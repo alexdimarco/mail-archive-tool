@@ -1,8 +1,10 @@
-# Build artifacts
+# Build artifacts (anchored to the repo root so they do NOT match the
+# cmd/mailarchive/ and cmd/mailarchive-gui/ source directories)
 /bin/
 *.exe
-mailarchive
-mailarchive-gui
+/mailarchive
+/mailarchive-gui
+/mailarchive-macos-universal
 
 # Example / local export output
 /export/
