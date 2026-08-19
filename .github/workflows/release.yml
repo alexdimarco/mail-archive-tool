@@ -1,0 +1,41 @@
+name: release
+
+# On every version tag (v*), run the gates, build the full cross-platform
+# binary matrix (incl. the macOS .app), and publish a GitHub Release with the
+# artifacts attached.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # tags, so build scripts can `git describe`
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Test (assurance gates must be green before shipping)
+        run: go test ./...
+
+      - name: Build release artifacts
+        run: bash packaging/build-release.sh "${GITHUB_REF_NAME}"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" dist/* \
+            --title "${GITHUB_REF_NAME}" \
+            --notes-file packaging/release-notes.md \
+          || gh release upload "${GITHUB_REF_NAME}" dist/* --clobber
