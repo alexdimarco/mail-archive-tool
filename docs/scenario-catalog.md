@@ -1,0 +1,121 @@
+# Scenario catalog — mail-archive-tool
+
+Per assurance-kit `process/scenario-catalog.md`. The tables here are the machine
+contract the covers-map meta-test (`assureblock/covers_map_test.go`) parses — do
+not restyle them. The tests encode the invariants; a change that cannot satisfy
+an invariant is the thing that is wrong.
+
+## 1. ID prefix
+
+`MA-` (test-spec IDs). Invariants use the `R` series.
+
+## 2. Invariants (what must always hold)
+
+- **R1 — No silent loss.** Every message the reader yields is exported, and no
+  attachment/inline image is silently dropped: content referenced but absent
+  (not downloaded, unparseable) is recorded in the verification report, never
+  hidden.
+- **R2 — Incremental idempotence.** An incremental re-run over an unchanged
+  source exports zero new items; `full` re-exports all. The manifest is the sole
+  dedup authority.
+- **R3 — Stable identity.** A message's dedup key is stable across runs
+  (Internet Message-ID when present, deterministic content hash otherwise) and
+  folder-scoped — the same mail in two folders exports to both, but never twice
+  within one folder.
+- **R4 — Containment.** Every path the exporter writes stays inside the output
+  root. Store/folder/attachment names derived from untrusted mail cannot
+  traverse out (`..`, absolute paths, path separators, reserved device names) or
+  collide destructively.
+- **R5 — Crash-safe state.** The manifest is written atomically; an interrupted
+  or failed run never corrupts it, and progress already made survives.
+- **R6 — Faithful structure.** Output mirrors the source folder tree; each store
+  gets its own top-level directory; a single mbox/maildir folder does not
+  double-nest under its own name.
+- **R7 — Self-contained HTML.** Each exported `.html` renders the message body
+  offline: inline `cid:` images are embedded as data URIs; header fields are
+  HTML-escaped.
+- **R8 — Search ↔ export parity.** The index holds exactly the exported
+  messages; a full-text query returns matching items; free-text is matched as
+  literal terms (no FTS operator injection or query crash).
+- **R9 — Read-only source.** Reading a mail store never modifies it. The single
+  write path (`-enable-offline`) is opt-in, backs up before editing, and refuses
+  while the mail app is running.
+- **R10 — Robust parsing.** Malformed/truncated input (bad mbox framing,
+  non-MIME message, unparseable node) is skipped or fallback-parsed — never a
+  fatal crash of the whole run.
+- **R11 — Correct date semantics.** `-since` parsing is total (relative +
+  absolute + rejects garbage); the date filter excludes exactly the items
+  outside the window.
+- **R12 — Refusal legibility.** Invalid operator input is refused with a typed
+  non-zero exit and a message naming the problem — never a panic or stack trace.
+
+## 3. Scenarios
+
+| Scenario | Must hold | Recovery/response | Proven by |
+|---|---|---|---|
+| S1 Untrusted mail names a file `../../x` or a folder `..` | R4 | name neutralized to a safe in-root segment | MA-01, MA-03, MA-29, MA-30 |
+| S2 Run interrupted mid-export | R5, R2 | manifest intact; already-written items survive; resume skips them | MA-11, MA-22 |
+| S3 Re-run over an unchanged source | R2 | zero new exports | MA-22 |
+| S4 Same email filed in two folders | R3 | exported to both; never twice in one | MA-09, MA-13 |
+| S5 Message with an inline `cid:` image | R7 | embedded as a data URI; renders offline | MA-19 |
+| S6 Attachment/inline content not present locally | R1 | skipped from the zip but recorded in the report | MA-20, MA-21 |
+| S7 Malformed or non-MIME message | R10, R1 | fallback-parsed or skipped; run continues | MA-13, MA-31 |
+| S8 Search box contains FTS operators/quotes | R8 | treated as literal terms; no crash, no injection | MA-23, MA-32 |
+| S9 Operator omits `-out`, gives a bad `-mode`, or serves a missing index | R12 | typed non-zero refusal naming the problem; no panic | MA-08, MA-33, MA-34 |
+| S10 `-enable-offline` while the mail app is running | R9 | refused; prefs.js untouched (no backup written) | MA-27, MA-35 |
+| S11 Reading a mail store | R9 | source bytes unchanged after a full read | MA-36 |
+| S12 A store name/segment resolves to empty after sanitizing | R4, R6 | falls back to a stable placeholder, still in-root | MA-01 |
+
+Acknowledged limits (not defects): very large attachments are buffered whole in
+memory (bounded by the largest single attachment, not the mailbox) — recorded
+here so a finding against it is a design conversation, not a silent gap.
+
+## 4. Test specs
+
+Tiers: **U** unit property (every commit) · **S** structural whole-tree walk
+(every commit) · **A** fail-closed, infra-free · **L** lab (real infra).
+
+| ID | Tier | Asserts | Covers |
+|---|---|---|---|
+| MA-01 | U | SanitizeSegment strips separators/illegal/reserved, trims dots, `..`→placeholder | R4, S1, S12 |
+| MA-02 | U | SanitizeSegment bounds segment length | R4 |
+| MA-03 | U | SanitizeFilename preserves extension, drops path separators | R4, S1 |
+| MA-04 | U | Slug is filesystem-safe and stable | R4, R6 |
+| MA-05 | U | ShortHash is deterministic and collision-distinct | R3 |
+| MA-06 | U | ParseSince relative windows (`30d`,`4w`,`12h`) | R11 |
+| MA-07 | U | ParseSince absolute dates | R11 |
+| MA-08 | U | ParseSince rejects garbage with an error (no silent zero) | R11, R12 |
+| MA-09 | U | manifest Key is folder-scoped (same identity, different folders → different keys) | R3, S4 |
+| MA-10 | U | a missing manifest loads as empty, not an error | R5 |
+| MA-11 | U | manifest Add/Save/reload round-trips; atomic write | R5, R2, S2 |
+| MA-12 | U | decodeBytes returns UTF-8 for UTF-8 and Windows-1252 for legacy bytes | R1 |
+| MA-13 | U | mbox reader extracts headers/body/Message-ID; single file has no double-nest | R1, R3, R10, S4, S7 |
+| MA-14 | U | IsMailStoreDir detects mbox/maildir dirs, rejects a dir of `.pst` | R6 |
+| MA-15 | U | maildir reader reads cur/new; folder = dir name | R1, R6 |
+| MA-16 | S | walking a real PST fixture yields ≥1 mail item with subject | R1, R6 |
+| MA-17 | U | plain body is HTML-escaped; header block + charset present | R7 |
+| MA-18 | U | a full-HTML message keeps its doc and gets the metadata header injected | R7 |
+| MA-19 | U | inline cid image embedded as data URI and excluded from the zip | R7, S5 |
+| MA-20 | U | a zero-byte attachment is skipped and its name returned as empty | R1, S6 |
+| MA-21 | U | empty-attachment and unresolved-cid produce verification issues | R1, S6 |
+| MA-22 | S | full → incremental(0 new) → full lifecycle; html count matches | R2, R6, S2, S3 |
+| MA-23 | U | index Add then Search (text, filters, facets); replace-by-key no dup | R8 |
+| MA-24 | U | the SQLite build has FTS5; bm25 ranking + snippet work | R8 |
+| MA-25 | U | server /api/search, /api/facets, /files serve the exported set | R8 |
+| MA-26 | U | IsImapStore true under ImapMail, false for Local Folders | R9 |
+| MA-27 | U | account matched by directory; EnableOffline backs up + is idempotent | R9, S10 |
+| MA-28 | U | StableWaiter reports stable only after no growth for the window | R9 |
+| MA-29 | U | SanitizeSegment/SanitizeFilename neutralize traversal, absolute paths, separators, reserved names | R4, S1, S12 |
+| MA-30 | U | zip entry names carry no path separator or `..` (zip-slip contained) | R4, S1 |
+| MA-31 | U | malformed/garbage/oversized input parses to a stub without crashing | R10, S7 |
+| MA-32 | U | FTS search treats operators/quotes as literal terms (no error, no injection) | R8, S8 |
+| MA-33 | U | CLI refuses missing `-out` / bad `-mode` with a typed non-zero naming the problem, no panic | R12, S9 |
+| MA-34 | U | CLI `serve`/`search` with no index refuses naming the missing index | R12, S9 |
+| MA-35 | U | running detected by lock-PID liveness: live lock = running; stale/dead-pid lock and persistent `.parentlock` = not running | R9, S10 |
+| MA-36 | U | reading a mail store leaves its bytes unchanged | R9, S11 |
+| MA-37 | U | fallback identity distinguishes messages differing only in body; Message-ID wins | R3, R1, S4 |
+| MA-38 | U | archived mail is served under a CSP blocking scripts/remote loads + nosniff | R4 |
+| MA-39 | U | root and each subcommand emit help naming their flags (UX contract X3) | R12 |
+
+Rows MA-29..MA-37 were added by the adversarial pass; see
+`docs/review-adversarial.md` for the findings they encode.

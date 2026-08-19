@@ -1,0 +1,17 @@
+# Build artifacts
+/bin/
+*.exe
+mailarchive
+mailarchive-gui
+
+# Example / local export output
+/export/
+*.mailarchive-manifest.json
+mailarchive.log
+search.db
+search.db-wal
+search.db-shm
+
+# OS / editor cruft
+.DS_Store
+*.swp
