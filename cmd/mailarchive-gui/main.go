@@ -23,6 +23,7 @@ import (
 
 	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/export"
+	"mail-archive-tool/internal/source"
 	"mail-archive-tool/internal/thunderbird"
 	"mail-archive-tool/internal/util"
 )
@@ -332,15 +333,35 @@ func autoDetectSources() ([]string, error) {
 
 // pickAutoInputs lets the user choose one of the auto-detected stores, or all of
 // them. The returned paths are concrete (Auto stays false when they run).
+//
+// The list shows a legible label per store (the .pst/.ost file name, or a mail
+// folder's store name) rather than the raw path: the discovered paths are long
+// and identical up to the point the dialog truncates them, so a raw list is
+// unreadable and indistinguishable.
 func pickAutoInputs(found []string) ([]string, error) {
 	const allOfThem = "➤ All of them"
 	if len(found) == 1 {
 		return found, nil
 	}
-	items := append([]string{allOfThem}, found...)
+
+	labels := make([]string, 0, len(found)+1)
+	labels = append(labels, allOfThem)
+	byLabel := make(map[string]string, len(found))
+	counts := map[string]int{}
+	for _, p := range found {
+		base := autoInputLabel(p)
+		counts[base]++
+		label := base
+		if counts[base] > 1 { // disambiguate identical names
+			label = fmt.Sprintf("%s (%d)", base, counts[base])
+		}
+		byLabel[label] = p
+		labels = append(labels, label)
+	}
+
 	choice, err := zenity.List(
 		"These mailboxes were found. Export which one?",
-		items,
+		labels,
 		zenity.Title(appTitle),
 		zenity.DefaultItems(allOfThem),
 	)
@@ -350,7 +371,27 @@ func pickAutoInputs(found []string) ([]string, error) {
 	if choice == allOfThem {
 		return found, nil
 	}
-	return []string{choice}, nil
+	if p, ok := byLabel[choice]; ok {
+		return []string{p}, nil
+	}
+	return []string{choice}, nil // fallback: treat the choice as a path
+}
+
+// autoInputLabel returns a human-readable label for a discovered store: the file
+// name for an Outlook .pst/.ost, or the store name for a mail-store directory
+// (Thunderbird account, Evolution account/local store).
+func autoInputLabel(p string) string {
+	if fi, err := os.Stat(p); err == nil && fi.IsDir() {
+		if s, err := source.Open(p); err == nil {
+			name := strings.TrimSpace(s.StoreName())
+			s.Close()
+			if name != "" {
+				return name
+			}
+		}
+		return filepath.Base(strings.TrimRight(p, string(os.PathSeparator)))
+	}
+	return filepath.Base(p)
 }
 
 func runExport(inputs []string, outDir string, mode export.Mode, since time.Time, copyFirst bool) error {

@@ -88,6 +88,32 @@ func IsMailStoreDir(dir string) bool {
 	return false
 }
 
+// DataFileReadable reports whether the Outlook .pst/.ost file at path can be
+// opened and parsed. It is used by auto-discovery to drop the orphaned or corrupt
+// .ost stubs Outlook can leave behind (e.g. from a removed account) so they never
+// reach the picker.
+//
+// It is deliberately lock-tolerant: a file that cannot be opened at all — most
+// often because a running Outlook holds it, but also a permissions issue — is
+// reported readable (true). Such a file is probably a real mailbox we simply
+// can't read this instant (that is what -copy-first is for), and auto-discovery
+// must never silently drop a real mailbox. Only a file that opens at the OS level
+// but fails to parse is reported unreadable (false).
+func DataFileReadable(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return true // locked / no permission: don't hide a possibly-valid mailbox
+	}
+	f.Close()
+
+	s, err := Open(path)
+	if err != nil {
+		return false // opened at the OS level but does not parse: orphaned/corrupt
+	}
+	s.Close()
+	return true
+}
+
 // looksLikeMbox reports whether the file begins with an mbox "From " separator.
 func looksLikeMbox(path string) bool {
 	f, err := os.Open(path)

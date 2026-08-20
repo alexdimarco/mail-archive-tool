@@ -85,6 +85,7 @@ an invariant is the thing that is wrong.
 | S14 Operator schedules a recurring backup, then re-runs / removes it | R14 | correct host-OS entry generated; install idempotent; remove reverses; unrelated entries kept | MA-45, MA-46, MA-47, MA-48, MA-49, MA-50 |
 | S15 Evolution local Maildir++ store with nested, dot-encoded subfolders | R15, R1, R6 | every subfolder decoded and read; escaped names cannot traverse out | MA-52, MA-53, MA-55 |
 | S16 Evolution IMAP disk cache: folders/<f>/{cur,new}, nested directly and via subfolders/ | R15, R1 | all folders walked; messages read as RFC822; single source | MA-54, MA-55 |
+| S17 Auto-discovery hits an orphaned/corrupt Outlook `.ost` (removed account); or one locked by a running Outlook | R1 | unparseable stub excluded from the discovered set; a locked-but-valid file is kept | MA-56 |
 
 Acknowledged limits (not defects): very large attachments are buffered whole in
 memory (bounded by the largest single attachment, not the mailbox) — recorded
@@ -152,10 +153,12 @@ Tiers: **U** unit property (every commit) · **S** structural whole-tree walk
 | MA-53 | U | Evolution Maildir++ reader reads root INBOX + every dot-encoded subfolder (nested included) | R15, R1, S15 |
 | MA-54 | U | Evolution cache reader walks folders/<f>/{cur,new}, nested directly and via subfolders/ | R15, R1, S16 |
 | MA-55 | U | Evolution detection is exclusive (maildir++/cache/plain) and both are a single mail store | R15, R6, S15, S16 |
+| MA-56 | U | DataFileReadable drops empty/corrupt Outlook stubs from auto-discovery but keeps a valid or unopenable (locked) file | R1, S17 |
 
 Rows MA-29..MA-37 were added by the adversarial pass; see
 `docs/review-adversarial.md` for the findings they encode. Rows MA-40..MA-44
 cover the `reindex` self-repair subcommand (R13); MA-45..MA-50 cover the
 `schedule` subcommand (R14); MA-51 covers the input discovery behind the CLI
 `-auto` flag and the GUI auto-detect step; MA-52..MA-55 cover Evolution store
-support (R15).
+support (R15); MA-56 covers auto-discovery filtering out unreadable Outlook data
+files (R1).

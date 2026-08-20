@@ -345,11 +345,16 @@ func autoDiscover() []string {
 		}
 	}
 
-	// Outlook data files.
+	// Outlook data files. Skip any that can't be parsed — Outlook leaves orphaned
+	// or stub .ost files behind (e.g. from removed accounts) that would otherwise
+	// pad the picker with unreadable entries. A file that is merely locked by a
+	// running Outlook is kept (DataFileReadable is lock-tolerant).
 	for _, g := range outlookGlobs() {
 		matches, _ := filepath.Glob(g)
 		for _, m := range matches {
-			add(m)
+			if source.DataFileReadable(m) {
+				add(m)
+			}
 		}
 	}
 
