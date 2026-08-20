@@ -273,6 +273,9 @@ set *Account Settings → Change → Mail to keep offline → **All***, then
   close Outlook.
 - HTML bodies are read directly from `PidTagHtml` (including the binary form
   modern Outlook uses). Non-mail items (calendar, contacts, tasks) are skipped.
+- A corrupt, truncated, or unsupported data file (e.g. an orphaned `.ost` stub a
+  removed account left behind) is skipped with an error, never a crash — it is
+  also excluded from `-auto` discovery.
 
 **Thunderbird / mbox**
 - Reads **mbox** (Thunderbird's default) and **maildir** stores. A mail

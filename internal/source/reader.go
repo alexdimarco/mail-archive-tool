@@ -62,7 +62,7 @@ type Reader struct {
 }
 
 // openPST opens the .pst/.ost file at path.
-func openPST(path string) (*Reader, error) {
+func openPST(path string) (r *Reader, err error) {
 	registerCharsets()
 
 	f, err := os.Open(path)
@@ -70,13 +70,26 @@ func openPST(path string) (*Reader, error) {
 		return nil, fmt.Errorf("open %s: %w", path, err)
 	}
 
+	// go-pst indexes into decrypted/decompressed buffers without bounds checks in
+	// places, so a corrupt or truncated .pst/.ost can panic during parsing. Turn
+	// that into a clean error, so one bad file (e.g. an orphaned Outlook .ost stub
+	// left by a removed account) is skipped rather than crashing the whole run —
+	// or, in the no-console GUI, exiting silently (R10).
+	defer func() {
+		if rec := recover(); rec != nil {
+			f.Close()
+			r = nil
+			err = fmt.Errorf("parse %s: corrupt or unsupported Outlook data file (go-pst: %v)", path, rec)
+		}
+	}()
+
 	pstFile, err := pst.New(f)
 	if err != nil {
 		f.Close()
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
 
-	r := &Reader{
+	r = &Reader{
 		file:   pstFile,
 		closer: f,
 		store:  pstStoreName(pstFile, path),
@@ -95,7 +108,17 @@ func (r *Reader) Close() error {
 
 // Walk traverses every folder depth-first, invoking handler for each mail item.
 // Non-mail items (appointments, contacts, tasks) are skipped in this version.
-func (r *Reader) Walk(handler MessageHandler) error {
+func (r *Reader) Walk(handler MessageHandler) (err error) {
+	// Per-message conversion is already panic-guarded (safeConvertMessage); this
+	// contains a panic in the folder traversal itself (GetRootFolder /
+	// GetSubFolders / the iterators) so a corrupt store fails as an error the run
+	// can log and move past, never a crash (R10).
+	defer func() {
+		if rec := recover(); rec != nil {
+			err = fmt.Errorf("go-pst panicked reading store %q: %v", r.store, rec)
+		}
+	}()
+
 	root, err := r.file.GetRootFolder()
 	if err != nil {
 		return fmt.Errorf("get root folder: %w", err)

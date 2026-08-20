@@ -31,6 +31,15 @@ import (
 const appTitle = "Mail Archive Export"
 
 func main() {
+	// The Windows build has no console, so an unhandled panic would exit silently.
+	// Surface it in a dialog instead — a visible error always beats a vanish.
+	defer func() {
+		if r := recover(); r != nil {
+			_ = zenity.Error(fmt.Sprintf("Something went wrong:\n\n%v", r), zenity.Title(appTitle))
+			os.Exit(1)
+		}
+	}()
+
 	err := wizard()
 	switch {
 	case err == nil:
