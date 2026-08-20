@@ -31,11 +31,34 @@ jobs:
       - name: Build release artifacts
         run: bash packaging/build-release.sh "${GITHUB_REF_NAME}"
 
+      - name: Compose release notes (changelog + install guide)
+        run: |
+          prev=$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)
+          {
+            echo "## What's changed in ${GITHUB_REF_NAME}"
+            echo
+            if [ -n "$prev" ]; then
+              git log --no-merges --pretty='- %s' "${prev}..${GITHUB_REF_NAME}"
+              echo
+              echo "**Full changelog:** https://github.com/${GITHUB_REPOSITORY}/compare/${prev}...${GITHUB_REF_NAME}"
+            else
+              git log --no-merges --pretty='- %s' "${GITHUB_REF_NAME}"
+            fi
+            echo
+            echo "---"
+            echo
+            cat packaging/release-notes.md
+          } > "${RUNNER_TEMP}/release-notes.md"
+
       - name: Publish release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" dist/* \
-            --title "${GITHUB_REF_NAME}" \
-            --notes-file packaging/release-notes.md \
-          || gh release upload "${GITHUB_REF_NAME}" dist/* --clobber
+          if gh release create "${GITHUB_REF_NAME}" dist/* \
+               --title "${GITHUB_REF_NAME}" \
+               --notes-file "${RUNNER_TEMP}/release-notes.md"; then
+            exit 0
+          fi
+          # Release already exists (e.g. a re-run): refresh its notes and assets.
+          gh release edit "${GITHUB_REF_NAME}" --notes-file "${RUNNER_TEMP}/release-notes.md"
+          gh release upload "${GITHUB_REF_NAME}" dist/* --clobber
