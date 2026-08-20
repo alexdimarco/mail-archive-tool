@@ -170,6 +170,82 @@ func TestIndexAddSearch(t *testing.T) {
 	}
 }
 
+// covers: MA-43, R13
+// EachRow enumerates every stored (id,key,path); DeleteByID removes a row from
+// both the metadata table and the aligned FTS index (so it stops matching), and
+// DeleteByKey targets a row by its dedup key. This is the plumbing reindex uses
+// to prune dangling entries.
+func TestEachRowAndDelete(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "search.db")
+	ix, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ix.Close()
+
+	now := time.Unix(1_700_000_000, 0).UTC()
+	adds := []struct{ folder, body, rel, key string }{
+		{"Inbox", "alpha unique-alpha", "Inbox/a.html", "kA"},
+		{"Inbox", "beta unique-beta", "Inbox/b.html", "kB"},
+		{"Archive", "gamma unique-gamma", "Archive/c.html", "kC"},
+	}
+	for _, a := range adds {
+		if err := ix.Add("store", split(a.folder), mkMsg("s", "x", "me", a.body, now), a.rel, a.key); err != nil {
+			t.Fatalf("add %s: %v", a.key, err)
+		}
+	}
+	if err := ix.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	// EachRow sees every row, with the path and key we stored.
+	byKey := map[string]struct {
+		id   int64
+		path string
+	}{}
+	if err := ix.EachRow(func(id int64, key, path string) error {
+		byKey[key] = struct {
+			id   int64
+			path string
+		}{id, path}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	assure.Reached(t, byKey, "rows enumerated by EachRow")
+	if len(byKey) != 3 {
+		t.Fatalf("EachRow saw %d rows, want 3", len(byKey))
+	}
+	if got := byKey["kB"].path; got != "Inbox/b.html" {
+		t.Errorf("kB path = %q, want Inbox/b.html", got)
+	}
+
+	// DeleteByID removes kB from both docs and docs_fts.
+	if err := ix.DeleteByID(byKey["kB"].id); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := ix.Count(); n != 2 {
+		t.Errorf("count after DeleteByID = %d, want 2", n)
+	}
+	if _, total, err := ix.Search(Query{Text: "unique-beta"}); err != nil || total != 0 {
+		t.Errorf("deleted body still matches FTS: total=%d err=%v", total, err)
+	}
+	if _, total, _ := ix.Search(Query{Text: "unique-alpha"}); total != 1 {
+		t.Errorf("surviving body no longer matches: total=%d, want 1", total)
+	}
+
+	// DeleteByKey removes kC; deleting an absent key is a no-op.
+	if err := ix.DeleteByKey("kC"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ix.DeleteByKey("does-not-exist"); err != nil {
+		t.Errorf("DeleteByKey on absent key errored: %v", err)
+	}
+	if n, _ := ix.Count(); n != 1 {
+		t.Errorf("count after DeleteByKey = %d, want 1", n)
+	}
+}
+
 func split(folder string) []string {
 	if folder == "" {
 		return nil

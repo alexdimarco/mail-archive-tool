@@ -29,6 +29,45 @@ func TestLoadMissing(t *testing.T) {
 	}
 }
 
+// covers: MA-44, R13
+// Delete removes an entry (so a later Has is false and it survives a save/reload
+// round-trip); deleting an absent key is a no-op. This is what reindex uses to
+// prune a manifest entry whose exported file is gone.
+func TestManifestDelete(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "manifest.json")
+	m, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keep := Key("Inbox", "id-keep")
+	drop := Key("Inbox", "id-drop")
+	m.Add(keep, Record{Path: "store/Inbox/keep.html"})
+	m.Add(drop, Record{Path: "store/Inbox/drop.html"})
+
+	m.Delete(drop)
+	m.Delete("never-existed") // no-op, must not panic or affect others
+
+	if m.Has(drop) {
+		t.Error("deleted key still present")
+	}
+	if !m.Has(keep) {
+		t.Error("Delete removed the wrong key")
+	}
+	if m.Len() != 1 {
+		t.Errorf("len after delete = %d, want 1", m.Len())
+	}
+	if err := m.Save(); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Has(drop) || !reloaded.Has(keep) {
+		t.Errorf("delete did not persist: has(drop)=%v has(keep)=%v", reloaded.Has(drop), reloaded.Has(keep))
+	}
+}
+
 // covers: MA-11
 func TestAddHasSaveReload(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "sub", "manifest.json")

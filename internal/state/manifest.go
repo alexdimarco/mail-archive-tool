@@ -83,6 +83,14 @@ func (m *Manifest) Add(key string, r Record) {
 	m.Entries[key] = r
 }
 
+// Delete removes key from the manifest. Absent keys are a no-op. Used by the
+// reindex self-repair to prune entries whose exported file no longer exists.
+func (m *Manifest) Delete(key string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.Entries, key)
+}
+
 // Len returns the number of recorded entries.
 func (m *Manifest) Len() int {
 	m.mu.Lock()

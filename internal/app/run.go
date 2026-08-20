@@ -353,8 +353,8 @@ func autoDiscover() []string {
 		}
 	}
 
-	// Thunderbird account/store directories (only those that really are stores).
-	for _, g := range thunderbirdGlobs() {
+	// Thunderbird and Evolution account/store directories (only real stores).
+	for _, g := range append(thunderbirdGlobs(), evolutionGlobs()...) {
 		matches, _ := filepath.Glob(g)
 		for _, m := range matches {
 			if fi, err := os.Stat(m); err == nil && fi.IsDir() && source.IsMailStoreDir(m) {
@@ -398,6 +398,21 @@ func thunderbirdGlobs() []string {
 		globs = append(globs, filepath.Join(r, "*", "Mail", "*"))
 	}
 	return globs
+}
+
+// evolutionGlobs returns the default Evolution store locations: the local
+// Maildir++ store and each IMAP account's disk cache (native and Flatpak paths).
+func evolutionGlobs() []string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+	return []string{
+		filepath.Join(home, ".local", "share", "evolution", "mail", "local"),
+		filepath.Join(home, ".var", "app", "org.gnome.Evolution", "data", "evolution", "mail", "local"),
+		filepath.Join(home, ".cache", "evolution", "mail", "*"),
+		filepath.Join(home, ".var", "app", "org.gnome.Evolution", "cache", "evolution", "mail", "*"),
+	}
 }
 
 func isDataFile(name string) bool {

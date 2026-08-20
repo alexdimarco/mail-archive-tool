@@ -20,3 +20,6 @@ search.db-shm
 
 # Release artifacts
 /dist/
+
+# Work-in-progress handoff (not part of the project)
+/continuation.md

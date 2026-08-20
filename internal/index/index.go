@@ -111,18 +111,7 @@ func (ix *Index) Add(store string, folderPath []string, m *model.Message, relPat
 	}
 
 	// Replace any existing row with the same key (full-mode re-export).
-	var oldID int64
-	switch err := ix.tx.QueryRow(`SELECT id FROM docs WHERE key=?`, key).Scan(&oldID); {
-	case err == nil:
-		if _, err := ix.tx.Exec(`DELETE FROM docs WHERE id=?`, oldID); err != nil {
-			return err
-		}
-		if _, err := ix.tx.Exec(`DELETE FROM docs_fts WHERE rowid=?`, oldID); err != nil {
-			return err
-		}
-	case errors.Is(err, sql.ErrNoRows):
-		// new row
-	default:
+	if err := deleteByKeyTx(ix.tx, key); err != nil {
 		return err
 	}
 
@@ -202,4 +191,95 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// deleteByKeyTx removes any existing document (and its FTS row) with the given
+// key inside tx. It is the "replace" step of Add, shared with DeleteByKey so the
+// two-table delete lives in exactly one place.
+func deleteByKeyTx(tx *sql.Tx, key string) error {
+	var id int64
+	switch err := tx.QueryRow(`SELECT id FROM docs WHERE key=?`, key).Scan(&id); {
+	case err == nil:
+		return deleteByIDTx(tx, id)
+	case errors.Is(err, sql.ErrNoRows):
+		return nil
+	default:
+		return err
+	}
+}
+
+// deleteByIDTx removes the document with rowid id from both the metadata table
+// and the aligned FTS index inside tx.
+func deleteByIDTx(tx *sql.Tx, id int64) error {
+	if _, err := tx.Exec(`DELETE FROM docs WHERE id=?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM docs_fts WHERE rowid=?`, id); err != nil {
+		return err
+	}
+	return nil
+}
+
+// EachRow streams every indexed document's rowid, dedup key, and stored path
+// (relative to the export root, forward-slashed) to fn, ordered by rowid. Like
+// EachDoc it commits any pending batch first and streams rather than
+// materializing. fn MUST NOT write to the index: the single DB connection is
+// held by the row cursor for the duration of the walk, so collect the rows you
+// want to mutate and delete them after EachRow returns.
+func (ix *Index) EachRow(fn func(id int64, key, path string) error) error {
+	if err := ix.commitPending(); err != nil {
+		return err
+	}
+	rows, err := ix.db.Query(`SELECT id, key, path FROM docs ORDER BY id`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			id        int64
+			key, path string
+		)
+		if err := rows.Scan(&id, &key, &path); err != nil {
+			return err
+		}
+		if err := fn(id, key, path); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+// DeleteByID removes the document with rowid id from both the metadata table and
+// the FTS index. Any pending batch is committed first, so it is safe to call
+// between EachRow walks.
+func (ix *Index) DeleteByID(id int64) error {
+	if err := ix.commitPending(); err != nil {
+		return err
+	}
+	tx, err := ix.db.Begin()
+	if err != nil {
+		return err
+	}
+	if err := deleteByIDTx(tx, id); err != nil {
+		tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
+// DeleteByKey removes the document with the given dedup key (a no-op if absent).
+func (ix *Index) DeleteByKey(key string) error {
+	if err := ix.commitPending(); err != nil {
+		return err
+	}
+	tx, err := ix.db.Begin()
+	if err != nil {
+		return err
+	}
+	if err := deleteByKeyTx(tx, key); err != nil {
+		tx.Rollback()
+		return err
+	}
+	return tx.Commit()
 }

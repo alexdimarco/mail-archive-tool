@@ -29,6 +29,7 @@ import (
 	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/index"
+	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/server"
 	"mail-archive-tool/internal/thunderbird"
 	"mail-archive-tool/internal/util"
@@ -42,6 +43,10 @@ func main() {
 		err = runServe(args[1:])
 	case len(args) > 0 && args[0] == "search":
 		err = runSearch(args[1:])
+	case len(args) > 0 && args[0] == "reindex":
+		err = runReindex(args[1:])
+	case len(args) > 0 && args[0] == "schedule":
+		err = runSchedule(args[1:])
 	default:
 		err = runExport(args)
 	}
@@ -233,6 +238,174 @@ func moreNote(total, shown int) string {
 		return fmt.Sprintf(" (showing %d)", shown)
 	}
 	return ""
+}
+
+// runReindex reconciles the archive at -out with what is on disk: rows whose
+// exported file was deleted/moved are pruned from the index and manifest, and
+// the folder pages are regenerated.
+func runReindex(args []string) error {
+	fs := flag.NewFlagSet("mailarchive reindex", flag.ContinueOnError)
+	out := fs.String("out", "", "export directory to reconcile (contains search.db) (required)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *out == "" {
+		return errors.New("-out is required (the export directory to reconcile)")
+	}
+
+	logger := log.New(os.Stderr, "", 0)
+	kept, pruned, err := app.Reindex(*out, logger)
+	if err != nil {
+		return err
+	}
+	logger.Printf("reindexed: kept=%d pruned=%d", kept, pruned)
+	return nil
+}
+
+// runSchedule prints (default) or installs/removes a recurring-backup entry for
+// the host OS's scheduler. The scheduled command is this executable plus the
+// export flags the operator passed, so it runs `mailarchive -out DIR <sources>`.
+func runSchedule(args []string) error {
+	var inputs stringSlice
+	fs := flag.NewFlagSet("mailarchive schedule", flag.ContinueOnError)
+	fs.Usage = scheduleUsage(fs)
+	interval := fs.String("interval", "daily", "backup cadence: hourly|daily|weekly")
+	at := fs.String("at", "02:00", "time of day HH:MM (hourly uses only the minute)")
+	name := fs.String("name", schedule.DefaultName, "scheduler entry name")
+	install := fs.Bool("install", false, "install the schedule (default: print it without applying)")
+	remove := fs.Bool("remove", false, "remove a previously installed schedule by name")
+	// Pass-through export flags: these become the scheduled command's arguments.
+	fs.Var(&inputs, "input", "PST/OST file or a directory to back up (repeatable, comma-separated)")
+	out := fs.String("out", "", "output directory the backup writes to (required)")
+	auto := fs.Bool("auto", false, "auto-discover mail stores when the backup runs")
+	modeStr := fs.String("mode", "incremental", "backup export mode: incremental|full")
+	copyFirst := fs.Bool("copy-first", false, "snapshot each data file before reading (avoids locks)")
+	sinceStr := fs.String("since", "", "only export items newer than this (e.g. 30d, 2026-07-01)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	inputs = append(inputs, fs.Args()...)
+
+	if *install && *remove {
+		return errors.New("choose either -install or -remove, not both")
+	}
+	iv, err := schedule.ParseInterval(*interval)
+	if err != nil {
+		return err
+	}
+	mode, err := parseMode(*modeStr)
+	if err != nil {
+		return err
+	}
+	modeName := "incremental"
+	if mode == export.Full {
+		modeName = "full"
+	}
+	if *sinceStr != "" {
+		if _, err := util.ParseSince(*sinceStr, time.Now()); err != nil {
+			return err
+		}
+	}
+
+	// -out is required except when removing (removal keys off the name alone).
+	if !*remove && *out == "" {
+		return errors.New("-out is required (the directory the scheduled backup writes to)")
+	}
+
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("could not determine my own executable path: %w", err)
+	}
+
+	// A scheduled job runs from an unknown working directory, so make the paths
+	// absolute before baking them into the entry.
+	absOut := abspath(*out)
+	var absInputs []string
+	for _, in := range inputs {
+		absInputs = append(absInputs, abspath(in))
+	}
+
+	spec := schedule.Spec{
+		Name:     *name,
+		Interval: iv,
+		At:       *at,
+		Exe:      exe,
+		Args:     scheduleExportArgs(absOut, absInputs, *auto, modeName, *copyFirst, *sinceStr),
+	}
+	if absOut != "" {
+		spec.Log = schedule.DefaultLogPath(absOut, *name)
+	}
+	if err := spec.Validate(); err != nil {
+		return err
+	}
+
+	switch {
+	case *remove:
+		if err := schedule.Remove(spec); err != nil {
+			return err
+		}
+		fmt.Printf("Removed scheduled backup %q.\n", *name)
+	case *install:
+		if err := schedule.Install(spec); err != nil {
+			return err
+		}
+		fmt.Printf("Installed scheduled backup %q (%s at %s).\n", *name, iv, *at)
+		fmt.Printf("It runs: %s %s\n", exe, strings.Join(spec.Args, " "))
+	default:
+		text, err := schedule.Preview(spec)
+		if err != nil {
+			return err
+		}
+		fmt.Print(text)
+		fmt.Println("\nThis was NOT applied. Re-run with -install to schedule it, or -remove to uninstall.")
+	}
+	return nil
+}
+
+// scheduleExportArgs reconstructs the export flag list the scheduled run will
+// receive: `mailarchive -out DIR -mode MODE [sources...]`.
+func scheduleExportArgs(out string, inputs []string, auto bool, mode string, copyFirst bool, since string) []string {
+	args := []string{"-out", out, "-mode", mode}
+	if auto {
+		args = append(args, "-auto")
+	}
+	for _, in := range inputs {
+		args = append(args, "-input", in)
+	}
+	if copyFirst {
+		args = append(args, "-copy-first")
+	}
+	if since != "" {
+		args = append(args, "-since", since)
+	}
+	return args
+}
+
+func abspath(p string) string {
+	if p == "" {
+		return ""
+	}
+	if a, err := filepath.Abs(p); err == nil {
+		return a
+	}
+	return p
+}
+
+func scheduleUsage(fs *flag.FlagSet) func() {
+	return func() {
+		fmt.Fprintf(os.Stderr, `mailarchive schedule - schedule a recurring backup with the host OS scheduler
+
+Usage:
+  mailarchive schedule -out DIR [-input ...|-auto] [-interval daily|weekly|hourly] [-at HH:MM] [-name NAME]
+  mailarchive schedule -out DIR -auto -install        apply the schedule
+  mailarchive schedule -name NAME -remove             uninstall by name
+
+By default the exact scheduler entry is printed and NOT applied.
+
+Flags:
+`)
+		fs.PrintDefaults()
+	}
 }
 
 func exportUsage(fs *flag.FlagSet) func() {

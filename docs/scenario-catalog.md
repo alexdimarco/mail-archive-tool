@@ -48,6 +48,22 @@ an invariant is the thing that is wrong.
   outside the window.
 - **R12 — Refusal legibility.** Invalid operator input is refused with a typed
   non-zero exit and a message naming the problem — never a panic or stack trace.
+- **R13 — Reindex reconciles to disk.** `reindex` reconciles the archive to what
+  is on disk: every indexed message whose exported file has been deleted, moved,
+  or renamed is pruned from both the search index and the manifest; surviving
+  files stay searchable; the browsable folder pages regenerate from the
+  reconciled set; nothing on disk is deleted.
+- **R14 — Schedule is correct, opt-in, and reversible.** `schedule` generates a
+  correct scheduler entry for the host OS (cron/launchd/Task Scheduler) carrying
+  the operator's export flags; it prints the entry by default and only applies it
+  under `--install`; `--install` is idempotent (re-running yields one entry) and
+  `--remove` cleanly reverses it, leaving unrelated entries untouched.
+- **R15 — Evolution stores read faithfully.** An Evolution store is read without
+  silent loss: the local Maildir++ store's dot-encoded, `_XX`-escaped folder
+  hierarchy is decoded (every subfolder read, no traversal out of the root), and
+  an IMAP disk cache's per-folder maildirs are all walked, whether nested
+  directly or under a `subfolders` container. Each cached message is yielded once
+  with its correct folder path.
 
 ## 3. Scenarios
 
@@ -65,6 +81,10 @@ an invariant is the thing that is wrong.
 | S10 `-enable-offline` while the mail app is running | R9 | refused; prefs.js untouched (no backup written) | MA-27, MA-35 |
 | S11 Reading a mail store | R9 | source bytes unchanged after a full read | MA-36 |
 | S12 A store name/segment resolves to empty after sanitizing | R4, R6 | falls back to a stable placeholder, still in-root | MA-01 |
+| S13 Operator deletes/renames exported files, then runs `reindex` | R13 | dangling index+manifest entries pruned; survivors searchable; pages regenerate | MA-40, MA-41, MA-42, MA-43, MA-44 |
+| S14 Operator schedules a recurring backup, then re-runs / removes it | R14 | correct host-OS entry generated; install idempotent; remove reverses; unrelated entries kept | MA-45, MA-46, MA-47, MA-48, MA-49, MA-50 |
+| S15 Evolution local Maildir++ store with nested, dot-encoded subfolders | R15, R1, R6 | every subfolder decoded and read; escaped names cannot traverse out | MA-52, MA-53, MA-55 |
+| S16 Evolution IMAP disk cache: folders/<f>/{cur,new}, nested directly and via subfolders/ | R15, R1 | all folders walked; messages read as RFC822; single source | MA-54, MA-55 |
 
 Acknowledged limits (not defects): very large attachments are buffered whole in
 memory (bounded by the largest single attachment, not the mailbox) — recorded
@@ -116,6 +136,26 @@ Tiers: **U** unit property (every commit) · **S** structural whole-tree walk
 | MA-37 | U | fallback identity distinguishes messages differing only in body; Message-ID wins | R3, R1, S4 |
 | MA-38 | U | archived mail is served under a CSP blocking scripts/remote loads + nosniff | R4 |
 | MA-39 | U | root and each subcommand emit help naming their flags (UX contract X3) | R12 |
+| MA-40 | U | reindex prunes index rows + manifest entries whose exported file is gone | R13, S13 |
+| MA-41 | U | reindex keeps present files searchable (survivors not dropped) | R13, S13 |
+| MA-42 | U | reindex regenerates folder pages so the pruned message is no longer listed | R13, S13 |
+| MA-43 | U | index EachRow enumerates rows; DeleteByID/DeleteByKey remove from docs + docs_fts | R13 |
+| MA-44 | U | manifest Delete removes an entry (persisted); absent key is a no-op | R13 |
+| MA-45 | U | cron line: interval schedule fields + exe/export-flags + log redirect; block carries the marker | R14, S14 |
+| MA-46 | U | launchd plist: label, ProgramArguments, StartCalendarInterval (Minute/Hour/Weekday by cadence) | R14, S14 |
+| MA-47 | U | schtasks command: /TN /TR /SC /ST, weekly /D SUN, delete reverses by name | R14, S14 |
+| MA-48 | U | UpsertCronBlock idempotent (twice = one block); unrelated crontab lines preserved | R14, S14 |
+| MA-49 | U | RemoveCronBlock reverses install by marker; empty-crontab remove is a no-op | R14, S14 |
+| MA-50 | U | schedule refuses missing -out / bad -interval / install+remove with a typed non-zero naming the problem | R14, R12, S9, S14 |
+| MA-51 | U | DiscoverInputs expands a dir to its .pst/.ost and dedups; a mail-store dir is one source | R6 |
+| MA-52 | U | decodeMaildirName: dot-split + _XX unescape + drop-empty + sanitize (no traversal) | R15, R6, S15 |
+| MA-53 | U | Evolution Maildir++ reader reads root INBOX + every dot-encoded subfolder (nested included) | R15, R1, S15 |
+| MA-54 | U | Evolution cache reader walks folders/<f>/{cur,new}, nested directly and via subfolders/ | R15, R1, S16 |
+| MA-55 | U | Evolution detection is exclusive (maildir++/cache/plain) and both are a single mail store | R15, R6, S15, S16 |
 
 Rows MA-29..MA-37 were added by the adversarial pass; see
-`docs/review-adversarial.md` for the findings they encode.
+`docs/review-adversarial.md` for the findings they encode. Rows MA-40..MA-44
+cover the `reindex` self-repair subcommand (R13); MA-45..MA-50 cover the
+`schedule` subcommand (R14); MA-51 covers the input discovery behind the CLI
+`-auto` flag and the GUI auto-detect step; MA-52..MA-55 cover Evolution store
+support (R15).

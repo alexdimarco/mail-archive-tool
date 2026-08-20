@@ -65,6 +65,31 @@ func TestCLIRefusals(t *testing.T) {
 	// search against a directory with no index.
 	code, stderr = runCLI("search", "-out", t.TempDir(), "anything")
 	assure.Refused(t, code, stderr, assure.Code(1), assure.Names("index"))
+
+	// reindex with no -out.
+	code, stderr = runCLI("reindex")
+	assure.Refused(t, code, stderr, assure.Code(1), assure.Names("-out"))
+
+	// reindex against a directory with no index.
+	code, stderr = runCLI("reindex", "-out", t.TempDir())
+	assure.Refused(t, code, stderr, assure.Code(1), assure.Names("index"))
+}
+
+// covers: MA-50, R14, R12, S9, S14
+// schedule refuses a missing -out and a bad -interval with a typed non-zero exit
+// naming the problem, and never applies anything on the refusal path.
+func TestScheduleRefusals(t *testing.T) {
+	// Missing required -out (default interval is valid).
+	code, stderr := runCLI("schedule")
+	assure.Refused(t, code, stderr, assure.Code(1), assure.Names("-out"))
+
+	// Bad -interval value.
+	code, stderr = runCLI("schedule", "-out", t.TempDir(), "-interval", "fortnightly")
+	assure.Refused(t, code, stderr, assure.Code(1), assure.Names("interval"))
+
+	// Both -install and -remove is contradictory.
+	code, stderr = runCLI("schedule", "-out", t.TempDir(), "-auto", "-install", "-remove")
+	assure.Refused(t, code, stderr, assure.Code(1), assure.Names("install", "remove"))
 }
 
 // covers: MA-39, R12
@@ -77,6 +102,8 @@ func TestHelpTotality(t *testing.T) {
 		{[]string{"-h"}, []string{"-out", "-input", "-enable-offline"}},
 		{[]string{"serve", "-h"}, []string{"-out", "-addr"}},
 		{[]string{"search", "-h"}, []string{"-out", "-folder"}},
+		{[]string{"reindex", "-h"}, []string{"-out"}},
+		{[]string{"schedule", "-h"}, []string{"-out", "-interval", "-install"}},
 	}
 	for _, c := range cases {
 		_, stderr := runCLI(c.args...)

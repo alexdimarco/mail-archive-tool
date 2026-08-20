@@ -45,27 +45,50 @@ func main() {
 
 func wizard() error {
 	// 1. Choose the source type, then pick the file/folder accordingly.
+	const srcAuto = "Auto-detect my mailboxes"
 	const srcOutlook = "Outlook data file (.pst / .ost)"
 	const srcThunderbird = "Thunderbird / mbox mail folder"
 	const srcMbox = "Single mbox file"
 	srcType, err := zenity.List(
 		"What are you exporting?",
-		[]string{srcOutlook, srcThunderbird, srcMbox},
+		[]string{srcAuto, srcOutlook, srcThunderbird, srcMbox},
 		zenity.Title(appTitle),
-		zenity.DefaultItems(srcOutlook),
+		zenity.DefaultItems(srcAuto),
 	)
 	if err != nil {
 		return err
 	}
 
+	// Auto-detect discovers Outlook (Windows), Thunderbird, and Evolution stores.
+	// If it finds any, let the user pick one or all; otherwise fall through to the
+	// manual pickers below.
+	var autoInputs []string
+	if srcType == srcAuto {
+		autoInputs, err = autoDetectSources()
+		if err != nil {
+			return err
+		}
+		if len(autoInputs) == 0 {
+			if err := zenity.Warning(
+				"No Outlook, Thunderbird, or Evolution mailboxes were found automatically.\n\nPick the file or folder manually instead.",
+				zenity.Title(appTitle),
+			); err != nil {
+				return err
+			}
+			srcType = srcOutlook // fall through to the manual Outlook picker
+		}
+	}
+
 	var inputPath string
-	switch srcType {
-	case srcThunderbird:
+	switch {
+	case srcType == srcAuto && len(autoInputs) > 0:
+		// handled after the switch (inputs already discovered)
+	case srcType == srcThunderbird:
 		inputPath, err = zenity.SelectFile(
 			zenity.Title("Select the Thunderbird mail folder (e.g. …/ImapMail/<account>)"),
 			zenity.Directory(),
 		)
-	case srcMbox:
+	case srcType == srcMbox:
 		inputPath, err = zenity.SelectFile(
 			zenity.Title("Select an mbox file"),
 		)
@@ -81,6 +104,18 @@ func wizard() error {
 	}
 	if err != nil {
 		return err
+	}
+
+	// Assemble the input list: the auto-detected selection, or the single manual
+	// pick. Auto-detect can return several stores, so let the user choose.
+	var inputs []string
+	if srcType == srcAuto && len(autoInputs) > 0 {
+		inputs, err = pickAutoInputs(autoInputs)
+		if err != nil {
+			return err
+		}
+	} else {
+		inputs = []string{inputPath}
 	}
 
 	// 1a. IMAP prep: for a Thunderbird IMAP account, offer to enable offline and
@@ -149,7 +184,7 @@ func wizard() error {
 	copyFirst := strings.HasPrefix(openChoice, "Yes")
 
 	// 6. Run with a progress dialog.
-	return runExport(inputPath, outDir, mode, since, copyFirst)
+	return runExport(inputs, outDir, mode, since, copyFirst)
 }
 
 // prepareThunderbirdGUI offers, for a Thunderbird IMAP account, to enable
@@ -289,7 +324,36 @@ func askSince() (time.Time, error) {
 	}
 }
 
-func runExport(inputPath, outDir string, mode export.Mode, since time.Time, copyFirst bool) error {
+// autoDetectSources discovers mail stores the same way the CLI's -auto flag
+// does (Outlook on Windows; Thunderbird and Evolution on any OS).
+func autoDetectSources() ([]string, error) {
+	return app.DiscoverInputs(nil, true)
+}
+
+// pickAutoInputs lets the user choose one of the auto-detected stores, or all of
+// them. The returned paths are concrete (Auto stays false when they run).
+func pickAutoInputs(found []string) ([]string, error) {
+	const allOfThem = "➤ All of them"
+	if len(found) == 1 {
+		return found, nil
+	}
+	items := append([]string{allOfThem}, found...)
+	choice, err := zenity.List(
+		"These mailboxes were found. Export which one?",
+		items,
+		zenity.Title(appTitle),
+		zenity.DefaultItems(allOfThem),
+	)
+	if err != nil {
+		return nil, err
+	}
+	if choice == allOfThem {
+		return found, nil
+	}
+	return []string{choice}, nil
+}
+
+func runExport(inputs []string, outDir string, mode export.Mode, since time.Time, copyFirst bool) error {
 	logger := newLogger(outDir)
 
 	dlg, err := zenity.Progress(zenity.Title("Exporting…"), zenity.Pulsate())
@@ -306,7 +370,7 @@ func runExport(inputPath, outDir string, mode export.Mode, since time.Time, copy
 	}()
 
 	opts := app.Options{
-		Inputs:    []string{inputPath},
+		Inputs:    inputs,
 		Out:       outDir,
 		Mode:      mode,
 		Since:     since,

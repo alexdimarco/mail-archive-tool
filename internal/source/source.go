@@ -36,6 +36,11 @@ func Open(path string) (Source, error) {
 		return nil, fmt.Errorf("open %s: %w", path, err)
 	}
 	if info.IsDir() {
+		// Evolution stores are maildir-based but arrange folders differently, so
+		// they get a dedicated reader before the generic mbox/maildir path.
+		if r, ok := openEvolution(path); ok {
+			return r, nil
+		}
 		return openMboxDir(path)
 	}
 	switch strings.ToLower(filepath.Ext(path)) {
@@ -53,6 +58,10 @@ func Open(path string) (Source, error) {
 // directory (*.sbd). Used by input discovery to treat such a directory as a
 // single source rather than expanding it into .pst/.ost files.
 func IsMailStoreDir(dir string) bool {
+	// Evolution stores (local Maildir++ or an IMAP disk cache) are single sources.
+	if isEvolutionCacheStore(dir) || isEvolutionMaildirStore(dir) {
+		return true
+	}
 	if m, _ := filepath.Glob(filepath.Join(dir, "*.msf")); len(m) > 0 {
 		return true
 	}

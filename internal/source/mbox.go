@@ -45,7 +45,7 @@ func (r *mboxReader) Walk(handler MessageHandler) error {
 	}
 	// A directory that is itself a maildir folder is a single store.
 	if isMaildir(r.root) {
-		return r.readMaildir(r.root, nil, handler)
+		return readMaildir(r.root, nil, handler)
 	}
 	return r.walkDir(r.root, nil, handler)
 }
@@ -68,7 +68,7 @@ func (r *mboxReader) walkDir(dir string, prefix []string, handler MessageHandler
 			}
 			if isMaildir(full) {
 				folderPath := append(append([]string{}, prefix...), util.SanitizeSegment(name))
-				if err := r.readMaildir(full, folderPath, handler); err != nil {
+				if err := readMaildir(full, folderPath, handler); err != nil {
 					return err
 				}
 				if err := r.walkSbd(dir, name, folderPath, handler); err != nil {
@@ -112,25 +112,41 @@ func isMaildir(dir string) bool {
 }
 
 // readMaildir reads every message file in a maildir folder's new/ and cur/ dirs.
-func (r *mboxReader) readMaildir(dir string, folderPath []string, handler MessageHandler) error {
+// It is shared by the Thunderbird/mbox reader and the Evolution reader (both
+// store folders as maildirs).
+func readMaildir(dir string, folderPath []string, handler MessageHandler) error {
 	for _, sub := range []string{"new", "cur"} {
-		subdir := filepath.Join(dir, sub)
-		files, err := os.ReadDir(subdir)
-		if err != nil {
+		if err := readMaildirDir(filepath.Join(dir, sub), folderPath, handler); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// readMaildirDir reads every message file under a maildir new/ or cur/ directory.
+// Standard maildirs store messages as flat files; Evolution sub-buckets them into
+// two-hex-character shard directories (e.g. cur/04/<msg>), so we descend into
+// subdirectories rather than skipping them.
+func readMaildirDir(dir string, folderPath []string, handler MessageHandler) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil // absent new/ or cur/: nothing to read
+	}
+	for _, fe := range entries {
+		full := filepath.Join(dir, fe.Name())
+		if fe.IsDir() {
+			if err := readMaildirDir(full, folderPath, handler); err != nil {
+				return err
+			}
 			continue
 		}
-		for _, fe := range files {
-			if fe.IsDir() {
-				continue
-			}
-			data, err := os.ReadFile(filepath.Join(subdir, fe.Name()))
-			if err != nil {
-				return fmt.Errorf("read maildir message %s: %w", fe.Name(), err)
-			}
-			if m := safeParseMessage(data); m != nil {
-				if err := handler(folderPath, m); err != nil {
-					return err
-				}
+		data, err := os.ReadFile(full)
+		if err != nil {
+			return fmt.Errorf("read maildir message %s: %w", fe.Name(), err)
+		}
+		if m := safeParseMessage(data); m != nil {
+			if err := handler(folderPath, m); err != nil {
+				return err
 			}
 		}
 	}

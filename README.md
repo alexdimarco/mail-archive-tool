@@ -11,6 +11,7 @@ shared, so the same export / search / GUI stack works across:
 |--------|--------|--------|
 | **Outlook** (desktop) | `.pst` / `.ost` | pure-Go [`go-pst`](https://github.com/mooijtech/go-pst) |
 | **Thunderbird** (and any mbox) | mbox files / mail directory | [`go-mbox`](https://github.com/emersion/go-mbox) + [`go-message`](https://github.com/emersion/go-message) |
+| **Evolution** (GNOME) | local Maildir++ store / IMAP disk cache | maildir reader + [`go-message`](https://github.com/emersion/go-message) |
 
 Adding another source means adding one reader; the exporter, attachment zipping,
 incremental manifest, search index, web UI, folder pages and GUI are untouched.
@@ -20,6 +21,10 @@ items not seen on previous runs, optionally bounded to a recent date window
 (e.g. "the last month"). Everything is **pure Go (no cgo)** — it builds and runs
 on any OS, needs neither Outlook nor Thunderbird installed, and can process a
 copied mailbox offline.
+
+Beyond exporting, it can **`reindex`** an archive to reconcile it with what's on
+disk after files are moved or deleted, and **`schedule`** recurring backups with
+the host OS's scheduler (cron / launchd / Task Scheduler).
 
 ## Output layout
 
@@ -56,8 +61,10 @@ cross-compile from any OS.
 [`zenity`](https://github.com/ncruces/zenity)) — no browser, and on Windows no
 console window. Double-click it and it walks you through:
 
-1. **Source** — Outlook `.pst`/`.ost` file, a Thunderbird/mbox mail folder, or a single mbox file.
-2. **Choose** the file or folder (native picker).
+1. **Source** — **Auto-detect my mailboxes** (finds Outlook, Thunderbird, and
+   Evolution stores and lets you pick one or all), or choose a type manually:
+   Outlook `.pst`/`.ost` file, a Thunderbird/mbox mail folder, or a single mbox file.
+2. **Choose** the file or folder (native picker), or the auto-detected store(s).
 3. **IMAP prep** *(when applicable)* — for a Thunderbird IMAP account it offers to
    enable offline download and walk you through *Download/Sync Now* (then exports
    in Full mode); for an Outlook `.ost` it shows the equivalent "Mail to keep
@@ -89,7 +96,10 @@ mailarchive -input ~/.thunderbird/xxxx.default/ImapMail/mail.example.com -out ./
 # A single mbox folder file.
 mailarchive -input ~/.thunderbird/xxxx.default/Mail/Local\ Folders/Archive -out ./export
 
-# Auto-discover the default Outlook data files (Windows) and export.
+# Evolution: point at the local "On This Computer" store, or an IMAP disk cache.
+mailarchive -input ~/.local/share/evolution/mail/local -out ./export
+
+# Auto-discover every mailbox (Outlook on Windows; Thunderbird + Evolution anywhere).
 mailarchive -auto -out ./export
 
 # Full export of everything, ignoring the manifest.
@@ -100,13 +110,13 @@ mailarchive -input "%LOCALAPPDATA%\Microsoft\Outlook\me.ost" -out ./export -sinc
 ```
 
 An `-input` may be an Outlook `.pst`/`.ost` file, an mbox file, a **mail-store
-directory** (Thunderbird account dir — walked as one source, including nested
-`.sbd` subfolders and maildir folders), or a plain directory of `.pst`/`.ost`
-files (expanded). `-input` is **repeatable**, so one command can combine several
-heterogeneous sources — e.g. an Outlook `.pst` *and* a Thunderbird account —
-into a single archive under one shared search index (each keeps its own
-top-level `<store>/` directory). `-auto` does this automatically across every
-mailbox it finds.
+directory** (a Thunderbird account dir, or an Evolution local/cache store —
+walked as one source, including nested `.sbd` subfolders and maildir folders),
+or a plain directory of `.pst`/`.ost` files (expanded). `-input` is
+**repeatable**, so one command can combine several heterogeneous sources — e.g.
+an Outlook `.pst` *and* a Thunderbird account — into a single archive under one
+shared search index (each keeps its own top-level `<store>/` directory). `-auto`
+does this automatically across every mailbox it finds.
 
 ### Flags
 
@@ -118,7 +128,7 @@ mailbox it finds.
 | `-since` | Only items on/after this: `30d`, `4w`, `12h`, `720h`, or a date like `2026-07-01`. |
 | `-manifest` | Manifest path (default `<out>/.mailarchive-manifest.json`). |
 | `-copy-first` | Copy each data **file** to a temp snapshot before reading (avoids a lock when the mail app is open; ignored for directories). |
-| `-auto` | Auto-discover mail stores: Outlook files on Windows (`%LOCALAPPDATA%\Microsoft\Outlook\*.ost`, `%USERPROFILE%\Documents\Outlook Files\*.pst`) **and** Thunderbird profiles on any OS (`~/.thunderbird/*/{ImapMail,Mail}/*`, incl. the Snap and macOS/Windows locations). |
+| `-auto` | Auto-discover mail stores: Outlook files on Windows (`%LOCALAPPDATA%\Microsoft\Outlook\*.ost`, `%USERPROFILE%\Documents\Outlook Files\*.pst`), Thunderbird profiles on any OS (`~/.thunderbird/*/{ImapMail,Mail}/*`, incl. Snap and macOS/Windows), **and** Evolution stores (`~/.local/share/evolution/mail/local` and each `~/.cache/evolution/mail/*` IMAP cache, incl. Flatpak). |
 | `-index` / `-pages` | Build the search index / folder pages (both default on; set `=false` to skip). |
 
 ### Incremental model
@@ -164,6 +174,52 @@ Windows Search.
 Indexing and page generation are on by default; disable with `-index=false` /
 `-pages=false`. The index is pure-Go SQLite (`modernc.org/sqlite`), so it still
 cross-compiles to the Windows binary with no cgo.
+
+## Maintenance & automation
+
+### `reindex` — reconcile the archive with disk
+
+If you delete, move, or rename exported files by hand, the search index, the
+manifest, and the folder pages still point at them. `reindex` reconciles the
+archive to what is actually on disk: every entry whose file is gone is pruned
+from the index and the manifest, the surviving files stay searchable, and the
+folder pages are regenerated. Nothing on disk is deleted.
+
+```sh
+mailarchive reindex -out ./export
+# reindexed: kept=1843 pruned=12
+```
+
+### `schedule` — recurring backups
+
+`schedule` writes a recurring-backup entry for the host OS's scheduler — **cron**
+on Linux, a **launchd** LaunchAgent on macOS, **Task Scheduler** on Windows. The
+scheduled command is `mailarchive` plus the export flags you pass, so it runs an
+incremental backup on your cadence. By default it **prints** the exact entry and
+applies nothing; add `-install` to apply it (idempotently) and `-remove` to take
+it back out.
+
+```sh
+# Print the cron/launchd/schtasks entry for a nightly 02:00 incremental backup:
+mailarchive schedule -out ./export -auto
+
+# Apply it; re-running -install just updates the single entry.
+mailarchive schedule -out ./export -auto -install
+
+# Weekly on Sunday at 03:30, a named job:
+mailarchive schedule -out ./export -auto -interval weekly -at 03:30 -name weekly-mail -install
+
+# Remove it later (keyed by name):
+mailarchive schedule -name weekly-mail -remove
+```
+
+| Flag | Description |
+|------|-------------|
+| `-interval` | `daily` (default), `weekly`, or `hourly`. |
+| `-at` | Time of day `HH:MM` (default `02:00`; `hourly` uses only the minute). |
+| `-name` | Scheduler entry name (default `mailarchive-backup`). |
+| `-install` / `-remove` | Apply / uninstall (default: just print the entry). |
+| export flags | `-out` (required), `-input`, `-auto`, `-mode`, `-copy-first`, `-since` are baked into the scheduled command. |
 
 ## Verifying completeness
 
@@ -226,6 +282,17 @@ set *Account Settings → Change → Mail to keep offline → **All***, then
 - Messages are standard MIME, parsed with `go-message` — HTML/plain parts,
   base64/quoted-printable, charsets and `cid:` inline images all handled.
 - Messages flagged deleted-but-not-compacted are still exported.
+
+**Evolution (GNOME)**
+- Reads the local **"On This Computer"** store (Maildir++, at
+  `~/.local/share/evolution/mail/local`) — its dot-encoded folder hierarchy is
+  decoded back into a real folder tree — and each IMAP account's **disk cache**
+  (`~/.cache/evolution/mail/<account>`), whose per-folder maildirs are walked in
+  full (Evolution shards messages into `cur/NN/` buckets). IMAP account caches
+  are labelled by their account name.
+- Point `-input` at either directory, or use `-auto`. As with any IMAP source,
+  only content Evolution has **cached locally** is present; download for offline
+  use first for a complete archive.
 
 **Both**
 - Deleting originals is intentionally **not** performed — export only. Remove
