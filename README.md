@@ -131,6 +131,7 @@ does this automatically across every mailbox it finds.
 | `-manifest` | Manifest path (default `<out>/.mailarchive-manifest.json`). |
 | `-copy-first` | Copy each data **file** to a temp snapshot before reading (avoids a lock when the mail app is open; ignored for directories). |
 | `-outlook` | **Windows + classic Outlook only.** Have Outlook export each account to a fresh `.pst` under `<out>/_outlook-pst`, then archive those. Use when a live Exchange/`.ost` cache can't be read directly (see below). Refuses with a message elsewhere. |
+| `-outlook-sync-wait` | With `-outlook`: run a Send/Receive and wait up to this long (default `5m`) for downloads before creating the PST; `0` skips the sync. Only mail Outlook has downloaded locally is captured — set "Mail to keep offline" to **All** first for a complete archive. |
 | `-auto` | Auto-discover mail stores: Outlook files on Windows (`%LOCALAPPDATA%\Microsoft\Outlook\*.ost`, `%USERPROFILE%\Documents\Outlook Files\*.pst`), Thunderbird profiles on any OS (`~/.thunderbird/*/{ImapMail,Mail}/*`, incl. Snap and macOS/Windows), **and** Evolution stores (`~/.local/share/evolution/mail/local` and each `~/.cache/evolution/mail/*` IMAP cache, incl. Flatpak). Orphaned or corrupt Outlook `.ost` stubs (left by removed accounts) are skipped; a file merely locked by a running Outlook is kept. |
 | `-index` / `-pages` | Build the search index / folder pages (both default on; set `=false` to skip). |
 
@@ -284,8 +285,15 @@ set *Account Settings → Change → Mail to keep offline → **All***, then
   **"Outlook account (via Outlook app)"** wizard option sidesteps this: it drives
   Outlook to write a clean, standard `.pst` per account (`AddStore` + `CopyTo`),
   which then archives normally — Outlook does the parsing, so there's no format
-  fragility. Requires classic Outlook with a configured profile (not *New
-  Outlook*); Outlook may show a one-time "allow programmatic access" prompt.
+  fragility. It first runs a **Send/Receive** and waits (`-outlook-sync-wait`,
+  default 5 min) so the offline window is current. Requires classic Outlook with
+  a configured profile (not *New Outlook*); Outlook may show a one-time "allow
+  programmatic access" prompt.
+- **Completeness caveat:** the COM path can only capture what Outlook has
+  **downloaded locally**. Cached Exchange/IMAP accounts keep mail outside the
+  "Mail to keep offline" window on the server, so for a *complete* archive set
+  that slider to **All** and let Send/Receive finish before running. (This can't
+  be automated — it's a per-account profile setting that needs a resync.)
 
 **Thunderbird / mbox**
 - Reads **mbox** (Thunderbird's default) and **maildir** stores. A mail

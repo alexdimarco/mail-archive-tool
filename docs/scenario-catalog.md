@@ -166,7 +166,7 @@ Tiers: **U** unit property (every commit) · **S** structural whole-tree walk
 | MA-57 | U | Open contains a go-pst parse panic on a corrupt .pst/.ost as a clean error (no crash); DataFileReadable stays panic-safe | R10, S18 |
 | MA-58 | U | pstFileName yields a bare, in-root .pst name (no separator/traversal); empty account gets a fallback | R16, R4 |
 | MA-59 | A | CLI -outlook off Windows refuses with a typed non-zero naming the Windows/Outlook requirement (no crash) | R16, R12 |
-| MA-60 | L | on Windows + classic Outlook, -outlook writes a PST per account (via AddStoreEx + CopyTo) that archives normally — **pending**, validated on a real Outlook install | R16 |
+| MA-60 | L | on Windows + classic Outlook, -outlook runs Send/Receive (bounded wait), writes a PST per account (AddStoreEx + CopyTo) that archives normally — **pending**, validated on a real Outlook install | R16 |
 
 Rows MA-29..MA-37 were added by the adversarial pass; see
 `docs/review-adversarial.md` for the findings they encode. Rows MA-40..MA-44

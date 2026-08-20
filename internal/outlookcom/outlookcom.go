@@ -14,6 +14,7 @@ package outlookcom
 
 import (
 	"errors"
+	"time"
 
 	"mail-archive-tool/internal/util"
 )
@@ -21,6 +22,23 @@ import (
 // ErrUnsupported is returned when Outlook COM automation is not available: any
 // non-Windows OS, or Windows without classic Outlook installed.
 var ErrUnsupported = errors.New("Outlook automation requires Windows with classic Outlook installed (and a configured mail profile)")
+
+// CompletenessNote warns that a COM export can only capture mail Outlook has
+// actually downloaded locally. The "keep offline" window is a per-account profile
+// setting we can't reliably read or change, so callers surface this every time.
+const CompletenessNote = "Note: only mail Outlook has downloaded to this computer is included.\n" +
+	"For a complete archive, set the account's \"Mail to keep offline\" to All\n" +
+	"(File > Account Settings > Account Settings > your account > Change), let\n" +
+	"Send/Receive finish, and then run this."
+
+// Options tunes a COM export run.
+type Options struct {
+	// Sync runs a Send/Receive before copying, so the offline window is current.
+	Sync bool
+	// SyncWait bounds how long to wait for that Send/Receive (there is no reliable
+	// COM completion signal, so the wait is time-bounded). Zero uses a default.
+	SyncWait time.Duration
+}
 
 // Store is one account exported to a .pst.
 type Store struct {

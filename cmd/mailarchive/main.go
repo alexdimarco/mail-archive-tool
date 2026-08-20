@@ -83,6 +83,7 @@ func runExport(args []string) error {
 	copyFirst := fs.Bool("copy-first", false, "copy each data file to a temp snapshot before reading (avoids locks when Outlook is open)")
 	auto := fs.Bool("auto", false, "auto-discover mail stores (Outlook on Windows; Thunderbird on any OS)")
 	outlook := fs.Bool("outlook", false, "Windows + classic Outlook: have Outlook export each account to a .pst first, then archive that (use when a .ost can't be read directly)")
+	outlookSyncWait := fs.Duration("outlook-sync-wait", 5*time.Minute, "with -outlook: run Send/Receive and wait up to this long for downloads before creating the PST (0 to skip)")
 	doIndex := fs.Bool("index", true, "build/update the full-text search index (search.db)")
 	doPages := fs.Bool("pages", true, "generate browsable folder index.html pages")
 	enableOffline := fs.Bool("enable-offline", false, "Thunderbird IMAP: enable offline download in prefs.js so all mail can be synced (Thunderbird must be closed)")
@@ -114,9 +115,11 @@ func runExport(args []string) error {
 	// go-pst can't read directly. Windows + classic Outlook only; elsewhere it
 	// refuses with a legible message.
 	if *outlook {
+		logger.Printf("%s", outlookcom.CompletenessNote)
 		pstDir := filepath.Join(*out, "_outlook-pst")
 		logger.Printf("Outlook: exporting each account to a PST under %s ...", pstDir)
-		stores, cerr := outlookcom.CreatePSTs(pstDir, logger)
+		stores, cerr := outlookcom.CreatePSTs(pstDir,
+			outlookcom.Options{Sync: *outlookSyncWait > 0, SyncWait: *outlookSyncWait}, logger)
 		if cerr != nil {
 			return cerr
 		}

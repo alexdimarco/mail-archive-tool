@@ -422,6 +422,23 @@ func autoInputLabel(p string) string {
 func runExport(inputs []string, outDir string, mode export.Mode, since time.Time, copyFirst, outlookCOM bool) error {
 	logger := newLogger(outDir)
 
+	// For the Outlook-automation path, show the completeness caveat and confirm
+	// before spending time on a Send/Receive + PST copy.
+	if outlookCOM {
+		q := zenity.Question(
+			outlookcom.CompletenessNote+"\n\nI'll run Send/Receive, wait a few minutes, then export each account. Continue?",
+			zenity.Title(appTitle),
+			zenity.OKLabel("Continue"),
+			zenity.CancelLabel("Cancel"),
+		)
+		if errors.Is(q, zenity.ErrCanceled) {
+			return nil
+		}
+		if q != nil {
+			return q
+		}
+	}
+
 	dlg, err := zenity.Progress(zenity.Title("Exporting…"), zenity.Pulsate())
 	if err != nil {
 		return err
@@ -438,8 +455,9 @@ func runExport(inputs []string, outDir string, mode export.Mode, since time.Time
 	// Outlook-automation path: have Outlook write a fresh PST per account, then
 	// archive those. Reliable for Exchange/IMAP .ost caches go-pst can't read.
 	if outlookCOM {
-		_ = dlg.Text("Asking Outlook to export each account to a PST…\nThis can take a while for large mailboxes.")
-		stores, cerr := outlookcom.CreatePSTs(filepath.Join(outDir, "_outlook-pst"), logger)
+		_ = dlg.Text("Running Send/Receive, then exporting each account to a PST…\nThis can take several minutes for large mailboxes.")
+		stores, cerr := outlookcom.CreatePSTs(filepath.Join(outDir, "_outlook-pst"),
+			outlookcom.Options{Sync: true, SyncWait: 5 * time.Minute}, logger)
 		if cerr != nil {
 			_ = dlg.Close()
 			return cerr

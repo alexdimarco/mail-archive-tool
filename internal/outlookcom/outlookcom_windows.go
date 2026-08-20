@@ -11,10 +11,15 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	ole "github.com/go-ole/go-ole"
 	"github.com/go-ole/go-ole/oleutil"
 )
+
+// defaultSyncWait bounds the pre-copy Send/Receive when a caller asks to sync but
+// gives no explicit budget.
+const defaultSyncWait = 5 * time.Minute
 
 // olStoreUnicode selects the modern large-capacity Unicode PST format for
 // Namespace.AddStoreEx (OlStoreType.olStoreUnicode).
@@ -63,8 +68,9 @@ func Detect() (version string, available bool) {
 
 // CreatePSTs drives Outlook to copy each non-PST mail account into a fresh .pst
 // under outDir, returning the files created. Accounts already stored as a .pst on
-// disk are skipped (they can be archived directly).
-func CreatePSTs(outDir string, logger *log.Logger) ([]Store, error) {
+// disk are skipped (they can be archived directly). If opts.Sync is set it runs a
+// Send/Receive first (bounded by opts.SyncWait) so cached accounts are current.
+func CreatePSTs(outDir string, opts Options, logger *log.Logger) ([]Store, error) {
 	if logger == nil {
 		logger = log.New(io.Discard, "", 0)
 	}
@@ -91,6 +97,14 @@ func CreatePSTs(outDir string, logger *log.Logger) ([]Store, error) {
 		}
 		ns := nsV.ToIDispatch()
 		defer ns.Release()
+
+		if opts.Sync {
+			wait := opts.SyncWait
+			if wait <= 0 {
+				wait = defaultSyncWait
+			}
+			syncAndWait(ns, wait, logger)
+		}
 
 		srcStoresV, err := oleutil.GetProperty(ns, "Stores")
 		if err != nil {
@@ -119,6 +133,60 @@ func CreatePSTs(outDir string, logger *log.Logger) ([]Store, error) {
 		return nil, errors.New("no Outlook accounts could be exported to a PST (an account already stored as a .pst can be archived directly)")
 	}
 	return stores, nil
+}
+
+// syncAndWait starts every Send/Receive group and waits a bounded time for the
+// downloads to run. The Outlook Object Model exposes no reliable "sync finished"
+// signal, so the wait is time-bounded rather than event-driven; any items still
+// only on the server are fetched on demand when CopyTo reads them (online).
+func syncAndWait(ns *ole.IDispatch, wait time.Duration, logger *log.Logger) {
+	soV, err := oleutil.GetProperty(ns, "SyncObjects")
+	if err != nil {
+		logger.Printf("Outlook: could not access Send/Receive groups: %v", err)
+		return
+	}
+	so := soV.ToIDispatch()
+	defer so.Release()
+	countV, err := oleutil.GetProperty(so, "Count")
+	if err != nil {
+		return
+	}
+	count := int(countV.Val)
+	if count == 0 {
+		logger.Printf("Outlook: no Send/Receive groups configured; skipping sync")
+		return
+	}
+
+	started := 0
+	for i := 1; i <= count; i++ {
+		itV, err := oleutil.CallMethod(so, "Item", i)
+		if err != nil {
+			continue
+		}
+		it := itV.ToIDispatch()
+		if _, err := oleutil.CallMethod(it, "Start"); err != nil {
+			logger.Printf("Outlook: Send/Receive group %d failed to start: %v", i, err)
+		} else {
+			started++
+		}
+		it.Release()
+	}
+	if started == 0 {
+		return
+	}
+
+	logger.Printf("Outlook: Send/Receive started (%d group(s)); waiting up to %s for downloads.", started, wait)
+	const step = 20 * time.Second
+	for elapsed := time.Duration(0); elapsed < wait; {
+		d := step
+		if remaining := wait - elapsed; remaining < step {
+			d = remaining
+		}
+		time.Sleep(d)
+		elapsed += d
+		logger.Printf("Outlook: syncing… (%s elapsed of %s)", elapsed.Round(time.Second), wait)
+	}
+	logger.Printf("Outlook: proceeding; any remaining items download on demand as they are copied.")
 }
 
 // exportOneStore creates a PST for the i-th source store and copies its folders
