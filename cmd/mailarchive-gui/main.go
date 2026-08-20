@@ -16,6 +16,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -23,6 +24,7 @@ import (
 
 	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/export"
+	"mail-archive-tool/internal/outlookcom"
 	"mail-archive-tool/internal/source"
 	"mail-archive-tool/internal/thunderbird"
 	"mail-archive-tool/internal/util"
@@ -57,17 +59,25 @@ func wizard() error {
 	// 1. Choose the source type, then pick the file/folder accordingly.
 	const srcAuto = "Auto-detect my mailboxes"
 	const srcOutlook = "Outlook data file (.pst / .ost)"
+	const srcOutlookCOM = "Outlook account (via Outlook app — for Exchange / .ost)"
 	const srcThunderbird = "Thunderbird / mbox mail folder"
 	const srcMbox = "Single mbox file"
+	choices := []string{srcAuto, srcOutlook}
+	// Driving Outlook to export a PST needs classic Outlook, which is Windows-only.
+	if runtime.GOOS == "windows" {
+		choices = append(choices, srcOutlookCOM)
+	}
+	choices = append(choices, srcThunderbird, srcMbox)
 	srcType, err := zenity.List(
 		"What are you exporting?",
-		[]string{srcAuto, srcOutlook, srcThunderbird, srcMbox},
+		choices,
 		zenity.Title(appTitle),
 		zenity.DefaultItems(srcAuto),
 	)
 	if err != nil {
 		return err
 	}
+	useOutlookCOM := srcType == srcOutlookCOM
 
 	// Auto-detect discovers Outlook (Windows), Thunderbird, and Evolution stores.
 	// If it finds any, let the user pick one or all; otherwise fall through to the
@@ -91,6 +101,9 @@ func wizard() error {
 
 	var inputPath string
 	switch {
+	case useOutlookCOM:
+		// Nothing to pick: the accounts are read via Outlook automation, which
+		// creates the PST(s) once the output folder is chosen.
 	case srcType == srcAuto && len(autoInputs) > 0:
 		// handled after the switch (inputs already discovered)
 	case srcType == srcThunderbird:
@@ -116,15 +129,18 @@ func wizard() error {
 		return err
 	}
 
-	// Assemble the input list: the auto-detected selection, or the single manual
-	// pick. Auto-detect can return several stores, so let the user choose.
+	// Assemble the input list: nothing for the Outlook-automation path (the PSTs
+	// are created later), the auto-detected selection, or the single manual pick.
 	var inputs []string
-	if srcType == srcAuto && len(autoInputs) > 0 {
+	switch {
+	case useOutlookCOM:
+		inputs = nil
+	case srcType == srcAuto && len(autoInputs) > 0:
 		inputs, err = pickAutoInputs(autoInputs)
 		if err != nil {
 			return err
 		}
-	} else {
+	default:
 		inputs = []string{inputPath}
 	}
 
@@ -194,7 +210,7 @@ func wizard() error {
 	copyFirst := strings.HasPrefix(openChoice, "Yes")
 
 	// 6. Run with a progress dialog.
-	return runExport(inputs, outDir, mode, since, copyFirst)
+	return runExport(inputs, outDir, mode, since, copyFirst, useOutlookCOM)
 }
 
 // prepareThunderbirdGUI offers, for a Thunderbird IMAP account, to enable
@@ -403,7 +419,7 @@ func autoInputLabel(p string) string {
 	return filepath.Base(p)
 }
 
-func runExport(inputs []string, outDir string, mode export.Mode, since time.Time, copyFirst bool) error {
+func runExport(inputs []string, outDir string, mode export.Mode, since time.Time, copyFirst, outlookCOM bool) error {
 	logger := newLogger(outDir)
 
 	dlg, err := zenity.Progress(zenity.Title("Exporting…"), zenity.Pulsate())
@@ -418,6 +434,21 @@ func runExport(inputs []string, outDir string, mode export.Mode, since time.Time
 		<-dlg.Done()
 		cancel()
 	}()
+
+	// Outlook-automation path: have Outlook write a fresh PST per account, then
+	// archive those. Reliable for Exchange/IMAP .ost caches go-pst can't read.
+	if outlookCOM {
+		_ = dlg.Text("Asking Outlook to export each account to a PST…\nThis can take a while for large mailboxes.")
+		stores, cerr := outlookcom.CreatePSTs(filepath.Join(outDir, "_outlook-pst"), logger)
+		if cerr != nil {
+			_ = dlg.Close()
+			return cerr
+		}
+		inputs = nil
+		for _, s := range stores {
+			inputs = append(inputs, s.Path)
+		}
+	}
 
 	opts := app.Options{
 		Inputs:    inputs,

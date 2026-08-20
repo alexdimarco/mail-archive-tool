@@ -63,7 +63,9 @@ console window. Double-click it and it walks you through:
 
 1. **Source** — **Auto-detect my mailboxes** (finds Outlook, Thunderbird, and
    Evolution stores and lets you pick one or all), or choose a type manually:
-   Outlook `.pst`/`.ost` file, a Thunderbird/mbox mail folder, or a single mbox file.
+   Outlook `.pst`/`.ost` file, a Thunderbird/mbox mail folder, a single mbox file,
+   or — on Windows with classic Outlook — **Outlook account (via Outlook app)**,
+   which has Outlook export each account to a `.pst` first (for Exchange/`.ost`).
 2. **Choose** the file or folder (native picker), or the auto-detected store(s).
 3. **IMAP prep** *(when applicable)* — for a Thunderbird IMAP account it offers to
    enable offline download and walk you through *Download/Sync Now* (then exports
@@ -128,6 +130,7 @@ does this automatically across every mailbox it finds.
 | `-since` | Only items on/after this: `30d`, `4w`, `12h`, `720h`, or a date like `2026-07-01`. |
 | `-manifest` | Manifest path (default `<out>/.mailarchive-manifest.json`). |
 | `-copy-first` | Copy each data **file** to a temp snapshot before reading (avoids a lock when the mail app is open; ignored for directories). |
+| `-outlook` | **Windows + classic Outlook only.** Have Outlook export each account to a fresh `.pst` under `<out>/_outlook-pst`, then archive those. Use when a live Exchange/`.ost` cache can't be read directly (see below). Refuses with a message elsewhere. |
 | `-auto` | Auto-discover mail stores: Outlook files on Windows (`%LOCALAPPDATA%\Microsoft\Outlook\*.ost`, `%USERPROFILE%\Documents\Outlook Files\*.pst`), Thunderbird profiles on any OS (`~/.thunderbird/*/{ImapMail,Mail}/*`, incl. Snap and macOS/Windows), **and** Evolution stores (`~/.local/share/evolution/mail/local` and each `~/.cache/evolution/mail/*` IMAP cache, incl. Flatpak). Orphaned or corrupt Outlook `.ost` stubs (left by removed accounts) are skipped; a file merely locked by a running Outlook is kept. |
 | `-index` / `-pages` | Build the search index / folder pages (both default on; set `=false` to skip). |
 
@@ -276,6 +279,13 @@ set *Account Settings → Change → Mail to keep offline → **All***, then
 - A corrupt, truncated, or unsupported data file (e.g. an orphaned `.ost` stub a
   removed account left behind) is skipped with an error, never a crash — it is
   also excluded from `-auto` discovery.
+- **Live Exchange/IMAP `.ost` caches vary by Outlook build** and some can't be
+  parsed directly. On Windows with classic Outlook, `-outlook` (CLI) or the
+  **"Outlook account (via Outlook app)"** wizard option sidesteps this: it drives
+  Outlook to write a clean, standard `.pst` per account (`AddStore` + `CopyTo`),
+  which then archives normally — Outlook does the parsing, so there's no format
+  fragility. Requires classic Outlook with a configured profile (not *New
+  Outlook*); Outlook may show a one-time "allow programmatic access" prompt.
 
 **Thunderbird / mbox**
 - Reads **mbox** (Thunderbird's default) and **maildir** stores. A mail

@@ -29,6 +29,7 @@ import (
 	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/index"
+	"mail-archive-tool/internal/outlookcom"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/server"
 	"mail-archive-tool/internal/thunderbird"
@@ -81,6 +82,7 @@ func runExport(args []string) error {
 	manifestPath := fs.String("manifest", "", "manifest path (default <out>/.mailarchive-manifest.json)")
 	copyFirst := fs.Bool("copy-first", false, "copy each data file to a temp snapshot before reading (avoids locks when Outlook is open)")
 	auto := fs.Bool("auto", false, "auto-discover mail stores (Outlook on Windows; Thunderbird on any OS)")
+	outlook := fs.Bool("outlook", false, "Windows + classic Outlook: have Outlook export each account to a .pst first, then archive that (use when a .ost can't be read directly)")
 	doIndex := fs.Bool("index", true, "build/update the full-text search index (search.db)")
 	doPages := fs.Bool("pages", true, "generate browsable folder index.html pages")
 	enableOffline := fs.Bool("enable-offline", false, "Thunderbird IMAP: enable offline download in prefs.js so all mail can be synced (Thunderbird must be closed)")
@@ -105,6 +107,25 @@ func runExport(args []string) error {
 		}
 	}
 
+	logger := log.New(os.Stderr, "", 0)
+
+	// Optionally have Outlook itself export each account to a fresh .pst, then
+	// archive those. This is the reliable path for a live Exchange/IMAP .ost cache
+	// go-pst can't read directly. Windows + classic Outlook only; elsewhere it
+	// refuses with a legible message.
+	if *outlook {
+		pstDir := filepath.Join(*out, "_outlook-pst")
+		logger.Printf("Outlook: exporting each account to a PST under %s ...", pstDir)
+		stores, cerr := outlookcom.CreatePSTs(pstDir, logger)
+		if cerr != nil {
+			return cerr
+		}
+		for _, s := range stores {
+			inputs = append(inputs, s.Path)
+		}
+		logger.Printf("Outlook: %d PST(s) ready; archiving them now.", len(stores))
+	}
+
 	opts := app.Options{
 		Inputs:    inputs,
 		Auto:      *auto,
@@ -119,8 +140,6 @@ func runExport(args []string) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-
-	logger := log.New(os.Stderr, "", 0)
 
 	// Thunderbird IMAP prep: enable offline storage and/or wait for a sync so
 	// on-demand mail is actually present locally before we read it.

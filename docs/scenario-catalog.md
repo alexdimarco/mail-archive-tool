@@ -58,6 +58,13 @@ an invariant is the thing that is wrong.
   the operator's export flags; it prints the entry by default and only applies it
   under `--install`; `--install` is idempotent (re-running yields one entry) and
   `--remove` cleanly reverses it, leaving unrelated entries untouched.
+- **R16 — Outlook COM export is opt-in and safe.** On Windows with *classic*
+  Outlook, `-outlook` (and the GUI's Outlook-app option) drives Outlook to write
+  a fresh, standard `.pst` per mail account, which then archives through the
+  normal pipeline; every created PST file name stays inside the output root. On
+  any platform without classic Outlook it refuses with a legible message naming
+  the requirement — never a crash. (COM behaviour is lab-validated; go-pst
+  cannot read every live `.ost`, so this is the reliable path for Exchange.)
 - **R15 — Evolution stores read faithfully.** An Evolution store is read without
   silent loss: the local Maildir++ store's dot-encoded, `_XX`-escaped folder
   hierarchy is decoded (every subfolder read, no traversal out of the root), and
@@ -87,6 +94,7 @@ an invariant is the thing that is wrong.
 | S16 Evolution IMAP disk cache: folders/<f>/{cur,new}, nested directly and via subfolders/ | R15, R1 | all folders walked; messages read as RFC822; single source | MA-54, MA-55 |
 | S17 Auto-discovery hits an orphaned/corrupt Outlook `.ost` (removed account); or one locked by a running Outlook | R1 | unparseable stub excluded from the discovered set; a locked-but-valid file is kept | MA-56 |
 | S18 A corrupt/truncated `.pst`/`.ost` (orphaned stub, bad OST variant) that panics go-pst | R10 | `Open` fails with a clean error; no panic escapes; the run continues and the no-console GUI never exits silently | MA-57 |
+| S19 A live Exchange/IMAP `.ost` go-pst can't read; operator uses `-outlook` / the GUI Outlook-app option | R16 | on Windows, Outlook writes a clean `.pst` per account that archives normally; off Windows it refuses legibly | MA-58, MA-59, MA-60 |
 
 Acknowledged limits (not defects): very large attachments are buffered whole in
 memory (bounded by the largest single attachment, not the mailbox) — recorded
@@ -156,6 +164,9 @@ Tiers: **U** unit property (every commit) · **S** structural whole-tree walk
 | MA-55 | U | Evolution detection is exclusive (maildir++/cache/plain) and both are a single mail store | R15, R6, S15, S16 |
 | MA-56 | U | DataFileReadable drops empty/corrupt Outlook stubs from auto-discovery but keeps a valid or unopenable (locked) file | R1, S17 |
 | MA-57 | U | Open contains a go-pst parse panic on a corrupt .pst/.ost as a clean error (no crash); DataFileReadable stays panic-safe | R10, S18 |
+| MA-58 | U | pstFileName yields a bare, in-root .pst name (no separator/traversal); empty account gets a fallback | R16, R4 |
+| MA-59 | A | CLI -outlook off Windows refuses with a typed non-zero naming the Windows/Outlook requirement (no crash) | R16, R12 |
+| MA-60 | L | on Windows + classic Outlook, -outlook writes a PST per account (via AddStoreEx + CopyTo) that archives normally — **pending**, validated on a real Outlook install | R16 |
 
 Rows MA-29..MA-37 were added by the adversarial pass; see
 `docs/review-adversarial.md` for the findings they encode. Rows MA-40..MA-44
@@ -164,4 +175,7 @@ cover the `reindex` self-repair subcommand (R13); MA-45..MA-50 cover the
 `-auto` flag and the GUI auto-detect step; MA-52..MA-55 cover Evolution store
 support (R15); MA-56 covers auto-discovery filtering out unreadable Outlook data
 files (R1); MA-57 covers containing a go-pst open-time panic on a corrupt data
-file (R10).
+file (R10); MA-58..MA-60 cover the `-outlook` Outlook-COM PST export (R16) — the
+COM behaviour itself is lab-tier (MA-60, pending a real Windows+Outlook box),
+with the pure name-safety (MA-58) and the off-Windows refusal (MA-59) tested in
+CI.

@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -73,6 +74,20 @@ func TestCLIRefusals(t *testing.T) {
 	// reindex against a directory with no index.
 	code, stderr = runCLI("reindex", "-out", t.TempDir())
 	assure.Refused(t, code, stderr, assure.Code(1), assure.Names("index"))
+}
+
+// covers: MA-59, R16, R12
+// The -outlook option requires Windows + classic Outlook; on any other platform
+// it refuses with a typed non-zero exit naming the requirement — never a crash.
+// The assertion anchors on the phrase "requires Windows" (unique to the refusal
+// message): plain "Windows"/"Outlook" would also match the temp-dir path and the
+// progress log line, and pass even if the refusal never fired.
+func TestOutlookFlagUnsupportedRefusal(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("on Windows, -outlook drives real Outlook rather than refusing")
+	}
+	code, stderr := runCLI("-out", t.TempDir(), "-outlook")
+	assure.Refused(t, code, stderr, assure.Code(1), assure.Names("requires Windows", "classic Outlook"))
 }
 
 // covers: MA-50, R14, R12, S9, S14
