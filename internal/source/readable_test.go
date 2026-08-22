@@ -3,6 +3,7 @@ package source
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -43,9 +44,10 @@ func TestDataFileReadable(t *testing.T) {
 	}
 
 	// A file that cannot be opened at all (simulated with 0 permissions) is kept:
-	// it may be a real mailbox locked by a running Outlook. Skipped when running
-	// as root, which ignores the permission bits.
-	if os.Geteuid() != 0 {
+	// it may be a real mailbox locked by a running Outlook. Skipped as root (which
+	// ignores permission bits) and on Windows (where 0-perm files stay readable, so
+	// the simulation doesn't hold — the lock-tolerance itself is OS-agnostic).
+	if runtime.GOOS != "windows" && os.Geteuid() != 0 {
 		locked := filepath.Join(dir, "locked.ost")
 		if err := os.WriteFile(locked, []byte("!BDN whatever"), 0o000); err != nil {
 			t.Fatal(err)

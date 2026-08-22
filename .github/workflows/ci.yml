@@ -1,0 +1,37 @@
+name: ci
+
+# Build, vet, and test on every push and PR to main, across all three OSes.
+# Windows coverage is the point: it compiles the Outlook COM path (build-tagged,
+# go-ole) and runs the non-COM tests natively. The COM export itself needs a real
+# Outlook install and stays lab-tier (docs/scenario-catalog.md, MA-60) — CI never
+# drives Outlook.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Build (all packages)
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test (incl. assurance gates)
+        run: go test ./... -count=1

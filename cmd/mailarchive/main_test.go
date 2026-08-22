@@ -22,6 +22,9 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	testBin = filepath.Join(dir, "mailarchive")
+	if runtime.GOOS == "windows" {
+		testBin += ".exe" // exec needs the real produced name on Windows
+	}
 	build := exec.Command("go", "build", "-o", testBin, ".")
 	build.Env = append(os.Environ(), "GOTOOLCHAIN=local")
 	build.Stderr = os.Stderr
