@@ -22,6 +22,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -115,6 +116,12 @@ func runExport(args []string) error {
 	// go-pst can't read directly. Windows + classic Outlook only; elsewhere it
 	// refuses with a legible message.
 	if *outlook {
+		// Refuse up front on a platform that can't run Outlook automation, before
+		// printing the completeness note or any "exporting…" progress — a guaranteed
+		// refusal must not first look like it started work.
+		if runtime.GOOS != "windows" {
+			return fmt.Errorf("%w", outlookcom.ErrUnsupported)
+		}
 		logger.Printf("%s", outlookcom.CompletenessNote)
 		pstDir := filepath.Join(*out, "_outlook-pst")
 		logger.Printf("Outlook: exporting each account to a PST under %s ...", pstDir)
