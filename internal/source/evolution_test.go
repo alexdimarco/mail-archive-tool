@@ -22,7 +22,8 @@ func writeMaildirMsg(t *testing.T, dir, subject string) {
 	msg := "From: A <a@example.com>\r\nTo: B <b@example.com>\r\n" +
 		"Subject: " + subject + "\r\nDate: Mon, 03 Mar 2025 09:00:00 +0000\r\n" +
 		"Message-ID: <" + subject + "@x>\r\n\r\nbody of " + subject + "\r\n"
-	if err := os.WriteFile(filepath.Join(cur, subject+":2,S"), []byte(msg), 0o644); err != nil {
+	// Plain name (no ':', illegal on Windows); the reader reads every file in cur/.
+	if err := os.WriteFile(filepath.Join(cur, subject), []byte(msg), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }

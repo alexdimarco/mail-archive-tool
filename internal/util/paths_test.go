@@ -10,7 +10,9 @@ import (
 // Containment tombstone: names derived from untrusted mail cannot become path
 // separators, traversal tokens, or absolute paths that escape the output root.
 func TestContainment(t *testing.T) {
-	const root = "/out/root"
+	// Normalize to the host separator so the prefix check is valid on Windows
+	// (filepath.Join yields \out\root there, not /out/root).
+	root := filepath.Clean("/out/root")
 	adversarial := []string{
 		"../../etc/passwd", "..", ".", "/abs/path", `..\..\win`,
 		"a/b/c", "....//....//", "con", "nul", "\x00\x01evil", "  ..  ",

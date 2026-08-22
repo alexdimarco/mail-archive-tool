@@ -14,15 +14,29 @@ import (
 	"mail-archive-tool/internal/model"
 )
 
+// tmpDir is a temp directory with best-effort cleanup: modernc SQLite can hold
+// the search.db file briefly past Close on Windows, so a cleanup failure there
+// must not fail an otherwise-passing test (the process/OS reclaims it).
+func tmpDir(t *testing.T) string {
+	t.Helper()
+	d, err := os.MkdirTemp("", "srvtest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(d) })
+	return d
+}
+
 // covers: MA-38, R4
 // Archived mail is served under a CSP that blocks scripts and remote loads, so
 // a malicious email cannot execute or phone home when viewed through /files/.
 func TestFileServerSetsCSP(t *testing.T) {
-	dir := t.TempDir()
+	dir := tmpDir(t)
 	ix, err := index.Open(filepath.Join(dir, "search.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer ix.Close()
 	if err := os.MkdirAll(filepath.Join(dir, "store"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -53,11 +67,12 @@ func TestFileServerSetsCSP(t *testing.T) {
 
 // covers: MA-25
 func TestServerEndpoints(t *testing.T) {
-	dir := t.TempDir()
+	dir := tmpDir(t)
 	ix, err := index.Open(filepath.Join(dir, "search.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer ix.Close()
 	m := &model.Message{
 		Subject:     "Acme invoice",
 		SenderName:  "Bob",

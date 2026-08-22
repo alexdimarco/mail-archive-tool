@@ -1,6 +1,7 @@
 package index
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -8,6 +9,19 @@ import (
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/model"
 )
+
+// tmpDir is a temp directory with best-effort cleanup: modernc SQLite can hold
+// the search.db file briefly past Close on Windows, so a cleanup failure there
+// must not fail an otherwise-passing test.
+func tmpDir(t *testing.T) string {
+	t.Helper()
+	d, err := os.MkdirTemp("", "idxtest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(d) })
+	return d
+}
 
 // covers: MA-32, R8
 // FTS operator/quote input must be treated as literal terms — never an FTS
@@ -57,7 +71,7 @@ func mkMsg(subject, sender, to, body string, date time.Time, attach ...string) *
 
 // covers: MA-23
 func TestIndexAddSearch(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "search.db")
+	path := filepath.Join(tmpDir(t), "search.db")
 	ix, err := Open(path)
 	if err != nil {
 		t.Fatal(err)

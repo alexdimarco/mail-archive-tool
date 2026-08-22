@@ -27,7 +27,9 @@ func TestMaildirReader(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := os.WriteFile(filepath.Join(folder, "cur", "1700000000.abc:2,S"), []byte(sampleMsg), 0o644); err != nil {
+	// No ':' in the name — it's illegal on Windows (an NTFS alternate-data-stream
+	// separator). The reader reads every file in cur/ regardless of name.
+	if err := os.WriteFile(filepath.Join(folder, "cur", "1700000000.abc.2,S"), []byte(sampleMsg), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

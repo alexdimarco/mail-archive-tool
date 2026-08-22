@@ -16,6 +16,19 @@ import (
 	"mail-archive-tool/internal/state"
 )
 
+// tmpDir is a temp directory with best-effort cleanup: modernc SQLite can hold
+// the search.db file briefly past Close on Windows, so a cleanup failure there
+// must not fail an otherwise-passing test.
+func tmpDir(t *testing.T) string {
+	t.Helper()
+	d, err := os.MkdirTemp("", "apptest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(d) })
+	return d
+}
+
 func reindexMsg(subject, id string) *model.Message {
 	return &model.Message{
 		Subject:           subject,
@@ -106,7 +119,7 @@ func indexTotal(t *testing.T, out, query string) int {
 // surviving files stay searchable (MA-41), and the folder page is regenerated so
 // it no longer lists the pruned message (MA-42).
 func TestReindexReconciles(t *testing.T) {
-	out := t.TempDir()
+	out := tmpDir(t)
 	rels := buildArchive(t, out)
 
 	// Sanity: everything is present and searchable before we break anything.
