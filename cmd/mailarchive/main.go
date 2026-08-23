@@ -1,13 +1,17 @@
-// Command mailarchive exports messages from local Outlook data files (.pst/.ost)
-// into a directory of self-contained HTML files with per-email attachment
-// archives, mirroring the Outlook folder tree, and builds a full-text search
-// index for discovery.
+// Command mailarchive archives mail from many sources — Outlook .pst/.ost,
+// Thunderbird mbox/maildir, Evolution (Maildir++/IMAP cache), and Microsoft 365
+// via Graph — into a directory of self-contained HTML files with per-email
+// attachment archives, mirroring the source folder tree, and builds a full-text
+// search index for discovery.
 //
 // Subcommands:
 //
-//	mailarchive [flags]        export (default)
-//	mailarchive serve  [flags] start the local search + reader web UI
+//	mailarchive [flags]         export local mail sources (default)
+//	mailarchive serve  [flags]  start the local search + reader web UI
 //	mailarchive search [flags] QUERY...   full-text search from the terminal
+//	mailarchive reindex  [flags] reconcile the archive with what is on disk
+//	mailarchive schedule [flags] print/install a recurring-backup entry
+//	mailarchive graph  [flags]  archive Microsoft 365 mailboxes via Graph (app-only)
 package main
 
 import (
@@ -84,7 +88,7 @@ func runExport(args []string) error {
 	sinceStr := fs.String("since", "", "only export items newer than this (e.g. 30d, 4w, 720h, 2026-07-01)")
 	manifestPath := fs.String("manifest", "", "manifest path (default <out>/.mailarchive-manifest.json)")
 	copyFirst := fs.Bool("copy-first", false, "copy each data file to a temp snapshot before reading (avoids locks when Outlook is open)")
-	auto := fs.Bool("auto", false, "auto-discover mail stores (Outlook on Windows; Thunderbird on any OS)")
+	auto := fs.Bool("auto", false, "auto-discover mail stores (Outlook on Windows; Thunderbird and Evolution on any OS)")
 	outlook := fs.Bool("outlook", false, "Windows + classic Outlook: have Outlook export each account to a .pst first, then archive that (use when a .ost can't be read directly)")
 	outlookSyncWait := fs.Duration("outlook-sync-wait", 5*time.Minute, "with -outlook: run Send/Receive and wait up to this long for downloads before creating the PST (0 to skip)")
 	doIndex := fs.Bool("index", true, "build/update the full-text search index (search.db)")
@@ -97,7 +101,7 @@ func runExport(args []string) error {
 	inputs = append(inputs, fs.Args()...)
 
 	if *out == "" {
-		return errors.New("-out is required (or use a subcommand: serve, search)")
+		return errors.New("-out is required (or use a subcommand: serve, search, reindex, schedule, graph)")
 	}
 	mode, err := parseMode(*modeStr)
 	if err != nil {
@@ -525,17 +529,24 @@ Flags:
 
 func exportUsage(fs *flag.FlagSet) func() {
 	return func() {
-		fmt.Fprintf(os.Stderr, `mailarchive - export Outlook .pst/.ost mail to HTML + attachment archives, with search
+		fmt.Fprintf(os.Stderr, `mailarchive - archive mail (Outlook .pst/.ost, Thunderbird, Evolution, Microsoft 365)
+to self-contained HTML + attachment archives, with full-text search.
 
 Usage:
   mailarchive -out DIR [-input FILE|DIR ...] [-auto] [-mode incremental|full] [-since 30d]
-  mailarchive serve  -out DIR [-addr 127.0.0.1:8099]
-  mailarchive search -out DIR [-folder F] [-sender S] [-after D] QUERY...
+  mailarchive serve    -out DIR [-addr 127.0.0.1:8099]
+  mailarchive search   -out DIR [-folder F] [-sender S] [-after D] QUERY...
+  mailarchive reindex  -out DIR                          reconcile the archive with disk
+  mailarchive schedule -out DIR [-auto] [-interval ...] [-install|-remove]
+  mailarchive graph    -out DIR -tenant T -client-id ID -mailbox user@dom ...
 
 Examples:
   mailarchive -auto -out ./export
   mailarchive search -out ./export from:bob invoice
   mailarchive serve  -out ./export
+  mailarchive graph  -out ./export -tenant contoso.com -client-id APPID -mailbox a@contoso.com
+
+Run 'mailarchive <subcommand> -h' for a subcommand's flags.
 
 Export flags:
 `)

@@ -1,5 +1,15 @@
 # Plan: live IMAP fetch — Microsoft 365 MVP
 
+> **SUPERSEDED (2026-08).** The M365 server-side path shipped as an **app-only
+> Microsoft Graph** source, not live IMAP+OAuth — see `internal/graph/`,
+> `app.RunGraph`, the `graph` subcommand, and `docs/graph-app-setup.md`. Graph
+> app-only better fits "capture everything, automated, zero client footprint"
+> (no per-user sign-in, delta-friendly, first-class API). This doc is kept only
+> as the record of the IMAP alternative (still relevant for non-Graph providers
+> and app-password IMAP later). **The "R17" it sketches below is NOT the shipped
+> invariant** — the catalog's R17 is "Graph capture is complete, read-only,
+> incremental" (`docs/scenario-catalog.md`); ignore the R17 wording here.
+
 Scope: prove the **OAuth2 → IMAP → existing exporter** loop end-to-end against
 Microsoft 365, as the first live-network mail source. Gmail and app-password
 providers come later (see `docs/research-imap-oauth.md`). M365 is first because
@@ -88,7 +98,8 @@ IMAP fetch is expensive, so incremental must avoid re-downloading:
 
 ## 5. Assurance fit — mostly CI-testable (unlike the COM path)
 
-New invariant **R17 — Live IMAP is read-only, faithful, incremental, least-priv:**
+Proposed invariant (**not** the shipped R17 — see the banner; the real R17 is the
+Graph one) — *Live IMAP is read-only, faithful, incremental, least-priv:*
 EXAMINE + BODY.PEEK never modify the mailbox; every fetched message is exported
 once; the token is cached 0600 and only refreshed; incremental uses
 UIDVALIDITY/UID and re-fetches on validity change.

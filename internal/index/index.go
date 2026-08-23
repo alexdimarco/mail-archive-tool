@@ -8,6 +8,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"strings"
 
 	_ "modernc.org/sqlite"
@@ -78,6 +80,11 @@ func Open(path string) (*Index, error) {
 
 // OpenReadonly opens an existing index for querying (serve/search).
 func OpenReadonly(path string) (*Index, error) {
+	// Check for the file first, so a missing index yields a clean "run an export
+	// first" rather than the SQLite driver's misleading low-level open error.
+	if _, statErr := os.Stat(path); errors.Is(statErr, fs.ErrNotExist) {
+		return nil, fmt.Errorf("no search index at %s (run an export first)", path)
+	}
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("open index: %w", err)

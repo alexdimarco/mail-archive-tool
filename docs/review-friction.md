@@ -1,4 +1,9 @@
-# Friction review — mail-archive-tool
+# Friction review — mail-archive-tool (v0.1 surfaces)
+
+> Scope: the original v0.1 surfaces (default export, serve, search, IMAP prep).
+> Later surfaces (reindex, schedule, Evolution, GUI auto-detect, `-outlook`) are
+> reviewed in `docs/review-v0.2.md`; the full cross-cutting review is in
+> `docs/review-full.md`.
 
 Per assurance-kit `process/friction-review.md`. Walked as the actual actor
 (typed the commands, read the errors, counted the steps). Failure modes are

@@ -49,10 +49,10 @@ New-ManagementRoleAssignment -App <APPLICATION_CLIENT_ID> -Role "Application Mai
 (If you skip scoping, the app can read all mailboxes — only do that in a tenant
 where that's acceptable.)
 
-## 5. Confirm the mailbox allows the protocol
+## 5. Confirm the mailbox
 
-Graph mail read doesn't require IMAP/POP to be enabled, but the mailbox must be a
-normal Exchange Online mailbox in this tenant.
+Graph mail read needs no IMAP/POP — the mailbox just has to be a normal Exchange
+Online mailbox in this tenant.
 
 ## 6. Hand back to the operator
 

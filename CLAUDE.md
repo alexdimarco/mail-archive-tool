@@ -1,9 +1,10 @@
 # mail-archive-tool — agent instructions
 
-A source-agnostic mail archiver (Outlook `.pst`/`.ost`, Thunderbird mbox/maildir)
-that exports to self-contained HTML + attachment zips with a full-text search
-index. Pure Go, no cgo. See `README.md` for the product and `docs/invariants.md`
-for what must always hold.
+A source-agnostic mail archiver (Outlook `.pst`/`.ost`, Thunderbird mbox/maildir,
+Evolution Maildir++/IMAP cache, and Microsoft 365 via Graph) that exports to
+self-contained HTML + attachment zips with a full-text search index. Pure Go, no
+cgo. See `README.md` for the product and `docs/scenario-catalog.md` for the
+invariants (R-series) and test-specs (MA-series) that must always hold.
 
 <!-- assurance-kit-block v3 -->
 ## Testing discipline (non-negotiable)
@@ -13,16 +14,17 @@ for what must always hold.
   first). The test command is `go test ./...`; "an unfiltered run" means that
   command with no -run/package filters. assureblock/ is the wiring point: it
   holds the block meta-test and the covers-map meta-test.
-- The invariants are numbered in docs/invariants.md; every test cites what it
-  proves via a `// covers: INV-N[, INV-M]` marker on the test function. The
+- The invariants (R-series) and test-specs (MA-series) are numbered in
+  docs/scenario-catalog.md; every test cites what it proves via a
+  `// covers: MA-N[, R-M]` marker on the test function. The
   covers-map meta-test (assureblock/) fails if any invariant has no test or any
   test omits a marker. The tests encode the invariant, not the other way around.
   NEVER weaken a gate, delete a covers marker, add a suppression, or edit a
   baseline to make a test pass. A red gate means the code is wrong until a human
   says otherwise; if you believe the gate itself is wrong, STOP and say so
   instead of routing around it.
-- The covers baseline (docs/invariants.md is the catalog of record) is the count
-  of record; counts do not live in prose. Never lower a gate to make it pass.
+- The covers baseline (docs/scenario-catalog.md is the catalog of record) is the
+  count of record; counts do not live in prose. Never lower a gate to make it pass.
   Intentional reductions are accepted by the OPERATOR, never self-granted.
 - Import the assure helpers (assure/); never hand-roll refusal checks. A refusal
   test asserts the exact typed exit/behaviour, that the message names the

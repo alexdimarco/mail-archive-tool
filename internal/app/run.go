@@ -271,7 +271,8 @@ func snapshot(src string) (string, func(), error) {
 }
 
 // DiscoverInputs expands the given files/directories and, if auto is set, the
-// default Outlook locations into a deduplicated list of data files.
+// default Outlook, Thunderbird, and Evolution locations into a deduplicated list
+// of data files/stores.
 func DiscoverInputs(inputs []string, auto bool) ([]string, error) {
 	seen := map[string]bool{}
 	var files []string
@@ -334,7 +335,8 @@ func scanDir(dir string) ([]string, error) {
 }
 
 // autoDiscover returns default mail-source locations: Outlook data files
-// (Windows) and Thunderbird account/store directories (Linux/macOS/Windows).
+// (Windows), and Thunderbird and Evolution account/store directories
+// (Linux/macOS/Windows).
 func autoDiscover() []string {
 	var out []string
 	seen := map[string]bool{}

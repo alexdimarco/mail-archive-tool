@@ -308,8 +308,8 @@ set *Account Settings → Change → Mail to keep offline → **All***, then
   parsed directly. On Windows with classic Outlook, `-outlook` (CLI) or the
   **"Outlook account (via Outlook app)"** wizard option sidesteps this: it drives
   Outlook to write a clean, standard `.pst` per account (`AddStore` + `CopyTo`),
-  which then archives normally — Outlook does the parsing, so there's no format
-  fragility. It first runs a **Send/Receive** and waits (`-outlook-sync-wait`,
+  which then archives normally (`AddStoreEx` + `CopyTo`) — Outlook does the
+  parsing, so there's no format fragility. It first runs a **Send/Receive** and waits (`-outlook-sync-wait`,
   default 5 min) so the offline window is current. Requires classic Outlook with
   a configured profile (not *New Outlook*); Outlook may show a one-time "allow
   programmatic access" prompt.

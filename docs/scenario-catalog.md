@@ -37,9 +37,11 @@ an invariant is the thing that is wrong.
 - **R8 — Search ↔ export parity.** The index holds exactly the exported
   messages; a full-text query returns matching items; free-text is matched as
   literal terms (no FTS operator injection or query crash).
-- **R9 — Read-only source.** Reading a mail store never modifies it. The single
-  write path (`-enable-offline`) is opt-in, backs up before editing, and refuses
-  while the mail app is running.
+- **R9 — Read-only source.** Reading a mail store never modifies the source
+  mailbox. The only exceptions are opt-in local sync/write paths that never alter
+  mailbox content: `-enable-offline` edits Thunderbird's `prefs.js` (backs up
+  first, refuses while the app is running), and `-outlook`'s pre-copy
+  Send/Receive lets Outlook refresh its own cache. Graph capture is GET-only.
 - **R10 — Robust parsing.** Malformed/truncated input (bad mbox framing,
   non-MIME message, unparseable node) is skipped or fallback-parsed — never a
   fatal crash of the whole run.
@@ -58,13 +60,12 @@ an invariant is the thing that is wrong.
   the operator's export flags; it prints the entry by default and only applies it
   under `--install`; `--install` is idempotent (re-running yields one entry) and
   `--remove` cleanly reverses it, leaving unrelated entries untouched.
-- **R17 — Graph capture is complete, read-only, incremental.** The Microsoft
-  Graph app-only source enumerates every folder (including nested) and every
-  message and archives each via its raw MIME through the shared parser; it issues
-  only GET requests (the app holds the read-only `Mail.Read` application
-  permission, so a mailbox is never modified); and an incremental re-run archives
-  zero new items and re-downloads no already-archived message body, matched by
-  Internet-Message-ID.
+- **R15 — Evolution stores read faithfully.** An Evolution store is read without
+  silent loss: the local Maildir++ store's dot-encoded, `_XX`-escaped folder
+  hierarchy is decoded (every subfolder read, no traversal out of the root), and
+  an IMAP disk cache's per-folder maildirs are all walked, whether nested
+  directly or under a `subfolders` container. Each cached message is yielded once
+  with its correct folder path.
 - **R16 — Outlook COM export is opt-in and safe.** On Windows with *classic*
   Outlook, `-outlook` (and the GUI's Outlook-app option) drives Outlook to write
   a fresh, standard `.pst` per mail account, which then archives through the
@@ -72,12 +73,13 @@ an invariant is the thing that is wrong.
   any platform without classic Outlook it refuses with a legible message naming
   the requirement — never a crash. (COM behaviour is lab-validated; go-pst
   cannot read every live `.ost`, so this is the reliable path for Exchange.)
-- **R15 — Evolution stores read faithfully.** An Evolution store is read without
-  silent loss: the local Maildir++ store's dot-encoded, `_XX`-escaped folder
-  hierarchy is decoded (every subfolder read, no traversal out of the root), and
-  an IMAP disk cache's per-folder maildirs are all walked, whether nested
-  directly or under a `subfolders` container. Each cached message is yielded once
-  with its correct folder path.
+- **R17 — Graph capture is complete, read-only, incremental.** The Microsoft
+  Graph app-only source enumerates every folder (including nested) and every
+  message and archives each via its raw MIME through the shared parser; it issues
+  only GET requests (the app holds the read-only `Mail.Read` application
+  permission, so a mailbox is never modified); and an incremental re-run archives
+  zero new items and re-downloads no already-archived message body, matched by
+  Internet-Message-ID.
 
 ## 3. Scenarios
 

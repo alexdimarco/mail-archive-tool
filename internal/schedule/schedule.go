@@ -95,8 +95,14 @@ func (s Spec) program() []string { return append([]string{s.Exe}, s.Args...) }
 // ---- cron (Linux) ---------------------------------------------------------
 
 // CronMarker tags our managed crontab block so a repeated install replaces it
-// (idempotent) and a remove finds it precisely.
-func CronMarker(name string) string { return "# " + DefaultName + " " + name }
+// (idempotent) and a remove finds it precisely. The default name isn't repeated
+// (no "# mailarchive-backup mailarchive-backup"); a custom name is appended.
+func CronMarker(name string) string {
+	if name == DefaultName {
+		return "# " + DefaultName
+	}
+	return "# " + DefaultName + " " + name
+}
 
 func cronSchedule(iv Interval, hour, min int) string {
 	switch iv {
