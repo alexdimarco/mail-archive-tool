@@ -12,6 +12,7 @@ shared, so the same export / search / GUI stack works across:
 | **Outlook** (desktop) | `.pst` / `.ost` | pure-Go [`go-pst`](https://github.com/mooijtech/go-pst) |
 | **Thunderbird** (and any mbox) | mbox files / mail directory | [`go-mbox`](https://github.com/emersion/go-mbox) + [`go-message`](https://github.com/emersion/go-message) |
 | **Evolution** (GNOME) | local Maildir++ store / IMAP disk cache | maildir reader + [`go-message`](https://github.com/emersion/go-message) |
+| **Microsoft 365** (server-side) | live mailboxes via Microsoft Graph (app-only, read-only) | `internal/graph` + [`x/oauth2`](https://pkg.go.dev/golang.org/x/oauth2) |
 
 Adding another source means adding one reader; the exporter, attachment zipping,
 incremental manifest, search index, web UI, folder pages and GUI are untouched.
@@ -178,6 +179,29 @@ Windows Search.
 Indexing and page generation are on by default; disable with `-index=false` /
 `-pages=false`. The index is pure-Go SQLite (`modernc.org/sqlite`), so it still
 cross-compiles to the Windows binary with no cgo.
+
+## Server-side archiving (Microsoft 365 via Graph)
+
+For a tenant you administer, `mailarchive graph` archives mailboxes **server-side**
+— app-only, read-only, **nothing installed on any client**:
+
+```sh
+MAILARCHIVE_GRAPH_SECRET='<app secret>' \
+mailarchive graph -out ./archive -tenant <TENANT> -client-id <APPID> \
+  -mailbox alice@org.example -mailbox bob@org.example
+```
+
+It authenticates as an Entra app with the read-only **`Mail.Read`** application
+permission (issuing only Graph GET requests), walks every folder, and archives
+each message's raw MIME through the same HTML/attachment/index pipeline as every
+other source. Incremental runs skip already-archived messages by Internet-Message-ID
+**without re-downloading** them, so re-runs over huge mailboxes are cheap — pair it
+with `schedule` for hands-off nightly backups. One-time admin setup (register app,
+grant + scope `Mail.Read`) is in [`docs/graph-app-setup.md`](docs/graph-app-setup.md).
+
+For a mailbox in a tenant you **don't** administer, you can't authorize an app —
+use the local paths instead (`-input` a Thunderbird/Evolution store or a `.pst`,
+or `-outlook`), or ask that tenant's admin for a Purview PST export.
 
 ## Maintenance & automation
 

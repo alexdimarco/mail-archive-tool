@@ -181,6 +181,11 @@ func (r *mboxReader) walkFile(path string, folderPath []string, handler MessageH
 	}
 }
 
+// ParseRFC822 parses a raw RFC 5322 message into a normalized Message via the
+// same tolerant, panic-safe path the mbox/maildir readers use. The Graph source
+// uses it, since it fetches each message's raw MIME rather than reading a store.
+func ParseRFC822(data []byte) *model.Message { return safeParseMessage(data) }
+
 // safeParseMessage wraps parseMessage so a panic in the MIME/charset stack on a
 // single crafted message becomes a visible stub instead of aborting the whole
 // archive (R10 — robust parsing; the item is never silently dropped).

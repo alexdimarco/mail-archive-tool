@@ -93,6 +93,28 @@ func TestOutlookFlagUnsupportedRefusal(t *testing.T) {
 	assure.Refused(t, code, stderr, assure.Code(1), assure.Names("requires Windows", "classic Outlook"))
 }
 
+// covers: MA-63, R17, R12
+// graph refuses each missing required input (-out, -tenant, -client-id, -mailbox,
+// and an unset client secret) with a typed non-zero exit naming the problem.
+func TestGraphRefusals(t *testing.T) {
+	code, stderr := runCLI("graph")
+	assure.Refused(t, code, stderr, assure.Code(1), assure.Names("-out"))
+
+	code, stderr = runCLI("graph", "-out", t.TempDir())
+	assure.Refused(t, code, stderr, assure.Code(1), assure.Names("-tenant"))
+
+	code, stderr = runCLI("graph", "-out", t.TempDir(), "-tenant", "contoso.com")
+	assure.Refused(t, code, stderr, assure.Code(1), assure.Names("-client-id"))
+
+	code, stderr = runCLI("graph", "-out", t.TempDir(), "-tenant", "contoso.com", "-client-id", "app")
+	assure.Refused(t, code, stderr, assure.Code(1), assure.Names("-mailbox"))
+
+	// Secret env var deliberately points at an unset variable → names it.
+	code, stderr = runCLI("graph", "-out", t.TempDir(), "-tenant", "contoso.com",
+		"-client-id", "app", "-mailbox", "u@contoso.com", "-client-secret-env", "MAILARCHIVE_DEFINITELY_UNSET_XYZ")
+	assure.Refused(t, code, stderr, assure.Code(1), assure.Names("secret", "MAILARCHIVE_DEFINITELY_UNSET_XYZ"))
+}
+
 // covers: MA-50, R14, R12, S9, S14
 // schedule refuses a missing -out and a bad -interval with a typed non-zero exit
 // naming the problem, and never applies anything on the refusal path.
@@ -122,6 +144,7 @@ func TestHelpTotality(t *testing.T) {
 		{[]string{"search", "-h"}, []string{"-out", "-folder"}},
 		{[]string{"reindex", "-h"}, []string{"-out"}},
 		{[]string{"schedule", "-h"}, []string{"-out", "-interval", "-install"}},
+		{[]string{"graph", "-h"}, []string{"-out", "-tenant", "-mailbox"}},
 	}
 	for _, c := range cases {
 		_, stderr := runCLI(c.args...)

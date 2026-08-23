@@ -58,6 +58,13 @@ an invariant is the thing that is wrong.
   the operator's export flags; it prints the entry by default and only applies it
   under `--install`; `--install` is idempotent (re-running yields one entry) and
   `--remove` cleanly reverses it, leaving unrelated entries untouched.
+- **R17 — Graph capture is complete, read-only, incremental.** The Microsoft
+  Graph app-only source enumerates every folder (including nested) and every
+  message and archives each via its raw MIME through the shared parser; it issues
+  only GET requests (the app holds the read-only `Mail.Read` application
+  permission, so a mailbox is never modified); and an incremental re-run archives
+  zero new items and re-downloads no already-archived message body, matched by
+  Internet-Message-ID.
 - **R16 — Outlook COM export is opt-in and safe.** On Windows with *classic*
   Outlook, `-outlook` (and the GUI's Outlook-app option) drives Outlook to write
   a fresh, standard `.pst` per mail account, which then archives through the
@@ -95,6 +102,7 @@ an invariant is the thing that is wrong.
 | S17 Auto-discovery hits an orphaned/corrupt Outlook `.ost` (removed account); or one locked by a running Outlook | R1 | unparseable stub excluded from the discovered set; a locked-but-valid file is kept | MA-56 |
 | S18 A corrupt/truncated `.pst`/`.ost` (orphaned stub, bad OST variant) that panics go-pst | R10 | `Open` fails with a clean error; no panic escapes; the run continues and the no-console GUI never exits silently | MA-57 |
 | S19 A live Exchange/IMAP `.ost` go-pst can't read; operator uses `-outlook` / the GUI Outlook-app option | R16 | on Windows, Outlook writes a clean `.pst` per account that archives normally; off Windows it refuses legibly | MA-58, MA-59, MA-60 |
+| S20 Server-side archive of a (large) M365 mailbox via an app-only Graph grant | R17, R2, R9 | full first capture; incremental re-run adds nothing and re-downloads nothing; read-only | MA-61, MA-62, MA-63, MA-64 |
 
 Acknowledged limits (not defects): very large attachments are buffered whole in
 memory (bounded by the largest single attachment, not the mailbox) — recorded
@@ -167,6 +175,10 @@ Tiers: **U** unit property (every commit) · **S** structural whole-tree walk
 | MA-58 | U | pstFileName yields a bare, in-root .pst name (no separator/traversal); empty account gets a fallback | R16, R4 |
 | MA-59 | A | CLI -outlook off Windows refuses with a typed non-zero naming the Windows/Outlook requirement (no crash) | R16, R12 |
 | MA-60 | L | on Windows + classic Outlook, -outlook runs Send/Receive (bounded wait), writes a PST per account (AddStoreEx + CopyTo) that archives normally — **pending**, validated on a real Outlook install via `scripts/test-outlook.ps1` | R16 |
+| MA-61 | U | Graph client walks the full folder tree + pages all messages + fetches MIME, issuing only GET (read-only) | R17, R9 |
+| MA-62 | U | RunGraph captures every message into the pipeline; incremental re-run exports 0 new and re-downloads no bodies | R17, R2 |
+| MA-63 | U | graph subcommand refuses missing -out/-tenant/-client-id/-mailbox/secret with a typed non-zero naming the problem | R17, R12 |
+| MA-64 | L | end-to-end against a real M365 tenant (app-only consent, throttling, real folder set) — **pending**, validated on a live tenant | R17 |
 
 Rows MA-29..MA-37 were added by the adversarial pass; see
 `docs/review-adversarial.md` for the findings they encode. Rows MA-40..MA-44
@@ -178,4 +190,6 @@ files (R1); MA-57 covers containing a go-pst open-time panic on a corrupt data
 file (R10); MA-58..MA-60 cover the `-outlook` Outlook-COM PST export (R16) — the
 COM behaviour itself is lab-tier (MA-60, pending a real Windows+Outlook box),
 with the pure name-safety (MA-58) and the off-Windows refusal (MA-59) tested in
-CI.
+CI. MA-61..MA-64 cover the Microsoft Graph app-only server-side source (R17):
+the client, the RunGraph pipeline+incremental, and the refusals are CI-tested
+against an in-process fake Graph server; MA-64 (a real tenant) is lab-tier.

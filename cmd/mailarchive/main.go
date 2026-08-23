@@ -49,6 +49,8 @@ func main() {
 		err = runReindex(args[1:])
 	case len(args) > 0 && args[0] == "schedule":
 		err = runSchedule(args[1:])
+	case len(args) > 0 && args[0] == "graph":
+		err = runGraph(args[1:])
 	default:
 		err = runExport(args)
 	}
@@ -430,6 +432,90 @@ Usage:
   mailarchive schedule -name NAME -remove             uninstall by name
 
 By default the exact scheduler entry is printed and NOT applied.
+
+Flags:
+`)
+		fs.PrintDefaults()
+	}
+}
+
+// runGraph archives mailboxes server-side via Microsoft Graph (app-only). The
+// app client secret comes from an environment variable, never the command line,
+// so it can't leak into shell history or the process list.
+func runGraph(args []string) error {
+	var mailboxes stringSlice
+	fs := flag.NewFlagSet("mailarchive graph", flag.ContinueOnError)
+	fs.Usage = graphUsage(fs)
+	out := fs.String("out", "", "output directory (required)")
+	tenant := fs.String("tenant", "", "Microsoft 365 tenant id or domain (required)")
+	clientID := fs.String("client-id", "", "Entra app (client) id (required)")
+	secretEnv := fs.String("client-secret-env", "MAILARCHIVE_GRAPH_SECRET", "environment variable holding the app client secret")
+	fs.Var(&mailboxes, "mailbox", "mailbox UPN to archive (repeatable, comma-separated) (required)")
+	modeStr := fs.String("mode", "incremental", "export mode: incremental|full")
+	sinceStr := fs.String("since", "", "only export items newer than this (e.g. 30d, 2026-07-01)")
+	doIndex := fs.Bool("index", true, "build/update the full-text search index (search.db)")
+	doPages := fs.Bool("pages", true, "generate browsable folder index.html pages")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	mailboxes = append(mailboxes, fs.Args()...)
+
+	if *out == "" {
+		return errors.New("-out is required (the output directory)")
+	}
+	if *tenant == "" {
+		return errors.New("-tenant is required (the Microsoft 365 tenant id or domain)")
+	}
+	if *clientID == "" {
+		return errors.New("-client-id is required (the Entra app id)")
+	}
+	if len(mailboxes) == 0 {
+		return errors.New("-mailbox is required (at least one mailbox UPN to archive)")
+	}
+	secret := os.Getenv(*secretEnv)
+	if secret == "" {
+		return fmt.Errorf("app client secret is empty: set it in the $%s environment variable", *secretEnv)
+	}
+
+	mode, err := parseMode(*modeStr)
+	if err != nil {
+		return err
+	}
+	var since time.Time
+	if *sinceStr != "" {
+		since, err = util.ParseSince(*sinceStr, time.Now())
+		if err != nil {
+			return err
+		}
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	logger := log.New(os.Stderr, "", 0)
+
+	gopts := app.GraphOptions{Tenant: *tenant, ClientID: *clientID, ClientSecret: secret, Mailboxes: mailboxes}
+	opts := app.Options{Out: *out, Mode: mode, Since: since, Index: *doIndex, Pages: *doPages}
+	logger.Printf("Archiving %d mailbox(es) from tenant %s via Microsoft Graph (mode=%s)", len(mailboxes), *tenant, *modeStr)
+
+	result, err := app.RunGraph(ctx, gopts, opts, logger)
+	printSummary(logger, result, *doIndex, *out)
+	if errors.Is(err, context.Canceled) {
+		logger.Printf("interrupted; progress saved to the manifest")
+		return nil
+	}
+	return err
+}
+
+func graphUsage(fs *flag.FlagSet) func() {
+	return func() {
+		fmt.Fprintf(os.Stderr, `mailarchive graph - archive Microsoft 365 mailboxes server-side via Graph (app-only)
+
+Usage:
+  MAILARCHIVE_GRAPH_SECRET=... mailarchive graph -out DIR -tenant TENANT \
+    -client-id APPID -mailbox user@domain [-mailbox ...] [-mode incremental|full]
+
+Requires an Entra app with the Mail.Read (application) permission, admin-consented
+and RBAC-scoped to the mailboxes. See docs/graph-app-setup.md.
 
 Flags:
 `)
