@@ -322,6 +322,19 @@ func TestRenderTransportHeaders(t *testing.T) {
 	if !strings.Contains(s, "<summary>Transport headers as stored (unverified)</summary>") {
 		t.Error("panel is not labelled as unverified transport headers")
 	}
+	// The panel explains, on the page itself, WHY the headers are unverified.
+	if !strings.Contains(s, "supplied by the sending and relaying servers and can be forged") ||
+		!strings.Contains(s, "not proof of origin") {
+		t.Errorf("panel lacks the forgery/provenance note:\n%s", s)
+	}
+	// The note sits inside the panel, after the summary and before the escaped
+	// header <pre>.
+	sum := strings.Index(s, "</summary>")
+	note := strings.Index(s, "can be forged")
+	pre := strings.Index(s, "<pre>")
+	if sum < 0 || note < 0 || pre < 0 || !(sum < note && note < pre) {
+		t.Errorf("forgery note not placed between the summary and the <pre> (summary=%d note=%d pre=%d)", sum, note, pre)
+	}
 	// The panel sits AFTER the field list, not inside it.
 	if di, dl := strings.Index(s, "mailarchive-headers"), strings.Index(s, "</dl>"); di < 0 || dl < 0 || di < dl {
 		t.Errorf("panel not placed after the header <dl> (details=%d dl=%d)", di, dl)

@@ -297,8 +297,13 @@ func SchtasksDeleteCmd(name string) string {
 // ---- OS-aware preview / install / remove ----------------------------------
 
 // Preview returns the exact scheduler entry Install would apply on the current
-// OS, without applying it.
+// OS, without applying it. A scheduled verify at the archive's backup time is
+// refused here just as Install refuses it, so a preview never shows an entry the
+// install would reject.
 func Preview(s Spec) (string, error) {
+	if _, err := VerifyScheduleNote(s); err != nil {
+		return "", err
+	}
 	switch runtime.GOOS {
 	case "darwin":
 		plist, err := LaunchdPlist(s)
@@ -323,7 +328,12 @@ func cronPreview(s Spec) (string, error) {
 		return "", err
 	}
 	out := "cron — would be added to your user crontab:\n\n# " + cadenceGloss(s) + "\n" + block + "\n"
-	out += "\nA failed run surfaces only via `mailarchive status` or cron's MAILTO.\n"
+	if isVerifyJob(s) {
+		out += "\n" + VerifyLockWarning + "\n"
+		out += "A failed run surfaces only via `mailarchive status` or cron's MAILTO (a verify's verdict is shown as Last verify).\n"
+	} else {
+		out += "\nA failed run surfaces only via `mailarchive status` or cron's MAILTO.\n"
+	}
 	if argHasMode(s.Args, "full") {
 		out += "-mode full: every scheduled run re-exports everything.\n"
 	}
@@ -360,6 +370,38 @@ func argHasMode(args []string, value string) bool {
 	return false
 }
 
+// VerifyLockWarning cautions that a scheduled verify holds the archive's
+// exclusive lock for its whole run, so it must be scheduled away from the backup:
+// a backup whose trigger fires during a verify refuses and records nothing.
+const VerifyLockWarning = "Note: verify holds the archive lock for its whole run; a backup whose trigger fires meanwhile refuses and records nothing — schedule it away from the backup time."
+
+// isVerifyJob reports whether the spec runs a verify job (its first argument is
+// the verify verb).
+func isVerifyJob(s Spec) bool { return len(s.Args) > 0 && s.Args[0] == "verify" }
+
+// descriptorIsVerify reports whether a recorded descriptor is itself a verify
+// schedule rather than a backup (its job's first argument is the verify verb).
+func descriptorIsVerify(d Descriptor) bool { return len(d.Job) > 0 && d.Job[0] == "verify" }
+
+// VerifyScheduleNote returns the caution to print for a scheduled verify job, or
+// "" for any non-verify job. It refuses — with a typed error naming the recorded
+// backup and the remedy — when the verify would run at the SAME cadence and time
+// as the archive's already-recorded backup schedule: a verify holds the archive's
+// exclusive lock for its whole run, so scheduling it at the backup's own time
+// guarantees the two clash on every overlap (friction #4, R12/R14). Any other
+// time returns the warning, so the operator is told about the lock either way.
+func VerifyScheduleNote(s Spec) (string, error) {
+	if !isVerifyJob(s) {
+		return "", nil
+	}
+	if d, err := ReadDescriptor(s.Out); err == nil && !descriptorIsVerify(d) {
+		if d.Interval == string(s.Interval) && d.At == s.At {
+			return "", fmt.Errorf("this verify would run %s — the same time as the backup schedule %q recorded for %s; a verify holds the archive lock for its whole run, so the two would clash on every overlap: give the verify a different -at (or -interval) from the backup", cadenceGloss(s), d.Name, s.Out)
+		}
+	}
+	return VerifyLockWarning, nil
+}
+
 // Install applies the schedule to the host OS's scheduler and records the
 // archive-local descriptor. On Windows the wrapper is written (and fsynced)
 // BEFORE the task exists, so an interrupted install leaves at most an orphan
@@ -368,8 +410,17 @@ func Install(s Spec) error {
 	if err := s.Validate(); err != nil {
 		return err
 	}
-	if err := refuseCollision(s); err != nil {
+	// A scheduled verify at the backup's own time is refused; at any other time it
+	// is a distinct entry that coexists with the archive's backup schedule, so it
+	// bypasses the one-schedule-per-archive collision guard and never overwrites
+	// the backup's descriptor (friction #4).
+	if _, err := VerifyScheduleNote(s); err != nil {
 		return err
+	}
+	if !isVerifyJob(s) {
+		if err := refuseCollision(s); err != nil {
+			return err
+		}
 	}
 	var err error
 	switch runtime.GOOS {
@@ -388,7 +439,9 @@ func Install(s Spec) error {
 	if err != nil {
 		return err
 	}
-	if s.Out != "" {
+	// The archive-local descriptor records the archive's BACKUP schedule; a verify
+	// schedule is a separate entry and must not overwrite it.
+	if s.Out != "" && !isVerifyJob(s) {
 		if derr := WriteDescriptor(s.Out, DescribeSpec(s)); derr != nil {
 			return fmt.Errorf("schedule installed, but its descriptor could not be written: %w", derr)
 		}
@@ -617,8 +670,20 @@ func schtasksPreview(s Spec, now time.Time) (string, error) {
 		return "", err
 	}
 	xmlPath := SchtasksXMLPath(s.WrapperPath)
-	out := "Windows Task Scheduler — would run:\n\n  " + cmd + "\n"
+	out := "Windows Task Scheduler — " + cadenceGloss(s) + " (StartBoundary is local time) — would run:\n\n  " + cmd + "\n"
 	out += "\nfrom the definition " + xmlPath + " (written UTF-16LE):\n\n" + body + "\n"
+	// The resilience gloss the cron preview's persona also needs: the XML sets
+	// StartWhenAvailable=true, batteries allowed, WakeToRun=false (see MA-146).
+	out += "\nA run missed while the PC slept is caught up on wake; runs on battery; a night the PC is off is skipped.\n"
+	if isVerifyJob(s) {
+		out += VerifyLockWarning + "\n"
+		out += "A failed run surfaces only via `mailarchive status` (a verify's verdict is shown as Last verify).\n"
+	} else {
+		out += "A failed run surfaces only via `mailarchive status`.\n"
+	}
+	if argHasMode(s.Args, "full") {
+		out += "-mode full: every scheduled run re-exports everything.\n"
+	}
 	if s.Wrapper {
 		out += "\nwith the wrapper " + s.WrapperPath + " containing:\n\n" + CmdWrapper(s)
 	}

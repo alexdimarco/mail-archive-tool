@@ -5,6 +5,7 @@ import (
 	"html"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // Query describes a search request.
@@ -177,9 +178,14 @@ func buildFilters(q Query) (string, []any) {
 // ParseDate accepts (a bare year or year-month), so `after:2025-01` is a real
 // month bound rather than being silently dropped. A token whose date does not
 // parse is ignored (the rest of the query still runs).
+//
+// A token value may be quoted so it can carry spaces: folder:"Sent Messages" and
+// from:'a b' are one token each, not a token plus a dropped free term. The quote
+// characters are grouping delimiters (stripped from the value); an unterminated
+// quote runs to the end of the input.
 func ParseQuery(text string, base Query) Query {
 	var terms []string
-	for _, f := range strings.Fields(text) {
+	for _, f := range tokenizeQuery(text) {
 		low := strings.ToLower(f)
 		switch {
 		case strings.HasPrefix(low, "from:"):
@@ -202,6 +208,46 @@ func ParseQuery(text string, base Query) Query {
 	}
 	base.Text = strings.Join(terms, " ")
 	return base
+}
+
+// tokenizeQuery splits a query into whitespace-separated tokens, but a single-
+// or double-quoted span keeps its spaces inside one token so a value like
+// folder:"Sent Messages" survives intact (friction #6). The quote characters
+// themselves are delimiters and are not part of the token; an unterminated quote
+// extends to the end of the input. With no quotes this is exactly strings.Fields.
+func tokenizeQuery(text string) []string {
+	var tokens []string
+	var cur strings.Builder
+	inTok := false
+	var quote rune // the open quote rune, or 0 when not inside a quote
+	flush := func() {
+		if inTok {
+			tokens = append(tokens, cur.String())
+			cur.Reset()
+			inTok = false
+		}
+	}
+	for _, r := range text {
+		switch {
+		case quote != 0:
+			if r == quote {
+				quote = 0 // closing quote: drop it, stay in the same token
+			} else {
+				cur.WriteRune(r)
+			}
+			inTok = true
+		case r == '"' || r == '\'':
+			quote = r
+			inTok = true // an empty quoted value is still a token
+		case unicode.IsSpace(r):
+			flush()
+		default:
+			cur.WriteRune(r)
+			inTok = true
+		}
+	}
+	flush()
+	return tokens
 }
 
 // ParseDate parses a search date bound. It accepts a full RFC3339 timestamp, a

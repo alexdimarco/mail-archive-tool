@@ -332,6 +332,23 @@ func runServe(args []string) error {
 
 var markTags = regexp.MustCompile(`</?mark>`)
 
+// scrubTTY maps every C0 control, DEL and C1 control in mail-derived text to a
+// space before it reaches the terminal, so a hostile Subject, sender name or
+// body snippet cannot inject ANSI/OSC escape sequences into the operator's
+// terminal when they run `search`. This mirrors the control-strip the archive
+// already applies wherever it echoes untrusted mail-derived text
+// (internal/app/report.go, internal/schedule/descriptor.go, internal/lockfile).
+// The machine formats are unaffected: -json escapes control bytes and -paths
+// prints only tool-made paths.
+func scrubTTY(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) {
+			return ' '
+		}
+		return r
+	}, s)
+}
+
 func runSearch(args []string) error {
 	fs := flag.NewFlagSet("mailarchive search", flag.ContinueOnError)
 	out := fs.String("out", ".", "export directory to search (contains search.db)")
@@ -392,18 +409,20 @@ func runSearch(args []string) error {
 		if !r.Date.IsZero() {
 			date = r.Date.Format("2006-01-02")
 		}
-		from := r.SenderName
+		// Every mail-derived field is control-scrubbed before it reaches the
+		// terminal (a hostile Subject/body/sender must not inject ANSI/OSC).
+		from := scrubTTY(r.SenderName)
 		if from == "" {
-			from = r.SenderEmail
+			from = scrubTTY(r.SenderEmail)
 		}
-		subject := r.Subject
+		subject := scrubTTY(r.Subject)
 		if subject == "" {
 			subject = "(no subject)"
 		}
-		fmt.Printf("%s  %-28.28s  %s\n", date, from, r.Folder)
+		fmt.Printf("%s  %-28.28s  %s\n", date, from, scrubTTY(r.Folder))
 		fmt.Printf("    %s\n", subject)
 		if r.Snippet != "" {
-			fmt.Printf("    %s\n", markTags.ReplaceAllString(r.Snippet, ""))
+			fmt.Printf("    %s\n", scrubTTY(markTags.ReplaceAllString(r.Snippet, "")))
 		}
 		fmt.Printf("    -> %s\n\n", r.Path)
 	}
@@ -678,7 +697,9 @@ func runSchedule(args []string) error {
 	}
 	n := *name
 	if n == "" {
-		n = schedule.DefaultNameFor(j.out)
+		// A verify job derives a distinct "-verify" name so it coexists with the
+		// archive's backup schedule instead of overwriting it (friction #4).
+		n = defaultScheduleName(j)
 	}
 	if n, err = schedule.SanitizeName(n); err != nil {
 		return err
@@ -703,9 +724,16 @@ func runSchedule(args []string) error {
 		if err := schedule.Install(spec); err != nil {
 			return err
 		}
-		fmt.Printf("Installed scheduled backup %q (%s at %s).\n", n, iv, *at)
+		kind := "backup"
+		if j.verb == "verify" {
+			kind = "verify"
+		}
+		fmt.Printf("Installed scheduled %s %q (%s at %s).\n", kind, n, iv, *at)
 		fmt.Printf("It runs: %s %s\n", exe, strings.Join(spec.Args, " "))
 		fmt.Printf("Log: %s · descriptor: %s · check with: mailarchive status -out %q\n", logPath, filepath.Join(j.out, schedule.DescriptorName), j.out)
+		if note, _ := schedule.VerifyScheduleNote(spec); note != "" {
+			fmt.Println(note)
+		}
 		if jobUsesOutlook(spec.Args) {
 			fmt.Println(outlookReminderText)
 		}
