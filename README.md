@@ -24,7 +24,7 @@ mailbox offline.
 ## Just want to download and run it?
 
 No build, no command line. Grab the GUI for your machine from the
-[**Releases page**](https://github.com/dimarcotech/mail-archive-tool/releases),
+[**Releases page**](https://github.com/alexdimarco/mail-archive-tool/releases),
 double-click it, follow the wizard, then open `index.html` in the archive folder
 it makes — that page needs no software to read.
 
