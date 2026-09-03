@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bytes"
+	"errors"
 	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ncruces/zenity"
 
@@ -94,9 +97,11 @@ func TestScheduleRepairable(t *testing.T) {
 }
 
 // covers: MA-123, R18, S29
-// repairSpec rebuilds the install Spec from the descriptor's cadence and job but
-// the CURRENT executable and a wrapper path derived from the sanitized name (not
-// taken from the descriptor), and the result validates.
+// repairSpec rebuilds the install Spec with the CURRENT executable and a wrapper
+// path derived from the sanitized name (not taken from the descriptor), taking
+// only the cadence/time from the descriptor; the job args and log are
+// reconstructed from the name and -out (never copied from the descriptor), and
+// the result validates.
 func TestRepairSpec(t *testing.T) {
 	d := schedule.Descriptor{
 		Name: "mailarchive-1a2b3c4d", Interval: "weekly", At: "03:00",
@@ -121,9 +126,16 @@ func TestRepairSpec(t *testing.T) {
 	if spec.Interval != schedule.Weekly || spec.At != "03:00" {
 		t.Errorf("cadence = %s at %s, want weekly at 03:00 (from the descriptor)", spec.Interval, spec.At)
 	}
+	wantJob, err := job.PathFor(name)
+	if err != nil {
+		t.Fatal(err)
+	}
 	args := assure.Reached(t, spec.Args, "rebuilt job args")
-	if strings.Join(args, " ") != strings.Join(d.Job, " ") {
-		t.Errorf("spec.Args = %v, want the descriptor's job %v", args, d.Job)
+	if len(args) != 2 || args[0] != "-job" || args[1] != wantJob {
+		t.Errorf("spec.Args = %v, want [-job %s] rebuilt from the name", args, wantJob)
+	}
+	if want := filepath.Join("/archive", "mailarchive.log"); spec.Log != want {
+		t.Errorf("spec.Log = %q, want %q derived from -out", spec.Log, want)
 	}
 	if err := spec.Validate(); err != nil {
 		t.Errorf("rebuilt spec must validate: %v", err)
@@ -140,6 +152,58 @@ func TestRepairSpec(t *testing.T) {
 	}
 }
 
+// covers: MA-166, R14, S29
+// A tampered schedule descriptor cannot redirect the repaired job. The
+// descriptor lives in the (untrusted) archive directory; repairSpec ignores its
+// Job/Log/Exe and rebuilds the args from the sanitized name and -out and the
+// current executable, so an attacker who rewrites the descriptor to point -job
+// at a file they control does not get it installed (the INS-7 treatment already
+// applied to the wrapper path, extended to the job).
+func TestRepairSpecIgnoresHostileJob(t *testing.T) {
+	d := schedule.Descriptor{
+		Name: "mailarchive-1a2b3c4d", Interval: "daily", At: "02:00",
+		Exe:  "/attacker/evil-gui",
+		Job:  []string{"-job", "/tmp/evil.json"},
+		Log:  "/tmp/evil.log",
+		Host: "host-a",
+	}
+	const exe = "/new/place/mailarchive-gui"
+	spec, err := repairSpec("/archive", d, exe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name, _ := schedule.SanitizeName(d.Name)
+	wantJob, err := job.PathFor(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := assure.Reached(t, spec.Args, "rebuilt job args")
+	// The attacker's -job target and log must not survive.
+	if strings.Join(args, " ") == strings.Join(d.Job, " ") {
+		t.Fatalf("repairSpec installed the descriptor's job verbatim: %v", args)
+	}
+	for _, a := range args {
+		if strings.Contains(a, "evil") {
+			t.Fatalf("repairSpec carried an attacker-controlled arg %q into the install", a)
+		}
+	}
+	if len(args) != 2 || args[0] != "-job" || args[1] != wantJob {
+		t.Errorf("spec.Args = %v, want [-job %s] rebuilt from the sanitized name", args, wantJob)
+	}
+	if spec.Exe != exe {
+		t.Errorf("spec.Exe = %q, want the current executable (not the descriptor's %q)", spec.Exe, d.Exe)
+	}
+	if spec.Log == d.Log || strings.Contains(spec.Log, "evil") {
+		t.Errorf("spec.Log = %q, want it derived from -out, not the descriptor's %q", spec.Log, d.Log)
+	}
+	if want := filepath.Join("/archive", "mailarchive.log"); spec.Log != want {
+		t.Errorf("spec.Log = %q, want %q derived from -out", spec.Log, want)
+	}
+	if err := spec.Validate(); err != nil {
+		t.Errorf("rebuilt spec must validate: %v", err)
+	}
+}
+
 // covers: MA-124, R18, S29
 // A failed headless (scheduled) run raises exactly one desktop notification
 // naming the backup; a healthy run raises none (the positive twin) — so a
@@ -149,6 +213,13 @@ func TestNotifyFailureHeadless(t *testing.T) {
 	old := notify
 	notify = func(text string, _ ...zenity.Option) error { fired = append(fired, text); return nil }
 	defer func() { notify = old }()
+
+	// A start-failure now also records a config-dir breadcrumb (friction #20);
+	// redirect it to a temp dir so the test never touches the real config dir.
+	fdir := t.TempDir()
+	oldDir := failureDir
+	failureDir = func() (string, error) { return fdir, nil }
+	defer func() { failureDir = oldDir }()
 
 	// Failing run: the job's -out does not exist (the backup drive is unmounted).
 	dir := t.TempDir()
@@ -363,13 +434,138 @@ func TestCleanupOutlookScratch(t *testing.T) {
 		t.Errorf("failed run must keep the scratch directory: %v", err)
 	}
 
-	// Success: remove it, report the bytes.
+	// Success: remove it, report the bytes in human units (friction #9 — the GUI
+	// log a non-technical user reads must not print a raw int64) and name the
+	// directory, matching the CLI's wording.
 	out = makeScratch()
-	n := cleanupOutlookScratch(out, true, logger)
+	var buf bytes.Buffer
+	n := cleanupOutlookScratch(out, true, log.New(&buf, "", 0))
 	if n != 4096 {
 		t.Errorf("reclaimed %d bytes, want 4096", n)
 	}
 	if _, err := os.Stat(filepath.Join(out, "_outlook-pst")); !os.IsNotExist(err) {
 		t.Errorf("successful run must remove the scratch directory (stat err = %v)", err)
+	}
+	line := buf.String()
+	if !strings.Contains(line, "Reclaimed 4.0 KiB by removing the temporary Outlook PST copy") {
+		t.Errorf("reclaimed line not human-readable:\n%s", line)
+	}
+	if !strings.Contains(line, filepath.Join(out, "_outlook-pst")) {
+		t.Errorf("reclaimed line should name the scratch dir:\n%s", line)
+	}
+	if strings.Contains(line, "4096 bytes") {
+		t.Errorf("reclaimed line still prints a raw byte count:\n%s", line)
+	}
+}
+
+// covers: MA-167, R18, S29
+// The headless start-failure breadcrumb round-trips through the config dir: a
+// written record reads back with its name, time and reason, and control
+// characters planted in the file (the config dir is writable by any process
+// running as the user, and the reason is echoed into a dialog) are stripped on
+// read before the strings can reach the dialog.
+func TestLastFailureRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	if _, ok := readLastFailure(dir); ok {
+		t.Fatal("readLastFailure reported a record before any was written")
+	}
+	when := time.Now().UTC().Truncate(time.Second)
+	f := lastFailure{Name: "mailarchive-1a2b3c4d", When: when, Reason: "archive directory /mnt/backup is not present — is the backup drive mounted?"}
+	if err := writeLastFailure(dir, f); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := readLastFailure(dir)
+	if !ok {
+		t.Fatal("readLastFailure found no record after writing one")
+	}
+	if got.Name != f.Name || got.Reason != f.Reason || !got.When.Equal(when) {
+		t.Errorf("round-trip mismatch:\n got  %+v\n want %+v", got, f)
+	}
+
+	// Control characters planted in the file are stripped on read, but the
+	// surrounding content survives.
+	poison := lastFailure{Name: "job\x07", When: when, Reason: "line1\nline2\x00tail"}
+	if err := writeLastFailure(dir, poison); err != nil {
+		t.Fatal(err)
+	}
+	got, ok = readLastFailure(dir)
+	if !ok {
+		t.Fatal("readLastFailure found no record after writing the poisoned one")
+	}
+	for _, s := range []string{got.Name, got.Reason} {
+		for _, r := range s {
+			if r < 0x20 || r == 0x7f {
+				t.Errorf("control character survived read in %q", s)
+			}
+		}
+	}
+	if !strings.Contains(got.Reason, "line1") || !strings.Contains(got.Reason, "line2") || !strings.Contains(got.Reason, "tail") {
+		t.Errorf("stripping removed content, not just control chars: %q", got.Reason)
+	}
+}
+
+// covers: MA-168, R18, S29
+// showLastFailure surfaces a recorded headless start-failure only when there is
+// one, and either the archive is unreachable (its own last-run record cannot
+// speak) or the failure is newer than the archive's last recorded run — a later
+// successful run supersedes an older breadcrumb.
+func TestShowLastFailure(t *testing.T) {
+	when := time.Date(2026, 9, 2, 3, 0, 0, 0, time.UTC)
+	f := lastFailure{Name: "mailarchive-1a2b3c4d", When: when, Reason: "drive not mounted"}
+
+	if showLastFailure(f, false, time.Time{}, false) {
+		t.Error("no record (ok=false) must not surface")
+	}
+	if showLastFailure(lastFailure{}, true, time.Time{}, false) {
+		t.Error("a zero-time record must not surface")
+	}
+	if !showLastFailure(f, true, when.Add(time.Hour), false) {
+		t.Error("an unreachable archive must surface the failure even when it looks older than the (stale) last run")
+	}
+	if !showLastFailure(f, true, when.Add(-time.Hour), true) {
+		t.Error("a failure newer than the last run must surface")
+	}
+	if showLastFailure(f, true, when.Add(time.Hour), true) {
+		t.Error("a failure older than the last successful run must not surface (superseded)")
+	}
+}
+
+// covers: MA-169, R18, R16, S29, S19
+// After a successful Repair the wizard offers to continue (OK → run an export)
+// or stop (Cancel/dismiss → quiet exit); repairFollowUp maps the dialog answer
+// to that branch. And the keep-raw question is skipped when every input of a
+// raw-capable run is an Outlook data file (no raw .eml bytes to keep), while a
+// mixed, folder, or non-Outlook run still asks — and the Outlook picks never do.
+func TestRepairContinueAndKeepRawSkip(t *testing.T) {
+	// repairFollowUp: OK continues; Cancel stops quietly; other errors propagate.
+	if cont, err := repairFollowUp(nil); !cont || err != nil {
+		t.Errorf("OK should continue into the wizard: cont=%v err=%v", cont, err)
+	}
+	if cont, err := repairFollowUp(zenity.ErrCanceled); cont || err != nil {
+		t.Errorf("Cancel/dismiss should stop quietly: cont=%v err=%v", cont, err)
+	}
+	boom := errors.New("boom")
+	if cont, err := repairFollowUp(boom); cont || err == nil {
+		t.Errorf("an unexpected dialog error should propagate: cont=%v err=%v", cont, err)
+	}
+
+	// keep-raw is skipped when every chosen auto input is an Outlook file.
+	if keepRawWorthAsking(srcAuto, []string{"/a/one.pst", "/a/two.OST"}) {
+		t.Error("an auto run of only Outlook files should not ask keep-raw")
+	}
+	// A mixed set still has raw-capable inputs → ask.
+	if !keepRawWorthAsking(srcAuto, []string{"/a/one.pst", "/a/Inbox"}) {
+		t.Error("a mixed auto run should still ask keep-raw")
+	}
+	// A non-Outlook raw source (a folder) still asks.
+	if !keepRawWorthAsking(srcThunderbird, []string{"/home/me/ImapMail/acct"}) {
+		t.Error("a Thunderbird folder should still ask keep-raw")
+	}
+	// The Outlook picks never ask, whatever the inputs look like.
+	if keepRawWorthAsking(srcOutlook, []string{"/a/one.mbox"}) {
+		t.Error("the Outlook .pst/.ost pick must never ask keep-raw")
+	}
+	if keepRawWorthAsking(srcOutlookCOM, nil) {
+		t.Error("the Outlook-app path must never ask keep-raw")
 	}
 }
