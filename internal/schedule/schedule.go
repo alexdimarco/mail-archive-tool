@@ -102,6 +102,14 @@ func parseHHMM(s string) (hour, min int, err error) {
 // program is the executable followed by its arguments.
 func (s Spec) program() []string { return append([]string{s.Exe}, s.Args...) }
 
+// TaskRunLength is the length of the direct Task Scheduler run string for this
+// spec; a caller that wants no wrapper (the GUI, to avoid a console window)
+// must fall back to one when this exceeds SchtasksRunLimit (S12).
+func (s Spec) TaskRunLength() int { return len(taskRun(s)) }
+
+// SchtasksRunLimit is Task Scheduler's cap on the /TR string.
+const SchtasksRunLimit = 261
+
 // ---- cron (Linux) ---------------------------------------------------------
 
 // CronMarker tags our managed crontab block so a repeated install replaces it
