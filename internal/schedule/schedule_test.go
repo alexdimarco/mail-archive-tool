@@ -3,6 +3,7 @@ package schedule
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func sampleSpec(iv Interval, at string) Spec {
@@ -116,28 +117,40 @@ func TestLaunchdPlistGeneration(t *testing.T) {
 }
 
 // covers: MA-47, R14, S14
-// The schtasks command names the task, the run command, the schedule class and
-// start time; weekly adds /D SUN; the delete command reverses it by name.
+// The schtasks command registers the task from its XML definition — /Create /TN
+// /XML /F — then confirms it with /Query /TN; the schedule class/time and /TR
+// run string are gone (the definition carries them). The install argv Install
+// hands schtasks is exactly that /Create pair plus the /Query, and the delete
+// command reverses it by name.
 func TestSchtasksCommandGeneration(t *testing.T) {
-	daily, err := SchtasksCreateCmd(sampleSpec(Daily, "02:00"))
+	spec := sampleSpec(Daily, "02:00")
+	spec.WrapperPath = `C:\Users\Alex\AppData\Local\mailarchive\mailarchive-backup.cmd`
+	xmlPath := SchtasksXMLPath(spec.WrapperPath)
+
+	cmd, err := SchtasksCreateCmd(spec)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`/Create`, `/TN "mailarchive-backup"`, `/TR "`, `/SC DAILY`, `/ST 02:00`, `/F`} {
-		if !strings.Contains(daily, want) {
-			t.Errorf("schtasks create missing %q: %q", want, daily)
+	for _, want := range []string{`/Create`, `/TN "mailarchive-backup"`, `/XML `, `/F`, `/Query /TN "mailarchive-backup"`, xmlPath} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("schtasks command missing %q: %q", want, cmd)
 		}
 	}
-	if strings.Contains(daily, "/D SUN") {
-		t.Error("daily task must not carry /D SUN")
+	for _, gone := range []string{`/TR `, `/SC `, `/ST `, `/D SUN`} {
+		if strings.Contains(cmd, gone) {
+			t.Errorf("schtasks command still carries the retired %q: %q", gone, cmd)
+		}
 	}
 
-	weekly, err := SchtasksCreateCmd(sampleSpec(Weekly, "03:30"))
+	argv, err := SchtasksCreateArgv(spec)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(weekly, "/SC WEEKLY") || !strings.Contains(weekly, "/D SUN") {
-		t.Errorf("weekly task wrong: %q", weekly)
+	if want := []string{"/Create", "/TN", "mailarchive-backup", "/XML", xmlPath, "/F"}; !equalStrings(argv, want) {
+		t.Errorf("create argv = %q, want %q", argv, want)
+	}
+	if q := SchtasksQueryArgv(spec.Name); !equalStrings(q, []string{"/Query", "/TN", "mailarchive-backup"}) {
+		t.Errorf("query argv = %q", q)
 	}
 
 	del := SchtasksDeleteCmd(DefaultName)
@@ -203,75 +216,83 @@ func TestRemoveCronBlockReverses(t *testing.T) {
 }
 
 // covers: MA-65, R14, S14
-// The Task Scheduler run string quotes the executable and every argument that
-// contains a space — in the argv Install hands to schtasks AND in the pasteable
-// preview — so "C:\Program Files\…" or an archive under "OneDrive - Company"
-// survives the trip. Asserted on the wire: splitting the /TR value with the
-// Windows C-runtime command-line rules (what the scheduled mailarchive.exe
-// parses its os.Args with) must round-trip to the exact program + arguments.
+// Reconciled to the XML install: the path-with-spaces guarantee is now carried
+// by XML escaping of <Command>/<Arguments> plus the wrapper's own token quoting.
+// A wrapper path with a space, "&" and a non-ASCII rune is escaped in <Command>
+// (the raw byte stream carries &amp;, never a bare &) and round-trips through
+// xml.Unmarshal to the identical path; with no wrapper the exe lands in
+// <Command> and each argument is quoted in <Arguments> so it splits back
+// (C-runtime rules) to the exact args; and the wrapper body still quotes every
+// token.
 func TestSchtasksQuotesPathsWithSpaces(t *testing.T) {
-	spec := Spec{
-		Name:     DefaultName,
-		Interval: Daily,
-		At:       "02:00",
-		Exe:      `C:\Program Files\MailArchive\mailarchive.exe`,
-		Args: []string{
-			"-out", `C:\Users\Alex\OneDrive - Company\Mail Archive`,
-			"-mode", "incremental",
-			"-input", `C:\Users\Alex\Documents\Outlook Files\alex.pst`,
-			"-auto",
-		},
-	}
-	want := append([]string{spec.Exe}, spec.Args...)
+	now := time.Date(2026, 9, 3, 1, 0, 0, 0, time.Local)
 
-	// Install path: the raw argv handed to schtasks.exe.
-	argv, err := SchtasksCreateArgv(spec)
+	// With a wrapper: the wrapper path (space, "&", non-ASCII) is the <Command>.
+	wrapped := Spec{
+		Name:        DefaultName,
+		Interval:    Daily,
+		At:          "02:00",
+		Exe:         `C:\Program Files\MailArchive\mailarchive.exe`,
+		Args:        []string{"-out", `C:\Users\Alex\OneDrive - Company\Mail Archive`, "-mode", "incremental"},
+		Wrapper:     true,
+		WrapperPath: `C:\Users\Alex\R&D (2026)\föö\mailarchive-backup.cmd`,
+	}
+	doc, err := SchtasksXML(wrapped, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	tr := argAfter(t, argv, "/TR")
-	if !strings.HasPrefix(tr, `"`) {
-		t.Errorf("/TR must start with a quoted program path so Task Scheduler takes the whole path: %q", tr)
-	}
-	if got := splitWindowsCommandLine(tr); !equalStrings(got, want) {
-		t.Errorf("install /TR does not round-trip:\n tr=%q\n got=%q\n want=%q", tr, got, want)
-	}
-
-	// Preview path: the pasteable command wraps the same run string once more;
-	// unwrap it with the same rules and re-split.
-	cmd, err := SchtasksCreateCmd(spec)
+	body, err := decodeUTF16LE(doc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	outer := splitWindowsCommandLine(cmd)
-	if len(outer) == 0 || outer[0] != "schtasks" {
-		t.Fatalf("preview does not start with schtasks: %q", cmd)
+	if !strings.Contains(body, "&amp;") || strings.Contains(body, `R&D`) {
+		t.Errorf("the & in the wrapper path was not XML-escaped:\n%s", body)
 	}
-	ptr := argAfter(t, outer[1:], "/TR")
-	if got := splitWindowsCommandLine(ptr); !equalStrings(got, want) {
-		t.Errorf("preview /TR does not round-trip:\n cmd=%q\n got=%q\n want=%q", cmd, got, want)
+	got := parseTaskXML(t, doc)
+	if got.Actions.Exec.Command != wrapped.WrapperPath {
+		t.Errorf("wrapper <Command> did not round-trip:\n got=%q\n want=%q", got.Actions.Exec.Command, wrapped.WrapperPath)
+	}
+	if got.Actions.Exec.Arguments != "" {
+		t.Errorf("a wrapper install carries no <Arguments>: %q", got.Actions.Exec.Arguments)
 	}
 
-	// A clean, space-free spec must stay a plain (unquoted-argument) command line
-	// so the common case remains readable.
-	plain, err := SchtasksCreateArgv(sampleSpec(Daily, "02:00"))
+	// Without a wrapper: exe in <Command>, each argument quoted in <Arguments> so
+	// it splits back to the exact program + arguments.
+	direct := wrapped
+	direct.Wrapper = false
+	direct.Args = []string{
+		"-out", `C:\Users\Alex\OneDrive - Company\Mail Archive`,
+		"-input", `C:\Users\Alex\Documents\Outlook Files\alex.pst`,
+		"-auto",
+	}
+	doc, err = SchtasksXML(direct, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ptr := argAfter(t, plain, "/TR"); strings.Contains(ptr, `\"`) {
-		t.Errorf("space-free spec must not carry escaped quotes: %q", ptr)
+	got = parseTaskXML(t, doc)
+	if got.Actions.Exec.Command != direct.Exe {
+		t.Errorf("direct <Command> = %q, want the exe %q", got.Actions.Exec.Command, direct.Exe)
 	}
-}
+	if split := splitWindowsCommandLine(got.Actions.Exec.Arguments); !equalStrings(split, direct.Args) {
+		t.Errorf("<Arguments> does not round-trip:\n args=%q\n got=%q\n want=%q", got.Actions.Exec.Arguments, split, direct.Args)
+	}
 
-func argAfter(t *testing.T, argv []string, flag string) string {
-	t.Helper()
-	for i, a := range argv {
-		if a == flag && i+1 < len(argv) {
-			return argv[i+1]
+	// The wrapper body still quotes every token (paths with a space and "&"
+	// survive cmd.exe as one argument each).
+	w := CmdWrapper(wrapped)
+	wl := strings.Split(strings.TrimSpace(w), "\r\n")
+	run := wl[len(wl)-1]
+	for _, want := range []string{
+		`"C:\Program Files\MailArchive\mailarchive.exe"`,
+		`"-out"`,
+		`"C:\Users\Alex\OneDrive - Company\Mail Archive"`,
+		`"-mode"`,
+		`"incremental"`,
+	} {
+		if !strings.Contains(run, want) {
+			t.Errorf("wrapper run line lacks %s:\n%s", want, run)
 		}
 	}
-	t.Fatalf("argv lacks %s: %q", flag, argv)
-	return ""
 }
 
 func equalStrings(a, b []string) bool {

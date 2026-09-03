@@ -18,6 +18,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // DefaultName is the scheduler entry name used when the operator does not choose
@@ -118,10 +119,13 @@ func (s Spec) program() []string { return append([]string{s.Exe}, s.Args...) }
 
 // TaskRunLength is the length of the direct Task Scheduler run string for this
 // spec; a caller that wants no wrapper (the GUI, to avoid a console window)
-// must fall back to one when this exceeds SchtasksRunLimit (S12).
+// must fall back to one when this exceeds SchtasksRunLimit (S12). The install
+// itself is defined by XML (SchtasksXML), which has no such length limit; this
+// remains the GUI's short-vs-long command heuristic.
 func (s Spec) TaskRunLength() int { return len(taskRun(s)) }
 
-// SchtasksRunLimit is Task Scheduler's cap on the /TR string.
+// SchtasksRunLimit is Task Scheduler's historical cap on a /TR run string; the
+// GUI uses it as the short-vs-long threshold for whether to add a wrapper.
 const SchtasksRunLimit = 261
 
 // ---- cron (Linux) ---------------------------------------------------------
@@ -268,39 +272,21 @@ func launchdPlistPath(name string) string {
 
 // ---- Task Scheduler (Windows) --------------------------------------------
 
-func schtasksSC(iv Interval) string {
-	switch iv {
-	case Hourly:
-		return "HOURLY"
-	case Weekly:
-		return "WEEKLY"
-	default:
-		return "DAILY"
-	}
-}
-
 // SchtasksCreateCmd returns the schtasks command line that Install would run
-// (for previewing). The installer builds the argv directly rather than parsing
-// this string.
+// (for previewing). The task is registered from an XML definition, so the
+// command names the definition file rather than an inline /TR run string; a
+// following /Query confirms the task exists. The installer builds the argv
+// directly rather than parsing this string.
 func SchtasksCreateCmd(s Spec) (string, error) {
-	iv, err := ParseInterval(string(s.Interval))
-	if err != nil {
+	if _, err := ParseInterval(string(s.Interval)); err != nil {
 		return "", err
 	}
-	hour, min, err := parseHHMM(s.At)
-	if err != nil {
+	if _, _, err := parseHHMM(s.At); err != nil {
 		return "", err
 	}
-	tr := taskRun(s)
-	if s.Wrapper {
-		tr = winQuote(s.WrapperPath)
-	}
-	cmd := fmt.Sprintf("schtasks /Create /TN %s /TR %s /SC %s /ST %02d:%02d",
-		winQuote(s.Name), winQuote(tr), schtasksSC(iv), hour, min)
-	if iv == Weekly {
-		cmd += " /D SUN"
-	}
-	return cmd + " /F", nil
+	xmlPath := SchtasksXMLPath(s.WrapperPath)
+	return fmt.Sprintf("schtasks /Create /TN %s /XML %s /F && schtasks /Query /TN %s",
+		winQuote(s.Name), winQuote(xmlPath), winQuote(s.Name)), nil
 }
 
 // SchtasksDeleteCmd returns the schtasks command that removes the task.
@@ -321,15 +307,7 @@ func Preview(s Spec) (string, error) {
 		}
 		return fmt.Sprintf("launchd LaunchAgent — would be written to:\n  %s\n\n%s", launchdPlistPath(s.Name), plist), nil
 	case "windows":
-		cmd, err := SchtasksCreateCmd(s)
-		if err != nil {
-			return "", err
-		}
-		out := "Windows Task Scheduler — would run:\n\n  " + cmd + "\n"
-		if s.Wrapper {
-			out += "\nwith the wrapper " + s.WrapperPath + " containing:\n\n" + CmdWrapper(s)
-		}
-		return out, nil
+		return schtasksPreview(s, time.Now())
 	default:
 		return cronPreview(s)
 	}
@@ -453,8 +431,8 @@ func cronBlockOut(crontab, marker string) string {
 	return ""
 }
 
-// Remove uninstalls a previously installed schedule by name, then its wrapper
-// and descriptor.
+// Remove uninstalls a previously installed schedule by name, then its wrapper,
+// its XML definition and descriptor.
 func Remove(s Spec) error {
 	var err error
 	switch runtime.GOOS {
@@ -462,10 +440,8 @@ func Remove(s Spec) error {
 		err = removeLaunchd(s)
 	case "windows":
 		err = removeSchtasks(s)
-		if err == nil && s.WrapperPath != "" {
-			if rerr := os.Remove(s.WrapperPath); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
-				err = rerr
-			}
+		if err == nil {
+			err = removeSchtasksSideFiles(s)
 		}
 	default:
 		err = removeCron(s)
@@ -603,34 +579,73 @@ func removeLaunchd(s Spec) error {
 }
 
 // SchtasksCreateArgv returns the exact argument vector Install hands to
-// schtasks.exe (without the program name itself).
+// schtasks.exe (without the program name itself) to register the task from its
+// XML definition. Validate/generation errors surface here so Install fails
+// before touching the scheduler.
 func SchtasksCreateArgv(s Spec) ([]string, error) {
-	iv, err := ParseInterval(string(s.Interval))
-	if err != nil {
+	if _, err := ParseInterval(string(s.Interval)); err != nil {
 		return nil, err
 	}
-	hour, min, err := parseHHMM(s.At)
-	if err != nil {
+	if _, _, err := parseHHMM(s.At); err != nil {
 		return nil, err
 	}
-	tr := taskRun(s)
+	return []string{"/Create", "/TN", s.Name, "/XML", SchtasksXMLPath(s.WrapperPath), "/F"}, nil
+}
+
+// SchtasksQueryArgv is the argv Install runs after /Create to confirm the task
+// was actually registered (a /Create that "succeeds" but registers nothing must
+// not pass silently).
+func SchtasksQueryArgv(name string) []string {
+	return []string{"/Query", "/TN", name}
+}
+
+// schtasksPreview renders the Windows install for -install-less previewing: the
+// schtasks command, the XML definition it would write (decoded to UTF-8 for the
+// terminal), and the wrapper body when one is used. now fixes the trigger's
+// StartBoundary.
+func schtasksPreview(s Spec, now time.Time) (string, error) {
+	cmd, err := SchtasksCreateCmd(s)
+	if err != nil {
+		return "", err
+	}
+	doc, err := SchtasksXML(s, now)
+	if err != nil {
+		return "", err
+	}
+	body, err := decodeUTF16LE(doc)
+	if err != nil {
+		return "", err
+	}
+	xmlPath := SchtasksXMLPath(s.WrapperPath)
+	out := "Windows Task Scheduler — would run:\n\n  " + cmd + "\n"
+	out += "\nfrom the definition " + xmlPath + " (written UTF-16LE):\n\n" + body + "\n"
 	if s.Wrapper {
-		tr = winQuote(s.WrapperPath)
+		out += "\nwith the wrapper " + s.WrapperPath + " containing:\n\n" + CmdWrapper(s)
 	}
-	argv := []string{"/Create", "/TN", s.Name, "/TR", tr, "/SC", schtasksSC(iv), "/ST", fmt.Sprintf("%02d:%02d", hour, min)}
-	if iv == Weekly {
-		argv = append(argv, "/D", "SUN")
-	}
-	return append(argv, "/F"), nil
+	return out, nil
 }
 
 func installSchtasks(s Spec) error {
+	xmlPath := SchtasksXMLPath(s.WrapperPath)
+	doc, err := SchtasksXML(s, time.Now())
+	if err != nil {
+		return err
+	}
+	if err := writeFileAtomic(xmlPath, doc); err != nil {
+		return fmt.Errorf("could not write the Task Scheduler definition %s: %w", xmlPath, err)
+	}
 	argv, err := SchtasksCreateArgv(s)
 	if err != nil {
 		return err
 	}
 	if out, err := exec.Command("schtasks", argv...).CombinedOutput(); err != nil {
-		return fmt.Errorf("schtasks /Create: %w: %s", err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("schtasks /Create from %s: %w: %s", xmlPath, err, strings.TrimSpace(string(out)))
+	}
+	// Confirm the task exists: a /Create that reported success but registered
+	// nothing (a definition schtasks silently rejected) must not pass as a
+	// working schedule.
+	if out, err := exec.Command("schtasks", SchtasksQueryArgv(s.Name)...).CombinedOutput(); err != nil {
+		return fmt.Errorf("schtasks /Create reported success but the task %q is absent — its definition is %s: %w: %s", s.Name, xmlPath, err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
@@ -640,6 +655,50 @@ func removeSchtasks(s Spec) error {
 		return fmt.Errorf("schtasks /Delete: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// removeSchtasksSideFiles deletes the wrapper and the XML definition Install
+// wrote beside it, tolerating either being already gone. It is the file half of
+// the Windows Remove and is unit-testable off Windows.
+func removeSchtasksSideFiles(s Spec) error {
+	if s.WrapperPath == "" {
+		return nil
+	}
+	for _, p := range []string{s.WrapperPath, SchtasksXMLPath(s.WrapperPath)} {
+		if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
+}
+
+// writeFileAtomic writes data to path via a temp file that is fsynced and
+// renamed into place, so an interrupted write never leaves a half-written
+// definition where schtasks would read it.
+func writeFileAtomic(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, ".xml-*.tmp")
+	if err != nil {
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmp.Name())
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
 }
 
 // ---- quoting helpers ------------------------------------------------------

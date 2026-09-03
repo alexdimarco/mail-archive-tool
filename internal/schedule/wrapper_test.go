@@ -5,13 +5,15 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // covers: MA-73, R14, S28
 // On Windows the task runs a batch wrapper: every token in it is quoted (a
 // path with "&", "^", "(", "!" or "%" survives cmd.exe), "%" is doubled, stderr
-// goes to the sibling .stderr.log, and the task's /TR is the short quoted
-// wrapper path, not the long command.
+// goes to the sibling .stderr.log. The task is registered from the XML
+// definition (/Create /TN /XML /F) whose <Command> is the wrapper path; without
+// the wrapper the program lands in <Command> directly.
 func TestCmdWrapperQuotesEverything(t *testing.T) {
 	s := Spec{
 		Name: "mailarchive-1234abcd", Interval: Daily, At: "02:00",
@@ -44,22 +46,31 @@ func TestCmdWrapperQuotesEverything(t *testing.T) {
 		}
 	}
 
+	// The task registers from the XML definition; the argv is the /Create-XML
+	// pair, and the definition's <Command> is the wrapper path.
 	argv, err := SchtasksCreateArgv(s)
 	if err != nil {
 		t.Fatal(err)
 	}
-	tr := argAfter(t, argv, "/TR")
-	if tr != `"`+s.WrapperPath+`"` {
-		t.Errorf("/TR should be the quoted wrapper path, got %q", tr)
+	if want := []string{"/Create", "/TN", s.Name, "/XML", SchtasksXMLPath(s.WrapperPath), "/F"}; !equalStrings(argv, want) {
+		t.Errorf("create argv = %q, want %q", argv, want)
 	}
-	if len(tr) > 261 {
-		t.Errorf("/TR exceeds Task Scheduler's 261-character limit: %d", len(tr))
+	now := time.Date(2026, 9, 3, 1, 0, 0, 0, time.Local)
+	doc, err := SchtasksXML(s, now)
+	if err != nil {
+		t.Fatal(err)
 	}
-	// Without the wrapper the direct form is still produced (MA-65).
+	if got := parseTaskXML(t, doc).Actions.Exec.Command; got != s.WrapperPath {
+		t.Errorf("XML <Command> should be the wrapper path, got %q", got)
+	}
+	// Without the wrapper the program lands in <Command> directly (MA-65).
 	s.Wrapper = false
-	argv, _ = SchtasksCreateArgv(s)
-	if !strings.Contains(argAfter(t, argv, "/TR"), "mailarchive.exe") {
-		t.Error("direct /TR lost the program")
+	doc, err = SchtasksXML(s, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := parseTaskXML(t, doc).Actions.Exec.Command; !strings.Contains(got, "mailarchive.exe") {
+		t.Errorf("direct <Command> lost the program: %q", got)
 	}
 }
 
