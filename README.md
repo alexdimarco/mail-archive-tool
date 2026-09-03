@@ -479,12 +479,16 @@ Per OS:
   systemd-timer-only box), `status` reports that the scheduler cannot be queried.
 - **macOS (launchd):** a LaunchAgent under `~/Library/LaunchAgents`; crash output
   goes to `<out>/<name>.stderr.log`.
-- **Windows (Task Scheduler):** the task runs a small wrapper,
-  `%LOCALAPPDATA%\mailarchive\<name>.cmd`, holding the full command with every
-  token quoted (Task Scheduler's own run string is limited to 261 characters and
-  has no stderr); a console window appears briefly during the run; the task runs
-  only while you are logged in, and a night the PC is off or asleep is skipped —
-  `status` shows it. `-remove` deletes the wrapper too.
+- **Windows (Task Scheduler):** the task is defined by an XML file kept next to
+  the wrapper — `%LOCALAPPDATA%\mailarchive\<name>.xml` beside `<name>.cmd` — and
+  installed with `schtasks /Create /XML`, then confirmed with `schtasks /Query`.
+  The wrapper holds the full command with every token quoted and sends crash
+  output to `<out>/<name>.stderr.log`; a console window appears briefly during
+  the run, which runs while you are logged in. The task **catches up a missed
+  start** when the PC next wakes and **runs on battery**, so a night the machine
+  merely slept is not lost — but it **cannot power on an off machine** (a night
+  the PC is off is still skipped; `status` shows it). `-remove` deletes the task,
+  the wrapper and the XML.
 
 Upgrading or moving the binary: the entry keeps pointing at the old path. Re-run
 `schedule … -install` from the new one (`status` warns "not this binary" until
