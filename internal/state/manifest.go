@@ -9,12 +9,22 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 )
 
-// manifestVersion is bumped if the on-disk format changes incompatibly.
-const manifestVersion = 1
+// manifestVersion: 1 = paths only; 2 = completeness tracking (Missing/Terminal/
+// Unresolved per record). Fields are additive; a version-1 file is migrated on
+// load (every record becomes an "unknown" sentinel — see Load).
+const manifestVersion = 2
+
+// UnknownSentinel marks a record whose completeness predates tracking: it is
+// fillable, so the next incremental run re-examines it once.
+const UnknownSentinel = "unknown"
+
+// MissingBody is the gap label for a message captured with no body at all.
+const MissingBody = "body"
 
 // keySeparator joins the folder path and message identity into a manifest key.
 // The NUL byte cannot appear in either component, so it is an unambiguous
@@ -26,6 +36,36 @@ type Record struct {
 	Path       string    `json:"path"`   // export path relative to the output root
 	Folder     string    `json:"folder"` // human-readable source folder path
 	ExportedAt time.Time `json:"exported_at"`
+
+	// Completeness (version 2). Missing lists FILLABLE gaps — "body", an
+	// attachment label, or UnknownSentinel — that an on-demand source may still
+	// deliver, so incremental runs re-examine the record. Terminal lists the
+	// same kinds of gap from a complete-at-fetch source (nothing will ever fill
+	// them; recorded and reported, never retried). Unresolved lists cid: tokens
+	// with no matching part (informational). Subject/Date are carried only when
+	// one of the three is non-empty, so the manifest grows with issues, not with
+	// messages.
+	Missing    []string `json:"missing,omitempty"`
+	Terminal   []string `json:"terminal,omitempty"`
+	Unresolved []string `json:"unresolved,omitempty"`
+	Subject    string   `json:"subject,omitempty"`
+	Date       string   `json:"date,omitempty"` // RFC 3339 UTC
+}
+
+// Fillable reports whether an incremental run should re-examine the record.
+func (r Record) Fillable() bool { return len(r.Missing) > 0 }
+
+// Complete reports whether nothing at all is missing (fillable or terminal).
+func (r Record) Complete() bool { return len(r.Missing) == 0 && len(r.Terminal) == 0 }
+
+// HasIssues reports whether the record has anything to show in the report.
+func (r Record) HasIssues() bool {
+	return len(r.Missing) > 0 || len(r.Terminal) > 0 || len(r.Unresolved) > 0
+}
+
+// Unknown reports whether the record carries the legacy sentinel.
+func (r Record) Unknown() bool {
+	return len(r.Missing) == 1 && r.Missing[0] == UnknownSentinel
 }
 
 // Manifest is the set of exported messages, keyed by Key(folder, identity).
@@ -35,6 +75,10 @@ type Manifest struct {
 	mu      sync.Mutex
 	Version int               `json:"version"`
 	Entries map[string]Record `json:"entries"`
+
+	// Migrated counts the records converted to the unknown sentinel by this
+	// Load (a version-1 file). Zero for a version-2 file.
+	Migrated int `json:"-"`
 }
 
 // Key builds the manifest key for a message. Scoping the key by folder means
@@ -65,6 +109,20 @@ func Load(path string) (*Manifest, error) {
 	if m.Entries == nil {
 		m.Entries = map[string]Record{}
 	}
+	// A version-1 file — written before completeness tracking, or rewritten by
+	// an older binary after a downgrade — cannot say which entries are
+	// incomplete. Never assume "complete": mark every record with the unknown
+	// sentinel so the next incremental run re-examines it once (R1).
+	if m.Version < manifestVersion {
+		for key, r := range m.Entries {
+			if !r.HasIssues() {
+				r.Missing = []string{UnknownSentinel}
+				m.Entries[key] = r
+				m.Migrated++
+			}
+		}
+		m.Version = manifestVersion
+	}
 	return m, nil
 }
 
@@ -76,11 +134,78 @@ func (m *Manifest) Has(key string) bool {
 	return ok
 }
 
+// Get returns the record for key.
+func (m *Manifest) Get(key string) (Record, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.Entries[key]
+	return r, ok
+}
+
 // Add records key as exported.
 func (m *Manifest) Add(key string, r Record) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.Entries[key] = r
+}
+
+// Resolve clears the unknown sentinel from key without touching anything else:
+// used when a complete-at-fetch source revisits a legacy record (nothing
+// fillable can exist, so the record is complete as captured).
+func (m *Manifest) Resolve(key string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.Entries[key]
+	if !ok || !r.Unknown() {
+		return false
+	}
+	r.Missing = nil
+	if !r.HasIssues() {
+		r.Subject, r.Date = "", ""
+	}
+	m.Entries[key] = r
+	return true
+}
+
+// Issues returns every record with something to report, sorted by folder,
+// then date, then path (a stable order for the regenerated report).
+func (m *Manifest) Issues() []Record {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []Record
+	for _, r := range m.Entries {
+		if r.HasIssues() {
+			out = append(out, r)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Folder != out[j].Folder {
+			return out[i].Folder < out[j].Folder
+		}
+		if out[i].Date != out[j].Date {
+			return out[i].Date < out[j].Date
+		}
+		return out[i].Path < out[j].Path
+	})
+	return out
+}
+
+// Counts returns how many records are fillable (excluding sentinels), terminal,
+// and unknown (legacy sentinels).
+func (m *Manifest) Counts() (fillable, terminal, unknown int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, r := range m.Entries {
+		switch {
+		case r.Unknown():
+			unknown++
+		case r.Fillable():
+			fillable++
+		case len(r.Terminal) > 0:
+			terminal++
+		}
+	}
+	return
 }
 
 // Delete removes key from the manifest. Absent keys are a no-op. Used by the

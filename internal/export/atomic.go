@@ -44,6 +44,10 @@ func commitTemp(tmp *os.File, dst string) error {
 	return nil
 }
 
+// WriteFileAtomic writes data to dst via a temp sibling + rename (see
+// commitTemp): used for the report and any other archive-level file.
+func WriteFileAtomic(dst string, data []byte) error { return writeFileAtomic(dst, data) }
+
 // writeFileAtomic writes data to dst via a temp sibling + rename (see commitTemp).
 func writeFileAtomic(dst string, data []byte) error {
 	tmp, err := createTemp(filepath.Dir(dst))

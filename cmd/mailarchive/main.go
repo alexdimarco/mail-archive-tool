@@ -277,6 +277,13 @@ func runSearch(args []string) error {
 	return nil
 }
 
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
+}
+
 func moreNote(total, shown int) string {
 	if total > shown {
 		return fmt.Sprintf(" (showing %d)", shown)
@@ -694,24 +701,33 @@ func waitForSync(ctx context.Context, store string, logger *log.Logger) error {
 
 func printSummary(logger *log.Logger, r app.Result, indexed bool, out string) {
 	s := r.Stats
-	msg := fmt.Sprintf("Done. exported=%d skipped(seen)=%d skipped(date)=%d attachments=%d inline=%d non-html=%d no-body=%d manifest=%d",
-		s.Exported, s.SkippedManifest, s.SkippedDate, s.Attachments, s.AttachmentsInline, s.NonHTMLBodies, s.NoBody, r.ManifestSize)
+	msg := fmt.Sprintf("Done. exported=%d filled=%d skipped(seen)=%d skipped(date)=%d attachments=%d inline=%d non-html=%d no-body=%d manifest=%d",
+		s.Exported, s.Filled, s.SkippedManifest, s.SkippedDate, s.Attachments, s.AttachmentsInline, s.NonHTMLBodies, s.NoBody, r.ManifestSize)
 	if indexed {
 		msg += fmt.Sprintf(" indexed=%d", r.Indexed)
 	}
+	if r.IndexErrors > 0 {
+		msg += fmt.Sprintf(" INDEX-ERRORS=%d", r.IndexErrors)
+	}
 	logger.Printf("%s", msg)
 
-	if s.AttachmentsEmpty > 0 || s.UnresolvedInlineRef > 0 {
+	if r.Fillable > 0 || r.Terminal > 0 || r.Unknown > 0 || s.UnresolvedInlineRef > 0 {
 		suffix := ""
 		if r.ReportPath != "" {
 			suffix = fmt.Sprintf(" — details in %s", r.ReportPath)
 		}
-		logger.Printf("Verification: %d empty/not-downloaded attachment(s), %d unresolved inline image(s)%s",
-			s.AttachmentsEmpty, s.UnresolvedInlineRef, suffix)
-		if s.AttachmentsEmpty > 0 {
-			logger.Printf("  Empty attachments usually mean the content isn't cached locally (IMAP). In your mail")
-			logger.Printf("  app, download for offline use, then re-run with -mode full to fill the gaps.")
+		logger.Printf("Verification: %d message(s) still missing content, %d source-empty (never fillable), %d not yet re-examined, %d unresolved inline image(s) this run%s",
+			r.Fillable, r.Terminal, r.Unknown, s.UnresolvedInlineRef, suffix)
+		if r.Fillable > 0 {
+			logger.Printf("  Missing content usually means it isn't cached locally (IMAP / a limited Outlook offline window).")
+			logger.Printf("  In your mail app, download for offline use, then simply re-run: incremental fills the gaps.")
 		}
+		if r.Unknown > 0 {
+			logger.Printf("  %d entr%s predate completeness tracking and are re-examined by incremental runs until none remain.", r.Unknown, plural(r.Unknown, "y", "ies"))
+		}
+	}
+	if r.IndexErrors > 0 {
+		logger.Printf("WARNING: %d message(s) were exported but could not be indexed; run `mailarchive reindex -out %q` and re-check.", r.IndexErrors, out)
 	}
 
 	if indexed && r.Indexed > 0 {

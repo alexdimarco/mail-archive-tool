@@ -62,9 +62,14 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		Mode:     opts.Mode,
 		Since:    opts.Since,
 		Log:      logger,
+		// One GET returns the whole MIME: a gap can never be filled by
+		// re-fetching, so it is recorded terminal and never retried (R17 keeps
+		// its no-re-download guarantee).
+		SourceComplete: true,
 	}
 
 	var idx *index.Index
+	var indexErrors int
 	if opts.Index {
 		idxPath := filepath.Join(opts.Out, "search.db")
 		idx, err = index.Open(idxPath)
@@ -74,6 +79,7 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		defer idx.Close()
 		exp.OnExported = func(store string, folderPath []string, m *model.Message, relPath, key string) {
 			if addErr := idx.Add(store, folderPath, m, relPath, key); addErr != nil {
+				indexErrors++
 				logger.Printf("warning: index: %v", addErr)
 			}
 		}
@@ -101,9 +107,7 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 			}
 		}
 		if errors.Is(runErr, context.Canceled) {
-			result.Stats = exp.Stats
-			result.ManifestSize = manifest.Len()
-			result.Indexed = indexCount(idx)
+			finish(opts.Out, &result, exp, manifest, idx, indexErrors, logger)
 			return result, context.Canceled
 		}
 		if runErr != nil {
@@ -117,20 +121,7 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 			logger.Printf("warning: folder pages: %v", pErr)
 		}
 	}
-	if len(exp.Issues) > 0 {
-		reportPath := filepath.Join(opts.Out, "attachments-report.tsv")
-		if wErr := writeIssuesReport(reportPath, exp.Issues); wErr != nil {
-			logger.Printf("warning: could not write verification report: %v", wErr)
-		} else {
-			result.ReportPath = reportPath
-			logger.Printf("Verification: %d attachment/inline issue(s) recorded in %s", len(exp.Issues), reportPath)
-		}
-	}
-
-	result.Stats = exp.Stats
-	result.ManifestSize = manifest.Len()
-	result.Indexed = indexCount(idx)
-	result.Issues = len(exp.Issues)
+	finish(opts.Out, &result, exp, manifest, idx, indexErrors, logger)
 	if failures > 0 {
 		return result, fmt.Errorf("%d mailbox(es) failed", failures)
 	}
@@ -161,9 +152,15 @@ func runGraphMailbox(ctx context.Context, client *graph.Client, exp *export.Expo
 			// Incremental fast-path: skip a message already archived, matched by
 			// its Internet-Message-ID, WITHOUT downloading the body (R17). Only
 			// possible when the id is present; otherwise fall through and let the
-			// exporter dedup on the parsed content hash.
+			// exporter dedup on the parsed content hash. A legacy "unknown" record
+			// is resolved here without a download: Graph delivers a message whole,
+			// so the earlier capture is as complete as the source allows.
 			if mode == export.Incremental && ref.InternetMessageID != "" {
-				if manifest.Has(state.Key(folderKey, "mid:"+ref.InternetMessageID)) {
+				key := state.Key(folderKey, "mid:"+ref.InternetMessageID)
+				if _, seen := manifest.Get(key); seen {
+					if manifest.Resolve(key) {
+						exp.Stats.Resolved++
+					}
 					exp.Stats.SkippedManifest++
 					return nil
 				}

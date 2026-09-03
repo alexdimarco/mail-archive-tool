@@ -4,7 +4,6 @@
 package app
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -42,8 +41,27 @@ type Result struct {
 	Files        int
 	ManifestSize int
 	Indexed      int    // messages in the search index (0 if indexing disabled)
-	Issues       int    // verification findings (referenced-but-not-exported)
-	ReportPath   string // path to the verification report, if any issues
+	IndexErrors  int    // messages the index refused (R8 parity broken; surfaced, not swallowed)
+	Issues       int    // rows in the regenerated verification report
+	ReportPath   string // path to the verification report ("" when nothing to report)
+	Fillable     int    // manifest records still missing content an on-demand source may deliver
+	Terminal     int    // records missing content the source can never deliver (recorded, never retried)
+	Unknown      int    // legacy records not yet re-examined (migrated from a version-1 manifest)
+}
+
+// finish fills the manifest-derived fields of a Result and regenerates the
+// verification report (R1). Shared by the local and Graph runners.
+func finish(out string, r *Result, exp *export.Exporter, manifest *state.Manifest, idx *index.Index, indexErrors int, logger *log.Logger) {
+	r.Stats = exp.Stats
+	r.ManifestSize = manifest.Len()
+	r.Indexed = indexCount(idx)
+	r.IndexErrors = indexErrors
+	r.Fillable, r.Terminal, r.Unknown = manifest.Counts()
+	r.ReportPath, r.Issues = writeReport(out, manifest, manifest.Migrated > 0, logger)
+	if r.Issues > 0 {
+		logger.Printf("Verification: %d finding(s) recorded in %s (fillable=%d terminal=%d unknown=%d)",
+			r.Issues, r.ReportPath, r.Fillable, r.Terminal, r.Unknown)
+	}
 }
 
 // ProgressFunc, if provided, is called after each processed message with the
@@ -94,6 +112,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 
 	// Optional search index, fed as each message is written.
 	var idx *index.Index
+	var indexErrors int
 	if opts.Index {
 		idxPath := filepath.Join(opts.Out, "search.db")
 		idx, err = index.Open(idxPath)
@@ -103,9 +122,14 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		defer idx.Close()
 		exp.OnExported = func(store string, folderPath []string, m *model.Message, relPath, key string) {
 			if addErr := idx.Add(store, folderPath, m, relPath, key); addErr != nil {
+				indexErrors++
 				logger.Printf("warning: index: %v", addErr)
 			}
 		}
+	}
+	if manifest.Migrated > 0 {
+		logger.Printf("%d manifest entr%s predate completeness tracking; they will be re-examined by this and following incremental runs",
+			manifest.Migrated, plural(manifest.Migrated, "y", "ies"))
 	}
 
 	result := Result{Files: len(files)}
@@ -123,9 +147,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		}
 
 		if errors.Is(runErr, context.Canceled) {
-			result.Stats = exp.Stats
-			result.ManifestSize = manifest.Len()
-			result.Indexed = indexCount(idx)
+			finish(opts.Out, &result, exp, manifest, idx, indexErrors, logger)
 			return result, context.Canceled
 		}
 		if runErr != nil {
@@ -141,51 +163,18 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		}
 	}
 
-	// Verification report: anything referenced but not fully exported.
-	if len(exp.Issues) > 0 {
-		reportPath := filepath.Join(opts.Out, "attachments-report.tsv")
-		if wErr := writeIssuesReport(reportPath, exp.Issues); wErr != nil {
-			logger.Printf("warning: could not write verification report: %v", wErr)
-		} else {
-			result.ReportPath = reportPath
-			logger.Printf("Verification: %d attachment/inline issue(s) recorded in %s", len(exp.Issues), reportPath)
-		}
-	}
-
-	result.Stats = exp.Stats
-	result.ManifestSize = manifest.Len()
-	result.Indexed = indexCount(idx)
-	result.Issues = len(exp.Issues)
+	finish(opts.Out, &result, exp, manifest, idx, indexErrors, logger)
 	if failures > 0 {
 		return result, fmt.Errorf("%d file(s) failed", failures)
 	}
 	return result, nil
 }
 
-// writeIssuesReport writes the verification findings as a TSV that opens in any
-// spreadsheet, one row per referenced-but-not-exported item.
-func writeIssuesReport(path string, issues []export.Issue) error {
-	f, err := os.Create(path)
-	if err != nil {
-		return err
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
 	}
-	defer f.Close()
-
-	w := bufio.NewWriter(f)
-	fmt.Fprintln(w, "kind\tfolder\tdate\tsubject\tdetail\tpath")
-	for _, is := range issues {
-		date := ""
-		if !is.Date.IsZero() {
-			date = is.Date.UTC().Format("2006-01-02")
-		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
-			is.Kind, tsv(is.Folder), date, tsv(is.Subject), tsv(is.Detail), is.RelPath)
-	}
-	return w.Flush()
-}
-
-func tsv(s string) string {
-	return strings.ReplaceAll(strings.ReplaceAll(s, "\t", " "), "\n", " ")
+	return many
 }
 
 func indexCount(idx *index.Index) int {

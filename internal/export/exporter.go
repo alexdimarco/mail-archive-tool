@@ -5,6 +5,7 @@ package export
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -39,6 +40,12 @@ type Stats struct {
 	UnresolvedInlineRef int // cid: references in the HTML with no matching image present
 	NonHTMLBodies       int // messages exported from plain/RTF because no HTML body existed
 	NoBody              int // messages exported with no body content at all
+
+	// Incremental completeness (R1/R2): fillable gaps are re-examined.
+	Retried         int // seen-but-fillable records re-examined this run
+	Filled          int // retries that recovered content and were rewritten
+	StillIncomplete int // retries that recovered nothing (nothing rewritten)
+	Resolved        int // legacy "unknown" records resolved without recapture (complete-at-fetch sources)
 }
 
 // Issue is one verification finding: something referenced but not fully
@@ -60,6 +67,12 @@ type Exporter struct {
 	Since    time.Time // zero means no date filter
 	Log      *log.Logger
 
+	// SourceComplete says the source delivers a message whole on every read
+	// (Graph: one GET returns the full MIME), so a gap can never be filled by
+	// re-reading: it is recorded as terminal, not fillable. On-demand sources
+	// (PST/OST caches, Thunderbird, Evolution) leave it false.
+	SourceComplete bool
+
 	// OnExported, if set, is called after a message is successfully written
 	// (used to feed the search index). relPath is the HTML path relative to
 	// OutDir (forward-slashed); key is the manifest key.
@@ -70,18 +83,36 @@ type Exporter struct {
 }
 
 // Export writes a single message. It returns true if the message was written
-// (false when skipped by the date filter or the manifest).
+// (false when skipped by the manifest or the date filter, or when a retry found
+// nothing new to write).
+//
+// Decision (R1/R2): a message already in the manifest is skipped unless its
+// record is fillable — then it is re-examined regardless of the -since window,
+// first by a cheap probe (no render, no temp files) and, only if some
+// previously-missing item is now present, captured and committed again. An
+// unseen message goes through the date filter, then capture and commit.
 func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (bool, error) {
 	date := m.Date()
-	if !e.Since.IsZero() && !date.IsZero() && date.Before(e.Since) {
-		e.Stats.SkippedDate++
-		return false, nil
-	}
-
 	folderKey := strings.Join(folderPath, "/")
 	key := state.Key(folderKey, m.Identity())
-	if e.Mode == Incremental && e.Manifest.Has(key) {
-		e.Stats.SkippedManifest++
+
+	retry := false
+	if e.Mode == Incremental {
+		if rec, seen := e.Manifest.Get(key); seen {
+			if !rec.Fillable() {
+				e.Stats.SkippedManifest++
+				return false, nil
+			}
+			e.Stats.Retried++
+			if !probeImproves(m, rec.Missing) {
+				e.Stats.StillIncomplete++
+				return false, nil
+			}
+			retry = true
+		}
+	}
+	if !retry && !e.Since.IsZero() && !date.IsZero() && date.Before(e.Since) {
+		e.Stats.SkippedDate++
 		return false, nil
 	}
 
@@ -98,10 +129,6 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		return false, fmt.Errorf("render %q: %w", m.Subject, err)
 	}
 	htmlPath := filepath.Join(dir, base+".html")
-	if err := writeFileAtomic(htmlPath, htmlBytes); err != nil {
-		return false, fmt.Errorf("write %s: %w", htmlPath, err)
-	}
-
 	rel, err := filepath.Rel(e.OutDir, htmlPath)
 	if err != nil {
 		rel = htmlPath
@@ -110,13 +137,21 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 
 	e.Stats.AttachmentsInline += len(inlineConsumed)
 
+	// Gaps: what this capture could not deliver. Fillable or terminal per the
+	// source (SourceComplete); never silent (R1).
+	var gaps []string
+	if !hasBody(m) {
+		gaps = append(gaps, state.MissingBody)
+	}
+
+	// Attachments first (zip, then html): a visible html always has its zip.
+	zipPath := filepath.Join(dir, base+zipSuffix)
 	if hasArchivable(m.Attachments, inlineConsumed) {
-		zipPath := filepath.Join(dir, base+zipSuffix)
-		zr, err := WriteZip(zipPath, m.Attachments, inlineConsumed)
-		if err != nil {
+		zr, zerr := WriteZip(zipPath, m.Attachments, inlineConsumed)
+		if zerr != nil {
 			// A failed archive should not abort the whole export, but it is
 			// never silent: every attachment of the message is then unarchived.
-			e.Log.Printf("warning: attachments for %s: %v", htmlPath, err)
+			e.Log.Printf("warning: attachments for %s: %v", htmlPath, zerr)
 			for i := range m.Attachments {
 				if !inlineConsumed[i] {
 					zr.Failed = append(zr.Failed, attachmentLabel(m.Attachments[i], i))
@@ -127,36 +162,99 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		for _, name := range zr.Empty {
 			e.Stats.AttachmentsEmpty++
 			e.addIssue(folderKey, m, relSlash, "empty-attachment", name)
+			gaps = append(gaps, name)
 		}
 		for _, name := range zr.Failed {
 			e.Stats.AttachmentErrors++
 			e.addIssue(folderKey, m, relSlash, "attachment-error", name)
+			gaps = append(gaps, name)
 		}
+	} else {
+		os.Remove(zipPath) // a re-capture with nothing archivable must not keep a stale zip
+	}
+
+	if err := writeFileAtomic(htmlPath, htmlBytes); err != nil {
+		return false, fmt.Errorf("write %s: %w", htmlPath, err)
 	}
 
 	// Inline images referenced by cid: that we could not embed (missing from the
 	// message, e.g. dangling references in a reply/forward chain).
-	for _, cid := range unresolvedInlineRefs(htmlBytes) {
+	unresolved := unresolvedInlineRefs(htmlBytes)
+	for _, cid := range unresolved {
 		e.Stats.UnresolvedInlineRef++
 		e.addIssue(folderKey, m, relSlash, "unresolved-inline-image", cid)
 	}
-	e.Manifest.Add(key, state.Record{
-		Path:       relSlash,
-		Folder:     folderKey,
-		ExportedAt: time.Now().UTC(),
-	})
+
+	rec := state.Record{Path: relSlash, Folder: folderKey, ExportedAt: time.Now().UTC(), Unresolved: unresolved}
+	if e.SourceComplete {
+		rec.Terminal = gaps
+	} else {
+		rec.Missing = gaps
+	}
+	if rec.HasIssues() {
+		rec.Subject = m.Subject
+		if !date.IsZero() {
+			rec.Date = date.UTC().Format(time.RFC3339)
+		}
+	}
+	e.Manifest.Add(key, rec)
 	if e.OnExported != nil {
 		e.OnExported(store, folderPath, m, relSlash, key)
 	}
 
 	switch {
-	case strings.TrimSpace(m.HTMLBody) == "" && strings.TrimSpace(m.PlainBody) == "" && strings.TrimSpace(m.RTFBody) == "":
+	case !hasBody(m):
 		e.Stats.NoBody++
 	case strings.TrimSpace(m.HTMLBody) == "":
 		e.Stats.NonHTMLBodies++
 	}
+	if retry {
+		e.Stats.Filled++
+	}
 	e.Stats.Exported++
 	return true, nil
+}
+
+// hasBody reports whether any body source is present.
+func hasBody(m *model.Message) bool {
+	return strings.TrimSpace(m.HTMLBody) != "" || strings.TrimSpace(m.PlainBody) != "" || strings.TrimSpace(m.RTFBody) != ""
+}
+
+// probeImproves reports whether any item in oldMissing is now present in the
+// source message — the subset rule (a retry is promoted when the old missing set
+// is not contained in the new one) evaluated without rendering or writing
+// anything. The unknown sentinel always improves: a legacy record is re-captured
+// once so it can carry the truth.
+func probeImproves(m *model.Message, oldMissing []string) bool {
+	for _, item := range oldMissing {
+		switch item {
+		case state.UnknownSentinel:
+			return true
+		case state.MissingBody:
+			if hasBody(m) {
+				return true
+			}
+		default:
+			for i := range m.Attachments {
+				if attachmentLabel(m.Attachments[i], i) == item && attachmentBytes(m.Attachments[i]) > 0 {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// attachmentBytes counts an attachment's bytes by streaming it to nowhere.
+func attachmentBytes(a model.Attachment) int64 {
+	if a.WriteTo == nil {
+		return 0
+	}
+	n, err := a.WriteTo(io.Discard)
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 // addIssue records a verification finding (capped so a pathological archive

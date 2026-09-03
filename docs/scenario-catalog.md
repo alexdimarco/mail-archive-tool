@@ -13,8 +13,11 @@ an invariant is the thing that is wrong.
 
 - **R1 — No silent loss.** Every message the reader yields is exported, and no
   attachment/inline image is silently dropped: content referenced but absent
-  (not downloaded, unparseable) is recorded in the verification report, never
-  hidden.
+  (not downloaded, unparseable, torn) is recorded durably in the manifest —
+  classed *fillable* (an on-demand source may still deliver it) or *terminal*
+  (a complete-at-fetch source never will) — and listed in the verification
+  report regenerated from the manifest on every run, never hidden. Incremental
+  runs revisit every fillable gap and fill it once the source holds the content.
 - **R2 — Incremental idempotence.** An incremental re-run over an unchanged
   source exports zero new items; `full` re-exports all. The manifest is the sole
   dedup authority.
@@ -101,7 +104,7 @@ an invariant is the thing that is wrong.
 | S3 Re-run over an unchanged source | R2 | zero new exports | MA-22 |
 | S4 Same email filed in two folders | R3 | exported to both; never twice in one | MA-09, MA-13 |
 | S5 Message with an inline `cid:` image | R7 | embedded as a data URI; renders offline | MA-19 |
-| S6 Attachment/inline content not present locally | R1 | skipped from the zip but recorded in the report | MA-20, MA-21 |
+| S6 Attachment/inline content not present locally | R1, R2 | skipped from the zip; recorded in the manifest (fillable or terminal) and the regenerated report; a fillable gap is re-examined by incremental runs and filled once the content is there; a legacy manifest migrates to "unknown" and is re-examined once | MA-20, MA-21, MA-66, MA-67, MA-68, MA-70, MA-71 |
 | S7 Malformed or non-MIME message | R10, R1 | fallback-parsed or skipped; run continues | MA-13, MA-31 |
 | S8 Search box contains FTS operators/quotes | R8 | treated as literal terms; no crash, no injection | MA-23, MA-32 |
 | S9 Operator omits `-out`, gives a bad `-mode`, or serves a missing index | R12 | typed non-zero refusal naming the problem; no panic | MA-08, MA-33, MA-34 |
@@ -200,6 +203,11 @@ Tiers: **U** unit property (every commit) · **S** structural whole-tree walk
 | MA-82 | U | `serve` refuses a path whose resolved location is outside the archive root (symlink escape → 404) and does not list directories lacking an index.html | R19, R4, S22 |
 | MA-83 | U | `serve` sends the archive CSP + nosniff for files, and a `script-src 'self'` CSP + nosniff + frame-ancestors none for the UI and API; the UI carries no inline script | R19, R4, S22 |
 | MA-84 | U | loopback-address classification: 127.0.0.1/::1/localhost are loopback; an empty host (all interfaces), 0.0.0.0, and LAN addresses are not | R19, S22 |
+| MA-66 | U | a capture missing content is recorded fillable naming the item; an incremental re-run re-examines it (ignoring -since), rewrites nothing while unchanged, fills it once present (subset promotion: any recovered item promotes), then never re-examines; subject/date only on records with issues | R1, R2, S6 |
+| MA-67 | U | a missing body is a fillable "body" gap that fills when the body appears; body-without-attachments is complete; a SourceComplete exporter records gaps as terminal and never re-examines them | R1, S6 |
+| MA-68 | U | the report is regenerated from the manifest each run: a gap found earlier is still listed by a later run, disappears when filled (empty report removed); a legacy archive's earlier report is preserved as attachments-report-legacy.tsv | R1, S6 |
+| MA-70 | U | a version-1 manifest (incl. one an older binary rewrote) migrates every record to the "unknown" sentinel and counts them; Save writes v2; reload keeps the sentinel; a sentinel record is re-captured once by the next incremental run | R1, R5, S6 |
+| MA-71 | U | a Graph message captured with no body is recorded terminal and reported; an incremental re-run re-downloads nothing and retries nothing (R17 unchanged); a legacy sentinel on a Graph archive is resolved without a download | R17, R1, R2, S6 |
 | MA-69 | U | html/zip are written to unique temp files and renamed into place: an attachment stream error leaves no partial or final zip and is recorded as an issue; SweepOrphans removes `.mailarchive-*.tmp` older than the run start and `-attachments.zip` files with no sibling html, and Run/reindex call it | R5, R1, S2 |
 | MA-94 | U | a corrupt/truncated manifest is refused naming the file and the remedy (restore or delete to re-export), never a crash; Save fsyncs its temp before the atomic rename | R5, R12, S2 |
 
