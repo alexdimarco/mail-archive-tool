@@ -102,6 +102,43 @@ func TestExportListPreviewsWithoutCreating(t *testing.T) {
 	}
 }
 
+// covers: MA-105, R12
+// -list resolves the human-readable store label beside an opaque path: an
+// Evolution IMAP cache directory is named by an account-UID hash on disk, so the
+// preview shows the account's DisplayName (read from the small .source keyfile,
+// not by opening the mail store) rather than the bare hash (friction #21). A
+// path with no derivable friendly label yields none.
+func TestListResolvesEvolutionLabel(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir on Windows
+
+	const uid = "3c07b233abcdef0123456789"
+	cacheDir := filepath.Join(home, ".cache", "evolution", "mail", uid)
+	cur := filepath.Join(cacheDir, "folders", "INBOX", "cur")
+	if err := os.MkdirAll(cur, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	msg := "From: a@example.com\r\nSubject: hi\r\nMessage-ID: <a@x>\r\n\r\nbody\r\n"
+	if err := os.WriteFile(filepath.Join(cur, "1"), []byte(msg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	srcDir := filepath.Join(home, ".config", "evolution", "sources")
+	if err := os.MkdirAll(srcDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, uid+".source"), []byte("[Data Source]\nDisplayName=Work IMAP\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := storeLabel(cacheDir); got != "Work IMAP" {
+		t.Errorf("Evolution cache label = %q, want %q (the account name, not the hash %q)", got, "Work IMAP", filepath.Base(cacheDir))
+	}
+	if got := storeLabel(filepath.Join(home, "no-such-dir")); got != "" {
+		t.Errorf("storeLabel for a missing path = %q, want empty", got)
+	}
+}
+
 // covers: MA-110, R5
 // reclaimPSTDir removes the temporary -outlook PST scratch directory only after
 // a clean run, reporting the bytes reclaimed; a failed (or cancelled) run leaves

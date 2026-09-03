@@ -187,7 +187,10 @@ func TestUpgradeMigratesAndReExportsNothing(t *testing.T) {
 // covers: MA-134, R5, S30
 // The one-time upgrade is visible in the run log: the manifest re-scope count
 // and the index repair line both appear, so the operator sees the cost and can
-// tie the first-run duration to it.
+// tie the first-run duration to it. The manifest re-scope (cause) is logged
+// BEFORE the index-key migration (effect) — matching reindex and the README
+// sample (friction #17) — and the index line carries the "(one-time upgrade)"
+// reassurance.
 func TestUpgradeIsLogged(t *testing.T) {
 	out, _, src := buildThenDowngrade(t)
 	var buf bytes.Buffer
@@ -195,10 +198,18 @@ func TestUpgradeIsLogged(t *testing.T) {
 		t.Fatal(err)
 	}
 	logs := buf.String()
-	if !strings.Contains(logs, "re-scoped 2 manifest entries by store") {
+	reScope := strings.Index(logs, "re-scoped 2 manifest entries by store")
+	indexKeys := strings.Index(logs, "migrating index keys (2 rows)")
+	if reScope < 0 {
 		t.Errorf("run log missing the manifest re-scope line:\n%s", logs)
 	}
-	if !strings.Contains(logs, "migrating index keys (2 rows)") {
+	if indexKeys < 0 {
 		t.Errorf("run log missing the index migration line:\n%s", logs)
+	}
+	if reScope >= 0 && indexKeys >= 0 && reScope > indexKeys {
+		t.Errorf("cause/effect log order reversed: index-key migration is logged before the manifest re-scope:\n%s", logs)
+	}
+	if !strings.Contains(logs, "migrating index keys (2 rows) (one-time upgrade)") {
+		t.Errorf("index migration line lacks the \"(one-time upgrade)\" reassurance:\n%s", logs)
 	}
 }

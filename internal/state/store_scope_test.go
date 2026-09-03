@@ -125,8 +125,10 @@ func TestSentinelFiresForVersion1Only(t *testing.T) {
 // upgraded archive — is repaired by content on the next load: every one-NUL key
 // is re-scoped from its record's own path, every two-NUL key is left exactly as
 // it is (never double-prefixed into store\x00store\x00…), and when a re-scoped
-// key collides with a surviving v3 key the later record wins so exactly one v3
-// entry remains per message (R8). (The index half is proven in the index
+// key collides with a surviving v3 key the PRE-EXISTING survivor is kept (its
+// canonical path) and the legacy entry dropped, so exactly one v3 entry remains
+// per message and verify keeps pointing at the canonical file rather than the
+// excursion's duplicate (Friction #5/R8). (The index half is proven in the index
 // package.)
 func TestMixedKeysRepairedWithoutDoublePrefix(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "mixed.json")
@@ -160,7 +162,7 @@ func TestMixedKeysRepairedWithoutDoublePrefix(t *testing.T) {
 	if r, ok := m.Get(Key("s", "Sent", "mid:<b@x>")); !ok || r.Path != "s/Sent/b.html" {
 		t.Errorf("re-scoped v2 entry missing: ok=%v rec=%+v", ok, r)
 	}
-	if r, ok := m.Get(Key("s", "Draft", "mid:<c@x>")); !ok || r.Path != "s/Draft/c-old.html" {
-		t.Errorf("collision did not resolve to the re-scoped record: ok=%v rec=%+v", ok, r)
+	if r, ok := m.Get(Key("s", "Draft", "mid:<c@x>")); !ok || r.Path != "s/Draft/c-new.html" {
+		t.Errorf("collision must keep the pre-existing v3 survivor's canonical path, not the re-scoped legacy duplicate (Friction #5): ok=%v rec=%+v", ok, r)
 	}
 }

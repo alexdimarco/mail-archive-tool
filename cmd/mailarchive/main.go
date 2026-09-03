@@ -42,6 +42,7 @@ import (
 	"mail-archive-tool/internal/runlog"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/server"
+	"mail-archive-tool/internal/source"
 	"mail-archive-tool/internal/thunderbird"
 	"mail-archive-tool/internal/util"
 )
@@ -112,7 +113,7 @@ func runExport(args []string) error {
 	inputs := append(o.inputs, fs.Args()...)
 
 	if *o.out == "" {
-		return errors.New("-out is required (or use a subcommand: serve, search, reindex, schedule, graph, status)")
+		return errors.New("-out is required (or use a subcommand: serve, search, reindex, schedule, graph, status, verify)")
 	}
 	if *o.unattended {
 		if err := requireExistingOut(*o.out); err != nil {
@@ -220,7 +221,14 @@ func runExport(args []string) error {
 	}
 
 	result, runErr := app.Run(ctx, opts, logger, nil)
-	printSummary(logger, result, *doIndex, *keepRaw, *out)
+	// The "Done. …" summary (and its -raw/verification lines) belongs to a run
+	// that reached completion — a clean finish or a saved interrupt. A run that
+	// FAILED (refused before the lock, or aborted mid-walk) prints only the
+	// "FAILED:" line, never a misleading "Done. exported=0 … manifest=0" first
+	// (friction #7b/#22).
+	if runErr == nil || errors.Is(runErr, context.Canceled) {
+		printSummary(logger, result, *doIndex, *keepRaw, *out)
+	}
 
 	// The -outlook COM path builds a full, mailbox-sized PST copy under
 	// <out>/_outlook-pst purely to feed the pipeline. On a clean run reclaim it
@@ -279,9 +287,34 @@ func listStores(files []string) error {
 		return nil
 	}
 	for _, f := range files {
-		fmt.Printf("%8s  %s\n", thunderbird.HumanBytes(dirSize(f)), f)
+		line := fmt.Sprintf("%8s  %s", thunderbird.HumanBytes(dirSize(f)), f)
+		// Show the friendly store label beside an opaque path when discovery can
+		// derive one — most usefully an Evolution IMAP cache dir, whose on-disk
+		// name is an account-UID hash, not the account it belongs to (friction #21).
+		if label := storeLabel(f); label != "" && label != filepath.Base(f) {
+			line += "  (" + label + ")"
+		}
+		fmt.Println(line)
 	}
 	return nil
+}
+
+// storeLabel returns the human-readable store name a discovered directory source
+// would archive under (Evolution resolves an IMAP cache UID to its account name),
+// or "" when the path is not a directory store or cannot be opened. It is
+// best-effort and side-effect-free: it opens only directory sources (never a
+// heavyweight .pst/.ost parse) and creates nothing, so -list still writes nothing.
+func storeLabel(path string) string {
+	fi, err := os.Stat(path)
+	if err != nil || !fi.IsDir() {
+		return ""
+	}
+	s, err := source.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer s.Close()
+	return s.StoreName()
 }
 
 // newRunLogger returns the operator logger: stderr by default, or the

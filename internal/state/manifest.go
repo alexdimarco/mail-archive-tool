@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -137,6 +138,12 @@ type Manifest struct {
 	// Load (v2 keys, holding one NUL). Zero when nothing was re-scoped.
 	Rekeyed int `json:"-"`
 
+	// StoresMigrated counts the store ids canonicalized (or dropped, or collapsed
+	// onto another token) by this Load — a one-time upgrade of an archive keyed by
+	// the raw input spelling, or a defensive drop of a tampered token. Zero when
+	// the map was already canonical.
+	StoresMigrated int `json:"-"`
+
 	// byPath is a lazily built reverse index (export path → key) used to
 	// detect a file-stem collision between two different keys (R4).
 	byPath map[string]string
@@ -149,6 +156,109 @@ type Manifest struct {
 // it has already written.
 func Key(token, folderPath, identity string) string {
 	return token + keySeparator + folderPath + keySeparator + identity
+}
+
+// Qualify appends a content fingerprint to a manifest key with the NUL
+// separator, filing a DIFFERENT message that reused an already-archived
+// Message-ID under its own key. NUL cannot occur in any source-derived key
+// component (Message-ID parsing yields only vchar/multibyte; the sha fallback is
+// hex), so a qualified key can never coincide with any plaintext identity-derived
+// key — a crafted Message-ID (even one literally containing "#"+fingerprint) can
+// never pre-occupy the slot and make a distinct message look already-seen
+// (AGG2-1/R1/R3). A qualified key holds three NUL separators, so MigrateKey —
+// which re-scopes only one-NUL v2 keys — never disturbs it.
+func Qualify(key, fp string) string {
+	return key + keySeparator + fp
+}
+
+// SafeToken reports whether tok is a single, safe on-disk path segment: it names
+// exactly one directory under the output root and can never traverse out of it.
+// A token read back from a manifest is untrusted (any writer of the archive
+// directory can tamper with the persisted map), so both Load and the exporter
+// validate it before it becomes a directory name (INS2-1/R4).
+func SafeToken(tok string) bool {
+	if tok == "" || tok == "." || tok == ".." {
+		return false
+	}
+	if strings.ContainsRune(tok, '/') || strings.ContainsRune(tok, filepath.Separator) {
+		return false
+	}
+	if tok != filepath.Base(tok) {
+		return false
+	}
+	for _, r := range tok {
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
+// PathSourceID is the store id for a local file/directory source, canonicalized
+// so different spellings of one physical source — relative vs absolute, a
+// symlinked component, a trailing separator, or letter case on a case-insensitive
+// volume — resolve to ONE store token instead of minting a duplicate tree
+// (INT-CC-1/R2). The absolute path is symlink-resolved when it can be and cleaned
+// otherwise, and case-folded on the case-insensitive platforms (Windows, macOS).
+// The "path:" prefix keeps a filesystem id from ever colliding with a Graph
+// mailbox id. Callers keep reading the source through the original path; only the
+// token seed is canonicalized.
+func PathSourceID(p string) string {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		abs = p
+	}
+	if resolved, rerr := filepath.EvalSymlinks(abs); rerr == nil {
+		abs = resolved
+	} else {
+		abs = filepath.Clean(abs)
+	}
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		abs = strings.ToLower(abs)
+	}
+	return "path:" + abs
+}
+
+// MailboxSourceID is the store id for a Graph mailbox, lower-cased and trimmed
+// because Microsoft treats the UPN case-insensitively — so a re-run whose
+// -mailbox differs only in case still hits the same token and re-downloads
+// nothing (INT-CC-1/R17).
+func MailboxSourceID(addr string) string {
+	return "mailbox:" + strings.ToLower(strings.TrimSpace(addr))
+}
+
+// migrateStoreID rewrites a legacy (unprefixed) store id to its canonical form.
+// An unprefixed id that looks like an email address (contains '@' and is not an
+// absolute path) is a Graph mailbox; anything else is a filesystem path. An id
+// already carrying a "path:"/"mailbox:" prefix is returned unchanged, so the
+// migration is idempotent.
+func migrateStoreID(old string) string {
+	if strings.HasPrefix(old, "path:") || strings.HasPrefix(old, "mailbox:") {
+		return old
+	}
+	if strings.Contains(old, "@") && !filepath.IsAbs(old) {
+		return MailboxSourceID(old)
+	}
+	return PathSourceID(old)
+}
+
+// preferPlainToken picks which store token to keep when two source spellings
+// collapse to one id: the plain (hashless) segment if exactly one is plain, else
+// the lexicographically smaller — a stable, order-independent choice. The stale
+// duplicate tree the other token named on disk is left as-is (it cannot be
+// silently merged); future runs write only to the kept token.
+func preferPlainToken(a, b string) string {
+	aPlain, bPlain := !strings.Contains(a, "~"), !strings.Contains(b, "~")
+	switch {
+	case aPlain && !bPlain:
+		return a
+	case bPlain && !aPlain:
+		return b
+	case a <= b:
+		return a
+	default:
+		return b
+	}
 }
 
 // Token returns the store token for sourceID, assigning one the first time the
@@ -166,9 +276,14 @@ func (m *Manifest) Token(sourceID, store string) string {
 	if m.Stores == nil {
 		m.Stores = map[string]string{}
 	}
-	if tok, ok := m.Stores[sourceID]; ok {
+	if tok, ok := m.Stores[sourceID]; ok && SafeToken(tok) {
 		return tok
 	}
+	// A missing id assigns a fresh token below; a stored token that is not a
+	// single safe segment (a tampered manifest) is DISCARDED and re-derived here
+	// rather than trusted, so a write can never be redirected outside the output
+	// root (INS2-1/R4). Re-derivation keeps a corrupted archive usable while
+	// guaranteeing containment.
 	seg := util.SanitizeSegment(store)
 	if !m.segmentOwnedLocked(seg) {
 		m.Stores[sourceID] = seg
@@ -302,12 +417,52 @@ func Load(path string) (*Manifest, error) {
 		}
 		for _, rk := range rekeys {
 			delete(m.Entries, rk.oldKey)
-			// A collision on the new key is an old-binary excursion healing:
-			// the re-scoped (later) record replaces the survivor, so exactly one
-			// v3 key remains per message (R8).
-			m.Entries[rk.newKey] = rk.rec
+			// A collision on the new key is an old-binary excursion healing. Keep
+			// the record ALREADY at the v3 key — the store-qualified survivor an
+			// upgraded binary wrote at the canonical path — and drop the legacy v2
+			// entry, so verify keeps pointing at the canonical file instead of the
+			// excursion's duplicate copy (Friction #5/R8). When the v3 key is free,
+			// the re-scoped record takes it.
+			if _, exists := m.Entries[rk.newKey]; !exists {
+				m.Entries[rk.newKey] = rk.rec
+			}
 			m.Rekeyed++
 		}
+	}
+	// Canonicalize/validate the store id map (INT-CC-1/INS2-1). Existing archives
+	// keyed each store by the raw -input spelling (or the raw mailbox), so a run
+	// computing a canonical id would miss the entry and re-archive into a
+	// duplicate tree; rewrite each id to its canonical form (path:/mailbox:) so a
+	// post-upgrade run finds the existing token. Two spellings that resolve to one
+	// id collapse onto the token that owns the plain segment, and a token that is
+	// not a single safe path segment (tampered or corrupt) is dropped so Token
+	// re-derives a fresh, in-root one.
+	if len(m.Stores) > 0 {
+		olds := make([]string, 0, len(m.Stores))
+		for k := range m.Stores {
+			olds = append(olds, k)
+		}
+		sort.Strings(olds) // deterministic collision resolution
+		migrated := make(map[string]string, len(m.Stores))
+		for _, old := range olds {
+			tok := m.Stores[old]
+			if !SafeToken(tok) {
+				m.StoresMigrated++ // dropped; Token re-derives a fresh one on next use
+				continue
+			}
+			id := migrateStoreID(old)
+			changed := id != old
+			if existing, ok := migrated[id]; ok {
+				migrated[id] = preferPlainToken(existing, tok)
+				changed = true
+			} else {
+				migrated[id] = tok
+			}
+			if changed {
+				m.StoresMigrated++
+			}
+		}
+		m.Stores = migrated
 	}
 	if m.Version < manifestVersion {
 		m.Version = manifestVersion

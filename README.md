@@ -440,6 +440,19 @@ excursion by content on its next run (the old-shape entries are re-scoped and
 de-duplicated), but the leftover duplicate files remain on disk — so the safe
 rule is to upgrade every machine that writes the same archive.
 
+The re-scope re-exports nothing, so it does not backfill fixity: the legacy
+bytes are recorded, not re-hashed, so they cannot be attested as pristine. A
+freshly-upgraded archive therefore shows `Fixity: 0 of N records carry digests`,
+and `verify` reports NOT-ATTESTED, until the next full re-export or an explicit
+`mailarchive verify -record` baselines the current bytes. This is expected, not
+data loss — the files themselves are untouched.
+
+If an older `mailarchive` (or a newer-format archive opened by an older build)
+has already touched a shared `-out`, trust the message the export or `verify`
+prints — it names the format version and the upgrade remedy ("written by a newer
+mailarchive (format version N)…"). Upgrade every binary that writes the archive
+before running it again.
+
 ### `schedule` — recurring backups
 
 `schedule` writes a recurring-backup entry for the host OS's scheduler — **cron**

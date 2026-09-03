@@ -55,9 +55,10 @@ func runCLI(args ...string) (int, string) {
 // Invalid operator input is refused with a typed non-zero exit and a message
 // that names the problem — never a panic/stack trace.
 func TestCLIRefusals(t *testing.T) {
-	// Missing required -out.
+	// Missing required -out: the hint lists the subcommands, verify included
+	// (friction #8a), so an operator who typed a bare `verify -out …` learns it.
 	code, stderr := runCLI("-input", "nope")
-	assure.Refused(t, code, stderr, assure.Code(1), assure.Names("-out"))
+	assure.Refused(t, code, stderr, assure.Code(1), assure.Names("-out", "verify"))
 
 	// Bad -mode value.
 	code, stderr = runCLI("-out", t.TempDir(), "-mode", "sideways")
@@ -180,6 +181,32 @@ func TestRefusesLockedArchive(t *testing.T) {
 	if code, stderr := runCLI("-input", "../../testdata/support.pst", "-out", out); code != 0 {
 		t.Fatalf("export after release failed (%d): %s", code, stderr)
 	}
+}
+
+// covers: MA-153, R12, S25
+// A run that FAILS prints ONLY the failure, never a misleading "Done. exported=0
+// … manifest=0" summary first (friction #7b/#22): refused inside app.Run because
+// the archive is in use, it emits "FAILED" and "in use" and no "Done." line, with
+// exit 1. Positive twin first: a healthy export prints the "Done." summary.
+func TestNoDoneSummaryOnFailure(t *testing.T) {
+	// Positive twin: a clean run prints the Done summary.
+	okOut := t.TempDir()
+	if code, stderr := runCLI("-input", "../../testdata/support.pst", "-out", okOut); code != 0 {
+		t.Fatalf("healthy export failed (%d): %s", code, stderr)
+	} else if !strings.Contains(stderr, "Done.") {
+		t.Errorf("a successful run must print the Done summary; got:\n%s", stderr)
+	}
+
+	// Failure: a held lock refuses the run inside app.Run; only the failure prints.
+	out := t.TempDir()
+	held, err := lockfile.Acquire(filepath.Join(out, lockfile.Name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Release()
+	code, stderr := runCLI("-input", "../../testdata/support.pst", "-out", out)
+	assure.Refused(t, code, stderr, assure.Code(1), assure.Names("in use", "FAILED"),
+		assure.Forbid("Done."))
 }
 
 // covers: MA-72, R14, R12, S28

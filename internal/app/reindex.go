@@ -60,6 +60,10 @@ func Reindex(out string, logger *log.Logger) (kept, pruned int, err error) {
 	// A first open after upgrade re-scopes the manifest and index once (F2);
 	// reindex is a valid place for it (it already opens both). Driven by the
 	// manifest's re-key signal so an old-binary excursion is repaired here too.
+	if manifest.StoresMigrated > 0 {
+		logger.Printf("canonicalized %d store path%s (one-time upgrade)",
+			manifest.StoresMigrated, plural(manifest.StoresMigrated, "", "s"))
+	}
 	if manifest.Rekeyed > 0 {
 		logger.Printf("re-scoped %d manifest entr%s by store (one-time upgrade; cost scales with archive size)",
 			manifest.Rekeyed, plural(manifest.Rekeyed, "y", "ies"))
