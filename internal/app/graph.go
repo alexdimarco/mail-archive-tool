@@ -13,6 +13,7 @@ import (
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/graph"
 	"mail-archive-tool/internal/index"
+	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/model"
 	"mail-archive-tool/internal/pages"
 	"mail-archive-tool/internal/source"
@@ -46,6 +47,11 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	if err := os.MkdirAll(opts.Out, 0o755); err != nil {
 		return Result{}, fmt.Errorf("create output dir: %w", err)
 	}
+	lock, err := lockfile.Acquire(filepath.Join(opts.Out, lockfile.Name))
+	if err != nil {
+		return Result{}, err
+	}
+	defer lock.Release()
 
 	mpath := opts.Manifest
 	if mpath == "" {
@@ -93,10 +99,30 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		TokenURL:     g.TokenURL,
 	})
 
+	every := opts.CheckpointEvery
+	if every <= 0 {
+		every = defaultCheckpointEvery
+	}
+	lastCheckpoint := 0
+	checkpoint := func() {
+		if exp.Stats.Exported-lastCheckpoint < every {
+			return
+		}
+		lastCheckpoint = exp.Stats.Exported
+		if saveErr := manifest.Save(); saveErr != nil {
+			logger.Printf("warning: could not checkpoint manifest: %v", saveErr)
+		}
+		if idx != nil {
+			if flushErr := idx.Flush(); flushErr != nil {
+				logger.Printf("warning: index checkpoint: %v", flushErr)
+			}
+		}
+	}
+
 	result := Result{Files: len(g.Mailboxes)}
 	var failures int
 	for _, mbx := range g.Mailboxes {
-		runErr := runGraphMailbox(ctx, client, exp, manifest, opts.Mode, mbx, logger)
+		runErr := runGraphMailbox(ctx, client, exp, manifest, opts.Mode, mbx, logger, checkpoint)
 
 		if saveErr := manifest.Save(); saveErr != nil {
 			logger.Printf("warning: could not save manifest: %v", saveErr)
@@ -129,7 +155,7 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 }
 
 // runGraphMailbox walks one mailbox's folders and messages, exporting each.
-func runGraphMailbox(ctx context.Context, client *graph.Client, exp *export.Exporter, manifest *state.Manifest, mode export.Mode, mailbox string, logger *log.Logger) error {
+func runGraphMailbox(ctx context.Context, client *graph.Client, exp *export.Exporter, manifest *state.Manifest, mode export.Mode, mailbox string, logger *log.Logger, checkpoint func()) error {
 	logger.Printf("Reading mailbox %s via Microsoft Graph", mailbox)
 	folders, err := client.Folders(ctx, mailbox)
 	if err != nil {
@@ -182,6 +208,7 @@ func runGraphMailbox(ctx context.Context, client *graph.Client, exp *export.Expo
 					}
 				}()
 				_, exportErr := exp.Export(mailbox, f.Path, m)
+				checkpoint()
 				return exportErr
 			}()
 		})

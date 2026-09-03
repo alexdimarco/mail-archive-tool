@@ -16,6 +16,7 @@ import (
 
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/index"
+	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/model"
 	"mail-archive-tool/internal/pages"
 	"mail-archive-tool/internal/source"
@@ -33,6 +34,11 @@ type Options struct {
 	Manifest  string      // manifest path override (default <Out>/.mailarchive-manifest.json)
 	Index     bool        // build/update the search index (search.db)
 	Pages     bool        // generate browsable folder index.html pages
+
+	// CheckpointEvery saves the manifest and flushes the index every N
+	// exported messages inside a store walk (R5: a hard crash keeps the
+	// progress made). Zero means the default (1000).
+	CheckpointEvery int
 }
 
 // Result summarizes a completed (or cancelled) run.
@@ -87,6 +93,13 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	if err := os.MkdirAll(opts.Out, 0o755); err != nil {
 		return Result{}, fmt.Errorf("create output dir: %w", err)
 	}
+	// One run per archive at a time (R5): a scheduled run overlapping a manual
+	// one would otherwise interleave manifest/index/file writes.
+	lock, err := lockfile.Acquire(filepath.Join(opts.Out, lockfile.Name))
+	if err != nil {
+		return Result{}, err
+	}
+	defer lock.Release()
 	// What a crashed earlier run may have left behind (R5): stale temps and
 	// orphan zips. Only files older than this run's start are touched.
 	if n := export.SweepOrphans(opts.Out, time.Now(), logger); n > 0 {
@@ -132,10 +145,38 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 			manifest.Migrated, plural(manifest.Migrated, "y", "ies"))
 	}
 
+	// Checkpoint inside a store walk so a hard crash keeps the progress made
+	// (R5) — not only at store boundaries, where a single huge .pst would
+	// otherwise leave hours of work unrecorded.
+	every := opts.CheckpointEvery
+	if every <= 0 {
+		every = defaultCheckpointEvery
+	}
+	lastCheckpoint := 0
+	checkpoint := func(stats export.Stats) {
+		if stats.Exported-lastCheckpoint < every {
+			return
+		}
+		lastCheckpoint = stats.Exported
+		if saveErr := manifest.Save(); saveErr != nil {
+			logger.Printf("warning: could not checkpoint manifest: %v", saveErr)
+		}
+		if idx != nil {
+			if flushErr := idx.Flush(); flushErr != nil {
+				logger.Printf("warning: index checkpoint: %v", flushErr)
+			}
+		}
+	}
+
 	result := Result{Files: len(files)}
 	var failures int
 	for _, f := range files {
-		runErr := runFile(ctx, exp, f, opts.CopyFirst, logger, onProgress)
+		runErr := runFile(ctx, exp, f, opts.CopyFirst, logger, func(stats export.Stats) {
+			checkpoint(stats)
+			if onProgress != nil {
+				onProgress(stats)
+			}
+		})
 
 		if saveErr := manifest.Save(); saveErr != nil {
 			logger.Printf("warning: could not save manifest: %v", saveErr)
@@ -169,6 +210,9 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	}
 	return result, nil
 }
+
+// defaultCheckpointEvery aligns with the index's own batch size.
+const defaultCheckpointEvery = 1000
 
 func plural(n int, one, many string) string {
 	if n == 1 {

@@ -119,12 +119,20 @@ an invariant is the thing that is wrong.
 | S18 A corrupt/truncated `.pst`/`.ost` (orphaned stub, bad OST variant) that panics go-pst | R10 | `Open` fails with a clean error; no panic escapes; the run continues and the no-console GUI never exits silently | MA-57 |
 | S19 A live Exchange/IMAP `.ost` go-pst can't read; operator uses `-outlook` / the GUI Outlook-app option | R16 | on Windows, Outlook writes a clean `.pst` per account that archives normally; off Windows it refuses legibly | MA-58, MA-59, MA-60 |
 | S20 Server-side archive of a (large) M365 mailbox via an app-only Graph grant | R17, R2, R9 | full first capture; incremental re-run adds nothing and re-downloads nothing; read-only | MA-61, MA-62, MA-63, MA-64 |
+| S23 Two distinct messages share one Message-ID in one folder (a bug or a reused id) | R3, R1 | both exported and recorded (the second under a content-qualified key); an incremental re-run exports zero; names stay stable across full re-runs in any order | MA-86 |
+| S24 Two messages' file stems collide (32-bit hash), or a message is re-exported under a new name | R4, R6, R13 | the second stem is lengthened deterministically from its key, never overwriting; a renamed message's old html/zip are removed | MA-87 |
+| S25 A scheduled run overlaps a manual run on the same archive | R5, R12 | the second run refuses naming the lock file and the holder; nothing is written; the lock vanishes with its process | MA-85 |
 | S21 A hostile email (script, tracking pixel, remote CSS, `<base>`, meta refresh) is archived and opened from disk | R19, R7 | renders inertly: policy meta precedes the mail's markup; refresh neutralized; content preserved | MA-80 |
 | S22 `serve` faces a hostile archive or network: script in a body/snippet, a symlink inside the archive, a non-loopback bind | R19, R4, R8 | UI/API/file responses carry a strict policy; snippets are escaped; symlinked paths are 404; non-loopback bind warns | MA-81, MA-82, MA-83, MA-84 |
 
 Acknowledged limits (not defects): very large attachments are buffered whole in
-memory (bounded by the largest single attachment, not the mailbox) — recorded
-here so a finding against it is a design conversation, not a silent gap.
+memory (bounded by the largest single attachment, not the mailbox); the Graph
+incremental fast-path dedups by Internet-Message-ID alone (a second, different
+message reusing an already-archived id in the same folder is skipped without a
+download — the price of R17's no-re-download guarantee); every manifest record
+carries a 16-hex content fingerprint (~16% growth) so that Message-ID reuse is
+detected for local sources. Recorded here so a finding against them is a design
+conversation, not a silent gap.
 
 ## 4. Test specs
 
@@ -208,6 +216,10 @@ Tiers: **U** unit property (every commit) · **S** structural whole-tree walk
 | MA-68 | U | the report is regenerated from the manifest each run: a gap found earlier is still listed by a later run, disappears when filled (empty report removed); a legacy archive's earlier report is preserved as attachments-report-legacy.tsv | R1, S6 |
 | MA-70 | U | a version-1 manifest (incl. one an older binary rewrote) migrates every record to the "unknown" sentinel and counts them; Save writes v2; reload keeps the sentinel; a sentinel record is re-captured once by the next incremental run | R1, R5, S6 |
 | MA-71 | U | a Graph message captured with no body is recorded terminal and reported; an incremental re-run re-downloads nothing and retries nothing (R17 unchanged); a legacy sentinel on a Graph archive is resolved without a download | R17, R1, R2, S6 |
+| MA-85 | U | an exclusive lock on <out>/.mailarchive.lock is held for the whole run: a second Acquire fails naming the path and holder; Release frees it; the CLI refuses a locked archive with a typed non-zero naming the lock (no manifest written) | R5, R12, S25 |
+| MA-86 | U | two messages with the same Message-ID but different content in one folder are both exported and recorded; incremental re-run exports zero; a full re-run in reversed order yields the same file names | R3, R1, S23 |
+| MA-87 | U | a file-stem collision between two keys lengthens the second stem from its own key (deterministic, no overwrite); re-exporting a message under a new name removes its previous html/zip | R4, R6, R13, S24 |
+| MA-88 | U | the manifest and index are checkpointed every CheckpointEvery messages inside a store walk, so a hard crash keeps the progress made | R5, S2 |
 | MA-69 | U | html/zip are written to unique temp files and renamed into place: an attachment stream error leaves no partial or final zip and is recorded as an issue; SweepOrphans removes `.mailarchive-*.tmp` older than the run start and `-attachments.zip` files with no sibling html, and Run/reindex call it | R5, R1, S2 |
 | MA-94 | U | a corrupt/truncated manifest is refused naming the file and the remedy (restore or delete to re-export), never a crash; Save fsyncs its temp before the atomic rename | R5, R12, S2 |
 

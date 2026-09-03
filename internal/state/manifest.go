@@ -50,6 +50,11 @@ type Record struct {
 	Unresolved []string `json:"unresolved,omitempty"`
 	Subject    string   `json:"subject,omitempty"`
 	Date       string   `json:"date,omitempty"` // RFC 3339 UTC
+
+	// Fingerprint (16 hex) of the message content, so a different message
+	// reusing this record's Message-ID is recognized (R3). Empty on legacy
+	// records.
+	Fingerprint string `json:"fp,omitempty"`
 }
 
 // Fillable reports whether an incremental run should re-examine the record.
@@ -79,6 +84,10 @@ type Manifest struct {
 	// Migrated counts the records converted to the unknown sentinel by this
 	// Load (a version-1 file). Zero for a version-2 file.
 	Migrated int `json:"-"`
+
+	// byPath is a lazily built reverse index (export path → key) used to
+	// detect a file-stem collision between two different keys (R4).
+	byPath map[string]string
 }
 
 // Key builds the manifest key for a message. Scoping the key by folder means
@@ -146,7 +155,33 @@ func (m *Manifest) Get(key string) (Record, bool) {
 func (m *Manifest) Add(key string, r Record) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.byPath != nil {
+		if old, ok := m.Entries[key]; ok && old.Path != r.Path {
+			delete(m.byPath, old.Path)
+		}
+		if r.Path != "" {
+			m.byPath[r.Path] = key
+		}
+	}
 	m.Entries[key] = r
+}
+
+// KeyForPath returns the key whose record owns the export path, if any. The
+// reverse index is built on first use (rare: only when a stem already exists
+// on disk for a key that has no record at that path).
+func (m *Manifest) KeyForPath(path string) (string, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.byPath == nil {
+		m.byPath = make(map[string]string, len(m.Entries))
+		for k, r := range m.Entries {
+			if r.Path != "" {
+				m.byPath[r.Path] = k
+			}
+		}
+	}
+	k, ok := m.byPath[path]
+	return k, ok
 }
 
 // Resolve clears the unknown sentinel from key without touching anything else:
@@ -213,6 +248,11 @@ func (m *Manifest) Counts() (fillable, terminal, unknown int) {
 func (m *Manifest) Delete(key string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.byPath != nil {
+		if old, ok := m.Entries[key]; ok {
+			delete(m.byPath, old.Path)
+		}
+	}
 	delete(m.Entries, key)
 }
 

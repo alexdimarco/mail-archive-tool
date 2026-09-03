@@ -64,10 +64,20 @@ func (m *Message) Identity() string {
 	if id := strings.TrimSpace(m.InternetMessageID); id != "" {
 		return "mid:" + id
 	}
-	// The body is part of the identity: without it, two distinct messages that
-	// share subject/sender/recipient/second/attachment-count (e.g. two drafts,
-	// or generated mail with no Message-ID) would hash equal and the second
-	// would be dropped as a duplicate — silent data loss (R1/R3).
+	return "sha:" + m.contentHash()
+}
+
+// Fingerprint is a short (16 hex) digest of the message content, recorded on
+// every manifest entry so that a DIFFERENT message reusing an already-archived
+// Message-ID in the same folder is recognized and kept, not dropped (R3/R1).
+func (m *Message) Fingerprint() string { return m.contentHash()[:16] }
+
+// contentHash digests the fields that make a message itself. The body is part
+// of it: without it, two distinct messages that share subject/sender/
+// recipient/second/attachment-count (two drafts, generated mail with no
+// Message-ID) would hash equal and the second would be dropped as a duplicate —
+// silent data loss (R1/R3).
+func (m *Message) contentHash() string {
 	h := sha256.New()
 	fmt.Fprintf(h, "%s\x00%s\x00%s\x00%d\x00%d\x00",
 		m.Subject, m.SenderEmail, m.To, m.Date().UnixNano(), len(m.Attachments))
@@ -76,5 +86,5 @@ func (m *Message) Identity() string {
 	h.Write([]byte(m.PlainBody))
 	h.Write([]byte{0})
 	h.Write([]byte(m.RTFBody))
-	return "sha:" + hex.EncodeToString(h.Sum(nil))
+	return hex.EncodeToString(h.Sum(nil))
 }

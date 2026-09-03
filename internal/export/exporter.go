@@ -95,21 +95,33 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	date := m.Date()
 	folderKey := strings.Join(folderPath, "/")
 	key := state.Key(folderKey, m.Identity())
+	fp := m.Fingerprint()
+
+	// A DIFFERENT message reusing an already-archived Message-ID in this folder
+	// is a distinct message, not a duplicate: it lives under a content-qualified
+	// key. "Different" means the COMPLETE record's fingerprint disagrees — a
+	// fillable record is expected to change as its content arrives, so there a
+	// mismatch is the fill, not a collision. The record's fingerprint anchors
+	// which message owns the plain key, so names stay stable whatever order a
+	// later run walks them in (R3/R1).
+	prev, seen := e.Manifest.Get(key)
+	if seen && prev.Complete() && prev.Fingerprint != "" && prev.Fingerprint != fp {
+		key += "#" + fp
+		prev, seen = e.Manifest.Get(key)
+	}
 
 	retry := false
-	if e.Mode == Incremental {
-		if rec, seen := e.Manifest.Get(key); seen {
-			if !rec.Fillable() {
-				e.Stats.SkippedManifest++
-				return false, nil
-			}
-			e.Stats.Retried++
-			if !probeImproves(m, rec.Missing) {
-				e.Stats.StillIncomplete++
-				return false, nil
-			}
-			retry = true
+	if e.Mode == Incremental && seen {
+		if !prev.Fillable() {
+			e.Stats.SkippedManifest++
+			return false, nil
 		}
+		e.Stats.Retried++
+		if !probeImproves(m, prev.Missing) {
+			e.Stats.StillIncomplete++
+			return false, nil
+		}
+		retry = true
 	}
 	if !retry && !e.Since.IsZero() && !date.IsZero() && date.Before(e.Since) {
 		e.Stats.SkippedDate++
@@ -122,18 +134,11 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		return false, fmt.Errorf("create output dir %s: %w", dir, err)
 	}
 
-	base := baseName(date, m.Subject, key)
-
 	htmlBytes, inlineConsumed, err := Render(m)
 	if err != nil {
 		return false, fmt.Errorf("render %q: %w", m.Subject, err)
 	}
-	htmlPath := filepath.Join(dir, base+".html")
-	rel, err := filepath.Rel(e.OutDir, htmlPath)
-	if err != nil {
-		rel = htmlPath
-	}
-	relSlash := filepath.ToSlash(rel)
+	base, htmlPath, relSlash := e.stemFor(dir, date, m.Subject, key)
 
 	e.Stats.AttachmentsInline += len(inlineConsumed)
 
@@ -197,9 +202,18 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 			rec.Date = date.UTC().Format(time.RFC3339)
 		}
 	}
+	rec.Fingerprint = fp
 	e.Manifest.Add(key, rec)
 	if e.OnExported != nil {
 		e.OnExported(store, folderPath, m, relSlash, key)
+	}
+	// Re-exported under a new name (subject or date changed, naming rule
+	// changed): the previous html/zip are this message's own and must not
+	// linger as duplicates (R6/R13).
+	if seen && prev.Path != "" && prev.Path != relSlash {
+		old := filepath.Join(e.OutDir, filepath.FromSlash(prev.Path))
+		os.Remove(old)
+		os.Remove(strings.TrimSuffix(old, ".html") + zipSuffix)
 	}
 
 	switch {
@@ -213,6 +227,26 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	}
 	e.Stats.Exported++
 	return true, nil
+}
+
+// stemFor picks the file stem for key inside dir. The 8-hex digest of the key is
+// unique in practice; when a DIFFERENT key already owns that stem (a 32-bit
+// collision) the digest is lengthened, deterministically from this key alone,
+// so nothing is ever overwritten and a re-run makes the same choice (R4).
+func (e *Exporter) stemFor(dir string, date time.Time, subject, key string) (base, htmlPath, relSlash string) {
+	for _, n := range []int{8, 12, 16, 24, 40} {
+		base = baseNameN(date, subject, key, n)
+		htmlPath = filepath.Join(dir, base+".html")
+		rel, err := filepath.Rel(e.OutDir, htmlPath)
+		if err != nil {
+			rel = htmlPath
+		}
+		relSlash = filepath.ToSlash(rel)
+		if owner, ok := e.Manifest.KeyForPath(relSlash); !ok || owner == key {
+			return
+		}
+	}
+	return
 }
 
 // hasBody reports whether any body source is present.
@@ -298,12 +332,15 @@ func unresolvedInlineRefs(html []byte) []string {
 }
 
 // baseName builds the shared file stem for a message's HTML and zip.
-func baseName(date time.Time, subject, key string) string {
+func baseName(date time.Time, subject, key string) string { return baseNameN(date, subject, key, 8) }
+
+// baseNameN is baseName with an n-hex digest (see stemFor).
+func baseNameN(date time.Time, subject, key string, n int) string {
 	ts := "0000-00-00_0000"
 	if !date.IsZero() {
 		ts = date.UTC().Format("2006-01-02_1504")
 	}
-	return ts + "_" + util.Slug(subject, 60) + "_" + util.ShortHash(key)
+	return ts + "_" + util.Slug(subject, 60) + "_" + util.HashHex(key, n)
 }
 
 // hasArchivable reports whether any attachment would go into the zip (i.e. is

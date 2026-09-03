@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"mail-archive-tool/internal/assure"
+	"mail-archive-tool/internal/lockfile"
 )
 
 var testBin string
@@ -153,5 +154,28 @@ func TestHelpTotality(t *testing.T) {
 				t.Errorf("help for %v does not name %q; got:\n%s", c.args, w, stderr)
 			}
 		}
+	}
+}
+
+// covers: MA-85, R5, R12, S25
+// A run against an archive another run holds refuses with a typed non-zero exit
+// naming the lock and the fact that the archive is in use, and leaves no
+// manifest behind. The positive twin: the same archive exports once released.
+func TestRefusesLockedArchive(t *testing.T) {
+	out := t.TempDir()
+	held, err := lockfile.Acquire(filepath.Join(out, lockfile.Name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, stderr := runCLI("-input", "../../testdata/support.pst", "-out", out)
+	assure.Refused(t, code, stderr, assure.Code(1), assure.Names("in use", lockfile.Name),
+		assure.NoSideEffect(func() bool {
+			_, err := os.Stat(filepath.Join(out, ".mailarchive-manifest.json"))
+			return os.IsNotExist(err)
+		}))
+	held.Release()
+
+	if code, stderr := runCLI("-input", "../../testdata/support.pst", "-out", out); code != 0 {
+		t.Fatalf("export after release failed (%d): %s", code, stderr)
 	}
 }

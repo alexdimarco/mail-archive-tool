@@ -72,9 +72,18 @@ func Slug(s string, maxRunes int) string {
 
 // ShortHash returns a short, stable hex digest of s, used to guarantee unique
 // output filenames without blowing the Windows 260-character path limit.
-func ShortHash(s string) string {
+func ShortHash(s string) string { return HashHex(s, 8) }
+
+// HashHex returns the first n hex characters (n ≤ 40) of the SHA-1 of s: the
+// exporter lengthens a file stem's digest deterministically when two keys
+// collide at 8 characters.
+func HashHex(s string, n int) string {
 	sum := sha1.Sum([]byte(s))
-	return hex.EncodeToString(sum[:])[:8]
+	h := hex.EncodeToString(sum[:])
+	if n < len(h) {
+		return h[:n]
+	}
+	return h
 }
 
 func truncateRunes(s string, max int) string {
