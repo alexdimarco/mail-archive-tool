@@ -69,9 +69,18 @@ an invariant is the thing that is wrong.
   reconciled set; nothing on disk is deleted.
 - **R14 — Schedule is correct, opt-in, and reversible.** `schedule` generates a
   correct scheduler entry for the host OS (cron/launchd/Task Scheduler) carrying
-  the operator's export flags; it prints the entry by default and only applies it
+  exactly the operator's backup job (an export, `graph` or `reindex` job),
+  validated at schedule time through the job's own flag definitions: what
+  cannot run unattended (interactive prep, a non-backup verb, `-outlook` off
+  Windows, a Graph job without a secret file) is refused now. It is correct for
+  any host path (Windows runs the job through a batch wrapper with every token
+  quoted, so the 261-character run-string limit and cmd.exe metacharacters
+  cannot bite); the job writes a size-capped log; one schedule per archive by
+  default (the name derives from the archive path) and an archive-local
+  descriptor names it. It prints the entry by default and only applies it
   under `--install`; `--install` is idempotent (re-running yields one entry) and
-  `--remove` cleanly reverses it, leaving unrelated entries untouched.
+  `--remove` cleanly reverses it (entry, wrapper, descriptor), leaving
+  unrelated entries untouched.
 - **R15 — Evolution stores read faithfully.** An Evolution store is read without
   silent loss: the local Maildir++ store's dot-encoded, `_XX`-escaped folder
   hierarchy is decoded (every subfolder read, no traversal out of the root), and
@@ -130,6 +139,7 @@ an invariant is the thing that is wrong.
 | S25 A scheduled run overlaps a manual run on the same archive | R5, R12 | the second run refuses naming the lock file and the holder; nothing is written; the lock vanishes with its process | MA-85 |
 | S26 Folder/subject names the file system cannot carry: illegal characters, reserved device names with extensions, trailing dots, non-Latin scripts, decomposed Unicode, very long paths | R4, R6 | names stay distinct, creatable and portable across OSes; slugs stay readable; long paths shrink the slug | MA-01, MA-03, MA-04, MA-89 |
 | S27 An inheritor opens the archive folder with no tool, years later | R7 | README.txt explains the layout; every page navigates, names its attachments and links its zip/.eml; times carry their offsets; folder pages paginate | MA-90, MA-91, MA-92, MA-96, MA-13 |
+| S28 Operator schedules any backup job (export, Graph, reindex) on any OS, including Windows paths with spaces/metacharacters | R14, R12 | job validated at schedule time (non-backup verbs, interactive flags, missing secret file refused); Windows wrapper quotes every token; job logs rotate; descriptor written; per-archive default name | MA-72, MA-73, MA-93, MA-97 |
 | S21 A hostile email (script, tracking pixel, remote CSS, `<base>`, meta refresh) is archived and opened from disk | R19, R7 | renders inertly: policy meta precedes the mail's markup; refresh neutralized; content preserved | MA-80 |
 | S22 `serve` faces a hostile archive or network: script in a body/snippet, a symlink inside the archive, a non-loopback bind | R19, R4, R8 | UI/API/file responses carry a strict policy; snippets are escaped; symlinked paths are 404; non-loopback bind warns | MA-81, MA-82, MA-83, MA-84 |
 
@@ -193,8 +203,8 @@ Tiers: **U** unit property (every commit) · **S** structural whole-tree walk
 | MA-42 | U | reindex regenerates folder pages so the pruned message is no longer listed | R13, S13 |
 | MA-43 | U | index EachRow enumerates rows; DeleteByID/DeleteByKey remove from docs + docs_fts | R13 |
 | MA-44 | U | manifest Delete removes an entry (persisted); absent key is a no-op | R13 |
-| MA-45 | U | cron line: interval schedule fields + exe/export-flags + log redirect; block carries the marker | R14, S14 |
-| MA-46 | U | launchd plist: label, ProgramArguments, StartCalendarInterval (Minute/Hour/Weekday by cadence) | R14, S14 |
+| MA-45 | U | cron line: interval schedule fields + exe/job flags incl. -log, no shell redirect; block carries the marker | R14, S14 |
+| MA-46 | U | launchd plist: label, ProgramArguments, StartCalendarInterval (Minute/Hour/Weekday by cadence), StandardErrorPath to the .stderr.log sibling | R14, S14 |
 | MA-47 | U | schtasks command: /TN /TR /SC /ST, weekly /D SUN, delete reverses by name | R14, S14 |
 | MA-48 | U | UpsertCronBlock idempotent (twice = one block); unrelated crontab lines preserved | R14, S14 |
 | MA-49 | U | RemoveCronBlock reverses install by marker; empty-crontab remove is a no-op | R14, S14 |
@@ -224,6 +234,10 @@ Tiers: **U** unit property (every commit) · **S** structural whole-tree walk
 | MA-68 | U | the report is regenerated from the manifest each run: a gap found earlier is still listed by a later run, disappears when filled (empty report removed); a legacy archive's earlier report is preserved as attachments-report-legacy.tsv | R1, S6 |
 | MA-70 | U | a version-1 manifest (incl. one an older binary rewrote) migrates every record to the "unknown" sentinel and counts them; Save writes v2; reload keeps the sentinel; a sentinel record is re-captured once by the next incremental run | R1, R5, S6 |
 | MA-71 | U | a Graph message captured with no body is recorded terminal and reported; an incremental re-run re-downloads nothing and retries nothing (R17 unchanged); a legacy sentinel on a Graph archive is resolved without a download | R17, R1, R2, S6 |
+| MA-72 | U | schedule refuses a non-backup verb (serve/search/status/schedule), an interactive flag, a Graph job without -client-secret-file, a flat flag mixed with a -- job, and a bad -name, each naming the problem; valid export and graph -- jobs preview with -log and are not applied; the secret never appears in output | R14, R12, S28 |
+| MA-73 | U | the Windows wrapper quotes every token, doubles %, redirects stderr to the .stderr.log sibling, never enables delayed expansion; /TR is the quoted wrapper path (< 261); the direct form still works without the wrapper | R14, S28 |
+| MA-93 | U | the run log appends with a header per run and rotates to .1 past the size cap | R14, S28 |
+| MA-97 | U | Install's descriptor round-trips (name, cadence, real exe + size/mtime, job, host); Remove deletes it; DefaultNameFor is stable per archive; SanitizeName bounds length and characters | R14, S28 |
 | MA-90 | U | a message page links its folder page and the root, lists archived (not inline) attachments with a zip link, shows Message-ID, Sent/Received when both known, Reply-To, Bcc; times keep their original offset; a bare render carries no links | R7, S27 |
 | MA-91 | U | folder pages paginate at pageSize with prev/next and root links, every message on some page, no extra empty page; the date column is labelled UTC; the root page links each folder's first page and README.txt | R7, S27 |
 | MA-92 | U | Run writes README.txt at the archive root naming the layout, UTC convention, tool-free browsing, search.db (SQLite), the report and the manifest; reindex restores it | R7, S27 |

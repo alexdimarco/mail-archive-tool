@@ -35,6 +35,7 @@ import (
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/index"
 	"mail-archive-tool/internal/outlookcom"
+	"mail-archive-tool/internal/runlog"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/server"
 	"mail-archive-tool/internal/thunderbird"
@@ -79,44 +80,44 @@ func (s *stringSlice) Set(v string) error {
 }
 
 func runExport(args []string) error {
-	var inputs stringSlice
 	fs := flag.NewFlagSet("mailarchive", flag.ContinueOnError)
 	fs.Usage = exportUsage(fs)
-	fs.Var(&inputs, "input", "PST/OST file or a directory to scan (repeatable, comma-separated)")
-	out := fs.String("out", "", "output directory (required)")
-	modeStr := fs.String("mode", "incremental", "export mode: incremental|full")
-	sinceStr := fs.String("since", "", "only export items newer than this (e.g. 30d, 4w, 720h, 2026-07-01)")
-	manifestPath := fs.String("manifest", "", "manifest path (default <out>/.mailarchive-manifest.json)")
-	copyFirst := fs.Bool("copy-first", false, "copy each data file to a temp snapshot before reading (avoids locks when Outlook is open)")
-	auto := fs.Bool("auto", false, "auto-discover mail stores (Outlook on Windows; Thunderbird and Evolution on any OS)")
-	outlook := fs.Bool("outlook", false, "Windows + classic Outlook: have Outlook export each account to a .pst first, then archive that (use when a .ost can't be read directly)")
-	outlookSyncWait := fs.Duration("outlook-sync-wait", 5*time.Minute, "with -outlook: run Send/Receive and wait up to this long for downloads before creating the PST (0 to skip)")
-	doIndex := fs.Bool("index", true, "build/update the full-text search index (search.db)")
-	doPages := fs.Bool("pages", true, "generate browsable folder index.html pages")
-	keepRaw := fs.Bool("raw", false, "also keep each message's original RFC 822 bytes as <name>.eml beside the html (mbox/maildir/Graph sources; a .pst item has none)")
-	enableOffline := fs.Bool("enable-offline", false, "Thunderbird IMAP: enable offline download in prefs.js so all mail can be synced (Thunderbird must be closed)")
-	syncWait := fs.Bool("sync-wait", false, "Thunderbird IMAP: pause and wait for Download/Sync to finish before exporting")
+	o := exportFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	inputs = append(inputs, fs.Args()...)
+	inputs := append(o.inputs, fs.Args()...)
 
-	if *out == "" {
-		return errors.New("-out is required (or use a subcommand: serve, search, reindex, schedule, graph)")
+	if *o.out == "" {
+		return errors.New("-out is required (or use a subcommand: serve, search, reindex, schedule, graph, status)")
 	}
-	mode, err := parseMode(*modeStr)
+	mode, err := parseMode(*o.mode)
 	if err != nil {
 		return err
 	}
 	var since time.Time
-	if *sinceStr != "" {
-		since, err = util.ParseSince(*sinceStr, time.Now())
+	if *o.since != "" {
+		since, err = util.ParseSince(*o.since, time.Now())
 		if err != nil {
 			return err
 		}
 	}
 
-	logger := log.New(os.Stderr, "", 0)
+	logger, closeLog, err := newRunLogger(*o.log)
+	if err != nil {
+		return err
+	}
+	defer closeLog()
+	defer func() { // a failed unattended run leaves its reason in its own log too
+		if err != nil {
+			logger.Printf("FAILED: %v", err)
+		}
+	}()
+
+	outlook, outlookSyncWait, auto, copyFirst := o.outlook, o.outlookSyncWait, o.auto, o.copyFirst
+	manifestPath, doIndex, doPages, keepRaw := o.manifest, o.index, o.pages, o.keepRaw
+	enableOffline, syncWait, modeStr := o.enableOffline, o.syncWait, o.mode
+	out := o.out
 
 	// Optionally have Outlook itself export each account to a fresh .pst, then
 	// archive those. This is the reliable path for a live Exchange/IMAP .ost cache
@@ -155,6 +156,7 @@ func runExport(args []string) error {
 		Pages:     *doPages,
 		KeepRaw:   *keepRaw,
 	}
+	_ = modeStr
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -172,14 +174,28 @@ func runExport(args []string) error {
 		logger.Printf("Date filter: items on or after %s", since.Format(time.RFC3339))
 	}
 
-	result, err := app.Run(ctx, opts, logger, nil)
+	result, runErr := app.Run(ctx, opts, logger, nil)
 	printSummary(logger, result, *doIndex, *out)
 
-	if errors.Is(err, context.Canceled) {
+	if errors.Is(runErr, context.Canceled) {
 		logger.Printf("interrupted; progress saved to the manifest")
 		return nil
 	}
+	err = runErr
 	return err
+}
+
+// newRunLogger returns the operator logger: stderr by default, or the
+// size-capped run log at path when -log was given (what scheduled jobs use).
+func newRunLogger(path string) (*log.Logger, func(), error) {
+	if path == "" {
+		return log.New(os.Stderr, "", 0), func() {}, nil
+	}
+	f, err := runlog.Open(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	return log.New(f, "", log.LstdFlags), func() { f.Close() }, nil
 }
 
 func runServe(args []string) error {
@@ -296,19 +312,24 @@ func moreNote(total, shown int) string {
 // runReindex reconciles the archive at -out with what is on disk: rows whose
 // exported file was deleted/moved are pruned from the index and manifest, and
 // the folder pages are regenerated.
-func runReindex(args []string) error {
+func runReindex(args []string) (err error) {
 	fs := flag.NewFlagSet("mailarchive reindex", flag.ContinueOnError)
-	out := fs.String("out", "", "export directory to reconcile (contains search.db) (required)")
+	o := reindexFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *out == "" {
+	if *o.out == "" {
 		return errors.New("-out is required (the export directory to reconcile)")
 	}
 
-	logger := log.New(os.Stderr, "", 0)
-	kept, pruned, err := app.Reindex(*out, logger)
+	logger, closeLog, err := newRunLogger(*o.log)
 	if err != nil {
+		return err
+	}
+	defer closeLog()
+	kept, pruned, err := app.Reindex(*o.out, logger)
+	if err != nil {
+		logger.Printf("FAILED: %v", err)
 		return err
 	}
 	logger.Printf("reindexed: kept=%d pruned=%d", kept, pruned)
@@ -316,29 +337,34 @@ func runReindex(args []string) error {
 }
 
 // runSchedule prints (default) or installs/removes a recurring-backup entry for
-// the host OS's scheduler. The scheduled command is this executable plus the
-// export flags the operator passed, so it runs `mailarchive -out DIR <sources>`.
+// the host OS's scheduler. Two forms: the flat form (`schedule -out DIR -auto
+// …` — the export job's flags on the schedule command) and the job form
+// (`schedule [-interval …] -- <mailarchive job>` for an export, graph or reindex
+// job). Either way the job is validated NOW through the real flag definitions
+// (parseJob), so what cannot run unattended is refused at schedule time.
 func runSchedule(args []string) error {
-	var inputs stringSlice
+	// Split at "--": schedule flags before, the job after.
+	var jobArgs []string
+	hasJob := false
+	for i, a := range args {
+		if a == "--" {
+			jobArgs, args, hasJob = args[i+1:], args[:i], true
+			break
+		}
+	}
+
 	fs := flag.NewFlagSet("mailarchive schedule", flag.ContinueOnError)
 	fs.Usage = scheduleUsage(fs)
 	interval := fs.String("interval", "daily", "backup cadence: hourly|daily|weekly")
 	at := fs.String("at", "02:00", "time of day HH:MM (hourly uses only the minute)")
-	name := fs.String("name", schedule.DefaultName, "scheduler entry name")
+	name := fs.String("name", "", "scheduler entry name (default: mailarchive-<hash of the archive path>, one schedule per archive)")
 	install := fs.Bool("install", false, "install the schedule (default: print it without applying)")
-	remove := fs.Bool("remove", false, "remove a previously installed schedule by name")
-	// Pass-through export flags: these become the scheduled command's arguments.
-	fs.Var(&inputs, "input", "PST/OST file or a directory to back up (repeatable, comma-separated)")
-	out := fs.String("out", "", "output directory the backup writes to (required)")
-	auto := fs.Bool("auto", false, "auto-discover mail stores when the backup runs")
-	modeStr := fs.String("mode", "incremental", "backup export mode: incremental|full")
-	copyFirst := fs.Bool("copy-first", false, "snapshot each data file before reading (avoids locks)")
-	sinceStr := fs.String("since", "", "only export items newer than this (e.g. 30d, 2026-07-01)")
+	remove := fs.Bool("remove", false, "remove a previously installed schedule (by -name, or by the -out archive's descriptor)")
+	// Flat form: the export job's flags, validated through the same definitions.
+	eo := exportFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	inputs = append(inputs, fs.Args()...)
-
 	if *install && *remove {
 		return errors.New("choose either -install or -remove, not both")
 	}
@@ -346,23 +372,23 @@ func runSchedule(args []string) error {
 	if err != nil {
 		return err
 	}
-	mode, err := parseMode(*modeStr)
-	if err != nil {
-		return err
-	}
-	modeName := "incremental"
-	if mode == export.Full {
-		modeName = "full"
-	}
-	if *sinceStr != "" {
-		if _, err := util.ParseSince(*sinceStr, time.Now()); err != nil {
-			return err
-		}
-	}
 
-	// -out is required except when removing (removal keys off the name alone).
-	if !*remove && *out == "" {
-		return errors.New("-out is required (the directory the scheduled backup writes to)")
+	// The two forms are mutually exclusive: with "--" the job carries every
+	// job flag, so a job flag before it is a mistake, named.
+	if hasJob {
+		var stray []string
+		fs.Visit(func(f *flag.Flag) {
+			switch f.Name {
+			case "interval", "at", "name", "install", "remove":
+			default:
+				stray = append(stray, "-"+f.Name)
+			}
+		})
+		if len(stray) > 0 {
+			return fmt.Errorf("with -- the job carries its own flags: move %s after -- (or drop the --)", strings.Join(stray, ", "))
+		}
+	} else {
+		jobArgs = flatJobArgs(eo, fs.Args())
 	}
 
 	exe, err := os.Executable()
@@ -370,68 +396,126 @@ func runSchedule(args []string) error {
 		return fmt.Errorf("could not determine my own executable path: %w", err)
 	}
 
-	// A scheduled job runs from an unknown working directory, so make the paths
-	// absolute before baking them into the entry.
-	absOut := abspath(*out)
-	var absInputs []string
-	for _, in := range inputs {
-		absInputs = append(absInputs, abspath(in))
+	// Removal keys off the name, found via -name or the archive's descriptor.
+	if *remove {
+		out := abspath(*eo.out)
+		if out == "" && len(jobArgs) > 0 {
+			if j, jerr := parseJob(jobArgs); jerr == nil {
+				out = j.out
+			}
+		}
+		n := *name
+		if n == "" && out != "" {
+			if d, derr := schedule.ReadDescriptor(out); derr == nil {
+				n = d.Name
+			} else {
+				n = schedule.DefaultNameFor(out)
+			}
+		}
+		if n == "" {
+			return errors.New("-remove needs -name NAME or -out DIR (the archive whose schedule to remove)")
+		}
+		if n, err = schedule.SanitizeName(n); err != nil {
+			return err
+		}
+		spec := schedule.Spec{Name: n, Interval: iv, At: *at, Exe: exe, Out: out, WrapperPath: schedule.DefaultWrapperPath(n)}
+		if err := spec.Validate(); err != nil {
+			return err
+		}
+		if err := schedule.Remove(spec); err != nil {
+			return err
+		}
+		fmt.Printf("Removed scheduled backup %q.\n", n)
+		return nil
 	}
 
-	spec := schedule.Spec{
-		Name:     *name,
-		Interval: iv,
-		At:       *at,
-		Exe:      exe,
-		Args:     scheduleExportArgs(absOut, absInputs, *auto, modeName, *copyFirst, *sinceStr),
+	j, err := parseJob(jobArgs)
+	if err != nil {
+		return err
 	}
-	if absOut != "" {
-		spec.Log = schedule.DefaultLogPath(absOut, *name)
+	n := *name
+	if n == "" {
+		n = schedule.DefaultNameFor(j.out)
+	}
+	if n, err = schedule.SanitizeName(n); err != nil {
+		return err
+	}
+	logPath := schedule.DefaultLogPath(j.out, n)
+	spec := schedule.Spec{
+		Name:        n,
+		Interval:    iv,
+		At:          *at,
+		Exe:         exe,
+		Args:        append(j.command(), "-log", logPath),
+		Log:         logPath,
+		Wrapper:     runtime.GOOS == "windows",
+		WrapperPath: schedule.DefaultWrapperPath(n),
+		Out:         j.out,
 	}
 	if err := spec.Validate(); err != nil {
 		return err
 	}
 
-	switch {
-	case *remove:
-		if err := schedule.Remove(spec); err != nil {
-			return err
-		}
-		fmt.Printf("Removed scheduled backup %q.\n", *name)
-	case *install:
+	if *install {
 		if err := schedule.Install(spec); err != nil {
 			return err
 		}
-		fmt.Printf("Installed scheduled backup %q (%s at %s).\n", *name, iv, *at)
+		fmt.Printf("Installed scheduled backup %q (%s at %s).\n", n, iv, *at)
 		fmt.Printf("It runs: %s %s\n", exe, strings.Join(spec.Args, " "))
-	default:
-		text, err := schedule.Preview(spec)
-		if err != nil {
-			return err
-		}
-		fmt.Print(text)
-		fmt.Println("\nThis was NOT applied. Re-run with -install to schedule it, or -remove to uninstall.")
+		fmt.Printf("Log: %s · descriptor: %s · check with: mailarchive status -out %q\n", logPath, filepath.Join(j.out, schedule.DescriptorName), j.out)
+		return nil
 	}
+	text, err := schedule.Preview(spec)
+	if err != nil {
+		return err
+	}
+	fmt.Print(text)
+	fmt.Printf("\nThe job's log: %s\nThis was NOT applied. Re-run with -install to schedule it, or -remove to uninstall.\n", logPath)
 	return nil
 }
 
-// scheduleExportArgs reconstructs the export flag list the scheduled run will
-// receive: `mailarchive -out DIR -mode MODE [sources...]`.
-func scheduleExportArgs(out string, inputs []string, auto bool, mode string, copyFirst bool, since string) []string {
-	args := []string{"-out", out, "-mode", mode}
-	if auto {
-		args = append(args, "-auto")
+// flatJobArgs re-assembles the export job from the flat form's flags so it can
+// be validated through parseJob exactly like a -- job.
+func flatJobArgs(o *exportOpts, positional []string) []string {
+	var a []string
+	if *o.out != "" {
+		a = append(a, "-out", *o.out)
 	}
-	for _, in := range inputs {
-		args = append(args, "-input", in)
+	a = append(a, "-mode", *o.mode)
+	if *o.since != "" {
+		a = append(a, "-since", *o.since)
 	}
-	if copyFirst {
-		args = append(args, "-copy-first")
+	if *o.auto {
+		a = append(a, "-auto")
 	}
-	if since != "" {
-		args = append(args, "-since", since)
+	for _, in := range append(o.inputs, positional...) {
+		a = append(a, "-input", in)
 	}
-	return args
+	if *o.copyFirst {
+		a = append(a, "-copy-first")
+	}
+	if *o.outlook {
+		a = append(a, "-outlook", "-outlook-sync-wait", o.outlookSyncWait.String())
+	}
+	if !*o.index {
+		a = append(a, "-index=false")
+	}
+	if !*o.pages {
+		a = append(a, "-pages=false")
+	}
+	if *o.keepRaw {
+		a = append(a, "-raw")
+	}
+	if *o.manifest != "" {
+		a = append(a, "-manifest", *o.manifest)
+	}
+	if *o.enableOffline {
+		a = append(a, "-enable-offline")
+	}
+	if *o.syncWait {
+		a = append(a, "-sync-wait")
+	}
+	return a
 }
 
 func abspath(p string) string {
@@ -444,16 +528,25 @@ func abspath(p string) string {
 	return p
 }
 
+// parseSinceAt validates a -since value against now.
+func parseSinceAt(s string, now time.Time) (time.Time, error) { return util.ParseSince(s, now) }
+
 func scheduleUsage(fs *flag.FlagSet) func() {
 	return func() {
 		fmt.Fprintf(os.Stderr, `mailarchive schedule - schedule a recurring backup with the host OS scheduler
 
 Usage:
   mailarchive schedule -out DIR [-input ...|-auto] [-interval daily|weekly|hourly] [-at HH:MM] [-name NAME]
-  mailarchive schedule -out DIR -auto -install        apply the schedule
-  mailarchive schedule -name NAME -remove             uninstall by name
+  mailarchive schedule -out DIR -auto -install                    apply the schedule (export job)
+  mailarchive schedule [-interval ...] -install -- graph -out DIR -tenant T -client-id ID \
+      -mailbox u@dom -client-secret-file FILE                     apply a Graph job
+  mailarchive schedule -out DIR -remove                            uninstall this archive's schedule
+  mailarchive schedule -name NAME -remove                          uninstall by name
 
-By default the exact scheduler entry is printed and NOT applied.
+The job after -- may be an export (no verb), graph, or reindex job; it is
+validated now, and what cannot run unattended is refused now. By default the
+exact scheduler entry is printed and NOT applied. The job writes its log to
+<out>/<name>.log; one schedule per archive by default.
 
 Flags:
 `)
@@ -464,49 +557,46 @@ Flags:
 // runGraph archives mailboxes server-side via Microsoft Graph (app-only). The
 // app client secret comes from an environment variable, never the command line,
 // so it can't leak into shell history or the process list.
-func runGraph(args []string) error {
-	var mailboxes stringSlice
+func runGraph(args []string) (err error) {
 	fs := flag.NewFlagSet("mailarchive graph", flag.ContinueOnError)
 	fs.Usage = graphUsage(fs)
-	out := fs.String("out", "", "output directory (required)")
-	tenant := fs.String("tenant", "", "Microsoft 365 tenant id or domain (required)")
-	clientID := fs.String("client-id", "", "Entra app (client) id (required)")
-	secretEnv := fs.String("client-secret-env", "MAILARCHIVE_GRAPH_SECRET", "environment variable holding the app client secret")
-	fs.Var(&mailboxes, "mailbox", "mailbox UPN to archive (repeatable, comma-separated) (required)")
-	modeStr := fs.String("mode", "incremental", "export mode: incremental|full")
-	sinceStr := fs.String("since", "", "only export items newer than this (e.g. 30d, 2026-07-01)")
-	doIndex := fs.Bool("index", true, "build/update the full-text search index (search.db)")
-	doPages := fs.Bool("pages", true, "generate browsable folder index.html pages")
-	keepRaw := fs.Bool("raw", false, "also keep each message's original RFC 822 bytes as <name>.eml beside the html")
+	o := graphFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	mailboxes = append(mailboxes, fs.Args()...)
+	mailboxes := append(o.mailboxes, fs.Args()...)
 
-	if *out == "" {
+	if *o.out == "" {
 		return errors.New("-out is required (the output directory)")
 	}
-	if *tenant == "" {
+	if *o.tenant == "" {
 		return errors.New("-tenant is required (the Microsoft 365 tenant id or domain)")
 	}
-	if *clientID == "" {
+	if *o.clientID == "" {
 		return errors.New("-client-id is required (the Entra app id)")
 	}
 	if len(mailboxes) == 0 {
 		return errors.New("-mailbox is required (at least one mailbox UPN to archive)")
 	}
-	secret := os.Getenv(*secretEnv)
-	if secret == "" {
-		return fmt.Errorf("app client secret is empty: set it in the $%s environment variable", *secretEnv)
+	var secret string
+	if *o.secretFile != "" {
+		if secret, err = readSecret(*o.secretFile); err != nil {
+			return err
+		}
+	} else {
+		secret = os.Getenv(*o.secretEnv)
+		if secret == "" {
+			return fmt.Errorf("app client secret is empty: set it in the $%s environment variable, or pass -client-secret-file", *o.secretEnv)
+		}
 	}
 
-	mode, err := parseMode(*modeStr)
+	mode, err := parseMode(*o.mode)
 	if err != nil {
 		return err
 	}
 	var since time.Time
-	if *sinceStr != "" {
-		since, err = util.ParseSince(*sinceStr, time.Now())
+	if *o.since != "" {
+		since, err = util.ParseSince(*o.since, time.Now())
 		if err != nil {
 			return err
 		}
@@ -514,18 +604,28 @@ func runGraph(args []string) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	logger := log.New(os.Stderr, "", 0)
+	logger, closeLog, err := newRunLogger(*o.log)
+	if err != nil {
+		return err
+	}
+	defer closeLog()
+	defer func() {
+		if err != nil {
+			logger.Printf("FAILED: %v", err)
+		}
+	}()
 
-	gopts := app.GraphOptions{Tenant: *tenant, ClientID: *clientID, ClientSecret: secret, Mailboxes: mailboxes}
-	opts := app.Options{Out: *out, Mode: mode, Since: since, Index: *doIndex, Pages: *doPages, KeepRaw: *keepRaw}
-	logger.Printf("Archiving %d mailbox(es) from tenant %s via Microsoft Graph (mode=%s)", len(mailboxes), *tenant, *modeStr)
+	gopts := app.GraphOptions{Tenant: *o.tenant, ClientID: *o.clientID, ClientSecret: secret, Mailboxes: mailboxes}
+	opts := app.Options{Out: *o.out, Mode: mode, Since: since, Index: *o.index, Pages: *o.pages, KeepRaw: *o.keepRaw}
+	logger.Printf("Archiving %d mailbox(es) from tenant %s via Microsoft Graph (mode=%s)", len(mailboxes), *o.tenant, *o.mode)
 
-	result, err := app.RunGraph(ctx, gopts, opts, logger)
-	printSummary(logger, result, *doIndex, *out)
-	if errors.Is(err, context.Canceled) {
+	result, runErr := app.RunGraph(ctx, gopts, opts, logger)
+	printSummary(logger, result, *o.index, *o.out)
+	if errors.Is(runErr, context.Canceled) {
 		logger.Printf("interrupted; progress saved to the manifest")
 		return nil
 	}
+	err = runErr
 	return err
 }
 
@@ -536,9 +636,11 @@ func graphUsage(fs *flag.FlagSet) func() {
 Usage:
   MAILARCHIVE_GRAPH_SECRET=... mailarchive graph -out DIR -tenant TENANT \
     -client-id APPID -mailbox user@domain [-mailbox ...] [-mode incremental|full]
+  mailarchive graph ... -client-secret-file ~/.config/mailarchive/graph.secret   (scheduled jobs)
 
 Requires an Entra app with the Mail.Read (application) permission, admin-consented
-and RBAC-scoped to the mailboxes. See docs/graph-app-setup.md.
+and RBAC-scoped to the mailboxes. See docs/graph-app-setup.md. Client secrets
+expire (Entra caps them at 24 months): note the date and rotate before it.
 
 Flags:
 `)

@@ -179,3 +179,61 @@ func TestRefusesLockedArchive(t *testing.T) {
 		t.Fatalf("export after release failed (%d): %s", code, stderr)
 	}
 }
+
+// covers: MA-72, R14, R12, S28
+// schedule validates the job NOW through the real flag definitions: a
+// non-backup verb, an interactive flag, a Graph job without a secret file, and
+// a flat-form flag mixed with a -- job are each refused naming the problem;
+// valid export and graph jobs preview with their -log and are not applied.
+func TestScheduleJobValidation(t *testing.T) {
+	out := t.TempDir()
+
+	code, stderr := runCLI("schedule", "--", "serve", "-out", out)
+	assure.Refused(t, code, stderr, assure.Code(1), assure.Names("serve", "cannot be a scheduled backup job"))
+
+	code, stderr = runCLI("schedule", "--", "status", "-out", out)
+	assure.Refused(t, code, stderr, assure.Code(1), assure.Names("status", "cannot be scheduled"))
+
+	code, stderr = runCLI("schedule", "-out", out, "-input", "x.pst", "-enable-offline")
+	assure.Refused(t, code, stderr, assure.Code(1), assure.Names("-enable-offline", "interactive"))
+
+	code, stderr = runCLI("schedule", "--", "graph", "-out", out, "-tenant", "t", "-client-id", "c", "-mailbox", "m@x")
+	assure.Refused(t, code, stderr, assure.Code(1), assure.Names("-client-secret-file", "no environment"))
+
+	code, stderr = runCLI("schedule", "-out", out, "--", "-out", out, "-auto")
+	assure.Refused(t, code, stderr, assure.Code(1), assure.Names("-out", "after --"))
+
+	code, stderr = runCLI("schedule", "-name", "bad name!", "-out", out, "-auto")
+	assure.Refused(t, code, stderr, assure.Code(1), assure.Names("-name", "letters"))
+
+	// Valid export job via --: previewed, not applied, logging to <out>/<name>.log.
+	cmd := exec.Command(testBin, "schedule", "--", "-out", out, "-auto")
+	stdout, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("valid -- export job refused: %v", err)
+	}
+	for _, want := range []string{"-auto", "-log", "NOT applied", "mailarchive-"} {
+		if !strings.Contains(string(stdout), want) {
+			t.Errorf("preview lacks %q:\n%s", want, stdout)
+		}
+	}
+
+	// Valid graph job with a proper secret file.
+	secret := filepath.Join(t.TempDir(), "graph.secret")
+	if err := os.WriteFile(secret, []byte("s3cret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd = exec.Command(testBin, "schedule", "-interval", "weekly", "--", "graph", "-out", out, "-tenant", "t", "-client-id", "c", "-mailbox", "m@x", "-client-secret-file", secret)
+	stdout, err = cmd.Output()
+	if err != nil {
+		t.Fatalf("valid -- graph job refused: %v", err)
+	}
+	for _, want := range []string{"graph", "-client-secret-file", "-mailbox m@x", "NOT applied"} {
+		if !strings.Contains(string(stdout), want) {
+			t.Errorf("graph preview lacks %q:\n%s", want, stdout)
+		}
+	}
+	if strings.Contains(string(stdout), "s3cret") {
+		t.Error("the secret itself leaked into the preview")
+	}
+}

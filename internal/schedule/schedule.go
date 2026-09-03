@@ -50,12 +50,22 @@ func ParseInterval(s string) (Interval, error) {
 // Spec describes a scheduled backup: which mailarchive executable to run, the
 // export flags to pass it, and when to run it.
 type Spec struct {
-	Name     string   // scheduler entry name / marker (e.g. "mailarchive-backup")
+	Name     string   // scheduler entry name / marker (e.g. "mailarchive-1a2b3c4d")
 	Interval Interval // hourly | daily | weekly
 	At       string   // "HH:MM"; hourly uses only the minute
-	Exe      string   // absolute path to the mailarchive executable
-	Args     []string // export flags, e.g. ["-out","/data","-mode","incremental"]
-	Log      string   // logfile the run appends to (empty → no redirect)
+	Exe      string   // absolute path to the program to run
+	Args     []string // the job's arguments, e.g. ["-out","/data","-mode","incremental","-log","/data/x.log"]
+	Log      string   // the job's operator log (the job writes it via -log); its .stderr.log sibling catches crashes
+
+	// Wrapper (Windows): run through a batch wrapper at WrapperPath instead of
+	// the bare command, so any path length/characters work and stderr has a
+	// sink. The CLI always sets it on Windows.
+	Wrapper     bool
+	WrapperPath string
+
+	// Out is the archive directory; Install writes the descriptor there and
+	// Remove deletes it.
+	Out string
 }
 
 // Validate checks the fields code generation depends on.
@@ -115,8 +125,10 @@ func cronSchedule(iv Interval, hour, min int) string {
 	}
 }
 
-// CronLine returns the crontab command line (schedule + command + redirect),
-// without the marker comment.
+// CronLine returns the crontab command line (schedule + command), without the
+// marker comment. The job writes its own log (-log); nothing is redirected, so
+// anything the program cannot log itself — a crash, a refusal to start —
+// reaches cron's mail (MAILTO), the one push channel that needs no setup.
 func CronLine(s Spec) (string, error) {
 	iv, err := ParseInterval(string(s.Interval))
 	if err != nil {
@@ -126,11 +138,7 @@ func CronLine(s Spec) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	line := cronSchedule(iv, hour, min) + " " + shellJoin(s.program())
-	if strings.TrimSpace(s.Log) != "" {
-		line += " >> " + shellQuote(s.Log) + " 2>&1"
-	}
-	return line, nil
+	return cronSchedule(iv, hour, min) + " " + shellJoin(s.program()), nil
 }
 
 // CronBlock is the marker comment plus its command line — the two-line unit that
@@ -205,10 +213,11 @@ func LaunchdPlist(s Spec) (string, error) {
 		cal.WriteString("    <key>Weekday</key>\n    <integer>0</integer>\n")
 	}
 
+	// The job logs itself (-log); launchd only needs a sink for what the
+	// program cannot log — a crash or a failed start.
 	var logKeys string
 	if strings.TrimSpace(s.Log) != "" {
-		logKeys = "  <key>StandardOutPath</key>\n  <string>" + xmlEscape(s.Log) + "</string>\n" +
-			"  <key>StandardErrorPath</key>\n  <string>" + xmlEscape(s.Log) + "</string>\n"
+		logKeys = "  <key>StandardErrorPath</key>\n  <string>" + xmlEscape(StderrLogPath(s.Log)) + "</string>\n"
 	}
 
 	return `<?xml version="1.0" encoding="UTF-8"?>
@@ -260,8 +269,12 @@ func SchtasksCreateCmd(s Spec) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	tr := taskRun(s)
+	if s.Wrapper {
+		tr = winQuote(s.WrapperPath)
+	}
 	cmd := fmt.Sprintf("schtasks /Create /TN %s /TR %s /SC %s /ST %02d:%02d",
-		winQuote(s.Name), winQuote(taskRun(s)), schtasksSC(iv), hour, min)
+		winQuote(s.Name), winQuote(tr), schtasksSC(iv), hour, min)
 	if iv == Weekly {
 		cmd += " /D SUN"
 	}
@@ -290,7 +303,11 @@ func Preview(s Spec) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return "Windows Task Scheduler — would run:\n\n  " + cmd + "\n", nil
+		out := "Windows Task Scheduler — would run:\n\n  " + cmd + "\n"
+		if s.Wrapper {
+			out += "\nwith the wrapper " + s.WrapperPath + " containing:\n\n" + CmdWrapper(s)
+		}
+		return out, nil
 	default:
 		block, err := CronBlock(s)
 		if err != nil {
@@ -300,34 +317,93 @@ func Preview(s Spec) (string, error) {
 	}
 }
 
-// Install applies the schedule to the host OS's scheduler.
+// Install applies the schedule to the host OS's scheduler and records the
+// archive-local descriptor. On Windows the wrapper is written (and fsynced)
+// BEFORE the task exists, so an interrupted install leaves at most an orphan
+// wrapper and never a task pointing at nothing.
 func Install(s Spec) error {
 	if err := s.Validate(); err != nil {
 		return err
 	}
+	var err error
 	switch runtime.GOOS {
 	case "darwin":
-		return installLaunchd(s)
+		err = installLaunchd(s)
 	case "windows":
-		return installSchtasks(s)
+		if s.Wrapper {
+			if werr := writeWrapper(s); werr != nil {
+				return werr
+			}
+		}
+		err = installSchtasks(s)
 	default:
-		return installCron(s)
+		err = installCron(s)
 	}
+	if err != nil {
+		return err
+	}
+	if s.Out != "" {
+		if derr := WriteDescriptor(s.Out, DescribeSpec(s)); derr != nil {
+			return fmt.Errorf("schedule installed, but its descriptor could not be written: %w", derr)
+		}
+	}
+	return nil
 }
 
-// Remove uninstalls a previously installed schedule by name.
+// Remove uninstalls a previously installed schedule by name, then its wrapper
+// and descriptor.
 func Remove(s Spec) error {
+	var err error
 	switch runtime.GOOS {
 	case "darwin":
-		return removeLaunchd(s)
+		err = removeLaunchd(s)
 	case "windows":
-		return removeSchtasks(s)
+		err = removeSchtasks(s)
+		if err == nil && s.WrapperPath != "" {
+			if rerr := os.Remove(s.WrapperPath); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
+				err = rerr
+			}
+		}
 	default:
-		return removeCron(s)
+		err = removeCron(s)
 	}
+	if err != nil {
+		return err
+	}
+	if s.Out != "" {
+		return RemoveDescriptor(s.Out)
+	}
+	return nil
 }
 
-// DefaultLogPath returns where a scheduled run should append its output.
+// writeWrapper writes the batch wrapper atomically and fsynced.
+func writeWrapper(s Spec) error {
+	dir := filepath.Dir(s.WrapperPath)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, ".wrapper-*.tmp")
+	if err != nil {
+		return err
+	}
+	if _, err := tmp.WriteString(CmdWrapper(s)); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmp.Name())
+		return err
+	}
+	return os.Rename(tmp.Name(), s.WrapperPath)
+}
+
+// DefaultLogPath returns where a scheduled run writes its operator log.
 func DefaultLogPath(out, name string) string {
 	return filepath.Join(out, name+".log")
 }
@@ -400,7 +476,11 @@ func SchtasksCreateArgv(s Spec) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	argv := []string{"/Create", "/TN", s.Name, "/TR", taskRun(s), "/SC", schtasksSC(iv), "/ST", fmt.Sprintf("%02d:%02d", hour, min)}
+	tr := taskRun(s)
+	if s.Wrapper {
+		tr = winQuote(s.WrapperPath)
+	}
+	argv := []string{"/Create", "/TN", s.Name, "/TR", tr, "/SC", schtasksSC(iv), "/ST", fmt.Sprintf("%02d:%02d", hour, min)}
 	if iv == Weekly {
 		argv = append(argv, "/D", "SUN")
 	}

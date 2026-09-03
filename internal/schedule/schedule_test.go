@@ -11,14 +11,15 @@ func sampleSpec(iv Interval, at string) Spec {
 		Interval: iv,
 		At:       at,
 		Exe:      "/usr/local/bin/mailarchive",
-		Args:     []string{"-out", "/data/backup", "-mode", "incremental", "-auto"},
+		Args:     []string{"-out", "/data/backup", "-mode", "incremental", "-auto", "-log", "/data/backup/mailarchive-backup.log"},
 		Log:      "/data/backup/mailarchive-backup.log",
 	}
 }
 
 // covers: MA-45, R14, S14
-// The cron line carries the interval's schedule fields, the executable + export
-// flags, and the append-redirect to the logfile; the block prepends the marker.
+// The cron line carries the interval's schedule fields and the executable +
+// job flags including the job's own -log; nothing is shell-redirected, so a
+// crash reaches cron's mail; the block prepends the marker.
 func TestCronLineGeneration(t *testing.T) {
 	daily, err := CronLine(sampleSpec(Daily, "02:00"))
 	if err != nil {
@@ -27,10 +28,13 @@ func TestCronLineGeneration(t *testing.T) {
 	if !strings.HasPrefix(daily, "0 2 * * * ") {
 		t.Errorf("daily schedule fields wrong: %q", daily)
 	}
-	for _, want := range []string{"/usr/local/bin/mailarchive", "-out /data/backup", "-mode incremental", "-auto", ">> /data/backup/mailarchive-backup.log 2>&1"} {
+	for _, want := range []string{"/usr/local/bin/mailarchive", "-out /data/backup", "-mode incremental", "-auto", "-log /data/backup/mailarchive-backup.log"} {
 		if !strings.Contains(daily, want) {
 			t.Errorf("cron line missing %q: %q", want, daily)
 		}
+	}
+	if strings.Contains(daily, ">>") || strings.Contains(daily, "2>&1") {
+		t.Errorf("cron line must not shell-redirect (the job logs itself; crashes go to cron mail): %q", daily)
 	}
 
 	hourly, err := CronLine(sampleSpec(Hourly, "02:15"))
@@ -80,6 +84,8 @@ func TestLaunchdPlistGeneration(t *testing.T) {
 		"<key>StartCalendarInterval</key>",
 		"<key>Minute</key>",
 		"<key>Hour</key>",
+		"<key>StandardErrorPath</key>",
+		"<string>/data/backup/mailarchive-backup.stderr.log</string>",
 	} {
 		if !strings.Contains(daily, want) {
 			t.Errorf("plist missing %q", want)
