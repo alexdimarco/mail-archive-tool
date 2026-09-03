@@ -40,8 +40,8 @@ func Query(name string) State {
 		_, err := exec.Command("schtasks", "/Query", "/TN", name).CombinedOutput()
 		return schtasksState(err)
 	default:
-		out, err := exec.Command("crontab", "-l").CombinedOutput()
-		return cronState(name, string(out), err)
+		out, err := crontabList()
+		return cronState(name, out, err)
 	}
 }
 

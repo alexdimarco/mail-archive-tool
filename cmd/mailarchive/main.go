@@ -523,7 +523,7 @@ func runSchedule(args []string) error {
 			}
 		})
 		if len(stray) > 0 {
-			return fmt.Errorf("with -- the job carries its own flags: move %s after -- (or drop the --)", strings.Join(stray, ", "))
+			return errors.New(strayFlagRefusal(stray, jobArgs))
 		}
 	} else {
 		jobArgs = flatJobArgs(eo, fs.Args())
@@ -560,8 +560,17 @@ func runSchedule(args []string) error {
 		if err := spec.Validate(); err != nil {
 			return err
 		}
-		if err := schedule.Remove(spec); err != nil {
+		removed, err := schedule.RemoveIfInstalled(spec)
+		if err != nil {
 			return err
+		}
+		if !removed {
+			target := out
+			if target == "" {
+				target = n
+			}
+			fmt.Printf("no schedule was installed for %s — nothing to remove\n", target)
+			return nil
 		}
 		fmt.Printf("Removed scheduled backup %q.\n", n)
 		return nil
@@ -601,6 +610,12 @@ func runSchedule(args []string) error {
 		fmt.Printf("Installed scheduled backup %q (%s at %s).\n", n, iv, *at)
 		fmt.Printf("It runs: %s %s\n", exe, strings.Join(spec.Args, " "))
 		fmt.Printf("Log: %s · descriptor: %s · check with: mailarchive status -out %q\n", logPath, filepath.Join(j.out, schedule.DescriptorName), j.out)
+		if jobUsesOutlook(spec.Args) {
+			fmt.Println(outlookReminderText)
+		}
+		if svc, ok := util.UnderCloudSync(j.out); ok {
+			fmt.Printf("Note: %s is inside %s's synced folder — a local, non-synced folder avoids re-uploads and sync conflicts.\n", j.out, svc)
+		}
 		return nil
 	}
 	text, err := schedule.Preview(spec)

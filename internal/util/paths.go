@@ -5,6 +5,7 @@ package util
 import (
 	"crypto/sha1"
 	"encoding/hex"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -140,6 +141,42 @@ func HashHex(s string, n int) string {
 		return h[:n]
 	}
 	return h
+}
+
+// UnderCloudSync reports whether absPath sits inside a cloud-sync folder that
+// re-uploads on every change (P3-windows). It recognises OneDrive two ways: a
+// path segment equal to or beginning with "OneDrive" (case-insensitive, so
+// "OneDrive - Company" and "OneDriveCommercial" match), and the OneDrive*
+// environment variables the client sets to its sync roots. The service name is
+// returned for a legible remedy; ok is false when the path is not synced.
+func UnderCloudSync(absPath string) (service string, ok bool) {
+	clean := filepath.Clean(absPath)
+	for _, env := range []string{"OneDrive", "OneDriveCommercial", "OneDriveConsumer"} {
+		if root := os.Getenv(env); root != "" && pathWithin(clean, filepath.Clean(root)) {
+			return "OneDrive", true
+		}
+	}
+	for _, seg := range strings.FieldsFunc(clean, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if strings.HasPrefix(strings.ToLower(seg), "onedrive") {
+			return "OneDrive", true
+		}
+	}
+	return "", false
+}
+
+// pathWithin reports whether path is root or a descendant of root, comparing
+// case-insensitively (Windows paths are case-insensitive and this is a
+// Windows-facing check).
+func pathWithin(path, root string) bool {
+	if root == "" {
+		return false
+	}
+	p, r := strings.ToLower(path), strings.ToLower(root)
+	if p == r {
+		return true
+	}
+	sep := string(filepath.Separator)
+	return strings.HasPrefix(p, strings.TrimRight(r, sep)+sep)
 }
 
 func truncateRunes(s string, max int) string {

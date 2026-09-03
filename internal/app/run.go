@@ -324,9 +324,34 @@ func beginRun(opts Options) state.LastRun {
 	if opts.Mode == export.Full {
 		mode = "full"
 	}
-	lr := state.LastRun{Status: state.RunRunning, Started: time.Now().UTC(), PID: os.Getpid(), Exe: exe, Mode: mode}
+	lr := state.LastRun{Status: state.RunRunning, Started: time.Now().UTC(), PID: os.Getpid(), Exe: exe, Mode: mode, Job: canonicalJob(opts, mode)}
 	_ = state.WriteLastRun(opts.Out, lr) // best effort: the run itself must not fail on this
 	return lr
+}
+
+// canonicalJob reconstructs the run's export flags in the same shape the
+// scheduler stores them, so `status` can offer a "schedule the same job"
+// remedy. It returns nil when there is no determinable local export job — a
+// Graph run (shared beginRun, no inputs) or a bare run — so status falls back
+// to a generic phrase rather than inventing a wrong command.
+func canonicalJob(opts Options, mode string) []string {
+	if len(opts.Inputs) == 0 && !opts.Auto {
+		return nil
+	}
+	job := []string{"-out", opts.Out, "-mode", mode}
+	if opts.Auto {
+		job = append(job, "-auto")
+	}
+	for _, in := range opts.Inputs {
+		job = append(job, "-input", in)
+	}
+	if opts.CopyFirst {
+		job = append(job, "-copy-first")
+	}
+	if opts.KeepRaw {
+		job = append(job, "-raw")
+	}
+	return job
 }
 
 // recordRun finalizes the last-run record from the run's outcome.

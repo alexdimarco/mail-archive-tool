@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -17,19 +18,33 @@ import (
 	"mail-archive-tool/internal/procs"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/state"
+	"mail-archive-tool/internal/util"
 )
 
 // Input is everything known about an archive before judging it.
 type Input struct {
 	Out string
 
+	// GOOS shapes OS-specific wording (e.g. the staleness question: cron runs
+	// unattended, launchd/schtasks need a login). Empty defaults to the host.
+	GOOS string
+
+	// OutUnderSync names the cloud-sync service (e.g. "OneDrive") when the
+	// archive sits inside a synced folder; "" when it does not.
+	OutUnderSync string
+
 	HasManifest                 bool
 	Messages                    int
 	Fillable, Terminal, Unknown int
 	ReportPath                  string
+	ReportExists                bool // the verification report exists on disk
 
 	HasIndex bool
 	Indexed  int
+
+	// HasRange and the two bounds are the oldest/newest indexed message dates.
+	HasRange                 bool
+	RangeOldest, RangeNewest time.Time
 
 	LastRun      state.LastRun
 	LastRunState state.LastRunState
@@ -87,13 +102,23 @@ func Assess(in Input, now time.Time) Report {
 
 	// Completeness.
 	if in.Fillable > 0 {
-		r.warn(fmt.Sprintf("%d message(s) still missing content — download for offline use in your mail app, then re-run; incremental fills them (see %s)", in.Fillable, in.ReportPath))
+		msg := fmt.Sprintf("%d message(s) still missing content — download for offline use in your mail app, then re-run; incremental fills them", in.Fillable)
+		if in.ReportExists {
+			msg += fmt.Sprintf(" (see %s)", in.ReportPath)
+		}
+		r.warn(msg)
 	}
 	if in.Unknown > 0 {
 		r.warn(fmt.Sprintf("%d entr%s predate completeness tracking and are re-examined by incremental runs until none remain", in.Unknown, plural(in.Unknown, "y", "ies")))
 	}
 	if in.HasIndex && in.HasManifest && in.Indexed < in.Messages {
 		r.warn(fmt.Sprintf("the search index holds %d of %d messages — run `mailarchive reindex -out %q`", in.Indexed, in.Messages, in.Out))
+	}
+
+	// The archive's own location. A cloud-sync folder re-uploads every change
+	// and can conflict with the sync (P3).
+	if in.OutUnderSync != "" {
+		r.warn(fmt.Sprintf("the archive is inside %s's synced folder — a backup here re-uploads on every change and can corrupt during a sync; use a local, non-synced folder, or exclude it from sync / keep it always on this device", in.OutUnderSync))
 	}
 
 	// Last run.
@@ -103,7 +128,7 @@ func Assess(in Input, now time.Time) Report {
 	}
 	switch in.LastRunState {
 	case state.LastRunUnreadable:
-		r.warn(fmt.Sprintf("the last-run record %s is unreadable (%v) — the next run rewrites it", filepath.Join(in.Out, state.LastRunName), in.LastRunErr))
+		r.warn(fmt.Sprintf("the last-run record %s is unreadable (corrupt or truncated); the next run rewrites it", filepath.Join(in.Out, state.LastRunName)))
 	case state.LastRunAbsent:
 		if in.HasDescriptor {
 			r.warn("a schedule is installed but no run has ever been recorded here — wait for the first run, or run the job by hand to check it works")
@@ -130,7 +155,7 @@ func Assess(in Input, now time.Time) Report {
 			r.warn(fmt.Sprintf("the last run (%s) was cancelled before finishing; progress was kept", lr.Started.Local().Format("2006-01-02 15:04")))
 		}
 		if in.HasDescriptor && lr.Status != state.RunRunning && now.Sub(lr.Started) > 2*period {
-			r.warn(fmt.Sprintf("the last run was %s ago, more than twice the %s schedule period — is the machine on and logged in at %s?", HumanAge(now.Sub(lr.Started)), in.Desc.Interval, in.Desc.At))
+			r.warn(fmt.Sprintf("the last run was %s ago, more than twice the %s schedule period — %s", HumanAge(now.Sub(lr.Started)), in.Desc.Interval, stalenessQuestion(in.GOOS, in.Desc.At)))
 		}
 	}
 
@@ -139,8 +164,11 @@ func Assess(in Input, now time.Time) Report {
 	case in.DescErr != nil && !errors.Is(in.DescErr, os.ErrNotExist):
 		r.warn(in.DescErr.Error())
 	case !in.HasDescriptor:
-		r.warn(fmt.Sprintf("no schedule is recorded for this archive — keep it current with `mailarchive schedule -out %q -auto -install` (or the GUI's \"Keep this archive current\")", in.Out))
+		r.warn(fmt.Sprintf("no schedule is recorded for this archive — %s (or the GUI's \"Keep this archive current\"), or ignore this if a systemd timer, NAS task or other scheduler already keeps it current", scheduleRemedy(in)))
 	default:
+		if jo := jobOutOf(in.Desc.Job); jo != "" && filepath.IsAbs(jo) && filepath.IsAbs(in.Out) && filepath.Clean(jo) != filepath.Clean(in.Out) {
+			r.warn(fmt.Sprintf("the installed schedule %q backs up %s, not this archive (%s) — re-run `mailarchive schedule -out %q ... -install`, then remove the stale one with `mailarchive schedule -name %q -remove`", in.Desc.Name, jo, in.Out, in.Out, in.Desc.Name))
+		}
 		if in.ThisHost != "" && in.Desc.Host != "" && in.ThisHost != in.Desc.Host {
 			r.warn(fmt.Sprintf("the schedule was installed on host %q, not this one (%q); its state cannot be checked from here", in.Desc.Host, in.ThisHost))
 		} else {
@@ -189,11 +217,67 @@ func plural(n int, one, many string) string {
 	return many
 }
 
+// stalenessQuestion phrases the "why might it have missed a run?" prompt for the
+// scheduler the archive's OS uses: cron runs unattended whenever the machine is
+// on and crond is up (no login), while launchd and Task Scheduler run only in a
+// logged-in session.
+func stalenessQuestion(goos, at string) string {
+	if goos == "" {
+		goos = runtime.GOOS
+	}
+	switch goos {
+	case "linux", "freebsd", "openbsd", "netbsd":
+		return fmt.Sprintf("was the machine on (and crond running) at %s?", at)
+	default:
+		return fmt.Sprintf("is the machine on and logged in at %s?", at)
+	}
+}
+
+// scheduleRemedy shapes the "keep it current" advice for an archive with no
+// recorded schedule from the job that actually made it (friction #7). Older
+// records and Graph runs carry no job; it then names a generic phrase rather
+// than hard-coding -auto.
+func scheduleRemedy(in Input) string {
+	if in.LastRunState == state.LastRunPresent && len(in.LastRun.Job) > 0 {
+		return "keep it current by scheduling the same job that made this archive: " + scheduleCommand(in.LastRun.Job)
+	}
+	return "keep it current by scheduling the same job that made this archive (e.g. `mailarchive schedule -out " + fmt.Sprintf("%q", in.Out) + " ... -install`)"
+}
+
+// scheduleCommand renders a runnable `schedule … -install` line that repeats a
+// recorded job: an export job (no verb) on the flat form, a graph/reindex job
+// after `--`.
+func scheduleCommand(job []string) string {
+	if len(job) > 0 && (job[0] == "graph" || job[0] == "reindex") {
+		return "`mailarchive schedule -install -- " + strings.Join(job, " ") + "`"
+	}
+	return "`mailarchive schedule " + strings.Join(job, " ") + " -install`"
+}
+
+// jobOutOf returns the -out value carried by a scheduler job's arguments,
+// handling both `-out V` and `-out=V` (and their `--out` spellings); "" when
+// absent.
+func jobOutOf(job []string) string {
+	for i := 0; i < len(job); i++ {
+		a := strings.TrimLeft(job[i], "-")
+		if a == "out" && i+1 < len(job) {
+			return job[i+1]
+		}
+		if strings.HasPrefix(a, "out=") {
+			return a[len("out="):]
+		}
+	}
+	return ""
+}
+
 // Gather collects the facts about an archive. nameOverride checks that
 // schedule name instead of the descriptor's.
 func Gather(out, nameOverride string) Input {
-	in := Input{Out: out, PIDAlive: procs.Alive}
+	in := Input{Out: out, GOOS: runtime.GOOS, PIDAlive: procs.Alive}
 	in.ThisHost, _ = os.Hostname()
+	if svc, ok := util.UnderCloudSync(out); ok {
+		in.OutUnderSync = svc
+	}
 	// Probe the archive lock: held means a run is genuinely in progress.
 	if l, err := lockfile.Acquire(filepath.Join(out, lockfile.Name)); err == nil {
 		l.Release()
@@ -210,9 +294,15 @@ func Gather(out, nameOverride string) Input {
 		}
 	}
 	in.ReportPath = filepath.Join(out, "attachments-report.tsv")
+	if _, err := os.Stat(in.ReportPath); err == nil {
+		in.ReportExists = true
+	}
 	if ix, err := index.OpenReadonly(filepath.Join(out, "search.db")); err == nil {
 		in.HasIndex = true
 		in.Indexed, _ = ix.Count()
+		if oldest, newest, ok := ix.Range(); ok {
+			in.HasRange, in.RangeOldest, in.RangeNewest = true, oldest, newest
+		}
 		ix.Close()
 	}
 	in.LastRun, in.LastRunState, in.LastRunErr = state.ReadLastRun(out)
@@ -260,8 +350,16 @@ func Summary(in Input, rep Report) []string {
 			idx = fmt.Sprintf("%d indexed", in.Indexed)
 		}
 		lines = append(lines, fmt.Sprintf("Messages:   %d in manifest · %s", in.Messages, idx))
+		if in.HasRange {
+			lines = append(lines, fmt.Sprintf("Archived range: %s – %s (UTC)", in.RangeOldest.Format("2006-01-02"), in.RangeNewest.Format("2006-01-02")))
+		}
 		if in.Fillable > 0 || in.Terminal > 0 || in.Unknown > 0 {
-			lines = append(lines, fmt.Sprintf("Incomplete: %d still fillable · %d source-empty (terminal) · %d not yet re-examined — %s", in.Fillable, in.Terminal, in.Unknown, in.ReportPath))
+			line := fmt.Sprintf("Incomplete: %d still missing content · %d source-empty (never fillable) · %d not yet re-examined", in.Fillable, in.Terminal, in.Unknown)
+			if in.ReportExists {
+				line += " — " + in.ReportPath
+			}
+			lines = append(lines, line)
+			lines = append(lines, "            (still missing content = not downloaded yet; fills on the next run)")
 		} else {
 			lines = append(lines, "Incomplete: none")
 		}
@@ -294,4 +392,89 @@ func Summary(in Input, rep Report) []string {
 		lines = append(lines, "  "+reason)
 	}
 	return lines
+}
+
+// JSONReport is the typed, versioned document `status -json` prints (product
+// nas-01): the same facts and judgement as Summary, machine-readable. Version
+// is bumped when a field's meaning changes so a consumer can refuse a shape it
+// does not understand.
+type JSONReport struct {
+	Version  int           `json:"version"`
+	Posture  string        `json:"posture"`
+	Reasons  []string      `json:"reasons"`
+	Out      string        `json:"out"`
+	Messages int           `json:"messages"`
+	Indexed  int           `json:"indexed"`
+	Fillable int           `json:"fillable"`
+	Terminal int           `json:"terminal"`
+	Unknown  int           `json:"unknown"`
+	LastRun  *JSONLastRun  `json:"last_run,omitempty"`
+	Schedule *JSONSchedule `json:"schedule,omitempty"`
+}
+
+// JSONLastRun is the last-run facet of JSONReport (omitted when no readable
+// record exists).
+type JSONLastRun struct {
+	Status   string    `json:"status"`
+	Started  time.Time `json:"started"`
+	Finished time.Time `json:"finished"`
+	Error    string    `json:"error,omitempty"`
+	Exported int       `json:"exported"`
+	Filled   int       `json:"filled"`
+}
+
+// JSONSchedule is the schedule facet of JSONReport (omitted when no descriptor
+// is recorded).
+type JSONSchedule struct {
+	Name     string `json:"name"`
+	State    string `json:"state"`
+	Interval string `json:"interval"`
+	At       string `json:"at"`
+	Exe      string `json:"exe"`
+	Host     string `json:"host"`
+}
+
+// JSONVersion is the current JSONReport schema version.
+const JSONVersion = 1
+
+// JSON builds the machine-readable status document from the gathered facts and
+// the posture judgement. It never fails and never changes the exit code: like
+// Summary it only reports (R18).
+func JSON(in Input, rep Report) JSONReport {
+	doc := JSONReport{
+		Version:  JSONVersion,
+		Posture:  rep.Posture,
+		Reasons:  rep.Reasons,
+		Out:      in.Out,
+		Messages: in.Messages,
+		Indexed:  in.Indexed,
+		Fillable: in.Fillable,
+		Terminal: in.Terminal,
+		Unknown:  in.Unknown,
+	}
+	if doc.Reasons == nil {
+		doc.Reasons = []string{}
+	}
+	if in.LastRunState == state.LastRunPresent {
+		lr := in.LastRun
+		doc.LastRun = &JSONLastRun{
+			Status:   lr.Status,
+			Started:  lr.Started,
+			Finished: lr.Finished,
+			Error:    lr.Error,
+			Exported: lr.Exported,
+			Filled:   lr.Filled,
+		}
+	}
+	if in.HasDescriptor {
+		doc.Schedule = &JSONSchedule{
+			Name:     in.Desc.Name,
+			State:    in.SchedState.String(),
+			Interval: in.Desc.Interval,
+			At:       in.Desc.At,
+			Exe:      in.Desc.Exe,
+			Host:     in.Desc.Host,
+		}
+	}
+	return doc
 }

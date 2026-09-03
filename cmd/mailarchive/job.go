@@ -352,3 +352,51 @@ func parseSince(s string) (time.Time, error) {
 func jobLogPath(out, name string) string {
 	return filepath.Join(out, name+".log")
 }
+
+// strayFlagRefusal explains a flat job flag placed before `--` while a `--` job
+// is also present. When the SAME flag is already carried by the job after `--`
+// it is a duplicate — drop the copy before `--`; otherwise it is merely
+// misplaced — move it after `--` (friction #20).
+func strayFlagRefusal(stray, jobArgs []string) string {
+	var dup, misplaced []string
+	for _, s := range stray {
+		if jobHasFlag(jobArgs, s) {
+			dup = append(dup, s)
+		} else {
+			misplaced = append(misplaced, s)
+		}
+	}
+	if len(dup) > 0 {
+		return fmt.Sprintf("drop the %s before -- (the job after -- already carries it)", strings.Join(dup, ", "))
+	}
+	return fmt.Sprintf("with -- the job carries its own flags: move %s after -- (or drop the --)", strings.Join(misplaced, ", "))
+}
+
+// jobHasFlag reports whether jobArgs carries flag (e.g. "-out") in any spelling
+// the flag package accepts (-out, --out, -out=V).
+func jobHasFlag(jobArgs []string, flag string) bool {
+	name := strings.TrimLeft(flag, "-")
+	for _, a := range jobArgs {
+		t := strings.TrimLeft(a, "-")
+		if t == name || strings.HasPrefix(t, name+"=") {
+			return true
+		}
+	}
+	return false
+}
+
+// outlookReminderText is printed after installing an -outlook schedule: the COM
+// path can raise a one-time "allow programmatic access" prompt an unattended
+// run cannot answer, so it must be cleared by hand once (friction #10).
+const outlookReminderText = "Note: run `mailarchive -outlook` once by hand first to clear Outlook's one-time \"allow programmatic access\" prompt — a scheduled run cannot answer it."
+
+// jobUsesOutlook reports whether the job's arguments carry the -outlook flag
+// (not -outlook-sync-wait).
+func jobUsesOutlook(args []string) bool {
+	for _, a := range args {
+		if strings.TrimLeft(a, "-") == "outlook" {
+			return true
+		}
+	}
+	return false
+}
