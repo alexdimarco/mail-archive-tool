@@ -147,6 +147,7 @@ func TestHelpTotality(t *testing.T) {
 		{[]string{"schedule", "-h"}, []string{"-out", "-interval", "-install"}},
 		{[]string{"graph", "-h"}, []string{"-out", "-tenant", "-mailbox", "-client-secret-file"}},
 		{[]string{"status", "-h"}, []string{"-out", "-name"}},
+		{[]string{"verify", "-h"}, []string{"-out", "-json", "-record"}},
 	}
 	for _, c := range cases {
 		_, stderr := runCLI(c.args...)
@@ -236,5 +237,18 @@ func TestScheduleJobValidation(t *testing.T) {
 	}
 	if strings.Contains(string(stdout), "s3cret") {
 		t.Error("the secret itself leaked into the preview")
+	}
+
+	// Valid verify job via --: schedulable, previewed (not applied), carrying
+	// -unattended and its -log.
+	cmd = exec.Command(testBin, "schedule", "-interval", "weekly", "--", "verify", "-out", out)
+	stdout, err = cmd.Output()
+	if err != nil {
+		t.Fatalf("valid -- verify job refused: %v", err)
+	}
+	for _, want := range []string{"verify", "-unattended", "-log", "NOT applied"} {
+		if !strings.Contains(string(stdout), want) {
+			t.Errorf("verify preview lacks %q:\n%s", want, stdout)
+		}
 	}
 }

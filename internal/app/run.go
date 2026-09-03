@@ -110,7 +110,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	}
 	// One run per archive at a time (R5): a scheduled run overlapping a manual
 	// one would otherwise interleave manifest/index/file writes.
-	lock, err := lockfile.Acquire(filepath.Join(opts.Out, lockfile.Name))
+	lock, err := lockfile.AcquireAs(filepath.Join(opts.Out, lockfile.Name), "export")
 	if err != nil {
 		return Result{}, err
 	}
@@ -164,12 +164,22 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 			return Result{}, fmt.Errorf("open search index: %w", err)
 		}
 		defer idx.Close()
+		// Repair legacy index keys to match the re-scoped manifest, driven by
+		// the manifest's own re-key signal (force) — the only trigger that
+		// survives an old-binary excursion — or the index's own version (F2).
+		if _, rkErr := idx.RepairKeys(manifest.Rekeyed > 0, state.MigrateKey, logger); rkErr != nil {
+			return Result{}, fmt.Errorf("migrate search index keys: %w", rkErr)
+		}
 		exp.OnExported = func(store string, folderPath []string, m *model.Message, relPath, key string) {
 			if addErr := idx.Add(store, folderPath, m, relPath, key); addErr != nil {
 				indexErrors++
 				logger.Printf("warning: index: %v", addErr)
 			}
 		}
+	}
+	if manifest.Rekeyed > 0 {
+		logger.Printf("re-scoped %d manifest entr%s by store (one-time upgrade; cost scales with archive size)",
+			manifest.Rekeyed, plural(manifest.Rekeyed, "y", "ies"))
 	}
 	if manifest.Migrated > 0 {
 		logger.Printf("%d manifest entr%s predate completeness tracking; they will be re-examined by this and following incremental runs",
@@ -413,6 +423,11 @@ func runFile(ctx context.Context, exp *export.Exporter, path, out string, copyFi
 	defer reader.Close()
 
 	store := reader.StoreName()
+	// The token scopes this source's identity and names its on-disk tree. It is
+	// computed once from the ORIGINAL input path (never the -copy-first
+	// snapshot, whose name changes every run) so two sources with the same
+	// display name get distinct, sticky trees (F1). Injective and persisted.
+	token := exp.Manifest.Token(path, store)
 	logger.Printf("Reading %s (store: %s)", path, store)
 
 	return reader.Walk(func(folderPath []string, m *model.Message) (err error) {
@@ -430,7 +445,7 @@ func runFile(ctx context.Context, exp *export.Exporter, path, out string, copyFi
 				err = nil
 			}
 		}()
-		if _, exportErr := exp.Export(store, folderPath, m); exportErr != nil {
+		if _, exportErr := exp.Export(token, folderPath, m); exportErr != nil {
 			return exportErr
 		}
 		if onProgress != nil {

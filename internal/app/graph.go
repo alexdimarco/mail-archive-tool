@@ -47,7 +47,7 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	if err := os.MkdirAll(opts.Out, 0o755); err != nil {
 		return Result{}, fmt.Errorf("create output dir: %w", err)
 	}
-	lock, err := lockfile.Acquire(filepath.Join(opts.Out, lockfile.Name))
+	lock, err := lockfile.AcquireAs(filepath.Join(opts.Out, lockfile.Name), "graph")
 	if err != nil {
 		return Result{}, err
 	}
@@ -85,12 +85,19 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 			return Result{}, fmt.Errorf("open search index: %w", err)
 		}
 		defer idx.Close()
+		if _, rkErr := idx.RepairKeys(manifest.Rekeyed > 0, state.MigrateKey, logger); rkErr != nil {
+			return Result{}, fmt.Errorf("migrate search index keys: %w", rkErr)
+		}
 		exp.OnExported = func(store string, folderPath []string, m *model.Message, relPath, key string) {
 			if addErr := idx.Add(store, folderPath, m, relPath, key); addErr != nil {
 				indexErrors++
 				logger.Printf("warning: index: %v", addErr)
 			}
 		}
+	}
+	if manifest.Rekeyed > 0 {
+		logger.Printf("re-scoped %d manifest entr%s by store (one-time upgrade; cost scales with archive size)",
+			manifest.Rekeyed, plural(manifest.Rekeyed, "y", "ies"))
 	}
 
 	client := graph.New(ctx, graph.Config{
@@ -171,6 +178,11 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 // runGraphMailbox walks one mailbox's folders and messages, exporting each.
 func runGraphMailbox(ctx context.Context, client *graph.Client, exp *export.Exporter, manifest *state.Manifest, mode export.Mode, mailbox string, logger *log.Logger, checkpoint func()) error {
 	logger.Printf("Reading mailbox %s via Microsoft Graph", mailbox)
+	// The store token for a Graph source is derived from the mailbox address
+	// (its own source id), so the incremental fast-path key below and the
+	// exporter's key agree — the skip still matches (R17). Mailbox addresses are
+	// injective, so this is almost always the plain sanitized segment.
+	token := manifest.Token(mailbox, mailbox)
 	folders, err := client.Folders(ctx, mailbox)
 	if err != nil {
 		return fmt.Errorf("list folders: %w", err)
@@ -196,7 +208,7 @@ func runGraphMailbox(ctx context.Context, client *graph.Client, exp *export.Expo
 			// is resolved here without a download: Graph delivers a message whole,
 			// so the earlier capture is as complete as the source allows.
 			if mode == export.Incremental && ref.InternetMessageID != "" {
-				key := state.Key(folderKey, "mid:"+ref.InternetMessageID)
+				key := state.Key(token, folderKey, "mid:"+ref.InternetMessageID)
 				if _, seen := manifest.Get(key); seen {
 					if manifest.Resolve(key) {
 						exp.Stats.Resolved++
@@ -221,7 +233,7 @@ func runGraphMailbox(ctx context.Context, client *graph.Client, exp *export.Expo
 						err = nil
 					}
 				}()
-				_, exportErr := exp.Export(mailbox, f.Path, m)
+				_, exportErr := exp.Export(token, f.Path, m)
 				checkpoint()
 				return exportErr
 			}()

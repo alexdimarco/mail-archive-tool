@@ -96,10 +96,14 @@ type Exporter struct {
 // first by a cheap probe (no render, no temp files) and, only if some
 // previously-missing item is now present, captured and committed again. An
 // unseen message goes through the date filter, then capture and commit.
+// The store argument is the store TOKEN (state.Token), not a raw display name:
+// it names both the on-disk directory (OutDir/token/…) and the first component
+// of the key, so two mailboxes archived into one -out never collide even when
+// their display names match (F1). Callers compute it once per source.
 func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (bool, error) {
 	date := m.Date()
 	folderKey := strings.Join(folderPath, "/")
-	key := state.Key(folderKey, m.Identity())
+	key := state.Key(store, folderKey, m.Identity())
 	fp := m.Fingerprint()
 
 	// A DIFFERENT message reusing an already-archived Message-ID in this folder
@@ -134,7 +138,10 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		return false, nil
 	}
 
-	dirParts := append([]string{e.OutDir, util.SanitizeSegment(store)}, folderPath...)
+	// store is already the sanitized, disambiguated token (state.Token), so it
+	// is used verbatim as the directory segment — the same string that scopes
+	// the key, so the on-disk tree and the manifest never disagree (F1).
+	dirParts := append([]string{e.OutDir, store}, folderPath...)
 	dir := filepath.Join(dirParts...)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return false, fmt.Errorf("create output dir %s: %w", dir, err)
@@ -166,10 +173,17 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		}
 	}
 	htmlBytes, inlineConsumed := rr.HTML, rr.Consumed
+
+	// Fixity of every file this capture writes, recorded from the exact bytes
+	// as they are written so `verify` can later detect bit-rot or truncation
+	// (F3). A re-capture builds a fresh Fixity, replacing any earlier one.
+	var fx state.Fixity
 	if rawName != "" {
-		if err := writeFileAtomic(filepath.Join(dir, rawName), m.Raw); err != nil {
+		d, err := writeFileAtomicDigest(filepath.Join(dir, rawName), m.Raw)
+		if err != nil {
 			return false, fmt.Errorf("write %s: %w", rawName, err)
 		}
+		fx.EML = &d
 		e.Stats.RawWritten++
 	}
 
@@ -197,6 +211,7 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 			}
 		}
 		e.Stats.Attachments += zr.Written
+		fx.Zip = zr.Digest // nil unless a zip was actually committed
 		for _, name := range zr.Empty {
 			e.Stats.AttachmentsEmpty++
 			e.addIssue(folderKey, m, relSlash, "empty-attachment", name)
@@ -211,9 +226,11 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		os.Remove(zipPath) // a re-capture with nothing archivable must not keep a stale zip
 	}
 
-	if err := writeFileAtomic(htmlPath, htmlBytes); err != nil {
+	hd, err := writeFileAtomicDigest(htmlPath, htmlBytes)
+	if err != nil {
 		return false, fmt.Errorf("write %s: %w", htmlPath, err)
 	}
+	fx.HTML = &hd
 
 	// Inline images referenced by cid: that we could not embed (missing from the
 	// message, e.g. dangling references in a reply/forward chain).
@@ -236,6 +253,7 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		}
 	}
 	rec.Fingerprint = fp
+	rec.Fixity = &fx
 	e.Manifest.Add(key, rec)
 	if e.OnExported != nil {
 		e.OnExported(store, folderPath, m, relSlash, key)

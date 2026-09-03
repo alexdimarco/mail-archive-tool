@@ -97,6 +97,22 @@ func reindexFlags(fs *flag.FlagSet) *reindexOpts {
 	return o
 }
 
+type verifyOpts struct {
+	out, log       *string
+	asJSON, record *bool
+	unattended     *bool
+}
+
+func verifyFlags(fs *flag.FlagSet) *verifyOpts {
+	o := &verifyOpts{}
+	o.out = fs.String("out", "", "archive directory to verify (contains .mailarchive-manifest.json) (required)")
+	o.asJSON = fs.Bool("json", false, "print the report as a typed JSON document on stdout (exit stays 0 attested / 2 not attested / 1 refusal)")
+	o.record = fs.Bool("record", false, "baseline fixity: hash the current bytes of every recorded file that has no digest and store them as fixity from now (not proof the existing bytes were pristine)")
+	o.log = fs.String("log", "", "write the run log to this file (size-capped, rotated) instead of stderr — what scheduled jobs use")
+	o.unattended = fs.Bool("unattended", false, "scheduled run: refuse to verify a non-existent archive (an unmounted drive), never wait for input")
+	return o
+}
+
 // requireExistingOut is the unattended guard: a scheduled job whose -out is
 // not there (the backup drive is not mounted, the share is down) must not
 // quietly create a new archive on the local disk and report success.
@@ -133,7 +149,7 @@ func (j job) command() []string {
 	return append([]string{j.verb}, j.args...)
 }
 
-var knownVerbs = map[string]bool{"serve": true, "search": true, "reindex": true, "schedule": true, "graph": true, "status": true}
+var knownVerbs = map[string]bool{"serve": true, "search": true, "reindex": true, "schedule": true, "graph": true, "status": true, "verify": true}
 
 // parseJob validates a job (the arguments after `--`, or the flat form
 // re-assembled by schedule) through the real flag definitions and returns it in
@@ -146,9 +162,9 @@ func parseJob(args []string) (job, error) {
 	}
 	switch verb {
 	case "serve":
-		return job{}, errors.New("serve is a long-running web server and cannot be a scheduled backup job; schedule an export, graph or reindex job")
+		return job{}, errors.New("serve is a long-running web server and cannot be a scheduled backup job; schedule an export, graph, reindex or verify job")
 	case "search", "status", "schedule":
-		return job{}, fmt.Errorf("%s is a query, not a backup job, and cannot be scheduled; schedule an export, graph or reindex job", verb)
+		return job{}, fmt.Errorf("%s is a query, not a backup job, and cannot be scheduled; schedule an export, graph, reindex or verify job", verb)
 	}
 
 	fs := flag.NewFlagSet("job", flag.ContinueOnError)
@@ -285,6 +301,30 @@ func parseJob(args []string) (job, error) {
 		}
 		j := job{verb: "reindex", out: abspath(*o.out)}
 		j.args = []string{"-out", j.out, "-unattended"}
+		if *o.log != "" {
+			j.args = append(j.args, "-log", abspath(*o.log))
+		}
+		return j, nil
+
+	case "verify":
+		o := verifyFlags(fs)
+		if err := fs.Parse(rest); err != nil {
+			return job{}, fmt.Errorf("verify job: %v (a scheduled job runs exactly these flags; fix them now)", err)
+		}
+		if *o.out == "" {
+			return job{}, errors.New("-out is required (the archive directory to verify)")
+		}
+		if err := noControl("a job argument", *o.out+*o.log); err != nil {
+			return job{}, err
+		}
+		j := job{verb: "verify", out: abspath(*o.out)}
+		j.args = []string{"-out", j.out, "-unattended"}
+		if *o.record {
+			j.args = append(j.args, "-record")
+		}
+		if *o.asJSON {
+			j.args = append(j.args, "-json")
+		}
 		if *o.log != "" {
 			j.args = append(j.args, "-log", abspath(*o.log))
 		}

@@ -3,11 +3,15 @@ package export
 import (
 	"archive/zip"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
 	"mail-archive-tool/internal/model"
+	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/util"
 )
 
@@ -20,6 +24,12 @@ type ZipResult struct {
 	Written int
 	Empty   []string
 	Failed  []string
+
+	// Digest is the fixity of the committed zip (its sha256 + byte length),
+	// taken from a tee on the temp writer as the archive is built, so it is the
+	// exact bytes that land on disk. Nil when no zip was written (nothing
+	// archivable, or an error) (F3).
+	Digest *state.FileDigest
 }
 
 // WriteZip writes every attachment not in skip into a zip archive at zipPath.
@@ -39,7 +49,14 @@ func WriteZip(zipPath string, atts []model.Attachment, skip map[int]bool) (ZipRe
 		return res, werr
 	}
 
-	zw := zip.NewWriter(tmp)
+	// Tee every byte the zip writer emits through a sha256 hasher and a byte
+	// counter, so the committed archive's fixity is known without re-reading
+	// the file (F3). The temp file, the hasher and the counter all see the
+	// identical stream, so the digest matches exactly what commitTemp renames
+	// into place.
+	h := sha256.New()
+	counter := &byteCounter{}
+	zw := zip.NewWriter(io.MultiWriter(tmp, h, counter))
 	usedNames := map[string]int{}
 
 	for i := range atts {
@@ -87,7 +104,17 @@ func WriteZip(zipPath string, atts []model.Attachment, skip map[int]bool) (ZipRe
 	if err := commitTemp(tmp, zipPath); err != nil {
 		return res, fmt.Errorf("commit zip: %w", err)
 	}
+	res.Digest = &state.FileDigest{SHA256: hex.EncodeToString(h.Sum(nil)), Size: counter.n}
 	return res, nil
+}
+
+// byteCounter counts the bytes written through it (the committed zip's length,
+// tallied from the same tee that feeds the hasher).
+type byteCounter struct{ n int64 }
+
+func (c *byteCounter) Write(p []byte) (int, error) {
+	c.n += int64(len(p))
+	return len(p), nil
 }
 
 // attachmentLabel is a human-readable name for an attachment in reports.

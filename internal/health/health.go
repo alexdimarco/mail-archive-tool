@@ -36,6 +36,7 @@ type Input struct {
 	HasManifest                 bool
 	Messages                    int
 	Fillable, Terminal, Unknown int
+	WithFixity                  int // records carrying at least one file digest (N of Messages)
 	ReportPath                  string
 	ReportExists                bool // the verification report exists on disk
 
@@ -291,6 +292,7 @@ func Gather(out, nameOverride string) Input {
 			in.HasManifest = true
 			in.Messages = m.Len()
 			in.Fillable, in.Terminal, in.Unknown = m.Counts()
+			in.WithFixity, _ = m.FixityCounts()
 		}
 	}
 	in.ReportPath = filepath.Join(out, "attachments-report.tsv")
@@ -362,6 +364,16 @@ func Summary(in Input, rep Report) []string {
 			lines = append(lines, "            (still missing content = not downloaded yet; fills on the next run)")
 		} else {
 			lines = append(lines, "Incomplete: none")
+		}
+		// Fixity: how many records carry file digests, from manifest fields
+		// alone (does not hash anything — that is `verify`). When some records
+		// lack digests, name the baseline remedy (FC12).
+		if in.Messages > 0 {
+			fx := fmt.Sprintf("Fixity:     %d of %d records carry digests", in.WithFixity, in.Messages)
+			if in.WithFixity < in.Messages {
+				fx += fmt.Sprintf(" (run `mailarchive verify -record -out %q` to baseline the rest)", in.Out)
+			}
+			lines = append(lines, fx)
 		}
 	} else {
 		lines = append(lines, "Messages:   (no manifest yet — no run has completed here)")

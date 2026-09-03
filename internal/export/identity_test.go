@@ -131,8 +131,8 @@ func TestStemCollisionAndRename(t *testing.T) {
 	if n := countSuffix(t, out, ".html"); n != 2 {
 		t.Fatalf("stem collision overwrote a message: %d html files", n)
 	}
-	r1, _ := manifest.Get(state.Key("Inbox", m1.Identity()))
-	r2, _ := manifest.Get(state.Key("Inbox", m2.Identity()))
+	r1, _ := manifest.Get(state.Key("store", "Inbox", m1.Identity()))
+	r2, _ := manifest.Get(state.Key("store", "Inbox", m2.Identity()))
 	if r1.Path == r2.Path {
 		t.Fatalf("both records point at %s", r1.Path)
 	}
@@ -143,17 +143,17 @@ func TestStemCollisionAndRename(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if q1, _ := manifest.Get(state.Key("Inbox", m1.Identity())); q1.Path != r1.Path {
+	if q1, _ := manifest.Get(state.Key("store", "Inbox", m1.Identity())); q1.Path != r1.Path {
 		t.Errorf("re-run moved %s to %s", r1.Path, q1.Path)
 	}
-	if q2, _ := manifest.Get(state.Key("Inbox", m2.Identity())); q2.Path != r2.Path {
+	if q2, _ := manifest.Get(state.Key("store", "Inbox", m2.Identity())); q2.Path != r2.Path {
 		t.Errorf("re-run moved %s to %s", r2.Path, q2.Path)
 	}
 
 	// Rename: the record points at a file named by an older naming rule (the
 	// stem rule changed between versions). Re-exporting moves the message: the
 	// new file is written and the old one removed.
-	k1 := state.Key("Inbox", m1.Identity())
+	k1 := state.Key("store", "Inbox", m1.Identity())
 	rec1, _ := manifest.Get(k1)
 	oldRel := "store/Inbox/old-rule-name.html"
 	oldAbs := filepath.Join(out, filepath.FromSlash(oldRel))
@@ -202,7 +202,7 @@ func findHashCollision(t *testing.T) (string, string) {
 	seen := map[string]string{}
 	for i := 0; i < 2_000_000; i++ {
 		id := fmt.Sprintf("<c%d@x>", i)
-		key := state.Key("Inbox", "mid:"+id) // exactly what Identity() yields for InternetMessageID=id
+		key := state.Key("store", "Inbox", "mid:"+id) // exactly what Identity() yields for InternetMessageID=id
 		h := util.ShortHash(key)
 		if prev, ok := seen[h]; ok {
 			return prev, id

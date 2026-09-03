@@ -55,7 +55,7 @@ func TestIncrementalFillsGaps(t *testing.T) {
 		return &model.Message{Subject: "Report", Received: testDate, InternetMessageID: "<r@x>",
 			HTMLBody: "<p>hi</p>", Attachments: []model.Attachment{pdf.att("report.pdf")}}
 	}
-	key := state.Key("Inbox", msg().Identity())
+	key := state.Key("store", "Inbox", msg().Identity())
 
 	// Run 1: the attachment is empty → exported, recorded fillable, no zip.
 	e1 := incExporter(out, manifest)
@@ -139,7 +139,7 @@ func TestRetryPromotesOnAnyRecoveredItem(t *testing.T) {
 		return &model.Message{Subject: "Mixed", Received: testDate, InternetMessageID: "<mx@x>",
 			HTMLBody: body, Attachments: []model.Attachment{att.att("a.txt")}}
 	}
-	key := state.Key("Inbox", msg().Identity())
+	key := state.Key("store", "Inbox", msg().Identity())
 
 	e1 := incExporter(out, manifest)
 	if _, err := e1.Export("store", []string{"Inbox"}, msg()); err != nil {
@@ -188,7 +188,7 @@ func TestMissingBodyAndTerminalClass(t *testing.T) {
 	msg := func() *model.Message {
 		return &model.Message{Subject: "Empty", Received: testDate, InternetMessageID: "<e@x>", PlainBody: body}
 	}
-	key := state.Key("Inbox", msg().Identity())
+	key := state.Key("store", "Inbox", msg().Identity())
 	e1 := incExporter(out, manifest)
 	if _, err := e1.Export("store", []string{"Inbox"}, msg()); err != nil {
 		t.Fatal(err)
@@ -210,7 +210,7 @@ func TestMissingBodyAndTerminalClass(t *testing.T) {
 	if _, err := e2.Export("store", []string{"Inbox"}, ok); err != nil {
 		t.Fatal(err)
 	}
-	if rec, _ := manifest.Get(state.Key("Inbox", ok.Identity())); !rec.Complete() {
+	if rec, _ := manifest.Get(state.Key("store", "Inbox", ok.Identity())); !rec.Complete() {
 		t.Errorf("B: complete message recorded as %+v", rec)
 	}
 
@@ -221,7 +221,7 @@ func TestMissingBodyAndTerminalClass(t *testing.T) {
 	if _, err := term.Export("graph", []string{"Inbox"}, tm); err != nil {
 		t.Fatal(err)
 	}
-	tkey := state.Key("Inbox", tm.Identity())
+	tkey := state.Key("graph", "Inbox", tm.Identity())
 	rec, _ := manifest.Get(tkey)
 	if strings.Join(rec.Terminal, ",") != "body" || rec.Fillable() || len(rec.Missing) != 0 {
 		t.Fatalf("C: record=%+v, want Terminal=[body] and not fillable", rec)
@@ -243,7 +243,7 @@ func TestUnknownSentinelIsResolvedByRecapture(t *testing.T) {
 	out := t.TempDir()
 	manifest := mustManifest(t)
 	m := &model.Message{Subject: "Old", Received: testDate, InternetMessageID: "<old@x>", PlainBody: "text"}
-	key := state.Key("Inbox", m.Identity())
+	key := state.Key("store", "Inbox", m.Identity())
 	manifest.Add(key, state.Record{Path: "store/Inbox/old.html", Folder: "Inbox", Missing: []string{"unknown"}})
 
 	e := incExporter(out, manifest)

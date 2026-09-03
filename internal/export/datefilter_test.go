@@ -33,7 +33,7 @@ func TestDateFilterExcludesExactlyOutsideWindow(t *testing.T) {
 		t.Fatal(err)
 	}
 	assure.Reached(t, wrote, "the on/after message is exported")
-	afterKey := state.Key("Inbox", after.Identity())
+	afterKey := state.Key("store", "Inbox", after.Identity())
 	rec, ok := manifest.Get(afterKey)
 	if !ok {
 		t.Fatal("the on/after message was not recorded in the manifest")
@@ -59,7 +59,7 @@ func TestDateFilterExcludesExactlyOutsideWindow(t *testing.T) {
 	if e.Stats.Exported != 1 {
 		t.Errorf("Exported = %d, want 1 (only the on/after message)", e.Stats.Exported)
 	}
-	if _, seen := manifest.Get(state.Key("Inbox", before.Identity())); seen {
+	if _, seen := manifest.Get(state.Key("store", "Inbox", before.Identity())); seen {
 		t.Error("a message excluded by -since must not be recorded in the manifest")
 	}
 	if n := countSuffix(t, out, ".html"); n != 1 {

@@ -6,15 +6,20 @@ import (
 	"time"
 )
 
-// covers: MA-09
+// covers: MA-09, R6
 func TestKey(t *testing.T) {
-	k := Key("Inbox/Projects", "mid:<abc@example.com>")
-	if k != "Inbox/Projects\x00mid:<abc@example.com>" {
+	k := Key("Local Folders", "Inbox/Projects", "mid:<abc@example.com>")
+	if k != "Local Folders\x00Inbox/Projects\x00mid:<abc@example.com>" {
 		t.Errorf("unexpected key: %q", k)
 	}
 	// Same identity in different folders yields different keys.
-	if Key("A", "id") == Key("B", "id") {
+	if Key("s", "A", "id") == Key("s", "B", "id") {
 		t.Error("keys should be folder-scoped")
+	}
+	// Same folder + identity in different stores yields different keys, so two
+	// mailboxes archived into one -out never collide (R6).
+	if Key("s1", "A", "id") == Key("s2", "A", "id") {
+		t.Error("keys should be store-scoped")
 	}
 }
 
@@ -39,8 +44,8 @@ func TestManifestDelete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	keep := Key("Inbox", "id-keep")
-	drop := Key("Inbox", "id-drop")
+	keep := Key("s", "Inbox", "id-keep")
+	drop := Key("s", "Inbox", "id-drop")
 	m.Add(keep, Record{Path: "store/Inbox/keep.html"})
 	m.Add(drop, Record{Path: "store/Inbox/drop.html"})
 
@@ -76,7 +81,7 @@ func TestAddHasSaveReload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	key := Key("Inbox", "mid:<1@x>")
+	key := Key("s", "Inbox", "mid:<1@x>")
 	if m.Has(key) {
 		t.Fatal("unexpected hit on empty manifest")
 	}

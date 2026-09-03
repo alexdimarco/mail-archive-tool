@@ -27,10 +27,17 @@ type Lock struct {
 	path string
 }
 
-// Acquire takes the exclusive lock at path without waiting. On success the
-// file records "pid=… started=… host=…". When another process holds it the
-// error wraps ErrHeld and names the path and, when readable, the holder.
-func Acquire(path string) (*Lock, error) {
+// Acquire takes the exclusive lock at path without waiting, naming no verb (the
+// holder line carries "pid=… started=… host=…"). See AcquireAs.
+func Acquire(path string) (*Lock, error) { return AcquireAs(path, "") }
+
+// AcquireAs is Acquire naming the verb that holds the lock, so a run refused
+// while another holds it reads "held by mailarchive <verb> …" — the export,
+// Graph, reindex or verify that is running is self-explaining (FC5). On success
+// the file records "pid=… started=… host=… verb=<verb>" (verb omitted when
+// empty). When another process holds it the error wraps ErrHeld and names the
+// path and, when readable, the holder.
+func AcquireAs(path, verb string) (*Lock, error) {
 	// Never follow a symlink: a lock file that points elsewhere would be
 	// truncated when the holder line is written (an insider's planted link).
 	if fi, err := os.Lstat(path); err == nil && !fi.Mode().IsRegular() {
@@ -44,15 +51,37 @@ func Acquire(path string) (*Lock, error) {
 		f.Close()
 		holder := readHolder(path)
 		if holder != "" {
-			holder = " (" + holder + ")"
+			holder = " (held by mailarchive: " + holder + ")"
 		}
 		return nil, fmt.Errorf("archive is in use by another mailarchive run%s: %s: %w", holder, path, ErrHeld)
 	}
 	host, _ := os.Hostname()
-	info := fmt.Sprintf("pid=%d started=%s host=%s\n", os.Getpid(), time.Now().UTC().Format(time.RFC3339), host)
+	info := fmt.Sprintf("pid=%d started=%s host=%s", os.Getpid(), time.Now().UTC().Format(time.RFC3339), host)
+	if verb = sanitizeVerb(verb); verb != "" {
+		info += " verb=" + verb
+	}
+	info += "\n"
 	_ = f.Truncate(0)
 	_, _ = f.WriteAt([]byte(info), 0)
 	return &Lock{f: f, path: path}, nil
+}
+
+// sanitizeVerb keeps a verb to a short, control-character-free token so the
+// holder line (echoed into a terminal in a refusal) stays clean whatever a
+// caller passes.
+func sanitizeVerb(verb string) string {
+	verb = strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-':
+			return r
+		default:
+			return -1
+		}
+	}, verb)
+	if len(verb) > 16 {
+		verb = verb[:16]
+	}
+	return verb
 }
 
 // Release unlocks and closes the lock file. The file itself is left in place

@@ -1,12 +1,16 @@
 package export
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"mail-archive-tool/internal/state"
 )
 
 // tempPrefix names the in-flight temp files the exporter writes beside their
@@ -60,6 +64,19 @@ func writeFileAtomic(dst string, data []byte) error {
 		return err
 	}
 	return commitTemp(tmp, dst)
+}
+
+// writeFileAtomicDigest writes data to dst atomically (see commitTemp) and
+// returns the fixity of what it wrote: the sha256 and length of the exact bytes
+// on disk. The digest is taken from the in-memory bytes, so it always matches
+// the file (never a re-read that could observe a concurrent change). Used for
+// the `.html` and, with KeepRaw, the `.eml` (F3).
+func writeFileAtomicDigest(dst string, data []byte) (state.FileDigest, error) {
+	if err := writeFileAtomic(dst, data); err != nil {
+		return state.FileDigest{}, err
+	}
+	sum := sha256.Sum256(data)
+	return state.FileDigest{SHA256: hex.EncodeToString(sum[:]), Size: int64(len(data))}, nil
 }
 
 // syncDir fsyncs a directory so a completed rename survives power loss on

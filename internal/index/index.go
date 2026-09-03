@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log"
 	"os"
 	"strings"
 
@@ -18,6 +19,12 @@ import (
 )
 
 const batchSize = 1000
+
+// indexVersion is the schema/key-format version stamped in the meta table. An
+// index with no meta row (written by a pre-meta binary) is treated as version 1
+// and repaired to 2 by RepairKeys; a stored version above this is refused by
+// Open (written by a newer mailarchive).
+const indexVersion = 2
 
 const pragmas = `PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;`
 
@@ -45,7 +52,8 @@ CREATE INDEX IF NOT EXISTS idx_docs_folder ON docs(folder);
 CREATE VIRTUAL TABLE IF NOT EXISTS docs_fts USING fts5(
   subject, sender, recipients, folder, attachments, body,
   tokenize='unicode61 remove_diacritics 2'
-);`
+);
+CREATE TABLE IF NOT EXISTS meta(version INTEGER);`
 
 // bodyColumn is the 0-based index of the "body" column in docs_fts, used by
 // snippet().
@@ -56,6 +64,7 @@ type Index struct {
 	db      *sql.DB
 	tx      *sql.Tx
 	pending int
+	version int // key-format version read at Open (see indexVersion)
 }
 
 // Open opens (creating if needed) a writable index at path and begins a batch.
@@ -69,13 +78,63 @@ func Open(path string) (*Index, error) {
 		db.Close()
 		return nil, fmt.Errorf("index pragmas: %w", err)
 	}
+	// The version is decided BEFORE the schema runs: a pre-existing docs table
+	// with no meta table is a pre-meta index (version 1, needs RepairKeys); a
+	// brand-new file is stamped at the current version; a meta row is trusted.
+	hadDocs := tableExists(db, "docs")
+	hadMeta := tableExists(db, "meta")
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("index schema: %w", err)
 	}
+	version, err := resolveIndexVersion(db, hadDocs, hadMeta)
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("index version: %w", err)
+	}
+	if version > indexVersion {
+		db.Close()
+		return nil, fmt.Errorf("search index %s was written by a newer mailarchive (format version %d; this build understands %d): upgrade this copy of mailarchive, or point -out at an archive this version wrote", path, version, indexVersion)
+	}
 	// Transactions are opened lazily on the first Add so that read methods are
 	// never blocked waiting for the single connection an open write tx holds.
-	return &Index{db: db}, nil
+	return &Index{db: db, version: version}, nil
+}
+
+// tableExists reports whether a table of the given name is present.
+func tableExists(db *sql.DB, name string) bool {
+	var n int
+	if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?`, name).Scan(&n); err != nil {
+		return false
+	}
+	return n > 0
+}
+
+// resolveIndexVersion decides the stored key-format version after the schema
+// has been (idempotently) created. A meta row is authoritative; a pre-existing
+// docs table with no prior meta table is version 1 (a pre-meta index); a fresh
+// database is stamped at the current version.
+func resolveIndexVersion(db *sql.DB, hadDocs, hadMeta bool) (int, error) {
+	if hadMeta {
+		var v sql.NullInt64
+		switch err := db.QueryRow(`SELECT version FROM meta LIMIT 1`).Scan(&v); {
+		case errors.Is(err, sql.ErrNoRows):
+			return 1, nil // meta table present but empty: treat as legacy
+		case err != nil:
+			return 0, err
+		}
+		if v.Valid {
+			return int(v.Int64), nil
+		}
+		return 1, nil
+	}
+	if hadDocs {
+		return 1, nil // a pre-meta index carrying one-NUL keys
+	}
+	if _, err := db.Exec(`INSERT INTO meta(version) VALUES(?)`, indexVersion); err != nil {
+		return 0, err
+	}
+	return indexVersion, nil
 }
 
 // OpenReadonly opens an existing index for querying (serve/search).
@@ -289,4 +348,97 @@ func (ix *Index) DeleteByKey(key string) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+// RepairKeys re-scopes legacy (v2) index rows to store-qualified (v3) keys,
+// applying fn (state.MigrateKey) to each row's (key, path). It runs when force
+// is set — the manifest load re-scoped something, the ONLY signal that survives
+// an old-binary excursion (a downgrade never regresses the index's own meta
+// version) — or when the stored version is below target. It logs "migrating
+// index keys (N rows)" before it starts and re-keys every affected row in one
+// transaction, then stamps the current version so a later open is a no-op.
+// Idempotent: a row already holding a v3 key (fn returns false) is untouched
+// and never double-prefixed; when an excursion left a v3 row already occupying
+// a re-keyed row's target key, the re-keyed (later) row wins so exactly one row
+// per key survives (R8). Call it right after Open, before any Add.
+func (ix *Index) RepairKeys(force bool, fn func(key, path string) (string, bool), logger *log.Logger) (int, error) {
+	if err := ix.commitPending(); err != nil {
+		return 0, err
+	}
+	if !force && ix.version >= indexVersion {
+		return 0, nil
+	}
+	// Collect first: the single connection is held by the row cursor for the
+	// walk, so rows cannot be mutated until it is closed.
+	type change struct {
+		id     int64
+		newKey string
+	}
+	var changes []change
+	rows, err := ix.db.Query(`SELECT id, key, path FROM docs ORDER BY id`)
+	if err != nil {
+		return 0, err
+	}
+	for rows.Next() {
+		var (
+			id        int64
+			key, path string
+		)
+		if err := rows.Scan(&id, &key, &path); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		if nk, ok := fn(key, path); ok && nk != key {
+			changes = append(changes, change{id: id, newKey: nk})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, err
+	}
+	rows.Close()
+
+	if len(changes) > 0 && logger != nil {
+		logger.Printf("migrating index keys (%d rows)", len(changes))
+	}
+
+	tx, err := ix.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	for _, c := range changes {
+		// If a different row already holds the target key (old-binary
+		// excursion), drop it first so the re-keyed row can take the unique key.
+		var otherID int64
+		switch err := tx.QueryRow(`SELECT id FROM docs WHERE key=? AND id<>?`, c.newKey, c.id).Scan(&otherID); {
+		case err == nil:
+			if err := deleteByIDTx(tx, otherID); err != nil {
+				tx.Rollback()
+				return 0, err
+			}
+		case errors.Is(err, sql.ErrNoRows):
+		default:
+			tx.Rollback()
+			return 0, err
+		}
+		if _, err := tx.Exec(`UPDATE docs SET key=? WHERE id=?`, c.newKey, c.id); err != nil {
+			tx.Rollback()
+			return 0, err
+		}
+	}
+	// Stamp the current version whenever the repair runs (a fresh row when the
+	// legacy index had none), so the next open needs no force.
+	if _, err := tx.Exec(`DELETE FROM meta`); err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+	if _, err := tx.Exec(`INSERT INTO meta(version) VALUES(?)`, indexVersion); err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	ix.version = indexVersion
+	return len(changes), nil
 }

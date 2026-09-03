@@ -157,7 +157,7 @@ func TestReindexReconciles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	betaKey := state.Key("Inbox", reindexMsg("prune-beta", "<beta@x>").Identity())
+	betaKey := state.Key("Store", "Inbox", reindexMsg("prune-beta", "<beta@x>").Identity())
 	if manifest.Has(betaKey) {
 		t.Error("manifest still records the pruned message")
 	}

@@ -416,6 +416,30 @@ mailarchive reindex -out ./export
 # reindexed: kept=1843 pruned=12
 ```
 
+### Upgrading an existing archive
+
+This version scopes each message's identity to its store, so two mailboxes
+archived into one `-out` — two profiles that both call their store "Local
+Folders", two Outlook files both named "Outlook Data File" — no longer collide
+and lose one copy. The first run (or `reindex`) after upgrading re-scopes the
+existing manifest and search index once, in place, by content — nothing on
+disk is renamed or rewritten. It is logged:
+
+```
+re-scoped 4213 manifest entries by store (one-time upgrade; cost scales with archive size)
+migrating index keys (4213 rows)
+```
+
+The one-time cost is proportional to the archive size; later runs do no such
+work. **Once an archive has been written by this version, do not run an older
+`mailarchive` against it.** A shared or synced `-out` must be written only by
+upgraded copies: an older binary does not understand the newer format and,
+lacking a forward guard, will rewrite the manifest in the old shape and write
+a second, duplicate copy of each touched message. This version repairs such an
+excursion by content on its next run (the old-shape entries are re-scoped and
+de-duplicated), but the leftover duplicate files remain on disk — so the safe
+rule is to upgrade every machine that writes the same archive.
+
 ### `schedule` — recurring backups
 
 `schedule` writes a recurring-backup entry for the host OS's scheduler — **cron**
@@ -514,6 +538,46 @@ with nothing to report there is no path and no file. (The `Done.` line above it
 carries the per-run counts, including `filled=<n>`.) **You no longer need
 `-mode full` to fill gaps**: download the content in your mail app and simply
 run again.
+
+### Verifying the files themselves (fixity)
+
+Completeness above is about what was *captured*. **Fixity** is about whether the
+captured files are still intact on disk. `mailarchive verify -out DIR` re-hashes
+every archived file the manifest records and reports each as **ok**, **modified**
+(its bytes changed, or a symlink or non-regular file now stands in its place),
+**missing** (gone from disk), or **unrecorded** (no digest on record yet); a
+stray `.html` / `-attachments.zip` / `.eml` under a store directory that no
+record owns is reported as **unexpected**.
+
+Bit-rot, truncation and accidental edits are detected **for files written by
+this version or later, or baselined with `verify -record`** — an archive created
+by an older mailarchive shows every file as `unrecorded` until it is re-exported
+or baselined. `verify -record` hashes the current bytes of every unrecorded file
+and stores them as the fixity *from now on*: a baseline of the bytes as they are
+today, **not** proof the legacy bytes were ever pristine. Fixity detects
+*change*, not authorship — the manifest is not signed, so anyone who can rewrite
+a file can rewrite its recorded digest too.
+
+The exit code is the verdict: **0** attested (everything checked and intact,
+nothing unrecorded), **2** not attested (something modified, missing, or
+unrecorded — each named), **1** a refusal (no archive, or a locked archive). Add
+`-json` for a machine-readable report; `mailarchive status` shows coverage
+("Fixity: N of M records carry digests") without hashing anything.
+
+`verify` reads every byte of every archived file and holds the archive's
+exclusive lock for its whole run, so a scheduled backup that fires meanwhile
+refuses and records nothing. **Run it outside the backup window** — or schedule
+it in its own slot, away from the backup:
+
+```sh
+mailarchive schedule -interval weekly -at 05:00 -install -- verify -out ./archive
+```
+
+> **Upgrading a shared `-out`:** an archive a newer mailarchive has written must
+> not then be written by an older one (a shared or cloud-synced output). Older
+> binaries have no forward-version guard; the current format self-heals a single
+> such excursion, and `verify` reports the duplicate files an old binary leaves
+> behind as `unexpected`.
 
 ### IMAP: get everything downloaded first
 
