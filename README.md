@@ -145,6 +145,7 @@ GOOS=windows GOARCH=amd64 go build -ldflags -H=windowsgui -o mailarchive-gui.exe
   search.db                                                  # full-text search index (plain SQLite, FTS5)
   attachments-report.tsv                                     # what could not be captured (absent when nothing)
   BACKUP-NEEDS-ATTENTION.txt                                 # only after a FAILED run: the reason + how to check (removed by the next success)
+  ARCHIVE-INTEGRITY-ATTENTION.txt                            # only after a verify found modified/missing files: the counts + how to restore (removed once verify attests)
   .mailarchive-manifest.json                                 # export state: what is archived, and what is still missing
   .mailarchive-lastrun.json                                  # the last run: started, finished, result, counts
   .mailarchive-schedule.json                                 # the schedule feeding this archive (when installed)
@@ -389,17 +390,73 @@ Messages:   1843 in manifest · 1843 indexed
 Archived range: 2011-03-08 – 2026-09-01 (UTC)
 Incomplete: 12 still missing content · 0 source-empty (never fillable) · 0 not yet re-examined — /home/alex/export/attachments-report.tsv
             (still missing content = not downloaded yet; fills on the next run)
+Fixity coverage: 1843 of 1843 records recorded (run `mailarchive verify -out "/home/alex/export"` to check the bytes)
 Last run:   2026-09-02 02:00 → ok · exported 5 · filled 2 · took 41s
-Schedule:   "mailarchive-3fa2b1c0" installed · daily at 02:00 · runs /usr/local/bin/mailarchive · installed 2026-09-01 on laptop
+Last verify: 2026-09-01 02:05 → attested
+Schedule:   "mailarchive-3fa2b1c0" installed · daily at 02:00 · runs /usr/local/bin/mailarchive · installed 2026-09-01 (UTC) on laptop
 Posture:    WARN
   WARN: 12 message(s) still missing content — download for offline use in your mail app, then re-run; incremental fills them (see …)
 ```
 
+The **Fixity coverage** line is coverage, not integrity: it counts how many
+records carry a recorded digest, read from the manifest — it hashes nothing.
+Running `mailarchive verify` (below) is what checks the bytes; its verdict shows
+up on the **Last verify** line — `attested`, or `NOT attested (modified N,
+missing N, unrecorded N)` — and a scheduled verify that finds modified or
+missing files turns the posture RED with the restore/re-export remedy.
+
 The posture fails closed: a schedule with no run ever recorded, a run that never
 finished (crash, kill, power loss), a scheduled program that no longer exists or
-is not this binary, a last run older than twice the schedule period, or a
-scheduler that cannot be queried all show up, each with its remedy. It exits 0
-whenever it reports; the posture is the answer.
+is not this binary, a last run older than twice the schedule period, a last
+verify that was not attested, a manifest that exists but cannot be read (a newer
+format, or corrupt), or a scheduler that cannot be queried all show up, each with
+its remedy. It exits 0 whenever it reports; the posture is the answer. For a
+machine-readable form see [Machine-readable output](#machine-readable-output).
+
+### Machine-readable output
+
+`status -json` and `verify -json` emit typed, versioned JSON on stdout (stderr
+carries any operator conversation) so a monitor or CI gate keys on fields, not
+prose.
+
+**`status -json` (version 2).** Top-level keys: `version`, `posture`, `reasons`,
+`reason_codes`, `out`, `messages`, `indexed`, `fillable`, `terminal`, `unknown`,
+`fixity`, `last_run`, `last_verify`, `schedule`.
+
+- `posture` is one of `GREEN` · `WARN` · `RED`.
+- `reasons` is the human WARN/RED lines; `reason_codes` is a **parallel** array
+  (same length, same order) of stable snake_case codes, so a gate matches a code
+  instead of wording that can change. The codes: `manifest_unreadable`,
+  `incomplete_content`, `unexamined_entries`, `index_behind`, `cloud_sync`,
+  `lastrun_unreadable`, `never_ran`, `run_failed`, `auth_remedy`,
+  `run_in_progress`, `run_stuck`, `run_never_finished`, `run_cancelled`,
+  `stale`, `not_attested`, `verify_unrecorded`, `verify_stale`,
+  `descriptor_unreadable`, `no_schedule`, `moved_archive`, `other_host`,
+  `scheduler_unavailable`, `not_installed`, `exe_missing`, `exe_moved`.
+- `fixity` is `{records, with_fixity}` (coverage, not integrity), or `null` when
+  there is no manifest.
+- `last_run` is `{status, started, finished, error?, exported, filled}`, where
+  `status` is one of `ok` · `failed` · `cancelled` · `running` and `finished` is
+  `null` while a run is in progress.
+- `last_verify` is `verify`'s own verdict — `{status, started, finished,
+  attested, records, with_fixity, checked, ok, modified, missing, unrecorded,
+  unexpected, recorded, exit_code}` — or `null` when no verify has run.
+- `schedule` is `{name, state, interval, at, exe, host}` (present only when a
+  schedule is recorded).
+
+`status` always exits 0: the posture is the answer, so read `posture` /
+`reason_codes` rather than the exit code.
+
+**`verify -json` (version 1).** Keys: `version`, `attested` (the verdict as a
+bool), `out`, `records`, `with_fixity`, `checked`, `ok`, `modified`, `missing`,
+`unrecorded`, `unexpected`, `recorded`, `problems` (`[{path, kind, detail}]`,
+`kind` ∈ `modified` · `missing` · `unrecorded` · `unexpected`), and `truncated`
+when a per-category list was capped. The **exit code** is the verdict too: `0`
+attested · `2` not attested · `1` refusal.
+
+**`search -json`** is a bare JSON array of results, while the running server's
+`/api/search` wraps the same results in an envelope, `{total, results, limit,
+offset}`. The CLI's default `-limit` is 20; the API's default limit is 50.
 
 ### `reindex` — reconcile the archive with disk
 
@@ -565,16 +622,32 @@ a file can rewrite its recorded digest too.
 The exit code is the verdict: **0** attested (everything checked and intact,
 nothing unrecorded), **2** not attested (something modified, missing, or
 unrecorded — each named), **1** a refusal (no archive, or a locked archive). Add
-`-json` for a machine-readable report; `mailarchive status` shows coverage
-("Fixity: N of M records carry digests") without hashing anything.
+`-json` for a machine-readable report (it carries an explicit `version` and
+`attested` field — see [Machine-readable output](#machine-readable-output)).
+`mailarchive status` shows only coverage ("Fixity coverage: N of M records
+recorded") without hashing anything — `verify` is what checks the bytes.
+
+A **freshly-upgraded archive has no fixity yet**: the one-time re-scope
+re-exports nothing, so legacy bytes cannot be attested as pristine. Such an
+archive shows `Fixity coverage: 0 of N records recorded` and `verify` reports
+every file `unrecorded` (NOT attested) until the next full re-export or an
+explicit `mailarchive verify -record`. This is expected, not data loss.
+
+A scheduled verify's verdict **is recorded** — in `.mailarchive-lastverify.json`,
+separate from the export last-run record — so `mailarchive status` shows it on
+its `Last verify` line and a not-attested result turns the posture RED. A verify
+that finds modified or missing files also writes `ARCHIVE-INTEGRITY-ATTENTION.txt`
+at the archive root (removed automatically once a later verify attests), so even
+a headless nightly check leaves a plain-language notice on disk.
 
 `verify` reads every byte of every archived file and holds the archive's
 exclusive lock for its whole run, so a scheduled backup that fires meanwhile
 refuses and records nothing. **Run it outside the backup window** — or schedule
-it in its own slot, away from the backup:
+it in its own slot, away from the backup, with an explicit `-name` so it does
+not collide with the backup schedule (both derive their name from `-out`):
 
 ```sh
-mailarchive schedule -interval weekly -at 05:00 -install -- verify -out ./archive
+mailarchive schedule -interval weekly -at 05:00 -name mailarchive-verify -install -- verify -out ./archive
 ```
 
 > **Upgrading a shared `-out`:** an archive a newer mailarchive has written must

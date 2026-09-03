@@ -143,12 +143,30 @@ func HashHex(s string, n int) string {
 	return h
 }
 
-// UnderCloudSync reports whether absPath sits inside a cloud-sync folder that
-// re-uploads on every change (P3-windows). It recognises OneDrive two ways: a
-// path segment equal to or beginning with "OneDrive" (case-insensitive, so
-// "OneDrive - Company" and "OneDriveCommercial" match), and the OneDrive*
-// environment variables the client sets to its sync roots. The service name is
-// returned for a legible remedy; ok is false when the path is not synced.
+// StripControl removes control characters from an untrusted string: C0 controls
+// and DEL (below 0x20, and 0x7f) and the C1 range (0x80–0x9f). Records read from
+// an archive directory (the schedule descriptor, the last-run and last-verify
+// records) are writable by anyone who can write the directory, and their
+// strings are echoed into terminals, dialogs and pasteable remedies; stripping
+// here at the read boundary neutralizes ANSI escapes and embedded newlines that
+// could forge an output line before they reach any consumer.
+func StripControl(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) {
+			return -1
+		}
+		return r
+	}, s)
+}
+
+// UnderCloudSync reports whether absPath sits inside a consumer cloud-sync
+// folder that re-uploads on every change (P3). It recognises OneDrive by the
+// OneDrive* environment variables the client sets to its sync roots, and every
+// supported provider by a path segment naming its local root: OneDrive
+// (a segment beginning with "OneDrive", so "OneDrive - Company" matches),
+// Dropbox, Google Drive ("My Drive"/"Google Drive"), iCloud Drive and Box — all
+// case-insensitive. The matched service name is returned for a legible remedy;
+// ok is false when the path is not synced.
 func UnderCloudSync(absPath string) (service string, ok bool) {
 	clean := filepath.Clean(absPath)
 	for _, env := range []string{"OneDrive", "OneDriveCommercial", "OneDriveConsumer"} {
@@ -157,11 +175,30 @@ func UnderCloudSync(absPath string) (service string, ok bool) {
 		}
 	}
 	for _, seg := range strings.FieldsFunc(clean, func(r rune) bool { return r == '/' || r == '\\' }) {
-		if strings.HasPrefix(strings.ToLower(seg), "onedrive") {
-			return "OneDrive", true
+		if svc := cloudSyncService(seg); svc != "" {
+			return svc, true
 		}
 	}
 	return "", false
+}
+
+// cloudSyncService maps one path segment to the consumer cloud-sync service
+// whose local root it names (case-insensitive), or "" if it names none.
+func cloudSyncService(seg string) string {
+	l := strings.ToLower(seg)
+	switch {
+	case strings.HasPrefix(l, "onedrive"):
+		return "OneDrive"
+	case l == "dropbox":
+		return "Dropbox"
+	case l == "google drive" || l == "googledrive" || l == "my drive":
+		return "Google Drive"
+	case l == "icloud drive":
+		return "iCloud Drive"
+	case l == "box" || l == "box sync":
+		return "Box"
+	}
+	return ""
 }
 
 // pathWithin reports whether path is root or a descendant of root, comparing

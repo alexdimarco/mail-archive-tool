@@ -31,7 +31,10 @@ func runStatus(args []string) error {
 		return errors.New("-out is required (the archive directory to report on)")
 	}
 	in := health.Gather(abspath(*out), *name)
-	if !in.HasManifest && !in.HasDescriptor && in.LastRunState == state.LastRunAbsent {
+	// A manifest FILE that exists but does not load (newer format, corrupt) is
+	// an archive with a problem, not "no archive": let Assess RED it rather than
+	// giving the wrong "run an export first" advice (friction #7a).
+	if !in.HasManifestFile && !in.HasDescriptor && in.LastRunState == state.LastRunAbsent {
 		return fmt.Errorf("no archive at %s: no manifest, schedule descriptor or last-run record (run an export into it first, or check the path)", in.Out)
 	}
 	rep := health.Assess(in, time.Now())

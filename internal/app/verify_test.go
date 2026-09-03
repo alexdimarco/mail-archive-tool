@@ -165,15 +165,33 @@ func TestVerifyFreshArchiveAttested(t *testing.T) {
 		t.Fatalf("checked too few files: %d", rep.Checked)
 	}
 
-	// -json carries the coverage fields and the problem list.
+	// -json carries the coverage fields, the problem list, an explicit schema
+	// version and an explicit attested verdict (friction #10).
 	js, err := json.Marshal(rep)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{`"records"`, `"with_fixity"`, `"checked"`, `"problems"`} {
+	for _, key := range []string{`"records"`, `"with_fixity"`, `"checked"`, `"problems"`, `"version"`, `"attested"`} {
 		if !strings.Contains(string(js), key) {
 			t.Errorf("verify -json is missing the %s field:\n%s", key, js)
 		}
+	}
+	var jm map[string]any
+	if err := json.Unmarshal(js, &jm); err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := jm["version"].(float64); v != 1 {
+		t.Errorf("verify -json version = %v, want 1:\n%s", jm["version"], js)
+	}
+	if att, ok := jm["attested"].(bool); !ok || !att {
+		t.Errorf("verify -json attested should be true on a fresh archive:\n%s", js)
+	}
+
+	// The human summary glosses the two units so records (messages) and checked
+	// (files) do not read as a discrepancy (friction #15).
+	summary := strings.Join(VerifySummary(rep), "\n")
+	if !strings.Contains(summary, "records=2 messages") || !strings.Contains(summary, "files checked=") {
+		t.Errorf("summary count line is not glossed:\n%s", summary)
 	}
 }
 
@@ -256,13 +274,28 @@ func TestVerifyLegacyUnrecordedThenRecord(t *testing.T) {
 		t.Errorf("summary does not name the `verify -record` remedy:\n%s", strings.Join(VerifySummary(rep), "\n"))
 	}
 
-	// Baseline with -record.
-	recRep, err := Verify(out, VerifyOptions{Record: true}, discard(), nil)
+	// Baseline with -record. The "recorded fixity for N file(s)" line is printed
+	// once, by VerifySummary — not also by the run logger (friction #16).
+	var logbuf strings.Builder
+	recRep, err := Verify(out, VerifyOptions{Record: true}, log.New(&logbuf, "", 0), nil)
 	if err != nil {
 		t.Fatalf("verify -record refused: %v", err)
 	}
 	if recRep.Recorded < 2 || recRep.Unrecorded != 0 || recRep.ExitCode() != 0 {
 		t.Fatalf("verify -record did not baseline everything: %+v", recRep)
+	}
+	if strings.Contains(logbuf.String(), "recorded fixity for") {
+		t.Errorf("the run logger duplicated the `recorded fixity` line:\n%s", logbuf.String())
+	}
+	recSummary := VerifySummary(recRep)
+	seen := 0
+	for _, l := range recSummary {
+		if strings.Contains(l, "recorded fixity for") {
+			seen++
+		}
+	}
+	if seen != 1 {
+		t.Errorf("`recorded fixity` printed %d times in the summary, want exactly 1:\n%s", seen, strings.Join(recSummary, "\n"))
 	}
 
 	// A following plain verify now attests, reading the baselined digests.
@@ -299,6 +332,12 @@ func TestVerifyUnexpectedStrayFile(t *testing.T) {
 	}
 	if !rep.Attested() || rep.ExitCode() != 0 {
 		t.Fatalf("an unexpected file must not change the exit (still attested): exit=%d %+v", rep.ExitCode(), rep)
+	}
+	// The summary explains what `unexpected` means and how to act on it safely
+	// (friction #5b): not owned by any record, and compare bytes before deleting.
+	summary := strings.Join(VerifySummary(rep), "\n")
+	if !strings.Contains(summary, "unexpected") || !strings.Contains(summary, "owned by no record") || !strings.Contains(summary, "compare bytes before deleting") {
+		t.Errorf("summary does not explain `unexpected` with a remedy:\n%s", summary)
 	}
 }
 
