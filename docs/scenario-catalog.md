@@ -122,6 +122,7 @@ an invariant is the thing that is wrong.
 | S23 Two distinct messages share one Message-ID in one folder (a bug or a reused id) | R3, R1 | both exported and recorded (the second under a content-qualified key); an incremental re-run exports zero; names stay stable across full re-runs in any order | MA-86 |
 | S24 Two messages' file stems collide (32-bit hash), or a message is re-exported under a new name | R4, R6, R13 | the second stem is lengthened deterministically from its key, never overwriting; a renamed message's old html/zip are removed | MA-87 |
 | S25 A scheduled run overlaps a manual run on the same archive | R5, R12 | the second run refuses naming the lock file and the holder; nothing is written; the lock vanishes with its process | MA-85 |
+| S26 Folder/subject names the file system cannot carry: illegal characters, reserved device names with extensions, trailing dots, non-Latin scripts, decomposed Unicode, very long paths | R4, R6 | names stay distinct, creatable and portable across OSes; slugs stay readable; long paths shrink the slug | MA-01, MA-03, MA-04, MA-89 |
 | S21 A hostile email (script, tracking pixel, remote CSS, `<base>`, meta refresh) is archived and opened from disk | R19, R7 | renders inertly: policy meta precedes the mail's markup; refresh neutralized; content preserved | MA-80 |
 | S22 `serve` faces a hostile archive or network: script in a body/snippet, a symlink inside the archive, a non-loopback bind | R19, R4, R8 | UI/API/file responses carry a strict policy; snippets are escaped; symlinked paths are 404; non-loopback bind warns | MA-81, MA-82, MA-83, MA-84 |
 
@@ -141,10 +142,10 @@ Tiers: **U** unit property (every commit) · **S** structural whole-tree walk
 
 | ID | Tier | Asserts | Covers |
 |---|---|---|---|
-| MA-01 | U | SanitizeSegment strips separators/illegal/reserved, trims dots, `..`→placeholder | R4, S1, S12 |
+| MA-01 | U | SanitizeSegment strips separators/illegal/reserved (reserved names with any extension too), trims dots, `..`→placeholder | R4, S1, S12 |
 | MA-02 | U | SanitizeSegment bounds segment length | R4 |
-| MA-03 | U | SanitizeFilename preserves extension, drops path separators | R4, S1 |
-| MA-04 | U | Slug is filesystem-safe and stable | R4, R6 |
+| MA-03 | U | SanitizeFilename preserves extension, drops path separators, never ends in a dot/space | R4, S1 |
+| MA-04 | U | Slug is filesystem-safe, stable, keeps letters/digits of every script, drops bidi overrides, NFC-normalized (segments too) | R4, R6 |
 | MA-05 | U | ShortHash is deterministic and collision-distinct | R3 |
 | MA-06 | U | ParseSince relative windows (`30d`,`4w`,`12h`) | R11 |
 | MA-07 | U | ParseSince absolute dates | R11 |
@@ -216,6 +217,7 @@ Tiers: **U** unit property (every commit) · **S** structural whole-tree walk
 | MA-68 | U | the report is regenerated from the manifest each run: a gap found earlier is still listed by a later run, disappears when filled (empty report removed); a legacy archive's earlier report is preserved as attachments-report-legacy.tsv | R1, S6 |
 | MA-70 | U | a version-1 manifest (incl. one an older binary rewrote) migrates every record to the "unknown" sentinel and counts them; Save writes v2; reload keeps the sentinel; a sentinel record is re-captured once by the next incremental run | R1, R5, S6 |
 | MA-71 | U | a Graph message captured with no body is recorded terminal and reported; an incremental re-run re-downloads nothing and retries nothing (R17 unchanged); a legacy sentinel on a Graph archive is resolved without a download | R17, R1, R2, S6 |
+| MA-89 | U | a folder segment that sanitization had to alter (illegal chars, truncation) carries a deterministic ~hash suffix from the original name so distinct source folders never merge; whitespace tidying adds none; the exporter shrinks the subject slug when the relative path would exceed 200 characters | R6, R4, S26 |
 | MA-85 | U | an exclusive lock on <out>/.mailarchive.lock is held for the whole run: a second Acquire fails naming the path and holder; Release frees it; the CLI refuses a locked archive with a typed non-zero naming the lock (no manifest written) | R5, R12, S25 |
 | MA-86 | U | two messages with the same Message-ID but different content in one folder are both exported and recorded; incremental re-run exports zero; a full re-run in reversed order yields the same file names | R3, R1, S23 |
 | MA-87 | U | a file-stem collision between two keys lengthens the second stem from its own key (deterministic, no overwrite); re-exporting a message under a new name removes its previous html/zip | R4, R6, R13, S24 |

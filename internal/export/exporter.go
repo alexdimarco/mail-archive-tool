@@ -234,8 +234,25 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 // collision) the digest is lengthened, deterministically from this key alone,
 // so nothing is ever overwritten and a re-run makes the same choice (R4).
 func (e *Exporter) stemFor(dir string, date time.Time, subject, key string) (base, htmlPath, relSlash string) {
+	// Path budget: Windows limits a full path to 260 characters and the
+	// archive root is the operator's. Keep the archive-relative path under
+	// relPathBudget by shrinking the subject slug (the only elastic part) —
+	// the subject stays in the html header and the index, never lost.
+	slug := slugMax
+	for {
+		rel := filepath.Join(strings.TrimPrefix(dir, e.OutDir), baseNameN(date, subjectSlug(subject, slug), key, 8)+".html")
+		if len(rel) <= relPathBudget || slug == 0 {
+			break
+		}
+		switch slug {
+		case slugMax:
+			slug = 24
+		default:
+			slug = 0
+		}
+	}
 	for _, n := range []int{8, 12, 16, 24, 40} {
-		base = baseNameN(date, subject, key, n)
+		base = baseNameN(date, subjectSlug(subject, slug), key, n)
 		htmlPath = filepath.Join(dir, base+".html")
 		rel, err := filepath.Rel(e.OutDir, htmlPath)
 		if err != nil {
@@ -247,6 +264,19 @@ func (e *Exporter) stemFor(dir string, date time.Time, subject, key string) (bas
 		}
 	}
 	return
+}
+
+const (
+	slugMax       = 60  // runes of subject slug in a file stem
+	relPathBudget = 200 // archive-relative path length we try to stay under
+)
+
+// subjectSlug returns the subject slug bounded to n runes, or "" for n == 0.
+func subjectSlug(subject string, n int) string {
+	if n == 0 {
+		return ""
+	}
+	return util.Slug(subject, n)
 }
 
 // hasBody reports whether any body source is present.
@@ -332,15 +362,21 @@ func unresolvedInlineRefs(html []byte) []string {
 }
 
 // baseName builds the shared file stem for a message's HTML and zip.
-func baseName(date time.Time, subject, key string) string { return baseNameN(date, subject, key, 8) }
+func baseName(date time.Time, subject, key string) string {
+	return baseNameN(date, util.Slug(subject, slugMax), key, 8)
+}
 
-// baseNameN is baseName with an n-hex digest (see stemFor).
-func baseNameN(date time.Time, subject, key string, n int) string {
+// baseNameN is baseName with an n-hex digest and a pre-computed slug (which
+// may be empty under the path budget; see stemFor).
+func baseNameN(date time.Time, slug, key string, n int) string {
 	ts := "0000-00-00_0000"
 	if !date.IsZero() {
 		ts = date.UTC().Format("2006-01-02_1504")
 	}
-	return ts + "_" + util.Slug(subject, 60) + "_" + util.HashHex(key, n)
+	if slug == "" {
+		return ts + "_" + util.HashHex(key, n)
+	}
+	return ts + "_" + slug + "_" + util.HashHex(key, n)
 }
 
 // hasArchivable reports whether any attachment would go into the zip (i.e. is

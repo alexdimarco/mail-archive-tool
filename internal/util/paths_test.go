@@ -41,7 +41,7 @@ func TestContainment(t *testing.T) {
 func TestSanitizeSegment(t *testing.T) {
 	cases := map[string]string{
 		`Inbox`:            "Inbox",
-		`a/b\c:d*e?`:       "a b c d e",
+		`a/b\c:d*e?`:       "a b c d e~" + ShortHash(`a/b\c:d*e?`), // altered → suffixed (S26)
 		`  spaced  name  `: "spaced name",
 		`trailing.`:        "trailing",
 		``:                 "untitled",
