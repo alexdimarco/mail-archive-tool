@@ -35,6 +35,10 @@ type Options struct {
 	Index     bool        // build/update the search index (search.db)
 	Pages     bool        // generate browsable folder index.html pages
 
+	// KeepRaw also preserves each message's original RFC 822 bytes as
+	// <stem>.eml (mbox/maildir/Graph sources; a PST item has none).
+	KeepRaw bool
+
 	// CheckpointEvery saves the manifest and flushes the index every N
 	// exported messages inside a store walk (R5: a hard crash keeps the
 	// progress made). Zero means the default (1000).
@@ -55,9 +59,11 @@ type Result struct {
 	Unknown      int    // legacy records not yet re-examined (migrated from a version-1 manifest)
 }
 
-// finish fills the manifest-derived fields of a Result and regenerates the
-// verification report (R1). Shared by the local and Graph runners.
+// finish fills the manifest-derived fields of a Result, regenerates the
+// verification report (R1) and the archive README. Shared by the local and
+// Graph runners.
 func finish(out string, r *Result, exp *export.Exporter, manifest *state.Manifest, idx *index.Index, indexErrors int, logger *log.Logger) {
+	writeArchiveReadme(out, logger)
 	r.Stats = exp.Stats
 	r.ManifestSize = manifest.Len()
 	r.Indexed = indexCount(idx)
@@ -121,6 +127,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		Mode:     opts.Mode,
 		Since:    opts.Since,
 		Log:      logger,
+		KeepRaw:  opts.KeepRaw,
 	}
 
 	// Optional search index, fed as each message is written.

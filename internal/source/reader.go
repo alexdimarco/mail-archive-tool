@@ -31,6 +31,10 @@ const (
 	pidTagDisplayName = 12289 // 0x3001, message-store display name
 	pidTagBody        = 4096  // 0x1000, PidTagBody (plain text)
 	pidTagHtml        = 4115  // 0x1013, PidTagHtml
+	pidTagDisplayBcc  = 3586  // 0x0E02, PidTagDisplayBcc
+	pidTagReplyRecips = 80    // 0x0050, PidTagReplyRecipientNames
+	pidTagInReplyTo   = 4162  // 0x1042, PidTagInReplyToId
+	pidTagReferences  = 4153  // 0x1039, PidTagInternetReferences
 )
 
 // registerCharsets wires go-message's charset catalogue into go-pst once, so
@@ -208,6 +212,10 @@ func convertMessage(m *pst.Message) (*model.Message, error) {
 		SenderEmail:       mp.GetSenderEmailAddress(),
 		To:                mp.GetDisplayTo(),
 		Cc:                mp.GetDisplayCc(),
+		Bcc:               readTextProperty(m, pidTagDisplayBcc),
+		ReplyTo:           readTextProperty(m, pidTagReplyRecips),
+		InReplyTo:         strings.Trim(readTextProperty(m, pidTagInReplyTo), "<> "),
+		References:        strings.TrimSpace(readTextProperty(m, pidTagReferences)),
 		InternetMessageID: mp.GetInternetMessageId(),
 		HTMLBody:          htmlBody,
 		PlainBody:         plainBody,

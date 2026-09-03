@@ -68,6 +68,7 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		Mode:     opts.Mode,
 		Since:    opts.Since,
 		Log:      logger,
+		KeepRaw:  opts.KeepRaw,
 		// One GET returns the whole MIME: a gap can never be filled by
 		// re-fetching, so it is recorded terminal and never retried (R17 keeps
 		// its no-re-download guarantee).

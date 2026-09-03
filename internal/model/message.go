@@ -34,9 +34,18 @@ type Message struct {
 	SenderEmail       string
 	To                string
 	Cc                string
-	Sent              time.Time // client submit time; zero if unknown
-	Received          time.Time // message delivery time; zero if unknown
+	Bcc               string    // sent mail carries it; empty on received mail
+	ReplyTo           string    // Reply-To header, when present
+	InReplyTo         string    // In-Reply-To message id (threading)
+	References        string    // References header (threading)
+	Sent              time.Time // client submit time; zero if unknown. Zone = the original offset when known.
+	Received          time.Time // message delivery time; zero if unknown. Zone = the original offset when known.
 	InternetMessageID string
+
+	// Raw holds the original RFC 822 bytes when the source has them (mbox,
+	// maildir, Graph); nil for a PST/OST item. The exporter preserves it as
+	// <stem>.eml when asked (KeepRaw); it is never required for rendering.
+	Raw []byte
 
 	// Body sources, in precedence order. The exporter picks the richest one
 	// that is present (HTML > plain > decoded RTF).

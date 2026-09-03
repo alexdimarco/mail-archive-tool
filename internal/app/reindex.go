@@ -92,6 +92,8 @@ func Reindex(out string, logger *log.Logger) (kept, pruned int, err error) {
 	if err := pages.Generate(out, idx, logger); err != nil {
 		return 0, 0, fmt.Errorf("regenerate folder pages: %w", err)
 	}
+	writeReport(out, manifest, manifest.Migrated > 0, logger)
+	writeArchiveReadme(out, logger)
 	if err := manifest.Save(); err != nil {
 		return 0, 0, err
 	}

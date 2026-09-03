@@ -207,13 +207,13 @@ func parseMessage(data []byte) *model.Message {
 	}
 	h := mr.Header
 
-	msg := &model.Message{}
+	msg := &model.Message{Raw: data}
 	msg.Subject, _ = h.Subject()
 	if id, err := h.MessageID(); err == nil {
 		msg.InternetMessageID = id
 	}
 	if d, err := h.Date(); err == nil && !d.IsZero() {
-		msg.Received = d.UTC()
+		msg.Received = d // keep the original offset: it is part of the record
 	}
 	if from, err := h.AddressList("From"); err == nil && len(from) > 0 {
 		msg.SenderName = from[0].Name
@@ -221,6 +221,10 @@ func parseMessage(data []byte) *model.Message {
 	}
 	msg.To = addressList(&h, "To")
 	msg.Cc = addressList(&h, "Cc")
+	msg.Bcc = addressList(&h, "Bcc")
+	msg.ReplyTo = addressList(&h, "Reply-To")
+	msg.InReplyTo = strings.Trim(h.Get("In-Reply-To"), "<> ")
+	msg.References = strings.TrimSpace(h.Get("References"))
 
 	for {
 		p, err := mr.NextPart()
@@ -273,7 +277,7 @@ func parseMessage(data []byte) *model.Message {
 func fallbackParse(data []byte) *model.Message {
 	m, err := netmail.ReadMessage(bytes.NewReader(data))
 	if err != nil {
-		return &model.Message{Subject: "(unparseable message)", PlainBody: string(data)}
+		return &model.Message{Subject: "(unparseable message)", PlainBody: string(data), Raw: data}
 	}
 	body, _ := io.ReadAll(m.Body)
 	msg := &model.Message{
@@ -281,14 +285,19 @@ func fallbackParse(data []byte) *model.Message {
 		InternetMessageID: strings.Trim(m.Header.Get("Message-Id"), "<>"),
 		To:                m.Header.Get("To"),
 		Cc:                m.Header.Get("Cc"),
+		Bcc:               m.Header.Get("Bcc"),
+		ReplyTo:           m.Header.Get("Reply-To"),
+		InReplyTo:         strings.Trim(m.Header.Get("In-Reply-To"), "<> "),
+		References:        strings.TrimSpace(m.Header.Get("References")),
 		PlainBody:         string(body),
+		Raw:               data,
 	}
 	if addrs, err := m.Header.AddressList("From"); err == nil && len(addrs) > 0 {
 		msg.SenderName = addrs[0].Name
 		msg.SenderEmail = addrs[0].Address
 	}
 	if d, err := m.Header.Date(); err == nil {
-		msg.Received = d.UTC()
+		msg.Received = d
 	}
 	return msg
 }

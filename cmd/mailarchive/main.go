@@ -93,6 +93,7 @@ func runExport(args []string) error {
 	outlookSyncWait := fs.Duration("outlook-sync-wait", 5*time.Minute, "with -outlook: run Send/Receive and wait up to this long for downloads before creating the PST (0 to skip)")
 	doIndex := fs.Bool("index", true, "build/update the full-text search index (search.db)")
 	doPages := fs.Bool("pages", true, "generate browsable folder index.html pages")
+	keepRaw := fs.Bool("raw", false, "also keep each message's original RFC 822 bytes as <name>.eml beside the html (mbox/maildir/Graph sources; a .pst item has none)")
 	enableOffline := fs.Bool("enable-offline", false, "Thunderbird IMAP: enable offline download in prefs.js so all mail can be synced (Thunderbird must be closed)")
 	syncWait := fs.Bool("sync-wait", false, "Thunderbird IMAP: pause and wait for Download/Sync to finish before exporting")
 	if err := fs.Parse(args); err != nil {
@@ -152,6 +153,7 @@ func runExport(args []string) error {
 		Manifest:  *manifestPath,
 		Index:     *doIndex,
 		Pages:     *doPages,
+		KeepRaw:   *keepRaw,
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -475,6 +477,7 @@ func runGraph(args []string) error {
 	sinceStr := fs.String("since", "", "only export items newer than this (e.g. 30d, 2026-07-01)")
 	doIndex := fs.Bool("index", true, "build/update the full-text search index (search.db)")
 	doPages := fs.Bool("pages", true, "generate browsable folder index.html pages")
+	keepRaw := fs.Bool("raw", false, "also keep each message's original RFC 822 bytes as <name>.eml beside the html")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -514,7 +517,7 @@ func runGraph(args []string) error {
 	logger := log.New(os.Stderr, "", 0)
 
 	gopts := app.GraphOptions{Tenant: *tenant, ClientID: *clientID, ClientSecret: secret, Mailboxes: mailboxes}
-	opts := app.Options{Out: *out, Mode: mode, Since: since, Index: *doIndex, Pages: *doPages}
+	opts := app.Options{Out: *out, Mode: mode, Since: since, Index: *doIndex, Pages: *doPages, KeepRaw: *keepRaw}
 	logger.Printf("Archiving %d mailbox(es) from tenant %s via Microsoft Graph (mode=%s)", len(mailboxes), *tenant, *modeStr)
 
 	result, err := app.RunGraph(ctx, gopts, opts, logger)

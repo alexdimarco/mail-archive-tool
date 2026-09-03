@@ -43,13 +43,12 @@ const folderTmpl = `<!DOCTYPE html>
 <title>{{.Folder}}</title><style>` + sharedCSS + `</style></head><body>
 <div class="bar">
   <h1>{{.Folder}}</h1>
-  <div class="muted">{{.Total}} message(s) · <a href="{{.RootRelPrefix}}index.html">↑ all folders</a></div>
+  <div class="muted">{{.Total}} message(s){{if gt .Pages 1}} · page {{.Page}} of {{.Pages}}{{if .PrevHref}} · <a href="{{.PrevHref}}">‹ newer</a>{{end}}{{if .NextHref}} · <a href="{{.NextHref}}">older ›</a>{{end}}{{end}} · <a href="{{.RootRelPrefix}}index.html">↑ all folders</a></div>
   <div style="margin-top:8px"><input type="search" id="q" placeholder="Filter these messages… (type to narrow)"></div>
 </div>
 <div class="wrap">
-{{if gt .Omitted 0}}<div class="note">Showing the newest {{len .Rows}} of {{.Total}} messages. {{.Omitted}} more are omitted from this page — use full-text search (<code>mailarchive serve</code>) to find them.</div>{{end}}
 <table id="t"><thead><tr>
-  <th data-i="0">Date</th><th data-i="1">From</th><th data-i="2">Subject</th><th data-i="3">📎</th>
+  <th data-i="0">Date (UTC)</th><th data-i="1">From</th><th data-i="2">Subject</th><th data-i="3">📎</th>
 </tr></thead><tbody>
 {{range .Rows}}<tr>
   <td class="date">{{.DateStr}}</td>
@@ -58,6 +57,7 @@ const folderTmpl = `<!DOCTYPE html>
   <td>{{if .HasAttach}}<a href="{{urlpath .ZipFile}}" title="attachments">📎</a>{{end}}</td>
 </tr>{{end}}
 </tbody></table>
+{{if gt .Pages 1}}<div class="muted" style="margin-top:10px">Page {{.Page}} of {{.Pages}}{{if .PrevHref}} · <a href="{{.PrevHref}}">‹ newer</a>{{end}}{{if .NextHref}} · <a href="{{.NextHref}}">older ›</a>{{end}}</div>{{end}}
 </div>
 <script>
 const q=document.getElementById('q'),rows=[...document.querySelectorAll('#t tbody tr')];
@@ -81,8 +81,10 @@ li .c{color:#888;font-variant-numeric:tabular-nums}
 <div class="bar"><h1>Email archive</h1><div class="muted">Generated {{.Generated}}</div></div>
 <div class="wrap">
 <div class="note">
+  <b>No software needed:</b> browse the folders below; every message is a self-contained page with its attachments
+  in a sibling zip. Dates in tables and file names are UTC. See <a href="README.txt">README.txt</a> for the layout.<br>
   <b>Full-text search:</b> run <code>mailarchive serve -out .</code> in this folder and open the printed
-  <code>http://localhost:…</code> URL for ranked search across every message and attachment name.<br>
+  <code>http://localhost:…</code> URL for ranked search across every message and attachment name.
   Or from a terminal: <code>rg -i "your text" .</code> (ripgrep), or add this folder to Windows Search.
 </div>
 <h1 style="font-size:15px;margin:16px 0 6px">Folders</h1>

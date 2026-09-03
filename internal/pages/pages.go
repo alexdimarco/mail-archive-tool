@@ -4,6 +4,8 @@
 package pages
 
 import (
+	"bytes"
+	"fmt"
 	"html/template"
 	"log"
 	"os"
@@ -13,13 +15,14 @@ import (
 	"strings"
 	"time"
 
+	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/index"
 )
 
-// maxRowsPerFolder bounds how many messages a single folder page lists, so a
-// huge folder doesn't produce an unusable multi-hundred-thousand-row table. The
-// count of omitted rows is shown on the page and pointed at full-text search.
-const maxRowsPerFolder = 5000
+// pageSize is how many messages one folder page lists; a bigger folder gets
+// index.html, index-2.html, … linked to each other, so every message is
+// reachable by browsing alone (never truncated). A var so tests can shrink it.
+var pageSize = 5000
 
 type row struct {
 	File      string
@@ -67,7 +70,7 @@ func Generate(outDir string, ix *index.Index, logger *log.Logger) error {
 			curDir = dir
 		}
 		total++
-		if len(curRows) < maxRowsPerFolder {
+		{
 			curRows = append(curRows, row{
 				File:      path.Base(d.Path),
 				ZipFile:   strings.TrimSuffix(path.Base(d.Path), ".html") + "-attachments.zip",
@@ -109,20 +112,49 @@ func formatFrom(name, email string) string {
 	}
 }
 
+// pageName is the file name of the n-th (1-based) page of a folder.
+func pageName(n int) string {
+	if n <= 1 {
+		return "index.html"
+	}
+	return fmt.Sprintf("index-%d.html", n)
+}
+
 func writeFolderPage(outDir, dir string, rows []row, total int) error {
 	full := filepath.Join(outDir, filepath.FromSlash(dir))
 	if err := os.MkdirAll(full, 0o755); err != nil {
 		return err
 	}
-	data := folderPageData{
-		Folder:    dir,
-		Rows:      rows,
-		Total:     total,
-		Omitted:   total - len(rows),
-		Depth:     strings.Count(dir, "/") + 1, // path back to root
-		Generated: time.Now().UTC().Format("2006-01-02 15:04 MST"),
+	pages := (len(rows) + pageSize - 1) / pageSize
+	if pages == 0 {
+		pages = 1
 	}
-	return renderFile(filepath.Join(full, "index.html"), folderTemplate, data)
+	for p := 1; p <= pages; p++ {
+		lo := (p - 1) * pageSize
+		hi := lo + pageSize
+		if hi > len(rows) {
+			hi = len(rows)
+		}
+		data := folderPageData{
+			Folder:    dir,
+			Rows:      rows[lo:hi],
+			Total:     total,
+			Page:      p,
+			Pages:     pages,
+			Depth:     strings.Count(dir, "/") + 1, // path back to root
+			Generated: time.Now().UTC().Format("2006-01-02 15:04 MST"),
+		}
+		if p > 1 {
+			data.PrevHref = pageName(p - 1)
+		}
+		if p < pages {
+			data.NextHref = pageName(p + 1)
+		}
+		if err := renderFile(filepath.Join(full, pageName(p)), folderTemplate, data); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func writeRootPage(outDir string, folders []folderInfo) error {
@@ -132,20 +164,24 @@ func writeRootPage(outDir string, folders []folderInfo) error {
 	})
 }
 
+// renderFile writes a page atomically (temp + rename), so a crash never leaves
+// a half-written index page.
 func renderFile(path string, tmpl *template.Template, data any) error {
-	f, err := os.Create(path)
-	if err != nil {
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
 		return err
 	}
-	defer f.Close()
-	return tmpl.Execute(f, data)
+	return export.WriteFileAtomic(path, buf.Bytes())
 }
 
 type folderPageData struct {
 	Folder    string
 	Rows      []row
 	Total     int
-	Omitted   int
+	Page      int
+	Pages     int
+	PrevHref  string
+	NextHref  string
 	Depth     int
 	Generated string
 }

@@ -67,6 +67,10 @@ type Exporter struct {
 	Since    time.Time // zero means no date filter
 	Log      *log.Logger
 
+	// KeepRaw preserves each message's original RFC 822 bytes as <stem>.eml
+	// beside the html, for sources that have them (mbox, maildir, Graph).
+	KeepRaw bool
+
 	// SourceComplete says the source delivers a message whole on every read
 	// (Graph: one GET returns the full MIME), so a gap can never be filled by
 	// re-reading: it is recorded as terminal, not fillable. On-demand sources
@@ -134,11 +138,36 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		return false, fmt.Errorf("create output dir %s: %w", dir, err)
 	}
 
-	htmlBytes, inlineConsumed, err := Render(m)
+	base, htmlPath, relSlash := e.stemFor(dir, date, m.Subject, key)
+	rawName := ""
+	if e.KeepRaw && len(m.Raw) > 0 {
+		rawName = base + ".eml"
+	}
+	ctx := RenderContext{
+		RootRel:        strings.Repeat("../", 1+len(folderPath)), // store dir + folders
+		FolderIndexRel: "index.html",
+		RawName:        rawName,
+	}
+	if hasArchivable(m.Attachments, map[int]bool{}) { // refined below once inline embedding is known
+		ctx.ZipName = base + zipSuffix
+	}
+	htmlBytes, inlineConsumed, err := RenderWith(m, ctx)
 	if err != nil {
 		return false, fmt.Errorf("render %q: %w", m.Subject, err)
 	}
-	base, htmlPath, relSlash := e.stemFor(dir, date, m.Subject, key)
+	if ctx.ZipName != "" && !hasArchivable(m.Attachments, inlineConsumed) {
+		// Every attachment was embedded inline: no zip will exist, so re-render
+		// without the link (cheap: such messages are small).
+		ctx.ZipName = ""
+		if htmlBytes, inlineConsumed, err = RenderWith(m, ctx); err != nil {
+			return false, fmt.Errorf("render %q: %w", m.Subject, err)
+		}
+	}
+	if rawName != "" {
+		if err := writeFileAtomic(filepath.Join(dir, rawName), m.Raw); err != nil {
+			return false, fmt.Errorf("write %s: %w", rawName, err)
+		}
+	}
 
 	e.Stats.AttachmentsInline += len(inlineConsumed)
 
@@ -214,6 +243,7 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		old := filepath.Join(e.OutDir, filepath.FromSlash(prev.Path))
 		os.Remove(old)
 		os.Remove(strings.TrimSuffix(old, ".html") + zipSuffix)
+		os.Remove(strings.TrimSuffix(old, ".html") + ".eml")
 	}
 
 	switch {

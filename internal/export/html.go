@@ -76,6 +76,8 @@ body{font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin
 .mailarchive-header dt{font-weight:600;color:#555}
 .mailarchive-header dd{margin:0;word-break:break-word}
 .mailarchive-subject{font-size:18px;font-weight:700;margin:0 0 10px}
+.mailarchive-nav{font-size:13px;margin:0 0 8px}
+.mailarchive-attachments,.mailarchive-raw{margin-top:8px;font-size:13px}
 .mailarchive-body{padding:20px}
 .mailarchive-body pre.plain{white-space:pre-wrap;word-wrap:break-word;font-family:ui-monospace,Consolas,monospace}
 </style>
@@ -89,15 +91,31 @@ body{font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin
 </html>
 `
 
-// Render builds a self-contained HTML document for the message. Inline images
-// referenced via cid: are embedded as data: URIs; the set of attachment
+// RenderContext tells the renderer where the page will live, so the header can
+// carry navigation and links an inheritor can follow without the tool: the
+// relative path back to the archive root ("../../"), the folder page
+// ("index.html"), the sibling attachment zip and the preserved raw message
+// (both file names, empty when absent). A zero context renders no links.
+type RenderContext struct {
+	RootRel        string
+	FolderIndexRel string
+	ZipName        string
+	RawName        string
+}
+
+// Render builds a self-contained HTML document for the message with no
+// navigation context (see RenderWith).
+func Render(m *model.Message) ([]byte, map[int]bool, error) { return RenderWith(m, RenderContext{}) }
+
+// RenderWith builds a self-contained HTML document for the message. Inline
+// images referenced via cid: are embedded as data: URIs; the set of attachment
 // indices consumed that way is returned so the caller can exclude them from the
 // attachment archive.
-func Render(m *model.Message) ([]byte, map[int]bool, error) {
+func RenderWith(m *model.Message, ctx RenderContext) ([]byte, map[int]bool, error) {
 	body, isHTML := selectBody(m)
 	consumed := map[int]bool{}
 	body = embedInlineImages(body, m.Attachments, consumed)
-	header := renderHeader(m)
+	header := renderHeader(m, ctx, consumed)
 
 	// When the message carries its own full HTML document, preserve it (its
 	// <head> styles matter) and inject our metadata header into its <body>.
@@ -131,9 +149,26 @@ func selectBody(m *model.Message) (string, bool) {
 	return "", false
 }
 
-func renderHeader(m *model.Message) string {
+// timeLayout shows a time with its ORIGINAL UTC offset — the offset is part of
+// the record (a reader must not have to guess which zone "09:30" was in).
+const timeLayout = "Mon, 02 Jan 2006 15:04:05 -0700"
+
+func renderHeader(m *model.Message, ctx RenderContext, consumed map[int]bool) string {
 	var b strings.Builder
 	b.WriteString(`<div class="mailarchive-header">`)
+	if ctx.RootRel != "" || ctx.FolderIndexRel != "" {
+		b.WriteString(`<div class="mailarchive-nav">`)
+		if ctx.RootRel != "" {
+			b.WriteString(`<a href="` + html.EscapeString(ctx.RootRel+"index.html") + `">All folders</a>`)
+		}
+		if ctx.FolderIndexRel != "" {
+			if ctx.RootRel != "" {
+				b.WriteString(` · `)
+			}
+			b.WriteString(`<a href="` + html.EscapeString(ctx.FolderIndexRel) + `">This folder</a>`)
+		}
+		b.WriteString(`</div>`)
+	}
 	b.WriteString(`<div class="mailarchive-subject">` + html.EscapeString(displaySubject(m)) + `</div>`)
 	b.WriteString(`<dl>`)
 	row := func(label, value string) {
@@ -144,12 +179,51 @@ func renderHeader(m *model.Message) string {
 		b.WriteString(`<dd>` + html.EscapeString(value) + `</dd>`)
 	}
 	row("From", formatSender(m))
+	row("Reply-To", m.ReplyTo)
 	row("To", m.To)
 	row("Cc", m.Cc)
-	if d := m.Date(); !d.IsZero() {
-		row("Date", d.Format("Mon, 02 Jan 2006 15:04:05 MST"))
+	row("Bcc", m.Bcc)
+	// Sent and Received are shown separately when both are known and differ;
+	// otherwise the one known time is the Date.
+	switch {
+	case !m.Sent.IsZero() && !m.Received.IsZero() && !m.Sent.Equal(m.Received):
+		row("Sent", m.Sent.Format(timeLayout))
+		row("Received", m.Received.Format(timeLayout))
+	default:
+		if d := m.Date(); !d.IsZero() {
+			row("Date", d.Format(timeLayout))
+		}
 	}
-	b.WriteString(`</dl></div>`)
+	row("Message-ID", m.InternetMessageID)
+	row("In-Reply-To", m.InReplyTo)
+	b.WriteString(`</dl>`)
+
+	// Archived attachments (those not embedded inline), with the zip link, so
+	// the page alone tells the reader what came with the message.
+	var names []string
+	for i, a := range m.Attachments {
+		if consumed[i] {
+			continue
+		}
+		names = append(names, attachmentLabel(a, i))
+	}
+	if len(names) > 0 {
+		b.WriteString(`<div class="mailarchive-attachments"><b>Attachments:</b> `)
+		for i, n := range names {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(html.EscapeString(n))
+		}
+		if ctx.ZipName != "" {
+			b.WriteString(` — <a href="` + html.EscapeString(ctx.ZipName) + `">download zip</a>`)
+		}
+		b.WriteString(`</div>`)
+	}
+	if ctx.RawName != "" {
+		b.WriteString(`<div class="mailarchive-raw"><a href="` + html.EscapeString(ctx.RawName) + `">Original message (.eml)</a></div>`)
+	}
+	b.WriteString(`</div>`)
 	return b.String()
 }
 

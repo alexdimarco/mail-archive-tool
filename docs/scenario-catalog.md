@@ -37,9 +37,15 @@ an invariant is the thing that is wrong.
 - **R6 — Faithful structure.** Output mirrors the source folder tree; each store
   gets its own top-level directory; a single mbox/maildir folder does not
   double-nest under its own name.
-- **R7 — Self-contained HTML.** Each exported `.html` renders the message body
-  offline: inline `cid:` images are embedded as data URIs; header fields are
-  HTML-escaped.
+- **R7 — Self-contained, legible HTML.** Each exported `.html` renders the
+  message body offline: inline `cid:` images are embedded as data URIs; header
+  fields are HTML-escaped. The page stands on its own for a reader with no
+  tool: it links back to its folder page and the archive root, lists its
+  archived attachments with a link to the sibling zip, shows Message-ID,
+  Sent/Received (with their original UTC offsets), Reply-To and Bcc, and links
+  the preserved original `.eml` when one was kept. Folder pages paginate (never
+  truncate) and label their dates UTC; the archive root carries a README.txt
+  that explains the layout without the tool.
 - **R8 — Search ↔ export parity.** The index holds exactly the exported
   messages; a full-text query returns matching items; free-text is matched as
   literal terms (no FTS operator injection or query crash).
@@ -123,6 +129,7 @@ an invariant is the thing that is wrong.
 | S24 Two messages' file stems collide (32-bit hash), or a message is re-exported under a new name | R4, R6, R13 | the second stem is lengthened deterministically from its key, never overwriting; a renamed message's old html/zip are removed | MA-87 |
 | S25 A scheduled run overlaps a manual run on the same archive | R5, R12 | the second run refuses naming the lock file and the holder; nothing is written; the lock vanishes with its process | MA-85 |
 | S26 Folder/subject names the file system cannot carry: illegal characters, reserved device names with extensions, trailing dots, non-Latin scripts, decomposed Unicode, very long paths | R4, R6 | names stay distinct, creatable and portable across OSes; slugs stay readable; long paths shrink the slug | MA-01, MA-03, MA-04, MA-89 |
+| S27 An inheritor opens the archive folder with no tool, years later | R7 | README.txt explains the layout; every page navigates, names its attachments and links its zip/.eml; times carry their offsets; folder pages paginate | MA-90, MA-91, MA-92, MA-96, MA-13 |
 | S21 A hostile email (script, tracking pixel, remote CSS, `<base>`, meta refresh) is archived and opened from disk | R19, R7 | renders inertly: policy meta precedes the mail's markup; refresh neutralized; content preserved | MA-80 |
 | S22 `serve` faces a hostile archive or network: script in a body/snippet, a symlink inside the archive, a non-loopback bind | R19, R4, R8 | UI/API/file responses carry a strict policy; snippets are escaped; symlinked paths are 404; non-loopback bind warns | MA-81, MA-82, MA-83, MA-84 |
 
@@ -154,7 +161,7 @@ Tiers: **U** unit property (every commit) · **S** structural whole-tree walk
 | MA-10 | U | a missing manifest loads as empty, not an error | R5 |
 | MA-11 | U | manifest Add/Save/reload round-trips; atomic write | R5, R2, S2 |
 | MA-12 | U | decodeBytes returns UTF-8 for UTF-8 and Windows-1252 for legacy bytes | R1 |
-| MA-13 | U | mbox reader extracts headers/body/Message-ID; single file has no double-nest | R1, R3, R10, S4, S7 |
+| MA-13 | U | mbox reader extracts headers/body/Message-ID (plus Bcc, Reply-To, In-Reply-To, References, the original Date offset and the raw bytes); single file has no double-nest | R1, R3, R10, S4, S7, S27 |
 | MA-14 | U | IsMailStoreDir detects mbox/maildir dirs, rejects a dir of `.pst` | R6 |
 | MA-15 | U | maildir reader reads cur/new; folder = dir name | R1, R6 |
 | MA-16 | S | walking a real PST fixture yields ≥1 mail item with subject | R1, R6 |
@@ -217,6 +224,10 @@ Tiers: **U** unit property (every commit) · **S** structural whole-tree walk
 | MA-68 | U | the report is regenerated from the manifest each run: a gap found earlier is still listed by a later run, disappears when filled (empty report removed); a legacy archive's earlier report is preserved as attachments-report-legacy.tsv | R1, S6 |
 | MA-70 | U | a version-1 manifest (incl. one an older binary rewrote) migrates every record to the "unknown" sentinel and counts them; Save writes v2; reload keeps the sentinel; a sentinel record is re-captured once by the next incremental run | R1, R5, S6 |
 | MA-71 | U | a Graph message captured with no body is recorded terminal and reported; an incremental re-run re-downloads nothing and retries nothing (R17 unchanged); a legacy sentinel on a Graph archive is resolved without a download | R17, R1, R2, S6 |
+| MA-90 | U | a message page links its folder page and the root, lists archived (not inline) attachments with a zip link, shows Message-ID, Sent/Received when both known, Reply-To, Bcc; times keep their original offset; a bare render carries no links | R7, S27 |
+| MA-91 | U | folder pages paginate at pageSize with prev/next and root links, every message on some page, no extra empty page; the date column is labelled UTC; the root page links each folder's first page and README.txt | R7, S27 |
+| MA-92 | U | Run writes README.txt at the archive root naming the layout, UTC convention, tool-free browsing, search.db (SQLite), the report and the manifest; reindex restores it | R7, S27 |
+| MA-96 | U | with KeepRaw a message's original bytes are preserved byte-identically as <stem>.eml and linked from the page; none for a message without raw bytes; nothing without KeepRaw | R1, S27 |
 | MA-89 | U | a folder segment that sanitization had to alter (illegal chars, truncation) carries a deterministic ~hash suffix from the original name so distinct source folders never merge; whitespace tidying adds none; the exporter shrinks the subject slug when the relative path would exceed 200 characters | R6, R4, S26 |
 | MA-85 | U | an exclusive lock on <out>/.mailarchive.lock is held for the whole run: a second Acquire fails naming the path and holder; Release frees it; the CLI refuses a locked archive with a typed non-zero naming the lock (no manifest written) | R5, R12, S25 |
 | MA-86 | U | two messages with the same Message-ID but different content in one folder are both exported and recorded; incremental re-run exports zero; a full re-run in reversed order yields the same file names | R3, R1, S23 |
