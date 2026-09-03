@@ -3,6 +3,7 @@ package app
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/state"
@@ -68,6 +70,24 @@ type Report struct {
 	Truncated map[string]int `json:"truncated,omitempty"` // kind → count omitted from Problems
 }
 
+// verifyJSONVersion is the schema version of the `verify -json` document, so a
+// consumer can refuse a shape it does not understand (independent of the
+// status JSON version).
+const verifyJSONVersion = 1
+
+// MarshalJSON emits the report with a leading schema "version" and an explicit
+// "attested" verdict — so a script reads the verdict directly instead of
+// re-deriving it from the exit code or the counts (friction #10) — then all of
+// the report's own fields.
+func (r Report) MarshalJSON() ([]byte, error) {
+	type alias Report // a distinct type: no MarshalJSON, so no recursion
+	return json.Marshal(struct {
+		Version  int  `json:"version"`
+		Attested bool `json:"attested"`
+		alias
+	}{Version: verifyJSONVersion, Attested: r.Attested(), alias: alias(r)})
+}
+
 // Attested reports whether every recorded file was checked and intact and no
 // record lacks fixity: nothing modified, missing, or unrecorded (FC4).
 // `unexpected` is reported but does not un-attest the recorded set.
@@ -97,13 +117,13 @@ func (r Report) ExitCode() int {
 // checked. A refusal (no manifest, locked archive, unreadable manifest) returns
 // an error (the caller maps it to exit 1); otherwise the Report's ExitCode is
 // the verdict.
-func Verify(out string, opts VerifyOptions, logger *log.Logger, onProgress func(Report)) (Report, error) {
+func Verify(out string, opts VerifyOptions, logger *log.Logger, onProgress func(Report)) (rep Report, err error) {
 	if logger == nil {
 		logger = log.New(io.Discard, "", 0)
 	}
-	lock, err := lockfile.AcquireAs(filepath.Join(out, lockfile.Name), "verify")
-	if err != nil {
-		return Report{}, err
+	lock, lerr := lockfile.AcquireAs(filepath.Join(out, lockfile.Name), "verify")
+	if lerr != nil {
+		return Report{}, lerr
 	}
 	defer lock.Release()
 
@@ -111,10 +131,35 @@ func Verify(out string, opts VerifyOptions, logger *log.Logger, onProgress func(
 	if _, statErr := os.Stat(mpath); errors.Is(statErr, fs.ErrNotExist) {
 		return Report{}, fmt.Errorf("no archive to verify at %s: no manifest (%s) — run an export into it first, or check the path", out, mpath)
 	}
-	manifest, err := state.Load(mpath)
-	if err != nil {
-		return Report{}, err
+	manifest, mErr := state.Load(mpath)
+	if mErr != nil {
+		return Report{}, mErr
 	}
+
+	// Persist a SEPARATE last-verify record so a scheduled verify's verdict
+	// reaches `status` without disturbing the export last-run record (UJ-A1):
+	// "running" now that the lock is held and the check is committed, finalized
+	// with the verdict on the way out. A refusal before this point (no manifest,
+	// unreadable manifest) writes no record — it is a refusal, not a verdict.
+	started := time.Now().UTC()
+	_ = state.WriteLastVerify(out, state.LastVerify{Status: state.VerifyRunning, Started: started})
+	defer func() {
+		finished := time.Now().UTC()
+		lv := state.LastVerify{Status: state.VerifyDone, Started: started, Finished: &finished}
+		if err != nil {
+			// A produced-report error (e.g. a -record save failure): the caller
+			// maps it to exit 1; record it as not attested.
+			lv.ExitCode = 1
+		} else {
+			lv.Attested = rep.Attested()
+			lv.Records, lv.WithFixity, lv.Checked = rep.Records, rep.WithFixity, rep.Checked
+			lv.OK, lv.Modified, lv.Missing = rep.OK, rep.Modified, rep.Missing
+			lv.Unrecorded, lv.Unexpected, lv.Recorded = rep.Unrecorded, rep.Unexpected, rep.Recorded
+			lv.ExitCode = rep.ExitCode()
+		}
+		_ = state.WriteLastVerify(out, lv) // best effort: the archive is intact without it
+	}()
+
 	if manifest.Rekeyed > 0 {
 		logger.Printf("re-scoped %d manifest entr%s by store (one-time upgrade)", manifest.Rekeyed, plural(manifest.Rekeyed, "y", "ies"))
 	}
@@ -165,12 +210,16 @@ func Verify(out string, opts VerifyOptions, logger *log.Logger, onProgress func(
 	v.rep.WithFixity, _ = manifest.FixityCounts()
 
 	if opts.Record && v.rep.Recorded > 0 {
-		if err := manifest.Save(); err != nil {
-			return v.rep, fmt.Errorf("record fixity baseline: %w", err)
+		if serr := manifest.Save(); serr != nil {
+			rep = v.rep
+			return rep, fmt.Errorf("record fixity baseline: %w", serr)
 		}
-		logger.Printf("recorded fixity for %d file(s) (baseline from current bytes)", v.rep.Recorded)
+		// The "recorded fixity for N file(s)" line is printed once, by
+		// VerifySummary on stdout (friction #16); a -log run keeps the count in
+		// VerifyResultLine.
 	}
-	return v.rep, nil
+	rep = v.rep
+	return rep, nil
 }
 
 // verifier carries the per-run state Verify accumulates.
@@ -517,7 +566,10 @@ func hashFile(full string, limit int64) (string, int64, error) {
 func VerifySummary(r Report) []string {
 	var out []string
 	out = append(out, fmt.Sprintf("Fixity check of %s", r.Out))
-	out = append(out, fmt.Sprintf("records=%d with-fixity=%d checked=%d", r.Records, r.WithFixity, r.Checked))
+	// Gloss the two units so the counts do not read as a discrepancy: records
+	// counts messages, checked counts the files each message owns (friction
+	// #15).
+	out = append(out, fmt.Sprintf("records=%d messages · with-fixity=%d · files checked=%d (html + attachment zips + kept eml)", r.Records, r.WithFixity, r.Checked))
 	out = append(out, fmt.Sprintf("ok=%d modified=%d missing=%d unrecorded=%d unexpected=%d",
 		r.OK, r.Modified, r.Missing, r.Unrecorded, r.Unexpected))
 	if r.Recorded > 0 {
@@ -534,6 +586,9 @@ func VerifySummary(r Report) []string {
 		if n := r.Truncated[kind]; n > 0 {
 			out = append(out, fmt.Sprintf("  … %d more %s (list truncated at %d)", n, kind, maxVerifyDetail))
 		}
+	}
+	if r.Unexpected > 0 {
+		out = append(out, "note: `unexpected` files are under a store directory but owned by no record — a leftover from an old-binary excursion, or a file added by hand; compare bytes before deleting anything.")
 	}
 	if r.Unrecorded > 0 {
 		out = append(out, fmt.Sprintf("WARN: %d file(s) carry no recorded fixity — run `mailarchive verify -record -out %q` to baseline them (records the bytes as they are now, not proof they were pristine)", r.Unrecorded, r.Out))
@@ -555,6 +610,6 @@ func VerifyResultLine(r Report) string {
 	if !r.Attested() {
 		verdict = "NOT-ATTESTED"
 	}
-	return fmt.Sprintf("%s records=%d with-fixity=%d checked=%d ok=%d modified=%d missing=%d unrecorded=%d unexpected=%d",
-		verdict, r.Records, r.WithFixity, r.Checked, r.OK, r.Modified, r.Missing, r.Unrecorded, r.Unexpected)
+	return fmt.Sprintf("%s records=%d with-fixity=%d checked=%d ok=%d modified=%d missing=%d unrecorded=%d unexpected=%d recorded=%d",
+		verdict, r.Records, r.WithFixity, r.Checked, r.OK, r.Modified, r.Missing, r.Unrecorded, r.Unexpected, r.Recorded)
 }

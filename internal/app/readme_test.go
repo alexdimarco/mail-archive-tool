@@ -32,7 +32,16 @@ func TestArchiveCarriesReadme(t *testing.T) {
 		t.Fatalf("README.txt not written: %v", err)
 	}
 	s := string(data)
-	for _, want := range []string{"index.html", "UTC", "-attachments.zip", "search.db", "SQLite", "attachments-report.tsv", ".mailarchive-manifest.json", "no software"} {
+	for _, want := range []string{
+		"index.html", "UTC", "-attachments.zip", "search.db", "SQLite",
+		"attachments-report.tsv", ".mailarchive-manifest.json", "no software",
+		// Post-v2 additions (D10): the verify path, the transport-headers panel,
+		// and the run/verify/schedule records + attention sidecars.
+		"mailarchive verify -out", "Transport headers as stored (unverified)",
+		".mailarchive-lastrun.json", ".mailarchive-lastverify.json",
+		".mailarchive-schedule.json", "BACKUP-NEEDS-ATTENTION.txt",
+		"ARCHIVE-INTEGRITY-ATTENTION.txt",
+	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("README.txt lacks %q", want)
 		}

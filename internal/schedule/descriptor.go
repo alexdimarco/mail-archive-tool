@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strings"
 	"time"
 
 	"mail-archive-tool/internal/util"
@@ -88,36 +87,27 @@ func ReadDescriptor(out string) (Descriptor, error) {
 	}
 	// The file is untrusted (any writer of the archive directory could edit
 	// it) and its strings are echoed into terminals and dialogs: strip control
-	// characters, and hold the name and cadence to their grammars.
-	d.Name = clean(d.Name)
-	d.Exe, d.Host, d.Wrapper, d.Log = clean(d.Exe), clean(d.Host), clean(d.Wrapper), clean(d.Log)
+	// characters (via the shared util.StripControl choke-point helper), and hold
+	// the name and cadence to their grammars.
+	d.Name = util.StripControl(d.Name)
+	d.Exe, d.Host, d.Wrapper, d.Log = util.StripControl(d.Exe), util.StripControl(d.Host), util.StripControl(d.Wrapper), util.StripControl(d.Log)
 	for i := range d.Job {
-		d.Job[i] = clean(d.Job[i])
+		d.Job[i] = util.StripControl(d.Job[i])
 	}
 	if _, err := SanitizeName(d.Name); err != nil {
 		return d, fmt.Errorf("schedule descriptor %s names an invalid schedule (%v): re-run `mailarchive schedule ... -install` to rewrite it", filepath.Join(out, DescriptorName), err)
 	}
-	if iv, err := ParseInterval(clean(d.Interval)); err == nil {
+	if iv, err := ParseInterval(util.StripControl(d.Interval)); err == nil {
 		d.Interval = string(iv)
 	} else {
 		d.Interval = string(Daily)
 	}
-	if _, _, err := parseHHMM(clean(d.At)); err != nil {
+	if _, _, err := parseHHMM(util.StripControl(d.At)); err != nil {
 		d.At = "??:??"
 	} else {
-		d.At = clean(d.At)
+		d.At = util.StripControl(d.At)
 	}
 	return d, nil
-}
-
-// clean strips control characters from an untrusted string.
-func clean(s string) string {
-	return strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) {
-			return -1
-		}
-		return r
-	}, s)
 }
 
 // RemoveDescriptor deletes the descriptor; a missing file is not an error.
