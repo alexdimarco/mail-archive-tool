@@ -110,6 +110,11 @@ func TestKeepRawWritesOriginalMessage(t *testing.T) {
 	if !strings.Contains(string(page), filepath.Base(emlPath)) {
 		t.Error("page does not link its .eml")
 	}
+	// Stats.RawWritten counts the .eml actually written (feeds the -raw no-op
+	// WARNING): one so far.
+	if e.Stats.RawWritten != 1 {
+		t.Errorf("RawWritten = %d after one raw message, want 1", e.Stats.RawWritten)
+	}
 
 	noRaw := &model.Message{Subject: "PST", Received: testDate, InternetMessageID: "<pst@x>", PlainBody: "body"}
 	if _, err := e.Export("store", []string{"Inbox"}, noRaw); err != nil {
@@ -117,6 +122,11 @@ func TestKeepRawWritesOriginalMessage(t *testing.T) {
 	}
 	if n := countSuffix(t, out, ".eml"); n != 1 {
 		t.Errorf("eml files = %d, want 1", n)
+	}
+	// A message with no raw bytes (a PST item) writes no .eml, so the counter is
+	// unchanged — exactly the source shape the WARNING is meant to catch.
+	if e.Stats.RawWritten != 1 {
+		t.Errorf("RawWritten = %d after a no-raw message, want it unchanged at 1", e.Stats.RawWritten)
 	}
 
 	// KeepRaw off: nothing written even when raw bytes exist.
@@ -126,5 +136,8 @@ func TestKeepRawWritesOriginalMessage(t *testing.T) {
 	}
 	if n := countSuffix(t, e2.OutDir, ".eml"); n != 0 {
 		t.Errorf("KeepRaw off wrote %d eml files", n)
+	}
+	if e2.Stats.RawWritten != 0 {
+		t.Errorf("KeepRaw off set RawWritten = %d, want 0", e2.Stats.RawWritten)
 	}
 }

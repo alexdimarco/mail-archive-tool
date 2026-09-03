@@ -8,9 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -18,6 +20,7 @@ import (
 	"mail-archive-tool/internal/index"
 	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/model"
+	"mail-archive-tool/internal/outlookcom"
 	"mail-archive-tool/internal/pages"
 	"mail-archive-tool/internal/source"
 	"mail-archive-tool/internal/state"
@@ -59,21 +62,23 @@ type Result struct {
 	Unknown      int    // legacy records not yet re-examined (migrated from a version-1 manifest)
 }
 
-// finish fills the manifest-derived fields of a Result, regenerates the
-// verification report (R1) and the archive README. Shared by the local and
-// Graph runners.
-func finish(out string, r *Result, exp *export.Exporter, manifest *state.Manifest, idx *index.Index, indexErrors int, logger *log.Logger) {
-	writeArchiveReadme(out, logger)
+// finish fills the manifest-derived fields of a Result and regenerates the
+// verification report (R1). When scaffold is true it also (re)writes the archive
+// README; a Graph run passes false when no mailbox succeeded, so a run that
+// captured nothing leaves no empty browsable scaffold behind. Shared by the
+// local and Graph runners. The single operator-facing "Verification:" line is
+// printed by the caller's summary (cmd/mailarchive printSummary), not here, so
+// the run log carries it exactly once.
+func finish(out string, r *Result, exp *export.Exporter, manifest *state.Manifest, idx *index.Index, indexErrors int, scaffold bool, logger *log.Logger) {
+	if scaffold {
+		writeArchiveReadme(out, logger)
+	}
 	r.Stats = exp.Stats
 	r.ManifestSize = manifest.Len()
 	r.Indexed = indexCount(idx)
 	r.IndexErrors = indexErrors
 	r.Fillable, r.Terminal, r.Unknown = manifest.Counts()
 	r.ReportPath, r.Issues = writeReport(out, manifest, manifest.Migrated > 0, logger)
-	if r.Issues > 0 {
-		logger.Printf("Verification: %d finding(s) recorded in %s (fillable=%d terminal=%d unknown=%d)",
-			r.Issues, r.ReportPath, r.Fillable, r.Terminal, r.Unknown)
-	}
 }
 
 // ProgressFunc, if provided, is called after each processed message with the
@@ -86,6 +91,18 @@ type ProgressFunc func(stats export.Stats)
 func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress ProgressFunc) (result Result, err error) {
 	if logger == nil {
 		logger = log.New(io.Discard, "", 0)
+	}
+
+	// Validate the inputs BEFORE creating anything (friction #2). A missing
+	// -input path, or no sources at all, must refuse naming the problem while
+	// creating no output dir, no lock, and no last-run record — a guaranteed
+	// failure must not first leave a half-built archive and a failed run behind.
+	files, err := DiscoverInputs(opts.Inputs, opts.Auto)
+	if err != nil {
+		return Result{}, err
+	}
+	if len(files) == 0 {
+		return Result{}, errors.New("no input mail sources found (a .pst/.ost file, an mbox file, or a mail directory; or enable auto-discovery)")
 	}
 
 	if err := os.MkdirAll(opts.Out, 0o755); err != nil {
@@ -103,13 +120,16 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// visible as such to `status`.
 	defer recordRun(opts, beginRun(opts), &result, &err)
 
-	files, err := DiscoverInputs(opts.Inputs, opts.Auto)
-	if err != nil {
-		return Result{}, err
+	// On -auto, warn up front when a live Exchange/IMAP .ost is about to be read
+	// by the direct go-pst reader, which cannot read every .ost — the -outlook
+	// remedy should not wait for a failure to appear (friction #1).
+	if opts.Auto {
+		_, classicOutlook := outlookcom.Detect()
+		if adv := ostAdvisory(runtime.GOOS, files, classicOutlook); adv != "" {
+			logger.Printf("%s", adv)
+		}
 	}
-	if len(files) == 0 {
-		return Result{}, errors.New("no input mail sources found (a .pst/.ost file, an mbox file, or a mail directory; or enable auto-discovery)")
-	}
+
 	// What a crashed earlier run may have left behind (R5): stale temps and
 	// orphan zips. Only files older than this run's start are touched.
 	if n := export.SweepOrphans(opts.Out, time.Now(), logger); n > 0 {
@@ -158,15 +178,17 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 
 	// Checkpoint inside a store walk so a hard crash keeps the progress made
 	// (R5) — not only at store boundaries, where a single huge .pst would
-	// otherwise leave hours of work unrecorded.
-	every := opts.CheckpointEvery
-	if every <= 0 {
-		every = defaultCheckpointEvery
+	// otherwise leave hours of work unrecorded. The cadence scales with the
+	// archive size (effectiveEvery) so a small archive checkpoints often and a
+	// huge one does not pay a full save every configured-N messages.
+	floor := opts.CheckpointEvery
+	if floor <= 0 {
+		floor = defaultCheckpointEvery
 	}
 	lastCheckpoint := 0
 	var lockLost error
 	checkpoint := func(stats export.Stats) {
-		if stats.Exported-lastCheckpoint < every {
+		if stats.Exported-lastCheckpoint < effectiveEvery(floor, manifest.Len()) {
 			return
 		}
 		lastCheckpoint = stats.Exported
@@ -191,13 +213,13 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		})
 		if lockLost != nil {
 			commit(manifest, idx, logger)
-			finish(opts.Out, &result, exp, manifest, idx, indexErrors, logger)
+			finish(opts.Out, &result, exp, manifest, idx, indexErrors, true, logger)
 			return result, lockLost
 		}
 		commit(manifest, idx, logger)
 
 		if errors.Is(runErr, context.Canceled) {
-			finish(opts.Out, &result, exp, manifest, idx, indexErrors, logger)
+			finish(opts.Out, &result, exp, manifest, idx, indexErrors, true, logger)
 			return result, context.Canceled
 		}
 		if runErr != nil {
@@ -206,14 +228,16 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		}
 	}
 
-	// Browsable folder index pages, built from the finished index.
-	if idx != nil && opts.Pages {
+	// Browsable folder index pages, built from the finished index. Regenerate
+	// them only when this run exported something or the root index.html is not
+	// yet there (nas-02): a zero-change re-run must not rewrite every page.
+	if idx != nil && opts.Pages && pagesNeeded(opts.Out, exp.Stats.Exported) {
 		if pErr := pages.Generate(opts.Out, idx, logger); pErr != nil {
 			logger.Printf("warning: folder pages: %v", pErr)
 		}
 	}
 
-	finish(opts.Out, &result, exp, manifest, idx, indexErrors, logger)
+	finish(opts.Out, &result, exp, manifest, idx, indexErrors, true, logger)
 	if failures > 0 {
 		return result, fmt.Errorf("%d file(s) failed", failures)
 	}
@@ -222,6 +246,61 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 
 // defaultCheckpointEvery aligns with the index's own batch size.
 const defaultCheckpointEvery = 1000
+
+// effectiveEvery is the checkpoint cadence for an archive currently holding n
+// records: roughly an eighth of the archive, clamped to at least floor (the
+// configured CheckpointEvery, default 1000) and at most 25000. A small archive
+// checkpoints every floor messages; a very large one caps the save frequency so
+// the durability writes never dominate a long run (nas-03).
+func effectiveEvery(floor, n int) int {
+	e := n / 8
+	if e < floor {
+		e = floor
+	}
+	if e > 25000 {
+		e = 25000
+	}
+	return e
+}
+
+// pagesNeeded reports whether the browsable folder pages should be regenerated:
+// only when this run exported at least one message, or the root index.html does
+// not yet exist. A zero-change re-run then leaves the pages (and their mtimes)
+// untouched (nas-02). reindex regenerates unconditionally — it reconciles the
+// pages to what survives on disk.
+func pagesNeeded(out string, exported int) bool {
+	if exported > 0 {
+		return true
+	}
+	_, err := os.Stat(filepath.Join(out, "index.html"))
+	return errors.Is(err, fs.ErrNotExist)
+}
+
+// ostAdvisory returns the up-front guidance to print before an -auto run reads
+// its inputs, when a live Exchange/IMAP Outlook .ost is about to be routed into
+// the direct go-pst reader (which cannot read every .ost) and the classic
+// Outlook that could export a clean PST is present. It is a pure function of the
+// OS, the discovered paths, and whether classic Outlook was detected, so the
+// decision is unit-tested without a Windows host. Empty when it does not apply
+// (not Windows, no .ost among the inputs, or no classic Outlook to run -outlook).
+func ostAdvisory(goos string, paths []string, classicOutlook bool) string {
+	if goos != "windows" || !classicOutlook {
+		return ""
+	}
+	hasOST := false
+	for _, p := range paths {
+		if strings.EqualFold(filepath.Ext(p), ".ost") {
+			hasOST = true
+			break
+		}
+	}
+	if !hasOST {
+		return ""
+	}
+	return "Note: a live Exchange/IMAP Outlook .ost was auto-discovered. Some .ost caches " +
+		"cannot be read directly; if this run reports read errors or missing mail, re-run " +
+		"with -outlook to have classic Outlook export a clean PST first."
+}
 
 // commit makes progress durable: the index FIRST, then the manifest. After a
 // crash the index is then a superset of the manifest, and the next incremental

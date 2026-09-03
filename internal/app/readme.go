@@ -42,7 +42,9 @@ Housekeeping files (safe to leave alone):
   attachments-report.tsv       messages whose attachments or bodies could
                                not be captured (opens in a spreadsheet);
                                absent when there is nothing to report
-  .mailarchive.lock            held only while an archive run is in progress
+  .mailarchive.lock            lock file; may remain after a run — its presence
+                               does not mean a run is active (the real lock is an
+                               OS flock released when the run ends)
 `
 
 // writeArchiveReadme writes README.txt atomically; failures are logged, never

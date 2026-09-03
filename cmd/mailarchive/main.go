@@ -22,6 +22,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -112,6 +113,22 @@ func runExport(args []string) error {
 		}
 	}
 
+	// Discover the inputs up front (friction #2), BEFORE any output dir, run log,
+	// lock or last-run record exists: a missing -input path (or no sources at
+	// all) refuses here, naming the problem, having created nothing. -list
+	// previews the discovered stores and stops. -outlook supplies its own inputs
+	// later, so an empty set is not yet a refusal in that case.
+	discovered, err := app.DiscoverInputs(inputs, *o.auto)
+	if err != nil {
+		return err
+	}
+	if *o.list {
+		return listStores(discovered)
+	}
+	if len(discovered) == 0 && !*o.outlook {
+		return errors.New("no input mail sources found: pass -input PATH (a .pst/.ost file, an mbox file, or a mail directory), or -auto to discover Outlook/Thunderbird/Evolution stores")
+	}
+
 	logger, closeLog, err := newRunLogger(*o.log)
 	if err != nil {
 		return err
@@ -132,6 +149,7 @@ func runExport(args []string) error {
 	// archive those. This is the reliable path for a live Exchange/IMAP .ost cache
 	// go-pst can't read directly. Windows + classic Outlook only; elsewhere it
 	// refuses with a legible message.
+	pstDir := ""
 	if *outlook {
 		// Refuse up front on a platform that can't run Outlook automation, before
 		// printing the completeness note or any "exporting…" progress — a guaranteed
@@ -140,7 +158,7 @@ func runExport(args []string) error {
 			return fmt.Errorf("%w", outlookcom.ErrUnsupported)
 		}
 		logger.Printf("%s", outlookcom.CompletenessNote)
-		pstDir := filepath.Join(*out, "_outlook-pst")
+		pstDir = filepath.Join(*out, "_outlook-pst")
 		logger.Printf("Outlook: exporting each account to a PST under %s ...", pstDir)
 		stores, cerr := outlookcom.CreatePSTs(pstDir,
 			outlookcom.Options{Sync: *outlookSyncWait > 0, SyncWait: *outlookSyncWait}, logger)
@@ -184,7 +202,16 @@ func runExport(args []string) error {
 	}
 
 	result, runErr := app.Run(ctx, opts, logger, nil)
-	printSummary(logger, result, *doIndex, *out)
+	printSummary(logger, result, *doIndex, *keepRaw, *out)
+
+	// The -outlook COM path builds a full, mailbox-sized PST copy under
+	// <out>/_outlook-pst purely to feed the pipeline. On a clean run reclaim it
+	// (it rebuilds next run); on a failure leave it for inspection/retry (P2).
+	if pstDir != "" {
+		if n, ok := reclaimPSTDir(pstDir, runErr); ok {
+			logger.Printf("Reclaimed %s by removing the temporary Outlook PST copy (%s).", thunderbird.HumanBytes(n), pstDir)
+		}
+	}
 
 	if errors.Is(runErr, context.Canceled) {
 		logger.Printf("interrupted; progress saved to the manifest")
@@ -192,6 +219,51 @@ func runExport(args []string) error {
 	}
 	err = runErr
 	return err
+}
+
+// reclaimPSTDir removes the temporary per-account PST directory that -outlook's
+// COM export built under the archive, once the run succeeded, and returns the
+// bytes reclaimed. A failed or cancelled run (runErr != nil) leaves it in place
+// so a retry can reuse or inspect it. The bool reports whether it was removed.
+func reclaimPSTDir(pstDir string, runErr error) (int64, bool) {
+	if runErr != nil {
+		return 0, false
+	}
+	n := dirSize(pstDir)
+	if err := os.RemoveAll(pstDir); err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
+// dirSize sums the sizes of the regular files under dir (0 if it does not exist).
+func dirSize(dir string) int64 {
+	var total int64
+	filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if !d.IsDir() {
+			if info, ierr := d.Info(); ierr == nil {
+				total += info.Size()
+			}
+		}
+		return nil
+	})
+	return total
+}
+
+// listStores prints, one per line, the mail stores an export would archive with
+// a rough on-disk size — the -list preview. It creates nothing and exits 0.
+func listStores(files []string) error {
+	if len(files) == 0 {
+		fmt.Println("No mail stores found to archive.")
+		return nil
+	}
+	for _, f := range files {
+		fmt.Printf("%8s  %s\n", thunderbird.HumanBytes(dirSize(f)), f)
+	}
+	return nil
 }
 
 // newRunLogger returns the operator logger: stderr by default, or the
@@ -691,7 +763,7 @@ func runGraph(args []string) (err error) {
 	logger.Printf("Archiving %d mailbox(es) from tenant %s via Microsoft Graph (mode=%s)", len(mailboxes), *o.tenant, *o.mode)
 
 	result, runErr := app.RunGraph(ctx, gopts, opts, logger)
-	printSummary(logger, result, *o.index, *o.out)
+	printSummary(logger, result, *o.index, *o.keepRaw, *o.out)
 	if errors.Is(runErr, context.Canceled) {
 		logger.Printf("interrupted; progress saved to the manifest")
 		return nil
@@ -785,7 +857,8 @@ func prepareThunderbird(ctx context.Context, inputs []string, auto, enableOfflin
 	if len(osts) > 0 {
 		logger.Printf("Outlook .ost detected (%d) — offline settings can't be changed from here.", len(osts))
 		logger.Printf("  In Outlook: Account Settings -> Change -> \"Mail to keep offline\" -> All,")
-		logger.Printf("  then Send/Receive -> Update Folder, and re-run with -mode full.")
+		logger.Printf("  then Send/Receive -> Update Folder, and run again — an incremental run")
+		logger.Printf("  re-examines and fills mail that had no content yet (no -mode full needed).")
 	}
 
 	if len(stores) == 0 {
@@ -829,7 +902,7 @@ func prepareStore(ctx context.Context, store string, enableOffline, syncWait boo
 			}
 		}
 		logger.Printf("Next: START Thunderbird, then right-click the account -> Download/Sync Now.")
-		logger.Printf("To re-export mail previously exported without content, use -mode full.")
+		logger.Printf("Then run again — an incremental run re-examines and fills mail that had no content yet (no -mode full needed).")
 	}
 
 	if syncWait {
@@ -878,7 +951,7 @@ func waitForSync(ctx context.Context, store string, logger *log.Logger) error {
 	}
 }
 
-func printSummary(logger *log.Logger, r app.Result, indexed bool, out string) {
+func printSummary(logger *log.Logger, r app.Result, indexed, keepRaw bool, out string) {
 	s := r.Stats
 	msg := fmt.Sprintf("Done. exported=%d filled=%d skipped(seen)=%d skipped(date)=%d attachments=%d inline=%d non-html=%d no-body=%d manifest=%d",
 		s.Exported, s.Filled, s.SkippedManifest, s.SkippedDate, s.Attachments, s.AttachmentsInline, s.NonHTMLBodies, s.NoBody, r.ManifestSize)
@@ -890,13 +963,23 @@ func printSummary(logger *log.Logger, r app.Result, indexed bool, out string) {
 	}
 	logger.Printf("%s", msg)
 
-	if r.Fillable > 0 || r.Terminal > 0 || r.Unknown > 0 || s.UnresolvedInlineRef > 0 {
-		suffix := ""
-		if r.ReportPath != "" {
-			suffix = fmt.Sprintf(" — details in %s", r.ReportPath)
+	// One coherent Verification line: what is still missing, what the source can
+	// never deliver, what has not been re-examined yet, how many fillable gaps
+	// this run re-examined (invisible otherwise), and the report path only when a
+	// report file exists. Printed whenever any of those is non-zero.
+	if r.Fillable > 0 || r.Terminal > 0 || r.Unknown > 0 || s.UnresolvedInlineRef > 0 || s.Retried > 0 {
+		line := fmt.Sprintf("Verification: %d message(s) still missing content, %d source-empty (never fillable), %d not yet re-examined",
+			r.Fillable, r.Terminal, r.Unknown)
+		if s.Retried > 0 {
+			line += fmt.Sprintf(", re-examined=%d", s.Retried)
 		}
-		logger.Printf("Verification: %d message(s) still missing content, %d source-empty (never fillable), %d not yet re-examined, %d unresolved inline image(s) this run%s",
-			r.Fillable, r.Terminal, r.Unknown, s.UnresolvedInlineRef, suffix)
+		if s.UnresolvedInlineRef > 0 {
+			line += fmt.Sprintf(", %d unresolved inline image(s) this run", s.UnresolvedInlineRef)
+		}
+		if r.ReportPath != "" {
+			line += fmt.Sprintf(" — details in %s", r.ReportPath)
+		}
+		logger.Printf("%s", line)
 		if r.Fillable > 0 {
 			logger.Printf("  Missing content usually means it isn't cached locally (IMAP / a limited Outlook offline window).")
 			logger.Printf("  In your mail app, download for offline use, then simply re-run: incremental fills the gaps.")
@@ -904,6 +987,12 @@ func printSummary(logger *log.Logger, r app.Result, indexed bool, out string) {
 		if r.Unknown > 0 {
 			logger.Printf("  %d entr%s predate completeness tracking and are re-examined by incremental runs until none remain.", r.Unknown, plural(r.Unknown, "y", "ies"))
 		}
+	}
+	// -raw is silently a no-op on sources that carry no original message bytes
+	// (Outlook .pst/.ost items). Say so once, rather than let the operator assume
+	// .eml files were written (P7).
+	if keepRaw && s.Exported > 0 && s.RawWritten == 0 {
+		logger.Printf("WARNING: -raw had no effect: these sources carry no original message bytes (typically Outlook .pst/.ost items); 0 .eml written")
 	}
 	if r.IndexErrors > 0 {
 		logger.Printf("WARNING: %d message(s) were exported but could not be indexed; run `mailarchive reindex -out %q` and re-check.", r.IndexErrors, out)

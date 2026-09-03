@@ -76,6 +76,11 @@ func TestGraphGapsAreTerminalAndNeverRefetched(t *testing.T) {
 	if err != nil || !strings.Contains(string(rep), "terminal") || !strings.Contains(string(rep), "missing-body") {
 		t.Errorf("report lacks the terminal row: %v\n%s", err, rep)
 	}
+	// The body gap's detail column reads for a person, not as the bare token
+	// "body" (friction #11).
+	if !strings.Contains(string(rep), "(message body)") {
+		t.Errorf("report renders the body gap as the bare token, not \"(message body)\":\n%s", rep)
+	}
 	first := f.hits()
 
 	r2, err := RunGraph(context.Background(), g, opts, logger)
