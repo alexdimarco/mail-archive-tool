@@ -478,6 +478,38 @@ mailarchive reindex -out ./export
 # reindexed: kept=1843 pruned=12
 ```
 
+### Rebuilding the search index
+
+If `search.db` is lost, corrupted, or left out of a copy — but the archive's
+manifest (`.mailarchive-manifest.json`) and the exported per-message files are
+still there — you can reconstruct the index and the folder pages from the
+archive itself, with no access to the original mail source and no network:
+
+```sh
+mailarchive reindex -rebuild -out ./export
+# rebuilt=1843 (from-eml=1200 re-derived=643 unrecovered-fields=0) pruned=0
+```
+
+Rebuild reads only the archive. For each message it prefers the preserved
+original bytes: if you archived with `-raw`, the sibling `<stem>.eml` is parsed
+back at full fidelity (`from-eml`). Otherwise — every PST/OST archive, and
+anything archived without `-raw` — the message's index fields are re-derived
+from the archived `<stem>.html` the tool wrote (`re-derived`), which recovers
+the **searchable text**, not the original wire bytes. The summary reports the
+split, plus the count of fields a page was too old or too damaged to yield.
+
+Rebuild never touches a message file (`.html`/`.zip`/`.eml`) and never contacts
+the source; it does regenerate the folder and root `index.html` pages, and a
+re-derived record's folder-table columns can be less complete than its intact
+message page. The fresh index is built beside the old one and swapped in only on
+success, so an interrupted rebuild leaves your existing index untouched. It
+requires the manifest — rebuilding the manifest itself is out of scope; if a
+copy that skips dotfiles dropped it, restore it from a backup.
+
+For a byte-faithful index rather than re-derived text, archive with `-raw` (so
+the `.eml` originals are on disk to parse), or re-export from the original
+source. Plain `reindex` on an archive whose index is gone points you here.
+
 ### Upgrading an existing archive
 
 This version scopes each message's identity to its store, so two mailboxes

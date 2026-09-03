@@ -88,6 +88,7 @@ func graphFlags(fs *flag.FlagSet) *graphOpts {
 type reindexOpts struct {
 	out, log   *string
 	unattended *bool
+	rebuild    *bool
 }
 
 func reindexFlags(fs *flag.FlagSet) *reindexOpts {
@@ -95,6 +96,7 @@ func reindexFlags(fs *flag.FlagSet) *reindexOpts {
 	o.out = fs.String("out", "", "export directory to reconcile (contains search.db) (required)")
 	o.log = fs.String("log", "", "write the run log to this file (size-capped, rotated) instead of stderr")
 	o.unattended = fs.Bool("unattended", false, "scheduled run: never wait for input")
+	o.rebuild = fs.Bool("rebuild", false, "reconstruct search.db and the folder pages from the archive itself (the manifest and the on-disk .html/.eml files) — recovery for a lost or corrupt index; requires the manifest")
 	return o
 }
 

@@ -535,6 +535,16 @@ func runReindex(args []string) (err error) {
 		return err
 	}
 	defer closeLog()
+	if *o.rebuild {
+		rep, err := app.Rebuild(*o.out, logger)
+		if err != nil {
+			logger.Printf("FAILED: %v", err)
+			return err
+		}
+		logger.Printf("rebuilt=%d (from-eml=%d re-derived=%d unrecovered-fields=%d) pruned=%d",
+			rep.Rebuilt, rep.FromEML, rep.FromHTML, rep.Unrecovered, rep.Pruned)
+		return nil
+	}
 	kept, pruned, err := app.Reindex(*o.out, logger)
 	if err != nil {
 		logger.Printf("FAILED: %v", err)

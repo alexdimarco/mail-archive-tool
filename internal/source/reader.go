@@ -41,6 +41,13 @@ const (
 	// to recover them; it is often absent for items that never crossed the
 	// internet.
 	pidTagTransportMessageHeaders = 125 // 0x007D, PidTagTransportMessageHeaders
+
+	// Message-state properties (integers), read for the page's "Status" row.
+	// They are captured but excluded from the message's identity (see
+	// model.Message).
+	pidTagImportance   = 23   // 0x0017, PidTagImportance (0 low, 1 normal, 2 high)
+	pidTagSensitivity  = 54   // 0x0036, PidTagSensitivity (0 none, 1 personal, 2 private, 3 confidential)
+	pidTagMessageFlags = 3591 // 0x0E07, PidTagMessageFlags (bit 0x1 = mfRead)
 )
 
 // registerCharsets wires go-message's charset catalogue into go-pst once, so
@@ -234,6 +241,19 @@ func convertMessage(m *pst.Message) (*model.Message, error) {
 		msg.Sent = time.Unix(0, t).UTC()
 	}
 
+	// Message state (read/importance/sensitivity). Read straight from the
+	// property context so an ABSENT importance stays "" (unremarkable) rather
+	// than being conflated with a present 0 (low). Excluded from identity.
+	if v, ok := readIntProperty(m, pidTagImportance); ok {
+		msg.Importance = importanceString(v)
+	}
+	if v, ok := readIntProperty(m, pidTagSensitivity); ok {
+		msg.Sensitivity = sensitivityString(v)
+	}
+	if v, ok := readIntProperty(m, pidTagMessageFlags); ok {
+		msg.Unread = unreadFromMessageFlags(v)
+	}
+
 	// Only pay the cost of decompressing RTF when there is no better body.
 	if strings.TrimSpace(msg.HTMLBody) == "" && strings.TrimSpace(msg.PlainBody) == "" {
 		if rtf, err := m.GetBodyRTF(); err == nil {
@@ -275,6 +295,55 @@ func readTextProperty(m *pst.Message, propertyID uint16) string {
 	}
 	return decodeBytes(buf)
 }
+
+// readIntProperty reads a 32-bit integer property directly from the message's
+// property context. The bool is false when the property is absent or is not an
+// integer, letting the caller distinguish "unset" from a real zero value.
+func readIntProperty(m *pst.Message, propertyID uint16) (int32, bool) {
+	r, err := m.PropertyContext.GetPropertyReader(propertyID, m.LocalDescriptors)
+	if err != nil {
+		return 0, false
+	}
+	v, err := r.GetInteger32()
+	if err != nil {
+		return 0, false
+	}
+	return v, true
+}
+
+// importanceString maps PidTagImportance (0 low / 1 normal / 2 high) to the
+// model's convention; normal and any unexpected value are the empty
+// (unremarkable) state.
+func importanceString(v int32) string {
+	switch v {
+	case 0:
+		return "low"
+	case 2:
+		return "high"
+	default:
+		return ""
+	}
+}
+
+// sensitivityString maps PidTagSensitivity (0 none / 1 personal / 2 private /
+// 3 confidential) to the model's convention; none and any unexpected value are
+// the empty state.
+func sensitivityString(v int32) string {
+	switch v {
+	case 1:
+		return "personal"
+	case 2:
+		return "private"
+	case 3:
+		return "confidential"
+	default:
+		return ""
+	}
+}
+
+// unreadFromMessageFlags reports the read state from PidTagMessageFlags: bit
+// 0x1 (mfRead) is set once the item has been read, so its ABSENCE means unread.
+func unreadFromMessageFlags(flags int32) bool { return flags&0x1 == 0 }
 
 // decodeBytes turns raw binary text bytes into a Go string. Modern Outlook
 // stores PidTagHtml as UTF-8 bytes; legacy messages use a single-byte codepage,

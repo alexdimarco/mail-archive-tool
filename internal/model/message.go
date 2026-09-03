@@ -63,6 +63,19 @@ type Message struct {
 	PlainBody string
 	RTFBody   string
 
+	// Importance, Sensitivity and Unread are the message's mutable STATE at
+	// capture time (the source's read/flag/priority markers), shown in the
+	// page's "Status" row when set. Importance is "low"/"high" (empty = the
+	// ordinary "normal"); Sensitivity is "personal"/"private"/"confidential"
+	// (empty = normal/none); Unread is the read flag. They are a snapshot, NOT
+	// part of the message's identity: they are deliberately excluded from
+	// contentHash and Fingerprint — a message later marked read, or whose
+	// importance changes, is still the same message (R2/R3) — and are not
+	// indexed.
+	Importance  string
+	Sensitivity string
+	Unread      bool
+
 	Attachments []Attachment
 }
 
@@ -107,7 +120,10 @@ func (m *Message) Fingerprint() string {
 // of it: without it, two distinct messages that share subject/sender/
 // recipient/second/attachment-count (two drafts, generated mail with no
 // Message-ID) would hash equal and the second would be dropped as a duplicate —
-// silent data loss (R1/R3).
+// silent data loss (R1/R3). Importance, Sensitivity and Unread are deliberately
+// NOT part of this hash (nor of Fingerprint): they are mutable state, and
+// hashing them would make a re-read that only saw a changed read/priority flag
+// look like a different message.
 func (m *Message) contentHash() string {
 	h := sha256.New()
 	fmt.Fprintf(h, "%s\x00%s\x00%s\x00%d\x00%d\x00",
