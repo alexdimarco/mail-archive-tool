@@ -21,6 +21,21 @@ untouched. Everything is **pure Go (no cgo)** — it builds and runs on any OS,
 needs neither Outlook nor Thunderbird installed, and can process a copied
 mailbox offline.
 
+## Just want to download and run it?
+
+No build, no command line. Grab the GUI for your machine from the
+[**Releases page**](https://github.com/dimarcotech/mail-archive-tool/releases),
+double-click it, follow the wizard, then open `index.html` in the archive folder
+it makes — that page needs no software to read.
+
+| Your machine | Download | First run |
+|---|---|---|
+| **Windows** | `mailarchive-gui-windows-amd64.exe` | double-click (SmartScreen → *More info → Run anyway*) |
+| **macOS** | `MailArchive-macos.zip` | unzip, then **right-click "Mail Archive.app" → Open → Open** once (it is unsigned) |
+| **Linux** | `mailarchive-gui-linux-amd64` | needs `zenity` installed; mark executable and double-click (or run it) |
+
+The wizard is the [GUI section](#gui-native-dialog-wizard) below.
+
 ## Start here: which path for my mail program?
 
 Every mail program keeps mail a little differently, so the path from "archive
@@ -65,13 +80,19 @@ console window. Double-click it and it walks you through:
 
 0. **Backup health** — if this wizard has scheduled an archive before, its
    health comes first (last run, completeness, whether the schedule still points
-   at this program), with *Remove the scheduled backup* beside *Continue*.
+   at this program), with *Continue* and *Remove the scheduled backup* — and,
+   when the schedule needs it (not installed, or its program was moved or
+   replaced), *Repair the scheduled backup*, which re-installs it from this copy
+   of the program.
 1. **Source** — **Auto-detect my mailboxes** (Outlook, Thunderbird and Evolution
    stores; pick one, or *All of them (and any added later)*), or choose a type:
    Outlook `.pst`/`.ost` file, Thunderbird/mbox folder, Evolution store (Linux),
    a single mbox file, or — on Windows with classic Outlook — **Outlook account
-   (via Outlook app)**, which has Outlook export each account to a `.pst` first.
-   If nothing is found automatically it asks again rather than guessing.
+   (via Outlook app)**, which has Outlook export each account to a `.pst` first
+   (offered automatically when a live `.ost` is auto-detected). If nothing is
+   found automatically it explains why for your OS — including that New Outlook
+   and Outlook for Mac keep no local files and are archived server-side via
+   Microsoft 365 — and asks again rather than guessing.
 2. **Choose** the file or folder (native picker), or the auto-detected store(s).
 3. **IMAP prep** *(when applicable, auto-detected inputs included)* — for a
    Thunderbird IMAP account it offers to enable offline download and walk you
@@ -82,13 +103,17 @@ console window. Double-click it and it walks you through:
 6. **Date window** — e.g. `30d`, `4w`, `2026-07-01`, or blank for everything.
 7. **Mail app open?** — only for a data *file*; if yes, it snapshots the file
    first to avoid a lock.
-8. A **progress** dialog (cancellable — progress is saved), then a **summary**:
-   exported, filled, still missing content, source-empty, index errors, and how
-   to browse and search the result.
-9. **Keep this archive current?** — *daily at 02:00* or *weekly, Sunday 03:00*
-   installs a schedule that repeats exactly this export using this very
-   program (`mailarchive-gui -job FILE`, no dialogs, no console); the wizard
-   warns first if the program runs from Downloads or a temp folder.
+8. **Keep the originals too?** *(only for mbox/Thunderbird/Evolution sources,
+   which carry raw bytes)* — optionally save each message's original `.eml`
+   beside its page so you can re-import it into a mail program later.
+9. A **progress** dialog (cancellable — progress is saved), then a **summary** in
+   plain words (newly downloaded, not-fully-downloaded-yet, empty-at-the-source,
+   index errors) with an *Open the archive* button that opens `index.html`.
+10. **Keep this archive current?** — *daily at 02:00* or *weekly, Sunday 03:00*
+    installs a schedule that repeats exactly this export using this very
+    program (`mailarchive-gui -job FILE`, no dialogs, no console); the wizard
+    warns first if the program runs from Downloads or a temp folder. A failed
+    scheduled run raises a desktop notification so it never fails silently.
 
 A run log is written to `mailarchive.log` in the output folder (rotated at 8 MB).
 The GUI drives the exact same export engine as the CLI, so results are identical.

@@ -20,8 +20,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -44,6 +46,27 @@ import (
 )
 
 const appTitle = "Mail Archive Export"
+
+// Source-type labels the wizard's first list offers. Package-level so the pure
+// decision functions (keepRawApplies, preferOutlookApp) and their tests can name
+// them without reconstructing a dialog.
+const (
+	srcAuto        = "Auto-detect my mailboxes"
+	srcOutlook     = "Outlook data file (.pst / .ost)"
+	srcOutlookCOM  = "Outlook account (via Outlook app — for Exchange / .ost)"
+	srcThunderbird = "Thunderbird / mbox mail folder"
+	srcEvolution   = "Evolution mail store (folder)"
+	srcMbox        = "Single mbox file"
+)
+
+// notify is the desktop-notification sink, overridable in tests. A scheduled
+// (headless) run has no window, so a failure would otherwise be invisible until
+// the user next opens the GUI (P3).
+var notify = zenity.Notify
+
+// detectOutlook reports whether classic Outlook COM automation is available on
+// this machine; overridable in tests (the real probe is Windows-only).
+var detectOutlook = func() bool { _, ok := outlookcom.Detect(); return ok }
 
 func main() {
 	jobPath := flag.String("job", "", "run this saved job headlessly (no dialogs); what the installed schedule uses")
@@ -113,6 +136,7 @@ func runHeadless(path string) int {
 		if cerr != nil {
 			logger.Printf("FAILED: %v", cerr)
 			fmt.Fprintln(os.Stderr, "mailarchive-gui: "+cerr.Error())
+			notifyFailure(j.Name, j.Out)
 			return 1
 		}
 		inputs = nil
@@ -140,7 +164,13 @@ func runHeadless(path string) int {
 	if runErr != nil && !errors.Is(runErr, context.Canceled) {
 		logger.Printf("FAILED: %v", runErr)
 		fmt.Fprintln(os.Stderr, "mailarchive-gui: "+runErr.Error()) // cron mail / stderr.log
+		notifyFailure(j.Name, j.Out)
 		return 1
+	}
+	// The Outlook-app path wrote scratch PSTs under <out>/_outlook-pst; once the
+	// export that read them succeeded, reclaim that space (kept on failure).
+	if j.Outlook && runErr == nil {
+		cleanupOutlookScratch(j.Out, true, logger)
 	}
 	return 0
 }
@@ -154,6 +184,53 @@ func jobFail(path string, err error) {
 		f.Close()
 	}
 	fmt.Fprintln(os.Stderr, "mailarchive-gui: "+err.Error())
+	notifyFailure(name, "")
+}
+
+// notifyFailure raises a best-effort desktop notification that a scheduled
+// backup failed, so a headless run that no one is watching does not fail
+// silently (P3). A machine with no notification daemon simply shows nothing;
+// success never notifies. The out argument is accepted for symmetry with the
+// callers but the message names the backup by its schedule name.
+func notifyFailure(name, out string) {
+	_ = out // reserved for a future per-archive message; the schedule name is the identifier today
+	_ = notify(fmt.Sprintf("Mail Archive backup failed for %s — open Mail Archive to see what went wrong.", name), zenity.Title(appTitle))
+}
+
+// dirSize sums the sizes of the regular files under root (best-effort), to
+// report how much scratch space a cleanup reclaimed.
+func dirSize(root string) int64 {
+	var total int64
+	_ = filepath.WalkDir(root, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if fi, e := d.Info(); e == nil {
+			total += fi.Size()
+		}
+		return nil
+	})
+	return total
+}
+
+// cleanupOutlookScratch removes the scratch directory of freshly-written PSTs
+// the Outlook-app path created (<out>/_outlook-pst) once the export that read
+// them has SUCCEEDED, logging the space reclaimed. On failure the directory is
+// kept so the run can be retried or inspected. Returns the bytes reclaimed.
+func cleanupOutlookScratch(out string, exportOK bool, logger *log.Logger) int64 {
+	if !exportOK {
+		return 0
+	}
+	dir := filepath.Join(out, "_outlook-pst")
+	n := dirSize(dir)
+	if err := os.RemoveAll(dir); err != nil {
+		logger.Printf("warning: could not remove temporary Outlook PSTs %s: %v", dir, err)
+		return 0
+	}
+	if n > 0 {
+		logger.Printf("Reclaimed %d bytes of temporary Outlook PSTs from %s", n, dir)
+	}
+	return n
 }
 
 func logSummary(logger *log.Logger, r app.Result) {
@@ -176,6 +253,7 @@ type wizardChoice struct {
 	since      string
 	copyFirst  bool
 	outlookCOM bool
+	keepRaw    bool // also keep each message's original .eml (raw-capable sources)
 }
 
 func wizard() error {
@@ -186,12 +264,6 @@ func wizard() error {
 	}
 
 	// 1. Choose the source type, then pick the file/folder accordingly.
-	const srcAuto = "Auto-detect my mailboxes"
-	const srcOutlook = "Outlook data file (.pst / .ost)"
-	const srcOutlookCOM = "Outlook account (via Outlook app — for Exchange / .ost)"
-	const srcThunderbird = "Thunderbird / mbox mail folder"
-	const srcEvolution = "Evolution mail store (folder)"
-	const srcMbox = "Single mbox file"
 	choices := []string{srcAuto, srcOutlook}
 	if runtime.GOOS == "windows" {
 		choices = append(choices, srcOutlookCOM) // needs classic Outlook, Windows-only
@@ -223,15 +295,31 @@ func wizard() error {
 		if len(autoInputs) > 0 {
 			break
 		}
-		// Nothing found: say so and ask again (never drop into a picker for a
-		// program the user may not have).
-		if err := zenity.Warning(
-			"No Outlook, Thunderbird, or Evolution mailboxes were found automatically.\n\nChoose the type and pick the file or folder yourself.",
-			zenity.Title(appTitle)); err != nil {
+		// Nothing found: explain per-OS what that means and what to do (never
+		// drop into a picker for a program the user may not have), then ask again.
+		if err := zenity.Warning(nothingFoundMessage(runtime.GOOS), zenity.Title(appTitle)); err != nil {
 			return err
 		}
 	}
 	useOutlookCOM := srcType == srcOutlookCOM
+
+	// On Windows with classic Outlook, a discovered live .ost is more reliably
+	// read through the Outlook app than directly (its on-disk format varies).
+	// Probe for Outlook only when a .ost is actually present, so a plain auto
+	// run never spins up COM (which could launch Outlook) needlessly.
+	if srcType == srcAuto && anyOST(autoInputs) && preferOutlookApp(runtime.GOOS, autoInputs, detectOutlook()) {
+		q := zenity.Question(
+			"A live Outlook (.ost) account was found. Reading it directly can miss mail Outlook hasn't fully downloaded to this computer; having the Outlook app export it first is more reliable.\n\nUse the Outlook app to export this account?",
+			zenity.Title(appTitle),
+			zenity.OKLabel("Use the Outlook app"),
+			zenity.CancelLabel("Read the files directly"),
+		)
+		if q == nil {
+			srcType, useOutlookCOM = srcOutlookCOM, true
+		} else if !errors.Is(q, zenity.ErrCanceled) {
+			return q
+		}
+	}
 
 	switch srcType {
 	case srcOutlookCOM, srcAuto:
@@ -333,8 +421,71 @@ func wizard() error {
 		choice.copyFirst = strings.HasPrefix(openChoice, "Yes")
 	}
 
+	// 5b. Keep the original messages too? Only sources that carry raw RFC-822
+	//     bytes (mbox/maildir readers) can honour it — a .pst/.ost item and the
+	//     Outlook-app export path have no originals to keep, so they aren't asked.
+	if keepRawApplies(srcType) {
+		rawChoice, err := zenity.List(
+			"Also keep a copy of each original message (.eml) so you can re-import it into a mail program later? (uses more disk space)",
+			[]string{"No", "Yes — keep the original .eml files too"},
+			zenity.Title(appTitle), zenity.DefaultItems("No"))
+		if err != nil {
+			return err
+		}
+		choice.keepRaw = strings.HasPrefix(rawChoice, "Yes")
+	}
+
 	// 6. Run with a progress dialog, then offer to keep it current.
 	return runExport(choice)
+}
+
+// keepRawApplies reports whether the "also keep the original .eml" question is
+// worth asking for a source type: only readers that yield raw RFC-822 bytes
+// (Thunderbird/mbox, Evolution, a single mbox, and auto-detect, which may find
+// any of those) can honour -raw. A .pst/.ost item has no raw bytes, and the
+// Outlook-app (COM) path exports via a PST, so neither is asked.
+func keepRawApplies(srcType string) bool {
+	switch srcType {
+	case srcThunderbird, srcEvolution, srcMbox, srcAuto:
+		return true
+	default: // srcOutlook (.pst/.ost), srcOutlookCOM
+		return false
+	}
+}
+
+// preferOutlookApp reports whether the auto-detect result should steer the user
+// to the Outlook-app (COM) path instead of reading a file directly: on Windows,
+// with classic Outlook present, when a discovered store is a live .ost, whose
+// on-disk format go-pst may not read.
+func preferOutlookApp(goos string, discovered []string, outlookDetected bool) bool {
+	return goos == "windows" && outlookDetected && anyOST(discovered)
+}
+
+// anyOST reports whether any discovered path is an Outlook .ost cache.
+func anyOST(paths []string) bool {
+	for _, p := range paths {
+		if strings.EqualFold(filepath.Ext(p), ".ost") {
+			return true
+		}
+	}
+	return false
+}
+
+// nothingFoundMessage explains, per OS, why auto-detect found no mailboxes and
+// what to do next — so the macOS / New Outlook user is not dropped into a file
+// picker with no context. It always ends by pointing back at the type list.
+func nothingFoundMessage(goos string) string {
+	switch goos {
+	case "darwin":
+		return "No mailboxes were found automatically.\n\n" +
+			"On a Mac, Apple Mail is not supported, and Outlook for Mac / New Outlook keep no local mail files this tool can read.\n\n" +
+			"A Microsoft 365 mailbox can be archived server-side by an administrator instead — see docs/graph-app-setup.md.\n\n" +
+			"If you have a copied .pst, .ost or mbox file from another machine, choose its type next and pick the file."
+	default:
+		return "No Outlook, Thunderbird, or Evolution mailboxes were found automatically.\n\n" +
+			"New Outlook keeps no .pst/.ost files, and a Microsoft 365 mailbox is archived server-side by an administrator (see docs/graph-app-setup.md).\n\n" +
+			"Otherwise choose the type below and pick the file or folder yourself."
+	}
 }
 
 func anyRegularFile(paths []string) bool {
@@ -383,15 +534,86 @@ func healthCheck() error {
 	text := strings.Join(health.Summary(in, rep), "\n")
 
 	const cont = "Continue to the wizard"
+	const repair = "Repair the scheduled backup"
 	const remove = "Remove the scheduled backup"
-	pick, err := zenity.List("Backup health — "+rep.Posture+"\n\n"+text, []string{cont, remove}, zenity.Title(appTitle), zenity.DefaultItems(cont))
+	choices := []string{cont}
+	if repairable(in) {
+		choices = append(choices, repair)
+	}
+	choices = append(choices, remove)
+	pick, err := zenity.List("Backup health — "+rep.Posture+"\n\n"+text, choices, zenity.Title(appTitle), zenity.DefaultItems(cont))
 	if err != nil {
 		return err
 	}
-	if pick != remove {
+	switch pick {
+	case repair:
+		return repairSchedule(out, in.Desc)
+	case remove:
+		return removeSchedule(out)
+	default:
 		return nil
 	}
-	return removeSchedule(out)
+}
+
+// repairable reports whether the launch health view should offer to re-install
+// the schedule: there is a descriptor, it was installed on THIS host, and the
+// schedule is in a state a re-install from the current binary fixes — not
+// present in the scheduler, or its program moved or gone. A schedule recorded
+// for another host cannot be repaired from here.
+func repairable(in health.Input) bool {
+	if !in.HasDescriptor {
+		return false
+	}
+	if in.ThisHost != "" && in.Desc.Host != "" && in.ThisHost != in.Desc.Host {
+		return false
+	}
+	return in.SchedState == schedule.NotInstalled || !in.ExeExists || !in.ExeIsThis
+}
+
+// repairSpec rebuilds the install Spec for a recorded schedule using the CURRENT
+// executable, so re-installing points the scheduler back at this binary. Like
+// removeSchedule, the name and wrapper path are derived from the descriptor's
+// name (never taken from the file), and the cadence and job come from the
+// descriptor itself.
+func repairSpec(out string, d schedule.Descriptor, exe string) (schedule.Spec, error) {
+	name, err := schedule.SanitizeName(d.Name)
+	if err != nil {
+		return schedule.Spec{}, err
+	}
+	iv, _ := schedule.ParseInterval(d.Interval)
+	at := d.At
+	if strings.ContainsRune(at, '?') || strings.TrimSpace(at) == "" {
+		at = "02:00" // ReadDescriptor parks an unreadable time as "??:??"
+	}
+	spec := schedule.Spec{
+		Name: name, Interval: iv, At: at, Exe: exe,
+		Args: append([]string(nil), d.Job...), Log: d.Log, Out: out,
+		WrapperPath: schedule.DefaultWrapperPath(name),
+	}
+	// No console window when the direct run string fits; otherwise the wrapper
+	// is the price of a working job (S12) — mirrors offerSchedule.
+	spec.Wrapper = runtime.GOOS == "windows" && spec.TaskRunLength() > schedule.SchtasksRunLimit
+	if err := spec.Validate(); err != nil {
+		return schedule.Spec{}, err
+	}
+	return spec, nil
+}
+
+// repairSchedule re-installs a recorded schedule from the current executable.
+func repairSchedule(out string, d schedule.Descriptor) error {
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	spec, err := repairSpec(out, d, exe)
+	if err != nil {
+		return err
+	}
+	if err := schedule.Install(spec); err != nil {
+		return fmt.Errorf("could not repair the scheduled backup:\n%v", err)
+	}
+	rememberArchive(out)
+	return zenity.Info(fmt.Sprintf("Repaired the scheduled backup %q for\n%s\n\nIt now runs this copy of the program. Re-open this program any time to check the backup's health.", spec.Name, out), zenity.Title(appTitle))
 }
 
 func removeSchedule(out string) error {
@@ -686,6 +908,7 @@ func runExport(c wizardChoice) error {
 		CopyFirst: c.copyFirst,
 		Index:     true,
 		Pages:     true,
+		KeepRaw:   c.keepRaw,
 	}
 
 	var ticks int
@@ -715,30 +938,89 @@ func runExport(c wizardChoice) error {
 		return errors.New(msg)
 	}
 	rememberArchive(c.out)
-
-	s := result.Stats
-	summary := fmt.Sprintf(
-		"Export complete.\n\n"+
-			"Exported:               %d\n"+
-			"Filled (content arrived): %d\n"+
-			"Skipped (already done): %d\n"+
-			"Skipped (date filter):  %d\n"+
-			"Attachments archived:   %d\n",
-		s.Exported, s.Filled, s.SkippedManifest, s.SkippedDate, s.Attachments)
-	if result.Fillable > 0 || result.Terminal > 0 || result.Unknown > 0 {
-		summary += fmt.Sprintf("\nStill missing content:  %d (download for offline use in your mail app, then run again — incremental fills them)\nSource-empty (never fillable): %d\nNot yet re-examined:    %d\nDetails: %s\n",
-			result.Fillable, result.Terminal, result.Unknown, result.ReportPath)
-	}
-	if result.IndexErrors > 0 {
-		summary += fmt.Sprintf("\nWARNING: %d message(s) could not be indexed for search.\n", result.IndexErrors)
-	}
-	summary += fmt.Sprintf("\nOutput folder:\n%s\n\nOpen index.html there to browse (no software needed); for full-text search run:\n  mailarchive serve -out \"%s\"", c.out, c.out)
-	if err := zenity.Info(summary, zenity.Title(appTitle)); err != nil && !errors.Is(err, zenity.ErrCanceled) {
-		return err
+	// The Outlook-app path wrote scratch PSTs under <out>/_outlook-pst; the
+	// export that read them succeeded, so reclaim that space.
+	if c.outlookCOM {
+		cleanupOutlookScratch(c.out, true, logger)
 	}
 
-	// 7. Keep it current? (P7)
+	// Finish line: show the summary and offer to open the archive, then continue
+	// to the schedule offer exactly as before.
+	open := zenity.Question(exportSummary(c.out, c.keepRaw, result), zenity.Title(appTitle),
+		zenity.OKLabel("Open the archive"), zenity.CancelLabel("Close"))
+	if open == nil {
+		openPath(filepath.Join(c.out, "index.html"))
+	} else if !errors.Is(open, zenity.ErrCanceled) {
+		return open
+	}
+
+	// 7. Keep it current?
 	return offerSchedule(c)
+}
+
+// exportSummary renders the success summary shown after a run. It is a pure
+// function of the run's counts (the same numbers `status` reports — ux-contract
+// X6) and the choice, worded for someone who has never met the engine, so a unit
+// test can assert both the counts and the wording without a display.
+func exportSummary(out string, keepRaw bool, r app.Result) string {
+	s := r.Stats
+	b := &strings.Builder{}
+	fmt.Fprintf(b,
+		"Export complete.\n\n"+
+			"Newly downloaded this run: %d\n"+
+			"Exported:                  %d\n"+
+			"Skipped (already done):    %d\n"+
+			"Skipped (date filter):     %d\n"+
+			"Attachments archived:      %d\n",
+		s.Filled, s.Exported, s.SkippedManifest, s.SkippedDate, s.Attachments)
+
+	notDone := r.Fillable + r.Unknown
+	if notDone > 0 {
+		line := fmt.Sprintf("\nNot fully downloaded yet: %d — open these in your mail app so it downloads them, then run this again to add them", notDone)
+		if r.Unknown > 0 {
+			line += fmt.Sprintf(" (%d are from an older archive and get re-checked automatically each run)", r.Unknown)
+		}
+		b.WriteString(line + "\n")
+	}
+	if r.Terminal > 0 {
+		fmt.Fprintf(b, "Empty at the source (nothing to download): %d\n", r.Terminal)
+	}
+	if (notDone > 0 || r.Terminal > 0) && r.ReportPath != "" {
+		fmt.Fprintf(b, "Details: %s\n", r.ReportPath)
+	}
+	if r.IndexErrors > 0 {
+		fmt.Fprintf(b, "\nWARNING: %d message(s) could not be indexed for search.\n", r.IndexErrors)
+	}
+	if keepRaw {
+		b.WriteString("\nEach message is saved twice: an .html page to read, and an .eml file to import back into a mail program if you ever need to.\n")
+	}
+	fmt.Fprintf(b, "\nOutput folder:\n%s\n\nOpen index.html there to browse — no extra software needed. Each folder page has a box to filter within that folder; to search the whole archive at once, use the command-line tool: mailarchive serve -out %q", out, out)
+	return b.String()
+}
+
+// openPathArgv is the detached command that opens a file or folder with the OS's
+// default handler. It is a pure function of GOOS so a unit test can assert the
+// argv without a display and without launching anything.
+func openPathArgv(goos, p string) (string, []string) {
+	switch goos {
+	case "darwin":
+		return "open", []string{p}
+	case "windows":
+		return "rundll32", []string{"url.dll,FileProtocolHandler", p}
+	default:
+		return "xdg-open", []string{p}
+	}
+}
+
+// openPath opens p with the OS's default handler, detached and best-effort: a
+// GUI has no console to show a launch error, and the summary already named the
+// folder, so a failure is silent.
+func openPath(p string) {
+	name, args := openPathArgv(runtime.GOOS, p)
+	cmd := exec.Command(name, args...)
+	if err := cmd.Start(); err == nil && cmd.Process != nil {
+		_ = cmd.Process.Release()
+	}
 }
 
 // ---- keep it current (P7) --------------------------------------------------
@@ -785,16 +1067,7 @@ func offerSchedule(c wizardChoice) error {
 	if err != nil {
 		return err
 	}
-	j := job.Job{
-		Name: name, Inputs: c.inputs, Auto: c.auto, Out: c.out,
-		Mode:  "incremental", // repeats are incremental: they also fill what was missing
-		Since: c.since, CopyFirst: c.copyFirst, Outlook: c.outlookCOM,
-	}
-	if c.outlookCOM {
-		j.Inputs = nil
-		j.OutlookSyncWait = "5m"
-	}
-	if err := job.Write(jobPath, j); err != nil {
+	if err := job.Write(jobPath, jobFor(name, c)); err != nil {
 		return err
 	}
 
@@ -822,8 +1095,26 @@ func offerSchedule(c wizardChoice) error {
 			note += " A console window will appear briefly while it runs."
 		}
 	}
-	return zenity.Info(fmt.Sprintf("Scheduled: %s at %s.\n\nArchive: %s\nLog: %s\n\nStarting this wizard shows the backup's health first; the command line has `mailarchive status -out \"%s\"`.%s",
-		iv, at, c.out, spec.Log, c.out, note), zenity.Title(appTitle))
+	return zenity.Info(fmt.Sprintf("Scheduled: %s at %s.\n\nArchive: %s\nLog: %s\n\nRe-open this program any time to check the backup's health.%s",
+		iv, at, c.out, spec.Log, note), zenity.Title(appTitle))
+}
+
+// jobFor builds the scheduled-job file from the wizard's answers. A repeat is
+// always incremental (it also fills what was still missing); everything else
+// — inputs/auto, out, date window, copy-first, the Outlook-app path, and
+// keep-raw — carries over so the headless run repeats exactly this export.
+func jobFor(name string, c wizardChoice) job.Job {
+	j := job.Job{
+		Name: name, Inputs: c.inputs, Auto: c.auto, Out: c.out,
+		Mode:  "incremental",
+		Since: c.since, CopyFirst: c.copyFirst, Outlook: c.outlookCOM,
+		KeepRaw: c.keepRaw,
+	}
+	if c.outlookCOM {
+		j.Inputs = nil
+		j.OutlookSyncWait = "5m"
+	}
+	return j
 }
 
 // inVolatileDir reports whether the executable lives somewhere that gets
