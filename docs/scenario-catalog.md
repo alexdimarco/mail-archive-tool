@@ -26,8 +26,11 @@ an invariant is the thing that is wrong.
   root. Store/folder/attachment names derived from untrusted mail cannot
   traverse out (`..`, absolute paths, path separators, reserved device names) or
   collide destructively.
-- **R5 — Crash-safe state.** The manifest is written atomically; an interrupted
-  or failed run never corrupts it, and progress already made survives.
+- **R5 — Crash-safe state.** The manifest and every exported `.html`/`.zip` are
+  written to a temp file and renamed into place (fsynced first); an interrupted
+  or failed run never corrupts the manifest, never leaves a partial exported file
+  under its final name, and never records a file that was not fully written;
+  stale temps and orphan zips are swept; progress already made survives.
 - **R6 — Faithful structure.** Output mirrors the source folder tree; each store
   gets its own top-level directory; a single mbox/maildir folder does not
   double-nest under its own name.
@@ -94,7 +97,7 @@ an invariant is the thing that is wrong.
 | Scenario | Must hold | Recovery/response | Proven by |
 |---|---|---|---|
 | S1 Untrusted mail names a file `../../x` or a folder `..` | R4 | name neutralized to a safe in-root segment | MA-01, MA-03, MA-29, MA-30 |
-| S2 Run interrupted mid-export | R5, R2 | manifest intact; already-written items survive; resume skips them | MA-11, MA-22 |
+| S2 Run interrupted mid-export | R5, R2 | manifest intact; no partial html/zip visible; orphans swept; already-written items survive; resume skips them | MA-11, MA-22, MA-69, MA-94 |
 | S3 Re-run over an unchanged source | R2 | zero new exports | MA-22 |
 | S4 Same email filed in two folders | R3 | exported to both; never twice in one | MA-09, MA-13 |
 | S5 Message with an inline `cid:` image | R7 | embedded as a data URI; renders offline | MA-19 |
@@ -197,6 +200,8 @@ Tiers: **U** unit property (every commit) · **S** structural whole-tree walk
 | MA-82 | U | `serve` refuses a path whose resolved location is outside the archive root (symlink escape → 404) and does not list directories lacking an index.html | R19, R4, S22 |
 | MA-83 | U | `serve` sends the archive CSP + nosniff for files, and a `script-src 'self'` CSP + nosniff + frame-ancestors none for the UI and API; the UI carries no inline script | R19, R4, S22 |
 | MA-84 | U | loopback-address classification: 127.0.0.1/::1/localhost are loopback; an empty host (all interfaces), 0.0.0.0, and LAN addresses are not | R19, S22 |
+| MA-69 | U | html/zip are written to unique temp files and renamed into place: an attachment stream error leaves no partial or final zip and is recorded as an issue; SweepOrphans removes `.mailarchive-*.tmp` older than the run start and `-attachments.zip` files with no sibling html, and Run/reindex call it | R5, R1, S2 |
+| MA-94 | U | a corrupt/truncated manifest is refused naming the file and the remedy (restore or delete to re-export), never a crash; Save fsyncs its temp before the atomic rename | R5, R12, S2 |
 
 Rows MA-29..MA-37 were added by the adversarial pass; see
 `docs/review-adversarial.md` for the findings they encode. Rows MA-40..MA-44

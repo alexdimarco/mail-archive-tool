@@ -5,23 +5,41 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"mail-archive-tool/internal/model"
 	"mail-archive-tool/internal/util"
 )
 
+// ZipResult reports what WriteZip did: how many attachments were archived, the
+// labels of those that produced zero bytes (e.g. content not downloaded from an
+// IMAP server — recoverable by syncing), and the labels of those whose stream
+// FAILED mid-read (a torn fetch, a read error). Neither kind is ever silently
+// dropped (R1): both are recorded as verification issues by the exporter.
+type ZipResult struct {
+	Written int
+	Empty   []string
+	Failed  []string
+}
+
 // WriteZip writes every attachment not in skip into a zip archive at zipPath.
-// Attachments that produce zero bytes (e.g. embedded messages, or content not
-// downloaded from an IMAP server) are omitted; their names are returned in
-// `empty` for verification. If nothing is written, no file is left on disk. It
-// returns the number of attachments archived plus the empties.
-func WriteZip(zipPath string, atts []model.Attachment, skip map[int]bool) (written int, empty []string, err error) {
-	f, err := os.Create(zipPath)
+// The archive is built in a uniquely named temp file beside zipPath and renamed
+// into place only when finished, so a crash or error can never leave a partial
+// zip under the final name and a previously good zip survives (R5). If nothing
+// is written, no file is left on disk (and a stale zip at zipPath is removed).
+func WriteZip(zipPath string, atts []model.Attachment, skip map[int]bool) (ZipResult, error) {
+	var res ZipResult
+	tmp, err := createTemp(filepath.Dir(zipPath))
 	if err != nil {
-		return 0, nil, fmt.Errorf("create zip: %w", err)
+		return res, fmt.Errorf("create zip: %w", err)
+	}
+	abort := func(werr error) (ZipResult, error) {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		return res, werr
 	}
 
-	zw := zip.NewWriter(f)
+	zw := zip.NewWriter(tmp)
 	usedNames := map[string]int{}
 
 	for i := range atts {
@@ -34,12 +52,13 @@ func WriteZip(zipPath string, atts []model.Attachment, skip map[int]bool) (writt
 		var buf bytes.Buffer
 		n, werr := atts[i].WriteTo(&buf)
 		if werr != nil {
-			zw.Close()
-			f.Close()
-			return written, empty, fmt.Errorf("read attachment %q: %w", atts[i].Filename, werr)
+			// A torn stream loses only this attachment, never the rest of the
+			// message's archive; it is reported, not swallowed.
+			res.Failed = append(res.Failed, attachmentLabel(atts[i], i))
+			continue
 		}
 		if n == 0 {
-			empty = append(empty, attachmentLabel(atts[i], i))
+			res.Empty = append(res.Empty, attachmentLabel(atts[i], i))
 			continue
 		}
 
@@ -47,29 +66,28 @@ func WriteZip(zipPath string, atts []model.Attachment, skip map[int]bool) (writt
 		w, cerr := zw.Create(name)
 		if cerr != nil {
 			zw.Close()
-			f.Close()
-			return written, empty, fmt.Errorf("create zip entry %q: %w", name, cerr)
+			return abort(fmt.Errorf("create zip entry %q: %w", name, cerr))
 		}
 		if _, werr := w.Write(buf.Bytes()); werr != nil {
 			zw.Close()
-			f.Close()
-			return written, empty, fmt.Errorf("write zip entry %q: %w", name, werr)
+			return abort(fmt.Errorf("write zip entry %q: %w", name, werr))
 		}
-		written++
+		res.Written++
 	}
 
 	if err := zw.Close(); err != nil {
-		f.Close()
-		return written, empty, fmt.Errorf("finalize zip: %w", err)
+		return abort(fmt.Errorf("finalize zip: %w", err))
 	}
-	if err := f.Close(); err != nil {
-		return written, empty, fmt.Errorf("close zip: %w", err)
+	if res.Written == 0 {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		os.Remove(zipPath) // a stale archive from an earlier capture must not outlive it
+		return res, nil
 	}
-
-	if written == 0 {
-		os.Remove(zipPath)
+	if err := commitTemp(tmp, zipPath); err != nil {
+		return res, fmt.Errorf("commit zip: %w", err)
 	}
-	return written, empty, nil
+	return res, nil
 }
 
 // attachmentLabel is a human-readable name for an attachment in reports.

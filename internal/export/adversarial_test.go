@@ -21,11 +21,11 @@ func TestZipEntryNamesContained(t *testing.T) {
 		{Filename: `..\..\Windows\System32\evil.dll`, WriteTo: writeString("y")},
 		{Filename: "/abs/olute/passwd", WriteTo: writeString("z")},
 	}
-	n, _, err := WriteZip(zipPath, atts, map[int]bool{})
+	res, err := WriteZip(zipPath, atts, map[int]bool{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	assure.Reached(t, n, "archived attachments")
+	assure.Reached(t, res.Written, "archived attachments")
 
 	zr, err := zip.OpenReader(zipPath)
 	if err != nil {

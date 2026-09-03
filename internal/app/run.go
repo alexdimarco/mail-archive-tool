@@ -69,6 +69,11 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	if err := os.MkdirAll(opts.Out, 0o755); err != nil {
 		return Result{}, fmt.Errorf("create output dir: %w", err)
 	}
+	// What a crashed earlier run may have left behind (R5): stale temps and
+	// orphan zips. Only files older than this run's start are touched.
+	if n := export.SweepOrphans(opts.Out, time.Now(), logger); n > 0 {
+		logger.Printf("swept %d orphaned temp/zip file(s) from an interrupted run", n)
+	}
 
 	mpath := opts.Manifest
 	if mpath == "" {

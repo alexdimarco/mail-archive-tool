@@ -113,15 +113,15 @@ func TestWriteZipSkipsEmpty(t *testing.T) {
 			return io.Copy(w, bytes.NewReader([]byte("content")))
 		}},
 	}
-	n, empty, err := WriteZip(zipPath, atts, map[int]bool{})
+	zr, err := WriteZip(zipPath, atts, map[int]bool{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != 1 {
-		t.Errorf("expected 1 archived attachment, got %d", n)
+	if zr.Written != 1 {
+		t.Errorf("expected 1 archived attachment, got %d", zr.Written)
 	}
-	if len(empty) != 1 || empty[0] != "empty.txt" {
-		t.Errorf("expected empty=[empty.txt], got %v", empty)
+	if len(zr.Empty) != 1 || zr.Empty[0] != "empty.txt" {
+		t.Errorf("expected empty=[empty.txt], got %v", zr.Empty)
 	}
 }
 

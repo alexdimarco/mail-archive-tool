@@ -60,7 +60,7 @@ func Load(path string) (*Manifest, error) {
 		return m, nil
 	}
 	if err := json.Unmarshal(data, m); err != nil {
-		return nil, fmt.Errorf("parse manifest %s: %w", path, err)
+		return nil, fmt.Errorf("manifest %s is corrupt or truncated (%v): restore it from a backup, or delete it to re-export everything (the archived files are untouched; incremental runs will rewrite them in place)", path, err)
 	}
 	if m.Entries == nil {
 		m.Entries = map[string]Record{}
@@ -126,11 +126,22 @@ func (m *Manifest) Save() error {
 		tmp.Close()
 		return fmt.Errorf("write temp manifest: %w", err)
 	}
+	// Durability, not just namespace atomicity: the bytes must be on disk
+	// before the rename makes them the manifest of record, and the directory
+	// entry must be on disk before we report success (R5).
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("sync temp manifest: %w", err)
+	}
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close temp manifest: %w", err)
 	}
 	if err := os.Rename(tmpName, m.path); err != nil {
 		return fmt.Errorf("replace manifest: %w", err)
+	}
+	if d, err := os.Open(dir); err == nil {
+		_ = d.Sync() // best effort: not every filesystem supports fsync on a directory
+		d.Close()
 	}
 	return nil
 }

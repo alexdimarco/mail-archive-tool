@@ -8,7 +8,9 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"time"
 
+	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/index"
 	"mail-archive-tool/internal/pages"
 	"mail-archive-tool/internal/state"
@@ -44,6 +46,9 @@ func Reindex(out string, logger *log.Logger) (kept, pruned int, err error) {
 	manifest, err := state.Load(mpath)
 	if err != nil {
 		return 0, 0, err
+	}
+	if n := export.SweepOrphans(out, time.Now(), logger); n > 0 {
+		logger.Printf("swept %d orphaned temp/zip file(s)", n)
 	}
 
 	// A dangling row: its exported file no longer exists on disk. Collect first —

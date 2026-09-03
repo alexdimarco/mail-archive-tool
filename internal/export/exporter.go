@@ -35,6 +35,7 @@ type Stats struct {
 	Attachments         int // attachment files written into zips
 	AttachmentsInline   int // inline images embedded into the HTML as data URIs
 	AttachmentsEmpty    int // declared attachments that produced zero bytes (e.g. not downloaded)
+	AttachmentErrors    int // attachments whose stream failed mid-read (torn fetch); reported, not archived
 	UnresolvedInlineRef int // cid: references in the HTML with no matching image present
 	NonHTMLBodies       int // messages exported from plain/RTF because no HTML body existed
 	NoBody              int // messages exported with no body content at all
@@ -47,7 +48,7 @@ type Issue struct {
 	Subject string
 	RelPath string // exported HTML path relative to OutDir
 	Date    time.Time
-	Kind    string // "empty-attachment" | "unresolved-inline-image"
+	Kind    string // "empty-attachment" | "attachment-error" | "unresolved-inline-image"
 	Detail  string // attachment name or cid token
 }
 
@@ -97,7 +98,7 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		return false, fmt.Errorf("render %q: %w", m.Subject, err)
 	}
 	htmlPath := filepath.Join(dir, base+".html")
-	if err := os.WriteFile(htmlPath, htmlBytes, 0o644); err != nil {
+	if err := writeFileAtomic(htmlPath, htmlBytes); err != nil {
 		return false, fmt.Errorf("write %s: %w", htmlPath, err)
 	}
 
@@ -110,16 +111,26 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	e.Stats.AttachmentsInline += len(inlineConsumed)
 
 	if hasArchivable(m.Attachments, inlineConsumed) {
-		zipPath := filepath.Join(dir, base+"-attachments.zip")
-		n, empty, err := WriteZip(zipPath, m.Attachments, inlineConsumed)
+		zipPath := filepath.Join(dir, base+zipSuffix)
+		zr, err := WriteZip(zipPath, m.Attachments, inlineConsumed)
 		if err != nil {
-			// A failed archive should not abort the whole export.
+			// A failed archive should not abort the whole export, but it is
+			// never silent: every attachment of the message is then unarchived.
 			e.Log.Printf("warning: attachments for %s: %v", htmlPath, err)
+			for i := range m.Attachments {
+				if !inlineConsumed[i] {
+					zr.Failed = append(zr.Failed, attachmentLabel(m.Attachments[i], i))
+				}
+			}
 		}
-		e.Stats.Attachments += n
-		for _, name := range empty {
+		e.Stats.Attachments += zr.Written
+		for _, name := range zr.Empty {
 			e.Stats.AttachmentsEmpty++
 			e.addIssue(folderKey, m, relSlash, "empty-attachment", name)
+		}
+		for _, name := range zr.Failed {
+			e.Stats.AttachmentErrors++
+			e.addIssue(folderKey, m, relSlash, "attachment-error", name)
 		}
 	}
 
