@@ -33,6 +33,7 @@ type taskXML struct {
 	Xmlns            string              `xml:"xmlns,attr"`
 	RegistrationInfo taskRegistrationXML `xml:"RegistrationInfo"`
 	Triggers         taskTriggersXML     `xml:"Triggers"`
+	Principals       taskPrincipalsXML   `xml:"Principals"`
 	Settings         taskSettingsXML     `xml:"Settings"`
 	Actions          taskActionsXML      `xml:"Actions"`
 }
@@ -40,6 +41,25 @@ type taskXML struct {
 type taskRegistrationXML struct {
 	Description string `xml:"Description"`
 }
+
+// taskPrincipalsXML makes the run identity EXPLICIT rather than leaving it to
+// whatever schtasks /Create /XML infers from a definition with no principal
+// (which varies by Windows version). InteractiveToken = "run only when the user
+// is logged on", matching the README's "runs while you are logged in"; the
+// Actions Context references this principal by id so the task fires as the
+// logged-in user without a stored password.
+type taskPrincipalsXML struct {
+	Principal taskPrincipalXML `xml:"Principal"`
+}
+
+type taskPrincipalXML struct {
+	ID        string `xml:"id,attr"`
+	LogonType string `xml:"LogonType"`
+	RunLevel  string `xml:"RunLevel"`
+}
+
+// principalID is the principal id and the Actions Context that references it.
+const principalID = "Author"
 
 type taskTriggersXML struct {
 	Calendar taskCalendarTriggerXML `xml:"CalendarTrigger"`
@@ -72,6 +92,7 @@ type taskDaysOfWeekX struct {
 }
 
 type taskSettingsXML struct {
+	Enabled                    bool   `xml:"Enabled"`
 	StartWhenAvailable         bool   `xml:"StartWhenAvailable"`
 	DisallowStartIfOnBatteries bool   `xml:"DisallowStartIfOnBatteries"`
 	StopIfGoingOnBatteries     bool   `xml:"StopIfGoingOnBatteries"`
@@ -80,7 +101,8 @@ type taskSettingsXML struct {
 }
 
 type taskActionsXML struct {
-	Exec taskExecXML `xml:"Exec"`
+	Context string      `xml:"Context,attr,omitempty"`
+	Exec    taskExecXML `xml:"Exec"`
 }
 
 type taskExecXML struct {
@@ -135,14 +157,20 @@ func SchtasksXML(s Spec, now time.Time) ([]byte, error) {
 		Xmlns:            taskNamespace,
 		RegistrationInfo: taskRegistrationXML{Description: "mailarchive scheduled backup " + s.Name},
 		Triggers:         taskTriggersXML{Calendar: trig},
+		Principals: taskPrincipalsXML{Principal: taskPrincipalXML{
+			ID:        principalID,
+			LogonType: "InteractiveToken",
+			RunLevel:  "LeastPrivilege",
+		}},
 		Settings: taskSettingsXML{
+			Enabled:                    true,
 			StartWhenAvailable:         true,
 			DisallowStartIfOnBatteries: false,
 			StopIfGoingOnBatteries:     false,
 			MultipleInstancesPolicy:    "IgnoreNew",
 			WakeToRun:                  false,
 		},
-		Actions: taskActionsXML{Exec: act},
+		Actions: taskActionsXML{Context: principalID, Exec: act},
 	}
 
 	body, err := xml.MarshalIndent(doc, "", "  ")

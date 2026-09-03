@@ -43,7 +43,7 @@ func minInt(a, b int) int {
 	return b
 }
 
-// covers: MA-146, R14, S28
+// covers: MA-146, MA-170, R14, S28
 // The Task Scheduler XML for daily and weekly specs — with a wrapper path
 // holding a space, "&" and a non-ASCII rune — is UTF-16LE with a BOM, carries
 // the 1.2 version and the schema namespace, and round-trips through
@@ -91,6 +91,20 @@ func TestSchtasksXMLRoundTrip(t *testing.T) {
 		cal := got.Triggers.Calendar
 		if !cal.Enabled {
 			t.Errorf("%s: trigger is not Enabled", tc.name)
+		}
+		// The run identity is explicit (auto-start must not depend on what
+		// schtasks infers from a principal-less definition): an interactive-logon
+		// principal, referenced by the Actions Context, and the task itself
+		// enabled (MA-170).
+		if !st.Enabled {
+			t.Errorf("%s: task <Settings><Enabled> is not true — it may register disabled", tc.name)
+		}
+		p := got.Principals.Principal
+		if p.ID == "" || p.LogonType != "InteractiveToken" {
+			t.Errorf("%s: principal is not an explicit InteractiveToken: %+v", tc.name, p)
+		}
+		if got.Actions.Context != p.ID {
+			t.Errorf("%s: Actions Context %q does not reference the principal id %q", tc.name, got.Actions.Context, p.ID)
 		}
 		if (cal.ByDay != nil) != tc.wantDay {
 			t.Errorf("%s: ScheduleByDay present = %v, want %v", tc.name, cal.ByDay != nil, tc.wantDay)

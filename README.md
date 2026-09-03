@@ -582,7 +582,8 @@ Per OS:
   installed with `schtasks /Create /XML`, then confirmed with `schtasks /Query`.
   The wrapper holds the full command with every token quoted and sends crash
   output to `<out>/<name>.stderr.log`; a console window appears briefly during
-  the run, which runs while you are logged in. The task **catches up a missed
+  the run, which runs while you are logged in (the task is registered with an
+  interactive-logon identity, so it fires as you, without a stored password). The task **catches up a missed
   start** when the PC next wakes and **runs on battery**, so a night the machine
   merely slept is not lost — but it **cannot power on an off machine** (a night
   the PC is off is still skipped; `status` shows it). `-remove` deletes the task,

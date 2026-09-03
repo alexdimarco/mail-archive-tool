@@ -133,7 +133,10 @@ Deferred to a later design (large, each needs its own fixture story):
   arguments when no wrapper); settings `StartWhenAvailable=true`,
   `DisallowStartIfOnBatteries=false`, `StopIfGoingOnBatteries=false`,
   `MultipleInstancesPolicy=IgnoreNew`; `WakeToRun` stays false (cannot power on
-  an off machine; documented as weak). Every text node comes from
+  an off machine; documented as weak). The run identity is explicit — an
+  `InteractiveToken` principal referenced by the `Actions` `Context`, and the
+  task and trigger both `Enabled` — so automatic firing does not depend on
+  what `schtasks` infers from a principal-less document. Every text node comes from
   `encoding/xml`, so `&`, `<`, quotes and non-ASCII in paths are escaped, and
   the document round-trips through `xml.Unmarshal`. The wrapper still quotes
   every token (R14). `Remove` deletes the task, the wrapper and the XML
