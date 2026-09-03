@@ -47,7 +47,7 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	if err := os.MkdirAll(opts.Out, 0o755); err != nil {
 		return Result{}, fmt.Errorf("create output dir: %w", err)
 	}
-	lock, err := lockfile.Acquire(filepath.Join(opts.Out, lockfile.Name))
+	lock, err := lockfile.AcquireAs(filepath.Join(opts.Out, lockfile.Name), "graph")
 	if err != nil {
 		return Result{}, err
 	}

@@ -173,10 +173,17 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		}
 	}
 	htmlBytes, inlineConsumed := rr.HTML, rr.Consumed
+
+	// Fixity of every file this capture writes, recorded from the exact bytes
+	// as they are written so `verify` can later detect bit-rot or truncation
+	// (F3). A re-capture builds a fresh Fixity, replacing any earlier one.
+	var fx state.Fixity
 	if rawName != "" {
-		if err := writeFileAtomic(filepath.Join(dir, rawName), m.Raw); err != nil {
+		d, err := writeFileAtomicDigest(filepath.Join(dir, rawName), m.Raw)
+		if err != nil {
 			return false, fmt.Errorf("write %s: %w", rawName, err)
 		}
+		fx.EML = &d
 		e.Stats.RawWritten++
 	}
 
@@ -204,6 +211,7 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 			}
 		}
 		e.Stats.Attachments += zr.Written
+		fx.Zip = zr.Digest // nil unless a zip was actually committed
 		for _, name := range zr.Empty {
 			e.Stats.AttachmentsEmpty++
 			e.addIssue(folderKey, m, relSlash, "empty-attachment", name)
@@ -218,9 +226,11 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		os.Remove(zipPath) // a re-capture with nothing archivable must not keep a stale zip
 	}
 
-	if err := writeFileAtomic(htmlPath, htmlBytes); err != nil {
+	hd, err := writeFileAtomicDigest(htmlPath, htmlBytes)
+	if err != nil {
 		return false, fmt.Errorf("write %s: %w", htmlPath, err)
 	}
+	fx.HTML = &hd
 
 	// Inline images referenced by cid: that we could not embed (missing from the
 	// message, e.g. dangling references in a reply/forward chain).
@@ -243,6 +253,7 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		}
 	}
 	rec.Fingerprint = fp
+	rec.Fixity = &fx
 	e.Manifest.Add(key, rec)
 	if e.OnExported != nil {
 		e.OnExported(store, folderPath, m, relSlash, key)

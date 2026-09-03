@@ -33,7 +33,7 @@ func Reindex(out string, logger *log.Logger) (kept, pruned int, err error) {
 
 	// One run per archive at a time (R5): reindex sweeps and rewrites, so it
 	// must never overlap an export.
-	lock, err := lockfile.Acquire(filepath.Join(out, lockfile.Name))
+	lock, err := lockfile.AcquireAs(filepath.Join(out, lockfile.Name), "reindex")
 	if err != nil {
 		return 0, 0, err
 	}

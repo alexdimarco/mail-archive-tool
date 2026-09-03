@@ -13,6 +13,7 @@
 //	mailarchive schedule [flags] print/install a recurring-backup entry
 //	mailarchive graph  [flags]  archive Microsoft 365 mailboxes via Graph (app-only)
 //	mailarchive status [flags]  report an archive's completeness, last run and schedule
+//	mailarchive verify [flags]  check archived files against their recorded fixity
 package main
 
 import (
@@ -61,14 +62,31 @@ func main() {
 		err = runGraph(args[1:])
 	case len(args) > 0 && args[0] == "status":
 		err = runStatus(args[1:])
+	case len(args) > 0 && args[0] == "verify":
+		err = runVerify(args[1:])
 	default:
 		err = runExport(args)
 	}
 	if err != nil {
+		// verify's "not attested" verdict carries its own exit code and has
+		// already printed its report; it is not a refusal, so it gets no
+		// "mailarchive:" prefix. Everything else is a refusal/error (exit 1).
+		var ee *exitError
+		if errors.As(err, &ee) {
+			os.Exit(ee.code)
+		}
 		fmt.Fprintln(os.Stderr, "mailarchive: "+err.Error())
 		os.Exit(1)
 	}
 }
+
+// exitError carries a specific, non-1 process exit code for a command whose
+// result (not a refusal) is machine-read from the exit status — `verify`'s
+// "not attested" is exit 2 (docs/ux-contract.md X1). The report is printed
+// before it is returned, so main only needs the code.
+type exitError struct{ code int }
+
+func (e *exitError) Error() string { return fmt.Sprintf("exit status %d", e.code) }
 
 // stringSlice is a repeatable / comma-separated string flag.
 type stringSlice []string
@@ -474,6 +492,84 @@ func runReindex(args []string) (err error) {
 	return nil
 }
 
+// runVerify checks the archive at -out against its recorded fixity and prints a
+// report. It exits 0 when the archive is attested (every recorded file checked
+// and intact, none unrecorded), 2 when it is not attested (any modified,
+// missing or unrecorded file — each named), and 1 on refusal or error (no
+// manifest, a locked archive, an unreadable manifest). `unexpected` files are
+// reported, not an exit condition (docs/ux-contract.md X1). Verify holds the
+// archive lock for its whole duration, so run it outside the backup window.
+func runVerify(args []string) error {
+	fs := flag.NewFlagSet("mailarchive verify", flag.ContinueOnError)
+	fs.Usage = verifyUsage(fs)
+	o := verifyFlags(fs)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *o.out == "" {
+		return errors.New("-out is required (the archive directory to verify)")
+	}
+	if *o.unattended {
+		if err := requireExistingOut(*o.out); err != nil {
+			return err
+		}
+	}
+	logger, closeLog, err := newRunLogger(*o.log)
+	if err != nil {
+		return err
+	}
+	defer closeLog()
+
+	rep, verr := app.Verify(abspath(*o.out), app.VerifyOptions{Record: *o.record}, logger, nil)
+	if verr != nil {
+		if *o.log != "" { // a scheduled run leaves its reason in its own log
+			logger.Printf("FAILED: %v", verr)
+		}
+		return verr
+	}
+	if *o.asJSON {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(rep); err != nil {
+			return err
+		}
+	} else {
+		for _, line := range app.VerifySummary(rep) {
+			fmt.Println(line)
+		}
+	}
+	if *o.log != "" {
+		logger.Printf("verify: %s", app.VerifyResultLine(rep))
+	}
+	if code := rep.ExitCode(); code != 0 {
+		return &exitError{code: code}
+	}
+	return nil
+}
+
+func verifyUsage(fs *flag.FlagSet) func() {
+	return func() {
+		fmt.Fprintf(os.Stderr, `mailarchive verify - check archived files against their recorded fixity
+
+Usage:
+  mailarchive verify -out DIR [-json] [-record]
+
+Re-hashes every archived file the manifest records and reports each as ok,
+modified, missing or unrecorded, plus any stray file as unexpected. Fixity is
+detected for files written by this version or later, or baselined with -record.
+
+Exit: 0 attested (every recorded file checked and intact, none unrecorded);
+2 not attested (any modified/missing/unrecorded, each named); 1 refusal/error.
+
+verify holds the archive's exclusive lock for its whole run, so a scheduled
+backup that fires meanwhile refuses — run verify OUTSIDE the backup window.
+
+Flags:
+`)
+		fs.PrintDefaults()
+	}
+}
+
 // runSchedule prints (default) or installs/removes a recurring-backup entry for
 // the host OS's scheduler. Two forms: the flat form (`schedule -out DIR -auto
 // …` — the export job's flags on the schedule command) and the job form
@@ -696,8 +792,8 @@ Usage:
   mailarchive schedule -out DIR -remove                            uninstall this archive's schedule
   mailarchive schedule -name NAME -remove                          uninstall by name
 
-The job after -- may be an export (no verb), graph, or reindex job; it is
-validated now, and what cannot run unattended is refused now. By default the
+The job after -- may be an export (no verb), graph, reindex, or verify job; it
+is validated now, and what cannot run unattended is refused now. By default the
 exact scheduler entry is printed and NOT applied. The job writes its log to
 <out>/<name>.log; one schedule per archive by default.
 
@@ -819,6 +915,7 @@ Usage:
   mailarchive schedule -out DIR [-auto] [-interval ...] [-install|-remove]
   mailarchive graph    -out DIR -tenant T -client-id ID -mailbox user@dom ...
   mailarchive status   -out DIR                          completeness, last run, schedule posture
+  mailarchive verify   -out DIR [-json] [-record]        check archived files against recorded fixity
 
 Examples:
   mailarchive -auto -out ./export

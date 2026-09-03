@@ -62,6 +62,37 @@ type Record struct {
 	// reusing this record's Message-ID is recognized (R3). Empty on legacy
 	// records.
 	Fingerprint string `json:"fp,omitempty"`
+
+	// Fixity (version 3) records the sha256 + byte length of each file the
+	// exporter wrote for this record, so `verify` can detect bit-rot,
+	// truncation or an accidental edit of an archived file. It is empty on
+	// records written before fixity, or before `verify -record` baselined
+	// them: such files are *unrecorded*, never *modified* (F3, FC11).
+	Fixity *Fixity `json:"fixity,omitempty"`
+}
+
+// FileDigest is the recorded fixity of one exported file: the sha256 (hex) of
+// its bytes and its length as written. `verify` re-hashes the file, capped at
+// Size+1 bytes, and compares (F3/F4).
+type FileDigest struct {
+	SHA256 string `json:"sha256"`
+	Size   int64  `json:"size"`
+}
+
+// Fixity holds the digests of the files an export wrote for a single record —
+// the `.html` always, the `-attachments.zip` and the `.eml` when they exist.
+// The three are siblings derived from the record's Path, never repeated as
+// keys, so the per-record cost is ~100 bytes per file (FC11).
+type Fixity struct {
+	HTML *FileDigest `json:"html,omitempty"`
+	Zip  *FileDigest `json:"zip,omitempty"`
+	EML  *FileDigest `json:"eml,omitempty"`
+}
+
+// HasDigest reports whether the record carries at least one recorded file
+// digest.
+func (r Record) HasDigest() bool {
+	return r.Fixity != nil && (r.Fixity.HTML != nil || r.Fixity.Zip != nil || r.Fixity.EML != nil)
 }
 
 // Fillable reports whether an incremental run should re-examine the record.
@@ -390,6 +421,34 @@ func (m *Manifest) Counts() (fillable, terminal, unknown int) {
 		}
 	}
 	return
+}
+
+// FixityCounts returns how many records carry at least one recorded file
+// digest (withFixity) and the total number of records (total). `status` prints
+// "Fixity: N of M records carry digests" from these fields alone (FC12).
+func (m *Manifest) FixityCounts() (withFixity, total int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	total = len(m.Entries)
+	for _, r := range m.Entries {
+		if r.HasDigest() {
+			withFixity++
+		}
+	}
+	return
+}
+
+// All returns a snapshot copy of every key→record, safe to range over while the
+// manifest is separately updated in the same goroutine (verify iterates the
+// snapshot and writes baselined fixity back through Add).
+func (m *Manifest) All() map[string]Record {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make(map[string]Record, len(m.Entries))
+	for k, r := range m.Entries {
+		out[k] = r
+	}
+	return out
 }
 
 // Delete removes key from the manifest. Absent keys are a no-op. Used by the

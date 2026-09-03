@@ -110,7 +110,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	}
 	// One run per archive at a time (R5): a scheduled run overlapping a manual
 	// one would otherwise interleave manifest/index/file writes.
-	lock, err := lockfile.Acquire(filepath.Join(opts.Out, lockfile.Name))
+	lock, err := lockfile.AcquireAs(filepath.Join(opts.Out, lockfile.Name), "export")
 	if err != nil {
 		return Result{}, err
 	}
