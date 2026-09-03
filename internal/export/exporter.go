@@ -41,6 +41,7 @@ type Stats struct {
 	NonHTMLBodies       int // messages exported from plain/RTF because no HTML body existed
 	NoBody              int // messages exported with no body content at all
 	RawWritten          int // original .eml files written (KeepRaw; 0 for sources with no original bytes, e.g. Outlook items)
+	RawAvailable        int // exported messages that HAD original bytes available, whether or not KeepRaw wrote them; >0 without KeepRaw means the source is raw-capable but no .eml was preserved (extract will find nothing — PC15)
 
 	// Incremental completeness (R1/R2): fillable gaps are re-examined.
 	Retried         int // seen-but-fillable records re-examined this run
@@ -290,6 +291,12 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	}
 	if retry {
 		e.Stats.Filled++
+	}
+	// Whether or not KeepRaw wrote it, note that this message HAD original bytes:
+	// a raw-capable source archived without -raw is the extract-foreclosure the
+	// capture-time warning surfaces (PC15).
+	if len(m.Raw) > 0 {
+		e.Stats.RawAvailable++
 	}
 	e.Stats.Exported++
 	return true, nil

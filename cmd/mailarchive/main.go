@@ -65,6 +65,8 @@ func main() {
 		err = runStatus(args[1:])
 	case len(args) > 0 && args[0] == "verify":
 		err = runVerify(args[1:])
+	case len(args) > 0 && args[0] == "extract":
+		err = runExtract(args[1:])
 	default:
 		err = runExport(args)
 	}
@@ -113,7 +115,7 @@ func runExport(args []string) error {
 	inputs := append(o.inputs, fs.Args()...)
 
 	if *o.out == "" {
-		return errors.New("-out is required (or use a subcommand: serve, search, reindex, schedule, graph, status, verify)")
+		return errors.New("-out is required (or use a subcommand: serve, search, reindex, schedule, graph, status, verify, extract)")
 	}
 	if *o.unattended {
 		if err := requireExistingOut(*o.out); err != nil {
@@ -632,6 +634,82 @@ Flags:
 	}
 }
 
+// runExtract migrates the archive out: it copies every record's preserved
+// original bytes (`<stem>.eml`) into -dest as standard interchange (mboxrd, one
+// file per folder; or byte-exact .eml, one per message), faithfully or not at
+// all. It exits 0 when the whole set was emitted, the partial code (3) when any
+// record had no preserved bytes to emit (including a PST-only archive, where
+// nothing is extractable), and 1 on refusal/error. extract holds the archive's
+// exclusive lock for its whole run, so run it OUTSIDE the backup window.
+func runExtract(args []string) error {
+	fs := flag.NewFlagSet("mailarchive extract", flag.ContinueOnError)
+	fs.Usage = extractUsage(fs)
+	o := extractFlags(fs)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *o.out == "" {
+		return errors.New("-out is required (the archive directory to extract from)")
+	}
+	format := app.ExtractFormat(strings.ToLower(strings.TrimSpace(*o.format)))
+	if format != app.FormatMbox && format != app.FormatEML {
+		return fmt.Errorf("-format is required and must be mbox or eml (got %q)", *o.format)
+	}
+	if *o.dest == "" {
+		return errors.New("-dest is required (an empty directory to write the extracted mail into; it must not overlap -out)")
+	}
+
+	logger, closeLog, err := newRunLogger(*o.log)
+	if err != nil {
+		return err
+	}
+	defer closeLog()
+
+	rep, xerr := app.Extract(abspath(*o.out), format, *o.dest, *o.overwrite, logger, nil)
+	if xerr != nil {
+		if *o.log != "" { // a piped run leaves its reason in its own log
+			logger.Printf("FAILED: %v", xerr)
+		}
+		return xerr
+	}
+	for _, line := range app.ExtractSummary(rep) {
+		fmt.Println(line)
+	}
+	if code := rep.ExitCode(); code != 0 {
+		return &exitError{code: code}
+	}
+	return nil
+}
+
+func extractUsage(fs *flag.FlagSet) func() {
+	return func() {
+		fmt.Fprintf(os.Stderr, `mailarchive extract - migrate the archive out as standard mail (mbox/eml)
+
+Usage:
+  mailarchive extract -out DIR -format mbox|eml -dest OUTDIR [--overwrite]
+
+Copies each message's PRESERVED original bytes (the <stem>.eml kept with -raw)
+into -dest, faithfully or not at all: a record with no preserved bytes (every
+PST/OST item; any archive captured without -raw) is counted and listed, never
+synthesized. -format mbox writes one mboxrd file per folder (a reader that
+unquotes ">From " recovers the exact bytes); -format eml writes one byte-exact
+.eml per message, mirroring the folder tree — the format for a consumer of
+unknown flavour. -dest must be empty (or pass --overwrite), must not overlap
+-out, and needs room for the full .eml volume this copies.
+
+Exit: 0 the whole set emitted; 3 partial (some records had no preserved bytes,
+including a PST-only archive where nothing is extractable); 1 refusal/error.
+
+extract holds the archive's exclusive lock for its whole run, so a scheduled
+backup that fires meanwhile refuses — run extract OUTSIDE the backup window. It
+is an operator-driven migration, not a backup, and cannot be scheduled.
+
+Flags:
+`)
+		fs.PrintDefaults()
+	}
+}
+
 // runSchedule prints (default) or installs/removes a recurring-backup entry for
 // the host OS's scheduler. Two forms: the flat form (`schedule -out DIR -auto
 // …` — the export job's flags on the schedule command) and the job form
@@ -987,6 +1065,7 @@ Usage:
   mailarchive graph    -out DIR -tenant T -client-id ID -mailbox user@dom ...
   mailarchive status   -out DIR                          completeness, last run, schedule posture
   mailarchive verify   -out DIR [-json] [-record]        check archived files against recorded fixity
+  mailarchive extract  -out DIR -format mbox|eml -dest OUTDIR   migrate the archive out as standard mail
 
 Examples:
   mailarchive -auto -out ./export
@@ -1176,6 +1255,13 @@ func printSummary(logger *log.Logger, r app.Result, indexed, keepRaw bool, out s
 	// .eml files were written (P7).
 	if keepRaw && s.Exported > 0 && s.RawWritten == 0 {
 		logger.Printf("WARNING: -raw had no effect: these sources carry no original message bytes (typically Outlook .pst/.ost items); 0 .eml written")
+	}
+	// The mirror case (PC15): a raw-capable source (mbox/maildir/Graph) was
+	// archived WITHOUT -raw, so no .eml was preserved and `mailarchive extract`
+	// will produce nothing. Say so at capture, while the source still exists to
+	// re-archive, rather than let the operator discover it after deleting it.
+	if !keepRaw && s.RawAvailable > 0 {
+		logger.Printf("WARNING: these sources carry original message bytes, but -raw was not set — no .eml was preserved, so `mailarchive extract` will produce nothing from this archive. Re-run with -raw to keep the originals BEFORE deleting the source.")
 	}
 	if r.IndexErrors > 0 {
 		logger.Printf("WARNING: %d message(s) were exported but could not be indexed; run `mailarchive reindex -out %q` and re-check.", r.IndexErrors, out)
