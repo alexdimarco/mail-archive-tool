@@ -76,6 +76,18 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		SourceComplete: true,
 	}
 
+	// One-time upgrade logs BEFORE the index repair, so cause (the manifest
+	// re-scope) precedes effect (the index-key migration) — matching reindex and
+	// the README sample (friction #17).
+	if manifest.StoresMigrated > 0 {
+		logger.Printf("canonicalized %d store path%s (one-time upgrade)",
+			manifest.StoresMigrated, plural(manifest.StoresMigrated, "", "s"))
+	}
+	if manifest.Rekeyed > 0 {
+		logger.Printf("re-scoped %d manifest entr%s by store (one-time upgrade; cost scales with archive size)",
+			manifest.Rekeyed, plural(manifest.Rekeyed, "y", "ies"))
+	}
+
 	var idx *index.Index
 	var indexErrors int
 	if opts.Index {
@@ -94,10 +106,6 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 				logger.Printf("warning: index: %v", addErr)
 			}
 		}
-	}
-	if manifest.Rekeyed > 0 {
-		logger.Printf("re-scoped %d manifest entr%s by store (one-time upgrade; cost scales with archive size)",
-			manifest.Rekeyed, plural(manifest.Rekeyed, "y", "ies"))
 	}
 
 	client := graph.New(ctx, graph.Config{
@@ -130,10 +138,12 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	var failures int
 	var firstErr error
 	for _, mbx := range g.Mailboxes {
-		runErr := runGraphMailbox(ctx, client, exp, manifest, opts.Mode, mbx, logger, checkpoint)
+		runErr := runGraphMailbox(ctx, client, exp, manifest, opts.Mode, mbx, logger, checkpoint, func() error { return lockLost })
 		if lockLost != nil {
-			commit(manifest, idx, logger)
-			finish(opts.Out, &result, exp, manifest, idx, indexErrors, true, logger)
+			// Lock removed/replaced mid-run: another run may own this archive now.
+			// Write no shared state (manifest/index/README); the deferred recordRun
+			// marks the run failed and the next incremental run reconciles the
+			// message files already written (INT-CC-2/R5).
 			return result, lockLost
 		}
 		commit(manifest, idx, logger)
@@ -176,13 +186,14 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 }
 
 // runGraphMailbox walks one mailbox's folders and messages, exporting each.
-func runGraphMailbox(ctx context.Context, client *graph.Client, exp *export.Exporter, manifest *state.Manifest, mode export.Mode, mailbox string, logger *log.Logger, checkpoint func()) error {
+func runGraphMailbox(ctx context.Context, client *graph.Client, exp *export.Exporter, manifest *state.Manifest, mode export.Mode, mailbox string, logger *log.Logger, checkpoint func(), abort func() error) error {
 	logger.Printf("Reading mailbox %s via Microsoft Graph", mailbox)
-	// The store token for a Graph source is derived from the mailbox address
-	// (its own source id), so the incremental fast-path key below and the
-	// exporter's key agree — the skip still matches (R17). Mailbox addresses are
-	// injective, so this is almost always the plain sanitized segment.
-	token := manifest.Token(mailbox, mailbox)
+	// The store token for a Graph source is seeded from the CANONICAL mailbox id
+	// (lower-cased/trimmed), so a re-run whose -mailbox differs only in case hits
+	// the same token — the incremental fast-path key below and the exporter's key
+	// still agree and no body is re-downloaded (INT-CC-1/R17). Mailbox addresses
+	// are injective, so this is almost always the plain sanitized segment.
+	token := manifest.Token(state.MailboxSourceID(mailbox), mailbox)
 	folders, err := client.Folders(ctx, mailbox)
 	if err != nil {
 		return fmt.Errorf("list folders: %w", err)
@@ -200,6 +211,13 @@ func runGraphMailbox(ctx context.Context, client *graph.Client, exp *export.Expo
 			case <-ctx.Done():
 				return ctx.Err()
 			default:
+			}
+			// Stop promptly once the run lost its lock — before any download —
+			// bounding continued writing to a contended archive (INT-CC-2/R5).
+			if abort != nil {
+				if e := abort(); e != nil {
+					return e
+				}
 			}
 			// Incremental fast-path: skip a message already archived, matched by
 			// its Internet-Message-ID, WITHOUT downloading the body (R17). Only

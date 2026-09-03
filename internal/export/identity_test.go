@@ -109,6 +109,55 @@ func TestFillVersusReuseWhileIncomplete(t *testing.T) {
 	}
 }
 
+// covers: MA-86, R3, R1, S23
+// A crafted third message must not silently displace a distinct message via the
+// reuse-split key. When a different message (Q) reuses an already-seen
+// Message-ID, it is filed under a fingerprint-qualified key. The qualifier joins
+// with NUL, which is illegal inside a Message-ID, so an attacker who pre-seeds a
+// message (R) whose Message-ID literally contains "#"+Q's-fingerprint can no
+// longer pre-occupy Q's qualified slot: exported in order P, R, Q, all three
+// survive. The qualified key holds three NUL separators, leaving the v2→v3
+// discriminator (exactly one NUL = a v2 key) untouched.
+func TestMessageIDReuseThirdMessageNotDropped(t *testing.T) {
+	out := t.TempDir()
+	manifest := mustManifest(t)
+
+	const base = "<A@x>"
+	p := &model.Message{Subject: "P-subject", Received: testDate, InternetMessageID: base, SenderEmail: "p@ex.com", To: "victim@ex.com", PlainBody: "p"}
+	q := &model.Message{Subject: "Q-subject", Received: testDate, InternetMessageID: base, SenderEmail: "q@ex.com", To: "victim@ex.com", PlainBody: "q"}
+	fpQ := q.Fingerprint()
+	// R's Message-ID literally contains "#"+fpQ: under the old "#"-join this
+	// pre-occupied Q's qualified key byte-for-byte, so Q was dropped as seen.
+	r := &model.Message{Subject: "R-subject", Received: testDate, InternetMessageID: base + "#" + fpQ, SenderEmail: "r@ex.com", To: "victim@ex.com", PlainBody: "r"}
+
+	e := incExporter(out, manifest)
+	for _, m := range []*model.Message{p, r, q} {
+		wrote, err := e.Export("store", []string{"Inbox"}, m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !wrote {
+			t.Fatalf("message %q was skipped as already-seen — a distinct message was silently dropped", m.Subject)
+		}
+	}
+	if e.Stats.Exported != 3 || manifest.Len() != 3 {
+		t.Fatalf("three distinct messages: exported=%d manifest=%d, want 3/3", e.Stats.Exported, manifest.Len())
+	}
+	if n := countSuffix(t, out, ".html"); n != 3 {
+		t.Fatalf("html files = %d, want 3 (a distinct message was dropped)", n)
+	}
+	qKey := state.Qualify(state.Key("store", "Inbox", p.Identity()), fpQ)
+	if _, ok := manifest.Get(qKey); !ok {
+		t.Errorf("Q not recorded under its NUL-qualified key %q", qKey)
+	}
+	if got := strings.Count(qKey, "\x00"); got != 3 {
+		t.Errorf("qualified key holds %d NUL separators, want 3 (the v2→v3 discriminator must stay = exactly one NUL)", got)
+	}
+	if _, migrated := state.MigrateKey(qKey, "store/Inbox/x.html"); migrated {
+		t.Errorf("a 3-NUL qualified key was wrongly treated as a re-scopable v2 key by MigrateKey")
+	}
+}
+
 // covers: MA-87, R4, R6, R13, S24
 // A 32-bit stem collision between two different keys must never overwrite: the
 // second stem is lengthened deterministically from its own key. Re-exporting a

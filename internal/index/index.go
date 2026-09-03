@@ -399,7 +399,7 @@ func (ix *Index) RepairKeys(force bool, fn func(key, path string) (string, bool)
 	rows.Close()
 
 	if len(changes) > 0 && logger != nil {
-		logger.Printf("migrating index keys (%d rows)", len(changes))
+		logger.Printf("migrating index keys (%d rows) (one-time upgrade)", len(changes))
 	}
 
 	tx, err := ix.db.Begin()

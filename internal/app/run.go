@@ -154,6 +154,18 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		KeepRaw:  opts.KeepRaw,
 	}
 
+	// One-time upgrade logs BEFORE the index repair, so cause (the manifest
+	// re-scope) precedes effect (the index-key migration) — matching reindex and
+	// the README sample (friction #17).
+	if manifest.StoresMigrated > 0 {
+		logger.Printf("canonicalized %d store path%s (one-time upgrade)",
+			manifest.StoresMigrated, plural(manifest.StoresMigrated, "", "s"))
+	}
+	if manifest.Rekeyed > 0 {
+		logger.Printf("re-scoped %d manifest entr%s by store (one-time upgrade; cost scales with archive size)",
+			manifest.Rekeyed, plural(manifest.Rekeyed, "y", "ies"))
+	}
+
 	// Optional search index, fed as each message is written.
 	var idx *index.Index
 	var indexErrors int
@@ -176,10 +188,6 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 				logger.Printf("warning: index: %v", addErr)
 			}
 		}
-	}
-	if manifest.Rekeyed > 0 {
-		logger.Printf("re-scoped %d manifest entr%s by store (one-time upgrade; cost scales with archive size)",
-			manifest.Rekeyed, plural(manifest.Rekeyed, "y", "ies"))
 	}
 	if manifest.Migrated > 0 {
 		logger.Printf("%d manifest entr%s predate completeness tracking; they will be re-examined by this and following incremental runs",
@@ -220,10 +228,14 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 			if onProgress != nil {
 				onProgress(stats)
 			}
-		})
+		}, func() error { return lockLost })
 		if lockLost != nil {
-			commit(manifest, idx, logger)
-			finish(opts.Out, &result, exp, manifest, idx, indexErrors, true, logger)
+			// The lock was removed or replaced mid-run: another run may now own
+			// this archive. Do NOT write shared state (manifest/index/README) into
+			// it — the deferred recordRun marks this run failed, and the message
+			// files already written are reconciled by the next incremental run
+			// (index-before-manifest ordering leaves no orphaned manifest rows).
+			// (INT-CC-2/R5.)
 			return result, lockLost
 		}
 		commit(manifest, idx, logger)
@@ -410,7 +422,7 @@ func indexCount(idx *index.Index) int {
 
 // runFile opens one data file (optionally via a temp snapshot) and exports every
 // message it contains, honouring ctx cancellation between messages.
-func runFile(ctx context.Context, exp *export.Exporter, path, out string, copyFirst bool, logger *log.Logger, onProgress ProgressFunc) error {
+func runFile(ctx context.Context, exp *export.Exporter, path, out string, copyFirst bool, logger *log.Logger, onProgress ProgressFunc, abort func() error) error {
 	openPath := path
 	if copyFirst {
 		// Snapshotting only applies to single files (e.g. a locked .ost);
@@ -432,11 +444,15 @@ func runFile(ctx context.Context, exp *export.Exporter, path, out string, copyFi
 	defer reader.Close()
 
 	store := reader.StoreName()
-	// The token scopes this source's identity and names its on-disk tree. It is
-	// computed once from the ORIGINAL input path (never the -copy-first
-	// snapshot, whose name changes every run) so two sources with the same
-	// display name get distinct, sticky trees (F1). Injective and persisted.
-	token := exp.Manifest.Token(path, store)
+	// The token scopes this source's identity and names its on-disk tree. Its
+	// seed is the CANONICAL source id (state.PathSourceID) of the original input
+	// path (never the -copy-first snapshot, whose name changes every run), so a
+	// different spelling of the same file — relative vs absolute, a symlink, a
+	// trailing slash — hits the same token instead of minting a duplicate tree
+	// (INT-CC-1/R2), while two distinct sources with the same display name still
+	// get distinct, sticky trees (F1). The source is still READ through the
+	// original path.
+	token := exp.Manifest.Token(state.PathSourceID(path), store)
 	logger.Printf("Reading %s (store: %s)", path, store)
 
 	return reader.Walk(func(folderPath []string, m *model.Message) (err error) {
@@ -444,6 +460,13 @@ func runFile(ctx context.Context, exp *export.Exporter, path, out string, copyFi
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
+		}
+		// Stop promptly once the run lost its lock: bound continued writing to a
+		// contended archive to the next message boundary (INT-CC-2/R5).
+		if abort != nil {
+			if e := abort(); e != nil {
+				return e
+			}
 		}
 		// A panic exporting one crafted message must not abort the whole run
 		// (R10); log it and skip that message.

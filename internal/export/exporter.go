@@ -115,8 +115,16 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	// message owns the plain key, so names stay stable whatever order a later
 	// run walks them in (R3/R1).
 	prev, seen := e.Manifest.Get(key)
-	if seen && prev.Fingerprint != "" && prev.Fingerprint != fp {
-		key += "#" + fp
+	for seen && prev.Fingerprint != "" && prev.Fingerprint != fp {
+		// A DIFFERENT message reused this key's Message-ID: file it under a
+		// fingerprint-qualified key. The separator is NUL (state.Qualify), never a
+		// character legal in a Message-ID, so no crafted id — not even one that
+		// literally contains "#"+fingerprint — can pre-occupy the qualified slot
+		// and make this distinct message look already-seen. Should the qualified
+		// slot somehow hold yet another message (a fingerprint collision), qualify
+		// again rather than treat this one as seen: a mismatch must never become a
+		// silent skip (AGG2-1/R1).
+		key = state.Qualify(key, fp)
 		prev, seen = e.Manifest.Get(key)
 	}
 
@@ -138,9 +146,15 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		return false, nil
 	}
 
-	// store is already the sanitized, disambiguated token (state.Token), so it
-	// is used verbatim as the directory segment — the same string that scopes
-	// the key, so the on-disk tree and the manifest never disagree (F1).
+	// store is the sanitized, disambiguated token (state.Token). A last-line guard
+	// before it becomes a directory segment: refuse a token that is not a single
+	// safe path segment, so a tampered manifest can never redirect a write outside
+	// the output root no matter what reached here (INS2-1/R4).
+	if !state.SafeToken(store) {
+		return false, fmt.Errorf("refusing to export: store token %q is not a single safe path segment; a write to %s could otherwise escape the archive (tampered manifest?)", store, e.OutDir)
+	}
+	// store is used verbatim as the directory segment — the same string that
+	// scopes the key, so the on-disk tree and the manifest never disagree (F1).
 	dirParts := append([]string{e.OutDir, store}, folderPath...)
 	dir := filepath.Join(dirParts...)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
