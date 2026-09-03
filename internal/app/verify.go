@@ -57,6 +57,7 @@ type Report struct {
 
 	Records    int `json:"records"`     // records in the manifest (M)
 	WithFixity int `json:"with_fixity"` // records carrying at least one digest (N)
+	WithEML    int `json:"with_eml"`    // records whose preserved original (.eml) is present — what `extract` can emit (PC15)
 	Checked    int `json:"checked"`     // recorded files hashed and compared (or baselined)
 
 	OK         int `json:"ok"`
@@ -273,6 +274,14 @@ func (v *verifier) checkRecord(key string, rec state.Record) {
 			*sib.digest = updated
 			v.saveFixity(key, &rec, &fx)
 		}
+	}
+
+	// Extractability (PC15): does this record have preserved original bytes
+	// (.eml) present as a regular file? Counted so the summary can flag an
+	// archive with none — `mailarchive extract` would produce nothing from it.
+	emlSegs := append(append([]string{}, baseSegs...), lastSegment(stem+verifyEMLSuffix))
+	if kind, _, _ := v.inspect(emlSegs); kind == "ok" {
+		v.rep.WithEML++
 	}
 }
 
@@ -595,6 +604,12 @@ func VerifySummary(r Report) []string {
 	}
 	if r.Checked == 0 {
 		out = append(out, "WARN: nothing was checked — no archived file in this archive carries recorded fixity yet")
+	}
+	// Extractability (PC15): warn that this archive has no preserved original
+	// bytes, so `mailarchive extract` would produce nothing — before the source
+	// is deleted. Not an attestation failure; a heads-up about portability.
+	if r.Records > 0 && r.WithEML == 0 {
+		out = append(out, "note: no preserved original bytes (.eml) in this archive — `mailarchive extract` would produce nothing. A PST/OST archive never has originals; an mbox/maildir/Graph archive must be captured with -raw to be extractable.")
 	}
 	if r.Attested() {
 		out = append(out, "attested: every recorded file was checked and intact")

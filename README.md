@@ -478,6 +478,49 @@ mailarchive reindex -out ./export
 # reindexed: kept=1843 pruned=12
 ```
 
+### Migrating the archive out (mbox/eml)
+
+To move the archive into another mail system, `extract` writes each message back
+out as standard interchange — **mbox** (one mboxrd file per folder) or **eml**
+(one byte-exact `.eml` per message, mirroring the folder tree):
+
+```sh
+# One mbox file per folder, under ./out:
+mailarchive extract -out ./export -format mbox -dest ./out
+# emitted=1843 skipped=0
+# One .eml per message, mirroring the tree:
+mailarchive extract -out ./export -format eml  -dest ./out
+```
+
+`extract` is **faithful-only**: it copies each message's *preserved original
+bytes* — the `<stem>.eml` kept at capture with `-raw` — and never synthesizes or
+re-serializes a message, so nothing it emits is a forgery. A record with no
+preserved bytes is counted, named, and skipped, never invented. That means:
+
+- An **Outlook `.pst`/`.ost`** archive has no originals at all (Outlook items
+  carry no RFC 822 bytes), so `extract` emits nothing from it.
+- An **mbox / maildir / Microsoft 365 (Graph)** archive is extractable only if
+  it was captured **with `-raw`**. Without `-raw`, no `.eml` was kept, and both
+  the export summary and `mailarchive verify` warn you of this — re-archive with
+  `-raw` while you still have the source.
+
+When a record carries recorded fixity, its `.eml` is checked against it before
+being emitted (a mismatch is skipped, not written); otherwise the bytes are
+emitted *as stored* — run `mailarchive verify` first if you need them attested.
+mbox output is **mboxrd**: a reader that unquotes `>From ` lines recovers the
+exact original bytes; an mboxo reader does not, so prefer `-format eml` for a
+consumer of unknown flavour, which is byte-exact.
+
+`-dest` must be an **empty** directory (or pass `--overwrite`), must **not
+overlap `-out`**, and needs room for the full `.eml` volume this copies. Output
+is atomic and idempotent — a re-run replaces files, never doubles them.
+
+`extract` holds the archive's exclusive lock for its whole run, so run it
+**outside the backup window**; it is an operator-driven migration, not a backup,
+and cannot be scheduled. Its exit status is `0` when the whole set was emitted,
+`3` when some records had no preserved bytes (partial — including a PST-only
+archive, where nothing is extractable), and `1` on refusal or error.
+
 ### Upgrading an existing archive
 
 This version scopes each message's identity to its store, so two mailboxes

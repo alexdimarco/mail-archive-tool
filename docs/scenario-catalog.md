@@ -119,6 +119,28 @@ an invariant is the thing that is wrong.
   that policy for archived files, a `script-src 'self'` policy for its own UI,
   HTML-escapes search snippets, never follows a symlink out of the archive root,
   and warns when bound to a non-loopback address.
+- **R20 — Extract is faithful-or-absent and contained.** `extract` migrates the
+  archive out as standard interchange — mboxrd (one file per folder) or
+  byte-exact `.eml` (one per message, mirroring the tree) — by copying only each
+  record's PRESERVED original bytes (`<stem>.eml`, kept at capture with `-raw`);
+  it never synthesizes or re-serializes a message, so a record with no preserved
+  bytes (every PST/OST item; any archive captured without `-raw`) is counted,
+  listed and skipped, never written. Each `.eml` is confirmed through the gate
+  `verify` uses — a validated relative path resolved component-wise, no symlink
+  followed at any level, regular-file-only, the read bounded to the recorded
+  size — and, when a `Fixity.EML` is recorded, verified against it before
+  emitting; a mismatch is skipped like an absence. Output is atomic and
+  idempotent (a temp file per message/folder renamed on success, truncating a
+  pre-existing file never appending, so a re-run does not double) and contained
+  within `-dest`, which may not equal, sit inside, or contain `-out`
+  (symlink-resolved). mbox is mboxrd (a reader that unquotes `>From ` recovers
+  the exact bytes); `-format eml` is byte-exact. extract writes nothing into the
+  archive, holds the archive's exclusive lock for its whole run, and is not a
+  schedulable backup. Its exit is `0` (whole set emitted), `3` (partial — some
+  records had no preserved bytes, including an archive from which nothing is
+  extractable) or `1` (refusal/error). Capture and `verify` warn when a
+  raw-capable source is archived WITHOUT `-raw`, so the dependency is visible
+  before the source is deleted.
 
 ## 3. Scenarios
 
@@ -156,6 +178,7 @@ an invariant is the thing that is wrong.
 | S30 Two mailboxes with the same store display name archived into one `-out`, or an archive upgraded from a pre-store-scoped key format | R6, R3, R2, R5, R8 | each store gets its own tree under a distinct, sticky token (the second `segment~hash`); the same mail in both stores is exported to both; an incremental re-run exports zero; an older archive re-scopes its manifest and index once, by content (from each record's own path), logged, and self-heals after an old-binary excursion without double-prefixing | MA-128, MA-129, MA-130, MA-131, MA-134 |
 | S31 An archived file is bit-rotted, truncated, deleted or replaced (or predates fixity), or a manifest path is tampered, and the operator runs `verify` | R1, R4, R5 | verify re-hashes every recorded file under the archive lock and classifies each ok/modified/missing/unrecorded, reporting stray files as unexpected; a clean archive with full fixity exits 0, any modified/missing/unrecorded exits 2 (each named, `verify -record` offered for unrecorded), a refusal/error exits 1; recorded paths are validated and resolved component-wise, symlinks and non-regular files are integrity failures never followed or opened, and reads stop at recorded size+1; `-record` baselines current bytes and `status` counts coverage | MA-135, MA-136, MA-137, MA-138, MA-139, MA-140, MA-141, MA-142 |
 | S32 An inheritor or auditor needs a message's original internet headers, and a hostile message forges its Received/Authentication-Results lines | R7, R19, R3 | the transport-header block is kept as stored (PST 0x007D decoded; raw sources' header section within 64 KiB) and shown in a collapsed, escaped, "unverified", 64-KiB-capped panel — never executed, never indexed, never in the fingerprint | MA-143, MA-144, MA-145 |
+| S34 Operator migrates the archive out with `extract` (mbox/eml), or points `-dest` at/inside/over `-out`, or a preserved `.eml` is symlinked/oversized/fixity-mismatched, or the archive has no preserved originals | R20, R4, R5, R12 | a `-raw` archive emits one mboxrd file per folder (`>From `-quoted, net/mail round-trips the boundaries) or a byte-exact `.eml` tree; a re-run does not double (temp+rename, truncate); a PST-only/no-raw archive emits nothing, names the skipped count and reason and exits the partial code (3); a `-dest` overlapping `-out`, a `../`/absolute/symlinked `-dest`, a symlinked/oversized `.eml` and a `Fixity.EML` mismatch are refused/skipped; extract writes nothing into the archive and is refused as a scheduled job; capture and `verify` warn when a raw-capable source is archived without `-raw` | MA-181, MA-182, MA-183, MA-184, MA-185, MA-186 |
 
 Acknowledged limits (not defects): two messages that reuse one Message-ID with
 an identical envelope (subject, sender, recipients, date, attachment names) and
@@ -273,6 +296,12 @@ Tiers: **U** unit property (every commit) · **S** structural whole-tree walk
 | MA-98 | U | Graph requests are bounded: a server that stalls before headers or mid-body fails within the configured deadline (listing and MIME download); a prompt server succeeds | R17, S29 |
 | MA-99 | U | -unattended (baked into every scheduled job) refuses to create a new archive when -out does not exist, naming the likely unmounted drive, and writes nothing; an existing -out is accepted | R14, R12, S28 |
 | MA-100 | U | a -copy-first snapshot is created on the archive's own volume, never in the system temp directory | R5, S2 |
+| MA-181 | U | `extract -format mbox` on a -raw archive writes one mboxrd `.mbox` per folder that round-trips through net/mail (correct message boundaries, count preserved) and `>`-quotes a body `From `/`>From ` line so it is not mistaken for a boundary; the folder tree is mirrored | R20, S34, R12 |
+| MA-182 | U | `extract -format eml` mirrors the folder tree with one byte-exact `.eml` per record; a re-run into the same -dest does NOT double (temp+rename over the existing file, never appended) and -dest empty-or-`--overwrite` is enforced | R20, S34, R5 |
+| MA-183 | U | a PST-only (or no-raw) archive emits nothing: every record is skipped, the summary names the skipped count and reason ("no preserved original"), and the run exits the partial code 3 (never 0, never verify's 2) | R20, S34, R12 |
+| MA-184 | U | extract trusts nothing: a `-dest` equal to/inside/containing `-out` (symlink-resolved) is refused naming the overlap; a symlinked, oversized or fixity-mismatched `<stem>.eml` is skipped-and-reported, never read/emitted; and extract writes nothing into the archive (positive twin first, assure.Refused + NoSideEffect) | R20, R4, R5, S34 |
+| MA-185 | U | `schedule -- extract -out X` is refused with a typed non-zero message calling extract an operator-driven migration, not a backup; `extract -h` names -out, -format and -dest and states the lock/backup-window posture | R20, R12, S34 |
+| MA-186 | U | the capture-time warning fires when a raw-capable source (mbox/maildir/Graph, RawAvailable>0) is archived WITHOUT -raw ("extract will produce nothing … re-run with -raw") and is ABSENT with -raw; `verify` on an archive with no preserved `.eml` prints the same not-extractable note | R20, S34 |
 | MA-122 | U | the GUI's "open the archive" command is built per-GOOS without executing: xdg-open (Linux), open (macOS), rundll32 url.dll,FileProtocolHandler (Windows), each carrying the path | R18, S29 |
 | MA-123 | U | the launch health view offers "repair" only for the states a re-install fixes (not-installed / moved / missing program, same host), never for a healthy or other-host schedule; the rebuilt Spec uses the CURRENT exe, takes only the cadence/time from the descriptor, and reconstructs the job args and log from the sanitized name and -out (with a name-derived wrapper path), and validates | R18, S29 |
 | MA-124 | U | a failed headless (scheduled) run raises exactly one desktop notification naming the backup; a healthy run raises none | R18, S29 |

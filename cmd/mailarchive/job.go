@@ -85,6 +85,21 @@ func graphFlags(fs *flag.FlagSet) *graphOpts {
 	return o
 }
 
+type extractOpts struct {
+	out, format, dest, log *string
+	overwrite              *bool
+}
+
+func extractFlags(fs *flag.FlagSet) *extractOpts {
+	o := &extractOpts{}
+	o.out = fs.String("out", "", "archive directory to extract from (contains .mailarchive-manifest.json) (required)")
+	o.format = fs.String("format", "", "output format: mbox (one mboxrd file per folder) | eml (one byte-exact .eml per message, mirroring the tree) (required)")
+	o.dest = fs.String("dest", "", "empty destination directory to write the extracted mail into; it must not overlap -out and needs room for the full .eml volume (required)")
+	o.overwrite = fs.Bool("overwrite", false, "write into a non-empty -dest, truncating any file this run replaces (never appends)")
+	o.log = fs.String("log", "", "write the run log to this file (size-capped, rotated) instead of stderr")
+	return o
+}
+
 type reindexOpts struct {
 	out, log   *string
 	unattended *bool
@@ -150,7 +165,7 @@ func (j job) command() []string {
 	return append([]string{j.verb}, j.args...)
 }
 
-var knownVerbs = map[string]bool{"serve": true, "search": true, "reindex": true, "schedule": true, "graph": true, "status": true, "verify": true}
+var knownVerbs = map[string]bool{"serve": true, "search": true, "reindex": true, "schedule": true, "graph": true, "status": true, "verify": true, "extract": true}
 
 // parseJob validates a job (the arguments after `--`, or the flat form
 // re-assembled by schedule) through the real flag definitions and returns it in
@@ -166,6 +181,8 @@ func parseJob(args []string) (job, error) {
 		return job{}, errors.New("serve is a long-running web server and cannot be a scheduled backup job; schedule an export, graph, reindex or verify job")
 	case "search", "status", "schedule":
 		return job{}, fmt.Errorf("%s is a query, not a backup job, and cannot be scheduled; schedule an export, graph, reindex or verify job", verb)
+	case "extract":
+		return job{}, errors.New("extract is an operator-driven migration, not a backup job, and cannot be scheduled; run it by hand outside the backup window; schedule an export, graph, reindex or verify job")
 	}
 
 	fs := flag.NewFlagSet("job", flag.ContinueOnError)
