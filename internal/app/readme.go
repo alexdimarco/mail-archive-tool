@@ -44,9 +44,12 @@ reference, not as proof of origin: a sending or relaying server can forge them.
 Verifying the files: every archived file's SHA-256 checksum is recorded in
 .mailarchive-manifest.json. If you have the mailarchive program, run
   mailarchive verify -out <this folder>
-to re-check every file against its recorded checksum (exit 0 means every file is
-intact). This detects a changed, truncated or missing file; it is not a
-signature, so it proves the files have not changed, not who wrote them.
+to re-check every file against its recorded checksum. Exit 0 means every
+recorded file is intact and none is missing a checksum; a file archived by an
+older mailarchive carries none yet and shows as "unrecorded" until it is
+re-exported or baselined with "mailarchive verify -record". This detects a
+changed, truncated or missing file; it is not a signature, so it proves the
+files have not changed, not who wrote them.
 
 Housekeeping files (safe to leave alone):
   .mailarchive-manifest.json   which messages are archived (used for

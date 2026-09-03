@@ -580,7 +580,7 @@ func (m *Manifest) Counts() (fillable, terminal, unknown int) {
 
 // FixityCounts returns how many records carry at least one recorded file
 // digest (withFixity) and the total number of records (total). `status` prints
-// "Fixity: N of M records carry digests" from these fields alone (FC12).
+// "Fixity coverage: N of M records recorded" from these fields alone (FC12).
 func (m *Manifest) FixityCounts() (withFixity, total int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

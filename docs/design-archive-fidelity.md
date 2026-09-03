@@ -2,7 +2,11 @@
 
 **Revision:** 2 (2026-09-03). **BUILD STATUS:** built — merged as `76966a6`
 (slices a+b, MA-128..142, S30/S31), `b8a374b` (slice c, MA-143..145, S32) and
-`93e45bb` (slice d, MA-146..148; MA-47/65/73/79 reconciled). Deviation from
+`93e45bb` (slice d, MA-146..148; MA-47/65/73/79 reconciled). The adversarial
+pass and friction walk are filed as `docs/review-fidelity-adversarial.md` and
+`docs/review-fidelity-friction.md` (c0cdc62); their confirmed findings landed as
+`eb37754`/`28fcc77`/`58bec68`/`b788788` (MA-149..169) and the Windows run-identity
+fix as `746ad70` (MA-170). Deviation from
 FC6 as built: `verify` requires a recorded path's first segment to be a
 non-dotfile that resolves to a real directory under the root (it does not
 consult the token registry; every legitimately written first segment is a

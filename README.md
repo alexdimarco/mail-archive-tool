@@ -148,6 +148,7 @@ GOOS=windows GOARCH=amd64 go build -ldflags -H=windowsgui -o mailarchive-gui.exe
   ARCHIVE-INTEGRITY-ATTENTION.txt                            # only after a verify found modified/missing files: the counts + how to restore (removed once verify attests)
   .mailarchive-manifest.json                                 # export state: what is archived, and what is still missing
   .mailarchive-lastrun.json                                  # the last run: started, finished, result, counts
+  .mailarchive-lastverify.json                               # the last verify: when it ran, whether every file was intact
   .mailarchive-schedule.json                                 # the schedule feeding this archive (when installed)
   .mailarchive.lock                                          # lock file; may remain after a run — its presence does not mean a run is active
   mailarchive.log                                            # the GUI's run log (interactive and GUI-scheduled runs; rotated at 8 MB, one .1 kept)
@@ -249,10 +250,10 @@ does this automatically across every mailbox it finds.
 ### Incremental model, and what "missing content" means
 
 Each exported message is recorded in the manifest under a key of
-`folder path` + its identity (the RFC 5322 **Message-ID**, or a content hash
-when absent). Scoping by folder means the same email filed in two folders is
-exported to both, while a re-run still skips each `(folder, message)` pair it
-already wrote. Two *different* messages that share one Message-ID in a folder
+`store` + `folder path` + its identity (the RFC 5322 **Message-ID**, or a content
+hash when absent). Scoping by store and folder means the same email filed in two
+folders — or the same mailbox archived twice into one `-out` — is kept in each
+place, while a re-run still skips each `(store, folder, message)` it already wrote. Two *different* messages that share one Message-ID in a folder
 are both kept.
 
 The manifest also records **what each message is missing**. An IMAP account
@@ -503,7 +504,7 @@ rule is to upgrade every machine that writes the same archive.
 
 The re-scope re-exports nothing, so it does not backfill fixity: the legacy
 bytes are recorded, not re-hashed, so they cannot be attested as pristine. A
-freshly-upgraded archive therefore shows `Fixity: 0 of N records carry digests`,
+freshly-upgraded archive therefore shows `Fixity coverage: 0 of N records recorded`,
 and `verify` reports NOT-ATTESTED, until the next full re-export or an explicit
 `mailarchive verify -record` baselines the current bytes. This is expected, not
 data loss — the files themselves are untouched.
@@ -523,7 +524,7 @@ the exact entry and applies nothing; add `-install` to apply it (idempotently)
 and `-remove` to take it back out.
 
 Two forms. The flat form puts the export job's flags on the schedule command;
-the `--` form takes any backup job — an export, a `graph` job, or `reindex`:
+the `--` form takes any backup job — an export, a `graph` job, `reindex`, or `verify`:
 
 ```sh
 # Nightly 02:00 incremental backup of every mailbox found (printed, not applied):
@@ -653,7 +654,8 @@ explicit `mailarchive verify -record`. This is expected, not data loss.
 
 A scheduled verify's verdict **is recorded** — in `.mailarchive-lastverify.json`,
 separate from the export last-run record — so `mailarchive status` shows it on
-its `Last verify` line and a not-attested result turns the posture RED. A verify
+its `Last verify` line: modified or missing files turn the posture RED (restore
+or re-export), while an unrecorded-only gap is a WARN. A verify
 that finds modified or missing files also writes `ARCHIVE-INTEGRITY-ATTENTION.txt`
 at the archive root (removed automatically once a later verify attests), so even
 a headless nightly check leaves a plain-language notice on disk.

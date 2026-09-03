@@ -89,7 +89,7 @@ li .c{color:#888;font-variant-numeric:tabular-nums}
   <b>Full-text search:</b> run <code>mailarchive serve -out .</code> in this folder and open the printed
   <code>http://localhost:…</code> URL for ranked search across every message and attachment name.
   Or from a terminal: <code>rg -i "your text" .</code> (ripgrep), or add this folder to Windows Search.<br>
-  <b>Check the files are intact:</b> run <code>mailarchive verify -out .</code> in this folder — exit 0 means every archived file still matches the checksum recorded when it was written.
+  <b>Check the files are intact:</b> run <code>mailarchive verify -out .</code> in this folder — exit 0 means every recorded file still matches its checksum and none is unrecorded (an archive from an older version shows files as "unrecorded" until re-exported).
 </div>
 <h1 style="font-size:15px;margin:16px 0 6px">Folders</h1>
 <ul>
