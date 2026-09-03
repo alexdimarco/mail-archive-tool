@@ -101,6 +101,14 @@ an invariant is the thing that is wrong.
   permission, so a mailbox is never modified); and an incremental re-run archives
   zero new items and re-downloads no already-archived message body, matched by
   Internet-Message-ID.
+- **R18 — Every scheduled run is recorded and `status` reports it.** A run
+  writes a `running` record the moment it holds the archive lock and finalizes
+  it (ok / failed / cancelled, with counts and error) on the way out; `status`
+  reports the archive's completeness, last run and schedule posture as
+  GREEN/WARN/RED, failing closed on missing evidence (no record, an unreadable
+  record, a run that never finished, a missing or moved scheduled program, a
+  scheduler that cannot be queried), every WARN/RED naming its remedy; it exits
+  0 whenever it reports. The GUI's job file round-trips the wizard's answers.
 - **R19 — Offline-inert archive.** Every exported `.html` is safe to open from
   disk: its `<head>` begins with a Content-Security-Policy meta identical to the
   policy `serve` sends (no scripts, no remote loads, no `<base>`, no forms) and a
@@ -140,6 +148,7 @@ an invariant is the thing that is wrong.
 | S26 Folder/subject names the file system cannot carry: illegal characters, reserved device names with extensions, trailing dots, non-Latin scripts, decomposed Unicode, very long paths | R4, R6 | names stay distinct, creatable and portable across OSes; slugs stay readable; long paths shrink the slug | MA-01, MA-03, MA-04, MA-89 |
 | S27 An inheritor opens the archive folder with no tool, years later | R7 | README.txt explains the layout; every page navigates, names its attachments and links its zip/.eml; times carry their offsets; folder pages paginate | MA-90, MA-91, MA-92, MA-96, MA-13 |
 | S28 Operator schedules any backup job (export, Graph, reindex) on any OS, including Windows paths with spaces/metacharacters | R14, R12 | job validated at schedule time (non-backup verbs, interactive flags, missing secret file refused); Windows wrapper quotes every token; job logs rotate; descriptor written; per-archive default name | MA-72, MA-73, MA-93, MA-97 |
+| S29 Operator (or the GUI) asks whether the archive is healthy and the backup is running | R18, R12 | last-run record present and truthful; status GREEN/WARN/RED with remedies; three-state install detection; GUI job file round-trips | MA-75, MA-76, MA-77, MA-78 |
 | S21 A hostile email (script, tracking pixel, remote CSS, `<base>`, meta refresh) is archived and opened from disk | R19, R7 | renders inertly: policy meta precedes the mail's markup; refresh neutralized; content preserved | MA-80 |
 | S22 `serve` faces a hostile archive or network: script in a body/snippet, a symlink inside the archive, a non-loopback bind | R19, R4, R8 | UI/API/file responses carry a strict policy; snippets are escaped; symlinked paths are 404; non-loopback bind warns | MA-81, MA-82, MA-83, MA-84 |
 
@@ -234,6 +243,10 @@ Tiers: **U** unit property (every commit) · **S** structural whole-tree walk
 | MA-68 | U | the report is regenerated from the manifest each run: a gap found earlier is still listed by a later run, disappears when filled (empty report removed); a legacy archive's earlier report is preserved as attachments-report-legacy.tsv | R1, S6 |
 | MA-70 | U | a version-1 manifest (incl. one an older binary rewrote) migrates every record to the "unknown" sentinel and counts them; Save writes v2; reload keeps the sentinel; a sentinel record is re-captured once by the next incremental run | R1, R5, S6 |
 | MA-71 | U | a Graph message captured with no body is recorded terminal and reported; an incremental re-run re-downloads nothing and retries nothing (R17 unchanged); a legacy sentinel on a Graph archive is resolved without a download | R17, R1, R2, S6 |
+| MA-75 | U | status posture rules: healthy GREEN; fillable/unknown/index-behind/no-schedule/never-ran/unreadable/stale/other-host/scheduler-unavailable/not-installed/moved-binary/cancelled WARN; failed/never-finished/exe-missing RED, each with a remedy; auth failure adds the rotation remedy; the CLI reports a real archive (exit 0) and refuses a directory with neither manifest nor descriptor | R18, R12, S29 |
+| MA-76 | U | a run writes a running record first and finalizes it ok/failed/cancelled with counts, error and pid; absent vs unreadable records are distinguished | R18, R5, S29 |
+| MA-77 | U | the GUI job file round-trips inputs/auto/out/mode/since/copy-first/outlook/raw, is owner-only, ignores unknown fields, refuses a newer version or a missing out | R18, S29 |
+| MA-78 | U | install detection is three-state (installed / not installed / scheduler unavailable) over injected crontab, schtasks and launchd evidence | R18, S29 |
 | MA-72 | U | schedule refuses a non-backup verb (serve/search/status/schedule), an interactive flag, a Graph job without -client-secret-file, a flat flag mixed with a -- job, and a bad -name, each naming the problem; valid export and graph -- jobs preview with -log and are not applied; the secret never appears in output | R14, R12, S28 |
 | MA-74 | U | -client-secret-file: a missing, empty, oversized, world-readable (Unix) or non-regular (symlink/pipe) file is refused naming the requirement, at run time as at schedule time; the secret never appears in output; a proper file is accepted | R12, S28 |
 | MA-73 | U | the Windows wrapper quotes every token, doubles %, redirects stderr to the .stderr.log sibling, never enables delayed expansion; /TR is the quoted wrapper path (< 261); the direct form still works without the wrapper | R14, S28 |

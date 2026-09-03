@@ -12,6 +12,7 @@
 //	mailarchive reindex  [flags] reconcile the archive with what is on disk
 //	mailarchive schedule [flags] print/install a recurring-backup entry
 //	mailarchive graph  [flags]  archive Microsoft 365 mailboxes via Graph (app-only)
+//	mailarchive status [flags]  report an archive's completeness, last run and schedule
 package main
 
 import (
@@ -56,6 +57,8 @@ func main() {
 		err = runSchedule(args[1:])
 	case len(args) > 0 && args[0] == "graph":
 		err = runGraph(args[1:])
+	case len(args) > 0 && args[0] == "status":
+		err = runStatus(args[1:])
 	default:
 		err = runExport(args)
 	}
@@ -660,12 +663,15 @@ Usage:
   mailarchive reindex  -out DIR                          reconcile the archive with disk
   mailarchive schedule -out DIR [-auto] [-interval ...] [-install|-remove]
   mailarchive graph    -out DIR -tenant T -client-id ID -mailbox user@dom ...
+  mailarchive status   -out DIR                          completeness, last run, schedule posture
 
 Examples:
   mailarchive -auto -out ./export
   mailarchive search -out ./export from:bob invoice
   mailarchive serve  -out ./export
   mailarchive graph  -out ./export -tenant contoso.com -client-id APPID -mailbox a@contoso.com
+  mailarchive schedule -out ./export -auto -install       keep it current, nightly
+  mailarchive status -out ./export
 
 Run 'mailarchive <subcommand> -h' for a subcommand's flags.
 

@@ -145,7 +145,8 @@ func TestHelpTotality(t *testing.T) {
 		{[]string{"search", "-h"}, []string{"-out", "-folder"}},
 		{[]string{"reindex", "-h"}, []string{"-out"}},
 		{[]string{"schedule", "-h"}, []string{"-out", "-interval", "-install"}},
-		{[]string{"graph", "-h"}, []string{"-out", "-tenant", "-mailbox"}},
+		{[]string{"graph", "-h"}, []string{"-out", "-tenant", "-mailbox", "-client-secret-file"}},
+		{[]string{"status", "-h"}, []string{"-out", "-name"}},
 	}
 	for _, c := range cases {
 		_, stderr := runCLI(c.args...)

@@ -37,7 +37,7 @@ type GraphOptions struct {
 // Incremental runs skip messages already recorded in the manifest by their
 // Internet-Message-ID, without downloading the body — so re-runs over a large
 // mailbox are cheap.
-func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Logger) (Result, error) {
+func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Logger) (result Result, err error) {
 	if logger == nil {
 		logger = log.New(io.Discard, "", 0)
 	}
@@ -52,6 +52,7 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		return Result{}, err
 	}
 	defer lock.Release()
+	defer recordRun(opts, beginRun(opts), &result, &err)
 
 	mpath := opts.Manifest
 	if mpath == "" {
@@ -120,7 +121,7 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		}
 	}
 
-	result := Result{Files: len(g.Mailboxes)}
+	result = Result{Files: len(g.Mailboxes)}
 	var failures int
 	for _, mbx := range g.Mailboxes {
 		runErr := runGraphMailbox(ctx, client, exp, manifest, opts.Mode, mbx, logger, checkpoint)

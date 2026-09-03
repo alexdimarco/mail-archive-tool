@@ -83,17 +83,9 @@ type ProgressFunc func(stats export.Stats)
 // Run performs the export described by opts. If ctx is cancelled it stops
 // promptly, saves the manifest, and returns the partial Result with
 // context.Canceled.
-func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress ProgressFunc) (Result, error) {
+func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress ProgressFunc) (result Result, err error) {
 	if logger == nil {
 		logger = log.New(io.Discard, "", 0)
-	}
-
-	files, err := DiscoverInputs(opts.Inputs, opts.Auto)
-	if err != nil {
-		return Result{}, err
-	}
-	if len(files) == 0 {
-		return Result{}, errors.New("no input mail sources found (a .pst/.ost file, an mbox file, or a mail directory; or enable auto-discovery)")
 	}
 
 	if err := os.MkdirAll(opts.Out, 0o755); err != nil {
@@ -106,6 +98,18 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		return Result{}, err
 	}
 	defer lock.Release()
+	// Every run that begins is recorded (R18): "running" now, before any early
+	// return, finalized on the way out — so a run that never finishes is
+	// visible as such to `status`.
+	defer recordRun(opts, beginRun(opts), &result, &err)
+
+	files, err := DiscoverInputs(opts.Inputs, opts.Auto)
+	if err != nil {
+		return Result{}, err
+	}
+	if len(files) == 0 {
+		return Result{}, errors.New("no input mail sources found (a .pst/.ost file, an mbox file, or a mail directory; or enable auto-discovery)")
+	}
 	// What a crashed earlier run may have left behind (R5): stale temps and
 	// orphan zips. Only files older than this run's start are touched.
 	if n := export.SweepOrphans(opts.Out, time.Now(), logger); n > 0 {
@@ -175,7 +179,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		}
 	}
 
-	result := Result{Files: len(files)}
+	result = Result{Files: len(files)}
 	var failures int
 	for _, f := range files {
 		runErr := runFile(ctx, exp, f, opts.CopyFirst, logger, func(stats export.Stats) {
@@ -220,6 +224,35 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 
 // defaultCheckpointEvery aligns with the index's own batch size.
 const defaultCheckpointEvery = 1000
+
+// beginRun writes the "running" last-run record and returns it for recordRun.
+func beginRun(opts Options) state.LastRun {
+	exe, _ := os.Executable()
+	mode := "incremental"
+	if opts.Mode == export.Full {
+		mode = "full"
+	}
+	lr := state.LastRun{Status: state.RunRunning, Started: time.Now().UTC(), PID: os.Getpid(), Exe: exe, Mode: mode}
+	_ = state.WriteLastRun(opts.Out, lr) // best effort: the run itself must not fail on this
+	return lr
+}
+
+// recordRun finalizes the last-run record from the run's outcome.
+func recordRun(opts Options, lr state.LastRun, result *Result, err *error) {
+	lr.Finished = time.Now().UTC()
+	switch {
+	case *err == nil:
+		lr.Status = state.RunOK
+	case errors.Is(*err, context.Canceled):
+		lr.Status = state.RunCancelled
+	default:
+		lr.Status = state.RunFailed
+		lr.Error = (*err).Error()
+	}
+	lr.Exported, lr.Filled = result.Stats.Exported, result.Stats.Filled
+	lr.Fillable, lr.Terminal, lr.Unknown, lr.IndexErrors = result.Fillable, result.Terminal, result.Unknown, result.IndexErrors
+	_ = state.WriteLastRun(opts.Out, lr)
+}
 
 func plural(n int, one, many string) string {
 	if n == 1 {
