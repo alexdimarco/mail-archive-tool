@@ -425,3 +425,34 @@ func TestRenderStatusRowAbsentWhenUnset(t *testing.T) {
 		t.Error("Status label present with no state set")
 	}
 }
+
+// covers: MA-187, R19, R7, S33
+// Mail may not wear the tool's private namespace: a hostile HTML body that
+// carries class="mailarchive-header" or a data-mailarchive-field attribute has
+// them stripped on render, so the exported page holds exactly one real header
+// marker — the tool's own — and reindex -rebuild cannot be fooled into reading
+// a mail-injected element as the record's header.
+func TestNeutralizeStripsReservedNamespace(t *testing.T) {
+	m := &model.Message{
+		Subject:     "Real Subject",
+		SenderName:  "Real Person",
+		SenderEmail: "real@example.com",
+		HTMLBody: `<div class="mailarchive-header" data-mailarchive-field="from">` +
+			`<span class="mailarchive-subject" data-mailarchive-field="subject">FORGED</span>injected</div>` +
+			`<p>hello zebrafinch</p>`,
+	}
+	out, _, err := Render(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	if n := strings.Count(s, `class="mailarchive-header"`); n != 1 {
+		t.Errorf(`class="mailarchive-header" appears %d times, want 1 (only the tool's own header div; the mail-injected one must be stripped)`, n)
+	}
+	if strings.Contains(s, `data-mailarchive-field="from">`+"injected") || strings.Contains(s, `data-mailarchive-field="subject">FORGED`) {
+		t.Errorf("a mail-supplied data-mailarchive-field survived into the page:\n%s", s)
+	}
+	if !strings.Contains(s, "injected") || !strings.Contains(s, "zebrafinch") {
+		t.Errorf("stripping the reserved namespace must keep the element's text content:\n%s", s)
+	}
+}

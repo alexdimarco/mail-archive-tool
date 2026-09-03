@@ -181,10 +181,48 @@ func sanitizeHTML(doc string) (headExtra, bodyAttrs, body string) {
 }
 
 // neutralize rewrites hostile nodes in place (see sanitizeHTML).
+// stripReservedNamespace removes the tool's private markers from ONE
+// mail-supplied element: class tokens beginning "mailarchive-" and attributes
+// keyed "data-mailarchive-*". neutralize's own additions (it marks a dropped
+// inline image class="mailarchive-missing-image") run after this on the same
+// element and are preserved.
+func stripReservedNamespace(n *xhtml.Node) {
+	kept := n.Attr[:0]
+	for _, a := range n.Attr {
+		if strings.HasPrefix(strings.ToLower(a.Key), "data-mailarchive-") {
+			continue // drop the tool's private data attributes
+		}
+		if strings.EqualFold(a.Key, "class") {
+			var toks []string
+			for _, t := range strings.Fields(a.Val) {
+				if !strings.HasPrefix(strings.ToLower(t), "mailarchive-") {
+					toks = append(toks, t)
+				}
+			}
+			if len(toks) == 0 {
+				continue // the class held only reserved tokens: drop it entirely
+			}
+			a.Val = strings.Join(toks, " ")
+		}
+		kept = append(kept, a)
+	}
+	n.Attr = kept
+}
+
 func neutralize(n *xhtml.Node) {
 	for c := n.FirstChild; c != nil; {
 		next := c.NextSibling
 		if c.Type == xhtml.ElementNode {
+			// Mail may not wear the tool's private namespace. Strip any
+			// class token beginning "mailarchive-" and any attribute whose key
+			// begins "data-mailarchive-" from every mail-supplied element (head
+			// children included — neutralize runs over the whole parsed tree).
+			// The renderer writes its own header/body/subject/field markers
+			// AFTER sanitizeHTML, so this removes no legitimate output; it stops
+			// a hostile <head><style class="mailarchive-header"> (or a
+			// data-mailarchive-field) from shadowing a real field when
+			// reindex -rebuild re-derives the record from this page.
+			stripReservedNamespace(c)
 			switch c.DataAtom {
 			case atom.Meta:
 				if metaIsCharset(c) {

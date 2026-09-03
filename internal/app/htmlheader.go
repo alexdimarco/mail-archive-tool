@@ -49,14 +49,27 @@ func readArchivedHTML(data []byte) (*model.Message, int) {
 		return m, 3
 	}
 
-	// The body text is recovered from the FIRST `.mailarchive-body` element —
-	// the wrapper the renderer puts the whole message body inside — regardless
-	// of whether a header is found, so search still works on a torn page.
-	if body := findFirst(root, func(n *xhtml.Node) bool { return hasClass(n, "mailarchive-body") }); body != nil {
+	// Anchor to the renderer's OWN elements, not document-order-first. The
+	// renderer emits exactly two <div> direct children of <body>: the
+	// `.mailarchive-header` div then the `.mailarchive-body` div, and it writes
+	// them itself (mail content lives nested inside the body div). Requiring a
+	// <div> that is a DIRECT CHILD OF <body> — never descending into <head> or a
+	// mail-supplied <template>/<style> — means a hostile message cannot inject an
+	// element earlier in document order (an old page, written before the source
+	// also strips the reserved namespace, could carry one) and have it read as
+	// the header (AGG-1/INT-1).
+	bodyEl := findFirst(root, func(n *xhtml.Node) bool { return n.Type == xhtml.ElementNode && n.Data == "body" })
+	if bodyEl == nil {
+		return m, 3
+	}
+	// The body text is recovered from the FIRST `.mailarchive-body` div —
+	// regardless of whether a header is found, so search still works on a torn
+	// page.
+	if body := firstChildDiv(bodyEl, "mailarchive-body"); body != nil {
 		m.HTMLBody = innerHTML(body)
 	}
 
-	header := findFirst(root, func(n *xhtml.Node) bool { return hasClass(n, "mailarchive-header") })
+	header := firstChildDiv(bodyEl, "mailarchive-header")
 	if header == nil {
 		return m, 3
 	}
@@ -214,6 +227,20 @@ func parseHeaderTime(s string) (time.Time, bool) {
 // these only read structure the exporter itself wrote) ---
 
 // findFirst returns the first node (pre-order) for which pred is true.
+// firstChildDiv returns the first DIRECT element child of parent that is a
+// <div> carrying the class token cls. It does not descend, so only the
+// renderer's own header/body wrappers (the direct children of <body>) match —
+// never a mail-supplied element nested inside the body or hidden in a
+// <template>/<style>.
+func firstChildDiv(parent *xhtml.Node, cls string) *xhtml.Node {
+	for c := parent.FirstChild; c != nil; c = c.NextSibling {
+		if c.Type == xhtml.ElementNode && c.Data == "div" && hasClass(c, cls) {
+			return c
+		}
+	}
+	return nil
+}
+
 func findFirst(n *xhtml.Node, pred func(*xhtml.Node) bool) *xhtml.Node {
 	if pred(n) {
 		return n

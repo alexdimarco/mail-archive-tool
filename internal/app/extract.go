@@ -330,10 +330,47 @@ func (x *extractor) processRecord(it walkItem) error {
 	}
 
 	if err := x.emit(it, data); err != nil {
+		if errors.Is(err, errDestUnsafe) {
+			return nil // already counted+reported as a skip; keep extracting
+		}
 		return err
 	}
 	x.rep.Emitted++
 	return nil
+}
+
+// errDestUnsafe marks a record skipped because a symlink stands in its -dest
+// output path (an insider could plant one to divert a write outside -dest). It
+// is counted+reported like any other skip; processRecord swallows it so the run
+// continues.
+var errDestUnsafe = errors.New("unsafe -dest path")
+
+// destDirSafe walks the EXISTING components of dir under x.dest and refuses to
+// write through a symlink (or a non-directory) at any level — the write-side
+// mirror of extractInspect's read-side no-follow rule. Components not yet
+// created are fine (they will be made fresh). It returns the offending path.
+func (x *extractor) destDirSafe(dir string) (string, bool) {
+	rel, err := filepath.Rel(x.dest, dir)
+	if err != nil {
+		return dir, false
+	}
+	cur := x.dest
+	if rel != "." && rel != "" {
+		for _, seg := range strings.Split(rel, string(filepath.Separator)) {
+			if seg == ".." {
+				return cur, false
+			}
+			cur = filepath.Join(cur, seg)
+			fi, lerr := os.Lstat(cur)
+			if lerr != nil {
+				break // not yet created: the rest of the path is made fresh
+			}
+			if fi.Mode()&fs.ModeSymlink != 0 || !fi.IsDir() {
+				return cur, false
+			}
+		}
+	}
+	return "", true
 }
 
 // emit writes one record's preserved bytes in the chosen format, atomically.
@@ -358,6 +395,10 @@ func (x *extractor) emitEML(it walkItem, data []byte) error {
 	full, ok := x.destPath(outSegs)
 	if !ok {
 		return fmt.Errorf("refusing to write %s: it would escape -dest %s", strings.Join(outSegs, "/"), x.dest)
+	}
+	if off, safe := x.destDirSafe(filepath.Dir(full)); !safe {
+		x.skip(strings.Join(outSegs, "/"), "a symlink stands in the -dest path ("+off+") — not written through", &x.rep.SkippedGate)
+		return errDestUnsafe
 	}
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		return fmt.Errorf("create output dir for %s: %w", full, err)
@@ -393,6 +434,10 @@ func (x *extractor) openFolder(it walkItem) error {
 	final := filepath.Join(parentDir, leaf+".mbox")
 	if !within(x.dest, final) {
 		return fmt.Errorf("refusing to write %s: it would escape -dest %s", final, x.dest)
+	}
+	if off, safe := x.destDirSafe(parentDir); !safe {
+		x.skip(final, "a symlink stands in the -dest path ("+off+") — not written through", &x.rep.SkippedGate)
+		return errDestUnsafe
 	}
 	if err := os.MkdirAll(parentDir, 0o755); err != nil {
 		return fmt.Errorf("create output dir %s: %w", parentDir, err)
@@ -433,6 +478,7 @@ func (x *extractor) finalizeFolder() error {
 		x.resetFolder()
 		return fmt.Errorf("replace %s: %w", x.curFinal, err)
 	}
+	syncDir(filepath.Dir(x.curFinal)) // the completed rename survives power loss (INT-4)
 	x.resetFolder()
 	return nil
 }
@@ -556,7 +602,17 @@ func writeFileAtomic(full string, data []byte) error {
 		os.Remove(tmpName)
 		return fmt.Errorf("replace %s: %w", full, err)
 	}
+	syncDir(dir) // the completed rename survives power loss (INT-4)
 	return nil
+}
+
+// syncDir fsyncs a directory (best-effort) so a completed rename survives power
+// loss; ignored where the filesystem/OS does not support it.
+func syncDir(dir string) {
+	if d, err := os.Open(dir); err == nil {
+		_ = d.Sync()
+		d.Close()
+	}
 }
 
 // destOverlapsOut reports whether dest equals, sits inside, or contains out

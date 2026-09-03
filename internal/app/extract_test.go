@@ -6,6 +6,7 @@ import (
 	"net/mail"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -491,4 +492,45 @@ func keys(m map[string][]byte) []string {
 		k = append(k, s)
 	}
 	return k
+}
+
+// covers: MA-188, R20, R4, S34
+// extract's write side is symlink-strict like its read side: a symlink planted
+// as a directory component under -dest is refused, the record skipped and
+// reported, and nothing is written through it to the symlink's target (an
+// insider could otherwise divert preserved mail outside -dest).
+func TestExtractSkipsSymlinkedDestDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX symlinks")
+	}
+	out := buildRawArchive(t, map[string][][]byte{
+		"Inbox": {msg("hello", "e1", "body one")},
+	})
+	// The archive's top-level store directory name (what extract mirrors first).
+	var store string
+	ents, _ := os.ReadDir(out)
+	for _, e := range ents {
+		if e.IsDir() {
+			store = e.Name()
+			break
+		}
+	}
+	if store == "" {
+		t.Fatal("no store directory in the archive")
+	}
+	dest := tmpDir(t)
+	evil := tmpDir(t)
+	if err := os.Symlink(evil, filepath.Join(dest, store)); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	rep, err := Extract(out, FormatEML, dest, true, discard(), nil)
+	if err != nil {
+		t.Fatalf("extract should skip the unsafe path, not error: %v", err)
+	}
+	if rep.Emitted != 0 || rep.Skipped == 0 {
+		t.Errorf("emitted=%d skipped=%d, want 0 emitted and the record skipped", rep.Emitted, rep.Skipped)
+	}
+	if got := collectFiles(t, evil, ".eml"); len(got) != 0 {
+		t.Errorf("extract wrote %d file(s) through the symlink into the target: %v", len(got), keys(got))
+	}
 }

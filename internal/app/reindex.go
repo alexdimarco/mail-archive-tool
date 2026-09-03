@@ -91,6 +91,11 @@ func Reindex(out string, logger *log.Logger) (kept, pruned int, err error) {
 	if n := export.SweepOrphans(out, time.Now(), logger); n > 0 {
 		logger.Printf("swept %d orphaned temp/zip file(s)", n)
 	}
+	// A crashed `reindex -rebuild` leaves search.db.rebuild(+ -wal/-shm) that
+	// only the next rebuild would otherwise remove. This reconcile holds the
+	// archive lock, so no rebuild can be in progress: the leftover is garbage
+	// and safe to reclaim now (INT-3).
+	removeDBFiles(idxPath + ".rebuild")
 
 	// A dangling row: its exported file no longer exists on disk. Collect first —
 	// EachRow holds the DB connection open for the walk, so we must not delete
@@ -321,6 +326,7 @@ func Rebuild(out string, logger *log.Logger) (RebuildReport, error) {
 		removeDBFiles(tmpPath)
 		return rep, fmt.Errorf("replace search index at %s: %w", idxPath, err)
 	}
+	export.SyncDir(out) // the rename is the moment the new index goes live (INT-4)
 
 	// Keep the rest of the archive internally consistent, exactly as reindex
 	// does: regenerate the verification report and README, and persist the

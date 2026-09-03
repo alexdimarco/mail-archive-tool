@@ -92,6 +92,11 @@ func syncDir(dir string) {
 	d.Close()
 }
 
+// SyncDir fsyncs a directory (best-effort), so callers outside this package —
+// reindex's rebuild rename, extract's output renames — get the same
+// completed-rename-survives-power-loss discipline the exporter uses.
+func SyncDir(dir string) { syncDir(dir) }
+
 // SweepOrphans removes what a crashed run can leave behind under out: temp files
 // (tempPrefix…tmp) whose modification time is before `before` (the current run's
 // start, so an overlapping run's live temps are never touched), and attachment

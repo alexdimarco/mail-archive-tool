@@ -178,22 +178,25 @@ func (ix *Index) Add(store string, folderPath []string, m *model.Message, relPat
 
 	// Replace any existing row with the same key (full-mode re-export).
 	if err := deleteByKeyTx(ix.tx, key); err != nil {
-		return err
+		return ix.abandonBatch(err)
 	}
 
 	res, err := ix.tx.Exec(`INSERT INTO docs(key,store,folder,sender_name,sender_email,recipients,subject,date,path,has_attach,attach_names,snippet)
 		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
 		key, store, folder, m.SenderName, m.SenderEmail, recipients, m.Subject, date, relPath, boolToInt(len(m.Attachments) > 0), attach, snippet)
 	if err != nil {
-		return fmt.Errorf("index insert: %w", err)
+		return ix.abandonBatch(fmt.Errorf("index insert: %w", err))
 	}
 	id, err := res.LastInsertId()
 	if err != nil {
-		return err
+		return ix.abandonBatch(err)
 	}
 	if _, err := ix.tx.Exec(`INSERT INTO docs_fts(rowid,subject,sender,recipients,folder,attachments,body)
 		VALUES(?,?,?,?,?,?,?)`, id, m.Subject, sender, recipients, folder, attach, body); err != nil {
-		return fmt.Errorf("index fts insert: %w", err)
+		// A docs row inserted without its docs_fts twin would leave the two
+		// tables misaligned; roll the whole uncommitted batch back so neither a
+		// later Flush nor Close can commit the orphan (INT-2).
+		return ix.abandonBatch(fmt.Errorf("index fts insert: %w", err))
 	}
 
 	ix.pending++
@@ -205,6 +208,18 @@ func (ix *Index) Add(store string, folderPath []string, m *model.Message, relPat
 
 // commitPending commits the current batch (if any) and releases the connection.
 // A new transaction is begun lazily on the next Add.
+// abandonBatch rolls back the current uncommitted batch and clears it, so a row
+// that failed mid-insert can never be committed by a later Flush/Close and the
+// next Add begins a fresh transaction. It returns the original error.
+func (ix *Index) abandonBatch(cause error) error {
+	if ix.tx != nil {
+		_ = ix.tx.Rollback()
+		ix.tx = nil
+		ix.pending = 0
+	}
+	return cause
+}
+
 func (ix *Index) commitPending() error {
 	if ix.tx == nil {
 		return nil

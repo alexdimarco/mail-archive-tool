@@ -182,3 +182,22 @@ func TestReindexReconciles(t *testing.T) {
 		t.Errorf("regenerated folder page dropped surviving file %q", keptBase)
 	}
 }
+
+// covers: MA-189, R5, R13
+// A crashed `reindex -rebuild` leaves a search.db.rebuild temp behind; a routine
+// reindex (which holds the archive lock, so no rebuild can be in progress)
+// reclaims it rather than leaving orphaned temp state forever.
+func TestReindexReclaimsRebuildLeftover(t *testing.T) {
+	out := tmpDir(t)
+	buildRebuildArchive(t, out, []rbMsg{{folder: []string{"Inbox"}, m: reindexMsg("hello", "<r1@ex>")}})
+	leftover := filepath.Join(out, "search.db.rebuild")
+	if err := os.WriteFile(leftover, []byte("stale"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Reindex(out, discard()); err != nil {
+		t.Fatalf("reindex: %v", err)
+	}
+	if _, err := os.Stat(leftover); !os.IsNotExist(err) {
+		t.Errorf("search.db.rebuild leftover was not reclaimed by reindex (err=%v)", err)
+	}
+}
