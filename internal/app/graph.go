@@ -101,14 +101,14 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		TokenURL:     g.TokenURL,
 	})
 
-	every := opts.CheckpointEvery
-	if every <= 0 {
-		every = defaultCheckpointEvery
+	floor := opts.CheckpointEvery
+	if floor <= 0 {
+		floor = defaultCheckpointEvery
 	}
 	lastCheckpoint := 0
 	var lockLost error
 	checkpoint := func() {
-		if exp.Stats.Exported-lastCheckpoint < every {
+		if exp.Stats.Exported-lastCheckpoint < effectiveEvery(floor, manifest.Len()) {
 			return
 		}
 		lastCheckpoint = exp.Stats.Exported
@@ -121,31 +121,48 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 
 	result = Result{Files: len(g.Mailboxes)}
 	var failures int
+	var firstErr error
 	for _, mbx := range g.Mailboxes {
 		runErr := runGraphMailbox(ctx, client, exp, manifest, opts.Mode, mbx, logger, checkpoint)
 		if lockLost != nil {
 			commit(manifest, idx, logger)
-			finish(opts.Out, &result, exp, manifest, idx, indexErrors, logger)
+			finish(opts.Out, &result, exp, manifest, idx, indexErrors, true, logger)
 			return result, lockLost
 		}
 		commit(manifest, idx, logger)
 		if errors.Is(runErr, context.Canceled) {
-			finish(opts.Out, &result, exp, manifest, idx, indexErrors, logger)
+			finish(opts.Out, &result, exp, manifest, idx, indexErrors, true, logger)
 			return result, context.Canceled
 		}
 		if runErr != nil {
 			failures++
+			if firstErr == nil {
+				firstErr = runErr
+			}
 			logger.Printf("error: mailbox %s: %v", mbx, runErr)
 		}
 	}
 
-	if idx != nil && opts.Pages {
+	// When no mailbox succeeded, do not write the browsable scaffold
+	// (README.txt / folder index.html): a run that captured nothing must not
+	// leave an empty archive that looks real. The manifest and the last-run
+	// record are still written (below / by recordRun) so `status` sees the
+	// failure. Otherwise apply the nas-02 guard: regenerate pages only when
+	// something was exported or index.html is missing.
+	allFailed := failures == len(g.Mailboxes)
+	if idx != nil && opts.Pages && !allFailed && pagesNeeded(opts.Out, exp.Stats.Exported) {
 		if pErr := pages.Generate(opts.Out, idx, logger); pErr != nil {
 			logger.Printf("warning: folder pages: %v", pErr)
 		}
 	}
-	finish(opts.Out, &result, exp, manifest, idx, indexErrors, logger)
+	finish(opts.Out, &result, exp, manifest, idx, indexErrors, !allFailed, logger)
 	if failures > 0 {
+		// Carry the first per-mailbox error (including any AADSTS code) into the
+		// returned error so it lands in the last-run record and `status` can fire
+		// the expired-secret remedy (friction #6).
+		if firstErr != nil {
+			return result, fmt.Errorf("%d mailbox(es) failed; first error: %w", failures, firstErr)
+		}
 		return result, fmt.Errorf("%d mailbox(es) failed", failures)
 	}
 	return result, nil

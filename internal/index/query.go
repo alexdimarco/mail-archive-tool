@@ -160,6 +160,68 @@ func buildFilters(q Query) (string, []any) {
 	return " AND " + strings.Join(clauses, " AND "), args
 }
 
+// ParseQuery folds the inline search tokens in text into base and returns the
+// resulting Query, with the leftover words as its free-text Text. This is the
+// one grammar shared by the terminal `search` verb and the serve web box, so a
+// query typed in either place means the same thing. Recognised tokens:
+//
+//	from:NAME        substring match on sender name/email (→ Sender)
+//	folder:PATH      a folder and its subtree             (→ Folder)
+//	after:DATE       on/after DATE                        (→ After)
+//	before:DATE      strictly before DATE                 (→ Before)
+//	has:attach       only messages with attachments       (→ HasAttach)
+//	has:attachment   alias of has:attach
+//
+// A token overrides the same field already set in base — the token wins over an
+// explicit flag/param naming a different value. Dates accept the partial forms
+// ParseDate accepts (a bare year or year-month), so `after:2025-01` is a real
+// month bound rather than being silently dropped. A token whose date does not
+// parse is ignored (the rest of the query still runs).
+func ParseQuery(text string, base Query) Query {
+	var terms []string
+	for _, f := range strings.Fields(text) {
+		low := strings.ToLower(f)
+		switch {
+		case strings.HasPrefix(low, "from:"):
+			base.Sender = f[len("from:"):]
+		case strings.HasPrefix(low, "folder:"):
+			base.Folder = f[len("folder:"):]
+		case strings.HasPrefix(low, "after:"):
+			if t, ok := ParseDate(f[len("after:"):]); ok {
+				base.After = t
+			}
+		case strings.HasPrefix(low, "before:"):
+			if t, ok := ParseDate(f[len("before:"):]); ok {
+				base.Before = t
+			}
+		case low == "has:attach" || low == "has:attachment":
+			base.HasAttach = true
+		default:
+			terms = append(terms, f)
+		}
+	}
+	base.Text = strings.Join(terms, " ")
+	return base
+}
+
+// ParseDate parses a search date bound. It accepts a full RFC3339 timestamp, a
+// calendar day (2006-01-02), a month (2006-01 → its first day) or a bare year
+// (2006 → January 1), each interpreted in UTC to match the index's stored times.
+// The second result is false for empty or unrecognised input, so a bad bound is
+// dropped rather than crashing the query.
+func ParseDate(s string) (time.Time, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return time.Time{}, false
+	}
+	for _, layout := range []string{time.RFC3339, "2006-01-02", "2006-01", "2006"} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
+}
+
 // ftsMatch turns free-text into a safe FTS5 MATCH expression by quoting each
 // term (implicit AND). Returns "" when there are no usable terms.
 func ftsMatch(text string) string {

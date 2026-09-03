@@ -177,44 +177,23 @@ func IsLoopback(addr string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// parseQuery builds an index.Query from the request, honouring both explicit
-// params and inline tokens (from:, folder:, after:, before:, has:attach) in q.
+// parseQuery builds an index.Query from the request. The inline tokens in the
+// `q` box (from:, folder:, after:, before:, has:attach) are parsed by the shared
+// index.ParseQuery — the same grammar the terminal `search` verb uses — over the
+// explicit folder/sender/sort params; the explicit after/before/year/attach
+// params then apply on top.
 func parseQuery(r *http.Request) index.Query {
 	v := r.URL.Query()
-	q := index.Query{
+	q := index.ParseQuery(v.Get("q"), index.Query{
 		Folder: v.Get("folder"),
 		Sender: v.Get("sender"),
 		Sort:   v.Get("sort"),
-	}
+	})
 
-	var terms []string
-	for _, f := range strings.Fields(v.Get("q")) {
-		low := strings.ToLower(f)
-		switch {
-		case strings.HasPrefix(low, "from:"):
-			q.Sender = f[len("from:"):]
-		case strings.HasPrefix(low, "folder:"):
-			q.Folder = f[len("folder:"):]
-		case strings.HasPrefix(low, "after:"):
-			if t, ok := parseDate(f[len("after:"):]); ok {
-				q.After = t
-			}
-		case strings.HasPrefix(low, "before:"):
-			if t, ok := parseDate(f[len("before:"):]); ok {
-				q.Before = t
-			}
-		case low == "has:attach" || low == "has:attachment":
-			q.HasAttach = true
-		default:
-			terms = append(terms, f)
-		}
-	}
-	q.Text = strings.Join(terms, " ")
-
-	if t, ok := parseDate(v.Get("after")); ok {
+	if t, ok := index.ParseDate(v.Get("after")); ok {
 		q.After = t
 	}
-	if t, ok := parseDate(v.Get("before")); ok {
+	if t, ok := index.ParseDate(v.Get("before")); ok {
 		q.Before = t
 	}
 	if v.Get("attach") == "1" || v.Get("attach") == "true" {
@@ -233,20 +212,6 @@ func parseQuery(r *http.Request) index.Query {
 	}
 	q.Offset = atoiDefault(v.Get("offset"), 0)
 	return q
-}
-
-func parseDate(s string) (time.Time, bool) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return time.Time{}, false
-	}
-	if t, err := time.Parse("2006-01-02", s); err == nil {
-		return t, true
-	}
-	if t, err := time.Parse(time.RFC3339, s); err == nil {
-		return t, true
-	}
-	return time.Time{}, false
 }
 
 func atoiDefault(s string, def int) int {

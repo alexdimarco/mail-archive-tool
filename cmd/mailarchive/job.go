@@ -32,6 +32,7 @@ type exportOpts struct {
 	enableOffline   *bool
 	syncWait        *bool
 	unattended      *bool
+	list            *bool
 }
 
 func exportFlags(fs *flag.FlagSet) *exportOpts {
@@ -52,6 +53,7 @@ func exportFlags(fs *flag.FlagSet) *exportOpts {
 	o.enableOffline = fs.Bool("enable-offline", false, "Thunderbird IMAP: enable offline download in prefs.js so all mail can be synced (Thunderbird must be closed)")
 	o.syncWait = fs.Bool("sync-wait", false, "Thunderbird IMAP: pause and wait for Download/Sync to finish before exporting")
 	o.unattended = fs.Bool("unattended", false, "scheduled run: refuse to create a new archive when -out does not exist (an unmounted drive), never wait for input")
+	o.list = fs.Bool("list", false, "list the mail stores that would be archived (with a rough size) and exit, without exporting or creating the output directory")
 	return o
 }
 

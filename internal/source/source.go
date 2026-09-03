@@ -96,9 +96,11 @@ func IsMailStoreDir(dir string) bool {
 // It is deliberately lock-tolerant: a file that cannot be opened at all — most
 // often because a running Outlook holds it, but also a permissions issue — is
 // reported readable (true). Such a file is probably a real mailbox we simply
-// can't read this instant (that is what -copy-first is for), and auto-discovery
-// must never silently drop a real mailbox. Only a file that opens at the OS level
-// but fails to parse is reported unreadable (false).
+// can't read this instant (close Outlook, or use -outlook to have Outlook write
+// a fresh PST; -copy-first only helps a file Outlook still allows a shared read
+// of, not an exclusively locked one), and auto-discovery must never silently
+// drop a real mailbox. Only a file that opens at the OS level but fails to parse
+// is reported unreadable (false).
 func DataFileReadable(path string) bool {
 	f, err := os.Open(path)
 	if err != nil {

@@ -50,12 +50,18 @@ mailarchive status -out ./archive      # completeness, last run, schedule — GR
 ## Quick start (command line)
 
 ```sh
+mailarchive -auto -list -out ./archive                 # preview: which stores would -auto archive? (writes nothing)
 mailarchive -auto -out ./archive                       # first archive (incremental by default)
 mailarchive status -out ./archive                      # is it complete? did the last run work?
 mailarchive schedule -out ./archive -auto              # print the nightly entry (nothing applied)
 mailarchive schedule -out ./archive -auto -install     # keep it current, every night at 02:00
 mailarchive serve -out ./archive                       # search + read at http://127.0.0.1:8099/
 ```
+
+`-auto` archives **every** mail store it discovers (Outlook on Windows;
+Thunderbird and Evolution on any OS). To see that set before committing to it,
+run `-auto -list`: it prints the stores that would be archived, one per line
+with a rough size, and exits without exporting or creating the output directory.
 
 ## GUI (native dialog wizard)
 
@@ -113,12 +119,21 @@ GOOS=windows GOARCH=amd64 go build -ldflags -H=windowsgui -o mailarchive-gui.exe
       2026-07-15_1032_subject-slug_a1b2c3d4.eml              # the original message, only with -raw
   search.db                                                  # full-text search index (plain SQLite, FTS5)
   attachments-report.tsv                                     # what could not be captured (absent when nothing)
+  BACKUP-NEEDS-ATTENTION.txt                                 # only after a FAILED run: the reason + how to check (removed by the next success)
   .mailarchive-manifest.json                                 # export state: what is archived, and what is still missing
   .mailarchive-lastrun.json                                  # the last run: started, finished, result, counts
   .mailarchive-schedule.json                                 # the schedule feeding this archive (when installed)
-  .mailarchive.lock                                          # held only while a run is in progress
-  <name>.log                                                 # a scheduled job's log (rotated at 8 MB, one .1 kept)
+  .mailarchive.lock                                          # lock file; may remain after a run — its presence does not mean a run is active
+  mailarchive.log                                            # the GUI's run log (interactive and GUI-scheduled runs; rotated at 8 MB, one .1 kept)
+  <name>.log                                                 # a CLI-scheduled job's run log (rotated at 8 MB, one .1 kept)
 ```
+
+`BACKUP-NEEDS-ATTENTION.txt` is written only when a run finalizes as *failed* —
+so a desktop user notices a broken nightly backup without opening a JSON file —
+and is removed automatically by the next run that succeeds. `.mailarchive.lock`
+is a lock file that may remain on disk after a run; its presence does **not**
+mean a run is active — the real exclusion is an OS-level lock (`flock`) released
+when the run process ends.
 
 Each HTML file stands on its own: links back to its folder page and the archive
 root, the metadata header (From / Reply-To / To / Cc / Bcc / Sent / Received
@@ -202,6 +217,7 @@ does this automatically across every mailbox it finds.
 | `-outlook-sync-wait` | With `-outlook`: run a Send/Receive and wait up to this long (default `5m`) for downloads before creating the PST; `0` skips the sync. Only mail Outlook has downloaded locally is captured — set "Mail to keep offline" to **All** first for a complete archive. |
 | `-auto` | Auto-discover mail stores: Outlook files on Windows (`%LOCALAPPDATA%\Microsoft\Outlook\*.ost`, `%USERPROFILE%\Documents\Outlook Files\*.pst`), Thunderbird profiles on any OS (`~/.thunderbird/*/{ImapMail,Mail}/*`, incl. Snap and macOS/Windows), **and** Evolution stores (`~/.local/share/evolution/mail/local` and each `~/.cache/evolution/mail/*` IMAP cache, incl. Flatpak). Orphaned or corrupt Outlook `.ost` stubs (left by removed accounts) are skipped; a file merely locked by a running Outlook is kept. |
 | `-index` / `-pages` | Build the search index / folder pages (both default on; set `=false` to skip). |
+| `-list` | List the mail stores that would be archived (with a rough size) and exit, without exporting or creating the output directory. Pair with `-auto` to preview auto-discovery, or with `-input`. |
 | `-enable-offline` / `-sync-wait` | Thunderbird IMAP one-time prep (interactive; see below). Not schedulable. |
 
 ### Incremental model, and what "missing content" means
@@ -225,13 +241,18 @@ kinds and is regenerated from the manifest on every run, so nothing found
 earlier is ever lost; it disappears when there is nothing to report.
 
 Archives written by earlier versions have no such record: on first use every
-entry is marked *not yet re-examined* and the next incremental runs check each
-once (the summary and `status` count them down). Deleting the manifest forces
-a fresh full export.
+entry is marked *not yet re-examined*, and the next incremental runs re-examine
+each once until none remain. Each run's `Verification:` line reports the current
+counts (still missing content, source-empty, not yet re-examined, and how many
+gaps it re-examined this run); `status` is the standing surface that shows the
+*not yet re-examined* backlog shrinking to zero across runs. Deleting the
+manifest forces a fresh full export.
 
 Runs are safe to interrupt: files are written to a temp name and renamed into
-place, progress is checkpointed every 1000 messages, and a second run on the
-same archive is refused while one is in progress (`.mailarchive.lock`).
+place, progress is checkpointed periodically (at least every 1000 messages, and
+less often as an archive grows very large so the durability writes never
+dominate a long run), and a second run on the same archive is refused while one
+is in progress (`.mailarchive.lock`).
 
 Deleting originals is intentionally **not** performed — export only. Remove
 messages from your mail app yourself once you've verified the archive.
@@ -250,17 +271,32 @@ mailarchive serve -out ./export          # then open http://127.0.0.1:8099/
 
 Ranked full-text over subject, body, people and attachment names, with filters
 for folder, year and has-attachment. Click a result to read the email; grab its
-attachments as a zip. The box also understands tokens like
-`from:bob after:2025-01 invoice`. `serve` has **no authentication**: it binds
-to localhost by default and warns loudly if you bind it elsewhere. Archived
-pages are served under the same strict policy they carry, symlinks cannot lead
-outside the archive, and search snippets are escaped.
+attachments as a zip. The box also understands inline tokens —
+`from:bob folder:Inbox after:2025-01 before:2025-07 has:attach invoice` — where a
+date can be a whole year (`2025`), a month (`2025-01`) or a day (`2025-01-15`).
+`serve` has **no authentication**: it binds to localhost by default and warns
+loudly if you bind it elsewhere. Archived pages are served under the same strict
+policy they carry, symlinks cannot lead outside the archive, and search snippets
+are escaped.
 
 **Terminal search** (no browser):
 
 ```sh
 mailarchive search -out ./export from:bob invoice
 mailarchive search -out ./export -folder Inbox -after 2025-01-01 contract
+```
+
+Terminal search understands exactly the same inline tokens as the box
+(`from:`, `folder:`, `after:`, `before:`, `has:attach`), so the query above is
+identical to `-sender bob invoice`; a token overrides the matching flag. For
+scripting, add `-json` (a JSON array of matches on stdout, snippets without the
+`<mark>` highlights), or `-paths` (one archive-relative path per match, `-0` to
+NUL-separate them for `xargs -0`); in either mode stdout carries only the data
+and the "N match(es)" line goes to stderr:
+
+```sh
+mailarchive search -out ./export -json from:bob invoice | jq '.[].subject'
+mailarchive search -out ./export -paths -0 has:attach | xargs -0 -n1 echo
 ```
 
 **Browsable pages** (no binary needed): open `./export/index.html` for a folder
@@ -438,9 +474,15 @@ spreadsheet) in the output directory, regenerated from the manifest each run:
 | `unknown` | fillable | archived by an older version before completeness tracking; re-examined once |
 | `unresolved-inline-image` | info | the HTML references a `cid:` image that isn't in the message — common in replies/forwards and usually not recoverable |
 
-The run summary shows `filled=… fillable=… terminal=… unknown=…` and a
-`Verification:` line pointing at the report. **You no longer need `-mode full`
-to fill gaps**: download the content in your mail app and simply run again.
+Each run prints a single `Verification:` line summarizing the manifest: how many
+messages are **still missing content**, how many are **source-empty** (the
+source can never deliver them), how many are **not yet re-examined**, and — when
+an incremental run re-examined fillable gaps — `re-examined=<count>`. When a
+report file exists the line ends with `— details in …/attachments-report.tsv`;
+with nothing to report there is no path and no file. (The `Done.` line above it
+carries the per-run counts, including `filled=<n>`.) **You no longer need
+`-mode full` to fill gaps**: download the content in your mail app and simply
+run again.
 
 ### IMAP: get everything downloaded first
 
@@ -473,9 +515,12 @@ set *Account Settings → Change → Mail to keep offline → **All***, then
 **Outlook (`.pst`/`.ost`)**
 - **Classic Outlook only.** The *New Outlook* ("Monarch") app has no `.pst`/`.ost`
   files; use the Microsoft Graph path instead.
-- **OST while Outlook is open.** The file may be locked; use `-copy-first`, or
-  close Outlook. `-copy-first` copies the whole file to the temp directory on
-  every run — mind the disk space for a large `.ost` on an hourly schedule.
+- **OST while Outlook is open.** An exclusively locked `.ost` cannot be read
+  *or* copied: **close Outlook**, or use **`-outlook`** (below) to have Outlook
+  write a fresh PST. `-copy-first` helps only for a file that can still be opened
+  for a *shared* read (many locked files, but not an exclusive lock) — it
+  snapshots the whole file onto the archive's own volume before reading; mind the
+  disk space for a large `.ost` on an hourly schedule.
 - HTML bodies are read directly from `PidTagHtml` (including the binary form
   modern Outlook uses). Non-mail items (calendar, contacts, tasks) are skipped.
 - A corrupt, truncated, or unsupported data file (e.g. an orphaned `.ost` stub a

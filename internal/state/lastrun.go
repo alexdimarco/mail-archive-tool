@@ -3,6 +3,7 @@ package state
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -11,6 +12,12 @@ import (
 
 // LastRunName is the archive-local record of the most recent run (R18).
 const LastRunName = ".mailarchive-lastrun.json"
+
+// AttentionName is a plain-text sidecar written at the archive root when a run
+// finalizes failed, and removed when one finalizes ok: a desktop user must not
+// have to open a JSON file (or run a command) to learn last night's backup did
+// not work.
+const AttentionName = "BACKUP-NEEDS-ATTENTION.txt"
 
 // LastRun statuses.
 const (
@@ -67,6 +74,57 @@ func WriteLastRun(out string, r LastRun) error {
 		return err
 	}
 	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmp.Name())
+		return err
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return err
+	}
+	updateAttentionSidecar(out, r)
+	return nil
+}
+
+// updateAttentionSidecar writes (on a failed run) or removes (on an ok run) the
+// human-facing BACKUP-NEEDS-ATTENTION.txt at the archive root. A running or
+// cancelled record leaves it as-is — a failure stays flagged until the next
+// successful run clears it. Best effort: the archive is intact without it.
+func updateAttentionSidecar(out string, r LastRun) {
+	path := filepath.Join(out, AttentionName)
+	switch r.Status {
+	case RunFailed:
+		reason := r.Error
+		if reason == "" {
+			reason = "the run failed (no error text was recorded)"
+		}
+		body := fmt.Sprintf("This email backup FAILED and needs your attention.\n\n"+
+			"Archive: %s\n"+
+			"When:    %s\n"+
+			"Reason:  %s\n\n"+
+			"What to do: run\n"+
+			"  mailarchive status -out %q\n"+
+			"for the full posture and the remedy. This file is removed automatically\n"+
+			"after the next run that succeeds.\n",
+			out, r.Finished.UTC().Format(time.RFC3339), reason, out)
+		_ = writeSidecarAtomic(path, []byte(body))
+	case RunOK:
+		_ = os.Remove(path)
+	}
+}
+
+// writeSidecarAtomic writes data to path via a temp file and rename, so a torn
+// write never leaves a half-written attention notice.
+func writeSidecarAtomic(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".mailarchive-attention-*.tmp")
+	if err != nil {
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
 		os.Remove(tmp.Name())
 		return err

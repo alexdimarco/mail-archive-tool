@@ -270,7 +270,10 @@ func (m *Manifest) Save() error {
 	defer m.mu.Unlock()
 
 	m.Version = manifestVersion
-	data, err := json.MarshalIndent(m, "", "  ")
+	// Compact, not pretty-printed: the manifest is machine state (one record per
+	// exported message), never hand-read, and indentation roughly doubles its
+	// size on a large archive (nas-03). Load still reads older pretty files.
+	data, err := json.Marshal(m)
 	if err != nil {
 		return fmt.Errorf("encode manifest: %w", err)
 	}

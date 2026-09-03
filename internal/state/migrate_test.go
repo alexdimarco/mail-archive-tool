@@ -47,7 +47,8 @@ func TestLegacyManifestMigratesToUnknown(t *testing.T) {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(path)
-	if !strings.Contains(string(data), `"version": 2`) || !strings.Contains(string(data), `"unknown"`) {
+	// Save writes compact JSON (nas-03), so the version field carries no space.
+	if !strings.Contains(string(data), `"version":2`) || !strings.Contains(string(data), `"unknown"`) {
 		t.Errorf("saved manifest is not version 2 with the sentinel persisted:\n%s", data)
 	}
 	m2, err := Load(path)

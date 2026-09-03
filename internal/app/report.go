@@ -57,10 +57,10 @@ func writeReport(out string, manifest *state.Manifest, migrated bool, logger *lo
 	}
 	for _, r := range issues {
 		for _, item := range r.Missing {
-			emit(gapKind(item), "fillable", r, item)
+			emit(gapKind(item), "fillable", r, gapDetail(item))
 		}
 		for _, item := range r.Terminal {
-			emit(gapKind(item), "terminal", r, item)
+			emit(gapKind(item), "terminal", r, gapDetail(item))
 		}
 		for _, cid := range r.Unresolved {
 			emit("unresolved-inline-image", "info", r, cid)
@@ -83,6 +83,16 @@ func gapKind(item string) string {
 	default:
 		return "empty-attachment"
 	}
+}
+
+// gapDetail is the human-readable detail column for a gap. The body gap is
+// stored as the bare token "body"; the report shows "(message body)" so the row
+// reads for a person, while attachment gaps keep their file name verbatim.
+func gapDetail(item string) string {
+	if item == state.MissingBody {
+		return "(message body)"
+	}
+	return item
 }
 
 // tsv keeps one report row on one line: every control character (tab, LF,
