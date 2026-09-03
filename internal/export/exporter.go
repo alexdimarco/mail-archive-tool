@@ -96,10 +96,14 @@ type Exporter struct {
 // first by a cheap probe (no render, no temp files) and, only if some
 // previously-missing item is now present, captured and committed again. An
 // unseen message goes through the date filter, then capture and commit.
+// The store argument is the store TOKEN (state.Token), not a raw display name:
+// it names both the on-disk directory (OutDir/token/…) and the first component
+// of the key, so two mailboxes archived into one -out never collide even when
+// their display names match (F1). Callers compute it once per source.
 func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (bool, error) {
 	date := m.Date()
 	folderKey := strings.Join(folderPath, "/")
-	key := state.Key(folderKey, m.Identity())
+	key := state.Key(store, folderKey, m.Identity())
 	fp := m.Fingerprint()
 
 	// A DIFFERENT message reusing an already-archived Message-ID in this folder
@@ -134,7 +138,10 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		return false, nil
 	}
 
-	dirParts := append([]string{e.OutDir, util.SanitizeSegment(store)}, folderPath...)
+	// store is already the sanitized, disambiguated token (state.Token), so it
+	// is used verbatim as the directory segment — the same string that scopes
+	// the key, so the on-disk tree and the manifest never disagree (F1).
+	dirParts := append([]string{e.OutDir, store}, folderPath...)
 	dir := filepath.Join(dirParts...)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return false, fmt.Errorf("create output dir %s: %w", dir, err)

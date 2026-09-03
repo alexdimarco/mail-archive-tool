@@ -153,6 +153,7 @@ an invariant is the thing that is wrong.
 | S29 Operator (or the GUI) asks whether the archive is healthy and the backup is running | R18, R12 | last-run record present and truthful; status GREEN/WARN/RED with remedies; three-state install detection; GUI job file round-trips | MA-75, MA-76, MA-77, MA-78 |
 | S21 A hostile email (script, tracking pixel, remote CSS, `<base>`, meta refresh) is archived and opened from disk | R19, R7 | renders inertly: policy meta precedes the mail's markup; refresh neutralized; content preserved | MA-80 |
 | S22 `serve` faces a hostile archive or network: script in a body/snippet, a symlink inside the archive, a non-loopback bind | R19, R4, R8 | UI/API/file responses carry a strict policy; snippets are escaped; symlinked paths are 404; non-loopback bind warns | MA-81, MA-82, MA-83, MA-84 |
+| S30 Two mailboxes with the same store display name archived into one `-out`, or an archive upgraded from a pre-store-scoped key format | R6, R3, R2, R5, R8 | each store gets its own tree under a distinct, sticky token (the second `segment~hash`); the same mail in both stores is exported to both; an incremental re-run exports zero; an older archive re-scopes its manifest and index once, by content (from each record's own path), logged, and self-heals after an old-binary excursion without double-prefixing | MA-128, MA-129, MA-130, MA-131, MA-134 |
 
 Acknowledged limits (not defects): two messages that reuse one Message-ID with
 an identical envelope (subject, sender, recipients, date, attachment names) and
@@ -180,7 +181,7 @@ Tiers: **U** unit property (every commit) · **S** structural whole-tree walk
 | MA-06 | U | ParseSince relative windows (`30d`,`4w`,`12h`) | R11 |
 | MA-07 | U | ParseSince absolute dates | R11 |
 | MA-08 | U | ParseSince rejects garbage with an error (no silent zero) | R11, R12 |
-| MA-09 | U | manifest Key is folder-scoped (same identity, different folders → different keys) | R3, S4 |
+| MA-09 | U | manifest Key is store- and folder-scoped (same identity in a different folder, or a different store, → different keys) | R3, R6, S4 |
 | MA-10 | U | a missing manifest loads as empty, not an error | R5 |
 | MA-11 | U | manifest Add/Save/reload round-trips; atomic write | R5, R2, S2 |
 | MA-12 | U | decodeBytes returns UTF-8 for UTF-8 and Windows-1252 for legacy bytes | R1 |
@@ -294,6 +295,13 @@ Tiers: **U** unit property (every commit) · **S** structural whole-tree walk
 | MA-86 | U | two messages with the same Message-ID but different envelopes in one folder are both exported and recorded (also while the first is still incomplete); a fill of an incomplete message keeps its key; incremental re-run exports zero; a full re-run in reversed order yields the same file names | R3, R1, S23 |
 | MA-87 | U | a file-stem collision between two keys lengthens the second stem from its own key (deterministic, no overwrite); re-exporting a message under a new name removes its previous html/zip | R4, R6, R13, S24 |
 | MA-88 | U | the manifest and index are checkpointed every CheckpointEvery messages inside a store walk, so a hard crash keeps the progress made | R5, S2 |
+| MA-128 | U | two stores with the same display name archived into one -out get distinct, sticky tokens (the second `segment~hash`) so both export into their own tree and an incremental re-run exports zero | R6, R3, R2, S30 |
+| MA-129 | U | two distinctly-named stores each keep their plain sanitized segment as token, export into separate trees, and an incremental re-run exports zero | R6, R2, S30 |
+| MA-130 | U | an archive whose manifest and search index predate store-scoped keys re-scopes both on first open (by content, from each record's own path), an incremental run then exports zero, and a second load re-scopes nothing (Rekeyed==0) | R5, R2, R8, S30 |
+| MA-131 | U | a manifest and index holding a mix of one-NUL (legacy) and two-NUL (current) keys — an old-binary excursion — are repaired by content: legacy keys are re-scoped, current keys are left untouched (never double-prefixed), and a collision leaves exactly one key/row per message | R5, R8, S30 |
+| MA-132 | U | a manifest, and a search index, written by a newer mailarchive (a higher stored version) are refused naming the version and the upgrade remedy, without mutating the file | R5, R12 |
+| MA-133 | U | the sentinel migration fires only for a literal version-1 manifest: a complete version-2 record stays complete (never re-sentinelled) after the v3 re-scope | R1, R5, S6 |
+| MA-134 | U | the one-time upgrade is logged: the manifest re-scope count and the index repair line ("migrating index keys (N rows)") both appear in the run log | R5, S30 |
 | MA-69 | U | html/zip are written to unique temp files and renamed into place: an attachment stream error leaves no partial or final zip and is recorded as an issue; SweepOrphans removes `.mailarchive-*.tmp` older than the run start and `-attachments.zip` files with no sibling html, and Run/reindex call it | R5, R1, S2 |
 | MA-94 | U | a corrupt/truncated manifest is refused naming the file and the remedy (restore or delete to re-export), never a crash; Save fsyncs its temp before the atomic rename | R5, R12, S2 |
 | MA-119 | U | a folder of many pages renders a compact numbered pager (first, last, current, ±2 neighbours, ellipses for the gaps) with the right relative hrefs and the current page not self-linked; page 1 has no "newer" link; the newer/older links stay | R7, S27 |

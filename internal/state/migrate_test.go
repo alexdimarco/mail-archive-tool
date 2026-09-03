@@ -19,9 +19,9 @@ const legacyManifest = `{
 // A manifest written before completeness tracking (version 1) cannot know which
 // entries are incomplete, so every record is migrated to the "unknown" sentinel
 // (fillable — the next incremental run re-examines it) and counted; Save writes
-// version 2 and a reload keeps the sentinel without migrating again. A version-1
-// file that already holds entries — what an older binary leaves after a
-// downgrade — is treated the same way, never as silently complete.
+// the current version and a reload keeps the sentinel without migrating again. A
+// version-1 file that already holds entries — what an older binary leaves after
+// a downgrade — is treated the same way, never as silently complete.
 func TestLegacyManifestMigratesToUnknown(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "m.json")
 	if err := os.WriteFile(path, []byte(legacyManifest), 0o644); err != nil {
@@ -48,15 +48,15 @@ func TestLegacyManifestMigratesToUnknown(t *testing.T) {
 	}
 	data, _ := os.ReadFile(path)
 	// Save writes compact JSON (nas-03), so the version field carries no space.
-	if !strings.Contains(string(data), `"version":2`) || !strings.Contains(string(data), `"unknown"`) {
-		t.Errorf("saved manifest is not version 2 with the sentinel persisted:\n%s", data)
+	if !strings.Contains(string(data), `"version":3`) || !strings.Contains(string(data), `"unknown"`) {
+		t.Errorf("saved manifest is not the current version with the sentinel persisted:\n%s", data)
 	}
 	m2, err := Load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if m2.Migrated != 0 {
-		t.Errorf("a version-2 manifest must not migrate again (Migrated=%d)", m2.Migrated)
+		t.Errorf("an already-migrated manifest must not sentinel-migrate again (Migrated=%d)", m2.Migrated)
 	}
 	if _, _, u := m2.Counts(); u != 2 {
 		t.Errorf("sentinel lost on reload: unknown=%d", u)

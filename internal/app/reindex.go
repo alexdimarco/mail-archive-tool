@@ -57,6 +57,16 @@ func Reindex(out string, logger *log.Logger) (kept, pruned int, err error) {
 	if err != nil {
 		return 0, 0, err
 	}
+	// A first open after upgrade re-scopes the manifest and index once (F2);
+	// reindex is a valid place for it (it already opens both). Driven by the
+	// manifest's re-key signal so an old-binary excursion is repaired here too.
+	if manifest.Rekeyed > 0 {
+		logger.Printf("re-scoped %d manifest entr%s by store (one-time upgrade; cost scales with archive size)",
+			manifest.Rekeyed, plural(manifest.Rekeyed, "y", "ies"))
+	}
+	if _, rkErr := idx.RepairKeys(manifest.Rekeyed > 0, state.MigrateKey, logger); rkErr != nil {
+		return 0, 0, fmt.Errorf("migrate search index keys: %w", rkErr)
+	}
 	if n := export.SweepOrphans(out, time.Now(), logger); n > 0 {
 		logger.Printf("swept %d orphaned temp/zip file(s)", n)
 	}

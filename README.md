@@ -416,6 +416,30 @@ mailarchive reindex -out ./export
 # reindexed: kept=1843 pruned=12
 ```
 
+### Upgrading an existing archive
+
+This version scopes each message's identity to its store, so two mailboxes
+archived into one `-out` — two profiles that both call their store "Local
+Folders", two Outlook files both named "Outlook Data File" — no longer collide
+and lose one copy. The first run (or `reindex`) after upgrading re-scopes the
+existing manifest and search index once, in place, by content — nothing on
+disk is renamed or rewritten. It is logged:
+
+```
+re-scoped 4213 manifest entries by store (one-time upgrade; cost scales with archive size)
+migrating index keys (4213 rows)
+```
+
+The one-time cost is proportional to the archive size; later runs do no such
+work. **Once an archive has been written by this version, do not run an older
+`mailarchive` against it.** A shared or synced `-out` must be written only by
+upgraded copies: an older binary does not understand the newer format and,
+lacking a forward guard, will rewrite the manifest in the old shape and write
+a second, duplicate copy of each touched message. This version repairs such an
+excursion by content on its next run (the old-shape entries are re-scoped and
+de-duplicated), but the leftover duplicate files remain on disk — so the safe
+rule is to upgrade every machine that writes the same archive.
+
 ### `schedule` — recurring backups
 
 `schedule` writes a recurring-backup entry for the host OS's scheduler — **cron**

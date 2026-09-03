@@ -24,7 +24,7 @@ func TestPathBudgetShrinksSlug(t *testing.T) {
 	if _, err := e.Export("store", deep, m); err != nil {
 		t.Fatal(err)
 	}
-	rec, _ := manifest.Get(state.Key(strings.Join(deep, "/"), m.Identity()))
+	rec, _ := manifest.Get(state.Key("store", strings.Join(deep, "/"), m.Identity()))
 	stem := filepath.Base(rec.Path)
 	if strings.Contains(stem, "Quarterly") {
 		t.Errorf("deep path kept the full slug: %s", stem)
@@ -37,7 +37,7 @@ func TestPathBudgetShrinksSlug(t *testing.T) {
 	if _, err := e.Export("store", []string{"Inbox"}, shallow); err != nil {
 		t.Fatal(err)
 	}
-	rec2, _ := manifest.Get(state.Key("Inbox", shallow.Identity()))
+	rec2, _ := manifest.Get(state.Key("store", "Inbox", shallow.Identity()))
 	if !strings.Contains(rec2.Path, "Quarterly-Report") {
 		t.Errorf("shallow path lost its slug: %s", rec2.Path)
 	}

@@ -99,7 +99,7 @@ func TestKeepRawWritesOriginalMessage(t *testing.T) {
 	if _, err := e.Export("store", []string{"Inbox"}, withRaw); err != nil {
 		t.Fatal(err)
 	}
-	rec, _ := manifest.Get(state.Key("Inbox", withRaw.Identity()))
+	rec, _ := manifest.Get(state.Key("store", "Inbox", withRaw.Identity()))
 	htmlPath := filepath.Join(out, filepath.FromSlash(rec.Path))
 	emlPath := strings.TrimSuffix(htmlPath, ".html") + ".eml"
 	got, err := os.ReadFile(emlPath)
