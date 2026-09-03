@@ -31,6 +31,7 @@ type exportOpts struct {
 	keepRaw         *bool
 	enableOffline   *bool
 	syncWait        *bool
+	unattended      *bool
 }
 
 func exportFlags(fs *flag.FlagSet) *exportOpts {
@@ -50,6 +51,7 @@ func exportFlags(fs *flag.FlagSet) *exportOpts {
 	o.keepRaw = fs.Bool("raw", false, "also keep each message's original RFC 822 bytes as <name>.eml beside the html (mbox/maildir/Graph sources; a .pst item has none)")
 	o.enableOffline = fs.Bool("enable-offline", false, "Thunderbird IMAP: enable offline download in prefs.js so all mail can be synced (Thunderbird must be closed)")
 	o.syncWait = fs.Bool("sync-wait", false, "Thunderbird IMAP: pause and wait for Download/Sync to finish before exporting")
+	o.unattended = fs.Bool("unattended", false, "scheduled run: refuse to create a new archive when -out does not exist (an unmounted drive), never wait for input")
 	return o
 }
 
@@ -59,6 +61,7 @@ type graphOpts struct {
 	secretEnv, secretFile *string
 	mode, since, log      *string
 	index, pages, keepRaw *bool
+	unattended            *bool
 }
 
 func graphFlags(fs *flag.FlagSet) *graphOpts {
@@ -75,18 +78,42 @@ func graphFlags(fs *flag.FlagSet) *graphOpts {
 	o.index = fs.Bool("index", true, "build/update the full-text search index (search.db)")
 	o.pages = fs.Bool("pages", true, "generate browsable folder index.html pages")
 	o.keepRaw = fs.Bool("raw", false, "also keep each message's original RFC 822 bytes as <name>.eml beside the html")
+	o.unattended = fs.Bool("unattended", false, "scheduled run: refuse to create a new archive when -out does not exist (an unmounted drive)")
 	return o
 }
 
 type reindexOpts struct {
-	out, log *string
+	out, log   *string
+	unattended *bool
 }
 
 func reindexFlags(fs *flag.FlagSet) *reindexOpts {
 	o := &reindexOpts{}
 	o.out = fs.String("out", "", "export directory to reconcile (contains search.db) (required)")
 	o.log = fs.String("log", "", "write the run log to this file (size-capped, rotated) instead of stderr")
+	o.unattended = fs.Bool("unattended", false, "scheduled run: never wait for input")
 	return o
+}
+
+// requireExistingOut is the unattended guard: a scheduled job whose -out is
+// not there (the backup drive is not mounted, the share is down) must not
+// quietly create a new archive on the local disk and report success.
+func requireExistingOut(out string) error {
+	if fi, err := os.Stat(out); err != nil || !fi.IsDir() {
+		return fmt.Errorf("archive directory %s is not present — is the backup drive mounted? refusing to create a new archive elsewhere (unattended run)", out)
+	}
+	return nil
+}
+
+// noControl refuses values that could not appear in a legitimate scheduler
+// entry and would break one (a newline injects a crontab line).
+func noControl(what, v string) error {
+	for _, r := range v {
+		if r < 0x20 || r == 0x7f {
+			return fmt.Errorf("%s contains a control character (%q) and cannot be scheduled", what, v)
+		}
+	}
+	return nil
 }
 
 // job is a validated, canonical backup job for the scheduler.
@@ -148,8 +175,13 @@ func parseJob(args []string) (job, error) {
 				return job{}, err
 			}
 		}
+		for _, v := range append([]string{*o.out, *o.manifest, *o.log, *o.since}, o.inputs...) {
+			if err := noControl("a job argument", v); err != nil {
+				return job{}, err
+			}
+		}
 		j := job{out: abspath(*o.out)}
-		j.args = []string{"-out", j.out, "-mode", strings.ToLower(strings.TrimSpace(*o.mode))}
+		j.args = []string{"-out", j.out, "-mode", strings.ToLower(strings.TrimSpace(*o.mode)), "-unattended"}
 		if *o.since != "" {
 			j.args = append(j.args, "-since", *o.since)
 		}
@@ -211,8 +243,13 @@ func parseJob(args []string) (job, error) {
 				return job{}, err
 			}
 		}
+		for _, v := range append([]string{*o.out, *o.tenant, *o.clientID, *o.secretFile, *o.log, *o.since}, o.mailboxes...) {
+			if err := noControl("a job argument", v); err != nil {
+				return job{}, err
+			}
+		}
 		j := job{verb: "graph", out: abspath(*o.out)}
-		j.args = []string{"-out", j.out, "-tenant", *o.tenant, "-client-id", *o.clientID, "-client-secret-file", abspath(*o.secretFile), "-mode", strings.ToLower(strings.TrimSpace(*o.mode))}
+		j.args = []string{"-out", j.out, "-tenant", *o.tenant, "-client-id", *o.clientID, "-client-secret-file", abspath(*o.secretFile), "-mode", strings.ToLower(strings.TrimSpace(*o.mode)), "-unattended"}
 		for _, m := range o.mailboxes {
 			j.args = append(j.args, "-mailbox", m)
 		}
@@ -241,8 +278,11 @@ func parseJob(args []string) (job, error) {
 		if *o.out == "" {
 			return job{}, errors.New("-out is required (the export directory to reconcile)")
 		}
+		if err := noControl("a job argument", *o.out+*o.log); err != nil {
+			return job{}, err
+		}
 		j := job{verb: "reindex", out: abspath(*o.out)}
-		j.args = []string{"-out", j.out}
+		j.args = []string{"-out", j.out, "-unattended"}
 		if *o.log != "" {
 			j.args = append(j.args, "-log", abspath(*o.log))
 		}
@@ -256,7 +296,24 @@ func parseJob(args []string) (job, error) {
 // symlink, FIFO or device — a FIFO would hang an unattended job forever), not
 // readable by group/others on Unix, at most 4 KB, non-empty after trimming.
 func readSecret(path string) (string, error) {
-	fi, err := os.Lstat(path)
+	// Lstat first (a legible refusal for a symlink), then open the file ONCE
+	// without following links and without blocking (a FIFO must not hang an
+	// unattended job), and judge the descriptor we actually read from — no
+	// window between the check and the read.
+	if fi, err := os.Lstat(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("client secret file %s does not exist — create it readable only by you (chmod 600)", path)
+		}
+		return "", fmt.Errorf("client secret file %s: %w", path, err)
+	} else if !fi.Mode().IsRegular() {
+		return "", fmt.Errorf("client secret file %s must be a regular file (not a symlink, pipe or device)", path)
+	}
+	f, err := os.OpenFile(path, os.O_RDONLY|secretOpenFlags, 0)
+	if err != nil {
+		return "", fmt.Errorf("client secret file %s: %w", path, err)
+	}
+	defer f.Close()
+	fi, err := f.Stat()
 	if err != nil {
 		return "", fmt.Errorf("client secret file %s: %w", path, err)
 	}
@@ -269,9 +326,12 @@ func readSecret(path string) (string, error) {
 	if fi.Size() > 4096 {
 		return "", fmt.Errorf("client secret file %s is %d bytes; a client secret is far smaller — is this the right file?", path, fi.Size())
 	}
-	data, err := os.ReadFile(path)
+	data, err := io.ReadAll(io.LimitReader(f, 4097))
 	if err != nil {
 		return "", fmt.Errorf("client secret file %s: %w", path, err)
+	}
+	if len(data) > 4096 {
+		return "", fmt.Errorf("client secret file %s is larger than 4 KB — is this the right file?", path)
 	}
 	secret := strings.TrimSpace(string(data))
 	if secret == "" {

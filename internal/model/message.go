@@ -76,10 +76,22 @@ func (m *Message) Identity() string {
 	return "sha:" + m.contentHash()
 }
 
-// Fingerprint is a short (16 hex) digest of the message content, recorded on
-// every manifest entry so that a DIFFERENT message reusing an already-archived
+// Fingerprint is a short (16 hex) digest of the message's STABLE envelope —
+// subject, sender, recipients, date, attachment names — recorded on every
+// manifest entry so that a DIFFERENT message reusing an already-archived
 // Message-ID in the same folder is recognized and kept, not dropped (R3/R1).
-func (m *Message) Fingerprint() string { return m.contentHash()[:16] }
+// Bodies and attachment bytes are deliberately excluded: they change when an
+// on-demand source finally delivers them (a fill), and a fill must not look
+// like a different message. Two messages that reuse one Message-ID with an
+// identical envelope and differ only in body are treated as one (a resend).
+func (m *Message) Fingerprint() string {
+	h := sha256.New()
+	fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s\x00%d\x00", m.Subject, m.SenderEmail, m.To, m.Cc, m.Date().UnixNano())
+	for i, a := range m.Attachments {
+		fmt.Fprintf(h, "%d:%s\x00", i, a.Filename)
+	}
+	return hex.EncodeToString(h.Sum(nil))[:16]
+}
 
 // contentHash digests the fields that make a message itself. The body is part
 // of it: without it, two distinct messages that share subject/sender/

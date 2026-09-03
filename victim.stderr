@@ -1,0 +1,4 @@
+Exporting to /tmp/claude-1000/-home-alex-gitprojects-mail-archive-tool/a1f82783-1d05-434b-a1f7-2c330b1a8754/scratchpad/adv-review/verify-7/out (mode=incremental)
+Done. exported=0 filled=0 skipped(seen)=0 skipped(date)=0 attachments=0 inline=0 non-html=0 no-body=0 manifest=0 indexed=0
+FAILED: archive is in use by another mailarchive run (]0;PWNED-TITLE[2Jheld by pid=1 (root) -- your run is corrupt, contact admin[31mRED[0m): /tmp/claude-1000/-home-alex-gitprojects-mail-archive-tool/a1f82783-1d05-434b-a1f7-2c330b1a8754/scratchpad/adv-review/verify-7/out/.mailarchive.lock: held by another run
+mailarchive: archive is in use by another mailarchive run (]0;PWNED-TITLE[2Jheld by pid=1 (root) -- your run is corrupt, contact admin[31mRED[0m): /tmp/claude-1000/-home-alex-gitprojects-mail-archive-tool/a1f82783-1d05-434b-a1f7-2c330b1a8754/scratchpad/adv-review/verify-7/out/.mailarchive.lock: held by another run

@@ -63,7 +63,7 @@ func TestRenderHTMLDocumentInjectsHeader(t *testing.T) {
 		t.Error("metadata header not injected")
 	}
 	bodyIdx := strings.Index(s, "<body>")
-	headerIdx := strings.Index(s, "mailarchive-header")
+	headerIdx := strings.Index(s, `class="mailarchive-header"`)
 	if bodyIdx < 0 || headerIdx < bodyIdx {
 		t.Error("header should appear after <body>")
 	}
@@ -212,5 +212,87 @@ func TestRenderIsInertOffline(t *testing.T) {
 	}
 	if !strings.Contains(string(out), cspMeta) {
 		t.Error("plain-body document lacks the archive CSP meta")
+	}
+}
+
+// covers: MA-80, R19, S21
+// Neutralization must match what the BROWSER parses, not a regex: an
+// entity-encoded http-equiv, a ">" inside a quoted attribute before http-equiv,
+// markup placed before <head>, a comment that looks like a head, a mail-supplied
+// charset, and a <body> with its own attributes must all end up with the
+// archive policy as the first thing in the head, hostile metas defanged, the
+// mail's styles kept, and the body attributes preserved on the content wrapper.
+// Unresolved cid: images become a caption, not a broken-image icon.
+func TestRenderNeutralizesParserTricks(t *testing.T) {
+	cspMeta := `<meta http-equiv="Content-Security-Policy" content="` + ArchiveCSP + `">`
+	cases := map[string]string{
+		"entity-encoded http-equiv": `<html><head></head><body><meta http-equiv="&#114;efresh" content="0;url=https://evil.example/">hi</body></html>`,
+		"gt inside quoted attr":     `<html><head></head><body><meta content="0; url=https://evil.example/?x=>" http-equiv="refresh">hi</body></html>`,
+		"markup before head":        `<html><link rel="stylesheet" href="https://evil.example/x.css"><head><style>p{color:red}</style></head><body>hi</body></html>`,
+		"comment head":              `<!--<head>--><html><head><meta http-equiv="refresh" content="0;url=https://evil.example/"></head><body>hi</body></html>`,
+		"fragment with early link":  `<link rel="stylesheet" href="https://evil.example/y.css"><p>hi</p>`,
+		"uppercase and spacing":     `<HTML><HEAD><META HTTP-EQUIV = "Refresh" CONTENT="1"></HEAD><BODY>hi</BODY></HTML>`,
+	}
+	for name, body := range cases {
+		out, err := RenderWith(&model.Message{Subject: name, HTMLBody: body}, RenderContext{})
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		s := string(out.HTML)
+		low := strings.ToLower(s)
+		cspAt := strings.Index(s, cspMeta)
+		if cspAt < 0 {
+			t.Errorf("%s: no archive CSP meta", name)
+			continue
+		}
+		if evil := strings.Index(low, "evil.example"); evil >= 0 && evil < cspAt {
+			t.Errorf("%s: mail markup (%d) precedes the policy (%d):\n%s", name, evil, cspAt, s)
+		}
+		for _, live := range []string{`http-equiv="refresh"`, `http-equiv=refresh`, `http-equiv="&#114;efresh"`, `http-equiv='refresh'`} {
+			if strings.Contains(low, live) {
+				t.Errorf("%s: a live refresh survived: %s\n%s", name, live, s)
+			}
+		}
+		if !strings.Contains(s, "hi") {
+			t.Errorf("%s: body content lost", name)
+		}
+	}
+
+	// The mail's own head styles survive (moved under our head); its charset
+	// and title do not compete with ours; body attributes are kept.
+	m := &model.Message{Subject: "Styled", HTMLBody: `<html><head><meta charset="iso-8859-1"><title>THEIRS</title><style>p{color:red}</style></head><body style="background:#eee" bgcolor="#ffffff"><p>Hello</p></body></html>`}
+	out, err := RenderWith(m, RenderContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out.HTML)
+	if !strings.Contains(s, "p{color:red}") {
+		t.Error("mail <style> lost")
+	}
+	if strings.Count(strings.ToLower(s), "<meta charset") != 1 || strings.Contains(strings.ToLower(s), "iso-8859-1") {
+		t.Errorf("mail charset must not compete with ours:\n%s", s)
+	}
+	if strings.Contains(s, "<title>THEIRS</title>") {
+		t.Error("mail <title> replaced ours")
+	}
+	if !strings.Contains(s, `background:#eee`) {
+		t.Error("body style attribute lost")
+	}
+
+	// An unresolved cid: image becomes a caption, and is reported.
+	dangling := &model.Message{Subject: "Dangling", HTMLBody: `<p>see <img src="cid:gone@x" width="10"></p>`}
+	out, err = RenderWith(dangling, RenderContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s = string(out.HTML)
+	if strings.Contains(s, `src="cid:`) {
+		t.Error("dangling cid src left in place (broken-image icon)")
+	}
+	if !strings.Contains(s, "inline image not included") {
+		t.Error("no caption for the missing inline image")
+	}
+	if len(out.Unresolved) != 1 || out.Unresolved[0] != "gone@x" {
+		t.Errorf("unresolved refs = %v, want [gone@x]", out.Unresolved)
 	}
 }

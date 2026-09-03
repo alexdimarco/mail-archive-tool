@@ -94,6 +94,11 @@ func runExport(args []string) error {
 	if *o.out == "" {
 		return errors.New("-out is required (or use a subcommand: serve, search, reindex, schedule, graph, status)")
 	}
+	if *o.unattended {
+		if err := requireExistingOut(*o.out); err != nil {
+			return err
+		}
+	}
 	mode, err := parseMode(*o.mode)
 	if err != nil {
 		return err
@@ -580,6 +585,11 @@ func runGraph(args []string) (err error) {
 	}
 	if len(mailboxes) == 0 {
 		return errors.New("-mailbox is required (at least one mailbox UPN to archive)")
+	}
+	if *o.unattended {
+		if err := requireExistingOut(*o.out); err != nil {
+			return err
+		}
 	}
 	var secret string
 	if *o.secretFile != "" {

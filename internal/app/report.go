@@ -85,6 +85,13 @@ func gapKind(item string) string {
 	}
 }
 
+// tsv keeps one report row on one line: every control character (tab, LF,
+// CR, and the rest of C0/C1) in an untrusted field becomes a space.
 func tsv(s string) string {
-	return strings.ReplaceAll(strings.ReplaceAll(s, "\t", " "), "\n", " ")
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) {
+			return ' '
+		}
+		return r
+	}, s)
 }

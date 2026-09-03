@@ -59,10 +59,12 @@ func TestPosture(t *testing.T) {
 			in.LastRun.Status = state.RunFailed
 			in.LastRun.Error = "token: AADSTS7000215 invalid client secret"
 		}, "RED", "rotate"},
-		{"never finished", func(in *Input) { in.LastRun.Status = state.RunRunning; in.PIDAlive = dead }, "RED", "never finished"},
-		{"in progress", func(in *Input) {
+		{"never finished (lock free, pid reused)", func(in *Input) { in.LastRun.Status = state.RunRunning; in.LockHeld = false }, "RED", "never finished"},
+		{"in progress (lock held)", func(in *Input) {
 			in.LastRun.Status = state.RunRunning
 			in.LastRun.Started = now.Add(-10 * time.Minute)
+			in.LockHeld = true
+			in.PIDAlive = dead // a pid check must not override the lock
 		}, "GREEN", "in progress"},
 		{"exe gone", func(in *Input) { in.ExeExists = false }, "RED", "no longer exists"},
 		{"cancelled", func(in *Input) { in.LastRun.Status = state.RunCancelled }, "WARN", "cancelled"},

@@ -102,14 +102,15 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	fp := m.Fingerprint()
 
 	// A DIFFERENT message reusing an already-archived Message-ID in this folder
-	// is a distinct message, not a duplicate: it lives under a content-qualified
-	// key. "Different" means the COMPLETE record's fingerprint disagrees — a
-	// fillable record is expected to change as its content arrives, so there a
-	// mismatch is the fill, not a collision. The record's fingerprint anchors
-	// which message owns the plain key, so names stay stable whatever order a
-	// later run walks them in (R3/R1).
+	// is a distinct message, not a duplicate: it lives under an envelope-
+	// qualified key. The fingerprint covers only the stable envelope (never
+	// bodies or attachment bytes), so a fill of an incomplete record keeps its
+	// fingerprint and a mismatch always means a different message — whether the
+	// earlier record was complete or not. The record's fingerprint anchors which
+	// message owns the plain key, so names stay stable whatever order a later
+	// run walks them in (R3/R1).
 	prev, seen := e.Manifest.Get(key)
-	if seen && prev.Complete() && prev.Fingerprint != "" && prev.Fingerprint != fp {
+	if seen && prev.Fingerprint != "" && prev.Fingerprint != fp {
 		key += "#" + fp
 		prev, seen = e.Manifest.Get(key)
 	}
@@ -151,18 +152,19 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	if hasArchivable(m.Attachments, map[int]bool{}) { // refined below once inline embedding is known
 		ctx.ZipName = base + zipSuffix
 	}
-	htmlBytes, inlineConsumed, err := RenderWith(m, ctx)
+	rr, err := RenderWith(m, ctx)
 	if err != nil {
 		return false, fmt.Errorf("render %q: %w", m.Subject, err)
 	}
-	if ctx.ZipName != "" && !hasArchivable(m.Attachments, inlineConsumed) {
+	if ctx.ZipName != "" && !hasArchivable(m.Attachments, rr.Consumed) {
 		// Every attachment was embedded inline: no zip will exist, so re-render
 		// without the link (cheap: such messages are small).
 		ctx.ZipName = ""
-		if htmlBytes, inlineConsumed, err = RenderWith(m, ctx); err != nil {
+		if rr, err = RenderWith(m, ctx); err != nil {
 			return false, fmt.Errorf("render %q: %w", m.Subject, err)
 		}
 	}
+	htmlBytes, inlineConsumed := rr.HTML, rr.Consumed
 	if rawName != "" {
 		if err := writeFileAtomic(filepath.Join(dir, rawName), m.Raw); err != nil {
 			return false, fmt.Errorf("write %s: %w", rawName, err)
@@ -213,7 +215,7 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 
 	// Inline images referenced by cid: that we could not embed (missing from the
 	// message, e.g. dangling references in a reply/forward chain).
-	unresolved := unresolvedInlineRefs(htmlBytes)
+	unresolved := rr.Unresolved
 	for _, cid := range unresolved {
 		e.Stats.UnresolvedInlineRef++
 		e.addIssue(folderKey, m, relSlash, "unresolved-inline-image", cid)

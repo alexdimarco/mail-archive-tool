@@ -79,8 +79,22 @@ func (s Spec) Validate() error {
 	if _, err := ParseInterval(string(s.Interval)); err != nil {
 		return err
 	}
-	_, _, err := parseHHMM(s.At)
-	return err
+	if _, _, err := parseHHMM(s.At); err != nil {
+		return err
+	}
+	// A newline or other control character in any argument would inject a
+	// line into a crontab or break a plist/batch file; refuse at the source.
+	for _, v := range append([]string{s.Name, s.Exe, s.Log, s.Out, s.WrapperPath}, s.Args...) {
+		for _, r := range v {
+			if r < 0x20 || r == 0x7f {
+				return fmt.Errorf("schedule argument %q contains a control character and cannot be installed", v)
+			}
+		}
+	}
+	if s.Wrapper && !filepath.IsAbs(s.WrapperPath) {
+		return fmt.Errorf("wrapper path %q must be absolute (the scheduler runs with an unknown working directory)", s.WrapperPath)
+	}
+	return nil
 }
 
 func parseHHMM(s string) (hour, min int, err error) {
@@ -333,6 +347,9 @@ func Install(s Spec) error {
 	if err := s.Validate(); err != nil {
 		return err
 	}
+	if err := refuseCollision(s); err != nil {
+		return err
+	}
 	var err error
 	switch runtime.GOOS {
 	case "darwin":
@@ -356,6 +373,41 @@ func Install(s Spec) error {
 		}
 	}
 	return nil
+}
+
+// refuseCollision keeps one schedule per archive and one archive per schedule
+// name: an archive that already records a schedule under another name, or a
+// name that already backs up a different archive (cron: read from the existing
+// block's -out), is refused with the remedy named — never silently replaced.
+func refuseCollision(s Spec) error {
+	if s.Out != "" {
+		if d, err := ReadDescriptor(s.Out); err == nil && d.Name != s.Name {
+			return fmt.Errorf("archive %s already has a schedule named %q: remove it first (`mailarchive schedule -out %q -remove`) or re-install with -name %s", s.Out, d.Name, s.Out, d.Name)
+		}
+	}
+	if runtime.GOOS == "linux" || runtime.GOOS == "freebsd" || runtime.GOOS == "openbsd" || runtime.GOOS == "netbsd" {
+		if other := cronBlockOut(readCrontab(), CronMarker(s.Name)); other != "" && s.Out != "" && other != s.Out {
+			return fmt.Errorf("a schedule named %q already backs up %s: choose another -name, or remove that schedule first", s.Name, other)
+		}
+	}
+	return nil
+}
+
+// cronBlockOut returns the -out argument of the managed block with marker, or
+// "" when absent or unparseable.
+func cronBlockOut(crontab, marker string) string {
+	lines := strings.Split(crontab, "\n")
+	for i, line := range lines {
+		if strings.TrimSpace(line) == marker && i+1 < len(lines) {
+			fields := strings.Fields(lines[i+1])
+			for j, f := range fields {
+				if f == "-out" && j+1 < len(fields) {
+					return strings.Trim(fields[j+1], "'")
+				}
+			}
+		}
+	}
+	return ""
 }
 
 // Remove uninstalls a previously installed schedule by name, then its wrapper

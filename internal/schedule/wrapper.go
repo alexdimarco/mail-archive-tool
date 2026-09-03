@@ -14,14 +14,24 @@ import (
 // the program cannot log itself (a crash, a failed start).
 
 // DefaultWrapperPath is %LOCALAPPDATA%\mailarchive\<name>.cmd, falling back to
-// the user's config directory when LOCALAPPDATA is unset.
+// the user's config directory when LOCALAPPDATA is unset. It is always
+// absolute: a relative wrapper would resolve against the scheduler's working
+// directory (System32) and silently never run — Spec.Validate refuses it.
 func DefaultWrapperPath(name string) string {
 	base := os.Getenv("LOCALAPPDATA")
 	if base == "" {
 		if d, err := os.UserConfigDir(); err == nil {
 			base = d
-		} else {
-			base = "."
+		}
+	}
+	if base == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			base = filepath.Join(home, ".config")
+		}
+	}
+	if !filepath.IsAbs(base) {
+		if a, err := filepath.Abs(base); err == nil {
+			base = a
 		}
 	}
 	return filepath.Join(base, "mailarchive", name+".cmd")

@@ -33,12 +33,26 @@ type Config struct {
 	ClientSecret string
 	BaseURL      string
 	TokenURL     string
+
+	// Deadlines (zero = defaults). An unattended job must never hang on a
+	// stalled connection while holding the archive lock: every JSON request is
+	// bounded by RequestTimeout and every MIME download by MIMETimeout, and the
+	// transport gives up waiting for response headers after RequestTimeout.
+	RequestTimeout time.Duration
+	MIMETimeout    time.Duration
 }
+
+const (
+	defaultRequestTimeout = 60 * time.Second
+	defaultMIMETimeout    = 10 * time.Minute
+)
 
 // Client talks to Microsoft Graph with an auto-refreshing app-only token.
 type Client struct {
-	base string
-	hc   *http.Client
+	base        string
+	hc          *http.Client
+	reqTimeout  time.Duration
+	mimeTimeout time.Duration
 }
 
 // New builds a client whose HTTP transport injects (and refreshes) an app-only
@@ -59,7 +73,20 @@ func New(ctx context.Context, cfg Config) *Client {
 		Scopes:       []string{"https://graph.microsoft.com/.default"},
 		AuthStyle:    oauth2.AuthStyleInParams,
 	}
-	return &Client{base: strings.TrimRight(base, "/"), hc: cc.Client(ctx)}
+	reqTimeout, mimeTimeout := cfg.RequestTimeout, cfg.MIMETimeout
+	if reqTimeout <= 0 {
+		reqTimeout = defaultRequestTimeout
+	}
+	if mimeTimeout <= 0 {
+		mimeTimeout = defaultMIMETimeout
+	}
+	// The oauth2 client wraps this transport (the token request uses it too):
+	// a server that accepts the connection and then goes silent is cut off.
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = reqTimeout
+	transport.TLSHandshakeTimeout = 30 * time.Second
+	ctx = context.WithValue(ctx, oauth2.HTTPClient, &http.Client{Transport: transport})
+	return &Client{base: strings.TrimRight(base, "/"), hc: cc.Client(ctx), reqTimeout: reqTimeout, mimeTimeout: mimeTimeout}
 }
 
 // Folder is a mail folder with its full, sanitized path (root → leaf).
@@ -152,6 +179,8 @@ func (c *Client) Messages(ctx context.Context, userID, folderID string, fn func(
 // MIME fetches a message's raw RFC 5322 bytes (including attachments) via
 // /messages/{id}/$value, ready for the shared parser.
 func (c *Client) MIME(ctx context.Context, userID, messageID string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, c.mimeTimeout)
+	defer cancel()
 	u := c.base + "/users/" + url.PathEscape(userID) + "/messages/" + url.PathEscape(messageID) + "/$value"
 	resp, err := c.get(ctx, u)
 	if err != nil {
@@ -161,10 +190,16 @@ func (c *Client) MIME(ctx context.Context, userID, messageID string) ([]byte, er
 	if resp.StatusCode != http.StatusOK {
 		return nil, statusErr(resp)
 	}
-	return io.ReadAll(resp.Body)
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("download message %s: %w", messageID, err)
+	}
+	return data, nil
 }
 
 func (c *Client) getJSON(ctx context.Context, u string, v any) error {
+	ctx, cancel := context.WithTimeout(ctx, c.reqTimeout)
+	defer cancel()
 	resp, err := c.get(ctx, u)
 	if err != nil {
 		return err

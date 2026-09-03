@@ -17,6 +17,13 @@ var MaxSize int64 = 8 << 20
 // previous .1) when it already exceeds MaxSize, and writes a run header line.
 // The caller closes the file.
 func Open(path string) (*os.File, error) {
+	// The log and its rotated sibling must be regular files: a planted symlink
+	// would otherwise receive the run log (or be overwritten by the rotation).
+	for _, p := range []string{path, path + ".1"} {
+		if fi, err := os.Lstat(p); err == nil && !fi.Mode().IsRegular() {
+			return nil, fmt.Errorf("log %s is not a regular file (a symlink or special file); remove it or choose another -log path", p)
+		}
+	}
 	if fi, err := os.Stat(path); err == nil && fi.Size() > MaxSize {
 		if err := os.Rename(path, path+".1"); err != nil {
 			return nil, fmt.Errorf("rotate log %s: %w", path, err)

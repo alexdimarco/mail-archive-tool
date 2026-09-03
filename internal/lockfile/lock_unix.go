@@ -7,6 +7,9 @@ import (
 	"syscall"
 )
 
+// noFollow refuses to open through a symlink (the O_NOFOLLOW open flag).
+const noFollow = syscall.O_NOFOLLOW
+
 // tryLock takes an exclusive, non-blocking flock. flock is per open file
 // description, so a second Acquire in the same process fails too, and the OS
 // releases it when the descriptor closes or the process dies.

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"mail-archive-tool/internal/model"
 	"mail-archive-tool/internal/state"
@@ -63,6 +64,48 @@ func TestMessageIDCollisionKeepsBoth(t *testing.T) {
 	}
 	if names3 := htmlNames(t, out); names3 != names1 {
 		t.Errorf("full re-run in reversed order renamed files:\n before %s\n after  %s", names1, names3)
+	}
+}
+
+// covers: MA-86, R3, R1, S23
+// The envelope fingerprint separates "a different message reused this
+// Message-ID" from "the same message finally arrived in full": a message
+// captured INCOMPLETE (empty attachment) is filled — same key — when its bytes
+// arrive, while a different message (other subject) reusing the id while the
+// first is still incomplete is kept as its own entry, never mistaken for the
+// fill.
+func TestFillVersusReuseWhileIncomplete(t *testing.T) {
+	out := t.TempDir()
+	manifest := mustManifest(t)
+	att := &blob{}
+	first := func() *model.Message {
+		return &model.Message{Subject: "Invoice", Received: testDate, InternetMessageID: "<inv@x>", PlainBody: "see attached",
+			Attachments: []model.Attachment{att.att("inv.pdf")}}
+	}
+	e1 := incExporter(out, manifest)
+	if _, err := e1.Export("store", []string{"Inbox"}, first()); err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Len() != 1 {
+		t.Fatalf("manifest = %d", manifest.Len())
+	}
+	// A different message reusing the id, while the first is still incomplete.
+	other := &model.Message{Subject: "Totally different", Received: testDate.Add(time.Hour), InternetMessageID: "<inv@x>", PlainBody: "other"}
+	e2 := incExporter(out, manifest)
+	if _, err := e2.Export("store", []string{"Inbox"}, other); err != nil {
+		t.Fatal(err)
+	}
+	if e2.Stats.Exported != 1 || manifest.Len() != 2 || e2.Stats.Filled != 0 {
+		t.Errorf("reuse while incomplete: exported=%d manifest=%d filled=%d, want 1/2/0", e2.Stats.Exported, manifest.Len(), e2.Stats.Filled)
+	}
+	// The first message's bytes arrive: it is filled under its own key.
+	att.data = []byte("PDF")
+	e3 := incExporter(out, manifest)
+	if _, err := e3.Export("store", []string{"Inbox"}, first()); err != nil {
+		t.Fatal(err)
+	}
+	if e3.Stats.Filled != 1 || manifest.Len() != 2 {
+		t.Errorf("fill: filled=%d manifest=%d, want 1/2", e3.Stats.Filled, manifest.Len())
 	}
 }
 

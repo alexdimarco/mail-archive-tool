@@ -85,8 +85,10 @@ func runHeadless(path string) int {
 		jobFail(path, err)
 		return 1
 	}
-	if err := os.MkdirAll(j.Out, 0o755); err != nil {
-		jobFail(path, err)
+	// Unattended guard: an absent -out (the backup drive is not mounted) must
+	// not become a fresh archive on the local disk that then reports "ok".
+	if fi, err := os.Stat(j.Out); err != nil || !fi.IsDir() {
+		jobFail(path, fmt.Errorf("archive directory %s is not present — is the backup drive mounted? refusing to create a new archive elsewhere", j.Out))
 		return 1
 	}
 	logf, err := runlog.Open(filepath.Join(j.Out, "mailarchive.log"))
@@ -397,10 +399,16 @@ func removeSchedule(out string) error {
 	if err != nil {
 		return err
 	}
+	name, err := schedule.SanitizeName(d.Name)
+	if err != nil {
+		return err
+	}
 	iv, _ := schedule.ParseInterval(d.Interval)
-	spec := schedule.Spec{Name: d.Name, Interval: iv, At: d.At, Exe: d.Exe, Out: out, WrapperPath: d.Wrapper}
-	if spec.WrapperPath == "" {
-		spec.WrapperPath = schedule.DefaultWrapperPath(d.Name)
+	// The wrapper path is derived from the name, never taken from the file:
+	// the descriptor is not trusted to name a file to delete.
+	spec := schedule.Spec{Name: name, Interval: iv, At: "02:00", Exe: d.Exe, Out: out, WrapperPath: schedule.DefaultWrapperPath(name)}
+	if err := spec.Validate(); err != nil {
+		return err
 	}
 	if err := schedule.Remove(spec); err != nil {
 		return err

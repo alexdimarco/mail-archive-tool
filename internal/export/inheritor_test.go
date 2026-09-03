@@ -38,10 +38,11 @@ func TestMessagePageIsSelfDescribing(t *testing.T) {
 		},
 	}
 	ctx := RenderContext{RootRel: "../../", FolderIndexRel: "index.html", ZipName: "x-attachments.zip"}
-	out, consumed, err := RenderWith(m, ctx)
+	rr, err := RenderWith(m, ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
+	out, consumed := rr.HTML, rr.Consumed
 	s := string(out)
 	if !consumed[0] {
 		t.Fatal("inline image should have been embedded")
@@ -63,8 +64,8 @@ func TestMessagePageIsSelfDescribing(t *testing.T) {
 	if strings.Contains(attBlock[:strings.Index(attBlock, "</div>")], "logo.png") {
 		t.Error("inline-embedded image listed as an attachment")
 	}
-	if strings.Contains(s, "17:30:00") {
-		t.Error("time was converted away from its original offset")
+	if !strings.Contains(s, "09:30:00 -0800 (2024-01-01 17:30 UTC)") {
+		t.Errorf("time must show its original offset AND the UTC instant used by file names/tables:\n%s", s)
 	}
 
 	// Without context (a bare render) there is no navigation and no zip link;

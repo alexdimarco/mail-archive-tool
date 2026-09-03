@@ -8,6 +8,9 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+// noFollow: Windows has no O_NOFOLLOW; the Lstat check in Acquire covers it.
+const noFollow = 0
+
 // The locked byte range sits far beyond any content, so the holder line at
 // offset 0 stays readable by other processes while the lock is held.
 const lockOffset = 1 << 62

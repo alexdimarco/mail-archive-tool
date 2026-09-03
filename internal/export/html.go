@@ -9,6 +9,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
+
+	xhtml "golang.org/x/net/html"
+	"golang.org/x/net/html/atom"
 
 	"mail-archive-tool/internal/model"
 )
@@ -21,47 +25,14 @@ import (
 // render — stay allowed. One constant, so the two surfaces cannot drift (R19).
 const ArchiveCSP = "default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:; base-uri 'none'; form-action 'none'"
 
-var (
-	reBodyOpen = regexp.MustCompile(`(?i)<body[^>]*>`)
-	reHeadOpen = regexp.MustCompile(`(?i)<head[^>]*>`)
-	reHTMLOpen = regexp.MustCompile(`(?i)<html[^>]*>`)
-	reHasHTML  = regexp.MustCompile(`(?i)<html[\s>]`)
-	reCharset  = regexp.MustCompile(`(?i)charset`)
-	// Mail-supplied http-equiv metas that would make an archived page navigate
-	// (refresh — CSP cannot restrain it) or carry a policy of the mail's own.
-	reHostileMeta = regexp.MustCompile(`(?i)(<meta\b[^>]*\bhttp-equiv\s*=\s*["']?\s*)(refresh|content-security-policy)\b`)
-)
-
 // inertMetas are the first children of every exported document's <head>: the
-// archive policy (enforced by browsers on file://) and a no-referrer rule.
-// Placement is load-bearing — a meta CSP governs only what is parsed after it.
+// archive policy (enforced by browsers on file://) and a no-referrer rule. The
+// head is OURS — the mail's document is parsed and its pieces placed after
+// these — so nothing the mail supplies can precede the policy (R19).
 const inertMetas = `<meta http-equiv="Content-Security-Policy" content="` + ArchiveCSP + `">` + "\n" +
 	`<meta name="referrer" content="no-referrer">`
 
-// neutralizeMetas defangs mail-supplied refresh / policy metas by renaming
-// their http-equiv value; the tag stays in the document (content preserved,
-// nothing silently dropped) but no browser acts on it.
-func neutralizeMetas(doc string) string {
-	return reHostileMeta.ReplaceAllString(doc, "${1}x-mailarchive-neutralized-${2}")
-}
-
-// injectHead makes the inert metas (and a charset, when the document declares
-// none) the first children of <head>, creating the <head> after <html> when the
-// message's document has none.
-func injectHead(doc string) string {
-	metas := inertMetas
-	if !reCharset.MatchString(doc) {
-		metas += "\n<meta charset=\"utf-8\">"
-	}
-	if reHeadOpen.MatchString(doc) {
-		return replaceFirst(doc, reHeadOpen, func(tag string) string { return tag + "\n" + metas })
-	}
-	if reHTMLOpen.MatchString(doc) {
-		return replaceFirst(doc, reHTMLOpen, func(tag string) string { return tag + "\n<head>\n" + metas + "\n</head>" })
-	}
-	return "<head>\n" + metas + "\n</head>\n" + doc
-}
-
+// docTemplate: %s = title, mail head extras (styles etc.), our header, body attrs, body.
 const docTemplate = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -80,11 +51,12 @@ body{font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin
 .mailarchive-attachments,.mailarchive-raw{margin-top:8px;font-size:13px}
 .mailarchive-body{padding:20px}
 .mailarchive-body pre.plain{white-space:pre-wrap;word-wrap:break-word;font-family:ui-monospace,Consolas,monospace}
+.mailarchive-missing-image{display:inline-block;font-size:12px;color:#888;border:1px dashed #bbb;padding:2px 6px}
 </style>
-</head>
+%s</head>
 <body>
 %s
-<div class="mailarchive-body">
+<div class="mailarchive-body"%s>
 %s
 </div>
 </body>
@@ -103,36 +75,169 @@ type RenderContext struct {
 	RawName        string
 }
 
+// RenderResult is a rendered page plus what the renderer learned about it.
+type RenderResult struct {
+	HTML       []byte
+	Consumed   map[int]bool // attachment indices embedded inline as data: URIs
+	Unresolved []string     // cid: tokens with no matching part (dangling references)
+}
+
 // Render builds a self-contained HTML document for the message with no
-// navigation context (see RenderWith).
-func Render(m *model.Message) ([]byte, map[int]bool, error) { return RenderWith(m, RenderContext{}) }
+// navigation context. Kept for callers that only need the bytes.
+func Render(m *model.Message) ([]byte, map[int]bool, error) {
+	rr, err := RenderWith(m, RenderContext{})
+	if err != nil {
+		return nil, nil, err
+	}
+	return rr.HTML, rr.Consumed, nil
+}
 
 // RenderWith builds a self-contained HTML document for the message. Inline
-// images referenced via cid: are embedded as data: URIs; the set of attachment
-// indices consumed that way is returned so the caller can exclude them from the
-// attachment archive.
-func RenderWith(m *model.Message, ctx RenderContext) ([]byte, map[int]bool, error) {
+// images referenced via cid: are embedded as data: URIs. The mail's HTML is
+// PARSED with the same algorithm browsers use (golang.org/x/net/html), its
+// hostile metas defanged on the parsed tree, its head pieces (styles) and body
+// placed into OUR document after the policy metas — so what the browser sees
+// is exactly what was checked (R19).
+func RenderWith(m *model.Message, ctx RenderContext) (RenderResult, error) {
 	body, isHTML := selectBody(m)
 	consumed := map[int]bool{}
 	body = embedInlineImages(body, m.Attachments, consumed)
 	header := renderHeader(m, ctx, consumed)
 
-	// When the message carries its own full HTML document, preserve it (its
-	// <head> styles matter) and inject our metadata header into its <body>.
-	if isHTML && reHasHTML.MatchString(body) && reBodyOpen.MatchString(body) {
-		doc := injectHead(neutralizeMetas(body))
-		doc = replaceFirst(doc, reBodyOpen, func(tag string) string { return tag + "\n" + header })
-		return []byte(doc), consumed, nil
-	}
-
-	var inner string
+	var headExtra, bodyAttrs, inner string
+	var unresolved []string
 	if isHTML {
-		inner = neutralizeMetas(body) // HTML fragment (a meta refresh in a body is honoured by browsers)
+		unresolved = unresolvedInlineRefs([]byte(body))
+		headExtra, bodyAttrs, inner = sanitizeHTML(body)
 	} else {
 		inner = `<pre class="plain">` + html.EscapeString(body) + `</pre>`
 	}
-	out := fmt.Sprintf(docTemplate, html.EscapeString(displaySubject(m)), header, inner)
-	return []byte(out), consumed, nil
+	out := fmt.Sprintf(docTemplate, html.EscapeString(displaySubject(m)), headExtra, header, bodyAttrs, inner)
+	return RenderResult{HTML: []byte(out), Consumed: consumed, Unresolved: unresolved}, nil
+}
+
+// sanitizeHTML parses the mail's HTML (a full document or a fragment — the
+// parser builds html/head/body either way) and returns the serialized head
+// extras (styles, harmless metas), the body element's own attributes, and the
+// body content, with every hostile element neutralized on the PARSED tree:
+//
+//   - <meta http-equiv=refresh|content-security-policy|set-cookie|content-type>
+//     → the attribute is renamed (the tag stays, inert; nothing is silently
+//     dropped);
+//   - <meta charset> → removed (our UTF-8 charset is first and must win; the
+//     exporter always writes UTF-8);
+//   - <title> → removed (ours names the page);
+//   - <img src="cid:…"> with no matching part → src removed, a caption added.
+//
+// Scripts, remote loads, <base> and forms need no rewriting: the policy meta
+// that precedes everything makes them inert.
+func sanitizeHTML(doc string) (headExtra, bodyAttrs, body string) {
+	root, err := xhtml.Parse(strings.NewReader(doc))
+	if err != nil {
+		// Unparseable bytes: show them as text rather than guess.
+		return "", "", `<pre class="plain">` + html.EscapeString(doc) + `</pre>`
+	}
+	var headNode, bodyNode *xhtml.Node
+	var find func(n *xhtml.Node)
+	find = func(n *xhtml.Node) {
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			if c.Type == xhtml.ElementNode {
+				switch c.DataAtom {
+				case atom.Head:
+					if headNode == nil {
+						headNode = c
+					}
+				case atom.Body:
+					if bodyNode == nil {
+						bodyNode = c
+					}
+				}
+			}
+			find(c)
+		}
+	}
+	find(root)
+	neutralize(root)
+
+	var hb strings.Builder
+	if headNode != nil {
+		for c := headNode.FirstChild; c != nil; c = c.NextSibling {
+			if c.Type == xhtml.ElementNode && c.DataAtom == atom.Title {
+				continue
+			}
+			xhtml.Render(&hb, c)
+			hb.WriteByte('\n')
+		}
+	}
+	var bb strings.Builder
+	if bodyNode != nil {
+		for c := bodyNode.FirstChild; c != nil; c = c.NextSibling {
+			xhtml.Render(&bb, c)
+		}
+		bodyAttrs = bodyAttributes(bodyNode)
+	}
+	return hb.String(), bodyAttrs, bb.String()
+}
+
+// neutralize rewrites hostile nodes in place (see sanitizeHTML).
+func neutralize(n *xhtml.Node) {
+	for c := n.FirstChild; c != nil; {
+		next := c.NextSibling
+		if c.Type == xhtml.ElementNode {
+			switch c.DataAtom {
+			case atom.Meta:
+				if metaIsCharset(c) {
+					n.RemoveChild(c)
+					c = next
+					continue
+				}
+				for i, a := range c.Attr {
+					if strings.EqualFold(a.Key, "http-equiv") {
+						switch strings.ToLower(strings.TrimSpace(a.Val)) {
+						case "refresh", "content-security-policy", "set-cookie", "content-type":
+							c.Attr[i].Key = "data-mailarchive-neutralized"
+						}
+					}
+				}
+			case atom.Img:
+				for i, a := range c.Attr {
+					if strings.EqualFold(a.Key, "src") && strings.HasPrefix(strings.ToLower(strings.TrimSpace(a.Val)), "cid:") {
+						c.Attr[i].Key = "data-mailarchive-missing"
+						c.Attr = append(c.Attr,
+							xhtml.Attribute{Key: "alt", Val: "[inline image not included in the archived message]"},
+							xhtml.Attribute{Key: "class", Val: "mailarchive-missing-image"})
+					}
+				}
+			}
+		}
+		neutralize(c)
+		c = next
+	}
+}
+
+func metaIsCharset(n *xhtml.Node) bool {
+	for _, a := range n.Attr {
+		if strings.EqualFold(a.Key, "charset") {
+			return true
+		}
+	}
+	return false
+}
+
+// bodyAttributes carries the mail body's presentation attributes onto our
+// content wrapper (a plain <div>): style, class, dir and lang as they are,
+// bgcolor as a background colour.
+func bodyAttributes(body *xhtml.Node) string {
+	var b strings.Builder
+	for _, a := range body.Attr {
+		switch strings.ToLower(a.Key) {
+		case "style", "class", "dir", "lang":
+			b.WriteString(` ` + strings.ToLower(a.Key) + `="` + html.EscapeString(a.Val) + `"`)
+		case "bgcolor":
+			b.WriteString(` style="background-color:` + html.EscapeString(a.Val) + `"`)
+		}
+	}
+	return b.String()
 }
 
 // selectBody picks the richest available body and reports whether it is HTML.
@@ -152,6 +257,16 @@ func selectBody(m *model.Message) (string, bool) {
 // timeLayout shows a time with its ORIGINAL UTC offset — the offset is part of
 // the record (a reader must not have to guess which zone "09:30" was in).
 const timeLayout = "Mon, 02 Jan 2006 15:04:05 -0700"
+
+// fmtTime renders a time with its original offset and, when the offset is not
+// UTC, the same instant in UTC — what file names and folder tables use.
+func fmtTime(t time.Time) string {
+	s := t.Format(timeLayout)
+	if _, off := t.Zone(); off != 0 {
+		s += " (" + t.UTC().Format("2006-01-02 15:04 UTC") + ")"
+	}
+	return s
+}
 
 func renderHeader(m *model.Message, ctx RenderContext, consumed map[int]bool) string {
 	var b strings.Builder
@@ -187,11 +302,11 @@ func renderHeader(m *model.Message, ctx RenderContext, consumed map[int]bool) st
 	// otherwise the one known time is the Date.
 	switch {
 	case !m.Sent.IsZero() && !m.Received.IsZero() && !m.Sent.Equal(m.Received):
-		row("Sent", m.Sent.Format(timeLayout))
-		row("Received", m.Received.Format(timeLayout))
+		row("Sent", fmtTime(m.Sent))
+		row("Received", fmtTime(m.Received))
 	default:
 		if d := m.Date(); !d.IsZero() {
-			row("Date", d.Format(timeLayout))
+			row("Date", fmtTime(d))
 		}
 	}
 	row("Message-ID", m.InternetMessageID)
@@ -278,15 +393,6 @@ func embedInlineImages(body string, atts []model.Attachment, consumed map[int]bo
 		consumed[i] = true
 	}
 	return body
-}
-
-// replaceFirst replaces only the first match of re in s using repl.
-func replaceFirst(s string, re *regexp.Regexp, repl func(match string) string) string {
-	loc := re.FindStringIndex(s)
-	if loc == nil {
-		return s
-	}
-	return s[:loc[0]] + repl(s[loc[0]:loc[1]]) + s[loc[1]:]
 }
 
 func drain(a model.Attachment) ([]byte, error) {

@@ -164,39 +164,37 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		every = defaultCheckpointEvery
 	}
 	lastCheckpoint := 0
+	var lockLost error
 	checkpoint := func(stats export.Stats) {
 		if stats.Exported-lastCheckpoint < every {
 			return
 		}
 		lastCheckpoint = stats.Exported
-		if saveErr := manifest.Save(); saveErr != nil {
-			logger.Printf("warning: could not checkpoint manifest: %v", saveErr)
+		// The lock file is the run's guarantee of exclusivity; if it was removed
+		// or replaced under us, another run may now hold a fresh one. Stop
+		// rather than race it (R5).
+		if err := lock.StillHeld(); err != nil && lockLost == nil {
+			lockLost = err
+			return
 		}
-		if idx != nil {
-			if flushErr := idx.Flush(); flushErr != nil {
-				logger.Printf("warning: index checkpoint: %v", flushErr)
-			}
-		}
+		commit(manifest, idx, logger)
 	}
 
 	result = Result{Files: len(files)}
 	var failures int
 	for _, f := range files {
-		runErr := runFile(ctx, exp, f, opts.CopyFirst, logger, func(stats export.Stats) {
+		runErr := runFile(ctx, exp, f, opts.Out, opts.CopyFirst, logger, func(stats export.Stats) {
 			checkpoint(stats)
 			if onProgress != nil {
 				onProgress(stats)
 			}
 		})
-
-		if saveErr := manifest.Save(); saveErr != nil {
-			logger.Printf("warning: could not save manifest: %v", saveErr)
+		if lockLost != nil {
+			commit(manifest, idx, logger)
+			finish(opts.Out, &result, exp, manifest, idx, indexErrors, logger)
+			return result, lockLost
 		}
-		if idx != nil {
-			if flushErr := idx.Flush(); flushErr != nil {
-				logger.Printf("warning: index flush: %v", flushErr)
-			}
-		}
+		commit(manifest, idx, logger)
 
 		if errors.Is(runErr, context.Canceled) {
 			finish(opts.Out, &result, exp, manifest, idx, indexErrors, logger)
@@ -224,6 +222,21 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 
 // defaultCheckpointEvery aligns with the index's own batch size.
 const defaultCheckpointEvery = 1000
+
+// commit makes progress durable: the index FIRST, then the manifest. After a
+// crash the index is then a superset of the manifest, and the next incremental
+// run re-exports the un-manifested tail (idx.Add replaces by key), so search
+// and manifest can never permanently disagree (R5/R8).
+func commit(manifest *state.Manifest, idx *index.Index, logger *log.Logger) {
+	if idx != nil {
+		if flushErr := idx.Flush(); flushErr != nil {
+			logger.Printf("warning: index flush: %v", flushErr)
+		}
+	}
+	if saveErr := manifest.Save(); saveErr != nil {
+		logger.Printf("warning: could not save manifest: %v", saveErr)
+	}
+}
 
 // beginRun writes the "running" last-run record and returns it for recordRun.
 func beginRun(opts Options) state.LastRun {
@@ -274,13 +287,13 @@ func indexCount(idx *index.Index) int {
 
 // runFile opens one data file (optionally via a temp snapshot) and exports every
 // message it contains, honouring ctx cancellation between messages.
-func runFile(ctx context.Context, exp *export.Exporter, path string, copyFirst bool, logger *log.Logger, onProgress ProgressFunc) error {
+func runFile(ctx context.Context, exp *export.Exporter, path, out string, copyFirst bool, logger *log.Logger, onProgress ProgressFunc) error {
 	openPath := path
 	if copyFirst {
 		// Snapshotting only applies to single files (e.g. a locked .ost);
 		// mail-store directories are read in place.
 		if fi, err := os.Stat(path); err == nil && !fi.IsDir() {
-			snap, cleanup, err := snapshot(path)
+			snap, cleanup, err := snapshot(path, out)
 			if err != nil {
 				return err
 			}
@@ -323,15 +336,17 @@ func runFile(ctx context.Context, exp *export.Exporter, path string, copyFirst b
 	})
 }
 
-// snapshot copies src to a temporary file, returning its path and a cleanup func.
-func snapshot(src string) (string, func(), error) {
+// snapshot copies src to a temporary file ON THE ARCHIVE'S VOLUME (the drive
+// the operator chose and sized — a multi-gigabyte .ost must not land in a
+// small system temp directory at 02:00), returning its path and a cleanup func.
+func snapshot(src, out string) (string, func(), error) {
 	in, err := os.Open(src)
 	if err != nil {
 		return "", nil, fmt.Errorf("open %s: %w", src, err)
 	}
 	defer in.Close()
 
-	tmp, err := os.CreateTemp("", "mailarchive-*"+filepath.Ext(src))
+	tmp, err := os.CreateTemp(out, ".mailarchive-snapshot-*"+filepath.Ext(src))
 	if err != nil {
 		return "", nil, fmt.Errorf("create snapshot: %w", err)
 	}

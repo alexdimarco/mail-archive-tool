@@ -12,6 +12,7 @@ import (
 
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/index"
+	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/pages"
 	"mail-archive-tool/internal/state"
 )
@@ -28,6 +29,14 @@ func Reindex(out string, logger *log.Logger) (kept, pruned int, err error) {
 	if logger == nil {
 		logger = log.New(io.Discard, "", 0)
 	}
+
+	// One run per archive at a time (R5): reindex sweeps and rewrites, so it
+	// must never overlap an export.
+	lock, err := lockfile.Acquire(filepath.Join(out, lockfile.Name))
+	if err != nil {
+		return 0, 0, err
+	}
+	defer lock.Release()
 
 	idxPath := filepath.Join(out, "search.db")
 	// Refuse on a directory that was never exported to, rather than silently

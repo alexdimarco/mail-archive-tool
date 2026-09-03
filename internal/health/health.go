@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"mail-archive-tool/internal/index"
+	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/procs"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/state"
@@ -41,6 +42,11 @@ type Input struct {
 	ExeExists     bool
 	ExeIsThis     bool
 	ThisHost      string
+
+	// LockHeld is the authoritative liveness signal: the archive lock dies
+	// with its process, so a "running" record whose lock is free belongs to a
+	// run that never finished (pid numbers are reused after a reboot).
+	LockHeld bool
 
 	PIDAlive func(int) bool
 }
@@ -111,7 +117,7 @@ func Assess(in Input, now time.Time) Report {
 				r.Reasons = append(r.Reasons, "  remedy: authentication failed — the app client secret may have expired; rotate it in Entra and rewrite the secret file")
 			}
 		case state.RunRunning:
-			alive := in.PIDAlive != nil && in.PIDAlive(lr.PID)
+			alive := in.LockHeld
 			switch {
 			case alive && now.Sub(lr.Started) <= period:
 				r.Reasons = append(r.Reasons, fmt.Sprintf("a run is in progress (pid %d, started %s)", lr.PID, lr.Started.Local().Format("2006-01-02 15:04")))
@@ -188,6 +194,12 @@ func plural(n int, one, many string) string {
 func Gather(out, nameOverride string) Input {
 	in := Input{Out: out, PIDAlive: procs.Alive}
 	in.ThisHost, _ = os.Hostname()
+	// Probe the archive lock: held means a run is genuinely in progress.
+	if l, err := lockfile.Acquire(filepath.Join(out, lockfile.Name)); err == nil {
+		l.Release()
+	} else if errors.Is(err, lockfile.ErrHeld) {
+		in.LockHeld = true
+	}
 
 	mpath := filepath.Join(out, ".mailarchive-manifest.json")
 	if _, serr := os.Stat(mpath); serr == nil {

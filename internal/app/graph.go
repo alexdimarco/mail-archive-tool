@@ -106,34 +106,29 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		every = defaultCheckpointEvery
 	}
 	lastCheckpoint := 0
+	var lockLost error
 	checkpoint := func() {
 		if exp.Stats.Exported-lastCheckpoint < every {
 			return
 		}
 		lastCheckpoint = exp.Stats.Exported
-		if saveErr := manifest.Save(); saveErr != nil {
-			logger.Printf("warning: could not checkpoint manifest: %v", saveErr)
+		if err := lock.StillHeld(); err != nil && lockLost == nil {
+			lockLost = err
+			return
 		}
-		if idx != nil {
-			if flushErr := idx.Flush(); flushErr != nil {
-				logger.Printf("warning: index checkpoint: %v", flushErr)
-			}
-		}
+		commit(manifest, idx, logger)
 	}
 
 	result = Result{Files: len(g.Mailboxes)}
 	var failures int
 	for _, mbx := range g.Mailboxes {
 		runErr := runGraphMailbox(ctx, client, exp, manifest, opts.Mode, mbx, logger, checkpoint)
-
-		if saveErr := manifest.Save(); saveErr != nil {
-			logger.Printf("warning: could not save manifest: %v", saveErr)
+		if lockLost != nil {
+			commit(manifest, idx, logger)
+			finish(opts.Out, &result, exp, manifest, idx, indexErrors, logger)
+			return result, lockLost
 		}
-		if idx != nil {
-			if flushErr := idx.Flush(); flushErr != nil {
-				logger.Printf("warning: index flush: %v", flushErr)
-			}
-		}
+		commit(manifest, idx, logger)
 		if errors.Is(runErr, context.Canceled) {
 			finish(opts.Out, &result, exp, manifest, idx, indexErrors, logger)
 			return result, context.Canceled
