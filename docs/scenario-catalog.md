@@ -181,6 +181,7 @@ Tiers: **U** unit property (every commit) · **S** structural whole-tree walk
 | MA-62 | U | RunGraph captures every message into the pipeline; incremental re-run exports 0 new and re-downloads no bodies | R17, R2 |
 | MA-63 | U | graph subcommand refuses missing -out/-tenant/-client-id/-mailbox/secret with a typed non-zero naming the problem | R17, R12 |
 | MA-64 | L | end-to-end against a real M365 tenant (app-only consent, throttling, real folder set) — **pending**, validated on a live tenant | R17 |
+| MA-65 | U | schtasks /TR quotes the executable and every argument containing spaces, in both the install argv and the pasteable preview; splitting the run string with Windows C-runtime argv rules round-trips to the exact exe+args | R14, S14 |
 
 Rows MA-29..MA-37 were added by the adversarial pass; see
 `docs/review-adversarial.md` for the findings they encode. Rows MA-40..MA-44

@@ -195,3 +195,170 @@ func TestRemoveCronBlockReverses(t *testing.T) {
 		t.Errorf("remove from empty crontab = %q, want empty", got)
 	}
 }
+
+// covers: MA-65, R14, S14
+// The Task Scheduler run string quotes the executable and every argument that
+// contains a space — in the argv Install hands to schtasks AND in the pasteable
+// preview — so "C:\Program Files\…" or an archive under "OneDrive - Company"
+// survives the trip. Asserted on the wire: splitting the /TR value with the
+// Windows C-runtime command-line rules (what the scheduled mailarchive.exe
+// parses its os.Args with) must round-trip to the exact program + arguments.
+func TestSchtasksQuotesPathsWithSpaces(t *testing.T) {
+	spec := Spec{
+		Name:     DefaultName,
+		Interval: Daily,
+		At:       "02:00",
+		Exe:      `C:\Program Files\MailArchive\mailarchive.exe`,
+		Args: []string{
+			"-out", `C:\Users\Alex\OneDrive - Company\Mail Archive`,
+			"-mode", "incremental",
+			"-input", `C:\Users\Alex\Documents\Outlook Files\alex.pst`,
+			"-auto",
+		},
+	}
+	want := append([]string{spec.Exe}, spec.Args...)
+
+	// Install path: the raw argv handed to schtasks.exe.
+	argv, err := SchtasksCreateArgv(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := argAfter(t, argv, "/TR")
+	if !strings.HasPrefix(tr, `"`) {
+		t.Errorf("/TR must start with a quoted program path so Task Scheduler takes the whole path: %q", tr)
+	}
+	if got := splitWindowsCommandLine(tr); !equalStrings(got, want) {
+		t.Errorf("install /TR does not round-trip:\n tr=%q\n got=%q\n want=%q", tr, got, want)
+	}
+
+	// Preview path: the pasteable command wraps the same run string once more;
+	// unwrap it with the same rules and re-split.
+	cmd, err := SchtasksCreateCmd(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outer := splitWindowsCommandLine(cmd)
+	if len(outer) == 0 || outer[0] != "schtasks" {
+		t.Fatalf("preview does not start with schtasks: %q", cmd)
+	}
+	ptr := argAfter(t, outer[1:], "/TR")
+	if got := splitWindowsCommandLine(ptr); !equalStrings(got, want) {
+		t.Errorf("preview /TR does not round-trip:\n cmd=%q\n got=%q\n want=%q", cmd, got, want)
+	}
+
+	// A clean, space-free spec must stay a plain (unquoted-argument) command line
+	// so the common case remains readable.
+	plain, err := SchtasksCreateArgv(sampleSpec(Daily, "02:00"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ptr := argAfter(t, plain, "/TR"); strings.Contains(ptr, `\"`) {
+		t.Errorf("space-free spec must not carry escaped quotes: %q", ptr)
+	}
+}
+
+func argAfter(t *testing.T, argv []string, flag string) string {
+	t.Helper()
+	for i, a := range argv {
+		if a == flag && i+1 < len(argv) {
+			return argv[i+1]
+		}
+	}
+	t.Fatalf("argv lacks %s: %q", flag, argv)
+	return ""
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// splitWindowsCommandLine applies the Microsoft C-runtime argv rules (the ones
+// a Go program's os.Args follow on Windows): whitespace splits outside quotes, a
+// double quote toggles quoting, 2n backslashes before a quote yield n literal
+// backslashes, and 2n+1 yield n backslashes plus a literal quote. Backslashes
+// not followed by a quote are literal (so ordinary paths pass through).
+func splitWindowsCommandLine(s string) []string {
+	var args []string
+	var cur strings.Builder
+	inQuote, inArg := false, false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == '\\':
+			n := 0
+			for i < len(s) && s[i] == '\\' {
+				n++
+				i++
+			}
+			if i < len(s) && s[i] == '"' {
+				cur.WriteString(strings.Repeat(`\`, n/2))
+				if n%2 == 1 {
+					cur.WriteByte('"')
+				} else {
+					inQuote = !inQuote
+				}
+			} else {
+				cur.WriteString(strings.Repeat(`\`, n))
+				i-- // re-process the non-backslash character
+			}
+			inArg = true
+		case c == '"':
+			inQuote = !inQuote
+			inArg = true
+		case (c == ' ' || c == '\t') && !inQuote:
+			if inArg {
+				args = append(args, cur.String())
+				cur.Reset()
+				inArg = false
+			}
+		default:
+			cur.WriteByte(c)
+			inArg = true
+		}
+	}
+	if inArg {
+		args = append(args, cur.String())
+	}
+	return args
+}
+
+// covers: MA-65, R14, S14
+// Round-trip law for the Windows quoting helpers: for any token — spaces, an
+// embedded quote, a trailing backslash (the classic `"C:\dir\"` trap), runs of
+// backslashes before a quote, empty — splitting winQuote(x) under the C-runtime
+// rules yields exactly [x], and nesting winQuote(winQuote(x)) unwraps twice.
+func TestWindowsQuoteRoundTrip(t *testing.T) {
+	cases := []string{
+		`C:\Program Files\MailArchive\mailarchive.exe`,
+		`C:\Users\Alex\OneDrive - Company\Mail Archive`,
+		`C:\Mail Archive\`,  // trailing backslash before the closing quote
+		`C:\odd\\dir\\`,     // runs of backslashes, trailing
+		`say "hi"`,          // embedded quotes
+		`back\"slash-quote`, // backslash immediately before a quote
+		`tab	separated`,     // a tab is whitespace too
+		"",                  // empty argument must survive as an empty token
+		`plain-token`,
+	}
+	for _, c := range cases {
+		once := winQuote(c)
+		if got := splitWindowsCommandLine(once); !equalStrings(got, []string{c}) {
+			t.Errorf("winQuote(%q) = %q splits to %q, want [%q]", c, once, got, c)
+		}
+		twice := winQuote(once)
+		inner := splitWindowsCommandLine(twice)
+		if len(inner) != 1 || !equalStrings(splitWindowsCommandLine(inner[0]), []string{c}) {
+			t.Errorf("nested winQuote(%q) = %q does not unwrap twice: %q", c, twice, inner)
+		}
+		if a := winArg(c); !equalStrings(splitWindowsCommandLine(a), []string{c}) {
+			t.Errorf("winArg(%q) = %q does not round-trip", c, a)
+		}
+	}
+}

@@ -260,9 +260,8 @@ func SchtasksCreateCmd(s Spec) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	tr := strings.Join(s.program(), " ")
 	cmd := fmt.Sprintf("schtasks /Create /TN %s /TR %s /SC %s /ST %02d:%02d",
-		winQuote(s.Name), winQuote(tr), schtasksSC(iv), hour, min)
+		winQuote(s.Name), winQuote(taskRun(s)), schtasksSC(iv), hour, min)
 	if iv == Weekly {
 		cmd += " /D SUN"
 	}
@@ -390,21 +389,29 @@ func removeLaunchd(s Spec) error {
 	return nil
 }
 
-func installSchtasks(s Spec) error {
+// SchtasksCreateArgv returns the exact argument vector Install hands to
+// schtasks.exe (without the program name itself).
+func SchtasksCreateArgv(s Spec) ([]string, error) {
 	iv, err := ParseInterval(string(s.Interval))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	hour, min, err := parseHHMM(s.At)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	tr := strings.Join(s.program(), " ")
-	argv := []string{"/Create", "/TN", s.Name, "/TR", tr, "/SC", schtasksSC(iv), "/ST", fmt.Sprintf("%02d:%02d", hour, min)}
+	argv := []string{"/Create", "/TN", s.Name, "/TR", taskRun(s), "/SC", schtasksSC(iv), "/ST", fmt.Sprintf("%02d:%02d", hour, min)}
 	if iv == Weekly {
 		argv = append(argv, "/D", "SUN")
 	}
-	argv = append(argv, "/F")
+	return append(argv, "/F"), nil
+}
+
+func installSchtasks(s Spec) error {
+	argv, err := SchtasksCreateArgv(s)
+	if err != nil {
+		return err
+	}
 	if out, err := exec.Command("schtasks", argv...).CombinedOutput(); err != nil {
 		return fmt.Errorf("schtasks /Create: %w: %s", err, strings.TrimSpace(string(out)))
 	}
@@ -437,9 +444,57 @@ func shellJoin(args []string) string {
 	return strings.Join(quoted, " ")
 }
 
-// winQuote double-quotes s for a Windows command line.
+// taskRun is the Task Scheduler "task to run" string: the executable and each
+// argument quoted per token, so a path containing spaces ("C:\Program Files\…",
+// "OneDrive - Company") is one argument to the scheduled program, not several.
+// The program token is always quoted — Task Scheduler takes a leading quoted
+// token as the whole program path.
+func taskRun(s Spec) string {
+	parts := make([]string, 0, 1+len(s.Args))
+	parts = append(parts, winQuote(s.Exe))
+	for _, a := range s.Args {
+		parts = append(parts, winArg(a))
+	}
+	return strings.Join(parts, " ")
+}
+
+// winArg quotes one token for a Windows command line only when it needs it
+// (whitespace or a quote); a clean token is returned as-is for readability.
+func winArg(s string) string {
+	if s != "" && !strings.ContainsAny(s, " \t\"") {
+		return s
+	}
+	return winQuote(s)
+}
+
+// winQuote always double-quotes s under the Microsoft C-runtime rules the
+// receiving program parses its argv with: an embedded quote becomes \", and
+// backslashes that precede a quote (or the closing quote) are doubled so they
+// stay literal. Ordinary path backslashes are untouched. This is the inverse of
+// CommandLineToArgv, so nesting (a quoted run string inside a quoted /TR value)
+// round-trips exactly.
 func winQuote(s string) string {
-	return `"` + strings.ReplaceAll(s, `"`, `\"`) + `"`
+	var b strings.Builder
+	b.WriteByte('"')
+	slashes := 0
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch c {
+		case '\\':
+			slashes++
+			continue
+		case '"':
+			b.WriteString(strings.Repeat(`\`, slashes*2+1))
+			b.WriteByte('"')
+		default:
+			b.WriteString(strings.Repeat(`\`, slashes))
+			b.WriteByte(c)
+		}
+		slashes = 0
+	}
+	b.WriteString(strings.Repeat(`\`, slashes*2)) // trailing backslashes must not escape the closing quote
+	b.WriteByte('"')
+	return b.String()
 }
 
 func xmlEscape(s string) string {
