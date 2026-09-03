@@ -47,6 +47,16 @@ type Message struct {
 	// <stem>.eml when asked (KeepRaw); it is never required for rendering.
 	Raw []byte
 
+	// TransportHeaders is the message's internet header block as stored by the
+	// source: the decoded PidTagTransportMessageHeaders (0x007D) for PST/OST,
+	// or the header section of Raw for mbox/maildir/Graph. It is sender-
+	// influenced text (Received / Authentication-Results / List-Id can be
+	// forged), shown as-is and never trusted: it is excluded from the
+	// fingerprint (a resend that only rewrites headers is still one message),
+	// not indexed, and never used to synthesize an .eml. Often empty for PST
+	// items that never crossed the internet.
+	TransportHeaders string
+
 	// Body sources, in precedence order. The exporter picks the richest one
 	// that is present (HTML > plain > decoded RTF).
 	HTMLBody  string

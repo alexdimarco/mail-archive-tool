@@ -32,3 +32,34 @@ func TestIdentityDistinguishesBodies(t *testing.T) {
 		t.Errorf("Message-ID should determine identity, got %q", got)
 	}
 }
+
+// covers: MA-145, R3, R1, S32
+// TransportHeaders is sender-influenced text kept for display, never part of
+// the message's identity: a resend that rewrites only its Received/
+// Authentication-Results lines is still one message. So the envelope
+// Fingerprint (and the fallback content Identity) must be blind to it —
+// otherwise the same mail would be recorded twice, or a fill that re-reads a
+// fuller header copy would look like a different message and be dropped.
+func TestFingerprintIgnoresTransportHeaders(t *testing.T) {
+	base := func() *Message {
+		return &Message{
+			Subject:     "Quarterly report",
+			SenderEmail: "sender@example.com",
+			To:          "you@example.com",
+			PlainBody:   "see attached",
+		}
+	}
+	a := base()
+	a.TransportHeaders = "Received: from mx1\r\nAuthentication-Results: spf=pass"
+	b := base()
+	b.TransportHeaders = "Received: from mx2 (a totally different chain)\r\nAuthentication-Results: spf=fail"
+
+	if a.Fingerprint() != b.Fingerprint() {
+		t.Errorf("Fingerprint changed with TransportHeaders: %q vs %q", a.Fingerprint(), b.Fingerprint())
+	}
+	// The content-hash identity (used when no Message-ID is present) is also
+	// blind to the header block.
+	if a.Identity() != b.Identity() {
+		t.Errorf("Identity changed with TransportHeaders: %q vs %q", a.Identity(), b.Identity())
+	}
+}

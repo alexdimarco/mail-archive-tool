@@ -35,6 +35,12 @@ const (
 	pidTagReplyRecips = 80    // 0x0050, PidTagReplyRecipientNames
 	pidTagInReplyTo   = 4162  // 0x1042, PidTagInReplyToId
 	pidTagReferences  = 4153  // 0x1039, PidTagInternetReferences
+	// pidTagTransportMessageHeaders is Outlook's decoded copy of the item's
+	// internet header block (Received chain, Return-Path, Authentication-
+	// Results, List-Id). PST items carry no raw bytes, so this is the only way
+	// to recover them; it is often absent for items that never crossed the
+	// internet.
+	pidTagTransportMessageHeaders = 125 // 0x007D, PidTagTransportMessageHeaders
 )
 
 // registerCharsets wires go-message's charset catalogue into go-pst once, so
@@ -217,6 +223,7 @@ func convertMessage(m *pst.Message) (*model.Message, error) {
 		InReplyTo:         strings.Trim(readTextProperty(m, pidTagInReplyTo), "<> "),
 		References:        strings.TrimSpace(readTextProperty(m, pidTagReferences)),
 		InternetMessageID: mp.GetInternetMessageId(),
+		TransportHeaders:  readTextProperty(m, pidTagTransportMessageHeaders),
 		HTMLBody:          htmlBody,
 		PlainBody:         plainBody,
 	}

@@ -296,3 +296,69 @@ func TestRenderNeutralizesParserTricks(t *testing.T) {
 		t.Errorf("unresolved refs = %v, want [gone@x]", out.Unresolved)
 	}
 }
+
+// covers: MA-144, R7, R19, S32
+// The page shows the transport-header block in a collapsed panel after the
+// header <dl>: labelled "unverified", HTML-escaped inside <pre> (so a forged
+// header line carrying <script> and an & entity is shown as text, inert under
+// the archive CSP), capped at 64 KiB with a visible truncation note, and
+// omitted entirely when the block is empty.
+func TestRenderTransportHeaders(t *testing.T) {
+	// A hostile header line: a script tag and a bare ampersand must be escaped.
+	m := &model.Message{
+		Subject:          "Re: invoice",
+		SenderEmail:      "alice@example.com",
+		TransportHeaders: "Received: from mx by mail\r\nX-Evil: <script>alert(1)</script>\r\nX-Amp: a & b",
+	}
+	out, _, err := Render(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+
+	if !strings.Contains(s, `<details class="mailarchive-headers">`) {
+		t.Error("transport-header panel missing")
+	}
+	if !strings.Contains(s, "<summary>Transport headers as stored (unverified)</summary>") {
+		t.Error("panel is not labelled as unverified transport headers")
+	}
+	// The panel sits AFTER the field list, not inside it.
+	if di, dl := strings.Index(s, "mailarchive-headers"), strings.Index(s, "</dl>"); di < 0 || dl < 0 || di < dl {
+		t.Errorf("panel not placed after the header <dl> (details=%d dl=%d)", di, dl)
+	}
+	// The script tag and entity survive only in escaped form; never live.
+	if strings.Contains(s, "<script>alert(1)</script>") {
+		t.Error("transport headers rendered a live <script> tag")
+	}
+	if !strings.Contains(s, "&lt;script&gt;alert(1)&lt;/script&gt;") {
+		t.Error("script line not HTML-escaped")
+	}
+	if !strings.Contains(s, "a &amp; b") {
+		t.Error("ampersand in a header line not escaped")
+	}
+
+	// Empty block → no panel at all.
+	none, _, err := Render(&model.Message{Subject: "no headers", PlainBody: "hi"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(none), "mailarchive-headers") {
+		t.Error("an empty transport-header block still rendered a panel")
+	}
+
+	// Over the 64 KiB cap → truncation note, and the emitted run is bounded.
+	big := &model.Message{Subject: "huge", TransportHeaders: strings.Repeat("A", 70*1024)}
+	bout, _, err := Render(big)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bs := string(bout)
+	if !strings.Contains(bs, "(truncated)") {
+		t.Error("oversized transport headers carried no truncation note")
+	}
+	// Without the cap this would be 70 KiB of 'A'; capped it is ~64 KiB (plus a
+	// couple of stray 'A's from the template CSS, e.g. "Arial").
+	if n := strings.Count(bs, "A"); n >= 66*1024 || n < 60*1024 {
+		t.Errorf("transport-header block not capped near 64 KiB: %d 'A' bytes emitted", n)
+	}
+}
