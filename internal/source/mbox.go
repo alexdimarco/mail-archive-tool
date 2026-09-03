@@ -195,7 +195,37 @@ func safeParseMessage(data []byte) (m *model.Message) {
 			m = &model.Message{Subject: "(unreadable message)"}
 		}
 	}()
-	return parseMessage(data)
+	m = parseMessage(data)
+	if m != nil {
+		m.TransportHeaders = headerBlock(data)
+	}
+	return m
+}
+
+// headerBlock returns a raw message's internet header section — the bytes
+// before the first blank line — as stored, for display as transport headers.
+// It looks only within the first 64 KiB: if no blank line (CRLFCRLF or LFLF)
+// terminates the headers there, it returns "" rather than a misleading partial
+// block, so a body-only blob or a pathologically long header run yields
+// nothing. Shared by every raw-bytes source (mbox, maildir, Evolution) and the
+// Graph MIME path, which reach it through ParseRFC822.
+func headerBlock(raw []byte) string {
+	const limit = 64 << 10 // 64 KiB
+	scan := raw
+	if len(scan) > limit {
+		scan = scan[:limit]
+	}
+	end := -1
+	if i := bytes.Index(scan, []byte("\r\n\r\n")); i >= 0 {
+		end = i
+	}
+	if i := bytes.Index(scan, []byte("\n\n")); i >= 0 && (end < 0 || i < end) {
+		end = i
+	}
+	if end < 0 {
+		return ""
+	}
+	return string(raw[:end])
 }
 
 // parseMessage converts one raw RFC 5322 message into a model.Message, falling

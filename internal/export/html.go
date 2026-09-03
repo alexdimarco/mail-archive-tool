@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	xhtml "golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
@@ -312,6 +313,37 @@ func renderHeader(m *model.Message, ctx RenderContext, consumed map[int]bool) st
 	row("Message-ID", m.InternetMessageID)
 	row("In-Reply-To", m.InReplyTo)
 	b.WriteString(`</dl>`)
+
+	// The transport-header block as stored by the source, in a collapsed panel.
+	// It is sender-influenced text (Received/Authentication-Results can be
+	// forged), so it is labelled "unverified", escaped, and shown inside <pre>
+	// where the CSP already makes any script inert — it is never executed. The
+	// block is capped at 64 KiB with a visible truncation note; when empty
+	// (a PST item that never crossed the internet, a body-only blob) the panel
+	// is omitted entirely.
+	if strings.TrimSpace(m.TransportHeaders) != "" {
+		const headerCap = 64 << 10 // 64 KiB
+		text := m.TransportHeaders
+		truncated := false
+		if len(text) > headerCap {
+			text = text[:headerCap]
+			// Trim a rune split by the byte cap so escaping stays well-formed.
+			for len(text) > 0 {
+				if r, size := utf8.DecodeLastRuneInString(text); r == utf8.RuneError && size <= 1 {
+					text = text[:len(text)-1]
+					continue
+				}
+				break
+			}
+			truncated = true
+		}
+		b.WriteString(`<details class="mailarchive-headers"><summary>Transport headers as stored (unverified)</summary><pre>`)
+		b.WriteString(html.EscapeString(text))
+		if truncated {
+			b.WriteString(" … (truncated)")
+		}
+		b.WriteString(`</pre></details>`)
+	}
 
 	// Archived attachments (those not embedded inline), with the zip link, so
 	// the page alone tells the reader what came with the message.

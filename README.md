@@ -603,6 +603,13 @@ set *Account Settings → Change → Mail to keep offline → **All***, then
   letter case, or in NFC/NFD form, can still collide on a case-insensitive file
   system — an acknowledged limit.
 
+**Original headers (every source)**
+- Each message page shows the transport headers **as stored by the source** in a
+  collapsed "Transport headers as stored (unverified)" panel — sender-influenced
+  text (the `Received` chain and `Authentication-Results` can be forged), shown
+  as-is, not proof of provenance; for PST it is Outlook's decoded copy, often
+  absent for items that never crossed the internet.
+
 **Both**
 - Deleting originals is intentionally **not** performed — export only.
 - Non-UTF-8 legacy text is decoded as Windows-1252 when not valid UTF-8; unusual

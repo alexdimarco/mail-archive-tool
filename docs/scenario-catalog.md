@@ -153,6 +153,7 @@ an invariant is the thing that is wrong.
 | S29 Operator (or the GUI) asks whether the archive is healthy and the backup is running | R18, R12 | last-run record present and truthful; status GREEN/WARN/RED with remedies; three-state install detection; GUI job file round-trips | MA-75, MA-76, MA-77, MA-78 |
 | S21 A hostile email (script, tracking pixel, remote CSS, `<base>`, meta refresh) is archived and opened from disk | R19, R7 | renders inertly: policy meta precedes the mail's markup; refresh neutralized; content preserved | MA-80 |
 | S22 `serve` faces a hostile archive or network: script in a body/snippet, a symlink inside the archive, a non-loopback bind | R19, R4, R8 | UI/API/file responses carry a strict policy; snippets are escaped; symlinked paths are 404; non-loopback bind warns | MA-81, MA-82, MA-83, MA-84 |
+| S30 An inheritor or auditor needs a message's original internet headers, and a hostile message forges its Received/Authentication-Results lines | R7, R19, R3 | the transport-header block is kept as stored (PST 0x007D decoded; raw sources' header section within 64 KiB) and shown in a collapsed, escaped, "unverified", 64-KiB-capped panel — never executed, never indexed, never in the fingerprint | MA-143, MA-144, MA-145 |
 
 Acknowledged limits (not defects): two messages that reuse one Message-ID with
 an identical envelope (subject, sender, recipients, date, attachment names) and
@@ -244,6 +245,9 @@ Tiers: **U** unit property (every commit) · **S** structural whole-tree walk
 | MA-82 | U | `serve` refuses a path whose resolved location is outside the archive root (symlink escape → 404) and does not list directories lacking an index.html | R19, R4, S22 |
 | MA-83 | U | `serve` sends the archive CSP + nosniff for files, and a `script-src 'self'` CSP + nosniff + frame-ancestors none for the UI and API; the UI carries no inline script | R19, R4, S22 |
 | MA-84 | U | loopback-address classification: 127.0.0.1/::1/localhost are loopback; an empty host (all interfaces), 0.0.0.0, and LAN addresses are not | R19, S22 |
+| MA-143 | U | the readers keep the transport-header block: PST via PidTagTransportMessageHeaders (0x007D) through readTextProperty (proven on the support.pst fixture); mbox/maildir/Graph from the header section of Raw, only when a blank line terminates it within 64 KiB — a body-only blob or a block that runs past the bound yields "" | R7, S30 |
+| MA-144 | U | the message page shows a collapsed "Transport headers as stored (unverified)" panel after the header <dl>, the block HTML-escaped inside `<pre>` (a forged `<script>`/entity line is inert), capped at 64 KiB with a visible truncation note, and omitted entirely when the block is empty | R7, R19, S30 |
+| MA-145 | U | the envelope Fingerprint (and the fallback content Identity) is unchanged when only TransportHeaders differs — the sender-influenced block is excluded from identity and never indexed | R3, R1, S30 |
 | MA-103 | U | a missing -input path is refused before any output dir, lock, last-run record or attention sidecar is created, naming the path; a healthy source exports (positive twin) | R12, S9 |
 | MA-104 | U | printSummary prints one coherent Verification line (still-missing/source-empty/not-yet-re-examined/re-examined=Retried/report path only when a report exists) and one -raw no-op WARNING when raw was asked for but no .eml was written | R1, R12 |
 | MA-105 | U | export -list previews the stores that would be archived (one per line, rough size) and exits 0 without exporting or creating the output dir | R12 |
