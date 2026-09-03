@@ -162,9 +162,9 @@ and the MA-39 walk.
    archive.
 
 A run and `verify` warn when a raw-capable source is archived **without** `-raw`,
-and `status` reports "not extractable (no preserved originals)" for such an
-archive, so the capture-time dependency is visible before the source is deleted
-(PC15).
+so the capture-time dependency is visible before the source is deleted (PC15). A
+`status` line reporting "not extractable (no preserved originals)" is a small
+follow-up (it needs a manifest EML-count surface) and is not built in this slice.
 
 ### 3.3 Message state (slice C, builds on A; PC16–PC17)
 
@@ -233,7 +233,8 @@ archive, so the capture-time dependency is visible before the source is deleted
   stored; when a recorded fixity digest exists it is checked first, otherwise the
   output is "as stored — run `verify` first". An archive built without `-raw`, or
   any PST/OST archive, yields nothing to extract; that is stated at capture,
-  `verify`, `status`, and use, with the remedy named. No re-serialized original is
+  `verify`, and use, with the remedy named (a `status` extractability line is a
+  noted follow-up). No re-serialized original is
   ever written, so nothing `extract` emits is a forgery. mbox is mboxrd; `-format
   eml` is byte-exact.
 - Message state is a **snapshot at capture time**, shown as captured, excluded
