@@ -13,17 +13,60 @@ import (
 	"mail-archive-tool/internal/model"
 )
 
+// ArchiveCSP is the Content-Security-Policy every exported document carries as
+// a <meta> (browsers enforce it on file://, where no header exists) and that
+// `serve` sends as a header for archived files: no scripts, no remote loads
+// (tracking pixels, remote CSS/fonts/frames), no <base> rewriting, no form
+// submission. Inline styles and data: images/fonts — what real mail needs to
+// render — stay allowed. One constant, so the two surfaces cannot drift (R19).
+const ArchiveCSP = "default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:; base-uri 'none'; form-action 'none'"
+
 var (
 	reBodyOpen = regexp.MustCompile(`(?i)<body[^>]*>`)
 	reHeadOpen = regexp.MustCompile(`(?i)<head[^>]*>`)
+	reHTMLOpen = regexp.MustCompile(`(?i)<html[^>]*>`)
 	reHasHTML  = regexp.MustCompile(`(?i)<html[\s>]`)
 	reCharset  = regexp.MustCompile(`(?i)charset`)
+	// Mail-supplied http-equiv metas that would make an archived page navigate
+	// (refresh — CSP cannot restrain it) or carry a policy of the mail's own.
+	reHostileMeta = regexp.MustCompile(`(?i)(<meta\b[^>]*\bhttp-equiv\s*=\s*["']?\s*)(refresh|content-security-policy)\b`)
 )
+
+// inertMetas are the first children of every exported document's <head>: the
+// archive policy (enforced by browsers on file://) and a no-referrer rule.
+// Placement is load-bearing — a meta CSP governs only what is parsed after it.
+const inertMetas = `<meta http-equiv="Content-Security-Policy" content="` + ArchiveCSP + `">` + "\n" +
+	`<meta name="referrer" content="no-referrer">`
+
+// neutralizeMetas defangs mail-supplied refresh / policy metas by renaming
+// their http-equiv value; the tag stays in the document (content preserved,
+// nothing silently dropped) but no browser acts on it.
+func neutralizeMetas(doc string) string {
+	return reHostileMeta.ReplaceAllString(doc, "${1}x-mailarchive-neutralized-${2}")
+}
+
+// injectHead makes the inert metas (and a charset, when the document declares
+// none) the first children of <head>, creating the <head> after <html> when the
+// message's document has none.
+func injectHead(doc string) string {
+	metas := inertMetas
+	if !reCharset.MatchString(doc) {
+		metas += "\n<meta charset=\"utf-8\">"
+	}
+	if reHeadOpen.MatchString(doc) {
+		return replaceFirst(doc, reHeadOpen, func(tag string) string { return tag + "\n" + metas })
+	}
+	if reHTMLOpen.MatchString(doc) {
+		return replaceFirst(doc, reHTMLOpen, func(tag string) string { return tag + "\n<head>\n" + metas + "\n</head>" })
+	}
+	return "<head>\n" + metas + "\n</head>\n" + doc
+}
 
 const docTemplate = `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
+` + inertMetas + `
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>%s</title>
 <style>
@@ -59,14 +102,14 @@ func Render(m *model.Message) ([]byte, map[int]bool, error) {
 	// When the message carries its own full HTML document, preserve it (its
 	// <head> styles matter) and inject our metadata header into its <body>.
 	if isHTML && reHasHTML.MatchString(body) && reBodyOpen.MatchString(body) {
-		doc := ensureCharset(body)
+		doc := injectHead(neutralizeMetas(body))
 		doc = replaceFirst(doc, reBodyOpen, func(tag string) string { return tag + "\n" + header })
 		return []byte(doc), consumed, nil
 	}
 
 	var inner string
 	if isHTML {
-		inner = body // HTML fragment
+		inner = neutralizeMetas(body) // HTML fragment (a meta refresh in a body is honoured by browsers)
 	} else {
 		inner = `<pre class="plain">` + html.EscapeString(body) + `</pre>`
 	}
@@ -161,20 +204,6 @@ func embedInlineImages(body string, atts []model.Attachment, consumed map[int]bo
 		consumed[i] = true
 	}
 	return body
-}
-
-// ensureCharset injects a UTF-8 charset meta into the document head if none is
-// declared, so browsers render the archived HTML with the right encoding.
-func ensureCharset(doc string) string {
-	if reCharset.MatchString(doc) {
-		return doc
-	}
-	if reHeadOpen.MatchString(doc) {
-		return replaceFirst(doc, reHeadOpen, func(tag string) string {
-			return tag + "\n<meta charset=\"utf-8\">"
-		})
-	}
-	return doc
 }
 
 // replaceFirst replaces only the first match of re in s using repl.

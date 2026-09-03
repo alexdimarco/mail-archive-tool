@@ -2,6 +2,7 @@ package index
 
 import (
 	"fmt"
+	"html"
 	"strings"
 	"time"
 )
@@ -28,7 +29,21 @@ type Result struct {
 	Date        time.Time `json:"date"`
 	Path        string    `json:"path"`
 	HasAttach   bool      `json:"hasAttach"`
-	Snippet     string    `json:"snippet"` // may contain <mark> highlights
+	Snippet     string    `json:"snippet"` // HTML-escaped text; only the index's own <mark> tags are live
+}
+
+// Snippet highlight sentinels: FTS5 wraps matches in these control characters
+// (never present in mail text), the text is HTML-escaped, and only then are
+// they turned into <mark> tags — so a body containing markup can never reach
+// the UI live (R19/R8).
+const snipOpen, snipClose = "\x02", "\x03"
+
+// safeSnippet escapes a raw snippet and turns the highlight sentinels into
+// <mark> tags.
+func safeSnippet(raw string) string {
+	s := html.EscapeString(raw)
+	s = strings.ReplaceAll(s, snipOpen, "<mark>")
+	return strings.ReplaceAll(s, snipClose, "</mark>")
 }
 
 // FolderCount is a folder facet with its message count.
@@ -51,14 +66,16 @@ func (ix *Index) Search(q Query) ([]Result, int, error) {
 	match := ftsMatch(q.Text)
 
 	var (
-		fromWhere string
-		selectCol string
-		countExpr string
-		baseArgs  []any
+		fromWhere  string
+		selectCol  string
+		countExpr  string
+		baseArgs   []any
+		selectArgs []any // bound parameters used by the SELECT list (before the WHERE args)
 	)
 	if match != "" {
 		selectCol = `d.subject, d.sender_name, d.sender_email, d.folder, d.date, d.path, d.has_attach,
-			snippet(docs_fts, ` + fmt.Sprint(bodyColumn) + `, '<mark>', '</mark>', '… ', 12)`
+			snippet(docs_fts, ` + fmt.Sprint(bodyColumn) + `, ?, ?, '… ', 12)`
+		selectArgs = []any{snipOpen, snipClose}
 		fromWhere = `FROM docs_fts JOIN docs d ON d.id = docs_fts.rowid WHERE docs_fts MATCH ?`
 		countExpr = `SELECT count(*) FROM docs_fts JOIN docs d ON d.id = docs_fts.rowid WHERE docs_fts MATCH ?`
 		baseArgs = append(baseArgs, match)
@@ -83,7 +100,7 @@ func (ix *Index) Search(q Query) ([]Result, int, error) {
 
 	// Page of results.
 	sqlStr := "SELECT " + selectCol + " " + fromWhere + filters + " ORDER BY " + order + " LIMIT ? OFFSET ?"
-	pageArgs := append(append([]any{}, whereArgs...), q.Limit, q.Offset)
+	pageArgs := append(append(append([]any{}, selectArgs...), whereArgs...), q.Limit, q.Offset)
 
 	rows, err := ix.db.Query(sqlStr, pageArgs...)
 	if err != nil {
@@ -105,6 +122,7 @@ func (ix *Index) Search(q Query) ([]Result, int, error) {
 			r.Date = time.Unix(date, 0).UTC()
 		}
 		r.HasAttach = hasAttach != 0
+		r.Snippet = safeSnippet(r.Snippet)
 		results = append(results, r)
 	}
 	return results, total, rows.Err()

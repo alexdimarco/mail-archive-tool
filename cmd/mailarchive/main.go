@@ -198,10 +198,19 @@ func runServe(args []string) error {
 	count, _ := ix.Count()
 	handler := server.New(*out, ix)
 
+	if !server.IsLoopback(*addr) {
+		fmt.Fprintf(os.Stderr, "WARNING: serve has no authentication. Binding %s exposes every archived message to anyone who can reach this machine on that port; use 127.0.0.1 (the default) unless you mean it.\n", *addr)
+	}
 	fmt.Printf("Serving %d indexed messages from %s\n", count, *out)
 	fmt.Printf("Search UI:  http://%s/\n", *addr)
 	fmt.Println("Press Ctrl-C to stop.")
-	return http.ListenAndServe(*addr, handler)
+	srv := &http.Server{
+		Addr:              *addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second, // a stalled client cannot hold a connection open forever
+		IdleTimeout:       2 * time.Minute,
+	}
+	return srv.ListenAndServe()
 }
 
 var markTags = regexp.MustCompile(`</?mark>`)

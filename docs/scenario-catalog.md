@@ -80,6 +80,14 @@ an invariant is the thing that is wrong.
   permission, so a mailbox is never modified); and an incremental re-run archives
   zero new items and re-downloads no already-archived message body, matched by
   Internet-Message-ID.
+- **R19 — Offline-inert archive.** Every exported `.html` is safe to open from
+  disk: its `<head>` begins with a Content-Security-Policy meta identical to the
+  policy `serve` sends (no scripts, no remote loads, no `<base>`, no forms) and a
+  no-referrer meta, placed before any mail-supplied markup; mail-supplied
+  `refresh` and `content-security-policy` metas are neutralized. `serve` sends
+  that policy for archived files, a `script-src 'self'` policy for its own UI,
+  HTML-escapes search snippets, never follows a symlink out of the archive root,
+  and warns when bound to a non-loopback address.
 
 ## 3. Scenarios
 
@@ -105,6 +113,8 @@ an invariant is the thing that is wrong.
 | S18 A corrupt/truncated `.pst`/`.ost` (orphaned stub, bad OST variant) that panics go-pst | R10 | `Open` fails with a clean error; no panic escapes; the run continues and the no-console GUI never exits silently | MA-57 |
 | S19 A live Exchange/IMAP `.ost` go-pst can't read; operator uses `-outlook` / the GUI Outlook-app option | R16 | on Windows, Outlook writes a clean `.pst` per account that archives normally; off Windows it refuses legibly | MA-58, MA-59, MA-60 |
 | S20 Server-side archive of a (large) M365 mailbox via an app-only Graph grant | R17, R2, R9 | full first capture; incremental re-run adds nothing and re-downloads nothing; read-only | MA-61, MA-62, MA-63, MA-64 |
+| S21 A hostile email (script, tracking pixel, remote CSS, `<base>`, meta refresh) is archived and opened from disk | R19, R7 | renders inertly: policy meta precedes the mail's markup; refresh neutralized; content preserved | MA-80 |
+| S22 `serve` faces a hostile archive or network: script in a body/snippet, a symlink inside the archive, a non-loopback bind | R19, R4, R8 | UI/API/file responses carry a strict policy; snippets are escaped; symlinked paths are 404; non-loopback bind warns | MA-81, MA-82, MA-83, MA-84 |
 
 Acknowledged limits (not defects): very large attachments are buffered whole in
 memory (bounded by the largest single attachment, not the mailbox) — recorded
@@ -182,6 +192,11 @@ Tiers: **U** unit property (every commit) · **S** structural whole-tree walk
 | MA-63 | U | graph subcommand refuses missing -out/-tenant/-client-id/-mailbox/secret with a typed non-zero naming the problem | R17, R12 |
 | MA-64 | L | end-to-end against a real M365 tenant (app-only consent, throttling, real folder set) — **pending**, validated on a live tenant | R17 |
 | MA-65 | U | schtasks /TR quotes the executable and every argument containing spaces, in both the install argv and the pasteable preview; splitting the run string with Windows C-runtime argv rules round-trips to the exact exe+args | R14, S14 |
+| MA-80 | U | Render (both paths) starts `<head>` with the archive CSP meta + no-referrer meta before mail markup; neutralizes mail `refresh`/`content-security-policy` metas; adds a `<head>` when missing; body preserved | R19, R7, S21 |
+| MA-81 | U | search snippets are HTML-escaped with only the tool's own `<mark>` tags live, in FTS and browse modes | R19, R8, S22 |
+| MA-82 | U | `serve` refuses a path whose resolved location is outside the archive root (symlink escape → 404) and does not list directories lacking an index.html | R19, R4, S22 |
+| MA-83 | U | `serve` sends the archive CSP + nosniff for files, and a `script-src 'self'` CSP + nosniff + frame-ancestors none for the UI and API; the UI carries no inline script | R19, R4, S22 |
+| MA-84 | U | loopback-address classification: 127.0.0.1/::1/localhost are loopback; an empty host (all interfaces), 0.0.0.0, and LAN addresses are not | R19, S22 |
 
 Rows MA-29..MA-37 were added by the adversarial pass; see
 `docs/review-adversarial.md` for the findings they encode. Rows MA-40..MA-44

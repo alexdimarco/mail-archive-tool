@@ -1,7 +1,8 @@
 package server
 
-// pageHTML is the single-page search + reader UI. It is self-contained (inline
-// CSS/JS) and talks to /api/search, /api/facets, and /files/.
+// pageHTML is the single-page search + reader UI (inline CSS; its script is
+// served separately at /app.js so the page runs under script-src 'self'). It
+// talks to /api/search, /api/facets, and /files/.
 const pageHTML = `<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -54,8 +55,11 @@ button:disabled{opacity:.4;cursor:default}
   <div id="results"></div>
   <div class="pager"><button id="prev">‹ Prev</button><button id="next">Next ›</button></div>
 </div>
-<script>
-const $=s=>document.querySelector(s);
+<script src="/app.js"></script>
+</body></html>`
+
+// appJS is the UI script, served at /app.js.
+const appJS = `const $=s=>document.querySelector(s);
 let offset=0,limit=50,lastTotal=0;
 const state=()=>({q:$('#q').value,sort:$('#sort').value,folder:$('#folder').value,year:$('#year').value,attach:$('#attach').checked?'1':'',limit,offset});
 
@@ -75,7 +79,7 @@ function render(d){
   if(!d.results||!d.results.length){box.innerHTML='<div class="empty">No matches.</div>';}
   for(const m of (d.results||[])){
     const el=document.createElement('div');el.className='hit';
-    // snippet from server may include <mark>; it is trusted text from our own index.
+    // The snippet is HTML-escaped server-side; only the index's own <mark> tags are live (R19).
     el.innerHTML=
       '<div class="subj"><a href="'+fileURL(m.path)+'" target="_blank" rel="noopener">'+(esc(m.subject)||'(no subject)')+'</a></div>'+
       '<div class="line"><span>'+(esc(m.senderName)||esc(m.senderEmail)||'')+'</span>'+
@@ -100,5 +104,4 @@ for(const id of ['#sort','#folder','#year','#attach'])$(id).addEventListener('ch
 $('#prev').onclick=()=>{if(offset>0){offset-=limit;search();window.scrollTo(0,0);}};
 $('#next').onclick=()=>{if(offset+limit<lastTotal){offset+=limit;search();window.scrollTo(0,0);}};
 facets();search();
-</script>
-</body></html>`
+`

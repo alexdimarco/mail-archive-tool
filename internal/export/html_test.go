@@ -124,3 +124,93 @@ func TestWriteZipSkipsEmpty(t *testing.T) {
 		t.Errorf("expected empty=[empty.txt], got %v", empty)
 	}
 }
+
+// covers: MA-80, R19, S21
+// An exported document is inert when opened from disk (file://), where no HTTP
+// header can protect it: on BOTH render paths (a message carrying its own
+// <html> document, and a fragment/plain body placed in our template) the
+// document's <head> starts with the archive Content-Security-Policy meta — the
+// same policy `serve` sends — and a no-referrer meta, placed BEFORE any
+// mail-supplied <base>/<link>/<style>; navigation-triggering and policy-relaxing
+// http-equiv metas from the mail (refresh, content-security-policy) are
+// neutralized; a document with <html> but no <head> gets one.
+func TestRenderIsInertOffline(t *testing.T) {
+	cspMeta := `<meta http-equiv="Content-Security-Policy" content="` + ArchiveCSP + `">`
+
+	// 1. Full document with hostile head + body.
+	full := &model.Message{
+		Subject: "Your account needs attention",
+		HTMLBody: `<html><head>` +
+			`<base href="http://tracker.evil.example/">` +
+			`<meta http-equiv="Refresh" content="0;url=http://tracker.evil.example/go">` +
+			`<meta HTTP-EQUIV='content-security-policy' content="default-src *">` +
+			`<link rel="stylesheet" href="http://tracker.evil.example/x.css">` +
+			`</head><body><img src="http://tracker.evil.example/pixel.png"><script>alert(1)</script></body></html>`,
+	}
+	out, _, err := Render(full)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	cspAt := strings.Index(s, cspMeta)
+	if cspAt < 0 {
+		t.Fatalf("full document lacks the archive CSP meta:\n%s", s)
+	}
+	headAt := strings.Index(strings.ToLower(s), "<head>")
+	baseAt := strings.Index(s, "<base ")
+	if headAt < 0 || cspAt < headAt || (baseAt >= 0 && cspAt > baseAt) {
+		t.Errorf("CSP meta must be the first child of <head>, before mail-supplied <base>: head=%d csp=%d base=%d", headAt, cspAt, baseAt)
+	}
+	if !strings.Contains(s, `<meta name="referrer" content="no-referrer">`) {
+		t.Error("missing no-referrer meta")
+	}
+	low := strings.ToLower(s)
+	if strings.Contains(low, `http-equiv="refresh"`) || strings.Contains(low, `http-equiv='refresh'`) || strings.Contains(low, `http-equiv=refresh`) {
+		t.Error("mail-supplied meta refresh survived")
+	}
+	if strings.Count(low, `http-equiv="content-security-policy"`)+strings.Count(low, `http-equiv='content-security-policy'`) != 1 {
+		t.Errorf("exactly one live Content-Security-Policy meta (ours) expected:\n%s", s)
+	}
+	if !strings.Contains(s, "tracker.evil.example/pixel.png") {
+		t.Error("body content must be preserved verbatim (the CSP, not stripping, is the control)")
+	}
+
+	// 2. Fragment body in our template: the meta refresh in the body is neutralized
+	//    and the template head carries the policy.
+	frag := &model.Message{
+		Subject:  "Fragment",
+		HTMLBody: `<p>hi</p><meta http-equiv=refresh content="5;url=http://tracker.evil.example/f">`,
+	}
+	out, _, err = Render(frag)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s = string(out)
+	if !strings.Contains(s, cspMeta) {
+		t.Error("template document lacks the archive CSP meta")
+	}
+	if strings.Contains(strings.ToLower(s), "http-equiv=refresh") {
+		t.Error("meta refresh inside a fragment body survived")
+	}
+
+	// 3. A document with <html> but no <head> gets one, carrying the policy.
+	noHead := &model.Message{Subject: "NoHead", HTMLBody: `<html><body><p>x</p></body></html>`}
+	out, _, err = Render(noHead)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s = string(out)
+	if !strings.Contains(s, cspMeta) || strings.Index(s, cspMeta) > strings.Index(s, "<body") {
+		t.Errorf("head-less document must gain a <head> with the policy before <body>:\n%s", s)
+	}
+
+	// 4. Plain-text messages render through the template too.
+	plain := &model.Message{Subject: "Plain", PlainBody: "hello"}
+	out, _, err = Render(plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), cspMeta) {
+		t.Error("plain-body document lacks the archive CSP meta")
+	}
+}

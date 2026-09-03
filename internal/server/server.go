@@ -5,11 +5,18 @@ package server
 
 import (
 	"encoding/json"
+	"io/fs"
+	"net"
 	"net/http"
+	"os"
+	"path"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
 
+	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/index"
 )
 
@@ -25,6 +32,12 @@ func New(outDir string, ix *index.Index) http.Handler {
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Write([]byte(pageHTML))
+	})
+	// The UI's script is a same-origin file, never inline, so the UI can run
+	// under script-src 'self' (R19).
+	mux.HandleFunc("/app.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		w.Write([]byte(appJS))
 	})
 
 	mux.HandleFunc("/api/search", func(w http.ResponseWriter, r *http.Request) {
@@ -53,26 +66,115 @@ func New(outDir string, ix *index.Index) http.Handler {
 		writeJSON(w, map[string]any{"folders": folders, "years": years, "total": count})
 	})
 
-	// Serve the exported HTML files and attachment zips, under a strict CSP so
-	// archived mail can't run scripts or phone home when viewed here (R4).
-	files := http.StripPrefix("/files/", http.FileServer(http.Dir(outDir)))
-	mux.Handle("/files/", secureFileHeaders(files))
+	// Serve the exported HTML files and attachment zips from a file system that
+	// never resolves outside the archive root (R4/R19); the policy headers are
+	// applied by secureHeaders below.
+	files := http.StripPrefix("/files/", http.FileServer(newContainedDir(outDir)))
+	mux.Handle("/files/", files)
 
-	return mux
+	return secureHeaders(mux)
 }
 
-// secureFileHeaders wraps the archived-file server with a Content-Security-Policy
-// that blocks scripts and all remote loads (tracking pixels included), while
-// still allowing the inline styles and data: images real mail uses. A crafted
-// email's HTML therefore renders inertly instead of executing in the local
-// server's origin.
-func secureFileHeaders(next http.Handler) http.Handler {
+const (
+	// uiCSP governs the search UI itself: its own same-origin script and API
+	// calls, inline styles, data: images; nothing remote, never framed.
+	uiCSP = "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'self'; img-src data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+	// apiCSP: JSON is never a document; deny everything, never framed.
+	apiCSP = "default-src 'none'; frame-ancestors 'none'"
+)
+
+// secureHeaders sets a Content-Security-Policy on every response — the archive
+// policy (identical to the meta every exported file carries) for archived
+// files, so a crafted email renders inertly instead of executing in the local
+// server's origin; the UI/API policies for the tool's own pages — plus nosniff
+// and no-referrer.
+func secureHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Security-Policy",
-			"default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:; base-uri 'none'; form-action 'none'")
-		w.Header().Set("X-Content-Type-Options", "nosniff")
+		h := w.Header()
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/files/"):
+			h.Set("Content-Security-Policy", export.ArchiveCSP)
+		case strings.HasPrefix(r.URL.Path, "/api/"):
+			h.Set("Content-Security-Policy", apiCSP)
+		default:
+			h.Set("Content-Security-Policy", uiCSP)
+		}
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("Referrer-Policy", "no-referrer")
 		next.ServeHTTP(w, r)
 	})
+}
+
+// containedDir is an http.FileSystem rooted at a directory that refuses any
+// path whose resolved location (symlinks followed) lies outside that root, and
+// that never lists a directory: a directory is reachable only through its own
+// index.html (the archive's pages are the navigation). http.Dir alone blocks
+// ".." in the URL but happily follows an on-disk symlink out of the root.
+type containedDir struct {
+	root string // as given
+	real string // symlink-resolved, absolute
+}
+
+func newContainedDir(root string) containedDir {
+	real := root
+	if r, err := filepath.EvalSymlinks(root); err == nil {
+		real = r
+	}
+	if a, err := filepath.Abs(real); err == nil {
+		real = a
+	}
+	return containedDir{root: root, real: filepath.Clean(real)}
+}
+
+func (c containedDir) Open(name string) (http.File, error) {
+	rel := filepath.FromSlash(path.Clean("/" + name))
+	resolved, err := filepath.EvalSymlinks(filepath.Join(c.root, rel))
+	if err != nil {
+		return nil, err // a missing file surfaces as fs.ErrNotExist → 404
+	}
+	if a, err := filepath.Abs(resolved); err == nil {
+		resolved = a
+	}
+	if !within(c.real, resolved) {
+		return nil, fs.ErrNotExist
+	}
+	f, err := os.Open(resolved)
+	if err != nil {
+		return nil, err
+	}
+	if st, err := f.Stat(); err == nil && st.IsDir() {
+		if _, err := os.Stat(filepath.Join(resolved, "index.html")); err != nil {
+			f.Close()
+			return nil, fs.ErrNotExist
+		}
+	}
+	return f, nil
+}
+
+// within reports whether p is root or lies beneath it (case-insensitively on
+// Windows, whose file systems are).
+func within(root, p string) bool {
+	if runtime.GOOS == "windows" {
+		root, p = strings.ToLower(root), strings.ToLower(p)
+	}
+	return p == root || strings.HasPrefix(p, root+string(filepath.Separator))
+}
+
+// IsLoopback reports whether addr (host:port) binds only to this machine —
+// "localhost" or a loopback IP. An empty host (":8099") binds every interface,
+// so it is NOT loopback: `serve` has no authentication, and anything else
+// exposes the whole archive to the network.
+func IsLoopback(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+	}
+	host = strings.Trim(host, "[]")
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // parseQuery builds an index.Query from the request, honouring both explicit
