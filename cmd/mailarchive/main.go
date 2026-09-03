@@ -18,6 +18,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -245,28 +246,37 @@ func runSearch(args []string) error {
 	fs := flag.NewFlagSet("mailarchive search", flag.ContinueOnError)
 	out := fs.String("out", ".", "export directory to search (contains search.db)")
 	limit := fs.Int("limit", 20, "maximum results")
-	folder := fs.String("folder", "", "restrict to a folder (and its subfolders)")
-	sender := fs.String("sender", "", "restrict to a sender (substring)")
-	afterStr := fs.String("after", "", "only items on/after this date (YYYY-MM-DD)")
-	beforeStr := fs.String("before", "", "only items before this date (YYYY-MM-DD)")
+	folder := fs.String("folder", "", "restrict to a folder (and its subfolders); a folder: token in the query overrides this")
+	sender := fs.String("sender", "", "restrict to a sender (substring); a from: token in the query overrides this")
+	afterStr := fs.String("after", "", "only items on/after this date (YYYY, YYYY-MM or YYYY-MM-DD); an after: token overrides this")
+	beforeStr := fs.String("before", "", "only items before this date (YYYY, YYYY-MM or YYYY-MM-DD); a before: token overrides this")
 	attach := fs.Bool("attach", false, "only items with attachments")
+	asJSON := fs.Bool("json", false, "print matches as a JSON array on stdout (the N-match line goes to stderr; snippets carry no <mark>)")
+	asPaths := fs.Bool("paths", false, "print one archive-relative path per match on stdout (the N-match line goes to stderr)")
+	nul := fs.Bool("0", false, "with -paths, separate paths with NUL instead of newline (for xargs -0)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if *asJSON && *asPaths {
+		return errors.New("-json and -paths cannot be combined; pick one machine format")
+	}
 
-	q := index.Query{
-		Text:      strings.Join(fs.Args(), " "),
+	base := index.Query{
 		Folder:    *folder,
 		Sender:    *sender,
 		HasAttach: *attach,
 		Limit:     *limit,
 	}
-	if t, err := time.Parse("2006-01-02", *afterStr); err == nil {
-		q.After = t
+	if t, ok := index.ParseDate(*afterStr); ok {
+		base.After = t
 	}
-	if t, err := time.Parse("2006-01-02", *beforeStr); err == nil {
-		q.Before = t
+	if t, ok := index.ParseDate(*beforeStr); ok {
+		base.Before = t
 	}
+	// The positional args carry the same inline grammar as the serve box: a
+	// from:/folder:/after:/before:/has: token here means exactly what it means
+	// there, and overrides the matching flag.
+	q := index.ParseQuery(strings.Join(fs.Args(), " "), base)
 
 	ix, err := index.OpenReadonly(filepath.Join(*out, "search.db"))
 	if err != nil {
@@ -277,6 +287,13 @@ func runSearch(args []string) error {
 	results, total, err := ix.Search(q)
 	if err != nil {
 		return err
+	}
+
+	switch {
+	case *asJSON:
+		return emitSearchJSON(results, total, len(results))
+	case *asPaths:
+		return emitSearchPaths(results, total, len(results), *nul)
 	}
 
 	fmt.Printf("%d match(es)%s:\n\n", total, moreNote(total, len(results)))
@@ -300,6 +317,47 @@ func runSearch(args []string) error {
 		}
 		fmt.Printf("    -> %s\n\n", r.Path)
 	}
+	return nil
+}
+
+// emitSearchJSON writes the matches as a JSON array on stdout (only data), the
+// N-match line on stderr (X8). Each Snippet keeps its HTML-escaped text but
+// loses the index's <mark> highlight tags, which are a UI concern.
+func emitSearchJSON(results []index.Result, total, shown int) error {
+	out := make([]index.Result, len(results))
+	copy(out, results)
+	for i := range out {
+		out[i].Snippet = markTags.ReplaceAllString(out[i].Snippet, "")
+	}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(out); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "%d match(es)%s\n", total, moreNote(total, shown))
+	return nil
+}
+
+// emitSearchPaths writes one archive-relative path per match on stdout (only
+// data), separated by newline or NUL, the N-match line on stderr (X8).
+func emitSearchPaths(results []index.Result, total, shown int, nul bool) error {
+	w := bufio.NewWriter(os.Stdout)
+	sep := byte('\n')
+	if nul {
+		sep = 0
+	}
+	for _, r := range results {
+		if _, err := w.WriteString(r.Path); err != nil {
+			return err
+		}
+		if err := w.WriteByte(sep); err != nil {
+			return err
+		}
+	}
+	if err := w.Flush(); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "%d match(es)%s\n", total, moreNote(total, shown))
 	return nil
 }
 

@@ -250,17 +250,32 @@ mailarchive serve -out ./export          # then open http://127.0.0.1:8099/
 
 Ranked full-text over subject, body, people and attachment names, with filters
 for folder, year and has-attachment. Click a result to read the email; grab its
-attachments as a zip. The box also understands tokens like
-`from:bob after:2025-01 invoice`. `serve` has **no authentication**: it binds
-to localhost by default and warns loudly if you bind it elsewhere. Archived
-pages are served under the same strict policy they carry, symlinks cannot lead
-outside the archive, and search snippets are escaped.
+attachments as a zip. The box also understands inline tokens —
+`from:bob folder:Inbox after:2025-01 before:2025-07 has:attach invoice` — where a
+date can be a whole year (`2025`), a month (`2025-01`) or a day (`2025-01-15`).
+`serve` has **no authentication**: it binds to localhost by default and warns
+loudly if you bind it elsewhere. Archived pages are served under the same strict
+policy they carry, symlinks cannot lead outside the archive, and search snippets
+are escaped.
 
 **Terminal search** (no browser):
 
 ```sh
 mailarchive search -out ./export from:bob invoice
 mailarchive search -out ./export -folder Inbox -after 2025-01-01 contract
+```
+
+Terminal search understands exactly the same inline tokens as the box
+(`from:`, `folder:`, `after:`, `before:`, `has:attach`), so the query above is
+identical to `-sender bob invoice`; a token overrides the matching flag. For
+scripting, add `-json` (a JSON array of matches on stdout, snippets without the
+`<mark>` highlights), or `-paths` (one archive-relative path per match, `-0` to
+NUL-separate them for `xargs -0`); in either mode stdout carries only the data
+and the "N match(es)" line goes to stderr:
+
+```sh
+mailarchive search -out ./export -json from:bob invoice | jq '.[].subject'
+mailarchive search -out ./export -paths -0 has:attach | xargs -0 -n1 echo
 ```
 
 **Browsable pages** (no binary needed): open `./export/index.html` for a folder
