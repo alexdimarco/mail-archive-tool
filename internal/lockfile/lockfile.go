@@ -43,7 +43,7 @@ func AcquireAs(path, verb string) (*Lock, error) {
 	if fi, err := os.Lstat(path); err == nil && !fi.Mode().IsRegular() {
 		return nil, fmt.Errorf("lock %s is not a regular file (a symlink or special file was planted there); remove it", path)
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|noFollow, 0o644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|noFollow, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("open lock %s: %w", path, err)
 	}

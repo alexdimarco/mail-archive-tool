@@ -3,6 +3,7 @@ package lockfile
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -57,5 +58,27 @@ func TestLockHardening(t *testing.T) {
 	os.WriteFile(hostile, []byte("pid=1\x1b[2J\x07 started=now\r\nhost=evil"), 0o644)
 	if h := Holder(hostile); strings.ContainsAny(h, "\x1b\x07\r\n") {
 		t.Errorf("holder line carries control characters: %q", h)
+	}
+}
+
+// covers: MA-85, R5, S25
+// The lock file is created private like every other archive file (its holder
+// line names a pid and a host).
+func TestLockFileIsPrivate(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX modes")
+	}
+	path := filepath.Join(t.TempDir(), Name)
+	l, err := Acquire(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Release()
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode := fi.Mode().Perm(); mode != 0o600 {
+		t.Errorf("lock file mode = %o, want 600", mode)
 	}
 }

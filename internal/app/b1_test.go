@@ -1,6 +1,7 @@
 package app
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -20,5 +21,17 @@ func TestCanonicalJob(t *testing.T) {
 	}
 	if job := canonicalJob(Options{Out: "/a"}, "incremental"); job != nil {
 		t.Errorf("canonicalJob for a source-less run = %v, want nil", job)
+	}
+}
+
+// covers: MA-111, R18, S29
+// The recorded job carries absolute paths, so the remedy status prints is
+// pasteable from any working directory.
+func TestCanonicalJobAbsolutePaths(t *testing.T) {
+	job := canonicalJob(Options{Out: "rel/out", Inputs: []string{"rel/x.pst"}}, "incremental")
+	for i, tok := range job {
+		if (tok == "-out" || tok == "-input") && !filepath.IsAbs(job[i+1]) {
+			t.Errorf("recorded %s %q is not absolute", tok, job[i+1])
+		}
 	}
 }

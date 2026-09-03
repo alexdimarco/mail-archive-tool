@@ -1,7 +1,13 @@
 # Design — archive fidelity: store-scoped identity, fixity + `verify`, original headers, resilient Windows scheduling
 
-**Revision:** 2 (2026-09-03). **BUILD STATUS:** approved with conditions, not
-built — the 10-lens pre-code review is filed as
+**Revision:** 2 (2026-09-03). **BUILD STATUS:** built — merged as `76966a6`
+(slices a+b, MA-128..142, S30/S31), `b8a374b` (slice c, MA-143..145, S32) and
+`93e45bb` (slice d, MA-146..148; MA-47/65/73/79 reconciled). Deviation from
+FC6 as built: `verify` requires a recorded path's first segment to be a
+non-dotfile that resolves to a real directory under the root (it does not
+consult the token registry; every legitimately written first segment is a
+token, and containment is enforced component-wise regardless). The 10-lens
+pre-code review is filed as
 `docs/review-archive-fidelity-predesign.md` (GO_WITH_CONDITIONS; FC1–FC16 are
 folded into this revision). Four independent slices; each may ship in any
 order and carries its own adversarial pass.

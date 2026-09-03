@@ -348,12 +348,12 @@ func canonicalJob(opts Options, mode string) []string {
 	if len(opts.Inputs) == 0 && !opts.Auto {
 		return nil
 	}
-	job := []string{"-out", opts.Out, "-mode", mode}
+	job := []string{"-out", absOrSame(opts.Out), "-mode", mode}
 	if opts.Auto {
 		job = append(job, "-auto")
 	}
 	for _, in := range opts.Inputs {
-		job = append(job, "-input", in)
+		job = append(job, "-input", absOrSame(in))
 	}
 	if opts.CopyFirst {
 		job = append(job, "-copy-first")
@@ -362,6 +362,15 @@ func canonicalJob(opts Options, mode string) []string {
 		job = append(job, "-raw")
 	}
 	return job
+}
+
+// absOrSame returns p made absolute (so a recorded job is pasteable from any
+// directory), or p itself when it cannot be resolved.
+func absOrSame(p string) string {
+	if a, err := filepath.Abs(p); err == nil {
+		return a
+	}
+	return p
 }
 
 // recordRun finalizes the last-run record from the run's outcome.
@@ -502,6 +511,9 @@ func DiscoverInputs(inputs []string, auto bool) ([]string, error) {
 	for _, in := range inputs {
 		info, err := os.Stat(in)
 		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil, fmt.Errorf("input %s does not exist (check the path, or that the drive holding it is mounted)", in)
+			}
 			return nil, fmt.Errorf("input %s: %w", in, err)
 		}
 		if info.IsDir() {

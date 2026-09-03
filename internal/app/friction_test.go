@@ -41,7 +41,7 @@ func TestMissingInputRefusesBeforeCreatingAnything(t *testing.T) {
 	if err != nil {
 		code, msg = 1, err.Error()
 	}
-	assure.Refused(t, code, msg, assure.Code(1), assure.Names(missing),
+	assure.Refused(t, code, msg, assure.Code(1), assure.Names(missing, "does not exist", "mounted"),
 		assure.NoSideEffect(func() bool {
 			// No output dir means no lock, no manifest, no last-run, no sidecar.
 			_, e := os.Stat(out)

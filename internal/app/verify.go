@@ -524,9 +524,9 @@ func VerifySummary(r Report) []string {
 		out = append(out, fmt.Sprintf("recorded fixity for %d file(s) (baseline from current bytes)", r.Recorded))
 	}
 	for _, p := range r.Problems {
-		line := "  " + p.Kind + ": " + p.Path
+		line := "  " + p.Kind + ": " + rawPath(p.Path)
 		if p.Detail != "" {
-			line += " (" + p.Detail + ")"
+			line += " (" + rawPath(p.Detail) + ")"
 		}
 		out = append(out, line)
 	}

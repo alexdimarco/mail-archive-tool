@@ -565,3 +565,15 @@ func hasRawPathProblem(r Report, needle string) bool {
 	}
 	return false
 }
+
+// covers: MA-139, R4, R12, S31
+// A tampered manifest path or detail cannot drive the operator's terminal:
+// every printed problem line is control-character-free.
+func TestVerifySummaryStripsControlCharacters(t *testing.T) {
+	r := Report{Out: "/a", Problems: []Problem{{Path: "store/x\x1b[2J\n.html", Kind: "modified", Detail: "size 1\r\n2"}}}
+	for _, line := range VerifySummary(r) {
+		if strings.ContainsAny(line, "\x1b\r\n") {
+			t.Errorf("control characters printed: %q", line)
+		}
+	}
+}
