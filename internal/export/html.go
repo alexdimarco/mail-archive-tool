@@ -337,7 +337,9 @@ func renderHeader(m *model.Message, ctx RenderContext, consumed map[int]bool) st
 			}
 			truncated = true
 		}
-		b.WriteString(`<details class="mailarchive-headers"><summary>Transport headers as stored (unverified)</summary><pre>`)
+		b.WriteString(`<details class="mailarchive-headers"><summary>Transport headers as stored (unverified)</summary>`)
+		b.WriteString(`<p class="mailarchive-headers-note">These lines are supplied by the sending and relaying servers and can be forged — shown as stored, not proof of origin.</p>`)
+		b.WriteString(`<pre>`)
 		b.WriteString(html.EscapeString(text))
 		if truncated {
 			b.WriteString(" … (truncated)")

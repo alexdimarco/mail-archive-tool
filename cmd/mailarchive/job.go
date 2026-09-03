@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"mail-archive-tool/internal/outlookcom"
+	"mail-archive-tool/internal/schedule"
 )
 
 // The flag sets of the archiving verbs are built by these functions so that
@@ -391,6 +392,19 @@ func parseSince(s string) (time.Time, error) {
 // named after the schedule.
 func jobLogPath(out, name string) string {
 	return filepath.Join(out, name+".log")
+}
+
+// defaultScheduleName derives the scheduler entry name for a parsed job when the
+// operator gives no -name. A verify job gets a distinct "-verify" suffix so its
+// entry never overwrites the archive's backup schedule, whose default name
+// derives from the same -out (friction #4). The suffix stays SanitizeName-safe
+// and within MaxNameLen — the base "mailarchive-" + 8 hex is 20 characters.
+func defaultScheduleName(j job) string {
+	n := schedule.DefaultNameFor(j.out)
+	if j.verb == "verify" {
+		n += "-verify"
+	}
+	return n
 }
 
 // strayFlagRefusal explains a flat job flag placed before `--` while a `--` job

@@ -243,3 +243,18 @@ func TestFolderFilterPlaceholderScope(t *testing.T) {
 		t.Error("unpaginated folder should not carry the page-scope caveat")
 	}
 }
+
+// covers: MA-165, R7, S27
+// The archive's root index.html front-door note points the reader at
+// `mailarchive verify -out .` so integrity-checking the files is a step the
+// folder teaches, not out-of-band knowledge (friction #8).
+func TestRootPageVerifyPointer(t *testing.T) {
+	out := genFolder(t, map[string]int{"Inbox": 2}, 50)
+	root, err := os.ReadFile(filepath.Join(out, "index.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(root), "mailarchive verify -out .") {
+		t.Errorf("root front-door note does not point at `mailarchive verify -out .`:\n%s", root)
+	}
+}

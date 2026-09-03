@@ -45,7 +45,7 @@ explained in the sections below.
 | Mail program | Prepare once | First archive | Keep it current | What to know |
 |---|---|---|---|---|
 | **Outlook (classic) with a `.pst`** (POP, or an archive file) | nothing | `mailarchive -input x.pst -out ./archive` | `mailarchive schedule -out ./archive -input x.pst -copy-first -install` | `-copy-first` snapshots the file, so Outlook may stay open. |
-| **Outlook (classic) with Exchange / IMAP (`.ost`)** | Account Settings → Change → *Mail to keep offline* → **All**, then Send/Receive | Windows: `mailarchive -outlook -out ./archive` (Outlook writes clean `.pst`s first) or the GUI's *Outlook account (via Outlook app)*. Elsewhere: copy the `.ost` and `-input` it. | `mailarchive schedule -out ./archive -outlook -install` — runs while you are logged in. Run `mailarchive -outlook` once by hand first to clear Outlook's one-time "allow programmatic access" prompt; a scheduled run cannot answer it. | Some live `.ost` files cannot be read directly; the Outlook-app path is the reliable one. Outlook's one-time "allow programmatic access" prompt must be answered by hand once. |
+| **Outlook (classic) with Exchange / IMAP (`.ost`)** | Account Settings → Change → *Mail to keep offline* → **All**, then Send/Receive | Windows: `mailarchive -outlook -out ./archive` (Outlook writes clean `.pst`s first) or the GUI's *Outlook account (via Outlook app)*. Elsewhere: copy the `.ost` and `-input` it. | `mailarchive schedule -out ./archive -outlook -install` — runs while you are logged in. Run `mailarchive -outlook` once by hand first to clear Outlook's one-time "allow programmatic access" prompt; a scheduled run cannot answer it. | Some live `.ost` files cannot be read directly; the Outlook-app path is the reliable one. Outlook's one-time "allow programmatic access" prompt must be answered by hand once. Scheduled runs happen while you are logged in; a night the laptop merely sleeps is caught up when it wakes, but a night it is fully powered off is skipped (`status` shows it). |
 | **New Outlook / Outlook for Mac** | admin registers an app ([docs/graph-app-setup.md](docs/graph-app-setup.md)) | `mailarchive graph …` | `mailarchive schedule -install -- graph … -client-secret-file FILE` | No local files exist; only the server-side path works. |
 | **Thunderbird, IMAP account** | with Thunderbird **closed**: `mailarchive -enable-offline -sync-wait -mode full -input <ImapMail/account> -out ./archive` (it flips "keep messages on this computer" and waits for the sync) | that same command is the first archive | `mailarchive schedule -out ./archive -input <ImapMail/account> -install` | Thunderbird downloads bodies on demand; until it has them a message is archived as *still missing content* and filled by a later incremental run automatically. |
 | **Thunderbird, POP / Local Folders** | nothing | `mailarchive -input <Mail/Local Folders> -out ./archive` | `mailarchive schedule -out ./archive -input … -install` | Fully local; nothing to prepare. |
@@ -314,7 +314,11 @@ mailarchive search -out ./export -folder Inbox -after 2025-01-01 contract
 
 Terminal search understands exactly the same inline tokens as the box
 (`from:`, `folder:`, `after:`, `before:`, `has:attach`), so the query above is
-identical to `-sender bob invoice`; a token overrides the matching flag. For
+identical to `-sender bob invoice`; a token overrides the matching flag. A
+token's value may contain spaces if you quote it — `folder:"Sent Messages"` or
+`from:'a b'` — otherwise the value ends at the first space (a bare
+`folder:Sent Messages` would match nothing); the box and the terminal read the
+quotes the same way. For
 scripting, add `-json` (a JSON array of matches on stdout, snippets without the
 `<mark>` highlights), or `-paths` (one archive-relative path per match, `-0` to
 NUL-separate them for `xargs -0`); in either mode stdout carries only the data
@@ -662,6 +666,13 @@ not collide with the backup schedule (both derive their name from `-out`):
 ```sh
 mailarchive schedule -interval weekly -at 05:00 -name mailarchive-verify -install -- verify -out ./archive
 ```
+
+A scheduled verify automatically gets its own entry name (`mailarchive-<hash of
+-out>-verify`), distinct from the backup's, so the two coexist and neither
+overwrites the other — you don't need to pass `-name`. If you point the verify at
+the **same cadence and time** the archive's backup already uses, `schedule`
+refuses (the two would hold the lock against each other on every overlap); pick a
+different `-at` or `-interval`, as above.
 
 > **Upgrading a shared `-out`:** an archive a newer mailarchive has written must
 > not then be written by an older one (a shared or cloud-synced output). Older

@@ -294,3 +294,75 @@ func sortedPaths(p ...string) []string {
 	sort.Strings(out)
 	return out
 }
+
+// covers: MA-161, R8, R19, S22
+// The plain (human) `search` output control-scrubs every mail-derived field
+// before it reaches the terminal: a message whose subject, body and sender carry
+// raw ESC/BEL/other C0-C1 controls prints with no control byte other than the
+// printer's own newlines, so a hostile email cannot inject an ANSI/OSC escape
+// sequence into the operator's terminal. The fields are scrubbed, not dropped —
+// their visible text still prints.
+func TestSearchPlainOutputScrubsControlChars(t *testing.T) {
+	dir := t.TempDir()
+	ix, err := index.Open(filepath.Join(dir, "search.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A hostile email: CSI erase-line + colour in the subject, an OSC window-title
+	// set with a BEL terminator, a conceal sequence next to the searchable term in
+	// the body, and control bytes in the sender name.
+	hostile := &model.Message{
+		Subject:     "invoice \x1b[2K\x1b[1;31mPWNED-SUBJECT\x1b[0m \x1b]0;hijacked\x07",
+		SenderName:  "e\x1bvil \x07sender",
+		SenderEmail: "evil@example.com",
+		To:          "me@example.com",
+		Received:    time.Date(2025, 3, 1, 9, 0, 0, 0, time.UTC),
+		HTMLBody:    "<p>the quarterly \x1b[8mHIDDEN\x1b[0m invoice \x1b]0;evil\x07 report</p>",
+	}
+	if err := ix.Add("store", []string{"Inbox"}, hostile, "store/Inbox/h.html", "kHostile"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ix.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	code, stdout, stderr := runCLIOut(t, "search", "-out", dir, "invoice")
+	if code != 0 {
+		t.Fatalf("search exited %d: %s", code, stderr)
+	}
+	// Not one control rune reaches the terminal except the printer's own newlines.
+	for i, r := range stdout {
+		if r == '\n' {
+			continue
+		}
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) {
+			t.Fatalf("plain search output carries control rune %#U at offset %d:\n%q", r, i, stdout)
+		}
+	}
+	// The scrubbed subject's visible text still prints (scrubbed, not dropped).
+	if !strings.Contains(stdout, "PWNED-SUBJECT") {
+		t.Errorf("scrubbed subject text missing from output:\n%q", stdout)
+	}
+
+	// Positive twin: a clean message prints its subject text intact and unaltered.
+	clean := t.TempDir()
+	cx, err := index.Open(filepath.Join(clean, "search.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	good := &model.Message{Subject: "Acme invoice #4471", SenderName: "bob", SenderEmail: "bob@example.com",
+		To: "me@example.com", Received: time.Date(2025, 3, 1, 9, 0, 0, 0, time.UTC), HTMLBody: "<p>the invoice is attached</p>"}
+	if err := cx.Add("store", []string{"Inbox"}, good, "store/Inbox/g.html", "kClean"); err != nil {
+		t.Fatal(err)
+	}
+	if err := cx.Close(); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, stderr = runCLIOut(t, "search", "-out", clean, "invoice")
+	if code != 0 {
+		t.Fatalf("clean search exited %d: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "Acme invoice #4471") {
+		t.Errorf("clean subject not printed intact:\n%q", stdout)
+	}
+}
