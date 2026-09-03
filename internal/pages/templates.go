@@ -43,8 +43,11 @@ const folderTmpl = `<!DOCTYPE html>
 <title>{{.Folder}}</title><style>` + sharedCSS + `</style></head><body>
 <div class="bar">
   <h1>{{.Folder}}</h1>
-  <div class="muted">{{.Total}} message(s){{if gt .Pages 1}} · page {{.Page}} of {{.Pages}}{{if .PrevHref}} · <a href="{{.PrevHref}}">‹ newer</a>{{end}}{{if .NextHref}} · <a href="{{.NextHref}}">older ›</a>{{end}}{{end}} · <a href="{{.RootRelPrefix}}index.html">↑ all folders</a></div>
-  <div style="margin-top:8px"><input type="search" id="q" placeholder="Filter these messages… (type to narrow)"></div>
+  <div class="muted">{{.Total}} message(s){{if gt .Pages 1}} · page {{.Page}} of {{.Pages}}{{if .PrevHref}} · <a href="{{.PrevHref}}">‹ newer</a>{{end}}{{if .NextHref}} · <a href="{{.NextHref}}">older ›</a>{{end}}{{if .Pager}} · {{template "numpager" .}}{{end}}{{end}} · <a href="{{.RootRelPrefix}}index.html">↑ all folders</a></div>
+  <div style="margin-top:8px">
+    <input type="search" id="q" placeholder="{{if gt .Pages 1}}Filter this page…{{else}}Filter these messages… (type to narrow){{end}}">
+    {{if gt .Pages 1}}<div class="muted" style="margin-top:4px">Filter matches this page only ({{len .Rows}} of {{.Total}}) and only the columns shown. To search the whole archive, run <code>mailarchive serve</code> for full-text search, or <code>rg -i "your text" .</code> to search message bodies.</div>{{end}}
+  </div>
 </div>
 <div class="wrap">
 <table id="t"><thead><tr>
@@ -57,7 +60,7 @@ const folderTmpl = `<!DOCTYPE html>
   <td>{{if .HasAttach}}<a href="{{urlpath .ZipFile}}" title="attachments">📎</a>{{end}}</td>
 </tr>{{end}}
 </tbody></table>
-{{if gt .Pages 1}}<div class="muted" style="margin-top:10px">Page {{.Page}} of {{.Pages}}{{if .PrevHref}} · <a href="{{.PrevHref}}">‹ newer</a>{{end}}{{if .NextHref}} · <a href="{{.NextHref}}">older ›</a>{{end}}</div>{{end}}
+{{if gt .Pages 1}}<div class="muted" style="margin-top:10px">Page {{.Page}} of {{.Pages}}{{if .PrevHref}} · <a href="{{.PrevHref}}">‹ newer</a>{{end}}{{if .NextHref}} · <a href="{{.NextHref}}">older ›</a>{{end}}{{if .Pager}} · {{template "numpager" .}}{{end}}</div>{{end}}
 </div>
 <script>
 const q=document.getElementById('q'),rows=[...document.querySelectorAll('#t tbody tr')];
@@ -94,7 +97,14 @@ li .c{color:#888;font-variant-numeric:tabular-nums}
 </div>
 </body></html>`
 
+// numPagerTmpl renders the compact numbered pager (see folderPageData.Pager):
+// the first/last/current pages and a band of neighbours, ellipses for the gaps.
+// Each item is a plain relative link, so the pager works from file:// with no
+// script. It is defined as an associated template so both the top and bottom
+// pager rows can reuse it.
+const numPagerTmpl = `{{define "numpager"}}{{range .Pager}}{{if .Ellipsis}}<span class="muted">…</span> {{else if .Current}}<b>{{.Num}}</b> {{else}}<a href="{{.Href}}">{{.Num}}</a> {{end}}{{end}}{{end}}`
+
 var (
-	folderTemplate = template.Must(template.New("folder").Funcs(tmplFuncs).Parse(folderTmpl))
+	folderTemplate = template.Must(template.Must(template.New("folder").Funcs(tmplFuncs).Parse(folderTmpl)).Parse(numPagerTmpl))
 	rootTemplate   = template.Must(template.New("root").Funcs(tmplFuncs).Parse(rootTmpl))
 )
