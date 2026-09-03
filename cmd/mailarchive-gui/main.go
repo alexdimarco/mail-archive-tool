@@ -41,6 +41,7 @@ import (
 	"mail-archive-tool/internal/runlog"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/source"
+	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/thunderbird"
 	"mail-archive-tool/internal/util"
 )
@@ -175,7 +176,12 @@ func runHeadless(path string) int {
 	return 0
 }
 
-// jobFail records a failure to even start the job, beside the job file.
+// jobFail records a failure to even start the job, beside the job file. A run
+// that fails this early (an unreadable job, an absent -out, an unopenable log)
+// writes no archive-local last-run record — there may be no archive directory
+// at all — so besides the .jobfail.log beside the job file and the desktop
+// toast, it also leaves a single last-failure breadcrumb in the config dir that
+// the GUI's launch health view can find later (friction #20).
 func jobFail(path string, err error) {
 	name := strings.TrimSuffix(filepath.Base(path), ".json")
 	sink := filepath.Join(filepath.Dir(path), name+".jobfail.log")
@@ -183,6 +189,7 @@ func jobFail(path string, err error) {
 		fmt.Fprintf(f, "%s %v\n", time.Now().Format(time.RFC3339), err)
 		f.Close()
 	}
+	recordHeadlessFailure(name, err)
 	fmt.Fprintln(os.Stderr, "mailarchive-gui: "+err.Error())
 	notifyFailure(name, "")
 }
@@ -228,7 +235,7 @@ func cleanupOutlookScratch(out string, exportOK bool, logger *log.Logger) int64 
 		return 0
 	}
 	if n > 0 {
-		logger.Printf("Reclaimed %d bytes of temporary Outlook PSTs from %s", n, dir)
+		logger.Printf("Reclaimed %s by removing the temporary Outlook PST copy (%s).", thunderbird.HumanBytes(n), dir)
 	}
 	return n
 }
@@ -424,7 +431,7 @@ func wizard() error {
 	// 5b. Keep the original messages too? Only sources that carry raw RFC-822
 	//     bytes (mbox/maildir readers) can honour it — a .pst/.ost item and the
 	//     Outlook-app export path have no originals to keep, so they aren't asked.
-	if keepRawApplies(srcType) {
+	if keepRawWorthAsking(srcType, choice.inputs) {
 		rawChoice, err := zenity.List(
 			"Also keep a copy of each original message (.eml) so you can re-import it into a mail program later? (uses more disk space)",
 			[]string{"No", "Yes — keep the original .eml files too"},
@@ -451,6 +458,43 @@ func keepRawApplies(srcType string) bool {
 	default: // srcOutlook (.pst/.ost), srcOutlookCOM
 		return false
 	}
+}
+
+// keepRawWorthAsking reports whether the keep-raw question is worth putting to
+// the user for this run: the source type must be raw-capable (keepRawApplies)
+// AND at least one chosen input must be able to yield raw bytes. On the
+// auto-detect path a run may resolve to only Outlook data files (.pst/.ost),
+// which carry no raw .eml to keep — asking there is a dead question, so it is
+// skipped (friction #24). A folder source or any non-Outlook input still asks.
+func keepRawWorthAsking(srcType string, inputs []string) bool {
+	if !keepRawApplies(srcType) {
+		return false
+	}
+	return !allOutlookFiles(inputs)
+}
+
+// isOutlookFile reports whether p is an Outlook data file by extension.
+func isOutlookFile(p string) bool {
+	switch strings.ToLower(filepath.Ext(p)) {
+	case ".pst", ".ost":
+		return true
+	default:
+		return false
+	}
+}
+
+// allOutlookFiles reports whether every path is an Outlook data file. An empty
+// list is not "all Outlook" (nothing is known yet), so it does not suppress.
+func allOutlookFiles(paths []string) bool {
+	if len(paths) == 0 {
+		return false
+	}
+	for _, p := range paths {
+		if !isOutlookFile(p) {
+			return false
+		}
+	}
+	return true
 }
 
 // preferOutlookApp reports whether the auto-detect result should steer the user
@@ -526,12 +570,37 @@ func healthCheck() error {
 		return nil
 	}
 	out := strings.TrimSpace(string(data))
+
+	// A headless run whose -out was absent leaves no archive-local record — the
+	// config-dir breadcrumb is the only trace (friction #20). Read it up front so
+	// it can be shown even when the archive itself is now unreachable.
+	var fail lastFailure
+	var haveFail bool
+	if dir, e := failureDir(); e == nil {
+		fail, haveFail = readLastFailure(dir)
+	}
+
 	if _, err := schedule.ReadDescriptor(out); err != nil {
-		return nil // no schedule here: nothing to report
+		// No readable schedule at the last archive path (or the archive is
+		// unreachable, e.g. an unmounted drive). Nothing else to report, but a
+		// recent start-failure still deserves a warning.
+		if showLastFailure(fail, haveFail, time.Time{}, false) {
+			return zenity.Warning(lastFailureLine(fail), zenity.Title(appTitle))
+		}
+		return nil
 	}
 	in := health.Gather(out, "")
 	rep := health.Assess(in, time.Now())
-	text := strings.Join(health.Summary(in, rep), "\n")
+	lines := health.Summary(in, rep)
+	var lastRun time.Time
+	reachable := in.HasManifest || in.LastRunState == state.LastRunPresent
+	if in.LastRunState == state.LastRunPresent {
+		lastRun = in.LastRun.Started
+	}
+	if showLastFailure(fail, haveFail, lastRun, reachable) {
+		lines = append([]string{lastFailureLine(fail), ""}, lines...)
+	}
+	text := strings.Join(lines, "\n")
 
 	const cont = "Continue to the wizard"
 	const repair = "Repair the scheduled backup"
@@ -571,12 +640,20 @@ func repairable(in health.Input) bool {
 }
 
 // repairSpec rebuilds the install Spec for a recorded schedule using the CURRENT
-// executable, so re-installing points the scheduler back at this binary. Like
-// removeSchedule, the name and wrapper path are derived from the descriptor's
-// name (never taken from the file), and the cadence and job come from the
-// descriptor itself.
+// executable, so re-installing points the scheduler back at this binary. The
+// descriptor lives in the archive directory and is untrusted (any writer of that
+// directory could edit it), so — exactly as offerSchedule builds a fresh install
+// and as the INS-7 fix already treats the name/wrapper path — the job args and
+// log are RECONSTRUCTED from the sanitized name and -out, never copied from the
+// descriptor's Job/Log/Exe. A tampered descriptor therefore cannot redirect the
+// scheduled `-job` at an attacker-writable file. Only the cadence and time are
+// taken from the descriptor (they name no path and cannot escalate).
 func repairSpec(out string, d schedule.Descriptor, exe string) (schedule.Spec, error) {
 	name, err := schedule.SanitizeName(d.Name)
+	if err != nil {
+		return schedule.Spec{}, err
+	}
+	jobPath, err := job.PathFor(name)
 	if err != nil {
 		return schedule.Spec{}, err
 	}
@@ -587,7 +664,7 @@ func repairSpec(out string, d schedule.Descriptor, exe string) (schedule.Spec, e
 	}
 	spec := schedule.Spec{
 		Name: name, Interval: iv, At: at, Exe: exe,
-		Args: append([]string(nil), d.Job...), Log: d.Log, Out: out,
+		Args: []string{"-job", jobPath}, Log: filepath.Join(out, "mailarchive.log"), Out: out,
 		WrapperPath: schedule.DefaultWrapperPath(name),
 	}
 	// No console window when the direct run string fits; otherwise the wrapper
@@ -613,7 +690,39 @@ func repairSchedule(out string, d schedule.Descriptor) error {
 		return fmt.Errorf("could not repair the scheduled backup:\n%v", err)
 	}
 	rememberArchive(out)
-	return zenity.Info(fmt.Sprintf("Repaired the scheduled backup %q for\n%s\n\nIt now runs this copy of the program. Re-open this program any time to check the backup's health.", spec.Name, out), zenity.Title(appTitle))
+	// The repair is done; offer to continue into the wizard (run an export now)
+	// rather than forcing a re-launch — a returning user who repairs a schedule
+	// often wants to run one too (friction #24). "Close" exits quietly.
+	q := zenity.Question(
+		fmt.Sprintf("Repaired the scheduled backup %q for\n%s\n\nIt now runs this copy of the program. Re-open this program any time to check the backup's health.\n\nContinue to run an export now?", spec.Name, out),
+		zenity.Title(appTitle),
+		zenity.OKLabel("Continue to the wizard"),
+		zenity.CancelLabel("Close"),
+	)
+	cont, err := repairFollowUp(q)
+	switch {
+	case err != nil:
+		return err
+	case cont:
+		return nil // fall through into the wizard
+	default:
+		return zenity.ErrCanceled // quiet exit in main
+	}
+}
+
+// repairFollowUp interprets the user's answer to the post-repair "continue?"
+// prompt: OK (nil) continues into the wizard; Cancel or a dismissed dialog
+// (ErrCanceled) stops quietly; any other error propagates. Pure so the branch
+// is testable without a display.
+func repairFollowUp(choice error) (cont bool, err error) {
+	switch {
+	case choice == nil:
+		return true, nil
+	case errors.Is(choice, zenity.ErrCanceled):
+		return false, nil
+	default:
+		return false, choice
+	}
 }
 
 func removeSchedule(out string) error {
