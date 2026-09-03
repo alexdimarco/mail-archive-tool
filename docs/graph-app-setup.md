@@ -57,19 +57,35 @@ Online mailbox in this tenant.
 ## 6. Hand back to the operator
 
 Give the operator: **tenant id**, **client id**, the **client secret**, and the
-list of **mailbox UPNs**. They run (secret via environment variable, never on the
-command line):
+list of **mailbox UPNs**. They run it interactively with the secret in an
+environment variable, or — for scheduled runs, which have no environment — from
+a file readable only by them (never on the command line):
 
 ```sh
+# interactive
 MAILARCHIVE_GRAPH_SECRET='<the secret>' \
 mailarchive graph -out ./archive \
   -tenant <TENANT_ID> -client-id <CLIENT_ID> \
   -mailbox alice@contoso.org -mailbox bob@contoso.org
+
+# from a file (chmod 600; a regular file, not a symlink or pipe)
+mailarchive graph -out ./archive -tenant <TENANT_ID> -client-id <CLIENT_ID> \
+  -mailbox alice@contoso.org -client-secret-file ~/.config/mailarchive/graph.secret
+
+# scheduled nightly at 03:00 — the job is validated now, exactly as it will run
+mailarchive schedule -interval daily -at 03:00 -install -- graph -out ./archive \
+  -tenant <TENANT_ID> -client-id <CLIENT_ID> -mailbox alice@contoso.org \
+  -client-secret-file ~/.config/mailarchive/graph.secret
 ```
 
 - First run captures everything; later runs are incremental (only new mail, no
-  re-download) and can be scheduled (`mailarchive schedule`).
+  re-download of anything already archived). `mailarchive status -out ./archive`
+  shows completeness, the last run and the schedule.
 - Read-only throughout: the tool issues only Graph GET requests.
+- **The secret expires.** Entra caps client secrets at 24 months and admins often
+  issue 6- or 12-month ones. Put the expiry date in a calendar; when `status`
+  reports an authentication failure, create a new secret in Entra and rewrite
+  the secret file — nothing else changes.
 
 ## Revoking
 

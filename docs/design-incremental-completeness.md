@@ -1,8 +1,11 @@
 # Design — incremental completeness (manifest knows what is missing)
 
-**Revision:** 2 (2026-09-02). **BUILD STATUS:** approved with conditions — pre-code review
-filed as `docs/review-incremental-completeness-predesign.md` (GO_WITH_CONDITIONS, B1–B12
-folded into this revision). Build proceeds in the order of §4.
+**Revision:** 2 (2026-09-02). **BUILD STATUS:** built — pre-code review filed as
+`docs/review-incremental-completeness-predesign.md` (GO_WITH_CONDITIONS, B1–B12 folded
+into this revision). Landed as commits `679d2bc` (B12 slice: atomic files, sweep,
+manifest durability — MA-69, MA-94), `49e3386` (completeness core — MA-66, 67, 68,
+70, 71) and `751f021` (run lock, checkpoints, Message-ID reuse, stem guard — MA-85..88);
+all tier-U rows CI-tested with prove-fail records in the commits.
 
 ## 1. Problem
 

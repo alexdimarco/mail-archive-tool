@@ -1,9 +1,13 @@
 # Design — repeat archiving v2: schedule any job, Windows-safe, with a status surface
 
-**Revision:** 2 (2026-09-02). **BUILD STATUS:** approved with conditions — pre-code review
-filed as `docs/review-schedule-v2-predesign.md` (GO_WITH_CONDITIONS, S1–S16 folded into
-this revision). Built as the slices of §4; the secret-file slice additionally owes the
-adversarial pass and the GUI slices the friction review (S1).
+**Revision:** 2 (2026-09-02). **BUILD STATUS:** built — pre-code review filed as
+`docs/review-schedule-v2-predesign.md` (GO_WITH_CONDITIONS, S1–S16 folded into this
+revision). Landed as commits `efdac66` (slice a: job parsing, `--`, -log, wrapper,
+descriptor — MA-72, 73, 93, 97), `ca98a93` (slice b: secret file — MA-74; adversarial
+pass in `docs/review-schedule-v2-adversarial.md`), `da05d89` + `250e839` (slice c:
+last-run, status, health — MA-75, 76, 77, 78) and `bc6e9d0` (slices d/e: GUI headless,
+schedule step, health view, flow fixes — lab rows MA-79, MA-95 pending; friction walk
+in `docs/review-schedule-v2-friction.md`).
 
 ## 1. Problem (from the 2026-09-02 flow review)
 
