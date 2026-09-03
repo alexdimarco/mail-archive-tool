@@ -285,33 +285,43 @@ func renderHeader(m *model.Message, ctx RenderContext, consumed map[int]bool) st
 		}
 		b.WriteString(`</div>`)
 	}
-	b.WriteString(`<div class="mailarchive-subject">` + html.EscapeString(displaySubject(m)) + `</div>`)
+	// The subject div and the From/To/Cc/Date/Sent/Received dds carry an inert
+	// data-mailarchive-field attribute so `reindex -rebuild` can recover the
+	// index fields from an archived page by attribute rather than by structure
+	// (PC3). It changes no visible output — it is a machine tag on the tool's own
+	// header markup, escaped mail content is unaffected.
+	b.WriteString(`<div class="mailarchive-subject" data-mailarchive-field="subject">` + html.EscapeString(displaySubject(m)) + `</div>`)
 	b.WriteString(`<dl>`)
-	row := func(label, value string) {
+	// row emits a labelled dd; field, when non-empty, tags that dd for rebuild.
+	row := func(label, value, field string) {
 		if strings.TrimSpace(value) == "" {
 			return
 		}
 		b.WriteString(`<dt>` + html.EscapeString(label) + `</dt>`)
-		b.WriteString(`<dd>` + html.EscapeString(value) + `</dd>`)
+		if field != "" {
+			b.WriteString(`<dd data-mailarchive-field="` + field + `">` + html.EscapeString(value) + `</dd>`)
+		} else {
+			b.WriteString(`<dd>` + html.EscapeString(value) + `</dd>`)
+		}
 	}
-	row("From", formatSender(m))
-	row("Reply-To", m.ReplyTo)
-	row("To", m.To)
-	row("Cc", m.Cc)
-	row("Bcc", m.Bcc)
+	row("From", formatSender(m), "from")
+	row("Reply-To", m.ReplyTo, "")
+	row("To", m.To, "to")
+	row("Cc", m.Cc, "cc")
+	row("Bcc", m.Bcc, "")
 	// Sent and Received are shown separately when both are known and differ;
 	// otherwise the one known time is the Date.
 	switch {
 	case !m.Sent.IsZero() && !m.Received.IsZero() && !m.Sent.Equal(m.Received):
-		row("Sent", fmtTime(m.Sent))
-		row("Received", fmtTime(m.Received))
+		row("Sent", fmtTime(m.Sent), "sent")
+		row("Received", fmtTime(m.Received), "received")
 	default:
 		if d := m.Date(); !d.IsZero() {
-			row("Date", fmtTime(d))
+			row("Date", fmtTime(d), "date")
 		}
 	}
-	row("Message-ID", m.InternetMessageID)
-	row("In-Reply-To", m.InReplyTo)
+	row("Message-ID", m.InternetMessageID, "")
+	row("In-Reply-To", m.InReplyTo, "")
 	b.WriteString(`</dl>`)
 
 	// The transport-header block as stored by the source, in a collapsed panel.
