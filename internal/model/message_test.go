@@ -63,3 +63,33 @@ func TestFingerprintIgnoresTransportHeaders(t *testing.T) {
 		t.Errorf("Identity changed with TransportHeaders: %q vs %q", a.Identity(), b.Identity())
 	}
 }
+
+// covers: MA-145, R3, R1, S35
+// Importance, Sensitivity and Unread are mutable capture-time state, NOT part of
+// the message's identity: a message later marked read, re-prioritised or
+// re-classified is still the same message. So both the envelope Fingerprint and
+// the fallback content Identity must be blind to all three — otherwise a re-read
+// that saw only a changed flag would look like a different message (double
+// record) or a fill would be dropped.
+func TestFingerprintIgnoresMessageState(t *testing.T) {
+	base := func() *Message {
+		return &Message{
+			Subject:     "Quarterly report",
+			SenderEmail: "sender@example.com",
+			To:          "you@example.com",
+			PlainBody:   "see attached",
+		}
+	}
+	a := base() // no state at all
+	b := base()
+	b.Unread = true
+	b.Importance = "high"
+	b.Sensitivity = "confidential"
+
+	if a.Fingerprint() != b.Fingerprint() {
+		t.Errorf("Fingerprint changed with message state: %q vs %q", a.Fingerprint(), b.Fingerprint())
+	}
+	if a.Identity() != b.Identity() {
+		t.Errorf("Identity changed with message state: %q vs %q", a.Identity(), b.Identity())
+	}
+}

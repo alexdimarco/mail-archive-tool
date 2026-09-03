@@ -185,6 +185,45 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	return result, nil
 }
 
+// applyGraphState overlays the message-state fields carried on the widened
+// listing $select (PC16). Graph is authoritative for a mailbox item's
+// importance, sensitivity and read state, so these override anything the MIME
+// headers carried. A field the tenant omitted stays empty; an omitted isRead
+// (nil) leaves the read state unset rather than guessing "unread".
+func applyGraphState(m *model.Message, ref graph.MessageRef) {
+	m.Importance = graphImportance(ref.Importance)
+	m.Sensitivity = graphSensitivity(ref.Sensitivity)
+	if ref.IsRead != nil {
+		m.Unread = !*ref.IsRead
+	}
+}
+
+// graphImportance maps Graph's importance ("low"/"normal"/"high") to the
+// model's convention; normal/omitted is the empty state.
+func graphImportance(s string) string {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "high":
+		return "high"
+	case "low":
+		return "low"
+	}
+	return ""
+}
+
+// graphSensitivity maps Graph's sensitivity ("normal"/"personal"/"private"/
+// "confidential") to the model's convention; normal/omitted is the empty state.
+func graphSensitivity(s string) string {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "personal":
+		return "personal"
+	case "private":
+		return "private"
+	case "confidential":
+		return "confidential"
+	}
+	return ""
+}
+
 // runGraphMailbox walks one mailbox's folders and messages, exporting each.
 func runGraphMailbox(ctx context.Context, client *graph.Client, exp *export.Exporter, manifest *state.Manifest, mode export.Mode, mailbox string, logger *log.Logger, checkpoint func(), abort func() error) error {
 	logger.Printf("Reading mailbox %s via Microsoft Graph", mailbox)
@@ -243,6 +282,7 @@ func runGraphMailbox(ctx context.Context, client *graph.Client, exp *export.Expo
 			if m == nil {
 				return nil
 			}
+			applyGraphState(m, ref)
 			// A panic exporting one crafted message must not abort the mailbox (R10).
 			return func() (err error) {
 				defer func() {

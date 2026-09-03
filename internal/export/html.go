@@ -269,6 +269,27 @@ func fmtTime(t time.Time) string {
 	return s
 }
 
+// statusLine renders the message's capture-time state — read flag, importance,
+// sensitivity — as one human line for the "Status" row, e.g.
+// "Unread · Importance: high · Sensitivity: confidential". It is empty when none
+// is set (no row is shown). The format is reversible: `reindex -rebuild`'s
+// from-HTML reader (internal/app/htmlheader.go) parses it back into the model
+// fields. The separator is a middle dot (U+00B7), which html.EscapeString leaves
+// untouched, so the reader recovers the parts exactly.
+func statusLine(m *model.Message) string {
+	var parts []string
+	if m.Unread {
+		parts = append(parts, "Unread")
+	}
+	if m.Importance != "" {
+		parts = append(parts, "Importance: "+m.Importance)
+	}
+	if m.Sensitivity != "" {
+		parts = append(parts, "Sensitivity: "+m.Sensitivity)
+	}
+	return strings.Join(parts, " · ")
+}
+
 func renderHeader(m *model.Message, ctx RenderContext, consumed map[int]bool) string {
 	var b strings.Builder
 	b.WriteString(`<div class="mailarchive-header">`)
@@ -322,6 +343,10 @@ func renderHeader(m *model.Message, ctx RenderContext, consumed map[int]bool) st
 	}
 	row("Message-ID", m.InternetMessageID, "")
 	row("In-Reply-To", m.InReplyTo, "")
+	// Capture-time message state (read flag, importance, sensitivity), shown as
+	// one line when any is set. row() escapes it and tags the dd so `reindex
+	// -rebuild` can read it back (statusLine's format is reversible).
+	row("Status", statusLine(m), "status")
 	b.WriteString(`</dl>`)
 
 	// The transport-header block as stored by the source, in a collapsed panel.

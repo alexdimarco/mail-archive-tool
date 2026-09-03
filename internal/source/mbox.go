@@ -7,6 +7,7 @@ import (
 	netmail "net/mail"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	gombox "github.com/emersion/go-mbox"
@@ -145,6 +146,14 @@ func readMaildirDir(dir string, folderPath []string, handler MessageHandler) err
 			return fmt.Errorf("read maildir message %s: %w", fe.Name(), err)
 		}
 		if m := safeParseMessage(data); m != nil {
+			// Read state for a maildir message is the "S" (Seen) info flag in its
+			// filename — UNLESS the message also carries an X-Mozilla-Status
+			// header (a Thunderbird artifact parseMessage already honoured, which
+			// wins per the design). Threaded here because only the maildir layout
+			// puts the read flag in the path.
+			if !headerBlockHas(data, "X-Mozilla-Status") {
+				m.Unread = !maildirSeen(fe.Name())
+			}
 			if err := handler(folderPath, m); err != nil {
 				return err
 			}
@@ -256,6 +265,15 @@ func parseMessage(data []byte) *model.Message {
 	msg.InReplyTo = strings.Trim(h.Get("In-Reply-To"), "<> ")
 	msg.References = strings.TrimSpace(h.Get("References"))
 
+	// Message state from headers. Read from X-Mozilla-Status wins when present
+	// (Thunderbird mbox); otherwise Unread is left for the maildir "S" flag or
+	// stays false for a plain mbox with no read-state signal.
+	msg.Importance = importanceFromHeaders(h.Get("Importance"), h.Get("X-Priority"))
+	msg.Sensitivity = sensitivityFromHeader(h.Get("Sensitivity"))
+	if unread, ok := mozillaReadFlag(h.Get("X-Mozilla-Status")); ok {
+		msg.Unread = unread
+	}
+
 	for {
 		p, err := mr.NextPart()
 		if err == io.EOF {
@@ -329,6 +347,11 @@ func fallbackParse(data []byte) *model.Message {
 	if d, err := m.Header.Date(); err == nil {
 		msg.Received = d
 	}
+	msg.Importance = importanceFromHeaders(m.Header.Get("Importance"), m.Header.Get("X-Priority"))
+	msg.Sensitivity = sensitivityFromHeader(m.Header.Get("Sensitivity"))
+	if unread, ok := mozillaReadFlag(m.Header.Get("X-Mozilla-Status")); ok {
+		msg.Unread = unread
+	}
 	return msg
 }
 
@@ -346,6 +369,103 @@ func addressList(h *mail.Header, key string) string {
 		}
 	}
 	return strings.Join(parts, ", ")
+}
+
+// importanceFromHeaders maps the Importance header ("high"/"normal"/"low") or,
+// absent that, X-Priority (1-2 high, 4-5 low, 3 normal) to the model's
+// convention; normal/unknown is the empty state.
+func importanceFromHeaders(importance, xPriority string) string {
+	switch strings.ToLower(strings.TrimSpace(importance)) {
+	case "high":
+		return "high"
+	case "low":
+		return "low"
+	case "normal":
+		return ""
+	}
+	// X-Priority is a digit, sometimes with a trailing word ("1 (Highest)").
+	switch firstToken(xPriority) {
+	case "1", "2":
+		return "high"
+	case "4", "5":
+		return "low"
+	}
+	return ""
+}
+
+// sensitivityFromHeader maps the RFC 2156 Sensitivity header to the model's
+// convention. "Company-Confidential" and "Confidential" both map to
+// "confidential"; "normal"/absent is empty.
+func sensitivityFromHeader(s string) string {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "personal":
+		return "personal"
+	case "private":
+		return "private"
+	case "company-confidential", "confidential":
+		return "confidential"
+	}
+	return ""
+}
+
+// mozillaReadFlag reads Thunderbird's X-Mozilla-Status (four hex digits); bit
+// 0x0001 is MSG_FLAG_READ, so its absence means unread. ok is false when the
+// header is absent or unparseable, letting the maildir "S" flag decide instead.
+func mozillaReadFlag(s string) (unread, ok bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false, false
+	}
+	v, err := strconv.ParseUint(s, 16, 32)
+	if err != nil {
+		return false, false
+	}
+	return v&0x0001 == 0, true
+}
+
+// maildirSeen reports whether a maildir filename carries the "S" (Seen) info
+// flag. The info section is "<unique>:2,<flags>"; on filesystems where ':' is
+// illegal (Windows/NTFS) tools substitute another separator, so we locate the
+// "2," version marker rather than the colon. A message in new/ (no info) or one
+// without the flag is unseen (unread).
+func maildirSeen(name string) bool {
+	i := strings.LastIndex(name, "2,")
+	if i < 0 {
+		return false
+	}
+	return strings.ContainsRune(name[i+2:], 'S')
+}
+
+// headerBlockHas reports whether raw's header section (the lines before the
+// first blank line) carries a header field with the given name
+// (case-insensitive). Used to decide whether a maildir message already carries
+// an X-Mozilla-Status header that should win over the filename's "S" flag.
+func headerBlockHas(raw []byte, field string) bool {
+	hb := headerBlock(raw)
+	if hb == "" {
+		// No blank line within the bound: scan the leading bytes anyway, so a
+		// header-only maildir file (no body) is still recognised.
+		const limit = 64 << 10
+		if len(raw) > limit {
+			raw = raw[:limit]
+		}
+		hb = string(raw)
+	}
+	prefix := strings.ToLower(field) + ":"
+	for _, line := range strings.Split(hb, "\n") {
+		if strings.HasPrefix(strings.ToLower(strings.TrimLeft(line, " \t")), prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func firstToken(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexAny(s, " \t"); i >= 0 {
+		return s[:i]
+	}
+	return s
 }
 
 func bytesWriterTo(data []byte) func(io.Writer) (int64, error) {

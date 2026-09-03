@@ -113,7 +113,34 @@ func readArchivedHTML(data []byte) (*model.Message, int) {
 		unrecovered++
 	}
 
+	// Message state (PC17): the renderer's reversible "Status" line, read back
+	// into the model. These fields are not indexed and not part of identity, so
+	// recovering them changes no search result or dedup decision — it keeps a
+	// rebuilt model faithful to the page it came from. Absent → left empty; not
+	// counted as an unrecovered CORE field.
+	if st := fields["status"]; st != "" {
+		applyStatusLine(m, st)
+	}
+
 	return m, unrecovered
+}
+
+// applyStatusLine reverses export.statusLine, recovering Unread/Importance/
+// Sensitivity from the "Status" row the renderer wrote. The separator is the
+// same middle dot (U+00B7) the renderer used; an unrecognised segment is
+// ignored.
+func applyStatusLine(m *model.Message, s string) {
+	for _, part := range strings.Split(s, " · ") {
+		part = strings.TrimSpace(part)
+		switch {
+		case part == "Unread":
+			m.Unread = true
+		case strings.HasPrefix(part, "Importance: "):
+			m.Importance = strings.TrimSpace(strings.TrimPrefix(part, "Importance: "))
+		case strings.HasPrefix(part, "Sensitivity: "):
+			m.Sensitivity = strings.TrimSpace(strings.TrimPrefix(part, "Sensitivity: "))
+		}
+	}
 }
 
 // readFirstDL returns the field→value map recovered from the first <dl>

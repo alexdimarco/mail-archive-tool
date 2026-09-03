@@ -139,23 +139,32 @@ func (c *Client) Folders(ctx context.Context, userID string) ([]Folder, error) {
 
 // MessageRef is the lightweight per-message metadata used to decide whether a
 // message needs fetching (its InternetMessageID drives incremental dedup without
-// downloading the body).
+// downloading the body). The message-state scalars (importance/isRead/
+// sensitivity) ride along on the SAME listing request — no extra round-trip —
+// and the caller maps them onto the message after parsing its MIME.
 type MessageRef struct {
 	ID                string
 	InternetMessageID string // angle brackets stripped, matching go-message
 	Received          time.Time
+
+	Importance  string // Graph "low"/"normal"/"high"; "" when the tenant omits it
+	Sensitivity string // Graph "normal"/"personal"/"private"/"confidential"; "" when omitted
+	IsRead      *bool  // nil when the tenant omits it (read state then unknown)
 }
 
 // Messages streams every message reference in folderID to fn (paged).
 func (c *Client) Messages(ctx context.Context, userID, folderID string, fn func(MessageRef) error) error {
 	next := c.base + "/users/" + url.PathEscape(userID) + "/mailFolders/" + url.PathEscape(folderID) +
-		"/messages?$select=id,internetMessageId,receivedDateTime&$top=1000"
+		"/messages?$select=id,internetMessageId,receivedDateTime,importance,isRead,sensitivity&$top=1000"
 	for next != "" {
 		var body struct {
 			Value []struct {
 				ID                string `json:"id"`
 				InternetMessageID string `json:"internetMessageId"`
 				Received          string `json:"receivedDateTime"`
+				Importance        string `json:"importance"`
+				IsRead            *bool  `json:"isRead"`
+				Sensitivity       string `json:"sensitivity"`
 			} `json:"value"`
 			Next string `json:"@odata.nextLink"`
 		}
@@ -163,7 +172,13 @@ func (c *Client) Messages(ctx context.Context, userID, folderID string, fn func(
 			return err
 		}
 		for _, m := range body.Value {
-			ref := MessageRef{ID: m.ID, InternetMessageID: strings.Trim(m.InternetMessageID, "<>")}
+			ref := MessageRef{
+				ID:                m.ID,
+				InternetMessageID: strings.Trim(m.InternetMessageID, "<>"),
+				Importance:        m.Importance,
+				Sensitivity:       m.Sensitivity,
+				IsRead:            m.IsRead,
+			}
 			if t, err := time.Parse(time.RFC3339, m.Received); err == nil {
 				ref.Received = t
 			}

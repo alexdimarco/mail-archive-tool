@@ -375,3 +375,53 @@ func TestRenderTransportHeaders(t *testing.T) {
 		t.Errorf("transport-header block not capped near 64 KiB: %d 'A' bytes emitted", n)
 	}
 }
+
+// covers: MA-177, R7, S35
+// When a message carries capture-time state, the page shows one "Status" row —
+// tagged data-mailarchive-field="status" for rebuild — combining the read flag,
+// importance and sensitivity. Like every header value it is HTML-escaped, so an
+// unexpected metacharacter in a field is inert (R7).
+func TestRenderStatusRowEscaped(t *testing.T) {
+	m := &model.Message{
+		Subject:     "Board memo",
+		Unread:      true,
+		Importance:  "high",
+		Sensitivity: "private<x>&y", // a hostile/unexpected value: must be escaped
+	}
+	out, _, err := Render(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	if !strings.Contains(s, `data-mailarchive-field="status"`) {
+		t.Errorf("no Status row tagged for rebuild:\n%s", s)
+	}
+	if !strings.Contains(s, "<dt>Status</dt>") {
+		t.Error("Status row has no label")
+	}
+	// The row combines all three parts, joined by the middle dot, escaped.
+	if !strings.Contains(s, "Unread · Importance: high · Sensitivity: private&lt;x&gt;&amp;y") {
+		t.Errorf("Status line wrong or not escaped:\n%s", s)
+	}
+	if strings.Contains(s, "private<x>") {
+		t.Error("a metacharacter in a status field rendered live (not escaped)")
+	}
+}
+
+// covers: MA-180, R7, S35
+// A message with no read/importance/sensitivity state shows no "Status" row at
+// all — the row appears only when there is state to show.
+func TestRenderStatusRowAbsentWhenUnset(t *testing.T) {
+	m := &model.Message{Subject: "Ordinary", PlainBody: "hi"}
+	out, _, err := Render(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	if strings.Contains(s, `data-mailarchive-field="status"`) {
+		t.Errorf("Status row present with no state set:\n%s", s)
+	}
+	if strings.Contains(s, "<dt>Status</dt>") {
+		t.Error("Status label present with no state set")
+	}
+}
