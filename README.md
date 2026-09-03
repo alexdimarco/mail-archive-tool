@@ -30,7 +30,7 @@ explained in the sections below.
 | Mail program | Prepare once | First archive | Keep it current | What to know |
 |---|---|---|---|---|
 | **Outlook (classic) with a `.pst`** (POP, or an archive file) | nothing | `mailarchive -input x.pst -out ./archive` | `mailarchive schedule -out ./archive -input x.pst -copy-first -install` | `-copy-first` snapshots the file, so Outlook may stay open. |
-| **Outlook (classic) with Exchange / IMAP (`.ost`)** | Account Settings → Change → *Mail to keep offline* → **All**, then Send/Receive | Windows: `mailarchive -outlook -out ./archive` (Outlook writes clean `.pst`s first) or the GUI's *Outlook account (via Outlook app)*. Elsewhere: copy the `.ost` and `-input` it. | `mailarchive schedule -out ./archive -outlook -install` — runs while you are logged in | Some live `.ost` files cannot be read directly; the Outlook-app path is the reliable one. Outlook's one-time "allow programmatic access" prompt must be answered by hand once. |
+| **Outlook (classic) with Exchange / IMAP (`.ost`)** | Account Settings → Change → *Mail to keep offline* → **All**, then Send/Receive | Windows: `mailarchive -outlook -out ./archive` (Outlook writes clean `.pst`s first) or the GUI's *Outlook account (via Outlook app)*. Elsewhere: copy the `.ost` and `-input` it. | `mailarchive schedule -out ./archive -outlook -install` — runs while you are logged in. Run `mailarchive -outlook` once by hand first to clear Outlook's one-time "allow programmatic access" prompt; a scheduled run cannot answer it. | Some live `.ost` files cannot be read directly; the Outlook-app path is the reliable one. Outlook's one-time "allow programmatic access" prompt must be answered by hand once. |
 | **New Outlook / Outlook for Mac** | admin registers an app ([docs/graph-app-setup.md](docs/graph-app-setup.md)) | `mailarchive graph …` | `mailarchive schedule -install -- graph … -client-secret-file FILE` | No local files exist; only the server-side path works. |
 | **Thunderbird, IMAP account** | with Thunderbird **closed**: `mailarchive -enable-offline -sync-wait -mode full -input <ImapMail/account> -out ./archive` (it flips "keep messages on this computer" and waits for the sync) | that same command is the first archive | `mailarchive schedule -out ./archive -input <ImapMail/account> -install` | Thunderbird downloads bodies on demand; until it has them a message is archived as *still missing content* and filled by a later incremental run automatically. |
 | **Thunderbird, POP / Local Folders** | nothing | `mailarchive -input <Mail/Local Folders> -out ./archive` | `mailarchive schedule -out ./archive -input … -install` | Fully local; nothing to prepare. |
@@ -325,7 +325,9 @@ mailarchive status -out ./export
 ```
 Archive:    /home/alex/export
 Messages:   1843 in manifest · 1843 indexed
-Incomplete: 12 still fillable · 0 source-empty (terminal) · 0 not yet re-examined — /home/alex/export/attachments-report.tsv
+Archived range: 2011-03-08 – 2026-09-01 (UTC)
+Incomplete: 12 still missing content · 0 source-empty (never fillable) · 0 not yet re-examined — /home/alex/export/attachments-report.tsv
+            (still missing content = not downloaded yet; fills on the next run)
 Last run:   2026-09-02 02:00 → ok · exported 5 · filled 2 · took 41s
 Schedule:   "mailarchive-3fa2b1c0" installed · daily at 02:00 · runs /usr/local/bin/mailarchive · installed 2026-09-01 on laptop
 Posture:    WARN
@@ -396,10 +398,10 @@ mailarchive schedule -name weekly-mail -remove
 
 What is checked *when you schedule*, not at 02:00: the job's flags parse
 exactly as the job will run them; `-enable-offline` / `-sync-wait` are refused
-(they are interactive — do that one-time prep by hand first); `serve`, `search`
-and `status` are refused (not backup jobs); `-outlook` is refused off Windows; a
-`graph` job must name a `-client-secret-file` that passes the same checks the
-job applies.
+(they are interactive — do that one-time prep by hand first); `serve`, `search`,
+`status` and a nested `schedule` are refused (not backup jobs); `-outlook` is
+refused off Windows; a `graph` job must name a `-client-secret-file` that passes
+the same checks the job applies.
 
 What it leaves behind: the scheduler entry; `<out>/.mailarchive-schedule.json`
 naming the schedule, its cadence, the program it runs and the host; and, after
@@ -408,8 +410,12 @@ each run, `<out>/<name>.log` (rotated at 8 MB) plus `.mailarchive-lastrun.json`.
 
 Per OS:
 
-- **Linux (cron):** the job logs itself; anything it cannot log (a crash) reaches
-  cron's mail — set `MAILTO` in your crontab if you want that pushed to you.
+- **Linux (cron):** cron runs the job whether or not you are logged in, as long
+  as the machine is on and `crond` is running — so a missed run means the machine
+  was off, not that you were logged out. The job logs itself; anything it cannot
+  log (a crash) reaches cron's mail — set `MAILTO` in your crontab if you want
+  that pushed to you. On a host with no `crontab` binary (a container, a
+  systemd-timer-only box), `status` reports that the scheduler cannot be queried.
 - **macOS (launchd):** a LaunchAgent under `~/Library/LaunchAgents`; crash output
   goes to `<out>/<name>.stderr.log`.
 - **Windows (Task Scheduler):** the task runs a small wrapper,

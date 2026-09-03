@@ -226,3 +226,21 @@ func (ix *Index) Years() ([]int, error) {
 	}
 	return out, rows.Err()
 }
+
+// Range returns the oldest and newest indexed message dates (UTC), over docs
+// with a known date (date > 0); ok is false when the index holds no dated
+// messages. `status` prints it as the archive's coverage (product P6-windows).
+func (ix *Index) Range() (oldest, newest time.Time, ok bool) {
+	if err := ix.commitPending(); err != nil {
+		return time.Time{}, time.Time{}, false
+	}
+	// MIN/MAX over no rows are NULL; a **int64 receives that as nil.
+	var lo, hi *int64
+	if err := ix.db.QueryRow(`SELECT MIN(date), MAX(date) FROM docs WHERE date > 0`).Scan(&lo, &hi); err != nil {
+		return time.Time{}, time.Time{}, false
+	}
+	if lo == nil || hi == nil {
+		return time.Time{}, time.Time{}, false
+	}
+	return time.Unix(*lo, 0).UTC(), time.Unix(*hi, 0).UTC(), true
+}

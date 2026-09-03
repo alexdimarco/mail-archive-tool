@@ -24,20 +24,26 @@ const (
 // before any early return — and finalized when it ends, so `status` can tell
 // a run that never finished (power loss, kill) from one that succeeded.
 type LastRun struct {
-	Version     int       `json:"version"`
-	Status      string    `json:"status"` // running | ok | failed | cancelled
-	Started     time.Time `json:"started"`
-	Finished    time.Time `json:"finished,omitempty"`
-	PID         int       `json:"pid"`
-	Exe         string    `json:"exe,omitempty"`
-	Mode        string    `json:"mode,omitempty"`
-	Exported    int       `json:"exported"`
-	Filled      int       `json:"filled"`
-	Fillable    int       `json:"fillable"`
-	Terminal    int       `json:"terminal"`
-	Unknown     int       `json:"unknown"`
-	IndexErrors int       `json:"index_errors"`
-	Error       string    `json:"error,omitempty"`
+	Version  int       `json:"version"`
+	Status   string    `json:"status"` // running | ok | failed | cancelled
+	Started  time.Time `json:"started"`
+	Finished time.Time `json:"finished,omitempty"`
+	PID      int       `json:"pid"`
+	Exe      string    `json:"exe,omitempty"`
+	Mode     string    `json:"mode,omitempty"`
+	// Job is the run's canonical export flags (e.g. -out … -auto, or -out …
+	// -input …), recorded so `status` can shape a "keep it current" remedy from
+	// the job that actually made this archive instead of hard-coding -auto.
+	// Absent on older records and on runs with no determinable local job (a
+	// Graph run); status then falls back to a generic phrase.
+	Job         []string `json:"job,omitempty"`
+	Exported    int      `json:"exported"`
+	Filled      int      `json:"filled"`
+	Fillable    int      `json:"fillable"`
+	Terminal    int      `json:"terminal"`
+	Unknown     int      `json:"unknown"`
+	IndexErrors int      `json:"index_errors"`
+	Error       string   `json:"error,omitempty"`
 }
 
 // LastRunState says what ReadLastRun found.

@@ -331,12 +331,55 @@ func Preview(s Spec) (string, error) {
 		}
 		return out, nil
 	default:
-		block, err := CronBlock(s)
-		if err != nil {
-			return "", err
-		}
-		return "cron — would be added to your user crontab:\n\n" + block + "\n", nil
+		return cronPreview(s)
 	}
+}
+
+// cronPreview renders the crontab entry with a plain-language gloss above the
+// raw schedule line and the notes an operator needs: a failed run is visible
+// only via `mailarchive status` or cron's MAILTO, and a full-mode job
+// re-exports everything on every run (friction #15).
+func cronPreview(s Spec) (string, error) {
+	block, err := CronBlock(s)
+	if err != nil {
+		return "", err
+	}
+	out := "cron — would be added to your user crontab:\n\n# " + cadenceGloss(s) + "\n" + block + "\n"
+	out += "\nA failed run surfaces only via `mailarchive status` or cron's MAILTO.\n"
+	if argHasMode(s.Args, "full") {
+		out += "-mode full: every scheduled run re-exports everything.\n"
+	}
+	return out, nil
+}
+
+// cadenceGloss renders the spec's cadence and time in plain language, e.g.
+// "daily at 02:00" or "weekly on Sunday at 03:30".
+func cadenceGloss(s Spec) string {
+	iv, _ := ParseInterval(string(s.Interval))
+	hh, mm, _ := parseHHMM(s.At)
+	switch iv {
+	case Hourly:
+		return fmt.Sprintf("hourly at :%02d", mm)
+	case Weekly:
+		return fmt.Sprintf("weekly on Sunday at %02d:%02d", hh, mm)
+	default:
+		return fmt.Sprintf("daily at %02d:%02d", hh, mm)
+	}
+}
+
+// argHasMode reports whether the job args set -mode to value (both `-mode V`
+// and `-mode=V` spellings).
+func argHasMode(args []string, value string) bool {
+	for i := 0; i < len(args); i++ {
+		a := strings.TrimLeft(args[i], "-")
+		if a == "mode" && i+1 < len(args) && args[i+1] == value {
+			return true
+		}
+		if a == "mode="+value {
+			return true
+		}
+	}
+	return false
 }
 
 // Install applies the schedule to the host OS's scheduler and records the
@@ -436,6 +479,27 @@ func Remove(s Spec) error {
 	return nil
 }
 
+// RemoveIfInstalled removes a schedule only when it is actually present — a
+// descriptor recorded in the archive, or the named entry in the host scheduler
+// — and returns removed=false without touching the scheduler otherwise. So a
+// `-remove` for an archive that never had a schedule neither claims to have
+// removed one nor rewrites (materializing an empty) crontab (friction #9).
+func RemoveIfInstalled(s Spec) (removed bool, err error) {
+	present := false
+	if s.Out != "" {
+		if _, derr := ReadDescriptor(s.Out); derr == nil {
+			present = true
+		}
+	}
+	if !present && Query(s.Name) == Installed {
+		present = true
+	}
+	if !present {
+		return false, nil
+	}
+	return true, Remove(s)
+}
+
 // writeWrapper writes the batch wrapper atomically and fsynced.
 func writeWrapper(s Spec) error {
 	dir := filepath.Dir(s.WrapperPath)
@@ -480,22 +544,35 @@ func removeCron(s Spec) error {
 	return writeCrontab(RemoveCronBlock(readCrontab(), CronMarker(s.Name)))
 }
 
+// crontabList and crontabInstall are the two crontab side effects, indirected
+// through package variables so a test can sandbox them — proving a no-op
+// `-remove` writes nothing — without touching the developer's real crontab.
+// crontabList returns `crontab -l`'s combined output and run error;
+// crontabInstall pipes new content to `crontab -`.
+var (
+	crontabList = func() (string, error) {
+		out, err := exec.Command("crontab", "-l").CombinedOutput()
+		return string(out), err
+	}
+	crontabInstall = func(content string) error {
+		cmd := exec.Command("crontab", "-")
+		cmd.Stdin = strings.NewReader(content)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("crontab -: %w: %s", err, strings.TrimSpace(string(out)))
+		}
+		return nil
+	}
+)
+
 func readCrontab() string {
-	out, err := exec.Command("crontab", "-l").Output()
+	out, err := crontabList()
 	if err != nil {
 		return "" // no crontab yet (or none for this user)
 	}
-	return string(out)
+	return out
 }
 
-func writeCrontab(content string) error {
-	cmd := exec.Command("crontab", "-")
-	cmd.Stdin = strings.NewReader(content)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("crontab -: %w: %s", err, strings.TrimSpace(string(out)))
-	}
-	return nil
-}
+func writeCrontab(content string) error { return crontabInstall(content) }
 
 func installLaunchd(s Spec) error {
 	plist, err := LaunchdPlist(s)
