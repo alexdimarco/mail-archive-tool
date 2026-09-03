@@ -17,8 +17,9 @@ invariants (R-series) and test-specs (MA-series) that must always hold.
 - The invariants (R-series) and test-specs (MA-series) are numbered in
   docs/scenario-catalog.md; every test cites what it proves via a
   `// covers: MA-N[, R-M]` marker on the test function. The
-  covers-map meta-test (assureblock/) fails if any invariant has no test or any
-  test omits a marker. The tests encode the invariant, not the other way around.
+  covers-map meta-test (assureblock/) fails if any U/S test-spec (MA row) has no
+  covering test, if any product test omits a marker, or if a marker cites an id
+  absent from the catalog (R-invariants are covered through their MA rows). The tests encode the invariant, not the other way around.
   NEVER weaken a gate, delete a covers marker, add a suppression, or edit a
   baseline to make a test pass. A red gate means the code is wrong until a human
   says otherwise; if you believe the gate itself is wrong, STOP and say so
@@ -26,7 +27,7 @@ invariants (R-series) and test-specs (MA-series) that must always hold.
 - The covers baseline (docs/scenario-catalog.md is the catalog of record) is the
   count of record; counts do not live in prose. Never lower a gate to make it pass.
   Intentional reductions are accepted by the OPERATOR, never self-granted.
-- Import the assure helpers (assure/); never hand-roll refusal checks. A refusal
+- Import the assure helpers (internal/assure/); never hand-roll refusal checks. A refusal
   test asserts the exact typed exit/behaviour, that the message names the
   offending file/policy/remediation, and that the side effect is ABSENT
   (assure.Refused); prove the positive twin on a healthy fixture first.

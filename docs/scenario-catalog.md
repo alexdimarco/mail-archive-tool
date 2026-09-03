@@ -66,7 +66,9 @@ an invariant is the thing that is wrong.
   is on disk: every indexed message whose exported file has been deleted, moved,
   or renamed is pruned from both the search index and the manifest; surviving
   files stay searchable; the browsable folder pages regenerate from the
-  reconciled set; nothing on disk is deleted.
+  reconciled set; no exported message file is deleted — only stale
+  `.mailarchive-*.tmp` temps and orphan `-attachments.zip` files with no sibling
+  `.html` are swept (R5, MA-69).
 - **R14 — Schedule is correct, opt-in, and reversible.** `schedule` generates a
   correct scheduler entry for the host OS (cron/launchd/Task Scheduler) carrying
   exactly the operator's backup job (an export, `graph` or `reindex` job),

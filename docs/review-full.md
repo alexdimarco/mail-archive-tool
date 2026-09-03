@@ -1,5 +1,11 @@
 # Full design + friction review — mail-archive-tool
 
+> As of 2026-08-22 (v0.2.x; R1–R17, S1–S20, MA-01–MA-64). Predates the 2026-09-02
+> incremental-completeness, schedule-v2/status (R18) and offline-hardening (R19)
+> work — see `docs/design-incremental-completeness.md` and
+> `docs/design-schedule-v2.md`; the later reviews are `docs/review-archive-offline.md`,
+> `docs/review-schedule-v2-friction.md` and `docs/review-schedule-v2-adversarial.md`.
+
 Cross-cutting review of the whole tool after the v0.2.x work (6 subcommands, 5
 sources, R1–R17). Two lenses: **design coherence** and a **friction walk**, with
 a dedicated **"language matches function"** audit (help text, catalog prose, and

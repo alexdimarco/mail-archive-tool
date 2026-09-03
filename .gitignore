@@ -23,3 +23,6 @@ search.db-shm
 
 # Work-in-progress handoff (not part of the project)
 /continuation.md
+
+# agent worktrees
+.claude/worktrees/

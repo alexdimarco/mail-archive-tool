@@ -23,8 +23,9 @@ import (
 // nothing else reconciles them. Reindex opens the index and manifest, prunes
 // every entry whose exported file is gone, regenerates the browsable folder
 // pages from the surviving set, and saves the manifest. Surviving files stay
-// searchable; nothing on disk is deleted. It returns how many rows were kept and
-// pruned.
+// searchable; no exported message file is deleted — only stale .mailarchive-*.tmp
+// temps and orphan -attachments.zip files with no sibling .html are swept
+// (SweepOrphans). It returns how many rows were kept and pruned.
 func Reindex(out string, logger *log.Logger) (kept, pruned int, err error) {
 	if logger == nil {
 		logger = log.New(io.Discard, "", 0)

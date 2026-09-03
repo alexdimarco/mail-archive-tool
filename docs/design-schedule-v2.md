@@ -1,7 +1,7 @@
 # Design — repeat archiving v2: schedule any job, Windows-safe, with a status surface
 
 **Revision:** 2 (2026-09-02). **BUILD STATUS:** built — pre-code review filed as
-`docs/review-schedule-v2-predesign.md` (GO_WITH_CONDITIONS, S1–S16 folded into this
+`docs/review-schedule-v2-predesign.md` (GO_WITH_CONDITIONS, SC1–SC16 folded into this
 revision). Landed as commits `efdac66` (slice a: job parsing, `--`, -log, wrapper,
 descriptor — MA-72, 73, 93, 97), `ca98a93` (slice b: secret file — MA-74; adversarial
 pass in `docs/review-schedule-v2-adversarial.md`), `da05d89` + `250e839` (slice c:
@@ -29,21 +29,21 @@ in `docs/review-schedule-v2-friction.md`).
 
 - **P1 — Any backup job, one grammar.** `schedule` accepts either the existing
   export flags (now including `-outlook`, `-outlook-sync-wait`) *or* `-- <job>`
-  where the job is the default export, `graph`, or `reindex` (S2). The two forms
+  where the job is the default export, `graph`, or `reindex` (SC2). The two forms
   are mutually exclusive: with `--`, any schedule-level export flag is refused
-  naming it, and `-out`, the log path and all validation derive from the job (S3).
+  naming it, and `-out`, the log path and all validation derive from the job (SC3).
   The scheduled command is exactly that job. (MA-72)
 - **P2 — Fail at schedule time, not at 02:00.** The job is dry-parsed with the
   real subcommand flag sets: an unknown flag, a missing `-out`, an interactive
   flag (`-enable-offline`, `-sync-wait`), `-outlook` off Windows, a
   non-backup verb (`serve`, `search`, `status`, `schedule`), or a `graph` job
-  whose secret file fails the full run-time check (S10) is refused now, naming
+  whose secret file fails the full run-time check (SC10) is refused now, naming
   the problem and the remedy. (MA-72)
 - **P3 — Windows-safe.** Install writes the wrapper `%LOCALAPPDATA%\mailarchive\
-  <name>.cmd` FIRST (S13), holding the command with every token quoted and every
-  `%` doubled (S4), then creates the task whose `/TR` is the quoted wrapper path.
+  <name>.cmd` FIRST (SC13), holding the command with every token quoted and every
+  `%` doubled (SC4), then creates the task whose `/TR` is the quoted wrapper path.
   `-name` is sanitized and capped at 40 characters, so the `/TR` string is bounded
-  at ~120 characters on any Windows profile (S12). Remove deletes both. The
+  at ~120 characters on any Windows profile (SC12). Remove deletes both. The
   wrapper generator is pure and unit-tested. (MA-73)
 - **P4 — A secret file, never a secret argument.** `graph -client-secret-file
   PATH` reads the secret from a regular file (Lstat; a symlink/FIFO/device is
@@ -54,24 +54,24 @@ in `docs/review-schedule-v2-friction.md`).
   `<out>/.mailarchive-lastrun.json` {version, started, pid, status:"running"} as
   their FIRST action (before any early return) and finalize it atomically at the
   end {finished, mode, exported, filled, fillable, terminal, error, exe}. Under
-  SIGKILL/power loss the `running` record stays and is itself a signal (S6). (MA-76)
+  SIGKILL/power loss the `running` record stays and is itself a signal (SC6). (MA-76)
 - **P6 — `status` is the legibility surface (X6).** `mailarchive status -out DIR`
   prints messages, indexed, fillable/terminal/unknown counts (+report path), the
-  last run (+error), the schedule from the archive-local descriptor (S5) — name,
+  last run (+error), the schedule from the archive-local descriptor (SC5) — name,
   cadence, host, whether the real executable still exists and whether it is this
-  binary (S8) — and a GREEN/WARN/RED posture that fails closed on missing
-  evidence (S6), with every WARN/RED naming its remedy. It exits 0 whenever it
-  reports (S15). (MA-75, MA-78)
+  binary (SC8) — and a GREEN/WARN/RED posture that fails closed on missing
+  evidence (SC6), with every WARN/RED naming its remedy. It exits 0 whenever it
+  reports (SC15). (MA-75, MA-78)
 - **P7 — The GUI can keep an archive current.** After a successful wizard run it
   offers *Keep this archive current? (No / Daily at 02:00 / Weekly, Sunday
   03:00)*. Yes writes a job file and installs a schedule (same per-archive name
-  as the CLI, S7) whose program is the GUI executable in headless mode
+  as the CLI, SC7) whose program is the GUI executable in headless mode
   (`mailarchive-gui -job FILE`): no dialogs, no console, a rotating log, lastrun
   written. On every launch the first screen shows the health of any schedule for
   the last-used archive (last run, posture, "the scheduled program is not this
-  binary") beside *Remove the scheduled backup* (S8). The wizard dialog flows are
+  binary") beside *Remove the scheduled backup* (SC8). The wizard dialog flows are
   lab-tier; the job-file codec, headless wiring and health logic are tier U. (MA-77)
-- **P8 — Bounded logs (S9).** `-log FILE` on export and graph writes the operator
+- **P8 — Bounded logs (SC9).** `-log FILE` on export and graph writes the operator
   log to FILE with size-capped rotation (8 MB, one `.1`) instead of stderr; every
   scheduled entry uses it. Crash output the product cannot capture goes to cron's
   mail on Linux and to `<name>.stderr.log` under launchd and the Windows wrapper.
@@ -97,7 +97,7 @@ Conceded non-goals:
   that channel is backlog, not promised (hidden blocker of the review).
 - Entra client secrets expire (≤24 months). README/graph-app-setup carry the
   calendar note; `status` maps an authentication failure to a "rotate the secret
-  and rewrite the file" remedy (S10).
+  and rewrite the file" remedy (SC10).
 
 ## 3. Mechanism
 
@@ -117,30 +117,30 @@ Refusals (all `mailarchive: …`, exit 1, R12): unknown flag (from `flag`);
 (see README → IMAP), then schedule without it"*; `-outlook` off Windows (reuse
 `outlookcom.ErrUnsupported`); a non-backup verb → *"serve is a long-running
 server and cannot be a scheduled backup job; schedule an export, graph or
-reindex job"* (S2); a schedule-level export flag combined with `--` → names the
-flag (S3); `graph` without `-client-secret-file` → *"a scheduled job has no
+reindex job"* (SC2); a schedule-level export flag combined with `--` → names the
+flag (SC3); `graph` without `-client-secret-file` → *"a scheduled job has no
 environment; pass -client-secret-file"*; the secret file failing `readSecret`
-(S10).
+(SC10).
 
 ### 3.2 `schedule.Spec` and the Windows wrapper
 
 `Spec` gains `Wrapper bool` and `WrapperPath` (default
 `%LOCALAPPDATA%\mailarchive\<name>.cmd`). The CLI always sets `Wrapper` on
 Windows (it needs the stderr redirect); the GUI sets it only when the direct
-`/TR` string would exceed 261 characters (S12), accepting the console flash in
+`/TR` string would exceed 261 characters (SC12), accepting the console flash in
 that case. Pure generators: `CmdWrapper(s) string` (content: `@echo off`, a
 comment naming the managing command, the run line with EVERY token wrapped in
 `"` and every `%` doubled — inside cmd.exe quotes `& | < > ^ ( )` are inert and
-delayed expansion is never enabled, S4 — redirecting `2>> "<name>.stderr.log"`),
+delayed expansion is never enabled, SC4 — redirecting `2>> "<name>.stderr.log"`),
 and `SchtasksCreateArgv`, which uses `winQuote(WrapperPath)` as `/TR` when
 `Wrapper`. Install writes and fsyncs the wrapper before creating the task
-(S13); `Remove` deletes the task, then the wrapper. `Preview` prints both.
+(SC13); `Remove` deletes the task, then the wrapper. `Preview` prints both.
 
 Every install (all OSes) also writes the archive-local descriptor
 `<out>/.mailarchive-schedule.json` {version, name, interval, at, exe, exe_size,
-exe_mtime, wrapper, job, installed_at, host} and `Remove` deletes it (S5/S8).
+exe_mtime, wrapper, job, installed_at, host} and `Remove` deletes it (SC5/SC8).
 `schedule -out DIR -remove` reads the name from it. The default name is
-`mailarchive-` + the first 8 hex of sha1(absolute out) (S7); `DefaultName`
+`mailarchive-` + the first 8 hex of sha1(absolute out) (SC7); `DefaultName`
 stays the managed-marker prefix so existing entries are still recognized.
 
 ### 3.3 `-client-secret-file`
@@ -149,7 +149,7 @@ stays the managed-marker prefix so existing entries are still recognized.
 refuse naming the requirement; on non-Windows `mode&0o077 != 0` → refuse naming
 `chmod 600 <path>`; read at most 4 KB, `strings.TrimSpace`; empty → refuse.
 Precedence: flag file over env var. The same function runs at schedule time
-(S10). The `graph` help and `docs/graph-app-setup.md` show the file form for
+(SC10). The `graph` help and `docs/graph-app-setup.md` show the file form for
 scheduled use and the secret-expiry note.
 
 ### 3.4 Last-run record and `status`
@@ -159,10 +159,10 @@ PID int; Status string /* running|ok|failed|cancelled */; Mode string; Exported,
 Filled, Fillable, Terminal, IndexErrors int; Error, Exe string}` with atomic
 `Write(out)`/`Read(out)` (Read distinguishes absent / unreadable / present).
 `app.Run`/`RunGraph` write the `running` record as their first action and
-finalize in a deferred step (S6).
+finalize in a deferred step (SC6).
 
 `schedule.Installed(name) (State, error)` returns Installed / NotInstalled /
-SchedulerUnavailable (S14): cron → `crontab -l` contains `CronMarker(name)`
+SchedulerUnavailable (SC14): cron → `crontab -l` contains `CronMarker(name)`
 (exec error ≠ empty crontab); launchd → plist exists; Windows → `schtasks
 /Query /TN <name>` exit 0 vs. command missing. Each is a pure predicate over
 injected command output/errors so it is unit-testable on any OS (MA-78); the
@@ -181,7 +181,7 @@ Schedule:   "mailarchive-backup" installed · daily 02:00 · runs /usr/local/bin
 Posture:    GREEN | WARN (reasons…) | RED (reasons…)
 ```
 
-Posture (fail-closed, S6): RED if the last run failed, or its record is
+Posture (fail-closed, SC6): RED if the last run failed, or its record is
 `running` with a dead pid or older than one interval ("previous run did not
 complete"), or the scheduled executable is missing; WARN if fillable>0 or
 unknown>0, no schedule is installed, the scheduler is unavailable, a schedule is
@@ -189,13 +189,13 @@ installed but no run was ever recorded, the record is unreadable (named), the
 last run is older than 2× the interval, or the scheduled executable is not this
 binary; else GREEN. A directory with neither manifest nor descriptor is refused
 naming it. An authentication error in the last run adds the secret-rotation
-remedy. `status` exits 0 whenever it reports (S15); a machine-readable health
+remedy. `status` exits 0 whenever it reports (SC15); a machine-readable health
 signal is ux-contract condition C5 (backlog).
 
 ### 3.5 GUI
 
 - `mailarchive-gui -job FILE`: headless. The job file (`internal/job`, JSON:
-  version, inputs, auto, out, mode, since, copy_first, outlook; S11) is written by
+  version, inputs, auto, out, mode, since, copy_first, outlook; SC11) is written by
   the wizard to `os.UserConfigDir()/mailarchive/<name>.json`. Headless mode
   re-runs discovery when `auto` is set, then runs `app.Run` (or the COM path) with
   the rotating log opener on `<out>/mailarchive.log`; no dialog is ever shown. A
@@ -203,9 +203,9 @@ signal is ux-contract condition C5 (backlog).
   and exits 1 (a sink that does not depend on `out`).
 - Schedule step after a successful run (P7): `schedule.Install` with
   `Exe=os.Executable()`, `Args=["-job", path]`, the per-archive name, `Wrapper`
-  per S12. Before installing, if the executable lives under a Downloads/Temp
+  per SC12. Before installing, if the executable lives under a Downloads/Temp
   path the GUI warns ("move it somewhere permanent first") with *Continue anyway*.
-- First screen (health view, S8): for the last-used archive (remembered in the
+- First screen (health view, SC8): for the last-used archive (remembered in the
   config dir) read the descriptor + lastrun and show last run, posture, and
   whether the scheduled program is this binary, beside *Remove the scheduled
   backup*.
@@ -225,7 +225,7 @@ Graph section and `graph-app-setup.md` fixed to the secret-file form.
 
 ## 4. Build order and seams
 
-Slices (S1), each its own commit naming its gate:
+Slices (SC1), each its own commit naming its gate:
 
 1. **(a)** CLI flag-builder refactor + `parseJob` + `--` form + verb whitelist +
    form exclusivity + `-log` rotation (MA-72, MA-93; MA-39/50 stay green).
@@ -267,6 +267,6 @@ last run, and schedule posture, failing closed on missing evidence.**
   detection on each OS, and the wizard dialog flows are **lab-pending** (MA-79,
   MA-95).
 - "No console for the GUI job": **conditional** on the direct `/TR` fitting 261
-  characters; otherwise the wrapper is used and a console flashes (S12).
+  characters; otherwise the wrapper is used and a console flashes (SC12).
 - "Every run that begins is recorded": **best-effort** under power loss (the
   `running` record survives and is itself the signal).
