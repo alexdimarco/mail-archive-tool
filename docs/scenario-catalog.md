@@ -272,6 +272,9 @@ Tiers: **U** unit property (every commit) · **S** structural whole-tree walk
 | MA-88 | U | the manifest and index are checkpointed every CheckpointEvery messages inside a store walk, so a hard crash keeps the progress made | R5, S2 |
 | MA-69 | U | html/zip are written to unique temp files and renamed into place: an attachment stream error leaves no partial or final zip and is recorded as an issue; SweepOrphans removes `.mailarchive-*.tmp` older than the run start and `-attachments.zip` files with no sibling html, and Run/reindex call it | R5, R1, S2 |
 | MA-94 | U | a corrupt/truncated manifest is refused naming the file and the remedy (restore or delete to re-export), never a crash; Save fsyncs its temp before the atomic rename | R5, R12, S2 |
+| MA-119 | U | a folder of many pages renders a compact numbered pager (first, last, current, ±2 neighbours, ellipses for the gaps) with the right relative hrefs and the current page not self-linked; page 1 has no "newer" link; the newer/older links stay | R7, S27 |
+| MA-120 | U | the in-page filter keeps the honest "Filter" label; a paginated folder's help says the box matches this page only (N of M columns shown) and points to `mailarchive serve`/`rg` for whole-archive and body search, while an unpaginated folder keeps the short placeholder and shows no such help | R7, S27 |
+| MA-121 | U | the exporter's date filter excludes exactly the items outside the -since window: an unseen message dated before -since is skipped (SkippedDate==1, no file written, not recorded in the manifest) while one on/after the window is exported | R11 |
 
 Rows MA-29..MA-37 were added by the adversarial pass; see
 `docs/review-adversarial.md` for the findings they encode. Rows MA-40..MA-44

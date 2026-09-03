@@ -197,6 +197,56 @@ func (d folderPageData) RootRelPrefix() string {
 	return strings.Repeat("../", d.Depth)
 }
 
+// pagerItem is one slot in the compact numbered pager: a page link, the current
+// page (no link), or an ellipsis standing in for a run of omitted pages.
+type pagerItem struct {
+	Num      int    // page number (0 for an ellipsis)
+	Href     string // relative link ("" for the current page and for ellipses)
+	Current  bool
+	Ellipsis bool
+}
+
+// pagerWindow is how many neighbouring pages flank the current one on each side.
+const pagerWindow = 2
+
+// Pager returns the compact numbered pager for this page: first, last, the
+// current page and a ±pagerWindow band of neighbours, with an ellipsis wherever
+// a run of page numbers is skipped (e.g. page 6 of 12 -> 1 … 4 5 6 7 8 … 12).
+// It returns nil when there are three pages or fewer — the newer/older links
+// already reach every page — so the template shows the numbers only for bigger
+// folders. Every link is a plain relative filename, so it works from file://
+// with no script. Order is newest-first: page 1 is the newest.
+func (d folderPageData) Pager() []pagerItem {
+	if d.Pages <= 3 {
+		return nil
+	}
+	show := map[int]bool{1: true, d.Pages: true}
+	for n := d.Page - pagerWindow; n <= d.Page+pagerWindow; n++ {
+		if n >= 1 && n <= d.Pages {
+			show[n] = true
+		}
+	}
+	var items []pagerItem
+	prev := 0
+	for n := 1; n <= d.Pages; n++ {
+		if !show[n] {
+			continue
+		}
+		if prev != 0 && n != prev+1 {
+			items = append(items, pagerItem{Ellipsis: true})
+		}
+		it := pagerItem{Num: n}
+		if n == d.Page {
+			it.Current = true
+		} else {
+			it.Href = pageName(n)
+		}
+		items = append(items, it)
+		prev = n
+	}
+	return items
+}
+
 func (r row) DateStr() string {
 	if r.Date.IsZero() {
 		return ""
