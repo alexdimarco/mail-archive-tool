@@ -1,7 +1,8 @@
 # Design — mailbox categories, and the "extractable" status line
 
-**Revision:** 1 (2026-09-03). **BUILD STATUS:** not built — input to the 10-lens
-pre-code design review. It completes the two items the portability design left
+**Revision:** 2 (2026-09-03). **BUILD STATUS:** approved with conditions, not
+built — the 10-lens pre-code review is filed as
+`docs/review-categories-predesign.md` (GO_WITH_CONDITIONS; QC1–QC8 folded in). It completes the two items the portability design left
 open: message **categories/tags** (P6, deferred as "named-MAPI-property work")
 and the **`status` extractability line** (PC15, deferred as "needs a manifest
 EML-count surface"). Two small, independent slices.
@@ -23,8 +24,10 @@ EML-count surface"). Two small, independent slices.
   fills it from the named `Keywords` property; the mbox/maildir reader from
   `X-Mozilla-Keys` (Thunderbird) and a `Keywords` header; Graph from the message
   JSON `categories` array (one more field on the already-widened `$select`, no
-  extra request). Categories appear in the existing message-page "Status" row,
-  HTML-escaped, and are recovered by `reindex -rebuild`'s read-back. They are
+  extra request). Categories appear in their OWN message-page field (a "Categories" row with
+  `data-mailarchive-field="categories"`, never inside the " · "-joined Status
+  line — QC3), HTML-escaped and capped (QC4), and are recovered losslessly by
+  `reindex -rebuild` from that dedicated field. They are
   **excluded from `contentHash`/`Fingerprint`** (mutable classification; hashing
   them would break R2/R3) and are not indexed this increment. (additive to
   R7/MA-90 and the message-state scenario; explicitly NOT R2/R3. Scenario S36.)
@@ -33,27 +36,33 @@ EML-count surface"). Two small, independent slices.
   (`NameToIDMap.StringToID["Keywords"]`, the `Keywords` string name of
   `PidNameKeywords` in `PS_PUBLIC_STRINGS`) and reads the value, parsing the
   multi-valued unicode (PT_MV_UNICODE) blob itself since go-pst has no
-  multi-value string reader. A single-valued unicode categories property is also
+  multi-value string reader — with hard bounds BEFORE any allocation (QC2), and
+  under a localized recover so a corrupt property costs only the categories, not
+  the message (QC5). A single-valued unicode categories property is also
   handled. Everything is best-effort inside the existing panic-safe convert path:
   an absent property, a foreign type, or an unparseable blob yields no categories
   and never fails the message. go-pst's `StringToID` is a flat string→id map, so
   a (rare) different property set also naming a property `Keywords` could shadow
   it — an acknowledged limit stated in §5. (R10 panic-safety; R1 no silent crash.)
 - **K3 — Category text is untrusted and inert.** Category strings are
-  sender/source-influenced; they are HTML-escaped in the Status row (like every
-  other field), carry no markup, and are stripped of control characters before
-  rendering or read-back so they cannot corrupt the page, the rebuild parser, or
-  a terminal. (R19; the AGG-1/INT-1 posture.)
-- **K4 — `status` reports extractability from the manifest alone.** `status`
-  prints "Extractable: N of M records have a preserved original (.eml)" computed
-  from the manifest (a record is extractable iff it recorded an `.eml` digest —
-  `Fixity.EML != nil`), hashing nothing and reading no message file. When N is 0
-  and M > 0 it says "not extractable: no preserved originals — re-archive a
-  mbox/maildir/Graph source with `-raw` to migrate out later". Posture is
-  unchanged (informational, like the fixity-coverage line). `status -json`
-  carries `extractable {records_with_raw, records}`. The count reflects records
-  written by the fixity version or later (same framing as "Fixity coverage"),
-  stated in §5. (extends R18/S29; no new invariant.)
+  sender/source-influenced; they are HTML-escaped in their own field (like every
+  other header field), carry no markup, are stripped of control characters, and —
+  because they live in a dedicated field, never the Status line — a category
+  value can never be tokenised as a Status segment to forge Unread/Importance/
+  Sensitivity on read-back (QC3). (R19; the AGG-1/INT-1 posture.)
+- **K4 — `status` reports extractability from the same signal `extract` uses.**
+  Extractability is a filesystem fact: a record is extractable iff its
+  `<stem>.eml` is present on disk (a regular file). `status` Lstats each record's
+  `.eml` (never hashes, never reads bytes) — the same presence signal `extract`
+  emits on and `verify` counts (`WithEML`), via one shared helper so the three
+  surfaces cannot disagree (QC1). It prints "Extractable: N of M records have a
+  preserved original (.eml) on disk". It never prints a categorical "not
+  extractable — re-archive": for the M−N records without one it says a
+  mbox/maildir/Microsoft 365 source archived with `-raw` keeps an `.eml`, while
+  Outlook `.pst`/`.ost` items never carry one (keep the `.pst` itself to migrate).
+  Posture is unchanged (informational). `status -json` carries
+  `extractable {records_with_eml, records}`. (governed by R20/MA-186, the
+  file-presence definition; extends S29.)
 
 ## 3. Mechanism
 
@@ -69,27 +78,34 @@ EML-count surface"). Two small, independent slices.
   (4-byte little-endian count, then count×4-byte offsets, then UTF-16LE strings)
   with defensive bounds so a truncated/hostile blob returns what it safely can.
   Each value is trimmed and control-stripped; empties dropped.
-- `internal/source/mbox.go`: `Categories` from `X-Mozilla-Keys` (space-
-  separated) unioned with a `Keywords` header (comma-separated), trimmed,
-  control-stripped, de-duplicated, order-stable.
+- `internal/source/mbox.go`: `Categories` from `X-Mozilla-Keys` only
+  (Thunderbird's local tagging; space-separated), trimmed, control-stripped,
+  de-duplicated, order-stable. The sender-settable RFC `Keywords` header is NOT
+  used (QC6).
 - `internal/graph`: add `categories` to `Messages`' `$select`; `MessageRef`
   carries `Categories []string`; `internal/app/graph.go` sets it on the message.
-- `internal/export/html.go` `statusLine`: append "Categories: a, b" when
-  non-empty (escaped by the existing `row(...,"status")`). `internal/app/
-  htmlheader.go` `applyStatusLine`: recover the `Categories: …` segment (split
-  on ", ") so rebuild read-back is faithful. A category value therefore may not
-  itself contain the segment separators the line uses; the reader splits
-  conservatively and this is noted (the values are short tags).
+- `internal/export/html.go` `renderHeader`: emit a dedicated "Categories" `<dd
+  data-mailarchive-field="categories">` (its own row, NOT part of `statusLine`),
+  the values joined for display, HTML-escaped, capped in number and total length
+  with a visible truncation note (QC3, QC4). `internal/app/htmlheader.go`: read
+  the categories back from the `data-mailarchive-field="categories"` field
+  (its own field — lossless, no Status-line separator ambiguity). Categories are
+  never appended to the Status line.
 
 ### 3.2 Extractable line (slice L)
 
-- `internal/state/manifest.go`: `func (m *Manifest) ExtractableCounts()
-  (withRaw, total int)` counting records with `Fixity.EML != nil`. No new field,
-  no version bump.
-- `internal/health`: `Input.Extractable {WithRaw, Total int}` set by `Gather`
-  from the manifest; `Summary` prints the K4 line after the fixity-coverage line;
-  `status -json` gains `extractable`. Posture untouched. When the manifest has no
-  records the line is omitted.
+- One shared helper — `func ExtractableCount(out string, m *state.Manifest)
+  (withEML, total int)` (in package app, beside verify/extract) — Lstats each
+  record's `<stem>.eml` under `out` (via the same `validRelPath` gate) and counts
+  the regular files present. `verify`'s `WithEML` and this helper are the same
+  code, and `extract` emits on the identical presence check, so the three cannot
+  diverge (QC1).
+- `internal/health`: `Input.Extractable {WithEML, Total int}` (set by the caller,
+  since health must not import app — `cmd/mailarchive/status.go` computes it via
+  the shared helper and passes it in); `Summary` prints the K4 line after the
+  fixity-coverage line, with the source-aware M−N wording; `status -json` gains
+  `extractable {records_with_eml, records}`. Posture untouched; the line is
+  omitted when the manifest has no records.
 
 ## 4. Build order and seams
 
@@ -105,13 +121,18 @@ Both slices are independent and file-disjoint except `renderHeader`/
    `<script>`/control char is escaped and control-stripped in the Status row and
    survives a rebuild read-back inertly; `Fingerprint`/`Identity` unchanged when
    only `Categories` differ (extend MA-145); support.pst (no categories) yields
-   none without error. **Real-PST categories end-to-end is lab-pending** (no
-   categorized `.pst` fixture without Outlook) — a new lab row.
-2. **Slice L — extractable line.** the manifest count, `Gather`/`Summary`/
-   `status -json`. Tests: an archive built with `-raw` reports "Extractable: N of
-   M" with N == the raw count; a PST-only (no `.eml`) archive reports "not
-   extractable"; `status -json` carries the field; posture is unchanged across
-   both.
+   none without error; a hostile `parseMVUnicode` blob (huge declared count,
+   out-of-range offsets) returns a bounded safe result with no OOM/panic (QC2);
+   a category value containing " · "/", " renders in its own field and cannot
+   forge a Status segment on read-back (QC3). **Real-PST categories end-to-end is
+   lab-pending** (no categorized `.pst` fixture without Outlook) — a new lab row.
+2. **Slice L — extractable line.** the shared `ExtractableCount` (.eml file
+   presence), `status.go` wiring, `Summary`, `status -json`. Tests: on a `-raw`
+   archive the count equals what `verify` reports (`WithEML`) and what `extract`
+   emits (agreement, QC1); a PST-only archive reports N=0 with the source-aware
+   "keep the .pst" wording, never a categorical "re-archive"; deleting a
+   preserved `.eml` drops the count by one (file-presence, not a stale digest);
+   `status -json` carries `extractable`; posture is unchanged.
 
 ## 5. Honesty of claims
 
@@ -123,8 +144,10 @@ Both slices are independent and file-disjoint except `renderHeader`/
   acknowledged, unlikely limit. The multi-value parse is bounds-checked and
   best-effort; validation against a real categorized PST is lab-pending because
   no such fixture can be built without Outlook.
-- The extractable count is manifest-only and reflects records written by the
-  fixity version or later (a pre-fixity `-raw` archive undercounts) — stated the
-  same way as the fixity-coverage line; it never reads or hashes a message file.
+- The extractable count is `.eml` file presence (an Lstat per record, never a
+  hash), so it agrees with `extract` and `verify` on the same archive; it is
+  current (a since-deleted `.eml` is not counted). It Lstats each record, which
+  is O(records) on a `status` call — cheap next to a hash, and bounded by the
+  manifest size.
 - Scenario **S36** (and a lab row for real-PST categories) is a proposal for the
   OPERATOR to accept into `docs/scenario-catalog.md`.
