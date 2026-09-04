@@ -273,6 +273,9 @@ func parseMessage(data []byte) *model.Message {
 	if unread, ok := mozillaReadFlag(h.Get("X-Mozilla-Status")); ok {
 		msg.Unread = unread
 	}
+	// Categories come ONLY from Thunderbird's local tagging (X-Mozilla-Keys),
+	// never the sender-settable RFC Keywords header (QC6).
+	msg.Categories = mozillaCategories(h.Get("X-Mozilla-Keys"))
 
 	for {
 		p, err := mr.NextPart()
@@ -352,6 +355,7 @@ func fallbackParse(data []byte) *model.Message {
 	if unread, ok := mozillaReadFlag(m.Header.Get("X-Mozilla-Status")); ok {
 		msg.Unread = unread
 	}
+	msg.Categories = mozillaCategories(m.Header.Get("X-Mozilla-Keys"))
 	return msg
 }
 
@@ -421,6 +425,25 @@ func mozillaReadFlag(s string) (unread, ok bool) {
 		return false, false
 	}
 	return v&0x0001 == 0, true
+}
+
+// mozillaCategories parses Thunderbird's X-Mozilla-Keys header — the local tag
+// keys, whitespace-separated and often trailing-space-padded — into categories,
+// control-stripped, de-duplicated and order-stable. Only this local-tagging
+// header is a category source; the sender-settable RFC Keywords header is NOT
+// read (QC6), so a sender cannot inject "categories". Absent/blank → nil.
+func mozillaCategories(s string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, tok := range strings.Fields(s) {
+		tok = strings.TrimSpace(util.StripControl(tok))
+		if tok == "" || seen[tok] {
+			continue
+		}
+		seen[tok] = true
+		out = append(out, tok)
+	}
+	return out
 }
 
 // maildirSeen reports whether a maildir filename carries the "S" (Seen) info

@@ -147,24 +147,26 @@ type MessageRef struct {
 	InternetMessageID string // angle brackets stripped, matching go-message
 	Received          time.Time
 
-	Importance  string // Graph "low"/"normal"/"high"; "" when the tenant omits it
-	Sensitivity string // Graph "normal"/"personal"/"private"/"confidential"; "" when omitted
-	IsRead      *bool  // nil when the tenant omits it (read state then unknown)
+	Importance  string   // Graph "low"/"normal"/"high"; "" when the tenant omits it
+	Sensitivity string   // Graph "normal"/"personal"/"private"/"confidential"; "" when omitted
+	IsRead      *bool    // nil when the tenant omits it (read state then unknown)
+	Categories  []string // the message's category tags; nil when the tenant omits them
 }
 
 // Messages streams every message reference in folderID to fn (paged).
 func (c *Client) Messages(ctx context.Context, userID, folderID string, fn func(MessageRef) error) error {
 	next := c.base + "/users/" + url.PathEscape(userID) + "/mailFolders/" + url.PathEscape(folderID) +
-		"/messages?$select=id,internetMessageId,receivedDateTime,importance,isRead,sensitivity&$top=1000"
+		"/messages?$select=id,internetMessageId,receivedDateTime,importance,isRead,sensitivity,categories&$top=1000"
 	for next != "" {
 		var body struct {
 			Value []struct {
-				ID                string `json:"id"`
-				InternetMessageID string `json:"internetMessageId"`
-				Received          string `json:"receivedDateTime"`
-				Importance        string `json:"importance"`
-				IsRead            *bool  `json:"isRead"`
-				Sensitivity       string `json:"sensitivity"`
+				ID                string   `json:"id"`
+				InternetMessageID string   `json:"internetMessageId"`
+				Received          string   `json:"receivedDateTime"`
+				Importance        string   `json:"importance"`
+				IsRead            *bool    `json:"isRead"`
+				Sensitivity       string   `json:"sensitivity"`
+				Categories        []string `json:"categories"`
 			} `json:"value"`
 			Next string `json:"@odata.nextLink"`
 		}
@@ -178,6 +180,7 @@ func (c *Client) Messages(ctx context.Context, userID, folderID string, fn func(
 				Importance:        m.Importance,
 				Sensitivity:       m.Sensitivity,
 				IsRead:            m.IsRead,
+				Categories:        m.Categories,
 			}
 			if t, err := time.Parse(time.RFC3339, m.Received); err == nil {
 				ref.Received = t

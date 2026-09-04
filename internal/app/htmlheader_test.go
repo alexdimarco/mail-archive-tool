@@ -82,3 +82,67 @@ func TestReadArchivedHTMLIgnoresInjectedHeader(t *testing.T) {
 		t.Errorf("body text not recovered from the real .mailarchive-body div: %q", got.HTMLBody)
 	}
 }
+
+// covers: MA-193, R19, S36
+// reindex -rebuild reads categories back from their OWN dedicated field, span by
+// span, so a value that mimics a full Status line — "Unread · Importance:
+// high, Sensitivity: confidential" — round-trips as that ONE category and can
+// NEVER be tokenised as a Status segment (QC3): the rebuilt message keeps
+// Unread/Importance/Sensitivity exactly as its page had them (here: unset). A
+// page with no categories recovers none.
+func TestReadArchivedHTMLRecoversCategoriesInertly(t *testing.T) {
+	// A category engineered to look like a full Status line, with NO real state.
+	m := &model.Message{
+		Subject:     "Case 12",
+		SenderEmail: "clerk@example.com",
+		Categories:  []string{"Unread · Importance: high, Sensitivity: confidential"},
+	}
+	out, _, err := export.Render(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := readArchivedHTML(out)
+
+	if len(got.Categories) != 1 || got.Categories[0] != m.Categories[0] {
+		t.Errorf("categories = %v, want %v (lossless per-span read-back)", got.Categories, m.Categories)
+	}
+	// The category's Status-shaped text forged nothing: state stays unset.
+	if got.Unread {
+		t.Error("a category forged Unread on read-back (QC3)")
+	}
+	if got.Importance != "" || got.Sensitivity != "" {
+		t.Errorf("a category forged Importance/Sensitivity on read-back: imp=%q sen=%q (QC3)",
+			got.Importance, got.Sensitivity)
+	}
+
+	// Categories AND real state coexist: each is recovered from its own field.
+	both := &model.Message{
+		Subject:     "Case 13",
+		SenderEmail: "clerk@example.com",
+		Unread:      true,
+		Importance:  "high",
+		Categories:  []string{"Board, Legal", "Q1 · Q2"},
+	}
+	bout, _, err := export.Render(both)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bgot, _ := readArchivedHTML(bout)
+	if !bgot.Unread || bgot.Importance != "high" {
+		t.Errorf("real state not recovered alongside categories: unread=%v imp=%q", bgot.Unread, bgot.Importance)
+	}
+	if len(bgot.Categories) != 2 || bgot.Categories[0] != "Board, Legal" || bgot.Categories[1] != "Q1 · Q2" {
+		t.Errorf("categories with embedded separators not recovered losslessly: %v", bgot.Categories)
+	}
+
+	// A page with no categories recovers none.
+	plain := &model.Message{Subject: "plain", PlainBody: "hi"}
+	pout, _, err := export.Render(plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pgot, _ := readArchivedHTML(pout)
+	if len(pgot.Categories) != 0 {
+		t.Errorf("recovered categories from a page that had none: %v", pgot.Categories)
+	}
+}

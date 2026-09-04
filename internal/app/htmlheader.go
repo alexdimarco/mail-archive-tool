@@ -135,7 +135,54 @@ func readArchivedHTML(data []byte) (*model.Message, int) {
 		applyStatusLine(m, st)
 	}
 
+	// Categories (K1): recovered from their OWN dedicated field, span by span,
+	// so the values round-trip losslessly and — living in their own field, never
+	// the Status line — can NEVER be tokenised as a Status segment (QC3). Like
+	// the state fields they are not indexed and not part of identity; recovering
+	// them only keeps a rebuilt model faithful. Read from the SAME anchored
+	// header the other fields use, so a hostile body cannot inject them.
+	m.Categories = readCategoriesField(header)
+
 	return m, unrecovered
+}
+
+// readCategoriesField recovers the message's categories from the archived page:
+// the text of each <span class="mailarchive-category"> inside the dedicated
+// categories dd of the header's first <dl>. Each category rides in its own span,
+// so the values round-trip with no separator ambiguity, and because they live
+// in their own field they can never be read as a Status segment (QC3). Absent
+// categories yield nil. It reads from the passed (already anchored) header node,
+// so a mail-injected element elsewhere in the document cannot reach it.
+func readCategoriesField(header *xhtml.Node) []string {
+	dl := findFirst(header, func(n *xhtml.Node) bool { return n.Type == xhtml.ElementNode && n.Data == "dl" })
+	if dl == nil {
+		return nil
+	}
+	var dd *xhtml.Node
+	for c := dl.FirstChild; c != nil; c = c.NextSibling {
+		if c.Type == xhtml.ElementNode && c.Data == "dd" && attr(c, "data-mailarchive-field") == "categories" {
+			dd = c
+			break // first categories dd wins, like readFirstDL
+		}
+	}
+	if dd == nil {
+		return nil
+	}
+	var cats []string
+	var walk func(*xhtml.Node)
+	walk = func(n *xhtml.Node) {
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			if c.Type == xhtml.ElementNode && c.Data == "span" && hasClass(c, "mailarchive-category") {
+				if s := strings.TrimSpace(textContent(c)); s != "" {
+					cats = append(cats, s)
+				}
+				continue // one category per span; do not descend further
+			}
+			walk(c)
+		}
+	}
+	walk(dd)
+	return cats
 }
 
 // applyStatusLine reverses export.statusLine, recovering Unread/Importance/

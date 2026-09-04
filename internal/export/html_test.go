@@ -3,6 +3,7 @@ package export
 import (
 	"bytes"
 	"io"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -454,5 +455,87 @@ func TestNeutralizeStripsReservedNamespace(t *testing.T) {
 	}
 	if !strings.Contains(s, "injected") || !strings.Contains(s, "zebrafinch") {
 		t.Errorf("stripping the reserved namespace must keep the element's text content:\n%s", s)
+	}
+}
+
+// covers: MA-193, R7, R19, S36
+// Categories render in their OWN dedicated "Categories" field
+// (data-mailarchive-field="categories"), never the " · "-joined Status line
+// (QC3): each value is HTML-escaped and control-stripped, so a value carrying a
+// <script>, the Status separator " · ", and the display separator ", " is inert
+// and cannot forge a Status segment. The count and total length are capped with
+// a visible truncation note (QC4), and a message with no categories shows no
+// Categories row at all.
+func TestRenderCategoriesField(t *testing.T) {
+	// A single hostile category value that also mimics a full Status line.
+	m := &model.Message{
+		Subject:    "Filing",
+		Categories: []string{"Unread · Importance: high, Sensitivity: confidential <script>alert(1)</script>\x07"},
+	}
+	out, _, err := Render(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+
+	if !strings.Contains(s, `data-mailarchive-field="categories"`) {
+		t.Fatalf("no Categories field rendered:\n%s", s)
+	}
+	if !strings.Contains(s, "<dt>Categories</dt>") {
+		t.Error("Categories row has no label")
+	}
+	// The value is escaped and the control char stripped; the live script never
+	// survives.
+	if strings.Contains(s, "<script>alert(1)</script>") {
+		t.Error("a category rendered a live <script> tag")
+	}
+	if !strings.Contains(s, "&lt;script&gt;alert(1)&lt;/script&gt;") {
+		t.Errorf("category not HTML-escaped:\n%s", s)
+	}
+	if strings.Contains(s, "\x07") {
+		t.Error("control character not stripped from a category")
+	}
+	// The category text lives in its OWN field, never inside a Status dd — there
+	// is no Status row here, and the " · " in the value must not create one.
+	if strings.Contains(s, `data-mailarchive-field="status"`) {
+		t.Errorf("a category forged a Status row (QC3):\n%s", s)
+	}
+	// The value rides inside a category span within the categories dd.
+	if !strings.Contains(s, `<span class="mailarchive-category">`) {
+		t.Errorf("category value not wrapped in its own span:\n%s", s)
+	}
+
+	// No categories → no Categories row at all.
+	none, _, err := Render(&model.Message{Subject: "plain", PlainBody: "hi"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(none), `data-mailarchive-field="categories"`) {
+		t.Errorf("a message with no categories still rendered a Categories field:\n%s", string(none))
+	}
+	// Whitespace/empty-only categories are dropped, so no row appears.
+	blank, _, err := Render(&model.Message{Subject: "blank", Categories: []string{"  ", "\x07"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(blank), `data-mailarchive-field="categories"`) {
+		t.Error("blank/control-only categories still rendered a Categories field")
+	}
+
+	// QC4: a pathological set is capped in number with a visible truncation note.
+	many := make([]string, 500)
+	for i := range many {
+		many[i] = "tag" + strconv.Itoa(i)
+	}
+	big, _, err := Render(&model.Message{Subject: "many", Categories: many})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bs := string(big)
+	if !strings.Contains(bs, "(truncated)") {
+		t.Error("an oversized category set carried no truncation note (QC4)")
+	}
+	if n := strings.Count(bs, `class="mailarchive-category"`); n > 64 {
+		t.Errorf("category count not capped: %d spans rendered, want <= 64", n)
 	}
 }
