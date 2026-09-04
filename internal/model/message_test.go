@@ -64,13 +64,14 @@ func TestFingerprintIgnoresTransportHeaders(t *testing.T) {
 	}
 }
 
-// covers: MA-145, R3, R1, S35
-// Importance, Sensitivity and Unread are mutable capture-time state, NOT part of
-// the message's identity: a message later marked read, re-prioritised or
-// re-classified is still the same message. So both the envelope Fingerprint and
-// the fallback content Identity must be blind to all three — otherwise a re-read
-// that saw only a changed flag would look like a different message (double
-// record) or a fill would be dropped.
+// covers: MA-145, R3, R1, S35, S36
+// Importance, Sensitivity, Unread and Categories are mutable capture-time state,
+// NOT part of the message's identity: a message later marked read,
+// re-prioritised or re-classified is still the same message. So both the
+// envelope Fingerprint and the fallback content Identity must be blind to all
+// four — otherwise a re-read that saw only a changed flag or a new category
+// would look like a different message (double record) or a fill would be
+// dropped (QC7).
 func TestFingerprintIgnoresMessageState(t *testing.T) {
 	base := func() *Message {
 		return &Message{
@@ -85,11 +86,23 @@ func TestFingerprintIgnoresMessageState(t *testing.T) {
 	b.Unread = true
 	b.Importance = "high"
 	b.Sensitivity = "confidential"
+	b.Categories = []string{"Board", "Legal Hold"}
 
 	if a.Fingerprint() != b.Fingerprint() {
 		t.Errorf("Fingerprint changed with message state: %q vs %q", a.Fingerprint(), b.Fingerprint())
 	}
 	if a.Identity() != b.Identity() {
 		t.Errorf("Identity changed with message state: %q vs %q", a.Identity(), b.Identity())
+	}
+
+	// Categories alone (no other state difference) must also be invisible to
+	// identity — the QC7 twin, isolated.
+	c := base()
+	c.Categories = []string{"Reclassified"}
+	if a.Fingerprint() != c.Fingerprint() {
+		t.Errorf("Fingerprint changed with categories only: %q vs %q", a.Fingerprint(), c.Fingerprint())
+	}
+	if a.Identity() != c.Identity() {
+		t.Errorf("Identity changed with categories only: %q vs %q", a.Identity(), c.Identity())
 	}
 }

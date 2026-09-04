@@ -16,6 +16,7 @@ import (
 	"golang.org/x/net/html/atom"
 
 	"mail-archive-tool/internal/model"
+	"mail-archive-tool/internal/util"
 )
 
 // ArchiveCSP is the Content-Security-Policy every exported document carries as
@@ -328,6 +329,61 @@ func statusLine(m *model.Message) string {
 	return strings.Join(parts, " · ")
 }
 
+// Category display bounds (QC4): a pathological set of categories must not bloat
+// the page or the rebuild parse. The count is capped at maxCategories and the
+// total rendered category text at maxCategoriesLen; exceeding either appends a
+// visible truncation note.
+const (
+	maxCategories    = 64
+	maxCategoriesLen = 4096
+)
+
+// categoriesField renders the message's categories as the inner HTML of the
+// dedicated "Categories" dd: each value in its OWN escaped, control-stripped
+// <span class="mailarchive-category">, joined for display by ", " but recovered
+// per-span (so a value containing ", " or " · " round-trips losslessly and can
+// never be read as a Status segment — QC3). The number and total length are
+// bounded with a visible truncation note (QC4). ok is false when, after
+// cleaning, there is nothing to show — then no row is emitted.
+func categoriesField(cats []string) (inner string, ok bool) {
+	cleaned := make([]string, 0, len(cats))
+	for _, c := range cats {
+		if c = strings.TrimSpace(util.StripControl(c)); c != "" {
+			cleaned = append(cleaned, c)
+		}
+	}
+	if len(cleaned) == 0 {
+		return "", false
+	}
+	truncated := false
+	if len(cleaned) > maxCategories {
+		cleaned = cleaned[:maxCategories]
+		truncated = true
+	}
+	var b strings.Builder
+	total, shown := 0, 0
+	for _, c := range cleaned {
+		if total+len(c) > maxCategoriesLen {
+			truncated = true
+			break
+		}
+		if shown > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(`<span class="mailarchive-category">` + html.EscapeString(c) + `</span>`)
+		total += len(c)
+		shown++
+	}
+	if shown == 0 {
+		// The first value alone exceeded the length cap: show nothing but the note.
+		return " … (truncated)", true
+	}
+	if truncated {
+		b.WriteString(` … (truncated)`)
+	}
+	return b.String(), true
+}
+
 func renderHeader(m *model.Message, ctx RenderContext, consumed map[int]bool) string {
 	var b strings.Builder
 	b.WriteString(`<div class="mailarchive-header">`)
@@ -385,6 +441,16 @@ func renderHeader(m *model.Message, ctx RenderContext, consumed map[int]bool) st
 	// one line when any is set. row() escapes it and tags the dd so `reindex
 	// -rebuild` can read it back (statusLine's format is reversible).
 	row("Status", statusLine(m), "status")
+	// Capture-time categories (the operator/source classification), in their OWN
+	// dedicated row — NEVER folded into the Status line (QC3) — so a category
+	// value can never be tokenised as a Status segment to forge Unread/
+	// Importance/Sensitivity on read-back. Each value rides in its own escaped,
+	// control-stripped <span class="mailarchive-category"> (untrusted text; the
+	// spans let reindex -rebuild recover the values losslessly with no separator
+	// ambiguity), capped in number and total length (QC4).
+	if inner, ok := categoriesField(m.Categories); ok {
+		b.WriteString(`<dt>Categories</dt><dd data-mailarchive-field="categories">` + inner + `</dd>`)
+	}
 	b.WriteString(`</dl>`)
 
 	// The transport-header block as stored by the source, in a collapsed panel.

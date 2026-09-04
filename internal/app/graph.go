@@ -187,14 +187,20 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 
 // applyGraphState overlays the message-state fields carried on the widened
 // listing $select (PC16). Graph is authoritative for a mailbox item's
-// importance, sensitivity and read state, so these override anything the MIME
-// headers carried. A field the tenant omitted stays empty; an omitted isRead
-// (nil) leaves the read state unset rather than guessing "unread".
+// importance, sensitivity, read state and categories, so these override
+// anything the MIME headers carried. A field the tenant omitted stays empty; an
+// omitted isRead (nil) leaves the read state unset rather than guessing
+// "unread"; omitted categories leave the message with none.
 func applyGraphState(m *model.Message, ref graph.MessageRef) {
 	m.Importance = graphImportance(ref.Importance)
 	m.Sensitivity = graphSensitivity(ref.Sensitivity)
 	if ref.IsRead != nil {
 		m.Unread = !*ref.IsRead
+	}
+	// Categories ride on the same widened listing; Graph is authoritative for a
+	// mailbox item's classification. Copied so the message owns its slice.
+	if len(ref.Categories) > 0 {
+		m.Categories = append([]string(nil), ref.Categories...)
 	}
 }
 

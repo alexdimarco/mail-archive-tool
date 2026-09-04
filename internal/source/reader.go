@@ -3,6 +3,7 @@
 package source
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf16"
 	"unicode/utf8"
 
 	charsets "github.com/emersion/go-message/charset"
@@ -76,6 +78,13 @@ type Reader struct {
 	file   *pst.File
 	closer io.Closer
 	store  string
+
+	// catPropID is the property id the store's name-to-id map assigns to the
+	// named "Keywords" property (PidNameKeywords in PS_PUBLIC_STRINGS — the
+	// message categories), resolved once at open; hasCatProp is false when the
+	// store defines no such named property (then no message carries categories).
+	catPropID  uint16
+	hasCatProp bool
 }
 
 // openPST opens the .pst/.ost file at path.
@@ -110,6 +119,17 @@ func openPST(path string) (r *Reader, err error) {
 		file:   pstFile,
 		closer: f,
 		store:  pstStoreName(pstFile, path),
+	}
+	// Resolve the named "Keywords" property (message categories) once per file
+	// from go-pst's flat string→id map. StringToID is a flat map, so a (rare)
+	// different property set that also names a property "Keywords" could shadow
+	// this one — an acknowledged limit (docs/scenario-catalog.md). Absent → no
+	// categories are read for any message in this store.
+	if pstFile.NameToIDMap != nil {
+		if id, ok := pstFile.NameToIDMap.StringToID["Keywords"]; ok {
+			r.catPropID = uint16(id)
+			r.hasCatProp = true
+		}
 	}
 	return r, nil
 }
@@ -177,7 +197,7 @@ func (r *Reader) walkMessages(folder *pst.Folder, folderPath []string, handler M
 	}
 
 	for it.Next() {
-		msg, err := safeConvertMessage(it.Value())
+		msg, err := safeConvertMessage(it.Value(), r.catPropID, r.hasCatProp)
 		if err != nil {
 			return fmt.Errorf("convert message in %q: %w", folder.Name, err)
 		}
@@ -194,18 +214,19 @@ func (r *Reader) walkMessages(folder *pst.Folder, folderPath []string, handler M
 // safeConvertMessage wraps convertMessage so a panic deep in the PST binary
 // parser on one crafted node becomes a visible stub instead of aborting the
 // whole archive (R10 — robust parsing).
-func safeConvertMessage(m *pst.Message) (out *model.Message, err error) {
+func safeConvertMessage(m *pst.Message, catID uint16, hasCat bool) (out *model.Message, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			out, err = &model.Message{Subject: "(unreadable message)"}, nil
 		}
 	}()
-	return convertMessage(m)
+	return convertMessage(m, catID, hasCat)
 }
 
 // convertMessage maps a go-pst message into a model.Message, or returns nil for
-// non-mail items.
-func convertMessage(m *pst.Message) (*model.Message, error) {
+// non-mail items. catID/hasCat carry the store's resolved "Keywords" property
+// id so per-message category reads need no re-resolution.
+func convertMessage(m *pst.Message, catID uint16, hasCat bool) (*model.Message, error) {
 	mp, ok := m.Properties.(*properties.Message)
 	if !ok {
 		return nil, nil
@@ -252,6 +273,13 @@ func convertMessage(m *pst.Message) (*model.Message, error) {
 	}
 	if v, ok := readIntProperty(m, pidTagMessageFlags); ok {
 		msg.Unread = unreadFromMessageFlags(v)
+	}
+
+	// Categories (the named "Keywords" property), read under readCategories'
+	// OWN localized recover so a corrupt/hostile Keywords node costs only the
+	// categories, never the whole message. Excluded from identity.
+	if hasCat {
+		msg.Categories = readCategories(m, catID)
 	}
 
 	// Only pay the cost of decompressing RTF when there is no better body.
@@ -344,6 +372,140 @@ func sensitivityString(v int32) string {
 // unreadFromMessageFlags reports the read state from PidTagMessageFlags: bit
 // 0x1 (mfRead) is set once the item has been read, so its ABSENCE means unread.
 func unreadFromMessageFlags(flags int32) bool { return flags&0x1 == 0 }
+
+// readCategories reads the store's named "Keywords" property (message
+// categories) at the resolved property id. It carries its OWN defer/recover
+// (returning nil), so a corrupt or hostile Keywords node costs ONLY the
+// categories — the whole-message stub never swallows a categorized message
+// (QC5, R10). Both a single-valued unicode (PT_UNICODE) and a multi-valued
+// unicode (PT_MV_UNICODE = 4127) categories property are handled; every value
+// is control-stripped and trimmed and empties dropped. An absent property, a
+// foreign type, or an unreadable blob yields no categories and never fails the
+// message (R1).
+func readCategories(m *pst.Message, propID uint16) (cats []string) {
+	defer func() {
+		if recover() != nil {
+			cats = nil
+		}
+	}()
+	r, err := m.PropertyContext.GetPropertyReader(propID, m.LocalDescriptors)
+	if err != nil {
+		return nil
+	}
+	switch r.Property.Type {
+	case pst.PropertyTypeString:
+		s, err := r.GetString()
+		if err != nil {
+			return nil
+		}
+		if s = cleanCategory(s); s != "" {
+			return []string{s}
+		}
+		return nil
+	case pst.PropertyTypeMultipleString:
+		size := r.Size()
+		if size <= 0 {
+			return nil
+		}
+		// Bound the blob read BEFORE allocating: the declared size is untrusted
+		// and categories are small. parseMVUnicode bounds the parse itself.
+		const maxBlob = 1 << 20 // 1 MiB
+		if size > maxBlob {
+			size = maxBlob
+		}
+		buf := make([]byte, size)
+		n, _ := r.ReadAt(buf, 0)
+		return parseMVUnicode(buf[:n])
+	}
+	return nil
+}
+
+// parseMVUnicode parses a PT_MV_UNICODE (PropertyTypeMultipleString = 4127)
+// property blob into its string values. The blob is a 4-byte little-endian
+// value count, then that many 4-byte little-endian byte offsets (each a value's
+// start, measured from the blob's start), then the values as UTF-16LE bytes;
+// value i runs to the next offset, and the last value to the blob's end. The
+// blob is UNTRUSTED (it rides in from the source file), so every quantity is
+// bounded BEFORE it is used to allocate or index (QC2):
+//
+//   - the declared count is clamped to what the offset table could physically
+//     hold, (len(blob)-4)/4, AND to a small absolute ceiling, BEFORE anything
+//     is allocated — a hostile 0xFFFFFFFF can never size a slice or a loop;
+//   - no slice is pre-sized from the untrusted count; offsets are appended as
+//     they validate;
+//   - offset arithmetic is 64-bit;
+//   - every offset must fall within [headerEnd, len(blob)] and not move
+//     backwards; the FIRST violation stops the parse.
+//
+// A truncated or hostile blob thus yields a bounded, safe subset of in-range
+// values — never an over-allocation, an out-of-range index, or a panic. Each
+// value is control-stripped and trimmed; empties are dropped.
+func parseMVUnicode(blob []byte) []string {
+	const maxValues = 4096
+	blen := int64(len(blob))
+	if blen < 4 {
+		return nil
+	}
+	count := uint64(binary.LittleEndian.Uint32(blob[:4]))
+	if maxByLen := uint64(blen-4) / 4; count > maxByLen {
+		count = maxByLen // cannot exceed what the offset table could hold
+	}
+	if count > maxValues {
+		count = maxValues // absolute ceiling
+	}
+	if count == 0 {
+		return nil
+	}
+	headerEnd := 4 + int64(count)*4
+
+	// Read the offset table, validating each entry before trusting it. The
+	// offsets slice is NOT pre-sized from the count: entries are appended as
+	// they pass, so a mid-table violation just yields a shorter, still-safe
+	// table.
+	var offsets []int64
+	prev := headerEnd
+	for i := int64(0); i < int64(count); i++ {
+		off := int64(binary.LittleEndian.Uint32(blob[4+i*4 : 8+i*4]))
+		if off < prev || off > blen {
+			break // first violation: stop, keep what validated
+		}
+		offsets = append(offsets, off)
+		prev = off
+	}
+
+	var out []string
+	for i := 0; i < len(offsets); i++ {
+		start := offsets[i]
+		end := blen
+		if i+1 < len(offsets) {
+			end = offsets[i+1]
+		}
+		// headerEnd ≤ start ≤ end ≤ blen, all validated above: the slice is
+		// always in range.
+		if v := cleanCategory(decodeUTF16LE(blob[start:end])); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// decodeUTF16LE decodes UTF-16LE bytes into a Go string; an odd trailing byte
+// (a truncated value) is ignored.
+func decodeUTF16LE(b []byte) string {
+	if len(b) < 2 {
+		return ""
+	}
+	u := make([]uint16, 0, len(b)/2)
+	for i := 0; i+1 < len(b); i += 2 {
+		u = append(u, uint16(b[i])|uint16(b[i+1])<<8)
+	}
+	return string(utf16.Decode(u))
+}
+
+// cleanCategory trims and control-strips one untrusted category value.
+func cleanCategory(s string) string {
+	return strings.TrimSpace(util.StripControl(s))
+}
 
 // decodeBytes turns raw binary text bytes into a Go string. Modern Outlook
 // stores PidTagHtml as UTF-8 bytes; legacy messages use a single-byte codepage,

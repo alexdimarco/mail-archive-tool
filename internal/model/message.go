@@ -76,6 +76,16 @@ type Message struct {
 	Sensitivity string
 	Unread      bool
 
+	// Categories are the message's classification tags at capture — a records
+	// manager's own labels: the PST named "Keywords" property, Thunderbird's
+	// X-Mozilla-Keys header, or Graph's categories array (empty when none).
+	// Like the state fields above they are a mutable capture-time snapshot,
+	// shown on the page in their OWN "Categories" row (never the Status line),
+	// but NOT part of the message's identity: they are deliberately NOT
+	// referenced by contentHash or Fingerprint — a re-classified message is
+	// still the same message (R2/R3) — and are not indexed this increment.
+	Categories []string
+
 	Attachments []Attachment
 }
 

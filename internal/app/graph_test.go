@@ -44,12 +44,13 @@ func newFakeGraphServer() (*fakeGraphServer, *httptest.Server) {
 		j(w, `{"value":[{"id":"F_IN","displayName":"Inbox","childFolderCount":0},{"id":"F_AR","displayName":"Archive","childFolderCount":0}]}`)
 	})
 	// The listings carry message state on the same request (PC16): M1 is unread,
-	// high, confidential; M2 is read, normal, normal (no state to show); M3 omits
-	// isRead entirely (read state then unknown) and is low/personal.
+	// high, confidential and carries two categories; M2 is read, normal, normal
+	// (no state to show); M3 omits isRead entirely (read state then unknown) and
+	// is low/personal.
 	mux.HandleFunc("/users/u1/mailFolders/F_IN/messages", func(w http.ResponseWriter, r *http.Request) {
 		recordSelect(r)
 		j(w, `{"value":[
-			{"id":"M1","internetMessageId":"<m1@x>","receivedDateTime":"2025-03-01T09:00:00Z","importance":"high","isRead":false,"sensitivity":"confidential"},
+			{"id":"M1","internetMessageId":"<m1@x>","receivedDateTime":"2025-03-01T09:00:00Z","importance":"high","isRead":false,"sensitivity":"confidential","categories":["Board","Legal Hold"]},
 			{"id":"M2","internetMessageId":"<m2@x>","receivedDateTime":"2025-03-02T09:00:00Z","importance":"normal","isRead":true,"sensitivity":"normal"}]}`)
 	})
 	mux.HandleFunc("/users/u1/mailFolders/F_AR/messages", func(w http.ResponseWriter, r *http.Request) {
@@ -230,5 +231,67 @@ func TestRunGraphCapturesMessageState(t *testing.T) {
 	}
 	if strings.Contains(p, "Unread") {
 		t.Errorf("M3 has isRead omitted and must not be marked Unread:\n%s", p)
+	}
+}
+
+// covers: MA-192, R3, S36
+// The Graph source's categories array rides on the SAME widened listing $select
+// (one field more, no extra request) and reaches the message's own "Categories"
+// page field. M1 carries two categories; they appear in the dedicated
+// categories field (each in its own span), never folded into the Status line,
+// and a message with none (M2) shows no categories field.
+func TestRunGraphCapturesCategories(t *testing.T) {
+	out := tmpDir(t)
+	f, srv := newFakeGraphServer()
+	defer srv.Close()
+
+	g := GraphOptions{
+		Tenant: "t", ClientID: "c", ClientSecret: "s",
+		Mailboxes: []string{"u1"},
+		BaseURL:   srv.URL, TokenURL: srv.URL + "/token",
+	}
+	opts := Options{Out: out, Mode: export.Incremental, Index: true, Pages: true}
+	logger := log.New(io.Discard, "", 0)
+
+	if _, err := RunGraph(context.Background(), g, opts, logger); err != nil {
+		t.Fatalf("RunGraph: %v", err)
+	}
+
+	// The one listing request carried "categories" on the same $select — no
+	// extra round-trip.
+	for _, q := range f.selectQueries() {
+		if !strings.Contains(q, "categories") {
+			t.Errorf("listing $select %q is missing categories", q)
+		}
+	}
+
+	// M1: both categories reach the dedicated categories field.
+	p := messagePage(t, out, "subj-M1")
+	catIdx := strings.Index(p, `data-mailarchive-field="categories"`)
+	if catIdx < 0 {
+		t.Fatalf("M1 page lacks the categories field:\n%s", p)
+	}
+	ddEnd := strings.Index(p[catIdx:], "</dd>")
+	if ddEnd < 0 {
+		t.Fatalf("categories dd not closed:\n%s", p)
+	}
+	field := p[catIdx : catIdx+ddEnd]
+	for _, want := range []string{"Board", "Legal Hold"} {
+		if !strings.Contains(field, want) {
+			t.Errorf("categories field missing %q:\n%s", want, field)
+		}
+	}
+	// Categories are their OWN field, never a Status segment: the categories
+	// text does not sit inside a status dd.
+	if statusIdx := strings.Index(p, `data-mailarchive-field="status"`); statusIdx >= 0 {
+		statusEnd := strings.Index(p[statusIdx:], "</dd>")
+		if statusEnd >= 0 && strings.Contains(p[statusIdx:statusIdx+statusEnd], "Board") {
+			t.Errorf("a category leaked into the Status row (QC3):\n%s", p)
+		}
+	}
+
+	// M2 has no categories → no categories field at all.
+	if m2 := messagePage(t, out, "subj-M2"); strings.Contains(m2, `data-mailarchive-field="categories"`) {
+		t.Errorf("M2 (no categories) should have no categories field:\n%s", m2)
 	}
 }
