@@ -47,6 +47,15 @@ type Input struct {
 	ReportPath                  string
 	ReportExists                bool // the verification report exists on disk
 
+	// Extractable is how many records have a preserved original (.eml) present
+	// on disk (WithEML) out of the total (Total) — extract's migration signal
+	// (design K4). It is FILE PRESENCE (an Lstat per record), never a recorded
+	// digest, and is the same signal `extract` drains and `verify` counts, so the
+	// three surfaces cannot diverge (QC1). health must not import app, so the
+	// caller (`status`) computes it via app.ExtractableCount and sets it here;
+	// it is display-only and never changes the posture.
+	Extractable Extractable
+
 	HasIndex bool
 	Indexed  int
 
@@ -79,6 +88,16 @@ type Input struct {
 	LockHeld bool
 
 	PIDAlive func(int) bool
+}
+
+// Extractable is the extractability facet of an archive: WithEML of Total
+// records have a preserved original (.eml) present on disk — the file-presence
+// signal `extract` drains and `verify` counts (design K4). It is set by the
+// caller from app.ExtractableCount (health must not import app); it is
+// informational, like fixity coverage, and never changes the posture.
+type Extractable struct {
+	WithEML int
+	Total   int
 }
 
 // Report is the judgement: a posture and the reasons behind any WARN/RED. Codes
@@ -548,6 +567,20 @@ func Summary(in Input, rep Report) []string {
 			}
 			lines = append(lines, fx)
 		}
+		// Extractability (design K4): how many records have a preserved original
+		// (.eml) present on disk — the same FILE-PRESENCE signal `extract` drains
+		// and `verify` counts (never a recorded digest, so it agrees with them).
+		// Informational like fixity coverage: it never changes the posture and
+		// never prints a categorical "re-archive" verdict — for the records with
+		// no original it names both remedies (re-run with -raw for a raw-capable
+		// source; keep the .pst itself for Outlook, which never carries one).
+		// Omitted when the manifest has no records.
+		if in.Extractable.Total > 0 {
+			lines = append(lines, fmt.Sprintf("Extractable: %d of %d records have a preserved original (.eml) on disk", in.Extractable.WithEML, in.Extractable.Total))
+			if in.Extractable.WithEML < in.Extractable.Total {
+				lines = append(lines, fmt.Sprintf("            the remaining %d have no preserved original — an mbox/maildir/Microsoft 365 source keeps one only when archived with -raw; Outlook .pst/.ost items never carry one, so keep the .pst itself to migrate", in.Extractable.Total-in.Extractable.WithEML))
+			}
+		}
 	} else if in.HasManifestFile {
 		lines = append(lines, "Messages:   (manifest present but unreadable — see the posture below)")
 	} else {
@@ -598,20 +631,21 @@ func Summary(in Input, rep Report) []string {
 // is bumped when a field's meaning changes so a consumer can refuse a shape it
 // does not understand.
 type JSONReport struct {
-	Version     int             `json:"version"`
-	Posture     string          `json:"posture"`
-	Reasons     []string        `json:"reasons"`
-	ReasonCodes []string        `json:"reason_codes"` // parallel to Reasons; a stable code per WARN/RED
-	Out         string          `json:"out"`
-	Messages    int             `json:"messages"`
-	Indexed     int             `json:"indexed"`
-	Fillable    int             `json:"fillable"`
-	Terminal    int             `json:"terminal"`
-	Unknown     int             `json:"unknown"`
-	Fixity      *JSONFixity     `json:"fixity"` // fixity COVERAGE; null when no manifest
-	LastRun     *JSONLastRun    `json:"last_run,omitempty"`
-	LastVerify  *JSONLastVerify `json:"last_verify"` // verify's integrity verdict; null when none recorded
-	Schedule    *JSONSchedule   `json:"schedule,omitempty"`
+	Version     int              `json:"version"`
+	Posture     string           `json:"posture"`
+	Reasons     []string         `json:"reasons"`
+	ReasonCodes []string         `json:"reason_codes"` // parallel to Reasons; a stable code per WARN/RED
+	Out         string           `json:"out"`
+	Messages    int              `json:"messages"`
+	Indexed     int              `json:"indexed"`
+	Fillable    int              `json:"fillable"`
+	Terminal    int              `json:"terminal"`
+	Unknown     int              `json:"unknown"`
+	Fixity      *JSONFixity      `json:"fixity"`      // fixity COVERAGE; null when no manifest
+	Extractable *JSONExtractable `json:"extractable"` // records with a preserved .eml present on disk (file presence, design K4); null when no manifest
+	LastRun     *JSONLastRun     `json:"last_run,omitempty"`
+	LastVerify  *JSONLastVerify  `json:"last_verify"` // verify's integrity verdict; null when none recorded
+	Schedule    *JSONSchedule    `json:"schedule,omitempty"`
 }
 
 // JSONFixity is the fixity-coverage facet: how many records carry a digest
@@ -619,6 +653,15 @@ type JSONReport struct {
 type JSONFixity struct {
 	Records    int `json:"records"`
 	WithFixity int `json:"with_fixity"`
+}
+
+// JSONExtractable is the extractability facet: how many records have a preserved
+// original (.eml) present on disk (records_with_eml) of the total (records) — the
+// file-presence signal `extract` drains and `verify` counts (design K4), never a
+// recorded digest, so it agrees with what `extract` and `verify` see.
+type JSONExtractable struct {
+	Records        int `json:"records"`
+	RecordsWithEML int `json:"records_with_eml"`
 }
 
 // JSONLastRun is the last-run facet of JSONReport (omitted when no readable
@@ -665,7 +708,10 @@ type JSONSchedule struct {
 
 // JSONVersion is the current JSONReport schema version. Bumped to 2 with the
 // addition of fixity, last_verify and reason_codes and the change of
-// last_run.finished to null-while-running.
+// last_run.finished to null-while-running. The `extractable` object is a later,
+// backward-compatible addition at version 2 — a new optional key changes no
+// existing field's meaning, so a version-2 consumer that ignores unknown keys is
+// unaffected and the version is not bumped.
 const JSONVersion = 2
 
 // JSON builds the machine-readable status document from the gathered facts and
@@ -692,6 +738,9 @@ func JSON(in Input, rep Report) JSONReport {
 	}
 	if in.HasManifest {
 		doc.Fixity = &JSONFixity{Records: in.Messages, WithFixity: in.WithFixity}
+		// Extractability (design K4): the file-presence count `extract`/`verify`
+		// share, carried alongside fixity coverage. null when no manifest.
+		doc.Extractable = &JSONExtractable{Records: in.Extractable.Total, RecordsWithEML: in.Extractable.WithEML}
 	}
 	if in.LastRunState == state.LastRunPresent {
 		lr := in.LastRun
