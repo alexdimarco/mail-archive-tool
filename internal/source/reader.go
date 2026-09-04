@@ -394,6 +394,10 @@ func readCategories(m *pst.Message, propID uint16) (cats []string) {
 	}
 	switch r.Property.Type {
 	case pst.PropertyTypeString:
+		// Bound the single-value read like the MV branch: categories are small.
+		if r.Size() > 1<<20 {
+			return nil
+		}
 		s, err := r.GetString()
 		if err != nil {
 			return nil

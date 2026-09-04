@@ -18,7 +18,9 @@ import (
 // "present". A record whose recorded path fails containment is not present.
 func emlPresent(out string, rec state.Record) bool {
 	segs, ok := validRelPath(rec.Path)
-	if !ok {
+	// The identical gate extract's newWalkItem applies, so status/verify/extract
+	// count the same records even for a tampered non-.html manifest path (QC1).
+	if !ok || len(segs) < 2 || !strings.HasSuffix(rec.Path, verifyHTMLSuffix) {
 		return false
 	}
 	stem := strings.TrimSuffix(rec.Path, verifyHTMLSuffix)

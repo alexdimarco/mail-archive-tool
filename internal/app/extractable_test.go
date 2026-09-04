@@ -146,3 +146,33 @@ func TestExtractableCountIsFilePresenceNotStaleDigest(t *testing.T) {
 		t.Fatalf("status must not claim all %d records have a preserved original:\n%s", total, line)
 	}
 }
+
+// covers: MA-194, R20, S34
+// emlPresent applies the identical path gate extract uses, so a tampered manifest
+// record whose Path is not a valid in-archive .html is excluded from the
+// extractable count exactly as extract would skip it — status, verify and extract
+// cannot disagree even on a hand-edited manifest (QC1).
+func TestEmlPresentRejectsNonHTMLPath(t *testing.T) {
+	out := t.TempDir()
+	// A single-segment .html path whose derived .eml is actually present on disk:
+	// the weak gate (validRelPath only) would count it, the extract-identical gate
+	// (len(segs) >= 2 && .html suffix) rejects it. Placing the .eml proves the
+	// exclusion is the GATE, not a missing file.
+	if err := os.WriteFile(filepath.Join(out, "x.eml"), []byte("m"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if emlPresent(out, state.Record{Path: "x.html"}) {
+		t.Error("emlPresent counted a single-segment record (x.html) that extract's gate rejects")
+	}
+	// A non-.html path likewise must not count even if a sibling exists.
+	if err := os.WriteFile(filepath.Join(out, "y.txt.eml"), []byte("m"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if emlPresent(out, state.Record{Path: "s/y.txt"}) {
+		t.Error("emlPresent counted a non-.html record path that extract's gate rejects")
+	}
+	// A traversal path is always rejected.
+	if emlPresent(out, state.Record{Path: "../escape.html"}) {
+		t.Error("emlPresent accepted a traversal path")
+	}
+}

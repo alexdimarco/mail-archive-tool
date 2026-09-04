@@ -22,7 +22,8 @@ EML-count surface"). Two small, independent slices.
 - **K1 — Categories are captured, shown, and kept out of identity.**
   `model.Message` gains `Categories []string` (empty when none). The PST reader
   fills it from the named `Keywords` property; the mbox/maildir reader from
-  `X-Mozilla-Keys` (Thunderbird) and a `Keywords` header; Graph from the message
+  `X-Mozilla-Keys` (Thunderbird) ONLY, never the sender-settable RFC `Keywords`
+  header (QC6); Graph from the message
   JSON `categories` array (one more field on the already-widened `$select`, no
   extra request). Categories appear in their OWN message-page field (a "Categories" row with
   `data-mailarchive-field="categories"`, never inside the " · "-joined Status
@@ -113,12 +114,12 @@ Both slices are independent and file-disjoint except `renderHeader`/
 `statusLine` (slice K only). Each ships prove-fail → prove-pass and catalog rows.
 
 1. **Slice K — categories.** model field; PST named-property read + the pure
-   `parseMVUnicode`; mbox/maildir headers; Graph `$select` + apply; the Status
-   row + read-back. Tests: `parseMVUnicode` on a hand-built two-value blob and on
+   `parseMVUnicode`; mbox/maildir headers; Graph `$select` + apply; the dedicated
+   Categories field + read-back. Tests: `parseMVUnicode` on a hand-built two-value blob and on
    truncated/empty bytes (no panic, safe subset); a Thunderbird `X-Mozilla-Keys`
-   and a `Keywords` header populate `Categories` de-duplicated and order-stable;
-   the Graph fake server's `categories` array populates them; a category with a
-   `<script>`/control char is escaped and control-stripped in the Status row and
+   header populates `Categories` de-duplicated and order-stable (the RFC
+   `Keywords` header is not read);
+   the Graph fake server's `categories` array populates them; a category with a `<script>`/control char is escaped and control-stripped in its own Categories field and
    survives a rebuild read-back inertly; `Fingerprint`/`Identity` unchanged when
    only `Categories` differ (extend MA-145); support.pst (no categories) yields
    none without error; a hostile `parseMVUnicode` blob (huge declared count,

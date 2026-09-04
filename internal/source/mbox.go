@@ -433,9 +433,21 @@ func mozillaReadFlag(s string) (unread, ok bool) {
 // header is a category source; the sender-settable RFC Keywords header is NOT
 // read (QC6), so a sender cannot inject "categories". Absent/blank → nil.
 func mozillaCategories(s string) []string {
+	// Bound the untrusted header BEFORE strings.Fields (which allocates a token
+	// per word up front) and cap the token count, mirroring the PST path's
+	// blob/value bounds — only maxCategories can ever render, so scanning more is
+	// pointless and a multi-MB X-Mozilla-Keys must not amplify memory.
+	const maxScan = 64 << 10 // bytes scanned before splitting
+	const maxTokens = 256    // >> the 64 the page renders
+	if len(s) > maxScan {
+		s = s[:maxScan]
+	}
 	var out []string
 	seen := map[string]bool{}
 	for _, tok := range strings.Fields(s) {
+		if len(out) >= maxTokens {
+			break
+		}
 		tok = strings.TrimSpace(util.StripControl(tok))
 		if tok == "" || seen[tok] {
 			continue

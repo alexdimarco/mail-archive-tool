@@ -2,7 +2,9 @@ package source
 
 import (
 	"encoding/binary"
+	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"unicode/utf16"
 
@@ -102,7 +104,7 @@ func TestParseMVUnicode(t *testing.T) {
 // Categories and the walk completes without error (the localized readCategories
 // recover never turns a normal message into a stub). This is the U-tested
 // graceful-absence half of QC8; real categorized-PST end-to-end is lab-pending
-// (MA-194).
+// (MA-197).
 func TestPSTCategoriesAbsentOnFixture(t *testing.T) {
 	if _, err := os.Stat(fixture); err != nil {
 		t.Skipf("fixture missing: %v", err)
@@ -157,5 +159,16 @@ func TestMozillaKeysCategories(t *testing.T) {
 	sm := assure.Reached(t, ParseRFC822([]byte(sender)), "parsed keywords message")
 	if len(sm.Categories) != 0 {
 		t.Errorf("RFC Keywords header populated categories %v — a sender must not inject categories (QC6)", sm.Categories)
+	}
+
+	// A hostile X-Mozilla-Keys with a huge number of distinct tokens is bounded
+	// before it can amplify memory: mozillaCategories caps the tokens it returns
+	// (only a few render), mirroring the PST path's pre-allocation bounds.
+	var huge strings.Builder
+	for i := 0; i < 200_000; i++ {
+		fmt.Fprintf(&huge, "tag%06d ", i) // DISTINCT tokens (dedup must not hide the bound)
+	}
+	if n := len(mozillaCategories(huge.String())); n > 256 {
+		t.Errorf("mozillaCategories returned %d distinct tokens from a huge header — the bound did not apply", n)
 	}
 }
