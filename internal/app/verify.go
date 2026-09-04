@@ -277,10 +277,11 @@ func (v *verifier) checkRecord(key string, rec state.Record) {
 	}
 
 	// Extractability (PC15): does this record have preserved original bytes
-	// (.eml) present as a regular file? Counted so the summary can flag an
-	// archive with none — `mailarchive extract` would produce nothing from it.
-	emlSegs := append(append([]string{}, baseSegs...), lastSegment(stem+verifyEMLSuffix))
-	if kind, _, _ := v.inspect(emlSegs); kind == "ok" {
+	// (.eml) present as a regular file? Counted through the shared emlPresent
+	// predicate — the SAME file-presence signal `status`/ExtractableCount and
+	// `extract` use — so verify's WithEML and status's Extractable cannot diverge
+	// (design K4/QC1). File presence, never a recorded digest.
+	if emlPresent(v.out, rec) {
 		v.rep.WithEML++
 	}
 }

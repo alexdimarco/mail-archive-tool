@@ -396,6 +396,7 @@ Archived range: 2011-03-08 – 2026-09-01 (UTC)
 Incomplete: 12 still missing content · 0 source-empty (never fillable) · 0 not yet re-examined — /home/alex/export/attachments-report.tsv
             (still missing content = not downloaded yet; fills on the next run)
 Fixity coverage: 1843 of 1843 records recorded (run `mailarchive verify -out "/home/alex/export"` to check the bytes)
+Extractable: 1843 of 1843 records have a preserved original (.eml) on disk
 Last run:   2026-09-02 02:00 → ok · exported 5 · filled 2 · took 41s
 Last verify: 2026-09-01 02:05 → attested
 Schedule:   "mailarchive-3fa2b1c0" installed · daily at 02:00 · runs /usr/local/bin/mailarchive · installed 2026-09-01 (UTC) on laptop
@@ -409,6 +410,15 @@ Running `mailarchive verify` (below) is what checks the bytes; its verdict shows
 up on the **Last verify** line — `attested`, or `NOT attested (modified N,
 missing N, unrecorded N)` — and a scheduled verify that finds modified or
 missing files turns the posture RED with the restore/re-export remedy.
+
+The **Extractable** line answers "can I migrate this archive out with `extract`?"
+It counts how many records have a preserved original (`.eml`) present on disk —
+the same file-presence signal `extract` drains and `verify` counts, so the three
+never disagree (it Lstats each record, hashing nothing). When some records have
+none it names both remedies rather than a blanket "re-archive": a
+mbox/maildir/Microsoft 365 source keeps an `.eml` only when captured with `-raw`,
+while an Outlook `.pst`/`.ost` never carries one — for those, keep the `.pst`
+itself to migrate. It is informational and never changes the posture.
 
 The posture fails closed: a schedule with no run ever recorded, a run that never
 finished (crash, kill, power loss), a scheduled program that no longer exists or
@@ -426,7 +436,9 @@ prose.
 
 **`status -json` (version 2).** Top-level keys: `version`, `posture`, `reasons`,
 `reason_codes`, `out`, `messages`, `indexed`, `fillable`, `terminal`, `unknown`,
-`fixity`, `last_run`, `last_verify`, `schedule`.
+`fixity`, `extractable`, `last_run`, `last_verify`, `schedule`. (`extractable` is
+a backward-compatible addition at version 2 — a new optional key, so a consumer
+that ignores unknown keys is unaffected and the version is not bumped.)
 
 - `posture` is one of `GREEN` · `WARN` · `RED`.
 - `reasons` is the human WARN/RED lines; `reason_codes` is a **parallel** array
@@ -440,6 +452,9 @@ prose.
   `scheduler_unavailable`, `not_installed`, `exe_missing`, `exe_moved`.
 - `fixity` is `{records, with_fixity}` (coverage, not integrity), or `null` when
   there is no manifest.
+- `extractable` is `{records, records_with_eml}` — how many records have a
+  preserved original (`.eml`) present on disk (file presence, the same signal
+  `extract` and `verify` use), or `null` when there is no manifest.
 - `last_run` is `{status, started, finished, error?, exported, filled}`, where
   `status` is one of `ok` · `failed` · `cancelled` · `running` and `finished` is
   `null` while a run is in progress.

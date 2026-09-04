@@ -6,8 +6,10 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
+	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/health"
 	"mail-archive-tool/internal/state"
 )
@@ -36,6 +38,19 @@ func runStatus(args []string) error {
 	// giving the wrong "run an export first" advice (friction #7a).
 	if !in.HasManifestFile && !in.HasDescriptor && in.LastRunState == state.LastRunAbsent {
 		return fmt.Errorf("no archive at %s: no manifest, schedule descriptor or last-run record (run an export into it first, or check the path)", in.Out)
+	}
+	// Extractability (design K4): compute the count of records with a preserved
+	// original (.eml) present on disk via the shared app.ExtractableCount helper
+	// — the SAME file-presence signal `extract` drains and `verify` counts, so
+	// the three surfaces cannot diverge (QC1). health must not import app, so
+	// status computes it here and passes it in. File presence only: it Lstats
+	// each record's .eml, never hashing and never reading message bytes; posture
+	// is unchanged (informational).
+	if in.HasManifest {
+		if m, lerr := state.Load(filepath.Join(in.Out, ".mailarchive-manifest.json")); lerr == nil {
+			withEML, total := app.ExtractableCount(in.Out, m)
+			in.Extractable = health.Extractable{WithEML: withEML, Total: total}
+		}
 	}
 	rep := health.Assess(in, time.Now())
 	if *asJSON {
