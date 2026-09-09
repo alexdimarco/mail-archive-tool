@@ -36,8 +36,13 @@ chmod +x "$OUT/mailarchive-macos-universal"
 
 sed "s/@VERSION@/$VERSION/g" "$ROOT/packaging/macos/Info.plist.in" > "$app/Contents/Info.plist"
 
+# Ship the open-me instructions beside the app so an unzip shows both, and a
+# user who hits the unsigned-app warning (or opens the wrong file) has the fix
+# in hand without the web page.
+cp "$ROOT/packaging/macos/README-macOS.txt" "$WORK/READ ME — opening on macOS.txt"
+
 rm -f "$OUT/MailArchive-macos.zip"
-( cd "$WORK" && zip -q -r -y "$OUT/MailArchive-macos.zip" "Mail Archive.app" )
+( cd "$WORK" && zip -q -r -y "$OUT/MailArchive-macos.zip" "Mail Archive.app" "READ ME — opening on macOS.txt" )
 
 echo "    $OUT/MailArchive-macos.zip"
 echo "    $OUT/mailarchive-macos-universal"

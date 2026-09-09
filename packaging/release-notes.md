@@ -8,10 +8,13 @@ status, and a native-dialog GUI. Pure Go, no cgo.
   because it's unsigned: **right-click "Mail Archive.app" → Open → Open** (once).
   Or in Terminal: `xattr -cr "Mail Archive.app"` then double-click. Universal —
   runs on Apple Silicon and Intel.
-- **CLI:** `mailarchive-macos-universal` —
-  `xattr -d com.apple.quarantine mailarchive-macos-universal && chmod +x mailarchive-macos-universal && ./mailarchive-macos-universal -h`
-- The raw `mailarchive-darwin-*` files are per-arch CLI binaries for scripting;
-  most Mac users want the two universal downloads above.
+- **CLI (optional, Terminal):** download **`mailarchive-cli-macos.tar.gz`** — a
+  command-line program, **not** a double-click app (double-clicking a bare
+  program opens it in a text editor). In Terminal:
+  `tar -xzf mailarchive-cli-macos.tar.gz && cd mailarchive-cli-macos && xattr -cr mailarchive && ./mailarchive -h`.
+  Universal — Apple Silicon and Intel.
+- macOS ships exactly these two downloads (the app and the CLI tarball); there
+  are no bare per-arch macOS binaries to pick wrong.
 
 ### Linux / Windows
 | Platform | CLI | GUI |

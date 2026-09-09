@@ -34,6 +34,12 @@ it makes — that page needs no software to read.
 | **macOS** | `MailArchive-macos.zip` | unzip, then **right-click "Mail Archive.app" → Open → Open** once (it is unsigned) |
 | **Linux** | `mailarchive-gui-linux-amd64` | needs `zenity` installed; mark executable and double-click (or run it) |
 
+On macOS the double-click app is **`MailArchive-macos.zip`** (it unzips to
+`Mail Archive.app`). The command-line tool is a separate download,
+**`mailarchive-cli-macos.tar.gz`** — a Terminal program, so run it from Terminal
+(`tar -xzf …`, then `./mailarchive -h`); do not double-click it, or macOS opens
+it in a text editor. Both are universal (Apple Silicon and Intel).
+
 The wizard is the [GUI section](#gui-native-dialog-wizard) below.
 
 ## Start here: which path for my mail program?
