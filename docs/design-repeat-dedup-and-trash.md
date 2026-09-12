@@ -1,5 +1,9 @@
 # Design — repeat capture: cross-folder dedup and Deleted Items / Junk policy
 
+> **SUPERSEDED (2026-09-11) by `docs/design-goback.md`**, which folds this dedup
+> core and the trash ruling into the larger point-in-time (go-back) archive
+> design. Kept for the reasoning and the operator ruling; build from design-goback.md.
+
 **Revision:** 1 (2026-09-11). **BUILD STATUS:** not built — input to the 10-lens
 pre-code design review. It is architecture-relevant: it changes what the manifest
 dedup key means for a *repeat* capture from a live source (Graph today; IMAP if
