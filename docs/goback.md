@@ -200,6 +200,14 @@ is folded), never a lost move.
 - **Live sources only.** `graph` writes the timeline (IMAP later). A one-shot
   local import (`.pst`, mbox, maildir) has no timeline and no go-back — its view
   is the static first-captured layout.
+- **A pre-existing live archive is not retroactively consolidated.** Upgrading an
+  older (pre-v4) Graph archive fills in the timeline fields but does **not**
+  re-file its existing per-folder copies under the new per-mailbox key, so the
+  next `graph` run re-downloads and re-stores each still-present message once
+  under the new key. No file is ever deleted (R13), so nothing is lost — the
+  archive just gains a parallel copy. One-copy-per-message applies to a live
+  archive captured fresh with this version; see the README's
+  [Upgrading](../README.md#upgrading-an-older-archive-format-v4) note.
 - **Static pages stay first-captured.** The offline pages never follow moves or
   offer a slider; only `serve` does. This is deliberate (no script offline).
 - **A move is inferred, not a server event.** The tool notices a message is in a

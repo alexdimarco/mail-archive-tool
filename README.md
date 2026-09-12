@@ -449,12 +449,23 @@ The timeline comes with a manifest **format v4**. The first run of this version
 over an older archive migrates the manifest **once**, in place — filling in the
 per-message timeline fields (each existing message is marked present, in its
 current folder, first seen when it was captured) — and nothing on disk is renamed
-or rewritten. From then on a live capture keeps one copy per message and records
-moves in place rather than making a duplicate. The forward guard refuses any
-archive whose stored version is above 4, so an older binary cannot silently
-corrupt a v4 archive. As with every format bump, **do not run an older
-`mailarchive` against a v4 archive** (see [Upgrading an existing
-archive](#upgrading-an-existing-archive)).
+or rewritten. The forward guard refuses any archive whose stored version is above
+4, so an older binary cannot silently corrupt a v4 archive. As with every format
+bump, **do not run an older `mailarchive` against a v4 archive** (see [Upgrading
+an existing archive](#upgrading-an-existing-archive)).
+
+One-copy-per-message keying — a live message stored once per mailbox with its
+moves recorded in place — is the model for a live (Graph) archive **created with
+this version**. This version does **not** retroactively
+consolidate a *pre-existing* live archive's per-folder copies under the new
+per-mailbox key: those older records keep their per-folder keys, so the identity
+lookup does not find them and the next `graph` run over such an archive
+re-downloads each still-present message and stores it a second time under the new
+key. Files already on disk are never removed (R13), so nothing is lost, but the
+archive gains a parallel copy of everything still in the mailbox. If that matters
+for a large existing live archive, start a fresh capture into a new `-out` to get
+one-copy-per-message from the first run. (A one-shot local `.pst`/mbox/maildir
+import is unaffected: it is folder-scoped by design.)
 
 `mailarchive status` reports the timeline's health on a **History** line (how
 many runs and events, GREEN, or a WARN/RED with a remedy if the log is torn or
