@@ -178,7 +178,7 @@ an invariant is the thing that is wrong.
 | S1 Untrusted mail names a file `../../x` or a folder `..` | R4 | name neutralized to a safe in-root segment | MA-01, MA-03, MA-29, MA-30 |
 | S2 Run interrupted mid-export | R5, R2 | manifest intact; no partial html/zip visible; orphans swept; already-written items survive; resume skips them | MA-11, MA-22, MA-69, MA-94 |
 | S3 Re-run over an unchanged source | R2 | zero new exports | MA-22 |
-| S4 Same email filed in two folders | R3 | exported to both; never twice in one | MA-09, MA-13 |
+| S4 Same email filed in two folders (one-shot local import) | R3 | exported to both; never twice in one | MA-09, MA-13 |
 | S5 Message with an inline `cid:` image | R7 | embedded as a data URI; renders offline | MA-19 |
 | S6 Attachment/inline content not present locally | R1, R2 | skipped from the zip; recorded in the manifest (fillable or terminal) and the regenerated report; a fillable gap is re-examined by incremental runs and filled once the content is there; a legacy manifest migrates to "unknown" and is re-examined once | MA-20, MA-21, MA-66, MA-67, MA-68, MA-70, MA-71 |
 | S7 Malformed or non-MIME message | R10, R1 | fallback-parsed or skipped; run continues | MA-13, MA-31 |
@@ -249,7 +249,7 @@ Tiers: **U** unit property (every commit) · **S** structural whole-tree walk
 | MA-06 | U | ParseSince relative windows (`30d`,`4w`,`12h`) | R11 |
 | MA-07 | U | ParseSince absolute dates | R11 |
 | MA-08 | U | ParseSince rejects garbage with an error (no silent zero) | R11, R12 |
-| MA-09 | U | manifest Key is store- and folder-scoped (same identity in a different folder, or a different store, → different keys) | R3, R6, S4 |
+| MA-09 | U | manifest Key (the one-shot LOCAL-import key) is store- and folder-scoped (same identity in a different folder, or a different store, → different keys); the live path keys per mailbox (LiveKey), not per folder | R3, R6, S4 |
 | MA-10 | U | a missing manifest loads as empty, not an error | R5 |
 | MA-11 | U | manifest Add/Save/reload round-trips; atomic write | R5, R2, S2 |
 | MA-12 | U | decodeBytes returns UTF-8 for UTF-8 and Windows-1252 for legacy bytes | R1 |

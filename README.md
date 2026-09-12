@@ -261,7 +261,11 @@ absent). A **live** source (Microsoft 365 via Graph) is keyed **per mailbox**:
 one physical copy of each message, wherever it is filed, with the folder it lives
 in recorded over time — so moving a message between folders updates the record
 in place (no second copy, nothing re-downloaded) and the served view follows it
-(see [Going back in time](#going-back-in-time-point-in-time-view)). A **one-shot
+(see [Going back in time](#going-back-in-time-point-in-time-view)). This
+one-copy-per-mailbox keying is the model for a live archive **created with this
+version**; a *pre-existing* live archive is not retroactively consolidated when
+it upgrades (see [Upgrading an older
+archive](#upgrading-an-older-archive-format-v4)). A **one-shot
 local import** (a `.pst`, mbox, or maildir) additionally scopes the key by
 **folder**, so the same email filed in two folders — or the same mailbox
 imported twice into one `-out` — is kept in each place; a re-run still skips each
@@ -727,12 +731,18 @@ de-duplicated), but the leftover duplicate files remain on disk — so the safe
 rule is to upgrade every machine that writes the same archive.
 
 This version also adds the go-back **timeline** and, with it, a manifest **format
-v4**. From now on a **live** (`graph`) capture keeps a single copy of each
-message and records the folder it lives in over time, so a message that moves
-between folders updates its record in place rather than making a second copy —
-and the forward guard refuses any archive whose stored version is above 4, so an
-older binary cannot silently corrupt a v4 archive. See [Going back in
-time](#going-back-in-time-point-in-time-view) for what the timeline gives you.
+v4** — the forward guard refuses any archive whose stored version is above 4, so
+an older binary cannot silently corrupt a v4 archive. One-copy-per-message live
+keying — a message stored once per mailbox with its moves recorded in place — is
+the model for a live (`graph`) archive **created with this version**; upgrading a
+*pre-existing* live archive fills in the timeline fields but does **not**
+retroactively consolidate its per-folder copies under the new per-mailbox key, so
+its next `graph` run re-downloads and re-stores each still-present message once
+under the new key (no file is ever removed — R13 — so nothing is lost, but the
+archive gains a parallel copy). See [Upgrading an older archive (format
+v4)](#upgrading-an-older-archive-format-v4) for that caveat in full and [Going
+back in time](#going-back-in-time-point-in-time-view) for what the timeline gives
+you.
 
 The re-scope re-exports nothing, so it does not backfill fixity: the legacy
 bytes are recorded, not re-hashed, so they cannot be attested as pristine. A
