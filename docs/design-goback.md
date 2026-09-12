@@ -1,204 +1,242 @@
 # Design — go-back: a point-in-time (Wayback-style) view of the archive
 
-**Revision:** 1 (2026-09-11). **BUILD STATUS:** not built — input to the 10-lens
-pre-code design review. Architecture-relevant: it makes the archive temporal (a
-delta over time), changes what the dedup key means (one physical copy per
-message, not per folder), adds an append-only history log and a `serve` date
-view, and must preserve R13 (append-only), R19 (static pages are script-free),
-R8 (search↔export parity), R2/R17. It **supersedes**
-`docs/design-repeat-dedup-and-trash.md`, folding its dedup core in.
+**Revision:** 2 (2026-09-12). **BUILD STATUS:** approved with conditions, not
+built — two 10-lens pre-code reviews are filed as
+`docs/review-goback-predesign.md` (the go-back gate, GO_WITH_CONDITIONS) and the
+superseded `docs/design-repeat-dedup-and-trash.md`'s gate (dedup core,
+GO_WITH_CONDITIONS). Their conditions are folded in below (GB/dedup findings →
+the numbered mechanisms of §3). It supersedes `docs/design-repeat-dedup-and-trash.md`.
 
-Operator decisions already fixed (2026-09-11): the go-back slider lives in
-`serve` (the static file:// browse stays current-only and script-free); daily
-granularity is fine and daily fetch is the recommended cadence; Deleted Items
-and Junk are excluded by default and the config asks (opt-in to include). The
-user-facing docs and the README must carry all of this — it is part of the
-build, not an afterthought.
+Operator decisions fixed: go-back lives in `serve`; daily fetch recommended,
+daily granularity; Deleted Items and Junk excluded by default, config asks;
+adopt the reworded R3 and the new R21 (§5). Docs are part of the build.
 
 ## 1. Problem
 
-The archiver captures a live mailbox on a schedule. Today the dedup key is
-`(mailbox, folder, Message-ID)`, so a message that **moves** between folders —
-most commonly delete-to-trash — is archived a second time under the new folder,
-and there is no way to ask "what did this mailbox look like on date D." Two
-wants emerged:
+A scheduled `graph` capture dedups correctly within a folder but the key is
+`(mailbox, folder, Message-ID)` and the folder walk has no exclusions, so a
+folder MOVE — most often delete-to-trash — archives the message again under the
+new folder. And there is no way to ask "what did this mailbox look like on date
+D." Wanted: one record per message with the browsable view following the live
+mailbox, plus a Wayback-style go-back date track, every file preserved.
 
-1. **One record per message, and the browsable view should follow the live
-   mailbox's folder structure** (a moved message shows up where it now is, not
-   as a duplicate).
-2. **A go-back track**, like the Internet Archive's Wayback Machine: slide to a
-   past date and see the mailbox as it was then, with every file preserved.
+## 2. Properties
 
-## 2. Properties (what this design makes true)
-
-- **T1 — One physical copy per message, append-only.** A message is stored once
-  per mailbox, keyed by its identity — `Message-ID`, or a content fingerprint
-  when absent — and, when a Message-ID is reused by a genuinely different
-  message, qualified by the existing envelope-fingerprint (`#fp`) so a distinct
-  message is never dropped or overwritten. The physical file lives under its
-  first-captured folder path and is **never moved or deleted** by a normal run
-  (R13). Later appearances in other folders do not write a second file. (subsumes
-  the dedup design; preserves R13, R8, R17. Changes R3 — see §5.)
+- **T1 — One physical copy per message, append-only.** A live/repeat capture
+  stores a message once per mailbox, keyed by identity (`Message-ID`, or a
+  content fingerprint when absent). A reused Message-ID by a *genuinely
+  different* message stays a distinct record via the envelope-fingerprint
+  qualifier (never a silent merge — §3.1). The file lives at its first-captured
+  path and is never moved or deleted by a normal run (R13). One-shot local
+  imports (PST/mbox) keep the folder-scoped key and R3 unchanged — the
+  mailbox-wide behaviour is confined to the live path (§3.6).
 - **T2 — The archive records a delta over time.** An append-only history log,
-  `.mailarchive-history.jsonl`, records each scheduled run as a small set of
-  **change events**: a message newly seen, a message whose folder changed, and a
-  message no longer present in the mailbox. Runs append only what changed since
-  the last observation (not a full snapshot), so the log grows with churn, not
-  with mailbox size × runs. Each run also appends a run header (id, UTC time,
-  mailboxes, mode). This log **is** the go-back timeline. (new: append-only
-  history; complements R13.)
-- **T3 — The current view follows the live mailbox.** The static file:// browse
-  and `serve`'s default view show the **latest** observation: each message under
-  its current folder, and a message deleted from the mailbox is not shown in the
-  current view (its file stays; see T5). Folder index pages are generated from
-  current folder membership (from the manifest), so the browsable structure
-  mirrors the mailbox as of the last run. The physical file path is opaque
-  (hash+slug) and stays at its first-captured location; the reader navigates by
-  the generated folder pages, which follow the mailbox. (R8; R13 — files never
-  move.)
-- **T4 — `serve` hosts the go-back date track.** `serve` gains a date control (a
-  slider / list of observed dates). Selecting date D renders the archive **as
-  observed at or before D**: the messages present as of D, each grouped under the
-  folder they were in at D, computed server-side by folding the history log up to
-  D. It is dynamic and server-rendered, so **no script is added to the static
-  archived pages** (R19 preserved). The raw file:// browse always shows the
-  current state; go-back is a `serve` feature, stated plainly in the docs.
-- **T5 — Two kinds of "gone", kept distinct, and reindex is redaction.**
-  - *Deleted from the mailbox* (online delete, or moved to an excluded folder) is
-    a **timeline event**: the file is kept, past-date views still show it under
-    the folder it was in, and it is labelled "no longer in the mailbox after D."
-  - *Removed from the archive* (the operator deletes the exported files and runs
-    `reindex`) is a **redaction across all of history**. Every date's view is
-    computed as `(history projection) ∩ (files present on disk)`, so a message
-    whose file has been deleted never appears at **any** date, past or present.
-    `reindex` additionally compacts the history log to drop events for messages
-    no longer on disk. This keeps the existing delete-and-refresh escape hatch
-    working and gives it a clear meaning: permanent removal from the whole
-    archive, all dates. (new invariant R21 — see §5; extends R13.)
-- **T6 — Daily fetch is the recommended cadence; granularity is the run cadence.**
-  The go-back resolution is exactly how often the archive observes the mailbox —
-  a daily schedule gives daily resolution. A message that appeared and vanished
-  between two runs may never be observed (inherent to any polling archiver). The
-  docs recommend `schedule -interval daily`, and the design does not force it.
-- **T7 — Deleted Items and Junk are excluded by default; the config asks.**
-  (Operator ruling.) The two well-known folders are not captured by default; the
-  GUI wizard and the CLI/schedule ask the operator to include or exclude, a
-  click-through takes the excluded default, and opting in captures them deduped
-  and timelined like any folder.
-- **T8 — The behaviour is documented for the operator.** The build ships: a
-  README "Going back in time" section (the `serve` date track, that go-back is
-  serve-only, daily-fetch recommendation, the two meanings of "gone", the trash
-  default); a user-docs section (`docs/` guide); a release-notes entry; and a
-  line in the in-archive `README.txt` naming `.mailarchive-history.jsonl` and
-  pointing at `mailarchive serve` for the date view.
+  `.mailarchive-history.jsonl`, records each run as change events: newly-seen,
+  folder-assertion (moved), gone (present last run, absent now), and
+  present-again. Runs append only what changed. This log is the go-back
+  timeline; the manifest is its fold-to-now projection (§3.5).
+- **T3 — Views: static = first-captured; current and past = `serve`.** The
+  static file:// pages stay grouped by each message's first-captured folder
+  (stable, R13-clean, no cross-directory links). `serve` provides two dynamic
+  projections over the manifest+history: the **current** view (each message
+  under its current folder; departed messages hidden) and the **at-date-D**
+  view. The static browse never changes; go-back and current-following are
+  `serve` features (§3.4).
+- **T4 — `serve` hosts the date track.** `serve` gains `?at=<date>` and a date
+  slider; selecting D folds the history to D and renders that day's folders and
+  messages, server-side, adding no script to the archived pages (R19).
+- **T5 — Two kinds of "gone"; reindex is redaction.** *Deleted from the mailbox*
+  is a timeline event (file kept, visible in past views). *Removed from the
+  archive* (delete files + `reindex`) is a redaction: every date's view =
+  (history projection) ∩ (files on disk), so a redacted message never appears at
+  any date; `reindex` compacts the history log (§3.4). (R21.)
+- **T6 — Daily fetch recommended; granularity = run cadence.** Between-run
+  changes may be unobserved. Docs recommend `schedule -interval daily`.
+- **T7 — Deleted Items and Junk excluded by default; config asks.** (Operator
+  ruling.) Exclusion is by resolved well-known-folder ids (`deletedItems`,
+  `junkemail`), locale-independent; the GUI and CLI/schedule ask; click-through
+  excludes; opting in captures them deduped and timelined.
+- **T8 — Documented in the build.** README "Going back in time"; a `docs/` user
+  guide; release notes; a `README.txt` line naming `.mailarchive-history.jsonl`
+  and pointing at `serve`; the daily-fetch recommendation.
 
-## 3. Mechanism (sketch — the gate refines this)
+## 3. Mechanism
 
-### 3.1 Identity, single copy, current-folder metadata
+### 3.1 Key format v4, identity, and the fingerprint-safe collapse
 
-- `state.Key` becomes `Key(token, identity)` for the physical record — dropping
-  the folder from the *dedup* key so a message is one record per mailbox — with
-  the `#fp` fingerprint qualifier unchanged (a reused Message-ID with a different
-  envelope is a distinct record, never a silent overwrite; MA-86).
-- `Record` gains: `Folder` (current), `FirstFolder`, `FirstSeen`, `LastSeen`
-  (the run time it was last observed present), `Present bool`. The physical
-  `Path` stays the first-captured location (R13).
-- Exporter: a message already recorded for `(token, identity)` is not
-  re-written; instead the run updates `Folder`/`LastSeen`/`Present` and emits a
-  history event when the folder changed. The MIME is not re-fetched (the Graph
-  fast-path stays: recognised by Message-ID before download — R17).
+- **Stop discriminating key format by NUL count.** Bump `manifestVersion` 3→4
+  and the index meta version 2→3. The legacy v2→v3 re-scope is gated on the
+  stored **version integer**, not on `keySeparator` count (fixes GB-01/GB-1/F1).
+  The live-path physical key becomes `Key(token, identity)`; `Qualify` appends
+  the fingerprint as before. Because discrimination is now version-based, the
+  one-NUL folder-less key is never mistaken for a v2 key.
+- **v3→v4 migration (fingerprint-safe, no silent drop).** On first load of a v3
+  archive, records sharing `(token, identity)` are collapsed to one `(token,
+  identity)` record **only when their stored `Fingerprint` matches** — using the
+  per-record fingerprint the manifest already holds, so no download. Two
+  genuinely different messages that reused one Message-ID in different folders
+  have different fingerprints and stay separate as `#fp`-qualified siblings
+  (resolves the hidden blocker; R1 preserved). The surviving record keeps the
+  first-captured file and `FirstFolder`/`FirstSeen` (earliest `ExportedAt`, then
+  lexical key — deterministic); each collapsed sibling becomes a folder-assertion
+  event in the history log so no location is lost; the loser index rows are
+  pruned; the loser files stay on disk and are reported by `verify` as
+  `unexpected` (documented; a later reconcile may sweep them). This is done once,
+  logged ("collapsed N move-duplicates by identity"), under the v4 migration —
+  the retroactive dedup §1 raised is handled here, not deferred.
+- **The mailbox-wide identity index** is `mid → []{key, fingerprint}` (not one
+  key), built at load and maintained on Add and Delete, coexisting with
+  `#fp`-qualified siblings and any pre-existing multi-folder records
+  (GB-2/F2/F3).
+- **New pre-existing records get load-time defaults** under the v4 migration:
+  `Present=true`, `FirstFolder=Folder=`existing folder (from the pre-collapse
+  key), `FirstSeen=LastSeen=ExportedAt` (GB-05).
 
-### 3.2 The history log (the delta)
+### 3.2 Never dedup on Message-ID alone; the move fast-path
+
+- **Widen the Graph listing `$select`** to carry the envelope fields the
+  fingerprint needs (`subject, from, toRecipients, ccRecipients,
+  receivedDateTime, hasAttachments`) so an envelope signature is computable
+  **before** download. The mailbox-wide skip fires **only** when the candidate's
+  envelope signature matches an archived sibling's stored fingerprint; on any
+  mismatch, DOWNLOAD and let the exporter's `#fp` split file it as a distinct
+  message (dedup-F1). A reused Message-ID never drops a distinct message.
+- **Move recording, no download (R17 intact).** The fast-path probes
+  `Key(token, identity)`; when a message is seen and its observed folder differs
+  from `Record.Folder`, it does a **no-download in-place merge**: rewrite
+  `Folder`/`LastSeen`/`Present`, append a folder-assertion event, and update the
+  index's folder column via a body-free `UPDATE docs SET folder=? WHERE key=?`
+  (GB-06/GB-3/E). The folder is known from the listing, so nothing is fetched.
+  The merge preserves `Fixity`/`Fingerprint`/`ExportedAt`/completeness (in-place
+  field merge, never a Record rebuild — dedup-F4/G).
+- **Both run modes dedup mailbox-wide** (with the envelope-signature
+  discrimination), so a `full` run does not re-materialise per-folder duplicates;
+  `full` stays a complete recovery path (dedup-F6).
+
+### 3.3 The history log (the delta)
 
 - `.mailarchive-history.jsonl` under `-out`, append-only, one JSON object per
-  line. A run appends a `{"run": id, "at": RFC3339, "mailboxes": […]}` header,
-  then one event per changed message: `{"k": key, "folder": "Inbox"}` (new or
-  moved), or `{"k": key, "gone": true}` (present last time, absent now). Unchanged
-  messages produce no line. Writes are append-only and fsync'd; a torn final line
-  is tolerated on read (skip it). This file is itself a natural, auditable
-  "delta over time."
-- Manifest + history are the two halves: the manifest is the current projection
-  (fast to read for the current view), the history log is the past.
+  line: a run header `{"run":id,"at":RFC3339,"mailboxes":[…]}` then, per changed
+  message, `{"k":key,"folder":"Inbox"}` (new/moved/present-again) or
+  `{"k":key,"gone":true}`, and a folder-rename line applying to all messages
+  under an old path in one event (bounds rename cost — GB-5). A **run-completed
+  footer** marks a clean run.
+- **Torn-tail (write side).** On open-for-append, if the file does not end in
+  `\n`, truncate the torn trailing partial line before appending, so a torn line
+  is always genuinely last and the read-side skip suffices (GB-4).
+- **Present-again.** A message re-observed after `gone` emits a folder assertion
+  (`Present` false→true). The fold at D = the latest of {folder-assertion, gone,
+  present-again} with `at ≤ D` (GB-03/F).
 
-### 3.3 `serve` date view
+### 3.4 gone-detection, serve views, reindex redaction
 
-- `serve` gains `?at=<YYYY-MM-DD>` (default: now). The handler folds the history
-  log to D — start from first-seen, apply folder-change and gone events with
-  `at <= D` — to compute each on-disk message's folder-at-D and present-at-D,
-  then renders the folder listing and message links for that date, intersected
-  with files currently on disk (T5 redaction). A compact date track (the observed
-  run dates, newest first, as a slider or list) sits atop the served pages.
-  Everything is server-side; the archived `.html` files are unchanged and remain
-  CSP-locked and script-free (R19).
-- Performance: folding a churn-sized log is linear in events; for a large archive
-  the handler caches the projection per requested date within the process.
+- **gone-detection by full reconciliation.** Every observation — including a
+  fast-path or manifest skip — stamps `LastSeen=thisRun` (folder known from the
+  listing, no body, R17 intact). After **every non-excluded folder of a mailbox
+  is fully walked** in a run that held its lock, `gone` = that mailbox's
+  `Present` records with `LastSeen < thisRun`, **scoped to folders actually
+  walked** — a message in an excluded/unwalked folder retains its last state and
+  is never marked gone (GB-4/GB-08/GB-3/F3/D). Never computed at a checkpoint.
+- **serve current + at-D projection.** `serve` renders the current view and any
+  `?at=D` server-side over the manifest (current) and the folded history (past),
+  intersected with files on disk (T5). A compact date track (observed run dates,
+  newest first) sits atop. Static pages are untouched (R19).
+- **reindex redaction.** After pruning index/manifest rows for files gone from
+  disk (today), `reindex` compacts `.mailarchive-history.jsonl` to drop events
+  for messages no longer on disk, so redaction spans all dates (T5/R21).
+- **History-log recovery/legibility.** `status`/`verify` report history coverage
+  and flag a torn tail (GREEN/WARN/RED with a remedy, X6); `serve` announces
+  "go-back unavailable/partial" rather than silently showing current-only when
+  the log is missing/corrupt; the `README.txt` and docs name the file (F2/H).
 
-### 3.4 reindex, pages, trash
+### 3.5 Crash ordering (the two/three durable stores)
 
-- `reindex`: after pruning index/manifest rows whose files are gone (today's
-  behaviour), compact `.mailarchive-history.jsonl` to drop events keyed to absent
-  messages, so redaction spans all dates (T5). Regenerate current folder pages.
-- `pages.Generate`: group by `Record.Folder` (current), not the physical path, so
-  the static browse follows the current mailbox (T3).
-- Folder policy: `graph.Folders` gains a default exclude of well-known
-  `deletedItems` and `junkemail` (stable ids, locale-independent); the CLI adds
-  `-include-deleted`/`-include-junk` (or `-include-folders`), and the GUI wizard
-  and `schedule` preview surface the choice (T7).
+Pin the order **history-append+fsync → index → manifest.Save (the trailing
+anchor)**, at run end AND at every checkpoint: extend `commit()`/the checkpoint
+to append+fsync the run's folder/gone events before advancing the manifest's
+`Folder`/`Present`/`LastSeen`. A crash between steps yields at most a **duplicate
+event** (idempotent under the fold), never a lost move (GB-02/GB-2/GB-5/F4/B).
+The message file is fsync'd before its events.
+
+### 3.6 Scope, folder identity, pages, trash
+
+- **Scope.** Mailbox-wide dedup is confined to the live/repeat path (Graph;
+  IMAP later) via an explicit `Exporter.DedupMailboxWide` flag set only there;
+  one-shot local imports keep the folder-scoped key and R3 (dedup-F3/E).
+- **Folder identity by stable Graph `Folder.ID`**, not the display-name path, so
+  a rename is one folder-rename event, not a mass move (GB-5/dedup-F2).
+- **Static pages** group by first-captured folder (physical, R13-clean);
+  current-folder and at-D grouping are serve-only projections (G — this replaces
+  rev 1's "pages.Generate by current folder", removing the cross-dir-link
+  blockers F5/GB-6).
+- **Trash/junk** excluded by default by resolved well-known-folder ids
+  (`deletedItems`, `junkemail`); `-include-deleted`/`-include-junk` opt in; the
+  display-name `-exclude-folders` form is documented as locale-fragile
+  (dedup-F6/F7).
+- **No-Message-ID messages** dedup mailbox-wide on the post-download content hash
+  (stable for the same body); wording aligned so a moved no-mid message is one
+  record too (dedup-F4).
 
 ## 4. Build order and seams
 
-1. **Slice A — single copy + current-folder metadata + history log.** `state.Key`,
-   `Record` fields, exporter/graph move-recording, the append-only history writer.
-   Tests: a message that moves folder between two runs is one file with an updated
-   `Folder` and a history event, not a duplicate; a reused Message-ID with a
-   different envelope stays two records (MA-86 holds); the history log round-trips
-   and tolerates a torn last line; incremental re-run with no change appends no
-   events.
-2. **Slice B — `serve` date track + `?at=`.** Fold-to-date projection, the date
-   UI, redaction intersection with on-disk files. Tests: the view at a past date
-   shows a since-deleted message under its then-folder; the current view does not;
-   a file removed + `reindex` disappears from every date; the static pages carry
-   no script (R19 stays green).
-3. **Slice C — current-following pages + reindex history compaction + trash
-   policy.** `pages.Generate` by current folder; `reindex` log compaction; the
-   well-known-folder exclude + the config ask (CLI flags, GUI step, schedule
-   preview). Tests: browse groups a moved message under its current folder;
-   reindex drops a redacted message's history; Deleted Items/Junk are absent by
-   default and present when opted in.
-4. **Slice D — docs (T8).** README "Going back in time" section, `docs/` user
-   guide, release notes, `README.txt` line, and the daily-fetch recommendation
-   throughout. (Docs land with the code, not after.)
+1. **Slice A — v4 key + fingerprint-safe collapse migration + mailbox-wide
+   identity index + envelope-signature dedup + move fast-path + history log +
+   crash ordering.** The foundation and the riskiest slice; heaviest tests. Must
+   prove: an unchanged re-run downloads nothing (R17) and the first upgraded run
+   over a v3 archive re-downloads nothing; a moved message is one file with an
+   updated folder + a history event (no duplicate); two distinct messages sharing
+   a Message-ID across folders both survive the collapse (R1); the log tolerates
+   a torn tail (read and write side); crash order holds (log before manifest);
+   an old (v3) binary refuses a v4 archive.
+2. **Slice B — gone/present-again detection (full-reconciliation, scoped to
+   walked folders) + the index folder-update path.** Tests: a deleted-online
+   message is marked gone after a full walk, not on a checkpoint; an excluded
+   folder never triggers gone; re-appearance restores it; the index folder column
+   follows a move.
+3. **Slice C — serve current + at-D projection + date track + history recovery
+   legibility.** Tests: at-D shows a since-deleted message under its then-folder;
+   current view hides it; a redacted (deleted+reindex) message shows at no date;
+   static pages stay script-free (R19); a corrupt log makes serve say
+   "go-back partial", status WARN.
+4. **Slice D — trash/junk exclude-by-default + config ask** (well-known-id
+   resolution; CLI flags; GUI step; schedule preview).
+5. **Slice E — docs** (README, `docs/` guide, release notes, `README.txt`,
+   daily-fetch recommendation) — lands with the code.
 
-Each slice ships prove-fail → prove-pass and catalog rows; the temporal/serve
-and trash paths owe an adversarial pass (a hostile history log, a `?at=` that
-tries to escape the on-disk set, a folder name / date injection into the served
-page), and slice C owes a friction check of the date track and the config ask.
+Each slice ships prove-fail → prove-pass and catalog rows. Slice A owes an
+adversarial pass (the fingerprint-safe collapse and the envelope-signature dedup
+are R1-critical); slice C owes an adversarial pass (a hostile history log fed to
+`serve`; `?at=` escaping the on-disk set; folder/date injection into the served
+page) and a friction check of the date track; slice D owes a friction check of
+the config ask.
 
 ## 5. Invariants and honesty
 
-- **R3 re-worded (operator decision).** From "the same mail filed in two folders
-  exports to both" to: "a message is stored once per mailbox; its folder over
-  time is recorded, and the current/served view groups it under its current (or a
-  chosen date's) folder." If a single observation genuinely reports a message in
-  two folders at once (labels/copies), both are recorded for that date and the
-  view shows it under both. One-shot local imports (PST/mbox) have a single
-  observation, so go-back over them shows just that one state; the timeline is
-  built by repeat/live capture (Graph, and IMAP if built).
-- **New R21 (proposed).** The served point-in-time view shows exactly the
-  messages present on disk, projected to the chosen date; a message removed from
+- **R3 reworded (operator-adopted):** "a message captured from a live source is
+  stored once per mailbox; its folder over time is recorded, and the current/
+  served view groups it under its current (or a chosen date's) folder. A one-shot
+  local import keeps per-folder copies." Genuine simultaneous two-folder
+  membership in one observation is recorded for that date.
+- **R17 reworded:** "an incremental re-run re-downloads no already-archived body;
+  a cross-folder Message-ID hit costs an envelope-signature check (no body) and
+  downloads only a genuinely new/distinct message." No-download stays true for
+  the unchanged case and for a move.
+- **New R21 (operator-adopted):** the served point-in-time view shows exactly the
+  messages present on disk projected to the chosen date; a message removed from
   the archive (files deleted, then `reindex`) never appears at any date. The
   history log is append-only and reindex-compactable.
-- **R13 preserved.** No exported message file is moved or deleted by a normal
-  run; go-back never mutates the archived bytes. The physical path reflects the
-  first-captured folder (opaque hash+slug), while the browsable grouping follows
-  the current mailbox — stated so a reader is not surprised the path says one
-  folder and the listing another.
-- **R19 preserved.** The date slider is a `serve` feature; the static pages stay
-  script-free and CSP-locked. There is no offline go-back — the raw files show
-  the current state only.
-- **Granularity is the run cadence** (daily recommended); between-run changes may
-  be unobserved. Retroactive de-duplication of move-duplicates already on disk in
-  a pre-existing archive is a separate follow-up (append-only makes it delicate).
-- **R21, R3's re-word, and any new scenarios (S37+)** are proposals for the
-  OPERATOR to accept into `docs/scenario-catalog.md`; the build does not
-  self-grant them.
+- **R13 preserved** (files never moved/deleted by a normal run; the v3→v4
+  collapse leaves loser files on disk, reported by `verify`, never auto-deleted).
+  **R8 preserved** (one index row per message; the folder column follows the
+  move). **R19 preserved** (static pages script-free; the slider is serve-only —
+  no offline go-back).
+- **Honest limits:** granularity = run cadence; the physical path keeps the
+  first-captured folder while serve's grouping follows current; the v3→v4
+  collapse leaves superseded duplicate files on disk until a reconcile sweeps
+  them; a folder move is inferred from per-run folder observation, not a
+  server-side move event.
+- **Catalog impact (for the OPERATOR / the build):** R3/R17 reworded, R21 added;
+  S4/MA-09/MA-13 and the Acknowledged-limits paragraph updated; new scenarios
+  S37 (point-in-time/go-back), S38 (move deduped + timelined), S39 (v3→v4
+  fingerprint-safe collapse); new MA rows for each slice; the covers baseline
+  moves accordingly. The build states the exact row list in the catalog.
