@@ -761,6 +761,25 @@ func (m *Manifest) MergeFields(key, folder string, seen time.Time, present bool)
 	return true
 }
 
+// SetPresent flips only a record's Present flag, leaving Folder/LastSeen and
+// every other field untouched; it reports whether the key existed. It is the
+// exact undo of a SweepGone flip: the live path calls SetPresent(key, true) when
+// the paired {k,gone} history append fails, so the saved manifest (the trailing
+// anchor, §3.5) never durably records a 'gone' the log does not have — the
+// manifest must never lead the log (#13). The message keeps its prior
+// Folder/LastSeen and is re-detected gone (and the event retried) next run.
+func (m *Manifest) SetPresent(key string, present bool) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.Entries[key]
+	if !ok {
+		return false
+	}
+	r.Present = present
+	m.Entries[key] = r
+	return true
+}
+
 // WalkedFolders is a per-run observed-set: the folder paths a single mailbox
 // walk actually visited to completion this run. It is the SCOPE of
 // gone-detection (§3.4) — gone is computed only over records whose recorded

@@ -88,6 +88,12 @@ func (g *gobackServer) serveGoback(w http.ResponseWriter, r *http.Request) {
 	// Decide the view. An at request is honored only when the timeline is not
 	// unavailable; a bad date falls back to the current view, announced (never
 	// silently current-only, and never echoing the raw value — R19/§3.4).
+	// Read the timeline ONCE per request; the fold (at-view) and the date track
+	// both reuse this slice instead of re-reading the file (#12, adversarial
+	// 2026-09-12). A read error yields no events — the availability banner set
+	// above already tells the reader the timeline is partial or unavailable.
+	events, _ := state.ReadHistory(hpath)
+
 	atStr := r.URL.Query().Get("at")
 	page.Current = true
 	if atStr != "" {
@@ -96,7 +102,7 @@ func (g *gobackServer) serveGoback(w http.ResponseWriter, r *http.Request) {
 		} else if page.Availability != "unavailable" {
 			page.Current = false
 			page.AtDate = d.Format("2006-01-02")
-			page.buildAtView(g, hpath, endOfDay(d))
+			page.buildAtView(g, events, endOfDay(d))
 		}
 	}
 
@@ -107,11 +113,9 @@ func (g *gobackServer) serveGoback(w http.ResponseWriter, r *http.Request) {
 		page.labelMessages(subjects)
 	}
 
-	// The date track is the observed run cadence, drawn from the log even when a
-	// bad date pushed us back to the current view.
-	if events, err := state.ReadHistory(hpath); err == nil {
-		page.DateTrack = state.RunDates(events)
-	}
+	// The date track is the observed run cadence, drawn from the already-read log
+	// even when a bad date pushed us back to the current view.
+	page.DateTrack = state.RunDates(events)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = gobackTmpl.Execute(w, page)
@@ -143,11 +147,7 @@ func (p *gobackPage) buildCurrentView(g *gobackServer, subjects map[string]strin
 // under its THEN-folder, intersected with the manifest (a redacted key is gone)
 // and the files on disk (T4/T5/R21). It records the raw path so labelMessages
 // can attach subjects after the shared subject map is built.
-func (p *gobackPage) buildAtView(g *gobackServer, hpath string, upTo time.Time) {
-	events, err := state.ReadHistory(hpath)
-	if err != nil {
-		return
-	}
+func (p *gobackPage) buildAtView(g *gobackServer, events []state.HistoryEvent, upTo time.Time) {
 	fold := state.FoldEvents(events, upTo)
 	m, merr := state.Load(filepath.Join(g.outDir, ".mailarchive-manifest.json"))
 	if merr != nil {

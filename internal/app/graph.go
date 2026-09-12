@@ -459,10 +459,17 @@ func runGraphMailbox(ctx context.Context, client *graph.Client, exp *export.Expo
 	for _, k := range gone {
 		if hist != nil {
 			// The {k,gone} event is appended (and fsync'd by the caller's commit)
-			// BEFORE the manifest records Present=false, so the history is never
-			// behind the fold-to-now projection (crash order §3.5).
+			// so the log carries the gone before the manifest (the trailing anchor)
+			// is saved with Present=false (crash order §3.5). If the append FAILS,
+			// UNDO SweepGone's in-memory Present=false, so the saved manifest never
+			// records a gone the log lacks — the manifest must never lead the log
+			// (#13). The record keeps its prior Folder/LastSeen and is re-detected
+			// gone (event retried) next run. When there is no log at all (hist nil)
+			// the manifest still reflects reality for the current view; there is no
+			// log to lead.
 			if herr := hist.WriteGone(k); herr != nil {
-				logger.Printf("warning: history gone event: %v", herr)
+				logger.Printf("warning: history gone event (leaving message present until next run): %v", herr)
+				manifest.SetPresent(k, true)
 			}
 		}
 	}

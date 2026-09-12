@@ -197,14 +197,22 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 			// field merge is here so the manifest is correct even without a callback.
 			// A folder-scoped local import (flag off) keeps the plain skip and R3.
 			if e.DedupMailboxWide {
-				moved := prev.Folder != folderKey
+				// Emit a folder-assertion on a MOVE (folder changed) OR on
+				// present-again (the record was gone and is seen again): both are
+				// one folder-assertion shape, and the fold reads an assertion after
+				// a gone event as present-again (§3.3). This mirrors the graph
+				// fast-path's `rec.Folder != folderKey || !rec.Present`; without the
+				// `!prev.Present` twin a no-Message-ID message that went gone and
+				// reappeared in the SAME folder got no event, so the fold reported
+				// it gone forever after (#5, adversarial 2026-09-12).
+				assert := prev.Folder != folderKey || !prev.Present
 				seenAt := e.RunAt
 				if seenAt.IsZero() {
 					seenAt = time.Now().UTC()
 				}
 				e.Manifest.MergeFields(key, folderKey, seenAt, true)
 				if e.OnManifestSkip != nil {
-					e.OnManifestSkip(key, folderPath, moved)
+					e.OnManifestSkip(key, folderPath, assert)
 				}
 			}
 			e.Stats.SkippedManifest++

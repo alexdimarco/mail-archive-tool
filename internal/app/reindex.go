@@ -133,21 +133,6 @@ func Reindex(out string, logger *log.Logger) (kept, pruned int, err error) {
 		return 0, 0, err
 	}
 
-	// Redaction spans all dates (T5/R21): a message whose files were deleted is
-	// pruned from the manifest above, so its history events would still surface
-	// it in a past `serve` view (until the on-disk intersection also hid it).
-	// Compact the timeline to drop every event whose key is no longer in the
-	// reconciled manifest — a message still on disk (a departed-from-mailbox
-	// record keeps its file and its manifest row, R13) is untouched, so only a
-	// genuinely removed message loses its trace. Run headers/footers and folder
-	// renames are kept, so the date track survives.
-	hpath := filepath.Join(out, state.HistoryName)
-	if dropped, cerr := state.CompactHistory(hpath, manifest.Has); cerr != nil {
-		return 0, 0, fmt.Errorf("compact history log: %w", cerr)
-	} else if dropped > 0 {
-		logger.Printf("compacted %d history event(s) for redacted message(s)", dropped)
-	}
-
 	// Regenerate folder + root index pages from the reconciled index so they no
 	// longer list the pruned messages.
 	if err := pages.Generate(out, idx, logger); err != nil {
@@ -157,6 +142,30 @@ func Reindex(out string, logger *log.Logger) (kept, pruned int, err error) {
 	writeArchiveReadme(out, logger)
 	if err := manifest.Save(); err != nil {
 		return 0, 0, err
+	}
+
+	// Redaction spans all dates (T5/R21): a message whose files were deleted is
+	// pruned from the manifest above, so its history events would still surface
+	// it in a past `serve` view (until the on-disk intersection also hid it).
+	// Compact the timeline to drop every event whose key is no longer in the
+	// reconciled manifest — a message still on disk (a departed-from-mailbox
+	// record keeps its file and its manifest row, R13) is untouched, so only a
+	// genuinely removed message loses its trace. Run headers/footers and folder
+	// renames are kept, so the date track survives.
+	//
+	// This runs LAST, AFTER manifest.Save: the manifest is the keep-authority for
+	// compaction (keep == manifest.Has), so persisting it first means a crash
+	// between the two never leaves the log durably shy of events a still-persisted
+	// manifest asserts. If compaction then fails or a crash precedes it, the log
+	// keeps stale events for the redacted message, but serve already hides it via
+	// the on-disk intersection and the next reindex compacts — the derived log
+	// heals from (manifest ∩ disk) (#11, adversarial 2026-09-12; §3.5's ordering
+	// applied to the redaction path).
+	hpath := filepath.Join(out, state.HistoryName)
+	if dropped, cerr := state.CompactHistory(hpath, manifest.Has); cerr != nil {
+		return 0, 0, fmt.Errorf("compact history log: %w", cerr)
+	} else if dropped > 0 {
+		logger.Printf("compacted %d history event(s) for redacted message(s)", dropped)
 	}
 	return kept, pruned, nil
 }

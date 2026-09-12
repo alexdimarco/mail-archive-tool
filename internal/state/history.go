@@ -270,6 +270,14 @@ func FoldEvents(events []HistoryEvent, upTo time.Time) map[string]FoldState {
 		case ev.Run > 0 && ev.At != "":
 			if t, perr := time.Parse(time.RFC3339, ev.At); perr == nil {
 				curAt, haveAt = t, true
+			} else {
+				// A run header whose timestamp does not parse INVALIDATES the run:
+				// its events must not inherit the previous run's date (that would
+				// date a later change to an earlier day and falsify the ?at=D view —
+				// a bad header could show a gone message as present, or hide a
+				// present one). Skip its events, exactly as RunDates skips a corrupt
+				// header for the date track. (#3, adversarial 2026-09-12)
+				haveAt = false
 			}
 		case ev.K != "":
 			if !haveAt || curAt.After(upTo) {
