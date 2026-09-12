@@ -414,8 +414,16 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	}
 	// Re-exported under a new name (subject or date changed, naming rule
 	// changed): the previous html/zip are this message's own and must not
-	// linger as duplicates (R6/R13).
-	if seen && prev.Path != "" && prev.Path != relSlash {
+	// linger as duplicates (R6/R13). But NEVER delete the prior file when we are
+	// adopting a LEGACY-scheme record on the live path: its identity is not
+	// content-verified (the fingerprint scheme is incomparable), so the message we
+	// just downloaded MIGHT be a distinct reuse of a gone original rather than the
+	// same message — deleting the original's file would be irreversible data loss
+	// (R13). Keeping it costs at most a harmless orphan (verify flags it); the
+	// full resolution of the reuse-vs-same ambiguity is the deferred ImmutableId
+	// closure. (Adversarial re-check #1, 2026-09-12.)
+	adoptingLegacy := e.DedupMailboxWide && seen && prev.FpScheme != state.FpSchemeCurrent
+	if seen && prev.Path != "" && prev.Path != relSlash && !adoptingLegacy {
 		old := filepath.Join(e.OutDir, filepath.FromSlash(prev.Path))
 		os.Remove(old)
 		os.Remove(strings.TrimSuffix(old, ".html") + zipSuffix)
