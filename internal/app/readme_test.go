@@ -45,6 +45,13 @@ func TestArchiveCarriesReadme(t *testing.T) {
 		// point-in-time view is described, and the reindex redaction is spelled
 		// out (delete files + reindex removes a message across all dates).
 		".mailarchive-history.jsonl", "point-in-time", "mailarchive reindex -out",
+		// Friction review (2026-09-12): the archive must disclose its capture
+		// SCOPE and the honest limits of redaction — that a live capture skips
+		// Deleted Items/Junk by default (so mail only there is absent), that a
+		// redaction must also name the .eml, and that a message still live in the
+		// mailbox is re-archived on the next run unless removed there too.
+		"Deleted Items and Junk Email", "its .eml if one is present",
+		"archive it again",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("README.txt lacks %q", want)

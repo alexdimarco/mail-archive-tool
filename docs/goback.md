@@ -124,13 +124,17 @@ operator-driven **redaction**, covered next.
 To take a message out of the archive at **every** date:
 
 ```sh
-# 1. Delete its files from the archive (the .html, the -attachments.zip, any .eml).
-rm ./archive/<store>/<folder>/2026-07-15_1032_subject_a1b2c3d4.*
+# 1. Delete its files — name all three; the shell glob <stem>.* would MISS the
+#    dash in -attachments.zip.
+stem=./archive/<store>/<folder>/2026-07-15_1032_subject_a1b2c3d4
+rm "$stem.html" "$stem-attachments.zip" "$stem.eml"   # .eml only in a -raw archive
 # 2. Reconcile the archive to disk (prunes the index, manifest and timeline).
 mailarchive reindex -out ./archive
+# 3. Confirm nothing remains under that name (any leftover file is NOT yet gone).
+mailarchive verify -out ./archive
 ```
 
-Two things make this airtight:
+Within the archive, two things make this complete:
 
 - **`serve` intersects every date's view with the files actually on disk.** The
   moment the files are gone, the message vanishes from the current view *and*
@@ -138,12 +142,23 @@ Two things make this airtight:
 - **`reindex` compacts the timeline.** It drops the removed message's events from
   `.mailarchive-history.jsonl` (keeping run headers, folder renames, and the
   events of messages merely *departed* from the mailbox whose files are still on
-  disk), so the redaction is permanent and spans all dates. The rewrite is atomic
+  disk), so the redaction spans every date in the archive. The rewrite is atomic
   and a no-op when nothing was removed.
 
 A **normal** run never deletes a message file (invariant R13) — a redaction is
 always something you do by hand. That asymmetry is the point: the archive won't
 lose anything on its own, and you can still deliberately excise something.
+
+**One precondition — redaction acts on the archive, not the live mailbox.**
+Incremental capture skips a message whose Internet-Message-ID is already in the
+manifest, and `reindex` removes that manifest entry. So if the message you
+redacted still lives in the connected mailbox in a folder you capture, the next
+scheduled `graph` run has no record of it and **archives it again**. To remove
+it for good, also delete or move it out of the live mailbox (or ensure it lives
+only in an excluded folder such as Deleted Items). Closing that loop *inside the
+tool* — a redaction list the capture path honours, so a still-live message is
+never re-archived — is a planned change under design review; today the operator
+closes it in the mailbox.
 
 ## Deleted Items and Junk are excluded by default
 

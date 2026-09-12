@@ -39,11 +39,20 @@ Without it: use your system's file search over the .html files, or ripgrep.
 Going back in time: for an archive of a live mailbox (Microsoft 365 via Graph),
 "mailarchive serve" also offers a point-in-time view: pick a past date and see
 the folders and messages as they stood then, including mail later deleted from
-the mailbox. It reads the timeline in .mailarchive-history.jsonl. This date
-view is offered only by "serve"; the pages here on disk always show each
-message in the folder it was FIRST archived in, and never change. To remove a
-message from the archive at every date, delete its files here and then run
-"mailarchive reindex -out <this folder>" — that redacts it across all dates. A
+an ordinary folder. It reads the timeline in .mailarchive-history.jsonl. By
+default a live capture skips the Deleted Items and Junk Email folders, so a
+message that lived ONLY there is not in this archive unless the operator chose
+to include them. This date view is offered only by "serve"; the pages here on
+disk always show each message in the folder it was FIRST archived in, and never
+change.
+
+Removing a message for good (redaction): delete its files here — the .html
+page, its matching -attachments.zip, and its .eml if one is present (only a
+-raw archive has .eml) — then run "mailarchive reindex -out <this folder>",
+which redacts it across all dates. Run "mailarchive verify -out <this folder>"
+afterward: any file still listed under that name has not been removed yet. If
+the same message still lives in the mailbox this archive captures, the next
+scheduled run will archive it again, so remove or move it in the mailbox too. A
 normal run never deletes a message file.
 
 Transport headers: each message page has a collapsed panel labelled
@@ -69,8 +78,9 @@ Housekeeping files (safe to leave alone):
                                every file was intact)
   .mailarchive-schedule.json   the recurring-backup descriptor, if one was set
   .mailarchive-history.jsonl   the go-back timeline: what changed each run (a
-                               live capture writes it); append-only, read by
-                               "mailarchive serve" for the point-in-time view
+                               live capture writes it); appended each run and
+                               rewritten only by reindex when redacting; read
+                               by "mailarchive serve" for the point-in-time view
   attachments-report.tsv       messages whose attachments or bodies could
                                not be captured (opens in a spreadsheet);
                                absent when there is nothing to report
