@@ -386,3 +386,225 @@ func mustHistory(t *testing.T, out string) []state.HistoryEvent {
 	}
 	return ev
 }
+
+// noMIDGraphServer serves mailbox u1 with an Inbox (F_IN) and an Archive (F_AR)
+// holding a single message N1 that carries NO internetMessageId in the listing
+// and NO Message-ID header in its MIME — so its identity is the post-download
+// content hash, not a Message-ID. Which folder N1 is listed under is controlled
+// by n1Folder so a test can MOVE it between runs; $value fetches are counted so
+// the test can show a no-mid message is re-downloaded each run (the acknowledged
+// price) yet still deduped and its move recorded at the exporter's skip. The MIME
+// is identical whatever folder N1 sits in, so the content hash — and thus the
+// dedup identity — is stable across runs.
+type noMIDGraphServer struct {
+	mu       sync.Mutex
+	mimeHits int
+	n1Folder string // "F_IN" or "F_AR"
+}
+
+func newNoMIDGraphServer() (*noMIDGraphServer, *httptest.Server) {
+	f := &noMIDGraphServer{n1Folder: "F_IN"}
+	mux := http.NewServeMux()
+	j := func(w http.ResponseWriter, s string) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(s))
+	}
+	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
+		j(w, `{"access_token":"t","token_type":"Bearer","expires_in":3600}`)
+	})
+	mux.HandleFunc("/users/u1/mailFolders", func(w http.ResponseWriter, r *http.Request) {
+		j(w, `{"value":[
+			{"id":"F_IN","displayName":"Inbox","childFolderCount":0},
+			{"id":"F_AR","displayName":"Archive","childFolderCount":0}]}`)
+	})
+	// N1's listing entry carries the envelope $select but NO internetMessageId, so
+	// the pre-download fast-path cannot recognise it — it is downloaded and deduped
+	// on its content hash at the exporter.
+	n1 := `{"id":"N1","subject":"subj-N1","from":{"emailAddress":{"address":"a@example.com"}},"receivedDateTime":"2025-03-01T09:00:00Z"}`
+	list := func(folderID string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			f.mu.Lock()
+			here := f.n1Folder == folderID
+			f.mu.Unlock()
+			var entries []string
+			if here {
+				entries = append(entries, n1)
+			}
+			j(w, `{"value":[`+strings.Join(entries, ",")+`]}`)
+		}
+	}
+	mux.HandleFunc("/users/u1/mailFolders/F_IN/messages", list("F_IN"))
+	mux.HandleFunc("/users/u1/mailFolders/F_AR/messages", list("F_AR"))
+	mux.HandleFunc("/users/u1/messages/", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		f.mimeHits++
+		f.mu.Unlock()
+		// No Message-ID header: the parsed message falls back to a content hash for
+		// its identity. The bytes are identical every run so the hash is stable.
+		w.Write([]byte("From: a@example.com\r\nSubject: subj-N1\r\n" +
+			"Date: Mon, 03 Mar 2025 09:00:00 +0000\r\n\r\nbody-N1\r\n"))
+	})
+	return f, httptest.NewServer(mux)
+}
+
+func (f *noMIDGraphServer) hits() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.mimeHits
+}
+
+func (f *noMIDGraphServer) setFolder(folderID string) {
+	f.mu.Lock()
+	f.n1Folder = folderID
+	f.mu.Unlock()
+}
+
+// covers: MA-206, R3, R5, S38
+// A no-Internet-Message-ID Graph message is deduped mailbox-wide on its
+// post-download content hash. Because its identity is only known AFTER download,
+// it reaches the exporter's mailbox-wide skip rather than the pre-download
+// fast-path — so it IS re-downloaded each run (the acknowledged no-mid price),
+// but every observation, INCLUDING the write-nothing skip, stamps LastSeen=thisRun
+// and, when the folder differs, records the move (Folder field + a history
+// folder-assertion + a body-free index folder update). Without that stamp a
+// still-present no-mid message's LastSeen would never advance (gone-detection
+// would wrongly bury it) and a moved one's folder would never follow (§3.4/§3.6).
+func TestGraphNoMessageIDMoveDedupAndTimeline(t *testing.T) {
+	out := tmpDir(t)
+	f, srv := newNoMIDGraphServer()
+	defer srv.Close()
+
+	g := GraphOptions{Tenant: "t", ClientID: "c", ClientSecret: "s", Mailboxes: []string{"u1"},
+		BaseURL: srv.URL, TokenURL: srv.URL + "/token"}
+	opts := Options{Out: out, Mode: export.Incremental, Index: true, Pages: true}
+	logger := log.New(io.Discard, "", 0)
+
+	// Run 1: N1 captured in Inbox (downloaded once, no Message-ID).
+	if _, err := RunGraph(context.Background(), g, opts, logger); err != nil {
+		t.Fatalf("run 1: %v", err)
+	}
+	if n := countFiles(t, out, ".html", "index.html"); n != 1 {
+		t.Fatalf("run 1 wrote %d html files, want 1", n)
+	}
+	if f.hits() != 1 {
+		t.Fatalf("run 1 fetched N1 %d times, want 1", f.hits())
+	}
+	key1, rec1 := recordForID(t, out, "sha:")
+	if rec1.Folder != "Inbox" || rec1.FirstFolder != "Inbox" || !rec1.Present {
+		t.Fatalf("run 1 record = Folder %q / FirstFolder %q / Present %v, want Inbox/Inbox/true", rec1.Folder, rec1.FirstFolder, rec1.Present)
+	}
+
+	// Run 2: N1 unchanged, still in Inbox. It is re-downloaded (no id to skip on)
+	// and deduped at the exporter — ONE file still — and the write-nothing skip
+	// stamps a FRESH LastSeen so gone-detection will see it as seen-this-run.
+	if _, err := RunGraph(context.Background(), g, opts, logger); err != nil {
+		t.Fatalf("run 2: %v", err)
+	}
+	if n := countFiles(t, out, ".html", "index.html"); n != 1 {
+		t.Errorf("run 2 left %d html files, want 1 (a no-mid message must dedup, not duplicate)", n)
+	}
+	if f.hits() != 2 {
+		t.Errorf("N1 fetched %d times after run 2, want 2 (a no-mid message is re-downloaded each run — its identity is only known post-download)", f.hits())
+	}
+	_, rec2 := recordForID(t, out, "sha:")
+	if !rec2.LastSeen.After(rec1.LastSeen) {
+		t.Errorf("run 2 did not advance LastSeen (%v → %v); a skip must still stamp LastSeen=thisRun or a still-present message is wrongly marked gone (§3.4)", rec1.LastSeen, rec2.LastSeen)
+	}
+	if rec2.Folder != "Inbox" || !rec2.Present {
+		t.Errorf("run 2 record = Folder %q / Present %v, want Inbox/true", rec2.Folder, rec2.Present)
+	}
+
+	// Run 3: N1 has moved to Archive. Still one file at its first-captured Inbox
+	// folder (R13); the skip records the move on the ONE record.
+	f.setFolder("F_AR")
+	if _, err := RunGraph(context.Background(), g, opts, logger); err != nil {
+		t.Fatalf("run 3: %v", err)
+	}
+	if n := countFiles(t, out, ".html", "index.html"); n != 1 {
+		t.Errorf("after the move there are %d html files, want 1 (a no-mid move must not re-archive)", n)
+	}
+	key3, rec3 := recordForID(t, out, "sha:")
+	if key3 != key1 {
+		t.Errorf("the move changed the record's key %q → %q (it must stay the mailbox-wide key)", key1, key3)
+	}
+	if rec3.Folder != "Archive" {
+		t.Errorf("record current Folder = %q after the no-mid move, want Archive (the skip must follow the move, §3.6)", rec3.Folder)
+	}
+	if rec3.FirstFolder != "Inbox" {
+		t.Errorf("record FirstFolder = %q, want Inbox (the first-captured folder never moves, R13)", rec3.FirstFolder)
+	}
+	if rec3.Path != rec1.Path || !strings.HasPrefix(rec3.Path, "u1/Inbox/") {
+		t.Errorf("the physical file moved (%q → %q); a normal run never relocates a file (R13)", rec1.Path, rec3.Path)
+	}
+	if fol := indexFolder(t, out); fol != "Archive" {
+		t.Errorf("index folder column = %q after the no-mid move, want Archive", fol)
+	}
+	events := assure.Reached(t, mustHistory(t, out), "history events")
+	var sawMove bool
+	for _, ev := range events {
+		if ev.K == key3 && ev.Folder == "Archive" && !ev.Gone {
+			sawMove = true
+		}
+	}
+	if !sawMove {
+		t.Errorf("no history folder-assertion recorded the no-mid move to Archive (events: %+v)", events)
+	}
+}
+
+// covers: MA-204, R2, R3, S38
+// A FULL Graph run over a message that has already MOVED re-materialises no
+// duplicate: it re-downloads and re-writes the ONE file at its first-captured
+// folder (R13, the exporter's writeFolderPath = FirstFolder branch) while the
+// record's current folder stays the moved-to folder and the index folder follows.
+func TestGraphFullRunOverMovedMessage(t *testing.T) {
+	out := tmpDir(t)
+	f, srv := newMoveGraphServer()
+	defer srv.Close()
+
+	g := GraphOptions{Tenant: "t", ClientID: "c", ClientSecret: "s", Mailboxes: []string{"u1"},
+		BaseURL: srv.URL, TokenURL: srv.URL + "/token"}
+	logger := log.New(io.Discard, "", 0)
+
+	// Run 1 (incremental): M1 captured in Inbox.
+	if _, err := RunGraph(context.Background(), g, Options{Out: out, Mode: export.Incremental, Index: true, Pages: true}, logger); err != nil {
+		t.Fatalf("run 1: %v", err)
+	}
+	// Run 2 (incremental): M1 moved to Archive — recorded as a move, one file kept.
+	f.setM1Folder("F_AR")
+	if _, err := RunGraph(context.Background(), g, Options{Out: out, Mode: export.Incremental, Index: true, Pages: true}, logger); err != nil {
+		t.Fatalf("run 2: %v", err)
+	}
+	_, recMoved := recordForID(t, out, "m1@x")
+	if recMoved.Folder != "Archive" || recMoved.FirstFolder != "Inbox" {
+		t.Fatalf("after the move: Folder %q / FirstFolder %q, want Archive/Inbox", recMoved.Folder, recMoved.FirstFolder)
+	}
+	movedHits := f.hits("M1")
+
+	// Run 3 (FULL): M1 still in Archive. Full re-exports (R2) but must not
+	// re-materialise a per-folder duplicate; the file is rewritten at its
+	// first-captured Inbox folder while the current folder stays Archive.
+	r3, err := RunGraph(context.Background(), g, Options{Out: out, Mode: export.Full, Index: true, Pages: true}, logger)
+	if err != nil {
+		t.Fatalf("full run: %v", err)
+	}
+	if r3.Stats.Exported != 1 {
+		t.Errorf("full run exported %d, want 1 (full re-exports the moved message, R2)", r3.Stats.Exported)
+	}
+	if f.hits("M1") <= movedHits {
+		t.Errorf("full run re-downloaded nothing (%d then %d) — full must re-export (R2)", movedHits, f.hits("M1"))
+	}
+	if n := countFiles(t, out, ".html", "index.html"); n != 1 {
+		t.Errorf("full run over a moved message left %d html files, want 1 (no per-folder duplicate)", n)
+	}
+	key3, rec3 := recordForID(t, out, "m1@x")
+	if rec3.Folder != "Archive" {
+		t.Errorf("full run reset the current folder to %q, want Archive (the move must survive a full re-export)", rec3.Folder)
+	}
+	if rec3.FirstFolder != "Inbox" || !strings.HasPrefix(rec3.Path, "u1/Inbox/") {
+		t.Errorf("full run relocated the file: FirstFolder %q, path %q, want Inbox / under u1/Inbox/ (R13)", rec3.FirstFolder, rec3.Path)
+	}
+	if fol := indexFolder(t, out); fol != "Archive" {
+		t.Errorf("index folder column = %q after the full run, want Archive", fol)
+	}
+	_ = key3
+}

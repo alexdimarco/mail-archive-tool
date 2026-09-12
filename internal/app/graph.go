@@ -140,6 +140,21 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 			}
 		}
 	}
+	// Every mailbox-wide observation stamps LastSeen=runAt (§3.4); the exporter
+	// does that on a skip via RunAt, so a with-mid fast-path skip and a no-mid
+	// exporter skip in one run carry the identical run timestamp.
+	exp.RunAt = runAt
+	// A no-Message-ID message cannot be recognised before download, so its move is
+	// discovered at the exporter's mailbox-wide skip rather than the pre-download
+	// fast-path. The exporter has already merged the record's Folder/LastSeen; here
+	// we record the side effects only the live path can reach — the history
+	// folder-assertion and the body-free index folder update — exactly as the
+	// fast-path does for a with-mid move (§3.2/§3.6).
+	exp.OnManifestSkip = func(key string, folderPath []string, moved bool) {
+		if moved {
+			recordMove(hist, idx, key, strings.Join(folderPath, "/"), logger)
+		}
+	}
 
 	client := graph.New(ctx, graph.Config{
 		Tenant:       g.Tenant,
@@ -282,6 +297,26 @@ func graphSensitivity(s string) string {
 	return ""
 }
 
+// recordMove appends the history folder-assertion and issues the body-free index
+// folder update for an already-archived message observed in a NEW folder — the
+// move's log+index side effects, shared by the pre-download fast-path (with a
+// Message-ID) and the exporter's mailbox-wide skip (no Message-ID). The manifest
+// field merge (Folder/LastSeen/Present) is the caller's; this is only the two
+// stores the exporter cannot reach. Either store may be nil (idx off, or the
+// history log could not be opened); a failure of one is logged, not fatal (§3.2).
+func recordMove(hist *state.HistoryWriter, idx *index.Index, key, folder string, logger *log.Logger) {
+	if hist != nil {
+		if herr := hist.WriteFolder(key, folder); herr != nil {
+			logger.Printf("warning: history event: %v", herr)
+		}
+	}
+	if idx != nil {
+		if uerr := idx.UpdateFolder(key, folder); uerr != nil {
+			logger.Printf("warning: index folder update: %v", uerr)
+		}
+	}
+}
+
 // runGraphMailbox walks one mailbox's folders and messages, exporting each. hist
 // and idx (either may be nil) receive the go-back timeline events and the
 // body-free index folder update the move fast-path issues; runAt is the run's
@@ -351,16 +386,7 @@ func runGraphMailbox(ctx context.Context, client *graph.Client, exp *export.Expo
 					}
 					manifest.MergeFields(matchKey, folderKey, runAt, true)
 					if rec.Folder != folderKey {
-						if hist != nil {
-							if herr := hist.WriteFolder(matchKey, folderKey); herr != nil {
-								logger.Printf("warning: history event: %v", herr)
-							}
-						}
-						if idx != nil {
-							if uerr := idx.UpdateFolder(matchKey, folderKey); uerr != nil {
-								logger.Printf("warning: index folder update: %v", uerr)
-							}
-						}
+						recordMove(hist, idx, matchKey, folderKey, logger)
 					}
 					exp.Stats.SkippedManifest++
 					return nil

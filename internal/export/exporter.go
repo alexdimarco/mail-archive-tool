@@ -103,6 +103,27 @@ type Exporter struct {
 	// OutDir (forward-slashed); key is the manifest key.
 	OnExported func(store string, folderPath []string, m *model.Message, relPath, key string)
 
+	// RunAt is the run's timestamp, stamped as LastSeen when a mailbox-wide
+	// observation SKIPS the write (DedupMailboxWide) — a no-Message-ID message
+	// reaches the exporter, not the pre-download fast-path, because its identity
+	// is only known post-download, and every observation (a skip included) must
+	// advance LastSeen so gone-detection never marks a still-present message gone
+	// (§3.4/§3.6). It is the same value the live fast-path stamps, so with-mid and
+	// no-mid observations in one run agree. Zero (a local import, or a test that
+	// omits it) falls back to time.Now at skip time.
+	RunAt time.Time
+
+	// OnManifestSkip, if set, is called when a mailbox-wide incremental skip
+	// (DedupMailboxWide) observes an already-archived, complete message the write
+	// was skipped for — the exporter has already stamped the record's timeline
+	// (LastSeen/Present/Folder via MergeFields); this callback lets the live path
+	// record the side effects it alone can reach when the message MOVED: a history
+	// folder-assertion and the body-free index folder update (§3.2). moved is true
+	// only when the observed folder differs from the record's previous folder, so
+	// an unchanged re-observation costs no history/index write. It is the no-mid
+	// analogue of the pre-download fast-path's move recording.
+	OnManifestSkip func(key string, folderPath []string, moved bool)
+
 	Stats  Stats
 	Issues []Issue // verification findings (attachments/inline images not fully exported)
 }
@@ -164,6 +185,28 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	retry := false
 	if e.Mode == Incremental && seen {
 		if !prev.Fillable() {
+			// A mailbox-wide observation of an already-archived, complete message
+			// writes nothing, but this run still SAW the message: stamp its timeline
+			// (LastSeen=thisRun, Present) and, when its observed folder differs,
+			// record the move. A no-Message-ID message lands here — not the
+			// pre-download fast-path — because its identity is a post-download content
+			// hash, so without this stamp its LastSeen would never advance (a
+			// still-present message would be wrongly marked gone once gone-detection
+			// lands) and a move would never be followed (§3.4/§3.6). The move's
+			// history/index side effects are the live path's (OnManifestSkip); the
+			// field merge is here so the manifest is correct even without a callback.
+			// A folder-scoped local import (flag off) keeps the plain skip and R3.
+			if e.DedupMailboxWide {
+				moved := prev.Folder != folderKey
+				seenAt := e.RunAt
+				if seenAt.IsZero() {
+					seenAt = time.Now().UTC()
+				}
+				e.Manifest.MergeFields(key, folderKey, seenAt, true)
+				if e.OnManifestSkip != nil {
+					e.OnManifestSkip(key, folderPath, moved)
+				}
+			}
 			e.Stats.SkippedManifest++
 			return false, nil
 		}
