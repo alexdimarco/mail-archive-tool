@@ -99,7 +99,7 @@ func TestGraphClientReadsEverythingReadOnly(t *testing.T) {
 	c := newTestClient(srv)
 	ctx := context.Background()
 
-	folders, err := c.Folders(ctx, "u1")
+	folders, err := c.Folders(ctx, "u1", FolderFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}

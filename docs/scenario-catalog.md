@@ -103,8 +103,11 @@ an invariant is the thing that is wrong.
   the requirement — never a crash. (COM behaviour is lab-validated; go-pst
   cannot read every live `.ost`, so this is the reliable path for Exchange.)
 - **R17 — Graph capture is complete, read-only, incremental.** The Microsoft
-  Graph app-only source enumerates every folder (including nested) and every
-  message and archives each via its raw MIME through the shared parser; it issues
+  Graph app-only source enumerates every folder (including nested) — excluding the
+  Deleted Items and Junk Email subtrees by default, which `-include-deleted` /
+  `-include-junk` restore (the exclusion is by resolved well-known-folder id, so
+  it is locale-independent — T7, operator ruling) — and every message in the
+  walked folders and archives each via its raw MIME through the shared parser; it issues
   only GET requests (the app holds the read-only `Mail.Read` application
   permission, so a mailbox is never modified); and an incremental re-run archives
   zero new items and re-downloads no already-archived message body. A cross-folder
@@ -301,6 +304,9 @@ Tiers: **U** unit property (every commit) · **S** structural whole-tree walk
 | MA-61 | U | Graph client walks the full folder tree + pages all messages + fetches MIME, issuing only GET (read-only) | R17, R9 |
 | MA-62 | U | RunGraph captures every message into the pipeline; incremental re-run exports 0 new and re-downloads no bodies | R17, R2 |
 | MA-63 | U | graph subcommand refuses missing -out/-tenant/-client-id/-mailbox/secret with a typed non-zero naming the problem | R17, R12 |
+| MA-215 | U | Deleted Items and Junk Email are ABSENT from the walked folder set by default — the client resolves their well-known-folder ids (`deletedItems`/`junkemail`) via Graph's well-known-folder endpoint and skips each folder AND its subtree by that id (never a display-name match, which is locale-fragile) — and PRESENT when the FolderFilter opts them in (`-include-deleted`/`-include-junk`); a mailbox lacking a well-known folder (the resolution 404s) simply has nothing to skip; the resolution and walk issue only GET requests (read-only, R17) | R17, S38 |
+| MA-216 | U | the schedule preview surfaces the Deleted-Items/Junk choice for a graph job: with neither flag the preview names the default exclusion and the `-include-deleted`/`-include-junk` opt-in flags, and opting in both carries the flags into the canonical job so the preview's command line shows them (default excluded emits no flag); a non-graph (export) job carries and shows no such note | R14, S28 |
+| MA-217 | U | the GUI's Deleted-Items/Junk decision function defaults to EXCLUDED on a click-through: includeDeletedJunk maps the default/any non-include answer to (false,false) and only the explicit include item to (true,true); deletedJunkApplies is false for the GUI's local source types, so the question is not put where the walk cannot honor the well-known-id exclusion (the dialog is lab-tier; the pure decision is U-tested) | R17, S38 |
 | MA-64 | L | end-to-end against a real M365 tenant (app-only consent, throttling, real folder set) — **pending**, validated on a live tenant | R17 |
 | MA-65 | U | reconciled to the XML install: the path-with-spaces guarantee is carried by XML escaping of <Command>/<Arguments> plus the wrapper's own token quoting — a wrapper path with a space, "&" and a non-ASCII rune is escaped (&amp;, never a bare &) and round-trips through xml.Unmarshal to the identical path, a no-wrapper spec's exe lands in <Command> with each argument quoted in <Arguments> so it splits back (C-runtime rules) to the exact args, and the wrapper body still quotes every token | R14, S14 |
 | MA-101 | U | the terminal `search` verb and the serve `/api/search` box share one inline-token grammar: from:/folder:/after:/before: tokens return the same hit set as the equal flags and as the API, and a partial `after:YYYY-MM` applies a real month bound (a message before it excluded, one on/after it included) | R8, R11 |

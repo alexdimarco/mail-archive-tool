@@ -82,6 +82,10 @@ mailarchive schedule -interval daily -at 03:00 -install -- graph -out ./archive 
   re-download of anything already archived). `mailarchive status -out ./archive`
   shows completeness, the last run and the schedule.
 - Read-only throughout: the tool issues only Graph GET requests.
+- **Deleted Items and Junk Email are excluded by default** — pass
+  `-include-deleted` / `-include-junk` to archive them. The exclusion is by
+  resolved well-known-folder id (`deletedItems` / `junkemail`), not display name,
+  so it holds whatever the mailbox's display language is.
 - **The secret expires.** Entra caps client secrets at 24 months and admins often
   issue 6- or 12-month ones. Put the expiry date in a calendar; when `status`
   reports an authentication failure, create a new secret in Entra and rewrite

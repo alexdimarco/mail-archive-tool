@@ -60,6 +60,14 @@ const (
 	srcMbox        = "Single mbox file"
 )
 
+// The Deleted-Items/Junk question's two answers. The dialog defaults to the
+// exclude item so a click-through (accepting the default) excludes them (T7);
+// only the explicit include item opts in.
+const (
+	deletedJunkExcludeItem = "No — skip Deleted Items and Junk Email (recommended)"
+	deletedJunkIncludeItem = "Yes — also archive Deleted Items and Junk Email"
+)
+
 // notify is the desktop-notification sink, overridable in tests. A scheduled
 // (headless) run has no window, so a failure would otherwise be invisible until
 // the user next opens the GUI (P3).
@@ -261,6 +269,10 @@ type wizardChoice struct {
 	copyFirst  bool
 	outlookCOM bool
 	keepRaw    bool // also keep each message's original .eml (raw-capable sources)
+	// Deleted Items / Junk Email are excluded by default; set only for a
+	// live-path (Graph) source, which the GUI does not offer yet (T7, §3.6).
+	includeDeleted bool
+	includeJunk    bool
 }
 
 func wizard() error {
@@ -442,8 +454,66 @@ func wizard() error {
 		choice.keepRaw = strings.HasPrefix(rawChoice, "Yes")
 	}
 
+	// 5c. Include the Deleted Items / Junk Email folders? Excluded by default;
+	//     a click-through excludes them (T7). Only asked for a source whose walk
+	//     can honor the exclusion by resolved well-known-folder id — a live-path
+	//     (Graph) source. The GUI reads only local stores today, so the step is
+	//     suppressed rather than asking a question the local import cannot honor
+	//     (deletedJunkApplies); the pure decision is exercised by the tests.
+	if deletedJunkApplies(srcType) {
+		choice.includeDeleted, choice.includeJunk, err = askDeletedJunk()
+		if err != nil {
+			return err
+		}
+	}
+
 	// 6. Run with a progress dialog, then offer to keep it current.
 	return runExport(choice)
+}
+
+// includeDeletedJunk maps the wizard's Deleted-Items/Junk answer to the two
+// include flags. The dialog defaults to the exclude item, so a click-through
+// (accepting the default — or any answer that is not the explicit include item)
+// leaves both folders EXCLUDED (T7, operator ruling); only the explicit include
+// answer opts in. Pure, so the default-excluded contract is testable without a
+// dialog (the GUI is lab-tier).
+func includeDeletedJunk(answer string) (includeDeleted, includeJunk bool) {
+	if answer == deletedJunkIncludeItem {
+		return true, true
+	}
+	return false, false
+}
+
+// deletedJunkApplies reports whether the Deleted-Items/Junk exclusion question
+// is worth putting to the user for a source type. Exclusion is a LIVE-path
+// (Graph) mechanism resolved by well-known-folder id (§3.6); the sources this
+// GUI reads today are one-shot LOCAL imports (Outlook data files, Thunderbird/
+// Evolution/mbox), which have no such mechanism — asking a question we could not
+// honor would be a lie (cf. keepRawWorthAsking), so it is not asked. It becomes
+// reachable when a server-side (Graph) source is offered in the GUI.
+func deletedJunkApplies(srcType string) bool {
+	// The set of live/server-side GUI sources — currently empty, since the GUI
+	// offers only local imports. A future Graph source is added here.
+	return liveGUISources[srcType]
+}
+
+// liveGUISources are the source types whose walk honors the well-known-folder
+// exclusion (Graph); the GUI has none yet (§3.6).
+var liveGUISources = map[string]bool{}
+
+// askDeletedJunk asks whether to include the Deleted Items and Junk Email
+// folders, defaulting the dialog to EXCLUDE so a click-through excludes them
+// (T7). The answer→flags mapping is the pure includeDeletedJunk.
+func askDeletedJunk() (includeDeleted, includeJunk bool, err error) {
+	answer, err := zenity.List(
+		"Include the Deleted Items and Junk Email folders in the archive?",
+		[]string{deletedJunkExcludeItem, deletedJunkIncludeItem},
+		zenity.Title(appTitle), zenity.DefaultItems(deletedJunkExcludeItem))
+	if err != nil {
+		return false, false, err
+	}
+	d, j := includeDeletedJunk(answer)
+	return d, j, nil
 }
 
 // keepRawApplies reports whether the "also keep the original .eml" question is

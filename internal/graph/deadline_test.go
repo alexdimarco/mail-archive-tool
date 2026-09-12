@@ -44,13 +44,13 @@ func TestGraphRequestsAreBounded(t *testing.T) {
 	c := New(context.Background(), Config{Tenant: "t", ClientID: "c", ClientSecret: "s", BaseURL: srv.URL, TokenURL: srv.URL + "/token",
 		RequestTimeout: 300 * time.Millisecond, MIMETimeout: 300 * time.Millisecond})
 
-	folders, err := c.Folders(context.Background(), "u")
+	folders, err := c.Folders(context.Background(), "u", FolderFilter{})
 	if err != nil || len(folders) != 1 {
 		t.Fatalf("prompt server: folders=%v err=%v", folders, err)
 	}
 
 	start := time.Now()
-	_, err = c.Folders(context.Background(), "slow")
+	_, err = c.Folders(context.Background(), "slow", FolderFilter{})
 	if err == nil {
 		t.Fatal("a stalled listing did not fail")
 	}

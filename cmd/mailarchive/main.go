@@ -851,6 +851,9 @@ func runSchedule(args []string) error {
 		}
 		fmt.Printf("Installed scheduled %s %q (%s at %s).\n", kind, n, iv, *at)
 		fmt.Printf("It runs: %s %s\n", exe, strings.Join(spec.Args, " "))
+		if note := graphDeletedJunkNote(j); note != "" {
+			fmt.Println(note)
+		}
 		fmt.Printf("Log: %s · descriptor: %s · check with: mailarchive status -out %q\n", logPath, filepath.Join(j.out, schedule.DescriptorName), j.out)
 		if note, _ := schedule.VerifyScheduleNote(spec); note != "" {
 			fmt.Println(note)
@@ -868,6 +871,9 @@ func runSchedule(args []string) error {
 		return err
 	}
 	fmt.Print(text)
+	if note := graphDeletedJunkNote(j); note != "" {
+		fmt.Println(note)
+	}
 	fmt.Printf("\nThe job's log: %s\nThis was NOT applied. Re-run with -install to schedule it, or -remove to uninstall.\n", logPath)
 	return nil
 }
@@ -1018,9 +1024,12 @@ func runGraph(args []string) (err error) {
 		}
 	}()
 
-	gopts := app.GraphOptions{Tenant: *o.tenant, ClientID: *o.clientID, ClientSecret: secret, Mailboxes: mailboxes}
+	gopts := app.GraphOptions{Tenant: *o.tenant, ClientID: *o.clientID, ClientSecret: secret, Mailboxes: mailboxes, IncludeDeleted: *o.includeDeleted, IncludeJunk: *o.includeJunk}
 	opts := app.Options{Out: *o.out, Mode: mode, Since: since, Index: *o.index, Pages: *o.pages, KeepRaw: *o.keepRaw}
 	logger.Printf("Archiving %d mailbox(es) from tenant %s via Microsoft Graph (mode=%s)", len(mailboxes), *o.tenant, *o.mode)
+	if *o.includeDeleted || *o.includeJunk {
+		logger.Printf("including %s in the walk (excluded by default)", includedFoldersPhrase(*o.includeDeleted, *o.includeJunk))
+	}
 
 	result, runErr := app.RunGraph(ctx, gopts, opts, logger)
 	printSummary(logger, result, *o.index, *o.keepRaw, *o.out)

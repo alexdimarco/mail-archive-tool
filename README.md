@@ -364,9 +364,12 @@ mailarchive graph -out ./archive -tenant <TENANT> -client-id <APPID> \
 ```
 
 It authenticates as an Entra app with the read-only **`Mail.Read`** application
-permission (issuing only Graph GET requests), walks every folder, and archives
-each message's raw MIME through the same HTML/attachment/index pipeline as every
-other source. Incremental runs skip already-archived messages by Internet-Message-ID
+permission (issuing only Graph GET requests), walks every folder — **except
+Deleted Items and Junk Email, which are excluded by default** (pass
+`-include-deleted` / `-include-junk` to archive them; the exclusion is by
+resolved well-known-folder id, so it holds whatever the mailbox's display
+language is) — and archives each message's raw MIME through the same
+HTML/attachment/index pipeline as every other source. Incremental runs skip already-archived messages by Internet-Message-ID
 **without re-downloading** them, so re-runs over huge mailboxes are cheap. To
 schedule it, pass the job after `--`:
 

@@ -30,6 +30,12 @@ type GraphOptions struct {
 	Mailboxes    []string
 	BaseURL      string
 	TokenURL     string
+
+	// Deleted Items and Junk Email are excluded from the walk by default (T7,
+	// operator ruling); these opt them back in. Exclusion is by resolved
+	// well-known-folder id, so it is locale-independent (§3.6).
+	IncludeDeleted bool
+	IncludeJunk    bool
 }
 
 // RunGraph archives the given mailboxes server-side via Microsoft Graph (app-only
@@ -182,11 +188,14 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		commit(hist, idx, manifest, logger)
 	}
 
+	// Deleted Items / Junk Email are excluded by default; the flags opt in (T7).
+	filter := graph.FolderFilter{IncludeDeleted: g.IncludeDeleted, IncludeJunk: g.IncludeJunk}
+
 	result = Result{Files: len(g.Mailboxes)}
 	var failures int
 	var firstErr error
 	for _, mbx := range g.Mailboxes {
-		runErr := runGraphMailbox(ctx, client, exp, manifest, hist, idx, runAt, mbx, logger, checkpoint, func() error { return lockLost })
+		runErr := runGraphMailbox(ctx, client, exp, manifest, hist, idx, runAt, mbx, filter, logger, checkpoint, func() error { return lockLost })
 		if lockLost != nil {
 			// Lock removed/replaced mid-run: another run may own this archive now.
 			// Write no shared state (manifest/index/README); the deferred recordRun
@@ -321,7 +330,7 @@ func recordMove(hist *state.HistoryWriter, idx *index.Index, key, folder string,
 // and idx (either may be nil) receive the go-back timeline events and the
 // body-free index folder update the move fast-path issues; runAt is the run's
 // timestamp, stamped as LastSeen on every observation (§3.2/§3.4).
-func runGraphMailbox(ctx context.Context, client *graph.Client, exp *export.Exporter, manifest *state.Manifest, hist *state.HistoryWriter, idx *index.Index, runAt time.Time, mailbox string, logger *log.Logger, checkpoint func(), abort func() error) error {
+func runGraphMailbox(ctx context.Context, client *graph.Client, exp *export.Exporter, manifest *state.Manifest, hist *state.HistoryWriter, idx *index.Index, runAt time.Time, mailbox string, filter graph.FolderFilter, logger *log.Logger, checkpoint func(), abort func() error) error {
 	logger.Printf("Reading mailbox %s via Microsoft Graph", mailbox)
 	// The store token for a Graph source is seeded from the CANONICAL mailbox id
 	// (lower-cased/trimmed), so a re-run whose -mailbox differs only in case hits
@@ -329,7 +338,11 @@ func runGraphMailbox(ctx context.Context, client *graph.Client, exp *export.Expo
 	// still agree and no body is re-downloaded (INT-CC-1/R17). Mailbox addresses
 	// are injective, so this is almost always the plain sanitized segment.
 	token := manifest.Token(state.MailboxSourceID(mailbox), mailbox)
-	folders, err := client.Folders(ctx, mailbox)
+	// Deleted Items and Junk Email are dropped from the walk by default (T7): the
+	// filter resolves each to its concrete well-known-folder id and skips it and
+	// its subtree, so a folder there is never listed and its records — being in an
+	// unwalked folder — are never marked gone by the sweep below (§3.4/S38).
+	folders, err := client.Folders(ctx, mailbox, filter)
 	if err != nil {
 		return fmt.Errorf("list folders: %w", err)
 	}

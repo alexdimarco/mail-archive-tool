@@ -95,9 +95,54 @@ type Folder struct {
 	Path []string
 }
 
+// Well-known folder names Graph resolves in place of a concrete folder id. Trash
+// and Junk are excluded from a walk by default (T7, operator ruling); resolution
+// is by these stable, locale-independent names — never a display-name path,
+// which is locale-fragile (§3.6).
+const (
+	WellKnownDeletedItems = "deletedItems"
+	WellKnownJunkEmail    = "junkemail"
+)
+
+// FolderFilter selects which by-default-excluded well-known folders a walk keeps.
+// Deleted Items and Junk Email are excluded by default (T7): the walk resolves
+// each to its concrete folder ID and skips that folder AND its whole subtree — an
+// id-based skip, so it holds whatever the mailbox's display language is. Setting
+// a field true keeps that folder (and its subtree) in the walk.
+type FolderFilter struct {
+	IncludeDeleted bool // include the Deleted Items subtree (default: excluded)
+	IncludeJunk    bool // include the Junk Email subtree (default: excluded)
+}
+
 // Folders returns every mail folder for userID (a UPN or object id), recursing
-// through child folders and carrying each folder's display-name path.
-func (c *Client) Folders(ctx context.Context, userID string) ([]Folder, error) {
+// through child folders and carrying each folder's display-name path. The
+// well-known folders the filter excludes (Deleted Items and Junk Email by
+// default) are resolved to their concrete folder IDs and skipped WITH their
+// subtrees, so the exclusion is locale-independent (T7/§3.6). A tenant that
+// lacks an excluded folder (its resolution 404s) simply has nothing to skip.
+func (c *Client) Folders(ctx context.Context, userID string, filter FolderFilter) ([]Folder, error) {
+	excluded := map[string]bool{}
+	exclude := func(wellKnown string) error {
+		id, err := c.WellKnownFolderID(ctx, userID, wellKnown)
+		if err != nil {
+			return err
+		}
+		if id != "" {
+			excluded[id] = true
+		}
+		return nil
+	}
+	if !filter.IncludeDeleted {
+		if err := exclude(WellKnownDeletedItems); err != nil {
+			return nil, err
+		}
+	}
+	if !filter.IncludeJunk {
+		if err := exclude(WellKnownJunkEmail); err != nil {
+			return nil, err
+		}
+	}
+
 	var out []Folder
 	var walk func(parentID string, prefix []string) error
 	walk = func(parentID string, prefix []string) error {
@@ -119,6 +164,13 @@ func (c *Client) Folders(ctx context.Context, userID string) ([]Folder, error) {
 				return err
 			}
 			for _, f := range body.Value {
+				// An excluded well-known folder (Deleted Items / Junk Email) and its
+				// entire subtree are dropped by resolved ID before any message in
+				// them is listed, so nothing under them is walked (T7). Never a
+				// display-name match, which would break under a non-English mailbox.
+				if excluded[f.ID] {
+					continue
+				}
 				fp := append(append([]string{}, prefix...), util.SanitizeSegment(f.DisplayName))
 				out = append(out, Folder{ID: f.ID, Path: fp})
 				if f.ChildFolderCount > 0 {
@@ -135,6 +187,36 @@ func (c *Client) Folders(ctx context.Context, userID string) ([]Folder, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+// WellKnownFolderID resolves a Graph well-known folder name (e.g. "deletedItems",
+// "junkemail") to its concrete, locale-independent folder ID via the well-known-
+// folder endpoint. A mailbox that lacks the folder yields ("", nil) — Graph
+// answers 404 — so a caller treats "no such folder" as "nothing to exclude"
+// rather than a run-ending error; any other HTTP failure is returned. GET-only,
+// so it keeps the client read-only (R17).
+func (c *Client) WellKnownFolderID(ctx context.Context, userID, wellKnown string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, c.reqTimeout)
+	defer cancel()
+	u := c.base + "/users/" + url.PathEscape(userID) + "/mailFolders/" + url.PathEscape(wellKnown) + "?$select=id"
+	resp, err := c.get(ctx, u)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return "", nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", statusErr(resp)
+	}
+	var body struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return "", err
+	}
+	return body.ID, nil
 }
 
 // MessageRef is the lightweight per-message metadata used to decide whether a

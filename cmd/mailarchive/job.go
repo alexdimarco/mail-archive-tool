@@ -59,12 +59,13 @@ func exportFlags(fs *flag.FlagSet) *exportOpts {
 }
 
 type graphOpts struct {
-	mailboxes             stringSlice
-	out, tenant, clientID *string
-	secretEnv, secretFile *string
-	mode, since, log      *string
-	index, pages, keepRaw *bool
-	unattended            *bool
+	mailboxes                   stringSlice
+	out, tenant, clientID       *string
+	secretEnv, secretFile       *string
+	mode, since, log            *string
+	index, pages, keepRaw       *bool
+	includeDeleted, includeJunk *bool
+	unattended                  *bool
 }
 
 func graphFlags(fs *flag.FlagSet) *graphOpts {
@@ -81,6 +82,8 @@ func graphFlags(fs *flag.FlagSet) *graphOpts {
 	o.index = fs.Bool("index", true, "build/update the full-text search index (search.db)")
 	o.pages = fs.Bool("pages", true, "generate browsable folder index.html pages")
 	o.keepRaw = fs.Bool("raw", false, "also keep each message's original RFC 822 bytes as <name>.eml beside the html")
+	o.includeDeleted = fs.Bool("include-deleted", false, "also archive the Deleted Items folder (excluded by default)")
+	o.includeJunk = fs.Bool("include-junk", false, "also archive the Junk Email folder (excluded by default)")
 	o.unattended = fs.Bool("unattended", false, "scheduled run: refuse to create a new archive when -out does not exist (an unmounted drive)")
 	return o
 }
@@ -303,6 +306,14 @@ func parseJob(args []string) (job, error) {
 		if *o.keepRaw {
 			j.args = append(j.args, "-raw")
 		}
+		// The trash/junk choice rides into the canonical job so the schedule
+		// preview surfaces it verbatim; the default (excluded) emits no flag (T7).
+		if *o.includeDeleted {
+			j.args = append(j.args, "-include-deleted")
+		}
+		if *o.includeJunk {
+			j.args = append(j.args, "-include-junk")
+		}
 		if *o.log != "" {
 			j.args = append(j.args, "-log", abspath(*o.log))
 		}
@@ -462,6 +473,44 @@ func jobHasFlag(jobArgs []string, flag string) bool {
 // path can raise a one-time "allow programmatic access" prompt an unattended
 // run cannot answer, so it must be cleared by hand once (friction #10).
 const outlookReminderText = "Note: run `mailarchive -outlook` once by hand first to clear Outlook's one-time \"allow programmatic access\" prompt — a scheduled run cannot answer it."
+
+// graphDeletedJunkNote is the one-line schedule/preview gloss that surfaces the
+// Deleted-Items/Junk choice for a graph job. They are excluded by default (T7),
+// so the operator SEES the default they are getting — and the flags that opt in
+// — in the preview, not only the opted-in flags buried in the command line. It
+// is "" for any non-graph job.
+func graphDeletedJunkNote(j job) string {
+	if j.verb != "graph" {
+		return ""
+	}
+	inclDel := jobHasFlag(j.args, "-include-deleted")
+	inclJunk := jobHasFlag(j.args, "-include-junk")
+	switch {
+	case inclDel && inclJunk:
+		return "Deleted Items and Junk Email: included (-include-deleted -include-junk)."
+	case inclDel:
+		return "Deleted Items: included (-include-deleted); Junk Email: excluded (the default)."
+	case inclJunk:
+		return "Junk Email: included (-include-junk); Deleted Items: excluded (the default)."
+	default:
+		return "Deleted Items and Junk Email are excluded (the default); pass -include-deleted / -include-junk to archive them."
+	}
+}
+
+// includedFoldersPhrase names the by-default-excluded folders a run was told to
+// include, for the run log line that makes the non-default choice visible.
+func includedFoldersPhrase(deleted, junk bool) string {
+	switch {
+	case deleted && junk:
+		return "Deleted Items and Junk Email"
+	case deleted:
+		return "Deleted Items"
+	case junk:
+		return "Junk Email"
+	default:
+		return ""
+	}
+}
 
 // jobUsesOutlook reports whether the job's arguments carry the -outlook flag
 // (not -outlook-sync-wait).
