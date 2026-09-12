@@ -32,7 +32,22 @@ import (
 // move-duplicates is CollapseByIdentity, invoked by the live path (a one-shot
 // local import keeps its folder-scoped keys and R3 — §3.6). Load refuses a
 // stored version above manifestVersion.
-const manifestVersion = 4
+const manifestVersion = 5
+
+// Fingerprint scheme tags (version 5). A record's FpScheme says which algorithm
+// produced its Fingerprint. fpSchemeLegacy (0, the zero value, so every pre-v5
+// or empty-fp record is legacy on load) is NOT comparable to a current
+// fingerprint: the go-back work changed the fingerprint's date term (from the
+// MIME Date header to the source's delivered timestamp), so a v1–v4 fp differs
+// byte-for-byte from one this build computes over the same message. The download
+// paths (a fillable retry; a no-Message-ID re-observation) therefore ADOPT — and
+// never #fp-split against — a legacy-scheme sibling, so a migrated record is
+// recognised as the same message and never re-split into a duplicate (design
+// rev-4 §3). fpSchemeCurrent marks a fingerprint this build wrote.
+const (
+	fpSchemeLegacy  = 0
+	fpSchemeCurrent = 1
+)
 
 // UnknownSentinel marks a record whose completeness predates tracking: it is
 // fillable, so the next incremental run re-examines it once.
@@ -70,6 +85,20 @@ type Record struct {
 	// reusing this record's Message-ID is recognized (R3). Empty on legacy
 	// records.
 	Fingerprint string `json:"fp,omitempty"`
+
+	// FpScheme (version 5) tags which algorithm produced Fingerprint: 0
+	// (fpSchemeLegacy, the zero value) = a pre-v5 or empty fp that is NOT
+	// comparable to a current fingerprint; fpSchemeCurrent = one this build wrote.
+	// The download #fp-split ADOPTS a legacy-scheme sibling rather than splitting
+	// against it, so a migrated record is never re-duplicated (design rev-4 §3).
+	FpScheme int `json:"fp_scheme,omitempty"`
+
+	// AlsoFiles (version 5) lists extra on-disk paths (relative to -out) that
+	// belong to this message but sit outside its canonical Path — the files of a
+	// move-duplicate LOSER that CollapseByIdentity unified into this record (the
+	// loser's copy stays on disk, R13). Redaction (reindex) deletes these
+	// alongside Path so no copy of a redacted message is left served (rev-4 §6).
+	AlsoFiles []string `json:"also_files,omitempty"`
 
 	// Fixity (version 3) records the sha256 + byte length of each file the
 	// exporter wrote for this record, so `verify` can detect bit-rot,

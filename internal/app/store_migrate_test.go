@@ -168,8 +168,8 @@ func TestUpgradeMigratesAndReExportsNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.Version != 4 {
-		t.Errorf("manifest version after upgrade = %d, want 4", m.Version)
+	if m.Version != 5 {
+		t.Errorf("manifest version after upgrade = %d, want 5", m.Version)
 	}
 	if m.Rekeyed != 0 {
 		t.Errorf("a second load re-scoped %d entries, want 0 (migration is not idempotent)", m.Rekeyed)

@@ -357,9 +357,9 @@ func mustFold(t *testing.T, path string, upTo time.Time) map[string]FoldState {
 // whereas the IDENTICAL bytes in a v2 manifest ARE re-scoped — proving the gate
 // is version-sensitive, not a no-op that would silently break either format
 // (GB-01/F1). And Load refuses a manifest whose stored version exceeds the
-// current constant (version 5), naming the file and the upgrade remedy and
+// current constant (version 6), naming the file and the upgrade remedy and
 // leaving the bytes untouched (fail-closed) — an old binary likewise refuses a
-// v4 archive. The v4 positive twin (loads clean) fronts the refusal.
+// newer archive. The v4 positive twin (loads clean under v5) fronts the refusal.
 func TestVersionGateAndRefusesFuture(t *testing.T) {
 	lk := LiveKey("mbox", "mid:<e@x>") // one NUL: a legitimate v4 live key
 	t1 := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -394,21 +394,21 @@ func TestVersionGateAndRefusesFuture(t *testing.T) {
 		t.Errorf("the identical one-NUL key was NOT re-scoped under v2 (Rekeyed=%d, want 1); the gate is not version-sensitive", m2.Rekeyed)
 	}
 
-	// version 5 (above the current constant) is refused, byte-unchanged.
-	v5 := filepath.Join(t.TempDir(), "v5.json")
-	body := []byte(`{"version":5,"entries":{"whatever":{"path":"s/Inbox/a.html"}}}`)
-	if err := os.WriteFile(v5, body, 0o644); err != nil {
+	// version 6 (above the current constant, 5) is refused, byte-unchanged.
+	v6 := filepath.Join(t.TempDir(), "v6.json")
+	body := []byte(`{"version":6,"entries":{"whatever":{"path":"s/Inbox/a.html"}}}`)
+	if err := os.WriteFile(v6, body, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, lerr := Load(v5)
+	_, lerr := Load(v6)
 	rc, msg := 0, ""
 	if lerr != nil {
 		rc, msg = 2, lerr.Error()
 	}
 	assure.Refused(t, rc, msg,
-		assure.Names(v5, "newer mailarchive", "upgrade"),
+		assure.Names(v6, "newer mailarchive", "upgrade"),
 		assure.NoSideEffect(func() bool {
-			after, readErr := os.ReadFile(v5)
+			after, readErr := os.ReadFile(v6)
 			return readErr == nil && bytes.Equal(after, body)
 		}))
 }

@@ -52,7 +52,7 @@ func TestManifestRefusesNewerVersion(t *testing.T) {
 	}
 
 	path := filepath.Join(t.TempDir(), "future.json")
-	body := []byte(`{"version":5,"entries":{"whatever":{"path":"s/Inbox/a.html"}}}`)
+	body := []byte(`{"version":6,"entries":{"whatever":{"path":"s/Inbox/a.html"}}}`)
 	if err := os.WriteFile(path, body, 0o644); err != nil {
 		t.Fatal(err)
 	}
