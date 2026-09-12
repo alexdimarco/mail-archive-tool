@@ -80,7 +80,7 @@ func TestIndexRefusesNewerVersion(t *testing.T) {
 	}
 	seed.Close()
 	rawExec(t, future, `DELETE FROM meta`)
-	rawExec(t, future, `INSERT INTO meta(version) VALUES(3)`)
+	rawExec(t, future, `INSERT INTO meta(version) VALUES(4)`)
 
 	_, err = Open(future)
 	rc, msg := 0, ""
@@ -89,7 +89,7 @@ func TestIndexRefusesNewerVersion(t *testing.T) {
 	}
 	assure.Refused(t, rc, msg,
 		assure.Names(future, "newer mailarchive", "upgrade"),
-		assure.NoSideEffect(func() bool { return rawMetaVersion(t, future) == 3 }))
+		assure.NoSideEffect(func() bool { return rawMetaVersion(t, future) == 4 }))
 }
 
 // covers: MA-131, R8, S30

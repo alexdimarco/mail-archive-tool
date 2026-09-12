@@ -139,13 +139,29 @@ func (c *Client) Folders(ctx context.Context, userID string) ([]Folder, error) {
 
 // MessageRef is the lightweight per-message metadata used to decide whether a
 // message needs fetching (its InternetMessageID drives incremental dedup without
-// downloading the body). The message-state scalars (importance/isRead/
-// sensitivity) ride along on the SAME listing request — no extra round-trip —
-// and the caller maps them onto the message after parsing its MIME.
+// downloading the body). The envelope scalars (Subject/From/To/Cc/Received/
+// HasAttachments) ride along on the SAME widened listing request so an envelope
+// signature is computable BEFORE download (§3.2): a mailbox-wide id hit is
+// confirmed as the same already-archived message — and skipped without a body
+// fetch — only when that signature matches an archived sibling's stored
+// fingerprint (R17), while a mismatch (a distinct message reusing the id) is
+// downloaded and split. The message-state scalars (importance/isRead/
+// sensitivity/categories) ride along too — no extra round-trip — and the caller
+// maps them onto the message after parsing its MIME.
 type MessageRef struct {
 	ID                string
 	InternetMessageID string // angle brackets stripped, matching go-message
 	Received          time.Time
+
+	// Envelope fields for the pre-download signature (§3.2). To/Cc are the bare
+	// e-mail addresses (display names dropped) so the signature is independent of
+	// header formatting; HasAttachments is Graph's boolean (attachment NAMES are
+	// not in the listing, so the signature uses only presence).
+	Subject        string
+	From           string // sender e-mail address; "" when the tenant omits it
+	To             []string
+	Cc             []string
+	HasAttachments bool
 
 	Importance  string   // Graph "low"/"normal"/"high"; "" when the tenant omits it
 	Sensitivity string   // Graph "normal"/"personal"/"private"/"confidential"; "" when omitted
@@ -153,20 +169,50 @@ type MessageRef struct {
 	Categories  []string // the message's category tags; nil when the tenant omits them
 }
 
-// Messages streams every message reference in folderID to fn (paged).
+// graphRecipient is Graph's {emailAddress:{name,address}} recipient shape.
+type graphRecipient struct {
+	EmailAddress struct {
+		Name    string `json:"name"`
+		Address string `json:"address"`
+	} `json:"emailAddress"`
+}
+
+// addrsOf pulls the bare e-mail addresses out of a recipient list.
+func addrsOf(rs []graphRecipient) []string {
+	if len(rs) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(rs))
+	for _, r := range rs {
+		if a := strings.TrimSpace(r.EmailAddress.Address); a != "" {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// Messages streams every message reference in folderID to fn (paged). The
+// $select is widened to carry the envelope fields (subject, from, toRecipients,
+// ccRecipients, receivedDateTime, hasAttachments) the pre-download signature
+// needs, alongside the message-state fields — all on one request (§3.2).
 func (c *Client) Messages(ctx context.Context, userID, folderID string, fn func(MessageRef) error) error {
 	next := c.base + "/users/" + url.PathEscape(userID) + "/mailFolders/" + url.PathEscape(folderID) +
-		"/messages?$select=id,internetMessageId,receivedDateTime,importance,isRead,sensitivity,categories&$top=1000"
+		"/messages?$select=id,internetMessageId,subject,from,toRecipients,ccRecipients,receivedDateTime,hasAttachments,importance,isRead,sensitivity,categories&$top=1000"
 	for next != "" {
 		var body struct {
 			Value []struct {
-				ID                string   `json:"id"`
-				InternetMessageID string   `json:"internetMessageId"`
-				Received          string   `json:"receivedDateTime"`
-				Importance        string   `json:"importance"`
-				IsRead            *bool    `json:"isRead"`
-				Sensitivity       string   `json:"sensitivity"`
-				Categories        []string `json:"categories"`
+				ID                string           `json:"id"`
+				InternetMessageID string           `json:"internetMessageId"`
+				Subject           string           `json:"subject"`
+				From              *graphRecipient  `json:"from"`
+				ToRecipients      []graphRecipient `json:"toRecipients"`
+				CcRecipients      []graphRecipient `json:"ccRecipients"`
+				Received          string           `json:"receivedDateTime"`
+				HasAttachments    bool             `json:"hasAttachments"`
+				Importance        string           `json:"importance"`
+				IsRead            *bool            `json:"isRead"`
+				Sensitivity       string           `json:"sensitivity"`
+				Categories        []string         `json:"categories"`
 			} `json:"value"`
 			Next string `json:"@odata.nextLink"`
 		}
@@ -177,10 +223,17 @@ func (c *Client) Messages(ctx context.Context, userID, folderID string, fn func(
 			ref := MessageRef{
 				ID:                m.ID,
 				InternetMessageID: strings.Trim(m.InternetMessageID, "<>"),
+				Subject:           m.Subject,
+				To:                addrsOf(m.ToRecipients),
+				Cc:                addrsOf(m.CcRecipients),
+				HasAttachments:    m.HasAttachments,
 				Importance:        m.Importance,
 				Sensitivity:       m.Sensitivity,
 				IsRead:            m.IsRead,
 				Categories:        m.Categories,
+			}
+			if m.From != nil {
+				ref.From = strings.TrimSpace(m.From.EmailAddress.Address)
 			}
 			if t, err := time.Parse(time.RFC3339, m.Received); err == nil {
 				ref.Received = t

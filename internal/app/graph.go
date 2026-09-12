@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/graph"
@@ -74,6 +75,26 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		// re-fetching, so it is recorded terminal and never retried (R17 keeps
 		// its no-re-download guarantee).
 		SourceComplete: true,
+		// The live/repeat path stores one copy per mailbox keyed by identity, so a
+		// message that moves between folders is one record, not a second archived
+		// copy (R3 reworded, §3.1/§3.6). Set ONLY here — a one-shot local import
+		// keeps the folder-scoped key.
+		DedupMailboxWide: true,
+	}
+
+	// The go-back timeline: an append-only history log records this run's changes
+	// (newly-seen / moved / gone), fsync'd before the manifest advances (§3.5).
+	// A log that cannot be opened degrades the timeline but must not fail the run.
+	runAt := time.Now().UTC()
+	var hist *state.HistoryWriter
+	if hw, herr := state.OpenHistory(filepath.Join(opts.Out, state.HistoryName)); herr != nil {
+		logger.Printf("warning: %v (this run's go-back timeline will be incomplete)", herr)
+	} else {
+		hist = hw
+		defer hist.Close()
+		if werr := hist.WriteRunHeader(runAt.UnixNano(), runAt, g.Mailboxes); werr != nil {
+			logger.Printf("warning: history run header: %v", werr)
+		}
 	}
 
 	// One-time upgrade logs BEFORE the index repair, so cause (the manifest
@@ -100,10 +121,22 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		if _, rkErr := idx.RepairKeys(manifest.Rekeyed > 0, state.MigrateKey, logger); rkErr != nil {
 			return Result{}, fmt.Errorf("migrate search index keys: %w", rkErr)
 		}
-		exp.OnExported = func(store string, folderPath []string, m *model.Message, relPath, key string) {
+	}
+	// Every successful export is a newly-seen (or, in full mode, re-observed)
+	// message: feed it to the search index (when enabled) and append a history
+	// folder-assertion under its CURRENT folder — the timeline event the fold and
+	// serve read (T2). The key is the exporter's own (possibly #fp-qualified) key,
+	// so the assertion and the index row agree with the manifest record.
+	exp.OnExported = func(store string, folderPath []string, m *model.Message, relPath, key string) {
+		if idx != nil {
 			if addErr := idx.Add(store, folderPath, m, relPath, key); addErr != nil {
 				indexErrors++
 				logger.Printf("warning: index: %v", addErr)
+			}
+		}
+		if hist != nil {
+			if herr := hist.WriteFolder(key, strings.Join(folderPath, "/")); herr != nil {
+				logger.Printf("warning: history event: %v", herr)
 			}
 		}
 	}
@@ -131,14 +164,14 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 			lockLost = err
 			return
 		}
-		commit(manifest, idx, logger)
+		commit(hist, idx, manifest, logger)
 	}
 
 	result = Result{Files: len(g.Mailboxes)}
 	var failures int
 	var firstErr error
 	for _, mbx := range g.Mailboxes {
-		runErr := runGraphMailbox(ctx, client, exp, manifest, opts.Mode, mbx, logger, checkpoint, func() error { return lockLost })
+		runErr := runGraphMailbox(ctx, client, exp, manifest, hist, idx, runAt, mbx, logger, checkpoint, func() error { return lockLost })
 		if lockLost != nil {
 			// Lock removed/replaced mid-run: another run may own this archive now.
 			// Write no shared state (manifest/index/README); the deferred recordRun
@@ -146,7 +179,7 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 			// message files already written (INT-CC-2/R5).
 			return result, lockLost
 		}
-		commit(manifest, idx, logger)
+		commit(hist, idx, manifest, logger)
 		if errors.Is(runErr, context.Canceled) {
 			finish(opts.Out, &result, exp, manifest, idx, indexErrors, true, logger)
 			return result, context.Canceled
@@ -167,6 +200,16 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	// failure. Otherwise apply the nas-02 guard: regenerate pages only when
 	// something was exported or index.html is missing.
 	allFailed := failures == len(g.Mailboxes)
+	// A footer marks a fully-clean run (every mailbox walked): the timeline is
+	// complete to here, so a later fold/gone-detection can trust it. A run with
+	// any mailbox failure leaves no footer. The footer is fsync'd before the
+	// manifest advances one last time (crash order, §3.5).
+	if failures == 0 && hist != nil {
+		if werr := hist.WriteRunFooter(runAt.UnixNano(), time.Now().UTC()); werr != nil {
+			logger.Printf("warning: history run footer: %v", werr)
+		}
+	}
+	commit(hist, idx, manifest, logger)
 	if idx != nil && opts.Pages && !allFailed && pagesNeeded(opts.Out, exp.Stats.Exported) {
 		if pErr := pages.Generate(opts.Out, idx, logger); pErr != nil {
 			logger.Printf("warning: folder pages: %v", pErr)
@@ -196,6 +239,15 @@ func applyGraphState(m *model.Message, ref graph.MessageRef) {
 	m.Sensitivity = graphSensitivity(ref.Sensitivity)
 	if ref.IsRead != nil {
 		m.Unread = !*ref.IsRead
+	}
+	// Graph's receivedDateTime is the authoritative delivery time for a mailbox
+	// item; adopt it as Received so the envelope signature computed from the
+	// downloaded message uses the SAME date the pre-download listing carried
+	// (otherwise a message whose MIME Date header differs from Graph's delivery
+	// time would fail the fast-path signature match and be re-downloaded every
+	// run — R17). A tenant that omits it leaves the MIME date in place.
+	if !ref.Received.IsZero() {
+		m.Received = ref.Received
 	}
 	// Categories ride on the same widened listing; Graph is authoritative for a
 	// mailbox item's classification. Copied so the message owns its slice.
@@ -230,8 +282,11 @@ func graphSensitivity(s string) string {
 	return ""
 }
 
-// runGraphMailbox walks one mailbox's folders and messages, exporting each.
-func runGraphMailbox(ctx context.Context, client *graph.Client, exp *export.Exporter, manifest *state.Manifest, mode export.Mode, mailbox string, logger *log.Logger, checkpoint func(), abort func() error) error {
+// runGraphMailbox walks one mailbox's folders and messages, exporting each. hist
+// and idx (either may be nil) receive the go-back timeline events and the
+// body-free index folder update the move fast-path issues; runAt is the run's
+// timestamp, stamped as LastSeen on every observation (§3.2/§3.4).
+func runGraphMailbox(ctx context.Context, client *graph.Client, exp *export.Exporter, manifest *state.Manifest, hist *state.HistoryWriter, idx *index.Index, runAt time.Time, mailbox string, logger *log.Logger, checkpoint func(), abort func() error) error {
 	logger.Printf("Reading mailbox %s via Microsoft Graph", mailbox)
 	// The store token for a Graph source is seeded from the CANONICAL mailbox id
 	// (lower-cased/trimmed), so a re-run whose -mailbox differs only in case hits
@@ -264,17 +319,48 @@ func runGraphMailbox(ctx context.Context, client *graph.Client, exp *export.Expo
 					return e
 				}
 			}
-			// Incremental fast-path: skip a message already archived, matched by
-			// its Internet-Message-ID, WITHOUT downloading the body (R17). Only
-			// possible when the id is present; otherwise fall through and let the
-			// exporter dedup on the parsed content hash. A legacy "unknown" record
-			// is resolved here without a download: Graph delivers a message whole,
-			// so the earlier capture is as complete as the source allows.
-			if mode == export.Incremental && ref.InternetMessageID != "" {
-				key := state.Key(token, folderKey, "mid:"+ref.InternetMessageID)
-				if _, seen := manifest.Get(key); seen {
-					if manifest.Resolve(key) {
+			// Live fast-path (incremental): a message already archived under its
+			// mailbox-wide identity is recognised WITHOUT downloading its body
+			// (R17). The candidate's envelope signature — recomputed from the
+			// widened listing, no fetch — must match an archived sibling's stored
+			// fingerprint before we treat it as the same message; a mismatch means
+			// a DISTINCT message reused the id, so we fall through and download and
+			// the exporter files it as a #fp sibling (R1). A MOVE (same message,
+			// different observed folder) is recorded with no download: rewrite the
+			// record's Folder/LastSeen/Present, append a history folder-assertion,
+			// and follow the index's folder column. Every observation — a plain
+			// skip included — stamps LastSeen=thisRun so gone-detection is accurate
+			// (§3.4). A legacy "unknown" record is resolved here without a download
+			// (Graph delivers a message whole). Full mode re-downloads everything
+			// (R2) and dedups at the exporter instead.
+			if exp.Mode == export.Incremental && ref.InternetMessageID != "" {
+				identity := "mid:" + ref.InternetMessageID
+				candSig := export.EnvelopeSignature(ref.Subject, ref.From,
+					append(append([]string{}, ref.To...), ref.Cc...), ref.Received, ref.HasAttachments)
+				matchKey := ""
+				for _, sib := range manifest.KeysForIdentity(identity) {
+					if sib.Fingerprint == candSig {
+						matchKey = sib.Key
+						break
+					}
+				}
+				if matchKey != "" {
+					rec, _ := manifest.Get(matchKey)
+					if rec.Unknown() && manifest.Resolve(matchKey) {
 						exp.Stats.Resolved++
+					}
+					manifest.MergeFields(matchKey, folderKey, runAt, true)
+					if rec.Folder != folderKey {
+						if hist != nil {
+							if herr := hist.WriteFolder(matchKey, folderKey); herr != nil {
+								logger.Printf("warning: history event: %v", herr)
+							}
+						}
+						if idx != nil {
+							if uerr := idx.UpdateFolder(matchKey, folderKey); uerr != nil {
+								logger.Printf("warning: index folder update: %v", uerr)
+							}
+						}
 					}
 					exp.Stats.SkippedManifest++
 					return nil

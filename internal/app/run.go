@@ -217,7 +217,9 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 			lockLost = err
 			return
 		}
-		commit(manifest, idx, logger)
+		// A one-shot local import keeps no go-back timeline (its dedup is
+		// folder-scoped, §3.6), so there is no history writer to sync here.
+		commit(nil, idx, manifest, logger)
 	}
 
 	result = Result{Files: len(files)}
@@ -238,7 +240,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 			// (INT-CC-2/R5.)
 			return result, lockLost
 		}
-		commit(manifest, idx, logger)
+		commit(nil, idx, manifest, logger)
 
 		if errors.Is(runErr, context.Canceled) {
 			finish(opts.Out, &result, exp, manifest, idx, indexErrors, true, logger)
@@ -324,18 +326,49 @@ func ostAdvisory(goos string, paths []string, classicOutlook bool) string {
 		"with -outlook to have classic Outlook export a clean PST first."
 }
 
-// commit makes progress durable: the index FIRST, then the manifest. After a
-// crash the index is then a superset of the manifest, and the next incremental
-// run re-exports the un-manifested tail (idx.Add replaces by key), so search
-// and manifest can never permanently disagree (R5/R8).
-func commit(manifest *state.Manifest, idx *index.Index, logger *log.Logger) {
+// commit makes progress durable in the crash-safe order (§3.5): the history log
+// is appended+fsync'd FIRST, THEN the index is flushed, THEN the manifest is
+// saved as the trailing anchor. So the manifest — the fold-to-now projection —
+// never advances past the history events that explain it: after a crash the
+// history is a superset of the manifest and the index is a superset too, and the
+// next run re-observes the tail idempotently (a duplicate history event folds
+// away; idx.Add replaces by key). A move is therefore never lost. hist and idx
+// may be nil (a one-shot local run writes no timeline; indexing may be off).
+func commit(hist *state.HistoryWriter, idx *index.Index, manifest *state.Manifest, logger *log.Logger) {
+	var syncHistory, flushIndex, saveManifest func() error
+	if hist != nil {
+		syncHistory = hist.Sync
+	}
 	if idx != nil {
-		if flushErr := idx.Flush(); flushErr != nil {
-			logger.Printf("warning: index flush: %v", flushErr)
+		flushIndex = idx.Flush
+	}
+	if manifest != nil {
+		saveManifest = manifest.Save
+	}
+	commitInOrder(syncHistory, flushIndex, saveManifest, logger)
+}
+
+// commitInOrder is the single definition of the crash-safe durability order
+// (history → index → manifest, §3.5); commit wires the real stores to it and a
+// test drives it with recording doubles to prove the order holds. A nil step is
+// skipped. Each error is logged and does not abort the later steps: a save is
+// best-effort, and the invariant is only about ORDER (the manifest is written
+// last), never that every step succeeds.
+func commitInOrder(syncHistory, flushIndex, saveManifest func() error, logger *log.Logger) {
+	if syncHistory != nil {
+		if err := syncHistory(); err != nil {
+			logger.Printf("warning: history sync: %v", err)
 		}
 	}
-	if saveErr := manifest.Save(); saveErr != nil {
-		logger.Printf("warning: could not save manifest: %v", saveErr)
+	if flushIndex != nil {
+		if err := flushIndex(); err != nil {
+			logger.Printf("warning: index flush: %v", err)
+		}
+	}
+	if saveManifest != nil {
+		if err := saveManifest(); err != nil {
+			logger.Printf("warning: could not save manifest: %v", err)
+		}
 	}
 }
 

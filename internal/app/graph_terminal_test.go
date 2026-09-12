@@ -33,8 +33,8 @@ func newFakeGraphServerWithEmpty() (*fakeGraphServer, *httptest.Server) {
 	})
 	mux.HandleFunc("/users/u2/mailFolders/F_IN/messages", func(w http.ResponseWriter, r *http.Request) {
 		j(w, `{"value":[
-			{"id":"M1","internetMessageId":"<m1@x>","receivedDateTime":"2025-03-01T09:00:00Z"},
-			{"id":"M4","internetMessageId":"<m4@x>","receivedDateTime":"2025-03-04T09:00:00Z"}]}`)
+			{"id":"M1","internetMessageId":"<m1@x>","subject":"subj-M1","from":{"emailAddress":{"address":"a@example.com"}},"receivedDateTime":"2025-03-01T09:00:00Z"},
+			{"id":"M4","internetMessageId":"<m4@x>","subject":"subj-M4","from":{"emailAddress":{"address":"a@example.com"}},"receivedDateTime":"2025-03-04T09:00:00Z"}]}`)
 	})
 	mux.HandleFunc("/users/u2/messages/", func(w http.ResponseWriter, r *http.Request) {
 		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/users/u2/messages/"), "/$value")

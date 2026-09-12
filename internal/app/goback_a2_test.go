@@ -1,0 +1,388 @@
+package app
+
+import (
+	"context"
+	"io"
+	"log"
+	"net/http"
+	"net/http/httptest"
+	"reflect"
+	"strings"
+	"sync"
+	"testing"
+
+	"mail-archive-tool/internal/assure"
+	"mail-archive-tool/internal/export"
+	"mail-archive-tool/internal/index"
+	"mail-archive-tool/internal/state"
+)
+
+// moveGraphServer serves mailbox u1 with an Inbox (F_IN) and an Archive (F_AR)
+// holding a single message M1. Which folder M1 is listed under is controlled by
+// m1Folder, so a test can MOVE it between runs; $value fetches are counted so the
+// test can prove the move is recorded WITHOUT re-downloading the body. A second
+// message D (a DISTINCT message reusing M1's internetMessageId in a third run) is
+// listed only when distinct is set, so one server drives both the move test and
+// the id-reuse-split test.
+type moveGraphServer struct {
+	mu       sync.Mutex
+	mimeHits map[string]int
+	m1Folder string // "F_IN" or "F_AR"
+	distinct bool   // when true, F_SE also lists D (same id <m1@x>, different subject)
+}
+
+func newMoveGraphServer() (*moveGraphServer, *httptest.Server) {
+	f := &moveGraphServer{mimeHits: map[string]int{}, m1Folder: "F_IN"}
+	mux := http.NewServeMux()
+	j := func(w http.ResponseWriter, s string) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(s))
+	}
+	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
+		j(w, `{"access_token":"t","token_type":"Bearer","expires_in":3600}`)
+	})
+	mux.HandleFunc("/users/u1/mailFolders", func(w http.ResponseWriter, r *http.Request) {
+		j(w, `{"value":[
+			{"id":"F_IN","displayName":"Inbox","childFolderCount":0},
+			{"id":"F_AR","displayName":"Archive","childFolderCount":0},
+			{"id":"F_SE","displayName":"Sent","childFolderCount":0}]}`)
+	})
+	// M1's listing entry, carrying the widened envelope $select so a signature is
+	// computable pre-download. It is listed under whichever folder m1Folder names.
+	m1 := `{"id":"M1","internetMessageId":"<m1@x>","subject":"subj-M1","from":{"emailAddress":{"address":"a@example.com"}},"receivedDateTime":"2025-03-01T09:00:00Z"}`
+	list := func(folderID string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			f.mu.Lock()
+			here := f.m1Folder == folderID
+			distinct := f.distinct
+			f.mu.Unlock()
+			var entries []string
+			if here {
+				entries = append(entries, m1)
+			}
+			// D reuses M1's internetMessageId but is a DIFFERENT message (its
+			// subject differs), listed under Sent when distinct is on.
+			if distinct && folderID == "F_SE" {
+				entries = append(entries, `{"id":"D","internetMessageId":"<m1@x>","subject":"subj-D-distinct","from":{"emailAddress":{"address":"a@example.com"}},"receivedDateTime":"2025-03-09T09:00:00Z"}`)
+			}
+			j(w, `{"value":[`+strings.Join(entries, ",")+`]}`)
+		}
+	}
+	mux.HandleFunc("/users/u1/mailFolders/F_IN/messages", list("F_IN"))
+	mux.HandleFunc("/users/u1/mailFolders/F_AR/messages", list("F_AR"))
+	mux.HandleFunc("/users/u1/mailFolders/F_SE/messages", list("F_SE"))
+	mux.HandleFunc("/users/u1/messages/", func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/users/u1/messages/"), "/$value")
+		f.mu.Lock()
+		f.mimeHits[id]++
+		f.mu.Unlock()
+		// D and M1 share the internetMessageId but differ in subject (a distinct
+		// message that reused the id).
+		subj := "subj-M1"
+		if id == "D" {
+			subj = "subj-D-distinct"
+		}
+		w.Write([]byte("From: a@example.com\r\nSubject: " + subj +
+			"\r\nMessage-ID: <m1@x>\r\nDate: Mon, 03 Mar 2025 09:00:00 +0000\r\n\r\nbody-" + id + "\r\n"))
+	})
+	return f, httptest.NewServer(mux)
+}
+
+func (f *moveGraphServer) hits(id string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.mimeHits[id]
+}
+
+func (f *moveGraphServer) setM1Folder(folderID string) {
+	f.mu.Lock()
+	f.m1Folder = folderID
+	f.mu.Unlock()
+}
+
+func (f *moveGraphServer) setDistinct(b bool) {
+	f.mu.Lock()
+	f.distinct = b
+	f.mu.Unlock()
+}
+
+// loadManifest reads the archive manifest and returns the single record whose
+// key carries the given identity substring (fails if not exactly one).
+func recordForID(t *testing.T, out, idSubstr string) (string, state.Record) {
+	t.Helper()
+	m, err := state.Load(out + "/.mailarchive-manifest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var key string
+	var rec state.Record
+	n := 0
+	for k, r := range m.All() {
+		if strings.Contains(k, idSubstr) {
+			key, rec = k, r
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("want exactly one record for %q, found %d", idSubstr, n)
+	}
+	return key, rec
+}
+
+// indexFolder returns the search index's folder facet for a single-message
+// archive (the current folder its one docs row holds); "" if not exactly one.
+func indexFolder(t *testing.T, out string) string {
+	t.Helper()
+	ix, err := index.OpenReadonly(out + "/search.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ix.Close()
+	fcs, err := ix.Folders()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fcs) == 1 {
+		return fcs[0].Folder
+	}
+	return ""
+}
+
+// covers: MA-202, R17, R3, R1, R5, S38
+// An incremental Graph re-run over a message MOVED between folders records the
+// move as a folder change on the ONE record (Folder follows, FirstFolder and the
+// physical file stay put — R13), a history folder-assertion event, and a body-
+// free index folder update — and downloads NO body (the envelope signature
+// matches, so the fast-path knows it is the same message). One physical file, not
+// two.
+func TestGraphMoveDedupAndTimeline(t *testing.T) {
+	out := tmpDir(t)
+	f, srv := newMoveGraphServer()
+	defer srv.Close()
+
+	g := GraphOptions{Tenant: "t", ClientID: "c", ClientSecret: "s", Mailboxes: []string{"u1"},
+		BaseURL: srv.URL, TokenURL: srv.URL + "/token"}
+	opts := Options{Out: out, Mode: export.Incremental, Index: true, Pages: true}
+	logger := log.New(io.Discard, "", 0)
+
+	// Run 1: M1 captured in Inbox.
+	if _, err := RunGraph(context.Background(), g, opts, logger); err != nil {
+		t.Fatalf("run 1: %v", err)
+	}
+	if n := countFiles(t, out, ".html", "index.html"); n != 1 {
+		t.Fatalf("run 1 wrote %d html files, want 1", n)
+	}
+	if f.hits("M1") != 1 {
+		t.Fatalf("run 1 fetched M1 %d times, want 1", f.hits("M1"))
+	}
+	key1, rec1 := recordForID(t, out, "m1@x")
+	if rec1.Folder != "Inbox" || rec1.FirstFolder != "Inbox" {
+		t.Fatalf("run 1 record folders = %q/%q, want Inbox/Inbox", rec1.Folder, rec1.FirstFolder)
+	}
+
+	// Run 2: M1 has moved to Archive.
+	f.setM1Folder("F_AR")
+	if _, err := RunGraph(context.Background(), g, opts, logger); err != nil {
+		t.Fatalf("run 2: %v", err)
+	}
+
+	// ONE file, not re-downloaded.
+	if n := countFiles(t, out, ".html", "index.html"); n != 1 {
+		t.Errorf("after the move there are %d html files, want 1 (the message must not be re-archived)", n)
+	}
+	if f.hits("M1") != 1 {
+		t.Errorf("M1 body was re-downloaded on the move (%d fetches), want 1 — a move costs no download (R17)", f.hits("M1"))
+	}
+
+	// The ONE record's current folder followed the move; FirstFolder and the
+	// physical file stayed put (R13).
+	key2, rec2 := recordForID(t, out, "m1@x")
+	if key2 != key1 {
+		t.Errorf("the move changed the record's key %q → %q (it must stay the mailbox-wide key)", key1, key2)
+	}
+	if rec2.Folder != "Archive" {
+		t.Errorf("record current Folder = %q after the move, want Archive", rec2.Folder)
+	}
+	if rec2.FirstFolder != "Inbox" {
+		t.Errorf("record FirstFolder = %q, want Inbox (the first-captured folder never moves, R13)", rec2.FirstFolder)
+	}
+	if rec2.Path != rec1.Path {
+		t.Errorf("the physical file moved (%q → %q); a normal run never relocates a file (R13)", rec1.Path, rec2.Path)
+	}
+	if !strings.HasPrefix(rec2.Path, "u1/Inbox/") {
+		t.Errorf("the file %q is not under its first-captured Inbox folder (R13)", rec2.Path)
+	}
+
+	// The search index's folder column followed the move (a body-free update).
+	if fol := indexFolder(t, out); fol != "Archive" {
+		t.Errorf("index folder column = %q after the move, want Archive", fol)
+	}
+
+	// The history log records the move as a folder-assertion event under Archive.
+	events := assure.Reached(t, mustHistory(t, out), "history events")
+	var sawMove bool
+	for _, ev := range events {
+		if ev.K == key2 && ev.Folder == "Archive" && !ev.Gone {
+			sawMove = true
+		}
+	}
+	if !sawMove {
+		t.Errorf("no history folder-assertion recorded the move to Archive (events: %+v)", events)
+	}
+}
+
+// covers: MA-203, R1, R3, R17, S38
+// A DISTINCT message that reuses an already-archived Internet-Message-ID in
+// another folder fails the pre-download envelope-signature check (its subject
+// differs), so it IS downloaded and filed as its own #fp-qualified mailbox-wide
+// sibling — both survive (R1). MA-86 held within one folder; here it holds
+// mailbox-wide.
+func TestGraphDistinctIDMailboxWideSplit(t *testing.T) {
+	out := tmpDir(t)
+	f, srv := newMoveGraphServer()
+	defer srv.Close()
+
+	g := GraphOptions{Tenant: "t", ClientID: "c", ClientSecret: "s", Mailboxes: []string{"u1"},
+		BaseURL: srv.URL, TokenURL: srv.URL + "/token"}
+	opts := Options{Out: out, Mode: export.Incremental, Index: true, Pages: true}
+	logger := log.New(io.Discard, "", 0)
+
+	// Run 1: M1 captured in Inbox.
+	if _, err := RunGraph(context.Background(), g, opts, logger); err != nil {
+		t.Fatalf("run 1: %v", err)
+	}
+
+	// Run 2: M1 still in Inbox (unchanged) AND a distinct message D reuses <m1@x>
+	// in Sent.
+	f.setDistinct(true)
+	r2, err := RunGraph(context.Background(), g, opts, logger)
+	if err != nil {
+		t.Fatalf("run 2: %v", err)
+	}
+
+	// D was downloaded (the envelope mismatched); M1 was not re-downloaded.
+	if f.hits("D") != 1 {
+		t.Errorf("D fetched %d times, want 1 (a distinct id-reuse must be downloaded)", f.hits("D"))
+	}
+	if f.hits("M1") != 1 {
+		t.Errorf("M1 re-downloaded (%d) while unchanged — its envelope matched, so it must skip", f.hits("M1"))
+	}
+	if r2.Stats.Exported != 1 {
+		t.Errorf("run 2 exported %d, want 1 (only the distinct D)", r2.Stats.Exported)
+	}
+
+	// Both survive: two files, two records under the shared identity.
+	if n := countFiles(t, out, ".html", "index.html"); n != 2 {
+		t.Errorf("html files = %d, want 2 (M1 + the distinct D both kept, R1)", n)
+	}
+	m, err := state.Load(out + "/.mailarchive-manifest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	refs := assure.Reached(t, m.KeysForIdentity("mid:m1@x"), "records for mid:m1@x")
+	if len(refs) != 2 {
+		t.Fatalf("identity mid:m1@x has %d records, want 2 (a distinct reuse must not be dropped, R1)", len(refs))
+	}
+	// One sits at the base mailbox-wide key, the other at a #fp-qualified sibling.
+	base := 0
+	for _, ref := range refs {
+		if strings.Count(ref.Key, "\x00") == 1 {
+			base++
+		}
+	}
+	if base != 1 {
+		t.Errorf("want exactly one base (unqualified) key among %v, got %d", refs, base)
+	}
+}
+
+// covers: MA-204, R2, R3, R17, S38
+// A FULL Graph run re-exports everything (R2) but the mailbox-wide keying
+// re-materialises NO per-folder duplicate: the file/record counts are unchanged
+// while every body is re-downloaded.
+func TestGraphFullRunDedupsMailboxWide(t *testing.T) {
+	out := tmpDir(t)
+	f, srv := newFakeGraphServer()
+	defer srv.Close()
+
+	g := GraphOptions{Tenant: "t", ClientID: "c", ClientSecret: "s", Mailboxes: []string{"u1"},
+		BaseURL: srv.URL, TokenURL: srv.URL + "/token"}
+	logger := log.New(io.Discard, "", 0)
+
+	r1, err := RunGraph(context.Background(), g, Options{Out: out, Mode: export.Incremental, Index: true, Pages: true}, logger)
+	if err != nil {
+		t.Fatalf("run 1: %v", err)
+	}
+	if r1.ManifestSize != 3 || countFiles(t, out, ".html", "index.html") != 3 {
+		t.Fatalf("run 1 manifest=%d files=%d, want 3/3", r1.ManifestSize, countFiles(t, out, ".html", "index.html"))
+	}
+	firstHits := f.hits()
+
+	// Full re-run: re-exports all (R2) but must not duplicate any record/file.
+	r2, err := RunGraph(context.Background(), g, Options{Out: out, Mode: export.Full, Index: true, Pages: true}, logger)
+	if err != nil {
+		t.Fatalf("full run: %v", err)
+	}
+	if r2.Stats.Exported != 3 {
+		t.Errorf("full run exported %d, want 3 (full re-exports all, R2)", r2.Stats.Exported)
+	}
+	if r2.ManifestSize != 3 {
+		t.Errorf("full run manifest = %d, want 3 (no mailbox-wide duplicate materialised)", r2.ManifestSize)
+	}
+	if n := countFiles(t, out, ".html", "index.html"); n != 3 {
+		t.Errorf("full run left %d html files, want 3 (no per-folder duplicate)", n)
+	}
+	// Full genuinely re-downloaded (R2), unlike an incremental skip.
+	reDownloaded := false
+	for id, n := range f.hits() {
+		if n > firstHits[id] {
+			reDownloaded = true
+		}
+	}
+	if !reDownloaded {
+		t.Error("a full run re-downloaded nothing — full must re-export all (R2)")
+	}
+}
+
+// covers: MA-205, R5, S38
+// The crash-safe durability order is history append+fsync → index flush →
+// manifest.Save (the trailing anchor), the single definition commit wires the
+// real stores to. commitInOrder runs the steps in that order; a nil step is
+// skipped and the manifest still anchors last — so a one-shot local run (no
+// history writer) still saves last, and on the live path the manifest never
+// advances past the history events explaining it.
+func TestCommitCrashOrder(t *testing.T) {
+	logger := log.New(io.Discard, "", 0)
+
+	var order []string
+	commitInOrder(
+		func() error { order = append(order, "history"); return nil },
+		func() error { order = append(order, "index"); return nil },
+		func() error { order = append(order, "manifest"); return nil },
+		logger)
+	if want := []string{"history", "index", "manifest"}; !reflect.DeepEqual(order, want) {
+		t.Errorf("commit order = %v, want %v (manifest is the trailing anchor)", order, want)
+	}
+	if order[len(order)-1] != "manifest" {
+		t.Errorf("manifest must be written LAST (the fold-to-now anchor), order was %v", order)
+	}
+
+	// A nil history step (a local run keeps no timeline) is skipped, and the
+	// manifest still anchors last.
+	var order2 []string
+	commitInOrder(nil,
+		func() error { order2 = append(order2, "index"); return nil },
+		func() error { order2 = append(order2, "manifest"); return nil },
+		logger)
+	if want := []string{"index", "manifest"}; !reflect.DeepEqual(order2, want) {
+		t.Errorf("with no history writer, order = %v, want %v", order2, want)
+	}
+}
+
+func mustHistory(t *testing.T, out string) []state.HistoryEvent {
+	t.Helper()
+	ev, err := state.ReadHistory(out + "/" + state.HistoryName)
+	if err != nil {
+		t.Fatalf("ReadHistory: %v", err)
+	}
+	return ev
+}

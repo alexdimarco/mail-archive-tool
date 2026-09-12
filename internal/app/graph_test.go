@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"mail-archive-tool/internal/export"
+	"mail-archive-tool/internal/state"
 )
 
 // fakeGraphServer serves the token + a small "u1" mailbox (Inbox: M1,M2;
@@ -50,12 +51,12 @@ func newFakeGraphServer() (*fakeGraphServer, *httptest.Server) {
 	mux.HandleFunc("/users/u1/mailFolders/F_IN/messages", func(w http.ResponseWriter, r *http.Request) {
 		recordSelect(r)
 		j(w, `{"value":[
-			{"id":"M1","internetMessageId":"<m1@x>","receivedDateTime":"2025-03-01T09:00:00Z","importance":"high","isRead":false,"sensitivity":"confidential","categories":["Board","Legal Hold"]},
-			{"id":"M2","internetMessageId":"<m2@x>","receivedDateTime":"2025-03-02T09:00:00Z","importance":"normal","isRead":true,"sensitivity":"normal"}]}`)
+			{"id":"M1","internetMessageId":"<m1@x>","subject":"subj-M1","from":{"emailAddress":{"address":"a@example.com"}},"receivedDateTime":"2025-03-01T09:00:00Z","importance":"high","isRead":false,"sensitivity":"confidential","categories":["Board","Legal Hold"]},
+			{"id":"M2","internetMessageId":"<m2@x>","subject":"subj-M2","from":{"emailAddress":{"address":"a@example.com"}},"receivedDateTime":"2025-03-02T09:00:00Z","importance":"normal","isRead":true,"sensitivity":"normal"}]}`)
 	})
 	mux.HandleFunc("/users/u1/mailFolders/F_AR/messages", func(w http.ResponseWriter, r *http.Request) {
 		recordSelect(r)
-		j(w, `{"value":[{"id":"M3","internetMessageId":"<m3@x>","receivedDateTime":"2025-03-03T09:00:00Z","importance":"low","sensitivity":"personal"}]}`)
+		j(w, `{"value":[{"id":"M3","internetMessageId":"<m3@x>","subject":"subj-M3","from":{"emailAddress":{"address":"a@example.com"}},"receivedDateTime":"2025-03-03T09:00:00Z","importance":"low","sensitivity":"personal"}]}`)
 	})
 	mux.HandleFunc("/users/u1/messages/", func(w http.ResponseWriter, r *http.Request) {
 		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/users/u1/messages/"), "/$value")
@@ -152,6 +153,28 @@ func TestRunGraphCapturesAndIncrements(t *testing.T) {
 	firstHits := f.hits()
 	if len(firstHits) != 3 {
 		t.Fatalf("first run fetched %d distinct bodies, want 3: %v", len(firstHits), firstHits)
+	}
+
+	// The live path writes the go-back timeline (MA-62 extended, §3.3): a run
+	// header, a folder-assertion for each newly-captured message, and a clean-run
+	// footer.
+	ev1, herr := state.ReadHistory(filepath.Join(out, state.HistoryName))
+	if herr != nil {
+		t.Fatalf("read history log: %v", herr)
+	}
+	var headers, footers, folders int
+	for _, e := range ev1 {
+		switch {
+		case e.Run > 0 && e.At != "":
+			headers++
+		case e.Run > 0 && e.Completed != "":
+			footers++
+		case e.K != "" && !e.Gone:
+			folders++
+		}
+	}
+	if headers < 1 || footers < 1 || folders != 3 {
+		t.Errorf("run 1 timeline: headers=%d footers=%d folder-assertions=%d, want >=1/>=1/3", headers, footers, folders)
 	}
 
 	// Second run (incremental): nothing new, and no body re-downloaded.

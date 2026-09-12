@@ -21,10 +21,16 @@ an invariant is the thing that is wrong.
 - **R2 — Incremental idempotence.** An incremental re-run over an unchanged
   source exports zero new items; `full` re-exports all. The manifest is the sole
   dedup authority.
-- **R3 — Stable identity.** A message's dedup key is stable across runs
-  (Internet Message-ID when present, deterministic content hash otherwise) and
-  folder-scoped — the same mail in two folders exports to both, but never twice
-  within one folder.
+- **R3 — Stable identity; one copy per mailbox on the live path.** A message's
+  dedup key is stable across runs (Internet Message-ID when present,
+  deterministic content hash otherwise). A message captured from a LIVE source
+  (Graph; IMAP later) is stored once per mailbox, keyed by identity: its folder
+  over time is recorded (in the record's Folder/FirstFolder and the history log),
+  and the current/served view groups it under its current — or a chosen date's —
+  folder. A one-shot LOCAL import (PST/mbox/maildir) keeps the folder-scoped key,
+  so the same mail filed in two folders exports to both, but never twice within
+  one folder. Genuine simultaneous two-folder membership observed in one run is
+  recorded for that date.
 - **R4 — Containment.** Every path the exporter writes stays inside the output
   root. Store/folder/attachment names derived from untrusted mail cannot
   traverse out (`..`, absolute paths, path separators, reserved device names) or
@@ -101,8 +107,11 @@ an invariant is the thing that is wrong.
   message and archives each via its raw MIME through the shared parser; it issues
   only GET requests (the app holds the read-only `Mail.Read` application
   permission, so a mailbox is never modified); and an incremental re-run archives
-  zero new items and re-downloads no already-archived message body, matched by
-  Internet-Message-ID.
+  zero new items and re-downloads no already-archived message body. A cross-folder
+  Internet-Message-ID hit costs only an envelope-signature check (computed from
+  the widened listing `$select`, no body fetched) and downloads only a genuinely
+  new or distinct message; an already-archived message that merely moved between
+  folders is recorded as a folder change with no download.
 - **R18 — Every scheduled run is recorded and `status` reports it.** A run
   writes a `running` record the moment it holds the archive lock and finalizes
   it (ok / failed / cancelled, with counts and error) on the way out; `status`
@@ -183,6 +192,7 @@ an invariant is the thing that is wrong.
 | S35 A message carries read/importance/sensitivity state at capture (PST flags; mbox/maildir Importance/X-Priority/Sensitivity headers or the maildir "S" flag; Graph's listing `$select`), and later that state changes | R7, R3, R1 | the reader captures Importance/Sensitivity/Unread; the message page shows them in one HTML-escaped "Status" row when any is set (no row when none is), reversible so `reindex -rebuild` reads them back; the fields are a snapshot excluded from contentHash and Fingerprint and not indexed, so a message marked read or re-prioritised is still the same message | MA-177, MA-178, MA-179, MA-180 |
 | S36 A message carries operator/source categories at capture (the PST named `Keywords` property; Thunderbird's `X-Mozilla-Keys`; Graph's `categories` array), and that classification later changes | R7, R3, R1 | the reader captures Categories (the multi-valued unicode blob parsed under hard pre-allocation bounds and a localized recover); the page shows them in their OWN HTML-escaped, control-stripped "Categories" field (never the " · " Status line), capped in number and total length, recovered per-span by `reindex -rebuild`; the fields are a snapshot excluded from contentHash and Fingerprint and not indexed, so a re-classified message is still the same message | MA-190, MA-191, MA-192, MA-193, MA-197 |
 | S39 A v3 archive keyed by the pre-v4 folder-scoped format is opened by the live path, or two messages reuse one Message-ID across folders | R1, R2, R3, R5 | records sharing a (token, identity) with an equal, non-empty fingerprint collapse to one mailbox-wide LiveKey record (first-captured file kept, R13; folder-over-time recorded in the history log so no location is lost); distinct-fingerprint reuses stay #fp-qualified siblings (no silent drop); the v2→v3 re-scope is version-gated so a folder-less one-NUL live key is never mis-read as v2; the append-only history log round-trips and tolerates a torn tail (write-truncate + read-skip); Load refuses a stored version above 4 | MA-198, MA-199, MA-200, MA-201 |
+| S38 A live-source (Graph) message moves between folders across runs, or a distinct message reuses an already-archived Message-ID in another folder | R3, R17, R1, R2, R5 | one physical copy is kept at its first-captured folder (R13); an incremental re-run records the move as a manifest folder change (Folder/LastSeen/Present) + a history folder-assertion + a body-free index folder update, with no re-download; a distinct id-reuse fails the pre-download envelope-signature check, is downloaded and kept as a #fp-qualified mailbox-wide sibling (no silent drop); a full run re-materialises no per-folder duplicate; the crash order (history append+fsync → index → manifest anchor) never advances the manifest past the events that explain a move | MA-202, MA-203, MA-204, MA-205 |
 
 Acknowledged limits (not defects): two messages that reuse one Message-ID with
 an identical envelope (subject, sender, recipients, date, attachment names) and
@@ -370,6 +380,10 @@ Tiers: **U** unit property (every commit) · **S** structural whole-tree walk
 | MA-199 | U | Load fills the v4 timeline defaults on a pre-v4 record (Present=true, FirstFolder=Folder, FirstSeen=LastSeen=ExportedAt); the in-place field merge rewrites only Folder/LastSeen/Present (the no-download move merge) and preserves Fixity/Fingerprint/ExportedAt/FirstFolder/FirstSeen/completeness; a merge on an absent key is a no-op | R2, R5, S39 |
 | MA-200 | U | the append-only history log round-trips its run header / folder-assertion & gone / folder-rename / run-completed footer; the reader skips a torn last line and open-for-append truncates it (both-side torn-tail defence); Fold replays folder-assertion/gone/present-again to the latest transition at ≤ D | R5, R2, S39 |
 | MA-201 | U | v4 key-format discrimination is version-gated: a folder-less one-NUL live key in a v4 manifest is not re-scoped (Rekeyed==0) though the identical bytes are re-scoped under a v2 manifest; Load refuses a stored version above 4 (version 5) naming the file and the upgrade remedy, byte-unchanged | R5, R12, S30, S39 |
+| MA-202 | U | an incremental Graph re-run over a message MOVED between folders records the move as a manifest folder change (Folder/LastSeen/Present) + a history folder-assertion event + a body-free `UPDATE docs SET folder`, keeping ONE physical file at its first-captured folder and downloading no body (envelope signature matches, so no re-fetch); the timeline log carries the run header, the new-capture assertions, and the move | R17, R3, R1, R5, S38 |
+| MA-203 | U | a DISTINCT message reusing an already-archived Internet-Message-ID in another folder fails the pre-download envelope-signature check, is downloaded, and is filed as a #fp-qualified mailbox-wide sibling — both survive (R1, MA-86 mailbox-wide); the exporter's mailbox-wide keying splits it exactly as the folder-scoped path splits a within-folder reuse | R1, R3, R17, S38 |
+| MA-204 | U | Exporter.DedupMailboxWide off keeps the folder-scoped key so a one-shot local import stores the same mail in each folder (R3); on keys mailbox-wide by identity + envelope signature so one message is one file across folders and modes, and a full run re-materialises no per-folder duplicate (R2, full still re-exports all) | R3, R2, R17, S38 |
+| MA-205 | U | the crash-safe durability order is history append+fsync → index flush → manifest.Save (the trailing anchor), applied at every checkpoint and at run end, so the manifest — the fold-to-now projection — never advances past the history events that explain it (a move is never lost; a crash costs at most a duplicate, idempotent, event) | R5, S38 |
 | MA-128 | U | two stores with the same display name archived into one -out get distinct, sticky tokens (the second `segment~hash`) so both export into their own tree and an incremental re-run exports zero | R6, R3, R2, S30 |
 | MA-129 | U | two distinctly-named stores each keep their plain sanitized segment as token, export into separate trees, and an incremental re-run exports zero | R6, R2, S30 |
 | MA-130 | U | an archive whose manifest and search index predate store-scoped keys re-scopes both on first open (by content, from each record's own path), an incremental run then exports zero, and a second load re-scopes nothing (Rekeyed==0) | R5, R2, R8, S30 |

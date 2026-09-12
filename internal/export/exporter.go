@@ -4,12 +4,16 @@
 package export
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log"
+	"net/mail"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -79,6 +83,21 @@ type Exporter struct {
 	// (PST/OST caches, Thunderbird, Evolution) leave it false.
 	SourceComplete bool
 
+	// DedupMailboxWide keys a message by its identity ALONE — mailbox-wide,
+	// folder-independent (state.LiveKey) — instead of by (store, folder,
+	// identity), so a message that lives in (or moves between) several folders is
+	// stored once per mailbox and its folder over time is a record field, not a
+	// second archived copy (R3 reworded, §3.1). It is set ONLY on the live/repeat
+	// path (Graph; IMAP later); a one-shot local import leaves it false and keeps
+	// the folder-scoped key and R3 (§3.6). When set, the record's stored
+	// Fingerprint is the envelope signature (EnvelopeSignature) — the value the
+	// live fast-path recomputes from the widened Graph listing to recognise an
+	// already-archived message before download (R17) — and a no-Message-ID message
+	// dedups mailbox-wide on its post-download content-hash identity. When clear,
+	// the record's Fingerprint stays the model's envelope fingerprint and dedup is
+	// folder-scoped.
+	DedupMailboxWide bool
+
 	// OnExported, if set, is called after a message is successfully written
 	// (used to feed the search index). relPath is the HTML path relative to
 	// OutDir (forward-slashed); key is the manifest key.
@@ -104,17 +123,30 @@ type Exporter struct {
 func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (bool, error) {
 	date := m.Date()
 	folderKey := strings.Join(folderPath, "/")
-	key := state.Key(store, folderKey, m.Identity())
-	fp := m.Fingerprint()
+	// The physical key. On the live/repeat path (DedupMailboxWide) it is
+	// mailbox-wide — token\x00identity, no folder — so a message stored once per
+	// mailbox stays one record whatever folder it is seen in (R3 reworded). Its
+	// stored fingerprint is then the envelope signature the fast-path recomputes
+	// pre-download (R17); a no-Message-ID message keys on its content-hash
+	// identity, deduped mailbox-wide too. A one-shot local import (flag off) keeps
+	// the folder-scoped key and the model envelope fingerprint (R3).
+	var key, fp string
+	if e.DedupMailboxWide {
+		key = state.LiveKey(store, m.Identity())
+		fp = EnvelopeSignature(m.Subject, m.SenderEmail, recipientAddrs(m), date, len(m.Attachments) > 0)
+	} else {
+		key = state.Key(store, folderKey, m.Identity())
+		fp = m.Fingerprint()
+	}
 
-	// A DIFFERENT message reusing an already-archived Message-ID in this folder
-	// is a distinct message, not a duplicate: it lives under an envelope-
-	// qualified key. The fingerprint covers only the stable envelope (never
-	// bodies or attachment bytes), so a fill of an incomplete record keeps its
-	// fingerprint and a mismatch always means a different message — whether the
-	// earlier record was complete or not. The record's fingerprint anchors which
-	// message owns the plain key, so names stay stable whatever order a later
-	// run walks them in (R3/R1).
+	// A DIFFERENT message reusing an already-archived Message-ID is a distinct
+	// message, not a duplicate: it lives under an envelope-qualified key. The
+	// fingerprint covers only the stable envelope (never bodies or attachment
+	// bytes), so a fill of an incomplete record keeps its fingerprint and a
+	// mismatch always means a different message — whether the earlier record was
+	// complete or not. The record's fingerprint anchors which message owns the
+	// plain key, so names stay stable whatever order a later run walks them in
+	// (R3/R1).
 	prev, seen := e.Manifest.Get(key)
 	for seen && prev.Fingerprint != "" && prev.Fingerprint != fp {
 		// A DIFFERENT message reused this key's Message-ID: file it under a
@@ -156,7 +188,16 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	}
 	// store is used verbatim as the directory segment — the same string that
 	// scopes the key, so the on-disk tree and the manifest never disagree (F1).
-	dirParts := append([]string{e.OutDir, store}, folderPath...)
+	// The FILE is written under the message's first-captured folder, never the
+	// currently-observed one: on the mailbox-wide path a re-export of an already-
+	// archived message (a full run, or a move) keeps the physical file put (R13);
+	// only the recorded current folder follows the move. writeFolderPath is the
+	// current folder for a new record and the first-captured folder for a seen one.
+	writeFolderPath := folderPath
+	if e.DedupMailboxWide && seen && prev.FirstFolder != "" {
+		writeFolderPath = strings.Split(prev.FirstFolder, "/")
+	}
+	dirParts := append([]string{e.OutDir, store}, writeFolderPath...)
 	dir := filepath.Join(dirParts...)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return false, fmt.Errorf("create output dir %s: %w", dir, err)
@@ -168,7 +209,7 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		rawName = base + ".eml"
 	}
 	ctx := RenderContext{
-		RootRel:        strings.Repeat("../", 1+len(folderPath)), // store dir + folders
+		RootRel:        strings.Repeat("../", 1+len(writeFolderPath)), // store dir + folders
 		FolderIndexRel: "index.html",
 		RawName:        rawName,
 	}
@@ -255,7 +296,8 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		e.addIssue(folderKey, m, relSlash, "unresolved-inline-image", cid)
 	}
 
-	rec := state.Record{Path: relSlash, Folder: folderKey, ExportedAt: time.Now().UTC(), Unresolved: unresolved}
+	now := time.Now().UTC()
+	rec := state.Record{Path: relSlash, Folder: folderKey, ExportedAt: now, Unresolved: unresolved}
 	if e.SourceComplete {
 		rec.Terminal = gaps
 	} else {
@@ -269,6 +311,22 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	}
 	rec.Fingerprint = fp
 	rec.Fixity = &fx
+	// Folder-over-time timeline (the go-back record fields) on the live path:
+	// Present now, LastSeen now, and the set-once FirstFolder/FirstSeen preserved
+	// across a re-export so a full re-run never loses when/where a message was
+	// first captured (§3.1). A folder-scoped local record leaves them empty
+	// (omitempty); Load fills its defaults.
+	if e.DedupMailboxWide {
+		rec.Present = true
+		rec.LastSeen = now
+		if seen && !prev.FirstSeen.IsZero() {
+			rec.FirstFolder = prev.FirstFolder
+			rec.FirstSeen = prev.FirstSeen
+		} else {
+			rec.FirstFolder = folderKey
+			rec.FirstSeen = now
+		}
+	}
 	e.Manifest.Add(key, rec)
 	if e.OnExported != nil {
 		e.OnExported(store, folderPath, m, relSlash, key)
@@ -450,6 +508,64 @@ func baseNameN(date time.Time, slug, key string, n int) string {
 		return ts + "_" + util.HashHex(key, n)
 	}
 	return ts + "_" + slug + "_" + util.HashHex(key, n)
+}
+
+// EnvelopeSignature is the mailbox-wide dedup fingerprint (16 hex) of a message's
+// STABLE envelope, computed identically from a downloaded message and from a
+// Graph listing entry so the live fast-path can recognise an already-archived
+// message BEFORE downloading its body (R17, §3.2). It hashes exactly what a Graph
+// listing carries — subject, sender address, the SET of recipient addresses
+// (order-independent, case-folded), the received date to the second, and whether
+// the message has attachments — and nothing else: bodies, attachment bytes and
+// attachment NAMES are excluded (a listing carries only hasAttachments), as are
+// the mutable state fields. Two envelopes that hash equal are treated as one
+// message (a resend/move); any difference downloads and lets the exporter's #fp
+// split file a genuinely distinct message under its own key (R1). It is a
+// DIFFERENT digest from model.Message.Fingerprint (which folds in attachment
+// names and the raw recipient strings), used only where DedupMailboxWide is set,
+// where every compared record shares this definition.
+func EnvelopeSignature(subject, sender string, recipients []string, date time.Time, hasAttachments bool) string {
+	norm := make([]string, 0, len(recipients))
+	seen := map[string]bool{}
+	for _, r := range recipients {
+		r = strings.ToLower(strings.TrimSpace(r))
+		if r == "" || seen[r] {
+			continue
+		}
+		seen[r] = true
+		norm = append(norm, r)
+	}
+	sort.Strings(norm)
+	var sec int64
+	if !date.IsZero() {
+		sec = date.Unix()
+	}
+	h := sha256.New()
+	fmt.Fprintf(h, "%s\x00%s\x00%s\x00%d\x00%t",
+		strings.TrimSpace(subject), strings.ToLower(strings.TrimSpace(sender)),
+		strings.Join(norm, ","), sec, hasAttachments)
+	return hex.EncodeToString(h.Sum(nil))[:16]
+}
+
+// recipientAddrs extracts the bare e-mail addresses from a message's To and Cc
+// header strings, so EnvelopeSignature is independent of display names and header
+// formatting and matches the addresses a Graph listing carries. A header value
+// net/mail cannot parse falls back to its trimmed raw form (still deterministic).
+func recipientAddrs(m *model.Message) []string {
+	var out []string
+	for _, s := range []string{m.To, m.Cc} {
+		if strings.TrimSpace(s) == "" {
+			continue
+		}
+		if parsed, err := mail.ParseAddressList(s); err == nil {
+			for _, a := range parsed {
+				out = append(out, a.Address)
+			}
+		} else {
+			out = append(out, strings.TrimSpace(s))
+		}
+	}
+	return out
 }
 
 // hasArchivable reports whether any attachment would go into the zip (i.e. is

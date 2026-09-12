@@ -20,11 +20,14 @@ import (
 
 const batchSize = 1000
 
-// indexVersion is the schema/key-format version stamped in the meta table. An
-// index with no meta row (written by a pre-meta binary) is treated as version 1
-// and repaired to 2 by RepairKeys; a stored version above this is refused by
-// Open (written by a newer mailarchive).
-const indexVersion = 2
+// indexVersion is the schema/key-format version stamped in the meta table. 1 =
+// pre-meta (no meta row); 2 = store-scoped keys; 3 = the go-back timeline, where
+// a row's key may be a mailbox-wide LiveKey and its folder column follows a move
+// (UpdateFolder). An index with no meta row is treated as version 1 and repaired
+// by RepairKeys; a pre-go-back version-2 index is re-stamped to 3 on first open
+// (its store-scoped keys are already correct, so no row changes); a stored
+// version above this is refused by Open (written by a newer mailarchive).
+const indexVersion = 3
 
 const pragmas = `PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;`
 
@@ -347,6 +350,24 @@ func (ix *Index) DeleteByID(id int64) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+// UpdateFolder rewrites ONLY the folder column of the doc with the given key —
+// the body-free index update the mailbox-wide move fast-path issues (§3.2). A
+// message that moved between folders keeps its indexed subject, body, path and
+// attachment names; only its folder (the browse/facet grouping, `docs.folder`,
+// which folder facets and pages read) follows the move, at the cost of one
+// UPDATE and no re-tokenising of the body. The `folder` column of the FTS table
+// is a full-text search nicety left to the next reindex — `docs.folder` is the
+// authoritative browse/facet folder. Any pending batch is committed first, so it
+// is safe to call between Add calls during a walk. A no-op when no row has the
+// key.
+func (ix *Index) UpdateFolder(key, folder string) error {
+	if err := ix.commitPending(); err != nil {
+		return err
+	}
+	_, err := ix.db.Exec(`UPDATE docs SET folder=? WHERE key=?`, folder, key)
+	return err
 }
 
 // DeleteByKey removes the document with the given dedup key (a no-op if absent).
