@@ -1109,6 +1109,12 @@ func (m *Manifest) CollapseByIdentity(tokens ...string) ([]CollapseLoss, map[str
 					nk = Qualify(base, util.HashHex(s.firstKey, 8))
 				}
 			}
+			// Record each loser's kept-on-disk file on the survivor (R13: the loser
+			// copy is NOT deleted now), so a later redaction reaches every copy of
+			// the message, not just the survivor's (rev-4 §6, #4).
+			for _, l := range s.losers {
+				s.rec.AlsoFiles = append(s.rec.AlsoFiles, l.rec.Path)
+			}
 			newEntries[nk] = s.rec
 			if s.firstKey != nk {
 				remap[s.firstKey] = nk // the survivor's index row must follow the re-key

@@ -122,7 +122,27 @@ func Reindex(out string, logger *log.Logger) (kept, pruned int, err error) {
 		return 0, 0, err
 	}
 
+	// deleteMessageFiles removes a message's html + -attachments.zip + .eml triple
+	// (each os.Remove no-ops if absent). This runs ONLY in reindex (redaction),
+	// never on a normal run, so R13's "a normal run never deletes a message file"
+	// holds; here the .html is already gone (that is why the row is pruned), and
+	// leaving the .zip/.eml — or a collapse-loser's copy — would keep a redacted
+	// message served at /files/ (rev-4 §6, #4/#10).
+	deleteMessageFiles := func(relHTML string) {
+		stem := strings.TrimSuffix(filepath.Join(out, filepath.FromSlash(relHTML)), ".html")
+		for _, suffix := range []string{".html", "-attachments.zip", ".eml"} {
+			if err := os.Remove(stem + suffix); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				logger.Printf("warning: redaction could not remove %s: %v", stem+suffix, err)
+			}
+		}
+	}
 	for _, g := range gone {
+		if rec, ok := manifest.Get(g.key); ok {
+			deleteMessageFiles(rec.Path) // the pruned record's own orphaned siblings
+			for _, also := range rec.AlsoFiles {
+				deleteMessageFiles(also) // every collapse-loser copy folded in (#4)
+			}
+		}
 		if delErr := idx.DeleteByID(g.id); delErr != nil {
 			return 0, 0, fmt.Errorf("prune index row %d: %w", g.id, delErr)
 		}

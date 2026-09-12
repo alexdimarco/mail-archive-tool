@@ -387,6 +387,11 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 			rec.FirstFolder = folderKey
 			rec.FirstSeen = now
 		}
+		// Carry the collapse-loser file list across a re-export, so a full run does
+		// not strand loser copies outside redaction's reach (rev-4 §6, #4).
+		if seen {
+			rec.AlsoFiles = prev.AlsoFiles
+		}
 	}
 	e.Manifest.Add(key, rec)
 	if e.OnExported != nil {
