@@ -212,10 +212,17 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	lastCheckpoint := 0
 	var lockLost error
 	checkpoint := func() {
-		if exp.Stats.Exported-lastCheckpoint < effectiveEvery(floor, manifest.Len()) {
+		// Gate on messages PROCESSED (written + skipped-as-already-archived), not
+		// just Exported: a migration or steady-state run is nearly all skips
+		// (SkippedManifest), so an Exported-only gate would never fire and an
+		// interrupted large run would never persist its progress and never
+		// converge (EC11). Every skip stamps LastSeen / records a move, so skips
+		// are real work worth checkpointing.
+		processed := exp.Stats.Exported + exp.Stats.SkippedManifest
+		if processed-lastCheckpoint < effectiveEvery(floor, manifest.Len()) {
 			return
 		}
-		lastCheckpoint = exp.Stats.Exported
+		lastCheckpoint = processed
 		if err := lock.StillHeld(); err != nil && lockLost == nil {
 			lockLost = err
 			return
@@ -300,11 +307,9 @@ func applyGraphState(m *model.Message, ref graph.MessageRef) {
 		m.Unread = !*ref.IsRead
 	}
 	// Graph's receivedDateTime is the authoritative delivery time for a mailbox
-	// item; adopt it as Received so the envelope signature computed from the
-	// downloaded message uses the SAME date the pre-download listing carried
-	// (otherwise a message whose MIME Date header differs from Graph's delivery
-	// time would fail the fast-path signature match and be re-downloaded every
-	// run — R17). A tenant that omits it leaves the MIME date in place.
+	// item; adopt it as Received so the message's Date — and the content
+	// fingerprint that folds it — reflects the mailbox delivery time. A tenant
+	// that omits it leaves the MIME Date header in place.
 	if !ref.Received.IsZero() {
 		m.Received = ref.Received
 	}
@@ -404,19 +409,12 @@ func runGraphMailbox(ctx context.Context, client *graph.Client, exp *export.Expo
 				}
 			}
 			// Live fast-path (incremental): a message already archived under its
-			// mailbox-wide identity is recognised WITHOUT downloading its body
-			// (R17). The candidate's envelope signature — recomputed from the
-			// widened listing, no fetch — must match an archived sibling's stored
-			// fingerprint before we treat it as the same message; a mismatch means
-			// a DISTINCT message reused the id, so we fall through and download and
-			// the exporter files it as a #fp sibling (R1). A MOVE (same message,
-			// different observed folder) is recorded with no download: rewrite the
-			// record's Folder/LastSeen/Present, append a history folder-assertion,
-			// and follow the index's folder column. Every observation — a plain
-			// skip included — stamps LastSeen=thisRun so gone-detection is accurate
-			// (§3.4). A legacy "unknown" record is resolved here without a download
-			// (Graph delivers a message whole). Full mode re-downloads everything
-			// (R2) and dedups at the exporter instead.
+			// mailbox-wide identity is recognised by Message-ID MEMBERSHIP and NOT
+			// re-downloaded (R17); a MOVE is recorded from the listing with no
+			// download; every observation stamps LastSeen=thisRun so gone-detection
+			// is accurate (§3.4); a legacy "unknown" record is resolved here without
+			// a download. Full mode re-downloads everything (R2) and dedups at the
+			// exporter. The option-D mechanics are in the block below.
 			if exp.Mode == export.Incremental && ref.InternetMessageID != "" {
 				identity := "mid:" + ref.InternetMessageID
 				// Option D (design rev-4): skip the download when this Message-ID is
@@ -452,7 +450,13 @@ func runGraphMailbox(ctx context.Context, client *graph.Client, exp *export.Expo
 					if rec.Folder != folderKey || !rec.Present {
 						recordMove(hist, idx, matchKey, folderKey, logger)
 					}
+					// #8 residual (floor): if this identity already carries MORE THAN
+					// ONE distinct fingerprint, a reuse is known — log it (deduped).
+					// A fresh reuse (still one sibling) is undetectable here without
+					// download; the deferred ImmutableId closure catches it (EC9).
+					exp.NoteIDReuse(identity, len(sibs))
 					exp.Stats.SkippedManifest++
+					checkpoint() // a mostly-skip run must still persist progress (EC11)
 					return nil
 				}
 			}

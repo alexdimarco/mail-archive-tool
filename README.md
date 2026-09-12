@@ -262,10 +262,10 @@ one physical copy of each message, wherever it is filed, with the folder it live
 in recorded over time — so moving a message between folders updates the record
 in place (no second copy, nothing re-downloaded) and the served view follows it
 (see [Going back in time](#going-back-in-time-point-in-time-view)). This
-one-copy-per-mailbox keying is the model for a live archive **created with this
-version**; a *pre-existing* live archive is not retroactively consolidated when
-it upgrades (see [Upgrading an older
-archive](#upgrading-an-older-archive-format-v4)). A **one-shot
+one-copy-per-mailbox keying holds for a live archive **created with this version**
+AND for a **pre-existing** one on its first upgraded run, which collapses any
+per-folder duplicates into one record *before* capturing (see [Upgrading an older
+archive](#upgrading-an-older-archive)). A **one-shot
 local import** (a `.pst`, mbox, or maildir) additionally scopes the key by
 **folder**, so the same email filed in two folders — or the same mailbox
 imported twice into one `-out` — is kept in each place; a re-run still skips each
@@ -447,27 +447,32 @@ and timelined like any other. The CLI, the GUI and `schedule` all surface this
 choice — see [Server-side
 archiving](#server-side-archiving-microsoft-365-via-graph).
 
-### Upgrading an older archive (format v4)
+### Upgrading an older archive
 
-The timeline comes with a manifest **format v4**. The first run of this version
-over an older archive migrates the manifest **once**, in place — filling in the
-per-message timeline fields (each existing message is marked present, in its
-current folder, first seen when it was captured) — and nothing on disk is renamed
-or rewritten. The forward guard refuses any archive whose stored version is above
-4, so an older binary cannot silently corrupt a v4 archive. As with every format
-bump, **do not run an older `mailarchive` against a v4 archive** (see [Upgrading
-an existing archive](#upgrading-an-existing-archive)).
+The timeline and one-copy-per-mailbox keying come with manifest **format v5**. The
+first run of this version over an older archive migrates the manifest **once**, in
+place: it fills the per-message timeline fields (each existing message marked
+present, in its current folder, first seen when captured) and — for a **live
+(Graph)** archive — it **collapses** any per-folder move-duplicates into one
+mailbox-wide record and re-keys the search index to match, *before* the first
+walk. So each still-present message is then recognised by its Internet-Message-ID
+and is **not** re-downloaded: the archive consolidates to one copy per message on
+that first upgraded run, at no re-fetch cost. A collapsed duplicate's file is
+**never deleted** (R13) — it stays on disk and is reached only by a later
+redaction (`reindex`). The forward guard refuses any archive whose stored version
+is above 5, so an older binary cannot silently corrupt a v5 archive; as with every
+format bump, **do not run an older `mailarchive` against a v5 archive** (see
+[Upgrading an existing archive](#upgrading-an-existing-archive)).
 
-One-copy-per-message keying — a live message stored once per mailbox with its
-moves recorded in place — is the model for a live (Graph) archive **created with
-this version**. This version does **not** retroactively
-consolidate a *pre-existing* live archive's per-folder copies under the new
-per-mailbox key: those older records keep their per-folder keys, so the identity
-lookup does not find them and the next `graph` run over such an archive
-re-downloads each still-present message and stores it a second time under the new
-key. Files already on disk are never removed (R13), so nothing is lost, but the
-archive gains a parallel copy of everything still in the mailbox. If that matters
-for a large existing live archive, start a fresh capture into a new `-out` to get
+One caveat, rare: capture recognises an already-archived message by its
+Internet-Message-ID, so a *genuinely different* message that reuses an id already
+in the archive is skipped by a live `graph` run without being captured (a local
+import or a full run splits distinct reuses by content and keeps both). This is a
+bounded gap for deliberately crafted or malfunctioning mail; where an archive
+already holds two distinct messages under one id, `graph` notes it in the run log.
+Closing it on Graph — detecting a distinct reuse before download — is a planned
+enhancement. If a large existing live archive matters, you can still start a fresh
+capture into a new `-out` to get
 one-copy-per-message from the first run. (A one-shot local `.pst`/mbox/maildir
 import is unaffected: it is folder-scoped by design.)
 
@@ -731,18 +736,18 @@ de-duplicated), but the leftover duplicate files remain on disk — so the safe
 rule is to upgrade every machine that writes the same archive.
 
 This version also adds the go-back **timeline** and, with it, a manifest **format
-v4** — the forward guard refuses any archive whose stored version is above 4, so
-an older binary cannot silently corrupt a v4 archive. One-copy-per-message live
+v5** — the forward guard refuses any archive whose stored version is above 5, so
+an older binary cannot silently corrupt a v5 archive. One-copy-per-message live
 keying — a message stored once per mailbox with its moves recorded in place — is
-the model for a live (`graph`) archive **created with this version**; upgrading a
-*pre-existing* live archive fills in the timeline fields but does **not**
-retroactively consolidate its per-folder copies under the new per-mailbox key, so
-its next `graph` run re-downloads and re-stores each still-present message once
-under the new key (no file is ever removed — R13 — so nothing is lost, but the
-archive gains a parallel copy). See [Upgrading an older archive (format
-v4)](#upgrading-an-older-archive-format-v4) for that caveat in full and [Going
-back in time](#going-back-in-time-point-in-time-view) for what the timeline gives
-you.
+the model for a live (`graph`) archive **created with this version** AND for a
+*pre-existing* one on its first upgraded run, which **collapses** any per-folder
+duplicates into one record and re-keys the index *before* capturing, so each
+still-present message is recognised by its Internet-Message-ID and not
+re-downloaded (a collapsed duplicate's file stays on disk — R13 — reached only by
+a later redaction). See [Upgrading an older
+archive](#upgrading-an-older-archive) for the detail (including the rare
+reused-Message-ID caveat) and [Going back in
+time](#going-back-in-time-point-in-time-view) for what the timeline gives you.
 
 The re-scope re-exports nothing, so it does not backfill fixity: the legacy
 bytes are recorded, not re-hashed, so they cannot be attested as pristine. A

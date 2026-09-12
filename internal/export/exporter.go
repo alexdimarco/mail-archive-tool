@@ -57,7 +57,7 @@ type Issue struct {
 	Subject string
 	RelPath string // exported HTML path relative to OutDir
 	Date    time.Time
-	Kind    string // "empty-attachment" | "attachment-error" | "unresolved-inline-image"
+	Kind    string // "empty-attachment" | "attachment-error" | "unresolved-inline-image" | "id-reuse"
 	Detail  string // attachment name or cid token
 }
 
@@ -121,6 +121,11 @@ type Exporter struct {
 
 	Stats  Stats
 	Issues []Issue // verification findings (attachments/inline images not fully exported)
+
+	// reuseLogged dedupes the per-run #8-residual id-reuse note (NoteIDReuse) so an
+	// identity with multiple distinct fingerprints is reported once per run, not
+	// once per folder-observation.
+	reuseLogged map[string]bool
 }
 
 // Export writes a single message. It returns true if the message was written
@@ -533,6 +538,32 @@ func (e *Exporter) addIssue(folder string, m *model.Message, relPath, kind, deta
 		Kind:    kind,
 		Detail:  detail,
 	})
+}
+
+// NoteIDReuse records the bounded, mandatory #8-residual log for the live path
+// (design rev-4 §5, EC9): when a pre-download membership skip observes an identity
+// that is ALREADY archived under MORE THAN ONE distinct fingerprint (a genuine
+// Message-ID reuse — e.g. two distinct messages that shared an id in a migrated v3
+// archive), it is a case where a further distinct reuse could be skipped without
+// capture on the floor (the deferred Graph ImmutableId closure detects such
+// reuses pre-download). It fires only on genuine ambiguity (distinct > 1) and is
+// deduped per identity per run, so it never floods; a single distinct sibling (the
+// ordinary case) logs nothing. It appends an "id-reuse" Issue and logs a note.
+func (e *Exporter) NoteIDReuse(identity string, distinct int) {
+	if distinct <= 1 {
+		return
+	}
+	if e.reuseLogged == nil {
+		e.reuseLogged = map[string]bool{}
+	}
+	if e.reuseLogged[identity] {
+		return
+	}
+	e.reuseLogged[identity] = true
+	e.Issues = append(e.Issues, Issue{Kind: "id-reuse", Detail: identity})
+	if e.Log != nil {
+		e.Log.Printf("note: %s is archived under %d distinct fingerprints (a reused Internet-Message-ID); a further distinct reuse of it can be skipped without capture on this run — the deferred Graph ImmutableId closure detects such reuses (docs/goback.md)", identity, distinct)
+	}
 }
 
 // reInlineCID matches a cid: reference token in HTML.
