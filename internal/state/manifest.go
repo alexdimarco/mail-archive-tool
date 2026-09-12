@@ -761,6 +761,88 @@ func (m *Manifest) MergeFields(key, folder string, seen time.Time, present bool)
 	return true
 }
 
+// WalkedFolders is a per-run observed-set: the folder paths a single mailbox
+// walk actually visited to completion this run. It is the SCOPE of
+// gone-detection (§3.4) — gone is computed only over records whose recorded
+// folder is in this set, so a message in an excluded folder (never walked) or in
+// a folder a partial run never reached retains its state and is never marked
+// gone. One WalkedFolders is built per mailbox walk; Mark records a folder once
+// its listing has been fully consumed.
+type WalkedFolders struct {
+	set map[string]bool
+}
+
+// NewWalkedFolders returns an empty per-run observed-set.
+func NewWalkedFolders() *WalkedFolders {
+	return &WalkedFolders{set: map[string]bool{}}
+}
+
+// Mark records that folder was fully walked this run.
+func (w *WalkedFolders) Mark(folder string) {
+	if w.set == nil {
+		w.set = map[string]bool{}
+	}
+	w.set[folder] = true
+}
+
+// Has reports whether folder was walked this run.
+func (w *WalkedFolders) Has(folder string) bool { return w != nil && w.set[folder] }
+
+// Len is the number of distinct folders walked this run.
+func (w *WalkedFolders) Len() int {
+	if w == nil {
+		return 0
+	}
+	return len(w.set)
+}
+
+// SweepGone performs gone-detection by full reconciliation (§3.4): after every
+// non-excluded folder of the mailbox named by token has been fully walked in a
+// run that held its lock, it marks gone every still-Present record of that token
+// whose recorded folder was actually walked (walked.Has(Folder)) but which was
+// NOT re-observed this run (LastSeen strictly before thisRun — every observation
+// stamps LastSeen=thisRun, so a still-present message never qualifies). "Gone"
+// means the message left the LIVE mailbox: Present is flipped to false IN PLACE,
+// keeping the record's last known Folder and LastSeen so a past view still shows
+// where and when it last lived, and the first-captured file is KEPT on disk (a
+// timeline event, not a redaction — R13/T5). It returns the swept keys in sorted
+// order so the caller appends one {k,gone} history event per key and the events
+// are durable before the manifest records Present=false (crash order §3.5).
+//
+// The `walked` scope is the guard against a false positive: a message in an
+// excluded or unwalked folder (walked.Has(Folder) is false) is never swept, and
+// a record already gone (Present=false) or observed this run is left untouched.
+// It is called ONCE per mailbox, at the end of the full walk — NEVER at a
+// checkpoint, which fires mid-walk when a not-yet-walked folder's messages have
+// not been re-observed; the caller also skips the sweep entirely when the walk
+// did not complete (a folder error, a ctx cancel, or a lost lock), so a
+// partial/aborted run marks nothing gone.
+func (m *Manifest) SweepGone(token string, walked *WalkedFolders, thisRun time.Time) []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	prefix := token + keySeparator
+	var gone []string
+	for key, r := range m.Entries {
+		if !strings.HasPrefix(key, prefix) {
+			continue // another mailbox's record — out of this sweep's scope
+		}
+		if !r.Present || !r.LastSeen.Before(thisRun) {
+			continue // already gone, or observed this run
+		}
+		if !walked.Has(r.Folder) {
+			continue // excluded/unwalked folder — retain its last state
+		}
+		gone = append(gone, key)
+	}
+	sort.Strings(gone)
+	for _, key := range gone {
+		r := m.Entries[key]
+		r.Present = false // keep the last known Folder/LastSeen; the file stays (R13)
+		m.Entries[key] = r
+	}
+	return gone
+}
+
 // KeysForIdentity returns every (key, fingerprint) sharing the message identity
 // (Message-ID, or the content-hash identity when absent), so the live path can
 // find an already-archived sibling before download (R17) and let a

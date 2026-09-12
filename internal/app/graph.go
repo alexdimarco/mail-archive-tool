@@ -334,6 +334,7 @@ func runGraphMailbox(ctx context.Context, client *graph.Client, exp *export.Expo
 		return fmt.Errorf("list folders: %w", err)
 	}
 
+	walked := state.NewWalkedFolders()
 	for _, f := range folders {
 		select {
 		case <-ctx.Done():
@@ -385,7 +386,15 @@ func runGraphMailbox(ctx context.Context, client *graph.Client, exp *export.Expo
 						exp.Stats.Resolved++
 					}
 					manifest.MergeFields(matchKey, folderKey, runAt, true)
-					if rec.Folder != folderKey {
+					// A folder-assertion is emitted when the observed folder differs
+					// from the record's last known folder (a MOVE) OR the record was
+					// gone and is now seen again (present-again, Present false→true):
+					// both are one folder-assertion shape, and the fold reads an
+					// assertion after a gone event as present-again (§3.3). rec is the
+					// pre-observation snapshot (MergeFields does not mutate this copy).
+					// An unchanged re-observation (same folder, still present) emits
+					// nothing and downloads nothing (R17).
+					if rec.Folder != folderKey || !rec.Present {
 						recordMove(hist, idx, matchKey, folderKey, logger)
 					}
 					exp.Stats.SkippedManifest++
@@ -417,6 +426,35 @@ func runGraphMailbox(ctx context.Context, client *graph.Client, exp *export.Expo
 		if err != nil {
 			return err
 		}
+		// This folder was fully walked (its listing consumed with no error): a
+		// message recorded under it that we did NOT re-observe this run has left
+		// the live mailbox and is in-scope for the gone sweep below (§3.4).
+		walked.Mark(folderKey)
+	}
+	// gone-detection by full reconciliation (§3.4). Control reaches here only
+	// after EVERY folder of the mailbox was fully walked (any folder error or ctx
+	// cancel returns above). Re-check abort() so a run whose lock was lost or
+	// replaced at a checkpoint DURING this walk stops WITHOUT concluding anything
+	// is gone — a run that may no longer own the archive must not sweep. gone is
+	// therefore computed once, at the walk's end, NEVER at a checkpoint.
+	if abort != nil {
+		if e := abort(); e != nil {
+			return e
+		}
+	}
+	gone := manifest.SweepGone(token, walked, runAt)
+	for _, k := range gone {
+		if hist != nil {
+			// The {k,gone} event is appended (and fsync'd by the caller's commit)
+			// BEFORE the manifest records Present=false, so the history is never
+			// behind the fold-to-now projection (crash order §3.5).
+			if herr := hist.WriteGone(k); herr != nil {
+				logger.Printf("warning: history gone event: %v", herr)
+			}
+		}
+	}
+	if len(gone) > 0 {
+		logger.Printf("mailbox %s: %d message(s) gone from the live mailbox (files kept)", mailbox, len(gone))
 	}
 	return nil
 }
