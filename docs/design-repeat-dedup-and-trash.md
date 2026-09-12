@@ -58,13 +58,18 @@ On a scheduled `graph` run against a live Microsoft 365 mailbox:
   existing record (e.g. `AlsoIn []string` or a "current folder" field), so the
   move is *recorded*, not *duplicated*. (changes R3 for repeat capture; preserves
   R13, R8, R17.)
-- **D2 — Deleted Items and Junk are captured, but never as a duplicate.** They
-  remain in the folder walk (deleted-only mail is still archived, once), but a
-  message already archived from Inbox that moves to Deleted Items hits D1 and is
-  not re-written. A message that only ever existed in Deleted Items is archived
-  once, there. An operator flag (`-exclude-folders "Deleted Items,Junk Email"` or
-  a well-known-folder skip) can drop those folders entirely for sites that do not
-  want deleted/junk mail archived — off by default (capture everything, deduped).
+- **D2 — Deleted Items and Junk are EXCLUDED by default; the operator is asked.**
+  OPERATOR RULING (2026-09-11): the two well-known folders **Deleted Items** and
+  **Junk Email** are **not captured by default**. The configuration flow (the GUI
+  wizard step, and the CLI/schedule via an explicit `-include-deleted`/
+  `-include-junk` pair or an `-include-folders` choice) **asks** the operator to
+  decide one way or the other, so it is a conscious choice, not a silent one. A
+  fast click-through with no choice takes the **excluded** default. When an
+  operator opts to include them, D1 still applies: a message already archived
+  from another folder that later appears in Deleted Items/Junk is recorded as a
+  move (metadata), never written a second time; a message that only ever lived in
+  Deleted Items is archived once, there. Exclusion uses the stable well-known-
+  folder ids (`deletedItems`, `junkemail`), so it is locale-independent.
 - **D3 — Search and pages stay consistent (R8).** One archived file ⇒ one index
   row. A message's folder page shows it under its first-captured folder; its
   recorded also-in/current-folder metadata is shown on the message page and,
@@ -110,5 +115,10 @@ On a scheduled `graph` run against a live Microsoft 365 mailbox:
   change already hold the move-duplicates. A `reindex`-time or one-off
   reconciliation to collapse existing cross-folder duplicates is out of scope
   here (append-only makes it delicate); state it as a known limit or a follow-up.
-- **Default trash policy.** Capture Deleted Items/Junk by default (deduped) so no
-  mail is lost, with an opt-out — versus exclude by default. A product call.
+- **Default trash policy — RESOLVED (operator, 2026-09-11).** Deleted Items and
+  Junk are **excluded by default**; the setup flow asks the operator to include
+  or exclude (a conscious decision), and a click-through defaults to excluded. So
+  the common scheduled run does not archive trash/junk at all, which also removes
+  the biggest move-duplicate source outright; including them is an explicit
+  opt-in, and even then deduped per D1. The review should treat "exclude by
+  default, asked at config, opt-in to include" as fixed, not open.
