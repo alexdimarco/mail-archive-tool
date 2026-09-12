@@ -821,6 +821,48 @@ func (m *Manifest) SetPresent(key string, present bool) bool {
 	return true
 }
 
+// TouchSeen advances a record's LastSeen to seen WITHOUT changing its Folder or
+// Present. The live path calls it on EVERY same-identity same-token sibling of an
+// observed message: a single listing entry cannot say WHICH #fp-qualified sibling
+// of a reused Message-ID it is, so all are stamped as observed this run, else an
+// un-stamped but still-present sibling would be phantom-marked gone by SweepGone
+// (EC5, R21). It never resurrects a record already gone (Present untouched), and
+// leaves the folder to the primary record the observation actually matched.
+func (m *Manifest) TouchSeen(key string, seen time.Time) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.Entries[key]
+	if !ok {
+		return false
+	}
+	r.LastSeen = seen
+	m.Entries[key] = r
+	return true
+}
+
+// SameStoreIdentityCount returns how many records of the given store token carry
+// the identity. The exporter uses it to decide whether an adopt-never-split
+// against a legacy-scheme record is UNAMBIGUOUS (exactly one record for the
+// store+identity — the ordinary single-message migration, adopt) or must split
+// instead (a distinct Message-ID reuse survived collapse, so adopting could
+// overwrite the wrong physical message — R1; split to a #fp-qualified key, a
+// bounded duplicate, never a drop).
+func (m *Manifest) SameStoreIdentityCount(store, identity string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.byIdent == nil {
+		m.buildIdentIndexLocked()
+	}
+	prefix := store + keySeparator
+	n := 0
+	for _, ref := range m.byIdent[identity] {
+		if strings.HasPrefix(ref.Key, prefix) {
+			n++
+		}
+	}
+	return n
+}
+
 // WalkedFolders is a per-run observed-set: the folder paths a single mailbox
 // walk actually visited to completion this run. It is the SCOPE of
 // gone-detection (§3.4) — gone is computed only over records whose recorded

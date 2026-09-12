@@ -182,8 +182,18 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	// import (flag off) is NOT gated: its content fingerprint is computed the same
 	// way in every version (Date from the MIME header), so it stays comparable and
 	// a genuine distinct reuse still #fp-splits — both survive (R1, MA-86).
+	// Adopt-never-split (live path) applies ONLY when this identity has a single
+	// same-store record — the ordinary single-message migration, where adopting a
+	// legacy-scheme record is unambiguous. With MORE THAN ONE record (a distinct
+	// Message-ID reuse survived collapse), adopting could overwrite the WRONG
+	// physical message (an R1/R13 drop) or, in full mode, duplicate one; so the
+	// split is NOT suppressed there — a genuine fingerprint mismatch #fp-splits to
+	// a qualified key (a bounded duplicate, never a drop). This also covers full
+	// mode, which bypasses the graph membership skip and re-exports every message.
+	identityMultiRecord := e.DedupMailboxWide && e.Manifest.SameStoreIdentityCount(store, m.Identity()) > 1
 	prev, seen := e.Manifest.Get(key)
-	for seen && prev.Fingerprint != "" && prev.Fingerprint != fp && !(e.DedupMailboxWide && prev.FpScheme != state.FpSchemeCurrent) {
+	for seen && prev.Fingerprint != "" && prev.Fingerprint != fp &&
+		!(e.DedupMailboxWide && prev.FpScheme != state.FpSchemeCurrent && !identityMultiRecord) {
 		// A DIFFERENT message reused this key's Message-ID: file it under a
 		// fingerprint-qualified key. The separator is NUL (state.Qualify), never a
 		// character legal in a Message-ID, so no crafted id — not even one that

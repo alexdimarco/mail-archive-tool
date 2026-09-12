@@ -427,12 +427,26 @@ func runGraphMailbox(ctx context.Context, client *graph.Client, exp *export.Expo
 				// the floor: the membership skip never downloads it, so a fresh reuse
 				// cannot be detected here (the deferred Graph ImmutableId closure
 				// detects it pre-download; the id-reuse log lands in a later slice).
-				if sibs := manifest.KeysForIdentity(identity); len(sibs) > 0 {
-					// Stamp the primary (bare live key) record; fall back to the first
-					// sibling if every record for the identity is #fp-qualified.
+				// Same-TOKEN siblings only: KeysForIdentity is archive-wide (the
+				// token is stripped from the index), so a Message-ID shared with
+				// ANOTHER mailbox archived into the same -out must NOT make this
+				// mailbox skip — each mailbox keeps its own physical copy (R6). Filter
+				// to this token; if none, fall through and download.
+				var sameToken []state.IdentRef
+				tokenPrefix := token + "\x00"
+				for _, sib := range manifest.KeysForIdentity(identity) {
+					if strings.HasPrefix(sib.Key, tokenPrefix) {
+						sameToken = append(sameToken, sib)
+					}
+				}
+				if len(sameToken) > 0 {
+					// Already archived in THIS mailbox → skip the download (R17). Stamp
+					// the primary (bare live key) record with the observed folder; fall
+					// back to the first same-token sibling if only #fp-qualified records
+					// exist.
 					matchKey := state.LiveKey(token, identity)
 					if _, ok := manifest.Get(matchKey); !ok {
-						matchKey = sibs[0].Key
+						matchKey = sameToken[0].Key
 					}
 					rec, _ := manifest.Get(matchKey)
 					if rec.Unknown() && manifest.Resolve(matchKey) {
@@ -450,11 +464,23 @@ func runGraphMailbox(ctx context.Context, client *graph.Client, exp *export.Expo
 					if rec.Folder != folderKey || !rec.Present {
 						recordMove(hist, idx, matchKey, folderKey, logger)
 					}
+					// EC5 — a single listing entry cannot disambiguate WHICH
+					// #fp-qualified sibling of a reused Message-ID it is, so advance
+					// LastSeen on EVERY same-token sibling (folder untouched), else an
+					// un-stamped still-present sibling would be phantom-marked gone by
+					// SweepGone (R21). (A genuinely departed sibling of a reused id is
+					// not detected as gone on the floor — a bounded imprecision the
+					// deferred ImmutableId closure resolves.)
+					for _, sib := range sameToken {
+						if sib.Key != matchKey {
+							manifest.TouchSeen(sib.Key, runAt)
+						}
+					}
 					// #8 residual (floor): if this identity already carries MORE THAN
-					// ONE distinct fingerprint, a reuse is known — log it (deduped).
-					// A fresh reuse (still one sibling) is undetectable here without
-					// download; the deferred ImmutableId closure catches it (EC9).
-					exp.NoteIDReuse(identity, len(sibs))
+					// ONE distinct fingerprint in this mailbox, a reuse is known — log
+					// it (deduped). A fresh reuse (still one sibling) is undetectable
+					// here without download; the deferred ImmutableId closure catches it.
+					exp.NoteIDReuse(identity, len(sameToken))
 					exp.Stats.SkippedManifest++
 					checkpoint() // a mostly-skip run must still persist progress (EC11)
 					return nil

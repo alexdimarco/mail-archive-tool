@@ -129,6 +129,14 @@ func Reindex(out string, logger *log.Logger) (kept, pruned int, err error) {
 	// leaving the .zip/.eml — or a collapse-loser's copy — would keep a redacted
 	// message served at /files/ (rev-4 §6, #4/#10).
 	deleteMessageFiles := func(relHTML string) {
+		// The manifest is untrusted: a tampered Path/AlsoFiles could carry `..` or
+		// an absolute path. Gate every entry with validRelPath before os.Remove, so
+		// a redaction can never delete outside -out (INS2-1), exactly as Rebuild and
+		// the other manifest-path consumers do; skip and log an unsafe one.
+		if _, ok := validRelPath(relHTML); !ok {
+			logger.Printf("warning: redaction skipped an unsafe archive path %q", relHTML)
+			return
+		}
 		stem := strings.TrimSuffix(filepath.Join(out, filepath.FromSlash(relHTML)), ".html")
 		for _, suffix := range []string{".html", "-attachments.zip", ".eml"} {
 			if err := os.Remove(stem + suffix); err != nil && !errors.Is(err, fs.ErrNotExist) {
