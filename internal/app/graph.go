@@ -128,6 +128,28 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 			return Result{}, fmt.Errorf("migrate search index keys: %w", rkErr)
 		}
 	}
+	// One-time v3→v4 upgrade of an existing live archive: collapse any pre-existing
+	// per-folder move-duplicates (two folder-scoped records for one message that
+	// visited two folders) into one identity-keyed record, fingerprint-safe — a
+	// genuinely distinct Message-ID reuser has a different fingerprint and is kept
+	// as its own #fp sibling, never merged (R1). This runs BEFORE capture so the
+	// fast-path recognises each message by its LiveKey (no re-download, R17) and
+	// the archive holds one copy per message (R3). Confined to the live path
+	// (§3.6). The loser index rows are pruned; the loser files stay on disk (R13)
+	// and are reported by verify. Idempotent: a run that does not persist re-does
+	// it next time.
+	if manifest.LoadedVersion < 4 {
+		if losses := manifest.CollapseByIdentity(); len(losses) > 0 {
+			for _, loss := range losses {
+				if idx != nil {
+					if delErr := idx.DeleteByKey(loss.LoserKey); delErr != nil {
+						logger.Printf("warning: pruning collapsed index row: %v", delErr)
+					}
+				}
+			}
+			logger.Printf("collapsed %d move-duplicate(s) into one copy per message (one-time v3→v4 upgrade)", len(losses))
+		}
+	}
 	// Every successful export is a newly-seen (or, in full mode, re-observed)
 	// message: feed it to the search index (when enabled) and append a history
 	// folder-assertion under its CURRENT folder — the timeline event the fold and
