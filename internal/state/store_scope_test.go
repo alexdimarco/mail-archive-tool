@@ -44,7 +44,7 @@ func writeManifestJSON(t *testing.T, path string, version int, entries map[strin
 // Positive twin first: a current-version manifest loads clean.
 func TestManifestRefusesNewerVersion(t *testing.T) {
 	good := filepath.Join(t.TempDir(), "good.json")
-	if err := os.WriteFile(good, []byte(`{"version":3,"entries":{}}`), 0o644); err != nil {
+	if err := os.WriteFile(good, []byte(`{"version":4,"entries":{}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Load(good); err != nil {
@@ -52,7 +52,7 @@ func TestManifestRefusesNewerVersion(t *testing.T) {
 	}
 
 	path := filepath.Join(t.TempDir(), "future.json")
-	body := []byte(`{"version":4,"entries":{"whatever":{"path":"s/Inbox/a.html"}}}`)
+	body := []byte(`{"version":5,"entries":{"whatever":{"path":"s/Inbox/a.html"}}}`)
 	if err := os.WriteFile(path, body, 0o644); err != nil {
 		t.Fatal(err)
 	}

@@ -20,12 +20,19 @@ import (
 
 // manifestVersion: 1 = paths only; 2 = completeness tracking (Missing/Terminal/
 // Unresolved per record); 3 = store-scoped identity (the key carries the store
-// token as its first component: token\x00folder\x00identity). Fields are
-// additive. A version-1 file is migrated to the "unknown" sentinel on load; the
-// v2→v3 re-scope is content-driven (a key holding exactly one NUL is a v2 key)
-// and never triggered by the version integer, so it self-heals after an
-// old-binary excursion (see Load).
-const manifestVersion = 3
+// token as its first component: token\x00folder\x00identity); 4 = the go-back
+// timeline — a mailbox-wide live key (token\x00identity, no folder — LiveKey),
+// per-record folder-over-time fields (Folder/FirstFolder/FirstSeen/LastSeen/
+// Present), and version-gated migrations. Fields are additive. A version-1 file
+// is migrated to the "unknown" sentinel on load. The v2→v3 re-scope is now
+// VERSION-gated on the stored version integer (< 3), not on the NUL count, so a
+// folder-less one-NUL live key (a legitimate v4 key) is never mistaken for a
+// legacy v2 folder\x00identity key and re-scoped (GB-01/F1). Load fills the v4
+// timeline defaults for a pre-v4 record; the fingerprint-safe v3→v4 collapse of
+// move-duplicates is CollapseByIdentity, invoked by the live path (a one-shot
+// local import keeps its folder-scoped keys and R3 — §3.6). Load refuses a
+// stored version above manifestVersion.
+const manifestVersion = 4
 
 // UnknownSentinel marks a record whose completeness predates tracking: it is
 // fillable, so the next incremental run re-examines it once.
@@ -70,6 +77,23 @@ type Record struct {
 	// records written before fixity, or before `verify -record` baselined
 	// them: such files are *unrecorded*, never *modified* (F3, FC11).
 	Fixity *Fixity `json:"fixity,omitempty"`
+
+	// Folder-over-time (version 4, the go-back timeline). Folder (above) is the
+	// message's CURRENT — most-recently-observed — source folder; FirstFolder is
+	// where it was first captured (the physical, static-page grouping the file
+	// lives under, which a normal run never moves — R13). FirstSeen and LastSeen
+	// bound its observed lifetime, and Present is false once a full mailbox walk
+	// finds it gone (the file is KEPT — that is a timeline event, not a
+	// redaction). A pre-v4 record gets these filled at load (Present=true,
+	// FirstFolder=Folder, FirstSeen=LastSeen=ExportedAt — GB-05); the live path
+	// maintains them thereafter through MergeFields and CollapseByIdentity. The
+	// times serialize like ExportedAt (a zero time is rendered, not omitted);
+	// FirstFolder and Present carry omitempty so a folder-scoped local record,
+	// which uses neither, stays compact.
+	FirstFolder string    `json:"first_folder,omitempty"`
+	FirstSeen   time.Time `json:"first_seen,omitempty"`
+	LastSeen    time.Time `json:"last_seen,omitempty"`
+	Present     bool      `json:"present,omitempty"`
 }
 
 // FileDigest is the recorded fixity of one exported file: the sha256 (hex) of
@@ -144,9 +168,48 @@ type Manifest struct {
 	// the map was already canonical.
 	StoresMigrated int `json:"-"`
 
+	// LoadedVersion is the format version integer read from disk, BEFORE Load
+	// upgrades Version to the current constant. The live path reads it to decide
+	// whether the fingerprint-safe v3→v4 collapse (CollapseByIdentity) still owes
+	// a run (LoadedVersion < 4); it is manifestVersion for a fresh/empty archive.
+	LoadedVersion int `json:"-"`
+
+	// Collapsed counts the manifest rows unified away by the last
+	// CollapseByIdentity call (each a move-duplicate merged into its surviving
+	// sibling). The live path logs "collapsed N move-duplicates by identity".
+	Collapsed int `json:"-"`
+
 	// byPath is a lazily built reverse index (export path → key) used to
 	// detect a file-stem collision between two different keys (R4).
 	byPath map[string]string
+
+	// byIdent is the mailbox-wide identity index (message identity → every
+	// manifest key carrying it, with that key's fingerprint), built at load and
+	// maintained on Add/Delete. The live path looks a candidate's Message-ID up
+	// here to find an already-archived sibling before download (R17) and to let a
+	// move-collapsed record coexist with its #fp-qualified siblings (§3.1/§3.2).
+	byIdent map[string][]IdentRef
+}
+
+// IdentRef pairs a manifest key with its record's content fingerprint, the value
+// type of the mailbox-wide identity index (see KeysForIdentity).
+type IdentRef struct {
+	Key         string
+	Fingerprint string
+}
+
+// CollapseLoss records one manifest row dropped by CollapseByIdentity: its own
+// key and export path (the file is LEFT ON DISK — R13; `verify` reports it as
+// unexpected until a reconcile sweeps it), the folder it occupied, its capture
+// time, and the key of the surviving sibling that now represents the message.
+// The caller records each as a history folder-assertion event (so no location is
+// lost — §3.1) and prunes the loser's index row; no message is silently dropped.
+type CollapseLoss struct {
+	LoserKey    string
+	LoserPath   string
+	Folder      string
+	ExportedAt  time.Time
+	SurvivorKey string
 }
 
 // Key builds the manifest key for a message. The token scopes identity to the
@@ -156,6 +219,21 @@ type Manifest struct {
 // it has already written.
 func Key(token, folderPath, identity string) string {
 	return token + keySeparator + folderPath + keySeparator + identity
+}
+
+// LiveKey builds the mailbox-wide physical key for a message captured from a
+// live source (Graph; IMAP later): token\x00identity, with NO folder component.
+// One message is stored once per mailbox (R3 reworded); its folder over time is
+// carried in the record (Folder/FirstFolder) and the history log, not in the
+// key, so a folder MOVE is a field/log update rather than a second archived copy
+// (§3.1). Qualify appends a content fingerprint exactly as for a folder-scoped
+// Key, filing a genuinely different message that reused a Message-ID under its
+// own #fp key (R1). A live key holds ONE NUL; because v4 key-format
+// discrimination is now version-gated (see Load), that single NUL is never
+// mistaken for a legacy v2 folder\x00identity key and re-scoped. Folder-scoped
+// Key is retained for one-shot local imports, which keep per-folder copies.
+func LiveKey(token, identity string) string {
+	return token + keySeparator + identity
 }
 
 // Qualify appends a content fingerprint to a manifest key with the NUL
@@ -356,7 +434,7 @@ func firstSegment(path string) string {
 // Load reads the manifest at path. A missing file yields an empty manifest
 // bound to that path (so a later Save creates it).
 func Load(path string) (*Manifest, error) {
-	m := &Manifest{path: path, Version: manifestVersion, Entries: map[string]Record{}}
+	m := &Manifest{path: path, Version: manifestVersion, LoadedVersion: manifestVersion, Entries: map[string]Record{}, byIdent: map[string][]IdentRef{}}
 
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -382,6 +460,9 @@ func Load(path string) (*Manifest, error) {
 	if m.Version > manifestVersion {
 		return nil, fmt.Errorf("manifest %s was written by a newer mailarchive (format version %d; this build understands %d): upgrade this copy of mailarchive, or point -out at an archive this version wrote", path, m.Version, manifestVersion)
 	}
+	// Remember the on-disk version before any upgrade rewrites it: the live path
+	// consults LoadedVersion to know whether the v3→v4 collapse still owes a run.
+	m.LoadedVersion = m.Version
 	// A version-1 file — written before completeness tracking, or rewritten by
 	// an older binary after a downgrade — cannot say which entries are
 	// incomplete. Never assume "complete": mark every record with the unknown
@@ -399,12 +480,17 @@ func Load(path string) (*Manifest, error) {
 	}
 	// v2→v3 re-scope: every key holding exactly one NUL is a v2 key and is
 	// re-keyed by its record's own store (the first segment of its path), so the
-	// same mail archived from two stores stops colliding (R6). Content-driven,
-	// not version-gated: a v2 excursion by an old binary (which regresses the
-	// file to version 2 and writes one-NUL keys) is repaired by the next v3
-	// load, and a key already holding two NULs is left exactly as it is —
-	// idempotent, never double-prefixed (FC1).
-	if len(m.Entries) > 0 {
+	// same mail archived from two stores stops colliding (R6). VERSION-gated on
+	// the stored version integer (< 3), not on the NUL count: a v4 live key
+	// (token\x00identity) legitimately holds ONE NUL, so a content-driven rule
+	// would mistake it for a v2 folder\x00identity key and wrongly re-scope it
+	// (GB-01/F1). Gating on the version means a v2 excursion by an old binary
+	// (which regresses the file to version 2 and writes one-NUL keys) is still
+	// repaired by the next load, while a v3/v4 key is left exactly as it is —
+	// idempotent, never double-prefixed, and a folder-less live key is never
+	// touched (FC1). Within a v2 file MigrateKey still discriminates per key by
+	// content, so a mixed-key excursion re-scopes only its one-NUL rows.
+	if m.LoadedVersion < 3 && len(m.Entries) > 0 {
 		type rekey struct {
 			oldKey, newKey string
 			rec            Record
@@ -427,6 +513,30 @@ func Load(path string) (*Manifest, error) {
 				m.Entries[rk.newKey] = rk.rec
 			}
 			m.Rekeyed++
+		}
+	}
+	// v3→v4 timeline defaults: a pre-v4 record has none of the folder-over-time
+	// fields, so seed them from what it already knows — Present=true (a walk has
+	// not yet found it gone), FirstFolder=Folder (the folder it was captured in),
+	// FirstSeen=LastSeen=ExportedAt (its capture time bounds a one-observation
+	// lifetime) — GB-05. Version-gated on the stored version so a genuine v4
+	// record's maintained fields (a Present=false gone message, a distinct
+	// FirstFolder) are never stomped on reload. This is always safe: it only
+	// fills empty fields and never merges records — the fingerprint-safe collapse
+	// of move-duplicates is CollapseByIdentity, confined to the live path (§3.6).
+	if m.LoadedVersion < 4 {
+		for key, r := range m.Entries {
+			if r.FirstFolder == "" {
+				r.FirstFolder = r.Folder
+			}
+			if r.FirstSeen.IsZero() {
+				r.FirstSeen = r.ExportedAt
+			}
+			if r.LastSeen.IsZero() {
+				r.LastSeen = r.ExportedAt
+			}
+			r.Present = true
+			m.Entries[key] = r
 		}
 	}
 	// Canonicalize/validate the store id map (INT-CC-1/INS2-1). Existing archives
@@ -467,6 +577,7 @@ func Load(path string) (*Manifest, error) {
 	if m.Version < manifestVersion {
 		m.Version = manifestVersion
 	}
+	m.buildIdentIndexLocked()
 	return m, nil
 }
 
@@ -498,6 +609,7 @@ func (m *Manifest) Add(key string, r Record) {
 			m.byPath[r.Path] = key
 		}
 	}
+	m.identUpsertLocked(key, r.Fingerprint)
 	m.Entries[key] = r
 }
 
@@ -616,6 +728,7 @@ func (m *Manifest) Delete(key string) {
 			delete(m.byPath, old.Path)
 		}
 	}
+	m.identRemoveLocked(key)
 	delete(m.Entries, key)
 }
 
@@ -624,6 +737,278 @@ func (m *Manifest) Len() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return len(m.Entries)
+}
+
+// MergeFields applies a fresh observation to the record at key WITHOUT rebuilding
+// it: it rewrites only the mutable timeline fields — Folder (the current source
+// folder), LastSeen, Present — and leaves every capture-time field untouched
+// (Path, Fixity, Fingerprint, ExportedAt, the completeness lists, and the
+// set-once FirstFolder/FirstSeen). It is the no-download move merge (§3.2): a
+// moved message keeps its first-captured file and its recorded fixity while its
+// folder over time is tracked. The key and fingerprint are unchanged, so the
+// identity index is unaffected. Returns false if key is absent.
+func (m *Manifest) MergeFields(key, folder string, seen time.Time, present bool) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.Entries[key]
+	if !ok {
+		return false
+	}
+	r.Folder = folder
+	r.LastSeen = seen
+	r.Present = present
+	m.Entries[key] = r
+	return true
+}
+
+// KeysForIdentity returns every (key, fingerprint) sharing the message identity
+// (Message-ID, or the content-hash identity when absent), so the live path can
+// find an already-archived sibling before download (R17) and let a
+// move-collapsed record coexist with its #fp-qualified siblings. The result is a
+// fresh copy, safe to range while the manifest is separately mutated.
+func (m *Manifest) KeysForIdentity(identity string) []IdentRef {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.byIdent == nil {
+		m.buildIdentIndexLocked()
+	}
+	src := m.byIdent[identity]
+	out := make([]IdentRef, len(src))
+	copy(out, src)
+	return out
+}
+
+// CollapseByIdentity performs the fingerprint-safe v3→v4 collapse (§3.1): it
+// re-keys every folder-scoped v3 record to the mailbox-wide LiveKey(token,
+// identity) form and unifies records that share a (token, identity) AND a
+// non-empty stored Fingerprint into ONE record — the survivor keeps the
+// first-captured file and FirstFolder/FirstSeen (earliest ExportedAt, then
+// lexical key), while its current Folder/LastSeen follow the most-recently-
+// observed sibling and Present becomes true. Records reusing one Message-ID with
+// a DIFFERENT fingerprint are genuinely different messages: they stay separate
+// #fp-qualified siblings, never merged (no silent drop — R1). An empty
+// fingerprint proves nothing, so an empty-fingerprint record is never collapsed
+// with another (also R1-safe). Each unified-away loser is returned as a
+// CollapseLoss so the caller records a history folder-assertion (no location
+// lost) and prunes its index row; the loser file stays on disk (R13). The
+// identity index is rebuilt. It assumes v3-form input and so is confined to the
+// live path (LoadedVersion < 4); a one-shot local import keeps its folder-scoped
+// keys and R3 by never calling it (§3.6).
+func (m *Manifest) CollapseByIdentity() []CollapseLoss {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.Entries) == 0 {
+		m.Collapsed = 0
+		return nil
+	}
+
+	type member struct {
+		oldKey string
+		rec    Record
+	}
+	type gid struct{ token, identity string }
+
+	groups := map[gid][]member{}
+	newEntries := make(map[string]Record, len(m.Entries))
+	for k, r := range m.Entries {
+		parts := strings.Split(k, keySeparator)
+		if len(parts) < 3 {
+			// Not a v3 folder-scoped key (e.g. an already-collapsed live key):
+			// keep it verbatim. Under the caller's LoadedVersion<4 gate the input
+			// is pure v3, so this is defensive only.
+			newEntries[k] = r
+			continue
+		}
+		g := gid{token: parts[0], identity: parts[2]}
+		groups[g] = append(groups[g], member{oldKey: k, rec: r})
+	}
+
+	// Deterministic group order so the collapse is reproducible.
+	gids := make([]gid, 0, len(groups))
+	for g := range groups {
+		gids = append(gids, g)
+	}
+	sort.Slice(gids, func(i, j int) bool {
+		if gids[i].token != gids[j].token {
+			return gids[i].token < gids[j].token
+		}
+		return gids[i].identity < gids[j].identity
+	})
+
+	var losses []CollapseLoss
+	for _, g := range gids {
+		members := groups[g]
+
+		// Partition into fingerprint sub-groups: equal NON-EMPTY fingerprints
+		// share a sub-group (same message, e.g. moved between folders); each
+		// empty-fingerprint member is its own sub-group (an absent fingerprint
+		// cannot prove sameness — never merge it, R1).
+		type sub struct {
+			fp      string
+			members []member
+		}
+		byFP := map[string]int{}
+		var subs []*sub
+		for _, mem := range members {
+			fp := mem.rec.Fingerprint
+			if fp == "" {
+				subs = append(subs, &sub{fp: "", members: []member{mem}})
+				continue
+			}
+			if idx, ok := byFP[fp]; ok {
+				subs[idx].members = append(subs[idx].members, mem)
+			} else {
+				byFP[fp] = len(subs)
+				subs = append(subs, &sub{fp: fp, members: []member{mem}})
+			}
+		}
+
+		// One survivor per sub-group.
+		type survivor struct {
+			fp        string
+			rec       Record
+			firstKey  string
+			firstSeen time.Time
+			losers    []member
+		}
+		var survivors []survivor
+		for _, sg := range subs {
+			ms := sg.members
+			sort.Slice(ms, func(i, j int) bool {
+				ti, tj := ms[i].rec.ExportedAt, ms[j].rec.ExportedAt
+				if !ti.Equal(tj) {
+					return ti.Before(tj)
+				}
+				return ms[i].oldKey < ms[j].oldKey
+			})
+			earliest := ms[0]
+			latest := ms[0]
+			for _, x := range ms[1:] {
+				if x.rec.ExportedAt.After(latest.rec.ExportedAt) {
+					latest = x
+				}
+			}
+			rec := earliest.rec // first file wins: keeps Path/Fixity/Fingerprint/completeness
+			rec.FirstFolder = earliest.rec.Folder
+			rec.FirstSeen = earliest.rec.ExportedAt
+			rec.Folder = latest.rec.Folder
+			rec.LastSeen = latest.rec.ExportedAt
+			rec.Present = true
+			survivors = append(survivors, survivor{
+				fp: sg.fp, rec: rec, firstKey: earliest.oldKey,
+				firstSeen: earliest.rec.ExportedAt, losers: ms[1:],
+			})
+		}
+
+		// The earliest survivor takes the base live key; the rest are its
+		// #fp-qualified siblings (distinct messages that reused the identity).
+		sort.Slice(survivors, func(i, j int) bool {
+			if !survivors[i].firstSeen.Equal(survivors[j].firstSeen) {
+				return survivors[i].firstSeen.Before(survivors[j].firstSeen)
+			}
+			return survivors[i].firstKey < survivors[j].firstKey
+		})
+		base := LiveKey(g.token, g.identity)
+		for i := range survivors {
+			s := &survivors[i]
+			nk := base
+			if i > 0 {
+				if s.fp != "" {
+					nk = Qualify(base, s.fp)
+				} else {
+					// An empty-fingerprint non-first survivor cannot be #fp-split;
+					// qualify by a deterministic token of its own key so it still
+					// survives under a unique key (no drop). Pathological — a genuine
+					// v3 archive fingerprints every record.
+					nk = Qualify(base, util.HashHex(s.firstKey, 8))
+				}
+			}
+			newEntries[nk] = s.rec
+			for _, l := range s.losers {
+				losses = append(losses, CollapseLoss{
+					LoserKey: l.oldKey, LoserPath: l.rec.Path, Folder: l.rec.Folder,
+					ExportedAt: l.rec.ExportedAt, SurvivorKey: nk,
+				})
+			}
+		}
+	}
+
+	m.Entries = newEntries
+	m.byPath = nil // export paths unchanged, but the reverse map is rebuilt lazily
+	m.buildIdentIndexLocked()
+	m.Collapsed = len(losses)
+	return losses
+}
+
+// identityOf returns the second NUL-delimited component of a manifest key: the
+// message identity of a live-path key (token\x00identity[\x00fp]) — and the
+// folder of a folder-scoped local key (token\x00folder\x00identity[\x00fp]),
+// which is harmless noise in the mailbox-wide index because that index is
+// consulted only on the live path. Empty for a key with no separator.
+func identityOf(key string) string {
+	i := strings.IndexByte(key, keySeparator[0])
+	if i < 0 {
+		return ""
+	}
+	rest := key[i+1:]
+	if j := strings.IndexByte(rest, keySeparator[0]); j >= 0 {
+		return rest[:j]
+	}
+	return rest
+}
+
+// buildIdentIndexLocked rebuilds the mailbox-wide identity index from Entries.
+// The caller either holds m.mu or is Load (single-threaded construction).
+func (m *Manifest) buildIdentIndexLocked() {
+	m.byIdent = make(map[string][]IdentRef, len(m.Entries))
+	for k, r := range m.Entries {
+		id := identityOf(k)
+		if id == "" {
+			continue
+		}
+		m.byIdent[id] = append(m.byIdent[id], IdentRef{Key: k, Fingerprint: r.Fingerprint})
+	}
+}
+
+// identUpsertLocked records (key, fp) in the identity index, replacing any prior
+// fingerprint for the same key. The caller holds m.mu.
+func (m *Manifest) identUpsertLocked(key, fp string) {
+	if m.byIdent == nil {
+		m.buildIdentIndexLocked()
+	}
+	id := identityOf(key)
+	if id == "" {
+		return
+	}
+	lst := m.byIdent[id]
+	for i := range lst {
+		if lst[i].Key == key {
+			lst[i].Fingerprint = fp
+			return
+		}
+	}
+	m.byIdent[id] = append(lst, IdentRef{Key: key, Fingerprint: fp})
+}
+
+// identRemoveLocked drops key from the identity index. The caller holds m.mu.
+func (m *Manifest) identRemoveLocked(key string) {
+	if m.byIdent == nil {
+		return
+	}
+	id := identityOf(key)
+	if id == "" {
+		return
+	}
+	lst := m.byIdent[id]
+	for i := range lst {
+		if lst[i].Key == key {
+			m.byIdent[id] = append(lst[:i], lst[i+1:]...)
+			if len(m.byIdent[id]) == 0 {
+				delete(m.byIdent, id)
+			}
+			return
+		}
+	}
 }
 
 // Save writes the manifest atomically (temp file + rename) so a crash mid-write
