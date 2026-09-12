@@ -36,6 +36,16 @@ body). Any SQLite tool can query it. With the mailarchive program:
   mailarchive search -out <this folder> words...
 Without it: use your system's file search over the .html files, or ripgrep.
 
+Going back in time: for an archive of a live mailbox (Microsoft 365 via Graph),
+"mailarchive serve" also offers a point-in-time view: pick a past date and see
+the folders and messages as they stood then, including mail later deleted from
+the mailbox. It reads the timeline in .mailarchive-history.jsonl. This date
+view is offered only by "serve"; the pages here on disk always show each
+message in the folder it was FIRST archived in, and never change. To remove a
+message from the archive at every date, delete its files here and then run
+"mailarchive reindex -out <this folder>" — that redacts it across all dates. A
+normal run never deletes a message file.
+
 Transport headers: each message page has a collapsed panel labelled
 "Transport headers as stored (unverified)" — the raw delivery headers
 (Received, Authentication-Results, …) as received. They are shown for
@@ -58,6 +68,9 @@ Housekeeping files (safe to leave alone):
   .mailarchive-lastverify.json record of the last verify (when it ran, whether
                                every file was intact)
   .mailarchive-schedule.json   the recurring-backup descriptor, if one was set
+  .mailarchive-history.jsonl   the go-back timeline: what changed each run (a
+                               live capture writes it); append-only, read by
+                               "mailarchive serve" for the point-in-time view
   attachments-report.tsv       messages whose attachments or bodies could
                                not be captured (opens in a spreadsheet);
                                absent when there is nothing to report

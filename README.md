@@ -255,12 +255,19 @@ does this automatically across every mailbox it finds.
 
 ### Incremental model, and what "missing content" means
 
-Each exported message is recorded in the manifest under a key of
-`store` + `folder path` + its identity (the RFC 5322 **Message-ID**, or a content
-hash when absent). Scoping by store and folder means the same email filed in two
-folders — or the same mailbox archived twice into one `-out` — is kept in each
-place, while a re-run still skips each `(store, folder, message)` it already wrote. Two *different* messages that share one Message-ID in a folder
-are both kept.
+Each exported message is recorded in the manifest under a key built from its
+`store` and its identity (the RFC 5322 **Message-ID**, or a content hash when
+absent). A **live** source (Microsoft 365 via Graph) is keyed **per mailbox**:
+one physical copy of each message, wherever it is filed, with the folder it lives
+in recorded over time — so moving a message between folders updates the record
+in place (no second copy, nothing re-downloaded) and the served view follows it
+(see [Going back in time](#going-back-in-time-point-in-time-view)). A **one-shot
+local import** (a `.pst`, mbox, or maildir) additionally scopes the key by
+**folder**, so the same email filed in two folders — or the same mailbox
+imported twice into one `-out` — is kept in each place; a re-run still skips each
+`(store, folder, message)` it already wrote. In either case two *different*
+messages that happen to share one Message-ID are both kept (each on its own key),
+never silently merged.
 
 The manifest also records **what each message is missing**. An IMAP account
 (Thunderbird, Evolution) or a windowed Outlook `.ost` holds mail locally only on
@@ -346,6 +353,113 @@ whoever inherits it.
 Indexing and page generation are on by default; disable with `-index=false` /
 `-pages=false`. The index is pure-Go SQLite (`modernc.org/sqlite`), so it still
 cross-compiles to the Windows binary with no cgo.
+
+## Going back in time (point-in-time view)
+
+A scheduled **live** capture does more than keep the archive current — it records
+a **timeline**, so `serve` can show what the mailbox looked like on a past date,
+Wayback-style. On the search-and-read page a **Go back in time →** link opens
+`/goback`: a date track of the days the archive was captured (newest first) and,
+for each, the folders and messages as they stood that day. A full how-to is in
+[`docs/goback.md`](docs/goback.md).
+
+Two projections, both rendered by `serve`:
+
+- **Current** (`/goback`) — every message under the folder it lives in **now**,
+  with messages that have since left the mailbox hidden. This *follows the live
+  mailbox*: a message moved from Inbox to a project folder shows under the
+  project folder.
+- **As of a date** (`/goback?at=2026-07-15`, or click a date in the track) — the
+  timeline folded to the end of that day: each message under the folder it was in
+  **then**, including a message that has since been deleted online (shown under
+  its last-known folder for any date before it went away, and again after a
+  restore).
+
+**This is a `serve` feature only.** The static `index.html` and folder pages you
+open straight from disk — with no tool at all — always group each message under
+the folder it was **first captured** in, and never change: they follow neither a
+move nor the date track. That is deliberate. Those pages carry no script, which
+is what keeps them safe to open from a file system (see [Safe to open from
+disk](#safe-to-open-from-disk)); the current-follows-the-mailbox and go-back
+views are computed by the running server, so they exist only while `serve` runs.
+There is no offline time slider.
+
+### Where the timeline comes from
+
+A live capture — `mailarchive graph` today (IMAP later) — writes an append-only
+log, `.mailarchive-history.jsonl`, beside the manifest. Each run appends only
+what changed since the last: a message newly seen, one that moved folders, one
+that is **gone** (present last run, absent now), and one that is **present
+again**. A **one-shot local import** (a `.pst`, mbox, or maildir) records no
+timeline — its identity is folder-scoped and it has no notion of "the same
+mailbox over time" — so go-back is a live-source feature. When there is no
+timeline, `serve` says so ("Go-back is unavailable … showing the current mailbox
+only") rather than pretending.
+
+### Granularity is your run cadence — so fetch daily
+
+Go-back can only distinguish the days it actually observed. A message that
+appeared and was deleted **between** two runs is never seen; a move is dated to
+the run that first observed it, not to the moment it happened. **The remedy is to
+capture daily** — `schedule` defaults to a daily run for exactly this reason:
+
+```sh
+mailarchive schedule -interval daily -at 03:00 -install -- graph -out ./archive \
+  -tenant T -client-id ID -mailbox a@org -client-secret-file ~/.config/mailarchive/graph.secret
+```
+
+The finer your cadence, the finer the timeline; daily is the recommended floor.
+
+### Two meanings of "gone"
+
+It matters which one you mean:
+
+1. **Deleted from the mailbox** — a *timeline event*. The message's archived file
+   is **kept on disk**. It disappears from the *current* view, but any past date
+   **before** the deletion still shows it, under the folder it lived in then.
+   Nothing is destroyed; the archive is a superset of the live mailbox over time.
+   If it comes back later (restored from Deleted Items), a *present-again* event
+   is recorded and the timeline reads absent only between the two.
+2. **Removed from the archive** — a *redaction*. You delete the exported files
+   yourself, then run `reindex`. Now the message shows at **no** date. `serve`
+   intersects every date's view with the files actually on disk, so deleting the
+   files alone already hides it everywhere; `reindex` then compacts the log,
+   dropping that message's events so the redaction is permanent across all dates.
+   This is how you take something out of the archive for good.
+
+The archive never deletes a message file on its own (only a normal run keeps
+every file, R13) — a redaction is always something *you* do.
+
+### Deleted Items and Junk are excluded by default
+
+So that the everyday "delete a message" — which, in Outlook/Exchange, *moves* it
+to Deleted Items — does not fill the archive with trash, a `graph` capture
+**skips the Deleted Items and Junk Email folders by default**, by their resolved
+well-known-folder ids (so it holds whatever language the mailbox is in). A
+message you delete therefore becomes **gone** in the timeline (its earlier copy
+kept, per above), not re-captured under Deleted Items. To archive those folders
+too, pass `-include-deleted` / `-include-junk`; their messages are then captured
+and timelined like any other. The CLI, the GUI and `schedule` all surface this
+choice — see [Server-side
+archiving](#server-side-archiving-microsoft-365-via-graph).
+
+### Upgrading an older archive (format v4)
+
+The timeline comes with a manifest **format v4**. The first run of this version
+over an older archive migrates the manifest **once**, in place — filling in the
+per-message timeline fields (each existing message is marked present, in its
+current folder, first seen when it was captured) — and nothing on disk is renamed
+or rewritten. From then on a live capture keeps one copy per message and records
+moves in place rather than making a duplicate. The forward guard refuses any
+archive whose stored version is above 4, so an older binary cannot silently
+corrupt a v4 archive. As with every format bump, **do not run an older
+`mailarchive` against a v4 archive** (see [Upgrading an existing
+archive](#upgrading-an-existing-archive)).
+
+`mailarchive status` reports the timeline's health on a **History** line (how
+many runs and events, GREEN, or a WARN/RED with a remedy if the log is torn or
+unreadable); `serve` announces "go-back partial" rather than silently showing
+current-only when the log is damaged.
 
 ## Server-side archiving (Microsoft 365 via Graph)
 
@@ -600,6 +714,14 @@ a second, duplicate copy of each touched message. This version repairs such an
 excursion by content on its next run (the old-shape entries are re-scoped and
 de-duplicated), but the leftover duplicate files remain on disk — so the safe
 rule is to upgrade every machine that writes the same archive.
+
+This version also adds the go-back **timeline** and, with it, a manifest **format
+v4**. From now on a **live** (`graph`) capture keeps a single copy of each
+message and records the folder it lives in over time, so a message that moves
+between folders updates its record in place rather than making a second copy —
+and the forward guard refuses any archive whose stored version is above 4, so an
+older binary cannot silently corrupt a v4 archive. See [Going back in
+time](#going-back-in-time-point-in-time-view) for what the timeline gives you.
 
 The re-scope re-exports nothing, so it does not backfill fixity: the legacy
 bytes are recorded, not re-hashed, so they cannot be attested as pristine. A

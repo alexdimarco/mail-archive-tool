@@ -41,6 +41,10 @@ func TestArchiveCarriesReadme(t *testing.T) {
 		".mailarchive-lastrun.json", ".mailarchive-lastverify.json",
 		".mailarchive-schedule.json", "BACKUP-NEEDS-ATTENTION.txt",
 		"ARCHIVE-INTEGRITY-ATTENTION.txt",
+		// go-back (slice E, design T8): the timeline file is named, serve's
+		// point-in-time view is described, and the reindex redaction is spelled
+		// out (delete files + reindex removes a message across all dates).
+		".mailarchive-history.jsonl", "point-in-time", "mailarchive reindex -out",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("README.txt lacks %q", want)
