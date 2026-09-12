@@ -223,14 +223,25 @@ is folded), never a lost move.
   deleted by this (R13): a collapsed duplicate's copy stays on disk and is reached
   only by a later redaction.
 - **A reused Message-ID can hide a distinct message (rare).** Capture recognises
-  an already-archived message by its Internet-Message-ID, so if a *genuinely
-  different* message reuses an id already in the archive, a live `graph` run skips
-  it without capturing it — a bounded gap that matters only for deliberately
-  crafted or malfunctioning mail. Where the archive already holds two distinct
-  messages under one id (e.g. from an older import), `graph` notes the reuse in
-  its run log. A one-shot local import or a full run splits distinct reuses by
-  content and keeps both. Detecting a distinct reuse *before* download on Graph
-  (so it is always captured) is a planned enhancement.
+  an already-archived message by its Internet-Message-ID. If a *genuinely
+  different* message reuses an id already in the archive, the tool cannot always
+  tell it apart, so a handful of bounded, documented gaps exist — all rare (they
+  need a deliberately crafted or malfunctioning reused id) and **none deletes a
+  file**:
+    - A live `graph` run **skips** the distinct reuse without capturing it (it
+      looks already-archived). Where the archive already holds two distinct
+      messages under one id, `graph` notes the reuse in its run log.
+    - Upgrading an older archive that holds two distinct copies of a reused id
+      distinguishes them by their preserved `.eml` (a `-raw` archive) or a
+      differing envelope, keeping both; but two copies with an *identical*
+      envelope and *no* `.eml` may be merged so one drops from search/browse.
+    - A `-mode full` re-export over such an archive may **overwrite** the
+      search/browse record of a copy whose live message is gone — but that copy's
+      **file is never deleted** (it stays on disk and `mailarchive verify` flags
+      it), so nothing is lost irrecoverably.
+  Detecting a distinct reuse as its own physical message *before* download on
+  Graph (via the mailbox's immutable message id) — which closes all of the above —
+  is a planned enhancement.
 - **Static pages stay first-captured.** The offline pages never follow moves or
   offer a slider; only `serve` does. This is deliberate (no script offline).
 - **A move is inferred, not a server event.** The tool notices a message is in a
