@@ -142,23 +142,30 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 			collapseTokens = append(collapseTokens, tok)
 		}
 	}
-	if len(collapseTokens) > 0 {
-		// Merge two same-(token,identity) records only when their archived files are
-		// byte-identical (a real move-duplicate): the fingerprint excludes bodies,
-		// so two distinct reuses of one Message-ID with an identical envelope must
-		// NOT be merged away (R1). Size-check first, then compare bytes.
-		sameContent := func(relA, relB string) bool {
-			a := filepath.Join(opts.Out, filepath.FromSlash(relA))
-			b := filepath.Join(opts.Out, filepath.FromSlash(relB))
-			fa, ea := os.Stat(a)
-			fb, eb := os.Stat(b)
-			if ea != nil || eb != nil || fa.Size() != fb.Size() {
-				return false
-			}
-			ba, e1 := os.ReadFile(a)
-			bb, e2 := os.ReadFile(b)
-			return e1 == nil && e2 == nil && bytes.Equal(ba, bb)
+	// If a search index EXISTS on disk but is not open this run (-index=false), a
+	// collapse would re-key the manifest to LiveKeys while leaving the index at its
+	// v3 folder-scoped keys — a permanent desync (a later reindex redaction would
+	// miss the stale search rows, and search would keep the un-collapsed duplicate).
+	// Defer the collapse (leave the token owing it) to a run that can re-key the
+	// index in step.
+	if len(collapseTokens) > 0 && idx == nil {
+		if _, statErr := os.Stat(filepath.Join(opts.Out, "search.db")); statErr == nil {
+			logger.Printf("deferring the one-time v3→v5 identity-collapse: a search index exists but is not open this run — re-run with -index so the manifest and index are re-keyed together")
+			collapseTokens = nil
 		}
+	}
+	if len(collapseTokens) > 0 {
+		// Decide whether two same-(token,identity) records are one move-duplicate
+		// (merge) or two distinct reuses (keep both). The rendered .html is NOT a
+		// valid discriminator — the same message rendered in two folders differs
+		// (folder breadcrumb, depth-dependent relative paths, key-derived attachment
+		// names), so comparing it would wrongly split genuine move-duplicates (R3).
+		// Compare the PRESERVED .eml instead — the raw wire bytes, identical for one
+		// message wherever it is filed. When a -raw .eml is absent for either copy
+		// we cannot content-compare, so we MERGE (the common move-duplicate case);
+		// the residual — two distinct same-envelope/different-body reuses in a
+		// non-raw archive — is rare and closed by the deferred ImmutableId closure.
+		sameContent := func(relA, relB string) bool { return sameArchivedEML(opts.Out, relA, relB) }
 		losses, remap := manifest.CollapseByIdentity(sameContent, collapseTokens...)
 		if len(remap) > 0 || len(losses) > 0 {
 			if idx != nil {
@@ -566,4 +573,29 @@ func runGraphMailbox(ctx context.Context, client *graph.Client, exp *export.Expo
 		logger.Printf("mailbox %s: %d message(s) gone from the live mailbox (files kept)", mailbox, len(gone))
 	}
 	return nil
+}
+
+// sameArchivedEML reports whether two archived messages (given by their .html
+// paths relative to out) are the SAME message — by comparing their preserved
+// .eml (raw wire bytes, identical wherever a message is filed). The rendered
+// .html must NOT be used: it embeds the folder breadcrumb, depth-dependent
+// relative paths and key-derived attachment names, so one message's two
+// folder-copies differ. When a -raw .eml is absent for either copy there is
+// nothing to compare, so they are treated as a move-duplicate (the common case);
+// the residual — two distinct same-envelope/different-body reuses in a non-raw
+// archive — is closed by the deferred ImmutableId closure.
+func sameArchivedEML(out, relHTMLa, relHTMLb string) bool {
+	emlA := filepath.Join(out, filepath.FromSlash(strings.TrimSuffix(relHTMLa, ".html")+".eml"))
+	emlB := filepath.Join(out, filepath.FromSlash(strings.TrimSuffix(relHTMLb, ".html")+".eml"))
+	fa, ea := os.Stat(emlA)
+	fb, eb := os.Stat(emlB)
+	if ea != nil || eb != nil {
+		return true // no raw bytes to compare → treat as a move-duplicate
+	}
+	if fa.Size() != fb.Size() {
+		return false
+	}
+	ba, e1 := os.ReadFile(emlA)
+	bb, e2 := os.ReadFile(emlB)
+	return e1 == nil && e2 == nil && bytes.Equal(ba, bb)
 }
