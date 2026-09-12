@@ -40,6 +40,12 @@ func New(outDir string, ix *index.Index) http.Handler {
 		w.Write([]byte(appJS))
 	})
 
+	// The go-back (point-in-time) view: current mailbox and any ?at=<date>,
+	// rendered server-side over the manifest + folded history, intersected with
+	// the files on disk (design §3.4). It carries no script (see gobackCSP).
+	gb := &gobackServer{outDir: outDir, ix: ix}
+	mux.HandleFunc("/goback", gb.serveGoback)
+
 	mux.HandleFunc("/api/search", func(w http.ResponseWriter, r *http.Request) {
 		q := parseQuery(r)
 		results, total, err := ix.Search(q)
@@ -81,6 +87,11 @@ const (
 	uiCSP = "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'self'; img-src data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
 	// apiCSP: JSON is never a document; deny everything, never framed.
 	apiCSP = "default-src 'none'; frame-ancestors 'none'"
+	// gobackCSP governs the point-in-time page: it is fully server-rendered and
+	// carries NO script at all (default-src 'none' blocks script; only inline
+	// styles are allowed), so a hostile folder name or subject folded into it can
+	// never execute even if escaping regressed (R19, defence in depth).
+	gobackCSP = "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
 )
 
 // secureHeaders sets a Content-Security-Policy on every response — the archive
@@ -96,6 +107,8 @@ func secureHeaders(next http.Handler) http.Handler {
 			h.Set("Content-Security-Policy", export.ArchiveCSP)
 		case strings.HasPrefix(r.URL.Path, "/api/"):
 			h.Set("Content-Security-Policy", apiCSP)
+		case r.URL.Path == "/goback":
+			h.Set("Content-Security-Policy", gobackCSP)
 		default:
 			h.Set("Content-Security-Policy", uiCSP)
 		}

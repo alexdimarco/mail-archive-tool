@@ -59,6 +59,15 @@ type Input struct {
 	HasIndex bool
 	Indexed  int
 
+	// History is the go-back timeline's coverage (design §3.4, X6): whether the
+	// log exists, how many runs and events it records, and whether it carries a
+	// torn tail or an unreadable line. HistoryReadErr is a hard read failure. An
+	// absent log is not a problem (a one-shot local import has none; a live
+	// capture writes it on the next run); a torn tail is a recoverable WARN (the
+	// next run repairs it); a hard read error is a RED.
+	History        state.HistoryStat
+	HistoryReadErr error
+
 	// HasRange and the two bounds are the oldest/newest indexed message dates.
 	HasRange                 bool
 	RangeOldest, RangeNewest time.Time
@@ -235,6 +244,20 @@ func Assess(in Input, now time.Time) Report {
 		if isVerifyJob(in.Desc.Job) && lv.Finished != nil && now.Sub(*lv.Finished) > 2*IntervalOf(in.Desc.Interval) {
 			r.warn("verify_stale", fmt.Sprintf("the last verify was %s ago, more than twice the %s verify schedule period — schedule it, or run `mailarchive verify -out %q`", HumanAge(now.Sub(*lv.Finished)), in.Desc.Interval, in.Out))
 		}
+	}
+
+	// Go-back timeline coverage (design §3.4, X6). An absent log is not a
+	// problem (a one-shot local import has none; a live archive writes it on its
+	// next run), so it never warns. A hard read failure is a RED (a past-date
+	// view is unavailable); a present log with a torn tail is a recoverable WARN
+	// the next run heals; other unreadable lines are a WARN that reindex compacts.
+	switch {
+	case in.HistoryReadErr != nil:
+		r.red("history_unreadable", fmt.Sprintf("the go-back history log %s could not be read (%s) — the point-in-time view is unavailable; run `mailarchive reindex -out %q` to compact and heal the log", filepath.Join(in.Out, state.HistoryName), util.StripControl(in.HistoryReadErr.Error()), in.Out))
+	case in.History.Exists && in.History.TornTail && in.History.BadLines <= 1:
+		r.warn("history_torn_tail", fmt.Sprintf("the go-back history log has a torn tail (a run crashed mid-line) — the next run repairs it, or run `mailarchive reindex -out %q` to compact and heal it now; past-date views may be incomplete until then", in.Out))
+	case in.History.Exists && (in.History.BadLines > 0 || in.History.TornTail):
+		r.warn("history_corrupt", fmt.Sprintf("the go-back history log has %d unreadable line(s) — those events are skipped, so past-date views may be incomplete; run `mailarchive reindex -out %q` to compact the log", in.History.BadLines, in.Out))
 	}
 
 	// Schedule.
@@ -496,6 +519,7 @@ func Gather(out, nameOverride string) Input {
 		}
 		ix.Close()
 	}
+	in.History, in.HistoryReadErr = state.HistoryStatus(filepath.Join(out, state.HistoryName))
 	in.LastRun, in.LastRunState, in.LastRunErr = state.ReadLastRun(out)
 	in.LastVerify, in.LastVerifyState, in.LastVerifyErr = state.ReadLastVerify(out)
 
@@ -586,6 +610,21 @@ func Summary(in Input, rep Report) []string {
 	} else {
 		lines = append(lines, "Messages:   (no manifest yet — no run has completed here)")
 	}
+	// Go-back timeline coverage (design §3.4): the observed run cadence and
+	// whether a past-date view is fully available. Absent is normal for a
+	// one-shot local import.
+	switch {
+	case !in.History.Exists:
+		lines = append(lines, "History:    none recorded — no go-back timeline (a live capture writes it; a one-shot local import has none)")
+	case in.HistoryReadErr != nil:
+		lines = append(lines, "History:    present but unreadable — see the posture below")
+	case in.History.Clean():
+		lines = append(lines, fmt.Sprintf("History:    %d run(s), %d event(s) recorded — go-back available", in.History.Runs, in.History.Events))
+	case in.History.TornTail && in.History.BadLines <= 1:
+		lines = append(lines, fmt.Sprintf("History:    %d run(s), %d event(s) — torn tail, go-back partial (repairs on the next run)", in.History.Runs, in.History.Events))
+	default:
+		lines = append(lines, fmt.Sprintf("History:    %d run(s), %d event(s) — %d unreadable line(s), go-back partial", in.History.Runs, in.History.Events, in.History.BadLines))
+	}
 	switch in.LastRunState {
 	case state.LastRunPresent:
 		lr := in.LastRun
@@ -643,6 +682,7 @@ type JSONReport struct {
 	Unknown     int              `json:"unknown"`
 	Fixity      *JSONFixity      `json:"fixity"`      // fixity COVERAGE; null when no manifest
 	Extractable *JSONExtractable `json:"extractable"` // records with a preserved .eml present on disk (file presence, design K4); null when no manifest
+	History     *JSONHistory     `json:"history"`     // go-back timeline coverage (design §3.4); always present (exists=false when no log)
 	LastRun     *JSONLastRun     `json:"last_run,omitempty"`
 	LastVerify  *JSONLastVerify  `json:"last_verify"` // verify's integrity verdict; null when none recorded
 	Schedule    *JSONSchedule    `json:"schedule,omitempty"`
@@ -662,6 +702,18 @@ type JSONFixity struct {
 type JSONExtractable struct {
 	Records        int `json:"records"`
 	RecordsWithEML int `json:"records_with_eml"`
+}
+
+// JSONHistory is the go-back timeline's coverage (design §3.4): whether the log
+// exists, its run and event counts, and the two damage signals (unreadable
+// lines, a torn tail). A consumer can read `exists && !torn_tail && bad_lines==0`
+// as "go-back fully available".
+type JSONHistory struct {
+	Exists   bool `json:"exists"`
+	Runs     int  `json:"runs"`
+	Events   int  `json:"events"`
+	BadLines int  `json:"bad_lines"`
+	TornTail bool `json:"torn_tail"`
 }
 
 // JSONLastRun is the last-run facet of JSONReport (omitted when no readable
@@ -708,10 +760,10 @@ type JSONSchedule struct {
 
 // JSONVersion is the current JSONReport schema version. Bumped to 2 with the
 // addition of fixity, last_verify and reason_codes and the change of
-// last_run.finished to null-while-running. The `extractable` object is a later,
-// backward-compatible addition at version 2 — a new optional key changes no
-// existing field's meaning, so a version-2 consumer that ignores unknown keys is
-// unaffected and the version is not bumped.
+// last_run.finished to null-while-running. The `extractable` and `history`
+// objects are later, backward-compatible additions at version 2 — a new optional
+// key changes no existing field's meaning, so a version-2 consumer that ignores
+// unknown keys is unaffected and the version is not bumped.
 const JSONVersion = 2
 
 // JSON builds the machine-readable status document from the gathered facts and
@@ -735,6 +787,16 @@ func JSON(in Input, rep Report) JSONReport {
 	}
 	if doc.ReasonCodes == nil {
 		doc.ReasonCodes = []string{}
+	}
+	// Go-back timeline coverage (design §3.4): a new optional key, always
+	// present, that changes no existing field's meaning — so, like `extractable`,
+	// it is a backward-compatible addition and does not bump JSONVersion.
+	doc.History = &JSONHistory{
+		Exists:   in.History.Exists,
+		Runs:     in.History.Runs,
+		Events:   in.History.Events,
+		BadLines: in.History.BadLines,
+		TornTail: in.History.TornTail,
 	}
 	if in.HasManifest {
 		doc.Fixity = &JSONFixity{Records: in.Messages, WithFixity: in.WithFixity}

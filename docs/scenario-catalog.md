@@ -150,6 +150,23 @@ an invariant is the thing that is wrong.
   extractable) or `1` (refusal/error). Capture and `verify` warn when a
   raw-capable source is archived WITHOUT `-raw`, so the dependency is visible
   before the source is deleted.
+- **R21 — Point-in-time truth (go-back).** The served point-in-time view shows
+  exactly the messages present on disk projected to the chosen date: `serve`
+  renders the current mailbox (each message under its current folder, departed
+  messages hidden) and any `?at=D` (the append-only history log folded to D, each
+  message under its then-folder), each intersected with the files actually on
+  disk — so a message removed from the archive (its files deleted, then
+  `reindex`) never appears at ANY date, whether or not the log has yet been
+  compacted. The history log is append-only and reindex-compactable: `reindex`
+  drops the events of a removed message so redaction spans all dates, while a
+  message merely departed from the live mailbox keeps its file, its manifest row
+  and its timeline (R13). The go-back page is fully server-rendered and
+  script-free (R19); a hostile folder name, subject or `?at` folded into it is
+  inert, escaped text and can neither inject markup nor surface an off-disk
+  message. When the log is missing or damaged, `serve` announces go-back
+  unavailable/partial rather than silently showing current-only, and `status`
+  reports the timeline's coverage and flags a torn tail (GREEN/WARN/RED with a
+  remedy, X6).
 
 ## 3. Scenarios
 
@@ -328,6 +345,11 @@ Tiers: **U** unit property (every commit) · **S** structural whole-tree walk
 | MA-98 | U | Graph requests are bounded: a server that stalls before headers or mid-body fails within the configured deadline (listing and MIME download); a prompt server succeeds | R17, S29 |
 | MA-99 | U | -unattended (baked into every scheduled job) refuses to create a new archive when -out does not exist, naming the likely unmounted drive, and writes nothing; an existing -out is accepted | R14, R12, S28 |
 | MA-100 | U | a -copy-first snapshot is created on the archive's own volume, never in the system temp directory | R5, S2 |
+| MA-210 | U | `serve` renders the go-back projection server-side over the manifest + folded history, intersected with the files on disk: `/goback` (current) groups each present message under its current folder and HIDES a message swept gone from the live mailbox, while `/goback?at=D` folds the log to the end of day D and shows that same gone message under its THEN-folder for a date before the gone event (and again after a present-again); the compact date track lists the observed run dates newest-first; the static file:// pages are untouched (grouped by first-captured folder, R13) | R21, R3, S37 |
+| MA-211 | U | the on-disk intersection is the redaction belt: deleting a message's exported `.html` from the archive (WITHOUT reindex, so its manifest row and history events still exist) makes it vanish from the current view AND from every `?at=D` view — the projection shows only keys whose file is present on disk — so a removed message shows at NO date even before the log is compacted | R21, S37 |
+| MA-212 | U | the go-back page is script-free and CSP-locked (`/goback` carries a `default-src 'none'` policy with no script-src and no inline `<script>`, R19); a hostile history event is inert — a folder name or subject bearing markup/control chars is HTML-escaped by contextual templating (never injected), a `?at` that is not a valid `YYYY-MM-DD` (a time component, an out-of-range field, a traversal attempt) is rejected without crashing and without echoing the raw value, and an event key that is not a manifest record present on disk surfaces no message | R19, R21, S37, S22 |
+| MA-213 | U | history-log recovery legibility (X6): a MISSING log makes `serve` announce "go-back unavailable" (not silently current-only) and `status` report "History: none recorded" with GREEN posture; a torn/corrupt log makes `serve` announce "go-back partial" and `status` WARN with a remedy naming the log and `reindex`; a clean log reads "go-back available" and GREEN; `status -json` carries a `history {exists,runs,events,bad_lines,torn_tail}` object and the posture reason code (`history_torn_tail`/`history_corrupt`) | R21, R18, S37 |
+| MA-214 | U | `reindex` compacts the history log so redaction spans all dates: after pruning the index/manifest rows of files gone from disk it drops every per-message event whose key is no longer in the reconciled manifest (a removed message), while KEEPING run headers/footers, folder renames and the events of a message merely departed from the mailbox whose file is still on disk (R13); the rewrite is atomic (temp+rename) and a no-op when nothing is redacted | R21, S37, R13 |
 | MA-181 | U | `extract -format mbox` on a -raw archive writes one mboxrd `.mbox` per folder that round-trips through net/mail (correct message boundaries, count preserved) and `>`-quotes a body `From `/`>From ` line so it is not mistaken for a boundary; the folder tree is mirrored | R20, S34, R12 |
 | MA-182 | U | `extract -format eml` mirrors the folder tree with one byte-exact `.eml` per record; a re-run into the same -dest does NOT double (temp+rename over the existing file, never appended) and -dest empty-or-`--overwrite` is enforced | R20, S34, R5 |
 | MA-183 | U | a PST-only (or no-raw) archive emits nothing: every record is skipped, the summary names the skipped count and reason ("no preserved original"), and the run exits the partial code 3 (never 0, never verify's 2) | R20, S34, R12 |

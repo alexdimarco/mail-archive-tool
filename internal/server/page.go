@@ -42,6 +42,7 @@ button:disabled{opacity:.4;cursor:default}
   <div class="row">
     <input id="q" type="search" placeholder="Search subject, body, people, attachments…  (try  from:bob after:2025-01 invoice)" autofocus>
     <select id="sort"><option value="relevance">Relevance</option><option value="date">Newest</option></select>
+    <a href="/goback" style="font-size:13px;white-space:nowrap">Go back in time →</a>
   </div>
   <div class="filters">
     <label>Folder <select id="folder"><option value="">all</option></select></label>

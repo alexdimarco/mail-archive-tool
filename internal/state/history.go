@@ -30,6 +30,8 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -253,6 +255,13 @@ func FoldHistory(path string, upTo time.Time) (map[string]FoldState, error) {
 	if err != nil {
 		return nil, err
 	}
+	return FoldEvents(events, upTo), nil
+}
+
+// FoldEvents is FoldHistory over an already-read event slice, so a caller that
+// needs both the fold and other passes over the log (the date track, coverage)
+// reads the file once. The events must be in log order (ReadHistory's order).
+func FoldEvents(events []HistoryEvent, upTo time.Time) map[string]FoldState {
 	state := map[string]FoldState{}
 	var curAt time.Time
 	haveAt := false
@@ -280,7 +289,7 @@ func FoldHistory(path string, upTo time.Time) (map[string]FoldState, error) {
 			applyRename(state, ev.From, ev.To)
 		}
 	}
-	return state, nil
+	return state
 }
 
 // applyRename rewrites the folder of every message under from (exactly, or as a
@@ -296,4 +305,166 @@ func applyRename(state map[string]FoldState, from, to string) {
 			state[k] = s
 		}
 	}
+}
+
+// RunDates returns the distinct calendar dates (YYYY-MM-DD, UTC) of the run
+// headers in events, newest first — the observed run cadence `serve` renders as
+// its go-back date track (§3.4). A run whose header timestamp does not parse is
+// skipped, so a corrupt line never puts a bogus date on the track.
+func RunDates(events []HistoryEvent) []string {
+	seen := map[string]bool{}
+	var dates []string
+	for _, ev := range events {
+		if ev.Run > 0 && ev.At != "" {
+			if t, err := time.Parse(time.RFC3339, ev.At); err == nil {
+				d := t.UTC().Format("2006-01-02")
+				if !seen[d] {
+					seen[d] = true
+					dates = append(dates, d)
+				}
+			}
+		}
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(dates)))
+	return dates
+}
+
+// HistoryStat is the go-back timeline's coverage, as `status`/`verify` report it
+// and `serve` uses to decide whether go-back is available, partial, or
+// unavailable (design §3.4, X6). Exists is whether the log file is present;
+// Runs counts run headers (the observed cadence); Events counts parseable
+// per-message and folder-rename events; BadLines counts non-empty lines that
+// did not parse (a torn tail or a hand-corruption); TornTail is set when the
+// file is non-empty and does not end in a newline — a run that crashed mid-line,
+// which the next append repairs on the write side (GB-4).
+type HistoryStat struct {
+	Exists   bool
+	Runs     int
+	Events   int
+	BadLines int
+	TornTail bool
+}
+
+// Clean reports whether the timeline is fully legible: present, and with neither
+// a torn tail nor an unparseable line. serve reads go-back as "available" only
+// when Clean; a present-but-damaged log is "partial", an absent one
+// "unavailable" — never silently current-only (§3.4).
+func (s HistoryStat) Clean() bool {
+	return s.Exists && s.BadLines == 0 && !s.TornTail
+}
+
+// HistoryStatus inspects the log at path for coverage without folding it. A
+// missing file is not an error (Exists stays false). It reads the file once,
+// counting run headers, events and unparseable lines, and probes the final byte
+// for a torn (newline-less) tail.
+func HistoryStatus(path string) (HistoryStat, error) {
+	var st HistoryStat
+	f, err := os.Open(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return st, nil
+	}
+	if err != nil {
+		return st, fmt.Errorf("open history log %s: %w", path, err)
+	}
+	defer f.Close()
+	st.Exists = true
+
+	if fi, serr := f.Stat(); serr == nil && fi.Size() > 0 {
+		var last [1]byte
+		if _, rerr := f.ReadAt(last[:], fi.Size()-1); rerr == nil && last[0] != '\n' {
+			st.TornTail = true
+		}
+	}
+
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
+	for sc.Scan() {
+		line := bytes.TrimSpace(sc.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+		var ev HistoryEvent
+		if json.Unmarshal(line, &ev) != nil {
+			st.BadLines++
+			continue
+		}
+		switch {
+		case ev.Run > 0 && ev.At != "":
+			st.Runs++
+		case ev.Run > 0 && ev.Completed != "":
+			// a clean-run footer, not a timeline event
+		case ev.K != "" || (ev.From != "" && ev.To != ""):
+			st.Events++
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return st, fmt.Errorf("read history log %s: %w", path, err)
+	}
+	return st, nil
+}
+
+// CompactHistory rewrites the log at path, dropping every per-message event
+// whose key `keep` rejects — the redaction step `reindex` runs after pruning the
+// index/manifest rows of files gone from disk, so a message removed from the
+// archive (files deleted, then reindex) leaves no trace at any date (T5/R21).
+// Run headers, run footers and folder-rename events are retained (the date track
+// and folder history survive a redaction); an unparseable line is dropped (the
+// rewrite also heals a torn tail). A missing log is a no-op. It returns the
+// number of per-message events dropped; when that is zero the file is left
+// byte-for-byte untouched (no needless churn). The rewrite is atomic — a temp
+// sibling fsync'd and renamed into place (R5) — so an interrupted compaction
+// leaves the original log intact.
+func CompactHistory(path string, keep func(key string) bool) (dropped int, err error) {
+	events, err := ReadHistory(path)
+	if err != nil {
+		return 0, err
+	}
+	if len(events) == 0 {
+		return 0, nil
+	}
+	kept := make([]HistoryEvent, 0, len(events))
+	for _, ev := range events {
+		if ev.K != "" && !keep(ev.K) {
+			dropped++
+			continue
+		}
+		kept = append(kept, ev)
+	}
+	if dropped == 0 {
+		return 0, nil // nothing redacted — leave the append-only log untouched
+	}
+
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".mailarchive-history-*.tmp")
+	if err != nil {
+		return 0, fmt.Errorf("compact history log %s: %w", path, err)
+	}
+	tmpName := tmp.Name()
+	bw := bufio.NewWriter(tmp)
+	enc := json.NewEncoder(bw)
+	for _, ev := range kept {
+		if err := enc.Encode(ev); err != nil { // Encode appends '\n'
+			tmp.Close()
+			os.Remove(tmpName)
+			return 0, fmt.Errorf("compact history log %s: %w", path, err)
+		}
+	}
+	if err := bw.Flush(); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return 0, fmt.Errorf("compact history log %s: %w", path, err)
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return 0, fmt.Errorf("compact history log %s: %w", path, err)
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return 0, fmt.Errorf("compact history log %s: %w", path, err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		os.Remove(tmpName)
+		return 0, fmt.Errorf("compact history log %s: %w", path, err)
+	}
+	return dropped, nil
 }
