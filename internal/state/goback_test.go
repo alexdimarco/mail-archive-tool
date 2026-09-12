@@ -66,7 +66,7 @@ func TestV3ToV4FingerprintSafeCollapse(t *testing.T) {
 		t.Fatalf("LoadedVersion = %d, want 3", m.LoadedVersion)
 	}
 
-	losses, _ := m.CollapseByIdentity()
+	losses, _ := m.CollapseByIdentity(nil)
 
 	if m.Len() != 3 {
 		t.Errorf("entries after collapse = %d, want 3 (A collapsed; B kept as two distinct siblings)", m.Len())

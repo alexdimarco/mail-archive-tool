@@ -252,7 +252,8 @@ func parseMessage(data []byte) *model.Message {
 		msg.InternetMessageID = id
 	}
 	if d, err := h.Date(); err == nil && !d.IsZero() {
-		msg.Received = d // keep the original offset: it is part of the record
+		msg.Received = d     // keep the original offset: it is part of the record
+		msg.IdentityDate = d // the immutable MIME Date term for identity/fingerprint
 	}
 	if from, err := h.AddressList("From"); err == nil && len(from) > 0 {
 		msg.SenderName = from[0].Name
@@ -349,6 +350,7 @@ func fallbackParse(data []byte) *model.Message {
 	}
 	if d, err := m.Header.Date(); err == nil {
 		msg.Received = d
+		msg.IdentityDate = d // the immutable MIME Date term for identity/fingerprint
 	}
 	msg.Importance = importanceFromHeaders(m.Header.Get("Importance"), m.Header.Get("X-Priority"))
 	msg.Sensitivity = sensitivityFromHeader(m.Header.Get("Sensitivity"))

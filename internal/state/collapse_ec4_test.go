@@ -37,7 +37,7 @@ func TestCollapseDiscriminatesAndScopes(t *testing.T) {
 
 	// Scope to mbox: its keys are all already LiveKey-shaped, so NOTHING collapses
 	// and the qualified sibling survives verbatim.
-	losses, remap := m.CollapseByIdentity("mbox")
+	losses, remap := m.CollapseByIdentity(nil, "mbox")
 	if len(losses) != 0 || len(remap) != 0 {
 		t.Errorf("collapse touched healthy LiveKeys of the in-scope token: losses=%d remap=%d", len(losses), len(remap))
 	}
@@ -56,7 +56,7 @@ func TestCollapseDiscriminatesAndScopes(t *testing.T) {
 
 	// Now archive "other": its move-duplicate unifies to one LiveKey, and the
 	// remap points the survivor's old folder-scoped key at the new LiveKey.
-	lo, re := m.CollapseByIdentity("other")
+	lo, re := m.CollapseByIdentity(nil, "other")
 	if len(lo) != 1 {
 		t.Fatalf("other collapse losses=%d, want 1 (the Trash copy)", len(lo))
 	}

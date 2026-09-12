@@ -29,17 +29,30 @@ type Attachment struct {
 
 // Message is a normalized mail item.
 type Message struct {
-	Subject           string
-	SenderName        string
-	SenderEmail       string
-	To                string
-	Cc                string
-	Bcc               string    // sent mail carries it; empty on received mail
-	ReplyTo           string    // Reply-To header, when present
-	InReplyTo         string    // In-Reply-To message id (threading)
-	References        string    // References header (threading)
-	Sent              time.Time // client submit time; zero if unknown. Zone = the original offset when known.
-	Received          time.Time // message delivery time; zero if unknown. Zone = the original offset when known.
+	Subject     string
+	SenderName  string
+	SenderEmail string
+	To          string
+	Cc          string
+	Bcc         string    // sent mail carries it; empty on received mail
+	ReplyTo     string    // Reply-To header, when present
+	InReplyTo   string    // In-Reply-To message id (threading)
+	References  string    // References header (threading)
+	Sent        time.Time // client submit time; zero if unknown. Zone = the original offset when known.
+	Received    time.Time // message delivery time; zero if unknown. Zone = the original offset when known.
+
+	// IdentityDate is the IMMUTABLE date term folded into the dedup identity and
+	// fingerprint: the message's own MIME Date header, set once at parse and NEVER
+	// overridden by a source's delivery-time metadata. Received, by contrast, is
+	// overwritten on the Graph path with the mailbox receivedDateTime (for display
+	// and file naming), which differs from the sender's Date header — so folding
+	// Received would make a no-Message-ID message's sha: identity (and its
+	// fingerprint) DRIFT across a pre-go-back → v5 upgrade, duplicating it and
+	// phantom-marking the original gone. Folding IdentityDate keeps the identity
+	// version-stable. Zero for a source that sets no MIME Date (PST/Outlook items,
+	// a hand-built test message); identityTime() then falls back to Date(), so
+	// those paths are unchanged.
+	IdentityDate      time.Time
 	InternetMessageID string
 
 	// Raw holds the original RFC 822 bytes when the source has them (mbox,
@@ -98,6 +111,17 @@ func (m *Message) Date() time.Time {
 	return m.Sent
 }
 
+// identityTime is the version-stable date folded into the dedup identity and
+// fingerprint: the immutable MIME Date (IdentityDate) when known, else Date().
+// It must never reflect a source's mutable delivery time (the Graph
+// receivedDateTime override), or a no-Message-ID identity would drift on upgrade.
+func (m *Message) identityTime() time.Time {
+	if !m.IdentityDate.IsZero() {
+		return m.IdentityDate
+	}
+	return m.Date()
+}
+
 // Identity returns a stable key used to deduplicate the message across
 // incremental runs. It prefers the RFC 5322 Message-ID header; when that is
 // absent (drafts, calendar-adjacent items, some generated mail) it falls back
@@ -119,7 +143,7 @@ func (m *Message) Identity() string {
 // identical envelope and differ only in body are treated as one (a resend).
 func (m *Message) Fingerprint() string {
 	h := sha256.New()
-	fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s\x00%d\x00", m.Subject, m.SenderEmail, m.To, m.Cc, m.Date().UnixNano())
+	fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s\x00%d\x00", m.Subject, m.SenderEmail, m.To, m.Cc, m.identityTime().UnixNano())
 	for i, a := range m.Attachments {
 		fmt.Fprintf(h, "%d:%s\x00", i, a.Filename)
 	}
@@ -137,7 +161,7 @@ func (m *Message) Fingerprint() string {
 func (m *Message) contentHash() string {
 	h := sha256.New()
 	fmt.Fprintf(h, "%s\x00%s\x00%s\x00%d\x00%d\x00",
-		m.Subject, m.SenderEmail, m.To, m.Date().UnixNano(), len(m.Attachments))
+		m.Subject, m.SenderEmail, m.To, m.identityTime().UnixNano(), len(m.Attachments))
 	h.Write([]byte(m.HTMLBody))
 	h.Write([]byte{0})
 	h.Write([]byte(m.PlainBody))

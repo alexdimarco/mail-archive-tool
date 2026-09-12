@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -142,7 +143,23 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		}
 	}
 	if len(collapseTokens) > 0 {
-		losses, remap := manifest.CollapseByIdentity(collapseTokens...)
+		// Merge two same-(token,identity) records only when their archived files are
+		// byte-identical (a real move-duplicate): the fingerprint excludes bodies,
+		// so two distinct reuses of one Message-ID with an identical envelope must
+		// NOT be merged away (R1). Size-check first, then compare bytes.
+		sameContent := func(relA, relB string) bool {
+			a := filepath.Join(opts.Out, filepath.FromSlash(relA))
+			b := filepath.Join(opts.Out, filepath.FromSlash(relB))
+			fa, ea := os.Stat(a)
+			fb, eb := os.Stat(b)
+			if ea != nil || eb != nil || fa.Size() != fb.Size() {
+				return false
+			}
+			ba, e1 := os.ReadFile(a)
+			bb, e2 := os.ReadFile(b)
+			return e1 == nil && e2 == nil && bytes.Equal(ba, bb)
+		}
+		losses, remap := manifest.CollapseByIdentity(sameContent, collapseTokens...)
 		if len(remap) > 0 || len(losses) > 0 {
 			if idx != nil {
 				drop := make([]string, len(losses))

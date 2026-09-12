@@ -1001,7 +1001,14 @@ func (m *Manifest) MarkCollapsed(tokens ...string) {
 // the caller to prune) AND the survivor re-key map (old folder-scoped key → new
 // LiveKey), so the caller re-keys the search index to match (EC5). Keys that are
 // already LiveKey-shaped (identity at parts[1]) are kept verbatim.
-func (m *Manifest) CollapseByIdentity(tokens ...string) ([]CollapseLoss, map[string]string) {
+// sameContent (optional): reports whether two archived files (paths relative to
+// -out) are byte-identical. The collapse merges same-fingerprint records only
+// when it says yes — because the Fingerprint excludes bodies, two DISTINCT
+// messages that reused one Message-ID with an identical envelope hash equal, and
+// merging them would drop one from the manifest and index (R1). A nil callback
+// (a caller with no file access, e.g. a unit test on synthetic fingerprints)
+// merges by fingerprint alone.
+func (m *Manifest) CollapseByIdentity(sameContent func(relA, relB string) bool, tokens ...string) ([]CollapseLoss, map[string]string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if len(m.Entries) == 0 {
@@ -1035,16 +1042,21 @@ func (m *Manifest) CollapseByIdentity(tokens ...string) ([]CollapseLoss, map[str
 		// family carries it at parts[1].
 		parts := strings.Split(k, keySeparator)
 		switch {
-		case len(parts) >= 2 && isIdentity(parts[1]):
-			newEntries[k] = r // v4/v5 LiveKey or #fp-qualified LiveKey — already collapsed.
-			continue
 		case len(parts) >= 3 && isIdentity(parts[2]):
+			// v3 folder-scoped key (token\x00folder\x00identity, optionally #fp at
+			// parts[3]): the identity is at parts[2]. Tested FIRST — a #fp-qualified
+			// LiveKey has a 16-hex fingerprint at parts[2] (never identity-shaped), so
+			// this is unambiguous AND correctly migrates a v3 key even when its FOLDER
+			// is literally named "mid:…"/"sha:…" (which would fool the parts[1] test).
 			if tokenSet != nil && !tokenSet[parts[0]] {
 				newEntries[k] = r // a mailbox not archived this run — leave as-is.
 				continue
 			}
 			g := gid{token: parts[0], identity: parts[2]}
 			groups[g] = append(groups[g], member{oldKey: k, rec: r})
+		case len(parts) >= 2 && isIdentity(parts[1]):
+			newEntries[k] = r // v4/v5 LiveKey or #fp-qualified LiveKey — already collapsed.
+			continue
 		default:
 			newEntries[k] = r // unrecognised shape — never guess; keep verbatim.
 		}
@@ -1075,18 +1087,31 @@ func (m *Manifest) CollapseByIdentity(tokens ...string) ([]CollapseLoss, map[str
 			fp      string
 			members []member
 		}
-		byFP := map[string]int{}
 		var subs []*sub
 		for _, mem := range members {
 			fp := mem.rec.Fingerprint
 			if fp == "" {
+				// An empty fingerprint proves nothing — never merge it (R1).
 				subs = append(subs, &sub{fp: "", members: []member{mem}})
 				continue
 			}
-			if idx, ok := byFP[fp]; ok {
-				subs[idx].members = append(subs[idx].members, mem)
-			} else {
-				byFP[fp] = len(subs)
+			// Join an existing same-fingerprint sub-group ONLY when the on-disk
+			// files are byte-identical (a real move-duplicate). Two distinct
+			// messages that reused one Message-ID with an identical envelope hash to
+			// the same fingerprint (bodies are excluded); a content check keeps them
+			// as separate siblings instead of dropping one (R1).
+			placed := false
+			for _, s := range subs {
+				if s.fp != fp {
+					continue
+				}
+				if sameContent == nil || sameContent(s.members[0].rec.Path, mem.rec.Path) {
+					s.members = append(s.members, mem)
+					placed = true
+					break
+				}
+			}
+			if !placed {
 				subs = append(subs, &sub{fp: fp, members: []member{mem}})
 			}
 		}
@@ -1141,13 +1166,13 @@ func (m *Manifest) CollapseByIdentity(tokens ...string) ([]CollapseLoss, map[str
 			s := &survivors[i]
 			nk := base
 			if i > 0 {
-				if s.fp != "" {
-					nk = Qualify(base, s.fp)
-				} else {
-					// An empty-fingerprint non-first survivor cannot be #fp-split;
-					// qualify by a deterministic token of its own key so it still
-					// survives under a unique key (no drop). Pathological — a genuine
-					// v3 archive fingerprints every record.
+				nk = Qualify(base, s.fp)
+				if _, taken := newEntries[nk]; s.fp == "" || taken {
+					// Either an empty fingerprint (cannot #fp-split), or a same-
+					// fingerprint COLLISION — two distinct-content messages that reused
+					// one Message-ID with an identical envelope. Qualify by a
+					// deterministic hash of the record's own key so BOTH survive under
+					// unique keys (never drop one — R1).
 					nk = Qualify(base, util.HashHex(s.firstKey, 8))
 				}
 			}
