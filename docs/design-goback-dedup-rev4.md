@@ -1,7 +1,13 @@
 # Design — go-back live-dedup, rev 4 (option D: portable identity)
 
-**Revision:** 4 (2026-09-12). **Status:** for a re-run 10-lens/adversarial gate,
-then build. Supersedes rev 3's EnvSig apparatus. Operator decisions (2026-09-12):
+**Revision:** 4 (2026-09-12). **Status:** GATED — GO_WITH_CONDITIONS (EC1–EC10,
+see `docs/review-goback-dedup-rev4-gate.md`). The FLOOR (Message-ID skip +
+content-fp split + token-scoped collapse) is confirmed correct and buildable under
+EC4/EC5/EC7/EC10; the "#8 closed on Graph" closure (slice G2, §5) is NO-GO until a
+cross-layer PhysID→Export() channel (EC1–EC3), the seams (EC8/EC9), and a
+live-tenant check that immutable ids return under app-only Mail.Read (EC6) land —
+else #8-on-Graph downgrades to the logged floor. A rev-5 delta folds these before
+the G2 build; the floor slices may proceed under conditions. Supersedes rev 3's EnvSig apparatus. Operator decisions (2026-09-12):
 **(1) identity = option D** — a portable Message-ID + post-download content
 fingerprint floor, with per-source pre-download discriminators as OPTIONAL,
 capability-gated hints (never a dependency); **(2) #8 posture** — the distinct
