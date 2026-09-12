@@ -386,6 +386,66 @@ func (ix *Index) DeleteByKey(key string) error {
 	return tx.Commit()
 }
 
+// Rekey applies the v3→v5 identity-collapse to the search index in ONE
+// transaction: it renames each row old→new for every entry in remap (the
+// survivors) and DELETES every key in drop (the collapsed-away losers), then
+// checkpoints the WAL into the main db file before returning — so the index
+// migration is durable BEFORE the manifest advances (EC5), and a crash between
+// the two leaves the index ahead, which the idempotent collapse heals on the next
+// run. Drop-the-occupant collision semantics match RepairKeys: if another row
+// already holds a target key, it is removed first. A remap source that no longer
+// exists (already re-keyed) is skipped, so Rekey is itself idempotent.
+func (ix *Index) Rekey(remap map[string]string, drop []string) error {
+	if err := ix.commitPending(); err != nil {
+		return err
+	}
+	if len(remap) == 0 && len(drop) == 0 {
+		return nil
+	}
+	tx, err := ix.db.Begin()
+	if err != nil {
+		return err
+	}
+	for _, k := range drop {
+		if err := deleteByKeyTx(tx, k); err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+	for old, nk := range remap {
+		var id int64
+		switch err := tx.QueryRow(`SELECT id FROM docs WHERE key=?`, old).Scan(&id); {
+		case err == nil:
+		case errors.Is(err, sql.ErrNoRows):
+			continue // already re-keyed (idempotent) or the row was never indexed
+		default:
+			tx.Rollback()
+			return err
+		}
+		var otherID int64
+		switch err := tx.QueryRow(`SELECT id FROM docs WHERE key=? AND id<>?`, nk, id).Scan(&otherID); {
+		case err == nil:
+			if err := deleteByIDTx(tx, otherID); err != nil {
+				tx.Rollback()
+				return err
+			}
+		case errors.Is(err, sql.ErrNoRows):
+		default:
+			tx.Rollback()
+			return err
+		}
+		if _, err := tx.Exec(`UPDATE docs SET key=? WHERE id=?`, nk, id); err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	_, _ = ix.db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`) // durable before the manifest advances
+	return nil
+}
+
 // RepairKeys re-scopes legacy (v2) index rows to store-qualified (v3) keys,
 // applying fn (state.MigrateKey) to each row's (key, path). It runs when force
 // is set — the manifest load re-scoped something, the ONLY signal that survives

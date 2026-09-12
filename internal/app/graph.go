@@ -128,6 +128,41 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 			return Result{}, fmt.Errorf("migrate search index keys: %w", rkErr)
 		}
 	}
+	// One-time v3→v5 identity-collapse (option D, design rev-4 §4), BEFORE the walk
+	// so the walk's Message-ID membership skip finds the collapsed LiveKeys. For
+	// each mailbox we are about to archive that still owes it, unify every v3
+	// folder-scoped move-duplicate into one mailbox-wide record and re-key the
+	// search index to match. Scoped to this run's tokens and skipped once a token
+	// is marked (EC4); the index re-key is durable BEFORE the manifest is saved,
+	// and the whole thing is idempotent, so a crash mid-migration re-runs cleanly.
+	var collapseTokens []string
+	for _, mbx := range g.Mailboxes {
+		if tok := manifest.Token(state.MailboxSourceID(mbx), mbx); manifest.OwesCollapse(tok) {
+			collapseTokens = append(collapseTokens, tok)
+		}
+	}
+	if len(collapseTokens) > 0 {
+		losses, remap := manifest.CollapseByIdentity(collapseTokens...)
+		if len(remap) > 0 || len(losses) > 0 {
+			if idx != nil {
+				drop := make([]string, len(losses))
+				for i, l := range losses {
+					drop[i] = l.LoserKey
+				}
+				if rkErr := idx.Rekey(remap, drop); rkErr != nil {
+					return Result{}, fmt.Errorf("re-key search index for identity collapse: %w", rkErr)
+				}
+			}
+			logger.Printf("collapsed %d move-duplicate(s) and re-keyed %d record(s) to the mailbox-wide identity (one-time v3→v5 upgrade)", len(losses), len(remap))
+		}
+		manifest.MarkCollapsed(collapseTokens...)
+		// Persist the collapsed manifest + marker now, AFTER the index re-key, so a
+		// crash before the walk's end-of-run save leaves a consistent collapsed
+		// archive (the manifest never lagging the index).
+		if err := manifest.Save(); err != nil {
+			return Result{}, fmt.Errorf("save manifest after identity collapse: %w", err)
+		}
+	}
 	// Every successful export is a newly-seen (or, in full mode, re-observed)
 	// message: feed it to the search index (when enabled) and append a history
 	// folder-assertion under its CURRENT folder — the timeline event the fold and

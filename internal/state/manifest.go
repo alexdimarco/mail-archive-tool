@@ -186,6 +186,15 @@ type Manifest struct {
 	// files already use.
 	Stores map[string]string `json:"stores,omitempty"`
 
+	// CollapsedTokens records, per store token, that the one-time v3→v5
+	// identity-collapse (CollapseByIdentity) has run for that mailbox — set after
+	// the first successful live run of the token whether or not it had anything to
+	// collapse, so a fresh v5 archive is marked immediately and a still-v3 second
+	// mailbox onboarded in a LATER run is collapsed then (per-token, never a
+	// manifest-wide scalar — EC4). The live path skips the collapse scan for a
+	// marked token.
+	CollapsedTokens map[string]bool `json:"collapsed_tokens,omitempty"`
+
 	// Migrated counts the records converted to the unknown sentinel by this
 	// Load (a version-1 file). Zero for a version-2/3 file.
 	Migrated int `json:"-"`
@@ -911,28 +920,60 @@ func (m *Manifest) KeysForIdentity(identity string) []IdentRef {
 	return out
 }
 
-// CollapseByIdentity performs the fingerprint-safe v3→v4 collapse (§3.1): it
-// re-keys every folder-scoped v3 record to the mailbox-wide LiveKey(token,
-// identity) form and unifies records that share a (token, identity) AND a
-// non-empty stored Fingerprint into ONE record — the survivor keeps the
-// first-captured file and FirstFolder/FirstSeen (earliest ExportedAt, then
-// lexical key), while its current Folder/LastSeen follow the most-recently-
-// observed sibling and Present becomes true. Records reusing one Message-ID with
-// a DIFFERENT fingerprint are genuinely different messages: they stay separate
-// #fp-qualified siblings, never merged (no silent drop — R1). An empty
-// fingerprint proves nothing, so an empty-fingerprint record is never collapsed
-// with another (also R1-safe). Each unified-away loser is returned as a
-// CollapseLoss so the caller records a history folder-assertion (no location
-// lost) and prunes its index row; the loser file stays on disk (R13). The
-// identity index is rebuilt. It assumes v3-form input and so is confined to the
-// live path (LoadedVersion < 4); a one-shot local import keeps its folder-scoped
-// keys and R3 by never calling it (§3.6).
-func (m *Manifest) CollapseByIdentity() []CollapseLoss {
+// isIdentity reports whether a key component is a message identity — the value
+// model.Message.Identity() returns ("mid:"+Message-ID or "sha:"+content hash).
+// It lets CollapseByIdentity tell a LiveKey (identity at parts[1]) from a v3
+// folder-scoped key (folder at parts[1], identity at parts[2]) by SHAPE, never by
+// NUL/component count (EC4).
+func isIdentity(s string) bool {
+	return strings.HasPrefix(s, "mid:") || strings.HasPrefix(s, "sha:")
+}
+
+// OwesCollapse reports whether the one-time v3→v5 identity-collapse still owes a
+// run for a store token (it has not been marked done). A marked token is skipped,
+// so steady-state runs pay no collapse scan.
+func (m *Manifest) OwesCollapse(token string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return !m.CollapsedTokens[token]
+}
+
+// MarkCollapsed records that the identity-collapse has run for the given tokens
+// (set after a successful live run whether or not it collapsed anything).
+func (m *Manifest) MarkCollapsed(tokens ...string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.CollapsedTokens == nil {
+		m.CollapsedTokens = map[string]bool{}
+	}
+	for _, t := range tokens {
+		m.CollapsedTokens[t] = true
+	}
+}
+
+// CollapseByIdentity performs the one-time v3→v5 fingerprint-safe collapse for
+// the given store token(s) (empty = all). It unifies v3 folder-scoped records
+// that share a (token, identity) AND an equal non-empty fingerprint into one
+// mailbox-wide LiveKey record (a move-duplicate → one copy, R3); distinct-
+// fingerprint reuses stay #fp-qualified siblings (R1). It returns the losers (for
+// the caller to prune) AND the survivor re-key map (old folder-scoped key → new
+// LiveKey), so the caller re-keys the search index to match (EC5). Keys that are
+// already LiveKey-shaped (identity at parts[1]) are kept verbatim.
+func (m *Manifest) CollapseByIdentity(tokens ...string) ([]CollapseLoss, map[string]string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if len(m.Entries) == 0 {
 		m.Collapsed = 0
-		return nil
+		return nil, nil
+	}
+	// Scope to the mailbox token(s) archived this run (empty = all): a mailbox not
+	// walked this run keeps its keys untouched (R3, EC4).
+	var tokenSet map[string]bool
+	if len(tokens) > 0 {
+		tokenSet = make(map[string]bool, len(tokens))
+		for _, t := range tokens {
+			tokenSet[t] = true
+		}
 	}
 
 	type member struct {
@@ -944,16 +985,27 @@ func (m *Manifest) CollapseByIdentity() []CollapseLoss {
 	groups := map[gid][]member{}
 	newEntries := make(map[string]Record, len(m.Entries))
 	for k, r := range m.Entries {
+		// Discriminate the key SHAPE by which component is the message identity
+		// (mid:/sha:), NEVER by NUL/component count — a #fp-qualified LiveKey
+		// (token\x00identity\x00fp) has the same three components as a v3
+		// folder-scoped key (token\x00folder\x00identity) and must NOT be collapsed
+		// (EC4). A v3 folder-scoped key carries its identity at parts[2]; a LiveKey
+		// family carries it at parts[1].
 		parts := strings.Split(k, keySeparator)
-		if len(parts) < 3 {
-			// Not a v3 folder-scoped key (e.g. an already-collapsed live key):
-			// keep it verbatim. Under the caller's LoadedVersion<4 gate the input
-			// is pure v3, so this is defensive only.
-			newEntries[k] = r
+		switch {
+		case len(parts) >= 2 && isIdentity(parts[1]):
+			newEntries[k] = r // v4/v5 LiveKey or #fp-qualified LiveKey — already collapsed.
 			continue
+		case len(parts) >= 3 && isIdentity(parts[2]):
+			if tokenSet != nil && !tokenSet[parts[0]] {
+				newEntries[k] = r // a mailbox not archived this run — leave as-is.
+				continue
+			}
+			g := gid{token: parts[0], identity: parts[2]}
+			groups[g] = append(groups[g], member{oldKey: k, rec: r})
+		default:
+			newEntries[k] = r // unrecognised shape — never guess; keep verbatim.
 		}
-		g := gid{token: parts[0], identity: parts[2]}
-		groups[g] = append(groups[g], member{oldKey: k, rec: r})
 	}
 
 	// Deterministic group order so the collapse is reproducible.
@@ -969,6 +1021,7 @@ func (m *Manifest) CollapseByIdentity() []CollapseLoss {
 	})
 
 	var losses []CollapseLoss
+	remap := map[string]string{} // survivor old key → new LiveKey (EC5: re-key the index)
 	for _, g := range gids {
 		members := groups[g]
 
@@ -1057,6 +1110,9 @@ func (m *Manifest) CollapseByIdentity() []CollapseLoss {
 				}
 			}
 			newEntries[nk] = s.rec
+			if s.firstKey != nk {
+				remap[s.firstKey] = nk // the survivor's index row must follow the re-key
+			}
 			for _, l := range s.losers {
 				losses = append(losses, CollapseLoss{
 					LoserKey: l.oldKey, LoserPath: l.rec.Path, Folder: l.rec.Folder,
@@ -1070,7 +1126,7 @@ func (m *Manifest) CollapseByIdentity() []CollapseLoss {
 	m.byPath = nil // export paths unchanged, but the reverse map is rebuilt lazily
 	m.buildIdentIndexLocked()
 	m.Collapsed = len(losses)
-	return losses
+	return losses, remap
 }
 
 // identityOf returns the second NUL-delimited component of a manifest key: the
