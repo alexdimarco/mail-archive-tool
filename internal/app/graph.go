@@ -384,16 +384,23 @@ func runGraphMailbox(ctx context.Context, client *graph.Client, exp *export.Expo
 			// (R2) and dedups at the exporter instead.
 			if exp.Mode == export.Incremental && ref.InternetMessageID != "" {
 				identity := "mid:" + ref.InternetMessageID
-				candSig := export.EnvelopeSignature(ref.Subject, ref.From,
-					append(append([]string{}, ref.To...), ref.Cc...), ref.Received, ref.HasAttachments)
-				matchKey := ""
-				for _, sib := range manifest.KeysForIdentity(identity) {
-					if sib.Fingerprint == candSig {
-						matchKey = sib.Key
-						break
+				// Option D (design rev-4): skip the download when this Message-ID is
+				// already archived ANYWHERE in the mailbox (membership), whatever
+				// folder it is now in — no envelope signature is computed or compared
+				// (that was rev-2's retired mechanism). This is the cheap re-run and
+				// the move fast-path in one: recognised by identity, folder recorded
+				// from the LISTING, body never re-fetched (R17). A genuinely DISTINCT
+				// message that reuses this Message-ID is the bounded #8 residual on
+				// the floor: the membership skip never downloads it, so a fresh reuse
+				// cannot be detected here (the deferred Graph ImmutableId closure
+				// detects it pre-download; the id-reuse log lands in a later slice).
+				if sibs := manifest.KeysForIdentity(identity); len(sibs) > 0 {
+					// Stamp the primary (bare live key) record; fall back to the first
+					// sibling if every record for the identity is #fp-qualified.
+					matchKey := state.LiveKey(token, identity)
+					if _, ok := manifest.Get(matchKey); !ok {
+						matchKey = sibs[0].Key
 					}
-				}
-				if matchKey != "" {
 					rec, _ := manifest.Get(matchKey)
 					if rec.Unknown() && manifest.Resolve(matchKey) {
 						exp.Stats.Resolved++

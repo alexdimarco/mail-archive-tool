@@ -45,8 +45,11 @@ const manifestVersion = 5
 // recognised as the same message and never re-split into a duplicate (design
 // rev-4 §3). fpSchemeCurrent marks a fingerprint this build wrote.
 const (
-	fpSchemeLegacy  = 0
-	fpSchemeCurrent = 1
+	fpSchemeLegacy = 0
+	// FpSchemeCurrent is the scheme this build stamps on a fingerprint it writes;
+	// exported so the exporter (which computes the fingerprint) can tag a Record
+	// and can ask whether a stored fingerprint is comparable (FingerprintComparable).
+	FpSchemeCurrent = 1
 )
 
 // UnknownSentinel marks a record whose completeness predates tracking: it is

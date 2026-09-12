@@ -98,7 +98,10 @@ func TestMailboxWideIDReuseSplit(t *testing.T) {
 	if _, ok := m.Get(base); !ok {
 		t.Errorf("A not recorded at the base mailbox-wide key %q", base)
 	}
-	qual := state.Qualify(base, EnvelopeSignature(b.Subject, b.SenderEmail, nil, b.Date(), false))
+	// Option D: the #fp-split discriminator is the CONTENT fingerprint, not an
+	// envelope signature. B's distinct body gives it a distinct fingerprint, so it
+	// is filed under its content-fingerprint-qualified mailbox-wide key.
+	qual := state.Qualify(base, b.Fingerprint())
 	if _, ok := m.Get(qual); !ok {
 		t.Errorf("B not recorded under its #fp-qualified mailbox-wide key %q", qual)
 	}

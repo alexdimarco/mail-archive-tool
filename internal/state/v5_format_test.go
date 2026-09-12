@@ -24,7 +24,7 @@ func TestV5SchemeAndAlsoFilesRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "v5.json")
 	writeFullManifest(t, path, 5, map[string]Record{
 		cur: {Path: "mbox/Inbox/cur.html", Folder: "Inbox", ExportedAt: t1, FirstFolder: "Inbox", FirstSeen: t1, LastSeen: t1, Present: true,
-			Fingerprint: "cccccccccccccccc", FpScheme: fpSchemeCurrent, AlsoFiles: []string{"mbox/Trash/cur.html", "mbox/Trash/cur-attachments.zip"}},
+			Fingerprint: "cccccccccccccccc", FpScheme: FpSchemeCurrent, AlsoFiles: []string{"mbox/Trash/cur.html", "mbox/Trash/cur-attachments.zip"}},
 		leg: {Path: "mbox/Inbox/leg.html", Folder: "Inbox", ExportedAt: t1, FirstFolder: "Inbox", FirstSeen: t1, LastSeen: t1, Present: true,
 			Fingerprint: "llllllllllllllll"}, // FpScheme omitted → fpSchemeLegacy
 	})
@@ -33,8 +33,8 @@ func TestV5SchemeAndAlsoFilesRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	rc, _ := m.Get(cur)
-	if rc.FpScheme != fpSchemeCurrent {
-		t.Errorf("current record FpScheme = %d, want %d", rc.FpScheme, fpSchemeCurrent)
+	if rc.FpScheme != FpSchemeCurrent {
+		t.Errorf("current record FpScheme = %d, want %d", rc.FpScheme, FpSchemeCurrent)
 	}
 	if len(rc.AlsoFiles) != 2 || rc.AlsoFiles[0] != "mbox/Trash/cur.html" {
 		t.Errorf("AlsoFiles did not load: %v", rc.AlsoFiles)
@@ -52,7 +52,7 @@ func TestV5SchemeAndAlsoFilesRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	rc2, _ := m2.Get(cur)
-	if rc2.FpScheme != fpSchemeCurrent || len(rc2.AlsoFiles) != 2 {
+	if rc2.FpScheme != FpSchemeCurrent || len(rc2.AlsoFiles) != 2 {
 		t.Errorf("v5 fields did not survive save+load: FpScheme=%d AlsoFiles=%v", rc2.FpScheme, rc2.AlsoFiles)
 	}
 }
