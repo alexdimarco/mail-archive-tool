@@ -29,6 +29,7 @@ type moveGraphServer struct {
 	mimeHits map[string]int
 	m1Folder string // "F_IN" or "F_AR"
 	distinct bool   // when true, F_SE also lists D (same id <m1@x>, different subject)
+	honor    bool   // when true, honor the immutable-id preference (emit Preference-Applied), so ref.PhysID = the message id
 }
 
 func newMoveGraphServer() (*moveGraphServer, *httptest.Server) {
@@ -55,7 +56,11 @@ func newMoveGraphServer() (*moveGraphServer, *httptest.Server) {
 			f.mu.Lock()
 			here := f.m1Folder == folderID
 			distinct := f.distinct
+			honor := f.honor
 			f.mu.Unlock()
+			if honor && strings.Contains(strings.ToLower(r.Header.Get("Prefer")), "immutableid") {
+				w.Header().Set("Preference-Applied", `IdType="ImmutableId"`)
+			}
 			var entries []string
 			if here {
 				entries = append(entries, m1)
@@ -97,6 +102,12 @@ func (f *moveGraphServer) hits(id string) int {
 func (f *moveGraphServer) setM1Folder(folderID string) {
 	f.mu.Lock()
 	f.m1Folder = folderID
+	f.mu.Unlock()
+}
+
+func (f *moveGraphServer) setHonorImmutable(b bool) {
+	f.mu.Lock()
+	f.honor = b
 	f.mu.Unlock()
 }
 
@@ -232,23 +243,21 @@ func TestGraphMoveDedupAndTimeline(t *testing.T) {
 }
 
 // covers: MA-203, R1, R3, R17, S38
-// XFAIL ENCODER (operator-accepted open gap). Under option D (design rev-4) the
-// live Graph path skips an already-archived Message-ID by MEMBERSHIP pre-download
-// — with no envelope signature — so a DISTINCT message reusing that Message-ID is
-// skipped and NOT archived: the bounded #8 residual (an R1 gap) the operator
-// accepted for the floor build ("build the floor now; defer the ImmutableId
-// closure", 2026-09-12). It is CLOSED only by the deferred Graph ImmutableId
-// closure, which detects the distinct physical message pre-download and forces the
-// download + #fp-split (docs/design-goback-dedup-rev4.md §5; gate EC1/EC3/EC6,
-// docs/review-goback-dedup-rev4-gate.md). The R1 split itself still holds on the
-// LOCAL/full path — proven by TestMailboxWideIDReuseSplit (also MA-203). When the
-// closure is built, REMOVE the t.Skip: this test then asserts the reuse IS
-// downloaded and both survive.
+// #8 CLOSED ON GRAPH (design closure rev-6.1 §4/§5) — was the deferred floor
+// residual, now a PERMANENT GUARD. The live Graph path honors immutable ids, so a
+// DISTINCT message reusing an already-archived Message-ID carries a DIFFERENT
+// immutable id: the fast-path finds no sibling with that id, DOWNLOADS it, and the
+// exporter's byte compare #fp-splits it under a PhysID-hash key — both survive
+// (R1), while the unchanged original is skipped by its matched id (not
+// re-downloaded, R17). This was a t.Skip XFAIL encoder under the option-D floor
+// while EC6 was unconfirmed; EC6 passed 2026-09-14 and the closure is built, so the
+// skip is REMOVED and this now asserts the capture. The same R1 split on the
+// LOCAL/full path is TestMailboxWideIDReuseSplit.
 func TestGraphDistinctIDMailboxWideSplit(t *testing.T) {
-	t.Skip("confirmed-open #8 residual (R1 gap) on the option-D Graph floor: a distinct Message-ID reuse is skipped by membership pre-download and not archived; closed by the deferred Graph ImmutableId closure (rev-4 §5, gate EC1/EC3/EC6). Un-skip when that closure is built.")
 	out := tmpDir(t)
 	f, srv := newMoveGraphServer()
 	defer srv.Close()
+	f.setHonorImmutable(true)
 
 	g := GraphOptions{Tenant: "t", ClientID: "c", ClientSecret: "s", Mailboxes: []string{"u1"},
 		BaseURL: srv.URL, TokenURL: srv.URL + "/token"}

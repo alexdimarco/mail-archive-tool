@@ -459,19 +459,23 @@ walk. So each still-present message is then recognised by its Internet-Message-I
 and is **not** re-downloaded: the archive consolidates to one copy per message on
 that first upgraded run, at no re-fetch cost. A collapsed duplicate's file is
 **never deleted** (R13) — it stays on disk and is reached only by a later
-redaction (`reindex`). The forward guard refuses any archive whose stored version
-is above 5, so an older binary cannot silently corrupt a v5 archive; as with every
-format bump, **do not run an older `mailarchive` against a v5 archive** (see
+redaction (`reindex`). Manifest **format v6** adds the per-message Graph immutable
+id used to close reused-Message-ID gaps on the live path (below). The forward guard
+refuses any archive whose stored version is above 6, so an older binary cannot
+silently corrupt a v6 archive; as with every format bump, **do not run an older
+`mailarchive` against a v6 archive** (see
 [Upgrading an existing archive](#upgrading-an-existing-archive)).
 
-One caveat, rare: capture recognises an already-archived message by its
-Internet-Message-ID, so a *genuinely different* message that reuses an id already
-in the archive is skipped by a live `graph` run without being captured (a local
-import or a full run splits distinct reuses by content and keeps both). This is a
-bounded gap for deliberately crafted or malfunctioning mail; where an archive
-already holds two distinct messages under one id, `graph` notes it in the run log.
-Closing it on Graph — detecting a distinct reuse before download — is a planned
-enhancement. If a large existing live archive matters, you can still start a fresh
+One historical caveat, now **closed on Graph**: two *genuinely different* messages
+that reuse one Internet-Message-ID are told apart on the live `graph` path by the
+mailbox's per-message **immutable id** — the tool downloads a reuse whose id it has
+not archived and keeps both, distinguished by a byte comparison (even when their
+envelopes are identical). Upgrading an older archive backfills each id from the
+listing with no re-download. Sources without a per-message id (IMAP / local
+imports) keep the floor, where a distinct reuse with an identical envelope and no
+preserved `.eml` may be skipped; see
+[Limits](docs/goback.md#limits-read-these) for the full, bounded edge
+list. If a large existing live archive matters, you can still start a fresh
 capture into a new `-out` to get
 one-copy-per-message from the first run. (A one-shot local `.pst`/mbox/maildir
 import is unaffected: it is folder-scoped by design.)
@@ -735,9 +739,10 @@ excursion by content on its next run (the old-shape entries are re-scoped and
 de-duplicated), but the leftover duplicate files remain on disk — so the safe
 rule is to upgrade every machine that writes the same archive.
 
-This version also adds the go-back **timeline** and, with it, a manifest **format
-v5** — the forward guard refuses any archive whose stored version is above 5, so
-an older binary cannot silently corrupt a v5 archive. One-copy-per-message live
+This version also adds the go-back **timeline** and a manifest **format v5**;
+**v6** then adds the per-message Graph immutable id that closes reused-Message-ID
+gaps on the live path. The forward guard refuses any archive whose stored version
+is above 6, so an older binary cannot silently corrupt a v6 archive. One-copy-per-message live
 keying — a message stored once per mailbox with its moves recorded in place — is
 the model for a live (`graph`) archive **created with this version** AND for a
 *pre-existing* one on its first upgraded run, which **collapses** any per-folder

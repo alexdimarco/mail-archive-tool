@@ -222,26 +222,33 @@ is folded), never a lost move.
   and **not** re-downloaded — one copy per message from then on. No file is ever
   deleted by this (R13): a collapsed duplicate's copy stays on disk and is reached
   only by a later redaction.
-- **A reused Message-ID can hide a distinct message (rare).** Capture recognises
-  an already-archived message by its Internet-Message-ID. If a *genuinely
-  different* message reuses an id already in the archive, the tool cannot always
-  tell it apart, so a handful of bounded, documented gaps exist — all rare (they
-  need a deliberately crafted or malfunctioning reused id) and **none deletes a
+- **A reused Message-ID: closed on Graph, a bounded floor gap elsewhere.** Some
+  senders stamp two genuinely *different* messages with the *same*
+  Internet-Message-ID. On the live `graph` path this is now resolved at the root:
+  Microsoft Graph gives each physical message a distinct **immutable id**, so the
+  tool downloads a reuse whose id it has not archived and keeps both, told apart by
+  a byte comparison — a `$100` and a `$250` invoice that share an id *and* an
+  identical envelope both survive (the case the fingerprint alone could not split).
+  The first immutable-id-honoring run over an older archive **backfills** each
+  message's id from the listing with **no re-download**; a genuinely new reuse that
+  arrived just before that run is captured within one further run (it self-heals
+  once a baseline exists). The honest edges, all bounded and **none deletes a
   file**:
-    - A live `graph` run **skips** the distinct reuse without capturing it (it
-      looks already-archived). Where the archive already holds two distinct
-      messages under one id, `graph` notes the reuse in its run log.
-    - Upgrading an older archive that holds two distinct copies of a reused id
-      distinguishes them by their preserved `.eml` (a `-raw` archive) or a
-      differing envelope, keeping both; but two copies with an *identical*
-      envelope and *no* `.eml` may be merged so one drops from search/browse.
-    - A `-mode full` re-export over such an archive may **overwrite** the
+    - **Sources without a per-message id (IMAP / local imports)** keep the floor:
+      a distinct reuse with an *identical* envelope and *no* preserved `.eml` may
+      look already-archived and be skipped. A `-raw` archive (preserved `.eml`) or
+      a differing envelope still keeps both.
+    - **A reissued immutable id** — a mailbox restore or cross-tenant migration
+      that renumbers every id — is recognised by its unchanged content and adopted
+      in place with a logged `phys-churn` note, **not** duplicated; only if that
+      migration *also* rewrote the stored MIME bytes is the message re-captured as
+      one bounded, logged duplicate.
+    - **A tenant that withholds the immutable id** degrades to the
+      Internet-Message-ID floor above.
+    - A `-mode full` re-export over a *floor* archive may **overwrite** the
       search/browse record of a copy whose live message is gone — but that copy's
       **file is never deleted** (it stays on disk and `mailarchive verify` flags
       it), so nothing is lost irrecoverably.
-  Detecting a distinct reuse as its own physical message *before* download on
-  Graph (via the mailbox's immutable message id) — which closes all of the above —
-  is a planned enhancement.
 - **Static pages stay first-captured.** The offline pages never follow moves or
   offer a slider; only `serve` does. This is deliberate (no script offline).
 - **A move is inferred, not a server event.** The tool notices a message is in a
