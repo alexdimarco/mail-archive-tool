@@ -467,50 +467,82 @@ func runGraphMailbox(ctx context.Context, client *graph.Client, exp *export.Expo
 					}
 				}
 				if len(sameToken) > 0 {
-					// Already archived in THIS mailbox → skip the download (R17). Stamp
-					// the primary (bare live key) record with the observed folder; fall
-					// back to the first same-token sibling if only #fp-qualified records
-					// exist.
+					// Skip-vs-download decision (design closure rev-6.1 §5). The floor
+					// (no immutable id, ref.PhysID == "") skips by Message-ID MEMBERSHIP
+					// — this mail is archived somewhere in THIS mailbox, whatever folder
+					// it is in now (R17). With an immutable id, the decision is exact:
+					// skip only when a sibling already stores THIS id (the same physical
+					// message), OR — unambiguously — backfill the id from the listing
+					// onto a LONE not-yet-identified sibling (the first v6 walk of an
+					// upgraded archive, no re-download; option D's no-storm-on-upgrade
+					// holds). A distinct reuse or a churn (no id match, or an ambiguous
+					// multi-sibling identity) falls through to DOWNLOAD, where the
+					// exporter's byte compare places it (adopt/backfill/split — §4).
 					matchKey := state.LiveKey(token, identity)
 					if _, ok := manifest.Get(matchKey); !ok {
 						matchKey = sameToken[0].Key
 					}
-					rec, _ := manifest.Get(matchKey)
-					if rec.Unknown() && manifest.Resolve(matchKey) {
-						exp.Stats.Resolved++
-					}
-					manifest.MergeFields(matchKey, folderKey, runAt, true)
-					// A folder-assertion is emitted when the observed folder differs
-					// from the record's last known folder (a MOVE) OR the record was
-					// gone and is now seen again (present-again, Present false→true):
-					// both are one folder-assertion shape, and the fold reads an
-					// assertion after a gone event as present-again (§3.3). rec is the
-					// pre-observation snapshot (MergeFields does not mutate this copy).
-					// An unchanged re-observation (same folder, still present) emits
-					// nothing and downloads nothing (R17).
-					if rec.Folder != folderKey || !rec.Present {
-						recordMove(hist, idx, matchKey, folderKey, logger)
-					}
-					// EC5 — a single listing entry cannot disambiguate WHICH
-					// #fp-qualified sibling of a reused Message-ID it is, so advance
-					// LastSeen on EVERY same-token sibling (folder untouched), else an
-					// un-stamped still-present sibling would be phantom-marked gone by
-					// SweepGone (R21). (A genuinely departed sibling of a reused id is
-					// not detected as gone on the floor — a bounded imprecision the
-					// deferred ImmutableId closure resolves.)
-					for _, sib := range sameToken {
-						if sib.Key != matchKey {
-							manifest.TouchSeen(sib.Key, runAt)
+					skip := true
+					if ref.PhysID != "" {
+						skip = false
+						for _, sib := range sameToken {
+							if sib.PhysID == ref.PhysID {
+								matchKey, skip = sib.Key, true
+								break
+							}
+						}
+						if !skip && len(sameToken) == 1 && sameToken[0].PhysID == "" {
+							// Unambiguous: exactly one archived message for this Message-ID
+							// and it has no id yet → this listing entry IS it → backfill the
+							// id from the listing, no download (HC5/§5). A distinct reuse of
+							// a DEPARTED id lands here identically to the floor's membership
+							// skip — no worse (§9).
+							matchKey = sameToken[0].Key
+							manifest.BackfillPhys(matchKey, ref.PhysID)
+							skip = true
 						}
 					}
-					// #8 residual (floor): if this identity already carries MORE THAN
-					// ONE distinct fingerprint in this mailbox, a reuse is known — log
-					// it (deduped). A fresh reuse (still one sibling) is undetectable
-					// here without download; the deferred ImmutableId closure catches it.
-					exp.NoteIDReuse(identity, len(sameToken))
-					exp.Stats.SkippedManifest++
-					checkpoint() // a mostly-skip run must still persist progress (EC11)
-					return nil
+					if skip {
+						rec, _ := manifest.Get(matchKey)
+						if rec.Unknown() && manifest.Resolve(matchKey) {
+							exp.Stats.Resolved++
+						}
+						manifest.MergeFields(matchKey, folderKey, runAt, true)
+						// A folder-assertion is emitted when the observed folder differs
+						// from the record's last known folder (a MOVE) OR the record was
+						// gone and is now seen again (present-again, Present false→true):
+						// both are one folder-assertion shape, and the fold reads an
+						// assertion after a gone event as present-again (§3.3). rec is the
+						// pre-observation snapshot (MergeFields does not mutate this copy).
+						// An unchanged re-observation (same folder, still present) emits
+						// nothing and downloads nothing (R17).
+						if rec.Folder != folderKey || !rec.Present {
+							recordMove(hist, idx, matchKey, folderKey, logger)
+						}
+						// EC5 fan-out, FLOOR ONLY (ref.PhysID == ""): a single listing
+						// entry cannot disambiguate WHICH #fp-qualified sibling of a reused
+						// Message-ID it is, so advance LastSeen on EVERY same-token sibling,
+						// else an un-stamped still-present sibling would be phantom-marked
+						// gone by SweepGone (R21). WITH an immutable id each physical message
+						// has its OWN listing entry and its own stamp, so stamp only the
+						// matched sibling — a genuinely departed distinct reuse is then
+						// correctly detected as gone (rev-6.1 closes that floor imprecision).
+						if ref.PhysID == "" {
+							for _, sib := range sameToken {
+								if sib.Key != matchKey {
+									manifest.TouchSeen(sib.Key, runAt)
+								}
+							}
+						}
+						// If this identity already carries MORE THAN ONE distinct
+						// fingerprint in this mailbox, a reuse is known — log it (deduped,
+						// HC12). It is now captured on the download path when a fresh reuse
+						// arrives; the note remains an audit trail.
+						exp.NoteIDReuse(identity, len(sameToken))
+						exp.Stats.SkippedManifest++
+						checkpoint() // a mostly-skip run must still persist progress (EC11)
+						return nil
+					}
 				}
 			}
 			data, fetchErr := client.MIME(ctx, mailbox, ref.ID)
