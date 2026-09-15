@@ -4,6 +4,7 @@
 package export
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"log"
@@ -126,6 +127,11 @@ type Exporter struct {
 	// identity with multiple distinct fingerprints is reported once per run, not
 	// once per folder-observation.
 	reuseLogged map[string]bool
+
+	// churnLogged dedupes the per-run phys-churn anomaly (NotePhysChurn) so an
+	// identity whose immutable id was reissued (a one-time restore/migration) is
+	// reported once per run.
+	churnLogged map[string]bool
 }
 
 // Export writes a single message. It returns true if the message was written
@@ -191,8 +197,31 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	// a qualified key (a bounded duplicate, never a drop). This also covers full
 	// mode, which bypasses the graph membership skip and re-exports every message.
 	identityMultiRecord := e.DedupMailboxWide && e.Manifest.SameStoreIdentityCount(store, m.Identity()) > 1
+	isMid := strings.HasPrefix(m.Identity(), "mid:")
 	prev, seen := e.Manifest.Get(key)
-	for seen && prev.Fingerprint != "" && prev.Fingerprint != fp &&
+
+	// PhysID-aware placement (design closure rev-6.1 §4), LIVE PATH + Message-ID
+	// identity + a known immutable id + the message's OWN bytes in hand. The
+	// immutable id is the distinctness signal and the archived .eml bytes are the
+	// churn-vs-distinct arbiter; placeByPhysID scans the identity's siblings and
+	// returns the key — adopt an id/byte match (churn or backfill), or split a
+	// genuinely distinct reuse under a PhysID-hash key (HC1). It runs INSTEAD of the
+	// fingerprint qualify loop below; everything it cannot decide (no immutable id,
+	// no incoming bytes, non-mid:, non-live) falls to the floor loop unchanged (HC8:
+	// a no-Message-ID identity already folds the body into contentHash, so PhysID
+	// must not touch it).
+	physResolved := false
+	if e.DedupMailboxWide && isMid && m.PhysID != "" && len(m.Raw) > 0 {
+		k, churn := e.placeByPhysID(store, m, fp)
+		key = k
+		if churn {
+			e.NotePhysChurn(m.Identity())
+		}
+		prev, seen = e.Manifest.Get(key)
+		physResolved = true
+	}
+
+	for !physResolved && seen && prev.Fingerprint != "" && prev.Fingerprint != fp &&
 		!(e.DedupMailboxWide && prev.FpScheme != state.FpSchemeCurrent && !identityMultiRecord) {
 		// A DIFFERENT message reused this key's Message-ID: file it under a
 		// fingerprint-qualified key. The separator is NUL (state.Qualify), never a
@@ -589,6 +618,95 @@ func (e *Exporter) NoteIDReuse(identity string, distinct int) {
 	e.Issues = append(e.Issues, Issue{Kind: "id-reuse", Detail: identity})
 	if e.Log != nil {
 		e.Log.Printf("note: %s is archived under %d distinct fingerprints (a reused Internet-Message-ID); a further distinct reuse of it can be skipped without capture on this run — the deferred Graph ImmutableId closure detects such reuses (docs/goback.md)", identity, distinct)
+	}
+}
+
+// placeByPhysID chooses the manifest key for a live-path message that carries a
+// Graph immutable id under a Message-ID identity (design closure rev-6.1 §4). The
+// caller guarantees a non-empty PhysID and non-empty Raw. It scans the identity's
+// siblings and returns (key, churn):
+//  1. a sibling already stores THIS immutable id -> that sibling (the same physical
+//     message re-observed); adopt.
+//  2. no id match, but a same-fingerprint sibling's archived .eml is BYTE-IDENTICAL
+//     to this message -> adopt that sibling and BACKFILL its PhysID. If that
+//     sibling carried a DIFFERENT non-empty id, the id was REISSUED (a restore /
+//     migration churn): churn=true so the caller logs it. An EMPTY-id sibling is
+//     the ordinary first-PhysID-walk backfill: churn=false.
+//  3. otherwise -> a genuinely DISTINCT reuse: a key qualified by a HASH OF THE
+//     IMMUTABLE ID, not the fingerprint (HC1: the fingerprints COLLIDE on an
+//     identical envelope, so an fp-qualified key would overwrite — an R1 drop).
+//     The slot-taken loop requalifies so a hash collision never becomes a skip.
+//
+// When the bytes cannot be compared (a same-fp sibling has no archived .eml)
+// sameRawAsArchived returns false, so step 2 does NOT match and the message SPLITS:
+// a bounded duplicate is a safe error, a dropped distinct message is not (R1).
+func (e *Exporter) placeByPhysID(store string, m *model.Message, fp string) (string, bool) {
+	base := state.LiveKey(store, m.Identity())
+	sibs := e.Manifest.KeysForIdentity(m.Identity())
+	for _, s := range sibs {
+		if s.PhysID == m.PhysID {
+			return s.Key, false
+		}
+	}
+	for _, s := range sibs {
+		if s.Fingerprint != fp {
+			continue
+		}
+		r, ok := e.Manifest.Get(s.Key)
+		if !ok || !e.sameRawAsArchived(m, r.Path) {
+			continue
+		}
+		e.Manifest.BackfillPhys(s.Key, m.PhysID)
+		return s.Key, s.PhysID != ""
+	}
+	if _, taken := e.Manifest.Get(base); !taken {
+		return base, false
+	}
+	key := state.Qualify(base, util.HashHex(m.PhysID, 8))
+	for {
+		r, taken := e.Manifest.Get(key)
+		if !taken || r.PhysID == m.PhysID {
+			return key, false
+		}
+		key = state.Qualify(key, util.HashHex(m.PhysID, 8))
+	}
+}
+
+// sameRawAsArchived reports whether the incoming message's raw RFC822 bytes are
+// byte-identical to the .eml already archived for prevRel (the churn-vs-distinct
+// arbiter, rev-6.1). Unlike the collapse layer's sameArchivedEML, a MISSING or
+// unreadable .eml returns FALSE (not "assume same"): here an unproven match must
+// never let a distinct message be adopted onto another's key (R1) — the caller
+// splits instead.
+func (e *Exporter) sameRawAsArchived(m *model.Message, prevRel string) bool {
+	if len(m.Raw) == 0 || prevRel == "" {
+		return false
+	}
+	eml := strings.TrimSuffix(filepath.Join(e.OutDir, filepath.FromSlash(prevRel)), ".html") + ".eml"
+	stored, err := os.ReadFile(eml)
+	if err != nil || len(stored) == 0 {
+		return false
+	}
+	return bytes.Equal(stored, m.Raw)
+}
+
+// NotePhysChurn records the phys-churn anomaly (design closure rev-6.1 §4/HC7): a
+// message whose Graph immutable id was REISSUED between runs (a one-time restore or
+// cross-tenant migration) is recognized by its byte-identical content, adopted in
+// place, and its stored PhysID updated. It is not a distinct reuse and is never
+// split; it is logged so an operator can see that an id namespace shifted. Deduped
+// per identity per run.
+func (e *Exporter) NotePhysChurn(identity string) {
+	if e.churnLogged == nil {
+		e.churnLogged = map[string]bool{}
+	}
+	if e.churnLogged[identity] {
+		return
+	}
+	e.churnLogged[identity] = true
+	e.Issues = append(e.Issues, Issue{Kind: "phys-churn", Detail: identity})
+	if e.Log != nil {
+		e.Log.Printf("note: %s kept its content but its immutable id was reissued (a restore or cross-tenant migration); adopted in place with the new id, not duplicated (docs/goback.md)", identity)
 	}
 }
 
