@@ -395,6 +395,14 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	if e.DedupMailboxWide {
 		rec.Present = true
 		rec.LastSeen = now
+		// PhysID (closure rev-6 §1/HC5): store this listing's immutable id. When the
+		// listing withheld it (empty) but a prior record already knew it, carry that
+		// baseline forward so a later distinct reuse still has a PhysID to be told
+		// apart by. Inert here — the exporter/fast-path consult it in H3/H4.
+		rec.PhysID = m.PhysID
+		if rec.PhysID == "" && seen {
+			rec.PhysID = prev.PhysID
+		}
 		if seen && !prev.FirstSeen.IsZero() {
 			rec.FirstFolder = prev.FirstFolder
 			rec.FirstSeen = prev.FirstSeen

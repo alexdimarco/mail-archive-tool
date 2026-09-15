@@ -247,6 +247,7 @@ type Manifest struct {
 type IdentRef struct {
 	Key         string
 	Fingerprint string
+	PhysID      string // the record's Graph immutable id (version 6); empty when withheld/local (see Record.PhysID)
 }
 
 // CollapseLoss records one manifest row dropped by CollapseByIdentity: its own
@@ -660,7 +661,7 @@ func (m *Manifest) Add(key string, r Record) {
 			m.byPath[r.Path] = key
 		}
 	}
-	m.identUpsertLocked(key, r.Fingerprint)
+	m.identUpsertLocked(key, r.Fingerprint, r.PhysID)
 	m.Entries[key] = r
 }
 
@@ -972,6 +973,41 @@ func (m *Manifest) KeysForIdentity(identity string) []IdentRef {
 	return out
 }
 
+// BackfillPhys stamps physID onto the record at key and its identity-index entry,
+// under one lock, and returns true when it changed the stored PhysID. It is the
+// survivor/empty-PhysID adopt path (design closure rev-6 §5.4/§6): a first
+// PhysID-bearing walk records the immutable id onto a record captured before v6
+// (or whose provider had withheld it), so a later distinct reuse can be told apart
+// by PhysID without re-download. It refreshes BOTH Entries and byIdent so the
+// fast-path sees the new PhysID without a rebuild. A no-op (empty physID, unknown
+// key, or the same PhysID already stored) returns false. It NEVER touches identity
+// or fingerprint. Consumed by the graph fast-path/collapse (H4/H5).
+func (m *Manifest) BackfillPhys(key, physID string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if physID == "" {
+		return false
+	}
+	r, ok := m.Entries[key]
+	if !ok || r.PhysID == physID {
+		return false
+	}
+	r.PhysID = physID
+	m.Entries[key] = r
+	if m.byIdent == nil {
+		m.buildIdentIndexLocked()
+	} else {
+		id := identityOf(key)
+		for i := range m.byIdent[id] {
+			if m.byIdent[id][i].Key == key {
+				m.byIdent[id][i].PhysID = physID
+				break
+			}
+		}
+	}
+	return true
+}
+
 // isIdentity reports whether a key component is a message identity — the value
 // model.Message.Identity() returns ("mid:"+Message-ID or "sha:"+content hash).
 // It lets CollapseByIdentity tell a LiveKey (identity at parts[1]) from a v3
@@ -1238,13 +1274,13 @@ func (m *Manifest) buildIdentIndexLocked() {
 		if id == "" {
 			continue
 		}
-		m.byIdent[id] = append(m.byIdent[id], IdentRef{Key: k, Fingerprint: r.Fingerprint})
+		m.byIdent[id] = append(m.byIdent[id], IdentRef{Key: k, Fingerprint: r.Fingerprint, PhysID: r.PhysID})
 	}
 }
 
-// identUpsertLocked records (key, fp) in the identity index, replacing any prior
-// fingerprint for the same key. The caller holds m.mu.
-func (m *Manifest) identUpsertLocked(key, fp string) {
+// identUpsertLocked records (key, fp, physID) in the identity index, replacing any
+// prior fingerprint AND PhysID for the same key. The caller holds m.mu.
+func (m *Manifest) identUpsertLocked(key, fp, physID string) {
 	if m.byIdent == nil {
 		m.buildIdentIndexLocked()
 	}
@@ -1256,10 +1292,11 @@ func (m *Manifest) identUpsertLocked(key, fp string) {
 	for i := range lst {
 		if lst[i].Key == key {
 			lst[i].Fingerprint = fp
+			lst[i].PhysID = physID
 			return
 		}
 	}
-	m.byIdent[id] = append(lst, IdentRef{Key: key, Fingerprint: fp})
+	m.byIdent[id] = append(lst, IdentRef{Key: key, Fingerprint: fp, PhysID: physID})
 }
 
 // identRemoveLocked drops key from the identity index. The caller holds m.mu.
