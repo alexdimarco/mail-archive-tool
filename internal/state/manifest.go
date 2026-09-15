@@ -32,7 +32,7 @@ import (
 // move-duplicates is CollapseByIdentity, invoked by the live path (a one-shot
 // local import keeps its folder-scoped keys and R3 — §3.6). Load refuses a
 // stored version above manifestVersion.
-const manifestVersion = 5
+const manifestVersion = 6
 
 // Fingerprint scheme tags (version 5). A record's FpScheme says which algorithm
 // produced its Fingerprint. fpSchemeLegacy (0, the zero value, so every pre-v5
@@ -95,6 +95,16 @@ type Record struct {
 	// The download #fp-split ADOPTS a legacy-scheme sibling rather than splitting
 	// against it, so a migrated record is never re-duplicated (design rev-4 §3).
 	FpScheme int `json:"fp_scheme,omitempty"`
+
+	// PhysID (version 6) is the source's per-PHYSICAL-message discriminator — the
+	// Graph immutable id — a capability-gated HINT for the pre-download skip and a
+	// distinctness tie-breaker (a distinct message that reuses an already-archived
+	// Message-ID has a different PhysID). Empty for local imports, for a message
+	// whose provider withheld the immutable id, and for any record captured before
+	// v6. It is NEVER part of the message identity or fingerprint, and the content
+	// fingerprint remains the sole adopt-vs-split arbiter — PhysID only breaks a tie
+	// and lets a same-envelope distinct reuse be told apart (design closure rev-6).
+	PhysID string `json:"phys_id,omitempty"`
 
 	// AlsoFiles (version 5) lists extra on-disk paths (relative to -out) that
 	// belong to this message but sit outside its canonical Path — the files of a

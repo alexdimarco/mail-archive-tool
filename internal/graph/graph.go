@@ -235,6 +235,13 @@ type MessageRef struct {
 	InternetMessageID string // angle brackets stripped, matching go-message
 	Received          time.Time
 
+	// PhysID is the message's per-PHYSICAL-message immutable id when the run
+	// obtained one (Prefer: IdType="ImmutableId" honored on the listing, so ID is
+	// itself the immutable id) — empty otherwise. The live path uses it to tell a
+	// distinct reuse of a Message-ID apart before download (closure rev-6); when
+	// empty the path degrades to Message-ID membership (the shipped floor).
+	PhysID string
+
 	// Envelope fields for the pre-download signature (§3.2). To/Cc are the bare
 	// e-mail addresses (display names dropped) so the signature is independent of
 	// header formatting; HasAttachments is Graph's boolean (attachment NAMES are

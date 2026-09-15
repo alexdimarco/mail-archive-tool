@@ -99,6 +99,16 @@ type Message struct {
 	// still the same message (R2/R3) — and are not indexed this increment.
 	Categories []string
 
+	// PhysID is the source's per-PHYSICAL-message discriminator (the Graph
+	// immutable id), set by the source at capture — empty when the source has none
+	// (local imports) or the provider withheld it. Like the state/category fields
+	// above it is a capture-time value, NOT part of the message's identity: it is
+	// deliberately EXCLUDED from Identity(), Fingerprint() and contentHash() (a
+	// reused-id distinct message must still be told apart by content, not by a
+	// transport id). The live path stores it as Record.PhysID and uses it as a
+	// pre-download skip hint and a distinctness tie-breaker (closure rev-6).
+	PhysID string
+
 	Attachments []Attachment
 }
 
