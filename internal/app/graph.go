@@ -342,6 +342,9 @@ func applyGraphState(m *model.Message, ref graph.MessageRef) {
 	if len(ref.Categories) > 0 {
 		m.Categories = append([]string(nil), ref.Categories...)
 	}
+	// The per-physical-message immutable id (empty unless the run obtained one),
+	// carried to the exporter as the PhysID capture field (closure rev-6 §1/§4).
+	m.PhysID = ref.PhysID
 }
 
 // graphImportance maps Graph's importance ("low"/"normal"/"high") to the

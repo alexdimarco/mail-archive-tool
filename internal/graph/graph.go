@@ -160,7 +160,7 @@ func (c *Client) Folders(ctx context.Context, userID string, filter FolderFilter
 				} `json:"value"`
 				Next string `json:"@odata.nextLink"`
 			}
-			if err := c.getJSON(ctx, next, &body); err != nil {
+			if _, err := c.getJSON(ctx, next, &body); err != nil {
 				return err
 			}
 			for _, f := range body.Value {
@@ -287,6 +287,7 @@ func addrsOf(rs []graphRecipient) []string {
 func (c *Client) Messages(ctx context.Context, userID, folderID string, fn func(MessageRef) error) error {
 	next := c.base + "/users/" + url.PathEscape(userID) + "/mailFolders/" + url.PathEscape(folderID) +
 		"/messages?$select=id,internetMessageId,subject,from,toRecipients,ccRecipients,receivedDateTime,hasAttachments,importance,isRead,sensitivity,categories&$top=1000"
+	honored, firstPage := false, true // whether Prefer: IdType="ImmutableId" is in effect this run
 	for next != "" {
 		var body struct {
 			Value []struct {
@@ -305,8 +306,17 @@ func (c *Client) Messages(ctx context.Context, userID, folderID string, fn func(
 			} `json:"value"`
 			Next string `json:"@odata.nextLink"`
 		}
-		if err := c.getJSON(ctx, next, &body); err != nil {
+		pref, err := c.getJSON(ctx, next, &body)
+		if err != nil {
 			return err
+		}
+		if firstPage {
+			// Namespace-once (rev-6 §2): the first page's Preference-Applied says
+			// whether the tenant honored the immutable-id preference. When honored,
+			// each message id IS its immutable id and becomes PhysID; otherwise
+			// PhysID stays empty and the live path degrades to the Message-ID floor.
+			honored = strings.Contains(strings.ToLower(pref), "immutableid")
+			firstPage = false
 		}
 		for _, m := range body.Value {
 			ref := MessageRef{
@@ -326,6 +336,9 @@ func (c *Client) Messages(ctx context.Context, userID, folderID string, fn func(
 			}
 			if t, err := time.Parse(time.RFC3339, m.Received); err == nil {
 				ref.Received = t
+			}
+			if honored {
+				ref.PhysID = m.ID // the immutable id (rev-6): the per-physical-message hint
 			}
 			if err := fn(ref); err != nil {
 				return err
@@ -357,18 +370,21 @@ func (c *Client) MIME(ctx context.Context, userID, messageID string) ([]byte, er
 	return data, nil
 }
 
-func (c *Client) getJSON(ctx context.Context, u string, v any) error {
+// getJSON decodes a GET's JSON body and returns the response's Preference-Applied
+// header (empty when absent) so a caller can tell whether Prefer: IdType was
+// honored this request.
+func (c *Client) getJSON(ctx context.Context, u string, v any) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.reqTimeout)
 	defer cancel()
 	resp, err := c.get(ctx, u)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return statusErr(resp)
+		return "", statusErr(resp)
 	}
-	return json.NewDecoder(resp.Body).Decode(v)
+	return resp.Header.Get("Preference-Applied"), json.NewDecoder(resp.Body).Decode(v)
 }
 
 // get issues a GET with bounded retries that honour Graph throttling
@@ -380,6 +396,11 @@ func (c *Client) get(ctx context.Context, u string) (*http.Response, error) {
 		if err != nil {
 			return nil, err
 		}
+		// Request immutable message ids (closure rev-6): when honored, a message's
+		// `id` is its stable per-physical-message immutable id on BOTH the listing
+		// and the /$value fetch, so the two agree. Harmless on non-message GETs.
+		// Whether the tenant honored it is read from the listing's Preference-Applied.
+		req.Header.Set("Prefer", `IdType="ImmutableId"`)
 		resp, err := c.hc.Do(req)
 		if err != nil {
 			return nil, err
