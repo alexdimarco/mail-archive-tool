@@ -432,6 +432,22 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		// distinct reuse of this Message-ID from the same message re-observed, without
 		// the original .eml. Reflects THIS capture's content (a fill updates it).
 		rec.ContentHash = m.ContentDigest()
+		if seen {
+			// Carry the content-equal immutable-id SET forward on an adopt (rev-6.2):
+			// a full-mode re-export or a fill REBUILDS the record, and without this the
+			// fresh primary would overwrite AltPhysIDs, so the next incremental run
+			// would re-download every OTHER copy of a copied message. Union the new
+			// primary (already rec.PhysID) with the prior primary and its alternates,
+			// dropping the primary itself and duplicates, order-stable.
+			have := map[string]bool{rec.PhysID: true}
+			for _, id := range append([]string{prev.PhysID}, prev.AltPhysIDs...) {
+				if id == "" || have[id] {
+					continue
+				}
+				have[id] = true
+				rec.AltPhysIDs = append(rec.AltPhysIDs, id)
+			}
+		}
 		if seen && !prev.FirstSeen.IsZero() {
 			rec.FirstFolder = prev.FirstFolder
 			rec.FirstSeen = prev.FirstSeen

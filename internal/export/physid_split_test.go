@@ -136,3 +136,41 @@ func TestContentDigestDistinguishesAttachmentAndCc(t *testing.T) {
 		t.Fatalf("identity has %d records, want 2 (attachment-only-differing reuses must both survive — R1)", n)
 	}
 }
+
+// covers: MA-250, R17, S38
+// The content-equal id-set survives a record REBUILD (a full-mode re-export or a
+// fill), so a copied message is not re-downloaded after a full run (rev-6.2, final
+// adversarial re-check). A record that has absorbed a second id (a copy in another
+// folder) keeps BOTH ids when the record is rewritten under a fresh capture; without
+// carrying AltPhysIDs forward the rebuild would strand every copy but the primary.
+func TestIDSetSurvivesRecordRebuild(t *testing.T) {
+	out := t.TempDir()
+	m := mustManifest(t)
+	e := mbwExporter(out, m)
+	base := state.LiveKey("store", "mid:<c@x>")
+	mk := func(phys string) *model.Message {
+		return &model.Message{Subject: "Notice", Received: testDate, InternetMessageID: "<c@x>",
+			SenderEmail: "a@ex.com", To: "b@ex.com", PlainBody: "same body", PhysID: phys}
+	}
+	// Capture, then absorb a second content-equal id (a copy).
+	if _, err := e.Export("store", []string{"Inbox"}, mk("id-A")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.Export("store", []string{"Saved"}, mk("id-B")); err != nil {
+		t.Fatal(err)
+	}
+	if !m.HasPhysID(base, "id-A") || !m.HasPhysID(base, "id-B") {
+		t.Fatalf("precondition: id-set = {A:%v B:%v}, want both", m.HasPhysID(base, "id-A"), m.HasPhysID(base, "id-B"))
+	}
+
+	// A FULL re-export rebuilds the record (Mode=Full re-exports even a complete,
+	// seen message). Both ids must survive the rebuild.
+	ef := &Exporter{OutDir: out, Manifest: m, Mode: Full, DedupMailboxWide: true, Log: e.Log}
+	if _, err := ef.Export("store", []string{"Inbox"}, mk("id-A")); err != nil {
+		t.Fatal(err)
+	}
+	if !m.HasPhysID(base, "id-A") || !m.HasPhysID(base, "id-B") {
+		r, _ := m.Get(base)
+		t.Errorf("after a full-mode rebuild the id-set collapsed: PhysID=%q Alt=%v, want both id-A and id-B", r.PhysID, r.AltPhysIDs)
+	}
+}

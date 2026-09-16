@@ -252,6 +252,14 @@ is folded), never a lost move.
       search/browse record of a copy whose live message is gone — but that copy's
       **file is never deleted** (it stays on disk and `mailarchive verify` flags
       it), so nothing is lost irrecoverably.
+- **A message copied into several folders shows one record whose folder may flap.**
+  Mailbox-wide dedup keeps ONE record for a message that exists as copies in two or
+  more folders (same Message-ID, identical content) — it is never duplicated, and
+  with the immutable-id set it is not re-downloaded. But the record has a single
+  "current folder", so as each run walks the copies the folder (and the go-back
+  timeline) can show it moving between those folders even though it never moved. This
+  is a pre-existing property of mailbox-wide dedup (not introduced by the immutable-id
+  work) and is cosmetic: no message is lost, duplicated, or re-fetched.
 - **Static pages stay first-captured.** The offline pages never follow moves or
   offer a slider; only `serve` does. This is deliberate (no script offline).
 - **A move is inferred, not a server event.** The tool notices a message is in a

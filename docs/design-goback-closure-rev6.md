@@ -203,4 +203,8 @@ skipped on later runs); it becomes a distinct capture only if the CONTENT also
 changed — then it is genuinely a different message and the split is correct. The
 content hash excludes transport headers (so a header-only migration is still the same
 message) and folds Cc/Bcc + attachment name/size (so an attachment- or Cc-only
-distinct reuse is split, not dropped — adversarial re-check 2026-09-16).
+distinct reuse is split, not dropped — adversarial re-check 2026-09-16). A message COPIED into several
+folders is kept as ONE record and (with the id-set) not re-downloaded, but its single
+"current folder" and the go-back timeline can flap between those folders each run — a
+PRE-EXISTING mailbox-wide-dedup property (present on the floor), cosmetic (no
+loss/duplicate/re-fetch); a per-copy folder model is deferred.
