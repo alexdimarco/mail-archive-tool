@@ -116,6 +116,15 @@ type Record struct {
 	// Message-ID floor. It is NOT part of the identity, key, or Fingerprint.
 	ContentHash string `json:"chash,omitempty"`
 
+	// AltPhysIDs (version 6) are ADDITIONAL content-equal immutable ids for this
+	// record beyond the primary PhysID — the ids of other simultaneously-live copies
+	// of the same message (same Message-ID, identical content, distinct Graph ids
+	// from a copy-to-folder) and any reissued id (a migration). The live path skips
+	// a listing entry whose id is the primary OR any AltPhysIDs entry, so a copied
+	// message is not re-downloaded every run (design closure rev-6.2). Like PhysID it
+	// is NEVER part of the identity, key, or Fingerprint.
+	AltPhysIDs []string `json:"alt_phys_ids,omitempty"`
+
 	// AlsoFiles (version 5) lists extra on-disk paths (relative to -out) that
 	// belong to this message but sit outside its canonical Path — the files of a
 	// move-duplicate LOSER that CollapseByIdentity unified into this record (the
@@ -983,39 +992,74 @@ func (m *Manifest) KeysForIdentity(identity string) []IdentRef {
 	return out
 }
 
-// BackfillPhys stamps physID onto the record at key and its identity-index entry,
-// under one lock, and returns true when it changed the stored PhysID. It is the
-// survivor/empty-PhysID adopt path (design closure rev-6 §5.4/§6): a first
-// PhysID-bearing walk records the immutable id onto a record captured before v6
-// (or whose provider had withheld it), so a later distinct reuse can be told apart
-// by PhysID without re-download. It refreshes BOTH Entries and byIdent so the
-// fast-path sees the new PhysID without a rebuild. A no-op (empty physID, unknown
-// key, or the same PhysID already stored) returns false. It NEVER touches identity
-// or fingerprint. Consumed by the graph fast-path/collapse (H4/H5).
-func (m *Manifest) BackfillPhys(key, physID string) bool {
+// AddPhysID records id as one of the record's content-equal immutable ids and
+// returns true when it changed the record (design closure rev-6.2). If the record
+// has no primary PhysID yet, id becomes the primary (and is stamped into the
+// identity index); otherwise, if id is not already known, it is appended to
+// AltPhysIDs. So ONE mailbox-wide record can represent SEVERAL simultaneously-live
+// copies of a message — same Message-ID, identical content, distinct Graph immutable
+// ids (a copy filed into a second folder) — or a reissued id (a restore/migration),
+// WITHOUT flipping a single slot (which made each copy re-download and the id flap
+// every run). A no-op (empty id, unknown key, or id already known) returns false. It
+// NEVER touches identity or fingerprint.
+func (m *Manifest) AddPhysID(key, id string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if physID == "" {
+	if id == "" {
 		return false
 	}
 	r, ok := m.Entries[key]
-	if !ok || r.PhysID == physID {
+	if !ok || recordHasPhysID(r, id) {
 		return false
 	}
-	r.PhysID = physID
-	m.Entries[key] = r
-	if m.byIdent == nil {
-		m.buildIdentIndexLocked()
-	} else {
-		id := identityOf(key)
-		for i := range m.byIdent[id] {
-			if m.byIdent[id][i].Key == key {
-				m.byIdent[id][i].PhysID = physID
-				break
+	if r.PhysID == "" {
+		r.PhysID = id
+		m.Entries[key] = r
+		if m.byIdent == nil {
+			m.buildIdentIndexLocked()
+		} else {
+			bid := identityOf(key)
+			for i := range m.byIdent[bid] {
+				if m.byIdent[bid][i].Key == key {
+					m.byIdent[bid][i].PhysID = id
+					break
+				}
 			}
 		}
+		return true
 	}
+	r.AltPhysIDs = append(r.AltPhysIDs, id)
+	m.Entries[key] = r
 	return true
+}
+
+// HasPhysID reports whether the record at key carries id as one of its content-equal
+// immutable ids (the primary PhysID or an AltPhysIDs entry).
+func (m *Manifest) HasPhysID(key, id string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.Entries[key]
+	if !ok {
+		return false
+	}
+	return recordHasPhysID(r, id)
+}
+
+// recordHasPhysID reports whether id is a non-empty immutable id of r (primary or
+// alternate). The caller holds m.mu (or owns r).
+func recordHasPhysID(r Record, id string) bool {
+	if id == "" {
+		return false
+	}
+	if r.PhysID == id {
+		return true
+	}
+	for _, a := range r.AltPhysIDs {
+		if a == id {
+			return true
+		}
+	}
+	return false
 }
 
 // isIdentity reports whether a key component is a message identity — the value

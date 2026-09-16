@@ -107,3 +107,95 @@ func TestGraphPhysIDSkipByMatchedIDNoRedownload(t *testing.T) {
 		t.Errorf("run 2 re-downloaded (hits=%v) — skip-by-matched-id failed", h)
 	}
 }
+
+// copyGraphServer serves ONE message that exists as content-identical COPIES in two
+// folders (Inbox id CA, Saved id CB) — same Internet-Message-ID <c@x>, distinct
+// immutable ids, identical MIME — honoring immutable ids when *honor is set.
+func copyGraphServer(honor *bool) (func() map[string]int, *httptest.Server) {
+	var mu sync.Mutex
+	hits := map[string]int{}
+	mux := http.NewServeMux()
+	j := func(w http.ResponseWriter, s string) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(s))
+	}
+	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
+		j(w, `{"access_token":"t","token_type":"Bearer","expires_in":3600}`)
+	})
+	mux.HandleFunc("/users/u1/mailFolders", func(w http.ResponseWriter, r *http.Request) {
+		j(w, `{"value":[{"id":"F_IN","displayName":"Inbox","childFolderCount":0},{"id":"F_SA","displayName":"Saved","childFolderCount":0}]}`)
+	})
+	listing := func(id string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if *honor && strings.Contains(strings.ToLower(r.Header.Get("Prefer")), "immutableid") {
+				w.Header().Set("Preference-Applied", `IdType="ImmutableId"`)
+			}
+			j(w, `{"value":[{"id":"`+id+`","internetMessageId":"<c@x>","subject":"Notice","from":{"emailAddress":{"address":"a@example.com"}},"receivedDateTime":"2025-03-03T09:00:00Z"}]}`)
+		}
+	}
+	mux.HandleFunc("/users/u1/mailFolders/F_IN/messages", listing("CA"))
+	mux.HandleFunc("/users/u1/mailFolders/F_SA/messages", listing("CB"))
+	mux.HandleFunc("/users/u1/messages/", func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/users/u1/messages/"), "/$value")
+		mu.Lock()
+		hits[id]++
+		mu.Unlock()
+		// IDENTICAL content for both copies (keyed by Message-ID, not id).
+		w.Write([]byte("From: a@example.com\r\nSubject: Notice\r\nMessage-ID: <c@x>\r\nDate: Mon, 03 Mar 2025 09:00:00 +0000\r\n\r\nsame body\r\n"))
+	})
+	snap := func() map[string]int {
+		mu.Lock()
+		defer mu.Unlock()
+		out := map[string]int{}
+		for k, v := range hits {
+			out[k] = v
+		}
+		return out
+	}
+	return snap, httptest.NewServer(mux)
+}
+
+// covers: MA-249, R17, S38, S39
+// A message COPIED into two folders (same Internet-Message-ID, identical content,
+// DISTINCT Graph immutable ids) collapses to ONE mailbox-wide record whose
+// content-equal id SET holds both ids (rev-6.2). The first run downloads each copy
+// once (a fresh capture + one content-compare) and adds both ids; every LATER run
+// skips BOTH by set membership — no re-download, no id flap. Without the set (a
+// single-id record) the copy whose id is not stored re-downloads on every run
+// forever.
+func TestGraphCopiedMessageNoRedownloadNoFlap(t *testing.T) {
+	out := tmpDir(t)
+	honor := true
+	hitsOf, srv := copyGraphServer(&honor)
+	defer srv.Close()
+	g := GraphOptions{Tenant: "t", ClientID: "c", ClientSecret: "s", Mailboxes: []string{"u1"}, BaseURL: srv.URL, TokenURL: srv.URL + "/token"}
+	opts := Options{Out: out, Mode: export.Incremental, Index: true, Pages: true}
+	logger := log.New(io.Discard, "", 0)
+	ctx := context.Background()
+
+	if _, err := RunGraph(ctx, g, opts, logger); err != nil {
+		t.Fatalf("run 1: %v", err)
+	}
+	man := loadManifest(t, out)
+	refs := man.KeysForIdentity("mid:c@x")
+	if len(refs) != 1 {
+		t.Fatalf("copied message has %d records, want 1 (one mailbox-wide copy)", len(refs))
+	}
+	base := refs[0].Key
+	if !man.HasPhysID(base, "CA") || !man.HasPhysID(base, "CB") {
+		t.Errorf("record id-set missing a copy: HasPhysID CA=%v CB=%v, want both", man.HasPhysID(base, "CA"), man.HasPhysID(base, "CB"))
+	}
+
+	// Every later run skips BOTH copies with no re-download.
+	before := hitsOf()
+	r2, err := RunGraph(ctx, g, opts, logger)
+	if err != nil {
+		t.Fatalf("run 2: %v", err)
+	}
+	if r2.Stats.SkippedManifest != 2 || r2.Stats.Exported != 0 {
+		t.Errorf("run 2 skipped=%d exported=%d, want 2/0 (both copies skip by set membership)", r2.Stats.SkippedManifest, r2.Stats.Exported)
+	}
+	if h := hitsOf(); h["CA"] != before["CA"] || h["CB"] != before["CB"] {
+		t.Errorf("a copied message was re-downloaded on run 2 (before=%v after=%v) — the id-set skip failed", before, h)
+	}
+}

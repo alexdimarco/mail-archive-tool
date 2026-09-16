@@ -42,6 +42,16 @@ existing archives close it for messages captured fresh under v6. The sibling sca
 also **token-scoped** (R6) so it never adopts, backfills, or deletes across store
 boundaries.
 
+**rev-6.2 id-set (2026-09-16, after the re-verification pass).** A record holds a
+SET of content-equal immutable ids (`PhysID` primary + `AltPhysIDs`), not one slot.
+A content-hash match on a NEW id ADDS it to the set (`AddPhysID`) instead of flipping
+a single stored id; the fast-path and exporter skip a listing entry whose id is ANY
+member (`HasPhysID`). This handles a message COPIED into several folders — same
+Message-ID, identical content, distinct Graph ids — which otherwise re-downloaded and
+flapped the stored id every run; and it subsumes a genuine migration reissue
+uniformly. The separate `phys-churn` anomaly is REMOVED: a second content-equal id is
+absorbed silently (it is neither a distinct message nor an error).
+
 ## 0. One-line shape
 `Record.PhysID` = the Graph immutable id, a **capability-gated hint** for
 Message-ID (`mid:`) identities only. The immutable id is the **distinctness
@@ -65,7 +75,7 @@ drop, no re-download storm).
   (mailbox-wide), and carries `prev.PhysID` forward on an adopt. `applyGraphState`
   stamps `m.PhysID` from the listing.
 - **HC10:** `IdentRef` gains `PhysID`; `identUpsertLocked`/`buildIdentIndexLocked`
-  set it; `BackfillPhys`/the update path refresh `byIdent` under the same lock, so
+  set it; `AddPhysID` (rev-6.2, replacing `BackfillPhys`) records content-equal ids under the same lock, so
   the fast-path compares PhysID without a per-sibling `Get`.
 - **Format v6 (HC13):** `manifestVersion` 5→6; `Record.PhysID` additive/omitempty;
   MA-201 flips to "refuses above 6 (version 7)" with a v7 fixture in the SAME change.
@@ -90,27 +100,32 @@ again" loop so a hash collision still never becomes a silent skip.
 ## 4. Exporter placement — the content hash is the arbiter (HC3, HC7, HC1; rev-6.2)
 Live path, `mid:` identity, this message carries an immutable id. `placeByPhysID`
 scans the identity's **same-token** siblings (`KeysForIdentity` filtered to this
-store — R6) and returns `(key, churn, ok)`:
+store — R6) and returns `(key, ok)`:
 1. **A sibling already stores THIS immutable id** → that sibling: the same physical
    message re-observed → adopt/skip. `ok=true`.
 2. **Every same-token sibling carries a content hash** (a v6-managed identity): a
    sibling whose stored `ContentHash` EQUALS this message's `ContentDigest` is the
-   same message with a **REISSUED** id → adopt it, **backfill its PhysID**, emit a
-   `phys-churn` anomaly (HC7); no content match → a genuinely **DISTINCT** reuse →
-   **split** under a key qualified by a HASH OF THE IMMUTABLE ID (§3, HC1 — the
-   fingerprints COLLIDE on an identical envelope, so an fp-qualified key would
-   overwrite; an R1 drop). `ok=true`, both survive (**#8 closed**).
+   SAME message under a new immutable id (a copy filed elsewhere, or a reissue) →
+   **`AddPhysID`** the id to that record's content-equal set and adopt (no split, no
+   anomaly, so a later run skips every copy — rev-6.2); no content match → a
+   genuinely **DISTINCT** reuse → **split** under a key qualified by a HASH OF THE
+   IMMUTABLE ID (§3, HC1 — the fingerprints COLLIDE on an identical envelope, so an
+   fp-qualified key would overwrite; an R1 drop). `ok=true`, both survive (**#8
+   closed**). The content hash (`ContentDigest`) is at least as discriminating as
+   `Fingerprint` — it folds Cc/Bcc and attachment name+size as well as the bodies —
+   so the arbiter never adopts two messages the fingerprint would split.
 3. **Any same-token sibling LACKS a content hash** (a pre-v6 / floor record), or the
    incoming message has none → `ok=FALSE`: the closure cannot tell a distinct reuse
    from the archived message without a comparable hash, so it defers to the shipped
    Message-ID floor — no unsafe split, no drop, no re-download storm to backfill
    legacy records. Such an archive closes #8 only for messages captured fresh under
    v6.
-`R17 restated honestly (HC7):` a message whose immutable id changes between runs is
-re-downloaded that run and adopted in place by the content-hash match (bounded,
-logged); it is a distinct capture only if its content ALSO changed (then it is a
-different message, correctly split). The only NEW downloads the closure adds are
-genuine distinct reuses and these re-id churns.
+`R17 restated (rev-6.2):` a NEW content-equal id (a copy, or a reissue) is
+downloaded ONCE — the run that first sees it — then added to the record's id-set, so
+later runs skip it by set membership (no per-run re-download, no id flap). A capture
+is a distinct new record only when the content differs (correctly split). The only
+NEW downloads the closure adds are genuine distinct reuses and first-observations of
+a new content-equal id.
 
 ## 5. Fast-path skip decision (HC6, HC4, HC12; rev-6.2)
 The fast-path decides only SKIP-vs-DOWNLOAD; all placement (adopt/churn/split) is
@@ -124,7 +139,7 @@ siblings present:
    gone-detected — no EC5 fan-out on an id match).
 3. **physID matches NO sibling, and EVERY same-token sibling carries a content
    hash** → DOWNLOAD and hand to the exporter, which arbitrates by content hash
-   (§4): a content-hash match ⇒ adopt + backfill / churn-note; no match ⇒ #fp-split
+   (§4): a content-hash match ⇒ adopt + AddPhysID (add the id to the record's set, no anomaly); no match ⇒ #fp-split
    by the §3 key (**#8 closed**).
 4. **physID matches NO sibling, but ANY sibling LACKS a content hash** (a pre-v6 /
    floor record) → FLOOR membership skip: never bind a listed id to a record chosen
@@ -166,7 +181,7 @@ siblings present:
   (inert: HC9 test); Graph client `Prefer: IdType` on listing + `/$value`,
   namespace-once, per-message degrade (HC11) + header-aware fake server; MA-201→v7.
 - **H2** — `Export` capture-store `rec.PhysID` + carry-on-adopt (HC5);
-  `IdentRef.PhysID` + byIdent wiring + `BackfillPhys` (HC10).
+  `IdentRef.PhysID` + byIdent wiring + `AddPhysID`/`HasPhysID` id-set (HC10, rev-6.2).
 - **H3** — exporter three-way adopt/re-id/split with the PhysID-hash split key
   (HC1, HC3, HC7); `phys-churn` anomaly; scoped to `mid:` (HC8).
 - **H4** — graph fast-path skip-by-matched-sibling + download-and-compare +
@@ -182,8 +197,10 @@ re-captured (= floor merge-drop). **rev-6.2:** an EXISTING (pre-v6 / floor) arch
 keeps the Message-ID floor for its already-captured messages — the closure does not
 re-download to backfill immutable ids or content hashes, so #8 is closed only for
 messages captured fresh under v6 (a distinct reuse of a pre-v6 record's Message-ID
-is the same bounded floor residual as before, never a NEW drop). A churn is
-duplicated only if the message's CONTENT also changed across the reissue — in which
-case it is genuinely a different message and the split is correct, not a duplicate.
-The content hash excludes transport headers, so a migration that only rewrites
-headers is still recognized as the same message (adopt, not duplicate).
+is the same bounded floor residual as before, never a NEW drop). A reissued or
+copied id is added to the record's content-equal id-set (one record, no duplicate,
+skipped on later runs); it becomes a distinct capture only if the CONTENT also
+changed — then it is genuinely a different message and the split is correct. The
+content hash excludes transport headers (so a header-only migration is still the same
+message) and folds Cc/Bcc + attachment name/size (so an attachment- or Cc-only
+distinct reuse is split, not dropped — adversarial re-check 2026-09-16).

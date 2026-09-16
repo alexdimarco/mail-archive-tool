@@ -471,8 +471,9 @@ One historical caveat, now **closed on Graph for messages captured under v6**: t
 the live `graph` path by the mailbox's per-message **immutable id** together with a
 body-inclusive **content hash** recorded at capture — the tool downloads a reuse
 whose id it has not archived and keeps both when their content differs (even when
-their envelopes are identical), or adopts a reissued-id copy of the same content in
-place. Existing (pre-v6) archives keep the Message-ID floor for their
+their envelopes are identical), or — for a reissued id or a copy filed in another
+folder — adds the id to the record's content-equal set (one record, no duplicate, no
+re-download on later runs). Existing (pre-v6) archives keep the Message-ID floor for their
 already-captured messages (the tool does not re-download to backfill the new
 signals — no upgrade storm); messages captured fresh under v6 get the full closure.
 Sources without a per-message id (IMAP / local imports) keep the floor too. See

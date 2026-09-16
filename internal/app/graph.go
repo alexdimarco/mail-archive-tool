@@ -492,7 +492,12 @@ func runGraphMailbox(ctx context.Context, client *graph.Client, exp *export.Expo
 					idMatched := false
 					if ref.PhysID != "" {
 						for _, sib := range sameToken {
-							if sib.PhysID == ref.PhysID {
+							// Match the id against the record's WHOLE content-equal set
+							// (primary PhysID or any AltPhysIDs), so a message copied into
+							// several folders — same Message-ID, identical content, distinct
+							// Graph ids — skips every copy after the first run instead of
+							// re-downloading and flapping the id (rev-6.2).
+							if manifest.HasPhysID(sib.Key, ref.PhysID) {
 								matchKey, idMatched, skip = sib.Key, true, true
 								break
 							}

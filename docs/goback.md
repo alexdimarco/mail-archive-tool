@@ -231,7 +231,7 @@ is folded), never a lost move.
   downloaded and compared by content hash: a different body → kept as a distinct
   message (a `$100` and a `$250` invoice that share an id *and* an envelope both
   survive — the case the fingerprint alone could not split); the same content with a
-  reissued id → adopted in place with a logged `phys-churn` note (not duplicated).
+  reissued id, or a **copy** of the message filed in another folder → its id is added to the record's content-equal id-set (one record, no duplicate), and every copy is skipped on later runs with no re-download.
   The content hash excludes transport headers, so a migration that only rewrites
   `Received`/etc. is still recognised as the same message. The honest edges, all
   bounded and **none deletes a file**:

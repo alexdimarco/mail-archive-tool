@@ -19,7 +19,7 @@ func TestV6PhysIDRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "v6.json")
 	writeFullManifest(t, path, 6, map[string]Record{
 		withID: {Path: "mbox/Inbox/p.html", Folder: "Inbox", ExportedAt: t1, FirstFolder: "Inbox", FirstSeen: t1, LastSeen: t1, Present: true,
-			Fingerprint: "pppppppppppppppp", FpScheme: FpSchemeCurrent, PhysID: "IMMUTABLE-P", ContentHash: "chash-p"},
+			Fingerprint: "pppppppppppppppp", FpScheme: FpSchemeCurrent, PhysID: "IMMUTABLE-P", ContentHash: "chash-p", AltPhysIDs: []string{"IMMUTABLE-P2"}},
 		legacy: {Path: "mbox/Inbox/l.html", Folder: "Inbox", ExportedAt: t1, FirstFolder: "Inbox", FirstSeen: t1, LastSeen: t1, Present: true,
 			Fingerprint: "llllllllllllllll", FpScheme: FpSchemeCurrent}, // no PhysID
 	})
@@ -37,7 +37,7 @@ func TestV6PhysIDRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	m2, _ := Load(path)
-	if r, _ := m2.Get(withID); r.PhysID != "IMMUTABLE-P" || r.ContentHash != "chash-p" {
-		t.Errorf("v6 fields did not survive save+load: PhysID=%q ContentHash=%q", r.PhysID, r.ContentHash)
+	if r, _ := m2.Get(withID); r.PhysID != "IMMUTABLE-P" || r.ContentHash != "chash-p" || len(r.AltPhysIDs) != 1 || r.AltPhysIDs[0] != "IMMUTABLE-P2" {
+		t.Errorf("v6 fields did not survive save+load: PhysID=%q ContentHash=%q AltPhysIDs=%v", r.PhysID, r.ContentHash, r.AltPhysIDs)
 	}
 }

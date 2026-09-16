@@ -59,18 +59,17 @@ func TestDistinctPhysIDSplitSameEnvelope(t *testing.T) {
 }
 
 // covers: MA-245, R1, R17, S38
-// phys-churn (HC7, rev-6.1 content-hash arbiter): the SAME message re-observed with
-// a REISSUED immutable id (a restore / cross-tenant migration) is recognized by its
-// identical CONTENT HASH, adopted in place (ONE record, no split/duplicate), its
-// stored PhysID updated to the new id, and a phys-churn anomaly logged. The content
-// hash proves it, so a distinct reuse (MA-244) is never swept up with a churn — and
-// it works with NO preserved .eml. The content hash excludes transport headers, so a
-// migration that rewrites Received/etc. is still recognized as the same message.
-func TestPhysChurnAdoptsInPlace(t *testing.T) {
+// A SECOND content-equal immutable id for one Message-ID — a reissued id (a
+// restore/migration) or a copy filed into another folder — is ADDED to the record's
+// content-equal set (rev-6.2 id-set), not treated as a churn that flips a single
+// stored id. Result: ONE record, no split, no duplicate; BOTH ids are in the set so
+// a later run skips every copy (no re-download, no id flap, no misleading anomaly).
+// The content hash proves it is the same message, so a distinct reuse (MA-244) is
+// never swept up with it.
+func TestSecondContentEqualIDIsAbsorbed(t *testing.T) {
 	out := t.TempDir()
 	m := mustManifest(t)
 	e := mbwExporter(out, m)
-
 	mk := func(phys string) *model.Message {
 		return &model.Message{Subject: "Invoice", Received: testDate, InternetMessageID: "<inv@x>",
 			SenderEmail: "billing@acme.com", To: "bob@corp.com", PlainBody: "You owe $100", PhysID: phys}
@@ -79,31 +78,23 @@ func TestPhysChurnAdoptsInPlace(t *testing.T) {
 		t.Fatal(err)
 	}
 	base := state.LiveKey("store", "mid:<inv@x>")
-	if r, _ := m.Get(base); r.PhysID != "IMM-OLD" || r.ContentHash == "" {
-		t.Fatalf("first export: PhysID=%q ContentHash=%q, want IMM-OLD + a stored hash", r.PhysID, r.ContentHash)
-	}
-
-	// A migration reissued the id; the content is unchanged (same content hash).
+	// The same content re-observed under a DIFFERENT immutable id.
 	if _, err := e.Export("store", []string{"Inbox"}, mk("IMM-NEW")); err != nil {
 		t.Fatal(err)
 	}
 	if n := len(m.KeysForIdentity("mid:<inv@x>")); n != 1 {
-		t.Fatalf("identity has %d records after a churn, want 1 (adopted in place, not duplicated)", n)
+		t.Fatalf("identity has %d records, want 1 (the second id absorbed, not duplicated)", n)
 	}
-	if r, _ := m.Get(base); r.PhysID != "IMM-NEW" {
-		t.Errorf("stored PhysID = %q, want IMM-NEW (updated to the reissued id)", r.PhysID)
+	if !m.HasPhysID(base, "IMM-OLD") || !m.HasPhysID(base, "IMM-NEW") {
+		t.Errorf("both content-equal ids must be in the record's set (so every copy skips later)")
 	}
 	if countSuffix(t, out, ".html") != 1 {
 		t.Errorf("html files = %d, want 1 (no duplicate written)", countSuffix(t, out, ".html"))
 	}
-	churn := false
 	for _, is := range e.Issues {
-		if is.Kind == "phys-churn" && is.Detail == "mid:<inv@x>" {
-			churn = true
+		if is.Kind == "phys-churn" {
+			t.Errorf("a phys-churn anomaly was logged; rev-6.2 absorbs a second content-equal id silently")
 		}
-	}
-	if !churn {
-		t.Errorf("no phys-churn anomaly logged for the reissued id (Issues=%v)", e.Issues)
 	}
 }
 

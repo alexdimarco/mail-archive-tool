@@ -126,11 +126,6 @@ type Exporter struct {
 	// identity with multiple distinct fingerprints is reported once per run, not
 	// once per folder-observation.
 	reuseLogged map[string]bool
-
-	// churnLogged dedupes the per-run phys-churn anomaly (NotePhysChurn) so an
-	// identity whose immutable id was reissued (a one-time restore/migration) is
-	// reported once per run.
-	churnLogged map[string]bool
 }
 
 // Export writes a single message. It returns true if the message was written
@@ -214,11 +209,8 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	// floor).
 	physResolved := false
 	if e.DedupMailboxWide && isMid && m.PhysID != "" {
-		if k, churn, ok := e.placeByPhysID(store, m, fp); ok {
+		if k, ok := e.placeByPhysID(store, m, fp); ok {
 			key = k
-			if churn {
-				e.NotePhysChurn(m.Identity())
-			}
 			prev, seen = e.Manifest.Get(key)
 			physResolved = true
 		}
@@ -651,75 +643,65 @@ func (e *Exporter) NoteIDReuse(identity string, distinct int) {
 //     it defers to the shipped Message-ID floor (no unsafe split, no drop, no
 //     re-download storm to backfill legacy records). Such an archive closes #8 only
 //     for messages captured fresh under v6.
-func (e *Exporter) placeByPhysID(store string, m *model.Message, fp string) (string, bool, bool) {
+func (e *Exporter) placeByPhysID(store string, m *model.Message, fp string) (string, bool) {
 	ch := m.ContentDigest()
 	if ch == "" {
-		return "", false, false
+		return "", false
 	}
 	base := state.LiveKey(store, m.Identity())
 	tokenPrefix := store + "\x00"
-	var sibs []state.IdentRef
+	var keys []string
+	var recs []state.Record
 	for _, s := range e.Manifest.KeysForIdentity(m.Identity()) {
-		if strings.HasPrefix(s.Key, tokenPrefix) {
-			sibs = append(sibs, s)
+		if !strings.HasPrefix(s.Key, tokenPrefix) {
+			continue
 		}
+		r, ok := e.Manifest.Get(s.Key)
+		if !ok {
+			continue
+		}
+		keys = append(keys, s.Key)
+		recs = append(recs, r)
 	}
-	// 1. exact immutable-id match: the same physical message.
-	for _, s := range sibs {
-		if s.PhysID == m.PhysID {
-			return s.Key, false, true
+	// 1. exact immutable-id match (primary OR an already-known alternate): the same
+	//    physical message re-observed — adopt/skip.
+	for i := range keys {
+		if e.Manifest.HasPhysID(keys[i], m.PhysID) {
+			return keys[i], true
 		}
 	}
 	// Require every same-token sibling to be content-comparable; a pre-v6/floor
 	// sibling (no content hash) means the identity is not v6-managed -> defer to the
-	// floor (step 3 in the doc).
-	recs := make([]state.Record, len(sibs))
-	for i, s := range sibs {
-		r, ok := e.Manifest.Get(s.Key)
-		if !ok || r.ContentHash == "" {
-			return "", false, false
+	// floor (§4 step 3). This also keeps the closure off for a pre-v6 archive.
+	for i := range recs {
+		if recs[i].ContentHash == "" {
+			return "", false
 		}
-		recs[i] = r
 	}
-	// 2. a content match: the same message whose immutable id was reissued (a churn).
-	for i, s := range sibs {
+	// 2. a content match: the SAME message under a new immutable id — a copy filed
+	//    into another folder, or a reissued id (migration). ADD the id to that
+	//    record's content-equal set (never flip a single slot, never re-download it
+	//    next run) and adopt. No split, no anomaly.
+	for i := range keys {
 		if recs[i].ContentHash != ch {
 			continue
 		}
-		e.Manifest.BackfillPhys(s.Key, m.PhysID)
-		return s.Key, true, true
+		e.Manifest.AddPhysID(keys[i], m.PhysID)
+		return keys[i], true
 	}
-	// 3. a genuinely distinct reuse: key by a hash of the immutable id.
+	// 3. a genuinely DISTINCT reuse (no id match, content differs from every
+	//    sibling): key by a hash of the immutable id (§3, HC1). Requalify on a taken
+	//    slot so a hash collision never becomes a silent skip.
 	if _, taken := e.Manifest.Get(base); !taken {
-		return base, false, true
+		return base, true
 	}
 	key := state.Qualify(base, util.HashHex(m.PhysID, 8))
 	for {
-		r, taken := e.Manifest.Get(key)
-		if !taken || r.PhysID == m.PhysID {
-			return key, false, true
+		_, taken := e.Manifest.Get(key)
+		if !taken || e.Manifest.HasPhysID(key, m.PhysID) {
+			return key, true
 		}
 		key = state.Qualify(key, util.HashHex(m.PhysID, 8))
-	}
-}
-
-// NotePhysChurn records the phys-churn anomaly (design closure rev-6.1 §4/HC7): a
-// message whose Graph immutable id was REISSUED between runs (a one-time restore or
-// cross-tenant migration) is recognized by its byte-identical content, adopted in
-// place, and its stored PhysID updated. It is not a distinct reuse and is never
-// split; it is logged so an operator can see that an id namespace shifted. Deduped
-// per identity per run.
-func (e *Exporter) NotePhysChurn(identity string) {
-	if e.churnLogged == nil {
-		e.churnLogged = map[string]bool{}
-	}
-	if e.churnLogged[identity] {
-		return
-	}
-	e.churnLogged[identity] = true
-	e.Issues = append(e.Issues, Issue{Kind: "phys-churn", Detail: identity})
-	if e.Log != nil {
-		e.Log.Printf("note: %s kept its content but its immutable id was reissued (a restore or cross-tenant migration); adopted in place with the new id, not duplicated (docs/goback.md)", identity)
 	}
 }
 
