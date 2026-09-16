@@ -9,28 +9,30 @@ import (
 )
 
 // covers: MA-244, R1, R3, S38, S39
-// The #8 closure core (HC1, rev-6.1): two DISTINCT messages that reuse one
-// Message-ID with an IDENTICAL envelope — so their fingerprints COLLIDE — but
-// different bodies and different immutable ids are told apart by the byte compare
-// and BOTH survive. The second is filed under a key qualified by a HASH OF THE
-// IMMUTABLE ID, never the fingerprint (an fp-qualified key would collide and
-// overwrite the first — an R1 drop). This is the residual the floor could only
-// bound-and-log ($100 vs $250 invoice); with immutable ids it is closed.
+// The #8 closure core (HC1, rev-6.1 content-hash arbiter): two DISTINCT messages
+// that reuse one Message-ID with an IDENTICAL envelope — so their fingerprints
+// COLLIDE — but different bodies and different immutable ids are told apart by the
+// recorded body-inclusive CONTENT HASH and BOTH survive. The second is filed under
+// a key qualified by a HASH OF THE IMMUTABLE ID, never the fingerprint (an
+// fp-qualified key would collide and overwrite the first — an R1 drop). This is the
+// residual the floor could only bound-and-log ($100 vs $250 invoice); with immutable
+// ids and the content hash it is closed — and it needs NO preserved .eml (-raw).
 func TestDistinctPhysIDSplitSameEnvelope(t *testing.T) {
 	out := t.TempDir()
 	m := mustManifest(t)
 	e := mbwExporter(out, m)
-	e.KeepRaw = true
 
 	mk := func(body, phys string) *model.Message {
 		return &model.Message{Subject: "Invoice", Received: testDate, InternetMessageID: "<dup@x>",
-			SenderEmail: "billing@acme.com", To: "bob@corp.com", PlainBody: body, PhysID: phys,
-			Raw: []byte("Message-ID: <dup@x>\r\n\r\n" + body)}
+			SenderEmail: "billing@acme.com", To: "bob@corp.com", PlainBody: body, PhysID: phys}
 	}
 	a := mk("You owe $100", "IMM-A")
 	b := mk("You owe $250", "IMM-B")
 	if a.Fingerprint() != b.Fingerprint() {
 		t.Fatalf("premise broken: fingerprints differ (%s vs %s) — need an identical envelope", a.Fingerprint(), b.Fingerprint())
+	}
+	if a.ContentDigest() == b.ContentDigest() {
+		t.Fatalf("premise broken: content hashes equal — need distinct bodies to split")
 	}
 	for _, msg := range []*model.Message{a, b} {
 		if _, err := e.Export("store", []string{"Inbox"}, msg); err != nil {
@@ -56,32 +58,31 @@ func TestDistinctPhysIDSplitSameEnvelope(t *testing.T) {
 }
 
 // covers: MA-245, R1, R17, S38
-// phys-churn (HC7, rev-6.1): the SAME message re-observed with a REISSUED immutable
-// id (a restore / cross-tenant migration) is recognized by its BYTE-IDENTICAL
-// archived content, adopted in place (ONE record, no split, no duplicate), its
-// stored PhysID updated to the new id, and a phys-churn anomaly logged. A
-// fingerprint-only rule (rev-6 before 6.1) would ALSO have adopted here — but the
-// bytes prove it, so a distinct reuse (MA-244) is never swept up with a churn.
+// phys-churn (HC7, rev-6.1 content-hash arbiter): the SAME message re-observed with
+// a REISSUED immutable id (a restore / cross-tenant migration) is recognized by its
+// identical CONTENT HASH, adopted in place (ONE record, no split/duplicate), its
+// stored PhysID updated to the new id, and a phys-churn anomaly logged. The content
+// hash proves it, so a distinct reuse (MA-244) is never swept up with a churn — and
+// it works with NO preserved .eml. The content hash excludes transport headers, so a
+// migration that rewrites Received/etc. is still recognized as the same message.
 func TestPhysChurnAdoptsInPlace(t *testing.T) {
 	out := t.TempDir()
 	m := mustManifest(t)
 	e := mbwExporter(out, m)
-	e.KeepRaw = true
 
-	raw := []byte("Message-ID: <inv@x>\r\nSubject: Invoice\r\n\r\nYou owe $100")
 	mk := func(phys string) *model.Message {
 		return &model.Message{Subject: "Invoice", Received: testDate, InternetMessageID: "<inv@x>",
-			SenderEmail: "billing@acme.com", To: "bob@corp.com", PlainBody: "You owe $100", PhysID: phys, Raw: raw}
+			SenderEmail: "billing@acme.com", To: "bob@corp.com", PlainBody: "You owe $100", PhysID: phys}
 	}
 	if _, err := e.Export("store", []string{"Inbox"}, mk("IMM-OLD")); err != nil {
 		t.Fatal(err)
 	}
 	base := state.LiveKey("store", "mid:<inv@x>")
-	if r, _ := m.Get(base); r.PhysID != "IMM-OLD" {
-		t.Fatalf("first export: PhysID = %q, want IMM-OLD", r.PhysID)
+	if r, _ := m.Get(base); r.PhysID != "IMM-OLD" || r.ContentHash == "" {
+		t.Fatalf("first export: PhysID=%q ContentHash=%q, want IMM-OLD + a stored hash", r.PhysID, r.ContentHash)
 	}
 
-	// A migration reissued the id; the MIME content is unchanged (byte-identical).
+	// A migration reissued the id; the content is unchanged (same content hash).
 	if _, err := e.Export("store", []string{"Inbox"}, mk("IMM-NEW")); err != nil {
 		t.Fatal(err)
 	}

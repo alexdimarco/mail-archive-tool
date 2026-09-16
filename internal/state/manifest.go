@@ -106,6 +106,16 @@ type Record struct {
 	// and lets a same-envelope distinct reuse be told apart (design closure rev-6).
 	PhysID string `json:"phys_id,omitempty"`
 
+	// ContentHash (version 6) is the body-inclusive content digest
+	// (model.Message.ContentDigest) recorded on a live-path record so the PhysID
+	// closure can tell a distinct Message-ID reuse (different content) from a churn
+	// (same content, reissued immutable id) WITHOUT the original .eml — closing #8 on
+	// a default archive, not only a -raw one (design closure rev-6.1). Empty on a
+	// pre-v6/floor record and on folder-scoped local records; the closure engages
+	// only where it is present, so an archive with no ContentHash stays the shipped
+	// Message-ID floor. It is NOT part of the identity, key, or Fingerprint.
+	ContentHash string `json:"chash,omitempty"`
+
 	// AlsoFiles (version 5) lists extra on-disk paths (relative to -out) that
 	// belong to this message but sit outside its canonical Path — the files of a
 	// move-duplicate LOSER that CollapseByIdentity unified into this record (the

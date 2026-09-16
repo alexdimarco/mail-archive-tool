@@ -23,14 +23,34 @@ cannot be compared (no incoming `Raw`, or no archived `.eml`), the closure does 
 assert sameness: it defers to the shipped floor or splits (a bounded duplicate is a
 safe error; a dropped message is not).
 
+**rev-6.2 correction (the arbiter must not depend on `-raw`; operator-authorized
+2026-09-16 after the closure adversarial pass found a default-mode R1 drop).** The
+rev-6.1 `.eml` byte-compare is INERT by default: `-raw` (preserved `.eml`) is
+opt-in, so a default archive has nothing to compare, and the H4 *backfill-from-
+listing* shortcut then bound a listed id onto a lone record with NO content check
+and skipped — permanently dropping a distinct reuse (R1). rev-6.2 makes a
+**body-inclusive content hash** (`model.Message.ContentDigest` = `contentHash`,
+recorded as `Record.ContentHash` at capture) the churn-vs-distinct arbiter — it
+needs no `.eml`, and excludes transport headers so a migration that rewrites
+`Received`/etc. is still recognized as the same message. The `backfill-from-listing`
+shortcut is **removed**: when a listed id matches no sibling the exporter DOWNLOADS
+and arbitrates by content hash. The closure engages only where every same-token
+sibling carries a content hash (a v6-managed identity); a pre-v6 / floor record
+(none) stays the shipped Message-ID floor — no re-download storm, no unsafe split,
+no drop beyond the documented floor. Fresh v6 archives close #8 for everyone;
+existing archives close it for messages captured fresh under v6. The sibling scan is
+also **token-scoped** (R6) so it never adopts, backfills, or deletes across store
+boundaries.
+
 ## 0. One-line shape
 `Record.PhysID` = the Graph immutable id, a **capability-gated hint** for
 Message-ID (`mid:`) identities only. The immutable id is the **distinctness
-signal** (a distinct physical message has a distinct id — EC6/Q3) and the **message
-bytes are the churn-vs-distinct arbiter** (rev-6.1). PhysID is a pre-download skip
-hint and a distinctness tie-breaker, never folded into identity or fingerprint.
-Withheld/absent PhysID, or bytes that cannot be compared ⇒ the shipped
-Message-ID-membership floor (no regression, no wrong drop).
+signal** (a distinct physical message has a distinct id — EC6/Q3) and the recorded
+**body-inclusive content hash is the churn-vs-distinct arbiter** (rev-6.2 — no
+`.eml`/`-raw` needed). PhysID is never folded into identity or fingerprint.
+Withheld/absent PhysID, or an identity without a comparable content hash (a pre-v6 /
+floor record) ⇒ the shipped Message-ID-membership floor (no regression, no wrong
+drop, no re-download storm).
 
 ## 1. Identity inertness + plumbing (HC8, HC9, HC10, HC5)
 - **HC9:** `model.Message.PhysID` and `Record.PhysID` are non-identity capture
@@ -67,50 +87,51 @@ qualifies by **`util.HashHex(physID, 8)`** (mirroring `CollapseByIdentity`'s
 existing fp-collision fallback), and keeps the existing "slot taken → qualify
 again" loop so a hash collision still never becomes a silent skip.
 
-## 4. Exporter placement — bytes are the churn-vs-distinct arbiter (HC3, HC7, HC1; rev-6.1)
-Live path, `mid:` identity, this message carries an immutable id AND its `Raw` bytes
-are present. `placeByPhysID` scans the identity's siblings (`KeysForIdentity`) and
-chooses the key:
+## 4. Exporter placement — the content hash is the arbiter (HC3, HC7, HC1; rev-6.2)
+Live path, `mid:` identity, this message carries an immutable id. `placeByPhysID`
+scans the identity's **same-token** siblings (`KeysForIdentity` filtered to this
+store — R6) and returns `(key, churn, ok)`:
 1. **A sibling already stores THIS immutable id** → that sibling: the same physical
-   message re-observed → adopt/skip. (No byte compare needed.)
-2. **No id match, but a same-fingerprint sibling's archived `.eml` is
-   BYTE-IDENTICAL** to this message → adopt THAT sibling and **backfill its
-   PhysID**. If the sibling carried a DIFFERENT non-empty id, its id was REISSUED (a
-   restore / cross-tenant migration): emit a `phys-churn` anomaly (HC7); if the
-   sibling's id was EMPTY (a pre-v6 / withheld record), this is the ordinary first
-   PhysID-walk backfill (§5) — no anomaly. Never split.
-3. **No id match and byte-differs from every same-fingerprint sibling** → a
-   genuinely DISTINCT reuse → **split** under a key qualified by a HASH OF THE
-   IMMUTABLE ID (§3, HC1 — the fingerprints COLLIDE on an identical envelope, so an
-   fp-qualified key would overwrite; an R1 drop). Both survive (**#8 closed**).
-- **Cannot byte-compare** (a same-fp sibling has no archived `.eml`) → do NOT assert
-  distinctness on nothing: fall back rather than risk an R1 drop — the incoming
-  message splits (keep both), a bounded duplicate.
-- **No incoming `Raw`, PhysID empty, non-`mid:`, or non-live** → the shipped floor
-  (adopt-never-split / content-fp split), unchanged.
+   message re-observed → adopt/skip. `ok=true`.
+2. **Every same-token sibling carries a content hash** (a v6-managed identity): a
+   sibling whose stored `ContentHash` EQUALS this message's `ContentDigest` is the
+   same message with a **REISSUED** id → adopt it, **backfill its PhysID**, emit a
+   `phys-churn` anomaly (HC7); no content match → a genuinely **DISTINCT** reuse →
+   **split** under a key qualified by a HASH OF THE IMMUTABLE ID (§3, HC1 — the
+   fingerprints COLLIDE on an identical envelope, so an fp-qualified key would
+   overwrite; an R1 drop). `ok=true`, both survive (**#8 closed**).
+3. **Any same-token sibling LACKS a content hash** (a pre-v6 / floor record), or the
+   incoming message has none → `ok=FALSE`: the closure cannot tell a distinct reuse
+   from the archived message without a comparable hash, so it defers to the shipped
+   Message-ID floor — no unsafe split, no drop, no re-download storm to backfill
+   legacy records. Such an archive closes #8 only for messages captured fresh under
+   v6.
 `R17 restated honestly (HC7):` a message whose immutable id changes between runs is
-re-downloaded that run and adopted in place by the byte compare (bounded, logged);
-duplicated ONLY if its stored MIME is not byte-identical across the reissue (§9).
-The only NEW downloads the closure adds are genuine distinct reuses and these re-id
-churns.
+re-downloaded that run and adopted in place by the content-hash match (bounded,
+logged); it is a distinct capture only if its content ALSO changed (then it is a
+different message, correctly split). The only NEW downloads the closure adds are
+genuine distinct reuses and these re-id churns.
 
-## 5. Fast-path skip decision (HC6, HC4, HC12; rev-6.1)
-The fast-path decides only SKIP-vs-DOWNLOAD before it has bytes; all placement
-(adopt/churn/split) is the exporter's `placeByPhysID` (§4), which owns the key and
-does the byte compare AFTER download. Incremental, `mid:` identity, same-token
+## 5. Fast-path skip decision (HC6, HC4, HC12; rev-6.2)
+The fast-path decides only SKIP-vs-DOWNLOAD; all placement (adopt/churn/split) is
+the exporter's `placeByPhysID` (§4). Incremental, `mid:` identity, same-token
 siblings present:
-1. **listed physID == ""** (withheld) → floor: skip by membership; fire the
-   id-reuse note if the identity already carries >1 distinct fingerprint (HC12).
-2. **physID matches a sibling's stored PhysID** → SKIP (no download); **matchKey =
-   THAT sibling** (HC6, chosen by PhysID, not the base); `MergeFields(present)` on
-   it; `TouchSeen` the other same-token siblings (EC5). If the matched sibling is
-   one of >1 distinct-fp siblings, still fire the id-reuse note (HC12).
-3. **physID matches NO sibling** → DOWNLOAD and hand to the exporter, which
-   byte-compares against the siblings (§4): a byte-identical sibling ⇒ adopt +
-   backfill / churn-note (this subsumes the old §5.4 empty-sibling *and* the all-v6
-   churn cases — one arbiter, the bytes); no byte match ⇒ #fp-split by the §3 key
-   (**#8 closed**). Fire the id-reuse Issue when the identity carries >1 distinct fp.
-   NEVER bind a listed id to an on-disk file chosen by anything but content (HC4).
+1. **listed physID == ""** (withheld) → floor: skip by membership; fire the id-reuse
+   note if the identity already carries >1 distinct fingerprint (HC12).
+2. **physID matches a same-token sibling's stored PhysID** → SKIP (no download);
+   **matchKey = THAT sibling** (HC6); `MergeFields(present)`; stamp ONLY that sibling
+   (each physical message has its own listing entry, so a departed distinct reuse is
+   gone-detected — no EC5 fan-out on an id match).
+3. **physID matches NO sibling, and EVERY same-token sibling carries a content
+   hash** → DOWNLOAD and hand to the exporter, which arbitrates by content hash
+   (§4): a content-hash match ⇒ adopt + backfill / churn-note; no match ⇒ #fp-split
+   by the §3 key (**#8 closed**).
+4. **physID matches NO sibling, but ANY sibling LACKS a content hash** (a pre-v6 /
+   floor record) → FLOOR membership skip: never bind a listed id to a record chosen
+   by anything but content (HC4), and never re-download to backfill legacy records
+   (no storm). Fan out `TouchSeen` over all same-token siblings (a floor skip cannot
+   say which one this entry is — R21). The closure engages for this identity only
+   once its records are captured fresh under v6.
 
 ## 6. Collapse (HC2 — reject defer-to-walk; keep the floor merge)
 - Keep the SHIPPED collapse merging every same-(token,identity) group to one
@@ -153,14 +174,16 @@ siblings present:
 - **H5** — collapse survivor-PhysID backfill + still-live-loser re-separation (HC2);
   docs/README/goback.md + catalog rewrites (HC13, HC14); the re-run adversarial pass.
 
-## 9. Operator-accepted residuals (carried; rev-6.1)
+## 9. Operator-accepted residuals (carried; rev-6.2)
 IMAP/local #8 (floor); a withheld id (degrade to floor); an adversarial tenant
 assigning ONE immutable id to two distinct reused-id messages (skip-match; the
-id-reuse note still fires — HC12); a pre-v6 collapse-dropped loser gone before the
-first PhysID run (= floor merge-drop). **New with the byte-compare arbiter
-(rev-6.1):** a churn (reissued id) whose stored MIME is NOT byte-identical across
-the reissue is re-captured as a bounded, logged DUPLICATE rather than adopted — the
-`.eml` compare cannot recognize it (a stronger, body-only arbiter is possible later
-if a real migration exhibits this); and a same-fingerprint reuse whose sibling has
-no archived `.eml` (KeepRaw was off) splits to a bounded duplicate rather than risk
-an R1 drop. Both are DUPLICATES (safe), never drops.
+id-reuse note still fires — HC12); a pre-v6 collapse-dropped loser gone before it is
+re-captured (= floor merge-drop). **rev-6.2:** an EXISTING (pre-v6 / floor) archive
+keeps the Message-ID floor for its already-captured messages — the closure does not
+re-download to backfill immutable ids or content hashes, so #8 is closed only for
+messages captured fresh under v6 (a distinct reuse of a pre-v6 record's Message-ID
+is the same bounded floor residual as before, never a NEW drop). A churn is
+duplicated only if the message's CONTENT also changed across the reissue — in which
+case it is genuinely a different message and the split is correct, not a duplicate.
+The content hash excludes transport headers, so a migration that only rewrites
+headers is still recognized as the same message (adopt, not duplicate).

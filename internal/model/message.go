@@ -160,6 +160,18 @@ func (m *Message) Fingerprint() string {
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }
 
+// ContentDigest is the exported body-inclusive content hash used by the live-path
+// PhysID closure as the churn-vs-distinct arbiter (design closure rev-6.1): it is
+// contentHash() — subject/sender/recipients/immutable-date/attachment-count + all
+// body variants — and so DISTINGUISHES two messages that differ in body (a distinct
+// reuse) while MATCHING the same message re-observed with a reissued immutable id (a
+// churn). It excludes transport headers, importance/categories and the immutable id
+// itself, so a header rewrite or a re-classification does not make one message look
+// like another. It is NOT part of Identity()/Fingerprint() (those are unchanged).
+func (m *Message) ContentDigest() string {
+	return m.contentHash()
+}
+
 // contentHash digests the fields that make a message itself. The body is part
 // of it: without it, two distinct messages that share subject/sender/
 // recipient/second/attachment-count (two drafts, generated mail with no

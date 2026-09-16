@@ -4,7 +4,6 @@
 package export
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"log"
@@ -200,25 +199,29 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	isMid := strings.HasPrefix(m.Identity(), "mid:")
 	prev, seen := e.Manifest.Get(key)
 
-	// PhysID-aware placement (design closure rev-6.1 §4), LIVE PATH + Message-ID
-	// identity + a known immutable id + the message's OWN bytes in hand. The
-	// immutable id is the distinctness signal and the archived .eml bytes are the
-	// churn-vs-distinct arbiter; placeByPhysID scans the identity's siblings and
-	// returns the key — adopt an id/byte match (churn or backfill), or split a
-	// genuinely distinct reuse under a PhysID-hash key (HC1). It runs INSTEAD of the
-	// fingerprint qualify loop below; everything it cannot decide (no immutable id,
-	// no incoming bytes, non-mid:, non-live) falls to the floor loop unchanged (HC8:
-	// a no-Message-ID identity already folds the body into contentHash, so PhysID
-	// must not touch it).
+	// PhysID-aware placement (design closure rev-6.1 §4, content-hash arbiter), LIVE
+	// PATH + Message-ID identity + a known immutable id. The immutable id is the
+	// distinctness signal and the recorded body-inclusive CONTENT HASH is the
+	// churn-vs-distinct arbiter (no .eml / -raw needed). placeByPhysID scans the
+	// identity's SAME-TOKEN siblings and returns (key, churn, ok): adopt an id match
+	// or a content match (churn/backfill), or split a genuinely distinct reuse under
+	// a PhysID-hash key (HC1). ok is false — fall to the fingerprint floor unchanged
+	// — whenever it cannot safely decide by content: no incoming content hash, or ANY
+	// same-token sibling lacks a stored content hash (a pre-v6/floor record). So an
+	// archive with no content hashes stays the shipped Message-ID floor: no
+	// re-download storm, no unsafe split, no drop beyond the documented floor (HC8: a
+	// no-Message-ID identity already folds the body into contentHash — left to the
+	// floor).
 	physResolved := false
-	if e.DedupMailboxWide && isMid && m.PhysID != "" && len(m.Raw) > 0 {
-		k, churn := e.placeByPhysID(store, m, fp)
-		key = k
-		if churn {
-			e.NotePhysChurn(m.Identity())
+	if e.DedupMailboxWide && isMid && m.PhysID != "" {
+		if k, churn, ok := e.placeByPhysID(store, m, fp); ok {
+			key = k
+			if churn {
+				e.NotePhysChurn(m.Identity())
+			}
+			prev, seen = e.Manifest.Get(key)
+			physResolved = true
 		}
-		prev, seen = e.Manifest.Get(key)
-		physResolved = true
 	}
 
 	for !physResolved && seen && prev.Fingerprint != "" && prev.Fingerprint != fp &&
@@ -432,6 +435,11 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		if rec.PhysID == "" && seen {
 			rec.PhysID = prev.PhysID
 		}
+		// The body-inclusive content hash is the closure's churn-vs-distinct arbiter
+		// (rev-6.1). Recorded on every live-path write so a later run can tell a
+		// distinct reuse of this Message-ID from the same message re-observed, without
+		// the original .eml. Reflects THIS capture's content (a fill updates it).
+		rec.ContentHash = m.ContentDigest()
 		if seen && !prev.FirstSeen.IsZero() {
 			rec.FirstFolder = prev.FirstFolder
 			rec.FirstSeen = prev.FirstSeen
@@ -622,72 +630,77 @@ func (e *Exporter) NoteIDReuse(identity string, distinct int) {
 }
 
 // placeByPhysID chooses the manifest key for a live-path message that carries a
-// Graph immutable id under a Message-ID identity (design closure rev-6.1 §4). The
-// caller guarantees a non-empty PhysID and non-empty Raw. It scans the identity's
-// siblings and returns (key, churn):
+// Graph immutable id under a Message-ID identity (design closure rev-6.1 §4,
+// content-hash arbiter). The caller guarantees a non-empty PhysID. It scans the
+// identity's SAME-TOKEN siblings (never another store's — R6) and returns
+// (key, churn, ok):
 //  1. a sibling already stores THIS immutable id -> that sibling (the same physical
-//     message re-observed); adopt.
-//  2. no id match, but a same-fingerprint sibling's archived .eml is BYTE-IDENTICAL
-//     to this message -> adopt that sibling and BACKFILL its PhysID. If that
-//     sibling carried a DIFFERENT non-empty id, the id was REISSUED (a restore /
-//     migration churn): churn=true so the caller logs it. An EMPTY-id sibling is
-//     the ordinary first-PhysID-walk backfill: churn=false.
-//  3. otherwise -> a genuinely DISTINCT reuse: a key qualified by a HASH OF THE
-//     IMMUTABLE ID, not the fingerprint (HC1: the fingerprints COLLIDE on an
-//     identical envelope, so an fp-qualified key would overwrite — an R1 drop).
-//     The slot-taken loop requalifies so a hash collision never becomes a skip.
-//
-// When the bytes cannot be compared (a same-fp sibling has no archived .eml)
-// sameRawAsArchived returns false, so step 2 does NOT match and the message SPLITS:
-// a bounded duplicate is a safe error, a dropped distinct message is not (R1).
-func (e *Exporter) placeByPhysID(store string, m *model.Message, fp string) (string, bool) {
+//     message re-observed); adopt. ok=true.
+//  2. otherwise, if EVERY same-token sibling carries a stored content hash: a
+//     sibling whose content hash EQUALS this message's is the same message with a
+//     REISSUED id -> adopt it and BACKFILL its PhysID (churn=true so the caller logs
+//     it — an empty-id sibling would be a plain backfill, but on this path all
+//     siblings are v6 records so a differing id means a reissue); no content match ->
+//     a genuinely DISTINCT reuse -> split under a key qualified by a HASH OF THE
+//     IMMUTABLE ID, not the fingerprint (HC1: identical envelopes collide under an fp
+//     key — an R1 drop). The slot-taken loop requalifies so a hash collision never
+//     becomes a skip. ok=true.
+//  3. if ANY same-token sibling LACKS a content hash (a pre-v6 / floor record, or the
+//     incoming message has none) -> ok=FALSE: the closure cannot safely tell a
+//     distinct reuse from the archived message without a comparable content hash, so
+//     it defers to the shipped Message-ID floor (no unsafe split, no drop, no
+//     re-download storm to backfill legacy records). Such an archive closes #8 only
+//     for messages captured fresh under v6.
+func (e *Exporter) placeByPhysID(store string, m *model.Message, fp string) (string, bool, bool) {
+	ch := m.ContentDigest()
+	if ch == "" {
+		return "", false, false
+	}
 	base := state.LiveKey(store, m.Identity())
-	sibs := e.Manifest.KeysForIdentity(m.Identity())
-	for _, s := range sibs {
-		if s.PhysID == m.PhysID {
-			return s.Key, false
+	tokenPrefix := store + "\x00"
+	var sibs []state.IdentRef
+	for _, s := range e.Manifest.KeysForIdentity(m.Identity()) {
+		if strings.HasPrefix(s.Key, tokenPrefix) {
+			sibs = append(sibs, s)
 		}
 	}
+	// 1. exact immutable-id match: the same physical message.
 	for _, s := range sibs {
-		if s.Fingerprint != fp {
-			continue
+		if s.PhysID == m.PhysID {
+			return s.Key, false, true
 		}
+	}
+	// Require every same-token sibling to be content-comparable; a pre-v6/floor
+	// sibling (no content hash) means the identity is not v6-managed -> defer to the
+	// floor (step 3 in the doc).
+	recs := make([]state.Record, len(sibs))
+	for i, s := range sibs {
 		r, ok := e.Manifest.Get(s.Key)
-		if !ok || !e.sameRawAsArchived(m, r.Path) {
+		if !ok || r.ContentHash == "" {
+			return "", false, false
+		}
+		recs[i] = r
+	}
+	// 2. a content match: the same message whose immutable id was reissued (a churn).
+	for i, s := range sibs {
+		if recs[i].ContentHash != ch {
 			continue
 		}
 		e.Manifest.BackfillPhys(s.Key, m.PhysID)
-		return s.Key, s.PhysID != ""
+		return s.Key, true, true
 	}
+	// 3. a genuinely distinct reuse: key by a hash of the immutable id.
 	if _, taken := e.Manifest.Get(base); !taken {
-		return base, false
+		return base, false, true
 	}
 	key := state.Qualify(base, util.HashHex(m.PhysID, 8))
 	for {
 		r, taken := e.Manifest.Get(key)
 		if !taken || r.PhysID == m.PhysID {
-			return key, false
+			return key, false, true
 		}
 		key = state.Qualify(key, util.HashHex(m.PhysID, 8))
 	}
-}
-
-// sameRawAsArchived reports whether the incoming message's raw RFC822 bytes are
-// byte-identical to the .eml already archived for prevRel (the churn-vs-distinct
-// arbiter, rev-6.1). Unlike the collapse layer's sameArchivedEML, a MISSING or
-// unreadable .eml returns FALSE (not "assume same"): here an unproven match must
-// never let a distinct message be adopted onto another's key (R1) — the caller
-// splits instead.
-func (e *Exporter) sameRawAsArchived(m *model.Message, prevRel string) bool {
-	if len(m.Raw) == 0 || prevRel == "" {
-		return false
-	}
-	eml := strings.TrimSuffix(filepath.Join(e.OutDir, filepath.FromSlash(prevRel)), ".html") + ".eml"
-	stored, err := os.ReadFile(eml)
-	if err != nil || len(stored) == 0 {
-		return false
-	}
-	return bytes.Equal(stored, m.Raw)
 }
 
 // NotePhysChurn records the phys-churn anomaly (design closure rev-6.1 §4/HC7): a

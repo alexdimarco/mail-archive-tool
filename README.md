@@ -466,14 +466,16 @@ silently corrupt a v6 archive; as with every format bump, **do not run an older
 `mailarchive` against a v6 archive** (see
 [Upgrading an existing archive](#upgrading-an-existing-archive)).
 
-One historical caveat, now **closed on Graph**: two *genuinely different* messages
-that reuse one Internet-Message-ID are told apart on the live `graph` path by the
-mailbox's per-message **immutable id** — the tool downloads a reuse whose id it has
-not archived and keeps both, distinguished by a byte comparison (even when their
-envelopes are identical). Upgrading an older archive backfills each id from the
-listing with no re-download. Sources without a per-message id (IMAP / local
-imports) keep the floor, where a distinct reuse with an identical envelope and no
-preserved `.eml` may be skipped; see
+One historical caveat, now **closed on Graph for messages captured under v6**: two
+*genuinely different* messages that reuse one Internet-Message-ID are told apart on
+the live `graph` path by the mailbox's per-message **immutable id** together with a
+body-inclusive **content hash** recorded at capture — the tool downloads a reuse
+whose id it has not archived and keeps both when their content differs (even when
+their envelopes are identical), or adopts a reissued-id copy of the same content in
+place. Existing (pre-v6) archives keep the Message-ID floor for their
+already-captured messages (the tool does not re-download to backfill the new
+signals — no upgrade storm); messages captured fresh under v6 get the full closure.
+Sources without a per-message id (IMAP / local imports) keep the floor too. See
 [Limits](docs/goback.md#limits-read-these) for the full, bounded edge
 list. If a large existing live archive matters, you can still start a fresh
 capture into a new `-out` to get

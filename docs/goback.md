@@ -222,27 +222,30 @@ is folded), never a lost move.
   and **not** re-downloaded — one copy per message from then on. No file is ever
   deleted by this (R13): a collapsed duplicate's copy stays on disk and is reached
   only by a later redaction.
-- **A reused Message-ID: closed on Graph, a bounded floor gap elsewhere.** Some
+- **A reused Message-ID: closed on Graph for messages captured under v6.** Some
   senders stamp two genuinely *different* messages with the *same*
-  Internet-Message-ID. On the live `graph` path this is now resolved at the root:
-  Microsoft Graph gives each physical message a distinct **immutable id**, so the
-  tool downloads a reuse whose id it has not archived and keeps both, told apart by
-  a byte comparison — a `$100` and a `$250` invoice that share an id *and* an
-  identical envelope both survive (the case the fingerprint alone could not split).
-  The first immutable-id-honoring run over an older archive **backfills** each
-  message's id from the listing with **no re-download**; a genuinely new reuse that
-  arrived just before that run is captured within one further run (it self-heals
-  once a baseline exists). The honest edges, all bounded and **none deletes a
-  file**:
+  Internet-Message-ID. On the live `graph` path this is resolved by two signals
+  recorded when a message is archived under this version: Microsoft Graph gives each
+  physical message a distinct **immutable id**, and the archive stores a
+  body-inclusive **content hash**. A reuse whose id the archive has not seen is
+  downloaded and compared by content hash: a different body → kept as a distinct
+  message (a `$100` and a `$250` invoice that share an id *and* an envelope both
+  survive — the case the fingerprint alone could not split); the same content with a
+  reissued id → adopted in place with a logged `phys-churn` note (not duplicated).
+  The content hash excludes transport headers, so a migration that only rewrites
+  `Received`/etc. is still recognised as the same message. The honest edges, all
+  bounded and **none deletes a file**:
+    - **Existing (pre-v6) archives keep the Message-ID floor for their
+      already-captured messages.** The closure needs the content hash to tell a
+      reuse apart, and a message archived before this version has none; the tool
+      does **not** re-download the whole mailbox to backfill it (no upgrade storm).
+      So a distinct reuse of a *pre-v6* message's Message-ID is skipped just as on
+      the floor — the same bounded residual as before, never a new drop. Messages
+      captured **fresh** under v6 get the full closure; to close it retroactively,
+      re-capture into a new `-out`.
     - **Sources without a per-message id (IMAP / local imports)** keep the floor:
-      a distinct reuse with an *identical* envelope and *no* preserved `.eml` may
-      look already-archived and be skipped. A `-raw` archive (preserved `.eml`) or
-      a differing envelope still keeps both.
-    - **A reissued immutable id** — a mailbox restore or cross-tenant migration
-      that renumbers every id — is recognised by its unchanged content and adopted
-      in place with a logged `phys-churn` note, **not** duplicated; only if that
-      migration *also* rewrote the stored MIME bytes is the message re-captured as
-      one bounded, logged duplicate.
+      a distinct reuse with an *identical* envelope may look already-archived and be
+      skipped.
     - **A tenant that withholds the immutable id** degrades to the
       Internet-Message-ID floor above.
     - A `-mode full` re-export over a *floor* archive may **overwrite** the

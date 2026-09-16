@@ -16,8 +16,7 @@ import (
 // physGraphServer serves u1/Inbox with two distinct-Message-ID messages and, when
 // *honor is set AND the client asked for immutable ids, emits Preference-Applied so
 // graph.Messages sets ref.PhysID = the message id. It records $value fetches so a
-// test can prove no re-download. Flipping *honor between runs models a tenant that
-// begins honoring immutable ids (the first v6 walk of an upgraded archive).
+// test can prove no re-download.
 func physGraphServer(honor *bool) (func() map[string]int, *httptest.Server) {
 	var mu sync.Mutex
 	hits := map[string]int{}
@@ -61,15 +60,15 @@ func physGraphServer(honor *bool) (func() map[string]int, *httptest.Server) {
 }
 
 // covers: MA-246, R17, S38, S39
-// The live fast-path uses the immutable id (rev-6.1 §5). Upgrading a floor archive
-// to id-honoring is STORM-FREE: the first id-bearing walk BACKFILLS each lone
-// sibling's PhysID FROM THE LISTING with no re-download (option D's promise holds),
-// and thereafter each message is skipped by its exact immutable id. A tenant that
-// withholds the id degrades to the Message-ID-membership floor. This exercises the
-// skip-vs-download half; the exporter's placement/split is MA-244/245.
-func TestGraphPhysIDBackfillNoRedownloadThenSkipByID(t *testing.T) {
+// The live fast-path uses the immutable id + the recorded content hash (rev-6.1 §5,
+// content-hash arbiter). A message captured under v6 stores its immutable id AND a
+// body-inclusive content hash (the churn-vs-distinct arbiter, no .eml / -raw
+// needed); a re-run skips it by its EXACT immutable id with no re-download. (A
+// distinct reuse is downloaded and split — MA-203/MA-244; a pre-v6 record with no
+// content hash stays the floor — MA-247.)
+func TestGraphPhysIDSkipByMatchedIDNoRedownload(t *testing.T) {
 	out := tmpDir(t)
-	honor := false
+	honor := true
 	hitsOf, srv := physGraphServer(&honor)
 	defer srv.Close()
 	g := GraphOptions{Tenant: "t", ClientID: "c", ClientSecret: "s", Mailboxes: []string{"u1"}, BaseURL: srv.URL, TokenURL: srv.URL + "/token"}
@@ -77,52 +76,34 @@ func TestGraphPhysIDBackfillNoRedownloadThenSkipByID(t *testing.T) {
 	logger := log.New(io.Discard, "", 0)
 	ctx := context.Background()
 
-	// Run 1 — the tenant WITHHOLDS the id (floor): capture both, PhysID unset.
+	// Run 1 — fresh v6 capture: each message stores its immutable id AND a content hash.
 	if _, err := RunGraph(ctx, g, opts, logger); err != nil {
 		t.Fatalf("run 1: %v", err)
 	}
 	if h := hitsOf(); h["M1"] != 1 || h["M2"] != 1 {
-		t.Fatalf("run 1 hits = %v, want each message fetched once", h)
+		t.Fatalf("run 1 hits = %v, want each fetched once", h)
 	}
 	man := loadManifest(t, out)
-	for _, id := range []string{"mid:m1@x", "mid:m2@x"} {
+	for id, wid := range map[string]string{"mid:m1@x": "M1", "mid:m2@x": "M2"} {
 		refs := man.KeysForIdentity(id)
-		if len(refs) != 1 || refs[0].PhysID != "" {
-			t.Fatalf("after floor run: %s PhysID = %+v, want empty", id, refs)
+		if len(refs) != 1 || refs[0].PhysID != wid {
+			t.Fatalf("%s PhysID = %+v, want %s stored at capture", id, refs, wid)
+		}
+		rec, _ := man.Get(refs[0].Key)
+		if rec.ContentHash == "" {
+			t.Errorf("%s has no ContentHash stored — the closure's arbiter signal is missing", id)
 		}
 	}
 
-	// Run 2 — the tenant NOW honors immutable ids. Each lone sibling is backfilled
-	// FROM THE LISTING: skipped, no re-download, and the id is now stored.
-	honor = true
+	// Run 2 — steady state: skip by the matched immutable id, no re-download.
 	r2, err := RunGraph(ctx, g, opts, logger)
 	if err != nil {
 		t.Fatalf("run 2: %v", err)
 	}
 	if r2.Stats.SkippedManifest != 2 || r2.Stats.Exported != 0 {
-		t.Errorf("run 2 skipped=%d exported=%d, want 2/0", r2.Stats.SkippedManifest, r2.Stats.Exported)
+		t.Errorf("run 2 skipped=%d exported=%d, want 2/0 (skip by matched id)", r2.Stats.SkippedManifest, r2.Stats.Exported)
 	}
 	if h := hitsOf(); h["M1"] != 1 || h["M2"] != 1 {
-		t.Errorf("run 2 RE-DOWNLOADED on upgrade (hits=%v, want each still 1) — the backfill-from-listing storm-free path failed", h)
-	}
-	man = loadManifest(t, out)
-	want := map[string]string{"mid:m1@x": "M1", "mid:m2@x": "M2"}
-	for id, wid := range want {
-		refs := man.KeysForIdentity(id)
-		if len(refs) != 1 || refs[0].PhysID != wid {
-			t.Errorf("after upgrade: %s PhysID = %+v, want %s backfilled from the listing", id, refs, wid)
-		}
-	}
-
-	// Run 3 — steady state: skip by the matched immutable id, still no download.
-	r3, err := RunGraph(ctx, g, opts, logger)
-	if err != nil {
-		t.Fatalf("run 3: %v", err)
-	}
-	if r3.Stats.SkippedManifest != 2 {
-		t.Errorf("run 3 skipped=%d, want 2 (skip by matched id)", r3.Stats.SkippedManifest)
-	}
-	if h := hitsOf(); h["M1"] != 1 || h["M2"] != 1 {
-		t.Errorf("run 3 re-downloaded (hits=%v) — skip-by-matched-id failed", h)
+		t.Errorf("run 2 re-downloaded (hits=%v) — skip-by-matched-id failed", h)
 	}
 }
