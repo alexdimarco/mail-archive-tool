@@ -160,16 +160,35 @@ func (m *Message) Fingerprint() string {
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }
 
-// ContentDigest is the exported body-inclusive content hash used by the live-path
-// PhysID closure as the churn-vs-distinct arbiter (design closure rev-6.1): it is
-// contentHash() — subject/sender/recipients/immutable-date/attachment-count + all
-// body variants — and so DISTINGUISHES two messages that differ in body (a distinct
-// reuse) while MATCHING the same message re-observed with a reissued immutable id (a
-// churn). It excludes transport headers, importance/categories and the immutable id
-// itself, so a header rewrite or a re-classification does not make one message look
-// like another. It is NOT part of Identity()/Fingerprint() (those are unchanged).
+// ContentDigest is the live-path PhysID closure's churn-vs-distinct arbiter (design
+// closure rev-6.2): the hash the exporter stores as Record.ContentHash and compares
+// to decide whether a Message-ID reuse whose immutable id it has not seen is the
+// SAME message (a reissued/copied id → adopt) or a genuinely DISTINCT one (→ split).
+//
+// It MUST be at least as discriminating as Fingerprint() — otherwise the closure,
+// which lets a ContentDigest match OVERRIDE the fingerprint #fp-split, could adopt
+// (and thus drop) two messages that Fingerprint would keep apart. So it folds every
+// field Fingerprint trusts — Subject, SenderEmail, To, Cc, the immutable date, and
+// each attachment's name AND size — PLUS Bcc and all body variants (the content
+// Fingerprint deliberately omits). A distinct reuse differing only in an attachment,
+// Cc/Bcc, or body therefore gets a DIFFERENT digest and is split, not dropped
+// (adversarial re-check 2026-09-16). It excludes transport headers, importance/
+// categories and the immutable id itself, so a header rewrite or re-classification
+// does not make one message look like another. It is NOT contentHash() and is NOT
+// part of Identity()/Fingerprint() — changing it never shifts a message's key.
 func (m *Message) ContentDigest() string {
-	return m.contentHash()
+	h := sha256.New()
+	fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s\x00%s\x00%d\x00",
+		m.Subject, m.SenderEmail, m.To, m.Cc, m.Bcc, m.identityTime().UnixNano())
+	for i, a := range m.Attachments {
+		fmt.Fprintf(h, "%d:%s:%d\x00", i, a.Filename, a.Size)
+	}
+	h.Write([]byte(m.HTMLBody))
+	h.Write([]byte{0})
+	h.Write([]byte(m.PlainBody))
+	h.Write([]byte{0})
+	h.Write([]byte(m.RTFBody))
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // contentHash digests the fields that make a message itself. The body is part

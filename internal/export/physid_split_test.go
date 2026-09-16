@@ -1,6 +1,7 @@
 package export
 
 import (
+	"io"
 	"testing"
 
 	"mail-archive-tool/internal/model"
@@ -103,5 +104,44 @@ func TestPhysChurnAdoptsInPlace(t *testing.T) {
 	}
 	if !churn {
 		t.Errorf("no phys-churn anomaly logged for the reissued id (Issues=%v)", e.Issues)
+	}
+}
+
+// covers: MA-248, R1, R3, S38
+// The content-hash arbiter must be at least as discriminating as Fingerprint
+// (adversarial re-check 2026-09-16): two DISTINCT reuses of one Message-ID that are
+// identical in subject/sender/To/date/body and share the same attachment COUNT but
+// differ only in an attachment NAME (report-jan.pdf vs report-feb.pdf) — or only in
+// Cc — must get DIFFERENT content digests and BOTH survive. A coarse digest (folding
+// only the attachment count, not names) collides them and the closure adopts+drops
+// one (a silent R1 loss the fingerprint split would otherwise prevent).
+func TestContentDigestDistinguishesAttachmentAndCc(t *testing.T) {
+	att := func(name string) model.Attachment {
+		return model.Attachment{Filename: name, Size: 4, WriteTo: func(w io.Writer) (int64, error) { n, e := w.Write([]byte("data")); return int64(n), e }}
+	}
+	mk := func(attName, cc, phys string) *model.Message {
+		return &model.Message{Subject: "Daily Report", Received: testDate, InternetMessageID: "<rep@x>",
+			SenderEmail: "reports@acme.com", To: "bob@corp.com", Cc: cc, PlainBody: "See attached", PhysID: phys,
+			Attachments: []model.Attachment{att(attName)}}
+	}
+	// Unit level: the digest separates an attachment-name-only and a Cc-only diff.
+	if mk("report-jan.pdf", "", "A").ContentDigest() == mk("report-feb.pdf", "", "B").ContentDigest() {
+		t.Errorf("ContentDigest collides on an attachment-name-only difference — a distinct reuse would be dropped (R1)")
+	}
+	if mk("report-jan.pdf", "", "A").ContentDigest() == mk("report-jan.pdf", "carol@corp.com", "B").ContentDigest() {
+		t.Errorf("ContentDigest collides on a Cc-only difference — a distinct reuse would be dropped (R1)")
+	}
+
+	// Exporter level: two attachment-only-differing reuses BOTH survive (split).
+	out := t.TempDir()
+	m := mustManifest(t)
+	e := mbwExporter(out, m)
+	for _, msg := range []*model.Message{mk("report-jan.pdf", "", "IMM-A"), mk("report-feb.pdf", "", "IMM-B")} {
+		if _, err := e.Export("store", []string{"Inbox"}, msg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := len(m.KeysForIdentity("mid:<rep@x>")); n != 2 {
+		t.Fatalf("identity has %d records, want 2 (attachment-only-differing reuses must both survive — R1)", n)
 	}
 }
