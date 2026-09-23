@@ -11,8 +11,10 @@ import (
 	"strings"
 	"time"
 
+	"mail-archive-tool/internal/graph"
 	"mail-archive-tool/internal/outlookcom"
 	"mail-archive-tool/internal/schedule"
+	"mail-archive-tool/internal/util"
 )
 
 // The flag sets of the archiving verbs are built by these functions so that
@@ -62,6 +64,7 @@ type graphOpts struct {
 	mailboxes                   stringSlice
 	out, tenant, clientID       *string
 	secretEnv, secretFile       *string
+	auth, tokenCache            *string
 	mode, since, log            *string
 	index, pages, keepRaw       *bool
 	includeDeleted, includeJunk *bool
@@ -71,11 +74,13 @@ type graphOpts struct {
 func graphFlags(fs *flag.FlagSet) *graphOpts {
 	o := &graphOpts{}
 	o.out = fs.String("out", "", "output directory (required)")
+	o.auth = fs.String("auth", "app", "authentication: app (app-only client-credentials, a tenant-consented Mail.Read application permission for named mailboxes) | device (per-user device-code sign-in, delegated Mail.Read for your OWN mailbox — no tenant-wide permission)")
 	o.tenant = fs.String("tenant", "", "Microsoft 365 tenant id or domain (required)")
 	o.clientID = fs.String("client-id", "", "Entra app (client) id (required)")
-	o.secretEnv = fs.String("client-secret-env", "MAILARCHIVE_GRAPH_SECRET", "environment variable holding the app client secret")
-	o.secretFile = fs.String("client-secret-file", "", "file holding the app client secret (a regular file readable only by you); takes precedence over the environment variable, and is what scheduled jobs must use")
-	fs.Var(&o.mailboxes, "mailbox", "mailbox UPN to archive (repeatable, comma-separated) (required)")
+	o.secretEnv = fs.String("client-secret-env", "MAILARCHIVE_GRAPH_SECRET", "app auth: environment variable holding the app client secret")
+	o.secretFile = fs.String("client-secret-file", "", "app auth: file holding the app client secret (a regular file readable only by you); takes precedence over the environment variable, and is what scheduled app jobs must use")
+	o.tokenCache = fs.String("token-cache", "", "device auth: file to save your sign-in (a refresh token) so later runs need no re-sign-in (default: under your OS config dir); a scheduled device job must set this")
+	fs.Var(&o.mailboxes, "mailbox", "mailbox UPN to archive (app: repeatable/required; device: optional, your own address only)")
 	o.mode = fs.String("mode", "incremental", "export mode: incremental|full")
 	o.since = fs.String("since", "", "only export items newer than this (e.g. 30d, 2026-07-01)")
 	o.log = fs.String("log", "", "write the run log to this file (size-capped, rotated) instead of stderr")
@@ -261,6 +266,10 @@ func parseJob(args []string) (job, error) {
 			return job{}, fmt.Errorf("graph job: %v (a scheduled job runs exactly these flags; fix them now)", err)
 		}
 		o.mailboxes = append(o.mailboxes, fs.Args()...)
+		authMode := strings.ToLower(strings.TrimSpace(*o.auth))
+		if authMode != "app" && authMode != "device" {
+			return job{}, fmt.Errorf("-auth must be app or device (got %q)", *o.auth)
+		}
 		switch {
 		case *o.out == "":
 			return job{}, errors.New("-out is required (the output directory)")
@@ -268,13 +277,37 @@ func parseJob(args []string) (job, error) {
 			return job{}, errors.New("-tenant is required (the Microsoft 365 tenant id or domain)")
 		case *o.clientID == "":
 			return job{}, errors.New("-client-id is required (the Entra app id)")
-		case len(o.mailboxes) == 0:
-			return job{}, errors.New("-mailbox is required (at least one mailbox UPN to archive)")
-		case *o.secretFile == "":
-			return job{}, errors.New("a scheduled graph job has no environment to carry the secret: pass -client-secret-file PATH (a file readable only by you)")
 		}
-		if _, err := readSecret(*o.secretFile); err != nil {
-			return job{}, err
+		// The auth-specific tokens the canonical job carries: an app job carries the
+		// secret file (never the secret itself); a device job carries the token
+		// cache it must run from unattended (design P4/P7 — a scheduled device run
+		// cannot prompt, so the cache is validated now, exactly as it will be read).
+		var authArgs []string
+		if authMode == "device" {
+			if *o.secretFile != "" || flagWasSet(fs, "client-secret-env") {
+				return job{}, errors.New("device auth is a public client and takes no secret — remove -client-secret-file/-client-secret-env")
+			}
+			if len(o.mailboxes) > 1 {
+				return job{}, errors.New("device auth archives ONE mailbox (your own) — pass at most one -mailbox, or none")
+			}
+			if strings.TrimSpace(*o.tokenCache) == "" {
+				return job{}, errors.New("a scheduled device job cannot prompt for a sign-in: pass -token-cache PATH to a cache you have already signed in to (run `mailarchive graph -auth device …` once, as the account this schedule runs as)")
+			}
+			if err := graph.CheckTokenCache(*o.tokenCache); err != nil {
+				return job{}, err
+			}
+			authArgs = []string{"-auth", "device", "-token-cache", abspath(*o.tokenCache)}
+		} else {
+			if len(o.mailboxes) == 0 {
+				return job{}, errors.New("-mailbox is required (at least one mailbox UPN to archive)")
+			}
+			if *o.secretFile == "" {
+				return job{}, errors.New("a scheduled graph job has no environment to carry the secret: pass -client-secret-file PATH (a file readable only by you)")
+			}
+			if _, err := readSecret(*o.secretFile); err != nil {
+				return job{}, err
+			}
+			authArgs = []string{"-client-secret-file", abspath(*o.secretFile)}
 		}
 		if _, err := parseMode(*o.mode); err != nil {
 			return job{}, err
@@ -284,13 +317,14 @@ func parseJob(args []string) (job, error) {
 				return job{}, err
 			}
 		}
-		for _, v := range append([]string{*o.out, *o.tenant, *o.clientID, *o.secretFile, *o.log, *o.since}, o.mailboxes...) {
+		for _, v := range append([]string{*o.out, *o.tenant, *o.clientID, *o.secretFile, *o.tokenCache, *o.log, *o.since}, o.mailboxes...) {
 			if err := noControl("a job argument", v); err != nil {
 				return job{}, err
 			}
 		}
 		j := job{verb: "graph", out: abspath(*o.out)}
-		j.args = []string{"-out", j.out, "-tenant", *o.tenant, "-client-id", *o.clientID, "-client-secret-file", abspath(*o.secretFile), "-mode", strings.ToLower(strings.TrimSpace(*o.mode)), "-unattended"}
+		j.args = append([]string{"-out", j.out, "-tenant", *o.tenant, "-client-id", *o.clientID}, authArgs...)
+		j.args = append(j.args, "-mode", strings.ToLower(strings.TrimSpace(*o.mode)), "-unattended")
 		for _, m := range o.mailboxes {
 			j.args = append(j.args, "-mailbox", m)
 		}
@@ -367,44 +401,13 @@ func parseJob(args []string) (job, error) {
 // readSecret reads an app client secret from a file the way both `graph` (at
 // run time) and `schedule` (at schedule time) must: a regular file only (no
 // symlink, FIFO or device — a FIFO would hang an unattended job forever), not
-// readable by group/others on Unix, at most 4 KB, non-empty after trimming.
+// readable by group/others on Unix, at most 4 KB, non-empty after trimming. The
+// file-safety discipline is shared with the delegated token cache via
+// util.ReadSecureFile so the two cannot drift (design-graph-delegated D-C4).
 func readSecret(path string) (string, error) {
-	// Lstat first (a legible refusal for a symlink), then open the file ONCE
-	// without following links and without blocking (a FIFO must not hang an
-	// unattended job), and judge the descriptor we actually read from — no
-	// window between the check and the read.
-	if fi, err := os.Lstat(path); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return "", fmt.Errorf("client secret file %s does not exist — create it readable only by you (chmod 600)", path)
-		}
-		return "", fmt.Errorf("client secret file %s: %w", path, err)
-	} else if !fi.Mode().IsRegular() {
-		return "", fmt.Errorf("client secret file %s must be a regular file (not a symlink, pipe or device)", path)
-	}
-	f, err := os.OpenFile(path, os.O_RDONLY|secretOpenFlags, 0)
+	data, err := util.ReadSecureFile(path, "client secret file", 4096)
 	if err != nil {
-		return "", fmt.Errorf("client secret file %s: %w", path, err)
-	}
-	defer f.Close()
-	fi, err := f.Stat()
-	if err != nil {
-		return "", fmt.Errorf("client secret file %s: %w", path, err)
-	}
-	if !fi.Mode().IsRegular() {
-		return "", fmt.Errorf("client secret file %s must be a regular file (not a symlink, pipe or device)", path)
-	}
-	if runtime.GOOS != "windows" && fi.Mode().Perm()&0o077 != 0 {
-		return "", fmt.Errorf("client secret file %s is readable by other users (mode %04o): run `chmod 600 %s`", path, fi.Mode().Perm(), path)
-	}
-	if fi.Size() > 4096 {
-		return "", fmt.Errorf("client secret file %s is %d bytes; a client secret is far smaller — is this the right file?", path, fi.Size())
-	}
-	data, err := io.ReadAll(io.LimitReader(f, 4097))
-	if err != nil {
-		return "", fmt.Errorf("client secret file %s: %w", path, err)
-	}
-	if len(data) > 4096 {
-		return "", fmt.Errorf("client secret file %s is larger than 4 KB — is this the right file?", path)
+		return "", err
 	}
 	secret := strings.TrimSpace(string(data))
 	if secret == "" {

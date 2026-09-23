@@ -22,8 +22,8 @@ import (
 	"mail-archive-tool/internal/state"
 )
 
-// GraphOptions configures a Microsoft Graph app-only archive run. BaseURL and
-// TokenURL are test overrides (empty = Microsoft production endpoints).
+// GraphOptions configures a Microsoft Graph archive run. BaseURL, TokenURL and
+// DeviceAuthURL are test overrides (empty = Microsoft production endpoints).
 type GraphOptions struct {
 	Tenant       string
 	ClientID     string
@@ -31,6 +31,17 @@ type GraphOptions struct {
 	Mailboxes    []string
 	BaseURL      string
 	TokenURL     string
+
+	// Auth selects the trust model: "app" (default/empty) is the app-only
+	// client-credentials grant against /users/{upn}; "device" is the per-user
+	// device-code delegated grant against the signer's OWN mailbox (/me). In
+	// device mode ClientSecret is unused, Mailboxes is at most the signer's own
+	// address, and TokenCachePath persists the sign-in for later silent runs
+	// (design-graph-delegated OR1/OR3).
+	Auth           string
+	TokenCachePath string
+	DeviceAuthURL  string
+	Unattended     bool
 
 	// Deleted Items and Junk Email are excluded from the walk by default (T7,
 	// operator ruling); these opt them back in. Exclusion is by resolved
@@ -49,6 +60,15 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	if logger == nil {
 		logger = log.New(io.Discard, "", 0)
 	}
+	// Build the Graph client and resolve the mailbox set BEFORE taking the archive
+	// lock: a device sign-in is interactive and must not hold the lock, and device
+	// mode derives its single mailbox (the signer, read from /me) rather than being
+	// told one. App mode returns the given mailboxes unchanged.
+	client, mailboxes, err := buildGraphClient(ctx, g, logger)
+	if err != nil {
+		return Result{}, err
+	}
+	g.Mailboxes = mailboxes
 	if len(g.Mailboxes) == 0 {
 		return Result{}, errors.New("no mailboxes specified (-mailbox is required)")
 	}
@@ -221,14 +241,6 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		}
 	}
 
-	client := graph.New(ctx, graph.Config{
-		Tenant:       g.Tenant,
-		ClientID:     g.ClientID,
-		ClientSecret: g.ClientSecret,
-		BaseURL:      g.BaseURL,
-		TokenURL:     g.TokenURL,
-	})
-
 	floor := opts.CheckpointEvery
 	if floor <= 0 {
 		floor = defaultCheckpointEvery
@@ -316,6 +328,50 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		return result, fmt.Errorf("%d mailbox(es) failed", failures)
 	}
 	return result, nil
+}
+
+// buildGraphClient constructs the Graph client for the selected auth mode and
+// resolves the mailbox set. App mode (default) builds the client-credentials
+// client and returns the given mailboxes unchanged. Device mode signs in (from a
+// cache, or interactively), reads the signer's UPN from /me, and returns that one
+// mailbox — refusing a -mailbox that names anyone else, so the operator can never
+// believe they are archiving a mailbox other than their own (design P3/D-C1).
+func buildGraphClient(ctx context.Context, g GraphOptions, logger *log.Logger) (*graph.Client, []string, error) {
+	if strings.EqualFold(g.Auth, "device") {
+		client, err := graph.NewDelegated(ctx, graph.Config{
+			Tenant:         g.Tenant,
+			ClientID:       g.ClientID,
+			BaseURL:        g.BaseURL,
+			TokenURL:       g.TokenURL,
+			DeviceAuthURL:  g.DeviceAuthURL,
+			TokenCachePath: g.TokenCachePath,
+			Unattended:     g.Unattended,
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+		upn, err := client.Me(ctx)
+		if err != nil {
+			return nil, nil, fmt.Errorf("verify signed-in user: %w", err)
+		}
+		switch {
+		case len(g.Mailboxes) == 0:
+			// no -mailbox: adopt the signer.
+		case len(g.Mailboxes) == 1 && strings.EqualFold(strings.TrimSpace(g.Mailboxes[0]), upn):
+			// -mailbox matches the signer.
+		default:
+			return nil, nil, fmt.Errorf("signed in as %s, but -mailbox is %s: device mode archives only your own mailbox — omit -mailbox or pass exactly %s", upn, strings.Join(g.Mailboxes, ", "), upn)
+		}
+		logger.Printf("Signed in as %s (device flow); archiving your own mailbox", upn)
+		return client, []string{upn}, nil
+	}
+	return graph.New(ctx, graph.Config{
+		Tenant:       g.Tenant,
+		ClientID:     g.ClientID,
+		ClientSecret: g.ClientSecret,
+		BaseURL:      g.BaseURL,
+		TokenURL:     g.TokenURL,
+	}), g.Mailboxes, nil
 }
 
 // applyGraphState overlays the message-state fields carried on the widened

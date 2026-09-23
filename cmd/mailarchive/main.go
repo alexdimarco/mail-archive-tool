@@ -970,6 +970,10 @@ func runGraph(args []string) (err error) {
 	}
 	mailboxes := append(o.mailboxes, fs.Args()...)
 
+	authMode := strings.ToLower(strings.TrimSpace(*o.auth))
+	if authMode != "app" && authMode != "device" {
+		return fmt.Errorf("-auth must be app or device (got %q)", *o.auth)
+	}
 	if *o.out == "" {
 		return errors.New("-out is required (the output directory)")
 	}
@@ -979,24 +983,50 @@ func runGraph(args []string) (err error) {
 	if *o.clientID == "" {
 		return errors.New("-client-id is required (the Entra app id)")
 	}
-	if len(mailboxes) == 0 {
-		return errors.New("-mailbox is required (at least one mailbox UPN to archive)")
-	}
 	if *o.unattended {
 		if err := requireExistingOut(*o.out); err != nil {
 			return err
 		}
 	}
-	var secret string
-	if *o.secretFile != "" {
-		if secret, err = readSecret(*o.secretFile); err != nil {
-			return err
+
+	gopts := app.GraphOptions{
+		Tenant: *o.tenant, ClientID: *o.clientID, Mailboxes: mailboxes,
+		IncludeDeleted: *o.includeDeleted, IncludeJunk: *o.includeJunk, Unattended: *o.unattended,
+	}
+	switch authMode {
+	case "app":
+		if len(mailboxes) == 0 {
+			return errors.New("-mailbox is required (at least one mailbox UPN to archive)")
 		}
-	} else {
-		secret = os.Getenv(*o.secretEnv)
-		if secret == "" {
-			return fmt.Errorf("app client secret is empty: set it in the $%s environment variable, or pass -client-secret-file", *o.secretEnv)
+		var secret string
+		if *o.secretFile != "" {
+			if secret, err = readSecret(*o.secretFile); err != nil {
+				return err
+			}
+		} else {
+			secret = os.Getenv(*o.secretEnv)
+			if secret == "" {
+				return fmt.Errorf("app client secret is empty: set it in the $%s environment variable, or pass -client-secret-file (or use -auth device to sign in as yourself with no secret)", *o.secretEnv)
+			}
 		}
+		gopts.ClientSecret = secret
+	case "device":
+		// A public client takes no secret; refuse one so it is never fed to a flow
+		// that ignores it and the operator is not misled (P6).
+		if *o.secretFile != "" || flagWasSet(fs, "client-secret-env") {
+			return errors.New("device auth is a public client and takes no secret — remove -client-secret-file/-client-secret-env (device mode signs you in interactively)")
+		}
+		if len(mailboxes) > 1 {
+			return errors.New("device auth signs in as ONE user and archives that mailbox — pass at most one -mailbox (your own address), or none")
+		}
+		cache := strings.TrimSpace(*o.tokenCache)
+		if cache == "" {
+			if cache, err = defaultTokenCachePath(*o.tenant, *o.clientID, mailboxes); err != nil {
+				return err
+			}
+		}
+		gopts.Auth = "device"
+		gopts.TokenCachePath = cache
 	}
 
 	mode, err := parseMode(*o.mode)
@@ -1024,9 +1054,12 @@ func runGraph(args []string) (err error) {
 		}
 	}()
 
-	gopts := app.GraphOptions{Tenant: *o.tenant, ClientID: *o.clientID, ClientSecret: secret, Mailboxes: mailboxes, IncludeDeleted: *o.includeDeleted, IncludeJunk: *o.includeJunk}
 	opts := app.Options{Out: *o.out, Mode: mode, Since: since, Index: *o.index, Pages: *o.pages, KeepRaw: *o.keepRaw}
-	logger.Printf("Archiving %d mailbox(es) from tenant %s via Microsoft Graph (mode=%s)", len(mailboxes), *o.tenant, *o.mode)
+	if authMode == "device" {
+		logger.Printf("Signing in to tenant %s via Microsoft Graph device flow (mode=%s)", *o.tenant, *o.mode)
+	} else {
+		logger.Printf("Archiving %d mailbox(es) from tenant %s via Microsoft Graph (mode=%s)", len(mailboxes), *o.tenant, *o.mode)
+	}
 	if *o.includeDeleted || *o.includeJunk {
 		logger.Printf("including %s in the walk (excluded by default)", includedFoldersPhrase(*o.includeDeleted, *o.includeJunk))
 	}
@@ -1039,6 +1072,36 @@ func runGraph(args []string) (err error) {
 	}
 	err = runErr
 	return err
+}
+
+// flagWasSet reports whether a flag was explicitly passed (as opposed to left at
+// its default) — used to refuse a secret-carrying flag under device auth even
+// when it has a default value.
+func flagWasSet(fs *flag.FlagSet, name string) bool {
+	set := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			set = true
+		}
+	})
+	return set
+}
+
+// defaultTokenCachePath is where a device sign-in is cached when -token-cache is
+// not given: under the caller's OS config dir (%APPDATA% on Windows, ~/.config on
+// Unix — never inside -out, which may be a synced folder), named by the tenant +
+// client, plus the mailbox when one is given so two mailboxes on one host do not
+// collide (design D-C1/D-C3).
+func defaultTokenCachePath(tenant, clientID string, mailboxes []string) (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", fmt.Errorf("cannot determine your OS config directory for the sign-in cache — pass -token-cache PATH: %w", err)
+	}
+	name := "graph-token-" + util.ShortHash(strings.ToLower(strings.TrimSpace(tenant))) + "-" + util.ShortHash(strings.TrimSpace(clientID))
+	if len(mailboxes) == 1 {
+		name += "-" + util.ShortHash(strings.ToLower(strings.TrimSpace(mailboxes[0])))
+	}
+	return filepath.Join(dir, "mailarchive", name+".json"), nil
 }
 
 func graphUsage(fs *flag.FlagSet) func() {

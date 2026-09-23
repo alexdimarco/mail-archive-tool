@@ -204,7 +204,7 @@ func Assess(in Input, now time.Time) Report {
 		case state.RunFailed:
 			r.red("run_failed", fmt.Sprintf("the last run (%s) FAILED: %s", lr.Started.Local().Format("2006-01-02 15:04"), lr.Error))
 			if looksLikeAuthFailure(lr.Error) {
-				r.note("auth_remedy", "  remedy: authentication failed — the app client secret may have expired; rotate it in Entra and rewrite the secret file")
+				r.note("auth_remedy", "  remedy: authentication failed — for an app-auth job the client secret may have expired (rotate it in Entra and rewrite the secret file); for a device-auth job the sign-in may have expired (re-run `mailarchive graph -auth device …` to sign in again)")
 			}
 		case state.RunRunning:
 			alive := in.LockHeld
@@ -343,7 +343,7 @@ func jobWithOut(job []string, out string) []string {
 
 func looksLikeAuthFailure(msg string) bool {
 	m := strings.ToLower(msg)
-	for _, needle := range []string{"401", "unauthorized", "invalid_client", "aadsts", "authentication", "invalid client secret"} {
+	for _, needle := range []string{"401", "unauthorized", "invalid_client", "invalid_grant", "aadsts", "authentication", "invalid client secret", "sign in", "sign-in", "token cache", "device sign"} {
 		if strings.Contains(m, needle) {
 			return true
 		}

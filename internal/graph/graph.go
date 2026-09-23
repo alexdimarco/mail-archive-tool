@@ -40,6 +40,18 @@ type Config struct {
 	// transport gives up waiting for response headers after RequestTimeout.
 	RequestTimeout time.Duration
 	MIMETimeout    time.Duration
+
+	// Delegated (per-user, device-code) fields — used only by NewDelegated.
+	// DeviceAuthURL defaults to the Microsoft devicecode endpoint; tests override
+	// it. TokenCachePath is where the per-user refresh/access token is persisted
+	// (0600, under the caller's OS config dir). Unattended refuses an interactive
+	// device prompt (a scheduled run has no console): with no usable cache it
+	// fails naming the sign-in remedy rather than blocking. Prompt receives the
+	// verification URI + user code on a first sign-in; nil prints to stderr.
+	DeviceAuthURL  string
+	TokenCachePath string
+	Unattended     bool
+	Prompt         func(DeviceAuth)
 }
 
 const (
@@ -47,12 +59,29 @@ const (
 	defaultMIMETimeout    = 10 * time.Minute
 )
 
-// Client talks to Microsoft Graph with an auto-refreshing app-only token.
+// Client talks to Microsoft Graph with an auto-refreshing token — app-only
+// (client-credentials) or delegated per-user (device-code, meMode).
 type Client struct {
 	base        string
 	hc          *http.Client
 	reqTimeout  time.Duration
 	mimeTimeout time.Duration
+
+	// meMode addresses the signed-in user's OWN mailbox at /me instead of
+	// /users/{upn}: it is set by the delegated (device-code) constructor, where
+	// the token is a per-user delegated Mail.Read grant that can reach no other
+	// mailbox (design-graph-delegated OR3/P3).
+	meMode bool
+}
+
+// userSeg is the mailbox path segment: /me for a delegated per-user client (the
+// token reaches only the signer's own mailbox, so userID is ignored), or
+// /users/{upn} for an app-only client addressing a named mailbox.
+func (c *Client) userSeg(userID string) string {
+	if c.meMode {
+		return "/me"
+	}
+	return "/users/" + url.PathEscape(userID)
 }
 
 // New builds a client whose HTTP transport injects (and refreshes) an app-only
@@ -82,11 +111,19 @@ func New(ctx context.Context, cfg Config) *Client {
 	}
 	// The oauth2 client wraps this transport (the token request uses it too):
 	// a server that accepts the connection and then goes silent is cut off.
+	ctx = context.WithValue(ctx, oauth2.HTTPClient, httpTransport(reqTimeout))
+	return &Client{base: strings.TrimRight(base, "/"), hc: cc.Client(ctx), reqTimeout: reqTimeout, mimeTimeout: mimeTimeout}
+}
+
+// httpTransport builds the deadline-bounded HTTP client the oauth2 layer wraps for
+// both the token exchange and the Graph API calls: a server that accepts the
+// connection and then goes silent is cut off after reqTimeout (app-only and
+// delegated share it, so device sign-in is bounded too — R17/MA-98, D-C5).
+func httpTransport(reqTimeout time.Duration) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.ResponseHeaderTimeout = reqTimeout
 	transport.TLSHandshakeTimeout = 30 * time.Second
-	ctx = context.WithValue(ctx, oauth2.HTTPClient, &http.Client{Transport: transport})
-	return &Client{base: strings.TrimRight(base, "/"), hc: cc.Client(ctx), reqTimeout: reqTimeout, mimeTimeout: mimeTimeout}
+	return &http.Client{Transport: transport}
 }
 
 // Folder is a mail folder with its full, sanitized path (root → leaf).
@@ -146,9 +183,9 @@ func (c *Client) Folders(ctx context.Context, userID string, filter FolderFilter
 	var out []Folder
 	var walk func(parentID string, prefix []string) error
 	walk = func(parentID string, prefix []string) error {
-		path := "/users/" + url.PathEscape(userID) + "/mailFolders"
+		path := c.userSeg(userID) + "/mailFolders"
 		if parentID != "" {
-			path = "/users/" + url.PathEscape(userID) + "/mailFolders/" + url.PathEscape(parentID) + "/childFolders"
+			path = c.userSeg(userID) + "/mailFolders/" + url.PathEscape(parentID) + "/childFolders"
 		}
 		next := c.base + path + "?$select=id,displayName,childFolderCount&$top=100"
 		for next != "" {
@@ -198,7 +235,7 @@ func (c *Client) Folders(ctx context.Context, userID string, filter FolderFilter
 func (c *Client) WellKnownFolderID(ctx context.Context, userID, wellKnown string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.reqTimeout)
 	defer cancel()
-	u := c.base + "/users/" + url.PathEscape(userID) + "/mailFolders/" + url.PathEscape(wellKnown) + "?$select=id"
+	u := c.base + c.userSeg(userID) + "/mailFolders/" + url.PathEscape(wellKnown) + "?$select=id"
 	resp, err := c.get(ctx, u)
 	if err != nil {
 		return "", err
@@ -285,7 +322,7 @@ func addrsOf(rs []graphRecipient) []string {
 // ccRecipients, receivedDateTime, hasAttachments) the pre-download signature
 // needs, alongside the message-state fields — all on one request (§3.2).
 func (c *Client) Messages(ctx context.Context, userID, folderID string, fn func(MessageRef) error) error {
-	next := c.base + "/users/" + url.PathEscape(userID) + "/mailFolders/" + url.PathEscape(folderID) +
+	next := c.base + c.userSeg(userID) + "/mailFolders/" + url.PathEscape(folderID) +
 		"/messages?$select=id,internetMessageId,subject,from,toRecipients,ccRecipients,receivedDateTime,hasAttachments,importance,isRead,sensitivity,categories&$top=1000"
 	honored, firstPage := false, true // whether Prefer: IdType="ImmutableId" is in effect this run
 	for next != "" {
@@ -354,7 +391,7 @@ func (c *Client) Messages(ctx context.Context, userID, folderID string, fn func(
 func (c *Client) MIME(ctx context.Context, userID, messageID string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.mimeTimeout)
 	defer cancel()
-	u := c.base + "/users/" + url.PathEscape(userID) + "/messages/" + url.PathEscape(messageID) + "/$value"
+	u := c.base + c.userSeg(userID) + "/messages/" + url.PathEscape(messageID) + "/$value"
 	resp, err := c.get(ctx, u)
 	if err != nil {
 		return nil, err
