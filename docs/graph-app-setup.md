@@ -13,6 +13,30 @@
   whose central IT will not grant an application `Mail.Read`). **See
   "Per-user (device sign-in)" below.**
 
+## Which IDs do I use? (avoid the "Object ID" trap)
+
+Entra shows **three** GUIDs that look interchangeable but are not. The tool uses
+exactly **two**, and **neither is an Object ID**:
+
+| Value | Where to find it | Use it? |
+|---|---|---|
+| **Directory (tenant) ID** | App registration → **Overview** (also Entra → Overview) | ✅ `-tenant` |
+| **Application (client) ID** | App registration → **Overview** | ✅ `-client-id` |
+| **Object ID** *(of the app registration)* | App registration → **Overview**, directly under the Application (client) ID | ❌ never |
+| **Object ID** *(of the enterprise application / service principal)* | Entra → **Enterprise applications** → your app → **Overview** | ❌ not for auth |
+
+**The two Object IDs are the two options people get stuck on.** They sit right next
+to the Application (client) ID and are easy to copy by mistake. The tool authenticates
+with the **Application (client) ID** — a tenant-wide identifier of the *app*, the same
+on every tenant that consents it — not with either Object ID, which are
+directory-row identifiers of two *different* objects (the registration and its
+service principal).
+
+The **only** place an Object ID is ever needed is the optional app-only RBAC scoping
+in step 4 below (`New-ServicePrincipal -ServiceId …`), and there it is specifically the
+**enterprise application's** Object ID (the service principal), *not* the app
+registration's. Device (per-user) sign-in never needs an Object ID at all.
+
 ## App-only (admin, one-time)
 
 The app-only path needs a tenant admin to register one app, grant it **read-only**

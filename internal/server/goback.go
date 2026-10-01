@@ -291,29 +291,33 @@ var gobackTmpl = template.Must(template.New("goback").Parse(`<!DOCTYPE html>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Go back — Archive</title>
 <style>
-:root{color-scheme:light dark}
+/* Shared MailArchive design tokens (light + dark) — matches the search UI. */
+:root{color-scheme:light dark;--bg:#f3f5f8;--panel:#fff;--text:#18212b;--muted:#667085;--line:#d9e0e8;--accent:#2563eb;--accent-soft:#eaf1ff;--good:#157347;--warn:#a15c00;--danger:#b42318}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1319;--panel:#171c24;--text:#eef2f6;--muted:#9aa4b2;--line:#2a3441;--accent:#8aa4ff;--accent-soft:#202943;--good:#62d59a;--warn:#f4c66b;--danger:#ff8a80}}
 *{box-sizing:border-box}
-body{margin:0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1a1a1a;background:#fff}
-@media (prefers-color-scheme:dark){body{color:#e6e6e6;background:#161616}a{color:#7cb0ff}.bar{background:#1e1e1e;border-color:#2c2c2c}.chip{background:#242424;border-color:#3a3a3a}.chip.sel{background:#33507a;border-color:#33507a}.folder{border-color:#2a2a2a}}
-.bar{position:sticky;top:0;z-index:5;background:#f7f7f8;border-bottom:1px solid #ddd;padding:12px 16px}
-.row{display:flex;gap:12px;align-items:baseline;max-width:1000px;margin:0 auto}
+body{margin:0;font:15px system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:var(--text);background:var(--bg)}
+a{color:var(--accent)}
+.bar{position:sticky;top:0;z-index:5;background:var(--panel);border-bottom:1px solid var(--line);padding:14px 16px}
+.bar::before{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:var(--accent)}
+.row{display:flex;gap:12px;align-items:baseline;max-width:1040px;margin:0 auto}
 .row a{margin-left:auto;font-size:13px}
-.main{max-width:1000px;margin:0 auto;padding:12px 16px 60px}
-.avail{padding:8px 12px;border-radius:6px;font-size:13px;margin:8px 0}
-.avail-available{background:#e7f6e7}.avail-partial{background:#fff3cd}.avail-unavailable{background:#f8d7da}
-@media (prefers-color-scheme:dark){.avail-available{background:#1c331c}.avail-partial{background:#3a3210}.avail-unavailable{background:#3a1c1e}}
-.note{background:#fff3cd;padding:8px 12px;border-radius:6px;font-size:13px;margin:8px 0}
-@media (prefers-color-scheme:dark){.note{background:#3a3210}}
-.track{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:10px 0}
-.track-label{font-size:12px;color:#888}
-.chip{font-size:12px;padding:2px 9px;border:1px solid #ccc;border-radius:12px;background:#eee;text-decoration:none;color:inherit}
-.chip.sel{background:#33507a;color:#fff;border-color:#33507a}
-h1{font-size:16px;margin:16px 0 6px}
-.folder{border:1px solid #eee;border-radius:6px;padding:8px 12px;margin:10px 0}
+.main{max-width:1040px;margin:0 auto;padding:12px 16px 60px}
+.avail{padding:10px 13px;border-radius:10px;font-size:13px;margin:10px 0;border:1px solid var(--line)}
+.avail-available{background:color-mix(in srgb,var(--good) 14%,var(--panel));border-color:color-mix(in srgb,var(--good) 35%,var(--line))}
+.avail-partial{background:color-mix(in srgb,var(--warn) 14%,var(--panel));border-color:color-mix(in srgb,var(--warn) 35%,var(--line))}
+.avail-unavailable{background:color-mix(in srgb,var(--danger) 14%,var(--panel));border-color:color-mix(in srgb,var(--danger) 35%,var(--line))}
+.note{background:color-mix(in srgb,var(--warn) 14%,var(--panel));border:1px solid color-mix(in srgb,var(--warn) 35%,var(--line));padding:10px 13px;border-radius:10px;font-size:13px;margin:10px 0}
+.track{display:flex;gap:7px;flex-wrap:wrap;align-items:center;margin:12px 0}
+.track-label{font-size:12px;color:var(--muted)}
+.chip{font-size:12px;padding:3px 10px;border:1px solid var(--line);border-radius:999px;background:var(--panel);text-decoration:none;color:var(--text)}
+.chip:hover{border-color:var(--accent);color:var(--accent)}
+.chip.sel{background:var(--accent);color:#fff;border-color:var(--accent)}
+h1{font-size:16px;margin:18px 0 6px}
+.folder{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 14px;margin:10px 0}
 .folder h2{font-size:14px;margin:2px 0 6px}
 .folder ul{margin:0;padding-left:20px}
 .folder li{font-size:13px;margin:3px 0}
-.empty{color:#888;padding:30px 0;text-align:center}
+.empty{color:var(--muted);padding:30px 0;text-align:center}
 </style></head>
 <body>
 <header class="bar"><div class="row"><strong>Archive · point in time</strong><a href="/">Search →</a></div></header>
