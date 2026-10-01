@@ -37,6 +37,7 @@ import (
 
 	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/export"
+	"mail-archive-tool/internal/graphconfig"
 	"mail-archive-tool/internal/index"
 	"mail-archive-tool/internal/outlookcom"
 	"mail-archive-tool/internal/runlog"
@@ -61,6 +62,8 @@ func main() {
 		err = runSchedule(args[1:])
 	case len(args) > 0 && args[0] == "graph":
 		err = runGraph(args[1:])
+	case len(args) > 0 && args[0] == "setup":
+		err = runSetup(args[1:])
 	case len(args) > 0 && args[0] == "status":
 		err = runStatus(args[1:])
 	case len(args) > 0 && args[0] == "verify":
@@ -362,6 +365,46 @@ func runServe(args []string) error {
 		ReadHeaderTimeout: 10 * time.Second, // a stalled client cannot hold a connection open forever
 		IdleTimeout:       2 * time.Minute,
 	}
+	return srv.ListenAndServe()
+}
+
+// runSetup launches the Microsoft 365 setup wizard: a loopback-only local web page
+// where an admin enters the Entra app-registration values (tenant, application id,
+// auth mode, and — app-only — a client secret stored in the OS credential manager).
+// It REFUSES a non-loopback bind: the surface writes credentials and must never be
+// reachable from the network (design-graph-setup-wizard P4/W-C1).
+func runSetup(args []string) error {
+	fs := flag.NewFlagSet("mailarchive setup", flag.ContinueOnError)
+	addr := fs.String("addr", "127.0.0.1:8097", "loopback address to serve the wizard on (must be loopback)")
+	cfg := fs.String("config", "", "config file to write (default: under your OS config dir)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if !server.IsLoopback(*addr) {
+		return fmt.Errorf("-addr %s is not a loopback address: the setup wizard writes credentials and is served only on 127.0.0.1/localhost", *addr)
+	}
+	cfgPath := *cfg
+	if cfgPath == "" {
+		p, err := graphconfig.DefaultConfigPath()
+		if err != nil {
+			return err
+		}
+		cfgPath = p
+	}
+	store, err := graphconfig.DefaultSecretStore()
+	if err != nil {
+		return err
+	}
+	srv := &http.Server{
+		Addr:              *addr,
+		Handler:           server.SetupHandler(cfgPath, store),
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+	}
+	fmt.Printf("Microsoft 365 setup — open this page in a browser:\n  http://%s/\n", *addr)
+	fmt.Printf("Config:        %s\n", cfgPath)
+	fmt.Printf("Secret store:  %s\n", store.Name())
+	fmt.Println("Press Ctrl-C to stop.")
 	return srv.ListenAndServe()
 }
 
@@ -970,6 +1013,22 @@ func runGraph(args []string) (err error) {
 	}
 	mailboxes := append(o.mailboxes, fs.Args()...)
 
+	// Fill unset values from the saved setup config (`mailarchive setup`); an
+	// explicit flag always wins (coexistence, MA-269). A missing config is fine.
+	if cfgPath, perr := graphconfig.DefaultConfigPath(); perr == nil {
+		if cfg, cerr := graphconfig.Load(cfgPath); cerr == nil {
+			if !flagWasSet(fs, "tenant") && *o.tenant == "" {
+				*o.tenant = cfg.Tenant
+			}
+			if !flagWasSet(fs, "client-id") && *o.clientID == "" {
+				*o.clientID = cfg.ClientID
+			}
+			if !flagWasSet(fs, "auth") && cfg.Auth != "" {
+				*o.auth = cfg.Auth
+			}
+		}
+	}
+
 	authMode := strings.ToLower(strings.TrimSpace(*o.auth))
 	if authMode != "app" && authMode != "device" {
 		return fmt.Errorf("-auth must be app or device (got %q)", *o.auth)
@@ -999,14 +1058,23 @@ func runGraph(args []string) (err error) {
 			return errors.New("-mailbox is required (at least one mailbox UPN to archive)")
 		}
 		var secret string
-		if *o.secretFile != "" {
+		switch {
+		case *o.secretFile != "":
 			if secret, err = readSecret(*o.secretFile); err != nil {
 				return err
 			}
-		} else {
+		case os.Getenv(*o.secretEnv) != "":
 			secret = os.Getenv(*o.secretEnv)
+		default:
+			// Fall back to the secret the setup wizard stored (OS credential
+			// manager / 0600 file) for this tenant+client (MA-269).
+			if store, serr := graphconfig.DefaultSecretStore(); serr == nil {
+				if s, gerr := store.Get(graphconfig.AccountKey(*o.tenant, *o.clientID)); gerr == nil {
+					secret = s
+				}
+			}
 			if secret == "" {
-				return fmt.Errorf("app client secret is empty: set it in the $%s environment variable, or pass -client-secret-file (or use -auth device to sign in as yourself with no secret)", *o.secretEnv)
+				return fmt.Errorf("app client secret is empty: run `mailarchive setup` to store it, set the $%s environment variable, or pass -client-secret-file (or use -auth device to sign in as yourself with no secret)", *o.secretEnv)
 			}
 		}
 		gopts.ClientSecret = secret

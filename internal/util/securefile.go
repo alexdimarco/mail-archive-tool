@@ -5,8 +5,47 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"runtime"
 )
+
+// WriteFileAtomic0600 writes data to path atomically and 0600: it creates the
+// parent dir (0700), writes a temp file in the same dir, fsyncs it, chmods it
+// 0600, and renames it over path. A crash never leaves a torn file — the rename
+// is atomic, so path is either the old bytes or the whole new bytes. Used for
+// secret-bearing and config files (the token cache has its own copy for the
+// {upn,token} shape).
+func WriteFileAtomic0600(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("create dir %s: %w", dir, err)
+	}
+	tmp, err := os.CreateTemp(dir, ".tmp-*")
+	if err != nil {
+		return fmt.Errorf("temp file in %s: %w", dir, err)
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // no-op once renamed away
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return fmt.Errorf("rename into place %s: %w", path, err)
+	}
+	return nil
+}
 
 // ReadSecureFile reads a small secret-bearing file with the hardened discipline a
 // client secret and an OAuth token cache both need, factored into one place so the
