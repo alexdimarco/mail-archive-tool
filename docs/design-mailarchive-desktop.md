@@ -10,8 +10,10 @@ unaffected); **DC3** bounded Activity log + capture-goroutine `recover`; **DC4**
 loopback+CSRF boundary is documented as not defending against a same-user local process;
 **DC5** OS-aware security copy; **DC6** clean MSI upgrade over Steve's build; **DC7**
 two-port lifecycle under one process. Full scope + owner rulings:
-`~/.claude/plans/snazzy-sniffing-seal.md` (approved 2026-10-02). Slice a (S2) owes the
-adversarial pass; S4 the friction review.
+`~/.claude/plans/snazzy-sniffing-seal.md` (approved 2026-10-02). Slice a (S2) carries its
+adversarial pass (`docs/review-mailarchive-desktop-adversarial.md`, PASS); S4 its friction
+review (`docs/review-mailarchive-desktop-friction.md`, PASS). R1 (windowsgui launch) is
+fixed by MA-281 (browser-open on start). All slices S0–S6 + Part B/C built, gate-green.
 
 **Owner rulings:** in-process engine (NOT shell-out), cross-platform core / Windows-first
 integration, packaging (MSI/RMM) brought in too, plus a button-label clarity pass and a
@@ -74,9 +76,11 @@ packages directly, and clear security language so a user trusts it with their ma
 
 - **S0** this design + gate. **S1** skeleton: loopback server (non-loopback refused), sidebar
   nav, status cards (`health`), connection display, Security panel. **S2** config + device
-  sign-in in-process + token→vault (P4); owes the **adversarial pass**. **S3** archive-now
-  (`app.RunGraph` goroutine) + Activity log + settings (location/day/time/raw/Deleted-Junk).
-  **S4** schedule install/update/remove (`internal/schedule`); owes the **friction review**.
+  sign-in in-process + token→vault (P4); **adversarial pass** filed (review-…-adversarial.md,
+  PASS). **S3** archive-now (`app.RunGraph` goroutine) + Activity log + settings
+  (location/day/time/raw/Deleted-Junk).
+  **S4** schedule install/update/remove (`internal/schedule`); **friction review** filed
+  (review-…-friction.md, PASS).
   **S5** embedded reader (`server.New`) + go-back. **S6** maintenance (verify/reindex/extract)
   + Windows shortcuts/startup (build-tagged). **Part C** packaging (MSI/RMM into
   `packaging/mailarchive-desktop/`, single-binary; wired into `build-release.sh`).

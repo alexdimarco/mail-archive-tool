@@ -110,19 +110,23 @@ integration below is **lab-pending** and is exactly what this round covers:
    sign-in); verify by then clicking the Desktop shortcut, which should reconnect to
    the running instance and open the browser to it (not error on the bound port).
 
-3. **Weekly scheduled headless capture** (DC1). The weekly backup must run with the
-   dashboard closed. Until the dashboard's own schedule action ships (slice S4),
-   install the task by hand and verify it:
+3. **Weekly scheduled headless capture** (DC1, slice S4 shipped — MA-279). The
+   dashboard installs/updates/removes the weekly backup itself (the **Weekly backup**
+   control), writing a Task Scheduler entry that runs `mailarchive-desktop.exe
+   -capture` so the backup runs with the dashboard closed. The task name is derived
+   per archive — `mailarchive-<hash>` (`schedule.DefaultNameFor`) — not a fixed
+   string. Verify end-to-end from the UI:
 
-   ```cmd
-   schtasks /Create /TN "MailArchive Desktop Weekly" /SC WEEKLY /D SUN /ST 03:00 ^
-     /TR "\"C:\Program Files\MailArchive Desktop\mailarchive-desktop.exe\" -capture" /RL LIMITED /F
-   schtasks /Run /TN "MailArchive Desktop Weekly"
-   ```
+   - Set a weekly day/time in the dashboard and save; Overview's **weekly backup**
+     card flips to *Installed*.
+   - `schtasks /Query /FO LIST | findstr mailarchive-` shows the task.
+   - Run it (`schtasks /Run /TN mailarchive-<hash>`) and confirm it ran from the
+     saved sign-in with **no prompt** — see `%APPDATA%\mailarchive\desktop-capture.log`
+     and that the archive grew.
 
-   Confirm it ran from the saved sign-in with **no prompt**: see
-   `%APPDATA%\mailarchive\desktop-capture.log` and that the archive grew. This is the
-   product's real weekly backup (`mailarchive-desktop.exe -capture`), not a
+   A by-hand `schtasks /Create … /TR "\"…\mailarchive-desktop.exe\" -capture"` is only
+   a fallback if the dashboard reports the scheduler unavailable. Either way the task
+   runs `mailarchive-desktop.exe -capture` (the product's real weekly backup), never a
    `mailarchive.exe` task.
 
 Also smoke-test the DC6 upgrade: install the old 1.1.0 MSI first, then this one — it
@@ -171,9 +175,11 @@ capture can be tried the same way: `mailarchive-desktop.exe -capture`.
   a real `-no-browser` flag; the Startup shortcut passes it so the at-login launch
   starts the server quietly (no browser), while the Desktop/Start-menu shortcuts (no
   args) open the browser.
-- **R3 — schedule install not yet in the dashboard.** Slice S4 (dashboard "install
-  weekly schedule") is not wired yet, so the weekly task is installed by hand
-  (section D.3). The engine-headless capture it calls (`-capture`) is implemented.
-- **R4 — doc wording.** `README-payload.txt` (committed) says scheduled captures run
-  `mailarchive.exe` via schtasks; the product's integrated weekly backup is actually
-  `mailarchive-desktop.exe -capture`. Reconcile that wording in a follow-up.
+- **R3 — schedule install in the dashboard. RESOLVED (S4 / MA-279).** The dashboard's
+  Weekly backup control installs/updates/removes the task in-process via
+  `internal/schedule` (cross-platform schtasks/cron/launchd), running
+  `mailarchive-desktop.exe -capture`. The by-hand schtasks of section D.3 is now only
+  a scheduler-unavailable fallback.
+- **R4 — doc wording. RESOLVED (Part C).** `README-payload.txt` now states the
+  integrated weekly backup runs `mailarchive-desktop.exe -capture` in-process (DC1),
+  not a `mailarchive.exe` schtasks job.
