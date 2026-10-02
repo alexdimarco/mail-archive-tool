@@ -141,14 +141,18 @@ func TestLockLossMidWalkStopsWithoutRewriting(t *testing.T) {
 	progress := func(export.Stats) {
 		seen++
 		if seen == 1 {
-			os.Remove(lockPath) // a second run could now acquire a fresh lock
+			// Overwrite the holder line (clears our nonce) rather than unlink: an
+			// unlink of the open lock is refused on Windows, but an in-place content
+			// replacement is detected on both platforms. A second run could now
+			// acquire a fresh lock.
+			os.WriteFile(lockPath, []byte("pid=1 started=x host=y\n"), 0o600)
 		}
 	}
 	_, err := Run(ctx, Options{Inputs: []string{src}, Out: out, Mode: export.Incremental, Index: true, Pages: true, CheckpointEvery: 1}, logger, progress)
 	if err == nil {
 		t.Fatal("run did not report the lock loss")
 	}
-	if !strings.Contains(err.Error(), lockfile.Name) || !strings.Contains(err.Error(), "removed during the run") {
+	if !strings.Contains(err.Error(), lockfile.Name) || !strings.Contains(err.Error(), "during the run") {
 		t.Errorf("lock-loss error does not name the lock and cause: %v", err)
 	}
 	// No scaffold: finish() was not called after the loss.
