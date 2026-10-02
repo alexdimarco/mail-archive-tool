@@ -28,9 +28,13 @@ How the MSI launches it (no-console note)
 -----------------------------------------
 mailarchive-desktop.exe is a GUI-subsystem binary, so it has NO console: the URL
 it prints to stdout (http://127.0.0.1:8097/) is invisible when double-clicked.
-The shortcut / MSI custom action must open the browser to that URL after start
-(or the installed shortcut points a browser at it). The dashboard and its reader
-bind loopback only and refuse any other address (design P2 / X9).
+The binary therefore opens that URL in the OS default browser itself once the
+server is listening (MA-281, former risk R1) — the Desktop/Start-menu shortcut
+needs no custom action. If an instance is already running (the Startup shortcut
+started one at login) it reconnects and opens the browser to that instance
+instead of failing to bind. The Startup shortcut passes -no-browser so the
+at-login launch stays quiet (no browser tab every sign-in). The dashboard and its
+reader bind loopback only and refuse any other address (design P2 / X9).
 
 MSI identity (design DC6): use a stable UpgradeCode so our MSI cleanly replaces
 Steve's earlier out-of-repo build (both detect HKLM\Software\MailArchive Desktop);

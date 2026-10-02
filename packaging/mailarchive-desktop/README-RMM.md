@@ -102,11 +102,13 @@ integration below is **lab-pending** and is exactly what this round covers:
 
 2. **Desktop / Startup shortcuts.** After install, the Desktop and Start Menu
    shortcuts and the all-users **Startup** shortcut (`shell:common startup`) all
-   launch `mailarchive-desktop.exe`. Because that binary is windowsgui (no console)
-   and does not yet open a browser (risk R1), "launches" means the background server
-   starts — verify by browsing to `http://127.0.0.1:8097/` (or `curl` it / check
-   Task Manager) after the shortcut runs. The Startup shortcut carries **no**
-   `--startup` argument (risk R2).
+   launch `mailarchive-desktop.exe`. The binary is windowsgui (no console) but now
+   opens the dashboard in the OS default browser itself once listening (MA-281), so
+   a Desktop/Start-menu click should pop `http://127.0.0.1:8097/` straight away —
+   verify the page appears. The **Startup** shortcut passes `-no-browser` so the
+   at-login launch starts the background server quietly (no browser tab every
+   sign-in); verify by then clicking the Desktop shortcut, which should reconnect to
+   the running instance and open the browser to it (not error on the bound port).
 
 3. **Weekly scheduled headless capture** (DC1). The weekly backup must run with the
    dashboard closed. Until the dashboard's own schedule action ships (slice S4),
@@ -157,16 +159,18 @@ capture can be tried the same way: `mailarchive-desktop.exe -capture`.
 
 ## Risks / open items
 
-- **R1 — no-console, no browser-open.** `mailarchive-desktop.exe` is built
-  `-H=windowsgui` (build-release.sh) and prints its URL to stdout, which is invisible
-  under windowsgui; it does not open a browser. So a Desktop/Startup shortcut starts
-  the server silently and the user must browse to `:8097`. The intended polish is a
-  browser-open (and optional tray/stop) in `cmd/mailarchive-desktop` — a product
-  change that owes the desktop component's gates, out of scope for this packaging.
-  Flagged, not fixed.
-- **R2 — `--startup` dropped.** The old Startup shortcut passed `--startup`; our
-  binary rejects unknown flags (exit 1), so the argument is removed. A distinct
-  startup mode needs a real `-startup` flag added to the binary first.
+- **R1 — no-console, no browser-open. RESOLVED (MA-281).** `mailarchive-desktop.exe`
+  is built `-H=windowsgui` (build-release.sh) with no console, so its stdout URL is
+  invisible. The binary now opens the OS default browser to the dashboard itself once
+  the server is listening, and if an instance is already running it reconnects and
+  opens the browser to that one instead of failing to bind. So a shortcut click shows
+  the page, never a silent server. An optional tray/stop UI remains possible future
+  polish but is no longer needed for a visible launch. Lab: verify on Windows.
+- **R2 — a real startup flag exists now (`-no-browser`). RESOLVED.** The old Startup
+  shortcut passed `--startup`, which our binary rejected (exit 1). The binary now has
+  a real `-no-browser` flag; the Startup shortcut passes it so the at-login launch
+  starts the server quietly (no browser), while the Desktop/Start-menu shortcuts (no
+  args) open the browser.
 - **R3 — schedule install not yet in the dashboard.** Slice S4 (dashboard "install
   weekly schedule") is not wired yet, so the weekly task is installed by hand
   (section D.3). The engine-headless capture it calls (`-capture`) is implemented.

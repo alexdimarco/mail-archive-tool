@@ -104,11 +104,11 @@
           <RegistryValue Name="InstallDir" Type="string" Value="[INSTALLFOLDER]" />
         </RegistryKey>
 
-        <!-- Shortcuts target the dashboard exe. NOTE (see README-RMM.md risk R1):
-             the exe is windowsgui + prints its URL to (invisible) stdout and does not
-             open a browser, so a click starts the background server silently. The
-             user then browses to http://127.0.0.1:8097/. The planned polish is a
-             browser-open in the binary; until then the shortcut starts the server. -->
+        <!-- Shortcuts target the dashboard exe. The exe is windowsgui (no console);
+             on a normal start it now opens the dashboard in the OS default browser
+             itself (MA-281, former risk R1), so a Desktop/Start-menu click shows the
+             page instead of a silent background server. No args => dashboard :8097 +
+             reader :8099 (defaults) + browser-open. -->
         <Shortcut
             Id="DesktopShortcut"
             Directory="CommonDesktopFolder"
@@ -119,15 +119,18 @@
             Icon="MailArchiveIcon"
             Advertise="no" />
 
-        <!-- ADAPTED: Steve's Startup shortcut passed Arguments="--startup"; our binary
-             has no such flag (flag.ContinueOnError would reject it and exit 1), so the
-             argument is removed. No args => dashboard :8097 + reader :8099 (defaults). -->
+        <!-- ADAPTED: Steve's Startup shortcut passed Arguments="--startup" (our binary
+             had no such flag). It now passes -no-browser so the at-login launch starts
+             the always-on background server QUIETLY — no browser tab every sign-in. A
+             later Desktop/Start-menu click reconnects to this instance and opens the
+             browser to it (MA-281). -->
         <Shortcut
             Id="StartupShortcut"
             Directory="CommonStartupFolder"
             Name="MailArchive Desktop"
             Description="Start MailArchive Desktop after Windows sign-in"
             Target="[INSTALLFOLDER]mailarchive-desktop.exe"
+            Arguments="-no-browser"
             WorkingDirectory="INSTALLFOLDER"
             Icon="MailArchiveIcon"
             Advertise="no" />

@@ -6,13 +6,18 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -35,6 +40,7 @@ func run(args []string) error {
 	cfg := fs.String("config", "", "Graph config file (default: under your OS config dir)")
 	capture := fs.Bool("capture", false, "run ONE scheduled headless capture (no dashboard) and exit — what the weekly backup runs")
 	logPath := fs.String("log", "", "capture mode: append the run log here (default: desktop-capture.log under your OS config dir)")
+	noBrowser := fs.Bool("no-browser", false, "do not open the dashboard in a browser on start (use for a background/Startup launch)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -75,20 +81,53 @@ func run(args []string) error {
 		return fmt.Errorf("-reader-addr %s is not a loopback address: the archive reader is served only on 127.0.0.1/localhost", *readerAddr)
 	}
 	dcfg.ReaderURL = "http://" + *readerAddr + "/"
+	dashURL := "http://" + *addr + "/"
 
-	dash := &http.Server{Addr: *addr, Handler: desktop.DashboardHandler(dcfg), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute}
-	reader := &http.Server{Addr: *readerAddr, Handler: desktop.ReaderHandler(dcfg), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute}
+	// Bind the dashboard port FIRST. If it is already taken, an instance is already
+	// running (e.g. the Startup shortcut started one at login). Don't fail — just
+	// open the browser to the running instance and exit, so a second shortcut click
+	// brings up the page instead of erroring (review finding R1 / README-RMM.md).
+	ln, err := net.Listen("tcp", *addr)
+	if err != nil {
+		if isAddrInUse(err) {
+			if *noBrowser {
+				fmt.Printf("MailArchive Desktop is already running at %s\n", dashURL)
+			} else {
+				fmt.Printf("MailArchive Desktop is already running — opening %s\n", dashURL)
+				openBrowser(dashURL)
+			}
+			return nil
+		}
+		return err
+	}
+	readerLn, err := net.Listen("tcp", *readerAddr)
+	if err != nil {
+		_ = ln.Close()
+		return fmt.Errorf("archive reader could not bind %s: %w", *readerAddr, err)
+	}
+
+	dash := &http.Server{Handler: desktop.DashboardHandler(dcfg), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute}
+	reader := &http.Server{Handler: desktop.ReaderHandler(dcfg), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	errc := make(chan error, 2)
-	go func() { errc <- dash.ListenAndServe() }()
-	go func() { errc <- reader.ListenAndServe() }()
+	go func() { errc <- dash.Serve(ln) }()
+	go func() { errc <- reader.Serve(readerLn) }()
 
-	fmt.Printf("MailArchive Desktop — open this page in a browser:\n  http://%s/\n", *addr)
+	fmt.Printf("MailArchive Desktop — open this page in a browser:\n  %s\n", dashURL)
 	fmt.Printf("Archive reader: http://%s/\n", *readerAddr)
 	fmt.Printf("Config: %s\n", cfgPath)
 	fmt.Println("Press Ctrl-C to stop.")
+
+	// Open the dashboard in the OS default browser. The binary is built
+	// -ldflags -H=windowsgui (no console), so a Desktop/Start-menu shortcut click
+	// would otherwise start a silent, invisible server with nothing to see
+	// (review finding R1). The listener is already bound above, so the browser
+	// never races a cold port. -no-browser (the Startup launch) suppresses it.
+	if !*noBrowser {
+		openBrowser(dashURL)
+	}
 
 	select {
 	case err := <-errc:
@@ -101,5 +140,45 @@ func run(args []string) error {
 		defer cancel()
 		_ = reader.Shutdown(shutCtx)
 		return dash.Shutdown(shutCtx)
+	}
+}
+
+// isAddrInUse reports whether a net.Listen error is "address already in use" —
+// i.e. another instance already holds the port. errors.Is on syscall.EADDRINUSE
+// covers Linux/macOS/Windows; the string fallback guards any wrapper that does
+// not compare equal (incl. the Windows WSAEADDRINUSE message text).
+func isAddrInUse(err error) bool {
+	if errors.Is(err, syscall.EADDRINUSE) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "address already in use") ||
+		strings.Contains(msg, "only one usage of each socket address")
+}
+
+// openBrowserArgv is the detached command that opens a URL in the OS default
+// browser. A pure function of GOOS so a test can assert the argv without a
+// display. It mirrors cmd/mailarchive-gui's openPathArgv — the same OS handlers
+// open a URL as open a path.
+func openBrowserArgv(goos, url string) (string, []string) {
+	switch goos {
+	case "darwin":
+		return "open", []string{url}
+	case "windows":
+		return "rundll32", []string{"url.dll,FileProtocolHandler", url}
+	default:
+		return "xdg-open", []string{url}
+	}
+}
+
+// openBrowser opens url in the OS default browser, detached and best-effort: the
+// windowsgui binary has no console to show a launch error, and the URL is already
+// printed, so a failure is silent. It is a var so a test can observe the launch
+// without spawning a real browser.
+var openBrowser = func(url string) {
+	name, args := openBrowserArgv(runtime.GOOS, url)
+	cmd := exec.Command(name, args...)
+	if err := cmd.Start(); err == nil && cmd.Process != nil {
+		_ = cmd.Process.Release()
 	}
 }
