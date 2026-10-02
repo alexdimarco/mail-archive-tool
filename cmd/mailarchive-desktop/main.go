@@ -29,15 +29,19 @@ func main() {
 func run(args []string) error {
 	fs := flag.NewFlagSet("mailarchive-desktop", flag.ContinueOnError)
 	addr := fs.String("addr", "127.0.0.1:8097", "loopback address for the dashboard (must be loopback)")
+	readerAddr := fs.String("reader-addr", "127.0.0.1:8099", "loopback address for the archive reader (must be loopback)")
 	out := fs.String("out", "", "archive directory to manage")
 	cfg := fs.String("config", "", "Graph config file (default: under your OS config dir)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	// The dashboard is a control surface (it captures, signs in, schedules); it is
-	// never exposed to the network (design P2).
+	// Both surfaces are control/reader surfaces served only on this machine; never
+	// the network (design P2/DC7).
 	if !desktop.Loopback(*addr) {
 		return fmt.Errorf("-addr %s is not a loopback address: the dashboard is served only on 127.0.0.1/localhost", *addr)
+	}
+	if !desktop.Loopback(*readerAddr) {
+		return fmt.Errorf("-reader-addr %s is not a loopback address: the archive reader is served only on 127.0.0.1/localhost", *readerAddr)
 	}
 	cfgPath := *cfg
 	if cfgPath == "" {
@@ -49,20 +53,19 @@ func run(args []string) error {
 	}
 	store, _ := graphconfig.DefaultSecretStore() // informational shell tolerates a nil store
 	settingsPath := filepath.Join(filepath.Dir(cfgPath), "desktop-settings.json")
+	dcfg := desktop.Config{Out: *out, ConfigPath: cfgPath, Store: store, SettingsPath: settingsPath, ReaderURL: "http://" + *readerAddr + "/"}
 
-	srv := &http.Server{
-		Addr:              *addr,
-		Handler:           desktop.DashboardHandler(desktop.Config{Out: *out, ConfigPath: cfgPath, Store: store, SettingsPath: settingsPath}),
-		ReadHeaderTimeout: 10 * time.Second,
-		IdleTimeout:       2 * time.Minute,
-	}
+	dash := &http.Server{Addr: *addr, Handler: desktop.DashboardHandler(dcfg), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute}
+	reader := &http.Server{Addr: *readerAddr, Handler: desktop.ReaderHandler(dcfg), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	errc := make(chan error, 1)
-	go func() { errc <- srv.ListenAndServe() }()
+	errc := make(chan error, 2)
+	go func() { errc <- dash.ListenAndServe() }()
+	go func() { errc <- reader.ListenAndServe() }()
 
 	fmt.Printf("MailArchive Desktop — open this page in a browser:\n  http://%s/\n", *addr)
+	fmt.Printf("Archive reader: http://%s/\n", *readerAddr)
 	fmt.Printf("Config: %s\n", cfgPath)
 	fmt.Println("Press Ctrl-C to stop.")
 
@@ -75,6 +78,7 @@ func run(args []string) error {
 	case <-ctx.Done():
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		return srv.Shutdown(shutCtx)
+		_ = reader.Shutdown(shutCtx)
+		return dash.Shutdown(shutCtx)
 	}
 }

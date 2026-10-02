@@ -37,6 +37,10 @@ type Config struct {
 	// BaseURL/TokenURL/DeviceAuthURL are test overrides for the in-process capture
 	// (empty = the Microsoft production endpoints).
 	BaseURL, TokenURL, DeviceAuthURL string
+
+	// ReaderURL is where the embedded archive reader is served; the Open-archive /
+	// Go-back links point here. Empty in the informational shell.
+	ReaderURL string
 }
 
 // tokenCfg locates the device sign-in token for a configured tenant/client: the
@@ -236,10 +240,11 @@ func (cfg Config) overview(csrf string) string {
 		Auth           string
 		Vault          string
 		OutDir         string
+		ReaderURL      string
 		KeepRaw        bool
 		IncludeDeleted bool
 		IncludeJunk    bool
-	}{CSRF: csrf, Cards: cfg.cards(), Vault: vaultPhrase(), OutDir: cfg.effectiveOut(), SignedIn: signedIn, UPN: upn,
+	}{CSRF: csrf, Cards: cfg.cards(), Vault: vaultPhrase(), OutDir: cfg.effectiveOut(), ReaderURL: cfg.ReaderURL, SignedIn: signedIn, UPN: upn,
 		KeepRaw: s.KeepRaw, IncludeDeleted: s.IncludeDeleted, IncludeJunk: s.IncludeJunk}
 	if c != nil {
 		data.Configured = strings.TrimSpace(c.Tenant) != ""
@@ -306,9 +311,9 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
     <nav class="nav">
       <div class="nav-title">Workspace</div>
       <a class="active" href="/">Overview</a>
-      <a href="/">Archive now</a>
-      <a href="/">Open archive</a>
-      <a href="/">Go back in time</a>
+      <a href="#" onclick="document.getElementById('archiveBtn').click();return false">Archive now</a>
+      <a href="{{.ReaderURL}}" target="_blank" rel="noopener">Open archive</a>
+      <a href="{{.ReaderURL}}goback" target="_blank" rel="noopener">Go back in time</a>
       <div class="nav-title">Diagnostics</div>
       <a href="/">Status &amp; health</a>
       <a href="/">Activity log</a>
@@ -344,6 +349,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <h2>Archive now</h2>
       <p class="card-sub">Fetch the latest mail into your archive. The first time, you sign in with a Microsoft device code shown here.</p>
       <button class="btn" id="archiveBtn">Archive now</button>
+      {{if .ReaderURL}}<a class="btn secondary" href="{{.ReaderURL}}" target="_blank" rel="noopener">Open archive</a> <a class="btn secondary" href="{{.ReaderURL}}goback" target="_blank" rel="noopener">Go back in time</a>{{end}}
       <div class="device-box" id="device" hidden>
         <div>To sign in, open <a id="deviceUrl" target="_blank" rel="noopener">this Microsoft page</a> and enter the code:</div>
         <div class="device-code" id="deviceCode"></div>
