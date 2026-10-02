@@ -1,15 +1,17 @@
 CLI := mailarchive
 GUI := mailarchive-gui
+DESKTOP := mailarchive-desktop
 CLI_PKG := ./cmd/mailarchive
 GUI_PKG := ./cmd/mailarchive-gui
+DESKTOP_PKG := ./cmd/mailarchive-desktop
 BUILD_DIR := bin
 
-# GUI Windows build has no console window.
+# GUI and Desktop Windows builds have no console window.
 GUI_WIN_LDFLAGS := -H=windowsgui
 
-.PHONY: all build build-gui build-windows build-macos build-macos-app dist test vet fmt tidy run clean
+.PHONY: all build build-gui build-desktop build-windows build-macos build-macos-app dist test vet fmt tidy run clean
 
-all: vet test build build-gui
+all: vet test build build-gui build-desktop
 
 ## build: compile the CLI for the host platform
 build:
@@ -19,10 +21,15 @@ build:
 build-gui:
 	go build -o $(BUILD_DIR)/$(GUI) $(GUI_PKG)
 
-## build-windows: cross-compile both Windows executables (CLI console + GUI no-console)
+## build-desktop: compile the desktop dashboard for the host platform
+build-desktop:
+	go build -o $(BUILD_DIR)/$(DESKTOP) $(DESKTOP_PKG)
+
+## build-windows: cross-compile the Windows executables (CLI console + GUI/Desktop no-console)
 build-windows:
 	GOOS=windows GOARCH=amd64 go build -o $(BUILD_DIR)/$(CLI).exe $(CLI_PKG)
 	GOOS=windows GOARCH=amd64 go build -ldflags "$(GUI_WIN_LDFLAGS)" -o $(BUILD_DIR)/$(GUI).exe $(GUI_PKG)
+	GOOS=windows GOARCH=amd64 go build -ldflags "$(GUI_WIN_LDFLAGS)" -o $(BUILD_DIR)/$(DESKTOP).exe $(DESKTOP_PKG)
 
 ## build-macos: cross-compile macOS binaries (Apple Silicon arm64 + Intel amd64)
 build-macos:

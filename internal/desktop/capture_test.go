@@ -123,6 +123,44 @@ func TestCaptureInProcess(t *testing.T) {
 	}
 }
 
+// covers: MA-278, R17, S41
+// The scheduled headless capture (`mailarchive-desktop --capture`, DC1) runs with no
+// dashboard and no prompt: it refuses when not configured or not signed in, and with
+// a saved config + sign-in it archives — the command a weekly backup runs whether or
+// not the dashboard is open.
+func TestHeadlessCapture(t *testing.T) {
+	srv := newFakeM365(t)
+	dir, out := t.TempDir(), t.TempDir()
+	cfgPath := filepath.Join(dir, "graph-config.json")
+	tok := filepath.Join(dir, "tok.json")
+	base := Config{
+		ConfigPath: cfgPath, SettingsPath: filepath.Join(dir, "settings.json"), TokenCachePath: tok, Out: out,
+		BaseURL: srv.URL, TokenURL: srv.URL + "/token", DeviceAuthURL: srv.URL + "/devicecode",
+	}
+
+	// Not configured → refused naming setup.
+	if err := HeadlessCapture(base, io.Discard); err == nil || !strings.Contains(err.Error(), "setup") {
+		t.Errorf("not-configured should refuse naming setup, got %v", err)
+	}
+	if err := graphconfig.Save(cfgPath, &graphconfig.Config{Tenant: "t", ClientID: "c", Auth: "device"}); err != nil {
+		t.Fatal(err)
+	}
+	// Configured but no saved sign-in → refused (a scheduled run cannot prompt).
+	if err := HeadlessCapture(base, io.Discard); err == nil || !strings.Contains(strings.ToLower(err.Error()), "sign") {
+		t.Errorf("no saved sign-in should refuse, got %v", err)
+	}
+	// Saved sign-in → runs headless and archives.
+	if err := os.WriteFile(tok, []byte(`{"upn":"alice@contoso.org","token":{"access_token":"AT1","refresh_token":"RT1","expiry":"2999-01-01T00:00:00Z"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := HeadlessCapture(base, io.Discard); err != nil {
+		t.Fatalf("headless capture with a saved sign-in: %v", err)
+	}
+	if countHTML(out) == 0 {
+		t.Error("headless capture archived nothing")
+	}
+}
+
 // covers: MA-276, R19, R12, R4, S41
 // The settings POST is loopback+CSRF-guarded (a bad request writes nothing) and a
 // valid request persists the archive location, keep-raw, and Deleted/Junk choices.

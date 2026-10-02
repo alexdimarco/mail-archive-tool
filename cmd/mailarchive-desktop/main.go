@@ -8,6 +8,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
@@ -32,16 +33,10 @@ func run(args []string) error {
 	readerAddr := fs.String("reader-addr", "127.0.0.1:8099", "loopback address for the archive reader (must be loopback)")
 	out := fs.String("out", "", "archive directory to manage")
 	cfg := fs.String("config", "", "Graph config file (default: under your OS config dir)")
+	capture := fs.Bool("capture", false, "run ONE scheduled headless capture (no dashboard) and exit — what the weekly backup runs")
+	logPath := fs.String("log", "", "capture mode: append the run log here (default: desktop-capture.log under your OS config dir)")
 	if err := fs.Parse(args); err != nil {
 		return err
-	}
-	// Both surfaces are control/reader surfaces served only on this machine; never
-	// the network (design P2/DC7).
-	if !desktop.Loopback(*addr) {
-		return fmt.Errorf("-addr %s is not a loopback address: the dashboard is served only on 127.0.0.1/localhost", *addr)
-	}
-	if !desktop.Loopback(*readerAddr) {
-		return fmt.Errorf("-reader-addr %s is not a loopback address: the archive reader is served only on 127.0.0.1/localhost", *readerAddr)
 	}
 	cfgPath := *cfg
 	if cfgPath == "" {
@@ -53,7 +48,32 @@ func run(args []string) error {
 	}
 	store, _ := graphconfig.DefaultSecretStore() // informational shell tolerates a nil store
 	settingsPath := filepath.Join(filepath.Dir(cfgPath), "desktop-settings.json")
-	dcfg := desktop.Config{Out: *out, ConfigPath: cfgPath, Store: store, SettingsPath: settingsPath, ReaderURL: "http://" + *readerAddr + "/"}
+	dcfg := desktop.Config{Out: *out, ConfigPath: cfgPath, Store: store, SettingsPath: settingsPath}
+
+	// Scheduled headless capture (DC1): no server, no prompt — read the saved
+	// config + sign-in and run one incremental capture, logging to a file.
+	if *capture {
+		lp := *logPath
+		if lp == "" {
+			lp = filepath.Join(filepath.Dir(cfgPath), "desktop-capture.log")
+		}
+		var w io.Writer = os.Stderr
+		if f, ferr := os.OpenFile(lp, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); ferr == nil {
+			defer f.Close()
+			w = io.MultiWriter(os.Stderr, f)
+		}
+		return desktop.HeadlessCapture(dcfg, w)
+	}
+
+	// Both surfaces are control/reader surfaces served only on this machine; never
+	// the network (design P2/DC7).
+	if !desktop.Loopback(*addr) {
+		return fmt.Errorf("-addr %s is not a loopback address: the dashboard is served only on 127.0.0.1/localhost", *addr)
+	}
+	if !desktop.Loopback(*readerAddr) {
+		return fmt.Errorf("-reader-addr %s is not a loopback address: the archive reader is served only on 127.0.0.1/localhost", *readerAddr)
+	}
+	dcfg.ReaderURL = "http://" + *readerAddr + "/"
 
 	dash := &http.Server{Addr: *addr, Handler: desktop.DashboardHandler(dcfg), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute}
 	reader := &http.Server{Addr: *readerAddr, Handler: desktop.ReaderHandler(dcfg), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute}

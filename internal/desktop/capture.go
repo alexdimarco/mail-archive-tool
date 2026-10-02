@@ -2,7 +2,9 @@ package desktop
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -13,6 +15,35 @@ import (
 	"mail-archive-tool/internal/graph"
 	"mail-archive-tool/internal/server"
 )
+
+// HeadlessCapture runs one incremental capture with NO dashboard and NO prompt —
+// the command a SCHEDULED weekly backup runs (design DC1: a scheduled capture must
+// succeed whether or not the dashboard app is open). It reads the saved config +
+// settings + sign-in token (Credential Manager on Windows / the file cache else)
+// and refuses if there is no saved sign-in (Unattended=true never prompts). Logs to
+// logw; returns the run error.
+func HeadlessCapture(cfg Config, logw io.Writer) error {
+	c := cfg.load()
+	if c == nil || strings.TrimSpace(c.Tenant) == "" || strings.TrimSpace(c.ClientID) == "" {
+		return errors.New("not configured — run `mailarchive setup` or open MailArchive Desktop and sign in first")
+	}
+	out := cfg.effectiveOut()
+	if out == "" {
+		return errors.New("no archive location set — choose one in MailArchive Desktop first")
+	}
+	s := cfg.settings()
+	tcfg := cfg.tokenCfg(c)
+	g := app.GraphOptions{
+		Auth: "device", Tenant: c.Tenant, ClientID: c.ClientID,
+		TokenStore: tcfg.TokenStore, TokenCachePath: tcfg.TokenCachePath,
+		BaseURL: cfg.BaseURL, TokenURL: cfg.TokenURL, DeviceAuthURL: cfg.DeviceAuthURL,
+		Unattended:     true, // a scheduled run never prompts; it uses the saved sign-in
+		IncludeDeleted: s.IncludeDeleted, IncludeJunk: s.IncludeJunk,
+	}
+	opts := app.Options{Out: out, Mode: export.Incremental, Index: true, Pages: true, KeepRaw: s.KeepRaw}
+	_, err := app.RunGraph(context.Background(), g, opts, log.New(logw, "", log.LstdFlags))
+	return err
+}
 
 // logRingMax bounds the in-memory activity log so a long run never grows without
 // limit (design DC3).
