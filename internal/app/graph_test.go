@@ -45,18 +45,18 @@ func newFakeGraphServer() (*fakeGraphServer, *httptest.Server) {
 		j(w, `{"value":[{"id":"F_IN","displayName":"Inbox","childFolderCount":0},{"id":"F_AR","displayName":"Archive","childFolderCount":0}]}`)
 	})
 	// The listings carry message state on the same request (PC16): M1 is unread,
-	// high, confidential and carries two categories; M2 is read, normal, normal
-	// (no state to show); M3 omits isRead entirely (read state then unknown) and
-	// is low/personal.
+	// high and carries two categories; M2 is read, normal (no state to show); M3
+	// omits isRead entirely (read state then unknown) and is low. (Graph does not
+	// expose sensitivity on $select — MA-284 — so the listing never carries it.)
 	mux.HandleFunc("/users/u1/mailFolders/F_IN/messages", func(w http.ResponseWriter, r *http.Request) {
 		recordSelect(r)
 		j(w, `{"value":[
-			{"id":"M1","internetMessageId":"<m1@x>","subject":"subj-M1","from":{"emailAddress":{"address":"a@example.com"}},"receivedDateTime":"2025-03-01T09:00:00Z","importance":"high","isRead":false,"sensitivity":"confidential","categories":["Board","Legal Hold"]},
-			{"id":"M2","internetMessageId":"<m2@x>","subject":"subj-M2","from":{"emailAddress":{"address":"a@example.com"}},"receivedDateTime":"2025-03-02T09:00:00Z","importance":"normal","isRead":true,"sensitivity":"normal"}]}`)
+			{"id":"M1","internetMessageId":"<m1@x>","subject":"subj-M1","from":{"emailAddress":{"address":"a@example.com"}},"receivedDateTime":"2025-03-01T09:00:00Z","importance":"high","isRead":false,"categories":["Board","Legal Hold"]},
+			{"id":"M2","internetMessageId":"<m2@x>","subject":"subj-M2","from":{"emailAddress":{"address":"a@example.com"}},"receivedDateTime":"2025-03-02T09:00:00Z","importance":"normal","isRead":true}]}`)
 	})
 	mux.HandleFunc("/users/u1/mailFolders/F_AR/messages", func(w http.ResponseWriter, r *http.Request) {
 		recordSelect(r)
-		j(w, `{"value":[{"id":"M3","internetMessageId":"<m3@x>","subject":"subj-M3","from":{"emailAddress":{"address":"a@example.com"}},"receivedDateTime":"2025-03-03T09:00:00Z","importance":"low","sensitivity":"personal"}]}`)
+		j(w, `{"value":[{"id":"M3","internetMessageId":"<m3@x>","subject":"subj-M3","from":{"emailAddress":{"address":"a@example.com"}},"receivedDateTime":"2025-03-03T09:00:00Z","importance":"low"}]}`)
 	})
 	mux.HandleFunc("/users/u1/messages/", func(w http.ResponseWriter, r *http.Request) {
 		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/users/u1/messages/"), "/$value")
@@ -198,11 +198,12 @@ func TestRunGraphCapturesAndIncrements(t *testing.T) {
 
 // covers: MA-179, R3, S35
 // The Graph source carries message state on the SAME widened listing $select
-// (PC16): importance/isRead/sensitivity ride along with no extra request, are
-// mapped onto each message, and reach the page's Status row. A field the tenant
-// omits stays empty (M2 is normal/read → no row; M3 omits isRead → not marked
-// unread), and the incremental fast-path still keys on the id alone, so no body
-// is fetched more than once.
+// (PC16): importance/isRead ride along with no extra request, are mapped onto each
+// message, and reach the page's Status row. A field the tenant omits stays empty
+// (M2 is normal/read → no row; M3 omits isRead → not marked unread), and the
+// incremental fast-path still keys on the id alone, so no body is fetched more than
+// once. Sensitivity is NOT on the Graph $select (not a v1.0 message property,
+// MA-284), so a Graph-sourced message shows no Sensitivity in its Status row.
 func TestRunGraphCapturesMessageState(t *testing.T) {
 	out := tmpDir(t)
 	f, srv := newFakeGraphServer()
@@ -226,10 +227,13 @@ func TestRunGraphCapturesMessageState(t *testing.T) {
 		t.Fatal("no /messages listing request recorded")
 	}
 	for _, q := range selects {
-		for _, field := range []string{"importance", "isRead", "sensitivity"} {
+		for _, field := range []string{"importance", "isRead", "categories"} {
 			if !strings.Contains(q, field) {
 				t.Errorf("listing $select %q is missing %q", q, field)
 			}
+		}
+		if strings.Contains(q, "sensitivity") {
+			t.Errorf("listing $select %q must not request 'sensitivity' (not a v1.0 message property — real Graph 400s, MA-284)", q)
 		}
 	}
 	// State fetched only via the listing: each body downloaded exactly once.
@@ -239,17 +243,19 @@ func TestRunGraphCapturesMessageState(t *testing.T) {
 		}
 	}
 
-	// M1: unread, high, confidential → full Status row.
-	if p := messagePage(t, out, "subj-M1"); !strings.Contains(p, "Unread · Importance: high · Sensitivity: confidential") {
+	// M1: unread + high → Status row (no Sensitivity: Graph does not provide it).
+	if p := messagePage(t, out, "subj-M1"); !strings.Contains(p, "Unread · Importance: high") {
 		t.Errorf("M1 page lacks the expected Status row:\n%s", p)
+	} else if strings.Contains(p, "Sensitivity") {
+		t.Errorf("M1 must show no Sensitivity (Graph does not expose it, MA-284):\n%s", p)
 	}
-	// M2: read + normal + normal → no Status row.
+	// M2: read + normal → no Status row.
 	if p := messagePage(t, out, "subj-M2"); strings.Contains(p, `data-mailarchive-field="status"`) {
 		t.Errorf("M2 (all-normal) should have no Status row:\n%s", p)
 	}
-	// M3: low + personal, isRead omitted → Status row without "Unread".
+	// M3: low, isRead omitted → Status row "Importance: low" without "Unread".
 	p := messagePage(t, out, "subj-M3")
-	if !strings.Contains(p, "Importance: low · Sensitivity: personal") {
+	if !strings.Contains(p, "Importance: low") {
 		t.Errorf("M3 page lacks the expected Status row:\n%s", p)
 	}
 	if strings.Contains(p, "Unread") {

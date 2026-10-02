@@ -304,10 +304,12 @@ type MessageRef struct {
 	Cc             []string
 	HasAttachments bool
 
-	Importance  string   // Graph "low"/"normal"/"high"; "" when the tenant omits it
-	Sensitivity string   // Graph "normal"/"personal"/"private"/"confidential"; "" when omitted
-	IsRead      *bool    // nil when the tenant omits it (read state then unknown)
-	Categories  []string // the message's category tags; nil when the tenant omits them
+	Importance string   // Graph "low"/"normal"/"high"; "" when the tenant omits it
+	IsRead     *bool    // nil when the tenant omits it (read state then unknown)
+	Categories []string // the message's category tags; nil when the tenant omits them
+	// NOTE: there is no Sensitivity here. Graph's message resource does not expose a
+	// 'sensitivity' property on $select (it lives only in the MAPI property
+	// PidTagSensitivity); selecting it makes real Graph 400. See messageSelectFields.
 }
 
 // graphRecipient is Graph's {emailAddress:{name,address}} recipient shape.
@@ -332,13 +334,47 @@ func addrsOf(rs []graphRecipient) []string {
 	return out
 }
 
+// messageSelectFields is the $select for the message listing (§3.2): the envelope
+// fields the pre-download signature needs plus the message-state fields, on one
+// request. EVERY entry MUST be a property of microsoft.graph.message that is
+// selectable on the v1.0 endpoint (messageSelectableV1) — a non-schema property
+// makes real Graph reject the WHOLE page with 400 "Could not find a property named
+// X". 'sensitivity' is intentionally ABSENT: Graph's message resource does not
+// expose it on $select (it lives only in the MAPI property PidTagSensitivity,
+// "Integer 0x0036", reachable via $expand=singleValueExtendedProperties), so
+// selecting it 400s on a real tenant; Graph-sourced messages carry no sensitivity.
+var messageSelectFields = []string{
+	"id", "internetMessageId", "subject", "from", "toRecipients", "ccRecipients",
+	"receivedDateTime", "hasAttachments", "importance", "isRead", "categories",
+}
+
+// messageSelectableV1 is the set of $select-able properties of
+// microsoft.graph.message on graph.microsoft.com/v1.0, from the live CSDL
+// $metadata (the entity → outlookItem → message chain). It is the schema our
+// $select is checked against (TestMessageSelectWithinSchema), so a non-v1.0
+// property — e.g. the MAPI-only 'sensitivity' a real tenant rejects — fails CI at
+// the source rather than only against a live mailbox (the fake server does not
+// validate $select).
+var messageSelectableV1 = map[string]bool{
+	"id": true, "bccRecipients": true, "body": true, "bodyPreview": true,
+	"ccRecipients": true, "categories": true, "changeKey": true,
+	"conversationId": true, "conversationIndex": true, "createdDateTime": true,
+	"flag": true, "from": true, "hasAttachments": true, "importance": true,
+	"inferenceClassification": true, "internetMessageHeaders": true,
+	"internetMessageId": true, "isDeliveryReceiptRequested": true, "isDraft": true,
+	"isRead": true, "isReadReceiptRequested": true, "lastModifiedDateTime": true,
+	"parentFolderId": true, "receivedDateTime": true, "replyTo": true,
+	"sender": true, "sentDateTime": true, "subject": true, "toRecipients": true,
+	"uniqueBody": true, "webLink": true,
+}
+
 // Messages streams every message reference in folderID to fn (paged). The
 // $select is widened to carry the envelope fields (subject, from, toRecipients,
 // ccRecipients, receivedDateTime, hasAttachments) the pre-download signature
 // needs, alongside the message-state fields — all on one request (§3.2).
 func (c *Client) Messages(ctx context.Context, userID, folderID string, fn func(MessageRef) error) error {
 	next := c.base + c.userSeg(userID) + "/mailFolders/" + url.PathEscape(folderID) +
-		"/messages?$select=id,internetMessageId,subject,from,toRecipients,ccRecipients,receivedDateTime,hasAttachments,importance,isRead,sensitivity,categories&$top=1000"
+		"/messages?$select=" + strings.Join(messageSelectFields, ",") + "&$top=1000"
 	honored, firstPage := false, true // whether Prefer: IdType="ImmutableId" is in effect this run
 	for next != "" {
 		var body struct {
@@ -353,7 +389,6 @@ func (c *Client) Messages(ctx context.Context, userID, folderID string, fn func(
 				HasAttachments    bool             `json:"hasAttachments"`
 				Importance        string           `json:"importance"`
 				IsRead            *bool            `json:"isRead"`
-				Sensitivity       string           `json:"sensitivity"`
 				Categories        []string         `json:"categories"`
 			} `json:"value"`
 			Next string `json:"@odata.nextLink"`
@@ -379,7 +414,6 @@ func (c *Client) Messages(ctx context.Context, userID, folderID string, fn func(
 				Cc:                addrsOf(m.CcRecipients),
 				HasAttachments:    m.HasAttachments,
 				Importance:        m.Importance,
-				Sensitivity:       m.Sensitivity,
 				IsRead:            m.IsRead,
 				Categories:        m.Categories,
 			}

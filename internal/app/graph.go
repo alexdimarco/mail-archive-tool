@@ -387,13 +387,16 @@ func buildGraphClient(ctx context.Context, g GraphOptions, logger *log.Logger) (
 
 // applyGraphState overlays the message-state fields carried on the widened
 // listing $select (PC16). Graph is authoritative for a mailbox item's
-// importance, sensitivity, read state and categories, so these override
-// anything the MIME headers carried. A field the tenant omitted stays empty; an
-// omitted isRead (nil) leaves the read state unset rather than guessing
-// "unread"; omitted categories leave the message with none.
+// importance, read state and categories, so these override anything the MIME
+// headers carried. A field the tenant omitted stays empty; an omitted isRead
+// (nil) leaves the read state unset rather than guessing "unread"; omitted
+// categories leave the message with none. Sensitivity is NOT overlaid: Graph's
+// message resource does not expose it on $select (it is the MAPI property
+// PidTagSensitivity, reachable only via an extended-property $expand), so a
+// Graph-sourced message keeps whatever Sensitivity its MIME headers carried (none
+// for a typical Graph capture) rather than being forced empty.
 func applyGraphState(m *model.Message, ref graph.MessageRef) {
 	m.Importance = graphImportance(ref.Importance)
-	m.Sensitivity = graphSensitivity(ref.Sensitivity)
 	if ref.IsRead != nil {
 		m.Unread = !*ref.IsRead
 	}
@@ -422,20 +425,6 @@ func graphImportance(s string) string {
 		return "high"
 	case "low":
 		return "low"
-	}
-	return ""
-}
-
-// graphSensitivity maps Graph's sensitivity ("normal"/"personal"/"private"/
-// "confidential") to the model's convention; normal/omitted is the empty state.
-func graphSensitivity(s string) string {
-	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "personal":
-		return "personal"
-	case "private":
-		return "private"
-	case "confidential":
-		return "confidential"
 	}
 	return ""
 }

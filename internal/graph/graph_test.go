@@ -149,3 +149,27 @@ func TestGraphClientReadsEverythingReadOnly(t *testing.T) {
 		t.Fatal("no GET requests recorded")
 	}
 }
+
+// covers: MA-284, R17, S35
+// Every property in the message listing $select must be a $select-able property of
+// microsoft.graph.message on v1.0 (messageSelectableV1, from the live CSDL
+// $metadata). A non-schema property makes real Graph 400 the WHOLE page ("Could not
+// find a property named X") — and the fake server does not validate $select, so
+// this guards the class at the source. In particular 'sensitivity' (a MAPI-only
+// property, not on the Graph message resource) must never reappear in the select.
+func TestMessageSelectWithinSchema(t *testing.T) {
+	if len(messageSelectFields) == 0 {
+		t.Fatal("message $select is empty")
+	}
+	for _, f := range messageSelectFields {
+		if !messageSelectableV1[f] {
+			t.Errorf("message $select includes %q, which is not a v1.0-selectable "+
+				"microsoft.graph.message property — real Graph will 400 "+
+				"\"Could not find a property named '%s'\"", f, f)
+		}
+	}
+	// Guard the schema set itself: 'sensitivity' is NOT a v1.0 message property.
+	if messageSelectableV1["sensitivity"] {
+		t.Error("'sensitivity' is not a v1.0 microsoft.graph.message property and must not be in messageSelectableV1")
+	}
+}
