@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"mail-archive-tool/internal/graph"
 )
 
 // DefaultSecretStore on non-Windows is a 0600 file store under the OS config dir
@@ -18,3 +20,7 @@ func DefaultSecretStore() (SecretStore, error) {
 	}
 	return NewFileSecretStore(filepath.Join(dir, "mailarchive", "secrets")), nil
 }
+
+// DefaultTokenStore is nil off Windows: the delegated sign-in token uses the 0600
+// file cache (the cross-platform default the shipped device tests exercise).
+func DefaultTokenStore(tenant, clientID string) graph.TokenStore { return nil }

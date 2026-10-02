@@ -43,6 +43,11 @@ type GraphOptions struct {
 	DeviceAuthURL  string
 	Unattended     bool
 
+	// TokenStore, when set, keeps the delegated sign-in token in a vault (Windows
+	// Credential Manager) instead of the TokenCachePath file (design-mailarchive-
+	// desktop P4). Nil = the file cache (the cross-platform default).
+	TokenStore graph.TokenStore
+
 	// Deleted Items and Junk Email are excluded from the walk by default (T7,
 	// operator ruling); these opt them back in. Exclusion is by resolved
 	// well-known-folder id, so it is locale-independent (§3.6).
@@ -345,6 +350,7 @@ func buildGraphClient(ctx context.Context, g GraphOptions, logger *log.Logger) (
 			TokenURL:       g.TokenURL,
 			DeviceAuthURL:  g.DeviceAuthURL,
 			TokenCachePath: g.TokenCachePath,
+			TokenStore:     g.TokenStore,
 			Unattended:     g.Unattended,
 		})
 		if err != nil {

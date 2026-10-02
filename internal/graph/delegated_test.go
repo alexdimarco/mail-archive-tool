@@ -375,6 +375,68 @@ func TestDelegatedTokenWriteBack(t *testing.T) {
 	}
 }
 
+// memTokenStore is an in-memory graph.TokenStore for proving the store seam
+// cross-platform (the Credential Manager backing is lab-tier, MA-264).
+type memTokenStore struct {
+	data    []byte
+	cleared bool
+}
+
+func (m *memTokenStore) LoadToken() ([]byte, error) {
+	if m.data == nil {
+		return nil, os.ErrNotExist
+	}
+	return m.data, nil
+}
+func (m *memTokenStore) StoreToken(d []byte) error { m.data = append([]byte(nil), d...); return nil }
+func (m *memTokenStore) ClearToken() error         { m.data = nil; m.cleared = true; return nil }
+
+// covers: MA-273, R17, R4, S41
+// With Config.TokenStore set, the delegated token is loaded from / stored to the
+// store (not a file): consent writes it there, a later run loads it with no prompt,
+// SignedIn reports it, and ClearSignIn removes it.
+func TestTokenStoreSeam(t *testing.T) {
+	ctx := context.Background()
+	_, srv := newFakeDeleg(false)
+	defer srv.Close()
+	store := &memTokenStore{}
+	cfg := Config{
+		Tenant: "t", ClientID: "c",
+		BaseURL: srv.URL, TokenURL: srv.URL + "/token", DeviceAuthURL: srv.URL + "/devicecode",
+		TokenStore: store, Prompt: func(DeviceAuth) {},
+	}
+
+	if _, err := NewDelegated(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if store.data == nil {
+		t.Fatal("consent did not write the token to the store")
+	}
+	if upn, ok := SignedIn(cfg); !ok || upn != "alice@contoso.org" {
+		t.Fatalf("SignedIn via store = %q, %v; want alice@contoso.org, true", upn, ok)
+	}
+
+	prompted := false
+	cfg2 := cfg
+	cfg2.Prompt = func(DeviceAuth) { prompted = true }
+	if _, err := NewDelegated(ctx, cfg2); err != nil {
+		t.Fatal(err)
+	}
+	if prompted {
+		t.Error("a stored sign-in must not prompt again")
+	}
+
+	if err := ClearSignIn(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if store.data != nil || !store.cleared {
+		t.Error("ClearSignIn did not clear the store")
+	}
+	if _, ok := SignedIn(cfg); ok {
+		t.Error("SignedIn after clear should be false")
+	}
+}
+
 func errStr(err error) string {
 	if err == nil {
 		return ""

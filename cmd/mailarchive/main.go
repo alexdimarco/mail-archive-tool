@@ -1095,6 +1095,9 @@ func runGraph(args []string) (err error) {
 		}
 		gopts.Auth = "device"
 		gopts.TokenCachePath = cache
+		// On Windows the sign-in token lives in Credential Manager (vault); nil
+		// elsewhere → the 0600 file cache (design-mailarchive-desktop P4).
+		gopts.TokenStore = graphconfig.DefaultTokenStore(*o.tenant, *o.clientID)
 	}
 
 	mode, err := parseMode(*o.mode)

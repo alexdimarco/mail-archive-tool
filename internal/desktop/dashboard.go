@@ -7,29 +7,62 @@
 package desktop
 
 import (
+	"encoding/json"
 	"html/template"
 	"net/http"
 	"runtime"
 	"strings"
 
+	"mail-archive-tool/internal/graph"
 	"mail-archive-tool/internal/graphconfig"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/server"
 )
 
-// Config wires the dashboard to one archive and the Graph config. Store is the
-// secret store (Credential Manager on Windows / a file elsewhere); it may be nil
-// in the informational shell.
+// Config wires the dashboard to one archive and the Graph config/credentials.
 type Config struct {
 	Out        string
 	ConfigPath string
 	Store      graphconfig.SecretStore
+	// TokenStore/TokenCachePath locate the device sign-in token (vault on Windows,
+	// a file elsewhere) so the dashboard can show whether you are signed in and
+	// clear it. Both may be zero in the informational shell.
+	TokenStore     graph.TokenStore
+	TokenCachePath string
 }
 
-// DashboardHandler serves the dashboard. Slice 1: GET "/" (the Overview page) and
-// the restyled static assets. State-changing actions arrive in later slices and
-// will be loopback-only + CSRF/Origin/Host-guarded (the `setup` pattern).
+// tokenCfg locates the device sign-in token for a configured tenant/client: the
+// Config overrides (used by tests), else the OS default — Credential Manager on
+// Windows (vault), a 0600 file elsewhere — matching the CLI so both see one sign-in.
+func (cfg Config) tokenCfg(c *graphconfig.Config) graph.Config {
+	store, path := cfg.TokenStore, cfg.TokenCachePath
+	if store == nil && path == "" {
+		store = graphconfig.DefaultTokenStore(c.Tenant, c.ClientID)
+		path, _ = graphconfig.DefaultTokenCachePath(c.Tenant, c.ClientID)
+	}
+	return graph.Config{Tenant: c.Tenant, ClientID: c.ClientID, TokenStore: store, TokenCachePath: path}
+}
+
+// signInState reports whether a saved sign-in exists (reads only the local token
+// cache, no network) and the mailbox it is for.
+func (cfg Config) signInState() (string, bool) {
+	c := cfg.load()
+	if c == nil || strings.TrimSpace(c.Tenant) == "" || strings.TrimSpace(c.ClientID) == "" {
+		return "", false
+	}
+	return graph.SignedIn(cfg.tokenCfg(c))
+}
+
+// dashboard holds the per-process CSRF token for state-changing actions.
+type dashboard struct {
+	cfg  Config
+	csrf string
+}
+
+// DashboardHandler serves the dashboard: GET "/" (Overview), the static script,
+// and the loopback-only, CSRF/Origin/Host-guarded action endpoints.
 func DashboardHandler(cfg Config) http.Handler {
+	d := &dashboard{cfg: cfg, csrf: server.NewCSRFToken()}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
@@ -37,9 +70,42 @@ func DashboardHandler(cfg Config) http.Handler {
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write([]byte(cfg.overview()))
+		w.Write([]byte(d.cfg.overview(d.csrf)))
 	})
+	mux.HandleFunc("/dashboard.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		w.Write([]byte(dashboardJS))
+	})
+	mux.HandleFunc("/api/clear-signin", d.clearSignin)
 	return dashboardHeaders(mux)
+}
+
+// clearSignin removes the saved delegated sign-in (loopback-only, CSRF-guarded), so
+// the next capture performs a fresh device sign-in.
+func (d *dashboard) clearSignin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	if !server.GuardLocalPOST(r, d.csrf) {
+		http.Error(w, "refused: same-origin, tokened, local requests only", http.StatusForbidden)
+		return
+	}
+	c := d.cfg.load()
+	if c == nil {
+		writeJSON(w, map[string]any{"ok": false, "error": "not configured"})
+		return
+	}
+	if err := graph.ClearSignIn(d.cfg.tokenCfg(c)); err != nil {
+		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
+}
+
+func writeJSON(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	json.NewEncoder(w).Encode(v)
 }
 
 // dashCSP mirrors the setup CSP: same-origin script + fetch (later slices POST via
@@ -66,7 +132,11 @@ func (cfg Config) cards() []card {
 
 	conn := card{"Microsoft 365", "Not configured", "warn"}
 	if c := cfg.load(); c != nil && strings.TrimSpace(c.Tenant) != "" {
-		conn = card{"Microsoft 365", "Configured (" + authLabel(c.Auth) + ")", "good"}
+		if _, ok := cfg.signInState(); ok {
+			conn = card{"Microsoft 365", "Signed in", "good"}
+		} else {
+			conn = card{"Microsoft 365", "Sign-in needed", "warn"}
+		}
 	}
 	out = append(out, conn)
 
@@ -111,17 +181,21 @@ func vaultPhrase() string {
 	return "a file only you can read"
 }
 
-func (cfg Config) overview() string {
+func (cfg Config) overview(csrf string) string {
 	c := cfg.load()
+	upn, signedIn := cfg.signInState()
 	data := struct {
+		CSRF       string
 		Cards      []card
 		Configured bool
+		SignedIn   bool
+		UPN        string
 		Tenant     string
 		ClientID   string
 		Auth       string
 		Vault      string
 		OutDir     string
-	}{Cards: cfg.cards(), Vault: vaultPhrase(), OutDir: cfg.Out}
+	}{CSRF: csrf, Cards: cfg.cards(), Vault: vaultPhrase(), OutDir: cfg.Out, SignedIn: signedIn, UPN: upn}
 	if c != nil {
 		data.Configured = strings.TrimSpace(c.Tenant) != ""
 		data.Tenant, data.ClientID, data.Auth = c.Tenant, c.ClientID, authLabel(c.Auth)
@@ -140,6 +214,7 @@ func Loopback(addr string) bool { return server.IsLoopback(addr) }
 var overviewTmpl = template.Must(template.New("overview").Parse(`<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf" content="{{.CSRF}}">
 <title>MailArchive Desktop</title>
 <style>
 :root{color-scheme:light dark;--bg:#f3f5f8;--panel:#fff;--text:#18212b;--muted:#667085;--line:#d9e0e8;--accent:#2563eb;--accent-soft:#eaf1ff;--good:#157347;--warn:#a15c00;--danger:#b42318;--sidebar:#0f172a;--sidebar-text:#e5e7eb;--sidebar-muted:#94a3b8}
@@ -165,6 +240,8 @@ h1{font-size:1.8rem;letter-spacing:-.02em;margin:0 0 4px}.lede{color:var(--muted
 .row:last-child{border-bottom:0}.row .k{color:var(--muted);font-size:.85rem}.row .v{font-weight:650;overflow-wrap:anywhere}
 .sec li{margin:8px 0;line-height:1.45}.sec b{color:var(--text)}
 .mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
+.btn-link{background:none;border:0;color:var(--accent);font:inherit;font-weight:700;cursor:pointer;padding:0;text-decoration:underline}
+.note{margin-top:12px;padding:10px 12px;border-radius:9px;font-size:.9rem;background:var(--accent-soft);border:1px solid color-mix(in srgb,var(--accent) 30%,var(--line))}
 @media(max-width:900px){.app-shell{grid-template-columns:1fr}.status-grid{grid-template-columns:1fr 1fr}.sidebar-foot{display:none}}
 </style></head>
 <body>
@@ -200,10 +277,12 @@ h1{font-size:1.8rem;letter-spacing:-.02em;margin:0 0 4px}.lede{color:var(--muted
       <div class="row"><div class="k">Tenant</div><div class="v mono">{{.Tenant}}</div></div>
       <div class="row"><div class="k">Application (client) ID</div><div class="v mono">{{.ClientID}}</div></div>
       <div class="row"><div class="k">Sign-in mode</div><div class="v">{{.Auth}}</div></div>
+      <div class="row"><div class="k">Sign-in</div><div class="v">{{if .SignedIn}}<span class="good">Signed in as {{.UPN}}</span> &nbsp; <button class="btn-link" id="clearSignin">Clear sign-in</button>{{else}}<span class="warn">Sign-in needed</span> — the first capture signs you in with a Microsoft device code.{{end}}</div></div>
       {{else}}
       <div class="row"><div class="k">Status</div><div class="v warn">Not configured — run <span class="mono">mailarchive setup</span> to add your tenant and application ID.</div></div>
       {{end}}
       {{if .OutDir}}<div class="row"><div class="k">Archive location</div><div class="v mono">{{.OutDir}}</div></div>{{end}}
+      <div class="note" id="note" hidden></div>
     </div>
 
     <div class="card sec">
@@ -220,4 +299,20 @@ h1{font-size:1.8rem;letter-spacing:-.02em;margin:0 0 4px}.lede{color:var(--muted
     </div>
   </div></main>
 </div>
+<script src="/dashboard.js"></script>
 </body></html>`))
+
+// dashboardJS wires the Clear-sign-in action (fetch with the CSRF token). Served at
+// /dashboard.js so it runs under script-src 'self'.
+const dashboardJS = `const csrf=document.querySelector('meta[name=csrf]').content;
+const btn=document.getElementById('clearSignin');
+if(btn)btn.addEventListener('click',async()=>{
+  const note=document.getElementById('note');
+  try{
+    const r=await fetch('/api/clear-signin',{method:'POST',headers:{'X-CSRF-Token':csrf}});
+    const d=await r.json();
+    if(note){note.hidden=false;note.textContent=d.ok?'Signed out. The next capture will sign in again.':(d.error||'Could not clear the sign-in.');}
+    if(d.ok)setTimeout(()=>location.reload(),900);
+  }catch(e){if(note){note.hidden=false;note.textContent='Could not clear the sign-in: '+e;}}
+});
+`

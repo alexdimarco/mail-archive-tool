@@ -9,12 +9,21 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
+
+	"mail-archive-tool/internal/graph"
 )
 
 // DefaultSecretStore on Windows is the user's Credential Manager vault, so the
 // client secret is not a plaintext file on disk (OR2). Entries are generic
 // credentials under the current user's vault.
 func DefaultSecretStore() (SecretStore, error) { return credmanStore{}, nil }
+
+// DefaultTokenStore on Windows keeps the delegated sign-in token in Credential
+// Manager too (design-mailarchive-desktop P4), so the "sign-in is in the vault"
+// claim holds. Elsewhere it is nil and the file token cache is used.
+func DefaultTokenStore(tenant, clientID string) graph.TokenStore {
+	return NewTokenStore(credmanStore{}, tenant, clientID)
+}
 
 var (
 	advapi32        = windows.NewLazySystemDLL("advapi32.dll")

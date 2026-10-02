@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -49,9 +48,10 @@ func NewDelegated(ctx context.Context, cfg Config) (*Client, error) {
 	base := strings.TrimRight(orDefault(cfg.BaseURL, defaultBaseURL), "/")
 	tokenURL := orDefault(cfg.TokenURL, "https://login.microsoftonline.com/"+cfg.Tenant+"/oauth2/v2.0/token")
 	deviceURL := orDefault(cfg.DeviceAuthURL, "https://login.microsoftonline.com/"+cfg.Tenant+"/oauth2/v2.0/devicecode")
-	if strings.TrimSpace(cfg.TokenCachePath) == "" {
-		return nil, errors.New("internal: NewDelegated requires a token cache path")
+	if cfg.TokenStore == nil && strings.TrimSpace(cfg.TokenCachePath) == "" {
+		return nil, errors.New("internal: NewDelegated requires a token cache path or a token store")
 	}
+	be := tokenBackend{store: cfg.TokenStore, path: cfg.TokenCachePath}
 	reqTimeout, mimeTimeout := cfg.RequestTimeout, cfg.MIMETimeout
 	if reqTimeout <= 0 {
 		reqTimeout = defaultRequestTimeout
@@ -70,7 +70,7 @@ func NewDelegated(ctx context.Context, cfg Config) (*Client, error) {
 		Endpoint: oauth2.Endpoint{TokenURL: tokenURL, DeviceAuthURL: deviceURL, AuthStyle: oauth2.AuthStyleInParams},
 	}
 
-	cached, err := loadTokenCache(cfg.TokenCachePath)
+	cached, err := be.load()
 	var tok *oauth2.Token
 	var upn string
 	switch {
@@ -78,7 +78,7 @@ func NewDelegated(ctx context.Context, cfg Config) (*Client, error) {
 		tok, upn = cached.Token, cached.UPN
 	case errors.Is(err, os.ErrNotExist):
 		if cfg.Unattended {
-			return nil, fmt.Errorf("no saved sign-in at %s: run `mailarchive graph -auth device …` once interactively to sign in (a scheduled run cannot prompt for the device code)", cfg.TokenCachePath)
+			return nil, errors.New("no saved sign-in: run `mailarchive graph -auth device …` (or MailArchive Desktop) once interactively to sign in (a scheduled run cannot prompt for the device code)")
 		}
 		tok, err = deviceConsent(ctx, conf, cfg.Prompt)
 		if err != nil {
@@ -91,14 +91,14 @@ func NewDelegated(ctx context.Context, cfg Config) (*Client, error) {
 		if err != nil {
 			return nil, fmt.Errorf("read the signed-in user: %w", err)
 		}
-		if err := storeTokenCache(cfg.TokenCachePath, upn, tok); err != nil {
+		if err := be.put(upn, tok); err != nil {
 			return nil, err
 		}
 	default:
 		return nil, err // a malformed or insecure cache is a hard error, never a silent re-consent
 	}
 
-	src := newDeviceSource(ctx, conf, cfg.TokenCachePath, upn, tok)
+	src := newDeviceSource(ctx, conf, be, upn, tok)
 	return &Client{base: base, hc: oauth2.NewClient(ctx, src), reqTimeout: reqTimeout, mimeTimeout: mimeTimeout, meMode: true}, nil
 }
 
@@ -174,7 +174,7 @@ func defaultPrompt(d DeviceAuth) {
 type deviceSource struct {
 	ctx  context.Context
 	conf *oauth2.Config
-	path string
+	be   tokenBackend
 	upn  string
 
 	mu   sync.Mutex
@@ -182,8 +182,8 @@ type deviceSource struct {
 	last *oauth2.Token
 }
 
-func newDeviceSource(ctx context.Context, conf *oauth2.Config, path, upn string, tok *oauth2.Token) *deviceSource {
-	return &deviceSource{ctx: ctx, conf: conf, path: path, upn: upn,
+func newDeviceSource(ctx context.Context, conf *oauth2.Config, be tokenBackend, upn string, tok *oauth2.Token) *deviceSource {
+	return &deviceSource{ctx: ctx, conf: conf, be: be, upn: upn,
 		cur: oauth2.ReuseTokenSource(tok, conf.TokenSource(ctx, tok)), last: tok}
 }
 
@@ -202,7 +202,7 @@ func (s *deviceSource) Token() (*oauth2.Token, error) {
 		}
 	}
 	if s.last == nil || t.AccessToken != s.last.AccessToken || t.RefreshToken != s.last.RefreshToken {
-		_ = storeTokenIfNewer(s.path, s.upn, t) // best-effort; a failed persist never fails the run
+		_ = s.be.putIfNewer(s.upn, t) // best-effort; a failed persist never fails the run
 		s.last = t
 	}
 	return t, nil
@@ -211,7 +211,7 @@ func (s *deviceSource) Token() (*oauth2.Token, error) {
 // reload re-reads the cache when a refresh failed, returning a token worth
 // retrying only if a concurrent run wrote a DIFFERENT refresh token than ours.
 func (s *deviceSource) reload() *oauth2.Token {
-	tc, err := loadTokenCache(s.path)
+	tc, err := s.be.load()
 	if err != nil || tc.Token == nil {
 		return nil
 	}
@@ -221,66 +221,93 @@ func (s *deviceSource) reload() *oauth2.Token {
 	return tc.Token
 }
 
-func loadTokenCache(path string) (*tokenCache, error) {
-	data, err := util.ReadSecureFile(path, "token cache file", tokenCacheMaxBytes)
+// tokenBackend is where the delegated token cache lives: a TokenStore (e.g.
+// Credential Manager) when set, otherwise a 0600 file at path (the cross-platform
+// default). Routing load/store/ifNewer through it keeps the file path byte-for-byte
+// as the shipped tests exercise it while letting the dashboard move the token into
+// the OS vault on Windows (DC2).
+type tokenBackend struct {
+	store TokenStore
+	path  string
+}
+
+func (b tokenBackend) load() (*tokenCache, error) {
+	var data []byte
+	var err error
+	if b.store != nil {
+		data, err = b.store.LoadToken()
+	} else {
+		data, err = util.ReadSecureFile(b.path, "token cache file", tokenCacheMaxBytes)
+	}
 	if err != nil {
 		return nil, err
 	}
 	var tc tokenCache
 	if err := json.Unmarshal(data, &tc); err != nil {
-		return nil, fmt.Errorf("token cache file %s is not valid JSON (delete it and sign in again): %w", path, err)
+		return nil, fmt.Errorf("saved sign-in is not valid JSON (sign in again): %w", err)
 	}
 	return &tc, nil
 }
 
-// storeTokenCache writes the cache atomically (temp file + fsync + rename) at 0600
-// so a crash never leaves a torn token that would be read as valid — it fails
-// toward re-consent (design P5/§3.5).
-func storeTokenCache(path, upn string, tok *oauth2.Token) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("token cache dir %s: %w", dir, err)
-	}
+// put writes the cache: to the store, or atomically to the 0600 file (temp +
+// fsync + rename, so a crash never leaves a torn token — it fails toward re-consent).
+func (b tokenBackend) put(upn string, tok *oauth2.Token) error {
 	data, err := json.Marshal(tokenCache{UPN: upn, Token: tok})
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(dir, ".graph-token-*.tmp")
-	if err != nil {
-		return fmt.Errorf("token cache temp file: %w", err)
+	if b.store != nil {
+		return b.store.StoreToken(data)
 	}
-	tmpName := tmp.Name()
-	defer os.Remove(tmpName) // no-op once renamed away
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		return fmt.Errorf("token cache temp file: %w", err)
-	}
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return fmt.Errorf("token cache temp file: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return fmt.Errorf("token cache temp file: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("token cache temp file: %w", err)
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		return fmt.Errorf("token cache rename to %s: %w", path, err)
-	}
-	return nil
+	return util.WriteFileAtomic0600(b.path, data)
 }
 
-// storeTokenIfNewer persists only a token newer (later expiry) than what is on
-// disk, so a concurrent run's freshly-rotated token is not clobbered (D-C2).
-func storeTokenIfNewer(path, upn string, tok *oauth2.Token) error {
-	if existing, err := loadTokenCache(path); err == nil && existing.Token != nil {
+// putIfNewer persists only a token newer (later expiry) than what is stored, so a
+// concurrent run's freshly-rotated token is not clobbered (D-C2).
+func (b tokenBackend) putIfNewer(upn string, tok *oauth2.Token) error {
+	if existing, err := b.load(); err == nil && existing.Token != nil {
 		if !tok.Expiry.IsZero() && !existing.Token.Expiry.IsZero() && !tok.Expiry.After(existing.Token.Expiry) {
 			return nil
 		}
 	}
-	return storeTokenCache(path, upn, tok)
+	return b.put(upn, tok)
+}
+
+func (b tokenBackend) clear() error {
+	if b.store != nil {
+		return b.store.ClearToken()
+	}
+	if err := os.Remove(b.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+// File-path wrappers — the signatures the shipped tests use (store == nil).
+func loadTokenCache(path string) (*tokenCache, error) { return tokenBackend{path: path}.load() }
+func storeTokenCache(path, upn string, tok *oauth2.Token) error {
+	return tokenBackend{path: path}.put(upn, tok)
+}
+func storeTokenIfNewer(path, upn string, tok *oauth2.Token) error {
+	return tokenBackend{path: path}.putIfNewer(upn, tok)
+}
+
+// ClearSignIn removes the saved delegated sign-in (the token store entry or the
+// file cache), so the next NewDelegated performs a fresh device consent. Used by
+// the dashboard's "sign in again" / "clear sign-in" actions.
+func ClearSignIn(cfg Config) error {
+	return tokenBackend{store: cfg.TokenStore, path: cfg.TokenCachePath}.clear()
+}
+
+// SignedIn reports whether a saved delegated sign-in exists (a token in the store
+// or file cache) and, if so, the mailbox it is for. It reads no network — just the
+// local cache — so the dashboard can show the sign-in card cheaply.
+func SignedIn(cfg Config) (upn string, ok bool) {
+	tc, err := tokenBackend{store: cfg.TokenStore, path: cfg.TokenCachePath}.load()
+	if err != nil || tc.Token == nil || strings.TrimSpace(tc.Token.RefreshToken) == "" {
+		return "", false
+	}
+	return tc.UPN, true
 }
 
 func orDefault(s, def string) string {

@@ -39,24 +39,29 @@ func TestOverviewContent(t *testing.T) {
 		}
 	}
 
-	// Device config → "Configured (device)" + the tenant/client id.
+	// Device config, no saved token → "Sign-in needed" + the tenant/client id.
 	dev := filepath.Join(t.TempDir(), "graph-config.json")
 	if err := graphconfig.Save(dev, &graphconfig.Config{Tenant: "contoso", ClientID: "APPID", Auth: "device"}); err != nil {
 		t.Fatal(err)
 	}
-	body = getOverview(t, Config{ConfigPath: dev})
-	for _, want := range []string{"Configured (device)", "contoso", "APPID"} {
+	// Point the token at an empty tempdir file so "not signed in" is deterministic.
+	cfg := Config{ConfigPath: dev, TokenCachePath: filepath.Join(t.TempDir(), "tok.json")}
+	body = getOverview(t, cfg)
+	for _, want := range []string{"Sign-in needed", "contoso", "APPID"} {
 		if !strings.Contains(body, want) {
-			t.Errorf("overview (device) missing %q", want)
+			t.Errorf("overview (device, not signed in) missing %q", want)
 		}
 	}
+	if strings.Contains(body, "Signed in as") {
+		t.Errorf("no token present, but the page claims a sign-in")
+	}
 
-	// App config → "Configured (app-only)".
+	// App config → the "app-only" mode label appears.
 	app := filepath.Join(t.TempDir(), "graph-config.json")
 	if err := graphconfig.Save(app, &graphconfig.Config{Tenant: "contoso", ClientID: "APPID", Auth: "app"}); err != nil {
 		t.Fatal(err)
 	}
-	if body = getOverview(t, Config{ConfigPath: app}); !strings.Contains(body, "Configured (app-only)") {
-		t.Errorf("app-mode config should show Configured (app-only):\n%s", body)
+	if body = getOverview(t, Config{ConfigPath: app, TokenCachePath: filepath.Join(t.TempDir(), "t.json")}); !strings.Contains(body, "app-only") {
+		t.Errorf("app-mode config should show the app-only label:\n%s", body)
 	}
 }

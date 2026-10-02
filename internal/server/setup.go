@@ -43,10 +43,9 @@ func SetupHandler(cfgPath string, store graphconfig.SecretStore) http.Handler {
 			http.Error(w, "POST only", http.StatusMethodNotAllowed)
 			return
 		}
-		// Anti-CSRF + anti-DNS-rebind (W-C2): the Host must be loopback, a present
-		// Origin must be a loopback origin, and the per-process CSRF token must
-		// match. Any failure refuses BEFORE touching config or the secret store.
-		if !IsLoopback(r.Host) || !originIsLoopback(r) || !tokenOK(r, csrf) {
+		// Anti-CSRF + anti-DNS-rebind (W-C2): same-origin, tokened, loopback only.
+		// Any failure refuses BEFORE touching config or the secret store.
+		if !GuardLocalPOST(r, csrf) {
 			http.Error(w, "refused: this setup endpoint accepts only a same-origin, tokened request from the local machine", http.StatusForbidden)
 			return
 		}
@@ -130,6 +129,19 @@ func randomToken() string {
 		return "setup" // extremely unlikely; the loopback+Origin+Host checks still gate
 	}
 	return hex.EncodeToString(b)
+}
+
+// NewCSRFToken mints a per-process CSRF token for a loopback control surface.
+func NewCSRFToken() string { return randomToken() }
+
+// GuardLocalPOST reports whether r is a safe same-origin, tokened POST from this
+// machine for a loopback control surface (the setup wizard and the desktop
+// dashboard share it): the Host must be loopback, a present Origin must be a
+// loopback origin, and the per-process CSRF token must match. It does NOT defend
+// against a local process running as the same user (which already has the user's
+// rights and could run the engine directly) — see ux-contract X9 / design DC4.
+func GuardLocalPOST(r *http.Request, csrfToken string) bool {
+	return IsLoopback(r.Host) && originIsLoopback(r) && tokenOK(r, csrfToken)
 }
 
 // tokenOK compares the request's CSRF token (header or JSON is header-only here)

@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"mail-archive-tool/internal/util"
 )
@@ -40,6 +41,20 @@ func DefaultConfigPath() (string, error) {
 		return "", fmt.Errorf("cannot determine the OS config directory: %w", err)
 	}
 	return filepath.Join(dir, "mailarchive", "graph-config.json"), nil
+}
+
+// DefaultTokenCachePath is the device sign-in token's file location (the
+// cross-platform fallback when there is no vault token store): under the OS config
+// dir, keyed by tenant + client so two registrations don't collide. It matches the
+// path `mailarchive graph -auth device` uses with no -mailbox, so the dashboard and
+// the CLI see the same sign-in.
+func DefaultTokenCachePath(tenant, clientID string) (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", fmt.Errorf("cannot determine the OS config directory: %w", err)
+	}
+	name := "graph-token-" + util.ShortHash(strings.ToLower(strings.TrimSpace(tenant))) + "-" + util.ShortHash(strings.TrimSpace(clientID)) + ".json"
+	return filepath.Join(dir, "mailarchive", name), nil
 }
 
 // Load reads the config at path. A missing file is reported as a typed not-found

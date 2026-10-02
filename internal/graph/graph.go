@@ -52,6 +52,21 @@ type Config struct {
 	TokenCachePath string
 	Unattended     bool
 	Prompt         func(DeviceAuth)
+
+	// TokenStore, when set, persists the delegated token cache somewhere other
+	// than a file — e.g. Windows Credential Manager — so a sign-in need not live
+	// as a plaintext file (design-mailarchive-desktop P4/DC2). When nil the file
+	// at TokenCachePath is used, exactly as before (the cross-platform default,
+	// which the shipped device tests exercise).
+	TokenStore TokenStore
+}
+
+// TokenStore persists the delegated token cache's JSON bytes. A missing entry is
+// reported as errors.Is(err, os.ErrNotExist).
+type TokenStore interface {
+	LoadToken() ([]byte, error)
+	StoreToken(data []byte) error
+	ClearToken() error
 }
 
 const (
