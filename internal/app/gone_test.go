@@ -226,7 +226,9 @@ func newPartialWalkServer(lockPath string) (*partialWalkServer, *httptest.Server
 		if id == "A1" {
 			f.mu.Lock()
 			if !f.deleted {
-				os.Remove(f.lockPath)
+				// In-place overwrite (clears the nonce), not unlink: detectable on
+				// Windows too, where an open lock file cannot be removed.
+				os.WriteFile(f.lockPath, []byte("pid=1 started=x host=y\n"), 0o600)
 				f.deleted = true
 			}
 			f.mu.Unlock()

@@ -43,9 +43,15 @@ func TestLockHardening(t *testing.T) {
 	if err := l.StillHeld(); err != nil {
 		t.Fatalf("fresh lock reported lost: %v", err)
 	}
-	os.Remove(link)
-	if err := l.StillHeld(); err == nil || !strings.Contains(err.Error(), "removed") {
-		t.Errorf("removed lock not detected: %v", err)
+	// Unlink-while-open is a POSIX-only race: on Windows an open lock file (held
+	// without FILE_SHARE_DELETE) cannot be removed by another process, so there is
+	// nothing to detect — the lock is in fact safer there. Prove removal detection
+	// on POSIX; prove in-place replacement (below) on both.
+	if runtime.GOOS != "windows" {
+		os.Remove(link)
+		if err := l.StillHeld(); err == nil || !strings.Contains(err.Error(), "removed") {
+			t.Errorf("removed lock not detected: %v", err)
+		}
 	}
 	os.WriteFile(link, []byte("pid=1 started=x host=y"), 0o644)
 	if err := l.StillHeld(); err == nil || !strings.Contains(err.Error(), "replaced") {

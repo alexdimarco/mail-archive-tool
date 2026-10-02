@@ -8,6 +8,9 @@
 package lockfile
 
 import (
+	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -23,8 +26,9 @@ var ErrHeld = errors.New("held by another run")
 
 // Lock is a held lock.
 type Lock struct {
-	f    *os.File
-	path string
+	f     *os.File
+	path  string
+	nonce string // this holder's random identity, stamped into the file content
 }
 
 // Acquire takes the exclusive lock at path without waiting, naming no verb (the
@@ -56,14 +60,25 @@ func AcquireAs(path, verb string) (*Lock, error) {
 		return nil, fmt.Errorf("archive is in use by another mailarchive run%s: %s: %w", holder, path, ErrHeld)
 	}
 	host, _ := os.Hostname()
-	info := fmt.Sprintf("pid=%d started=%s host=%s", os.Getpid(), time.Now().UTC().Format(time.RFC3339), host)
+	// A random nonce stamps THIS holder's identity into the file's content, so a
+	// mid-run check can prove the lock is still ours by reading it back — identity
+	// that holds on Windows too, where there is no inode and an open file cannot be
+	// removed or renamed but its bytes CAN be overwritten (R5).
+	var nb [16]byte
+	if _, err := rand.Read(nb[:]); err != nil {
+		unlock(f)
+		f.Close()
+		return nil, fmt.Errorf("lock %s: generate nonce: %w", path, err)
+	}
+	nonce := hex.EncodeToString(nb[:])
+	info := fmt.Sprintf("pid=%d started=%s host=%s nonce=%s", os.Getpid(), time.Now().UTC().Format(time.RFC3339), host, nonce)
 	if verb = sanitizeVerb(verb); verb != "" {
 		info += " verb=" + verb
 	}
 	info += "\n"
 	_ = f.Truncate(0)
 	_, _ = f.WriteAt([]byte(info), 0)
-	return &Lock{f: f, path: path}, nil
+	return &Lock{f: f, path: path, nonce: nonce}, nil
 }
 
 // sanitizeVerb keeps a verb to a short, control-character-free token so the
@@ -105,15 +120,16 @@ func (l *Lock) StillHeld() error {
 	if l == nil || l.f == nil {
 		return errors.New("lock not held")
 	}
-	held, err := l.f.Stat()
-	if err != nil {
-		return fmt.Errorf("lock %s: %w", l.path, err)
-	}
-	onDisk, err := os.Stat(l.path)
+	// Compare CONTENT, not inode/file-id. On Windows an open file can be neither
+	// removed nor renamed by another process, but its bytes CAN be overwritten and
+	// there is no inode, so os.SameFile can never see the change; re-reading our
+	// nonce is correct on both platforms (R5). It also strengthens POSIX: an
+	// in-place overwrite that kept the same inode was previously invisible.
+	data, err := os.ReadFile(l.path)
 	if err != nil {
 		return fmt.Errorf("lock %s was removed during the run (%v): stopping so two runs cannot overlap; run again", l.path, err)
 	}
-	if !os.SameFile(held, onDisk) {
+	if !bytes.Contains(data, []byte("nonce="+l.nonce)) {
 		return fmt.Errorf("lock %s was replaced during the run: stopping so two runs cannot overlap; run again", l.path)
 	}
 	return nil
