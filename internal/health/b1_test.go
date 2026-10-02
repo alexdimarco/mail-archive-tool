@@ -231,11 +231,14 @@ func TestScheduleTargetAndCloudSync(t *testing.T) {
 	}
 
 	// Schedule targets a different archive → WARN naming both paths + remedy.
+	// POSIX test paths are made host-absolute so Assess's filepath.IsAbs gate
+	// fires on Windows too (unchanged on a POSIX host).
+	curr, old := hostAbs("/archives/current"), hostAbs("/archives/old")
 	in := healthyInput(now)
-	in.Out = "/archives/current"
-	in.Desc.Job = []string{"-out", "/archives/old", "-auto"}
+	in.Out = curr
+	in.Desc.Job = []string{"-out", old, "-auto"}
 	r := strings.Join(Assess(in, now).Reasons, "\n")
-	if !strings.Contains(r, "/archives/old") || !strings.Contains(r, "/archives/current") {
+	if !strings.Contains(r, old) || !strings.Contains(r, curr) {
 		t.Errorf("target-mismatch WARN missing a path:\n%s", r)
 	}
 	if !strings.Contains(r, "not this archive") || !strings.Contains(r, "-remove") {
@@ -244,8 +247,8 @@ func TestScheduleTargetAndCloudSync(t *testing.T) {
 
 	// Same target → no such WARN.
 	in = healthyInput(now)
-	in.Out = "/archives/current"
-	in.Desc.Job = []string{"-out", "/archives/current", "-auto"}
+	in.Out = curr
+	in.Desc.Job = []string{"-out", curr, "-auto"}
 	if r := strings.Join(Assess(in, now).Reasons, "\n"); strings.Contains(r, "not this archive") {
 		t.Errorf("matching target wrongly warned:\n%s", r)
 	}

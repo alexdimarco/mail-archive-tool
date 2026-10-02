@@ -14,7 +14,7 @@ import (
 func TestCanonicalJob(t *testing.T) {
 	job := canonicalJob(Options{Out: "/a", Inputs: []string{"/a/x.pst"}, Auto: true, CopyFirst: true, KeepRaw: true}, "incremental")
 	got := strings.Join(job, " ")
-	for _, want := range []string{"-out /a", "-mode incremental", "-auto", "-input /a/x.pst", "-copy-first", "-raw"} {
+	for _, want := range []string{"-out " + absOrSame("/a"), "-mode incremental", "-auto", "-input " + absOrSame("/a/x.pst"), "-copy-first", "-raw"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("canonicalJob missing %q: %q", want, got)
 		}
