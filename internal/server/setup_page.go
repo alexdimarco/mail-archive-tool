@@ -98,6 +98,12 @@ input{width:100%;padding:10px 11px;border:1px solid var(--line);border-radius:8p
 
     <button class="btn" id="save">Save configuration</button>
     <div class="note" id="note"></div>
+    <p class="help" style="margin-top:16px;border-top:1px solid var(--line);padding-top:12px">
+      <b>Your data stays on this PC.</b> This page runs only on 127.0.0.1 (this computer).
+      Your secret is kept in your OS credential manager (or a file only you can read) and is
+      never uploaded. The tool reads your mailbox <b>read-only</b> (Mail.Read) — it can never
+      send, move, change, or delete anything.
+    </p>
   </div>
 </div>
 <script src="/setup.js"></script>

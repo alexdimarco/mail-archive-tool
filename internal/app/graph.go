@@ -48,6 +48,10 @@ type GraphOptions struct {
 	// desktop P4). Nil = the file cache (the cross-platform default).
 	TokenStore graph.TokenStore
 
+	// Prompt (device mode) receives the verification URL + user code at first
+	// sign-in, so a GUI can display the code instead of the default stderr print.
+	Prompt func(graph.DeviceAuth)
+
 	// Deleted Items and Junk Email are excluded from the walk by default (T7,
 	// operator ruling); these opt them back in. Exclusion is by resolved
 	// well-known-folder id, so it is locale-independent (§3.6).
@@ -352,6 +356,7 @@ func buildGraphClient(ctx context.Context, g GraphOptions, logger *log.Logger) (
 			TokenCachePath: g.TokenCachePath,
 			TokenStore:     g.TokenStore,
 			Unattended:     g.Unattended,
+			Prompt:         g.Prompt,
 		})
 		if err != nil {
 			return nil, nil, err

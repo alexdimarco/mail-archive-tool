@@ -1173,6 +1173,7 @@ func exportSummary(out string, keepRaw bool, r app.Result) string {
 	if keepRaw {
 		b.WriteString("\nEach message is saved twice: an .html page to read, and an .eml file to import back into a mail program if you ever need to.\n")
 	}
+	b.WriteString("\nYour data stays on this computer: the archive is read from your own mail files, nothing is uploaded anywhere, and the saved pages run no scripts and load nothing from the internet — safe to open offline.\n")
 	fmt.Fprintf(b, "\nOutput folder:\n%s\n\nOpen index.html there to browse — no extra software needed. Each folder page has a box to filter within that folder; to search the whole archive at once, use the command-line tool: mailarchive serve -out %q", out, out)
 	return b.String()
 }
