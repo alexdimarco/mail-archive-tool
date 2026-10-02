@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -47,10 +48,11 @@ func run(args []string) error {
 		cfgPath = p
 	}
 	store, _ := graphconfig.DefaultSecretStore() // informational shell tolerates a nil store
+	settingsPath := filepath.Join(filepath.Dir(cfgPath), "desktop-settings.json")
 
 	srv := &http.Server{
 		Addr:              *addr,
-		Handler:           desktop.DashboardHandler(desktop.Config{Out: *out, ConfigPath: cfgPath, Store: store}),
+		Handler:           desktop.DashboardHandler(desktop.Config{Out: *out, ConfigPath: cfgPath, Store: store, SettingsPath: settingsPath}),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 	}

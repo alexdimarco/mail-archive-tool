@@ -29,6 +29,14 @@ type Config struct {
 	// clear it. Both may be zero in the informational shell.
 	TokenStore     graph.TokenStore
 	TokenCachePath string
+
+	// SettingsPath is the dashboard preferences file (archive location, raw,
+	// Deleted/Junk, schedule); default under the OS config dir.
+	SettingsPath string
+
+	// BaseURL/TokenURL/DeviceAuthURL are test overrides for the in-process capture
+	// (empty = the Microsoft production endpoints).
+	BaseURL, TokenURL, DeviceAuthURL string
 }
 
 // tokenCfg locates the device sign-in token for a configured tenant/client: the
@@ -53,16 +61,17 @@ func (cfg Config) signInState() (string, bool) {
 	return graph.SignedIn(cfg.tokenCfg(c))
 }
 
-// dashboard holds the per-process CSRF token for state-changing actions.
+// dashboard holds the per-process CSRF token and the live capture state.
 type dashboard struct {
 	cfg  Config
 	csrf string
+	cap  *captureState
 }
 
 // DashboardHandler serves the dashboard: GET "/" (Overview), the static script,
 // and the loopback-only, CSRF/Origin/Host-guarded action endpoints.
 func DashboardHandler(cfg Config) http.Handler {
-	d := &dashboard{cfg: cfg, csrf: server.NewCSRFToken()}
+	d := &dashboard{cfg: cfg, csrf: server.NewCSRFToken(), cap: &captureState{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
@@ -77,7 +86,38 @@ func DashboardHandler(cfg Config) http.Handler {
 		w.Write([]byte(dashboardJS))
 	})
 	mux.HandleFunc("/api/clear-signin", d.clearSignin)
+	mux.HandleFunc("/api/capture", d.capture)
+	mux.HandleFunc("/api/activity", d.activity)
+	mux.HandleFunc("/api/settings", d.saveSettings)
 	return dashboardHeaders(mux)
+}
+
+// saveSettings persists the dashboard preferences (loopback-only, CSRF-guarded).
+func (d *dashboard) saveSettings(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	if !server.GuardLocalPOST(r, d.csrf) {
+		http.Error(w, "refused: same-origin, tokened, local requests only", http.StatusForbidden)
+		return
+	}
+	var in struct {
+		Out                                  string
+		KeepRaw, IncludeDeleted, IncludeJunk bool
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&in); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	s := d.cfg.settings()
+	s.Out = strings.TrimSpace(in.Out)
+	s.KeepRaw, s.IncludeDeleted, s.IncludeJunk = in.KeepRaw, in.IncludeDeleted, in.IncludeJunk
+	if err := SaveSettings(d.cfg.SettingsPath, s); err != nil {
+		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
 }
 
 // clearSignin removes the saved delegated sign-in (loopback-only, CSRF-guarded), so
@@ -184,18 +224,23 @@ func vaultPhrase() string {
 func (cfg Config) overview(csrf string) string {
 	c := cfg.load()
 	upn, signedIn := cfg.signInState()
+	s := cfg.settings()
 	data := struct {
-		CSRF       string
-		Cards      []card
-		Configured bool
-		SignedIn   bool
-		UPN        string
-		Tenant     string
-		ClientID   string
-		Auth       string
-		Vault      string
-		OutDir     string
-	}{CSRF: csrf, Cards: cfg.cards(), Vault: vaultPhrase(), OutDir: cfg.Out, SignedIn: signedIn, UPN: upn}
+		CSRF           string
+		Cards          []card
+		Configured     bool
+		SignedIn       bool
+		UPN            string
+		Tenant         string
+		ClientID       string
+		Auth           string
+		Vault          string
+		OutDir         string
+		KeepRaw        bool
+		IncludeDeleted bool
+		IncludeJunk    bool
+	}{CSRF: csrf, Cards: cfg.cards(), Vault: vaultPhrase(), OutDir: cfg.effectiveOut(), SignedIn: signedIn, UPN: upn,
+		KeepRaw: s.KeepRaw, IncludeDeleted: s.IncludeDeleted, IncludeJunk: s.IncludeJunk}
 	if c != nil {
 		data.Configured = strings.TrimSpace(c.Tenant) != ""
 		data.Tenant, data.ClientID, data.Auth = c.Tenant, c.ClientID, authLabel(c.Auth)
@@ -242,6 +287,16 @@ h1{font-size:1.8rem;letter-spacing:-.02em;margin:0 0 4px}.lede{color:var(--muted
 .mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
 .btn-link{background:none;border:0;color:var(--accent);font:inherit;font-weight:700;cursor:pointer;padding:0;text-decoration:underline}
 .note{margin-top:12px;padding:10px 12px;border-radius:9px;font-size:.9rem;background:var(--accent-soft);border:1px solid color-mix(in srgb,var(--accent) 30%,var(--line))}
+.card-sub{color:var(--muted);font-size:.9rem;margin:-4px 0 14px}
+.btn{display:inline-flex;align-items:center;justify-content:center;padding:9px 15px;border-radius:8px;border:0;background:var(--accent);color:#fff;font-weight:750;cursor:pointer}
+.btn.secondary{background:var(--panel);color:var(--accent);border:1px solid var(--accent)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+label{display:block;font-weight:700;margin:14px 0 5px}
+input{width:100%;padding:10px 11px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text)}
+.checkline{display:flex;align-items:center;gap:8px;font-weight:600;margin-top:10px}.checkline input{width:auto}
+.device-box{margin-top:14px;padding:14px;border:2px dashed var(--accent);border-radius:10px;background:var(--accent-soft)}
+.device-code{font:800 1.7rem/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.1em;margin-top:6px}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:12px;max-height:280px;overflow:auto;margin-top:14px;font-size:.84rem}
 @media(max-width:900px){.app-shell{grid-template-columns:1fr}.status-grid{grid-template-columns:1fr 1fr}.sidebar-foot{display:none}}
 </style></head>
 <body>
@@ -285,6 +340,29 @@ h1{font-size:1.8rem;letter-spacing:-.02em;margin:0 0 4px}.lede{color:var(--muted
       <div class="note" id="note" hidden></div>
     </div>
 
+    <div class="card">
+      <h2>Archive now</h2>
+      <p class="card-sub">Fetch the latest mail into your archive. The first time, you sign in with a Microsoft device code shown here.</p>
+      <button class="btn" id="archiveBtn">Archive now</button>
+      <div class="device-box" id="device" hidden>
+        <div>To sign in, open <a id="deviceUrl" target="_blank" rel="noopener">this Microsoft page</a> and enter the code:</div>
+        <div class="device-code" id="deviceCode"></div>
+      </div>
+      <pre id="activity" hidden></pre>
+      <div class="note" id="captureResult" hidden></div>
+    </div>
+
+    <div class="card">
+      <h2>Settings</h2>
+      <label for="outDir">Archive location</label>
+      <input id="outDir" value="{{.OutDir}}" placeholder="e.g. C:\MailArchive, a mapped drive, or a UNC path" spellcheck="false">
+      <label class="checkline"><input type="checkbox" id="keepRaw"{{if .KeepRaw}} checked{{end}}> Keep each message's original .eml too</label>
+      <label class="checkline"><input type="checkbox" id="incDeleted"{{if .IncludeDeleted}} checked{{end}}> Include Deleted Items</label>
+      <label class="checkline"><input type="checkbox" id="incJunk"{{if .IncludeJunk}} checked{{end}}> Include Junk Email</label>
+      <div style="margin-top:14px"><button class="btn secondary" id="saveSettings">Save settings</button></div>
+      <div class="note" id="settingsNote" hidden></div>
+    </div>
+
     <div class="card sec">
       <h2>Security &amp; privacy</h2>
       <ul>
@@ -302,17 +380,53 @@ h1{font-size:1.8rem;letter-spacing:-.02em;margin:0 0 4px}.lede{color:var(--muted
 <script src="/dashboard.js"></script>
 </body></html>`))
 
-// dashboardJS wires the Clear-sign-in action (fetch with the CSRF token). Served at
-// /dashboard.js so it runs under script-src 'self'.
+// dashboardJS wires the action buttons (clear sign-in, settings, archive-now with
+// device-code + activity polling). Served at /dashboard.js so it runs under
+// script-src 'self'.
 const dashboardJS = `const csrf=document.querySelector('meta[name=csrf]').content;
-const btn=document.getElementById('clearSignin');
-if(btn)btn.addEventListener('click',async()=>{
-  const note=document.getElementById('note');
-  try{
-    const r=await fetch('/api/clear-signin',{method:'POST',headers:{'X-CSRF-Token':csrf}});
-    const d=await r.json();
-    if(note){note.hidden=false;note.textContent=d.ok?'Signed out. The next capture will sign in again.':(d.error||'Could not clear the sign-in.');}
+const $=id=>document.getElementById(id);
+const post=path=>fetch(path,{method:'POST',headers:{'X-CSRF-Token':csrf}});
+
+const clr=$('clearSignin');
+if(clr)clr.addEventListener('click',async()=>{
+  const n=$('note');
+  try{const d=await(await post('/api/clear-signin')).json();
+    if(n){n.hidden=false;n.textContent=d.ok?'Signed out. The next capture will sign in again.':(d.error||'Could not clear the sign-in.');}
     if(d.ok)setTimeout(()=>location.reload(),900);
-  }catch(e){if(note){note.hidden=false;note.textContent='Could not clear the sign-in: '+e;}}
+  }catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}
 });
+
+const save=$('saveSettings');
+if(save)save.addEventListener('click',async()=>{
+  const n=$('settingsNote');
+  const body={out:$('outDir').value,keepRaw:$('keepRaw').checked,includeDeleted:$('incDeleted').checked,includeJunk:$('incJunk').checked};
+  try{const d=await(await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(body)})).json();
+    if(n){n.hidden=false;n.textContent=d.ok?'Settings saved.':(d.error||'Could not save.');}
+  }catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}
+});
+
+let polling=false;
+const btn=$('archiveBtn');
+if(btn)btn.addEventListener('click',async()=>{
+  btn.disabled=true;const r=$('captureResult');if(r)r.hidden=true;
+  try{const d=await(await post('/api/capture')).json();
+    if(!d.ok){btn.disabled=false;if(r){r.hidden=false;r.textContent=d.error||'Could not start.';}return;}
+    start();
+  }catch(e){btn.disabled=false;if(r){r.hidden=false;r.textContent='Error: '+e;}}
+});
+function start(){if(!polling){polling=true;poll();}}
+async function poll(){
+  try{const d=await(await fetch('/api/activity')).json();render(d);
+    if(d.running){setTimeout(poll,1500);return;}
+  }catch(e){}
+  polling=false;if(btn)btn.disabled=false;
+}
+function render(d){
+  const dev=$('device'),act=$('activity'),res=$('captureResult');
+  if(d.device&&d.device.code){dev.hidden=false;$('deviceCode').textContent=d.device.code;$('deviceUrl').href=d.device.url;}
+  else dev.hidden=true;
+  if(d.log&&d.log.length){act.hidden=false;act.textContent=d.log.join('\n');act.scrollTop=act.scrollHeight;}
+  if(!d.running&&res){res.hidden=false;res.textContent=d.error?('Capture failed: '+d.error):(d.result||'Done.');}
+}
+fetch('/api/activity').then(r=>r.json()).then(d=>{if(d.running)start();}).catch(()=>{});
 `
