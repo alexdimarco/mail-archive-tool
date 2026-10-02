@@ -25,7 +25,31 @@ status, and a native-dialog GUI. Pure Go, no cgo.
 
 Windows GUI: SmartScreen → *More info → Run anyway*. Verify downloads against `SHA256SUMS`.
 
+**Windows — MailArchive Desktop (new):** `mailarchive-desktop-windows-amd64.exe` is the
+local control panel (double-click to open; it opens the dashboard in your browser). For an
+IT/RMM rollout, `mailarchive-desktop-windows-msi-payload.zip` builds a self-contained MSI
+(`packaging/mailarchive-desktop/`).
+
 ### What's new
+- **MailArchive Desktop (Windows) — a local control panel for Microsoft 365.** A new single
+  app opens a private dashboard on `127.0.0.1` (this computer only) that signs you in to M365,
+  archives your mailbox, browses it (with go-back-in-time), schedules a weekly backup, and
+  checks the archive's health — all **in-process** (no separate engine to install), with a
+  plain-language Security & privacy panel. Double-click it and it opens the page in your
+  browser; the weekly backup keeps running with the app closed. Ships with an MSI/RMM kit for
+  IT. The dashboard and its reader bind loopback only and refuse any network address; the
+  sign-in is read-only (`Mail.Read`) and stays in the OS vault. Cross-platform core (Linux/
+  macOS run the same dashboard); Windows integration (Credential Manager, shortcuts, MSI) is
+  Windows-first and validated by hand, not in CI.
+- **Guided Microsoft 365 setup (`mailarchive setup`).** A local wizard walks an admin through
+  the Entra app registration — tenant ID, application (client) ID, and (app-only) the client
+  secret — and clarifies the two-Object-ID trap: you need the **Application (client) ID**, not
+  an Object ID. The secret is stored in your OS credential vault, never on the command line.
+- **Your Microsoft sign-in lives in the OS vault.** On Windows the delegated sign-in (and any
+  app secret) are kept in **Windows Credential Manager**, not a plaintext file; elsewhere, a
+  file only you can read. Only the refresh token is stored (the short-lived access token is
+  regenerated as needed), and nothing is uploaded. Sign out any time (*Clear sign-in*);
+  uninstalling keeps your archive.
 - **Microsoft 365 without admin — sign in as yourself (`-auth device`):** you no longer need a tenant-wide app permission to archive an M365 mailbox. `mailarchive graph -auth device -out ./archive -tenant T -client-id C` prints a code and a URL; you sign in once in a browser and approve, and the tool archives **your own** mailbox with a read-only **delegated** `Mail.Read` grant — no admin, no RBAC, no client secret. The sign-in is saved (a refresh token, `chmod 600`, under your OS config dir) so scheduled runs need no re-sign-in; run the schedule as the same account you signed in as. The original **`-auth app`** (app-only, admin-consented, many mailboxes from one job) is unchanged and still the default. Read-only throughout, either way. See [`docs/graph-app-setup.md`](../docs/graph-app-setup.md).
 - **Reused Message-IDs, told apart (Microsoft 365 / Graph):** some senders stamp two genuinely *different* messages with the *same* `Message-ID`. Earlier versions kept one copy per Message-ID, so a distinct reuse could be skipped. A live Graph archive now uses each message's Microsoft **immutable id** plus a body-inclusive **content hash** recorded at capture: a reuse whose id it has not archived is downloaded and, when its content differs, kept as its own message — even when the two share an identical envelope (a `$100` and a `$250` invoice that reuse one id both survive). A copy filed into several folders, or a message whose id is reissued by a mailbox restore/migration, is recognised as the same content and kept as **one** record (no duplicate, no re-download). The manifest format bumps to **v6**; this closure applies to messages captured **fresh** under v6 — an existing archive keeps the Message-ID behaviour for what it already holds (no re-download to upgrade), and sources without a per-message id (IMAP / local imports) keep it too. See [`docs/goback.md`](../docs/goback.md).
 - **Go back in time:** for a live Microsoft 365 (Graph) archive, `mailarchive serve` now shows the mailbox as it was on any past date, Wayback-style — a scheduled daily capture records an append-only timeline, so a message deleted online stays visible at earlier dates (under its then-folder) while the current view follows moves and hides it. Deleting the files and running `reindex` redacts a message across all dates. Deleted Items and Junk Email are excluded from a Graph capture by default (`-include-deleted` / `-include-junk` opt in). A live archive keeps one copy per message and records folder moves in place (no re-download, no duplicate); the manifest format bumps to v5 (v6 adds the reused-Message-ID closure above), and the first run over a pre-existing live archive **collapses** any per-folder duplicates into one record (recognised by Message-ID, not re-downloaded — see Known limitations). The date view is served-only — the offline pages still show each message's first-captured folder. See [`docs/goback.md`](../docs/goback.md).
@@ -43,6 +67,6 @@ Windows GUI: SmartScreen → *More info → Run anyway*. Verify downloads agains
 - Windows scheduled runs happen only while you are logged in; a console window appears briefly for CLI-scheduled jobs.
 - Go-back (the point-in-time view) is a `serve` feature and needs a live Graph capture that records the timeline; a one-shot local import (`.pst`/mbox/maildir) has none. Its resolution is your run cadence — capture daily for a daily timeline.
 - Upgrading a **pre-existing** live (Graph) archive **consolidates** it on the first run: per-folder move-duplicates collapse into one mailbox-wide record and the search index is re-keyed, so each still-present message is recognised by its Internet-Message-ID and **not** re-downloaded (one copy per message, no re-fetch). A collapsed duplicate's file is never deleted. The reused-Message-ID closure (above) applies to messages captured **fresh** under format v6: an existing archive keeps the Internet-Message-ID behaviour for its already-captured messages (a distinct reuse of one of those is skipped, as before — the tool never re-downloads a whole mailbox to upgrade), and IMAP / local imports (no per-message id) keep it too — in all cases **no file is ever deleted** (`verify` flags any orphan). A message copied into several folders is kept as one record but its shown "current folder" and the date-view timeline may flap between those folders each run (cosmetic; the message is never lost, duplicated, or re-fetched).
-- The Outlook-app export path (`-outlook`) and the real Windows/macOS scheduler installs are validated by hand, not in CI (catalog rows MA-60, MA-79, MA-95).
+- The Outlook-app export path (`-outlook`) and the real Windows/macOS scheduler installs are validated by hand, not in CI (catalog rows MA-60, MA-79, MA-95). MailArchive Desktop's Windows-specific integration — the Credential Manager sign-in/secret, Desktop/Startup shortcuts, and the MSI build/install/upgrade — is likewise validated on Windows by hand (the dashboard, in-process capture, and reader are CI-tested cross-platform on Linux). Reading a mailbox's own `sensitivity` from Microsoft 365 is best-effort: a tenant that doesn't expose the underlying property is archived without it, not failed.
 
 Licensed under **AGPL-3.0**. Provided "as is", without warranty — use at your own risk.
