@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -17,6 +18,10 @@ import (
 func TestReaderEmbed(t *testing.T) {
 	out := t.TempDir()
 	rm := ReaderHandler(Config{Out: out})
+	// The reader holds its index open to serve; release it before t.TempDir's
+	// cleanup removes the dir (on Windows an open file cannot be deleted). This
+	// defer runs before the TempDir Cleanup, which is registered after it.
+	defer rm.(io.Closer).Close()
 
 	// No index yet → a legible 503.
 	rec := httptest.NewRecorder()

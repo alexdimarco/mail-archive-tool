@@ -51,3 +51,19 @@ func (rm *readerMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rm.mu.Unlock()
 	h.ServeHTTP(w, r)
 }
+
+// Close releases the lazily-opened index, if any. It is safe to call more than
+// once and concurrently with ServeHTTP. The desktop process normally holds the
+// reader open for its lifetime; Close matters for an orderly shutdown and for
+// tests that must release search.db before their tempdir is removed (on Windows
+// an open file cannot be deleted).
+func (rm *readerMux) Close() error {
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
+	if rm.ix == nil {
+		return nil
+	}
+	err := rm.ix.Close()
+	rm.ix, rm.h = nil, nil
+	return err
+}

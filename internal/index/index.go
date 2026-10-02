@@ -151,7 +151,16 @@ func OpenReadonly(path string) (*Index, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open index: %w", err)
 	}
-	if _, err := db.Query(`SELECT 1 FROM docs LIMIT 1`); err != nil {
+	// Probe that docs exists and is readable, fully consuming the one-row result
+	// so the connection (and its OS file handle) is returned to the pool. The old
+	// db.Query discarded an unclosed *sql.Rows that pinned a connection open past
+	// ix.Close(): harmless on POSIX, but on Windows it blocks a later
+	// os.Remove/os.Rename of search.db (a Rebuild then fails "Access is denied").
+	// An empty index is still usable, so sql.ErrNoRows counts as success.
+	var probe int
+	switch err := db.QueryRow(`SELECT 1 FROM docs LIMIT 1`).Scan(&probe); {
+	case err == nil, errors.Is(err, sql.ErrNoRows):
+	default:
 		db.Close()
 		return nil, fmt.Errorf("no usable index at %s (run an export first): %w", path, err)
 	}

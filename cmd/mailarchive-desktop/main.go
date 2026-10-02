@@ -139,6 +139,9 @@ func run(args []string) error {
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = reader.Shutdown(shutCtx)
+		if c, ok := reader.Handler.(io.Closer); ok {
+			_ = c.Close() // release the reader's open index handle on shutdown
+		}
 		return dash.Shutdown(shutCtx)
 	}
 }
