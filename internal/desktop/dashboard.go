@@ -41,6 +41,10 @@ type Config struct {
 	// ReaderURL is where the embedded archive reader is served; the Open-archive /
 	// Go-back links point here. Empty in the informational shell.
 	ReaderURL string
+
+	// Exe is the absolute path to this binary, recorded in the scheduled task so a
+	// weekly backup runs the right program (default os.Executable()); set by tests.
+	Exe string
 }
 
 // tokenCfg locates the device sign-in token for a configured tenant/client: the
@@ -93,6 +97,9 @@ func DashboardHandler(cfg Config) http.Handler {
 	mux.HandleFunc("/api/capture", d.capture)
 	mux.HandleFunc("/api/activity", d.activity)
 	mux.HandleFunc("/api/settings", d.saveSettings)
+	mux.HandleFunc("/api/schedule-install", d.scheduleInstall)
+	mux.HandleFunc("/api/schedule-remove", d.scheduleRemove)
+	mux.HandleFunc("/api/schedule-state", d.scheduleState)
 	return dashboardHeaders(mux)
 }
 
@@ -187,8 +194,8 @@ func (cfg Config) cards() []card {
 	out = append(out, card{"Capture", "Idle", "good"})
 
 	sc := card{"Weekly backup", "Not installed", "warn"}
-	if strings.TrimSpace(cfg.Out) != "" {
-		switch schedule.Query(schedule.DefaultNameFor(cfg.Out)) {
+	if eo := cfg.effectiveOut(); eo != "" {
+		switch schedule.Query(schedule.DefaultNameFor(eo)) {
 		case schedule.Installed:
 			sc = card{"Weekly backup", "Installed", "good"}
 		case schedule.SchedulerUnavailable:
@@ -207,6 +214,13 @@ func (cfg Config) load() *graphconfig.Config {
 		return nil
 	}
 	return c
+}
+
+func orElse(s, def string) string {
+	if strings.TrimSpace(s) == "" {
+		return def
+	}
+	return s
 }
 
 func authLabel(a string) string {
@@ -244,8 +258,11 @@ func (cfg Config) overview(csrf string) string {
 		KeepRaw        bool
 		IncludeDeleted bool
 		IncludeJunk    bool
+		Interval       string
+		WeeklyTime     string
 	}{CSRF: csrf, Cards: cfg.cards(), Vault: vaultPhrase(), OutDir: cfg.effectiveOut(), ReaderURL: cfg.ReaderURL, SignedIn: signedIn, UPN: upn,
-		KeepRaw: s.KeepRaw, IncludeDeleted: s.IncludeDeleted, IncludeJunk: s.IncludeJunk}
+		KeepRaw: s.KeepRaw, IncludeDeleted: s.IncludeDeleted, IncludeJunk: s.IncludeJunk,
+		Interval: orElse(s.Interval, "weekly"), WeeklyTime: orElse(s.WeeklyTime, "03:00")}
 	if c != nil {
 		data.Configured = strings.TrimSpace(c.Tenant) != ""
 		data.Tenant, data.ClientID, data.Auth = c.Tenant, c.ClientID, authLabel(c.Auth)
@@ -299,6 +316,8 @@ h1{font-size:1.8rem;letter-spacing:-.02em;margin:0 0 4px}.lede{color:var(--muted
 label{display:block;font-weight:700;margin:14px 0 5px}
 input{width:100%;padding:10px 11px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text)}
 .checkline{display:flex;align-items:center;gap:8px;font-weight:600;margin-top:10px}.checkline input{width:auto}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+select{width:100%;padding:10px 11px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text)}
 .device-box{margin-top:14px;padding:14px;border:2px dashed var(--accent);border-radius:10px;background:var(--accent-soft)}
 .device-code{font:800 1.7rem/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.1em;margin-top:6px}
 pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:12px;max-height:280px;overflow:auto;margin-top:14px;font-size:.84rem}
@@ -369,6 +388,18 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <div class="note" id="settingsNote" hidden></div>
     </div>
 
+    <div class="card">
+      <h2>Weekly backup</h2>
+      <p class="card-sub">Run a capture automatically on a schedule. It runs even when this app is closed (as long as you stay signed in to Windows), using your saved Microsoft sign-in.</p>
+      <div class="row2">
+        <div><label for="schedInterval">How often</label>
+          <select id="schedInterval"><option value="weekly"{{if eq .Interval "weekly"}} selected{{end}}>Weekly (Sunday)</option><option value="daily"{{if eq .Interval "daily"}} selected{{end}}>Daily</option></select></div>
+        <div><label for="schedTime">At (local time)</label><input id="schedTime" type="time" value="{{.WeeklyTime}}"></div>
+      </div>
+      <div style="margin-top:14px"><button class="btn" id="schedInstall">Install / update</button> <button class="btn secondary" id="schedRemove">Remove</button></div>
+      <div class="note" id="schedState" hidden></div>
+    </div>
+
     <div class="card sec">
       <h2>Security &amp; privacy</h2>
       <ul>
@@ -435,4 +466,24 @@ function render(d){
   if(!d.running&&res){res.hidden=false;res.textContent=d.error?('Capture failed: '+d.error):(d.result||'Done.');}
 }
 fetch('/api/activity').then(r=>r.json()).then(d=>{if(d.running)start();}).catch(()=>{});
+
+async function schedState(){
+  const n=$('schedState');if(!n)return;
+  try{const d=await(await fetch('/api/schedule-state')).json();
+    n.hidden=false;
+    if(!d.schedulerAvailable)n.textContent='The OS scheduler is unavailable on this machine.';
+    else if(d.state==='installed')n.textContent='Installed'+(d.interval?(' ('+d.interval+(d.at?' at '+d.at:'')+')'):'')+'.';
+    else n.textContent='Not installed.';
+  }catch(e){}
+}
+function schedPost(path){
+  const n=$('schedState');
+  const body={interval:$('schedInterval').value,time:$('schedTime').value};
+  return fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(body)})
+    .then(r=>r.json()).then(d=>{if(n){n.hidden=false;n.textContent=d.ok?'Saved.':(d.error||'Failed.');}schedState();});
+}
+const si=$('schedInstall'),sr=$('schedRemove');
+if(si)si.addEventListener('click',()=>schedPost('/api/schedule-install'));
+if(sr)sr.addEventListener('click',()=>schedPost('/api/schedule-remove'));
+schedState();
 `

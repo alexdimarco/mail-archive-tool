@@ -48,7 +48,8 @@ func run(args []string) error {
 	}
 	store, _ := graphconfig.DefaultSecretStore() // informational shell tolerates a nil store
 	settingsPath := filepath.Join(filepath.Dir(cfgPath), "desktop-settings.json")
-	dcfg := desktop.Config{Out: *out, ConfigPath: cfgPath, Store: store, SettingsPath: settingsPath}
+	exe, _ := os.Executable() // recorded in a scheduled task so the weekly backup runs this binary
+	dcfg := desktop.Config{Out: *out, ConfigPath: cfgPath, Store: store, SettingsPath: settingsPath, Exe: exe}
 
 	// Scheduled headless capture (DC1): no server, no prompt — read the saved
 	// config + sign-in and run one incremental capture, logging to a file.

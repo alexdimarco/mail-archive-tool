@@ -17,8 +17,9 @@ type Settings struct {
 	KeepRaw        bool   `json:"keepRaw,omitempty"`
 	IncludeDeleted bool   `json:"includeDeleted,omitempty"`
 	IncludeJunk    bool   `json:"includeJunk,omitempty"`
-	WeeklyDay      string `json:"weeklyDay,omitempty"`  // "Sunday".."Saturday"
+	WeeklyDay      string `json:"weeklyDay,omitempty"`  // "Sunday".."Saturday" (weekly runs Sunday for now)
 	WeeklyTime     string `json:"weeklyTime,omitempty"` // "03:00"
+	Interval       string `json:"interval,omitempty"`   // "daily" | "weekly" (default weekly)
 }
 
 // LoadSettings reads the settings file, returning the zero value (all defaults) on
