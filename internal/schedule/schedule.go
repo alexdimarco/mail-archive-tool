@@ -270,6 +270,32 @@ func launchdPlistPath(name string) string {
 	return filepath.Join(home, "Library", "LaunchAgents", LaunchdLabel(name)+".plist")
 }
 
+// launchdPreview renders the macOS install for -install-less previewing: a
+// readable command line (identical on every OS, so an operator — and a preview
+// test — sees the whole command regardless of how launchd's plist splits each
+// argument into its own <string>), the plist that would be written, and the same
+// operator notes cron and Windows show (the verify lock warning, how a failed run
+// surfaces, and the full-mode caveat). It shows argument PATHS only, never secret
+// contents.
+func launchdPreview(s Spec) (string, error) {
+	plist, err := LaunchdPlist(s)
+	if err != nil {
+		return "", err
+	}
+	out := "launchd LaunchAgent — " + cadenceGloss(s) + " — would run:\n\n  " + shellJoin(s.program()) + "\n"
+	out += "\nwritten to " + launchdPlistPath(s.Name) + ":\n\n" + plist + "\n"
+	if isVerifyJob(s) {
+		out += VerifyLockWarning + "\n"
+		out += "A failed run surfaces only via `mailarchive status` or launchd's logs (a verify's verdict is shown as Last verify).\n"
+	} else {
+		out += "A failed run surfaces only via `mailarchive status` or launchd's logs.\n"
+	}
+	if argHasMode(s.Args, "full") {
+		out += "-mode full: every scheduled run re-exports everything.\n"
+	}
+	return out, nil
+}
+
 // ---- Task Scheduler (Windows) --------------------------------------------
 
 // SchtasksCreateCmd returns the schtasks command line that Install would run
@@ -306,11 +332,7 @@ func Preview(s Spec) (string, error) {
 	}
 	switch runtime.GOOS {
 	case "darwin":
-		plist, err := LaunchdPlist(s)
-		if err != nil {
-			return "", err
-		}
-		return fmt.Sprintf("launchd LaunchAgent — would be written to:\n  %s\n\n%s", launchdPlistPath(s.Name), plist), nil
+		return launchdPreview(s)
 	case "windows":
 		return schtasksPreview(s, time.Now())
 	default:
@@ -670,7 +692,8 @@ func schtasksPreview(s Spec, now time.Time) (string, error) {
 		return "", err
 	}
 	xmlPath := SchtasksXMLPath(s.WrapperPath)
-	out := "Windows Task Scheduler — " + cadenceGloss(s) + " (StartBoundary is local time) — would run:\n\n  " + cmd + "\n"
+	out := "Windows Task Scheduler — " + cadenceGloss(s) + " (StartBoundary is local time) — would run:\n\n  " + shellJoin(s.program()) + "\n"
+	out += "\nregistered with:\n\n  " + cmd + "\n"
 	out += "\nfrom the definition " + xmlPath + " (written UTF-16LE):\n\n" + body + "\n"
 	// The resilience gloss the cron preview's persona also needs: the XML sets
 	// StartWhenAvailable=true, batteries allowed, WakeToRun=false (see MA-146).
