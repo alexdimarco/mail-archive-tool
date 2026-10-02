@@ -307,9 +307,11 @@ type MessageRef struct {
 	Importance string   // Graph "low"/"normal"/"high"; "" when the tenant omits it
 	IsRead     *bool    // nil when the tenant omits it (read state then unknown)
 	Categories []string // the message's category tags; nil when the tenant omits them
-	// NOTE: there is no Sensitivity here. Graph's message resource does not expose a
-	// 'sensitivity' property on $select (it lives only in the MAPI property
-	// PidTagSensitivity); selecting it makes real Graph 400. See messageSelectFields.
+	// Sensitivity is "personal"/"private"/"confidential" (model form), decoded from
+	// the MAPI PidTagSensitivity extended property carried by sensitivityExpand —
+	// Graph does NOT expose sensitivity on $select (MA-284). "" means Normal/absent,
+	// OR that the sensitivity $expand was unsupported here (best-effort, MA-285).
+	Sensitivity string
 }
 
 // graphRecipient is Graph's {emailAddress:{name,address}} recipient shape.
@@ -368,33 +370,83 @@ var messageSelectableV1 = map[string]bool{
 	"uniqueBody": true, "webLink": true,
 }
 
+// sensitivityExpand carries the message's MAPI PidTagSensitivity (canonical id
+// 0x0036, PtypInteger32) alongside the listing — the only way Graph exposes
+// sensitivity on a message (it is not $select-able, MA-284). Spaces are
+// percent-encoded; the parens and quotes are the literal OData the service wants.
+// It is BEST-EFFORT: a tenant/endpoint that rejects the $expand is handled by the
+// first-page fallback in Messages, so capture never fails for it (MA-285).
+const sensitivityExpand = "singleValueExtendedProperties($filter=id%20eq%20'Integer%200x0036')"
+
+// singleValueExtProp is one Graph single-value extended property {id, value}.
+type singleValueExtProp struct {
+	ID    string `json:"id"`
+	Value string `json:"value"`
+}
+
+// sensitivityFromExtProps decodes the message sensitivity (model form) from the
+// PidTagSensitivity single-value extended property requested by sensitivityExpand.
+// We ask for exactly that one property, so the slice holds 0 or 1 entries; the
+// value is the MAPI integer 0=Normal/1=Personal/2=Private/3=Confidential (matched
+// regardless of how the service spells the returned id). Absent/0/garbage → ""
+// (Normal), which is also what a tenant that doesn't support the $expand yields.
+func sensitivityFromExtProps(props []singleValueExtProp) string {
+	for _, p := range props {
+		switch strings.TrimSpace(p.Value) {
+		case "1":
+			return "personal"
+		case "2":
+			return "private"
+		case "3":
+			return "confidential"
+		}
+	}
+	return ""
+}
+
 // Messages streams every message reference in folderID to fn (paged). The
 // $select is widened to carry the envelope fields (subject, from, toRecipients,
 // ccRecipients, receivedDateTime, hasAttachments) the pre-download signature
-// needs, alongside the message-state fields — all on one request (§3.2).
+// needs, alongside the message-state fields — all on one request (§3.2). It also
+// $expands the PidTagSensitivity extended property (sensitivityExpand) to recover
+// sensitivity (MA-285), best-effort: if the first page is rejected with the expand,
+// it retries that page WITHOUT it so capture always completes.
 func (c *Client) Messages(ctx context.Context, userID, folderID string, fn func(MessageRef) error) error {
-	next := c.base + c.userSeg(userID) + "/mailFolders/" + url.PathEscape(folderID) +
-		"/messages?$select=" + strings.Join(messageSelectFields, ",") + "&$top=1000"
+	sel := strings.Join(messageSelectFields, ",")
+	msgs := c.base + c.userSeg(userID) + "/mailFolders/" + url.PathEscape(folderID) + "/messages"
+	next := msgs + "?$select=" + sel + "&$expand=" + sensitivityExpand + "&$top=1000"
 	honored, firstPage := false, true // whether Prefer: IdType="ImmutableId" is in effect this run
 	for next != "" {
 		var body struct {
 			Value []struct {
-				ID                string           `json:"id"`
-				InternetMessageID string           `json:"internetMessageId"`
-				Subject           string           `json:"subject"`
-				From              *graphRecipient  `json:"from"`
-				ToRecipients      []graphRecipient `json:"toRecipients"`
-				CcRecipients      []graphRecipient `json:"ccRecipients"`
-				Received          string           `json:"receivedDateTime"`
-				HasAttachments    bool             `json:"hasAttachments"`
-				Importance        string           `json:"importance"`
-				IsRead            *bool            `json:"isRead"`
-				Categories        []string         `json:"categories"`
+				ID                string               `json:"id"`
+				InternetMessageID string               `json:"internetMessageId"`
+				Subject           string               `json:"subject"`
+				From              *graphRecipient      `json:"from"`
+				ToRecipients      []graphRecipient     `json:"toRecipients"`
+				CcRecipients      []graphRecipient     `json:"ccRecipients"`
+				Received          string               `json:"receivedDateTime"`
+				HasAttachments    bool                 `json:"hasAttachments"`
+				Importance        string               `json:"importance"`
+				IsRead            *bool                `json:"isRead"`
+				Categories        []string             `json:"categories"`
+				ExtProps          []singleValueExtProp `json:"singleValueExtendedProperties"`
 			} `json:"value"`
 			Next string `json:"@odata.nextLink"`
 		}
 		pref, err := c.getJSON(ctx, next, &body)
 		if err != nil {
+			// Best-effort sensitivity (MA-285): a tenant/endpoint that does not
+			// support the singleValueExtendedProperties $expand must NOT fail the
+			// capture. On the first page (the one we build), retry once WITHOUT the
+			// $expand; sensitivity is then simply not captured. A real error (auth,
+			// network, a genuinely bad folder) fails the no-$expand retry too and so
+			// still surfaces. Later pages follow server nextLinks that consistently
+			// carry — or omit — the $expand the first page settled on.
+			if firstPage && strings.Contains(next, "$expand=") {
+				next = msgs + "?$select=" + sel + "&$top=1000"
+				continue
+			}
 			return err
 		}
 		if firstPage {
@@ -416,6 +468,7 @@ func (c *Client) Messages(ctx context.Context, userID, folderID string, fn func(
 				Importance:        m.Importance,
 				IsRead:            m.IsRead,
 				Categories:        m.Categories,
+				Sensitivity:       sensitivityFromExtProps(m.ExtProps),
 			}
 			if m.From != nil {
 				ref.From = strings.TrimSpace(m.From.EmailAddress.Address)

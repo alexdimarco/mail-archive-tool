@@ -390,13 +390,16 @@ func buildGraphClient(ctx context.Context, g GraphOptions, logger *log.Logger) (
 // importance, read state and categories, so these override anything the MIME
 // headers carried. A field the tenant omitted stays empty; an omitted isRead
 // (nil) leaves the read state unset rather than guessing "unread"; omitted
-// categories leave the message with none. Sensitivity is NOT overlaid: Graph's
-// message resource does not expose it on $select (it is the MAPI property
-// PidTagSensitivity, reachable only via an extended-property $expand), so a
-// Graph-sourced message keeps whatever Sensitivity its MIME headers carried (none
-// for a typical Graph capture) rather than being forced empty.
+// categories leave the message with none. Sensitivity rides on the PidTagSensitivity
+// extended-property $expand (not $select, MA-284/285) and is overlaid ONLY when a
+// value came back — so a tenant that doesn't support the $expand, or a message with
+// no sensitivity set, keeps whatever the MIME headers carried rather than being
+// wiped (best-effort).
 func applyGraphState(m *model.Message, ref graph.MessageRef) {
 	m.Importance = graphImportance(ref.Importance)
+	if ref.Sensitivity != "" {
+		m.Sensitivity = ref.Sensitivity
+	}
 	if ref.IsRead != nil {
 		m.Unread = !*ref.IsRead
 	}

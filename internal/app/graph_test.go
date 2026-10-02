@@ -14,6 +14,8 @@ import (
 	"testing"
 
 	"mail-archive-tool/internal/export"
+	"mail-archive-tool/internal/graph"
+	"mail-archive-tool/internal/model"
 	"mail-archive-tool/internal/state"
 )
 
@@ -322,5 +324,25 @@ func TestRunGraphCapturesCategories(t *testing.T) {
 	// M2 has no categories → no categories field at all.
 	if m2 := messagePage(t, out, "subj-M2"); strings.Contains(m2, `data-mailarchive-field="categories"`) {
 		t.Errorf("M2 (no categories) should have no categories field:\n%s", m2)
+	}
+}
+
+// covers: MA-285, R3, S35
+// Sensitivity from the PidTagSensitivity $expand is overlaid ONLY when present, so a
+// tenant that doesn't support the extended-property expand (ref.Sensitivity == "")
+// keeps whatever the message's MIME headers carried rather than being wiped — the
+// graceful-degradation contract for an Exchange that doesn't use it.
+func TestApplyGraphStateSensitivityOverlay(t *testing.T) {
+	// A value from the $expand is authoritative and overrides.
+	m := &model.Message{Sensitivity: ""}
+	applyGraphState(m, graph.MessageRef{Sensitivity: "private"})
+	if m.Sensitivity != "private" {
+		t.Errorf("a present extended-property sensitivity must override; got %q", m.Sensitivity)
+	}
+	// A degraded/absent $expand ("") must NOT wipe a MIME-derived sensitivity.
+	mMIME := &model.Message{Sensitivity: "confidential"} // e.g. from a MIME "Sensitivity:" header
+	applyGraphState(mMIME, graph.MessageRef{Sensitivity: ""})
+	if mMIME.Sensitivity != "confidential" {
+		t.Errorf("a degraded/absent $expand must not wipe MIME sensitivity; got %q", mMIME.Sensitivity)
 	}
 }
