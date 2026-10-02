@@ -37,6 +37,10 @@ const (
 	credTypeGeneric         = 1
 	credPersistLocalMachine = 2
 	errorNotFound           = syscall.Errno(1168) // ERROR_NOT_FOUND
+	// credMaxBlobSize is CRED_MAX_CREDENTIAL_BLOB_SIZE (wincred.h): 5*512 bytes.
+	// CredWriteW rejects a larger blob with the opaque RPC_X_BAD_STUB_DATA (1783,
+	// "The stub received bad data"); we check first and say what actually happened.
+	credMaxBlobSize = 5 * 512
 )
 
 // credentialW mirrors the Win32 CREDENTIALW struct (wincred.h).
@@ -67,6 +71,9 @@ func (s credmanStore) Set(account, secret string) error {
 		return err
 	}
 	blob := []byte(secret)
+	if len(blob) > credMaxBlobSize {
+		return fmt.Errorf("CredWrite %s: %d bytes exceeds Windows Credential Manager's %d-byte limit (CRED_MAX_CREDENTIAL_BLOB_SIZE)", account, len(blob), credMaxBlobSize)
+	}
 	var blobPtr *byte
 	if len(blob) > 0 {
 		blobPtr = &blob[0]

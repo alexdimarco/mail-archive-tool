@@ -34,3 +34,11 @@ loss. Token-at-rest hardening (atomic write, `O_NOFOLLOW`, size bound, no-log) i
 from the delegated pass and unchanged. Covering tests: MA-273 (token-store seam, cross-platform
 in-memory store), MA-274 (sign-in state + guarded clear), MA-276 (guarded settings). prove-fail
 → prove-pass records are in the S2 commit.
+
+**Addendum (post-ship fix, MA-283):** the vault blob now persists a **slim token** — refresh
+token + type + expiry, **no access token** (the access token is a ~2 KB Graph JWT that
+overflowed Credential Manager's 2560-byte `CRED_MAX_CREDENTIAL_BLOB_SIZE` and surfaced as
+"The stub received bad data" / RPC_X_BAD_STUB_DATA). This strengthens D3/D4: less bearer
+material at rest (the short-lived access token is never persisted, only regenerated from the
+refresh token), with no weakening — the long-lived refresh token is protected exactly as
+before. The `0600` file cache is unchanged (DC2).

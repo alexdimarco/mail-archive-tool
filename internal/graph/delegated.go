@@ -251,8 +251,20 @@ func (b tokenBackend) load() (*tokenCache, error) {
 
 // put writes the cache: to the store, or atomically to the 0600 file (temp +
 // fsync + rename, so a crash never leaves a torn token — it fails toward re-consent).
+//
+// A TokenStore (the OS vault) can impose a hard blob-size limit the file cache does
+// not: Windows Credential Manager caps a credential at CRED_MAX_CREDENTIAL_BLOB_SIZE
+// (2560 bytes) and rejects an oversize write with "The stub received bad data"
+// (RPC_X_BAD_STUB_DATA, 1783). A Graph access token is a ~2 KB JWT and is needless at
+// rest — it is regenerated from the refresh token on reload — so the store gets a slim
+// token (refresh token + type + expiry, no access token). The 0600 file keeps the full
+// token byte-for-byte, exactly as the shipped device tests exercise it (DC2).
 func (b tokenBackend) put(upn string, tok *oauth2.Token) error {
-	data, err := json.Marshal(tokenCache{UPN: upn, Token: tok})
+	stored := tok
+	if b.store != nil {
+		stored = slimToken(tok)
+	}
+	data, err := json.Marshal(tokenCache{UPN: upn, Token: stored})
 	if err != nil {
 		return err
 	}
@@ -260,6 +272,21 @@ func (b tokenBackend) put(upn string, tok *oauth2.Token) error {
 		return b.store.StoreToken(data)
 	}
 	return util.WriteFileAtomic0600(b.path, data)
+}
+
+// slimToken returns a copy of tok safe for a size-limited store: it drops the large,
+// short-lived, regenerable access token and keeps the refresh token, token type, and
+// expiry. An empty AccessToken makes a reloaded token refresh immediately (its Valid()
+// is false), and keeping Expiry preserves putIfNewer's concurrent-rotation check.
+func slimToken(tok *oauth2.Token) *oauth2.Token {
+	if tok == nil {
+		return nil
+	}
+	return &oauth2.Token{
+		RefreshToken: tok.RefreshToken,
+		TokenType:    tok.TokenType,
+		Expiry:       tok.Expiry,
+	}
 }
 
 // putIfNewer persists only a token newer (later expiry) than what is stored, so a

@@ -437,6 +437,55 @@ func TestTokenStoreSeam(t *testing.T) {
 	}
 }
 
+// covers: MA-283, R17, R4, S41
+// A token persisted to a TokenStore (the OS vault) drops the large access token so
+// the blob fits a size-limited vault — Windows Credential Manager's 2560-byte
+// CRED_MAX_CREDENTIAL_BLOB_SIZE, whose overflow is the opaque "The stub received bad
+// data" (RPC_X_BAD_STUB_DATA 1783). The refresh token (+ type + expiry) is kept, so
+// SignedIn still reports the sign-in; the 0600 file cache keeps the FULL token (DC2).
+func TestTokenStoreStripsAccessTokenToFitVault(t *testing.T) {
+	store := &memTokenStore{}
+	bigJWT := strings.Repeat("J", 4000) // a Graph access token easily overflows the vault
+	exp := time.Now().Add(time.Hour).Truncate(time.Second).UTC()
+	tok := &oauth2.Token{AccessToken: bigJWT, RefreshToken: "refresh-xyz", TokenType: "Bearer", Expiry: exp}
+
+	if err := (tokenBackend{store: store}).put("alice@contoso.org", tok); err != nil {
+		t.Fatal(err)
+	}
+	if store.data == nil {
+		t.Fatal("token not written to the store")
+	}
+	if len(store.data) > 2560 {
+		t.Errorf("stored blob is %d bytes; must fit Credential Manager's 2560-byte limit", len(store.data))
+	}
+	tc, err := (tokenBackend{store: store}).load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tc.Token.AccessToken != "" {
+		t.Error("the access token must not be persisted to the vault (it overflows the blob limit and is regenerable)")
+	}
+	if tc.Token.RefreshToken != "refresh-xyz" {
+		t.Errorf("the refresh token must be persisted; got %q", tc.Token.RefreshToken)
+	}
+	if !tc.Token.Expiry.Equal(exp) {
+		t.Errorf("expiry must be preserved for the putIfNewer concurrency check; got %v want %v", tc.Token.Expiry, exp)
+	}
+
+	// The 0600 file cache keeps the FULL token byte-for-byte (DC2): stripping is vault-only.
+	fp := filepath.Join(t.TempDir(), "tok.json")
+	if err := (tokenBackend{path: fp}).put("alice@contoso.org", tok); err != nil {
+		t.Fatal(err)
+	}
+	ftc, err := (tokenBackend{path: fp}).load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ftc.Token.AccessToken != bigJWT {
+		t.Error("the 0600 file cache must keep the full token byte-for-byte (DC2)")
+	}
+}
+
 func errStr(err error) string {
 	if err == nil {
 		return ""
