@@ -120,48 +120,29 @@ func (d *dashboard) activity(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *dashboard) startCapture() error {
-	c := d.cap
-	c.mu.Lock()
-	if c.running {
-		c.mu.Unlock()
-		return fmt.Errorf("a capture is already running")
-	}
 	cfg := d.cfg.load()
 	if cfg == nil || strings.TrimSpace(cfg.Tenant) == "" || strings.TrimSpace(cfg.ClientID) == "" {
-		c.mu.Unlock()
 		return fmt.Errorf("not configured — open Microsoft 365 setup to add your tenant and application ID first")
 	}
-	out := d.cfg.effectiveOut()
-	if out == "" {
-		c.mu.Unlock()
+	out, ok := d.requireOut()
+	if !ok {
 		return fmt.Errorf("choose an archive location first")
 	}
-	c.running, c.device, c.lines, c.result, c.errMsg = true, nil, nil, "", ""
-	c.mu.Unlock()
-
 	s := d.cfg.settings()
 	tcfg := d.cfg.tokenCfg(cfg)
-	go func() {
-		// A crafted message or a bug must never take down the dashboard (DC3).
-		defer func() {
-			if rec := recover(); rec != nil {
-				c.finish("", fmt.Sprintf("the capture stopped unexpectedly: %v", rec))
-			}
-		}()
+	return d.runJob(func(logger *log.Logger) (string, error) {
 		g := app.GraphOptions{
 			Auth: "device", Tenant: cfg.Tenant, ClientID: cfg.ClientID,
 			TokenStore: tcfg.TokenStore, TokenCachePath: tcfg.TokenCachePath,
 			BaseURL: d.cfg.BaseURL, TokenURL: d.cfg.TokenURL, DeviceAuthURL: d.cfg.DeviceAuthURL,
 			IncludeDeleted: s.IncludeDeleted, IncludeJunk: s.IncludeJunk,
-			Prompt: func(da graph.DeviceAuth) { c.setDevice(da) },
+			Prompt: func(da graph.DeviceAuth) { d.cap.setDevice(da) },
 		}
 		opts := app.Options{Out: out, Mode: export.Incremental, Index: true, Pages: true, KeepRaw: s.KeepRaw}
-		res, err := app.RunGraph(context.Background(), g, opts, log.New(c, "", 0))
+		res, err := app.RunGraph(context.Background(), g, opts, logger)
 		if err != nil {
-			c.finish("", err.Error())
-			return
+			return "", err
 		}
-		c.finish(fmt.Sprintf("Archived — %d message(s) exported, %d indexed.", res.Stats.Exported, res.Indexed), "")
-	}()
-	return nil
+		return fmt.Sprintf("Archived — %d message(s) exported, %d indexed.", res.Stats.Exported, res.Indexed), nil
+	})
 }

@@ -100,6 +100,9 @@ func DashboardHandler(cfg Config) http.Handler {
 	mux.HandleFunc("/api/schedule-install", d.scheduleInstall)
 	mux.HandleFunc("/api/schedule-remove", d.scheduleRemove)
 	mux.HandleFunc("/api/schedule-state", d.scheduleState)
+	mux.HandleFunc("/api/verify", d.verifyAction)
+	mux.HandleFunc("/api/rebuild", d.rebuildAction)
+	mux.HandleFunc("/api/health", d.healthAction)
 	return dashboardHeaders(mux)
 }
 
@@ -400,6 +403,19 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <div class="note" id="schedState" hidden></div>
     </div>
 
+    <div class="card">
+      <h2>Status &amp; health</h2>
+      <div id="healthPosture" class="small"></div>
+      <pre id="healthBody" class="small" style="min-height:0;max-height:220px">Loading…</pre>
+    </div>
+
+    <div class="card">
+      <h2>Maintenance</h2>
+      <p class="card-sub">Occasional housekeeping. These share the archive with captures, so only one runs at a time — watch the Archive-now activity for progress.</p>
+      <button class="btn secondary" id="verifyBtn">Check integrity</button>
+      <button class="btn secondary" id="rebuildBtn">Rebuild search index</button>
+    </div>
+
     <div class="card sec">
       <h2>Security &amp; privacy</h2>
       <ul>
@@ -486,4 +502,18 @@ const si=$('schedInstall'),sr=$('schedRemove');
 if(si)si.addEventListener('click',()=>schedPost('/api/schedule-install'));
 if(sr)sr.addEventListener('click',()=>schedPost('/api/schedule-remove'));
 schedState();
+
+async function health(){
+  const p=$('healthPosture'),b=$('healthBody');if(!b)return;
+  try{const d=await(await fetch('/api/health')).json();
+    if(p)p.textContent=d.posture?('Posture: '+d.posture):'';
+    b.textContent=(d.summary||[]).join('\n')||'No archive yet.';
+  }catch(e){b.textContent='Could not read status.';}
+}
+health();
+function job(path){const r=$('captureResult');if(r)r.hidden=true;
+  post(path).then(x=>x.json()).then(d=>{if(d.ok)start();else if(r){r.hidden=false;r.textContent=d.error||'Could not start.';}});}
+const vb=$('verifyBtn'),rb=$('rebuildBtn');
+if(vb)vb.addEventListener('click',()=>job('/api/verify'));
+if(rb)rb.addEventListener('click',()=>{if(confirm('Rebuild the search index from the archive files? This can take a while for a large archive.'))job('/api/rebuild');});
 `
