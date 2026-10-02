@@ -248,7 +248,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		}
 		if runErr != nil {
 			failures++
-			logger.Printf("error: %s: %v", f, runErr)
+			logger.Printf("error: %s: %v%s", f, runErr, ostOpenRemedy(f))
 		}
 	}
 
@@ -451,6 +451,22 @@ func indexCount(idx *index.Index) int {
 		return 0
 	}
 	return n
+}
+
+// ostOpenRemedy returns guidance to append when a source fails to open/parse and
+// the input is an Outlook `.ost`: go-pst cannot read every live Cached-Exchange
+// `.ost` (invariant R16 / scenario S19), so a bare "corrupt or unsupported" error
+// strands a CLI user with no next step (the GUI already steers here). Point the
+// operator at the reliable paths — Outlook's own export on Windows, or the Graph
+// device path for a Microsoft 365 mailbox. Pure function of the path so a test can
+// assert the wording without a real `.ost`; empty for any non-`.ost` source.
+func ostOpenRemedy(path string) string {
+	if !strings.EqualFold(filepath.Ext(path), ".ost") {
+		return ""
+	}
+	return " — a live Exchange / Microsoft 365 .ost often cannot be read directly;" +
+		" on Windows run `mailarchive -outlook` (Outlook exports a clean .pst first)," +
+		" or archive a Microsoft 365 mailbox server-side with `mailarchive graph -auth device`"
 }
 
 // runFile opens one data file (optionally via a temp snapshot) and exports every
