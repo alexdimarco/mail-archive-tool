@@ -11,9 +11,11 @@ Contents of the payload
                             built -ldflags -H=windowsgui). This is the product
                             the Start-menu / Desktop shortcut launches.
   mailarchive-gui.exe       the native-dialog wizard (no console window).
-  mailarchive.exe           the engine CLI (console). Scheduled captures run THIS
-                            headless via schtasks (design DC1); the dashboard
-                            never shells out to it at runtime (in-process, P1).
+  mailarchive.exe           the engine CLI (console). Bundled for app-only /
+                            multi-mailbox graph captures and headless CLI use; the
+                            dashboard never shells out to it at runtime (in-process,
+                            P1). The Desktop's own weekly backup does NOT use this —
+                            it runs mailarchive-desktop.exe -capture in-process (DC1).
   branding/                 icon + installer art (see branding/README.txt).
   docs/                     LICENSE.txt, release-notes.md, and the user docs the
                             dashboard links to (goback, graph-app-setup).

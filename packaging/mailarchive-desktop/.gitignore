@@ -1,0 +1,3 @@
+# Build outputs — never committed. Produced by Build-MSI.ps1.
+dist/
+.tools/

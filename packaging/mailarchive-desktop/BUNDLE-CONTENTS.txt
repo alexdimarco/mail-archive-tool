@@ -1,0 +1,35 @@
+MailArchive Desktop — in-repo MSI / RMM WiX layer
+(packaging/mailarchive-desktop/)
+
+Checked into the repo — the WiX/RMM layer (hand to Steve with the payload zip):
+  Product.wxs               WiX installer definition (DC6 UpgradeCode preserved)
+  Build-MSI.ps1             MSI builder — consumes the payload zip, stages notices, runs WiX
+  BUILD-MSI.cmd             double-click wrapper for Build-MSI.ps1
+  Install-RMM.ps1           optional RMM install helper
+  Detect-RMM.ps1            RMM detection helper (exit 0 = installed)
+  Uninstall-RMM.ps1         RMM silent uninstaller
+  Cleanup-CurrentUser.ps1   optional per-user credential/state cleanup
+  SOURCE-NOTICE.txt         AGPL source pointer + attribution (staged into payload)
+  DEPLOYMENT.txt            deployment metadata: ports, token store, schedule (staged)
+  THIRD-PARTY-NOTICES.md    bundled Go module notices (staged)
+  README-RMM.md             build + deploy + verify instructions (read this)
+  BUNDLE-CONTENTS.txt       this file
+
+Checked in, consumed by packaging/build-release.sh (do not remove):
+  README-payload.txt        becomes "READ ME.txt" inside the payload zip
+  branding/README.txt       names the expected installer art
+  branding/mailarchive.ico  installer + Add/Remove-Programs icon
+
+Supplied at build time — produced by packaging/build-release.sh (NOT in the repo):
+  dist/mailarchive-desktop-windows-msi-payload.zip
+      mailarchive-desktop.exe   in-process dashboard + reader (cmd/mailarchive-desktop)
+      mailarchive.exe           headless engine / CLI          (cmd/mailarchive)
+      mailarchive-gui.exe       native GUI                     (cmd/mailarchive-gui)
+      branding/mailarchive.ico
+      READ ME.txt
+      docs/LICENSE.txt, release-notes.md, goback.md, graph-app-setup.md
+
+Produced by Build-MSI.ps1 (git-ignored):
+  dist/payload/                 extracted + staged payload (adds the notices + PAYLOAD-SHA256.txt)
+  dist/MailArchiveDesktop-<ver>-x64.msi   versioned MSI (contains the EXEs)
+  dist/MailArchiveDesktop.msi             stable-name copy for RMM upload

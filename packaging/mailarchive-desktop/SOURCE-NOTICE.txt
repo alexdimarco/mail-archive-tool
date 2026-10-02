@@ -1,0 +1,19 @@
+MailArchive Desktop — source and attribution
+=============================================
+
+mailarchive-desktop.exe, mailarchive.exe, and mailarchive-gui.exe are the official
+in-repo build of alexdimarco/mail-archive-tool (cmd/mailarchive-desktop,
+cmd/mailarchive, cmd/mailarchive-gui), cross-compiled for Windows x64.
+
+Upstream source: https://github.com/alexdimarco/mail-archive-tool
+License:         GNU Affero General Public License v3.0 (AGPL-3.0) — see docs\LICENSE.txt
+
+The dashboard drives the engine IN-PROCESS; this replaces the earlier out-of-repo
+wrapper that shelled out to a child mailarchive.exe.
+
+AGPL note: the dashboard is a loopback-only local web UI (127.0.0.1), served only to
+the person running it on their own machine. The complete corresponding source for
+this build is the public repository above at the commit recorded below. Retain this
+notice, docs\LICENSE.txt, and THIRD-PARTY-NOTICES.md when redistributing the bundle.
+
+(The build commit is appended below by Build-MSI.ps1.)

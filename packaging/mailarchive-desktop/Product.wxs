@@ -1,0 +1,179 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  MailArchive Desktop MSI — in-repo WiX source.
+
+  SourceDir ($(var.SourceDir)) is the UNZIPPED payload that packaging/build-release.sh
+  produces as the release asset `mailarchive-desktop-windows-msi-payload.zip`:
+
+      mailarchive-desktop.exe      in-process dashboard (:8097) + reader (:8099)
+      mailarchive.exe              headless engine / CLI
+      mailarchive-gui.exe          native GUI wizard
+      READ ME.txt                  payload readme (packaging/.../README-payload.txt)
+      branding\mailarchive.ico     app icon
+      docs\LICENSE.txt             AGPL-3.0
+      docs\release-notes.md, docs\goback.md, docs\graph-app-setup.md
+
+  Build-MSI.ps1 stages four more files into SourceDir before the build:
+      SOURCE-NOTICE.txt, DEPLOYMENT.txt, THIRD-PARTY-NOTICES.md,
+      managed-install.marker, and the generated PAYLOAD-SHA256.txt.
+
+  DC6 — clean upgrade over Steve's out-of-repo 1.1.0 build: the UpgradeCode below is
+  IDENTICAL to his and the detection key is the same HKLM\Software\MailArchive Desktop,
+  so any ProductVersion > 1.1.0 performs a MajorUpgrade that removes his build and
+  installs this one in its place. DO NOT change the UpgradeCode.
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product
+      Id="*"
+      Name="MailArchive Desktop"
+      Language="1033"
+      Version="$(var.ProductVersion)"
+      Manufacturer="MailArchive Desktop"
+      UpgradeCode="4CE5B43F-D4D0-59ED-9BCB-4A004F0F2D11">
+
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine" Platform="x64" />
+    <!-- Shared UpgradeCode + higher version => silent replace of any earlier build
+         (Steve's 1.1.0 included). Scheduled early so old files are gone first. -->
+    <MajorUpgrade
+        Schedule="afterInstallInitialize"
+        DowngradeErrorMessage="A newer version of MailArchive Desktop is already installed." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <Property Id="ARPCONTACT" Value="IT Support" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/alexdimarco/mail-archive-tool" />
+    <Condition Message="MailArchive Desktop requires 64-bit Windows.">VersionNT64</Condition>
+
+    <Icon Id="MailArchiveIcon" SourceFile="$(var.SourceDir)\branding\mailarchive.ico" />
+    <Property Id="ARPPRODUCTICON" Value="MailArchiveIcon" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLFOLDER" Name="MailArchive Desktop">
+          <Directory Id="DocsDir" Name="docs" />
+        </Directory>
+      </Directory>
+      <Directory Id="CommonDesktopFolder" />
+      <Directory Id="CommonStartupFolder" />
+      <Directory Id="CommonProgramsFolder">
+        <Directory Id="ApplicationProgramsFolder" Name="MailArchive Desktop" />
+      </Directory>
+    </Directory>
+
+    <DirectoryRef Id="INSTALLFOLDER">
+      <!-- The dashboard: serves :8097 (dashboard) + :8099 (reader) in-process; it
+           never shells out to a child mailarchive.exe (design P1). Built
+           -H=windowsgui (no console) by build-release.sh. -->
+      <Component Id="CmpDesktopExe" Guid="*" Win64="yes">
+        <File Id="FilDesktopExe" Source="$(var.SourceDir)\mailarchive-desktop.exe" KeyPath="yes" />
+      </Component>
+
+      <!-- The engine/CLI. Bundled for app-only / multi-mailbox scheduled captures and
+           headless CLI use; the Desktop's own weekly backup runs in-process
+           (mailarchive-desktop.exe -capture, design DC1). -->
+      <Component Id="CmpEngineExe" Guid="*" Win64="yes">
+        <File Id="FilEngineExe" Source="$(var.SourceDir)\mailarchive.exe" KeyPath="yes" />
+      </Component>
+
+      <Component Id="CmpEngineGuiExe" Guid="*" Win64="yes">
+        <File Id="FilEngineGuiExe" Source="$(var.SourceDir)\mailarchive-gui.exe" KeyPath="yes" />
+      </Component>
+
+      <Component Id="CmpBrandAssets" Guid="*" Win64="yes">
+        <File Id="FilIcon" Source="$(var.SourceDir)\branding\mailarchive.ico" KeyPath="yes" />
+      </Component>
+
+      <!-- Deployment metadata + payload manifest + AGPL source/notices, flat in the
+           install dir. DEPLOYMENT.txt / SOURCE-NOTICE.txt / THIRD-PARTY-NOTICES.md /
+           managed-install.marker are staged by Build-MSI.ps1; READ ME.txt ships in
+           the payload zip. -->
+      <Component Id="CmpDeploymentDocs" Guid="*" Win64="yes">
+        <File Id="FilDeployment" Source="$(var.SourceDir)\DEPLOYMENT.txt" KeyPath="yes" />
+        <File Id="FilReadme" Source="$(var.SourceDir)\READ ME.txt" />
+        <File Id="FilPayloadHash" Source="$(var.SourceDir)\PAYLOAD-SHA256.txt" />
+        <File Id="FilManagedMarker" Source="$(var.SourceDir)\managed-install.marker" />
+        <File Id="FilSourceNotice" Source="$(var.SourceDir)\SOURCE-NOTICE.txt" />
+        <File Id="FilThirdParty" Source="$(var.SourceDir)\THIRD-PARTY-NOTICES.md" />
+      </Component>
+
+      <Component Id="CmpShortcutsAndDetection" Guid="*" Win64="yes">
+        <!-- DC6 detection key: unchanged from Steve's build. -->
+        <RegistryKey Root="HKLM" Key="Software\MailArchive Desktop">
+          <RegistryValue Name="Installed" Type="integer" Value="1" KeyPath="yes" />
+          <RegistryValue Name="Version" Type="string" Value="$(var.ProductVersion)" />
+          <RegistryValue Name="InstallDir" Type="string" Value="[INSTALLFOLDER]" />
+        </RegistryKey>
+
+        <!-- Shortcuts target the dashboard exe. NOTE (see README-RMM.md risk R1):
+             the exe is windowsgui + prints its URL to (invisible) stdout and does not
+             open a browser, so a click starts the background server silently. The
+             user then browses to http://127.0.0.1:8097/. The planned polish is a
+             browser-open in the binary; until then the shortcut starts the server. -->
+        <Shortcut
+            Id="DesktopShortcut"
+            Directory="CommonDesktopFolder"
+            Name="MailArchive Desktop"
+            Description="Open MailArchive Desktop"
+            Target="[INSTALLFOLDER]mailarchive-desktop.exe"
+            WorkingDirectory="INSTALLFOLDER"
+            Icon="MailArchiveIcon"
+            Advertise="no" />
+
+        <!-- ADAPTED: Steve's Startup shortcut passed Arguments="--startup"; our binary
+             has no such flag (flag.ContinueOnError would reject it and exit 1), so the
+             argument is removed. No args => dashboard :8097 + reader :8099 (defaults). -->
+        <Shortcut
+            Id="StartupShortcut"
+            Directory="CommonStartupFolder"
+            Name="MailArchive Desktop"
+            Description="Start MailArchive Desktop after Windows sign-in"
+            Target="[INSTALLFOLDER]mailarchive-desktop.exe"
+            WorkingDirectory="INSTALLFOLDER"
+            Icon="MailArchiveIcon"
+            Advertise="no" />
+
+        <Shortcut
+            Id="StartMenuShortcut"
+            Directory="ApplicationProgramsFolder"
+            Name="MailArchive Desktop"
+            Description="Open MailArchive Desktop"
+            Target="[INSTALLFOLDER]mailarchive-desktop.exe"
+            WorkingDirectory="INSTALLFOLDER"
+            Icon="MailArchiveIcon"
+            Advertise="no" />
+
+        <Shortcut
+            Id="UninstallShortcut"
+            Directory="ApplicationProgramsFolder"
+            Name="Uninstall MailArchive Desktop"
+            Description="Uninstall MailArchive Desktop"
+            Target="[System64Folder]msiexec.exe"
+            Arguments="/x [ProductCode]"
+            WorkingDirectory="INSTALLFOLDER"
+            Advertise="no" />
+
+        <RemoveFolder Id="RemoveProgramMenuFolder" Directory="ApplicationProgramsFolder" On="uninstall" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="DocsDir">
+      <Component Id="CmpUserDocs" Guid="*" Win64="yes">
+        <File Id="FilLicense" Source="$(var.SourceDir)\docs\LICENSE.txt" KeyPath="yes" />
+        <File Id="FilReleaseNotes" Source="$(var.SourceDir)\docs\release-notes.md" />
+        <File Id="FilGoback" Source="$(var.SourceDir)\docs\goback.md" />
+        <File Id="FilGraphSetup" Source="$(var.SourceDir)\docs\graph-app-setup.md" />
+        <RemoveFolder Id="RemoveDocsFolder" Directory="DocsDir" On="uninstall" />
+      </Component>
+    </DirectoryRef>
+
+    <Feature Id="MainFeature" Title="MailArchive Desktop" Level="1">
+      <ComponentRef Id="CmpDesktopExe" />
+      <ComponentRef Id="CmpEngineExe" />
+      <ComponentRef Id="CmpEngineGuiExe" />
+      <ComponentRef Id="CmpBrandAssets" />
+      <ComponentRef Id="CmpDeploymentDocs" />
+      <ComponentRef Id="CmpShortcutsAndDetection" />
+      <ComponentRef Id="CmpUserDocs" />
+    </Feature>
+  </Product>
+</Wix>

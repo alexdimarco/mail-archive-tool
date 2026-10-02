@@ -1,0 +1,21 @@
+MailArchive Desktop
+Dashboard:        http://127.0.0.1:8097/  (loopback only)
+Archive reader:   http://127.0.0.1:8099/  (loopback only)
+Token storage:    Windows Credential Manager (generic credential, current user's vault;
+                  target "mailarchive:graph-token:<hash>")
+Mailbox mode:     Microsoft Graph /me via device-code sign-in (read-only, Mail.Read)
+Persistent token file: none on Windows — the sign-in lives in Credential Manager
+Weekly backup:    mailarchive-desktop.exe -capture  (in-process headless capture, DC1)
+
+Tenant ID:        0960dc39-0838-44ae-b2bb-1f9868566e00
+Application ID:   a22af286-b761-4cc9-96c0-d5693ea29b8a
+
+Notes:
+- The dashboard and reader run under one process and bind loopback only; a
+  non-loopback bind is refused.
+- The weekly backup runs the engine headless (never the dashboard UI), so it fires
+  whether or not the dashboard is open. It reuses the saved device sign-in.
+- mailarchive.exe is also bundled for app-only / multi-mailbox scheduled graph
+  captures and headless CLI use.
+- Uninstall preserves the mail archive, %LOCALAPPDATA%\MailArchiveDesktop, and the
+  Credential Manager sign-in. Use Cleanup-CurrentUser.ps1 for full deprovisioning.
