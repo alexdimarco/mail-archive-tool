@@ -13,6 +13,16 @@ import (
 
 func joinReasons(rep Report) string { return strings.Join(rep.Reasons, "\n") }
 
+// hostAbs makes a POSIX-style test path absolute (and host-spelled) so Assess's
+// filepath.IsAbs gate on the moved-archive WARN fires on Windows too; on a POSIX
+// host it returns the path unchanged. Shared by the package tests.
+func hostAbs(p string) string {
+	if a, err := filepath.Abs(filepath.FromSlash(p)); err == nil {
+		return a
+	}
+	return filepath.FromSlash(p)
+}
+
 // covers: MA-155, R18, S31
 // status reflects verify's separate last-verify record: a "Last verify" line in
 // the summary (attested / NOT attested with counts), a RED posture when the
@@ -231,9 +241,13 @@ func TestMovedArchivePathComparison(t *testing.T) {
 	}
 
 	// darwin/windows: two case-only spellings of a (non-existent) path fold equal.
+	// Host-absolute so Assess's filepath.IsAbs gate fires on Windows; the case
+	// comparison is still driven by the simulated GOOS. filepath.Abs preserves
+	// case, so the case-only difference survives on a case-insensitive host.
+	foldHi, foldLo := hostAbs("/nope/Archive"), hostAbs("/nope/archive")
 	fold := healthyInput(now)
-	fold.Out = "/nope/Archive"
-	fold.Desc.Job = []string{"-out", "/nope/archive", "-auto"}
+	fold.Out = foldHi
+	fold.Desc.Job = []string{"-out", foldLo, "-auto"}
 	fold.GOOS = "darwin"
 	if warned(fold) {
 		t.Errorf("darwin case-only difference wrongly warned as a moved archive")
@@ -241,8 +255,8 @@ func TestMovedArchivePathComparison(t *testing.T) {
 
 	// linux: the same case-only difference is a genuine different directory.
 	exact := healthyInput(now)
-	exact.Out = "/nope/Archive"
-	exact.Desc.Job = []string{"-out", "/nope/archive", "-auto"}
+	exact.Out = foldHi
+	exact.Desc.Job = []string{"-out", foldLo, "-auto"}
 	exact.GOOS = "linux"
 	if !warned(exact) {
 		t.Errorf("linux case-only difference should warn (case-sensitive volume)")
@@ -311,20 +325,27 @@ func TestStatusRemedyUsesActualOutAndUTC(t *testing.T) {
 	}
 
 	// moved-archive remedy substitutes the job (no "..."), targeting in.Out.
-	mv := healthyInput(now)
-	mv.Out = "/archives/current"
-	mv.Desc.Name = "mailarchive-x"
-	mv.Desc.Job = []string{"-out", "/archives/old", "-auto"}
-	mv.GOOS = "linux"
-	mr := joinReasons(Assess(mv, now))
-	if !strings.Contains(mr, "not this archive") {
-		t.Fatalf("expected the moved-archive WARN:\n%s", mr)
-	}
-	if strings.Contains(mr, "...") {
-		t.Errorf("moved-archive remedy still carries a `...` placeholder:\n%s", mr)
-	}
-	if !strings.Contains(mr, "/archives/current -auto -install") {
-		t.Errorf("moved-archive re-install remedy did not substitute this archive's job:\n%s", mr)
+	// This asserts the exact GOOS="linux" rendering of a POSIX -out, coherent only
+	// where the host also treats that path as absolute (so the filepath.IsAbs gate
+	// fires and the path keeps forward slashes). On Windows the POSIX path is
+	// neither absolute nor forward-slash-spelled; the moved-archive detection is
+	// covered there by TestMovedArchivePathComparison.
+	if filepath.IsAbs("/archives/current") {
+		mv := healthyInput(now)
+		mv.Out = "/archives/current"
+		mv.Desc.Name = "mailarchive-x"
+		mv.Desc.Job = []string{"-out", "/archives/old", "-auto"}
+		mv.GOOS = "linux"
+		mr := joinReasons(Assess(mv, now))
+		if !strings.Contains(mr, "not this archive") {
+			t.Fatalf("expected the moved-archive WARN:\n%s", mr)
+		}
+		if strings.Contains(mr, "...") {
+			t.Errorf("moved-archive remedy still carries a `...` placeholder:\n%s", mr)
+		}
+		if !strings.Contains(mr, "/archives/current -auto -install") {
+			t.Errorf("moved-archive re-install remedy did not substitute this archive's job:\n%s", mr)
+		}
 	}
 
 	// The installed timestamp is rendered and labelled UTC.

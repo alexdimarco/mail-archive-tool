@@ -32,7 +32,7 @@ func TestExportRefusesUnsafeStoreToken(t *testing.T) {
 	assure.Reached(t, countSuffix(t, filepath.Join(out, "Inbox"), ".html"), "html under the clean store token")
 
 	// Each unsafe token is refused, naming it, and leaves no side effect.
-	for _, tok := range []string{"../escape", filepath.Join("..", "..", "victim"), "a/b", "..", "."} {
+	for _, tok := range []string{"../escape", "../../victim", "a/b", "..", "."} {
 		wrote, err := e.Export(tok, []string{"Folder"}, msg())
 		rc, m := 0, ""
 		if err != nil {
