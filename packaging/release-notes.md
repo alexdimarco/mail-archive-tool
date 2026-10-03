@@ -30,6 +30,11 @@ local control panel (double-click to open; it opens the dashboard in your browse
 IT/RMM rollout, `mailarchive-desktop-windows-msi-payload.zip` builds a self-contained MSI
 (`packaging/mailarchive-desktop/`).
 
+### Fixed in 0.7.1
+- **Windows: rebuilding the search index no longer fails while the archive is open.** A leaked database handle kept `search.db` open, so `reindex -rebuild` (and the dashboard's *Rebuild index*) could fail with "Access is denied" on Windows while a viewer held the index. The handle is now released; rebuild and reindex work with the archive open.
+- **Windows: a lost or overwritten archive lock is now detected mid-run.** The lock-loss check relied on POSIX file identity, which Windows cannot provide, so in rare cases two runs on the same archive could overlap on Windows. The lock now carries a content marker re-checked during the run, so a run whose lock is taken over stops instead of racing (R5) — on every OS.
+- **Clearer schedule preview on macOS and Windows.** `schedule` now shows the full command on one readable line (as on Linux) plus the same operator notes, not only the raw launchd/schtasks definition.
+
 ### What's new
 - **MailArchive Desktop (Windows) — a local control panel for Microsoft 365.** A new single
   app opens a private dashboard on `127.0.0.1` (this computer only) that signs you in to M365,
