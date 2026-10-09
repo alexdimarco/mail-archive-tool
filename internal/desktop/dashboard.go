@@ -297,6 +297,7 @@ body{margin:0;font:15px system-ui,-apple-system,Segoe UI,Roboto,sans-serif;backg
 .nav-title{color:var(--sidebar-muted);font-size:.72rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;margin:10px 0 4px}
 .nav a{display:block;color:var(--sidebar-text);text-decoration:none;padding:9px 11px;border-radius:9px;font-weight:650}
 .nav a.active{background:rgba(255,255,255,.11)}.nav a:hover{background:rgba(255,255,255,.08)}
+.nav .nav-disabled{display:block;color:var(--sidebar-muted);padding:9px 11px;font-weight:650;cursor:not-allowed}
 .sidebar-foot{margin-top:auto;color:var(--sidebar-muted);font-size:.78rem}
 .content{padding:30px 34px 52px;min-width:0}.inner{max-width:1040px;margin:0 auto}
 h1{font-size:1.8rem;letter-spacing:-.02em;margin:0 0 4px}.lede{color:var(--muted);margin:0 0 22px}
@@ -305,7 +306,7 @@ h1{font-size:1.8rem;letter-spacing:-.02em;margin:0 0 4px}.lede{color:var(--muted
 .status-card .label{color:var(--muted);font-size:.8rem}.status-card .value{font-size:1.08rem;font-weight:800;margin-top:6px;overflow-wrap:anywhere}
 .good{color:var(--good)}.warn{color:var(--warn)}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:19px;margin-bottom:16px}
-.card h2{font-size:1.05rem;margin:0 0 12px}
+.card h2{font-size:1.05rem;margin:0 0 12px}.card[id],.anchor{scroll-margin-top:16px}
 .row{display:grid;grid-template-columns:180px minmax(0,1fr);gap:12px;padding:8px 0;border-bottom:1px solid var(--line)}
 .row:last-child{border-bottom:0}.row .k{color:var(--muted);font-size:.85rem}.row .v{font-weight:650;overflow-wrap:anywhere}
 .sec li{margin:8px 0;line-height:1.45}.sec b{color:var(--text)}
@@ -333,15 +334,16 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
     <nav class="nav">
       <div class="nav-title">Workspace</div>
       <a class="active" href="/">Overview</a>
-      <a href="#" onclick="document.getElementById('archiveBtn').click();return false">Archive now</a>
-      <a href="{{.ReaderURL}}" target="_blank" rel="noopener">Open archive</a>
-      <a href="{{.ReaderURL}}goback" target="_blank" rel="noopener">Go back in time</a>
+      <a href="#sec-archive" id="navArchive">Archive now</a>
+      {{if .ReaderURL}}<a href="{{.ReaderURL}}" target="_blank" rel="noopener">Open archive</a>
+      <a href="{{.ReaderURL}}goback" target="_blank" rel="noopener">Go back in time</a>{{else}}<span class="nav-disabled" title="The archive reader is not running">Open archive</span>
+      <span class="nav-disabled" title="The archive reader is not running">Go back in time</span>{{end}}
       <div class="nav-title">Diagnostics</div>
-      <a href="/">Status &amp; health</a>
-      <a href="/">Activity log</a>
+      <a href="#sec-health">Status &amp; health</a>
+      <a href="#sec-activity">Activity log</a>
       <div class="nav-title">Setup</div>
-      <a href="/">Microsoft 365 connection</a>
-      <a href="/">Weekly backup</a>
+      <a href="#sec-m365">Microsoft 365 connection</a>
+      <a href="#sec-backup">Weekly backup</a>
     </nav>
     <div class="sidebar-foot">Local control panel<br>127.0.0.1</div>
   </aside>
@@ -353,7 +355,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       {{range .Cards}}<div class="status-card"><div class="label">{{.Label}}</div><div class="value {{.Class}}">{{.Value}}</div></div>{{end}}
     </div>
 
-    <div class="card">
+    <div class="card" id="sec-m365">
       <h2>Microsoft 365 connection</h2>
       {{if .Configured}}
       <div class="row"><div class="k">Tenant</div><div class="v mono">{{.Tenant}}</div></div>
@@ -367,7 +369,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <div class="note" id="note" hidden></div>
     </div>
 
-    <div class="card">
+    <div class="card" id="sec-archive">
       <h2>Archive now</h2>
       <p class="card-sub">Fetch the latest mail into your archive. The first time, you sign in with a Microsoft device code shown here.</p>
       <button class="btn" id="archiveBtn">Archive now</button>
@@ -376,11 +378,12 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
         <div>To sign in, open <a id="deviceUrl" target="_blank" rel="noopener">this Microsoft page</a> and enter the code:</div>
         <div class="device-code" id="deviceCode"></div>
       </div>
+      <div id="sec-activity" class="anchor"></div>
       <pre id="activity" hidden></pre>
       <div class="note" id="captureResult" hidden></div>
     </div>
 
-    <div class="card">
+    <div class="card" id="sec-settings">
       <h2>Settings</h2>
       <label for="outDir">Archive location</label>
       <input id="outDir" value="{{.OutDir}}" placeholder="e.g. C:\MailArchive, a mapped drive, or a UNC path" spellcheck="false">
@@ -391,7 +394,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <div class="note" id="settingsNote" hidden></div>
     </div>
 
-    <div class="card">
+    <div class="card" id="sec-backup">
       <h2>Weekly backup</h2>
       <p class="card-sub">Run a capture automatically on a schedule. It runs even when this app is closed (as long as you stay signed in to Windows), using your saved Microsoft sign-in.</p>
       <div class="row2">
@@ -403,7 +406,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <div class="note" id="schedState" hidden></div>
     </div>
 
-    <div class="card">
+    <div class="card" id="sec-health">
       <h2>Status &amp; health</h2>
       <div id="healthPosture" class="small"></div>
       <pre id="healthBody" class="small" style="min-height:0;max-height:220px">Loading…</pre>
@@ -460,6 +463,18 @@ if(save)save.addEventListener('click',async()=>{
 
 let polling=false;
 const btn=$('archiveBtn');
+// Sidebar "Archive now" starts a capture as well as jumping to its card (an
+// inline onclick would be blocked by script-src 'self').
+const navArchive=$('navArchive');
+if(navArchive)navArchive.addEventListener('click',()=>{if(btn&&!btn.disabled)btn.click();});
+function markNav(){
+  const h=location.hash||'';
+  document.querySelectorAll('.nav a').forEach(a=>{
+    const href=a.getAttribute('href')||'';
+    a.classList.toggle('active',h?href===h:href==='/');
+  });
+}
+window.addEventListener('hashchange',markNav);markNav();
 if(btn)btn.addEventListener('click',async()=>{
   btn.disabled=true;const r=$('captureResult');if(r)r.hidden=true;
   try{const d=await(await post('/api/capture')).json();
