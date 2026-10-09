@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
@@ -163,10 +164,38 @@ func OpenReadonly(path string) (*Index, error) {
 	if err != nil && readonlyMediaErr(err) {
 		db, err = openProbed(path, "mode=ro&immutable=1")
 	}
+	if err != nil && Busy(err) {
+		// In use, not damaged: the rebuild remedy would be wrong advice.
+		return nil, fmt.Errorf("search index %s is busy (%w): another program or run kept it locked for longer than %s — try again in a moment", path, err, readonlyBusyTimeout)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("search index %s is present but cannot be read (%w): if it is damaged, rebuild it from the archive with `mailarchive reindex -rebuild -out %q` (on read-only media, copy the archive to a writable location first)", path, err, filepath.Dir(path))
 	}
 	return &Index{db: db}, nil
+}
+
+// readonlyBusyTimeout is how long a read-only open waits for a lock another
+// connection holds before giving up with SQLITE_BUSY: a writer committing or
+// checkpointing, or the WAL recovery the next opener runs after a read-only
+// reader left the -wal/-shm pair behind. Without it every such moment failed
+// the open at once, and `status` reported a healthy index as unreadable. A
+// var so a test can shrink it.
+var readonlyBusyTimeout = 5 * time.Second
+
+// Busy reports whether err is SQLite's "in use" answer — SQLITE_BUSY (with its
+// BUSY_RECOVERY/BUSY_SNAPSHOT variants) or SQLITE_LOCKED, by primary result
+// code — which says another connection held the database past the busy
+// timeout, and nothing about whether the file is damaged.
+func Busy(err error) bool {
+	var se *sqlite.Error
+	if !errors.As(err, &se) {
+		return false
+	}
+	switch se.Code() & 0xff {
+	case sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED:
+		return true
+	}
+	return false
 }
 
 // openProbed opens the database at path through a SQLite file: URI carrying
@@ -183,6 +212,9 @@ func openProbed(path, query string) (*sql.DB, error) {
 	if !strings.HasPrefix(p, "/") {
 		p = "/" + p // a Windows drive path: file:///C:/...
 	}
+	// The busy timeout rides on the URI as the driver's _pragma parameter
+	// (SQLite ignores it), so it is set on every connection the pool opens.
+	query += fmt.Sprintf("&_pragma=busy_timeout(%d)", readonlyBusyTimeout.Milliseconds())
 	u := url.URL{Scheme: "file", Path: p, RawQuery: query}
 	db, err := sql.Open("sqlite", u.String())
 	if err != nil {

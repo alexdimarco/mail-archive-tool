@@ -59,10 +59,15 @@ type Input struct {
 	// HasIndex is true when search.db opened; HasIndexFile when it exists on
 	// disk at all. A present index that cannot be opened (corrupt) carries the
 	// open error in IndexErr and is a RED, never "no search index" (F82).
+	//
+	// IndexBusy marks an open that failed only because another connection kept
+	// search.db locked past the busy timeout (index.Busy): the file is in use,
+	// not damaged, so it is never index_unreadable.
 	HasIndex     bool
 	Indexed      int
 	HasIndexFile bool
 	IndexErr     error
+	IndexBusy    bool
 
 	// History is the go-back timeline's coverage (design §3.4, X6): whether the
 	// log exists, how many runs and events it records, and whether it carries a
@@ -194,6 +199,16 @@ func Assess(in Input, now time.Time) Report {
 	// files (F82). The open error is control-stripped like the manifest's.
 	idxPath := filepath.Join(in.Out, "search.db")
 	switch {
+	case in.HasIndexFile && !in.HasIndex && in.IndexErr != nil && in.IndexBusy:
+		// In use, not damaged: never the rebuild remedy. Under a run's archive
+		// lock that is expected and only a note; with the lock free something
+		// outside mailarchive held it and the counts are unknown, so a WARN.
+		msg := fmt.Sprintf("the search index %s was busy (kept locked by another connection) and could not be read just now, so its counts are not shown", idxPath)
+		if in.LockHeld {
+			r.note("index_busy", msg+" — a run is using this archive; run status again when it finishes")
+		} else {
+			r.warn("index_busy", msg+" — close any other program that has it open, then run status again")
+		}
 	case in.HasIndexFile && !in.HasIndex && in.IndexErr != nil:
 		r.red("index_unreadable", fmt.Sprintf("the search index %s cannot be read (%s) — search, serve and the folder pages need it; rebuild it from the archive with `mailarchive reindex -rebuild -out %q`", idxPath, util.StripControl(in.IndexErr.Error()), in.Out))
 	case !in.HasIndex && !in.HasIndexFile && in.HasManifest && in.Messages > 0 && !(in.LastRunState == state.LastRunPresent && in.LastRun.NoIndex):
@@ -567,7 +582,7 @@ func Gather(out, nameOverride string) Input {
 			}
 			ix.Close()
 		} else {
-			in.IndexErr = err
+			in.IndexErr, in.IndexBusy = err, index.Busy(err)
 		}
 	}
 	in.History, in.HistoryReadErr = state.HistoryStatus(filepath.Join(out, state.HistoryName))
@@ -616,6 +631,8 @@ func Summary(in Input, rep Report) []string {
 		switch {
 		case in.HasIndex:
 			idx = fmt.Sprintf("%d indexed", in.Indexed)
+		case in.HasIndexFile && in.IndexBusy:
+			idx = "search index busy (see the posture below)"
 		case in.HasIndexFile:
 			idx = "search index unreadable (see the posture below)"
 		}
