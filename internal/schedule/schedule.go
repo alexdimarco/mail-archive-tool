@@ -529,8 +529,16 @@ func VerifyScheduleNote(s Spec) (string, error) {
 // Install applies the schedule to the host OS's scheduler and records the
 // archive-local descriptor of its kind. On Windows the wrapper is written (and
 // fsynced) BEFORE the task exists, so an interrupted install leaves at most an
-// orphan wrapper and never a task pointing at nothing.
-func Install(s Spec) error {
+// orphan wrapper and never a task pointing at nothing. The descriptor is
+// written only AFTER the scheduler has the entry, so an install that fails at
+// the scheduler records nothing: no descriptor claims an entry that never
+// loaded.
+func Install(s Spec) error { return installOn(s, runtime.GOOS) }
+
+// installOn is Install for the host scheduler goos selects; the cron and Task
+// Scheduler branches run against their seams (crontabList/crontabInstall,
+// schtasksRun), so a test can drive any branch's failure on any OS.
+func installOn(s Spec, goos string) error {
 	if err := s.Validate(); err != nil {
 		return err
 	}
@@ -542,11 +550,11 @@ func Install(s Spec) error {
 	if _, err := VerifyScheduleNote(s); err != nil {
 		return err
 	}
-	if err := refuseCollision(s, runtime.GOOS); err != nil {
+	if err := refuseCollision(s, goos); err != nil {
 		return err
 	}
 	var err error
-	switch runtime.GOOS {
+	switch goos {
 	case "darwin":
 		err = installLaunchd(s)
 	case "windows":
