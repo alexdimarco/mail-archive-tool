@@ -186,6 +186,17 @@ remote images, fonts or stylesheets), cannot submit forms or rewrite links with
 content is preserved verbatim; the policy is the control. Browsers enforce the
 meta form on `file://`, which is what makes tool-free browsing safe.
 
+When a message's HTML cannot be shown as HTML, its page shows the HTML as
+escaped source instead: the words stay readable and searchable, and its inline
+images go into the zip. This is never silent: the run counts it and
+`attachments-report.tsv` lists it as `html-shown-as-source` with one of these
+reasons: `unsafe-after-reparse` (re-reading the cleaned page as a browser would
+still found something live that must not be), `unparseable`,
+`too-deeply-nested` (nested deeper than the HTML parser accepts), or
+`too-large` (cleaning it would make it more than 16 times its own size, and at
+least 1 MiB: markup that a browser's parser blows up, built to exhaust the
+exporter rather than to be read).
+
 ## Build
 
 ```sh

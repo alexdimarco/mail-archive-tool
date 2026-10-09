@@ -3,6 +3,7 @@ package export
 import (
 	"bytes"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"html"
 	"mime"
@@ -84,16 +85,19 @@ type RenderResult struct {
 	Unresolved []string     // cid: tokens with no matching part (dangling references)
 	// BodyFallback is non-empty when the mail's HTML could not be shown as HTML
 	// and the page shows its escaped source instead: FallbackTooDeep,
-	// FallbackUnparseable or FallbackHostile. The exporter records it (R1, R7):
-	// the fallback is never silent.
+	// FallbackUnparseable, FallbackHostile or FallbackTooLarge. The exporter
+	// records it (R1, R7): the fallback is never silent.
 	BodyFallback string
 }
 
-// Reasons an HTML body is shown as escaped source rather than rendered.
+// Reasons an HTML body is shown as escaped source rather than rendered. The
+// strings are recorded on the manifest (body_fallback) and in the report, and
+// `reindex -rebuild` recognises a fallback page by them: never rename one.
 const (
-	FallbackTooDeep     = "too-deeply-nested" // the parser's nesting cap (x/net: 512 open elements)
-	FallbackUnparseable = "unparseable"
-	FallbackHostile     = "unsafe-after-reparse" // the re-parse check found a live hostile meta
+	FallbackTooDeep     = "too-deeply-nested"    // the parser's nesting cap (x/net: 512 open elements)
+	FallbackUnparseable = "unparseable"          // the parser or serializer refused the mail
+	FallbackHostile     = "unsafe-after-reparse" // the re-parse check found a live hostile meta or link hint
+	FallbackTooLarge    = "too-large"            // the serialization would pass serializedCap (RV-8)
 )
 
 // Render builds a self-contained HTML document for the message with no
@@ -195,20 +199,32 @@ func sanitizeHTML(doc string) (headExtra, bodyAttrs, body, fallback string) {
 	find(root)
 	neutralize(root)
 
-	var hb strings.Builder
+	// The serialization is capped (RV-8): x/net's reconstruct-active-
+	// formatting step can turn a small mail into a huge tree (400 unclosed
+	// <b id=i> re-opened in every later paragraph: 16 KB in, 12 MB out), and
+	// the checks below re-parse that output, each parse quadratic in the open
+	// formatting elements. Past the cap the body falls back to its source
+	// before the output is complete, let alone re-parsed.
+	left := serializedCap(len(doc))
+	hb, bb := &capWriter{left: &left}, &capWriter{left: &left}
 	if headNode != nil {
 		for c := headNode.FirstChild; c != nil; c = c.NextSibling {
 			if c.Type == xhtml.ElementNode && c.DataAtom == atom.Title {
 				continue
 			}
-			renderNode(&hb, c)
-			hb.WriteByte('\n')
+			if err := renderNode(hb, c); err != nil {
+				return "", "", "", renderFailure(err)
+			}
+			if err := hb.WriteByte('\n'); err != nil {
+				return "", "", "", renderFailure(err)
+			}
 		}
 	}
-	var bb strings.Builder
 	if bodyNode != nil {
 		for c := bodyNode.FirstChild; c != nil; c = c.NextSibling {
-			renderNode(&bb, c)
+			if err := renderNode(bb, c); err != nil {
+				return "", "", "", renderFailure(err)
+			}
 		}
 		bodyAttrs = bodyAttributes(bodyNode)
 	}
@@ -217,6 +233,70 @@ func sanitizeHTML(doc string) (headExtra, bodyAttrs, body, fallback string) {
 	}
 	return hb.String(), bodyAttrs, bb.String(), ""
 }
+
+// serializedCap bounds the sanitized head+body of a mail whose HTML (inline
+// images already embedded) is n bytes: 16x the input, and at least 1 MiB.
+// Serializing real mail grows it by at most about 5x — x/net writes " and '
+// as 5-byte references, and implied end tags and tbody add little — so 16x
+// leaves 3x headroom, and only the super-linear growth of reconstructed
+// formatting elements trips it (the RV-8 body grows about 630x). The floor
+// keeps small mail, which implied tags can double, far from the cap. Every
+// check after it re-parses at most 16x the input, so its cost stays linear in
+// the mail's size.
+func serializedCap(n int) int { return max(16*n, 1<<20) }
+
+// errTooLarge stops the serializer once its output passes the size cap.
+var errTooLarge = errors.New("serialized mail HTML exceeds the size cap")
+
+// renderFailure maps a serialization error to the fallback reason: the size
+// cap, or any other refusal to serialize (fail closed: never write a body the
+// checks have not read).
+func renderFailure(err error) string {
+	if errors.Is(err, errTooLarge) {
+		return FallbackTooLarge
+	}
+	return FallbackUnparseable
+}
+
+// capWriter collects serialized output and refuses to grow past a budget
+// shared with its siblings (one mail's head and body draw on one cap). It has
+// the Write, WriteByte and WriteString methods x/net's Render writes through.
+type capWriter struct {
+	b    strings.Builder
+	left *int
+}
+
+func (w *capWriter) spend(n int) error {
+	if n > *w.left {
+		*w.left = 0
+		return errTooLarge
+	}
+	*w.left -= n
+	return nil
+}
+
+func (w *capWriter) Write(p []byte) (int, error) {
+	if err := w.spend(len(p)); err != nil {
+		return 0, err
+	}
+	return w.b.Write(p)
+}
+
+func (w *capWriter) WriteString(s string) (int, error) {
+	if err := w.spend(len(s)); err != nil {
+		return 0, err
+	}
+	return w.b.WriteString(s)
+}
+
+func (w *capWriter) WriteByte(c byte) error {
+	if err := w.spend(1); err != nil {
+		return err
+	}
+	return w.b.WriteByte(c)
+}
+
+func (w *capWriter) String() string { return w.b.String() }
 
 // renderNode serializes one parsed node. It is a variable only so a test can
 // inject a renderer that does not round-trip (fault injection for the
@@ -293,10 +373,11 @@ func liveResourceHint(n *xhtml.Node) bool {
 // is re-parsed TWICE, with the scripting flag on and off: it decides whether
 // <noscript> content is text or markup, and a viewer with JavaScript disabled
 // (the archive needs none) reads it as markup, while the sanitizer's own parse
-// read it as text. Hostile in either reading fails closed.
+// read it as text. Hostile in either reading fails closed. The second parse is
+// skipped when the output holds no noscript start tag (see scriptingModes).
 func hostileSurvives(head, body string) bool {
 	doc := "<!DOCTYPE html><html><head>" + head + "</head><body>" + body + "</body></html>"
-	for _, scripting := range []bool{true, false} {
+	for _, scripting := range scriptingModes(head, body) {
 		if hostileIn(doc, scripting) {
 			return true
 		}
@@ -304,8 +385,69 @@ func hostileSurvives(head, body string) bool {
 	return false
 }
 
+// scriptingModes is the scripting flags a re-parse of s must use to read it
+// as every browser will: on, plus off when s can hold a <noscript> start tag.
+// Skipping the second parse otherwise is exact, not a heuristic: in x/net the
+// scripting flag is read only when a noscript start tag is processed (in head
+// and in body), and the tokenizer names a tag by the bytes after "<", folded
+// to lower case in ASCII only (NUL becomes U+FFFD), so a noscript start tag
+// needs the bytes "<noscript" in some ASCII case. Without them both readings
+// build the same tree (RV-8: the second parse doubled the check's cost).
+func scriptingModes(s ...string) []bool {
+	for _, part := range s {
+		if hasNoscriptTag(part) {
+			return []bool{true, false}
+		}
+	}
+	return []bool{true}
+}
+
+// hasNoscriptTag reports whether s contains "<noscript" in any ASCII case.
+func hasNoscriptTag(s string) bool {
+	const tag = "<noscript"
+	for i := strings.IndexByte(s, '<'); i >= 0; {
+		if len(s)-i < len(tag) {
+			return false
+		}
+		if asciiEqualFold(s[i:i+len(tag)], tag) {
+			return true
+		}
+		j := strings.IndexByte(s[i+1:], '<')
+		if j < 0 {
+			return false
+		}
+		i += 1 + j
+	}
+	return false
+}
+
+// asciiEqualFold compares a and b (b lower-case) folding ASCII letters only,
+// as the tokenizer does.
+func asciiEqualFold(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := 0; i < len(a); i++ {
+		c := a[i]
+		if 'A' <= c && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		if c != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// reparse parses serialized output for the checks that read it back as a
+// browser will. It is a variable only so a test can count the parses (the
+// RV-8 cost guard); production always uses xhtml.ParseWithOptions.
+var reparse = func(doc string, scripting bool) (*xhtml.Node, error) {
+	return xhtml.ParseWithOptions(strings.NewReader(doc), xhtml.ParseOptionEnableScripting(scripting))
+}
+
 func hostileIn(doc string, scripting bool) bool {
-	root, err := xhtml.ParseWithOptions(strings.NewReader(doc), xhtml.ParseOptionEnableScripting(scripting))
+	root, err := reparse(doc, scripting)
 	if err != nil {
 		return true
 	}
