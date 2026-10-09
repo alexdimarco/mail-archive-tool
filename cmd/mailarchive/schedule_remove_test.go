@@ -130,18 +130,20 @@ func TestScheduleRemoveTargetsTheNamedEntry(t *testing.T) {
 }
 
 // covers: MA-455, R14, R18, S14
-// A descriptor that cannot be read is never deleted: nothing in it says whose
-// it is, and `schedule` writes it for a backup under any -name. So a backup
-// removal that leaves one names its path and the remedy, and `status` keeps
-// reporting it. A backup installed through the real binary (sandboxed
-// scheduler) under a custom -name, and one under the archive's default name,
-// each have their descriptor cut short and are removed — `-name NAME -out X
-// -remove` and `-out X -remove`: the entry is gone, the descriptor is
+// A descriptor that cannot be read goes with the archive's default-named
+// backup only: `-out X -remove` deletes it with that entry (568c992). Under a
+// custom -name nothing in it says it was that backup's — `schedule` writes it
+// for a backup under any -name — so `-name NAME -out X -remove` leaves it, names
+// its path and the remedy, and `status` keeps reporting it. Through the real
+// binary (sandboxed scheduler): a backup under a custom -name has its
+// descriptor cut short and is removed: the entry is gone, the descriptor is
 // byte-identical, stdout names the file, "delete it" and -install, and `status`
 // (on a folder with no manifest or run record yet) reports the file and its
 // remedy instead of refusing it as "no archive" or saying no schedule is
-// recorded. The positive twin: with a readable descriptor the same custom-name
-// removal deletes it and names nothing left behind.
+// recorded. A backup under the archive's default name, its descriptor cut
+// short, is removed by `-out X -remove` together with the descriptor, and
+// nothing is named as left behind. The positive twin: with a readable
+// descriptor the custom-name removal deletes it and names nothing left behind.
 func TestScheduleRemoveNamesAnUnreadableDescriptorItLeaves(t *testing.T) {
 	sandboxScheduler(t)
 	const custom = "nightly-mail-ma455"
@@ -178,9 +180,10 @@ func TestScheduleRemoveNamesAnUnreadableDescriptorItLeaves(t *testing.T) {
 		name    string
 		install string // -name at install ("" = the archive's default)
 		remove  func(out string) []string
+		goes    bool // the unreadable descriptor goes with the removal
 	}{
-		{"custom -name", custom, func(out string) []string { return []string{"schedule", "-name", custom, "-out", out, "-remove"} }},
-		{"default -name", "", func(out string) []string { return []string{"schedule", "-out", out, "-remove"} }},
+		{"custom -name", custom, func(out string) []string { return []string{"schedule", "-name", custom, "-out", out, "-remove"} }, false},
+		{"default -name", "", func(out string) []string { return []string{"schedule", "-out", out, "-remove"} }, true},
 	} {
 		t.Run(leg.name, func(t *testing.T) {
 			out := t.TempDir()
@@ -201,6 +204,16 @@ func TestScheduleRemoveNamesAnUnreadableDescriptorItLeaves(t *testing.T) {
 			}
 			if schedule.Query(name) == schedule.Installed {
 				t.Errorf("the backup %s is still installed", name)
+			}
+			if leg.goes {
+				// The archive's default-named schedule: the descriptor goes with it.
+				if _, err := os.Stat(path); !os.IsNotExist(err) {
+					t.Errorf("an unreadable descriptor outlived the archive's default-named schedule, so status and -install still point at a schedule that is gone (stat: %v)", err)
+				}
+				if strings.Contains(stdout, "Left in place") {
+					t.Errorf("a removal that took the descriptor with it names a leftover:\n%s", stdout)
+				}
+				return
 			}
 			if after, err := os.ReadFile(path); err != nil || string(after) != string(broken) {
 				t.Errorf("the removal changed or deleted the unreadable descriptor, which records no name it can trust (%v)", err)

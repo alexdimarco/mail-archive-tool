@@ -18,15 +18,15 @@ import (
 // which still names the archive's real, running schedule for `status` — exactly
 // as it was. The positive twin is the descriptor's own name, which is removed
 // together with the descriptor. A descriptor that cannot be read at all (bad
-// JSON, as a hand edit leaves it) says nothing about whose it is — Install
-// writes it for a backup under any -name — so it is never deleted: it stays,
-// byte for byte, when the archive's verify is removed, when its backup is
-// removed under the default name (the entry `-out X -remove` falls back to),
-// and when a backup installed under a custom -name is removed, and
-// UnreadableDescriptor names it each time so the caller can point the
-// operator at it. The scheduler is sandboxed: HOME is a temp dir and a fake
-// launchctl is first on PATH for launchd, and the crontab seams stand in on
-// cron hosts.
+// JSON, as a hand edit leaves it) records no one's schedule, so it goes with the
+// archive's DEFAULT-named schedule — the entry `-out X -remove` falls back to
+// when it cannot read the descriptor — and stays, byte for byte, when another
+// entry of the archive is removed: its verify, or a backup installed under a
+// custom -name (Install writes the descriptor for that one too, so nothing in
+// the file says it was not that entry's). Each time it stays,
+// UnreadableDescriptor names it so the caller can point the operator at it. The
+// scheduler is sandboxed: HOME is a temp dir and a fake launchctl is first on
+// PATH for launchd, and the crontab seams stand in on cron hosts.
 func TestRemoveIfInstalledKeepsAnotherSchedulesDescriptor(t *testing.T) {
 	switch runtime.GOOS {
 	case "darwin", "linux", "freebsd", "openbsd", "netbsd":
@@ -89,9 +89,10 @@ func TestRemoveIfInstalledKeepsAnotherSchedulesDescriptor(t *testing.T) {
 		for _, leg := range []struct {
 			name   string
 			backup func(out string) string // the backup's -name
+			goes   bool                    // the unreadable descriptor goes with the backup's removal
 		}{
-			{"default -name", DefaultNameFor},
-			{"custom -name", func(string) string { return "nightly-mail-ma455" }},
+			{"default -name", DefaultNameFor, true},
+			{"custom -name", func(string) string { return "nightly-mail-ma455" }, false},
 		} {
 			t.Run(leg.name, func(t *testing.T) {
 				out := t.TempDir()
@@ -137,8 +138,8 @@ func TestRemoveIfInstalledKeepsAnotherSchedulesDescriptor(t *testing.T) {
 				}
 				kept("removing the verify entry")
 
-				// The archive's backup, under whatever -name it was installed with:
-				// removed, and the descriptor still kept.
+				// The archive's backup: removed. Under the default name the
+				// unreadable descriptor goes with it; under a custom -name it stays.
 				removed, err = RemoveIfInstalled(backup)
 				if err != nil {
 					t.Fatal(err)
@@ -147,7 +148,16 @@ func TestRemoveIfInstalledKeepsAnotherSchedulesDescriptor(t *testing.T) {
 				if Query(backup.Name) == Installed {
 					t.Errorf("the backup %s is still installed", backup.Name)
 				}
-				kept("removing the backup " + backup.Name)
+				if !leg.goes {
+					kept("removing the backup " + backup.Name)
+					return
+				}
+				if _, err := os.Stat(path); !os.IsNotExist(err) {
+					t.Errorf("an unreadable descriptor outlived the archive's default-named schedule, so status and -install still point at a schedule that is gone (stat: %v)", err)
+				}
+				if got := UnreadableDescriptor(out); got != "" {
+					t.Errorf("after the default-named removal, UnreadableDescriptor still names %q", got)
+				}
 			})
 		}
 	})

@@ -647,18 +647,16 @@ func cronBlockOut(crontab, marker string) string {
 }
 
 // Remove uninstalls a previously installed schedule by name, then its wrapper,
-// its XML definition and each of the archive's descriptors that records THIS
-// schedule: the backup's descriptor goes with the backup's entry, the verify
-// descriptor with the verify's, never one with the other's. A descriptor naming
-// another schedule (the archive's backup, when a verify entry is removed) still
-// describes a running schedule that `status` watches, so it is kept. A
-// descriptor that exists but cannot be read (a hand edit, bad JSON, an invalid
-// name) is never deleted: nothing in it says whose it is — a backup installed
-// under any -name writes the backup's, a verify under any -name the verify's —
-// so deleting it with this entry could take another schedule's record. It stays
-// for the operator to judge: the caller names it (UnreadableDescriptor,
-// UnreadableVerifyDescriptor and their remedies) and `status` keeps reporting
-// it.
+// its XML definition and each of the archive's descriptors that goes with THIS
+// schedule: the backup's descriptor with the backup's entry (descriptorGoesWith),
+// the verify descriptor with the verify's, never one with the other's. A
+// descriptor naming another schedule (the archive's backup, when a verify entry
+// is removed) still describes a running schedule that `status` watches, so it
+// is kept. A backup descriptor that exists but cannot be read goes with the
+// archive's default-named schedule only (MA-455); with any other entry it stays,
+// and so does a verify descriptor that cannot be read, with either entry. The
+// caller names a file left so (UnreadableDescriptor, UnreadableVerifyDescriptor
+// and their remedies) and `status` keeps reporting it.
 func Remove(s Spec) error {
 	var err error
 	switch runtime.GOOS {
@@ -675,7 +673,7 @@ func Remove(s Spec) error {
 	if err != nil {
 		return err
 	}
-	if descriptorRecords(s.Out, s.Name) {
+	if descriptorGoesWith(s.Out, s.Name) {
 		if err := RemoveDescriptor(s.Out); err != nil {
 			return err
 		}
@@ -686,17 +684,42 @@ func Remove(s Spec) error {
 	return nil
 }
 
+// descriptorGoesWith reports whether removing the schedule called name also
+// removes the archive's (backup) descriptor: when the descriptor records that
+// name, or when it exists but cannot be read (a hand edit, bad JSON, an invalid
+// name) and name is the archive's default name — the entry `-out X -remove`
+// falls back to when it cannot read the descriptor, whose own install wrote it.
+// Left behind, it would keep `status` and `-install` pointing at a schedule that
+// is gone. With any other name an unreadable descriptor stays: nothing in it
+// says it was that entry's (a backup under a custom -name writes it too), so the
+// caller names it with UnreadableDescriptorRemedy instead (MA-455).
+func descriptorGoesWith(out, name string) bool {
+	if out == "" {
+		return false
+	}
+	d, err := ReadDescriptor(out)
+	switch {
+	case err == nil:
+		return d.Name == name
+	case errors.Is(err, fs.ErrNotExist):
+		return false
+	default:
+		return name == DefaultNameFor(out)
+	}
+}
+
 // UnreadableDescriptorRemedy is what the operator does with the archive's
-// descriptor when it exists but cannot be read: re-installing the backup
-// schedule rewrites it, and once the archive has no backup schedule left
-// (-remove leaves the file in place) it is deleted by hand. A backup schedule is
-// any non-verify job: only those write this descriptor.
+// descriptor when it exists but cannot be read and -remove left it in place:
+// re-installing the backup schedule rewrites it, and once the archive has no
+// backup schedule left it is deleted by hand. A backup schedule is any
+// non-verify job: only those write this descriptor.
 const UnreadableDescriptorRemedy = "delete it if no backup schedule for this archive is installed, or re-run that schedule's `mailarchive schedule ... -install` to rewrite it"
 
 // UnreadableDescriptor returns the path of the archive's descriptor when the
-// file exists but cannot be read, and "" otherwise. Remove never deletes such a
-// file, so a caller that has just removed a backup schedule names it with
-// UnreadableDescriptorRemedy: only the operator can tell whose it was.
+// file exists but cannot be read, and "" otherwise. Remove deletes such a file
+// only with the archive's default-named schedule (descriptorGoesWith), so a
+// caller that has just removed a backup under another name names what is left
+// with UnreadableDescriptorRemedy: only the operator can tell whose it was.
 func UnreadableDescriptor(out string) string {
 	if out == "" {
 		return ""
@@ -719,8 +742,8 @@ const UnreadableVerifyDescriptorRemedy = "delete it if no verify schedule for th
 
 // UnreadableVerifyDescriptor returns the path of the archive's verify
 // descriptor when the file exists but cannot be read, and "" otherwise. Remove
-// never deletes such a file, so a caller that has just removed a verify
-// schedule names it with UnreadableVerifyDescriptorRemedy.
+// never deletes such a file (it goes with neither entry), so a caller that has
+// just removed a verify schedule names it with UnreadableVerifyDescriptorRemedy.
 func UnreadableVerifyDescriptor(out string) string {
 	if out == "" {
 		return ""
