@@ -896,7 +896,10 @@ Neither depends on rows 2–7, and catalog changes still land one at a time.
 |---|---|---|
 | g7-Q1 | How is a running export or graph record's `run_in_progress` judged? | By the lock holder's verb, as `2ff682f` did for verify. It is live only while the holder's verb is export or graph, or while the holder names no verb (status's own probe, or a binary older than `c19f429`). Counting those as live keeps a mixed-version install free of a false RED. New row MA-545 (§13.1) |
 | g7-Q2 | Does the Windows sharing-violation retry cover the other atomic renames? | Yes. The last-run record, the last-verify record, the history log and the sidecars go through `state`'s `replaceFile`, which gets the same bounded, Windows-only retry. Best-effort writes stay best-effort. MA-399 is extended |
-| g8-R2 | What happens to an unreadable descriptor left by a custom-named backup's removal? | It is never deleted, because the tool cannot tell whose it is. The removal prints its path and the remedy, and status keeps naming it. MA-455 is extended |
+| g8-R2 | What happens to an unreadable descriptor left by a custom-named backup's removal? | It is never deleted, because the tool cannot tell whose it is. The removal prints its path and the remedy, and status keeps naming it. MA-455 is extended. A default-named removal keeps 568c992's rule, restored in `5090706`: there the file goes with the default-named entry. Extending "never deleted" to that case would narrow MA-455's guarantee, so it is ESC-10 (§13.6) |
+| g8-Q6 | `55e449c` reads FB-4's name guard as two cross-kind refusals on every OS (a verify under the backup's name, a backup under the verify's name), with no one-verify-per-archive refusal. Is that the right reading? | Yes. A one-verify-per-archive refusal would block the residual's recovery (re-installing under the archive's own derived name) |
+| g8-Q7 | Keep `1f26d5c`'s skip encoder for FB-4's residual (a verify `-name` shared across archives on launchd and Task Scheduler) under MA-456? | Keep it. §0 rule 3 asks for an encoder wherever a test can show the open gap |
+| g8-Q8 | Should a verify schedule installed after the archive's last verify be exempt from `verify_stale` until two of its periods have passed? | Not adopted. It would flip MA-466's covering scenario (§0, rule 2). `b755a43` stands: the WARN still fires, says the schedule was installed after the last verify and has not run yet, and names a remedy that clears it (wait for the next run, or run `verify` now) |
 | g8-Q4 | Should MA-260's `-token-cache` requirement on Windows be relaxed? | No, keep requiring it. Relaxing it would change what an existing covering test asserts (§0, rule 2). It goes on the owner's low-priority list |
 | g8-Q5 | Should a legacy verify entry be removed automatically? | No, keep the hint. The name may by now hold another archive's verify |
 | g8-R3 | X6 was marked Met while MA-466's encoder was still open | Resolved by building FB-4 (MA-457, MA-458), which turns MA-466's encoder green. X6's text is not edited |
@@ -1044,3 +1047,9 @@ Neither depends on rows 2–7, and catalog changes still land one at a time.
     "min(200 MiB cap, budget)" now names the shared size cap that SG confirms.
 - **Unblocks:** EW-E2 once EW-E1 is built and RR-2b passes; EW-E4 (RR-3) once EW-E2 and
   EW-E3 are built.
+
+### 13.6 Escalation from the g8 branch
+
+| Id | The question for the owner | Recommended answer | Safe interim | Blocks |
+|---|---|---|---|---|
+| **ESC-10** (g8 review, issue 1; §13.3 g8-R2) | Should `schedule -out X -remove`, and the dashboard's remove, keep and name an unreadable backup descriptor, as a custom-named removal now does, instead of deleting it with the archive's default-named schedule? Adopting this narrows MA-455's existing guarantee and reverses 568c992's covering assertion (§0, rule 2) | Yes. One rule for every removal: never delete a descriptor the tool cannot read, because it cannot tell whose it is. Status names the file with the remedy | 568c992's rule, restored in `5090706`: the file goes with the default-named entry and stays, named, with any other entry. The residual: a damaged descriptor that was rewritten for a custom-named backup is deleted when a default-named entry for the same archive is removed | nothing |
