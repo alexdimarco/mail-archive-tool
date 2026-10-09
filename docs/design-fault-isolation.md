@@ -1,7 +1,7 @@
 # Design — fault isolation for capture: one bad item costs exactly that item
 
 **Revision:** 2 (2026-10-09). **BUILD STATUS:** approved with conditions, not built; owner
-rulings folded (`docs/owner-rulings-2026-10-09.md`); RR-6 addendum folded.
+rulings folded (`docs/owner-rulings-2026-10-09.md`); RR-6 addendum folded and re-verified.
 - **The gate.** The 10-lens pre-code review is filed as
   `docs/review-fault-isolation-predesign.md`. Verdict: **GO_WITH_CONDITIONS**. Findings: 114
   found, 111 confirmed, 3 refuted. No blocker survived the rescue.
@@ -10,6 +10,13 @@ rulings folded (`docs/owner-rulings-2026-10-09.md`); RR-6 addendum folded.
   **GO_WITH_CONDITIONS**; no blocker survived the rescue. Its conditions **RR6-C1–RR6-C6** are
   folded, each marked `[RR-6 RR6-Cn]` where it lands, with new rows MA-540 and MA-541. RR6-C2
   and RR6-C3 amend ruling J4 (capture's overall cap before S3, and the size cap).
+- **RR-6 re-verification.** A fresh-eyes check of that fold failed RR6-C6 and found stale
+  text and two gate weakenings. Each fix is marked `[RR-6 RR6-Cn; re-verification]` with the
+  condition it completes (a bare `[re-verification]` inside a clause already marked), or
+  `[RR-6 re-verification]` where it brings stale text or an id into line. Both weakenings are
+  reverted and raised as owner rulings in the addendum: **RR6-OR1** (the size cap on capture
+  where no documented figure bounds it) and **RR6-OR2** (the breadth of capture's Graph folder
+  walk). Each has a safe interim, and neither blocks SG.
 - **This revision.** Revision 2 folds in the review's conditions **FC1–FC34**. Each change is
   marked in the text with its condition number, as `[FCn]`.
 - **Ruled.** The ten **owner rulings, OR1–OR10** (§11), are ruled in
@@ -145,17 +152,29 @@ invariant proposed in §2.1. Labels: **proven** (the named MA row, once green), 
     lock is taken [FC2].
   - A PST folder hierarchy is walked with a visited-NID set and a depth cap. **[RR-6 RR6-C6]**
     So is a Graph one: `Folders` keeps one visited folder-id set across the whole call and the
-    same depth cap of 300 (§4.8.7).
-  - A Graph download is bounded by an **idle timeout** (no bytes for 2 min), an overall cap
-    (2 h) and a size cap [FC21], not by a 10-minute wall clock. **[RR-6 RR6-C2]** For capture
-    the 2 h cap lands in S3, with the `Retry-After` clamp and the breakers; until then capture's
-    overall cap stays today's 10 minutes. **[RR-6 RR6-C3]** The size cap's figure is confirmed in
-    SG, before SG code (§4.8.6). If Microsoft's documentation cannot bound a stored item, or the
-    limit later rises, the cap is an open condition, not accepted. Before S3, a body over the
-    cap, like any other download stop, fails the mailbox through today's error path.
+    same depth cap of 300 (§4.8.7). **[RR-6 RR6-C6; re-verification] Conditional:** a
+    `childFolders` response that invents fresh folders at every level is bounded in depth, and
+    per loop by the page cap, but not in total, so a misbehaving endpoint can keep one walk
+    going for as long as it answers. That is an **open gap, not accepted**, encoded by
+    MA-541's breadth case as a skip encoder citing R10 (owner ruling RR6-OR2).
+  - A Graph download is bounded by an **idle timeout** (no bytes for 2 min), a `$value` header
+    timeout, an overall cap and a size cap [FC21]. **[RR-6 RR6-C2; re-verification]** The
+    overall cap is 2 h for the copy export from E1, and for capture from S3, where it lands
+    with the `Retry-After` clamp and the breakers and replaces today's 10-minute wall clock.
+    Until S3, capture's overall cap is that 10-minute wall clock. **[RR-6 RR6-C3]** The size
+    cap's figure is confirmed in SG, before SG code, at or above the largest `$value` a stored
+    Exchange Online item can produce (§4.8.6). Before S3, a body over the cap, like any other
+    download stop, fails the mailbox through today's error path. **[RR-6 RR6-C3;
+    re-verification]** The cap reaches capture only at a figure that confirmation bounds.
+    Where none does, capture keeps today's uncapped read, so its download is bounded by time
+    only: an open gap, not accepted (owner ruling RR6-OR1's safe interim, §4.8.6). A cap that
+    reaches capture holds a legal item only while Microsoft's documented limit stays at or
+    below it (§4.8.6).
   - `Retry-After` sleeps are clamped (≤60 s each, ≤5 min per item) until F17 lands [FC10]
     (F17 is this design's slice GF17, [ruling workspace Q15]). The clamp lands in S3; until
-    then capture's 10-minute overall cap bounds these sleeps [RR-6 RR6-C2].
+    then capture's 10-minute overall cap bounds these sleeps [RR-6 RR6-C2]. **[RR-6 RR6-C1;
+    re-verification]** The `$value` header timer never runs during these sleeps: it times each
+    HTTP attempt, from sending the request to its response headers (§4.8.6).
   - A Graph listing that repeats a `nextLink`, or leaves the client's base host, stops. This
     holds in **every** paging loop, `Folders` included [FC21]. **[ruling J4]** The repeat
     set and the page cap hold in every loop from SG on. The host/path pin holds in the
@@ -179,13 +198,16 @@ invariant proposed in §2.1. Labels: **proven** (the named MA row, once green), 
     In those cases the record stays `running` and `status` reports `run_never_finished`.
   - **[FC10] Wall-clock bound.**
     - Transport faults cost at most 30 minutes per mailbox plus one in-flight item.
-      **[RR-6 RR6-C4] Conditional:** this holds only with a failing control request (§4.8.5).
-      - With a healthy control request the bound is per item only (the header timer of at least
-        2 min, idle 2 min, the overall cap), and every known-poison item pays its timer on every
-        run.
+      **[RR-6 RR6-C4] Conditional:** this holds only with a failing control request (§4.8.5),
+      and only for counted faults.
+      - **[RR-6 RR6-C4; re-verification]** Known poison never counts, whatever the control
+        request returns. Every known-poison item therefore pays its timer on every run,
+        outside the 30 minutes, even when the control request fails.
+      - With a healthy control request nothing trips, and the bound is per item only (the
+        header timer of at least 2 min, idle 2 min, the overall cap).
       - A mailbox whose `$value` stalls while its listings answer (a conversion incident, or
         items that always stall) therefore costs up to K × the item timer per run. K is the
-        number of such items, and it can grow over the archive's life.
+        number of such items, known poison included, and it can grow over the archive's life.
       - This is an **open condition, not accepted.** A probe-immune time budget would reopen
         §8's hostile-sender wedge, and a ledger-driven limit on retries would narrow P5 and R1's
         added sentence ([ruling J7]).
@@ -198,7 +220,8 @@ invariant proposed in §2.1. Labels: **proven** (the named MA row, once green), 
     - Two consecutive mailboxes tripping stop the run.
     - The desktop Archive now has no mid-run cancel. That is stated here, not hidden.
 
-  **Proven:** MA-314, MA-317, MA-322, MA-540, MA-541 [RR-6]. **Conditional:**
+  **Proven:** MA-314, MA-317, MA-322, MA-540, MA-541 [RR-6], except for the conditions below
+  [RR-6 RR6-C6; re-verification]. **Conditional:**
   - **Depth cap.** The cap of 300 assumes no genuine store nests deeper. It matches the
     folder-hierarchy depth limit that Exchange Online is understood to publish (300).
     - That figure is an assumption. S2a confirms it against Microsoft's documentation and the
@@ -207,6 +230,20 @@ invariant proposed in §2.1. Labels: **proven** (the named MA row, once green), 
     - **[RR-6 RR6-C6]** For a Graph mailbox, SG confirms the figure against Microsoft's
       documentation before SG code, because SG applies the cap to capture's `Folders` first.
       There a deeper level fails the mailbox loudly; no level is dropped silently.
+    - **[RR-6 RR6-C6; re-verification]** The confirmation also fixes how Exchange counts
+      levels, and MA-541's at-cap chain is built to that count. If it gives a higher figure,
+      the cap is that figure, for capture and for S2a. If it gives none, capture's `Folders`
+      carries no depth cap until a figure is bounded, as today's walk carries none (the rule
+      of owner ruling RR6-OR1's safe interim). The visited set still ships, an endless chain
+      of fresh ids is then an open gap, not accepted, and MA-541's over-depth case is a skip
+      encoder citing MA-541.
+  - **[RR-6 RR6-C6; re-verification] Graph folder breadth.** A `childFolders` response that
+    invents fresh folders at every level is not bounded in total: an open gap, not accepted,
+    encoded by MA-541's breadth case as a skip encoder citing R10 (owner ruling RR6-OR2).
+  - **[RR-6 RR6-C3; re-verification] Size cap.** The cap reaches capture only at a figure SG's
+    confirmation bounds, and it holds a legal item only while Microsoft's documented limit
+    stays at or below it. Where no figure bounds it, capture's download is bounded by time
+    only (owner ruling RR6-OR1, §4.8.6).
   - **Windows.** The special-file guard is proven on Unix only. On Windows it rests on the FC1
     classifier (§4.5).
 - **P4 — Every fault is recorded durably, with a reason, a scope, a class and a locator.**
@@ -631,7 +668,7 @@ decision. This is how "terminal" coexists with H3.
 |---|---|---|---|---|---|
 | `fetch-failed` | Graph: an HTTP response with a Graph error code, e.g. 500 `ErrorMimeContentConversionFailed`, or another 4xx | item | fillable | next item | no (item-class) |
 | `fetch-transport` | Graph: no response, connection error, 429/503 after `get`'s retries, 502/504 | item | fillable | next item | **yes**, unless known poison [FC10] |
-| `fetch-timeout` | Graph: idle timeout or overall cap (walk context still live) | item | fillable | next item | **yes**, unless known poison [FC10] |
+| `fetch-timeout` | Graph: SG's typed idle, `$value` header or overall timeout (walk context still live) [RR-6 RR6-C1; re-verification] | item | fillable | next item | **yes**, unless known poison [FC10] |
 | `fetch-too-large` [FC21] | Graph: the MIME body exceeds the shared download's size cap | item | terminal | next item; never truncated | no |
 | `vanished-at-fetch` | Graph 404 / `ErrorItemNotFound` | item | fillable, self-closing (first sighting makes the run partial, [ruling OR4]) | not retried this run | no |
 | `refresh-failed` | any source [FC5]: a degraded capture held back by the KEEP guard (P15), or a Graph Full-mode fault on an item whose Message-ID already has a same-token record | item | info | next item | as its transport class |
@@ -1175,8 +1212,9 @@ so they are built once, in a slice **SG**. SG lands before S3 and before the ext
 design's E1. Which design owns it is owner ruling **OR9**. **[ruling OR9 = J4]** This design
 owns SG, as a standalone slice; the extraction design's E1 depends on SG, not on S3. Lenses
 3, 6, 7 and 8 re-ran on SG's capture-side changes before SG code (RR-6). Its addendum is
-filed (GO_WITH_CONDITIONS), and its conditions RR6-C1–RR6-C6 are folded. The extraction
-design's E1 keeps its own short adversarial note.
+filed (GO_WITH_CONDITIONS), and its conditions RR6-C1–RR6-C6 are folded and re-verified; the
+re-verification raised owner rulings RR6-OR1 and RR6-OR2, whose safe interims block nothing.
+The extraction design's E1 keeps its own short adversarial note.
 - `statusErr` becomes `*graph.StatusError{Code int, GraphCode string, Text string}`.
   - `GraphCode` is parsed from `error.code`.
   - `Text` is bounded.
@@ -1379,9 +1417,12 @@ recursion carries the visited folder-id set and the depth cap (§4.8.7) [RR-6 RR
   - 25 known-poison 504s from run 1 → run 2 walks past them;
   - 25 consecutive per-item timeouts with a healthy control → no trip.
 - **Thresholds.** Every threshold in this design is fixed by design in this revision: 25, 50%
-  of 50, 30 min, 50 local, 100 PST rows, depth 300, 1000/1000/100 ledger caps, 2 min, 2 h, the
-  size cap, `Retry-After` clamps. Operator-tunable settings are an operability-backlog item.
-  The breaker and timeout messages print the value that fired.
+  of 50, 30 min, 50 local, 100 PST rows, depth 300 (the figure SG confirms), 1000/1000/100
+  ledger caps, 2 min idle, the `$value` header window (2 min, never below the idle window),
+  2 h overall (capture's 10 minutes until S3), the size cap (the figure SG confirms, 256 MiB or
+  higher), the 100 000-page cap, `Retry-After` clamps [RR-6 re-verification].
+  Operator-tunable settings are an operability-backlog item. The breaker, timeout and guard
+  messages print the value that fired.
 
 #### 4.8.6 Download bounds (F9.5, P3)
 
@@ -1393,8 +1434,14 @@ recursion carries the visited folder-id set and the depth cap (§4.8.7) [RR-6 RR
   - **[RR-6 RR6-C1] Typed stops, never a cancel.** `MIMETo` runs its idle, header and overall
     timers itself, on a child context of the caller's.
     - While the caller's context is live, every stop of its own returns a typed
-      `*graph.TimeoutError{Kind: idle|header|overall, Limit, MessageID}`. That includes a stop
-      that lands inside `get`'s `Retry-After` select (`graph.go:555-557`).
+      `*graph.TimeoutError{Kind: idle|header|overall, Limit, MessageID}`. That includes an
+      overall stop that lands inside `get`'s `Retry-After` select (`graph.go:555-557`).
+    - **[RR-6 RR6-C1; re-verification] What each timer measures.** The header timer times
+      each HTTP attempt, from sending the request to its response headers, and starts again on
+      the next attempt. It does not run during `get`'s `Retry-After` sleeps, so a throttled
+      item waits as long as the overall cap allows, as it does today. The idle timer runs only
+      while a body is read. Only the overall cap and the caller's context bound the whole call,
+      sleeps included. MA-540's `Retry-After` twin asserts this.
     - The error names the message and the limit that fired (MA-98, X2). It never unwraps to
       `context.Canceled` or `context.DeadlineExceeded`.
     - Why: a plain cancel surfaces as `context.Canceled`, which shipped capture reads as an
@@ -1432,8 +1479,26 @@ recursion carries the visited folder-id set and the depth cap (§4.8.7) [RR-6 RR
     the confirmation requires it.
   - **Early refusal.** A response whose `Content-Length` exceeds the cap is refused before its
     body is read, so an over-cap item is not downloaded again on every run.
-  - If the documentation cannot bound a stored item, or the limit later rises, the cap is an
-    open condition, not accepted, stated at P3 and §12.
+  - ~~If the documentation cannot bound a stored item, or the limit later rises, the cap is an
+    open condition, not accepted, stated at P3 and §12.~~ **[RR-6 RR6-C3; re-verification]**
+    That branch shipped the cap to capture where no figure bounds it, so an item that today's
+    uncapped `io.ReadAll` (`graph.go:505`) archives could fail its mailbox on every scheduled
+    run before S3 and stay a terminal gap after it. It is reverted, and the choice is owner
+    ruling **RR6-OR1** (review addendum). Its safe interim:
+    - **Only a bounded figure reaches capture.** If the documentation cannot bound a stored
+      item, `Client.MIME` passes no size cap, as today, and the copy export alone carries the
+      cap (256 MiB) from E1. Capture's download is then bounded by time only (the idle,
+      header and overall timers), and its memory by §3 N9's pre-existing bound of
+      whole-message reads.
+    - That missing cap is an open gap, not accepted, stated at P3, §8 and §12. While capture
+      passes no cap, MA-540's over-cap case and MA-314's `fetch-too-large` gap case are skip
+      encoders citing their rows.
+    - **Conditional.** A cap that reaches capture holds a legal item only while Microsoft's
+      documented limit stays at or below it. SG records here the documentation it relied on
+      and the date it was checked. A later documented rise past the cap puts capture back on
+      the rule above from the release that learns of it. Until that release, an over-cap item
+      fails loudly, naming the item and the cap. That window is part of RR6-OR1's question;
+      until it is answered it is an open condition, not accepted.
   - An item over the cap is a `fetch-too-large` terminal gap from S3. **[RR-6 RR6-C3]** Before
     S3 it fails the mailbox through today's error path, and the typed error names the item and
     the cap.
@@ -1445,6 +1510,13 @@ recursion carries the visited folder-id set and the depth cap (§4.8.7) [RR-6 RR
     (`graph.go:137-140`), never lengthen it. The `$value` request therefore goes through its
     own base transport, without that 60 s bound, under the client's token source.
   - JSON requests and the token endpoint keep the shared 60 s.
+  - **[RR-6 RR6-C1; re-verification]** The header window is `MIMEHeaderTimeout`, default 2 min
+    and never below the idle window. It times each attempt (above).
+  - **[RR-6 RR6-C1; re-verification] The redirect seam.** The `$value` client is SG's own, not
+    the shared client that the extraction design's E1 hardens. E1's `CheckRedirect` (its
+    XC26) must be set on this client too, and E1's `Client.Timeout` (the F15 fix) must not be,
+    because it would bound the whole download. The extraction design's §4.5 and MA-528 say
+    so, and EW-E1's short adversarial note checks it.
 - **[FC10] `Retry-After` clamp.** Until F17 lands, `get`'s `Retry-After` sleeps are clamped to
   ≤ 60 s each and ≤ 5 min per item. Without the clamp, the 2 h cap would replace today's
   10-minute bound on those sleeps (`graph.go:494`, `556-569`). **[RR-6 RR6-C2]** The clamp
@@ -1482,7 +1554,8 @@ then mark every record past the stop gone (H2). The outcomes:
 - in `Folders`, the mailbox fails.
 
 **[RR-6 RR6-C5]** On capture's shipped path, MA-540 asserts the pre-S3 `Messages` stop (no
-`{k,gone}`), the page cap and its per-loop scope. MA-314's `Messages` gap case lands with S3.
+`{k,gone}`), the page cap and its per-loop scope, and the page cap in `Folders` [RR-6
+RR6-C5; re-verification]. MA-314's `Messages` gap case lands with S3.
 
 **[RR-6 RR6-C6] Folder hierarchy.** The guard bounds each paging loop, but `Folders` opens a
 new loop at every level, and the client builds each level's first URL (`graph.go:200-205`,
@@ -1494,11 +1567,17 @@ and no loop reaches the page cap. `Folders` also keeps two guards:
   walk.
 - **A depth cap of 300**, the Exchange hierarchy figure P3 uses, confirmed in SG (P3). A deeper
   level stops the walk with a typed error naming the cap, and the mailbox fails, as a `Folders`
-  repeat does.
+  repeat does. **[RR-6 RR6-C6; re-verification]** A chain exactly at the cap completes,
+  counted as the confirmation counts levels, and MA-541's at-cap twin asserts it. If the
+  confirmation gives a higher figure, the cap is that figure. If it gives none, `Folders`
+  carries no depth cap until one is bounded (P3).
 
 MA-541 asserts both. A response that invents fresh folders at every level is bounded in depth
 only, and in breadth only by the per-loop page cap. That is an open condition, not accepted
-(§8).
+(§8). **[RR-6 RR6-C6; re-verification]** It is stated at the claim it qualifies (P3, §12),
+and MA-541's breadth case encodes it as a skip encoder citing R10: a fake server that invents
+two fresh child folders at every level must see `Folders` return under a time guard. Whether
+to close it with a total-folder cap is owner ruling RR6-OR2.
 
 ### 4.9 Outcome: errors, exit codes, last-run record
 
@@ -1740,9 +1819,9 @@ case is labelled conditional.
 | P3 Windows reparse | FC1 classifier | MA-322 (synthetic FileMode table; unprivileged junction); MA-503, L row pending (OneDrive placeholder) [ruling J1] |
 | P3 cycle / depth | visited and depth guards | MA-317 |
 | P3 structural row breakers | message and sub-folder breakers (§4.4) | MA-316 |
-| P3 MIME idle, cap, size | `MIMETo` (§4.8.6) | MA-314 (idle, trickle, **overall cap firing**, size cap and its boundary) [FC32] [RR-6 RR6-C3]; MA-540 (typed stops through `RunGraph`, never a cancel) [RR-6 RR6-C1]; capture's 10-minute overall cap until S3: MA-98, unchanged [RR-6 RR6-C2] |
-| P3 nextLink, every loop | §4.8.7 | MA-314 (Messages and **Folders**, repeat and foreign host); MA-540 (capture's pre-S3 `Messages` stop with no `{k,gone}`, the page cap and its per-loop scope) [RR-6 RR6-C5] |
-| P3 Graph folder hierarchy | `Folders` visited folder-id set and depth cap (§4.8.7) | MA-541 [RR-6 RR6-C6] |
+| P3 MIME idle, cap, size | `MIMETo` (§4.8.6) | MA-314 (idle, trickle, **overall cap firing**, size cap and its boundary) [FC32] [RR-6 RR6-C3]; MA-540 (typed stops through `RunGraph`, never a cancel) [RR-6 RR6-C1]; capture's 10-minute overall cap until S3: MA-98, unchanged [RR-6 RR6-C2]; the header timer per attempt: MA-540's `Retry-After` twin; the size cap on capture only at a bounded figure: MA-540's over-cap case, a skip encoder while capture passes no cap (RR6-OR1) [RR-6 RR6-C1, RR6-C3; re-verification] |
+| P3 nextLink, every loop | §4.8.7 | MA-314 (Messages and **Folders**, repeat and foreign host); MA-540 (capture's pre-S3 `Messages` stop with no `{k,gone}`, the page cap and its per-loop scope) [RR-6 RR6-C5], and the page cap in `Folders` [RR-6 RR6-C5; re-verification] |
+| P3 Graph folder hierarchy | `Folders` visited folder-id set and depth cap (§4.8.7) | MA-541 (cycle, moved folder, depth and its at-cap twin) [RR-6 RR6-C6]; breadth: MA-541's skip encoder citing R10, an open gap (RR6-OR2) [RR-6 RR6-C6; re-verification] |
 | P3 Retry-After clamp | `get` clamp | MA-313 (new) |
 | P4 | `state.CaptureGap`, `ObserveGap`; `model.ReadGaps` → `state.GapClass`; `Load` sanitisation | MA-318, MA-323, MA-327 |
 | P5 | ledger separate from `Entries`/`byIdent`; §4.8.2 "no Add on failure" | MA-311, MA-324, MA-502 |
@@ -1787,8 +1866,8 @@ inside the manifest's atomic save.
 | Component | If lost | If compromised or corrupt | Fails | Operator sees |
 |---|---|---|---|---|
 | Capture-gap ledger | re-derived by the next walk; attempt counts reset | it can only add **false rows**, never suppress capture (P5). `Load` bounds, strips, caps the count, clamps times, maps an unknown class to terminal, and drops a bad or unknown token [FC14, FC16, FC17] | open (loud) | spurious rows. A row is cleared when its folder is next fully listed. A row of a token or folder that is no longer walked shows as "not attempted", never as stuck [FC14] |
-| Graph breaker | — | mis-tuned too eager: the mailbox fails loudly (exit 1), which is today's behaviour, and the message prints the threshold that fired. Too lax: more gaps, still capped, and the 30-minute time bound still applies [FC10]. **[RR-6 RR6-C4]** That bound holds only while the control request fails; with a healthy one a run's cost is per item (P3's open condition) | loud | `run_failed` RED or gap rows; `run_stuck` RED once a run outlasts its schedule period |
-| MIME idle watchdog / size cap | — | bug that kills progressing downloads: `fetch-timeout` gaps (loud). Never fires: bounded by the overall cap. A cap set too low: `fetch-too-large` terminal gaps (loud), never truncation. **[RR-6 RR6-C1]** Before S3 each of these fails the mailbox through today's error path, with the typed stop named, never read as a cancel | loud | gap rows or a slow run |
+| Graph breaker | — | mis-tuned too eager: the mailbox fails loudly (exit 1), which is today's behaviour, and the message prints the threshold that fired. Too lax: more gaps, still capped, and the 30-minute time bound still applies [FC10]. **[RR-6 RR6-C4]** That bound holds only while the control request fails; with a healthy one a run's cost is per item (P3's open condition). **[RR-6 RR6-C4; re-verification]** It never covers known poison, which pays its timer on every run whatever the control request returns | loud | `run_failed` RED or gap rows; `run_stuck` RED once a run outlasts its schedule period |
+| MIME idle watchdog / size cap | — | bug that kills progressing downloads: `fetch-timeout` gaps (loud). Never fires: bounded by the overall cap. A cap set too low: `fetch-too-large` terminal gaps (loud), never truncation. **[RR-6 RR6-C1]** Before S3 each of these fails the mailbox through today's error path, with the typed stop named, never read as a cancel. **[RR-6 RR6-C3; re-verification]** The cap reaches capture only at a figure the confirmation bounds; where none does, capture keeps today's uncapped read (RR6-OR1) | loud | gap rows or a slow run |
 | Recovery / metadata-only supersede | — | **[FC8]** a wrong match is prevented by the store-uid in every PST locator. A rebuilt store (`-outlook` scratch, `.ost`, or a store whose uid cannot be read) has no per-NID locators, only aggregates, so nothing can match across rebuilds. Within one store generation, NIDs and maildir unique names are unique. A supersede writes no file, so even a wrong match cannot damage a page | — | — |
 | Source-read containment | — | bug that refuses a legitimate file: a terminal gap (loud), never a silent drop. **[FC1]** On Windows a reparse file that is not a link is read, never classed info | loud | gap row with path |
 | Archive-root probe [FC12] | — | a false "unavailable" fails the run (exit 1, loud). A missed loss is still caught by the next 50-fault probe or by the checkpoint lock check | loud | §7.5 "archive location unavailable" |
@@ -1969,6 +2048,8 @@ That is **3 reads, 0 actions**.
   in `$value` alone, while listings still answer, is not an outage to the breaker. The control
   request succeeds, so nothing trips and each item pays its timer (P3's open condition). The
   night runs long, and `status` shows `run_stuck` RED if the run outlasts the schedule period.
+  **[RR-6 RR6-C4; re-verification]** Known-poison items pay theirs every night, whatever the
+  control request returns.
 - **Mailbox removed from the job.** Its gaps show as "never captured … not in recent runs".
   They stay listed, and they never escalate [FC14].
 
@@ -2048,7 +2129,7 @@ ledger inherits the manifest's mode. There is no new listener.
 | Hostile store supplier (Windows) | follow a junction out of the store, or hide mail behind reparse points | a junction or mount point is a directory link: recorded, not followed. A cloud or HSM placeholder is read, never silently dropped [FC1] |
 | Hostile store supplier | hang the run (FIFO) or discovery, crash it (cycle), or loop it (`.sbd` → root) | FIFO never opened, at discovery too [FC2]; cycle and depth bounded; directory links not followed (P3, P12) |
 | Hostile store supplier | mint unbounded records from a bogus or interleaved table (for example 99 bad rows then 1 good, repeated) | no record is minted for a row with nothing readable [FC7]. Duplicate and absent NIDs are structural and count toward the row breaker [FC9]. Ledger entries are capped over the archive's life (P13) |
-| Misbehaving or impersonated Graph endpoint (TLS is assumed; MITM is out of the model) | hide mail by returning 404s or 500s; hang a walk with a looping or foreign `nextLink`; stream without end | every hidden item is a **visible** gap. 500 storms run through, capped and loud. Transport storms trip the rate/time breaker (exit 1). A cyclic, foreign-host or over-long `nextLink` chain is stopped in **every** paging loop, `Folders` included. The bearer token is never sent off the base host. A body over the size cap is a terminal gap [FC21] from S3; before S3 it fails the mailbox through today's error path [RR-6 RR6-C3]. **[ruling J4]** In capture's loops the foreign-host stop comes with step SGc, behind the extraction review's XC25 gate; until then that case is an open gap, not accepted. **[RR-6 RR6-C6]** A cyclic or over-deep `childFolders` hierarchy is stopped by the visited folder-id set and the depth cap. One that invents fresh folders at every level is bounded in depth only: an open condition, not accepted |
+| Misbehaving or impersonated Graph endpoint (TLS is assumed; MITM is out of the model) | hide mail by returning 404s or 500s; hang a walk with a looping or foreign `nextLink`; stream without end | every hidden item is a **visible** gap. 500 storms run through, capped and loud. Transport storms trip the rate/time breaker (exit 1). A cyclic, foreign-host or over-long `nextLink` chain is stopped in **every** paging loop, `Folders` included. The bearer token is never sent off the base host. A body over the size cap is a terminal gap [FC21] from S3; before S3 it fails the mailbox through today's error path [RR-6 RR6-C3]. **[RR-6 RR6-C3; re-verification]** Where no documented figure bounds the cap, capture carries none, as today, and its body is bounded by time only: an open gap, not accepted (owner ruling RR6-OR1). **[ruling J4]** In capture's loops the foreign-host stop comes with step SGc, behind the extraction review's XC25 gate; until then that case is an open gap, not accepted. **[RR-6 RR6-C6]** A cyclic or over-deep `childFolders` hierarchy is stopped by the visited folder-id set and the depth cap. One that invents fresh folders at every level is bounded in depth only: an open condition, not accepted. **[RR-6 RR6-C6; re-verification]** It is stated at P3 and encoded by MA-541's skip encoder citing R10 (owner ruling RR6-OR2) |
 | Archive-writer (can write `-out`) | plant ledger entries or record fields to suppress capture, raise a permanent alarm, or redirect a write | suppression is impossible: the ledger is inert (P5). At most false rows. `Load` drops rows whose token is not in `Stores`, clamps future times and caps the count. A row whose folder is never walked shows as "not attempted", never stuck [FC14, FC16]. Supersede writes **no file**, so a planted `loc`/`path` cannot redirect a write [FC6, FC7]. `Load` drops a stray `Locator` or `RecoveredBy` |
 | Integrity/concurrency: a live mail client renaming or deleting files mid-read | lose mail silently | re-list once; otherwise a self-closing `vanished-during-read` gap. The lock still excludes concurrent archive writers |
 | Same-user local process racing a symlink swap between lstat/Readlink and open | read outside the store | **out of scope** (it already holds the user's rights). The final open is `O_NOFOLLOW` + fstat-regular on Unix, so only an intermediate-component swap remains. That swap is closed where the recommended `os.Root` open path is used [FC3] |
@@ -2058,7 +2139,7 @@ ledger inherits the manifest's mode. There is no new listener.
 The design touches untrusted-input parsing, symlink containment and the integrity of the go-back
 sweep. It **owes the adversarial pass** for S2a, S2b, SG and S3 (§10).
 
-## 9. Test plan (rows MA-310..MA-329, MA-501..MA-504, MA-540 and MA-541; allocated ids [ruling OR8 = J1])
+## 9. Test plan (rows MA-310..MA-329 and MA-501..MA-504, allocated ids [ruling OR8 = J1]; MA-540 and MA-541, reserved for RR-6 until recorded [RR-6 re-verification])
 
 All rows are tier **U** except MA-315 and MA-329, which walk the real fixtures and are tier
 **S**, and MA-503 and MA-504, which are tier **L**. Each row is a covers-mapped spec.
@@ -2068,6 +2149,16 @@ All rows are tier **U** except MA-315 and MA-329, which walk the real fixtures a
 run. They are rows of their own, not cases of MA-314, because the covers-map counts a row as
 covered once any test cites it: a primitive MA-314 test would otherwise stand in for a missing
 shipped-path test (FC33's reasoning).
+
+**[RR-6 re-verification] Ids and covers at SG time.**
+- The rulings log's §8.4, the allocation of record under J1, does not yet record the block
+  MA-540..MA-544. J1 lets a design cite only allocated ids, so until the log's owner records
+  that block the two ids are reserved, not allocated, and SG's catalog-first PR waits for the
+  record.
+- The covers-map refuses a marker that cites an id the catalog does not yet hold
+  (`assureblock/covers_map_test.go:59-61`, `139-142`). S46 lands with S1a, after SG, so the
+  SG-time markers of MA-314 and MA-540 cite their other ids, and S1a adds S46 to them. Their
+  Covers cells read "S46 (from S1a)".
 
 **[FC33] Split rows.** Rev 1's MA-320 and MA-324 each had a local half and a Graph half, and the
 covers-map counts a row as covered once any test cites it. They are therefore split into a
@@ -2103,9 +2194,9 @@ first.
 | MA-311 | U | Ledger inert on Graph: run 2 with POISON healed downloads it once; the gap closes; `Recovered=1`; exit-path nil. A record seeded for POISON as Terminal (the H3 anti-pattern, constructed in the test) is shown never re-fetched, documenting why gaps are not records | R1, R17, R2, S46 | make the fast path also skip ledger locators, or `Add` a Terminal record on failure → POISON never fetched |
 | MA-312 | U | Sweep safety (H2, [FC4]), six cases. (a) Full mode: the re-fetch of archived A2 fails → no `{k,gone}`, `Present` true, `LastSeen==runAt`. (b) Immutable-id comparable path: same. (c) A no-mid fetch failure in Inbox, with no PhysID match → the token's PhysID-less `sha:` records are not swept this run (a genuinely deleted no-mid message is **not** marked gone), and they are swept on the next clean run; a known-identity failure in Sent still lets a deleted Sent message be swept. (d) A message moved Inbox → Projects, then the Projects listing fails → no `{k,gone}` (the mailbox is not swept). (e) A moved no-mid message whose fetch fails, with immutable ids confirmed → stamped via PhysID, not gone. (f) Full mode, refs skipped because of the unwritable set → not gone. (g) [ruling OR10] A pre-v6, PhysID-less `mid:` record whose listing and parsed Message-IDs differ, and whose fetch fails in a walked folder → no `{k,gone}`; its sweep is deferred. Twin: a clean walk sweeps a deleted message (MA-207 unchanged) | R21, R1, S37, S46 | drop the `TouchSeen` loop or the PhysID stamp, or always `walked.Mark` → phantom gone in (a)–(f) |
 | MA-313 | U | Abort semantics and breaker. Parent ctx cancelled mid-download → no gap for that item, `context.Canceled`, `LastRun` cancelled. `$value` 401 → mailbox failed, exit-path error, ≤1 gap; **403** the same, per OR7 ([ruling OR7]); the token endpoint starting to return 401 `invalid_client` mid-walk → mailbox-fatal auth with `auth_remedy`, **no** gap [FC11]. 25 consecutive 503s plus a failing control request → breaker error naming the threshold that fired and the last status, no sweep, gaps ≤ 25; 24 then a success → no trip (twin). 25 consecutive 500 item-class failures → **no** trip. 404 → `vanished-at-fetch`, fetched once, not counted. **[FC10]:** 1 success per 10 attempts → trips on the rate bound; 25 known-poison 504s that already have gaps from run 1 → run 2 walks past them; 25 consecutive per-item timeouts while the control request succeeds → no trip; two consecutive tripped mailboxes → the run stops; a `Retry-After: 3600` → the sleep is clamped (≤ 60 s scaled) | R5, R12, R18, S46 | classify `context.Canceled` as an item gap → walk continues; count 500 as transport → trips; drop the control probe → the timeout case trips; classify `RetrieveError` as transport → 25 gaps |
-| MA-314 | U | MIME and listing bounds (scaled: idle 200 ms, cap 5 s, size cap 1 MiB). A server trickling 1 byte/50 ms for 1.5 s (beyond a 1 s wall clock) completes. A server stalling >200 ms mid-body → `fetch-timeout` gap, and the walk ctx is still live (the next item is fetched). A server that keeps streaming past the **overall cap** → `fetch-timeout` [FC32]. A body over the size cap → `fetch-too-large`, terminal, nothing written [FC21]. **[RR-6 RR6-C3]** A body exactly at the scaled cap completes; one byte more is refused with nothing returned; a response whose `Content-Length` exceeds the cap is refused before its body is read. A repeating `nextLink` ends the folder as `folder-list-failed`. A repeating `nextLink` in **Folders** → the mailbox fails, the walk terminates. A `nextLink` to a foreign host → refused, no bearer token sent [FC21]. **[RR-6 RR6-C2]** These primitive cases pass the scaled overall cap explicitly; capture's own overall cap until S3 is `Config.MIMETimeout`, which MA-98 asserts unchanged. The shipped-path cases are MA-540 and the folder-hierarchy cases MA-541 [RR-6]. **Slices [ruling J4]:** the row lands with SG (the trickle, stall, overall-cap and size-cap primitive cases, the size-cap boundary and `Content-Length` cases [RR-6 RR6-C3], and the repeat stop in `Folders`); its `fetch-timeout`, `fetch-too-large` and `folder-list-failed` gap cases land with S3, and its capture foreign-host case with SGc; until then each is a skip encoder citing MA-314 | R10, R17, S46 | restore a wall-clock deadline shorter than the trickle → trickle fails; remove the `nextLink` set or the host pin → test timeout / token sent; refuse at the cap itself → the at-cap case fails [RR-6 RR6-C3] |
-| MA-540 | U | [RR-6 RR6-C5, with RR6-C1 and RR6-C3] SG on the shipped capture path, through `RunGraph` on the fake Graph server. Two mailboxes; a healthy first run archives every message; then the case run (scaled: idle 200 ms, page cap 5, size cap 1 MiB, capture's overall cap 2 s). In mailbox 1 the case run meets one stop: (1) a repeating `nextLink` in `Messages` after its first page; (2) fresh `nextLink`s past the page cap in `Messages`; (3) a new item's `$value` that stalls mid-body past the idle window, or sends no headers within the header window, or trickles past the overall cap; (4) a new item's `$value` over the size cap. Each case expects: a typed error naming the stop, and for (3) and (4) the message and the limit, matching neither `context.Canceled` nor `context.DeadlineExceeded`; **zero** `{k,gone}` events and `Present` unchanged for every mailbox-1 record (none was deleted at the source); mailbox 2 walked; last-run `failed` (with `partial: true` from S1b), never `cancelled`; the attention sidecar written; `RunGraph`'s error does not match `context.Canceled`, so `graph` exits 1 (`main.go:1140-1145`). Before S3 the stop fails mailbox 1, which is today's error path; from S3 on it is MA-314's gap case and the mailbox continues, and every assertion above still holds. (5) Both mailboxes, several folders each, whose total page count exceeds the page cap while every loop stays under it → the run completes with nil (the cap counts per loop). (6) A transport that returns `context.Canceled` for mailbox 1's `$value` while the parent context is live (fault injection, the second guard) → mailbox 1 failed, mailbox 2 walked, last-run `failed`, never `cancelled`, and `RunGraph`'s error does not match `context.Canceled`, so `graph` exits 1. Twins: headers that arrive after the scaled JSON request timeout but inside the header window → the item is archived; the parent context cancelled during mailbox 1's download → last-run `cancelled`, `graph` exits 0 (X1's handled interrupt), mailbox 2 not walked | R10, R17, R18, R21, S37, S46 | end the listing quietly on a stop → phantom `{k,gone}` events appear; return the raw transport error from `MIMETo`'s idle stop → the typed-error assertion fails; drop `RunGraph`'s `ctx.Err()` test → case (6) records `cancelled` and exits 0; keep the page count on the `Client` → case (5) fails |
-| MA-541 | U | [RR-6 RR6-C6] Graph folder hierarchy, the Graph twin of MA-317, on the fake Graph server. A `childFolders` response that lists an ancestor (A → B → A) → `Folders` returns under a 1 s guard with A and B each listed once, and no second `childFolders` request is made for A. A chain of fresh folder ids 301 levels deep → the mailbox fails with the typed depth error naming the cap, under a time guard. A folder listed under two parents, as when it moves during the walk → listed once, and the walk completes. Twin: a healthy three-level tree → every folder listed once, nil | R10, R17 | remove the visited set → the guard times out; remove the depth cap → the 301-deep chain does not fail; fail on a revisit → the moved-folder case fails |
+| MA-314 | U | MIME and listing bounds (scaled: idle 200 ms, cap 5 s, size cap 1 MiB). A server trickling 1 byte/50 ms for 1.5 s (beyond a 1 s wall clock) completes. A server stalling >200 ms mid-body → `fetch-timeout` gap, and the walk ctx is still live (the next item is fetched). A server that keeps streaming past the **overall cap** → `fetch-timeout` [FC32]. A body over the size cap → `fetch-too-large`, terminal, nothing written [FC21]. **[RR-6 RR6-C3]** A body exactly at the scaled cap completes; one byte more is refused with nothing returned; a response whose `Content-Length` exceeds the cap is refused before its body is read. A repeating `nextLink` ends the folder as `folder-list-failed`. A repeating `nextLink` in **Folders** → the mailbox fails, the walk terminates. A `nextLink` to a foreign host → refused, no bearer token sent [FC21]. **[RR-6 RR6-C2]** These primitive cases pass the scaled overall cap explicitly; capture's own overall cap until S3 is `Config.MIMETimeout`, which MA-98 asserts unchanged. The shipped-path cases are MA-540 and the folder-hierarchy cases MA-541 [RR-6]. **Slices [ruling J4]:** the row lands with SG (the trickle, stall, overall-cap and size-cap primitive cases, the size-cap boundary and `Content-Length` cases [RR-6 RR6-C3], and the repeat stop in `Folders`); its `fetch-timeout`, `fetch-too-large` and `folder-list-failed` gap cases land with S3, and its capture foreign-host case with SGc; until then each is a skip encoder citing MA-314. **[RR-6 RR6-C3; re-verification]** While capture passes no size cap (owner ruling RR6-OR1's safe interim), the `fetch-too-large` gap case stays a skip encoder citing MA-314 | R10, R17, S46 (from S1a) | restore a wall-clock deadline shorter than the trickle → trickle fails; remove the `nextLink` set or the host pin → test timeout / token sent; refuse at the cap itself → the at-cap case fails [RR-6 RR6-C3] |
+| MA-540 | U | [RR-6 RR6-C5, with RR6-C1 and RR6-C3] SG on the shipped capture path, through `RunGraph` on the fake Graph server. Two mailboxes; a healthy first run archives every message; then the case run (scaled: idle 200 ms, `$value` header window 600 ms, JSON request timeout 100 ms [RR-6 RR6-C5; re-verification], page cap 5, size cap 1 MiB, capture's overall cap 2 s). In mailbox 1 the case run meets one stop: (1) a repeating `nextLink` in `Messages` after its first page; (2) fresh `nextLink`s past the page cap in `Messages`, and, as a case of its own, in `Folders` [RR-6 RR6-C5; re-verification]; (3) a new item's `$value` that stalls mid-body past the idle window, or sends no headers within the header window, or trickles past the overall cap; (4) a new item's `$value` over the size cap. Each case expects: a typed error naming the stop, and for (3) and (4) the message and the limit, matching neither `context.Canceled` nor `context.DeadlineExceeded`; **zero** `{k,gone}` events and `Present` unchanged for every mailbox-1 record (none was deleted at the source); mailbox 2 walked; last-run `failed` (with `partial: true` from S1b), never `cancelled`; the attention sidecar written; `RunGraph`'s error does not match `context.Canceled`, so `graph` exits 1 (`main.go:1140-1145`). Before S3 the stop fails mailbox 1, which is today's error path; from S3 on a `Messages` or `$value` stop is MA-314's gap case, the typed error is the gap's detail, the mailbox continues, and every other assertion above still holds [RR-6 RR6-C5; re-verification]. A `Folders` stop fails the mailbox before and after S3. (5) Both mailboxes, several folders each, whose total page count exceeds the page cap while every loop stays under it → the run completes with nil (the cap counts per loop). (6) A transport that returns `context.Canceled` for mailbox 1's `$value` while the parent context is live (fault injection, the second guard) → before S3 mailbox 1 fails; from S3 that item is a `fetch-transport` gap (§4.8.1 rule 4) and mailbox 1 continues [RR-6 RR6-C5; re-verification]; in both, mailbox 2 walked, last-run `failed` (with `partial: true` from S1b), never `cancelled`, and `RunGraph`'s error does not match `context.Canceled`, so `graph` exits 1. Twins: headers that arrive after the scaled JSON request timeout but inside the header window → the item is archived; **[RR-6 RR6-C1; re-verification]** a 503 whose `Retry-After` sleep is longer than the header window but ends inside capture's overall cap, then a prompt 200 → the item is archived (the header timer times each attempt and does not run in the sleep); the parent context cancelled during mailbox 1's download → last-run `cancelled`, `graph` exits 0 (X1's handled interrupt), mailbox 2 not walked. **[RR-6 RR6-C5; re-verification] The exit code.** `graph` takes no base-URL setting and cannot reach the fake server, so its exit mapping (`main.go:1140-1145`) is factored so a test can call it, and a test in `cmd/mailarchive` runs `RunGraph` on the same fake server and passes its error through that mapping: exit 1 for every stop case and case (6), exit 0 for the parent-cancel twin. **[RR-6 RR6-C3; re-verification]** While capture passes no size cap (owner ruling RR6-OR1's safe interim), case (4) is a skip encoder citing MA-540 | R10, R17, R18, R21, S37, S46 (from S1a) | end the listing quietly on a stop → phantom `{k,gone}` events appear; return the raw transport error from `MIMETo`'s idle stop → the typed-error assertion fails; drop `RunGraph`'s `ctx.Err()` test → case (6) records `cancelled` and exits 0; keep the page count on the `Client` → case (5) fails; drop the page cap from `Folders` → its page-cap case runs into the time guard; run the header timer across `get`'s sleeps → the `Retry-After` twin fails [RR-6 RR6-C1, RR6-C5; re-verification] |
+| MA-541 | U | [RR-6 RR6-C6] Graph folder hierarchy, the Graph twin of MA-317, on the fake Graph server. A `childFolders` response that lists an ancestor (A → B → A) → `Folders` returns under a 1 s guard with A and B each listed once, and no second `childFolders` request is made for A. A chain of fresh folder ids 301 levels deep (one past the cap) → the mailbox fails with the typed depth error naming the cap, under a time guard. A folder listed under two parents, as when it moves during the walk → listed once, and the walk completes. Twins: a healthy three-level tree → every folder listed once, nil; **[RR-6 RR6-C6; re-verification]** a chain exactly at the cap (300 levels, counted as SG's confirmation counts them) → completes, every folder listed once, nil. **[RR-6 RR6-C6; re-verification] Breadth, an open gap (owner ruling RR6-OR2):** a fake server that invents two fresh child folders at every level → `Folders` returns under a time guard; a skip encoder citing R10 until a total-folder cap lands. If SG's confirmation gives no depth figure, the over-depth case is a skip encoder citing MA-541 until one is bounded (P3); a higher figure moves both chains with it | R10, R17 | remove the visited set → the guard times out; remove the depth cap → the over-depth chain does not fail; fail on a revisit → the moved-folder case fails; count one level too many → the at-cap twin fails [RR-6 RR6-C6; re-verification] |
 | MA-315 | S | PST per-row isolation (H1, [FC7]): copies of `support.pst` with the message block at #0, #3 or #11 XOR-corrupted each yield **16** real messages plus **one** `pst-message-unreadable` ledger gap whose locator is `pst-nid:<store-uid>/<nid>` (or one `pst-messages-unreadable` aggregate if the store-uid cannot be read) and **no** stub record or page; the walk terminates under a 10 s guard. In the 1656-mutation sweep of block #0 (the F23 PoC), every mutation yields 17 items: 17 real, or 16 real + 1 gap. The F23 emulation gave 1563 at 17 and 93 at 16. No mutation aborts or hangs the walk. A differential check: on the uncorrupted fixture the copied loops yield exactly go-pst's own folder and message sets [FC30]. Twin: the uncorrupted fixture yields 17, no gap | R10, R1, S46 | revert to the `MessageIterator` loop → yields 0/3/11; wrap `it.Next()` in `continue` → guard timeout; mint a stub record again → record count 17 |
 | MA-316 | U | Folder isolation: a corrupted PST sub-folder table row costs that sub-folder only (`folder-unreadable`), siblings walk; a `GetMessageTableContext` failure on one folder records `folder-unreadable` and its sub-folders still walk; 100 consecutive **structural** bad rows → one `folder-partially-read` with `Skipped`, no further entries. **[FC9]:** an interleaved table (99 bad rows, 1 duplicate or valid NID, repeated) → bounded ledger entries, no records; a 150-row run of **real** damaged nodes mid-folder → 150 gaps and every later row archived; a corrupt hierarchy table with 100+ bad rows → one `folder-partially-read`. **[FC32]:** a Graph listing page error in one folder → `folder-list-failed`, the next folder walks, no sweep; a maildir non-root `ReadDir` failure → `folder-unreadable`, siblings walk; an mbox open failure → `folder-unreadable`; an mbox mid-stream error → `folder-partially-read` with the count read; the Evolution walkers' folder errors → per-folder gaps | R10, R6, R1, S46 | use `GetSubFolders()` again → siblings lost; count case 3 in the breaker → rows after the damaged run lost; drop the duplicate-NID set → unbounded entries |
 | MA-317 | U | PST cycle/depth (F27): the PoC-patched fixture (child NID → root NID) returns well under 1 s with a terminal `folder-cycle` gap and every distinct folder archived once; a synthetic 301-deep chain → `folder-too-deep`. The prove-fail runs the walk in a **child test process** (`os/exec` of the test binary with `-test.run`), because a stack overflow is fatal | R10, S47 | remove the visited set → the child dies with `stack overflow` (the parent asserts failure) |
@@ -2157,7 +2248,7 @@ five designs in flight are **serialised**, in the order of
 | **S2a** — PST isolation and healing | store-uid locators and per-folder aggregates (FC8); row and sub-folder loops with every upstream gate kept, differential test, go-pst pin (FC30); structural breakers and duplicate/absent-NID checks (FC9); inward recovers; zero-content failures as ledger gaps, no stub records (FC7); visited and depth guards; `.pst` and `-outlook` remedies; fault callback (FC29); `runFile` classification, archive-root probe, run-fatal volume errnos, unwritable set, local breaker, fault-driven checkpoint (FC12); `-outlook` export-skip gaps (FC28); legacy-placeholder re-class (FC27); R10's added sentences [ruling J7]; N9's skip encoder citing R1 [ruling J7] | MA-315, MA-316, MA-317, MA-318, MA-319, MA-320, MA-323 (legacy case), MA-324, MA-504 (L, pending) | S1a | — (OR8 ruled) | **adversarial pass** (untrusted PST parsing, exporter write paths) |
 | **S2b** — local containment | mbox/maildir/Evolution per-file and per-folder isolation; containment at **every** local open (FC2); lexical link judgment, recommended `os.Root` (FC3); Windows reparse classifier (FC1); `util.OpenRegularFile`; the per-input directory-link opt-in [ruling OR6]; raw-preserving stubs with bounded text and parser generation (FC25), expressed through g3's hook (FC26), **without the identity fold** [ruling J8]; R25 text, naming the opt-in; S47 | MA-318 (raw stubs, the collapse as a skip encoder citing R1), MA-321, MA-322, MA-503 (L, pending) | S1a, g3 S1 [ruling J5] | — (OR6 and OR8 ruled) | **adversarial pass** (R25 containment, Windows) |
 | **S2b-id** — the F33 identity fold [ruling J8] | `stubIdentityTerms` folds a digest of the raw bytes, so distinct unparseable messages stop collapsing; g3's MA-330 golden regenerated for panicking inputs only, with a README note; the skip encoder in MA-318 removed | MA-318 (the fold case) | S2b, g3 S1 | **ESC-1** (the owner accepts the identity drift) | **adversarial** addendum |
-| **SG** — shared Graph primitive [ruling OR9 = J4] | `StatusError{Code, GraphCode, Text}` (today's `Error()` text), `graph.Classify`, `MIMETo` (idle, overall and size caps; `$value`'s own header timeout ≥ the idle window, for capture too), nextLink guard: the repeat set and the page cap in every paging loop, and the host/path pin for the extraction design's loops; R29 and S52 land with this slice's catalog-first PR (MA-402 cites them). **[RR-6]** `MIMETo`'s own stops typed (`*graph.TimeoutError`, never a context error while the caller's context is live), with the `$value` header timer on its own base transport, and `RunGraph` deciding "cancelled" from its own `ctx.Err()` (RR6-C1); capture's overall cap kept at today's 10 minutes until S3 (RR6-C2); the size-cap figure confirmed against Microsoft's documentation before SG code, at or above Exchange Online's largest item, with the `Content-Length` refusal (RR6-C3); every guard stop typed, never a quiet end of listing (RR6-C5); `Folders`' visited folder-id set and depth cap, the 300 figure confirmed before SG code (RR6-C6) | MA-314 (its SG cases; the rest are skip encoders until S3 and SGc); MA-540 and MA-541 [RR-6]; the extraction design's MA-402 | — | — (OR9 ruled); **RR-6** filed: GO_WITH_CONDITIONS, RR6-C1–RR6-C6 folded | **adversarial pass** (network input), shared with the extraction design's E1, which keeps its own short note |
+| **SG** — shared Graph primitive [ruling OR9 = J4] | `StatusError{Code, GraphCode, Text}` (today's `Error()` text), `graph.Classify`, `MIMETo` (idle, overall and size caps; `$value`'s own header timeout ≥ the idle window, for capture too), nextLink guard: the repeat set and the page cap in every paging loop, and the host/path pin for the extraction design's loops; R29 and S52 land with this slice's catalog-first PR (MA-402 cites them). **[RR-6]** `MIMETo`'s own stops typed (`*graph.TimeoutError`, never a context error while the caller's context is live), with the `$value` header timer on its own base transport, and `RunGraph` deciding "cancelled" from its own `ctx.Err()` (RR6-C1); capture's overall cap kept at today's 10 minutes until S3 (RR6-C2); the size-cap figure confirmed against Microsoft's documentation before SG code, at or above Exchange Online's largest item, with the `Content-Length` refusal (RR6-C3); every guard stop typed, never a quiet end of listing (RR6-C5); `Folders`' visited folder-id set and depth cap, the 300 figure confirmed before SG code (RR6-C6). **[RR-6 re-verification]** The header timer per attempt, never across `get`'s sleeps; the size cap reaching capture only at a figure the confirmation bounds, with capture's uncapped read otherwise (RR6-OR1's safe interim), the documentation and date recorded in §4.8.6; the depth figure's fallback and an at-cap twin; the breadth case an open gap, skip-encoded (RR6-OR2); the `$value` client left for E1's `CheckRedirect`, never its `Client.Timeout` | MA-314 (its SG cases; the rest are skip encoders until S3 and SGc); MA-540 and MA-541 [RR-6], with their skip encoders [RR-6 re-verification]; the extraction design's MA-402 | — | — (OR9 ruled); **RR-6** filed: GO_WITH_CONDITIONS, RR6-C1–RR6-C6 folded and re-verified; RR6-OR1 and RR6-OR2 block nothing (their safe interims apply); the catalog-first PR waits until the rulings log records MA-540..MA-544 (J1) [RR-6 re-verification] | **adversarial pass** (network input), shared with the extraction design's E1, which keeps its own short note |
 | **SGc** — capture's nextLink pin [ruling J4] (formerly the extraction design's E1c) | the host/path pin with the extraction review's XC25 normalization in capture's `Folders` and `Messages`, a typed error naming the foreign host | MA-505 (the extraction design's MA-401b), MA-314's capture foreign-host case | SG | MA-443's nextLink-shape sub-case recorded (XC25's gate), unless the owner answers **ESC-7** first | short **adversarial** note (shipped capture path) |
 | **S3** — Graph isolation | `classifyFetch` (token-refresh auth, FC11; 403 mailbox-fatal [ruling OR7]), per-item gaps with no record, immutable-id locators, `-since` rule, `refresh-failed`, stub listing-mid only without a same-token record, parser-generation re-fetch, Graph legacy-stub adoption (FC27), sweep rules (FC4) with OR10's stricter rule [ruling OR10], folder-list isolation, rate/time breaker with known-poison exemption, control probe and run-level breaker, `Retry-After` clamp (FC10), and in the same slice capture's overall cap raised from today's 10 minutes to `MIMEMaxDuration` (2 h) [RR-6 RR6-C2], footer condition; R17's added sentence [ruling J7] | MA-310, MA-311, MA-312, MA-313, MA-314 (its ledger cases), MA-501, MA-502 | S1a, SG | — (OR7 and OR8 ruled) | **adversarial pass** (network input, go-back sweep integrity) |
 | **GF17** — F17 in the shared Graph layer [ruling workspace Q15] | retry Graph 500/502/504 and budget `Retry-After` so throttle waits no longer count against the 60 s request deadline; this lifts the clamp's interim role and the extraction design's R-v condition | rows allocated at its catalog-first PR | S3 | — | **adversarial** addendum (network input) |
@@ -2293,7 +2384,9 @@ for context, followed by its ruling.
   `Error()` text and one `graph.Classify`; the 404 class and breaker thresholds stay per
   consumer, each justified. Capture's host/path pin is step SGc, behind the extraction review's
   XC25 gate (lifting it is ESC-7). RR-6 re-ran lenses 3, 6, 7 and 8 before SG code. Its
-  addendum is filed (GO_WITH_CONDITIONS), and its conditions RR6-C1–RR6-C6 are folded.
+  addendum is filed (GO_WITH_CONDITIONS), and its conditions RR6-C1–RR6-C6 are folded and
+  re-verified. The re-verification raised owner rulings RR6-OR1 and RR6-OR2 in the addendum,
+  each with a safe interim that blocks nothing [RR-6 re-verification].
 - **OR10 (new, optional) — The P7 residual.** Accept the stated residual (the default), or
   exclude PhysID-less records from the sweep on any fault whose identity matched no record? The
   stricter choice defers gone-detection on pre-v6 archives while such a fault persists. Blocks
@@ -2312,11 +2405,16 @@ for context, followed by its ruling.
     Graph faults are bounded by the breaker rules (§4.8.5) until MA-313's new cases are green.
   - P3: the run finishes unless go-pst or the OS hangs, or the process is killed (N7/N8). The
     depth cap of 300 assumes no deeper genuine store. The wall-clock bound is per mailbox.
-    - **[RR-6 RR6-C4]** Its 30 minutes hold only with a failing control request. With a
-      healthy one the bound is per item, and every known-poison item pays its timer on every
-      run. This is an open condition, not accepted.
+    - **[RR-6 RR6-C4]** Its 30 minutes hold only with a failing control request, and only for
+      counted faults. Known poison never counts, so every known-poison item pays its timer on
+      every run, whatever the control request returns [re-verification]. With a healthy
+      control request the bound is per item. This is an open condition, not accepted.
     - **[RR-6 RR6-C2]** For capture the 2 h overall cap applies from S3. Until then it is
       today's 10 minutes.
+    - **[RR-6 RR6-C6; re-verification] Graph folder breadth.** A `childFolders` response that
+      invents fresh folders at every level is bounded in depth, and per loop by the page cap,
+      but not in total: an open gap, not accepted, encoded by MA-541's skip encoder citing R10
+      (owner ruling RR6-OR2).
   - P4 "durably": requires g7/F53.
   - P6 recovery: requires an in-place repair that keeps the store identity and the NID.
     Rebuilt stores (`-outlook`, `.ost`, no readable store-uid) get aggregate gaps and no
@@ -2338,9 +2436,17 @@ for context, followed by its ruling.
   - The whole Graph error classification is proven against the fake server only. Real-tenant
     codes, and Exchange's maximum message size for the download cap, are lab-unverified.
     - **[RR-6 RR6-C3]** The cap's figure is set in SG from Microsoft's documentation, not from a
-      tenant. If that documentation cannot bound a stored item, or the limit later rises, the
-      cap is an open condition, not accepted.
+      tenant. ~~If that documentation cannot bound a stored item, or the limit later rises, the
+      cap is an open condition, not accepted.~~ **[re-verification]** It reaches capture only
+      at a figure that documentation bounds. Where none does, capture keeps today's
+      uncapped read, bounded by time only: an open gap, not accepted, skip-encoded in MA-540
+      (owner ruling RR6-OR1's safe interim). A cap that reaches capture holds a legal item only
+      while Microsoft's documented limit stays at or below it; a later rise is part of
+      RR6-OR1's question and, until it is answered, an open condition, not accepted.
     - **[RR-6 RR6-C6]** The Graph depth cap of 300 is confirmed the same way, in SG.
+      **[re-verification]** A higher documented figure becomes the cap. With no figure,
+      capture's `Folders` carries no depth cap, as today, an endless chain of fresh ids is an
+      open gap, not accepted, and MA-541's over-depth case is a skip encoder.
   - `PidTagRecordKey` readability through go-pst is verified in S2a. If go-pst cannot read it,
     every PST uses aggregate gaps.
 - **Aspirational:** P11's "heals" for fillable Graph gaps. The tool retries and reports; only

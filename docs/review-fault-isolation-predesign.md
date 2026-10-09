@@ -618,7 +618,10 @@ design, filed as an addendum to this review:
   `[RR-6 RR6-Cn]` where it lands.
 - RR6-C2 and RR6-C3 **amend ruling J4**, a delegated ruling. In each case a confirmed finding shows
   that the ruled figure causes a defect. The rulings log itself is not edited.
-- No condition needs an owner ruling, so there are **no escalations**. ESC-7 is unchanged.
+- No condition needs an owner ruling, so the filing raised **no escalations**. ESC-7 is
+  unchanged. **[re-verification]** A fresh-eyes check of the fold found two gate weakenings in
+  it. Both are reverted and raised as owner rulings **RR6-OR1** and **RR6-OR2** (Escalations,
+  below), each with a safe interim that blocks nothing.
 - New rows **MA-540** and **MA-541** are in the design's own test plan (§9). The catalog is not
   edited.
 - Eight minors remain as notes for the design's author. They are not conditions.
@@ -649,6 +652,10 @@ design, filed as an addendum to this review:
     - A context timer cannot lengthen the shared 60 s, so the request goes through its own base
       transport. JSON requests and the token endpoint keep the shared 60 s.
     - This also settles L3-4 and HB3.
+    - **[re-verification]** The header timer times each HTTP attempt, from send to headers, and
+      never runs during `get`'s `Retry-After` sleeps, so only the overall stop can land in that
+      select. Its window is `MIMEHeaderTimeout`, default 2 min. MA-540 gains a `Retry-After`
+      twin. The `$value` client must carry E1's `CheckRedirect` and not its `Client.Timeout`.
   - **Rows.** MA-540's stall case: the run fails naming the item, never `cancelled`; the sidecar is
     written; `graph` exits 1; mailbox 2 is walked. Its parent-cancel twin still records
     `cancelled` and exits 0.
@@ -676,8 +683,11 @@ design, filed as an addendum to this review:
     therefore 256 MiB, or higher if the confirmation requires it.
   - A response whose `Content-Length` exceeds the cap is refused before its body is read (L8-3's
     refinement), so an over-cap item is not downloaded again on every run.
-  - If the documentation cannot bound a stored item, or the limit later rises, the cap is an open
-    condition, not accepted, stated at P3 and §12.
+  - ~~If the documentation cannot bound a stored item, or the limit later rises, the cap is an
+    open condition, not accepted, stated at P3 and §12.~~ **[re-verification]** Reverted: that
+    branch shipped the cap to capture where no figure bounds it. The cap now reaches capture
+    only at a figure the confirmation bounds; otherwise capture keeps today's uncapped read.
+    That choice, and a later rise of the limit, are owner ruling RR6-OR1.
   - P3 and §8's endpoint row state that before S3 an over-cap body fails the mailbox through
     today's error path.
   - MA-314 gains the boundary cases: a body exactly at the scaled cap completes, and one byte more
@@ -687,7 +697,9 @@ design, filed as an addendum to this review:
   - P3 states that the 30-minute bound holds only with a failing control request. With a healthy
     one the bound is per item only (the header timer of at least 2 min, idle 2 min, the overall
     cap), and every known-poison item pays its timer on every run. The cost grows with the number
-    of such items over the archive's life.
+    of such items over the archive's life. **[re-verification]** Known poison never counts,
+    whatever the control request returns, so it pays its timer on every run even when the
+    control request fails; P3, §5, §7.3 and §12 now say so.
   - It is an **open condition, not accepted**, stated next to the claim. The same condition is
     stated at §5's breaker row, §7.3's outage bullet and §12's P3 line, together with what the
     operator sees: `run_stuck` RED once a run outlasts its schedule period.
@@ -717,9 +729,13 @@ design, filed as an addendum to this review:
   - A level deeper than 300 stops the walk with a typed error naming the cap, and the mailbox
     fails, as a `Folders` repeat does.
   - SG confirms the 300 figure against Microsoft's documentation before SG code, because SG
-    applies it to capture before S2a confirms it for PST.
+    applies it to capture before S2a confirms it for PST. **[re-verification]** A higher
+    documented figure becomes the cap; with none, capture's `Folders` carries no depth cap until
+    one is bounded. MA-541 gains an at-cap twin.
   - A response that invents fresh folders at every level stays bounded in depth only. That is an
-    open condition, not accepted, stated in §4.8.7 and §8.
+    open condition, not accepted, stated in §4.8.7 and §8. **[re-verification]** It is now also
+    stated at P3 and §12, encoded by a skip encoder citing R10 in MA-541, and raised as owner
+    ruling RR6-OR2.
 
 ### Rescue outcomes
 
@@ -789,12 +805,67 @@ Escapes the rescue tested and rejected:
   - Why: L3-3 shows that 200 MiB can sit below FC21's own floor, because 150 MiB of attachment
     bytes is about 205.3 MiB of MIME. An over-cap item that today's code archives would then wedge
     its mailbox before S3 and be a permanent terminal gap after it.
+  - **[re-verification]** Where no documented figure bounds the cap, it does not reach capture
+    (RR6-OR1's safe interim); the copy export keeps it.
 
 ### Escalations (OWNER RULING)
 
-None.
-- No condition weakens a gate, or narrows an invariant, a catalog row's guarantee or an X line. No
-  condition edits a baseline or accepts a known gap.
+The filing raised none. **[re-verification]** The fresh-eyes check of the fold found two gate
+weakenings in it ("Re-verification", below). Each part is reverted in the design and raised
+here. Neither blocks SG: each safe interim needs nothing from the owner.
+
+- **RR6-OR1 — The size cap on capture where no documented figure bounds it** (from the check of
+  RR6-C3).
+  - **Question.** SG gives capture's `$value` download the shared size cap, set at or above the
+    largest `$value` that Microsoft's documentation shows a stored Exchange Online item can
+    produce. Two cases have no such figure: the documentation cannot bound a stored item, or
+    Microsoft later raises its limit past a shipped cap. May capture carry the cap in those
+    cases?
+    - **If it does,** an item above the cap, which today's uncapped `io.ReadAll`
+      (`graph.go:505`) archives, fails its mailbox on every scheduled run before S3, at a fixed
+      listing position. After S3 it is a terminal gap, retried every run and never archived
+      while the cap stays below it.
+    - **If it does not,** capture's download is bounded by time only (the idle, header and
+      overall timers), as today. A misbehaving endpoint can then stream one body into memory
+      until the overall cap fires, which is the design's §3 N9 memory bound of whole-message
+      reads.
+    - **Or SG code waits** until a figure is bounded, which also holds back S3 and the
+      extraction design's E1.
+  - **Recommended answer.** It does not. Capture keeps no lower cap than today's until a
+    documented figure bounds the cap, as RR6-C2 does for the overall cap, and the copy export
+    alone carries the cap from E1. After a documented rise past a shipped cap, the next release
+    raises capture's cap to the new figure, or drops it under the same rule. The owner accepts
+    the window between such a rise and that release, in which an over-cap item fails loudly,
+    naming the item and the cap.
+  - **Safe interim.** The recommended rule, without accepting that window: the window stays an
+    open condition, not accepted, stated at the design's P3, §4.8.6 and §12.
+    - While capture passes no cap, the missing cap is an open gap, not accepted, stated at P3,
+      §8 and §12. MA-540's over-cap case and MA-314's `fetch-too-large` gap case are skip
+      encoders citing their rows.
+    - When SG's confirmation bounds a stored item, the cap reaches capture as RR6-C3 states, and
+      nothing waits on this ruling.
+    - The same rule holds for the Graph depth cap (RR6-C6). A higher documented figure becomes
+      the cap. With none, capture's `Folders` carries no depth cap until one is bounded, and
+      MA-541's over-depth case is a skip encoder.
+- **RR6-OR2 — The breadth of capture's Graph folder walk** (from the check of RR6-C6).
+  - **Question.** `Folders` now ends a cycle (the visited set) and bounds depth (the cap of
+    300). A `childFolders` response that invents fresh folders at every level is bounded in
+    breadth only per loop, by the page cap, so its total is unbounded: a misbehaving endpoint
+    can keep one walk going for as long as it answers (L6-3's remainder). A total-folder cap
+    would close it, but only a cap at or above Exchange Online's real per-mailbox folder limit
+    cannot fail a healthy mailbox. Should capture's walk carry one?
+  - **Recommended answer.** Yes, if Microsoft documents a per-mailbox folder limit: a cap at or
+    above it, confirmed the way RR6-C3 confirms the size cap, with an at-cap twin. If it
+    documents none, no cap, and the case stays open.
+  - **Safe interim.** No total-folder cap. The case is an open gap, not accepted, stated at the
+    design's P3, §4.8.7, §8 and §12, and encoded by MA-541's breadth case as a skip encoder
+    citing R10. Nothing waits on this ruling.
+
+What the filing said still holds, with one correction:
+- No condition narrows an invariant, a catalog row's guarantee or an X line, and none edits a
+  baseline. **[re-verification]** The filing also said that none weakens a gate or accepts a
+  known gap. As folded, two parts did: RR6-C3's fallback shipped the cap to capture with no
+  bounding figure, and RR6-C6's breadth residual read as proven at P3. Both are reverted above.
 - No condition changes what an existing covering test asserts.
   - MA-98 keeps its assertions through the `MIMETimeout` alias.
   - `RunGraph`'s `ctx.Err()` guard changes no outcome an existing test sees. Today's child
@@ -818,6 +889,8 @@ its total-folder cap, below). The rest are notes for the design's author:
   - Add an MA-313 assertion of `auth_remedy` on a 403. Until then §7.5 says what a 403 shows.
 - **L6-3's remainder.** A total-folder cap no lower than Exchange Online's per-mailbox folder
   limit, once that limit is confirmed. RR6-C6 leaves breadth as an open condition until then.
+  **[re-verification]** This is now owner ruling RR6-OR2, with the breadth case stated at P3
+  and §12 and skip-encoded in MA-541.
 - **L6-6.** Strip C0/C1 controls from `StatusError.Text` (`util.StripControl`) and bound it
   rune-safely at construction.
   - Have `Error()` render the status from `Code` (`http.StatusText`), not the server's reason
@@ -838,6 +911,8 @@ its total-folder cap, below). The rest are notes for the design's author:
   - `runGraphMailbox` wraps a `Messages` error with the folder path, and a `Folders` stop names
     the parent folder.
   - Add the 100 000-page cap to §4.8.5's printed thresholds, and assert the text in MA-540.
+    **[re-verification]** The page cap is now in §4.8.5's list; the wrapping and the MA-540
+    text assertion remain a note.
 - **L7-7.** State the listing bound at P3's [FC10] clause and in §8's row: up to 100 000 requests
   per loop (per folder after S3), each no longer than the request timeout. Print the cap in the
   stop message. A tighter rule waits for MA-443's count data, so that it cannot fail a healthy
@@ -864,14 +939,23 @@ its total-folder cap, below). The rest are notes for the design's author:
 - **The extraction workspace's author.** RR6-C3 changes the shared size cap. The workspace's §4.5
   ("default 200 MiB, a hair over Exchange Online's 150 MB limit after MIME overhead"), its P16
   memory bound and its §4.13 and §8 tables should read the figure SG confirms (256 MiB, or
-  higher). RR-2 runs before EW-E2.
-- **EW-E1's short adversarial note** (always owed, L2-3) has three questions:
+  higher). RR-2 runs before EW-E2. **[re-verification]** Done in the re-verification commit,
+  marked `[fault-isolation RR-6]`: those lines, §4.15 and the XC25 key-condition line now read
+  the confirmed cap and capture's interim 10 minutes, and §4.5's redirect bullet and MA-528
+  cover SG's `$value` client. RR-2 should check them.
+- **EW-E1's short adversarial note** (always owed, L2-3) has three questions, and a fourth
+  **[re-verification]**:
   - whether the copy export's own 2 h overall cap, with `get`'s `Retry-After` sleeps unclamped
     until S3, is bounded by the workspace's no-progress clock (RR6-C2);
   - where `MessagePage`'s repeat set and page count live between calls (L7-9);
-  - the redirect channel, for capture until SGc or E1 (L6-9).
+  - the redirect channel, for capture until SGc or E1 (L6-9);
+  - whether `CheckRedirect` covers SG's `$value` client, which runs on its own base transport,
+    and whether `Client.Timeout` stays off it (RR6-C1).
 - **The rulings log's owner (J1).** MA-540 and MA-541 come from the block MA-540..MA-544 given to
   the RR-6 run. The log's §8.4 should record them, and its J4 should note RR-6's two amendments.
+  **[re-verification]** Until §8.4 records the block, SG's catalog-first PR waits (the design's
+  §9). The log should also carry RR6-OR1 and RR6-OR2 among its escalations, and J4's note
+  should name RR6-OR1's safe interim for the size cap.
 
 ### Findings
 
@@ -918,3 +1002,32 @@ there. The rescue's hidden issues come last, as HB1–HB3.
 
 The design's header, §4.8.1, the §10 SG row and §11's OR9 cite this addendum. The design's BUILD
 STATUS stays "approved with conditions, not built".
+
+### Re-verification
+
+A fresh-eyes check re-read the fold at `5f060db` against each condition, the code and the
+rulings. It passed RR6-C1–RR6-C5 and failed RR6-C6, listed stale text, and found two gate
+weakenings. In the design each fix is marked `[RR-6 RR6-Cn; re-verification]` with the
+condition it completes, or `[RR-6 re-verification]` for stale text and ids; in the extraction
+design `[fault-isolation RR-6]`; here `[re-verification]`.
+- **RR6-C6 failed.** Its breadth residual was stated only in §4.8.7 and §8, so P3's "No hang, no
+  unbounded walk" read it as proven by MA-541. It is now stated at P3 and §12 and encoded by a
+  skip encoder citing R10 in MA-541. The text now says what a higher depth figure or none does,
+  and MA-541 gains an at-cap twin, so an off-by-one cannot fail a legal mailbox and still pass.
+- **Gate weakenings.** RR6-C3's fallback shipped the cap to capture where no figure bounds it,
+  and the breadth residual read as proven. Both are reverted and raised as RR6-OR1 and RR6-OR2
+  (Escalations, above).
+- **Open points under passed conditions.** RR6-C1: the header timer times each attempt and never
+  runs during `get`'s `Retry-After` sleeps, with an MA-540 twin, and the `$value` client is
+  named in E1's redirect seam. RR6-C4: known poison pays its timer on every run, whatever the
+  control request returns (P3, §5, §7.3, §12). RR6-C5: MA-540 gives its scaled header and JSON
+  timeouts, adds a `Folders` page-cap case, splits case (6) at S3 and asserts `graph`'s exit
+  through the verb's own mapping. MA-314's and MA-540's Covers cells read "S46 (from S1a)",
+  since S46 lands after SG.
+- **Stale text fixed.** In the design: P3's download sentence, §4.1's `fetch-timeout` row and
+  §4.8.5's threshold list. In the extraction design: its six 200 MiB figures and its "overall
+  2 h … for both consumers", and its §4.5 redirect bullet and MA-528 now cover SG's `$value`
+  client.
+- **Not fixed here.** The rulings log is not a design, so it is not edited. Its J4 still reads
+  200 MiB and 2 h for both consumers, and its §8.4 does not record MA-540..MA-544. Both stay
+  with the log's owner (follow-ups, above), and SG's catalog-first PR waits for the second.

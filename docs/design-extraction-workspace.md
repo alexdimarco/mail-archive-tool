@@ -28,7 +28,10 @@ Key conditions:
 - **XC9 / XC10** time-based breakers and per-OS failure classes.
 - **XC23** E0 is `docs/design-local-confidentiality.md` slices C1+C2.
 - **XC25** the Graph layer is shared with `docs/design-fault-isolation.md`, through its SG
-  slice [ruling J4].
+  slice [ruling J4]. That design's RR-6 re-run amends J4's download figures: the shared size
+  cap is the figure SG confirms against Exchange Online's largest item (256 MiB or higher, not
+  200 MiB), and capture keeps a 10-minute overall cap until fault-isolation S3 while this
+  design's stays 2 h. Each change it makes here is marked `[fault-isolation RR-6]`.
 - **XC28** each slice ships only what it builds.
 
 **Ids are allocated [ruling Q11 = J1].** Revision 2's provisional R22 / S42 / X12–X14 are now
@@ -344,9 +347,10 @@ rows that will prove it (§9).
   picks plus exclusions per selection; 100-row list pages; one live preview). Per-message
   state goes to the local run record (XC1), never to an in-memory slice. Originals stream
   to disk. **Conditional (XC30):** originals are streamed when Readable HTML is off. With
-  it on, one message's MIME plus its decoded attachments are held, bounded by the 200 MiB
-  cap, and MA-419 runs in both modes. The session's caches are byte-capped and released
-  after 30 idle minutes (XC18). Proven (MA-432). Proposes R29.
+  it on, one message's MIME plus its decoded attachments are held, bounded by the shared size
+  cap (256 MiB or higher, the figure SG confirms) [fault-isolation RR-6], and MA-419 runs in
+  both modes. The session's caches are byte-capped and released after 30 idle minutes
+  (XC18). Proven (MA-432). Proposes R29.
 - **P17 — The workspace surface is guarded end to end.** Every workspace endpoint is a
   POST through `GuardLocalPOST`, including the reads (folder trees, message lists,
   progress), because they return mailbox content. The two HTML pages carry no mailbox
@@ -694,9 +698,11 @@ one type:
 - `StatusError{Code int, GraphCode string, Text string}` (its §4.8.1): `Text` bounded, and
   `Error()` keeps today's exact text, as MA-402 asserts;
 - `graph.Classify`, one classifier for both consumers;
-- `MIMETo(w, maxBytes, idle, overall)`, one bounded download (idle 2 min, overall 2 h, size
-  cap 200 MiB), whose `$value` request has its own response-header timeout of at least the
-  idle window, for both consumers;
+- `MIMETo(w, maxBytes, idle, overall)`, one bounded download, whose `$value` request has its
+  own response-header timeout of at least the idle window, for both consumers. Idle is 2 min.
+  The size cap is the figure SG confirms against the largest `$value` an Exchange Online item
+  can produce, 256 MiB or higher. The overall cap is 2 h for this design, and today's 10
+  minutes for capture until fault-isolation S3 [fault-isolation RR-6];
 - the nextLink guard: a repeat set and a page cap in every paging loop, and the host/path pin
   below.
 
@@ -733,11 +739,12 @@ J4], still gated as XC25 says (below).
   time.Duration) (int64, error)` (SG's, with the overall cap as a further argument [ruling
   J4]) streams `/$value` into `w`. It aborts when no byte
   arrives for `idle` (default 120 s; this replaces the fixed 10-minute deadline for this
-  path), above `maxBytes` (default 200 MiB, a hair over Exchange Online's 150 MB limit
-  after MIME overhead), or on `ctx` cancel. **XC26:** the `$value` request gets its own
-  response-header timeout of at least the idle window. The shared transport's 60 s
-  `ResponseHeaderTimeout` (`graph.go:136-141`) would otherwise fail a large conversion
-  before its first byte, on every retry. MA-443 records time-to-first-byte against size.
+  path), above `maxBytes` (default: the shared size cap SG confirms, 256 MiB or higher;
+  150 MiB of attachments is about 205.3 MiB of MIME, so the earlier 200 MiB sat below an
+  item at Exchange Online's 150 MB limit [fault-isolation RR-6]), or on `ctx` cancel.
+  **XC26:** the `$value` request gets its own response-header timeout of at least the idle
+  window. The shared transport's 60 s `ResponseHeaderTimeout` (`graph.go:136-141`) would
+  otherwise fail a large conversion before its first byte, on every retry. MA-443 records time-to-first-byte against size.
 - **Typed errors (XC25) [ruling J4].** `StatusError` is SG's `{Code, GraphCode, Text}`
   with a bounded `Text`, and `Error()` keeps today's exact text. Callers use `errors.As` to
   tell 404/401/403/5xx apart. Classification maps SG's `graph.Classify` onto this design's
@@ -759,7 +766,9 @@ J4], still gated as XC25 says (below).
   `Timeout: reqTimeout`. That is the **F15 fix, required in E1**: `oauth2.NewClient` uses
   the context's client only for token acquisition, so the timeout bounds token fetches
   and the `deviceSource` mutex hold, and a stalled `/token` body can no longer block every
-  workspace endpoint and the run.
+  workspace endpoint and the run. **[fault-isolation RR-6]** SG's `$value` request runs on its
+  own base transport (fault-isolation §4.8.6), so `CheckRedirect` is set on that client too,
+  and `Timeout: reqTimeout` is not, because it would bound the whole download.
 
 ### 4.6 Archive source adapter (slice E4)
 
@@ -1183,7 +1192,7 @@ On Windows, `syscall.ENOSPC` is an invented constant that no disk-full code maps
 | Condition | Class | Effect |
 |---|---|---|
 | `/$value` 404 | terminal (for this selection) | listed: "no longer in the mailbox (moved or deleted after you selected it)"; never retried in-run (F9 hazard 4) |
-| 400 / `ErrorMimeContentConversionFailed` / above the 200 MiB cap | retryable (a later export may succeed) | listed with the reason; offered by "Export failed messages again" |
+| 400 / `ErrorMimeContentConversionFailed` / above the shared size cap (256 MiB or higher [fault-isolation RR-6]) | retryable (a later export may succeed) | listed with the reason; offered by "Export failed messages again" |
 | **Transport-class**: no HTTP status (dial, DNS, reset, token-endpoint network failure); 502/503/504 after the client's retries; idle timeout (XC9) | **back off on the same message** (1 s → 60 s, exponential) | never recorded as a failure; counts only toward the no-progress clock |
 | No successful request for **5 minutes** (wall clock, XC9) | **run-fatal: connection lost** | stop → R-u (names the 5 minutes) |
 | 25 consecutive per-message server-class failures (5xx with a body) (XC9) | **run-fatal: Microsoft 365 having problems** | stop → R-u2 |
@@ -1321,10 +1330,11 @@ manifest and sums list exactly the recorded files that are present under the roo
   memory (50,000 ≈ 15 MB). Cap: **200,000 per run** (R-i, "split into several exports,
   for example by folder").
 - Run memory: one message at a time. Originals stream to disk. Parsing for derived files
-  reads one `.eml` back (bounded by the 200 MiB cap; large attachments are buffered
-  whole in memory, the catalog's existing acknowledged limit). So with Readable HTML on,
-  one message's MIME plus decoded attachments is held (XC30). Per-message state is
-  written to the local run record, not held (XC1).
+  reads one `.eml` back (bounded by the shared size cap, 256 MiB or higher [fault-isolation
+  RR-6]; large attachments are buffered whole in memory, the catalog's existing
+  acknowledged limit). So with Readable HTML on, one message's MIME plus decoded
+  attachments is held (XC30). Per-message state is written to the local run record, not
+  held (XC1).
 - Throughput: sequential. An estimated ~2–5 messages/s means 50,000 messages take about
   3–7 hours. This is **aspirational** and unsourced until measured on a real tenant and on
   a USB-stick destination, sync cost included (MA-443; XC30, XC5). The preview gives this
@@ -1839,7 +1849,7 @@ No refusal echoes a token, a Graph URL with its query, or a stack trace (MA-438;
 |---|---|---|
 | Folder display names, subjects, sender names/addresses | mail senders; the mailbox owner | JSON-escaped, control-stripped, `textContent`; sanitized and FoldKey-unique on disk |
 | Attachment file names | mail senders | `SanitizeFilename`, FoldKey-unique, root-contained; bidi conditional on F75 |
-| MIME bytes | mail senders via Graph | written verbatim (bounded 200 MiB); parsed only for derived files, under the existing panic guard |
+| MIME bytes | mail senders via Graph | written verbatim (bounded by the shared size cap, 256 MiB or higher [fault-isolation RR-6]); parsed only for derived files, under the existing panic guard |
 | Message HTML | mail senders | `RenderWith` + re-parse fail-closed (MA-300/301) |
 | Graph JSON, `nextLink`, redirects | Microsoft, or a misbehaving or compromised server | bodies read through `io.LimitReader` (XC26); `nextLink` pinned to the base after normalization (XC25); redirects off the base refused (XC26) |
 | Archive manifest, paths, zips | whoever can write the archive, or whoever wrote another archive folder chosen as a source [ruling W1] | path gates, no symlinks, fixity, zip-bomb bounds; for another archive folder also R-o3, R-p and the read-only open of §4.3 (MA-531) |
@@ -2008,7 +2018,7 @@ MA-447..MA-466, of which MA-450..MA-466 are now MA-514..MA-530).**
 | MA-525 | U | archive renders stay byte-identical after `RenderContext.AttachDirName` is added (exporter contexts: KeepRaw on and off, with and without a zip); the "attachments are inside the .eml file" sentence appears only in export renders | R7, R19, R29 | print the sentence whenever `AttachDirName == ""` → an archive render changes | E5 |
 | MA-526 | U | (Q6 ruled yes [ruling Q6]) with the deployment switch off, every workspace and export route returns 404 and the sidebar has no "Export" group | R12 | register the routes regardless → a 200 appears | E3 |
 | MA-527 | U | F15: a stalled `/token` response body is released within `reqTimeout`; an unrelated workspace list waits no longer than that; the run stops with a typed error, never hangs | R17, R29 | remove `Client.Timeout` → the list blocks behind the mutex | E1 |
-| MA-528 | U | redirects and bodies: a Graph 302 to a foreign host carries no `Authorization` there (zero hits); a Graph JSON body over the limit is refused, not decoded | R17, R29 | leave `CheckRedirect` unset → the foreign fake receives the token | E1 |
+| MA-528 | U | redirects and bodies: a Graph 302 to a foreign host carries no `Authorization` there (zero hits), on a JSON request and on SG's `$value` client [fault-isolation RR-6]; a Graph JSON body over the limit is refused, not decoded | R17, R29 | leave `CheckRedirect` unset on either client → the foreign fake receives the token | E1 |
 | MA-529 | S | structural: Browse is disabled while an export runs (the browse endpoint refuses with the picker seam not invoked); CI runs `govulncheck` for GOOS=windows on `./cmd/mailarchive-desktop` | R12, S52 | allow browse during a run → the seam is invoked | E3 |
 | MA-530 | U | sign-in changes at the desktop surface: Clear sign-in during a run → the running export stops with R-z, finalized (manifest `failed`, marker STOPPED) and retryable from the run record; a sign-in as B during A's run → R-z naming both; an out-of-process change seen by the every-100-messages `SignedIn` poll → R-z; a refused refresh token in the preview and list endpoints shows R-b/R-c, never raw text | R17, R29, S41, S52 | drop the session-drop → run cancel link → A's run continues after the clear | E3 |
 | MA-531 | U | [ruling W1] another archive folder, read-only: with a writable fixture folder and a read-only one, preview and run leave every file under the folder byte-identical and add no file (no `.mailarchive.lock`, no manifest save, no `search.db-wal`/`-shm`/journal, no temp), Settings and the installed weekly backup unchanged; a `search.db-wal` beside the index → the list says recent messages may be missing and whole-folder selection still exports them; a folder with no manifest → R-o3; a newer manifest or index → R-p; a destination inside the folder → R-f; each refusal with the side effect absent; positive twin first | R29, R9, R20, R12, S52 | open the index read-write (`index.Open`, which runs `RepairKeys`) → a byte change or an added `-wal` is detected | E4 |
