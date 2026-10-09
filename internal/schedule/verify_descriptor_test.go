@@ -205,6 +205,49 @@ func TestVerifyDescriptorGoesOnlyWithItsOwnEntry(t *testing.T) {
 	}
 }
 
+// covers: MA-456, R14, S28
+// OPEN RESIDUAL ENCODER (R14; owner ruling FB-4: an open residual, not
+// accepted). The one-archive-per-name guard should refuse a second archive's
+// verify under a -name the first archive's verify already holds on every OS, as
+// it does on cron hosts (MA-456). On launchd and Task Scheduler hosts it cannot:
+// their entries are never read back (UJ-6, upheld by FB-4), and an archive's
+// own descriptors know nothing of another archive's names. So the second
+// install replaces the first's entry, and what stays visible is the first
+// archive's verify_stale (MA-466). Closing this would read those entries back,
+// which UJ-6 rules out, so the encoder stays skipped. On a launchd host
+// (sandboxed: temp HOME, fake launchctl first on PATH) it installs archive A's
+// verify under the shared name the old README passed; the positive twin is
+// archive B's verify under its own derived name; then it wants B's verify under
+// the shared name refused, naming the name, A and the -name remedy, with A's
+// entry (its plist) unchanged.
+func TestSharedVerifyNameAcrossArchivesIsRefusedOnLaunchd(t *testing.T) {
+	t.Skip("open residual, not accepted (owner ruling FB-4): launchd and Task Scheduler entries are never read back (UJ-6), so a second archive's verify under a -name the first archive's verify holds is not detected at install there; the archive that lost its verify shows verify_stale (MA-466). Closing it would reopen UJ-6.")
+	if runtime.GOOS != "darwin" {
+		t.Skip("shown on a launchd host: cron hosts already refuse it (MA-456), and Task Scheduler has no sandbox here")
+	}
+	sandboxHostScheduler(t)
+	const shared = "mailarchive-verify"
+	a, b := t.TempDir(), t.TempDir()
+	for _, s := range []Spec{verifySpecFor(a, shared), verifySpecFor(b, DefaultNameFor(b)+"-verify")} {
+		if err := Install(s); err != nil {
+			t.Fatal(err)
+		}
+		assure.Reached(t, Query(s.Name) == Installed, "fixture: "+s.Name+" installed")
+	}
+	plist := func() string {
+		data, _ := os.ReadFile(launchdPlistPath(shared))
+		return string(data)
+	}
+	was := assure.Reached(t, plist(), "archive A's verify entry")
+	err := Install(verifySpecFor(b, shared))
+	code, msg := 0, ""
+	if err != nil {
+		code, msg = 1, err.Error()
+	}
+	assure.Refused(t, code, msg, assure.Code(1), assure.Names(shared, a, "-name"),
+		assure.NoSideEffect(func() bool { return plist() == was }))
+}
+
 // covers: MA-457, R14, S28
 // On every OS the name guard reads the archive's own two descriptors (owner
 // ruling FB-4), so neither of the archive's entries can take the name the other
