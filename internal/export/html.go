@@ -203,11 +203,39 @@ func parseFailure(err error) string {
 // node back into a live <meta refresh>. When the body is shown as source, the
 // fallback reason is returned (and body is empty; RenderWith builds the
 // fallback from the un-embedded source).
+//
+// The main parse runs with scripting on, like the browser that reads most
+// archives, so <noscript> content is raw text that neutralize cannot reach,
+// while the re-check also reads the output with scripting off. A harmless
+// <meta charset> or Content-Type meta inside <noscript> therefore tripped the
+// re-check and could never be rendered (DIFF-FP-1). When the re-check trips
+// and the mail has a noscript tag, the main parse is retried ONCE with
+// scripting off — noscript content is then markup neutralize renames or
+// removes — and that result is accepted only if it passes the same dual-mode
+// re-check; otherwise the body falls back as before. (Parsing only with
+// scripting off is not an option: its serialization writes noscript text
+// children back raw, so an escaped <meta> there would come out live — the
+// re-check is what rejects that.)
 func sanitizeHTML(doc string) (headExtra, bodyAttrs, body, fallback string) {
 	// Markup nested past flattenDepth loses its container tags (not its text)
 	// first, as a browser flattens past its own cap, so deep mail renders
 	// instead of failing the parser's 512-element cap (DIFF-FP-2).
-	root, err := xhtml.Parse(strings.NewReader(flattenDeep(doc)))
+	flat := flattenDeep(doc)
+	headExtra, bodyAttrs, body, fallback = sanitizeParsed(flat, len(doc), true)
+	if fallback == FallbackHostile && hasNoscriptTag(flat) {
+		// Without a noscript tag the scripting-off parse is the same tree
+		// (scriptingModes), so the retry could change nothing.
+		if h, a, b, f := sanitizeParsed(flat, len(doc), false); f == "" {
+			return h, a, b, ""
+		}
+	}
+	return headExtra, bodyAttrs, body, fallback
+}
+
+// sanitizeParsed is one sanitizing pass over doc (already flattened), with the
+// main parse's scripting flag as given; inputLen sizes the serialization cap.
+func sanitizeParsed(doc string, inputLen int, scripting bool) (headExtra, bodyAttrs, body, fallback string) {
+	root, err := xhtml.ParseWithOptions(strings.NewReader(doc), xhtml.ParseOptionEnableScripting(scripting))
 	if err != nil {
 		// Unparseable bytes (or nesting the flattener's model missed): show
 		// them as text rather than guess.
@@ -241,7 +269,7 @@ func sanitizeHTML(doc string) (headExtra, bodyAttrs, body, fallback string) {
 	// the checks below re-parse that output, each parse quadratic in the open
 	// formatting elements. Past the cap the body falls back to its source
 	// before the output is complete, let alone re-parsed.
-	left := serializedCap(len(doc))
+	left := serializedCap(inputLen)
 	hb, bb := &capWriter{left: &left}, &capWriter{left: &left}
 	if headNode != nil {
 		for c := headNode.FirstChild; c != nil; c = c.NextSibling {

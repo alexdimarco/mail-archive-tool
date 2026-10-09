@@ -75,7 +75,8 @@ func liveResourceHints(t *testing.T, page string) []string {
 // the rel is cased or combined: CSP has no directive for preconnect or
 // dns-prefetch, so an archived page opened from disk would otherwise open a
 // connection to the sender's host (an open-tracking / IP-leak beacon). The
-// mail's text is kept and, outside noscript, the page still renders as HTML.
+// mail's text is kept and the page still renders as HTML — a noscript copy
+// through the scripting-off retry (MA-476), which neutralize can reach.
 // The positive twin: ordinary mail keeps its hyperlinks and data: images, and a
 // mail <link rel=stylesheet> (already blocked by the policy) is renamed inert
 // without the body falling back.
@@ -111,7 +112,7 @@ func TestRenderResourceHintLinksAreInert(t *testing.T) {
 		if !strings.Contains(page, "marker-text") {
 			t.Errorf("%s: the mail's own text was lost", name)
 		}
-		if !strings.HasPrefix(name, "noscript") && out.BodyFallback != "" {
+		if out.BodyFallback != "" {
 			t.Errorf("%s: the body must render with the hint renamed inert, not fall back (got %q)", name, out.BodyFallback)
 		}
 	}

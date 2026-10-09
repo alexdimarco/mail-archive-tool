@@ -74,3 +74,84 @@ func TestRenderDeepNoscriptRenders(t *testing.T) {
 		}
 	}
 }
+
+// liveCharsetMetas counts the <meta charset> elements in an exported page in
+// each scripting reading (the page's own utf-8 charset is one of them).
+func liveCharsetMetas(t *testing.T, page string) [2]int {
+	t.Helper()
+	var n [2]int
+	for i, root := range pageTrees(t, "charset count", page) {
+		var walk func(x *xhtml.Node)
+		walk = func(x *xhtml.Node) {
+			if x.Type == xhtml.ElementNode && strings.EqualFold(x.Data, "meta") {
+				for _, a := range x.Attr {
+					if strings.EqualFold(a.Key, "charset") {
+						n[i]++
+					}
+				}
+			}
+			for c := x.FirstChild; c != nil; c = c.NextSibling {
+				walk(c)
+			}
+		}
+		walk(root)
+	}
+	return n
+}
+
+// covers: MA-476, MA-300, R7, R19, S21
+// A harmless <meta charset> or Content-Type meta inside <noscript> — in the
+// body, the head, an AMP-style head, or a whole ESP document wrapped in
+// noscript — renders as HTML (it was always shown as source): the re-check
+// trips on the scripting-off reading, so the main parse is retried once with
+// scripting off, where neutralize can reach noscript content, and the result
+// passes the same dual-mode re-check. Under both readings no hostile meta is
+// live and the page's own utf-8 charset is the only charset meta. The MA-300
+// noscript refreshes now render with the refresh neutralized, still inert;
+// the escaped twin renders as text; and an escaped twin beside a real
+// charset meta — whose scripting-off serialization writes the escaped meta
+// back raw — is rejected by the re-check and falls back (the retry is
+// accepted only when the re-check passes again).
+func TestRenderNoscriptMetasRenderNeutralized(t *testing.T) {
+	const refresh = `<meta http-equiv="refresh" content="0;url=http://evil.example/beacon">`
+	render := map[string]string{
+		"body content-type":     `<p>marker-text</p><noscript><meta http-equiv=Content-Type content="text/html; charset=UTF-8"><img src=cid:px@x></noscript>`,
+		"body charset":          `<p>marker-text</p><noscript><meta charset=utf-8></noscript>`,
+		"head charset":          `<html><head><noscript><meta charset=utf-8></noscript></head><body><p>marker-text</p></body></html>`,
+		"head content-type":     `<html><head><noscript><meta http-equiv="Content-Type" content="text/html; charset=utf-8"></noscript></head><body><p>marker-text</p></body></html>`,
+		"amp head":              `<!doctype html><html amp4email data-css-strict><head><meta charset="utf-8"><script async src="https://cdn.ampproject.org/v0.js"></script><style amp4email-boilerplate>body{visibility:hidden}</style><noscript><meta charset="utf-8"><style>body{visibility:visible}</style></noscript></head><body><p>marker-text</p></body></html>`,
+		"esp doc in noscript":   `<p>marker-text</p><noscript><html><head><meta http-equiv="Content-Type" content="text/html; charset=utf-8"><title>News</title></head><body><table><tr><td>fallback newsletter</td></tr></table></body></html></noscript>`,
+		"noscript refresh":      `<p>marker-text</p><noscript>` + refresh + `</noscript>`,
+		"head noscript refresh": `<html><head><noscript>` + refresh + `</noscript></head><body><p>marker-text</p></body></html>`,
+		"nested refresh":        `<div><span><noscript>` + refresh + `</noscript></span></div><p>marker-text</p>`,
+		"escaped twin":          `<p>marker-text</p><noscript>&lt;meta http-equiv="refresh" content="0;url=http://evil.example/beacon"&gt;</noscript>`,
+	}
+	for name, body := range render {
+		out, err := RenderWith(&model.Message{Subject: name, HTMLBody: body}, RenderContext{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		page := string(out.HTML)
+		if out.BodyFallback != "" {
+			t.Errorf("%s: must render as HTML, got fallback %q", name, out.BodyFallback)
+		}
+		if live := liveHostileMetas(t, page); len(live) > 0 {
+			t.Errorf("%s: a live hostile meta survived: %v\n%s", name, live, bodyPart(page))
+		}
+		if n := liveCharsetMetas(t, page); n != [2]int{1, 1} {
+			t.Errorf("%s: the page's own charset must be the only one, got %v (scripting on, off)", name, n)
+		}
+		if !strings.Contains(page, "marker-text") {
+			t.Errorf("%s: the mail's own text was lost", name)
+		}
+	}
+
+	mixed := `<p>marker-text</p><noscript>&lt;meta http-equiv="refresh" content="0;url=http://evil.example/beacon"&gt;<meta charset=utf-8></noscript>`
+	out, err := RenderWith(&model.Message{Subject: "mixed", HTMLBody: mixed}, RenderContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if live := liveHostileMetas(t, string(out.HTML)); len(live) > 0 || out.BodyFallback != FallbackHostile {
+		t.Errorf("escaped twin beside a real meta: the retry must be rejected by the re-check and fall back (got %q, live %v)", out.BodyFallback, live)
+	}
+}
