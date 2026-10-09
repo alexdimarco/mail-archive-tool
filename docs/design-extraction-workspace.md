@@ -15,7 +15,10 @@ Gates before code:
   Verdict: **GO_WITH_CONDITIONS**, conditions **RR2-C1..RR2-C14**. They are folded into
   this text as tracked changes, each marked `[RR-2 RR2-Cn]` where it lands, for
   re-verification as design-review.md step 4 asks. E2 code starts from this text with
-  them, never from the text before them.
+  them, never from the text before them. **Re-verified once:** the check found RR2-C2,
+  RR2-C3, RR2-C4 and RR2-C13 not fully delivered, with stale passages beside them. Their
+  fixes are folded under the same marks (the addendum's "Re-verification"), and they are
+  re-verified again before E2 code.
 - **RR-3 [ruling W1]: filed with RR-2.** Lenses 3, 6 and 7 on the second archive source's
   text (Q3), before E4 code, folded into RR-2 as allowed. Its W1 conditions are RR2-C9,
   RR2-C11, RR2-C13 and RR2-C14. Its W1 notes stay open, owed as "W1's text completed as
@@ -100,17 +103,17 @@ with its slice's catalog-first PR, for the OPERATOR to accept into
 |---|---|
 | RR2-C1 the sealed line carries the outcome; Check and finish acts on it | P6, P14, §3, §4.13, §4.16, §4.19, §5.1, §9 (MA-429, MA-430, MA-520), §10 |
 | RR2-C2 one seal-and-finish step for every finishing path | P9, §4.2, §4.10, §4.13, §4.16, §4.19, §5.1, §9 (MA-429, MA-437, MA-447, MA-521), §10 |
-| RR2-C3 an absent or slow folder is looked for again | §4.2, §4.13, §4.16, §7.2, §8.3, §9 (MA-448), §10 |
-| RR2-C4 a root's identity survives a remount | P14, §4.3, §4.9, §4.10, §4.16, §4.19, §5.1, §7.6, §9 (MA-430, MA-448, MA-512), §10 |
+| RR2-C3 an absent or slow folder is looked for again | §4.2, §4.13, §4.16, §4.19, §5.1, §5.2, §7.2, §8.3, §9 (MA-430, MA-447, MA-448), §10 |
+| RR2-C4 a root's identity survives a remount | P14, §4.3, §4.9, §4.10, §4.13, §4.16, §4.19, §5.1, §7.6, §9 (MA-430, MA-438, MA-448, MA-512), §10 |
 | RR2-C5 free space before every message, reserve sized from the plan | §4.7, §4.13, §5.2, §7.2, §9 (MA-427, MA-518), §10 |
 | RR2-C6 the posture of what the export inherits, checked on the created root | §4.7, §4.9, §4.18, §4.19, §7.6, §8.5, §9 (MA-438, MA-532), §10, §11 Q10 |
 | RR2-C7 every unsealed run can be finished, its remaining messages exported | P12, §4.2, §4.13, §4.16, §4.19, §5.2, §7.2, §7.6, §9 (MA-427, MA-437, MA-438), §10 |
 | RR2-C8 the no-progress breaker counts awake time | P12, §4.13, §4.15, §7.2, §9 (MA-516), §10 |
-| RR2-C9 an archived page keeps `.html` only with the renderer's prefix, from E4 | P10, §4.6, §4.7, §4.11, §8.1, §8.2, §9 (MA-420, MA-531), §10, §11 Q3 |
+| RR2-C9 an archived page keeps `.html` only with the renderer's prefix, from E4 | P10, §4.6, §4.7, §4.11, §4.18, §8.1, §8.2, §9 (MA-420, MA-423, MA-531), §10, §11 Q3 |
 | RR2-C10 final placement renames relative to the directory handle | P6, §4.9, §8.4, §9 (MA-417), §10 |
 | RR2-C11 another archive folder: manifest cap, defensive `search.db` open | §4.3, §7.6, §8.1, §8.2, §9 (MA-512, MA-531), §10, §11 Q3 |
 | RR2-C12 run records are found without the journal | §4.2, §4.16, §4.19, §5.1, §5.2, §9 (MA-430), §10 |
-| RR2-C13 R-f compares identities, not only paths | §4.7, §8.1, §9 (MA-414, MA-531), §10, §11 Q3 |
+| RR2-C13 R-f compares identities, not only paths | §3, §4.7, §4.8, §7.2, §7.6, §8.1, §9 (MA-414, MA-434, MA-438, MA-531), §10, §11 Q3 |
 | RR2-C14 an export from another archive folder saves no setting | §4.3, §4.17, §9 (MA-531), §10, §11 Q3 |
 
 **Owner rulings (already made, not reopened here):**
@@ -323,8 +326,8 @@ rows that will prove it (§9).
   other hostile meta. Otherwise (a page rendered before the F1 fix, or by anything other
   than this renderer, as another archive folder's may be) it is copied as
   `<stem>.archived-page.txt` (inert) with a note, never as `.html`. The gate is built in
-  E4, the slice that copies these pages (§4.11) [RR-2 RR2-C9]. Proven (MA-420, E4;
-  MA-423). Serves R19, R7.
+  E4, the slice that copies these pages (§4.11) [RR-2 RR2-C9]. Proven (MA-420, E4, for
+  archived pages [RR-2 RR2-C9]; MA-423, E5, for Readable HTML). Serves R19, R7.
 - **P11 — Extracted attachments are decoded convenience copies, labelled derived.**
   With "Extract attachments" on, each attachment the MIME parser yields is written as a
   loose file under `<stem>.attachments/`, with sanitized, casefold-unique names. The
@@ -360,7 +363,8 @@ rows that will prove it (§9).
   run's marker is rewritten, never removed [RR-2 RR2-C1]. **Restated (XC5):** any export
   directory that contains a message file carries the marker or is complete. A W2–W4 kill
   (§5.1) leaves an empty or temp-only root, which is reconciled as interrupted ("empty
-  export folder", offering Finish as partial, §4.16) [RR-2 RR2-C4]. README's and the
+  export folder", offering Finish as partial, §4.16) once its file identity confirms it
+  (§4.9) [RR-2 RR2-C4]. README's and the
   manifest's status are conditional in their own text on the marker being absent, so no
   kill point leaves a document claiming "complete" beside the marker. Proven (MA-429, which proves the
   **ordering** by fault injection). **Conditional, stated here (XC5):** this holds across
@@ -480,8 +484,9 @@ R19, R20).
 - **Changing the mailbox or the archive in any way**: no move, flag, delete, or feeding
   an export back into the archive.
 - **Incremental or scheduled exports.** A copy export is one-off and never schedulable.
-- **Cloud destinations.** The destination is a local, mounted or UNC path. A
-  cloud-synced folder gets a warning, not a refusal. The warning is **best-effort
+- **Cloud destinations.** The destination is a local, mounted or UNC path, outside the
+  archive by §4.7's checks; R-f2 refuses one whose identity cannot be compared with the
+  archive's [RR-2 RR2-C13]. A cloud-synced folder gets a warning, not a refusal. The warning is **best-effort
   detection** (XC32): OneDrive, Dropbox (including "Dropbox (<team>)" roots), Google
   Drive, iCloud Drive / `iCloudDrive`, macOS iCloud Desktop & Documents, and Box. Other
   providers are not detected.
@@ -572,7 +577,7 @@ MA-405 keeps the method and guard twins, and MA-406 is deleted (XC23).
 | `/api/exports/open-folder` | `{runId}` → reveals the recorded export directory after the identity check, never launching anything (XC33) | `open -R` / `explorer.exe /select,` / `xdg-open` on the verified directory (helper moved from `cmd/mailarchive-gui/main.go:1184`) |
 | `/api/exports/retry` | `{runId, which: "failed"\|"rest"}` → a new preview from that run's **run record**, never the destination manifest (XC2) | memory only |
 | `/api/exports/finish` | `{runId}` → "Finish as partial" for any unsealed run (killed, finalization failed, panicked or wedged) [RR-2 RR2-C7], or "Check and finish" for a sealed one, from its run record (XC2, XC5) | writes README, manifest, sums and marker in its own root only; then appends the run record's sealed line, the fingerprint-ledger line and the journal `end` (the seal-and-finish step, §4.13) [RR-2 RR2-C2] |
-| `/api/exports/locate` | `{runId, "again"\|"gone"\|{path}}` → "Look again", "This folder is gone" or "Locate…" for a run whose folder was not found, did not answer or could not be confirmed (§4.16) [RR-2 RR2-C3] | one bounded probe; "gone" appends a terminal `reconciled` record; a located path is accepted only when the identity check passes (§4.9), and is appended to the run record |
+| `/api/exports/locate` | `{runId, "again"\|"gone"\|{path}}` → "Look again", "This folder is gone" or "Locate…" for a run whose folder was not found, did not answer, could not be confirmed, or was moved or replaced (§4.16) [RR-2 RR2-C3] | one bounded probe; "gone" appends a `gone` line to the run record and a terminal `reconciled` record to the journal; a located path is accepted only when the identity check passes (§4.9), and is appended to the run record |
 | `/api/exports/check` | `{runId}` → "Check this export": re-hash against `SHA256SUMS.txt`, compare the sealed fingerprint, list unlisted files (XC14) | reads only |
 
 New files: `internal/desktop/workspace.go` (session, selection, count, preview store,
@@ -889,13 +894,45 @@ cancels the old one). It:
    (`destOverlapsOut`, `extract.go:621`, using only its "same"/"inside" cases; else R-f),
    nor equal to or inside the other archive folder when that is the source [ruling W1].
    **By identity too [RR-2 RR2-C13].** A path compare misses a folder reached by another
-   name (a mapped drive beside its UNC path, a `subst` letter, a `\\localhost\D$` share, a
-   bind mount). So the destination directory is opened, and its ancestors are walked up
-   to the volume root (`openat(fd, "..")` on POSIX; on Windows each ancestor of
-   `GetFinalPathNameByHandle`'s canonical path, opened and its volume serial + file ID
-   read). R-f also refuses when any ancestor has the identity (volume serial + file ID, or
-   dev+inode) of the configured archive or of the other archive folder, whose identity is
-   read when the source is validated. `extract`'s own `destOverlapsOut` is unchanged.
+   name: a mapped drive beside its UNC path, a `subst` letter, a junction or mount folder,
+   a bind mount of the archive or of a folder inside it, or a share defined on such a
+   folder. So R-f also compares identities (dev+inode, or volume serial + file ID):
+   - **The archive's set.** At preview, the configured archive (when an archive location
+     is set), and the other archive folder when it is the source, are walked from the
+     root, no-follow and directories only, and every directory's identity is collected.
+     An archive's directories are mainly its stores and folders (`exporter.go:300`), so
+     the walk is bounded at 100,000 directories and 10 s.
+   - **The destination.** The destination directory is opened, and it and each of its
+     ancestors up to its volume or share root (`openat(fd, "..")` on POSIX; on Windows
+     each ancestor of `GetFinalPathNameByHandle`'s canonical path) are opened and their
+     identities read. R-f refuses when any of them is in the archive's set. A bind mount,
+     `subst` letter, junction, mount folder or mapped drive keeps the identity of the
+     folder it shows, so the set sees through each, whichever folder of the archive it
+     shows. Checking the archive's own identity alone would miss a bind mount of
+     `<archive>/<store>`, because `..` at the mount's root leads out of the archive.
+   - **Where identity cannot decide: R-f2.** Identity decides only between two views that
+     keep it: both on this computer's local filesystems, or both through one network mount
+     or share whose client reports the server's file ids (the OS's own NFS and SMB
+     clients). Views are classified from the filesystem type that the "Filesystem type"
+     item below reads (XC12), and a type the table does not know is treated as stacking.
+     Where the two views cannot reach the same storage, no identity is needed: a
+     destination on another computer's share beside an archive on this computer's local
+     filesystems is outside, and so is the reverse. Every other pairing is refused with **R-f2** ("couldn't confirm
+     that this folder is outside the archive"):
+     - a share or mount served by this computer (`localhost`, a loopback address, this
+       computer's own name or one of its addresses), on either side;
+     - the archive on one network mount or share and the destination on another: two
+       names can reach one server, and a server may give each share its own volume
+       serial;
+     - a FUSE or stacking filesystem on either side (sshfs, bindfs, overlayfs), whose
+       source the check cannot name and whose ids are its own. A FUSE block filesystem on
+       a device (ntfs-3g) is a local filesystem. A GNOME gvfs path names its server and
+       share (`…/gvfs/smb-share:server=…,share=…`), so it counts as that share for this
+       table, but its ids are its own, so it never decides by identity;
+     - a walk that passed its bound or met a directory it could not read, when the set
+       would have had to decide.
+
+   `extract`'s own `destOverlapsOut` is unchanged.
    It also reports:
    - **Free bytes** via `util.FreeBytes` (statfs / `GetDiskFreeSpaceEx`, read-only), with
      the **free-space policy (XC11):** the estimate plus a finalization reserve must fit.
@@ -958,8 +995,9 @@ space and the reserve (XC11), the signer unchanged, and the posture line, recomp
 the line is broader than the one the preview showed, Start refuses with R-w2 and writes
 nothing [RR-2 RR2-C6]. It also **opens the destination once as a directory handle**,
 checks that its identity equals the previewed one and that it is still outside the
-archive and the other archive folder, by path and by identity (step 3) [RR-2 RR2-C13],
-and then creates the export root **through that handle** (XC32). There is no path
+archive and the other archive folder, by path and by identity (step 3: the destination
+walked again, against the set the preview collected; R-f2 where identity cannot decide)
+[RR-2 RR2-C13], and then creates the export root **through that handle** (XC32). There is no path
 re-walk between the check and the mkdir. Start refuses on a stale or superseded id
 (R-k). **Realized posture [RR-2 RR2-C6].** After W2 and W4 (§5.1), the realized DACLs of
 the root and of the marker are read (macOS: their inherited ACL entries). If they grant
@@ -1017,7 +1055,9 @@ that path is validated the same way (§4.7 step 3). The boundary is "only the si
 OS user can drive the dashboard" (E0).
 
 **Create folder.** `{parent, name}`: `parent` must be an existing directory outside the
-archive. `name` must equal `util.SanitizeSegment(name)` (no separator, `..`, reserved
+archive, by §4.7 step 3's checks (path and identity, R-f and R-f2), against the
+configured archive and any other archive folder this session has validated, because its
+mkdir is a write too [RR-2 RR2-C13]. `name` must equal `util.SanitizeSegment(name)` (no separator, `..`, reserved
 name or empty; otherwise R-q with the sanitized suggestion). Then one `os.Mkdir(parent/name,
 0o700)`; an existing name is R-q ("already exists — pick it with Browse, or use another
 name"). It returns the new path for the box.
@@ -1064,11 +1104,17 @@ name"). It returns the new path for the box.
      the record; then it must match. After a dev change (a replug, a remount, a reboot)
      the nonce decides.
 
+  **A folder with no nonce** [RR-2 RR2-C4] (an empty or temp-only root from a W2–W4 kill,
+  or a root whose marker is gone and that has no README) skips rule 1 and is confirmed by
+  its file identity alone: on Windows its volume serial + file ID, on POSIX its dev+inode
+  while dev is unchanged on a stable-inode filesystem. Otherwise (a replugged FAT stick,
+  a remount) it is "couldn't confirm".
+
   A positive mismatch is another run id, a non-directory, a symlink or reparse point, a
   Windows identity mismatch, or a new inode on the same mount of a stable-inode
-  filesystem. That is "moved or replaced" (R-r). An empty or temp-only root with no nonce
-  yet (a W2–W4 kill) is the run's own empty export folder. Anything else is "couldn't
-  confirm", which is looked for again (§4.16).
+  filesystem. That is "moved or replaced" (R-r). Anything else is "couldn't confirm",
+  which is looked for again (§4.16); an action that needs a confirmed folder refuses it
+  with R-r2, never R-r [RR-2 RR2-C4].
 - **Directory size (XC12):** no export directory holds more than 1,000 files. Messages go
   under a month subdirectory (`messages/<folder>/2026-03/…`, or `messages/2026-03/…` with
   Preserve OFF), split as `2026-03~2`, `~3` … past 1,000. That is about 8,000 FAT
@@ -1120,7 +1166,10 @@ name"). It returns the new path for the box.
   - macOS: `renameatx_np(dirfd, tmp, dirfd, name, RENAME_EXCL)`;
   - Windows: the handle-relative rename that Go's `os.Root.Rename` makes
     (`FILE_RENAME_INFORMATION_EX` with `RootDirectory` set to that directory handle),
-    without its replace-if-exists flag;
+    without its replace-if-exists flag. Where a volume rejects the Ex information class
+    (FAT and exFAT may), the plain `FILE_RENAME_INFORMATION` with `ReplaceIfExists =
+    FALSE` and the same `RootDirectory`, so the rename stays handle-relative where no hard
+    link exists [RR-2 RR2-C10];
   - otherwise: `linkat` with the same directory handles (`os.Root.Link`, which fails on an
     existing name), then the temp file is removed.
 
@@ -1168,10 +1217,13 @@ Notes on the fields:
 - **`status`** is valid only while `_EXPORT-NOT-FINISHED.txt` is absent, as
   `valid_if_absent` says in the manifest's own text (XC5). The marker carries the same
   `run.id`, and so does README's first line [RR-2 RR2-C4]. Reconciliation acts on a
-  directory only when the ids match (XC3, §4.9).
+  directory only when §4.9's tuple confirms it: the ids match, or, for a folder with no
+  nonce yet, its file identity does (XC3) [RR-2 RR2-C4].
 - **`immutable_ids`** comes from the first page's "honored" flag recorded per cursor
   (XC27).
-- **`chain`** lists every part of a retry set (XC15).
+- **`chain`** lists every part of a retry set (XC15). A part not sealed when this one was
+  written has an empty `fingerprint`; the set fingerprint follows seal order (§4.16)
+  [RR-2 RR2-C2].
 - **Archive source (XC21):** `source` is
   `{"kind":"archive","archive":"C:\\MailArchive","stores":[{"store":"…","mailbox":"alex@contoso.com"},…]}`,
   and each message entry carries `"mailbox"`.
@@ -1268,8 +1320,8 @@ meta and `inertMetas` (`html.go:34-43`) at the start of `<head>`. Every page the
 renderer writes starts with those, and `hostileSurvives` alone would flag every page.
 If a live refresh or a foreign CSP meta is found (a page rendered before the F1 fix), it
 is copied as `<stem>.archived-page.txt` with a note instead (P10). Its hash still equals
-the archive's recorded fixity. MA-423's positive twin: a page rendered by the current
-renderer is copied byte-exact as `.html`.
+the archive's recorded fixity. MA-420's positive twin (E4) [RR-2 RR2-C9]: a page rendered
+by the current renderer is copied byte-exact as `.html`.
 
 **The archived-page gate [RR-2 RR2-C9].** `LiveRefreshIn` looks only at metas
 (`hostileIn`, `html.go:260-285`), so a page with a `<script>` and no CSP meta before it
@@ -1350,7 +1402,7 @@ On Windows, `syscall.ENOSPC` is an invented constant that no disk-full code maps
 | `/$value` 404 | terminal (for this selection) | listed: "no longer in the mailbox (moved or deleted after you selected it)"; never retried in-run (F9 hazard 4) |
 | 400 / `ErrorMimeContentConversionFailed` / above the 200 MiB cap | retryable (a later export may succeed) | listed with the reason; offered by "Export failed messages again" |
 | **Transport-class**: no HTTP status (dial, DNS, reset, token-endpoint network failure); 502/503/504 after the client's retries; idle timeout (XC9) | **back off on the same message** (1 s → 60 s, exponential) | never recorded as a failure; counts only toward the no-progress clock |
-| No progress for **5 minutes of awake time** (XC9) [RR-2 RR2-C8]. Progress is a 2xx response or response-body bytes received, so a slow, healthy download never trips it. Awake time is counted by a 1-second ticker in the run: a gap above 30 s is a suspend, is not counted, and restarts the window | **run-fatal: connection lost** | stop → R-u (names the 5 minutes) |
+| No progress for **5 minutes of awake time** (XC9) [RR-2 RR2-C8]. Progress is a 2xx response, or body bytes of a 2xx response received, so a slow, healthy download never trips it; the body of a non-2xx answer is never progress. Awake time is counted by a 1-second ticker in the run: a gap above 30 s is a suspend, is not counted, and restarts the window | **run-fatal: connection lost** | stop → R-u (names the 5 minutes) |
 | 25 consecutive per-message server-class failures (5xx with a body) (XC9) | **run-fatal: Microsoft 365 having problems** | stop → R-u2 |
 | 429 | handled in `get` with Retry-After (`graph.go:547`) | none unless retries run out → transport-class |
 | Derived-file failure (parse or render panic, attachment stream error, read-back hash ≠ recorded, XC1) | partial content | original kept; entry `exported-original-only` ("exported without a readable copy", XC35) or a note |
@@ -1406,9 +1458,12 @@ it is completed by reconcile (§4.16) or by running the step again:
    without_original) [RR-2 RR2-C1], and the fingerprint computed from the in-memory SUMS
    bytes (XC1, XC5). finished-as-partial is the record's own status for a run completed
    by Finish as partial: its manifest says `failed`, its marker says STOPPED, and its label
-   is "Stopped: the app stopped while this export was running".
+   is "Stopped: <reason> (finished as partial)", with the reason from the run's `stopped`
+   line (below), or "the app stopped while this export was running" when it recorded
+   none, as after a kill [RR-2 RR2-C7].
 7. Append the fingerprint-ledger line, once per run id. It also carries the retry
-   chain's set fingerprint and the SHA-256 state behind it (§4.16).
+   chain's set fingerprint, the SHA-256 state behind it and the parts it covers, in the
+   order they sealed (§4.16) [RR-2 RR2-C2].
 8. The sealed status's marker action [RR-2 RR2-C1]. **Complete/partial:** remove
    `_EXPORT-NOT-FINISHED.txt`. **Cancelled/failed/finished-as-partial:** rewrite it as
    "CANCELLED / STOPPED at <time>: <exported> of <selected> exported, reason …; do not
@@ -1421,7 +1476,11 @@ If finalization itself fails, the marker stays, the activity page says so, and *
 as partial** completes the part from the run record once the cause is cleared (§4.16)
 [RR-2 RR2-C7]. With the per-message free-space budget (RR2-C5), this run's own writes can
 no longer cause that. Another program or a quota filling the volume still can, and then
-the marker stays [RR-2 RR2-C5].
+the marker stays [RR-2 RR2-C5]. **A run that stops before its seal while the app runs
+on** (a failed finalization, a recovered panic inside it, a wedge) appends a `stopped`
+line with its reason to the run record, and the journal `stopped` event, when the state
+volume takes them. That reason names the cause on the interrupted and finished-as-partial
+labels (§4.16) [RR-2 RR2-C7].
 
 **Outcome** (engine `CopyOutcome`, reserved for a future CLI verb, consistent with X1's
 `extract` partition): `0` complete (every selected message exported with every
@@ -1458,8 +1517,8 @@ partial, or any unsealed run, interrupted runs included [RR-2 RR2-C7]) build a n
   planted changes nothing.
 
 **Finish as partial (XC2).** Every unsealed run whose root is found and confirmed is
-finished by the app from its run record alone, after the root's identity matches the
-recorded one (XC3, §4.9) [RR-2 RR2-C7]. That covers a killed run, a run whose
+finished by the app from its run record alone, after §4.9's tuple confirms the root (a
+root with no nonce yet by its file identity alone) (XC3) [RR-2 RR2-C4, RR2-C7]. That covers a killed run, a run whose
 finalization failed (a pulled stick plugged back in), a panicked run, and a wedged run
 once its goroutine has returned or after a restart. README, manifest and sums list
 exactly the recorded files that are present under the root (Lstat) and whose bytes,
@@ -1549,7 +1608,9 @@ spool" item.
     event:"start"|"stopped"|"end"|"reconciled", at, source_kind, mailbox|archive, dest_dir,
     root_id, planned, exported, failed, status, fingerprint}`. No subjects (privacy).
     **[RR-2 RR2-C2, RR2-C3]** The run record's `sealed` line is the seal, so the journal
-    has no `sealed` event. `stopped` is a wedged run's mark (§4.13), and it is not terminal.
+    has no `sealed` event. `stopped` marks a run that stopped before its seal while the
+    app ran on (a wedge, a failed finalization, a recovered panic; §4.13), and it is not
+    terminal [RR-2 RR2-C7].
   - **When `start` is written (XC3):** **after** the exclusive mkdir of the export root,
     with the real directory name and the root's identity. A failed journal or run-record
     write refuses the start with R-d, naming the state directory. The empty root is then
@@ -1559,7 +1620,8 @@ spool" item.
     truncated (`state.OpenHistory`'s `truncateTornTail`, `internal/state/history.go`). One
     mutex covers append and compaction.
   - **Compaction.** Temp + rename once the journal passes 1,000 lines; it keeps the last
-    200 runs and copies raw lines verbatim, including lines with an unknown `v`, which it
+    200 runs, and every unresolved run whatever its age (§4.19 Lifetime) [RR-2 RR2-C3],
+    and copies raw lines verbatim, including lines with an unknown `v`, which it
     never reinterprets (XC3). Fingerprints survive compaction in the separate fingerprint
     ledger (§4.10, XC14).
   - **Reading.** Strings are control-stripped (`util.StripControl`), malformed lines are
@@ -1573,10 +1635,13 @@ spool" item.
     `/api/exports/history`. Progress (`/api/exports/progress`) never waits on it.
   - **Launch sweep [RR-2 RR2-C12].** At launch the reconciler also lists
     `<state dir>/exports/*.jsonl`. It adopts any record that no journal line names (a
-    kill inside W3, a lost or damaged journal), rebuilding its `start` line from the
-    record's header (this host only), and reconciles it as usual. It deletes any record
-    whose run is sealed and ledgered and whose chain is complete. The journal is an index,
-    so losing it no longer hides a run whose record survives.
+    kill inside W3, a lost or damaged journal, a compaction stopped before its
+    deletions), rebuilding its `start` line from the record's header and, from a `gone`
+    line, its terminal `reconciled` record (this host only), and reconciles it as usual; a
+    gone run is not probed. It deletes any record whose run is settled (§4.19 Lifetime:
+    sealed, ledgered and ended, or gone) and whose chain is complete, so a sealed run whose
+    marker action is still owed keeps the record Check and finish needs [RR-2 RR2-C3]. The
+    journal is an index, so losing it no longer hides a run whose record survives.
   - **What it reads.** Status comes **only** from the journal and the run record. The
     export directory is probed only for presence, for the marker, and for an identity
     and run id that match the record (XC3). It is never parsed for status, ids or hashes,
@@ -1590,15 +1655,18 @@ spool" item.
     - identity neither confirmed nor positively mismatched (no nonce to read, or a
       comparison the filesystem cannot make) → "couldn't confirm this is the same folder
       — Look again", not terminal [RR-2 RR2-C3, RR2-C4];
-    - a positive mismatch (§4.9) → "this folder was moved or replaced since the export";
-    - an empty or temp-only root, no `sealed` record and no progress line (a W2–W4 kill)
-      → "interrupted: empty export folder — the app stopped before writing anything",
-      offering **Finish as partial**, or deleting the folder by hand [RR-2 RR2-C4];
-    - marker present and no `sealed` record → "interrupted (the app stopped while this
-      export was running)", offering **Finish as partial** (XC2), whatever stopped it
-      [RR-2 RR2-C7];
+    - a positive mismatch (§4.9) → "this folder was moved or replaced since the export",
+      terminal, offering **Locate…** and **This folder is gone** [RR-2 RR2-C3];
+    - an empty or temp-only root, no `sealed` record and no progress line (a W2–W4 kill),
+      confirmed by its file identity (§4.9) → "interrupted: empty export folder — the app
+      stopped before writing anything", offering **Finish as partial**, or deleting the
+      folder by hand [RR-2 RR2-C4];
+    - marker present and no `sealed` record → "interrupted: <the reason from the run's
+      `stopped` line>", or "interrupted (the app stopped while this export was running)"
+      when it recorded none, as after a kill, offering **Finish as partial** (XC2),
+      whatever stopped it [RR-2 RR2-C7];
     - marker present and a `sealed` record → "Finished writing (<the sealed status's
-      label>) — this folder's marker still needs updating", offering **Check and
+      label>) — this folder's marker may still need updating", offering **Check and
       finish**. It verifies sha256(SUMS on disk) = the sealed fingerprint and every listed
       file, then performs the sealed status's marker action (§4.13 step 8): it removes the
       app's own marker for complete or partial, and rewrites it CANCELLED / STOPPED for
@@ -1609,21 +1677,34 @@ spool" item.
       exported (recovered)", with **Export failed messages again**; "Cancelled" or
       "Stopped: <reason>", saying the folder's marker is missing [RR-2 RR2-C1];
     - marker absent and no `sealed` record, with progress lines → "changed after the
-      export — run Check this export", with "fingerprint not recorded at export time".
-  - **Recording [RR-2 RR2-C3].** Only the marker-and-seal outcomes are terminal. Each is
-    appended once as a `reconciled` record, and that run is not probed again.
+      export: its marker is gone — run Check this export", with "fingerprint not recorded
+      at export time", offering **Finish as partial** once §4.9's tuple confirms the
+      folder, as for every unsealed run [RR-2 RR2-C4, RR2-C7].
+  - **Recording [RR-2 RR2-C3].** The terminal outcomes are the marker-and-seal outcomes
+    and a positive mismatch. Each is appended once as a `reconciled` record, and that run
+    is not probed again unless a user action changes it.
     - "Folder not found", "did not answer" and "couldn't confirm" are observations. They
       are cached for `/api/exports/history`, never journaled, and probed again once per
       launch (5 s bound, in the background) for each run that has a run record and no
       terminal outcome, and by the card's guarded **Look again**.
-    - **This folder is gone** (the user's answer) makes the outcome terminal and offers
-      **Export these N messages again** (§4.13).
+    - **This folder is gone** (the user's answer) is terminal. It is written as a `gone`
+      line in the run record (fsynced) as well as to the journal, so it outlives
+      compaction and a lost journal, and it offers **Export these N messages again**
+      (§4.13).
     - **Locate…** (Browse) accepts the folder at a new path, after a drive-letter or
-      mount change, only when the identity check passes, and appends that path to the run
-      record.
-    - The bound holds because a run record ends at finish, at "gone" or at compaction.
-    - Reconcile also appends a missing ledger line from any sealed record, then the
-      journal `end` [RR-2 RR2-C2].
+      mount change or a "moved or replaced", only when the identity check passes, and
+      appends that path to the run record; the run is then reconciled at that path.
+    - **The ledger line and the `end`.** Reconcile appends a missing ledger line from any
+      sealed record as soon as it reads the record, whatever the folder answers
+      [RR-2 RR2-C2]. It appends the journal `end` only when a probe sees the marker absent
+      beside a sealed record. A sealed run whose folder was not found, did not answer or
+      could not be confirmed therefore gets no `end` and is probed again. Once its folder
+      is seen with the marker, Check and finish does the marker action and appends the
+      `end` itself. So an `end` always means no marker action is left to do.
+    - **The bound** is §4.19's Lifetime: the records of the last 200 runs, plus the
+      records of unresolved runs (unsealed and not gone, or sealed without an `end`).
+      Compaction keeps an unresolved run's lines, so the run stays on this page with its
+      actions until it is finished or the user says its folder is gone.
 
     Losing the journal loses only the history of runs whose records are gone too: the
     launch sweep re-adopts every surviving record [RR-2 RR2-C12]. Losing the fingerprint
@@ -1639,13 +1720,18 @@ spool" item.
     media); "Export failed messages again"; "Export the remaining messages"; "Finish as
     partial" and "Check and finish" (XC2, XC5); "Look again", "This folder is gone",
     "Locate…" and "Export these N messages again" (`/api/exports/locate`) [RR-2 RR2-C3].
-  - **Set fingerprint (XC15):** SHA-256 over the chain's `SHA256SUMS.txt` files in part
-    order. **[RR-2 RR2-C2]** It is computed at each part's seal, by resuming the SHA-256
-    state that the previous part's ledger line saved (Go's `sha256` digest marshals its
-    state), with this part's in-memory SUMS bytes. Every ledger line saves the state after
-    its chain's SUMS bytes so far (for a first part, after its own), and the set
-    fingerprint. No earlier part's SUMS is re-read from disk, and no earlier run record is
-    needed, so compaction may delete one while its chain is open.
+  - **Set fingerprint (XC15):** SHA-256 over the `SHA256SUMS.txt` files of the chain's
+    **sealed** parts, **in the order they sealed** [RR-2 RR2-C2]. It is computed at each
+    part's seal, under the ledger's mutex, by resuming the SHA-256 state saved in the
+    chain's most recent ledger line (Go's `sha256` digest marshals its state), with this
+    part's in-memory SUMS bytes. Every ledger line saves that state, the set fingerprint
+    and the parts it covers, in order (a first sealed part starts the state with its own
+    bytes). Parts need not seal in part order: an interrupted part 1 can be finished as
+    partial after "Export the remaining messages" has sealed part 2, and a part marked gone
+    never seals and never enters it. So the page and the receipt give the set fingerprint
+    with its part order, and a recipient hashes the parts' SUMS files in that order. No
+    earlier part's SUMS is re-read from disk, and no earlier run record is needed, so
+    compaction may delete one while its chain is open.
 - **"Open folder" (XC33)** never takes a path from the request. Before opening the
   recorded export root it requires all of these:
   - Lstat shows no symlink or reparse point;
@@ -1654,7 +1740,10 @@ spool" item.
     [RR-2 RR2-C4];
   - the marker or the manifest is present.
 
-  Otherwise it refuses with R-r ("this folder was moved or replaced since the export").
+  A symlink, reparse point, non-directory or positive mismatch (§4.9) refuses with R-r
+  ("this folder was moved or replaced since the export"). An identity it could not
+  confirm, or a folder with neither marker nor manifest, refuses with R-r2 ("couldn't
+  confirm this is the export's folder"), never R-r [RR-2 RR2-C4].
   It opens with reveal semantics that never launch anything: macOS `open -R
   <root>/README.txt`, Windows `explorer.exe /select,<root>\README.txt`, Linux `xdg-open`
   on the verified directory. On macOS an `.app` bundle is a directory, so the Lstat check
@@ -1694,7 +1783,7 @@ saves settings drops these fields, which is harmless (§6).
 
 | Finding | Disposition |
 |---|---|
-| F1 meta refresh smuggled via SVG/MathML (`go.mod:11`) | Fixed upstream (x/net v0.60.0; MA-300/MA-301). Export pages reuse `RenderWith` and MA-423 re-runs the corpus. Archived pages rendered before the fix are detected and quarantined as `.txt` (P10). |
+| F1 meta refresh smuggled via SVG/MathML (`go.mod:11`) | Fixed upstream (x/net v0.60.0; MA-300/MA-301). Export pages reuse `RenderWith` and MA-423 re-runs the corpus. Archived pages rendered before the fix are detected and quarantined as `.txt` (P10; MA-420, E4 [RR-2 RR2-C9]). |
 | F2 any Host on GET (`server.go:102`) | **E0 prerequisite** = `docs/design-local-confidentiality.md` slice C1 (XC23). Until then the workspace exposes only POST data endpoints (Host-checked by `GuardLocalPOST`, D2) and data-free page shells. |
 | F3 CSRF token to anyone; cross-user dashboard (`dashboard.go:90`) | **E0 hard prerequisite** ([ruling Q5]) = local-confidentiality slice C2 (XC23). **Re-premised (XC24):** the shipped dashboard already lets another local account copy the live mailbox to a path (POST `/api/settings` with any `Out`, then `/api/capture` with the victim's token). E0 closes that exposure on its own merits. The workspace inherits it and adds a faster selective copy and a subject-read surface, so it must not ship while another local account can POST. |
 | F4 port squatter (`main.go:92`) | **E0.** A look-alike dashboard could phish a workspace sign-in. |
@@ -1746,6 +1835,10 @@ recipient's.
   fingerprint, computed from the in-memory SUMS bytes, and is fsynced. It is the first
   part of the seal-and-finish step (§4.13), which then writes the same fingerprint to the
   ledger (W9b) and ends with the journal `end` (W11). The journal has no `sealed` event.
+- **Stop and gone [RR-2 RR2-C3, RR2-C7].** A run that stops before its seal while the app
+  runs on appends a `stopped` line with its reason (§4.13), when the state volume takes
+  it. The user's "This folder is gone" appends a `gone` line (fsynced), so that answer
+  outlives the journal (§4.16).
 - **What is built from it.** `export-manifest.json` and `SHA256SUMS.txt` are streamed from
   the record, and their per-file hashes are the recorded ones. Derived HTML is rendered
   only from read-back bytes whose hash equals the recorded one. There is no destination
@@ -1763,12 +1856,22 @@ recipient's.
   fingerprint from destination content.
 - **Version rules (XC3).** A reader refuses a newer `format_version` with "made by a newer
   MailArchive Desktop — update to retry", and tolerates additive fields.
-- **Lifetime.** A record is deleted when its run and its whole retry chain are complete,
-  or when journal compaction drops the run, and in either case only once its ledger line
-  exists [RR-2 RR2-C2]. Compaction deletes the dropped runs' records only after the new
-  journal is in place, and the launch sweep (§4.16) deletes any record whose run is
-  sealed and ledgered and whose chain is complete [RR-2 RR2-C12]. Its fingerprint, and the
-  set-fingerprint state for a retry chain, survive in the ledger.
+- **Lifetime [RR-2 RR2-C2, RR2-C3, RR2-C12].** A run is **settled** when it is sealed, its
+  ledger line exists and its journal `end` does (no marker action is left), or when the
+  user has said its folder is gone. Any other run is **unresolved**. A record is deleted
+  in three cases only:
+  - a refused start: R-d removes the record it wrote (§4.16);
+  - a settled run whose whole retry chain is complete: at once, or by the launch sweep;
+  - a settled run that journal compaction drops: only after the new journal is in place.
+    A record left by a compaction stopped before its deletions is re-adopted by the launch
+    sweep (§4.16) and ages out again.
+
+  An unresolved run's record is never deleted, and compaction keeps its lines, so it stays
+  on the activity page with its actions (Finish as partial, Check and finish, Look again,
+  Locate…, This folder is gone) until the user resolves it. The records are therefore
+  those of the last 200 runs plus the unresolved ones, and each holds at most its plan
+  (200,000 lines). A deleted record's fingerprint, and the set-fingerprint state for a
+  retry chain, survive in the ledger.
 - **Residual (stated, §8.4).** A co-writer on the destination can still alter or add files
   *after* they are written. The recipient's check, the extra-files check and "Check this
   export" detect that. Nothing in the run vouches for it.
@@ -1785,7 +1888,7 @@ Revision 2 order (XC1, XC3, XC5): the exclusive mkdir now comes **before** the j
 | W0 | Preview (writes nothing) | — | — | — | nothing | preview lost; preview again |
 | W1 | Create folder: one `os.Mkdir` | nothing | atomic | an empty folder | harmless | the folder exists, empty |
 | W2 | Export root: exclusive mkdir through the destination handle; random-suffixed name; identity read (XC3, XC32) | no folder | atomic | an empty folder with no marker and no journal record (sub-second window) | an empty folder is plainly not an export, and no record points at it | an empty `MailExport-…` folder; README-less, so nothing claims it |
-| W3 | Run record header + plan (append, fsync), then journal `start` with the real name and root identity (append after `truncateTornTail`, fsync) (XC1, XC3) | empty root, no record | torn line, truncated before the next append | record | a record for an empty, marker-less root; a kill between the two appends leaves a record no journal line names, which the launch sweep adopts (§4.16) [RR-2 RR2-C12] | "interrupted" ("empty export folder", RR2-C4); **Finish as partial** writes a 0-message STOPPED export, or the folder can be deleted |
+| W3 | Run record header + plan (append, fsync), then journal `start` with the real name and root identity (append after `truncateTornTail`, fsync) (XC1, XC3) | empty root, no record | torn line, truncated before the next append | record | a record for an empty, marker-less root; a kill between the two appends leaves a record no journal line names, which the launch sweep adopts (§4.16) [RR-2 RR2-C12] | "interrupted" ("empty export folder", once its file identity confirms it, RR2-C4); **Finish as partial** writes a 0-message STOPPED export, or the folder can be deleted |
 | W4 | `_EXPORT-NOT-FINISHED.txt` carrying the run id (temp → fsync → rename → dir sync) | root + record, no marker | temp residue | marker | unfinished | "interrupted"; marker explains; Finish as partial |
 | W5 | Per message: temp → `Sync` → no-replace rename, for each file (directory syncs batched, XC5) | previous files only | `.mailexport-*.tmp` residue, never a partial file under a final name (R5 analog) | file complete | unfinished (marker present) | "interrupted"; marker; Finish as partial |
 | W6 | Run-record line for the message (append, fsync, after its files) (XC1) | the files exist, unrecorded (not listed by Finish as partial) | torn last line, truncated | recorded | unfinished (marker present) | same |
@@ -1795,8 +1898,8 @@ Revision 2 order (XC1, XC3, XC5): the exclusive mkdir now comes **before** the j
 | W9a | Run record `sealed` line: the final status and counts [RR-2 RR2-C1] and the in-memory fingerprint (fsync) (XC1, XC5) | sums on disk, not sealed | torn line | sealed | unfinished (marker present) but provably written | "Finished writing (<the sealed status's label>)" → **Check and finish**, which then does the sealed status's marker action (RR2-C1) |
 | W9b | Fingerprint-ledger line, once per run id (append, fsync) [RR-2 RR2-C2] | sealed, no ledger line | torn line, truncated | ledger line | unfinished (marker present); reconcile appends a missing ledger line from the sealed line | as W9a |
 | W10 | The sealed status's marker action: remove the marker (complete/partial) or rewrite it CANCELLED / STOPPED by one atomic replacing rename (cancelled/failed/finished-as-partial) [RR-2 RR2-C1]; dir sync | marker present: claims less than the truth (safe); Check and finish performs the same action from the sealed status | atomic | done | as the sealed status says | the sealed status's label |
-| W11 | Journal `end` [RR-2 RR2-C2] | sealed; the ledger line or the `end` missing → reconcile appends them | torn line | record | reconcile reads the **sealed** line, never the folder (XC4) | the sealed status's label with "(recovered)" and the sealed fingerprint; "complete" only if that status is complete (RR2-C1) |
-| W12 | Journal compaction (temp → rename, under the journal mutex, unknown-`v` lines kept verbatim) (XC3); the dropped runs' records are deleted only after the new journal is in place [RR-2 RR2-C12] | old journal | temp residue | new journal | at worst, history lost; fingerprints kept in the ledger; a leftover record is found by the launch sweep | shorter history |
+| W11 | Journal `end` [RR-2 RR2-C2] | sealed, the marker action done; reconcile appends a missing ledger line, and the `end` once a probe sees the marker absent; a rewritten CANCELLED / STOPPED marker gets it from Check and finish [RR-2 RR2-C3] | torn line | record | reconcile reads the **sealed** line, never the folder (XC4) | the sealed status's label with "(recovered)" and the sealed fingerprint once the marker is seen absent; with a rewritten marker, "Finished writing (<that label>)" and Check and finish (RR2-C3); "complete" only if that status is complete (RR2-C1) |
+| W12 | Journal compaction (temp → rename, under the journal mutex, unknown-`v` lines kept verbatim) (XC3); the dropped runs' records are deleted only after the new journal is in place [RR-2 RR2-C12]; an unresolved run is never dropped (§4.19 Lifetime) [RR-2 RR2-C3] | old journal | temp residue | new journal | at worst, history lost; fingerprints kept in the ledger; a leftover record is found by the launch sweep | shorter history |
 | W13 | Settings (existing `util.WriteFileAtomic0600`, under the settings mutex, XC34) | old | — | new | old defaults | previous defaults |
 
 **The invariant this ordering buys (P14, restated by XC5).** Any export directory that
@@ -1832,7 +1935,7 @@ tell the user the folder can be deleted.
 | **Run record** (XC1) | its run can no longer be retried or finished from the app; the export on disk is unaffected and still self-verifies | same-user file, 0600, local; a reader refuses a newer format legibly | closed (no retry offered) | "this export's run record is missing — Check this export still works" |
 | Destination volume | removed or full → run-fatal; the per-OS errno table, root probe, 5-failure breaker and free-space reserve make that hold on Windows, SMB and FAT too (XC10, XC11) | another program writing there: only the export root is ours, under `os.Root`. The app's truth is the run record, never this volume (XC1, XC4) | closed, marker kept; finalization fits against this run's own writes (RR2-C5); if another program used the reserve, Finish as partial completes the part later (RR2-C7) [RR-2] | R-g / R-g2; "Export the remaining messages" from the run record |
 | Archive (source) | missing → R-o; gone mid-run → run-fatal R-o2 (XC10) | damaged or swapped files → fixity mismatch per message; hard links refused (XC19) | closed per message | listed failures; "run Check integrity" |
-| Journal | the next launch's sweep re-adopts every surviving run record, so each unfinished run comes back with its actions; only runs whose records are gone too leave the history [RR-2 RR2-C12]; fingerprints survive in the ledger (XC14) | malformed lines skipped; torn tail truncated (XC3); paths are never trusted for deletion (there is no deletion) | open (exports unaffected) | shorter history |
+| Journal | the next launch's sweep re-adopts every surviving run record, so each unfinished run comes back with its actions; only runs whose records are gone too leave the history [RR-2 RR2-C12]; fingerprints survive in the ledger (XC14) | malformed lines skipped; torn tail truncated (XC3); a journal path is never used to write or delete anything; the only deletions are the app's own run records in the state directory, chosen by run id (§4.19 Lifetime) [RR-2] | open (exports unaffected) | shorter history |
 | Fingerprint ledger (XC14) | the sender's tamper anchor for past exports is lost, unless a receipt was saved | same-user file, 0600 | open | "fingerprint not recorded" |
 | Native picker | unavailable → typed path | **crash** in a shell extension (Windows, in-process) kills the dashboard process: the run is interrupted and recovered by Finish as partial. **Hang**: `zenity.Context` cannot dismiss it, and Browse stays refused until restart. Browse is disabled while an export runs (XC31) | open to the typed fallback | R-n; "a folder picker is already open" |
 | An export after hand-over | — | tampered → `sha256sum -c` mismatch; re-hashed throughout → caught only by the fingerprint; files **added** → caught only by the extra-files check or Check this export (XC14) | detectable | the recipient's check fails |
@@ -1960,6 +2063,7 @@ slice.
 | AV quarantines a written `.eml` (XC14) | the presence check before the sums makes the run partial and names the file | **Export failed messages again** → **Start** (2), or restore it from quarantine and **Check this export** (1) | I |
 | Retry after a restart (XC2) | retry reads the run record, so it works after any restart | **Export the remaining messages** → **Start** (2) | I |
 | Linux, no zenity | R-n | type the path (1) | III (bundling a picker is backlog) |
+| Destination on another network share than a share-held archive, on a share served by this computer, or on an sshfs or other FUSE mount [RR-2 RR2-C13] | R-f2 at preview; nothing written | choose a local folder, a USB drive, or a folder on the archive's own share outside it (1) · none | I (identity cannot be compared across those views, and the archive must stay unwritten) |
 | Picks 12,000 rows by hand | R-j (reachable now that picks are row handles, XC17) | **Select current folder** + untick (2) | I (bound) |
 
 ### 7.3 Admin / IT handing over a departing user's mail
@@ -2035,6 +2139,7 @@ choices are **Save and keep the backup**, **Save and remove the weekly backup**,
 | R-d2 | [RR-2 RR2-C7] "MailArchive Desktop couldn't record this export's progress in C:\Users\alex\AppData\Local\MailArchive (disk full or access denied) — the export stopped after 812 of 2,088 messages and the folder is marked unfinished. Free some space there, then click 'Finish as partial' or 'Export the remaining messages' on Export activity." Raised when a run-record or journal write fails during a run; never matched against the destination table. |
 | R-e | "The folder C:\Users\alex\Downloads\Archive Folder doesn't exist — an export is written into an existing folder. Click Browse to choose one, or Create folder." |
 | R-f | "That folder is inside your archive (C:\MailArchive) — an export written there would mix into the archive. Choose a folder outside C:\MailArchive." |
+| R-f2 | [RR-2 RR2-C13] "MailArchive couldn't confirm that \\\\nas\\mail is outside your archive (\\\\nas\\share\\MailArchive) — the two are reached through different network shares, which can show one folder under two names, so nothing was written. Choose a folder on a local drive or a USB drive, or one on the archive's own share outside the archive." Variants name the cause: a share on this computer ("use the folder's local path instead"), a FUSE or overlay mount, or an archive too large or partly unreadable to check. Also raised by Create folder. |
 | R-g | "The destination is full or no longer available (E:\ — no space left) — the export stopped after 812 of 2,088 messages and the folder is marked unfinished. Free some space or choose another destination, then click 'Export the remaining messages'." The remedy works even when the destination is gone, because it reads the run record (XC2, XC11). It names the real cause from the per-OS table, e.g. "the drive was removed" or "the network share is gone" (XC10). |
 | R-g2 | (XC11) "E:\ has 1.1 GB free, but this export needs about 1.4 GB plus room to finish (the manifest and checksums) — nothing was written. Free some space or choose another destination." |
 | R-h | (Preview disabled) "Select at least one folder or message to preview." |
@@ -2053,6 +2158,7 @@ choices are **Save and keep the backup**, **Save and remove the weekly backup**,
 | R-p | (the loader's own wording) e.g. "The archive's manifest was written by a newer MailArchive (format 7) — update MailArchive Desktop to export from it." |
 | R-q | "A folder named 'Archive Folder' already exists here — choose it with Browse, or use another name." / "'a/b' can't be a folder name (it contains '/') — try 'a b'." |
 | R-r | (XC33) "This export's folder was moved or replaced since the export (E:\…\MailExport-2026-10-09_142233-7f3a) — MailArchive won't open it. Find the folder yourself, then run Check this export." |
+| R-r2 | [RR-2 RR2-C4] "MailArchive couldn't confirm that E:\…\MailExport-2026-10-09_142233-7f3a is this export's folder (the drive may have been plugged in again, or the folder's marker and README are missing) — it won't open a folder it can't confirm. Click Look again on Export activity, or find the folder yourself." Raised for "couldn't confirm", never for a positive mismatch. |
 | R-s | "This mailbox has more than 10,000 folders — more than the workspace can show. Export from the archive instead, or contact support." |
 | R-t | "Couldn't create a new export folder in C:\…\Archive Folder (MailExport-2026-10-09_142233 through -99 already exist) — choose another destination." |
 | R-u | (XC9) "The connection to Microsoft 365 has been down for 5 minutes — the export stopped after 1,500 of 2,088 messages; none of them was marked failed. Check your network, then click 'Export the remaining messages'." |
@@ -2091,8 +2197,13 @@ No refusal echoes a token, a Graph URL with its query, or a stack trace (MA-438;
    interpreted by this tool.
 5. **User → destination path.** A trusted user (after E0), but validated: an absolute,
    existing directory, not in the archive, nor in another archive folder chosen as the
-   source, by path and by identity, so an alias (a mapped drive, `subst`, a
-   `\\localhost` share, a bind mount) is refused too (§4.7) [RR-2 RR2-C13]. A symlinked
+   source, by path and by identity (§4.7) [RR-2 RR2-C13]. An alias that keeps identity
+   (a mapped drive, `subst`, a junction or mount folder, a bind mount of the archive or of
+   any folder inside it) is refused with R-f, against the identities of all the archive's
+   directories. Where identity cannot be compared (a share served by this computer, such
+   as `\\localhost`; another share than a share-held archive's; a FUSE or overlay mount),
+   the destination is refused as unconfirmed (R-f2). Create folder's parent is checked the
+   same way (§4.8). A symlinked
    destination is allowed (the user's choice). At start the destination is opened once as a directory handle, its
    identity is re-checked, and the export root is created through that handle and then
    pinned with `os.Root` (XC32).
@@ -2301,22 +2412,24 @@ noted.
 
 | Row | Change | Condition |
 |---|---|---|
-| MA-414 | adds: a destination reached through an alias of the configured archive (`subst` on the Windows CI leg, a bind mount on Linux) → R-f, with nothing written | RR2-C13 |
+| MA-414 | adds: a destination reached through an alias of the configured archive (`subst` on the Windows CI leg, a bind mount on Linux) → R-f, with nothing written; adds [re-verification]: an alias of a folder inside the archive (a bind mount of `<archive>/<store>` in a user namespace on the Linux leg, `subst` of an archive subfolder on the Windows leg), the destination itself being that alias or below it → R-f; through the view-classification seam, a share served by this computer, a destination on another share than a share-held archive's, and an sshfs or overlay mount → R-f2, while a share on another computer beside a local archive is allowed (the positive twin); an archive walk past its bound → R-f2; each with nothing written. Second prove-fail: compare the archive root's identity only → the subfolder bind mount case writes into the archive | RR2-C13 |
 | MA-417 | adds: a fault hook at the rename seam swaps the parent for a symlink or junction between the temp file and the rename → the message fails and nothing appears outside the root | RR2-C10 |
-| MA-420 | adds: an archived page with `<script>` and no CSP prefix is exported as `.archived-page.txt` with a note (hash = archive fixity); a page from the current renderer stays `.html`; the preview counts the quarantined pages. Second prove-fail: accept any page without a hostile meta → the script page is exported as `.html` | RR2-C9 |
+| MA-420 | adds: an archived page with `<script>` and no CSP prefix is exported as `.archived-page.txt` with a note (hash = archive fixity); a page from the current renderer stays `.html`; the preview counts the quarantined pages. Second prove-fail: accept any page without a hostile meta → the script page is exported as `.html`. Adds [re-verification], moved from MA-423 so that E4's `LiveRefreshIn` has its own row: a page with the renderer's prefix that carries a live refresh (rendered before the F1 fix) → `.archived-page.txt` with a note, its hash equal to the archive fixity, and MA-423's former positive twin (a current-renderer page copied byte-exact as `.html`). Third prove-fail: make `LiveRefreshIn` report nothing → the live-refresh page is exported as `.html` | RR2-C9 |
+| MA-423 | [re-verification] its archived-page cases (the live-refresh quarantine and its positive twin) move to MA-420 (E4) with their prove-fail, because E4 builds `LiveRefreshIn` and the quarantine path; MA-423 keeps the export render. Its prove-fail becomes: drop the `ArchiveCSP` meta from export renders → the head-order assertion fails | RR2-C9 |
 | MA-427 | adds: a volume a few MB above the reserve with a large message → that message is aborted at its budget, the run stops with R-g, and finalization fits; ENOSPC → the stick is removed → finalization fails → the stick is re-inserted → Finish as partial is offered, and the part verifies; a run-record append failing mid-run → R-d2, never R-g | RR2-C5, RR2-C7 |
 | MA-429 | the kill points include W9b, and W9a's label reads "Finished writing (<the sealed status's label>)"; adds: a cancelled run and a partial run, each killed at W9a and between W10 and W11 → the cancelled run's marker is never removed, and the partial run is never labelled complete | RR2-C1, RR2-C2 |
-| MA-430 | "marker absent plus a sealed run record reconciles to complete (recovered)" reads "a sealed run record whose status is complete"; adds: a marker-absent sealed partial run is labelled "Finished with problems … (recovered)", never complete; a fake filesystem whose dev and inode change between launches with the nonce intact → Finish as partial is offered and Open folder opens; a different run id → R-r; the different-inode case stays (same dev, stable-inode filesystem → R-r); with the journal deleted, an interrupted run and a sealed run both reappear after the next launch, and Finish as partial is offered for the first; a record no journal line names (a W3 kill) is adopted as interrupted | RR2-C1, RR2-C4, RR2-C12 |
-| MA-437 | adds: Finish as partial leaves a ledger fingerprint equal to sha256 of the SUMS it wrote, and a journal `end`; a present recorded file whose bytes changed is listed "damaged when the computer stopped", never in SUMS; Finish as partial on a run whose finalization failed; for a part marked gone, `rest` includes its done but never-finalized messages | RR2-C2, RR2-C7 |
-| MA-438 | adds R-d2 and R-w2 | RR2-C6, RR2-C7 |
-| MA-447 | adds: a kill between W9a and W9b, and one between W10 and W11, each leaves exactly one ledger line equal to the sealed fingerprint, and a journal `end`, after the next launch's reconcile | RR2-C2 |
-| MA-448 | "gets a terminal reconciled record" holds for the marker-and-seal outcomes only, and "an identity mismatch" reads "a positive identity mismatch (§4.9)"; adds: a folder absent at the first launch and present at the second → interrupted, with Finish as partial offered; a probe that times out is recorded as a timeout and probed again; Look again re-probes; "This folder is gone" is terminal; Locate… accepts a moved folder only when the identity check passes; a wedged run is offered Finish as partial after a restart; the dev-and-inode-change fake as in MA-430 | RR2-C3, RR2-C4 |
+| MA-430 | "marker absent plus a sealed run record reconciles to complete (recovered)" reads "a sealed run record whose status is complete"; adds: a marker-absent sealed partial run is labelled "Finished with problems … (recovered)", never complete; a fake filesystem whose dev and inode change between launches with the nonce intact → Finish as partial is offered and Open folder opens; a different run id → R-r; the different-inode case stays (same dev, stable-inode filesystem → R-r); with the journal deleted, an interrupted run and a sealed run both reappear after the next launch, and Finish as partial is offered for the first; a record no journal line names (a W3 kill) is adopted as interrupted. Adds [re-verification]: an empty export folder on a stable-inode filesystem with dev unchanged → Finish as partial offered; the same folder on a fake vfat whose inode changed → "couldn't confirm", no Finish as partial, and Open folder refuses with R-r2, never R-r; an unresolved run's lines survive compaction past 200 runs; a gone run's `gone` line survives a deleted journal, and the run is re-adopted as gone and never probed; a settled run's record is deleted at compaction, only after the new journal is in place; a sealed run without its `end` keeps its record through the launch sweep | RR2-C1, RR2-C3, RR2-C4, RR2-C12 |
+| MA-434 | adds [re-verification]: a parent reached through an alias of a folder inside the configured archive (a bind mount on the Linux leg, `subst` on the Windows leg) → R-f, and an unconfirmable view from the seam → R-f2, each with no directory created | RR2-C13 |
+| MA-437 | adds: Finish as partial leaves a ledger fingerprint equal to sha256 of the SUMS it wrote, and a journal `end`; a present recorded file whose bytes changed is listed "damaged when the computer stopped", never in SUMS; Finish as partial on a run whose finalization failed, labelled with the reason its `stopped` line recorded, never "the app stopped while this export was running" [re-verification]; for a part marked gone, `rest` includes its done but never-finalized messages | RR2-C2, RR2-C7 |
+| MA-438 | adds R-d2 and R-w2; adds [re-verification] R-f2 and R-r2 | RR2-C4, RR2-C6, RR2-C7, RR2-C13 |
+| MA-447 | adds [corrected by re-verification]: a kill between W9a and W9b leaves, after the next launch's reconcile, exactly one ledger line equal to the sealed fingerprint and no journal `end` (the marker is still present), and Check and finish then appends the `end`; a kill between W10 and W11 of a complete run leaves one ledger line and an `end` once the reconcile sees the marker absent | RR2-C2, RR2-C3 |
+| MA-448 | "gets a terminal reconciled record" holds for the marker-and-seal outcomes and a positive mismatch only, and "an identity mismatch" reads "a positive identity mismatch (§4.9)"; adds: a folder absent at the first launch and present at the second → interrupted, with Finish as partial offered; a sealed run killed between W9a and W10 whose folder is absent at the next launch gets its ledger line but no `end`, is probed again at the launch after, and is then offered Check and finish [re-verification]; a positive mismatch offers Locate… and This folder is gone and is not probed again [re-verification]; a probe that times out is recorded as a timeout and probed again; Look again re-probes; "This folder is gone" is terminal; Locate… accepts a moved folder only when the identity check passes; a wedged run is offered Finish as partial after a restart; the dev-and-inode-change fake as in MA-430 | RR2-C3, RR2-C4 |
 | MA-512 | adds R-l2 and R-o4 | RR2-C4, RR2-C11 |
 | MA-516 | adds (clock-injected): a 60-minute suspend followed by 30 s of transport errors, then success → the run completes with zero failures; a 12-minute body download with bytes arriving → no R-u; a sustained 5-minute awake outage → R-u | RR2-C8 |
 | MA-518 | adds: a plan with 150-character ids and Readable HTML on → the reserve is above 1 KB per message, and R-g2 compares against it; the state-volume check uses the run record's bound | RR2-C5 |
 | MA-520 | adds: Check and finish on a sealed cancelled run verifies, then rewrites the marker CANCELLED and never removes it; on a sealed partial run it removes the marker | RR2-C1 |
-| MA-521 | adds: part 1's run record deleted by compaction before part 3 seals → the set fingerprint still equals SHA-256 over the three SUMS files in order | RR2-C2 |
-| MA-531 | adds: a page with `<script>` and no CSP prefix → `.archived-page.txt`, and a current-renderer page stays `.html` (RR2-C9); an over-cap manifest → R-o4 before any unmarshal, with no unbounded allocation; a `search.db` whose `docs` is a view → the list is disabled and whole-folder selection works (RR2-C11); a destination reached through an alias of the folder (`subst` on the Windows CI leg, a bind mount on Linux) → R-f, with nothing written (RR2-C13). "Settings … unchanged" stays as written, and RR2-C14 makes it hold | RR2-C9, RR2-C11, RR2-C13, RR2-C14 |
+| MA-521 | adds: part 1's run record deleted by compaction before part 3 seals → the set fingerprint still equals SHA-256 over the three SUMS files in order; adds [re-verification]: part 1 interrupted, part 2 ("Export the remaining messages") sealed, then part 1 finished as partial → the set fingerprint equals SHA-256 over part 2's then part 1's SUMS, and the ledger line names that order; a part marked gone never enters it | RR2-C2 |
+| MA-531 | adds: a page with `<script>` and no CSP prefix → `.archived-page.txt`, and a current-renderer page stays `.html` (RR2-C9); an over-cap manifest → R-o4 before any unmarshal, with no unbounded allocation; a `search.db` whose `docs` is a view → the list is disabled and whole-folder selection works (RR2-C11); a destination reached through an alias of the folder (`subst` on the Windows CI leg, a bind mount on Linux) → R-f, with nothing written (RR2-C13); adds [re-verification]: a destination reached through a bind mount of a subfolder of the folder (Linux leg) → R-f, the seam's unconfirmable views → R-f2, and a Create folder whose parent is such an alias → R-f, each with no file or directory added under the folder (RR2-C13). "Settings … unchanged" stays as written, and RR2-C14 makes it hold | RR2-C9, RR2-C11, RR2-C13, RR2-C14 |
 
 **RR-2 new row [RR-2 RR2-C6]** (from the RR-2/RR-3 reserve).
 
@@ -2338,7 +2451,8 @@ lists only the rows it builds, and each row belongs to exactly one slice (XC28).
 this table. **No E2 code starts** until lenses 3, 6 and 7 have re-run on revision 2 as an
 addendum to the review (**XC40**, RR-2). That addendum is filed (GO_WITH_CONDITIONS), and
 its conditions RR2-C1..RR2-C14 are folded into this text, so E2 starts from this text with
-them, never from the text before them [RR-2]. Q12 (which engine) and Q10 (export-root ACL
+them, never from the text before them [RR-2]. The fixes from the first re-verification
+(RR2-C2, RR2-C3, RR2-C4, RR2-C13) are re-verified again before E2 code [re-verification]. Q12 (which engine) and Q10 (export-root ACL
 posture) are ruled [ruling Q12, Q10 = J3]. **No E4 code starts** until RR-3 has re-run lenses
 3, 6 and 7 on the W1 text [ruling W1]; RR-3 is folded into the same addendum [RR-2].
 
@@ -2348,8 +2462,8 @@ posture) are ruled [ruling Q12, Q10 = J3]. **No E4 code starts** until RR-3 has 
 | **E1** | Graph additions (§4.5): `FolderTree`, `FolderCount`, `MessagePage` (widened `$select`, id-aware extended properties, "honored" flag; XC27), the use of SG's `MIMETo` and nextLink guard, the host/path pin on the workspace paths (XC25), `CheckRedirect` + `io.LimitReader` (XC26), **the F15 fix** (`Client.Timeout`; XC26), identity-safe `putIfNewer`/`reload` (XC7) | **`docs/design-fault-isolation.md` slice SG** [ruling J4] (`StatusError{Code, GraphCode, Text}` with today's `Error()` text, `graph.Classify`, `MIMETo`, the nextLink guard; XC25), not S3 | MA-400, MA-401, MA-403, MA-515, MA-527, MA-528 (MA-402 is built in SG [ruling J4]) | short adversarial note, always: redirect refusal and token write-back touch capture (L2-3) [ruling J4] |
 | ~~E1c~~ | **Moved [ruling J4]:** capture's nextLink pin is fault-isolation's step FI-SGc, still gated on MA-443's nextLink-shape sub-case (XC25); lifting that gate is ESC-7 | — | MA-505 (built in FI-SGc) | FI-SGc's short adversarial note |
 | **E2** | Engine (`internal/app/copyexport*.go`): plan, **run record** (§4.19, XC1), `os.Root` writer with no-replace placement (XC13), naming with ≤1,000 files per directory (XC12) and the export-only stricter naming pass for F75/F91/F111 [ruling Q15], marker, README, manifest and sums built from the run record, outcomes, failure classes with backoff and time breaker (XC9), per-OS destination classes and write breaker (XC10), cancel, M365 adapter (originals only), `util.FreeBytes`/`FoldKey`; R29 and S52 land with SG's catalog-first PR (MA-402 cites them, [ruling J4]); the archive writer's F75/F91/F111 gap gets a skip encoder citing R4 [ruling Q15]; **from RR-2 [RR-2]:** the seal-and-finish step with the outcome in the sealed line (RR2-C1, RR2-C2), the identity tuple and README's run-id line (RR2-C4), the per-message free-space budget and the plan-sized reserve (RR2-C5), the hand-over posture over the inherited descriptor and its realized check before W5 (RR2-C6), the state-directory write class (RR2-C7), the awake-time breaker and the Windows power request (RR2-C8), handle-relative no-replace placement (RR2-C10) | E1; **XC40 addendum filed (RR-2), its conditions folded**; Q10 and Q12 are ruled | MA-416..419, MA-421, MA-422, MA-508, MA-426, MA-427..429, MA-432, MA-439, MA-440, MA-441, MA-447, MA-516, MA-517, MA-519, MA-532 | adversarial pass on the write side (combined with E3's) |
-| **E3** — first shippable | Desktop: `workspace`, `exports`, endpoints through `localweb.Mux` with relative URLs (XC23), Graph session on the process-lifetime context with `Drain` (XC6), selection with row handles (XC17) and count, preview, start/cancel, progress/history split with the background reconciler (XC4), journal (XC3), the Microsoft 365 card and the sign-in slot (XC8), picker (disabled during a run, XC31), Create folder, settings (serialized, XC34), **retry, Finish as partial, Check this export and retry chains (revision 1's E7 folded in; XC2, XC14, XC15, XC28)**, the deployment switch [ruling Q6], and the Export sidebar group, which does not declare desktop P7 superseded [ruling ESC-5]. Source: Microsoft 365. Output: original EML + manifest. Readable HTML **hidden, `exportHTML` OFF** (XC28). X13 (scoped, Partial; XC24), X14 (scoped to the dashboard, [ruling J7]) and X15 land under their allocated ids; **from RR-2 [RR-2]:** reconciliation whose absence and timeout outcomes are not terminal, with Look again, This folder is gone and Locate… (RR2-C3), status-driven labels and Check and finish (RR2-C1), Finish as partial for every unsealed run and Export the remaining messages for interrupted runs (RR2-C7), the launch sweep of run records (RR2-C12), R-f by identity for the configured archive (RR2-C13) | E2, **E0 merged** | MA-506, MA-404, MA-405, MA-407..410, MA-411, MA-412..415, MA-430, MA-431, MA-511, MA-433, MA-434, MA-437, MA-438, MA-444..446, MA-448, MA-449, MA-514, MA-518, MA-520..522, MA-524, MA-526, MA-529, MA-530 | **adversarial pass** (`docs/review-extraction-workspace-adversarial.md`: new loopback read surface returning mailbox content, a filesystem write primitive, a native dialog newly linked into the desktop binary, the run record) and **friction review** (`docs/review-extraction-workspace-friction.md`, every §7.2 cell, retry and Finish as partial included) |
-| **E4** | Archive source: adapter (§4.6) with the redaction belt, nlink check, `UnknownSentinel` filter and archive-gone class (XC19, XC10); `index.ListFolder` read-only with the version check and Rebuild lock (XC19, XC20); tree from the share-delete snapshot (XC20) with per-store mailboxes (XC21); content disclosure; the Settings-save guard (XC22); **the second archive source, another archive folder, read-only (§4.3, R-o3) [ruling W1]**; **from RR-2 [RR-2]:** the archived-page gate, `export.LiveRefreshIn` and the quarantine path, moved from E5 (RR2-C9), the W1 manifest cap and the defensive `search.db` open (RR2-C11), R-f by identity for the W1 folder (RR2-C13), no settings save for a W1 export (RR2-C14) | E2, E3; Q3 is ruled yes (owner-direct) [ruling Q3]; **RR-3 before code: filed with RR-2** [RR-2] | MA-507, MA-420, MA-510, MA-435, MA-436, MA-512, MA-523, MA-531 | adversarial addendum (archive read gates, the read-only open of another archive folder, the archived-page gate, concurrency, Windows share mode) + friction re-run (the inheritor walk §7.4) |
+| **E3** — first shippable | Desktop: `workspace`, `exports`, endpoints through `localweb.Mux` with relative URLs (XC23), Graph session on the process-lifetime context with `Drain` (XC6), selection with row handles (XC17) and count, preview, start/cancel, progress/history split with the background reconciler (XC4), journal (XC3), the Microsoft 365 card and the sign-in slot (XC8), picker (disabled during a run, XC31), Create folder, settings (serialized, XC34), **retry, Finish as partial, Check this export and retry chains (revision 1's E7 folded in; XC2, XC14, XC15, XC28)**, the deployment switch [ruling Q6], and the Export sidebar group, which does not declare desktop P7 superseded [ruling ESC-5]. Source: Microsoft 365. Output: original EML + manifest. Readable HTML **hidden, `exportHTML` OFF** (XC28). X13 (scoped, Partial; XC24), X14 (scoped to the dashboard, [ruling J7]) and X15 land under their allocated ids; **from RR-2 [RR-2]:** reconciliation whose absence and timeout outcomes are not terminal, with Look again, This folder is gone and Locate… (RR2-C3), status-driven labels and Check and finish (RR2-C1), Finish as partial for every unsealed run and Export the remaining messages for interrupted runs (RR2-C7), the launch sweep of run records (RR2-C12), R-f by identity over the archive's directory set, and R-f2 where identity cannot decide, for the configured archive and Create folder (RR2-C13) | E2, **E0 merged** | MA-506, MA-404, MA-405, MA-407..410, MA-411, MA-412..415, MA-430, MA-431, MA-511, MA-433, MA-434, MA-437, MA-438, MA-444..446, MA-448, MA-449, MA-514, MA-518, MA-520..522, MA-524, MA-526, MA-529, MA-530 | **adversarial pass** (`docs/review-extraction-workspace-adversarial.md`: new loopback read surface returning mailbox content, a filesystem write primitive, a native dialog newly linked into the desktop binary, the run record) and **friction review** (`docs/review-extraction-workspace-friction.md`, every §7.2 cell, retry and Finish as partial included) |
+| **E4** | Archive source: adapter (§4.6) with the redaction belt, nlink check, `UnknownSentinel` filter and archive-gone class (XC19, XC10); `index.ListFolder` read-only with the version check and Rebuild lock (XC19, XC20); tree from the share-delete snapshot (XC20) with per-store mailboxes (XC21); content disclosure; the Settings-save guard (XC22); **the second archive source, another archive folder, read-only (§4.3, R-o3) [ruling W1]**; **from RR-2 [RR-2]:** the archived-page gate, `export.LiveRefreshIn` and the quarantine path, moved from E5 (RR2-C9), the W1 manifest cap and the defensive `search.db` open (RR2-C11), R-f by identity and R-f2 for the W1 folder (RR2-C13), no settings save for a W1 export (RR2-C14) | E2, E3; Q3 is ruled yes (owner-direct) [ruling Q3]; **RR-3 before code: filed with RR-2** [RR-2] | MA-507, MA-420, MA-510, MA-435, MA-436, MA-512, MA-523, MA-531 | adversarial addendum (archive read gates, the read-only open of another archive folder, the archived-page gate, concurrency, Windows share mode) + friction re-run (the inheritor walk §7.4) |
 | **E5** | Readable HTML (`RenderContext.AttachDirName` with the guarded sentence, read-back hash check); `exportHTML` default flips to ON. `export.LiveRefreshIn` and the quarantine path moved to E4 [RR-2 RR2-C9] | E2 (E4 for the archived-page gate) [RR-2 RR2-C9] | MA-423, MA-509, MA-513, MA-525 | none new (renderer reused; R19 rows); noted in the E4 addendum |
 | **E6** | Extract attachments, including archive zip extraction with bounds | E2, E5, **mime-fidelity S2, which carries the C1-1 fix** [ruling Q9] | MA-424, MA-425 | adversarial addendum (untrusted names → loose files; zip bounds) |
 

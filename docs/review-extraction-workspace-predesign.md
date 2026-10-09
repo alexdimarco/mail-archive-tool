@@ -1214,7 +1214,10 @@ accepts a known gap.
 
 - **Local-confidentiality's author.** J3 also has `extract -dest` name its hand-over root's
   posture with `Posture(dir)`. L6a-1's defect reaches that use too, and RR2-C6's hand-over
-  evaluation is the fix there (slice LC-A). This addendum does not edit that design.
+  evaluation is the fix there (slice LC-A). This addendum does not change that design's
+  decisions. Its re-verification corrected the sentences there that described the
+  workspace's line, and states the `extract -dest` defect there as an open gap owed by
+  slice A (see "Re-verification").
 
 ### Findings
 
@@ -1324,5 +1327,75 @@ slice named. W1's notes are part of "W1's text completed as RR-3 finds" (owner r
 `docs/design-extraction-workspace.md` keeps BUILD STATUS "approved with conditions, not
 built" and cites this review. Its header now says this addendum is filed
 (GO_WITH_CONDITIONS) and that RR2-C1..RR2-C14 are folded, each marked `[RR-2 RR2-Cn]`, with
-a condition map. Before E2 code: the re-verification of those folded conditions. After E3:
-the adversarial pass and the friction review, as before.
+a condition map. Before E2 code: the re-verification of those folded conditions, and again
+of the fixes the first re-verification made (below). After E3: the adversarial pass and the
+friction review, as before.
+
+### Re-verification (2026-10-09)
+
+**What the check found.** A fresh-eyes check of the folded text at `c2ba9eb` passed RR2-C1,
+RR2-C5..RR2-C12 and RR2-C14, the hard limit and the escalations. It found four conditions
+not plainly delivered (RR2-C2, RR2-C3, RR2-C4 and RR2-C13) and fourteen stale passages, and
+no gate weakening. Each fix below lands in the design under its condition's mark; §9's row
+changes say `[re-verification]`.
+- **RR2-C2.** A part finished as partial after a later part had sealed (RR2-C7 allows that
+  order), and a part marked gone, left the set fingerprint with no state to resume. It now
+  covers the chain's **sealed** parts in the order they sealed. It resumes the chain's most
+  recent ledger state under the ledger's mutex, each ledger line names the parts it covers,
+  and the page and the receipt give that order (§4.10, §4.13 step 7, §4.16; MA-521).
+- **RR2-C3.**
+  - Reconcile appended `end` unconditionally, so a sealed run whose marker action was never
+    done left the re-probe set. It now appends the ledger line at once, and the `end` only
+    when a probe sees the marker absent. Otherwise Check and finish appends it, so an `end`
+    always means no marker action is left (§4.16, §5.1 W11; MA-447 corrected, MA-448).
+  - "Gone" was lost at compaction, and the stated bound was false. "Gone" is now also a
+    `gone` line in the run record, and compaction keeps unresolved runs. §4.19's Lifetime
+    defines settled and unresolved runs and the three deletion cases (R-d's included), and
+    states the real bound (§4.16, §4.19, §5.1 W12; MA-430).
+  - A positive mismatch was neither terminal nor an observation. It is now terminal and
+    offers Locate… and This folder is gone (§4.2, §4.16; MA-448).
+- **RR2-C4.** A folder with no nonce (an empty root, or one whose marker is gone and that has
+  no README) is confirmed by its file identity alone, or else it is "couldn't confirm"
+  (§4.9, §4.10, §4.13, §4.16, P14, §5.1 W3). Open folder keeps R-r for a positive mismatch
+  and refuses an unconfirmed folder with the new R-r2 (§7.6; MA-430, MA-438).
+- **RR2-C13.** The walk compared the destination's ancestors only with the archive root's
+  identity, so an alias of a folder *inside* the archive passed (a bind mount of
+  `<archive>/<store>`, a share defined on a subfolder). Two changes close it:
+  - R-f now compares the destination and its ancestors with the identities of every
+    directory in the archive, from a bounded no-follow walk.
+  - The new **R-f2** refuses, failing closed, every pairing where identity cannot decide: a
+    share served by this computer, an archive on one share with the destination on another,
+    a FUSE or stacking filesystem, or an incomplete walk. A destination on another
+    computer's share beside a local archive, and the reverse, stay allowed.
+
+  Create folder's parent gets the same check, because its mkdir is a write (§4.7, §4.8,
+  §7.2, §7.6, §8.1; MA-414, MA-434, MA-438, MA-531). This closes the residual that the check
+  said would otherwise need the owner, so no OWNER RULING is raised. Its cost is a stated
+  Type I cell in §7.2.
+- **Stale passages.**
+  - The interrupted and finished-as-partial labels take their cause from a `stopped` line.
+    A run appends it when it stops before its seal while the app runs on (§4.13, §4.16,
+    §4.19; MA-437).
+  - The launch sweep deletes only settled runs' records, so Check and finish keeps its record.
+  - MA-423's archived-page cases move to MA-420 (E4), with their prove-fail.
+  - §5.2's Journal row names the run-record deletions.
+  - §8.1 #5 now claims only what the mechanism refuses.
+  - Two precision notes are folded. A non-2xx body is never breaker progress (RR2-C8). On
+    Windows, placement falls back to the plain handle-relative `FILE_RENAME_INFORMATION`
+    where a volume rejects the Ex class (RR2-C10).
+  - In `docs/design-local-confidentiality.md`, the sentences saying the workspace's posture
+    line uses `Posture(dir)` now describe the hand-over form. The same defect in
+    `extract -dest`'s use is stated there as an open gap owed by its slice A.
+
+**Not changed here.**
+- The rulings log's J3 bullet still says the workspace's line uses `Posture(dir)`. The log
+  is the owner's record and is not edited. The amendment above is where J3's mechanism
+  changes, and the next revision of the log should point J3 at it.
+- `extract -dest`'s posture fix is local-confidentiality slice A's (the follow-up above).
+- L3-12's host definition, on which the sweep's "this host only" rests, is still a note
+  owed in E3.
+
+No folded change is reverted. Each fix adds a check or a refusal, corrects an assertion that
+encoded a confirmed defect (MA-447's unconditional `end`), or moves a case between proposed
+rows without dropping it (MA-423 to MA-420). These fixes are re-verified again before E2
+code.
