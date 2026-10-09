@@ -222,6 +222,18 @@ func Assess(in Input, now time.Time) Report {
 		if in.HasDescriptor && lr.Status != state.RunRunning && now.Sub(lr.Started) > 2*period {
 			r.warn("stale", fmt.Sprintf("the last run was %s ago, more than twice the %s schedule period — %s", HumanAge(now.Sub(lr.Started)), in.Desc.Interval, stalenessQuestion(in.GOOS, in.Desc.At)))
 		}
+		// Problems the last run found with its own setup and kept running past
+		// (design-local-confidentiality P10): a credential, or the desktop's
+		// settings and sign-in, inside the archive. The recorded text names the
+		// file, the archive and the remedy. Only the codes defined here are shown
+		// (the record is writable by anyone who can write the archive), and they
+		// come from the last run alone, so a run without the problem clears them.
+		for _, w := range lr.Warnings {
+			switch w.Code {
+			case "credential_in_archive", "config_in_archive":
+				r.warn(w.Code, w.Message)
+			}
+		}
 	}
 
 	// Last verify: the archive's integrity verdict, from verify's own record.
