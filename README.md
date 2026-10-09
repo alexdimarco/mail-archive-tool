@@ -192,9 +192,10 @@ images go into the zip. This is never silent: the run counts it and
 `attachments-report.tsv` lists it as `html-shown-as-source` with one of these
 reasons: `unsafe-after-reparse` (re-reading the cleaned page as a browser would
 still found something live that must not be), `unparseable`,
-`too-deeply-nested` (still deeper than the HTML parser accepts after markup
-nested past 480 levels has kept its text but lost its tags, much as browsers
-flatten past 512), or
+`too-deeply-nested` (still deeper than the HTML parser accepts after
+flattening, which drops the tags of markup nested past 480 levels but keeps its
+text, with words that a paragraph, table cell or other block kept apart still
+apart), or
 `too-large` (cleaning it would make it more than 16 times its own size, and at
 least 1 MiB: markup that a browser's parser blows up, built to exhaust the
 exporter rather than to be read).

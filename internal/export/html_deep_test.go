@@ -233,7 +233,10 @@ func TestRenderDeepMailRendersFlattened(t *testing.T) {
 // written), comments, void elements and raw-text elements (style, script,
 // textarea and their contents, markup-looking text included) all come through
 // in order, an unterminated tag at the end is kept as it was, and the result
-// parses no deeper than the limit (plus html, body and a leaf).
+// parses no deeper than the limit (plus html, body and a leaf). The only bytes
+// it adds are the word boundaries of dropped block-level tags (MA-477): one
+// newline for the run of <div>s dropped before "deep" and one for their end
+// tags after "text", none for the dropped inline <span>, <b> and <i>.
 func TestFlattenKeepsTextAndLeaves(t *testing.T) {
 	doc := "<div><section><div><span>one\r\ntwo &amp; \x00 three<!-- c1 --><img src=a.png>" +
 		"<div><div><b><i>deep <br> text</i></b></div></div><style>p > b { color: red } </div></style>" +
@@ -269,8 +272,9 @@ func TestFlattenKeepsTextAndLeaves(t *testing.T) {
 		}
 	}
 	in, got := read(doc), read(flat)
-	if got.text != in.text {
-		t.Errorf("text changed:\n in: %q\nout: %q", in.text, got.text)
+	want := strings.Replace(strings.Replace(in.text, "three", "three\n", 1), " text", " text\n", 1)
+	if got.text != want {
+		t.Errorf("text changed (beyond the two block boundaries):\n  in: %q\nwant: %q\n out: %q", in.text, want, got.text)
 	}
 	if got.comments != in.comments || got.leaves != in.leaves {
 		t.Errorf("comments or leaf elements changed:\n in: %q %q\nout: %q %q", in.comments, in.leaves, got.comments, got.leaves)

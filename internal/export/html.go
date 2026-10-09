@@ -377,21 +377,25 @@ const flattenDepth = 480
 // past flattenDepth dropped, keeping all text, comments, void elements and
 // raw-text elements (script, style, textarea, title, ...: one text token each,
 // so they never nest) — as Chromium keeps attaching content past its own 512
-// cap instead of refusing the page (DIFF-FP-2). Mail that never gets that deep
-// is returned unchanged, the same string. It is a single tokenizer pass with a
-// model of the tree builder's open-element stack (implied end tags, implied
-// tbody/tr, foreign content and its integration points, noscript read as
-// markup so the scripting-off reading is flattened too). The model is not the
-// tree builder and carries no safety: what it writes is parsed, neutralized
-// and re-checked like any mail, and an exported page is parsed once more as a
-// whole before it is accepted.
+// cap instead of refusing the page (DIFF-FP-2). Where a dropped tag is a
+// block-level one (flatBlock: p, div, td, li, ...) a newline takes its place,
+// so the words on either side stay apart — on the page, and for
+// `reindex -rebuild`, which reads the words back from it. Mail that never gets
+// that deep is returned unchanged, the same string. It is a single tokenizer
+// pass with a model of the tree builder's open-element stack (implied end
+// tags, implied tbody/tr, foreign content and its integration points,
+// noscript read as markup so the scripting-off reading is flattened too). The
+// model is not the tree builder and carries no safety: what it writes is
+// parsed, neutralized and re-checked like any mail, and an exported page is
+// parsed once more as a whole before it is accepted.
 func flattenDeep(doc string) string { return flattenAt(doc, flattenDepth) }
 
 func flattenAt(doc string, limit int) string {
 	z := xhtml.NewTokenizer(strings.NewReader(doc))
 	f := &flattener{limit: limit}
 	var out *strings.Builder
-	pos := 0 // bytes of doc covered by the tokens read so far (tokens are contiguous)
+	var last byte // the last byte written to out
+	pos := 0      // bytes of doc covered by the tokens read so far (tokens are contiguous)
 	for {
 		top := f.top()
 		z.AllowCDATA(top != nil && top.ns != "") // as the parser does: CDATA only in foreign content
@@ -400,20 +404,38 @@ func flattenAt(doc string, limit int) string {
 			break
 		}
 		raw := z.Raw()
-		keep := true
+		keep, name := true, ""
 		switch tt {
 		case xhtml.StartTagToken, xhtml.SelfClosingTagToken:
-			keep = f.start(z, tt == xhtml.SelfClosingTagToken)
+			nameB, hasAttr := z.TagName()
+			name = string(nameB)
+			keep = f.start(z, atom.Lookup(nameB), name, hasAttr, tt == xhtml.SelfClosingTagToken)
 		case xhtml.EndTagToken:
-			keep = f.end(z)
+			nameB, _ := z.TagName()
+			name = string(nameB)
+			keep = f.end(atom.Lookup(nameB), name)
 		}
 		if !keep && out == nil {
 			out = &strings.Builder{}
 			out.Grow(len(doc))
 			out.WriteString(doc[:pos])
+			if pos > 0 {
+				last = doc[pos-1]
+			}
 		}
-		if keep && out != nil {
+		switch {
+		case keep && out != nil && len(raw) > 0:
 			out.Write(raw)
+			last = raw[len(raw)-1]
+		case !keep && flatBlock[name] && !isASCIIWhitespace(rune(last)):
+			// The dropped tag separated words (a browser shows them on
+			// separate lines; the index tokenizes them apart): keep a word
+			// boundary. Whitespace is inert wherever it lands — in table
+			// context the tree builder inserts it in place, it is never
+			// foster-parented — and one is enough, so a run of dropped tags
+			// writes a single newline.
+			out.WriteByte('\n')
+			last = '\n'
 		}
 		pos += len(raw)
 	}
@@ -520,10 +542,7 @@ func (f *flattener) closeIn(a atom.Atom, boundary func(flatEl) bool) {
 	}
 }
 
-func (f *flattener) start(z *xhtml.Tokenizer, selfClosing bool) bool {
-	nameB, hasAttr := z.TagName()
-	a := atom.Lookup(nameB)
-	name := string(nameB)
+func (f *flattener) start(z *xhtml.Tokenizer, a atom.Atom, name string, hasAttr, selfClosing bool) bool {
 	if top := f.top(); top != nil && top.ns != "" && f.foreignRules(top, a) {
 		breaks := flatBreakout[name]
 		if a == atom.Font && hasAttr {
@@ -742,10 +761,7 @@ func (f *flattener) closeTop(a atom.Atom) {
 	}
 }
 
-func (f *flattener) end(z *xhtml.Tokenizer) bool {
-	nameB, _ := z.TagName()
-	a := atom.Lookup(nameB)
-	name := string(nameB)
+func (f *flattener) end(a atom.Atom, name string) bool {
 	if f.closeDropped(name) {
 		return false // its start tag was not written
 	}
@@ -849,6 +865,26 @@ var (
 		atom.Pre, atom.Script, atom.Section, atom.Select, atom.Source, atom.Style, atom.Summary, atom.Table,
 		atom.Tbody, atom.Td, atom.Template, atom.Textarea, atom.Tfoot, atom.Th, atom.Thead, atom.Title, atom.Tr,
 		atom.Track, atom.Ul, atom.Wbr, atom.Xmp)
+	// flatBlock names the tags whose drop leaves a word boundary: every name
+	// the search index treats as one (internal/index blockElements: its live
+	// index tokenizes the mail, `reindex -rebuild` the page, so a boundary the
+	// flattener loses is a word neither finds again), and HTML's other
+	// block-level containers, which a browser shows on lines of their own.
+	// Keyed by name, whatever the namespace, as the index's tokenizer reads
+	// them. Inline names (b, span, a, font, ...) are not here: a word split by
+	// them is one word, and a dropped inline tag writes nothing.
+	flatBlock = map[string]bool{
+		// the index's blockElements
+		"p": true, "br": true, "div": true, "li": true, "tr": true, "td": true, "th": true,
+		"h1": true, "h2": true, "h3": true, "h4": true, "h5": true, "h6": true, "ul": true, "ol": true,
+		"table": true, "blockquote": true, "section": true, "article": true, "header": true, "footer": true,
+		// HTML's other block-level containers
+		"address": true, "aside": true, "caption": true, "center": true, "dd": true, "details": true,
+		"dialog": true, "dir": true, "dl": true, "dt": true, "fieldset": true, "figcaption": true,
+		"figure": true, "form": true, "hgroup": true, "legend": true, "listing": true, "main": true,
+		"menu": true, "nav": true, "optgroup": true, "option": true, "pre": true, "search": true,
+		"summary": true, "tbody": true, "tfoot": true, "thead": true,
+	}
 	// flatBreakout: start tags that leave foreign content (x/net foreign.go).
 	flatBreakout = map[string]bool{"b": true, "big": true, "blockquote": true, "body": true, "br": true,
 		"center": true, "code": true, "dd": true, "div": true, "dl": true, "dt": true, "em": true, "embed": true,
