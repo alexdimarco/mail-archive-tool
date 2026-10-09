@@ -80,3 +80,69 @@ func TestReadArchivedHTMLRecoversLegacyDateStamp(t *testing.T) {
 	}
 	assure.Reached(t, searchTotal(t, out, "after:2025-04-02 before:2025-04-03 fragment"), "date-bounded hits for the old record")
 }
+
+// covers: MA-481, R13, R8, S33
+// A page shown as source carries the mail's HTML as escaped text in a
+// <pre data-mailarchive-fallback>, and `reindex -rebuild` indexes that text
+// (the mail's words), not the page's markup. The attribute is honoured only on
+// the layout the renderer writes: the <pre> is the ONLY non-whitespace child of
+// the body div, its class is "plain", and its value is a known reason. Pages
+// v0.1.1–v0.2.3 wrote put a mail fragment raw into the body div, so a mail can
+// carry the attribute there itself; its decoy <pre> no longer hides every other
+// word of the mail from the rebuilt index (RV-6). A real shown-as-source page,
+// for every reason, still indexes by the mail's words.
+func TestRebuildHonoursFallbackOnlyOnRendererLayout(t *testing.T) {
+	when := time.Date(2025, 4, 2, 11, 20, 0, 0, time.UTC)
+	msg := func(subject, body string) *model.Message {
+		return &model.Message{Subject: subject, SenderName: "Frag Sender", SenderEmail: "skfrag@example.com",
+			To: "rcpt@example.com", Received: when, InternetMessageID: "<" + strings.Fields(subject)[0] + "@x>", HTMLBody: body}
+	}
+	// RV-6's payload (skgen.py "old"), kept raw by v0.2.3 in the body div.
+	decoy := msg("skepfragsubj", `<pre data-mailarchive-fallback="x">skepdecoy only</pre><p>the real message says skeprealword</p>`)
+	decoyPage := renderV023(decoy)
+	if !strings.Contains(string(decoyPage), "<div class=\"mailarchive-body\">\n<pre data-mailarchive-fallback=\"x\">skepdecoy only</pre><p>") {
+		t.Fatalf("fixture sanity: not RV-6's v0.2.3 layout:\n%s", decoyPage)
+	}
+
+	// Each renderer-layout condition, alone, decides: a decoy that misses any
+	// one is indexed as an ordinary body (its markup, as before aa1c98d).
+	for name, body := range map[string]string{
+		"not the only child": `<pre class="plain" data-mailarchive-fallback="too-deeply-nested">skepdecoy</pre><p>skeprealtwo</p>`,
+		"text beside it":     `<pre class="plain" data-mailarchive-fallback="too-deeply-nested">skepdecoy</pre>skeprealthree`,
+		"no class plain":     `<pre data-mailarchive-fallback="too-deeply-nested">skepdecoy</pre>`,
+		"unknown reason":     `<pre class="plain" data-mailarchive-fallback="x">skepdecoy</pre>`,
+	} {
+		got, _ := readArchivedHTML(renderV023(msg("decoy "+name, body)))
+		if !strings.Contains(got.HTMLBody, "<pre") || !strings.Contains(got.HTMLBody, "skepdecoy") {
+			t.Errorf("%s: HTMLBody = %q, want the body div's own markup (the attribute not honoured)", name, got.HTMLBody)
+		}
+	}
+
+	// Real shown-as-source pages (aa1c98d's layout), one per reason, are
+	// honoured: the indexed body is the mail's source text, not the <pre>.
+	// "too-large" is the reason being added alongside this change (RV-8).
+	source := "<html><body>" + strings.Repeat("<div>", 600) + "<p>body words for skepfallbackneedle</p>" + strings.Repeat("</div>", 600) + "</body></html>"
+	for _, reason := range []string{export.FallbackTooDeep, export.FallbackUnparseable, export.FallbackHostile, "too-large"} {
+		got, _ := readArchivedHTML(renderAA1(msg("fallback "+reason, source), "", aa1Fallback(source, reason)))
+		if got.HTMLBody != source {
+			t.Errorf("fallback %q: HTMLBody = %.80q..., want the mail's source text", reason, got.HTMLBody)
+		}
+	}
+
+	out := tmpDir(t)
+	fallback := msg("skepfallbacksubj", source)
+	buildOnDiskArchive(t, out, []diskPage{
+		{decoy, decoyPage},
+		{fallback, renderAA1(fallback, "", aa1Fallback(source, export.FallbackTooDeep))},
+	})
+	rebuildOnDisk(t, out, 2)
+	for q, want := range map[string]int{
+		"skeprealword": 1, "skepdecoy": 1, // every word of the old page's mail
+		"skepfallbackneedle": 1, "div": 0, // the fallback page: the mail's words, not its markup
+	} {
+		if got := searchTotal(t, out, q); got != want {
+			t.Errorf("post-rebuild %q = %d, want %d", q, got, want)
+		}
+	}
+	assure.Reached(t, firstResult(t, out, "skepdecoy").SenderEmail, "the decoy page's rebuilt sender")
+}

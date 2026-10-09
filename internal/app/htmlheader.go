@@ -9,6 +9,7 @@ import (
 	xhtml "golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
 
+	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/model"
 )
 
@@ -235,13 +236,11 @@ func readArchivedTree(data []byte, root *xhtml.Node) (*model.Message, int) {
 	if body := firstChildDiv(bodyEl, "mailarchive-body"); body != nil {
 		m.HTMLBody = innerHTML(body)
 		// A body the renderer could not show as HTML is kept as escaped source in
-		// a reserved-attribute <pre> (export.plainFallback; mail cannot carry the
-		// attribute). Its text IS the mail's HTML, so index that — the mail's
-		// words, as the live export did — not the markup as words.
-		if pre := findFirst(body, func(n *xhtml.Node) bool {
-			return n.Type == xhtml.ElementNode && n.Data == "pre" && attr(n, "data-mailarchive-fallback") != ""
-		}); pre != nil && pre.Parent == body {
-			m.HTMLBody = textContent(pre)
+		// a reserved-attribute <pre> (export.plainFallback). Its text IS the
+		// mail's HTML, so index that — the mail's words, as the live export did —
+		// not the markup as words.
+		if src, ok := fallbackSource(body); ok {
+			m.HTMLBody = src
 		}
 	}
 
@@ -320,6 +319,39 @@ func readArchivedTree(data []byte, root *xhtml.Node) (*model.Message, int) {
 	m.Categories = readCategoriesField(header)
 
 	return m, unrecovered
+}
+
+// fallbackReasons are the values export.plainFallback writes on the <pre>.
+var fallbackReasons = map[string]bool{
+	export.FallbackTooDeep:     true,
+	export.FallbackUnparseable: true,
+	export.FallbackHostile:     true,
+	"too-large":                true, // export.FallbackTooLarge, being added with the output-size cap (RV-8); a literal until it lands
+}
+
+// fallbackSource returns the mail's HTML source from a body div the renderer
+// wrote for a body shown as source, and ok=false for any other body div. Mail
+// on a v0.3.0+ page cannot carry data-mailarchive-fallback (the sanitizer
+// strips the namespace), but pages v0.1.1–v0.2.3 wrote put a mail fragment raw
+// into the body div, so a mail there can carry it on a decoy <pre> (RV-6).
+// Only the renderer's exact layout counts: the <pre> is the ONLY non-whitespace
+// child of the body div (no other element, comment or text), its class is
+// "plain", and its value is a reason the renderer writes.
+func fallbackSource(bodyDiv *xhtml.Node) (string, bool) {
+	var pre *xhtml.Node
+	for c := bodyDiv.FirstChild; c != nil; c = c.NextSibling {
+		switch {
+		case c.Type == xhtml.TextNode && strings.Trim(c.Data, " \t\n\f\r") == "":
+		case c.Type == xhtml.ElementNode && c.Data == "pre" && pre == nil:
+			pre = c
+		default:
+			return "", false
+		}
+	}
+	if pre == nil || attr(pre, "class") != "plain" || !fallbackReasons[attr(pre, "data-mailarchive-fallback")] {
+		return "", false
+	}
+	return textContent(pre), true
 }
 
 // readCategoriesField recovers the message's categories from the archived page:
