@@ -104,9 +104,11 @@ func TestReadonlyOpenWaitsOutABusyIndex(t *testing.T) {
 // of failing at once — which failed the whole run: a lock released within the
 // wait is waited out, and the index then opens and takes a row. A damaged file
 // is not busy: it still fails at once, never after the busy timeout. The open
-// goes through OpenReadonly's escaped file: URI, so a '?' in the archive path
-// is part of the file name, never URI parameters that cut the path short.
-// Positive twin: with no holder the index opens for writing at once.
+// goes through OpenReadonly's escaped file: URI, so a '?', '#' or '%' in the
+// archive path is part of the file name, never URI syntax that cuts the path
+// short or decodes it: '#' and '%' on every OS, '?' wherever a file name can
+// hold one (not Windows). Positive twin: with no holder the index opens for
+// writing at once.
 func TestWriterOpenWaitsOutABusyIndex(t *testing.T) {
 	when := time.Date(2025, 3, 3, 9, 0, 0, 0, time.UTC)
 	setWait := func(t *testing.T, d time.Duration) {
@@ -178,40 +180,49 @@ func TestWriterOpenWaitsOutABusyIndex(t *testing.T) {
 		}
 	})
 
-	t.Run("a question mark in the path", func(t *testing.T) {
-		if runtime.GOOS == "windows" {
-			t.Skip("a Windows file name cannot contain '?'")
-		}
-		parent := tmpDir(t)
-		path := filepath.Join(parent, "mail?2026", "search.db")
-		if err := os.Mkdir(filepath.Dir(path), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		ix, err := Open(path)
-		if err != nil {
-			t.Fatalf("writable open of %s: %v", path, err)
-		}
-		if err := ix.Add("s", []string{"Inbox"}, mkMsg("query", "erin", "me", "a path with a question mark", when), "s/Inbox/q.html", "kq"); err != nil {
-			t.Fatal(err)
-		}
-		if err := ix.Close(); err != nil {
-			t.Fatal(err)
-		}
-		if cut := filepath.Join(parent, "mail"); fileExists(cut) {
-			t.Errorf("the writable open wrote %s: the path was cut short at its '?' and the rest read as URI parameters", cut)
-		}
-		if !fileExists(path) {
-			t.Fatalf("the writable open did not create the index at %s", path)
-		}
-		ro, err := OpenReadonly(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer ro.Close()
-		if n, err := ro.Count(); err != nil || n != 1 {
-			t.Fatalf("the index at %s holds %d rows (err %v), want 1", path, n, err)
-		}
-	})
+	// Each folder name holds a character that is URI syntax: unescaped, '?'
+	// starts the URI's parameters and '#' its fragment, cutting the path short
+	// at "mail", and "%20" decodes to a space, naming a folder that does not
+	// exist. '#' and '%' are legal in a file name on every OS, so those legs
+	// run everywhere; a Windows file name cannot hold a '?', so that leg runs
+	// where one can.
+	special := []string{"mail#2026", "mail%2026"}
+	if runtime.GOOS != "windows" {
+		special = append(special, "mail?2026")
+	}
+	for _, name := range special {
+		t.Run("a URI special character in the path: "+name, func(t *testing.T) {
+			parent := tmpDir(t)
+			path := filepath.Join(parent, name, "search.db")
+			if err := os.Mkdir(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			ix, err := Open(path)
+			if err != nil {
+				t.Fatalf("writable open of %s: %v", path, err)
+			}
+			if err := ix.Add("s", []string{"Inbox"}, mkMsg("query", "erin", "me", "a path holding URI syntax", when), "s/Inbox/q.html", "kq"); err != nil {
+				t.Fatal(err)
+			}
+			if err := ix.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if cut := filepath.Join(parent, "mail"); fileExists(cut) {
+				t.Errorf("the writable open wrote %s: the path was cut short and the rest of %q read as URI syntax", cut, name)
+			}
+			if !fileExists(path) {
+				t.Fatalf("the writable open did not create the index at %s", path)
+			}
+			ro, err := OpenReadonly(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer ro.Close()
+			if n, err := ro.Count(); err != nil || n != 1 {
+				t.Fatalf("the index at %s holds %d rows (err %v), want 1", path, n, err)
+			}
+		})
+	}
 }
 
 func fileExists(path string) bool {
