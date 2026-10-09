@@ -1226,36 +1226,56 @@ func stripReservedNamespace(n *xhtml.Node) {
 }
 
 // neutralizeNoscriptContents rewrites, in place, the content of every
-// <noscript> on the scripting-on parse tree so a reader with JavaScript off
-// reads it neutralized, WITHOUT the restructuring a full scripting-off re-parse
-// of the whole document does — which pops a head <noscript>'s flow content out
-// into the body, so a word the live indexer skips (it is in an explicit head)
-// would appear in the rebuilt index only (R8). With scripting on a <noscript>
-// holds one raw-text node (its markup as text); that text is parsed as a body
-// fragment with scripting off, neutralized (metas disarmed, charsets and the
-// tool's reserved markers stripped, resource-hint links renamed) and put back
-// as the noscript's element children. Serialized, those children are markup a
-// JS-off browser reads as the neutralized elements and the scripting-on
-// re-check reads back as inert raw text; an escaped `&lt;meta&gt;` decodes to a
-// text child that Render writes literally, so a live meta smuggled beside a
-// real one is caught by the dual-mode re-check and falls back.
+// outermost HTML <noscript> on the scripting-on parse tree so a reader with
+// JavaScript off reads it neutralized, WITHOUT the restructuring a full
+// scripting-off re-parse of the whole document does — which pops a head
+// <noscript>'s flow content out into the body, so a word the live indexer skips
+// (it is in an explicit head) would appear in the rebuilt index only (R8). With
+// scripting on an HTML <noscript> holds one raw-text node (its markup as text);
+// that text is parsed as a body fragment with scripting off, neutralized
+// (metas disarmed, charsets and the tool's reserved markers stripped,
+// resource-hint links renamed) and put back as the noscript's element children.
+// Serialized, those children are markup a JS-off browser reads as the
+// neutralized elements and the scripting-on re-check reads back as inert raw
+// text; an escaped `&lt;meta&gt;` decodes to a text child that Render writes
+// literally, so a live meta smuggled beside a real one is caught by the
+// dual-mode re-check and falls back.
+//
+// Each outermost noscript is rewritten ONCE: the walk never descends into the
+// content it has just built. A <noscript> nested in it is markup already (the
+// scripting-off fragment parse read it as an ordinary element), and its text is
+// text; parsing that text again decoded its entities a second time and dropped
+// the nested noscript's element children (an escaped refresh became a
+// neutralized <meta> element, and its words left the rebuilt index). Once every
+// outermost noscript is rewritten, a nested noscript's text is set to be
+// written escaped (keepNestedNoscriptText). An SVG or MathML <noscript> is an
+// ordinary foreign element whose children were markup to the main parse
+// (neutralize reached them): it is not raw text and is left as it is.
 func neutralizeNoscriptContents(root *xhtml.Node) {
+	var rewritten []*xhtml.Node
 	var walk func(n *xhtml.Node)
 	walk = func(n *xhtml.Node) {
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			if c.Type == xhtml.ElementNode && c.DataAtom == atom.Noscript {
-				neutralizeOneNoscript(c)
+			if c.Type == xhtml.ElementNode && c.DataAtom == atom.Noscript && c.Namespace == "" {
+				if neutralizeOneNoscript(c) {
+					rewritten = append(rewritten, c)
+				}
+				continue
 			}
 			walk(c)
 		}
 	}
 	walk(root)
+	for _, ns := range rewritten {
+		keepNestedNoscriptText(ns)
+	}
 }
 
 // neutralizeOneNoscript neutralizes one <noscript>'s raw-text content in place
-// (see neutralizeNoscriptContents). A nested <noscript> inside is markup to the
-// scripting-off fragment parse, so one pass reaches every level.
-func neutralizeOneNoscript(ns *xhtml.Node) {
+// (see neutralizeNoscriptContents) and reports whether it rewrote it. A nested
+// <noscript> inside is markup to the scripting-off fragment parse, so one pass
+// reaches every level.
+func neutralizeOneNoscript(ns *xhtml.Node) bool {
 	var raw strings.Builder
 	for c := ns.FirstChild; c != nil; c = c.NextSibling {
 		if c.Type == xhtml.TextNode {
@@ -1263,12 +1283,12 @@ func neutralizeOneNoscript(ns *xhtml.Node) {
 		}
 	}
 	if strings.TrimSpace(raw.String()) == "" {
-		return
+		return false
 	}
 	ctx := &xhtml.Node{Type: xhtml.ElementNode, Data: "body", DataAtom: atom.Body}
 	nodes, err := xhtml.ParseFragmentWithOptions(strings.NewReader(raw.String()), ctx, xhtml.ParseOptionEnableScripting(false))
 	if err != nil {
-		return // leave as raw text; the dual-mode re-check falls back if hostile
+		return false // leave as raw text; the dual-mode re-check falls back if hostile
 	}
 	for c := ns.FirstChild; c != nil; {
 		next := c.NextSibling
@@ -1279,6 +1299,36 @@ func neutralizeOneNoscript(ns *xhtml.Node) {
 		ns.AppendChild(nd)
 	}
 	neutralize(ns) // disarm the newly-appended children and their descendants
+	return true
+}
+
+// keepNestedNoscriptText writes the text of every HTML <noscript> nested in a
+// rewritten noscript's content escaped, as the mail wrote it. To the
+// scripting-off fragment parse that built the content, a nested noscript is an
+// ordinary element and its text is text, its entities decoded once; but x/net
+// writes a noscript's text children back literally (render.go
+// childTextNodesAreLiteral always includes noscript), so a reader with
+// JavaScript off would decode them a second time and read escaped markup as
+// markup — `&lt;b&gt;` as a <b> element, an escaped refresh as a live <meta>.
+// A RawNode holding the escaped text is written as it is, in that position and
+// any other, so the nested noscript's text stays text. (The outer noscript's own
+// text children are written literally still: MA-476 pins that an escaped meta
+// there beside a real one falls back.)
+func keepNestedNoscriptText(outer *xhtml.Node) {
+	var walk func(n *xhtml.Node)
+	walk = func(n *xhtml.Node) {
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			if c.Type == xhtml.ElementNode && c.DataAtom == atom.Noscript && c.Namespace == "" {
+				for t := c.FirstChild; t != nil; t = t.NextSibling {
+					if t.Type == xhtml.TextNode {
+						t.Type, t.Data = xhtml.RawNode, xhtml.EscapeString(t.Data)
+					}
+				}
+			}
+			walk(c)
+		}
+	}
+	walk(outer)
 }
 
 func neutralize(n *xhtml.Node) {

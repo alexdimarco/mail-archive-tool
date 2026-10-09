@@ -226,6 +226,67 @@ func TestLiveAndRebuiltIndexAgreeOnHeadNoscriptMarkup(t *testing.T) {
 	}
 }
 
+// covers: MA-492, R8, R13
+// A <noscript> nested in another is read the same on both sides. The live
+// index reads the outer one's raw text as a reader with JavaScript off does
+// (the nested noscript an element, its text text); the page the exporter's
+// in-place retry writes (the outer one carries a charset meta) must hold the
+// same, and `reindex -rebuild` reads it back. The retry used to parse the
+// nested noscript's text a second time: the reviewer's
+// adv_noscript2_body_esc_d turned its escaped refresh into a <meta> element,
+// so "meta"/"equiv"/"refresh" were found live only; a doubly escaped tag
+// became an element and its name left the rebuilt index; a nested <p> beside
+// text was dropped; and an SVG <noscript>'s escaped text was re-parsed into
+// an element. Each word is now found once on both sides.
+func TestLiveAndRebuiltIndexAgreeOnNestedNoscripts(t *testing.T) {
+	bodies := map[string]string{
+		"nest case alpha":   `<p>nsrvwords</p><noscript><meta charset=utf-8><noscript>&lt;meta http-equiv="refresh" content="0;url=http://127.0.0.1:8799/b/nsrvbeacon"&gt;</noscript></noscript><p>nsrvtail</p>`,
+		"nest case bravo":   `<p>nsa</p><noscript><meta charset=utf-8><noscript>nestedtextword<p>nestedkeptword</p></noscript></noscript><p>nstail</p>`,
+		"nest case charlie": `<p>nsdbl</p><noscript><meta charset=utf-8><noscript>&amp;lt;dbltag&amp;gt;dblword&amp;lt;/dbltag&amp;gt;</noscript></noscript>`,
+		"nest case delta":   `<p>nssvg</p><noscript><meta charset=utf-8></noscript><svg><noscript>&lt;svgtag&gt;svgword&lt;/svgtag&gt;</noscript></svg>`,
+	}
+	want := map[string]int{
+		"nsrvwords": 1, "nsrvtail": 1, "meta": 1, "equiv": 1, "refresh": 1, "nsrvbeacon": 1,
+		"nestedtextword": 1, "nestedkeptword": 1, "nstail": 1,
+		"dblword": 1, "dbltag": 1, "lt": 1,
+		"svgword": 1, "svgtag": 1,
+	}
+	live, rebuilt := parityArchive(t, bodies, keysOf(want))
+	assure.Reached(t, live["nestedtextword"]+rebuilt["nestedtextword"], "hits for a nested noscript word")
+	for _, p := range parityProblems(want, live, rebuilt) {
+		t.Error(p)
+	}
+}
+
+// covers: MA-492, R8
+// OPEN GAP in R8, NOT accepted (pending an owner ruling on MA-476's escaped
+// twin), encoded the kit's way: a t.Skip that FAILS if un-skipped today. The
+// in-place noscript retry writes the OUTER noscript's own text children back
+// literally (x/net renders a noscript's text as it is), so escaped markup in
+// that text — decoded once by the scripting-off parse that rebuilt the
+// content — is read as markup by a reader with JavaScript off and by
+// `reindex -rebuild`: `&lt;b&gt;outeresctext&lt;/b&gt;` beside a charset meta
+// renders as a <b> element, and the tag's name is found live only (live=1
+// rebuilt=0). A nested noscript's text is written escaped and is at parity
+// (TestLiveAndRebuiltIndexAgreeOnNestedNoscripts); writing the outer text the
+// same way closes this, but MA-476's escaped twin beside a real charset meta
+// would then render with its refresh as inert text instead of falling back as
+// unsafe-after-reparse, which changes what MA-476 asserts: the owner's call.
+// When it is ruled and this passes, REMOVE the Skip.
+func TestLiveAndRebuiltIndexAgreeOnOuterNoscriptEscapedText(t *testing.T) {
+	t.Skip("R8 open gap: the noscript retry writes the outer noscript's escaped text back literally, so it is read as markup (the tag name is found live only); pending an owner ruling on MA-476's escaped twin (docs/review-sanitizer-roundtrip-adversarial.md)")
+
+	bodies := map[string]string{
+		"outer escaped case": `<p>outerescbody</p><noscript>&lt;outeresctag&gt;outeresctext&lt;/outeresctag&gt;<meta charset=utf-8></noscript>`,
+	}
+	want := map[string]int{"outerescbody": 1, "outeresctext": 1, "outeresctag": 1}
+	live, rebuilt := parityArchive(t, bodies, keysOf(want))
+	assure.Reached(t, live["outerescbody"]+rebuilt["outerescbody"], "hits for the body word")
+	for _, p := range parityProblems(want, live, rebuilt) {
+		t.Error(p)
+	}
+}
+
 // covers: MA-492, R8, R13, S33
 // Deep mails, at and past the depth where an exporter would flatten them (480)
 // and past the tree parser's cap (512), keep their word boundaries and their

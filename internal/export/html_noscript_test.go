@@ -168,6 +168,101 @@ func TestReservedMarkerInNoscriptIsStripped(t *testing.T) {
 	}
 }
 
+// directText is the text of n's own text children (not its descendants').
+func directText(n *xhtml.Node) string {
+	var b strings.Builder
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if c.Type == xhtml.TextNode {
+			b.WriteString(c.Data)
+		}
+	}
+	return b.String()
+}
+
+// covers: MA-476, R7, R19, S21
+// The in-place noscript retry rewrites each OUTERMOST HTML <noscript> once and
+// never parses what it built a second time. A <noscript> nested in one is
+// markup to the scripting-off parse that built the content: its element
+// children are kept, and its text stays text — written escaped, as the mail
+// wrote it, so a reader with JavaScript off reads that text and never markup
+// decoded out of it. The walk used to descend into the rewritten content and
+// parse a nested noscript's text again, decoding its entities a second time
+// and dropping its element children: the reviewer's adv_noscript2_body_esc_d
+// turned its escaped refresh into a (neutralized) <meta> element, a doubly
+// escaped `&amp;lt;b&amp;gt;` became a <b> element, and a <p> beside nested
+// text was lost. An SVG <noscript> is an ordinary foreign element whose
+// children were markup to the main parse: its escaped text stays text too,
+// never re-parsed into a <b> that leaves the <svg>. Each renders as HTML, with
+// no hostile meta live in either reading and no element made of escaped text.
+func TestNoscriptRetryRewritesEachNoscriptOnce(t *testing.T) {
+	cases := []struct {
+		name, body string
+		nestedText string // the nested noscript's own text to a reader with JavaScript off
+		kept       string // the text of the nested noscript's <p> child ("": none)
+		svgText    string // the SVG noscript's text in both readings ("": no SVG)
+	}{
+		{"nested escaped refresh",
+			`<p>adv words</p><noscript><meta charset=utf-8><noscript>&lt;meta http-equiv="refresh" content="0;url=http://127.0.0.1:8799/b/adv"&gt;</noscript></noscript><p>tail</p>`,
+			`<meta http-equiv="refresh" content="0;url=http://127.0.0.1:8799/b/adv">`, "", ""},
+		{"nested element children",
+			`<p>nsa</p><noscript><meta charset=utf-8><noscript>nestedtextword<p>nestedkeptword</p></noscript></noscript><p>nstail</p>`,
+			"nestedtextword", "nestedkeptword", ""},
+		{"nested doubly escaped",
+			`<p>nsa</p><noscript><meta charset=utf-8><noscript>&amp;lt;b&amp;gt;dblword&amp;lt;/b&amp;gt;</noscript></noscript>`,
+			"&lt;b&gt;dblword&lt;/b&gt;", "", ""},
+		{"svg noscript",
+			`<p>nsa</p><noscript><meta charset=utf-8></noscript><svg><noscript>&lt;b&gt;svgword&lt;/b&gt;</noscript></svg>`,
+			"", "", "<b>svgword</b>"},
+	}
+	for _, c := range cases {
+		out, err := RenderWith(&model.Message{Subject: c.name, HTMLBody: c.body}, RenderContext{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		page := string(out.HTML)
+		if out.BodyFallback != "" {
+			t.Errorf("%s: must render as HTML, got fallback %q", c.name, out.BodyFallback)
+			continue
+		}
+		if live := liveHostileMetas(t, page); len(live) > 0 {
+			t.Errorf("%s: a live hostile meta survived: %v\n%s", c.name, live, bodyPart(page))
+		}
+		trees := pageTrees(t, c.name, page)
+		for i, root := range trees {
+			body := mailBody(t, root)
+			if n := countElems(body, "meta") + countElems(body, "b"); n != 0 {
+				t.Errorf("%s (reading %d): escaped text became %d element(s):\n%s", c.name, i, n, bodyPart(page))
+			}
+			if c.svgText != "" {
+				ns := findElem(body, func(n *xhtml.Node) bool { return n.Data == "noscript" && n.Namespace == "svg" })
+				if ns == nil || directText(ns) != c.svgText {
+					t.Errorf("%s (reading %d): the SVG noscript's text must stay %q", c.name, i, c.svgText)
+				}
+			}
+		}
+		if c.nestedText == "" {
+			continue
+		}
+		off := mailBody(t, trees[1])
+		inner := findElem(off, func(n *xhtml.Node) bool {
+			return n.Data == "noscript" && n.Parent != nil && n.Parent.Data == "noscript"
+		})
+		if inner == nil {
+			t.Errorf("%s: with scripting off the nested noscript must be an element inside the outer one:\n%s", c.name, bodyPart(page))
+			continue
+		}
+		if got := directText(inner); got != c.nestedText {
+			t.Errorf("%s: with scripting off the nested noscript's text must stay text, %q; got %q", c.name, c.nestedText, got)
+		}
+		if c.kept != "" {
+			p := findElem(inner, func(n *xhtml.Node) bool { return n.Data == "p" })
+			if p == nil || !strings.Contains(directText(p), c.kept) {
+				t.Errorf("%s: the nested noscript's element child (<p>%s</p>) must be kept:\n%s", c.name, c.kept, bodyPart(page))
+			}
+		}
+	}
+}
+
 // liveCharsetMetas counts the <meta charset> elements in an exported page in
 // each scripting reading (the page's own utf-8 charset is one of them).
 func liveCharsetMetas(t *testing.T, page string) [2]int {
