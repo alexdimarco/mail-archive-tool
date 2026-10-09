@@ -65,6 +65,10 @@ type LastRun struct {
 	Unknown     int      `json:"unknown"`
 	IndexErrors int      `json:"index_errors"`
 	Error       string   `json:"error,omitempty"`
+	// NoIndex records that the run was told not to build the search index
+	// (-index=false), so `status` does not warn that an archive deliberately
+	// kept without search.db has lost it. Absent (false) on older records.
+	NoIndex bool `json:"no_index,omitempty"`
 }
 
 // LastRunState says what ReadLastRun found.

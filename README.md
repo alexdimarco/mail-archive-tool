@@ -595,7 +595,8 @@ that ignores unknown keys is unaffected and the version is not bumped.)
 - `reasons` is the human WARN/RED lines; `reason_codes` is a **parallel** array
   (same length, same order) of stable snake_case codes, so a gate matches a code
   instead of wording that can change. The codes: `manifest_unreadable`,
-  `incomplete_content`, `unexamined_entries`, `index_behind`, `cloud_sync`,
+  `incomplete_content`, `unexamined_entries`, `index_behind`,
+  `index_unreadable`, `index_missing`, `cloud_sync`,
   `lastrun_unreadable`, `never_ran`, `run_failed`, `auth_remedy`,
   `run_in_progress`, `run_stuck`, `run_never_finished`, `run_cancelled`,
   `stale`, `not_attested`, `verify_unrecorded`, `verify_stale`,

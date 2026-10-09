@@ -56,8 +56,13 @@ type Input struct {
 	// it is display-only and never changes the posture.
 	Extractable Extractable
 
-	HasIndex bool
-	Indexed  int
+	// HasIndex is true when search.db opened; HasIndexFile when it exists on
+	// disk at all. A present index that cannot be opened (corrupt) carries the
+	// open error in IndexErr and is a RED, never "no search index" (F82).
+	HasIndex     bool
+	Indexed      int
+	HasIndexFile bool
+	IndexErr     error
 
 	// History is the go-back timeline's coverage (design §3.4, X6): whether the
 	// log exists, how many runs and events it records, and whether it carries a
@@ -181,6 +186,18 @@ func Assess(in Input, now time.Time) Report {
 	// the rebuild from the archive's own files (F50).
 	if in.HasIndex && in.HasManifest && in.Indexed < in.Messages {
 		r.warn("index_behind", fmt.Sprintf("the search index holds %d of %d messages — rebuild it from the archive with `mailarchive reindex -rebuild -out %q`", in.Indexed, in.Messages, in.Out))
+	}
+	// A search index that is present but cannot be read is a RED (search, serve
+	// and the next run all fail on it); one that is gone from an archive that
+	// records messages is a WARN unless the last run deliberately skipped
+	// indexing (-index=false). Both name the rebuild from the archive's own
+	// files (F82). The open error is control-stripped like the manifest's.
+	idxPath := filepath.Join(in.Out, "search.db")
+	switch {
+	case in.HasIndexFile && !in.HasIndex && in.IndexErr != nil:
+		r.red("index_unreadable", fmt.Sprintf("the search index %s cannot be read (%s) — search, serve and the folder pages need it; rebuild it from the archive with `mailarchive reindex -rebuild -out %q`", idxPath, util.StripControl(in.IndexErr.Error()), in.Out))
+	case !in.HasIndex && !in.HasIndexFile && in.HasManifest && in.Messages > 0 && !(in.LastRunState == state.LastRunPresent && in.LastRun.NoIndex):
+		r.warn("index_missing", fmt.Sprintf("the archive has no search index (%s) although the manifest records %d message(s) — search, serve and the folder pages need it; rebuild it from the archive with `mailarchive reindex -rebuild -out %q` (or ignore this if the archive is deliberately kept without one, -index=false)", idxPath, in.Messages, in.Out))
 	}
 
 	// The archive's own location. A cloud-sync folder re-uploads every change
@@ -514,13 +531,21 @@ func Gather(out, nameOverride string) Input {
 	if _, err := os.Stat(in.ReportPath); err == nil {
 		in.ReportExists = true
 	}
-	if ix, err := index.OpenReadonly(filepath.Join(out, "search.db")); err == nil {
-		in.HasIndex = true
-		in.Indexed, _ = ix.Count()
-		if oldest, newest, ok := ix.Range(); ok {
-			in.HasRange, in.RangeOldest, in.RangeNewest = true, oldest, newest
+	// Tell an absent index from a present-but-unopenable one: keep the open
+	// error so Assess can RED a damaged index instead of reporting none (F82).
+	idxPath := filepath.Join(out, "search.db")
+	if _, serr := os.Stat(idxPath); serr == nil {
+		in.HasIndexFile = true
+		if ix, err := index.OpenReadonly(idxPath); err == nil {
+			in.HasIndex = true
+			in.Indexed, _ = ix.Count()
+			if oldest, newest, ok := ix.Range(); ok {
+				in.HasRange, in.RangeOldest, in.RangeNewest = true, oldest, newest
+			}
+			ix.Close()
+		} else {
+			in.IndexErr = err
 		}
-		ix.Close()
 	}
 	in.History, in.HistoryReadErr = state.HistoryStatus(filepath.Join(out, state.HistoryName))
 	in.LastRun, in.LastRunState, in.LastRunErr = state.ReadLastRun(out)
@@ -565,8 +590,11 @@ func Summary(in Input, rep Report) []string {
 	lines = append(lines, fmt.Sprintf("Archive:    %s", in.Out))
 	if in.HasManifest {
 		idx := "no search index"
-		if in.HasIndex {
+		switch {
+		case in.HasIndex:
 			idx = fmt.Sprintf("%d indexed", in.Indexed)
+		case in.HasIndexFile:
+			idx = "search index unreadable (see the posture below)"
 		}
 		lines = append(lines, fmt.Sprintf("Messages:   %d in manifest · %s", in.Messages, idx))
 		if in.HasRange {

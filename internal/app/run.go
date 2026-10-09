@@ -384,7 +384,7 @@ func beginRun(opts Options) state.LastRun {
 	if opts.Mode == export.Full {
 		mode = "full"
 	}
-	lr := state.LastRun{Status: state.RunRunning, Started: time.Now().UTC(), PID: os.Getpid(), Exe: exe, Mode: mode, Job: canonicalJob(opts, mode)}
+	lr := state.LastRun{Status: state.RunRunning, Started: time.Now().UTC(), PID: os.Getpid(), Exe: exe, Mode: mode, Job: canonicalJob(opts, mode), NoIndex: !opts.Index}
 	_ = state.WriteLastRun(opts.Out, lr) // best effort: the run itself must not fail on this
 	return lr
 }
