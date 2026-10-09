@@ -3,6 +3,7 @@ package schedule
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -203,6 +204,104 @@ func TestVerifyDescriptorGoesOnlyWithItsOwnEntry(t *testing.T) {
 			t.Errorf("after removing %s, UnreadableVerifyDescriptor = %q, want %s", s.Name, got, verifyPath)
 		}
 	}
+}
+
+// covers: MA-457, R14, S14
+// On Task Scheduler too, a verify the descriptor records but the scheduler no
+// longer has (deleted by hand in Task Scheduler) still counts as present, so its
+// removal clears the stale record, as launchd's and cron's removals do: a
+// /Delete of a task already gone is no error once /Query no longer finds it.
+// The Windows removal runs here on every OS against a fake Task Scheduler (the
+// schtasksRun seam), so no real scheduler is touched. The positive twin first:
+// a verify Task Scheduler still has is deleted with its descriptor, keeping the
+// backup's task and descriptor. Then the same verify, recorded but already gone
+// from Task Scheduler, is removed without error and its record cleared. A task
+// Task Scheduler still has but will not delete stays an error naming schtasks
+// /Delete and its output, with the task and the verify descriptor unchanged.
+func TestTaskSchedulerRemovalClearsAVerifyAlreadyGone(t *testing.T) {
+	orig := schtasksRun
+	t.Cleanup(func() { schtasksRun = orig })
+	tasks, locked := map[string]bool{}, map[string]bool{} // the fake's tasks, and those that refuse /Delete
+	notFound := []byte("ERROR: The system cannot find the file specified.")
+	schtasksRun = func(args ...string) ([]byte, error) {
+		if len(args) < 3 || args[1] != "/TN" {
+			return nil, fmt.Errorf("unexpected schtasks call %v", args)
+		}
+		name := args[2]
+		switch args[0] {
+		case "/Query":
+			if tasks[name] {
+				return []byte(name), nil
+			}
+			return notFound, &exec.ExitError{}
+		case "/Delete":
+			switch {
+			case locked[name]:
+				return []byte("ERROR: Access is denied."), &exec.ExitError{}
+			case tasks[name]:
+				delete(tasks, name)
+				return []byte("SUCCESS: The scheduled task was successfully deleted."), nil
+			}
+			return notFound, &exec.ExitError{}
+		}
+		return nil, fmt.Errorf("unexpected schtasks call %v", args)
+	}
+	out := t.TempDir()
+	backup := backupSpecFor(out, DefaultNameFor(out))
+	verify := verifySpecFor(out, DefaultNameFor(out)+"-verify")
+	verify.WrapperPath = filepath.Join(out, verify.Name+".cmd") // its side files stay in the temp dir
+	backupPath, verifyPath := filepath.Join(out, DescriptorName), filepath.Join(out, VerifyDescriptorName)
+	record := func() {
+		t.Helper()
+		if err := WriteDescriptor(out, DescribeSpec(backup)); err != nil {
+			t.Fatal(err)
+		}
+		if err := WriteVerifyDescriptor(out, DescribeSpec(verify)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exists := func(p string) bool { _, err := os.Lstat(p); return err == nil }
+
+	// Positive twin: a verify Task Scheduler still has goes with its descriptor.
+	record()
+	tasks[backup.Name], tasks[verify.Name] = true, true
+	if err := removeOn(verify, "windows"); err != nil {
+		t.Fatalf("removing a verify Task Scheduler has: %v", err)
+	}
+	if tasks[verify.Name] || exists(verifyPath) || !tasks[backup.Name] || !exists(backupPath) {
+		t.Errorf("removing the verify: task left=%v, its descriptor left=%v; backup task=%v, its descriptor=%v",
+			tasks[verify.Name], exists(verifyPath), tasks[backup.Name], exists(backupPath))
+	}
+
+	// Recorded, but deleted by hand in Task Scheduler: the removal clears the record.
+	record()
+	assure.Reached(t, VerifyRecorded(out, verify.Name) && !tasks[verify.Name], "fixture: the verify recorded but gone from Task Scheduler")
+	if err := removeOn(verify, "windows"); err != nil {
+		t.Errorf("removing a verify Task Scheduler no longer has failed, so its stale record is never cleared: %v", err)
+	}
+	if exists(verifyPath) {
+		t.Errorf("the stale verify record outlived the removal of its entry")
+	}
+	if !exists(backupPath) || !tasks[backup.Name] {
+		t.Errorf("clearing the verify's stale record touched the backup (task=%v, descriptor=%v)", tasks[backup.Name], exists(backupPath))
+	}
+
+	// A task Task Scheduler still has but will not delete: an error, nothing cleared.
+	record()
+	tasks[verify.Name], locked[verify.Name] = true, true
+	before, err := os.ReadFile(verifyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, msg := 0, ""
+	if err := removeOn(verify, "windows"); err != nil {
+		code, msg = 1, err.Error()
+	}
+	assure.Refused(t, code, msg, assure.Code(1), assure.Names("schtasks /Delete", "Access is denied"),
+		assure.NoSideEffect(func() bool {
+			after, err := os.ReadFile(verifyPath)
+			return err == nil && string(after) == string(before) && tasks[verify.Name]
+		}))
 }
 
 // covers: MA-456, R14, S28

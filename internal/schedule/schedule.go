@@ -656,10 +656,16 @@ func cronBlockOut(crontab, marker string) string {
 // archive's default-named schedule only (MA-455); with any other entry it stays,
 // and so does a verify descriptor that cannot be read, with either entry. The
 // caller names a file left so (UnreadableDescriptor, UnreadableVerifyDescriptor
-// and their remedies) and `status` keeps reporting it.
-func Remove(s Spec) error {
+// and their remedies) and `status` keeps reporting it. An entry already gone
+// from the host scheduler (taken out by hand) is no error on any OS, so a
+// recorded-but-gone entry's removal still clears its record.
+func Remove(s Spec) error { return removeOn(s, runtime.GOOS) }
+
+// removeOn is Remove for the host scheduler goos selects; the Windows branch
+// runs against the schtasksRun seam, so a test can drive it on any OS.
+func removeOn(s Spec, goos string) error {
 	var err error
-	switch runtime.GOOS {
+	switch goos {
 	case "darwin":
 		err = removeLaunchd(s)
 	case "windows":
@@ -886,6 +892,14 @@ var (
 	}
 )
 
+// schtasksRun runs schtasks.exe with args and returns its combined output and
+// run error. Like crontabList and crontabInstall it is a package variable, so a
+// test can stand a fake Task Scheduler in, on any OS, without touching the
+// runner's real one.
+var schtasksRun = func(args ...string) ([]byte, error) {
+	return exec.Command("schtasks", args...).CombinedOutput()
+}
+
 func readCrontab() string {
 	out, err := crontabList()
 	if err != nil {
@@ -997,23 +1011,33 @@ func installSchtasks(s Spec) error {
 	if err != nil {
 		return err
 	}
-	if out, err := exec.Command("schtasks", argv...).CombinedOutput(); err != nil {
+	if out, err := schtasksRun(argv...); err != nil {
 		return fmt.Errorf("schtasks /Create from %s: %w: %s", xmlPath, err, strings.TrimSpace(string(out)))
 	}
 	// Confirm the task exists: a /Create that reported success but registered
 	// nothing (a definition schtasks silently rejected) must not pass as a
 	// working schedule.
-	if out, err := exec.Command("schtasks", SchtasksQueryArgv(s.Name)...).CombinedOutput(); err != nil {
+	if out, err := schtasksRun(SchtasksQueryArgv(s.Name)...); err != nil {
 		return fmt.Errorf("schtasks /Create reported success but the task %q is absent — its definition is %s: %w: %s", s.Name, xmlPath, err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
 
+// removeSchtasks deletes the task. A task already gone from Task Scheduler
+// (deleted there by hand) leaves nothing to delete, as an absent launchd plist
+// or cron block does: when /Delete fails and /Query no longer finds the task,
+// the removal goes on to the task's files and the descriptor that records it,
+// so a recorded-but-gone entry's stale record is cleared on Windows too. A task
+// Task Scheduler still has (or cannot be asked about) keeps the /Delete error.
 func removeSchtasks(s Spec) error {
-	if out, err := exec.Command("schtasks", "/Delete", "/TN", s.Name, "/F").CombinedOutput(); err != nil {
-		return fmt.Errorf("schtasks /Delete: %w: %s", err, strings.TrimSpace(string(out)))
+	out, err := schtasksRun("/Delete", "/TN", s.Name, "/F")
+	if err == nil {
+		return nil
 	}
-	return nil
+	if _, qerr := schtasksRun(SchtasksQueryArgv(s.Name)...); schtasksState(qerr) == NotInstalled {
+		return nil
+	}
+	return fmt.Errorf("schtasks /Delete: %w: %s", err, strings.TrimSpace(string(out)))
 }
 
 // removeSchtasksSideFiles deletes the wrapper and the XML definition Install
