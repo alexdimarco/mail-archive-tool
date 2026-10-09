@@ -190,7 +190,8 @@ func parseFailure(err error) string {
 //   - <title> → removed (ours names the page);
 //   - <img src="cid:…"> with no matching part → src removed, a caption added;
 //   - <link href> → renamed data-mailarchive-neutralized-href, on EVERY
-//     mail-supplied <link> (see neutralizeLink).
+//     <link> in the parsed tree (see neutralizeLink; a <noscript> copy is
+//     text to a scripting-on parse, see hostileSurvives).
 //
 // Scripts, remote loads, <base> and forms need no rewriting: the policy meta
 // that precedes everything makes them inert. A meta refresh is the exception —
@@ -1155,15 +1156,20 @@ func neutralize(n *xhtml.Node) {
 	}
 }
 
-// neutralizeLink renames the href of a mail-supplied <link> — every one, not
-// only resource hints. ArchiveCSP allows nothing remote (only data: images and
-// fonts and inline styles), so every network fetch a link could start
-// (stylesheet, icon, preload, prefetch, modulepreload, manifest) is already
-// refused and renaming the href costs the page nothing it showed — at most a
-// data: favicon. The two hints the policy does not govern, preconnect and
-// dns-prefetch, would otherwise open a connection to (or resolve) the sender's
-// host when the archived page is opened (RV-2). Renaming every href is simpler
-// than a rel list and cannot be bypassed by a link type the list misses.
+// neutralizeLink renames the href of a mail-supplied <link> — every one
+// neutralize reaches, not only resource hints. ArchiveCSP allows nothing remote
+// (only data: images and fonts and inline styles), so every network fetch a
+// link could start (stylesheet, icon, preload, prefetch, modulepreload,
+// manifest) is already refused and renaming the href costs the page nothing it
+// showed — at most a data: favicon. The two hints the policy does not govern,
+// preconnect and dns-prefetch, would otherwise open a connection to (or
+// resolve) the sender's host when the archived page is opened (RV-2). Renaming
+// every href is simpler than a rel list and cannot be bypassed by a link type
+// the list misses. A <noscript> copy that only a reader with JavaScript off
+// reads as markup is out of reach of the scripting-on parse: the re-check fails
+// closed on it when it is a resource hint (and the scripting-off retry then
+// renames it); any other link type there keeps its href in that reading, its
+// fetch refused by the policy.
 func neutralizeLink(n *xhtml.Node) {
 	for i, a := range n.Attr {
 		if strings.EqualFold(a.Key, "href") {

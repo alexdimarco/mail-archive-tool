@@ -67,6 +67,33 @@ func liveResourceHints(t *testing.T, page string) []string {
 	return found
 }
 
+// liveLinkHrefsScriptingOn returns every <link> element with an href in an
+// exported page read with scripting on (the reading neutralize's own tree is
+// written for): the page template carries no <link>, so any is the mail's.
+func liveLinkHrefsScriptingOn(t *testing.T, page string) []string {
+	t.Helper()
+	root, err := xhtml.ParseWithOptions(strings.NewReader(page), xhtml.ParseOptionEnableScripting(true))
+	if err != nil {
+		t.Fatalf("exported page does not parse: %v", err)
+	}
+	var found []string
+	var walk func(n *xhtml.Node)
+	walk = func(n *xhtml.Node) {
+		if n.Type == xhtml.ElementNode && strings.EqualFold(n.Data, "link") {
+			for _, a := range n.Attr {
+				if strings.EqualFold(a.Key, "href") {
+					found = append(found, a.Val)
+				}
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(root)
+	return found
+}
+
 // covers: MA-470, R19, S21
 // A mail-supplied <link> resource hint (preconnect, dns-prefetch, prefetch,
 // preload, modulepreload, prerender) never comes out of the renderer with a
@@ -77,9 +104,13 @@ func liveResourceHints(t *testing.T, page string) []string {
 // connection to the sender's host (an open-tracking / IP-leak beacon). The
 // mail's text is kept and the page still renders as HTML — a noscript copy
 // through the scripting-off retry (MA-476), which neutralize can reach.
-// The positive twin: ordinary mail keeps its hyperlinks and data: images, and a
-// mail <link rel=stylesheet> (already blocked by the policy) is renamed inert
-// without the body falling back.
+// Every <link> neutralize reaches is renamed, so read with scripting on no
+// exported page holds a mail <link> with a live href at all. The positive twins:
+// ordinary mail keeps its hyperlinks and data: images, and a mail <link
+// rel=stylesheet> (already blocked by the policy) is renamed inert without the
+// body falling back; so is a web-builder head (a preload hint, and a <noscript>
+// stylesheet copy for readers without JavaScript, which neutralize cannot reach
+// and the re-check does not fail on: the policy refuses that fetch).
 func TestRenderResourceHintLinksAreInert(t *testing.T) {
 	const beacon = "http://evil.example/beacon"
 	cases := map[string]string{
@@ -115,6 +146,27 @@ func TestRenderResourceHintLinksAreInert(t *testing.T) {
 		if out.BodyFallback != "" {
 			t.Errorf("%s: the body must render with the hint renamed inert, not fall back (got %q)", name, out.BodyFallback)
 		}
+		if live := liveLinkHrefsScriptingOn(t, page); len(live) > 0 {
+			t.Errorf("%s: with scripting on, no mail <link> may keep a live href, got %v", name, live)
+		}
+	}
+
+	fonts := `<html><head><link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Inter">` +
+		`<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter">` +
+		`<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter"></noscript></head>` +
+		`<body><p>web-builder newsletter fonts</p></body></html>`
+	fo, err := RenderWith(&model.Message{Subject: "fonts", HTMLBody: fonts}, RenderContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fo.BodyFallback != "" {
+		t.Errorf("positive twin: a web-builder fonts head must render as HTML, got fallback %q", fo.BodyFallback)
+	}
+	if live := liveResourceHints(t, string(fo.HTML)); len(live) > 0 {
+		t.Errorf("fonts head: a live resource hint survived: %v", live)
+	}
+	if live := liveLinkHrefsScriptingOn(t, string(fo.HTML)); len(live) > 0 {
+		t.Errorf("fonts head: with scripting on, no mail <link> may keep a live href, got %v", live)
 	}
 
 	ordinary := `<p>Hello <a href="https://example.com/offer" rel="noopener noreferrer">see the offer</a></p>` +
@@ -127,6 +179,9 @@ func TestRenderResourceHintLinksAreInert(t *testing.T) {
 	page := string(out.HTML)
 	if out.BodyFallback != "" {
 		t.Fatalf("positive twin: ordinary mail must render as HTML, got fallback %q", out.BodyFallback)
+	}
+	if live := liveLinkHrefsScriptingOn(t, page); len(live) > 0 {
+		t.Errorf("positive twin: with scripting on, no mail <link> may keep a live href, got %v", live)
 	}
 	for _, want := range []string{
 		`<a href="https://example.com/offer" rel="noopener noreferrer">see the offer</a>`,
