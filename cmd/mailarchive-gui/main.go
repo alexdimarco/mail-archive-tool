@@ -165,8 +165,10 @@ func runHeadless(path string) int {
 			logger.Printf("warning: ignoring invalid since %q: %v", j.Since, err)
 		}
 	}
+	// Unattended: a vanished input on this existing archive is recorded as a
+	// failed run, exactly as the CLI's -unattended does (N13, R18).
 	opts := app.Options{Inputs: inputs, Auto: j.Auto, Out: j.Out, Mode: mode, Since: since,
-		CopyFirst: j.CopyFirst, Index: true, Pages: true, KeepRaw: j.KeepRaw}
+		CopyFirst: j.CopyFirst, Index: true, Pages: true, KeepRaw: j.KeepRaw, Unattended: true}
 	logger.Printf("Scheduled job %q: exporting to %s", j.Name, j.Out)
 	result, runErr := app.Run(ctx, opts, logger, nil)
 	logSummary(logger, result)

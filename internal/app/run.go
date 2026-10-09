@@ -46,6 +46,12 @@ type Options struct {
 	// exported messages inside a store walk (R5: a hard crash keeps the
 	// progress made). Zero means the default (1000).
 	CheckpointEvery int
+
+	// Unattended marks a scheduled run (the CLI's -unattended, the GUI's
+	// headless job). A discovery refusal (a vanished -input, no sources found)
+	// on an archive that already exists is then recorded as a failed run, so
+	// `status` reports it (N13, R18); see RecordRefusedRun.
+	Unattended bool
 }
 
 // Result summarizes a completed (or cancelled) run.
@@ -102,12 +108,17 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// -input path, or no sources at all, must refuse naming the problem while
 	// creating no output dir, no lock, and no last-run record — a guaranteed
 	// failure must not first leave a half-built archive and a failed run behind.
+	// A scheduled run's refusal is still a run (N13): recorded failed when the
+	// archive already exists, so it never leaves the previous success standing.
 	files, err := DiscoverInputs(opts.Inputs, opts.Auto)
-	if err != nil {
-		return Result{}, err
+	if err == nil && len(files) == 0 {
+		err = errors.New("no input mail sources found (a .pst/.ost file, an mbox file, or a mail directory; or enable auto-discovery)")
 	}
-	if len(files) == 0 {
-		return Result{}, errors.New("no input mail sources found (a .pst/.ost file, an mbox file, or a mail directory; or enable auto-discovery)")
+	if err != nil {
+		if opts.Unattended {
+			RecordRefusedRun(opts, err)
+		}
+		return Result{}, err
 	}
 
 	if err := os.MkdirAll(opts.Out, 0o755); err != nil {
@@ -407,14 +418,48 @@ func commitInOrder(syncHistory, flushIndex, saveManifest func() error, logger *l
 
 // beginRun writes the "running" last-run record and returns it for recordRun.
 func beginRun(opts Options) state.LastRun {
+	lr := newRunRecord(opts)
+	_ = state.WriteLastRun(opts.Out, lr) // best effort: the run itself must not fail on this
+	return lr
+}
+
+// newRunRecord is the "running" last-run record for a run of opts, starting now.
+func newRunRecord(opts Options) state.LastRun {
 	exe, _ := os.Executable()
 	mode := "incremental"
 	if opts.Mode == export.Full {
 		mode = "full"
 	}
-	lr := state.LastRun{Status: state.RunRunning, Started: time.Now().UTC(), PID: os.Getpid(), Exe: exe, Mode: mode, Job: canonicalJob(opts, mode), NoIndex: !opts.Index}
-	_ = state.WriteLastRun(opts.Out, lr) // best effort: the run itself must not fail on this
-	return lr
+	return state.LastRun{Status: state.RunRunning, Started: time.Now().UTC(), PID: os.Getpid(), Exe: exe, Mode: mode, Job: canonicalJob(opts, mode), NoIndex: !opts.Index}
+}
+
+// RecordRefusedRun records a scheduled run that refused before it began — its
+// -input vanished, or discovery found no sources — as a FAILED run of the
+// archive at opts.Out (N13, R18): the last-run record names the cause and the
+// attention sidecar is written, so `status` reports RED run_failed instead of
+// the previous success. It writes only into an archive that already exists (a
+// manifest or a last-run record is present): a first run that refuses still
+// creates nothing (friction #2, MA-103). It takes the archive lock for the
+// write and skips it when another run holds the lock — that run's own record
+// is authoritative. Best effort, like every last-run write.
+func RecordRefusedRun(opts Options, cause error) {
+	mpath := opts.Manifest
+	if mpath == "" {
+		mpath = filepath.Join(opts.Out, ".mailarchive-manifest.json")
+	}
+	_, mErr := os.Stat(mpath)
+	_, lrErr := os.Stat(filepath.Join(opts.Out, state.LastRunName))
+	if mErr != nil && lrErr != nil {
+		return
+	}
+	lock, err := lockfile.AcquireAs(filepath.Join(opts.Out, lockfile.Name), "export")
+	if err != nil {
+		return
+	}
+	defer lock.Release()
+	lr := newRunRecord(opts)
+	lr.Status, lr.Finished, lr.Error = state.RunFailed, lr.Started, cause.Error()
+	_ = state.WriteLastRun(opts.Out, lr)
 }
 
 // canonicalJob reconstructs the run's export flags in the same shape the

@@ -143,14 +143,28 @@ func runExport(args []string) error {
 	// previews the discovered stores and stops. -outlook supplies its own inputs
 	// later, so an empty set is not yet a refusal in that case.
 	discovered, err := app.DiscoverInputs(inputs, *o.auto)
-	if err != nil {
-		return err
-	}
-	if *o.list {
+	if err == nil && *o.list {
 		return listStores(discovered)
 	}
-	if len(discovered) == 0 && !*o.outlook {
-		return errors.New("no input mail sources found: pass -input PATH (a .pst/.ost file, an mbox file, or a mail directory), or -auto to discover Outlook/Thunderbird/Evolution stores")
+	if err == nil && len(discovered) == 0 && !*o.outlook {
+		err = errors.New("no input mail sources found: pass -input PATH (a .pst/.ost file, an mbox file, or a mail directory), or -auto to discover Outlook/Thunderbird/Evolution stores")
+	}
+	if err != nil {
+		// A scheduled run's refusal is still a run (N13, R18): on an archive
+		// that already exists it is recorded failed (status, attention
+		// sidecar) and logged to its own -log, instead of leaving the previous
+		// success as the archive's last word. A first run still creates
+		// nothing (RecordRefusedRun writes only into an existing archive).
+		if *o.unattended && !*o.list {
+			app.RecordRefusedRun(exportOptions(o, inputs, mode, since), err)
+			if *o.log != "" {
+				if l, closeLog, lerr := newRunLogger(*o.log); lerr == nil {
+					l.Printf("FAILED: %v", err)
+					closeLog()
+				}
+			}
+		}
+		return err
 	}
 
 	logger, closeLog, err := newRunLogger(*o.log)
@@ -164,8 +178,8 @@ func runExport(args []string) error {
 		}
 	}()
 
-	outlook, outlookSyncWait, auto, copyFirst := o.outlook, o.outlookSyncWait, o.auto, o.copyFirst
-	manifestPath, doIndex, doPages, keepRaw := o.manifest, o.index, o.pages, o.keepRaw
+	outlook, outlookSyncWait, auto := o.outlook, o.outlookSyncWait, o.auto
+	doIndex, keepRaw := o.index, o.keepRaw
 	enableOffline, syncWait, modeStr := o.enableOffline, o.syncWait, o.mode
 	out := o.out
 
@@ -195,19 +209,7 @@ func runExport(args []string) error {
 		logger.Printf("Outlook: %d PST(s) ready; archiving them now.", len(stores))
 	}
 
-	opts := app.Options{
-		Inputs:    inputs,
-		Auto:      *auto,
-		Out:       *out,
-		Mode:      mode,
-		Since:     since,
-		CopyFirst: *copyFirst,
-		Manifest:  *manifestPath,
-		Index:     *doIndex,
-		Pages:     *doPages,
-		KeepRaw:   *keepRaw,
-	}
-	_ = modeStr
+	opts := exportOptions(o, inputs, mode, since)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -250,6 +252,24 @@ func runExport(args []string) error {
 	}
 	err = runErr
 	return err
+}
+
+// exportOptions builds the app.Options an export run (or its recorded refusal)
+// uses from the parsed flags and the final input list.
+func exportOptions(o *exportOpts, inputs []string, mode export.Mode, since time.Time) app.Options {
+	return app.Options{
+		Inputs:     inputs,
+		Auto:       *o.auto,
+		Out:        *o.out,
+		Mode:       mode,
+		Since:      since,
+		CopyFirst:  *o.copyFirst,
+		Manifest:   *o.manifest,
+		Index:      *o.index,
+		Pages:      *o.pages,
+		KeepRaw:    *o.keepRaw,
+		Unattended: *o.unattended,
+	}
 }
 
 // reclaimPSTDir removes the temporary per-account PST directory that -outlook's
