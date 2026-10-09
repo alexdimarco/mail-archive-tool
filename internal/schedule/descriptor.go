@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
 	"mail-archive-tool/internal/util"
@@ -17,6 +18,15 @@ import (
 // real name, cadence, host and executable from here instead of guessing, and
 // `schedule -out DIR -remove` finds the entry to remove.
 const DescriptorName = ".mailarchive-schedule.json"
+
+// VerifyDescriptorName is the archive-local file that records the archive's
+// scheduled verify (owner ruling FB-4): a verify is its own scheduler entry, so
+// it gets its own descriptor beside the backup's, written when the verify is
+// installed and removed only with that entry. `status` judges the last verify's
+// staleness against the cadence recorded here, and the install-time name guard
+// reads it with the backup's. Same format and write discipline as
+// DescriptorName.
+const VerifyDescriptorName = ".mailarchive-verify-schedule.json"
 
 // Descriptor describes an installed schedule.
 type Descriptor struct {
@@ -53,12 +63,28 @@ func DescribeSpec(s Spec) Descriptor {
 
 // WriteDescriptor writes the descriptor into the archive directory atomically.
 func WriteDescriptor(out string, d Descriptor) error {
+	return writeDescriptorFile(out, DescriptorName, d)
+}
+
+// WriteVerifyDescriptor writes the verify schedule's descriptor into the archive
+// directory, exactly as WriteDescriptor writes the backup's.
+func WriteVerifyDescriptor(out string, d Descriptor) error {
+	return writeDescriptorFile(out, VerifyDescriptorName, d)
+}
+
+// writeDescriptorFile is the one writer of both descriptors: a temp file in the
+// archive directory (created 0600 — owner-only on POSIX — by os.CreateTemp) is
+// written, closed and renamed over name, so a reader sees the old file or the
+// new one, never a torn one, and the file keeps that mode. The temp name keeps
+// the `.mailarchive-*.tmp` shape the orphan sweep (export.SweepOrphans) removes
+// if a crash leaves one.
+func writeDescriptorFile(out, name string, d Descriptor) error {
 	data, err := json.MarshalIndent(d, "", "  ")
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(out, DescriptorName)
-	tmp, err := os.CreateTemp(out, ".mailarchive-schedule-*.tmp")
+	path := filepath.Join(out, name)
+	tmp, err := os.CreateTemp(out, strings.TrimSuffix(name, ".json")+"-*.tmp")
 	if err != nil {
 		return err
 	}
@@ -77,13 +103,28 @@ func WriteDescriptor(out string, d Descriptor) error {
 // ReadDescriptor reads the archive's descriptor. A missing file is reported
 // with os.ErrNotExist (a legible "no schedule recorded here" for callers).
 func ReadDescriptor(out string) (Descriptor, error) {
+	return readDescriptorFile(out, DescriptorName, "schedule descriptor", UnreadableDescriptorRemedy)
+}
+
+// ReadVerifyDescriptor reads the verify schedule's descriptor under the same
+// untrusted-input rules as ReadDescriptor; a missing file is os.ErrNotExist (no
+// verify recorded here — none installed, or one installed by a release that
+// wrote no verify descriptor).
+func ReadVerifyDescriptor(out string) (Descriptor, error) {
+	return readDescriptorFile(out, VerifyDescriptorName, "verify schedule descriptor", UnreadableVerifyDescriptorRemedy)
+}
+
+// readDescriptorFile is the one reader of both descriptors. what names the file
+// in its errors and remedy is what to do about one that cannot be read.
+func readDescriptorFile(out, name, what, remedy string) (Descriptor, error) {
 	var d Descriptor
-	data, err := os.ReadFile(filepath.Join(out, DescriptorName))
+	path := filepath.Join(out, name)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return d, err
 	}
 	if err := json.Unmarshal(data, &d); err != nil {
-		return d, fmt.Errorf("schedule descriptor %s is unreadable (%v): %s", filepath.Join(out, DescriptorName), err, UnreadableDescriptorRemedy)
+		return d, fmt.Errorf("%s %s is unreadable (%v): %s", what, path, err, remedy)
 	}
 	// The file is untrusted (any writer of the archive directory could edit
 	// it) and its strings are echoed into terminals and dialogs: strip control
@@ -95,7 +136,7 @@ func ReadDescriptor(out string) (Descriptor, error) {
 		d.Job[i] = util.StripControl(d.Job[i])
 	}
 	if _, err := SanitizeName(d.Name); err != nil {
-		return d, fmt.Errorf("schedule descriptor %s names an invalid schedule (%v): %s", filepath.Join(out, DescriptorName), err, UnreadableDescriptorRemedy)
+		return d, fmt.Errorf("%s %s names an invalid schedule (%v): %s", what, path, err, remedy)
 	}
 	if iv, err := ParseInterval(util.StripControl(d.Interval)); err == nil {
 		d.Interval = string(iv)
@@ -112,7 +153,17 @@ func ReadDescriptor(out string) (Descriptor, error) {
 
 // RemoveDescriptor deletes the descriptor; a missing file is not an error.
 func RemoveDescriptor(out string) error {
-	err := os.Remove(filepath.Join(out, DescriptorName))
+	return removeDescriptorFile(out, DescriptorName)
+}
+
+// RemoveVerifyDescriptor deletes the verify schedule's descriptor; a missing
+// file is not an error.
+func RemoveVerifyDescriptor(out string) error {
+	return removeDescriptorFile(out, VerifyDescriptorName)
+}
+
+func removeDescriptorFile(out, name string) error {
+	err := os.Remove(filepath.Join(out, name))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}

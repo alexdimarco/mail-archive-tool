@@ -64,8 +64,9 @@ type Spec struct {
 	Wrapper     bool
 	WrapperPath string
 
-	// Out is the archive directory; Install writes the descriptor there and
-	// Remove deletes it.
+	// Out is the archive directory; Install writes the descriptor of its kind
+	// there (the backup's, or a verify's own) and Remove deletes the one that
+	// records this entry.
 	Out string
 }
 
@@ -526,9 +527,9 @@ func VerifyScheduleNote(s Spec) (string, error) {
 }
 
 // Install applies the schedule to the host OS's scheduler and records the
-// archive-local descriptor. On Windows the wrapper is written (and fsynced)
-// BEFORE the task exists, so an interrupted install leaves at most an orphan
-// wrapper and never a task pointing at nothing.
+// archive-local descriptor of its kind. On Windows the wrapper is written (and
+// fsynced) BEFORE the task exists, so an interrupted install leaves at most an
+// orphan wrapper and never a task pointing at nothing.
 func Install(s Spec) error {
 	if err := s.Validate(); err != nil {
 		return err
@@ -537,7 +538,7 @@ func Install(s Spec) error {
 	// is a distinct entry that coexists with the archive's backup schedule, so it
 	// bypasses the one-schedule-per-archive descriptor guard and never overwrites
 	// the backup's descriptor (friction #4) — but, like any entry, it may not take
-	// over a name another archive's entry already holds.
+	// over a name the archive's backup or another archive's entry already holds.
 	if _, err := VerifyScheduleNote(s); err != nil {
 		return err
 	}
@@ -561,10 +562,16 @@ func Install(s Spec) error {
 	if err != nil {
 		return err
 	}
-	// The archive-local descriptor records the archive's BACKUP schedule; a verify
-	// schedule is a separate entry and must not overwrite it.
-	if s.Out != "" && !isVerifyJob(s) {
-		if derr := WriteDescriptor(s.Out, DescribeSpec(s)); derr != nil {
+	// The archive-local descriptors record what is installed, one per kind: the
+	// BACKUP's (DescriptorName) for any non-verify job, and the verify's own
+	// (VerifyDescriptorName, FB-4) for a verify. Neither kind ever writes the
+	// other's.
+	if s.Out != "" {
+		if isVerifyJob(s) {
+			if derr := WriteVerifyDescriptor(s.Out, DescribeSpec(s)); derr != nil {
+				return fmt.Errorf("verify schedule installed, but its descriptor could not be written: %w", derr)
+			}
+		} else if derr := WriteDescriptor(s.Out, DescribeSpec(s)); derr != nil {
 			return fmt.Errorf("schedule installed, but its descriptor could not be written: %w", derr)
 		}
 	}
@@ -576,12 +583,30 @@ func Install(s Spec) error {
 // name that already backs up a different archive (cron: read from the existing
 // block's -out), is refused with the remedy named — never silently replaced.
 // The descriptor guard is for the archive's backup only (a verify is a second,
-// distinctly named entry that never writes the descriptor); the name guard
-// applies to every entry, a verify included. goos selects the host scheduler.
+// distinctly named entry with a descriptor of its own); the name guard applies
+// to every entry, a verify included. On every OS the name guard reads the
+// archive's own two descriptors, so neither of the archive's entries takes the
+// name the other holds: a verify under the backup's name would replace the
+// backup's entry, and a backup under the verify's name the verify's (FB-4).
+// Only on cron hosts does it also read the scheduler back (the managed block's
+// -out). launchd and Task Scheduler entries are never read back (UJ-6), so two
+// archives sharing one explicit -name there are not detected here — an open
+// residual (owner ruling FB-4). goos selects the host scheduler.
 func refuseCollision(s Spec, goos string) error {
-	if s.Out != "" && !isVerifyJob(s) {
-		if d, err := ReadDescriptor(s.Out); err == nil && d.Name != s.Name {
-			return fmt.Errorf("archive %s already has a schedule named %q: remove it first (`mailarchive schedule -out %q -remove`) or re-install with -name %s", s.Out, d.Name, s.Out, d.Name)
+	if s.Out != "" {
+		if isVerifyJob(s) {
+			// An older release's descriptor may record a verify itself; that is this
+			// verify's own record, not the backup's name.
+			if d, err := ReadDescriptor(s.Out); err == nil && !descriptorIsVerify(d) && d.Name == s.Name {
+				return fmt.Errorf("%q is the backup schedule of archive %s: a verify under the same -name would replace it — %s", s.Name, s.Out, otherNameRemedy("verify", s.Name, DefaultNameFor(s.Out)+"-verify"))
+			}
+		} else {
+			if d, err := ReadDescriptor(s.Out); err == nil && d.Name != s.Name {
+				return fmt.Errorf("archive %s already has a schedule named %q: remove it first (`mailarchive schedule -out %q -remove`) or re-install with -name %s", s.Out, d.Name, s.Out, d.Name)
+			}
+			if d, err := ReadVerifyDescriptor(s.Out); err == nil && d.Name == s.Name {
+				return fmt.Errorf("%q is the verify schedule of archive %s: a backup under the same -name would replace it — %s", s.Name, s.Out, otherNameRemedy("backup", s.Name, DefaultNameFor(s.Out)))
+			}
 		}
 	}
 	if goos == "linux" || goos == "freebsd" || goos == "openbsd" || goos == "netbsd" {
@@ -590,6 +615,16 @@ func refuseCollision(s Spec, goos string) error {
 		}
 	}
 	return nil
+}
+
+// otherNameRemedy is the way out of a name the archive's other entry already
+// holds: another -name, or none at all when the kind's derived default (alt)
+// is not the refused name itself.
+func otherNameRemedy(kind, name, alt string) string {
+	if alt == name {
+		return "give the " + kind + " another -name"
+	}
+	return fmt.Sprintf("give the %s another -name, or leave -name out (it then gets %q)", kind, alt)
 }
 
 // cronBlockOut returns the -out argument of the managed block with marker, or
@@ -612,15 +647,18 @@ func cronBlockOut(crontab, marker string) string {
 }
 
 // Remove uninstalls a previously installed schedule by name, then its wrapper,
-// its XML definition and — only when the archive's descriptor records THIS
-// schedule — the descriptor. A descriptor naming another schedule (the
-// archive's backup, when a verify entry is removed) still describes a running
-// schedule that `status` watches, so it is kept. A descriptor that exists but
-// cannot be read (a hand edit, bad JSON, an invalid name) is never deleted:
-// nothing in it says whose it is — a backup installed under any -name writes
-// it — so deleting it with this entry could take another schedule's record. It
-// stays for the operator to judge: the caller names it (UnreadableDescriptor,
-// UnreadableDescriptorRemedy) and `status` keeps reporting it.
+// its XML definition and each of the archive's descriptors that records THIS
+// schedule: the backup's descriptor goes with the backup's entry, the verify
+// descriptor with the verify's, never one with the other's. A descriptor naming
+// another schedule (the archive's backup, when a verify entry is removed) still
+// describes a running schedule that `status` watches, so it is kept. A
+// descriptor that exists but cannot be read (a hand edit, bad JSON, an invalid
+// name) is never deleted: nothing in it says whose it is — a backup installed
+// under any -name writes the backup's, a verify under any -name the verify's —
+// so deleting it with this entry could take another schedule's record. It stays
+// for the operator to judge: the caller names it (UnreadableDescriptor,
+// UnreadableVerifyDescriptor and their remedies) and `status` keeps reporting
+// it.
 func Remove(s Spec) error {
 	var err error
 	switch runtime.GOOS {
@@ -638,7 +676,12 @@ func Remove(s Spec) error {
 		return err
 	}
 	if descriptorRecords(s.Out, s.Name) {
-		return RemoveDescriptor(s.Out)
+		if err := RemoveDescriptor(s.Out); err != nil {
+			return err
+		}
+	}
+	if VerifyRecorded(s.Out, s.Name) {
+		return RemoveVerifyDescriptor(s.Out)
 	}
 	return nil
 }
@@ -668,6 +711,30 @@ func UnreadableDescriptor(out string) string {
 	return path
 }
 
+// UnreadableVerifyDescriptorRemedy is what the operator does with the archive's
+// verify descriptor when it exists but cannot be read: re-installing the
+// archive's verify rewrites it, and once no verify for the archive is installed
+// (-remove leaves the file in place) it is deleted by hand.
+const UnreadableVerifyDescriptorRemedy = "delete it if no verify schedule for this archive is installed, or re-run that verify's `mailarchive schedule ... -install -- verify ...` to rewrite it"
+
+// UnreadableVerifyDescriptor returns the path of the archive's verify
+// descriptor when the file exists but cannot be read, and "" otherwise. Remove
+// never deletes such a file, so a caller that has just removed a verify
+// schedule names it with UnreadableVerifyDescriptorRemedy.
+func UnreadableVerifyDescriptor(out string) string {
+	if out == "" {
+		return ""
+	}
+	path := filepath.Join(out, VerifyDescriptorName)
+	if _, err := os.Lstat(path); err != nil {
+		return ""
+	}
+	if _, err := ReadVerifyDescriptor(out); err == nil {
+		return ""
+	}
+	return path
+}
+
 // descriptorRecords reports whether the archive at out has a readable
 // descriptor that records the schedule called name.
 func descriptorRecords(out, name string) bool {
@@ -678,15 +745,27 @@ func descriptorRecords(out, name string) bool {
 	return err == nil && d.Name == name
 }
 
-// RemoveIfInstalled removes a schedule only when it is actually present — the
-// archive's descriptor records this name, or the named entry is in the host
-// scheduler — and returns removed=false without touching the scheduler
+// VerifyRecorded reports whether the archive at out has a readable verify
+// descriptor that records the schedule called name: that entry is the
+// archive's scheduled verify, whatever -name it was installed under.
+func VerifyRecorded(out, name string) bool {
+	if out == "" {
+		return false
+	}
+	d, err := ReadVerifyDescriptor(out)
+	return err == nil && d.Name == name
+}
+
+// RemoveIfInstalled removes a schedule only when it is actually present — one
+// of the archive's descriptors records this name, or the named entry is in the
+// host scheduler — and returns removed=false without touching the scheduler
 // otherwise. So a `-remove` for an archive that never had a schedule neither
 // claims to have removed one nor rewrites (materializing an empty) crontab
 // (friction #9), and a name that was never installed (a typo, another
-// archive's entry) does not count the archive's own descriptor as its presence.
+// archive's entry) does not count the archive's own descriptors as its
+// presence.
 func RemoveIfInstalled(s Spec) (removed bool, err error) {
-	if !descriptorRecords(s.Out, s.Name) && Query(s.Name) != Installed {
+	if !descriptorRecords(s.Out, s.Name) && !VerifyRecorded(s.Out, s.Name) && Query(s.Name) != Installed {
 		return false, nil
 	}
 	return true, Remove(s)

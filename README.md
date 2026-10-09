@@ -811,7 +811,7 @@ mailarchive schedule -remove -- verify -out ./export
 | `-interval` | `daily` (default), `weekly`, or `hourly`. |
 | `-at` | Time of day `HH:MM` (default `02:00`; `hourly` uses only the minute). |
 | `-name` | Scheduler entry name (default `mailarchive-<hash of the archive path>`: one schedule per archive). Letters, digits, `.`, `_`, `-`; at most 40 characters. |
-| `-install` / `-remove` | Apply / uninstall (default: just print the entry). `-remove` finds the entry from `-name`, from a `verify` job after `--` (its own `-verify` entry), or from `-out` (the archive's backup schedule), and removes only that entry — the archive's descriptor goes only with the schedule it records. A descriptor that cannot be read (a hand edit, a damaged file) is never deleted, since nothing in it says whose it is: the removal names it, and `status` reports it until you delete it (once no backup schedule for the archive is installed) or re-install to rewrite it. |
+| `-install` / `-remove` | Apply / uninstall (default: just print the entry). `-remove` finds the entry from `-name`, from a `verify` job after `--` (its own `-verify` entry), or from `-out` (the archive's backup schedule), and removes only that entry — the archive's descriptor goes only with the schedule it records, and a scheduled verify's own descriptor only with the verify's entry. A descriptor that cannot be read (a hand edit, a damaged file) is never deleted, since nothing in it says whose it is: the removal names it, and `status` reports it until you delete it (once no backup schedule for the archive is installed) or re-install to rewrite it. |
 | job flags | Either the export flags (`-out`, `-input`, `-auto`, `-mode`, `-copy-first`, `-since`, `-outlook`, `-raw`, …) on the schedule command, **or** the whole job after `--`. Not both. |
 
 What is checked *when you schedule*, not at 02:00: the job's flags parse
@@ -822,8 +822,10 @@ refused off Windows; a `graph` job must name a `-client-secret-file` that passes
 the same checks the job applies.
 
 What it leaves behind: the scheduler entry; `<out>/.mailarchive-schedule.json`
-naming the schedule, its cadence, the program it runs and the host; and, after
-each run, `<out>/<name>.log` (rotated at 8 MB) plus `.mailarchive-lastrun.json`.
+naming the schedule, its cadence, the program it runs and the host (for a
+scheduled `verify`, its own `<out>/.mailarchive-verify-schedule.json` instead,
+so the backup's record is never overwritten); and, after each run,
+`<out>/<name>.log` (rotated at 8 MB) plus `.mailarchive-lastrun.json`.
 `status` reads all of it.
 
 Per OS:
@@ -933,7 +935,10 @@ verify, so the two coexist and neither overwrites the other — don't pass a fix
 `-name`: one shared name across archives would make a second archive's verify
 take over the first's entry. Only with cron (Linux/BSD) can `schedule` see that
 and refuse it; on macOS and Windows the existing entry is not read back, so the
-second install silently replaces the first archive's verify. `status` shows each
+second install silently replaces the first archive's verify. What `schedule`
+does check on every OS is the archive's own two descriptors: a verify under the
+name of the archive's backup (or a backup under the name of its verify) is
+refused, because it would replace that entry. `status` shows each
 archive's last verify (verdict and date) on its `Last verify` line, but it is
 not told a verify's own schedule, so it cannot warn when a scheduled verify
 stops running: check that date. Remove it with the same command,

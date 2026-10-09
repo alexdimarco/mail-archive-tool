@@ -228,6 +228,131 @@ func TestScheduleRemoveNamesAnUnreadableDescriptorItLeaves(t *testing.T) {
 	}
 }
 
+// covers: MA-457, R14, R18, S14, S28
+// Through the real binary (sandboxed scheduler), a scheduled verify records its
+// own descriptor and each descriptor goes only with its own entry (owner ruling
+// FB-4). `schedule -install -- verify -out X` beside a backup writes
+// .mailarchive-verify-schedule.json recording the verify, names that file on
+// its Log line, and leaves the backup's descriptor byte-identical.
+// `-out X -remove` removes the backup with its descriptor and keeps the
+// verify's entry and descriptor; `-remove -- verify -out X` removes the verify
+// with its descriptor. A verify installed under its own -name is recorded under
+// that name, and `-name NAME -out X -remove` reports it as the verify it is and
+// deletes its descriptor, keeping the backup. A verify under the backup's name
+// is refused (exit 1, naming the name, "backup schedule" and the -name remedy)
+// with the backup's entry, its descriptor and the absent verify descriptor all
+// unchanged — the positive twin being the same verify under its own name,
+// installed above. A verify descriptor cut short is never deleted: the verify's
+// removal names it and its remedy.
+func TestScheduleVerifyRecordsItsOwnDescriptor(t *testing.T) {
+	sandboxScheduler(t)
+	out := t.TempDir()
+	backup := schedule.DefaultNameFor(out)
+	derived := backup + "-verify"
+	const custom = "weekly-verify-ma457"
+	descPath, verifyPath := filepath.Join(out, schedule.DescriptorName), filepath.Join(out, schedule.VerifyDescriptorName)
+	run := func(args ...string) string {
+		t.Helper()
+		code, stdout, stderr := runCLIOut(t, args...)
+		if code != 0 {
+			t.Fatalf("%v exited %d: %s%s", args, code, stdout, stderr)
+		}
+		return stdout
+	}
+	read := func(p string) string { // "" when absent
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return ""
+		}
+		return string(data)
+	}
+	recorded := func() string {
+		d, err := schedule.ReadVerifyDescriptor(out)
+		if err != nil {
+			return ""
+		}
+		return d.Name
+	}
+	// hostEntry is the backup's entry as the sandboxed scheduler holds it.
+	hostEntry := func() string {
+		if runtime.GOOS == "darwin" {
+			return read(filepath.Join(os.Getenv("HOME"), "Library", "LaunchAgents", schedule.LaunchdLabel(backup)+".plist"))
+		}
+		return read(os.Getenv("FAKE_CRONTAB"))
+	}
+	verifyArgs := func(name string) []string {
+		args := []string{"schedule", "-interval", "weekly", "-at", "05:00"}
+		if name != "" {
+			args = append(args, "-name", name)
+		}
+		return append(args, "-install", "--", "verify", "-out", out)
+	}
+
+	run("schedule", "-install", "--", "-out", out, "-auto")
+	backupBytes := assure.Reached(t, read(descPath), "the backup's descriptor")
+	stdout := run(verifyArgs("")...)
+	if !strings.Contains(stdout, "descriptor: "+verifyPath) {
+		t.Errorf("the verify install does not name its own descriptor:\n%s", stdout)
+	}
+	if got := recorded(); got != derived {
+		t.Errorf("the verify descriptor records %q, want %q", got, derived)
+	}
+	if read(descPath) != backupBytes {
+		t.Errorf("installing the verify changed the backup's descriptor")
+	}
+
+	// The backup's removal keeps the verify's entry and descriptor.
+	verifyBytes := read(verifyPath)
+	run("schedule", "-out", out, "-remove")
+	if read(descPath) != "" || read(verifyPath) != verifyBytes || schedule.Query(derived) != schedule.Installed {
+		t.Errorf("-out X -remove: want the backup's descriptor gone and the verify's entry (%v) and descriptor kept", schedule.Query(derived))
+	}
+	// The verify's removal takes the verify's descriptor.
+	stdout = run("schedule", "-remove", "--", "verify", "-out", out)
+	if !strings.Contains(stdout, "Removed scheduled verify") || read(verifyPath) != "" || schedule.Query(derived) == schedule.Installed {
+		t.Errorf("-remove -- verify -out X: want the verify's entry and descriptor gone:\n%s", stdout)
+	}
+
+	// Under its own -name: recorded so, and removed by -name as the verify.
+	run("schedule", "-install", "--", "-out", out, "-auto")
+	run(verifyArgs(custom)...)
+	if got := recorded(); got != custom {
+		t.Errorf("a verify installed with -name %s is recorded as %q", custom, got)
+	}
+	stdout = run("schedule", "-name", custom, "-out", out, "-remove")
+	if !strings.Contains(stdout, `Removed scheduled verify "`+custom+`"`) || read(verifyPath) != "" || schedule.Query(custom) == schedule.Installed {
+		t.Errorf("-name %s -out X -remove: want the verify reported, its entry and descriptor gone:\n%s", custom, stdout)
+	}
+	if schedule.Query(backup) != schedule.Installed || read(descPath) == "" {
+		t.Errorf("removing the custom-named verify removed the backup or its descriptor")
+	}
+
+	// A verify under the backup's own name would replace the backup: refused.
+	backupBytes, entry := read(descPath), hostEntry()
+	assure.Reached(t, entry, "the backup's entry in the sandboxed scheduler")
+	code, _, stderr := runCLIOut(t, verifyArgs(backup)...)
+	assure.Refused(t, code, stderr, assure.Code(1), assure.Names(backup, "backup schedule", "-name"),
+		assure.NoSideEffect(func() bool {
+			return read(descPath) == backupBytes && read(verifyPath) == "" && hostEntry() == entry && schedule.Query(backup) == schedule.Installed
+		}))
+
+	// A verify descriptor cut short: never deleted, named with its remedy.
+	run(verifyArgs("")...)
+	broken := "{\"version\":1,\"name\":" // a hand edit cut short
+	if err := os.WriteFile(verifyPath, []byte(broken), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stdout = run("schedule", "-remove", "--", "verify", "-out", out)
+	if read(verifyPath) != broken {
+		t.Errorf("the verify's removal changed or deleted its unreadable descriptor")
+	}
+	for _, want := range []string{"Removed scheduled verify", "Left in place", verifyPath, "delete it if no verify schedule", "-install -- verify"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("the verify's removal does not name the descriptor it left and the remedy (lacks %q):\n%s", want, stdout)
+		}
+	}
+}
+
 // covers: MA-454, R14, R18, S14, S28
 // A verify removal that finds nothing under the archive's derived
 // "<hash>-verify" name never claims the archive has no schedule: its backup is
@@ -235,12 +360,14 @@ func TestScheduleRemoveNamesAnUnreadableDescriptorItLeaves(t *testing.T) {
 // with (the old README passed a fixed -name). So `-remove -- verify -out X`
 // exits 0, says "nothing to remove" naming the absent entry, hints at removing
 // the verify by the -name it was installed with, and removes nothing: the
-// backup, its descriptor and the custom-named verify all survive. The positive
-// twin is that hint followed, the same command with `-name <custom>` added: it
-// removes the verify and keeps the backup and its descriptor. When the
-// descriptor itself records a verify (written by a release from before a
-// verify kept its own entry name), the hint names that entry, and still
-// nothing is removed.
+// backup, both descriptors and the custom-named verify all survive. The hint
+// names the entry when something records it: the verify's own descriptor
+// (FB-4) for a verify this release installed, or a backup descriptor that
+// records the verify itself (written by a release from before a verify kept
+// its own entry name); a verify an earlier release installed, recorded
+// nowhere, gets the generic "-name NAME". The positive twin is that hint
+// followed, the same command with `-name <custom>` added: it removes the verify
+// and keeps the backup and its descriptor.
 func TestScheduleRemoveVerifyNotFoundNamesTheEntry(t *testing.T) {
 	sandboxScheduler(t)
 	out := t.TempDir()
@@ -248,6 +375,15 @@ func TestScheduleRemoveVerifyNotFoundNamesTheEntry(t *testing.T) {
 	derived := backup + "-verify"
 	const custom = "weekly-verify-ma454"
 	descPath := filepath.Join(out, schedule.DescriptorName)
+	verifyDescPath := filepath.Join(out, schedule.VerifyDescriptorName)
+	// forgetVerify makes the verify look installed by an earlier release, which
+	// wrote no verify descriptor.
+	forgetVerify := func() {
+		t.Helper()
+		if err := os.Remove(verifyDescPath); err != nil {
+			t.Fatalf("fixture: the verify install wrote no verify descriptor to forget: %v", err)
+		}
+	}
 
 	installCustomVerify := func() {
 		t.Helper()
@@ -273,6 +409,7 @@ func TestScheduleRemoveVerifyNotFoundNamesTheEntry(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		verifyBefore, verifyErr := os.ReadFile(verifyDescPath)
 		code, stdout, stderr := runCLIOut(t, "schedule", "-remove", "--", "verify", "-out", out)
 		if code != 0 {
 			t.Fatalf("%s: exit %d: %s%s", step, code, stdout, stderr)
@@ -293,9 +430,14 @@ func TestScheduleRemoveVerifyNotFoundNamesTheEntry(t *testing.T) {
 		if after, err := os.ReadFile(descPath); err != nil || string(after) != string(before) {
 			t.Errorf("%s: a not-found verify removal changed the descriptor (%v)", step, err)
 		}
+		if after, err := os.ReadFile(verifyDescPath); (err == nil) != (verifyErr == nil) || string(after) != string(verifyBefore) {
+			t.Errorf("%s: a not-found verify removal changed the verify descriptor (%v)", step, err)
+		}
 	}
 
-	notFound("verify installed under a custom -name", "-name NAME")
+	notFound("verify installed under a custom -name, recorded in its own descriptor", "-name "+custom)
+	forgetVerify()
+	notFound("verify installed under a custom -name by an earlier release, recorded nowhere", "-name NAME")
 
 	// Positive twin: the hint, followed, removes that verify and only it.
 	code, stdout, stderr := runCLIOut(t, "schedule", "-name", custom, "-remove", "--", "verify", "-out", out)
@@ -309,8 +451,10 @@ func TestScheduleRemoveVerifyNotFoundNamesTheEntry(t *testing.T) {
 		t.Errorf("remove -name <custom> -- verify: the backup's descriptor was not kept (%+v, %v)", d, err)
 	}
 
-	// A descriptor that records the verify itself, as an older release wrote it.
+	// A descriptor that records the verify itself, as an older release wrote it
+	// (that release wrote no verify descriptor either).
 	installCustomVerify()
+	forgetVerify()
 	legacy := schedule.Spec{Name: custom, Interval: schedule.Weekly, At: "05:00", Exe: "/usr/local/bin/mailarchive",
 		Args: []string{"verify", "-out", out, "-unattended"}, Out: out}
 	if err := schedule.WriteDescriptor(out, schedule.DescribeSpec(legacy)); err != nil {

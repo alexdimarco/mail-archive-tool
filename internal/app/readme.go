@@ -77,6 +77,8 @@ Housekeeping files (safe to leave alone):
   .mailarchive-lastverify.json record of the last verify (when it ran, whether
                                every file was intact)
   .mailarchive-schedule.json   the recurring-backup descriptor, if one was set
+  .mailarchive-verify-schedule.json the scheduled verify's descriptor, if one
+                               was set
   .mailarchive-history.jsonl   the go-back timeline: what changed each run (a
                                live capture writes it); appended each run and
                                rewritten only by reindex when redacting; read

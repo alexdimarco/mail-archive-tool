@@ -852,6 +852,13 @@ func runSchedule(args []string) error {
 		if err := spec.Validate(); err != nil {
 			return err
 		}
+		// Which of the archive's entries this is: a verify job after --, or the
+		// name the archive's verify descriptor records (read before the removal
+		// deletes it).
+		kind := "backup"
+		if rj.verb == "verify" || schedule.VerifyRecorded(out, n) {
+			kind = "verify"
+		}
 		removed, err := schedule.RemoveIfInstalled(spec)
 		if err != nil {
 			return err
@@ -870,18 +877,17 @@ func runSchedule(args []string) error {
 			}
 			return nil
 		}
-		kind := "backup"
-		if rj.verb == "verify" {
-			kind = "verify"
-		}
 		fmt.Printf("Removed scheduled %s %q.\n", kind, n)
 		// A descriptor that cannot be read is never deleted (nothing in it says
-		// whose it is), so a backup removal names what it left and the remedy;
+		// whose it is), so a removal names the one of its own kind it left — the
+		// backup's for a backup, the verify's for a verify — with the remedy;
 		// `status` keeps reporting it until the operator acts.
-		if kind != "verify" {
-			if p := schedule.UnreadableDescriptor(out); p != "" {
-				fmt.Printf("Left in place: %s cannot be read, so -remove cannot tell which schedule it records — %s.\n", p, schedule.UnreadableDescriptorRemedy)
-			}
+		left, remedy := schedule.UnreadableDescriptor(out), schedule.UnreadableDescriptorRemedy
+		if kind == "verify" {
+			left, remedy = schedule.UnreadableVerifyDescriptor(out), schedule.UnreadableVerifyDescriptorRemedy
+		}
+		if left != "" {
+			fmt.Printf("Left in place: %s cannot be read, so -remove cannot tell which schedule it records — %s.\n", left, remedy)
 		}
 		return nil
 	}
@@ -928,7 +934,11 @@ func runSchedule(args []string) error {
 		if note := graphDeletedJunkNote(j); note != "" {
 			fmt.Println(note)
 		}
-		fmt.Printf("Log: %s · descriptor: %s · check with: mailarchive status -out %q\n", logPath, filepath.Join(j.out, schedule.DescriptorName), j.out)
+		desc := filepath.Join(j.out, schedule.DescriptorName)
+		if j.verb == "verify" {
+			desc = filepath.Join(j.out, schedule.VerifyDescriptorName) // a verify records its own
+		}
+		fmt.Printf("Log: %s · descriptor: %s · check with: mailarchive status -out %q\n", logPath, desc, j.out)
 		if note, _ := schedule.VerifyScheduleNote(spec); note != "" {
 			fmt.Println(note)
 		}
@@ -1193,12 +1203,16 @@ func flagWasSet(fs *flag.FlagSet, name string) bool {
 // verifyRemoveHint is printed when `-remove -- verify -out X` finds no entry
 // under the archive's derived "-verify" name: the verify may still be running
 // under the -name it was installed with (the README once passed a fixed one),
-// which only that name removes — the same command with -name added. When the
-// archive's descriptor records a verify itself (a release from before a verify
-// got its own entry name wrote it so), the hint names that entry. It is a hint,
-// not an automatic removal: a shared name may by now hold another archive's
-// verify.
+// which only that name removes — the same command with -name added. The hint
+// names that entry when something records it: the archive's verify descriptor
+// (FB-4), or else a backup descriptor that records a verify itself (a release
+// from before a verify got its own entry name wrote it so). It is a hint, not
+// an automatic removal: on launchd and Task Scheduler a shared name may by now
+// hold another archive's verify.
 func verifyRemoveHint(out string) string {
+	if d, err := schedule.ReadVerifyDescriptor(out); err == nil {
+		return fmt.Sprintf("The archive's verify descriptor records a verify schedule named %q; if it is still this archive's verify, run this command again with -name %s before -- to remove it.", d.Name, d.Name)
+	}
 	if d, err := schedule.ReadDescriptor(out); err == nil && len(d.Job) > 0 && d.Job[0] == "verify" {
 		return fmt.Sprintf("The archive's descriptor records a verify schedule named %q (written before a verify got its own entry name); if it is this archive's verify, run this command again with -name %s before -- to remove it.", d.Name, d.Name)
 	}
