@@ -19,7 +19,8 @@ import (
 // remedy (internal/health). stdout carries the answer (X8) and the exit is 0
 // whenever it reports; a directory with neither manifest, descriptor nor
 // last-run record is refused (a failed first run, recorded only in the last-run
-// record, is still reportable).
+// record, is still reportable, and so is a descriptor that exists but cannot be
+// read — `schedule -remove` leaves one in place, and status must name it).
 func runStatus(args []string) error {
 	fs := flag.NewFlagSet("mailarchive status", flag.ContinueOnError)
 	fs.Usage = statusUsage(fs)
@@ -36,7 +37,7 @@ func runStatus(args []string) error {
 	// A manifest FILE that exists but does not load (newer format, corrupt) is
 	// an archive with a problem, not "no archive": let Assess RED it rather than
 	// giving the wrong "run an export first" advice (friction #7a).
-	if !in.HasManifestFile && !in.HasDescriptor && in.LastRunState == state.LastRunAbsent {
+	if !in.HasManifestFile && !in.HasDescriptorFile && in.LastRunState == state.LastRunAbsent {
 		return fmt.Errorf("no archive at %s: no manifest, schedule descriptor or last-run record (run an export into it first, or check the path)", in.Out)
 	}
 	// Extractability (design K4): compute the count of records with a preserved

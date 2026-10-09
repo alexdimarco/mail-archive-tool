@@ -811,7 +811,7 @@ mailarchive schedule -remove -- verify -out ./export
 | `-interval` | `daily` (default), `weekly`, or `hourly`. |
 | `-at` | Time of day `HH:MM` (default `02:00`; `hourly` uses only the minute). |
 | `-name` | Scheduler entry name (default `mailarchive-<hash of the archive path>`: one schedule per archive). Letters, digits, `.`, `_`, `-`; at most 40 characters. |
-| `-install` / `-remove` | Apply / uninstall (default: just print the entry). `-remove` finds the entry from `-name`, from a `verify` job after `--` (its own `-verify` entry), or from `-out` (the archive's backup schedule), and removes only that entry — the archive's descriptor goes only with the schedule it records. |
+| `-install` / `-remove` | Apply / uninstall (default: just print the entry). `-remove` finds the entry from `-name`, from a `verify` job after `--` (its own `-verify` entry), or from `-out` (the archive's backup schedule), and removes only that entry — the archive's descriptor goes only with the schedule it records. A descriptor that cannot be read (a hand edit, a damaged file) is never deleted, since nothing in it says whose it is: the removal names it, and `status` reports it until you delete it (once no backup schedule for the archive is installed) or re-install to rewrite it. |
 | job flags | Either the export flags (`-out`, `-input`, `-auto`, `-mode`, `-copy-first`, `-since`, `-outlook`, `-raw`, …) on the schedule command, **or** the whole job after `--`. Not both. |
 
 What is checked *when you schedule*, not at 02:00: the job's flags parse

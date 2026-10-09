@@ -875,6 +875,14 @@ func runSchedule(args []string) error {
 			kind = "verify"
 		}
 		fmt.Printf("Removed scheduled %s %q.\n", kind, n)
+		// A descriptor that cannot be read is never deleted (nothing in it says
+		// whose it is), so a backup removal names what it left and the remedy;
+		// `status` keeps reporting it until the operator acts.
+		if kind != "verify" {
+			if p := schedule.UnreadableDescriptor(out); p != "" {
+				fmt.Printf("Left in place: %s cannot be read, so -remove cannot tell which schedule it records — %s.\n", p, schedule.UnreadableDescriptorRemedy)
+			}
+		}
 		return nil
 	}
 

@@ -129,6 +129,105 @@ func TestScheduleRemoveTargetsTheNamedEntry(t *testing.T) {
 	expect("remove -out X", false, true, "")
 }
 
+// covers: MA-455, R14, R18, S14
+// A descriptor that cannot be read is never deleted: nothing in it says whose
+// it is, and `schedule` writes it for a backup under any -name. So a backup
+// removal that leaves one names its path and the remedy, and `status` keeps
+// reporting it. A backup installed through the real binary (sandboxed
+// scheduler) under a custom -name, and one under the archive's default name,
+// each have their descriptor cut short and are removed — `-name NAME -out X
+// -remove` and `-out X -remove`: the entry is gone, the descriptor is
+// byte-identical, stdout names the file, "delete it" and -install, and `status`
+// (on a folder with no manifest or run record yet) reports the file and its
+// remedy instead of refusing it as "no archive" or saying no schedule is
+// recorded. The positive twin: with a readable descriptor the same custom-name
+// removal deletes it and names nothing left behind.
+func TestScheduleRemoveNamesAnUnreadableDescriptorItLeaves(t *testing.T) {
+	sandboxScheduler(t)
+	const custom = "nightly-mail-ma455"
+	broken := []byte("{\"version\":1,\"name\":") // a hand edit cut short
+	install := func(t *testing.T, out, name string) {
+		t.Helper()
+		args := []string{"schedule", "-install", "--", "-out", out, "-auto"}
+		if name != "" {
+			args = append([]string{"schedule", "-name", name}, args[1:]...)
+		}
+		if code, _, stderr := runCLIOut(t, args...); code != 0 {
+			t.Fatalf("%v exited %d: %s", args, code, stderr)
+		}
+	}
+
+	// Positive twin: a readable descriptor goes with the schedule it records.
+	out := t.TempDir()
+	install(t, out, custom)
+	if d, err := schedule.ReadDescriptor(out); err != nil || d.Name != custom {
+		t.Fatalf("fixture: the descriptor should record %s, got %+v (%v)", custom, d, err)
+	}
+	code, stdout, stderr := runCLIOut(t, "schedule", "-name", custom, "-out", out, "-remove")
+	if code != 0 || !strings.Contains(stdout, "Removed scheduled backup") {
+		t.Fatalf("remove -name %s: exit %d:\n%s%s", custom, code, stdout, stderr)
+	}
+	if _, err := os.Stat(filepath.Join(out, schedule.DescriptorName)); !os.IsNotExist(err) {
+		t.Errorf("the readable descriptor outlived the schedule it records (stat: %v)", err)
+	}
+	if strings.Contains(stdout, "Left in place") {
+		t.Errorf("a removal that left nothing behind names a leftover:\n%s", stdout)
+	}
+
+	for _, leg := range []struct {
+		name    string
+		install string // -name at install ("" = the archive's default)
+		remove  func(out string) []string
+	}{
+		{"custom -name", custom, func(out string) []string { return []string{"schedule", "-name", custom, "-out", out, "-remove"} }},
+		{"default -name", "", func(out string) []string { return []string{"schedule", "-out", out, "-remove"} }},
+	} {
+		t.Run(leg.name, func(t *testing.T) {
+			out := t.TempDir()
+			install(t, out, leg.install)
+			name := leg.install
+			if name == "" {
+				name = schedule.DefaultNameFor(out)
+			}
+			assure.Reached(t, schedule.Query(name) == schedule.Installed, "fixture: "+name+" installed")
+			path := filepath.Join(out, schedule.DescriptorName)
+			if err := os.WriteFile(path, broken, 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			code, stdout, stderr := runCLIOut(t, leg.remove(out)...)
+			if code != 0 || !strings.Contains(stdout, "Removed scheduled backup") || !strings.Contains(stdout, name) {
+				t.Errorf("%v: exit %d, want it to remove %s:\n%s%s", leg.remove(out), code, name, stdout, stderr)
+			}
+			if schedule.Query(name) == schedule.Installed {
+				t.Errorf("the backup %s is still installed", name)
+			}
+			if after, err := os.ReadFile(path); err != nil || string(after) != string(broken) {
+				t.Errorf("the removal changed or deleted the unreadable descriptor, which records no name it can trust (%v)", err)
+			}
+			for _, want := range []string{"Left in place", path, "delete it", "-install"} {
+				if !strings.Contains(stdout, want) {
+					t.Errorf("the removal does not name the descriptor it left and the remedy (lacks %q):\n%s", want, stdout)
+				}
+			}
+
+			// status keeps naming it, although the folder has no manifest or run record.
+			code, stdout, stderr = runCLIOut(t, "status", "-out", out)
+			if code != 0 {
+				t.Fatalf("status refused the folder holding the leftover descriptor (exit %d): %s", code, stderr)
+			}
+			for _, want := range []string{path, "unreadable", "delete it"} {
+				if !strings.Contains(stdout, want) {
+					t.Errorf("status does not name the leftover descriptor and its remedy (lacks %q):\n%s", want, stdout)
+				}
+			}
+			if strings.Contains(stdout, "Schedule:   none recorded") {
+				t.Errorf("status says no schedule is recorded beside a descriptor it cannot read:\n%s", stdout)
+			}
+		})
+	}
+}
+
 // covers: MA-454, R14, R18, S14, S28
 // A verify removal that finds nothing under the archive's derived
 // "<hash>-verify" name never claims the archive has no schedule: its backup is

@@ -83,7 +83,7 @@ func ReadDescriptor(out string) (Descriptor, error) {
 		return d, err
 	}
 	if err := json.Unmarshal(data, &d); err != nil {
-		return d, fmt.Errorf("schedule descriptor %s is unreadable (%v): re-run `mailarchive schedule ... -install` to rewrite it", filepath.Join(out, DescriptorName), err)
+		return d, fmt.Errorf("schedule descriptor %s is unreadable (%v): %s", filepath.Join(out, DescriptorName), err, UnreadableDescriptorRemedy)
 	}
 	// The file is untrusted (any writer of the archive directory could edit
 	// it) and its strings are echoed into terminals and dialogs: strip control
@@ -95,7 +95,7 @@ func ReadDescriptor(out string) (Descriptor, error) {
 		d.Job[i] = util.StripControl(d.Job[i])
 	}
 	if _, err := SanitizeName(d.Name); err != nil {
-		return d, fmt.Errorf("schedule descriptor %s names an invalid schedule (%v): re-run `mailarchive schedule ... -install` to rewrite it", filepath.Join(out, DescriptorName), err)
+		return d, fmt.Errorf("schedule descriptor %s names an invalid schedule (%v): %s", filepath.Join(out, DescriptorName), err, UnreadableDescriptorRemedy)
 	}
 	if iv, err := ParseInterval(util.StripControl(d.Interval)); err == nil {
 		d.Interval = string(iv)

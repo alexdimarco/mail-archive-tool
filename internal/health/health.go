@@ -83,13 +83,17 @@ type Input struct {
 	LastVerifyState state.LastVerifyState
 	LastVerifyErr   error
 
-	HasDescriptor bool
-	Desc          schedule.Descriptor
-	DescErr       error
-	SchedState    schedule.State
-	ExeExists     bool
-	ExeIsThis     bool
-	ThisHost      string
+	// HasDescriptorFile is true when the descriptor file exists (even if it
+	// cannot be read); HasDescriptor only when it loaded. `schedule -remove`
+	// never deletes an unreadable descriptor, so status must still report one.
+	HasDescriptorFile bool
+	HasDescriptor     bool
+	Desc              schedule.Descriptor
+	DescErr           error
+	SchedState        schedule.State
+	ExeExists         bool
+	ExeIsThis         bool
+	ThisHost          string
 
 	// LockHeld is the authoritative liveness signal: the archive lock dies
 	// with its process, so a "running" record whose lock is free belongs to a
@@ -523,6 +527,9 @@ func Gather(out, nameOverride string) Input {
 	in.LastRun, in.LastRunState, in.LastRunErr = state.ReadLastRun(out)
 	in.LastVerify, in.LastVerifyState, in.LastVerifyErr = state.ReadLastVerify(out)
 
+	if _, err := os.Lstat(filepath.Join(out, schedule.DescriptorName)); err == nil {
+		in.HasDescriptorFile = true
+	}
 	d, derr := schedule.ReadDescriptor(out)
 	in.DescErr = derr
 	if derr == nil {
@@ -652,10 +659,13 @@ func Summary(in Input, rep Report) []string {
 				lv.Finished.UTC().Format("2006-01-02 15:04"), lv.Modified, lv.Missing, lv.Unrecorded))
 		}
 	}
-	if in.HasDescriptor {
+	switch {
+	case in.HasDescriptor:
 		lines = append(lines, fmt.Sprintf("Schedule:   %q %s · %s at %s · runs %s · installed %s (UTC) on %s",
 			in.Desc.Name, in.SchedState, in.Desc.Interval, in.Desc.At, in.Desc.Exe, in.Desc.InstalledAt.UTC().Format("2006-01-02"), in.Desc.Host))
-	} else {
+	case in.HasDescriptorFile:
+		lines = append(lines, "Schedule:   (descriptor present but unreadable — see the posture below)")
+	default:
 		lines = append(lines, "Schedule:   none recorded")
 	}
 	lines = append(lines, fmt.Sprintf("Posture:    %s", rep.Posture))
