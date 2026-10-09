@@ -107,7 +107,9 @@ type Input struct {
 	//
 	// LockVerb is the verb the holder named in the lock's holder line
 	// (lockfile.HolderVerb: "export", "verify", …), "" when the lock is free
-	// or its holder names none (status's own probe).
+	// or its holder names none (status's own probe). It says WHICH run holds
+	// the lock, so a running record is live only while its own kind of run
+	// holds it (runRunning, verifyRunning).
 	LockHeld bool
 	LockVerb string
 
@@ -247,7 +249,7 @@ func Assess(in Input, now time.Time) Report {
 				r.note("auth_remedy", "  remedy: authentication failed — for an app-auth job the client secret may have expired (rotate it in Entra and rewrite the secret file); for a device-auth job the sign-in may have expired (re-run `mailarchive graph -auth device …` to sign in again)")
 			}
 		case state.RunRunning:
-			alive := in.LockHeld
+			alive := runRunning(in)
 			switch {
 			case alive && now.Sub(lr.Started) <= period:
 				r.note("run_in_progress", fmt.Sprintf("a run is in progress (pid %d, started %s)", lr.PID, lr.Started.Local().Format("2006-01-02 15:04")))
@@ -364,6 +366,25 @@ func Assess(in Input, now time.Time) Report {
 // finished.
 func verifyRunning(in Input) bool {
 	return in.LockHeld && in.LockVerb == "verify"
+}
+
+// runRunning reports whether the "running" last-run record — which only an
+// export or a Graph run writes — can belong to a run in progress now: the
+// archive lock is held by an export or a graph run, or by a holder that names
+// no verb (status's own probe, or a binary older than c19f429, which wrote
+// none — counted as live so a mixed-version install shows no false RED). A
+// lock held by a verify, a reindex, an extract or any other verb cannot be
+// that run, so the record belongs to a run that never finished (R18: fail
+// closed), the same rule verifyRunning applies to a running verify record.
+func runRunning(in Input) bool {
+	if !in.LockHeld {
+		return false
+	}
+	switch in.LockVerb {
+	case "export", "graph", "":
+		return true
+	}
+	return false
 }
 
 // indexOpenCause is what the index_unreadable reason says about a failed
