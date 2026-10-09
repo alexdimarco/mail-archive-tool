@@ -40,8 +40,11 @@ var oemCodePages = []struct {
 // all. The non-ASCII bytes are placed in every token, and also only where they
 // most often are: an ASCII exe under C:\Program Files with an ASCII -config,
 // whose only non-ASCII bytes are the archive's -out, its -log and the 2>>
-// target; and a job whose only non-ASCII token is its -input. The switch must
-// look at the whole run line, not just the program.
+// target; a job whose only non-ASCII token is its -input; and a per-user
+// install whose only non-ASCII token is the program itself
+// (C:\Users\Jörg\AppData\Local\Programs\…), with -out, -input and -log ASCII on
+// D:\. The switch must look at the whole run line: the program as well as
+// every argument and the redirect target.
 func TestCmdWrapperNonASCIIPathsSurviveCodePage(t *testing.T) {
 	base := Spec{
 		Name: "mailarchive-1a2b3c4d", Interval: Daily, At: "02:00",
@@ -73,6 +76,9 @@ func TestCmdWrapperNonASCIIPathsSurviveCodePage(t *testing.T) {
 			"-out", `D:\Mail\Eingänge`, "-unattended", "-log", `D:\Mail\Eingänge\mailarchive-1a2b3c4d.log`)},
 		{"only -input non-ASCII", fixture(programFiles,
 			"-out", `D:\Mail\Inbox`, "-input", `C:\Users\Public\Анна\田中.pst`, "-unattended",
+			"-log", `D:\Mail\Inbox\mailarchive-1a2b3c4d.log`)},
+		{"only the exe non-ASCII (a per-user install)", fixture(`C:\Users\Jörg\AppData\Local\Programs\MailArchive\mailarchive.exe`,
+			"-out", `D:\Mail\Inbox`, "-input", `D:\Mail\Exports\archive.pst`, "-unattended",
 			"-log", `D:\Mail\Inbox\mailarchive-1a2b3c4d.log`)},
 	}
 
