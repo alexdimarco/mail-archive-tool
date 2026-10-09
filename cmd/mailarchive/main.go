@@ -1080,7 +1080,7 @@ func runGraph(args []string) (err error) {
 	// carries -unattended — it warns, records the warning for `status`, and
 	// captures: refusing at run time would silently stop an installed backup.
 	var setupWarnings []state.RunWarning
-	credentialPlaced := func(problem error) error {
+	refuseOrWarn := func(problem error) error {
 		if !*o.unattended {
 			return problem
 		}
@@ -1096,7 +1096,7 @@ func runGraph(args []string) (err error) {
 		switch {
 		case *o.secretFile != "":
 			if credentialInArchive(*o.secretFile, *o.out) {
-				if err := credentialPlaced(secretFileInArchive(*o.secretFile, *o.out)); err != nil {
+				if err := refuseOrWarn(secretFileInArchive(*o.secretFile, *o.out)); err != nil {
 					return err
 				}
 			}
@@ -1136,7 +1136,7 @@ func runGraph(args []string) (err error) {
 		}
 		if credentialInArchive(cache, *o.out) {
 			def, _ := defaultTokenCachePath(*o.tenant, *o.clientID, mailboxes)
-			if err := credentialPlaced(tokenCacheInArchive(cache, *o.out, def, isDefault, *o.unattended)); err != nil {
+			if err := refuseOrWarn(tokenCacheInArchive(cache, *o.out, def, isDefault, *o.unattended)); err != nil {
 				return err
 			}
 		}
