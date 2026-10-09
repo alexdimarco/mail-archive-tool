@@ -184,3 +184,31 @@ func TestLiveAndRebuiltIndexAgreeOnHeadsAroundNoscript(t *testing.T) {
 		t.Error(p)
 	}
 }
+
+// covers: MA-492, R8, R13
+// A head <noscript> that holds a charset <meta> and text (adv2 rv5 corpus
+// 46_head_noscript_charset_text): with scripting on, the parser keeps the
+// noscript's content in the head as raw text; with scripting off, the <p>
+// leaves the head and becomes body content. Which of the two the page shows
+// is the exporter's choice: today the dual-mode re-check sends this mail to
+// the source fallback, and a scripting-off retry would render the text in
+// the body. Whatever it shows, the live index and the rebuilt one must find
+// the same words. So this pins parity, not a count, for the noscript text,
+// and the body word is found once on both sides.
+func TestLiveAndRebuiltIndexAgreeOnHeadNoscriptMarkup(t *testing.T) {
+	bodies := map[string]string{
+		"head noscript charset": `<html><head><noscript><meta charset="utf-8"><p>parheadnstext</p></noscript></head><body><p>parheadnsbodyword</p></body></html>`,
+	}
+	same := []string{"parheadnstext"}
+	want := map[string]int{"parheadnsbodyword": 1}
+	live, rebuilt := parityArchive(t, bodies, append(keysOf(want), same...))
+	assure.Reached(t, live["parheadnsbodyword"]+rebuilt["parheadnsbodyword"], "hits for the body word")
+	for _, p := range parityProblems(want, live, rebuilt) {
+		t.Error(p)
+	}
+	for _, q := range same {
+		if live[q] != rebuilt[q] {
+			t.Errorf("search %q: live=%d rebuilt=%d, want the same count on both (R8)", q, live[q], rebuilt[q])
+		}
+	}
+}
