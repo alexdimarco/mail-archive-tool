@@ -601,6 +601,7 @@ keys is unaffected and the version is not bumped.)
   `lastrun_unreadable`, `never_ran`, `run_failed`, `auth_remedy`,
   `run_in_progress`, `run_stuck`, `run_never_finished`, `run_cancelled`,
   `stale`, `not_attested`, `verify_unrecorded`, `verify_stale`,
+  `verify_never_finished`, `lastverify_unreadable`,
   `verify_descriptor_unreadable`, `descriptor_unreadable`, `no_schedule`,
   `moved_archive`, `other_host`, `scheduler_unavailable`, `not_installed`,
   `exe_missing`, `exe_moved`.
@@ -949,9 +950,14 @@ refused, because it would replace that entry.
 records its own descriptor, `<out>/.mailarchive-verify-schedule.json`, and
 `status` shows it on a `Verify schedule` line (`verify_schedule` in `-json`)
 beside each archive's `Last verify` line. It WARNs (`verify_stale`) when the
-last verify finished more than twice the verify's own period ago, or when no
-verify has run in twice that period since the verify was installed. The cadence
-is always the verify's, never the backup's.
+last verify finished more than twice the verify's own period ago, when the last
+verify started that long ago and has not finished, or when no verify has run in
+twice that period since the verify was installed. The cadence is always the
+verify's, never the backup's. A last verify that is still recorded as running
+while nothing holds the archive lock died mid-run (a crash, a kill, a power
+loss): `status` WARNs at once (`verify_never_finished`), so a verify that dies
+on every run never looks current. A last-verify record that cannot be read is a
+WARN too (`lastverify_unreadable`): the next verify rewrites it.
 
 **What is not detected:** on launchd (macOS) and Task Scheduler (Windows)
 hosts, two archives that share one explicit `-name` are not detected at

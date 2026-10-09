@@ -311,24 +311,48 @@ func Assess(in Input, now time.Time) Report {
 // for the verify itself (UJ-A1, owner ruling FB-4), never the backup's. The
 // verify's own descriptor decides when it loads: a verify whose last run
 // finished more than twice its period ago is stale, and so is one that has
-// recorded no run in twice its period since it was installed. A run still
-// recorded as running is not judged (as the backup's staleness skips one). A
-// verify descriptor that exists but cannot be read is a WARN naming it and its
-// remedy, and gives no cadence. Without a readable one, a descriptor an older
-// release wrote for the verify in the backup's place still gives the cadence
-// (MA-155); a verify installed by an earlier release records none, so its
-// staleness is not judged — a guessed cadence would raise a false WARN.
+// recorded no run in twice its period since it was installed. A last verify
+// still recorded as running (verify writes "running" when it takes the lock and
+// finalizes the record on the way out) is judged from when it started: no
+// verify has finished since then, and none has started after it, so one started
+// more than twice the period ago is stale whether or not it still holds the
+// lock. With the lock free its process is gone (the lock dies with it), so it
+// never finished: a WARN at once, so a verify that dies on every run is never
+// GREEN. A last-verify record that cannot be read gives no verdict and no date
+// to judge by, so it is a WARN too (failing closed, R18). A verify descriptor
+// that exists but cannot be read is a WARN naming it and its remedy, and gives
+// no cadence. Without a readable one, a descriptor an older release wrote for
+// the verify in the backup's place still gives the cadence (MA-155); a verify
+// installed by an earlier release records none, so its staleness is not judged
+// — a guessed cadence would raise a false WARN.
 func assessVerifySchedule(r *Report, in Input, now time.Time) {
 	lv := in.LastVerify
 	done := in.LastVerifyState == state.LastVerifyPresent && lv.Status == state.VerifyDone && lv.Finished != nil
 	if in.HasVerifyDescriptor {
 		vd := in.VerifyDesc
 		period := IntervalOf(vd.Interval)
+		pending := in.LastVerifyState == state.LastVerifyPresent && !done
 		switch {
 		case done && now.Sub(*lv.Finished) > 2*period:
 			r.warn("verify_stale", fmt.Sprintf("the last verify was %s ago, more than twice the %s verify schedule period of %q — %s", HumanAge(now.Sub(*lv.Finished)), vd.Interval, vd.Name, verifyStaleRemedy(in)))
+		case pending && now.Sub(lv.Started) > 2*period:
+			r.warn("verify_stale", fmt.Sprintf("the last verify started %s ago and has not finished, more than twice the %s verify schedule period of %q — %s", HumanAge(now.Sub(lv.Started)), vd.Interval, vd.Name, verifyStaleRemedy(in)))
 		case in.LastVerifyState == state.LastVerifyAbsent && !vd.InstalledAt.IsZero() && now.Sub(vd.InstalledAt) > 2*period:
 			r.warn("verify_stale", fmt.Sprintf("no verify has run in the %s since the %s verify schedule %q was installed, more than twice its period — %s", HumanAge(now.Sub(vd.InstalledAt)), vd.Interval, vd.Name, verifyStaleRemedy(in)))
+		}
+		if pending && lv.Status == state.VerifyRunning && !in.LockHeld {
+			logHint := ""
+			if vd.Log != "" {
+				logHint = " " + vd.Log
+			}
+			r.warn("verify_never_finished", fmt.Sprintf("the verify started %s never finished (no process holds the archive lock: a crash, kill, or power loss) — check its log%s, then run `mailarchive verify -out %q`; the next scheduled run of %q also replaces this record", lv.Started.Local().Format("2006-01-02 15:04"), logHint, in.Out, vd.Name))
+		}
+		if in.LastVerifyState == state.LastVerifyUnreadable {
+			cause := "corrupt or truncated"
+			if in.LastVerifyErr != nil {
+				cause = util.StripControl(in.LastVerifyErr.Error())
+			}
+			r.warn("lastverify_unreadable", fmt.Sprintf("the last-verify record %s is unreadable (%s), so the scheduled verify %q cannot be judged — the next verify rewrites it, or run `mailarchive verify -out %q` now", filepath.Join(in.Out, state.LastVerifyName), cause, vd.Name, in.Out))
 		}
 		return
 	}

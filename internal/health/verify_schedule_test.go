@@ -2,6 +2,7 @@ package health
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,7 +27,15 @@ import (
 // ago is stale. A verify with no run recorded yet is judged from the
 // descriptor's install time: not stale 3 days after a weekly verify was
 // installed, stale 20 days after; with no install time recorded it is not
-// judged. Older installs stay truthful, with no false WARN: a verify an earlier
+// judged. A last verify still recorded as running is judged from its start: one
+// running for an hour with the archive lock held is neither stale nor flagged
+// (the positive twin); one started a day ago with the lock free never finished
+// (verify_never_finished, naming its start, its log and `verify -out`) and is
+// not yet stale; one started 30 days ago is stale ("started 30 days ago", "has
+// not finished"), with the lock free (and verify_never_finished too) or held. A
+// last-verify record that cannot be read is a WARN (lastverify_unreadable)
+// naming the file and `verify -out`, never GREEN. Older installs stay truthful,
+// with no false WARN: a verify an earlier
 // release installed records no descriptor, so a last verify 30 days old raises
 // no verify_stale; a verify an even older release recorded in the backup's
 // descriptor is still judged against that record (MA-155), and the verify's own
@@ -48,7 +57,7 @@ func TestVerifyStaleJudgedAgainstTheVerifySchedule(t *testing.T) {
 		in.HasVerifyDescriptorFile, in.HasVerifyDescriptor = true, true
 		in.VerifyDesc = schedule.Descriptor{Version: 1, Name: verifyName, Interval: interval, At: "05:00",
 			Exe: "/usr/local/bin/mailarchive", Job: []string{"verify", "-out", "/a", "-unattended", "-record", "-log", "/a/" + verifyName + ".log"},
-			InstalledAt: installed, Host: "box"}
+			Log: "/a/" + verifyName + ".log", InstalledAt: installed, Host: "box"}
 		in.VerifySchedState = schedule.Installed
 		return in
 	}
@@ -110,6 +119,65 @@ func TestVerifyStaleJudgedAgainstTheVerifySchedule(t *testing.T) {
 		t.Errorf("the never-ran WARN does not say since when, which schedule, and the remedy:\n%s", reason)
 	}
 	expect("no install time recorded, no run yet", withVerify("weekly", time.Time{}), false)
+
+	// A last verify that never finished: judged from when it started.
+	reasonFor := func(in Input, code string) (bool, string) {
+		rep := Assess(in, now)
+		for i, c := range rep.Codes {
+			if c == code {
+				return true, rep.Reasons[i]
+			}
+		}
+		return false, ""
+	}
+	running := func(started time.Time, lockHeld bool) Input {
+		in := withVerify("weekly", daysAgo(60))
+		in.LastVerifyState = state.LastVerifyPresent
+		in.LastVerify = state.LastVerify{Status: state.VerifyRunning, Started: started}
+		in.LockHeld = lockHeld
+		return in
+	}
+	for _, c := range []struct {
+		step                 string
+		in                   Input
+		stale, neverFinished bool
+	}{
+		{"a verify running for an hour, the lock held (the positive twin)", running(now.Add(-time.Hour), true), false, false},
+		{"a verify started a day ago, the lock free", running(daysAgo(1), false), false, true},
+		{"a verify started 30 days ago, the lock free", running(daysAgo(30), false), true, true},
+		{"a verify started 30 days ago, the lock still held", running(daysAgo(30), true), true, false},
+	} {
+		got, reason := reasonFor(c.in, "verify_stale")
+		if got != c.stale {
+			t.Errorf("%s: verify_stale=%v, want %v (reasons: %v)", c.step, got, c.stale, Assess(c.in, now).Reasons)
+		}
+		if got && (!strings.Contains(reason, "started 30 days ago") || !strings.Contains(reason, "has not finished") || !strings.Contains(reason, verifyName)) {
+			t.Errorf("%s: the stale-verify WARN does not say when the unfinished verify started:\n%s", c.step, reason)
+		}
+		got, reason = reasonFor(c.in, "verify_never_finished")
+		if got != c.neverFinished {
+			t.Errorf("%s: verify_never_finished=%v, want %v (reasons: %v)", c.step, got, c.neverFinished, Assess(c.in, now).Reasons)
+		}
+		if got {
+			started := c.in.LastVerify.Started.Local().Format("2006-01-02 15:04")
+			for _, want := range []string{started, "never finished", "/a/" + verifyName + ".log", "`mailarchive verify -out \"/a\"`"} {
+				if !strings.Contains(reason, want) {
+					t.Errorf("%s: the never-finished WARN lacks %q:\n%s", c.step, want, reason)
+				}
+			}
+		}
+	}
+
+	// A last-verify record that cannot be read: a WARN naming it, never GREEN.
+	unreadable := withVerify("weekly", daysAgo(60))
+	unreadable.LastVerifyState, unreadable.LastVerifyErr = state.LastVerifyUnreadable, errors.New("unexpected end of JSON input")
+	if got, reason := reasonFor(unreadable, "lastverify_unreadable"); !got || !strings.Contains(reason, filepath.Join("/a", state.LastVerifyName)) ||
+		!strings.Contains(reason, "unreadable") || !strings.Contains(reason, "`mailarchive verify -out \"/a\"`") {
+		t.Errorf("an unreadable last-verify record is not a WARN naming the file and the remedy (%v):\n%s", got, reason)
+	}
+	if rep := Assess(unreadable, now); rep.Posture == "GREEN" {
+		t.Errorf("an unreadable last-verify record left the posture GREEN: %v", rep.Reasons)
+	}
 
 	// Older installs: no false WARN.
 	earlier := healthyInput(now) // an earlier release's verify: no verify descriptor
