@@ -23,6 +23,8 @@ How to read it:
   on it starts (§10).
 - The text edits these rulings imply beyond what the designs now carry are listed in §11, for
   each design's author.
+- §13 holds the amendments made after the log stood. Each section they change carries a
+  pointer to it.
 
 ## 0. Authority
 
@@ -169,7 +171,10 @@ self-granted"):
   - **Download.** There is one bounded `MIMETo(w, maxBytes, idle, overall)`: idle 2 min,
     overall 2 h, size cap 200 MiB. For both consumers, `$value` gets its own
     response-header timeout of at least the idle window (workspace XC26), so a large
-    conversion never becomes a permanent 60-second poison.
+    conversion never becomes a permanent 60-second poison. **[Amended by RR-6, §13.4:**
+    capture's overall cap stays at today's 10 minutes until S3; the 200 MiB figure is replaced
+    by one confirmed from Microsoft's documentation, at least 256 MiB, that reaches capture
+    only where the documentation bounds it; the header timer times each attempt.**]**
   - **nextLink guard.** One guard, built once in SG, with three parts: a repeat set, a page
     cap, and a host/path pin with XC25's normalization.
     - The repeat set and the page cap run in every paging loop from SG on, capture's
@@ -187,7 +192,9 @@ self-granted"):
   - **Rows.** SG carries MA-314 (its SG cases; its ledger cases land with S3 and its capture
     foreign-host case with FI-SGc, each a skip encoder citing MA-314 until then, §3) and
     MA-402. FI-SGc carries MA-505 (MA-401b). E1 keeps MA-400, MA-401 (the "a" half), MA-403
-    (the "a" half), MA-515, MA-527 and MA-528 (the allocated ids are in §8).
+    (the "a" half), MA-515, MA-527 and MA-528 (the allocated ids are in §8). **[Added by RR-6,
+    §13.4:** SG also carries MA-540 and MA-541, with `Folders`' visited folder-id set and depth
+    cap.**]**
 - **Authority:** delegated-judgement.
 - **Why:**
   - One type and one guard live in one package.
@@ -674,7 +681,8 @@ The workspace's provisional MA-457 and MA-458 are now MA-521 and MA-522, so noth
 once the workspace text is rewritten.
 
 **Overflow, in build order:** MA-500 (local confidentiality), MA-501..504 (fault isolation),
-MA-505..534 (extraction workspace). The next free overflow id is **MA-535**.
+MA-505..534 (extraction workspace). The next free overflow id is **MA-535**. *(Superseded by
+§13.1, which gives out MA-535..MA-545. The next free overflow id is now MA-546.)*
 
 ## 9. Cross-design build order
 
@@ -692,7 +700,7 @@ MA-505..534 (extraction workspace). The next free overflow id is **MA-535**.
   skeptic's notes);
 - FX-SAN (merge after its adversarial round 3);
 - LC-A and LC-C1;
-- FI-SG (after RR-6) and FI-S1a;
+- FI-SG (after RR-6, which has run: §13.4) and FI-S1a;
 - MF-S0;
 - RI-S1 (interim);
 - FX-G8.
@@ -772,6 +780,9 @@ isolation, MF = MIME fidelity, RI = re-capture integrity, EW = extraction worksp
 None of the seven blocks the owner's chosen tool. EW-E1..E6 need none of them: ESC-5's
 interim lets EW-E3 ship, and ESC-7 holds back only capture's pin.
 
+**Added after the log:** ESC-8 and ESC-9, raised by RR-6, are in §13.4. Neither blocks
+anything.
+
 ## 11. Follow-ups for other owners
 
 **The kit owner** (`assureblock/`, which is not edited here). Three strengthenings of the
@@ -849,3 +860,118 @@ Every correction's evidence was re-read at the cited lines before it was applied
 
 The check found no question missing from §1–§7: every Q, OR and OQ of the five designs and
 their reviews appears there.
+
+## 13. Amendments after the log
+
+Added on 2026-10-09, after the log stood. Every item is delegated-judgement (§0). None weakens
+a gate, edits a baseline or narrows a catalog row's guarantee.
+
+### 13.1 MA ids (amends §8.4)
+
+| Owner | Block | Status |
+|---|---|---|
+| RR-2 and RR-3 (extraction workspace) | MA-532..MA-534 (§8.4's reserve), then MA-535..MA-539 | reserved; the ids the run uses are recorded with its result (§13.5) |
+| RR-6 (fault isolation, SG) | MA-540..MA-544 | **allocated:** MA-540 (SG's stops on the shipped capture path, through `RunGraph`) and MA-541 (the Graph folder hierarchy: visited set and depth cap), both in FI-SG. MA-542..MA-544 stay reserved to fault isolation |
+| g7-Q1 (§13.3) | MA-545 | **allocated:** an export or graph `run_in_progress` is judged by the lock holder's verb (G7) |
+
+The next free overflow id is **MA-546**. An unused id in a reserved block stays with that
+block's owner. This is the record that the fault-isolation design's §9 and its §10 SG row wait
+for (J1), so SG's catalog-first PR may land MA-540 and MA-541.
+
+### 13.2 Merge order for slices that are already built (amends §9's "How to read the table")
+
+§9's numbers are a valid topological order, not a queue for code that already exists. FX-G8
+(row 8) and the g7 branch (row 9: G7-F53 and the rest of `wip/g7-index-status`) merge as soon
+as their owed gates pass, after FX-SAN, or before it while FX-SAN's round 3 is still running.
+Neither depends on rows 2–7, and catalog changes still land one at a time.
+- **Why:** finished, reviewed fixes should not wait on six unbuilt slices. Later slices rebase
+  onto a base that already holds them.
+
+### 13.3 Questions raised by the fix-branch reviews (adds to §7)
+
+| Id | Question | Ruling |
+|---|---|---|
+| g7-Q1 | How is a running export or graph record's `run_in_progress` judged? | By the lock holder's verb, as `2ff682f` did for verify. It is live only while the holder's verb is export or graph, or while the holder names no verb (status's own probe, or a binary older than `c19f429`). Counting those as live keeps a mixed-version install free of a false RED. New row MA-545 (§13.1) |
+| g7-Q2 | Does the Windows sharing-violation retry cover the other atomic renames? | Yes. The last-run record, the last-verify record, the history log and the sidecars go through `state`'s `replaceFile`, which gets the same bounded, Windows-only retry. Best-effort writes stay best-effort. MA-399 is extended |
+| g8-R2 | What happens to an unreadable descriptor left by a custom-named backup's removal? | It is never deleted, because the tool cannot tell whose it is. The removal prints its path and the remedy, and status keeps naming it. MA-455 is extended |
+| g8-Q4 | Should MA-260's `-token-cache` requirement on Windows be relaxed? | No, keep requiring it. Relaxing it would change what an existing covering test asserts (§0, rule 2). It goes on the owner's low-priority list |
+| g8-Q5 | Should a legacy verify entry be removed automatically? | No, keep the hint. The name may by now hold another archive's verify |
+| g8-R3 | X6 was marked Met while MA-466's encoder was still open | Resolved by building FB-4 (MA-457, MA-458), which turns MA-466's encoder green. X6's text is not edited |
+| FB-3 note | Does round 3's medium finding (a `<plaintext>` or script escape inside a noscript ends the page early) reopen FB-3? | No. Option (b), the in-place noscript retry, stands. The finding is fixed inside it by failing closed on page structure: the assembled page is re-parsed in both scripting readings, its header and body must be live children of `<body>`, and otherwise the page falls back |
+
+### 13.4 RR-6: the SG re-review (amends J4 and §10, and completes §9's RR-6 row)
+
+- **Run.** Lenses 3, 6, 7 and 8 ran on SG as J4 defines it, before FI-SG code, on
+  `wip/rr6-sg` (base `aed7e5b`). The addendum ("Addendum: RR-6") is filed in
+  `docs/review-fault-isolation-predesign.md`. Its conditions are folded into
+  `docs/design-fault-isolation.md`, each marked `[RR-6 RR6-Cn]`. The commits are `5f060db` and
+  `5cc54bc`.
+- **Verdict: GO_WITH_CONDITIONS.** There were 29 findings. The skeptic confirmed 15 (1 blocker,
+  3 major, 11 minor) and refuted or merged 14. The rescue pass dissolved the blocker and two of
+  the majors with mechanism changes and narrowed the third (L3-2). It also raised three hidden
+  blockers, and each is now a condition.
+- **Conditions folded:**
+  - RR6-C1: typed stops. `MIMETo`'s stops return `*graph.TimeoutError`, and `RunGraph` decides
+    "cancelled" from its own context.
+  - RR6-C2: capture's interim 10-minute overall cap.
+  - RR6-C3: the size-cap figure is confirmed from Microsoft's documentation, at least 256 MiB.
+    A response whose `Content-Length` exceeds it is refused before the body is read.
+  - RR6-C4: FC10's 30-minute bound is stated with its condition.
+  - RR6-C5: every guard stop is typed, never a quiet end of listing (MA-540).
+  - RR6-C6: `Folders` gets a visited set and a depth cap of 300 (MA-541).
+
+  A fresh-eyes check failed RR6-C6 and found two gate weakenings in the fold. The fixer
+  reverted both and raised them as owner rulings RR6-OR1 and RR6-OR2 (ESC-8 and ESC-9, below).
+- **J4 amended.** Its Download and Rows bullets carry a pointer here.
+  1. **Overall cap.** Until FI-S3, capture's `Client.MIME` passes `MIMETo` an overall cap of
+     `Config.MIMETimeout`, today's 10 minutes. S3 raises it to the 2 h `MIMEMaxDuration` in the
+     same slice as FC10's `Retry-After` clamp, the breaker's time bound and the run-level
+     breaker. The copy export keeps J4's 2 h from E1 (RR6-C2).
+     - **Why:** between SG and S3 the 2 h cap would reach capture without the clamp and the
+       breakers. A throttled or trickling mailbox could then hold the archive lock for up to
+       2 h instead of 10 minutes, about 80 h for a 40-mailbox job, and later scheduled runs
+       would be refused.
+  2. **Size cap.** The 200 MiB figure is replaced. Before SG code, SG confirms from Microsoft's
+     documentation the largest `$value` an Exchange Online item can produce, stored items
+     included. The shared cap is set at or above that figure: 256 MiB, or higher if the
+     confirmation requires it. A response whose `Content-Length` exceeds the cap is refused
+     before its body is read (RR6-C3). The cap reaches capture only at a figure the
+     confirmation bounds; otherwise ESC-8's safe interim applies.
+     - **Why:** 150 MiB of attachments comes to about 205.3 MiB once base64 and CRLF are
+       added. A 200 MiB cap would fail an item that today's code archives, on every run before
+       S3, and leave it a permanent gap after S3.
+  3. **Header timer.** J4's "own response-header timeout of at least the idle window" is
+     `MIMEHeaderTimeout`, default 2 minutes. It times each HTTP attempt from send to headers,
+     never during `get`'s `Retry-After` sleeps. `MIMETo`'s own stops are typed, and none is
+     read as a cancel while the caller's context is live (RR6-C1).
+  4. **Added to SG.** Capture's `Folders` keeps one visited folder-id set across the call and a
+     depth cap of 300, confirmed against Microsoft's documentation before SG code (RR6-C6).
+     - A higher documented figure becomes the cap. With no figure, `Folders` gets no depth cap
+       and the over-depth case is a skip encoder.
+     - A revisited folder is skipped. A level past the cap fails the mailbox with a typed error.
+- **Open conditions, not accepted.** Each is stated in the design next to its claim, and
+  nothing waits on it:
+  - with a healthy control request, FC10's bound is per item only, and known-poison items pay
+    their timers on every run (RR6-C4);
+  - the breadth of capture's folder walk (ESC-9's interim);
+  - the window between a documented rise of Microsoft's limit and the release that answers it
+    (ESC-8's interim).
+- **Follow-ups:**
+  - RR-6 edited the extraction design: the six 200 MiB figures, capture's interim 10 minutes,
+    §4.5's redirect bullet and MA-528, each marked `[fault-isolation RR-6]`. RR-2 had already
+    started on `aed7e5b` and does not see those edits. A delta check of them (lenses 6 and 7)
+    therefore runs before EW-E2 code, after RR-2 and RR-3 merge.
+  - EW-E1's short adversarial note gains a fourth question: does `CheckRedirect` cover SG's
+    `$value` client, and does `Client.Timeout` stay off it?
+- **Unblocks:** FI-SG (§9 row 4). The gate it owes after build is still the adversarial pass
+  (network input).
+
+| Id | The question for the owner | Recommended answer | Safe interim | Blocks |
+|---|---|---|---|---|
+| **ESC-8** (RR6-OR1) | Where Microsoft's documentation gives no figure that bounds a stored item's `$value`, or Microsoft later raises its limit past a shipped cap, may capture carry the size cap anyway? If it does, an item above the cap, which today's uncapped read archives, fails its mailbox on every scheduled run before S3 and is a terminal gap after it. If it does not, capture's download stays bounded by time only, as today | No. Capture keeps no lower cap than today's until a documented figure bounds it, and the copy export alone carries the cap from E1. After a documented rise, the next release raises capture's cap, or drops it under the same rule. You accept the window between the rise and that release, in which an over-cap item fails loudly, naming the item and the cap | The recommended rule, without accepting the window, which stays an open condition. While capture passes no cap, the missing cap is an open gap, not accepted, and MA-540's over-cap case and MA-314's `fetch-too-large` gap case are skip encoders. The same rule holds for the depth cap | nothing |
+| **ESC-9** (RR6-OR2) | Should capture's Graph folder walk carry a total-folder cap? A `childFolders` response that invents fresh folders at every level is bounded per loop but not in total, so a misbehaving endpoint can keep one walk going for as long as it answers. Only a cap at or above Exchange Online's real per-mailbox folder limit cannot fail a healthy mailbox | Yes, if Microsoft documents a per-mailbox folder limit: a cap at or above it, confirmed like the size cap, with an at-cap twin. If none is documented, no cap, and the case stays open | No total-folder cap. The case is an open gap, not accepted, encoded by MA-541's breadth case as a skip encoder citing R10 | nothing |
+
+### 13.5 RR-2 and RR-3 (pending)
+
+Their result is filed here when the run ends. Until then EW-E2 and EW-E4 stay behind §9's RR-2
+and RR-3 rows, and §13.1's reserve stands.
