@@ -50,10 +50,13 @@ func searchTotal(t *testing.T, out, q string) int {
 // index found in the mail: every word has the same hits before and after a
 // rebuild, and no glued token (kestrelalphakestrelbeta) exists in either.
 // Driven by 127 nested tables (whose innermost <p>s were rendered intact
-// before the flattener), and 495 and 600 nested divs. The twins: a 10-deep
-// mail (never flattened) has the same parity, and a word split only by inline
-// tags dropped past the limit (kes<b>trel</b>omega) stays ONE word in both
-// indexes — a dropped inline tag writes nothing.
+// before the flattener), 495 and 600 nested divs, and a 495-deep <dl> whose
+// <dt>/<dd> now split words on both indexes (index.blockElements was widened to
+// the flattener's block set, so dt/dd/dl/pre/address/... read the same live and
+// rebuilt). The twins: a 10-deep mail (never flattened) has the same parity,
+// and a word split only by inline tags dropped past the limit
+// (kes<b>trel</b>omega) stays ONE word in both indexes — a dropped inline tag
+// writes nothing.
 func TestFlattenedBlocksKeepWordBoundaries(t *testing.T) {
 	out := t.TempDir()
 	msgs := []struct{ subject, html string }{
@@ -62,11 +65,13 @@ func TestFlattenedBlocksKeepWordBoundaries(t *testing.T) {
 		{"divs 495", flatDivs(495, "<div>kestrelgamma</div><div>kestreldelta</div>")},
 		{"divs 600", flatDivs(600, "<div>kestrelepsilon</div><div>kestrelzeta</div>")},
 		{"inline 495", flatDivs(495, "<p>kes<b>trel</b>omega and <span>kes</span><i>trel</i>sigma</p>")},
+		{"dl 495", flatDivs(495, "<dl><dt>kestrelmu</dt><dd>kestrelnu</dd></dl>")},
 	}
 	words := []string{"kestreleta", "kestreltheta", "kestrelalpha", "kestrelbeta", "kestrelgamma",
-		"kestreldelta", "kestrelepsilon", "kestrelzeta", "kestrelomega", "kestrelsigma"}
+		"kestreldelta", "kestrelepsilon", "kestrelzeta", "kestrelomega", "kestrelsigma",
+		"kestrelmu", "kestrelnu"}
 	glued := []string{"kestreletakestreltheta", "kestrelalphakestrelbeta", "kestrelgammakestreldelta",
-		"kestrelepsilonkestrelzeta"}
+		"kestrelepsilonkestrelzeta", "kestrelmukestrelnu"}
 
 	idx, err := index.Open(filepath.Join(out, "search.db"))
 	if err != nil {
@@ -110,7 +115,7 @@ func TestFlattenedBlocksKeepWordBoundaries(t *testing.T) {
 
 	// On the page itself: block-separated words are apart, the inline-split
 	// word is whole.
-	for _, subj := range []string{"tables 127", "divs 495", "divs 600"} {
+	for _, subj := range []string{"tables 127", "divs 495", "divs 600", "dl 495"} {
 		b, err := os.ReadFile(filepath.Join(out, filepath.FromSlash(assure.Reached(t, pages[subj], subj+" page"))))
 		if err != nil {
 			t.Fatal(err)
@@ -155,17 +160,4 @@ func TestFlattenedBlocksKeepWordBoundaries(t *testing.T) {
 		}
 	}
 
-	// HTML's other block-level containers keep their words apart on the page
-	// too, as a browser shows them. Page only: the index does not split dt
-	// and dd at any depth (its word-boundary set lacks them), so there is no
-	// parity to hold here.
-	rr, err := export.RenderWith(&model.Message{Subject: "dl",
-		HTMLBody: flatDivs(495, "<dl><dt>kestrelmu</dt><dd>kestrelnu</dd></dl>")}, export.RenderContext{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if page := string(rr.HTML); rr.BodyFallback != "" || strings.Contains(page, "kestrelmukestrelnu") ||
-		!strings.Contains(page, "kestrelmu") || !strings.Contains(page, "kestrelnu") {
-		t.Errorf("a dropped <dt>/<dd> must leave its words apart on the rendered page (fallback %q)", rr.BodyFallback)
-	}
 }

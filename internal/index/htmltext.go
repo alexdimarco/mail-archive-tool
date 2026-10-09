@@ -22,12 +22,24 @@ func BodyText(m *model.Message) string {
 	return normalizeWS(m.RTFBody)
 }
 
-// blockElements introduce a word boundary so adjacent text doesn't run together.
+// blockElements introduce a word boundary so adjacent text doesn't run
+// together. The set is the flattener's flatBlock (internal/export): a browser
+// shows each on its own line, and the exporter writes a newline where it drops
+// one past the depth cap, so the live index (which reads the original mail) and
+// `reindex -rebuild` (which reads the flattened page) split words at the same
+// names — including dt/dd/dl/pre/address/..., which an earlier, narrower set
+// ran together (`<dt>a</dt><dd>b</dd>` now reads "a b", a better ordinary-mail
+// word boundary and exact live/rebuilt parity for those names; R8).
 var blockElements = map[string]bool{
-	"p": true, "br": true, "div": true, "li": true, "tr": true, "td": true,
-	"th": true, "h1": true, "h2": true, "h3": true, "h4": true, "h5": true,
-	"h6": true, "ul": true, "ol": true, "table": true, "blockquote": true,
-	"section": true, "article": true, "header": true, "footer": true,
+	// the browser block-level containers the flattener also treats as block
+	"p": true, "br": true, "div": true, "li": true, "tr": true, "td": true, "th": true,
+	"h1": true, "h2": true, "h3": true, "h4": true, "h5": true, "h6": true, "ul": true, "ol": true,
+	"table": true, "blockquote": true, "section": true, "article": true, "header": true, "footer": true,
+	"address": true, "aside": true, "caption": true, "center": true, "dd": true, "details": true,
+	"dialog": true, "dir": true, "dl": true, "dt": true, "fieldset": true, "figcaption": true,
+	"figure": true, "form": true, "hgroup": true, "legend": true, "listing": true, "main": true,
+	"menu": true, "nav": true, "optgroup": true, "option": true, "pre": true, "search": true,
+	"summary": true, "tbody": true, "tfoot": true, "thead": true,
 }
 
 // htmlToText returns the collapsed text a reader of the archived page sees,
