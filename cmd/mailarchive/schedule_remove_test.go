@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -363,6 +364,123 @@ func TestScheduleVerifyRecordsItsOwnDescriptor(t *testing.T) {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("the verify's removal does not name the descriptor it left and the remedy (lacks %q):\n%s", want, stdout)
 		}
+	}
+}
+
+// covers: MA-457, R14, S14, S28
+// A verify renamed by -name leaves its earlier entry running, and the install
+// names it. Install rewrites the verify descriptor for the new name and never
+// removes the old entry (on launchd and Task Scheduler nothing can say the old
+// name is still this archive's, UJ-6), so once the descriptor moves on nothing
+// records it: the install's note names it with the command that removes it.
+// Through the real binary (sandboxed scheduler), the positive twins come first:
+// a first install and a re-install under the same name print no note. Then the
+// verify is installed under -name v2: the derived entry stays installed, and the
+// note names it with `mailarchive schedule -name <derived> -remove -- verify
+// -out X`; followed, that removes only the derived entry, keeping v2's entry,
+// its descriptor (byte-identical) and the backup. Renamed again (v3), the note
+// names v2, and followed it removes v2. An old entry already gone from the
+// scheduler (taken out by hand) is named by no note: nothing is left running.
+func TestScheduleVerifyRenameNamesTheEntryItLeaves(t *testing.T) {
+	sandboxScheduler(t)
+	out := t.TempDir()
+	backup := schedule.DefaultNameFor(out)
+	derived := backup + "-verify"
+	const v2, v3 = "v2-ma457", "v3-ma457"
+	const note = "Note: this archive's verify was installed as"
+	verifyPath := filepath.Join(out, schedule.VerifyDescriptorName)
+	run := func(args ...string) string {
+		t.Helper()
+		code, stdout, stderr := runCLIOut(t, args...)
+		if code != 0 {
+			t.Fatalf("%v exited %d: %s%s", args, code, stdout, stderr)
+		}
+		return stdout
+	}
+	install := func(name string) string {
+		t.Helper()
+		args := []string{"schedule", "-interval", "weekly", "-at", "05:00"}
+		if name != "" {
+			args = append(args, "-name", name)
+		}
+		return run(append(args, "-install", "--", "verify", "-out", out)...)
+	}
+	removal := func(name string) string { // the command the note gives
+		return fmt.Sprintf("mailarchive schedule -name %s -remove -- verify -out %q", name, out)
+	}
+	installed := func(name string) bool { return schedule.Query(name) == schedule.Installed }
+	recorded := func() string {
+		d, err := schedule.ReadVerifyDescriptor(out)
+		if err != nil {
+			return ""
+		}
+		return d.Name
+	}
+	// takeOut removes an entry from the sandboxed scheduler by hand, as an
+	// operator might, leaving the archive's records alone.
+	takeOut := func(name string) {
+		t.Helper()
+		if runtime.GOOS == "darwin" {
+			if err := os.Remove(filepath.Join(os.Getenv("HOME"), "Library", "LaunchAgents", schedule.LaunchdLabel(name)+".plist")); err != nil {
+				t.Fatal(err)
+			}
+			return
+		}
+		tab, err := os.ReadFile(os.Getenv("FAKE_CRONTAB"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(os.Getenv("FAKE_CRONTAB"), []byte(schedule.RemoveCronBlock(string(tab), schedule.CronMarker(name))), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	run("schedule", "-install", "--", "-out", out, "-auto")
+	// Positive twins: nothing is left behind, so nothing is named.
+	for _, step := range []string{"a first install", "a re-install under the same name"} {
+		if stdout := install(""); strings.Contains(stdout, note) {
+			t.Errorf("%s names a superseded verify:\n%s", step, stdout)
+		}
+	}
+
+	// Renamed: the derived entry keeps running, and the note names it.
+	stdout := install(v2)
+	if got := recorded(); got != v2 {
+		t.Fatalf("the verify descriptor records %q after the install under -name %s", got, v2)
+	}
+	if !installed(derived) || !installed(v2) {
+		t.Fatalf("fixture: derived=%v v2=%v, want both installed (the install removes nothing)", installed(derived), installed(v2))
+	}
+	for _, want := range []string{note, `"` + derived + `"`, "still installed", removal(derived)} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("renaming the verify to %s does not name the entry it leaves running (lacks %q):\n%s", v2, want, stdout)
+		}
+	}
+	// The note followed removes only that entry.
+	before, err := os.ReadFile(verifyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run("schedule", "-name", derived, "-remove", "--", "verify", "-out", out)
+	after, err := os.ReadFile(verifyPath)
+	if installed(derived) || !installed(v2) || !installed(backup) || err != nil || string(after) != string(before) {
+		t.Errorf("following the note: derived=%v v2=%v backup=%v, verify descriptor unchanged=%v (%v); want only the derived entry gone",
+			installed(derived), installed(v2), installed(backup), string(after) == string(before), err)
+	}
+
+	// Renamed again: the note names v2, and followed it removes v2.
+	if stdout := install(v3); !strings.Contains(stdout, removal(v2)) {
+		t.Errorf("renaming the verify to %s does not name %s, which it leaves running:\n%s", v3, v2, stdout)
+	}
+	run("schedule", "-name", v2, "-remove", "--", "verify", "-out", out)
+	if installed(v2) || !installed(v3) || recorded() != v3 {
+		t.Errorf("following the second note: v2=%v v3=%v recorded=%q; want only v3 left", installed(v2), installed(v3), recorded())
+	}
+
+	// An old entry already gone from the scheduler: nothing left running, no note.
+	takeOut(v3)
+	if stdout := install(""); strings.Contains(stdout, note) {
+		t.Errorf("an install names %s, which the scheduler no longer has:\n%s", v3, stdout)
 	}
 }
 

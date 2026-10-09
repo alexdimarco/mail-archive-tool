@@ -966,6 +966,13 @@ because `schedule` does not read those entries back. The archive that lost its
 verify then shows `verify_stale` once its last verify is older than twice its
 period. So leave `-name` out for a verify; each archive then has its own.
 
+Changing a verify's `-name` (for example from the old README's
+`-name mailarchive-verify` to none) installs a second entry and leaves the first
+one running: `schedule` never removes it, since on macOS and Windows it cannot
+tell whether that name is still this archive's. While the scheduler still has
+it, the install prints the command that removes it,
+`mailarchive schedule -name OLD -remove -- verify -out X`.
+
 A verify installed by an earlier release has no verify descriptor, so `status`
 cannot tell its cadence. It does not guess one, and so raises no `verify_stale`
 for it: re-run that verify's `-install` once so `status` can watch it. (An even

@@ -923,6 +923,10 @@ func runSchedule(args []string) error {
 	}
 
 	if *install {
+		// A verify installed under a new -name leaves the entry the archive's
+		// records name running (Install never removes it); read it before the
+		// install rewrites the verify descriptor, so it can be named below.
+		superseded := schedule.SupersededVerify(spec)
 		if err := schedule.Install(spec); err != nil {
 			return err
 		}
@@ -940,6 +944,9 @@ func runSchedule(args []string) error {
 			desc = filepath.Join(j.out, schedule.VerifyDescriptorName) // a verify records its own
 		}
 		fmt.Printf("Log: %s · descriptor: %s · check with: mailarchive status -out %q\n", logPath, desc, j.out)
+		if superseded != "" {
+			fmt.Printf("Note: this archive's verify was installed as %q, and that entry is still installed: it keeps running beside %q. If it is still this archive's verify, remove it with `mailarchive schedule -name %s -remove -- verify -out %q`.\n", superseded, n, superseded, j.out)
+		}
 		if note, _ := schedule.VerifyScheduleNote(spec); note != "" {
 			fmt.Println(note)
 		}

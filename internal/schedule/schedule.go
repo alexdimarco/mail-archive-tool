@@ -779,6 +779,34 @@ func VerifyRecorded(out, name string) bool {
 	return err == nil && d.Name == name
 }
 
+// SupersededVerify returns the name of the archive's earlier scheduled verify
+// that installing s — a verify under a -name of its own — leaves running: the
+// name the archive's verify descriptor records (or, without a readable one, a
+// backup descriptor an older release wrote for the verify itself), when that
+// is not s.Name and the host scheduler still has it. Install never removes that
+// entry: on launchd and Task Scheduler nothing can say the old name is still
+// this archive's (their entries are never read back, UJ-6, and another
+// archive's verify may have taken a shared -name over). And once Install has
+// rewritten the verify descriptor for the new entry, nothing records the old
+// one. So the caller reads it before installing and names it, with the command
+// that removes it. "" otherwise: not a verify, the same name, or nothing left
+// running under the old one.
+func SupersededVerify(s Spec) string {
+	if !isVerifyJob(s) || s.Out == "" {
+		return ""
+	}
+	old := ""
+	if d, err := ReadVerifyDescriptor(s.Out); err == nil {
+		old = d.Name
+	} else if d, err := ReadDescriptor(s.Out); err == nil && descriptorIsVerify(d) {
+		old = d.Name
+	}
+	if old == "" || old == s.Name || Query(old) != Installed {
+		return ""
+	}
+	return old
+}
+
 // RemoveIfInstalled removes a schedule only when it is actually present — one
 // of the archive's descriptors records this name, or the named entry is in the
 // host scheduler — and returns removed=false without touching the scheduler
