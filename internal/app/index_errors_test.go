@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"mail-archive-tool/internal/assure"
@@ -49,13 +50,16 @@ func injectIndexFault(t *testing.T, out, subject, action string) {
 // row — the other 49 of its batch stay indexed — and when SQLite abandons the
 // whole transaction (RAISE(ROLLBACK), the shape of a disk-full/I-O failure)
 // the earlier rows lost with it are counted too, never silently dropped.
-// Result.Indexed is the index's total, so on a fresh archive Indexed +
-// IndexErrors == exported, and on a run whose exports are all new to the index
-// (Indexed after − Indexed before) + IndexErrors == exported. A fill exports
-// its message again under the same key, so its row is replaced, not added (as
-// for a re-capture of a legacy "unknown" record or a full-mode re-export), and
-// the growth equation does not hold for it: after a run that fills, every key
-// it exported is in the index, its row carrying what that run exported.
+// Result.Indexed is the index's total, so on a run that exports each key once,
+// none of them already indexed, (Indexed after − Indexed before) +
+// IndexErrors == exported; on a fresh archive that is Indexed + IndexErrors ==
+// exported, which the ABORT and ROLLBACK runs below check. A message exported
+// again under the same key has its row replaced, not added: a fill (as for a
+// re-capture of a legacy "unknown" record or a full-mode re-export), and, on
+// a fresh archive too, a key the same run exports twice
+// (TestFreshRunIndexesAKeyExportedTwiceOnce). Neither equation holds for it:
+// after a run that fills, every key it exported is in the index, its row
+// carrying what that run exported.
 func TestRunCountsEveryIndexLoss(t *testing.T) {
 	const n = 50
 	src := filepath.Join(tmpDir(t), "Inbox")
@@ -202,6 +206,87 @@ func TestRunCountsEveryIndexLoss(t *testing.T) {
 	if grew := fillRun.Indexed - gapRun.Indexed; grew != 1 {
 		t.Errorf("fill: the index grew by %d, want 1 — the row the index held is replaced, never doubled, and the row it lacked is added", grew)
 	}
+}
+
+// covers: MA-388, R8, S29
+// On a fresh archive the index books are the growth equation counted from an
+// empty index, so Indexed + IndexErrors == exported holds only when the run
+// exports each key once. One run can export a key twice: full mode never
+// skips a key it has already seen, so a source holding a message twice is
+// exported twice under one key, and an incremental run fills, in the same
+// run, the gap an earlier copy of a message left. Either way the key's second
+// export replaces its row — never a second row, never a refused insert — so
+// the run exports 4 messages of 3 keys and the index holds 3 rows with no
+// index error, every key the run exported is in the index, and the row
+// carries the copy the run exported last.
+func TestFreshRunIndexesAKeyExportedTwiceOnce(t *testing.T) {
+	logger := log.New(io.Discard, "", 0)
+	held := filepath.Join(tmpDir(t), "Inbox")
+	maildirMessages(t, held, 3)
+	raw, err := os.ReadFile(filepath.Join(held, "cur", "0.eml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(held, "cur", "0-copy.eml"), raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inRun := filepath.Join(tmpDir(t), "Inbox")
+	maildirMessages(t, inRun, 2)
+	twice := func(name, body string) { // maildir files are read in name order
+		t.Helper()
+		msg := "From: a@example.com\r\nSubject: twice\r\nDate: Mon, 03 Mar 2025 11:00:00 +0000\r\nMessage-ID: <twice@x>\r\n\r\n" + body
+		if err := os.WriteFile(filepath.Join(inRun, "cur", name), []byte(msg), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	twice("twice-a.eml", "")                       // no body: a fillable gap
+	twice("twice-b.eml", "the latecomer body\r\n") // fills it in the same run
+	for _, tc := range []struct {
+		name   string
+		src    string
+		mode   export.Mode
+		filled int
+		mid    string // the Message-ID exported twice
+		last   string // a term only the copy exported last carries ("": the two copies are the same bytes)
+	}{
+		{"full mode over a message held twice", held, export.Full, 0, "m0@x", ""},
+		{"an in-run fill", inRun, export.Incremental, 1, "twice@x", "latecomer"},
+	} {
+		out := tmpDir(t)
+		res, err := Run(context.Background(), Options{Inputs: []string{tc.src}, Out: out, Mode: tc.mode, Index: true}, logger, nil)
+		if err != nil {
+			t.Fatalf("fresh, %s: run failed: %v", tc.name, err)
+		}
+		if res.Stats.Exported != 4 || res.ManifestSize != 3 || res.Stats.Filled != tc.filled {
+			t.Fatalf("fresh, %s: exported=%d keys=%d filled=%d, want 4 exports of 3 keys, %d filled", tc.name, res.Stats.Exported, res.ManifestSize, res.Stats.Filled, tc.filled)
+		}
+		if res.Indexed != 3 || res.IndexErrors != 0 {
+			t.Errorf("fresh, %s: indexed=%d indexErrors=%d, want 3/0 — the key exported twice keeps one row, replaced by its second export, never doubled and never refused", tc.name, res.Indexed, res.IndexErrors)
+		}
+		recs := manifestRecords(t, out)
+		k := assure.Reached(t, keyOf(recs, tc.mid), "the manifest key of "+tc.mid+", exported twice")
+		rows, _ := indexedRows(t, out, "body")
+		for key, rec := range recs {
+			if !rows[key] {
+				t.Errorf("fresh, %s: %s was exported but has no row in the index (IndexErrors=%d)", tc.name, rec.Path, res.IndexErrors)
+			}
+		}
+		if tc.last != "" {
+			if _, carrying := indexedRows(t, out, tc.last); !carrying[recs[k].Path] {
+				t.Errorf("fresh, %s: the index row of %s still carries the first copy, not the copy the run exported last", tc.name, recs[k].Path)
+			}
+		}
+	}
+}
+
+// keyOf returns the manifest key that carries the given Message-ID, or "".
+func keyOf(recs map[string]state.Record, mid string) string {
+	for k := range recs {
+		if strings.Contains(k, mid) {
+			return k
+		}
+	}
+	return ""
 }
 
 // clearIndexFault drops the trigger injectIndexFault planted, so the next run
