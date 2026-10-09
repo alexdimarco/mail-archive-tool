@@ -80,7 +80,10 @@ const (
 	LastRunPresent
 )
 
-// WriteLastRun writes the record atomically into out.
+// WriteLastRun writes the record atomically into out. Its rename waits out a
+// moment of Windows file sharing (replaceFile) — `status` reading the record
+// while a run finalizes must not cost the run its "ok" — and its callers keep
+// it best effort: a refusal that persists is returned, never fails a run.
 func WriteLastRun(out string, r LastRun) error {
 	r.Version = 1
 	data, err := json.MarshalIndent(r, "", "  ")
@@ -106,7 +109,7 @@ func WriteLastRun(out string, r LastRun) error {
 		os.Remove(tmp.Name())
 		return err
 	}
-	if err := os.Rename(tmp.Name(), path); err != nil {
+	if err := replaceFile(tmp.Name(), path); err != nil {
 		return err
 	}
 	updateAttentionSidecar(out, r)
@@ -147,7 +150,9 @@ func updateAttentionSidecar(out string, r LastRun) {
 }
 
 // writeSidecarAtomic writes data to path via a temp file and rename, so a torn
-// write never leaves a half-written attention notice.
+// write never leaves a half-written attention notice. The rename waits out a
+// moment of Windows file sharing (replaceFile): a notice open in a viewer must
+// not keep a stale one standing.
 func writeSidecarAtomic(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".mailarchive-attention-*.tmp")
@@ -163,7 +168,7 @@ func writeSidecarAtomic(path string, data []byte) error {
 		os.Remove(tmp.Name())
 		return err
 	}
-	return os.Rename(tmp.Name(), path)
+	return replaceFile(tmp.Name(), path)
 }
 
 // ReadLastRun reads the record, distinguishing absent from unreadable (a torn
@@ -243,7 +248,8 @@ const (
 )
 
 // WriteLastVerify writes the verify record atomically into out and, when the
-// record is finalized, updates verify's own integrity sidecar.
+// record is finalized, updates verify's own integrity sidecar. Its rename waits
+// out a moment of Windows file sharing (replaceFile), as WriteLastRun's does.
 func WriteLastVerify(out string, v LastVerify) error {
 	v.Version = 1
 	v.Status = util.StripControl(v.Status)
@@ -275,7 +281,7 @@ func WriteLastVerify(out string, v LastVerify) error {
 		os.Remove(tmp.Name())
 		return err
 	}
-	if err := os.Rename(tmp.Name(), path); err != nil {
+	if err := replaceFile(tmp.Name(), path); err != nil {
 		return err
 	}
 	if v.Status == VerifyDone {
