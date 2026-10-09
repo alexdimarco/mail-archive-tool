@@ -856,7 +856,11 @@ func (f *flattener) startTablePart(el flatEl) bool {
 	if len(f.drop) > 0 {
 		// A kept table is open but the current node is dropped: the part drops
 		// into the dropped region (a boundary), never through the kept-stack
-		// path below, which would clear the drop stack.
+		// path below, which would clear the drop stack. The part may belong to
+		// a table opened (and dropped) in that region: credited to the kept
+		// table instead, that table's </table> would close the kept one, and
+		// the kept table's next <td> would be a stray tag the parser ignores,
+		// gluing the words on either side of it.
 		return f.push(el)
 	}
 	ti := -1

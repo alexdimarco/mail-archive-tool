@@ -1,14 +1,19 @@
 package app
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"log"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	xhtml "golang.org/x/net/html"
 
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/model"
@@ -282,6 +287,91 @@ func TestLiveAndRebuiltIndexAgreeOnOuterNoscriptEscapedText(t *testing.T) {
 	want := map[string]int{"outerescbody": 1, "outeresctext": 1, "outeresctag": 1}
 	live, rebuilt := parityArchive(t, bodies, keysOf(want))
 	assure.Reached(t, live["outerescbody"]+rebuilt["outerescbody"], "hits for the body word")
+	for _, p := range parityProblems(want, live, rebuilt) {
+		t.Error(p)
+	}
+}
+
+// covers: MA-473, MA-492, R8, R13
+// Table parts that arrive while a table the flattener kept is open but the
+// current node is past flattenDepth (startTablePart's dropped-current-node
+// branch, a397085): a cell kept below the cap (a table at depth 471), dropped
+// markup in it past 480, and then a <td>, a <tr>, a nested table's own cells
+// (alone, and followed by the kept table's next <td>), or a <td> inside an SVG
+// foreignObject. Each part drops with the region it arrives in, leaving a word
+// boundary. Credited to the kept table instead (through the kept-stack path,
+// which clears the drop stack), the nested table's parts were written as the
+// kept table's, its </table> closed the kept table, and the kept table's next
+// <td> was a stray tag the parser ignores: "tpthenafter" and "tpthennext" ran
+// together on the page and in the rebuilt index only. Each mail renders as
+// HTML, its page parses in both scripting readings with the words on either
+// side of a part apart on the page, and every word is found once live and once
+// after a rebuild, the glued pair on neither side.
+func TestLiveAndRebuiltIndexAgreeOnTablePartsPastTheCap(t *testing.T) {
+	divs := func(n int, inner string) string {
+		return strings.Repeat("<div>", n) + inner + strings.Repeat("</div>", n)
+	}
+	kept := func(inner string) string {
+		return `<html><body>` + divs(470, `<table><tr><td>`+divs(10, inner)+`</td></tr></table>`) + `</body></html>`
+	}
+	bodies := map[string]string{
+		"tp cell after dropped": kept(`tpcellalpha<td>tpcellbeta`),
+		"tp row after dropped":  kept(`tprowalpha<tr><td>tprowbeta`),
+		"tp nested table":       kept(`<table><tr><td>tpnestalpha</td><td>tpnestbeta</td></tr></table>tpnestafter`),
+		"tp nested then cell":   kept(`<table><tr><td>tpthenalpha</td><td>tpthenbeta</td></tr></table>tpthenafter<td>tpthennext`),
+		"tp foreignobject cell": kept(`<svg><foreignObject>tpfoalpha<td>tpfobeta</foreignObject></svg>`),
+	}
+	pairs := [][2]string{
+		{"tpcellalpha", "tpcellbeta"}, {"tprowalpha", "tprowbeta"},
+		{"tpnestalpha", "tpnestbeta"}, {"tpnestbeta", "tpnestafter"},
+		{"tpthenalpha", "tpthenbeta"}, {"tpthenafter", "tpthennext"}, {"tpfoalpha", "tpfobeta"},
+	}
+	want := map[string]int{}
+	for _, p := range pairs {
+		want[p[0]], want[p[1]], want[p[0]+p[1]] = 1, 1, 0
+	}
+
+	out := tmpDir(t)
+	date := time.Date(2025, 4, 4, 9, 0, 0, 0, time.UTC)
+	var msgs []rbMsg
+	for subject, body := range bodies {
+		msgs = append(msgs, rbMsg{[]string{"Inbox"}, &model.Message{
+			Subject: subject, SenderName: "Parity Sender", SenderEmail: "parity@example.com",
+			InternetMessageID: "<" + strings.ReplaceAll(subject, " ", "-") + "@example.com>",
+			Received:          date.Add(time.Duration(len(msgs)) * time.Minute), HTMLBody: body,
+		}})
+	}
+	rels := buildRebuildArchive(t, out, msgs)
+	for subject := range bodies {
+		page, err := os.ReadFile(filepath.Join(out, filepath.FromSlash(assure.Reached(t, rels[subject], "page of "+subject))))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(page), "data-mailarchive-fallback") {
+			t.Errorf("%s: must render as HTML (flattened), not fall back", subject)
+		}
+		for _, scripting := range []bool{true, false} {
+			if _, err := xhtml.ParseWithOptions(bytes.NewReader(page), xhtml.ParseOptionEnableScripting(scripting)); err != nil {
+				t.Errorf("%s: the page does not parse (scripting=%v): %v", subject, scripting, err)
+			}
+		}
+		for _, p := range pairs {
+			if strings.Contains(string(page), p[0]+p[1]) {
+				t.Errorf("%s: the page runs %q and %q together", subject, p[0], p[1])
+			}
+		}
+	}
+	live := map[string]int{}
+	for q := range want {
+		live[q] = indexTotal(t, out, q)
+	}
+	deleteSearchDB(t, out)
+	rebuildOnDisk(t, out, len(bodies))
+	rebuilt := map[string]int{}
+	for q := range want {
+		rebuilt[q] = indexTotal(t, out, q)
+	}
+	assure.Reached(t, live["tpcellbeta"]+rebuilt["tpcellbeta"], "hits for a word after a table part past the cap")
 	for _, p := range parityProblems(want, live, rebuilt) {
 		t.Error(p)
 	}
