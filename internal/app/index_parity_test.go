@@ -212,3 +212,50 @@ func TestLiveAndRebuiltIndexAgreeOnHeadNoscriptMarkup(t *testing.T) {
 		}
 	}
 }
+
+// covers: MA-492, R8, R13, S33
+// Deep mails, at and past the depth where an exporter would flatten them (480)
+// and past the tree parser's cap (512), keep their word boundaries and their
+// words on both sides: block-spaced text 490 divs deep (adv2 rv5 corpus
+// 53_deep_480_blocks), one line per level 600 deep (31_divs_600_deep), a
+// 150-deep table layout (28_tables_150_deep), and the RV-3 hide payload at
+// depths 480, 500 and 509. Each word is found once live and once after a
+// rebuild; the words glued together are found on neither side. However the
+// page renders such a mail (as HTML, flattened, or as source), the rebuild
+// must read the same words the live index read from the mail.
+func TestLiveAndRebuiltIndexAgreeOnDeepBlockText(t *testing.T) {
+	divs := func(n int, inner string) string {
+		return strings.Repeat("<div>", n) + inner + strings.Repeat("</div>", n)
+	}
+	var lines strings.Builder
+	for i := 0; i < 600; i++ {
+		lines.WriteString("<div><p>deepline" + strconv.Itoa(i) + "</p>")
+	}
+	lines.WriteString(strings.Repeat("</div>", 600))
+	hide := func(word string) string {
+		return `<p>Hello</p><svg width=0 height=0><style><!--</style><script>--></style></svg><p>account ` + word + ` today</p>`
+	}
+	bodies := map[string]string{
+		"blocks 490 deep": `<html><body>` + divs(490, `<p>blkalpha</p><p>blkbravo</p><div>blkcharlie</div>blkdelta<br>blkecho<li>blkfoxtrot</li>`+
+			`<table><tr><td>blkgolf</td><td>blkhotel</td></tr></table>`) + `</body></html>`,
+		"lines 600 deep": `<div dir="ltr">Top reply line.` + lines.String() + `</div>`,
+		"tables 150 deep": `<html><body>` + strings.Repeat(`<table role="presentation"><tr><td align="center">`, 150) +
+			`<p>One hundred fifty layer table.</p><div>tblsecond block</div><div>tblthird block</div>` +
+			strings.Repeat(`</td></tr></table>`, 150) + `</body></html>`,
+		"hide 480 deep": `<html><body>` + divs(480, hide("hidefoureighty")) + `</body></html>`,
+		"hide 500 deep": `<html><body>` + divs(500, hide("hidefivehundred")) + `</body></html>`,
+		"hide 509 deep": `<html><body>` + divs(509, hide("hidefiveohnine")) + `</body></html>`,
+	}
+	want := map[string]int{
+		"blkalpha": 1, "blkbravo": 1, "blkcharlie": 1, "blkdelta": 1, "blkecho": 1, "blkfoxtrot": 1, "blkgolf": 1, "blkhotel": 1,
+		"blkalphablkbravo": 0, "blkdeltablkecho": 0, "blkgolfblkhotel": 0,
+		"deepline0": 1, "deepline300": 1, "deepline477": 1, "deepline478": 1, "deepline479": 1, "deepline599": 1, "deepline478deepline479": 0,
+		"tblsecond": 1, "tblthird": 1, "blocktblthird": 0,
+		"hidefoureighty": 1, "hidefivehundred": 1, "hidefiveohnine": 1,
+	}
+	live, rebuilt := parityArchive(t, bodies, keysOf(want))
+	assure.Reached(t, live["blkalpha"]+rebuilt["blkalpha"], "hits for a deep block word")
+	for _, p := range parityProblems(want, live, rebuilt) {
+		t.Error(p)
+	}
+}
