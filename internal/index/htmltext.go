@@ -1,6 +1,7 @@
 package index
 
 import (
+	"sort"
 	"strings"
 
 	"golang.org/x/net/html"
@@ -40,6 +41,22 @@ var blockElements = map[string]bool{
 	"figure": true, "form": true, "hgroup": true, "legend": true, "listing": true, "main": true,
 	"menu": true, "nav": true, "optgroup": true, "option": true, "pre": true, "search": true,
 	"summary": true, "tbody": true, "tfoot": true, "thead": true,
+}
+
+// BlockElementNames lists the names blockElements splits words at, sorted. It
+// exists for one test: the set must be the exporter's flatBlock (listed by
+// internal/export FlatBlockNames), and neither package can see the other's, so
+// an external test of internal/export, which imports both, compares the two
+// lists (MA-477).
+func BlockElementNames() []string {
+	var names []string
+	for name, block := range blockElements {
+		if block {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
 }
 
 // htmlToText returns the collapsed text a reader of the archived page sees,

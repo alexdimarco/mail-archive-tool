@@ -161,3 +161,49 @@ func TestFlattenedBlocksKeepWordBoundaries(t *testing.T) {
 	}
 
 }
+
+// covers: MA-477, R8
+// The flattener and the search index split words at the same names. Where the
+// flattener drops a block-level tag past flattenDepth it writes a newline
+// (export flatBlock), and the index splits words at its own set (index
+// blockElements); the live index reads the mail, `reindex -rebuild` the
+// flattened page, so a name in one set and not in the other splits two words
+// on one side and glues them on the other (R8). 0f824b9 made the sets equal,
+// but the end-to-end test above pins that only for the names it drives (div,
+// p, the table parts, dl/dt/dd): `"pre": false` in blockElements left export,
+// index and app green. Each package lists its set (export.FlatBlockNames,
+// index.BlockElementNames), and the two lists must be equal, name for name, in
+// either direction. Positive twin: both hold names the end-to-end test drives,
+// and pre.
+func TestFlattenerAndIndexSplitWordsAtTheSameNames(t *testing.T) {
+	flat, idx := export.FlatBlockNames(), index.BlockElementNames()
+	assure.Reached(t, len(flat), "the flattener's block names")
+	assure.Reached(t, len(idx), "the index's block names")
+	in := func(names []string) map[string]bool {
+		set := map[string]bool{}
+		for _, n := range names {
+			set[n] = true
+		}
+		return set
+	}
+	flatSet, idxSet := in(flat), in(idx)
+	var flatOnly, idxOnly []string
+	for _, n := range flat {
+		if !idxSet[n] {
+			flatOnly = append(flatOnly, n)
+		}
+	}
+	for _, n := range idx {
+		if !flatSet[n] {
+			idxOnly = append(idxOnly, n)
+		}
+	}
+	if len(flatOnly) > 0 || len(idxOnly) > 0 {
+		t.Errorf("the flattener and the index split words at different names: flattener only %v, index only %v", flatOnly, idxOnly)
+	}
+	for _, n := range []string{"div", "p", "td", "dt", "dd", "pre"} {
+		if !flatSet[n] || !idxSet[n] {
+			t.Errorf("%q must split words on both sides (flattener %v, index %v)", n, flatSet[n], idxSet[n])
+		}
+	}
+}

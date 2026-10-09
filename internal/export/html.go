@@ -10,6 +10,7 @@ import (
 	"mime"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -1099,6 +1100,22 @@ var (
 		"pre": true, "ruby": true, "s": true, "small": true, "span": true, "strong": true, "strike": true,
 		"sub": true, "sup": true, "table": true, "tt": true, "u": true, "ul": true, "var": true}
 )
+
+// FlatBlockNames lists the names flatBlock leaves a word boundary for, sorted.
+// It exists for one test: the set must be the search index's blockElements
+// (listed by internal/index BlockElementNames), and neither package can see
+// the other's, so an external test of this package, which imports both,
+// compares the two lists (MA-477).
+func FlatBlockNames() []string {
+	var names []string
+	for name, block := range flatBlock {
+		if block {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
+}
 
 // renderNode serializes one parsed node. It is a variable only so a test can
 // inject a renderer that does not round-trip (fault injection for the
