@@ -458,49 +458,81 @@ type flatEl struct {
 
 // flattener models the tree builder's stack of open elements for flattenAt.
 // stack holds the elements whose start tag was written (plus the tbody/tr the
-// tree builder adds itself); dropped counts, by name, the open elements whose
-// start tag was not written. Dropped elements are always above every written
-// one: once one is open nothing else is written until it closes, and a pop of
-// a written element closes everything above it. open counts stack by name, so
-// a tag with nothing of its name open costs O(1) rather than a walk of a deep
-// stack (a mail of 480 divs and a million stray end tags must stay linear).
+// tree builder adds itself); drop holds, in the same order, the open elements
+// whose start tag was NOT written, which are always above every written one
+// (once one is open nothing else is written until it closes, and a pop of a
+// written element closes everything above it). The drop stack is kept in full
+// — not just counted — so the current node's namespace is known in the dropped
+// region too: an SVG/MathML container dropped past the depth cap still makes a
+// <style>/<script>/<title> inside it an ordinary foreign element (read as
+// markup, not raw text) rather than an HTML raw-text element that would swallow
+// the rest of the body when the page is re-parsed (and the index reads it
+// back). open and dropOpen count stack and drop by name, so a tag with nothing
+// of its name open costs O(1) rather than a walk of a deep stack, and a stray
+// end tag pops nothing (a mail of 480 divs and a million stray tags stays
+// linear; the drop stack's memory is linear in the input, as x/net's own would
+// be below its cap).
 type flattener struct {
 	limit    int
-	stack    []flatEl
-	open     map[string]int
-	dropped  map[string]int
-	nDropped int
+	stack    []flatEl       // written (kept) open elements
+	open     map[string]int // count of stack by name
+	drop     []flatEl       // dropped open elements, above every kept one
+	dropOpen map[string]int // count of drop by name
 }
 
+// top is the current node: the innermost open element, dropped or kept.
 func (f *flattener) top() *flatEl {
-	if len(f.stack) == 0 {
-		return nil
+	if n := len(f.drop); n > 0 {
+		return &f.drop[n-1]
 	}
-	return &f.stack[len(f.stack)-1]
+	if n := len(f.stack); n > 0 {
+		return &f.stack[n-1]
+	}
+	return nil
 }
 
-// popTo closes stack[i] and everything above it, dropped elements included.
+// popTo closes stack[i] and everything above it, dropped elements included
+// (the dropped elements are all above every kept one).
 func (f *flattener) popTo(i int) {
+	f.clearDrop()
 	for _, el := range f.stack[i:] {
 		f.open[el.name]--
 	}
 	f.stack = f.stack[:i]
-	if f.nDropped > 0 {
-		clear(f.dropped)
-		f.nDropped = 0
+}
+
+// clearDrop closes every open dropped element.
+func (f *flattener) clearDrop() {
+	if len(f.drop) == 0 {
+		return
 	}
+	f.drop = f.drop[:0]
+	clear(f.dropOpen)
+}
+
+// popDropTo closes drop[i] and every dropped element above it.
+func (f *flattener) popDropTo(i int) {
+	for _, el := range f.drop[i:] {
+		f.dropOpen[el.name]--
+	}
+	f.drop = f.drop[:i]
 }
 
 // push opens el (after the implied elements the tree builder adds before it)
-// and reports whether its start tag is written: not when an element is
-// already dropped or el would pass the limit.
+// and reports whether its start tag is written: not when an element is already
+// dropped or el would pass the limit. A dropped element goes on the drop stack
+// so its namespace and nesting stay known.
 func (f *flattener) push(el flatEl, implied ...flatEl) bool {
-	if f.nDropped > 0 || len(f.stack)+len(implied)+1 > f.limit {
-		if f.dropped == nil {
-			f.dropped = map[string]int{}
+	if len(f.drop) > 0 || len(f.stack)+len(implied)+1 > f.limit {
+		if f.dropOpen == nil {
+			f.dropOpen = map[string]int{}
 		}
-		f.dropped[el.name]++
-		f.nDropped++
+		for _, p := range implied {
+			f.dropOpen[p.name]++
+			f.drop = append(f.drop, p)
+		}
+		f.dropOpen[el.name]++
+		f.drop = append(f.drop, el)
 		return false
 	}
 	if f.open == nil {
@@ -515,14 +547,19 @@ func (f *flattener) push(el flatEl, implied ...flatEl) bool {
 	return true
 }
 
-// closeDropped closes an open dropped element named name, if there is one.
+// closeDropped closes the nearest open dropped element named name (and every
+// dropped element above it), if there is one.
 func (f *flattener) closeDropped(name string) bool {
-	if f.dropped[name] == 0 {
+	if f.dropOpen[name] == 0 {
 		return false
 	}
-	f.dropped[name]--
-	f.nDropped--
-	return true
+	for i := len(f.drop) - 1; i >= 0; i-- {
+		if f.drop[i].name == name {
+			f.popDropTo(i)
+			return true
+		}
+	}
+	return false
 }
 
 // closeIn closes the nearest open HTML element named a unless a scope
@@ -582,13 +619,27 @@ func (f *flattener) start(z *xhtml.Tokenizer, a atom.Atom, name string, hasAttr,
 		}
 		// A breakout tag leaves foreign content: close up to the nearest HTML
 		// element or integration point, then treat the tag as HTML.
-		i := len(f.stack) - 1
-		for i >= 0 && f.stack[i].ns != "" && !f.stack[i].htmlIP && !f.stack[i].mathTIP {
-			i--
-		}
-		f.popTo(i + 1)
+		f.breakoutForeign()
 	}
 	return f.startHTML(z, a, name, selfClosing)
+}
+
+// breakoutForeign closes the open foreign elements down to the nearest HTML
+// element or integration point, across the drop stack and the kept stack (the
+// dropped elements are all above the kept ones), as x/net does before it reads
+// a breakout tag.
+func (f *flattener) breakoutForeign() {
+	for {
+		t := f.top()
+		if t == nil || t.ns == "" || t.htmlIP || t.mathTIP {
+			return
+		}
+		if n := len(f.drop); n > 0 {
+			f.popDropTo(n - 1)
+		} else {
+			f.popTo(len(f.stack) - 1)
+		}
+	}
 }
 
 // foreignRules reports whether a start tag a is handled by the tree builder's
@@ -637,7 +688,10 @@ func (f *flattener) startHTML(z *xhtml.Tokenizer, a atom.Atom, name string, self
 		}
 	case atom.Table:
 		// A table directly in a table (not in a cell) closes the outer one.
-		for i := len(f.stack) - 1; i >= 0 && f.open["table"] > 0; i-- {
+		// Skip the restructuring in the dropped region: a dropped table drops
+		// the new one too (push routes to drop), and popTo here would wrongly
+		// clear the drop stack.
+		for i := len(f.stack) - 1; len(f.drop) == 0 && i >= 0 && f.open["table"] > 0; i-- {
 			s := f.stack[i]
 			if s.ns != "" {
 				continue
@@ -666,7 +720,20 @@ func (f *flattener) startHTML(z *xhtml.Tokenizer, a atom.Atom, name string, self
 // a table (or template) the tree builder ignores the tag.
 func (f *flattener) startTablePart(el flatEl) bool {
 	if f.open["table"] == 0 && f.open["template"] == 0 {
+		if f.dropOpen["table"] > 0 || f.dropOpen["template"] > 0 {
+			// The enclosing table/template is dropped: the part drops too,
+			// leaving a block word boundary, never a stray <tr>/<td> that a
+			// re-parse ignores for lack of a table around it (so the words in
+			// adjacent cells would glue together, on the page and in the index).
+			return f.push(el)
+		}
 		return true // ignored by the tree builder: written, opens nothing
+	}
+	if len(f.drop) > 0 {
+		// A kept table is open but the current node is dropped: the part drops
+		// into the dropped region (a boundary), never through the kept-stack
+		// path below, which would clear the drop stack.
+		return f.push(el)
 	}
 	ti := -1
 	for i := len(f.stack) - 1; i >= 0; i-- {
@@ -722,8 +789,12 @@ func (f *flattener) impliedEnds(a atom.Atom) {
 	case atom.Dd, atom.Dt:
 		f.closeItem(atom.Dd, atom.Dt)
 	case atom.H1, atom.H2, atom.H3, atom.H4, atom.H5, atom.H6:
-		if top := f.top(); top != nil && top.ns == "" && flatHeading[top.a] && f.nDropped == 0 {
-			f.popTo(len(f.stack) - 1)
+		if top := f.top(); top != nil && top.ns == "" && flatHeading[top.a] {
+			if len(f.drop) > 0 {
+				f.popDropTo(len(f.drop) - 1)
+			} else {
+				f.popTo(len(f.stack) - 1)
+			}
 		}
 	case atom.A, atom.Nobr, atom.Button, atom.Select:
 		f.closeIn(a, flatDefaultScope)
@@ -765,6 +836,17 @@ func (f *flattener) closeTop(a atom.Atom) {
 func (f *flattener) end(a atom.Atom, name string) bool {
 	if f.closeDropped(name) {
 		return false // its start tag was not written
+	}
+	if a == atom.P || a == atom.Br {
+		// </p> and </br> leave foreign content: the in-body rules read </br> as
+		// a <br> start tag and let a </p> with no <p> open imply one, and both
+		// are breakout tags, so no foreign element is ever named p or br. Without
+		// this, an SVG dropped past the cap stays open and a <style> after the
+		// stray </p> is read as a foreign (not raw-text) element, hiding the body
+		// after it on the page and in the rebuilt index (RV-3 on the deep path).
+		if top := f.top(); top != nil && top.ns != "" {
+			f.breakoutForeign()
+		}
 	}
 	switch a {
 	case atom.Html, atom.Head, atom.Body, atom.Br:
