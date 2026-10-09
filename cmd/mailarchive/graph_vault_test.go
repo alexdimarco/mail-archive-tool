@@ -38,7 +38,9 @@ func standInVault(t *testing.T, tenant, clientID string) graph.TokenStore {
 // vault is schedulable, the job carrying -auth device -token-cache; an empty
 // vault is refused naming the sign-in remedy even when an old signed-in file
 // sits at -token-cache (the run would fail from the empty vault), and the check
-// writes nothing to the vault or the file.
+// writes nothing to the vault or the file. The run side holds to the same
+// store: an unattended device run (runGraph) fails on the very vault entry the
+// check refuses, never falling back to the file.
 func TestScheduleDeviceJobChecksTheVault(t *testing.T) {
 	vault := standInVault(t, "contoso.com", "APPID")
 	primed := []byte(`{"upn":"a@contoso.com","token":{"refresh_token":"RT1"}}`)
@@ -78,4 +80,39 @@ func TestScheduleDeviceJobChecksTheVault(t *testing.T) {
 			after, ferr := os.ReadFile(cache)
 			return errors.Is(verr, os.ErrNotExist) && ferr == nil && bytes.Equal(after, primed)
 		}))
+
+	// The run resolves its store through the same seam. The stand-in now holds
+	// a sign-in that does not parse and no file sits at -token-cache, so an
+	// unattended device run that reads the vault fails on that entry exactly as
+	// the check does, while a run that read the file would fail with "no saved
+	// sign-in" instead. Neither loads a sign-in, so neither reaches the network.
+	// runGraph fills unset flags from the setup config under the OS config dir,
+	// pointed here at a temp dir.
+	for _, env := range []string{"HOME", "XDG_CONFIG_HOME", "APPDATA"} {
+		t.Setenv(env, t.TempDir())
+	}
+	torn := []byte(`{"upn":"a@contoso.com","tok`)
+	if err := vault.StoreToken(torn); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(cache); err != nil {
+		t.Fatal(err)
+	}
+	runErr := runGraph([]string{"-auth", "device", "-unattended", "-out", out, "-tenant", "contoso.com", "-client-id", "APPID",
+		"-token-cache", cache, "-log", filepath.Join(t.TempDir(), "graph.log")})
+	_, checkErr := parseJob(job)
+	for _, side := range []struct {
+		what string
+		err  error
+	}{{"the unattended run", runErr}, {"the schedule check", checkErr}} {
+		if side.err == nil || !strings.Contains(side.err.Error(), "not valid JSON") {
+			t.Errorf("%s did not read the stand-in vault (want its unparseable sign-in refused): %v", side.what, side.err)
+		}
+	}
+	if got, err := vault.LoadToken(); err != nil || !bytes.Equal(got, torn) {
+		t.Errorf("the run or the check rewrote the vault entry (%q, %v)", got, err)
+	}
+	if _, err := os.Stat(cache); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the run or the check wrote a -token-cache file (%v)", err)
+	}
 }
