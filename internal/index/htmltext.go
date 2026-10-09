@@ -264,12 +264,20 @@ func htmlSpace(b []byte) bool {
 //     NextIsNotRawText, as the parser tells it, and CDATA is allowed;
 //   - an HTML end tag closes the foreign content open above its element when
 //     the parser's in-body rules would (default scope for block end tags; the
-//     nearest special element for the rest).
+//     nearest special element for the rest), and `</br>` and `</p>` always
+//     leave it: the in-body rules read `</br>` as a <br> start tag and let a
+//     `</p>` with no <p> open imply one, and both are breakout tags;
+//   - a block tag's word boundary is written after the pops it causes, so a
+//     tag that closes a hiding element (an SVG <style>) shows its boundary.
 //
-// What it does not model — table insertion modes, implied end tags, the
-// adoption agency's reparenting — moves text or closes ordinary elements
-// without changing what is hidden, except in contrived markup; tracking stops
-// at maxOpenElements open elements.
+// What it does not model — table insertion modes, implied end tags, `</form>`
+// (which x/net takes off the stack without closing what is above it), the
+// adoption agency's reparenting, <frameset> — mostly moves text or closes
+// ordinary elements. In contrived markup it can still change what is hidden:
+// a random differential against the tree walk finds words hidden only here
+// after `</form>` or a misnested formatting end tag (`<a><p><svg><style></a>`)
+// with foreign content open, around a <frameset>, and in table modes around
+// foreign content. Tracking stops at maxOpenElements open elements.
 const maxOpenElements = 1 << 20
 
 func tokenText(h string, scripting bool) string {
@@ -521,22 +529,36 @@ func (w *tokenWalker) startTag(selfClosing bool) {
 			w.endHead()
 		}
 	}
-	if w.hidden == 0 && blockElements[name] {
-		w.sink.main.WriteByte(' ')
-	}
 	if w.inForeign(html.StartTagToken, name) {
 		_, color := attrs["color"]
 		_, face := attrs["face"]
 		_, size := attrs["size"]
 		if !breakout[name] && !(name == "font" && (color || face || size)) {
+			w.blockSpace(name)
 			w.foreignStart(name, selfClosing, attrs)
 			return
 		}
-		for t := w.top(); t != nil && t.ns != nsHTML && !t.ip && !t.mtip; t = w.top() {
-			w.pop()
-		}
+		w.breakOut()
 	}
+	w.blockSpace(name)
 	w.htmlStart(name, selfClosing)
+}
+
+// blockSpace writes the word boundary of a block element's tag, unless an open
+// element hides it. It is called after the tag's pops, so a boundary that
+// closes (or breaks out of) a hiding element is shown, as the tree shows it.
+func (w *tokenWalker) blockSpace(name string) {
+	if w.hidden == 0 && blockElements[name] {
+		w.sink.main.WriteByte(' ')
+	}
+}
+
+// breakOut pops the open foreign elements down to the nearest HTML element or
+// integration point, as x/net does before it reads a breakout tag.
+func (w *tokenWalker) breakOut() {
+	for t := w.top(); t != nil && t.ns != nsHTML && !t.ip && !t.mtip; t = w.top() {
+		w.pop()
+	}
 }
 
 func (w *tokenWalker) foreignStart(name string, selfClosing bool, attrs map[string]string) {
@@ -630,18 +652,24 @@ func (w *tokenWalker) endTag() {
 			return
 		}
 	}
-	if w.hidden == 0 && blockElements[name] {
-		w.sink.main.WriteByte(' ')
-	}
 	if w.inForeign(html.EndTagToken, name) {
 		// x/net: pop to the nearest element of that name within the top run of
-		// foreign elements; otherwise the HTML rules decide.
+		// foreign elements; otherwise the in-body rules decide. For `</br>` and
+		// `</p>` those leave the foreign content: `</br>` is read as a <br>
+		// start tag, and `</p>` either pops to an open <p> (below the foreign
+		// content) or implies a <p> start tag. <br> and <p> are breakout tags,
+		// so no foreign element ever has either name.
 		if j := lastIndex(w.foreignPos[name]); j >= 0 && j >= lastIndex(w.runs) {
 			w.popTo(j)
+			w.blockSpace(name)
 			return
+		}
+		if name == "br" || name == "p" {
+			w.breakOut()
 		}
 	}
 	w.htmlEnd(name)
+	w.blockSpace(name)
 }
 
 func (w *tokenWalker) htmlEnd(name string) {
@@ -651,7 +679,8 @@ func (w *tokenWalker) htmlEnd(name string) {
 			w.popTo(j)
 		}
 	case "head", "body", "html", "br":
-		// ignored in the body (`</br>` is a <br>: a word boundary, written above)
+		// ignored in the body (`</br>` is a <br>: a word boundary, written by
+		// the caller)
 	case "h1", "h2", "h3", "h4", "h5", "h6":
 		j := -1
 		for _, h := range [...]string{"h1", "h2", "h3", "h4", "h5", "h6"} {

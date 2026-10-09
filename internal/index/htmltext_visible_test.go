@@ -200,10 +200,11 @@ func TestBodyTextIndexesBodyAfterUnclosedHead(t *testing.T) {
 // <style>/<script> inside SVG/MathML, and a head skip that only `</head>` ended.
 // It keeps a per-element stack (only `</style>` ends an SVG style, only
 // `</script>` an SVG script, and a head ends at body content), tracks foreign
-// content (integration points, breakout tags, HTML end tags that close it) and
-// tells the tokenizer when a raw-text name inside foreign content is not raw
-// text. Each fixture is proven to reach the fallback (the tree parser refuses
-// it).
+// content (integration points, breakout tags, HTML end tags that close it,
+// including a stray `</p>` or `</br>`, which x/net's in-body rules turn into a
+// breakout start tag) and tells the tokenizer when a raw-text name inside
+// foreign content is not raw text. Each fixture is proven to reach the
+// fallback (the tree parser refuses it).
 func TestBodyTextFallbackForDeepBodiesKeepsVisibleWords(t *testing.T) {
 	const depth = 600
 	cases := []visCase{
@@ -250,6 +251,38 @@ func TestBodyTextFallbackForDeepBodiesKeepsVisibleWords(t *testing.T) {
 			html:   deepWrap(depth, `<math><mi><style>mathcss</style>mathshown</mi></math><p>mathafter</p>`),
 			want:   []string{"mathshown", "mathafter"},
 			absent: []string{"mathcss"},
+		},
+		{
+			// x/net hands an unmatched `</p>` in foreign content to the in-body
+			// rules, which imply a <p>: a breakout tag. So the SVG closes, the
+			// <style> after it is HTML, and the paragraph is shown.
+			name: "`</p>` with no <p> open breaks out of SVG, deep (adv2 rv5/mkbr.py)",
+			html: deepWrap(depth, `<p>Hello brvisibleone</p><svg width=0 height=0></p><style><!--</style><p>please wire funds to brhiddenp today</p>--></style></svg><p>brtailone</p>`),
+			want: []string{"brvisibleone", "wire", "brhiddenp", "today", "brtailone"},
+		},
+		{
+			// `</br>` is read as a <br> start tag, also a breakout tag.
+			name: "`</br>` breaks out of SVG, deep (adv2 rv5/mkbr.py)",
+			html: deepWrap(depth, `<p>Hello brvisibletwo</p><svg width=0 height=0></br><style><!--</style><p>please wire funds to brhiddenbr today</p>--></style></svg><p>brtailtwo</p>`),
+			want: []string{"brvisibletwo", "brhiddenbr", "brtailtwo"},
+		},
+		{
+			// A breakout tag, or an HTML end tag, pops a hiding SVG <style>, and
+			// the block boundary of that tag is shown: the words on either side
+			// stay two words, as in the tree.
+			name:   "a tag that closes a hiding SVG style keeps its word boundary, deep",
+			html:   deepWrap(depth, `<p>alpha<svg><style>brcss</br>bravo</p><p>charlie<svg><style>brcss2<p>delta</p><div>echo<svg><style>brcss3</div>foxtrot`),
+			want:   []string{"alpha", "bravo", "charlie", "delta", "echo", "foxtrot"},
+			absent: []string{"brcss", "brcss2", "brcss3", "alphabravo", "charliedelta", "echofoxtrot"},
+		},
+		{
+			// Positive twins: an unmatched end tag that is not p or br stays in
+			// the SVG, so its style still hides; and `</p>` at a foreignObject
+			// (an integration point) does not leave the outer SVG.
+			name:   "positive twin: other unmatched end tags stay in SVG, deep",
+			html:   deepWrap(depth, `<svg></div><style>svgdivcss</style><text>svgdivshown</text></svg><svg><foreignObject><svg></p><style>focss</style>fotextword</svg></foreignObject><style>outercss</style></svg>`),
+			want:   []string{"svgdivshown", "fotextword"},
+			absent: []string{"svgdivcss", "focss", "outercss"},
 		},
 		{
 			name:   "positive twin: HTML style, script and title stay out, deep",

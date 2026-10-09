@@ -19,7 +19,10 @@ import (
 // (adv2-scripts/mknohead.py) had no body words in the live index, but did after
 // a rebuild. Each word is now found once, on the live index and after a
 // rebuild, at ordinary depth and nested past the tree parser's cap (a page
-// shown as source, read by the fallback extractor on both sides). Positive
+// shown as source, read by the fallback extractor on both sides). So are the
+// words after an SVG that a stray `</p>` or `</br>` closes (adv2 rv5/mkbr.py):
+// the parser leaves foreign content there, so the <style> that follows is HTML
+// and the comment trick hides nothing; the fallback once missed that. Positive
 // twins: an ordinary mail's title, style and script words are found on neither
 // side, nor are a noscript's tag and attribute words, while its text is; a
 // noscript in the mail's explicit <head> (which the page keeps in its own head,
@@ -52,14 +55,20 @@ func TestLiveAndRebuiltIndexReadTheSameVisibleWords(t *testing.T) {
 		mk("head noscript", `<html><head><noscript><p>parheadnsword</p></noscript></head><body><p>parheadnsbody</p></body></html>`),
 		mk("deep hide", `<html><body>`+deep(`<p>Hello</p><svg><style><!--</style><script>--></style></svg><p>account deepkestreleleven today</p>`)+`</body></html>`),
 		mk("deep nohead", `<html><head><meta name="viewport" content="x"><body>`+deep(`<p>hello deepkestreltwelve</p>`)+`</body></html>`),
+		mk("deep p breakout", `<html><body>`+deep(`<p>Hello brvisibleone</p><svg width=0 height=0></p><style><!--</style><p>please wire funds to brhiddenp today</p>--></style></svg><p>brtailone</p>`)+`</body></html>`),
+		mk("deep br breakout", `<html><body>`+deep(`<p>Hello brvisibletwo</p><svg width=0 height=0></br><style><!--</style><p>please wire funds to brhiddenbr today</p>--></style></svg><p>brtailtwo</p>`)+`</body></html>`),
+		mk("shallow p breakout", `<html><body><p>Hello</p><svg width=0 height=0></p><style><!--</style><p>please wire funds to brshallowp today</p>--></style></svg></body></html>`),
+		mk("shallow br breakout", `<html><body><p>Hello</p><svg width=0 height=0></br><style><!--</style><p>please wire funds to brshallowbr today</p>--></style></svg></body></html>`),
 	})
 
 	want := map[string]int{
-		"kestreleleven": 1, "wire": 1, "skephidden": 1, "skepvisible": 1,
+		"kestreleleven": 1, "wire": 5, "skephidden": 1, "skepvisible": 1,
 		"kestreltwelve": 1, "kestrelthirteen": 1, "skepnoheadtitleword": 1,
 		"paribodyword": 1, "parinoscriptword": 1, "parheadnsbody": 1, "parheadnsword": 0,
 		"parititleword": 0, "paristyleword": 0, "pariscriptword": 0, "paribodystyle": 0, "paribodyscript": 0, "parinsaltword": 0,
 		"deepkestreleleven": 1, "deepkestreltwelve": 1,
+		"brvisibleone": 1, "brhiddenp": 1, "brtailone": 1, "brvisibletwo": 1, "brhiddenbr": 1, "brtailtwo": 1,
+		"brshallowp": 1, "brshallowbr": 1,
 	}
 	live := map[string]int{}
 	for q := range want {
@@ -71,8 +80,8 @@ func TestLiveAndRebuiltIndexReadTheSameVisibleWords(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Rebuild: %v", err)
 	}
-	if rep.Rebuilt != 9 {
-		t.Fatalf("rebuild report = %+v, want Rebuilt=9 (every page re-derived)", rep)
+	if rep.Rebuilt != 13 {
+		t.Fatalf("rebuild report = %+v, want Rebuilt=13 (every page re-derived)", rep)
 	}
 	for q, w := range want {
 		rebuilt := indexTotal(t, out, q)
