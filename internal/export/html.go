@@ -126,19 +126,55 @@ func RenderWith(m *model.Message, ctx RenderContext) (RenderResult, error) {
 	if isHTML {
 		unresolved = unresolvedInlineRefs([]byte(body))
 		headExtra, bodyAttrs, inner, fallback = sanitizeHTML(body)
-		if fallback != "" {
-			// Show the mail's ORIGINAL source (cid: references, not megabytes of
-			// base64), and put every inline image back in the attachment zip so
-			// nothing is lost when the body cannot be rendered.
-			consumed = map[int]bool{}
-			inner = plainFallback(source, fallback)
-		}
 	} else {
 		inner = `<pre class="plain">` + html.EscapeString(body) + `</pre>`
 	}
-	header := renderHeader(m, ctx, consumed)
-	out := fmt.Sprintf(docTemplate, html.EscapeString(displaySubject(m)), headExtra, header, bodyAttrs, inner)
-	return RenderResult{HTML: []byte(out), Consumed: consumed, Unresolved: unresolved, BodyFallback: fallback}, nil
+	page := assemblePage(m, ctx, consumed, headExtra, bodyAttrs, inner)
+	if isHTML && fallback == "" {
+		// The page wraps the body one level deeper than the tree sanitizeHTML
+		// checked (html > body > div.mailarchive-body), and a page too deep for
+		// the tree parser cannot be read back by `reindex -rebuild` (INT-1).
+		// Parse the page itself, in every reading a browser can make.
+		fallback = pageFallback(page)
+	}
+	if fallback != "" {
+		// Show the mail's ORIGINAL source (cid: references, not megabytes of
+		// base64), and put every inline image back in the attachment zip so
+		// nothing is lost when the body cannot be rendered. This page needs no
+		// parse check: around the template's shallow, closed markup every byte
+		// of the mail is escaped text inside one <pre>.
+		consumed = map[int]bool{}
+		page = assemblePage(m, ctx, consumed, "", "", plainFallback(source, fallback))
+	}
+	return RenderResult{HTML: []byte(page), Consumed: consumed, Unresolved: unresolved, BodyFallback: fallback}, nil
+}
+
+// assemblePage puts our header and the mail's sanitized pieces into the page
+// template.
+func assemblePage(m *model.Message, ctx RenderContext, consumed map[int]bool, headExtra, bodyAttrs, inner string) string {
+	return fmt.Sprintf(docTemplate, html.EscapeString(displaySubject(m)), headExtra, renderHeader(m, ctx, consumed), bodyAttrs, inner)
+}
+
+// pageFallback reports why an assembled page must not be written as HTML — ""
+// when it parses with x/net's default 512-element cap in every reading (the
+// scripting flag on, and off when the page holds a noscript tag) — so a page
+// the exporter writes is never too deep for the tree parser.
+func pageFallback(page string) string {
+	for _, scripting := range scriptingModes(page) {
+		if _, err := reparse(page, scripting); err != nil {
+			return parseFailure(err)
+		}
+	}
+	return ""
+}
+
+// parseFailure maps a parse error to the fallback reason: the parser's
+// nesting cap ("open stack of elements exceeds 512 nodes"), or anything else.
+func parseFailure(err error) string {
+	if strings.Contains(err.Error(), "exceeds") {
+		return FallbackTooDeep
+	}
+	return FallbackUnparseable
 }
 
 // sanitizeHTML parses the mail's HTML (a full document or a fragment — the
@@ -168,14 +204,14 @@ func RenderWith(m *model.Message, ctx RenderContext) (RenderResult, error) {
 // fallback reason is returned (and body is empty; RenderWith builds the
 // fallback from the un-embedded source).
 func sanitizeHTML(doc string) (headExtra, bodyAttrs, body, fallback string) {
-	root, err := xhtml.Parse(strings.NewReader(doc))
+	// Markup nested past flattenDepth loses its container tags (not its text)
+	// first, as a browser flattens past its own cap, so deep mail renders
+	// instead of failing the parser's 512-element cap (DIFF-FP-2).
+	root, err := xhtml.Parse(strings.NewReader(flattenDeep(doc)))
 	if err != nil {
-		// Unparseable bytes (or nesting past the parser's cap): show them as
-		// text rather than guess.
-		if strings.Contains(err.Error(), "exceeds") {
-			return "", "", "", FallbackTooDeep
-		}
-		return "", "", "", FallbackUnparseable
+		// Unparseable bytes (or nesting the flattener's model missed): show
+		// them as text rather than guess.
+		return "", "", "", parseFailure(err)
 	}
 	var headNode, bodyNode *xhtml.Node
 	var find func(n *xhtml.Node)
@@ -297,6 +333,502 @@ func (w *capWriter) WriteByte(c byte) error {
 }
 
 func (w *capWriter) String() string { return w.b.String() }
+
+// flattenDepth is how deep flattenDeep lets mail markup nest — open elements,
+// not counting html/head/body — before it stops writing container tags. The
+// page puts the mail body under html > body > div.mailarchive-body, so an
+// element at mail depth d sits at page depth d+3 and a void or raw-text leaf
+// inside it at d+4: with 480 the deepest page element is at 484, leaving 28 of
+// x/net's 512 levels for elements the tree builder adds that the flattener's
+// model does not track (reconstructed formatting elements, mostly). The page
+// check in RenderWith (pageFallback) is what guarantees an exported page
+// parses; flattening only makes deep mail render instead of falling back.
+const flattenDepth = 480
+
+// flattenDeep returns the mail's HTML with every container start and end tag
+// past flattenDepth dropped, keeping all text, comments, void elements and
+// raw-text elements (script, style, textarea, title, ...: one text token each,
+// so they never nest) — as Chromium keeps attaching content past its own 512
+// cap instead of refusing the page (DIFF-FP-2). Mail that never gets that deep
+// is returned unchanged, the same string. It is a single tokenizer pass with a
+// model of the tree builder's open-element stack (implied end tags, implied
+// tbody/tr, foreign content and its integration points, noscript read as
+// markup so the scripting-off reading is flattened too). The model is not the
+// tree builder and carries no safety: what it writes is parsed, neutralized
+// and re-checked like any mail, and an exported page is parsed once more as a
+// whole before it is accepted.
+func flattenDeep(doc string) string { return flattenAt(doc, flattenDepth) }
+
+func flattenAt(doc string, limit int) string {
+	z := xhtml.NewTokenizer(strings.NewReader(doc))
+	f := &flattener{limit: limit}
+	var out *strings.Builder
+	pos := 0 // bytes of doc covered by the tokens read so far (tokens are contiguous)
+	for {
+		top := f.top()
+		z.AllowCDATA(top != nil && top.ns != "") // as the parser does: CDATA only in foreign content
+		tt := z.Next()
+		if tt == xhtml.ErrorToken {
+			break
+		}
+		raw := z.Raw()
+		keep := true
+		switch tt {
+		case xhtml.StartTagToken, xhtml.SelfClosingTagToken:
+			keep = f.start(z, tt == xhtml.SelfClosingTagToken)
+		case xhtml.EndTagToken:
+			keep = f.end(z)
+		}
+		if !keep && out == nil {
+			out = &strings.Builder{}
+			out.Grow(len(doc))
+			out.WriteString(doc[:pos])
+		}
+		if keep && out != nil {
+			out.Write(raw)
+		}
+		pos += len(raw)
+	}
+	if out == nil {
+		return doc
+	}
+	out.WriteString(doc[pos:]) // bytes the tokenizer returned no token for (an unterminated tag at EOF)
+	return out.String()
+}
+
+// flatEl is one open element in flattener's model.
+type flatEl struct {
+	a       atom.Atom
+	name    string // lower-case tag name
+	ns      string // "" (HTML), "svg" or "math"
+	htmlIP  bool   // an HTML integration point: svg foreignObject/desc/title, math annotation-xml text/html
+	mathTIP bool   // a MathML text integration point: mi, mo, mn, ms, mtext
+}
+
+// flattener models the tree builder's stack of open elements for flattenAt.
+// stack holds the elements whose start tag was written (plus the tbody/tr the
+// tree builder adds itself); dropped counts, by name, the open elements whose
+// start tag was not written. Dropped elements are always above every written
+// one: once one is open nothing else is written until it closes, and a pop of
+// a written element closes everything above it. open counts stack by name, so
+// a tag with nothing of its name open costs O(1) rather than a walk of a deep
+// stack (a mail of 480 divs and a million stray end tags must stay linear).
+type flattener struct {
+	limit    int
+	stack    []flatEl
+	open     map[string]int
+	dropped  map[string]int
+	nDropped int
+}
+
+func (f *flattener) top() *flatEl {
+	if len(f.stack) == 0 {
+		return nil
+	}
+	return &f.stack[len(f.stack)-1]
+}
+
+// popTo closes stack[i] and everything above it, dropped elements included.
+func (f *flattener) popTo(i int) {
+	for _, el := range f.stack[i:] {
+		f.open[el.name]--
+	}
+	f.stack = f.stack[:i]
+	if f.nDropped > 0 {
+		clear(f.dropped)
+		f.nDropped = 0
+	}
+}
+
+// push opens el (after the implied elements the tree builder adds before it)
+// and reports whether its start tag is written: not when an element is
+// already dropped or el would pass the limit.
+func (f *flattener) push(el flatEl, implied ...flatEl) bool {
+	if f.nDropped > 0 || len(f.stack)+len(implied)+1 > f.limit {
+		if f.dropped == nil {
+			f.dropped = map[string]int{}
+		}
+		f.dropped[el.name]++
+		f.nDropped++
+		return false
+	}
+	if f.open == nil {
+		f.open = map[string]int{}
+	}
+	for _, p := range implied {
+		f.open[p.name]++
+	}
+	f.open[el.name]++
+	f.stack = append(f.stack, implied...)
+	f.stack = append(f.stack, el)
+	return true
+}
+
+// closeDropped closes an open dropped element named name, if there is one.
+func (f *flattener) closeDropped(name string) bool {
+	if f.dropped[name] == 0 {
+		return false
+	}
+	f.dropped[name]--
+	f.nDropped--
+	return true
+}
+
+// closeIn closes the nearest open HTML element named a unless a scope
+// boundary comes first (the tree builder's "has an element in scope").
+func (f *flattener) closeIn(a atom.Atom, boundary func(flatEl) bool) {
+	if f.closeDropped(a.String()) || f.open[a.String()] == 0 {
+		return
+	}
+	for i := len(f.stack) - 1; i >= 0; i-- {
+		el := f.stack[i]
+		if el.ns == "" && el.a == a {
+			f.popTo(i)
+			return
+		}
+		if boundary(el) {
+			return
+		}
+	}
+}
+
+func (f *flattener) start(z *xhtml.Tokenizer, selfClosing bool) bool {
+	nameB, hasAttr := z.TagName()
+	a := atom.Lookup(nameB)
+	name := string(nameB)
+	if top := f.top(); top != nil && top.ns != "" && f.foreignRules(top, a) {
+		breaks := flatBreakout[name]
+		if a == atom.Font && hasAttr {
+			for more := true; more && !breaks; {
+				var k []byte
+				k, _, more = z.TagAttr()
+				switch string(k) {
+				case "color", "face", "size":
+					breaks = true
+				}
+			}
+		}
+		if !breaks {
+			// A foreign element: a raw-text name is an element here, and a
+			// self-closing tag closes itself.
+			z.NextIsNotRawText()
+			if selfClosing {
+				return true
+			}
+			el := flatEl{a: a, name: name, ns: top.ns}
+			switch {
+			case el.ns == "svg" && (a == atom.Foreignobject || a == atom.Desc || a == atom.Title):
+				el.htmlIP = true
+			case el.ns == "math" && (a == atom.Mi || a == atom.Mo || a == atom.Mn || a == atom.Ms || a == atom.Mtext):
+				el.mathTIP = true
+			case el.ns == "math" && a == atom.AnnotationXml && hasAttr:
+				for more := true; more; {
+					var k, v []byte
+					k, v, more = z.TagAttr()
+					if string(k) == "encoding" && (strings.EqualFold(string(v), "text/html") || strings.EqualFold(string(v), "application/xhtml+xml")) {
+						el.htmlIP = true
+					}
+				}
+			}
+			return f.push(el)
+		}
+		// A breakout tag leaves foreign content: close up to the nearest HTML
+		// element or integration point, then treat the tag as HTML.
+		i := len(f.stack) - 1
+		for i >= 0 && f.stack[i].ns != "" && !f.stack[i].htmlIP && !f.stack[i].mathTIP {
+			i--
+		}
+		f.popTo(i + 1)
+	}
+	return f.startHTML(z, a, name, selfClosing)
+}
+
+// foreignRules reports whether a start tag a is handled by the tree builder's
+// foreign-content rules when top is the current node (parse.go
+// inForeignContent).
+func (f *flattener) foreignRules(top *flatEl, a atom.Atom) bool {
+	switch {
+	case top.mathTIP && a != atom.Mglyph && a != atom.Malignmark:
+		return false
+	case top.ns == "math" && top.a == atom.AnnotationXml && a == atom.Svg:
+		return false
+	case top.htmlIP:
+		return false
+	}
+	return true
+}
+
+func (f *flattener) startHTML(z *xhtml.Tokenizer, a atom.Atom, name string, selfClosing bool) bool {
+	switch a {
+	case atom.Html, atom.Head, atom.Body, atom.Frameset:
+		return true // merged into the document's own elements, or ignored: nothing opens
+	case atom.Svg, atom.Math:
+		if selfClosing {
+			return true
+		}
+		return f.push(flatEl{a: a, name: name, ns: name})
+	}
+	f.impliedEnds(a)
+	if flatVoid[a] || flatRawText[a] {
+		return true // a leaf: void, or one text token the tokenizer reads to its end tag
+	}
+	if a == atom.Noscript {
+		// Read noscript content as markup (the scripting-off reading, where its
+		// depth counts); to the scripting-on reading it stays one text node.
+		z.NextIsNotRawText()
+	}
+	el := flatEl{a: a, name: name}
+	switch a {
+	case atom.Form:
+		if f.open["form"] > 0 {
+			for _, open := range f.stack {
+				if open.ns == "" && open.a == atom.Form {
+					return true // a nested form start tag is ignored
+				}
+			}
+		}
+	case atom.Table:
+		// A table directly in a table (not in a cell) closes the outer one.
+		for i := len(f.stack) - 1; i >= 0 && f.open["table"] > 0; i-- {
+			s := f.stack[i]
+			if s.ns != "" {
+				continue
+			}
+			if s.a == atom.Td || s.a == atom.Th || s.a == atom.Caption || s.a == atom.Template {
+				break
+			}
+			if s.a == atom.Table || s.a == atom.Tbody || s.a == atom.Thead || s.a == atom.Tfoot || s.a == atom.Tr {
+				for j := i; j >= 0; j-- {
+					if f.stack[j].ns == "" && f.stack[j].a == atom.Table {
+						f.popTo(j)
+						break
+					}
+				}
+				break
+			}
+		}
+	case atom.Td, atom.Th, atom.Tr, atom.Tbody, atom.Thead, atom.Tfoot, atom.Caption, atom.Colgroup:
+		return f.startTablePart(el)
+	}
+	return f.push(el)
+}
+
+// startTablePart opens a table part where the tree builder would put it:
+// closing the open cell or row first and adding the implied tbody/tr. Outside
+// a table (or template) the tree builder ignores the tag.
+func (f *flattener) startTablePart(el flatEl) bool {
+	if f.open["table"] == 0 && f.open["template"] == 0 {
+		return true // ignored by the tree builder: written, opens nothing
+	}
+	ti := -1
+	for i := len(f.stack) - 1; i >= 0; i-- {
+		if s := f.stack[i]; s.ns == "" && (s.a == atom.Table || s.a == atom.Template) {
+			ti = i
+			break
+		}
+	}
+	if ti < 0 {
+		return true // ignored by the tree builder: written, opens nothing
+	}
+	if f.stack[ti].a == atom.Template {
+		return f.push(el) // template content takes table parts as they come
+	}
+	// The nearest row-group / row the new part goes into.
+	si := ti
+	for i := len(f.stack) - 1; i > ti; i-- {
+		s := f.stack[i]
+		if s.ns != "" {
+			continue
+		}
+		if (el.a == atom.Td || el.a == atom.Th) && (s.a == atom.Tr || s.a == atom.Tbody || s.a == atom.Thead || s.a == atom.Tfoot) ||
+			el.a == atom.Tr && (s.a == atom.Tbody || s.a == atom.Thead || s.a == atom.Tfoot) {
+			si = i
+			break
+		}
+	}
+	if si+1 < len(f.stack) {
+		f.popTo(si + 1)
+	}
+	parent := f.stack[si].a
+	switch {
+	case (el.a == atom.Td || el.a == atom.Th) && parent == atom.Table:
+		return f.push(el, flatEl{a: atom.Tbody, name: "tbody"}, flatEl{a: atom.Tr, name: "tr"})
+	case (el.a == atom.Td || el.a == atom.Th) && parent != atom.Tr:
+		return f.push(el, flatEl{a: atom.Tr, name: "tr"})
+	case el.a == atom.Tr && parent == atom.Table:
+		return f.push(el, flatEl{a: atom.Tbody, name: "tbody"})
+	}
+	return f.push(el)
+}
+
+// impliedEnds closes what the start tag a implies the end of: an open p, the
+// previous li / dd / dt / heading / option, an open a / nobr / button /
+// select.
+func (f *flattener) impliedEnds(a atom.Atom) {
+	if flatClosesP[a] {
+		f.closeIn(atom.P, flatButtonScope)
+	}
+	switch a {
+	case atom.Li:
+		f.closeItem(atom.Li, atom.Li)
+	case atom.Dd, atom.Dt:
+		f.closeItem(atom.Dd, atom.Dt)
+	case atom.H1, atom.H2, atom.H3, atom.H4, atom.H5, atom.H6:
+		if top := f.top(); top != nil && top.ns == "" && flatHeading[top.a] && f.nDropped == 0 {
+			f.popTo(len(f.stack) - 1)
+		}
+	case atom.A, atom.Nobr, atom.Button, atom.Select:
+		f.closeIn(a, flatDefaultScope)
+	case atom.Option:
+		f.closeTop(atom.Option)
+	case atom.Optgroup:
+		f.closeTop(atom.Option)
+		f.closeTop(atom.Optgroup)
+	}
+}
+
+// closeItem closes the nearest open item (li, or dd/dt) unless a special
+// element other than address, div or p comes first.
+func (f *flattener) closeItem(x, y atom.Atom) {
+	if f.closeDropped(x.String()) || f.closeDropped(y.String()) || f.open[x.String()]+f.open[y.String()] == 0 {
+		return
+	}
+	for i := len(f.stack) - 1; i >= 0; i-- {
+		el := f.stack[i]
+		if el.ns == "" && (el.a == x || el.a == y) {
+			f.popTo(i)
+			return
+		}
+		if flatSpecial(el) && el.a != atom.Address && el.a != atom.Div && el.a != atom.P {
+			return
+		}
+	}
+}
+
+func (f *flattener) closeTop(a atom.Atom) {
+	if f.closeDropped(a.String()) {
+		return
+	}
+	if top := f.top(); top != nil && top.ns == "" && top.a == a {
+		f.popTo(len(f.stack) - 1)
+	}
+}
+
+func (f *flattener) end(z *xhtml.Tokenizer) bool {
+	nameB, _ := z.TagName()
+	a := atom.Lookup(nameB)
+	name := string(nameB)
+	if f.closeDropped(name) {
+		return false // its start tag was not written
+	}
+	switch a {
+	case atom.Html, atom.Head, atom.Body, atom.Br:
+		return true // </br> is a <br>; the others close nothing in the model
+	}
+	if f.open[name] == 0 {
+		return true // nothing of that name is open: the tree builder ignores it
+	}
+	tablePart := a == atom.Table || a == atom.Tbody || a == atom.Thead || a == atom.Tfoot || a == atom.Tr || a == atom.Td || a == atom.Th || a == atom.Caption || a == atom.Colgroup
+	for i := len(f.stack) - 1; i >= 0; i-- {
+		el := f.stack[i]
+		if el.name == name {
+			f.popTo(i)
+			return true
+		}
+		switch {
+		case tablePart:
+			if el.ns == "" && (el.a == atom.Table || el.a == atom.Template || el.a == atom.Html) {
+				return true
+			}
+		case flatFormatting[a] || flatSpecial(flatEl{a: a}):
+			if flatDefaultScope(el) {
+				return true
+			}
+		default:
+			if flatSpecial(el) {
+				return true // "any other end tag" stops at a special element
+			}
+		}
+	}
+	return true // unmatched: ignored by the tree builder (a </p> makes an empty p)
+}
+
+func flatDefaultScope(el flatEl) bool {
+	switch el.ns {
+	case "":
+		switch el.a {
+		case atom.Applet, atom.Caption, atom.Html, atom.Table, atom.Td, atom.Th, atom.Marquee, atom.Object, atom.Template, atom.Select:
+			return true
+		}
+		return false
+	case "math":
+		switch el.a {
+		case atom.AnnotationXml, atom.Mi, atom.Mn, atom.Mo, atom.Ms, atom.Mtext:
+			return true
+		}
+		return false
+	}
+	return el.a == atom.Desc || el.a == atom.Foreignobject || el.a == atom.Title
+}
+
+func flatButtonScope(el flatEl) bool {
+	return flatDefaultScope(el) || el.ns == "" && el.a == atom.Button
+}
+
+// flatSpecial mirrors x/net's isSpecialElement.
+func flatSpecial(el flatEl) bool {
+	switch el.ns {
+	case "":
+		return flatSpecialHTML[el.a]
+	case "math":
+		switch el.a {
+		case atom.Mi, atom.Mo, atom.Mn, atom.Ms, atom.Mtext, atom.AnnotationXml:
+			return true
+		}
+		return false
+	}
+	return el.a == atom.Foreignobject || el.a == atom.Desc || el.a == atom.Title
+}
+
+func atomSet(as ...atom.Atom) map[atom.Atom]bool {
+	m := make(map[atom.Atom]bool, len(as))
+	for _, a := range as {
+		m[a] = true
+	}
+	return m
+}
+
+var (
+	flatVoid = atomSet(atom.Area, atom.Base, atom.Basefont, atom.Bgsound, atom.Br, atom.Col, atom.Embed, atom.Frame,
+		atom.Hr, atom.Image, atom.Img, atom.Input, atom.Keygen, atom.Link, atom.Meta, atom.Param, atom.Source, atom.Track, atom.Wbr)
+	flatRawText = atomSet(atom.Iframe, atom.Noembed, atom.Noframes, atom.Plaintext, atom.Script, atom.Style,
+		atom.Textarea, atom.Title, atom.Xmp)
+	flatClosesP = atomSet(atom.Address, atom.Article, atom.Aside, atom.Blockquote, atom.Center, atom.Details, atom.Dialog,
+		atom.Dir, atom.Div, atom.Dl, atom.Fieldset, atom.Figcaption, atom.Figure, atom.Footer, atom.Header, atom.Hgroup,
+		atom.Main, atom.Menu, atom.Nav, atom.Ol, atom.P, atom.Search, atom.Section, atom.Summary, atom.Ul,
+		atom.H1, atom.H2, atom.H3, atom.H4, atom.H5, atom.H6, atom.Pre, atom.Listing, atom.Form, atom.Plaintext,
+		atom.Xmp, atom.Hr, atom.Li, atom.Dd, atom.Dt)
+	flatHeading    = atomSet(atom.H1, atom.H2, atom.H3, atom.H4, atom.H5, atom.H6)
+	flatFormatting = atomSet(atom.A, atom.B, atom.Big, atom.Code, atom.Em, atom.Font, atom.I, atom.Nobr, atom.S,
+		atom.Small, atom.Strike, atom.Strong, atom.Tt, atom.U)
+	flatSpecialHTML = atomSet(atom.Address, atom.Applet, atom.Area, atom.Article, atom.Aside, atom.Base, atom.Basefont,
+		atom.Bgsound, atom.Blockquote, atom.Body, atom.Br, atom.Button, atom.Caption, atom.Center, atom.Col,
+		atom.Colgroup, atom.Dd, atom.Details, atom.Dir, atom.Div, atom.Dl, atom.Dt, atom.Embed, atom.Fieldset,
+		atom.Figcaption, atom.Figure, atom.Footer, atom.Form, atom.Frame, atom.Frameset, atom.H1, atom.H2, atom.H3,
+		atom.H4, atom.H5, atom.H6, atom.Head, atom.Header, atom.Hgroup, atom.Hr, atom.Html, atom.Iframe, atom.Img,
+		atom.Input, atom.Keygen, atom.Li, atom.Link, atom.Listing, atom.Main, atom.Marquee, atom.Menu, atom.Meta,
+		atom.Nav, atom.Noembed, atom.Noframes, atom.Noscript, atom.Object, atom.Ol, atom.P, atom.Param, atom.Plaintext,
+		atom.Pre, atom.Script, atom.Section, atom.Select, atom.Source, atom.Style, atom.Summary, atom.Table,
+		atom.Tbody, atom.Td, atom.Template, atom.Textarea, atom.Tfoot, atom.Th, atom.Thead, atom.Title, atom.Tr,
+		atom.Track, atom.Ul, atom.Wbr, atom.Xmp)
+	// flatBreakout: start tags that leave foreign content (x/net foreign.go).
+	flatBreakout = map[string]bool{"b": true, "big": true, "blockquote": true, "body": true, "br": true,
+		"center": true, "code": true, "dd": true, "div": true, "dl": true, "dt": true, "em": true, "embed": true,
+		"h1": true, "h2": true, "h3": true, "h4": true, "h5": true, "h6": true, "head": true, "hr": true, "i": true,
+		"img": true, "li": true, "listing": true, "menu": true, "meta": true, "nobr": true, "ol": true, "p": true,
+		"pre": true, "ruby": true, "s": true, "small": true, "span": true, "strong": true, "strike": true,
+		"sub": true, "sup": true, "table": true, "tt": true, "u": true, "ul": true, "var": true}
+)
 
 // renderNode serializes one parsed node. It is a variable only so a test can
 // inject a renderer that does not round-trip (fault injection for the
