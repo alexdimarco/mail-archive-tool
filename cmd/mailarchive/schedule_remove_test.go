@@ -137,9 +137,11 @@ func TestScheduleRemoveTargetsTheNamedEntry(t *testing.T) {
 // for a backup under any -name — so `-name NAME -out X -remove` leaves it, names
 // its path and the remedy, and `status` keeps reporting it. Through the real
 // binary (sandboxed scheduler): a backup under a custom -name has its
-// descriptor cut short and is removed: the entry is gone, the descriptor is
+// descriptor cut short — or, in a second leg, rewritten with a name outside the
+// -name grammar — and is removed: the entry is gone, the descriptor is
 // byte-identical, stdout names the file, "delete it" and -install, and `status`
-// (on a folder with no manifest or run record yet) reports the file and its
+// (on a folder with no manifest or run record yet) reports the file, the
+// reader's own cause ("is unreadable", "names an invalid schedule") and its
 // remedy instead of refusing it as "no archive" or saying no schedule is
 // recorded. A backup under the archive's default name, its descriptor cut
 // short, is removed by `-out X -remove` together with the descriptor, and
@@ -177,14 +179,23 @@ func TestScheduleRemoveNamesAnUnreadableDescriptorItLeaves(t *testing.T) {
 		t.Errorf("a removal that left nothing behind names a leftover:\n%s", stdout)
 	}
 
+	cutShort := func(string) []byte { return broken }
+	// A hand edit that keeps the JSON but puts a name outside the -name grammar.
+	invalidName := func(out string) []byte {
+		return []byte(fmt.Sprintf(`{"version":1,"name":"bad name","interval":"daily","at":"02:00","exe":"/usr/local/bin/mailarchive","job":["-out",%q]}`, out))
+	}
+	removeCustom := func(out string) []string { return []string{"schedule", "-name", custom, "-out", out, "-remove"} }
 	for _, leg := range []struct {
 		name    string
 		install string // -name at install ("" = the archive's default)
+		damage  func(out string) []byte
+		cause   string // the reader's own wording, which status prints
 		remove  func(out string) []string
 		goes    bool // the unreadable descriptor goes with the removal
 	}{
-		{"custom -name", custom, func(out string) []string { return []string{"schedule", "-name", custom, "-out", out, "-remove"} }, false},
-		{"default -name", "", func(out string) []string { return []string{"schedule", "-out", out, "-remove"} }, true},
+		{"custom -name", custom, cutShort, "is unreadable", removeCustom, false},
+		{"custom -name, invalid name", custom, invalidName, "names an invalid schedule", removeCustom, false},
+		{"default -name", "", cutShort, "is unreadable", func(out string) []string { return []string{"schedule", "-out", out, "-remove"} }, true},
 	} {
 		t.Run(leg.name, func(t *testing.T) {
 			out := t.TempDir()
@@ -195,8 +206,12 @@ func TestScheduleRemoveNamesAnUnreadableDescriptorItLeaves(t *testing.T) {
 			}
 			assure.Reached(t, schedule.Query(name) == schedule.Installed, "fixture: "+name+" installed")
 			path := filepath.Join(out, schedule.DescriptorName)
+			broken := leg.damage(out)
 			if err := os.WriteFile(path, broken, 0o644); err != nil {
 				t.Fatal(err)
+			}
+			if _, err := schedule.ReadDescriptor(out); err == nil || !strings.Contains(err.Error(), leg.cause) {
+				t.Fatalf("fixture: the descriptor should fail to read with %q, got %v", leg.cause, err)
 			}
 
 			code, stdout, stderr := runCLIOut(t, leg.remove(out)...)
@@ -230,7 +245,7 @@ func TestScheduleRemoveNamesAnUnreadableDescriptorItLeaves(t *testing.T) {
 			if code != 0 {
 				t.Fatalf("status refused the folder holding the leftover descriptor (exit %d): %s", code, stderr)
 			}
-			for _, want := range []string{path, "unreadable", "delete it"} {
+			for _, want := range []string{path, "unreadable", leg.cause, "delete it"} {
 				if !strings.Contains(stdout, want) {
 					t.Errorf("status does not name the leftover descriptor and its remedy (lacks %q):\n%s", want, stdout)
 				}
