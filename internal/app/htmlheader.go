@@ -77,70 +77,107 @@ func readArchivedHTML(data []byte) (*model.Message, int) {
 	// body div: read the header fields from the shallow part, and hand the body
 	// bytes to the indexer as they are (its text extraction is a tokenizer pass
 	// with no depth limit).
-	if prefix, body, ok := splitAtBodyDiv(data); ok {
-		if root, perr := xhtml.Parse(strings.NewReader(prefix + `<div class="mailarchive-body"></div></body></html>`)); perr == nil {
-			m, unrecovered := readArchivedTree(data, root)
-			m.HTMLBody = body
-			return m, unrecovered
-		}
+	if root, body, ok := splitAtBodyDiv(data); ok {
+		m, unrecovered := readArchivedTree(data, root)
+		m.HTMLBody = body
+		return m, unrecovered
 	}
 	// Unparseable bytes: nothing recovered. The record is still indexed with
 	// empty fields (never dropped), and all three core fields are counted.
 	return &model.Message{}, 3
 }
 
-// splitAtBodyDiv tokenizes an exported page (no depth limit) and returns the
-// bytes before the renderer's `.mailarchive-body` div and the bytes after its
-// start tag. It anchors exactly as readArchivedTree does: the header is the
-// first <div class="mailarchive-header"> directly inside <body>, and the body
-// div is the next element after the header's matching end tag. Mail-supplied
-// head content (a <style>) is raw text to the tokenizer and cannot shadow
-// either; anything else returns ok=false.
-func splitAtBodyDiv(data []byte) (prefix, body string, ok bool) {
-	z := xhtml.NewTokenizer(bytes.NewReader(data))
-	off := 0
-	inBody, headerDepth, headerDone := false, 0, false
-	for {
-		tt := z.Next()
-		if tt == xhtml.ErrorToken {
-			return "", "", false // EOF or a tokenizer error before the body div
+// bodyDivOpen begins the renderer's body div start tag in every release
+// (`<div class="mailarchive-body"` + the mail body's own attributes + `>`).
+const bodyDivOpen = `<div class="mailarchive-body"`
+
+// splitAtBodyDiv splits a page too deep for the tree parser at the renderer's
+// body div. It returns the tree of the page up to the end of that div's start
+// tag (the head and the header: shallow) and the bytes after the tag (the mail
+// body, for the indexer's text pass, which has no depth limit).
+//
+// The split is chosen by the tree parser, never by a bare tokenizer: a
+// tokenizer reads <style> as raw text even inside <svg>, where the tree does
+// not, so mail head content could show it tags the tree reads as a comment,
+// and choose the split (RV-5). Every occurrence of bodyDivOpen in the bytes is
+// a candidate; candidate i is the split when data[:end of its tag] parses and,
+// in that tree, the header (anchorHeader) is followed directly by a live body
+// div: the candidate's own tag, which inside a comment or raw text is only
+// text. Mail on a v0.3.0+ page cannot wear the class, so the renderer's div is
+// the only live one and every candidate before it is text: "does not parse, or
+// is the split" is false before the renderer's candidate and true from it on,
+// and a binary search finds it in a logarithmic number of parses, however many
+// decoys a hostile head carries. The result is checked, never assumed; with no
+// split the page is unsplittable (ok=false).
+func splitAtBodyDiv(data []byte) (root *xhtml.Node, body string, ok bool) {
+	var ends []int // end offsets of the candidate start tags, ascending
+	for off := 0; ; {
+		i := bytes.Index(data[off:], []byte(bodyDivOpen))
+		if i < 0 {
+			break
 		}
-		raw := len(z.Raw())
-		tok := z.Token()
-		isDiv := tok.Data == "div"
-		switch {
-		case !inBody:
-			if tt == xhtml.StartTagToken && tok.Data == "body" {
-				inBody = true
-			}
-		case headerDone:
-			if tt == xhtml.TextToken && strings.TrimSpace(tok.Data) == "" {
-				break
-			}
-			if tt == xhtml.StartTagToken && isDiv && tokenHasClass(tok, "mailarchive-body") {
-				return string(data[:off]), string(data[off+raw:]), true
-			}
-			return "", "", false
-		case headerDepth == 0:
-			if tt == xhtml.TextToken && strings.TrimSpace(tok.Data) == "" {
-				break
-			}
-			if tt == xhtml.StartTagToken && isDiv && tokenHasClass(tok, "mailarchive-header") {
-				headerDepth = 1
-				break
-			}
-			return "", "", false
-		default:
-			if isDiv && tt == xhtml.StartTagToken {
-				headerDepth++
-			} else if isDiv && tt == xhtml.EndTagToken {
-				if headerDepth--; headerDepth == 0 {
-					headerDone = true
-				}
-			}
+		start := off + i
+		gt := bytes.IndexByte(data[start:], '>')
+		if gt < 0 {
+			break
 		}
-		off += raw
+		if end := start + gt + 1; len(ends) == 0 || end > ends[len(ends)-1] {
+			ends = append(ends, end)
+		}
+		off = start + len(bodyDivOpen)
 	}
+	probe := func(end int) (*xhtml.Node, bool) {
+		root, err := parsePrefix(data[:end])
+		if err != nil {
+			return nil, false
+		}
+		return root, bodyDivFollowsHeader(data, root)
+	}
+	lo, hi := 0, len(ends)
+	for lo < hi {
+		mid := lo + (hi-lo)/2
+		if root, split := probe(ends[mid]); root == nil || split {
+			hi = mid
+		} else {
+			lo = mid + 1
+		}
+	}
+	if lo == len(ends) {
+		return nil, "", false
+	}
+	if root, split := probe(ends[lo]); split {
+		return root, string(data[ends[lo]:]), true
+	}
+	return nil, "", false
+}
+
+// parsePrefix parses a page prefix for splitAtBodyDiv. It is a variable only so
+// a test can count the parses a split costs (the cost guard); production always
+// uses xhtml.Parse.
+var parsePrefix = func(b []byte) (*xhtml.Node, error) { return xhtml.Parse(bytes.NewReader(b)) }
+
+// bodyDivFollowsHeader reports whether, in a parsed page prefix, the page's
+// header is followed (whitespace aside) by a live div.mailarchive-body.
+func bodyDivFollowsHeader(data []byte, root *xhtml.Node) bool {
+	bodyEl := findFirst(root, func(n *xhtml.Node) bool { return n.Type == xhtml.ElementNode && n.Data == "body" })
+	if bodyEl == nil {
+		return false
+	}
+	header := anchorHeader(data, bodyEl)
+	if header == nil {
+		return false
+	}
+	next := nextElementSibling(header)
+	return next != nil && next.Data == "div" && hasClass(next, "mailarchive-body")
+}
+
+func nextElementSibling(n *xhtml.Node) *xhtml.Node {
+	for c := n.NextSibling; c != nil; c = c.NextSibling {
+		if c.Type == xhtml.ElementNode {
+			return c
+		}
+	}
+	return nil
 }
 
 // legacyHeaderSpan reports where a page written by v0.1.1–v0.2.3 carries the
@@ -195,19 +232,6 @@ func renderNodeString(n *xhtml.Node) string {
 	var b strings.Builder
 	_ = xhtml.Render(&b, n)
 	return b.String()
-}
-
-func tokenHasClass(t xhtml.Token, cls string) bool {
-	for _, a := range t.Attr {
-		if a.Key == "class" {
-			for _, c := range strings.Fields(a.Val) {
-				if c == cls {
-					return true
-				}
-			}
-		}
-	}
-	return false
 }
 
 // readArchivedTree recovers the index fields from a parsed exported page (see

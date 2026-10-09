@@ -8,6 +8,7 @@ import (
 
 	xhtml "golang.org/x/net/html"
 
+	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/model"
 )
@@ -80,5 +81,89 @@ func TestRebuildRecoversDeepAndFallbackPages(t *testing.T) {
 	r := firstResult(t, out, "needlebeta")
 	if r.Subject != "shown600 subject" || strings.Contains(r.Snippet, "&lt;") || strings.Contains(strings.ToLower(r.Snippet), "div") {
 		t.Errorf("fallback page must be indexed by the mail's words: subject=%q snippet=%q", r.Subject, r.Snippet)
+	}
+}
+
+// covers: MA-482, R13, R8, S33
+// A page too deep for the tree parser is split where the TREE parser would
+// split it, never where a bare tokenizer does. The tokenizer treats a <style>
+// as raw text even inside <svg>, where the tree does not, so mail head content
+// like <template><svg><style><!--</style>…--> showed the tokenizer tags that the
+// tree reads as a comment, and let a hostile mail choose the split on a 509-deep
+// page (RV-5): "early" split inside the head, losing subject/From/date and
+// indexing the real header as body text; "none" (a <plaintext>) found no split
+// at all. Both payloads (adv2 skgen.py "split") now rebuild with their subject,
+// sender, date and body, nothing forged and no header text in the body; so does
+// a head holding thousands of decoy body-div tags in raw text (the split is
+// found in a logarithmic number of parses), and a decoy inside the mail body,
+// after the real split, does not move it. The same early head on a 10-deep
+// page (the tree path) and a 509-deep page with no payload are the twins.
+func TestRebuildDeepPageSplitsWhereTheTreeDoes(t *testing.T) {
+	when := time.Date(2025, 4, 2, 11, 11, 0, 0, time.UTC)
+	early := `<template><svg><style><!--</style><body><div class="mailarchive-header"><div class="mailarchive-subject">SKFORGED</div><dl><dt>From</dt><dd>forged@evil.example</dd></dl></div><div class="mailarchive-body">--></style></svg></template>`
+	none := `<template><svg><style><!--</style><plaintext>--></style></svg></template>`
+	decoys := strings.Repeat(`<style><div class="mailarchive-body"></style>`+"\n", 4000) + early + "\n"
+	deepBody := func(depth int, word, needle string) string {
+		return "<p>" + word + "</p>" + strings.Repeat("<div>", depth) + "<p>" + needle + "</p>" + strings.Repeat("</div>", depth)
+	}
+	page := func(name string, depth int, headExtra, preBody string) diskPage {
+		m := &model.Message{
+			Subject: "skep" + name + "subj deep", SenderName: name + " Sender", SenderEmail: "sk" + name + "@example.com",
+			To: "rcpt@example.com", Received: when, InternetMessageID: "skep-split-" + name + "@example.com",
+			TransportHeaders: "From: " + name + " Sender <sk" + name + "@example.com>\r\nX-Note: skeptransportword",
+		}
+		return diskPage{m, renderAA1(m, headExtra, preBody+deepBody(depth, "skep"+name+"word", "skep"+name+"needle"))}
+	}
+	pages := []diskPage{
+		page("ctl", 509, "", ""),
+		page("early", 509, early+"\n", ""),
+		page("none", 509, none+"\n", ""),
+		page("decoy", 509, decoys, `<p>skepdecoyleadword</p><style><div class="mailarchive-body"></style>`),
+		page("shallow", 10, early+"\n", ""),
+	}
+	for _, p := range pages[:4] {
+		if _, err := xhtml.Parse(bytes.NewReader(p.page)); err == nil {
+			t.Fatalf("fixture sanity: %q parses as a tree; it must be past the parser's cap", p.m.Subject)
+		}
+	}
+
+	// Cost guard: 4002 candidates on the decoy page, found by binary search in
+	// about log2(4002) ≈ 12 prefix parses (+1 to confirm), not one per decoy.
+	parses, parse := 0, parsePrefix
+	parsePrefix = func(b []byte) (*xhtml.Node, error) { parses++; return parse(b) }
+	got, _ := readArchivedHTML(pages[3].page)
+	parsePrefix = parse
+	if assure.Reached(t, parses, "prefix parses for the decoy page"); parses > 16 || got.Subject != pages[3].m.Subject {
+		t.Errorf("decoy page: %d prefix parses (want <= 16, logarithmic in the 4002 candidates), subject %q", parses, got.Subject)
+	}
+
+	for _, p := range pages {
+		got, unrecovered := readArchivedHTML(p.page)
+		if unrecovered != 0 || got.Subject != p.m.Subject || got.SenderEmail != p.m.SenderEmail || !got.Received.Equal(when) {
+			t.Errorf("%q read subject=%q sender=%q date=%v unrecovered=%d, want its own header and 0",
+				p.m.Subject, got.Subject, got.SenderEmail, got.Received, unrecovered)
+		}
+		if strings.Contains(got.HTMLBody, "skeptransportword") || strings.Contains(got.HTMLBody, "SKFORGED") {
+			t.Errorf("%q: header or head text indexed as body: %.200q", p.m.Subject, got.HTMLBody)
+		}
+	}
+
+	out := tmpDir(t)
+	buildOnDiskArchive(t, out, pages)
+	if rep := rebuildOnDisk(t, out, len(pages)); rep.Unrecovered != 0 {
+		t.Errorf("rebuild unrecovered-fields = %d, want 0", rep.Unrecovered)
+	}
+	want := map[string]int{"skforged": 0, "from:forged": 0, "skeptransportword": 0, "skepdecoyleadword": 1}
+	for _, name := range []string{"ctl", "early", "none", "decoy", "shallow"} {
+		want["skep"+name+"subj"], want["from:sk"+name], want["skep"+name+"word"], want["skep"+name+"needle"] = 1, 1, 1, 1
+	}
+	for q, n := range want {
+		if got := searchTotal(t, out, q); got != n {
+			t.Errorf("post-rebuild %q = %d, want %d", q, got, n)
+		}
+	}
+	r := firstResult(t, out, "skepearlyneedle")
+	if r.Subject != "skepearlysubj deep" || r.SenderEmail != "skearly@example.com" || !r.Date.Equal(when) {
+		t.Errorf("early page rebuilt as subject=%q sender=%q date=%v", r.Subject, r.SenderEmail, r.Date)
 	}
 }
