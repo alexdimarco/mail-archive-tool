@@ -312,7 +312,10 @@ func TestBodyTextFallbackForDeepBodiesKeepsVisibleWords(t *testing.T) {
 // inside an explicit <head> is not indexed, like the rest of that head: the
 // exporter moves the mail's head into the page's <head>, which `reindex
 // -rebuild` does not read, so indexing it would make the live index and the
-// rebuilt one disagree (R8). The fallback extractor reads noscript the same way.
+// rebuilt one disagree (R8). A head written on its own line after <html> (or
+// after a doctype and a comment) is still explicit. A noscript that starts a
+// body div is in an implied head when the div is parsed alone, as the rebuild
+// does, and is indexed. The fallback extractor reads noscript the same way.
 func TestBodyTextReadsNoscriptAsMarkup(t *testing.T) {
 	cases := []visCase{
 		{
@@ -331,6 +334,30 @@ func TestBodyTextReadsNoscriptAsMarkup(t *testing.T) {
 			html:   `<html><head><noscript><p>headnsword</p></noscript></head><body><p>bodyns</p></body></html>`,
 			want:   []string{"bodyns"},
 			absent: []string{"headnsword"},
+		},
+		{
+			// The usual layout puts a newline (and indentation) between <html>
+			// and <head>; the parser skips that whitespace, so the head is
+			// still explicit, and still kept out.
+			name:   "noscript in a newline-formatted explicit head stays out",
+			html:   "<html>\n<head>\n<noscript><p>nlheadnsword</p></noscript>\n</head>\n<body>\n<p>nlbodyword</p>\n</body>\n</html>",
+			want:   []string{"nlbodyword"},
+			absent: []string{"nlheadnsword"},
+		},
+		{
+			name: "noscript in a Litmus-style head (doctype, comment, indentation) stays out",
+			html: "<!DOCTYPE html>\n<!-- preheader -->\n<html lang=\"en\" xmlns=\"http://www.w3.org/1999/xhtml\">\n  <head>\n    <meta charset=\"utf-8\">\n" +
+				"    <noscript><p>litheadnsword</p></noscript>\n  </head>\n  <body>\n    <p>litbodyword</p>\n  </body>\n</html>",
+			want:   []string{"litbodyword"},
+			absent: []string{"litheadnsword"},
+		},
+		{
+			// The rebuild reads the page's body div, and a mail whose <body>
+			// starts with a noscript gives a div that does too; parsed alone,
+			// that noscript lands in an implied head, which is read.
+			name: "noscript at the start of a body div (an implied head) is indexed",
+			html: "\n<noscript><p>divstartnsword</p></noscript><p>divstartbody</p>",
+			want: []string{"divstartnsword", "divstartbody"},
 		},
 		{
 			name:   "style inside noscript stays out",

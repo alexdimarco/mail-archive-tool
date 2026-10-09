@@ -1,13 +1,16 @@
 package app
 
 import (
+	"fmt"
 	"io"
 	"log"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/model"
 )
 
@@ -92,5 +95,92 @@ func TestLiveAndRebuiltIndexReadTheSameVisibleWords(t *testing.T) {
 	r := firstResult(t, out, "kestreltwelve")
 	if r.Subject != "nohead ordinary" || !strings.Contains(r.Snippet, "kestreltwelve") {
 		t.Errorf("rebuilt nohead record: subject=%q snippet=%q", r.Subject, r.Snippet)
+	}
+}
+
+// parityArchive exports bodies as HTML mails (the live index reads each
+// original mail), then deletes search.db and rebuilds it from the pages. It
+// returns each query's hit count on both sides.
+func parityArchive(t *testing.T, bodies map[string]string, queries []string) (live, rebuilt map[string]int) {
+	t.Helper()
+	out := tmpDir(t)
+	date := time.Date(2025, 4, 3, 9, 0, 0, 0, time.UTC)
+	var msgs []rbMsg
+	n := 0
+	for subject, body := range bodies {
+		n++
+		msgs = append(msgs, rbMsg{[]string{"Inbox"}, &model.Message{
+			Subject: subject, SenderName: "Parity Sender", SenderEmail: "parity@example.com",
+			InternetMessageID: "<parity2-" + strconv.Itoa(n) + "@example.com>",
+			Received:          date.Add(time.Duration(n) * time.Minute),
+			HTMLBody:          body,
+		}})
+	}
+	buildRebuildArchive(t, out, msgs)
+	live = map[string]int{}
+	for _, q := range queries {
+		live[q] = indexTotal(t, out, q)
+	}
+	deleteSearchDB(t, out)
+	rep, err := Rebuild(out, log.New(io.Discard, "", 0))
+	if err != nil {
+		t.Fatalf("Rebuild: %v", err)
+	}
+	if rep.Rebuilt != len(bodies) {
+		t.Fatalf("rebuild report = %+v, want Rebuilt=%d (every page re-derived)", rep, len(bodies))
+	}
+	rebuilt = map[string]int{}
+	for _, q := range queries {
+		rebuilt[q] = indexTotal(t, out, q)
+	}
+	return live, rebuilt
+}
+
+// parityProblems lists each query whose count is not the wanted one, on the
+// live index or after the rebuild.
+func parityProblems(want map[string]int, live, rebuilt map[string]int) []string {
+	var problems []string
+	for q, w := range want {
+		if live[q] != w || rebuilt[q] != w {
+			problems = append(problems, fmt.Sprintf("search %q: live=%d rebuilt=%d, want %d on both", q, live[q], rebuilt[q], w))
+		}
+	}
+	sort.Strings(problems)
+	return problems
+}
+
+func keysOf(m map[string]int) []string {
+	var ks []string
+	for k := range m {
+		ks = append(ks, k)
+	}
+	return ks
+}
+
+// covers: MA-492, R8, R13
+// explicitHead decides which head is kept out of the live index, and the
+// decision must match what the rebuild can read. A head written the usual
+// way, on its own line after <html> (and after a doctype and a comment, as
+// Litmus-style templates have it), is still explicit: the exporter keeps it in
+// the page's own <head>, so its noscript text is found on neither side. A
+// mail whose explicit <body> starts with a noscript keeps that noscript at
+// the start of the page's body div, where the rebuild's own parse puts it in
+// an implied head; implied heads are read, so its text is found on both sides.
+func TestLiveAndRebuiltIndexAgreeOnHeadsAroundNoscript(t *testing.T) {
+	bodies := map[string]string{
+		"newline head": "<html>\n<head>\n<noscript><p>parnlheadns</p></noscript>\n</head>\n<body>\n<p>parnlbody</p>\n</body>\n</html>",
+		"litmus head": "<!DOCTYPE html>\n<!-- preheader -->\n<html lang=\"en\" xmlns=\"http://www.w3.org/1999/xhtml\">\n  <head>\n    <meta charset=\"utf-8\">\n" +
+			"    <noscript><p>parlitheadns</p></noscript>\n  </head>\n  <body>\n    <p>parlitbody</p>\n  </body>\n</html>",
+		"body starts with noscript": `<html><head><title>t</title></head><body><noscript><p>parbodystartns</p></noscript><p>parbodystartbody</p></body></html>`,
+	}
+	want := map[string]int{
+		"parnlheadns": 0, "parnlbody": 1,
+		"parlitheadns": 0, "parlitbody": 1,
+		"parbodystartns": 1, "parbodystartbody": 1,
+	}
+	live, rebuilt := parityArchive(t, bodies, keysOf(want))
+	assure.Reached(t, live["parnlbody"]+rebuilt["parnlbody"], "hits for an indexed body word")
+	for _, p := range parityProblems(want, live, rebuilt) {
+		t.Error(p)
 	}
 }

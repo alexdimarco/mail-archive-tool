@@ -40,10 +40,11 @@ var blockElements = map[string]bool{
 // Not indexed, because no reading of the page shows them: <title>, <style>,
 // <script> (HTML or SVG) and <template>. Not indexed either, for parity: an
 // explicit <head>, which the exporter moves into the page's own <head>, where
-// `reindex -rebuild` does not read (see explicitHead). A <noscript>'s content
-// elsewhere IS indexed, as markup: the archive ships no script, so a reader
-// with JavaScript off — and the mail client the mail was first read in — sees
-// it (see noscriptText). The conventions are those of the tokenizer this
+// `reindex -rebuild` does not read (see explicitHead, which also names the
+// one known drift: an implied head's noscript or noframes). A <noscript>'s
+// content elsewhere IS indexed, as markup: the archive ships no script, so a
+// reader with JavaScript off — and the mail client the mail was first read in
+// — sees it (see noscriptText). The conventions are those of the tokenizer this
 // replaces: whitespace collapses, entities are decoded, block elements
 // separate words, attribute values and comments are not text.
 //
@@ -178,15 +179,27 @@ func noscriptText(raw string) string {
 // and before-head modes on the leading tokens, so it decides exactly as the
 // tree builder does.
 //
-// The two heads are indexed differently on purpose, for search parity (R8).
-// The exporter places the mail's <head> children in the page's own <head>,
-// which `reindex -rebuild` never reads, so text the parser keeps in an explicit
-// head — the raw content of a <noscript> or <noframes>; everything else there
-// is skipped anyway — must not be indexed live either. An implied head holds
-// the leading head-only elements of a body; the
-// rebuild's body div starts the same way and its own parse implies the same
-// head, so an implied head is read by the ordinary element rules on both
-// sides.
+// The two heads are indexed differently, for search parity (R8), and the
+// split is only partly right. The exporter places the mail's <head> children,
+// implied or explicit, in the page's own <head>, which `reindex -rebuild`
+// never reads. So text the parser keeps in an explicit head — the raw content
+// of a <noscript> or <noframes>; everything else there is skipped anyway — is
+// not indexed live either. Leading whitespace, comments and a doctype do not
+// make a head implied (`<html>\n<head>` is explicit), as in the parser.
+//
+// An implied head is read by the ordinary element rules, because of what the
+// rebuild hands this extractor: the inner HTML of the page's body div, parsed
+// on its own. A mail whose <body> starts with a <noscript> gives a div that
+// starts with it too, the rebuild's parse puts that noscript in an implied
+// head, and the page shows it in the body. Skipping implied heads would lose
+// those words on rebuild. The live side reads the mail itself, though, and
+// there an implied head is not body content: a fragment that starts with a
+// text-bearing <noscript> or <noframes> (`<noscript><p>w</p></noscript><p>…`)
+// is indexed live, while the exporter moves it into the page's <head> and the
+// rebuild does not find it. That drift predates the tree walk. The extractor
+// cannot settle it, because both inputs are the same bytes. It needs the
+// rebuild to mark its input as body content (for example, by wrapping it in
+// <body>), and then every head can be skipped.
 func explicitHead(h string) bool {
 	z := html.NewTokenizer(strings.NewReader(h))
 	for {
