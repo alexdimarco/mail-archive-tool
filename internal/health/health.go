@@ -95,6 +95,20 @@ type Input struct {
 	ExeIsThis         bool
 	ThisHost          string
 
+	// The scheduled verify's own descriptor (.mailarchive-verify-schedule.json,
+	// owner ruling FB-4), written when `schedule` installs a verify: it carries
+	// the verify's cadence, so verify_stale is judged against the verify itself.
+	// HasVerifyDescriptorFile is true when the file exists (even if it cannot be
+	// read), HasVerifyDescriptor only when it loaded; VerifySchedState is what the
+	// host scheduler says about the name it records. A verify installed by an
+	// earlier release has no such file (an even older one recorded the verify in
+	// Desc, in the backup's place).
+	HasVerifyDescriptorFile bool
+	HasVerifyDescriptor     bool
+	VerifyDesc              schedule.Descriptor
+	VerifyDescErr           error
+	VerifySchedState        schedule.State
+
 	// LockHeld is the authoritative liveness signal: the archive lock dies
 	// with its process, so a "running" record whose lock is free belongs to a
 	// run that never finished (pid numbers are reused after a reboot).
@@ -230,9 +244,8 @@ func Assess(in Input, now time.Time) Report {
 
 	// Last verify: the archive's integrity verdict, from verify's own record.
 	// modified/missing is real corruption (RED); unrecorded-only is a coverage
-	// gap (WARN); a verify older than twice its own schedule cadence is stale
-	// (WARN) — only when the recorded schedule IS a verify schedule, so its
-	// cadence is known (UJ-A1).
+	// gap (WARN); a verify that has not run for more than twice its own
+	// schedule's cadence is stale (WARN, assessVerifySchedule).
 	if in.LastVerifyState == state.LastVerifyPresent && in.LastVerify.Status == state.VerifyDone {
 		lv := in.LastVerify
 		when := ""
@@ -245,10 +258,8 @@ func Assess(in Input, now time.Time) Report {
 		case lv.Unrecorded > 0:
 			r.warn("verify_unrecorded", fmt.Sprintf("the last verify (%s UTC) left %d file(s) with no recorded fixity — run `mailarchive verify -record -out %q` to baseline them", when, lv.Unrecorded, in.Out))
 		}
-		if isVerifyJob(in.Desc.Job) && lv.Finished != nil && now.Sub(*lv.Finished) > 2*IntervalOf(in.Desc.Interval) {
-			r.warn("verify_stale", fmt.Sprintf("the last verify was %s ago, more than twice the %s verify schedule period — schedule it, or run `mailarchive verify -out %q`", HumanAge(now.Sub(*lv.Finished)), in.Desc.Interval, in.Out))
-		}
 	}
+	assessVerifySchedule(&r, in, now)
 
 	// Go-back timeline coverage (design §3.4, X6). An absent log is not a
 	// problem (a one-shot local import has none; a live archive writes it on its
@@ -294,6 +305,71 @@ func Assess(in Input, now time.Time) Report {
 		}
 	}
 	return r
+}
+
+// assessVerifySchedule judges the scheduled verify against the cadence recorded
+// for the verify itself (UJ-A1, owner ruling FB-4), never the backup's. The
+// verify's own descriptor decides when it loads: a verify whose last run
+// finished more than twice its period ago is stale, and so is one that has
+// recorded no run in twice its period since it was installed. A run still
+// recorded as running is not judged (as the backup's staleness skips one). A
+// verify descriptor that exists but cannot be read is a WARN naming it and its
+// remedy, and gives no cadence. Without a readable one, a descriptor an older
+// release wrote for the verify in the backup's place still gives the cadence
+// (MA-155); a verify installed by an earlier release records none, so its
+// staleness is not judged — a guessed cadence would raise a false WARN.
+func assessVerifySchedule(r *Report, in Input, now time.Time) {
+	lv := in.LastVerify
+	done := in.LastVerifyState == state.LastVerifyPresent && lv.Status == state.VerifyDone && lv.Finished != nil
+	if in.HasVerifyDescriptor {
+		vd := in.VerifyDesc
+		period := IntervalOf(vd.Interval)
+		switch {
+		case done && now.Sub(*lv.Finished) > 2*period:
+			r.warn("verify_stale", fmt.Sprintf("the last verify was %s ago, more than twice the %s verify schedule period of %q — %s", HumanAge(now.Sub(*lv.Finished)), vd.Interval, vd.Name, verifyStaleRemedy(in)))
+		case in.LastVerifyState == state.LastVerifyAbsent && !vd.InstalledAt.IsZero() && now.Sub(vd.InstalledAt) > 2*period:
+			r.warn("verify_stale", fmt.Sprintf("no verify has run in the %s since the %s verify schedule %q was installed, more than twice its period — %s", HumanAge(now.Sub(vd.InstalledAt)), vd.Interval, vd.Name, verifyStaleRemedy(in)))
+		}
+		return
+	}
+	if in.VerifyDescErr != nil && !errors.Is(in.VerifyDescErr, os.ErrNotExist) {
+		r.warn("verify_descriptor_unreadable", in.VerifyDescErr.Error())
+	}
+	if isVerifyJob(in.Desc.Job) && done && now.Sub(*lv.Finished) > 2*IntervalOf(in.Desc.Interval) {
+		r.warn("verify_stale", fmt.Sprintf("the last verify was %s ago, more than twice the %s verify schedule period — schedule it, or run `mailarchive verify -out %q`", HumanAge(now.Sub(*lv.Finished)), in.Desc.Interval, in.Out))
+	}
+}
+
+// verifyStaleRemedy is what to do about a stale scheduled verify: put it back
+// with its recorded cadence, time and verify flags, aimed at this archive and
+// without -name, so it gets this archive's own entry name (on launchd and Task
+// Scheduler a -name another archive's verify shares is not detected and would
+// be taken over again, FB-4's residual) — or run a verify now. Every token of
+// the pasteable command is shell-quoted for the host's shell.
+func verifyStaleRemedy(in Input) string {
+	vd := in.VerifyDesc
+	toks := []string{"-interval", vd.Interval}
+	if !strings.Contains(vd.At, "?") { // ReadDescriptor parks an unreadable time as "??:??"
+		toks = append(toks, "-at", vd.At)
+	}
+	toks = append(toks, "-install", "--", "verify", "-out", in.Out)
+	for _, a := range vd.Job {
+		if a == "-record" || a == "-json" {
+			toks = append(toks, a)
+		}
+	}
+	reinstall := "`mailarchive schedule " + strings.Join(quoteTokens(toks, in.GOOS), " ") + "`"
+	why := "it has stopped running here"
+	goos := in.GOOS
+	if goos == "" {
+		goos = runtime.GOOS
+	}
+	switch goos {
+	case "linux", "freebsd", "openbsd", "netbsd":
+	default:
+		why = "it has stopped running, or another archive's verify installed under the same -name replaced it (on macOS and Windows a shared -name is not detected)"
+	}
+	return fmt.Sprintf("%s: re-install it with %s (no -name, so it has this archive's own entry), or run `mailarchive verify -out %q`", why, reinstall, in.Out)
 }
 
 // sameArchivePath reports whether two -out spellings name the same directory.
@@ -548,6 +624,19 @@ func Gather(out, nameOverride string) Input {
 	} else if nameOverride != "" {
 		in.SchedState = schedule.Query(nameOverride)
 	}
+
+	// The scheduled verify's own descriptor (FB-4): its cadence judges
+	// verify_stale, and the host scheduler is asked about the name it records.
+	if _, err := os.Lstat(filepath.Join(out, schedule.VerifyDescriptorName)); err == nil {
+		in.HasVerifyDescriptorFile = true
+	}
+	vd, vderr := schedule.ReadVerifyDescriptor(out)
+	in.VerifyDescErr = vderr
+	if vderr == nil {
+		in.HasVerifyDescriptor = true
+		in.VerifyDesc = vd
+		in.VerifySchedState = schedule.Query(vd.Name)
+	}
 	return in
 }
 
@@ -668,6 +757,16 @@ func Summary(in Input, rep Report) []string {
 	default:
 		lines = append(lines, "Schedule:   none recorded")
 	}
+	// The scheduled verify, from its own descriptor (FB-4); no line when none is
+	// recorded (a verify installed by an earlier release records none).
+	switch {
+	case in.HasVerifyDescriptor:
+		vd := in.VerifyDesc
+		lines = append(lines, fmt.Sprintf("Verify schedule: %q %s · %s at %s · runs %s · installed %s (UTC) on %s",
+			vd.Name, in.VerifySchedState, vd.Interval, vd.At, vd.Exe, vd.InstalledAt.UTC().Format("2006-01-02"), vd.Host))
+	case in.HasVerifyDescriptorFile:
+		lines = append(lines, "Verify schedule: (descriptor present but unreadable — see the posture below)")
+	}
 	lines = append(lines, fmt.Sprintf("Posture:    %s", rep.Posture))
 	for _, reason := range rep.Reasons {
 		lines = append(lines, "  "+reason)
@@ -696,6 +795,10 @@ type JSONReport struct {
 	LastRun     *JSONLastRun     `json:"last_run,omitempty"`
 	LastVerify  *JSONLastVerify  `json:"last_verify"` // verify's integrity verdict; null when none recorded
 	Schedule    *JSONSchedule    `json:"schedule,omitempty"`
+	// VerifySchedule is the scheduled verify from its own descriptor (FB-4), in
+	// the schedule facet's shape; omitted when none is recorded. A later,
+	// backward-compatible addition at version 2, like `extractable`.
+	VerifySchedule *JSONSchedule `json:"verify_schedule,omitempty"`
 }
 
 // JSONFixity is the fixity-coverage facet: how many records carry a digest
@@ -770,8 +873,8 @@ type JSONSchedule struct {
 
 // JSONVersion is the current JSONReport schema version. Bumped to 2 with the
 // addition of fixity, last_verify and reason_codes and the change of
-// last_run.finished to null-while-running. The `extractable` and `history`
-// objects are later, backward-compatible additions at version 2 — a new optional
+// last_run.finished to null-while-running. The `extractable`, `history` and
+// `verify_schedule` objects are later, backward-compatible additions at version 2 — a new optional
 // key changes no existing field's meaning, so a version-2 consumer that ignores
 // unknown keys is unaffected and the version is not bumped.
 const JSONVersion = 2
@@ -848,6 +951,16 @@ func JSON(in Input, rep Report) JSONReport {
 			At:       in.Desc.At,
 			Exe:      in.Desc.Exe,
 			Host:     in.Desc.Host,
+		}
+	}
+	if in.HasVerifyDescriptor {
+		doc.VerifySchedule = &JSONSchedule{
+			Name:     in.VerifyDesc.Name,
+			State:    in.VerifySchedState.String(),
+			Interval: in.VerifyDesc.Interval,
+			At:       in.VerifyDesc.At,
+			Exe:      in.VerifyDesc.Exe,
+			Host:     in.VerifyDesc.Host,
 		}
 	}
 	return doc

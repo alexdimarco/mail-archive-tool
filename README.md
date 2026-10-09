@@ -574,9 +574,10 @@ itself to migrate. It is informational and never changes the posture.
 The posture fails closed: a schedule with no run ever recorded, a run that never
 finished (crash, kill, power loss), a scheduled program that no longer exists or
 is not this binary, a last run older than twice the schedule period, a last
-verify that was not attested, a manifest that exists but cannot be read (a newer
-format, or corrupt), or a scheduler that cannot be queried all show up, each with
-its remedy. It exits 0 whenever it reports; the posture is the answer. For a
+verify that was not attested, a scheduled verify that has not run for twice its
+own period, a schedule descriptor that cannot be read, a manifest that exists
+but cannot be read (a newer format, or corrupt), or a scheduler that cannot be
+queried all show up, each with its remedy. It exits 0 whenever it reports; the posture is the answer. For a
 machine-readable form see [Machine-readable output](#machine-readable-output).
 
 ### Machine-readable output
@@ -587,9 +588,10 @@ prose.
 
 **`status -json` (version 2).** Top-level keys: `version`, `posture`, `reasons`,
 `reason_codes`, `out`, `messages`, `indexed`, `fillable`, `terminal`, `unknown`,
-`fixity`, `extractable`, `last_run`, `last_verify`, `schedule`. (`extractable` is
-a backward-compatible addition at version 2 — a new optional key, so a consumer
-that ignores unknown keys is unaffected and the version is not bumped.)
+`fixity`, `extractable`, `last_run`, `last_verify`, `schedule`,
+`verify_schedule`. (`extractable` and `verify_schedule` are backward-compatible
+additions at version 2 — new optional keys, so a consumer that ignores unknown
+keys is unaffected and the version is not bumped.)
 
 - `posture` is one of `GREEN` · `WARN` · `RED`.
 - `reasons` is the human WARN/RED lines; `reason_codes` is a **parallel** array
@@ -599,8 +601,9 @@ that ignores unknown keys is unaffected and the version is not bumped.)
   `lastrun_unreadable`, `never_ran`, `run_failed`, `auth_remedy`,
   `run_in_progress`, `run_stuck`, `run_never_finished`, `run_cancelled`,
   `stale`, `not_attested`, `verify_unrecorded`, `verify_stale`,
-  `descriptor_unreadable`, `no_schedule`, `moved_archive`, `other_host`,
-  `scheduler_unavailable`, `not_installed`, `exe_missing`, `exe_moved`.
+  `verify_descriptor_unreadable`, `descriptor_unreadable`, `no_schedule`,
+  `moved_archive`, `other_host`, `scheduler_unavailable`, `not_installed`,
+  `exe_missing`, `exe_moved`.
 - `fixity` is `{records, with_fixity}` (coverage, not integrity), or `null` when
   there is no manifest.
 - `extractable` is `{records, records_with_eml}` — how many records have a
@@ -614,6 +617,8 @@ that ignores unknown keys is unaffected and the version is not bumped.)
   unexpected, recorded, exit_code}` — or `null` when no verify has run.
 - `schedule` is `{name, state, interval, at, exe, host}` (present only when a
   schedule is recorded).
+- `verify_schedule` is the scheduled verify in the same shape, from its own
+  descriptor (present only when a verify schedule is recorded).
 
 `status` always exits 0: the posture is the answer, so read `posture` /
 `reason_codes` rather than the exit code.
@@ -938,11 +943,31 @@ and refuse it; on macOS and Windows the existing entry is not read back, so the
 second install silently replaces the first archive's verify. What `schedule`
 does check on every OS is the archive's own two descriptors: a verify under the
 name of the archive's backup (or a backup under the name of its verify) is
-refused, because it would replace that entry. `status` shows each
-archive's last verify (verdict and date) on its `Last verify` line, but it is
-not told a verify's own schedule, so it cannot warn when a scheduled verify
-stops running: check that date. Remove it with the same command,
-`-install` swapped for `-remove`. A verify installed under a `-name` of its own
+refused, because it would replace that entry.
+
+`status` watches a scheduled verify the way it watches the backup. The verify
+records its own descriptor, `<out>/.mailarchive-verify-schedule.json`, and
+`status` shows it on a `Verify schedule` line (`verify_schedule` in `-json`)
+beside each archive's `Last verify` line. It WARNs (`verify_stale`) when the
+last verify finished more than twice the verify's own period ago, or when no
+verify has run in twice that period since the verify was installed. The cadence
+is always the verify's, never the backup's.
+
+**What is not detected:** on launchd (macOS) and Task Scheduler (Windows)
+hosts, two archives that share one explicit `-name` are not detected at
+install: the second archive's verify silently replaces the first's entry,
+because `schedule` does not read those entries back. The archive that lost its
+verify then shows `verify_stale` once its last verify is older than twice its
+period. So leave `-name` out for a verify; each archive then has its own.
+
+A verify installed by an earlier release has no verify descriptor, so `status`
+cannot tell its cadence. It does not guess one, and so raises no `verify_stale`
+for it: re-run that verify's `-install` once so `status` can watch it. (An even
+older release recorded the verify in `.mailarchive-schedule.json` itself;
+`status` still judges that verify against the cadence recorded there.)
+
+Remove a scheduled verify with the same command, `-install` swapped for
+`-remove`; its descriptor goes with it. A verify installed under a `-name` of its own
 (an earlier version of this README passed `-name mailarchive-verify`) is removed
 the same way with that `-name` added before `--`; without it, `-remove` says
 which entry it did not find and points at that. If you point the verify at the

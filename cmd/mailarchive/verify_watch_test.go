@@ -2,30 +2,31 @@ package main
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
+	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/state"
 )
 
 // covers: MA-466, R18, R14, S29
-// OPEN GAP ENCODER (R18, X6; N11 — owner ruling pending). `status` should watch
-// a verify that `schedule` installed the way it watches the archive's backup:
-// once the last verify is older than twice the verify's own cadence, a WARN
-// (verify_stale) names the remedy. Today it cannot. A verify is its own
-// scheduler entry and records nothing archive-local (the descriptor records the
-// backup, friction #4), so status never learns the verify's cadence, and
-// verify_stale fires only for a descriptor an older release wrote for a verify
-// (MA-155). Closing this needs the owner's design ruling: a verify descriptor
-// (for example .mailarchive-verify-schedule.json) and its health semantics.
-// When that is built, REMOVE the t.Skip: the test then asserts it end to end —
-// a backup and a weekly verify installed through the real binary in the
-// sandboxed scheduler, the last verify finished 30 days ago, and `status -json`
-// carrying verify_stale — after the positive twin, a verify that ran a day ago
-// and is not stale.
+// `status` watches a verify that `schedule` installed the way it watches the
+// archive's backup (R18, X6; owner ruling FB-4): the verify records its own
+// descriptor (.mailarchive-verify-schedule.json, MA-457), and once the last
+// verify is older than twice that verify's own cadence a WARN (verify_stale)
+// names the remedy. End to end: a backup and a weekly verify installed through
+// the real binary in the sandboxed scheduler; the positive twin first, a verify
+// that ran a day ago is not stale; then the last verify finished 30 days ago
+// and `status -json` carries verify_stale. This was the open-gap encoder for
+// N11 until the verify descriptor was built; it is now a permanent guard. It is
+// also what an archive sees after another archive's verify took over a shared
+// -name on launchd or Task Scheduler (FB-4's residual, not detected at
+// install): its own verify stops running, and verify_stale follows.
 func TestStatusWarnsWhenAScheduledVerifyStops(t *testing.T) {
-	t.Skip("confirmed-open R18/X6 gap (N11): a verify installed by `schedule` records nothing archive-local, so status cannot know its cadence and verify_stale never fires for it; pending the owner's ruling on a verify descriptor and its health semantics. Un-skip when that is built.")
 	sandboxScheduler(t)
 	out := t.TempDir()
 	for _, args := range [][]string{
@@ -64,5 +65,79 @@ func TestStatusWarnsWhenAScheduledVerifyStops(t *testing.T) {
 	// The weekly verify stopped: its last run was 30 days ago.
 	if codes := reasonCodes(30 * 24 * time.Hour); !slices.Contains(codes, "verify_stale") {
 		t.Errorf("status does not warn that the scheduled weekly verify stopped (last verify 30 days ago); reason codes: %v", codes)
+	}
+}
+
+// covers: MA-458, R18, R14, S29
+// Through the real binary (sandboxed scheduler), `status` reads the verify's own
+// descriptor (owner ruling FB-4). Beside a backup and a weekly verify it prints
+// a `Verify schedule:` line naming the verify, its state and cadence, and
+// `status -json` carries `verify_schedule`. Once the backup is removed, the
+// folder (no manifest, no run record yet) is still reported for the verify it
+// records — never refused as "no archive" — and says no backup schedule is
+// recorded. A verify descriptor cut short is a WARN
+// (verify_descriptor_unreadable) naming the file and its remedy, and the line
+// says it is unreadable.
+func TestStatusNamesTheVerifySchedule(t *testing.T) {
+	sandboxScheduler(t)
+	out := t.TempDir()
+	derived := schedule.DefaultNameFor(out) + "-verify"
+	run := func(args ...string) string {
+		t.Helper()
+		code, stdout, stderr := runCLIOut(t, args...)
+		if code != 0 {
+			t.Fatalf("%v exited %d: %s%s", args, code, stdout, stderr)
+		}
+		return stdout
+	}
+	run("schedule", "-install", "--", "-out", out, "-auto")
+	run("schedule", "-interval", "weekly", "-at", "05:00", "-install", "--", "verify", "-out", out)
+	type facet struct {
+		Name, State, Interval, At string
+	}
+	statusJSON := func() (facet, []string) {
+		t.Helper()
+		var doc struct {
+			VerifySchedule *facet   `json:"verify_schedule"`
+			ReasonCodes    []string `json:"reason_codes"`
+		}
+		stdout := run("status", "-json", "-out", out)
+		if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
+			t.Fatalf("status -json is not valid JSON: %v\n%s", err, stdout)
+		}
+		if doc.VerifySchedule == nil {
+			return facet{}, doc.ReasonCodes
+		}
+		return *doc.VerifySchedule, doc.ReasonCodes
+	}
+	line := `Verify schedule: "` + derived + `" installed · weekly at 05:00`
+
+	if text := run("status", "-out", out); !strings.Contains(text, line) {
+		t.Errorf("status does not name the verify schedule (want %q):\n%s", line, text)
+	}
+	if got, _ := statusJSON(); got != (facet{Name: derived, State: "installed", Interval: "weekly", At: "05:00"}) {
+		t.Errorf("status -json verify_schedule = %+v, want the weekly verify %s", got, derived)
+	}
+
+	// Only the verify left: still reported, never "no archive".
+	run("schedule", "-out", out, "-remove")
+	text := run("status", "-out", out)
+	if !strings.Contains(text, line) || !strings.Contains(text, "Schedule:   none recorded") {
+		t.Errorf("with the backup removed, status does not report the verify alone:\n%s", text)
+	}
+
+	// Cut short: named with its remedy.
+	path := filepath.Join(out, schedule.VerifyDescriptorName)
+	if err := os.WriteFile(path, []byte("{\"version\":1,\"name\":"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	text = run("status", "-out", out)
+	for _, want := range []string{"Verify schedule: (descriptor present but unreadable", path, "delete it if no verify schedule"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("status does not report the unreadable verify descriptor (lacks %q):\n%s", want, text)
+		}
+	}
+	if got, codes := statusJSON(); got != (facet{}) || !slices.Contains(codes, "verify_descriptor_unreadable") {
+		t.Errorf("status -json for an unreadable verify descriptor: verify_schedule=%+v, reason codes %v", got, codes)
 	}
 }
