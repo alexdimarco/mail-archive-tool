@@ -20,7 +20,7 @@ import (
 // daily and the verify weekly, a verify that finished 10 days ago is not stale
 // (against the daily backup it would be) and one that finished 15 days ago is:
 // the WARN names the weekly period, the verify schedule and a pasteable
-// re-install of this archive's verify (its cadence, time and -record flag, no
+// re-install of this archive's verify (its cadence, time and -record and -json flags, no
 // -name; a time the descriptor could not parse is left out), and names a shared
 // -name as a cause only off cron hosts, where it is not detected. With the
 // verify daily and the backup weekly, one that finished 3 days
@@ -62,7 +62,7 @@ func TestVerifyStaleJudgedAgainstTheVerifySchedule(t *testing.T) {
 		in.GOOS = "darwin"
 		in.HasVerifyDescriptorFile, in.HasVerifyDescriptor = true, true
 		in.VerifyDesc = schedule.Descriptor{Version: 1, Name: verifyName, Interval: interval, At: "05:00",
-			Exe: "/usr/local/bin/mailarchive", Job: []string{"verify", "-out", "/a", "-unattended", "-record", "-log", "/a/" + verifyName + ".log"},
+			Exe: "/usr/local/bin/mailarchive", Job: []string{"verify", "-out", "/a", "-unattended", "-record", "-json", "-log", "/a/" + verifyName + ".log"},
 			Log: "/a/" + verifyName + ".log", InstalledAt: installed, Host: "box"}
 		in.VerifySchedState = schedule.Installed
 		return in
@@ -94,7 +94,7 @@ func TestVerifyStaleJudgedAgainstTheVerifySchedule(t *testing.T) {
 	reason := expect("weekly verify, last run 15 days ago", weekly15, true)
 	for _, want := range []string{
 		"15 days", "weekly verify schedule period", verifyName,
-		"`mailarchive schedule -interval weekly -at 05:00 -install -- verify -out /a -record`",
+		"`mailarchive schedule -interval weekly -at 05:00 -install -- verify -out /a -record -json`",
 		"another archive's verify", "`mailarchive verify -out \"/a\"`",
 	} {
 		if !strings.Contains(reason, want) {
@@ -110,8 +110,8 @@ func TestVerifyStaleJudgedAgainstTheVerifySchedule(t *testing.T) {
 	}
 	noTime := weekly15
 	noTime.VerifyDesc.At = "??:??"
-	if _, reason := staleReason(noTime); !strings.Contains(reason, "`mailarchive schedule -interval weekly -install -- verify -out /a -record`") {
-		t.Errorf("the re-install remedy carries an unparseable time:\n%s", reason)
+	if _, reason := staleReason(noTime); !strings.Contains(reason, "`mailarchive schedule -interval weekly -install -- verify -out /a -record -json`") {
+		t.Errorf("with an unparseable time, the re-install remedy is not the cadence and the verify's flags without -at:\n%s", reason)
 	}
 	daily3 := withVerify("daily", daysAgo(60))
 	daily3.Desc.Interval = "weekly"
