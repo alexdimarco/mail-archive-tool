@@ -2,6 +2,7 @@ package schedule
 
 import (
 	"os/exec"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -20,6 +21,12 @@ import (
 // -out also reads back (cronBlockOut) as the archive path, so the per-name
 // collision guard keeps recognising the archive's own block on re-install.
 func TestCronLineEscapesPercent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// cron is Unix-only, and an sh.exe a Windows runner may have on PATH
+		// (Git for Windows, MSYS) would re-split this quoting under its own
+		// command-line rules, not cron's or a Unix sh's.
+		t.Skip("cron runs only on Unix; a Windows sh.exe is not the shell cron hands this line to")
+	}
 	sh, err := exec.LookPath("sh")
 	if err != nil {
 		t.Skip("no POSIX sh on this host; cron runs only where sh exists")
