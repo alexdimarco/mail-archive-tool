@@ -66,6 +66,13 @@ CREATE TABLE IF NOT EXISTS meta(version INTEGER);`
 // snippet().
 const bodyColumn = 5
 
+// ErrNewerFormat is wrapped by Open's refusal of a search.db written by a
+// newer mailarchive (a stored format version above indexVersion). That refusal
+// names the file and the upgrade itself, so a caller can tell it from a
+// damaged file, whose remedy is the rebuild — which would replace a newer
+// index with an older one.
+var ErrNewerFormat = errors.New("written by a newer mailarchive")
+
 // Index is an open search index.
 type Index struct {
 	db      *sql.DB
@@ -113,7 +120,7 @@ func Open(path string) (*Index, error) {
 	}
 	if version > indexVersion {
 		db.Close()
-		return nil, fmt.Errorf("search index %s was written by a newer mailarchive (format version %d; this build understands %d): upgrade this copy of mailarchive, or point -out at an archive this version wrote", path, version, indexVersion)
+		return nil, fmt.Errorf("search index %s was %w (format version %d; this build understands %d): upgrade this copy of mailarchive, or point -out at an archive this version wrote", path, ErrNewerFormat, version, indexVersion)
 	}
 	// Transactions are opened lazily on the first Add so that read methods are
 	// never blocked waiting for the single connection an open write tx holds.

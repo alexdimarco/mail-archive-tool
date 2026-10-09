@@ -101,6 +101,34 @@ func finish(out string, r *Result, exp *export.Exporter, manifest *state.Manifes
 	r.ReportPath, r.Issues = writeReport(out, manifest, manifest.Migrated > 0, logger)
 }
 
+// indexOpenError is the refusal of an export or a Graph run whose search.db
+// at idxPath cannot be opened for writing (index.Open's err). Like reindex's,
+// it names the file and the remedy its cause has (R12, X6), never SQLite's
+// bare error:
+//   - a busy index is in use, not damaged — another program kept it locked
+//     past the writable open's wait — so the remedy is to retry, never the
+//     rebuild (MA-398);
+//   - a newer format's refusal already names the file and the upgrade, and
+//     stands: a rebuild would replace a newer index with an older one;
+//   - anything else, a damaged file (SQLITE_NOTADB) above all, is rebuilt
+//     from the archive's own files, which needs the archive's manifest
+//     (Rebuild refuses without one). With no manifest in out there is nothing
+//     to rebuild from, and nothing in that file a run needs, so the remedy is
+//     to move it aside: the next run builds a fresh index.
+func indexOpenError(idxPath, out string, err error) error {
+	switch {
+	case errors.Is(err, index.ErrNewerFormat):
+		return err
+	case index.Busy(err):
+		return fmt.Errorf("search index %s is busy (%w): another program kept it locked — close any other program that has it open, then run again", idxPath, err)
+	}
+	mpath := filepath.Join(out, ".mailarchive-manifest.json")
+	if _, serr := os.Stat(mpath); errors.Is(serr, fs.ErrNotExist) {
+		return fmt.Errorf("search index %s cannot be opened (%w), and there is no manifest (%s) to rebuild it from: move it out of %s, then run again", idxPath, err, mpath, out)
+	}
+	return fmt.Errorf("search index %s cannot be opened (%w): rebuild it from the archive with `mailarchive reindex -rebuild -out %q`, then run again", idxPath, err, out)
+}
+
 // ProgressFunc, if provided, is called after each processed message with the
 // running stats. Keep it cheap; it runs inline with the export loop.
 type ProgressFunc func(stats export.Stats)
@@ -198,7 +226,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		idxPath := filepath.Join(opts.Out, "search.db")
 		idx, err = index.Open(idxPath)
 		if err != nil {
-			return Result{}, fmt.Errorf("open search index: %w", err)
+			return Result{}, indexOpenError(idxPath, opts.Out, err)
 		}
 		defer idx.Close()
 		// Repair legacy index keys to match the re-scoped manifest, driven by
