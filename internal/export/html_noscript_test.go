@@ -263,6 +263,215 @@ func TestNoscriptRetryRewritesEachNoscriptOnce(t *testing.T) {
 	}
 }
 
+// pageLayout finds, in a parsed page, the renderer's header div — the first
+// div directly in <body> with the class token mailarchive-header — and the
+// body div that must be the next element after it (nil when either is not
+// live there): the anchor `reindex -rebuild` reads a record by. Written apart
+// from the product's own check so the test does not grade itself.
+func pageLayout(root *xhtml.Node) (header, body *xhtml.Node) {
+	hasToken := func(n *xhtml.Node, tok string) bool {
+		for _, f := range strings.Fields(attrOf(n, "class")) {
+			if f == tok {
+				return true
+			}
+		}
+		return false
+	}
+	bodyEl := findElem(root, func(n *xhtml.Node) bool { return n.Data == "body" })
+	if bodyEl == nil {
+		return nil, nil
+	}
+	for c := bodyEl.FirstChild; c != nil; c = c.NextSibling {
+		if c.Type == xhtml.ElementNode && c.Data == "div" && hasToken(c, "mailarchive-header") {
+			header = c
+			break
+		}
+	}
+	if header == nil {
+		return nil, nil
+	}
+	for c := header.NextSibling; c != nil; c = c.NextSibling {
+		if c.Type == xhtml.ElementNode {
+			if c.Data == "div" && hasToken(c, "mailarchive-body") {
+				return header, c
+			}
+			break
+		}
+	}
+	return header, nil
+}
+
+// shownIn reports whether the mail's words are on the page body as the mail
+// showed them: in a live HTML <p> or <xmp> (markup that nothing before it
+// swallowed or moved — raw text in a <noscript>, a <plaintext> or a script is
+// not, nor an SVG element the words were moved into), or, when the body fell
+// back, in the text of the shown-as-source <pre>.
+func shownIn(body *xhtml.Node, fellBack bool, words string) bool {
+	if !fellBack {
+		return findElem(body, func(n *xhtml.Node) bool {
+			return n.Namespace == "" && (n.Data == "p" || n.Data == "xmp") && strings.Contains(directText(n), words)
+		}) != nil
+	}
+	pre := findElem(body, func(n *xhtml.Node) bool { return n.Data == "pre" && attrOf(n, "data-mailarchive-fallback") != "" })
+	return pre != nil && strings.Contains(directText(pre), words)
+}
+
+// covers: MA-476, MA-474, R7, R8, R13, R19, S21
+// No page the exporter writes hides its own header or body. The in-place
+// noscript retry (d787013) wrote pages whose head <noscript> never closed: its
+// rewritten content ended in a <plaintext> (x/net's Render writes nothing
+// after one, so the </noscript> was never written, and the rest of the page —
+// the tool's header and the mail — became noscript raw text in the head), or
+// in a script left in an escape state by `<!--<script>` (with scripting off it
+// ran past its </script> and the </noscript> to the end of the page). The
+// re-check read no live meta in either and the page check only parsed the
+// page, so a hostile mail blanked its own archived page and, on `reindex
+// -rebuild`, erased its own subject, sender and date. These are the
+// reviewer's nine (rv3/corpus-adv: adv_plaintext_head_{esc,lnk,ref}_{a,d},
+// adv_scriptesc_head_{esc,lnk,ref}_a). A rewritten noscript is now kept only
+// where it is written as one closed noscript in both readings (closesItself),
+// and every pass is accepted only with a page whose header div and body div are
+// live in every reading (pageFallback). In the body the same tricks moved or
+// swallowed the mail's words after the noscript: a <plaintext>, a script
+// escape (with scripting off only), text that decodes to
+// `</noscript><plaintext>` or to a `</div>` that closes the body div, a
+// noscript nested in a <div> whose `</div>` the scripting-on reading meets
+// after the outer noscript's raw text ends (it closed the page's body div),
+// and, under an SVG foreignObject inside an SVG <noscript>, a nested
+// noscript's end tag left over after the raw text, which the foreign-content
+// rules read as the SVG noscript's (the HTML <xmp> after it became an SVG xmp
+// and its text an SVG <style>). Two heads blanked the page with no retry to
+// blame: a head <script> left in an escape state at the end of the mail (both
+// readings), and a head <noscript> holding a <plaintext> (scripting off) —
+// they fall back to the escaped source as unsafe-after-reparse, whose header
+// is live. In every reading of every page here the header (with the subject)
+// and the body div are live, the mail's words are shown as it showed them
+// (live, or in the source), the page's own charset is the only charset meta,
+// and no hostile meta or hint is live.
+//
+// Positive twins, rendered as HTML with the header, the body div and the words
+// live: a body <plaintext> or script escape at the end of the mail (it
+// swallows only the page's closing tags), an AMP head noscript, a head
+// noscript with a charset meta and text; a head <noscript> whose raw text
+// leaves an element open around the header for a reader with JavaScript off (a
+// <b>, a <div>) or a <frameset> that drops the body — the first pass's page
+// fails, and the in-place retry writes the content closed (or, for the
+// frameset, empty, as a body fragment parse reads it); and a refused rewrite
+// beside an accepted one — the refused noscript keeps its raw text, the
+// accepted one's charset meta is gone, and the page renders.
+func TestRenderKeepsThePageHeaderAndBodyLive(t *testing.T) {
+	const (
+		esc = `&lt;meta http-equiv="refresh" content="0;url=http://127.0.0.1:8799/b/adv"&gt;`
+		lnk = `<link rel="preconnect" href="http://127.0.0.1:8799/b/adv">`
+		ref = `<meta http-equiv="refresh" content="0;url=http://127.0.0.1:8799/b/adv">`
+	)
+	head := func(ns string) string {
+		return `<html><head><noscript><meta charset=utf-8>` + ns + `</noscript></head><body><p>adv words</p></body></html>`
+	}
+	cases := []struct {
+		name, body, words string
+		fallback          string // "" = any (the retry or the page check decides); else the reason it must fall back as
+	}{
+		{"adv_plaintext_head_esc_a", head(`<plaintext></noscript>` + esc), "adv words", ""},
+		{"adv_plaintext_head_esc_d", head(`<plaintext>` + esc), "adv words", ""},
+		{"adv_plaintext_head_lnk_a", head(`<plaintext></noscript>` + lnk), "adv words", ""},
+		{"adv_plaintext_head_lnk_d", head(`<plaintext>` + lnk), "adv words", ""},
+		{"adv_plaintext_head_ref_a", head(`<plaintext></noscript>` + ref), "adv words", ""},
+		{"adv_plaintext_head_ref_d", head(`<plaintext>` + ref), "adv words", ""},
+		{"adv_scriptesc_head_esc_a", head(`<script><!--<script></noscript>` + esc + `</script>`), "adv words", ""},
+		{"adv_scriptesc_head_lnk_a", head(`<script><!--<script></noscript>` + lnk + `</script>`), "adv words", ""},
+		{"adv_scriptesc_head_ref_a", head(`<script><!--<script></noscript>` + ref + `</script>`), "adv words", ""},
+		{"body noscript plaintext", `<p>nsbefore</p><noscript><meta charset=utf-8><plaintext>x</noscript><p>after words</p>`, "after words", ""},
+		{"body noscript script escape", `<p>nsbefore</p><noscript><meta charset=utf-8><script><!--<script></noscript><p>after words</p>`, "after words", ""},
+		{"body noscript decoded plaintext", `<p>nsbefore</p><noscript>a&lt;/noscript&gt;&lt;plaintext&gt;b<meta charset=utf-8></noscript><p>after words</p>`, "after words", ""},
+		{"body noscript decoded div end", `<p>nsbefore</p><noscript>&lt;/noscript&gt;&lt;/div&gt;<meta charset=utf-8></noscript><p>after words</p>`, "after words", ""},
+		{"body noscript nested in a div", `<p>nsbefore</p><noscript><meta charset=utf-8><div><noscript>inner</div>outer</noscript><p>after words</p>`, "after words", ""},
+		{"svg noscript stray end tag", `<p>nsbefore</p><svg><noscript><foreignObject><noscript><meta charset=utf-8><noscript>y</noscript>more<xmp>q<style>fo words</style>z</xmp></foreignObject></noscript></svg><p>after</p>`, "fo words", ""},
+		{"head script escape at the end", `<html><head><title>t</title><script><!--<script></head><body><p>after words</p></body></html>`, "after words", FallbackHostile},
+		{"head noscript plaintext", `<html><head><noscript><plaintext>nsheadword</noscript></head><body><p>after words</p></body></html>`, "after words", FallbackHostile},
+	}
+	for _, c := range cases {
+		subject := "pagesubj " + c.name
+		out, err := RenderWith(&model.Message{Subject: subject, HTMLBody: c.body}, RenderContext{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		page := string(out.HTML)
+		if c.fallback != "" && out.BodyFallback != c.fallback {
+			t.Errorf("%s: must fall back as %q (its page would hide the header), got %q", c.name, c.fallback, out.BodyFallback)
+		}
+		for i, root := range pageTrees(t, c.name, page) {
+			header, body := pageLayout(root)
+			if header == nil || body == nil {
+				t.Errorf("%s (reading %d): the page's header and body div must be live directly in <body> (header %v, body div %v):\n%s",
+					c.name, i, header != nil, body != nil, bodyPart(page))
+				continue
+			}
+			if !strings.Contains(textOf(header), subject) {
+				t.Errorf("%s (reading %d): the live header must carry the subject", c.name, i)
+			}
+			if !shownIn(body, out.BodyFallback != "", c.words) {
+				t.Errorf("%s (reading %d): the mail's words %q must be on the page as the mail showed them (fallback %q):\n%s", c.name, i, c.words, out.BodyFallback, bodyPart(page))
+			}
+		}
+		if live := liveHostileMetas(t, page); len(live) > 0 {
+			t.Errorf("%s: a live hostile meta: %v", c.name, live)
+		}
+		if hints := liveResourceHints(t, page); len(hints) > 0 {
+			t.Errorf("%s: a live resource hint: %v", c.name, hints)
+		}
+		if n := liveCharsetMetas(t, page); n != [2]int{1, 1} {
+			t.Errorf("%s: the page's own charset must be the only one, got %v (scripting on, off)", c.name, n)
+		}
+	}
+
+	twins := []struct{ name, body, words string }{
+		{"body plaintext at the end", `<p>before</p><plaintext>rest words`, "rest words"},
+		{"body script escape at the end", `<p>before words</p><script><!--<script>`, "before words"},
+		{"amp head noscript", `<!doctype html><html amp4email><head><meta charset="utf-8"><style amp4email-boilerplate>body{visibility:hidden}</style><noscript><meta charset="utf-8"><style>body{visibility:visible}</style></noscript></head><body><p>marker words</p></body></html>`, "marker words"},
+		{"head noscript charset text", `<html><head><noscript><meta charset="utf-8"><p>headnstext</p></noscript></head><body><p>head twin words</p></body></html>`, "head twin words"},
+		{"head noscript open b", `<html><head><noscript><b>Please enable JavaScript</noscript></head><body><p>open b words</p></body></html>`, "open b words"},
+		{"head noscript open div", `<html><head><noscript><div class="banner">Please enable JavaScript</noscript></head><body><p>open div words</p></body></html>`, "open div words"},
+		{"head noscript frameset", `<html><head><noscript><frameset></noscript></head><body><p>frameset words</p></body></html>`, "frameset words"},
+		{"refused beside accepted", `<p>m5before</p><noscript><meta charset=utf-8></noscript><noscript><div><noscript>m5inner</div>m5outer</noscript><p>m5 after words</p>`, "m5 after words"},
+	}
+	for _, c := range twins {
+		out, err := RenderWith(&model.Message{Subject: c.name, HTMLBody: c.body}, RenderContext{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		page := string(out.HTML)
+		if out.BodyFallback != "" {
+			t.Errorf("positive twin %s: must render as HTML, got fallback %q", c.name, out.BodyFallback)
+			continue
+		}
+		for i, root := range pageTrees(t, c.name, page) {
+			if header, body := pageLayout(root); header == nil || body == nil || !liveText(body, c.words) {
+				t.Errorf("positive twin %s (reading %d): header and body div live, the words live text:\n%s", c.name, i, page)
+			}
+		}
+		if n := liveCharsetMetas(t, page); n != [2]int{1, 1} {
+			t.Errorf("positive twin %s: the page's own charset must be the only one, got %v (scripting on, off)", c.name, n)
+		}
+	}
+}
+
+// textOf is the text of n and its descendants.
+func textOf(n *xhtml.Node) string {
+	var b strings.Builder
+	var walk func(x *xhtml.Node)
+	walk = func(x *xhtml.Node) {
+		if x.Type == xhtml.TextNode {
+			b.WriteString(x.Data)
+		}
+		for c := x.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(n)
+	return b.String()
+}
+
 // liveCharsetMetas counts the <meta charset> elements in an exported page in
 // each scripting reading (the page's own utf-8 charset is one of them).
 func liveCharsetMetas(t *testing.T, page string) [2]int {

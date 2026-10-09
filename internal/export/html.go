@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"io"
 	"mime"
 	"path/filepath"
 	"regexp"
@@ -96,7 +97,7 @@ type RenderResult struct {
 const (
 	FallbackTooDeep     = "too-deeply-nested"    // the parser's nesting cap (x/net: 512 open elements)
 	FallbackUnparseable = "unparseable"          // the parser or serializer refused the mail
-	FallbackHostile     = "unsafe-after-reparse" // the re-parse check found a live hostile meta or link hint
+	FallbackHostile     = "unsafe-after-reparse" // a re-parse found a live hostile meta, link hint or reserved marker, or the page's own header or body not live
 	FallbackTooLarge    = "too-large"            // the serialization would pass serializedCap (RV-8)
 )
 
@@ -125,18 +126,20 @@ func RenderWith(m *model.Message, ctx RenderContext) (RenderResult, error) {
 	var unresolved []string
 	if isHTML {
 		unresolved = unresolvedInlineRefs([]byte(body))
-		headExtra, bodyAttrs, inner, fallback = sanitizeHTML(body)
+		// Each sanitizing pass is accepted only with the page it makes: the
+		// page wraps the body one level deeper than the tree the sanitizer
+		// checked (html > body > div.mailarchive-body), and a page too deep for
+		// the tree parser cannot be read back by `reindex -rebuild` (INT-1); and
+		// the mail's head pieces come before the tool's header, so mail markup
+		// that runs on past its own end can swallow the header and the body.
+		// The page itself is parsed, in every reading a browser can make.
+		headExtra, bodyAttrs, inner, fallback = sanitizeChecked(body, func(h, a, b string) string {
+			return pageFallback(assemblePage(m, ctx, consumed, h, a, b))
+		})
 	} else {
 		inner = `<pre class="plain">` + html.EscapeString(body) + `</pre>`
 	}
 	page := assemblePage(m, ctx, consumed, headExtra, bodyAttrs, inner)
-	if isHTML && fallback == "" {
-		// The page wraps the body one level deeper than the tree sanitizeHTML
-		// checked (html > body > div.mailarchive-body), and a page too deep for
-		// the tree parser cannot be read back by `reindex -rebuild` (INT-1).
-		// Parse the page itself, in every reading a browser can make.
-		fallback = pageFallback(page)
-	}
 	if fallback != "" {
 		// Show the mail's ORIGINAL source (cid: references, not megabytes of
 		// base64), and put every inline image back in the attachment zip so
@@ -156,16 +159,84 @@ func assemblePage(m *model.Message, ctx RenderContext, consumed map[int]bool, he
 }
 
 // pageFallback reports why an assembled page must not be written as HTML — ""
-// when it parses with x/net's default 512-element cap in every reading (the
-// scripting flag on, and off when the page holds a noscript tag) — so a page
-// the exporter writes is never too deep for the tree parser.
+// when, in every reading (the scripting flag on, and off when the page holds a
+// noscript tag), it parses with x/net's default 512-element cap AND its own
+// layout is live (anchoredPage) — so a page the exporter writes is never too
+// deep for the tree parser, and never one whose mail markup hides the tool's
+// header and body. Mail head markup that runs on past its own end — a head
+// <script> left in an escape state, or what a reader with JavaScript off reads
+// out of a head <noscript>: a <plaintext>, an element left open around the
+// header — would put them in raw text or inside the mail's own markup: the
+// page would show the reader no header and no body, and `reindex -rebuild`,
+// which anchors on them, would erase the mail's own subject, sender, date and
+// words (MA-187, R8). Such a page is unsafe-after-reparse (and, when the mail
+// has a noscript tag, gets the in-place noscript retry; see sanitizeChecked);
+// the fallback page keeps the header, so the record stays recoverable.
 func pageFallback(page string) string {
 	for _, scripting := range scriptingModes(page) {
-		if _, err := reparse(page, scripting); err != nil {
+		root, err := reparse(page, scripting)
+		if err != nil {
 			return parseFailure(err)
+		}
+		if !anchoredPage(root) {
+			return FallbackHostile
 		}
 	}
 	return ""
+}
+
+// anchoredPage reports whether a parsed page has the renderer's own layout
+// live: the first div.mailarchive-header directly in the first <body>, and the
+// next element after it a div.mailarchive-body — exactly the anchor
+// `reindex -rebuild` reads a current page's record by (internal/app
+// readArchivedTree: findFirst body, firstChildDiv, nextElementSibling).
+func anchoredPage(root *xhtml.Node) bool {
+	body := firstElement(root, "body")
+	if body == nil {
+		return false
+	}
+	var header *xhtml.Node
+	for c := body.FirstChild; c != nil && header == nil; c = c.NextSibling {
+		if c.Type == xhtml.ElementNode && c.Data == "div" && classToken(c, "mailarchive-header") {
+			header = c
+		}
+	}
+	if header == nil {
+		return false
+	}
+	next := header.NextSibling
+	for next != nil && next.Type != xhtml.ElementNode {
+		next = next.NextSibling
+	}
+	return next != nil && next.Data == "div" && classToken(next, "mailarchive-body")
+}
+
+// firstElement returns the first element named name in document order.
+func firstElement(n *xhtml.Node, name string) *xhtml.Node {
+	if n.Type == xhtml.ElementNode && n.Data == name {
+		return n
+	}
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if e := firstElement(c, name); e != nil {
+			return e
+		}
+	}
+	return nil
+}
+
+// classToken reports whether an element's class attribute holds the token cls.
+func classToken(n *xhtml.Node, cls string) bool {
+	for _, a := range n.Attr {
+		if a.Key == "class" {
+			for _, t := range strings.Fields(a.Val) {
+				if t == cls {
+					return true
+				}
+			}
+			return false
+		}
+	}
+	return false
 }
 
 // parseFailure maps a parse error to the fallback reason: the parser's
@@ -217,17 +288,46 @@ func parseFailure(err error) string {
 // re-parse the whole document with scripting off, because that pops a head
 // <noscript>'s flow content out into the body, and a word the live indexer
 // skips (it sits in an explicit head) would then show up in the rebuilt index
-// only (search parity, R8). The retry is accepted only if it passes the same
-// dual-mode re-check; otherwise the body falls back as before. (The re-check is
-// still essential: an escaped <meta> inside a noscript decodes to a text child
-// that Render writes back raw, so a live meta smuggled beside a real one is
-// caught and falls back.)
+// only (search parity, R8). A noscript's rewritten content is kept only where
+// the renderer writes it as one closed noscript in both readings
+// (closesItself: never a <plaintext> or a script left in an escape state that
+// runs on past it, swallowing the rest of the page); otherwise its raw text
+// stays. The retry is accepted only if it passes the same dual-mode re-check;
+// otherwise the body falls back as before. (The re-check is still essential:
+// an escaped <meta> inside a noscript decodes to a text child that Render
+// writes back raw, so a live meta smuggled beside a real one is caught and
+// falls back.)
+//
+// sanitizeHTML runs the passes without the page check; RenderWith runs them
+// through sanitizeChecked, which also reads the page each pass makes.
 func sanitizeHTML(doc string) (headExtra, bodyAttrs, body, fallback string) {
+	return sanitizeChecked(doc, nil)
+}
+
+// sanitizeChecked is sanitizeHTML with a page check: pageCheck, when set,
+// returns why the page a pass's pieces would make must not be written ("" when
+// it may; RenderWith's is pageFallback on the assembled page), and a pass is
+// accepted only with its page. So the in-place noscript retry also runs when
+// the first pass's re-check passes but its page is unsafe-after-reparse: what a
+// reader with JavaScript off reads out of a head <noscript>'s raw text, written
+// back literally, can leave an element open around the tool's header (a benign
+// `<noscript><div>enable JavaScript</noscript>`), which the rewritten content,
+// written closed, does not. A retry that passes the re-check is judged by its
+// own page — and reports that page's reason when it fails (a page too deep is
+// too-deeply-nested, never unsafe; RV-9) — while a retry that fails the
+// re-check leaves the first pass's reason.
+func sanitizeChecked(doc string, pageCheck func(headExtra, bodyAttrs, body string) string) (headExtra, bodyAttrs, body, fallback string) {
+	withPage := func(h, a, b, f string) (string, string, string, string) {
+		if f == "" && pageCheck != nil {
+			f = pageCheck(h, a, b)
+		}
+		return h, a, b, f
+	}
 	// Markup nested past flattenDepth loses its container tags (not its text)
 	// first, as a browser flattens past its own cap, so deep mail renders
 	// instead of failing the parser's 512-element cap (DIFF-FP-2).
 	flat := flattenDeep(doc)
-	headExtra, bodyAttrs, body, fallback = sanitizeParsed(flat, len(doc), false)
+	headExtra, bodyAttrs, body, fallback = withPage(sanitizeParsed(flat, len(doc), false))
 	if fallback == FallbackHostile && hasNoscriptTag(flat) {
 		// Without a noscript tag the scripting-off parse is the same tree
 		// (scriptingModes), so the retry could change nothing. Retry with the
@@ -237,7 +337,7 @@ func sanitizeHTML(doc string) (headExtra, bodyAttrs, body, fallback string) {
 		// an explicit head, would then be in the rebuilt index only; R8). The
 		// document keeps the structure the scripting-on parse gives it.
 		if h, a, b, f := sanitizeParsed(flat, len(doc), true); f == "" {
-			return h, a, b, ""
+			return withPage(h, a, b, f)
 		}
 	}
 	return headExtra, bodyAttrs, body, fallback
@@ -279,7 +379,12 @@ func sanitizeParsed(doc string, inputLen int, neutralizeNoscript bool) (headExtr
 	find(root)
 	neutralize(root)
 	if neutralizeNoscript {
-		neutralizeNoscriptContents(root)
+		// The rewritten noscripts are checked by writing them out; that draws on
+		// a budget of its own the size of the serialization cap, so a noscript
+		// whose rewrite inflates past it fails the retry as too-large unread.
+		if err := neutralizeNoscriptContents(root, serializedCap(inputLen)); err != nil {
+			return "", "", "", renderFailure(err)
+		}
 	}
 
 	// The serialization is capped (RV-8): x/net's reconstruct-active-
@@ -1251,14 +1356,23 @@ func stripReservedNamespace(n *xhtml.Node) {
 // written escaped (keepNestedNoscriptText). An SVG or MathML <noscript> is an
 // ordinary foreign element whose children were markup to the main parse
 // (neutralize reached them): it is not raw text and is left as it is.
-func neutralizeNoscriptContents(root *xhtml.Node) {
-	var rewritten []*xhtml.Node
+//
+// A rewrite is then kept only if the renderer writes it as ONE closed noscript
+// in both readings of the page (closesItself); otherwise the noscript gets its
+// raw text back, as the first pass had it. Writing the content out for that
+// check draws on a budget of limit bytes; past it the error is errTooLarge.
+func neutralizeNoscriptContents(root *xhtml.Node, limit int) error {
+	type rewrite struct {
+		ns  *xhtml.Node
+		raw []*xhtml.Node // its raw-text children, put back if the rewrite is refused
+	}
+	var rewritten []rewrite
 	var walk func(n *xhtml.Node)
 	walk = func(n *xhtml.Node) {
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
 			if c.Type == xhtml.ElementNode && c.DataAtom == atom.Noscript && c.Namespace == "" {
-				if neutralizeOneNoscript(c) {
-					rewritten = append(rewritten, c)
+				if raw, ok := neutralizeOneNoscript(c); ok {
+					rewritten = append(rewritten, rewrite{c, raw})
 				}
 				continue
 			}
@@ -1266,16 +1380,36 @@ func neutralizeNoscriptContents(root *xhtml.Node) {
 		}
 	}
 	walk(root)
-	for _, ns := range rewritten {
-		keepNestedNoscriptText(ns)
+	budget := limit
+	for _, r := range rewritten {
+		keepNestedNoscriptText(r.ns)
+		closed, err := closesItself(r.ns, &budget)
+		if err != nil {
+			return err
+		}
+		if !closed {
+			// Refused: the noscript keeps the raw text the scripting-on parse gave
+			// it. The re-check then reads it as it read the first pass (falling
+			// back if that is hostile), and the page check still refuses a page
+			// whose header and body it would hide.
+			for c := r.ns.FirstChild; c != nil; {
+				next := c.NextSibling
+				r.ns.RemoveChild(c)
+				c = next
+			}
+			for _, c := range r.raw {
+				r.ns.AppendChild(c)
+			}
+		}
 	}
+	return nil
 }
 
 // neutralizeOneNoscript neutralizes one <noscript>'s raw-text content in place
-// (see neutralizeNoscriptContents) and reports whether it rewrote it. A nested
-// <noscript> inside is markup to the scripting-off fragment parse, so one pass
-// reaches every level.
-func neutralizeOneNoscript(ns *xhtml.Node) bool {
+// (see neutralizeNoscriptContents) and reports whether it rewrote it, with the
+// raw-text children it took out. A nested <noscript> inside is markup to the
+// scripting-off fragment parse, so one pass reaches every level.
+func neutralizeOneNoscript(ns *xhtml.Node) ([]*xhtml.Node, bool) {
 	var raw strings.Builder
 	for c := ns.FirstChild; c != nil; c = c.NextSibling {
 		if c.Type == xhtml.TextNode {
@@ -1283,23 +1417,114 @@ func neutralizeOneNoscript(ns *xhtml.Node) bool {
 		}
 	}
 	if strings.TrimSpace(raw.String()) == "" {
-		return false
+		return nil, false
 	}
 	ctx := &xhtml.Node{Type: xhtml.ElementNode, Data: "body", DataAtom: atom.Body}
 	nodes, err := xhtml.ParseFragmentWithOptions(strings.NewReader(raw.String()), ctx, xhtml.ParseOptionEnableScripting(false))
 	if err != nil {
-		return false // leave as raw text; the dual-mode re-check falls back if hostile
+		return nil, false // leave as raw text; the dual-mode re-check falls back if hostile
 	}
+	var old []*xhtml.Node
 	for c := ns.FirstChild; c != nil; {
 		next := c.NextSibling
 		ns.RemoveChild(c)
+		old = append(old, c)
 		c = next
 	}
 	for _, nd := range nodes {
 		ns.AppendChild(nd)
 	}
 	neutralize(ns) // disarm the newly-appended children and their descendants
-	return true
+	return old, true
+}
+
+// noscriptSentinel follows a rewritten noscript in closesItself's
+// scripting-off reading. Mail cannot carry the attribute: neutralize strips the
+// data-mailarchive- namespace from the content first, and text that decodes to
+// it is found by position (it would have to come out of the noscript, which is
+// what the reading checks).
+const noscriptSentinel = `<div data-mailarchive-sentinel=""></div>`
+
+// closesItself reports whether a rewritten noscript, as the renderer writes it,
+// re-parses to ONE closed noscript in both readings of the page: nothing after
+// it is swallowed, and nothing in it gets out. Its content came from a
+// scripting-off fragment parse that ended at the end of the noscript's raw
+// text, and the renderer does not always write it back to read that way: it
+// writes no end tag at all after a <plaintext> (render.go plaintextAbort, so
+// the </noscript> is never written), it writes a script's and a noscript's
+// text literally (a script left in an escape state by `<!--<script>` runs past
+// its </script> and the </noscript>; text that decodes to `</noscript>`,
+// `<plaintext>` or `<style>` ends the noscript early or opens raw text).
+//
+//   - With scripting on (a browser's default, and `reindex -rebuild`'s
+//     reading), the content must be raw text running to the noscript's own
+//     end tag, and only stray </noscript> end tags may follow it — the end tags
+//     of noscripts nested at the end of the content, which the HTML insertion
+//     modes ignore (no HTML noscript is ever open in that reading). Not where
+//     the noscript's parent is an SVG or MathML integration point: there the
+//     foreign-content rules read a stray end tag, and they pop up to a foreign
+//     element of the same name (`<svg><noscript><foreignObject>` ...), moving
+//     the content after it out of the integration point — an HTML <xmp>'s
+//     text into an SVG <style> that no reader sees. The tokenizer reads a
+//     noscript's content as raw text exactly as the scripting-on tree builder
+//     has it read.
+//   - With scripting off, the noscript in a <div> (the body div or mail element
+//     it sits in) must close before a sentinel written after it: the div's
+//     children are exactly the noscript and the sentinel, so a stray </div>
+//     that would close the page's body div is caught too.
+//
+// The write draws on budget (errTooLarge past it).
+func closesItself(ns *xhtml.Node, budget *int) (bool, error) {
+	w := &capWriter{left: budget}
+	if err := renderNode(w, ns); err != nil {
+		return false, err
+	}
+	written := w.String()
+
+	foreignParent := ns.Parent != nil && ns.Parent.Type == xhtml.ElementNode && ns.Parent.Namespace != ""
+	z := xhtml.NewTokenizer(strings.NewReader(written))
+	if tt := z.Next(); tt != xhtml.StartTagToken {
+		return false, nil
+	}
+	if name, _ := z.TagName(); string(name) != "noscript" {
+		return false, nil
+	}
+	ended := false
+	for {
+		tt := z.Next()
+		if tt == xhtml.ErrorToken {
+			if z.Err() != io.EOF || !ended {
+				return false, nil // no end tag: the raw text ran to the end
+			}
+			break
+		}
+		switch {
+		case tt == xhtml.TextToken && !ended:
+			// the raw text, before the end tag
+		case tt == xhtml.EndTagToken:
+			if name, _ := z.TagName(); string(name) != "noscript" || ended && foreignParent {
+				return false, nil
+			}
+			ended = true
+		default:
+			return false, nil
+		}
+	}
+
+	ctx := &xhtml.Node{Type: xhtml.ElementNode, Data: "body", DataAtom: atom.Body}
+	nodes, err := xhtml.ParseFragmentWithOptions(strings.NewReader("<div>"+written+noscriptSentinel+"</div>"), ctx, xhtml.ParseOptionEnableScripting(false))
+	if err != nil || len(nodes) != 1 || nodes[0].Type != xhtml.ElementNode || nodes[0].DataAtom != atom.Div {
+		return false, nil
+	}
+	first := nodes[0].FirstChild
+	if first == nil || first.Type != xhtml.ElementNode || first.DataAtom != atom.Noscript || first.Namespace != "" {
+		return false, nil
+	}
+	s := first.NextSibling
+	if s == nil || s.NextSibling != nil || s.Type != xhtml.ElementNode || s.DataAtom != atom.Div || len(s.Attr) != 1 || s.Attr[0].Key != "data-mailarchive-sentinel" {
+		return false, nil
+	}
+	return true, nil
 }
 
 // keepNestedNoscriptText writes the text of every HTML <noscript> nested in a

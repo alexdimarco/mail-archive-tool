@@ -3,11 +3,14 @@ package export
 import (
 	"archive/zip"
 	"encoding/base64"
+	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 
 	xhtml "golang.org/x/net/html"
+	"golang.org/x/net/html/atom"
 
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/model"
@@ -293,6 +296,91 @@ func TestSizeCapIsSharedByHeadAndBody(t *testing.T) {
 		if twin.BodyFallback != "" {
 			t.Errorf("positive twin %s: one half under the cap must render as HTML, got %q", name, twin.BodyFallback)
 		}
+	}
+}
+
+// countingWriter counts what x/net's Render writes through it into w (it has
+// the three methods Render writes through, so Render uses it unbuffered).
+type countingWriter struct {
+	w interface {
+		io.Writer
+		io.ByteWriter
+		io.StringWriter
+	}
+	n *int
+}
+
+func (c countingWriter) Write(p []byte) (int, error) {
+	k, err := c.w.Write(p)
+	*c.n += k
+	return k, err
+}
+
+func (c countingWriter) WriteByte(b byte) error {
+	err := c.w.WriteByte(b)
+	if err == nil {
+		*c.n++
+	}
+	return err
+}
+
+func (c countingWriter) WriteString(s string) (int, error) {
+	k, err := c.w.WriteString(s)
+	*c.n += k
+	return k, err
+}
+
+// covers: MA-472, R7, R19
+// The noscript retry's check (closesItself) writes each rewritten noscript out
+// to re-parse it, and that write draws on a budget the size of the
+// serialization cap: past it the check stops with errTooLarge and parses
+// nothing, so a noscript whose rewrite inflates (the RV-8 shape inside a
+// noscript) fails the retry as too-large instead of being re-parsed at many
+// times the mail's size. The positive twin: the same noscript under a budget
+// it fits closes itself. End to end, the RV-8 body inside a noscript beside a
+// charset meta (16 KB of raw text to the scripting-on parse, about 12 MB once
+// the retry rebuilds it as markup) falls back with everything the renderer
+// wrote — the first pass and the retry's check together — bounded by twice the
+// mail's cap, not the rebuilt content's 12 MB.
+func TestNoscriptCheckDrawsOnTheSizeBudget(t *testing.T) {
+	ns := &xhtml.Node{Type: xhtml.ElementNode, Data: "noscript", DataAtom: atom.Noscript}
+	ns.AppendChild(&xhtml.Node{Type: xhtml.TextNode, Data: strings.Repeat("x", 100)})
+	budget := 1000
+	if closed, err := closesItself(ns, &budget); err != nil || !closed {
+		t.Fatalf("positive twin: a small noscript under the budget must close itself, got closed=%v err=%v", closed, err)
+	}
+	if budget != 1000-len("<noscript></noscript>")-100 {
+		t.Errorf("the check must spend what it writes from the budget, %d left", budget)
+	}
+	budget = 50
+	if _, err := closesItself(ns, &budget); !errors.Is(err, errTooLarge) {
+		t.Errorf("past the budget the check must stop with errTooLarge, got %v", err)
+	}
+
+	real := renderNode
+	t.Cleanup(func() { renderNode = real })
+	written := 0
+	renderNode = func(w io.Writer, n *xhtml.Node) error {
+		cw, ok := w.(interface {
+			io.Writer
+			io.ByteWriter
+			io.StringWriter
+		})
+		if !ok {
+			t.Fatalf("the renderer is handed a %T, not the size-capped writer", w)
+		}
+		return real(countingWriter{cw, &written}, n)
+	}
+	mail := "<html><body><p>inflate words</p><noscript><meta charset=utf-8>" + inflatingPart(2000) + "</noscript></body></html>"
+	out, err := RenderWith(&model.Message{Subject: "noscript inflation", HTMLBody: mail}, RenderContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.BodyFallback == "" {
+		t.Errorf("an inflating noscript beside a charset meta must fall back")
+	}
+	if limit := 2 * serializedCap(len(mail)); written == 0 || written > limit {
+		t.Errorf("the renderer wrote %d bytes for a %d-byte mail, want at most %d (the retry's check must draw on the size cap)", written, len(mail), limit)
 	}
 }
 
