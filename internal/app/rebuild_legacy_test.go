@@ -84,6 +84,53 @@ func TestReadArchivedHTMLRecoversLegacyDateStamp(t *testing.T) {
 	assure.Reached(t, searchTotal(t, out, "after:2025-04-02 before:2025-04-03 fragment"), "date-bounded hits for the old record")
 }
 
+// covers: MA-480, R13, R8, S33
+// v0.1.1–v0.2.3 converted every time to UTC before rendering (each source set
+// Received/Sent to ….UTC()), so the Date stamp they wrote always ends "UTC".
+// Any other abbreviation is not theirs and names no offset the reader can
+// trust — not even one this machine's own zone uses, which time.Parse would
+// resolve through time.Local ("CST" is +8 in Shanghai and -6 in Chicago) — so
+// it is counted unrecovered whatever zone the rebuild runs in, never indexed
+// hours off. This host's own abbreviations (January and July) are among those
+// checked, so wherever the host is not on UTC a reader that trusts the local
+// zone fails here. The page's other fields still read; a "UTC" stamp still
+// reads (TestReadArchivedHTMLRecoversLegacyDateStamp is the twin).
+func TestReadArchivedHTMLLegacyStampReadsOnlyUTC(t *testing.T) {
+	abbrevs := map[string]int{"GMT": 0, "GMT+3": 3 * 3600, "EST": -5 * 3600, "PDT": -7 * 3600, "CST": 8 * 3600, "CET": 3600, "BST": 3600}
+	for _, month := range []time.Month{time.January, time.July} {
+		if name, off := time.Date(2025, month, 15, 12, 0, 0, 0, time.Local).Zone(); name != "UTC" {
+			abbrevs[name] = off
+		}
+	}
+	var pages []diskPage
+	for name, off := range abbrevs {
+		m := &model.Message{Subject: "skzone " + name, SenderName: "Zone Sender", SenderEmail: "skzone@example.com", To: "rcpt@example.com",
+			Received: time.Date(2025, 4, 2, 10, 30, 0, 0, time.FixedZone(name, off)), InternetMessageID: "<skzone-" + name + "@x>", HTMLBody: "<p>skzoneword</p>"}
+		page := renderV023(m)
+		if !strings.Contains(string(page), "10:30:00 "+name+"</dd>") {
+			t.Fatalf("fixture sanity: no %q stamp in %s", name, page)
+		}
+		got, unrecovered := readArchivedHTML(page)
+		if !got.Received.IsZero() || unrecovered != 1 {
+			t.Errorf("%q stamp: date = %v (unrecovered=%d), want zero and 1 (not a stamp those releases wrote; counted, never guessed)", name, got.Received, unrecovered)
+		}
+		if got.Subject != m.Subject || got.SenderEmail != "skzone@example.com" {
+			t.Errorf("%q stamp: subject=%q sender=%q, want the page's own header", name, got.Subject, got.SenderEmail)
+		}
+		pages = append(pages, diskPage{m, page})
+	}
+
+	out := tmpDir(t)
+	buildOnDiskArchive(t, out, pages)
+	if rep := rebuildOnDisk(t, out, len(pages)); rep.Unrecovered != len(pages) {
+		t.Errorf("rebuild unrecovered-fields = %d, want %d (one date per page)", rep.Unrecovered, len(pages))
+	}
+	if got := searchTotal(t, out, "skzoneword"); got != len(pages) {
+		t.Errorf("post-rebuild \"skzoneword\" = %d, want %d (every record still indexed)", got, len(pages))
+	}
+	assure.Reached(t, searchTotal(t, out, "from:skzone@example.com"), "rebuilt records by sender")
+}
+
 // covers: MA-481, R13, R8, S33
 // A page shown as source carries the mail's HTML as escaped text in a
 // <pre data-mailarchive-fallback>, and `reindex -rebuild` indexes that text

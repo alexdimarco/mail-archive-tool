@@ -39,8 +39,8 @@ import (
 const htmlHeaderLayout = "Mon, 02 Jan 2006 15:04:05 -0700"
 
 // htmlHeaderLegacyLayout is the Date stamp v0.1.1–v0.2.3 wrote
-// (d.Format("Mon, 02 Jan 2006 15:04:05 MST")): the zone's abbreviation, or a
-// bare offset when the zone has no name (which htmlHeaderLayout already reads).
+// (d.Format("Mon, 02 Jan 2006 15:04:05 MST")): the zone's abbreviation, which
+// is always "UTC" (those releases converted every time to UTC first).
 const htmlHeaderLegacyLayout = "Mon, 02 Jan 2006 15:04:05 MST"
 
 // reHeaderUTC matches fmtTime's parenthetical UTC instant "(YYYY-MM-DD HH:MM
@@ -583,7 +583,7 @@ func splitSender(s string) (name, email string) {
 // parseHeaderTime recovers a time from a header dd's text: the parenthetical
 // UTC instant fmtTime appends for a non-UTC offset (minute precision), else the
 // leading RFC-style stamp with its original offset (a UTC time, which has no
-// parenthetical), else a v0.1–v0.2 stamp with a zone abbreviation. A dd whose
+// parenthetical), else a v0.1–v0.2 stamp, which is always "UTC". A dd whose
 // text is none of these yields ok=false.
 func parseHeaderTime(s string) (time.Time, bool) {
 	if mm := reHeaderUTC.FindStringSubmatch(s); mm != nil {
@@ -595,12 +595,14 @@ func parseHeaderTime(s string) (time.Time, bool) {
 		return t, true
 	}
 	if t, err := time.Parse(htmlHeaderLegacyLayout, strings.TrimSpace(s)); err == nil {
-		// An abbreviation names an offset only where one is known: UTC and
-		// GMT[±h] always, any other only when this machine's zone uses it then
-		// (time.Parse resolves it to time.Local). An unknown one parses at
-		// offset 0 in a made-up zone, a guess hours off, so it is counted
-		// unrecovered instead of indexed.
-		if name, _ := t.Zone(); t.Location() == time.UTC || t.Location() == time.Local || strings.HasPrefix(name, "GMT") {
+		// v0.1.1–v0.2.3 converted every time to UTC before rendering (each
+		// source set Received/Sent to ….UTC()), so their stamp always reads
+		// "UTC", which time.Parse maps to time.UTC whatever the local zone. Any
+		// other abbreviation is not theirs, and time.Parse can only guess its
+		// offset: through this machine's zone ("CST" is +8 in Shanghai, -6 in
+		// Chicago), or as a made-up zone at the wrong instant (offset 0, or
+		// "GMT+3" taken as UTC wall time). It is counted, never indexed.
+		if t.Location() == time.UTC {
 			return t, true
 		}
 	}
