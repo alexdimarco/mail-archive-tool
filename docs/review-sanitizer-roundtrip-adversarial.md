@@ -411,6 +411,18 @@ Stated residuals carried from the branch work (not regressions):
 - **No JS-off browser check** of the noscript link/meta copies; the scripting-off
   x/net reading is what covers them.
 
+Open gap found by the fresh-eyes review's corpus run (not a regression of these
+fixes: already present at the merge `8f900c9`; open, not accepted, and for the
+round-3 pass): on rv3/corpus-adv, after `c3b26a6`, 8 of the 372 mails still
+have words found live and rebuilt a different number of times (R8). A
+`<plaintext>` that runs to the end of the mail
+(adv_plaintext_{body,head}_{esc,lnk,ref}_b) also swallows the page's own
+closing tags, whose names the rebuild indexes; and a `<noscript>` nested past
+`flattenDepth` (adv_deep_xmp, adv_deep2_template) loses its tags to the
+flattener, so an `<xmp>` or `<template>` straddling the noscript's raw-text end
+reads differently on the page. Encoded by the skipped MA-492
+`TestLiveAndRebuiltIndexAgreeOnCorpusResidualShapes`, which fails if un-skipped.
+
 ### Differential lens results
 
 **Offensive differential: none survives `aa1c98d`.** The finder exported 25 crafted vectors

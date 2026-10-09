@@ -377,6 +377,46 @@ func TestLiveAndRebuiltIndexAgreeOnTablePartsPastTheCap(t *testing.T) {
 	}
 }
 
+// covers: MA-492, R8
+// OPEN GAP in R8, NOT accepted, encoded the kit's way: a t.Skip that FAILS if
+// un-skipped today. The fresh-eyes corpus run (rv3/corpus-adv, 372 vectors)
+// leaves 8 mails whose words differ live and rebuilt, all of them already at
+// 8f900c9 (the pre-integration merge), in two shapes. (1) A <plaintext> that
+// runs to the end of the mail (adv_plaintext_{body,head}_{esc,lnk,ref}_b) also
+// swallows the page's own closing `</div></body></html>`, which the rebuild
+// then indexes as the words "div", "body" and "html" (rebuilt only). (2) A
+// <noscript> nested past flattenDepth (adv_deep_xmp, adv_deep2_template): the
+// flattener reads noscript content as markup and drops the noscript's own
+// tags past the cap, so what the scripting-on reading of the mail held as the
+// noscript's raw text — and an <xmp> or <template> straddling its end — reads
+// differently on the page: the refresh's words are found rebuilt only, and so
+// is a word after a <template> whose </template> sat in the noscript's raw
+// text (in the mail it is template content, which no reader sees). Fixing
+// either changes what the page or the flattener writes, which is for the
+// round-3 pass and the owner; until then this stays skipped. When it passes,
+// REMOVE the Skip.
+func TestLiveAndRebuiltIndexAgreeOnCorpusResidualShapes(t *testing.T) {
+	t.Skip("R8 open gap: a mail-final <plaintext> swallows the page's closing tags, and a noscript dropped past flattenDepth changes the scripting-on reading (rv3/corpus-adv residuals, pre-existing at 8f900c9)")
+
+	divs := func(n int, inner string) string {
+		return strings.Repeat("<div>", n) + inner + strings.Repeat("</div>", n)
+	}
+	const refresh = `<meta http-equiv="refresh" content="0;url=http://127.0.0.1:8799/b/resid">`
+	bodies := map[string]string{
+		"resid plaintext tail": `<p>residplainwords</p><plaintext><noscript><meta charset=utf-8>residtailword</noscript><p>tail</p>`,
+		"resid deep xmp":       divs(500, `<noscript><meta charset=utf-8><xmp></noscript>`+refresh+`</xmp></noscript>`) + `<p>residxmpafter</p>`,
+		"resid deep template":  divs(500, `<template><noscript><meta charset=utf-8></template>&lt;meta http-equiv="refresh" content="0;url=http://127.0.0.1:8799/b/residtpl"&gt;</noscript>`) + `<p>residtplafter</p>`,
+	}
+	same := []string{"div", "body", "html", "resid", "residtpl", "refresh", "equiv", "residplainwords", "residtailword", "residxmpafter", "residtplafter"}
+	live, rebuilt := parityArchive(t, bodies, same)
+	assure.Reached(t, live["residplainwords"]+rebuilt["residplainwords"], "hits for a body word")
+	for _, q := range same {
+		if live[q] != rebuilt[q] {
+			t.Errorf("search %q: live=%d rebuilt=%d, want the same count on both (R8)", q, live[q], rebuilt[q])
+		}
+	}
+}
+
 // covers: MA-492, R8, R13, S33
 // Deep mails, at and past the depth where an exporter would flatten them (480)
 // and past the tree parser's cap (512), keep their word boundaries and their
