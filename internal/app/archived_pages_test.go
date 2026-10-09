@@ -242,25 +242,29 @@ func fixtureSender(m *model.Message) string {
 // ---- end to end: an archive whose pages are exactly the given bytes.
 
 // diskPage is one archived page as some release wrote it, plus the message
-// whose manifest record points at it.
+// whose manifest record points at it. A nil page keeps the page today's
+// exporter writes for m (a positive twin).
 type diskPage struct {
 	m    *model.Message
 	page []byte
 }
 
-// buildOnDiskArchive lays down a real archive (manifest, folder pages, one
-// record per page) by exporting a shallow placeholder for each message with
-// today's exporter — only so the record and its path exist — and then writes
-// each page's on-disk bytes over the placeholder page, keeps no .eml (so the
-// rebuild must re-derive the record from the page) and deletes search.db. The
-// rebuild then reads exactly the bytes the release left behind.
-func buildOnDiskArchive(t *testing.T, out string, pages []diskPage) {
+// layDownArchive writes a real archive (manifest, live index, folder pages, one
+// record per page): each message is exported with today's exporter — for a
+// fixture page as a shallow placeholder, only so the record and its path exist
+// — and each fixture's on-disk bytes are then written over its placeholder
+// page. No .eml is kept, so a rebuild must re-derive every record from its
+// page, and reads exactly the bytes the release left behind.
+func layDownArchive(t *testing.T, out string, pages []diskPage) {
 	t.Helper()
 	msgs := make([]rbMsg, len(pages))
 	for i, p := range pages {
-		ph := *p.m
-		ph.HTMLBody, ph.PlainBody, ph.Raw = "<p>placeholder</p>", "", nil
-		msgs[i] = rbMsg{[]string{"Inbox"}, &ph}
+		m := *p.m
+		m.Raw = nil
+		if p.page != nil {
+			m.HTMLBody, m.PlainBody = "<p>placeholder</p>", ""
+		}
+		msgs[i] = rbMsg{[]string{"Inbox"}, &m}
 	}
 	rels := buildRebuildArchive(t, out, msgs)
 	for _, p := range pages {
@@ -269,13 +273,23 @@ func buildOnDiskArchive(t *testing.T, out string, pages []diskPage) {
 			t.Fatalf("no page exported for %q (subjects must be distinct)", p.m.Subject)
 		}
 		full := filepath.Join(out, filepath.FromSlash(rel))
-		if err := os.WriteFile(full, p.page, 0o644); err != nil {
-			t.Fatal(err)
-		}
 		if _, err := os.Stat(strings.TrimSuffix(full, ".html") + ".eml"); err == nil {
 			t.Fatalf("%s kept a .eml; the rebuild would not read the page", rel)
 		}
+		if p.page == nil {
+			continue
+		}
+		if err := os.WriteFile(full, p.page, 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
+}
+
+// buildOnDiskArchive is layDownArchive with the live index then deleted: the
+// state `reindex -rebuild` recovers from.
+func buildOnDiskArchive(t *testing.T, out string, pages []diskPage) {
+	t.Helper()
+	layDownArchive(t, out, pages)
 	deleteSearchDB(t, out)
 }
 
