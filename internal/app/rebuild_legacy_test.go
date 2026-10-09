@@ -108,16 +108,22 @@ func TestRebuildHonoursFallbackOnlyOnRendererLayout(t *testing.T) {
 	}
 
 	// Each renderer-layout condition, alone, decides: a decoy that misses any
-	// one is indexed as an ordinary body (its markup, as before aa1c98d).
+	// one is indexed as an ordinary body (its markup, as before aa1c98d). On a
+	// v0.2.3 page the attribute is never honoured at all (those releases wrote
+	// no fallback <pre>); the same bodies laid into aa1c98d's template, where
+	// the body div is the renderer's, are decided by the layout alone.
 	for name, body := range map[string]string{
 		"not the only child": `<pre class="plain" data-mailarchive-fallback="too-deeply-nested">skepdecoy</pre><p>skeprealtwo</p>`,
 		"text beside it":     `<pre class="plain" data-mailarchive-fallback="too-deeply-nested">skepdecoy</pre>skeprealthree`,
 		"no class plain":     `<pre data-mailarchive-fallback="too-deeply-nested">skepdecoy</pre>`,
 		"unknown reason":     `<pre class="plain" data-mailarchive-fallback="x">skepdecoy</pre>`,
 	} {
-		got, _ := readArchivedHTML(renderV023(msg("decoy "+name, body)))
-		if !strings.Contains(got.HTMLBody, "<pre") || !strings.Contains(got.HTMLBody, "skepdecoy") {
-			t.Errorf("%s: HTMLBody = %q, want the body div's own markup (the attribute not honoured)", name, got.HTMLBody)
+		m := msg("decoy "+name, body)
+		for layout, page := range map[string][]byte{"v0.2.3": renderV023(m), "aa1c98d": renderAA1(m, "", body)} {
+			got, _ := readArchivedHTML(page)
+			if !strings.Contains(got.HTMLBody, "<pre") || !strings.Contains(got.HTMLBody, "skepdecoy") {
+				t.Errorf("%s (%s page): HTMLBody = %q, want the body div's own markup (the attribute not honoured)", name, layout, got.HTMLBody)
+			}
 		}
 	}
 
@@ -219,5 +225,156 @@ func TestRebuildReadsLegacyPageWithoutBodyDiv(t *testing.T) {
 	r := firstResult(t, out, "skepdeepoldneedle")
 	if r.Subject != "skepdeepoldsubj" || r.SenderEmail != "skdeepold@example.com" || !r.Date.Equal(when) {
 		t.Errorf("deep old page rebuilt as subject=%q sender=%q date=%v", r.Subject, r.SenderEmail, r.Date)
+	}
+}
+
+// covers: MA-481, MA-483, R13, R8, S33
+// A page v0.1.1–v0.2.3 wrote (it carries their header span) never has its
+// fallback attribute honoured, nor a body div taken as the renderer's: those
+// releases never wrote a fallback <pre> and kept the mail's own classes, so
+// on either of their layouts a mail could wear both. The body is all of
+// <body>'s content but the header, so no mail-supplied element hides the rest
+// of the mail from the rebuilt index (RV-6 beyond the fragment decoy): (a) a
+// full document whose content starts with its own <div class="mailarchive-body">,
+// with or without a decoy fallback <pre> in it, keeps every word after it; (b) a
+// fragment that is one renderer-shaped fallback <pre> is indexed by its visible
+// text, so words after an escaped `<!--` or inside an escaped `<style>` are not
+// re-read as markup and lost. Each record keeps its own header. A plain <div>
+// and a <pre> without the attribute are the twins (adv2 fvgen.py "fulldecoy",
+// "oldpre").
+func TestRebuildLegacyPageNeverHonoursFallback(t *testing.T) {
+	when := time.Date(2025, 4, 2, 11, 50, 0, 0, time.UTC)
+	msg := func(name, body string) *model.Message {
+		return &model.Message{Subject: name + "subj", SenderName: name + " Sender", SenderEmail: name + "@example.com",
+			To: "rcpt@example.com", Received: when, InternetMessageID: "<" + name + "@x>", HTMLBody: body}
+	}
+	full := func(content string) string { return `<html><head></head><body>` + content + `</body></html>` }
+	cases := []struct {
+		m    *model.Message
+		want []string // words the rebuilt index must find for this mail
+	}{
+		{msg("skfdecoy", full(`<div class="mailarchive-body"><pre class="plain" data-mailarchive-fallback="too-deeply-nested">skfdecoyshown</pre></div><p>the real message says skfdecoyreal</p>`)),
+			[]string{"skfdecoyshown", "skfdecoyreal"}},
+		{msg("skfdiv", full(`<div class="mailarchive-body">skfdivshown</div><p>the real message says skfdivreal</p>`)),
+			[]string{"skfdivshown", "skfdivreal"}},
+		{msg("skfctl", full(`<div>skfctlshown</div><p>the real message says skfctlreal</p>`)),
+			[]string{"skfctlshown", "skfctlreal"}},
+		{msg("skopre", `<pre class="plain" data-mailarchive-fallback="too-deeply-nested">skoprevisible &lt;!-- skoprehidden words --&gt;</pre>`),
+			[]string{"skoprevisible", "skoprehidden"}},
+		{msg("skoprestyle", `<pre class="plain" data-mailarchive-fallback="unparseable">&lt;style&gt;skoprestylehidden&lt;/style&gt; skoprestylevisible</pre>`),
+			[]string{"skoprestylevisible", "skoprestylehidden"}},
+		{msg("skoprectl", `<pre class="plain">skoprectlvisible &lt;!-- skoprectlhidden --&gt;</pre>`),
+			[]string{"skoprectlvisible", "skoprectlhidden"}},
+	}
+	var pages []diskPage
+	for _, c := range cases {
+		p := renderV023(c.m)
+		if _, _, legacy := legacyHeaderSpan(p); !legacy {
+			t.Fatalf("fixture sanity: %q carries no v0.2.3 header span:\n%s", c.m.Subject, p)
+		}
+		pages = append(pages, diskPage{c.m, p})
+	}
+	if p := string(pages[0].page); !strings.Contains(p, "</dl></div><div class=\"mailarchive-body\"><pre class=\"plain\" data-mailarchive-fallback=") {
+		t.Fatalf("fixture sanity: the full-document decoy does not follow the injected header:\n%s", p)
+	}
+
+	for i, p := range pages {
+		got, unrecovered := readArchivedHTML(p.page)
+		if unrecovered != 0 || got.Subject != p.m.Subject || got.SenderEmail != p.m.SenderEmail || !got.Received.Equal(when) {
+			t.Errorf("%q read subject=%q sender=%q date=%v unrecovered=%d, want its own header and 0",
+				p.m.Subject, got.Subject, got.SenderEmail, got.Received, unrecovered)
+		}
+		if strings.Contains(got.HTMLBody, "mailarchive-subject") {
+			t.Errorf("%q: header indexed as body: %.200q", p.m.Subject, got.HTMLBody)
+		}
+		for _, w := range cases[i].want {
+			if !strings.Contains(got.HTMLBody, w) {
+				t.Errorf("%q: HTMLBody lacks %q: %.200q", p.m.Subject, w, got.HTMLBody)
+			}
+		}
+	}
+
+	out := tmpDir(t)
+	buildOnDiskArchive(t, out, pages)
+	if rep := rebuildOnDisk(t, out, len(pages)); rep.Unrecovered != 0 {
+		t.Errorf("rebuild unrecovered-fields = %d, want 0", rep.Unrecovered)
+	}
+	for _, c := range cases {
+		for _, w := range append([]string{c.m.Subject, "from:" + c.m.SenderEmail}, c.want...) {
+			if got := searchTotal(t, out, w); got != 1 {
+				t.Errorf("post-rebuild %q = %d, want 1", w, got)
+			}
+		}
+	}
+}
+
+// covers: MA-483, R13, R8, S33
+// On a v0.1.1–v0.2.3 full-document page the parser puts whatever the mail had
+// between its </head> and its <body> tag — text, a hidden preheader div — into
+// <body> AHEAD of the injected header. That is the mail's content too, and
+// `reindex -rebuild` indexes it, shallow and on a page too deep for the tree
+// parser, alongside the content after the header. A header-classed div there
+// (RV-1's forged one, moved in from the mail's <head>) is still skipped: it
+// forges nothing and adds no words (adv2 fvgen.py "before").
+func TestRebuildLegacyPageIndexesContentBeforeHeader(t *testing.T) {
+	when := time.Date(2025, 4, 2, 11, 55, 0, 0, time.UTC)
+	deep := func(inner string, d int) string {
+		return strings.Repeat("<div>", d) + inner + strings.Repeat("</div>", d)
+	}
+	msg := func(name, body string) *model.Message {
+		return &model.Message{Subject: name + "subj", SenderName: name + " Sender", SenderEmail: name + "@example.com",
+			To: "rcpt@example.com", Received: when, InternetMessageID: "<" + name + "@x>", HTMLBody: body}
+	}
+	forgedDiv := `<div class="mailarchive-header"><div class="mailarchive-subject" data-mailarchive-field="subject">skbforged wire approval</div>` +
+		`<dl><dt>From</dt><dd data-mailarchive-field="from">Chief Executive &lt;ceo@skbbank.example&gt;</dd></dl></div>`
+	pages := []diskPage{}
+	for _, m := range []*model.Message{
+		msg("skbtext", `<html><head></head><p>skbtextbefore</p><body><p>skbtextafter</p></body></html>`),
+		msg("skbpre", `<html><head><title>t</title></head><div style="display:none">skbprebefore</div><body style="margin:0"><p>skbpreafter</p></body></html>`),
+		msg("skbforge", `<html><head>`+forgedDiv+`</head><div style="display:none">skbforgebefore</div><body><p>skbforgeafter</p></body></html>`),
+		msg("skbdeep", `<html><head></head><div style="display:none">skbdeepbefore</div><body><p>skbdeepafter</p>`+deep("<p>skbdeepneedle</p>", 600)+`</body></html>`),
+		msg("skbdeepforge", `<html><head>`+forgedDiv+`</head><div style="display:none">skbdeepforgebefore</div><body><p>skbdeepforgeafter</p>`+deep("<p>skbdeepforgeneedle</p>", 600)+`</body></html>`),
+	} {
+		pages = append(pages, diskPage{m, renderV023(m)})
+	}
+	for i, p := range pages {
+		_, err := xhtml.Parse(bytes.NewReader(p.page))
+		if deep := i >= 3; deep != (err != nil) {
+			t.Fatalf("fixture sanity: %q parse error = %v; the deep pages must be past the parser's cap, the others not", p.m.Subject, err)
+		}
+		if _, _, legacy := legacyHeaderSpan(p.page); !legacy || strings.Contains(string(p.page), `class="mailarchive-body"`) {
+			t.Fatalf("fixture sanity: %q is not a v0.2.3 full-document page:\n%.300s", p.m.Subject, p.page)
+		}
+	}
+
+	for _, p := range pages {
+		got, unrecovered := readArchivedHTML(p.page)
+		if unrecovered != 0 || got.Subject != p.m.Subject || got.SenderEmail != p.m.SenderEmail || !got.Received.Equal(when) {
+			t.Errorf("%q read subject=%q sender=%q date=%v unrecovered=%d, want its own header and 0",
+				p.m.Subject, got.Subject, got.SenderEmail, got.Received, unrecovered)
+		}
+		name := strings.TrimSuffix(p.m.Subject, "subj")
+		if !strings.Contains(got.HTMLBody, name+"before") || !strings.Contains(got.HTMLBody, name+"after") {
+			t.Errorf("%q: HTMLBody lacks %q or %q: %.200q", p.m.Subject, name+"before", name+"after", got.HTMLBody)
+		}
+		if strings.Contains(got.HTMLBody, "mailarchive-subject") || strings.Contains(got.HTMLBody, "skbforged") {
+			t.Errorf("%q: a header indexed as body: %.200q", p.m.Subject, got.HTMLBody)
+		}
+	}
+
+	out := tmpDir(t)
+	buildOnDiskArchive(t, out, pages)
+	if rep := rebuildOnDisk(t, out, len(pages)); rep.Unrecovered != 0 {
+		t.Errorf("rebuild unrecovered-fields = %d, want 0", rep.Unrecovered)
+	}
+	want := map[string]int{"from:ceo": 0, "skbforged": 0, "wire": 0, "skbdeepneedle": 1, "skbdeepforgeneedle": 1}
+	for _, p := range pages {
+		name := strings.TrimSuffix(p.m.Subject, "subj")
+		want[p.m.Subject], want["from:"+p.m.SenderEmail], want[name+"before"], want[name+"after"] = 1, 1, 1, 1
+	}
+	for q, n := range want {
+		if got := searchTotal(t, out, q); got != n {
+			t.Errorf("post-rebuild %q = %d, want %d", q, got, n)
+		}
 	}
 }

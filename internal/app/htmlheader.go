@@ -64,8 +64,8 @@ var reLegacyHeader = regexp.MustCompile(`^\n(<div class="mailarchive-header"><di
 // could not be recovered — the honesty count the rebuild summary reports (PC5).
 // Attachment names are NOT read here: the rebuild reads them from the sibling
 // zip's central directory (PC3). A parse that finds no header leaves the three
-// core fields empty and counts all three; the body is still recovered when a
-// `.mailarchive-body` element is present.
+// core fields empty and counts all three; the body is still recovered (see
+// readArchivedTree).
 func readArchivedHTML(data []byte) (*model.Message, int) {
 	root, err := xhtml.Parse(bytes.NewReader(data))
 	if err == nil {
@@ -77,15 +77,18 @@ func readArchivedHTML(data []byte) (*model.Message, int) {
 	// body div: read the header fields from the shallow part, and hand the body
 	// bytes to the indexer as they are (its text extraction is a tokenizer pass
 	// with no depth limit). A page v0.1.1–v0.2.3 wrote for a full-document mail
-	// has no body div: split it right after its anchored header (RV-7).
+	// has no body div: split it right after its anchored header (RV-7). The
+	// body is what the shallow part holds of it (on an old page, the mail's
+	// content the parser put ahead of the header; on a current one, nothing:
+	// the part ends at the body div's start tag), then the bytes after the split.
 	if root, body, ok := splitAtLegacyHeader(data); ok {
 		m, unrecovered := readArchivedTree(data, root)
-		m.HTMLBody = body
+		m.HTMLBody += body
 		return m, unrecovered
 	}
 	if root, body, ok := splitAtBodyDiv(data); ok {
 		m, unrecovered := readArchivedTree(data, root)
-		m.HTMLBody = body
+		m.HTMLBody += body
 		return m, unrecovered
 	}
 	// Unparseable bytes: nothing recovered. The record is still indexed with
@@ -110,7 +113,10 @@ func splitAtLegacyHeader(data []byte) (root *xhtml.Node, body string, ok bool) {
 		return nil, "", false
 	}
 	bodyEl := findFirst(root, func(n *xhtml.Node) bool { return n.Type == xhtml.ElementNode && n.Data == "body" })
-	if bodyEl == nil || anchorHeader(data, bodyEl) == nil {
+	if bodyEl == nil {
+		return nil, "", false
+	}
+	if header, _ := anchorHeader(data, bodyEl); header == nil {
 		return nil, "", false
 	}
 	return root, string(data[end:]), true
@@ -201,7 +207,7 @@ func bodyDivFollowsHeader(data []byte, root *xhtml.Node) bool {
 	if bodyEl == nil {
 		return false
 	}
-	header := anchorHeader(data, bodyEl)
+	header, _ := anchorHeader(data, bodyEl)
 	if header == nil {
 		header = firstChildDiv(bodyEl, "mailarchive-header")
 	}
@@ -238,7 +244,8 @@ func legacyHeaderSpan(data []byte) (start, end int, ok bool) {
 }
 
 // anchorHeader returns the renderer's own header element among bodyEl's
-// children, or nil when it cannot be told apart.
+// children, or nil when it cannot be told apart, and whether the page carries
+// the v0.1.1–v0.2.3 header span (legacyHeaderSpan), live or not.
 //
 // A page v0.3.0 or later wrote (no legacy span) keeps the first header div
 // directly in <body>: every mail element was stripped of the reserved class.
@@ -250,23 +257,27 @@ func legacyHeaderSpan(data []byte) (start, end int, ok bool) {
 // earlier header divs are ignored. A span that is not live (an old mail whose
 // first `<body` sat in its <title>, or a current mail whose head raw text
 // mimics the old bytes) yields nil: the core fields are counted, never read
-// from another div.
-func anchorHeader(data []byte, bodyEl *xhtml.Node) *xhtml.Node {
+// from another div (MA-187's open gap: bytes cannot tell those two apart).
+func anchorHeader(data []byte, bodyEl *xhtml.Node) (header *xhtml.Node, legacy bool) {
 	start, end, legacy := legacyHeaderSpan(data)
 	if !legacy {
-		return firstChildDiv(bodyEl, "mailarchive-header")
+		return firstChildDiv(bodyEl, "mailarchive-header"), false
 	}
 	nodes, err := xhtml.ParseFragment(bytes.NewReader(data[start:end]), &xhtml.Node{Type: xhtml.ElementNode, Data: "body", DataAtom: atom.Body})
 	if err != nil || len(nodes) != 1 {
-		return nil
+		return nil, true
 	}
 	want := renderNodeString(nodes[0])
 	for c := bodyEl.FirstChild; c != nil; c = c.NextSibling {
-		if c.Type == xhtml.ElementNode && c.Data == "div" && hasClass(c, "mailarchive-header") && renderNodeString(c) == want {
-			return c
+		if isHeaderDiv(c) && renderNodeString(c) == want {
+			return c, true
 		}
 	}
-	return nil
+	return nil, true
+}
+
+func isHeaderDiv(n *xhtml.Node) bool {
+	return n.Type == xhtml.ElementNode && n.Data == "div" && hasClass(n, "mailarchive-header")
 }
 
 func renderNodeString(n *xhtml.Node) string {
@@ -295,23 +306,30 @@ func readArchivedTree(data []byte, root *xhtml.Node) (*model.Message, int) {
 	if bodyEl == nil {
 		return m, 3
 	}
-	header := anchorHeader(data, bodyEl)
+	header, legacy := anchorHeader(data, bodyEl)
 
-	// The body text: the `.mailarchive-body` div right after the header, or,
-	// with no header found, the FIRST such div directly in <body>, so search
-	// still works on a torn page. A page v0.1.1–v0.2.3 wrote for a full-document
-	// mail has no body div at all: the mail's content follows the header inside
-	// its own <body>, so that content is the body (RV-7).
+	// The body text. On a page that carries the v0.1.1–v0.2.3 header span, the
+	// mail kept its own classes and attributes, and those releases never wrote
+	// a fallback <pre>, so neither a body div nor data-mailarchive-fallback
+	// marks the mail's content: the body is all of <body>'s content but the
+	// header (legacyBody; RV-6 on both old layouts, RV-7). On any other page:
+	// the `.mailarchive-body` div right after the header, or, with no header
+	// found, the FIRST such div directly in <body>, so search still works on a
+	// torn page.
 	var bodyDiv *xhtml.Node
-	if header != nil {
+	switch {
+	case legacy:
+		m.HTMLBody = legacyBody(bodyEl, header)
+	case header != nil:
 		if next := nextElementSibling(header); next != nil && next.Data == "div" && hasClass(next, "mailarchive-body") {
 			bodyDiv = next
+		} else {
+			m.HTMLBody = legacyBody(bodyEl, header) // torn: the rest of <body>
 		}
-	} else {
+	default:
 		bodyDiv = firstChildDiv(bodyEl, "mailarchive-body")
 	}
-	switch {
-	case bodyDiv != nil:
+	if bodyDiv != nil {
 		m.HTMLBody = innerHTML(bodyDiv)
 		// A body the renderer could not show as HTML is kept as escaped source in
 		// a reserved-attribute <pre> (export.plainFallback). Its text IS the
@@ -320,12 +338,6 @@ func readArchivedTree(data []byte, root *xhtml.Node) (*model.Message, int) {
 		if src, ok := fallbackSource(bodyDiv); ok {
 			m.HTMLBody = src
 		}
-	case header != nil:
-		var b strings.Builder
-		for c := header.NextSibling; c != nil; c = c.NextSibling {
-			_ = xhtml.Render(&b, c)
-		}
-		m.HTMLBody = b.String()
 	}
 
 	if header == nil {
@@ -404,6 +416,29 @@ func readArchivedTree(data []byte, root *xhtml.Node) (*model.Message, int) {
 	return m, unrecovered
 }
 
+// legacyBody is the mail's content on a page that carries the v0.1.1–v0.2.3
+// header span: every child of <body>, in order, but the anchored header and any
+// header-classed div ahead of it — RV-1's forged one, which the parser moved
+// there from the mail's <head>; with no live header, every header-classed div.
+// That keeps the content the parser put ahead of the header too (what the mail
+// had between its </head> and its <body> tag: text, a hidden preheader), and a
+// mail-supplied body div or fallback <pre> is indexed like the rest, as markup.
+// On the fragment layout the template's body div is simply part of it.
+func legacyBody(bodyEl, header *xhtml.Node) string {
+	var b strings.Builder
+	after := false
+	for c := bodyEl.FirstChild; c != nil; c = c.NextSibling {
+		switch {
+		case c == header:
+			after = true
+		case !after && isHeaderDiv(c):
+		default:
+			_ = xhtml.Render(&b, c)
+		}
+	}
+	return b.String()
+}
+
 // fallbackReasons are the values export.plainFallback writes on the <pre>.
 var fallbackReasons = map[string]bool{
 	export.FallbackTooDeep:     true,
@@ -415,11 +450,11 @@ var fallbackReasons = map[string]bool{
 // fallbackSource returns the mail's HTML source from a body div the renderer
 // wrote for a body shown as source, and ok=false for any other body div. Mail
 // on a v0.3.0+ page cannot carry data-mailarchive-fallback (the sanitizer
-// strips the namespace), but pages v0.1.1–v0.2.3 wrote put a mail fragment raw
-// into the body div, so a mail there can carry it on a decoy <pre> (RV-6).
-// Only the renderer's exact layout counts: the <pre> is the ONLY non-whitespace
-// child of the body div (no other element, comment or text), its class is
-// "plain", and its value is a reason the renderer writes.
+// strips the namespace); pages v0.1.1–v0.2.3 wrote, where a mail can (RV-6),
+// never get here (legacyBody). Even so only the renderer's exact layout
+// counts: the <pre> is the ONLY non-whitespace child of the body div (no other
+// element, comment or text), its class is "plain", and its value is a reason
+// the renderer writes.
 func fallbackSource(bodyDiv *xhtml.Node) (string, bool) {
 	var pre *xhtml.Node
 	for c := bodyDiv.FirstChild; c != nil; c = c.NextSibling {
