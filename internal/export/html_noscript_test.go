@@ -111,7 +111,8 @@ func liveCharsetMetas(t *testing.T, page string) [2]int {
 // the escaped twin renders as text; and an escaped twin beside a real
 // charset meta — whose scripting-off serialization writes the escaped meta
 // back raw — is rejected by the re-check and falls back (the retry is
-// accepted only when the re-check passes again).
+// accepted only when the re-check passes again). The retry keeps the mail's
+// head pieces: the AMP head's styles are on the page in both readings.
 func TestRenderNoscriptMetasRenderNeutralized(t *testing.T) {
 	const refresh = `<meta http-equiv="refresh" content="0;url=http://evil.example/beacon">`
 	render := map[string]string{
@@ -153,5 +154,37 @@ func TestRenderNoscriptMetasRenderNeutralized(t *testing.T) {
 	}
 	if live := liveHostileMetas(t, string(out.HTML)); len(live) > 0 || out.BodyFallback != FallbackHostile {
 		t.Errorf("escaped twin beside a real meta: the retry must be rejected by the re-check and fall back (got %q, live %v)", out.BodyFallback, live)
+	}
+
+	// The retry keeps the mail's head pieces: the AMP head's boilerplate style
+	// is a live style in the page's head in both readings, and to a reader
+	// with JavaScript off its noscript style is live there too.
+	amp, err := RenderWith(&model.Message{Subject: "amp", HTMLBody: render["amp head"]}, RenderContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if amp.BodyFallback != "" {
+		t.Fatalf("amp head: must render, got %q", amp.BodyFallback)
+	}
+	for i, root := range pageTrees(t, "amp head", string(amp.HTML)) {
+		head := findElem(root, func(n *xhtml.Node) bool { return n.Data == "head" })
+		var styles []string
+		var walk func(n *xhtml.Node)
+		walk = func(n *xhtml.Node) {
+			if n.Type == xhtml.ElementNode && n.Data == "style" && n.FirstChild != nil {
+				styles = append(styles, n.FirstChild.Data)
+			}
+			for c := n.FirstChild; c != nil; c = c.NextSibling {
+				walk(c)
+			}
+		}
+		walk(head)
+		joined := strings.Join(styles, "|")
+		if !strings.Contains(joined, "body{visibility:hidden}") {
+			t.Errorf("amp head (reading %d): the mail's head style must be kept in the page's head, got styles %q", i, styles)
+		}
+		if scriptingOff := i == 1; scriptingOff && !strings.Contains(joined, "body{visibility:visible}") {
+			t.Errorf("amp head, scripting off: the noscript style must be live in the page's head, got styles %q", styles)
+		}
 	}
 }

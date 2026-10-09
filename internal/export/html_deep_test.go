@@ -302,9 +302,12 @@ func TestFlattenKeepsTextAndLeaves(t *testing.T) {
 // the tree builder re-opens 40 formatting elements it cannot see) and that
 // parses at exactly the 512 cap, so the sanitizer's own parse and re-check
 // accept it; only the page is too deep, and it falls back as
-// too-deeply-nested with a page that parses. Across shapes around the cap
-// (divs, tables, noscript, head template, the reopened case), every page
-// written — rendered or fallen back — parses. The twin, 460 divs deep, renders.
+// too-deeply-nested with a page that parses. Wrapped in a <noscript> (469
+// deep) the page is too deep only to a reader with JavaScript off, and falls
+// back too: the page check reads the scripting-off page as well. Across shapes
+// around the cap (divs, tables, noscript, head template, the reopened case
+// bare and in a noscript), every page written — rendered or fallen back —
+// parses. The twin, 460 divs deep, renders.
 func TestRenderNeverWritesAPageTooDeepToParse(t *testing.T) {
 	doc := reopenedBold(470, "reopened words")
 	if _, err := xhtml.Parse(strings.NewReader(flattenDeep(doc))); err != nil {
@@ -318,6 +321,25 @@ func TestRenderNeverWritesAPageTooDeepToParse(t *testing.T) {
 	pageTrees(t, "reopened 470", page)
 	if out.BodyFallback != FallbackTooDeep || !strings.Contains(page, `data-mailarchive-fallback="`+FallbackTooDeep+`"`) || !strings.Contains(page, "reopened words") {
 		t.Errorf("a page too deep to parse must fall back as %q with the words shown, got %q", FallbackTooDeep, out.BodyFallback)
+	}
+
+	// The page is parsed in EVERY scripting reading: inside a <noscript> the
+	// same kind of mail (469 deep) is one text node to the scripting-on reading
+	// of the page and one level past the cap to a reader with JavaScript off.
+	// The sanitizer's own parse and its re-check accept it (the re-check's doc
+	// has no div.mailarchive-body), so only the page check's scripting-off
+	// parse makes it fall back.
+	ns := "<p>shown words</p><noscript>" + reopenedBold(469, "noscript words") + "</noscript>"
+	if _, _, _, f := sanitizeHTML(ns); f != "" {
+		t.Fatalf("precondition: the sanitizer must accept the noscript mail (only its page is too deep), got %q", f)
+	}
+	out, err = RenderWith(&model.Message{Subject: "noscript reopened", HTMLBody: ns}, RenderContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pageTrees(t, "noscript reopened 469", string(out.HTML))
+	if out.BodyFallback != FallbackTooDeep || !strings.Contains(string(out.HTML), "shown words") {
+		t.Errorf("a page too deep only with scripting off must fall back as %q with the words shown, got %q", FallbackTooDeep, out.BodyFallback)
 	}
 
 	twin, err := RenderWith(&model.Message{Subject: "reopened 460", HTMLBody: reopenedBold(460, "twin words")}, RenderContext{})
@@ -344,6 +366,9 @@ func TestRenderNeverWritesAPageTooDeepToParse(t *testing.T) {
 		shapes[fmt.Sprintf("reopened %d", n)] = reopenedBold(n, "w")
 	}
 	shapes["noscript 600"] = "<p>x</p><noscript>" + nestedHTML(600, "y") + "</noscript>"
+	for _, n := range []int{466, 468, 469, 470} {
+		shapes[fmt.Sprintf("noscript reopened %d", n)] = "<p>x</p><noscript>" + reopenedBold(n, "y") + "</noscript>"
+	}
 	shapes["head template 700"] = "<html><head><template>" + nestedHTML(700, "t") + "</template></head><body><p>b</p></body></html>"
 	shapes["table text 600"] = "<table>" + nestedHTML(600, "fostered") + "</table>"
 	for name, body := range shapes {

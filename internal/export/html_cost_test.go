@@ -118,7 +118,10 @@ func TestRecheckReparsesScriptingOffOnlyForNoscript(t *testing.T) {
 // every attachment is an inline image renders once with no zip link and no zip
 // (it used to be rendered twice, the second time only to drop a link that was
 // never shown); the twin with one more, ordinary attachment renders once with
-// the link and its zip.
+// the link and its zip. Counted twice over: by the exporter's render seam, and
+// by what one render costs whoever calls it — the sanitizer's re-check and the
+// page check, one scripting-on parse each (no noscript tag: none with
+// scripting off) — so a second render that bypasses the seam is seen too.
 func TestExportRendersEachMessageOnce(t *testing.T) {
 	png := []byte("PNGDATA-once")
 	inline := `<html><body><p>logo <img src="cid:img1@host"></p></body></html>`
@@ -126,6 +129,7 @@ func TestExportRendersEachMessageOnce(t *testing.T) {
 	out := t.TempDir()
 	e := incExporter(out, mustManifest(t))
 	renders := countRenders(t)
+	parses := countReparses(t)
 	m := &model.Message{Subject: "all inline", SenderEmail: "a@example.com", InternetMessageID: "<inl@x>",
 		Received: testDate, HTMLBody: inline, Attachments: []model.Attachment{inlinePNG(png)}}
 	if _, err := e.Export("Store", []string{"Inbox"}, m); err != nil {
@@ -135,6 +139,9 @@ func TestExportRendersEachMessageOnce(t *testing.T) {
 	if *renders != 1 {
 		t.Errorf("a message whose attachments are all inline must be rendered once, got %d renders", *renders)
 	}
+	if parses.on != 2 || parses.off != 0 {
+		t.Errorf("all-inline: one render is two scripting-on re-parses (re-check, page check), got on=%d off=%d", parses.on, parses.off)
+	}
 	if !strings.Contains(page, "data:image/png;base64,") || strings.Contains(page, "download zip") || countFiles(t, out, ".zip") != 0 {
 		t.Errorf("all-inline: want the image embedded, no zip link and no zip (zips=%d):\n%s", countFiles(t, out, ".zip"), bodyPart(page))
 	}
@@ -142,6 +149,7 @@ func TestExportRendersEachMessageOnce(t *testing.T) {
 	out = t.TempDir()
 	e = incExporter(out, mustManifest(t))
 	renders = countRenders(t)
+	parses = countReparses(t)
 	b := &blob{data: []byte("report bytes")}
 	m = &model.Message{Subject: "with attachment", SenderEmail: "a@example.com", InternetMessageID: "<att@x>",
 		Received: testDate, HTMLBody: inline, Attachments: []model.Attachment{inlinePNG(png), b.att("report.pdf")}}
@@ -151,6 +159,9 @@ func TestExportRendersEachMessageOnce(t *testing.T) {
 	page = assure.Reached(t, readOnly(t, out, ".html"), "page with an attachment")
 	if *renders != 1 {
 		t.Errorf("a message with an ordinary attachment must be rendered once, got %d renders", *renders)
+	}
+	if parses.on != 2 || parses.off != 0 {
+		t.Errorf("with attachment: one render is two scripting-on re-parses (re-check, page check), got on=%d off=%d", parses.on, parses.off)
 	}
 	if !strings.Contains(page, "report.pdf") || !strings.Contains(page, `">download zip</a>`) || countFiles(t, out, ".zip") != 1 {
 		t.Errorf("with attachment: want report.pdf listed with the zip link and one zip (zips=%d)", countFiles(t, out, ".zip"))
@@ -208,6 +219,80 @@ func TestExportInflatingMailIsBoundedAndRenderedOnce(t *testing.T) {
 	defer zr.Close()
 	if len(zr.File) != 1 || zr.File[0].Name != "logo.png" {
 		t.Errorf("the inline image must go into the zip when the body falls back")
+	}
+}
+
+// inflatingPart is explodingBody's inflating markup alone (no document
+// around it), for a head <template> as well as a body: x/net re-opens the 400
+// formatting elements in each of the n paragraphs inside a template too.
+func inflatingPart(n int) string {
+	var b strings.Builder
+	b.WriteString("<p>")
+	for i := 0; i < 400; i++ {
+		fmt.Fprintf(&b, "<b id=%d>", i)
+	}
+	b.WriteString("</p>")
+	b.WriteString(strings.Repeat("<p>x</p>", n))
+	return b.String()
+}
+
+// covers: MA-472, R7, R19
+// The size cap is ONE budget for the sanitized head and body together, so a
+// mail cannot double it by splitting the inflation between them: a head
+// <template> and a body that each serialize to about 0.6 MiB — each alone
+// under the cap the whole mail gets (its 1 MiB floor), together past it — fall
+// back as too-large, never re-parsed. The positive twins: the head half alone
+// and the body half alone render as HTML.
+func TestSizeCapIsSharedByHeadAndBody(t *testing.T) {
+	const n = 100
+	head := "<template>" + inflatingPart(n) + "</template>"
+	body := inflatingPart(n)
+	doc := "<html><head>" + head + "</head><body>" + body + "</body></html>"
+
+	// Precondition, measured on the parsed mail: each half fits the cap the
+	// whole mail gets, the two together do not.
+	root, err := xhtml.Parse(strings.NewReader(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	size := func(name string) int {
+		var sb strings.Builder
+		for c := findElem(root, func(x *xhtml.Node) bool { return x.Data == name }).FirstChild; c != nil; c = c.NextSibling {
+			if err := xhtml.Render(&sb, c); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return sb.Len()
+	}
+	limit, hs, bs := serializedCap(len(doc)), size("head"), size("body")
+	if hs >= limit || bs >= limit || hs+bs <= limit {
+		t.Fatalf("precondition: want each half under the cap and both past it, got head=%d body=%d cap=%d", hs, bs, limit)
+	}
+
+	parses := countReparses(t)
+	out, err := RenderWith(&model.Message{Subject: "split inflation", HTMLBody: doc}, RenderContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.BodyFallback != FallbackTooLarge || parses.on+parses.off != 0 {
+		t.Errorf("head and body inflating together past the cap must fall back as %q, never re-parsed: got %q (on=%d off=%d)",
+			FallbackTooLarge, out.BodyFallback, parses.on, parses.off)
+	}
+	if len(out.HTML) > 2*len(doc)+64<<10 {
+		t.Errorf("the fallback page is %d bytes for a %d-byte mail (output must be bounded)", len(out.HTML), len(doc))
+	}
+
+	for name, half := range map[string]string{
+		"head half": "<html><head>" + head + "</head><body><p>body words</p></body></html>",
+		"body half": "<html><body>" + body + "</body></html>",
+	} {
+		twin, err := RenderWith(&model.Message{Subject: name, HTMLBody: half}, RenderContext{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if twin.BodyFallback != "" {
+			t.Errorf("positive twin %s: one half under the cap must render as HTML, got %q", name, twin.BodyFallback)
+		}
 	}
 }
 
