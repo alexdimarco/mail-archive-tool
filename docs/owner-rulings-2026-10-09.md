@@ -137,7 +137,10 @@ self-granted"):
   `extract -dest` root) get an owner-only protected DACL, or inherit the destination's ACL?
 - **Ruling:** Inherit, and name the posture before the first write.
   - The workspace preview's posture line (its XC32) and `extract` both use
-    local-confidentiality's `Posture(dir)`.
+    local-confidentiality's `Posture(dir)`. **[Mechanism amended by RR-2, §13.5:** the
+    workspace uses a hand-over form of `Posture`, computed over the security descriptor a new
+    child of the destination would inherit; `extract -dest`'s use carries the same defect, an
+    open gap owed by LC-A.**]**
   - POSIX modes stay 0700/0600 either way.
   - Local-confidentiality's protected DACL (its P3) is scoped to archive roots and to the
     tool's own state directories. The workspace sentence in its §6 and the text of R22
@@ -898,6 +901,8 @@ Neither depends on rows 2–7, and catalog changes still land one at a time.
 | g8-Q5 | Should a legacy verify entry be removed automatically? | No, keep the hint. The name may by now hold another archive's verify |
 | g8-R3 | X6 was marked Met while MA-466's encoder was still open | Resolved by building FB-4 (MA-457, MA-458), which turns MA-466's encoder green. X6's text is not edited |
 | FB-3 note | Does round 3's medium finding (a `<plaintext>` or script escape inside a noscript ends the page early) reopen FB-3? | No. Option (b), the in-place noscript retry, stands. The finding is fixed inside it by failing closed on page structure: the assembled page is re-parsed in both scripting readings, its header and body must be live children of `<body>`, and otherwise the page falls back |
+| san-Q1 | `c3b26a6` goes past the review's ask in two ways, both found by probing. The in-place retry also runs when the first pass's page check fails, so a harmless head noscript that leaves a `<b>` or `<div>` open for readers with scripting off renders instead of falling back. Stray noscript end tags under SVG and MathML integration points are refused. Keep both? | Keep both. The first renders more harmless mail while every page still passes the structure check (header and body live in both readings). The second only refuses more. Round 3 attacks both by name |
+| san-Q2 | Who owns the two R8 shapes left after `c3b26a6` and encoded at `829f51d`: a `<plaintext>` at the end of a mail swallowing the page's closing tags, and the flattener dropping a noscript's tags past depth 480? | FX-SAN. Both go into round 3's scope and are fixed there if the fix needs no design change, which turns the encoder green. Otherwise they stay skip encoders (open gaps, not accepted) and go on the owner's list |
 
 ### 13.4 RR-6: the SG re-review (amends J4 and §10, and completes §9's RR-6 row)
 
@@ -971,7 +976,71 @@ Neither depends on rows 2–7, and catalog changes still land one at a time.
 | **ESC-8** (RR6-OR1) | Where Microsoft's documentation gives no figure that bounds a stored item's `$value`, or Microsoft later raises its limit past a shipped cap, may capture carry the size cap anyway? If it does, an item above the cap, which today's uncapped read archives, fails its mailbox on every scheduled run before S3 and is a terminal gap after it. If it does not, capture's download stays bounded by time only, as today | No. Capture keeps no lower cap than today's until a documented figure bounds it, and the copy export alone carries the cap from E1. After a documented rise, the next release raises capture's cap, or drops it under the same rule. You accept the window between the rise and that release, in which an over-cap item fails loudly, naming the item and the cap | The recommended rule, without accepting the window, which stays an open condition. While capture passes no cap, the missing cap is an open gap, not accepted, and MA-540's over-cap case and MA-314's `fetch-too-large` gap case are skip encoders. The same rule holds for the depth cap | nothing |
 | **ESC-9** (RR6-OR2) | Should capture's Graph folder walk carry a total-folder cap? A `childFolders` response that invents fresh folders at every level is bounded per loop but not in total, so a misbehaving endpoint can keep one walk going for as long as it answers. Only a cap at or above Exchange Online's real per-mailbox folder limit cannot fail a healthy mailbox | Yes, if Microsoft documents a per-mailbox folder limit: a cap at or above it, confirmed like the size cap, with an at-cap twin. If none is documented, no cap, and the case stays open | No total-folder cap. The case is an open gap, not accepted, encoded by MA-541's breadth case as a skip encoder citing R10 | nothing |
 
-### 13.5 RR-2 and RR-3 (pending)
+### 13.5 RR-2 and RR-3: the extraction workspace re-review (amends J3's mechanism, and completes §9's RR-2 and RR-3 rows)
 
-Their result is filed here when the run ends. Until then EW-E2 and EW-E4 stay behind §9's RR-2
-and RR-3 rows, and §13.1's reserve stands.
+- **Run.** Lenses 3, 6 and 7 ran on revision 2 with ruling J3 and the W1 second archive
+  source, with RR-2 and RR-3 folded into one run as the design allows. Lens 6 had two finders,
+  one for E2's write path with J3 and one for W1. The run was on `wip/rr2-rr3-workspace`
+  (base `aed7e5b`). The addendum is filed in `docs/review-extraction-workspace-predesign.md`,
+  and its conditions are folded into `docs/design-extraction-workspace.md`, each marked
+  `[RR-2 RR2-Cn]`. The commits are `c2ba9eb` and `2a82bdb`, merged as `1f588de`.
+- **Verdict: GO_WITH_CONDITIONS.** There were 33 findings. 26 were confirmed (8 major,
+  18 minor) and 7 refuted or merged. The rescue pass dissolved the 8 majors with mechanism
+  changes and raised 6 hidden blockers, each now a condition. A fresh-eyes check failed
+  RR2-C2, RR2-C3, RR2-C4 and RR2-C13, and the fixer re-fixed them. No gate weakening was
+  found, and no owner question was raised.
+- **Conditions folded:**
+  - RR2-C1 and RR2-C2: the run record's sealed line carries the final status and counts.
+    One idempotent seal-and-finish step ends normal finalization, Finish as partial and
+    Check and finish. A record is deleted only after its ledger line exists.
+  - RR2-C3: only marker-and-seal outcomes are terminal. "Folder not found", a probe timeout
+    and "couldn't confirm" are re-probed, and "This folder is gone" is a terminal choice.
+  - RR2-C4: the root's identity is a tuple (the run id as a content nonce, then the
+    volume's file identity). The W1 source is bound by its path plus per-message fixity.
+  - RR2-C5: free bytes are read before every message, and `MIMETo`'s `maxBytes` is the
+    smaller of the size cap and the free-space budget.
+  - RR2-C6: the hand-over posture line (J3, below), with new row MA-532.
+  - RR2-C7: Finish as partial is offered for every unsealed run whose root is confirmed.
+    A run-record or journal write failure stops the run.
+  - RR2-C8: the time breaker counts awake time only, and the run holds off system sleep
+    in-process.
+  - RR2-C9: an archived page (with no `.eml`) keeps `.html` only if it begins with the
+    renderer's exact prefix and carries no other hostile meta. Otherwise it is quarantined
+    as text. This moves from E5 to E4.
+  - RR2-C10: final placement is a no-replace rename relative to a directory handle opened
+    through the root, never a path-based rename.
+  - RR2-C11: another archive folder's manifest is read through a 1 GiB limit, and its
+    `search.db` is opened read-only and immutable, with SQLite's defensive settings.
+  - RR2-C12: a launch sweep adopts run records that no journal line names.
+  - RR2-C13: the destination-inside-archive refusal compares file identities as well as
+    paths, and fails closed where identity cannot decide.
+  - RR2-C14: an export from another archive folder saves no setting, so MA-531 holds as
+    written.
+- **MA ids (amends §13.1).** MA-532 is allocated (the realized posture check, RR2-C6, slice
+  E2). MA-533..MA-539 stay reserved to the workspace. The next free overflow id stays MA-546.
+- **J3 amended (mechanism only).** Its Ruling bullet carries a pointer here.
+  - **Change:** the workspace preview's posture line uses a hand-over form of `Posture`,
+    computed over the security descriptor a new child of the destination would inherit, for
+    the root and for a file.
+    - It names each principal with read access.
+    - It reads "couldn't check who can read this folder" when the descriptor cannot be read.
+    - It is recomputed at Start, which refuses with R-w2 if the result is broader.
+    - It is checked again on the realized root and marker before the first message.
+  - J3's decision is unchanged: inherit the destination's ACL; POSIX 0700/0600; the
+    protected DACL only for archive roots and the tool's own state directories.
+  - **Why:** L6a-1 (major). `Posture(dir)` reports Open only when a broad SID can read the
+    root, so an inheritable grant to one named account would read "only you" while the
+    export inherits read access.
+- **Follow-ups:**
+  - `extract -dest`'s use of `Posture(dir)` has the same defect. The local-confidentiality
+    design now states it as an open gap, not accepted, owed by LC-A (§9 row 2).
+  - L3-12 (what "this host" means; `os.Hostname` is not stable on macOS) is an open note owed
+    in E3.
+  - **RR-2b, before EW-E2 code:** a fresh-eyes re-verification of the four re-fixed
+    conditions (RR2-C2, RR2-C3, RR2-C4 and RR2-C13), together with §13.4's delta check of
+    RR-6's edits to the extraction design (lenses 6 and 7). They run as one small design
+    check.
+  - The merge reconciled one sentence the two re-runs wrote separately. RR2-C5's
+    "min(200 MiB cap, budget)" now names the shared size cap that SG confirms.
+- **Unblocks:** EW-E2 once EW-E1 is built and RR-2b passes; EW-E4 (RR-3) once EW-E2 and
+  EW-E3 are built.

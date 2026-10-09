@@ -1381,9 +1381,10 @@ DC3 `recover`: a panic becomes `failed`, and the marker stays.
 **Before each message [RR-2 RR2-C5]**, free bytes are read on the destination and on the
 state volume (one `statfs` / `GetDiskFreeSpaceEx` call each, `lpFreeBytesAvailableToCaller`,
 which respects quotas). The destination's budget for the message is free − reserve:
-- Microsoft 365: `MIMETo` gets `maxBytes` = min(200 MiB cap, budget). Passing the cap
-  stays the retryable "above the 200 MiB cap" class; passing the budget is the
-  free-space stop below.
+- Microsoft 365: `MIMETo` gets `maxBytes` = min(the shared size cap, budget). Passing the
+  cap stays the retryable "above the size cap" class; passing the budget is the
+  free-space stop below. **[merge of RR-2 with fault-isolation RR-6]** The cap is the figure
+  SG confirms (256 MiB or higher, §4.5), not the earlier 200 MiB.
 - Archive source: the file's recorded or Lstat size is checked against the budget before
   the copy.
 - Derived files are checked against what is left before they are written.
