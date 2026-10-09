@@ -212,15 +212,16 @@ func TestManifestSaveWaitsOutWindowsSharing(t *testing.T) {
 }
 
 // covers: MA-399, R5, R18, S29
-// Every other file the archive's state replaces by rename waits out the same
-// moment of Windows file sharing as the manifest (replaceFile): the last-run
-// record — `status` reading it while a run finalizes must not lose the "ok"
-// record and leave status reading a run that never finished (RED
-// run_never_finished) — the last-verify record, the attention and integrity
-// sidecars, and the compacted history log. Each rename, refused three times
-// with ERROR_SHARING_VIOLATION (Windows' classification applied on every OS
-// through the seams), is waited out and the write lands. Positive twin:
-// unobstructed, each write lands and waits for nothing.
+// Every other record, sidecar and log this package replaces by rename waits
+// out the same moment of Windows file sharing as the manifest (replaceFile):
+// the last-run record — `status` reading it while a run finalizes must not
+// lose the "ok" record and leave status reading a run that never finished
+// (RED run_never_finished) — the last-verify record, the attention and
+// integrity sidecars, and the compacted history log. Each rename, refused
+// three times with ERROR_SHARING_VIOLATION (Windows' classification applied
+// on every OS through the seams), is waited out and the write lands. Files
+// other packages replace by rename are outside this test and MA-399. Positive
+// twin: unobstructed, each write lands and waits for nothing.
 func TestStateFilesWaitOutWindowsSharing(t *testing.T) {
 	now := time.Now().UTC()
 	finished := now
