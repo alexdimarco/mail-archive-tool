@@ -21,8 +21,10 @@ import (
 // export or a graph run holding it, or a holder that names no verb (status's
 // own probe, or a binary older than the verb), can be that run, so the record
 // reads as a run in progress (the note run_in_progress, and RED run_stuck once
-// it is older than the schedule period). While a verify, a reindex or an
-// extract holds the lock, the export that wrote the record was killed: RED
+// it is older than the schedule period). While a verify, a reindex, an
+// extract or any other verb holds the lock — "purge" stands for a verb this
+// build does not know, so the live set is an allowlist, never a list of the
+// verbs that are not live — the export that wrote the record was killed: RED
 // run_never_finished at once, naming the remedy, never the in-progress note
 // and never a period's wait for run_stuck. status's human `Last run:` line
 // (Summary, which the CLI, the GUI and the desktop view print) says the same:
@@ -55,6 +57,7 @@ func TestRunningExportIsJudgedByTheLockHolder(t *testing.T) {
 		{"verify", false},
 		{"reindex", false},
 		{"extract", false},
+		{"purge", false}, // a verb this build does not know
 	} {
 		held, err := lockfile.AcquireAs(filepath.Join(out, lockfile.Name), tc.holder)
 		if err != nil {
