@@ -82,7 +82,19 @@ type RenderResult struct {
 	HTML       []byte
 	Consumed   map[int]bool // attachment indices embedded inline as data: URIs
 	Unresolved []string     // cid: tokens with no matching part (dangling references)
+	// BodyFallback is non-empty when the mail's HTML could not be shown as HTML
+	// and the page shows its escaped source instead: FallbackTooDeep,
+	// FallbackUnparseable or FallbackHostile. The exporter records it (R1, R7):
+	// the fallback is never silent.
+	BodyFallback string
 }
+
+// Reasons an HTML body is shown as escaped source rather than rendered.
+const (
+	FallbackTooDeep     = "too-deeply-nested" // the parser's nesting cap (x/net: 512 open elements)
+	FallbackUnparseable = "unparseable"
+	FallbackHostile     = "unsafe-after-reparse" // the re-parse check found a live hostile meta
+)
 
 // Render builds a self-contained HTML document for the message with no
 // navigation context. Kept for callers that only need the bytes.
@@ -101,21 +113,28 @@ func Render(m *model.Message) ([]byte, map[int]bool, error) {
 // placed into OUR document after the policy metas — so what the browser sees
 // is exactly what was checked (R19).
 func RenderWith(m *model.Message, ctx RenderContext) (RenderResult, error) {
-	body, isHTML := selectBody(m)
+	source, isHTML := selectBody(m)
 	consumed := map[int]bool{}
-	body = embedInlineImages(body, m.Attachments, consumed)
-	header := renderHeader(m, ctx, consumed)
+	body := embedInlineImages(source, m.Attachments, consumed)
 
-	var headExtra, bodyAttrs, inner string
+	var headExtra, bodyAttrs, inner, fallback string
 	var unresolved []string
 	if isHTML {
 		unresolved = unresolvedInlineRefs([]byte(body))
-		headExtra, bodyAttrs, inner = sanitizeHTML(body)
+		headExtra, bodyAttrs, inner, fallback = sanitizeHTML(body)
+		if fallback != "" {
+			// Show the mail's ORIGINAL source (cid: references, not megabytes of
+			// base64), and put every inline image back in the attachment zip so
+			// nothing is lost when the body cannot be rendered.
+			consumed = map[int]bool{}
+			inner = plainFallback(source, fallback)
+		}
 	} else {
 		inner = `<pre class="plain">` + html.EscapeString(body) + `</pre>`
 	}
+	header := renderHeader(m, ctx, consumed)
 	out := fmt.Sprintf(docTemplate, html.EscapeString(displaySubject(m)), headExtra, header, bodyAttrs, inner)
-	return RenderResult{HTML: []byte(out), Consumed: consumed, Unresolved: unresolved}, nil
+	return RenderResult{HTML: []byte(out), Consumed: consumed, Unresolved: unresolved, BodyFallback: fallback}, nil
 }
 
 // sanitizeHTML parses the mail's HTML (a full document or a fragment — the
@@ -138,12 +157,18 @@ func RenderWith(m *model.Message, ctx RenderContext) (RenderResult, error) {
 // live there, the body falls back to escaped text (fail closed). The parse →
 // serialize round trip is not guaranteed to be a fixed point: x/net once wrote
 // SVG/MathML raw-text children unescaped (GO-2023-1988), turning an inert text
-// node back into a live <meta refresh>.
-func sanitizeHTML(doc string) (headExtra, bodyAttrs, body string) {
+// node back into a live <meta refresh>. When the body is shown as source, the
+// fallback reason is returned (and body is empty; RenderWith builds the
+// fallback from the un-embedded source).
+func sanitizeHTML(doc string) (headExtra, bodyAttrs, body, fallback string) {
 	root, err := xhtml.Parse(strings.NewReader(doc))
 	if err != nil {
-		// Unparseable bytes: show them as text rather than guess.
-		return "", "", plainFallback(doc)
+		// Unparseable bytes (or nesting past the parser's cap): show them as
+		// text rather than guess.
+		if strings.Contains(err.Error(), "exceeds") {
+			return "", "", "", FallbackTooDeep
+		}
+		return "", "", "", FallbackUnparseable
 	}
 	var headNode, bodyNode *xhtml.Node
 	var find func(n *xhtml.Node)
@@ -185,9 +210,9 @@ func sanitizeHTML(doc string) (headExtra, bodyAttrs, body string) {
 		bodyAttrs = bodyAttributes(bodyNode)
 	}
 	if hostileSurvives(hb.String(), bb.String()) {
-		return "", "", plainFallback(doc)
+		return "", "", "", FallbackHostile
 	}
-	return hb.String(), bodyAttrs, bb.String()
+	return hb.String(), bodyAttrs, bb.String(), ""
 }
 
 // renderNode serializes one parsed node. It is a variable only so a test can
@@ -195,9 +220,12 @@ func sanitizeHTML(doc string) (headExtra, bodyAttrs, body string) {
 // hostileSurvives fail-closed path); production always uses xhtml.Render.
 var renderNode = xhtml.Render
 
-// plainFallback shows mail HTML as escaped text: nothing in it is live.
-func plainFallback(doc string) string {
-	return `<pre class="plain">` + html.EscapeString(doc) + `</pre>`
+// plainFallback shows mail HTML as escaped text: nothing in it is live. The
+// reserved data-mailarchive-fallback attribute (mail can never carry one:
+// stripReservedNamespace removes them) tells `reindex -rebuild` that the
+// <pre> holds HTML source, so it indexes the mail's words, not its markup.
+func plainFallback(doc, reason string) string {
+	return `<pre class="plain" data-mailarchive-fallback="` + html.EscapeString(reason) + `">` + html.EscapeString(doc) + `</pre>`
 }
 
 // hostileEquiv reports whether a meta http-equiv value is one neutralize
@@ -214,9 +242,23 @@ func hostileEquiv(v string) bool {
 // and reports whether any meta that neutralize must disarm (a live hostile
 // http-equiv, or a competing charset) is present in it. Every meta element is
 // checked whatever its namespace, so a renderer that lets markup escape a
-// foreign-content raw-text element is caught here rather than trusted.
+// foreign-content raw-text element is caught here rather than trusted. The page
+// is re-parsed TWICE, with the scripting flag on and off: it decides whether
+// <noscript> content is text or markup, and a viewer with JavaScript disabled
+// (the archive needs none) reads it as markup, while the sanitizer's own parse
+// read it as text. Hostile in either reading fails closed.
 func hostileSurvives(head, body string) bool {
-	root, err := xhtml.Parse(strings.NewReader("<!DOCTYPE html><html><head>" + head + "</head><body>" + body + "</body></html>"))
+	doc := "<!DOCTYPE html><html><head>" + head + "</head><body>" + body + "</body></html>"
+	for _, scripting := range []bool{true, false} {
+		if hostileIn(doc, scripting) {
+			return true
+		}
+	}
+	return false
+}
+
+func hostileIn(doc string, scripting bool) bool {
+	root, err := xhtml.ParseWithOptions(strings.NewReader(doc), xhtml.ParseOptionEnableScripting(scripting))
 	if err != nil {
 		return true
 	}

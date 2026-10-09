@@ -1372,7 +1372,7 @@ func printSummary(logger *log.Logger, r app.Result, indexed, keepRaw bool, out s
 	// never deliver, what has not been re-examined yet, how many fillable gaps
 	// this run re-examined (invisible otherwise), and the report path only when a
 	// report file exists. Printed whenever any of those is non-zero.
-	if r.Fillable > 0 || r.Terminal > 0 || r.Unknown > 0 || s.UnresolvedInlineRef > 0 || s.Retried > 0 {
+	if r.Fillable > 0 || r.Terminal > 0 || r.Unknown > 0 || s.UnresolvedInlineRef > 0 || s.HTMLFallback > 0 || s.Retried > 0 {
 		line := fmt.Sprintf("Verification: %d message(s) still missing content, %d source-empty (never fillable), %d not yet re-examined",
 			r.Fillable, r.Terminal, r.Unknown)
 		if s.Retried > 0 {
@@ -1380,6 +1380,9 @@ func printSummary(logger *log.Logger, r app.Result, indexed, keepRaw bool, out s
 		}
 		if s.UnresolvedInlineRef > 0 {
 			line += fmt.Sprintf(", %d unresolved inline image(s) this run", s.UnresolvedInlineRef)
+		}
+		if s.HTMLFallback > 0 {
+			line += fmt.Sprintf(", %d HTML message(s) shown as source this run (too deeply nested or unsafe to render; content kept)", s.HTMLFallback)
 		}
 		if r.ReportPath != "" {
 			line += fmt.Sprintf(" — details in %s", r.ReportPath)

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"regexp"
 	"strings"
 	"time"
@@ -41,13 +42,99 @@ var reHeaderUTC = regexp.MustCompile(`\((\d{4}-\d{2}-\d{2} \d{2}:\d{2}) UTC\)`)
 // core fields empty and counts all three; the body is still recovered when a
 // `.mailarchive-body` element is present.
 func readArchivedHTML(data []byte) (*model.Message, int) {
-	m := &model.Message{}
 	root, err := xhtml.Parse(strings.NewReader(string(data)))
-	if err != nil {
-		// Unparseable bytes: nothing recovered. The record is still indexed with
-		// empty fields (never dropped), and all three core fields are counted.
-		return m, 3
+	if err == nil {
+		return readArchivedTree(root)
 	}
+	// The parser refuses trees nested past its cap (x/net: 512 open elements),
+	// which a browser renders and an archived mail body can reach. The tool's
+	// own head and header are shallow, so split the page at the renderer's
+	// body div: read the header fields from the shallow part, and hand the body
+	// bytes to the indexer as they are (its text extraction is a tokenizer pass
+	// with no depth limit).
+	if prefix, body, ok := splitAtBodyDiv(data); ok {
+		if root, perr := xhtml.Parse(strings.NewReader(prefix + `<div class="mailarchive-body"></div></body></html>`)); perr == nil {
+			m, unrecovered := readArchivedTree(root)
+			m.HTMLBody = body
+			return m, unrecovered
+		}
+	}
+	// Unparseable bytes: nothing recovered. The record is still indexed with
+	// empty fields (never dropped), and all three core fields are counted.
+	return &model.Message{}, 3
+}
+
+// splitAtBodyDiv tokenizes an exported page (no depth limit) and returns the
+// bytes before the renderer's `.mailarchive-body` div and the bytes after its
+// start tag. It anchors exactly as readArchivedTree does: the header is the
+// first <div class="mailarchive-header"> directly inside <body>, and the body
+// div is the next element after the header's matching end tag. Mail-supplied
+// head content (a <style>) is raw text to the tokenizer and cannot shadow
+// either; anything else returns ok=false.
+func splitAtBodyDiv(data []byte) (prefix, body string, ok bool) {
+	z := xhtml.NewTokenizer(bytes.NewReader(data))
+	off := 0
+	inBody, headerDepth, headerDone := false, 0, false
+	for {
+		tt := z.Next()
+		if tt == xhtml.ErrorToken {
+			return "", "", false // EOF or a tokenizer error before the body div
+		}
+		raw := len(z.Raw())
+		tok := z.Token()
+		isDiv := tok.Data == "div"
+		switch {
+		case !inBody:
+			if tt == xhtml.StartTagToken && tok.Data == "body" {
+				inBody = true
+			}
+		case headerDone:
+			if tt == xhtml.TextToken && strings.TrimSpace(tok.Data) == "" {
+				break
+			}
+			if tt == xhtml.StartTagToken && isDiv && tokenHasClass(tok, "mailarchive-body") {
+				return string(data[:off]), string(data[off+raw:]), true
+			}
+			return "", "", false
+		case headerDepth == 0:
+			if tt == xhtml.TextToken && strings.TrimSpace(tok.Data) == "" {
+				break
+			}
+			if tt == xhtml.StartTagToken && isDiv && tokenHasClass(tok, "mailarchive-header") {
+				headerDepth = 1
+				break
+			}
+			return "", "", false
+		default:
+			if isDiv && tt == xhtml.StartTagToken {
+				headerDepth++
+			} else if isDiv && tt == xhtml.EndTagToken {
+				if headerDepth--; headerDepth == 0 {
+					headerDone = true
+				}
+			}
+		}
+		off += raw
+	}
+}
+
+func tokenHasClass(t xhtml.Token, cls string) bool {
+	for _, a := range t.Attr {
+		if a.Key == "class" {
+			for _, c := range strings.Fields(a.Val) {
+				if c == cls {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// readArchivedTree recovers the index fields from a parsed exported page (see
+// readArchivedHTML).
+func readArchivedTree(root *xhtml.Node) (*model.Message, int) {
+	m := &model.Message{}
 
 	// Anchor to the renderer's OWN elements, not document-order-first. The
 	// renderer emits exactly two <div> direct children of <body>: the
@@ -67,6 +154,15 @@ func readArchivedHTML(data []byte) (*model.Message, int) {
 	// page.
 	if body := firstChildDiv(bodyEl, "mailarchive-body"); body != nil {
 		m.HTMLBody = innerHTML(body)
+		// A body the renderer could not show as HTML is kept as escaped source in
+		// a reserved-attribute <pre> (export.plainFallback; mail cannot carry the
+		// attribute). Its text IS the mail's HTML, so index that — the mail's
+		// words, as the live export did — not the markup as words.
+		if pre := findFirst(body, func(n *xhtml.Node) bool {
+			return n.Type == xhtml.ElementNode && n.Data == "pre" && attr(n, "data-mailarchive-fallback") != ""
+		}); pre != nil && pre.Parent == body {
+			m.HTMLBody = textContent(pre)
+		}
 	}
 
 	header := firstChildDiv(bodyEl, "mailarchive-header")

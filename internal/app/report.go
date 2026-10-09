@@ -65,6 +65,9 @@ func writeReport(out string, manifest *state.Manifest, migrated bool, logger *lo
 		for _, cid := range r.Unresolved {
 			emit("unresolved-inline-image", "info", r, cid)
 		}
+		if r.BodyFallback != "" {
+			emit("html-shown-as-source", "info", r, r.BodyFallback)
+		}
 	}
 	w.Flush()
 	if err := export.WriteFileAtomic(path, buf.Bytes()); err != nil {

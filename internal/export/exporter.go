@@ -38,6 +38,7 @@ type Stats struct {
 	AttachmentsEmpty    int // declared attachments that produced zero bytes (e.g. not downloaded)
 	AttachmentErrors    int // attachments whose stream failed mid-read (torn fetch); reported, not archived
 	UnresolvedInlineRef int // cid: references in the HTML with no matching image present
+	HTMLFallback        int // HTML bodies shown as escaped source (too deep / unparseable / unsafe after re-parse)
 	NonHTMLBodies       int // messages exported from plain/RTF because no HTML body existed
 	NoBody              int // messages exported with no body content at all
 	RawWritten          int // original .eml files written (KeepRaw; 0 for sources with no original bytes, e.g. Outlook items)
@@ -57,7 +58,7 @@ type Issue struct {
 	Subject string
 	RelPath string // exported HTML path relative to OutDir
 	Date    time.Time
-	Kind    string // "empty-attachment" | "attachment-error" | "unresolved-inline-image" | "id-reuse"
+	Kind    string // "empty-attachment" | "attachment-error" | "unresolved-inline-image" | "html-shown-as-source" | "id-reuse"
 	Detail  string // attachment name or cid token
 }
 
@@ -395,8 +396,13 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		e.addIssue(folderKey, m, relSlash, "unresolved-inline-image", cid)
 	}
 
+	if rr.BodyFallback != "" {
+		e.Stats.HTMLFallback++
+		e.addIssue(folderKey, m, relSlash, "html-shown-as-source", rr.BodyFallback)
+	}
+
 	now := time.Now().UTC()
-	rec := state.Record{Path: relSlash, Folder: folderKey, ExportedAt: now, Unresolved: unresolved}
+	rec := state.Record{Path: relSlash, Folder: folderKey, ExportedAt: now, Unresolved: unresolved, BodyFallback: rr.BodyFallback}
 	if e.SourceComplete {
 		rec.Terminal = gaps
 	} else {

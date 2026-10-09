@@ -81,8 +81,12 @@ type Record struct {
 	Missing    []string `json:"missing,omitempty"`
 	Terminal   []string `json:"terminal,omitempty"`
 	Unresolved []string `json:"unresolved,omitempty"`
-	Subject    string   `json:"subject,omitempty"`
-	Date       string   `json:"date,omitempty"` // RFC 3339 UTC
+	// BodyFallback (informational, additive) names why the page shows the
+	// mail's HTML as escaped source instead of rendering it (export.Fallback*):
+	// the content is all there, as text, and every inline image is in the zip.
+	BodyFallback string `json:"body_fallback,omitempty"`
+	Subject      string `json:"subject,omitempty"`
+	Date         string `json:"date,omitempty"` // RFC 3339 UTC
 
 	// Fingerprint (16 hex) of the message content, so a different message
 	// reusing this record's Message-ID is recognized (R3). Empty on legacy
@@ -189,7 +193,7 @@ func (r Record) Complete() bool { return len(r.Missing) == 0 && len(r.Terminal) 
 
 // HasIssues reports whether the record has anything to show in the report.
 func (r Record) HasIssues() bool {
-	return len(r.Missing) > 0 || len(r.Terminal) > 0 || len(r.Unresolved) > 0
+	return len(r.Missing) > 0 || len(r.Terminal) > 0 || len(r.Unresolved) > 0 || r.BodyFallback != ""
 }
 
 // Unknown reports whether the record carries the legacy sentinel.
