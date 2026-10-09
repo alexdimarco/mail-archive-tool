@@ -35,40 +35,68 @@ var oemCodePages = []struct {
 // switching to UTF-8 once a `chcp 65001` line has run — and the run line must
 // then split (cmdRunArgv) to exactly the job's argv and .stderr.log target. The
 // file carries no BOM (cmd would run it as part of the first command), every
-// byte read before the switch is ASCII, and an all-ASCII wrapper never switches
-// the console's code page at all.
+// byte read before the switch is ASCII, a wrapper holding any non-ASCII byte
+// switches, and an all-ASCII wrapper never switches the console's code page at
+// all. The non-ASCII bytes are placed in every token, and also only where they
+// most often are: an ASCII exe under C:\Program Files with an ASCII -config,
+// whose only non-ASCII bytes are the archive's -out, its -log and the 2>>
+// target; and a job whose only non-ASCII token is its -input. The switch must
+// look at the whole run line, not just the program.
 func TestCmdWrapperNonASCIIPathsSurviveCodePage(t *testing.T) {
-	nonASCII := Spec{
+	base := Spec{
 		Name: "mailarchive-1a2b3c4d", Interval: Daily, At: "02:00",
-		Exe: `C:\Users\Jörg\AppData\Local\Programs\MailArchive\mailarchive.exe`,
-		Args: []string{"-config", `C:\Users\Jörg\AppData\Roaming\mailarchive\graph-config.json`,
-			"-out", `D:\Mail\Eingänge`, "-input", `C:\Users\Анна\田中.pst`, "-unattended",
-			"-log", `D:\Mail\Eingänge\mailarchive-1a2b3c4d.log`},
-		Log:     `D:\Mail\Eingänge\mailarchive-1a2b3c4d.log`,
 		Wrapper: true, WrapperPath: `C:\Users\Jörg\AppData\Local\mailarchive\mailarchive-1a2b3c4d.cmd`,
 	}
-	ascii := nonASCII
-	ascii.Exe = `C:\Program Files\MailArchive\mailarchive.exe`
-	ascii.Args = []string{"-out", `D:\Mail\Inbox`, "-unattended", "-log", `D:\Mail\Inbox\mailarchive-1a2b3c4d.log`}
-	ascii.Log = `D:\Mail\Inbox\mailarchive-1a2b3c4d.log`
+	fixture := func(exe string, args ...string) Spec {
+		s := base
+		s.Exe, s.Args = exe, args
+		for i := 0; i+1 < len(args); i++ {
+			if args[i] == "-log" {
+				s.Log = args[i+1]
+			}
+		}
+		return s
+	}
+	const programFiles = `C:\Program Files\MailArchive\mailarchive.exe`
+	fixtures := []struct {
+		name string
+		spec Spec
+	}{
+		{"all ASCII (no switch)", fixture(programFiles,
+			"-out", `D:\Mail\Inbox`, "-unattended", "-log", `D:\Mail\Inbox\mailarchive-1a2b3c4d.log`)},
+		{"non-ASCII in every token", fixture(`C:\Users\Jörg\AppData\Local\Programs\MailArchive\mailarchive.exe`,
+			"-config", `C:\Users\Jörg\AppData\Roaming\mailarchive\graph-config.json`,
+			"-out", `D:\Mail\Eingänge`, "-input", `C:\Users\Анна\田中.pst`, "-unattended",
+			"-log", `D:\Mail\Eingänge\mailarchive-1a2b3c4d.log`)},
+		{"ASCII exe and -config, non-ASCII -out, -log and 2>> target", fixture(programFiles,
+			"-config", `C:\ProgramData\mailarchive\graph-config.json`,
+			"-out", `D:\Mail\Eingänge`, "-unattended", "-log", `D:\Mail\Eingänge\mailarchive-1a2b3c4d.log`)},
+		{"only -input non-ASCII", fixture(programFiles,
+			"-out", `D:\Mail\Inbox`, "-input", `C:\Users\Public\Анна\田中.pst`, "-unattended",
+			"-log", `D:\Mail\Inbox\mailarchive-1a2b3c4d.log`)},
+	}
 
-	for _, s := range []Spec{ascii, nonASCII} {
+	for _, f := range fixtures {
+		s := f.spec
 		data := []byte(CmdWrapper(s))
 		if len(data) >= 3 && string(data[:3]) == "\xef\xbb\xbf" {
-			t.Fatalf("the wrapper starts with a UTF-8 BOM, which cmd.exe would run as part of @echo off")
+			t.Fatalf("%s: the wrapper starts with a UTF-8 BOM, which cmd.exe would run as part of @echo off", f.name)
 		}
 		for _, cp := range oemCodePages {
-			lines, switched := cmdDecodeBatch(t, data, cp.enc)
-			assure.Reached(t, lines, cp.name+": decoded wrapper lines")
+			where := f.name + ", " + cp.name
+			lines, switched := cmdDecodeBatch(t, where, data, cp.enc)
+			assure.Reached(t, lines, where+": decoded wrapper lines")
 			argv, target := cmdRunArgv(t, lines[len(lines)-1])
 			if !equalStrings(argv, s.program()) {
-				t.Errorf("%s: the program receives\n %q\nwant\n %q", cp.name, argv, s.program())
+				t.Errorf("%s: the program receives\n %q\nwant\n %q", where, argv, s.program())
 			}
 			if want := StderrLogPath(s.Log); target != want {
-				t.Errorf("%s: stderr is redirected to %q, want %q", cp.name, target, want)
+				t.Errorf("%s: stderr is redirected to %q, want %q", where, target, want)
 			}
-			if sevenBit(string(data)) && switched {
-				t.Errorf("%s: an all-ASCII wrapper switched the console code page", cp.name)
+			if ascii := sevenBit(string(data)); ascii && switched {
+				t.Errorf("%s: an all-ASCII wrapper switched the console code page", where)
+			} else if !ascii && !switched {
+				t.Errorf("%s: a wrapper holding non-ASCII bytes never switched the console to UTF-8", where)
 			}
 		}
 	}
@@ -79,17 +107,17 @@ func TestCmdWrapperNonASCIIPathsSurviveCodePage(t *testing.T) {
 // after it. A non-ASCII byte read while the OEM page is active fails the test —
 // cmd would garble it differently on every locale. It reports whether the code
 // page was switched.
-func cmdDecodeBatch(t *testing.T, data []byte, oem encoding.Encoding) (lines []string, switched bool) {
+func cmdDecodeBatch(t *testing.T, where string, data []byte, oem encoding.Encoding) (lines []string, switched bool) {
 	t.Helper()
 	for _, raw := range strings.Split(strings.TrimRight(string(data), "\r\n"), "\r\n") {
 		line := raw
 		if !switched {
 			dec, err := oem.NewDecoder().String(raw)
 			if err != nil {
-				t.Fatalf("decoding %q in the OEM code page: %v", raw, err)
+				t.Fatalf("%s: decoding %q in the OEM code page: %v", where, raw, err)
 			}
 			if !sevenBit(raw) {
-				t.Errorf("a non-ASCII byte is read in the OEM code page (cmd sees %q for %q)", dec, raw)
+				t.Errorf("%s: a non-ASCII byte is read in the OEM code page (cmd sees %q for %q)", where, dec, raw)
 			}
 			line = dec
 		}
