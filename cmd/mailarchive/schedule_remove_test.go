@@ -51,6 +51,26 @@ func sandboxScheduler(t *testing.T) {
 	}
 }
 
+// takeOutOfSandbox removes an entry from the scheduler sandboxScheduler set up,
+// by hand, as an operator might in launchd or crontab, leaving the archive's
+// records alone.
+func takeOutOfSandbox(t *testing.T, name string) {
+	t.Helper()
+	if runtime.GOOS == "darwin" {
+		if err := os.Remove(filepath.Join(os.Getenv("HOME"), "Library", "LaunchAgents", schedule.LaunchdLabel(name)+".plist")); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	tab, err := os.ReadFile(os.Getenv("FAKE_CRONTAB"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(os.Getenv("FAKE_CRONTAB"), []byte(schedule.RemoveCronBlock(string(tab), schedule.CronMarker(name))), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // covers: MA-454, MA-455, R14, R18, S14, S28
 // `-remove` reverses exactly the entry it names and leaves every other one
 // alone. An archive with a nightly backup and a weekly verify (two entries; the
@@ -431,24 +451,6 @@ func TestScheduleVerifyRenameNamesTheEntryItLeaves(t *testing.T) {
 		}
 		return d.Name
 	}
-	// takeOut removes an entry from the sandboxed scheduler by hand, as an
-	// operator might, leaving the archive's records alone.
-	takeOut := func(name string) {
-		t.Helper()
-		if runtime.GOOS == "darwin" {
-			if err := os.Remove(filepath.Join(os.Getenv("HOME"), "Library", "LaunchAgents", schedule.LaunchdLabel(name)+".plist")); err != nil {
-				t.Fatal(err)
-			}
-			return
-		}
-		tab, err := os.ReadFile(os.Getenv("FAKE_CRONTAB"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(os.Getenv("FAKE_CRONTAB"), []byte(schedule.RemoveCronBlock(string(tab), schedule.CronMarker(name))), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
 
 	run("schedule", "-install", "--", "-out", out, "-auto")
 	// Positive twins: nothing is left behind, so nothing is named.
@@ -493,7 +495,7 @@ func TestScheduleVerifyRenameNamesTheEntryItLeaves(t *testing.T) {
 	}
 
 	// An old entry already gone from the scheduler: nothing left running, no note.
-	takeOut(v3)
+	takeOutOfSandbox(t, v3)
 	if stdout := install(""); strings.Contains(stdout, note) {
 		t.Errorf("an install names %s, which the scheduler no longer has:\n%s", v3, stdout)
 	}

@@ -108,6 +108,10 @@ type Input struct {
 	VerifyDesc              schedule.Descriptor
 	VerifyDescErr           error
 	VerifySchedState        schedule.State
+	// VerifyExeExists / VerifyExeIsThis are the backup's ExeExists / ExeIsThis
+	// for the program the verify descriptor records.
+	VerifyExeExists bool
+	VerifyExeIsThis bool
 
 	// LockHeld is the authoritative liveness signal: the archive lock dies
 	// with its process, so a "running" record whose lock is free belongs to a
@@ -304,7 +308,53 @@ func Assess(in Input, now time.Time) Report {
 			}
 		}
 	}
+	assessVerifyEntry(&r, in)
 	return r
+}
+
+// assessVerifyEntry watches the scheduled verify's entry the way the Schedule
+// section above watches the backup's (MA-466): recorded on another host, its
+// state cannot be checked from here (verify_other_host); on this host a verify
+// the scheduler does not have is verify_not_installed, a scheduler that cannot
+// be queried is scheduler_unavailable (once, with the backup's), and a recorded
+// program that is gone or is not this binary is verify_exe_missing or
+// verify_exe_moved, each naming the re-install. A verify that cannot run is a
+// WARN, as a stale verify is: RED stays for a backup that cannot run and for
+// corruption a verify found.
+func assessVerifyEntry(r *Report, in Input) {
+	if !in.HasVerifyDescriptor {
+		return
+	}
+	vd := in.VerifyDesc
+	if in.ThisHost != "" && vd.Host != "" && in.ThisHost != vd.Host {
+		r.warn("verify_other_host", fmt.Sprintf("the verify schedule %q was installed on host %q, not this one (%q); its state cannot be checked from here", vd.Name, vd.Host, in.ThisHost))
+		return
+	}
+	reinstall := verifyReinstall(in)
+	switch in.VerifySchedState {
+	case schedule.NotInstalled:
+		clearCmd := "`mailarchive schedule " + strings.Join(quoteTokens([]string{"-name", vd.Name, "-remove", "--", "verify", "-out", in.Out}, in.GOOS), " ") + "`"
+		r.warn("verify_not_installed", fmt.Sprintf("the verify schedule %q is recorded but not present in this host's scheduler — re-install it with %s, or, if this archive should have no scheduled verify, clear the record with %s", vd.Name, reinstall, clearCmd))
+	case schedule.SchedulerUnavailable:
+		if !r.has("scheduler_unavailable") {
+			r.warn("scheduler_unavailable", "this host's scheduler cannot be queried (no crontab/schtasks?) — the scheduled verify may not run here")
+		}
+	}
+	if !in.VerifyExeExists {
+		r.warn("verify_exe_missing", fmt.Sprintf("the scheduled verify's program %s no longer exists — the verify cannot run; re-install it with %s from the current binary", vd.Exe, reinstall))
+	} else if !in.VerifyExeIsThis {
+		r.warn("verify_exe_moved", fmt.Sprintf("the scheduled verify runs %s, which is not this binary — after an upgrade or move, re-install it with %s", vd.Exe, reinstall))
+	}
+}
+
+// has reports whether the report already carries code.
+func (r *Report) has(code string) bool {
+	for _, c := range r.Codes {
+		if c == code {
+			return true
+		}
+	}
+	return false
 }
 
 // assessVerifySchedule judges the scheduled verify against the cadence recorded
@@ -393,13 +443,13 @@ func cadenceOf(d schedule.Descriptor) string {
 	return d.Interval + " at " + d.At
 }
 
-// verifyStaleRemedy is what to do about a stale scheduled verify: put it back
-// with its recorded cadence, time and verify flags, aimed at this archive and
-// without -name, so it gets this archive's own entry name (on launchd and Task
-// Scheduler a -name another archive's verify shares is not detected and would
-// be taken over again, FB-4's residual) — or run a verify now. Every token of
-// the pasteable command is shell-quoted for the host's shell.
-func verifyStaleRemedy(in Input) string {
+// verifyReinstall is the pasteable command that puts this archive's scheduled
+// verify back: its recorded cadence, time and verify flags, aimed at this
+// archive and without -name, so it gets this archive's own entry name (on
+// launchd and Task Scheduler a -name another archive's verify shares is not
+// detected and would be taken over again, FB-4's residual). Every token is
+// shell-quoted for the host's shell.
+func verifyReinstall(in Input) string {
 	vd := in.VerifyDesc
 	toks := []string{"-interval", vd.Interval}
 	if !strings.Contains(vd.At, "?") { // ReadDescriptor parks an unreadable time as "??:??"
@@ -411,7 +461,13 @@ func verifyStaleRemedy(in Input) string {
 			toks = append(toks, a)
 		}
 	}
-	reinstall := "`mailarchive schedule " + strings.Join(quoteTokens(toks, in.GOOS), " ") + "`"
+	return "`mailarchive schedule " + strings.Join(quoteTokens(toks, in.GOOS), " ") + "`"
+}
+
+// verifyStaleRemedy is what to do about a stale scheduled verify: put it back
+// (verifyReinstall), or run a verify now.
+func verifyStaleRemedy(in Input) string {
+	reinstall := verifyReinstall(in)
 	why := "it has stopped running here"
 	goos := in.GOOS
 	if goos == "" {
@@ -669,11 +725,7 @@ func Gather(out, nameOverride string) Input {
 			name = nameOverride
 		}
 		in.SchedState = schedule.Query(name)
-		if fi, err := os.Stat(d.Exe); err == nil {
-			in.ExeExists = true
-			self, _ := os.Executable()
-			in.ExeIsThis = sameFile(self, d.Exe) || (d.ExeSize == fi.Size() && !d.ExeMTime.IsZero() && d.ExeMTime.Equal(fi.ModTime().UTC()))
-		}
+		in.ExeExists, in.ExeIsThis = exeIdentity(d)
 	} else if nameOverride != "" {
 		in.SchedState = schedule.Query(nameOverride)
 	}
@@ -689,8 +741,21 @@ func Gather(out, nameOverride string) Input {
 		in.HasVerifyDescriptor = true
 		in.VerifyDesc = vd
 		in.VerifySchedState = schedule.Query(vd.Name)
+		in.VerifyExeExists, in.VerifyExeIsThis = exeIdentity(vd)
 	}
 	return in
+}
+
+// exeIdentity reports whether a recorded schedule's program still exists, and
+// whether it is this binary: the same file, or the size and modification time
+// the install recorded for it.
+func exeIdentity(d schedule.Descriptor) (exists, isThis bool) {
+	fi, err := os.Stat(d.Exe)
+	if err != nil {
+		return false, false
+	}
+	self, _ := os.Executable()
+	return true, sameFile(self, d.Exe) || (d.ExeSize == fi.Size() && !d.ExeMTime.IsZero() && d.ExeMTime.Equal(fi.ModTime().UTC()))
 }
 
 func sameFile(a, b string) bool {

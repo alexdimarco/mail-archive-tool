@@ -604,7 +604,8 @@ keys is unaffected and the version is not bumped.)
   `verify_never_finished`, `lastverify_unreadable`,
   `verify_descriptor_unreadable`, `descriptor_unreadable`, `no_schedule`,
   `moved_archive`, `other_host`, `scheduler_unavailable`, `not_installed`,
-  `exe_missing`, `exe_moved`.
+  `exe_missing`, `exe_moved`, `verify_other_host`, `verify_not_installed`,
+  `verify_exe_missing`, `verify_exe_moved`.
 - `fixity` is `{records, with_fixity}` (coverage, not integrity), or `null` when
   there is no manifest.
 - `extractable` is `{records, records_with_eml}` — how many records have a
@@ -960,7 +961,12 @@ now (re-installing again changes nothing). A last verify that is still recorded 
 while nothing holds the archive lock died mid-run (a crash, a kill, a power
 loss): `status` WARNs at once (`verify_never_finished`), so a verify that dies
 on every run never looks current. A last-verify record that cannot be read is a
-WARN too (`lastverify_unreadable`): the next verify rewrites it.
+WARN too (`lastverify_unreadable`): the next verify rewrites it. As for the
+backup, the verify's entry is checked as well: a verify recorded but missing
+from this host's scheduler (`verify_not_installed`), or whose program is gone or
+is not this binary (`verify_exe_missing`, `verify_exe_moved`), is a WARN naming
+the re-install, and one installed on another host is `verify_other_host`, since
+its state cannot be checked from here.
 
 **What is not detected:** on launchd (macOS) and Task Scheduler (Windows)
 hosts, two archives that share one explicit `-name` are not detected at

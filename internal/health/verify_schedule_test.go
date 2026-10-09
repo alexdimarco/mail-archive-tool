@@ -64,7 +64,7 @@ func TestVerifyStaleJudgedAgainstTheVerifySchedule(t *testing.T) {
 		in.VerifyDesc = schedule.Descriptor{Version: 1, Name: verifyName, Interval: interval, At: "05:00",
 			Exe: "/usr/local/bin/mailarchive", Job: []string{"verify", "-out", "/a", "-unattended", "-record", "-json", "-log", "/a/" + verifyName + ".log"},
 			Log: "/a/" + verifyName + ".log", InstalledAt: installed, Host: "box"}
-		in.VerifySchedState = schedule.Installed
+		in.VerifySchedState, in.VerifyExeExists, in.VerifyExeIsThis = schedule.Installed, true, true
 		return in
 	}
 	staleReason := func(in Input) (bool, string) {
@@ -289,5 +289,109 @@ func TestVerifyStaleJudgedAgainstTheVerifySchedule(t *testing.T) {
 	}
 	if lines := strings.Join(Summary(earlier, Assess(earlier, now)), "\n"); strings.Contains(lines, "Verify schedule:") {
 		t.Errorf("the summary names a verify schedule none recorded:\n%s", lines)
+	}
+}
+
+// covers: MA-466, R18, S29
+// `status` watches the scheduled verify's entry as it watches the backup's (the
+// README and MA-466 say so): on this host a verify recorded but absent from the
+// scheduler is a WARN at once (verify_not_installed) naming the re-install and
+// the removal that clears the record; a scheduler that cannot be queried is
+// scheduler_unavailable, once even beside the backup's; a recorded program that
+// is gone or is not this binary is verify_exe_missing or verify_exe_moved,
+// naming the re-install — WARNs, as a stale verify is, never RED. A verify
+// recorded on another host is verify_other_host, and its state and program are
+// not judged from here. The positive twin first: a healthy recorded verify
+// raises none of these, and the posture stays GREEN. The last verify ran a day
+// ago throughout, so verify_stale is never the reason.
+func TestVerifyEntryWatchedAsTheBackupIs(t *testing.T) {
+	now := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	const verifyName = "mailarchive-1234abcd-verify"
+	entryCodes := []string{"verify_other_host", "verify_not_installed", "scheduler_unavailable", "verify_exe_missing", "verify_exe_moved"}
+	healthy := func() Input {
+		in := healthyInput(now)
+		in.GOOS = "linux"
+		in.HasVerifyDescriptorFile, in.HasVerifyDescriptor = true, true
+		in.VerifyDesc = schedule.Descriptor{Version: 1, Name: verifyName, Interval: "weekly", At: "05:00",
+			Exe: "/usr/local/bin/mailarchive", Job: []string{"verify", "-out", "/a", "-unattended", "-record"},
+			InstalledAt: now.Add(-60 * 24 * time.Hour), Host: "box"}
+		in.VerifySchedState, in.VerifyExeExists, in.VerifyExeIsThis = schedule.Installed, true, true
+		finished := now.Add(-24 * time.Hour)
+		in.LastVerifyState = state.LastVerifyPresent
+		in.LastVerify = state.LastVerify{Status: state.VerifyDone, Started: finished, Finished: &finished, Attested: true}
+		return in
+	}
+	count := func(rep Report, code string) (n int, reason string) {
+		for i, c := range rep.Codes {
+			if c == code {
+				n, reason = n+1, rep.Reasons[i]
+			}
+		}
+		return n, reason
+	}
+	reinstall := "`mailarchive schedule -interval weekly -at 05:00 -install -- verify -out /a -record`"
+
+	// Positive twin: a healthy recorded verify raises none of the entry's WARNs.
+	rep := Assess(healthy(), now)
+	for _, code := range entryCodes {
+		if n, _ := count(rep, code); n != 0 {
+			t.Errorf("a healthy scheduled verify raised %s: %v", code, rep.Reasons)
+		}
+	}
+	if rep.Posture != "GREEN" {
+		t.Errorf("a healthy scheduled verify is not GREEN: %s %v", rep.Posture, rep.Reasons)
+	}
+
+	for _, c := range []struct {
+		step   string
+		mutate func(in *Input)
+		code   string
+		wants  []string
+		others []string // entry codes that must not appear
+	}{
+		{"recorded but absent from the scheduler", func(in *Input) { in.VerifySchedState = schedule.NotInstalled }, "verify_not_installed",
+			[]string{verifyName, "not present in this host's scheduler", reinstall, "`mailarchive schedule -name " + verifyName + " -remove -- verify -out /a`"}, nil},
+		{"the scheduler cannot be queried, no backup recorded", func(in *Input) {
+			in.VerifySchedState, in.HasDescriptor, in.DescErr = schedule.SchedulerUnavailable, false, os.ErrNotExist
+		}, "scheduler_unavailable", []string{"cannot be queried", "scheduled verify"}, nil},
+		{"the recorded program is gone", func(in *Input) { in.VerifyExeExists, in.VerifyExeIsThis = false, false }, "verify_exe_missing",
+			[]string{"/usr/local/bin/mailarchive", "no longer exists", reinstall}, []string{"verify_exe_moved"}},
+		{"the recorded program is not this binary", func(in *Input) { in.VerifyExeIsThis = false }, "verify_exe_moved",
+			[]string{"/usr/local/bin/mailarchive", "not this binary", reinstall}, []string{"verify_exe_missing"}},
+		{"recorded on another host", func(in *Input) {
+			in.VerifyDesc.Host, in.VerifySchedState, in.VerifyExeExists = "nas-01", schedule.NotInstalled, false
+		}, "verify_other_host", []string{verifyName, `"nas-01"`, "cannot be checked from here"}, []string{"verify_not_installed", "verify_exe_missing"}},
+	} {
+		in := healthy()
+		c.mutate(&in)
+		rep := Assess(in, now)
+		n, reason := count(rep, c.code)
+		if n != 1 {
+			t.Errorf("%s: %d %s reason(s), want 1 (reasons: %v)", c.step, n, c.code, rep.Reasons)
+			continue
+		}
+		for _, want := range c.wants {
+			if !strings.Contains(reason, want) {
+				t.Errorf("%s: the %s WARN lacks %q:\n%s", c.step, c.code, want, reason)
+			}
+		}
+		for _, other := range c.others {
+			if n, _ := count(rep, other); n != 0 {
+				t.Errorf("%s: also raised %s: %v", c.step, other, rep.Reasons)
+			}
+		}
+		if rep.Posture != "WARN" {
+			t.Errorf("%s: posture %s, want WARN (a verify that cannot run is a WARN, never RED): %v", c.step, rep.Posture, rep.Reasons)
+		}
+		if n, _ := count(rep, "verify_stale"); n != 0 {
+			t.Errorf("%s: verify_stale raised for a verify that ran a day ago: %v", c.step, rep.Reasons)
+		}
+	}
+
+	// Beside the backup's own scheduler_unavailable, said once.
+	both := healthy()
+	both.SchedState, both.VerifySchedState = schedule.SchedulerUnavailable, schedule.SchedulerUnavailable
+	if n, _ := count(Assess(both, now), "scheduler_unavailable"); n != 1 {
+		t.Errorf("an unqueryable scheduler is reported %d times for the backup and the verify, want once: %v", n, Assess(both, now).Reasons)
 	}
 }

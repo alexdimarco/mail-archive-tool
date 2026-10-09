@@ -25,7 +25,11 @@ import (
 // N11 until the verify descriptor was built; it is now a permanent guard. It is
 // also what an archive sees after another archive's verify took over a shared
 // -name on launchd or Task Scheduler (FB-4's residual, not detected at
-// install): its own verify stops running, and verify_stale follows.
+// install): its own verify stops running, and verify_stale follows. As for the
+// backup, the verify's entry itself is watched too: the installed verify raises
+// no verify_not_installed, and once its entry is taken out of the sandboxed
+// scheduler by hand, `status -json` carries verify_not_installed at once (its
+// last run a day ago, so not verify_stale).
 func TestStatusWarnsWhenAScheduledVerifyStops(t *testing.T) {
 	sandboxScheduler(t)
 	out := t.TempDir()
@@ -65,6 +69,17 @@ func TestStatusWarnsWhenAScheduledVerifyStops(t *testing.T) {
 	// The weekly verify stopped: its last run was 30 days ago.
 	if codes := reasonCodes(30 * 24 * time.Hour); !slices.Contains(codes, "verify_stale") {
 		t.Errorf("status does not warn that the scheduled weekly verify stopped (last verify 30 days ago); reason codes: %v", codes)
+	}
+
+	// As for the backup, the verify's entry itself is watched: installed, no
+	// WARN; taken out of the scheduler by hand, a WARN at once, before any
+	// staleness.
+	if codes := reasonCodes(24 * time.Hour); slices.Contains(codes, "verify_not_installed") {
+		t.Errorf("an installed scheduled verify is reported as not installed; reason codes: %v", codes)
+	}
+	takeOutOfSandbox(t, schedule.DefaultNameFor(out)+"-verify")
+	if codes := reasonCodes(24 * time.Hour); !slices.Contains(codes, "verify_not_installed") || slices.Contains(codes, "verify_stale") {
+		t.Errorf("a scheduled verify taken out of the scheduler is not reported as such (its last run a day ago); reason codes: %v", codes)
 	}
 }
 
