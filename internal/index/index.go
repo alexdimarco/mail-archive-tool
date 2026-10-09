@@ -10,10 +10,13 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 
 	"mail-archive-tool/internal/model"
 )
@@ -140,31 +143,80 @@ func resolveIndexVersion(db *sql.DB, hadDocs, hadMeta bool) (int, error) {
 	return indexVersion, nil
 }
 
-// OpenReadonly opens an existing index for querying (serve/search).
+// OpenReadonly opens an existing index for querying (serve/search/status). The
+// connection is genuinely read-only (SQLite URI mode=ro): it can never write
+// search.db, even by checkpointing a crashed writer's WAL. A WAL database needs
+// its -shm to be read, so on read-only media (a DVD, a write-protected USB
+// stick, a read-only share) where none exists and none can be created, the open
+// is retried as immutable=1 — safe there because nothing can be writing the
+// file — instead of failing with SQLITE_READONLY_DIRECTORY (F85/N14). On a
+// writable archive with no live writer, a read-only WAL reader cannot remove
+// the empty -wal/-shm pair it needed; the next writer reclaims them.
 func OpenReadonly(path string) (*Index, error) {
 	// Check for the file first, so a missing index yields a clean "run an export
 	// first" rather than the SQLite driver's misleading low-level open error.
 	if _, statErr := os.Stat(path); errors.Is(statErr, fs.ErrNotExist) {
 		return nil, fmt.Errorf("no search index at %s (run an export first)", path)
 	}
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		return nil, fmt.Errorf("open index: %w", err)
+	db, err := openProbed(path, "mode=ro")
+	if err != nil && readonlyMediaErr(err) {
+		db, err = openProbed(path, "mode=ro&immutable=1")
 	}
-	// Probe that docs exists and is readable, fully consuming the one-row result
-	// so the connection (and its OS file handle) is returned to the pool. The old
-	// db.Query discarded an unclosed *sql.Rows that pinned a connection open past
-	// ix.Close(): harmless on POSIX, but on Windows it blocks a later
-	// os.Remove/os.Rename of search.db (a Rebuild then fails "Access is denied").
-	// An empty index is still usable, so sql.ErrNoRows counts as success.
+	if err != nil {
+		return nil, fmt.Errorf("search index %s is present but cannot be read (%w): if it is damaged, rebuild it from the archive with `mailarchive reindex -rebuild -out %q` (on read-only media, copy the archive to a writable location first)", path, err, filepath.Dir(path))
+	}
+	return &Index{db: db}, nil
+}
+
+// openProbed opens the database at path through a SQLite file: URI carrying
+// the given query (e.g. "mode=ro") and probes that docs exists and is readable.
+// The URI is built from the absolute path with every special character
+// percent-escaped, so a '?', '#' or '%' in an archive path is never parsed as
+// a URI parameter.
+func openProbed(path, query string) (*sql.DB, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	p := filepath.ToSlash(abs)
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p // a Windows drive path: file:///C:/...
+	}
+	u := url.URL{Scheme: "file", Path: p, RawQuery: query}
+	db, err := sql.Open("sqlite", u.String())
+	if err != nil {
+		return nil, err
+	}
+	// Probe, fully consuming the one-row result so the connection (and its OS
+	// file handle) is returned to the pool. The old db.Query discarded an
+	// unclosed *sql.Rows that pinned a connection open past ix.Close():
+	// harmless on POSIX, but on Windows it blocks a later os.Remove/os.Rename
+	// of search.db (a Rebuild then fails "Access is denied"). An empty index is
+	// still usable, so sql.ErrNoRows counts as success.
 	var probe int
 	switch err := db.QueryRow(`SELECT 1 FROM docs LIMIT 1`).Scan(&probe); {
 	case err == nil, errors.Is(err, sql.ErrNoRows):
+		return db, nil
 	default:
 		db.Close()
-		return nil, fmt.Errorf("no usable index at %s (run an export first): %w", path, err)
+		return nil, err
 	}
-	return &Index{db: db}, nil
+}
+
+// readonlyMediaErr reports whether a read-only open failed because the media
+// cannot host the WAL reader's -shm (SQLITE_READONLY_* or SQLITE_CANTOPEN, by
+// primary result code), the one case the immutable retry is for. A corrupt
+// file (SQLITE_NOTADB) or a missing table is not retried.
+func readonlyMediaErr(err error) bool {
+	var se *sqlite.Error
+	if !errors.As(err, &se) {
+		return false
+	}
+	switch se.Code() & 0xff {
+	case sqlite3.SQLITE_READONLY, sqlite3.SQLITE_CANTOPEN:
+		return true
+	}
+	return false
 }
 
 // Add records (or replaces, by key) one message in the index.
