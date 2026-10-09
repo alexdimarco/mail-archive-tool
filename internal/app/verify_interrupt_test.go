@@ -1,9 +1,11 @@
 package app
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -57,18 +59,22 @@ func TestInterruptedVerifyKeepsTheLastVerdict(t *testing.T) {
 	}
 	assure.Reached(t, reasonFor(assessOut(out), "not_attested"), "the not_attested RED after a verify that found damage")
 
-	crashed := false
-	func() {
-		defer func() {
-			if recover() != nil {
-				crashed = true
-			}
+	crashVerify := func() {
+		t.Helper()
+		crashed := false
+		func() {
+			defer func() {
+				if recover() != nil {
+					crashed = true
+				}
+			}()
+			_, _ = Verify(out, VerifyOptions{}, discard(), func(Report) { panic("simulated crash mid-verify") })
 		}()
-		_, _ = Verify(out, VerifyOptions{}, discard(), func(Report) { panic("simulated crash mid-verify") })
-	}()
-	if !crashed {
-		t.Fatal("the simulated mid-verify crash did not happen")
+		if !crashed {
+			t.Fatal("the simulated mid-verify crash did not happen")
+		}
 	}
+	crashVerify()
 
 	rep := assessOut(out)
 	if rep.Posture != "RED" || reasonFor(rep, "not_attested") == "" {
@@ -77,6 +83,50 @@ func TestInterruptedVerifyKeepsTheLastVerdict(t *testing.T) {
 	assure.Reached(t, reasonFor(rep, "verify_never_finished"), "the verify_never_finished reason for a verify that died partway")
 	if _, err := os.Stat(filepath.Join(out, state.IntegrityAttentionName)); err != nil {
 		t.Errorf("the integrity sidecar did not survive the unfinished verify: %v", err)
+	}
+
+	// The documented status surfaces carry the kept verdict too: `status
+	// -json` reports the running record with a `previous` object holding the
+	// last finished verdict (one level, never nested), and the human lines
+	// say the verify never finished and show that verdict. A second crash
+	// carries the same verdict forward.
+	for crash := 1; crash <= 2; crash++ {
+		if crash == 2 {
+			crashVerify()
+		}
+		in := health.Gather(out, "")
+		srep := health.Assess(in, time.Now())
+		lv, prev := statusLastVerify(t, in, srep)
+		if lv["status"] != state.VerifyRunning || lv["finished"] != nil {
+			t.Fatalf("crash %d: status -json last_verify is %v, want the running record (finished null)", crash, lv)
+		}
+		if prev == nil || prev["status"] != state.VerifyDone || prev["modified"] != float64(1) || prev["attested"] != false || prev["finished"] == nil {
+			t.Fatalf("crash %d: status -json last_verify.previous is %v, want the finished verdict (done, modified 1, not attested)", crash, prev)
+		}
+		if _, nested := prev["previous"]; nested {
+			t.Fatalf("crash %d: last_verify.previous nests another previous: %v", crash, prev)
+		}
+		last, previous := summaryLine(in, srep, "Last verify:"), summaryLine(in, srep, "Previous verify:")
+		if !strings.HasSuffix(last, "→ never finished") {
+			t.Errorf("crash %d: Summary %q, want the verify shown as never finished", crash, last)
+		}
+		if !strings.Contains(previous, "→ NOT attested (modified 1, missing 0, unrecorded 0)") {
+			t.Errorf("crash %d: Summary %q, want the previous NOT attested verdict", crash, previous)
+		}
+	}
+
+	// The JSON builder itself flattens: even a record that arrived nested
+	// yields one level of previous.
+	in := health.Gather(out, "")
+	if in.LastVerify.Previous == nil {
+		t.Fatal("the gathered running record carries no previous verdict")
+	}
+	deeper := *in.LastVerify.Previous
+	in.LastVerify.Previous.Previous = &deeper
+	if _, prev := statusLastVerify(t, in, health.Assess(in, time.Now())); prev == nil {
+		t.Fatal("last_verify.previous missing for a nested record")
+	} else if _, nested := prev["previous"]; nested {
+		t.Fatalf("status -json nests previous inside previous: %v", prev)
 	}
 
 	// A verify that completes is the new verdict: still damaged, no longer
@@ -88,6 +138,44 @@ func TestInterruptedVerifyKeepsTheLastVerdict(t *testing.T) {
 	if reasonFor(rep, "not_attested") == "" || reasonFor(rep, "verify_never_finished") != "" {
 		t.Fatalf("a completed verify did not become the verdict: %v", rep.Reasons)
 	}
+	in = health.Gather(out, "")
+	rep = health.Assess(in, time.Now())
+	if lv, prev := statusLastVerify(t, in, rep); lv["status"] != state.VerifyDone || prev != nil {
+		t.Fatalf("after a completed verify, status -json last_verify is %v (previous %v), want the done record with no previous", lv, prev)
+	}
+	if p := summaryLine(in, rep, "Previous verify:"); p != "" || !strings.Contains(summaryLine(in, rep, "Last verify:"), "→ NOT attested (modified 1") {
+		t.Fatalf("after a completed verify the Summary shows %q / %q, want only the new NOT attested verdict", summaryLine(in, rep, "Last verify:"), p)
+	}
+}
+
+// statusLastVerify returns `status -json`'s last_verify object as a consumer
+// decodes it, and its optional `previous` object (nil when absent).
+func statusLastVerify(t *testing.T, in health.Input, rep health.Report) (map[string]any, map[string]any) {
+	t.Helper()
+	data, err := json.Marshal(health.JSON(in, rep))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	lv, ok := doc["last_verify"].(map[string]any)
+	if !ok {
+		t.Fatalf("status -json has no last_verify object:\n%s", data)
+	}
+	prev, _ := lv["previous"].(map[string]any)
+	return lv, prev
+}
+
+// summaryLine returns the Summary line starting with prefix, or "".
+func summaryLine(in health.Input, rep health.Report, prefix string) string {
+	for _, l := range health.Summary(in, rep) {
+		if strings.HasPrefix(l, prefix) {
+			return l
+		}
+	}
+	return ""
 }
 
 // covers: MA-395, R18, R20, S31
