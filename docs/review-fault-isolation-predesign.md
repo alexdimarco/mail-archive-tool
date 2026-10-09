@@ -563,3 +563,358 @@ built" and cites this review, which exists on disk. The repo has no meta-test fo
 (`assureblock/` holds only the block and covers-map tests), so the check is by convention, as for
 the earlier gates. Each slice flips its own status when it lands and cites its gate artifacts: a
 friction review for S1a/S1b, an adversarial pass for S2a, S2b and S3.
+
+## Addendum: RR-6 (2026-10-09), lenses 3, 6, 7 and 8 on revision 2's shared Graph primitive SG (ruling J4)
+
+**What was re-reviewed:** `docs/design-fault-isolation.md`, revision 2, with the owner rulings of
+`docs/owner-rulings-2026-10-09.md` folded at `aed7e5b`. The scope is SG as ruling J4 defines it
+(rulings §1 J4, §9 row 4 and the RR-6 row), as the design carries it: the header, P3, §4.8.1's
+[FC21] SG text, §4.8.6, §4.8.7, §8's Graph-endpoint row, §9's MA-314, §10's SG and SGc rows, OR9
+and §12. Every capture-side change SG makes was in scope:
+- the shared `StatusError{Code, GraphCode, Text}`, with `Text` bounded, `Error()` keeping today's
+  text, and callers moving to `errors.As`;
+- `graph.Classify` as the one classifier, with `app.classifyFetch` staying capture's wrapper (in
+  S3), and the 404 class, the 403 handling and the breaker thresholds kept per consumer;
+- `MIMETo(w, maxBytes, idle, overall)`: idle 2 min, overall 2 h, a 200 MiB size cap, and
+  `$value`'s own header timeout of at least the idle window, for capture too;
+- the nextLink guard's repeat set and page cap in every paging loop from SG on, capture's
+  `Folders` and `Messages` included. The host/path pin reaches capture only in step SGc, behind
+  XC25's gate (ESC-7).
+
+RR-6 exists because SG changes the shipped, unattended capture path before S3 lands (J4,
+"corrected after check"). Each lens asked whether code built to this text is durable, secure,
+recoverable and safely migratable for existing scheduled captures. The consumer on the other side
+is the extraction workspace (its XC25, XC26, §4.5, §4.13 and MA-402).
+
+**Procedure:** assurance-kit `process/design-review.md`, a re-run of chosen lenses on a changed
+design, filed as an addendum to this review:
+- **Finders:** one per lens: lens 3 (durability), lens 6 (security), lens 7 (failure domains and
+  recoverability) and lens 8 (migration and coexistence).
+- **Skeptic:** refutation-default, per finding, with the code in hand. A duplicate was folded into
+  the finding it repeats, and any extra trigger or evidence it carried was moved there.
+- **Rescue:** a separate agent was given the blocker and the three majors and told to save the
+  design. It named a dissolving change, or failed, for each one, and it surfaced three issues no
+  finder raised.
+- **Filed by:** a clerk that found none of these issues. It re-checked the rescue's three hidden
+  issues against the text and the code before acting on them, and folded the conditions.
+
+**Findings: 29 found · 15 confirmed · 1 refuted (L6-5) · 13 duplicates.**
+- By lens:
+  - lens 3: 6 found, 6 confirmed;
+  - lens 6: 9 found, 5 confirmed, 3 duplicates, 1 refuted;
+  - lens 7: 9 found, 3 confirmed, 6 duplicates;
+  - lens 8: 5 found, 1 confirmed, 4 duplicates.
+- Skeptic severity of the confirmed findings: **1 blocker · 3 major · 11 minor**.
+- **Rescue:** 4 sent (L6-1, L3-1, L3-2, L3-3). **3 DISSOLVED**, **1 PARTIAL** (L3-2), **0 SURVIVE**.
+- **Hidden issues** (rescue pass), each re-checked here:
+  - HB1, a major: verified, and now **RR6-C5**;
+  - HB2: verified, and now **RR6-C6**;
+  - HB3, graded minor by the rescue: its text contradiction is verified (it is L3-4), but MA-402
+    already fails the build it describes, so it is a note. Its bullet is reconciled inside
+    RR6-C1's fold.
+
+**Verdict: GO_WITH_CONDITIONS.** No blocker survives the rescue, so no lens fails.
+- **RR6-C1–RR6-C6** are must-fix-before-SG-code. Each is folded into the design and marked
+  `[RR-6 RR6-Cn]` where it lands.
+- RR6-C2 and RR6-C3 **amend ruling J4**, a delegated ruling. In each case a confirmed finding shows
+  that the ruled figure causes a defect. The rulings log itself is not edited.
+- No condition needs an owner ruling, so there are **no escalations**. ESC-7 is unchanged.
+- New rows **MA-540** and **MA-541** are in the design's own test plan (§9). The catalog is not
+  edited.
+- Eight minors remain as notes for the design's author. They are not conditions.
+
+### Conditions (must-fix-before-SG-code; all folded)
+
+- **RR6-C1 — `MIMETo`'s own stops are typed, never a cancel** (L6-1, blocker, DISSOLVED;
+  duplicates L7-1, L8-1). Folded in §4.8.6, §4.8.1 rule 5, §5, §4.11, §9 (MA-540) and the §10 SG
+  row.
+  - `MIMETo` runs its idle, header and overall timers itself, on a child context of the caller's.
+  - While the caller's context is live, every stop of its own returns a typed
+    `*graph.TimeoutError{Kind: idle|header|overall, Limit, MessageID}`, including a stop that
+    lands inside `get`'s `Retry-After` select. The error names the message and the limit (MA-98,
+    X2), and it never unwraps to `context.Canceled` or `context.DeadlineExceeded`.
+  - When the caller's context is done, `MIMETo` returns that context's error.
+  - **Second guard.** `RunGraph` decides "cancelled" from its own `ctx.Err()`. It returns
+    `context.Canceled` only when its context is done, and while its context is live it never
+    returns an error that matches `context.Canceled`.
+    - The rescue named the decision at `app/graph.go:294`. The clerk added that the returned chain
+      must not match either.
+    - The reason: `recordRun` (`run.go:427`) and the CLI (`main.go:1140`) test the chain too. With
+      only the early return guarded, the wrapped first error (`app/graph.go:335`) would still
+      record `cancelled` and exit 0.
+  - **The header timer.** §4.8.6's "Time to first byte" bullet is replaced with J4's rule, because
+    the condition names the header timer.
+    - The `$value` request has its own header timer, of at least the idle window and inside the
+      overall cap.
+    - A context timer cannot lengthen the shared 60 s, so the request goes through its own base
+      transport. JSON requests and the token endpoint keep the shared 60 s.
+    - This also settles L3-4 and HB3.
+  - **Rows.** MA-540's stall case: the run fails naming the item, never `cancelled`; the sidecar is
+    written; `graph` exits 1; mailbox 2 is walked. Its parent-cancel twin still records
+    `cancelled` and exits 0.
+- **RR6-C2 — Capture keeps today's 10-minute overall cap until S3** (L3-1, major, DISSOLVED;
+  duplicates L6-2, L7-3, L8-2). **Amends ruling J4.** Folded in P3, §4.8.6, §4.11, §9 (MA-314),
+  §10's SG and S3 rows, and §12.
+  - Until S3, `Client.MIME` passes `MIMETo` an overall cap of `Config.MIMETimeout`, whose default
+    stays today's 10 minutes. It bounds the whole call, `get`'s `Retry-After` sleeps included.
+  - S3 raises capture's overall cap to `MIMEMaxDuration` (2 h), in the same slice as FC10's clamp,
+    the breaker's time bound and the run-level breaker.
+  - Before S3 a fault still fails the mailbox. A mailbox therefore pays at most today's 10 minutes
+    per run for throttle sleeps or for a trickle (the trickle L8-2 carried). A download that needs
+    longer still fails, as today, until S3 (F9).
+  - MA-98 keeps its assertions, through the `MIMETimeout` alias.
+  - The copy export passes its own 2 h from E1.
+- **RR6-C3 — The size cap is confirmed in SG and set at or above Exchange Online's largest item**
+  (L3-3, major, DISSOLVED; duplicates L6-4, L7-2, L8-3). **Amends ruling J4.** Folded in P3,
+  §4.8.6, §4.11, §8, §9 (MA-314, MA-540), §10's SG row and §12.
+  - The confirmation moves from S3 into SG, before SG code.
+    - From Microsoft's documentation, SG establishes the largest `$value` an Exchange Online item
+      can produce, stored items included.
+    - It counts in binary megabytes, with base64's 4/3, CRLF's 78/76 and the headers.
+    - The arithmetic is written in §4.8.6.
+  - 150 MiB of attachment bytes is about 205.3 MiB of MIME, above 200 MiB. The shared cap is
+    therefore 256 MiB, or higher if the confirmation requires it.
+  - A response whose `Content-Length` exceeds the cap is refused before its body is read (L8-3's
+    refinement), so an over-cap item is not downloaded again on every run.
+  - If the documentation cannot bound a stored item, or the limit later rises, the cap is an open
+    condition, not accepted, stated at P3 and §12.
+  - P3 and §8's endpoint row state that before S3 an over-cap body fails the mailbox through
+    today's error path.
+  - MA-314 gains the boundary cases: a body exactly at the scaled cap completes, and one byte more
+    is refused with nothing returned. MA-540 has the shipped-path over-cap case.
+- **RR6-C4 — P3's 30-minute bound carries its condition** (L3-2, major, PARTIAL). Folded in P3,
+  §5, §7.3 and §12.
+  - P3 states that the 30-minute bound holds only with a failing control request. With a healthy
+    one the bound is per item only (the header timer of at least 2 min, idle 2 min, the overall
+    cap), and every known-poison item pays its timer on every run. The cost grows with the number
+    of such items over the archive's life.
+  - It is an **open condition, not accepted**, stated next to the claim. The same condition is
+    stated at §5's breaker row, §7.3's outage bullet and §12's P3 line, together with what the
+    operator sees: `run_stuck` RED once a run outlasts its schedule period.
+  - MA-313's healthy-probe no-trip case stays, because it is the §8 protection.
+- **RR6-C5 — SG's stops are asserted on the shipped capture path** (HB1, major, verified; with
+  L3-5 and its duplicate L7-5). Folded in P3, §4.8.7, §4.11, §9 (new row MA-540) and the §10 SG
+  row.
+  - Every guard stop ends its loop with a typed error, never a quiet end of listing.
+  - New row MA-540 runs through `RunGraph` on the fake server, with two mailboxes. Its stop cases
+    are a repeating `nextLink` in `Messages`, the page cap (scaled by a test hook), a `$value`
+    idle, header or overall stall (RR6-C1) and an over-cap body (RR6-C3).
+  - Each case expects zero `{k,gone}` events, mailbox 2 walked, last-run `failed` (never
+    `cancelled`), the sidecar, and `graph` exit 1.
+  - A healthy walk whose total page count exceeds the scaled cap, while every loop stays under it,
+    completes. That pins the per-loop scope on which J4's "cannot fail a healthy walk" depends
+    (L3-5).
+  - §4.11's P3 nextLink row names these cases and the page cap.
+- **RR6-C6 — Capture's Graph folder recursion is bounded** (HB2, verified; with L6-3 and its
+  duplicate L7-8). Folded in P3, §4.8.4, §4.8.7, §4.11, §8, §9 (new row MA-541), the §10 SG row
+  and §12.
+  - `Folders` keeps one visited folder-id set across the whole call and a depth cap of 300.
+  - **A revisit is skipped, not fatal:** the folder is neither listed nor expanded again, so a
+    cycle ends.
+    - The rescue proposed failing the mailbox on a revisit. The clerk folded the skip instead.
+    - The reason: a live mailbox can list a folder twice when it moves during the walk, and J4
+      holds that these guards cannot fail a healthy walk. A cycle is bounded either way.
+  - A level deeper than 300 stops the walk with a typed error naming the cap, and the mailbox
+    fails, as a `Folders` repeat does.
+  - SG confirms the 300 figure against Microsoft's documentation before SG code, because SG
+    applies it to capture before S2a confirms it for PST.
+  - A response that invents fresh folders at every level stays bounded in depth only. That is an
+    open condition, not accepted, stated in §4.8.7 and §8.
+
+### Rescue outcomes
+
+| Finding | Skeptic severity | Outcome | Condition |
+|---|---|---|---|
+| L6-1 | blocker | DISSOLVED-BY typed `MIMETo` stops that never unwrap to a context error while the caller's context is live, plus `RunGraph` deciding "cancelled" from its own `ctx.Err()` | RR6-C1 |
+| L3-1 | major | DISSOLVED-BY capture keeping `Config.MIMETimeout` (today's 10 minutes) as its overall cap until S3, which raises it to 2 h together with the clamp and the breakers | RR6-C2 |
+| L3-3 | major | DISSOLVED-BY confirming the size cap in SG and setting it at or above Exchange Online's largest item (256 MiB, or higher) | RR6-C3 |
+| L3-2 | major | PARTIAL. SG alone cannot produce it, because before S3 the first fault fails the mailbox. The honesty half dissolves by stating the condition at the claim. The cost itself stays, as an open condition, not accepted | RR6-C4 |
+
+Escapes the rescue tested and rejected:
+- **L3-1: moving only the clamp into SG.** It leaves the trickle: one byte just inside the idle
+  window holds an item for up to 2 h. It also changes today's throttle behaviour: with a
+  `Retry-After` of 5–10 minutes, five clamped 60 s sleeps fail an item that today's 10-minute
+  bound downloads.
+- **L6-1: `context.WithCancelCause` alone.** `ctx.Err()` stays `context.Canceled`, and `get`'s
+  `Retry-After` select returns `ctx.Err()` (`graph.go:555-557`). The mapping has to be `MIMETo`'s
+  own decision.
+- **L3-2: three escapes, each failing.**
+  - (a) A time bound that ignores the probe and trips. It reopens §8's wedge: a MIME-only incident
+    and a hostile sender's fresh stalling batch look the same to the client, and the batch sits at
+    the top of a newest-first Inbox.
+  - (b) A `$value` control request. It would re-download an archived body, which R17 forbids.
+  - (c) Skipping, deferring, budgeting or shortening known-poison retries. That uses the ledger to
+    limit fetches, which narrows P5 and R1's added sentence (J7), and the hard limit forbids it.
+
+### Hidden issues surfaced by the rescue (re-checked here)
+
+- **HB1 (major): verified.** No SG case asserts SG's capture-side stops on the shipped path.
+  - MA-314's slice note says its "`folder-list-failed` gap cases land with S3 … until then each is
+    a skip encoder citing MA-314". No row asserts the page cap.
+  - The covers-map marks a row covered once any test cites it
+    (`assureblock/covers_map_test.go:139-146`), and it counts `t.Skip` as an assertion (`:158`).
+  - So a `Messages` stop that ends the listing quietly passes every gate. `runGraphMailbox` then
+    marks the folder walked (`app/graph.go:647`), and `SweepGone` (`manifest.go:956-979`, called at
+    `app/graph.go:660`) marks every record past the stop gone. That is H2 (R21, S37) on the
+    unattended shipped path, where today the same loop hangs loudly.
+  - §4.8.7 forbids the quiet stop in words, but no case asserts it before S3, and §12 makes such a
+    clause conditional. → **RR6-C5.**
+- **HB2: verified.** `Folders` recurses on the server's `childFolderCount` (`graph.go:228-231`).
+  - Each level's first URL is built by the client (`:200-205`), and §4.8.7's guard "keeps a set of
+    `nextLink`s already fetched". A cyclic `childFolders` response is therefore never seen as a
+    repeat.
+  - P3 claims "This holds in every paging loop, `Folders` included", and R10 gains "never hangs"
+    (J7). The consequence is a fatal crash that every scheduled run repeats.
+  - The rescue graded it moderate and pre-existing; the skeptic graded the same failure (L6-3)
+    minor. It is made a condition because it is verified, the fix is a small strengthening, and
+    SG is the slice that claims to bound Graph listing loops, `Folders` included. → **RR6-C6.**
+- **HB3 (minor, text): verified as text, refuted as a shipped failure.** §4.8.6's "Time to first
+  byte. `ResponseHeaderTimeout` (60 s …) still bounds it" contradicts §4.8.1's J4 sentence. A 60 s
+  build cannot ship: MA-402, built in SG, asserts that "`$value` gets a header timeout ≥ the idle
+  window (XC26)". It is L3-4, a note. The bullet is replaced inside RR6-C1's fold, which names the
+  header timer and so needed it.
+
+### Ruling amendments (delegated rulings; the log is not edited)
+
+- **Amends ruling J4, Download: the overall cap, for capture (RR6-C2).** J4 sets `MIMETo`'s overall
+  cap at 2 h. Capture now passes today's 10 minutes until S3, and gets the 2 h in S3 with FC10's
+  clamp, the breaker's time bound and the run-level breaker.
+  - Why: L3-1 shows that the 2 h cap without them lets a throttled or trickling mailbox hold the
+    archive lock for up to 2 h instead of 10 minutes between SG and S3, about 80 h for a
+    40-mailbox job.
+  - The copy export keeps J4's 2 h.
+- **Amends ruling J4, Download: the size cap, for both consumers (RR6-C3).** J4 sets the cap at
+  200 MiB. SG now confirms the figure from Microsoft's documentation before SG code, and sets it at
+  or above Exchange Online's largest item: 256 MiB, or higher if the confirmation requires it.
+  - Why: L3-3 shows that 200 MiB can sit below FC21's own floor, because 150 MiB of attachment
+    bytes is about 205.3 MiB of MIME. An over-cap item that today's code archives would then wedge
+    its mailbox before S3 and be a permanent terminal gap after it.
+
+### Escalations (OWNER RULING)
+
+None.
+- No condition weakens a gate, or narrows an invariant, a catalog row's guarantee or an X line. No
+  condition edits a baseline or accepts a known gap.
+- No condition changes what an existing covering test asserts.
+  - MA-98 keeps its assertions through the `MIMETimeout` alias.
+  - `RunGraph`'s `ctx.Err()` guard changes no outcome an existing test sees. Today's child
+    deadlines (`graph.go:494`, `516`) end in `context.DeadlineExceeded`, so a mailbox error
+    matches `context.Canceled` only when `RunGraph`'s own context was cancelled, and no existing
+    Graph test cancels it.
+- The cost that RR6-C4 states could be closed only by reopening §8's wedge, or by narrowing P5 and
+  R1's added sentence. Both need the owner. Nothing waits on them, so the cost stays an open
+  condition, not accepted, like FB-4's residual in the rulings log, and no question is raised now.
+- No condition touches the owner-direct ruling or the earlier rulings of the log's §0. ESC-7 is
+  unchanged.
+
+### Notes (minors, not conditions)
+
+Three minors are closed by conditions: L3-4 by RR6-C1, L3-5 by RR6-C5, and L6-3 by RR6-C6 (except
+its total-folder cap, below). The rest are notes for the design's author:
+- **L3-6.** `status` reads Graph errors only as persisted text, so a 403 never gets the
+  `auth_remedy` §7.5 promises.
+  - Where OR7 lands (S3), record the run-fatal auth class as an additive last-run field, set
+    through `errors.As`, and key `auth_remedy` on it. Keep the needle list for older records.
+  - Add an MA-313 assertion of `auth_remedy` on a 403. Until then §7.5 says what a 403 shows.
+- **L6-3's remainder.** A total-folder cap no lower than Exchange Online's per-mailbox folder
+  limit, once that limit is confirmed. RR6-C6 leaves breadth as an open condition until then.
+- **L6-6.** Strip C0/C1 controls from `StatusError.Text` (`util.StripControl`) and bound it
+  rune-safely at construction.
+  - Have `Error()` render the status from `Code` (`http.StatusText`), not the server's reason
+    phrase. That is byte-identical for every printable body, so MA-402, MA-107 and the AADSTS
+    match still hold.
+  - Strip the sidecar's Reason line too, and add an ESC/CRLF-body case and an over-long-reason
+    case to MA-402.
+- **L6-8.** Add capture's one-line breaker-threshold justification to §4.8.1, which J4 requires.
+  At §8's hostile-sender row and at P1, state that "4xx never trips" covers 4xx other than 401 and
+  403, and holds only while Graph emits no per-item `$value` 403 (lab-unverified). The
+  workspace's `/me` probe stays an owner option.
+- **L6-9.** State the redirect channel next to §8's "never sent off the base host" and in §12.
+  - Encode it as an open gap until E1's `CheckRedirect` lands, with a skip encoder citing MA-314,
+    like the capture foreign-host case.
+  - Make SGc depend on E1, or have SGc carry the redirect refusal itself. Add a capture redirect
+    case to MA-505.
+- **L7-6.** The guard's typed stop names the condition and its value, never the raw link.
+  - `runGraphMailbox` wraps a `Messages` error with the folder path, and a `Folders` stop names
+    the parent folder.
+  - Add the 100 000-page cap to §4.8.5's printed thresholds, and assert the text in MA-540.
+- **L7-7.** State the listing bound at P3's [FC10] clause and in §8's row: up to 100 000 requests
+  per loop (per folder after S3), each no longer than the request timeout. Print the cap in the
+  stop message. A tighter rule waits for MA-443's count data, so that it cannot fail a healthy
+  walk.
+- **L7-9.** SG exposes the guard as a value (for example `graph.PageGuard`) that a caller threads
+  through one paging sequence. `MessagePage` takes it, or the cursor stores it. Add a
+  repeat-across-calls case to MA-401 or MA-402. This is also owed in E1's note.
+- **L8-5.** Add an SG paragraph to §6, with three parts:
+  - what changes for running schedules between SG and S3. With RR-6's conditions, a stalled
+    download fails at 2 minutes instead of 10, the header window is at least 2 minutes instead of
+    60 s, a looping listing fails its mailbox instead of hanging, and an over-cap body fails it;
+  - the release-note line;
+  - the rollback as it works on the MSI fleet: uninstall, then install the previous MSI. SG
+    persists nothing, so the archive needs no rollback.
+
+### Operability backlog (Type III; ships with the feature)
+
+- **The cost of known poison is visible** (from L3-2's rescue). The `capture_gaps_stuck` line for
+  transport-class gaps names the time those items cost on the last run. The operator can then act:
+  save a copy from Outlook on the web, then move or delete the item.
+
+### Follow-ups for other owners
+
+- **The extraction workspace's author.** RR6-C3 changes the shared size cap. The workspace's §4.5
+  ("default 200 MiB, a hair over Exchange Online's 150 MB limit after MIME overhead"), its P16
+  memory bound and its §4.13 and §8 tables should read the figure SG confirms (256 MiB, or
+  higher). RR-2 runs before EW-E2.
+- **EW-E1's short adversarial note** (always owed, L2-3) has three questions:
+  - whether the copy export's own 2 h overall cap, with `get`'s `Retry-After` sleeps unclamped
+    until S3, is bounded by the workspace's no-progress clock (RR6-C2);
+  - where `MessagePage`'s repeat set and page count live between calls (L7-9);
+  - the redirect channel, for capture until SGc or E1 (L6-9).
+- **The rulings log's owner (J1).** MA-540 and MA-541 come from the block MA-540..MA-544 given to
+  the RR-6 run. The log's §8.4 should record them, and its J4 should note RR-6's two amendments.
+
+### Findings
+
+The Verdict column gives the skeptic's verdict and severity, and the rescue outcome for the
+blocker and the majors. A duplicate names the finding it repeats, and its evidence was folded
+there. The rescue's hidden issues come last, as HB1–HB3.
+
+| ID | Lens | Design section (or OMISSION) | Claimed failure | Verdict | Evidence / refuting quote | Condition # |
+|---|---|---|---|---|---|---|
+| L3-1 | 3 | §4.8.6 overall cap vs the §10 SG and S3 rows; P3; rulings §9 rows 4 and 14 | SG ships the 2 h overall cap to capture's `$value`, but FC10's `Retry-After` clamp and the breakers wait for S3: a throttled mailbox costs up to 2 h instead of 10 min, about 80 h for 40 mailboxes, with the lock held through later runs | CONFIRMED (major) · rescue DISSOLVED | §4.8.6 "MIMETo replaces context.WithTimeout(ctx, c.mimeTimeout)" and "Without the clamp, the 2 h cap would replace today's 10-minute bound"; the SG row has no clamp, the S3 row has it; `get` sleeps up to 5 × any `Retry-After` (`graph.go:532-570`); `buildGraphClient` never sets `MIMETimeout` (`app/graph.go:379-385`). From L8-2: a trickle just inside the idle window also reaches 2 h | RR6-C2 |
+| L3-2 | 3 | P3 [FC10] wall-clock bound vs §4.8.5 known poison and control probe; §5; §7.3; §12 | The 30-minute per-mailbox bound fails whenever the control probe succeeds, and known-poison items pay SG's timers on every run, so every run's cost grows with their number | CONFIRMED (major) · rescue PARTIAL | §4.8.5 "Known poison does not count" and "The breaker trips only if that request fails too. Otherwise the counters reset"; MA-313 "25 consecutive per-item timeouts while the control request succeeds → no trip"; P3 states 30 minutes without the condition. Rescue: SG alone cannot produce it, and the cost cannot be removed under delegation | RR6-C4 |
+| L3-3 | 3 | §4.8.6 size cap; J4 Download; §4.8.5 thresholds; §8 endpoint row; §12 | An unverified 200 MiB cap reaches capture before S3 confirms it: an over-cap item that today's code archives wedges its mailbox before S3 and is never archived after | CONFIRMED (major) · rescue DISSOLVED | §4.8.6 "It is 200 MiB, as in the extraction design, and S3 confirms that figure"; today `io.ReadAll` has no cap (`graph.go:505`); the fetch error returns before `walked.Mark` (`app/graph.go:619-622`, `641-647`) at a fixed listing position (`graph.go:417`); 150 MiB × 4/3 × 78/76 ≈ 205.3 MiB; `-mode full` and the immutable-id download path re-fetch archived items (`app/graph.go:552-575`) | RR6-C3 |
+| L3-4 | 3 | §4.8.6 "Time to first byte" vs §4.8.1 [ruling J4] and the §10 SG row | §4.8.6 keeps the shared 60 s header timeout on `$value`, contradicting J4, and no MA-314 case tests time to first byte | CONFIRMED (minor) | §4.8.6 "`ResponseHeaderTimeout` (60 s, `graph.go:137-140`) still bounds it" vs §4.8.1 "Its `$value` request gets its own response-header timeout of at least the idle window, for capture as for the copy export"; MA-402 asserts it on `MIMETo`, so divergence is unlikely. From L8-4: token fetches keep 60 s, and the header timer stays inside the overall cap | RR6-C1 (its text) |
+| L3-5 | 3 | §4.8.7 page cap; §9 MA-314 slicing; §4.11 P3 nextLink row | No MA case asserts the page cap, its per-loop scope, or capture's pre-S3 `Messages` stop | CONFIRMED (minor) | MA-314's SG cases carry only "the repeat stop in `Folders`"; §4.11 names "repeat and foreign host" only; §12 "Any clause in §4.11 still without an asserting case is conditional". From L7-5: a `Messages` guard that breaks with nil passes every SG test, and `SweepGone` (`app/graph.go:660`) then writes phantom `{k,gone}` | RR6-C5 |
+| L3-6 | 3 | §4.8.1 `StatusError` and `errors.As`; §7.5 "401/403 keep … `auth_remedy`" | `status` reads Graph errors only as persisted text through a needle list, so a 403 never gets the auth remedy §7.5 promises | CONFIRMED (minor) | `auth_remedy` is added only if `looksLikeAuthFailure(lr.Error)` (`health.go:206`); the needles (`health.go:346`) match nothing a Graph 403 carries; the last-run record keeps only `Error` (`lastrun.go:67`). Pre-existing, unchanged by SG | note |
+| L6-1 | 6 | §4.8.6 idle watchdog; §4.8.1 rule 1 (S3 only); J4's pre-S3 path; §10 SG row | The watchdog's cancel surfaces as `context.Canceled`, which shipped capture reads as an operator interrupt: later mailboxes skipped, last-run `cancelled`, `graph` exit 0, every night if the stall is deterministic | CONFIRMED (blocker) · rescue DISSOLVED | §4.8.6 "The wrapper cancels the request context"; `runGraphMailbox` wraps with `%w` (`app/graph.go:621`); `RunGraph` returns `context.Canceled` on `errors.Is` (`app/graph.go:294-297`); `recordRun` writes `cancelled` (`run.go:427-428`); `graph` exits 0 (`main.go:1140-1143`). Today's `WithTimeout` gives DeadlineExceeded: only that mailbox fails, loudly | RR6-C1 |
+| L6-2 | 6 | §4.8.6 [FC10] clamp; §10 SG and S3 rows | as L3-1 | DUPLICATE of L3-1 | same quotes, code and fix; its §4.8.1-versus-§10 observation was carried into L3-1 | RR6-C2 |
+| L6-3 | 6 | P3; §4.8.7; §8 endpoint row. OMISSION: a bound on Graph folder recursion | `Folders` recursion has no visited set, depth cap or count cap, so a cyclic or endless `childFolders` tree crashes the run | CONFIRMED (minor) | `Folders` recurses on `childFolderCount` (`graph.go:228-231`); each level's first URL is built, not a nextLink, so neither the repeat set nor the per-loop cap fires; P3's visited and depth guard is PST-only (MA-317). Re-graded minor: only §8's misbehaving endpoint triggers it | RR6-C6 |
+| L6-4 | 6 | §4.8.6 size cap; MA-314 slicing; §12 | as L3-3 | DUPLICATE of L3-3 | same quotes and fix; re-graded major with L3-3 | RR6-C3 |
+| L6-5 | 6 | §4.8.7 (J4 paragraph); MA-314 foreign-host case. OMISSION: the scheme | The pin omits the scheme, so an `http://` nextLink would carry the token in cleartext | REFUTED | J4 "a host/path pin with XC25's normalization"; XC25 (extraction §4.5) "scheme equal; host equal case-insensitively; port equal after default-port normalization"; MA-401 "a nextLink whose scheme, host, port or path prefix differs from the base is refused", and MA-505 covers capture as MA-401. Aligning §4.8.7's parenthetical with XC25 remains a free editorial fix | — |
+| L6-6 | 6 | §4.8.1 `StatusError`; §8 "New surfaces and their controls" | `Text` is bounded but not stripped, and `Error()` keeps the server's reason phrase; the log, the CLI `FAILED:` line and the attention sidecar print it raw | CONFIRMED (minor) | today's text is `"graph " + resp.Status + ": "` plus up to 2048 raw body bytes (`graph.go:572-575`); printed raw at `app/graph.go:303`, `main.go:1124` and in the sidecar (`lastrun.go:120-138`); `status` strips only on read (`lastrun.go:187`). Pre-existing | note |
+| L6-7 | 6 | §4.8.6 "Time to first byte" | as L3-4 | DUPLICATE of L3-4 | same contradiction and the same missing capture case | RR6-C1 (its text) |
+| L6-8 | 6 | §4.8.1 "What stays per consumer"; §8 hostile-sender row; §9 lab story | The breaker-threshold justification J4 requires is missing, and §8's "4xx never trips" omits the per-item 403 condition | CONFIRMED in part (minor); the 403 line is REFUTED | Refuted part: rule 2, "[ruling OR7]: a 403 on `$value` is mailbox-fatal, so a revoked grant never turns into thousands of gaps". Confirmed: §8 "Item-class poison (500s, 4xx) never trips the breaker" vs rule 2; "whether a per-item 403 exists is not reproduced in CI" sits in §9, not at the claim | note |
+| L6-9 | 6 | §8 endpoint row; §4.8.7; §12; §10 SGc row. OMISSION: the redirect channel | "Never sent off the base host" ignores redirects, which carry capture's bearer token to any 3xx target until E1 | CONFIRMED (minor) | no `CheckRedirect` on the shared transport or the oauth2 clients (`graph.go:113-142`; `delegated.go:89`, `102`); oauth2's Transport attaches `Authorization` on every hop (extraction §4.5); §12 conditions only the nextLink pin; SGc depends only on SG. Pre-existing | note |
+| L7-1 | 7 | §4.8.6 idle watchdog with §4.8.1 rule 1 (S3) | as L6-1 | DUPLICATE of L6-1 | its fix options (a cause-typed stop; `RunGraph` testing `ctx.Err()`) are in RR6-C1 | RR6-C1 |
+| L7-2 | 7 | §4.8.6 one streaming download and size cap. OMISSION: no pre-S3 outcome for `MIMETo`'s stops | as L3-3 | DUPLICATE of L3-3 | same quotes and fix | RR6-C3 |
+| L7-3 | 7 | §4.8.6 [FC10] clamp vs §10 SG and S3 rows | as L3-1; it reopens the earlier review's L9-1 for the SG-to-S3 interval | DUPLICATE of L3-1 | same quotes and fix | RR6-C2 |
+| L7-4 | 7 | §4.8.6 "Time to first byte" vs §4.8.1 and the §10 SG row | as L3-4 | DUPLICATE of L3-4 | same contradiction | RR6-C1 (its text) |
+| L7-5 | 7 | §9 MA-314's slice note; §4.11 P3 nextLink row | No SG case checks that a `Messages` stop fails closed before S3 | DUPLICATE of L3-5 | its fail-open consequence (a nil break → `walked.Mark` → phantom `{k,gone}`, R21) was carried into L3-5 | RR6-C5 |
+| L7-6 | 7 | §4.8.7 stop outcomes; §4.8.5 threshold list | Before S3 a guard stop's error names no folder, condition or value, and does not say that later folders are blocked | CONFIRMED (minor) | the `Messages` error returns unwrapped (`app/graph.go:641-642`) and surfaces only as "N mailbox(es) failed; first error: …" (`:335`); J4 requires only that "A stop names the foreign host"; the page cap is absent from §4.8.5's printed thresholds | note |
+| L7-7 | 7 | §4.8.7 page cap; P3 [FC10]; §8 endpoint row | A listing that keeps serving fresh nextLinks stops only after 100 000 requests per loop, and no wall-clock clause covers listings | CONFIRMED (minor) | each page is bounded only by the request timeout (`graph.go:515-517`); the breaker counts only time spent in faults (§4.8.5). Misbehaving endpoint only; the remedy is honest wording | note |
+| L7-8 | 7 | OMISSION: a Graph folder hierarchy guard | as L6-3 | DUPLICATE of L6-3 | same code (`graph.go:199-237`) and fix | RR6-C6 |
+| L7-9 | 7 | §4.8.7 "every paging loop … `MessagePage`"; workspace §4.5 and §4.7 | `MessagePage` returns one page per call, and nothing says where its repeat set and page count live between calls | CONFIRMED (minor) | `MessagePage(…) ([]MessageRef, string, error)` (extraction §4.5); the cursor keeps only the nextLink and the honored flag. Attended preview only, not scheduled capture | note; EW-E1's note |
+| L8-1 | 8 | §4.8.6 idle watchdog; §4.8.1 `$value` header timeout; §10 SG row | as L6-1, with the header timer as a second trigger | DUPLICATE of L6-1 | same chain; its parent-cancel twin is in RR6-C1 (MA-540) | RR6-C1 |
+| L8-2 | 8 | §4.8.6 clamp vs §10 SG and S3 rows; P3 | as L3-1, plus a trickle just inside the idle window | DUPLICATE of L3-1 | its trickle and its keep-10-minutes option were carried into L3-1 | RR6-C2 |
+| L8-3 | 8 | §4.8.6 size cap; §10 SG and S3 rows; §5; §12 | as L3-3, plus the over-cap item downloaded again on every run | DUPLICATE of L3-3 | its `Content-Length` refusal refines RR6-C3 | RR6-C3 |
+| L8-4 | 8 | §4.8.6 "Time to first byte" vs J4 | as L3-4; raising the shared timeout would lengthen token fetches, and "at least the idle window" sets no ceiling | DUPLICATE of L3-4 | carried into L3-4; RR6-C1's text keeps the token endpoint at 60 s and the header timer inside the overall cap | RR6-C1 (its text) |
+| L8-5 | 8 | OMISSION: §6 has no SG paragraph; §6 "Rollback of the rollout" | §6 says nothing about what SG changes for running schedules, and the MSI refuses its rollback ("Swap the binary") | CONFIRMED (minor) | `Product.wxs:37-39` (MajorUpgrade with DowngradeErrorMessage); every threshold is "fixed by design" (§4.8.5), so SG has no switch; the extraction design's §6 (XC37) states the same MSI fact. SG persists nothing | note |
+| HB1 | rescue | §9 MA-314 slicing; §4.11 P3 nextLink row; §4.8.7 and J4's pre-S3 rule; §10 SG row | SG's capture-side stops have no case on the shipped path, so a `Messages` stop that ends the listing quietly records phantom gones with every gate green | VERIFIED (major) | MA-314: its gap cases "land with S3 … until then each is a skip encoder"; no row asserts the page cap; the covers-map counts any citing test (`assureblock/covers_map_test.go:139-146`) and `t.Skip` (`:158`); `walked.Mark` (`app/graph.go:647`), then `SweepGone` (`:660`) | RR6-C5 |
+| HB2 | rescue | P3; §4.8.7; §8 endpoint row; R10's added "never hangs" (J7) | `Folders` recursion has no visited set or depth cap, so a cyclic `childFolders` response is an unbounded walk that the nextLink guard never sees | VERIFIED (= L6-3) | §4.8.7 "It keeps a set of `nextLink`s already fetched"; each level's first URL is built by the client (`graph.go:200-205`, `228-231`); P3 "This holds in every paging loop, `Folders` included" | RR6-C6 |
+| HB3 | rescue | §4.8.6 "Time to first byte" vs §4.8.1, J4 and the §10 SG row | Two texts specify opposite builds, and a context timer cannot lengthen the shared 60 s | VERIFIED as text (= L3-4, minor); REFUTED as a shipped failure | MA-402: "`$value` gets a header timeout ≥ the idle window (XC26)", built in SG; `graph.go:137-142` | RR6-C1 (its text) |
+
+### Mechanical check
+
+The design's header, §4.8.1, the §10 SG row and §11's OR9 cite this addendum. The design's BUILD
+STATUS stays "approved with conditions, not built".
