@@ -210,33 +210,48 @@ func parseFailure(err error) string {
 // while the re-check also reads the output with scripting off. A harmless
 // <meta charset> or Content-Type meta inside <noscript> therefore tripped the
 // re-check and could never be rendered (DIFF-FP-1). When the re-check trips
-// and the mail has a noscript tag, the main parse is retried ONCE with
-// scripting off — noscript content is then markup neutralize renames or
-// removes — and that result is accepted only if it passes the same dual-mode
-// re-check; otherwise the body falls back as before. (Parsing only with
-// scripting off is not an option: its serialization writes noscript text
-// children back raw, so an escaped <meta> there would come out live — the
-// re-check is what rejects that.)
+// and the mail has a noscript tag, the sanitize pass is retried ONCE with each
+// <noscript>'s content neutralized IN PLACE (neutralizeNoscriptContents): the
+// content is parsed with scripting off, its metas and links disarmed, and put
+// back where the scripting-on parse had the noscript. The retry does NOT
+// re-parse the whole document with scripting off, because that pops a head
+// <noscript>'s flow content out into the body, and a word the live indexer
+// skips (it sits in an explicit head) would then show up in the rebuilt index
+// only (search parity, R8). The retry is accepted only if it passes the same
+// dual-mode re-check; otherwise the body falls back as before. (The re-check is
+// still essential: an escaped <meta> inside a noscript decodes to a text child
+// that Render writes back raw, so a live meta smuggled beside a real one is
+// caught and falls back.)
 func sanitizeHTML(doc string) (headExtra, bodyAttrs, body, fallback string) {
 	// Markup nested past flattenDepth loses its container tags (not its text)
 	// first, as a browser flattens past its own cap, so deep mail renders
 	// instead of failing the parser's 512-element cap (DIFF-FP-2).
 	flat := flattenDeep(doc)
-	headExtra, bodyAttrs, body, fallback = sanitizeParsed(flat, len(doc), true)
+	headExtra, bodyAttrs, body, fallback = sanitizeParsed(flat, len(doc), false)
 	if fallback == FallbackHostile && hasNoscriptTag(flat) {
 		// Without a noscript tag the scripting-off parse is the same tree
-		// (scriptingModes), so the retry could change nothing.
-		if h, a, b, f := sanitizeParsed(flat, len(doc), false); f == "" {
+		// (scriptingModes), so the retry could change nothing. Retry with the
+		// noscript contents neutralized in place — NOT by re-parsing the whole
+		// document with scripting off, which moves a head <noscript>'s flow
+		// content into the body (a word the live index skips, because it is in
+		// an explicit head, would then be in the rebuilt index only; R8). The
+		// document keeps the structure the scripting-on parse gives it.
+		if h, a, b, f := sanitizeParsed(flat, len(doc), true); f == "" {
 			return h, a, b, ""
 		}
 	}
 	return headExtra, bodyAttrs, body, fallback
 }
 
-// sanitizeParsed is one sanitizing pass over doc (already flattened), with the
-// main parse's scripting flag as given; inputLen sizes the serialization cap.
-func sanitizeParsed(doc string, inputLen int, scripting bool) (headExtra, bodyAttrs, body, fallback string) {
-	root, err := xhtml.ParseWithOptions(strings.NewReader(doc), xhtml.ParseOptionEnableScripting(scripting))
+// sanitizeParsed is one sanitizing pass over doc (already flattened). The main
+// parse always runs with scripting on, like the browser that reads most
+// archives; inputLen sizes the serialization cap. When neutralizeNoscript is
+// set (the DIFF-FP-1 retry), each <noscript>'s content — opaque raw text to the
+// scripting-on parse — is parsed with scripting off, neutralized and put back
+// in place, so a benign meta/charset/link inside it is disarmed without moving
+// the noscript's other content out of its head (search parity, R8).
+func sanitizeParsed(doc string, inputLen int, neutralizeNoscript bool) (headExtra, bodyAttrs, body, fallback string) {
+	root, err := xhtml.ParseWithOptions(strings.NewReader(doc), xhtml.ParseOptionEnableScripting(true))
 	if err != nil {
 		// Unparseable bytes (or nesting the flattener's model missed): show
 		// them as text rather than guess.
@@ -263,6 +278,9 @@ func sanitizeParsed(doc string, inputLen int, scripting bool) (headExtra, bodyAt
 	}
 	find(root)
 	neutralize(root)
+	if neutralizeNoscript {
+		neutralizeNoscriptContents(root)
+	}
 
 	// The serialization is capped (RV-8): x/net's reconstruct-active-
 	// formatting step can turn a small mail into a huge tree (400 unclosed
@@ -1192,6 +1210,62 @@ func stripReservedNamespace(n *xhtml.Node) {
 		kept = append(kept, a)
 	}
 	n.Attr = kept
+}
+
+// neutralizeNoscriptContents rewrites, in place, the content of every
+// <noscript> on the scripting-on parse tree so a reader with JavaScript off
+// reads it neutralized, WITHOUT the restructuring a full scripting-off re-parse
+// of the whole document does — which pops a head <noscript>'s flow content out
+// into the body, so a word the live indexer skips (it is in an explicit head)
+// would appear in the rebuilt index only (R8). With scripting on a <noscript>
+// holds one raw-text node (its markup as text); that text is parsed as a body
+// fragment with scripting off, neutralized (metas disarmed, charsets and the
+// tool's reserved markers stripped, resource-hint links renamed) and put back
+// as the noscript's element children. Serialized, those children are markup a
+// JS-off browser reads as the neutralized elements and the scripting-on
+// re-check reads back as inert raw text; an escaped `&lt;meta&gt;` decodes to a
+// text child that Render writes literally, so a live meta smuggled beside a
+// real one is caught by the dual-mode re-check and falls back.
+func neutralizeNoscriptContents(root *xhtml.Node) {
+	var walk func(n *xhtml.Node)
+	walk = func(n *xhtml.Node) {
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			if c.Type == xhtml.ElementNode && c.DataAtom == atom.Noscript {
+				neutralizeOneNoscript(c)
+			}
+			walk(c)
+		}
+	}
+	walk(root)
+}
+
+// neutralizeOneNoscript neutralizes one <noscript>'s raw-text content in place
+// (see neutralizeNoscriptContents). A nested <noscript> inside is markup to the
+// scripting-off fragment parse, so one pass reaches every level.
+func neutralizeOneNoscript(ns *xhtml.Node) {
+	var raw strings.Builder
+	for c := ns.FirstChild; c != nil; c = c.NextSibling {
+		if c.Type == xhtml.TextNode {
+			raw.WriteString(c.Data)
+		}
+	}
+	if strings.TrimSpace(raw.String()) == "" {
+		return
+	}
+	ctx := &xhtml.Node{Type: xhtml.ElementNode, Data: "body", DataAtom: atom.Body}
+	nodes, err := xhtml.ParseFragmentWithOptions(strings.NewReader(raw.String()), ctx, xhtml.ParseOptionEnableScripting(false))
+	if err != nil {
+		return // leave as raw text; the dual-mode re-check falls back if hostile
+	}
+	for c := ns.FirstChild; c != nil; {
+		next := c.NextSibling
+		ns.RemoveChild(c)
+		c = next
+	}
+	for _, nd := range nodes {
+		ns.AppendChild(nd)
+	}
+	neutralize(ns) // disarm the newly-appended children and their descendants
 }
 
 func neutralize(n *xhtml.Node) {
