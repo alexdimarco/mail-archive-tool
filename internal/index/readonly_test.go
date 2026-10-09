@@ -2,11 +2,16 @@ package index
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
+
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 
 	"mail-archive-tool/internal/assure"
 )
@@ -152,4 +157,22 @@ func TestOpenReadonlyUnreadableIndexMessage(t *testing.T) {
 			got, err := os.ReadFile(path)
 			return err == nil && bytes.Equal(got, junk)
 		}))
+
+	// The refusal is typed, so a caller that names the file and the remedy
+	// itself (status) can show SQLite's root cause alone: Cause is the
+	// driver's NOTADB error, naming neither the file nor the rebuild.
+	var ue *UnreadableError
+	if !errors.As(oerr, &ue) || ue.Path != path {
+		t.Fatalf("the refusal is not an UnreadableError for %s: %T %v", path, oerr, oerr)
+	}
+	var se *sqlite.Error
+	if !errors.As(ue.Cause, &se) || se.Code()&0xff != sqlite3.SQLITE_NOTADB {
+		t.Fatalf("Cause is not SQLite's NOTADB error: %T %v", ue.Cause, ue.Cause)
+	}
+	if !errors.As(oerr, &se) {
+		t.Fatalf("the refusal no longer wraps SQLite's error: %v", oerr)
+	}
+	if c := ue.Cause.Error(); strings.Contains(c, path) || strings.Contains(c, "reindex") {
+		t.Fatalf("Cause repeats the file or the remedy: %q", c)
+	}
 }

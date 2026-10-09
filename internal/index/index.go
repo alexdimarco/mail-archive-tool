@@ -169,10 +169,27 @@ func OpenReadonly(path string) (*Index, error) {
 		return nil, fmt.Errorf("search index %s is busy (%w): another program or run kept it locked for longer than %s — try again in a moment", path, err, readonlyBusyTimeout)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("search index %s is present but cannot be read (%w): if it is damaged, rebuild it from the archive with `mailarchive reindex -rebuild -out %q` (on read-only media, copy the archive to a writable location first)", path, err, filepath.Dir(path))
+		return nil, &UnreadableError{Path: path, Cause: err}
 	}
 	return &Index{db: db}, nil
 }
+
+// UnreadableError is OpenReadonly's refusal of a search.db that is present but
+// cannot be read (damaged, not a database, a table missing). Its message names
+// the file, SQLite's own cause and the rebuild remedy; Cause alone is that root
+// cause, for a caller such as `status` that names the file and the remedy
+// itself and must not print either twice.
+type UnreadableError struct {
+	Path  string // the search.db that could not be read
+	Cause error  // SQLite's (or the driver's) own error
+}
+
+func (e *UnreadableError) Error() string {
+	return fmt.Sprintf("search index %s is present but cannot be read (%v): if it is damaged, rebuild it from the archive with `mailarchive reindex -rebuild -out %q` (on read-only media, copy the archive to a writable location first)", e.Path, e.Cause, filepath.Dir(e.Path))
+}
+
+// Unwrap exposes Cause, so errors.As still reaches the *sqlite.Error.
+func (e *UnreadableError) Unwrap() error { return e.Cause }
 
 // readonlyBusyTimeout is how long a read-only open waits for a lock another
 // connection holds before giving up with SQLITE_BUSY: a writer committing or

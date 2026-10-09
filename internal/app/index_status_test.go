@@ -58,6 +58,16 @@ func TestStatusFlagsDamagedOrMissingIndex(t *testing.T) {
 	if rep.Posture != "RED" || !strings.HasPrefix(red, "RED:") || !strings.Contains(red, dbPath(corrupt)) || !strings.Contains(red, "mailarchive reindex -rebuild -out") {
 		t.Fatalf("corrupt index: posture %s, reason %q — want a RED naming %s and `reindex -rebuild`", rep.Posture, red, dbPath(corrupt))
 	}
+	// Once each: the file, the rebuild command, and SQLite's own root cause —
+	// never OpenReadonly's whole refusal, which names the file and the rebuild
+	// itself, nested inside the reason (a parser pulling the backticked
+	// remedy must find exactly one).
+	if files, remedies := strings.Count(red, dbPath(corrupt)), strings.Count(red, "reindex -rebuild"); files != 1 || remedies != 1 {
+		t.Errorf("corrupt index: the reason names the file %d times and the rebuild %d times, want once each: %q", files, remedies, red)
+	}
+	if !strings.Contains(red, "file is not a database") {
+		t.Errorf("corrupt index: the reason does not carry SQLite's root cause: %q", red)
+	}
 	followReindexRemedy(t, red, corrupt)
 	if in, rep := codes(corrupt); reasonFor(rep, "index_unreadable") != "" || in.Indexed != in.Messages {
 		t.Fatalf("following %q left indexed %d of %d (%v)", red, in.Indexed, in.Messages, rep.Reasons)

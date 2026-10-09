@@ -210,7 +210,7 @@ func Assess(in Input, now time.Time) Report {
 			r.warn("index_busy", msg+" — close any other program that has it open, then run status again")
 		}
 	case in.HasIndexFile && !in.HasIndex && in.IndexErr != nil:
-		r.red("index_unreadable", fmt.Sprintf("the search index %s cannot be read (%s) — search, serve and the folder pages need it; rebuild it from the archive with `mailarchive reindex -rebuild -out %q`", idxPath, util.StripControl(in.IndexErr.Error()), in.Out))
+		r.red("index_unreadable", fmt.Sprintf("the search index %s cannot be read (%s) — search, serve and the folder pages need it; rebuild it from the archive with `mailarchive reindex -rebuild -out %q`", idxPath, util.StripControl(indexOpenCause(in.IndexErr)), in.Out))
 	case !in.HasIndex && !in.HasIndexFile && in.HasManifest && in.Messages > 0 && !(in.LastRunState == state.LastRunPresent && in.LastRun.NoIndex):
 		r.warn("index_missing", fmt.Sprintf("the archive has no search index (%s) although the manifest records %d message(s) — search, serve and the folder pages need it; rebuild it from the archive with `mailarchive reindex -rebuild -out %q` (or ignore this if the archive is deliberately kept without one, -index=false)", idxPath, in.Messages, in.Out))
 	}
@@ -348,6 +348,19 @@ func Assess(in Input, now time.Time) Report {
 		}
 	}
 	return r
+}
+
+// indexOpenCause is what the index_unreadable reason says about a failed
+// search.db open: SQLite's own root cause when OpenReadonly typed its refusal
+// (index.UnreadableError), because the reason names the file and the rebuild
+// itself and the full refusal would print both twice; the whole error
+// otherwise.
+func indexOpenCause(err error) string {
+	var ue *index.UnreadableError
+	if errors.As(err, &ue) && ue.Cause != nil {
+		return ue.Cause.Error()
+	}
+	return err.Error()
 }
 
 // sameArchivePath reports whether two -out spellings name the same directory.
