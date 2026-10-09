@@ -148,13 +148,16 @@ func RenderWith(m *model.Message, ctx RenderContext) (RenderResult, error) {
 //   - <meta charset> → removed (our UTF-8 charset is first and must win; the
 //     exporter always writes UTF-8);
 //   - <title> → removed (ours names the page);
-//   - <img src="cid:…"> with no matching part → src removed, a caption added.
+//   - <img src="cid:…"> with no matching part → src removed, a caption added;
+//   - <link href> → renamed data-mailarchive-neutralized-href, on EVERY
+//     mail-supplied <link> (see neutralizeLink).
 //
 // Scripts, remote loads, <base> and forms need no rewriting: the policy meta
 // that precedes everything makes them inert. A meta refresh is the exception —
-// CSP has no directive that governs it — so the serialized result is re-parsed
-// the way a browser will read it, and if any meta neutralize must disarm is
-// live there, the body falls back to escaped text (fail closed). The parse →
+// CSP has no directive that governs it — and so are the preconnect and
+// dns-prefetch link hints, so the serialized result is re-parsed
+// the way a browser will read it, and if any meta or link hint neutralize must
+// disarm is live there, the body falls back to escaped text (fail closed). The parse →
 // serialize round trip is not guaranteed to be a fixed point: x/net once wrote
 // SVG/MathML raw-text children unescaped (GO-2023-1988), turning an inert text
 // node back into a live <meta refresh>. When the body is shown as source, the
@@ -229,18 +232,62 @@ func plainFallback(doc, reason string) string {
 }
 
 // hostileEquiv reports whether a meta http-equiv value is one neutralize
-// disarms.
+// disarms. "link" is the Link pragma: an HTTP Link header carried in a meta,
+// which can name rel=preconnect. No browser is required to honour it, but
+// nothing is lost by disarming it — the one thing such a header could load in
+// an archived page, a stylesheet, the policy already refuses (RV-2).
 func hostileEquiv(v string) bool {
 	switch strings.ToLower(strings.TrimSpace(v)) {
-	case "refresh", "content-security-policy", "set-cookie", "content-type":
+	case "refresh", "content-security-policy", "set-cookie", "content-type", "link":
 		return true
 	}
 	return false
 }
 
+// resourceHintRel reports whether a <link rel> value names a resource hint —
+// a link type that makes the browser open a connection to, resolve or fetch
+// from the href's host ahead of use. rel is split on ASCII whitespace and
+// matched ASCII case-insensitively, as browsers read it (strings.ToLower folds
+// no non-ASCII rune onto a letter these names use, so it is exact here).
+func resourceHintRel(rel string) bool {
+	for _, tok := range strings.FieldsFunc(rel, isASCIIWhitespace) {
+		switch strings.ToLower(tok) {
+		case "preconnect", "dns-prefetch", "prefetch", "preload", "modulepreload", "prerender":
+			return true
+		}
+	}
+	return false
+}
+
+func isASCIIWhitespace(r rune) bool {
+	switch r {
+	case ' ', '\t', '\n', '\f', '\r':
+		return true
+	}
+	return false
+}
+
+// liveResourceHint reports whether a <link> element is a resource hint a
+// browser would act on: it has an href and a resource-hint rel (any rel
+// attribute counts, so a duplicate cannot hide one).
+func liveResourceHint(n *xhtml.Node) bool {
+	hasHref, hint := false, false
+	for _, a := range n.Attr {
+		switch {
+		case strings.EqualFold(a.Key, "href"):
+			hasHref = true
+		case strings.EqualFold(a.Key, "rel"):
+			hint = hint || resourceHintRel(a.Val)
+		}
+	}
+	return hasHref && hint
+}
+
 // hostileSurvives re-parses sanitized head and body output as a browser will
 // and reports whether any meta that neutralize must disarm (a live hostile
-// http-equiv, or a competing charset) is present in it. Every meta element is
+// http-equiv, or a competing charset) or any live resource-hint <link href>
+// (preconnect and dns-prefetch are governed by no CSP directive) is present in
+// it. Every meta and link element is
 // checked whatever its namespace, so a renderer that lets markup escape a
 // foreign-content raw-text element is caught here rather than trusted. The page
 // is re-parsed TWICE, with the scripting flag on and off: it decides whether
@@ -274,6 +321,9 @@ func hostileIn(doc string, scripting bool) bool {
 						return true
 					}
 				}
+			}
+			if c.Type == xhtml.ElementNode && strings.EqualFold(c.Data, "link") && liveResourceHint(c) {
+				return true
 			}
 			if live(c) {
 				return true
@@ -339,6 +389,8 @@ func neutralize(n *xhtml.Node) {
 						c.Attr[i].Key = "data-mailarchive-neutralized"
 					}
 				}
+			case atom.Link:
+				neutralizeLink(c)
 			case atom.Img:
 				for i, a := range c.Attr {
 					if strings.EqualFold(a.Key, "src") && strings.HasPrefix(strings.ToLower(strings.TrimSpace(a.Val)), "cid:") {
@@ -352,6 +404,23 @@ func neutralize(n *xhtml.Node) {
 		}
 		neutralize(c)
 		c = next
+	}
+}
+
+// neutralizeLink renames the href of a mail-supplied <link> — every one, not
+// only resource hints. ArchiveCSP allows nothing remote (only data: images and
+// fonts and inline styles), so every network fetch a link could start
+// (stylesheet, icon, preload, prefetch, modulepreload, manifest) is already
+// refused and renaming the href costs the page nothing it showed — at most a
+// data: favicon. The two hints the policy does not govern, preconnect and
+// dns-prefetch, would otherwise open a connection to (or resolve) the sender's
+// host when the archived page is opened (RV-2). Renaming every href is simpler
+// than a rel list and cannot be bypassed by a link type the list misses.
+func neutralizeLink(n *xhtml.Node) {
+	for i, a := range n.Attr {
+		if strings.EqualFold(a.Key, "href") {
+			n.Attr[i].Key = "data-mailarchive-neutralized-href"
+		}
 	}
 }
 
