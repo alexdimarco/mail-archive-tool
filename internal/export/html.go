@@ -132,12 +132,18 @@ func RenderWith(m *model.Message, ctx RenderContext) (RenderResult, error) {
 //   - <img src="cid:…"> with no matching part → src removed, a caption added.
 //
 // Scripts, remote loads, <base> and forms need no rewriting: the policy meta
-// that precedes everything makes them inert.
+// that precedes everything makes them inert. A meta refresh is the exception —
+// CSP has no directive that governs it — so the serialized result is re-parsed
+// the way a browser will read it, and if any meta neutralize must disarm is
+// live there, the body falls back to escaped text (fail closed). The parse →
+// serialize round trip is not guaranteed to be a fixed point: x/net once wrote
+// SVG/MathML raw-text children unescaped (GO-2023-1988), turning an inert text
+// node back into a live <meta refresh>.
 func sanitizeHTML(doc string) (headExtra, bodyAttrs, body string) {
 	root, err := xhtml.Parse(strings.NewReader(doc))
 	if err != nil {
 		// Unparseable bytes: show them as text rather than guess.
-		return "", "", `<pre class="plain">` + html.EscapeString(doc) + `</pre>`
+		return "", "", plainFallback(doc)
 	}
 	var headNode, bodyNode *xhtml.Node
 	var find func(n *xhtml.Node)
@@ -167,18 +173,73 @@ func sanitizeHTML(doc string) (headExtra, bodyAttrs, body string) {
 			if c.Type == xhtml.ElementNode && c.DataAtom == atom.Title {
 				continue
 			}
-			xhtml.Render(&hb, c)
+			renderNode(&hb, c)
 			hb.WriteByte('\n')
 		}
 	}
 	var bb strings.Builder
 	if bodyNode != nil {
 		for c := bodyNode.FirstChild; c != nil; c = c.NextSibling {
-			xhtml.Render(&bb, c)
+			renderNode(&bb, c)
 		}
 		bodyAttrs = bodyAttributes(bodyNode)
 	}
+	if hostileSurvives(hb.String(), bb.String()) {
+		return "", "", plainFallback(doc)
+	}
 	return hb.String(), bodyAttrs, bb.String()
+}
+
+// renderNode serializes one parsed node. It is a variable only so a test can
+// inject a renderer that does not round-trip (fault injection for the
+// hostileSurvives fail-closed path); production always uses xhtml.Render.
+var renderNode = xhtml.Render
+
+// plainFallback shows mail HTML as escaped text: nothing in it is live.
+func plainFallback(doc string) string {
+	return `<pre class="plain">` + html.EscapeString(doc) + `</pre>`
+}
+
+// hostileEquiv reports whether a meta http-equiv value is one neutralize
+// disarms.
+func hostileEquiv(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "refresh", "content-security-policy", "set-cookie", "content-type":
+		return true
+	}
+	return false
+}
+
+// hostileSurvives re-parses sanitized head and body output as a browser will
+// and reports whether any meta that neutralize must disarm (a live hostile
+// http-equiv, or a competing charset) is present in it. Every meta element is
+// checked whatever its namespace, so a renderer that lets markup escape a
+// foreign-content raw-text element is caught here rather than trusted.
+func hostileSurvives(head, body string) bool {
+	root, err := xhtml.Parse(strings.NewReader("<!DOCTYPE html><html><head>" + head + "</head><body>" + body + "</body></html>"))
+	if err != nil {
+		return true
+	}
+	var live func(n *xhtml.Node) bool
+	live = func(n *xhtml.Node) bool {
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			if c.Type == xhtml.ElementNode && strings.EqualFold(c.Data, "meta") {
+				if metaIsCharset(c) {
+					return true
+				}
+				for _, a := range c.Attr {
+					if strings.EqualFold(a.Key, "http-equiv") && hostileEquiv(a.Val) {
+						return true
+					}
+				}
+			}
+			if live(c) {
+				return true
+			}
+		}
+		return false
+	}
+	return live(root)
 }
 
 // neutralize rewrites hostile nodes in place (see sanitizeHTML).
@@ -232,11 +293,8 @@ func neutralize(n *xhtml.Node) {
 					continue
 				}
 				for i, a := range c.Attr {
-					if strings.EqualFold(a.Key, "http-equiv") {
-						switch strings.ToLower(strings.TrimSpace(a.Val)) {
-						case "refresh", "content-security-policy", "set-cookie", "content-type":
-							c.Attr[i].Key = "data-mailarchive-neutralized"
-						}
+					if strings.EqualFold(a.Key, "http-equiv") && hostileEquiv(a.Val) {
+						c.Attr[i].Key = "data-mailarchive-neutralized"
 					}
 				}
 			case atom.Img:

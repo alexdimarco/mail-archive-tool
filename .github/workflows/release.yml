@@ -21,12 +21,19 @@ jobs:
         with:
           fetch-depth: 0 # tags, so build scripts can `git describe`
 
+      # Build with the current patch of the supported Go line, never the
+      # go.mod minimum (see ci.yml). `go version -m` on a shipped binary
+      # names the toolchain that built it.
       - uses: actions/setup-go@v6
         with:
-          go-version-file: go.mod
+          go-version: '1.26.x'
+          check-latest: true
 
       - name: Test (assurance gates must be green before shipping)
         run: go test ./...
+
+      - name: Vulnerability scan (a reachable known vulnerability blocks the release)
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
 
       - name: Build release artifacts
         run: bash packaging/build-release.sh "${GITHUB_REF_NAME}"

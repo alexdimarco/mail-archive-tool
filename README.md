@@ -194,7 +194,7 @@ make build-gui        # GUI  -> bin/mailarchive-gui
 make build-windows    # bin/mailarchive.exe (console) + bin/mailarchive-gui.exe (no console)
 ```
 
-Requires Go 1.23+. Both binaries are pure Go (no cgo); the Windows executables
+Requires Go 1.26+. Both binaries are pure Go (no cgo); the Windows executables
 cross-compile from any OS.
 
 ## Usage
