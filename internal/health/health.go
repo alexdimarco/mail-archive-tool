@@ -176,8 +176,11 @@ func Assess(in Input, now time.Time) Report {
 	if in.Unknown > 0 {
 		r.warn("unexamined_entries", fmt.Sprintf("%d entr%s predate completeness tracking and are re-examined by incremental runs until none remain", in.Unknown, plural(in.Unknown, "y", "ies")))
 	}
+	// Plain `reindex` only prunes rows whose file is gone — it can never add a
+	// missing row — so the remedy for an index that is short of the manifest is
+	// the rebuild from the archive's own files (F50).
 	if in.HasIndex && in.HasManifest && in.Indexed < in.Messages {
-		r.warn("index_behind", fmt.Sprintf("the search index holds %d of %d messages — run `mailarchive reindex -out %q`", in.Indexed, in.Messages, in.Out))
+		r.warn("index_behind", fmt.Sprintf("the search index holds %d of %d messages — rebuild it from the archive with `mailarchive reindex -rebuild -out %q`", in.Indexed, in.Messages, in.Out))
 	}
 
 	// The archive's own location. A cloud-sync folder re-uploads every change

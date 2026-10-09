@@ -644,6 +644,10 @@ mailarchive reindex -out ./export
 # reindexed: kept=1843 pruned=12
 ```
 
+Plain `reindex` only removes; it never adds a missing row. When the index holds
+fewer messages than the manifest (status `index_behind`, or a run that reported
+`INDEX-ERRORS`), rebuild it instead — see below.
+
 ### Rebuilding the search index
 
 If `search.db` is lost, corrupted, or left out of a copy — but the archive's
@@ -674,7 +678,8 @@ copy that skips dotfiles dropped it, restore it from a backup.
 
 For a byte-faithful index rather than re-derived text, archive with `-raw` (so
 the `.eml` originals are on disk to parse), or re-export from the original
-source. Plain `reindex` on an archive whose index is gone points you here.
+source. Plain `reindex` on an archive whose index is gone points you here, as do
+`status`'s `index_behind` warning and a run summary's `INDEX-ERRORS` warning.
 
 ### Migrating the archive out (mbox/eml)
 

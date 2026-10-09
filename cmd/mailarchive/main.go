@@ -1406,8 +1406,10 @@ func printSummary(logger *log.Logger, r app.Result, indexed, keepRaw bool, out s
 	if !keepRaw && s.RawAvailable > 0 {
 		logger.Printf("WARNING: these sources carry original message bytes, but -raw was not set — no .eml was preserved, so `mailarchive extract` will produce nothing from this archive. Re-run with -raw to keep the originals BEFORE deleting the source.")
 	}
+	// Plain `reindex` only prunes; the rebuild re-adds the missing rows from the
+	// archived files (F50).
 	if r.IndexErrors > 0 {
-		logger.Printf("WARNING: %d message(s) were exported but could not be indexed; run `mailarchive reindex -out %q` and re-check.", r.IndexErrors, out)
+		logger.Printf("WARNING: %d message(s) were exported but could not be indexed; rebuild the index from the archive with `mailarchive reindex -rebuild -out %q` and re-check.", r.IndexErrors, out)
 	}
 
 	if indexed && r.Indexed > 0 {
