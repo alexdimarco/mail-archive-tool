@@ -1,24 +1,28 @@
 # Design — parser fidelity: every MIME part kept, attachments byte-exact, PST attached items, identity frozen
 
 **Revision:** 2 (2026-10-09). **BUILD STATUS:** approved with conditions, not
-built. The 10-lens pre-code review is filed as
+built; owner rulings folded (`docs/owner-rulings-2026-10-09.md`). The 10-lens pre-code review is filed as
 `docs/review-mime-fidelity-predesign.md` (GO_WITH_CONDITIONS: 101 findings, 96
 confirmed, 5 refuted; the rescue dissolved all four blockers and found one hidden
 blocker). Conditions **MC1–MC43** are folded into this revision, each cited where
-it lands. Owner rulings **OR1–OR5** and Q1–Q5 stay open (§11) and block the slices
-named there:
+it lands. Owner rulings **OR1–OR5** and Q1–Q6 (§11) are answered in
+`docs/owner-rulings-2026-10-09.md` §4 and the joint rulings it cites; each change they
+make here is marked `[ruling <id>]`. Q6 / OR1 is escalated (ESC-6) and blocks only the
+Desktop repair slice MF-SD. What each slice still waits on:
 
-- S0 waits on OR5 (catalog ids) and on BodyFallback landing (MC29).
-- S1 waits on OR2 (the joint ruling with fault-isolation) and OR4 (toolchain).
-- S6 waits on Q2 (MC32).
-- S7 waits on Q1, OR3 (the joint ruling with recapture-integrity) and a delta
-  re-review of this §4.10 (MC43).
+- S0 waits on BodyFallback landing (MC29), which has landed; OR5 is ruled [ruling J1].
+- S1 waits on fault-isolation S1a (the landing order of [ruling J5]); OR2 and OR4 are ruled.
+- S6 waits on Q2's fixture (MC32): Q2 is ruled yes for a synthetic fixture, which does not
+  exist yet [ruling Q2].
+- S7 waits on re-capture integrity's S4 and S5 (themselves waiting on ESC-2 and ESC-3), on
+  S2–S6, S6 included (MC43), and on a delta re-review of this §4.10 (RR-4). Q1 and OR3 are
+  ruled [ruling Q1, J6].
 
 Revision 1 is superseded; the build must not start from it. Nothing in this
 document is built, and no MA row below exists in the catalog yet. Catalog ids are
-working names until the operator allocates them (MC42, OR5): **R-PARSE** (parse
-fidelity; R22(a) in revision 1), **R-FREEZE** (identity freeze and repair; R22(b))
-and **S-PARSE** (S42).
+allocated [ruling OR5 = J1]: **R26** (parse fidelity; R-PARSE in revision 2, R22(a) in
+revision 1), **R27** (identity freeze and repair; R-FREEZE, R22(b)) and **S49** (S-PARSE,
+S42).
 
 **Findings addressed** (verified review findings of 2026-10-08): F24, F25, F26,
 C1-1, C1-4, C1-5, C1-8, C1-10. **Parsers in scope:** the one raw-MIME parser
@@ -37,8 +41,8 @@ much of this design it inherits depends on the path:
 - **It copies the archived files** (the archive source for a record without an
   `.eml`). The copy carries these properties only if the record was captured, or
   repaired, at the current parser scheme. That never happens for with-Message-ID
-  Graph mail on MailArchive Desktop (P11, OR1), and Desktop keeps no `.eml` by
-  default.
+  Graph mail on MailArchive Desktop (P11, OR1, escalated as ESC-6 [ruling ESC-6]), and
+  Desktop keeps no `.eml` by default.
 
 The seam items are listed in §4.11.
 
@@ -181,7 +185,7 @@ Four hazards constrain any fix:
 
 ## 2. Properties
 
-- **P1 — Message identity is parser-independent (serves R2, R3; proposes R-FREEZE).**
+- **P1 — Message identity is parser-independent (serves R2, R3; proposes R27).**
   For a raw-MIME message, every input to `Identity()`, `Fingerprint()`,
   `ContentDigest()` and `contentHash()` comes from a frozen, verbatim replay of
   the v1 parser, never from the fidelity parser. The replay is today's
@@ -193,6 +197,10 @@ Four hazards constrain any fix:
   moves an archived message's manifest key, fingerprint, content hash or file
   stem, on any path (local, live, full, fill, repair), for changed or unchanged
   mail, and no future parser change routed the same way does either.
+  **[ruling J6]** A repair commits through re-capture integrity's write path, so a
+  repaired message's files are those its commit gives: the same identity-view stem,
+  or that stem's `-vN` successor if the owner answers ESC-3 with (a). The stem is
+  still computed from the identity view; only re-capture's suffix can differ.
   **Proven** for this design's own changes, by construction (MA-330).
   **Conditional** for dependency and toolchain changes (MC26). It holds while:
   - (a) `internal/source/parsev1.go` and its vendored dependencies stay
@@ -218,8 +226,11 @@ Four hazards constrain any fix:
   Even so, an upstream change on a message shape the corpus lacks can still move
   identity (MC26). The toolchain floats by policy (`ci.yml:26-33`), so `x/text`,
   `encoding/base64` and the unicode tables are the stated residual until OR4 is
-  ruled (MC27). Drift is handled by §5's drift policy (MC28); it is never silently
-  accepted.
+  ruled (MC27). **[ruling OR4]** The toolchain keeps floating, and that residual is an
+  open condition, not accepted: MA-330 and MA-331 run on every CI build and catch drift
+  on corpus shapes, and S1 is asked to vendor `encoding/base64` into `parsev1` and have
+  MA-331 assert `unicode.Version`, so the named residual becomes a tripwire. Drift is
+  handled by §5's drift policy (MC28); it is never silently accepted.
 - **P2 — No part's failure ends the parse of another (F24, C1-4; R1, R10).** The
   fidelity walker visits every leaf part. A decode problem in one part (unknown
   charset, unknown or malformed transfer encoding, corrupt base64, a panic in a
@@ -291,9 +302,11 @@ Four hazards constrain any fix:
   **proven** by MA-342 on an in-memory retyped `support.pst` and is the shipped
   floor. Full extraction is **aspirational** until MA-343 is tier U on a
   committed, Outlook-written method-5 fixture (Q2), and S6 may not merge before
-  then (MC32).
+  then (MC32). **[ruling Q2]** The fixture may be committed if it is synthetic: generated
+  on a Windows Outlook host from made-up messages, or a third-party sample whose licence
+  is recorded in THIRD-PARTY-NOTICES. No real mail enters the repo.
 - **P10 — Undecodable content is a visible, recorded gap, with its bytes kept (R1;
-  proposes R-PARSE).** A part that cannot be decoded is archived as received
+  proposes R26).** A part that cannot be decoded is archived as received
   (still-encoded) where bytes exist. It is recorded as a gap in the manifest, the
   regenerated report (its own kinds), the run summary, `status`, and a visible
   block on the page. The class follows R1's source rule (MC20):
@@ -311,7 +324,11 @@ Four hazards constrain any fix:
   written by an older parser scheme (or a revoked one, MC18) and its message,
   re-read now, triggers a fidelity note that a later scheme introduced. It is
   re-captured on the next run with the same key, fingerprint and file stem and new
-  fixity. That happens at most once per record per scheme and source content: if
+  fixity. **[ruling J6]** "In place" is replaced: the repair is a re-capture through
+  re-capture integrity's verdict and write path (W1–W5), taking only UNCHANGED, COMMIT
+  or KEEP, never MERGE. Its key and fingerprint never move; its files are those that
+  commit gives (the same stem, or its `-vN` successor if ESC-3 is answered (a)). "Never
+  to less" is re-capture's R28, which R27 cites. That happens at most once per record per scheme and source content: if
   the output is unchanged, the record is restamped and not rewritten (MC12). The
   repair runs only if the V1C precondition proves four things (§4.10, MC1, MC3–MC6):
   - the archived files are present and as recorded;
@@ -333,18 +350,24 @@ Four hazards constrain any fix:
     message.
   - MailArchive Desktop captures Graph incrementally only (`capture.go:43, :141`),
     so it **never repairs with-Message-ID mail**. Desktop says so in its summary
-    (MC37), and a Desktop repair route is **OR1**.
+    (MC37), and a Desktop repair route is **OR1**. **[ruling ESC-6]** OR1 is escalated to
+    the owner: until answered, MC16/MC37's disclosure stands and the gap stays open, not
+    accepted.
   - In `-mode full`, records that carry no note keep today's behaviour. That is
     F46's unguarded re-capture, which this design does not change (MC9).
 
-  Automatic or opt-in is **Q1**.
+  Automatic or opt-in is **Q1**. **[ruling Q1]** Automatic, on the next ordinary run;
+  `state.RevokedSchemes` is the rollback lever.
 - **P12 — Mixed versions and rollback create no duplicate (R2, R3).** There is no
   manifest version bump in this design. Every new field is additive and
   `omitempty` (the precedent is the concurrent `BodyFallback` field). If OR3 adopts
-  recapture-integrity's v7, see §6 (MC41). Because identity and stems are P1, an
+  recapture-integrity's v7, see §6 (MC41). **[ruling J2]** It does not: the manifest stays
+  version 6 for every in-flight design. Because identity and stems are P1, an
   older binary and this one compute the same keys, fingerprints and stems for
   every message, so alternating them, or rolling back, never `#fp`-splits,
-  re-exports or renames. **Proven** by MA-347. Residuals:
+  re-exports or renames. **[ruling J6]** A repair's `-vN` file name (ESC-3 (a)) is named
+  by the manifest record, which an older binary reads, so rollback still renames
+  nothing. **Proven** by MA-347. Residuals:
   - Any save by an older binary drops `parse_scheme` (and every other new field)
     from every record. Each alternation then costs this build one in-memory
     re-examination of the noted subset, and no rewrite, because unchanged output
@@ -389,7 +412,10 @@ Four hazards constrain any fix:
   change stub identity. It moves the stub's identity terms out of the frozen file,
   into `stubIdentityTerms` (§4.2, MC7), so F33's change never has to edit frozen
   code. Until F33 lands, a stub-identity record carries a visible `identity-stub`
-  gap and is never repaired (MC6). Who owns which part is **OR2**.
+  gap and is never repaired (MC6). Who owns which part is **OR2**. **[ruling J5]**
+  Fault-isolation owns `stubIdentityTerms`, which S1 creates reproducing today's constant
+  stub exactly. F33's identity fold is escalated (ESC-1), so it stays out until the owner
+  answers.
 - General re-capture monotonicity for `-mode full` and fills (F46), and re-capture
   commit ordering (N2, N3), are owned by the re-capture-integrity design. This
   design does make two changes on those paths:
@@ -398,13 +424,17 @@ Four hazards constrain any fix:
   - noted records in full mode go through the repair branch (MC9).
 
   The repair's commit primitive is a joint decision with that design (**OR3**,
-  MC41). S7 does not merge before it.
+  MC41). S7 does not merge before it. **[ruling J6]** The repair commits through that
+  design's verdict and write path (W1–W5); there is no in-place exemption.
 - Repair from a preserved `.eml` without the source (the only cheap repair for
-  with-Message-ID Graph mail): deferred, **Q3**.
+  with-Message-ID Graph mail): deferred, **Q3**. **[ruling Q3]** It gets its own design and
+  its own 10-lens review, and does not block S0–S7.
 - Decoding UTF-7, uuencode/`x-uuencode`, BinHex, TNEF (`winmail.dat`),
   `message/partial` reassembly, S/MIME or PGP; `multipart/digest`'s implicit
   `message/rfc822` default type (parts keep go-message's `text/plain` default).
-  Undecodable parts are kept as received (P10). (uuencode: **Q4**.)
+  Undecodable parts are kept as received (P10). (uuencode: **Q4**; **[ruling Q4]** kept
+  still-encoded with a terminal `undecoded-part` gap; a bounded decoder can be a later
+  slice.)
 - Rendering MIME `message/rfc822` attachments as nested HTML (they are kept as
   the faithful `.eml`); indexing the text of attached/embedded messages; indexing
   HTML-only segments of a message that also has a plain track (the index keeps
@@ -413,9 +443,11 @@ Four hazards constrain any fix:
 - No change to Message-ID or Date extraction, to `-raw`'s default, to the
   transport-header panel (shown as stored, MA-143/144), to MA-19's semantics, or
   to the missing-body gap's fillable classification (MA-67).
-- No new CLI flag, verb, refusal or exit code (if Q1 is ruled "automatic"). None
-  of this design's counts (undecodable, fidelity-fallback, repair withheld, repair
-  failed) makes a run `partial` or exit 3 under fault-isolation's partition (MC40).
+- No new CLI flag, verb, refusal or exit code (if Q1 is ruled "automatic"; **[ruling Q1]**
+  it is). None of this design's counts (undecodable, fidelity-fallback, repair withheld,
+  repair failed) makes a run `partial` under fault-isolation's partition (MC40); they
+  register there as informational [ruling J5]. (Fault-isolation's exit 3 is not adopted,
+  [ruling fault-isolation OR2].)
 
 ## 4. Mechanism
 
@@ -431,7 +463,7 @@ type IdentityTerms struct { // the v1 parser's values of every identity input
 type Message struct { …
     IdentityTerms *IdentityTerms // nil → the content fields are the identity inputs (as today)
     ParseNotes    []ParseNote    // {Code string; Since int; Detail string} fidelity events
-    ParseGaps     []ParseGap     // {Kind, Detail string} message-level parse gaps (channel per OR2, MC40)
+    ParseGaps     []ParseGap     // {Kind, Detail string} message-level parse gaps (channel per OR2, MC40; [ruling J5]: carried as fault-isolation's ReadGaps labels)
     V1Inventory   []V1Item       // {Index int; Label string; Size int64; SHA256 [32]byte}, from the replay (V1C, MC3)
     FellBack      bool           // this parse used v1 content (P13; MC4, MC19)
 }
@@ -479,7 +511,10 @@ today.
     It reproduces the stub that the build which wrote the archive produced. Today
     that is the constant `{Subject:"(unreadable message)"}`. After F33 it becomes
     fault-isolation's raw-preserving `{Subject, PlainBody: string(data)}`, with
-    that design's own legacy-stub migration.
+    that design's own legacy-stub migration. **[ruling J5, J8]** S1 creates it with
+    today's constant stub exactly, so S1 changes no identity. The F33 fold that would
+    change it moves MA-330's golden and is escalated (ESC-1); it lands only in
+    fault-isolation's S2b-id, after the owner answers.
   - An MA-330 corpus item that panics v1 pins it.
 
   Fault-isolation's `ReadGaps:[unparsed]` addition to `fallbackParse` is content,
@@ -497,7 +532,9 @@ today.
   `github.com/emersion/go-message`, so the fidelity walker and the rest of the
   module can take go-message, `x/net` and Go security updates without moving
   identity. **Residual, stated in P1:** `x/text`'s charmap tables, `encoding/base64`
-  and the unicode tables are still shared with the toolchain (OR4).
+  and the unicode tables are still shared with the toolchain (OR4). **[ruling OR4]** An
+  open condition, not accepted: S1 vendors `encoding/base64` too, and MA-331 asserts
+  `unicode.Version`, so a toolchain move that touches them goes red.
 - **`safeParseMessage(data)` becomes:**
   1. `v1, panicked := replayV1(data)`.
   2. `terms := identityTermsOf(v1)` (or `stubIdentityTerms(data)` when panicked);
@@ -563,8 +600,9 @@ implicitly.
    as text; note `header-fallback`. If `net/mail` also fails, the result is
    `(unparseable message)` with the whole input decoded as text (v1's behaviour,
    now valid UTF-8). That case also records fault-isolation's `unparsed` gap, in
-   the gap channel OR2 rules on. It sits here because it is content, not identity
-   (MC7, MC40).
+   the gap channel OR2 rules on (**[ruling J5]**: `ReadGaps` + `GapClass`; until this
+   walker exists the label is added in `safeParseMessage`'s routing). It sits here because
+   it is content, not identity (MC7, MC40).
 2. **Leaf vs container.** Content-Type parsed strict (go-message's own
    `Header.ContentType()`, so params are RFC 2047-decoded exactly as v1); on
    error, the lenient tokenizer (`mimeparams.go`, below). `multipart/*` →
@@ -854,6 +892,12 @@ cannot be made safe.
   not `GapKind`. The rest of this section describes the encoding this design
   proposed (`ParseGaps`, NUL-prefixed `Terminal` labels); OR2 replaces it if it
   rules otherwise. The classes, bounds, counts and wording below hold either way.
+  **[ruling J5]** OR2 rules for the proposal: fault-isolation's `ReadGaps` + `GapClass`,
+  together with `probeImproves`, are the single owner of record gap labels, and this
+  design's kinds register there as informational, never `partial`. S1 reconciles the
+  label encoding below with `GapClass`'s grammar, so there is one grammar; the classes,
+  bounds, counts and wording hold unchanged. Fault-isolation S1a owns the
+  `Counts()`/status rewrite, and S2 adds this design's kinds to it as new cases.
 - **Class per kind, by R1's source rule (MC20).**
   - `undecoded-part`, `structure-limit`, `embedded-item`, `ole-object`,
     `identity-stub` (MC6) and `fidelity-fallback` (MC19) are deterministic. They
@@ -911,6 +955,18 @@ OR3 adopts recapture-integrity's write-beside commit, repair commits through it
 instead. Either way, repair uses only recapture's UNCHANGED, COMMIT or KEEP
 outcomes, never MERGE, and hands it V1C's v1↔fidelity correspondence as its
 inventory (MC41).
+
+**[ruling Q1, J6]** Q1: repair is automatic. OR3 (= J6): a repair has no commit path of
+its own. It is a re-capture through recapture-integrity's verdict (its §4.3) and write
+path (W1–W5), with no in-place exemption in that design's R5 amendment. Its file names
+are whatever that commit gives (the stem, or its `-vN` successor if ESC-3 is answered
+(a)), and "never to less" is that design's R28, which R27 cites while keeping V1C's own
+preconditions (the archive files as recorded; the same message). So the stem gate's
+**no-fallback** rule stands (a repair never takes a stem from the decoded subject), but
+the "In place" promise, the staged rename-over of "Write discipline", the W2 row of §5
+and the "rewritten in place" wording of "Accounting" below are superseded. They are
+rewritten through W1–W5 before RR-4, the delta re-review this gate names. The manifest-v7
+clause is moot: the version stays 6 [ruling J2].
 
 **Scheme**
 - `Record.ParseScheme int` (`json:"parse_scheme,omitempty"`). 0 means the record
@@ -1040,7 +1096,10 @@ revision 1 is withdrawn (MC3).
 - So an older binary that drops `parse_scheme` costs this build CPU only: zero
   rewrites, zero verify windows, zero folder-assertions.
 
-**In place (MC8, MC10, MC11)**
+**In place (MC8, MC10, MC11)** — **[ruling J6]** superseded as a commit mode: the kept
+fields, the stem gate and the `.eml` carry-forward below still hold, but `Path` is the one
+re-capture's commit gives (the stem, or its `-vN` successor under ESC-3 (a)), so "a repair
+never renames … a file" becomes "a repair never takes a new stem from the decoded subject".
 - **Kept fields.** Key, `Fingerprint`, `FpScheme`, `ContentHash`, `FirstFolder`,
   `FirstSeen`, `AlsoFiles` and `Path` are kept: key, fingerprint and hash by P1;
   the others carried as on any re-capture.
@@ -1143,7 +1202,8 @@ what / why / remedy:
   - Graph: "N live records were captured by an earlier parser; only `-mode full`
     re-examines them (it re-downloads the mailbox)";
   - MailArchive Desktop: "Desktop cannot re-check them without a full
-    re-download" (OR1).
+    re-download" (OR1; escalated as ESC-6 [ruling ESC-6], so this line stays until the
+    owner answers).
 
   The extraction workspace's caveat for older records is keyed on the same field
   (MC36).
@@ -1200,7 +1260,12 @@ what / why / remedy:
 
   What remains is a joint ruling across the two designs (**OR2**: gap primitive,
   ownership of `stubIdentityTerms` and of the `Counts()`/status rewrite, landing
-  order, Q5 restated). S1 does not merge before it.
+  order, Q5 restated). S1 does not merge before it. **[ruling J5]** Ruled: the gap
+  primitive is fault-isolation's `ReadGaps` + `GapClass`; fault-isolation owns
+  `stubIdentityTerms` (S1 creates it with today's stub) and the `Counts()`/status rewrite
+  (its S1a); the `unparsed` label lives outside `parsev1.go`; the order is fault-isolation
+  S1a → this design's S0 → S1 → fault-isolation S2b. The F33 identity fold is ESC-1
+  [ruling J8].
 - **Re-capture integrity (F46, N2, N3) — OR3, MC41.** Revision 1 said P11's
   precondition was "stricter than, and independent of, F46's general rule". That
   was false: a count is weaker than recapture-integrity's per-item KEEP/MERGE, and
@@ -1217,12 +1282,14 @@ what / why / remedy:
   - If OR3 adopts write-beside, repair commits through recapture's primitive,
     and MA-346 becomes "same stem, or its `-vN` successor". If OR3 grants repair
     an in-place exemption, §4.10's staged rename-over stands, with the N3 window
-    stated in §5.
+    stated in §5. **[ruling J6]** OR3 adopts recapture's commit (no in-place
+    exemption), and MA-346 reads "the stem re-capture's commit gives it".
   - One old-zip inventory reader is shared by both designs (`util.ArchiveFileGate`
     plus this design's bounds, MC35).
-  - Which invariant owns "never to less" is part of OR3 (MC42).
+  - Which invariant owns "never to less" is part of OR3 (MC42). **[ruling J6]** It is
+    recapture's R28; R27 cites it.
 
-  S7 does not merge before OR3.
+  S7 does not merge before OR3 (ruled, [ruling J6]).
 - **Index/status (F53).** If a manifest save fails (F53 logs only), the repair
   stamp is lost. The next run re-examines and, because the output is unchanged,
   only restamps (MC12): idempotent, no loss, no rewrite.
@@ -1263,12 +1330,19 @@ what / why / remedy:
 
 **Exit codes:** unchanged (X1). No refusal is added or changed. Gaps, fallbacks,
 withheld repairs and failed repairs never change the exit status, and they are
-informational under fault-isolation's partial/exit-3 partition (MC40, OR2).
+informational under fault-isolation's partial/exit-3 partition (MC40, OR2). (**[ruling
+J5]** they register as informational; fault-isolation's exit 3 is not adopted, its OR2.)
 
 ## 5. Crash ordering and failure domains
 
 **Writes.** This design adds one new file kind, the per-run `repairs-<run-id>.tsv`
 beside the report (MC17). Repair stages its own temps (MC13).
+
+**[ruling J6]** The W2 repair row below, and the paragraph after the table, describe the
+superseded rename-over. Under J6 a repair commits through recapture-integrity's W1–W5,
+whose crash table (its §5.1) is the repair's: the persisted manifest always names a
+complete set of files matching their recorded fixity, so the W2 "new zip, old html, old
+fixity" window does not arise. This table's W2 rows are rewritten before RR-4.
 
 | Write | Steps | Killed after… | Residual | Direction | Operator sees |
 |---|---|---|---|---|---|
@@ -1291,7 +1365,10 @@ once per scheme, at the first post-upgrade run. If `verify` runs inside the
 window, it reports `modified` and suggests restoring from backup. On an unchanged
 source that is harmless, because the next run repairs again. If OR3 adopts
 recapture-integrity's staged write-beside commit, the window closes for repair too
-(MC41). The v1 replay and the fidelity parse are pure functions of the input bytes.
+(MC41). **[ruling J6]** It does, so the window closes; and "never renames a file to a new
+path" becomes "never takes a new stem from the decoded subject" (the commit may give the
+stem's `-vN` successor under ESC-3 (a)). The v1 replay and the fidelity parse are pure
+functions of the input bytes.
 
 **Failure domains.**
 
@@ -1325,7 +1402,9 @@ or a reordering of segments. The remedies for those:
 
 **Residual:** a record damaged that way whose source is later lost can be
 repaired only from a preserved `.eml` (Q3). Q1 is the canary lever: an opt-in
-first release limits a defect to the operators who asked for repair.
+first release limits a defect to the operators who asked for repair. **[ruling Q1]**
+Repair is automatic, so `state.RevokedSchemes` is the rollback lever, and V1C (never to
+less) and MC4 bound the blast radius. **[ruling Q3]** The `.eml` repair is its own design.
 
 **Drift policy — the 3am drill (MC28)**
 - **A reachable CVE in the frozen surface** (`parsev1.go`, its vendored copies, or
@@ -1350,16 +1429,18 @@ first release limits a defect to the operators who asked for repair.
 ## 6. Migration and coexistence
 
 - **Existing archives.** No load-time migration and no manifest version change
-  (stays 6, unless OR3 adopts recapture-integrity's v7; see Rollback).
-  `parse_scheme` appears on records as they are re-read or written (MC12). Parse
-  gaps live in the gap channel OR2 rules on. The first run after upgrade exports
-  zero new items for an unchanged source (P1) and repairs the records whose
-  messages carry notes and pass V1C (P11). A seen record that needs nothing is
-  stamped in memory without a write.
+  (stays 6, unless OR3 adopts recapture-integrity's v7; see Rollback; **[ruling J2]** it
+  stays 6). `parse_scheme` appears on records as they are re-read or written (MC12). Parse
+  gaps live in the gap channel OR2 rules on (`ReadGaps` + `GapClass`, [ruling J5]). The
+  first run after upgrade exports zero new items for an unchanged source (P1) and repairs
+  the records whose messages carry notes and pass V1C (P11). A seen record that needs
+  nothing is stamped in memory without a write.
 - **R2 clarification (catalog text, S0; MC12):** "…exports zero new items. A
   repair of a record written by an older parser scheme is a re-capture in place,
   not a new item, and rewrites a record at most once per record per scheme and
-  source content."
+  source content." **[ruling J7]** Not in S0: this clarification changes R2's text, so it
+  lands with recapture-integrity's R2 amendment as one joint paragraph once the owner
+  answers ESC-2. "In place" there follows ESC-3 [ruling J6].
 - **Schedules.** No job flag changes; MA-72's dry-parse is unaffected. The first
   scheduled run after each scheme upgrade carries the repair burst. It is longer
   once per scheme, every future scheme repeats it, and it is logged (MC17). S2–S6
@@ -1369,9 +1450,11 @@ first release limits a defect to the operators who asked for repair.
   repair. A full run re-downloads every message; its noted records take the
   repair branch, and its other records are re-captured as today (MC9).
   `status` shows `not_reexamined` with that remedy (MC16). MailArchive Desktop
-  cannot run full (OR1). Stated in the README.
+  cannot run full (OR1; escalated as ESC-6 [ruling ESC-6]). Stated in the README.
 - **Mixed versions (MC12).** Identity and stems are equal across builds (P1,
-  MC8), so alternating binaries never duplicates or renames. Any save by an older
+  MC8), so alternating binaries never duplicates or renames. (**[ruling J6]** a
+  repair's `-vN` name under ESC-3 (a) is recorded in the manifest, so an older binary
+  reads it as it reads any record path.) Any save by an older
   binary (incremental runs, `verify -record`, `reindex`) drops `parse_scheme`,
   `FidelityFallback` and `RepairWithheld` from every record. This happens
   routinely when a scheduled job still points at an older executable
@@ -1390,7 +1473,8 @@ first release limits a defect to the operators who asked for repair.
   - If OR3 adopts recapture-integrity's manifest v7, rollback and alternation
     hold only among v7-capable binaries; a pre-v7 binary refuses the archive
     ("Load refuses a stored version above 6"). §6 is then re-walked under OR3
-    (MC41).
+    (MC41). **[ruling J2]** Moot: no design bumps the manifest, so rollback stays a
+    binary swap.
 - **Index.** No version change; repaired rows are replaced by key.
   `reindex -rebuild` from `.eml` yields fidelity content under the same keys. For
   records **not yet written at the current scheme** (with-Message-ID Graph mail
@@ -1437,8 +1521,8 @@ first release limits a defect to the operators who asked for repair.
   Desktop summary and health view say so: "N messages were archived by an
   earlier version; Desktop cannot re-check them without a full re-download"
   (from `not_reexamined`, MC16). Whether Desktop gains a repair action is
-  **OR1**. Until then, the workspace's Microsoft 365 source (a fresh parse) gives
-  fidelity output for a copy.
+  **OR1**, escalated to the owner as ESC-6 [ruling ESC-6]. Until then, the workspace's
+  Microsoft 365 source (a fresh parse) gives fidelity output for a copy.
 - **Admin** (scheduled CLI, PST fleet, or Graph app-only/device):
   1. Deploy the binary. Nothing else is needed for local sources (**0 steps**).
   2. **1 optional step** for Graph: a deliberate `-mode full` run to repair
@@ -1448,11 +1532,12 @@ first release limits a defect to the operators who asked for repair.
      backup and sync.
 
   `status` shows `not_reexamined` beforehand, so the admin can judge the benefit
-  first. A repair-only write policy for that full walk is part of OR1. `status`
-  keeps its posture. The new "cannot decode", withheld and fallback counts name
+  first. A repair-only write policy for that full walk is part of OR1 (ESC-6: it would
+  amend R2's "`full` re-exports all", which only the owner can accept [ruling ESC-6]).
+  `status` keeps its posture. The new "cannot decode", withheld and fallback counts name
   the report. If Q1 rules opt-in, the CLI flag, the GUI and Desktop control, the
   settings key and the job-descriptor field that carry it are named in S7 under
-  X5's shared builders (MC37).
+  X5's shared builders (MC37). **[ruling Q1]** Q1 rules automatic, so there is no flag.
 - **Custodian holding external copies** (offsite backup, checksum baseline,
   workspace hand-overs with `SHA256SUMS`). Each run that repaired anything writes
   `repairs-<run-id>.tsv` with old and new digests, named in the summary (MC17).
@@ -1473,8 +1558,8 @@ first release limits a defect to the operators who asked for repair.
     output carries the fidelity properties.
   - From archive records without an `.eml`, the copy carries what the archive
     holds: fidelity only for records at the current scheme, which is never the
-    case for with-Message-ID Desktop mail (OR1). Such entries carry the
-    "captured by an earlier version" note.
+    case for with-Message-ID Desktop mail (OR1; ESC-6 [ruling ESC-6]). Such entries carry
+    the "captured by an earlier version" note.
 - **Refusals:** none added. The new operator messages are §4.10's repair,
   restamp, withheld (per reason) and failed lines; §4.9's "cannot decode" counts;
   and the `not_reexamined` line. All are worded what / why / remedy. S2 and S4
@@ -1584,30 +1669,31 @@ working ids of the header (MC42).
 
 | ID | Tier | Asserts | Covers | Prove-fail |
 |---|---|---|---|---|
-| MA-330 | U | For every corpus message, `Identity()`, `Fingerprint()`, `ContentDigest()` and the local and live keys equal the identity golden, for messages the fidelity parser changes as well as unchanged ones. This includes the v1-panicking item, whose stub identity comes from `stubIdentityTerms`, and one item per go-pst nameMap label. PST twin on `support.pst` | R3, R2, R-FREEZE, S-PARSE | make `idv()` return content `Subject` → red |
-| MA-331 | U | (1) After parsing the corpus, the effective charset label table matches the snapshot: resolution of every label in IANA ∪ WHATWG ∪ go-message's quirk table ∪ go-pst's nameMap, for both the vendored and the shared table. `message.CharsetReader` is the same function. (2) The sha256 of `parsev1.go` and of every vendored file, and the `go.sum` lines of every identity dependency (P1(b)), equal the pinned values. (3) `go list -deps` of `parsev1` lists none of `net/mail`, `mime` or `github.com/emersion/go-message` (MC27). (4) `parsev1`'s v1 message for every corpus item equals the content golden (MC26) | R-FREEZE, R3 | add `charset.RegisterEncoding("unknown-8bit", …)` in `text.go` → red; edit one byte of `parsev1.go` → red |
-| MA-332 | U | Parser-scoped (MC29). Every corpus message with no fidelity note has content fields equal to the content golden, renders identically to the current renderer applied to `replayV1`'s message (computed in the test), and carries `IdentityTerms` equal to its content fields. It is also the guard that catches a missed note registration over the corpus (MC24) | R2, R7, R-FREEZE | concatenate with a separator even for one segment → red |
-| MA-333 | U | F24 charsets. Each label is tested both first and after the body. Every later part (incl. `r.pdf`) is archived, text is decoded (valid UTF-8 / Windows-1252) and no gap is recorded. A top-level `unknown-8bit` QP message gets a decoded Subject and body (no `fallbackParse`). Its "`charset-fallback` on the page" assertion turns green at S4 (MC30). Twin: `iso-8859-1` control | R1, R10, R-PARSE | restore `break` on error → red |
-| MA-334 | U | F24 CTEs. `8-bit` and `quoted-printable (encoded)` decode with `lenient-cte`. `x-uuencode`/`x-foo` keep still-encoded bytes as `<name>.undecoded` and record a **terminal** `undecoded-part` gap, even on a local source; the report row has kind `undecoded-part`, class `terminal`; a re-run neither retries nor rewrites; later parts are archived; no stub. **On-demand twin (MC20):** a base64 part truncated on the first run records a **fillable** `corrupt-part`, and when the complete message lands, the next run fills it. The same truncation on a Graph fake stays terminal. Twin: 7bit/base64/qp | R1, R10, R-PARSE | route `undecoded-part` to `Missing` → red (re-run retries); route `corrupt-part` to `Terminal` on a local source → red (never filled) |
-| MA-335 | U | F25 bodies. The Apple Mail fixture's page has html1, the placeholder and html2 in order, and renders as one document. The zip holds the PDF and `notes.txt` byte-exact. The index holds the plain alternative. mutt `build.log` and `name=notes.txt` are archived. The Mailman footer is shown after the HTML. `alternative[plain, html]` shows the HTML only | R1, R7, R-PARSE | keep first html only → red |
-| MA-336 | U | F25 names. Filename → CID → `inline`+ext; `message/rfc822` → `<subject>.eml`; inline `text/calendar` → `inline.ics`. Names are identical with `mime.ExtensionsByType` stubbed to return nothing (no host dependency). **Names match the zip (MC33):** the page's Attachments line, the placeholders and the gaps block print the zip entry names (duplicates `a (2).pdf`, a 130-rune name). A nested `<subject> - <name>` with a 200-rune subject keeps the attachment's own name and extension. A sender file named `Invoice (attached message).html` or `x.undecoded` is renamed | R1, R4, R-PARSE | use `mime.ExtensionsByType` → red under the stub; print the raw filename on the page → red (duplicate case) |
-| MA-337 | U | C1-1. Latin-1 `text/csv`, ISO-8859-1 XML, UTF-16 and Shift_JIS `.txt`, cp1252 `.ics` and a `text/html` attachment: each zip entry's sha256 equals the transfer-decoded source bytes, zip fixity is recorded over them, and `verify` exits 0. An 8bit, LF-only text attachment in an mbox has the bytes as go-mbox frames them (stated in the row's fixture comment, MC38). A truncated base64 attachment is archived as `<name>.partial` with a `corrupt-part` gap, never under its real name. The displayed Latin-1 body part is valid UTF-8 on the page. Twin: utf-8 attachment | R1, R5, R-PARSE | decode attachments through the charset path → red |
-| MA-338 | U | C1-4. Unquoted `=` boundary, unquoted `start=<x@y>`/`type=text/html`, `charset=us-ascii (Plain text)`, unquoted `filename=Invoice 2023.pdf` → body, attachments and names are recovered and `lenient-params` is noted. A multipart with no recoverable boundary → body as text + `unsplit-multipart` (fillable on an on-demand source, terminal on Graph; MC20), never a `body` gap. Twin: strict-valid headers unchanged | R1, R10, R-PARSE | disable the lenient tokenizer → red |
+| MA-330 | U | For every corpus message, `Identity()`, `Fingerprint()`, `ContentDigest()` and the local and live keys equal the identity golden, for messages the fidelity parser changes as well as unchanged ones. This includes the v1-panicking item, whose stub identity comes from `stubIdentityTerms`, and one item per go-pst nameMap label. PST twin on `support.pst` | R3, R2, R27, S49 | make `idv()` return content `Subject` → red |
+| MA-331 | U | (1) After parsing the corpus, the effective charset label table matches the snapshot: resolution of every label in IANA ∪ WHATWG ∪ go-message's quirk table ∪ go-pst's nameMap, for both the vendored and the shared table. `message.CharsetReader` is the same function. (2) The sha256 of `parsev1.go` and of every vendored file, and the `go.sum` lines of every identity dependency (P1(b)), equal the pinned values. (3) `go list -deps` of `parsev1` lists none of `net/mail`, `mime` or `github.com/emersion/go-message` (MC27). (4) `parsev1`'s v1 message for every corpus item equals the content golden (MC26) | R27, R3 | add `charset.RegisterEncoding("unknown-8bit", …)` in `text.go` → red; edit one byte of `parsev1.go` → red |
+| MA-332 | U | Parser-scoped (MC29). Every corpus message with no fidelity note has content fields equal to the content golden, renders identically to the current renderer applied to `replayV1`'s message (computed in the test), and carries `IdentityTerms` equal to its content fields. It is also the guard that catches a missed note registration over the corpus (MC24) | R2, R7, R27 | concatenate with a separator even for one segment → red |
+| MA-333 | U | F24 charsets. Each label is tested both first and after the body. Every later part (incl. `r.pdf`) is archived, text is decoded (valid UTF-8 / Windows-1252) and no gap is recorded. A top-level `unknown-8bit` QP message gets a decoded Subject and body (no `fallbackParse`). Its "`charset-fallback` on the page" assertion turns green at S4 (MC30). Twin: `iso-8859-1` control | R1, R10, R26 | restore `break` on error → red |
+| MA-334 | U | F24 CTEs. `8-bit` and `quoted-printable (encoded)` decode with `lenient-cte`. `x-uuencode`/`x-foo` keep still-encoded bytes as `<name>.undecoded` and record a **terminal** `undecoded-part` gap, even on a local source; the report row has kind `undecoded-part`, class `terminal`; a re-run neither retries nor rewrites; later parts are archived; no stub. **On-demand twin (MC20):** a base64 part truncated on the first run records a **fillable** `corrupt-part`, and when the complete message lands, the next run fills it. The same truncation on a Graph fake stays terminal. Twin: 7bit/base64/qp | R1, R10, R26 | route `undecoded-part` to `Missing` → red (re-run retries); route `corrupt-part` to `Terminal` on a local source → red (never filled) |
+| MA-335 | U | F25 bodies. The Apple Mail fixture's page has html1, the placeholder and html2 in order, and renders as one document. The zip holds the PDF and `notes.txt` byte-exact. The index holds the plain alternative. mutt `build.log` and `name=notes.txt` are archived. The Mailman footer is shown after the HTML. `alternative[plain, html]` shows the HTML only | R1, R7, R26 | keep first html only → red |
+| MA-336 | U | F25 names. Filename → CID → `inline`+ext; `message/rfc822` → `<subject>.eml`; inline `text/calendar` → `inline.ics`. Names are identical with `mime.ExtensionsByType` stubbed to return nothing (no host dependency). **Names match the zip (MC33):** the page's Attachments line, the placeholders and the gaps block print the zip entry names (duplicates `a (2).pdf`, a 130-rune name). A nested `<subject> - <name>` with a 200-rune subject keeps the attachment's own name and extension. A sender file named `Invoice (attached message).html` or `x.undecoded` is renamed | R1, R4, R26 | use `mime.ExtensionsByType` → red under the stub; print the raw filename on the page → red (duplicate case) |
+| MA-337 | U | C1-1. Latin-1 `text/csv`, ISO-8859-1 XML, UTF-16 and Shift_JIS `.txt`, cp1252 `.ics` and a `text/html` attachment: each zip entry's sha256 equals the transfer-decoded source bytes, zip fixity is recorded over them, and `verify` exits 0. An 8bit, LF-only text attachment in an mbox has the bytes as go-mbox frames them (stated in the row's fixture comment, MC38). A truncated base64 attachment is archived as `<name>.partial` with a `corrupt-part` gap, never under its real name. The displayed Latin-1 body part is valid UTF-8 on the page. Twin: utf-8 attachment | R1, R5, R26 | decode attachments through the charset path → red |
+| MA-338 | U | C1-4. Unquoted `=` boundary, unquoted `start=<x@y>`/`type=text/html`, `charset=us-ascii (Plain text)`, unquoted `filename=Invoice 2023.pdf` → body, attachments and names are recovered and `lenient-params` is noted. A multipart with no recoverable boundary → body as text + `unsplit-multipart` (fillable on an on-demand source, terminal on Graph; MC20), never a `body` gap. Twin: strict-valid headers unchanged | R1, R10, R26 | disable the lenient tokenizer → red |
 | MA-339 | U | C1-5. A plain body with `[cid:image001.png@…]` keeps `chart.png` in the zip and on the Attachments line, and the page has no base64. `<a href="cid:x">` is not consumed. `<img src="cid:x">` and CSS `url(cid:x)` are embedded and kept out of the zip (MA-19 twin). Unresolved refs are counted only in image contexts. `cid:abc` vs `cid:abcdef` is matched by whole token, and `renderNotes` flags the prefix case (MC24). **Data URIs (MC23):** an attachment whose `MimeType` is `image/png</style><div class="mailarchive-header">…`, referenced from the mail's own `<style>`, is not embedded; the page's first `.mailarchive-header` is the tool's; and MA-301's re-parse fails closed on reserved markup injected outside tool-owned blocks | R7, R1, R19 | re-enable regex embedding on plain bodies → red; drop the allowlist → red (forged header) |
-| MA-340 | U | C1-8. A raw Latin-1 Subject/From name/To, and unlabelled and `us-ascii`-labelled 8-bit bodies → valid UTF-8 `Grüße aus Köln` on the page, the FTS query `Grüße` hits, and there is no U+FFFD. Identity equals the golden. Fuzz-seeded property: every text field of `safeParseMessage(any bytes)` is valid UTF-8, **including fault-injected fidelity fallbacks** (MC19) | R7, R8, R-PARSE, R3 | drop the Windows-1252 step → red; skip `decodeText` on the fallback path → red |
+| MA-340 | U | C1-8. A raw Latin-1 Subject/From name/To, and unlabelled and `us-ascii`-labelled 8-bit bodies → valid UTF-8 `Grüße aus Köln` on the page, the FTS query `Grüße` hits, and there is no U+FFFD. Identity equals the golden. Fuzz-seeded property: every text field of `safeParseMessage(any bytes)` is valid UTF-8, **including fault-injected fidelity fallbacks** (MC19) | R7, R8, R26, R3 | drop the Windows-1252 step → red; skip `decodeText` on the fallback path → red |
 | MA-341 | U | C1-10. `<>`, `Mueller, Hans <hans@example.de>`, `Mail Delivery System <MAILER-DAEMON>`, `hans@example.de <hans@example.de>`, `<john..smith@…>`, `<.john@…>`, `Undisclosed sender:;` and an 8-bit name → the page's `data-mailarchive-field="from"` has the expected name/email, the folder page does not show `(unknown)`, and sender search hits. Control chars are stripped, with a 1,000-rune cap. The fingerprint equals the golden. mbox `extract`'s postmark address agrees with the page's sender (one primitive, MC35) | R7, R8, R3 | remove the From fallback → red |
-| MA-342 | U | F26 interim on `support.pst` with an attachment's 0x3701 retyped in memory to `PtypObject` (method 5 and 6). There is no junk entry in the zip. `embedded-item`/`ole-object` terminal gaps name `PidTagDisplayName`, although PST is `SourceComplete=false`. A re-run neither retries nor rewrites. **The outer message is exported**, with its ordinary attachments (MC30). Method 5 with a `PtypBinary` 0x3701 keeps its bytes as today (MC31). Identity equals the golden | R1, R10, R-PARSE | fall through to go-pst `WriteTo` → red; remove the nil-`WriteTo` guard → red (outer message missing) |
-| MA-343 | U (S6 may not merge while L) | F26 full on a committed, Outlook-written method-5 fixture (Q2, MC32): forward-as-attachment, NDR, nested depth 2, a nested item whose subnode NIDs equal the outer item's, a block-id cycle, an embedded appointment. The outer zip has `<subject> (attached message).html` (CSP meta first, transport panel, inline images embedded) and byte-exact `<subject> - <name>` entries. Depth > 4, the cycle and an exhausted budget → `structure-limit`. The coinciding NIDs are **not** a cycle. The appointment → `embedded-item` naming the class. A go-pst `ErrLocalDescriptorBranchNode` → the named `embedded-item` detail, counted (MC31). Until Q2 yields the fixture, the row stays **L pending** ("export from Outlook on Windows a PST holding a forward-as-attachment, an NDR and a report-phish item; run; inspect the zip"), and S5's gap is the shipped floor | R1, R19, R4, R-PARSE | skip the visited set → cycle test hangs past its deadline → red; key the set on NIDs → coinciding-NID item reports a false cycle → red |
-| MA-344 | U | Repair. Start from an archive written through the frozen v1 path (v1 messages exported with `parse_scheme` 0) and upgrade it. The first incremental run rewrites exactly the records whose notes fire and whose output changes (`Repaired`) and restamps the rest without a write (`Restamped`, MC12). Keys, paths and fingerprints are unchanged, fixity is fresh (`verify` exits 0) and index text is updated. Untouched records' files keep their bytes and mtimes. `repairs-<run-id>.tsv` lists old and new digests, and every surface shows `exported 0 new` (MC17). The second run repairs 0, restamps 0 and exports 0. A scheme listed in `RevokedSchemes` makes its records repair again (MC18). Graph fake: an incremental run downloads no with-Message-ID message and repairs a no-Message-ID one; `-mode full` routes noted with-Message-ID records through the repair branch (V1C runs, same stem, `.eml` carried forward) with no `#fp` split (MC9) | R2, R3, R5, R13, R17, R-FREEZE | stamp `parse_scheme` 0 on write → second run repairs again → red |
-| MA-345 | U | Repair never to less, and withheld legibly. Each case is withheld with old page, zip, record and fixity unchanged (assure NoSideEffect), the named reason and its own counter: (a) an on-demand source whose message lost an attachment's bytes since capture → `source-changed`; (b) the L1-1 masking case (a cid-placeholder image no longer consumed hides report.pdf now streaming 0 bytes); (c) a Thunderbird-detached part (`X-Mozilla-Altered: AttachmentDetached`, same name, placeholder bytes); (d) the F25 named-inline and S6 nested-entry offsets; (e) a same-envelope message with a different body or attachments, and the Mailman list-copy twin → `cannot-confirm-same-message`; (f) a v1-panicking record → never repaired, `identity-stub` gap; (g) **the H-1 twin (MC1):** a record with no zip whose page the owner deleted → nothing written, `archive-file-missing-or-modified`. The same for a page or zip that is missing-but-recorded, unreadable, altered against fixity, symlinked or over the bound, never followed or opened; (h) **the H-2 twin (MC2):** a withheld no-Message-ID record on the live path (fake Graph) keeps `Present` true, gets `LastSeen` = `runAt`, and is not marked gone by `SweepGone`; (i) an injected rename refusal on the zip and on the html → old trio unchanged, `RepairFailed` names the path, and a later new message in the walk is still captured (MC13); (j) `RepairWithheld` is persisted with its `SourceDigest`, and the next run skips the re-check and does not re-warn (MC15). Positive twin: the source unchanged → repaired | R1, R13, R4, R21, R-FREEZE | replace V1C with revision 1's count → red (cases b–d replace the old zip); drop the archive-side check → red (case g re-creates the page) |
-| MA-346 | U | Repair and re-capture keep paths and originals. (a) A `-raw` record repaired by a run without `-raw` keeps its `.eml` and `Fixity.EML`, and a `-raw` repair never rewrites an existing `.eml` (MC11). (b) The html/zip are rewritten at the same stem although the decoded subject's slug differs. (c) A **fill** and a **`-mode full` run** on a legacy-8bit-subject record in a `-raw` archive, run without `-raw`, keep the same path, `.eml` and `Fixity.EML` (MC8). (d) A tampered `Path` (`../x.html`, absolute, another store's directory, a sibling record's stem) is never written through, nothing outside `-out` is removed, and the repair is withheld as `unsafe-path` (MC10). Cases (a)/(c) cover S1's write path; (b)/(d) turn green at S7 | R4, R20, R13, R5 | use `stemFor(m.Subject)` → red (stem changes) |
-| MA-347 | U | Mixed versions. Identity half (S1): a run by v1 semantics (manifest round-trip dropping `parse_scheme`; exporter fed `replayV1` messages) → 0 new exports, 0 `#fp`-qualified keys, the same stems. Repair half (S7): **3 alternations** → ≤ 1 rewrite per record in total, 0 writes after the first, 0 new exports, and no new history folder-assertions after the first (MC12) | R2, R3, R-FREEZE | compute identity from content terms → red (`#fp` splits); drop the restamp → red (rewrites per alternation) |
+| MA-342 | U | F26 interim on `support.pst` with an attachment's 0x3701 retyped in memory to `PtypObject` (method 5 and 6). There is no junk entry in the zip. `embedded-item`/`ole-object` terminal gaps name `PidTagDisplayName`, although PST is `SourceComplete=false`. A re-run neither retries nor rewrites. **The outer message is exported**, with its ordinary attachments (MC30). Method 5 with a `PtypBinary` 0x3701 keeps its bytes as today (MC31). Identity equals the golden | R1, R10, R26 | fall through to go-pst `WriteTo` → red; remove the nil-`WriteTo` guard → red (outer message missing) |
+| MA-343 | L, pending, until Q2's fixture lands; then U, in S6 [ruling Q2, J1] (S6 may not merge while L) | F26 full on a committed, Outlook-written method-5 fixture (Q2, MC32; ruled: a synthetic fixture, [ruling Q2]): forward-as-attachment, NDR, nested depth 2, a nested item whose subnode NIDs equal the outer item's, a block-id cycle, an embedded appointment. The outer zip has `<subject> (attached message).html` (CSP meta first, transport panel, inline images embedded) and byte-exact `<subject> - <name>` entries. Depth > 4, the cycle and an exhausted budget → `structure-limit`. The coinciding NIDs are **not** a cycle. The appointment → `embedded-item` naming the class. A go-pst `ErrLocalDescriptorBranchNode` → the named `embedded-item` detail, counted (MC31). Until Q2 yields the fixture, the row stays **L pending** ("export from Outlook on Windows a PST holding a forward-as-attachment, an NDR and a report-phish item; run; inspect the zip"), and S5's gap is the shipped floor | R1, R19, R4, R26 | skip the visited set → cycle test hangs past its deadline → red; key the set on NIDs → coinciding-NID item reports a false cycle → red |
+| MA-344 | U | Repair. Start from an archive written through the frozen v1 path (v1 messages exported with `parse_scheme` 0) and upgrade it. The first incremental run rewrites exactly the records whose notes fire and whose output changes (`Repaired`) and restamps the rest without a write (`Restamped`, MC12). Keys and fingerprints are unchanged, paths are those re-capture's commit gives (the same stem, or its `-vN` successor under ESC-3 (a), [ruling J6]), fixity is fresh (`verify` exits 0) and index text is updated. Untouched records' files keep their bytes and mtimes. `repairs-<run-id>.tsv` lists old and new digests, and every surface shows `exported 0 new` (MC17). The second run repairs 0, restamps 0 and exports 0. A scheme listed in `RevokedSchemes` makes its records repair again (MC18). Graph fake: an incremental run downloads no with-Message-ID message and repairs a no-Message-ID one; `-mode full` routes noted with-Message-ID records through the repair branch (V1C runs, same stem, `.eml` carried forward) with no `#fp` split (MC9) | R2, R3, R5, R13, R17, R27 | stamp `parse_scheme` 0 on write → second run repairs again → red |
+| MA-345 | U | Repair never to less, and withheld legibly. Each case is withheld with old page, zip, record and fixity unchanged (assure NoSideEffect), the named reason and its own counter: (a) an on-demand source whose message lost an attachment's bytes since capture → `source-changed`; (b) the L1-1 masking case (a cid-placeholder image no longer consumed hides report.pdf now streaming 0 bytes); (c) a Thunderbird-detached part (`X-Mozilla-Altered: AttachmentDetached`, same name, placeholder bytes); (d) the F25 named-inline and S6 nested-entry offsets; (e) a same-envelope message with a different body or attachments, and the Mailman list-copy twin → `cannot-confirm-same-message`; (f) a v1-panicking record → never repaired, `identity-stub` gap; (g) **the H-1 twin (MC1):** a record with no zip whose page the owner deleted → nothing written, `archive-file-missing-or-modified`. The same for a page or zip that is missing-but-recorded, unreadable, altered against fixity, symlinked or over the bound, never followed or opened; (h) **the H-2 twin (MC2):** a withheld no-Message-ID record on the live path (fake Graph) keeps `Present` true, gets `LastSeen` = `runAt`, and is not marked gone by `SweepGone`; (i) an injected rename refusal on the zip and on the html → old trio unchanged, `RepairFailed` names the path, and a later new message in the walk is still captured (MC13); (j) `RepairWithheld` is persisted with its `SourceDigest`, and the next run skips the re-check and does not re-warn (MC15). Positive twin: the source unchanged → repaired | R1, R13, R4, R21, R27 | replace V1C with revision 1's count → red (cases b–d replace the old zip); drop the archive-side check → red (case g re-creates the page) |
+| MA-346 | U | Repair and re-capture keep paths and originals. (a) A `-raw` record repaired by a run without `-raw` keeps its `.eml` and `Fixity.EML`, and a `-raw` repair never rewrites an existing `.eml` (MC11). (b) The html/zip are rewritten at the stem re-capture's commit gives it (the identity-view stem, or its `-vN` successor under ESC-3 (a)), never a stem from the decoded subject, although the decoded subject's slug differs [ruling J6]. (c) A **fill** and a **`-mode full` run** on a legacy-8bit-subject record in a `-raw` archive, run without `-raw`, keep the same path, `.eml` and `Fixity.EML` (MC8). (d) A tampered `Path` (`../x.html`, absolute, another store's directory, a sibling record's stem) is never written through, nothing outside `-out` is removed, and the repair is withheld as `unsafe-path` (MC10). Cases (a)/(c) cover S1's write path; (b)/(d) turn green at S7 | R4, R20, R13, R5 | use `stemFor(m.Subject)` → red (stem changes) |
+| MA-347 | U | Mixed versions. Identity half (S1): a run by v1 semantics (manifest round-trip dropping `parse_scheme`; exporter fed `replayV1` messages) → 0 new exports, 0 `#fp`-qualified keys, the same stems. Repair half (S7): **3 alternations** → ≤ 1 rewrite per record in total, 0 writes after the first, 0 new exports, and no new history folder-assertions after the first (MC12) | R2, R3, R27 | compute identity from content terms → red (`#fp` splits); drop the restamp → red (rewrites per alternation) |
 | MA-348 | U | Legibility. The summary shows `repaired=N`, `restamped`, "exported 0 new · repaired N" (`Done.` line, GUI, Desktop card), and the "cannot decode" counts. The `status` Incomplete line splits source-empty from cannot-decode. The `not_reexamined` line has its per-source remedy, and `status -json` carries `undecodable`, `not_reexamined`, `repair_withheld` by reason and `fidelity_fallback` (MC15–MC17). The GUI summary and Desktop health view show the split. Report kinds and classes are as specified. The page's visible gaps block (incl. `fidelity-fallback`, `identity-stub`) and collapsed notes block are escaped, and the notes block lists only display-qualifying notes (MC25). `reindex -rebuild` from HTML ignores both blocks. The page-block assertions turn green at S4 (MC30) | R1, R18, R7, X6 | count parse gaps as source-empty → red; count repairs as `Exported` → red |
-| MA-349 | U | Bounds and isolation. Each of these completes within a generous deadline, records `structure-limit`/`corrupt-part` (one part only), or reverts that message to v1 content with a visible `fidelity-fallback` gap, and never yields a stub; the next mbox message parses normally: multipart depth 33; 10,001 leaves; 64+ lenient params; `filename*4294967295*=` (bounded, no allocation by index); an oversized part header (MC22); an encoded-word bomb; a fault-injected panic in one part's decoder; a fault-injected panic in the fidelity parser; an injected "fidelity ⊇ v1" failure (MC4); more than 32 parse gaps → 32 labels + one summary, with a manifest-size assertion (MC21). A fault-injected panic in an embedded render, in the cid tree embedding and in a repair attempt → an `embedded-item` gap / `render-fallback` / withheld `repair-error`, and the outer message is exported (MC14). The `</style>` breakout (MC23). A fallback message with a cid text reference → the second run repairs 0 (MC19) | R10, R1, R19, R-PARSE | remove the depth bound → red (deadline); stamp a fallback write 0 and drop the `FellBack` exclusion → red (rewrite every run) |
+| MA-349 | U | Bounds and isolation. Each of these completes within a generous deadline, records `structure-limit`/`corrupt-part` (one part only), or reverts that message to v1 content with a visible `fidelity-fallback` gap, and never yields a stub; the next mbox message parses normally: multipart depth 33; 10,001 leaves; 64+ lenient params; `filename*4294967295*=` (bounded, no allocation by index); an oversized part header (MC22); an encoded-word bomb; a fault-injected panic in one part's decoder; a fault-injected panic in the fidelity parser; an injected "fidelity ⊇ v1" failure (MC4); more than 32 parse gaps → 32 labels + one summary, with a manifest-size assertion (MC21). A fault-injected panic in an embedded render, in the cid tree embedding and in a repair attempt → an `embedded-item` gap / `render-fallback` / withheld `repair-error`, and the outer message is exported (MC14). The `</style>` breakout (MC23). A fallback message with a cid text reference → the second run repairs 0 (MC19) | R10, R1, R19, R26 | remove the depth bound → red (deadline); stamp a fallback write 0 and drop the `FellBack` exclusion → red (rewrite every run) |
 
-Proposed catalog additions (S0, ids as allocated by the operator, OR5, MC42):
+Proposed catalog additions (S0, ids as allocated by the operator, OR5, MC42; **[ruling
+OR5 = J1]** allocated: R26, R27, S49):
 
-- **R-PARSE — Parse fidelity.** "Every MIME leaf part and every PST attachment the
+- **R26 — Parse fidelity.** "Every MIME leaf part and every PST attachment the
   reader meets is either archived or recorded as a parse gap, and no part's failure
   ends the parse of another.
   - *Archived:* an attachment as its transfer-decoded bytes as the source store
@@ -1618,29 +1704,36 @@ Proposed catalog additions (S0, ids as allocated by the operator, OR5, MC42):
     the page, with its bytes kept as received where they exist. The gap is
     terminal where re-reading cannot change the answer, and fillable on an
     on-demand source where a later complete copy can."
-- **R-FREEZE — Frozen identity, guarded repair.** "A raw-MIME message's dedup
-  identity, fingerprint, content digest and file stem are computed from the frozen
-  v1 parser's view of it, and a PST item's from its v1 attachment names. No parser
-  change therefore moves an archived message's key, fingerprint or files.
-  A record written by an older or revoked parser scheme whose message now triggers
-  a later scheme's fix is re-captured in place, rewriting it at most once per
-  scheme and source content. That happens only when:
+- **R27 — Frozen identity, guarded repair.** **[ruling J6]** This is the text that lands in
+  S0. It replaces revision 2's draft, which promised that no parser change moves an
+  archived message's files and that a repair is "re-captured in place"; under J6 a repair
+  commits through R28's write path, whose answer to ESC-3 decides its file names.
+  "A raw-MIME message's dedup identity, fingerprint, content digest and file stem are
+  computed from the frozen v1 parser's view of it, and a PST item's from its v1
+  attachment names. No parser change therefore moves an archived message's key or
+  fingerprint. A record written by an older or revoked parser scheme whose message now
+  triggers a later scheme's fix is re-captured through R28's commit, rewriting it at
+  most once per scheme and source content; its files are those that commit gives it
+  (its stem, or that stem's `-vN` successor). That happens only when:
   - the archived files are present and as recorded;
-  - the source still delivers every archived item, matched by content;
-  - the new capture holds at least what v1 does;
-  - it is provably the same message.
+  - it is provably the same message;
+  - the re-capture is never to less (R28): the source still delivers every archived
+    item, matched by content, and the new capture holds at least what v1 does.
 
   Otherwise the record is left as archived, its timeline is still stamped, and the
   reason is shown." OR3 may assign the "holds at least" clause to
-  recapture-integrity's invariant instead; this text then cites it.
-- **S-PARSE** — "A legacy, Apple Mail, mailing-list or Outlook message is archived,
+  recapture-integrity's invariant instead; this text then cites it. **[ruling J6]** It
+  does: the clause cites R28, and V1C's own preconditions stay.
+- **S49** — "A legacy, Apple Mail, mailing-list or Outlook message is archived,
   and an archive written by an earlier version is upgraded. The message may have
   split bodies, inline named files, legacy or unknown charsets, unknown
   encodings, malformed parameters, cid text placeholders, a bounce sender, or an
-  attached Outlook item." → R-PARSE, R-FREEZE, R1, R2, R3, R7, R8, R21 →
+  attached Outlook item." → R26, R27, R1, R2, R3, R7, R8, R21 →
   MA-330..349.
 
-The R2 clarification is as in §6. S0 checks that the catalog text of every id
+The R2 clarification is as in §6. **[ruling J7]** It does not land in S0: it changes R2's
+text, so it lands with recapture-integrity's R2 amendment as one joint paragraph once the
+owner answers ESC-2. S0 checks that the catalog text of every id
 cited in a Covers cell matches the wording above. This catches the case where
 another design's catalog edit took the id first (MC42).
 
@@ -1654,29 +1747,36 @@ The order is dependency-sound:
 
 | Slice | Waits on | Content | Rows turned green | Gate owed after build |
 |---|---|---|---|---|
-| **S0** | OR5; `BodyFallback` landed (MC29) | Catalog first: R-PARSE, R-FREEZE, S-PARSE (allocated ids), the R2 clarification, MA-330..349 (U rows as `t.Skip` encoders citing R-PARSE/R-FREEZE). The fidelity corpus, incl. nameMap and v1-panic items. The identity and content goldens at the named release tag (provenance recorded) | — | none (tests/catalog only) |
-| **S1** | OR2, OR4 | Model (`IdentityTerms`, `ParseNotes`, gap fields per OR2, `V1Inventory`, `FellBack`, `Attachment.GapKind/Embedded/ZipName`, `idv()`). `parsev1.go` at the named tag, plus the vendored dependencies (MC27), and `stubIdentityTerms` (MC7). `safeParseMessage` routing. `ContentHash` on every write (MC5). Identity-view stems and `.eml` carry-forward on every write (MC8). `Record.ParseScheme` stamping (=1), incl. stamp on re-read (MC12). Content still from v1 | MA-330, MA-331, MA-347 (identity half), MA-346 (a, c) | **adversarial pass** (integrity persona: identity drift, mixed versions, stems) |
+| **S0** | `BodyFallback` landed (MC29; it has); OR5 ruled [ruling J1] | Catalog first: R26, R27 (the [ruling J6] text of §9), S49 (allocated ids), MA-330..349 (U rows as `t.Skip` encoders citing R26/R27; MA-343 as L, pending). The R2 clarification is **not** in S0: it waits for ESC-2 [ruling J7]. The fidelity corpus, incl. nameMap and v1-panic items. The identity and content goldens at the named release tag (provenance recorded) | — | none (tests/catalog only) |
+| **S1** | OR2, OR4 (ruled [ruling J5, OR4]); fault-isolation S1a merged first (the landing order of J5) | Model (`IdentityTerms`, `ParseNotes`, gap fields per OR2, `V1Inventory`, `FellBack`, `Attachment.GapKind/Embedded/ZipName`, `idv()`). `parsev1.go` at the named tag, plus the vendored dependencies (MC27), and `stubIdentityTerms` (MC7). `safeParseMessage` routing. `ContentHash` on every write (MC5). Identity-view stems and `.eml` carry-forward on every write (MC8). `Record.ParseScheme` stamping (=1), incl. stamp on re-read (MC12). Content still from v1. `stubIdentityTerms` reproduces today's constant stub [ruling J5]. Vendor `encoding/base64` into `parsev1` and have MA-331 assert `unicode.Version` (recommended strengthening, [ruling OR4]) | MA-330, MA-331, MA-347 (identity half), MA-346 (a, c) | **adversarial pass** (integrity persona: identity drift, mixed versions, stems) |
 | **S2** | S1 | Fidelity walker, `mimeparams.go`, `text.go` for bodies, transfer decoding. P2, P4 (`.partial`), P5, P10 (gap classes, MC20), P13 (bounds, MC21/MC22). The "fidelity ⊇ v1" check and the visible fallback (MC4, MC19). Shared `internal/util` primitives (MC35). Report kinds, counts and wording (CLI, GUI, status). `BenchmarkParseCorpus` (MC39) | MA-332, 333 (non-page), 334, 337, 338, 340 (bodies), 349 | **adversarial pass** (hostile MIME) + **friction review and X-series check** (CLI/GUI/status wording, MC39) |
 | **S3** | S2 | Body assembly, classification, naming (final zip names once, reserved suffixes, MC33), header and address decoding (P3, P7 headers, P8) | MA-335, 336, 340, 341 | **friction review** (inheritor reads pages; names) |
 | **S4** | S3 | Renderer: tree-based cid embedding with the data-URI allowlist and the MA-301 fail-closed extension (MC23); `renderNotes` prefix case (MC24); gaps and notes blocks (MC25); render recovers (MC14) (P6) | MA-339, 333 (page), 348 | **adversarial pass** (R19 renderer surface) + **friction review and X-series check** (page blocks, MC39) |
 | **S5** | S1 | PST interim: 0x3701 property-type decision (MC31), method 5/6 gaps, the nil-`WriteTo` guard in `WriteZip`/`drain`/`hasArchivable`, GapKind routing and the report kind (MC30), PST `IdentityTerms` | MA-342 | **adversarial pass** (crafted PST, interim scope); S6's pass covers it only if they ship together |
-| **S6** | Q2: MA-343 tier U on an Outlook-written fixture (MC32) | PST full embedded extraction (P9), block-id visited set, budgets, go-pst error mapping (MC31) | MA-343 | **adversarial pass** (crafted PST) |
-| **S7** | Q1, OR3, a delta re-review of §4.10 rev 2 (lenses 3, 6, 7, 8) (MC43); S2–S6 in the same release or earlier | Repair: the predicate (incl. full mode MC9, revocation MC18, fallback MC19), V1C (MC1, MC3–MC6), restamp (MC12), write discipline (MC13), timeline stamping (MC2), withheld legibility and persistence (MC15), accounting, repair log, `not_reexamined` (MC16, MC17), the containment guard on removals (MC10), stats, summary, last-run, dashboard card, Desktop summary line (MC37), README/README.txt | MA-344, 345, 346 (b, d), 347 (repair half) | **friction review** (upgrade walk: local home user, Desktop user, admin, custodian) + **adversarial pass** (tampered manifest, old-file read, same-envelope forgery) |
+| **S6** | Q2: MA-343 tier U on an Outlook-written fixture (MC32); Q2 ruled yes for a synthetic fixture, which must be committed first [ruling Q2] | PST full embedded extraction (P9), block-id visited set, budgets, go-pst error mapping (MC31) | MA-343 | **adversarial pass** (crafted PST) |
+| **S7** | Q1, OR3 (ruled [ruling Q1, J6]), a delta re-review of §4.10 rev 2 (lenses 3, 6, 7, 8) (MC43; RR-4, on the text that writes J6 in); S2–S6 in the same release or earlier, **S6 included, unconditionally**; recapture-integrity S4 and S5 (waiting on ESC-2 and ESC-3) | Repair: the predicate (incl. full mode MC9, revocation MC18, fallback MC19), V1C (MC1, MC3–MC6), restamp (MC12), write discipline (MC13), timeline stamping (MC2), withheld legibility and persistence (MC15), accounting, repair log, `not_reexamined` (MC16, MC17), the containment guard on removals (MC10), stats, summary, last-run, dashboard card, Desktop summary line (MC37), README/README.txt | MA-344, 345, 346 (b, d), 347 (repair half) | **friction review** (upgrade walk: local home user, Desktop user, admin, custodian) + **adversarial pass** (tampered manifest, old-file read, same-envelope forgery) |
 
 Each slice ships prove-fail → prove-pass per row (§9).
 - S5 may ship before S2–S4: it needs only S1, now that it carries its own sinks
   (MC30).
 - S2–S6 ship before S7, or in the same release, so users see one repair burst
-  (MC43).
+  (MC43). **[ruling]** That includes S6: while Q2's fixture does not exist, S7 waits.
+  Shipping S7 before S6 relaxes MC43, which is the owner's decision
+  (`docs/owner-rulings-2026-10-09.md` §4).
 - If the owner rules repair opt-in (Q1), S7 adds the flag to the shared flag
   builders (X4/X5, MA-72) and to the help walk (MA-39). It also names the GUI
   and Desktop control, the settings key and the job-descriptor field that carry
-  the flag (MC37).
+  the flag (MC37). **[ruling Q1]** Repair is automatic, so no flag is added.
+- **[ruling ESC-6]** A Desktop repair action (Q6 / OR1) would be a further slice, MF-SD,
+  after S7 with its own friction review; it is escalated, and does not start until the
+  owner answers.
 
 ## 11. Open questions (OWNER RULING)
 
 The review (`docs/review-mime-fidelity-predesign.md`) did not impose these. Each
-blocks the slice named in §10.
+blocks the slice named in §10. **All are answered** in `docs/owner-rulings-2026-10-09.md`
+§4 (and the joint rulings of its §1): each keeps its question for context, followed by its
+ruling.
 
 - **Q1 — Automatic or opt-in repair?** Should a record damaged by an earlier
   version be re-captured automatically on the next ordinary run (proposed; it
@@ -1685,18 +1785,27 @@ blocks the slice named in §10.
   damaged pages stay damaged until then? Automatic costs a longer first run per
   scheme, and rewritten files (fresh fixity, listed in the repair log) for the
   repaired subset. Opt-in is also the canary lever of MC18. **Blocks S7.**
+  **RULED (delegated-recommended): automatic,** on the next ordinary run;
+  `state.RevokedSchemes` is the rollback lever.
 - **Q2 — PST fixture provenance.** May we commit a PST containing method-5
   attached items, generated on a Windows Outlook host (or a third-party sample
   under a compatible licence)? Without it, MA-343 stays tier L, lab-pending, and
   **S6 does not merge** (MC32). S5's gap is the shipped floor.
+  **RULED (delegated-judgement): yes, if it is synthetic** — generated on a Windows Outlook
+  host from made-up messages, or a third-party sample whose licence is recorded in
+  THIRD-PARTY-NOTICES. Until it exists, MA-343 stays L and pending, and S6 does not merge.
 - **Q3 — Repair from preserved `.eml`.** Should a follow-up design add a
   source-free repair that re-parses each record's preserved `.eml`? It is the
   only cheap repair for with-Message-ID Graph mail and for archives whose source
   is gone, and the only repair for a defect of the mojibake class on such records
   (MC18). Or is `-mode full` enough? Does not block.
+  **RULED (delegated-judgement): yes,** as its own design with its own 10-lens review; it
+  does not block S0–S7.
 - **Q4 — uuencode.** Keep `x-uuencode` parts still-encoded with a terminal gap
   (proposed), or add a small bounded uudecoder now (legacy Usenet/mail archives)?
   Does not block.
+  **RULED (delegated-recommended): keep them still-encoded,** with a terminal
+  `undecoded-part` gap and the bytes kept (R26); a bounded decoder can be a later slice.
 - **Q5 — Identity freeze as house rule (restated, part of OR2).** Do you confirm
   P1 as the rule for every future parser change? Identity would always come from
   the frozen v1 replay, so v1's identity quirks persist unless a dedicated,
@@ -1706,6 +1815,10 @@ blocks the slice named in §10.
     migration (MC7);
   - **this design:** its drift policy (MC28) is the only way the frozen surface
     changes.
+  **RULED (delegated-judgement): confirmed.** Identity comes from the frozen v1 replay for
+  every future parser change, and the frozen surface changes only through §5's drift
+  policy, which takes any MA-330 move to the owner. Fault-isolation's stub change is an
+  edit to `stubIdentityTerms`, never to `parsev1.go` (J5, J8).
 - **Q6 / OR1 — Repair route for with-Message-ID Graph mail, especially on
   MailArchive Desktop.** Desktop captures incrementally only and cannot run full.
   Choose one:
@@ -1718,6 +1831,12 @@ blocks the slice named in §10.
 
   Does not block S0–S7. A ruling for (a) adds a Desktop slice with its own
   friction review.
+  **ESCALATED (ESC-6).** (a) amends R2's "`full` re-exports all" for that walk, (b) cannot
+  reach a default Desktop archive, and (c) accepts the gap, so every option needs the
+  owner. Recommended answer: (a); if the owner would rather leave R2 untouched, MF-SD can
+  instead be designed as a new, separately named repair walk, which is a pure addition.
+  Interim: MC16/MC37's disclosure stands, the gap stays open, not accepted, and MF-SD does
+  not start.
 - **OR2 — Joint ruling with fault-isolation.** Decide:
   - one gap primitive (proposed: its `ReadGaps` + `GapClass`, with this design's
     kinds registered as informational);
@@ -1727,6 +1846,10 @@ blocks the slice named in §10.
   - the landing order.
 
   Both design documents are amended to match. **Blocks S1.**
+  **RULED = J5:** the proposed gap primitive; fault-isolation owns `stubIdentityTerms` (S1
+  creates it with today's constant stub) and the `Counts()`/status rewrite (its S1a); the
+  `unparsed` label lives outside `parsev1.go`; the order is fault-isolation S1a → S0 → S1 →
+  fault-isolation S2b. The F33 identity fold is escalated (ESC-1, J8).
 - **OR3 — Joint ruling with recapture-integrity.** Decide:
   - the repair's commit mode: write-beside with `-vN` naming (MA-346 then reads
     "same stem or its -vN successor"), or an explicit in-place exemption for
@@ -1737,6 +1860,12 @@ blocks the slice named in §10.
   - the manifest v7 interplay with rollback and alternation (§6).
 
   **Blocks S7, and F46's write-path slices.**
+  **RULED (delegated-judgement) = J6:** repair commits through recapture-integrity's
+  verdict and W1–W5, with no in-place exemption; it takes only UNCHANGED, COMMIT or KEEP;
+  V1C's correspondence is the T1-equivalent inventory; file names are what that commit
+  gives (ESC-3), so MA-346 reads "the stem re-capture's commit gives it"; "never to less"
+  is R28, which R27 cites; the v7 clause is moot (J2). R27 lands without a file promise
+  for repairs (§9).
 - **OR4 — Pin the Go toolchain?** The review's rescue proposed `toolchain` in
   go.mod and `go-version-file` with `check-latest` off. That would amend the
   deliberate CI/release policy (`ci.yml:26-33`: track the current patch for
@@ -1746,11 +1875,17 @@ blocks the slice named in §10.
     and the unicode tables move with the toolchain).
 
   **Blocks S1.**
+  **RULED (delegated-judgement): keep floating;** the CI policy is unchanged. P1's toolchain
+  residual stays an open condition, not accepted (accepting it is not delegable). MA-330 and
+  MA-331 run on every CI build, and S1 is asked to vendor `encoding/base64` into `parsev1`
+  and have MA-331 assert `unicode.Version`, so the residual becomes a tripwire.
 - **OR5 — Catalog id allocation.** R22 and S42 are claimed, with different
   meanings, by this design, fault-isolation, recapture-integrity,
   local-confidentiality and extraction-workspace. The operator allocates R and S
   ids across all five before any of their S0 slices lands. Until then this
   document uses R-PARSE, R-FREEZE and S-PARSE. **Blocks S0.**
+  **RULED = J1:** R26 (R-PARSE), R27 (R-FREEZE) and S49 (S-PARSE); the rows keep
+  MA-330..349, with MA-343 entering as tier L.
 
 ## 12. Honesty of claims (summary)
 
@@ -1761,7 +1896,7 @@ blocks the slice named in §10.
   - the replay's dependencies are vendored (MC27);
   - MA-331 pins the frozen files and `go.sum` lines;
   - the residual is `x/text`, `encoding/base64`, the unicode tables and the
-    floating toolchain (OR4);
+    floating toolchain (OR4; an open condition, not accepted, [ruling OR4]);
   - drift is handled by §5's drift policy, never silently.
 - **P2** is proven for the corpus and the listed triggers only. **P7**'s
   Windows-1252 guess is a guess for unlabelled bytes, and the page says so where it
@@ -1776,8 +1911,9 @@ blocks the slice named in §10.
   an on-demand source is fillable (MC20).
 - **P11** is conditional on the source still holding the message. Graph
   with-Message-ID mail is repaired only by `-mode full` (or Q3), and **never on
-  MailArchive Desktop** (OR1). Its "never to less" is the content-level V1C check
-  (MC3), not a count.
+  MailArchive Desktop** (OR1; escalated, ESC-6 [ruling ESC-6]). Its "never to less" is the
+  content-level V1C check (MC3), not a count, together with recapture-integrity's R28,
+  through whose commit a repair writes [ruling J6].
 - **P12**: no duplicates, unconditionally. "Lose nothing" holds only while the
   source still holds the message when this build next runs (MC39).
 - **P13**: "never worse than v1", panic or not (MC4). A stub appears only where

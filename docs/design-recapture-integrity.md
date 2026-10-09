@@ -1,6 +1,7 @@
 # Design — re-capture integrity: a re-export never makes the archive worse, and never deletes before it is durable
 
-**Revision:** 2 (2026-10-09). **BUILD STATUS:** approved with conditions, not built.
+**Revision:** 2 (2026-10-09). **BUILD STATUS:** approved with conditions, not built; owner
+rulings folded (`docs/owner-rulings-2026-10-09.md`).
 The 10-lens pre-code review is filed as `docs/review-recapture-integrity-predesign.md`:
 GO_WITH_CONDITIONS, 97 lens findings (91 confirmed, 6 refuted) plus two from the rescue
 pass (H1, H2). Conditions **RC1..RC38** are folded into this revision, and the build must
@@ -9,10 +10,15 @@ this document.
 
 Two gates stand before code:
 - **RC38:** lenses 3, 6 and 7 re-run on this revision, as an addendum to the review, before
-  any S4 or S5 code. RC1, RC2, RC5, RC9 and RC12 change the verdict, write and deletion
-  paths, which is a material change.
+  any S4 or S5 code (RR-1). RC1, RC2, RC5, RC9 and RC12 change the verdict, write and
+  deletion paths, which is a material change.
 - **Owner rulings OR1..OR7** (§11: Q1, Q2, Q5, Q7, Q8 re-premised; Q10 and Q11 new) each
-  block the slice they name.
+  block the slice they name. **[ruling]** All are answered in
+  `docs/owner-rulings-2026-10-09.md` §5 and the joint rulings of its §1, and each change
+  they make here is marked `[ruling <id>]`. Two are escalated to the owner: Q1 / OR1 as
+  **ESC-3** and Q5 / OR5's amended guards as **ESC-2**. Until the owner answers, S1 lands
+  only the additions and the confirmed-open encoders, S2 (without its two held cases) and
+  S3 land, and S4..S7 do not start.
 
 Key conditions:
 - **RC1** every non-writing outcome stamps the observation (W4 runs W5's record switch).
@@ -20,18 +26,17 @@ Key conditions:
   blocker).
 - **RC3** MERGE needs an improvement, and an absent item is never carried.
 - **RC4** items match by label and content, never by index.
-- **RC5** UNCHANGED is decided by content, not page bytes (pending OR1).
+- **RC5** UNCHANGED is decided by content, not page bytes (pending OR1, escalated as ESC-3
+  [ruling ESC-3]).
 - **RC8** writing beside never consumes the space the manifest save needs.
 - **RC9** the earlier-unit gate distinguishes absent from refused and unreadable.
 - **RC12** deletion is bound to content and to the superseding copy.
 - **RC28 / RC29** the sibling in-place writers and the manifest version are joint rulings.
 
-**Ids are provisional (RC30).** R22, S42 and S43 below are proposals for the OPERATOR to
-accept into `docs/scenario-catalog.md`. R22 and S42 collide with ids proposed by
-`design-fault-isolation.md`, `design-mime-fidelity.md`, `design-extraction-workspace.md`
-and `design-local-confidentiality.md` (S43 with fault-isolation). Here they are provisional
-labels: no covers marker may cite them. Every Covers cell in §9 is rewritten to the
-operator-allocated ids (OR4, Q11) before S1.
+**Ids are allocated [ruling Q11 = J1].** Revision 2's provisional R22, S42 and S43 are now
+**R28**, **S50** and **S51**, which this document uses throughout; the rows keep
+MA-350..364. They are proposals for the OPERATOR to accept into `docs/scenario-catalog.md`,
+landing with S1's catalog-first PR.
 
 **The owner's decision relayed on 2026-10-09** (the extraction workspace: select the
 source, choose the export destination, copy; no drag-and-drop) is honoured. No condition
@@ -42,7 +47,7 @@ adds a UI control, a drag-and-drop path or an interaction surface (NG7, RC37).
 | Condition | Lands in |
 |---|---|
 | RC1 stamping on non-writing outcomes | P9, §4.6, §4.7 W4, §5.1, §9 MA-356/362 |
-| RC2 HEAL | §2.1 R5/R22, P12 (new), §4.1, §4.3, §4.7 W4, §4.10, §4.11 R-H, §5.4, §6, §9 MA-362 |
+| RC2 HEAL | §2.1 R5/R28, P12 (new), §4.1, §4.3, §4.7 W4, §4.10, §4.11 R-H, §5.4, §6, §9 MA-362 |
 | RC3 MERGE gate, absent never carried | P3, §4.3 verdict, §4.4, §9 MA-350/356 |
 | RC4 label + content matching, parse scheme | §4.1, §4.2, §4.3, §4.13, §9 MA-355 |
 | RC5 content-based UNCHANGED | §2.1 R2, P8, §4.2, §4.3, §4.7 W4, §11 Q1, §9 MA-362 |
@@ -59,7 +64,7 @@ adds a UI control, a drag-and-drop path or an interaction surface (NG7, RC37).
 | RC16 W3 failure path | §4.7 W3, §5.1, §9 MA-359 |
 | RC17 legacy adopts | NG4, §4.3, §4.6, §4.7 W3, §4.11 R-F, §5.4, §6, §9 MA-356 |
 | RC18 redaction reach, loud stale-row lines | P7, §4.9, §4.13, §7.5, §9 MA-361 |
-| RC19 R22 restated | §2.1 |
+| RC19 R28 restated | §2.1 |
 | RC20 live-path and maintenance housekeeping | §4.8, §4.12, §5.1, §9 MA-358 |
 | RC21 migrations, G3 fail-closed | §4.2, §4.8, §9 MA-364 |
 | RC22 merge headers, bounds, `os.Root` | §4.4, §4.8 G4, §8, §9 MA-353/354 |
@@ -276,9 +281,12 @@ record. For Graph mail already gone from the mailbox, the loss is permanent. Fin
 ### 2.1 Proposed invariant and amendments (catalog edits land in slice S1)
 
 All ids here are provisional (RC30, header): the operator allocates them (OR4, Q11) before
-S1, and the amended texts need the owner's acceptance (OR5, Q5).
+S1, and the amended texts need the owner's acceptance (OR5, Q5). **[ruling J1, J7, ESC-2]**
+The ids are allocated (R28, S50, S51). The new R28, S50 and S51 and the additions marked
+below land with their slice; the amendments to existing text are escalated to the owner
+(ESC-2) and land only if the owner accepts them. Each item is marked.
 
-- **R22 (new, provisional id) — Re-capture is monotone** (restated by RC19). A re-capture
+- **R28 (new, allocated [ruling J1]) — Re-capture is monotone** (restated by RC19). A re-capture
   of an already-archived message never makes an item the archive holds — the body, an
   attachment, an inline image, the preserved original — empty, unreadable or absent. It
   deletes an earlier file only after no persisted manifest record or index row references
@@ -296,44 +304,59 @@ S1, and the amended texts need the owner's acceptance (OR5, Q5).
   carried forward (MERGE). Either way it is recorded on the record as *kept* and shown by
   the run summary, the report, `status` and `verify`. The scope is re-captures through the
   shared exporter commit; the sibling writers of §4.13 are governed there (RC28).
+  **[ruling J7]** New text: lands in S1. **[ruling Q10/OR3 = J6]** The mime-fidelity repair
+  is such a re-capture, so R28 governs it too.
 - **R1 (amend, add):** "…an item kept from an earlier capture that the source no longer
   delivers is not a gap: it is recorded as kept, never as fillable or terminal."
+  **[ruling J7]** An added sentence: lands with S5.
 - **R2 (amend; one joint text with the mime-fidelity design, RC28):** "`full` re-examines
   and re-captures all. A re-capture whose content is unchanged rewrites nothing (RC5), one
-  that would degrade is kept (R22), and one that finds an archived file missing or damaged
-  restores it from identical bytes (RC2)."
+  that would degrade is kept (R28), and one that finds an archived file missing or damaged
+  restores it from identical bytes (RC2)." **[ruling ESC-2]** It changes R2's existing
+  text, so it is escalated; until the owner answers, R2 stays as it is.
 - **R5 (amend, add; scoped by RC28):** "…a re-capture through the shared write path that
   changes a message's bytes writes the new files beside the old ones. At every instant, the
   persisted manifest names a complete set of files that match their recorded fixity, except
   that a HEAL (RC2) writes the recorded bytes in place. Superseded files are removed only
   after the manifest that no longer references them is durable, and an interrupted removal
   is finished by the next run or by `reindex`." The fault-isolation stub re-render is a
-  stated exception (§4.13, OR3).
+  stated exception (§4.13, OR3). **[ruling Q10/OR3]** That exception is dropped:
+  fault-isolation revision 2 supersedes metadata only, writing no file (its FC6(4), FC7),
+  so there is no stub re-render to except. **[ruling J7, ESC-3]** The write-beside
+  sentence lands with S4 only if the owner answers ESC-3 with (a); under (b) or (c) the
+  new files are not written beside the old ones, and the sentence is rewritten to match.
 - **R13 (amend):** "…no exported message file is deleted, except (a) a pruned record's
   siblings and AlsoFiles when the record's own file is **absent** (ENOENT; a file that
   cannot be inspected is never treated as missing, RC10), (b) superseded earlier copies
   the manifest lists, and (c) on a redaction prune, the unowned `-vN` family of the redacted
   stem (RC18). An index row naming an earlier file of a record whose current file is intact
   is repaired, never pruned, and a row path is never deleted directly (RC10). Nothing the
-  manifest's current record names is deleted while it exists."
+  manifest's current record names is deleted while it exists." **[ruling ESC-2]** The new
+  deletion cases (b) and (c) are escalated, and so is N2 adoption (§4.9, RC36), which keeps
+  a record whose recorded file is missing where R13 says it is pruned. Until the owner
+  answers, R13 stays as it is; S2 lands only the parts that restore it as written (the
+  absent-only rule, archivefs-gated deletion, the row repair).
 - **S24 (amend response):** "…a renamed message's old html/zip/eml are removed once the
-  manifest naming the new file is durable."
+  manifest naming the new file is durable." **[ruling ESC-2]** Escalated.
 - **S39 / MA-201 (amend only if OR2 rules for a bump):** "Load refuses a stored version
-  above **7**". The default is no bump (RC29), and then S39 is unchanged.
-- **New scenarios (provisional ids):**
-  - **S42**: an archived message is re-captured while its source holds less;
-  - **S43**: a re-capture is interrupted, or `reindex` meets a stale row.
+  above **7**". The default is no bump (RC29), and then S39 is unchanged. **[ruling Q2/OR2 =
+  J2]** No bump: S39 and MA-201 are unchanged.
+- **New scenarios (allocated ids [ruling J1]; they land in S1):**
+  - **S50**: an archived message is re-captured while its source holds less;
+  - **S51**: a re-capture is interrupted, or `reindex` meets a stale row.
 
 ### 2.2 Properties
 
 Every claim is labelled. **Proven** means proven by the named MA rows *once built*. Nothing
 is built yet.
 
-- **P1 — Never degrade (monotone re-capture).** Serves R22 (new) and R1. On every
+- **P1 — Never degrade (monotone re-capture).** Serves R28 (new) and R1. On every
   re-capture path through the shared exporter commit (full, fill retry, legacy
   re-examination; local and live) — *conditional* on §4.13's rule for the mime-fidelity
   repair and the fault-isolation stub re-render, which are governed there until OR3
-  (RC28) — consider each item the archive holds: the body; each attachment or inline image,
+  (RC28); **[ruling Q10/OR3 = J6]** OR3 puts the mime-fidelity repair on this path (it
+  takes only UNCHANGED, COMMIT or KEEP, never MERGE), and the fault-isolation stub re-render
+  no longer exists — consider each item the archive holds: the body; each attachment or inline image,
   identified by label and occurrence, or by content (RC4); the preserved original. If the
   new capture's counterpart is empty, unreadable or absent, the earlier bytes survive.
   Either the earlier files are kept and the capture is not committed (**KEEP**), or the
@@ -353,7 +376,7 @@ is built yet.
   with class `kept`, and `status` and `verify` count it. **Proven** (MA-350, 363).
   *Conditional* for presumed keeps (T3, UNVERIFIED, refused or unreadable units): the
   archive does not know the source holds less, and the wording says so (RC26 (a)).
-- **P3 — Merge carries kept attachments forward.** Serves R22 and R1. A re-capture may
+- **P3 — Merge carries kept attachments forward.** Serves R28 and R1. A re-capture may
   improve one item while regressing only zip-held attachments. The new zip then holds the
   improved items plus the earlier bytes of the regressed ones, so the improvement is not
   starved.
@@ -365,7 +388,7 @@ is built yet.
     regress. Otherwise P1's KEEP applies and the improvement waits (§3 NG8). **Proven**
     under that condition (MA-353, 354).
 - **P4 — The preserved original is never degraded or dropped by a re-capture.** Serves
-  R20 and R22. Re-capturing without `-raw` keeps the earlier `.eml` and its `Fixity.EML`,
+  R20 and R28. Re-capturing without `-raw` keeps the earlier `.eml` and its `Fixity.EML`,
   and the page still links it (RC6). A re-capture that keeps or carries any item never
   writes the new, degraded raw bytes. When a message moves, its `.eml` moves with it. A
   carried pre-fixity `.eml` is digested from the bytes kept or copied, labelled as a
@@ -377,7 +400,9 @@ is built yet.
   the shared write path that changes bytes, the persisted manifest names a complete set of
   files that exist and match its recorded fixity. New files are written beside the old
   ones under a name no file occupies, and never over a recorded file (*conditional* on
-  §4.13's rule for the sibling writers, RC28).
+  §4.13's rule for the sibling writers, RC28; **[ruling J6]** the mime-fidelity repair now
+  writes through this path; **[ruling ESC-3]** how a changed re-capture names its files is
+  escalated, so S4 waits).
   - **Proven** (MA-358, 359) for process death (namespace plus order), *conditional* on the
     kill-point harness of §9 (RC31), which snapshots the archive at Cn before any defer or
     return can commit.
@@ -449,7 +474,7 @@ is built yet.
   - **Aspirational** until the friction review: that an inheritor understands `-vN` names
     and `source-lost` rows from README.txt alone (§7.5).
 - **P12 — A full re-export heals what it can reproduce exactly** (new, RC2). Serves R5 and
-  R22. When a Full-mode re-capture's staged unit equals the recorded fixity while the
+  R28. When a Full-mode re-capture's staged unit equals the recorded fixity while the
   archived unit is absent or damaged, the staged unit is renamed into place, and nothing the
   on-disk copy holds is lost: a damaged unit that holds something the staged one lacks gives
   KEEP. The tool's RED remedy ("re-export them from the source") therefore keeps working.
@@ -471,17 +496,20 @@ is built yet.
 - **NG3 — Same-name attachments whose size changed are not judged.** When both the earlier
   and the new bytes are non-empty but differ in length, the capture is not a regression.
   The size change is counted (`changed`) and logged. A parser fix can legitimately change
-  bytes (re-encoding fixes, embedded-message extraction). See Q3.
+  bytes (re-encoding fixes, embedded-message extraction). See Q3. **[ruling Q3]** Commit,
+  counted as `changed`; empty, absent and `.partial` items are still caught.
 - **NG4 — Legacy-scheme adopts are exempt from KEEP** (§4.6): their identity is not
   content-verified, and a KEEP could drop a distinct Message-ID reuse (an R1 loss). A
   legacy record whose staged bytes equal its recorded fixity is adopted in place with no
   write (RC17), since identical bytes cannot be a distinct reuse. Otherwise the capture
   commits under a fresh name and the earlier file is kept on disk, now **owned** through the
   new record's AlsoFiles, counted and reported (RC17). The one-time growth this causes is
-  stated in §6, and Q7 (OR6) decides whether to keep it.
+  stated in §6, and Q7 (OR6) decides whether to keep it. **[ruling Q7]** It is kept: DEMOTE,
+  because KEEP would silently leave a distinct Message-ID reuse uncaptured (R1).
 - **NG5 — Orphans left by a crash before the checkpoint are not removed automatically.**
   The new files of a re-capture killed before its record was saved stay on disk. They are
-  never deleted by a sweep, because they may hold the newest content (Q8, OR7). RC8 makes
+  never deleted by a sweep, because they may hold the newest content (Q8, OR7; **[ruling
+  Q8]**: never removed automatically outside redaction, and listed as `earlier-copy`). RC8 makes
   them rare and short-lived: the next re-capture of the same message adopts a candidate
   trio whose digests equal its staged bytes. `verify` names any that remain as kind
   `earlier-copy`, with the current path and the cause (RC15), never as `unexpected`.
@@ -498,7 +526,10 @@ is built yet.
 - **NG8 — Pre-v7 records do not always merge.** Merge needs a known earlier entry name. A
   tier-T2 record with an ambiguous name, or any tier-T3 record, whose re-capture is mixed
   (one item improved, another regressed) is KEPT whole, and the improvement waits until a
-  no-worse capture is possible (Q6).
+  no-worse capture is possible (Q6). **[ruling Q6]** A one-time inventory backfill, slice
+  S7 after S5, reads each earlier zip's central directory into `Held` where the zip matches
+  its recorded `Fixity.Zip`, never re-baselining fixity. Until it lands the starvation is
+  an open gap, not accepted.
 - **NG9 — Fault isolation of a failed message is out of scope.** A write failure here still
   returns an error from `Export`. Whether the store walk continues is g2's N1. This design
   only guarantees that the earlier files and record are intact when that happens.
@@ -558,10 +589,11 @@ is built yet.
   - **DEMOTE**: a legacy-adopt COMMIT that regressed, with the earlier file left on disk
     and owned through the new record's AlsoFiles (RC17).
 
-### 4.2 Data and schema — additive fields (version per OR2, RC29)
+### 4.2 Data and schema — additive fields (version per OR2, RC29; [ruling Q2/OR2 = J2]: version 6)
 
 *Terms:* in this document a **v7 record** is a record captured by this build, so it
-carries `Held`, whatever manifest version OR2 settles on. A **pre-v7 record** has no
+carries `Held`, whatever manifest version OR2 settles on (**[ruling J2]**: the manifest
+stays version 6, so "v7" names only the record's generation). A **pre-v7 record** has no
 `Held`.
 
 New `Record` fields, all additive and `omitempty`:
@@ -602,7 +634,8 @@ New top-level `Manifest` fields:
 
 ```go
 Superseded []SupersededEntry `json:"superseded,omitempty"` // earlier copies awaiting deletion (P6); the user-facing
-                                                           // vocabulary is ruled by OR3 (RC28)
+                                                           // vocabulary is ruled by OR3 (RC28): "pending removal",
+                                                           // codes removal_pending_* [ruling Q10(3)]
 PagesStale bool              `json:"pages_stale,omitempty"` // folder pages may link a deleted copy (§4.8)
 
 type SupersededEntry struct {
@@ -637,6 +670,9 @@ type SupersededEntry struct {
   every field above is additive, so an older binary drops them in the safe direction (§6).
   If OR2 rules for a bump, it ships expand/contract: release N's `Load` accepts 7 while its
   `Save` still writes 6, and release N+1, bundling S4 and S5, writes 7 (FC1, MA-132).
+  **[ruling Q2/OR2 = J2]** No bump, for every in-flight design: `Load`'s ceiling stays 6,
+  and MA-201 and S39 are unchanged. A future change that cannot be additive needs a new
+  owner ruling, and would ship with this expand/contract.
 
 **Growth bounds (durability lens):**
 - **Inventory:** re-derived from a real fixture manifest before S5 (RC35). The revision 1
@@ -812,7 +848,10 @@ preserved original (§7.5).
 - **The mime-fidelity repair** (design-mime-fidelity.md P11, an incremental re-capture when
   the parse scheme improved) is a re-capture path too. Under §4.13's rule it calls this
   comparison, with its own count precondition kept as an extra gate, and writes through
-  W1–W5, unless OR3 declares it an exception (RC28).
+  W1–W5, unless OR3 declares it an exception (RC28). **[ruling Q10/OR3 = J6]** No exception:
+  it writes through W1–W5, takes only UNCHANGED, COMMIT or KEEP (never MERGE), and hands
+  this comparator V1C's per-entry v1↔fidelity correspondence as its T1-equivalent
+  inventory.
 - **First capture:** unchanged (NG6).
 - **Stamping of every non-writing outcome (P9, RC1)** on the live path:
   - **UNCHANGED** runs W5's record switch at `T = prev.Path` without file writes (§4.7 W4),
@@ -920,7 +959,8 @@ preserved original (§7.5).
     rendered for `prev.Path`'s own stem, all equal the recorded fixity. When the zip digest
     already differs, the extra render is skipped. The page keeps its capture-time state:
     Unread, Importance, Sensitivity, Categories and the transport headers are not refreshed
-    (S35/S36; design-categories §5), pending OR1.
+    (S35/S36; design-categories §5), pending OR1 (escalated as ESC-3 [ruling ESC-3]; this
+    is its option (a)).
   - **The earlier units are inspected** through the gate before the temps are discarded
     (RC2). Absent units, size mismatches against `Fixity` and `Held` binding mismatches are
     always checked; in Full mode each earlier unit is also hashed once, like `verify`.
@@ -1052,6 +1092,16 @@ on a non-ENOENT stat error (reindex.go:111-118).
 | missing | `rec.Path == row path` | — | prune: delete `rec.Path`'s siblings and AlsoFiles, the row and the record (today's redaction), plus the unowned `-vN` family of the redacted stem (RC18) |
 | missing | `rec.Path ≠ row path` | **present** | **repair**: re-point the row to `rec.Path`; **delete nothing**; keep the record (the F48 fix). Print both paths and the redaction remedy (cases A/C, RC18) |
 | missing | `rec.Path ≠ row path` | missing | **adopt** as in row 3 if a matching candidate exists (RC36); otherwise prune: delete the siblings of `rec.Path` plus AlsoFiles and the unowned `-vN` family; **enqueue** the row path as `SupersededEntry{Path: row path, Key}` instead of deleting it directly (RC10); remove the row and the record (redaction of a moved message) |
+
+**[ruling ESC-2] What S2 builds before the owner answers.** Three parts of this table add to
+or except from R13's existing text, so they wait for ESC-2: the **adoption** cells (RC36,
+which keep a record whose recorded file is missing, where R13 prunes it), the **unowned
+`-vN` family** on redaction (deletion case (c)), and the **enqueue** of a row path for the
+sweep (which feeds deletion case (b)). Until then S2 prunes such a record as today (deleting
+`rec.Path`'s siblings and AlsoFiles, which today's redaction already does, MA-227), leaves
+the row path alone, and never deletes it. The repair rows (the F48 fix) and the absent-only,
+archivefs-gated deletion land in S2: they restore R13 as written. MA-361's `-vN` and
+N2-victim twins are skip encoders citing MA-361 and R13 until the slice after ESC-2.
 
 - **Deletion rules (RC10).** `reindex` deletes directly only manifest-named paths:
   `rec.Path`'s siblings and AlsoFiles, each through archivefs (no symlinked component,
@@ -1206,9 +1256,11 @@ Counts are filled in. Wording depends on the reason and the evidence (RC26 (a)):
 - `Earlier files kept beside re-captured records archived before v5: 120 — see verify.`
   (info, RC17);
 - a **WARN** per pending-removal cause when entries are still pending after a *completed*
-  run (Q4), each with its own reason code and the R-E remedy, naming the first path: codes
+  run (Q4; **[ruling Q4]**: only after a completed run, with kept content GREEN plus an info
+  line), each with its own reason code and the R-E remedy, naming the first path: codes
   `removal_pending_index`, `removal_pending_noindex`, `removal_pending_in_use`,
-  `removal_pending_permission` (RC15; the vocabulary follows OR3);
+  `removal_pending_permission` (RC15; the vocabulary follows OR3: "pending removal",
+  [ruling Q10(3)]);
 - a **WARN** `merge_source_mismatch` when the last run found an archived zip or eml failing
   its recorded checksum: `the last run found <N> archived file(s) failing their recorded
   checksum while re-capturing — run mailarchive verify -out "<out>"` (RC26 (d));
@@ -1223,7 +1275,9 @@ Counts are filled in. Wording depends on the reason and the evidence (RC26 (a)):
 - an unowned file whose stem is in the `-vN` family of a record's Path (same directory, the
   base stem with or without `-v2` … `-v99`) is kind **`earlier-copy`**: `<path> is an
   earlier copy of a message whose current copy is <current path>, left by an interrupted
-  re-capture.` The remedy follows OR7 (Q8) (RC15);
+  re-capture.` The remedy follows OR7 (Q8) (RC15); **[ruling Q8]** it is never removed
+  automatically outside redaction, so the remedy compares the two copies and names
+  redaction (delete it, then `reindex`) for one the user does not want;
 - a record's `AlsoFiles` are counted as owned, never `unexpected` (RC17);
 - a note for kept records: `3 records hold content their source no longer delivered (rows
   "source-lost" in attachments-report.tsv) — keep this archive backed up.`;
@@ -1243,7 +1297,8 @@ the archive worse", plus these sentences:
   message with changed content was written beside the earlier one and the earlier copy
   removed; the copy linked from the folder page is the current one."*
 - *"A message's page shows its read, flagged and category state as it was when the message
-  was first captured"* (only if OR1 rules for option (a), RC5).
+  was first captured"* (only if OR1 rules for option (a), RC5; OR1 is escalated as ESC-3
+  [ruling ESC-3]).
 - *"Rows of kind source-lost in attachments-report.tsv mark content this archive holds that
   the mail source no longer delivered."*
 - *"A full re-export needs free space for the messages it re-captures, written beside their
@@ -1258,7 +1313,7 @@ are not rewritten)".
 
 | File | Change |
 |---|---|
-| `internal/state/manifest.go` | additive fields (version per OR2, RC29); `Record.Held/Kept/KeptBody/KeptHow/KeptAt/Unverified`; `Manifest.Superseded/PagesStale`; `Supersede` (records the page digest), `SupersededEntries`, `DropSuperseded`, `PathTaken`, `SetPagesStale`; `Held` validation (RC11); key and path migrations map `Superseded` (RC21); `Counts`/`HasIssues`/`RecaptureCounts` |
+| `internal/state/manifest.go` | additive fields (version per OR2, RC29; version 6, [ruling J2]); `Record.Held/Kept/KeptBody/KeptHow/KeptAt/Unverified`; `Manifest.Superseded/PagesStale`; `Supersede` (records the page digest), `SupersededEntries`, `DropSuperseded`, `PathTaken`, `SetPagesStale`; `Held` validation (RC11); key and path migrations map `Superseded` (RC21); `Counts`/`HasIssues`/`RecaptureCounts` |
 | `internal/state/lastrun.go` | additive counts, including `Healed` and `MergeSourceMismatch` |
 | `internal/export/recapture.go` (new) | inventory, evidence tiers T1–T3 with the Held binding (RC11), label + content matching (RC4), comparison, verdict, HEAL decision (RC2), merge-zip staging with fresh headers and caps (RC22) |
 | `internal/export/exporter.go` | `Export` restructured as render → stage → verdict → keep/unchanged/heal/commit/merge → rename → record switch; immediate deletes removed; W1 target selection in `stemFor` with the `-v99` cap, adoption and the space precheck (RC8, RC14); W4 record switch (RC1); KEEP stamping; legacy adopts (RC17); two-phase probe (RC24); `RawName` after the verdict (RC6) |
@@ -1278,7 +1333,7 @@ are not rewritten)".
 | `internal/health/health.go` | info lines, per-cause pending-removal WARNs, `merge_source_mismatch` WARN |
 | `cmd/mailarchive/main.go`, `cmd/mailarchive-gui/main.go`, `internal/desktop/*` | print `RecaptureSummary` (one truth, X10); GUI Full label reworded |
 | `internal/app/readme.go`, `README.md` | text |
-| `docs/scenario-catalog.md`, `docs/ux-contract.md` | R22, amendments, S42/S43 (ids per OR4), MA-350..364; X6 row names the new lines (S1) |
+| `docs/scenario-catalog.md`, `docs/ux-contract.md` | R28, S50/S51 (allocated ids, [ruling J1]), MA-350..364; X6 row names the new lines (S1); the amendments only once the owner answers ESC-2 [ruling ESC-2] |
 | `docs/design-incremental-completeness.md` | B2 annotated "superseded by design-recapture-integrity §4.3" |
 
 **No new dependency.** `archive/zip` raw copy and `os.Root` are in the standard library;
@@ -1308,7 +1363,9 @@ change**: `PathForKey` uses the existing `UNIQUE(key)`.
   copy once its block clears: the prune deletes the index row, so G3 passes on the next
   sweep (RC14). Redaction also reaches DEMOTE-kept files (AlsoFiles) and the unowned `-vN`
   family (RC17, RC18). The redaction procedure is unchanged *for a fresh index row*; during
-  a stale-row window `reindex` prints the extra step (§4.9, RC18).
+  a stale-row window `reindex` prints the extra step (§4.9, RC18). **[ruling ESC-2]** The
+  `-vN` reach is a new R13 deletion case and waits for the owner; the AlsoFiles reach is
+  MA-227's existing guarantee.
 - **g3, the mime-fidelity design (`docs/design-mime-fidelity.md`)** (RC4, RC28):
   - *Frozen fingerprint.* Its P1 computes the fingerprint from a frozen v1-parser replay,
     while the exported attachment list comes from the fidelity parser, so labels, order and
@@ -1322,34 +1379,45 @@ change**: `PathForKey` uses the existing `UNIQUE(key)`.
     W1–W5, recomputing `Held` and clearing `Kept`. Its stable-stem promise and the §1.7
     window that in-place repair accepts are the subject of **OR3 (Q10)**: either the repair
     accepts `-vN` names, or it is a stated P5 exception with the §1.7 residual written next
-    to R5.
-  - *Its R2 clarification and its R22.* One joint R2 text lands in a single S1 (§2.1); the
-    id collision goes to OR4.
+    to R5. **[ruling Q10/OR3 = J6]** The repair accepts the names this design's commit
+    gives (ESC-3 decides them), with no P5 exception. The mime design's "a decoded subject
+    never renames a file" and its rollback claim are amended to match, and its R27 makes
+    no file promise for repairs.
+  - *Its R2 clarification and its new invariants* (revision 2 cited them as its R22; they
+    are now R26 and R27, [ruling J1]). One joint R2 text, escalated together with this
+    design's R2 amendment (ESC-2, [ruling J7]); the id collision is gone.
 - **g2, the fault-isolation design (`docs/design-fault-isolation.md`)** (RC28):
   - *N1:* this design keeps the earlier copy intact on every error path; whether the walk
     continues is N1's call (above).
   - *Its supersede re-render* rewrites a content-free stub page in place (temp + rename) and
     is **an explicit P5 exception**: a kill can leave the stub page `modified` against its
     recorded fixity, which is the §1.7 window, stated next to the amended R5. OR3 confirms
-    it.
+    it. **[ruling Q10/OR3]** It no longer exists: fault-isolation revision 2 supersedes
+    metadata only, writing no file (its FC6(4), FC7), so no P5 exception is needed and the
+    R5 amendment drops it. Fault-isolation's heal-in-place goes through the shared exporter
+    commit.
   - *Vocabulary.* g2 uses "supersede" for that mechanism, next to this design's
     `Superseded` list and verify kind. OR3 decides which design renames; the recommendation
     is that this design's user-facing terms become "pending removal" (`removal_pending`).
-- **The manifest version** (RC29, OR2, Q2): g2, g3 and the local-confidentiality design
+    **[ruling Q10(3)]** Adopted: this design says "pending removal" (`removal_pending`);
+    fault-isolation keeps "superseded" for its metadata-only re-class.
+- **The manifest version** (RC29, OR2, Q2; **[ruling J2]**: no bump, for all of them): g2, g3 and the local-confidentiality design
   (g56) all keep version 6 so that a rollout can be rolled back by swapping the binary. This
   design's default is now the same: **no bump**, with every field additive and §6 stating
   what an older binary does with each. One program-level ruling covers g2, g3, g4, g56 and
   the BodyFallback change; if it rules for a bump, RC29's expand/contract applies to all of
   them.
-- **Catalog ids** (RC30, OR4): R22 is also proposed by g2, g3, g56 and the extraction
-  workspace, S42 by g2, g56 and the workspace, and S43 by g2. Every id here is provisional
-  until the operator allocates them.
+- **Catalog ids** (RC30, OR4) **[ruling Q11 = J1]:** allocated once across the five
+  designs: this design's R28, S50 and S51; fault-isolation's R25 and S46–S48;
+  mime-fidelity's R26, R27 and S49; local-confidentiality's R22–R24 and S42–S45; the
+  workspace's R29 and S52.
 - **The concurrent BodyFallback change** (Record.BodyFallback, an additive v6 field): body
-  presence ignores the fallback (NG2). Its version stance is part of OR2.
+  presence ignores the fallback (NG2). Its version stance is part of OR2 (additive v6,
+  [ruling J2]).
 - **The extraction workspace** (`docs/design-extraction-workspace.md`; the owner's decision:
   select a source, choose an export destination, copy; no drag-and-drop) (RC37). It adds no
   surface here, and it **never writes the archive**: its P1 refuses a destination inside
-  the archive (MA-414, MA-436), so no R22 obligation flows to it. The seam is its
+  the archive (MA-414, MA-436), so no R28 obligation flows to it. The seam is its
   **lock-free archive-source reader**:
   - superseded and `-vN` earlier copies are never record paths, so it never enumerates or
     emits them;
@@ -1357,7 +1425,7 @@ change**: `PathForKey` uses the existing `UNIQUE(key)`.
     its existing "changed in the archive during export";
   - `Unverified`, `Kept` and `KeptBody` are typed fields (RC23), so its notes never turn
     them into "attachment … never downloaded";
-  - its reader is covered by the same version policy (OR2).
+  - its reader is covered by the same version policy (OR2; version 6, [ruling J2]).
 
   The workspace design is asked to update its §4.14 and MA-431, which still describe N2's
   immediate deletion, to the W1/W5 semantics. `extract` (archive → mbox/eml) is read-only
@@ -1458,7 +1526,7 @@ What a kill leaves:
 | Earlier zip | absent: holds nothing, so it cannot regress; a Full run re-creates it by HEAL when the staged bytes equal the recorded fixity (RC2) | damaged (modified): COMMIT only if no worse than the **on-disk** content (RC11); HEAL when the staged bytes equal the recorded fixity and the disk copy holds nothing more; otherwise KEEP, and no merge from it (R-G). Refused or unreadable: presumed held, KEEP (RC9) | closed | `verify` `modified` until healed; R-G or R-H |
 | Earlier eml | absent: nothing to carry | modified, refused or unreadable: KEEP when it would have to be carried (RC9); HEAL when the staged raw equals `Fixity.EML` | closed | R-G-style line naming the eml |
 | Disk space | the space precheck (RC8) refuses a moving re-capture before staging: KEEP `low-disk`, nothing written. ENOSPC from another program while staging: fresh temps removed, earlier copy intact. A failed checkpoint Save: no deletion; unowned trios adopted by the next re-capture (RC8) | — | closed | R-I, or a run error as today. Transient extra space: clamp(n/8, 1000, 25000) messages per store file or mailbox (about 12.5% of re-captured messages for archives of 8k–200k records, more below 8k), or the pending-bytes cap of max(1 GiB, 2 × manifest), whichever comes first, *conditional* on G3–G7 passing. With a gate holding, each blocked message keeps at most 98 extra copies (the `-v99` cap, RC14); `reindex` clears the `index-stale` and `index-not-open` causes, not `in-use` or `permission` (RC15) |
-| Legacy adopt (pre-v5 live records) | — | — | open, toward extra files | the first full Graph run after the upgrade keeps an earlier file beside every legacy record whose bytes changed: about the pre-v5 share of the archive, once, owned through AlsoFiles and counted (R-F, status; RC17, OR6) |
+| Legacy adopt (pre-v5 live records) | — | — | open, toward extra files | the first full Graph run after the upgrade keeps an earlier file beside every legacy record whose bytes changed: about the pre-v5 share of the archive, once, owned through AlsoFiles and counted (R-F, status; RC17, OR6; [ruling Q7]: paid, DEMOTE kept) |
 | Windows handle on an earlier file | deletion G5 holds it pending | — | open, toward extra files | R-E (`in-use`, naming the path); next run |
 | Clock | `KeptAt` is informational only; temp sweeping is age-gated as today | — | — | — |
 
@@ -1487,10 +1555,13 @@ What a kill leaves:
     run, a record whose staged bytes equal its recorded fixity is adopted in place. Every
     other legacy record commits under a fresh name and keeps its earlier file beside it,
     owned through AlsoFiles. The one-time growth is about the pre-v5 Graph share of the
-    archive, once; R-F and `status` count it. Whether to pay it is OR6 (Q7).
+    archive, once; R-F and `status` count it. Whether to pay it is OR6 (Q7). **[ruling Q7]**
+    It is paid: DEMOTE stays (NG4).
   - **`unknown` records** go through T3: they COMMIT if no worse, otherwise become
     UNVERIFIED.
-- **Mixed versions** (OR2 decides; RC29).
+- **Mixed versions** (OR2 decides; RC29). **[ruling Q2/OR2 = J2]** No bump: the first case
+  below is the one that applies, and the "with a bump" case is kept only as the record of
+  what was rejected.
   - **Without a bump (the default):** an older binary loads the manifest and, on its next
     save, drops the additive fields. Field by field, in the safe direction:
     - `Held` dropped → this build falls back to T2/T3 evidence;
@@ -1504,7 +1575,7 @@ What a kill leaves:
     onto B overwrites the kept original, which is the same exposure as today's in-place
     overwrite. Rollback is a binary swap: the `-vN` files are named by the manifest the
     older binary reads.
-  - **With a bump (only if OR2 rules for it):** expand/contract. Release N ships a `Load`
+  - **With a bump (only if OR2 rules for it; [ruling J2]: it did not):** expand/contract. Release N ships a `Load`
     that accepts 7 while its `Save` still writes 6, so rolling back to release N works.
     Release N+1, which bundles S4 and S5, starts writing 7; S3's write never ships alone. A
     binary of v3 or later then refuses a version-7 manifest with "written by a newer
@@ -1524,31 +1595,44 @@ What a kill leaves:
   - **Fleet note (MSI/RMM):** the desktop MSI is a MajorUpgrade with a
     DowngradeErrorMessage (Product.wxs:37-39). A rollback is an uninstall plus a reinstall,
     after which, under a bump, every managed machine's scheduled capture fails at Load until
-    its archive is restored. This is stated for the owner in Q2.
+    its archive is restored. This is stated for the owner in Q2. **[ruling J2]** With no
+    bump, a rollback stays a binary swap on every machine.
 - **Schedules.** No job grammar changes and no new flag. A scheduled `-mode full` job now
   produces KEEP lines instead of destroying content, writes nothing for unchanged content,
   and heals damaged units. The schedule's "-mode full: every scheduled run re-exports
   everything" note (schedule.go:294, and :360, :708) stays true.
 - **Existing guards whose asserted behaviour changes.** These need **operator acceptance**
-  (CLAUDE.md: never self-granted; Q5):
+  (CLAUDE.md: never self-granted; Q5). **[ruling Q5 = ESC-2, J7]** The changes that narrow
+  or rewrite a guard are escalated to the owner (ESC-2) and none lands until the owner
+  answers. The additions and strengthenings land with their slice. Item by item:
   - **MA-66**'s covering test `TestRetryPromotesOnAnyRecoveredItem`, run 2: from
     "`Missing=[a.txt]`, zip without a.txt" (it explicitly accepts "another item regressed
     meanwhile") to MERGE, complete, a.txt carried, `Kept=[a.txt]` (MA-353). The MA-66 row
-    text stays true.
+    text stays true. **[ruling ESC-2]** Escalated: S5 does not change this test until the
+    owner answers.
   - **MA-87**'s covering test `TestStemCollisionAndRename` (identity_test.go:166): (a) the
     earlier html and zip are removed after the durable commit and the sweep, not
     immediately after `Export`; (b) its synthetic step leaves the original B file on disk
     unowned, and under W1 the message moves to `B-v2` rather than overwriting it.
-  - **S24**, **R5** (scoped, RC28) and **R13**: wording (§2.1).
-  - **R22**: its restated text (RC19).
+    **[ruling ESC-2]** Escalated: S4 does not change this test until the owner answers.
+  - **S24**, **R5** (scoped, RC28) and **R13**: wording (§2.1). **[ruling ESC-2, J7]** S24
+    and R13's new cases (including N2 adoption) are escalated (ESC-2). R5's write-beside
+    sentence is an addition and lands with S4 only if the owner answers ESC-3 with (a).
+  - **R28**: its restated text (RC19). **[ruling J7]** R28 is new text, not an existing
+    guard, so it lands with S1.
   - **R2**: wording (§2.1), one joint text with the mime-fidelity design. MA-22's counts
-    are unaffected because UNCHANGED and HEAL count in `Exported`.
-  - **MA-201 and S39**: version ceiling 6 → 7, only if OR2 rules for a bump.
-  - **design-incremental-completeness B2**: superseded.
+    are unaffected because UNCHANGED and HEAL count in `Exported`. **[ruling ESC-2]**
+    Escalated, together with the mime-fidelity clarification.
+  - **MA-201 and S39**: version ceiling 6 → 7, only if OR2 rules for a bump. **[ruling
+    J2]** No bump: unchanged.
+  - **design-incremental-completeness B2**: superseded. **[ruling ESC-2]** Escalated.
   - **MA-238** is *strengthened*, not changed: it now also holds when the path is
-    unchanged, and the kept earlier file is owned through AlsoFiles (RC17).
+    unchanged, and the kept earlier file is owned through AlsoFiles (RC17). **[ruling
+    J7]** Accepted.
   - **MA-227** is *strengthened*: no copy of a redacted message stays served, including
-    DEMOTE-kept files and the `-vN` family (RC18).
+    DEMOTE-kept files and the `-vN` family (RC18). **[ruling J7, ESC-2]** Its AlsoFiles
+    reach (which covers DEMOTE-kept files) is accepted. Its `-vN`-family clause is R13's
+    deletion case (c) and is escalated (ESC-2; corrected after check).
 - **The README's upgrade guidance** ("full re-export to gain fixity") stays correct, and is
   now safe on degraded sources.
 
@@ -1585,7 +1669,9 @@ without a KEEP. Confirmation on a real profile is pending (§9 Lab).
 with `unreadable` wording when the torn item was the only change (it heals on the next
 run, MA-352); R-B (the improvement waits) for a pre-v7 record with an ambiguous entry name
 (NG8). **0 extra steps.** R-B's remedy for this on-demand source is optional and in the
-mail app. Type II, ruled by Q6.
+mail app. Type II, ruled by Q6. **[ruling Q6]** After S7's backfill, a pre-v7 record
+whose zip matches its recorded fixity has a `Held` inventory and merges; R-B stays only
+for records the backfill could not bind.
 
 ### 7.2a Home user, desktop dashboard ("Archive now"), Microsoft 365 (RC27)
 
@@ -1629,13 +1715,16 @@ nothing beyond counts. *After:*
    old-binary note. Re-running the interrupted full re-export **adopts** each orphan whose
    digests equal the staged bytes (RC8), so most of them are re-owned with nothing to type.
    An orphan the re-run did not adopt (its message changed again since) stays listed;
-   whether `reindex` removes it is OR7 (Q8).
+   whether `reindex` removes it is OR7 (Q8). **[ruling Q8]** It does not: the orphan stays
+   listed as `earlier-copy`, and the remedy line compares the two copies and names
+   redaction for one the user does not want.
 
 *Today:* the same crash leaves records naming deleted files, verify RED with missing and
 unexpected entries, and no repair except another full run, or `reindex -rebuild`, which
 deletes the records. *After:* **manual repair steps go from 1 or more (with data loss) to
 0**, and the remaining orphans, if any, are named with their current copy. Type I for the
-deferral; the orphan remedy is Type II, ruled by OR7.
+deferral; the orphan remedy is Type II, ruled by OR7 (**[ruling Q8]**: no automatic
+removal).
 
 ### 7.4 Admin: the run warns of index errors (F49), then runs `reindex` as told (main.go:1413)
 
@@ -1662,7 +1751,8 @@ is safe. Missing rows still need `-rebuild` (g7 F50). Type I.
 **4 steps, the same as today.** Earlier copies left by an unfinished deferral are unlinked
 files. README.txt's sentence ("the copy linked from the folder page is the current one")
 covers them. The `-vN` suffix is Type II, ruled by Q1, and the friction review owes the
-cold walk.
+cold walk. **[ruling ESC-3]** Q1 is escalated to the owner. Until it is answered,
+today's write path stays, and S4, which introduces W1's `-vN` names, does not start.
 
 ---
 
@@ -1717,7 +1807,8 @@ cold walk.
 4. **A tampered or conflicted synced manifest** (cloud-sync conflict, an old-binary
    excursion, a manifest restored from a backup as manifest.go:525 advises).
    - Under OR2's default there is no version gate; with a bump, the gate refuses an older
-     writer's view.
+     writer's view. **[ruling J2]** No bump, so there is no version gate; the gates below
+     carry the defence.
    - Gates G1/G2/G4/G6/G7 hold regardless. G6 and G7 make deletion content-bound, so a
      stale list fails toward extra files even after B ↔ B-v2 name reuse (RC12).
    - `Held` is validated, and bound to the zip digest it was read from (RC11).
@@ -1767,9 +1858,9 @@ cold walk.
   uncommitted index batch are present in the snapshot, so a harness that observes
   post-commit state fails. Mocks are used only for this, for injected I/O errors, and for
   the fake Graph server, as CLAUDE.md allows.
-- **Ids are provisional** (RC30): the Covers column cites R22, S42 and S43 as proposals.
-  Every Covers cell is rewritten to the operator-allocated ids (OR4) before S1; until then
-  no covers marker may cite them.
+- **Ids are allocated** (RC30; **[ruling Q11 = J1]**): revision 2's provisional R22, S42
+  and S43 are R28, S50 and S51, and every Covers cell below cites the allocated ids. A
+  covers marker never cites a provisional label.
 - **Refusal-shaped outcomes** are asserted with `assure.Refused(t, rc, summary,
   assure.Code(0), assure.Names(<file>, <remedy or report>), assure.NoSideEffect(<earlier
   bytes unchanged ∧ no new file under the store>))`. Every collection under assertion is
@@ -1779,21 +1870,21 @@ cold walk.
 
 | ID | Tier | Asserts | Covers |
 |---|---|---|---|
-| MA-350 | U | Full mode over an on-demand local source (mbox) whose same-name attachment is now zero bytes → **KEEP**: zip, page and eml bytes equal their recorded fixity; the record has no `report.pdf` in Missing; `Kept=[report.pdf]`; `Stats.Kept=1`; the report has a `source-lost/kept` row; `verify` exit 0; summary R-A names the report. Twins: an intact source → UNCHANGED (`Kept=0`); a source that gained a body → COMMIT | R22, R1, S42 |
-| MA-351 | U | The body now missing (the Outlook offline-window analogue: same message, empty bodies) in Full mode → KEEP, page byte-unchanged, `Kept=[body]`, "body" not in Missing. In a fill retry where an attachment arrived but the body vanished, the KEEP is decided **at the probe** and no `.mailarchive-*.tmp` is ever created (hook counter). Twin: body present → no KEEP | R22, R1, S42 |
-| MA-352 | U | An attachment stream now **errors** in Full mode → KEEP with reason `unreadable`; the next full run with a healthy stream → UNCHANGED, `Kept` cleared (a transient fault heals). Twin: a healthy stream throughout | R22, R1, S42 |
-| MA-353 | U | **MERGE** (T1): a v7 record holds a.pdf, b.pdf is fillable. A retry finds b.pdf present and a.pdf empty → the new zip holds a.pdf byte-identical to run 1 (raw-copied, CRC intact) and b.pdf; the record is complete; `Kept=[a.pdf]`; `Held` a.pdf `Kept=true`; `Filled=1`; the earlier trio is superseded and removed after the commit; `verify` exit 0. T2 variant (`Held` stripped, unique names) → MERGE; T2 with a duplicate file name → KEEP (NG8). Replaces MA-66's run-2 expectation (Q5). Twin: no regression → plain COMMIT | R22, R1, S42 |
-| MA-354 | U | **Unreliable merge source:** as MA-353, but the earlier zip has a flipped byte (fails `Fixity.Zip`) → KEEP; the earlier zip is byte-unchanged and still `modified` in verify; b.pdf stays Missing; R-G names the zip path, "restore … from a backup" and `mailarchive verify`. A fixity-less earlier zip with a bad CRC → KEEP. Twin: an intact earlier zip → MERGE | R22, R1, R5, S42 |
-| MA-355 | U | **Legacy:** (a) a T2 v6 record (no `Held`, equal fingerprint) whose same-name attachment is now empty in Full mode → KEEP; (b) a version-1 manifest (`unknown`) over a degraded source → **UNVERIFIED**: files byte-unchanged, `Unverified=true` (no label in `Terminal`, RC23), the next incremental run has `Retried==0`, the report row is kind `unverified`, R-D; (c) `unknown` with an inline image embedded in the earlier page and now empty → KEEP (T3 inline presumption). Twin: (d) `unknown` over an intact source → COMMIT with real gaps and `Held` | R22, R1, R5, S42, S6 |
-| MA-356 | U | **Live path** (fake Graph server), Full mode, immutable-id match, an attachment **removed entirely** server-side (same PhysID, different fingerprint) → KEEP by label comparison; Path and Fixity unchanged; `LastSeen==runAt`, `Present=true`, `Folder` updated and a history folder-assertion written on a move; `SweepGone` does not mark it gone. A legacy-scheme record → DEMOTE: commits to a fresh name, the earlier file stays byte-unchanged on disk at the **same** path (strengthens MA-238), R-F names it. Twin: attachment intact → UNCHANGED | R22, R21, R17, R1, S42 |
-| MA-357 | U | **Preserved original:** a `-raw` archive. (a) A full run *without* `-raw`, unchanged path → `.eml` byte-unchanged and `Fixity.EML` kept (verify exit 0). (b) The same with a forced naming change → the eml moves to the new name byte-identical with the same digest, and the earlier eml is removed only after the commit. (c) A MERGE with `-raw` over a degraded mbox → the earlier eml is carried and the degraded raw never written. (d) An earlier eml with a flipped byte and no new raw → KEEP. Twin: `-raw` over an intact changed source → new eml written | R22, R20, R5, S42, S34 |
-| MA-358 | U | **Crash ordering (N2, §1.7):** a moving re-capture is stopped after each of C1..C8 (§5.1). After each stop, with everything reloaded from disk: every record's files exist and match the persisted fixity (verify exit 0); no record names a missing file; after C6 and C7 the earlier files are `superseded` (never `missing` or `unexpected`), and the next incremental run's start sweep removes them and regenerates the folder pages; before C6 the new files are at worst `earlier-copy` (RC15) and nothing is deleted. Same-path variant (§1.7): no stop point yields `modified`. RED on today's code reproduces the finder's numbers | R22, R5, R8, S43, S2 |
-| MA-359 | U | **Html write failure (N3):** an injected ENOSPC on the html temp, and a rename refusal on the html → the earlier trio is byte-unchanged and attested (no `missing`, no `modified`); no T-named file remains; `Export` returns an error naming the html path; the next run commits. Twin: no fault → COMMIT | R5, R22, S43 |
-| MA-360 | U | **Deletion gates and sweep:** an entry stays pending when (a) the superseding key's index row still names the earlier path (an index failure injected by a SQLite trigger, as in F48's PoC), (b) a search.db exists but the run is `-index=false`, (c) a record owns the path (planted), (d) a directory component is a symlink (skipped on Windows); (e) a tampered entry with `..` is dropped and nothing outside the archive is touched. Each pending entry is shown by `status` (the pending-removal WARN for its cause, with that cause's remedy, RC15) and by R-E. Twin: after `reindex` repairs the row, the next sweep removes the files and status clears | R13, R5, R8, R4, S43 |
-| MA-361 | U | **`reindex` (F48):** a 3-message archive whose records name new files while the index rows name earlier, missing ones → reindex deletes **zero** message files, re-points every row (searches hit `rec.Path`), keeps the records, prints repaired=3 pruned=0. A message whose current *and* earlier paths are both missing is pruned. Twin: deleting a record's current html still prunes it and deletes its zip, eml and AlsoFiles (MA-40 and the redaction-reach rows unchanged) | R13, R8, S43, S13 |
-| MA-362 | U | **Unchanged re-capture:** a full run over an unchanged source on a v7 archive writes no file (inode, mtime and bytes unchanged; `Unchanged==Exported==N`; no `Superseded` entry). A v6 archive with fixity gets `Held` backfilled without file writes. A pre-fixity archive with an unchanged naming rule is rewritten **in place** (W3), names unchanged, fixity recorded. Twin: a changed body → COMMIT to `B-v2` and the earlier trio removed after the commit | R2, R5, R22, S42 |
-| MA-363 | U | **Surfaces:** the CLI summary prints R-A..R-L under their conditions with what, why and remedy and the report path; the report has `source-lost/kept` and `unverified/info` rows with subject and date; `status` prints the kept-copies and unverified info lines with the posture unchanged and the per-cause pending-removal WARNs with their codes and remedies (RC15); `status -json` carries `recapture{…}`; `verify` prints the `superseded` count and the kept note, and `verify -json` is version 2 with `superseded` and `kept_records`; the GUI summary and desktop Activity carry the same counts (X10); `reindex` prints repaired. Twin: a clean archive prints none of these | X2, X6, X10, R18, R1, S42, S43 |
-| MA-364 | U | **Format and names:** the additive fields (`Held`, `Kept`, `KeptBody`, `KeptHow`, `Unverified`, `Superseded`, `PagesStale`) round-trip; a manifest without them loads (no `Held`). Under OR2's default the saved version stays 6 and `Load`'s ceiling is unchanged; if OR2 rules for a bump, release N loads 7 and saves 6, release N+1 saves 7, and `Load` refuses version 8 naming the file and the remedy, byte-unchanged (RC29). W1 never picks `prev.Path`, a `PathTaken` path (owned, AlsoFiles, pending) or an existing file: a planted unowned file at B is never overwritten, and the message goes to `B-v2`; the path budget holds with the suffix. `PagesStale` forces page regeneration on a later run with `exported==0`, is cleared by a regeneration with no deletion since, and is set again before any later deletion (RC14); `reindex` and `Rebuild` regenerate. Twin: the ordinary path | R5, R4, R12, R22, S43, S39 |
+| MA-350 | U | Full mode over an on-demand local source (mbox) whose same-name attachment is now zero bytes → **KEEP**: zip, page and eml bytes equal their recorded fixity; the record has no `report.pdf` in Missing; `Kept=[report.pdf]`; `Stats.Kept=1`; the report has a `source-lost/kept` row; `verify` exit 0; summary R-A names the report. Twins: an intact source → UNCHANGED (`Kept=0`); a source that gained a body → COMMIT | R28, R1, S50 |
+| MA-351 | U | The body now missing (the Outlook offline-window analogue: same message, empty bodies) in Full mode → KEEP, page byte-unchanged, `Kept=[body]`, "body" not in Missing. In a fill retry where an attachment arrived but the body vanished, the KEEP is decided **at the probe** and no `.mailarchive-*.tmp` is ever created (hook counter). Twin: body present → no KEEP | R28, R1, S50 |
+| MA-352 | U | An attachment stream now **errors** in Full mode → KEEP with reason `unreadable`; the next full run with a healthy stream → UNCHANGED, `Kept` cleared (a transient fault heals). Twin: a healthy stream throughout | R28, R1, S50 |
+| MA-353 | U | **MERGE** (T1): a v7 record holds a.pdf, b.pdf is fillable. A retry finds b.pdf present and a.pdf empty → the new zip holds a.pdf byte-identical to run 1 (raw-copied, CRC intact) and b.pdf; the record is complete; `Kept=[a.pdf]`; `Held` a.pdf `Kept=true`; `Filled=1`; the earlier trio is superseded and removed after the commit; `verify` exit 0. T2 variant (`Held` stripped, unique names) → MERGE; T2 with a duplicate file name → KEEP (NG8). Replaces MA-66's run-2 expectation (Q5; **[ruling ESC-2]**: escalated, and S5, which builds this row, waits for the owner's answer). Twin: no regression → plain COMMIT | R28, R1, S50 |
+| MA-354 | U | **Unreliable merge source:** as MA-353, but the earlier zip has a flipped byte (fails `Fixity.Zip`) → KEEP; the earlier zip is byte-unchanged and still `modified` in verify; b.pdf stays Missing; R-G names the zip path, "restore … from a backup" and `mailarchive verify`. A fixity-less earlier zip with a bad CRC → KEEP. Twin: an intact earlier zip → MERGE | R28, R1, R5, S50 |
+| MA-355 | U | **Legacy:** (a) a T2 v6 record (no `Held`, equal fingerprint) whose same-name attachment is now empty in Full mode → KEEP; (b) a version-1 manifest (`unknown`) over a degraded source → **UNVERIFIED**: files byte-unchanged, `Unverified=true` (no label in `Terminal`, RC23), the next incremental run has `Retried==0`, the report row is kind `unverified`, R-D; (c) `unknown` with an inline image embedded in the earlier page and now empty → KEEP (T3 inline presumption). Twin: (d) `unknown` over an intact source → COMMIT with real gaps and `Held` | R28, R1, R5, S50, S6 |
+| MA-356 | U | **Live path** (fake Graph server), Full mode, immutable-id match, an attachment **removed entirely** server-side (same PhysID, different fingerprint) → KEEP by label comparison; Path and Fixity unchanged; `LastSeen==runAt`, `Present=true`, `Folder` updated and a history folder-assertion written on a move; `SweepGone` does not mark it gone. A legacy-scheme record → DEMOTE: commits to a fresh name, the earlier file stays byte-unchanged on disk at the **same** path (strengthens MA-238), R-F names it. Twin: attachment intact → UNCHANGED | R28, R21, R17, R1, S50 |
+| MA-357 | U | **Preserved original:** a `-raw` archive. (a) A full run *without* `-raw`, unchanged path → `.eml` byte-unchanged and `Fixity.EML` kept (verify exit 0). (b) The same with a forced naming change → the eml moves to the new name byte-identical with the same digest, and the earlier eml is removed only after the commit. (c) A MERGE with `-raw` over a degraded mbox → the earlier eml is carried and the degraded raw never written. (d) An earlier eml with a flipped byte and no new raw → KEEP. Twin: `-raw` over an intact changed source → new eml written | R28, R20, R5, S50, S34 |
+| MA-358 | U | **Crash ordering (N2, §1.7):** a moving re-capture is stopped after each of C1..C8 (§5.1). After each stop, with everything reloaded from disk: every record's files exist and match the persisted fixity (verify exit 0); no record names a missing file; after C6 and C7 the earlier files are `superseded` (never `missing` or `unexpected`), and the next incremental run's start sweep removes them and regenerates the folder pages; before C6 the new files are at worst `earlier-copy` (RC15) and nothing is deleted. Same-path variant (§1.7): no stop point yields `modified`. RED on today's code reproduces the finder's numbers | R28, R5, R8, S51, S2 |
+| MA-359 | U | **Html write failure (N3):** an injected ENOSPC on the html temp, and a rename refusal on the html → the earlier trio is byte-unchanged and attested (no `missing`, no `modified`); no T-named file remains; `Export` returns an error naming the html path; the next run commits. Twin: no fault → COMMIT | R5, R28, S51 |
+| MA-360 | U | **Deletion gates and sweep:** an entry stays pending when (a) the superseding key's index row still names the earlier path (an index failure injected by a SQLite trigger, as in F48's PoC), (b) a search.db exists but the run is `-index=false`, (c) a record owns the path (planted), (d) a directory component is a symlink (skipped on Windows); (e) a tampered entry with `..` is dropped and nothing outside the archive is touched. Each pending entry is shown by `status` (the pending-removal WARN for its cause, with that cause's remedy, RC15) and by R-E. Twin: after `reindex` repairs the row, the next sweep removes the files and status clears | R13, R5, R8, R4, S51 |
+| MA-361 | U | **`reindex` (F48):** a 3-message archive whose records name new files while the index rows name earlier, missing ones → reindex deletes **zero** message files, re-points every row (searches hit `rec.Path`), keeps the records, prints repaired=3 pruned=0. A message whose current *and* earlier paths are both missing is pruned. Twin: deleting a record's current html still prunes it and deletes its zip, eml and AlsoFiles (MA-40 and the redaction-reach rows unchanged) | R13, R8, S51, S13 |
+| MA-362 | U | **Unchanged re-capture:** a full run over an unchanged source on a v7 archive writes no file (inode, mtime and bytes unchanged; `Unchanged==Exported==N`; no `Superseded` entry). A v6 archive with fixity gets `Held` backfilled without file writes. A pre-fixity archive with an unchanged naming rule is rewritten **in place** (W3), names unchanged, fixity recorded. Twin: a changed body → COMMIT to `B-v2` and the earlier trio removed after the commit | R2, R5, R28, S50 |
+| MA-363 | U | **Surfaces:** the CLI summary prints R-A..R-L under their conditions with what, why and remedy and the report path; the report has `source-lost/kept` and `unverified/info` rows with subject and date; `status` prints the kept-copies and unverified info lines with the posture unchanged and the per-cause pending-removal WARNs with their codes and remedies (RC15); `status -json` carries `recapture{…}`; `verify` prints the `superseded` count and the kept note, and `verify -json` is version 2 with `superseded` and `kept_records`; the GUI summary and desktop Activity carry the same counts (X10); `reindex` prints repaired. Twin: a clean archive prints none of these | X2, X6, X10, R18, R1, S50, S51 |
+| MA-364 | U | **Format and names:** the additive fields (`Held`, `Kept`, `KeptBody`, `KeptHow`, `Unverified`, `Superseded`, `PagesStale`) round-trip; a manifest without them loads (no `Held`). Under OR2's default the saved version stays 6 and `Load`'s ceiling is unchanged (**[ruling J2]**: this is the case built; the bump case is not); if OR2 rules for a bump, release N loads 7 and saves 6, release N+1 saves 7, and `Load` refuses version 8 naming the file and the remedy, byte-unchanged (RC29). W1 never picks `prev.Path`, a `PathTaken` path (owned, AlsoFiles, pending) or an existing file: a planted unowned file at B is never overwritten, and the message goes to `B-v2`; the path budget holds with the suffix. `PagesStale` forces page regeneration on a later run with `exported==0`, is cleared by a regeneration with no deletion since, and is set again before any later deletion (RC14); `reindex` and `Rebuild` regenerate. Twin: the ordinary path | R5, R4, R12, R28, S51, S39 |
 
 **Revision 2 twins and variants per row.** These are part of each row's assertions. They
 stay inside the reserved MA-350..364 range:
@@ -1811,7 +1902,7 @@ stay inside the reserved MA-350..364 range:
 | 358 | Uses the snapshot harness; asserts the stale lock and the uncommitted index batch are present. A RunGraph kill at C1 → its temps are swept by the next RunGraph. ENOSPC injected on staging and on the checkpoint Save → the earlier copies are intact, the next run converges (adopts or sweeps), status is not wedged | RC31, RC20, RC8 |
 | 359 | W3 twin: the html rename is refused after the eml and zip renames → the eml and zip are present and readable, and the old page still links them | RC16 |
 | 360 | An older manifest and search.db restored after B ↔ B-v2 alternation → nothing deleted, the entry dropped and logged (G6). The lock file replaced before the final commit → no file deleted. A re-key with a pending entry → the entry follows the key. Each cause shows its own WARN code and remedy. A symlinked target folder → KEEP before any write (R-J) | RC12, RC13, RC21, RC15, RC14 |
-| 361 | A symlinked folder and injected EACCES on `rec.Path` → nothing deleted, row and record kept. A suffix-less row path naming another record's stem → nothing deleted. Cases A, B and C print both paths and the redaction remedy, with zero deletions. An MA-227 twin: a message with a DEMOTE-kept file and a `-v2` orphan is redacted → no copy remains under `/files/`. An N2 victim built from the finder's PoC state → adopted, verify attests | RC10, RC18, RC36 |
+| 361 | A symlinked folder and injected EACCES on `rec.Path` → nothing deleted, row and record kept. A suffix-less row path naming another record's stem → nothing deleted. Cases A, B and C print both paths and the redaction remedy, with zero deletions. An MA-227 twin: a message with a DEMOTE-kept file and a `-v2` orphan is redacted → no copy remains under `/files/`. An N2 victim built from the finder's PoC state → adopted, verify attests. **[ruling ESC-2]** The `-v2` orphan half of the MA-227 twin and the N2-adoption twin are escalated: S2 lands each as a `t.Skip` encoder citing MA-361 and R13, and the slice that builds it after the owner's answer removes the skip. The DEMOTE-kept half (AlsoFiles, accepted under J7) lands with S5, which builds DEMOTE | RC10, RC18, RC36 |
 | 362 | HEAL twins: a deleted zip plus a full run → the zip is re-created and verify attests; a size-preserving flipped byte → healed in Full mode; a restored older zip holding an extra entry → KEEP, not healed. A read flag flipped and a category added between two full runs → UNCHANGED, no file written. The live-path UNCHANGED twin of the first full run after an upgrade → every record stamped, no `gone` event | RC2, RC5, RC1 |
 | 363 | `RecaptureSummary` text is identical across CLI, GUI and desktop. R-H..R-L print under their conditions. The per-cause WARN codes and `merge_source_mismatch` WARN | RC25, RC26, RC15 |
 | 364 | A malformed `Held` → treated as nil with a warning. W1 stops at `-v99` and KEEPs. W1 adopts an unowned candidate trio whose digests equal the staged temps. `verify -record` clears or refreshes `Held`; a restored zip with an extra entry is never deleted. A re-key maps `Superseded[].Key`. The Inventory size stays within the re-derived bound. Lands whole in S4 (RC32) | RC11, RC14, RC8, RC21, RC35, RC32 |
@@ -1859,15 +1950,18 @@ Each slice ships prove-fail → prove-pass, catalog first.
 | Slice | Content | Depends on | Rows | Gate owed after build |
 |---|---|---|---|---|
 | **S0** | this design + the 10-lens pre-code review, and RC38's lens 3/6/7 addendum on revision 2 | — | — | the review itself (`docs/review-recapture-integrity-predesign.md`) and its addendum |
-| **S1** | catalog: R22; R1/R2/R5/R13/S24 amendments (S39 only if OR2 bumps); S42/S43; MA-350..364 rows, all with operator-allocated ids (OR4); `t.Skip` encoders **only** for the confirmed-open gaps F46, N2, N3, F48 and §1.5–§1.7, under the RC31 harness; the §1.7 encoder's result goes to Q1 (RC33); no product code | S0 + OR4 + OR5 | the encoders only | none beyond S0 (the operator accepts the amended guards, OR5) |
-| **S2** | `reindex` guard (F48, §4.9): the absent-only rule, archivefs-gated deletions, row paths enqueued, loud repair lines, N2 adoption, the `-vN` family on redaction (RC10, RC18, RC36). No format change. The archivefs gate lands once with g56 C2-2/P5 (§4.13) | S1 | MA-361 | **adversarial pass** (destructive path; manifest and index untrusted; redaction semantics) |
+| **S1** | catalog: R28; R1/R2/R5/R13/S24 amendments (S39 only if OR2 bumps); S50/S51; MA-350..364 rows, all with operator-allocated ids (OR4); `t.Skip` encoders **only** for the confirmed-open gaps F46, N2, N3, F48 and §1.5–§1.7, under the RC31 harness; the §1.7 encoder's result goes to Q1 (RC33); no product code. **[ruling J1, J7, ESC-2] Interim S1:** the ids are allocated; S1 lands R28, S50 and S51 and the rows for the confirmed-open gaps with their encoders, each citing the existing invariant the defect breaks (F46 → R1; N2, N3 and §1.7 → R5; F48 → R13). No existing text or covering test changes: the R2, R13 and S24 amendments wait for ESC-2, R1's added sentence lands with S5, R5's with S4 only on ESC-3 (a), and S39 is unchanged (J2). The feature rows land with the slices that build them (RC32). The §1.7 encoder's result goes with ESC-3 | S0 + OR4 + OR5 (OR4 ruled, J1; OR5 is ESC-2, so the interim scope) | the encoders only | none beyond S0 (the operator accepts the amended guards, OR5; **[ruling ESC-2]**: escalated) |
+| **S2** | `reindex` guard (F48, §4.9): the absent-only rule, archivefs-gated deletions, row paths enqueued, loud repair lines, N2 adoption, the `-vN` family on redaction (RC10, RC18, RC36). No format change. The archivefs gate lands once with g56 C2-2/P5 (§4.13). **[ruling ESC-2]** Until the owner answers, S2 builds no N2 adoption, no `-vN` family deletion and no row-path enqueue (§4.9's note): an N2 victim is pruned as today | S1 | MA-361 (its `-vN` and N2-victim twins as skip encoders, [ruling ESC-2]) | **adversarial pass** (destructive path; manifest and index untrusted; redaction semantics) |
 | **S3** | the additive schema (state package only; `Load` accepts the new fields; no version write, RC29) + `archivefs.Inspect` with three outcomes, replacing every gate copy (verify and extract unchanged in behaviour, RC25). May be folded into S4 | S1 | none of its own | none of its own (no behaviour change); folded into S4's adversarial pass |
-| **S4** | crash-safe write path and deferred deletion (N2, N3, §1.7): W1–W5 (including W4's record switch, RC1, and HEAL, RC2), the space precheck, adoption and `-v99` cap (RC8, RC14), `finishSuperseded` + G1–G7 with the lock re-check (RC12, RC13), `commit` returns the save error, start-of-run sweep (and `SweepOrphans` in `RunGraph`), `PagesStale`, `PathForKey`, Rebuild runs the sweep (RC20); **its sinks**: R-E per cause, R-H (HEAL), R-I (low disk), R-J (symlinked folder), R-K (no free name), the pending-removal WARNs, verify's `superseded` and `earlier-copy` kinds; any version change (OR2) together with this first new-field producer; MA-87 test amendment | S2, S3; OR1, OR2; sequenced with g7 F53 (§4.13) | MA-358, 359, 360, 362, 364 (whole) | **adversarial pass** (manifest-driven deletion, crash ordering, symlink gate, HEAL) |
-| **S5** | never-degrade (F46, §1.5, §1.6): inventory recording with the Held binding, tiers T1–T3 with label + content matching, verdicts, the MERGE gate, merge with fresh headers and caps, eml rules, two-phase probe, KEEP stamping, legacy adopts, UNVERIFIED as a typed field, client placeholders; **its sinks**: report kinds, the Counts/HasIssues changes, R-A..R-D, R-F, R-G, the `merge_source_mismatch` WARN; MA-66 test amendment | S4 (MERGE and the eml carry write a new trio beside the earlier one and need the earlier zip to survive until the commit is durable); OR3, OR6 | MA-350..357 | **adversarial pass** (untrusted earlier zip, page and eml; hostile names and labels) |
+| **S4** | crash-safe write path and deferred deletion (N2, N3, §1.7): W1–W5 (including W4's record switch, RC1, and HEAL, RC2), the space precheck, adoption and `-v99` cap (RC8, RC14), `finishSuperseded` + G1–G7 with the lock re-check (RC12, RC13), `commit` returns the save error, start-of-run sweep (and `SweepOrphans` in `RunGraph`), `PagesStale`, `PathForKey`, Rebuild runs the sweep (RC20); **its sinks**: R-E per cause, R-H (HEAL), R-I (low disk), R-J (symlinked folder), R-K (no free name), the pending-removal WARNs, verify's `superseded` and `earlier-copy` kinds; any version change (OR2) together with this first new-field producer; MA-87 test amendment. **[ruling ESC-3, J2, ESC-2]** S4 does not start until the owner answers ESC-3 (Q1) and ESC-2; there is no version change (J2); the MA-87 test amendment is part of ESC-2 | S2, S3; OR1, OR2 (OR1 is ESC-3; OR2 ruled, J2); sequenced with g7 F53 (§4.13); RR-1 before code | MA-358, 359, 360, 362, 364 (whole) | **adversarial pass** (manifest-driven deletion, crash ordering, symlink gate, HEAL) |
+| **S5** | never-degrade (F46, §1.5, §1.6): inventory recording with the Held binding, tiers T1–T3 with label + content matching, verdicts, the MERGE gate, merge with fresh headers and caps, eml rules, two-phase probe, KEEP stamping, legacy adopts, UNVERIFIED as a typed field, client placeholders; **its sinks**: report kinds, the Counts/HasIssues changes, R-A..R-D, R-F, R-G, the `merge_source_mismatch` WARN; MA-66 test amendment. **[ruling ESC-2]** The MA-66 test amendment is part of ESC-2 | S4 (MERGE and the eml carry write a new trio beside the earlier one and need the earlier zip to survive until the commit is durable); OR3, OR6 (both ruled: J6 and Q10, Q7 = DEMOTE); RR-1 before code | MA-350..357 | **adversarial pass** (untrusted earlier zip, page and eml; hostile names and labels) |
 | **S6** | `RecaptureSummary` parity across CLI, GUI and desktop, R-L and the GUI label, README.md, README.txt, ux-contract X6 row | S5 | MA-363 | **friction review** (the walks of §7, including the inheritor cold walk and the `-vN` names) |
+| **S7** **[ruling Q6]** | the one-time inventory backfill: reads each earlier zip's central directory into `Held` only where the zip matches its recorded `Fixity.Zip`, never re-baselining fixity (unlike `verify -record`); the central-directory cap of RC22 applies | S5 | none yet: its rows take overflow ids at its catalog-first PR (the next free one is MA-535, owner-rulings log §8.4) | **adversarial** addendum (untrusted earlier zips) |
 
 **Order:** S1 → S2 → S3 → S4 → S5 → S6. S2 and S3 may proceed in parallel. S4 and S5 code
-waits for RC38's addendum. S5's KEEP alone *could* ship before S4, but it would leave
+waits for RC38's addendum. **[ruling Q6, ESC-2, ESC-3]** S7 follows S5. S4..S7 wait for the
+owner's answers to ESC-2 and ESC-3; S1 (interim), S2 (without its held cases) and S3 do
+not. The cross-design order is the owner-rulings log's §9 (rows 7, 16, 17 and 33–36). S5's KEEP alone *could* ship before S4, but it would leave
 N2/N3 and the §1.7 window open and would need rework for MERGE, so it follows S4. **No
 slice merges a producer before its sink** (RC32): S4 carries the sinks of the `Superseded`
 list it produces, and S5 carries the sinks of the kept, unverified and merged outcomes it
@@ -1877,8 +1971,14 @@ produces. No release ships a version write without the behaviour behind it (RC29
 
 ## 11. Open questions that need an OWNER RULING
 
+**All ruled or escalated** (docs/owner-rulings-2026-10-09.md §5, J1, J2, J6, J7 and §10).
+Each question below keeps its text and carries its outcome.
+
 - **Q1 (OR1, re-premised by RC33 and RC5) — How a changed re-capture keeps names and page
-  state.** Asked only after S1's §1.7 encoder has run under the RC31 harness. N2 needs only
+  state.** **ESCALATED (ESC-3)**, docs/owner-rulings-2026-10-09.md §10. Recommended answer:
+  (a), asked once S1's §1.7 encoder has run. Interim: today's write path stays, S4 does not
+  start, mime-fidelity's R27 lands without a file promise for repairs, and R5's
+  write-beside sentence lands only on answer (a). Asked only after S1's §1.7 encoder has run under the RC31 harness. N2 needs only
   deferred deletion; a new name is needed only for a re-capture at an unchanged path
   (§1.7).
   - **The real triggers** (RC5): under option (a), files move only on a content change, a
@@ -1904,7 +2004,8 @@ produces. No release ships a version write without the behaviour behind it (RC29
     "modified" alarm (§1.7) that tells the user to restore from a backup.
 
   Pre-fixity archives keep their names under every option (W3). **Blocks:** S4.
-- **Q2 (OR2, made joint) — Manifest version.** One program-level ruling covers this design,
+- **Q2 (OR2, made joint) — Manifest version.** **RULED = J2** (docs/owner-rulings-2026-10-09.md):
+  (a), no bump, for every in-flight design; the manifest stays version 6. One program-level ruling covers this design,
   the fault-isolation, mime-fidelity and local-confidentiality designs, and the BodyFallback
   change. Three of them already keep version 6 so that a rollout rolls back by swapping the
   binary.
@@ -1919,24 +2020,35 @@ produces. No release ships a version write without the behaviour behind it (RC29
 - **Q3 — Size-changed same-name attachments.** When both the earlier and new bytes are
   non-empty but differ in length, should the new capture commit (counted as `changed`) or
   be kept like a regression? *Design default:* commit (NG3), because parser fixes
-  legitimately change bytes.
-- **Q4 — Posture.**
+  legitimately change bytes. **RULED** (docs/owner-rulings-2026-10-09.md §5): commit,
+  counted as `changed`; empty, absent and `.partial` items are still caught.
+- **Q4 — Posture.** **RULED** (docs/owner-rulings-2026-10-09.md §5): kept content leaves
+  `status` GREEN with an info line; the pending-removal WARNs fire per cause, and only after
+  a completed run.
   - Should records holding kept content leave `status` GREEN with an info line (default),
     or raise a WARN even though there is no remedy?
   - Should the per-cause pending-removal WARNs (RC15) fire only after a completed run
     (default), or never?
 - **Q5 (OR5, widened) — Accepting changed guards.** Do you accept amending the existing
   guards in §6: MA-66's and MA-87's covering tests, the R2/R5/R13/S24 wording (R5 scoped by
-  RC28), R22's restated text (RC19), design-incremental-completeness B2, and, only if Q2
+  RC28), R28's restated text (RC19), design-incremental-completeness B2, and, only if Q2
   rules for a bump, the MA-201/S39 version ceiling? The tests encode the current behaviour
   that F46 and N2 identify as the defects. They cannot be changed without your acceptance.
-  **Blocks:** S1.
+  **Blocks:** S1. **ESCALATED (ESC-2)** for the narrowing items, docs/owner-rulings-2026-10-09.md
+  §10: R2 (one joint text with mime-fidelity), R13's new deletion cases and its N2
+  adoption exception, MA-227's `-vN` clause, S24, the MA-66 and MA-87 test changes, and B2.
+  The additions are accepted under J7 (R28, S50, S51, R1's kept-item sentence, MA-238 and
+  MA-227's AlsoFiles reach, and R5's sentence only on ESC-3 (a)); S39 is unchanged (J2).
+  Interim: S1 lands only the additions and encoders, S2 lands without its two held cases,
+  S3 lands, and no existing text or test changes.
 - **Q6 — Starvation on pre-v7 records.** A mixed re-capture (one item arrived, another
   regressed) on a pre-v7 record whose earlier zip entry is ambiguous (T2 duplicate names)
   or unknown (T3) is kept whole, so the newly available item waits (NG8). Is that
   acceptable? Or do you want a one-time inventory backfill (for example a
   `verify -record`-style pass that reads each earlier zip's central directory into `Held`)
-  as a further slice?
+  as a further slice? **RULED** (docs/owner-rulings-2026-10-09.md §5): the backfill, as
+  slice S7 after S5, only where the zip matches its recorded `Fixity.Zip` and never
+  re-baselining fixity. Until it lands the starvation is an open gap, not accepted.
 - **Q7 (OR6, now with a quantified residual) — Legacy-scheme adopts.** On the live path, a
   legacy-scheme record whose staged bytes equal its recorded fixity is now adopted in place
   (RC17). For the rest:
@@ -1947,16 +2059,19 @@ produces. No release ships a version write without the behaviour behind it (RC29
   - **KEEP** like any other record: no duplication, and the served copy stays the better
     one, but a distinct reuse would then be silently uncaptured.
 
-  **Blocks:** S5.
+  **Blocks:** S5. **RULED** (docs/owner-rulings-2026-10-09.md §5): DEMOTE, because KEEP
+  would silently leave a distinct Message-ID reuse uncaptured (R1).
 - **Q8 (OR7, re-premised) — Orphans from a crash before the checkpoint.** These are the new
   files of a re-capture whose record never reached disk. RC8's adoption re-owns most of them
   on the next re-capture, and RC15 lists the rest as `earlier-copy`, naming the current
   copy. Is it acceptable that the rest are never removed automatically (NG5)? Or should
   `reindex` also remove an unowned `-vN` family sibling of a record's current stem outside
   redaction, at the cost of possibly deleting the newest bytes of a message? **Blocks:**
-  RC15's remedy text (S4).
+  RC15's remedy text (S4). **RULED** (docs/owner-rulings-2026-10-09.md §5): no. NG5
+  stays; the rest are listed as `earlier-copy`, naming the current copy.
 - **Q9 — No forced downgrade.** Confirm there is no flag to force a downgrade, so that
-  removing content from the archive stays redaction-only (NG1).
+  removing content from the archive stays redaction-only (NG1). **RULED**
+  (docs/owner-rulings-2026-10-09.md §5): confirmed.
 - **Q10 (OR3, new) — The sibling in-place writers** (§4.13, RC28).
   - Does the mime-fidelity P11 repair route through §4.3 + W1–W5? That accepts `-vN` names
     on repair and amends that design's "a decoded subject never renames a file" and its
@@ -1966,12 +2081,18 @@ produces. No release ships a version write without the behaviour behind it (RC29
     user-facing terms become "pending removal" (`removal_pending`).
 
   These amend sibling designs, so this design cannot decide them. **Blocks:** S4 and S5,
-  and the mime-fidelity repair slice.
+  and the mime-fidelity repair slice. **RULED** (docs/owner-rulings-2026-10-09.md §5, J6):
+  (1) the mime-fidelity repair routes through §4.3 and W1–W5 (J6), with the names ESC-3
+  decides; (2) the stub re-render no longer exists (fault-isolation revision 2 supersedes
+  metadata only), so there is no P5 exception; (3) this design's terms become "pending
+  removal" (`removal_pending`).
 - **Q11 (OR4, new) — Catalog ids.** Allocate the R and S ids across the in-flight designs
   (fault-isolation, recapture-integrity, mime-fidelity, local-confidentiality,
   extraction-workspace; the same ruling as the workspace review's OR2), and decide whether
   the catalog meta-test gains a duplicate-id check. That is a gate change, so it is the
-  operator's. **Blocks:** S1.
+  operator's. **Blocks:** S1. **RULED = J1** (docs/owner-rulings-2026-10-09.md §8): R28,
+  S50 and S51 here; the duplicate-id check is a follow-up for the kit owner (log §11),
+  since `assureblock/` is not edited here.
 
 ---
 
@@ -1991,7 +2112,9 @@ produces. No release ships a version write without the behaviour behind it (RC29
   - P1 for tier T3 and for refused or unreadable earlier units (conservative: may refuse a
     no-worse capture);
   - P1, P5 and W1's "never writes over" for the mime-fidelity repair and the
-    fault-isolation stub re-render: governed by §4.13 until OR3 (RC28);
+    fault-isolation stub re-render: governed by §4.13 until OR3 (RC28). **[ruling Q10/OR3
+    = J6]** The mime-fidelity repair is on the shared commit, so these hold for it as for any
+    re-capture; the stub re-render no longer exists;
   - P2 for presumed keeps (the wording says the run could not confirm, RC26);
   - P3 (merge preconditions, including the improvement gate and the T1 body digest);
   - P5 and P6 for power loss (the filesystem must honour fsync);
@@ -2005,10 +2128,12 @@ produces. No release ships a version write without the behaviour behind it (RC29
 - **Stated residuals:** a merged record has no original holding every item (P4, RC7); a
   T2 MERGE has no body-digest check against a same-envelope forgery (§8, RC35 (a));
   redaction during a stale-row window is loud and one step away, not silent (RC18); legacy
-  adopts cost a one-time duplication unless OR6 rules for KEEP (RC17).
+  adopts cost a one-time duplication unless OR6 rules for KEEP (RC17; **[ruling Q7]**:
+  DEMOTE, so the duplication is paid once).
 - **Aspirational until the S6 friction review:** that an inheritor reads `-vN` names and
   `source-lost` rows correctly from README.txt alone.
 - **Not yet reproduced by a test:** §1.5, §1.6 and §1.7 are code-reading results, so S1's
   encoders must first show them RED on today's code, under the RC31 harness. Should one of
   them turn out green on today's code, its claim is withdrawn from §1, and this document is
-  revised before S4/S5. §1.7's result is reported with Q1 (RC33).
+  revised before S4/S5. §1.7's result is reported with Q1 (RC33), which is now ESC-3's
+  question to the owner.

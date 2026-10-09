@@ -1,15 +1,21 @@
 # Design — Extraction workspace: a one-off copy export from Microsoft 365 or the archive, inside MailArchive Desktop
 
-**Revision:** 2 (2026-10-09). **BUILD STATUS:** approved with conditions, not built.
+**Revision:** 2 (2026-10-09). **BUILD STATUS:** approved with conditions, not built; owner
+rulings folded (`docs/owner-rulings-2026-10-09.md`).
 The 10-lens pre-code review is filed as `docs/review-extraction-workspace-predesign.md`:
 GO_WITH_CONDITIONS, 118 findings (111 confirmed, 7 refuted). Conditions **XC1..XC40** are
 folded into this revision, and the build must not start from revision 1. Nothing in this
 document is built.
 
-Two gates stand before code:
+Gates before code:
 - **XC40:** lenses 3, 6 and 7 re-run on this revision, as an addendum to the review,
-  before any E2 code. XC1 moves where the app keeps its truth, which is a material change.
-- **Owner rulings:** Q3, Q5, Q6 and Q10–Q15 (§11) each block the slice they name.
+  before any E2 code (RR-2). XC1 moves where the app keeps its truth, which is a material
+  change.
+- **RR-3 [ruling W1]:** lenses 3, 6 and 7 re-run on the second archive source's text (Q3),
+  before E4 code. It may be folded into RR-2.
+- **Owner rulings:** every question in §11 is ruled (`docs/owner-rulings-2026-10-09.md` §2).
+  Q13 is escalated (ESC-5) and blocks nothing. Each change a ruling makes to this text is
+  marked `[ruling <id>]`.
 
 Key conditions:
 - **XC1** a per-run 0600 *run record* in the local state directory is the app's system of
@@ -21,23 +27,24 @@ Key conditions:
 - **XC7** identity-safe token write-back.
 - **XC9 / XC10** time-based breakers and per-OS failure classes.
 - **XC23** E0 is `docs/design-local-confidentiality.md` slices C1+C2.
-- **XC25** the Graph layer is shared with `docs/design-fault-isolation.md` S3.
+- **XC25** the Graph layer is shared with `docs/design-fault-isolation.md`, through its SG
+  slice [ruling J4].
 - **XC28** each slice ships only what it builds.
 
-**Ids are provisional (XC29).** The R22 / S42 / X12–X14 / MA-400..MA-4xx ids below are
-proposals for the OPERATOR to accept into `docs/scenario-catalog.md` and
-`docs/ux-contract.md`, and none is in the catalog yet. R22, S42 and X12 collide with ids
-proposed by `design-fault-isolation.md`, `design-recapture-integrity.md`,
-`design-mime-fidelity.md` and `design-local-confidentiality.md`. Here they are provisional
-labels: no covers marker may cite them. Every Covers cell is rewritten to the
-operator-allocated ids (Q11) before any slice's rows are accepted.
+**Ids are allocated [ruling Q11 = J1].** Revision 2's provisional R22 / S42 / X12–X14 are now
+**R29**, **S52** and **X13–X15**, and this document uses only those. The MA rows keep
+MA-400..MA-449; each split row's "a" half keeps the base number and its "b" half takes an
+overflow id (MA-505..MA-513); the rows revision 2 numbered MA-450..MA-466 are MA-514..MA-530;
+the new W1 row is MA-531; MA-406 is retired. None is in the catalog yet: each lands with its
+slice's catalog-first PR, for the OPERATOR to accept into `docs/scenario-catalog.md` and
+`docs/ux-contract.md` (`docs/owner-rulings-2026-10-09.md` §8).
 
 **Revision 2 condition map** (review → where it lands):
 
 | Condition | Lands in |
 |---|---|
 | XC1 run record | §4.19, P19, §4.10, §4.11, §4.13, §5.1, §5.2, §8.4 |
-| XC2 retry / Finish as partial | P4, P6, R22, §4.13, §4.19, §7.2, MA-437 |
+| XC2 retry / Finish as partial | P4, P6, R29, §4.13, §4.19, §7.2, MA-437 |
 | XC3 journal binding and versions | §4.9, §4.16, §5.1, §6 |
 | XC4 reconciliation | P19, §4.2, §4.16, §8.2, §9 |
 | XC5 honest status, P14 | P14, §4.9, §4.10, §4.13, §5.1, §9 |
@@ -59,7 +66,7 @@ operator-allocated ids (Q11) before any slice's rows are accepted.
 | XC21 source scope | §3, §4.1, §4.10, §4.16, §7.3 |
 | XC22 inheritor guard | §7.4, §11 Q3 |
 | XC23 E0 owner, localweb.Mux | P17, §4.2, §8.1, §9, §10 |
-| XC24 X12 scope, Q5 premise | §1.4, §2 X12, §4.18, §6, §11 Q5 |
+| XC24 X13 scope, Q5 premise | §1.4, §2 X13, §4.18, §6, §11 Q5 |
 | XC25 Graph layer with S3 | §4.5, §9, §10 |
 | XC26 redirect, bodies, F15 | P4, P13, §4.5, §4.18, §8.2, §8.4 |
 | XC27 MessagePage fields | §4.5, §4.10, §4.11 |
@@ -89,13 +96,17 @@ operator-allocated ids (Q11) before any slice's rows are accepted.
 - **OW4** — drag-and-drop from Outlook was considered and rejected. Selection happens
   in the page ("the simpler tool … where you just select the source and choose the
   export destination to copy it to").
-  **Contested reading (XC39).** `docs/design-fault-isolation.md` records the same relayed
-  decision differently: "That flow drives the same engine (`app.Run` / `app.RunGraph`)". It
-  also defines that flow's outcome (its §4.10) and a hand-off to this design (its S5).
-  This design reads OW4 as a separate copy-export engine; §1.2 argues why `RunGraph`
-  cannot target a hand-over folder. Where the two overlap, the copy-export outcome reuses
-  fault-isolation's gap and outcome vocabulary. E2 does not start until the owner rules on
-  which engine is the "simpler tool" (Q12).
+  **The engine (XC39) [ruling Q12].** The "simpler tool" is this workspace's own copy-export
+  engine (`internal/app/copyexport*.go`). `docs/design-fault-isolation.md` revision 2 reads
+  the same relayed decision the same way: its inputs and FC20 name this workspace as the
+  simple flow, with its own engine and `CopyOutcome`, never `app.Run` / `app.RunGraph`. §1.2
+  argues why `RunGraph` cannot target a hand-over folder. Where the two overlap, the
+  copy-export outcome reuses fault-isolation's gap and outcome vocabulary and its
+  `app.GapRemedy`. This reading does not declare desktop P7 superseded: that question is
+  escalated (ESC-5, §11 Q13).
+- **Q3 (owner-direct, 2026-10-09) [ruling Q3]** — "yes the read only": the archive source
+  also accepts another archive folder, read-only, chosen with the folder picker, and nothing
+  is ever written there (W1: §4.3, §4.6, §4.7, §7.4, MA-531).
 
 **Claim labels used throughout.** **proven** = a tier-U/S MA row in §9 asserts it on
 every commit once its slice is built (nothing is built, so read "proven" as "will be
@@ -174,7 +185,10 @@ rows that will prove it (§9).
   **XC20:** the workspace opens `search.db` with `mode=ro` / `PRAGMA query_only`. Where the
   medium does not allow that, closing the last connection may checkpoint a pending WAL
   into `search.db`. Its bytes then change while its rows stay the same, so MA-436 compares
-  `search.db` by rows. No row or message file changes. Proposes **R22**.
+  `search.db` by rows. No row or message file changes. **Another archive folder [ruling
+  W1]:** chosen as a source, it is not even touched that way. Nothing is written there: no
+  lock, no manifest save or migration, no `RepairKeys`, no SQLite `-wal`, `-shm` or
+  checkpoint, no temp file (§4.3). Proven (MA-531, by bytes). Proposes **R29**.
 - **P2 — Own mailbox only, no new permission (OW3).** The workspace builds only the
   delegated device-mode client (`/me` addressing, `internal/graph/graph.go:95`), even
   when the saved config says `auth=app`. It never addresses `/users/{x}` and never adds
@@ -185,7 +199,7 @@ rows that will prove it (§9).
   sends folder entries (folder id, include-subfolders flag, excluded message ids) and
   individual picks. It never receives or sends every message of a folder. Counts are
   computed server-side from the cached folder tree (§4.4). Proven (MA-409, MA-432).
-  Proposes R22.
+  Proposes R29.
 - **P4 — The server trusts no id or URL the page sends.** Individual picks and
   exclusions are accepted only as short opaque **row handles** that this session issued
   in a listing (XC17). Microsoft 365 folder ids are accepted only if they are in the
@@ -199,7 +213,7 @@ rows that will prove it (§9).
   record (§4.19) for the run being retried, under the same signer (R-l otherwise). The
   destination's `export-manifest.json` is never an admission source. A selection is bound
   to the signer (or archive path) it was made under. Proven (MA-401, MA-410, MA-411,
-  MA-437). Serves R17; proposes R22.
+  MA-437). Serves R17; proposes R29.
 - **P5 — Preview is a pure dry run, and the run copies exactly what was previewed.**
   "Preview copy export" resolves the selection, sizes it and names the target paths. It
   writes nothing to the destination or the archive. It writes nothing to the config
@@ -208,7 +222,7 @@ rows that will prove it (§9).
   entry from its tree hash and asserts that write separately. The run takes
   only a preview id and copies exactly that resolved list. A message that arrives after
   the preview is not copied; one that disappears is a listed failure. Proven (MA-412,
-  MA-413, MA-415). Proposes **X13**.
+  MA-413, MA-415). Proposes **X14**.
 - **P6 — Every run writes a new export directory, contained, never overwriting.** The
   export directory is created with an exclusive `os.Mkdir` under a unique name. Every
   later write goes through an `*os.Root` opened on that new directory (Go 1.26,
@@ -216,7 +230,7 @@ rows that will prove it (§9).
   existing file is ever opened for writing. **No existing file is ever replaced (XC13):**
   every final placement is a no-replace rename (§4.9). The one exception is finishing
   this app's own interrupted run, whose root identity matches its run record (XC2,
-  §4.19). Proven (MA-416, MA-417, MA-418). Serves R4, R5; proposes R22.
+  §4.19). Proven (MA-416, MA-417, MA-418). Serves R4, R5; proposes R29.
 - **P7 — Names are portable, distinct and bounded.** Folder and file names come from
   `util.SanitizeSegment` / `util.SanitizeFilename` / `util.Slug`
   (`internal/util/paths.go:47,91,112`). Siblings are de-duplicated on an NFC +
@@ -226,12 +240,14 @@ rows that will prove it (§9).
   rename and fails that message, and the failure is listed. The subject slug shrinks
   before any path passes 250 UTF-16 units. Proven (MA-417, MA-418, MA-441) for traversal,
   illegal characters, the current reserved list, case collisions and length.
-  **Conditional** on the shared `util` fixes landing for the rest: the missing reserved
-  names (F111), bidi controls (F75) and the Linux 255-byte segment limit (F91). These are
-  **unowned** until an owner is named (XC38, Q15), and their MA-417 sub-cases are xfail
-  encoders until then. On Windows, `os.Root` refuses reserved device names, so before
-  the fix such a name is a per-message failure, never a write to a device. Serves R4,
-  R6.
+  **[ruling Q15]** The rest (the missing reserved names, F111; bidi controls, F75; the Linux
+  255-byte segment limit, F91) is handled for exports by an export-only, stricter naming
+  pass that E2 builds over `util.SanitizeSegment` and `util.SanitizeFilename` (layered over
+  them, never a copy of them), so MA-417's sub-cases pass with no archive migration. The
+  archive writer's own names keep F75/F91/F111: that is an open gap, not accepted, and E2
+  lands a skip encoder citing R4 for it when MA-417's sub-cases turn green. On Windows,
+  `os.Root` refuses reserved device names, so such a name is never a write to a device.
+  Serves R4, R6.
 - **P8 — The original is byte-exact or absent, never synthesized.** Microsoft 365
   source: the `.eml` is the exact byte stream Graph's `/$value` returned, hashed as it is
   written. **Conditional:** these are the MIME bytes Exchange Online provides at export
@@ -243,7 +259,7 @@ rows that will prove it (§9).
   bounded read, `Fixity.EML` match when recorded). "The same gate" is true only once
   `extract`, the `Exporter` and the workspace share one archive-read helper. Until then
   §6 states the fork and its owner (XC36). A record without one gets no `.eml`, and the
-  manifest says why. Proven (MA-419, MA-420). Serves R20's posture; proposes R22.
+  manifest says why. Proven (MA-419, MA-420). Serves R20's posture; proposes R29.
 - **P9 — A manifest with hashes that a recipient checks with stock tools.** Every
   export directory carries `export-manifest.json` (run metadata, one entry per selected
   message, every file with role, SHA-256 and size, every failure) and `SHA256SUMS.txt`
@@ -260,7 +276,7 @@ rows that will prove it (§9).
   the sender still having that fingerprint. It is kept in a fingerprint ledger that
   compaction never prunes, and can be saved as a receipt; losing the ledger loses the
   sender's anchor (XC14). **Authenticity** (who made it) is not claimed: there are no
-  signatures (§3). Proposes R22.
+  signatures (§3). Proposes R29.
 - **P10 — Readable HTML comes from the archive's sanitizing renderer and is labelled
   derived.** With "Readable HTML" on, each message also gets `<stem>.html` from
   `export.RenderWith` (`internal/export/html.go:115`; citation refreshed, XC30): the same parse → neutralize →
@@ -276,7 +292,8 @@ rows that will prove it (§9).
   `.eml` stays the authoritative copy. **Conditional:** byte-faithful only once the
   parser fixes for C1-1 (non-UTF-8 text attachments re-encoded), F24 (unknown
   charset/encoding drops parts) and F25 (inline-disposition parts unnamed or dropped)
-  land. Until C1-1 lands, the option is not shipped (§10, Q9). Proven for names and
+  land. Until C1-1 lands, the option is not shipped (§10, [ruling Q9]: E6, after
+  mime-fidelity S2, which carries the C1-1 fix). Proven for names and
   containment (MA-424); MA-425 is the C1-1 encoder (xfail). Serves R4, R1.
 - **P12 — A run finishes around bad messages and names them.** Each message's outcome
   is classified (§4.13): per-message *retryable*, per-message *terminal*, or *run-fatal*.
@@ -308,7 +325,7 @@ rows that will prove it (§9).
   process death. Across power loss or a yanked stick it holds only on filesystems that
   order metadata (NTFS, APFS, ext4 data=ordered). On FAT32/exFAT the recipient's
   `sha256sum -c` is the backstop, and the app says "Eject before unplugging". Serves R5;
-  proposes R22.
+  proposes R29.
 - **P15 — Exports never block backups, and backups never block exports.** A Microsoft
   365 export does not touch the archive. An archive-source export reads a lock-free
   manifest snapshot (the `status` precedent, `internal/health/health.go:497-499`) and
@@ -319,7 +336,8 @@ rows that will prove it (§9).
   - On Windows the snapshot must be read through a share-delete open (the archive
     `os.Root`, §4.3). Until the Windows lab sub-case of MA-442 shows a capture saving its
     manifest during a reload, P15 is unproven on Windows.
-  - A Microsoft 365 export runs beside a capture only as far as F17 allows (§4.14).
+  - A Microsoft 365 export runs beside a capture only as far as F17 allows (§4.14). F17 is
+    fault-isolation's slice FI-GF17 [ruling Q15].
 
   Serves R5, R14, R18.
 - **P16 — Large selections stay bounded.** Hard caps (200,000 messages per run; 10,000
@@ -328,7 +346,7 @@ rows that will prove it (§9).
   to disk. **Conditional (XC30):** originals are streamed when Readable HTML is off. With
   it on, one message's MIME plus its decoded attachments are held, bounded by the 200 MiB
   cap, and MA-419 runs in both modes. The session's caches are byte-capped and released
-  after 30 idle minutes (XC18). Proven (MA-432). Proposes R22.
+  after 30 idle minutes (XC18). Proven (MA-432). Proposes R29.
 - **P17 — The workspace surface is guarded end to end.** Every workspace endpoint is a
   POST through `GuardLocalPOST`, including the reads (folder trees, message lists,
   progress), because they return mailbox content. The two HTML pages carry no mailbox
@@ -337,10 +355,11 @@ rows that will prove it (§9).
   `docs/design-local-confidentiality.md` slices **C1** (Host allow-list on every method,
   `localweb.Mux` route registry) and **C2** (per-launch per-user session under
   `/s/<P>/`, instance file), merged before E3 (XC23). Until E0 lands, any local account
-  can scrape the CSRF token (F3), so the workspace is not shipped before it (§10, Q5).
+  can scrape the CSRF token (F3), so the workspace is not shipped before it (§10, [ruling
+  Q5]).
   Every workspace route registers through `localweb.Mux`, and every page, fetch and
-  sidebar URL is relative (XC23). Proposes **X12** (scoped to the workspace and export
-  routes, XC24) and **X14**; serves X9, R19.
+  sidebar URL is relative (XC23). Proposes **X13** (scoped to the workspace and export
+  routes, XC24) and **X15**; serves X9, R19.
 - **P18 — The destination is chosen with the OS folder picker or typed.** "Browse"
   opens a native folder dialog in the dashboard process (`zenity.SelectFile(
   zenity.Directory())`). zenity is in `go.mod:10` and ships in the MSI through
@@ -363,9 +382,10 @@ rows that will prove it (§9).
   copied as the archived page plus attachment zip. The panel note changes per source
   (§4.1). Proven (MA-420, MA-435). Serves R20, R1.
 
-**Proposed R22 — Copy export is separate, contained, faithful-or-absent and
+**Proposed R29 — Copy export is separate, contained, faithful-or-absent and
 self-verifying.** An Extraction-workspace export reads Microsoft 365 (GET-only, the
-signer's own mailbox) or the archive (read-only, never locked, never written). It
+signer's own mailbox) or an archive, the configured one or another archive folder the user
+chooses (read-only, never locked, never written) [ruling W1]. It
 writes ONLY inside a newly created export directory under the user-chosen destination,
 plus its own 0600 run record in the local state directory (XC1). It never writes into an
 existing export, except to finish this app's own interrupted run when the root's identity
@@ -379,22 +399,24 @@ nothing precedes every run and binds it. A run that does not finish keeps its
 `_EXPORT-NOT-FINISHED.txt` marker. One message's failure never stops the run and is
 listed with its reason.
 
-**Proposed UX rules** (provisional ids, XC29; X12 collides with local-confidentiality's
-X12). **X12** — mailbox-content reads are guarded like writes. **Scoped (XC24):** every
+**Proposed UX rules** (allocated ids [ruling Q11 = J1]; local-confidentiality's
+X-CONF-LOCKED is X12). **X13** — mailbox-content reads are guarded like writes. **Scoped (XC24):** every
 workspace and export endpoint that returns mailbox or archive content (folder names,
 subjects, senders, paths, progress) is a POST with CSRF + loopback Origin/Host (+ the E0
 session), never an open GET. **State: Partial.** The shipped GET endpoints
 `/api/activity` (log lines and the device code), `/api/health` and
-`/api/schedule-state` stay GETs. They are recorded as an X12 condition and assigned to
-E0/C2, whose session then guards every method. **X13** — look before writing outside the archive: an
-action that writes to a user-chosen location first shows a dry run (what, how much,
-where) that writes nothing, and the write executes exactly the previewed plan. **X14**
+`/api/schedule-state` stay GETs. They are recorded as an X13 condition and assigned to
+E0/C2, whose session then guards every method. **X14** — look before writing outside the archive: a
+dashboard action that writes to a user-chosen location first shows a dry run (what, how much,
+where) that writes nothing, and the write executes exactly the previewed plan. **Scoped
+[ruling J7]:** the rule covers the dashboard's actions; the CLI's `extract -dest` writes
+without a dry run and is outside it. **X15**
 — mail-derived text is inert in the control surface: subjects, senders and folder names
 reach the dashboard DOM only via `textContent`; JSON responses carry `nosniff` and
 `Cache-Control: no-store`.
 
-**Proposed scenario S42** — a user copies selected folders and messages from Microsoft
-365 or the archive to a folder on disk with the Extraction workspace (R22, R4, R5, R17,
+**Proposed scenario S52** — a user copies selected folders and messages from Microsoft
+365 or the archive to a folder on disk with the Extraction workspace (R29, R4, R5, R17,
 R19, R20).
 
 ## 3. Non-goals (explicit scope cuts)
@@ -406,7 +428,9 @@ R19, R20).
   per source, whose mail it reads, and records each store's mailbox in the manifest.
 - **Drag-and-drop from Outlook** (OW4) and any Outlook add-in.
 - **Other output formats:** PST, `.msg`, mbox (the CLI `extract -format mbox` already
-  covers the archive), PDF.
+  covers the archive), PDF. **[ruling ESC-5]** This does not declare the desktop design's P7
+  ("Export a copy (extract mbox/eml)") superseded. Whether it is, is escalated to the owner;
+  until then P7 stays an approved, unbuilt desktop item.
 - **Legal-grade chain of custody:** digital signatures, trusted timestamps, legal hold,
   eDiscovery search (KQL), tamper-proof audit logs. SHA-256 hashes give integrity, and
   tamper evidence with the out-of-band fingerprint (P9). Authenticity is not claimed.
@@ -420,17 +444,19 @@ R19, R20).
   Drive, iCloud Drive / `iCloudDrive`, macOS iCloud Desktop & Documents, and Box. Other
   providers are not detected.
 - **The mockup's in-page destination folder tree** (replaced by the OS picker, §4.8;
-  owner ruling Q1).
+  [ruling Q1]).
 - **Recoverable Items, the online archive mailbox, public folders, calendar, contacts,
   tasks.**
-- **Parallel downloads.** v1 downloads one message at a time, like capture (Q7).
+- **Parallel downloads.** v1 downloads one message at a time, like capture [ruling Q7].
+  Parallel downloads wait for MA-443's measured throughput.
 - **Deleting or cleaning up exports from the app.** The app never deletes in the
   destination, not even residue of a crashed run (§5). Finishing its *own* interrupted
   run, from its run record, is not cleanup. It only writes README, manifest and sums,
   rewrites its own marker, or removes its own marker after "Check and finish" (XC2, XC5).
 - **A CLI verb.** The engine lives in `internal/app` so one can be added later with the
   §4.13 exit partition.
-- **An archive other than the dashboard's configured archive location** (Q3).
+- ~~An archive other than the dashboard's configured archive location~~ — **withdrawn
+  [ruling W1]:** the archive source also accepts another archive folder, read-only (§4.3).
 - **Re-rendering an archived page that has no `.eml`.** It is copied, or quarantined as
   `.txt` (P10).
 - **Fixing the MIME parser limits** (C1-1, F24, F25, F26). Owned elsewhere; this design
@@ -447,22 +473,22 @@ R19, R20).
 | Sidebar "Microsoft 365" | The existing "Microsoft 365 connection" card (`./#sec-m365`, relative; `dashboard.go:358`), linked from every page, extended per §4.16. The label stays "Microsoft 365 connection" (X11, MA-302 continuity). |
 | Sidebar "Export activity" | New route `exports` (§4.16). |
 | Banner "Selected 1766 messages from Inbox." | The transient status line after "Select current folder": "Selected 1,766 messages from Inbox (and its 3 subfolders)." The count comes from `POST /api/workspace/count` (§4.4). |
-| Panel "1 Mailbox source" | Source chooser: "Microsoft 365 — your mailbox (alex@contoso.com)" or "MailArchive archive — C:\MailArchive (holds: alex@contoso.com, bob@contoso.com)" (the configured archive location only). The archive source names every mailbox its stores hold, and the tree shows each store's mailbox (XC21). |
+| Panel "1 Mailbox source" | Source chooser: "Microsoft 365 — your mailbox (alex@contoso.com)", "MailArchive archive — C:\MailArchive (holds: alex@contoso.com, bob@contoso.com)" (the configured archive location), or **"Another archive folder… (read-only)"**, chosen with Browse or typed [ruling W1]. Each archive source names every mailbox its stores hold, and the tree shows each store's mailbox (XC21). |
 | Text box "Blank = my mailbox; or shared mailbox address" | **Omitted (OW3).** In its place, a read-only "Mailbox: alex@contoso.com (your own mailbox)" row and the note: "Shared mailboxes aren't available in this version. MailArchive signs in with read access to your own mailbox only." |
 | "Load folders" | `POST /api/workspace/folders` → the whole folder tree with counts, rendered lazily (§4.3, §4.5). If not signed in, it shows the sign-in prompt instead (§4.16). |
-| Folder tree with checkbox, expand arrow and count per folder | Each node: checkbox (whole-folder entry), arrow (expands from the cached tree, no request), `(N)` = Graph `totalItemCount` (archive: manifest record count). Deleted Items and Junk Email are listed, unticked (Q2). |
+| Folder tree with checkbox, expand arrow and count per folder | Each node: checkbox (whole-folder entry), arrow (expands from the cached tree, no request), `(N)` = Graph `totalItemCount` (archive: manifest record count). Deleted Items and Junk Email are listed, labelled and unticked, and included only when ticked [ruling Q2]. |
 | "Include subfolders" checkbox | Sets the subtree flag of the entry created when a folder is ticked or "Select current folder" is clicked. Descendants then show as ticked (greyed, inherited). Toggling it later does not rewrite existing entries; the summary names each entry. |
 | "Select current folder" | Adds a whole-folder entry for the folder whose messages are listed (with the subtree flag above). |
 | Message list (columns Message = subject + sender, Received; checkbox per row; select-all) | `POST api/workspace/messages` → one page of 100, newest first, plus an opaque cursor. Each row carries a short opaque **row handle** (XC17). A row checkbox is an individual pick, or, inside a ticked folder, an exclusion when unticked. Select-all toggles the currently visible loaded rows only. |
 | "Filter loaded messages by subject / sender" | Client-side filter over loaded rows only. The placeholder says "loaded" (the MA-120 honesty rule). It never queries the server. |
 | "Load more messages" | Next page via the opaque cursor, whose TTL refreshes on use. An expired or evicted cursor continues with a keyset query (`receivedDateTime lt <last loaded row>`, same order), or shows R-x (XC18). It shows "Showing 300 of 1,350" and hides at the end. |
 | Panel "2 Export destination", path box, "Browse" | Typed absolute path, or `POST /api/workspace/browse` → native OS folder picker (§4.8). |
-| Destination folder tree ("Click an arrow to expand folders…") | **Not built (§4.8, Q1).** The OS picker covers it, including its own "New folder". |
+| Destination folder tree ("Click an arrow to expand folders…") | **Not built (§4.8, [ruling Q1]).** The OS picker covers it, including its own "New folder". |
 | "New subfolder name" + "Create folder" | `POST /api/workspace/mkdir` creates exactly one sanitized directory under the current destination and puts its path in the box (§4.8). |
 | "Preserve folder structure" | Option, default ON: `messages/<folder path>/…`. OFF: `messages/` flat, with the folder recorded in the manifest. |
-| "Extract attachments" | Option, default OFF: loose decoded files under `<stem>.attachments/` (§4.12). Hidden until C1-1 lands (Q9). |
+| "Extract attachments" | Option, default OFF: loose decoded files under `<stem>.attachments/` (§4.12). Hidden until C1-1 lands (E6, [ruling Q9]). |
 | "Readable HTML" | Option: `<stem>.html` via `export.RenderWith` (§4.11). **Hidden until slice E5 lands, and `exportHTML` defaults OFF until then (XC28).** It defaults ON from E5 on. |
-| Note "Always exports original EML and a manifest with hashes. Each run creates a separate export directory." | Microsoft 365 source: shown as written. Archive source: "Exports the original EML where your archive kept one (N of M selected); otherwise the archived page and attachments. Always writes a manifest with hashes. Each run creates a separate export directory." (P20, Q8) |
+| Note "Always exports original EML and a manifest with hashes. Each run creates a separate export directory." | Microsoft 365 source: shown as written. Archive source: "Exports the original EML where your archive kept one (N of M selected); otherwise the archived page and attachments. Always writes a manifest with hashes. Each run creates a separate export directory." (P20, [ruling Q8]) |
 | Footer "2088 messages selected" | Server-computed count (§4.4). After a preview it says "2,088 messages selected (2,086 found — see preview)" if the two differ. |
 | "Clear selection" | Clears all entries (asks to confirm when there are any). |
 | "Preview copy export" | `POST /api/workspace/preview` → a dry-run job; the preview panel then offers **Start export** and **Back** (§4.7). |
@@ -488,7 +514,7 @@ MA-405 keeps the method and guard twins, and MA-406 is deleted (XC23).
 |---|---|---|
 | `/api/m365/signin` | Sign in only, as a job in its **own sign-in slot**, under one process-wide sign-in mutex shared with capture's device flow, so two device flows never run at once (XC8). It runs `graph.NewDelegated` + `Client.Me` against an in-memory store first, then persists, after the XC7 confirmation when a weekly backup is installed and the UPN differs | token stored (vault/file) after the confirmation |
 | `/api/m365/signin-status` | Polls the sign-in job: the device code, then the result. A guarded POST, never `GET /api/activity` (XC8) | none |
-| `/api/workspace/source` | Describes both sources' availability (signer UPN or "sign-in needed"; archive path or "no archive yet") | none |
+| `/api/workspace/source` | Describes the sources' availability (signer UPN or "sign-in needed"; archive path or "no archive yet"). **[ruling W1]** With `{otherArchive: path}` (from `browse` or typed) it validates that folder as §4.3 describes and returns its mailboxes, or R-o3 / R-p | none (reads only, in the chosen folder too) |
 | `/api/workspace/folders` | Folder tree with counts for the chosen source | Graph GETs; cache |
 | `/api/workspace/messages` | One page (100 rows) of a folder, newest first, plus an opaque cursor | Graph GETs or one index read; seen-set |
 | `/api/workspace/count` | Count for a selection description | none (cache only) |
@@ -557,7 +583,7 @@ via `x/sys`), `util.FoldKey` (NFC + `x/text/cases.Fold`).
       has an older expiry. It never re-creates a cleared store. `NewDelegated`'s
       first-sign-in `put` is unchanged.
     - `deviceSource.reload` refuses a stored token whose UPN differs from the source's.
-    - This ships with capture rows beside MA-258 (MA-451).
+    - This ships with capture rows beside MA-258 (MA-515).
 - **Archive snapshot.** For the configured archive location (`Config.effectiveOut`,
   `internal/desktop/settings.go:53`): a load of `.mailarchive-manifest.json` **without**
   the archive lock. Manifest saves are temp-plus-rename, so a reader always sees a whole
@@ -589,6 +615,29 @@ via `x/sys`), `util.FoldKey` (NFC + `x/text/cases.Fold`).
     inside Rebuild's rename window. This narrows revision 1's "does not add to F5".
   - **Errors.** A load error is shown verbatim (newer format, corrupt: the MA-132/MA-159
     wording).
+- **Another archive folder (read-only) [ruling W1; Q3, owner-direct].** The source chooser
+  also offers "Another archive folder…", picked with Browse (§4.8) or typed. The configured
+  archive location stays the default archive source. An inheritor reads an inherited
+  archive this way without repointing Settings (§7.4).
+  - **Nothing is ever written there.** No `.mailarchive.lock`, no manifest save or load-time
+    migration on disk (`state.Load`'s re-keying stays in memory), no `RepairKeys`, no SQLite
+    `-wal`, `-shm`, journal or checkpoint, and no temp file. The manifest snapshot is read
+    as above, through an `os.Root` on the chosen folder. `search.db` is opened only with the
+    URI parameters `mode=ro&immutable=1`, which make SQLite take no lock and create no
+    sidecar. If that open fails, or the medium is read-only, the message list is unavailable
+    and whole-folder selection works from the manifest, as for a read-only copy (F85). If a
+    `-wal` sits beside `search.db`, `immutable=1` does not read it, so the list says "recent
+    messages may be missing from this list; whole-folder selection includes them".
+  - **It never touches Settings or the weekly backup.** Choosing it changes no setting;
+    XC22's Settings-save guard stays for users who do repoint Settings.
+  - **The folder is untrusted input.** §4.6's gates apply unchanged: validated relative
+    paths, the component-wise Lstat walk, the nlink check, reads through `os.Root`, bounded
+    reads and fixity. A folder with no `.mailarchive-manifest.json` is refused (R-o3), and a
+    newer manifest or index format is refused (R-p). The selection is bound to the folder's
+    path and identity, as R-l binds a signer.
+  - **Proven** by MA-531 (by bytes: after preview and run, every file under the folder is
+    byte-identical and no file has been added, read-only media included), which is stricter
+    than MA-436's row compare.
 
 ### 4.4 Selection model and counts
 
@@ -639,23 +688,29 @@ via `x/sys`), `util.FoldKey` (NFC + `x/text/cases.Fold`).
 All in `internal/graph`, all GET, all with the existing `Prefer: IdType="ImmutableId"`
 header (`graph.go:542`) and throttling retry (`graph.go:531`).
 
-**One Graph layer (XC25).** E1 depends on `docs/design-fault-isolation.md` slice **S3**
-for these, so there is one owner and one type:
-- `StatusError{Code int, GraphCode string, Msg string}` (its §4.8.1; `Msg` bounded);
-- `classifyFetch`;
-- the MIME idle watchdog and size cap;
-- the nextLink repeat guard.
+**One Graph layer (XC25) [ruling J4].** E1 depends on `docs/design-fault-isolation.md`
+slice **SG** (not S3), which fault-isolation owns and builds once, so there is one owner and
+one type:
+- `StatusError{Code int, GraphCode string, Text string}` (its §4.8.1): `Text` bounded, and
+  `Error()` keeps today's exact text, as MA-402 asserts;
+- `graph.Classify`, one classifier for both consumers;
+- `MIMETo(w, maxBytes, idle, overall)`, one bounded download (idle 2 min, overall 2 h, size
+  cap 200 MiB), whose `$value` request has its own response-header timeout of at least the
+  idle window, for both consumers;
+- the nextLink guard: a repeat set and a page cap in every paging loop, and the host/path pin
+  below.
 
-E1 adds only `FolderTree`, `FolderCount`, `MessagePage`, `MIMETo` (a writer variant over
-S3's watchdog) and the host/path pin below. Revision 1's claim that capture's `Folders`,
-`Messages` and `MIME` "keep their behaviour … unchanged" is withdrawn: S3 and the
-capture-side pin (slice E1c, §10) change them, with their own capture rows.
+E1 adds only `FolderTree`, `FolderCount`, `MessagePage` and the use of SG's guard with the
+host/path pin on from day one. Revision 1's claim that capture's `Folders`, `Messages` and
+`MIME` "keep their behaviour … unchanged" is withdrawn: SG and S3 change them, with their
+own capture rows, and capture's host/path pin is fault-isolation's step **FI-SGc** [ruling
+J4], still gated as XC25 says (below).
 
 - `FolderTree(ctx, userID string, max int) ([]FolderInfo, error)`. Same walk as
   `Folders` (`$top=100`, `childFolders` recursion) with
   `$select=id,displayName,parentFolderId,childFolderCount,totalItemCount`. **No**
   Deleted Items / Junk exclusion: this is explicit selection, and T7 governs capture
-  walks (Q2). `FolderInfo{ID, ParentID, DisplayName (raw, untrusted), ChildFolderCount,
+  walks [ruling Q2]. `FolderInfo{ID, ParentID, DisplayName (raw, untrusted), ChildFolderCount,
   TotalItemCount, WellKnown}`. `WellKnown` labels Deleted Items / Junk via
   `WellKnownFolderID` (`graph.go:250`). Refuses above `max` = 10,000 folders (R-s).
 - `FolderCount(ctx, userID, folderID) (int, error)` — `GET
@@ -675,26 +730,28 @@ capture-side pin (slice E1c, §10) change them, with their own capture rows.
   `FromName`, `ParentFolderID` and `SizeHint int64` (−1 = unknown). The browse list uses
   `Top=100`; resolution uses `Top=1000`.
 - `MIMETo(ctx, userID, messageID string, w io.Writer, maxBytes int64, idle
-  time.Duration) (int64, error)` streams `/$value` into `w`. It aborts when no byte
+  time.Duration) (int64, error)` (SG's, with the overall cap as a further argument [ruling
+  J4]) streams `/$value` into `w`. It aborts when no byte
   arrives for `idle` (default 120 s; this replaces the fixed 10-minute deadline for this
   path), above `maxBytes` (default 200 MiB, a hair over Exchange Online's 150 MB limit
   after MIME overhead), or on `ctx` cancel. **XC26:** the `$value` request gets its own
   response-header timeout of at least the idle window. The shared transport's 60 s
   `ResponseHeaderTimeout` (`graph.go:136-141`) would otherwise fail a large conversion
   before its first byte, on every retry. MA-443 records time-to-first-byte against size.
-- **Typed errors (XC25).** `StatusError` is fault-isolation S3's
-  `{Code, GraphCode, Msg}` with a bounded `Msg`. Revision 1's `{Code, Text}` and its
-  "`Error()` keeps today's exact text" promise are dropped. Callers use `errors.As` to
-  tell 404/401/403/5xx apart. Classification is S3's `classifyFetch` (§4.13).
+- **Typed errors (XC25) [ruling J4].** `StatusError` is SG's `{Code, GraphCode, Text}`
+  with a bounded `Text`, and `Error()` keeps today's exact text. Callers use `errors.As` to
+  tell 404/401/403/5xx apart. Classification maps SG's `graph.Classify` onto this design's
+  own outcome table (§4.13).
 - **`nextLink` pinning (XC25).** A followed link is compared after `url.Parse`: scheme
   equal; host equal case-insensitively; port equal after default-port normalization (443
   for https); path under the base path on a segment boundary. Otherwise it is a typed
   error naming the foreign host, and no request is made. The workspace paths
   (`FolderTree`, `MessagePage`) are pinned from day one. Capture's `Folders` and
-  `Messages` get the pin in their own small capture-hardening slice, **E1c** (§10). It
-  has capture rows and a short adversarial note, and is gated on an MA-443 sub-case that
-  records real nextLink shapes, so a harmless Microsoft-side variation cannot fail every
-  scheduled backup.
+  `Messages` get the pin in their own small capture-hardening step, now fault-isolation's
+  **FI-SGc** [ruling J4] (formerly this design's E1c). It has capture rows (MA-505) and a
+  short adversarial note, and is gated on an MA-443 sub-case that records real nextLink
+  shapes, so a harmless Microsoft-side variation cannot fail every scheduled backup.
+  Lifting that gate is the owner's decision (ESC-7).
 - **Redirects and bodies (XC26).** `httpTransport`'s client sets `CheckRedirect` to refuse
   any redirect that leaves the base scheme, host and port. oauth2's Transport attaches
   `Authorization` on every hop, so a cross-host 302 would otherwise carry the bearer
@@ -705,6 +762,9 @@ capture-side pin (slice E1c, §10) change them, with their own capture rows.
   workspace endpoint and the run.
 
 ### 4.6 Archive source adapter (slice E4)
+
+The same adapter serves both archive sources. For another archive folder [ruling W1], "the
+archive directory" below is the chosen folder, and every gate applies unchanged.
 
 For each resolved record (key, `state.Record`):
 
@@ -733,7 +793,7 @@ For each resolved record (key, `state.Record`):
    issue-free v1 record, is filtered out. It is replaced by "completeness was not tracked
    by the version that captured this message".
 4. **Gone-from-mailbox records** (`Present == false`) are included by default and
-   counted separately in the preview (Q4).
+   counted separately in the preview [ruling Q4].
 5. **Redaction belt (XC19).** At resolution the selection is intersected with what is on
    disk: the record's page and `.eml` are Lstat-ed, as R21's reader does. A record whose
    files were deleted but not yet reindexed is left out of the plan. The preview reports
@@ -768,7 +828,8 @@ cancels the old one). It:
    delta-query fix would close it).
 3. Validates the destination: absolute and clean, no NUL; exists and is a directory
    (else R-e); not equal to or inside the archive location after symlink resolution
-   (`destOverlapsOut`, `extract.go:621`, using only its "same"/"inside" cases; else R-f).
+   (`destOverlapsOut`, `extract.go:621`, using only its "same"/"inside" cases; else R-f),
+   nor equal to or inside the other archive folder when that is the source [ruling W1].
    It also reports:
    - **Free bytes** via `util.FreeBytes` (statfs / `GetDiskFreeSpaceEx`, read-only), with
      the **free-space policy (XC11):** the estimate plus a finalization reserve of about
@@ -826,8 +887,8 @@ box always accepts a typed path. No endpoint lists directories.
   chooser the OS already provides, with favourites, network locations and "New folder".
   With E0 in place, the remaining exposure is only to the same user (DC4, out of scope),
   so the security cost after E0 is mostly the bug surface and the hang hazard, not a
-  confidentiality hole. That is why this is a recommendation and an owner question (Q1),
-  not a security necessity.
+  confidentiality hole. That is why this was a recommendation and an owner question (Q1),
+  not a security necessity. **[ruling Q1]** The picker plus the typed path is accepted.
 - *Native picker.* No new read surface: the path comes from an OS dialog the user
   drives, on the machine that owns the loopback (always the user's own, given
   loopback-only plus E0's per-user instance). Costs, which are friction rather than
@@ -849,8 +910,9 @@ box always accepts a typed path. No endpoint lists directories.
   kills the process, and the running export is then recovered by "Finish as partial"
   (XC2). A hang inside an extension cannot be dismissed by `zenity.Context`. Browse then
   stays refused ("a folder picker is already open") until restart. Both rows are in
-  §5.2. Running the dialog in a child process would contain both, but it touches the
-  desktop owner ruling P1, so it is Q14.
+  §5.2. Running the dialog in a child process would contain both, but it would reopen the
+  desktop owner ruling P1 (in-process, not shell-out). **[ruling Q14]** It is not done: P1
+  stands, and this minimum (Browse disabled during a run, the §5.2 rows) is the design.
 
 The picker is not a security boundary. The page can submit any typed path anyway, and
 that path is validated the same way (§4.7 step 3). The boundary is "only the signed-in
@@ -924,9 +986,11 @@ name"). It returns the new path for the box.
   **Conditional:** the modes hold on filesystems with POSIX modes. On FAT, exFAT,
   NTFS-3g and SMB/NFS mounts, access follows the mount or share options, and README
   says so. Windows: the export inherits the destination's ACL (conditional, stated in
-  README; lab row MA-442). Whether the export root instead gets a protected owner-only
-  DACL, as `docs/design-local-confidentiality.md` P1/P3 would have it, is the owner's
-  ruling (Q10). The preview's posture line (§4.7) tells the user which applies.
+  README; lab row MA-442). **[ruling Q10 = J3]** It does not get a protected owner-only
+  DACL: a hand-over copy must open for its recipient. `docs/design-local-confidentiality.md`
+  scopes its protected DACL to archive roots and the tool's own state directories. The
+  preview's posture line (§4.7), built on that design's `Posture(dir)`, names before the
+  first write who can read the destination.
 - **Temp files and final placement:** `.mailexport-<16 hex>.tmp` (`O_CREATE|O_EXCL`,
   0600) in the final directory: write, `Sync`, then a **no-replace rename** to the final
   name (XC13). That is `renameat2(RENAME_NOREPLACE)` on Linux, `renamex_np(RENAME_EXCL)`
@@ -1055,7 +1119,7 @@ and archive source with an original:
 files by relative name. **Guarded (XC30):** the sentence "attachments are inside the .eml
 file" appears only when `RawName != ""`, `ZipName == ""` and `AttachDirName == ""`, that
 is, only in the export's own renders. Archive renders stay byte-identical before and after
-the change, which MA-461 asserts. With no `RootRel`/`FolderIndexRel`, the header renders
+the change, which MA-525 asserts. With no `RootRel`/`FolderIndexRel`, the header renders
 no navigation (`html.go:68-78`). The
 CSP and no-referrer metas come first (R19). The parse → serialize → re-parse fail-closed
 check (`sanitizeHTML`, MA-301) applies unchanged.
@@ -1107,8 +1171,12 @@ DC3 `recover`: a panic becomes `failed`, and the marker stays.
 (XC13); then derived files; then one fsynced line in the **run record** (status, class,
 files with role, SHA-256 and size; XC1). The archive adapter is §4.6.
 
-**Classification (XC9, XC10).** One classifier, fault-isolation S3's `classifyFetch`
-(XC25), sorts every Graph error. Destination write errors are matched with `errors.As`
+**Classification (XC9, XC10).** One classifier, SG's `graph.Classify` (XC25, [ruling J4]),
+sorts every Graph error, and this design maps its classes onto the table below. Capture's
+wrapper, `app.classifyFetch`, is fault-isolation's and is not used here. The 404 class, the
+403 handling and the breaker thresholds are this design's own, with this justification: a
+copy export is a one-off for one selection, so a message that is gone is terminal for that
+selection, whereas capture retries through its ledger on every later run. Destination write errors are matched with `errors.As`
 on `syscall.Errno` against a per-OS table, never with `errors.Is(err, syscall.ENOSPC)`.
 On Windows, `syscall.ENOSPC` is an invented constant that no disk-full code maps to.
 
@@ -1210,7 +1278,8 @@ manifest and sums list exactly the recorded files that are present under the roo
 
 - **Microsoft 365 source:** no archive involvement at all, and no archive location is
   needed. It runs alongside a capture, **conditional on F17 (XC30, XC38)**.
-  - **Why the condition.** Until F17 is fixed (unowned, Q15), a Retry-After of about 60 s
+  - **Why the condition.** Until F17 is fixed (fault-isolation's slice FI-GF17, after its
+    S3 [ruling Q15]), a Retry-After of about 60 s
     or more counts against the capture's 60-second request deadline. A long export beside
     the scheduled backup can then make that backup fail ("context deadline exceeded"),
     not merely slow it down.
@@ -1371,20 +1440,20 @@ saves settings drops these fields, which is harmless (§6).
 |---|---|
 | F1 meta refresh smuggled via SVG/MathML (`go.mod:11`) | Fixed upstream (x/net v0.60.0; MA-300/MA-301). Export pages reuse `RenderWith` and MA-423 re-runs the corpus. Archived pages rendered before the fix are detected and quarantined as `.txt` (P10). |
 | F2 any Host on GET (`server.go:102`) | **E0 prerequisite** = `docs/design-local-confidentiality.md` slice C1 (XC23). Until then the workspace exposes only POST data endpoints (Host-checked by `GuardLocalPOST`, D2) and data-free page shells. |
-| F3 CSRF token to anyone; cross-user dashboard (`dashboard.go:90`) | **E0 hard prerequisite** (Q5) = local-confidentiality slice C2 (XC23). **Re-premised (XC24):** the shipped dashboard already lets another local account copy the live mailbox to a path (POST `/api/settings` with any `Out`, then `/api/capture` with the victim's token). E0 closes that exposure on its own merits. The workspace inherits it and adds a faster selective copy and a subject-read surface, so it must not ship while another local account can POST. |
+| F3 CSRF token to anyone; cross-user dashboard (`dashboard.go:90`) | **E0 hard prerequisite** ([ruling Q5]) = local-confidentiality slice C2 (XC23). **Re-premised (XC24):** the shipped dashboard already lets another local account copy the live mailbox to a path (POST `/api/settings` with any `Out`, then `/api/capture` with the victim's token). E0 closes that exposure on its own merits. The workspace inherits it and adds a faster selective copy and a subject-read surface, so it must not ship while another local account can POST. |
 | F4 port squatter (`main.go:92`) | **E0.** A look-alike dashboard could phish a workspace sign-in. |
 | N9 / N10 / F20 reader `/files` exposure and race | Not used. A destination inside the archive is refused, so the reader never serves an export. Archive reads use `os.Root` plus the Lstat gate. |
-| C2-1 world-readable `search.db` / 0755 directories | Avoided for exports: 0700/0600 at creation (MA-439). **Conditional (XC12):** only on filesystems with POSIX modes. On FAT/exFAT/SMB/NFS the mount or share decides, and the preview's posture line says so. Windows ACL posture: Q10. The archive's own modes are not this design's. |
+| C2-1 world-readable `search.db` / 0755 directories | Avoided for exports: 0700/0600 at creation (MA-439). **Conditional (XC12):** only on filesystems with POSIX modes. On FAT/exFAT/SMB/NFS the mount or share decides, and the preview's posture line says so. Windows ACL posture: inherited from the destination and named by the posture line [ruling Q10 = J3]. The archive's own modes are not this design's. |
 | C2-2 symlinked folder inside the archive | Archive reads are symlink-strict (`extractInspect` + `os.Root`). |
 | C2-3 / C1-2 redaction residue in `search.db` FTS / folder pages | Selection resolves from the manifest (redacted records are absent). The list reads `docs` rows, which redaction deletes. |
 | F5 reader holds `search.db` | The workspace opens it per request, read-only, and closes it. A list request's shared lock keeps it out of the in-process Rebuild's rename window (XC20). It narrows F5's window to the request; it does not remove F5. |
 | F9 one bad `$value` halts the walk (`graph.go:621`) | Avoided: per-message classes (§4.13). Hazards 1 and 2 cannot arise (no manifest writes); hazards 3–5 adopted. |
 | F11 position paging | Mitigated by count reconciliation (§4.7); residual stated. |
 | F15 token fetch without overall timeout | **Fixed in E1 (XC26):** `httpTransport`'s client gets `Timeout: reqTimeout`, which bounds token fetches and the `deviceSource` mutex hold. That fixes F15 for capture and the CLI too. |
-| F17 throttle waits count against the 60 s deadline; 5xx not retried | Dependency, **unowned** (XC38, Q15). **Conditional (XC26):** a listing under a long Retry-After shows R-v only once F17 is fixed or S3's typed throttle error lands. Until then it surfaces as a deadline error that the preview reports as "Microsoft 365 didn't answer in time — try again in a few minutes", not as R-v. 502/503/504 after retries are transport-class (backoff, XC9). F17 also conditions §4.14. |
+| F17 throttle waits count against the 60 s deadline; 5xx not retried | Dependency, owned by fault-isolation as its slice FI-GF17, after its S3 [ruling Q15]. **Conditional (XC26):** a listing under a long Retry-After shows R-v only once FI-GF17 or S3's typed throttle error lands. Until then it surfaces as a deadline error that the preview reports as "Microsoft 365 didn't answer in time — try again in a few minutes", not as R-v. 502/503/504 after retries are transport-class (backoff, XC9). F17 also conditions §4.14. |
 | F55 case-only folder collisions | Avoided by sibling FoldKey de-duplication (MA-418). |
-| F75 bidi / F91 byte cap / F111 reserved names (`util/paths.go`) | Dependency on the shared util fix, **unowned** until an owner is named (XC38, Q15). `docs/design-fault-isolation.md` §3 N1 calls them "owned elsewhere", and no plan builds them. MA-417 sub-cases xfail until then. `os.Root` is the Windows backstop. |
-| C1-1 / F24 / F25 parser limits | Original unaffected (M365). Derived files carry caveats. "Extract attachments" is not shipped before C1-1 (Q9). |
+| F75 bidi / F91 byte cap / F111 reserved names (`util/paths.go`) | **[ruling Q15]** For exports: an export-only, stricter naming pass layered over the util sanitizers, built in E2, so MA-417's sub-cases pass with no archive migration. The archive-side fix needs its own migration and stays open outside this design, as an open gap, not accepted: E2 lands a skip encoder citing R4 for the archive writer's names. `os.Root` is the Windows backstop. |
+| C1-1 / F24 / F25 parser limits | Original unaffected (M365). Derived files carry caveats. "Extract attachments" is not shipped before C1-1 (E6, [ruling Q9]). |
 | F26 PST embedded items | Archive source only. Cannot be detected; README caveat for PST stores. |
 | F49 / F50 / F85 index gaps, read-only medium | Folder selection and counts come from the manifest. The list may miss rows ("K messages in this folder are not in the search index — Rebuild search index fixes the list"). On a read-only copy the list is unavailable, and whole-folder selection still works. |
 | F8 invisible startup errors | Inherited, unrelated to the workspace. |
@@ -1546,7 +1615,9 @@ for that run, never the export itself.
   one exported stem / unique-name helper (`baseNameN`, `stemFor`, a casefold
   `uniqueName`). Otherwise this section names the fork and its owner before E4, and P8's
   "the same gate" is withdrawn. Whether the workspace supersedes the approved desktop
-  design's P7 "Export a copy (extract mbox/eml)" is the owner's ruling (Q13).
+  design's P7 "Export a copy (extract mbox/eml)" is escalated to the owner [ruling ESC-5].
+  Until the owner answers, nothing here declares P7 superseded: it stays an approved,
+  unbuilt desktop item, and E3 ships the workspace and its Export sidebar group beside it.
 - **E0 cutover (XC24).** E0 is `docs/design-local-confidentiality.md` slices C1 + C2, and
   its own migration section owns the cutover: the landing page for old bookmarks, the
   RMM verification step (`packaging/mailarchive-desktop/README-RMM.md:152-156`, "Open
@@ -1561,9 +1632,9 @@ for that run, never the export itself.
   (`Product.wxs:37-39`, MajorUpgrade with `DowngradeErrorMessage`). Rolling back the
   workspace by binary therefore means uninstalling and reinstalling the older MSI. That
   also removes every other fix in the release, including E0 if E0 shipped in the same
-  release. If the owner answers Q6 yes, the deployment switch is the rollback path: when
-  it is off, the workspace and export routes are never registered (404) and the sidebar
-  group is hidden (MA-462). Either way, exports on disk stay self-contained, the journal
+  release. **[ruling Q6]** The deployment switch is therefore the rollback path: when it
+  is off, the workspace and export routes are never registered (404) and the sidebar
+  group is hidden (MA-526). Either way, exports on disk stay self-contained, the journal
   and run records are orphaned harmlessly, and there is no archive state to roll back.
 - **Desktop binary footprint (corrected, XC31).** The MSI gains no component, but zenity
   is **new to the `mailarchive-desktop` binary**: `go list -deps ./cmd/mailarchive-desktop`
@@ -1641,29 +1712,32 @@ button, or save the receipt (1).
 
 ### 7.4 Inheritor opening the archive cold (has the archive folder and MailArchive Desktop)
 
-1. Settings → Archive location → the inherited folder → **Save settings** (2 steps).
-   **Hazard, guarded at the save (XC22).** If a weekly backup is installed, the next
-   scheduled capture would write the inheritor's own mailbox into the inherited archive,
-   because settings are read at run time (MA-279). So when a weekly backup is installed
-   and Archive location changes, **Save asks first**: "Your weekly backup will now
-   archive <signed-in UPN> into <new folder>". The choices are **Save and keep the
-   backup**, **Save and remove the weekly backup**, and **Cancel**. The inheritor chooses
-   **Save and remove the weekly backup** (+1 step). The silent contamination is gone: the
-   harmful save is now an informed one, at the moment it happens. **Residual (Type II,
-   PARTIAL in the review):** to read an inherited archive, the inheritor must still either
-   give up the backup or retarget it. Only Q3 (a read-only "another archive folder"
-   source) removes that, and **E4's inheritor cell is gated on the owner's Q3 ruling**.
-2. **Extraction workspace** → Source **MailArchive archive — D:\Inherited\MailArchive**
-   → **Load folders** (stores → folders, counts from the manifest).
-3. Select folders and messages (as 7.1, steps 3–4).
-4. **Browse** → destination.
-5. **Preview copy export** → "Of 2,088 selected, 312 have an original .eml; 1,776 will
+**[ruling W1; Q3, owner-direct]** The inheritor no longer repoints Settings. The walk:
+
+1. **Extraction workspace** → Source **Another archive folder…** → **Browse** → the
+   inherited folder (or type its path) → **Load folders** (stores → folders, counts from
+   its manifest). Nothing is written in that folder, and Settings and the weekly backup are
+   untouched, so the inheritor's own backup keeps archiving the inheritor's mailbox into the
+   inheritor's own archive.
+2. Select folders and messages (as 7.1, steps 3–4).
+3. **Browse** → destination.
+4. **Preview copy export** → "Of 2,088 selected, 312 have an original .eml; 1,776 will
    be copied as the archived page and attachment zip (no original was kept). 41 are no
    longer in the mailbox (kept in the archive)."
-6. **Start export** → **Open folder**.
+5. **Start export** → **Open folder**.
 
-**About 10 steps** (one more than revision 1: the XC22 confirmation). From a read-only copy (DVD), the message list is unavailable (F85);
-whole-folder selection still works.
+**About 9 steps**, one fewer than revision 2's Settings route, with no hazard. From a
+read-only copy (DVD), the message list is unavailable (F85); whole-folder selection still
+works. The revision 2 residual (Type II, PARTIAL in the review: to read an inherited archive
+the inheritor had to give up the backup or retarget it) is closed by this source.
+
+**A user who still repoints Settings** (Settings → Archive location → the inherited folder →
+**Save settings**) keeps XC22's guard. If a weekly backup is installed, the next scheduled
+capture would write the user's own mailbox into that archive, because settings are read at
+run time (MA-279). So when a weekly backup is installed and Archive location changes, **Save
+asks first**: "Your weekly backup will now archive <signed-in UPN> into <new folder>". The
+choices are **Save and keep the backup**, **Save and remove the weekly backup**, and
+**Cancel**. The harmful save is an informed one, at the moment it happens (MA-523).
 
 ### 7.5 Recipient opening the export cold (no tool)
 
@@ -1703,6 +1777,7 @@ whole-folder selection still works.
 | R-n | "The folder picker isn't available on this computer — the OS folder dialog needs the `zenity` program on Linux. Type the folder path in the box instead." |
 | R-o | "There's no archive at C:\MailArchive yet — run Archive now first, or choose Microsoft 365 as the source." |
 | R-o2 | (XC10) "The archive at \\\\nas\\MailArchive is no longer available (it was disconnected) — the export stopped after 1,500 of 2,088 messages; nothing in the archive is damaged. Reconnect it, then click 'Export the remaining messages'." |
+| R-o3 | [ruling W1] "D:\Inherited\Mail isn't a MailArchive archive (it has no .mailarchive-manifest.json) — choose the archive's top folder, the one that holds index.html and README.txt." Nothing is read beyond that check, and nothing is written. |
 | R-p | (the loader's own wording) e.g. "The archive's manifest was written by a newer MailArchive (format 7) — update MailArchive Desktop to export from it." |
 | R-q | "A folder named 'Archive Folder' already exists here — choose it with Browse, or use another name." / "'a/b' can't be a folder name (it contains '/') — try 'a b'." |
 | R-r | (XC33) "This export's folder was moved or replaced since the export (E:\…\MailExport-2026-10-09_142233-7f3a) — MailArchive won't open it. Find the folder yourself, then run Check this export." |
@@ -1710,7 +1785,7 @@ whole-folder selection still works.
 | R-t | "Couldn't create a new export folder in C:\…\Archive Folder (MailExport-2026-10-09_142233 through -99 already exist) — choose another destination." |
 | R-u | (XC9) "The connection to Microsoft 365 has been down for 5 minutes — the export stopped after 1,500 of 2,088 messages; none of them was marked failed. Check your network, then click 'Export the remaining messages'." |
 | R-u2 | (XC9) "Microsoft 365 is having problems (25 messages in a row returned a server error) — the export stopped after 1,500 of 2,088 messages. Try again later with 'Export the remaining messages'." |
-| R-v | "Microsoft 365 is limiting requests right now (throttled) — the preview couldn't list Inbox. Try again in a few minutes." **Conditional (XC26):** shown only once F17 or S3's typed throttle error lands; until then a long Retry-After surfaces as "Microsoft 365 didn't answer in time — try again in a few minutes." |
+| R-v | "Microsoft 365 is limiting requests right now (throttled) — the preview couldn't list Inbox. Try again in a few minutes." **Conditional (XC26):** shown only once F17 (fault-isolation's FI-GF17, [ruling Q15]) or S3's typed throttle error lands; until then a long Retry-After surfaces as "Microsoft 365 didn't answer in time — try again in a few minutes." |
 | R-w | (XC12) "MailArchive couldn't create a folder in E:\Exports (access denied) — choose another folder, or allow MailArchive Desktop in Windows Security → Controlled folder access (macOS: System Settings → Privacy & Security → Files and Folders)." Nothing is written. |
 | R-x | (XC18) "This list expired — reloading Inbox from the newest message." (shown when a keyset continuation is impossible; the selection is kept) |
 | R-y | (XC18) "MailArchive Desktop restarted — reload the page; your selection can't be reused." |
@@ -1724,7 +1799,7 @@ No refusal echoes a token, a Graph URL with its query, or a stack trace (MA-438;
 
 1. **Browser page ↔ dashboard process** (loopback HTTP). Guarded by `GuardLocalPOST`
    (CSRF + loopback Origin + loopback Host) on every data endpoint, reads included
-   (X12), plus E0's per-launch, per-user session and Host allow-list on every method.
+   (X13), plus E0's per-launch, per-user session and Host allow-list on every method.
    E0 is `docs/design-local-confidentiality.md` C1 + C2, with routes registered through
    `localweb.Mux` and probed by MA-378 (XC23). The page shells carry no mailbox data.
 2. **Dashboard process ↔ Microsoft Graph.** A delegated `Mail.Read` bearer token. GET
@@ -1736,7 +1811,7 @@ No refusal echoes a token, a Graph URL with its query, or a stack trace (MA-438;
    - page-supplied picks are row handles checked against the seen-set, and folder ids
      must be in the cached tree (XC17).
 3. **Mail content → the dashboard page.** Untrusted. JSON (Go's encoder escapes `<`,
-   `>`, `&`) with `nosniff`, rendered by `textContent` only (X14). The page CSP is the
+   `>`, `&`) with `nosniff`, rendered by `textContent` only (X15). The page CSP is the
    existing `dashCSP` (`script-src 'self'`).
 4. **Mail content → disk.** Untrusted names → sanitized, FoldKey-unique, `os.Root`-
    contained. HTML → the R19 renderer. The original `.eml` is written as bytes and never
@@ -1748,7 +1823,9 @@ No refusal echoes a token, a Graph URL with its query, or a stack trace (MA-438;
    pinned with `os.Root` (XC32).
 6. **Archive directory → export.** Semi-trusted: anyone who can write the archive.
    Every path is gated by `validRelPath` + `extractInspect` + `os.Root`, plus the nlink
-   check (XC19); sizes are bounded, and fixity is checked.
+   check (XC19); sizes are bounded, and fixity is checked. **Another archive folder [ruling
+   W1]** is untrusted input: anyone may have written it. The same gates apply, the
+   newer-format refusal applies, and nothing is ever written there (§4.3).
 7. **OS dialog → process.** The user's choice. Not a boundary (§4.8). It does load
    third-party shell code into the process on Windows (XC31).
 8. **Export directory → app (read-back; XC4).** Untrusted: other programs and accounts
@@ -1765,7 +1842,7 @@ No refusal echoes a token, a Graph URL with its query, or a stack trace (MA-438;
 | MIME bytes | mail senders via Graph | written verbatim (bounded 200 MiB); parsed only for derived files, under the existing panic guard |
 | Message HTML | mail senders | `RenderWith` + re-parse fail-closed (MA-300/301) |
 | Graph JSON, `nextLink`, redirects | Microsoft, or a misbehaving or compromised server | bodies read through `io.LimitReader` (XC26); `nextLink` pinned to the base after normalization (XC25); redirects off the base refused (XC26) |
-| Archive manifest, paths, zips | whoever can write the archive | path gates, no symlinks, fixity, zip-bomb bounds |
+| Archive manifest, paths, zips | whoever can write the archive, or whoever wrote another archive folder chosen as a source [ruling W1] | path gates, no symlinks, fixity, zip-bomb bounds; for another archive folder also R-o3, R-p and the read-only open of §4.3 (MA-531) |
 | Archived `.html` (no original) | the archive | live-meta detector; quarantined as `.txt` if live |
 | Selection JSON, row handles, folder ids, cursors | the page | 1 MiB cap (413 → R-j-style refusal); row handles resolved through the seen-set; M365 folder ids only from the cached tree; message folders from `parentFolderId`; opaque cursors; caps (XC17) |
 | Journal lines, run records, fingerprint ledger | the local state directory (same user) | control-stripped; torn tail truncated; newer formats refused legibly; never used to delete or write outside the app's own export root (XC1, XC3) |
@@ -1791,7 +1868,7 @@ records zenity's new reachability.
 |---|---|---|---|
 | Outside web page (CSRF) | POST `/api/exports/start` with a crafted plan | CSRF token + custom header (no CORS preflight granted) + Origin check; the start takes only a server-held preview id | none (proven, MA-405) |
 | DNS rebinding | read folder lists or subjects; scrape the token from `/` | data endpoints are POST + Host-checked (D2); E0 Host allow-list on GET; the session cookie is not sent to the attacker's hostname | conditional on E0 for the page shells |
-| Another local account (shared PC, RDS) | scrape the CSRF token, export the victim's mailbox to `C:\Users\Public` (and, today, already via `/api/settings` + `/api/capture`, XC24) | **E0** = local-confidentiality C2's per-user session and instance (F3/F4) (XC23) | **not shippable before E0** (Q5) |
+| Another local account (shared PC, RDS) | scrape the CSRF token, export the victim's mailbox to `C:\Users\Public` (and, today, already via `/api/settings` + `/api/capture`, XC24) | **E0** = local-confidentiality C2's per-user session and instance (F3/F4) (XC23) | **not shippable before E0** ([ruling Q5]) |
 | Malicious sender | traversal or reserved names, bidi spoofing, long names, script or refresh in HTML, MIME/zip bombs, markup in a subject aimed at the dashboard | sanitizers + `os.Root`; R19 renderer; bounds; `textContent` | bidi/reserved/byte-length conditional on the util fixes (P7); the `.eml` is the original (README caution) |
 | Archive-writer insider | symlink, hard link or swapped files to read outside the archive or poison the export | `extractInspect` + `os.Root` + nlink 1 (XC19) + fixity | a pre-fixity record is "unattested" (stated); the in-root check-then-use window is caught by fixity only when recorded |
 | Misbehaving or compromised server | redirect paging or a 302 to an attacker host to harvest the bearer token; huge JSON or `$value` | `nextLink` pinning after normalization (XC25); `CheckRedirect` refusing off-base redirects (XC26); `io.LimitReader` on JSON; size cap on `$value` | none (defence in depth) |
@@ -1804,9 +1881,9 @@ records zenity's new reachability.
 ### 8.5 Explicit non-claims
 
 Not DLP: the same OS user can always copy their mail (DC4), and the workspace makes that
-easier on purpose. There is no admin kill switch in v1 unless the owner rules otherwise
-(Q6). No authenticity or signatures (P9). On Windows, the export's privacy depends on the
-destination's ACL (Q10 decides whether the root gets a protected DACL). **Conditional
+easier on purpose. An administrator can turn the workspace off for a deployment [ruling
+Q6] (MA-526). No authenticity or signatures (P9). On Windows, the export's privacy depends on the
+destination's ACL: the root inherits it and gets no protected DACL [ruling Q10 = J3]. **Conditional
 (XC12):** the 0700/0600 modes hold only on filesystems with POSIX modes. On FAT, exFAT
 and most SMB/NAS shares, the mount or share decides who can read the export, and the
 preview's posture line says which applies (XC32). A cloud-synced destination uploads the
@@ -1814,11 +1891,13 @@ mail. It is warned, not refused, and detection is best-effort: OneDrive, Dropbox
 (including team roots), Google Drive, iCloud Drive / `iCloudDrive`, macOS iCloud Desktop
 & Documents, and Box (XC32).
 
-## 9. Test plan (proposed MA-400..MA-466; provisional ids, XC29)
+## 9. Test plan (MA-400..MA-449 and MA-505..MA-531; allocated ids [ruling Q11 = J1])
 
-The ids are provisional labels until the operator allocates them (XC29, Q11). No covers
-marker may cite them before that. Each row belongs to exactly one slice (XC28); the split
-rows are marked `a`/`b` and listed in "Revision 2 row changes" below. Tier U unless
+The ids are the operator's allocation (`docs/owner-rulings-2026-10-09.md` §8). Each row
+lands with its slice's catalog-first PR, and no covers marker cites a row before then. Each
+row belongs to exactly one slice (XC28). A split row's first half keeps its number and its
+second half takes an overflow id (MA-505..MA-513); both are listed in "Revision 2 row
+changes" below, and each becomes its own catalog row. Tier U unless
 marked. Each refusal row proves the positive twin first and asserts with
 `assure.Refused` (typed result, message names the what/why/remedy, side effect absent).
 The fake Graph server pattern is `internal/app/graph_test.go:31`. The prove-fail column
@@ -1826,168 +1905,180 @@ names the mutation that must turn the row red before revert.
 
 | ID | Tier | Asserts | Covers | Prove-fail |
 |---|---|---|---|---|
-| MA-400 | U | `FolderTree` on a delegated client addresses only `/me/mailFolders` and `…/childFolders`, includes Deleted Items and Junk Email (labelled via the well-known ids), returns the raw `displayName`, `parentFolderId`, `childFolderCount` and `totalItemCount` per folder, pages `$top=100`, refuses above the folder cap, and issues only GETs | R17, R22, S42 | drop `totalItemCount` from `$select` → count assertion fails |
-| MA-401 | U | `MessagePage` returns one page ordered `receivedDateTime desc` with subject, sender name and address, received, `hasAttachments` and the size hint (best-effort `$expand`, with the first-page fallback when the fake 400s it); a `nextLink` whose scheme, host, port or path prefix differs from the base is refused with no request made (the fake records zero hits on the foreign host) — in `MessagePage`, `FolderTree` and capture's `Messages`/`Folders` alike | R17, R22, S42, S20 | remove the pin → the foreign host receives a request carrying `Authorization` |
-| MA-402 | U | `MIMETo` streams `/$value` byte-exact into the writer; aborts on idle beyond the configured timeout, refuses above the size cap and stops on ctx cancel, leaving no partial output; `$value` gets a header timeout ≥ the idle window (XC26); `StatusError` is S3's `{Code, GraphCode, Msg}` and exposes 404/401/403/500 through `errors.As` (XC25: revision 1's "`Error()` keeps today's text" clause is dropped) | R17, R22 | restore `io.ReadAll` with a fixed deadline → the idle/cap cases fail |
-| MA-403 | U | the workspace's Graph session is the device (`/me`) client even with `auth=app` in the config; no request ever addresses `/users/`; `delegatedScopes` equals exactly `Mail.Read` + `offline_access`; a whole M365 preview and export issues only GET | R17, R9, R22, S42 | build the session with `graph.New` (app) → a `/users/` request appears |
+| MA-400 | U | `FolderTree` on a delegated client addresses only `/me/mailFolders` and `…/childFolders`, includes Deleted Items and Junk Email (labelled via the well-known ids), returns the raw `displayName`, `parentFolderId`, `childFolderCount` and `totalItemCount` per folder, pages `$top=100`, refuses above the folder cap, and issues only GETs | R17, R29, S52 | drop `totalItemCount` from `$select` → count assertion fails |
+| MA-401 | U | `MessagePage` returns one page ordered `receivedDateTime desc` with subject, sender name and address, received, `hasAttachments` and the size hint (best-effort `$expand`, with the first-page fallback when the fake 400s it); a `nextLink` whose scheme, host, port or path prefix differs from the base is refused with no request made (the fake records zero hits on the foreign host) — in `MessagePage`, `FolderTree` and capture's `Messages`/`Folders` alike. Capture's half is MA-505, built in fault-isolation's FI-SGc [ruling J4] | R17, R29, S52, S20 | remove the pin → the foreign host receives a request carrying `Authorization` |
+| MA-402 | U | `MIMETo` streams `/$value` byte-exact into the writer; aborts on idle beyond the configured timeout, refuses above the size cap and stops on ctx cancel, leaving no partial output; `$value` gets a header timeout ≥ the idle window (XC26); `StatusError` is SG's `{Code, GraphCode, Text}`, its bounded `Text`, and `Error()` keeping today's exact text, and it exposes 404/401/403/500 through `errors.As` [ruling J4]. Built in fault-isolation's SG slice | R17, R29 | restore `io.ReadAll` with a fixed deadline → the idle/cap cases fail; change `Error()`'s text → the text assertion fails |
+| MA-403 | U | the workspace's Graph session is the device (`/me`) client even with `auth=app` in the config; no request ever addresses `/users/`; `delegatedScopes` equals exactly `Mail.Read` + `offline_access`; a whole M365 preview and export issues only GET | R17, R9, R29, S52 | build the session with `graph.New` (app) → a `/users/` request appears |
 | MA-404 | U | the sign-in-only POST runs `NewDelegated` + `Me` in-process, surfaces the device code, persists the token and reports "Signed in as"; an untokened, cross-Origin or foreign-Host POST is 403 with no device flow started | R17, R19, S41 | skip the guard → the refusal twin starts a flow |
-| MA-405 | U | every `/api/workspace/*`, `/api/exports/*` and `/api/m365/signin` route: GET → 405; a POST missing the token, with a foreign Origin or with a non-loopback Host → 403 with the side effect absent (no Graph hit, no file, no dialog, no journal line); JSON replies carry `nosniff` and `no-store`. **XC23:** the route-table walk is E0's MA-378, which probes every pattern registered through `localweb.Mux`; this row keeps only the method and guard twins | R19, R12, S41, S42 | skip `GuardLocalPOST` on one route → that route's twin fails |
+| MA-405 | U | every `/api/workspace/*`, `/api/exports/*` and `/api/m365/signin` route: GET → 405; a POST missing the token, with a foreign Origin or with a non-loopback Host → 403 with the side effect absent (no Graph hit, no file, no dialog, no journal line); JSON replies carry `nosniff` and `no-store`. **XC23:** the route-table walk is E0's MA-378, which probes every pattern registered through `localweb.Mux`; this row keeps only the method and guard twins | R19, R12, S41, S52 | skip `GuardLocalPOST` on one route → that route's twin fails |
 | MA-406 | — | **Deleted (XC23).** E0's MA-372/MA-378 (local-confidentiality C2) cover the per-launch session and Host checks on every workspace route, because the routes register through `localweb.Mux` | — | — |
-| MA-407 | S | structural: `workspace.js` and `exports.js` contain no `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `document.write`, `eval` or `Function(`, and the pages carry no inline `on*` handler; every element id each script binds exists in its page; a folder or subject containing `<img src=x onerror=…>` from the fake Graph comes back as a JSON-escaped string | R19, S42 | add one `innerHTML` assignment → the walk fails |
-| MA-408 | U | every dashboard page (Overview, workspace, Export activity) renders the sidebar, and every entry resolves (same-page anchors exist; cross-page links hit a registered route whose page has the anchor), extending MA-302; the Microsoft 365 card states own-mailbox-only and that shared mailboxes aren't available; the workspace page has no mailbox-address input | R12, S41, S42 | link "Export activity" to a missing anchor → fails |
-| MA-409 | U | selection resolution and counts: a subtree entry resolves to the folder plus every descendant in a fresh tree (including one created after the load); a non-subtree entry to the folder alone; exclusions removed; picks inside a selected subtree counted once; overlapping entries de-duplicated; `/count` equals Σ `totalItemCount` − exclusions + outside picks, with no Graph request made; the request carries no per-message list for whole folders | R22, S42 | count subtree picks twice → the count assertion fails |
-| MA-410 | U | a pick or exclusion id that the session never listed is refused (R-j2) naming it; more than 10,000 picks plus exclusions → R-j; a body over 1 MiB → 413; positive twin with listed ids | R22, R12 | accept unseen ids → the refusal twin fails |
-| MA-411 | U | source binding: a selection or preview made under signer A is refused after a sign-in as B (R-l, both named); an archive-source selection is refused after the archive location changes | R22, R12 | drop the UPN from the binding → the B-run proceeds |
-| MA-412 | U | the preview writes nothing: tree hashes (names, sizes, bytes) of the destination, the archive and the config directory are identical before and after; the result carries the exact count, per-folder reported vs found, the size estimate with the unknown split, free bytes, the would-be directory name, 10 sample paths, the longest path and the over-259 count, and the cloud-sync warning when applicable | R22, S42 | `MkdirAll` the export root during preview → the destination hash differs |
-| MA-413 | U | the run copies exactly the previewed ids: a message added to the fake folder after the preview is absent from the export; one deleted after the preview is a listed "no longer in the mailbox" failure; an expired (clock-injected) or superseded preview id → R-k | R22, S42 | re-resolve at start → the added message appears |
-| MA-414 | U | destination refusals: missing → R-e; a file → R-e; relative → refused; equal to or inside the archive (including via a symlinked parent) → R-f; each with the side effect absent; positive twin; a cloud-synced path yields a warning naming the service, not a refusal | R22, R4, R12, S42 | drop the overlap check → an export lands inside `-out` |
-| MA-415 | U | reconciliation: when the fake's `totalItemCount` changes between the before and after reads, the folder is re-listed; a persistent mismatch is a preview WARN naming the folder and both numbers; the run exports the listed set | R22, R1, S42 | skip the after-read → no WARN on the changing fake |
-| MA-416 | U | each run creates a new export directory via exclusive mkdir; two runs in the same second get `…` and `…-2`; a planted pre-existing directory of the would-be name is never written into; an earlier export's bytes are unchanged after a later run (hash compare) | R22, R5, S42 | `MkdirAll` the root → the second run writes into the first |
-| MA-417 | U | containment and names: a symlink planted inside the export root (via a fault hook mid-run) pointing outside is not written through (the message fails and nothing appears outside); hostile names (`..`, `/`, `\`, absolute, NUL, `CON`, `COM1.txt`, trailing dot or space, 300-byte CJK, RLO bidi, `COM¹`, `CONIN$`, `CON .txt`) produce distinct, creatable, in-root names — the last four sub-cases are xfail encoders citing R4 until F75/F91/F111 land in util | R4, R6, R22, S42 | write via `os.Create(filepath.Join(...))` → the symlink case writes outside |
-| MA-418 | U | FoldKey de-duplication: sibling folders `Work`/`work` (archive source) and attachments `Report.pdf`/`report.PDF`/`report.pdf` in one message get distinct names, deterministic across two runs; NFC and NFD spellings of one name collide and are disambiguated | R4, R6, R22 | compare names case-sensitively → overwrite detected |
-| MA-419 | U | M365 originals: each `.eml` equals the fake's `$value` bytes, its manifest SHA-256 and size equal the file's, and the in-run heap stays under a bound while a 50 MiB message streams | R22, R17, S42 | buffer then transform line endings → the byte compare fails |
-| MA-420 | U | archive originals: a `-raw` record's `.eml` is copied byte-exact after the gate; a fixity mismatch, a symlinked `.eml`, one over the cap, and a missing file are each a listed failure, never emitted; a record without `.eml` exports its `.html` and zip byte-exact (hash = archive fixity) with status `exported-without-original` and the source-specific reason; nothing is synthesized (no `.eml` appears for it) | R20, R22, R4, S34, S42 | emit `.eml` re-serialized from the parsed message → the no-synthesis assertion fails |
-| MA-421 | U | manifest format: the required fields (format and version, tool, run, source, selection, options, counts, `hash`, entries with files/roles/sha256/size, failures, `not_attempted`); every file except `SHA256SUMS.txt` and the marker is listed in `SHA256SUMS.txt`, sorted, coreutils format; an in-Go `sha256sum -c` mirror passes, and a flipped byte in any file makes it report that path | R22, S42 | omit README from the sums → the "every file listed" walk fails |
-| MA-422 | U | recipient verification without the tool: `sha256sum -c` (or `shasum -a 256 -c`), run as an external binary on the CI host, passes on a fresh export and fails naming the file after a byte flip; README names all three verify forms and the fingerprint step; the journal fingerprint = sha256(`SHA256SUMS.txt`) | R22, S42 | write `SHA256SUMS.txt` with one space → the external check fails |
-| MA-423 | U | readable HTML: the export `.html` comes from `RenderWith`, its head starts with the `ArchiveCSP` meta then no-referrer before any mail markup, and the MA-300/MA-301 hostile corpus re-parses with no live refresh or CSP meta; it links the sibling `.eml` (and the attachments directory when extracted) by relative name; role `derived-html`; an archived page carrying a live refresh is copied as `.archived-page.txt` with a note, its hash equal to the archive fixity | R19, R7, R22, S21, S42 | copy the archived page as `.html` unconditionally → the quarantine case fails |
-| MA-424 | U | extract attachments: every parsed attachment is written under `<stem>.attachments/` with sanitized, FoldKey-unique names, bytes equal to the parsed part's bytes, role `derived-attachment`; a zero-byte or failed part is a note; archive zip entries are extracted within the bounds (entry count, per-entry and total uncompressed, ratio) with `../` names flattened, a bomb entry skipped with a note, and the zip itself copied byte-exact | R4, R1, R22, S42 | drop the ratio bound → the bomb fixture is expanded |
-| MA-425 | U | a Latin-1 `text/csv` attachment extracts byte-identical to the MIME part's transfer-decoded bytes — **xfail encoder citing R1/R22 until the C1-1 parser fix lands**, then a permanent guard | R1, R22 | (the open gap is itself the red state; on the fix, remove xfail) |
-| MA-426 | U | isolation: fake Inbox `[A1, A2, POISON(500 ErrorMimeContentConversionFailed), GONE(404), A3]` → A1/A2/A3 exported; POISON listed as `retryable` with the reason; GONE listed as "no longer in the mailbox", attempted once; outcome 3; a render panic on one message keeps its `.eml` with status `exported-original-only`; the archive is untouched | R22, R10, R1, S42 | return on the first fetch error (today's `graph.go:621` behaviour) → A3 is missing |
-| MA-427 | U | run-fatal classes: a 401 whose forced refresh fails stops with R-c and outcome 1 (XC9; the time breaker is MA-452); ENOSPC (fault-injected) stops with R-g, temps removed, marker kept as STOPPED; each finalizes whatever it can (manifest status `failed`) | R22, R5, R12 | treat 401 as per-message → the run continues through every message |
-| MA-428 | U | cancel: a guarded cancel stops after the in-flight message (its temp removed); the marker is rewritten CANCELLED with counts; the manifest has status `cancelled` and lists exported and `not_attempted` ids; the sums cover what was written; no partial file under a final name | R22, R5 | remove the marker on cancel → the CANCELLED assertion fails |
-| MA-429 | U | crash ordering (**proves ordering, not power-loss durability**; XC5): a fault hook kills the run at each of W2…W10, including W9a (§5.1). At every point, any directory that contains a message file carries the marker or is complete; a W2–W4 kill leaves an empty or temp-only root, reconciled as interrupted; README's text at each point says complete only conditionally on the marker's absence; the activity label at each point is never "complete" while the marker is present (W9a → "Finished writing but not marked complete"); temps carry the `.mailexport-` prefix | R22, R5 | remove the marker before writing the sums → the W9 kill point fails |
-| MA-430 | U | journal: 0600; compaction (temp + rename) keeps the last 200 runs; start-without-end with the marker shows interrupted; a missing directory shows "folder not found"; marker absent plus a **sealed run record** reconciles to "complete (recovered)", while marker absent plus a manifest status but no sealed record never does (XC4); a torn tail is truncated before the next append, and unknown-`v` lines survive compaction (XC3); control characters stripped on read; a deleted journal leaves exports intact; "Open folder" opens only the journal path (a mocked opener asserts argv), refusing a run id it does not know | R22, R12, S42 | open the request's path → the argv assertion fails |
-| MA-431 | U | concurrency: an M365 export completes while a capture holds the archive lock (the export never acquires it; archive bytes unchanged); an archive-source export takes no lock (a capture started mid-export succeeds and writes its last-run record); a record re-exported by a concurrent full capture mid-export is "changed in the archive during export", never emitted mixed; a second start → R-m | R22, R5, R20, S25, S42 | take `lockfile.AcquireAs` in the archive adapter → the concurrent capture refuses |
-| MA-432 | U | scale: a 60,000-message fake folder resolves and exports with the heap delta under the stated bound, per-message state written to the run record (no entries slice held; XC1), list endpoints never return more than 100 rows, progress counters advance and an ETA is present; a 200,001-message selection → R-i | R22, S42 | accumulate entries in memory → the heap bound fails |
-| MA-433 | U | picker: browse calls the picker seam with the directory option and returns the path; cancel → `{canceled}`; an unavailable picker → R-n's remedy; a second concurrent browse is refused; an unguarded browse never invokes the seam; the mocked zenity binary on Linux gets a clean argv | R22, R12, S42 | drop the one-at-a-time mutex → two dialogs |
-| MA-434 | U | Create folder: creates exactly one directory with a sanitized single-segment name under an existing destination; refuses an existing name, a separator, `..`, a reserved name, empty, and a parent inside the archive, with the side effect absent; positive twin | R4, R22, R12 | use `MkdirAll(parent/name)` with an unsanitized name → `a/b` creates two levels |
-| MA-435 | U | archive source: the tree and counts come from the manifest (stores → folders by current `Folder`); the message list comes from `index.ListFolder`, which is closed after each request (a following `Rebuild` rename succeeds on the test's injected "handle held" check); gone records are counted separately and included by default; the preview reports with-original vs without-original; archive gaps are carried into notes; a newer-format manifest → R-p | R20, R22, S42 | hold the index open → the rename check fails |
-| MA-436 | U | the archive is never written: for both sources, every archive file except `search.db-wal`/`-shm` is byte-identical after preview and run, `search.db`'s rows are unchanged, and no `.mailarchive.lock` is created when absent; an M365 export works with no archive location set at all | R9, R20, R22, S42 | call `index.Open` (read-write, runs `RepairKeys`) → a change is detected |
-| MA-437 | U | retry: "Export failed messages again" on a partial run yields a preview of exactly its failed ids; "Export the remaining messages" on a cancelled run yields its `not_attempted` ids; the ids come from the run record, never the destination manifest (XC2); each goes to a new directory whose manifest names `retry_of`; the earlier export is byte-unchanged; a signer mismatch → R-l | R22, S42 | write retries into the old directory → the unchanged assertion fails |
-| MA-438 | U | refusal wording: each R-a…R-v (§7.6) carries its what, why and remedy substrings; none contains a token, a Graph URL query, `panic` or `goroutine` (assure's forbid list) | R12, S42 | replace one message with `err.Error()` → the substrings are missing |
-| MA-439 | U (unix) | export directories are 0700 and files 0600 under umask 022 and umask 0 | R22, R4 | create with 0o755 → the mode assertion fails |
-| MA-440 | U | outcome mapping: complete → 0, partial and cancelled → 3, failed or refused → 1; the activity labels match; one requested-but-missing derived file makes a run partial | R22, R12 | map cancelled → 0 → fails |
-| MA-441 | U | path budget: a long destination makes the slug shrink 60 → 24 → 0 before any path is reported over budget; the preview reports the longest path in UTF-16 units and the over-259 count; folder segments are never truncated beyond `SanitizeSegment` | R4, R22 | skip the slug shrink → the over-budget count is too high |
-| MA-442 | L | Windows end to end: the real IFileOpenDialog picker; an export to a destination giving paths over 260 characters opens in Explorer with LongPathsEnabled on and is flagged when off; the README PowerShell line passes on Windows PowerShell 5.1 with a non-ASCII path; the destination's ACL is inherited — **pending** (Windows lab) | R22, S42 | — |
-| MA-443 | L | real tenant: `totalItemCount` vs `/messages` agreement per folder type; immutable ids honoured; `$value` byte stability across two downloads (informs P8's caveat); PidTagMessageSize availability; measured messages/s for the ETA band — **pending** (live tenant) | R17, R22, S42 | — |
-| MA-444 | U | the destination validation is repeated at start: a destination deleted, or turned into a symlink into the archive, between preview and start is refused (R-e/R-f) with the side effect absent | R22, R4, R12 | validate at preview only → start writes into the archive |
+| MA-407 | S | structural: `workspace.js` and `exports.js` contain no `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `document.write`, `eval` or `Function(`, and the pages carry no inline `on*` handler; every element id each script binds exists in its page; a folder or subject containing `<img src=x onerror=…>` from the fake Graph comes back as a JSON-escaped string | R19, S52 | add one `innerHTML` assignment → the walk fails |
+| MA-408 | U | every dashboard page (Overview, workspace, Export activity) renders the sidebar, and every entry resolves (same-page anchors exist; cross-page links hit a registered route whose page has the anchor), extending MA-302; the Microsoft 365 card states own-mailbox-only and that shared mailboxes aren't available; the workspace page has no mailbox-address input | R12, S41, S52 | link "Export activity" to a missing anchor → fails |
+| MA-409 | U | selection resolution and counts: a subtree entry resolves to the folder plus every descendant in a fresh tree (including one created after the load); a non-subtree entry to the folder alone; exclusions removed; picks inside a selected subtree counted once; overlapping entries de-duplicated; `/count` equals Σ `totalItemCount` − exclusions + outside picks, with no Graph request made; the request carries no per-message list for whole folders | R29, S52 | count subtree picks twice → the count assertion fails |
+| MA-410 | U | a pick or exclusion id that the session never listed is refused (R-j2) naming it; more than 10,000 picks plus exclusions → R-j; a body over 1 MiB → 413; positive twin with listed ids | R29, R12 | accept unseen ids → the refusal twin fails |
+| MA-411 | U | source binding: a selection or preview made under signer A is refused after a sign-in as B (R-l, both named); an archive-source selection is refused after the archive location changes | R29, R12 | drop the UPN from the binding → the B-run proceeds |
+| MA-412 | U | the preview writes nothing: tree hashes (names, sizes, bytes) of the destination, the archive and the config directory are identical before and after; the result carries the exact count, per-folder reported vs found, the size estimate with the unknown split, free bytes, the would-be directory name, 10 sample paths, the longest path and the over-259 count, and the cloud-sync warning when applicable | R29, S52 | `MkdirAll` the export root during preview → the destination hash differs |
+| MA-413 | U | the run copies exactly the previewed ids: a message added to the fake folder after the preview is absent from the export; one deleted after the preview is a listed "no longer in the mailbox" failure; an expired (clock-injected) or superseded preview id → R-k | R29, S52 | re-resolve at start → the added message appears |
+| MA-414 | U | destination refusals: missing → R-e; a file → R-e; relative → refused; equal to or inside the archive (including via a symlinked parent) → R-f; each with the side effect absent; positive twin; a cloud-synced path yields a warning naming the service, not a refusal | R29, R4, R12, S52 | drop the overlap check → an export lands inside `-out` |
+| MA-415 | U | reconciliation: when the fake's `totalItemCount` changes between the before and after reads, the folder is re-listed; a persistent mismatch is a preview WARN naming the folder and both numbers; the run exports the listed set | R29, R1, S52 | skip the after-read → no WARN on the changing fake |
+| MA-416 | U | each run creates a new export directory via exclusive mkdir; two runs in the same second get `…` and `…-2`; a planted pre-existing directory of the would-be name is never written into; an earlier export's bytes are unchanged after a later run (hash compare) | R29, R5, S52 | `MkdirAll` the root → the second run writes into the first |
+| MA-417 | U | containment and names: a symlink planted inside the export root (via a fault hook mid-run) pointing outside is not written through (the message fails and nothing appears outside); hostile names (`..`, `/`, `\`, absolute, NUL, `CON`, `COM1.txt`, trailing dot or space, 300-byte CJK, RLO bidi, `COM¹`, `CONIN$`, `CON .txt`) produce distinct, creatable, in-root names — the last four sub-cases are xfail encoders citing R4 until F75/F91/F111 land in util | R4, R6, R29, S52 | write via `os.Create(filepath.Join(...))` → the symlink case writes outside |
+| MA-418 | U | FoldKey de-duplication: sibling folders `Work`/`work` (archive source) and attachments `Report.pdf`/`report.PDF`/`report.pdf` in one message get distinct names, deterministic across two runs; NFC and NFD spellings of one name collide and are disambiguated | R4, R6, R29 | compare names case-sensitively → overwrite detected |
+| MA-419 | U | M365 originals: each `.eml` equals the fake's `$value` bytes, its manifest SHA-256 and size equal the file's, and the in-run heap stays under a bound while a 50 MiB message streams | R29, R17, S52 | buffer then transform line endings → the byte compare fails |
+| MA-420 | U | archive originals: a `-raw` record's `.eml` is copied byte-exact after the gate; a fixity mismatch, a symlinked `.eml`, one over the cap, and a missing file are each a listed failure, never emitted; a record without `.eml` exports its `.html` and zip byte-exact (hash = archive fixity) with status `exported-without-original` and the source-specific reason; nothing is synthesized (no `.eml` appears for it) | R20, R29, R4, S34, S52 | emit `.eml` re-serialized from the parsed message → the no-synthesis assertion fails |
+| MA-421 | U | manifest format: the required fields (format and version, tool, run, source, selection, options, counts, `hash`, entries with files/roles/sha256/size, failures, `not_attempted`); every file except `SHA256SUMS.txt` and the marker is listed in `SHA256SUMS.txt`, sorted, coreutils format; an in-Go `sha256sum -c` mirror passes, and a flipped byte in any file makes it report that path | R29, S52 | omit README from the sums → the "every file listed" walk fails |
+| MA-422 | U | recipient verification without the tool: `sha256sum -c` (or `shasum -a 256 -c`), run as an external binary on the CI host, passes on a fresh export and fails naming the file after a byte flip; README names all three verify forms and the fingerprint step; the journal fingerprint = sha256(`SHA256SUMS.txt`) | R29, S52 | write `SHA256SUMS.txt` with one space → the external check fails |
+| MA-423 | U | readable HTML: the export `.html` comes from `RenderWith`, its head starts with the `ArchiveCSP` meta then no-referrer before any mail markup, and the MA-300/MA-301 hostile corpus re-parses with no live refresh or CSP meta; it links the sibling `.eml` (and the attachments directory when extracted) by relative name; role `derived-html`; an archived page carrying a live refresh is copied as `.archived-page.txt` with a note, its hash equal to the archive fixity | R19, R7, R29, S21, S52 | copy the archived page as `.html` unconditionally → the quarantine case fails |
+| MA-424 | U | extract attachments: every parsed attachment is written under `<stem>.attachments/` with sanitized, FoldKey-unique names, bytes equal to the parsed part's bytes, role `derived-attachment`; a zero-byte or failed part is a note; archive zip entries are extracted within the bounds (entry count, per-entry and total uncompressed, ratio) with `../` names flattened, a bomb entry skipped with a note, and the zip itself copied byte-exact | R4, R1, R29, S52 | drop the ratio bound → the bomb fixture is expanded |
+| MA-425 | U | a Latin-1 `text/csv` attachment extracts byte-identical to the MIME part's transfer-decoded bytes — **xfail encoder citing R1/R29 until the C1-1 parser fix lands**, then a permanent guard | R1, R29 | (the open gap is itself the red state; on the fix, remove xfail) |
+| MA-426 | U | isolation: fake Inbox `[A1, A2, POISON(500 ErrorMimeContentConversionFailed), GONE(404), A3]` → A1/A2/A3 exported; POISON listed as `retryable` with the reason; GONE listed as "no longer in the mailbox", attempted once; outcome 3; a render panic on one message keeps its `.eml` with status `exported-original-only`; the archive is untouched | R29, R10, R1, S52 | return on the first fetch error (today's `graph.go:621` behaviour) → A3 is missing |
+| MA-427 | U | run-fatal classes: a 401 whose forced refresh fails stops with R-c and outcome 1 (XC9; the time breaker is MA-516); ENOSPC (fault-injected) stops with R-g, temps removed, marker kept as STOPPED; each finalizes whatever it can (manifest status `failed`) | R29, R5, R12 | treat 401 as per-message → the run continues through every message |
+| MA-428 | U | cancel: a guarded cancel stops after the in-flight message (its temp removed); the marker is rewritten CANCELLED with counts; the manifest has status `cancelled` and lists exported and `not_attempted` ids; the sums cover what was written; no partial file under a final name | R29, R5 | remove the marker on cancel → the CANCELLED assertion fails |
+| MA-429 | U | crash ordering (**proves ordering, not power-loss durability**; XC5): a fault hook kills the run at each of W2…W10, including W9a (§5.1). At every point, any directory that contains a message file carries the marker or is complete; a W2–W4 kill leaves an empty or temp-only root, reconciled as interrupted; README's text at each point says complete only conditionally on the marker's absence; the activity label at each point is never "complete" while the marker is present (W9a → "Finished writing but not marked complete"); temps carry the `.mailexport-` prefix | R29, R5 | remove the marker before writing the sums → the W9 kill point fails |
+| MA-430 | U | journal: 0600; compaction (temp + rename) keeps the last 200 runs; start-without-end with the marker shows interrupted; a missing directory shows "folder not found"; marker absent plus a **sealed run record** reconciles to "complete (recovered)", while marker absent plus a manifest status but no sealed record never does (XC4); a torn tail is truncated before the next append, and unknown-`v` lines survive compaction (XC3); control characters stripped on read; a deleted journal leaves exports intact; "Open folder" opens only the journal path (a mocked opener asserts argv), refusing a run id it does not know | R29, R12, S52 | open the request's path → the argv assertion fails |
+| MA-431 | U | concurrency: an M365 export completes while a capture holds the archive lock (the export never acquires it; archive bytes unchanged); an archive-source export takes no lock (a capture started mid-export succeeds and writes its last-run record); a record re-exported by a concurrent full capture mid-export is "changed in the archive during export", never emitted mixed; a second start → R-m | R29, R5, R20, S25, S52 | take `lockfile.AcquireAs` in the archive adapter → the concurrent capture refuses |
+| MA-432 | U | scale: a 60,000-message fake folder resolves and exports with the heap delta under the stated bound, per-message state written to the run record (no entries slice held; XC1), list endpoints never return more than 100 rows, progress counters advance and an ETA is present; a 200,001-message selection → R-i | R29, S52 | accumulate entries in memory → the heap bound fails |
+| MA-433 | U | picker: browse calls the picker seam with the directory option and returns the path; cancel → `{canceled}`; an unavailable picker → R-n's remedy; a second concurrent browse is refused; an unguarded browse never invokes the seam; the mocked zenity binary on Linux gets a clean argv | R29, R12, S52 | drop the one-at-a-time mutex → two dialogs |
+| MA-434 | U | Create folder: creates exactly one directory with a sanitized single-segment name under an existing destination; refuses an existing name, a separator, `..`, a reserved name, empty, and a parent inside the archive, with the side effect absent; positive twin | R4, R29, R12 | use `MkdirAll(parent/name)` with an unsanitized name → `a/b` creates two levels |
+| MA-435 | U | archive source: the tree and counts come from the manifest (stores → folders by current `Folder`); the message list comes from `index.ListFolder`, which is closed after each request (a following `Rebuild` rename succeeds on the test's injected "handle held" check); gone records are counted separately and included by default; the preview reports with-original vs without-original; archive gaps are carried into notes; a newer-format manifest → R-p | R20, R29, S52 | hold the index open → the rename check fails |
+| MA-436 | U | the archive is never written: for both sources, every archive file except `search.db-wal`/`-shm` is byte-identical after preview and run, `search.db`'s rows are unchanged, and no `.mailarchive.lock` is created when absent; an M365 export works with no archive location set at all | R9, R20, R29, S52 | call `index.Open` (read-write, runs `RepairKeys`) → a change is detected |
+| MA-437 | U | retry: "Export failed messages again" on a partial run yields a preview of exactly its failed ids; "Export the remaining messages" on a cancelled run yields its `not_attempted` ids; the ids come from the run record, never the destination manifest (XC2); each goes to a new directory whose manifest names `retry_of`; the earlier export is byte-unchanged; a signer mismatch → R-l | R29, S52 | write retries into the old directory → the unchanged assertion fails |
+| MA-438 | U | refusal wording: each R-a…R-v (§7.6) carries its what, why and remedy substrings; none contains a token, a Graph URL query, `panic` or `goroutine` (assure's forbid list) | R12, S52 | replace one message with `err.Error()` → the substrings are missing |
+| MA-439 | U (unix) | export directories are 0700 and files 0600 under umask 022 and umask 0 | R29, R4 | create with 0o755 → the mode assertion fails |
+| MA-440 | U | outcome mapping: complete → 0, partial and cancelled → 3, failed or refused → 1; the activity labels match; one requested-but-missing derived file makes a run partial | R29, R12 | map cancelled → 0 → fails |
+| MA-441 | U | path budget: a long destination makes the slug shrink 60 → 24 → 0 before any path is reported over budget; the preview reports the longest path in UTF-16 units and the over-259 count; folder segments are never truncated beyond `SanitizeSegment` | R4, R29 | skip the slug shrink → the over-budget count is too high |
+| MA-442 | L | Windows end to end: the real IFileOpenDialog picker; an export to a destination giving paths over 260 characters opens in Explorer with LongPathsEnabled on and is flagged when off; the README PowerShell line passes on Windows PowerShell 5.1 with a non-ASCII path; the destination's ACL is inherited — **pending** (Windows lab) | R29, S52 | — |
+| MA-443 | L | real tenant: `totalItemCount` vs `/messages` agreement per folder type; immutable ids honoured; `$value` byte stability across two downloads (informs P8's caveat); PidTagMessageSize availability; measured messages/s for the ETA band — **pending** (live tenant) | R17, R29, S52 | — |
+| MA-444 | U | the destination validation is repeated at start: a destination deleted, or turned into a symlink into the archive, between preview and start is refused (R-e/R-f) with the side effect absent | R29, R4, R12 | validate at preview only → start writes into the archive |
 | MA-445 | U | settings: the remembered destination and options round-trip in `desktop-settings.json` (0600, version 1, `*bool` defaults ON/ON/OFF when absent); an older file without the fields loads with the defaults; an unknown field written by a newer build is tolerated | R12 | default `exportPreserve` to false when absent → fails |
-| MA-446 | U | Export activity page: a running export shows counts, bytes, current folder, ETA and Cancel; finished runs show status label, counts, fingerprint, path and the actions their status allows; a panic in the run surfaces as "Stopped: an internal error" on the card, never a traceback (X11/DC3) | R12, S41, S42 | let the panic escape → the test process dies |
+| MA-446 | U | Export activity page: a running export shows counts, bytes, current folder, ETA and Cancel; finished runs show status label, counts, fingerprint, path and the actions their status allows; a panic in the run surfaces as "Stopped: an internal error" on the card, never a traceback (X11/DC3) | R12, S41, S52 | let the panic escape → the test process dies |
 
 **Revision 2 row changes (existing rows amended by the review's conditions).** Each
 change is part of its row's assertion; the prove-fail column is unchanged unless noted.
 
 | Row | Change | Condition |
 |---|---|---|
-| MA-401 | adds: a 302 from the fake base to a foreign fake records zero hits there; the pin accepts host case and an explicit `:443` and refuses a path prefix that is not on a segment boundary; split: **MA-401a** (E1: `MessagePage`/`FolderTree` pin and redirect) and **MA-401b** (E1c: capture's `Folders`/`Messages` pin) | XC25, XC26, XC28 |
-| MA-403 | split: **MA-403a** (E1: the `/me` device client, scopes exactly `Mail.Read` + `offline_access`), **MA-403b** (E3: a whole M365 preview and export issues only GET, never `/users/`) | XC28 |
+| MA-401 | adds: a 302 from the fake base to a foreign fake records zero hits there; the pin accepts host case and an explicit `:443` and refuses a path prefix that is not on a segment boundary; split: **MA-401** (E1: `MessagePage`/`FolderTree` pin and redirect) and **MA-505** (fault-isolation's FI-SGc, formerly E1c: capture's `Folders`/`Messages` pin; covers as MA-401) [ruling J4] | XC25, XC26, XC28 |
+| MA-403 | split: **MA-403** (E1: the `/me` device client, scopes exactly `Mail.Read` + `offline_access`), **MA-506** (E3: a whole M365 preview and export issues only GET, never `/users/`) | XC28 |
 | MA-404 | adds: the sign-in runs in its own slot; a concurrent capture device flow is refused by the sign-in mutex; the device code is served only by the guarded `signin-status` POST; with a weekly backup installed, a different UPN is not persisted until confirmed | XC8, XC7 |
 | MA-409 | picks and exclusions are row handles | XC17 |
 | MA-410 | realistic-length (≈150-character) Graph ids; 10,000 handles fit in 1 MiB; a 413 is an R-j-style refusal, not a bare status; an unseen folder id, `recoverableitemsdeletions` and `..` are refused with no Graph request | XC17 |
-| MA-411 | split: **MA-411a** (E3: signer binding), **MA-411b** (E4: archive-location binding) | XC28 |
+| MA-411 | split: **MA-411** (E3: signer binding), **MA-507** (E4: archive-location binding) | XC28 |
 | MA-412 | the token entry is excluded from the config-directory hash and its refresh asserted separately; the posture line and filesystem-type warnings are in the result | XC30, XC12, XC32 |
 | MA-415 | adds: a stable folder with reported > listed gets no re-list and no "changed" WARN, only the info line; arrivals during a newest-first listing produce no WARN after the union | XC16 |
 | MA-416 | the root name carries a random suffix; the journal `start` names the directory actually created (a planted `MailExport-<ts>` is never recorded or reconciled as this run) | XC3, XC32 |
 | MA-418 | adds: `ı`/`I` siblings; an 8.3 alias (`REPORT~1.PDF` beside `report-quarterly-final.pdf`) on the Windows CI leg; a planted file under a final name is never replaced (no-replace rename) | XC13 |
 | MA-419 | runs with Readable HTML off (streamed bound) and on (one message held) | XC30 |
 | MA-421 | adds: a planted, unlisted file is reported by the in-Go mirror's extra-files check | XC14 |
-| MA-422 | split: **MA-422a** (U, every OS: in-Go coreutils-format check incl. a planted file), **MA-422b** (U, `//go:build !windows`: external `sha256sum`/`shasum`), the PowerShell line inside MA-442 (L) | XC28, XC14 |
+| MA-422 | split: **MA-422** (U, every OS: in-Go coreutils-format check incl. a planted file), **MA-508** (U, `//go:build !windows`: external `sha256sum`/`shasum`), the PowerShell line inside MA-442 (L) | XC28, XC14 |
 | MA-423 | adds the positive twin: a page rendered by the current renderer is copied byte-exact as `.html` (its own leading metas are not "hostile"); adds: a `.eml` replaced on the destination before the read-back yields no derived file and the reason "the original changed on the destination after it was written" | XC30, XC1 |
-| MA-426 | split: **MA-426a** (E2: engine isolation, POISON/GONE), **MA-426b** (E5: render panic → `exported-original-only`, labelled "exported without a readable copy") | XC28, XC35 |
-| MA-427 | adds: table-driven Windows errno sub-cases (112, 39, 19, 1167, 82) on every CI OS; a fake filesystem that stays full after N writes → R-g, finalization fits the reserve, "Export the remaining messages" offered; a removed volume still offers it from the run record; 5 consecutive write failures → run-fatal; archive root gone mid-run → R-o2. Replaced: "10 consecutive transport errors → R-u" becomes MA-452's time breaker, and "a 401 mid-run → R-c" becomes "a 401 whose forced refresh fails → R-c" (MA-453) | XC10, XC11, XC9 |
+| MA-426 | split: **MA-426** (E2: engine isolation, POISON/GONE), **MA-509** (E5: render panic → `exported-original-only`, labelled "exported without a readable copy") | XC28, XC35 |
+| MA-427 | adds: table-driven Windows errno sub-cases (112, 39, 19, 1167, 82) on every CI OS; a fake filesystem that stays full after N writes → R-g, finalization fits the reserve, "Export the remaining messages" offered; a removed volume still offers it from the run record; 5 consecutive write failures → run-fatal; archive root gone mid-run → R-o2. Replaced: "10 consecutive transport errors → R-u" becomes MA-516's time breaker, and "a 401 mid-run → R-c" becomes "a 401 whose forced refresh fails → R-c" (MA-517) | XC10, XC11, XC9 |
 | MA-430 | adds: "Open folder" refuses a swapped symlink, a swapped `.app` bundle and a different-inode directory with the opener not invoked, and opens with reveal argv; reconciliation is MA-448's | XC33, XC4 |
-| MA-431 | split: **MA-431a** (E3: M365 export beside a locked archive), **MA-431b** (E4: lock-free archive export beside a capture) | XC28 |
-| MA-432 | split: **MA-432a** (E2: engine heap and the run-record bound, with the sync seam), **MA-432b** (E3: list endpoints ≤ 100 rows, progress, ETA); adds retained session heap after a large browse and the byte cap | XC28, XC5, XC18 |
+| MA-431 | split: **MA-431** (E3: M365 export beside a locked archive), **MA-510** (E4: lock-free archive export beside a capture) | XC28 |
+| MA-432 | split: **MA-432** (E2: engine heap and the run-record bound, with the sync seam), **MA-511** (E3: list endpoints ≤ 100 rows, progress, ETA); adds retained session heap after a large browse and the byte cap | XC28, XC5, XC18 |
 | MA-435 | adds: a v2-era fixture (manifest v2 + pre-meta index) lists via the migrated keys or shows the named message; a newer index version → R-p; a v1 fixture's `UnknownSentinel` never reaches notes; records whose files are gone are skipped and counted, their metadata absent from the export | XC19 |
 | MA-436 | `search.db` compared by rows (opened `mode=ro`) | XC20 |
 | MA-437 | adds: retry after a process restart; after Clear sign-in then re-sign-in as the same UPN; with the destination manifest deleted or tampered (what is retried is unchanged); Finish as partial on a killed run; parts named `-part2` with the chain in the manifest | XC2, XC15 |
-| MA-438 | split: **MA-438a** (E3: every Microsoft 365 and destination refusal, adding R-a2, R-d, R-g2, R-r, R-u2, R-w, R-x, R-y, R-z) and **MA-438b** (E4: R-o, R-o2, R-p) | XC28 |
-| MA-440 | split: **MA-440a** (E2: complete/partial/cancelled/failed mapping), **MA-440b** (E5: a requested-but-missing derived file makes a run partial) | XC28 |
+| MA-438 | split: **MA-438** (E3: every Microsoft 365 and destination refusal, adding R-a2, R-d, R-g2, R-r, R-u2, R-w, R-x, R-y, R-z) and **MA-512** (E4: R-o, R-o2, R-p) | XC28 |
+| MA-440 | split: **MA-440** (E2: complete/partial/cancelled/failed mapping), **MA-513** (E5: a requested-but-missing derived file makes a run partial) | XC28 |
 | MA-442 | adds: a capture saving its manifest while the workspace reloads the snapshot (share-delete read; P15 on Windows); the README PowerShell line ("OK: N files checked"); the end-session window drains a run on logoff | XC20, XC14, XC6 |
-| MA-443 | adds: real nextLink scheme/host/path shapes for `/me` folder and message paging (gates E1c); `$value` time-to-first-byte vs size; throughput on a USB-stick destination including sync cost | XC25, XC26, XC5 |
+| MA-443 | adds: real nextLink scheme/host/path shapes for `/me` folder and message paging (gates fault-isolation's FI-SGc, formerly E1c [ruling J4]; lifting that gate is ESC-7); `$value` time-to-first-byte vs size; throughput on a USB-stick destination including sync cost | XC25, XC26, XC5 |
 | MA-445 | asserts the per-slice default: `exportHTML` OFF (and hidden) before E5, ON after; the settings mutex reloads under the lock and changes only export fields | XC28, XC34 |
 
-**New rows (revision 2; provisional ids).**
+**New rows (revision 2; allocated ids [ruling Q11 = J1]; revision 2 numbered them
+MA-447..MA-466, of which MA-450..MA-466 are now MA-514..MA-530).**
 
 | ID | Tier | Asserts | Covers | Prove-fail | Slice |
 |---|---|---|---|---|---|
-| MA-447 | U | run record: header + plan are fsynced before the marker; one line per finished message with every file's role, SHA-256 and size; `export-manifest.json` and `SHA256SUMS.txt` are built from it (no `.mailexport-entries.tmp` exists in the root at any point); the `sealed` fingerprint equals sha256 of the in-memory SUMS bytes; a `.eml` replaced on the destination after its run-record line still fails `sha256sum -c` against the SUMS built from the record; the presence check before SUMS makes a run partial when a recorded file vanished (fault hook) | R22, R5, S42 | build SUMS by re-reading files from the destination → the replaced-file case vouches for the forged bytes | E2 |
-| MA-448 | U | reconciliation: a fault-injected blocking stat on an old run's `dest_dir` leaves `/api/exports/progress` answering within 1 s and Cancel working; each run is probed once per launch and gets a terminal `reconciled` record; a planted manifest with status complete plus a deleted marker never yields "complete" without a sealed record; no fingerprint is ever computed from disk; an identity mismatch shows "moved or replaced" | R22, R12, S42 | reconcile synchronously on the progress request → the 1 s bound fails | E3 |
-| MA-449 | U | process-lifetime context: a session built inside a handler whose context is then cancelled, with a fake token expiring in 2 s, still refreshes for a later list and a 3-minute run | R17, R22 | build the session on `r.Context()` → the later list fails "context canceled" | E3 |
-| MA-450 | U | shutdown: cancelling main's root context calls `Drain`, which cancels the run, waits for finalization (manifest status `cancelled`, marker CANCELLED) and returns within the 15 s budget | R22, R5 | return from main after `Shutdown` without draining → no manifest | E3 |
-| MA-451 | U | identity-safe token write-back (in `internal/graph`, so capture too): a live source whose store was cleared does not re-create it on the next refresh; a live source for A does not overwrite a stored entry for B; `reload` refuses a stored token for another UPN; a deleted vault entry or token file is not re-created; MA-258's same-UPN rotation still persists | R17, R5, S20 | restore `putIfNewer`'s write-on-missing → the cleared store is re-created | E1 |
-| MA-452 | U | transport backoff and the time breaker (clock-injected): a 30 s outage then recovery → the run completes with zero failures; a sustained outage → R-u once 5 minutes pass with no success, outcome 1; 25 consecutive 503s → R-u2, outcome 1 | R22, R10, S42 | count transport errors per request (revision 1's 10-in-a-row) → the 30 s outage fails the run | E2 |
-| MA-453 | U | sign-in classification (engine): a fake token endpoint returning 400 `invalid_grant` after N messages → R-c, not R-u, with at most one message affected; a transient 401 whose forced refresh succeeds → the run continues; the in-flight message at a run-fatal stop is in `failures`, never first in `not_attempted` | R17, R22, S42 | treat `*oauth2.RetrieveError` as transport → R-u appears | E2 |
-| MA-454 | U | free-space policy: start refuses with R-g2 when the estimate plus the reserve exceeds free bytes (side effect absent); the preview reports the reserve; the floor is also checked on the state-directory volume | R22, R12 | drop the reserve → start proceeds and finalization fails on the fake full disk | E3 |
-| MA-455 | U | removable filesystems: a fault hook enforcing FAT's 65,536-entry directory cap is never reached by a 10,000-message folder (≤1,000 files per directory, month split); modes are set only at creation (a chmod-rejecting fake filesystem still accepts every write); EACCES at root creation → R-w with nothing written | R22, R4, R12 | put every message in one directory → the entry cap is hit | E2 |
-| MA-456 | U | Check this export and Check and finish: a flipped byte, a missing file and a planted unlisted file are each reported (RED); a clean export is GREEN; Check and finish removes the app's own marker only when sha256(SUMS) equals the sealed fingerprint and every listed file matches, and refuses otherwise with the marker kept | R22, S42 | remove the marker without comparing the sealed fingerprint → a re-hashed SUMS is accepted | E3 |
-| MA-457 | U | retry chain: a retry of a retry is named `-part3`, every part's manifest carries the full `chain`, README lists the siblings, and Export activity's set fingerprint equals SHA-256 over the parts' SUMS files in order | R22, S42 | omit an earlier part from `chain` → the set fingerprint differs | E3 |
-| MA-458 | U | session lifecycle: "Load more" after the cursor TTL continues by keyset with no duplicate or skipped row on a static folder; an evicted cursor shows R-x; a POST after a dashboard restart shows R-y, never a bare 403; after 30 idle minutes (clock-injected) the tree, seen-set and cursors are released; resolution never adds to the seen-set and live-selection handles survive LRU pressure | R22, R12, S42 | let resolution feed the LRU → a pick is evicted and R-j2 fires | E3 |
-| MA-459 | U | Settings save with a weekly backup installed and a changed archive location asks first, naming the signed-in UPN and the new folder; "Save and remove the weekly backup" removes it; "Cancel" leaves settings unchanged (side effect absent) | R12, S41 | save without the confirmation → the schedule silently retargets | E4 |
-| MA-460 | U | settings serialization: an export start racing a `/api/settings` save never writes back a stale `Out` (both orders, injected interleaving) | R12, R5 | drop the mutex → the stale `Out` is written | E3 |
-| MA-461 | U | archive renders stay byte-identical after `RenderContext.AttachDirName` is added (exporter contexts: KeepRaw on and off, with and without a zip); the "attachments are inside the .eml file" sentence appears only in export renders | R7, R19, R22 | print the sentence whenever `AttachDirName == ""` → an archive render changes | E5 |
-| MA-462 | U | (only if the owner answers Q6 yes) with the deployment switch off, every workspace and export route returns 404 and the sidebar has no "Export" group | R12 | register the routes regardless → a 200 appears | E3 |
-| MA-463 | U | F15: a stalled `/token` response body is released within `reqTimeout`; an unrelated workspace list waits no longer than that; the run stops with a typed error, never hangs | R17, R22 | remove `Client.Timeout` → the list blocks behind the mutex | E1 |
-| MA-464 | U | redirects and bodies: a Graph 302 to a foreign host carries no `Authorization` there (zero hits); a Graph JSON body over the limit is refused, not decoded | R17, R22 | leave `CheckRedirect` unset → the foreign fake receives the token | E1 |
-| MA-465 | S | structural: Browse is disabled while an export runs (the browse endpoint refuses with the picker seam not invoked); CI runs `govulncheck` for GOOS=windows on `./cmd/mailarchive-desktop` | R12, S42 | allow browse during a run → the seam is invoked | E3 |
+| MA-447 | U | run record: header + plan are fsynced before the marker; one line per finished message with every file's role, SHA-256 and size; `export-manifest.json` and `SHA256SUMS.txt` are built from it (no `.mailexport-entries.tmp` exists in the root at any point); the `sealed` fingerprint equals sha256 of the in-memory SUMS bytes; a `.eml` replaced on the destination after its run-record line still fails `sha256sum -c` against the SUMS built from the record; the presence check before SUMS makes a run partial when a recorded file vanished (fault hook) | R29, R5, S52 | build SUMS by re-reading files from the destination → the replaced-file case vouches for the forged bytes | E2 |
+| MA-448 | U | reconciliation: a fault-injected blocking stat on an old run's `dest_dir` leaves `/api/exports/progress` answering within 1 s and Cancel working; each run is probed once per launch and gets a terminal `reconciled` record; a planted manifest with status complete plus a deleted marker never yields "complete" without a sealed record; no fingerprint is ever computed from disk; an identity mismatch shows "moved or replaced" | R29, R12, S52 | reconcile synchronously on the progress request → the 1 s bound fails | E3 |
+| MA-449 | U | process-lifetime context: a session built inside a handler whose context is then cancelled, with a fake token expiring in 2 s, still refreshes for a later list and a 3-minute run | R17, R29 | build the session on `r.Context()` → the later list fails "context canceled" | E3 |
+| MA-514 | U | shutdown: cancelling main's root context calls `Drain`, which cancels the run, waits for finalization (manifest status `cancelled`, marker CANCELLED) and returns within the 15 s budget | R29, R5 | return from main after `Shutdown` without draining → no manifest | E3 |
+| MA-515 | U | identity-safe token write-back (in `internal/graph`, so capture too): a live source whose store was cleared does not re-create it on the next refresh; a live source for A does not overwrite a stored entry for B; `reload` refuses a stored token for another UPN; a deleted vault entry or token file is not re-created; MA-258's same-UPN rotation still persists | R17, R5, S20 | restore `putIfNewer`'s write-on-missing → the cleared store is re-created | E1 |
+| MA-516 | U | transport backoff and the time breaker (clock-injected): a 30 s outage then recovery → the run completes with zero failures; a sustained outage → R-u once 5 minutes pass with no success, outcome 1; 25 consecutive 503s → R-u2, outcome 1 | R29, R10, S52 | count transport errors per request (revision 1's 10-in-a-row) → the 30 s outage fails the run | E2 |
+| MA-517 | U | sign-in classification (engine): a fake token endpoint returning 400 `invalid_grant` after N messages → R-c, not R-u, with at most one message affected; a transient 401 whose forced refresh succeeds → the run continues; the in-flight message at a run-fatal stop is in `failures`, never first in `not_attempted` | R17, R29, S52 | treat `*oauth2.RetrieveError` as transport → R-u appears | E2 |
+| MA-518 | U | free-space policy: start refuses with R-g2 when the estimate plus the reserve exceeds free bytes (side effect absent); the preview reports the reserve; the floor is also checked on the state-directory volume | R29, R12 | drop the reserve → start proceeds and finalization fails on the fake full disk | E3 |
+| MA-519 | U | removable filesystems: a fault hook enforcing FAT's 65,536-entry directory cap is never reached by a 10,000-message folder (≤1,000 files per directory, month split); modes are set only at creation (a chmod-rejecting fake filesystem still accepts every write); EACCES at root creation → R-w with nothing written | R29, R4, R12 | put every message in one directory → the entry cap is hit | E2 |
+| MA-520 | U | Check this export and Check and finish: a flipped byte, a missing file and a planted unlisted file are each reported (RED); a clean export is GREEN; Check and finish removes the app's own marker only when sha256(SUMS) equals the sealed fingerprint and every listed file matches, and refuses otherwise with the marker kept | R29, S52 | remove the marker without comparing the sealed fingerprint → a re-hashed SUMS is accepted | E3 |
+| MA-521 | U | retry chain: a retry of a retry is named `-part3`, every part's manifest carries the full `chain`, README lists the siblings, and Export activity's set fingerprint equals SHA-256 over the parts' SUMS files in order | R29, S52 | omit an earlier part from `chain` → the set fingerprint differs | E3 |
+| MA-522 | U | session lifecycle: "Load more" after the cursor TTL continues by keyset with no duplicate or skipped row on a static folder; an evicted cursor shows R-x; a POST after a dashboard restart shows R-y, never a bare 403; after 30 idle minutes (clock-injected) the tree, seen-set and cursors are released; resolution never adds to the seen-set and live-selection handles survive LRU pressure | R29, R12, S52 | let resolution feed the LRU → a pick is evicted and R-j2 fires | E3 |
+| MA-523 | U | Settings save with a weekly backup installed and a changed archive location asks first, naming the signed-in UPN and the new folder; "Save and remove the weekly backup" removes it; "Cancel" leaves settings unchanged (side effect absent) | R12, S41 | save without the confirmation → the schedule silently retargets | E4 |
+| MA-524 | U | settings serialization: an export start racing a `/api/settings` save never writes back a stale `Out` (both orders, injected interleaving) | R12, R5 | drop the mutex → the stale `Out` is written | E3 |
+| MA-525 | U | archive renders stay byte-identical after `RenderContext.AttachDirName` is added (exporter contexts: KeepRaw on and off, with and without a zip); the "attachments are inside the .eml file" sentence appears only in export renders | R7, R19, R29 | print the sentence whenever `AttachDirName == ""` → an archive render changes | E5 |
+| MA-526 | U | (Q6 ruled yes [ruling Q6]) with the deployment switch off, every workspace and export route returns 404 and the sidebar has no "Export" group | R12 | register the routes regardless → a 200 appears | E3 |
+| MA-527 | U | F15: a stalled `/token` response body is released within `reqTimeout`; an unrelated workspace list waits no longer than that; the run stops with a typed error, never hangs | R17, R29 | remove `Client.Timeout` → the list blocks behind the mutex | E1 |
+| MA-528 | U | redirects and bodies: a Graph 302 to a foreign host carries no `Authorization` there (zero hits); a Graph JSON body over the limit is refused, not decoded | R17, R29 | leave `CheckRedirect` unset → the foreign fake receives the token | E1 |
+| MA-529 | S | structural: Browse is disabled while an export runs (the browse endpoint refuses with the picker seam not invoked); CI runs `govulncheck` for GOOS=windows on `./cmd/mailarchive-desktop` | R12, S52 | allow browse during a run → the seam is invoked | E3 |
+| MA-530 | U | sign-in changes at the desktop surface: Clear sign-in during a run → the running export stops with R-z, finalized (manifest `failed`, marker STOPPED) and retryable from the run record; a sign-in as B during A's run → R-z naming both; an out-of-process change seen by the every-100-messages `SignedIn` poll → R-z; a refused refresh token in the preview and list endpoints shows R-b/R-c, never raw text | R17, R29, S41, S52 | drop the session-drop → run cancel link → A's run continues after the clear | E3 |
+| MA-531 | U | [ruling W1] another archive folder, read-only: with a writable fixture folder and a read-only one, preview and run leave every file under the folder byte-identical and add no file (no `.mailarchive.lock`, no manifest save, no `search.db-wal`/`-shm`/journal, no temp), Settings and the installed weekly backup unchanged; a `search.db-wal` beside the index → the list says recent messages may be missing and whole-folder selection still exports them; a folder with no manifest → R-o3; a newer manifest or index → R-p; a destination inside the folder → R-f; each refusal with the side effect absent; positive twin first | R29, R9, R20, R12, S52 | open the index read-write (`index.Open`, which runs `RepairKeys`) → a byte change or an added `-wal` is detected | E4 |
 
-| MA-466 | U | sign-in changes at the desktop surface: Clear sign-in during a run → the running export stops with R-z, finalized (manifest `failed`, marker STOPPED) and retryable from the run record; a sign-in as B during A's run → R-z naming both; an out-of-process change seen by the every-100-messages `SignedIn` poll → R-z; a refused refresh token in the preview and list endpoints shows R-b/R-c, never raw text | R17, R22, S41, S42 | drop the session-drop → run cancel link → A's run continues after the clear | E3 |
-
-MA-467..MA-469 are held in reserve.
+MA-532..MA-534 are held in reserve (for RR-2 and RR-3). Revision 2's reserve MA-467..MA-469
+is released, because it lies in g8's range [ruling Q11 = J1].
 
 ## 10. Build slices and order
 
-Each slice adds its MA rows to the catalog first (OPERATOR-accepted, under the ids the
-operator allocates, XC29), ships prove-fail → prove-pass, and leaves the covers map green.
-Producers merge before their sinks. **Each slice lists only the rows it builds, and each
-row belongs to exactly one slice (XC28).** Every "Proven (MA-x)" claim in this document is
-read as "MA-x (slice Ey)", taking the slice from this table. **No E2 code starts** until
-two things have happened:
-- lenses 3, 6 and 7 have re-run on revision 2 as an addendum to the review (**XC40**);
-- the owner has ruled on Q12 (which engine) and Q10 (export-root ACL posture, which blocks
-  E2's Windows write path).
+Each slice adds its MA rows to the catalog first (OPERATOR-accepted, under the allocated
+ids, XC29, [ruling Q11 = J1]), ships prove-fail → prove-pass, and leaves the covers map
+green. Catalog-first PRs land one at a time, in the cross-design order of
+`docs/owner-rulings-2026-10-09.md` §9. Producers merge before their sinks. **Each slice
+lists only the rows it builds, and each row belongs to exactly one slice (XC28).** Every
+"Proven (MA-x)" claim in this document is read as "MA-x (slice Ey)", taking the slice from
+this table. **No E2 code starts** until lenses 3, 6 and 7 have re-run on revision 2 as an
+addendum to the review (**XC40**, RR-2). Q12 (which engine) and Q10 (export-root ACL
+posture) are ruled [ruling Q12, Q10 = J3]. **No E4 code starts** until RR-3 has re-run lenses
+3, 6 and 7 on the W1 text [ruling W1].
 
 | Slice | Contents | Depends on | Rows | Gate owed after build |
 |---|---|---|---|---|
 | **E0** (prerequisite; XC23) | **= `docs/design-local-confidentiality.md` slices C1** (Host allow-list on every method and route, `localweb.Mux` route registry; its MA-371/374/375) **and C2** (per-launch per-user session under `/s/<P>/`, relative UI URLs, instance file and handoff; its MA-372/373/376/378), both merged before E3. Not built here: revision 1's "otherwise built here as the first slice" is withdrawn | — | local-confidentiality's rows | local-confidentiality's own gates (adversarial pass; C2 friction review) |
-| **E1** | Graph additions (§4.5): `FolderTree`, `FolderCount`, `MessagePage` (widened `$select`, id-aware extended properties, "honored" flag; XC27), `MIMETo` (a writer over S3's watchdog, own header timeout), the host/path pin on the workspace paths (XC25), `CheckRedirect` + `io.LimitReader` (XC26), **the F15 fix** (`Client.Timeout`; XC26), identity-safe `putIfNewer`/`reload` (XC7) | **`docs/design-fault-isolation.md` slice S3** (`StatusError{Code, GraphCode, Msg}`, `classifyFetch`, MIME watchdog, nextLink repeat guard; XC25) | MA-400, 401a, 402, 403a, 451, 463, 464 | short adversarial note (redirect refusal and token write-back touch capture); otherwise folded into E3's adversarial pass |
-| **E1c** (capture hardening; XC25) | The nextLink pin applied to capture's `Folders` and `Messages`, with a typed error naming the foreign host | E1, MA-443's nextLink-shape sub-case recorded | MA-401b + capture rows | short adversarial note (shipped capture path) |
-| **E2** | Engine (`internal/app/copyexport*.go`): plan, **run record** (§4.19, XC1), `os.Root` writer with no-replace placement (XC13), naming with ≤1,000 files per directory (XC12), marker, README, manifest and sums built from the run record, outcomes, failure classes with backoff and time breaker (XC9), per-OS destination classes and write breaker (XC10), cancel, M365 adapter (originals only), `util.FreeBytes`/`FoldKey`; R22/S42 accepted under allocated ids | E1; **XC40 addendum filed; Q10, Q12 ruled** | MA-416..419, 421, 422a, 422b, 426a, 427..429, 432a, 439, 440a, 441, 447, 452, 453, 455 | adversarial pass on the write side (combined with E3's) |
-| **E3** — first shippable | Desktop: `workspace`, `exports`, endpoints through `localweb.Mux` with relative URLs (XC23), Graph session on the process-lifetime context with `Drain` (XC6), selection with row handles (XC17) and count, preview, start/cancel, progress/history split with the background reconciler (XC4), journal (XC3), the Microsoft 365 card and the sign-in slot (XC8), picker (disabled during a run, XC31), Create folder, settings (serialized, XC34), **retry, Finish as partial, Check this export and retry chains (revision 1's E7 folded in; XC2, XC14, XC15, XC28)**. Source: Microsoft 365. Output: original EML + manifest. Readable HTML **hidden, `exportHTML` OFF** (XC28). X12 (scoped, Partial; XC24), X13, X14 accepted under allocated ids | E2, **E0 merged** | MA-403b, 404, 405, 407..410, 411a, 412..415, 430, 431a, 432b, 433, 434, 437, 438a, 444..446, 448..450, 454, 456..458, 460, 462 (if Q6), 465, 466 | **adversarial pass** (`docs/review-extraction-workspace-adversarial.md`: new loopback read surface returning mailbox content, a filesystem write primitive, a native dialog newly linked into the desktop binary, the run record) and **friction review** (`docs/review-extraction-workspace-friction.md`, every §7.2 cell, retry and Finish as partial included) |
-| **E4** | Archive source: adapter (§4.6) with the redaction belt, nlink check, `UnknownSentinel` filter and archive-gone class (XC19, XC10); `index.ListFolder` read-only with the version check and Rebuild lock (XC19, XC20); tree from the share-delete snapshot (XC20) with per-store mailboxes (XC21); content disclosure; the Settings-save guard (XC22) | E2, E3; **the inheritor cell §7.4 is gated on the owner's Q3 ruling** | MA-411b, 420, 431b, 435, 436, 438b, 459 | adversarial addendum (archive read gates, concurrency, Windows share mode) + friction re-run (inheritor cell §7.4) |
-| **E5** | Readable HTML (`RenderContext.AttachDirName` with the guarded sentence, `export.LiveRefreshIn` as defined in §4.11, read-back hash check, the quarantine path); `exportHTML` default flips to ON | E2 (E4 for quarantine) | MA-423, 426b, 440b, 461 | none new (renderer reused; R19 rows); noted in the E4 addendum |
-| **E6** | Extract attachments, including archive zip extraction with bounds | E2, E5, **the C1-1 fix** | MA-424, 425 | adversarial addendum (untrusted names → loose files; zip bounds) |
+| **E1** | Graph additions (§4.5): `FolderTree`, `FolderCount`, `MessagePage` (widened `$select`, id-aware extended properties, "honored" flag; XC27), the use of SG's `MIMETo` and nextLink guard, the host/path pin on the workspace paths (XC25), `CheckRedirect` + `io.LimitReader` (XC26), **the F15 fix** (`Client.Timeout`; XC26), identity-safe `putIfNewer`/`reload` (XC7) | **`docs/design-fault-isolation.md` slice SG** [ruling J4] (`StatusError{Code, GraphCode, Text}` with today's `Error()` text, `graph.Classify`, `MIMETo`, the nextLink guard; XC25), not S3 | MA-400, MA-401, MA-403, MA-515, MA-527, MA-528 (MA-402 is built in SG [ruling J4]) | short adversarial note, always: redirect refusal and token write-back touch capture (L2-3) [ruling J4] |
+| ~~E1c~~ | **Moved [ruling J4]:** capture's nextLink pin is fault-isolation's step FI-SGc, still gated on MA-443's nextLink-shape sub-case (XC25); lifting that gate is ESC-7 | — | MA-505 (built in FI-SGc) | FI-SGc's short adversarial note |
+| **E2** | Engine (`internal/app/copyexport*.go`): plan, **run record** (§4.19, XC1), `os.Root` writer with no-replace placement (XC13), naming with ≤1,000 files per directory (XC12) and the export-only stricter naming pass for F75/F91/F111 [ruling Q15], marker, README, manifest and sums built from the run record, outcomes, failure classes with backoff and time breaker (XC9), per-OS destination classes and write breaker (XC10), cancel, M365 adapter (originals only), `util.FreeBytes`/`FoldKey`; R29 and S52 land with SG's catalog-first PR (MA-402 cites them, [ruling J4]); the archive writer's F75/F91/F111 gap gets a skip encoder citing R4 [ruling Q15] | E1; **XC40 addendum filed (RR-2)**; Q10 and Q12 are ruled | MA-416..419, MA-421, MA-422, MA-508, MA-426, MA-427..429, MA-432, MA-439, MA-440, MA-441, MA-447, MA-516, MA-517, MA-519 | adversarial pass on the write side (combined with E3's) |
+| **E3** — first shippable | Desktop: `workspace`, `exports`, endpoints through `localweb.Mux` with relative URLs (XC23), Graph session on the process-lifetime context with `Drain` (XC6), selection with row handles (XC17) and count, preview, start/cancel, progress/history split with the background reconciler (XC4), journal (XC3), the Microsoft 365 card and the sign-in slot (XC8), picker (disabled during a run, XC31), Create folder, settings (serialized, XC34), **retry, Finish as partial, Check this export and retry chains (revision 1's E7 folded in; XC2, XC14, XC15, XC28)**, the deployment switch [ruling Q6], and the Export sidebar group, which does not declare desktop P7 superseded [ruling ESC-5]. Source: Microsoft 365. Output: original EML + manifest. Readable HTML **hidden, `exportHTML` OFF** (XC28). X13 (scoped, Partial; XC24), X14 (scoped to the dashboard, [ruling J7]) and X15 land under their allocated ids | E2, **E0 merged** | MA-506, MA-404, MA-405, MA-407..410, MA-411, MA-412..415, MA-430, MA-431, MA-511, MA-433, MA-434, MA-437, MA-438, MA-444..446, MA-448, MA-449, MA-514, MA-518, MA-520..522, MA-524, MA-526, MA-529, MA-530 | **adversarial pass** (`docs/review-extraction-workspace-adversarial.md`: new loopback read surface returning mailbox content, a filesystem write primitive, a native dialog newly linked into the desktop binary, the run record) and **friction review** (`docs/review-extraction-workspace-friction.md`, every §7.2 cell, retry and Finish as partial included) |
+| **E4** | Archive source: adapter (§4.6) with the redaction belt, nlink check, `UnknownSentinel` filter and archive-gone class (XC19, XC10); `index.ListFolder` read-only with the version check and Rebuild lock (XC19, XC20); tree from the share-delete snapshot (XC20) with per-store mailboxes (XC21); content disclosure; the Settings-save guard (XC22); **the second archive source, another archive folder, read-only (§4.3, R-o3) [ruling W1]** | E2, E3; Q3 is ruled yes (owner-direct) [ruling Q3]; **RR-3 before code** | MA-507, MA-420, MA-510, MA-435, MA-436, MA-512, MA-523, MA-531 | adversarial addendum (archive read gates, the read-only open of another archive folder, concurrency, Windows share mode) + friction re-run (the inheritor walk §7.4) |
+| **E5** | Readable HTML (`RenderContext.AttachDirName` with the guarded sentence, `export.LiveRefreshIn` as defined in §4.11, read-back hash check, the quarantine path); `exportHTML` default flips to ON | E2 (E4 for quarantine) | MA-423, MA-509, MA-513, MA-525 | none new (renderer reused; R19 rows); noted in the E4 addendum |
+| **E6** | Extract attachments, including archive zip extraction with bounds | E2, E5, **mime-fidelity S2, which carries the C1-1 fix** [ruling Q9] | MA-424, MA-425 | adversarial addendum (untrusted names → loose files; zip bounds) |
 
 E1 → E2 → E3 is the smallest independently reviewable shippable unit (M365 → original
 EML + manifest, with retry). E4–E6 each add one capability behind it. Revision 1's E7 is
 folded into E3, so that E3's refusals never name a control that does not exist (XC28).
 
-**Dependencies (XC38).** The util sanitizer fixes F75, F91 and F111 turn MA-417's xfail
-sub-cases green, and F17 conditions §4.14 and R-v. All four are **unowned** until the
-owner names an owner (Q15). Revision 1 said the sanitizer fixes "can land at any time".
-That is withdrawn: `docs/design-fault-isolation.md` §3 N1 notes that the path-portability
-fix "renames directories and changes local keys, so it needs its own migration". Two
-alternatives avoid that archive migration for this design: an export-only sanitizer
-variant built here, or naming an owner who builds the shared fix with its migration.
-Until one of them lands, P7 stays conditional at release, and says so.
+**Dependencies (XC38) [ruling Q15].** F75, F91 and F111 are handled for exports by an
+export-only, stricter naming pass built in E2, so MA-417's sub-cases pass with no archive
+migration. The shared util fix "renames directories and changes local keys, so it needs its
+own migration" (`docs/design-fault-isolation.md` §3 N1), and it stays open outside this
+design, as an open gap with a skip encoder citing R4 (E2). F17 conditions §4.14 and R-v; it
+is fault-isolation's slice FI-GF17, after its S3. Revision 1's "can land at any time" stays
+withdrawn.
 
-## 11. Open questions needing an OWNER RULING
+## 11. Open questions needing an OWNER RULING — all RULED or ESCALATED
+
+Every question below is answered in `docs/owner-rulings-2026-10-09.md` §2 (the joint
+rulings it cites are in its §1). Each keeps its question for context, followed by its ruling.
 
 - **Q1** — Do you accept the OS folder picker (Browse) plus the typed path in place of
   the mockup's in-page destination folder tree ("Click an arrow to expand folders…")?
   The tree needs a directory-listing API on the loopback dashboard (§4.8).
+  **RULED (delegated-recommended): yes.** No directory-listing API on the loopback surface.
 - **Q2** — Operator ruling T7 excludes Deleted Items and Junk Email from capture walks
   by default. Do you confirm that T7 does not apply to the workspace, so the tree lists
   Deleted Items (89) and Junk Email (1), unticked, as the mockup shows?
+  **RULED (delegated-judgement): confirmed.** Both are listed, labelled and unticked, and
+  are included only when ticked; T7 still governs capture.
 - **Q3** — Should the archive source also accept "another archive folder" (read-only,
   chosen with the picker), so an inheritor need not repoint the archive location, which
   would also retarget the weekly backup (§7.4)? Ruling OW2 says "the local MailArchive
   archive". **Now blocking (review OR5):** E4's inheritor cell (§7.4) is gated on this
   ruling. XC22's Settings-save confirmation is the interim guard, and the Type II residual
   stays until Q3 is answered.
+  **RULED (owner-direct, 2026-10-09: "yes the read only"): yes.** Built as W1 (§4.3, §4.6,
+  §4.7, §7.4, R-o3, MA-531, E4), whose details are delegated; RR-3 re-runs lenses 3, 6 and
+  7 on that text before E4 code. The Type II residual is closed.
 - **Q4** — For the archive source, should messages that have since been deleted from the
   live mailbox, but are kept in the archive, be included in a folder selection by
   default? (Proposed: yes, counted separately in the preview.)
+  **RULED (delegated-recommended): yes,** counted separately in the preview.
 - **Q5** (re-premised, XC24; review OR7) — Do you confirm that the workspace must not
   ship before E0 (`docs/design-local-confidentiality.md` C1 + C2) lands, even for
   single-user installs? The premise is corrected: without E0, any local account can
@@ -1995,20 +2086,26 @@ Until one of them lands, P7 stays conditional at release, and says so.
   `/api/settings` with any `Out`, then `/api/capture`). The workspace inherits that
   exposure and adds a selective copy and a subject-read surface. So E0 should ship on its
   own merits, whatever happens to the workspace.
+  **RULED (delegated-judgement): confirmed.** E0 is scheduled first, on its own merits.
 - **Q6** (review OR6) — Should an administrator (MSI or RMM property, or an HKLM policy
   value) be able to turn the Extraction workspace off for a deployment? **Recommended:
   yes,** because that switch is the rollout's only rollback path short of an
-  uninstall/reinstall, which also removes E0 (XC37, §6). If yes, MA-462 applies.
+  uninstall/reinstall, which also removes E0 (XC37, §6). If yes, MA-526 applies.
+  **RULED (delegated-recommended): yes.** MA-526 applies, in E3.
 - **Q7** — Is sequential download acceptable for v1 (about 3–7 hours per 50,000
   messages), or must v1 download 2–4 messages in parallel (within Exchange's
   4-concurrent-per-mailbox limit)?
+  **RULED (delegated-judgement): one at a time.** Parallel downloads wait for MA-443's
+  measured throughput.
 - **Q8** — For the archive source, do you accept the reworded panel note ("Exports the
   original EML where your archive kept one … otherwise the archived page and
   attachments"), since "Always exports original EML" is false for a default desktop
   archive?
+  **RULED (delegated-judgement): yes.**
 - **Q9** — Should "Extract attachments" wait for the C1-1 parser fix (as planned), or
   ship earlier with a warning that text attachments in non-UTF-8 encodings may be
   re-encoded?
+  **RULED (delegated-judgement): it waits.** E6 ships after mime-fidelity S2.
 - **Q10** (review OR1; XC23, XC32) — **Export-root ACL posture on Windows.**
   `docs/design-local-confidentiality.md` §6 expects workspace writes to get its protected
   owner/SYSTEM/Administrators DACL (its P1/P3, and its "owner-only at rest" R22). This
@@ -2018,11 +2115,17 @@ Until one of them lands, P7 stays conditional at release, and says so.
   into an administrator ownership takeover that rewrites every file's ACL. Either answer
   amends local-confidentiality §6's workspace sentence. **Blocks:** E2's Windows write
   path.
+  **RULED (delegated-recommended) = J3: inherit, and show the posture line.**
+  Local-confidentiality's protected DACL is scoped to archive roots and the tool's own state
+  directories; its §6 says so.
 - **Q11** (review OR2; XC29) — **Id allocation.** Will the operator allocate the R, S, X
   and MA id ranges across the five in-flight designs (fault-isolation,
-  recapture-integrity, mime-fidelity, local-confidentiality, extraction-workspace)? R22,
-  S42 and X12 are claimed by several of them with different meanings. **Blocks:** catalog
-  acceptance of any slice's rows.
+  recapture-integrity, mime-fidelity, local-confidentiality, extraction-workspace)? Revision
+  2's provisional R22, S42 and X12 were claimed by several of them with different meanings.
+  **Blocks:** catalog acceptance of any slice's rows.
+  **RULED (delegated-judgement) = J1.** R29, S52, X13–X15; MA-400..449 plus MA-505..531;
+  MA-406 retired; the reserve MA-467..469 released (header, §9). The duplicate-id check goes
+  to the kit owner as a follow-up.
 - **Q12** (review OR3; XC39) — **Which engine is the "simpler tool"?** Is the owner's
   "simpler tool … where you just select the source and choose the export destination to
   copy it to" this workspace's separate copy-export engine? Or is it a capture into a
@@ -2031,18 +2134,30 @@ Until one of them lands, P7 stays conditional at release, and says so.
   owner's words are "copy it to", and §1.2 shows `RunGraph` writes an archive (lock,
   manifest, `Exporter`, gone-sweeps), not a hand-over folder. Fault-isolation's input
   line would then be amended. **Blocks:** E2.
+  **RULED (delegated-recommended): this workspace's copy engine.** Fault-isolation revision
+  2 already reads it this way (its FC20), so the OW4 paragraph and XC39 cite that.
 - **Q13** (review OR4; XC36) — **Desktop P7.** Does the workspace supersede the approved
   desktop design's P7 "Export a copy (extract mbox/eml)" (`docs/design-mailarchive-desktop.md`
   rev 2), which drops a dashboard mbox export? The CLI's `extract -format mbox` remains.
   **Blocks:** E3's sidebar and the §3 wording.
+  **ESCALATED (ESC-5).** P7 carries out a direct owner ruling (the desktop feature-gap
+  review), which a delegated ruling may not reopen. Recommended answer: yes, one export
+  surface, with `extract -format mbox` as the CLI path. Interim: E3 ships the workspace and
+  its Export sidebar group without declaring P7 superseded; P7 stays an approved, unbuilt
+  desktop item, and §3, OW4 and XC39 do not call it superseded. It blocks nothing.
 - **Q14** (review OR8; XC31) — **Out-of-process folder picker.** Should the native picker
   run in a child process (a self re-exec, `mailarchive-desktop -pick-folder`, killed after
   the 10-minute bound), so that a crashing or hanging shell extension cannot take down the
   dashboard and a running export? That amends the desktop owner ruling P1 "in-process
   (NOT shell-out)". XC31's minimum (Browse disabled during a run, §5.2 rows) applies
   either way.
+  **RULED (delegated-judgement): no.** P1 stands; XC31's minimum is the design.
 - **Q15** (review OR9; XC38) — **Unowned dependencies.** Who owns F17 (throttle waits
   against the 60 s deadline; 5xx not retried) and F75 / F91 / F111 (bidi controls, the
   255-byte segment limit, reserved names)? Alternatively, should this design take them as
   explicit slices (an export-only sanitizer variant avoids the archive migration)? Until
   answered, P7, §4.14 and §4.18 label them unowned. (P13's old F15 condition is gone, because F15 is fixed in E1, XC26.)
+  **RULED (delegated-judgement).** F75, F91 and F111: an export-only, stricter naming pass
+  layered over the util sanitizers, built in E2, so MA-417's sub-cases pass with no archive
+  migration; the archive-side fix stays open outside these designs, with a skip encoder
+  citing R4. F17: fault-isolation's slice FI-GF17, after its S3.

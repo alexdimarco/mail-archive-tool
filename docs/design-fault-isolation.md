@@ -1,17 +1,23 @@
 # Design — fault isolation for capture: one bad item costs exactly that item
 
-**Revision:** 2 (2026-10-09). **BUILD STATUS:** approved with conditions, not built.
+**Revision:** 2 (2026-10-09). **BUILD STATUS:** approved with conditions, not built; owner
+rulings folded (`docs/owner-rulings-2026-10-09.md`).
 - **The gate.** The 10-lens pre-code review is filed as
   `docs/review-fault-isolation-predesign.md`. Verdict: **GO_WITH_CONDITIONS**. Findings: 114
   found, 111 confirmed, 3 refuted. No blocker survived the rescue.
 - **This revision.** Revision 2 folds in the review's conditions **FC1–FC34**. Each change is
   marked in the text with its condition number, as `[FCn]`.
-- **Still open.** Ten **owner rulings, OR1–OR10**, are not decided here (§11). The slices they
-  gate are blocked until each is ruled (§10, "Blocked on").
+- **Ruled.** The ten **owner rulings, OR1–OR10** (§11), are ruled in
+  `docs/owner-rulings-2026-10-09.md` §3, and each change they make here is marked
+  `[ruling ORn]` (or the joint ruling it cites, J1–J8). None is escalated. The F33 identity
+  fold, which this design's S2b would carry, is escalated (ESC-1, [ruling J8]); S2b ships
+  without it. Capture's nextLink host pin waits behind the extraction review's XC25 gate
+  (FI-SGc, [ruling J4]); lifting that gate is ESC-7.
 - **Nothing in this document is built.** Where a claim below says **proven**, it means "proven
   by the named MA row once that row is green". It does not mean built.
-- **Catalog ids.** The R22, S42–S44 and MA-310..MA-329 ids are proposals, pending the
-  operator's allocation (OR8, [FC34]).
+- **Catalog ids [ruling OR8 = J1].** Revision 2's provisional R22 and S42–S44 are now **R25**
+  and **S46–S48**. The rows keep MA-310..MA-329, with MA-320's and MA-324's Graph halves at
+  **MA-501** and **MA-502** and the two lab rows at **MA-503** and **MA-504**.
 
 Revision 1 (2026-10-09) is the text the review examined.
 
@@ -51,10 +57,11 @@ Every per-item and per-folder read, fetch, parse and write fault on every source
     new **capture-gap ledger** inside the manifest [FC7].
 - **The ledger is inert.** Nothing ever reads it to skip work, so every gap is retried on every
   run that reaches it.
-- **Partial runs.** A run with such faults ends **partial**: exit `3`, last-run status
-  `partial`, and a typed `app.ErrPartial`.
-  - The exit code and the status value wait on owner rulings OR1 and OR2.
-  - Until those are ruled, slice S1a reports a partial run as today's failure (exit 1) [FC33].
+- **Partial runs.** A run with such faults ends **partial**: exit `1` with a `partial` flag
+  on the last-run record (status `failed`, `partial: true`), and a typed `app.ErrPartial`
+  [ruling OR1, OR2]. X1 is not amended, so no capture verb gains exit `3`.
+  - S1a reports a partial run as today's failure (exit 1) [FC33]; S1b adds the flag, the
+    summary and the sidecar wording.
 - **Where it shows.** The same facts reach the summary, `status`, the report, `verify`, the
   README and the dashboard.
 - **Run-level faults still stop the run:**
@@ -126,7 +133,7 @@ invariant proposed in §2.1. Labels: **proven** (the named MA row, once green), 
   Siblings, and every other folder still reachable, continue. One bad row in a sub-folder table
   costs only that sub-folder (§4.4). A folder or account that Outlook's own export skipped in
   `-outlook` mode is recorded as a folder gap, never only logged [FC28]. *Serves R6, R10, R1.*
-  **Proven:** MA-316, MA-320a, MA-320b.
+  **Proven:** MA-316, MA-320, MA-501.
 - **P3 — No hang, no unbounded walk.** Six guards:
   - FIFOs, sockets and devices are never opened for reading. This covers every file a local
     reader **or discovery** opens, not only maildir entries, so discovery cannot hang before the
@@ -134,9 +141,15 @@ invariant proposed in §2.1. Labels: **proven** (the named MA row, once green), 
   - A PST folder hierarchy is walked with a visited-NID set and a depth cap.
   - A Graph download is bounded by an **idle timeout** (no bytes for 2 min), an overall cap
     (2 h) and a size cap [FC21], not by a 10-minute wall clock.
-  - `Retry-After` sleeps are clamped (≤60 s each, ≤5 min per item) until F17 lands [FC10].
+  - `Retry-After` sleeps are clamped (≤60 s each, ≤5 min per item) until F17 lands [FC10]
+    (F17 is this design's slice GF17, [ruling workspace Q15]).
   - A Graph listing that repeats a `nextLink`, or leaves the client's base host, stops. This
-    holds in **every** paging loop, `Folders` included [FC21].
+    holds in **every** paging loop, `Folders` included [FC21]. **[ruling J4]** The repeat
+    set and the page cap hold in every loop from SG on. The host/path pin holds in the
+    extraction workspace's loops from its E1, and in capture's `Folders` and `Messages` from
+    step SGc, which waits for MA-443's recorded nextLink shapes (the extraction review's
+    XC25 gate; lifting it is ESC-7). Until SGc, a foreign `nextLink` in capture's listings
+    is an open gap, not accepted, encoded by MA-314's foreign-host case as a skip encoder.
   - A PST folder table whose rows are **structurally** bad 100 times in a row is closed as one
     folder fault. This covers sub-folder tables too [FC9].
 
@@ -190,7 +203,7 @@ invariant proposed in §2.1. Labels: **proven** (the named MA row, once green), 
 - **P5 — The ledger is inert.** No code path consults a capture gap when deciding whether to
   read, fetch or export an item. A Graph capture failure **never** creates a manifest record or
   an identity-index (`byIdent`) entry. Every gap is therefore re-attempted by every run that
-  reaches its item (H3). *Serves R1, R17.* **Proven:** MA-311, MA-324a, MA-324b.
+  reaches its item (H3). *Serves R1, R17.* **Proven:** MA-311, MA-324, MA-502.
 - **P6 — Unreadable items are distinct, and partial reads keep what was read.**
   - **[FC7] Nothing readable.** An item with nothing readable is one ledger gap of its own,
     keyed by a stable locator [FC8].
@@ -258,11 +271,16 @@ invariant proposed in §2.1. Labels: **proven** (the named MA row, once green), 
     - its fetch fails while it sits in a folder that is marked walked.
   - The failure direction has changed, so this is a new assumption, not the old one. OR10 offers
     the owner a stricter alternative.
+  - **[ruling OR10]** The stricter alternative is taken: on any fault whose identity matched
+    no record, PhysID-less records are excluded from this run's sweep, as for an unknown
+    identity (§4.8.3). The phantom `{k,gone}` cannot arise; the cost is that gone-detection
+    for such records is deferred while the fault persists, and `status` names it. Deferred,
+    never wrong.
 - **P8 — Run-level faults still stop the run.** Each of these ends the mailbox or source walk
   as a failure (exit 1), with no flood of gaps:
   - parent context cancel (the handled interrupt still exits 0, X1);
   - archive lock loss;
-  - Graph 401/403 (403 per OR7), and a failed token refresh (`*oauth2.RetrieveError`, or the
+  - Graph 401/403 (403 per OR7, ruled mailbox-fatal [ruling OR7]), and a failed token refresh (`*oauth2.RetrieveError`, or the
     delegated source's sign-in-again error) [FC11];
   - ENOSPC, EDQUOT or EROFS (and the Windows disk-full and write-protect codes);
   - an **unavailable archive location**. The archive root or the token directory is gone, or
@@ -272,25 +290,29 @@ invariant proposed in §2.1. Labels: **proven** (the named MA row, once green), 
   - a tripped breaker: the Graph rate and time breaker of §4.8.5 [FC10], or 50 consecutive
     local write failures, where each folder's first `FolderError` counts [FC12].
 
-  *Serves R5, R12, R18 (H-F9.3).* **Proven:** MA-313, MA-320a, MA-320b.
+  *Serves R5, R12, R18 (H-F9.3).* **Proven:** MA-313, MA-320, MA-501.
 - **P9 — Partial is a typed outcome.** A run whose walk completed but observed at least one
   fillable or terminal fault ends **partial**. §4.1 gives the exact definition, which includes
   partly-read records (`unreadable:*` labels). On a partial run:
-  - capture verbs exit **`3`**: the default export verb, `graph`, `mailarchive-gui -job` and
-    `mailarchive-desktop -capture`;
-  - the last-run status is `partial`;
+  - capture verbs exit **`1` with the `partial` flag** [ruling OR2]: the default export verb,
+    `graph`, `mailarchive-gui -job` and `mailarchive-desktop -capture`. The locked X1 is not
+    amended, so no capture verb gains exit `3`;
+  - the last-run status is `failed` with `partial: true` [ruling OR1], so an older `status`
+    fails closed (RED) and `JSONVersion` stays 2;
   - in-process callers get `app.ErrPartial`, a typed error, so any caller that has not been
     updated treats partial as failure, never as success. Every in-repo `app.Run` caller is
     updated in S1b, including the `mailarchive-gui` wizard [FC19].
 
-  Precedence is `1` > `3` > `0`. *Serves X1 (amended), R18 (amended).* **Proven:** MA-325.
-  **Pending owner rulings:**
-  - exit `3` amends the locked X1 (OR2);
-  - the `partial` status value is OR1;
-  - what counts as partial for a first-seen vanished item is OR4.
+  Precedence is a run-level failure over partial over complete. *Serves X1 (unchanged), R18
+  (its `partial` flag added).* **Proven:** MA-325. **Ruled** (`docs/owner-rulings-2026-10-09.md`
+  §3):
+  - exit `3` is not adopted; X1 stays as it is (OR2);
+  - the status is `failed` plus the `partial` flag (OR1);
+  - a "vanished" fault seen for the first time makes the run partial (OR4).
 
-  Until OR1 and OR2 are ruled, slice S1a maps a partial run to today's `failed` (exit 1,
-  `run_failed` RED). That is loud and fails closed, with no X1 change [FC33].
+  S1a maps a partial run to today's `failed` (exit 1, `run_failed` RED). That is loud and
+  fails closed, with no X1 change [FC33]. S1b adds the flag, `gaps_new`, and the partial
+  wording of the summary, the sidecar and `status`.
 - **P10 — One truth, legible everywhere.**
   - The run summary prints a "Not captured" block (source, folder, reason, remedy) and a
     "Recovered" line.
@@ -330,15 +352,21 @@ invariant proposed in §2.1. Labels: **proven** (the named MA row, once green), 
   - **[FC18] Stuck.** A fillable gap attempted on several runs escalates to **WARN**
     `capture_gaps_stuck`, listed first, and **never to RED**. RED stays reserved for run-level
     failure and corruption. The threshold and its unit (runs or elapsed time) are owner ruling
-    OR5.
+    OR5. **[ruling OR5]** `Runs ≥ 3` AND `now − FirstRun ≥ max(72 h, two schedule periods)`,
+    counting at most one observation per day.
 
   *Serves R1 ("revisit every fillable gap").* **Proven:** MA-311, MA-323. **Aspirational:**
   "heals" for a fillable Graph failure depends on Microsoft eventually serving the item. The
   tool can only retry and report.
-- **P12 — Source-read containment (new invariant R22; id pending OR8).**
-  - **The rule.** Reading a local store never follows a directory link: a symlink, or on Windows
-    a junction or mount point. It never reads a special file, or a file whose link target lies
-    outside the store's resolved root.
+- **P12 — Source-read containment (new invariant R25 [ruling OR8 = J1]).**
+  - **The rule.** By default, reading a local store never follows a directory link: a
+    symlink, or on Windows a junction or mount point. It never reads a special file, or a file
+    whose link target lies outside the store's resolved root.
+  - **The opt-in [ruling OR6].** An explicit per-input opt-in (a flag, a GUI option and a
+    job-descriptor field, following X4/X5) follows that input's directory links, for that
+    input only, guarded by a visited (dev, inode) set, and keeps the input's token. File links
+    out of the store and special files stay refused even with the opt-in. R25's text names
+    the opt-in, so the invariant stays true for an input that uses it (§2.1).
   - **Every local open.** The rule covers every file a reader or discovery opens [FC2]:
     maildir entries, mbox candidates and files, auto-detection and the Evolution walkers.
   - **Links are judged lexically**, by `Readlink`, before anything is resolved [FC3].
@@ -346,12 +374,12 @@ invariant proposed in §2.1. Labels: **proven** (the named MA row, once green), 
     [FC1].
   - **Detection.** Detection may still see a linked folder; reading never descends into it.
 
-  *Serves new R22, R9, R15 (F29c/d).* **Proven (Unix):** MA-322. **Conditional:**
+  *Serves new R25, R9, R15 (F29c/d).* **Proven (Unix):** MA-322. **Conditional:**
   - **Static hostile store.** The threat is a static hostile store, such as one received from
     someone else.
     - A same-user local process racing a symlink swap between the check and the open is out of
       scope, as for DC4 in the desktop design (§8).
-    - **[FC3]** R22 also assumes the store is **not writable by another local user**. A
+    - **[FC3]** R25 also assumes the store is **not writable by another local user**. A
       co-writer can plant a hard link, which is a regular file inside the root, or swap an
       intermediate component. That co-writer is named in §8 as out of scope.
   - **[FC1] Windows.** On Windows, P12 rests on the reparse-point classifier (§4.5), proven by an
@@ -385,7 +413,8 @@ invariant proposed in §2.1. Labels: **proven** (the named MA row, once green), 
   - **Named exceptions.** Three derived or policy-changed outputs differ on purpose:
     - `README.txt` is rewritten each run from a constant that this design changes;
     - the root `index.html` carries the gap-count stamp;
-    - a store that captures through directory links changes under OR6.
+    - a store that captures through directory links changes under OR6 (ruled: it keeps its
+      token through the per-input opt-in, P12 [ruling OR6]).
 
   *Serves R2, R3, R5.* **Proven:** MA-329, with those exceptions excluded from the golden
   comparison.
@@ -403,13 +432,18 @@ invariant proposed in §2.1. Labels: **proven** (the named MA row, once green), 
 
 ### 2.1 Invariant text proposed (catalog edits land catalog-first with their slice)
 
-**[FC34] Ids.** The ids below are proposals. Five designs in flight all propose an R22 and an
-S42, each with a different meaning. No catalog-first edit lands until the operator has
-allocated the R and S ids across them (OR8). This design then renumbers to that allocation.
-Catalog edits across the designs are serialised (§10).
+**[FC34] Ids [ruling OR8 = J1].** The ids below are the operator's allocation: R25 and
+S46–S48 (revision 2 called them R22 and S42–S44, which collided with four sibling designs).
+Catalog edits across the designs are serialised, one catalog-first PR at a time, in the order
+of `docs/owner-rulings-2026-10-09.md` §9 (§10).
 
 **[FC31(1)] Conditions.** Each amended text carries its conditions inline, because the catalog
 is law.
+
+**What lands under delegation [ruling J7].** New ids and added sentences land with their
+slice. Text that narrows an existing invariant is not adopted; what it would have conceded
+stays an open condition, or a skip encoder where a test can show it. Each item below is
+marked.
 
 - **R1, amended** — append: *"Every item or folder the source holds that a run could not
   capture (unreadable, undownloadable, unwritable or refused) is recorded in the manifest.
@@ -422,6 +456,12 @@ is law.
   - The record is durable once g7/F53 lands. Until then, a failed final save loses that run's
     gap rows, never content.
   - A folder whose corrupted `MessageCount` reads 0 is a trust gap of the PST library (N9)."*
+
+  **[ruling J7]** The ledger sentences (recorded, listed, retried every run, never consulted
+  to skip work) land as added sentences. Their durability before g7/F53 lands stays an open
+  condition stated at P4, not a sentence in R1. The N9 sentence is not adopted: the
+  corrupted-`MessageCount` case becomes a skip encoder citing R1, on a byte-patched copy of
+  `support.pst`, in S2a.
 - **R10, amended** — replace: *"Malformed, truncated or damaged input costs the smallest unit
   the tool can isolate: the message, else the folder.
   - Damaged input means: bad mbox framing, a non-MIME message, an unparseable or unreadable
@@ -432,15 +472,34 @@ is law.
     - an unreadable PST sub-folder table costs that sub-tree.
   - A fault that surfaces as an error or a recoverable panic never crashes the run and never
     hangs it. This excepts go-pst-internal loops and allocations and OS-level hangs (N7/N8)."*
+
+  **[ruling J7]** Not adopted as a replacement: R10's existing "never a fatal crash" stays
+  whole. "The smallest unit the tool can isolate" and "never hangs" land as added
+  sentences. The exceptions (N7, N8) are not written into R10; they stay open conditions,
+  stated at P3 and §3.
 - **R17, amended** — "every message in the walked folders" becomes *"every message in the
   walked folders is archived, or recorded as a capture gap of the class given by its reason,
   never as a skip-eligible record, and is retried by every run whose scope covers it"*.
+
+  **[ruling J7]** The replacement wording is not adopted. An added sentence lands instead:
+  *"A message a run could not archive is recorded as a capture gap and retried by every run
+  whose scope covers it."* A poison item shows as an open R17 gap in `status` until it is
+  captured.
 - **R18, amended** — the run statuses become `ok / partial / failed / cancelled`, subject to OR1.
   *"partial = the walk completed but at least one fillable or terminal capture gap, or a
   partly-read record, was observed this run."*
-- **R22, new — Source-read containment** (id pending OR8). The text of P12, with its conditions:
-  Unix proven; Windows by the FC1 classifier; a store not writable by another local user.
-- **X1, amended** (a locked contract; owner ruling OR2). The capture verbs get [FC31(4)]:
+
+  **[ruling OR1, J7]** The statuses stay `ok / failed / cancelled`. A partial run is
+  `failed` with an added `partial: true` flag, defined by the sentence above; that flag lands.
+- **R25, new — Source-read containment** [ruling OR8 = J1]. The text of P12, with its
+  conditions: Unix proven; Windows by the FC1 classifier; a store not writable by another
+  local user. **[ruling OR6]** It names the per-input opt-in: *"…never follows a directory
+  link, unless that input's directory-link opt-in is set; then its directory links are
+  followed under a visited (dev, inode) set, and file links out of the store and special
+  files are still refused."*
+- **X1, amended** (a locked contract; owner ruling OR2). **[ruling OR2] Not adopted:** X1
+  stays as it is, and a partial capture run exits 1 with the `partial` flag. The proposal
+  read as follows. The capture verbs get [FC31(4)]:
   - `0` — complete.
   - `3` — partial. The walk completed, but this run observed at least one fillable or terminal
     capture gap, or a partly-read record. Items are named in the report up to the per-token
@@ -449,12 +508,12 @@ is law.
 
   A handled interrupt still exits `0` for the capture verbs. The extraction workspace's copy
   export has its own partition (its §4.13), which is not the same.
-- **Scenarios, new** (ids pending OR8):
-  - **S42** One item or folder in a store or mailbox cannot be read, downloaded, parsed or
+- **Scenarios, new** (allocated ids [ruling OR8 = J1]; they land with S1a and S2a):
+  - **S46** One item or folder in a store or mailbox cannot be read, downloaded, parsed or
     written (R1, R10, R17, R21).
-  - **S43** A local store has a hostile or odd layout: links out of the store, FIFOs, a cyclic
-    hierarchy (R22, R10).
-  - **S44** An operator or inheritor reads the result of a partial capture (R18, R7, X1, X6).
+  - **S47** A local store has a hostile or odd layout: links out of the store, FIFOs, a cyclic
+    hierarchy (R25, R10).
+  - **S48** An operator or inheritor reads the result of a partial capture (R18, R7, X1, X6).
 
 ## 3. Non-goals (explicit scope cuts)
 
@@ -462,7 +521,9 @@ is law.
   - `SanitizeSegment` bounds runes, not bytes (the N1 trigger). That fix belongs to the
     path-portability set (F75/F91/F111). It renames directories and changes local keys, so it
     needs its own migration. This design isolates the failure whatever its cause.
-  - Retrying Graph 500/502/504 and budgeting `Retry-After` (F17).
+  - ~~Retrying Graph 500/502/504 and budgeting `Retry-After` (F17).~~ **[ruling workspace
+    Q15]** F17 is no longer owned elsewhere: it is this design's slice **GF17**, after S3
+    (§10).
   - Positional-paging phantom gone (F11).
   - MIME part fidelity (g3: F24/F25/C1-x).
   - Re-export overwrite and delete ordering (g4: F46/N2/N3).
@@ -474,12 +535,14 @@ is law.
   an mbox stream after a mid-file read error. That mbox folder is recorded as
   `folder-partially-read`, with the count read.
 - **N3 — No acknowledge or forget verb.** A persistent terminal gap stays reported until the
-  item is captured, or until a run that covered it no longer finds it in the source (OR3).
+  item is captured, or until a run that covered it no longer finds it in the source (OR3;
+  [ruling OR3]: reported on every run that observes it).
   [FC14] The gaps of a source that is no longer archived persist and stay listed, as "never
   captured … not in recent runs". They do not drive the "retried" wording or stuck.
 - **N4 — Directory links are not followed** (symlinks, and on Windows junctions and mount
-  points), not even inside the store. This is pending owner ruling OR6. Neither are
-  out-of-store file links.
+  points), not even inside the store, by default. **[ruling OR6]** An explicit per-input
+  opt-in follows them for that input (P12, §4.5). Out-of-store file links are never
+  followed, opt-in or not.
 - **N5 — The report keeps its name.** `attachments-report.tsv` is now a misnomer. Renaming it
   would break the README, inheritors' bookmarks and scripts.
 - **N6 — Manifest-save failure surfacing** (g7/F53) is a dependency, not part of this design
@@ -536,7 +599,7 @@ decision. This is how "terminal" coexists with H3.
 | `fetch-transport` | Graph: no response, connection error, 429/503 after `get`'s retries, 502/504 | item | fillable | next item | **yes**, unless known poison [FC10] |
 | `fetch-timeout` | Graph: idle timeout or overall cap (walk context still live) | item | fillable | next item | **yes**, unless known poison [FC10] |
 | `fetch-too-large` [FC21] | Graph: the MIME body exceeds the shared download's size cap | item | terminal | next item; never truncated | no |
-| `vanished-at-fetch` | Graph 404 / `ErrorItemNotFound` | item | fillable, self-closing (first-sighting outcome: OR4) | not retried this run | no |
+| `vanished-at-fetch` | Graph 404 / `ErrorItemNotFound` | item | fillable, self-closing (first sighting makes the run partial, [ruling OR4]) | not retried this run | no |
 | `refresh-failed` | any source [FC5]: a degraded capture held back by the KEEP guard (P15), or a Graph Full-mode fault on an item whose Message-ID already has a same-token record | item | info | next item | as its transport class |
 | `folder-list-failed` | Graph: a listing page error other than auth, or a listing-guard stop | folder | fillable | next folder; not walked; **no sweep for the mailbox** [FC4] | **yes** if transport-class |
 | `export-failed` | any: per-message render or write error | item | fillable | next item | local write breaker |
@@ -544,7 +607,7 @@ decision. This is how "terminal" coexists with H3.
 | `folder-unwritable` | any: `export.FolderError` (output `MkdirAll`), after the archive-root probe found the root present [FC12] | folder | fillable | remaining items of that folder not attempted (`Skipped` counted per run [FC15]); fast-path skips still stamp; unwritable-set refs are faults for the sweep [FC4] | local write breaker; each folder's first attempt counts [FC12] |
 | `folder-unreadable` | local: `ReadDir`, mbox open, `GetMessageTableContext`, sub-folder table | folder | EACCES/EPERM → fillable; structure error → terminal | next folder | no |
 | `folder-partially-read` | local: mbox stream error mid-file; a PST row breaker on a message **or** sub-folder table [FC9] | folder | per errno, as above | next folder | no |
-| `vanished-during-read` | maildir ENOENT after one re-list | item | fillable, self-closing (first-sighting outcome: OR4) | next item | no |
+| `vanished-during-read` | maildir ENOENT after one re-list | item | fillable, self-closing (first sighting makes the run partial, [ruling OR4]) | next item | no |
 | `pst-message-unreadable` [FC7] | PST: a real node whose `GetMessage` fails, or whose envelope read panics (also the `safeConvertMessage` outer guard) | item, locator `pst-nid:<store-uid>/<nid>` [FC8] | terminal | next row; **no record** | no (real damage never counts [FC9]) |
 | `pst-messages-unreadable` [FC8] | PST: the same faults in a store whose store-uid cannot be read, an `-outlook` scratch PST, or an `.ost` rebuilt at the same path | folder (aggregate: count plus bounded NID list) | terminal | next row; **no record** | no |
 | `pst-row-unreadable` | PST: a row whose NID cannot be read | folder (aggregate per folder [FC8]) | terminal | next row | PST row breaker |
@@ -582,7 +645,8 @@ These do **not** make a run partial:
 - `unparsed` and info;
 - the pre-existing not-downloaded and source-empty gaps, which keep today's exit-0 behaviour.
 
-Whether a first-sighting self-closing gap counts is owner ruling OR4.
+Whether a first-sighting self-closing gap counts is owner ruling OR4. **[ruling OR4]** It
+counts: a one-shot run before a departure must not claim completeness.
 
 ### 4.2 Data and schema
 
@@ -673,8 +737,10 @@ never collide with a record key or reach `byIdent`. Accessors:
 - **[FC31(5)]** No `Version` bump. No reader gates on it: `WriteLastRun` hard-sets 1
   (`lastrun.go:81`) and `ReadLastRun` never reads it. The fields are additive.
 - The status for a partial run is owner ruling **OR1**. It is either a new constant
-  `RunPartial = "partial"`, or `"failed"` with `Partial bool`. Until OR1 is ruled, S1a writes
-  `failed` [FC33].
+  `RunPartial = "partial"`, or `"failed"` with `Partial bool`. **[ruling OR1]** It is
+  `"failed"` with `Partial bool` (`json:"partial,omitempty"`): an older `status` then fails
+  closed (RED) instead of showing GREEN, and no documented value set widens. S1a writes
+  `failed` [FC33]; S1b adds `Partial`.
 - New fields `GapsObserved`, `GapsNew`, `GapsRecovered`, `GapsFillable`, `GapsTerminal`,
   `GapsStuck`, `Unreadable`.
 - On a partial run, `Error` carries a one-line summary ("partial: N item(s) not captured —
@@ -718,8 +784,9 @@ never collide with a record key or reach `byIdent`. Accessors:
    - **Not attempted:** anything else. Its source or folder was not walked.
 
    Only an attempted fillable gap can be **stuck**. The threshold and its unit are owner ruling
-   **OR5**. Until it is ruled, the threshold is `Runs ≥ 3`, where `Runs` counts distinct runs
-   [FC15]. Stuck is WARN, never RED [FC18].
+   **OR5**. **[ruling OR5]** A gap is stuck when `Runs ≥ 3` (`Runs` counts distinct runs,
+   at most one observation per day [FC15]) AND `now − FirstRun ≥ max(72 h, two schedule
+   periods)`. Stuck is WARN, never RED [FC18].
 5. **Cap [FC16].** The caps are lifetime caps, not per run:
    - per token, ≤1000 live item-scope entries and ≤1000 folder-scope entries;
    - info entries have their own cap of 100.
@@ -902,7 +969,12 @@ history, never content (P5).
     skipped.
   - Not following directory links removes the 33-duplicate loop of F29d.
   - Whether in-store directory links should instead be followed, or opted in, is owner ruling
-    **OR6**. Its slice, S2b, is blocked until then.
+    **OR6**. **[ruling OR6]** They are followed only under an explicit per-input opt-in (a
+    flag, a GUI option and a job-descriptor field, following X4/X5). With it, that input's
+    directory links are followed, guarded by a visited (dev, inode) set, and the input keeps
+    its token; file links out of the store and special files stay refused. Without it, an
+    archive that captures through links today gets a terminal `symlinked-folder-skipped` gap
+    whose remedy names the opt-in. S2b builds it.
 - **Folder-level errors.**
   - A `ReadDir` failure on a non-root folder → `folder-unreadable`, and the siblings continue.
   - A failure on the store root stays a store-level error.
@@ -922,6 +994,14 @@ history, never content (P5).
     identities differ per message without a locator. Identical bytes are a true duplicate.
     - If g3 has not landed when S2b merges, S2b carries the edit in today's `safeParseMessage`.
       g3's MA-330 golden is then regenerated for panicking inputs only (§10).
+    - **[ruling J5, J8 = ESC-1]** The fold moves the identity MA-330's golden pins, so it is
+      escalated to the owner (ESC-1). The landing order is fixed (S1a → g3 S0 → g3 S1 → S2b),
+      so S2b never edits today's `safeParseMessage` for identity, and the "regenerate the
+      golden" route is not taken. S2b ships everything except the fold: the raw-preserving
+      content, `Raw` kept, the `unparsed` gap and containment. `stubIdentityTerms` keeps
+      today's constant stub, and the collapse of two or more unparseable raw messages in one
+      folder stays an open gap, not accepted, encoded as a skip encoder citing R1 in MA-318's
+      raw-stub case. The fold itself is slice S2b-id, after the owner answers.
 
 ### 4.6 Local orchestration (`internal/app/run.go` `runFile`)
 
@@ -1058,15 +1138,21 @@ Further rules:
 **[FC21] One shared Graph primitive (slice SG).** The extraction workspace
 (`docs/design-extraction-workspace.md` §4.5, E1) needs the same `internal/graph` primitives,
 so they are built once, in a slice **SG**. SG lands before S3 and before the extraction
-design's E1. Which design owns it is owner ruling **OR9**.
+design's E1. Which design owns it is owner ruling **OR9**. **[ruling OR9 = J4]** This design
+owns SG, as a standalone slice; the extraction design's E1 depends on SG, not on S3. Lenses
+3, 6, 7 and 8 re-run on SG's capture-side changes before SG code (RR-6), and the
+extraction design's E1 keeps its own short adversarial note.
 - `statusErr` becomes `*graph.StatusError{Code int, GraphCode string, Text string}`.
   - `GraphCode` is parsed from `error.code`.
   - `Text` is bounded.
   - `Error()` keeps **today's exact text**, as the extraction design's MA-402 requires.
 - **One classifier.** `graph.Classify(err, walkCtx)` returns the class and whether the fault is
   transport. Both consumers call it.
-- **One streaming download, §4.8.6.**
-- **One nextLink guard, §4.8.7**, used in every paging loop.
+- **One streaming download, §4.8.6.** **[ruling J4]** Its `$value` request gets its own
+  response-header timeout of at least the idle window, for capture as for the copy export
+  (the extraction review's XC26), so a large conversion is not a permanent 60-second poison.
+- **One nextLink guard, §4.8.7**, used in every paging loop (its host/path pin reaches
+  capture's loops only in step SGc, [ruling J4]).
 - **What stays per consumer.** The breaker thresholds and the 404 class, each with a written
   justification:
   - capture retries automatically, through the ledger, on every later run, so a 404 is
@@ -1078,7 +1164,9 @@ design's E1. Which design owns it is owner ruling **OR9**.
 
 1. `walkCtx.Err() != nil` → **fatal**: the walk is cancelled. The child deadline is not
    consulted (H-F9.3).
-2. `StatusError.Code` 401, or 403 per owner ruling OR7 → **fatal** for the mailbox.
+2. `StatusError.Code` 401, or 403 per owner ruling OR7 (**[ruling OR7]**: a 403 on `$value`
+   is mailbox-fatal, so a revoked grant never turns into thousands of gaps) → **fatal** for
+   the mailbox.
    **[FC11]** A failed token refresh is fatal too, and is classified **before** rule 4. It
    takes either of two forms:
    - `errors.As(err, *oauth2.RetrieveError)`;
@@ -1193,6 +1281,13 @@ listing and parsed Message-IDs differ, and whose fetch fails while it sits in a 
 marked walked. That record can receive a phantom `{k,gone}` (P7). OR10 offers the stricter
 alternative.
 
+**[ruling OR10]** The stricter rule is taken, closing the residual: a fault whose identity
+matched no record (no same-token key for its listing Message-ID, and no PhysID match) is
+treated like rule 3's unknown identity, so the token's PhysID-less records are excluded from
+this run's sweep. Gone-detection for them is deferred while such a fault persists, and
+`status` names it (the `capture_gaps_stuck` line below); it is never wrong. MA-312 gains the
+mismatched-Message-ID case.
+
 A persistent unknown-identity suspension is reported by `status` (§4.10). The
 `capture_gaps_stuck` line names it, and its remedy says how to end it [FC23(4)].
 
@@ -1210,7 +1305,7 @@ A `client.Messages` error that is not fatal is handled as follows:
 - the breaker counts it if it is transport-class.
 
 `client.Folders` failing remains a mailbox failure. Its paging loop now carries the same
-nextLink guard (§4.8.7) [FC21].
+nextLink guard (§4.8.7) [FC21]; its host/path pin comes with step SGc [ruling J4].
 
 #### 4.8.5 Breaker
 
@@ -1280,8 +1375,19 @@ design's `FolderTree` and `MessagePage`.
   elsewhere.
 - It caps the loop at 100 000 pages.
 
+**[ruling J4]** SG ships the repeat set and the page cap in every loop, capture's included,
+and the host/path pin (with the extraction review's XC25 normalization: case-insensitive
+host, default-port normalization, a path prefix on a segment boundary) on the extraction
+design's loops. Capture's `Folders` and `Messages` get the pin in step **SGc**, which waits
+for MA-443's recorded nextLink shapes (the extraction review's XC25 gate, which protects
+scheduled backups from a harmless Microsoft-side variation, L8-2). FC21's capture half
+therefore lands behind XC25's gate, and both conditions hold. Lifting the gate is the
+owner's decision (ESC-7). Until SGc lands, a foreign `nextLink` in capture's listings is an
+open gap, not accepted, encoded by MA-314's foreign-host case as a skip encoder.
+
 A repeat, a foreign host or the page cap ends the loop:
-- in `Messages`, the folder ends as `folder-list-failed` ("listing did not terminate");
+- in `Messages`, the folder ends as `folder-list-failed` ("listing did not terminate"); before
+  S3 lands, the stop fails the mailbox instead, which is today's error path [ruling J4];
 - in `Folders`, the mailbox fails.
 
 ### 4.9 Outcome: errors, exit codes, last-run record
@@ -1294,16 +1400,20 @@ A repeat, a foreign host or the page cap ends the loop:
 
   Precedence: a run-level failure in any source or mailbox returns that error and exits 1,
   even if other sources were partial. A cancellation stays `context.Canceled`.
+- **The rulings [ruling OR1, OR2].** X1 is not amended: wherever this section says a
+  capture verb exits `3` on a partial run, read **exit 1 with the `partial` flag**. The
+  last-run status is `failed` with `partial: true`.
 - **Interim mapping until the owner rules [FC33].** Until OR1 and OR2 are ruled, slice S1a
   maps a partial run to today's failure:
   - `ErrPartial` surfaces as a run failure: exit 1, last-run `failed`, `run_failed` RED;
   - the "Not captured" block and the report still print.
 
   That is loud and fail-closed, with no X1 change. S1b switches to the mapping below once the
-  rulings land.
+  rulings land. **[ruling OR1, OR2]** S1b keeps exit 1 and adds the `partial` flag, so
+  `status` shows the partial line rather than `run_failed`.
 - **`recordRun`** (`app/run.go:422-436`) maps `ErrPartial` → the status OR1 rules (`"partial"`,
   or `"failed"` plus `Partial:true`), with the gap fields set and `Error` holding the one-line
-  summary.
+  summary. **[ruling OR1]** `"failed"` plus `Partial:true`.
 - **Attention sidecar.** `updateAttentionSidecar` (`lastrun.go:115-140`) writes
   `BACKUP-NEEDS-ATTENTION.txt` for a partial run too, with its own body. **[FC23(2)]** The body
   leads with what is new:
@@ -1313,21 +1423,25 @@ A repeat, a foreign host or the page cap ends the loop:
 
   Only an `ok` run removes the sidecar. A cancelled or running record leaves it unchanged.
   Whether a run whose gaps are **all** already known keeps the sidecar and exit 3 is owner
-  ruling **OR3**.
+  ruling **OR3**. **[ruling OR3]** It does: every run that observes a fillable or terminal
+  gap is partial on every surface (exit 1 under OR2, the sidecar kept, the `-job`
+  notification sent), and each surface leads with "new this run: K" and
+  `last_run.gaps_new`, so monitoring can tell new loss from known loss.
 - **CLI (`cmd/mailarchive/main.go`).** `runExport` and `runGraph` print the summary for nil,
   cancelled **and partial** runs (`main.go:228-236` gains the partial case). They then return
-  `&exitError{code: 3}`. The deferred `FAILED:` lines of both verbs (`main.go:160-164` for
+  `&exitError{code: 3}` (**[ruling OR2]**: `code: 1`, with the partial summary). The deferred `FAILED:` lines of both verbs (`main.go:160-164` for
   export, `:1122-1126` for `graph`) skip `ErrPartial`. `reclaimPSTDir` treats partial as success: the `-outlook` scratch PST is rebuilt
   every run, so keeping a mailbox-sized copy for a gap buys nothing.
 - **Headless.**
-  - `mailarchive-gui -job` (`cmd/mailarchive-gui/main.go:171-178`) returns 3 on partial.
+  - `mailarchive-gui -job` (`cmd/mailarchive-gui/main.go:171-178`) returns 3 on partial
+    (**[ruling OR2]**: 1).
     - It logs `FINISHED WITH PROBLEMS: …`.
     - It notifies "backup finished; K new item(s) could not be archived (N in total)"
       [FC23(2)].
     - Its scratch reclaim gate (`main.go:181`) becomes
       `runErr == nil || errors.Is(runErr, app.ErrPartial)` [FC19].
   - `mailarchive-desktop -capture` (`desktop.HeadlessCapture` →
-    `cmd/mailarchive-desktop/main.go:72`) exits 3 the same way.
+    `cmd/mailarchive-desktop/main.go:72`) exits 3 the same way (**[ruling OR2]**: 1).
   - The Windows `.cmd` wrapper propagates the last command's errorlevel unchanged
     (`internal/schedule/wrapper.go`).
 - **Interactive GUI wizard [FC19].** `cmd/mailarchive-gui/main.go:1094-1137` calls `app.Run`.
@@ -1374,7 +1488,7 @@ A repeat, a foreign host or the page cap ends the loop:
   partition, `health.go:163-262`) [FC18].
   - **`capture_gaps_stuck` — WARN, listed first [FC18].** "N item(s) have failed on every run
     since <first> — <reason remedy>". Only *attempted* gaps can be stuck. The threshold is owner
-    ruling OR5.
+    ruling OR5 (**[ruling OR5]**: §4.3 step 4).
     - For a `fetch-failed` gap with a GraphCode, the remedy is: "Microsoft 365 will not export
       this item; save a copy from Outlook on the web. The row stays listed while the item
       remains in the mailbox."
@@ -1389,7 +1503,7 @@ A repeat, a foreign host or the page cap ends the loop:
     not be without action — <reason remedy>".
     - For PST, the remedy is scanpst in place.
     - For an `-outlook` scratch PST, it is to open the item in Outlook.
-  - **`capture_gaps_not_attempted` — a note by default, WARN if OR3 so rules [FC14].** "N
+  - **`capture_gaps_not_attempted` — a note (**[ruling OR3]**: not-attempted gaps stay a note) [FC14].** "N
     item(s) from <source> were never captured (last attempted <date>; this source or folder is
     not in recent runs)". These gaps never feed stuck or the "retried" wording.
   - **`unreadable_messages` — WARN.** "N message(s) could only be partly read from the source".
@@ -1399,8 +1513,8 @@ A repeat, a foreign host or the page cap ends the loop:
   - **`unparsed_messages` — a note**, with no posture change. It adds "after upgrading, the next
     run re-examines them once" [FC25].
   - **`partial` last-run handling.** A `Last run: … → partial (N not captured, K new)` line. No
-    `run_failed` RED; the posture comes from the gap rules above. Until OR1/OR2 are ruled, S1a
-    keeps today's `failed` mapping (§4.9).
+    `run_failed` RED; the posture comes from the gap rules above. S1a keeps today's `failed`
+    mapping (§4.9); from S1b, `status` reads the record's `partial` flag [ruling OR1].
 
   **[FC22] Gap lines.** After the reason lines, `health.Summary` lists up to 20 gaps from
   `CaptureGapsSorted()`. Each line gives source id, folder, subject, date, reason and remedy,
@@ -1418,7 +1532,8 @@ A repeat, a foreign host or the page cap ends the loop:
   - If OR1 adopts the value `"partial"`, `JSONVersion` becomes 3 and README.md is updated.
   - If OR1 adopts `"failed"` plus `partial:true`, `JSONVersion` stays 2.
 
-  That choice is the owner's [FC31(6)].
+  That choice is the owner's [FC31(6)]. **[ruling OR1]** `"failed"` plus `partial:true`:
+  `JSONVersion` stays 2, and only additive keys are added.
 - **Report (`internal/app/report.go`).** After the record rows, one row per ledger gap:
   - `kind` = reason;
   - `class`;
@@ -1509,24 +1624,24 @@ case is labelled conditional.
 | P2 maildir non-root `ReadDir` | `readMaildirDir` folder errors | MA-316 (new) [FC32] |
 | P2 mbox open / mid-stream | `walkFile` → `folder-unreadable` / `folder-partially-read` | MA-316 (new) [FC32] |
 | P2 Evolution walkers | `evolution.go` folder errors | MA-316 (new) [FC32] |
-| P2 unwritable folder | `export.FolderError`, unwritable set | MA-320a (local), MA-320b (Graph) |
-| P2 `-outlook` export skips | `CreatePSTs` skipped folders → `outlook-export-skipped` | MA-320a (unit mapping); Windows+Outlook L row pending [FC28] |
+| P2 unwritable folder | `export.FolderError`, unwritable set | MA-320 (local), MA-501 (Graph) |
+| P2 `-outlook` export skips | `CreatePSTs` skipped folders → `outlook-export-skipped` | MA-320 (unit mapping); MA-504, Windows+Outlook L row pending [FC28] [ruling J1] |
 | P3 special files, every open | entry judgment + `util.OpenRegularFile` at every local open (§4.5) | MA-322 (maildir, mbox FIFO at discovery and during the walk) [FC2] |
-| P3 Windows reparse | FC1 classifier | MA-322 (synthetic FileMode table; unprivileged junction); L row pending (OneDrive placeholder) |
+| P3 Windows reparse | FC1 classifier | MA-322 (synthetic FileMode table; unprivileged junction); MA-503, L row pending (OneDrive placeholder) [ruling J1] |
 | P3 cycle / depth | visited and depth guards | MA-317 |
 | P3 structural row breakers | message and sub-folder breakers (§4.4) | MA-316 |
 | P3 MIME idle, cap, size | `MIMETo` (§4.8.6) | MA-314 (idle, trickle, **overall cap firing**, size cap) [FC32] |
 | P3 nextLink, every loop | §4.8.7 | MA-314 (Messages and **Folders**, repeat and foreign host) |
 | P3 Retry-After clamp | `get` clamp | MA-313 (new) |
 | P4 | `state.CaptureGap`, `ObserveGap`; `model.ReadGaps` → `state.GapClass`; `Load` sanitisation | MA-318, MA-323, MA-327 |
-| P5 | ledger separate from `Entries`/`byIdent`; §4.8.2 "no Add on failure" | MA-311, MA-324a, MA-324b |
+| P5 | ledger separate from `Entries`/`byIdent`; §4.8.2 "no Add on failure" | MA-311, MA-324, MA-502 |
 | P6 | ledger gaps for nothing-readable items; raw-preserving stubs; partial records with `Locator`; metadata-only supersede | MA-315, MA-318, MA-319 |
 | P7 | §4.8.3 mailbox sweep skip; `TouchSeen` incl. PhysID; narrowed exclusion | MA-312 (a)–(f) |
 | P8 401 / 403 / token refresh | `classifyFetch` rule 2 | MA-313 (401, **403**, mid-walk `invalid_client`) [FC11, FC32] |
-| P8 disk and volume | `IsRunFatal`; archive-root probe | MA-320a (ENOSPC, **EDQUOT, EROFS** by errno injection; **Windows codes** by classifier table; `-out` removed mid-walk) [FC12, FC32] |
-| P8 `SafeToken` | refusal | MA-320a (new refusal case) [FC32] |
-| P8 breakers | §4.8.5; local breaker | MA-313, MA-320a |
-| P9 | `app.ErrPartial`, `recordRun`, status per OR1; CLI, GUI wizard, `-job`, desktop exit mapping | MA-325 |
+| P8 disk and volume | `IsRunFatal`; archive-root probe | MA-320 (ENOSPC, **EDQUOT, EROFS** by errno injection; **Windows codes** by classifier table; `-out` removed mid-walk) [FC12, FC32] |
+| P8 `SafeToken` | refusal | MA-320 (new refusal case) [FC32] |
+| P8 breakers | §4.8.5; local breaker | MA-313, MA-320 |
+| P9 | `app.ErrPartial`, `recordRun`, status `failed` + `partial` [ruling OR1]; CLI, GUI wizard, `-job`, desktop exit mapping (exit 1, [ruling OR2]) | MA-325 |
 | P10 | `printSummary`, `health.Assess`/`Summary`/`JSON`, `writeReport`, verify summary, readme, `pages.Generate` (every caller), desktop result | MA-326, MA-327, MA-328 |
 | P11 | `CloseGap`, `CloseUnobserved` (scope-covered), attempted split, `Runs` | MA-311, MA-323 (incl. the rolling `-since` case) |
 | P11 `-since` rule (§4.8.2 step 1) | no gap for a not-requested item; existing gap retained | MA-323 (new) [FC32] |
@@ -1588,7 +1703,10 @@ inside the manifest's atomic save.
   - That migration is part of owner ruling **OR6**. The options are: keep following in-store
     links guarded by a visited (dev, inode) set; offer an opt-in on the **same** input that
     keeps its token; or never follow them.
-  - S2b is blocked until OR6 is ruled.
+  - **[ruling OR6]** The opt-in on the same input: such an archive's next run records a
+    terminal `symlinked-folder-skipped` gap whose remedy names the opt-in. With the opt-in
+    set, the input keeps its token and its links are followed under a visited (dev, inode)
+    set, so no second tree is minted. S2b is no longer blocked.
 - **Legacy collapsed stubs (F33's merged record).** The re-class lands in **S2a**, the slice
   whose changes leave the record orphaned [FC27]. On the first **run**:
   - A record qualifies if its identity component equals the constant legacy-stub identity (the
@@ -1607,6 +1725,8 @@ inside the manifest's atomic save.
     what Task Scheduler shows as "Last Run Result 0x3".
     - Monitoring keyed on `!= 0` alerts on partial, which fails closed.
     - Monitoring keyed on `== 1` misses it, as the release note states.
+  - **[ruling OR2]** OR2 does not adopt it: a partial run exits 1, so schedulers show
+    "Last Run Result 0x1" and every monitor keyed on a non-zero exit alerts, as today.
   - **[FC23(2)] What to monitor.** Monitor `status -json` instead (C5). Key the alert on
     `last_run.gaps_new > 0`, or on posture, so that a known, unfixable gap does not drown a new
     loss.
@@ -1619,6 +1739,9 @@ inside the manifest's atomic save.
       A JSON monitor that tests `status == "failed"` then fails open.
     - The new binary's sidecar file and exit code still shout.
     - This is the real trade-off put to the owner as **OR1**. Revision 1 understated it.
+    - **[ruling OR1]** OR1 takes `"failed"` plus `partial: true`, so an older `status` reads
+      a partial run as a failed one and shows RED, failing closed; no documented value
+      widens, and a monitor testing `status == "failed"` keeps alerting.
   - *Older binary capturing a new archive.* Its old abort behaviour returns on bad items
     (loud). It mints its own collapsed legacy stub, which is re-classed on return.
   - *Old and new binaries alternating.* Examples: a schedule pinned to the pre-upgrade exe, or
@@ -1678,7 +1801,7 @@ receives this design's outcome.
   retries only the gaps).
 
 **If the problem persists.** The posture is **WARN `capture_gaps_stuck`**, listed first and
-never RED [FC18]. The threshold is OR5. The remedy reads: "Microsoft 365 will not export this
+never RED [FC18]. The threshold is OR5's (§4.3 step 4, [ruling OR5]). The remedy reads: "Microsoft 365 will not export this
 item; save a copy from Outlook on the web (*Download*, or forward it to yourself). The row stays
 listed while the item remains in the mailbox". For a no-mid item it adds how to resume deletion
 tracking [FC23(4)].
@@ -1688,7 +1811,8 @@ tracking [FC23(4)].
 
 ### 7.2 Home user, CLI, an old damaged `.pst` (any OS)
 
-1. `mailarchive -input old.pst -out X` → exit 3 (exit 1 under S1a, until OR1/OR2 are ruled).
+1. `mailarchive -input old.pst -out X` → exit 1 with the partial summary and the `partial`
+   flag (**[ruling OR2]**: X1 is not amended, so no exit 3).
    The summary's "Not captured" block names three things, plus the report path:
    - 2 unreadable messages in `Inbox`;
    - 1 partly-read message;
@@ -1712,7 +1836,7 @@ the token is seeded from the input path.
 
 ### 7.3 Admin, scheduled app-only Graph run, 40 mailboxes
 
-1. The scheduler shows `0x3` for last night (once OR2 is ruled).
+1. The scheduler shows `0x1` for last night (**[ruling OR2]**: a partial run exits 1).
 2. `mailarchive status -out X -json` returns:
    - posture WARN;
    - `reason_codes:["capture_gaps_fillable"]`;
@@ -1792,7 +1916,7 @@ partly-read and unparsed pages).
    until the dashboard session/read guard lands (F2/F3, E0). Until then they show gap lines
    **without subjects**. The dependency is stated here, and subjects stay in the CLI and the
    report.
-7. **Source-read containment (R22).** It covers every local open [FC2]. Links are judged
+7. **Source-read containment (R25).** It covers every local open [FC2]. Links are judged
    lexically before anything is resolved [FC3], and Windows reparse points are classified
    [FC1].
 8. **Raw-stub text**: bounded to the headers plus 64 KiB for the page and the index [FC25].
@@ -1810,31 +1934,43 @@ ledger inherits the manifest's mode. There is no new listener.
 | Hostile store supplier (Windows) | follow a junction out of the store, or hide mail behind reparse points | a junction or mount point is a directory link: recorded, not followed. A cloud or HSM placeholder is read, never silently dropped [FC1] |
 | Hostile store supplier | hang the run (FIFO) or discovery, crash it (cycle), or loop it (`.sbd` → root) | FIFO never opened, at discovery too [FC2]; cycle and depth bounded; directory links not followed (P3, P12) |
 | Hostile store supplier | mint unbounded records from a bogus or interleaved table (for example 99 bad rows then 1 good, repeated) | no record is minted for a row with nothing readable [FC7]. Duplicate and absent NIDs are structural and count toward the row breaker [FC9]. Ledger entries are capped over the archive's life (P13) |
-| Misbehaving or impersonated Graph endpoint (TLS is assumed; MITM is out of the model) | hide mail by returning 404s or 500s; hang a walk with a looping or foreign `nextLink`; stream without end | every hidden item is a **visible** gap. 500 storms run through, capped and loud. Transport storms trip the rate/time breaker (exit 1). A cyclic, foreign-host or over-long `nextLink` chain is stopped in **every** paging loop, `Folders` included. The bearer token is never sent off the base host. A body over the size cap is a terminal gap [FC21] |
+| Misbehaving or impersonated Graph endpoint (TLS is assumed; MITM is out of the model) | hide mail by returning 404s or 500s; hang a walk with a looping or foreign `nextLink`; stream without end | every hidden item is a **visible** gap. 500 storms run through, capped and loud. Transport storms trip the rate/time breaker (exit 1). A cyclic, foreign-host or over-long `nextLink` chain is stopped in **every** paging loop, `Folders` included. The bearer token is never sent off the base host. A body over the size cap is a terminal gap [FC21]. **[ruling J4]** In capture's loops the foreign-host stop comes with step SGc, behind the extraction review's XC25 gate; until then that case is an open gap, not accepted |
 | Archive-writer (can write `-out`) | plant ledger entries or record fields to suppress capture, raise a permanent alarm, or redirect a write | suppression is impossible: the ledger is inert (P5). At most false rows. `Load` drops rows whose token is not in `Stores`, clamps future times and caps the count. A row whose folder is never walked shows as "not attempted", never stuck [FC14, FC16]. Supersede writes **no file**, so a planted `loc`/`path` cannot redirect a write [FC6, FC7]. `Load` drops a stray `Locator` or `RecoveredBy` |
 | Integrity/concurrency: a live mail client renaming or deleting files mid-read | lose mail silently | re-list once; otherwise a self-closing `vanished-during-read` gap. The lock still excludes concurrent archive writers |
 | Same-user local process racing a symlink swap between lstat/Readlink and open | read outside the store | **out of scope** (it already holds the user's rights). The final open is `O_NOFOLLOW` + fstat-regular on Unix, so only an intermediate-component swap remains. That swap is closed where the recommended `os.Root` open path is used [FC3] |
-| **Co-user who can write the store** (a shared or group-writable maildir, a store on a shared drive) [FC3] | plant a hard link to a file the archiving user can read, or swap an intermediate path component, so the victim's run archives it | **out of scope, stated:** R22 holds for a store **not writable by another local user** (P12). A hard link inside the root is a regular file. Mitigations are `os.Root` and, optionally, refusing a multi-link file owned by another user. The archive's `search.db` is world-readable today (C2-1), which the local-confidentiality design owns |
+| **Co-user who can write the store** (a shared or group-writable maildir, a store on a shared drive) [FC3] | plant a hard link to a file the archiving user can read, or swap an intermediate path component, so the victim's run archives it | **out of scope, stated:** R25 holds for a store **not writable by another local user** (P12). A hard link inside the root is a regular file. Mitigations are `os.Root` and, optionally, refusing a multi-link file owned by another user. The archive's `search.db` is world-readable today (C2-1), which the local-confidentiality design owns |
 | Co-user or DNS-rebinding page reading the dashboard | read the subjects of failing items | subjects stay off the dashboard's GET pages until the read guard (F3/E0) lands [FC22] |
 
 The design touches untrusted-input parsing, symlink containment and the integrity of the go-back
 sweep. It **owes the adversarial pass** for S2a, S2b, SG and S3 (§10).
 
-## 9. Test plan (proposed rows MA-310..MA-329; ids pending OR8)
+## 9. Test plan (rows MA-310..MA-329 and MA-501..MA-504; allocated ids [ruling OR8 = J1])
 
 All rows are tier **U** except MA-315 and MA-329, which walk the real fixtures and are tier
-**S**. Each row is a covers-mapped spec.
+**S**, and MA-503 and MA-504, which are tier **L**. Each row is a covers-mapped spec.
 
 **[FC33] Split rows.** Rev 1's MA-320 and MA-324 each had a local half and a Graph half, and the
 covers-map counts a row as covered once any test cites it. They are therefore split into a
-(local) and b (Graph) rows. Each half lands with its own slice, so a slipped slice cannot leave
-a row green with half of it untested.
+local row and a Graph row: MA-320 and MA-501, MA-324 and MA-502 [ruling J1] (revision 2
+called them MA-320a/b and MA-324a/b). Each half lands with its own slice, so a slipped slice
+cannot leave a row green with half of it untested.
+
+**Rows that span slices [ruling, `docs/owner-rulings-2026-10-09.md` §3].** MA-318 (S2a,
+S2b), MA-323 (S1a, S2a), MA-325 and MA-326 (S1a or S1b, and S5), and MA-314 (SG; its
+`fetch-timeout`, `fetch-too-large` and `folder-list-failed` gap cases need the S1a/S3
+ledger and land with S3; its capture foreign-host case lands with SGc). Each lands with its
+earlier slice and carries a skip encoder for its later cases, citing the row, until the
+later slice lands (FC33's reasoning: the covers-map would otherwise read an unbuilt half as
+covered).
 
 **[FC32] Cases.** The new cases below are the asserting cases named in §4.11.
 
-**Pending L-tier rows.** Two cases need hardware this repo's CI does not have:
-- a real OneDrive placeholder under a maildir, on a Windows VM with Files-On-Demand [FC1];
-- the `-outlook` export-skip mapping against a real Windows Outlook install [FC28].
+**Pending L-tier rows.** Two cases need hardware this repo's CI does not have. Each is its
+own row [ruling J1], because a row has one tier:
+- **MA-503:** a real OneDrive placeholder under a maildir, on a Windows VM with
+  Files-On-Demand [FC1] (MA-322's L case; slice S2b);
+- **MA-504:** the `-outlook` export-skip mapping against a real Windows Outlook install
+  [FC28] (MA-320's L case; slice S2a).
 
 Both are marked pending, with the lab story stated. Fault injection uses a fake Graph server, byte-patched
 copies of `testdata/support.pst` (the F23/F27 PoC technique), planted files, chmod and test
@@ -1843,28 +1979,30 @@ first.
 
 | ID | Tier | Asserts | Covers | Prove-fail (mutate → red) |
 |---|---|---|---|---|
-| MA-310 | U | Graph: Inbox `[A1,A2,POISON,A3,A4]`, Sent `[B1,B2]`, POISON `$value` → 500 `ErrorMimeContentConversionFailed`. A1, A2, A3, A4, B1 and B2 are all archived; `RunGraph` returns `ErrPartial`; there is **no** manifest record or `KeysForIdentity` hit for POISON; one `fetch-failed` fillable gap carries POISON's subject and received date. Twin: the same mailbox without POISON → nil, no gap | R1, R10, R17, S42 | restore `return fmt.Errorf("fetch message …")` → A3/A4/B* missing |
-| MA-311 | U | Ledger inert on Graph: run 2 with POISON healed downloads it once; the gap closes; `Recovered=1`; exit-path nil. A record seeded for POISON as Terminal (the H3 anti-pattern, constructed in the test) is shown never re-fetched, documenting why gaps are not records | R1, R17, R2, S42 | make the fast path also skip ledger locators, or `Add` a Terminal record on failure → POISON never fetched |
-| MA-312 | U | Sweep safety (H2, [FC4]), six cases. (a) Full mode: the re-fetch of archived A2 fails → no `{k,gone}`, `Present` true, `LastSeen==runAt`. (b) Immutable-id comparable path: same. (c) A no-mid fetch failure in Inbox, with no PhysID match → the token's PhysID-less `sha:` records are not swept this run (a genuinely deleted no-mid message is **not** marked gone), and they are swept on the next clean run; a known-identity failure in Sent still lets a deleted Sent message be swept. (d) A message moved Inbox → Projects, then the Projects listing fails → no `{k,gone}` (the mailbox is not swept). (e) A moved no-mid message whose fetch fails, with immutable ids confirmed → stamped via PhysID, not gone. (f) Full mode, refs skipped because of the unwritable set → not gone. Twin: a clean walk sweeps a deleted message (MA-207 unchanged) | R21, R1, S37, S42 | drop the `TouchSeen` loop or the PhysID stamp, or always `walked.Mark` → phantom gone in (a)–(f) |
-| MA-313 | U | Abort semantics and breaker. Parent ctx cancelled mid-download → no gap for that item, `context.Canceled`, `LastRun` cancelled. `$value` 401 → mailbox failed, exit-path error, ≤1 gap; **403** the same, per OR7; the token endpoint starting to return 401 `invalid_client` mid-walk → mailbox-fatal auth with `auth_remedy`, **no** gap [FC11]. 25 consecutive 503s plus a failing control request → breaker error naming the threshold that fired and the last status, no sweep, gaps ≤ 25; 24 then a success → no trip (twin). 25 consecutive 500 item-class failures → **no** trip. 404 → `vanished-at-fetch`, fetched once, not counted. **[FC10]:** 1 success per 10 attempts → trips on the rate bound; 25 known-poison 504s that already have gaps from run 1 → run 2 walks past them; 25 consecutive per-item timeouts while the control request succeeds → no trip; two consecutive tripped mailboxes → the run stops; a `Retry-After: 3600` → the sleep is clamped (≤ 60 s scaled) | R5, R12, R18, S42 | classify `context.Canceled` as an item gap → walk continues; count 500 as transport → trips; drop the control probe → the timeout case trips; classify `RetrieveError` as transport → 25 gaps |
-| MA-314 | U | MIME and listing bounds (scaled: idle 200 ms, cap 5 s, size cap 1 MiB). A server trickling 1 byte/50 ms for 1.5 s (beyond a 1 s wall clock) completes. A server stalling >200 ms mid-body → `fetch-timeout` gap, and the walk ctx is still live (the next item is fetched). A server that keeps streaming past the **overall cap** → `fetch-timeout` [FC32]. A body over the size cap → `fetch-too-large`, terminal, nothing written [FC21]. A repeating `nextLink` ends the folder as `folder-list-failed`. A repeating `nextLink` in **Folders** → the mailbox fails, the walk terminates. A `nextLink` to a foreign host → refused, no bearer token sent [FC21] | R10, R17, S42 | restore a wall-clock deadline shorter than the trickle → trickle fails; remove the `nextLink` set or the host pin → test timeout / token sent |
-| MA-315 | S | PST per-row isolation (H1, [FC7]): copies of `support.pst` with the message block at #0, #3 or #11 XOR-corrupted each yield **16** real messages plus **one** `pst-message-unreadable` ledger gap whose locator is `pst-nid:<store-uid>/<nid>` (or one `pst-messages-unreadable` aggregate if the store-uid cannot be read) and **no** stub record or page; the walk terminates under a 10 s guard. In the 1656-mutation sweep of block #0 (the F23 PoC), every mutation yields 17 items: 17 real, or 16 real + 1 gap. The F23 emulation gave 1563 at 17 and 93 at 16. No mutation aborts or hangs the walk. A differential check: on the uncorrupted fixture the copied loops yield exactly go-pst's own folder and message sets [FC30]. Twin: the uncorrupted fixture yields 17, no gap | R10, R1, S42 | revert to the `MessageIterator` loop → yields 0/3/11; wrap `it.Next()` in `continue` → guard timeout; mint a stub record again → record count 17 |
-| MA-316 | U | Folder isolation: a corrupted PST sub-folder table row costs that sub-folder only (`folder-unreadable`), siblings walk; a `GetMessageTableContext` failure on one folder records `folder-unreadable` and its sub-folders still walk; 100 consecutive **structural** bad rows → one `folder-partially-read` with `Skipped`, no further entries. **[FC9]:** an interleaved table (99 bad rows, 1 duplicate or valid NID, repeated) → bounded ledger entries, no records; a 150-row run of **real** damaged nodes mid-folder → 150 gaps and every later row archived; a corrupt hierarchy table with 100+ bad rows → one `folder-partially-read`. **[FC32]:** a Graph listing page error in one folder → `folder-list-failed`, the next folder walks, no sweep; a maildir non-root `ReadDir` failure → `folder-unreadable`, siblings walk; an mbox open failure → `folder-unreadable`; an mbox mid-stream error → `folder-partially-read` with the count read; the Evolution walkers' folder errors → per-folder gaps | R10, R6, R1, S42 | use `GetSubFolders()` again → siblings lost; count case 3 in the breaker → rows after the damaged run lost; drop the duplicate-NID set → unbounded entries |
-| MA-317 | U | PST cycle/depth (F27): the PoC-patched fixture (child NID → root NID) returns well under 1 s with a terminal `folder-cycle` gap and every distinct folder archived once; a synthetic 301-deep chain → `folder-too-deep`. The prove-fail runs the walk in a **child test process** (`os/exec` of the test binary with `-test.run`), because a stack overflow is fatal | R10, S43 | remove the visited set → the child dies with `stack overflow` (the parent asserts failure) |
-| MA-318 | U | Placeholder and degraded-capture fidelity (F33, [FC5], [FC6], [FC7], [FC25]). Five unreadable PST nodes in one folder → **5 ledger gaps**, 5 report rows, **0** records or pages; an RTF panic keeps subject/sender/dates/attachments with `unreadable:body` and the record carries `Locator`; an attachment-table error keeps the body with `unreadable:attachments`; a MIME-panicking mbox/maildir/Graph message keeps `Raw` (`.eml` under `-raw`), shows the headers plus the first 64 KiB on the page and in the index, `unparsed` terminal with `ParserGen`/`RawDigest`; an `Export` panic increments `Stats.ExportPanics` and records `export-panic`, never log-only. **KEEP twins (P15):** a `-mode full` run over a PST copy whose RTF now panics, or whose attachment table now fails, on a message archived complete → html and zip bytes equal their recorded Fixity, record unchanged, one info `refresh-failed`; a Graph Full-mode run where an archived message's parse now panics → the record, html and zip are unchanged and no PhysID adoption happens. **Healing:** both orders of an attachment-table failure (partial first, then healthy; healthy first, then failing) → one record, no `#fp` duplicate; a no-Message-ID partial record whose healthy re-read lands on a new key → partial record re-classed `superseded` with `RecoveredBy`, no file written | R1, R3, R7, R10, S42 | mint a stub record → 5 records; restore the bare stub → fields lost; restore `err=nil` in the recover → no gap; drop the KEEP guard → html overwritten / zip orphaned; drop the zero-attachment `#fp` comparison → duplicate |
-| MA-319 | U | Recovery (P6, [FC6], [FC7], [FC8]): restore the corrupted block in the fixture copy at the **same path** → the next run captures the real message; its `pst-message-unreadable` gap closes as recovered; the report no longer lists it; **no file is written or deleted** by recovery. A repaired file at a different path → new token, the old gap unchanged (the documented duplicate). A repair that removes the item → the gap closes as "no longer in the source" on the next completed walk. A gap whose store-uid differs from the re-read store's → **not** recovered by a message at the same NID (no false recovery). An `-outlook`-style rebuilt store → one per-folder aggregate gap whose `Runs` counts across rebuilds. A partly-read record after an old-binary save stripped `loc` → `Locator` restored on re-examine. `verify` still attests after every case | R1, R6, R13, S42 | match across store-uids → false "recovered"; drop the restore-on-re-examine → `Locator` stays empty |
-| MA-320a | U | Folder-unwritable and run-fatal, **local** (N1, [FC12]). mbox A, B, C with a regular file at `out/<tok>/B` → A and C archived, `folder-unwritable` (fillable, `Skipped=n` for this run), `ErrPartial`; remove the file → run 3 archives B, the gap closes, nil. Run-fatal twin pairs (`assure.Refused`, no further writes): an injected ENOSPC, **EDQUOT, EROFS** (errno injection) → exit-path error naming the drive and the remedy; a healthy disk → nil. The **Windows codes** 112/39/19/3/21/53/55/64/1167/1295 map run-fatal in a classifier table test. **`-out` removed mid-walk** → exit 1 "the archive location … is unavailable", no partial outcome, no folder-unwritable rows. A `SafeToken` refusal → exit 1 naming the token. 50 consecutive item write failures, with each folder's first `FolderError` counting → local breaker error. The `-outlook` export-skip mapping (`CreatePSTs` skipped folders → `outlook-export-skipped`) by unit test; Windows+Outlook L row pending [FC28] | R1, R6, R10, R5, R12, S42 | return `exportErr` as today → C missing; treat ENOSPC or a vanished root as an item → run continues writing / ends partial |
-| MA-320b | U | Folder-unwritable, **Graph**: the same fixture through the fake Graph server → the unwritable folder's later refs are recorded under the gap without download; fast-path skips in it still stamp; in Full mode the unwritable-set refs count as faults, so no record in that folder is swept gone [FC4(d)] | R1, R6, R10, R21, S42 | ignore unwritable-set refs in the sweep → phantom gone |
-| MA-321 | U | Maildir per-file (F29a, [FC7]): `Inbox/cur{a, b chmod 000, c}`, `Work/cur{d}` → a, c, d archived and b a `file-unreadable` fillable **ledger gap** with locator `maildir:Inbox/<unique>`, **no** record, remedy "fix the permissions" (skipped when running as root or on Windows); an EIO injection → the same gap with the disk remedy; a test hook renaming `b:2,` → `b:2,S` while exporting a → b read once after the re-list; a hook deleting b → `vanished-during-read`, closed on the next run; after `chmod 600` on b → b archived and its gap closes as recovered. Twin: no faults → no rows | R10, R15, R1, S42 | return the read error → c and Work lost |
-| MA-322 | U | Containment (F29b/c/d, R22, [FC1], [FC2], [FC3]). **Maildir:** a FIFO in `cur/` → skipped without open (walk completes <1 s), `not-a-message-file` info; a file link to `outside/secret` → `symlink-outside-store`, and the marker string is **ABSENT** from every page and from `search.db` (NoSideEffect); an absolute or `..`-escaping link target is refused **before** any resolution (asserted with a target path that would block if touched); an in-store file link → read once; `Inbox.sbd → root` and `Other/cur → outside` → not followed (n=1, not 33), `symlinked-folder-skipped`. **mbox layout:** a FIFO named `Inbox` at the store root → discovery (`IsMailStoreDir`) and the walk both complete under a 1 s guard; an `Inbox` symlink to an outside file that begins "From " → refused, marker ABSENT. **Windows classifier (OS-independent):** a table of synthetic `FileMode`s → special files refused as info; `ModeIrregular` with `Readlink` success → `symlinked-folder-skipped`; `ModeIrregular` with `Readlink` failure → read; nothing that might hold mail is classed info. **Windows, unprivileged:** a `mklink /J` junction for `cur` → not followed, recorded. A real OneDrive placeholder: L row, pending (lab story: a Windows VM with Files-On-Demand). FIFO and symlink cases skipped on Windows, where they need privileges. Twin: the same store without links → every message, no rows | R22, R10, R4, S43 | `os.ReadFile` every entry again → secret archived / FIFO hang (guard timeout); class `ModeIrregular` as info → placeholder dropped |
-| MA-323 | U | Ledger lifecycle: Save/Load round-trip; a v6 manifest without `capture_gaps` loads empty; re-observe in a **later** run increments `Runs` and keeps `FirstRun`; two observations in one run increment it once, and `Skipped` resets per run [FC15]; `ObserveGap` updates `Folder` [FC14]; a gap in a fully walked folder that was not re-observed closes; a gap in an unwalked folder is retained and shows as **not attempted**; a gap whose `Received` is before a rolling `-since` is retained and still reported [FC13]; the lifetime caps (1001st item, folder-scope and info caps) → overflow with an exact count and the most severe absorbed class [FC16]; `Load` strips and bounds a hostile `Detail`, drops a non-`SafeToken` entry and an entry whose token is not in `Stores`, clamps a future `LastRun`, keeps a known class with an unknown reason, maps an unknown class to terminal [FC17]; a legacy collapsed stub is re-classed to `legacy-placeholder` once, on a run only; a Graph legacy stub is adopted and **not** swept gone [FC27]; a stale `ParserGen` `unparsed` Graph stub is re-fetched exactly once [FC25] | R1, R5, S42 | remove the cap → >1000 rows; skip the `Load` strip → ESC survives; count calls → `Runs` 2 in one run |
-| MA-324a | U | Inertness, **local** (PST, mbox, maildir): a manifest seeded with a gap whose locator matches a healthy item does not stop its capture; the gap closes as recovered | R1, R17, S42 | add a ledger lookup before export in any walker → item skipped |
-| MA-324b | U | Inertness, **Graph**: the same through the fake server | R1, R17, S42 | add a ledger lookup to the fast path → item skipped |
-| MA-325 | U | Outcome mapping (subject to OR1/OR2; S1a asserts the interim `failed`/exit 1 mapping). CLI export and `graph` exit 0, 3 and 1 for complete, partial and run-failure, with 1 winning over 3 across sources; Ctrl-C → 0. `LastRun.Status` is ok, the OR1 value or failed, with gap counts and `gaps_new`; `BACKUP-NEEDS-ATTENTION.txt` written for partial, leading with the new count, and removed only by ok. `mailarchive-gui -job` and `mailarchive-desktop -capture` return 3; `-job` reclaims the `-outlook` scratch on partial. **The GUI wizard's** pure result → next-step mapping: partial → summary with Not-captured, rememberArchive, scratch reclaim, open, offerSchedule [FC19]. The history footer is written only when `failures == 0 && !partial` [FC32]. Refusal twin: missing `-out` still exits 1 naming it (MA-33 unchanged) | R18, R12, S44 | map `ErrPartial` to 1 or 0 → wrong exit; treat partial as failure in the wizard mapping → no schedule offered |
-| MA-326 | U | Status: fillable → WARN `capture_gaps_fillable`, "automatically" only with a schedule; stuck → **WARN** `capture_gaps_stuck` listed first, never RED [FC18], with the no-mid sweep sentence and its move-or-delete remedy when applicable; not-attempted → the note (or WARN per OR3) and never stuck [FC14]; terminal → WARN with the remedy keyed by source kind; partly-read → WARN, absent from `incomplete_content`; `partial` last run → no `run_failed` (after OR1/OR2). `health.Summary` lists ≤20 gap lines with source, folder, subject, date and remedy; JSON has additive `capture_gaps` (incl. `items[]`, `not_attempted`) and `unreadable`, with `JSONVersion` per OR1 [FC22]. The desktop Status & health view shows the same reasons and gap lines **without subjects** until the dashboard read guard lands (X10) | R18, S44 | drop the stuck rule → no reason; escalate stuck to RED → posture assertion fails; render subjects on the GET page → assertion fails |
-| MA-327 | U | Report and inheritor: one TSV row per gap (kind, class, folder, date, subject, detail with locator and run count, **source id in `path`**) in a stable order, control-free; a **ledger-only** fixture (no record issues) still writes the report [FC24]; README text present, class vocabulary included; the root `index.html` banner appears with a count, no untrusted text, and the CSP meta intact; after `reindex` and after `reindex -rebuild` the banner is still present [FC24]; `verify` prints the "Not in this archive" line and still exits 0 on an attested archive | R1, R7, R19, S44 | omit ledger rows from `writeReport`, or keep the early return → gap invisible; pass 0 from reindex → banner gone |
-| MA-328 | U | Summary: the "Not captured" block (source, folder, reason, remedy; new count), capped at 20 lines with `+N more`; the deadline remedy on a first-seen fillable Graph gap; destination-side reasons name the archive location; the "Recovered" line; partial prints `Done.` and never `FAILED:`; `.pst` open failure appends the in-place-repair remedy (extends MA-282) | R18, R12, S44 | print `FAILED:` on partial → assertion fails |
+| MA-310 | U | Graph: Inbox `[A1,A2,POISON,A3,A4]`, Sent `[B1,B2]`, POISON `$value` → 500 `ErrorMimeContentConversionFailed`. A1, A2, A3, A4, B1 and B2 are all archived; `RunGraph` returns `ErrPartial`; there is **no** manifest record or `KeysForIdentity` hit for POISON; one `fetch-failed` fillable gap carries POISON's subject and received date. Twin: the same mailbox without POISON → nil, no gap | R1, R10, R17, S46 | restore `return fmt.Errorf("fetch message …")` → A3/A4/B* missing |
+| MA-311 | U | Ledger inert on Graph: run 2 with POISON healed downloads it once; the gap closes; `Recovered=1`; exit-path nil. A record seeded for POISON as Terminal (the H3 anti-pattern, constructed in the test) is shown never re-fetched, documenting why gaps are not records | R1, R17, R2, S46 | make the fast path also skip ledger locators, or `Add` a Terminal record on failure → POISON never fetched |
+| MA-312 | U | Sweep safety (H2, [FC4]), six cases. (a) Full mode: the re-fetch of archived A2 fails → no `{k,gone}`, `Present` true, `LastSeen==runAt`. (b) Immutable-id comparable path: same. (c) A no-mid fetch failure in Inbox, with no PhysID match → the token's PhysID-less `sha:` records are not swept this run (a genuinely deleted no-mid message is **not** marked gone), and they are swept on the next clean run; a known-identity failure in Sent still lets a deleted Sent message be swept. (d) A message moved Inbox → Projects, then the Projects listing fails → no `{k,gone}` (the mailbox is not swept). (e) A moved no-mid message whose fetch fails, with immutable ids confirmed → stamped via PhysID, not gone. (f) Full mode, refs skipped because of the unwritable set → not gone. (g) [ruling OR10] A pre-v6, PhysID-less `mid:` record whose listing and parsed Message-IDs differ, and whose fetch fails in a walked folder → no `{k,gone}`; its sweep is deferred. Twin: a clean walk sweeps a deleted message (MA-207 unchanged) | R21, R1, S37, S46 | drop the `TouchSeen` loop or the PhysID stamp, or always `walked.Mark` → phantom gone in (a)–(f) |
+| MA-313 | U | Abort semantics and breaker. Parent ctx cancelled mid-download → no gap for that item, `context.Canceled`, `LastRun` cancelled. `$value` 401 → mailbox failed, exit-path error, ≤1 gap; **403** the same, per OR7 ([ruling OR7]); the token endpoint starting to return 401 `invalid_client` mid-walk → mailbox-fatal auth with `auth_remedy`, **no** gap [FC11]. 25 consecutive 503s plus a failing control request → breaker error naming the threshold that fired and the last status, no sweep, gaps ≤ 25; 24 then a success → no trip (twin). 25 consecutive 500 item-class failures → **no** trip. 404 → `vanished-at-fetch`, fetched once, not counted. **[FC10]:** 1 success per 10 attempts → trips on the rate bound; 25 known-poison 504s that already have gaps from run 1 → run 2 walks past them; 25 consecutive per-item timeouts while the control request succeeds → no trip; two consecutive tripped mailboxes → the run stops; a `Retry-After: 3600` → the sleep is clamped (≤ 60 s scaled) | R5, R12, R18, S46 | classify `context.Canceled` as an item gap → walk continues; count 500 as transport → trips; drop the control probe → the timeout case trips; classify `RetrieveError` as transport → 25 gaps |
+| MA-314 | U | MIME and listing bounds (scaled: idle 200 ms, cap 5 s, size cap 1 MiB). A server trickling 1 byte/50 ms for 1.5 s (beyond a 1 s wall clock) completes. A server stalling >200 ms mid-body → `fetch-timeout` gap, and the walk ctx is still live (the next item is fetched). A server that keeps streaming past the **overall cap** → `fetch-timeout` [FC32]. A body over the size cap → `fetch-too-large`, terminal, nothing written [FC21]. A repeating `nextLink` ends the folder as `folder-list-failed`. A repeating `nextLink` in **Folders** → the mailbox fails, the walk terminates. A `nextLink` to a foreign host → refused, no bearer token sent [FC21]. **Slices [ruling J4]:** the row lands with SG (the trickle, stall, overall-cap and size-cap primitive cases, and the repeat stop in `Folders`); its `fetch-timeout`, `fetch-too-large` and `folder-list-failed` gap cases land with S3, and its capture foreign-host case with SGc; until then each is a skip encoder citing MA-314 | R10, R17, S46 | restore a wall-clock deadline shorter than the trickle → trickle fails; remove the `nextLink` set or the host pin → test timeout / token sent |
+| MA-315 | S | PST per-row isolation (H1, [FC7]): copies of `support.pst` with the message block at #0, #3 or #11 XOR-corrupted each yield **16** real messages plus **one** `pst-message-unreadable` ledger gap whose locator is `pst-nid:<store-uid>/<nid>` (or one `pst-messages-unreadable` aggregate if the store-uid cannot be read) and **no** stub record or page; the walk terminates under a 10 s guard. In the 1656-mutation sweep of block #0 (the F23 PoC), every mutation yields 17 items: 17 real, or 16 real + 1 gap. The F23 emulation gave 1563 at 17 and 93 at 16. No mutation aborts or hangs the walk. A differential check: on the uncorrupted fixture the copied loops yield exactly go-pst's own folder and message sets [FC30]. Twin: the uncorrupted fixture yields 17, no gap | R10, R1, S46 | revert to the `MessageIterator` loop → yields 0/3/11; wrap `it.Next()` in `continue` → guard timeout; mint a stub record again → record count 17 |
+| MA-316 | U | Folder isolation: a corrupted PST sub-folder table row costs that sub-folder only (`folder-unreadable`), siblings walk; a `GetMessageTableContext` failure on one folder records `folder-unreadable` and its sub-folders still walk; 100 consecutive **structural** bad rows → one `folder-partially-read` with `Skipped`, no further entries. **[FC9]:** an interleaved table (99 bad rows, 1 duplicate or valid NID, repeated) → bounded ledger entries, no records; a 150-row run of **real** damaged nodes mid-folder → 150 gaps and every later row archived; a corrupt hierarchy table with 100+ bad rows → one `folder-partially-read`. **[FC32]:** a Graph listing page error in one folder → `folder-list-failed`, the next folder walks, no sweep; a maildir non-root `ReadDir` failure → `folder-unreadable`, siblings walk; an mbox open failure → `folder-unreadable`; an mbox mid-stream error → `folder-partially-read` with the count read; the Evolution walkers' folder errors → per-folder gaps | R10, R6, R1, S46 | use `GetSubFolders()` again → siblings lost; count case 3 in the breaker → rows after the damaged run lost; drop the duplicate-NID set → unbounded entries |
+| MA-317 | U | PST cycle/depth (F27): the PoC-patched fixture (child NID → root NID) returns well under 1 s with a terminal `folder-cycle` gap and every distinct folder archived once; a synthetic 301-deep chain → `folder-too-deep`. The prove-fail runs the walk in a **child test process** (`os/exec` of the test binary with `-test.run`), because a stack overflow is fatal | R10, S47 | remove the visited set → the child dies with `stack overflow` (the parent asserts failure) |
+| MA-318 | U | Placeholder and degraded-capture fidelity (F33, [FC5], [FC6], [FC7], [FC25]). Five unreadable PST nodes in one folder → **5 ledger gaps**, 5 report rows, **0** records or pages; an RTF panic keeps subject/sender/dates/attachments with `unreadable:body` and the record carries `Locator`; an attachment-table error keeps the body with `unreadable:attachments`; a MIME-panicking mbox/maildir/Graph message keeps `Raw` (`.eml` under `-raw`), shows the headers plus the first 64 KiB on the page and in the index, `unparsed` terminal with `ParserGen`/`RawDigest`; an `Export` panic increments `Stats.ExportPanics` and records `export-panic`, never log-only. **KEEP twins (P15):** a `-mode full` run over a PST copy whose RTF now panics, or whose attachment table now fails, on a message archived complete → html and zip bytes equal their recorded Fixity, record unchanged, one info `refresh-failed`; a Graph Full-mode run where an archived message's parse now panics → the record, html and zip are unchanged and no PhysID adoption happens. **Healing:** both orders of an attachment-table failure (partial first, then healthy; healthy first, then failing) → one record, no `#fp` duplicate; a no-Message-ID partial record whose healthy re-read lands on a new key → partial record re-classed `superseded` with `RecoveredBy`, no file written. **[ruling J8 = ESC-1]** Two distinct MIME-panicking raw messages in one folder still share today's constant stub identity until the owner answers ESC-1: that collapse is a skip encoder citing R1 in this row's raw-stub case, removed when slice S2b-id lands | R1, R3, R7, R10, S46 | mint a stub record → 5 records; restore the bare stub → fields lost; restore `err=nil` in the recover → no gap; drop the KEEP guard → html overwritten / zip orphaned; drop the zero-attachment `#fp` comparison → duplicate |
+| MA-319 | U | Recovery (P6, [FC6], [FC7], [FC8]): restore the corrupted block in the fixture copy at the **same path** → the next run captures the real message; its `pst-message-unreadable` gap closes as recovered; the report no longer lists it; **no file is written or deleted** by recovery. A repaired file at a different path → new token, the old gap unchanged (the documented duplicate). A repair that removes the item → the gap closes as "no longer in the source" on the next completed walk. A gap whose store-uid differs from the re-read store's → **not** recovered by a message at the same NID (no false recovery). An `-outlook`-style rebuilt store → one per-folder aggregate gap whose `Runs` counts across rebuilds. A partly-read record after an old-binary save stripped `loc` → `Locator` restored on re-examine. `verify` still attests after every case | R1, R6, R13, S46 | match across store-uids → false "recovered"; drop the restore-on-re-examine → `Locator` stays empty |
+| MA-320 | U | Folder-unwritable and run-fatal, **local** (N1, [FC12]). mbox A, B, C with a regular file at `out/<tok>/B` → A and C archived, `folder-unwritable` (fillable, `Skipped=n` for this run), `ErrPartial`; remove the file → run 3 archives B, the gap closes, nil. Run-fatal twin pairs (`assure.Refused`, no further writes): an injected ENOSPC, **EDQUOT, EROFS** (errno injection) → exit-path error naming the drive and the remedy; a healthy disk → nil. The **Windows codes** 112/39/19/3/21/53/55/64/1167/1295 map run-fatal in a classifier table test. **`-out` removed mid-walk** → exit 1 "the archive location … is unavailable", no partial outcome, no folder-unwritable rows. A `SafeToken` refusal → exit 1 naming the token. 50 consecutive item write failures, with each folder's first `FolderError` counting → local breaker error. The `-outlook` export-skip mapping (`CreatePSTs` skipped folders → `outlook-export-skipped`) by unit test; the Windows+Outlook case is the L row MA-504, pending [FC28] [ruling J1] | R1, R6, R10, R5, R12, S46 | return `exportErr` as today → C missing; treat ENOSPC or a vanished root as an item → run continues writing / ends partial |
+| MA-501 | U | Folder-unwritable, **Graph**: the same fixture through the fake Graph server → the unwritable folder's later refs are recorded under the gap without download; fast-path skips in it still stamp; in Full mode the unwritable-set refs count as faults, so no record in that folder is swept gone [FC4(d)] | R1, R6, R10, R21, S46 | ignore unwritable-set refs in the sweep → phantom gone |
+| MA-321 | U | Maildir per-file (F29a, [FC7]): `Inbox/cur{a, b chmod 000, c}`, `Work/cur{d}` → a, c, d archived and b a `file-unreadable` fillable **ledger gap** with locator `maildir:Inbox/<unique>`, **no** record, remedy "fix the permissions" (skipped when running as root or on Windows); an EIO injection → the same gap with the disk remedy; a test hook renaming `b:2,` → `b:2,S` while exporting a → b read once after the re-list; a hook deleting b → `vanished-during-read`, closed on the next run; after `chmod 600` on b → b archived and its gap closes as recovered. Twin: no faults → no rows | R10, R15, R1, S46 | return the read error → c and Work lost |
+| MA-322 | U | Containment (F29b/c/d, R25, [FC1], [FC2], [FC3]). **Maildir:** a FIFO in `cur/` → skipped without open (walk completes <1 s), `not-a-message-file` info; a file link to `outside/secret` → `symlink-outside-store`, and the marker string is **ABSENT** from every page and from `search.db` (NoSideEffect); an absolute or `..`-escaping link target is refused **before** any resolution (asserted with a target path that would block if touched); an in-store file link → read once; `Inbox.sbd → root` and `Other/cur → outside` → not followed (n=1, not 33), `symlinked-folder-skipped`. **mbox layout:** a FIFO named `Inbox` at the store root → discovery (`IsMailStoreDir`) and the walk both complete under a 1 s guard; an `Inbox` symlink to an outside file that begins "From " → refused, marker ABSENT. **Windows classifier (OS-independent):** a table of synthetic `FileMode`s → special files refused as info; `ModeIrregular` with `Readlink` success → `symlinked-folder-skipped`; `ModeIrregular` with `Readlink` failure → read; nothing that might hold mail is classed info. **Windows, unprivileged:** a `mklink /J` junction for `cur` → not followed, recorded. A real OneDrive placeholder: the L row MA-503, pending (lab story: a Windows VM with Files-On-Demand) [ruling J1]. **Opt-in [ruling OR6]:** with the input's directory-link opt-in set, `Inbox.sbd → root` is followed once (the visited (dev, inode) set stops the loop, n=1), the input keeps its token, and the file link to `outside/secret` is still refused with the marker ABSENT; without it, the linked folder is a terminal `symlinked-folder-skipped` gap whose remedy names the opt-in. FIFO and symlink cases skipped on Windows, where they need privileges. Twin: the same store without links → every message, no rows | R25, R10, R4, S47 | `os.ReadFile` every entry again → secret archived / FIFO hang (guard timeout); class `ModeIrregular` as info → placeholder dropped |
+| MA-323 | U | Ledger lifecycle: Save/Load round-trip; a v6 manifest without `capture_gaps` loads empty; re-observe in a **later** run increments `Runs` and keeps `FirstRun`; two observations in one run increment it once, and `Skipped` resets per run [FC15]; `ObserveGap` updates `Folder` [FC14]; a gap in a fully walked folder that was not re-observed closes; a gap in an unwalked folder is retained and shows as **not attempted**; a gap whose `Received` is before a rolling `-since` is retained and still reported [FC13]; the lifetime caps (1001st item, folder-scope and info caps) → overflow with an exact count and the most severe absorbed class [FC16]; `Load` strips and bounds a hostile `Detail`, drops a non-`SafeToken` entry and an entry whose token is not in `Stores`, clamps a future `LastRun`, keeps a known class with an unknown reason, maps an unknown class to terminal [FC17]; a legacy collapsed stub is re-classed to `legacy-placeholder` once, on a run only; a Graph legacy stub is adopted and **not** swept gone [FC27]; a stale `ParserGen` `unparsed` Graph stub is re-fetched exactly once [FC25] | R1, R5, S46 | remove the cap → >1000 rows; skip the `Load` strip → ESC survives; count calls → `Runs` 2 in one run |
+| MA-324 | U | Inertness, **local** (PST, mbox, maildir): a manifest seeded with a gap whose locator matches a healthy item does not stop its capture; the gap closes as recovered | R1, R17, S46 | add a ledger lookup before export in any walker → item skipped |
+| MA-502 | U | Inertness, **Graph**: the same through the fake server | R1, R17, S46 | add a ledger lookup to the fast path → item skipped |
+| MA-325 | U | Outcome mapping ([ruling OR1, OR2]; S1a asserts the interim `failed`/exit 1 mapping). CLI export and `graph` exit 0 for complete, and 1 for partial (with the partial summary and the `partial` flag) and for run-failure, a run-level failure winning over partial across sources; Ctrl-C → 0. `LastRun.Status` is ok, or failed with `partial: true` on a partial run, or failed, with gap counts and `gaps_new`; `BACKUP-NEEDS-ATTENTION.txt` written for partial, leading with the new count, and removed only by ok. `mailarchive-gui -job` and `mailarchive-desktop -capture` return 1 on partial, with the flag; `-job` reclaims the `-outlook` scratch on partial. **The GUI wizard's** pure result → next-step mapping: partial → summary with Not-captured, rememberArchive, scratch reclaim, open, offerSchedule [FC19]. The history footer is written only when `failures == 0 && !partial` [FC32]. Refusal twin: missing `-out` still exits 1 naming it (MA-33 unchanged) | R18, R12, S48 | map `ErrPartial` to 0 → wrong exit; drop the `partial` flag → the partial line is missing ([ruling OR2]); treat partial as failure in the wizard mapping → no schedule offered |
+| MA-326 | U | Status: fillable → WARN `capture_gaps_fillable`, "automatically" only with a schedule; stuck → **WARN** `capture_gaps_stuck` listed first, never RED [FC18], with the no-mid sweep sentence and its move-or-delete remedy when applicable; not-attempted → the note ([ruling OR3]) and never stuck [FC14]; terminal → WARN with the remedy keyed by source kind; partly-read → WARN, absent from `incomplete_content`; a last run with `partial: true` → the partial line, no `run_failed` ([ruling OR1, OR2]). `health.Summary` lists ≤20 gap lines with source, folder, subject, date and remedy; JSON has additive `capture_gaps` (incl. `items[]`, `not_attempted`) and `unreadable`, with `JSONVersion` 2 ([ruling OR1]) [FC22]. The desktop Status & health view shows the same reasons and gap lines **without subjects** until the dashboard read guard lands (X10) | R18, S48 | drop the stuck rule → no reason; escalate stuck to RED → posture assertion fails; render subjects on the GET page → assertion fails |
+| MA-327 | U | Report and inheritor: one TSV row per gap (kind, class, folder, date, subject, detail with locator and run count, **source id in `path`**) in a stable order, control-free; a **ledger-only** fixture (no record issues) still writes the report [FC24]; README text present, class vocabulary included; the root `index.html` banner appears with a count, no untrusted text, and the CSP meta intact; after `reindex` and after `reindex -rebuild` the banner is still present [FC24]; `verify` prints the "Not in this archive" line and still exits 0 on an attested archive | R1, R7, R19, S48 | omit ledger rows from `writeReport`, or keep the early return → gap invisible; pass 0 from reindex → banner gone |
+| MA-328 | U | Summary: the "Not captured" block (source, folder, reason, remedy; new count), capped at 20 lines with `+N more`; the deadline remedy on a first-seen fillable Graph gap; destination-side reasons name the archive location; the "Recovered" line; partial prints `Done.` and never `FAILED:`; `.pst` open failure appends the in-place-repair remedy (extends MA-282) | R18, R12, S48 | print `FAILED:` on partial → assertion fails |
 | MA-329 | S | No regression (P14): on `support.pst` and the mbox, maildir, Evolution and fake-Graph fixtures, records, keys, identities, paths and per-message file bytes equal a pre-change golden manifest (timestamps masked; `README.txt` and the root `index.html` stamp excluded, P14's named exceptions); an incremental re-run exports 0; the ledger is empty | R2, R3, R5 | fold a locator into any message's hash → keys change |
+| MA-503 | L | [ruling J1] (MA-322's L case) a real OneDrive Files-On-Demand placeholder under a maildir is read as the file it represents, never refused and never classed info, while a junction beside it is refused and recorded — **pending** (lab: a Windows VM with Files-On-Demand) | R25, S47 | — |
+| MA-504 | L | [ruling J1] (MA-320's L case) the `-outlook` export-skip mapping on a real Windows classic-Outlook install: a folder whose `CopyTo` fails and a skipped account each become their ledger gap, and the run is partial — **pending** (lab: Windows with classic Outlook) | R1, R6, R10, S46 | — |
 
 **Lab story.** The Graph error-code classification is proven only against the fake server. The
 behaviour of real tenants (which items return `ErrorMimeContentConversionFailed`, and whether a
@@ -1880,20 +2018,27 @@ emitting faults. Each slice:
 - runs the covers-map unfiltered.
 
 **[FC33] Rulings.** No slice hard-codes the answer to an open owner ruling. The "Blocked on"
-column names what must be ruled before the slice may merge.
+column names what must be ruled before the slice may merge. **[ruling]** OR1–OR10 are ruled
+(`docs/owner-rulings-2026-10-09.md` §3); the column now names only the escalations (ESC-1,
+ESC-7) and the gates that remain.
 
 **[FC34] Catalog edits.** No catalog edit lands before the operator allocates the R and S ids
-(OR8). Catalog edits across the five designs in flight are **serialised**.
+(OR8; **[ruling OR8 = J1]** allocated: R25, S46–S48, MA-501..504). Catalog edits across the
+five designs in flight are **serialised**, in the order of
+`docs/owner-rulings-2026-10-09.md` §9.
 
 | Slice | Content | Rows | Depends on | Blocked on | Gate owed after build |
 |---|---|---|---|---|---|
 | **S0** | This design → 10-lens pre-code review filed (`review-fault-isolation-predesign.md`, GO_WITH_CONDITIONS); conditions FC1–FC34 folded into rev 2 | — | — | — | **pre-code design review** (done) |
-| **S1a** — sinks and surfaces | `state.CaptureGap` plus accessors (lifetime caps, attempted split, `Runs` per run), `Load` sanitisation (fail-closed classes, `Stores` check, clamps, count cap), `GapClass` (single owner of labels); `model.Locator`/`ReadGaps`/`ReadError` (unused by readers yet); exporter read-gap labels, KEEP guard (P15), healing (`#fp` zero-attachment comparison, probe, metadata-only supersede) and record notice; `printSummary` (source ids, new count, deadline remedy); `app.GapRemedy` (reason, source kind, errno class; exported for copyexport); `health` rules (stuck WARN, not-attempted note, ≤20 gap lines) and additive JSON keys; report rows (source id; written when the ledger is non-empty); `verify` line; README (class vocabulary); banner (every `pages.Generate` caller). **A partial run maps to today's `failed`** (exit 1, `run_failed` RED) — loud, fail-closed, no X1 change | MA-323, MA-326, MA-327, MA-328, MA-329 (golden baseline first) | — | **OR8** (ids), **OR5** (stuck threshold) | **friction review** of the surfaces (summary, status, sidecar) |
-| **S1b** — the partial outcome | `ErrPartial`/exit 3, the OR1 status value and the matching `JSONVersion`, sidecar wording; CLI, GUI wizard (FC19), `-job` (reclaim on partial), desktop exit mapping; ux-contract X1, R1, R18 text. Every in-repo `LastRun.Status` consumer is updated in this slice (`health.go:203-222,631-632,810-817`), so none ever sees an unknown value | MA-325 | S1a | **OR1, OR2, OR3, OR4** | **friction review** (exit code, sidecar); **UX-contract X1 amendment** recorded |
-| **S2a** — PST isolation and healing | store-uid locators and per-folder aggregates (FC8); row and sub-folder loops with every upstream gate kept, differential test, go-pst pin (FC30); structural breakers and duplicate/absent-NID checks (FC9); inward recovers; zero-content failures as ledger gaps, no stub records (FC7); visited and depth guards; `.pst` and `-outlook` remedies; fault callback (FC29); `runFile` classification, archive-root probe, run-fatal volume errnos, unwritable set, local breaker, fault-driven checkpoint (FC12); `-outlook` export-skip gaps (FC28); legacy-placeholder re-class (FC27); R10 text | MA-315, MA-316, MA-317, MA-318, MA-319, MA-320a, MA-323 (legacy case), MA-324a | S1a | OR8 | **adversarial pass** (untrusted PST parsing, exporter write paths) |
-| **S2b** — local containment | mbox/maildir/Evolution per-file and per-folder isolation; containment at **every** local open (FC2); lexical link judgment, recommended `os.Root` (FC3); Windows reparse classifier (FC1); `util.OpenRegularFile`; raw-preserving stubs with bounded text and parser generation (FC25), expressed through g3's hook (FC26); R22 text | MA-318 (raw stubs), MA-321, MA-322 | S1a | **OR6** (directory links), OR8 | **adversarial pass** (R22 containment, Windows) |
-| **SG** — shared Graph primitive | `StatusError{Code, GraphCode, Text}` (today's `Error()` text), `graph.Classify`, `MIMETo` (idle, overall and size caps), nextLink guard (repeat set, host/path pin, page cap) in every paging loop | MA-314 (primitive cases); the extraction design's MA-401/MA-402 | — | **OR9** (ownership, the extraction side) | **adversarial pass** (network input), shared with the extraction design's E1 |
-| **S3** — Graph isolation | `classifyFetch` (token-refresh auth, FC11), per-item gaps with no record, immutable-id locators, `-since` rule, `refresh-failed`, stub listing-mid only without a same-token record, parser-generation re-fetch, Graph legacy-stub adoption (FC27), sweep rules (FC4), folder-list isolation, rate/time breaker with known-poison exemption, control probe and run-level breaker, `Retry-After` clamp (FC10), footer condition | MA-310, MA-311, MA-312, MA-313, MA-314, MA-320b, MA-324b; R17 text | S1a, SG | **OR7** (403), OR8 | **adversarial pass** (network input, go-back sweep integrity) |
+| **S1a** — sinks and surfaces | `state.CaptureGap` plus accessors (lifetime caps, attempted split, `Runs` per run), `Load` sanitisation (fail-closed classes, `Stores` check, clamps, count cap), `GapClass` (single owner of labels); `model.Locator`/`ReadGaps`/`ReadError` (unused by readers yet); exporter read-gap labels, KEEP guard (P15), healing (`#fp` zero-attachment comparison, probe, metadata-only supersede) and record notice; `printSummary` (source ids, new count, deadline remedy); `app.GapRemedy` (reason, source kind, errno class; exported for copyexport); `health` rules (stuck WARN, not-attempted note, ≤20 gap lines) and additive JSON keys; report rows (source id; written when the ledger is non-empty); `verify` line; README (class vocabulary); banner (every `pages.Generate` caller). **A partial run maps to today's `failed`** (exit 1, `run_failed` RED) — loud, fail-closed, no X1 change. The stuck threshold is OR5's [ruling OR5]; S46 and S48 land here [ruling OR8 = J1] | MA-323, MA-326, MA-327, MA-328, MA-329 (golden baseline first) | — | — (OR8 and OR5 ruled) | **friction review** of the surfaces (summary, status, sidecar) |
+| **S1b** — the partial outcome | `ErrPartial` with exit 1 and the `partial` flag [ruling OR2], status `failed` + `partial: true` with `JSONVersion` 2 [ruling OR1], sidecar wording and "new this run" on every surface [ruling OR3], first-sighting vanished gaps partial [ruling OR4]; CLI, GUI wizard (FC19), `-job` (reclaim on partial), desktop exit mapping; R1's and R18's added sentences [ruling J7], no X1 change. Every in-repo `LastRun.Status` consumer is updated in this slice (`health.go:203-222,631-632,810-817`), so none ever sees an unknown value | MA-325 | S1a, g7/F53 | — (OR1–OR4 ruled) | **friction review** (exit code, sidecar); no UX-contract X1 amendment is owed [ruling OR2] |
+| **S2a** — PST isolation and healing | store-uid locators and per-folder aggregates (FC8); row and sub-folder loops with every upstream gate kept, differential test, go-pst pin (FC30); structural breakers and duplicate/absent-NID checks (FC9); inward recovers; zero-content failures as ledger gaps, no stub records (FC7); visited and depth guards; `.pst` and `-outlook` remedies; fault callback (FC29); `runFile` classification, archive-root probe, run-fatal volume errnos, unwritable set, local breaker, fault-driven checkpoint (FC12); `-outlook` export-skip gaps (FC28); legacy-placeholder re-class (FC27); R10's added sentences [ruling J7]; N9's skip encoder citing R1 [ruling J7] | MA-315, MA-316, MA-317, MA-318, MA-319, MA-320, MA-323 (legacy case), MA-324, MA-504 (L, pending) | S1a | — (OR8 ruled) | **adversarial pass** (untrusted PST parsing, exporter write paths) |
+| **S2b** — local containment | mbox/maildir/Evolution per-file and per-folder isolation; containment at **every** local open (FC2); lexical link judgment, recommended `os.Root` (FC3); Windows reparse classifier (FC1); `util.OpenRegularFile`; the per-input directory-link opt-in [ruling OR6]; raw-preserving stubs with bounded text and parser generation (FC25), expressed through g3's hook (FC26), **without the identity fold** [ruling J8]; R25 text, naming the opt-in; S47 | MA-318 (raw stubs, the collapse as a skip encoder citing R1), MA-321, MA-322, MA-503 (L, pending) | S1a, g3 S1 [ruling J5] | — (OR6 and OR8 ruled) | **adversarial pass** (R25 containment, Windows) |
+| **S2b-id** — the F33 identity fold [ruling J8] | `stubIdentityTerms` folds a digest of the raw bytes, so distinct unparseable messages stop collapsing; g3's MA-330 golden regenerated for panicking inputs only, with a README note; the skip encoder in MA-318 removed | MA-318 (the fold case) | S2b, g3 S1 | **ESC-1** (the owner accepts the identity drift) | **adversarial** addendum |
+| **SG** — shared Graph primitive [ruling OR9 = J4] | `StatusError{Code, GraphCode, Text}` (today's `Error()` text), `graph.Classify`, `MIMETo` (idle, overall and size caps; `$value`'s own header timeout ≥ the idle window, for capture too), nextLink guard: the repeat set and the page cap in every paging loop, and the host/path pin for the extraction design's loops; R29 and S52 land with this slice's catalog-first PR (MA-402 cites them) | MA-314 (its SG cases; the rest are skip encoders until S3 and SGc); the extraction design's MA-402 | — | — (OR9 ruled); **RR-6** (lenses 3, 6, 7 and 8 on these capture-side changes) before code | **adversarial pass** (network input), shared with the extraction design's E1, which keeps its own short note |
+| **SGc** — capture's nextLink pin [ruling J4] (formerly the extraction design's E1c) | the host/path pin with the extraction review's XC25 normalization in capture's `Folders` and `Messages`, a typed error naming the foreign host | MA-505 (the extraction design's MA-401b), MA-314's capture foreign-host case | SG | MA-443's nextLink-shape sub-case recorded (XC25's gate), unless the owner answers **ESC-7** first | short **adversarial** note (shipped capture path) |
+| **S3** — Graph isolation | `classifyFetch` (token-refresh auth, FC11; 403 mailbox-fatal [ruling OR7]), per-item gaps with no record, immutable-id locators, `-since` rule, `refresh-failed`, stub listing-mid only without a same-token record, parser-generation re-fetch, Graph legacy-stub adoption (FC27), sweep rules (FC4) with OR10's stricter rule [ruling OR10], folder-list isolation, rate/time breaker with known-poison exemption, control probe and run-level breaker, `Retry-After` clamp (FC10), footer condition; R17's added sentence [ruling J7] | MA-310, MA-311, MA-312, MA-313, MA-314 (its ledger cases), MA-501, MA-502 | S1a, SG | — (OR7 and OR8 ruled) | **adversarial pass** (network input, go-back sweep integrity) |
+| **GF17** — F17 in the shared Graph layer [ruling workspace Q15] | retry Graph 500/502/504 and budget `Retry-After` so throttle waits no longer count against the 60 s request deadline; this lifts the clamp's interim role and the extraction design's R-v condition | rows allocated at its catalog-first PR | S3 | — | **adversarial** addendum (network input) |
 | **S5** — in-process callers | desktop result card mapping (existing Archive now action named, schedule-aware wording, new count, items vs folders); Status & health gap lines without subjects until the dashboard read guard (F3/E0) lands; GUI headless notify text | MA-325/MA-326 desktop assertions | S1b, S2a, S2b, S3 | — | **friction review** of the whole feature: every §7 actor walked on the built tool |
 
 rev 1's **S4** (supersede and legacy) is **dissolved** [FC7]:
@@ -1909,7 +2054,7 @@ rev 1's **S4** (supersede and legacy) is **dissolved** [FC7]:
   consumer, with its own engine and `CopyOutcome`, and it never receives `ErrPartial`.
   - The shared surfaces are SG and `app.GapRemedy`.
   - SG lands before S3 and before the extraction design's E1, owned by whichever design lands
-    first (OR9).
+    first (OR9). **[ruling OR9 = J4]** This design owns it; E1 depends on SG, not on S3.
   - The breaker thresholds and the 404 class stay per consumer, each with a written
     justification (§4.8.1).
 - **g3 / mime-fidelity [FC26].** The overlap is **semantic**, not textual.
@@ -1921,6 +2066,8 @@ rev 1's **S4** (supersede and legacy) is **dissolved** [FC7]:
   - **Merge order.** g3's S1 lands before S2b. If it cannot, S2b carries the edit in today's
     `safeParseMessage`, and g3's MA-330 golden is regenerated for panicking inputs only. g3's
     MA-349 ("never a stub") and this design's MA-318 raw stub are reconciled in that merge.
+    **[ruling J5, J8]** The order is fixed: S1a → g3 S0 → g3 S1 → S2b, so the fallback is not
+    taken. The golden regeneration is the owner's (ESC-1), in S2b-id.
 - **g4 / recapture-integrity [FC5].** Rev 1 said "Nothing here depends on g4/N2". The text now
   reads:
   - S1a carries the KEEP guard (P15) itself.
@@ -1936,7 +2083,9 @@ rev 1's **S4** (supersede and legacy) is **dissolved** [FC7]:
 ## 11. Owner rulings (open; each blocks the named slice)
 
 Each open question of rev 1 is now an owner ruling, with the review's added facts. The review
-(`docs/review-fault-isolation-predesign.md`) does not impose any of them.
+(`docs/review-fault-isolation-predesign.md`) does not impose any of them. **All ten are
+RULED** in `docs/owner-rulings-2026-10-09.md` §3 (none escalated); each keeps its question
+for context, followed by its ruling.
 
 - **OR1 (was OQ1) — Last-run status for a partial run.** Blocks S1b. There are two options.
   - **The new value `"partial"`.** It is honest. It has two costs:
@@ -1949,10 +2098,17 @@ Each open question of rev 1 is now an owner ruling, with the review's added fact
     `status -json`.
 
   Until this is ruled, S1a writes `failed`.
+  **RULED (delegated-judgement): `"failed"` plus `partial: true`;** `JSONVersion` stays 2.
+  An older `status` then fails closed (RED) rather than showing GREEN, and no documented value
+  set widens.
 - **OR2 (was OQ7) — X1 amendment.** X1 is a **locked** contract in `docs/ux-contract.md`. Should
   `3` become the "partial" exit code for the capture verbs? The text is in §2.1: it is defined by
   the mechanism, cancel stays 0, and the copy export's partition differs. Blocks S1b. Until this
   is ruled, S1a exits 1 on a partial run.
+  **RULED (delegated-judgement): no amendment.** A partial capture run keeps exiting 1, and the
+  partial state travels in the flag, the summary, the sidecar and `status`. X1 is locked, and
+  its amendment is an owner act; exit 3 would also stop monitors keyed on exit 1 from alerting.
+  The owner may still amend X1 later. P9 and MA-325 read "exit 1 with the `partial` flag".
 - **OR3 (was OQ2) — Persistent known gaps.** Blocks S1b's sidecar and notification behaviour.
   An example is one permanently damaged PST node. There are two options:
   - **Honest-always.** Every run exits `3`, keeps `BACKUP-NEEDS-ATTENTION.txt`, and sends the
@@ -1963,10 +2119,15 @@ Each open question of rev 1 is now an owner ruling, with the review's added fact
   Either way the sidecar, the notification and the card lead with "new this run: K", and
   `last_run.gaps_new` is exposed [FC23(2)]. This ruling also decides whether not-attempted gaps
   are a note (the default) or a WARN. An acknowledge mechanism remains a separate design.
+  **RULED (delegated-judgement): honest-always,** with exit 1 under OR2. Each run that observes
+  a fillable or terminal gap is partial on every surface (exit 1, the sidecar kept, the `-job`
+  notification sent), and each leads with "new this run: K" and `last_run.gaps_new`.
+  Not-attempted gaps stay a note. Reporting known loss as a clean run would accept it.
 - **OR4 (was OQ3) — Self-closing "vanished" faults.** A Graph 404, or a maildir file removed
   mid-read, may be seen for the first time on a run. Is that run partial, or report-only unless
   the fault recurs? Recommendation: partial, because a one-shot "archive before departure" run
   must not claim completeness. Blocks S1b.
+  **RULED (delegated-recommended): partial.**
 - **OR5 (was OQ4) — Stuck threshold: the number and the unit.** Counting runs makes escalation
   depend on cadence and on clicks: hourly schedules exist, and so does a manual Archive now.
   - The review suggests: `Runs ≥ 3` AND `now − FirstRun ≥ max(72 h, two schedule periods)`,
@@ -1976,6 +2137,8 @@ Each open question of rev 1 is now an owner ruling, with the review's added fact
   - Feed into this ruling: 500 `ErrorMimeContentConversionFailed` is deterministic per item.
 
   Blocks S1a's stuck rule.
+  **RULED (delegated-recommended): the review's suggestion,** with the posture fixed at WARN,
+  never RED.
 - **OR6 (was OQ5) — Directory links in local stores.** Today they are followed. Blocks S2b.
   There are three options:
   - never follow (rev 1);
@@ -1985,21 +2148,35 @@ Each open question of rev 1 is now an owner ruling, with the review's added fact
   It also decides the migration for archives that capture through links today. Rev 1's remedy
   ("archive the real location as its own `-input`") mints a new token and re-exports every
   message into a second tree.
+  **RULED (delegated-judgement): not by default; an explicit per-input opt-in** (a flag, a GUI
+  option and a job-descriptor field, following X4/X5) keeps the input's token and follows its
+  directory links, guarded by a visited (dev, inode) set. File links out of the store and
+  special files stay refused even with the opt-in. An archive that captures through links today
+  gets a terminal gap whose remedy names the opt-in. R25's text names the opt-in.
 - **OR7 (was OQ6) — Graph 403 on `$value`.** Mailbox-fatal (recommended: a revoked grant then
   does not become thousands of gaps), or a per-item gap guarded only by the breaker? A failed
   token refresh is auth either way [FC11]. Blocks S3.
+  **RULED (delegated-recommended): mailbox-fatal.**
 - **OR8 (new) — Catalog id allocation (operator).** Five designs in flight propose an R22 and an
   S42, each with a different meaning: fault-isolation, extraction-workspace,
   recapture-integrity, local-confidentiality and mime-fidelity. The R and S ids must be
   allocated once, before any catalog-first edit. Blocks S1a and every later catalog edit.
+  **RULED (delegated-judgement) = J1:** R25, S46–S48, MA-310..329 plus MA-501..504.
 - **OR9 (new) — SG ownership (operator).** Which design owns the shared Graph primitive? And
   will the extraction design change its side? Its `StatusError` would gain `GraphCode`, and its
   404 class and breaker thresholds would be reconciled or justified. Blocks SG, and through it
   S3 and the extraction design's E1.
+  **RULED (delegated-judgement) = J4:** this design owns SG, a standalone slice before S3 and
+  before the extraction design's E1, with `StatusError{Code, GraphCode, Text}` keeping today's
+  `Error()` text and one `graph.Classify`; the 404 class and breaker thresholds stay per
+  consumer, each justified. Capture's host/path pin is step SGc, behind the extraction review's
+  XC25 gate (lifting it is ESC-7). RR-6 re-runs lenses 3, 6, 7 and 8 before SG code.
 - **OR10 (new, optional) — The P7 residual.** Accept the stated residual (the default), or
   exclude PhysID-less records from the sweep on any fault whose identity matched no record? The
   stricter choice defers gone-detection on pre-v6 archives while such a fault persists. Blocks
   nothing; the default applies unless the owner rules otherwise.
+  **RULED (delegated-judgement): the stricter rule.** The default would accept a known phantom
+  "gone" (R21, S37); gone-detection is deferred instead, and `status` names it.
 
 ## 12. Honesty of claims
 
@@ -2017,10 +2194,18 @@ Each open question of rev 1 is now an owner ruling, with the review's added fact
     Rebuilt stores (`-outlook`, `.ost`, no readable store-uid) get aggregate gaps and no
     per-item recovery. A no-Message-ID partial read leaves a second, partial record.
   - P7: there is a stated residual. A pre-v6, PhysID-less `mid:` record with mismatched listing
-    and parsed Message-IDs can get a phantom gone event (OR10).
+    and parsed Message-IDs can get a phantom gone event (OR10). **[ruling OR10]** Closed by the
+    stricter rule: such a record's gone-detection is deferred while the fault persists, never
+    wrong.
+  - P3's capture-side host pin: holds only from step SGc, behind the extraction review's XC25
+    gate; until then a foreign `nextLink` in capture's listings is an open gap, not accepted
+    [ruling J4].
   - P12: a static hostile store, not a same-user racer, and **not writable by another local
     user**. On Windows it rests on the FC1 classifier, and the cloud-placeholder case is
-    lab-pending.
+    lab-pending (MA-503). With an input's directory-link opt-in set, that input's directory
+    links are followed under the visited (dev, inode) set [ruling OR6].
+  - F33's collapse of distinct unparseable raw messages into one record stays until the owner
+    answers ESC-1, encoded by a skip encoder citing R1 in MA-318 [ruling J8].
   - `unparsed` is terminal **for one parser generation**.
   - The whole Graph error classification is proven against the fake server only. Real-tenant
     codes, and Exchange's maximum message size for the download cap, are lab-unverified.
