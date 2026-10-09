@@ -281,16 +281,20 @@ func htmlSpace(b []byte) bool {
 //     leave it: the in-body rules read `</br>` as a <br> start tag and let a
 //     `</p>` with no <p> open imply one, and both are breakout tags;
 //   - a block tag's word boundary is written after the pops it causes, so a
-//     tag that closes a hiding element (an SVG <style>) shows its boundary.
+//     tag that closes a hiding element (an SVG <style>) shows its boundary;
+//   - `</form>` takes the form off the stack and leaves what is above it open,
+//     and a misnested formatting end tag pops what the adoption agency pops
+//     (see detach), so foreign content above them stays or goes as in x/net.
 //
-// What it does not model — table insertion modes, implied end tags, `</form>`
-// (which x/net takes off the stack without closing what is above it), the
-// adoption agency's reparenting, <frameset> — mostly moves text or closes
-// ordinary elements. In contrived markup it can still change what is hidden:
-// a random differential against the tree walk finds words hidden only here
-// after `</form>` or a misnested formatting end tag (`<a><p><svg><style></a>`)
-// with foreign content open, around a <frameset>, and in table modes around
-// foreign content. Tracking stops at maxOpenElements open elements.
+// What it does not model — table insertion modes, implied end tags other than
+// `</form>`'s, the reconstruction of formatting elements, the adoption
+// agency's reparenting, <frameset> — mostly moves text or closes ordinary
+// elements. In contrived markup it can still change what is hidden: a random
+// differential against the tree walk finds words hidden only here around a
+// <frameset> and in table modes around foreign content. It also finds them
+// where x/net drops a <template> opened in an SVG or MathML integration point
+// and shows its text, which browsers keep inert. Tracking stops at
+// maxOpenElements open elements.
 const maxOpenElements = 1 << 20
 
 func tokenText(h string, scripting bool) string {
@@ -326,6 +330,7 @@ type openElem struct {
 	mtip    bool // MathML text integration point (mi, mo, mn, ms, mtext)
 	annXML  bool // MathML annotation-xml: an <svg> start tag inside follows HTML rules
 	runRoot bool // the lowest element of a contiguous run of foreign elements
+	gone    bool // taken off x/net's stack (see detach) but kept here as a placeholder
 }
 
 const (
@@ -350,7 +355,7 @@ type tokenWalker struct {
 	stack      []openElem
 	htmlPos    map[string][]int // per tag name, the stack indexes of open HTML elements
 	foreignPos map[string][]int // the same for SVG/MathML elements
-	specials   []int            // stack indexes of special elements
+	specials   []int            // stack indexes of special elements (a placeholder's may linger; see topSpecial)
 	scopes     []int            // stack indexes of default-scope boundaries
 	runs       []int            // stack indexes of foreign run roots
 	hidden     int              // open elements that hide their content
@@ -419,16 +424,27 @@ func (w *tokenWalker) push(e openElem) {
 }
 
 func (w *tokenWalker) pop() {
+	w.popOne()
+	// A placeholder never becomes the current node: x/net's stack has no such
+	// element, so the one below it is current.
+	for t := w.top(); t != nil && t.gone; t = w.top() {
+		w.popOne()
+	}
+}
+
+func (w *tokenWalker) popOne() {
 	i := len(w.stack) - 1
 	e := w.stack[i]
-	pos := w.htmlPos
-	if e.ns != nsHTML {
-		pos = w.foreignPos
+	if !e.gone {
+		pos := w.htmlPos
+		if e.ns != nsHTML {
+			pos = w.foreignPos
+		}
+		p := pos[e.name]
+		pos[e.name] = p[:len(p)-1]
 	}
-	p := pos[e.name]
-	pos[e.name] = p[:len(p)-1]
-	if e.special {
-		w.specials = w.specials[:len(w.specials)-1]
+	if n := len(w.specials); e.special && n > 0 && w.specials[n-1] == i {
+		w.specials = w.specials[:n-1]
 	}
 	if e.scope {
 		w.scopes = w.scopes[:len(w.scopes)-1]
@@ -440,6 +456,58 @@ func (w *tokenWalker) pop() {
 		w.hidden--
 	}
 	w.stack = w.stack[:i]
+}
+
+// detach takes the HTML element at stack index j off x/net's stack without
+// closing what is above it, as the parser does for `</form>` and for the
+// formatting element the adoption agency moves. j must be the last open
+// element of its name. The entry stays in w.stack as a placeholder (gone), so
+// the indexes above it keep their meaning, but it no longer counts as open,
+// special, or the current node. Its entry in w.specials (a form's) is dropped
+// lazily, by the readers, so a run of detaches costs no copying.
+func (w *tokenWalker) detach(j int) {
+	e := &w.stack[j]
+	p := w.htmlPos[e.name]
+	w.htmlPos[e.name] = p[:len(p)-1]
+	e.gone = true
+	if j == len(w.stack)-1 {
+		w.pop()
+	}
+}
+
+// topSpecial returns the stack index of the topmost special element still on
+// x/net's stack, or -1. A placeholder's entry it passes is dropped, once.
+func (w *tokenWalker) topSpecial() int {
+	for n := len(w.specials); n > 0; n = len(w.specials) {
+		if i := w.specials[n-1]; !w.stack[i].gone {
+			return i
+		}
+		w.specials = w.specials[:n-1]
+	}
+	return -1
+}
+
+// specialsAbove counts the special elements above stack index j, up to limit.
+// It drops the placeholders' entries it reads on the way, so each is read
+// once, and it reads at most limit live ones: the cost stays linear in the
+// input however the detaches and the queries interleave.
+func (w *tokenWalker) specialsAbove(j, limit int) int {
+	n := len(w.specials)
+	k, i, count := n, n-1, 0
+	for ; i >= 0 && w.specials[i] > j && count < limit; i-- {
+		if w.stack[w.specials[i]].gone {
+			continue
+		}
+		k--
+		w.specials[k] = w.specials[i]
+		count++
+	}
+	// [k, n) holds the live entries read, in order; [i+1, k) is free.
+	if k > i+1 {
+		copy(w.specials[i+1:], w.specials[k:n])
+		w.specials = w.specials[:i+1+n-k]
+	}
+	return count
 }
 
 // popTo pops the element at index i and everything above it.
@@ -701,18 +769,49 @@ func (w *tokenWalker) htmlEnd(name string) {
 		}
 		w.popInScope(j)
 	case "a", "b", "big", "code", "em", "font", "i", "nobr", "s", "small", "strike", "strong", "tt", "u":
-		// The adoption agency: with no special element above the formatting
-		// element it pops to it; with one, it reparents instead and leaves the
-		// elements above in place, which this model does by not popping.
+		// The adoption agency. Out of scope, the end tag is ignored. With no
+		// special element above the formatting element, it pops to it. With
+		// some, each pass of its outer loop (eight at most) reparents across
+		// the next one up; the pass that finds none above pops everything over
+		// the topmost, and the formatting element itself leaves the stack.
+		// With eight or more, the loop ends before that pop, and this model
+		// leaves the stack alone. Only the pops matter for what is hidden:
+		// the elements between are HTML, since any foreign content there
+		// would put an integration point, a scope boundary, in the way.
 		j := lastIndex(w.htmlPos[name])
 		if j < 0 {
 			w.popOther(name)
 			return
 		}
-		if lastIndex(w.scopes) > j || lastIndex(w.specials) > j {
+		if lastIndex(w.scopes) > j {
 			return
 		}
-		w.popTo(j)
+		switch above := w.specialsAbove(j, 8); {
+		case above == 0:
+			w.popTo(j)
+		case above < 8:
+			w.popTo(w.topSpecial() + 1)
+			w.detach(j)
+		}
+	case "form":
+		// x/net, with no <template> open: when the form is in scope, the
+		// implied end tags are popped and the form is taken off the stack;
+		// what is above it, foreign content included, stays open. Inside a
+		// template it pops to the form instead.
+		j := lastIndex(w.htmlPos["form"])
+		if j < 0 || lastIndex(w.scopes) > j {
+			return
+		}
+		if len(w.htmlPos["template"]) > 0 {
+			w.popTo(j)
+			return
+		}
+		for t := w.top(); t != nil && t.ns == nsHTML && impliedEnd[t.name]; t = w.top() {
+			name := t.name
+			w.pop()
+			w.blockSpace(name)
+		}
+		w.detach(j)
 	default:
 		if scopedEnd[name] {
 			w.popInScope(lastIndex(w.htmlPos[name]))
@@ -720,6 +819,12 @@ func (w *tokenWalker) htmlEnd(name string) {
 		}
 		w.popOther(name)
 	}
+}
+
+// impliedEnd names the elements x/net's generateImpliedEndTags pops.
+var impliedEnd = map[string]bool{
+	"dd": true, "dt": true, "li": true, "optgroup": true, "option": true, "p": true,
+	"rb": true, "rp": true, "rt": true, "rtc": true,
 }
 
 // popInScope pops to the element at j when it is in the default scope.
@@ -732,7 +837,7 @@ func (w *tokenWalker) popInScope(j int) {
 // popOther is x/net's inBodyEndTagOther: pop to the nearest element of that
 // name unless a special element is open above it.
 func (w *tokenWalker) popOther(name string) {
-	if j := lastIndex(w.htmlPos[name]); j >= 0 && lastIndex(w.specials) <= j {
+	if j := lastIndex(w.htmlPos[name]); j >= 0 && w.topSpecial() <= j {
 		w.popTo(j)
 	}
 }
@@ -774,7 +879,7 @@ var scopedEnd = map[string]bool{
 	"fieldset": true, "figcaption": true, "figure": true, "footer": true, "header": true,
 	"hgroup": true, "listing": true, "main": true, "menu": true, "nav": true, "ol": true,
 	"pre": true, "search": true, "section": true, "select": true, "summary": true, "ul": true,
-	"form": true, "p": true, "li": true, "dd": true, "dt": true, "applet": true, "marquee": true,
+	"p": true, "li": true, "dd": true, "dt": true, "applet": true, "marquee": true,
 	"object": true, "table": true, "tbody": true, "thead": true, "tfoot": true, "tr": true,
 	"td": true, "th": true, "caption": true, "colgroup": true,
 }

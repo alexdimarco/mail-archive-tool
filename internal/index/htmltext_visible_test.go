@@ -285,6 +285,37 @@ func TestBodyTextFallbackForDeepBodiesKeepsVisibleWords(t *testing.T) {
 			absent: []string{"svgdivcss", "focss", "outercss"},
 		},
 		{
+			// x/net takes the form off the stack at `</form>` and leaves the
+			// SVG or MathML above it open: the <title> after it is an SVG title
+			// (shown), the <style> a MathML element (shown) or an SVG style
+			// (hidden). The <p> the form's end tag closes keeps its boundary.
+			// Once the SVG above a removed form closes, the element below the
+			// form is current again: here a foreignObject, so its end tag
+			// closes it and the <title> after it is an SVG title. And a
+			// removed form no longer stops an end tag below it: `</span>`
+			// closes the span, and the SVG style above it, through the form.
+			name: "`</form>` leaves the foreign content above it open, deep",
+			html: deepWrap(depth, `<form><svg></form><title>formsvgtitle</title><style>formsvgcss</style></svg><br><form><math></form><style>formmathstyle</style></math><br><form><p>formp</form>formafter<br>`+
+				`<svg><foreignObject><form><svg></form></svg></foreignObject><title>formgonetitle</title></svg><br>`+
+				`<span><form><svg><style></form></span>formspanword`),
+			want:   []string{"formsvgtitle", "formmathstyle", "formp", "formafter", "formgonetitle", "formspanword"},
+			absent: []string{"formsvgcss", "formpformafter"},
+		},
+		{
+			// The adoption agency: a misnested `</a>` with special elements
+			// above the <a> pops everything over the topmost of them, an SVG
+			// style included, when there are fewer than eight; with eight it
+			// stops before that pop and the style still hides (positive twin).
+			// A form removed by `</form>` is not one of them.
+			name: "a misnested formatting end tag closes the SVG above its block, deep",
+			html: deepWrap(depth, `<a><p><svg><style></a>aaaword</p>`) + `<p>aaashown</p>` +
+				`<a>` + strings.Repeat("<div>", 7) + `<svg><style></a>aaasevenword</style></svg>` + strings.Repeat("</div>", 7) +
+				`<a><form>` + strings.Repeat("<div>", 7) + `<svg><style></form></a>aaaformseven</style></svg>` + strings.Repeat("</div>", 7) +
+				`<a>` + strings.Repeat("<div>", 8) + `<svg><style></a>aaaeighthidden</style></svg>`,
+			want:   []string{"aaaword", "aaashown", "aaasevenword", "aaaformseven"},
+			absent: []string{"aaaeighthidden"},
+		},
+		{
 			name:   "positive twin: HTML style, script and title stay out, deep",
 			html:   `<html><head><title>dtitleword</title><style>dstyleword</style></head><body>` + deepWrap(depth, `<p>dbodyword</p><style>dbodystyle</style><script>dbodyscript</script>`) + `</body></html>`,
 			want:   []string{"dbodyword"},
