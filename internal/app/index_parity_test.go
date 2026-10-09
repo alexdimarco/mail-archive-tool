@@ -1,0 +1,87 @@
+package app
+
+import (
+	"io"
+	"log"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"mail-archive-tool/internal/model"
+)
+
+// covers: MA-492, R8, R13, S33
+// The live index (BodyText on the original mail) and `reindex -rebuild`
+// (BodyText on the archived page's body div) read the same words. RV-3: the
+// SVG style/comment trick (adv2-scripts/mkhide.py) hid the words after it from
+// both, though the page shows them. RV-4: a mail without `</head>`
+// (adv2-scripts/mknohead.py) had no body words in the live index, but did after
+// a rebuild. Each word is now found once, on the live index and after a
+// rebuild, at ordinary depth and nested past the tree parser's cap (a page
+// shown as source, read by the fallback extractor on both sides). Positive
+// twins: an ordinary mail's title, style and script words are found on neither
+// side, nor are a noscript's tag and attribute words, while its text is; a
+// noscript in the mail's explicit <head> (which the page keeps in its own head,
+// out of the rebuild's reach) is found on neither side.
+func TestLiveAndRebuiltIndexReadTheSameVisibleWords(t *testing.T) {
+	out := tmpDir(t)
+	date := time.Date(2025, 4, 2, 12, 30, 0, 0, time.UTC)
+	n := 0
+	mk := func(subject, body string) rbMsg {
+		n++
+		return rbMsg{[]string{"Inbox"}, &model.Message{
+			Subject: subject, SenderName: "Parity Sender", SenderEmail: "parity@example.com",
+			InternetMessageID: "<parity-" + strconv.Itoa(n) + "@example.com>",
+			Received:          date.Add(time.Duration(n) * time.Minute),
+			HTMLBody:          body,
+		}}
+	}
+	deep := func(inner string) string {
+		return strings.Repeat("<div>", 600) + inner + strings.Repeat("</div>", 600)
+	}
+	buildRebuildArchive(t, out, []rbMsg{
+		mk("quarterly update", `<html><body><p>Hello team</p><svg width="0" height="0"><style><!--</style><script>--></style></svg><p>please wire funds to account kestreleleven today</p></body></html>`),
+		mk("skeptic hide", `<p>Hello skepvisible</p><svg width=0 height=0><style><!--</style><script>--></style></svg><p>please send to account skephidden today</p>`),
+		mk("nohead ordinary", `<html><head><meta name="viewport" content="width=device-width"><body><p>hello kestreltwelve</p></body></html>`),
+		mk("withhead ordinary", `<html><head><meta name="viewport" content="width=device-width"></head><body><p>hello kestrelthirteen</p></body></html>`),
+		mk("nohead title", `<head><title>t</title><body><p>hello skepnoheadtitleword</p>`),
+		mk("ordinary twin", `<html><head><title>parititleword</title><style>.x{} paristyleword</style><script>pariscriptword()</script></head>`+
+			`<body><p>paribodyword</p><style>paribodystyle</style><script>paribodyscript</script>`+
+			`<noscript><p>parinoscriptword</p><img alt="parinsaltword"></noscript></body></html>`),
+		mk("head noscript", `<html><head><noscript><p>parheadnsword</p></noscript></head><body><p>parheadnsbody</p></body></html>`),
+		mk("deep hide", `<html><body>`+deep(`<p>Hello</p><svg><style><!--</style><script>--></style></svg><p>account deepkestreleleven today</p>`)+`</body></html>`),
+		mk("deep nohead", `<html><head><meta name="viewport" content="x"><body>`+deep(`<p>hello deepkestreltwelve</p>`)+`</body></html>`),
+	})
+
+	want := map[string]int{
+		"kestreleleven": 1, "wire": 1, "skephidden": 1, "skepvisible": 1,
+		"kestreltwelve": 1, "kestrelthirteen": 1, "skepnoheadtitleword": 1,
+		"paribodyword": 1, "parinoscriptword": 1, "parheadnsbody": 1, "parheadnsword": 0,
+		"parititleword": 0, "paristyleword": 0, "pariscriptword": 0, "paribodystyle": 0, "paribodyscript": 0, "parinsaltword": 0,
+		"deepkestreleleven": 1, "deepkestreltwelve": 1,
+	}
+	live := map[string]int{}
+	for q := range want {
+		live[q] = indexTotal(t, out, q)
+	}
+
+	deleteSearchDB(t, out)
+	rep, err := Rebuild(out, log.New(io.Discard, "", 0))
+	if err != nil {
+		t.Fatalf("Rebuild: %v", err)
+	}
+	if rep.Rebuilt != 9 {
+		t.Fatalf("rebuild report = %+v, want Rebuilt=9 (every page re-derived)", rep)
+	}
+	for q, w := range want {
+		rebuilt := indexTotal(t, out, q)
+		if live[q] != w || rebuilt != w {
+			t.Errorf("search %q: live=%d rebuilt=%d, want %d on both", q, live[q], rebuilt, w)
+		}
+	}
+	r := firstResult(t, out, "kestreltwelve")
+	if r.Subject != "nohead ordinary" || !strings.Contains(r.Snippet, "kestreltwelve") {
+		t.Errorf("rebuilt nohead record: subject=%q snippet=%q", r.Subject, r.Snippet)
+	}
+}
