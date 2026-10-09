@@ -256,6 +256,9 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	}
 	lastCheckpoint := 0
 	var lockLost error
+	// saveErr is the most recent manifest save's outcome; a run whose last save
+	// failed kept no progress and fails (F53), exactly as Run does.
+	var saveErr error
 	checkpoint := func() {
 		// Gate on messages PROCESSED (written + skipped-as-already-archived), not
 		// just Exported: a migration or steady-state run is nearly all skips
@@ -272,7 +275,7 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 			lockLost = err
 			return
 		}
-		commit(hist, idx, manifest, logger)
+		saveErr = commit(hist, idx, manifest, logger)
 	}
 
 	// Deleted Items / Junk Email are excluded by default; the flags opt in (T7).
@@ -290,9 +293,12 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 			// message files already written (INT-CC-2/R5).
 			return result, lockLost
 		}
-		commit(hist, idx, manifest, logger)
+		saveErr = commit(hist, idx, manifest, logger)
 		if errors.Is(runErr, context.Canceled) {
 			finish(opts.Out, &result, exp, manifest, idx, indexErrors, true, logger)
+			if saveErr != nil {
+				return result, manifestSaveFailure(mpath, saveErr)
+			}
 			return result, context.Canceled
 		}
 		if runErr != nil {
@@ -320,13 +326,19 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 			logger.Printf("warning: history run footer: %v", werr)
 		}
 	}
-	commit(hist, idx, manifest, logger)
+	saveErr = commit(hist, idx, manifest, logger)
 	if idx != nil && opts.Pages && !allFailed && pagesNeeded(opts.Out, exp.Stats.Exported) {
 		if pErr := pages.Generate(opts.Out, idx, logger); pErr != nil {
 			logger.Printf("warning: folder pages: %v", pErr)
 		}
 	}
 	finish(opts.Out, &result, exp, manifest, idx, indexErrors, !allFailed, logger)
+	if saveErr != nil {
+		if failures > 0 && firstErr != nil {
+			return result, fmt.Errorf("%d mailbox(es) failed; first error: %w; and %w", failures, firstErr, manifestSaveFailure(mpath, saveErr))
+		}
+		return result, manifestSaveFailure(mpath, saveErr)
+	}
 	if failures > 0 {
 		// Carry the first per-mailbox error (including any AADSTS code) into the
 		// returned error so it lands in the last-run record and `status` can fire

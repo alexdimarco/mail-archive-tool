@@ -210,6 +210,10 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	}
 	lastCheckpoint := 0
 	var lockLost error
+	// saveErr is the outcome of the most recent manifest save: a failed
+	// mid-walk checkpoint is healed by a later save that succeeds, but a run
+	// whose LAST save failed has kept no progress and must fail (F53).
+	var saveErr error
 	checkpoint := func(stats export.Stats) {
 		if stats.Exported-lastCheckpoint < effectiveEvery(floor, manifest.Len()) {
 			return
@@ -224,7 +228,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		}
 		// A one-shot local import keeps no go-back timeline (its dedup is
 		// folder-scoped, §3.6), so there is no history writer to sync here.
-		commit(nil, idx, manifest, logger)
+		saveErr = commit(nil, idx, manifest, logger)
 	}
 
 	result = Result{Files: len(files)}
@@ -245,10 +249,14 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 			// (INT-CC-2/R5.)
 			return result, lockLost
 		}
-		commit(nil, idx, manifest, logger)
+		saveErr = commit(nil, idx, manifest, logger)
 
 		if errors.Is(runErr, context.Canceled) {
 			finish(opts.Out, &result, exp, manifest, idx, indexErrors, true, logger)
+			if saveErr != nil {
+				// "progress was kept" would be false: record it failed.
+				return result, manifestSaveFailure(mpath, saveErr)
+			}
 			return result, context.Canceled
 		}
 		if runErr != nil {
@@ -267,10 +275,25 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	}
 
 	finish(opts.Out, &result, exp, manifest, idx, indexErrors, true, logger)
+	if saveErr != nil {
+		if failures > 0 {
+			return result, fmt.Errorf("%d file(s) failed; %w", failures, manifestSaveFailure(mpath, saveErr))
+		}
+		return result, manifestSaveFailure(mpath, saveErr)
+	}
 	if failures > 0 {
 		return result, fmt.Errorf("%d file(s) failed", failures)
 	}
 	return result, nil
+}
+
+// manifestSaveFailure is the run error when the run's final manifest save
+// failed (F53): the manifest is the run's whole persisted result, so nothing
+// this run did is recorded and the next run repeats it. It names the file and
+// the remedy; recordRun finalizes the last-run record failed with it, so
+// `status` reports RED instead of a green "ok".
+func manifestSaveFailure(mpath string, err error) error {
+	return fmt.Errorf("could not save the manifest %s (%w): this run's progress was not recorded and the next run will repeat it — make sure the manifest file and its folder are writable (on Windows, that no other program holds the manifest open), then run again", mpath, err)
 }
 
 // defaultCheckpointEvery aligns with the index's own batch size.
@@ -338,8 +361,9 @@ func ostAdvisory(goos string, paths []string, classicOutlook bool) string {
 // history is a superset of the manifest and the index is a superset too, and the
 // next run re-observes the tail idempotently (a duplicate history event folds
 // away; idx.Add replaces by key). A move is therefore never lost. hist and idx
-// may be nil (a one-shot local run writes no timeline; indexing may be off).
-func commit(hist *state.HistoryWriter, idx *index.Index, manifest *state.Manifest, logger *log.Logger) {
+// may be nil (a one-shot local run writes no timeline; indexing may be off). It
+// returns the manifest save's error, so a run whose final save failed fails.
+func commit(hist *state.HistoryWriter, idx *index.Index, manifest *state.Manifest, logger *log.Logger) error {
 	var syncHistory, flushIndex, saveManifest func() error
 	if hist != nil {
 		syncHistory = hist.Sync
@@ -350,16 +374,18 @@ func commit(hist *state.HistoryWriter, idx *index.Index, manifest *state.Manifes
 	if manifest != nil {
 		saveManifest = manifest.Save
 	}
-	commitInOrder(syncHistory, flushIndex, saveManifest, logger)
+	return commitInOrder(syncHistory, flushIndex, saveManifest, logger)
 }
 
 // commitInOrder is the single definition of the crash-safe durability order
 // (history → index → manifest, §3.5); commit wires the real stores to it and a
 // test drives it with recording doubles to prove the order holds. A nil step is
-// skipped. Each error is logged and does not abort the later steps: a save is
-// best-effort, and the invariant is only about ORDER (the manifest is written
-// last), never that every step succeeds.
-func commitInOrder(syncHistory, flushIndex, saveManifest func() error, logger *log.Logger) {
+// skipped. Each error is logged and does not abort the later steps: the
+// invariant here is only about ORDER (the manifest is written last), never that
+// every step succeeds. The manifest save's error is also returned: a mid-walk
+// checkpoint may fail and be healed by a later save, but the caller fails a run
+// whose last save failed (F53).
+func commitInOrder(syncHistory, flushIndex, saveManifest func() error, logger *log.Logger) error {
 	if syncHistory != nil {
 		if err := syncHistory(); err != nil {
 			logger.Printf("warning: history sync: %v", err)
@@ -373,8 +399,10 @@ func commitInOrder(syncHistory, flushIndex, saveManifest func() error, logger *l
 	if saveManifest != nil {
 		if err := saveManifest(); err != nil {
 			logger.Printf("warning: could not save manifest: %v", err)
+			return err
 		}
 	}
+	return nil
 }
 
 // beginRun writes the "running" last-run record and returns it for recordRun.
