@@ -857,14 +857,16 @@ func runSchedule(args []string) error {
 			return err
 		}
 		if !removed {
-			switch {
-			case *name != "" && out != "":
-				// The archive may well have another schedule; say which name is absent.
-				fmt.Printf("no schedule %q was installed for %s — nothing to remove\n", n, out)
-			case out != "":
-				fmt.Printf("no schedule was installed for %s — nothing to remove\n", out)
-			default:
+			if out == "" {
 				fmt.Printf("no schedule was installed for %s — nothing to remove\n", n)
+				return nil
+			}
+			// The archive may well have another schedule (its backup, or a verify
+			// under another name): say which entry is absent, never that the
+			// archive has none.
+			fmt.Printf("no schedule %q was installed for %s — nothing to remove\n", n, out)
+			if rj.verb == "verify" && *name == "" {
+				fmt.Println(verifyRemoveHint(out))
 			}
 			return nil
 		}
@@ -1178,6 +1180,21 @@ func flagWasSet(fs *flag.FlagSet, name string) bool {
 		}
 	})
 	return set
+}
+
+// verifyRemoveHint is printed when `-remove -- verify -out X` finds no entry
+// under the archive's derived "-verify" name: the verify may still be running
+// under the -name it was installed with (the README once passed a fixed one),
+// which only that name removes — the same command with -name added. When the
+// archive's descriptor records a verify itself (a release from before a verify
+// got its own entry name wrote it so), the hint names that entry. It is a hint,
+// not an automatic removal: a shared name may by now hold another archive's
+// verify.
+func verifyRemoveHint(out string) string {
+	if d, err := schedule.ReadDescriptor(out); err == nil && len(d.Job) > 0 && d.Job[0] == "verify" {
+		return fmt.Sprintf("The archive's descriptor records a verify schedule named %q (written before a verify got its own entry name); if it is this archive's verify, run this command again with -name %s before -- to remove it.", d.Name, d.Name)
+	}
+	return "If this archive's verify was installed with -name NAME, run this command again with -name NAME before -- to remove it."
 }
 
 // deviceTokenStore is where a device sign-in lives besides the -token-cache file:

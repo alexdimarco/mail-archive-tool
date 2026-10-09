@@ -933,8 +933,11 @@ verify, so the two coexist and neither overwrites the other — don't pass a fix
 `-name`: one shared name across archives would make a second archive's verify
 take over the first's entry (with cron, on Linux/BSD, `schedule` refuses that;
 on macOS and Windows it cannot tell). Remove it with the same command,
-`-install` swapped for `-remove`. If you point the verify at the **same cadence
-and time** the archive's backup already uses, `schedule`
+`-install` swapped for `-remove`. A verify installed under a `-name` of its own
+(an earlier version of this README passed `-name mailarchive-verify`) is removed
+the same way with that `-name` added before `--`; without it, `-remove` says
+which entry it did not find and points at that. If you point the verify at the
+**same cadence and time** the archive's backup already uses, `schedule`
 refuses (the two would hold the lock against each other on every overlap); pick a
 different `-at` or `-interval`, as above.
 

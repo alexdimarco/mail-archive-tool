@@ -128,3 +128,94 @@ func TestScheduleRemoveTargetsTheNamedEntry(t *testing.T) {
 	}
 	expect("remove -out X", false, true, "")
 }
+
+// covers: MA-454, R14, R18, S14, S28
+// A verify removal that finds nothing under the archive's derived
+// "<hash>-verify" name never claims the archive has no schedule: its backup is
+// installed here, and its verify still runs under the -name it was installed
+// with (the old README passed a fixed -name). So `-remove -- verify -out X`
+// exits 0, says "nothing to remove" naming the absent entry, hints at removing
+// the verify by the -name it was installed with, and removes nothing: the
+// backup, its descriptor and the custom-named verify all survive. The positive
+// twin is that hint followed, the same command with `-name <custom>` added: it
+// removes the verify and keeps the backup and its descriptor. When the
+// descriptor itself records a verify (written by a release from before a
+// verify kept its own entry name), the hint names that entry, and still
+// nothing is removed.
+func TestScheduleRemoveVerifyNotFoundNamesTheEntry(t *testing.T) {
+	sandboxScheduler(t)
+	out := t.TempDir()
+	backup := schedule.DefaultNameFor(out)
+	derived := backup + "-verify"
+	const custom = "weekly-verify-ma454"
+	descPath := filepath.Join(out, schedule.DescriptorName)
+
+	installCustomVerify := func() {
+		t.Helper()
+		args := []string{"schedule", "-interval", "weekly", "-at", "05:00", "-name", custom, "-install", "--", "verify", "-out", out}
+		if code, _, stderr := runCLIOut(t, args...); code != 0 {
+			t.Fatalf("%v exited %d: %s", args, code, stderr)
+		}
+	}
+	if code, _, stderr := runCLIOut(t, "schedule", "-install", "--", "-out", out, "-auto"); code != 0 {
+		t.Fatalf("backup install exited %d: %s", code, stderr)
+	}
+	installCustomVerify()
+	if schedule.Query(backup) != schedule.Installed || schedule.Query(custom) != schedule.Installed || schedule.Query(derived) == schedule.Installed {
+		t.Fatalf("fixture: backup=%v custom verify=%v derived=%v, want the backup and the custom-named verify only",
+			schedule.Query(backup), schedule.Query(custom), schedule.Query(derived))
+	}
+
+	// notFound runs `-remove -- verify -out X` and checks it removed nothing,
+	// named the absent derived entry, and carried the hint (with want in it).
+	notFound := func(step, want string) {
+		t.Helper()
+		before, err := os.ReadFile(descPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		code, stdout, stderr := runCLIOut(t, "schedule", "-remove", "--", "verify", "-out", out)
+		if code != 0 {
+			t.Fatalf("%s: exit %d: %s%s", step, code, stdout, stderr)
+		}
+		for _, w := range []string{"nothing to remove", derived, "-name", want} {
+			if !strings.Contains(stdout, w) {
+				t.Errorf("%s: the not-found report lacks %q:\n%s", step, w, stdout)
+			}
+		}
+		for _, bad := range []string{"no schedule was installed for", "Removed"} {
+			if strings.Contains(stdout, bad) {
+				t.Errorf("%s: the report says %q while this archive's schedules are installed:\n%s", step, bad, stdout)
+			}
+		}
+		if schedule.Query(backup) != schedule.Installed || schedule.Query(custom) != schedule.Installed {
+			t.Errorf("%s: a not-found verify removal removed something: backup=%v custom verify=%v", step, schedule.Query(backup), schedule.Query(custom))
+		}
+		if after, err := os.ReadFile(descPath); err != nil || string(after) != string(before) {
+			t.Errorf("%s: a not-found verify removal changed the descriptor (%v)", step, err)
+		}
+	}
+
+	notFound("verify installed under a custom -name", "-name NAME")
+
+	// Positive twin: the hint, followed, removes that verify and only it.
+	code, stdout, stderr := runCLIOut(t, "schedule", "-name", custom, "-remove", "--", "verify", "-out", out)
+	if code != 0 || !strings.Contains(stdout, custom) || !strings.Contains(stdout, "Removed scheduled verify") {
+		t.Errorf("remove -name <custom> -- verify -out X: exit %d, want it to remove %q:\n%s%s", code, custom, stdout, stderr)
+	}
+	if schedule.Query(custom) == schedule.Installed || schedule.Query(backup) != schedule.Installed {
+		t.Errorf("remove -name <custom> -- verify: custom verify=%v backup=%v, want only the verify gone", schedule.Query(custom), schedule.Query(backup))
+	}
+	if d, err := schedule.ReadDescriptor(out); err != nil || d.Name != backup {
+		t.Errorf("remove -name <custom> -- verify: the backup's descriptor was not kept (%+v, %v)", d, err)
+	}
+
+	// A descriptor that records the verify itself, as an older release wrote it.
+	installCustomVerify()
+	legacy := schedule.Spec{Name: custom, Interval: schedule.Weekly, At: "05:00", Exe: "/usr/local/bin/mailarchive",
+		Args: []string{"verify", "-out", out, "-unattended"}, Out: out}
+	if err := schedule.WriteDescriptor(out, schedule.DescribeSpec(legacy)); err != nil {
+		t.Fatal(err)
+	}
+	notFound("descriptor records a verify", "-name "+custom)
+}
