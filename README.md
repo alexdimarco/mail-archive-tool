@@ -921,17 +921,20 @@ a headless nightly check leaves a plain-language notice on disk.
 `verify` reads every byte of every archived file and holds the archive's
 exclusive lock for its whole run, so a scheduled backup that fires meanwhile
 refuses and records nothing. **Run it outside the backup window** — or schedule
-it in its own slot, away from the backup, with an explicit `-name` so it does
-not collide with the backup schedule (both derive their name from `-out`):
+it in its own slot, away from the backup:
 
 ```sh
-mailarchive schedule -interval weekly -at 05:00 -name mailarchive-verify -install -- verify -out ./archive
+mailarchive schedule -interval weekly -at 05:00 -install -- verify -out ./archive
 ```
 
 A scheduled verify automatically gets its own entry name (`mailarchive-<hash of
--out>-verify`), distinct from the backup's, so the two coexist and neither
-overwrites the other — you don't need to pass `-name`. If you point the verify at
-the **same cadence and time** the archive's backup already uses, `schedule`
+-out>-verify`), distinct from the backup's and from every other archive's
+verify, so the two coexist and neither overwrites the other — don't pass a fixed
+`-name`: one shared name across archives would make a second archive's verify
+take over the first's entry (with cron, on Linux/BSD, `schedule` refuses that;
+on macOS and Windows it cannot tell). Remove it with the same command,
+`-install` swapped for `-remove`. If you point the verify at the **same cadence
+and time** the archive's backup already uses, `schedule`
 refuses (the two would hold the lock against each other on every overlap); pick a
 different `-at` or `-interval`, as above.
 

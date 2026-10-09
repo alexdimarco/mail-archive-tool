@@ -535,15 +535,14 @@ func Install(s Spec) error {
 	}
 	// A scheduled verify at the backup's own time is refused; at any other time it
 	// is a distinct entry that coexists with the archive's backup schedule, so it
-	// bypasses the one-schedule-per-archive collision guard and never overwrites
-	// the backup's descriptor (friction #4).
+	// bypasses the one-schedule-per-archive descriptor guard and never overwrites
+	// the backup's descriptor (friction #4) — but, like any entry, it may not take
+	// over a name another archive's entry already holds.
 	if _, err := VerifyScheduleNote(s); err != nil {
 		return err
 	}
-	if !isVerifyJob(s) {
-		if err := refuseCollision(s); err != nil {
-			return err
-		}
+	if err := refuseCollision(s, runtime.GOOS); err != nil {
+		return err
 	}
 	var err error
 	switch runtime.GOOS {
@@ -576,13 +575,16 @@ func Install(s Spec) error {
 // name: an archive that already records a schedule under another name, or a
 // name that already backs up a different archive (cron: read from the existing
 // block's -out), is refused with the remedy named — never silently replaced.
-func refuseCollision(s Spec) error {
-	if s.Out != "" {
+// The descriptor guard is for the archive's backup only (a verify is a second,
+// distinctly named entry that never writes the descriptor); the name guard
+// applies to every entry, a verify included. goos selects the host scheduler.
+func refuseCollision(s Spec, goos string) error {
+	if s.Out != "" && !isVerifyJob(s) {
 		if d, err := ReadDescriptor(s.Out); err == nil && d.Name != s.Name {
 			return fmt.Errorf("archive %s already has a schedule named %q: remove it first (`mailarchive schedule -out %q -remove`) or re-install with -name %s", s.Out, d.Name, s.Out, d.Name)
 		}
 	}
-	if runtime.GOOS == "linux" || runtime.GOOS == "freebsd" || runtime.GOOS == "openbsd" || runtime.GOOS == "netbsd" {
+	if goos == "linux" || goos == "freebsd" || goos == "openbsd" || goos == "netbsd" {
 		if other := cronBlockOut(readCrontab(), CronMarker(s.Name)); other != "" && s.Out != "" && other != s.Out {
 			return fmt.Errorf("a schedule named %q already backs up %s: choose another -name, or remove that schedule first", s.Name, other)
 		}
