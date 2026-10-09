@@ -129,6 +129,14 @@ func (d *dashboard) saveSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	s := d.cfg.settings()
 	s.Out = strings.TrimSpace(in.Out)
+	// The archive is copied, synced and browsed; MailArchive's own settings and
+	// sign-in must not travel with it (design-local-confidentiality P10).
+	if s.Out != "" {
+		if err := d.cfg.settingsOverlap(s.Out); err != nil {
+			writeJSONStatus(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
+			return
+		}
+	}
 	s.KeepRaw, s.IncludeDeleted, s.IncludeJunk = in.KeepRaw, in.IncludeDeleted, in.IncludeJunk
 	if err := SaveSettings(d.cfg.SettingsPath, s); err != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
@@ -162,6 +170,14 @@ func (d *dashboard) clearSignin(w http.ResponseWriter, r *http.Request) {
 
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	json.NewEncoder(w).Encode(v)
+}
+
+// writeJSONStatus is writeJSON with a status other than 200; the headers are
+// set before the status is written, or they would not be sent.
+func writeJSONStatus(w http.ResponseWriter, code int, v any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(v)
 }
 
