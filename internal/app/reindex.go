@@ -203,14 +203,22 @@ func Reindex(out string, logger *log.Logger) (kept, pruned int, err error) {
 // re-derived from the archived page (searchable text, not the original wire
 // bytes). Unrecovered counts the individual core fields (subject/from/date) a
 // from-HTML record could not recover. Pruned counts records dropped because
-// their file was missing on disk or failed the path gate.
+// their file was missing on disk or failed the path gate. Lost counts rows
+// whose Add succeeded but whose batch SQLite abandoned afterwards (F49): a
+// rebuild with Lost > 0 fails and swaps nothing in, so its other counts then
+// describe the attempt, not a live index.
 type RebuildReport struct {
 	Rebuilt     int // records indexed (FromEML + FromHTML)
 	FromEML     int
 	FromHTML    int
 	Unrecovered int
 	Pruned      int
+	Lost        int
 }
+
+// openRebuildIndex opens the fresh index Rebuild writes into; a var so a test
+// can inject a fault into that index.
+var openRebuildIndex = index.Open
 
 // rebuildMaxFileBytes caps how large a per-record file the rebuild reads into
 // memory to parse, so a pathological or hostile multi-GB .eml/.html cannot OOM
@@ -278,7 +286,7 @@ func Rebuild(out string, logger *log.Logger) (RebuildReport, error) {
 	idxPath := filepath.Join(out, "search.db")
 	tmpPath := idxPath + ".rebuild"
 	removeDBFiles(tmpPath) // clear any leftover temp from an interrupted rebuild
-	idx, err := index.Open(tmpPath)
+	idx, err := openRebuildIndex(tmpPath)
 	if err != nil {
 		return rep, fmt.Errorf("open rebuild index at %s: %w", tmpPath, err)
 	}
@@ -295,6 +303,7 @@ func Rebuild(out string, logger *log.Logger) (RebuildReport, error) {
 	}
 	sort.Strings(keys) // deterministic order for logs and pruning
 
+	var lostCause error // the Add error with which SQLite abandoned a batch (F49)
 	for _, key := range keys {
 		rec := records[key]
 		segs, ok := validRelPath(rec.Path)
@@ -335,7 +344,11 @@ func Rebuild(out string, logger *log.Logger) (RebuildReport, error) {
 
 		store := segs[0]
 		folderPath := append([]string{}, segs[1:len(segs)-1]...)
+		lostBefore := idx.Lost()
 		if addErr := idx.Add(store, folderPath, m, rec.Path, key); addErr != nil {
+			if lostCause == nil && idx.Lost() > lostBefore {
+				lostCause = addErr
+			}
 			// A single record's insert failing must not tear the whole rebuild
 			// (PC4). Count it pruned and continue.
 			logger.Printf("rebuild: could not index %s: %v; skipped", rec.Path, addErr)
@@ -355,6 +368,20 @@ func Rebuild(out string, logger *log.Logger) (RebuildReport, error) {
 		idx.Close()
 		removeDBFiles(tmpPath)
 		return rep, fmt.Errorf("flush rebuild index: %w", err)
+	}
+	// A batch SQLite abandoned mid-rebuild (RAISE(ROLLBACK), a full disk, an
+	// I/O error) took rows whose Add had succeeded with it (F49). Renaming this
+	// index over search.db would leave them unsearchable while reporting them
+	// rebuilt, so it is discarded before anything is replaced: search.db, the
+	// folder pages and the manifest stay exactly as they were.
+	if rep.Lost = idx.Lost(); rep.Lost > 0 {
+		idx.Close()
+		removeDBFiles(tmpPath)
+		cause := "see the log"
+		if lostCause != nil {
+			cause = lostCause.Error()
+		}
+		return rep, fmt.Errorf("rebuild: %d message(s) were lost from the new search index when SQLite abandoned a batch (%s); search.db, the folder pages and the manifest were left unchanged — fix the cause (often a full disk), then run `mailarchive reindex -rebuild -out %q` again", rep.Lost, cause, out)
 	}
 	// Regenerate folder + root pages FROM THE TEMP INDEX (still open) so the
 	// pages match exactly what the rebuild indexed (G1, PC5).
