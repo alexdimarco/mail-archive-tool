@@ -813,20 +813,33 @@ func runSchedule(args []string) error {
 		return fmt.Errorf("could not determine my own executable path: %w", err)
 	}
 
-	// Removal keys off the name, found via -name or the archive's descriptor.
+	// Removal keys off the name, found via -name, the job's own entry name, or
+	// the archive's descriptor.
 	if *remove {
 		out := abspath(*eo.out)
-		if out == "" && len(jobArgs) > 0 {
+		var rj job
+		if len(jobArgs) > 0 {
 			if j, jerr := parseJob(jobArgs); jerr == nil {
-				out = j.out
+				rj = j
+				if out == "" {
+					out = j.out
+				}
 			}
 		}
 		n := *name
 		if n == "" && out != "" {
-			if d, derr := schedule.ReadDescriptor(out); derr == nil {
-				n = d.Name
-			} else {
-				n = schedule.DefaultNameFor(out)
+			switch {
+			case rj.verb == "verify" && rj.out == out:
+				// A verify job's entry is the archive's distinct "-verify" name,
+				// exactly as -install derived it; the descriptor records the
+				// archive's BACKUP schedule and must not be what this removes.
+				n = defaultScheduleName(rj)
+			default:
+				if d, derr := schedule.ReadDescriptor(out); derr == nil {
+					n = d.Name
+				} else {
+					n = schedule.DefaultNameFor(out)
+				}
 			}
 		}
 		if n == "" {
@@ -844,14 +857,22 @@ func runSchedule(args []string) error {
 			return err
 		}
 		if !removed {
-			target := out
-			if target == "" {
-				target = n
+			switch {
+			case *name != "" && out != "":
+				// The archive may well have another schedule; say which name is absent.
+				fmt.Printf("no schedule %q was installed for %s — nothing to remove\n", n, out)
+			case out != "":
+				fmt.Printf("no schedule was installed for %s — nothing to remove\n", out)
+			default:
+				fmt.Printf("no schedule was installed for %s — nothing to remove\n", n)
 			}
-			fmt.Printf("no schedule was installed for %s — nothing to remove\n", target)
 			return nil
 		}
-		fmt.Printf("Removed scheduled backup %q.\n", n)
+		kind := "backup"
+		if rj.verb == "verify" {
+			kind = "verify"
+		}
+		fmt.Printf("Removed scheduled %s %q.\n", kind, n)
 		return nil
 	}
 
@@ -988,6 +1009,7 @@ Usage:
   mailarchive schedule [-interval ...] -install -- graph -out DIR -tenant T -client-id ID \
       -mailbox u@dom -client-secret-file FILE                     apply a Graph job
   mailarchive schedule -out DIR -remove                            uninstall this archive's schedule
+  mailarchive schedule -remove -- verify -out DIR                  uninstall this archive's scheduled verify
   mailarchive schedule -name NAME -remove                          uninstall by name
 
 The job after -- may be an export (no verb), graph, reindex, or verify job; it

@@ -610,7 +610,10 @@ func cronBlockOut(crontab, marker string) string {
 }
 
 // Remove uninstalls a previously installed schedule by name, then its wrapper,
-// its XML definition and descriptor.
+// its XML definition and — when the archive's descriptor records THIS schedule —
+// the descriptor. A descriptor naming another schedule (the archive's backup,
+// when a verify entry is removed) still describes a running schedule that
+// `status` watches, so it is kept.
 func Remove(s Spec) error {
 	var err error
 	switch runtime.GOOS {
@@ -627,28 +630,31 @@ func Remove(s Spec) error {
 	if err != nil {
 		return err
 	}
-	if s.Out != "" {
+	if descriptorRecords(s.Out, s.Name) {
 		return RemoveDescriptor(s.Out)
 	}
 	return nil
 }
 
-// RemoveIfInstalled removes a schedule only when it is actually present — a
-// descriptor recorded in the archive, or the named entry in the host scheduler
-// — and returns removed=false without touching the scheduler otherwise. So a
-// `-remove` for an archive that never had a schedule neither claims to have
-// removed one nor rewrites (materializing an empty) crontab (friction #9).
+// descriptorRecords reports whether the archive at out has a readable
+// descriptor that records the schedule called name.
+func descriptorRecords(out, name string) bool {
+	if out == "" {
+		return false
+	}
+	d, err := ReadDescriptor(out)
+	return err == nil && d.Name == name
+}
+
+// RemoveIfInstalled removes a schedule only when it is actually present — the
+// archive's descriptor records this name, or the named entry is in the host
+// scheduler — and returns removed=false without touching the scheduler
+// otherwise. So a `-remove` for an archive that never had a schedule neither
+// claims to have removed one nor rewrites (materializing an empty) crontab
+// (friction #9), and a name that was never installed (a typo, another
+// archive's entry) does not count the archive's own descriptor as its presence.
 func RemoveIfInstalled(s Spec) (removed bool, err error) {
-	present := false
-	if s.Out != "" {
-		if _, derr := ReadDescriptor(s.Out); derr == nil {
-			present = true
-		}
-	}
-	if !present && Query(s.Name) == Installed {
-		present = true
-	}
-	if !present {
+	if !descriptorRecords(s.Out, s.Name) && Query(s.Name) != Installed {
 		return false, nil
 	}
 	return true, Remove(s)

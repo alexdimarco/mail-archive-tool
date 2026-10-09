@@ -802,6 +802,8 @@ mailarchive schedule -interval weekly -install -- reindex -out ./export
 # Remove it later (by the archive, or by name):
 mailarchive schedule -out ./export -remove
 mailarchive schedule -name weekly-mail -remove
+# A scheduled verify is its own entry: swap -install for -remove to take out just it.
+mailarchive schedule -remove -- verify -out ./export
 ```
 
 | Flag | Description |
@@ -809,7 +811,7 @@ mailarchive schedule -name weekly-mail -remove
 | `-interval` | `daily` (default), `weekly`, or `hourly`. |
 | `-at` | Time of day `HH:MM` (default `02:00`; `hourly` uses only the minute). |
 | `-name` | Scheduler entry name (default `mailarchive-<hash of the archive path>`: one schedule per archive). Letters, digits, `.`, `_`, `-`; at most 40 characters. |
-| `-install` / `-remove` | Apply / uninstall (default: just print the entry). `-remove` finds the entry from `-out` or `-name`. |
+| `-install` / `-remove` | Apply / uninstall (default: just print the entry). `-remove` finds the entry from `-name`, from a `verify` job after `--` (its own `-verify` entry), or from `-out` (the archive's backup schedule), and removes only that entry — the archive's descriptor goes only with the schedule it records. |
 | job flags | Either the export flags (`-out`, `-input`, `-auto`, `-mode`, `-copy-first`, `-since`, `-outlook`, `-raw`, …) on the schedule command, **or** the whole job after `--`. Not both. |
 
 What is checked *when you schedule*, not at 02:00: the job's flags parse
