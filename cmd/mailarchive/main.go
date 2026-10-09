@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -339,7 +340,13 @@ func runServe(args []string) error {
 	fs := flag.NewFlagSet("mailarchive serve", flag.ContinueOnError)
 	out := fs.String("out", ".", "export directory to serve (contains search.db)")
 	addr := fs.String("addr", "127.0.0.1:8099", "address to listen on")
+	var allow stringSlice
+	fs.Var(&allow, "allow-host", "with a non-loopback -addr: also accept requests addressed to this host name (repeatable); this machine's own IP addresses are accepted already")
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	allowHosts, err := allowHostNames(allow)
+	if err != nil {
 		return err
 	}
 
@@ -351,21 +358,25 @@ func runServe(args []string) error {
 	defer ix.Close()
 
 	count, _ := ix.Count()
-	handler := server.New(*out, ix)
 
 	if !server.IsLoopback(*addr) {
 		fmt.Fprintf(os.Stderr, "WARNING: serve has no authentication. Binding %s exposes every archived message to anyone who can reach this machine on that port; use 127.0.0.1 (the default) unless you mean it.\n", *addr)
+	} else if len(allowHosts) > 0 {
+		fmt.Fprintf(os.Stderr, "note: -allow-host has no effect with a loopback -addr (%s): only 127.0.0.1, localhost and [::1] are accepted there\n", *addr)
+	}
+	ln, err := net.Listen("tcp", *addr)
+	if err != nil {
+		return err
 	}
 	fmt.Printf("Serving %d indexed messages from %s\n", count, *out)
-	fmt.Printf("Search UI:  http://%s/\n", *addr)
+	fmt.Printf("Search UI:  %s\n", servedURL(*addr, ln.Addr()))
 	fmt.Println("Press Ctrl-C to stop.")
 	srv := &http.Server{
-		Addr:              *addr,
-		Handler:           handler,
+		Handler:           serveHandler(*out, ix, ln.Addr(), allowHosts),
 		ReadHeaderTimeout: 10 * time.Second, // a stalled client cannot hold a connection open forever
 		IdleTimeout:       2 * time.Minute,
 	}
-	return srv.ListenAndServe()
+	return srv.Serve(ln)
 }
 
 // runSetup launches the Microsoft 365 setup wizard: a loopback-only local web page
@@ -395,17 +406,20 @@ func runSetup(args []string) error {
 	if err != nil {
 		return err
 	}
+	ln, err := net.Listen("tcp", *addr)
+	if err != nil {
+		return err
+	}
 	srv := &http.Server{
-		Addr:              *addr,
-		Handler:           server.SetupHandler(cfgPath, store),
+		Handler:           setupHandler(cfgPath, store, ln.Addr()),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 	}
-	fmt.Printf("Microsoft 365 setup — open this page in a browser:\n  http://%s/\n", *addr)
+	fmt.Printf("Microsoft 365 setup — open this page in a browser:\n  %s\n", servedURL(*addr, ln.Addr()))
 	fmt.Printf("Config:        %s\n", cfgPath)
 	fmt.Printf("Secret store:  %s\n", store.Name())
 	fmt.Println("Press Ctrl-C to stop.")
-	return srv.ListenAndServe()
+	return srv.Serve(ln)
 }
 
 var markTags = regexp.MustCompile(`</?mark>`)

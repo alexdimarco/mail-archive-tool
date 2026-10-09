@@ -23,6 +23,7 @@ import (
 
 	"mail-archive-tool/internal/desktop"
 	"mail-archive-tool/internal/graphconfig"
+	"mail-archive-tool/internal/localweb"
 )
 
 func main() {
@@ -106,8 +107,9 @@ func run(args []string) error {
 		return fmt.Errorf("archive reader could not bind %s: %w", *readerAddr, err)
 	}
 
-	dash := &http.Server{Handler: desktop.DashboardHandler(dcfg), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute}
-	reader := &http.Server{Handler: desktop.ReaderHandler(dcfg), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute}
+	dash := &http.Server{Handler: dashboardHandler(dcfg, ln.Addr()), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute}
+	rm := desktop.ReaderHandler(dcfg)
+	reader := &http.Server{Handler: readerHandler(rm, readerLn.Addr()), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -139,11 +141,23 @@ func run(args []string) error {
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = reader.Shutdown(shutCtx)
-		if c, ok := reader.Handler.(io.Closer); ok {
+		if c, ok := rm.(io.Closer); ok {
 			_ = c.Close() // release the reader's open index handle on shutdown
 		}
 		return dash.Shutdown(shutCtx)
 	}
+}
+
+// dashboardHandler is the dashboard as this binary serves it on the listener at,
+// and readerHandler the embedded archive reader rm: each behind the local-surface
+// guard (design-local-confidentiality §4.C1, P6), built in one place so the
+// structural test (MA-378) probes exactly what the binary serves.
+func dashboardHandler(dcfg desktop.Config, at net.Addr) http.Handler {
+	return localweb.Wrap(localweb.Surface{Name: "dashboard", Listener: at}, desktop.DashboardHandler(dcfg))
+}
+
+func readerHandler(rm http.Handler, at net.Addr) http.Handler {
+	return localweb.Wrap(localweb.Surface{Name: "reader", Listener: at}, rm)
 }
 
 // isAddrInUse reports whether a net.Listen error is "address already in use" —

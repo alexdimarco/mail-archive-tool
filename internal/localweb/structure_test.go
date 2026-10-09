@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -100,6 +101,131 @@ func isSel(e ast.Expr, pkg, name string) bool {
 	}
 	id, ok := s.X.(*ast.Ident)
 	return ok && id.Name == pkg && s.Sel.Name == name
+}
+
+// pkgFunc is a package-level function and the name its file gives localweb.
+type pkgFunc struct {
+	decl     *ast.FuncDecl
+	localweb string
+}
+
+// guardedExpr reports whether e builds its handler with localweb.Wrap: e is a
+// localweb.Wrap(...) call, or a call to a package-level function of the same
+// package every one of whose returns is (followed a few levels deep).
+func guardedExpr(e ast.Expr, lw string, funcs map[string]pkgFunc, depth int) bool {
+	call, ok := e.(*ast.CallExpr)
+	if !ok || depth > 4 {
+		return false
+	}
+	if isSel(call.Fun, lw, "Wrap") {
+		return true
+	}
+	id, ok := call.Fun.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	fn, ok := funcs[id.Name]
+	if !ok || fn.decl.Body == nil {
+		return false
+	}
+	returns := 0
+	all := true
+	ast.Inspect(fn.decl.Body, func(n ast.Node) bool {
+		switch r := n.(type) {
+		case *ast.FuncLit:
+			return false // a closure's returns are not the function's
+		case *ast.ReturnStmt:
+			returns++
+			if len(r.Results) == 0 || !guardedExpr(r.Results[0], fn.localweb, funcs, depth+1) {
+				all = false
+			}
+		}
+		return true
+	})
+	return returns > 0 && all
+}
+
+// covers: MA-378, R23, R19
+// Every handler a production binary serves is built by localweb.Wrap [CC15]:
+// each http.Server literal and Handler assignment in cmd/, and each
+// http.Serve/ServeTLS/ListenAndServe/ListenAndServeTLS call there, is given
+// localweb.Wrap(...) or a call to a package function whose every return is one.
+// A server with no Handler would serve the DefaultServeMux, so it fails too.
+func TestEveryServedHandlerIsGuarded(t *testing.T) {
+	root := moduleRoot(t)
+	files := assure.Reached(t, productionFiles(t, root, "cmd"), "production Go files under cmd/")
+	funcs := map[string]map[string]pkgFunc{} // package dir → function name → declaration
+	for _, sf := range files {
+		if funcs[sf.dir] == nil {
+			funcs[sf.dir] = map[string]pkgFunc{}
+		}
+		for _, d := range sf.file.Decls {
+			if fd, ok := d.(*ast.FuncDecl); ok && fd.Recv == nil {
+				funcs[sf.dir][fd.Name.Name] = pkgFunc{decl: fd, localweb: importName(sf.file, "mail-archive-tool/internal/localweb")}
+			}
+		}
+	}
+	serveArg := map[string]int{"Serve": 1, "ServeTLS": 1, "ListenAndServe": 1, "ListenAndServeTLS": 3}
+	servers := 0
+	var bad []string
+	for _, sf := range files {
+		httpName := importName(sf.file, "net/http")
+		if httpName == "" {
+			continue
+		}
+		lw := importName(sf.file, "mail-archive-tool/internal/localweb")
+		at := func(n ast.Node) string { return sf.rel + ":" + strconv.Itoa(sf.fset.Position(n.Pos()).Line) }
+		check := func(n ast.Node, e ast.Expr, what string) {
+			if !guardedExpr(e, lw, funcs[sf.dir], 0) {
+				bad = append(bad, at(n)+": "+what+" is given "+types.ExprString(e)+", not a localweb.Wrap handler")
+			}
+		}
+		ast.Inspect(sf.file, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.CompositeLit:
+				if !isSel(x.Type, httpName, "Server") {
+					return true
+				}
+				servers++
+				var handler ast.Expr
+				for _, el := range x.Elts {
+					if kv, ok := el.(*ast.KeyValueExpr); ok {
+						if k, ok := kv.Key.(*ast.Ident); ok && k.Name == "Handler" {
+							handler = kv.Value
+						}
+					}
+				}
+				if handler == nil {
+					bad = append(bad, at(x)+": an http.Server with no Handler serves the DefaultServeMux")
+				} else {
+					check(x, handler, "http.Server{Handler: ...}")
+				}
+			case *ast.AssignStmt:
+				for i, lhs := range x.Lhs {
+					if sel, ok := lhs.(*ast.SelectorExpr); ok && sel.Sel.Name == "Handler" && i < len(x.Rhs) {
+						check(x, x.Rhs[i], types.ExprString(lhs))
+					}
+				}
+			case *ast.CallExpr:
+				for name, arg := range serveArg {
+					if isSel(x.Fun, httpName, name) {
+						servers++
+						if len(x.Args) <= arg {
+							bad = append(bad, at(x)+": http."+name+" without a handler serves the DefaultServeMux")
+						} else {
+							check(x, x.Args[arg], "http."+name)
+						}
+					}
+				}
+			}
+			return true
+		})
+	}
+	assure.Reached(t, servers, "HTTP servers the binaries start")
+	sort.Strings(bad)
+	if len(bad) > 0 {
+		t.Errorf("binaries serve handlers the local-surface guard does not wrap:\n  %s", strings.Join(bad, "\n  "))
+	}
 }
 
 // covers: MA-378, R23, R19

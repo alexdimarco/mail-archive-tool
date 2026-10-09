@@ -105,6 +105,21 @@ func hostName(host string) (string, bool) {
 	return name, true
 }
 
+// ExtraHost normalizes a host name or IP literal for Surface.ExtraHosts — lower
+// case, an IPv6 literal bracketed as a Host header carries it — and reports false
+// for anything a Host header's name cannot be: empty, with a port, userinfo, a
+// path, an IPv6 zone or a trailing dot.
+func ExtraHost(name string) (string, bool) {
+	h := strings.ToLower(strings.TrimSpace(name))
+	if ip := net.ParseIP(strings.TrimSuffix(strings.TrimPrefix(h, "["), "]")); ip != nil && ip.To4() == nil {
+		h = "[" + ip.String() + "]"
+	}
+	if n, ok := hostName(h + ":1"); !ok || n != h {
+		return "", false
+	}
+	return h, true
+}
+
 func validPort(p string) bool {
 	if p == "" || len(p) > 5 {
 		return false
