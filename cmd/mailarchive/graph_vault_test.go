@@ -13,6 +13,22 @@ import (
 	"mail-archive-tool/internal/graphconfig"
 )
 
+// standInVault puts a real account-keyed store, kept in a temp dir, in
+// deviceTokenStore's place for the rest of the test, so every device path in
+// this process (the schedule-time check, the run) reads it instead of the OS
+// vault: never the developer's or the CI runner's Credential Manager. It
+// returns the stand-in's store for tenant and clientID, empty.
+func standInVault(t *testing.T, tenant, clientID string) graph.TokenStore {
+	t.Helper()
+	dir := t.TempDir()
+	orig := deviceTokenStore
+	t.Cleanup(func() { deviceTokenStore = orig })
+	deviceTokenStore = func(tenant, clientID string) graph.TokenStore {
+		return graphconfig.NewTokenStore(graphconfig.NewFileSecretStore(dir), tenant, clientID)
+	}
+	return deviceTokenStore(tenant, clientID)
+}
+
 // covers: MA-453, R14, R12, S28, S20
 // On Windows a device sign-in is saved to the OS vault (Credential Manager) and
 // the -token-cache file is never written, so `schedule` must validate a device
@@ -24,13 +40,7 @@ import (
 // sits at -token-cache (the run would fail from the empty vault), and the check
 // writes nothing to the vault or the file.
 func TestScheduleDeviceJobChecksTheVault(t *testing.T) {
-	vaultDir := t.TempDir()
-	orig := deviceTokenStore
-	t.Cleanup(func() { deviceTokenStore = orig })
-	deviceTokenStore = func(tenant, clientID string) graph.TokenStore {
-		return graphconfig.NewTokenStore(graphconfig.NewFileSecretStore(vaultDir), tenant, clientID)
-	}
-	vault := deviceTokenStore("contoso.com", "APPID")
+	vault := standInVault(t, "contoso.com", "APPID")
 	primed := []byte(`{"upn":"a@contoso.com","token":{"refresh_token":"RT1"}}`)
 
 	out := t.TempDir()

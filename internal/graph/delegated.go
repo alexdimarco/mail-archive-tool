@@ -132,7 +132,8 @@ func (c *Client) Me(ctx context.Context) (string, error) {
 // same cfg loads from: cfg.TokenStore (the OS vault — on Windows the CLI keeps
 // the sign-in there and never writes the TokenCachePath file) when set,
 // otherwise the file at cfg.TokenCachePath. So `schedule` accepts a device job
-// exactly when the scheduled run will find its sign-in.
+// exactly when the scheduled run will find its sign-in. Every refusal names
+// where the check looked and the sign-in remedy, whatever stopped the read.
 func CheckSignIn(cfg Config) error {
 	where := "at " + cfg.TokenCachePath
 	if cfg.TokenStore != nil {
@@ -143,7 +144,11 @@ func CheckSignIn(cfg Config) error {
 		if errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("no saved sign-in %s: run `mailarchive graph -auth device …` once interactively (as the account this schedule will run as) to sign in before scheduling", where)
 		}
-		return err
+		// Any other failure — a vault this session cannot open (Credential
+		// Manager outside an interactive logon), a file readable by others, a
+		// sign-in that does not parse — keeps its cause, with that cause's own
+		// remedy, inside the same where-and-how-to-sign-in refusal.
+		return fmt.Errorf("cannot read the saved sign-in %s (%w): resolve that, then sign in with `mailarchive graph -auth device …` once interactively (as the account this schedule will run as) before scheduling", where, err)
 	}
 	if tc.Token == nil || strings.TrimSpace(tc.Token.RefreshToken) == "" {
 		return fmt.Errorf("the saved sign-in %s carries no refresh token — sign in again with `mailarchive graph -auth device …` before scheduling", where)
