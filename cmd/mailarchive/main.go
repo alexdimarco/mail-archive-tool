@@ -45,6 +45,7 @@ import (
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/server"
 	"mail-archive-tool/internal/source"
+	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/thunderbird"
 	"mail-archive-tool/internal/util"
 )
@@ -1015,6 +1016,12 @@ Flags:
 	}
 }
 
+// graphFake points runGraph at a fake Microsoft 365 — its Graph, token and
+// device-code endpoints — and keeps a sign-in out of the OS vault. Only tests
+// set it, to run `graph` in-process with no network; no flag or environment
+// variable reaches it. Empty, runGraph talks to Microsoft.
+var graphFake struct{ base, token, deviceAuth string }
+
 // runGraph archives mailboxes server-side via Microsoft Graph (app-only). The
 // app client secret comes from an environment variable, never the command line,
 // so it can't leak into shell history or the process list.
@@ -1065,6 +1072,20 @@ func runGraph(args []string) (err error) {
 	gopts := app.GraphOptions{
 		Tenant: *o.tenant, ClientID: *o.clientID, Mailboxes: mailboxes,
 		IncludeDeleted: *o.includeDeleted, IncludeJunk: *o.includeJunk, Unattended: *o.unattended,
+		BaseURL: graphFake.base, TokenURL: graphFake.token, DeviceAuthURL: graphFake.deviceAuth,
+	}
+	// A credential file inside -out travels with every copy and sync of the
+	// archive (design-local-confidentiality P10). Run by hand, graph refuses it
+	// before anything is created or fetched. Unattended — every scheduled job
+	// carries -unattended — it warns, records the warning for `status`, and
+	// captures: refusing at run time would silently stop an installed backup.
+	var setupWarnings []state.RunWarning
+	credentialPlaced := func(problem error) error {
+		if !*o.unattended {
+			return problem
+		}
+		setupWarnings = append(setupWarnings, state.RunWarning{Code: "credential_in_archive", Message: problem.Error()})
+		return nil
 	}
 	switch authMode {
 	case "app":
@@ -1074,6 +1095,11 @@ func runGraph(args []string) (err error) {
 		var secret string
 		switch {
 		case *o.secretFile != "":
+			if credentialInArchive(*o.secretFile, *o.out) {
+				if err := credentialPlaced(secretFileInArchive(*o.secretFile, *o.out)); err != nil {
+					return err
+				}
+			}
 			if secret, err = readSecret(*o.secretFile); err != nil {
 				return err
 			}
@@ -1102,16 +1128,26 @@ func runGraph(args []string) (err error) {
 			return errors.New("device auth signs in as ONE user and archives that mailbox — pass at most one -mailbox (your own address), or none")
 		}
 		cache := strings.TrimSpace(*o.tokenCache)
-		if cache == "" {
+		isDefault := cache == ""
+		if isDefault {
 			if cache, err = defaultTokenCachePath(*o.tenant, *o.clientID, mailboxes); err != nil {
+				return err
+			}
+		}
+		if credentialInArchive(cache, *o.out) {
+			def, _ := defaultTokenCachePath(*o.tenant, *o.clientID, mailboxes)
+			if err := credentialPlaced(tokenCacheInArchive(cache, *o.out, def, isDefault, *o.unattended)); err != nil {
 				return err
 			}
 		}
 		gopts.Auth = "device"
 		gopts.TokenCachePath = cache
 		// On Windows the sign-in token lives in Credential Manager (vault); nil
-		// elsewhere → the 0600 file cache (design-mailarchive-desktop P4).
-		gopts.TokenStore = graphconfig.DefaultTokenStore(*o.tenant, *o.clientID)
+		// elsewhere → the 0600 file cache (design-mailarchive-desktop P4). A fake
+		// Microsoft 365 never gets the vault.
+		if graphFake.base == "" {
+			gopts.TokenStore = graphconfig.DefaultTokenStore(*o.tenant, *o.clientID)
+		}
 	}
 
 	mode, err := parseMode(*o.mode)
@@ -1139,7 +1175,10 @@ func runGraph(args []string) (err error) {
 		}
 	}()
 
-	opts := app.Options{Out: *o.out, Mode: mode, Since: since, Index: *o.index, Pages: *o.pages, KeepRaw: *o.keepRaw}
+	for _, w := range setupWarnings {
+		logger.Printf("warning: %s", w.Message)
+	}
+	opts := app.Options{Out: *o.out, Mode: mode, Since: since, Index: *o.index, Pages: *o.pages, KeepRaw: *o.keepRaw, Warnings: setupWarnings}
 	if authMode == "device" {
 		logger.Printf("Signing in to tenant %s via Microsoft Graph device flow (mode=%s)", *o.tenant, *o.mode)
 	} else {

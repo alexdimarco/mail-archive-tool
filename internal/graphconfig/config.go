@@ -32,15 +32,27 @@ type Config struct {
 	Mailbox    string `json:"mailbox,omitempty"`
 }
 
-// DefaultConfigPath is where the wizard writes and `graph` reads the config by
-// default: under the OS config dir (never inside an archive -out, which may be a
-// synced folder).
-func DefaultConfigPath() (string, error) {
+// DefaultConfigDir is the folder MailArchive keeps its own settings and sign-in
+// in by default — the Graph config, the desktop settings, the file token cache —
+// under the OS config dir. The credential checks of design-local-confidentiality
+// P10 compare archive locations against it.
+func DefaultConfigDir() (string, error) {
 	dir, err := os.UserConfigDir()
 	if err != nil {
 		return "", fmt.Errorf("cannot determine the OS config directory: %w", err)
 	}
-	return filepath.Join(dir, "mailarchive", "graph-config.json"), nil
+	return filepath.Join(dir, "mailarchive"), nil
+}
+
+// DefaultConfigPath is where the wizard writes and `graph` reads the config by
+// default: under the OS config dir (never inside an archive -out, which may be a
+// synced folder).
+func DefaultConfigPath() (string, error) {
+	dir, err := DefaultConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "graph-config.json"), nil
 }
 
 // DefaultTokenCachePath is the device sign-in token's file location (the
