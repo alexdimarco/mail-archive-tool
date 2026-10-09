@@ -7,7 +7,9 @@ import (
 	"time"
 
 	xhtml "golang.org/x/net/html"
+	"golang.org/x/net/html/atom"
 
+	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/model"
 )
 
@@ -21,11 +23,25 @@ import (
 // the renderer additionally tags those elements with `data-mailarchive-field`
 // going forward, which this reader prefers when present. Whatever cannot be
 // recovered is left empty and counted, never fatal.
+//
+// Two page layouts are on disk. v0.3.0 onward render the mail into the tool's
+// own document: <body> holds the header div, then the body div, and every mail
+// element has had the tool's reserved class tokens and data-mailarchive-*
+// attributes stripped, so the first header div directly in <body> is the
+// renderer's. v0.1.1–v0.2.3 stripped nothing, and for a mail that was a full
+// HTML document kept the mail's own document with the header injected right
+// after its first `<body ...>` tag; there the header is anchored by those bytes
+// (legacyHeaderSpan), never by document order (RV-1).
 
 // htmlHeaderLayout mirrors export.timeLayout — fmtTime's leading stamp, which
 // carries the message's ORIGINAL offset. It is duplicated here (the export
 // const is unexported) so the reader parses exactly what the renderer wrote.
 const htmlHeaderLayout = "Mon, 02 Jan 2006 15:04:05 -0700"
+
+// htmlHeaderLegacyLayout is the Date stamp v0.1.1–v0.2.3 wrote
+// (d.Format("Mon, 02 Jan 2006 15:04:05 MST")): the zone's abbreviation, which
+// is always "UTC" (those releases converted every time to UTC first).
+const htmlHeaderLegacyLayout = "Mon, 02 Jan 2006 15:04:05 MST"
 
 // reHeaderUTC matches fmtTime's parenthetical UTC instant "(YYYY-MM-DD HH:MM
 // UTC)", appended whenever the offset is not UTC. The design recovers the date
@@ -33,107 +49,247 @@ const htmlHeaderLayout = "Mon, 02 Jan 2006 15:04:05 -0700"
 // fallback for a UTC time, which carries no parenthetical.
 var reHeaderUTC = regexp.MustCompile(`\((\d{4}-\d{2}-\d{2} \d{2}:\d{2}) UTC\)`)
 
+// reLegacyBodyOpen is v0.1.1–v0.2.3's reBodyOpen: the header went in right
+// after the FIRST match in the mail's document (or the template's own <body>).
+var reLegacyBodyOpen = regexp.MustCompile(`(?i)<body[^>]*>`)
+
+// reLegacyHeader matches, anchored, what those releases wrote right after that
+// match: "\n" and renderHeader's exact output, every value html-escaped (so no
+// '<' inside), with no data-mailarchive-field markers and no nav.
+var reLegacyHeader = regexp.MustCompile(`^\n(<div class="mailarchive-header"><div class="mailarchive-subject">[^<]*</div><dl>(?:<dt>[^<]*</dt><dd>[^<]*</dd>)*</dl></div>)`)
+
 // readArchivedHTML parses an exported page's bytes and recovers a message's
 // index fields (subject, sender, recipients, date, body text). It returns the
 // recovered message and the number of CORE fields (subject, from, date) that
 // could not be recovered — the honesty count the rebuild summary reports (PC5).
 // Attachment names are NOT read here: the rebuild reads them from the sibling
 // zip's central directory (PC3). A parse that finds no header leaves the three
-// core fields empty and counts all three; the body is still recovered when a
-// `.mailarchive-body` element is present.
+// core fields empty and counts all three; the body is still recovered (see
+// readArchivedTree).
 func readArchivedHTML(data []byte) (*model.Message, int) {
-	root, err := xhtml.Parse(strings.NewReader(string(data)))
+	root, err := xhtml.Parse(bytes.NewReader(data))
 	if err == nil {
-		return readArchivedTree(root)
+		return readArchivedTree(data, root)
 	}
 	// The parser refuses trees nested past its cap (x/net: 512 open elements),
 	// which a browser renders and an archived mail body can reach. The tool's
 	// own head and header are shallow, so split the page at the renderer's
 	// body div: read the header fields from the shallow part, and hand the body
 	// bytes to the indexer as they are (its text extraction is a tokenizer pass
-	// with no depth limit).
-	if prefix, body, ok := splitAtBodyDiv(data); ok {
-		if root, perr := xhtml.Parse(strings.NewReader(prefix + `<div class="mailarchive-body"></div></body></html>`)); perr == nil {
-			m, unrecovered := readArchivedTree(root)
-			m.HTMLBody = body
-			return m, unrecovered
-		}
+	// with no depth limit). A page v0.1.1–v0.2.3 wrote for a full-document mail
+	// has no body div: split it right after its anchored header (RV-7). The
+	// body is what the shallow part holds of it (on an old page, the mail's
+	// content the parser put ahead of the header; on a current one, nothing:
+	// the part ends at the body div's start tag), then the bytes after the split.
+	if root, body, ok := splitAtLegacyHeader(data); ok {
+		m, unrecovered := readArchivedTree(data, root)
+		m.HTMLBody += body
+		return m, unrecovered
+	}
+	if root, body, ok := splitAtBodyDiv(data); ok {
+		m, unrecovered := readArchivedTree(data, root)
+		m.HTMLBody += body
+		return m, unrecovered
 	}
 	// Unparseable bytes: nothing recovered. The record is still indexed with
 	// empty fields (never dropped), and all three core fields are counted.
 	return &model.Message{}, 3
 }
 
-// splitAtBodyDiv tokenizes an exported page (no depth limit) and returns the
-// bytes before the renderer's `.mailarchive-body` div and the bytes after its
-// start tag. It anchors exactly as readArchivedTree does: the header is the
-// first <div class="mailarchive-header"> directly inside <body>, and the body
-// div is the next element after the header's matching end tag. Mail-supplied
-// head content (a <style>) is raw text to the tokenizer and cannot shadow
-// either; anything else returns ok=false.
-func splitAtBodyDiv(data []byte) (prefix, body string, ok bool) {
-	z := xhtml.NewTokenizer(bytes.NewReader(data))
-	off := 0
-	inBody, headerDepth, headerDone := false, 0, false
-	for {
-		tt := z.Next()
-		if tt == xhtml.ErrorToken {
-			return "", "", false // EOF or a tokenizer error before the body div
-		}
-		raw := len(z.Raw())
-		tok := z.Token()
-		isDiv := tok.Data == "div"
-		switch {
-		case !inBody:
-			if tt == xhtml.StartTagToken && tok.Data == "body" {
-				inBody = true
-			}
-		case headerDone:
-			if tt == xhtml.TextToken && strings.TrimSpace(tok.Data) == "" {
-				break
-			}
-			if tt == xhtml.StartTagToken && isDiv && tokenHasClass(tok, "mailarchive-body") {
-				return string(data[:off]), string(data[off+raw:]), true
-			}
-			return "", "", false
-		case headerDepth == 0:
-			if tt == xhtml.TextToken && strings.TrimSpace(tok.Data) == "" {
-				break
-			}
-			if tt == xhtml.StartTagToken && isDiv && tokenHasClass(tok, "mailarchive-header") {
-				headerDepth = 1
-				break
-			}
-			return "", "", false
-		default:
-			if isDiv && tt == xhtml.StartTagToken {
-				headerDepth++
-			} else if isDiv && tt == xhtml.EndTagToken {
-				if headerDepth--; headerDepth == 0 {
-					headerDone = true
-				}
-			}
-		}
-		off += raw
+// splitAtLegacyHeader splits a page too deep for the tree parser right after
+// the header v0.1.1–v0.2.3 injected (legacyHeaderSpan), for the layout with no
+// body div: the mail's own document, its content after the header. It returns
+// the tree of the page up to the header's end and the bytes after it, and
+// ok=true only when that header is the page's live one (anchorHeader, RV-1),
+// so a page whose span is not live, or that is not theirs, is left to
+// splitAtBodyDiv.
+func splitAtLegacyHeader(data []byte) (root *xhtml.Node, body string, ok bool) {
+	_, end, legacy := legacyHeaderSpan(data)
+	if !legacy {
+		return nil, "", false
 	}
+	root, err := parsePrefix(data[:end])
+	if err != nil {
+		return nil, "", false
+	}
+	bodyEl := findFirst(root, func(n *xhtml.Node) bool { return n.Type == xhtml.ElementNode && n.Data == "body" })
+	if bodyEl == nil {
+		return nil, "", false
+	}
+	if header, _ := anchorHeader(data, bodyEl); header == nil {
+		return nil, "", false
+	}
+	return root, string(data[end:]), true
 }
 
-func tokenHasClass(t xhtml.Token, cls string) bool {
-	for _, a := range t.Attr {
-		if a.Key == "class" {
-			for _, c := range strings.Fields(a.Val) {
-				if c == cls {
-					return true
-				}
-			}
+// bodyDivOpen begins the renderer's body div start tag in every release
+// (`<div class="mailarchive-body"` + the mail body's own attributes + `>`).
+const bodyDivOpen = `<div class="mailarchive-body"`
+
+// splitAtBodyDiv splits a page too deep for the tree parser at the renderer's
+// body div. It returns the tree of the page up to the end of that div's start
+// tag (the head and the header: shallow) and the bytes after the tag (the mail
+// body, for the indexer's text pass, which has no depth limit).
+//
+// The split is chosen by the tree parser, never by a bare tokenizer: a
+// tokenizer reads <style> as raw text even inside <svg>, where the tree does
+// not, so mail head content could show it tags the tree reads as a comment,
+// and choose the split (RV-5). Every occurrence of bodyDivOpen in the bytes is
+// a candidate; candidate i is the split when data[:end of its tag] parses and,
+// in that tree, the header (anchorHeader) is followed directly by a live body
+// div: the candidate's own tag, which inside a comment or raw text is only
+// text. Mail on a v0.3.0+ page cannot wear the class, so the renderer's div is
+// the only live one and every candidate before it is text: "does not parse, or
+// is the split" is false before the renderer's candidate and true from it on,
+// and a binary search finds it in a logarithmic number of parses, however many
+// decoys a hostile head carries. The result is checked, never assumed; with no
+// split the page is unsplittable (ok=false).
+func splitAtBodyDiv(data []byte) (root *xhtml.Node, body string, ok bool) {
+	var ends []int // end offsets of the candidate start tags, ascending
+	for off := 0; ; {
+		i := bytes.Index(data[off:], []byte(bodyDivOpen))
+		if i < 0 {
+			break
+		}
+		start := off + i
+		gt := bytes.IndexByte(data[start:], '>')
+		if gt < 0 {
+			break
+		}
+		if end := start + gt + 1; len(ends) == 0 || end > ends[len(ends)-1] {
+			ends = append(ends, end)
+		}
+		off = start + len(bodyDivOpen)
+	}
+	probe := func(end int) (*xhtml.Node, bool) {
+		root, err := parsePrefix(data[:end])
+		if err != nil {
+			return nil, false
+		}
+		return root, bodyDivFollowsHeader(data, root)
+	}
+	lo, hi := 0, len(ends)
+	for lo < hi {
+		mid := lo + (hi-lo)/2
+		if root, split := probe(ends[mid]); root == nil || split {
+			hi = mid
+		} else {
+			lo = mid + 1
 		}
 	}
-	return false
+	if lo == len(ends) {
+		return nil, "", false
+	}
+	if root, split := probe(ends[lo]); split {
+		return root, string(data[ends[lo]:]), true
+	}
+	return nil, "", false
+}
+
+// parsePrefix parses a page prefix for splitAtBodyDiv. It is a variable only so
+// a test can count the parses a split costs (the cost guard); production always
+// uses xhtml.Parse.
+var parsePrefix = func(b []byte) (*xhtml.Node, error) { return xhtml.Parse(bytes.NewReader(b)) }
+
+// bodyDivFollowsHeader reports whether, in a parsed page prefix, the page's
+// header is followed (whitespace aside) by a live div.mailarchive-body.
+//
+// When the page carries old header bytes that are not live (anchorHeader
+// returns nil: a current page whose head raw text mimics them, or an old page
+// whose real header landed in its <title>; MA-187), the split is chosen after
+// the first header div directly in <body> — the renderer's own on a current
+// page — so the body words survive. Only the split is chosen here:
+// readArchivedTree re-anchors on the prefix and counts the core fields, so
+// that div is never read for them (RV-5's "vanishes from search" otherwise came
+// back by this trigger: no candidate was ever accepted).
+func bodyDivFollowsHeader(data []byte, root *xhtml.Node) bool {
+	bodyEl := findFirst(root, func(n *xhtml.Node) bool { return n.Type == xhtml.ElementNode && n.Data == "body" })
+	if bodyEl == nil {
+		return false
+	}
+	header, _ := anchorHeader(data, bodyEl)
+	if header == nil {
+		header = firstChildDiv(bodyEl, "mailarchive-header")
+	}
+	if header == nil {
+		return false
+	}
+	next := nextElementSibling(header)
+	return next != nil && next.Data == "div" && hasClass(next, "mailarchive-body")
+}
+
+func nextElementSibling(n *xhtml.Node) *xhtml.Node {
+	for c := n.NextSibling; c != nil; c = c.NextSibling {
+		if c.Type == xhtml.ElementNode {
+			return c
+		}
+	}
+	return nil
+}
+
+// legacyHeaderSpan reports where a page written by v0.1.1–v0.2.3 carries the
+// header that release wrote: the byte span [start, end) right after the first
+// `<body ...>` match. Those releases put it there on every page, in exactly the
+// shape reLegacyHeader matches, so ok=false proves the page is not theirs.
+func legacyHeaderSpan(data []byte) (start, end int, ok bool) {
+	loc := reLegacyBodyOpen.FindIndex(data)
+	if loc == nil {
+		return 0, 0, false
+	}
+	mm := reLegacyHeader.FindSubmatchIndex(data[loc[1]:])
+	if mm == nil {
+		return 0, 0, false
+	}
+	return loc[1] + mm[2], loc[1] + mm[3], true
+}
+
+// anchorHeader returns the renderer's own header element among bodyEl's
+// children, or nil when it cannot be told apart, and whether the page carries
+// the v0.1.1–v0.2.3 header span (legacyHeaderSpan), live or not.
+//
+// A page v0.3.0 or later wrote (no legacy span) keeps the first header div
+// directly in <body>: every mail element was stripped of the reserved class.
+//
+// A page with a legacy span may be an old one, whose mail kept its classes: a
+// forged header div in the mail's <head> becomes a child of <body> AHEAD of the
+// real one (RV-1). Its header is the span's bytes, and it is trusted only where
+// it is live — the same element, by its serialization, directly in <body>;
+// earlier header divs are ignored. A span that is not live (an old mail whose
+// first `<body` sat in its <title>, or a current mail whose head raw text
+// mimics the old bytes) yields nil: the core fields are counted, never read
+// from another div (MA-187's open gap: bytes cannot tell those two apart).
+func anchorHeader(data []byte, bodyEl *xhtml.Node) (header *xhtml.Node, legacy bool) {
+	start, end, legacy := legacyHeaderSpan(data)
+	if !legacy {
+		return firstChildDiv(bodyEl, "mailarchive-header"), false
+	}
+	nodes, err := xhtml.ParseFragment(bytes.NewReader(data[start:end]), &xhtml.Node{Type: xhtml.ElementNode, Data: "body", DataAtom: atom.Body})
+	if err != nil || len(nodes) != 1 {
+		return nil, true
+	}
+	want := renderNodeString(nodes[0])
+	for c := bodyEl.FirstChild; c != nil; c = c.NextSibling {
+		if isHeaderDiv(c) && renderNodeString(c) == want {
+			return c, true
+		}
+	}
+	return nil, true
+}
+
+func isHeaderDiv(n *xhtml.Node) bool {
+	return n.Type == xhtml.ElementNode && n.Data == "div" && hasClass(n, "mailarchive-header")
+}
+
+func renderNodeString(n *xhtml.Node) string {
+	var b strings.Builder
+	_ = xhtml.Render(&b, n)
+	return b.String()
 }
 
 // readArchivedTree recovers the index fields from a parsed exported page (see
-// readArchivedHTML).
-func readArchivedTree(root *xhtml.Node) (*model.Message, int) {
+// readArchivedHTML). data is the page's bytes (all of them, also when root is
+// the tree of only a prefix), which anchor the header on an old page.
+func readArchivedTree(data []byte, root *xhtml.Node) (*model.Message, int) {
 	m := &model.Message{}
 
 	// Anchor to the renderer's OWN elements, not document-order-first. The
@@ -142,30 +298,48 @@ func readArchivedTree(root *xhtml.Node) (*model.Message, int) {
 	// them itself (mail content lives nested inside the body div). Requiring a
 	// <div> that is a DIRECT CHILD OF <body> — never descending into <head> or a
 	// mail-supplied <template>/<style> — means a hostile message cannot inject an
-	// element earlier in document order (an old page, written before the source
-	// also strips the reserved namespace, could carry one) and have it read as
-	// the header (AGG-1/INT-1).
+	// element earlier in document order and have it read as the header
+	// (AGG-1/INT-1). An old page, written before the source also stripped the
+	// reserved namespace, CAN carry a live one ahead of the real header, so
+	// there the header is anchored by bytes instead (anchorHeader, RV-1).
 	bodyEl := findFirst(root, func(n *xhtml.Node) bool { return n.Type == xhtml.ElementNode && n.Data == "body" })
 	if bodyEl == nil {
 		return m, 3
 	}
-	// The body text is recovered from the FIRST `.mailarchive-body` div —
-	// regardless of whether a header is found, so search still works on a torn
-	// page.
-	if body := firstChildDiv(bodyEl, "mailarchive-body"); body != nil {
-		m.HTMLBody = innerHTML(body)
+	header, legacy := anchorHeader(data, bodyEl)
+
+	// The body text. On a page that carries the v0.1.1–v0.2.3 header span, the
+	// mail kept its own classes and attributes, and those releases never wrote
+	// a fallback <pre>, so neither a body div nor data-mailarchive-fallback
+	// marks the mail's content: the body is all of <body>'s content but the
+	// header (legacyBody; RV-6 on both old layouts, RV-7). On any other page:
+	// the `.mailarchive-body` div right after the header, or, with no header
+	// found, the FIRST such div directly in <body>, so search still works on a
+	// torn page.
+	var bodyDiv *xhtml.Node
+	switch {
+	case legacy:
+		m.HTMLBody = legacyBody(bodyEl, header)
+	case header != nil:
+		if next := nextElementSibling(header); next != nil && next.Data == "div" && hasClass(next, "mailarchive-body") {
+			bodyDiv = next
+		} else {
+			m.HTMLBody = legacyBody(bodyEl, header) // torn: the rest of <body>
+		}
+	default:
+		bodyDiv = firstChildDiv(bodyEl, "mailarchive-body")
+	}
+	if bodyDiv != nil {
+		m.HTMLBody = innerHTML(bodyDiv)
 		// A body the renderer could not show as HTML is kept as escaped source in
-		// a reserved-attribute <pre> (export.plainFallback; mail cannot carry the
-		// attribute). Its text IS the mail's HTML, so index that — the mail's
-		// words, as the live export did — not the markup as words.
-		if pre := findFirst(body, func(n *xhtml.Node) bool {
-			return n.Type == xhtml.ElementNode && n.Data == "pre" && attr(n, "data-mailarchive-fallback") != ""
-		}); pre != nil && pre.Parent == body {
-			m.HTMLBody = textContent(pre)
+		// a reserved-attribute <pre> (export.plainFallback). Its text IS the
+		// mail's HTML, so index that — the mail's words, as the live export did —
+		// not the markup as words.
+		if src, ok := fallbackSource(bodyDiv); ok {
+			m.HTMLBody = src
 		}
 	}
 
-	header := firstChildDiv(bodyEl, "mailarchive-header")
 	if header == nil {
 		return m, 3
 	}
@@ -240,6 +414,62 @@ func readArchivedTree(root *xhtml.Node) (*model.Message, int) {
 	m.Categories = readCategoriesField(header)
 
 	return m, unrecovered
+}
+
+// legacyBody is the mail's content on a page that carries the v0.1.1–v0.2.3
+// header span: every child of <body>, in order, but the anchored header and any
+// header-classed div ahead of it — RV-1's forged one, which the parser moved
+// there from the mail's <head>; with no live header, every header-classed div.
+// That keeps the content the parser put ahead of the header too (what the mail
+// had between its </head> and its <body> tag: text, a hidden preheader), and a
+// mail-supplied body div or fallback <pre> is indexed like the rest, as markup.
+// On the fragment layout the template's body div is simply part of it.
+func legacyBody(bodyEl, header *xhtml.Node) string {
+	var b strings.Builder
+	after := false
+	for c := bodyEl.FirstChild; c != nil; c = c.NextSibling {
+		switch {
+		case c == header:
+			after = true
+		case !after && isHeaderDiv(c):
+		default:
+			_ = xhtml.Render(&b, c)
+		}
+	}
+	return b.String()
+}
+
+// fallbackReasons are the values export.plainFallback writes on the <pre>.
+var fallbackReasons = map[string]bool{
+	export.FallbackTooDeep:     true,
+	export.FallbackUnparseable: true,
+	export.FallbackHostile:     true,
+	"too-large":                true, // export.FallbackTooLarge, being added with the output-size cap (RV-8); a literal until it lands
+}
+
+// fallbackSource returns the mail's HTML source from a body div the renderer
+// wrote for a body shown as source, and ok=false for any other body div. Mail
+// on a v0.3.0+ page cannot carry data-mailarchive-fallback (the sanitizer
+// strips the namespace); pages v0.1.1–v0.2.3 wrote, where a mail can (RV-6),
+// never get here (legacyBody). Even so only the renderer's exact layout
+// counts: the <pre> is the ONLY non-whitespace child of the body div (no other
+// element, comment or text), its class is "plain", and its value is a reason
+// the renderer writes.
+func fallbackSource(bodyDiv *xhtml.Node) (string, bool) {
+	var pre *xhtml.Node
+	for c := bodyDiv.FirstChild; c != nil; c = c.NextSibling {
+		switch {
+		case c.Type == xhtml.TextNode && strings.Trim(c.Data, " \t\n\f\r") == "":
+		case c.Type == xhtml.ElementNode && c.Data == "pre" && pre == nil:
+			pre = c
+		default:
+			return "", false
+		}
+	}
+	if pre == nil || attr(pre, "class") != "plain" || !fallbackReasons[attr(pre, "data-mailarchive-fallback")] {
+		return "", false
+	}
+	return textContent(pre), true
 }
 
 // readCategoriesField recovers the message's categories from the archived page:
@@ -353,7 +583,8 @@ func splitSender(s string) (name, email string) {
 // parseHeaderTime recovers a time from a header dd's text: the parenthetical
 // UTC instant fmtTime appends for a non-UTC offset (minute precision), else the
 // leading RFC-style stamp with its original offset (a UTC time, which has no
-// parenthetical). A dd whose text is neither yields ok=false.
+// parenthetical), else a v0.1–v0.2 stamp, which is always "UTC". A dd whose
+// text is none of these yields ok=false.
 func parseHeaderTime(s string) (time.Time, bool) {
 	if mm := reHeaderUTC.FindStringSubmatch(s); mm != nil {
 		if t, err := time.Parse("2006-01-02 15:04", mm[1]); err == nil {
@@ -362,6 +593,18 @@ func parseHeaderTime(s string) (time.Time, bool) {
 	}
 	if t, err := time.Parse(htmlHeaderLayout, strings.TrimSpace(s)); err == nil {
 		return t, true
+	}
+	if t, err := time.Parse(htmlHeaderLegacyLayout, strings.TrimSpace(s)); err == nil {
+		// v0.1.1–v0.2.3 converted every time to UTC before rendering (each
+		// source set Received/Sent to ….UTC()), so their stamp always reads
+		// "UTC", which time.Parse maps to time.UTC whatever the local zone. Any
+		// other abbreviation is not theirs, and time.Parse can only guess its
+		// offset: through this machine's zone ("CST" is +8 in Shanghai, -6 in
+		// Chicago), or as a made-up zone at the wrong instant (offset 0, or
+		// "GMT+3" taken as UTC wall time). It is counted, never indexed.
+		if t.Location() == time.UTC {
+			return t, true
+		}
 	}
 	return time.Time{}, false
 }
