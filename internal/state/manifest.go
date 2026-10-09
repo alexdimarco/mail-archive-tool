@@ -1375,7 +1375,8 @@ func (m *Manifest) identRemoveLocked(key string) {
 }
 
 // Save writes the manifest atomically (temp file + rename) so a crash mid-write
-// cannot corrupt an existing manifest.
+// cannot corrupt an existing manifest. The rename waits out a moment of Windows
+// file sharing (replaceFile) before it reports failure.
 func (m *Manifest) Save() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1415,7 +1416,7 @@ func (m *Manifest) Save() error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close temp manifest: %w", err)
 	}
-	if err := os.Rename(tmpName, m.path); err != nil {
+	if err := replaceFile(tmpName, m.path); err != nil {
 		return fmt.Errorf("replace manifest: %w", err)
 	}
 	if d, err := os.Open(dir); err == nil {
