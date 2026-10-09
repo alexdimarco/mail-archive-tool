@@ -187,12 +187,24 @@ var parsePrefix = func(b []byte) (*xhtml.Node, error) { return xhtml.Parse(bytes
 
 // bodyDivFollowsHeader reports whether, in a parsed page prefix, the page's
 // header is followed (whitespace aside) by a live div.mailarchive-body.
+//
+// When the page carries old header bytes that are not live (anchorHeader
+// returns nil: a current page whose head raw text mimics them, or an old page
+// whose real header landed in its <title>; MA-187), the split is chosen after
+// the first header div directly in <body> — the renderer's own on a current
+// page — so the body words survive. Only the split is chosen here:
+// readArchivedTree re-anchors on the prefix and counts the core fields, so
+// that div is never read for them (RV-5's "vanishes from search" otherwise came
+// back by this trigger: no candidate was ever accepted).
 func bodyDivFollowsHeader(data []byte, root *xhtml.Node) bool {
 	bodyEl := findFirst(root, func(n *xhtml.Node) bool { return n.Type == xhtml.ElementNode && n.Data == "body" })
 	if bodyEl == nil {
 		return false
 	}
 	header := anchorHeader(data, bodyEl)
+	if header == nil {
+		header = firstChildDiv(bodyEl, "mailarchive-header")
+	}
 	if header == nil {
 		return false
 	}
