@@ -75,8 +75,9 @@ func readArchivedHTML(data []byte) (*model.Message, int) {
 	// which a browser renders and an archived mail body can reach. The tool's
 	// own head and header are shallow, so split the page at the renderer's
 	// body div: read the header fields from the shallow part, and hand the body
-	// bytes to the indexer as they are (its text extraction is a tokenizer pass
-	// with no depth limit). A page v0.1.1–v0.2.3 wrote for a full-document mail
+	// bytes to the indexer as they are (its text extraction reads the parse tree
+	// and, only past that same cap, a stack-tracking tokenizer, so a body too
+	// deep for the tree is still read). A page v0.1.1–v0.2.3 wrote for a full-document mail
 	// has no body div: split it right after its anchored header (RV-7). The
 	// body is what the shallow part holds of it (on an old page, the mail's
 	// content the parser put ahead of the header; on a current one, nothing:
@@ -129,7 +130,7 @@ const bodyDivOpen = `<div class="mailarchive-body"`
 // splitAtBodyDiv splits a page too deep for the tree parser at the renderer's
 // body div. It returns the tree of the page up to the end of that div's start
 // tag (the head and the header: shallow) and the bytes after the tag (the mail
-// body, for the indexer's text pass, which has no depth limit).
+// body, for the indexer's text pass, which reads past the tree parser's cap).
 //
 // The split is chosen by the tree parser, never by a bare tokenizer: a
 // tokenizer reads <style> as raw text even inside <svg>, where the tree does
