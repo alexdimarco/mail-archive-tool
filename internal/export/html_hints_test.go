@@ -153,8 +153,8 @@ func TestHostileSurvivesCatchesLiveResourceHints(t *testing.T) {
 		"multi-token rel":     {"", "<link rel=\"icon\fpreload\" href=\"http://evil.example/\">"},
 	}
 	for name, hb := range hostile {
-		if !hostileSurvives(hb[0], hb[1]) {
-			t.Errorf("%s: the re-parse check must report a live resource hint as hostile", name)
+		if reason := hostileSurvives(hb[0], hb[1]); reason != FallbackHostile {
+			t.Errorf("%s: the re-parse check must report a live resource hint as hostile (%q), got %q", name, FallbackHostile, reason)
 		}
 	}
 	benign := map[string][2]string{
@@ -165,8 +165,8 @@ func TestHostileSurvivesCatchesLiveResourceHints(t *testing.T) {
 		"non-ascii space":   {"", "<link rel=\"x\u00a0preconnect\" href=\"http://evil.example/\">"},
 	}
 	for name, hb := range benign {
-		if hostileSurvives(hb[0], hb[1]) {
-			t.Errorf("%s: positive twin must not be reported hostile", name)
+		if reason := hostileSurvives(hb[0], hb[1]); reason != "" {
+			t.Errorf("%s: positive twin must not be reported hostile, got %q", name, reason)
 		}
 	}
 }

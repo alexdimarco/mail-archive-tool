@@ -264,8 +264,8 @@ func sanitizeHTML(doc string) (headExtra, bodyAttrs, body, fallback string) {
 		}
 		bodyAttrs = bodyAttributes(bodyNode)
 	}
-	if hostileSurvives(hb.String(), bb.String()) {
-		return "", "", "", FallbackHostile
+	if reason := hostileSurvives(hb.String(), bb.String()); reason != "" {
+		return "", "", "", reason
 	}
 	return hb.String(), bodyAttrs, bb.String(), ""
 }
@@ -907,14 +907,21 @@ func liveResourceHint(n *xhtml.Node) bool {
 // (the archive needs none) reads it as markup, while the sanitizer's own parse
 // read it as text. Hostile in either reading fails closed. The second parse is
 // skipped when the output holds no noscript start tag (see scriptingModes).
-func hostileSurvives(head, body string) bool {
+//
+// It returns the fallback reason, "" when the output is safe: FallbackHostile
+// for a live meta or hint; and, when a reading cannot be parsed at all (so
+// nothing is known to be safe and the body must fall back), the parse
+// failure's own reason — FallbackTooDeep for the nesting cap, which a benign
+// mail can reach in the scripting-off reading alone (deep markup inside a
+// <noscript>), FallbackUnparseable otherwise — never "unsafe" (RV-9).
+func hostileSurvives(head, body string) string {
 	doc := "<!DOCTYPE html><html><head>" + head + "</head><body>" + body + "</body></html>"
 	for _, scripting := range scriptingModes(head, body) {
-		if hostileIn(doc, scripting) {
-			return true
+		if reason := hostileIn(doc, scripting); reason != "" {
+			return reason
 		}
 	}
-	return false
+	return ""
 }
 
 // scriptingModes is the scripting flags a re-parse of s must use to read it
@@ -978,10 +985,10 @@ var reparse = func(doc string, scripting bool) (*xhtml.Node, error) {
 	return xhtml.ParseWithOptions(strings.NewReader(doc), xhtml.ParseOptionEnableScripting(scripting))
 }
 
-func hostileIn(doc string, scripting bool) bool {
+func hostileIn(doc string, scripting bool) string {
 	root, err := reparse(doc, scripting)
 	if err != nil {
-		return true
+		return parseFailure(err)
 	}
 	var live func(n *xhtml.Node) bool
 	live = func(n *xhtml.Node) bool {
@@ -1005,7 +1012,10 @@ func hostileIn(doc string, scripting bool) bool {
 		}
 		return false
 	}
-	return live(root)
+	if live(root) {
+		return FallbackHostile
+	}
+	return ""
 }
 
 // neutralize rewrites hostile nodes in place (see sanitizeHTML).
