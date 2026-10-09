@@ -931,8 +931,12 @@ A scheduled verify automatically gets its own entry name (`mailarchive-<hash of
 -out>-verify`), distinct from the backup's and from every other archive's
 verify, so the two coexist and neither overwrites the other — don't pass a fixed
 `-name`: one shared name across archives would make a second archive's verify
-take over the first's entry (with cron, on Linux/BSD, `schedule` refuses that;
-on macOS and Windows it cannot tell). Remove it with the same command,
+take over the first's entry. Only with cron (Linux/BSD) can `schedule` see that
+and refuse it; on macOS and Windows the existing entry is not read back, so the
+second install silently replaces the first archive's verify. `status` shows each
+archive's last verify (verdict and date) on its `Last verify` line, but it is
+not told a verify's own schedule, so it cannot warn when a scheduled verify
+stops running: check that date. Remove it with the same command,
 `-install` swapped for `-remove`. A verify installed under a `-name` of its own
 (an earlier version of this README passed `-name mailarchive-verify`) is removed
 the same way with that `-name` added before `--`; without it, `-remove` says
