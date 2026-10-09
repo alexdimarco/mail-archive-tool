@@ -76,8 +76,19 @@ type Index struct {
 }
 
 // Open opens (creating if needed) a writable index at path and begins a batch.
+// It opens through the same escaped file: URI as OpenReadonly (fileURI), so a
+// '?', '#' or '%' in the archive path is part of the file name — never URI
+// parameters that cut the path short — and its connection waits out a lock
+// another connection holds for a moment (writerBusyTimeout): a status, search
+// or serve read-only open running WAL recovery, or a writer committing. Without
+// that wait such a moment failed the open with SQLITE_BUSY(_RECOVERY), and with
+// it the whole export run. A damaged file is not busy and still fails at once.
 func Open(path string) (*Index, error) {
-	db, err := sql.Open("sqlite", path)
+	dsn, err := fileURI(path, "mode=rwc", writerBusyTimeout)
+	if err != nil {
+		return nil, fmt.Errorf("open index: %w", err)
+	}
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open index: %w", err)
 	}
@@ -199,6 +210,12 @@ func (e *UnreadableError) Unwrap() error { return e.Cause }
 // var so a test can shrink it.
 var readonlyBusyTimeout = 5 * time.Second
 
+// writerBusyTimeout is the same wait for the writable connection Open makes
+// (an export, a Graph run, reindex): every statement on it waits out a lock
+// another connection holds for up to this long before SQLITE_BUSY. A var so a
+// test can change it.
+var writerBusyTimeout = 5 * time.Second
+
 // Busy reports whether err is SQLite's "in use" answer — SQLITE_BUSY (with its
 // BUSY_RECOVERY/BUSY_SNAPSHOT variants) or SQLITE_LOCKED, by primary result
 // code — which says another connection held the database past the busy
@@ -215,25 +232,35 @@ func Busy(err error) bool {
 	return false
 }
 
-// openProbed opens the database at path through a SQLite file: URI carrying
-// the given query (e.g. "mode=ro") and probes that docs exists and is readable.
-// The URI is built from the absolute path with every special character
-// percent-escaped, so a '?', '#' or '%' in an archive path is never parsed as
-// a URI parameter.
-func openProbed(path, query string) (*sql.DB, error) {
+// fileURI is the SQLite file: URI for the database at path, carrying the given
+// query (e.g. "mode=ro") and a busy timeout of busy. It is built from the
+// absolute path with every special character percent-escaped, so a '?', '#'
+// or '%' in an archive path is never parsed as a URI parameter. The busy
+// timeout rides on the URI as the driver's _pragma parameter (SQLite ignores
+// it), so it is set on every connection the pool opens.
+func fileURI(path, query string, busy time.Duration) (string, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	p := filepath.ToSlash(abs)
 	if !strings.HasPrefix(p, "/") {
 		p = "/" + p // a Windows drive path: file:///C:/...
 	}
-	// The busy timeout rides on the URI as the driver's _pragma parameter
-	// (SQLite ignores it), so it is set on every connection the pool opens.
-	query += fmt.Sprintf("&_pragma=busy_timeout(%d)", readonlyBusyTimeout.Milliseconds())
+	query += fmt.Sprintf("&_pragma=busy_timeout(%d)", busy.Milliseconds())
 	u := url.URL{Scheme: "file", Path: p, RawQuery: query}
-	db, err := sql.Open("sqlite", u.String())
+	return u.String(), nil
+}
+
+// openProbed opens the database at path through its file: URI (fileURI)
+// carrying the given query and the read-only busy timeout, and probes that
+// docs exists and is readable.
+func openProbed(path, query string) (*sql.DB, error) {
+	dsn, err := fileURI(path, query, readonlyBusyTimeout)
+	if err != nil {
+		return nil, err
+	}
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
 	}

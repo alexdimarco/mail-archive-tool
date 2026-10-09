@@ -3,8 +3,11 @@ package index
 import (
 	"bytes"
 	"database/sql"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -93,4 +96,125 @@ func TestReadonlyOpenWaitsOutABusyIndex(t *testing.T) {
 	if _, err := OpenReadonly(bad); err == nil || Busy(err) {
 		t.Fatalf("a damaged index must fail and not be classified busy: %v", err)
 	}
+}
+
+// covers: MA-398, R18, S33
+// The writable open (an export's, a Graph run's, reindex's) waits out a lock
+// another connection holds for a moment, as the read-only open does, instead
+// of failing at once — which failed the whole run: a lock released within the
+// wait is waited out, and the index then opens and takes a row. A damaged file
+// is not busy: it still fails at once, never after the busy timeout. The open
+// goes through OpenReadonly's escaped file: URI, so a '?' in the archive path
+// is part of the file name, never URI parameters that cut the path short.
+// Positive twin: with no holder the index opens for writing at once.
+func TestWriterOpenWaitsOutABusyIndex(t *testing.T) {
+	when := time.Date(2025, 3, 3, 9, 0, 0, 0, time.UTC)
+	setWait := func(t *testing.T, d time.Duration) {
+		t.Helper()
+		orig := writerBusyTimeout
+		t.Cleanup(func() { writerBusyTimeout = orig })
+		writerBusyTimeout = d
+	}
+
+	t.Run("idle", func(t *testing.T) {
+		ix, err := Open(buildReadonlyFixture(t, tmpDir(t)))
+		if err != nil {
+			t.Fatalf("positive twin: an idle index did not open for writing: %v", err)
+		}
+		if err := ix.Close(); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("a lock released within the wait", func(t *testing.T) {
+		setWait(t, 5*time.Second)
+		path := buildReadonlyFixture(t, tmpDir(t))
+		holder := holdExclusive(t, path)
+		released := make(chan struct{})
+		go func() {
+			time.Sleep(150 * time.Millisecond)
+			holder.Close()
+			close(released)
+		}()
+		ix, err := Open(path)
+		<-released
+		if err != nil {
+			t.Fatalf("the writable open did not wait out a lock released within its busy timeout: %v", err)
+		}
+		if err := ix.Add("s", []string{"Inbox"}, mkMsg("after the wait", "dave", "me", "written once the lock was free", when), "s/Inbox/c.html", "k3"); err != nil {
+			t.Fatalf("add after waiting out the lock: %v", err)
+		}
+		if err := ix.Close(); err != nil {
+			t.Fatal(err)
+		}
+		ro, err := OpenReadonly(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer ro.Close()
+		if n, err := ro.Count(); err != nil || n != 3 {
+			t.Fatalf("after waiting out the lock the index holds %d rows (err %v), want 3", n, err)
+		}
+	})
+
+	t.Run("a damaged file fails at once", func(t *testing.T) {
+		setWait(t, time.Minute)
+		bad := filepath.Join(tmpDir(t), "search.db")
+		if err := os.WriteFile(bad, bytes.Repeat([]byte("not a sqlite database "), 200), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		start := time.Now()
+		ix, err := Open(bad)
+		took := time.Since(start)
+		if err == nil {
+			ix.Close()
+			t.Fatal("a damaged index opened for writing")
+		}
+		if Busy(err) {
+			t.Fatalf("a damaged index was classified busy: %v", err)
+		}
+		if took > 10*time.Second {
+			t.Fatalf("a damaged index failed only after %v (busy timeout %v): it is not busy and must fail at once", took, writerBusyTimeout)
+		}
+	})
+
+	t.Run("a question mark in the path", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("a Windows file name cannot contain '?'")
+		}
+		parent := tmpDir(t)
+		path := filepath.Join(parent, "mail?2026", "search.db")
+		if err := os.Mkdir(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		ix, err := Open(path)
+		if err != nil {
+			t.Fatalf("writable open of %s: %v", path, err)
+		}
+		if err := ix.Add("s", []string{"Inbox"}, mkMsg("query", "erin", "me", "a path with a question mark", when), "s/Inbox/q.html", "kq"); err != nil {
+			t.Fatal(err)
+		}
+		if err := ix.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if cut := filepath.Join(parent, "mail"); fileExists(cut) {
+			t.Errorf("the writable open wrote %s: the path was cut short at its '?' and the rest read as URI parameters", cut)
+		}
+		if !fileExists(path) {
+			t.Fatalf("the writable open did not create the index at %s", path)
+		}
+		ro, err := OpenReadonly(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer ro.Close()
+		if n, err := ro.Count(); err != nil || n != 1 {
+			t.Fatalf("the index at %s holds %d rows (err %v), want 1", path, n, err)
+		}
+	})
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return !errors.Is(err, fs.ErrNotExist)
 }

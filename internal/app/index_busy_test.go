@@ -50,7 +50,7 @@ func TestStatusReadsABusyIndex(t *testing.T) {
 			}
 			ix, err := index.Open(dbPath)
 			if err != nil {
-				continue // the writer has no busy wait of its own; it just tries again
+				continue // the writer's own opens are TestExportIndexOpenWaitsOutStatusPolls's to judge; here it just tries again
 			}
 			m := reindexMsg(fmt.Sprintf("busy %d", i), fmt.Sprintf("<busy%d@x>", i))
 			addErr := ix.Add("s", []string{"Inbox"}, m, fmt.Sprintf("s/Inbox/busy-%d.html", i), fmt.Sprintf("busy-%d", i))
@@ -92,5 +92,68 @@ func TestStatusReadsABusyIndex(t *testing.T) {
 	assure.Reached(t, writes, "writer open/add/close cycles that overlapped the polls")
 	if unread > 0 {
 		t.Fatalf("%d of %d status polls could not read the healthy, busy index (%d writer cycles); first: %s", unread, polls, writes, first)
+	}
+}
+
+// covers: MA-398, R18, S29
+// The other side of the same moments: status polling a healthy index never
+// fails an export's writable open of it. While two status pollers (the real
+// Gather) read search.db — each read-only open that closes last leaves the
+// -wal/-shm pair, so the next opener runs WAL recovery — an export opening it
+// (index.Open, the open every export, Graph run and reindex makes) waits that
+// out instead of failing with SQLITE_BUSY_RECOVERY, which failed the whole run
+// and recorded it RED run_failed. Positive twin: with no poller the index
+// opens for writing.
+func TestExportIndexOpenWaitsOutStatusPolls(t *testing.T) {
+	src := filepath.Join(tmpDir(t), "Inbox")
+	maildirMessages(t, src, 3)
+	out := tmpDir(t)
+	if _, err := Run(context.Background(), Options{Inputs: []string{src}, Out: out, Mode: export.Incremental, Index: true}, log.New(io.Discard, "", 0), nil); err != nil {
+		t.Fatal(err)
+	}
+	dbPath := filepath.Join(out, "search.db")
+	ix, err := index.Open(dbPath)
+	if err != nil {
+		t.Fatalf("positive twin: with no poller the index did not open for writing: %v", err)
+	}
+	if err := ix.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	stop, polled := make(chan struct{}), make(chan int)
+	for p := 0; p < 2; p++ {
+		go func() {
+			n := 0
+			for {
+				select {
+				case <-stop:
+					polled <- n
+					return
+				default:
+				}
+				health.Gather(out, "")
+				n++
+			}
+		}()
+	}
+	opens, fails, first := 0, 0, ""
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); opens++ {
+		ix, err := index.Open(dbPath)
+		if err == nil {
+			err = ix.Close()
+		}
+		if err != nil {
+			fails++
+			if first == "" {
+				first = err.Error()
+			}
+		}
+	}
+	close(stop)
+	polls := <-polled + <-polled
+	assure.Reached(t, polls, "status polls made while the export opened its index")
+	assure.Reached(t, opens, "writable opens made while status polled")
+	if fails > 0 {
+		t.Fatalf("%d of %d writable opens of the healthy index failed while status polled it (%d polls) — each would have failed an export run; first: %s", fails, opens, polls, first)
 	}
 }
