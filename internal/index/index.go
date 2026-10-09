@@ -70,6 +70,7 @@ type Index struct {
 	db      *sql.DB
 	tx      *sql.Tx
 	pending int
+	lost    int // rows whose Add succeeded but whose batch was later lost (see Lost)
 	version int // key-format version read at Open (see indexVersion)
 }
 
@@ -219,7 +220,14 @@ func readonlyMediaErr(err error) bool {
 	return false
 }
 
-// Add records (or replaces, by key) one message in the index.
+// Add records (or replaces, by key) one message in the index. Each row is
+// written under its own SAVEPOINT inside the batch transaction, so a failure is
+// isolated to that row (F49): it is rolled back to the savepoint — leaving no
+// docs row without its docs_fts twin (INT-2) — while the earlier rows of the
+// uncommitted batch stay and commit with it. The returned error reports that
+// one row. If SQLite itself abandoned the whole transaction (a RAISE(ROLLBACK),
+// or a disk-full/I-O error it may answer that way), the earlier rows went with
+// it: the error says so and they are counted in Lost.
 func (ix *Index) Add(store string, folderPath []string, m *model.Message, relPath, key string) error {
 	if ix.tx == nil {
 		tx, err := ix.db.Begin()
@@ -240,58 +248,107 @@ func (ix *Index) Add(store string, folderPath []string, m *model.Message, relPat
 		date = d.Unix()
 	}
 
+	if _, err := ix.tx.Exec(`SAVEPOINT add_row`); err != nil {
+		return ix.abandonBatch(err)
+	}
 	// Replace any existing row with the same key (full-mode re-export).
 	if err := deleteByKeyTx(ix.tx, key); err != nil {
-		return ix.abandonBatch(err)
+		return ix.rollbackRow(err)
 	}
 
 	res, err := ix.tx.Exec(`INSERT INTO docs(key,store,folder,sender_name,sender_email,recipients,subject,date,path,has_attach,attach_names,snippet)
 		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
 		key, store, folder, m.SenderName, m.SenderEmail, recipients, m.Subject, date, relPath, boolToInt(len(m.Attachments) > 0), attach, snippet)
 	if err != nil {
-		return ix.abandonBatch(fmt.Errorf("index insert: %w", err))
+		return ix.rollbackRow(fmt.Errorf("index insert: %w", err))
 	}
 	id, err := res.LastInsertId()
 	if err != nil {
-		return ix.abandonBatch(err)
+		return ix.rollbackRow(err)
 	}
 	if _, err := ix.tx.Exec(`INSERT INTO docs_fts(rowid,subject,sender,recipients,folder,attachments,body)
 		VALUES(?,?,?,?,?,?,?)`, id, m.Subject, sender, recipients, folder, attach, body); err != nil {
 		// A docs row inserted without its docs_fts twin would leave the two
-		// tables misaligned; roll the whole uncommitted batch back so neither a
-		// later Flush nor Close can commit the orphan (INT-2).
-		return ix.abandonBatch(fmt.Errorf("index fts insert: %w", err))
+		// tables misaligned; rolling back to the savepoint removes it, so
+		// neither a later Flush nor Close can commit the orphan (INT-2).
+		return ix.rollbackRow(fmt.Errorf("index fts insert: %w", err))
+	}
+	if _, err := ix.tx.Exec(`RELEASE add_row`); err != nil {
+		return ix.abandonBatch(err)
 	}
 
 	ix.pending++
 	if ix.pending >= batchSize {
-		return ix.commitPending()
+		return ix.commitBatch(1) // this row's loss, if any, is reported by the error
 	}
 	return nil
 }
 
-// commitPending commits the current batch (if any) and releases the connection.
-// A new transaction is begun lazily on the next Add.
-// abandonBatch rolls back the current uncommitted batch and clears it, so a row
-// that failed mid-insert can never be committed by a later Flush/Close and the
-// next Add begins a fresh transaction. It returns the original error.
-func (ix *Index) abandonBatch(cause error) error {
-	if ix.tx != nil {
-		_ = ix.tx.Rollback()
-		ix.tx = nil
-		ix.pending = 0
+// rollbackRow undoes the failed row back to its savepoint, keeping the rest of
+// the batch, and returns cause. When the savepoint is gone because SQLite has
+// already abandoned the whole transaction, the batch is abandoned and counted
+// as lost (abandonBatch).
+func (ix *Index) rollbackRow(cause error) error {
+	if _, err := ix.tx.Exec(`ROLLBACK TO add_row`); err != nil {
+		return ix.abandonBatch(cause)
+	}
+	if _, err := ix.tx.Exec(`RELEASE add_row`); err != nil {
+		return ix.abandonBatch(cause)
 	}
 	return cause
 }
 
+// abandonBatch rolls back the current uncommitted batch and clears it, so a row
+// that failed mid-insert can never be committed by a later Flush/Close and the
+// next Add begins a fresh transaction. It is reached only when the batch
+// transaction itself is lost, so the earlier rows of the batch (whose Add had
+// succeeded) are counted in Lost and named in the returned error, which wraps
+// cause.
+func (ix *Index) abandonBatch(cause error) error {
+	if ix.tx == nil {
+		return cause
+	}
+	_ = ix.tx.Rollback()
+	ix.tx = nil
+	lost := ix.pending
+	ix.pending = 0
+	if lost == 0 {
+		return cause
+	}
+	ix.lost += lost
+	return fmt.Errorf("%w (the batch transaction was lost with it: %d earlier message(s) were not indexed)", cause, lost)
+}
+
+// commitPending commits the current batch (if any) and releases the connection.
+// A new transaction is begun lazily on the next Add. If the commit fails, the
+// whole batch is lost and its rows are counted in Lost.
 func (ix *Index) commitPending() error {
+	return ix.commitBatch(0)
+}
+
+// commitBatch is commitPending for a caller whose own error already reports
+// `reported` of the pending rows (Add committing at the batch size reports its
+// own row); only the rest are added to Lost on a failed commit.
+func (ix *Index) commitBatch(reported int) error {
 	if ix.tx == nil {
 		return nil
 	}
 	err := ix.tx.Commit()
+	if err != nil {
+		ix.lost += ix.pending - reported
+	}
 	ix.tx = nil
 	ix.pending = 0
 	return err
+}
+
+// Lost is how many rows this Index accepted (their Add returned nil) but never
+// committed, because their batch transaction was lost afterwards — SQLite
+// abandoned it on a later row's failure, or the commit itself failed. A caller
+// counting index errors adds it to the failed Adds it saw, so no lost row goes
+// uncounted (R8).
+func (ix *Index) Lost() int {
+	return ix.lost
 }
 
 // Flush commits everything added so far, making it visible to queries.

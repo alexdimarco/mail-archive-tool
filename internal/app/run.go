@@ -75,8 +75,13 @@ func finish(out string, r *Result, exp *export.Exporter, manifest *state.Manifes
 	}
 	r.Stats = exp.Stats
 	r.ManifestSize = manifest.Len()
-	r.Indexed = indexCount(idx)
+	r.Indexed = indexCount(idx) // commits any pending batch first
+	// The failed Adds the caller counted, plus every row whose Add succeeded but
+	// whose batch was lost afterwards (F49): Indexed + IndexErrors == exported.
 	r.IndexErrors = indexErrors
+	if idx != nil {
+		r.IndexErrors += idx.Lost()
+	}
 	r.Fillable, r.Terminal, r.Unknown = manifest.Counts()
 	r.ReportPath, r.Issues = writeReport(out, manifest, manifest.Migrated > 0, logger)
 }
