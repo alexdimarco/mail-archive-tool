@@ -140,7 +140,7 @@ func Extract(out string, format ExtractFormat, dest string, overwrite bool, logg
 	// component-wise) — extract must never write its output back into the archive
 	// it is reading (PC10).
 	dabs := absPath(dest)
-	if overlap, why := destOverlapsOut(dabs, out); overlap {
+	if overlap, why := util.Overlap(dabs, out); overlap {
 		return ExtractReport{}, fmt.Errorf("refusing to extract: -dest %s %s -out %s — choose a destination outside the archive", dest, why, out)
 	}
 	if err := os.MkdirAll(dabs, 0o755); err != nil {
@@ -432,7 +432,7 @@ func (x *extractor) openFolder(it walkItem) error {
 	leaf := dirSegs[len(dirSegs)-1]
 	parentDir := filepath.Join(append([]string{x.dest}, parents...)...)
 	final := filepath.Join(parentDir, leaf+".mbox")
-	if !within(x.dest, final) {
+	if !util.Within(x.dest, final) {
 		return fmt.Errorf("refusing to write %s: it would escape -dest %s", final, x.dest)
 	}
 	if off, safe := x.destDirSafe(parentDir); !safe {
@@ -507,7 +507,7 @@ func (x *extractor) resetFolder() {
 // asserts it stays within -dest.
 func (x *extractor) destPath(segs []string) (string, bool) {
 	full := filepath.Join(append([]string{x.dest}, segs...)...)
-	if !within(x.dest, full) {
+	if !util.Within(x.dest, full) {
 		return "", false
 	}
 	return full, true
@@ -615,77 +615,12 @@ func syncDir(dir string) {
 	}
 }
 
-// destOverlapsOut reports whether dest equals, sits inside, or contains out
-// (both symlink-resolved to their deepest existing ancestor), and a phrase
-// describing the overlap for the refusal (PC10).
-func destOverlapsOut(dest, out string) (bool, string) {
-	rd := resolveExisting(dest)
-	ro := resolveExisting(out)
-	switch {
-	case rd == ro:
-		return true, "is the same directory as"
-	case within(ro, rd):
-		return true, "is inside"
-	case within(rd, ro):
-		return true, "contains"
-	default:
-		return false, ""
-	}
-}
-
-// within reports whether target is base itself or a path under base, compared
-// component-wise on cleaned absolute paths (no string-prefix false positives
-// like /a/bc under /a/b).
-func within(base, target string) bool {
-	rel, err := filepath.Rel(base, target)
-	if err != nil {
-		return false
-	}
-	if rel == "." {
-		return true
-	}
-	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
-}
-
-// resolveExisting returns p as an absolute, symlink-resolved path, resolving the
-// deepest ancestor that exists (so a not-yet-created -dest still resolves a
-// symlinked parent) and re-appending the non-existent tail.
-func resolveExisting(p string) string {
-	abs, err := filepath.Abs(p)
-	if err != nil {
-		abs = p
-	}
-	abs = filepath.Clean(abs)
-	cur := abs
-	var tail []string
-	for {
-		if resolved, rerr := filepath.EvalSymlinks(cur); rerr == nil {
-			parts := append([]string{resolved}, reverseStrings(tail)...)
-			return filepath.Join(parts...)
-		}
-		parent := filepath.Dir(cur)
-		if parent == cur {
-			return abs
-		}
-		tail = append(tail, filepath.Base(cur))
-		cur = parent
-	}
-}
-
 // absPath returns p as an absolute, cleaned path (best effort).
 func absPath(p string) string {
 	if a, err := filepath.Abs(p); err == nil {
 		return a
 	}
 	return filepath.Clean(p)
-}
-
-func reverseStrings(s []string) []string {
-	out := make([]string, len(s))
-	for i, v := range s {
-		out[len(s)-1-i] = v
-	}
-	return out
 }
 
 // ExtractSummary renders the report as the lines `extract` prints (stdout): the
