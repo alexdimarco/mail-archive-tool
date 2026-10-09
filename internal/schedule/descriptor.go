@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"time"
 
@@ -109,9 +110,88 @@ func ReadDescriptor(out string) (Descriptor, error) {
 // ReadVerifyDescriptor reads the verify schedule's descriptor under the same
 // untrusted-input rules as ReadDescriptor; a missing file is os.ErrNotExist (no
 // verify recorded here — none installed, or one installed by a release that
-// wrote no verify descriptor).
+// wrote no verify descriptor). What it records decides which entry -remove
+// takes for this archive's verify, what the -remove hint names and what status
+// judges, so it is trusted only as a verify of THIS archive under a name of its
+// own. A job that is not a verify (a backup's descriptor copied over it), a
+// verify recorded on this host for another folder (an archive copied with its
+// records), or the name this archive's backup descriptor records (the install
+// refuses a verify under it, so one of the two is not what it says) is an error
+// like an unreadable file: status names it with its remedy, the verify's
+// removal never deletes it, and it never turns `-out X -remove` into a verify
+// removal. A verify recorded on another host may name the folder as that host
+// mounts it, so its -out is not held to this host's spelling.
 func ReadVerifyDescriptor(out string) (Descriptor, error) {
-	return readDescriptorFile(out, VerifyDescriptorName, "verify schedule descriptor", UnreadableVerifyDescriptorRemedy)
+	d, err := readDescriptorFile(out, VerifyDescriptorName, "verify schedule descriptor", UnreadableVerifyDescriptorRemedy)
+	if err != nil {
+		return d, err
+	}
+	path := filepath.Join(out, VerifyDescriptorName)
+	if !descriptorIsVerify(d) {
+		what := "an empty job"
+		if len(d.Job) > 0 {
+			what = fmt.Sprintf("a job starting %q", d.Job[0])
+		}
+		return d, fmt.Errorf("verify schedule descriptor %s records %s, not a verify: %s", path, what, UnreadableVerifyDescriptorRemedy)
+	}
+	if host, _ := os.Hostname(); d.Host == "" || host == "" || d.Host == host {
+		if jo := jobOut(d.Job); !sameDir(jo, out) {
+			if jo == "" {
+				jo = "no -out"
+			}
+			return d, fmt.Errorf("verify schedule descriptor %s records a verify of %s, not of this archive: %s", path, jo, UnreadableVerifyDescriptorRemedy)
+		}
+	}
+	if b, berr := ReadDescriptor(out); berr == nil && !descriptorIsVerify(b) && b.Name == d.Name {
+		return d, fmt.Errorf("verify schedule descriptor %s records %q, the name of this archive's backup schedule — the install refuses a verify under the backup's name, so this record is not the verify's: %s", path, d.Name, UnreadableVerifyDescriptorRemedy)
+	}
+	return d, nil
+}
+
+// jobOut returns the -out a recorded job carries (`-out V` or `-out=V`, one
+// dash or two), or "".
+func jobOut(job []string) string {
+	for i := 0; i < len(job); i++ {
+		if !strings.HasPrefix(job[i], "-") {
+			continue
+		}
+		a := strings.TrimLeft(job[i], "-")
+		if a == "out" && i+1 < len(job) {
+			return job[i+1]
+		}
+		if strings.HasPrefix(a, "out=") {
+			return a[len("out="):]
+		}
+	}
+	return ""
+}
+
+// sameDir reports whether two spellings name the same directory: equal once
+// made absolute and cleaned, the same file when both stat, or — when one cannot
+// be statted — equal ignoring case on the case-insensitive darwin and windows
+// volumes.
+func sameDir(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	abs := func(p string) string {
+		if ap, err := filepath.Abs(p); err == nil {
+			return ap
+		}
+		return filepath.Clean(p)
+	}
+	if abs(a) == abs(b) {
+		return true
+	}
+	fa, ea := os.Stat(a)
+	fb, eb := os.Stat(b)
+	if ea == nil && eb == nil {
+		return os.SameFile(fa, fb)
+	}
+	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
+		return strings.EqualFold(abs(a), abs(b))
+	}
+	return false
 }
 
 // readDescriptorFile is the one reader of both descriptors. what names the file

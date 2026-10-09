@@ -51,6 +51,71 @@ func sandboxScheduler(t *testing.T) {
 	}
 }
 
+// covers: MA-457, R14, R18, S14
+// A verify descriptor recording the name of the archive's backup is not
+// trusted: the install refuses a verify under the backup's name, so such a
+// record is planted or damaged, and it must not turn `-out X -remove` into a
+// verify removal. Through the real binary (sandboxed scheduler), the positive
+// twin first: the genuine verify descriptor a verify install writes is named on
+// status's `Verify schedule:` line. Then, beside the backup alone, a verify
+// descriptor recording the backup's name: status reports it as unreadable,
+// naming the file, the cause and the remedy, and `schedule -out X -remove`
+// reports removing the backup (never a verify), removes its entry and
+// descriptor, and leaves the planted file byte-identical.
+func TestScheduleRemoveDoesNotTrustAPlantedVerifyDescriptor(t *testing.T) {
+	sandboxScheduler(t)
+	out := t.TempDir()
+	backup := schedule.DefaultNameFor(out)
+	derived := backup + "-verify"
+	descPath, verifyPath := filepath.Join(out, schedule.DescriptorName), filepath.Join(out, schedule.VerifyDescriptorName)
+	run := func(args ...string) string {
+		t.Helper()
+		code, stdout, stderr := runCLIOut(t, args...)
+		if code != 0 {
+			t.Fatalf("%v exited %d: %s%s", args, code, stdout, stderr)
+		}
+		return stdout
+	}
+	run("schedule", "-install", "--", "-out", out, "-auto")
+
+	// Positive twin: the genuine verify descriptor is named.
+	run("schedule", "-interval", "weekly", "-at", "05:00", "-install", "--", "verify", "-out", out)
+	if text := run("status", "-out", out); !strings.Contains(text, `Verify schedule: "`+derived+`" installed`) {
+		t.Errorf("status does not name the genuine verify schedule:\n%s", text)
+	}
+	run("schedule", "-remove", "--", "verify", "-out", out)
+
+	// Planted: a verify of this archive under the backup's name.
+	planted := schedule.Spec{Name: backup, Interval: schedule.Weekly, At: "05:00", Exe: "/usr/local/bin/mailarchive",
+		Args: []string{"verify", "-out", out}, Out: out}
+	if err := schedule.WriteVerifyDescriptor(out, schedule.DescribeSpec(planted)); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(verifyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := run("status", "-out", out)
+	for _, want := range []string{"Verify schedule: (descriptor present but unreadable", verifyPath, "the name of this archive's backup schedule", "delete it if no verify schedule"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("status trusts a verify descriptor recording the backup's name (lacks %q):\n%s", want, text)
+		}
+	}
+	stdout := run("schedule", "-out", out, "-remove")
+	if !strings.Contains(stdout, `Removed scheduled backup "`+backup+`"`) || strings.Contains(stdout, "Removed scheduled verify") {
+		t.Errorf("-out X -remove beside a planted verify descriptor does not report removing the backup:\n%s", stdout)
+	}
+	if schedule.Query(backup) == schedule.Installed {
+		t.Errorf("the backup %s is still installed", backup)
+	}
+	if _, err := os.Stat(descPath); !os.IsNotExist(err) {
+		t.Errorf("the backup's descriptor outlived its removal (stat: %v)", err)
+	}
+	if after, err := os.ReadFile(verifyPath); err != nil || string(after) != string(before) {
+		t.Errorf("-out X -remove deleted or changed the planted verify descriptor (%v)", err)
+	}
+}
+
 // takeOutOfSandbox removes an entry from the scheduler sandboxScheduler set up,
 // by hand, as an operator might in launchd or crontab, leaving the archive's
 // records alone.

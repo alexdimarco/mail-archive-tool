@@ -988,6 +988,12 @@ for it: re-run that verify's `-install` once so `status` can watch it. (An even
 older release recorded the verify in `.mailarchive-schedule.json` itself;
 `status` still judges that verify against the cadence recorded there.)
 
+The verify descriptor is trusted only as a verify of this archive under a name
+of its own. A file that records some other job, a verify of another folder (an
+archive copied together with its records), or the name of the archive's backup
+is reported as unreadable, with its remedy: it is never deleted by `-remove`,
+and it never makes `-out X -remove` treat the backup as a verify.
+
 Remove a scheduled verify with the same command, `-install` swapped for
 `-remove`; its descriptor goes with it. A verify installed under a `-name` of its own
 (an earlier version of this README passed `-name mailarchive-verify`) is removed

@@ -206,6 +206,112 @@ func TestVerifyDescriptorGoesOnlyWithItsOwnEntry(t *testing.T) {
 	}
 }
 
+// covers: MA-457, R14, R18, S14
+// The verify descriptor is untrusted input: what it records decides which
+// entry -remove takes for this archive's verify and what status judges, so it
+// is trusted only as a verify of this archive under a name of its own. The
+// positive twin first: a genuine verify descriptor reads and records its
+// verify. A backup's descriptor copied over it (a job that is not a verify), a
+// verify of another folder recorded on this host (an archive copied with its
+// records), and a verify recorded under the name the archive's backup
+// descriptor records (which the install refuses) each fail to read, naming the
+// path, the cause and the remedy, so VerifyRecorded is false and
+// UnreadableVerifyDescriptor names the file. A verify recorded on another host
+// may name the folder as that host mounts it, so it still reads. With the
+// backup's name planted, the backup's removal (sandboxed scheduler: temp HOME
+// and a fake launchctl first on PATH, or the crontab seams) takes only the
+// backup's entry and descriptor and leaves the planted file byte-identical.
+func TestVerifyDescriptorIsTrustedOnlyAsThisArchivesVerify(t *testing.T) {
+	out, other := t.TempDir(), t.TempDir()
+	backupName, verifyName := DefaultNameFor(out), DefaultNameFor(out)+"-verify"
+	path := filepath.Join(out, VerifyDescriptorName)
+	plant := func(d Descriptor) {
+		t.Helper()
+		if err := WriteVerifyDescriptor(out, d); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := WriteDescriptor(out, DescribeSpec(backupSpecFor(out, backupName))); err != nil {
+		t.Fatal(err)
+	}
+
+	// Positive twin: a genuine verify descriptor reads and records its verify.
+	plant(DescribeSpec(verifySpecFor(out, verifyName)))
+	if d, err := ReadVerifyDescriptor(out); err != nil || d.Name != verifyName {
+		t.Fatalf("a genuine verify descriptor does not read as its verify: %+v (%v)", d, err)
+	}
+	assure.Reached(t, VerifyRecorded(out, verifyName), "the genuine verify recorded")
+	if got := UnreadableVerifyDescriptor(out); got != "" {
+		t.Errorf("a genuine verify descriptor is named as unreadable: %s", got)
+	}
+
+	foreign := DescribeSpec(verifySpecFor(other, verifyName))
+	foreign.Host = "nas-01-ma457"
+	for _, c := range []struct {
+		step    string
+		d       Descriptor
+		cause   string // "" when the record is trusted
+		records string // the name it records
+	}{
+		{"a backup's descriptor copied over it", DescribeSpec(backupSpecFor(out, verifyName)), `a job starting "-out", not a verify`, verifyName},
+		{"a verify of another folder, recorded on this host", DescribeSpec(verifySpecFor(other, verifyName)), "a verify of " + other + ", not of this archive", verifyName},
+		{"a verify under the name of the archive's backup", DescribeSpec(verifySpecFor(out, backupName)), "the name of this archive's backup schedule", backupName},
+		{"a verify recorded on another host, as that host mounts the folder", foreign, "", verifyName},
+	} {
+		plant(c.d)
+		_, err := ReadVerifyDescriptor(out)
+		if c.cause == "" {
+			if err != nil || !VerifyRecorded(out, c.records) {
+				t.Errorf("%s: not read as the verify it records (%v)", c.step, err)
+			}
+			continue
+		}
+		if err == nil || errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("%s: read as a verify of this archive (%v)", c.step, err)
+			continue
+		}
+		for _, want := range []string{path, c.cause, "delete it if no verify schedule"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%s: the reader's error lacks %q: %v", c.step, want, err)
+			}
+		}
+		if VerifyRecorded(out, c.records) {
+			t.Errorf("%s: trusted as recording the verify %s", c.step, c.records)
+		}
+		if got := UnreadableVerifyDescriptor(out); got != path {
+			t.Errorf("%s: UnreadableVerifyDescriptor = %q, want %s", c.step, got, path)
+		}
+	}
+
+	t.Run("the backup's removal", func(t *testing.T) {
+		sandboxHostScheduler(t)
+		out := t.TempDir()
+		backup := backupSpecFor(out, DefaultNameFor(out))
+		if err := Install(backup); err != nil {
+			t.Fatal(err)
+		}
+		assure.Reached(t, Query(backup.Name) == Installed, "fixture: the backup installed")
+		vpath := filepath.Join(out, VerifyDescriptorName)
+		if err := WriteVerifyDescriptor(out, DescribeSpec(verifySpecFor(out, backup.Name))); err != nil {
+			t.Fatal(err)
+		}
+		before, err := os.ReadFile(vpath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		removed, err := RemoveIfInstalled(backup)
+		if err != nil || !removed || Query(backup.Name) == Installed {
+			t.Fatalf("the backup was not removed (removed=%v, state=%v): %v", removed, Query(backup.Name), err)
+		}
+		if _, err := os.Stat(filepath.Join(out, DescriptorName)); !os.IsNotExist(err) {
+			t.Errorf("the backup's descriptor outlived its removal (stat: %v)", err)
+		}
+		if after, err := os.ReadFile(vpath); err != nil || string(after) != string(before) {
+			t.Errorf("removing the backup deleted or changed a planted verify descriptor recording the backup's name (%v)", err)
+		}
+	})
+}
+
 // covers: MA-457, R14, S14
 // On Task Scheduler too, a verify the descriptor records but the scheduler no
 // longer has (deleted by hand in Task Scheduler) still counts as present, so its

@@ -687,12 +687,15 @@ func removeOn(s Spec, goos string) error {
 	if err != nil {
 		return err
 	}
-	if descriptorGoesWith(s.Out, s.Name) {
+	// Both decisions are taken before either file goes: whether the verify
+	// descriptor is trusted can depend on the backup's (ReadVerifyDescriptor).
+	backupGoes, verifyGoes := descriptorGoesWith(s.Out, s.Name), VerifyRecorded(s.Out, s.Name)
+	if backupGoes {
 		if err := RemoveDescriptor(s.Out); err != nil {
 			return err
 		}
 	}
-	if VerifyRecorded(s.Out, s.Name) {
+	if verifyGoes {
 		return RemoveVerifyDescriptor(s.Out)
 	}
 	return nil
