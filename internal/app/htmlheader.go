@@ -76,7 +76,13 @@ func readArchivedHTML(data []byte) (*model.Message, int) {
 	// own head and header are shallow, so split the page at the renderer's
 	// body div: read the header fields from the shallow part, and hand the body
 	// bytes to the indexer as they are (its text extraction is a tokenizer pass
-	// with no depth limit).
+	// with no depth limit). A page v0.1.1–v0.2.3 wrote for a full-document mail
+	// has no body div: split it right after its anchored header (RV-7).
+	if root, body, ok := splitAtLegacyHeader(data); ok {
+		m, unrecovered := readArchivedTree(data, root)
+		m.HTMLBody = body
+		return m, unrecovered
+	}
 	if root, body, ok := splitAtBodyDiv(data); ok {
 		m, unrecovered := readArchivedTree(data, root)
 		m.HTMLBody = body
@@ -85,6 +91,29 @@ func readArchivedHTML(data []byte) (*model.Message, int) {
 	// Unparseable bytes: nothing recovered. The record is still indexed with
 	// empty fields (never dropped), and all three core fields are counted.
 	return &model.Message{}, 3
+}
+
+// splitAtLegacyHeader splits a page too deep for the tree parser right after
+// the header v0.1.1–v0.2.3 injected (legacyHeaderSpan), for the layout with no
+// body div: the mail's own document, its content after the header. It returns
+// the tree of the page up to the header's end and the bytes after it, and
+// ok=true only when that header is the page's live one (anchorHeader, RV-1),
+// so a page whose span is not live, or that is not theirs, is left to
+// splitAtBodyDiv.
+func splitAtLegacyHeader(data []byte) (root *xhtml.Node, body string, ok bool) {
+	_, end, legacy := legacyHeaderSpan(data)
+	if !legacy {
+		return nil, "", false
+	}
+	root, err := parsePrefix(data[:end])
+	if err != nil {
+		return nil, "", false
+	}
+	bodyEl := findFirst(root, func(n *xhtml.Node) bool { return n.Type == xhtml.ElementNode && n.Data == "body" })
+	if bodyEl == nil || anchorHeader(data, bodyEl) == nil {
+		return nil, "", false
+	}
+	return root, string(data[end:]), true
 }
 
 // bodyDivOpen begins the renderer's body div start tag in every release
@@ -254,21 +283,39 @@ func readArchivedTree(data []byte, root *xhtml.Node) (*model.Message, int) {
 	if bodyEl == nil {
 		return m, 3
 	}
-	// The body text is recovered from the FIRST `.mailarchive-body` div —
-	// regardless of whether a header is found, so search still works on a torn
-	// page.
-	if body := firstChildDiv(bodyEl, "mailarchive-body"); body != nil {
-		m.HTMLBody = innerHTML(body)
+	header := anchorHeader(data, bodyEl)
+
+	// The body text: the `.mailarchive-body` div right after the header, or,
+	// with no header found, the FIRST such div directly in <body>, so search
+	// still works on a torn page. A page v0.1.1–v0.2.3 wrote for a full-document
+	// mail has no body div at all: the mail's content follows the header inside
+	// its own <body>, so that content is the body (RV-7).
+	var bodyDiv *xhtml.Node
+	if header != nil {
+		if next := nextElementSibling(header); next != nil && next.Data == "div" && hasClass(next, "mailarchive-body") {
+			bodyDiv = next
+		}
+	} else {
+		bodyDiv = firstChildDiv(bodyEl, "mailarchive-body")
+	}
+	switch {
+	case bodyDiv != nil:
+		m.HTMLBody = innerHTML(bodyDiv)
 		// A body the renderer could not show as HTML is kept as escaped source in
 		// a reserved-attribute <pre> (export.plainFallback). Its text IS the
 		// mail's HTML, so index that — the mail's words, as the live export did —
 		// not the markup as words.
-		if src, ok := fallbackSource(body); ok {
+		if src, ok := fallbackSource(bodyDiv); ok {
 			m.HTMLBody = src
 		}
+	case header != nil:
+		var b strings.Builder
+		for c := header.NextSibling; c != nil; c = c.NextSibling {
+			_ = xhtml.Render(&b, c)
+		}
+		m.HTMLBody = b.String()
 	}
 
-	header := anchorHeader(data, bodyEl)
 	if header == nil {
 		return m, 3
 	}

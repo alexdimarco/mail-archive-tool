@@ -1,9 +1,12 @@
 package app
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 	"time"
+
+	xhtml "golang.org/x/net/html"
 
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/export"
@@ -145,4 +148,76 @@ func TestRebuildHonoursFallbackOnlyOnRendererLayout(t *testing.T) {
 		}
 	}
 	assure.Reached(t, firstResult(t, out, "skepdecoy").SenderEmail, "the decoy page's rebuilt sender")
+}
+
+// covers: MA-483, R13, R8, S33
+// Pages v0.1.1–v0.2.3 wrote for a full-document mail have NO body div: the
+// header was injected into the mail's own <body>, and the mail's content
+// follows it. `reindex -rebuild` reads that layout in both readers (RV-7): a
+// shallow page indexes <body>'s content after the header (it once indexed no
+// body words at all), and a page too deep for the tree parser is split right
+// after the anchored header (it once recovered nothing). Either way the
+// record keeps its subject, sender and date and its words; RV-1's forged head
+// div, at depth 600, still forges nothing and adds no words. A 600-deep
+// fragment page (the template, with a body div) is the twin.
+func TestRebuildReadsLegacyPageWithoutBodyDiv(t *testing.T) {
+	when := time.Date(2025, 4, 2, 11, 30, 0, 0, time.UTC)
+	deep := func(inner string, d int) string {
+		return strings.Repeat("<div>", d) + inner + strings.Repeat("</div>", d)
+	}
+	msg := func(name, subject, body string) *model.Message {
+		return &model.Message{Subject: subject, SenderName: name + " Sender", SenderEmail: "sk" + strings.ToLower(name) + "@example.com",
+			To: "rcpt@example.com", Received: when, InternetMessageID: "<" + subject + "@x>", HTMLBody: body}
+	}
+	forgedDiv := `<div class="mailarchive-header"><div class="mailarchive-subject" data-mailarchive-field="subject">skepforged wire approval</div>` +
+		`<dl><dt>From</dt><dd data-mailarchive-field="from">Chief Executive &lt;ceo@skepbank.example&gt;</dd></dl></div>`
+	// adv2 skgen.py "old", plus RV-1's payload made deep.
+	full := msg("Full", "skepfullsubj", "<html><head></head><body><p>skepfullword</p>"+deep("<p>skepfullneedle</p>", 10)+"</body></html>")
+	deepOld := msg("Deepold", "skepdeepoldsubj", "<html><head></head><body><p>skepdeepoldword</p>"+deep("<p>skepdeepoldneedle</p>", 600)+"</body></html>")
+	forged := msg("Mallory", "skepdeepforgesubj", "<html><head>"+forgedDiv+"</head><body><p>skepdeepforgeword</p>"+deep("<p>skepdeepforgeneedle</p>", 600)+"</body></html>")
+	frag := msg("Deepfrag", "skepdeepfragsubj", "<p>skepdeepfragword</p>"+deep("<p>skepdeepfragneedle</p>", 600))
+	pages := []diskPage{{full, renderV023(full)}, {deepOld, renderV023(deepOld)}, {forged, renderV023(forged)}, {frag, renderV023(frag)}}
+	for _, p := range pages[:3] {
+		if strings.Contains(string(p.page), `class="mailarchive-body"`) || !strings.HasPrefix(string(p.page), "<html><head>") {
+			t.Fatalf("fixture sanity: %q is not a v0.2.3 full-document page (no body div):\n%.300s", p.m.Subject, p.page)
+		}
+	}
+	for _, p := range pages[1:] {
+		if _, err := xhtml.Parse(bytes.NewReader(p.page)); err == nil {
+			t.Fatalf("fixture sanity: %q parses as a tree; it must be past the parser's cap", p.m.Subject)
+		}
+	}
+
+	for _, p := range pages {
+		got, unrecovered := readArchivedHTML(p.page)
+		if unrecovered != 0 || got.Subject != p.m.Subject || got.SenderEmail != p.m.SenderEmail || !got.Received.Equal(when) {
+			t.Errorf("%q read subject=%q sender=%q date=%v unrecovered=%d, want its own header and 0",
+				p.m.Subject, got.Subject, got.SenderEmail, got.Received, unrecovered)
+		}
+		if needle := strings.TrimSuffix(p.m.Subject, "subj") + "needle"; !strings.Contains(got.HTMLBody, needle) || strings.Contains(got.HTMLBody, "mailarchive-subject") {
+			t.Errorf("%q: HTMLBody (%d bytes) lacks %q or carries a header: %.120q", p.m.Subject, len(got.HTMLBody), needle, got.HTMLBody)
+		}
+	}
+
+	out := tmpDir(t)
+	buildOnDiskArchive(t, out, pages)
+	if rep := rebuildOnDisk(t, out, len(pages)); rep.Unrecovered != 0 {
+		t.Errorf("rebuild unrecovered-fields = %d, want 0", rep.Unrecovered)
+	}
+	want := map[string]int{"from:ceo": 0, "skepforged": 0, "wire": 0}
+	for _, name := range []string{"skepfull", "skepdeepold", "skepdeepforge", "skepdeepfrag"} {
+		want[name+"subj"], want[name+"word"], want[name+"needle"] = 1, 1, 1
+	}
+	for _, p := range pages {
+		want["from:"+p.m.SenderEmail] = 1
+	}
+	for q, n := range want {
+		if got := searchTotal(t, out, q); got != n {
+			t.Errorf("post-rebuild %q = %d, want %d", q, got, n)
+		}
+	}
+	r := firstResult(t, out, "skepdeepoldneedle")
+	if r.Subject != "skepdeepoldsubj" || r.SenderEmail != "skdeepold@example.com" || !r.Date.Equal(when) {
+		t.Errorf("deep old page rebuilt as subject=%q sender=%q date=%v", r.Subject, r.SenderEmail, r.Date)
+	}
 }
