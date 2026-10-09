@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"mail-archive-tool/internal/index"
 	"mail-archive-tool/internal/model"
@@ -114,6 +115,108 @@ func v023ReplaceFirst(s string, re *regexp.Regexp, repl func(string) string) str
 		return s
 	}
 	return s[:loc[0]] + repl(s[loc[0]:loc[1]]) + s[loc[1]:]
+}
+
+// ---- v0.3.0 – v0.7.1, 033b1e3, aa1c98d: the mail is parsed and sanitized and
+// its pieces placed into OUR document (`git show aa1c98d:internal/export/html.go`,
+// docTemplate and renderHeader; the template's bytes are the same from v0.3.0
+// on). Every mail element has had the tool's reserved class tokens and
+// data-mailarchive-* attributes stripped. headExtra is the serialized mail
+// head (each child followed by "\n") and inner the serialized mail body, as
+// x/net rendered them; the fixtures pass those bytes literally.
+
+const aa1DocTemplate = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>%s</title>
+<style>
+body{font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin:0;padding:0;color:#1a1a1a;background:#fff}
+.mailarchive-header{border-bottom:1px solid #ddd;padding:16px 20px;background:#f7f7f8;font-size:14px}
+.mailarchive-header dl{display:grid;grid-template-columns:max-content 1fr;gap:2px 12px;margin:0}
+.mailarchive-header dt{font-weight:600;color:#555}
+.mailarchive-header dd{margin:0;word-break:break-word}
+.mailarchive-subject{font-size:18px;font-weight:700;margin:0 0 10px}
+.mailarchive-nav{font-size:13px;margin:0 0 8px}
+.mailarchive-attachments,.mailarchive-raw{margin-top:8px;font-size:13px}
+.mailarchive-body{padding:20px}
+.mailarchive-body pre.plain{white-space:pre-wrap;word-wrap:break-word;font-family:ui-monospace,Consolas,monospace}
+.mailarchive-missing-image{display:inline-block;font-size:12px;color:#888;border:1px dashed #bbb;padding:2px 6px}
+</style>
+%s</head>
+<body>
+%s
+<div class="mailarchive-body"%s>
+%s
+</div>
+</body>
+</html>
+`
+
+// renderAA1 is aa1c98d's RenderWith for a page in Store/Inbox (the exporter's
+// RenderContext: RootRel "../../", FolderIndexRel "index.html"; no zip, no
+// .eml), with the mail's head and body already serialized.
+func renderAA1(m *model.Message, headExtra, inner string) []byte {
+	return []byte(fmt.Sprintf(aa1DocTemplate, html.EscapeString(fixtureSubject(m)), headExtra, aa1Header(m), "", inner))
+}
+
+// aa1Fallback is aa1c98d's plainFallback: the mail's source as escaped text in
+// the reserved-attribute <pre>.
+func aa1Fallback(source, reason string) string {
+	return `<pre class="plain" data-mailarchive-fallback="` + html.EscapeString(reason) + `">` + html.EscapeString(source) + `</pre>`
+}
+
+func aa1Header(m *model.Message) string {
+	var b strings.Builder
+	b.WriteString(`<div class="mailarchive-header">`)
+	b.WriteString(`<div class="mailarchive-nav"><a href="../../index.html">All folders</a> · <a href="index.html">This folder</a></div>`)
+	b.WriteString(`<div class="mailarchive-subject" data-mailarchive-field="subject">` + html.EscapeString(fixtureSubject(m)) + `</div>`)
+	b.WriteString(`<dl>`)
+	row := func(label, value, field string) {
+		if strings.TrimSpace(value) == "" {
+			return
+		}
+		b.WriteString(`<dt>` + html.EscapeString(label) + `</dt>`)
+		if field != "" {
+			b.WriteString(`<dd data-mailarchive-field="` + field + `">` + html.EscapeString(value) + `</dd>`)
+		} else {
+			b.WriteString(`<dd>` + html.EscapeString(value) + `</dd>`)
+		}
+	}
+	fmtTime := func(t time.Time) string {
+		s := t.Format("Mon, 02 Jan 2006 15:04:05 -0700")
+		if _, off := t.Zone(); off != 0 {
+			s += " (" + t.UTC().Format("2006-01-02 15:04 UTC") + ")"
+		}
+		return s
+	}
+	row("From", fixtureSender(m), "from")
+	row("Reply-To", m.ReplyTo, "")
+	row("To", m.To, "to")
+	row("Cc", m.Cc, "cc")
+	row("Bcc", m.Bcc, "")
+	switch {
+	case !m.Sent.IsZero() && !m.Received.IsZero() && !m.Sent.Equal(m.Received):
+		row("Sent", fmtTime(m.Sent), "sent")
+		row("Received", fmtTime(m.Received), "received")
+	default:
+		if d := m.Date(); !d.IsZero() {
+			row("Date", fmtTime(d), "date")
+		}
+	}
+	row("Message-ID", m.InternetMessageID, "")
+	row("In-Reply-To", m.InReplyTo, "")
+	b.WriteString(`</dl>`)
+	if strings.TrimSpace(m.TransportHeaders) != "" {
+		b.WriteString(`<details class="mailarchive-headers"><summary>Transport headers as stored (unverified)</summary>`)
+		b.WriteString(`<p class="mailarchive-headers-note">These lines are supplied by the sending and relaying servers and can be forged — shown as stored, not proof of origin.</p>`)
+		b.WriteString(`<pre>` + html.EscapeString(m.TransportHeaders) + `</pre></details>`)
+	}
+	b.WriteString(`</div>`)
+	return b.String()
 }
 
 // displaySubject / formatSender, unchanged from v0.1.1 through aa1c98d.

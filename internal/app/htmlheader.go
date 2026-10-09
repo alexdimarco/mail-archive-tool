@@ -7,6 +7,7 @@ import (
 	"time"
 
 	xhtml "golang.org/x/net/html"
+	"golang.org/x/net/html/atom"
 
 	"mail-archive-tool/internal/model"
 )
@@ -21,6 +22,15 @@ import (
 // the renderer additionally tags those elements with `data-mailarchive-field`
 // going forward, which this reader prefers when present. Whatever cannot be
 // recovered is left empty and counted, never fatal.
+//
+// Two page layouts are on disk. v0.3.0 onward render the mail into the tool's
+// own document: <body> holds the header div, then the body div, and every mail
+// element has had the tool's reserved class tokens and data-mailarchive-*
+// attributes stripped, so the first header div directly in <body> is the
+// renderer's. v0.1.1–v0.2.3 stripped nothing, and for a mail that was a full
+// HTML document kept the mail's own document with the header injected right
+// after its first `<body ...>` tag; there the header is anchored by those bytes
+// (legacyHeaderSpan), never by document order (RV-1).
 
 // htmlHeaderLayout mirrors export.timeLayout — fmtTime's leading stamp, which
 // carries the message's ORIGINAL offset. It is duplicated here (the export
@@ -38,6 +48,15 @@ const htmlHeaderLegacyLayout = "Mon, 02 Jan 2006 15:04:05 MST"
 // fallback for a UTC time, which carries no parenthetical.
 var reHeaderUTC = regexp.MustCompile(`\((\d{4}-\d{2}-\d{2} \d{2}:\d{2}) UTC\)`)
 
+// reLegacyBodyOpen is v0.1.1–v0.2.3's reBodyOpen: the header went in right
+// after the FIRST match in the mail's document (or the template's own <body>).
+var reLegacyBodyOpen = regexp.MustCompile(`(?i)<body[^>]*>`)
+
+// reLegacyHeader matches, anchored, what those releases wrote right after that
+// match: "\n" and renderHeader's exact output, every value html-escaped (so no
+// '<' inside), with no data-mailarchive-field markers and no nav.
+var reLegacyHeader = regexp.MustCompile(`^\n(<div class="mailarchive-header"><div class="mailarchive-subject">[^<]*</div><dl>(?:<dt>[^<]*</dt><dd>[^<]*</dd>)*</dl></div>)`)
+
 // readArchivedHTML parses an exported page's bytes and recovers a message's
 // index fields (subject, sender, recipients, date, body text). It returns the
 // recovered message and the number of CORE fields (subject, from, date) that
@@ -47,9 +66,9 @@ var reHeaderUTC = regexp.MustCompile(`\((\d{4}-\d{2}-\d{2} \d{2}:\d{2}) UTC\)`)
 // core fields empty and counts all three; the body is still recovered when a
 // `.mailarchive-body` element is present.
 func readArchivedHTML(data []byte) (*model.Message, int) {
-	root, err := xhtml.Parse(strings.NewReader(string(data)))
+	root, err := xhtml.Parse(bytes.NewReader(data))
 	if err == nil {
-		return readArchivedTree(root)
+		return readArchivedTree(data, root)
 	}
 	// The parser refuses trees nested past its cap (x/net: 512 open elements),
 	// which a browser renders and an archived mail body can reach. The tool's
@@ -59,7 +78,7 @@ func readArchivedHTML(data []byte) (*model.Message, int) {
 	// with no depth limit).
 	if prefix, body, ok := splitAtBodyDiv(data); ok {
 		if root, perr := xhtml.Parse(strings.NewReader(prefix + `<div class="mailarchive-body"></div></body></html>`)); perr == nil {
-			m, unrecovered := readArchivedTree(root)
+			m, unrecovered := readArchivedTree(data, root)
 			m.HTMLBody = body
 			return m, unrecovered
 		}
@@ -123,6 +142,60 @@ func splitAtBodyDiv(data []byte) (prefix, body string, ok bool) {
 	}
 }
 
+// legacyHeaderSpan reports where a page written by v0.1.1–v0.2.3 carries the
+// header that release wrote: the byte span [start, end) right after the first
+// `<body ...>` match. Those releases put it there on every page, in exactly the
+// shape reLegacyHeader matches, so ok=false proves the page is not theirs.
+func legacyHeaderSpan(data []byte) (start, end int, ok bool) {
+	loc := reLegacyBodyOpen.FindIndex(data)
+	if loc == nil {
+		return 0, 0, false
+	}
+	mm := reLegacyHeader.FindSubmatchIndex(data[loc[1]:])
+	if mm == nil {
+		return 0, 0, false
+	}
+	return loc[1] + mm[2], loc[1] + mm[3], true
+}
+
+// anchorHeader returns the renderer's own header element among bodyEl's
+// children, or nil when it cannot be told apart.
+//
+// A page v0.3.0 or later wrote (no legacy span) keeps the first header div
+// directly in <body>: every mail element was stripped of the reserved class.
+//
+// A page with a legacy span may be an old one, whose mail kept its classes: a
+// forged header div in the mail's <head> becomes a child of <body> AHEAD of the
+// real one (RV-1). Its header is the span's bytes, and it is trusted only where
+// it is live — the same element, by its serialization, directly in <body>;
+// earlier header divs are ignored. A span that is not live (an old mail whose
+// first `<body` sat in its <title>, or a current mail whose head raw text
+// mimics the old bytes) yields nil: the core fields are counted, never read
+// from another div.
+func anchorHeader(data []byte, bodyEl *xhtml.Node) *xhtml.Node {
+	start, end, legacy := legacyHeaderSpan(data)
+	if !legacy {
+		return firstChildDiv(bodyEl, "mailarchive-header")
+	}
+	nodes, err := xhtml.ParseFragment(bytes.NewReader(data[start:end]), &xhtml.Node{Type: xhtml.ElementNode, Data: "body", DataAtom: atom.Body})
+	if err != nil || len(nodes) != 1 {
+		return nil
+	}
+	want := renderNodeString(nodes[0])
+	for c := bodyEl.FirstChild; c != nil; c = c.NextSibling {
+		if c.Type == xhtml.ElementNode && c.Data == "div" && hasClass(c, "mailarchive-header") && renderNodeString(c) == want {
+			return c
+		}
+	}
+	return nil
+}
+
+func renderNodeString(n *xhtml.Node) string {
+	var b strings.Builder
+	_ = xhtml.Render(&b, n)
+	return b.String()
+}
+
 func tokenHasClass(t xhtml.Token, cls string) bool {
 	for _, a := range t.Attr {
 		if a.Key == "class" {
@@ -137,8 +210,9 @@ func tokenHasClass(t xhtml.Token, cls string) bool {
 }
 
 // readArchivedTree recovers the index fields from a parsed exported page (see
-// readArchivedHTML).
-func readArchivedTree(root *xhtml.Node) (*model.Message, int) {
+// readArchivedHTML). data is the page's bytes (all of them, also when root is
+// the tree of only a prefix), which anchor the header on an old page.
+func readArchivedTree(data []byte, root *xhtml.Node) (*model.Message, int) {
 	m := &model.Message{}
 
 	// Anchor to the renderer's OWN elements, not document-order-first. The
@@ -147,9 +221,10 @@ func readArchivedTree(root *xhtml.Node) (*model.Message, int) {
 	// them itself (mail content lives nested inside the body div). Requiring a
 	// <div> that is a DIRECT CHILD OF <body> — never descending into <head> or a
 	// mail-supplied <template>/<style> — means a hostile message cannot inject an
-	// element earlier in document order (an old page, written before the source
-	// also strips the reserved namespace, could carry one) and have it read as
-	// the header (AGG-1/INT-1).
+	// element earlier in document order and have it read as the header
+	// (AGG-1/INT-1). An old page, written before the source also stripped the
+	// reserved namespace, CAN carry a live one ahead of the real header, so
+	// there the header is anchored by bytes instead (anchorHeader, RV-1).
 	bodyEl := findFirst(root, func(n *xhtml.Node) bool { return n.Type == xhtml.ElementNode && n.Data == "body" })
 	if bodyEl == nil {
 		return m, 3
@@ -170,7 +245,7 @@ func readArchivedTree(root *xhtml.Node) (*model.Message, int) {
 		}
 	}
 
-	header := firstChildDiv(bodyEl, "mailarchive-header")
+	header := anchorHeader(data, bodyEl)
 	if header == nil {
 		return m, 3
 	}
