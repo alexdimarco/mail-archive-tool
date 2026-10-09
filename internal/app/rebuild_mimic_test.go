@@ -114,3 +114,44 @@ func TestRebuildCurrentPageWithOldHeaderBytesInHead(t *testing.T) {
 	}
 	assure.Reached(t, firstResult(t, out, "skmimdeepstyleneedle").Path, "the deep styled page's rebuilt record")
 }
+
+// covers: MA-187, R19, R8, S33
+// OPEN GAP in MA-187's "cannot erase" half, pending an OPERATOR ruling — encoded
+// the kit's way (a t.Skip that FAILS if un-skipped today), never a loosened
+// assertion. A CURRENT page (today's exporter) whose mail head raw text mimics
+// an old (v0.1.1–v0.2.3) header's exact bytes after a `<body` is, byte for byte,
+// indistinguishable from an old page whose real header is not live, so the
+// reader counts subject/From/date unrecovered — it ERASES the page's real
+// header rather than risk forging the mimicked one. (It never forges and keeps
+// the body: TestRebuildCurrentPageWithOldHeaderBytesInHead pins that.) MA-187's
+// invariant is "cannot forge OR erase"; the erase half is open here.
+//
+// The settled resolution is an out-of-band writer-version signal on NEW pages
+// (internal/state + internal/export, not this branch's files), so a v0.3+ page
+// is never read as a legacy one and its real header is recovered; pages already
+// on disk from v0.3.0 to aa1c98d carry no such signal and stay an open gap.
+// This test asserts the invariant that ruling must restore for a new page — the
+// real subject, From and date recovered, unrecovered 0 — and SKIPS pending the
+// ruling. When a writer signal lands and this passes, REMOVE the Skip so it
+// becomes a permanent guard.
+func TestRebuildCurrentPageRecoversRealHeaderDespiteMimicInHead(t *testing.T) {
+	t.Skip("MA-187 open gap: a current page's real subject/From/date are erased when its head raw text mimics the old header bytes; pending an operator ruling on an out-of-band writer-version signal (docs/review-sanitizer-roundtrip-adversarial.md)")
+
+	when := time.Date(2025, 4, 2, 11, 40, 0, 0, time.UTC)
+	oldHeader := `<div class="mailarchive-header"><div class="mailarchive-subject">mimicforged wire approval</div>` +
+		`<dl><dt>From</dt><dd>Chief Executive &lt;ceo@mimbank.example&gt;</dd><dt>Date</dt><dd>Mon, 01 Jan 2001 00:00:00 UTC</dd></dl></div>`
+	head := "<style><body>\n" + oldHeader + "</style>\n"
+	m := &model.Message{
+		Subject: "realmimicsubj", SenderName: "Real Sender", SenderEmail: "real@example.com",
+		Received: when, InternetMessageID: "<realmimic@example.com>",
+	}
+	page := renderAA1(m, head, "<p>realmimicword</p>")
+	if _, _, legacy := legacyHeaderSpan(page); !legacy {
+		t.Fatalf("fixture sanity: the head mimic must match legacyHeaderSpan")
+	}
+	got, unrecovered := readArchivedHTML(page)
+	if unrecovered != 0 || got.Subject != m.Subject || got.SenderEmail != m.SenderEmail || !got.Received.Equal(when) {
+		t.Errorf("a current page's real header must be recovered despite the head mimic: subject=%q sender=%q date=%v unrecovered=%d, want %q/%q/%v and 0",
+			got.Subject, got.SenderEmail, got.Received, unrecovered, m.Subject, m.SenderEmail, when)
+	}
+}
