@@ -104,7 +104,12 @@ type Input struct {
 	// LockHeld is the authoritative liveness signal: the archive lock dies
 	// with its process, so a "running" record whose lock is free belongs to a
 	// run that never finished (pid numbers are reused after a reboot).
+	//
+	// LockVerb is the verb the holder named in the lock's holder line
+	// (lockfile.HolderVerb: "export", "verify", …), "" when the lock is free
+	// or its holder names none (status's own probe).
 	LockHeld bool
+	LockVerb string
 
 	PIDAlive func(int) bool
 }
@@ -266,13 +271,14 @@ func Assess(in Input, now time.Time) Report {
 	// cadence is known (UJ-A1).
 	//
 	// A "running" record is judged by the finished verdict it carries (F79): a
-	// verify in progress (archive lock held) is a note; one whose lock is free
-	// never finished (crash, kill, power loss) and is a WARN — and either way
-	// the previous verdict, a not-attested RED included, is still reported.
+	// verify in progress (the archive lock held by a verify, verifyRunning) is
+	// a note; otherwise that verify never finished (crash, kill, power loss)
+	// and is a WARN — and either way the previous verdict, a not-attested RED
+	// included, is still reported.
 	lv, judge := in.LastVerify, in.LastVerifyState == state.LastVerifyPresent
 	if judge && lv.Status == state.VerifyRunning {
 		started := lv.Started.UTC().Format("2006-01-02 15:04")
-		if in.LockHeld {
+		if verifyRunning(in) {
 			r.note("verify_in_progress", fmt.Sprintf("a verify is in progress (started %s UTC)", started))
 		} else {
 			r.warn("verify_never_finished", fmt.Sprintf("the verify started %s UTC never finished (crash, kill, or power loss) — run `mailarchive verify -out %q` again; the last finished verify's verdict is still reported", started, in.Out))
@@ -348,6 +354,16 @@ func Assess(in Input, now time.Time) Report {
 		}
 	}
 	return r
+}
+
+// verifyRunning reports whether a verify is running now: the archive lock is
+// held AND its holder is a verify. Every verify names itself in the holder
+// line (lockfile.AcquireAs "verify"), so a lock held by another verb (an
+// export, a reindex), by a holder that names none (status's own probe), or no
+// lock at all means a "running" verify record belongs to a verify that never
+// finished.
+func verifyRunning(in Input) bool {
+	return in.LockHeld && in.LockVerb == "verify"
 }
 
 // indexOpenCause is what the index_unreadable reason says about a failed
@@ -557,11 +573,14 @@ func Gather(out, nameOverride string) Input {
 	if svc, ok := util.UnderCloudSync(out); ok {
 		in.OutUnderSync = svc
 	}
-	// Probe the archive lock: held means a run is genuinely in progress.
-	if l, err := lockfile.Acquire(filepath.Join(out, lockfile.Name)); err == nil {
+	// Probe the archive lock: held means a run is genuinely in progress, and
+	// the holder line says which verb holds it.
+	lockPath := filepath.Join(out, lockfile.Name)
+	if l, err := lockfile.Acquire(lockPath); err == nil {
 		l.Release()
 	} else if errors.Is(err, lockfile.ErrHeld) {
 		in.LockHeld = true
+		in.LockVerb = lockfile.HolderVerb(lockPath)
 	}
 
 	mpath := filepath.Join(out, ".mailarchive-manifest.json")
@@ -728,7 +747,7 @@ func Summary(in Input, rep Report) []string {
 		lv := in.LastVerify
 		if lv.Status == state.VerifyRunning || lv.Finished == nil {
 			how := "running"
-			if !in.LockHeld {
+			if !verifyRunning(in) {
 				how = "never finished"
 			}
 			lines = append(lines, fmt.Sprintf("Last verify: %s → %s", lv.Started.UTC().Format("2006-01-02 15:04"), how))

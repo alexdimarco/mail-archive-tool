@@ -5,12 +5,14 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/health"
+	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/state"
 )
 
@@ -32,6 +34,25 @@ func flipHTMLByte(t *testing.T, out string) string {
 
 func assessOut(out string) health.Report {
 	return health.Assess(health.Gather(out, ""), time.Now())
+}
+
+// crashVerifyIn runs a verify of out that dies partway: a panic inside it
+// stands in for a crash, leaving exactly the on-disk state a kill or power
+// loss leaves (the running record, carrying the previous verdict).
+func crashVerifyIn(t *testing.T, out string) {
+	t.Helper()
+	crashed := false
+	func() {
+		defer func() {
+			if recover() != nil {
+				crashed = true
+			}
+		}()
+		_, _ = Verify(out, VerifyOptions{}, discard(), func(Report) { panic("simulated crash mid-verify") })
+	}()
+	if !crashed {
+		t.Fatal("the simulated mid-verify crash did not happen")
+	}
 }
 
 // covers: MA-394, R18, R20, S31
@@ -59,21 +80,7 @@ func TestInterruptedVerifyKeepsTheLastVerdict(t *testing.T) {
 	}
 	assure.Reached(t, reasonFor(assessOut(out), "not_attested"), "the not_attested RED after a verify that found damage")
 
-	crashVerify := func() {
-		t.Helper()
-		crashed := false
-		func() {
-			defer func() {
-				if recover() != nil {
-					crashed = true
-				}
-			}()
-			_, _ = Verify(out, VerifyOptions{}, discard(), func(Report) { panic("simulated crash mid-verify") })
-		}()
-		if !crashed {
-			t.Fatal("the simulated mid-verify crash did not happen")
-		}
-	}
+	crashVerify := func() { t.Helper(); crashVerifyIn(t, out) }
 	crashVerify()
 
 	rep := assessOut(out)
@@ -176,6 +183,55 @@ func summaryLine(in health.Input, rep health.Report, prefix string) string {
 		}
 	}
 	return ""
+}
+
+// covers: MA-394, R18, R20, S31
+// A "running" verify record is judged by WHO holds the archive lock, not just
+// whether someone does: every verify names itself in the lock's holder line
+// (verb=verify), so only a lock held by a verify makes a running record the
+// note verify_in_progress ("→ running"). While an export or a reindex holds the
+// lock, or a holder that names no verb (status's own probe), a verify that
+// died earlier still never finished: WARN verify_never_finished, "→ never
+// finished". Either way the kept NOT attested verdict stays RED. Positive twin:
+// a verify holding the lock is in progress.
+func TestRunningVerifyIsJudgedByTheLockHolder(t *testing.T) {
+	out := tmpDir(t)
+	buildFixityArchive(t, out, fixtureMsg{subject: "one"}, fixtureMsg{subject: "two"})
+	flipHTMLByte(t, out)
+	if rep, err := Verify(out, VerifyOptions{}, discard(), nil); err != nil || rep.Attested() {
+		t.Fatalf("damaged archive attested: %v %+v", err, rep)
+	}
+	crashVerifyIn(t, out)
+
+	for _, tc := range []struct {
+		holder, want, not, how string
+	}{
+		{"verify", "verify_in_progress", "verify_never_finished", "→ running"},
+		{"export", "verify_never_finished", "verify_in_progress", "→ never finished"},
+		{"reindex", "verify_never_finished", "verify_in_progress", "→ never finished"},
+		{"", "verify_never_finished", "verify_in_progress", "→ never finished"},
+	} {
+		held, err := lockfile.AcquireAs(filepath.Join(out, lockfile.Name), tc.holder)
+		if err != nil {
+			t.Fatal(err)
+		}
+		in := health.Gather(out, "")
+		held.Release()
+		rep := health.Assess(in, time.Now())
+		if !in.LockHeld {
+			t.Fatalf("holder %q: status did not see the archive lock held", tc.holder)
+		}
+		assure.Reached(t, reasonFor(rep, tc.want), "the "+tc.want+" reason with the lock held by "+strconv.Quote(tc.holder))
+		if reasonFor(rep, tc.not) != "" {
+			t.Errorf("holder %q: status reports %s as well: %v", tc.holder, tc.not, rep.Reasons)
+		}
+		if rep.Posture != "RED" || reasonFor(rep, "not_attested") == "" {
+			t.Errorf("holder %q: the kept NOT attested verdict is gone: posture %s %v", tc.holder, rep.Posture, rep.Reasons)
+		}
+		if line := summaryLine(in, rep, "Last verify:"); !strings.HasSuffix(line, tc.how) {
+			t.Errorf("holder %q: Summary %q, want it to end %q", tc.holder, line, tc.how)
+		}
+	}
 }
 
 // covers: MA-395, R18, R20, S31

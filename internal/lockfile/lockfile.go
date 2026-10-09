@@ -141,13 +141,32 @@ func (l *Lock) StillHeld() error {
 // stripped so it can be echoed into a terminal.
 func Holder(path string) string { return readHolder(path) }
 
-func readHolder(path string) string {
+// HolderVerb returns the verb the current holder named through AcquireAs
+// ("export", "verify", …), read from its holder line, or "" when the line
+// names none (a plain Acquire, such as status's own probe) or cannot be read.
+// Like Holder it is untrusted content, sanitized the way AcquireAs sanitizes
+// the verb it writes. The verb comes last, after the host name, so the whole
+// line is read (Holder's 256-byte display cap could cut it off).
+func HolderVerb(path string) string {
+	for _, field := range strings.Fields(readHolderN(path, 1024)) {
+		if v, ok := strings.CutPrefix(field, "verb="); ok {
+			return sanitizeVerb(v)
+		}
+	}
+	return ""
+}
+
+func readHolder(path string) string { return readHolderN(path, 256) }
+
+// readHolderN reads up to max bytes of the holder line, control characters
+// stripped.
+func readHolderN(path string, max int) string {
 	f, err := os.Open(path)
 	if err != nil {
 		return ""
 	}
 	defer f.Close()
-	buf := make([]byte, 256)
+	buf := make([]byte, max)
 	n, _ := f.Read(buf)
 	return strings.TrimSpace(strings.Map(func(r rune) rune {
 		if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) {
