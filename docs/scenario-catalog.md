@@ -303,6 +303,7 @@ Tiers: **U** unit property (every commit) · **S** structural whole-tree walk
 | MA-49 | U | RemoveCronBlock reverses install by marker; empty-crontab remove is a no-op | R14, S14 |
 | MA-50 | U | schedule refuses missing -out / bad -interval / install+remove with a typed non-zero naming the problem | R14, R12, S9, S14 |
 | MA-450 | U | the Windows wrapper's run line, put through a cmd.exe model (%% expansion, unquoted `2>>` redirect stripped, no other unquoted metacharacter) and then Go's Windows os.Args parser, yields exactly the job's argv and the .stderr.log target for every host path — a drive root (`E:\`), a share root (`\\nas\backup\`), a trailing separator, doubled separators — never an escaped closing quote that merges later arguments | R14, S28 |
+| MA-451 | U | a wrapper carrying non-ASCII paths (Jörg, Eingänge, Анна, 田中), decoded the way cmd.exe reads a batch file (line by line in the active code page, starting from OEM CP437/850/866/932/936, UTF-8 after a `chcp 65001` line), still yields exactly the job's argv and .stderr.log target; no BOM, every byte read before the switch is ASCII, and an all-ASCII wrapper never switches the console code page | R14, S28 |
 | MA-51 | U | DiscoverInputs expands a dir to its .pst/.ost and dedups; a mail-store dir is one source | R6 |
 | MA-52 | U | decodeMaildirName: dot-split + _XX unescape + drop-empty + sanitize (no traversal) | R15, R6, S15 |
 | MA-53 | U | Evolution Maildir++ reader reads root INBOX + every dot-encoded subfolder (nested included) | R15, R1, S15 |
