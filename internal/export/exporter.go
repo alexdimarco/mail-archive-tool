@@ -38,7 +38,7 @@ type Stats struct {
 	AttachmentsEmpty    int // declared attachments that produced zero bytes (e.g. not downloaded)
 	AttachmentErrors    int // attachments whose stream failed mid-read (torn fetch); reported, not archived
 	UnresolvedInlineRef int // cid: references in the HTML with no matching image present
-	HTMLFallback        int // HTML bodies shown as escaped source (too deep / unparseable / unsafe after re-parse)
+	HTMLFallback        int // HTML bodies shown as escaped source, for any of the four Fallback* reasons (too deep / unparseable / unsafe after re-parse / too large)
 	NonHTMLBodies       int // messages exported from plain/RTF because no HTML body existed
 	NoBody              int // messages exported with no body content at all
 	RawWritten          int // original .eml files written (KeepRaw; 0 for sources with no original bytes, e.g. Outlook items)
