@@ -10,9 +10,11 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/export"
+	"mail-archive-tool/internal/health"
 	"mail-archive-tool/internal/state"
 )
 
@@ -97,5 +99,88 @@ func TestManifestSaveFailureFailsTheRun(t *testing.T) {
 				t.Errorf("%s: attention sidecar missing or does not name the manifest: %v\n%s", r.name, serr, sidecar)
 			}
 		})
+	}
+}
+
+// covers: MA-392, R5, R18, S29
+// Only the run's LAST manifest save decides (F53): a failed checkpoint save is
+// healed by a later save that succeeds. With a checkpoint after every message,
+// the save at message 2 is made to fail and message 3's checkpoint heals it,
+// and the save at the last message (4) is made to fail and the end-of-input
+// commit heals it. The run returns nil and records ok — no attention sidecar,
+// no run_failed on status — and the manifest on disk holds every record.
+// Fault injection: for exactly one save each time, a directory stands where
+// the manifest is renamed to (the run, its saves and the rename are real), so
+// the test runs on every OS. Positive twin: the same run with no fault logs no
+// failed save.
+func TestFailedCheckpointIsHealedByALaterSave(t *testing.T) {
+	const n = 4
+	src := filepath.Join(tmpDir(t), "Inbox")
+	maildirMessages(t, src, n)
+	run := func(out string, progress ProgressFunc) (Result, string, error) {
+		var logged bytes.Buffer
+		res, err := Run(context.Background(), Options{Inputs: []string{src}, Out: out, Mode: export.Incremental, Index: true, CheckpointEvery: 1}, log.New(&logged, "", 0), progress)
+		return res, logged.String(), err
+	}
+	const failedSave = "could not save manifest"
+
+	if _, logged, err := run(tmpDir(t), nil); err != nil || strings.Contains(logged, failedSave) {
+		t.Fatalf("positive twin: err=%v, log:\n%s", err, logged)
+	}
+
+	out := tmpDir(t)
+	mpath := filepath.Join(out, ".mailarchive-manifest.json")
+	block := func() { // the next save's rename meets a directory
+		if err := os.Rename(mpath, mpath+".aside"); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Join(mpath, "blocker"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	unblock := func() {
+		if err := os.RemoveAll(mpath); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(mpath+".aside", mpath); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Run checkpoints a message before reporting it, so the fault set up at
+	// message k fails the save at message k+1.
+	seen := 0
+	res, logged, err := run(out, func(export.Stats) {
+		seen++
+		switch seen {
+		case 1, 3:
+			block()
+		case 2, 4:
+			unblock()
+		}
+	})
+	if failed := assure.Reached(t, strings.Count(logged, failedSave), "checkpoint saves made to fail"); failed != 2 {
+		t.Fatalf("%d checkpoint saves failed, want the 2 injected; log:\n%s", failed, logged)
+	}
+	if err != nil {
+		t.Fatalf("a run whose failed checkpoints were healed by later saves failed: %v", err)
+	}
+	if res.Stats.Exported != n {
+		t.Fatalf("exported %d, want %d", res.Stats.Exported, n)
+	}
+	if lr, _, _ := state.ReadLastRun(out); lr.Status != state.RunOK {
+		t.Fatalf("a healed run recorded %q (%s), want ok", lr.Status, lr.Error)
+	}
+	if _, serr := os.Stat(filepath.Join(out, state.AttentionName)); !os.IsNotExist(serr) {
+		t.Errorf("a healed run left the attention sidecar: %v", serr)
+	}
+	if rep := health.Assess(health.Gather(out, ""), time.Now()); reasonFor(rep, "run_failed") != "" {
+		t.Errorf("status reports a healed run failed: %v", rep.Reasons)
+	}
+	m, lerr := state.Load(mpath)
+	if lerr != nil {
+		t.Fatal(lerr)
+	}
+	if m.Len() != n {
+		t.Fatalf("the manifest on disk holds %d records, want all %d", m.Len(), n)
 	}
 }
