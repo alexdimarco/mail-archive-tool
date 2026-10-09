@@ -293,7 +293,13 @@ func parseJob(args []string) (job, error) {
 			if strings.TrimSpace(*o.tokenCache) == "" {
 				return job{}, errors.New("a scheduled device job cannot prompt for a sign-in: pass -token-cache PATH to a cache you have already signed in to (run `mailarchive graph -auth device …` once, as the account this schedule runs as)")
 			}
-			if err := graph.CheckTokenCache(*o.tokenCache); err != nil {
+			// Check the sign-in where the scheduled run will read it: the OS vault
+			// when the run uses one (Windows, which never writes the file), else
+			// the file — the same backend runGraph hands NewDelegated.
+			if err := graph.CheckSignIn(graph.Config{
+				Tenant: *o.tenant, ClientID: *o.clientID, TokenCachePath: *o.tokenCache,
+				TokenStore: deviceTokenStore(*o.tenant, *o.clientID),
+			}); err != nil {
 				return job{}, err
 			}
 			authArgs = []string{"-auth", "device", "-token-cache", abspath(*o.tokenCache)}

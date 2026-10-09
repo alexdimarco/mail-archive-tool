@@ -168,11 +168,15 @@ sign-in (a refresh token) so later runs need no sign-in.
 
 - `-mailbox` is optional here and, if given, must be **your own** address — device
   mode archives only the mailbox you signed in as. It refuses any other address.
-- The sign-in is cached at a **file readable only by you** under your OS config
-  dir (`~/.config/mailarchive/` on Linux/macOS, `%APPDATA%\mailarchive\` on
-  Windows). Override with `-token-cache PATH`. It is **never** written inside
-  `-out` (which may be a synced OneDrive folder). It is a plaintext bearer token
-  at `chmod 600`, not encrypted at rest — treat it like the client secret file.
+- On Linux/macOS the sign-in is cached at a **file readable only by you** under
+  your OS config dir (`~/.config/mailarchive/`). Override with
+  `-token-cache PATH`. It is **never** written inside `-out` (which may be a
+  synced OneDrive folder). It is a plaintext bearer token at `chmod 600`, not
+  encrypted at rest — treat it like the client secret file.
+- On Windows the sign-in is saved to **Windows Credential Manager** (your user
+  vault, one entry per tenant + client id), not to a file: `-token-cache` is
+  accepted but no file is written there, and every run — scheduled or not —
+  reads the vault.
 
 ### 3. Scheduling a device job
 
@@ -181,8 +185,11 @@ A scheduled run cannot prompt, so it runs from the saved sign-in. Two rules:
 - **Sign in first, as the same OS account the schedule runs as.** The cache is
   per-user and `0600`; a task running as a different account (or Windows SYSTEM)
   cannot read it. Run step 2 once as that account, then schedule.
-- Pass `-token-cache PATH`; `schedule` validates the cache exists and carries a
-  refresh token at install time (it refuses otherwise, naming the sign-in step).
+- Pass `-token-cache PATH`; `schedule` validates, at install time, that the
+  sign-in the scheduled run will read exists and carries a refresh token — the
+  cache file on Linux/macOS, your Credential Manager entry for this tenant +
+  client id on Windows (there the path is still required but its file is not
+  consulted) — and refuses otherwise, naming the sign-in step.
 
 ```sh
 # prime the sign-in (interactive, once, as the scheduling user)

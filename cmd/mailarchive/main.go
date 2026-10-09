@@ -1097,7 +1097,7 @@ func runGraph(args []string) (err error) {
 		gopts.TokenCachePath = cache
 		// On Windows the sign-in token lives in Credential Manager (vault); nil
 		// elsewhere → the 0600 file cache (design-mailarchive-desktop P4).
-		gopts.TokenStore = graphconfig.DefaultTokenStore(*o.tenant, *o.clientID)
+		gopts.TokenStore = deviceTokenStore(*o.tenant, *o.clientID)
 	}
 
 	mode, err := parseMode(*o.mode)
@@ -1157,6 +1157,13 @@ func flagWasSet(fs *flag.FlagSet, name string) bool {
 	})
 	return set
 }
+
+// deviceTokenStore is where a device sign-in lives besides the -token-cache file:
+// the OS vault on Windows (Credential Manager, keyed by tenant + client), nil
+// elsewhere (the file is the backend). A device run and `schedule`'s check of a
+// device job both resolve it here, so they read the same backend; it is a
+// variable only so a test can stand a real store in for the Windows vault.
+var deviceTokenStore = graphconfig.DefaultTokenStore
 
 // defaultTokenCachePath is where a device sign-in is cached when -token-cache is
 // not given: under the caller's OS config dir (%APPDATA% on Windows, ~/.config on
