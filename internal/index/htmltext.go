@@ -50,11 +50,15 @@ var blockElements = map[string]bool{
 // does not, and a hostile mail used that to hide words the page renders (RV-3).
 //
 // Not indexed, because no reading of the page shows them: <title>, <style>,
-// <script> (HTML or SVG) and <template>. Not indexed either, for parity: an
-// explicit <head>, which the exporter moves into the page's own <head>, where
-// `reindex -rebuild` does not read (see explicitHead, which also names the
-// one known drift: an implied head's noscript or noframes). A <noscript>'s
-// content elsewhere IS indexed, as markup: the archive ships no script, so a
+// <script> (HTML or SVG) and <template>. The head is not indexed either,
+// explicit OR implied, because the exporter moves the mail's head (its implied
+// head included) into the page's own <head>, which `reindex -rebuild` does not
+// read; so a fragment that starts with a text-bearing <noscript> or <noframes>
+// is skipped on both sides, not indexed live only (the old implied-head drift).
+// The rebuild wraps the body div's inner HTML in <body> before handing it here
+// (internal/app/htmlheader.go), so a mail whose own <body> starts with a
+// <noscript> is body content on both sides, indexed on both. A <noscript>'s
+// content in the body IS indexed, as markup: the archive ships no script, so a
 // reader with JavaScript off — and the mail client the mail was first read in
 // — sees it (see noscriptText). The conventions are those of the tokenizer this
 // replaces: whitespace collapses, entities are decoded, block elements
@@ -101,15 +105,16 @@ func treeText(h string) (string, bool) {
 		return "", false
 	}
 	var s textSink
-	walkChildren(doc, &s, true, explicitHead(h))
+	walkChildren(doc, &s, true, true) // skip the head, explicit or implied (see htmlToText)
 	return s.String(), true
 }
 
 // walkChildren writes n's visible descendants into s. scripting names the
 // reading that built the tree: with it on, a <noscript> holds one raw text
 // node, read again by noscriptText; with it off (inside noscriptText) the
-// noscript's children are markup and are walked as they are. skipHead says
-// the document's <head> was opened by an explicit tag (see explicitHead).
+// noscript's children are markup and are walked as they are. skipHead says to
+// skip a <head> element, explicit or implied (the extractor always does, for
+// the whole document; see htmlToText).
 func walkChildren(n *html.Node, s *textSink, scripting, skipHead bool) {
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
 		switch c.Type {
@@ -184,79 +189,6 @@ func noscriptText(raw string) string {
 		}
 	}
 	return s.String()
-}
-
-// explicitHead reports whether the document's <head> element is opened by a
-// <head> tag rather than implied. It replays the parser's initial, before-html
-// and before-head modes on the leading tokens, so it decides exactly as the
-// tree builder does.
-//
-// The two heads are indexed differently, for search parity (R8), and the
-// split is only partly right. The exporter places the mail's <head> children,
-// implied or explicit, in the page's own <head>, which `reindex -rebuild`
-// never reads. So text the parser keeps in an explicit head — the raw content
-// of a <noscript> or <noframes>; everything else there is skipped anyway — is
-// not indexed live either. Leading whitespace, comments and a doctype do not
-// make a head implied (`<html>\n<head>` is explicit), as in the parser.
-//
-// An implied head is read by the ordinary element rules, because of what the
-// rebuild hands this extractor: the inner HTML of the page's body div, parsed
-// on its own. A mail whose <body> starts with a <noscript> gives a div that
-// starts with it too, the rebuild's parse puts that noscript in an implied
-// head, and the page shows it in the body. Skipping implied heads would lose
-// those words on rebuild. The live side reads the mail itself, though, and
-// there an implied head is not body content: a fragment that starts with a
-// text-bearing <noscript> or <noframes> (`<noscript><p>w</p></noscript><p>…`)
-// is indexed live, while the exporter moves it into the page's <head> and the
-// rebuild does not find it. That drift predates the tree walk. The extractor
-// cannot settle it, because both inputs are the same bytes. It needs the
-// rebuild to mark its input as body content (for example, by wrapping it in
-// <body>), and then every head can be skipped.
-func explicitHead(h string) bool {
-	z := html.NewTokenizer(strings.NewReader(h))
-	for {
-		tt := z.Next()
-		var name []byte
-		if tt == html.StartTagToken || tt == html.SelfClosingTagToken || tt == html.EndTagToken {
-			name, _ = z.TagName()
-		}
-		var text []byte
-		if tt == html.TextToken {
-			text = z.Text()
-		}
-		if decided, explicit := beforeHead(tt, string(name), text); decided {
-			return explicit
-		}
-	}
-}
-
-// beforeHead classifies one token met while the document's head is not yet
-// known, as x/net's initialIM, beforeHTMLIM and beforeHeadIM do: whitespace,
-// comments, doctypes, <html> and stray end tags leave it open; a <head> start
-// tag makes it explicit; anything else implies it.
-func beforeHead(tt html.TokenType, name string, text []byte) (decided, explicit bool) {
-	switch tt {
-	case html.ErrorToken:
-		return true, false
-	case html.CommentToken, html.DoctypeToken:
-		return false, false
-	case html.TextToken:
-		return !htmlSpace(text), false
-	case html.StartTagToken, html.SelfClosingTagToken:
-		switch name {
-		case "html":
-			return false, false
-		case "head":
-			return true, true
-		}
-		return true, false
-	case html.EndTagToken:
-		switch name {
-		case "head", "body", "html", "br":
-			return true, false
-		}
-	}
-	return false, false
 }
 
 // htmlSpace reports whether b is only HTML whitespace (space, tab, LF, FF, CR).
@@ -613,7 +545,15 @@ func (w *tokenWalker) startTag(selfClosing bool) {
 			w.phase = phaseHead
 			return
 		}
-		w.phase = phaseBody
+		if headContent[name] {
+			// Leading head content opens the implied head the parser creates;
+			// the extractor skips every head (hides), explicit or implied, so
+			// this matches the tree walk. The tag is processed in the head below.
+			w.push(openElem{name: "head", hides: true, special: true})
+			w.phase = phaseHead
+		} else {
+			w.phase = phaseBody
+		}
 	case w.topIsHead():
 		if name == "html" || name == "head" {
 			return

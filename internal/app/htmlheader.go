@@ -218,6 +218,15 @@ func bodyDivFollowsHeader(data []byte, root *xhtml.Node) bool {
 	return next != nil && next.Data == "div" && hasClass(next, "mailarchive-body")
 }
 
+// bodyForIndex wraps body-div content in <body> before it goes to the indexer,
+// so index.htmlToText parses it as body content and never an implied head: a
+// mail whose own <body> starts with a <noscript> or <noframes> gives a body div
+// that starts with it too, and a parse of that div alone would otherwise put the
+// noscript in an implied head, which the extractor skips — losing on rebuild a
+// word the live index (reading the original mail, where it is body content)
+// finds (R8). A shown-as-source body is never wrapped (it is a whole mail).
+func bodyForIndex(inner string) string { return "<body>" + inner }
+
 func nextElementSibling(n *xhtml.Node) *xhtml.Node {
 	for c := n.NextSibling; c != nil; c = c.NextSibling {
 		if c.Type == xhtml.ElementNode {
@@ -319,24 +328,26 @@ func readArchivedTree(data []byte, root *xhtml.Node) (*model.Message, int) {
 	var bodyDiv *xhtml.Node
 	switch {
 	case legacy:
-		m.HTMLBody = legacyBody(bodyEl, header)
+		m.HTMLBody = bodyForIndex(legacyBody(bodyEl, header))
 	case header != nil:
 		if next := nextElementSibling(header); next != nil && next.Data == "div" && hasClass(next, "mailarchive-body") {
 			bodyDiv = next
 		} else {
-			m.HTMLBody = legacyBody(bodyEl, header) // torn: the rest of <body>
+			m.HTMLBody = bodyForIndex(legacyBody(bodyEl, header)) // torn: the rest of <body>
 		}
 	default:
 		bodyDiv = firstChildDiv(bodyEl, "mailarchive-body")
 	}
 	if bodyDiv != nil {
-		m.HTMLBody = innerHTML(bodyDiv)
 		// A body the renderer could not show as HTML is kept as escaped source in
 		// a reserved-attribute <pre> (export.plainFallback). Its text IS the
 		// mail's HTML, so index that — the mail's words, as the live export did —
-		// not the markup as words.
+		// not the markup as words. It is the whole mail, so it is NOT wrapped: the
+		// indexer parses (and skips) its own head exactly as the live path did.
 		if src, ok := fallbackSource(bodyDiv); ok {
 			m.HTMLBody = src
+		} else {
+			m.HTMLBody = bodyForIndex(innerHTML(bodyDiv))
 		}
 	}
 

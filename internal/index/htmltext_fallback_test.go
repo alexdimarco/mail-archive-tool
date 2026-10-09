@@ -88,8 +88,9 @@ func TestFallbackExtractorAgreesWithTree(t *testing.T) {
 	// The same through htmlToText, nested past the cap: the deep copy reads as
 	// the shallow one does, plus nothing.
 	for _, h := range fallbackCorpus {
-		if strings.Contains(strings.ToLower(h), "<head") || strings.Contains(strings.ToLower(h), "<html") || strings.HasPrefix(h, "<noscript") {
-			continue // a document prologue cannot be nested
+		if strings.Contains(strings.ToLower(h), "<head") || strings.Contains(strings.ToLower(h), "<html") ||
+			strings.HasPrefix(strings.TrimLeft(h, " \t\n\r\f"), "<noscript") {
+			continue // a document prologue, or a leading implied-head noscript, cannot be nested (nesting makes it body content)
 		}
 		shallow := htmlToText(h)
 		deep := deepWrap(600, h)

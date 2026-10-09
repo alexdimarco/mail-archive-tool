@@ -158,25 +158,38 @@ func keysOf(m map[string]int) []string {
 }
 
 // covers: MA-492, R8, R13
-// explicitHead decides which head is kept out of the live index, and the
-// decision must match what the rebuild can read. A head written the usual
-// way, on its own line after <html> (and after a doctype and a comment, as
-// Litmus-style templates have it), is still explicit: the exporter keeps it in
-// the page's own <head>, so its noscript text is found on neither side. A
-// mail whose explicit <body> starts with a noscript keeps that noscript at
-// the start of the page's body div, where the rebuild's own parse puts it in
-// an implied head; implied heads are read, so its text is found on both sides.
+// Which head is kept out of the index must match what the rebuild can read.
+// Every head is skipped now, explicit OR implied, and the rebuild wraps the
+// body div's inner HTML in <body> so its content is body (not an implied head).
+// A head written the usual way, on its own line after <html> (and after a
+// doctype and a comment, Litmus-style), is explicit: the exporter keeps it in
+// the page's own <head>, so its noscript text is found on neither side. A mail
+// whose explicit <body> starts with a noscript keeps that noscript at the start
+// of the page's body div, which the rebuild wraps in <body>, so its text is
+// found on both sides. And the old implied-head drift is closed: a fragment
+// that leads with a text-bearing <noscript> or <noframes> — bare, after
+// whitespace, or after a <meta> — is an implied head the exporter moves into
+// the page's <head>; it was indexed live only (live=1 rebuilt=0), and is now
+// found on NEITHER side, equal.
 func TestLiveAndRebuiltIndexAgreeOnHeadsAroundNoscript(t *testing.T) {
 	bodies := map[string]string{
 		"newline head": "<html>\n<head>\n<noscript><p>parnlheadns</p></noscript>\n</head>\n<body>\n<p>parnlbody</p>\n</body>\n</html>",
 		"litmus head": "<!DOCTYPE html>\n<!-- preheader -->\n<html lang=\"en\" xmlns=\"http://www.w3.org/1999/xhtml\">\n  <head>\n    <meta charset=\"utf-8\">\n" +
 			"    <noscript><p>parlitheadns</p></noscript>\n  </head>\n  <body>\n    <p>parlitbody</p>\n  </body>\n</html>",
 		"body starts with noscript": `<html><head><title>t</title></head><body><noscript><p>parbodystartns</p></noscript><p>parbodystartbody</p></body></html>`,
+		"fragment leading noscript": `<noscript><p>parfragns</p></noscript><p>parfragbody</p>`,
+		"fragment leading noframes": `<noframes><p>parfragnf</p></noframes><p>parfragnfbody</p>`,
+		"noscript after whitespace": "\n  <noscript><p>parwsns</p></noscript><p>parwsbody</p>",
+		"noscript after a meta":     `<meta charset="utf-8"><noscript><p>parmetans</p></noscript><p>parmetabody</p>`,
 	}
 	want := map[string]int{
 		"parnlheadns": 0, "parnlbody": 1,
 		"parlitheadns": 0, "parlitbody": 1,
 		"parbodystartns": 1, "parbodystartbody": 1,
+		"parfragns": 0, "parfragbody": 1,
+		"parfragnf": 0, "parfragnfbody": 1,
+		"parwsns": 0, "parwsbody": 1,
+		"parmetans": 0, "parmetabody": 1,
 	}
 	live, rebuilt := parityArchive(t, bodies, keysOf(want))
 	assure.Reached(t, live["parnlbody"]+rebuilt["parnlbody"], "hits for an indexed body word")

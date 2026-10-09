@@ -340,13 +340,15 @@ func TestBodyTextFallbackForDeepBodiesKeepsVisibleWords(t *testing.T) {
 // it — the words, never its tags or attribute values as words — and appended
 // after the scripting-on text, so it never splits a word that reading shows
 // (`wi<noscript>x</noscript>re` reads "wire" with JavaScript on). A noscript
-// inside an explicit <head> is not indexed, like the rest of that head: the
-// exporter moves the mail's head into the page's <head>, which `reindex
-// -rebuild` does not read, so indexing it would make the live index and the
-// rebuilt one disagree (R8). A head written on its own line after <html> (or
-// after a doctype and a comment) is still explicit. A noscript that starts a
-// body div is in an implied head when the div is parsed alone, as the rebuild
-// does, and is indexed. The fallback extractor reads noscript the same way.
+// inside a <head> is not indexed, explicit OR implied, like the rest of that
+// head: the exporter moves the mail's head into the page's <head>, which
+// `reindex -rebuild` does not read, so indexing it would make the live index
+// and the rebuilt one disagree (R8). A head written on its own line after
+// <html> (or after a doctype and a comment) is explicit; a fragment that leads
+// with a text-bearing noscript is an implied head — both are skipped. The
+// rebuild wraps the body div's inner HTML in <body> before indexing, so a mail
+// whose own <body> starts with a noscript is body content and IS indexed, on
+// both sides. The fallback extractor reads noscript the same way.
 func TestBodyTextReadsNoscriptAsMarkup(t *testing.T) {
 	cases := []visCase{
 		{
@@ -383,12 +385,24 @@ func TestBodyTextReadsNoscriptAsMarkup(t *testing.T) {
 			absent: []string{"litheadnsword"},
 		},
 		{
-			// The rebuild reads the page's body div, and a mail whose <body>
-			// starts with a noscript gives a div that does too; parsed alone,
-			// that noscript lands in an implied head, which is read.
-			name: "noscript at the start of a body div (an implied head) is indexed",
-			html: "\n<noscript><p>divstartnsword</p></noscript><p>divstartbody</p>",
+			// The rebuild wraps the body div's inner HTML in <body> before
+			// indexing (internal/app/htmlheader.go), so a mail whose own <body>
+			// starts with a noscript is body content and is indexed — on the live
+			// side (which reads the original mail) and after a rebuild alike.
+			name: "noscript at the start of a <body> is indexed (the rebuild's input)",
+			html: "<body>\n<noscript><p>divstartnsword</p></noscript><p>divstartbody</p>",
 			want: []string{"divstartnsword", "divstartbody"},
+		},
+		{
+			// A bare fragment that leads with a text-bearing noscript is an
+			// implied head to the parser; the exporter moves it into the page's
+			// head, which the rebuild does not read, so the extractor skips it —
+			// on both sides, not indexed live only (the old implied-head drift,
+			// R8). noframes leading the fragment is the same.
+			name:   "a fragment leading with an implied-head noscript is skipped",
+			html:   "\n<noscript><p>fragnsword</p></noscript><p>fragbodyword</p>",
+			want:   []string{"fragbodyword"},
+			absent: []string{"fragnsword"},
 		},
 		{
 			name:   "style inside noscript stays out",
