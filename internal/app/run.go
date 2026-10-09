@@ -84,9 +84,12 @@ func finish(out string, r *Result, exp *export.Exporter, manifest *state.Manifes
 	r.Indexed = indexCount(idx) // commits any pending batch first
 	// The failed Adds the caller counted, plus every row whose Add succeeded but
 	// whose batch was lost afterwards (F49), so every message this run exported
-	// is either indexed or counted. Indexed is the index's total: the books read
-	// Indexed + IndexErrors == exported only on a fresh archive; on an
-	// incremental run they are the index's growth plus IndexErrors.
+	// has its row added or replaced in the index, or is counted. Indexed is the
+	// index's total, so Indexed + IndexErrors == exported only on a fresh
+	// archive, and the index's growth plus IndexErrors == exported only on a run
+	// whose exports are all new to the index: a fill, a re-capture of a legacy
+	// "unknown" record or a full-mode re-export exports its message again under
+	// the same key, and idx.Add replaces that key's row instead of adding one.
 	r.IndexErrors = indexErrors
 	if idx != nil {
 		r.IndexErrors += idx.Lost()
