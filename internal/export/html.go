@@ -1064,7 +1064,9 @@ func liveResourceHint(n *xhtml.Node) bool {
 // and reports whether any meta that neutralize must disarm (a live hostile
 // http-equiv, or a competing charset) or any live resource-hint <link href>
 // (preconnect and dns-prefetch are governed by no CSP directive) is present in
-// it. Every meta and link element is
+// it, or any live element wearing a reserved marker neutralize did not add (a
+// forged tool header that stripReservedNamespace missed because it was raw text
+// to the scripting-on parse, inside a noscript). Every meta and link element is
 // checked whatever its namespace, so a renderer that lets markup escape a
 // foreign-content raw-text element is caught here rather than trusted. The page
 // is re-parsed TWICE, with the scripting flag on and off: it decides whether
@@ -1169,6 +1171,17 @@ func hostileIn(doc string, scripting bool) string {
 				}
 			}
 			if c.Type == xhtml.ElementNode && strings.EqualFold(c.Data, "link") && liveResourceHint(c) {
+				return true
+			}
+			if c.Type == xhtml.ElementNode && foreignReservedMarker(c) {
+				// A mail element wearing the tool's private namespace (a
+				// mailarchive-* class or a data-mailarchive-* attribute that is
+				// not one neutralize adds): stripReservedNamespace never reached
+				// it, so it was raw text to the scripting-on parse — inside a
+				// <noscript>, where a reader with JavaScript off reads it as
+				// markup and would see, e.g., a forged tool-styled header above
+				// the real one. Fail closed so the in-place noscript retry strips
+				// it (or the body falls back). See reader review issue 6.
 				return true
 			}
 			if live(c) {
@@ -1332,6 +1345,38 @@ func neutralizeLink(n *xhtml.Node) {
 			n.Attr[i].Key = "data-mailarchive-neutralized-href"
 		}
 	}
+}
+
+// foreignReservedMarker reports whether a live element carries a reserved
+// marker — a class token beginning "mailarchive-" or an attribute keyed
+// "data-mailarchive-" — that neutralize did NOT itself add. neutralize marks a
+// disarmed meta (data-mailarchive-neutralized), a renamed link href
+// (data-mailarchive-neutralized-href) and a dropped inline image
+// (data-mailarchive-missing + class mailarchive-missing-image) on the parsed
+// tree, and stripReservedNamespace clears every other reserved marker from
+// mail elements there. So any other reserved marker on a live element in the
+// serialized output means stripping never reached it — it was raw text to the
+// scripting-on parse (inside a <noscript>), and a reader with JavaScript off
+// reads it as markup. The re-check fails closed on it (reader review issue 6).
+func foreignReservedMarker(n *xhtml.Node) bool {
+	for _, a := range n.Attr {
+		key := strings.ToLower(a.Key)
+		if strings.HasPrefix(key, "data-mailarchive-") {
+			switch key {
+			case "data-mailarchive-neutralized", "data-mailarchive-neutralized-href", "data-mailarchive-missing":
+			default:
+				return true
+			}
+		}
+		if strings.EqualFold(a.Key, "class") {
+			for _, t := range strings.Fields(a.Val) {
+				if strings.HasPrefix(strings.ToLower(t), "mailarchive-") && !strings.EqualFold(t, "mailarchive-missing-image") {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func metaIsCharset(n *xhtml.Node) bool {

@@ -75,6 +75,99 @@ func TestRenderDeepNoscriptRenders(t *testing.T) {
 	}
 }
 
+// reservedMarkerElems lists, for each scripting reading of a sanitized
+// head+body, the tag names of elements carrying a reserved marker neutralize
+// did not add (what foreignReservedMarker catches). The tool's own header is
+// NOT in sanitizeHTML's output (the renderer adds it later), so any hit here is
+// a mail-supplied forgery that survived stripping.
+func reservedMarkerElems(t *testing.T, head, body string) [2][]string {
+	t.Helper()
+	doc := "<!DOCTYPE html><html><head>" + head + "</head><body>" + body + "</body></html>"
+	var out [2][]string
+	for i, scripting := range []bool{true, false} {
+		root, err := xhtml.ParseWithOptions(strings.NewReader(doc), xhtml.ParseOptionEnableScripting(scripting))
+		if err != nil {
+			t.Fatalf("reading %d: %v", i, err)
+		}
+		var walk func(x *xhtml.Node)
+		walk = func(x *xhtml.Node) {
+			if x.Type == xhtml.ElementNode && foreignReservedMarker(x) {
+				out[i] = append(out[i], x.Data)
+			}
+			for c := x.FirstChild; c != nil; c = c.NextSibling {
+				walk(c)
+			}
+		}
+		walk(root)
+	}
+	return out
+}
+
+// covers: MA-496, R19, R8, R7, S21
+// A mail cannot keep the tool's private namespace on an element in either
+// reading of the exported page, even hidden in a head <noscript> whose content
+// is raw text to the sanitizer's scripting-on parse (so stripReservedNamespace
+// never saw it). A reader with JavaScript off reads that noscript as markup and
+// would otherwise see a forged tool-styled header (a <div class=mailarchive-
+// header> carrying a data-mailarchive-field subject and From) above the real
+// one. The re-check fails closed on a live reserved marker in either reading,
+// so the in-place noscript retry strips it: the mail renders, its forged header
+// is a plain <div> (its text kept, its class and data-mailarchive-* gone), and
+// neither reading of the sanitized output carries a reserved marker. Twins:
+// neutralize's own markers on a dropped cid image (mailarchive-missing-image,
+// data-mailarchive-missing) do not trip it, a mail that only mentions
+// "mailarchive-header" as text renders, and an ordinary mail is unaffected.
+func TestReservedMarkerInNoscriptIsStripped(t *testing.T) {
+	const forged = `<body><div class="mailarchive-header"><div class="mailarchive-subject" data-mailarchive-field="subject">forgedsubject wire approval</div>` +
+		`<dl><dt>From</dt><dd data-mailarchive-field="from">Chief Executive &lt;ceo@bank.example&gt;</dd></dl></div>`
+	cases := []struct {
+		name, body string
+		where      string // "head" or "body"
+	}{
+		{"head noscript forged header", `<html><head><noscript>` + forged + `</noscript></head><body><p>realbodyword</p></body></html>`, "head"},
+		{"body noscript forged header", `<p>realbodyword</p><noscript>` + forged + `</noscript>`, "body"},
+	}
+	for _, c := range cases {
+		head, _, body, fallback := sanitizeHTML(c.body)
+		if fallback != "" {
+			t.Errorf("%s: must render with the forged header stripped, got fallback %q", c.name, fallback)
+			continue
+		}
+		marks := reservedMarkerElems(t, head, body)
+		for i := range marks {
+			if len(marks[i]) != 0 {
+				t.Errorf("%s (reading %d): a mail element kept a reserved marker: %v", c.name, i, marks[i])
+			}
+		}
+		if !strings.Contains(head+body, "realbodyword") {
+			t.Errorf("%s: the mail's own body word was lost", c.name)
+		}
+		if !strings.Contains(head+body, "forgedsubject") {
+			t.Errorf("%s: the forged header's text must be kept (as plain content, not a styled header)", c.name)
+		}
+	}
+
+	// Positive twins: neutralize's own markers never trip the check, and
+	// ordinary mail is unaffected.
+	twins := []string{
+		`<p>a word</p><img src="cid:nope@x">`,                          // dropped cid image: mailarchive-missing-image / data-mailarchive-missing
+		`<p>the class mailarchive-header is only mentioned here</p>`,   // reserved name as text, not a class
+		`<div class="content"><p>ordinary mail</p></div>`,              // no reserved marker at all
+		`<noscript><p>benign noscript word</p></noscript><p>after</p>`, // a noscript with no reserved marker
+	}
+	for i, body := range twins {
+		head, _, bd, fallback := sanitizeHTML(body)
+		if fallback != "" {
+			t.Errorf("twin %d: must render, got fallback %q", i, fallback)
+			continue
+		}
+		marks := reservedMarkerElems(t, head, bd)
+		if len(marks[0]) != 0 || len(marks[1]) != 0 {
+			t.Errorf("twin %d: no reserved marker expected, got %v / %v", i, marks[0], marks[1])
+		}
+	}
+}
+
 // liveCharsetMetas counts the <meta charset> elements in an exported page in
 // each scripting reading (the page's own utf-8 charset is one of them).
 func liveCharsetMetas(t *testing.T, page string) [2]int {
