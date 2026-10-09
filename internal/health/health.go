@@ -752,7 +752,14 @@ func Summary(in Input, rep Report) []string {
 	switch in.LastRunState {
 	case state.LastRunPresent:
 		lr := in.LastRun
-		line := fmt.Sprintf("Last run:   %s → %s", lr.Started.Local().Format("2006-01-02 15:04"), lr.Status)
+		// A "running" record reads as running only while it can belong to a
+		// run in progress (runRunning, the rule Assess judges it by); otherwise
+		// the run that wrote it never finished, as the RED below says.
+		how := lr.Status
+		if lr.Status == state.RunRunning && !runRunning(in) {
+			how = "never finished"
+		}
+		line := fmt.Sprintf("Last run:   %s → %s", lr.Started.Local().Format("2006-01-02 15:04"), how)
 		if lr.Status == state.RunOK {
 			line += fmt.Sprintf(" · exported %d · filled %d · took %s", lr.Exported, lr.Filled, lr.Finished.Sub(lr.Started).Round(time.Second))
 		} else if lr.Error != "" {
