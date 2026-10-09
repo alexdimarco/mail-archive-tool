@@ -33,6 +33,12 @@ import (
 // (verify_never_finished, naming its start, its log and `verify -out`) and is
 // not yet stale; one started 30 days ago is stale ("started 30 days ago", "has
 // not finished"), with the lock free (and verify_never_finished too) or held. A
+// weekly verify installed 3 days ago, after a last verify of 30 days ago
+// (finished, or started and never finished), keeps verify_stale (MA-466) but
+// says the schedule was installed after the last verify and has not run since,
+// naming its next run and `verify -out` now, never "stopped running" or a
+// re-install; one re-installed 20 days ago with nothing since says no verify
+// has run since the install, with the re-install remedy. A
 // last-verify record that cannot be read is a WARN (lastverify_unreadable)
 // naming the file and `verify -out`, never GREEN. Older installs stay truthful,
 // with no false WARN: a verify an earlier
@@ -165,6 +171,43 @@ func TestVerifyStaleJudgedAgainstTheVerifySchedule(t *testing.T) {
 					t.Errorf("%s: the never-finished WARN lacks %q:\n%s", c.step, want, reason)
 				}
 			}
+		}
+	}
+
+	// A verify schedule installed after the last verify ran has not stopped: the
+	// WARN stays (MA-466), but says it has not run yet, and a verify now clears
+	// it; a re-install would change nothing, so it is not the remedy.
+	fresh := withVerify("weekly", daysAgo(3))
+	lastVerify(&fresh, daysAgo(30))
+	freshRunning := withVerify("weekly", daysAgo(3))
+	freshRunning.LastVerifyState = state.LastVerifyPresent
+	freshRunning.LastVerify = state.LastVerify{Status: state.VerifyRunning, Started: daysAgo(30)}
+	for _, c := range []struct {
+		step, last string
+		in         Input
+	}{
+		{"weekly verify installed 3 days ago, the last verify finished 30 days ago", "the last verify was 30 days ago", fresh},
+		{"weekly verify installed 3 days ago, the last verify started 30 days ago", "the last verify started 30 days ago and has not finished", freshRunning},
+	} {
+		reason := expect(c.step, c.in, true)
+		for _, want := range []string{c.last, verifyName, "installed 3 days ago, after the last verify", "has not run since", "wait for its next run (weekly at 05:00)", "`mailarchive verify -out \"/a\"` now"} {
+			if !strings.Contains(reason, want) {
+				t.Errorf("%s: the WARN lacks %q:\n%s", c.step, want, reason)
+			}
+		}
+		for _, bad := range []string{"stopped running", "re-install"} {
+			if strings.Contains(reason, bad) {
+				t.Errorf("%s: the WARN says %q of a schedule installed after the last verify:\n%s", c.step, bad, reason)
+			}
+		}
+	}
+	// Installed after the last verify, but two periods ago, with nothing since: stopped.
+	refreshed := withVerify("weekly", daysAgo(20))
+	lastVerify(&refreshed, daysAgo(30))
+	reason = expect("weekly verify re-installed 20 days ago, the last verify 30 days old", refreshed, true)
+	for _, want := range []string{"no verify has run in the 20 days since", verifyName, "the last verify was 30 days ago, before the install", "re-install it"} {
+		if !strings.Contains(reason, want) {
+			t.Errorf("a verify re-installed 20 days ago with nothing since: the WARN lacks %q:\n%s", want, reason)
 		}
 	}
 

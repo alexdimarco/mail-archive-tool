@@ -318,8 +318,14 @@ func Assess(in Input, now time.Time) Report {
 // more than twice the period ago is stale whether or not it still holds the
 // lock. With the lock free its process is gone (the lock dies with it), so it
 // never finished: a WARN at once, so a verify that dies on every run is never
-// GREEN. A last-verify record that cannot be read gives no verdict and no date
-// to judge by, so it is a WARN too (failing closed, R18). A verify descriptor
+// GREEN. A verify schedule installed (or re-installed) after the last verify
+// ran has not stopped: within two of its periods of the install a stale last
+// verify still raises verify_stale (MA-466), but the WARN says the schedule has
+// not run yet, naming its next run and a verify now — never a re-install,
+// which would change nothing; later, no verify since the install is said so,
+// with the re-install remedy. A last-verify record that cannot be read gives no
+// verdict and no date to judge by, so it is a WARN too (failing closed, R18). A
+// verify descriptor
 // that exists but cannot be read is a WARN naming it and its remedy, and gives
 // no cadence. Without a readable one, a descriptor an older release wrote for
 // the verify in the backup's place still gives the cadence (MA-155); a verify
@@ -332,11 +338,25 @@ func assessVerifySchedule(r *Report, in Input, now time.Time) {
 		vd := in.VerifyDesc
 		period := IntervalOf(vd.Interval)
 		pending := in.LastVerifyState == state.LastVerifyPresent && !done
+		// When the last verify ran: its finish, or the start of one that has not
+		// finished. The verify schedule may have been installed (or re-installed)
+		// after it, and then it has not stopped: it has not run yet.
+		var last time.Time
+		lastWhat := ""
 		switch {
-		case done && now.Sub(*lv.Finished) > 2*period:
-			r.warn("verify_stale", fmt.Sprintf("the last verify was %s ago, more than twice the %s verify schedule period of %q — %s", HumanAge(now.Sub(*lv.Finished)), vd.Interval, vd.Name, verifyStaleRemedy(in)))
-		case pending && now.Sub(lv.Started) > 2*period:
-			r.warn("verify_stale", fmt.Sprintf("the last verify started %s ago and has not finished, more than twice the %s verify schedule period of %q — %s", HumanAge(now.Sub(lv.Started)), vd.Interval, vd.Name, verifyStaleRemedy(in)))
+		case done:
+			last, lastWhat = *lv.Finished, fmt.Sprintf("the last verify was %s ago", HumanAge(now.Sub(*lv.Finished)))
+		case pending:
+			last, lastWhat = lv.Started, fmt.Sprintf("the last verify started %s ago and has not finished", HumanAge(now.Sub(lv.Started)))
+		}
+		switch {
+		case !last.IsZero() && now.Sub(last) > 2*period && vd.InstalledAt.After(last) && now.Sub(vd.InstalledAt) <= 2*period:
+			// Re-installing would change nothing here; a verify run now clears it.
+			r.warn("verify_stale", fmt.Sprintf("%s, more than twice the %s verify schedule period of %q — that schedule was installed %s ago, after the last verify, and has not run since: wait for its next run (%s), or run `mailarchive verify -out %q` now", lastWhat, vd.Interval, vd.Name, HumanAge(now.Sub(vd.InstalledAt)), cadenceOf(vd), in.Out))
+		case !last.IsZero() && now.Sub(last) > 2*period && vd.InstalledAt.After(last):
+			r.warn("verify_stale", fmt.Sprintf("no verify has run in the %s since the %s verify schedule %q was installed, more than twice its period (%s, before the install) — %s", HumanAge(now.Sub(vd.InstalledAt)), vd.Interval, vd.Name, lastWhat, verifyStaleRemedy(in)))
+		case !last.IsZero() && now.Sub(last) > 2*period:
+			r.warn("verify_stale", fmt.Sprintf("%s, more than twice the %s verify schedule period of %q — %s", lastWhat, vd.Interval, vd.Name, verifyStaleRemedy(in)))
 		case in.LastVerifyState == state.LastVerifyAbsent && !vd.InstalledAt.IsZero() && now.Sub(vd.InstalledAt) > 2*period:
 			r.warn("verify_stale", fmt.Sprintf("no verify has run in the %s since the %s verify schedule %q was installed, more than twice its period — %s", HumanAge(now.Sub(vd.InstalledAt)), vd.Interval, vd.Name, verifyStaleRemedy(in)))
 		}
@@ -362,6 +382,15 @@ func assessVerifySchedule(r *Report, in Input, now time.Time) {
 	if isVerifyJob(in.Desc.Job) && done && now.Sub(*lv.Finished) > 2*IntervalOf(in.Desc.Interval) {
 		r.warn("verify_stale", fmt.Sprintf("the last verify was %s ago, more than twice the %s verify schedule period — schedule it, or run `mailarchive verify -out %q`", HumanAge(now.Sub(*lv.Finished)), in.Desc.Interval, in.Out))
 	}
+}
+
+// cadenceOf renders a recorded schedule's cadence for a remedy, e.g. "weekly at
+// 05:00"; a time the descriptor could not parse ("??:??") is left out.
+func cadenceOf(d schedule.Descriptor) string {
+	if strings.Contains(d.At, "?") {
+		return d.Interval
+	}
+	return d.Interval + " at " + d.At
 }
 
 // verifyStaleRemedy is what to do about a stale scheduled verify: put it back

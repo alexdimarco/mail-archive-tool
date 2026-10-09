@@ -953,7 +953,10 @@ beside each archive's `Last verify` line. It WARNs (`verify_stale`) when the
 last verify finished more than twice the verify's own period ago, when the last
 verify started that long ago and has not finished, or when no verify has run in
 twice that period since the verify was installed. The cadence is always the
-verify's, never the backup's. A last verify that is still recorded as running
+verify's, never the backup's. If you install (or re-install) the verify
+schedule after the archive's last verify, the WARN stays until the schedule's
+first run and says so: wait for that run, or run `mailarchive verify -out X`
+now (re-installing again changes nothing). A last verify that is still recorded as running
 while nothing holds the archive lock died mid-run (a crash, a kill, a power
 loss): `status` WARNs at once (`verify_never_finished`), so a verify that dies
 on every run never looks current. A last-verify record that cannot be read is a
