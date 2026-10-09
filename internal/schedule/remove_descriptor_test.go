@@ -17,9 +17,13 @@ import (
 // removed=false, never touches the scheduler, and leaves the descriptor —
 // which still names the archive's real, running schedule for `status` — exactly
 // as it was. The positive twin is the descriptor's own name, which is removed
-// together with the descriptor. The scheduler is sandboxed: HOME is a temp dir
-// and a fake launchctl is first on PATH for launchd, and the crontab seams
-// stand in on cron hosts.
+// together with the descriptor. A descriptor that cannot be read at all (bad
+// JSON, as a hand edit leaves it) records no one's schedule, so it goes with the
+// archive's DEFAULT-named schedule — the entry `-out X -remove` falls back to
+// when it cannot read the descriptor, and the only one that writes it — and
+// stays, byte for byte, when another entry of the archive (its verify) is
+// removed. The scheduler is sandboxed: HOME is a temp dir and a fake launchctl
+// is first on PATH for launchd, and the crontab seams stand in on cron hosts.
 func TestRemoveIfInstalledKeepsAnotherSchedulesDescriptor(t *testing.T) {
 	switch runtime.GOOS {
 	case "darwin", "linux", "freebsd", "openbsd", "netbsd":
@@ -77,4 +81,50 @@ func TestRemoveIfInstalledKeepsAnotherSchedulesDescriptor(t *testing.T) {
 	if _, err := ReadDescriptor(out); !os.IsNotExist(err) {
 		t.Errorf("the recorded schedule's descriptor survived its removal: %v", err)
 	}
+
+	t.Run("unreadable descriptor", func(t *testing.T) {
+		out := t.TempDir()
+		exe := "/usr/local/bin/mailarchive"
+		backup := Spec{Name: DefaultNameFor(out), Interval: Daily, At: "02:00", Exe: exe, Args: []string{"-out", out}, Out: out}
+		verify := Spec{Name: DefaultNameFor(out) + "-verify", Interval: Weekly, At: "05:00", Exe: exe, Args: []string{"verify", "-out", out}, Out: out}
+		for _, s := range []Spec{backup, verify} {
+			if err := Install(s); err != nil { // the sandboxed launchctl / crontab seams
+				t.Fatal(err)
+			}
+			assure.Reached(t, Query(s.Name) == Installed, "fixture: "+s.Name+" installed")
+		}
+		path := filepath.Join(out, DescriptorName)
+		broken := []byte("{\"version\":1,\"name\":") // a hand edit cut short
+		if err := os.WriteFile(path, broken, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ReadDescriptor(out); err == nil || os.IsNotExist(err) {
+			t.Fatalf("fixture: the descriptor should exist and be unreadable, got %v", err)
+		}
+
+		// Another entry of the archive: removed, the unreadable descriptor kept.
+		removed, err := RemoveIfInstalled(verify)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !removed || Query(verify.Name) == Installed {
+			t.Errorf("the archive's verify entry was not removed (removed=%v, state=%v)", removed, Query(verify.Name))
+		}
+		if after, err := os.ReadFile(path); err != nil || string(after) != string(broken) {
+			t.Errorf("removing the verify entry changed or deleted the archive's descriptor (%v)", err)
+		}
+
+		// The archive's default-named schedule: removed together with it.
+		removed, err = RemoveIfInstalled(backup)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assure.Reached(t, removed, "removal of the archive's default-named schedule")
+		if Query(backup.Name) == Installed {
+			t.Errorf("the default-named schedule %s is still installed", backup.Name)
+		}
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("an unreadable descriptor outlived the archive's default-named schedule, so status and -install still point at a schedule that is gone (stat: %v)", err)
+		}
+	})
 }

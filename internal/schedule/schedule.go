@@ -612,10 +612,10 @@ func cronBlockOut(crontab, marker string) string {
 }
 
 // Remove uninstalls a previously installed schedule by name, then its wrapper,
-// its XML definition and — when the archive's descriptor records THIS schedule —
-// the descriptor. A descriptor naming another schedule (the archive's backup,
-// when a verify entry is removed) still describes a running schedule that
-// `status` watches, so it is kept.
+// its XML definition and — when the descriptor goes with THIS schedule
+// (descriptorGoesWith) — the archive's descriptor. A descriptor naming another
+// schedule (the archive's backup, when a verify entry is removed) still
+// describes a running schedule that `status` watches, so it is kept.
 func Remove(s Spec) error {
 	var err error
 	switch runtime.GOOS {
@@ -632,10 +632,33 @@ func Remove(s Spec) error {
 	if err != nil {
 		return err
 	}
-	if descriptorRecords(s.Out, s.Name) {
+	if descriptorGoesWith(s.Out, s.Name) {
 		return RemoveDescriptor(s.Out)
 	}
 	return nil
+}
+
+// descriptorGoesWith reports whether removing the schedule called name also
+// removes the archive's descriptor: when the descriptor records that name, or
+// when it exists but cannot be read (a hand edit, bad JSON, an invalid name) and
+// name is the archive's default name. An unreadable descriptor records no one's
+// schedule; the default name is the entry `-out X -remove` falls back to when it
+// cannot read the descriptor, and the archive's own backup — the only schedule
+// that writes the descriptor. Left behind, it would keep `status` and
+// `-install` pointing at a schedule that is gone.
+func descriptorGoesWith(out, name string) bool {
+	if out == "" {
+		return false
+	}
+	d, err := ReadDescriptor(out)
+	switch {
+	case err == nil:
+		return d.Name == name
+	case errors.Is(err, fs.ErrNotExist):
+		return false
+	default:
+		return name == DefaultNameFor(out)
+	}
 }
 
 // descriptorRecords reports whether the archive at out has a readable
