@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"mail-archive-tool/internal/index"
+	"mail-archive-tool/internal/localweb"
 	"mail-archive-tool/internal/server"
 )
 
@@ -50,6 +51,16 @@ func (rm *readerMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h := rm.h
 	rm.mu.Unlock()
 	h.ServeHTTP(w, r)
+}
+
+// Routes names the reader's routes. The reader always serves through a
+// server.New handler, whichever archive it is pointed at, so its routes are
+// exactly the ones server.New registers (design-local-confidentiality CC15).
+func (rm *readerMux) Routes() []string { return localweb.RoutesOf(server.New("", nil)) }
+
+// Route returns the pattern r reaches on the reader's server.New handler.
+func (rm *readerMux) Route(r *http.Request) string {
+	return localweb.RouteOf(server.New("", nil), r)
 }
 
 // Close releases the lazily-opened index, if any. It is safe to call more than

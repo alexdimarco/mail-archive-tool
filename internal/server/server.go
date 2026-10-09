@@ -18,12 +18,15 @@ import (
 
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/index"
+	"mail-archive-tool/internal/localweb"
 )
 
 // New returns an http.Handler serving the UI, JSON API, and exported files
-// rooted at outDir, querying ix.
+// rooted at outDir, querying ix. Its routes are registered on a localweb.Mux, so
+// the binaries' guard and route probe name them (design-local-confidentiality
+// CC15); `serve` and the desktop reader serve it behind localweb.Wrap.
 func New(outDir string, ix *index.Index) http.Handler {
-	mux := http.NewServeMux()
+	mux := localweb.NewMux()
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
@@ -78,7 +81,7 @@ func New(outDir string, ix *index.Index) http.Handler {
 	files := http.StripPrefix("/files/", http.FileServer(newContainedDir(outDir)))
 	mux.Handle("/files/", files)
 
-	return secureHeaders(mux)
+	return localweb.Routed(secureHeaders(mux), mux)
 }
 
 const (

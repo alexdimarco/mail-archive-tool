@@ -15,6 +15,7 @@ import (
 
 	"mail-archive-tool/internal/graph"
 	"mail-archive-tool/internal/graphconfig"
+	"mail-archive-tool/internal/localweb"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/server"
 )
@@ -77,10 +78,12 @@ type dashboard struct {
 }
 
 // DashboardHandler serves the dashboard: GET "/" (Overview), the static script,
-// and the loopback-only, CSRF/Origin/Host-guarded action endpoints.
+// and the loopback-only, CSRF/Origin/Host-guarded action endpoints. Its routes are
+// registered on a localweb.Mux so the binary's guard and route probe name them
+// (design-local-confidentiality CC15).
 func DashboardHandler(cfg Config) http.Handler {
 	d := &dashboard{cfg: cfg, csrf: server.NewCSRFToken(), cap: &captureState{}}
-	mux := http.NewServeMux()
+	mux := localweb.NewMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
@@ -103,7 +106,7 @@ func DashboardHandler(cfg Config) http.Handler {
 	mux.HandleFunc("/api/verify", d.verifyAction)
 	mux.HandleFunc("/api/rebuild", d.rebuildAction)
 	mux.HandleFunc("/api/health", d.healthAction)
-	return dashboardHeaders(mux)
+	return localweb.Routed(dashboardHeaders(mux), mux)
 }
 
 // saveSettings persists the dashboard preferences (loopback-only, CSRF-guarded).
