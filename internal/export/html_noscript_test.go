@@ -75,11 +75,28 @@ func TestRenderDeepNoscriptRenders(t *testing.T) {
 	}
 }
 
+// neutralizeOwnAttrs and neutralizeOwnClass are the reserved markers
+// neutralize itself adds to mail elements — a disarmed meta's
+// data-mailarchive-neutralized, a renamed link's
+// data-mailarchive-neutralized-href, a dropped inline image's
+// data-mailarchive-missing and class mailarchive-missing-image — written out
+// literally so the test's oracle is its own, not the product's
+// foreignReservedMarker.
+var neutralizeOwnAttrs = map[string]bool{
+	"data-mailarchive-neutralized":      true,
+	"data-mailarchive-neutralized-href": true,
+	"data-mailarchive-missing":          true,
+}
+
+const neutralizeOwnClass = "mailarchive-missing-image"
+
 // reservedMarkerElems lists, for each scripting reading of a sanitized
-// head+body, the tag names of elements carrying a reserved marker neutralize
-// did not add (what foreignReservedMarker catches). The tool's own header is
-// NOT in sanitizeHTML's output (the renderer adds it later), so any hit here is
-// a mail-supplied forgery that survived stripping.
+// head+body, every reserved marker on a live element that neutralize did not
+// add, as "tag:marker": a class token beginning "mailarchive-" (in any ASCII
+// case, as stripReservedNamespace reads it) and a "data-mailarchive-*"
+// attribute outside neutralizeOwnAttrs. The tool's own header is NOT in
+// sanitizeHTML's output (the renderer adds it later), so any hit here is a
+// mail-supplied forgery that survived stripping.
 func reservedMarkerElems(t *testing.T, head, body string) [2][]string {
 	t.Helper()
 	doc := "<!DOCTYPE html><html><head>" + head + "</head><body>" + body + "</body></html>"
@@ -91,8 +108,20 @@ func reservedMarkerElems(t *testing.T, head, body string) [2][]string {
 		}
 		var walk func(x *xhtml.Node)
 		walk = func(x *xhtml.Node) {
-			if x.Type == xhtml.ElementNode && foreignReservedMarker(x) {
-				out[i] = append(out[i], x.Data)
+			if x.Type == xhtml.ElementNode {
+				for _, a := range x.Attr {
+					key := strings.ToLower(a.Key)
+					if strings.HasPrefix(key, "data-mailarchive-") && !neutralizeOwnAttrs[key] {
+						out[i] = append(out[i], x.Data+":"+key)
+					}
+					if key == "class" {
+						for _, tok := range strings.Fields(a.Val) {
+							if strings.HasPrefix(strings.ToLower(tok), "mailarchive-") && tok != neutralizeOwnClass {
+								out[i] = append(out[i], x.Data+":class="+tok)
+							}
+						}
+					}
+				}
 			}
 			for c := x.FirstChild; c != nil; c = c.NextSibling {
 				walk(c)
@@ -113,19 +142,36 @@ func reservedMarkerElems(t *testing.T, head, body string) [2][]string {
 // one. The re-check fails closed on a live reserved marker in either reading,
 // so the in-place noscript retry strips it: the mail renders, its forged header
 // is a plain <div> (its text kept, its class and data-mailarchive-* gone), and
-// neither reading of the sanitized output carries a reserved marker. Twins:
-// neutralize's own markers on a dropped cid image (mailarchive-missing-image,
-// data-mailarchive-missing) do not trip it, a mail that only mentions
-// "mailarchive-header" as text renders, and an ordinary mail is unaffected.
+// neither reading of the sanitized output carries a reserved marker. Each
+// marker kind is caught alone — a header forged with the reserved classes
+// only, and one with the data-mailarchive-* attributes only, in a head and in
+// a body noscript — and the oracle is the test's own (any reserved class
+// token or attribute outside neutralize's allowlist, written out above): with
+// the product's own check as the oracle, and both kinds in every forgery, a
+// check blind to one kind passed. Twins: neutralize's own markers on a
+// dropped cid image (mailarchive-missing-image, data-mailarchive-missing) do
+// not trip it, a mail that only mentions "mailarchive-header" as text renders,
+// and an ordinary mail is unaffected.
 func TestReservedMarkerInNoscriptIsStripped(t *testing.T) {
 	const forged = `<body><div class="mailarchive-header"><div class="mailarchive-subject" data-mailarchive-field="subject">forgedsubject wire approval</div>` +
 		`<dl><dt>From</dt><dd data-mailarchive-field="from">Chief Executive &lt;ceo@bank.example&gt;</dd></dl></div>`
+	const classOnly = `<body><div class="mailarchive-header"><div class="mailarchive-subject">forgedsubject wire approval</div>` +
+		`<dl><dt>From</dt><dd>Chief Executive &lt;ceo@bank.example&gt;</dd></dl></div>`
+	const dataOnly = `<body><div><div data-mailarchive-field="subject">forgedsubject wire approval</div>` +
+		`<dl><dt>From</dt><dd data-mailarchive-field="from">Chief Executive &lt;ceo@bank.example&gt;</dd></dl></div>`
+	inHead := func(f string) string {
+		return `<html><head><noscript>` + f + `</noscript></head><body><p>realbodyword</p></body></html>`
+	}
+	inBody := func(f string) string { return `<p>realbodyword</p><noscript>` + f + `</noscript>` }
 	cases := []struct {
 		name, body string
-		where      string // "head" or "body"
 	}{
-		{"head noscript forged header", `<html><head><noscript>` + forged + `</noscript></head><body><p>realbodyword</p></body></html>`, "head"},
-		{"body noscript forged header", `<p>realbodyword</p><noscript>` + forged + `</noscript>`, "body"},
+		{"head noscript forged header", inHead(forged)},
+		{"body noscript forged header", inBody(forged)},
+		{"head noscript class-only header", inHead(classOnly)},
+		{"body noscript class-only header", inBody(classOnly)},
+		{"head noscript data-only header", inHead(dataOnly)},
+		{"body noscript data-only header", inBody(dataOnly)},
 	}
 	for _, c := range cases {
 		head, _, body, fallback := sanitizeHTML(c.body)
@@ -164,6 +210,9 @@ func TestReservedMarkerInNoscriptIsStripped(t *testing.T) {
 		marks := reservedMarkerElems(t, head, bd)
 		if len(marks[0]) != 0 || len(marks[1]) != 0 {
 			t.Errorf("twin %d: no reserved marker expected, got %v / %v", i, marks[0], marks[1])
+		}
+		if i == 0 && (!strings.Contains(bd, `data-mailarchive-missing=`) || !strings.Contains(bd, `class="`+neutralizeOwnClass+`"`)) {
+			t.Errorf("twin %d: the dropped image must carry neutralize's own markers (the allowlist is exercised):\n%s", i, bd)
 		}
 	}
 }
