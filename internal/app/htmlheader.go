@@ -27,6 +27,11 @@ import (
 // const is unexported) so the reader parses exactly what the renderer wrote.
 const htmlHeaderLayout = "Mon, 02 Jan 2006 15:04:05 -0700"
 
+// htmlHeaderLegacyLayout is the Date stamp v0.1.1–v0.2.3 wrote
+// (d.Format("Mon, 02 Jan 2006 15:04:05 MST")): the zone's abbreviation, or a
+// bare offset when the zone has no name (which htmlHeaderLayout already reads).
+const htmlHeaderLegacyLayout = "Mon, 02 Jan 2006 15:04:05 MST"
+
 // reHeaderUTC matches fmtTime's parenthetical UTC instant "(YYYY-MM-DD HH:MM
 // UTC)", appended whenever the offset is not UTC. The design recovers the date
 // from this parenthetical (using Received else Sent); the leading stamp is the
@@ -353,7 +358,8 @@ func splitSender(s string) (name, email string) {
 // parseHeaderTime recovers a time from a header dd's text: the parenthetical
 // UTC instant fmtTime appends for a non-UTC offset (minute precision), else the
 // leading RFC-style stamp with its original offset (a UTC time, which has no
-// parenthetical). A dd whose text is neither yields ok=false.
+// parenthetical), else a v0.1–v0.2 stamp with a zone abbreviation. A dd whose
+// text is none of these yields ok=false.
 func parseHeaderTime(s string) (time.Time, bool) {
 	if mm := reHeaderUTC.FindStringSubmatch(s); mm != nil {
 		if t, err := time.Parse("2006-01-02 15:04", mm[1]); err == nil {
@@ -362,6 +368,16 @@ func parseHeaderTime(s string) (time.Time, bool) {
 	}
 	if t, err := time.Parse(htmlHeaderLayout, strings.TrimSpace(s)); err == nil {
 		return t, true
+	}
+	if t, err := time.Parse(htmlHeaderLegacyLayout, strings.TrimSpace(s)); err == nil {
+		// An abbreviation names an offset only where one is known: UTC and
+		// GMT[±h] always, any other only when this machine's zone uses it then
+		// (time.Parse resolves it to time.Local). An unknown one parses at
+		// offset 0 in a made-up zone, a guess hours off, so it is counted
+		// unrecovered instead of indexed.
+		if name, _ := t.Zone(); t.Location() == time.UTC || t.Location() == time.Local || strings.HasPrefix(name, "GMT") {
+			return t, true
+		}
 	}
 	return time.Time{}, false
 }
