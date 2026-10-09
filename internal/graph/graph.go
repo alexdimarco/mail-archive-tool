@@ -569,7 +569,37 @@ func retryAfter(resp *http.Response) time.Duration {
 	return 5 * time.Second
 }
 
+// StatusError is a Graph response whose status is not a success. Callers branch
+// on it with errors.As (Code, and GraphCode for Graph's own error.code), never
+// on its text; Error() keeps the text the client has always returned, which the
+// last-run record, status's remedy needles and the CLI read (fault-isolation
+// §4.8.1, MA-402).
+type StatusError struct {
+	Code      int    // the HTTP status code
+	GraphCode string // the body's error.code; "" when the body carries none
+	Text      string // the body, bounded to its first statusTextMax bytes and trimmed
+}
+
+func (e *StatusError) Error() string {
+	return "graph " + strconv.Itoa(e.Code) + " " + http.StatusText(e.Code) + ": " + e.Text
+}
+
+// statusTextMax bounds the error body a StatusError keeps.
+const statusTextMax = 2048
+
+// statusErr reads a failed response's bounded body into a *StatusError. Its
+// GraphCode comes from the body's {"error":{"code":…}}; a body that is not that
+// JSON (or is cut by the bound) leaves it empty.
 func statusErr(resp *http.Response) error {
-	b, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-	return fmt.Errorf("graph %s: %s", resp.Status, strings.TrimSpace(string(b)))
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, statusTextMax))
+	e := &StatusError{Code: resp.StatusCode, Text: strings.TrimSpace(string(b))}
+	var body struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(b, &body) == nil {
+		e.GraphCode = body.Error.Code
+	}
+	return e
 }
