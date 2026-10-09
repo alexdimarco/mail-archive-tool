@@ -142,20 +142,32 @@ func Verify(out string, opts VerifyOptions, logger *log.Logger, onProgress func(
 	// "running" now that the lock is held and the check is committed, finalized
 	// with the verdict on the way out. A refusal before this point (no manifest,
 	// unreadable manifest) writes no record — it is a refusal, not a verdict.
+	//
+	// The running record carries the last FINISHED verdict (F79): a verify that
+	// never reaches its finalizer — killed, crashed, power lost — must not erase
+	// a previous not-attested RED. finalized is set only on the two normal
+	// returns below, so a panic unwinding through here leaves the running
+	// record exactly as a kill does, for status to report as never finished.
 	started := time.Now().UTC()
-	_ = state.WriteLastVerify(out, state.LastVerify{Status: state.VerifyRunning, Started: started})
+	_ = state.WriteLastVerify(out, state.LastVerify{Status: state.VerifyRunning, Started: started, Previous: state.LastVerdict(out)})
+	finalized := false
 	defer func() {
+		if !finalized {
+			return
+		}
 		finished := time.Now().UTC()
 		lv := state.LastVerify{Status: state.VerifyDone, Started: started, Finished: &finished}
+		// The counts are the verdict this verify reached — kept on the error
+		// path too, so a modified file it found is never recorded as zero.
+		lv.Records, lv.WithFixity, lv.Checked = rep.Records, rep.WithFixity, rep.Checked
+		lv.OK, lv.Modified, lv.Missing = rep.OK, rep.Modified, rep.Missing
+		lv.Unrecorded, lv.Unexpected, lv.Recorded = rep.Unrecorded, rep.Unexpected, rep.Recorded
 		if err != nil {
 			// A produced-report error (e.g. a -record save failure): the caller
 			// maps it to exit 1; record it as not attested.
 			lv.ExitCode = 1
 		} else {
 			lv.Attested = rep.Attested()
-			lv.Records, lv.WithFixity, lv.Checked = rep.Records, rep.WithFixity, rep.Checked
-			lv.OK, lv.Modified, lv.Missing = rep.OK, rep.Modified, rep.Missing
-			lv.Unrecorded, lv.Unexpected, lv.Recorded = rep.Unrecorded, rep.Unexpected, rep.Recorded
 			lv.ExitCode = rep.ExitCode()
 		}
 		_ = state.WriteLastVerify(out, lv) // best effort: the archive is intact without it
@@ -212,14 +224,14 @@ func Verify(out string, opts VerifyOptions, logger *log.Logger, onProgress func(
 
 	if opts.Record && v.rep.Recorded > 0 {
 		if serr := manifest.Save(); serr != nil {
-			rep = v.rep
+			rep, finalized = v.rep, true
 			return rep, fmt.Errorf("record fixity baseline: %w", serr)
 		}
 		// The "recorded fixity for N file(s)" line is printed once, by
 		// VerifySummary on stdout (friction #16); a -log run keeps the count in
 		// VerifyResultLine.
 	}
-	rep = v.rep
+	rep, finalized = v.rep, true
 	return rep, nil
 }
 

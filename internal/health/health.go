@@ -249,8 +249,25 @@ func Assess(in Input, now time.Time) Report {
 	// gap (WARN); a verify older than twice its own schedule cadence is stale
 	// (WARN) — only when the recorded schedule IS a verify schedule, so its
 	// cadence is known (UJ-A1).
-	if in.LastVerifyState == state.LastVerifyPresent && in.LastVerify.Status == state.VerifyDone {
-		lv := in.LastVerify
+	//
+	// A "running" record is judged by the finished verdict it carries (F79): a
+	// verify in progress (archive lock held) is a note; one whose lock is free
+	// never finished (crash, kill, power loss) and is a WARN — and either way
+	// the previous verdict, a not-attested RED included, is still reported.
+	lv, judge := in.LastVerify, in.LastVerifyState == state.LastVerifyPresent
+	if judge && lv.Status == state.VerifyRunning {
+		started := lv.Started.UTC().Format("2006-01-02 15:04")
+		if in.LockHeld {
+			r.note("verify_in_progress", fmt.Sprintf("a verify is in progress (started %s UTC)", started))
+		} else {
+			r.warn("verify_never_finished", fmt.Sprintf("the verify started %s UTC never finished (crash, kill, or power loss) — run `mailarchive verify -out %q` again; the last finished verify's verdict is still reported", started, in.Out))
+		}
+		judge = lv.Previous != nil
+		if judge {
+			lv = *lv.Previous
+		}
+	}
+	if judge && lv.Status == state.VerifyDone {
 		when := ""
 		if lv.Finished != nil {
 			when = lv.Finished.UTC().Format("2006-01-02 15:04")
@@ -260,6 +277,12 @@ func Assess(in Input, now time.Time) Report {
 			r.red("not_attested", fmt.Sprintf("the last verify (%s UTC) found the archive NOT intact: %d modified, %d missing — restore the affected files from a backup or re-export them from the source, then run `mailarchive verify -out %q` again", when, lv.Modified, lv.Missing, in.Out))
 		case lv.Unrecorded > 0:
 			r.warn("verify_unrecorded", fmt.Sprintf("the last verify (%s UTC) left %d file(s) with no recorded fixity — run `mailarchive verify -record -out %q` to baseline them", when, lv.Unrecorded, in.Out))
+		}
+		// Exit 1 on a produced report is an error after the check (a -record
+		// baseline whose save failed): its counts stand, but it did not finish
+		// cleanly, so say so (F79).
+		if lv.ExitCode == 1 {
+			r.warn("verify_failed", fmt.Sprintf("the last verify (%s UTC) checked the archive but then failed with an error (see its log) — fix the cause and run `mailarchive verify -out %q` again", when, in.Out))
 		}
 		if isVerifyJob(in.Desc.Job) && lv.Finished != nil && now.Sub(*lv.Finished) > 2*IntervalOf(in.Desc.Interval) {
 			r.warn("verify_stale", fmt.Sprintf("the last verify was %s ago, more than twice the %s verify schedule period — schedule it, or run `mailarchive verify -out %q`", HumanAge(now.Sub(*lv.Finished)), in.Desc.Interval, in.Out))
@@ -673,14 +696,19 @@ func Summary(in Input, rep Report) []string {
 	}
 	if in.LastVerifyState == state.LastVerifyPresent {
 		lv := in.LastVerify
-		switch {
-		case lv.Status == state.VerifyRunning || lv.Finished == nil:
-			lines = append(lines, fmt.Sprintf("Last verify: %s → running", lv.Started.UTC().Format("2006-01-02 15:04")))
-		case lv.Attested:
-			lines = append(lines, fmt.Sprintf("Last verify: %s → attested", lv.Finished.UTC().Format("2006-01-02 15:04")))
-		default:
-			lines = append(lines, fmt.Sprintf("Last verify: %s → NOT attested (modified %d, missing %d, unrecorded %d)",
-				lv.Finished.UTC().Format("2006-01-02 15:04"), lv.Modified, lv.Missing, lv.Unrecorded))
+		if lv.Status == state.VerifyRunning || lv.Finished == nil {
+			how := "running"
+			if !in.LockHeld {
+				how = "never finished"
+			}
+			lines = append(lines, fmt.Sprintf("Last verify: %s → %s", lv.Started.UTC().Format("2006-01-02 15:04"), how))
+			// The finished verdict a running record carries is still the
+			// archive's latest integrity evidence (F79).
+			if p := lv.Previous; p != nil && p.Finished != nil {
+				lines = append(lines, "Previous verify: "+verifyVerdict(*p))
+			}
+		} else {
+			lines = append(lines, "Last verify: "+verifyVerdict(lv))
 		}
 	}
 	if in.HasDescriptor {
@@ -694,6 +722,16 @@ func Summary(in Input, rep Report) []string {
 		lines = append(lines, "  "+reason)
 	}
 	return lines
+}
+
+// verifyVerdict renders a finished verify record as "<when> → attested" or
+// "<when> → NOT attested (…)" for Summary.
+func verifyVerdict(lv state.LastVerify) string {
+	when := lv.Finished.UTC().Format("2006-01-02 15:04")
+	if lv.Attested {
+		return fmt.Sprintf("%s → attested", when)
+	}
+	return fmt.Sprintf("%s → NOT attested (modified %d, missing %d, unrecorded %d)", when, lv.Modified, lv.Missing, lv.Unrecorded)
 }
 
 // JSONReport is the typed, versioned document `status -json` prints (product
@@ -776,6 +814,27 @@ type JSONLastVerify struct {
 	Unexpected int        `json:"unexpected"`
 	Recorded   int        `json:"recorded"`
 	ExitCode   int        `json:"exit_code"`
+	// Previous is the last finished verdict a running record carries (F79): a
+	// new optional key, omitted otherwise, so JSONVersion is unchanged.
+	Previous *JSONLastVerify `json:"previous,omitempty"`
+}
+
+// jsonLastVerify maps a verify record (and the finished verdict a running one
+// carries) to its JSON facet.
+func jsonLastVerify(lv state.LastVerify) *JSONLastVerify {
+	j := &JSONLastVerify{
+		Status: lv.Status, Started: lv.Started, Finished: lv.Finished,
+		Attested: lv.Attested, Records: lv.Records, WithFixity: lv.WithFixity,
+		Checked: lv.Checked, OK: lv.OK, Modified: lv.Modified, Missing: lv.Missing,
+		Unrecorded: lv.Unrecorded, Unexpected: lv.Unexpected, Recorded: lv.Recorded,
+		ExitCode: lv.ExitCode,
+	}
+	if lv.Previous != nil {
+		p := *lv.Previous
+		p.Previous = nil
+		j.Previous = jsonLastVerify(p)
+	}
+	return j
 }
 
 // JSONSchedule is the schedule facet of JSONReport (omitted when no descriptor
@@ -852,14 +911,7 @@ func JSON(in Input, rep Report) JSONReport {
 		doc.LastRun = jlr
 	}
 	if in.LastVerifyState == state.LastVerifyPresent {
-		lv := in.LastVerify
-		doc.LastVerify = &JSONLastVerify{
-			Status: lv.Status, Started: lv.Started, Finished: lv.Finished,
-			Attested: lv.Attested, Records: lv.Records, WithFixity: lv.WithFixity,
-			Checked: lv.Checked, OK: lv.OK, Modified: lv.Modified, Missing: lv.Missing,
-			Unrecorded: lv.Unrecorded, Unexpected: lv.Unexpected, Recorded: lv.Recorded,
-			ExitCode: lv.ExitCode,
-		}
+		doc.LastVerify = jsonLastVerify(in.LastVerify)
 	}
 	if in.HasDescriptor {
 		doc.Schedule = &JSONSchedule{

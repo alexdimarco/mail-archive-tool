@@ -213,6 +213,27 @@ type LastVerify struct {
 	Unexpected int        `json:"unexpected"`
 	Recorded   int        `json:"recorded"`
 	ExitCode   int        `json:"exit_code"`
+	// Previous carries the last FINISHED verdict inside a "running" record, so
+	// a verify that never finishes (crash, kill, power loss) cannot erase it:
+	// status keeps judging it until a new verdict is final (F79). Absent on a
+	// done record and when no verify ever finished.
+	Previous *LastVerify `json:"previous,omitempty"`
+}
+
+// LastVerdict returns the most recent FINISHED verify verdict recorded in out
+// — the done record itself, or the one a running record carries — with no
+// further nesting, or nil when there is none. A new verify stores it in its
+// running record before it starts checking.
+func LastVerdict(out string) *LastVerify {
+	v, st, _ := ReadLastVerify(out)
+	if st != LastVerifyPresent {
+		return nil
+	}
+	if v.Status != VerifyDone {
+		return v.Previous
+	}
+	v.Previous = nil
+	return &v
 }
 
 // LastVerify statuses.
@@ -226,6 +247,11 @@ const (
 func WriteLastVerify(out string, v LastVerify) error {
 	v.Version = 1
 	v.Status = util.StripControl(v.Status)
+	if v.Previous != nil {
+		p := *v.Previous
+		p.Status, p.Previous = util.StripControl(p.Status), nil
+		v.Previous = &p
+	}
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err
@@ -314,5 +340,8 @@ func ReadLastVerify(out string) (LastVerify, LastVerifyState, error) {
 		return v, LastVerifyUnreadable, err
 	}
 	v.Status = util.StripControl(v.Status)
+	if v.Previous != nil {
+		v.Previous.Status, v.Previous.Previous = util.StripControl(v.Previous.Status), nil
+	}
 	return v, LastVerifyPresent, nil
 }

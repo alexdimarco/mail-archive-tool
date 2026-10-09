@@ -600,6 +600,7 @@ that ignores unknown keys is unaffected and the version is not bumped.)
   `lastrun_unreadable`, `never_ran`, `run_failed`, `auth_remedy`,
   `run_in_progress`, `run_stuck`, `run_never_finished`, `run_cancelled`,
   `stale`, `not_attested`, `verify_unrecorded`, `verify_stale`,
+  `verify_in_progress`, `verify_never_finished`, `verify_failed`,
   `descriptor_unreadable`, `no_schedule`, `moved_archive`, `other_host`,
   `scheduler_unavailable`, `not_installed`, `exe_missing`, `exe_moved`.
 - `fixity` is `{records, with_fixity}` (coverage, not integrity), or `null` when
@@ -612,7 +613,10 @@ that ignores unknown keys is unaffected and the version is not bumped.)
   `null` while a run is in progress.
 - `last_verify` is `verify`'s own verdict — `{status, started, finished,
   attested, records, with_fixity, checked, ok, modified, missing, unrecorded,
-  unexpected, recorded, exit_code}` — or `null` when no verify has run.
+  unexpected, recorded, exit_code}` — or `null` when no verify has run. While
+  a verify is running (or after one that never finished) `status` is
+  `running` and an optional `previous` object carries the last finished
+  verdict, which the posture still judges.
 - `schedule` is `{name, state, interval, at, exe, host}` (present only when a
   schedule is recorded).
 
