@@ -155,6 +155,8 @@ func cronSchedule(iv Interval, hour, min int) string {
 // marker comment. The job writes its own log (-log); nothing is redirected, so
 // anything the program cannot log itself — a crash, a refusal to start —
 // reaches cron's mail (MAILTO), the one push channel that needs no setup.
+// Every token is quoted for cron as well as for sh (cronArg), so a % in a path
+// cannot end the command early.
 func CronLine(s Spec) (string, error) {
 	iv, err := ParseInterval(string(s.Interval))
 	if err != nil {
@@ -164,7 +166,106 @@ func CronLine(s Spec) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return cronSchedule(iv, hour, min) + " " + shellJoin(s.program()), nil
+	quoted := make([]string, 0, 1+len(s.Args))
+	for _, a := range s.program() {
+		quoted = append(quoted, cronArg(a))
+	}
+	return cronSchedule(iv, hour, min) + " " + strings.Join(quoted, " "), nil
+}
+
+// cronArg quotes one token for a crontab command field. cron reads the field
+// before sh does: the first unescaped % ends the command (the rest becomes the
+// job's stdin), whatever the shell quoting, and only a backslash-escaped \% is
+// a literal %. So a token holding a % is single-quoted piece by piece with
+// each % written as "\%" between the pieces: cron turns that into "%", which
+// sh reads as a literal %. Escaping a % in place would break on a path whose
+// own backslash comes right before the % (cron would pair that backslash with
+// the escaping one and still cut the command), whereas here the character
+// before every \% is always a double quote. A token without % is shellQuote'd
+// unchanged.
+func cronArg(tok string) string {
+	if !strings.Contains(tok, "%") {
+		return shellQuote(tok)
+	}
+	pieces := strings.Split(tok, "%")
+	for i, p := range pieces {
+		pieces[i] = "'" + strings.ReplaceAll(p, "'", `'\''`) + "'"
+	}
+	return strings.Join(pieces, `"\%"`)
+}
+
+// cronLineArgv returns the argument vector a managed crontab line was written
+// for: the five schedule fields are skipped, cron's \% escape is undone, and the
+// command is split into words the way sh splits the quoting CronLine writes
+// (single quotes, double quotes, backslash escapes). An unescaped % is read as
+// the literal % it was meant to be (a block written before % was escaped), so
+// an archive's own older block is still recognised as that archive's and a
+// re-install replaces it. It returns nil for a line that has no command.
+func cronLineArgv(line string) []string {
+	rest := strings.TrimLeft(line, " \t")
+	for i := 0; i < 5; i++ {
+		j := strings.IndexAny(rest, " \t")
+		if j < 0 {
+			return nil
+		}
+		rest = strings.TrimLeft(rest[j:], " \t")
+	}
+	var cmd strings.Builder
+	for i := 0; i < len(rest); i++ {
+		c := rest[i]
+		if c == '\\' && i+1 < len(rest) {
+			if rest[i+1] == '%' {
+				cmd.WriteByte('%')
+			} else {
+				cmd.WriteByte(c)
+				cmd.WriteByte(rest[i+1])
+			}
+			i++
+			continue
+		}
+		cmd.WriteByte(c)
+	}
+	var argv []string
+	var word strings.Builder
+	inWord := false
+	s := cmd.String()
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case c == ' ' || c == '\t':
+			if inWord {
+				argv = append(argv, word.String())
+				word.Reset()
+				inWord = false
+			}
+		case c == '\'':
+			inWord = true
+			j := strings.IndexByte(s[i+1:], '\'')
+			if j < 0 {
+				j = len(s) - i - 1
+			}
+			word.WriteString(s[i+1 : i+1+j])
+			i += j + 1
+		case c == '"':
+			inWord = true
+			for i++; i < len(s) && s[i] != '"'; i++ {
+				if s[i] == '\\' && i+1 < len(s) && strings.IndexByte("\\\"$`", s[i+1]) >= 0 {
+					i++
+				}
+				word.WriteByte(s[i])
+			}
+		case c == '\\' && i+1 < len(s):
+			inWord = true
+			i++
+			word.WriteByte(s[i])
+		default:
+			inWord = true
+			word.WriteByte(c)
+		}
+	}
+	if inWord {
+		argv = append(argv, word.String())
+	}
+	return argv
 }
 
 // CronBlock is the marker comment plus its command line — the two-line unit that
@@ -490,15 +591,17 @@ func refuseCollision(s Spec) error {
 }
 
 // cronBlockOut returns the -out argument of the managed block with marker, or
-// "" when absent or unparseable.
+// "" when absent or unparseable. The command line is read back the way cron
+// and sh run it (cronLineArgv), so a quoted or %-escaped path reads back as
+// the path itself.
 func cronBlockOut(crontab, marker string) string {
 	lines := strings.Split(crontab, "\n")
 	for i, line := range lines {
 		if strings.TrimSpace(line) == marker && i+1 < len(lines) {
-			fields := strings.Fields(lines[i+1])
-			for j, f := range fields {
-				if f == "-out" && j+1 < len(fields) {
-					return strings.Trim(fields[j+1], "'")
+			argv := cronLineArgv(lines[i+1])
+			for j, a := range argv {
+				if a == "-out" && j+1 < len(argv) {
+					return argv[j+1]
 				}
 			}
 		}
