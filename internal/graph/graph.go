@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -786,7 +787,7 @@ func (c *Client) getOn(ctx context.Context, hc *http.Client, u string, perAttemp
 		wait := retryAfter(resp)
 		resp.Body.Close()
 		if attempt >= maxRetry {
-			return nil, fmt.Errorf("graph throttled (HTTP %d) after %d retries", resp.StatusCode, attempt)
+			return nil, &throttledError{code: resp.StatusCode, retries: attempt}
 		}
 		select {
 		case <-ctx.Done():
@@ -822,6 +823,116 @@ func (e *StatusError) Error() string {
 
 // statusTextMax bounds the error body a StatusError keeps.
 const statusTextMax = 2048
+
+// Class is graph.Classify's verdict on an error from the client: the one
+// classifier capture and the copy export share (fault-isolation §4.8.1,
+// extraction §4.13). Each consumer maps it onto its own outcomes — capture's
+// app.classifyFetch (fault-isolation S3), the copy export's outcome table (its
+// E2) — and keeps its own 404 class, 403 handling and breaker thresholds.
+type Class int
+
+const (
+	ClassNone      Class = iota // no error
+	ClassCancelled              // the caller's walk context is done
+	ClassAuth                   // 401, or a failed token refresh
+	ClassForbidden              // 403
+	ClassNotFound               // 404, or Graph's ErrorItemNotFound
+	ClassTransport              // 429, 502, 503 or 504 after get's retries, or no response at all
+	ClassTimeout                // one of MIMETo's own timers (idle, header, overall)
+	ClassTooLarge               // a body over the size cap its caller passed
+	ClassFailed                 // any other response or error, 500 with any Graph code included
+)
+
+func (c Class) String() string {
+	switch c {
+	case ClassNone:
+		return "none"
+	case ClassCancelled:
+		return "cancelled"
+	case ClassAuth:
+		return "auth"
+	case ClassForbidden:
+		return "forbidden"
+	case ClassNotFound:
+		return "not-found"
+	case ClassTransport:
+		return "transport"
+	case ClassTimeout:
+		return "timeout"
+	case ClassTooLarge:
+		return "too-large"
+	}
+	return "failed"
+}
+
+// Classify sorts an error from the client into its Class, and reports whether
+// the fault is about the service rather than the item (transport: the faults a
+// breaker counts). It reads the error's types through errors.As, never its
+// text, in this order:
+//  1. walkCtx is done: cancelled, whatever err says (a download's own timers
+//     are not consulted);
+//  2. a failed token refresh (*oauth2.RetrieveError) is auth, before the
+//     network error it travels inside could make it transport;
+//  3. a *StatusError by its code: 401 auth, 403 forbidden, 404 (or
+//     ErrorItemNotFound) not found, 429/502/503/504 transport, any other one
+//     failed;
+//  4. MIMETo's stops: *TimeoutError is a timeout and transport, *TooLargeError
+//     too large and not;
+//  5. get's exhausted throttling retries, and no response at all (a request the
+//     transport could not complete, a dropped connection), are transport;
+//  6. anything else is failed.
+func Classify(err error, walkCtx context.Context) (class Class, transport bool) {
+	if err == nil {
+		return ClassNone, false
+	}
+	if walkCtx != nil && walkCtx.Err() != nil {
+		return ClassCancelled, false
+	}
+	var refresh *oauth2.RetrieveError
+	if errors.As(err, &refresh) {
+		return ClassAuth, false
+	}
+	var se *StatusError
+	if errors.As(err, &se) {
+		switch {
+		case se.Code == http.StatusUnauthorized:
+			return ClassAuth, false
+		case se.Code == http.StatusForbidden:
+			return ClassForbidden, false
+		case se.Code == http.StatusNotFound || se.GraphCode == "ErrorItemNotFound":
+			return ClassNotFound, false
+		case se.Code == http.StatusTooManyRequests || se.Code == http.StatusBadGateway ||
+			se.Code == http.StatusServiceUnavailable || se.Code == http.StatusGatewayTimeout:
+			return ClassTransport, true
+		}
+		return ClassFailed, false
+	}
+	var te *TimeoutError
+	if errors.As(err, &te) {
+		return ClassTimeout, true
+	}
+	var tl *TooLargeError
+	if errors.As(err, &tl) {
+		return ClassTooLarge, false
+	}
+	var thr *throttledError
+	var ue *url.Error
+	var ne net.Error
+	if errors.As(err, &thr) || errors.As(err, &ue) || errors.As(err, &ne) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return ClassTransport, true
+	}
+	return ClassFailed, false
+}
+
+// throttledError is get's answer once Graph still throttles (429 or 503) after
+// every retry; its text is the one the client has always returned.
+type throttledError struct {
+	code, retries int
+}
+
+func (e *throttledError) Error() string {
+	return fmt.Sprintf("graph throttled (HTTP %d) after %d retries", e.code, e.retries)
+}
 
 // statusErr reads a failed response's bounded body into a *StatusError. Its
 // GraphCode comes from the body's {"error":{"code":…}}; a body that is not that
