@@ -278,7 +278,7 @@ import (
 	"net/http"
 	"mail-archive-tool/internal/localweb"
 )
-func serve() { _ = &http.Server{Handler: localweb.Wrap(localweb.Surface{}, nil), DisableGeneralOptionsHandler: true} }
+	func serve() { _ = &http.Server{Handler: localweb.Wrap(localweb.Surface{}, nil), DisableGeneralOptionsHandler: true} }
 `)
 	if bad, n := servedViolations([]sourceFile{healthy}); len(bad) != 0 || n != 1 {
 		t.Fatalf("positive twin: violations %v, servers %d; want none and 1", bad, n)
@@ -288,16 +288,18 @@ func serve() { _ = &http.Server{Handler: localweb.Wrap(localweb.Surface{}, nil),
 	}
 	dot := parseSource(t, "cmd/x/dot.go", `package x
 import . "net/http"
-func serve() { m := NewServeMux(); m.HandleFunc("/leak", nil); s := &Server{Handler: m}; _ = s }
+	func serve() { m := NewServeMux(); m.HandleFunc("/leak", nil); s := &Server{Handler: m}; _ = s }
 `)
 	alias := parseSource(t, "cmd/x/alias.go", `package x
 import "net/http"
 type S = http.Server
 type M = http.ServeMux
 `)
+	refused := 0
 	for name, sf := range map[string]sourceFile{"dot-import": dot, "alias": alias} {
 		sv, _ := servedViolations([]sourceFile{sf})
 		rv := routeViolations([]sourceFile{sf})
+		refused += len(sv) + len(rv)
 		if len(sv) == 0 {
 			t.Errorf("%s: the served-handler check passed over a file it cannot read", name)
 		}
@@ -305,6 +307,7 @@ type M = http.ServeMux
 			t.Errorf("%s: the route-model check passed over a file it cannot read", name)
 		}
 	}
+	assure.Reached(t, refused, "violations reported over files the checks cannot read")
 }
 
 // routeViolations lists every route-registering use of net/http in files outside
