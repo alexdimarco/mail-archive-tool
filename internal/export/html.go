@@ -235,10 +235,12 @@ func pageAnchors(root *xhtml.Node) (header, bodyDiv *xhtml.Node) {
 	return header, next
 }
 
-// pageClosers are the bytes the template writes after the mail's body: what a
+// PageClosers are the bytes the template writes after the mail's body: what a
 // <plaintext>, or a script left in an escape state, at the very end of the mail
-// swallows as its own text (the mail's, read back without them).
-const pageClosers = "\n</div>\n</body>\n</html>\n"
+// swallows as its own text. `reindex -rebuild` removes them from a final
+// <plaintext>'s text before it indexes the page (they are the page's, not the
+// mail's words; R8).
+const PageClosers ="\n</div>\n</body>\n</html>\n"
 
 // mailStaysInBodyDiv reports whether the mail is contained in div.mailarchive-
 // body: nothing but whitespace follows the div in <body> in any reading, and,
@@ -269,9 +271,9 @@ func mailStaysInBodyDiv(bodyDiv *xhtml.Node, inner string, scripting bool) bool 
 	const strayEnd = "</noscript>"
 	got, want := strings.ReplaceAll(b.String(), strayEnd, ""), strings.ReplaceAll("\n"+inner, strayEnd, "")
 	switch {
-	case got == want+"\n", got == want+pageClosers:
+	case got == want+"\n", got == want+PageClosers:
 		return true
-	case strings.HasSuffix(want, "</script>") && got == want+pageClosers+"</script>":
+	case strings.HasSuffix(want, "</script>") && got == want+PageClosers+"</script>":
 		return true
 	}
 	return false

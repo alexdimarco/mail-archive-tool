@@ -348,6 +348,7 @@ func readArchivedTree(data []byte, root *xhtml.Node) (*model.Message, int) {
 		if src, ok := fallbackSource(bodyDiv); ok {
 			m.HTMLBody = src
 		} else {
+			trimSwallowedClosers(bodyDiv)
 			m.HTMLBody = bodyForIndex(innerHTML(bodyDiv))
 		}
 	}
@@ -449,6 +450,30 @@ func legacyBody(bodyEl, header *xhtml.Node) string {
 		}
 	}
 	return b.String()
+}
+
+// trimSwallowedClosers removes the template's own closing tags
+// (export.PageClosers) from the text of a <plaintext> in the body div. A
+// <plaintext> that runs to the end of the mail has no end tag, so the page's
+// `</div></body></html>` that follow it are its text on re-parse, and the
+// serialization of the body div then carries them: the rebuild would index
+// "div", "body" and "html" as the mail's words, which the live index (reading
+// the mail) never saw (R8). They are the page's bytes, never the mail's, and
+// only at the very end of the plaintext's text.
+func trimSwallowedClosers(bodyDiv *xhtml.Node) {
+	var walk func(n *xhtml.Node)
+	walk = func(n *xhtml.Node) {
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			if c.Type == xhtml.ElementNode && c.Namespace == "" && c.Data == "plaintext" {
+				if t := c.LastChild; t != nil && t.Type == xhtml.TextNode {
+					t.Data = strings.TrimSuffix(t.Data, export.PageClosers)
+				}
+				continue
+			}
+			walk(c)
+		}
+	}
+	walk(bodyDiv)
 }
 
 // fallbackReasons are the values export.plainFallback writes on the <pre>.

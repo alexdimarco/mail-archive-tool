@@ -378,6 +378,33 @@ func TestLiveAndRebuiltIndexAgreeOnTablePartsPastTheCap(t *testing.T) {
 }
 
 // covers: MA-492, R8
+// san-Q2 (1). A <plaintext> that runs to the end of the mail has no end tag, so
+// on re-parse the page's own closing `</div></body></html>` are its text, and
+// the serialization of the body div the rebuild reads carried them: "div",
+// "body" and "html" were found on the rebuilt index only (the reviewer's
+// adv_plaintext_{body,head}_{esc,lnk,ref}_b). The rebuild removes the template's
+// closing tags from a final plaintext's text (export.PageClosers), so those
+// words are found on neither side, and the mail's own words, before and inside
+// the plaintext, once on both. The twin is a mail that names the three words
+// itself: found once on both sides.
+func TestLiveAndRebuiltIndexAgreeOnAFinalPlaintext(t *testing.T) {
+	bodies := map[string]string{
+		"plaintext tail":     `<p>plainbefore</p><plaintext>plaininside <b>plaintag</b> rest`,
+		"plaintext noscript": `<p>residplainwords</p><plaintext><noscript><meta charset=utf-8>residtailword</noscript><p>tail</p>`,
+		"mentions div":       `<p>plainmention div body html words</p>`,
+	}
+	want := map[string]int{
+		"plainbefore": 1, "plaininside": 1, "plaintag": 1, "residplainwords": 1, "residtailword": 1, "plainmention": 1,
+		"div": 1, "body": 1, "html": 1, // only the mail that names them
+	}
+	live, rebuilt := parityArchive(t, bodies, keysOf(want))
+	assure.Reached(t, live["plaininside"]+rebuilt["plaininside"], "hits for a word inside a final plaintext")
+	for _, p := range parityProblems(want, live, rebuilt) {
+		t.Error(p)
+	}
+}
+
+// covers: MA-492, R8
 // OPEN GAP in R8, NOT accepted, encoded the kit's way: a t.Skip that FAILS if
 // un-skipped today. The fresh-eyes corpus run (rv3/corpus-adv, 372 vectors)
 // leaves 8 mails whose words differ live and rebuilt, all of them already at
@@ -396,8 +423,7 @@ func TestLiveAndRebuiltIndexAgreeOnTablePartsPastTheCap(t *testing.T) {
 // round-3 pass and the owner; until then this stays skipped. When it passes,
 // REMOVE the Skip.
 func TestLiveAndRebuiltIndexAgreeOnCorpusResidualShapes(t *testing.T) {
-	t.Skip("R8 open gap: a mail-final <plaintext> swallows the page's closing tags, and a noscript dropped past flattenDepth changes the scripting-on reading (rv3/corpus-adv residuals, pre-existing at 8f900c9)")
-
+	t.Skip("R8 open gap: a noscript dropped past flattenDepth changes the scripting-on reading (rv3/corpus-adv adv_deep_xmp, adv_deep2_template, pre-existing at 8f900c9); the final-plaintext shape is closed")
 	divs := func(n int, inner string) string {
 		return strings.Repeat("<div>", n) + inner + strings.Repeat("</div>", n)
 	}
