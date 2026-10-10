@@ -65,6 +65,19 @@ type LastRun struct {
 	Unknown     int      `json:"unknown"`
 	IndexErrors int      `json:"index_errors"`
 	Error       string   `json:"error,omitempty"`
+	// Warnings are problems the run found with its own setup that did not stop
+	// it (additive and optional: absent on older records and on a clean run).
+	Warnings []RunWarning `json:"warnings,omitempty"`
+}
+
+// RunWarning is one problem a run found with its own setup that does not stop
+// it — a credential, or MailArchive Desktop's settings and sign-in, kept inside
+// the archive (design-local-confidentiality P10). The run records it and
+// `status` WARNs it by Code; it never latches, because the next run that no
+// longer has the problem records none.
+type RunWarning struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
 }
 
 // LastRunState says what ReadLastRun found.
@@ -185,6 +198,9 @@ func ReadLastRun(out string) (LastRun, LastRunState, error) {
 		r.Job[i] = util.StripControl(r.Job[i])
 	}
 	r.Error, r.Exe, r.Mode = util.StripControl(r.Error), util.StripControl(r.Exe), util.StripControl(r.Mode)
+	for i := range r.Warnings {
+		r.Warnings[i].Code, r.Warnings[i].Message = util.StripControl(r.Warnings[i].Code), util.StripControl(r.Warnings[i].Message)
+	}
 	return r, LastRunPresent, nil
 }
 

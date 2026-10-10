@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"mail-archive-tool/internal/graph"
+	"mail-archive-tool/internal/graphconfig"
 	"mail-archive-tool/internal/outlookcom"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/util"
@@ -293,6 +294,11 @@ func parseJob(args []string) (job, error) {
 			if strings.TrimSpace(*o.tokenCache) == "" {
 				return job{}, errors.New("a scheduled device job cannot prompt for a sign-in: pass -token-cache PATH to a cache you have already signed in to (run `mailarchive graph -auth device …` once, as the account this schedule runs as)")
 			}
+			// P10: refused at install time, while the operator is present.
+			if credentialInArchive(*o.tokenCache, *o.out) {
+				def, _ := defaultTokenCachePath(*o.tenant, *o.clientID, o.mailboxes)
+				return job{}, tokenCacheInArchive(*o.tokenCache, *o.out, def, false, true)
+			}
 			if err := graph.CheckTokenCache(*o.tokenCache); err != nil {
 				return job{}, err
 			}
@@ -303,6 +309,9 @@ func parseJob(args []string) (job, error) {
 			}
 			if *o.secretFile == "" {
 				return job{}, errors.New("a scheduled graph job has no environment to carry the secret: pass -client-secret-file PATH (a file readable only by you)")
+			}
+			if credentialInArchive(*o.secretFile, *o.out) {
+				return job{}, secretFileInArchive(*o.secretFile, *o.out)
 			}
 			if _, err := readSecret(*o.secretFile); err != nil {
 				return job{}, err
@@ -396,6 +405,59 @@ func parseJob(args []string) (job, error) {
 		return j, nil
 	}
 	return job{}, fmt.Errorf("unknown job %q", verb)
+}
+
+// credentialInArchive reports whether the credential file at path lies inside
+// the archive out (design-local-confidentiality P10): a sign-in or secret kept
+// there travels with every copy, sync and browse of the archive. Both paths are
+// resolved to their deepest existing ancestor, so a file not created yet, or one
+// reached through a symlinked parent, is placed where it really is, by the
+// containment helper extract shares [CC16]. MailArchive's own OS config folder
+// is exempt when the archive contains it (an -out that is the home folder): its
+// default sign-in there is not "inside the archive", and the reader never serves
+// it (P9) [CC16].
+func credentialInArchive(path, out string) bool {
+	ro, rp := util.ResolveExisting(out), util.ResolveExisting(path)
+	if !util.Within(ro, rp) {
+		return false
+	}
+	if dir, err := graphconfig.DefaultConfigDir(); err == nil {
+		rd := util.ResolveExisting(dir)
+		if util.Within(rd, rp) && util.Within(ro, rd) && !util.Within(rd, ro) {
+			return false
+		}
+	}
+	return true
+}
+
+// credentialWhy is P10's reason, for the refusal and the unattended warning.
+const credentialWhy = "Why: the archive is meant to be copied, synced and browsed, so a %s kept there travels with it."
+
+// tokenCacheInArchive is P10's refusal for a token cache inside -out, as design
+// §7.6 words it. scheduled is for a job a scheduler runs, which must name its
+// cache; isDefault is for the default cache, which only an -out that is
+// MailArchive's config folder itself can hold.
+func tokenCacheInArchive(path, out, def string, isDefault, scheduled bool) error {
+	if def == "" {
+		def = "under your OS config folder"
+	}
+	do := "Do this: move it outside the archive — omit -token-cache to use the default " + def + "."
+	switch {
+	case isDefault:
+		do = "Do this: choose an archive folder (-out) outside " + filepath.Dir(path) + ", where MailArchive keeps its settings and sign-in."
+	case scheduled:
+		do = "Do this: move it outside the archive (for example to the default " + def + ") and pass its new path to -token-cache."
+	}
+	return fmt.Errorf("the token cache %s is inside the archive folder %s. "+credentialWhy+" %s", path, out, "sign-in", do)
+}
+
+// secretFileInArchive is P10's refusal for a client-secret file inside -out.
+func secretFileInArchive(path, out string) error {
+	where := ""
+	if dir, err := graphconfig.DefaultConfigDir(); err == nil {
+		where = " (for example to " + dir + ")"
+	}
+	return fmt.Errorf("the client secret file %s is inside the archive folder %s. "+credentialWhy+" Do this: move it outside the archive%s and pass its new path to -client-secret-file.", path, out, "secret", where)
 }
 
 // readSecret reads an app client secret from a file the way both `graph` (at

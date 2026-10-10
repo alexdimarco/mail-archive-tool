@@ -14,6 +14,7 @@ import (
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/graph"
 	"mail-archive-tool/internal/server"
+	"mail-archive-tool/internal/state"
 )
 
 // HeadlessCapture runs one incremental capture with NO dashboard and NO prompt —
@@ -40,8 +41,18 @@ func HeadlessCapture(cfg Config, logw io.Writer) error {
 		Unattended:     true, // a scheduled run never prompts; it uses the saved sign-in
 		IncludeDeleted: s.IncludeDeleted, IncludeJunk: s.IncludeJunk,
 	}
+	logger := log.New(logw, "", log.LstdFlags)
 	opts := app.Options{Out: out, Mode: export.Incremental, Index: true, Pages: true, KeepRaw: s.KeepRaw}
-	_, err := app.RunGraph(context.Background(), g, opts, log.New(logw, "", log.LstdFlags))
+	// An archive location that holds the desktop's settings and sign-in copies
+	// them with the archive (design-local-confidentiality P10). The scheduled
+	// capture does not refuse — that would silently stop an installed backup —
+	// it warns, records the warning for `status`, and captures [CC16].
+	if dir := cfg.settingsInArchive(out); dir != "" {
+		msg := fmt.Sprintf("Your MailArchive settings and sign-in are stored inside the archive folder %s. Why: the archive is meant to be copied and synced. Do this: choose an archive location that does not contain %s (Settings).", out, dir)
+		logger.Printf("warning: %s", msg)
+		opts.Warnings = []state.RunWarning{{Code: "config_in_archive", Message: msg}}
+	}
+	_, err := app.RunGraph(context.Background(), g, opts, logger)
 	return err
 }
 

@@ -1048,6 +1048,17 @@ Neither depends on rows 2–7, and catalog changes still land one at a time.
 - **Unblocks:** EW-E2 once EW-E1 is built and RR-2b passes; EW-E4 (RR-3) once EW-E2 and
   EW-E3 are built.
 
+### 13.7 Escalations from LC-C1's adversarial pass (merged 2026-10-10)
+
+None blocks anything: each has a skip encoder or a safe interim in force.
+
+| Id | The question for the owner | Recommended answer | Safe interim |
+|---|---|---|---|
+| **ESC-11** (AC8) | Answers that net/http writes before any handler (400, 408, 431 on a malformed request) cannot carry the policy headers, so MA-378's "every response" holds only for handler answers. Build a listener-level wrapper, or narrow the wording to handler answers? | Narrow the wording: these answers carry no archive data, and a listener wrapper is a large change for no data protection | Wording unchanged; `TestParseErrorAnswersCarryThePolicyHeaders` is a skip encoder (MA-378, R19, R23) |
+| **ESC-12** (AI2) | `status` echoes the recorded text of a known warning code from a record any archive writer can write. Rebuild the text from the code alone (dropping the file path P10's text names), or leave it to slice A's private root? | Rebuild from the code and show the path from a separate, validated field | Echo stays; `TestStatusDoesNotEchoAPlantedWarningText` is a skip encoder (MA-375, R12) |
+| **ESC-13** (AC4) | An interactive Archive run records no `config_in_archive` warning, so `status` stops warning while the settings stay inside the archive. MA-375 and P10 name only the Settings POST and the headless capture. Cover the interactive run too (refuse or warn)? | Warn, as the headless capture does | Not covered; encoded by a skip encoder |
+| **ESC-14** (AO5) | A loopback `serve` on `127.0.0.2` now accepts its own literal, because the printed URL otherwise failed its own Host check. Design P6, S43 and MA-371 say the loopback set is exactly `127.0.0.1`, `localhost` and `[::1]`. Amend those three to match, or refuse such a bind at start? | Refuse the bind at start (keeps the exact set, narrower exposure) | The fix stays; `TestLoopbackBindOtherThan127_0_0_1KeepsTheDesignsExactSet` is a skip encoder that goes red when unskipped |
+
 ### 13.6 Escalation from the g8 branch
 
 **ESC-10 RULED by the owner on 2026-10-10 ("esc-10 go"): the recommended answer.** One rule for

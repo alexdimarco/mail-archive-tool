@@ -2,9 +2,12 @@ package desktop
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
+	"mail-archive-tool/internal/graphconfig"
 	"mail-archive-tool/internal/util"
 )
 
@@ -55,4 +58,43 @@ func (cfg Config) effectiveOut() string {
 		return o
 	}
 	return strings.TrimSpace(cfg.Out)
+}
+
+// settingsDirs are the folders MailArchive Desktop keeps its settings and
+// sign-in in: its config file's folder (the settings file sits beside it) and
+// the default one under the OS config dir, where the file token cache lives
+// (design-local-confidentiality P10).
+func (cfg Config) settingsDirs() []string {
+	var dirs []string
+	if strings.TrimSpace(cfg.ConfigPath) != "" {
+		dirs = append(dirs, filepath.Dir(cfg.ConfigPath))
+	}
+	if d, err := graphconfig.DefaultConfigDir(); err == nil {
+		dirs = append(dirs, d)
+	}
+	return dirs
+}
+
+// settingsOverlap refuses an archive location that is, contains or sits inside
+// a settings folder — the Settings POST's check, the operator being present
+// (P10). nil when out is apart from them all.
+func (cfg Config) settingsOverlap(out string) error {
+	for _, d := range cfg.settingsDirs() {
+		if overlap, how := util.Overlap(out, d); overlap {
+			return fmt.Errorf("The archive location %s %s %s, the folder MailArchive keeps your settings and sign-in in. Why: the archive is meant to be copied and synced, so they would travel with it. Do this: choose an archive location that does not contain %s and is not inside it.", out, how, d, d)
+		}
+	}
+	return nil
+}
+
+// settingsInArchive is the scheduled capture's check (P10, CC16): the settings
+// folder the archive location out is or contains, or "" when it holds none.
+func (cfg Config) settingsInArchive(out string) string {
+	ro := util.ResolveExisting(out)
+	for _, d := range cfg.settingsDirs() {
+		if util.Within(ro, util.ResolveExisting(d)) {
+			return d
+		}
+	}
+	return ""
 }

@@ -46,6 +46,12 @@ type Options struct {
 	// exported messages inside a store walk (R5: a hard crash keeps the
 	// progress made). Zero means the default (1000).
 	CheckpointEvery int
+
+	// Warnings are problems the caller found with this run's setup that do not
+	// stop it (a credential inside the archive, design-local-confidentiality
+	// P10). The run records them in its last-run record, where `status` WARNs
+	// them.
+	Warnings []state.RunWarning
 }
 
 // Result summarizes a completed (or cancelled) run.
@@ -379,7 +385,7 @@ func beginRun(opts Options) state.LastRun {
 	if opts.Mode == export.Full {
 		mode = "full"
 	}
-	lr := state.LastRun{Status: state.RunRunning, Started: time.Now().UTC(), PID: os.Getpid(), Exe: exe, Mode: mode, Job: canonicalJob(opts, mode)}
+	lr := state.LastRun{Status: state.RunRunning, Started: time.Now().UTC(), PID: os.Getpid(), Exe: exe, Mode: mode, Job: canonicalJob(opts, mode), Warnings: opts.Warnings}
 	_ = state.WriteLastRun(opts.Out, lr) // best effort: the run itself must not fail on this
 	return lr
 }

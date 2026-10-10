@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"mail-archive-tool/internal/graphconfig"
+	"mail-archive-tool/internal/localweb"
 )
 
 // setupCSP governs the wizard: its own same-origin script + fetch, inline styles,
@@ -24,7 +25,7 @@ const setupCSP = "default-src 'none'; script-src 'self'; connect-src 'self'; sty
 // (design-graph-setup-wizard W-C1, R19 unchanged).
 func SetupHandler(cfgPath string, store graphconfig.SecretStore) http.Handler {
 	csrf := randomToken()
-	mux := http.NewServeMux()
+	mux := localweb.NewMux()
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" && r.URL.Path != "/setup" {
@@ -110,7 +111,7 @@ func SetupHandler(cfgPath string, store graphconfig.SecretStore) http.Handler {
 		writeJSON(w, map[string]any{"ok": true, "auth": in.Auth, "configured": configured})
 	})
 
-	return setupHeaders(mux)
+	return localweb.Routed(setupHeaders(mux), mux)
 }
 
 func setupHeaders(next http.Handler) http.Handler {
