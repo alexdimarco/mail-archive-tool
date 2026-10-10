@@ -293,6 +293,7 @@ type CopyExportEnv struct {
 	Host     string // this host's name, recorded in the journal and the run records
 	Version  string // the tool's version, for the manifest
 
+	journalMu   sync.Mutex // covers an append to the journal and its compaction
 	ledgerMu    sync.Mutex
 	chains      map[string][]string // run record ids by chain id, kept under ledgerMu (§4.16)
 	chainsBuilt bool

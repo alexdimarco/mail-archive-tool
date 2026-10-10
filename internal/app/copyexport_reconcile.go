@@ -555,10 +555,17 @@ func (e *CopyExportEnv) SweepRunRecords() (adopted []string, err error) {
 		}
 	}
 	// Deletion is a second pass, once every ledger line the first pass could append is there.
+	// Every record is judged before any is removed: a part's record is what shows that
+	// another part's failed message was exported, so deleting one first would change
+	// the verdict on its chain's other parts.
+	var deletable []string
 	for _, run := range runs {
 		if e.recordDeletable(run) {
-			os.Remove(e.recordPath(run))
+			deletable = append(deletable, run)
 		}
+	}
+	for _, run := range deletable {
+		os.Remove(e.recordPath(run))
 	}
 	return adopted, nil
 }
@@ -594,6 +601,9 @@ func (e *CopyExportEnv) recordDeletable(run string) bool {
 	var sums []*ceRecSummary
 	for _, p := range parts {
 		ps, err := readSummary(e.recordPath(p))
+		if errors.Is(err, fs.ErrNotExist) {
+			continue // a part whose record is gone was deleted settled, with its chain complete
+		}
 		if err != nil {
 			return false // an unreadable part keeps the chain open
 		}

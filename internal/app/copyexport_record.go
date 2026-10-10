@@ -569,7 +569,140 @@ func (e *CopyExportEnv) journalAppend(l ceJournalLine) error {
 	if l.At.IsZero() {
 		l.At = e.nowTime()
 	}
+	e.journalMu.Lock()
+	defer e.journalMu.Unlock()
 	return e.appendJSONL(e.journalPath(), l)
+}
+
+// Journal compaction (design §4.16, W12): once the journal passes this many lines it is
+// rewritten to keep the last copyKeepRuns runs, and every unresolved run whatever its
+// age, which §4.19's Lifetime defines.
+var (
+	copyJournalCompactAt = 1000
+	copyKeepRuns         = 200
+)
+
+// CompactJournal rewrites the journal when it has passed copyJournalCompactAt lines: a
+// temp file in the state directory, fsynced, renamed over the journal, under the
+// journal's mutex, so an append never lands in a file that is being replaced. It keeps
+// the last copyKeepRuns runs, every run whose record is unresolved (so it stays on the
+// activity page with its actions until it is finished or its folder is said to be gone),
+// and every line it cannot read or whose `v` it does not know, copied verbatim and
+// never reinterpreted (XC3). A dropped run's record is deleted only after the new
+// journal is in place, and only if the run is settled and its chain complete; a record
+// left behind by a compaction stopped before its deletions is adopted again by the
+// launch sweep and ages out again.
+func (e *CopyExportEnv) CompactJournal() error {
+	lines, err := e.journalRaw()
+	if err != nil || len(lines) <= copyJournalCompactAt {
+		return err
+	}
+	// What to keep is decided from the journal as it stands, before it is rewritten,
+	// because a run's end is in the lines compaction drops; and without the journal's
+	// lock, because deciding that a record is deletable takes the ledger's lock, which a
+	// seal holds while it appends to the journal.
+	var order []string
+	seen := map[string]bool{}
+	for _, l := range lines {
+		if run, ok := lineRun(l); ok && !seen[run] {
+			seen[run] = true
+			order = append(order, run)
+		}
+	}
+	keep := map[string]bool{}
+	for i := len(order) - 1; i >= 0 && len(keep) < copyKeepRuns; i-- {
+		keep[order[i]] = true
+	}
+	ledger, _ := e.readLedger()
+	var deletable []string
+	for _, run := range order {
+		if keep[run] {
+			continue
+		}
+		sum, err := readSummary(e.recordPath(run))
+		if err == nil && !e.settledRun(sum, ledger) {
+			keep[run] = true // unresolved: never dropped
+			continue
+		}
+		if e.recordDeletable(run) {
+			deletable = append(deletable, run)
+		}
+	}
+	if err := e.rewriteJournal(seen, keep); err != nil {
+		return err
+	}
+	// The records go only now, with the new journal in place.
+	for _, run := range deletable {
+		os.Remove(e.recordPath(run))
+	}
+	return nil
+}
+
+// journalRaw is the journal's complete lines, copied.
+func (e *CopyExportEnv) journalRaw() ([][]byte, error) {
+	var lines [][]byte
+	err := scanLines(e.journalPath(), func(line []byte) error {
+		lines = append(lines, append([]byte(nil), line...))
+		return nil
+	})
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	return lines, stateErr(err)
+}
+
+// lineRun is the run a journal line of version 1 names; a line of another version, or
+// one that is not JSON, names none and is kept verbatim.
+func lineRun(l []byte) (string, bool) {
+	var j ceJournalLine
+	if json.Unmarshal(l, &j) != nil || j.V != 1 || j.Run == "" {
+		return "", false
+	}
+	return j.Run, true
+}
+
+// rewriteJournal replaces the journal, under its mutex, by the lines compaction keeps: a
+// line that names no run, a run it decided to keep, and any run it had not seen (one
+// that began after the decision).
+func (e *CopyExportEnv) rewriteJournal(considered, keep map[string]bool) error {
+	e.journalMu.Lock()
+	defer e.journalMu.Unlock()
+	lines, err := e.journalRaw()
+	if err != nil {
+		return err
+	}
+	var out bytes.Buffer
+	for _, l := range lines {
+		if run, ok := lineRun(l); !ok || keep[run] || !considered[run] {
+			out.Write(l)
+			out.WriteByte('\n')
+		}
+	}
+	tmp := e.journalPath() + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return stateErr(err)
+	}
+	if _, err := f.Write(out.Bytes()); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return stateErr(err)
+	}
+	if err := e.fsync(f); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return stateErr(err)
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(tmp)
+		return stateErr(err)
+	}
+	if err := os.Rename(tmp, e.journalPath()); err != nil {
+		os.Remove(tmp)
+		return stateErr(err)
+	}
+	e.step("W12")
+	return nil
 }
 
 // appendJSONL appends v as one line to path, creating it 0600 and its directory
