@@ -22,12 +22,24 @@ import (
 // network-share install into verify_exe_missing/exe_missing, a narrowing of what
 // status reports that is the owner's to accept — and cannot cover a dead mount.
 // The encoder wants exeIdentity to leave a UNC program path unstat'ed: reported
-// as neither existing nor this binary, without touching the network.
+// as neither existing nor this binary, without touching the network. It watches
+// the stat itself (statProgram), because a path that does not exist gives the
+// same answer whether or not it was looked up; before the fix it is red (the
+// path is stat'ed), and it cannot pass by the path simply being absent.
 func TestStatusDoesNotStatAUNCProgramPath(t *testing.T) {
 	t.Skip("open (owner decision, G8-AI4): exeIdentity stats a descriptor-supplied program path; refusing UNC paths narrows status for network-share installs, and a hung mount cannot be detected without a deadline.")
-	exists, isThis := exeIdentity(schedule.Descriptor{Exe: `\\attacker-host\share\x.exe`})
-	if exists || isThis {
-		t.Errorf("a UNC program path was resolved (exists=%v isThis=%v)", exists, isThis)
+	orig := statProgram
+	t.Cleanup(func() { statProgram = orig })
+	var touched []string
+	statProgram = func(p string) (os.FileInfo, error) { touched = append(touched, p); return nil, os.ErrNotExist }
+	for _, unc := range []string{`\\attacker-host\share\x.exe`, `//attacker-host/share/x.exe`} {
+		exists, isThis := exeIdentity(schedule.Descriptor{Exe: unc})
+		if exists || isThis {
+			t.Errorf("a UNC program path was resolved (exists=%v isThis=%v)", exists, isThis)
+		}
+	}
+	if len(touched) != 0 {
+		t.Errorf("status looked up UNC program paths (a network connection with the viewer's credentials): %v", touched)
 	}
 }
 

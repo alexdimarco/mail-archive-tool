@@ -1001,13 +1001,16 @@ recorded for a folder that no longer exists is the renamed archive's own: it is
 still shown, and the install names its entry.)
 
 Every descriptor is handed over with the folder, so the entry name it records
-drives `-out X -remove` (and the GUI's Remove) only when that entry is this
-archive's: its own derived name, or a custom name whose job backs up this folder
-and — on cron — whose block does, or — on Windows — for which this tool wrote
-a wrapper. A name that is another archive's, or a task this tool never
-installed, is refused with the descriptor named; `-name NAME` removes an entry
-by name regardless. (launchd entries are not read back, so a custom name another
-archive's launchd entry holds cannot be told apart there.)
+drives `-out X -remove` (and the GUI's Remove and Repair, and the removal
+command `status` prints) only when that entry is this archive's: its own derived
+name, or a custom name whose job backs up this folder and — on cron — whose
+block does, or — on Windows — whose wrapper (the file this tool wrote for the
+task) runs this folder. A name that is another archive's, or a task this tool
+never installed, is refused with the descriptor named; `-name NAME` removes an
+entry by name regardless. (launchd entries are not read back, so a custom name
+another archive's launchd entry holds cannot be told apart there; and a folder
+that is merely absent, an unplugged drive, reads as a folder that was moved, so
+a descriptor that records its path and its entry name still binds.)
 
 Remove a scheduled verify with the same command, `-install` swapped for
 `-remove`; its descriptor goes with it. A verify installed under a `-name` of its own

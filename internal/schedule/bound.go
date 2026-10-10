@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strings"
 )
 
 // An archive's descriptors are untrusted input (a folder is written by whoever
@@ -69,6 +70,11 @@ func recordedVerifyNameOn(out, goos string) (string, bool) {
 	return "", false
 }
 
+// NameBound reports, for an operation that would act on the entry descriptor d
+// names (a repair that re-installs it, a removal command a report prints),
+// whether that name binds to the archive at out; the error says why not.
+func NameBound(out string, d Descriptor) error { return nameBoundOn(out, d, runtime.GOOS) }
+
 // nameBoundOn reports whether the entry name descriptor d records is this
 // archive's, on the scheduler goos selects.
 func nameBoundOn(out string, d Descriptor, goos string) error {
@@ -79,6 +85,36 @@ func nameBoundOn(out string, d Descriptor, goos string) error {
 // for the reader of the verify descriptor.
 func bindDescriptorName(out string, d Descriptor, path string) error {
 	return bindName(out, d, path, "", false)
+}
+
+var wrapperTokenRe = regexp.MustCompile(`"([^"]*)"`)
+
+// wrapperOutOf returns the -out a Windows wrapper's run line carries, read back
+// the way CmdWrapper wrote it (batchArg: a doubled % is one %, a doubled
+// trailing backslash run is half as long), or "" when the wrapper has none (a
+// GUI task runs a -job file, whose -out the wrapper does not hold). The rem
+// header lines are skipped, so the quoted name there is no token.
+func wrapperOutOf(content string) string {
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, `"`) {
+			continue
+		}
+		var toks []string
+		for _, m := range wrapperTokenRe.FindAllStringSubmatch(line, -1) {
+			tok := strings.ReplaceAll(m[1], "%%", "%")
+			if trail := len(tok) - len(strings.TrimRight(tok, `\`)); trail > 0 {
+				tok = tok[:len(tok)-trail/2]
+			}
+			toks = append(toks, tok)
+		}
+		for i := 0; i+1 < len(toks); i++ {
+			if toks[i] == "-out" {
+				return toks[i+1]
+			}
+		}
+	}
+	return ""
 }
 
 // bindName implements the rules above; withHost adds the scheduler-state checks
@@ -122,6 +158,13 @@ func bindName(out string, d Descriptor, path, goos string, withHost bool) error 
 	case "windows":
 		if _, err := os.Stat(DefaultWrapperPath(d.Name)); err != nil {
 			return fmt.Errorf("%s records the task %q, but this tool has no wrapper for it (%s): it is not an entry this tool installed — pass -name NAME to remove it by name anyway", path, d.Name, DefaultWrapperPath(d.Name))
+		}
+		// Every task of ours has a wrapper, so its existence says only that the
+		// name is one of ours; the archive the wrapper runs says whose (G8-AO1).
+		if b, err := os.ReadFile(DefaultWrapperPath(d.Name)); err == nil {
+			if other := wrapperOutOf(string(b)); other != "" && !sameDir(other, out) && (from == "" || !sameDir(other, from)) {
+				return fmt.Errorf("%s records the task %q, but that task backs up %s, not this archive: pass -name NAME to name the entry yourself", path, d.Name, other)
+			}
 		}
 	case "darwin":
 	default:

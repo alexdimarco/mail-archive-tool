@@ -746,13 +746,24 @@ func repairSpec(out string, d schedule.Descriptor, exe string) (schedule.Spec, e
 	return spec, nil
 }
 
+// repairPlan is the Spec a repair installs, or why it must not: the entry name
+// the descriptor records is untrusted too (a folder handed over can name another
+// archive's entry), and an install replaces whatever entry has that name, so a
+// name that is not shown to be this archive's is refused (G8-AO1, AI1).
+func repairPlan(out string, d schedule.Descriptor, exe string) (schedule.Spec, error) {
+	if err := schedule.NameBound(out, d); err != nil {
+		return schedule.Spec{}, fmt.Errorf("not repairing: %v", err)
+	}
+	return repairSpec(out, d, exe)
+}
+
 // repairSchedule re-installs a recorded schedule from the current executable.
 func repairSchedule(out string, d schedule.Descriptor) error {
 	exe, err := os.Executable()
 	if err != nil {
 		return err
 	}
-	spec, err := repairSpec(out, d, exe)
+	spec, err := repairPlan(out, d, exe)
 	if err != nil {
 		return err
 	}

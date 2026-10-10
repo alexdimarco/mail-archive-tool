@@ -90,10 +90,14 @@ type Input struct {
 	HasDescriptor     bool
 	Desc              schedule.Descriptor
 	DescErr           error
-	SchedState        schedule.State
-	ExeExists         bool
-	ExeIsThis         bool
-	ThisHost          string
+	// DescNameUnbound is true when the entry name the descriptor records cannot
+	// be shown to be THIS archive's (a copied or planted record, G8-AO1): a
+	// removal command is never printed from it. The zero value is a bound name.
+	DescNameUnbound bool
+	SchedState      schedule.State
+	ExeExists       bool
+	ExeIsThis       bool
+	ThisHost        string
 
 	// The scheduled verify's own descriptor (.mailarchive-verify-schedule.json,
 	// owner ruling FB-4), written when `schedule` installs a verify: it carries
@@ -112,6 +116,8 @@ type Input struct {
 	// for the program the verify descriptor records.
 	VerifyExeExists bool
 	VerifyExeIsThis bool
+	// VerifyNameUnbound is DescNameUnbound for the verify descriptor's name.
+	VerifyNameUnbound bool
 
 	// LockHeld is the authoritative liveness signal: the archive lock dies
 	// with its process, so a "running" record whose lock is free belongs to a
@@ -290,7 +296,14 @@ func Assess(in Input, now time.Time) Report {
 			// Substitute this archive's job into the re-install remedy (no "..."
 			// placeholder) so the operator can paste it (friction #14).
 			reinstall := scheduleCommand(jobWithOut(in.Desc.Job, in.Out), in.GOOS)
-			r.warn("moved_archive", fmt.Sprintf("the installed schedule %q backs up %s, not this archive (%s) — re-run %s, then remove the stale one with `mailarchive schedule -name %q -remove`", in.Desc.Name, jo, in.Out, reinstall, in.Desc.Name))
+			if in.DescNameUnbound {
+				// The record is untrusted: an entry it names that is not shown to be
+				// this archive's may be another archive's live one, so no removal
+				// command is printed from it (G8-AO1).
+				r.warn("moved_archive", fmt.Sprintf("the installed schedule %q backs up %s, not this archive (%s) — re-run %s; this record is not shown to be this archive's own, so it names no entry to remove: if it was copied here, delete %s", in.Desc.Name, jo, in.Out, reinstall, filepath.Join(in.Out, schedule.DescriptorName)))
+			} else {
+				r.warn("moved_archive", fmt.Sprintf("the installed schedule %q backs up %s, not this archive (%s) — re-run %s, then remove the stale one with `mailarchive schedule -name %q -remove`", in.Desc.Name, jo, in.Out, reinstall, in.Desc.Name))
+			}
 		}
 		if in.ThisHost != "" && in.Desc.Host != "" && in.ThisHost != in.Desc.Host {
 			r.warn("other_host", fmt.Sprintf("the schedule was installed on host %q, not this one (%q); its state cannot be checked from here", in.Desc.Host, in.ThisHost))
@@ -334,7 +347,13 @@ func assessVerifyEntry(r *Report, in Input) {
 	switch in.VerifySchedState {
 	case schedule.NotInstalled:
 		clearCmd := "`mailarchive schedule " + strings.Join(quoteTokens([]string{"-name", vd.Name, "-remove", "--", "verify", "-out", in.Out}, in.GOOS), " ") + "`"
-		r.warn("verify_not_installed", fmt.Sprintf("the verify schedule %q is recorded but not present in this host's scheduler — re-install it with %s, or, if this archive should have no scheduled verify, clear the record with %s", vd.Name, reinstall, clearCmd))
+		clearHow := "with"
+		if in.VerifyNameUnbound {
+			// Not shown to be this archive's entry (G8-AO1): no removal command
+			// from an untrusted record; the file is the operator's to delete.
+			clearHow, clearCmd = "by deleting", filepath.Join(in.Out, schedule.VerifyDescriptorName)
+		}
+		r.warn("verify_not_installed", fmt.Sprintf("the verify schedule %q is recorded but not present in this host's scheduler — re-install it with %s, or, if this archive should have no scheduled verify, clear the record %s %s", vd.Name, reinstall, clearHow, clearCmd))
 	case schedule.SchedulerUnavailable:
 		if !r.has("scheduler_unavailable") {
 			r.warn("scheduler_unavailable", "this host's scheduler cannot be queried (no crontab/schtasks?) — the scheduled verify may not run here")
@@ -663,7 +682,9 @@ const unsafeTokenPlaceholder = "<edit-this-value-by-hand>"
 // or is followed by a path separator (an administrative share, \\nas\backup$) is
 // literal in both.
 func windowsExpands(s string) bool {
-	if strings.ContainsAny(s, "%^`") {
+	// U+201C, U+201D and U+201E are double quotes to PowerShell: one inside the
+	// token closes the string the remedy wraps it in (G8-AO2).
+	if strings.ContainsAny(s, "%^`“”„") {
 		return true
 	}
 	for i := 0; i < len(s); i++ {
@@ -766,6 +787,7 @@ func Gather(out, nameOverride string) Input {
 	if derr == nil {
 		in.HasDescriptor = true
 		in.Desc = d
+		in.DescNameUnbound = schedule.NameBound(out, d) != nil
 		name := d.Name
 		if nameOverride != "" {
 			name = nameOverride
@@ -786,17 +808,22 @@ func Gather(out, nameOverride string) Input {
 	if vderr == nil {
 		in.HasVerifyDescriptor = true
 		in.VerifyDesc = vd
+		in.VerifyNameUnbound = schedule.NameBound(out, vd) != nil
 		in.VerifySchedState = schedule.Query(vd.Name)
 		in.VerifyExeExists, in.VerifyExeIsThis = exeIdentity(vd)
 	}
 	return in
 }
 
+// statProgram is the stat of a descriptor-supplied program path: a seam so a
+// test can see which paths `status` touches (G8-AI4's encoder).
+var statProgram = os.Stat
+
 // exeIdentity reports whether a recorded schedule's program still exists, and
 // whether it is this binary: the same file, or the size and modification time
 // the install recorded for it.
 func exeIdentity(d schedule.Descriptor) (exists, isThis bool) {
-	fi, err := os.Stat(d.Exe)
+	fi, err := statProgram(d.Exe)
 	if err != nil {
 		return false, false
 	}
