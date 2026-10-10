@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -120,6 +121,59 @@ func TestIndexOpenRefusalNamesAReadOnlyArchiveFolder(t *testing.T) {
 	res, err := Run(context.Background(), opts, discard(), nil)
 	if err != nil || res.Indexed != res.ManifestSize || res.Indexed != healthy.Indexed {
 		t.Fatalf("after making the folder writable: indexed=%d of %d, err=%v; want all %d", res.Indexed, res.ManifestSize, err, healthy.Indexed)
+	}
+}
+
+// covers: MA-386, R12, S33
+// A search.db the writer can open but not write is refused at the open (g7
+// friction F7). With the file made read-only (0444) in a writable folder SQLite
+// opens it read-only without a word, and the run used to go on: exit 0, one
+// identical "attempt to write a readonly database (8)" warning per message,
+// INDEX-ERRORS=N, the cause never named. Now the writable open probes for a write
+// and the run is refused naming the file, SQLite's cause, that search.db is
+// read-only and "make it writable" — never the rebuild — leaving search.db and
+// the manifest unchanged and exporting nothing. Positive twin: the healthy run;
+// then, followed (the file writable again), the next run indexes every record.
+func TestIndexOpenRefusalNamesAReadOnlySearchDB(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission bits model a read-only file")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses permission bits")
+	}
+	opts, healthy, unchanged := unwritableFixture(t, 3)
+	idxPath := filepath.Join(opts.Out, "search.db")
+	if err := os.Chmod(idxPath, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(idxPath, 0o644) })
+
+	// New mail to export, so a run that went on would produce index errors.
+	maildirMessages(t, opts.Inputs[0], 6)
+	var logs bytes.Buffer
+	_, err := Run(context.Background(), opts, log.New(&logs, "", 0), nil)
+	code, msg := refusalOf(err)
+	assure.Refused(t, code, msg, assure.Code(1),
+		assure.Names(idxPath, "attempt to write a readonly database", "search.db is read-only", "make it writable", "run again"),
+		assure.Forbid("reindex -rebuild", "rebuild it"),
+		assure.NoSideEffect(unchanged))
+	if strings.Contains(logs.String(), "warning: index:") {
+		t.Fatalf("the run went on to index and warn per message:\n%s", logs.String())
+	}
+	// The refused open leaves no read-only -wal/-shm pair behind, which would
+	// keep refusing after search.db itself is made writable.
+	for _, s := range []string{"-wal", "-shm"} {
+		if _, err := os.Stat(idxPath + s); err == nil {
+			t.Fatalf("the refused open left %s beside search.db", s)
+		}
+	}
+
+	if err := os.Chmod(idxPath, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Run(context.Background(), opts, discard(), nil)
+	if err != nil || res.IndexErrors != 0 || res.Indexed != res.ManifestSize || res.Indexed <= healthy.Indexed {
+		t.Fatalf("after making search.db writable: indexed=%d of %d errors=%d err=%v", res.Indexed, res.ManifestSize, res.IndexErrors, err)
 	}
 }
 

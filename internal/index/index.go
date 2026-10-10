@@ -99,6 +99,20 @@ func Open(path string) (*Index, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open index: %w", err)
 	}
+	// A refused open of a read-only search.db leaves a -wal/-shm pair SQLite
+	// created with the file's own read-only mode, which would keep refusing
+	// after the owner makes search.db writable (F7): remove what this open made.
+	var madeSidecars []string
+	for _, s := range []string{"-wal", "-shm"} {
+		if _, serr := os.Lstat(path + s); errors.Is(serr, fs.ErrNotExist) {
+			madeSidecars = append(madeSidecars, path+s)
+		}
+	}
+	dropSidecars := func() {
+		for _, p := range madeSidecars {
+			_ = os.Remove(p)
+		}
+	}
 	db.SetMaxOpenConns(1) // single writer avoids "database is locked"
 	if _, err := db.Exec(pragmas); err != nil {
 		db.Close()
@@ -121,6 +135,23 @@ func Open(path string) (*Index, error) {
 	if version > indexVersion {
 		db.Close()
 		return nil, fmt.Errorf("search index %s was %w (format version %d; this build understands %d): upgrade this copy of mailarchive, or point -out at an archive this version wrote", path, ErrNewerFormat, version, indexVersion)
+	}
+	// SQLite opens a file it may not write (mode 0444, Windows' Read-only
+	// attribute) read-only without a word, and every later write then fails one
+	// row at a time. Write the database header once, here, with the value it
+	// already holds (user_version, which nothing else uses), so that open
+	// refuses with SQLITE_READONLY instead (F7). It comes after the newer-format
+	// refusal, which must leave the file's bytes alone.
+	var uv int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&uv); err != nil {
+		db.Close()
+		dropSidecars()
+		return nil, fmt.Errorf("index write check: %w", err)
+	}
+	if _, err := db.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, uv)); err != nil {
+		db.Close()
+		dropSidecars()
+		return nil, fmt.Errorf("index write check: %w", err)
 	}
 	// Transactions are opened lazily on the first Add so that read methods are
 	// never blocked waiting for the single connection an open write tx holds.
