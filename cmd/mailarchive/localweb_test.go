@@ -140,7 +140,7 @@ func interfaceIPv4() string {
 func TestServeAllowHostIsAHostName(t *testing.T) {
 	for _, bad := range []string{"nas.example:8099", "http://nas.example", "nas.example/x", "user@nas.example", "nas.example.", "fe80::1%en0"} {
 		code, stderr := runCLI("serve", "-out", t.TempDir(), "-allow-host", bad)
-		assure.Refused(t, code, stderr, assure.Code(1), assure.Names("-allow-host", "without a port"))
+		assure.Refused(t, code, stderr, assure.Code(1), assure.Names("-allow-host", bad, "without a port"))
 	}
 	got, err := allowHostNames([]string{"NAS.example", "192.168.1.10", "2001:db8::1", "[2001:DB8::2]"})
 	if err != nil {

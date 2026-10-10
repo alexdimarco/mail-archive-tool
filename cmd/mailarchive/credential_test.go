@@ -181,49 +181,69 @@ func TestGraphRefusesCredentialInsideArchive(t *testing.T) {
 }
 
 // covers: MA-375, R12, R17, S45
-// With -unattended — every scheduled job carries it — a token cache inside -out
+// With -unattended — every scheduled job carries it — a credential inside -out
 // does not stop the backup (refusing at run time would silently stop the backups
-// of existing installs): the capture runs, the run log carries the warning, the
-// last-run record carries it, and `status` WARNs credential_in_archive [CC16].
+// of existing installs), whether it is a device job's token cache or an app-only
+// job's client-secret file: the capture runs, the run log carries the warning,
+// the last-run record carries it, and `status` WARNs credential_in_archive
+// [CC16]. The secret itself never reaches the log.
 func TestGraphUnattendedCredentialInsideArchiveWarns(t *testing.T) {
 	newFakeM365(t)
-	out := t.TempDir()
-	cache := filepath.Join(out, "graph.token")
-	primeCache(t, cache)
-	logPath := filepath.Join(t.TempDir(), "graph.log")
-	code, msg := graphInProcess("-auth", "device", "-unattended", "-out", out, "-tenant", "t", "-client-id", "c", "-token-cache", cache, "-log", logPath)
-	if code != 0 {
-		t.Fatalf("an unattended run must keep running with its credential inside the archive: exit %d %s", code, msg)
-	}
-	assure.Reached(t, capturedPages(out), "pages the unattended capture wrote")
-	logged, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := "warning: the token cache " + cache + " is inside the archive folder " + out; !strings.Contains(string(logged), want) {
-		t.Errorf("the run log lacks %q:\n%s", want, logged)
-	}
-	lr, _, _ := state.ReadLastRun(out)
-	if len(lr.Warnings) != 1 || lr.Warnings[0].Code != "credential_in_archive" || !strings.Contains(lr.Warnings[0].Message, cache) {
-		t.Errorf("the last-run record carries warnings %+v, want one credential_in_archive naming %s", lr.Warnings, cache)
-	}
-	code, stdout, stderr := runCLIOut(t, "status", "-out", out, "-json")
-	if code != 0 {
-		t.Fatalf("status: exit %d %s", code, stderr)
-	}
-	var doc struct {
-		Posture     string   `json:"posture"`
-		ReasonCodes []string `json:"reason_codes"`
-	}
-	if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
-		t.Fatalf("status -json: %v\n%s", err, stdout)
-	}
-	found := false
-	for _, c := range doc.ReasonCodes {
-		found = found || c == "credential_in_archive"
-	}
-	if !found || doc.Posture == "GREEN" {
-		t.Errorf("status is %s with reason codes %v, want a WARN carrying credential_in_archive", doc.Posture, doc.ReasonCodes)
+	for _, c := range []struct {
+		name  string   // the case
+		file  string   // the credential's name inside -out
+		names string   // how the warning names it
+		auth  []string // the auth flags, ending with the credential's own flag
+	}{
+		{"device token cache", "graph.token", "the token cache ", []string{"-auth", "device", "-token-cache"}},
+		{"app-only client secret file", "graph.secret", "the client secret file ", []string{"-auth", "app", "-mailbox", "alice@contoso.org", "-client-secret-file"}},
+	} {
+		out := t.TempDir()
+		cred := filepath.Join(out, c.file)
+		if c.file == "graph.token" {
+			primeCache(t, cred)
+		} else if err := os.WriteFile(cred, []byte("s3cret-value"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		logPath := filepath.Join(t.TempDir(), "graph.log")
+		args := append([]string{"-unattended", "-out", out, "-tenant", "t", "-client-id", "c", "-log", logPath}, append(c.auth, cred)...)
+		code, msg := graphInProcess(args...)
+		if code != 0 {
+			t.Fatalf("%s: an unattended run must keep running with its credential inside the archive: exit %d %s", c.name, code, msg)
+		}
+		assure.Reached(t, capturedPages(out), c.name+": pages the unattended capture wrote")
+		logged, err := os.ReadFile(logPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := "warning: " + c.names + cred + " is inside the archive folder " + out; !strings.Contains(string(logged), want) {
+			t.Errorf("%s: the run log lacks %q:\n%s", c.name, want, logged)
+		}
+		if strings.Contains(string(logged), "s3cret-value") {
+			t.Errorf("%s: the run log carries the client secret itself", c.name)
+		}
+		lr, _, _ := state.ReadLastRun(out)
+		if len(lr.Warnings) != 1 || lr.Warnings[0].Code != "credential_in_archive" || !strings.Contains(lr.Warnings[0].Message, cred) {
+			t.Errorf("%s: the last-run record carries warnings %+v, want one credential_in_archive naming %s", c.name, lr.Warnings, cred)
+		}
+		code, stdout, stderr := runCLIOut(t, "status", "-out", out, "-json")
+		if code != 0 {
+			t.Fatalf("%s: status: exit %d %s", c.name, code, stderr)
+		}
+		var doc struct {
+			Posture     string   `json:"posture"`
+			ReasonCodes []string `json:"reason_codes"`
+		}
+		if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
+			t.Fatalf("%s: status -json: %v\n%s", c.name, err, stdout)
+		}
+		found := false
+		for _, rc := range doc.ReasonCodes {
+			found = found || rc == "credential_in_archive"
+		}
+		if !found || doc.Posture == "GREEN" {
+			t.Errorf("%s: status is %s with reason codes %v, want a WARN carrying credential_in_archive", c.name, doc.Posture, doc.ReasonCodes)
+		}
 	}
 }
 
