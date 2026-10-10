@@ -171,7 +171,11 @@ func runHeadless(path string) int {
 		CopyFirst: j.CopyFirst, Index: true, Pages: true, KeepRaw: j.KeepRaw, Unattended: true}
 	logger.Printf("Scheduled job %q: exporting to %s", j.Name, j.Out)
 	result, runErr := app.Run(ctx, opts, logger, nil)
-	logSummary(logger, result)
+	// "Done." only for a run that finished or was cancelled: a refused or failed
+	// run logs FAILED alone, never a Done above it (F11).
+	if runErr == nil || errors.Is(runErr, context.Canceled) {
+		logSummary(logger, result)
+	}
 	if runErr != nil && !errors.Is(runErr, context.Canceled) {
 		logger.Printf("FAILED: %v", runErr)
 		fmt.Fprintln(os.Stderr, "mailarchive-gui: "+runErr.Error()) // cron mail / stderr.log
