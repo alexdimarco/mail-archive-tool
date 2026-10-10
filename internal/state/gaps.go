@@ -462,6 +462,21 @@ func (m *Manifest) CaptureGapCounts(lastRunAt map[string]time.Time, now time.Tim
 	return t.Fillable, t.Terminal, t.Info, t.Stuck, t.NotAttempted, t.Oldest
 }
 
+// MissingGapCount is how many items and folders the ledger says are missing from
+// the archive: its fillable and terminal entries, an overflow entry for the items
+// it absorbed (an info entry is nothing missing).
+func (m *Manifest) MissingGapCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, g := range m.CaptureGaps {
+		if g.Class == ClassFillable || g.Class == ClassTerminal {
+			n += g.Weight()
+		}
+	}
+	return n
+}
+
 // GapCount is the number of ledger entries.
 func (m *Manifest) GapCount() int {
 	m.mu.Lock()

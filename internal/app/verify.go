@@ -67,6 +67,13 @@ type Report struct {
 	Unexpected int `json:"unexpected"`
 	Recorded   int `json:"recorded,omitempty"` // files baselined this run (-record)
 
+	// What the capture-gap ledger says the source holds that this archive does not
+	// (fillable and terminal gaps: an item, an overflow entry for the items it
+	// absorbed, a folder). Informational: it never changes the verdict or the exit
+	// code (X1 for verify), because verify attests the files that ARE recorded.
+	GapItems   int `json:"gap_items,omitempty"`
+	GapFolders int `json:"gap_folders,omitempty"`
+
 	Problems  []Problem      `json:"problems"`            // bounded per category (see maxVerifyDetail)
 	Truncated map[string]int `json:"truncated,omitempty"` // kind → count omitted from Problems
 }
@@ -188,6 +195,15 @@ func Verify(out string, opts VerifyOptions, logger *log.Logger, onProgress func(
 
 	records := manifest.All()
 	v.rep.Records = len(records)
+	for _, g := range manifest.CaptureGapsSorted() {
+		switch {
+		case g.Class != state.ClassFillable && g.Class != state.ClassTerminal:
+		case g.Scope == state.GapScopeFolder:
+			v.rep.GapFolders++
+		default:
+			v.rep.GapItems += g.Weight()
+		}
+	}
 
 	keys := make([]string, 0, len(records))
 	for k := range records {
@@ -623,6 +639,12 @@ func VerifySummary(r Report) []string {
 	// is deleted. Not an attestation failure; a heads-up about portability.
 	if r.Records > 0 && r.WithEML == 0 {
 		out = append(out, "note: no preserved original bytes (.eml) in this archive — `mailarchive extract` would produce nothing. A PST/OST archive never has originals; an mbox/maildir/Graph archive must be captured with -raw to be extractable.")
+	}
+	// What the source holds that was never captured (the capture-gap ledger): a
+	// heads-up for the custodian, not a verdict — verify attests the files that are
+	// recorded, and a gap has none.
+	if r.GapItems > 0 || r.GapFolders > 0 {
+		out = append(out, fmt.Sprintf("Not in this archive: %d item(s), %d folder(s) from the source could not be captured (see attachments-report.tsv) — this does not affect attestation", r.GapItems, r.GapFolders))
 	}
 	if r.Attested() {
 		out = append(out, "attested: every recorded file was checked and intact")

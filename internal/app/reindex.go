@@ -164,7 +164,7 @@ func Reindex(out string, logger *log.Logger) (kept, pruned int, err error) {
 
 	// Regenerate folder + root index pages from the reconciled index so they no
 	// longer list the pruned messages.
-	if err := pages.Generate(out, idx, logger); err != nil {
+	if err := pages.Generate(out, idx, logger, gapBannerCount(manifest)); err != nil {
 		return 0, 0, fmt.Errorf("regenerate folder pages: %w", err)
 	}
 	writeReport(out, manifest, manifest.Migrated > 0, logger)
@@ -393,7 +393,7 @@ func Rebuild(out string, logger *log.Logger) (RebuildReport, error) {
 	}
 	// Regenerate folder + root pages FROM THE TEMP INDEX (still open) so the
 	// pages match exactly what the rebuild indexed (G1, PC5).
-	if err := pages.Generate(out, idx, logger); err != nil {
+	if err := pages.Generate(out, idx, logger, gapBannerCount(manifest)); err != nil {
 		idx.Close()
 		removeDBFiles(tmpPath)
 		return rep, fmt.Errorf("regenerate folder pages: %w", err)

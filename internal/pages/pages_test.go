@@ -44,7 +44,7 @@ func TestFolderPagesPaginate(t *testing.T) {
 	if err := ix.Flush(); err != nil {
 		t.Fatal(err)
 	}
-	if err := Generate(out, ix, log.New(io.Discard, "", 0)); err != nil {
+	if err := Generate(out, ix, log.New(io.Discard, "", 0), 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -124,7 +124,7 @@ func genFolder(t *testing.T, folders map[string]int, size int) string {
 	if err := ix.Flush(); err != nil {
 		t.Fatal(err)
 	}
-	if err := Generate(out, ix, log.New(io.Discard, "", 0)); err != nil {
+	if err := Generate(out, ix, log.New(io.Discard, "", 0), 0); err != nil {
 		t.Fatal(err)
 	}
 	return out

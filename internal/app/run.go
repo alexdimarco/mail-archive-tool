@@ -429,8 +429,8 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// Browsable folder index pages, built from the finished index. Regenerate
 	// them only when this run exported something or the root index.html is not
 	// yet there (nas-02): a zero-change re-run must not rewrite every page.
-	if idx != nil && opts.Pages && pagesNeeded(opts.Out, exp.Stats.Exported) {
-		if pErr := pages.Generate(opts.Out, idx, logger); pErr != nil {
+	if gaps := gapBannerCount(manifest); idx != nil && opts.Pages && pagesNeeded(opts.Out, exp.Stats.Exported, gaps) {
+		if pErr := pages.Generate(opts.Out, idx, logger, gaps); pErr != nil {
 			logger.Printf("warning: folder pages: %v", pErr)
 		}
 	}
@@ -477,16 +477,17 @@ func effectiveEvery(floor, n int) int {
 }
 
 // pagesNeeded reports whether the browsable folder pages should be regenerated:
-// only when this run exported at least one message, or the root index.html does
-// not yet exist. A zero-change re-run then leaves the pages (and their mtimes)
-// untouched (nas-02). reindex regenerates unconditionally — it reconciles the
-// pages to what survives on disk.
-func pagesNeeded(out string, exported int) bool {
+// only when this run exported at least one message, the root index.html does
+// not yet exist, or the gap count it was stamped with is not the manifest's now
+// (a ledger-only change must reach the banner, FC24). A zero-change re-run then
+// leaves the pages (and their mtimes) untouched (nas-02). reindex regenerates
+// unconditionally — it reconciles the pages to what survives on disk.
+func pagesNeeded(out string, exported, gaps int) bool {
 	if exported > 0 {
 		return true
 	}
-	_, err := os.Stat(filepath.Join(out, "index.html"))
-	return errors.Is(err, fs.ErrNotExist)
+	stamped, ok := pages.StampedGaps(out)
+	return !ok || stamped != gaps
 }
 
 // ostAdvisory returns the up-front guidance to print before an -auto run reads

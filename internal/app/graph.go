@@ -356,8 +356,8 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		}
 	}
 	saveErr = commit(hist, idx, manifest, logger)
-	if idx != nil && opts.Pages && !allFailed && pagesNeeded(opts.Out, exp.Stats.Exported) {
-		if pErr := pages.Generate(opts.Out, idx, logger); pErr != nil {
+	if gaps := gapBannerCount(manifest); idx != nil && opts.Pages && !allFailed && pagesNeeded(opts.Out, exp.Stats.Exported, gaps) {
+		if pErr := pages.Generate(opts.Out, idx, logger, gaps); pErr != nil {
 			logger.Printf("warning: folder pages: %v", pErr)
 		}
 	}

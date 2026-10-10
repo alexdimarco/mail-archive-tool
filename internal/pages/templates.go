@@ -80,10 +80,11 @@ ul{list-style:none;padding:0;max-width:760px}
 li{display:flex;justify-content:space-between;padding:6px 10px;border-bottom:1px solid #eee}
 @media (prefers-color-scheme:dark){li{border-color:#2a2a2a}}
 li .c{color:#888;font-variant-numeric:tabular-nums}
-</style></head><body>
+</style></head><body data-gaps="{{.Gaps}}">
 <div class="bar"><h1>Email archive</h1><div class="muted">Generated {{.Generated}}</div></div>
 <div class="wrap">
-<div class="note">
+{{if .Gaps}}<div class="note gaps">` + GapBanner + `</div>
+{{end}}<div class="note">
   <b>No software needed:</b> browse the folders below; every message is a self-contained page with its attachments
   in a sibling zip. Dates in tables and file names are UTC. See <a href="README.txt">README.txt</a> for the layout.<br>
   <b>Full-text search:</b> run <code>mailarchive serve -out .</code> in this folder and open the printed
