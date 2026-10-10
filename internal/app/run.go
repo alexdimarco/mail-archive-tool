@@ -788,10 +788,13 @@ func dataFileRemedy(path string) string {
 // dataFileRemedyFor is dataFileRemedy keyed by the cause (friction F1): the
 // in-place repair is for a file that opens and does not parse. A file that cannot
 // be opened at all (permissions, another program holding it, a wrong path, a disk
-// error) is told what to do about THAT, because a repair tool cannot help it. An
-// .ost keeps ostOpenRemedy and any other source gets none.
+// error) is told what to do about THAT, because a repair tool cannot help it, and
+// neither can a change of route (an .ost held by Outlook or locked is no more
+// readable through -outlook; FI-S1a re-verification, OP-5). An .ost whose cause is a parse or
+// format error keeps ostOpenRemedy and any other source gets none.
 func dataFileRemedyFor(path string, err error) string {
-	if !strings.EqualFold(filepath.Ext(path), ".pst") || err == nil {
+	ext := strings.ToLower(filepath.Ext(path))
+	if (ext != ".pst" && ext != ".ost") || err == nil {
 		return dataFileRemedy(path)
 	}
 	text := strings.ToLower(err.Error())

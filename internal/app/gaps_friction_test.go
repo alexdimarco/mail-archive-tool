@@ -136,7 +136,7 @@ func TestVerifyNotInThisArchiveSplitsRetryableFromNeedsAction(t *testing.T) {
 	if strings.Contains(joined, "0 folder(s)") {
 		t.Errorf("a zero part is printed:\n%s", joined)
 	}
-	for _, want := range []string{"Not in this archive: 2 item(s) from the source could not be captured", "1 retried whenever the archive runs again", "1 need action", "mailarchive status -out", "means the files this archive holds are intact, not that the archive is complete"} {
+	for _, want := range []string{"Not in this archive: 2 item(s) from the source could not be captured", "1 will be retried the next time the archive runs", "1 need action", "mailarchive status -out", "means the files this archive holds are intact, not that the archive is complete"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("verify's summary lacks %q:\n%s", want, joined)
 		}

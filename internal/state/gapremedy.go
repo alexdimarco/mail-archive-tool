@@ -184,9 +184,28 @@ func GapRemedy(reason, sourceKind, errnoClass string) string {
 	case "outlook-account-skipped":
 		return "archive that .pst file directly"
 	case "overflow":
-		return "see the report; fix the cause of the first failures, then run again"
+		return remedyOverflow
 	}
-	return "see the report, then run again"
+	return remedyUnknown
+}
+
+// The two remedies that point at the report; the report's own rows cannot.
+const (
+	remedyOverflow = "see the report; fix the cause of the first failures, then run again"
+	remedyUnknown  = "see the report, then run again"
+)
+
+// GapReportRemedy is GapRemedy as the report's own row says it (friction R3): the
+// two remedies that send the reader to the report would be circular there.
+func GapReportRemedy(reason, sourceKind, errnoClass string) string {
+	switch r := GapRemedy(reason, sourceKind, errnoClass); r {
+	case remedyOverflow:
+		return "fix the cause of the failures listed for this folder above, then run again; the rest are archived on the runs after that"
+	case remedyUnknown:
+		return "run again; if it is listed again, keep the original, because this version of mailarchive does not know the cause"
+	default:
+		return r
+	}
 }
 
 // GapOriginal says whether the original still exists, by reason and source kind

@@ -670,7 +670,7 @@ func VerifySummary(r Report) []string {
 		// and what the verdict below does not say.
 		var split []string
 		if r.GapRetryable > 0 {
-			split = append(split, fmt.Sprintf("%d retried whenever the archive runs again", r.GapRetryable))
+			split = append(split, fmt.Sprintf("%d will be retried the next time the archive runs", r.GapRetryable))
 		}
 		if r.GapNeedAction > 0 {
 			split = append(split, fmt.Sprintf("%d need action", r.GapNeedAction))
@@ -678,7 +678,11 @@ func VerifySummary(r Report) []string {
 		if len(split) > 0 {
 			out = append(out, fmt.Sprintf("  Of these, %s — `mailarchive status -out %q` says what to do.", strings.Join(split, " and "), r.Out))
 		}
-		out = append(out, "  \"attested\" below means the files this archive holds are intact, not that the archive is complete.")
+		if r.Attested() {
+			out = append(out, "  \"attested\" below means the files this archive holds are intact, not that the archive is complete.")
+		} else {
+			out = append(out, "  The verdict below is about the files this archive holds, not that the archive is complete.")
+		}
 	}
 	if r.Attested() {
 		out = append(out, "attested: every recorded file was checked and intact")

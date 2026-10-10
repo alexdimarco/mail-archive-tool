@@ -622,7 +622,7 @@ func (m *Manifest) GapSourceID(token string) string {
 // the input path, without the id's own prefix, control-stripped.
 func SourceDisplay(id string) string {
 	id = strings.TrimPrefix(strings.TrimPrefix(id, "path:"), "mailbox:")
-	return util.StripControl(id)
+	return util.StripBidi(util.StripControl(id))
 }
 
 // Source kinds a remedy is keyed by (fault-isolation §4.10, FC23(6)).

@@ -82,9 +82,10 @@ row has a class:
   terminal = the source itself would not deliver it as it stands;
   info = nothing missing (the tool only noticed something odd).
 If no one runs the tool against the source anymore, every fillable or terminal
-row is missing from this archive. The end of each row's detail says why it
-happened and what to do about it, and whether the original still exists. With
-the mailarchive program, run "mailarchive status -out ." in this folder for the
+row is missing from this archive. The end of the detail of a row for a message
+or folder that left no page says why it happened and what to do about it, and
+whether the original still exists; any other row names the problem in its kind
+and detail columns. With the mailarchive program, run "mailarchive status -out ." in this folder for the
 same in plain words.
 
 Housekeeping files (safe to leave alone):

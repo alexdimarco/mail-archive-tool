@@ -15,6 +15,7 @@ import (
 
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/state"
+	"mail-archive-tool/internal/util"
 )
 
 const (
@@ -176,7 +177,7 @@ func writeGapRows(w *bufio.Writer, out string, manifest *state.Manifest, gaps []
 		if o := state.GapOriginal(g.Reason, kind); o != "" {
 			why += " (" + o + ")"
 		}
-		remedy := state.GapRemedy(g.Reason, kind, state.GapErrnoClass(g.Detail))
+		remedy := state.GapReportRemedy(g.Reason, kind, state.GapErrnoClass(g.Detail))
 		if g.Class == state.ClassFillable && kind == state.SourceGraph {
 			remedy += ". " + state.GapDeadlineRemedy
 		}
@@ -198,12 +199,14 @@ func gapDetail(item string) string {
 }
 
 // tsv keeps one report row on one line: every control character (tab, LF,
-// CR, and the rest of C0/C1) in an untrusted field becomes a space.
+// CR, and the rest of C0/C1) in an untrusted field becomes a space, and the
+// bidirectional controls are dropped (they reverse what follows them in a
+// spreadsheet; friction OP-8).
 func tsv(s string) string {
 	return strings.Map(func(r rune) rune {
 		if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) {
 			return ' '
 		}
 		return r
-	}, s)
+	}, util.StripBidi(s))
 }
