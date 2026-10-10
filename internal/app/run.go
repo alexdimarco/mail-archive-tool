@@ -196,13 +196,26 @@ func unwritableRemedy(dbPath, out string, err error) string {
 	if index.DiskError(err) {
 		return fmt.Sprintf("the disk holding %s is full or failing — free space on it (or check the drive)", out)
 	}
-	fileRO := fileReadOnly(dbPath)
+	// search.db and the -wal/-shm pair a reader left beside it: SQLite creates
+	// those with the file's own mode, so a read-only search.db that a status or
+	// search read first leaves read-only sidecars, which keep refusing after
+	// search.db alone is made writable (the re-verification of F7).
+	var roFiles []string
+	for _, s := range []string{"", "-wal", "-shm"} {
+		if fileReadOnly(dbPath + s) {
+			roFiles = append(roFiles, filepath.Base(dbPath)+s)
+		}
+	}
 	dirRO := index.ReadOnlyDir(err)
 	switch {
-	case fileRO && dirRO:
-		return fmt.Sprintf("%s and the archive folder %s are read-only — make both writable (or remount the drive read-write)", filepath.Base(dbPath), out)
-	case fileRO:
-		return fmt.Sprintf("%s is read-only — make it writable (on Windows, clear its Read-only attribute)", filepath.Base(dbPath))
+	case len(roFiles) == 1 && dirRO:
+		return fmt.Sprintf("%s and the archive folder %s are read-only — make both writable (or remount the drive read-write)", roFiles[0], out)
+	case len(roFiles) > 1 && dirRO:
+		return fmt.Sprintf("%s and the archive folder %s are read-only — make all of them writable (or remount the drive read-write)", strings.Join(roFiles, ", "), out)
+	case len(roFiles) == 1:
+		return fmt.Sprintf("%s is read-only — make it writable (on Windows, clear its Read-only attribute)", roFiles[0])
+	case len(roFiles) > 1:
+		return fmt.Sprintf("%s are read-only — make them writable (on Windows, clear their Read-only attribute)", strings.Join(roFiles, ", "))
 	case dirRO:
 		return fmt.Sprintf("the archive folder %s is read-only — make it writable (or remount the drive read-write)", out)
 	}

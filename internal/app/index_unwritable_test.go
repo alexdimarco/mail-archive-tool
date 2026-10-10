@@ -218,3 +218,77 @@ func TestIndexOpenRefusalNamesAFullDisk(t *testing.T) {
 		assure.Names(idxPath, "database or disk is full", "the disk holding "+out+" is full or failing", "free space", "run again"),
 		assure.Forbid("reindex -rebuild", "rebuild it"))
 }
+
+// covers: MA-386, R12, S33
+// The remedy for a read-only search.db heals (g7 friction re-verification of F7).
+// A restored copy whose search.db is read-only is first read by status or search;
+// that reader leaves a -wal/-shm pair SQLite created with the file's read-only
+// mode. The operator then makes search.db writable, as the refusal says, and the
+// next run was refused again with "search.db or the archive folder is not writable
+// - make both writable", although both are, and the read-only sidecar was never
+// named. Now the refusal names the sidecar that is read-only and says to make it
+// writable; followed, the run indexes every record. Positive twin: the fixture's
+// reader really left a read-only sidecar (else the shape is not modelled).
+func TestIndexOpenRefusalNamesAReadOnlySidecar(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission bits model a read-only file")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses permission bits")
+	}
+	opts, healthy, _ := unwritableFixture(t, 3)
+	idxPath := filepath.Join(opts.Out, "search.db")
+	if err := os.Chmod(idxPath, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(idxPath, 0o644) })
+	rd, err := index.OpenReadonly(idxPath)
+	if err != nil {
+		t.Fatalf("fixture: a reader could not open the read-only index: %v", err)
+	}
+	rd.Close()
+	var roSidecars []string
+	for _, s := range []string{"-wal", "-shm"} {
+		if fi, err := os.Stat(idxPath + s); err == nil && fi.Mode().Perm()&0o200 == 0 {
+			roSidecars = append(roSidecars, "search.db"+s)
+			p := idxPath + s
+			t.Cleanup(func() { _ = os.Chmod(p, 0o644) })
+		}
+	}
+	if len(roSidecars) == 0 {
+		t.Fatal("fixture: the reader left no read-only -wal/-shm beside search.db")
+	}
+
+	// The operator's step: make search.db writable. New mail is waiting.
+	if err := os.Chmod(idxPath, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	maildirMessages(t, opts.Inputs[0], 6)
+	_, err = Run(context.Background(), opts, discard(), nil)
+	code, msg := refusalOf(err)
+	// The refused open may reclaim an empty -wal; what is still read-only beside
+	// search.db is what the refusal must name.
+	var stillRO []string
+	for _, s := range roSidecars {
+		if fi, serr := os.Stat(filepath.Join(opts.Out, s)); serr == nil && fi.Mode().Perm()&0o200 == 0 {
+			stillRO = append(stillRO, s)
+		}
+	}
+	if len(stillRO) == 0 {
+		t.Fatal("fixture: the refused open left no read-only sidecar to name")
+	}
+	assure.Refused(t, code, msg, assure.Code(1),
+		assure.Names(append([]string{"read-only", "make"}, stillRO...)...),
+		assure.Forbid("reindex -rebuild", "rebuild it", "make both writable"))
+
+	// Followed: the named files writable, the next run indexes every record.
+	for _, s := range stillRO {
+		if err := os.Chmod(filepath.Join(opts.Out, s), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	res, err := Run(context.Background(), opts, discard(), nil)
+	if err != nil || res.IndexErrors != 0 || res.Indexed != res.ManifestSize || res.Indexed <= healthy.Indexed {
+		t.Fatalf("after making the sidecars writable: indexed=%d of %d errors=%d err=%v", res.Indexed, res.ManifestSize, res.IndexErrors, err)
+	}
+}
