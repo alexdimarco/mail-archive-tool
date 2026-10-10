@@ -765,6 +765,10 @@ func (m *Manifest) Counts() (fillable, terminal, unknown int) {
 	return
 }
 
+// FallbackCounts returns, per reason, how many records show their page as
+// source (RV-10). TODO(RV-10): skeleton, filled in test-first.
+func (m *Manifest) FallbackCounts() map[string]int { return nil }
+
 // FixityCounts returns how many records carry at least one recorded file
 // digest (withFixity) and the total number of records (total). `status` prints
 // "Fixity coverage: N of M records recorded" from these fields alone (FC12).

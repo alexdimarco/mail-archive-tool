@@ -50,7 +50,10 @@ type Input struct {
 	HasManifest                 bool
 	Messages                    int
 	Fillable, Terminal, Unknown int
-	WithFixity                  int // records carrying at least one file digest (N of Messages)
+	// ShownAsSource counts records whose page is shown as plain text, per reason
+	// (RV-10), from the manifest's body_fallback; nil when none.
+	ShownAsSource map[string]int
+	WithFixity                 int // records carrying at least one file digest (N of Messages)
 	ReportPath                  string
 	ReportExists                bool // the verification report exists on disk
 
