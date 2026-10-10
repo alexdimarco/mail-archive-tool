@@ -26,3 +26,14 @@ None. Every confirmed finding was fixed inside the design: no fix narrows a guar
 
 - AO2's page-size limit (64 MiB, the constant `maxPageBytes`) is not a figure the design names. It is far above any real page and below the memory a hostile stream needs; it is cited under MA-314's "listing bounds". If the owner wants a different figure, it is one constant.
 - AC3 adds a goroutine per `$value` attempt (the token fetch) so the wait can be abandoned; the fetch itself still runs to its own 60 s bound and its result is cached.
+
+## Re-verification (fresh-eyes check of the fixes)
+
+A second reviewer re-ran each fix's mutation: AI1, AI2, AI3, AI4, AC3, AO2 and AI5 all passed (each tombstone red with its fix removed, green with it; AO2 reads `unexpected EOF` rather than `<nil>` under the reviewer's mutation, still not the typed stop). The report's counts were accurate. Two new low findings, both real and fixed:
+
+| Id | Finding | Outcome | Tombstone |
+|---|---|---|---|
+| AN1 | `StatusError.Error()` carried the server's whole status line (a 1 MiB reason phrase gave a 1,048,590-byte error string into the log, last-run and status). Reproduced RED: `Error() is 1048590 bytes for a 1 MiB reason phrase`. Fixed: the stored status line is cut at `statusLineMax` (128 bytes; every real phrase is shorter), so real phrases keep today's exact text. | FIXED | `TestStatusErrorBoundsTheServersReasonPhrase` (`internal/graph/review_test.go`) |
+| AN2 | AI5's clean-walk subtest did not assert the run footer or an ok outcome. Strengthened: the interrupted (second) run must be recorded `ok` and must carry exactly one footer. Mutation (skip the footer when the context is done) is RED with `wrote 0 run footers, want 1`; reverted, green. No production change. | FIXED (guard) | `TestRunGraphCancelAfterTheWalkDoesNotRewriteTheOutcome`, first subtest (`internal/app/graph_review_test.go`) |
+
+No new escalations.

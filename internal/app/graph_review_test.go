@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -67,8 +68,30 @@ func TestRunGraphCancelAfterTheWalkDoesNotRewriteTheOutcome(t *testing.T) {
 			t.Error("the walk's messages are not archived")
 		}
 		lr, _, _ := state.ReadLastRun(c.out)
-		if lr.Status == state.RunCancelled {
-			t.Errorf("a complete run is recorded %q", lr.Status)
+		if lr.Status != state.RunOK {
+			t.Errorf("a complete run is recorded %q, want %q", lr.Status, state.RunOK)
+		}
+		// AN2: the clean-run footer is written too: a walk the interrupt did not
+		// cut short is a complete timeline a later gone-detection can trust.
+		ev, herr := state.ReadHistory(filepath.Join(c.out, state.HistoryName))
+		if herr != nil {
+			t.Fatalf("read history log: %v", herr)
+		}
+		// runSGCase walks twice; the interrupted walk is the last run's.
+		var lastRun int64
+		for _, e := range ev {
+			if e.Run > 0 && e.At != "" {
+				lastRun = e.Run
+			}
+		}
+		footers := 0
+		for _, e := range ev {
+			if lastRun > 0 && e.Run == lastRun && e.Completed != "" {
+				footers++
+			}
+		}
+		if footers != 1 {
+			t.Errorf("the interrupted walk finished cleanly and wrote %d run footers, want 1", footers)
 		}
 	})
 	t.Run("a failed mailbox then an interrupt", func(t *testing.T) {

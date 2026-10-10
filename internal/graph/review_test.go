@@ -159,3 +159,34 @@ func TestStatusErrorKeepsTheServersReasonPhrase(t *testing.T) {
 		t.Errorf("a StatusError built without a response reads %q", got)
 	}
 }
+
+// covers: MA-402, R17, R29
+// AN1: the server's reason phrase is kept, but bounded: a hostile status line of
+// a megabyte does not become a megabyte error string (log, last-run, status).
+func TestStatusErrorBoundsTheServersReasonPhrase(t *testing.T) {
+	long := strings.Repeat("R", 1<<20)
+	srv := valueServer(t, map[string]http.HandlerFunc{
+		"HUGE": func(w http.ResponseWriter, r *http.Request) {
+			conn, buf, err := w.(http.Hijacker).Hijack()
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			defer conn.Close()
+			buf.WriteString("HTTP/1.1 401 " + long + "\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
+			buf.Flush()
+		},
+	})
+	c := boundedClient(srv, Config{})
+	_, err := c.MIMETo(context.Background(), "u", "HUGE", io.Discard, 0, 0, 5*time.Second)
+	var se *StatusError
+	if !errors.As(err, &se) || se.Code != 401 {
+		t.Fatalf("not a *StatusError with Code 401: %v", err)
+	}
+	if n := len(err.Error()); n > statusTextMax+statusLineMax+64 {
+		t.Errorf("Error() is %d bytes for a 1 MiB reason phrase", n)
+	}
+	if !strings.HasPrefix(err.Error(), "graph 401 RRR") {
+		t.Errorf("the bounded text lost its start: %.40q", err.Error())
+	}
+}

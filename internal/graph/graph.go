@@ -943,6 +943,10 @@ func (e *StatusError) Error() string {
 // statusTextMax bounds the error body a StatusError keeps.
 const statusTextMax = 2048
 
+// statusLineMax bounds the server's status line a StatusError keeps; every real
+// reason phrase is far shorter.
+const statusLineMax = 128
+
 // Class is graph.Classify's verdict on an error from the client: the one
 // classifier capture and the copy export share (fault-isolation §4.8.1,
 // extraction §4.13). Each consumer maps it onto its own outcomes — capture's
@@ -1069,8 +1073,16 @@ func statusErrFrom(resp *http.Response, r io.Reader) (*StatusError, error) {
 	b, rerr := io.ReadAll(io.LimitReader(r, statusTextMax))
 	return &StatusError{
 		Code: resp.StatusCode, GraphCode: graphErrorCode(b), Text: strings.TrimSpace(string(b)),
-		status: resp.Status,
+		status: boundStatusLine(resp.Status),
 	}, rerr
+}
+
+// boundStatusLine cuts the server's status line at statusLineMax bytes.
+func boundStatusLine(s string) string {
+	if len(s) > statusLineMax {
+		return s[:statusLineMax]
+	}
+	return s
 }
 
 // graphErrorCode reads error.code from the start of a Graph error body, which
