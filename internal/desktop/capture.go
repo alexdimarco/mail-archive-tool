@@ -143,6 +143,19 @@ func (d *dashboard) startCapture() error {
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("Archived — %d message(s) exported, %d indexed.", res.Stats.Exported, res.Indexed), nil
+		return archivedLine(res), nil
 	})
+}
+
+// archivedLine is the result text of a finished capture. When more messages
+// were exported than the archive grew by — a key exported again replaces its
+// earlier copy — it says so, so "4 exported, 3 indexed" is not a puzzle (F13).
+func archivedLine(res app.Result) string {
+	line := fmt.Sprintf("Archived — %d message(s) exported, %d indexed.", res.Stats.Exported, res.Indexed)
+	if added := res.ManifestSize - res.ManifestBefore; added >= 0 {
+		if replaced := res.Stats.Exported - added - res.Stats.Filled; replaced > 0 {
+			line += fmt.Sprintf(" (%d of the exports replaced an earlier copy of the same message, so the archive holds %d new.)", replaced, added)
+		}
+	}
+	return line
 }

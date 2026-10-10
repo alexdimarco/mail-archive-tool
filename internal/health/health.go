@@ -25,6 +25,12 @@ import (
 type Input struct {
 	Out string
 
+	// Surface names who reads the report: "" for the CLI (commands and SQLite's
+	// words are fine), "desktop" for MailArchive Desktop's Status & health card,
+	// "gui" for mailarchive-gui's health view. The owner surfaces name their own
+	// rebuild action instead of a command line and leave SQLite's text out (F3).
+	Surface string
+
 	// GOOS shapes OS-specific wording (e.g. the staleness question: cron runs
 	// unattended, launchd/schtasks need a login). Empty defaults to the host.
 	GOOS string
@@ -197,7 +203,7 @@ func Assess(in Input, now time.Time) Report {
 	// missing row — so the remedy for an index that is short of the manifest is
 	// the rebuild from the archive's own files (F50).
 	if in.HasIndex && in.HasManifest && in.Indexed < in.Messages {
-		r.warn("index_behind", fmt.Sprintf("the search index holds %d of %d messages — rebuild it from the archive with `mailarchive reindex -rebuild -out %q`", in.Indexed, in.Messages, in.Out))
+		r.warn("index_behind", fmt.Sprintf("the search index holds %d of %d messages — %s", in.Indexed, in.Messages, rebuildHow(in)))
 	}
 	// A search index that is present but cannot be read is a RED (search, serve
 	// and the next run all fail on it); one that is gone from an archive that
@@ -219,13 +225,17 @@ func Assess(in Input, now time.Time) Report {
 	case in.HasIndexFile && !in.HasIndex && in.IndexErr != nil:
 		// The rebuild needs the archive's manifest (it refuses without one), so
 		// with none here the remedy that works is moving the file aside (F6).
-		remedy := fmt.Sprintf("rebuild it from the archive with `mailarchive reindex -rebuild -out %q`", in.Out)
+		remedy := rebuildHow(in)
 		if !in.HasManifest && !in.HasManifestFile {
 			remedy = fmt.Sprintf("there is no manifest in %s to rebuild it from, so move search.db out of that folder; the next run builds a fresh index", in.Out)
 		}
-		r.red("index_unreadable", fmt.Sprintf("the search index %s cannot be read (%s) — search, serve and the folder pages need it; %s", idxPath, util.StripControl(indexOpenCause(in.IndexErr)), remedy))
+		cause := fmt.Sprintf(" (%s)", util.StripControl(indexOpenCause(in.IndexErr)))
+		if in.Surface != "" {
+			cause = "" // SQLite's words are for the log and -json, not the owner
+		}
+		r.red("index_unreadable", fmt.Sprintf("the search index %s cannot be read%s — search, serve and the folder pages need it; %s", idxPath, cause, remedy))
 	case !in.HasIndex && !in.HasIndexFile && in.HasManifest && in.Messages > 0 && !(in.LastRunState == state.LastRunPresent && in.LastRun.NoIndex):
-		r.warn("index_missing", fmt.Sprintf("the archive has no search index (%s) although the manifest records %d message(s) — search, serve and the folder pages need it; rebuild it from the archive with `mailarchive reindex -rebuild -out %q` (or ignore this if the archive is deliberately kept without one, -index=false)", idxPath, in.Messages, in.Out))
+		r.warn("index_missing", fmt.Sprintf("the archive has no search index (%s) although the manifest records %d message(s) — search, serve and the folder pages need it; %s (or ignore this if the archive is deliberately kept without one, -index=false)", idxPath, in.Messages, rebuildHow(in)))
 	}
 
 	// The archive's own location. A cloud-sync folder re-uploads every change
@@ -398,6 +408,19 @@ func (r *Report) worstFirst() {
 		}
 	}
 	r.Reasons, r.Codes = reasons, codes
+}
+
+// rebuildHow is the remedy sentence for a damaged, missing or lagging search
+// index, in the words of the surface reading it (F3): the CLI's command, the
+// desktop's Maintenance button, the mailarchive-gui health view's choice.
+func rebuildHow(in Input) string {
+	switch in.Surface {
+	case "desktop":
+		return "choose Maintenance → Rebuild search index to rebuild it from your archive"
+	case "gui":
+		return "choose \"Rebuild the search index\" below to rebuild it from your archive"
+	}
+	return fmt.Sprintf("rebuild it from the archive with `mailarchive reindex -rebuild -out %q`", in.Out)
 }
 
 // verifyRunning reports whether a verify is running now: the archive lock is

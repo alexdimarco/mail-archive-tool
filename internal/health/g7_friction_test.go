@@ -25,6 +25,49 @@ func reasonOf(rep Report, code string) string {
 }
 
 // covers: MA-391, R12, R18, S33
+// The owner-facing surfaces name their own rebuild action, not a command line
+// they do not have (g7 friction F3). The desktop's Status & health card says
+// "Maintenance → Rebuild search index", the mailarchive-gui health view says
+// "Rebuild the search index" (the choice it now offers), and neither prints
+// SQLite's own words; the CLI keeps `mailarchive reindex -rebuild` and the cause.
+// Covers the damaged, missing and behind index.
+func TestOwnerSurfacesNameTheirOwnRebuild(t *testing.T) {
+	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
+	cases := map[string]func(in *Input) string{
+		"index_unreadable": func(in *Input) string {
+			in.HasIndex, in.Indexed, in.HasIndexFile = false, 0, true
+			in.IndexErr = os.ErrInvalid
+			return "index_unreadable"
+		},
+		"index_missing": func(in *Input) string {
+			in.HasIndex, in.Indexed = false, 0
+			return "index_missing"
+		},
+		"index_behind": func(in *Input) string {
+			in.Indexed = 40
+			return "index_behind"
+		},
+	}
+	for name, mutate := range cases {
+		cli := healthyInput(now)
+		code := mutate(&cli)
+		cliReason := assure.Reached(t, reasonOf(Assess(cli, now), code), name+" for the CLI")
+		if !strings.Contains(cliReason, "mailarchive reindex -rebuild -out") {
+			t.Fatalf("positive twin: the CLI's %s lost its command: %q", name, cliReason)
+		}
+		for surface, want := range map[string]string{"desktop": "Maintenance → Rebuild search index", "gui": "Rebuild the search index"} {
+			in := healthyInput(now)
+			mutate(&in)
+			in.Surface = surface
+			got := assure.Reached(t, reasonOf(Assess(in, now), code), name+" for "+surface)
+			if !strings.Contains(got, want) || strings.Contains(got, "mailarchive reindex") || strings.Contains(got, "invalid argument") {
+				t.Fatalf("%s on %s: want %q and no command or SQLite text, got %q", name, surface, want, got)
+			}
+		}
+	}
+}
+
+// covers: MA-391, R12, R18, S33
 // status's remedy for a search.db it cannot read must work (g7 friction F6):
 // `reindex -rebuild` refuses an archive with no manifest, so with none in the
 // folder the RED index_unreadable names moving search.db aside (the next run

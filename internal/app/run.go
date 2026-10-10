@@ -130,15 +130,61 @@ func indexOpenError(idxPath, out string, err error) error {
 	case errors.Is(err, index.ErrNewerFormat):
 		return err
 	case index.Busy(err):
-		return fmt.Errorf("search index %s is busy (%w): another program kept it locked — close any other program that has it open, then run again", idxPath, err)
+		return &IndexOpenError{Kind: IndexBusy, Out: out, Err: err,
+			msg: fmt.Sprintf("search index %s is busy (%v): another program kept it locked — close any other program that has it open, then run again", idxPath, err)}
 	case index.ReadOnly(err) || index.DiskError(err):
-		return fmt.Errorf("search index %s cannot be written (%w): %s, then run again", idxPath, err, unwritableRemedy(idxPath, out, err))
+		remedy := unwritableRemedy(idxPath, out, err)
+		return &IndexOpenError{Kind: IndexUnwritable, Out: out, Err: err, remedy: remedy,
+			msg: fmt.Sprintf("search index %s cannot be written (%v): %s, then run again", idxPath, err, remedy)}
 	}
 	mpath := filepath.Join(out, ".mailarchive-manifest.json")
 	if _, serr := os.Stat(mpath); errors.Is(serr, fs.ErrNotExist) {
-		return fmt.Errorf("search index %s cannot be opened (%w), and there is no manifest (%s) to rebuild it from: move it out of %s, then run again", idxPath, err, mpath, out)
+		return &IndexOpenError{Kind: IndexDamagedNoManifest, Out: out, Err: err,
+			msg: fmt.Sprintf("search index %s cannot be opened (%v), and there is no manifest (%s) to rebuild it from: move it out of %s, then run again", idxPath, err, mpath, out)}
 	}
-	return fmt.Errorf("search index %s cannot be opened (%w): rebuild it from the archive with `mailarchive reindex -rebuild -out %q`, then run again", idxPath, err, out)
+	return &IndexOpenError{Kind: IndexDamaged, Out: out, Err: err,
+		msg: fmt.Sprintf("search index %s cannot be opened (%v): rebuild it from the archive with `mailarchive reindex -rebuild -out %q`, then run again", idxPath, err, out)}
+}
+
+// IndexOpenKind says which refusal an IndexOpenError is.
+type IndexOpenKind int
+
+const (
+	IndexBusy              IndexOpenKind = iota // another program holds search.db
+	IndexUnwritable                             // read-only file or folder, full or failing disk
+	IndexDamaged                                // unreadable, a manifest to rebuild from
+	IndexDamagedNoManifest                      // unreadable, nothing to rebuild from
+)
+
+// IndexOpenError is indexOpenError's refusal. Error() is the full text for the
+// CLI and the log (SQLite's own words, the `mailarchive reindex` command);
+// ForOwner is the same refusal in the words of an app whose owner has no
+// command line (F3). It unwraps to SQLite's error.
+type IndexOpenError struct {
+	Kind   IndexOpenKind
+	Out    string // the archive folder
+	Err    error  // SQLite's error
+	remedy string // IndexUnwritable: what to fix, in plain words
+	msg    string
+}
+
+func (e *IndexOpenError) Error() string { return e.msg }
+func (e *IndexOpenError) Unwrap() error { return e.Err }
+
+// ForOwner renders the refusal for an app owner: the folder, the cause in plain
+// terms, and the remedy that app offers — rebuildAction names its own rebuild
+// control (for example "Maintenance → Rebuild search index") — with no command
+// line and no SQLite text.
+func (e *IndexOpenError) ForOwner(rebuildAction string) string {
+	switch e.Kind {
+	case IndexBusy:
+		return fmt.Sprintf("The search index in %s is in use by another program. Close any other program that has it open, then try again.", e.Out)
+	case IndexUnwritable:
+		return fmt.Sprintf("Your archive in %s cannot be written to: %s, then try again.", e.Out, e.remedy)
+	case IndexDamagedNoManifest:
+		return fmt.Sprintf("The search index in %s is damaged, and the archive has no manifest to rebuild it from. Move search.db out of that folder, then try again — a fresh index is built.", e.Out)
+	}
+	return fmt.Sprintf("The search index in %s is damaged. Choose %s to rebuild it from your archive, then try again.", e.Out, rebuildAction)
 }
 
 // unwritableRemedy names what to fix when SQLite cannot write the index at

@@ -177,7 +177,16 @@ func runHeadless(path string) int {
 		logSummary(logger, result)
 	}
 	if runErr != nil && !errors.Is(runErr, context.Canceled) {
-		logger.Printf("FAILED: %v", runErr)
+		// An index refusal reads in the owner's words (this program has no
+		// command line to run a `reindex` from), with the technical text kept
+		// on the next line for whoever helps (F3).
+		var ie *app.IndexOpenError
+		if errors.As(runErr, &ie) {
+			logger.Printf("FAILED: %s", ie.ForOwner(rebuildChoice))
+			logger.Printf("detail: %v", runErr)
+		} else {
+			logger.Printf("FAILED: %v", runErr)
+		}
 		fmt.Fprintln(os.Stderr, "mailarchive-gui: "+runErr.Error()) // cron mail / stderr.log
 		notifyFailure(j.Name, j.Out)
 		return 1
@@ -666,6 +675,7 @@ func healthCheck() error {
 		return nil
 	}
 	in := health.Gather(out, "")
+	in.Surface = "gui" // name the rebuild choice below, not a command line
 	rep := health.Assess(in, time.Now())
 	lines := health.Summary(in, rep)
 	var lastRun time.Time
@@ -685,12 +695,21 @@ func healthCheck() error {
 	if repairable(in) {
 		choices = append(choices, repair)
 	}
+	if rebuildOffered(rep) {
+		choices = append(choices, rebuildChoice)
+	}
 	choices = append(choices, remove)
 	pick, err := zenity.List("Backup health — "+rep.Posture+"\n\n"+text, choices, zenity.Title(appTitle), zenity.DefaultItems(cont))
 	if err != nil {
 		return err
 	}
 	switch pick {
+	case rebuildChoice:
+		msg, rerr := rebuildSearchIndex(out)
+		if rerr != nil {
+			return zenity.Error(msg, zenity.Title(appTitle))
+		}
+		return zenity.Info(msg, zenity.Title(appTitle))
 	case repair:
 		return repairSchedule(out, in.Desc)
 	case remove:
@@ -698,6 +717,34 @@ func healthCheck() error {
 	default:
 		return nil
 	}
+}
+
+// rebuildChoice is the health view's choice that rebuilds a damaged, missing or
+// lagging search index from the archive's own files; the health lines and the
+// job log's refusals name it (F3).
+const rebuildChoice = "Rebuild the search index"
+
+// rebuildOffered reports whether the posture carries an index reason the
+// rebuild fixes (damaged, missing, or behind the manifest).
+func rebuildOffered(rep health.Report) bool {
+	for _, c := range rep.Codes {
+		switch c {
+		case "index_unreadable", "index_missing", "index_behind":
+			return true
+		}
+	}
+	return false
+}
+
+// rebuildSearchIndex rebuilds the archive's search index and folder pages from
+// its own files, the action behind rebuildChoice, and returns the text to show:
+// what was rebuilt, or the failure (err non-nil) with its cause.
+func rebuildSearchIndex(out string) (string, error) {
+	rr, err := app.Rebuild(out, nil)
+	if err != nil {
+		return "The search index could not be rebuilt:\n" + err.Error(), err
+	}
+	return fmt.Sprintf("The search index was rebuilt: %d message(s) indexed, %d pruned.", rr.Rebuilt, rr.Pruned), nil
 }
 
 // repairable reports whether the launch health view should offer to re-install
