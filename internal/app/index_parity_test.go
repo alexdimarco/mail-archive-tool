@@ -447,6 +447,68 @@ func TestLiveAndRebuiltIndexAgreeOnAFinalPlaintext(t *testing.T) {
 }
 
 // covers: MA-492, R8
+// NF-2 (round-3 re-verification; san-Q2 shape 1's family). A <plaintext> the
+// tree builder gave ELEMENTS — a formatting element re-opened as a clone inside
+// it (`<p><i>w<plaintext>rest`), or a foster-parented table placed after it
+// (`<table>w<plaintext>x`) — was written as markup after the plaintext's text,
+// and the page's own parse reads all of it as the plaintext's TEXT: the page
+// showed the literal `<i>` and `<table>` and `reindex -rebuild` indexed the tag
+// names (and attribute names and values) as words the live index never saw
+// (rebuilt only: i x2, table x2, a/href/x, color/red/font). Such a page is not
+// written as HTML now; the mail is shown as source, which both indexes read
+// with the one extractor. A plaintext with no elements is unchanged
+// (TestLiveAndRebuiltIndexAgreeOnAFinalPlaintext).
+func TestLiveAndRebuiltIndexAgreeOnAPlaintextThatHoldsElements(t *testing.T) {
+	bodies := map[string]string{
+		"reopened i":     `<p><i>pfone words<plaintext>pftwo rest`,
+		"reopened a":     `<p><a href=pfx>pfthree one<plaintext>pffour rest`,
+		"reopened font":  `<p><font color=pfred>pffive one<plaintext>pfsix rest`,
+		"fostered table": `<table>pfseven<plaintext>pfeight`,
+	}
+	want := map[string]int{
+		"pfone": 1, "pftwo": 1, "pfthree": 1, "pffour": 1, "pffive": 1, "pfsix": 1, "pfseven": 1, "pfeight": 1,
+		"table": 1, "href": 1, "pfx": 1, "color": 1, "pfred": 1, "font": 1, "words": 1,
+	}
+	live, rebuilt := parityArchive(t, bodies, append(keysOf(want), "i", "a"))
+	assure.Reached(t, live["pftwo"]+rebuilt["pftwo"], "hits for a word inside a plaintext")
+	for _, q := range []string{"i", "a", "table", "href", "pfx", "color", "pfred", "font"} {
+		if live[q] != rebuilt[q] {
+			t.Errorf("search %q: live=%d rebuilt=%d, want the same count on both (R8)", q, live[q], rebuilt[q])
+		}
+	}
+	for _, q := range []string{"pfone", "pftwo", "pfthree", "pffour", "pffive", "pfsix"} {
+		if live[q] != 1 || rebuilt[q] != 1 {
+			t.Errorf("search %q: live=%d rebuilt=%d, want 1 and 1", q, live[q], rebuilt[q])
+		}
+	}
+}
+
+// covers: MA-492, R8
+// NF-3 (round-3 re-verification), CLOSED. After the in-place noscript retry, an
+// HTML xmp, iframe, noembed or noframes inside <math><mtext> inside a noscript
+// was written by x/net's serializer with its text ESCAPED (an ancestor is a
+// foreign element that is not an HTML integration point, so the writer does not
+// take its text as literal), which a scripting-off read of the page takes
+// literally: `reindex -rebuild` indexed lt, gt and amp, which the live index
+// (which reads the mail's own raw text) never saw. Contrived trigger, no safety
+// effect. Fixed in neutralizeOneNoscript: a noscript holding such an element is
+// not rewritten (rawTextUnderForeign) and keeps its raw text, which both indexes
+// read the same way.
+func TestLiveAndRebuiltIndexAgreeOnRawTextUnderMathInANoscript(t *testing.T) {
+	bodies := map[string]string{
+		"math mtext iframe": `<p>mtwone</p><noscript><meta charset=utf-8></noscript><noscript><math><mtext><iframe>mtwtwo <b>mtwmark</b> &amp; mtwamp</iframe></mtext></math></noscript>`,
+	}
+	same := []string{"mtwone", "mtwtwo", "mtwmark", "lt", "gt", "amp"}
+	live, rebuilt := parityArchive(t, bodies, same)
+	for _, q := range same {
+		if live[q] != rebuilt[q] {
+			t.Errorf("search %q: live=%d rebuilt=%d, want the same count on both (R8)", q, live[q], rebuilt[q])
+		}
+	}
+	assure.Reached(t, live["mtwtwo"]+rebuilt["mtwtwo"], "hits for a word in the raw text")
+}
+
+// covers: MA-492, R8
 // san-Q2, CLOSED in round 3 (a permanent guard now; its Skip is removed). The
 // fresh-eyes corpus run (rv3/corpus-adv, 372 vectors) left 8 mails whose words
 // differed live and rebuilt, all of them already at 8f900c9 (the

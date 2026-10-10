@@ -44,7 +44,11 @@ and 7 low. **All three rounds: 30 found / 24 confirmed / 0 refuted (0 high, 7 me
 fixed, 2 open (RV-10, R3-AF2).** Seven of round 3's eight are fixed on the same branch (see *Round 3*
 at the end, with its commits, tombstones and a corpus run on a binary built at the fixed head), and
 so are both san-Q2 shapes. The two round-3 duplicates of known gaps (R3-AF1, R3-AC1) and the
-non-goal (R3-AO2) are named there as still open or ruled.
+non-goal (R3-AO2) are named there as still open or ruled. A fresh-eyes pass over round 3's own
+fixes (see *Re-verification of round 3's fixes* at the end of *Round 3*) found four more low
+defects (NF-1 to NF-4) and two incomplete fixes (R3-AC3, san-Q2 shape 1); NF-1 to NF-3 and both
+incomplete fixes are fixed on the same branch with tombstones, and NF-4 is recorded as defense in
+depth.
 
 **Verdict: FINDINGS OPEN.** Open: **RV-10** (the fallback is not surfaced in `status`, the GUI or
 the desktop message; the status branch owns it), **R3-AF2** (a quoted local part holding ` <` makes
@@ -52,8 +56,12 @@ the rebuilt sender differ from the live one; the fix changes the page's sender f
 owner's decision and a skipped MA-187 encoder holds it), the known gaps encoded as skipped guards and
 not accepted — **MA-187's erase half** (R3-AF1; FB-1, FX-187's writer signal) and **MA-492's
 outer-noscript escaped text** (R3-AC1; MA-476's escaped twin) — the owner question behind **R3-AO2**
-(fail closed on any live mail `<link href>`?), and **no adversarial pass has yet read round 3's own
-fixes** (a corpus run caught one false positive of the first of them). The verdict can say
+(fail closed on any live mail `<link href>`?), and a **second look at the fixes that
+re-verification itself made** (NF-1's standards-mode parse, the form unwrapping, the plaintext refusal
+and NF-3's noscript refusal were written and tested by the fixing agent and have had no adversarial
+pass of their own). Round 3's fixes were read by a fresh-eyes pass, whose findings are fixed (see
+*Re-verification*). Note: no row in the rulings log exists for R3-AF2 or R3-AC1 (MA-476's escaped
+twin), so neither is on the owner's list yet; they are escalations to be filed. The verdict can say
 "no findings open" only when every finding of every round is fixed and re-verified. As of round 2
 the twelve findings were: three confirmed medium, all
 present at `066f86d` — RV-1 (a pre-v0.3.0 page lets a mail forge its own subject, sender and date
@@ -622,7 +630,8 @@ Counting each defect once, R3-AF3 stands for three reports (R3-AO3, R3-AC4), R3-
 confirmed** (R3-AO1, AF3, AF4, AC2, AC3, AC5, AC6; with them the duplicates R3-AO3, R3-AC4 and
 R3-AF5) and both san-Q2 shapes. **Open: R3-AF2** (low; its fix changes the page's sender format, an owner
 decision: a skip encoder cites MA-187). The duplicates R3-AF1 (MA-187's erase half, FB-1/FX-187)
-and R3-AC1 (MA-492's outer-noscript escaped text, pending the owner on MA-476) are the known
+and R3-AC1 (MA-492's outer-noscript escaped text; the owner question on MA-476's escaped twin is
+not yet in the rulings log) are the known
 open gaps, unchanged; R3-AO2 is the stated policy (rulings: "whether the re-check should fail
 closed on any live mail `<link href>`" is an open question).
 
@@ -653,7 +662,9 @@ without a design change, and its Skip is removed (it is a permanent guard):
   "html" are found on neither side. The writer cannot close a plaintext, and the exporter's page
   check allows exactly this deviation (the existing twin "body plaintext at the end" still renders
   as HTML). Tombstone `TestLiveAndRebuiltIndexAgreeOnAFinalPlaintext` (MA-492; RED with the trim
-  mutated out: `search "body": live=1 rebuilt=3`, also `div` and `html`).
+  mutated out: `search "body": live=1 rebuilt=3`, also `div` and `html`). Only the encoded closers
+  were fixed here: the family (elements the tree builder puts inside or after a final plaintext)
+  was not, and is closed by NF-2 below.
 - **The flattener drops a noscript's tags past depth 480** (`9f6a850`): with R3-AC5, it now
   declines to drop a `<noscript>`, `<template>` or SVG `<style>`/`<script>` start tag past the cap
   (the mail is shown as source, `too-deeply-nested`, as before the flattener existed), drops a
@@ -698,8 +709,9 @@ x/net parses each page in both scripting readings):
 | fv4/runs/erase (the MA-187 erase half, known) | 4 | 8 vs 8 | 2 vs 2 | 0 vs 0 | 3 vs 3 | 0 vs 0 |
 
 Reading it: the 8 corpus-adv documents that differed at `829f51d` (the san-Q2 shapes) now agree on
-every term, with 9 more adversarial fallbacks (deep noscript/template/SVG-style shapes and the
-page-check ones); no new fallback on benign mail (corpus-benign, corpus-blocks, fv4, rv5: 0 before and
+every term, with 9 more adversarial fallbacks (all nine are `adv_deep*` too-deeply-nested shapes;
+the page check added none on this corpus: the 30 unsafe-after-reparse ones are the same 30 as at
+`829f51d`); no new fallback on benign mail (corpus-benign, corpus-blocks, fv4, rv5: 0 before and
 after; the `.words` tokens missing on corpus-benign, 8 of them, are the same 8 before and after:
 single-letter MathML tokens and accented words, outside this change set); the one new fallback in the
 hostile set is its `own deep hide` mail (a deep SVG `<style>` payload, now shown as source, parity
@@ -757,7 +769,8 @@ too-large in 0.2 s and 0.6 s, as before; the padded RV-8 mail (10 MB comment) ex
 - **No browser was run** by any finder or by the fixes: the oracle is x/net in both scripting
   readings. R3-AO2's suspicion (a favicon fetch outside the page policy) and the noscript link/meta
   copies in a JS-off browser (a standing residual since round 2) are unverified.
-- **The round-3 fixes themselves have had no adversarial pass.** The page check (fixed-point comparison
+- **At filing, the round-3 fixes had had no adversarial pass** (superseded: see *Re-verification of
+  round 3's fixes* below, which found NF-1 to NF-4). The page check (fixed-point comparison
   with its two allowed deviations, the stray-`</noscript>` normalization, the marker counts), the
   flattener's refusal set and leaf handling, `trimSwallowedClosers` and the cap's headroom were written
   and tested by the fixing agent, and one of them produced a false positive on benign mail that only
@@ -775,5 +788,49 @@ surfaced in `status`, the GUI or the desktop message; its owner is the status br
 duplicate findings, still encoded as skipped guards and not accepted: **MA-187's erase half** (R3-AF1,
 FB-1, FX-187's writer signal) and **MA-492's outer-noscript escaped text** (R3-AC1, MA-476's escaped
 twin); the owner question behind R3-AO2 (**fail closed on any live mail `<link href>`?**); and the
-round-3 fixes' own re-verification (a round 4 before the branch merges, if the owner wants the
-guarantee "every finding of every round is fixed and re-verified").
+re-verification's own fixes (below), which no one but their author has read yet (a round 4 before
+the branch merges, if the owner wants the guarantee "every finding of every round is fixed and
+re-verified").
+
+### Re-verification of round 3's fixes (`4b71152`, then the fix commit of this section)
+
+A fresh-eyes pass (not the author of the fixes or of the round) re-ran the fixes' tombstones with
+each fix mutated out, generated variants and grammar-fuzzed mails (about 12.6M for R3-AO1) and
+re-measured the cost numbers. Outcome per item:
+
+| Item | Outcome |
+|---|---|
+| R3-AO1 | Closed (266 variants and 12.6M fuzz mails: 0 live issues in both readings at head, 71 and 5607+ at `829f51d`). The marker half and the scripting-off trailing-sibling check are each redundant with the other: see NF-4. |
+| R3-AC2 with R3-AF4 | Closed (tombstone red with the containment removed; 12,000-mail grammar corpus: live-vs-rebuilt differences 507 to 10, the 10 being the plaintext family of NF-2). |
+| R3-AC3 | **Finding closed, mechanism regressed benign mail: fixed here (NF-1).** The byte-equality comparison needs the sanitizer's tree to serialize as the page's tree; it did not for ordinary markup. |
+| R3-AF3 with R3-AO3, R3-AC4 | Closed (tombstones red with the nil-body branch restored). |
+| san-Q2 shape 1 | **Encoded closers fixed; the family was not: fixed here (NF-2).** |
+| R3-AC5 with R3-AF5, san-Q2 shape 2 | Closed (each refusal and leaf rule separately pinned; 2300 deep mails, 0 differences). Disclosed trade-off, not a defect: a benign mail nested past 480 levels that holds an inline SVG with a `<style>`, a `<template>` or a `<noscript>` there now falls back as too-deeply-nested. |
+| R3-AC6 | Closed (cost numbers reproduce: padded 10 MB mail 17.4 s / 134 MB at base, 1.7 s / 10.9 MB at head; worst remaining case 3.9 s, 0.85 GB, 26.8 MB page, bounded by the 32 MiB headroom). |
+| c076187 (own false positive) | Closed for the shape it names; NF-1 is the same defect class (a serialization that is not a fixed point reads as hostile) and the corpora held none of its shapes. |
+| R3-AF2, R3-AC1 (escalations), R3-AF1, R3-AO2 | Confirmed as filed. The encoders are right and unchanged (R3-AF2: not invertible even in principle, since `From: "Mallory <x" <ceo@bank.example>` and `From: Mallory <"x <ceo"@bank.example>` give the same header text, so a format change or a lossy live index is an owner decision; R3-AC1: no ruling row exists for MA-476's escaped twin, so it is not yet on the owner's list; R3-AF1 is the known FB-1/FX-187 gap; R3-AO2 is policy). Nothing changed. |
+
+**New findings of the re-verification** (all low, none a regression of safety; all found with the
+finder's own x/net oracle in both scripting readings, no browser). I reproduced each before fixing it.
+
+| ID | Defect | Fix and tombstone |
+|---|---|---|
+| NF-1 | Benign mail fell back as `unsafe-after-reparse`, breaking the round's own bar of no new fallback on benign mail (R7). The page check compares the page's tree (standards mode, inside a div) with the sanitizer's tree byte for byte; the sanitizer parsed the mail in the MAIL's own compatibility mode. In quirks mode a `<table>` in an open `<p>` stays inside the `<p>`, in standards mode it closes it: every mail with no doctype or a quirks doctype and `<p>...<table>` (a Thunderbird html/head/body page, `<P align=center>..<TABLE>` after the HTML 4.01 Transitional doctype, FrontPage) fell back, 3 of 4 in an end-to-end run, all of them rendered at `829f51d`; a fuzz of 400k sloppy newsletter-like mails gave 17,833 head-only fallbacks, 15,362 of them this class. A second class: `<form><b>x</form><form>y</form>` (the second form is built inside the re-opened `<b>`, and a form start tag in a form is ignored on re-read). `0 of 49` on corpus-benign hid it. | `sanitizeParsed` parses the mail behind a `<!DOCTYPE html>` of ours (standards mode, as the page is read; the mail's own doctype is then an ignored parse error), and `unnestForms` unwraps an HTML form inside a form (what the re-read does anyway; not across a template). The fixed-point check is unchanged. Tombstone `TestRenderBenignQuirksModeMarkupStaysHTML` (MA-80, MA-474; RED: 7 of 8 vectors `got fallback "unsafe-after-reparse"`; with only the form unwrapping mutated out, the two form vectors stay red). |
+| NF-2 | A final `<plaintext>` still drifted live vs rebuilt when the tree builder put elements inside it (a formatting element re-opened as a clone) or after it in tree order (a foster-parented table): x/net writes them as markup after the plaintext's text, the page reads all of it as the plaintext's TEXT, the check passes (the strings are equal), the page shows literal tags and the rebuild indexes `i`, `table`, `href`, `color`, `font`... (rebuilt only). 5 of 8 minimal vectors, 3 of 8526 and 10 of 9899 grammar mails. Not a regression. | `plaintextHoldsElements`: a tree with any element at or after an HTML `<plaintext>` in document order other than the plaintext itself is not written as HTML (shown as source, `unsafe-after-reparse`; both indexes then read the source with the one extractor). Plain plaintext tails render as before. Tombstone `TestLiveAndRebuiltIndexAgreeOnAPlaintextThatHoldsElements` (MA-492, R8; RED: `search "href": live=0 rebuilt=1`, also `pfx`, `color`, `pfred`). |
+| NF-3 | After the in-place noscript retry, an HTML iframe, noembed, noframes or xmp inside `<math><mtext>` inside a noscript was written with its text escaped, which a scripting-off read takes literally: rebuilt-only `lt`, `gt` (and `amp`). Contrived, pre-existing. | `neutralizeOneNoscript` does not rewrite a noscript that holds such an element (`rawTextUnderForeign`); it keeps its raw text, which both indexes read the same way. Tombstone `TestLiveAndRebuiltIndexAgreeOnRawTextUnderMathInANoscript` (MA-492, R8; RED: `search "lt": live=0 rebuilt=1`, `gt` 0/1). |
+| NF-4 | Five layers of the page check (`pageMarkersAreOurs`, the scripting-off trailing-sibling check, the meta count, the resource-hint part and the header/body count) survive mutation: removing any one alone leaves the packages green, because each stray-div breakout is caught by two of them. | **Accepted and recorded, no change.** They are defense in depth for R19; a vector where exactly one layer fires has not been found, and a test per layer would have to invent one. Only the fixed-point comparison and the scripting-on trailing-sibling check are individually pinned. Owner may ask for per-layer vectors. |
+
+Also observed, not fixed (pre-existing, out of this change set): for `<table>pfseven<plaintext>pfeight`
+both indexes find neither word (0 and 0), so the two agree but the mail's words are not searchable.
+
+**Corpora after the fixes** (binaries built at `4b71152` and at the fixed head, run through
+`r3v/parity.py`): rv3/corpus-adv 372 mails, 0 differing terms, 0 differing documents, 39 fallbacks,
+0 unrecovered, both binaries; corpus-benign 49, 0/0/0 fallbacks, the same 8 `.words` tokens missing
+(outside this change set); corpus-blocks 96, 0/0/0; corpus-findings 46, 0/0, 2 fallbacks (too-large);
+rv5 5, 0/0/0. No change on any of them, so the standards-mode parse and the unwrapping move no
+benign document and add no fallback.
+
+**Residual of this section.** The page check's fixed-point comparison can still read a benign
+mail as hostile for shapes no corpus holds (the NF-1 fuzz still left 525 head-only fallbacks of
+600k random-tag mails: nested heading/a/form-in-table tag soup). Each is a safe fallback with parity,
+not a loss.

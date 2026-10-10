@@ -474,6 +474,80 @@ func sanitizeChecked(doc string, pageCheck func(headExtra, bodyAttrs, body strin
 	return headExtra, bodyAttrs, body, fallback
 }
 
+// unnestForms unwraps every HTML <form> that sits inside another <form> (its
+// children take its place). The parser only builds one when an unclosed
+// formatting element outlives its form's end tag (`<form><b>x</form><form>y
+// </form>`: the second form is opened inside the re-opened <b>); written out
+// and read again, a form start tag inside a form is ignored (the parser's form
+// element pointer is set), so the markup would not be a fixed point and the page
+// check would take ordinary mail for hostile. Dropping the inner tag is what
+// the second read does anyway: the same text, in the same elements, stays
+// (R3-AC3, NF-1). A form inside a <template> is left alone (its own scope);
+// anything this does not settle is still caught by the page check.
+func unnestForms(n *xhtml.Node, inForm bool) {
+	for c := n.FirstChild; c != nil; {
+		next := c.NextSibling
+		if c.Type == xhtml.ElementNode && c.Namespace == "" {
+			switch {
+			case c.DataAtom == atom.Template:
+				unnestForms(c, false)
+			case c.DataAtom == atom.Form && inForm:
+				unnestForms(c, true)
+				for k := c.FirstChild; k != nil; {
+					kn := k.NextSibling
+					c.RemoveChild(k)
+					n.InsertBefore(k, c)
+					k = kn
+				}
+				n.RemoveChild(c)
+			case c.DataAtom == atom.Form:
+				unnestForms(c, true)
+			default:
+				unnestForms(c, inForm)
+			}
+		} else {
+			unnestForms(c, inForm)
+		}
+		c = next
+	}
+}
+
+// plaintextHoldsElements reports whether the tree has any element at or after
+// an HTML <plaintext> in document order, other than the plaintext itself. After
+// a <plaintext> start tag the rest of the mail is its text, so the only
+// elements that can follow are ones the tree builder made on its own — a
+// formatting element re-opened as a clone inside it, a table foster-parented
+// after it. x/net writes them as markup after the plaintext's text, and the
+// page's parse reads all of it as that plaintext's TEXT: the page would show
+// the literal tags and `reindex -rebuild` would index their names as words the
+// live index never saw (NF-2, san-Q2 shape 1). A page that cannot be read back
+// as the mail was read is not written as HTML.
+func plaintextHoldsElements(root *xhtml.Node) bool {
+	seen := false
+	var walk func(n *xhtml.Node) bool
+	walk = func(n *xhtml.Node) bool {
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			if c.Type == xhtml.ElementNode {
+				if seen {
+					return true
+				}
+				if c.DataAtom == atom.Plaintext && c.Namespace == "" {
+					seen = true
+				}
+			}
+			if walk(c) {
+				return true
+			}
+		}
+		return false
+	}
+	return walk(root)
+}
+
+// standardsDoctype is written before the mail so the parser reads it in
+// standards mode, as the page's own doctype makes a browser read it.
+const standardsDoctype = "<!DOCTYPE html>"
+
 // sanitizeParsed is one sanitizing pass over doc (already flattened). The main
 // parse always runs with scripting on, like the browser that reads most
 // archives; inputLen sizes the serialization cap. When neutralizeNoscript is
@@ -482,7 +556,14 @@ func sanitizeChecked(doc string, pageCheck func(headExtra, bodyAttrs, body strin
 // in place, so a benign meta/charset/link inside it is disarmed without moving
 // the noscript's other content out of its head (search parity, R8).
 func sanitizeParsed(doc string, inputLen int, neutralizeNoscript bool) (headExtra, bodyAttrs, body, fallback string) {
-	root, err := xhtml.ParseWithOptions(strings.NewReader(doc), xhtml.ParseOptionEnableScripting(true))
+	// The mail is parsed in STANDARDS mode whatever doctype it carries (ours
+	// comes first, so the mail's own is an ignored parse error): the page that
+	// shows it has a doctype, so a browser reads the markup in standards mode,
+	// and the page check compares that reading with this tree byte for byte.
+	// In the mail's own quirks mode a <table> inside an open <p> stays in the
+	// <p>, which the page's tree does not do, and ordinary old mail (no doctype,
+	// HTML 4.01 Transitional, FrontPage) would read as hostile (R3-AC3, NF-1).
+	root, err := xhtml.ParseWithOptions(strings.NewReader(standardsDoctype+doc), xhtml.ParseOptionEnableScripting(true))
 	if err != nil {
 		// Unparseable bytes (or nesting the flattener's model missed): show
 		// them as text rather than guess.
@@ -509,6 +590,10 @@ func sanitizeParsed(doc string, inputLen int, neutralizeNoscript bool) (headExtr
 	}
 	find(root)
 	neutralize(root)
+	unnestForms(root, false)
+	if plaintextHoldsElements(root) {
+		return "", "", "", FallbackHostile
+	}
 	if neutralizeNoscript {
 		// The rewritten noscripts are checked by writing them out; that draws on
 		// a budget of its own the size of the serialization cap, so a noscript
@@ -1654,6 +1739,11 @@ func neutralizeOneNoscript(ns *xhtml.Node) ([]*xhtml.Node, bool) {
 	if err != nil {
 		return nil, false // leave as raw text; the dual-mode re-check falls back if hostile
 	}
+	for _, nd := range nodes {
+		if rawTextUnderForeign(nd, false) {
+			return nil, false
+		}
+	}
 	var old []*xhtml.Node
 	for c := ns.FirstChild; c != nil; {
 		next := c.NextSibling
@@ -1666,6 +1756,31 @@ func neutralizeOneNoscript(ns *xhtml.Node) ([]*xhtml.Node, bool) {
 	}
 	neutralize(ns) // disarm the newly-appended children and their descendants
 	return old, true
+}
+
+// rawTextUnderForeign reports whether n or a descendant is an HTML iframe,
+// noembed, noframes or xmp (an element whose text the tokenizer reads raw) that
+// has a foreign (SVG or MathML) element above it: `<math><mtext><xmp>` is an
+// HTML xmp, but x/net's writer takes its text for ordinary text and escapes it,
+// which a scripting-off read of the written page then takes literally (a word
+// `lt`, `gt` or `amp` the live index never saw, NF-3). A noscript holding one
+// is not rewritten; it keeps its raw text, which both indexes read the same way.
+func rawTextUnderForeign(n *xhtml.Node, foreign bool) bool {
+	if n.Type == xhtml.ElementNode {
+		if n.Namespace == "" && foreign {
+			switch n.DataAtom {
+			case atom.Iframe, atom.Noembed, atom.Noframes, atom.Xmp:
+				return true
+			}
+		}
+		foreign = foreign || n.Namespace != ""
+	}
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if rawTextUnderForeign(c, foreign) {
+			return true
+		}
+	}
+	return false
 }
 
 // noscriptSentinel follows a rewritten noscript in closesItself's
