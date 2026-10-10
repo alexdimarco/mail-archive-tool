@@ -263,8 +263,11 @@ func TestUnopenablePSTNamesFileAndRemedyOnEverySurface(t *testing.T) {
 			t.Errorf("junk .pst, %s lacks the file or the repair: %q", s.where, s.text)
 		}
 	}
-	if !strings.Contains(logText, "scanpst.exe") {
-		t.Errorf("run log lost its repair line: %s", logText)
+	if !strings.Contains(logText, "separate archive tree") {
+		t.Errorf("run log lost its full repair line: %s", logText)
+	}
+	if strings.Contains(e, "separate archive tree") {
+		t.Errorf("the returned error (printed twice more) repeats the long remedy: %q", e)
 	}
 
 	e, logText, side = run(locked)

@@ -808,6 +808,25 @@ func dataFileRemedyFor(path string, err error) string {
 	return dataFileRemedy(path)
 }
 
+// shortFileRemedy is dataFileRemedyFor for the run's returned error, which the
+// run log prints twice more (the FAILED line and the final error): the two long
+// generic remedies (the .pst repair with its path rule, the .ost routes) shrink to
+// one clause, and the full text stays on the per-file `error:` line. The
+// cause-specific remedies are already one clause.
+func shortFileRemedy(path string, err error) string {
+	full := dataFileRemedyFor(path, err)
+	if full == "" || full != dataFileRemedy(path) {
+		return full
+	}
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".pst":
+		return " — repair it in place with Outlook's Inbox Repair Tool (scanpst.exe, Windows), keeping its path, then run again"
+	case ".ost":
+		return " — on Windows run `mailarchive -outlook`, or use `mailarchive graph -auth device` for a Microsoft 365 mailbox"
+	}
+	return full
+}
+
 // fileFailureError is the run's error when data files failed to open or read
 // (friction F2). It names the first failing file, the cause in a few words and
 // the remedy for that cause, on one line, so the last-run record, `status` and
@@ -830,7 +849,7 @@ func fileFailureError(failures int, firstPath string, firstErr error) error {
 	if cause != "" {
 		msg += ": " + util.StripControl(cause)
 	}
-	msg += util.StripControl(dataFileRemedyFor(firstPath, firstErr))
+	msg += util.StripControl(shortFileRemedy(firstPath, firstErr))
 	if failures > 1 {
 		msg += fmt.Sprintf(" (the run log names the other %d)", failures-1)
 	}
