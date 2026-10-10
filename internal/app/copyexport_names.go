@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"hash/fnv"
 	"strings"
 	"unicode/utf16"
 
@@ -36,12 +37,12 @@ type ceNamer struct {
 	preserve bool
 	rootAbs  string              // the absolute path of the export root, for the path budget
 	root     *ceDir              // "messages"
-	stems    map[string]struct{} // fold keys of the stems in each month directory, by directory
+	stems    map[uint64]struct{} // 64-bit digests of (directory, stem fold key): a stem already placed in a month directory. A digest keeps the map small for 200,000 messages, and a collision of two digests only costs the later message a longer hash in its name.
 	counts   map[string]int      // files placed per month directory
 }
 
 func newCeNamer(preserve bool, rootAbs string) *ceNamer {
-	n := &ceNamer{preserve: preserve, rootAbs: rootAbs, stems: map[string]struct{}{}, counts: map[string]int{}}
+	n := &ceNamer{preserve: preserve, rootAbs: rootAbs, stems: map[uint64]struct{}{}, counts: map[string]int{}}
 	n.root = n.newDir("messages")
 	return n
 }
@@ -132,7 +133,7 @@ func (n *ceNamer) place(m *CopyMessage, files int) cePlace {
 	dir := d.rel + "/" + month
 	key := dir + "\x00"
 	stem := n.stem(m, dir, key)
-	n.stems[key+util.FoldKey(stem)] = struct{}{}
+	n.stems[stemDigest(key, stem)] = struct{}{}
 	n.counts[dir] += files
 	return cePlace{Dir: dir, Stem: stem}
 }
@@ -157,7 +158,7 @@ func (n *ceNamer) stem(m *CopyMessage, dir, key string) string {
 	var stem string
 	for _, hn := range []int{8, 12, 16, 24, 40} {
 		stem = export.StemName(m.Received, subjectSlug(m.Subject, slug), m.SourceID, hn)
-		if _, taken := n.stems[key+util.FoldKey(stem)]; !taken {
+		if _, taken := n.stems[stemDigest(key, stem)]; !taken {
 			return stem
 		}
 	}
@@ -192,6 +193,14 @@ func splitExt(name string) (stem, ext string) {
 		return name[:i], name[i:]
 	}
 	return name, ""
+}
+
+// stemDigest is the 64-bit FNV-1a digest of a directory key and a stem's fold key.
+func stemDigest(dirKey, stem string) uint64 {
+	h := fnv.New64a()
+	h.Write([]byte(dirKey))
+	h.Write([]byte(util.FoldKey(stem)))
+	return h.Sum64()
 }
 
 // subjectSlug is the subject slug bounded to n runes, or "" for n == 0.

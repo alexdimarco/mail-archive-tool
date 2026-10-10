@@ -337,13 +337,7 @@ func readSummary(path string) (*ceRecSummary, error) {
 	s := &ceRecSummary{Statuses: map[string]int{}}
 	last := map[int]string{}
 	err := scanLines(path, func(line []byte) error {
-		var kind struct {
-			T string `json:"t"`
-		}
-		if json.Unmarshal(line, &kind) != nil {
-			return nil // a malformed line is skipped, never reinterpreted
-		}
-		switch kind.T {
+		switch lineKind(line) { // a malformed line has no kind: skipped, never reinterpreted
 		case "header":
 			if err := json.Unmarshal(line, &s.Header); err != nil {
 				return err
@@ -400,6 +394,51 @@ func readSummary(path string) (*ceRecSummary, error) {
 		return s, fmt.Errorf("the run record %s has no header", filepath.Base(path))
 	}
 	return s, nil
+}
+
+// lineKind is a record line's "t". Every line this package writes starts `{"t":"`, so
+// the kind is read without decoding the line (a 200,000-message plan is read often);
+// any other line is decoded.
+func lineKind(line []byte) string {
+	const p = `{"t":"`
+	if bytes.HasPrefix(line, []byte(p)) {
+		if rest := line[len(p):]; len(rest) > 0 {
+			if i := bytes.IndexByte(rest, '"'); i > 0 {
+				return string(rest[:i])
+			}
+		}
+	}
+	var k struct {
+		T string `json:"t"`
+	}
+	if json.Unmarshal(line, &k) != nil {
+		return ""
+	}
+	return k.T
+}
+
+// walkProgress calls fn with each message's effective progress line, in the order the
+// lines were written: an amendment replaces the line it amends, and a message with no
+// line is not visited. It decodes no plan line, so the passes that need only what was
+// written (the presence check, the counts, the sums) stay cheap at 200,000 messages.
+func walkProgress(path string, fn func(m *ceMsgLine) error) error {
+	amend, err := amendments(path)
+	if err != nil {
+		return err
+	}
+	return scanLines(path, func(line []byte) error {
+		if !bytes.HasPrefix(line, []byte(`{"t":"msg"`)) {
+			return nil
+		}
+		var m ceMsgLine
+		if json.Unmarshal(line, &m) != nil || m.Amend {
+			return nil
+		}
+		if a, ok := amend[m.N]; ok {
+			m = a
+		}
+		return fn(&m)
+	})
 }
 
 // errCopyNewerFormat is the refusal of a run record made by a newer MailArchive

@@ -48,11 +48,6 @@ func TestCopyExportRetryPreviewAndOfferedLabels(t *testing.T) {
 	t.Skip("MA-427: the retry preview, the -partN root names and the activity page's offered labels are slice E3's (XC28, design §4.13 Retry, §4.16)")
 }
 
-// covers: MA-432, R29, S52
-func TestCopyExportRowMA432(t *testing.T) {
-	t.Skip("MA-432: the run record's bounded engine is not built; lands in EW-E2")
-}
-
 // covers: MA-532, R29, R12, S52
 func TestCopyExportRowMA532(t *testing.T) {
 	t.Skip("MA-532: the hand-over posture over the inherited descriptor is not built; lands in EW-E2")

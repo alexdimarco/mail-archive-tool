@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -39,6 +40,9 @@ func bigBody(n int) http.HandlerFunc {
 // peakHeap samples the heap while fn runs and returns its highest in-use size less
 // what was in use before.
 func peakHeap(fn func()) uint64 {
+	// A low GC target keeps the sampled heap close to what the run holds live, not what
+	// it has made garbage since the last collection.
+	defer debug.SetGCPercent(debug.SetGCPercent(20))
 	runtime.GC()
 	var base runtime.MemStats
 	runtime.ReadMemStats(&base)

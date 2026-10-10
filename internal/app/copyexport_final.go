@@ -29,12 +29,18 @@ import (
 // failed or not attempted, an amendment replacing the line it amends.
 func countRecord(path string) (CopyCounts, error) {
 	var c CopyCounts
-	err := walkMessages(path, func(p *cePlanLine, m *ceMsgLine) error {
-		c.Selected++
-		switch {
-		case m == nil, m.Status == statusNotAttempted:
+	h, err := readHeaderOnly(path)
+	if err != nil {
+		return c, err
+	}
+	c.Selected = h.Planned
+	seen := 0
+	err = walkProgress(path, func(m *ceMsgLine) error {
+		seen++
+		switch m.Status {
+		case statusNotAttempted:
 			c.NotAttempted++
-		case m.Status == statusFailed:
+		case statusFailed:
 			c.Failed++
 		default:
 			c.Exported++
@@ -47,6 +53,7 @@ func countRecord(path string) (CopyCounts, error) {
 		}
 		return nil
 	})
+	c.NotAttempted += c.Selected - seen // a message with no line was never attempted
 	return c, err
 }
 
@@ -230,8 +237,8 @@ func (e *ceFinalizeErr) Unwrap() error { return e.err }
 // whose bytes differ is a listed failure, never a sums line.
 func (f *ceFinish) presence(rehash bool) error {
 	var amend []ceMsgLine
-	err := walkMessages(f.rec.path, func(p *cePlanLine, m *ceMsgLine) error {
-		if m == nil || (m.Status != statusExported && m.Status != statusWithoutOrig && m.Status != statusOriginalOnly) {
+	err := walkProgress(f.rec.path, func(m *ceMsgLine) error {
+		if m.Status != statusExported && m.Status != statusWithoutOrig && m.Status != statusOriginalOnly {
 			return nil
 		}
 		for _, file := range m.Files {
@@ -553,8 +560,8 @@ type ceSumLine struct {
 func (f *ceFinish) buildSums(readme, manifestHash string) ([]byte, error) {
 	rh := sha256.Sum256([]byte(readme))
 	lines := []ceSumLine{{copyReadmeName, hex.EncodeToString(rh[:])}, {copyManifestName, manifestHash}}
-	err := walkMessages(f.rec.path, func(p *cePlanLine, m *ceMsgLine) error {
-		if m == nil || m.Status == statusFailed || m.Status == statusNotAttempted {
+	err := walkProgress(f.rec.path, func(m *ceMsgLine) error {
+		if m.Status == statusFailed || m.Status == statusNotAttempted {
 			return nil
 		}
 		for _, file := range m.Files {
