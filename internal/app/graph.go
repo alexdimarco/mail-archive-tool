@@ -99,6 +99,7 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	if err != nil {
 		return Result{}, err
 	}
+	manifestBefore := manifest.Len()
 
 	exp := &export.Exporter{
 		OutDir:   opts.Out,
@@ -281,7 +282,7 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	// Deleted Items / Junk Email are excluded by default; the flags opt in (T7).
 	filter := graph.FolderFilter{IncludeDeleted: g.IncludeDeleted, IncludeJunk: g.IncludeJunk}
 
-	result = Result{Files: len(g.Mailboxes)}
+	result = Result{Files: len(g.Mailboxes), ManifestBefore: manifestBefore}
 	var failures int
 	var firstErr error
 	for _, mbx := range g.Mailboxes {

@@ -59,13 +59,17 @@ type Result struct {
 	Stats        export.Stats
 	Files        int
 	ManifestSize int
-	Indexed      int    // messages in the search index (0 if indexing disabled)
-	IndexErrors  int    // messages the index refused (R8 parity broken; surfaced, not swallowed)
-	Issues       int    // rows in the regenerated verification report
-	ReportPath   string // path to the verification report ("" when nothing to report)
-	Fillable     int    // manifest records still missing content an on-demand source may deliver
-	Terminal     int    // records missing content the source can never deliver (recorded, never retried)
-	Unknown      int    // legacy records not yet re-examined (migrated from a version-1 manifest)
+	// ManifestBefore is the manifest's size when the run began, so the summary
+	// can tell how many of the run's exports were new messages and how many
+	// replaced an earlier copy of the same key (F13).
+	ManifestBefore int
+	Indexed        int    // messages in the search index (0 if indexing disabled)
+	IndexErrors    int    // messages the index refused (R8 parity broken; surfaced, not swallowed)
+	Issues         int    // rows in the regenerated verification report
+	ReportPath     string // path to the verification report ("" when nothing to report)
+	Fillable       int    // manifest records still missing content an on-demand source may deliver
+	Terminal       int    // records missing content the source can never deliver (recorded, never retried)
+	Unknown        int    // legacy records not yet re-examined (migrated from a version-1 manifest)
 }
 
 // finish fills the manifest-derived fields of a Result and regenerates the
@@ -239,6 +243,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	if err != nil {
 		return Result{}, err
 	}
+	manifestBefore := manifest.Len()
 
 	exp := &export.Exporter{
 		OutDir:   opts.Out,
@@ -321,7 +326,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		saveErr = commit(nil, idx, manifest, logger)
 	}
 
-	result = Result{Files: len(files)}
+	result = Result{Files: len(files), ManifestBefore: manifestBefore}
 	var failures int
 	for _, f := range files {
 		runErr := runFile(ctx, exp, f, opts.Out, opts.CopyFirst, logger, func(stats export.Stats) {

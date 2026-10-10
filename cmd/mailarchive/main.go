@@ -1387,6 +1387,21 @@ func printSummary(logger *log.Logger, r app.Result, indexed, keepRaw bool, out s
 		msg += fmt.Sprintf(" INDEX-ERRORS=%d", r.IndexErrors)
 	}
 	logger.Printf("%s", msg)
+	// Exports that were not new messages: a key exported again replaces its
+	// earlier copy, so exported exceeds the growth in manifest and indexed.
+	// A fill is its own explanation ("filled="); anything beyond it gets one
+	// line saying so (F13).
+	newMsgs := r.ManifestSize - r.ManifestBefore
+	if replaced := s.Exported - newMsgs; newMsgs >= 0 && replaced > s.Filled {
+		logger.Printf("Note:   %d exports made %d new message(s); %d replaced an earlier copy of the same message, so exported is above the growth in manifest and indexed.", s.Exported, newMsgs, replaced-s.Filled)
+	}
+	// An index that holds fewer messages than the manifest (search.db lost or
+	// emptied and re-created by this run, or earlier runs skipped indexing)
+	// would otherwise end in a quiet exit 0 (F4). Rows the run itself could not
+	// index have their own warning below.
+	if indexed && r.IndexErrors == 0 && r.Indexed < r.ManifestSize {
+		logger.Printf("WARNING: the search index holds %d of the archive's %d messages (search.db was missing or emptied, or earlier runs skipped indexing); search will not find the rest. Rebuild it from the archive with `mailarchive reindex -rebuild -out %q`.", r.Indexed, r.ManifestSize, out)
+	}
 
 	// One coherent Verification line: what is still missing, what the source can
 	// never deliver, what has not been re-examined yet, how many fillable gaps
