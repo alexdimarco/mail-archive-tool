@@ -206,6 +206,63 @@ func TestRedirectsAndBodiesAreBounded(t *testing.T) {
 	}
 }
 
+// covers: MA-528, R17, R29
+// Graph JSON bodies are read through a limit (XC26) on the workspace's paths as
+// well: a folder page or a message page that streams past the bound is refused
+// with the typed page-size stop and returns nothing, instead of being decoded
+// (the positive twin: a page within the bound is). The same server answers both
+// paths, in a size the bound allows and one past it.
+func TestWorkspaceJSONBodiesAreBounded(t *testing.T) {
+	var big atomic.Bool
+	stream := func(w http.ResponseWriter, item string) {
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"value":[`)
+		n := 3
+		if big.Load() {
+			n = (maxPageBytes + 1<<20) / len(item)
+		}
+		for i := 0; i < n; i++ {
+			if _, err := io.WriteString(w, item); err != nil {
+				return
+			}
+		}
+		io.WriteString(w, `{"id":"LAST"}]}`)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/token", tokenHandler)
+	mux.HandleFunc("/me/mailFolders/", func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/messages") {
+			stream(w, `{"id":"M","subject":"`+strings.Repeat("s", 900)+`"},`)
+			return
+		}
+		http.NotFound(w, r) // the well-known resolutions
+	})
+	mux.HandleFunc("/me/mailFolders", func(w http.ResponseWriter, r *http.Request) {
+		stream(w, `{"id":"F","displayName":"`+strings.Repeat("n", 900)+`","childFolderCount":0},`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	c := meClient(t, srv, Config{}, time.Now().Add(time.Hour))
+	ctx := context.Background()
+
+	if refs, _, err := c.MessagePage(ctx, "ignored", "F_IN", "", PageOpts{}); err != nil || len(refs) != 4 {
+		t.Fatalf("a message page within the bound: %d refs, %v", len(refs), err)
+	}
+	if folders, err := c.FolderTree(ctx, "ignored", 0); err != nil || len(folders) != 2 { // F, then LAST; F repeats are skipped
+		t.Fatalf("a folder page within the bound: %d folders, %v", len(folders), err)
+	}
+	big.Store(true)
+	refs, _, err := c.MessagePage(ctx, "ignored", "F_IN", "", PageOpts{})
+	var le *ListingError
+	if !errors.As(err, &le) || le.Kind != ListingPageSize || le.Limit != maxPageBytes || refs != nil {
+		t.Errorf("an over-size message page is not refused with the typed page-size stop: %d refs, %v", len(refs), err)
+	}
+	folders, err := c.FolderTree(ctx, "ignored", 0)
+	if !errors.As(err, &le) || le.Kind != ListingPageSize || folders != nil {
+		t.Errorf("an over-size folder page is not refused with the typed page-size stop: %d folders, %v", len(folders), err)
+	}
+}
+
 // covers: MA-527, R17, R29
 // F15 and RR2b-C3 (extraction design XC26). Client.Timeout is set on the JSON
 // clients, so a /token response whose body stalls after its headers is released
