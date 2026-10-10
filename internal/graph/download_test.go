@@ -316,7 +316,7 @@ func clip(s string) string {
 	return s
 }
 
-// covers: MA-314, R10, R17
+// covers: MA-314, R10, R17, S46
 // The primitive download bounds, scaled (idle 200 ms, overall cap 5 s, size cap
 // 1 MiB), each passed to MIMETo explicitly. The client's MIMETimeout is a 1 s
 // wall clock, shorter than the trickle, which MIMETo never consults:
@@ -425,14 +425,14 @@ func TestMIMEToBounds(t *testing.T) {
 	}
 }
 
-// covers: MA-314, R10, R17
+// covers: MA-314, R10, R17, S46
 // The gap half of MA-314's stall case: a $value that stalls past the idle window
 // becomes a fillable fetch-timeout gap, and the walk goes on to the next item.
 func TestMIMEStallIsAFetchTimeoutGap(t *testing.T) {
 	t.Skip("MA-314: the fetch-timeout gap case needs the S1a/S3 capture-gap ledger; until fault-isolation S3 a stall fails the mailbox through today's error path (MA-540); lands in FI-S3")
 }
 
-// covers: MA-314, R10, R17
+// covers: MA-314, R10, R17, S46
 // MA-314's fetch-too-large gap case: a body over the size cap is a terminal gap,
 // with nothing written to the archive.
 func TestOverCapBodyIsAFetchTooLargeGap(t *testing.T) {

@@ -46,7 +46,7 @@ func cancelAtEOF(id string, cancel context.CancelFunc) func(http.RoundTripper) h
 // whole walk is its download.
 const lastItem = "U2SENEW"
 
-// covers: MA-540, R10, R17, R18, R21, S37
+// covers: MA-540, R10, R17, R18, R21, S37, S46
 // AI5: RunGraph's "cancelled" decision is about a walk that did not finish. An
 // interrupt that lands after the last mailbox's walk completed cleanly leaves a
 // complete run (nil, recorded as such, never cancelled); and a mailbox that failed

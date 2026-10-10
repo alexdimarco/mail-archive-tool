@@ -34,7 +34,7 @@ func tokenHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, `{"access_token":"t","token_type":"Bearer","expires_in":3600}`)
 }
 
-// covers: MA-314, R10, R17
+// covers: MA-314, R10, R17, S46
 // A Graph listing that repeats a nextLink stops in every paging loop with a
 // typed *ListingError, never a quiet end of listing: in Folders (its first page
 // names itself as the next one) the call fails, and in Messages (page 2 names
@@ -88,7 +88,7 @@ func TestNextLinkRepeatStopsEveryLoop(t *testing.T) {
 	}
 }
 
-// covers: MA-314, R10, R17
+// covers: MA-314, R10, R17, S46
 // The guard's page cap and its scope: a listing that serves fresh nextLinks for
 // ever is stopped after exactly the cap's pages (scaled to 5) with a typed stop
 // naming the cap, and a second listing on the same client gets its own 5 pages
@@ -178,7 +178,7 @@ func TestNextLinkGuardPageCapAndPin(t *testing.T) {
 	}
 }
 
-// covers: MA-314, R10, R17
+// covers: MA-314, R10, R17, S46
 // MA-314's folder-list-failed gap case: a repeating nextLink in Messages ends
 // that folder as a folder-list-failed gap, and the walk goes on.
 func TestRepeatingNextLinkIsAFolderListFailedGap(t *testing.T) {
@@ -190,7 +190,7 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-// covers: MA-314, R10, R17
+// covers: MA-314, R10, R17, S46
 // MA-314's capture foreign-host case: a nextLink in capture's Folders or Messages
 // that leaves the base host is refused with a typed stop naming that host, no
 // request goes there and no bearer token reaches it. The foreign host is a name

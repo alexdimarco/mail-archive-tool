@@ -139,7 +139,7 @@ func failedNotCancelled(t *testing.T, c sgCase) {
 	}
 }
 
-// covers: MA-540, R10, R17, R18, R21, S37
+// covers: MA-540, R10, R17, R18, R21, S37, S46
 // SG's stops on the shipped capture path, through RunGraph on the shared fake:
 // two mailboxes, a healthy first run, then a case run in which mailbox 1 meets
 // one stop (graphtest.Stops): (1) a repeating nextLink in Messages after its
@@ -196,7 +196,7 @@ func TestRunGraphGuardStopsFailTheMailbox(t *testing.T) {
 	}
 }
 
-// covers: MA-540, R10, R17, R18, R21, S37
+// covers: MA-540, R10, R17, R18, R21, S37, S46
 // MA-540's case (4): a new item's $value over the size cap fails mailbox 1 with
 // the typed too-large error naming the item and the cap, with every other
 // expectation of the stop cases.
@@ -204,7 +204,7 @@ func TestRunGraphOverCapValueFailsTheMailbox(t *testing.T) {
 	t.Skip("MA-540: case (4) is open, not accepted: capture passes no size cap until Microsoft's documentation bounds a stored item (owner ruling RR6-OR1, ESC-8's safe interim; fault-isolation §4.8.6); it lands when a documented figure lets the cap reach capture")
 }
 
-// covers: MA-540, R10, R17, R18, R21, S37
+// covers: MA-540, R10, R17, R18, R21, S37, S46
 // MA-540's case (5): the page cap counts per loop. Both mailboxes, three folders
 // each, make 14 listing pages in all, more than the scaled cap of 5, while no
 // loop makes more than 3: the run completes with nil and archives every
@@ -253,7 +253,7 @@ func cancelValue(id string) func(http.RoundTripper) http.RoundTripper {
 	}
 }
 
-// covers: MA-540, R10, R17, R18, R21, S37
+// covers: MA-540, R10, R17, R18, R21, S37, S46
 // MA-540's case (6), RunGraph's second guard: a transport that returns
 // context.Canceled for mailbox 1's new $value while the run's own context is
 // live fails mailbox 1 (before S3) but is never read as an interrupt: mailbox 2
@@ -277,7 +277,7 @@ func valueAs(h http.HandlerFunc) func(*graphtest.Server) {
 	}
 }
 
-// covers: MA-540, R10, R17, R18, R21, S37
+// covers: MA-540, R10, R17, R18, R21, S37, S46
 // MA-540's twins. Headers that arrive after the scaled JSON request timeout but
 // inside the $value header window: the item is archived (the $value request is
 // not on the JSON requests' transport). A 503 whose Retry-After sleep is longer

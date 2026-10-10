@@ -39,7 +39,7 @@ func (w *slowWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// covers: MA-314, R10, R17
+// covers: MA-314, R10, R17, S46
 // AI1: the idle watchdog and the typed stops cover a non-200 answer's body too. A
 // server that sends error headers and then stalls (or trickles) is a typed idle
 // stop after the idle window, not a *StatusError after the overall cap, and
@@ -69,7 +69,7 @@ func TestMIMEToErrorBodyStallIsAnIdleStop(t *testing.T) {
 	}
 }
 
-// covers: MA-314, R10, R17
+// covers: MA-314, R10, R17, S46
 // AI2: the idle window times the server, not the destination. A writer that is
 // slow for longer than the idle window does not fail a download whose bytes
 // arrive on time.

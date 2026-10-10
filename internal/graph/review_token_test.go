@@ -27,7 +27,7 @@ func tokenServer(t *testing.T, delay time.Duration) *httptest.Server {
 	return srv
 }
 
-// covers: MA-314, R10, R17
+// covers: MA-314, R10, R17, S46
 // AC3: a token refresh neither delays MIMETo's own stops nor counts against the
 // $value header window. The overall cap ends the call at the cap while the token
 // endpoint is still answering, as the typed overall stop; and a refresh longer
