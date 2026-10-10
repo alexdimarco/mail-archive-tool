@@ -3,6 +3,7 @@ package schedule
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -42,7 +43,7 @@ func TestDescriptorIsUntrusted(t *testing.T) {
 	// Collision guards.
 	os.WriteFile(filepath.Join(out, DescriptorName), []byte(`{"version":1,"name":"first","interval":"daily","at":"02:00","exe":"/bin/x"}`), 0o644)
 	spec := Spec{Name: "second", Interval: Daily, At: "02:00", Exe: "/bin/x", Out: out}
-	if err := refuseCollision(spec); err == nil || !strings.Contains(err.Error(), "first") {
+	if err := refuseCollision(spec, runtime.GOOS); err == nil || !strings.Contains(err.Error(), "first") {
 		t.Errorf("a second schedule for the same archive was not refused: %v", err)
 	}
 	crontab := CronMarker("shared") + "\n0 2 * * * /bin/x -out /other/archive -mode incremental\n"

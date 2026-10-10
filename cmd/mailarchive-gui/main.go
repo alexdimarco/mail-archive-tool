@@ -799,13 +799,24 @@ func repairSpec(out string, d schedule.Descriptor, exe string) (schedule.Spec, e
 	return spec, nil
 }
 
+// repairPlan is the Spec a repair installs, or why it must not: the entry name
+// the descriptor records is untrusted too (a folder handed over can name another
+// archive's entry), and an install replaces whatever entry has that name, so a
+// name that is not shown to be this archive's is refused (G8-AO1, AI1).
+func repairPlan(out string, d schedule.Descriptor, exe string) (schedule.Spec, error) {
+	if err := schedule.NameBound(out, d); err != nil {
+		return schedule.Spec{}, fmt.Errorf("not repairing: %v", err)
+	}
+	return repairSpec(out, d, exe)
+}
+
 // repairSchedule re-installs a recorded schedule from the current executable.
 func repairSchedule(out string, d schedule.Descriptor) error {
 	exe, err := os.Executable()
 	if err != nil {
 		return err
 	}
-	spec, err := repairSpec(out, d, exe)
+	spec, err := repairPlan(out, d, exe)
 	if err != nil {
 		return err
 	}
@@ -853,7 +864,13 @@ func removeSchedule(out string) error {
 	if err != nil {
 		return err
 	}
-	name, err := schedule.SanitizeName(d.Name)
+	// The descriptor is untrusted: its name drives the removal only when it is
+	// this archive's entry (a handed-over folder can record any entry's name).
+	recorded, err := schedule.RecordedBackupName(out)
+	if err != nil {
+		return err
+	}
+	name, err := schedule.SanitizeName(recorded)
 	if err != nil {
 		return err
 	}
@@ -867,10 +884,10 @@ func removeSchedule(out string) error {
 	if err := schedule.Remove(spec); err != nil {
 		return err
 	}
-	if jp, err := job.PathFor(d.Name); err == nil {
+	if jp, err := job.PathFor(name); err == nil {
 		_ = os.Remove(jp)
 	}
-	return zenity.Info(fmt.Sprintf("Removed the scheduled backup %q for\n%s", d.Name, out), zenity.Title(appTitle))
+	return zenity.Info(fmt.Sprintf("Removed the scheduled backup %q for\n%s", name, out), zenity.Title(appTitle))
 }
 
 // ---- IMAP prep ------------------------------------------------------------

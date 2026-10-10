@@ -896,20 +896,37 @@ func runSchedule(args []string) error {
 		return fmt.Errorf("could not determine my own executable path: %w", err)
 	}
 
-	// Removal keys off the name, found via -name or the archive's descriptor.
+	// Removal keys off the name, found via -name, the job's own entry name, or
+	// the archive's descriptor.
 	if *remove {
 		out := abspath(*eo.out)
-		if out == "" && len(jobArgs) > 0 {
+		var rj job
+		if len(jobArgs) > 0 {
 			if j, jerr := parseJob(jobArgs); jerr == nil {
-				out = j.out
+				rj = j
+				if out == "" {
+					out = j.out
+				}
 			}
 		}
 		n := *name
 		if n == "" && out != "" {
-			if d, derr := schedule.ReadDescriptor(out); derr == nil {
-				n = d.Name
-			} else {
-				n = schedule.DefaultNameFor(out)
+			switch {
+			case rj.verb == "verify" && rj.out == out:
+				// A verify job's entry is the archive's distinct "-verify" name,
+				// exactly as -install derived it; the descriptor records the
+				// archive's BACKUP schedule and must not be what this removes.
+				n = defaultScheduleName(rj)
+			default:
+				if rn, rerr := schedule.RecordedBackupName(out); rerr == nil {
+					n = rn
+				} else if _, derr := schedule.ReadDescriptor(out); derr == nil {
+					// The descriptor reads, but the entry it names is not this
+					// archive's (a handed-over or copied folder): never act on it.
+					return fmt.Errorf("-remove will not act on the schedule name %s records: %w", filepath.Join(out, schedule.DescriptorName), rerr)
+				} else {
+					n = schedule.DefaultNameFor(out)
+				}
 			}
 		}
 		if n == "" {
@@ -922,19 +939,44 @@ func runSchedule(args []string) error {
 		if err := spec.Validate(); err != nil {
 			return err
 		}
+		// Which of the archive's entries this is: a verify job after --, or the
+		// name the archive's verify descriptor records (read before the removal
+		// deletes it).
+		kind := "backup"
+		if rj.verb == "verify" || schedule.VerifyRecorded(out, n) {
+			kind = "verify"
+		}
 		removed, err := schedule.RemoveIfInstalled(spec)
 		if err != nil {
 			return err
 		}
 		if !removed {
-			target := out
-			if target == "" {
-				target = n
+			if out == "" {
+				fmt.Printf("no schedule was installed for %s — nothing to remove\n", n)
+				return nil
 			}
-			fmt.Printf("no schedule was installed for %s — nothing to remove\n", target)
+			// The archive may well have another schedule (its backup, or a verify
+			// under another name): say which entry is absent, never that the
+			// archive has none.
+			fmt.Printf("no schedule %q was installed for %s — nothing to remove\n", n, out)
+			if rj.verb == "verify" && *name == "" {
+				fmt.Println(verifyRemoveHint(out))
+			}
 			return nil
 		}
-		fmt.Printf("Removed scheduled backup %q.\n", n)
+		fmt.Printf("Removed scheduled %s %q.\n", kind, n)
+		// A descriptor that cannot be read goes only with the archive's
+		// default-named backup (nothing in it says it was any other entry's), so a
+		// removal names the one of its own kind it left — the backup's for a
+		// backup, the verify's for a verify — with the remedy; `status` keeps
+		// reporting it until the operator acts.
+		left, remedy := schedule.UnreadableDescriptor(out), schedule.UnreadableDescriptorRemedy
+		if kind == "verify" {
+			left, remedy = schedule.UnreadableVerifyDescriptor(out), schedule.UnreadableVerifyDescriptorRemedy
+		}
+		if left != "" {
+			fmt.Printf("Left in place: %s cannot be read, so -remove cannot tell which schedule it records — %s.\n", left, remedy)
+		}
 		return nil
 	}
 
@@ -968,6 +1010,10 @@ func runSchedule(args []string) error {
 	}
 
 	if *install {
+		// A verify installed under a new -name leaves the entry the archive's
+		// records name running (Install never removes it); read it before the
+		// install rewrites the verify descriptor, so it can be named below.
+		superseded := schedule.SupersededVerify(spec)
 		if err := schedule.Install(spec); err != nil {
 			return err
 		}
@@ -980,7 +1026,14 @@ func runSchedule(args []string) error {
 		if note := graphDeletedJunkNote(j); note != "" {
 			fmt.Println(note)
 		}
-		fmt.Printf("Log: %s · descriptor: %s · check with: mailarchive status -out %q\n", logPath, filepath.Join(j.out, schedule.DescriptorName), j.out)
+		desc := filepath.Join(j.out, schedule.DescriptorName)
+		if j.verb == "verify" {
+			desc = filepath.Join(j.out, schedule.VerifyDescriptorName) // a verify records its own
+		}
+		fmt.Printf("Log: %s · descriptor: %s · check with: mailarchive status -out %q\n", logPath, desc, j.out)
+		if superseded != "" {
+			fmt.Printf("Note: this archive's verify was installed as %q, and that entry is still installed: it keeps running beside %q. If it is still this archive's verify, remove it with `mailarchive schedule -name %s -remove -- verify -out %q`.\n", superseded, n, superseded, j.out)
+		}
 		if note, _ := schedule.VerifyScheduleNote(spec); note != "" {
 			fmt.Println(note)
 		}
@@ -1071,6 +1124,7 @@ Usage:
   mailarchive schedule [-interval ...] -install -- graph -out DIR -tenant T -client-id ID \
       -mailbox u@dom -client-secret-file FILE                     apply a Graph job
   mailarchive schedule -out DIR -remove                            uninstall this archive's schedule
+  mailarchive schedule -remove -- verify -out DIR                  uninstall this archive's scheduled verify
   mailarchive schedule -name NAME -remove                          uninstall by name
 
 The job after -- may be an export (no verb), graph, reindex, or verify job; it
@@ -1214,7 +1268,7 @@ func runGraph(args []string) (err error) {
 		// elsewhere → the 0600 file cache (design-mailarchive-desktop P4). A fake
 		// Microsoft 365 never gets the vault.
 		if graphFake.base == "" {
-			gopts.TokenStore = graphconfig.DefaultTokenStore(*o.tenant, *o.clientID)
+			gopts.TokenStore = deviceTokenStore(*o.tenant, *o.clientID)
 		}
 	}
 
@@ -1288,6 +1342,34 @@ func flagWasSet(fs *flag.FlagSet, name string) bool {
 	})
 	return set
 }
+
+// verifyRemoveHint is printed when `-remove -- verify -out X` finds no entry
+// under the archive's derived "-verify" name: the verify may still be running
+// under the -name it was installed with (the README once passed a fixed one),
+// which only that name removes — the same command with -name added. The hint
+// names that entry when something records it: the archive's verify descriptor
+// (FB-4), or else a backup descriptor that records a verify itself (a release
+// from before a verify got its own entry name wrote it so). It is a hint, not
+// an automatic removal: on launchd and Task Scheduler a shared name may by now
+// hold another archive's verify.
+func verifyRemoveHint(out string) string {
+	// Only a recorded name that binds to this archive is offered (a descriptor
+	// handed over with the folder can record any entry's name).
+	if name, ok := schedule.RecordedVerifyName(out); ok {
+		if _, err := schedule.ReadVerifyDescriptor(out); err == nil {
+			return fmt.Sprintf("The archive's verify descriptor records a verify schedule named %q; if it is still this archive's verify, run this command again with -name %s before -- to remove it.", name, name)
+		}
+		return fmt.Sprintf("The archive's descriptor records a verify schedule named %q (written before a verify got its own entry name); if it is this archive's verify, run this command again with -name %s before -- to remove it.", name, name)
+	}
+	return "If this archive's verify was installed with -name NAME, run this command again with -name NAME before -- to remove it."
+}
+
+// deviceTokenStore is where a device sign-in lives besides the -token-cache file:
+// the OS vault on Windows (Credential Manager, keyed by tenant + client), nil
+// elsewhere (the file is the backend). A device run and `schedule`'s check of a
+// device job both resolve it here, so they read the same backend; it is a
+// variable only so a test can stand a real store in for the Windows vault.
+var deviceTokenStore = graphconfig.DefaultTokenStore
 
 // defaultTokenCachePath is where a device sign-in is cached when -token-cache is
 // not given: under the caller's OS config dir (%APPDATA% on Windows, ~/.config on

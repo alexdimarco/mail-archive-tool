@@ -299,7 +299,13 @@ func parseJob(args []string) (job, error) {
 				def, _ := defaultTokenCachePath(*o.tenant, *o.clientID, o.mailboxes)
 				return job{}, tokenCacheInArchive(*o.tokenCache, *o.out, def, false, true)
 			}
-			if err := graph.CheckTokenCache(*o.tokenCache); err != nil {
+			// Check the sign-in where the scheduled run will read it: the OS vault
+			// when the run uses one (Windows, which never writes the file), else
+			// the file — the same backend runGraph hands NewDelegated.
+			if err := graph.CheckSignIn(graph.Config{
+				Tenant: *o.tenant, ClientID: *o.clientID, TokenCachePath: *o.tokenCache,
+				TokenStore: deviceTokenStore(*o.tenant, *o.clientID),
+			}); err != nil {
 				return job{}, err
 			}
 			authArgs = []string{"-auth", "device", "-token-cache", abspath(*o.tokenCache)}

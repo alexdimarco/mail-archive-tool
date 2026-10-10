@@ -575,9 +575,10 @@ itself to migrate. It is informational and never changes the posture.
 The posture fails closed: a schedule with no run ever recorded, a run that never
 finished (crash, kill, power loss), a scheduled program that no longer exists or
 is not this binary, a last run older than twice the schedule period, a last
-verify that was not attested, a manifest that exists but cannot be read (a newer
-format, or corrupt), or a scheduler that cannot be queried all show up, each with
-its remedy. It exits 0 whenever it reports; the posture is the answer. For a
+verify that was not attested, a scheduled verify that has not run for twice its
+own period, a schedule descriptor that cannot be read, a manifest that exists
+but cannot be read (a newer format, or corrupt), or a scheduler that cannot be
+queried all show up, each with its remedy. It exits 0 whenever it reports; the posture is the answer. For a
 machine-readable form see [Machine-readable output](#machine-readable-output).
 
 ### Machine-readable output
@@ -589,9 +590,10 @@ prose.
 **`status -json` (version 2).** Top-level keys: `version`, `posture`, `reasons`,
 `reason_codes`, `out`, `messages`, `indexed`, `indexed_known`, `fillable`,
 `terminal`, `unknown`, `fixity`, `extractable`, `last_run`, `last_verify`,
-`schedule`. (`extractable`, `indexed_known` and `last_run.in_progress` are
-backward-compatible additions at version 2 — new optional keys, so a consumer
-that ignores unknown keys is unaffected and the version is not bumped.)
+`schedule`, `verify_schedule`. (`extractable`, `indexed_known`,
+`verify_schedule` and `last_run.in_progress` are backward-compatible additions
+at version 2 — new optional keys, so a consumer that ignores unknown keys is
+unaffected and the version is not bumped.)
 
 - `indexed` is how many messages the search index holds, **only when
   `indexed_known` is `true`**: while `search.db` is busy (another program has it
@@ -608,9 +610,11 @@ that ignores unknown keys is unaffected and the version is not bumped.)
   `run_in_progress`, `run_stuck`, `run_never_finished`, `run_cancelled`,
   `stale`, `not_attested`, `verify_unrecorded`, `verify_stale`,
   `verify_in_progress`, `verify_never_finished`, `verify_failed`,
+  `lastverify_unreadable`, `verify_descriptor_unreadable`,
   `descriptor_unreadable`, `no_schedule`, `moved_archive`, `other_host`,
   `scheduler_unavailable`, `not_installed`, `exe_missing`, `exe_moved`,
-  `archive_unwritable` (a scheduled backup whose archive folder takes no write:
+  `verify_other_host`, `verify_not_installed`, `verify_exe_missing`,
+  `verify_exe_moved`, `archive_unwritable` (a scheduled backup whose archive folder takes no write:
   read-only, full or lost drive — a run there cannot record its own failure, so
   this is where it shows; the probe is a write by the account running `status`,
   so a read-only monitoring account on the backup's host sees it for a healthy
@@ -635,6 +639,8 @@ that ignores unknown keys is unaffected and the version is not bumped.)
   verdict, which the posture still judges.
 - `schedule` is `{name, state, interval, at, exe, host}` (present only when a
   schedule is recorded).
+- `verify_schedule` is the scheduled verify in the same shape, from its own
+  descriptor (present only when a verify schedule is recorded).
 
 `status` always exits 0: the posture is the answer, so read `posture` /
 `reason_codes` rather than the exit code.
@@ -839,6 +845,8 @@ mailarchive schedule -interval weekly -install -- reindex -out ./export
 # Remove it later (by the archive, or by name):
 mailarchive schedule -out ./export -remove
 mailarchive schedule -name weekly-mail -remove
+# A scheduled verify is its own entry: swap -install for -remove to take out just it.
+mailarchive schedule -remove -- verify -out ./export
 ```
 
 | Flag | Description |
@@ -846,7 +854,7 @@ mailarchive schedule -name weekly-mail -remove
 | `-interval` | `daily` (default), `weekly`, or `hourly`. |
 | `-at` | Time of day `HH:MM` (default `02:00`; `hourly` uses only the minute). |
 | `-name` | Scheduler entry name (default `mailarchive-<hash of the archive path>`: one schedule per archive). Letters, digits, `.`, `_`, `-`; at most 40 characters. |
-| `-install` / `-remove` | Apply / uninstall (default: just print the entry). `-remove` finds the entry from `-out` or `-name`. |
+| `-install` / `-remove` | Apply / uninstall (default: just print the entry). `-remove` finds the entry from `-name`, from a `verify` job after `--` (its own `-verify` entry), or from `-out` (the archive's backup schedule), and removes only that entry — the archive's descriptor goes only with the schedule it records, and a scheduled verify's own descriptor only with the verify's entry. A backup descriptor that cannot be read (a hand edit, a damaged file) goes with the archive's default-named backup (`-out X -remove`); a backup under its own `-name` leaves it in place, and so does a verify with its own descriptor, since nothing in such a file says whose it is: the removal names the file it leaves, and `status` reports it until you delete it (once no such schedule for the archive is installed) or re-install to rewrite it. |
 | job flags | Either the export flags (`-out`, `-input`, `-auto`, `-mode`, `-copy-first`, `-since`, `-outlook`, `-raw`, …) on the schedule command, **or** the whole job after `--`. Not both. |
 
 What is checked *when you schedule*, not at 02:00: the job's flags parse
@@ -857,8 +865,10 @@ refused off Windows; a `graph` job must name a `-client-secret-file` that passes
 the same checks the job applies.
 
 What it leaves behind: the scheduler entry; `<out>/.mailarchive-schedule.json`
-naming the schedule, its cadence, the program it runs and the host; and, after
-each run, `<out>/<name>.log` (rotated at 8 MB) plus `.mailarchive-lastrun.json`.
+naming the schedule, its cadence, the program it runs and the host (for a
+scheduled `verify`, its own `<out>/.mailarchive-verify-schedule.json` instead,
+so the backup's record is never overwritten); and, after each run,
+`<out>/<name>.log` (rotated at 8 MB) plus `.mailarchive-lastrun.json`.
 `status` reads all of it.
 
 Per OS:
@@ -963,17 +973,94 @@ a headless nightly check leaves a plain-language notice on disk.
 `verify` reads every byte of every archived file and holds the archive's
 exclusive lock for its whole run, so a scheduled backup that fires meanwhile
 refuses and records nothing. **Run it outside the backup window** — or schedule
-it in its own slot, away from the backup, with an explicit `-name` so it does
-not collide with the backup schedule (both derive their name from `-out`):
+it in its own slot, away from the backup:
 
 ```sh
-mailarchive schedule -interval weekly -at 05:00 -name mailarchive-verify -install -- verify -out ./archive
+mailarchive schedule -interval weekly -at 05:00 -install -- verify -out ./archive
 ```
 
 A scheduled verify automatically gets its own entry name (`mailarchive-<hash of
--out>-verify`), distinct from the backup's, so the two coexist and neither
-overwrites the other — you don't need to pass `-name`. If you point the verify at
-the **same cadence and time** the archive's backup already uses, `schedule`
+-out>-verify`), distinct from the backup's and from every other archive's
+verify, so the two coexist and neither overwrites the other — don't pass a fixed
+`-name`: one shared name across archives would make a second archive's verify
+take over the first's entry. Only with cron (Linux/BSD) can `schedule` see that
+and refuse it; on macOS and Windows the existing entry is not read back, so the
+second install silently replaces the first archive's verify. What `schedule`
+does check on every OS is the archive's own two descriptors: a verify under the
+name of the archive's backup (or a backup under the name of its verify) is
+refused, because it would replace that entry.
+
+`status` watches a scheduled verify the way it watches the backup. The verify
+records its own descriptor, `<out>/.mailarchive-verify-schedule.json`, and
+`status` shows it on a `Verify schedule` line (`verify_schedule` in `-json`)
+beside each archive's `Last verify` line. It WARNs (`verify_stale`) when the
+last verify finished more than twice the verify's own period ago, when the last
+verify started that long ago and has not finished, or when no verify has run in
+twice that period since the verify was installed. The cadence is always the
+verify's, never the backup's. If you install (or re-install) the verify
+schedule after the archive's last verify, the WARN stays until the schedule's
+first run and says so: wait for that run, or run `mailarchive verify -out X`
+now (re-installing again changes nothing). A last verify that is still recorded as running
+while nothing holds the archive lock died mid-run (a crash, a kill, a power
+loss): `status` WARNs at once (`verify_never_finished`), so a verify that dies
+on every run never looks current. A last-verify record that cannot be read is a
+WARN too (`lastverify_unreadable`): the next verify rewrites it. As for the
+backup, the verify's entry is checked as well: a verify recorded but missing
+from this host's scheduler (`verify_not_installed`), or whose program is gone or
+is not this binary (`verify_exe_missing`, `verify_exe_moved`), is a WARN naming
+the re-install, and one installed on another host is `verify_other_host`, since
+its state cannot be checked from here.
+
+**What is not detected:** on launchd (macOS) and Task Scheduler (Windows)
+hosts, two archives that share one explicit `-name` are not detected at
+install: the second archive's verify silently replaces the first's entry,
+because `schedule` does not read those entries back. The archive that lost its
+verify then shows `verify_stale` once its last verify is older than twice its
+period. So leave `-name` out for a verify; each archive then has its own.
+
+Changing a verify's `-name` (for example from the old README's
+`-name mailarchive-verify` to none) installs a second entry and leaves the first
+one running: `schedule` never removes it, since on macOS and Windows it cannot
+tell whether that name is still this archive's. When the archive's records name
+the earlier entry (its verify descriptor, or a backup descriptor an older
+release wrote for the verify) and the scheduler still has it, the install prints
+the command that removes it,
+`mailarchive schedule -name OLD -remove -- verify -out X`. A verify an earlier
+release installed records nothing, so nothing can name it: remove it with the
+`-name` it was installed with (the old README's was `mailarchive-verify`).
+
+A verify installed by an earlier release has no verify descriptor, so `status`
+cannot tell its cadence. It does not guess one, and so raises no `verify_stale`
+for it: re-run that verify's `-install` once so `status` can watch it. (An even
+older release recorded the verify in `.mailarchive-schedule.json` itself;
+`status` still judges that verify against the cadence recorded there.)
+
+The verify descriptor is trusted only as a verify of this archive under a name
+of its own. A file that records some other job, a verify of another folder (an
+archive copied together with its records), or the name of the archive's backup
+is reported as unreadable, with its remedy: it is never deleted by `-remove`,
+and it never makes `-out X -remove` treat the backup as a verify. (A verify
+recorded for a folder that no longer exists is the renamed archive's own: it is
+still shown, and the install names its entry.)
+
+Every descriptor is handed over with the folder, so the entry name it records
+drives `-out X -remove` (and the GUI's Remove and Repair, and the removal
+command `status` prints) only when that entry is this archive's: its own derived
+name, or a custom name whose job backs up this folder and — on cron — whose
+block does, or — on Windows — whose wrapper (the file this tool wrote for the
+task) runs this folder. A name that is another archive's, or a task this tool
+never installed, is refused with the descriptor named; `-name NAME` removes an
+entry by name regardless. (launchd entries are not read back, so a custom name
+another archive's launchd entry holds cannot be told apart there; and a folder
+that is merely absent, an unplugged drive, reads as a folder that was moved, so
+a descriptor that records its path and its entry name still binds.)
+
+Remove a scheduled verify with the same command, `-install` swapped for
+`-remove`; its descriptor goes with it. A verify installed under a `-name` of its own
+(an earlier version of this README passed `-name mailarchive-verify`) is removed
+the same way with that `-name` added before `--`; without it, `-remove` says
+which entry it did not find and points at that. If you point the verify at the
+**same cadence and time** the archive's backup already uses, `schedule`
 refuses (the two would hold the lock against each other on every overlap); pick a
 different `-at` or `-interval`, as above.
 

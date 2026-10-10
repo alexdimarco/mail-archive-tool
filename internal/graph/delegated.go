@@ -119,20 +119,34 @@ func (c *Client) Me(ctx context.Context) (string, error) {
 	return upn, nil
 }
 
-// CheckTokenCache validates a device-auth token cache the way `schedule` must at
-// install time: the file passes the secure-file discipline, parses, and carries a
-// refresh token (so a later unattended run can refresh without a prompt). A
-// missing/unusable cache is refused naming the sign-in remedy (design P7/D-C3).
-func CheckTokenCache(path string) error {
-	tc, err := loadTokenCache(path)
+// CheckSignIn validates a saved device sign-in the way `schedule` must at install
+// time: it passes the secure-file discipline (for a file), parses, and carries a
+// refresh token (so a later unattended run can refresh without a prompt); a
+// missing/unusable sign-in is refused naming the sign-in remedy (design
+// P7/D-C3). It reads through the backend an unattended NewDelegated with the
+// same cfg loads from: cfg.TokenStore (the OS vault — on Windows the CLI keeps
+// the sign-in there and never writes the TokenCachePath file) when set,
+// otherwise the file at cfg.TokenCachePath. So `schedule` accepts a device job
+// exactly when the scheduled run will find its sign-in. Every refusal names
+// where the check looked and the sign-in remedy, whatever stopped the read.
+func CheckSignIn(cfg Config) error {
+	where := "at " + cfg.TokenCachePath
+	if cfg.TokenStore != nil {
+		where = "in the OS credential store for tenant " + cfg.Tenant + " and client id " + cfg.ClientID
+	}
+	tc, err := tokenBackend{store: cfg.TokenStore, path: cfg.TokenCachePath}.load()
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("no saved sign-in at %s: run `mailarchive graph -auth device …` once interactively (as the account this schedule will run as) to sign in before scheduling", path)
+			return fmt.Errorf("no saved sign-in %s: run `mailarchive graph -auth device …` once interactively (as the account this schedule will run as) to sign in before scheduling", where)
 		}
-		return err
+		// Any other failure — a vault this session cannot open (Credential
+		// Manager outside an interactive logon), a file readable by others, a
+		// sign-in that does not parse — keeps its cause, with that cause's own
+		// remedy, inside the same where-and-how-to-sign-in refusal.
+		return fmt.Errorf("cannot read the saved sign-in %s (%w): resolve that, then sign in with `mailarchive graph -auth device …` once interactively (as the account this schedule will run as) before scheduling", where, err)
 	}
 	if tc.Token == nil || strings.TrimSpace(tc.Token.RefreshToken) == "" {
-		return fmt.Errorf("token cache %s carries no refresh token — sign in again with `mailarchive graph -auth device …` before scheduling", path)
+		return fmt.Errorf("the saved sign-in %s carries no refresh token — sign in again with `mailarchive graph -auth device …` before scheduling", where)
 	}
 	return nil
 }
