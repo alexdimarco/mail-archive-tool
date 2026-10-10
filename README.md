@@ -188,7 +188,9 @@ meta form on `file://`, which is what makes tool-free browsing safe.
 
 When a message's HTML cannot be shown as HTML, its page shows the HTML as
 escaped source instead: the words stay readable and searchable, and its inline
-images go into the zip. This is never silent: the run counts it and
+images go into the zip. This is never silent: `status` (and the apps' health
+views) say how many messages are shown this way and why, in plain words, with
+nothing to do about it; the run counts it and
 `attachments-report.tsv` lists it as `html-shown-as-source` with one of these
 reasons: `unsafe-after-reparse` (re-reading the cleaned page as a browser would
 still found something live that must not be), `unparseable`,
@@ -604,8 +606,9 @@ prose.
 **`status -json` (version 2).** Top-level keys: `version`, `posture`, `reasons`,
 `reason_codes`, `out`, `messages`, `indexed`, `indexed_known`, `fillable`,
 `terminal`, `unknown`, `fixity`, `extractable`, `last_run`, `last_verify`,
-`schedule`, `verify_schedule`. (`extractable`, `indexed_known`,
-`verify_schedule` and `last_run.in_progress` are backward-compatible additions
+`schedule`, `verify_schedule`, `shown_as_source`. (`extractable`,
+`indexed_known`, `verify_schedule`, `shown_as_source` and
+`last_run.in_progress` are backward-compatible additions
 at version 2 — new optional keys, so a consumer that ignores unknown keys is
 unaffected and the version is not bumped.)
 
@@ -618,7 +621,8 @@ unaffected and the version is not bumped.)
 - `reasons` is the human WARN/RED lines; `reason_codes` is a **parallel** array
   (same length, same order) of stable snake_case codes, so a gate matches a code
   instead of wording that can change. The codes: `manifest_unreadable`,
-  `incomplete_content`, `unexamined_entries`, `index_behind`,
+  `incomplete_content`, `unexamined_entries`, `shown_as_source` (a note, not a
+  WARN: messages shown as plain text; the posture is unchanged), `index_behind`,
   `index_unreadable`, `index_missing`, `index_busy`, `cloud_sync`,
   `lastrun_unreadable`, `never_ran`, `run_failed`, `auth_remedy`,
   `run_in_progress`, `run_stuck`, `run_never_finished`, `run_cancelled`,
@@ -633,6 +637,13 @@ unaffected and the version is not bumped.)
   this is where it shows; the probe is a write by the account running `status`,
   so a read-only monitoring account on the backup's host sees it for a healthy
   backup: run `status` as the account the job runs as).
+- `shown_as_source` is `{count, reasons}` — how many messages are shown as plain
+  text instead of a formatted page, and a count per reason (`unsafe-after-reparse`,
+  `unparseable`, `too-deeply-nested`, `too-large`; see the report kinds above);
+  absent when there are none. The same fact is a note, never a WARN, in
+  `reasons` with the code `shown_as_source`, and as a "Shown as source:" line in
+  `status` and in the apps' health views: nothing is lost (the original is kept
+  and searchable), so there is nothing to do.
 - `fixity` is `{records, with_fixity}` (coverage, not integrity), or `null` when
   there is no manifest.
 - `extractable` is `{records, records_with_eml}` — how many records have a

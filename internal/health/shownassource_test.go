@@ -116,7 +116,6 @@ func TestStatusSaysMessagesAreShownAsSourceInPlainWords(t *testing.T) {
 // The README lists the reason code, the JSON key and the report kind with every
 // reason (RV-10).
 func TestReadmeNamesShownAsSource(t *testing.T) {
-	t.Skip("open (RV-10): the README does not list shown_as_source yet")
 	b, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
 	if err != nil {
 		t.Fatal(err)

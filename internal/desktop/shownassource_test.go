@@ -15,7 +15,6 @@ import (
 // as plain text, and not for one without. (The GUI's health view prints the same
 // health.Summary lines.)
 func TestHealthCardSaysMessagesAreShownAsSource(t *testing.T) {
-	t.Skip("open (RV-10): health.Summary has no Shown as source line yet")
 	card := func(fallback string) string {
 		out := t.TempDir()
 		m, _ := state.Load(filepath.Join(out, ".mailarchive-manifest.json"))
