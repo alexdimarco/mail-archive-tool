@@ -127,13 +127,17 @@ func send(h http.Handler, method, target, host string) *httptest.ResponseRecorde
 	return rec
 }
 
+// checkPolicy reads the headers as they were sent — the recorder's snapshot at
+// the first write — never the live map, which a handler or the guard could
+// still change after the response went out.
 func checkPolicy(t assure.TB, rec *httptest.ResponseRecorder, what string) {
 	t.Helper()
-	if rec.Header().Get("Content-Security-Policy") == "" {
+	sent := rec.Result().Header
+	if sent.Get("Content-Security-Policy") == "" {
 		t.Fatalf("%s: response has no Content-Security-Policy", what)
 	}
 	for k, want := range policy {
-		if got := rec.Header().Get(k); got != want {
+		if got := sent.Get(k); got != want {
 			t.Fatalf("%s: %s = %q, want %q", what, k, got, want)
 		}
 	}

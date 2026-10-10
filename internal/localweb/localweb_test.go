@@ -128,7 +128,10 @@ func TestHostAllowList(t *testing.T) {
 // deny-all one when the handler set none), nosniff, no-referrer, no-store and
 // same-origin CORP — the Host refusal, errors and redirects included: net/http's
 // own error and redirect paths among them (http.FileServer's error path deletes
-// Cache-Control before it writes).
+// Cache-Control before it writes), and the empty 200 net/http sends for a
+// handler that writes nothing. The headers are read as they were sent (the
+// recorder's snapshot at the first write), not from the live map a handler or
+// the guard could still change after the response went out.
 func TestEveryResponseCarriesThePolicyHeaders(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "page.html"), []byte("<p>page</p>"), 0o600); err != nil {
@@ -147,6 +150,7 @@ func TestEveryResponseCarriesThePolicyHeaders(t *testing.T) {
 		w.Header().Set("Cache-Control", "public, max-age=86400")
 		w.Write([]byte("tries to be cached"))
 	})
+	m.HandleFunc("/silent", func(http.ResponseWriter, *http.Request) {}) // net/http answers 200 itself
 	m.Handle("/files/", http.StripPrefix("/files/", http.FileServer(http.Dir(dir))))
 	h := Wrap(Surface{Name: "serve", Listener: loopbackAt(8099)}, m)
 
@@ -160,6 +164,7 @@ func TestEveryResponseCarriesThePolicyHeaders(t *testing.T) {
 		{"/err", "127.0.0.1:8099", http.StatusServiceUnavailable, denyCSP},
 		{"/moved", "127.0.0.1:8099", http.StatusMovedPermanently, denyCSP},
 		{"/cached", "127.0.0.1:8099", http.StatusOK, denyCSP},
+		{"/silent", "127.0.0.1:8099", http.StatusOK, denyCSP},
 		{"/files/page.html", "127.0.0.1:8099", http.StatusOK, denyCSP},
 		{"/files/missing.html", "127.0.0.1:8099", http.StatusNotFound, denyCSP}, // FileServer's serveError
 		{"/files", "127.0.0.1:8099", anyRedirect, denyCSP},                      // ServeMux's own redirect
@@ -174,7 +179,7 @@ func TestEveryResponseCarriesThePolicyHeaders(t *testing.T) {
 		} else if rec.Code != c.code {
 			t.Errorf("GET %s (Host %s): status %d, want %d", c.path, c.host, rec.Code, c.code)
 		}
-		hd := rec.Header()
+		hd := rec.Result().Header // as sent: the snapshot taken when the status was written
 		for k, want := range map[string]string{
 			"Content-Security-Policy":      c.csp,
 			"X-Content-Type-Options":       "nosniff",

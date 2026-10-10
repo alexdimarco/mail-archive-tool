@@ -60,6 +60,12 @@ func (g *guard) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	g.inner.ServeHTTP(pw, r)
+	// A handler that wrote nothing gets net/http's own empty 200, written on the
+	// underlying writer after it returns, past the policyWriter: write that 200
+	// here instead, so it carries the policy headers like every other response.
+	if !pw.wrote {
+		pw.WriteHeader(http.StatusOK)
+	}
 }
 
 // allowed reports whether host, a request's Host, names this machine as the
