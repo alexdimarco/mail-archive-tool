@@ -50,9 +50,9 @@ func TestOSTOpenRemedyFollowsTheCause(t *testing.T) {
 
 // covers: MA-327, R1, R7, R19, S48
 // IN-1 / F10 / R5: the root banner and README.txt promise a why and a what-to-do
-// only for the rows that carry one. A record row (an unparsed message, an empty
-// attachment, a missing body) has the bare kind and detail; the banner shows on an
-// archive that has only such rows, so it must not say "each row says why".
+// for every row, record rows included (ESC-16, §13.11); the banner shows on an
+// archive that has only record rows (an unparsed message, an empty attachment, a
+// missing body), and those rows now carry the why and the remedy.
 func TestBannerAndReadmeOnlyPromiseWhatRowsCarry(t *testing.T) {
 	src := filepath.Join(tmpDir(t), "Inbox")
 	maildirMessages(t, src, 2)
@@ -80,18 +80,20 @@ func TestBannerAndReadmeOnlyPromiseWhatRowsCarry(t *testing.T) {
 	if !strings.Contains(page, "attachments-report.tsv") {
 		t.Fatalf("positive twin: a record-only archive has no banner:\n%s", page)
 	}
-	if strings.Contains(page, "each row says why") {
-		t.Error("the banner says each row says why it is missing, but a record row carries no why")
+	// ESC-16 (§13.11): a record row now carries a why and a what-to-do too, so the
+	// promise is again for every row.
+	if strings.Contains(page, "a row for a message or folder that left no page") {
+		t.Error("the banner still narrows the promise to ledger rows")
 	}
-	if !strings.Contains(page, "a row for a message or folder that left no page says why it is missing and what to do about it") {
-		t.Error("the banner does not say which rows carry the why and the remedy")
+	if !strings.Contains(page, "each row says why it is missing and what to do about it") {
+		t.Error("the banner does not promise a why and a remedy for every row")
 	}
 	readme := strings.Join(strings.Fields(archiveReadme), " ")
-	if strings.Contains(readme, "The end of each row's detail") {
-		t.Error("README.txt says the end of each row's detail says why, but a record row's does not")
+	if strings.Contains(readme, "row for a message or folder that left no page") {
+		t.Error("README.txt still narrows the promise to ledger rows")
 	}
-	if !strings.Contains(readme, "row for a message or folder that left no page says why it happened and what to do about it") {
-		t.Error("README.txt does not say which rows carry the why and the remedy")
+	if !strings.Contains(readme, "The end of each row's detail says why it happened and what to do about it") {
+		t.Error("README.txt does not promise a why and a remedy for every row")
 	}
 }
 

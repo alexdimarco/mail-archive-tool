@@ -208,6 +208,68 @@ func GapReportRemedy(reason, sourceKind, errnoClass string) string {
 	}
 }
 
+// RecordRowWhy says in plain words why a record row of the report exists, by its
+// kind (the report's first column), in the register of GapWhy (owner ruling §13.11,
+// ESC-16): a record row used to carry only a bare code.
+func RecordRowWhy(kind string) string {
+	switch kind {
+	case "missing-body":
+		return "the message was archived without a body"
+	case "unreadable-body":
+		return "the message body could only be partly read from the source"
+	case "unreadable-attachments":
+		return "the attachments could only be partly read from the source"
+	case "unparsed-message":
+		return "the message could not be parsed, so its page shows only what could be read"
+	case "empty-attachment":
+		return "the attachment came out empty (nothing was downloaded, or its stream failed)"
+	case "unknown":
+		return "this message was archived by an older version that did not track whether anything was missing"
+	case "superseded":
+		return "a complete copy of this message was archived later, so this partly-read page no longer misses anything"
+	case "unresolved-inline-image":
+		return "the message's HTML shows an inline image that is not in the message (common in replies and forwards)"
+	case "html-shown-as-source":
+		return "the message's HTML could not be shown safely as a page, so the page shows it as text"
+	}
+	return "this version of mailarchive does not know why this record has a gap"
+}
+
+// RecordRowRemedy is what to do about a record row, by its kind and class (the
+// report's first and second columns): an honest "nothing to do" where there is none.
+func RecordRowRemedy(kind, class string) string {
+	const kept = "the original is kept"
+	terminal := class == ClassTerminal
+	switch kind {
+	case "missing-body":
+		if terminal {
+			return "nothing to do: the source has no body to give; " + kept
+		}
+		return "download the message in your mail app, then run again; " + kept
+	case "unreadable-body", "unreadable-attachments":
+		if terminal {
+			return "nothing to do: the source would not deliver it as it stands; " + kept
+		}
+		return "open the message in your mail app to check it, then run again; " + kept
+	case "unparsed-message":
+		return "nothing to do: " + kept
+	case "empty-attachment":
+		if terminal {
+			return "nothing to do: the source cannot deliver it; " + kept
+		}
+		return "download it in your mail app, then run again; " + kept
+	case "unknown":
+		return "run again: it is checked once and this row closes; " + kept
+	case "superseded":
+		return "nothing to do: the complete copy is kept"
+	case "unresolved-inline-image":
+		return "nothing to do: it is usually not recoverable; " + kept
+	case "html-shown-as-source":
+		return "nothing to do: the words are kept and searchable; " + kept
+	}
+	return "run again; if it is listed again, keep the original, because this version of mailarchive does not know the cause"
+}
+
 // GapOriginal says whether the original still exists, by reason and source kind
 // (friction F12): the owner's first question about an item "NOT in this archive"
 // is whether it is lost or only not archived. "" when there is nothing true and

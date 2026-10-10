@@ -987,6 +987,9 @@ spreadsheet) in the output directory, regenerated from the manifest each run:
 | `unknown` | fillable | archived by an older version before completeness tracking; re-examined once |
 | `unresolved-inline-image` | info | the HTML references a `cid:` image that isn't in the message — common in replies/forwards and usually not recoverable |
 
+Every row's `detail` ends with a plain-words why and what to do (or "nothing to
+do: the original is kept"), so the report can be read without the tool.
+
 Each run prints a single `Verification:` line summarizing the manifest: how many
 messages are **still missing content**, how many are **source-empty** (the
 source can never deliver them), how many are **not yet re-examined**, and — when

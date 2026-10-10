@@ -134,31 +134,47 @@ func TestReportHasOneRowPerGapWithItsSourceID(t *testing.T) {
 
 // covers: MA-327, R1, R7, S48
 // Record gap labels in the report: the partly-read labels, unparsed and
-// superseded have kinds of their own and the class GapClass gives them.
+// superseded have kinds of their own and the class GapClass gives them. Every
+// record row's detail is its bare code followed by a plain-words why and what to do
+// (owner ruling §13.11, ESC-16), the same register as a ledger row.
 func TestReportKindsForReadGapLabels(t *testing.T) {
 	out := tmpDir(t)
 	m, _ := state.Load(filepath.Join(out, ".mailarchive-manifest.json"))
 	m.Add("k1", state.Record{Path: "s/a.html", Folder: "Inbox", Subject: "A", Missing: []string{"unreadable:body", "unreadable:attachments", "body"}})
 	m.Add("k2", state.Record{Path: "s/b.html", Folder: "Inbox", Subject: "B", Terminal: []string{"unparsed", "superseded", "x.pdf"}})
+	m.Add("k3", state.Record{Path: "s/c.html", Folder: "Inbox", Subject: "C", Missing: []string{state.UnknownSentinel}})
+	m.Add("k4", state.Record{Path: "s/d.html", Folder: "Inbox", Subject: "D", Unresolved: []string{"logo@x"}, BodyFallback: "unparseable"})
+	m.Add("k5", state.Record{Path: "s/e.html", Folder: "Inbox", Subject: "E", Terminal: []string{"body"}})
 	path, rows := writeReport(out, m, false, log.New(io.Discard, "", 0))
-	if rows != 6 {
-		t.Fatalf("%d report rows, want 6", rows)
+	if rows != 10 {
+		t.Fatalf("%d report rows, want 10", rows)
 	}
-	got := map[string]string{}
+	type want struct{ class, detail string }
+	got := map[string]want{}
 	for _, l := range readLines(t, path)[1:] {
 		f := strings.Split(l, "\t")
-		got[f[0]+"/"+f[5]] = f[1]
+		got[f[0]+"/"+f[1]] = want{f[1], f[5]}
 	}
-	for k, want := range map[string]string{
-		"unreadable-body/unreadable:body":               "fillable",
-		"unreadable-attachments/unreadable:attachments": "fillable",
-		"missing-body/(message body)":                   "fillable",
-		"unparsed-message/unparsed":                     "terminal",
-		"superseded/superseded":                         "info",
-		"empty-attachment/x.pdf":                        "terminal",
+	const orig = "the original is kept"
+	for k, w := range map[string]want{
+		"unreadable-body/fillable":        {"fillable", "unreadable:body · why: the message body could only be partly read from the source · what to do: open the message in your mail app to check it, then run again; " + orig},
+		"unreadable-attachments/fillable": {"fillable", "unreadable:attachments · why: the attachments could only be partly read from the source · what to do: open the message in your mail app to check it, then run again; " + orig},
+		"missing-body/fillable":           {"fillable", "(message body) · why: the message was archived without a body · what to do: download the message in your mail app, then run again; " + orig},
+		"missing-body/terminal":           {"terminal", "(message body) · why: the message was archived without a body · what to do: nothing to do: the source has no body to give; " + orig},
+		"unparsed-message/terminal":       {"terminal", "unparsed · why: the message could not be parsed, so its page shows only what could be read · what to do: nothing to do: " + orig},
+		"superseded/info":                 {"info", "superseded · why: a complete copy of this message was archived later, so this partly-read page no longer misses anything · what to do: nothing to do: the complete copy is kept"},
+		"empty-attachment/terminal":       {"terminal", "x.pdf · why: the attachment came out empty (nothing was downloaded, or its stream failed) · what to do: nothing to do: the source cannot deliver it; " + orig},
+		"unknown/fillable":                {"fillable", "unknown · why: this message was archived by an older version that did not track whether anything was missing · what to do: run again: it is checked once and this row closes; " + orig},
+		"unresolved-inline-image/info":    {"info", "logo@x · why: the message's HTML shows an inline image that is not in the message (common in replies and forwards) · what to do: nothing to do: it is usually not recoverable; " + orig},
+		"html-shown-as-source/info":       {"info", "unparseable · why: the message's HTML could not be shown safely as a page, so the page shows it as text · what to do: nothing to do: the words are kept and searchable; " + orig},
 	} {
-		if got[k] != want {
-			t.Errorf("row %q: class %q, want %q (rows: %v)", k, got[k], want, got)
+		g, ok := got[k]
+		if !ok {
+			t.Errorf("no %q row (rows: %v)", k, got)
+			continue
+		}
+		if g != w {
+			t.Errorf("row %q: class %q detail %q\nwant class %q detail %q", k, g.class, g.detail, w.class, w.detail)
 		}
 	}
 }
