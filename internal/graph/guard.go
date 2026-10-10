@@ -3,6 +3,7 @@ package graph
 import (
 	"crypto/sha256"
 	"fmt"
+	"net/http"
 	"net/url"
 	"path"
 	"strings"
@@ -131,6 +132,50 @@ type DepthError struct {
 
 func (e *DepthError) Error() string {
 	return fmt.Sprintf("graph folder hierarchy is deeper than %d levels (Exchange Online's maximum folder depth), so its walk stopped", e.Limit)
+}
+
+// maxRedirects is the number of redirects a request follows before the next one
+// is refused: net/http's own limit of ten, which a CheckRedirect of our own
+// replaces (extraction design §4.5, RR2b-C4).
+const maxRedirects = 10
+
+// RedirectError is the refusal of a redirect (extraction design XC26, RR2b-C4):
+// the answer pointed off the host the request was sent to, or the request was
+// redirected more than maxRedirects times. net/http returns it inside a
+// *url.Error, so a caller finds it with errors.As; graph.Classify would read that
+// as a network failure, which is why a caller matches this type first. It names
+// the host the redirect pointed at, never the link, and the request that was
+// refused was never sent: the bearer token did not leave.
+type RedirectError struct {
+	Host string // the host (and port) the redirect pointed at, bounded
+	Hops int    // how many redirects the request had met, this one included
+}
+
+func (e *RedirectError) Error() string {
+	if e.Hops > maxRedirects {
+		return fmt.Sprintf("graph redirected the request more than %d times (to %q), so it was not followed any further", maxRedirects, e.Host)
+	}
+	return fmt.Sprintf("graph redirected the request to %q, which is not the host it was sent to; the redirect was not followed and no sign-in token was sent there", e.Host)
+}
+
+// refuseRedirect is the CheckRedirect of every client the package builds. A
+// redirect is followed only to the origin (scheme, host and port, after the
+// default-port normalization of XC25) its request was first sent to, at most
+// maxRedirects times: oauth2's Transport adds the bearer token to every hop, so a
+// redirect to another host would otherwise carry it there.
+func refuseRedirect(req *http.Request, via []*http.Request) error {
+	host := req.URL.Host
+	if len(host) > 253 {
+		host = host[:253]
+	}
+	first := via[0].URL
+	if req.URL.Scheme != first.Scheme || !strings.EqualFold(req.URL.Hostname(), first.Hostname()) || portOf(req.URL) != portOf(first) {
+		return &RedirectError{Host: host, Hops: len(via)}
+	}
+	if len(via) > maxRedirects {
+		return &RedirectError{Host: host, Hops: len(via)}
+	}
+	return nil
 }
 
 // portOf is u's port, or its scheme's default.

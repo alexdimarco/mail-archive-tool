@@ -208,19 +208,27 @@ func (cfg Config) settings() settings {
 // transport the token endpoint shares; the $value request goes through its own
 // base transport (mimeTransport), under the same token source.
 func newClient(ctx context.Context, base string, src oauth2.TokenSource, b settings, meMode bool) *Client {
-	mimeCtx := context.WithValue(ctx, oauth2.HTTPClient, mimeTransport(b.wrap))
 	src = oauth2.ReuseTokenSource(nil, src)
+	// The $value client is built here, over its own base transport and the
+	// shared token source, never by oauth2.NewClient from a context that carries
+	// httpTransport's client: NewClient copies that client's Timeout (RR2b-C3),
+	// which would cut every download longer than the JSON request timeout. It
+	// takes the redirect refusal (XC26) and no Timeout.
+	mime := mimeTransport(b.wrap)
 	return &Client{
 		base:        strings.TrimRight(base, "/"),
 		hc:          oauth2.NewClient(ctx, src),
 		reqTimeout:  b.req,
 		mimeTimeout: b.mime,
-		mimeHC:      oauth2.NewClient(mimeCtx, src),
-		tokens:      src,
-		mimeIdle:    b.idle,
-		mimeHeader:  b.header,
-		pageCap:     b.pageCap,
-		meMode:      meMode,
+		mimeHC: &http.Client{
+			Transport:     &oauth2.Transport{Base: mime.Transport, Source: src},
+			CheckRedirect: mime.CheckRedirect,
+		},
+		tokens:     src,
+		mimeIdle:   b.idle,
+		mimeHeader: b.header,
+		pageCap:    b.pageCap,
+		meMode:     meMode,
 	}
 }
 
@@ -229,11 +237,21 @@ func newClient(ctx context.Context, base string, src oauth2.TokenSource, b setti
 // connection and then goes silent is cut off after reqTimeout (app-only and
 // delegated share it, so device sign-in is bounded too — R17/MA-98, D-C5). A
 // test's wrap, when set, wraps its transport.
+//
+// The client also carries the two bounds of the extraction design's XC26: a
+// CheckRedirect that refuses any redirect off the host the request was sent to
+// (oauth2's Transport adds the bearer token on every hop), and Timeout:
+// reqTimeout, the F15 fix, which bounds a token fetch's whole exchange, its body
+// included, and so the deviceSource mutex hold it runs under. oauth2.NewClient
+// copies both into every Graph client built over this one (oauth2.go:357-366),
+// so the Timeout bounds every request through them as well, which changes
+// nothing for the JSON requests, each of which already runs under a reqTimeout
+// context.
 func httpTransport(reqTimeout time.Duration, wrap func(http.RoundTripper) http.RoundTripper) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.ResponseHeaderTimeout = reqTimeout
 	transport.TLSHandshakeTimeout = 30 * time.Second
-	return &http.Client{Transport: wrapped(transport, wrap)}
+	return &http.Client{Transport: wrapped(transport, wrap), CheckRedirect: refuseRedirect, Timeout: reqTimeout}
 }
 
 // mimeTransport is the $value request's own base transport (fault-isolation
@@ -241,11 +259,12 @@ func httpTransport(reqTimeout time.Duration, wrap func(http.RoundTripper) http.R
 // timeout (60 s), which would fail a large conversion before its first byte on
 // every run, and a context timer can only shorten it; this one sets none, and
 // MIMETo runs its own header timer instead. It sets no Client.Timeout either,
-// which would bound the whole download.
+// which would bound the whole download. It does refuse a redirect off the host
+// (XC26, MA-528): the bearer token is added on every hop.
 func mimeTransport(wrap func(http.RoundTripper) http.RoundTripper) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSHandshakeTimeout = 30 * time.Second
-	return &http.Client{Transport: wrapped(transport, wrap)}
+	return &http.Client{Transport: wrapped(transport, wrap), CheckRedirect: refuseRedirect}
 }
 
 func wrapped(t http.RoundTripper, wrap func(http.RoundTripper) http.RoundTripper) http.RoundTripper {
