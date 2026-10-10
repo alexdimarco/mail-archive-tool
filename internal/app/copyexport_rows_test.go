@@ -8,39 +8,22 @@ import "testing"
 // piece it covers is built. What stays here at the end is what a later slice or an
 // owner decision closes, each with the row it cites.
 
-// covers: MA-416, R29, R5, S52
-func TestCopyExportRowMA416(t *testing.T) {
-	t.Skip("MA-416: the exclusive export root, its random suffix and the journal start are not built; lands in EW-E2")
-}
-
-// covers: MA-417, R4, R6, R29, S52
-func TestCopyExportRowMA417(t *testing.T) {
-	t.Skip("MA-417: the contained writer, the handle-relative no-replace placement and the export-only naming pass are not built; lands in EW-E2")
-}
-
-// covers: MA-418, R4, R6, R29
-func TestCopyExportRowMA418(t *testing.T) {
-	t.Skip("MA-418: FoldKey and the casefold-unique naming are not built; lands in EW-E2")
+// covers: R4
+// The archive writer's own names keep F75 (bidi controls), F91 (the 255-byte segment
+// limit) and F111 (the reserved device names SanitizeSegment misses: COM¹, CONIN$,
+// "CON .txt"): export.Exporter still passes an RLO control, a 300-byte CJK segment
+// and those names through util.SanitizeSegment unchanged. The copy export has its own,
+// stricter pass (util.ExportSegment, ruling Q15, MA-417), so it needs no archive
+// migration; fixing the archive's names renames directories and changes local keys,
+// so it needs a migration of its own (fault-isolation §3 N1). An open gap, not
+// accepted, which this encoder keeps open until that migration lands.
+func TestArchiveWriterNamesKeepF75F91F111(t *testing.T) {
+	t.Skip("R4: the archive writer's names keep F75/F91/F111 (ruling Q15, extraction design §4.18); the fix needs its own migration, owned outside the extraction workspace; the copy export's naming pass (util.ExportSegment) closes MA-417 meanwhile")
 }
 
 // covers: MA-419, R29, R17, S52
 func TestCopyExportRowMA419(t *testing.T) {
 	t.Skip("MA-419: the Microsoft 365 adapter and its byte-exact originals are not built; lands in EW-E2")
-}
-
-// covers: MA-421, R29, S52
-func TestCopyExportRowMA421(t *testing.T) {
-	t.Skip("MA-421: the manifest and SHA256SUMS built from the run record are not built; lands in EW-E2")
-}
-
-// covers: MA-422, R29, S52
-func TestCopyExportRowMA422(t *testing.T) {
-	t.Skip("MA-422: the README verify forms and the fingerprint are not built; lands in EW-E2")
-}
-
-// covers: MA-508, R29, S52
-func TestCopyExportRowMA508(t *testing.T) {
-	t.Skip("MA-508: the external sha256sum check needs the finished export; lands in EW-E2")
 }
 
 // covers: MA-426, R29, R10, R1, S52
@@ -68,19 +51,9 @@ func TestCopyExportRowMA432(t *testing.T) {
 	t.Skip("MA-432: the run record's bounded engine is not built; lands in EW-E2")
 }
 
-// covers: MA-439, R29, R4
-func TestCopyExportRowMA439(t *testing.T) {
-	t.Skip("MA-439: the modes set at creation are not built; lands in EW-E2")
-}
-
 // covers: MA-440, R29, R12
 func TestCopyExportRowMA440(t *testing.T) {
 	t.Skip("MA-440: the outcome mapping is not built; lands in EW-E2")
-}
-
-// covers: MA-441, R4, R29
-func TestCopyExportRowMA441(t *testing.T) {
-	t.Skip("MA-441: the path budget is not built; lands in EW-E2")
 }
 
 // covers: MA-447, R29, R5, S52
@@ -96,11 +69,6 @@ func TestCopyExportRowMA516(t *testing.T) {
 // covers: MA-517, R17, R29, S52
 func TestCopyExportRowMA517(t *testing.T) {
 	t.Skip("MA-517: the sign-in classification is not built; lands in EW-E2")
-}
-
-// covers: MA-519, R29, R4, R12
-func TestCopyExportRowMA519(t *testing.T) {
-	t.Skip("MA-519: the removable-filesystem rules are not built; lands in EW-E2")
 }
 
 // covers: MA-532, R29, R12, S52
