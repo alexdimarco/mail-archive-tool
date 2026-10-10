@@ -123,9 +123,10 @@ var afterCheck = func(rel string) {}
 
 // checkEntry walks segs in root, Lstat-ing each prefix: every component on the
 // way must be a real folder, and the last a folder or a file the name rules
-// allow. It returns the last entry's Lstat info (nil for the root) and kind.
-func checkEntry(root *os.Root, segs []string) (fs.FileInfo, entryKind, bool) {
-	var fi fs.FileInfo
+// allow. It returns the Lstat info of every prefix of segs (empty for the root)
+// and the last entry's kind.
+func checkEntry(root *os.Root, segs []string) ([]fs.FileInfo, entryKind, bool) {
+	var infos []fs.FileInfo
 	kind := entryDir
 	for i := range segs {
 		info, mode, surrogate, err := probeEntry(root, filepath.Join(segs[:i+1]...))
@@ -136,21 +137,37 @@ func checkEntry(root *os.Root, segs []string) (fs.FileInfo, entryKind, bool) {
 		if k == entryRefused || (i < len(segs)-1 && k != entryDir) {
 			return nil, entryRefused, false
 		}
-		fi, kind = info, k
+		infos, kind = append(infos, info), k
 	}
 	if kind == entryFile && !fileAllowed(len(segs), segs[len(segs)-1]) {
 		return nil, entryRefused, false
 	}
-	return fi, kind, true
+	return infos, kind, true
+}
+
+// sameDir reports whether the directory root is bound to is the one info (an
+// Lstat) described.
+func sameDir(root *os.Root, info fs.FileInfo) bool {
+	d, err := root.Open(".")
+	if err != nil {
+		return false
+	}
+	defer d.Close()
+	got, err := d.Stat()
+	return err == nil && os.SameFile(info, got)
 }
 
 // openChecked opens segs in root once checkEntry allows it. A folder must hold a
-// servable index.html, its only way in. The handle opened must be the entry the
-// check saw (same file, same kind): os.Root follows a link that stays inside
-// the archive, so a link swapped in after the check would otherwise reach
-// search.db.
+// servable index.html, its only way in. The open walks the path one folder at a
+// time, each bound with OpenRoot and compared with the entry its Lstat saw, so a
+// link swapped in at ANY component after that component's check is caught: the
+// opened path is the path the name rules judged, not merely a file the last Lstat
+// agrees with (os.Root follows a link that stays inside the archive, which would
+// otherwise reach search.db or a staging page). The file itself must be the entry
+// the check saw (same file, same kind), and is opened without waiting for a
+// writer, so a FIFO swapped in cannot block the handler.
 func openChecked(root *os.Root, segs []string) (http.File, error) {
-	seen, kind, ok := checkEntry(root, segs)
+	infos, kind, ok := checkEntry(root, segs)
 	if !ok {
 		return nil, fs.ErrNotExist
 	}
@@ -160,11 +177,36 @@ func openChecked(root *os.Root, segs []string) (http.File, error) {
 		}
 	}
 	rel := "."
+	var seen fs.FileInfo
 	if len(segs) > 0 {
 		rel = filepath.Join(segs...)
+		seen = infos[len(infos)-1]
 	}
 	afterCheck(rel)
-	f, err := root.Open(rel)
+	cur := root
+	release := func() {
+		if cur != root {
+			cur.Close()
+		}
+	}
+	name := "."
+	if len(segs) > 0 {
+		for i := 0; i < len(segs)-1; i++ {
+			next, err := cur.OpenRoot(segs[i])
+			release()
+			if err != nil {
+				return nil, fs.ErrNotExist
+			}
+			cur = next
+			if !sameDir(cur, infos[i]) {
+				release()
+				return nil, fs.ErrNotExist
+			}
+		}
+		name = segs[len(segs)-1]
+	}
+	f, err := cur.OpenFile(name, openFlags, 0)
+	release()
 	if err != nil {
 		return nil, fs.ErrNotExist
 	}
