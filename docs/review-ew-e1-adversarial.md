@@ -13,7 +13,7 @@
 
 | ID | Lens | Claim (file:line) | Verdict | Evidence (repro or refutation) | Fix commit | Tombstone test |
 |---|---|---|---|---|---|---|
-| AO1 | outside aggressor | WellKnownFolderID decodes its body with no size limit (graph.go:419; FolderTree calls it twice) | CONFIRMED (medium) | Fake served `{"id":"` plus 200 MiB; id returned with err=nil. Reproduced again in the fix tombstone (75 MiB id accepted). | 09a0d5e | TestWellKnownFolderIDBodyIsBounded (MA-528) |
+| AO1 | outside aggressor | WellKnownFolderID decodes its body with no size limit (graph.go:419; FolderTree calls it twice) | CONFIRMED (medium) | Fake served `{"id":"` plus 200 MiB; id returned with err=nil. Reproduced again in the fix tombstone (72 MiB id accepted: 75497472 bytes). | 09a0d5e | TestWellKnownFolderIDBodyIsBounded (MA-528) |
 | AO2 | outside aggressor | MessagePage's $expand fallback fires on any non-401/403/404/429 StatusError (workspace.go:262-270) | NON_GOAL | Mechanism real, but it is MA-285's acknowledged best-effort limit (design §4.5 lines 841-844); capture's Messages falls back on any error, so this is stricter than its precedent. No flag was asked for in the design. | - | - |
 | AO3 | outside aggressor | putIfNewer check-then-act (delegated.go:312-321) | DUPLICATE of AI1 | Same mechanism; the UPN-only identity half is AI2. | (AI1) | (AI1) |
 | AO4 | outside aggressor | graph.Classify reads a refused redirect as ClassTransport (graph.go:1069) | NON_GOAL | Design §4.5 lines 894-895 and guard.go:146-148 state the limit: callers match *RedirectError first (RR2b-C4). Token does not leave. | - | - |
@@ -28,4 +28,17 @@
 
 ## Escalations
 
-- AI1, cross-process: the fix serialises writes inside one process only. A sign-in in the dashboard process during a scheduled run's load-to-write window can still be overwritten (a forced re-sign-in; no token is ever written under another identity). Closing it needs a cross-process lock on the token file and on each vault backend, on three operating systems: an owner decision. Skip encoder: TestTokenWriteBackCrossProcessSignIn (MA-515, XC7).
+- AI1, cross-process: the fix serialises writes inside one process only. A sign-in in the dashboard process during a scheduled run's load-to-write window can still be overwritten (a forced re-sign-in; no token is ever written under another identity). Closing it needs a cross-process lock, for example one sidecar advisory lock covering every backend (internal/lockfile exists but is try-lock only); whether it tries or blocks, and where the lock file lives, changes scheduled-run and dashboard behaviour and adds an on-disk artifact: an owner decision. Skip encoder: TestTokenWriteBackCrossProcessSignIn (MA-515, XC7).
+
+## Re-verification
+
+A fresh-eyes check re-ran each fix at 5e86950 by reverting it in a probe worktree.
+
+| Item | Outcome |
+|---|---|
+| AO1 (09a0d5e) | Pass. Tombstone red for the stated reason with the fix reverted ("id 75497472 bytes, err <nil>"), green with it. Mirrors getJSON's bound; no other unbounded Graph body decode remains. |
+| AC1 (6106361) | Pass. Tombstone red without guard.forget ("did not terminate ... (1 requests)"), green with it. A fetched page is still ListingRepeat; refused admits are not undone. |
+| AI1 (22007f1) | Pass. Only the load-to-write subtest goes red without the lock; green under -race with count=3. No deadlock found. |
+| ESC-AI1 | Pass. Skip encoder carries covers MA-515, R17, R5, S20 and cites XC7. Wording nit (a lock on "each vault backend" overstated) corrected above. The escalation stands. |
+| Suite | Pass. Unfiltered go test ./..., gofmt -l and vet3 clean. |
+| New finding: AO1 figure | Real, doc-only nit. 75497472 bytes is 72 MiB (64 + 8 MiB chunks), not 75 MiB. Corrected in the AO1 row. No code or tombstone change; the commit message of 09a0d5e is not rewritten. |
