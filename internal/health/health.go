@@ -464,9 +464,24 @@ func verifyReinstall(in Input) string {
 	return "`mailarchive schedule " + strings.Join(quoteTokens(toks, in.GOOS), " ") + "`"
 }
 
+// verifyLogHint names where the scheduled verify's log is: the descriptor's, or
+// the run log's default place beside the archive.
+func verifyLogHint(in Input) string {
+	if in.VerifyDesc.Log != "" {
+		return in.VerifyDesc.Log
+	}
+	return filepath.Join(in.Out, in.VerifyDesc.Name+".log")
+}
+
 // verifyStaleRemedy is what to do about a stale scheduled verify: put it back
 // (verifyReinstall), or run a verify now.
 func verifyStaleRemedy(in Input) string {
+	// A last verify still recorded as running while a process holds the archive
+	// lock is running now (or hung): re-installing changes nothing, and another
+	// verify would collide with the lock (K3).
+	if in.LockHeld && in.LastVerifyState == state.LastVerifyPresent && in.LastVerify.Status == state.VerifyRunning {
+		return fmt.Sprintf("a verify holds the archive lock and is still running: let it finish (its log is %s), or, if it is hung, end its process and run `mailarchive verify -out %q`", verifyLogHint(in), in.Out)
+	}
 	reinstall := verifyReinstall(in)
 	why := "it has stopped running here"
 	goos := in.GOOS
@@ -621,16 +636,47 @@ func quoteTokens(toks []string, goos string) []string {
 // $ or backticks (unlike Go's %q double-quoted form); Windows uses double
 // quotes with doubled embedded quotes.
 func shellQuoteToken(s, goos string) string {
-	if !needsShellQuoting(s) {
-		return s
-	}
 	if goos == "" {
 		goos = runtime.GOOS
+	}
+	if goos == "windows" && windowsExpands(s) {
+		// No quoting is inert in both cmd and PowerShell (the Windows terminal's
+		// default): the token is not pasted. `<` makes either shell refuse the
+		// line, so the operator fills the value in by hand (G8-AO2).
+		return unsafeTokenPlaceholder
+	}
+	if !needsShellQuoting(s) {
+		return s
 	}
 	if goos == "windows" {
 		return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
 	}
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// unsafeTokenPlaceholder stands in for a Windows token no quoting makes inert.
+const unsafeTokenPlaceholder = "<edit-this-value-by-hand>"
+
+// windowsExpands reports whether a Windows shell would expand something in s even
+// inside double quotes: cmd's %VAR% and ^ escape, PowerShell's backtick escape,
+// $(...), ${...} and $name / $env:name / $? variables. A `$` that ends the token
+// or is followed by a path separator (an administrative share, \\nas\backup$) is
+// literal in both.
+func windowsExpands(s string) bool {
+	if strings.ContainsAny(s, "%^`") {
+		return true
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] != '$' || i+1 == len(s) {
+			continue
+		}
+		switch c := s[i+1]; {
+		case c == '\\', c == '/', c == ' ', c == '"', c == '.', c == '-':
+		default:
+			return true
+		}
+	}
+	return false
 }
 
 // needsShellQuoting reports whether s must be quoted to survive a shell as one

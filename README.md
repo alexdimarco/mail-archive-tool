@@ -978,9 +978,13 @@ period. So leave `-name` out for a verify; each archive then has its own.
 Changing a verify's `-name` (for example from the old README's
 `-name mailarchive-verify` to none) installs a second entry and leaves the first
 one running: `schedule` never removes it, since on macOS and Windows it cannot
-tell whether that name is still this archive's. While the scheduler still has
-it, the install prints the command that removes it,
-`mailarchive schedule -name OLD -remove -- verify -out X`.
+tell whether that name is still this archive's. When the archive's records name
+the earlier entry (its verify descriptor, or a backup descriptor an older
+release wrote for the verify) and the scheduler still has it, the install prints
+the command that removes it,
+`mailarchive schedule -name OLD -remove -- verify -out X`. A verify an earlier
+release installed records nothing, so nothing can name it: remove it with the
+`-name` it was installed with (the old README's was `mailarchive-verify`).
 
 A verify installed by an earlier release has no verify descriptor, so `status`
 cannot tell its cadence. It does not guess one, and so raises no `verify_stale`
@@ -992,7 +996,18 @@ The verify descriptor is trusted only as a verify of this archive under a name
 of its own. A file that records some other job, a verify of another folder (an
 archive copied together with its records), or the name of the archive's backup
 is reported as unreadable, with its remedy: it is never deleted by `-remove`,
-and it never makes `-out X -remove` treat the backup as a verify.
+and it never makes `-out X -remove` treat the backup as a verify. (A verify
+recorded for a folder that no longer exists is the renamed archive's own: it is
+still shown, and the install names its entry.)
+
+Every descriptor is handed over with the folder, so the entry name it records
+drives `-out X -remove` (and the GUI's Remove) only when that entry is this
+archive's: its own derived name, or a custom name whose job backs up this folder
+and — on cron — whose block does, or — on Windows — for which this tool wrote
+a wrapper. A name that is another archive's, or a task this tool never
+installed, is refused with the descriptor named; `-name NAME` removes an entry
+by name regardless. (launchd entries are not read back, so a custom name another
+archive's launchd entry holds cannot be told apart there.)
 
 Remove a scheduled verify with the same command, `-install` swapped for
 `-remove`; its descriptor goes with it. A verify installed under a `-name` of its own
