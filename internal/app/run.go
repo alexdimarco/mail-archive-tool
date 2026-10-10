@@ -653,6 +653,7 @@ func recordRun(opts Options, lr state.LastRun, result *Result, err *error, logge
 	default:
 		lr.Status = state.RunFailed
 		lr.Error = (*err).Error()
+		lr.ErrorKind = errorKindOf(*err)
 	}
 	lr.Exported, lr.Filled = result.Stats.Exported, result.Stats.Filled
 	lr.Fillable, lr.Terminal, lr.Unknown, lr.IndexErrors = result.Fillable, result.Terminal, result.Unknown, result.IndexErrors
@@ -668,6 +669,25 @@ func recordRun(opts Options, lr state.LastRun, result *Result, err *error, logge
 		}
 		logger.Printf("warning: could not record this run in %s (%v): `mailarchive status` may show this run as \"never finished\" or still show the previous result, whatever this log says about how it ended — run again once the file can be written%s", filepath.Join(opts.Out, state.LastRunName), werr, hint)
 	}
+}
+
+// errorKindOf names the search-index refusal err is (state.ErrKind*), or ""
+// for any other failure, for the last-run record: an owner surface's health
+// view renders the refusal in its own words from the kind.
+func errorKindOf(err error) string {
+	var ioe *IndexOpenError
+	if !errors.As(err, &ioe) {
+		return ""
+	}
+	switch ioe.Kind {
+	case IndexBusy:
+		return state.ErrKindIndexBusy
+	case IndexUnwritable:
+		return state.ErrKindIndexUnwritable
+	case IndexDamagedNoManifest:
+		return state.ErrKindIndexDamagedNoManifest
+	}
+	return state.ErrKindIndexDamaged
 }
 
 func plural(n int, one, many string) string {

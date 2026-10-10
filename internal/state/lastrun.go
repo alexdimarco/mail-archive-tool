@@ -41,6 +41,14 @@ const (
 	RunCancelled = "cancelled"
 )
 
+// LastRun.ErrorKind values: the search-index refusals a failed run records.
+const (
+	ErrKindIndexBusy              = "index_busy"                // another program holds search.db
+	ErrKindIndexUnwritable        = "index_unwritable"          // read-only file or folder, full or failing disk
+	ErrKindIndexDamaged           = "index_damaged"             // unreadable, a manifest to rebuild from
+	ErrKindIndexDamagedNoManifest = "index_damaged_no_manifest" // unreadable, nothing to rebuild from
+)
+
 // LastRun is written as "running" the moment a run holds the archive lock —
 // before any early return — and finalized when it ends, so `status` can tell
 // a run that never finished (power loss, kill) from one that succeeded.
@@ -65,6 +73,11 @@ type LastRun struct {
 	Unknown     int      `json:"unknown"`
 	IndexErrors int      `json:"index_errors"`
 	Error       string   `json:"error,omitempty"`
+	// ErrorKind names the refusal Error carries when it is one the app owner's
+	// surfaces say in their own words (an ErrKind* constant), so the desktop's and
+	// mailarchive-gui's health views need not print the CLI command and SQLite's
+	// text recorded in Error. Absent on older records and on any other failure.
+	ErrorKind string `json:"error_kind,omitempty"`
 	// NoIndex records that the run was told not to build the search index
 	// (-index=false), so `status` does not warn that an archive deliberately
 	// kept without search.db has lost it. Absent (false) on older records.

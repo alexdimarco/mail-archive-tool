@@ -267,7 +267,7 @@ func Assess(in Input, now time.Time) Report {
 		lr := in.LastRun
 		switch lr.Status {
 		case state.RunFailed:
-			r.red("run_failed", fmt.Sprintf("the last run (%s) FAILED: %s", lr.Started.Local().Format("2006-01-02 15:04"), lr.Error))
+			r.red("run_failed", fmt.Sprintf("the last run (%s) FAILED: %s", lr.Started.Local().Format("2006-01-02 15:04"), runErrorText(in, lr)))
 			if looksLikeAuthFailure(lr.Error) {
 				r.note("auth_remedy", "  remedy: authentication failed — for an app-auth job the client secret may have expired (rotate it in Entra and rewrite the secret file); for a device-auth job the sign-in may have expired (re-run `mailarchive graph -auth device …` to sign in again)")
 			}
@@ -483,6 +483,29 @@ func rebuildHow(in Input) string {
 		return "choose \"Rebuild the search index\" below to rebuild it from your archive"
 	}
 	return fmt.Sprintf("rebuild it from the archive with `mailarchive reindex -rebuild -out %q`", in.Out)
+}
+
+// runErrorText is the last run's failure as the surface reading it should see
+// it. The CLI and -json print what the run recorded (its command and SQLite's
+// words). An owner surface (desktop, gui) prints a search-index refusal, which
+// the record names by kind, in plain words with that surface's own rebuild
+// action, so the health view never tells an owner with no command line to run
+// one (g7 friction re-verification of F3). Any other failure is verbatim.
+func runErrorText(in Input, lr state.LastRun) string {
+	if in.Surface == "" {
+		return lr.Error
+	}
+	switch lr.ErrorKind {
+	case state.ErrKindIndexBusy:
+		return "the search index is in use by another program — close any other program that has it open, then try again"
+	case state.ErrKindIndexUnwritable:
+		return "the archive cannot be written to (a read-only folder or file, or a full or failing disk) — make it writable or free some space, then try again"
+	case state.ErrKindIndexDamaged:
+		return "the search index is damaged — " + rebuildHow(in) + ", then try again"
+	case state.ErrKindIndexDamagedNoManifest:
+		return fmt.Sprintf("the search index is damaged, and the archive has no manifest to rebuild it from — move search.db out of %s, then try again; a fresh index is built", in.Out)
+	}
+	return lr.Error
 }
 
 // verifyRunning reports whether a verify is running now: the archive lock is
@@ -899,7 +922,7 @@ func Summary(in Input, rep Report) []string {
 		if lr.Status == state.RunOK {
 			line += fmt.Sprintf(" · exported %d · filled %d · took %s", lr.Exported, lr.Filled, lr.Finished.Sub(lr.Started).Round(time.Second))
 		} else if lr.Error != "" {
-			line += ": " + lr.Error
+			line += ": " + runErrorText(in, lr)
 		}
 		lines = append(lines, line)
 	case state.LastRunAbsent:
