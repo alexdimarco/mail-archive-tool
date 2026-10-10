@@ -234,6 +234,12 @@ func Assess(in Input, now time.Time) Report {
 		}
 		r.warn("incomplete_content", msg)
 	}
+	// Shown as source (RV-10): not wrong and nothing to fix, but an owner whose
+	// mail is shown as plain text should be able to learn it here. A note — it
+	// never moves the posture.
+	if txt := shownAsSourceText(in.ShownAsSource); txt != "" {
+		r.note("shown_as_source", txt)
+	}
 	if in.Unknown > 0 {
 		r.warn("unexamined_entries", fmt.Sprintf("%d entr%s predate completeness tracking and are re-examined by incremental runs until none remain", in.Unknown, plural(in.Unknown, "y", "ies")))
 	}

@@ -44,7 +44,6 @@ func TestGatherCarriesShownAsSource(t *testing.T) {
 // shown_as_source, no WARN/RED prefix, and the posture is whatever it was — a
 // healthy backup stays GREEN, a WARN or RED one keeps its own verdict.
 func TestShownAsSourceIsANoteNotAWarn(t *testing.T) {
-	t.Skip("open (RV-10): Assess does not mention messages shown as source yet")
 	now := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
 
 	in := shownInput(now)
