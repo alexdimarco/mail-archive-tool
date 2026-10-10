@@ -38,10 +38,10 @@ func GapErrnoClass(detail string) string {
 // stuck threshold to learn there is a way to save the item (FC23(1)).
 const GapDeadlineRemedy = "If you are about to lose access to this mailbox, save a copy from Outlook on the web now."
 
-// scanpstRemedy is the repair advice for a damaged .pst: in place, or the copy
+// PSTRepairRemedy is the repair advice for a damaged .pst: in place, or the copy
 // at the SAME path, because the store token is seeded from the input path (a
 // copy from another path would start a second archive tree).
-const scanpstRemedy = "repair the file in place with Outlook's Inbox Repair Tool (scanpst.exe, Windows; it keeps a .bak backup), or put the repaired copy at the same path, then run again — a copy archived from a different path starts a separate archive tree"
+const PSTRepairRemedy = "repair the file in place with Outlook's Inbox Repair Tool (scanpst.exe, Windows; it keeps a .bak backup), or put the repaired copy at the same path, then run again — a copy archived from a different path starts a separate archive tree"
 
 // scratchRemedy is the remedy for an item lost from the .pst that -outlook's
 // Outlook export writes: that file is rebuilt every run, so repairing it is
@@ -141,7 +141,7 @@ func GapRemedy(reason, sourceKind, errnoClass string) string {
 	case "folder-unwritable":
 		switch errnoClass {
 		case ErrnoTooLong:
-			return "rename the folder in your mail app, or archive to an NTFS/APFS drive"
+			return "rename it in your mail app, or archive to an NTFS/APFS drive"
 		case ErrnoPerm:
 			return "make the archive location writable, then run again"
 		case ErrnoSpace:
@@ -161,7 +161,7 @@ func GapRemedy(reason, sourceKind, errnoClass string) string {
 	case "folder-unreadable", "folder-partially-read":
 		switch {
 		case sourceKind == SourcePST:
-			return scanpstRemedy
+			return PSTRepairRemedy
 		case sourceKind == SourceOutlookScratch:
 			return scratchRemedy
 		case errnoClass == ErrnoPerm:
@@ -174,7 +174,7 @@ func GapRemedy(reason, sourceKind, errnoClass string) string {
 		if sourceKind == SourceOutlookScratch {
 			return scratchRemedy
 		}
-		return scanpstRemedy
+		return PSTRepairRemedy
 	case "symlink-outside-store", "symlinked-folder-skipped":
 		return "links are not followed: copy the mail into the store, or archive its real location as its own input"
 	case "not-a-message-file":

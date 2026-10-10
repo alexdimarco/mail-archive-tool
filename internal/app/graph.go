@@ -101,7 +101,8 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		return Result{}, err
 	}
 	defer lock.Release()
-	defer recordRun(opts, beginRun(opts), &result, &err, logger)
+	begun := beginRun(opts)
+	defer recordRun(opts, begun, &result, &err, logger)
 
 	mpath := opts.Manifest
 	if mpath == "" {
@@ -134,7 +135,10 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	// The go-back timeline: an append-only history log records this run's changes
 	// (newly-seen / moved / gone), fsync'd before the manifest advances (§3.5).
 	// A log that cannot be opened degrades the timeline but must not fail the run.
-	runAt := time.Now().UTC()
+	// The run's timestamp is its last-run record's start: the stamp every LastSeen
+	// and every capture-gap observation carries, so `status` can tell a gap this
+	// run attempted from one it did not (FC14).
+	runAt := begun.Started
 	var hist *state.HistoryWriter
 	if hw, herr := state.OpenHistory(filepath.Join(opts.Out, state.HistoryName)); herr != nil {
 		logger.Printf("warning: %v (this run's go-back timeline will be incomplete)", herr)
@@ -377,7 +381,7 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		}
 		return result, fmt.Errorf("%d mailbox(es) failed", failures)
 	}
-	return result, nil
+	return result, partialOutcome(result)
 }
 
 // asFailure is RR6-C1's second guard on what RunGraph returns: while its

@@ -72,9 +72,19 @@ type Result struct {
 	IndexErrors    int    // messages the index refused (R8 parity broken; surfaced, not swallowed)
 	Issues         int    // rows in the regenerated verification report
 	ReportPath     string // path to the verification report ("" when nothing to report)
-	Fillable       int    // manifest records still missing content an on-demand source may deliver
+	Fillable       int    // manifest records still missing content an on-demand source may deliver (a record that is only partly read is counted in Unreadable instead)
 	Terminal       int    // records missing content the source can never deliver (recorded, never retried)
 	Unknown        int    // legacy records not yet re-examined (migrated from a version-1 manifest)
+
+	// Fault isolation (§4.2). Unreadable and Unparsed are the manifest's partly-read
+	// and unparsed records; Gaps is what this run observed in the capture-gap
+	// ledger; Partial says the run observed something it could not capture (a
+	// fillable or terminal gap, or a partly-read record written or re-examined), so
+	// it returns *PartialError (S1a: a failure, §4.9).
+	Unreadable int
+	Unparsed   int
+	Gaps       GapSummary
+	Partial    bool
 }
 
 // finish fills the manifest-derived fields of a Result and regenerates the
@@ -107,7 +117,16 @@ func finish(out string, r *Result, exp *export.Exporter, manifest *state.Manifes
 		r.IndexErrors += idx.Lost()
 	}
 	r.Fillable, r.Terminal, r.Unknown = manifest.Counts()
+	// A partly-read record is fillable too, but it is not "missing content" to
+	// download: it has its own count, its own line and its own remedy.
+	r.Fillable -= manifest.UnreadableOnlyCount()
+	r.Unreadable, r.Unparsed = manifest.UnreadableCount(), manifest.UnparsedCount()
 	r.ReportPath, r.Issues = writeReport(out, manifest, manifest.Migrated > 0, logger)
+	// What this run observed in the capture-gap ledger (its own runAt is the stamp
+	// every observation carries). The stuck count uses a daily period: `status`
+	// judges it against the installed schedule's.
+	r.Gaps = summarizeGaps(manifest, out, exp.RunAt, time.Now().UTC(), 24*time.Hour)
+	r.Partial = r.partial()
 }
 
 // indexOpenError is the refusal of an export or a Graph run whose search.db
@@ -280,8 +299,13 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	defer lock.Release()
 	// Every run that begins is recorded (R18): "running" now, before any early
 	// return, finalized on the way out — so a run that never finishes is
-	// visible as such to `status`.
-	defer recordRun(opts, beginRun(opts), &result, &err, logger)
+	// visible as such to `status`. The record's start is the run's own timestamp,
+	// the stamp every capture-gap observation carries: a gap whose LastRun equals
+	// it was attempted by this run, and `status` tells attempted from not attempted
+	// by comparing with the last-run record's start (FC14).
+	begun := beginRun(opts)
+	defer recordRun(opts, begun, &result, &err, logger)
+	runAt := begun.Started
 
 	// On -auto, warn up front when a live Exchange/IMAP .ost is about to be read
 	// by the direct go-pst reader, which cannot read every .ost — the -outlook
@@ -316,6 +340,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		Since:    opts.Since,
 		Log:      logger,
 		KeepRaw:  opts.KeepRaw,
+		RunAt:    runAt,
 	}
 
 	// One-time upgrade logs BEFORE the index repair, so cause (the manifest
@@ -422,7 +447,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		}
 		if runErr != nil {
 			failures++
-			logger.Printf("error: %s: %v%s", f, runErr, ostOpenRemedy(f))
+			logger.Printf("error: %s: %v%s", f, runErr, dataFileRemedy(f))
 		}
 	}
 
@@ -445,7 +470,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	if failures > 0 {
 		return result, fmt.Errorf("%d file(s) failed", failures)
 	}
-	return result, nil
+	return result, partialOutcome(result)
 }
 
 // manifestSaveFailure is the run error when the run's final manifest save
@@ -665,6 +690,12 @@ func recordRun(opts Options, lr state.LastRun, result *Result, err *error, logge
 	}
 	lr.Exported, lr.Filled = result.Stats.Exported, result.Stats.Filled
 	lr.Fillable, lr.Terminal, lr.Unknown, lr.IndexErrors = result.Fillable, result.Terminal, result.Unknown, result.IndexErrors
+	// What this run observed in the capture-gap ledger (additive; a monitor keys on
+	// gaps_new, FC23(2)). A partial run is recorded as the failure it maps to in
+	// S1a: status "failed" with the *PartialError's one-line text.
+	g := result.Gaps
+	lr.GapsObserved, lr.GapsNew, lr.GapsRecovered = g.Observed, g.New, g.Recovered
+	lr.GapsFillable, lr.GapsTerminal, lr.GapsStuck, lr.Unreadable = g.Fillable, g.Terminal, g.Stuck, result.Stats.Unreadable
 	// Best effort: a refused write never fails the run, but it is logged (F12),
 	// because the "running" record then stays and status reads it as a run that
 	// never finished although this log says how it ended.
@@ -730,6 +761,22 @@ func ostOpenRemedy(path string) string {
 	return " — a live Exchange / Microsoft 365 .ost often cannot be read directly;" +
 		" on Windows run `mailarchive -outlook` (Outlook exports a clean .pst first)," +
 		" or archive a Microsoft 365 mailbox server-side with `mailarchive graph -auth device`"
+}
+
+// dataFileRemedy is the guidance appended to the run log's error line when a
+// data file fails to open or read: a `.ost` gets ostOpenRemedy; a damaged `.pst`
+// gets the in-place repair — repair it with Outlook's Inbox Repair Tool, or put
+// the repaired copy at the SAME path, because the store's token is seeded from
+// the input path and a copy archived from another path starts a separate archive
+// tree (fault-isolation §4.4). Any other source gets none.
+func dataFileRemedy(path string) string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".ost":
+		return ostOpenRemedy(path)
+	case ".pst":
+		return " — a damaged .pst can usually be repaired: " + state.PSTRepairRemedy
+	}
+	return ""
 }
 
 // runFile opens one data file (optionally via a temp snapshot) and exports every
