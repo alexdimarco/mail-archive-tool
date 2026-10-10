@@ -1658,8 +1658,10 @@ it is completed by reconcile (§4.16) or by running the step again:
      reads.
    - **The set state [RR-2b re-verification].** It also carries the chain id and the set
      state this seal computes, under the ledger's mutex (step 7): the SHA-256 state saved
-     in the chain's most recent ledger line, resumed with this part's in-memory SUMS bytes
-     (§4.16). The new state, the set fingerprint and the parts it covers, in the order they
+     in the chain's most recent ledger line that carries a set state, resumed with this
+     part's in-memory SUMS bytes (§4.16). A `gone` or `refused` ledger line carries no set
+     state, so the seal skips it and resumes from the latest line that does [RR-2b
+     re-verification 2]. The new state, the set fingerprint and the parts it covers, in the order they
      sealed, are stored here.
 7. Append the fingerprint-ledger line, once per run id, copied from the sealed line: the
    run id, the chain id, the fingerprint, and the retry chain's set fingerprint, the
@@ -1669,7 +1671,12 @@ it is completed by reconcile (§4.16) or by running the step again:
      computed and held until this line is fsynced.
    - Before computing, the step appends any ledger line its chain is still missing (after
      a kill, or a failed append, between steps 6 and 7 of another part), copied from that
-     part's sealed line. The launch sweep's index finds the chain's records (§4.16).
+     part's sealed line. The launch sweep builds the index that finds the chain's records
+     (§4.16), and this process keeps it current: it updates the index whenever a record
+     header is written or a sealed line is appended, so a part that sealed after launch
+     with its ledger append failing is found too [RR-2b re-verification 2].
+   - The state this step resumes from is the chain's most recent ledger line that carries
+     a set state; a `gone` or `refused` line is skipped [RR-2b re-verification 2].
    - A failed append here is the state-directory class (table): the step stops, steps 8
      and 9 wait, and reconcile or Check and finish completes it.
 8. The sealed status's marker action [RR-2 RR2-C1]. **Complete/partial:** remove
@@ -1944,6 +1951,13 @@ spool" item.
     - **Locate…** (Browse) accepts the folder at a new path, after a drive-letter or
       mount change or a "moved or replaced", only when the identity check passes, and
       appends that path to the run record; the run is then reconciled at that path.
+      **For a settled run whose record is deleted [RR-2b re-verification 2]** (§4.19
+      deletes a settled, chain-complete run's record at once, and reconcile never probes
+      such a run), Locate… and This folder is gone work from the journal line instead: the
+      journal run id is the nonce, and the line's `dest_dir` and `root_id` are the recorded
+      identity. They append a `located` or `reconciled` journal line, since there is no
+      record to write to. So R-r's remedy works for a complete export whose folder was
+      replaced.
     - **The ledger line and the `end`.** Reconcile appends a missing ledger line from any
       sealed record as soon as it reads the record, whatever the folder answers
       [RR-2 RR2-C2]. It appends the journal `end` only when a probe sees the marker absent
@@ -1974,13 +1988,16 @@ spool" item.
   - **Set fingerprint (XC15):** SHA-256 over the `SHA256SUMS.txt` files of the chain's
     **sealed** parts, **in the order they sealed** [RR-2 RR2-C2]. It is computed at each
     part's seal, under the ledger's mutex, by resuming the SHA-256 state saved in the
-    chain's most recent ledger line (Go's `sha256` digest marshals its state), with this
-    part's in-memory SUMS bytes. **[RR-2b re-verification]** How each seal finds and keeps
-    that state:
+    chain's most recent ledger line that carries a set state (Go's `sha256` digest
+    marshals its state), with this part's in-memory SUMS bytes. A `gone` or `refused`
+    ledger line carries no set state, so after a part marked gone before sealing, or a
+    refused retry start, the next part's seal skips that line and resumes from the latest
+    line that does [RR-2b re-verification 2]. **[RR-2b re-verification]** How each seal
+    finds and keeps that state:
     - **By chain id.** The chain id is the first part's run id. Every run record's header,
       sealed line and ledger line carry it. So a part that seals late (an interrupted part 1
-      finished as partial after part 2 sealed) finds the chain's most recent ledger line,
-      although its own header names no later part.
+      finished as partial after part 2 sealed) finds the chain's most recent state-carrying
+      ledger line, although its own header names no later part.
     - **In the sealed line first.** The mutex is taken before the state is computed and is
       held until the ledger line is fsynced (§4.13 steps 6–7). The sealed line stores the
       new state, the set fingerprint and the parts it covers, and the ledger line copies
@@ -1988,8 +2005,11 @@ spool" item.
       two therefore holds the same state, although reconcile never reads the folder.
     - **No gap in the chain.** Before computing, a seal appends any ledger line its chain is
       missing, copied from that part's sealed line. The launch sweep indexes the records by
-      chain id before the export slot opens (above), so a later part never resumes past a
-      part that sealed.
+      chain id before the export slot opens (above), and the process updates that index
+      in-process whenever a record header is written or a sealed line is appended. So a
+      part that seals after launch with its ledger append failing (R-d2) is in the index,
+      and a later part never resumes past a part that sealed, although an earlier part's
+      header names only earlier parts [RR-2b re-verification 2].
 
     Every sealed part's ledger line saves that state, the set fingerprint and the parts it
     covers, in order (a first sealed part starts the state with its own bytes). Parts need
@@ -2109,7 +2129,9 @@ recipient's.
   fingerprint, computed from the in-memory SUMS bytes, and is fsynced. It also carries the
   stop's R-id, class and in-flight message id for a run that stopped [RR-2b RR2b-C10]. It
   carries the chain id with the set state, set fingerprint and parts covered that the seal
-  computes under the ledger's mutex (§4.16) [RR-2b re-verification]. It is the first
+  computes under the ledger's mutex (§4.16) [RR-2b re-verification]. That state resumes
+  from the chain's most recent ledger line that carries a set state, skipping `gone` and
+  `refused` lines [RR-2b re-verification 2]. It is the first
   part of the seal-and-finish step (§4.13), which then writes the same fingerprint to the
   ledger (W9b) and ends with the journal `end` (W11). The journal has no `sealed` event.
 - **Stop and gone [RR-2 RR2-C3, RR2-C7].** A run that stops before its seal while the app
@@ -2139,7 +2161,7 @@ recipient's.
   each term, which §4.16 uses too:
   - **Settled.** A run is settled when its ledger line exists and either it is sealed and
     its journal `end` exists (no marker action is left), or the user has said its folder is
-    gone. Its ledger line is the one the seal-and-finish step writes or, for a run that
+    gone, or its start was refused (R-d) [RR-2b re-verification 2]. Its ledger line is the one the seal-and-finish step writes or, for a run that
     never sealed, its `gone` or `refused` line (§4.10).
   - **Unresolved.** Any run that is not settled: an unsealed run that is not gone, a sealed
     run without its ledger line or its `end`, or a gone run whose ledger line is still
@@ -2152,7 +2174,9 @@ recipient's.
   three cases only:
   - a refused start: R-d appends its `refused` ledger line, then removes the record it
     wrote. If that append fails, the record is kept and the launch sweep adopts it (§4.16);
-  - a settled run whose chain is complete: at once, or by the launch sweep;
+  - a settled run whose chain is complete: at once, or by the launch sweep. Its folder can
+    still be moved or replaced later, so Locate… and This folder is gone then work from the
+    run's journal line, not the record (§4.16) [RR-2b re-verification 2];
   - a settled run that journal compaction drops: only after the new journal is in place.
     A record left by a compaction stopped before its deletions is re-adopted by the launch
     sweep (§4.16) and ages out again.
@@ -2458,7 +2482,7 @@ choices are **Save and keep the backup**, **Save and remove the weekly backup**,
 | R-o4 | [RR-2 RR2-C11] "D:\Inherited\Mail's manifest is larger than MailArchive reads from another archive folder (2.4 GB; the limit is 1 GB) — nothing was read beyond that check, and nothing was written. If you trust this archive, make it the archive location in Settings (Save asks first when a weekly backup is installed)." Checked before anything is unmarshalled. |
 | R-p | (the loader's own wording) e.g. "The archive's manifest was written by a newer MailArchive (format 7) — update MailArchive Desktop to export from it." |
 | R-q | "A folder named 'Archive Folder' already exists here — choose it with Browse, or use another name." / "'a/b' can't be a folder name (it contains '/') — try 'a b'." |
-| R-r | (XC33) "This export's folder was moved or replaced since the export (E:\…\MailExport-2026-10-09_142233-7f3a) — MailArchive won't open it. If the folder is somewhere else now, click Locate… on Export activity and choose it; if it's lost, click This folder is gone." [RR-2b re-verification] Check this export checks the recorded root, so it is not the remedy until Locate… has accepted the folder at its new path. |
+| R-r | (XC33) "This export's folder was moved or replaced since the export (E:\…\MailExport-2026-10-09_142233-7f3a) — MailArchive won't open it. If the folder is somewhere else now, click Locate… on Export activity and choose it; if it's lost, click This folder is gone." [RR-2b re-verification] Check this export checks the recorded root, so it is not the remedy until Locate… has accepted the folder at its new path. [RR-2b re-verification 2] For a settled run whose record is deleted, Locate… and This folder is gone work from the journal line (its run id as the nonce, its dest_dir and root_id) and append a `located` or `reconciled` journal line (§4.16). |
 | R-r2 | [RR-2 RR2-C4] "MailArchive couldn't confirm that E:\…\MailExport-2026-10-09_142233-7f3a is this export's folder (the drive may have been plugged in again, or the folder's marker and README are missing) — it won't open a folder it can't confirm. Click Look again on Export activity, or find the folder yourself." Raised for "couldn't confirm", never for a positive mismatch. |
 | R-s | "This mailbox has more than 10,000 folders — more than the workspace can show. Export from the archive instead, or contact support." |
 | R-t | "Couldn't create a new export folder in C:\…\Archive Folder (MailExport-2026-10-09_142233 through -99 already exist) — choose another destination." |
@@ -2730,7 +2754,7 @@ noted.
 | MA-437 | adds: Finish as partial leaves a ledger fingerprint equal to sha256 of the SUMS it wrote, and a journal `end`; a present recorded file whose bytes changed is listed "damaged when the computer stopped", never in SUMS; Finish as partial on a run whose finalization failed, labelled with the reason its `stopped` line recorded, never "the app stopped while this export was running" [re-verification]; for a part marked gone, `rest` includes its done but never-finalized messages | RR2-C2, RR2-C7 |
 | MA-438 | adds R-d2 and R-w2; adds [re-verification] R-f2 and R-r2 | RR2-C4, RR2-C6, RR2-C7, RR2-C13 |
 | MA-447 | adds [corrected by re-verification]: a kill between W9a and W9b leaves, after the next launch's reconcile, exactly one ledger line equal to the sealed fingerprint and no journal `end` (the marker is still present), and Check and finish then appends the `end`; a kill between W10 and W11 of a complete run leaves one ledger line and an `end` once the reconcile sees the marker absent | RR2-C2, RR2-C3 |
-| MA-448 | "gets a terminal reconciled record" holds for the marker-and-seal outcomes only (owner rulings §13.5) [RR-2b re-verification], and "an identity mismatch" reads "a positive identity mismatch (§4.9)"; adds: a folder absent at the first launch and present at the second → interrupted, with Finish as partial offered; a sealed run killed between W9a and W10 whose folder is absent at the next launch gets its ledger line but no `end`, is probed again at the launch after, and is then offered Check and finish [re-verification]; a positive mismatch offers Locate… and This folder is gone [re-verification], and is probed again at the next launch, never recorded as terminal [RR-2b re-verification]; a probe that times out is recorded as a timeout and probed again; Look again re-probes; "This folder is gone" is terminal; Locate… accepts a moved folder only when the identity check passes; a wedged run is offered Finish as partial after a restart; the dev-and-inode-change fake as in MA-430 | RR2-C3, RR2-C4 |
+| MA-448 | "gets a terminal reconciled record" holds for the marker-and-seal outcomes only (owner rulings §13.5) [RR-2b re-verification], and "an identity mismatch" reads "a positive identity mismatch (§4.9)"; adds: a folder absent at the first launch and present at the second → interrupted, with Finish as partial offered; a sealed run killed between W9a and W10 whose folder is absent at the next launch gets its ledger line but no `end`, is probed again at the launch after, and is then offered Check and finish [re-verification]; a positive mismatch offers Locate… and This folder is gone [re-verification], and is probed again at the next launch, never recorded as terminal [RR-2b re-verification]; a probe that times out is recorded as a timeout and probed again; Look again re-probes; "This folder is gone" is terminal; Locate… accepts a moved folder only when the identity check passes; a wedged run is offered Finish as partial after a restart; the dev-and-inode-change fake as in MA-430. Adds [RR-2b re-verification 2]: a complete export whose folder was replaced and whose record is already deleted → R-r; Locate… then works from the journal line (run id as nonce, its dest_dir and root_id), accepts the real folder and appends a `located` journal line; This folder is gone on the same run appends a `reconciled` journal line | RR2-C3, RR2-C4 |
 | MA-512 | adds R-l2 and R-o4 | RR2-C4, RR2-C11 |
 | MA-516 | adds (clock-injected): a 60-minute suspend followed by 30 s of transport errors, then success → the run completes with zero failures; a 12-minute body download with bytes arriving → no R-u; a sustained 5-minute awake outage → R-u | RR2-C8 |
 | MA-518 | adds: a plan with 150-character ids and Readable HTML on → the reserve is above 1 KB per message, and R-g2 compares against it; the state-volume check uses the run record's bound | RR2-C5 |
@@ -2762,14 +2786,14 @@ leaving the set).
 | MA-419 | "on (one message held)" reads "on (one message held, its readable copy within the render bound, which MA-509 pins)" | RR2b-C2 |
 | MA-426 | adds: a message above the (scaled) size cap is listed "larger than this version of MailArchive exports", terminal, not offered by "Export failed messages again", and the run continues | RR2b-C8 |
 | MA-427 | adds: the RR2-C5 budget case continued: "Export the remaining messages" on the stopped run builds a part whose plan holds message 813, last; with free space below the cap, a `$value` whose declared length is above the cap is listed above-cap and the run continues (never R-g), while one whose declared length is within the cap but above the budget stops with R-g; a `$value` redirected to a foreign host stops the run with R-u3 naming the host, never R-u, with the message in `failures` as retryable; a retried message leaves no `.mailexport-*.tmp`, and a fake volume that fills between two attempts stops the run with R-g at the second | RR2b-C4, RR2b-C5, RR2b-C6, RR2b-C8 |
-| MA-430 | adds [RR-2b re-verification]: a root that holds message files, whose marker was deleted and that has no README: on a stable-inode filesystem with dev unchanged → Finish as partial offered; on a fake vfat → "couldn't confirm", and Open folder refuses with R-r2; R-d's `refused` ledger line precedes its record's deletion, and with that append failing too (fault hook) the record is kept and adopted at the next launch as an interrupted empty export folder; a run marked gone before it sealed gets a `gone` ledger line before its record is deleted; a sealed run without its `end` that is marked gone is settled; a single-part run marked gone keeps its record while its card offers "Export these N messages again", and a sealed partial run keeps its record while "Export failed messages again" is offered. Adds (RR2b-C10): after a restart, sealed failed runs stopped by R-g, R-u, R-c and R-z are each labelled "Stopped: <reason>" with that R-id's remedy, from the sealed line; a stop between messages (R-z at the poll) records its reason with no message | RR2-C2, RR2-C3, RR2-C4, RR2b-C10 |
+| MA-430 | adds [RR-2b re-verification]: a root that holds message files, whose marker was deleted and that has no README: on a stable-inode filesystem with dev unchanged → Finish as partial offered; on a fake vfat → "couldn't confirm", and Open folder refuses with R-r2; R-d's `refused` ledger line precedes its record's deletion, and with that append failing too (fault hook) the record is kept and adopted at the next launch as an interrupted empty export folder; a run marked gone before it sealed gets a `gone` ledger line before its record is deleted; a sealed run without its `end` that is marked gone is settled; a single-part run marked gone keeps its record while its card offers "Export these N messages again", and a sealed partial run keeps its record while "Export failed messages again" is offered. Adds (RR2b-C10): after a restart, sealed failed runs stopped by R-g, R-u, R-c and R-z are each labelled "Stopped: <reason>" with that R-id's remedy, from the sealed line; a stop between messages (R-z at the poll) records its reason with no message. Adds [RR-2b re-verification 2]: "Open folder" on a complete export whose folder was replaced, its record deleted, refuses with R-r, and Locate… then accepts the real folder (from the journal line) | RR2-C2, RR2-C3, RR2-C4, RR2b-C10 |
 | MA-434 | adds [RR-2b re-verification]: a fault hook between the check and the mkdir swaps the parent for a symlink (a junction on the Windows leg) into the archive → no directory appears inside the archive | RR2-C13 |
 | MA-437 | adds: "Export the remaining messages" on a stopped run yields its `not_attempted` ids, then its retryable failures, the in-flight message last; after R-u2 the next part holds the 25 failed messages; "Export failed messages again" is offered on a cancelled run with retryable failures. Adds [RR-2b re-verification]: for a sealed part marked gone, `rest` is its whole plan minus the messages exported in other sealed parts not marked gone, which is its whole plan when no other part covers them | RR2b-C6, RR2-C3 |
 | MA-438 | adds R-u3 and R-v2; R-u without "none of them was marked failed"; R-r's Locate… remedy and R-f2's archive-side variants [RR-2b re-verification] | RR2b-C4, RR2b-C6, RR2b-C7, RR2-C3, RR2-C13 |
 | MA-447 | adds [RR-2b re-verification]: the ledger line that reconcile appends after a W9a–W9b kill carries the chain id, the set state, the set fingerprint and the parts that the sealed line stored; a ledger append that fails (fault hook) stops the step with R-d2, the marker kept, and Check and finish then appends the line, does the marker action and appends the `end` | RR2-C2 |
 | MA-509 | adds: Readable HTML on, a message within the cap whose HTML body references one 8 MiB inline image 10 times (a predicted render over the 32 MiB bound) → `exported-original-only` with the note "too large for a readable copy", not offered for retry, and the heap delta stays under the stated bound; the same image referenced twice renders. Second prove-fail: remove the render bound → the heap bound fails | RR2b-C2 |
 | MA-516 | adds (fake `$value`, clock-scaled): a 2xx whose body stalls, five times → the message is listed retryable ("kept stopping partway") and the run exports the rest, outcome 3; a trickle that runs the scaled overall cap → listed after that one attempt, never a backoff; a cut whose attempt spans a (seam) suspend is not counted. Adds (RR2b-C7): a `$value` that never sends headers while JSON requests succeed → after 5 awake minutes the control request is answered 2xx, the message is listed "didn't start sending", and the run continues, never R-u; 429 with a long Retry-After to the `$value` and to the control request → R-v2, never R-u; a 6-minute capture pause → no R-u; a sustained outage with the control request unanswered → R-u as before; a breaker stop is never recorded as cancelled. Adds (RR2b-C9): with the real 1-second ticker, and the suspend-counting clock read through a seam that jumps 60 minutes between two ticks, 3 minutes of no progress before the jump and 2.5 after → no R-u. Adds (RR2b-C5): a retried message leaves no `.mailexport-*.tmp`. Second prove-fail: count only attempts that delivered no body bytes (the text before RR2b-C1) → the stall case never ends (test timeout). Third prove-fail: measure the suspend gap with Go's monotonic clock → R-u in the before-and-after case | RR2b-C1, RR2b-C5, RR2b-C7, RR2b-C9 |
-| MA-521 | adds [RR-2b re-verification]: part 2 killed between W9a and W9b with its folder absent, then part 3 seals → the set fingerprint equals SHA-256 over parts 1, 2 and 3's SUMS in seal order, and part 2's reconciled ledger line equals what its sealed line stored; part 2's ledger append failing while the app runs on, then part 3 sealing → part 3's seal appends part 2's line first, with the same result; part 1 finished as partial after part 2 sealed finds the chain's state by chain id; a part marked gone after it sealed stays in the set, and the page and the receipt name it as gone and list each other part's own fingerprint; every ledger line carries the chain id | RR2-C2 |
+| MA-521 | adds [RR-2b re-verification]: part 2 killed between W9a and W9b with its folder absent, then part 3 seals → the set fingerprint equals SHA-256 over parts 1, 2 and 3's SUMS in seal order, and part 2's reconciled ledger line equals what its sealed line stored; part 2's ledger append failing while the app runs on, then part 3 sealing → part 3's seal appends part 2's line first, with the same result; part 1 finished as partial after part 2 sealed finds the chain's state by chain id; a part marked gone after it sealed stays in the set, and the page and the receipt name it as gone and list each other part's own fingerprint; every ledger line carries the chain id. Adds [RR-2b re-verification 2]: part 1 sealed, part 2 marked gone unsealed, part 3 seals → the set covers parts 1 and 3 (the seal resumes from the latest ledger line that carries a set state, skipping the `gone` line); the same with a `refused` line in place of the `gone` one; a part that seals after launch with its ledger append failing, then a later-sealing earlier part → it finds that part through the in-process index (updated at each record header and sealed line) and does not resume past it | RR2-C2 |
 | MA-527 | adds: through the clients E1 builds, a `$value` download longer than `reqTimeout` with bytes arriving (scaled: `reqTimeout` 100 ms, a byte every 20 ms for 1 s) completes byte-exact, while a stalled `/token` body is still released within `reqTimeout`. Second prove-fail: build SG's `$value` client with `oauth2.NewClient` from a context carrying `httpTransport`'s client → the long download is cut at `reqTimeout` | RR2b-C3 |
 | MA-528 | adds: the refused redirect is a `*graph.RedirectError` naming the foreign host, found with `errors.As` through the `*url.Error`, on a JSON request and on SG's `$value` client; a same-host redirect loop stops at the eleventh hop with the same typed error | RR2b-C4 |
 
