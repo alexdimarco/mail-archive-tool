@@ -232,7 +232,9 @@ func TestEveryServedHandlerIsGuarded(t *testing.T) {
 // One route model [CC15]: no production code outside internal/localweb builds an
 // http.ServeMux or registers on the DefaultServeMux, so every route a surface
 // serves is registered through localweb.Mux and recorded — none can escape the
-// probe of every registered pattern.
+// probe of every registered pattern. Any use of the http.ServeMux type counts,
+// not only NewServeMux, a literal or new(): a `var m http.ServeMux` (its zero
+// value is a working mux), a field or a parameter of that type is a mux too.
 func TestNoRouteOutsideTheRegistry(t *testing.T) {
 	root := moduleRoot(t)
 	files := assure.Reached(t, productionFiles(t, root, "cmd", "internal"), "production Go files under cmd/ and internal/")
@@ -245,6 +247,7 @@ func TestNoRouteOutsideTheRegistry(t *testing.T) {
 		if httpName == "" {
 			continue
 		}
+		named := map[token.Pos]bool{} // http.ServeMux types a literal or new() already reported
 		ast.Inspect(sf.file, func(n ast.Node) bool {
 			switch x := n.(type) {
 			case *ast.SelectorExpr:
@@ -253,12 +256,19 @@ func TestNoRouteOutsideTheRegistry(t *testing.T) {
 						bad = append(bad, sf.rel+":"+strconv.Itoa(sf.fset.Position(x.Pos()).Line)+": http."+name)
 					}
 				}
+				// Every other use of the type: a var, a field, a parameter, a
+				// conversion. (A literal or new() is visited first, and named.)
+				if isSel(x, httpName, "ServeMux") && !named[x.Pos()] {
+					bad = append(bad, sf.rel+":"+strconv.Itoa(sf.fset.Position(x.Pos()).Line)+": http.ServeMux")
+				}
 			case *ast.CompositeLit:
 				if isSel(x.Type, httpName, "ServeMux") {
+					named[x.Type.Pos()] = true
 					bad = append(bad, sf.rel+":"+strconv.Itoa(sf.fset.Position(x.Pos()).Line)+": http.ServeMux{}")
 				}
 			case *ast.CallExpr:
 				if id, ok := x.Fun.(*ast.Ident); ok && id.Name == "new" && len(x.Args) == 1 && isSel(x.Args[0], httpName, "ServeMux") {
+					named[x.Args[0].Pos()] = true
 					bad = append(bad, sf.rel+":"+strconv.Itoa(sf.fset.Position(x.Pos()).Line)+": new(http.ServeMux)")
 				}
 			}
