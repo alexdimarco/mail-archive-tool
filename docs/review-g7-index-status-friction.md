@@ -1,0 +1,195 @@
+# Friction review — g7: index status, run state and their refusals
+
+> As of 2026-10-09, walked against `wip/g7-index-status` at `1a8bdbe` (change set
+> `066f86d..1a8bdbe`, catalog rows MA-385..MA-399 and MA-545) with the built
+> binaries on macOS: `mailarchive` and `mailarchive-gui` from this tree, plus the
+> CLI built from `17ffc1b` (the last commit before `c19f429` added the lock verb)
+> for the mixed-version cells. Method: the assurance-kit friction review, each
+> cell an actor × scenario walked by typing the commands and reading the output,
+> classified Type I (the ceremony is the control), Type II (design choice,
+> reducible without weakening the control), Type III (missing legibility or
+> tooling). Every command ran with HOME and the per-user config folders in a
+> scratch home; scratch archives came from the repository's `support.pst` and
+> synthetic mboxes/maildirs (no real mail, no network). Fault injection only:
+> junk, truncated or zero-byte `search.db`, permission bits, `RLIMIT_FSIZE` as a
+> full-disk model, a foreign SQLite connection in exclusive locking mode,
+> `kill -9` / SIGSTOP / SIGINT at chosen moments, a planted SQLite trigger, and a
+> flock holder writing the pre-verb holder line byte for byte. The drill scripts
+> and transcripts were kept outside the repository. No fixes in this stage.
+
+**Cells walked:** 35 &nbsp;·&nbsp; **Functioning:** 16 yes / 15 partial / 4 no &nbsp;·&nbsp; **High-friction cells:** 5 (OW-2b, OP-9, OP-11, CU-2 on this branch's surfaces; IN-2 pre-existing) &nbsp;·&nbsp; **Findings:** 28 — Type I: 2 · Type II: 4 (3 in scope) · Type III: 22 (15 in scope)
+
+**Verdict: SHIPPABLE** (design verdict) — no Type II finding rises to a usability regression. Ship is contingent on the in-scope Type III operability backlog below (per the definition of done the legibility layer is built before ship), led by F1, F2 and F3, which account for four of the five high-friction cells.
+
+**Rationale.** The mechanisms this branch adds hold up under the real binaries. A damaged `search.db` (junk, truncated) is RED in `status`, refused by `search` and by the next run in 0.02 s, each naming the file and `reindex -rebuild`, and that one command (0.06 s) heals it. A real 6000-message scheduled export ran for 59 s under two continuous `status -json` pollers and a searcher: 4890 polls, 4544 searches, no failure, none slower than 1 s (MA-398). A killed export's record turned RED `run_never_finished` at once while a real `verify` and a real `reindex` held the lock (MA-545), and a running `17ffc1b` export read as in progress, with no false RED from the verb rule. An interrupted `verify` kept the previous verdict, a NOT-attested RED included (MA-394). A scheduled job whose source drive was unplugged was recorded failed, with the path and "the drive holding it" named, and cleared on the next run (MA-396, MA-397). MA-388's fresh-archive books balanced.
+
+The friction is in what the refusals tell the actor to do, and in where the failure can be seen. The writer's new refusal names the rebuild for causes the rebuild cannot fix: a read-only archive folder, a full disk or an I/O error. Following it fails with "out of memory (14)" or "disk I/O error (4874)" (F1). A run that cannot write into its archive folder cannot record that it failed either, so `status` and `status -json` keep showing the previous ok. A custodian on RMM sees nothing (F2). Every new index remedy is a CLI command, but MailArchive Desktop has a button the text never names, and `mailarchive-gui` has no rebuild action at all. Its owner has no CLI, which the README says is a separate download (F3).
+
+All three are buildable-away (better classification, a status probe, surface-aware remedy lines), so they do not drive the design verdict. They are this branch's own surfaces, though, and they must be built before ship. The Type II items are the ruled trade-off for verb-less lock holders (F16, bounded by `run_stuck`), the open Windows rename condition MA-399 already names (F17), and the run that silently re-creates a lost or empty index (F4).
+
+---
+
+## Cell table
+
+| Cell (actor × scenario) | Functions? | Friction findings | Type | Fix / backlog item |
+|---|---|---|---|---|
+| OP-1 · operator × another program holds `search.db` past the wait, archive lock free: status, search, plain reindex, the next run | partial | `status` waits 5.1 s then WARN `index_busy` "close any other program that has it open, then run status again"; `search` waits 5.1 s, "is busy … try again in a moment"; the run waits 5.2 s, refuses "is busy … close any other program …, then run again", recorded RED `run_failed`. **Plain `reindex` waits 5.1 s and says "cannot be opened (index pragmas: database is locked (5) (SQLITE_BUSY)): rebuild it from the archive with `mailarchive reindex -rebuild -out …`"**: the wrong remedy, and the path is unquoted | III (F5), I (F18) | F5: route reindex's open failure through `indexOpenError` |
+| OP-2 · operator / owner × status and search during a real scheduled capture (6000 messages, 59 s) | yes | 4890 `status -json` polls (the 4888 taken during the run all `run_in_progress`), 4544 searches exit 0, 0 polls slower than 1 s, export exit 0, 6040 of 6040 indexed. MA-398 holds under load | none | — |
+| CU-1 · custodian × index busy, read through `status -json` | partial | `reason_codes` carries `index_busy` (WARN with the lock free, note under a run's lock), but `"indexed": 0` beside `"messages": 40` where the text says "its counts are not shown". A status taken during an export's 5 s wait printed the note "a run is using this archive" beside "Last run: … → failed" (the lock was probed before the wait, the record read after it) | III (F8, F14) | F8b: `indexed` null (or a known flag) when busy or unreadable; F14: read the lock and the record on one side of the wait |
+| OW-1 · owner × index busy when the weekly backup fires (GUI headless job walked; desktop "Capture failed:" shares `indexOpenError`) | partial | Refusal reaches stderr, `mailarchive.log`, the attention file and the health view, but as "(index pragmas: database is locked (5) (SQLITE_BUSY)): another program kept it locked — close any other program that has it open": SQLite text, and the owner cannot know which program. The GUI log prints "Done. exported=0 …" above the FAILED line | III (F3, F11) | F3: owner-surface wording; F11: no Done line on a failed headless run |
+| OP-3 · operator × `search.db` junk or truncated (NOTADB / "database disk image is malformed (11)"): status, search, the next run, the remedy | yes | Model refusals: file, SQLite's cause and `reindex -rebuild -out "…"` once each; the run fails at once; one command heals; the next run exports and indexes 80 of 80. Steps to green: 2 (rebuild, run). The failed run's RED stays until a run succeeds, its text still ending "then run again" | I (F19) | none (interactive double print is F27) |
+| OP-4 · operator × `search.db` zero bytes, or deleted (left out of a copy), then the next scheduled run | partial | Before the run `status` is right: RED "no such table: docs" (zero bytes), WARN `index_missing` (deleted), both naming the rebuild. **The run then exits 0 with "Done. … manifest=80 indexed=40" and no warning:** it creates a fresh index of the 40 new messages, and the archive's `index.html` drops the old folder (`['small']` → `['small-more']`; `small/index.html` still on disk, unlinked). `status` falls to WARN `index_behind`. `search` on the missing file says "run an export first" | II (F4), III (F6) | F4: refuse (as plain reindex already does) or warn when the manifest holds records the fresh index lacks |
+| OP-5 · operator × damaged `search.db` in a folder with no manifest (a dotfile-skipping copy) | partial | The run's refusal is right ("no manifest … to rebuild it from: move it out of …, then run again"); `search` says "rebuild it" and `reindex -rebuild` then refuses "no manifest … restore it from a backup": one dead end. `status` refuses "no archive at …" (pre-existing) | III (F6) | F6a: make the reader-side refusal and `index_unreadable` manifest-aware like the writer's |
+| OW-2a · owner × damaged `search.db` on MailArchive Desktop (Status & health card, "Capture failed:" line; reasoned from `healthAction` → `health.Summary` and `startCapture` → `RunGraph`, strings from the walked CLI and GUI) | partial | The card shows "RED: the search index …\search.db cannot be read (file is not a database (26)) — … rebuild it from the archive with `mailarchive reindex -rebuild -out "…"`" and the capture says the same, ending "then run again". The app's own remedy, Maintenance → **Rebuild search index**, two cards down, is never named | III (F3) | F3: name the in-app action on the desktop's surfaces |
+| OW-2b · owner × damaged `search.db` on `mailarchive-gui` (headless job walked; launch health view reasoned from `healthCheck`) | **no** | Job log, stderr and health view all say "rebuild it from the archive with `mailarchive reindex -rebuild -out …`". The GUI's health view offers only Continue / Repair / Remove the schedule, with no rebuild, and a GUI owner has no CLI (README: "No build, no command line"; the CLI is a separate download). Every later scheduled run fails RED the same way. **HIGH** | III (F3) | F3: a rebuild choice in the GUI's health view, and a remedy line that names it |
+| OP-6 · operator × `search.db` read-only (0444), folder writable | partial | `status` reads it and shows nothing wrong. The next run exits 0 with 40 identical "warning: index: index insert: attempt to write a readonly database (8)" lines, "INDEX-ERRORS=40" and the rebuild WARNING; `status` WARN `index_behind` 40 of 80. The rebuild heals on POSIX (the rename replaces the read-only file; mode back to 644), but nothing ever names the cause. On Windows that rename is refused (reasoned) | III (F7) | F7: detect a read-only index at open and name it; collapse identical per-row warnings |
+| IN-1 · inheritor × the archive on read-only media (folder and files write-protected, with and without `-wal`/`-shm`) | yes | `status` and `search` read it (the `mode=ro` open, then the immutable fallback, MA-385); no sidecar was created | none | — |
+| OP-7 · operator × a scheduled run onto that read-only archive (a remount, a write-protect switch) | partial | Refused at the lock: "FAILED: open lock …/.mailarchive.lock: open …/.mailarchive.lock: permission denied". It names the cause but no remedy, and prints the path twice (F26). Nothing can be recorded, so `status` still shows the previous ok (F2). With the lock file writable but the folder not, the run gets past the lock and F1's wrong remedy follows (OP-9) | III (F2, F26) | F2 |
+| OP-8 · operator × the archive folder became read-only after a good run, attended, `-wal`/`-shm` present | partial | The run reaches the save and refuses well: "could not save the manifest … (create temp manifest: … permission denied): this run's progress was not recorded … make sure the manifest file and its folder are writable …, then run again" (exit 1). The last-run record cannot be written, so the next morning `status` and `status -json` show "Last run: … → ok" and posture WARN (`no_schedule` only). No attention file | III (F2) | F2: a status probe that the archive folder is writable / has space |
+| OP-9 · operator × the same, as the scheduled job (`-log` inside the archive; no `-wal`/`-shm` after the last clean close) | **no** | The run fails earlier, at the index: "cannot be opened (index pragmas: attempt to write a readonly database (1544)): rebuild it …, then run again". The rebuild fails "open rebuild index at …/search.db.rebuild: index pragmas: unable to open database file: out of memory (14)". `status` shows the previous ok. Which of OP-8's and OP-9's refusals appears depends on whether a reader left `-wal`/`-shm` behind. **HIGH** | III (F1, F2) | F1: classify read-only / can't-open / I/O / full by SQLite's primary code, never as damaged |
+| OP-10 · operator × `-manifest` in a separate folder that became read-only (MA-393's own shape) | yes | exit 1, the manifest file and the writable remedy named; `status` RED `run_failed` with the same text; `BACKUP-NEEDS-ATTENTION.txt` written. (`status` shows "Messages: (no manifest yet …)" because it does not know `-manifest`; pre-existing) | none | — |
+| OP-11 · operator × a full disk (modelled: `RLIMIT_FSIZE` 24 KB, writes past it fail with EFBIG) | partial | The run fails at the index open: "(index pragmas: disk I/O error (4874)): rebuild it …, then run again". Following that fails the same way ("index schema: disk I/O error (4874)") and leaves `search.db.rebuild`, `-wal` and `-shm` behind. Here the small last-run record fit, so `status` was RED, repeating the wrong remedy twice. Nothing anywhere says "disk" or "space". **HIGH** | III (F1) | F1 (and the leftover temp, pre-existing) |
+| CU-2 · custodian × a manifest-save failure seen through RMM (`status -json`, the attention file) | **no** | For the unwritable-folder shape (OP-8, OP-9, a really full disk) RMM sees `posture: WARN`, `last_run.status: ok` and no attention file, until the stale WARN after twice the schedule period. That WARN then asks whether the machine was on and logged in. Only the tested `-manifest` shape (OP-10) reaches RMM. **HIGH** | III (F2) | F2 |
+| OP-12 · operator × `kill -9` mid-run (power loss), next morning, then the resume | yes | `status` RED "the run started … never finished (pid N is gone: crash, kill, or power loss) — check the log and run again", Last run "→ never finished"; the resume completed (64 s, 6000 exported; the kill came before the first 1000-message checkpoint). The job log just stops (inherent); no attention file (F28); a verify before the resume lists the killed run's pages as `unexpected` under the "old-binary excursion" note (F21) | III (F21, F28, out of scope) | backlog |
+| OP-13 · operator × that killed record while a real `verify`, then a real `reindex`, holds the lock (MA-545) | yes | RED `run_never_finished` at once, "Last run: … → never finished", the `verify_in_progress` note, "Previous verify: … → attested" kept. But "Last run: 2026-10-09 20:36" (local) sits above "Last verify: 2026-10-10 00:36 → running" (UTC) for the same minute, with no zone on either line | III (F9) | F9: label or unify the zones |
+| CU-3 · custodian × the killed run through `status -json` | partial | `reason_codes: [run_never_finished]` is right, but `last_run` is `{status: running, finished: null}`. The README documents exactly that shape as "while a run is in progress". The human line was fixed (b24eb65); the JSON and its documentation were not | III (F8) | F8a: document (or add a field) that liveness is in `reason_codes` |
+| OW-3 · owner × the capture cut off (lid closed, power loss) — desktop card / GUI health view, reasoned from `Summary` | yes | "Last run: … → never finished" and the RED read clearly; "pid N", and "check the log" with no file named, are jargon for this actor; "Archive now" is the remedy | III (F3) | F3 |
+| OP-14 · operator × a `17ffc1b` (pre-verb) export running, judged by this build's `status` | yes | The note `run_in_progress` and "→ running", with no false RED from the verb rule; killed, RED never finished at once. (Frozen at the instant between creating `search.db` and its tables, the index read RED "no such table: docs" with the rebuild remedy: a narrow window this build's `index.Open` has too) | — | — |
+| OP-15 · operator × a verb-less holder line (the pre-verb format) over a killed export's record | partial (by ruling) | "a run is in progress (pid N …)" and "→ running" while pid N is dead, until `run_stuck` after the schedule period (24 h with no schedule). This is g7-Q1's accepted trade-off against a false RED | II (F16) | F16: owner decision; compare the holder line's pid with the record's |
+| OP-16 · operator × Ctrl-C during `verify` (the last verdict attested, then NOT attested) | yes | The running record carries the previous verdict; `status` WARN `verify_never_finished` and "Previous verify: …"; the NOT-attested RED and `ARCHIVE-INTEGRITY-ATTENTION.txt` stand; running `verify` again finishes it. But the terminal shows nothing at Ctrl-C (exit by signal, 130 in a shell), `status` calls it "crash, kill, or power loss", and the WARN prints above the RED | III (F10, F20) | F10: one line at the interrupt |
+| CU-4 · custodian × the interrupted verify through `status -json` | yes | `last_verify.status: running` with `previous` (documented for `last_verify`), `verify_never_finished` and `not_attested` | none | — |
+| OP-17 · operator × the job exactly as `schedule` previews it, source drive unplugged (MA-396) | yes | exit 1 "input … does not exist (check the path, or that the drive holding it is mounted)"; recorded failed, FAILED in the job's log, attention file; `status` RED; plugged back in, the next run clears the RED and the file. 1 step | none | — |
+| CU-5 · custodian × that refusal through `status -json` and `BACKUP-NEEDS-ATTENTION.txt` | yes | `run_failed` with the path in the reason; the sidecar names `status` | none | — |
+| OP-18 · operator × the archive drive unplugged at 02:00; the backup firing while a verify holds the lock | partial | Both refusals are legible ("is the backup drive mounted?"; "held by mailarchive: pid=… nonce=… verb=verify"). Neither records anything: the plist's `StandardErrorPath` sits inside the missing archive, and the lock refusal records nothing by design. So `status` next morning shows the previous ok | III (F25, F26, out of scope) | backlog |
+| OW-4 · owner × the GUI's scheduled job with the source gone, or the archive gone, no display (MA-397) | yes | Source gone: stderr line, `mailarchive.log` FAILED, last-run failed, attention file, `status` RED. Archive gone: `last-failure.json` and `<name>.jobfail.log` in the config folder for the launch view. The "Done. exported=0 …" line precedes each FAILED (F11); with no display the failure notification cannot show (inherent) | III (F11) | F11 |
+| CU-6 · custodian × `mailarchive-gui` launched over RMM / SSH with no display | no | exit 1 and nothing on stderr: `main()` shows the error only in a dialog that cannot open | III (F24, out of scope) | backlog |
+| OP-19 · operator × a fresh archive where one key is exported twice: an in-run fill, and full mode over a duplicate (MA-388) | yes | Both: 3 in the manifest, 3 indexed, 0 index errors; search finds the latecomer body; verify attested; `status` agrees. But full mode prints "Done. exported=4 filled=0 … manifest=3 indexed=3", and nothing reconciles 4 with 3 (the fill run at least shows `filled=1`) | III (F13) | F13 |
+| OP-20 · operator × a run that could not index two messages, then the printed command (MA-389, MA-390) | yes | "INDEX-ERRORS=2" and the WARNING naming `reindex -rebuild -out "…"`; `status` WARN 78 of 80; the command as printed heals, 80 of 80 | none | — |
+| CU-7 · custodian / owner × Windows antivirus or indexer holding the manifest or a record during the rename (MA-399; reasoned from the code and the seam tests, both run here) | partial | A hold within the ~2 s budget is waited out invisibly (4 attempts, 3 waits). A longer hold fails the run naming the manifest and "that no other program holds the manifest open", with no way to find which program. A last-run write refused past the budget is dropped without a log line, so `status` can show RED "never finished (… crash, kill, or power loss)" after a run whose log says Done. Pages, zips, folder pages and the rebuild's `search.db` swap still rename once | III (F12), II (F17) | F12; F17 (owner question) |
+| IN-2 · inheritor × a drive whose last scheduled run was cut off, with only `README.txt` and the CLI | partial | `README.txt` never names `mailarchive status` or the rebuild; `mailarchive -h` does. `status` is RED "never finished … check the log and run again", but the inheritor has no source, so no run can ever clear it ("no input mail sources found"; plain `reindex` leaves it RED). `verify` attests but prints 497 `unexpected` lines (the cut-off run's pages) under the "old-binary excursion … compare bytes before deleting" note. **HIGH** (pre-existing) | II (F22), III (F21, F23, out of scope) | backlog |
+| IN-3 · inheritor × the copy dropped `search.db` | yes | `search` says "no search index … (run an export first)", a dead end (F6b). `status` WARN `index_missing` names the rebuild; plain `reindex` names it too; the rebuild then search work. Steps: 3, one dead end | III (F6) | F6b |
+
+---
+
+## Findings
+
+In this branch's scope first, most valuable first; then the pre-existing items the walk hit, as backlog.
+
+**F1 · [Type III · in scope · cells OP-9, OP-11, OP-7] The writer's refusal names the rebuild for causes the rebuild cannot fix.**
+`indexOpenError` (`internal/app/run.go`) treats every open error that is not busy and not a newer format as damaged. That includes `SQLITE_READONLY_DIRECTORY` (1544, a read-only archive folder), `SQLITE_IOERR_SHMSIZE` (4874, a full disk or a file-size limit at the `-shm`) and, by the code, `SQLITE_CANTOPEN` and `SQLITE_FULL`. The operator is told "rebuild it from the archive with `mailarchive reindex -rebuild -out …`, then run again". The rebuild then fails with "unable to open database file: out of memory (14)" or "disk I/O error (4874)", and on the full disk it leaves `search.db.rebuild`, `-wal` and `-shm` behind. MA-386 says "the rebuild is never the remedy for another cause". These are other causes.
+*Change:* classify by SQLite's primary code, reusing `index.readonlyMediaErr`'s classifier plus `SQLITE_IOERR`/`SQLITE_FULL`. Those causes get "the archive folder or `search.db` is not writable, or the disk is full: free space or make DIR writable, then run again", never the rebuild. Add the walked shapes as legs of MA-386's writer test. (The rebuild's missing cleanup when its own open fails, `reindex.go` after `openRebuildIndex`, predates the branch.)
+
+**F2 · [Type III · in scope · cells CU-2, OP-8, OP-9, OP-7] A run that cannot write into its archive folder leaves `status` showing the previous ok.**
+F53's "surfaced instead of lost" holds when the last-run record can still be written: MA-393 puts the manifest in a separate read-only folder, and so did the test (OP-10). When the archive folder itself is unwritable (a read-only remount, changed permissions, a really full disk), `WriteLastRun` fails silently in `beginRun` and `recordRun`. `status` and `status -json` keep reporting the previous ok, and no attention file can be written. The failure lives only in the exit code, on stderr, and in a `-log` that is usually inside that same folder. A custodian reading status remotely sees nothing until the stale WARN, two schedule periods later, which then asks whether the machine was on.
+*Change:* a probe in `health.Gather` (create and remove a temp file in DIR, and check free space). Report RED "the archive folder is not writable (or full): backups into it fail", with the remedy. Also, or alternatively, a breadcrumb outside the archive for CLI scheduled runs, as `mailarchive-gui`'s `last-failure.json` already does.
+
+**F3 · [Type III · in scope · cells OW-2b, OW-2a, OW-1] The owner's surfaces tell a non-technical user to run a CLI command, in SQLite's words.**
+`index_unreadable`, `index_missing`, `index_behind` and the run refusal all name `mailarchive reindex -rebuild -out …`. `health.Summary` and `indexOpenError` are what MailArchive Desktop's Status & health card and its "Capture failed:" line print (X10), and what `mailarchive-gui`'s launch health view prints. The desktop has a **Rebuild search index** button the text never mentions. The GUI has no rebuild action at all, and its owner has no CLI, which the README describes as a separate download. Owner-facing lines also carry "index pragmas: …", "(5) (SQLITE_BUSY)", "(26)" and "pid N".
+*Change:* a rebuild choice in the GUI's health view (`healthCheck`, beside Repair/Remove); a remedy line that names the surface's own action (desktop: "Maintenance → Rebuild search index"); SQLite's code kept for the log and `-json`, out of the owner's line.
+
+**F4 · [Type II · in scope · cell OP-4] A run re-creates a lost or empty `search.db` without a word, and the archive's front page loses its earlier folders.**
+With `search.db` deleted or zero bytes, `index.Open` creates a fresh index and the run exits 0 ("manifest=80 indexed=40", no WARNING). The folder pages and the root `index.html` are regenerated from that partial index, so an owner opening the archive in a browser no longer sees the older folders (their pages stay on disk, unlinked) until someone rebuilds. On the zero-byte file `status` called the index damaged (RED) before the run; the writer accepted it, contradicting MA-386's "a run … whose writable open meets a damaged search.db fails at once". Plain `reindex` already refuses the deleted case (`reindex.go:58`).
+*Change:* when the manifest holds records and `search.db` is absent, empty or has no `docs` table, refuse like plain `reindex` ("rebuild it from the archive …") or rebuild first. At the least, `printSummary` should warn when `Indexed < ManifestSize`, as it does for INDEX-ERRORS.
+
+**F5 · [Type III · in scope · cells OP-1, IN-3] Plain `reindex` names the rebuild for every open failure.**
+`reindex.go:64-69` wraps any `index.Open` error as "cannot be opened (…): rebuild it from the archive with `mailarchive reindex -rebuild -out DIR`". Walked: a busy index (5.1 s wait, then the rebuild), and a newer-format index. In that one the inner text says "upgrade this copy of mailarchive" and the outer says "rebuild", which would swap a newer index for an older one, the case 26ad25e added `ErrNewerFormat` to prevent. The path is unquoted (`%s`), unlike every other remedy (`%q`). MA-398 lists `reindex` among the writable-open callers; its refusal was not routed through the new classifier.
+*Change:* use `indexOpenError` (busy → retry, newer → upgrade, no manifest → move aside) and `%q`.
+
+**F6 · [Type III · in scope · cells OP-5, IN-3, OP-4] The reader-side refusals do not check whether the remedy they name can work.**
+(a) `UnreadableError` (search, serve) and `index_unreadable` (status) name the rebuild even when there is no manifest to rebuild from, while the writer, after 26ad25e, says "move it aside". (b) `search`/`serve` on a missing `search.db` still say "run an export first" (portability REC-6, still open), now beside `status`'s new `index_missing` WARN that names the rebuild for the same state.
+*Change:* give `OpenReadonly`'s two refusals, and Assess's `index_unreadable`, the manifest check `reindex` and `indexOpenError` already make.
+
+**F7 · [Type III · in scope · cell OP-6] A `search.db` the writer can open but not write is not recognised.**
+`index.Open` succeeds on a 0444 file, and every `Add` then fails: one identical "attempt to write a readonly database (8)" line per message (40 here, thousands on a real run), "INDEX-ERRORS=N", exit 0, recorded ok. The rebuild remedy heals it on POSIX only because the rename replaces the read-only file; on Windows the rename over a read-only file is refused (reasoned). The cause is never named.
+*Change:* probe for a write in `Open` (or classify `SQLITE_READONLY` on the first Add) and refuse "search.db is read-only: make it writable". Collapse identical per-row warnings into one line with a count.
+
+**F8 · [Type III · in scope · cells CU-3, CU-1] `status -json` gives a custodian two misleading fields.**
+(a) After a run that never finished, `last_run` is `{status: running, finished: null}`. The README documents that shape as "while a run is in progress"; only `reason_codes` (`run_never_finished` vs `run_in_progress`) tells them apart. b24eb65 fixed the human line only. (b) `"indexed": 0` when the index is busy or unreadable, where the text says the counts are not shown.
+*Change:* (a) a README sentence (liveness is in `reason_codes`; `last_run.status` is the stored record), or an additive field. (b) `indexed: null`, or an `indexed_known` flag, when `IndexBusy` or `IndexErr` (additive; version unchanged).
+
+**F9 · [Type III · in scope · cell OP-13] The Last run and Last verify lines use different, unlabeled zones.**
+`Summary` prints Last run in local time and Last verify / Previous verify in UTC, with no label on either. In the walk the same minute printed as "2026-10-09 20:36" and "2026-10-10 00:36". The RED for the run is local; the verify notes say "UTC". The branch rewrote both lines (b24eb65, 3f6cec9).
+*Change:* label both, or print both in UTC as the archive's file names do.
+
+**F10 · [Type III · in scope · cell OP-16] `verify` says nothing when interrupted.**
+Ctrl-C ends `verify` through Go's default handler: no output, exit by signal (130 in a shell; X1 allows it), while `export` prints "interrupted; progress saved". `status` later reports the operator's own Ctrl-C as "crash, kill, or power loss".
+*Change:* catch SIGINT/SIGTERM in `runVerify`, print "verify interrupted — the last finished verdict (…) still stands; run verify again to finish", and exit leaving the running record exactly as now (MA-394 unchanged). Add "interrupted" to the `verify_never_finished` wording.
+
+**F11 · [Type III · in scope · cells OW-4, OW-1] The GUI's headless log prints "Done. exported=0 …" above every FAILED line.**
+`runHeadless` calls `logSummary` before checking `runErr`, for MA-397's refusal and for the damaged and busy index refusals. The CLI fixed exactly this for its own summary (schedule-v2 finding 2).
+*Change:* log the summary only when the run finished or was cancelled, as `runExport` does.
+
+**F12 · [Type III · in scope · cell CU-7] MA-399's residuals are silent.**
+`recordRun` ignores `WriteLastRun`'s error (`_ =`), so a last-run rename refused past the 2 s budget is dropped without a log line. `status` then reads the "running" record as RED "never finished (pid … is gone: crash, kill, or power loss)" after a run that logged Done. The g7-Q2 ruling keeps the write best effort; it does not forbid saying so. The persistent-hold refusal names "no other program holds the manifest open" but not how to find the holder.
+*Change:* log "could not record this run's result in .mailarchive-lastrun.json (…): status will show it as never finished" from `recordRun`. Add a README line for Windows: exclude the archive folder from real-time scanning, and find a holder with Resource Monitor's handle search.
+
+**F13 · [Type III · in scope · cell OP-19] MA-388's books are right, but the run's summary does not reconcile them.**
+In full mode over a source holding a message twice: "Done. exported=4 filled=0 … manifest=3 indexed=3", with nothing saying one key was exported twice. Since F49 the docs teach reading `exported` against the index, so this reads as a lost row. The desktop's "Archived — N message(s) exported, M indexed." has the same gap.
+*Change:* when exports exceed new keys, say so ("4 exports of 3 messages; 1 replaced its earlier copy").
+
+**F14 · [Type III · in scope · cell CU-1] `status`'s busy wait makes its snapshot non-atomic.**
+`Gather` probes the lock, then waits up to 5 s on the index, then reads the last-run record. The walk printed "a run is using this archive; run status again when it finishes" beside "Last run: … → failed" and a RED for that same run.
+*Change:* read the last-run record before the index wait, or re-probe the lock after it.
+
+**F15 · [Type III · in scope] README gaps on this branch's own surfaces.**
+The rebuild section (the sentence this branch edited) lists `index_behind` and INDEX-ERRORS as pointing there, but not `index_unreadable`, `index_missing`, the run's damaged-index refusal or `search`'s. The `last_run` line documents `finished: null` as "in progress" (F8a).
+*Change:* complete both sentences.
+
+**F16 · [Type II · in scope · cell OP-15] A verb-less lock holder keeps a dead run "in progress" until `run_stuck`.**
+This is ruled (g7-Q1): a holder naming no verb counts as live, so a mixed-version install shows no false RED. The cost is a fail-open window of one schedule period, showing a dead pid as "in progress". It is reducible without a false RED: both formats write `pid=` on the holder line, and a holder whose pid differs from the record's cannot be that record's run.
+*Change:* owner decision; if adopted, `runRunning` treats a verb-less holder with a different pid as not live.
+
+**F17 · [Type II · in scope · cell CU-7] MA-399's open condition, and one file it does not list.**
+Exported pages and zips (`internal/export` `commitTemp`), folder pages, `README.txt`, `attachments-report.tsv` and the schedule descriptor still rename once on Windows. A freshly written page is antivirus's most likely target. The rebuild's swap of `search.db` (`reindex.go:404`, plain `os.Rename`), the remedy every new index refusal names, is not in MA-399's list. On Windows it fails while another process (serve, the desktop reader) has `search.db` open (reasoned).
+*Change:* owner question (already raised in 1a8bdbe); add the rebuild swap to the condition's list.
+
+**F18 · [Type I · in scope · cells OP-1, CU-1] `status` and `search` take up to 5 s while another program holds `search.db`.** The wait is the control that keeps a busy index from reading as damaged (MA-398). Acceptable for RMM polling; no change.
+
+**F19 · [Type I · in scope · cell OP-3] The failed run's RED stays after the rebuild until a run succeeds.** The record is the truth about the last run, and its text ends "then run again", which names the remaining step. No change.
+
+**F20 · [Type III · in scope, low · cells OP-16, OP-1] Posture lines are in check order, not severity order.** The branch's new WARNs (`verify_never_finished`, `index_busy`) print above the REDs they accompany. *Change:* list RED before WARN before notes in `Summary`.
+
+*Out of this branch's scope (pre-existing; backlog):*
+
+**F21 · [III · cells OP-12, IN-2]** `verify` reports the tool's own paginated folder pages (`index-2.html` …, `verify.go:463/490` exclude only `index.html`) as `unexpected`. After a killed run it lists every uncommitted page of that run, 497 lines on the inheritor's drive, all under "a leftover from an old-binary excursion, or a file added by hand; compare bytes before deleting anything". The right advice after a kill is "the next export run adopts them".
+
+**F22 · [II · cell IN-2]** An inheritor without the source can never clear RED `run_never_finished`. The posture does not separate the backup job's health from the archive content's (attested here), and "check the log" names no file, though the record's job carries `-log`.
+
+**F23 · [III · cell IN-2]** `README.txt` (`internal/app/readme.go`), the archive's front door, never names `mailarchive status`, nor rebuilding a damaged or missing `search.db`. It does not explain `search.db-wal`/`-shm`.
+
+**F24 · [III · cell CU-6]** `mailarchive-gui` with no display exits 1 with nothing on stderr; `main()` sends the error only to a dialog.
+
+**F25 · [III · cell OP-18]** A CLI scheduled run that cannot reach its archive (drive missing), or is refused by a held lock, leaves no trace `status` can show. launchd's `StandardErrorPath` is inside the archive; the GUI has `last-failure.json`, the CLI nothing.
+
+**F26 · [III · cells OP-7, OP-18]** Lock refusals: on a read-only archive "open lock …: open …: permission denied" names no remedy and prints the path twice; the held-lock refusal prints the holder's nonce.
+
+**F27 · [III · cell OP-3]** Interactive refusals still print twice ("FAILED: …" then "mailarchive: …"; portability REC-4).
+
+**F28 · [III · cell OP-12]** A killed run leaves no `BACKUP-NEEDS-ATTENTION.txt`. `status` is RED, but a headless owner looking at the folder sees nothing.
+
+---
+
+## UX contract (X-series) check
+
+- X2 (each refusal states what failed, and the remedy where one is actionable): F1, F5 and F6a name a remedy that cannot work; F7 names no cause.
+- X6 (a legibility surface per feature, each WARN/RED with its remedy): F2 (a failure status cannot see) and F8 (`-json` fields that contradict the reasons).
+- X10 (one status truth across `status`, the GUI and the desktop): holds, and so carries F3's CLI-only remedy onto the owner's surfaces.
+- X1, X8: hold. `verify`'s 130 on Ctrl-C is the declared uncaught-signal case (F10 is legibility, not exit codes).
+
+Compliance is necessary, not sufficient; the walk's verdict stands on the cells above.
+
+## What the walk could not cover
+
+- **Windows** (MA-399's sharing violations, the read-only attribute, Task Scheduler): reasoned from `replace.go`, `replace_windows.go` and the seam tests. `TestManifestSaveWaitsOutWindowsSharing` and `TestStateFilesWaitOutWindowsSharing` were run here and pass; they apply Windows' classification on every OS. The claims about renaming over a read-only or open file on Windows (F7, F17) are from the documented `MoveFileEx` behaviour, not observed.
+- **MailArchive Desktop** was not launched: it opens the system browser and reads the credential store, and neither was touched. Its Status & health card and "Capture failed:" line were reasoned from `healthAction` → `health.Summary` and `startCapture` → `app.RunGraph`, using the strings the walked CLI and GUI print from the same functions.
+- **`mailarchive-gui`'s dialogs** (the launch health view, the summary) were not rendered: no dialog tool was on PATH, deliberately, so nothing reached the real desktop. The headless `-job` path was walked for real.
+- **Graph / Microsoft 365 runs** (no tenant, no network): `RunGraph`'s refusals share `indexOpenError` and `manifestSaveFailure` (`graph.go`).
+- **A real full disk** (ENOSPC) and **real read-only media** were modelled: `RLIMIT_FSIZE`, and permission bits as MA-385's test does. No disk image was mounted. A real full disk may answer `SQLITE_FULL` (13) rather than 4874; either way `indexOpenError`'s catch-all names the rebuild.
+- **`run_stuck`** (a live run older than the schedule period) and **the stale WARN** (twice the period) were not waited out; reasoned from `health.go`.
+- **Older binaries:** only `17ffc1b` was built. It ran only into its own fresh archive, never over an archive this build wrote (the README warns against old-binary excursions).
+- **Linux** (cron, the GUI's `zenity` binary) and `serve`'s HTTP surface were not walked; `search` exercises the same `OpenReadonly`.
+- The unfiltered test suite was not re-run for this stage; the walk exercised the built binaries.
+
+## Disposition
+
+Pending. Filed with no fixes, as this stage requires. The in-scope Type III items (F1–F3, F5–F15, F20) are this branch's operability backlog and are owed before ship. F4 and F17 are owner decisions (F17 is already an open condition in MA-399), and F16 is the owner's g7-Q1 ruling, open to the refinement above. F21–F28 are backlog for their own areas.
