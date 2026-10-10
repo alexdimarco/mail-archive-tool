@@ -5,6 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
 )
 
 // The extraction workspace's read paths (design-extraction-workspace §4.5, slice
@@ -135,6 +139,168 @@ func (c *Client) FolderTree(ctx context.Context, userID string, max int) ([]Fold
 		return nil, err
 	}
 	return out, nil
+}
+
+// PageOpts are MessagePage's options.
+type PageOpts struct {
+	Top     int        // $top of the first page: 100 for browsing, 1000 for resolution (zero = 100; above 1000 = 1000)
+	Honored bool       // the first page's recorded "immutable ids honored" flag, for a page reached by nextLink
+	Guard   *PageGuard // the caller's loop guard (NewPageGuard); nil = a guard for this one call
+}
+
+// PageGuard is the nextLink guard of a caller's loop over MessagePage: the repeat
+// set, the page cap and the host/path pin, one guard to a loop.
+type PageGuard struct{ g *pageGuard }
+
+// NewPageGuard is the guard for one paging loop over MessagePage.
+func (c *Client) NewPageGuard() *PageGuard { return &PageGuard{g: c.newPageGuard(true)} }
+
+// The message extended properties MessagePage asks for, best-effort and in one
+// $expand: PidTagMessageSize (0x0E08, the size hint) and PidTagSensitivity
+// (0x0036). The filter is id-aware (`or` of both ids), and the answer is decoded
+// by property id (extPropNumber), never by position, because
+// sensitivityFromExtProps takes the first value that looks like a sensitivity and
+// would read a size of 2 as "private".
+const (
+	messageSizePropID = 0x0E08
+	sensitivityPropID = 0x0036
+
+	messagePageExpand = "singleValueExtendedProperties($filter=id%20eq%20'Integer%200x0E08'%20or%20id%20eq%20'Integer%200x0036')"
+
+	defaultPageTop = 100
+	maxPageTop     = 1000
+)
+
+// extPropNumber is the MAPI property number of a single-value extended property
+// id as Graph spells it ("Integer 0x0E08"), whatever the case or the zero padding
+// of its hex number; ok is false for any other id.
+func extPropNumber(id string) (n uint64, ok bool) {
+	typ, hex, found := strings.Cut(strings.ToLower(strings.TrimSpace(id)), " ")
+	if !found || typ != "integer" {
+		return 0, false
+	}
+	n, err := strconv.ParseUint(strings.TrimPrefix(strings.TrimSpace(hex), "0x"), 16, 32)
+	return n, err == nil
+}
+
+// decodeExtProps reads a message's size hint (-1 when absent or unreadable) and
+// sensitivity ("" for Normal or absent) from its extended properties by id.
+func decodeExtProps(props []singleValueExtProp) (size int64, sensitivity string) {
+	size = -1
+	for _, p := range props {
+		switch n, _ := extPropNumber(p.ID); n {
+		case messageSizePropID:
+			if v, err := strconv.ParseInt(strings.TrimSpace(p.Value), 10, 64); err == nil && v >= 0 {
+				size = v
+			}
+		case sensitivityPropID:
+			sensitivity = sensitivityFromExtProps([]singleValueExtProp{p})
+		}
+	}
+	return size, sensitivity
+}
+
+// MessagePage lists one page of folderID's messages, newest first, for the
+// workspace's browse list and for resolving a selection (extraction design §4.5,
+// XC27). With next empty it builds the first request: capture's
+// messageSelectFields plus parentFolderId (so each message's folder and its
+// state come from Graph), $orderby receivedDateTime desc, $top o.Top, and one
+// best-effort $expand of the size and sensitivity extended properties; a tenant
+// that rejects the $expand gets the first page again without it (the MA-285
+// fallback, sizes unknown). With next set it follows that link exactly as the
+// previous page gave it, after the guard has admitted it: scheme, host, port and
+// path on the client's base, no repeat, within the page cap (XC25), and nothing is
+// sent otherwise. It returns the page and its nextLink ("" on the last page).
+//
+// Immutable ids: when the response's Preference-Applied says IdType="ImmutableId"
+// was honored, or o.Honored (the first page's flag, which the caller records with
+// its cursor) says so, each ref's PhysID is its ID, as in Messages; otherwise
+// PhysID stays empty.
+func (c *Client) MessagePage(ctx context.Context, userID, folderID, next string, o PageOpts) ([]MessageRef, string, error) {
+	if err := c.requireOwnMailbox(); err != nil {
+		return nil, "", err
+	}
+	guard := c.newPageGuard(true)
+	if o.Guard != nil {
+		guard = o.Guard.g
+	}
+	top := o.Top
+	if top <= 0 {
+		top = defaultPageTop
+	}
+	top = min(top, maxPageTop)
+	plain := c.base + c.userSeg(userID) + "/mailFolders/" + url.PathEscape(folderID) + "/messages" +
+		"?$select=" + strings.Join(messageSelectFields, ",") + ",parentFolderId" +
+		"&$orderby=receivedDateTime%20desc&$top=" + strconv.Itoa(top)
+	link, expanded := next, false
+	if link == "" {
+		link, expanded = plain+"&$expand="+messagePageExpand, true
+	}
+	if err := guard.admit(link); err != nil {
+		return nil, "", err
+	}
+
+	var body struct {
+		Value []struct {
+			ID                string               `json:"id"`
+			InternetMessageID string               `json:"internetMessageId"`
+			Subject           string               `json:"subject"`
+			From              *graphRecipient      `json:"from"`
+			ToRecipients      []graphRecipient     `json:"toRecipients"`
+			CcRecipients      []graphRecipient     `json:"ccRecipients"`
+			Received          string               `json:"receivedDateTime"`
+			HasAttachments    bool                 `json:"hasAttachments"`
+			Importance        string               `json:"importance"`
+			IsRead            *bool                `json:"isRead"`
+			Categories        []string             `json:"categories"`
+			ParentFolderID    string               `json:"parentFolderId"`
+			ExtProps          []singleValueExtProp `json:"singleValueExtendedProperties"`
+		} `json:"value"`
+		Next string `json:"@odata.nextLink"`
+	}
+	pref, err := c.getJSON(ctx, link, &body)
+	var se *StatusError
+	if err != nil && expanded && errors.As(err, &se) && !slices.Contains([]int{401, 403, 404, 429}, se.Code) {
+		// Best-effort sensitivity and size (MA-285): a tenant that does not support
+		// the $expand must not fail the listing, so the first page is asked for
+		// again without it. A refusal that is about the sign-in, the folder or
+		// throttling is not read as that, and every other error surfaces.
+		pref, err = c.getJSON(ctx, plain, &body)
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	honored := o.Honored || strings.Contains(strings.ToLower(pref), "immutableid")
+	refs := make([]MessageRef, 0, len(body.Value))
+	for _, m := range body.Value {
+		size, sens := decodeExtProps(m.ExtProps)
+		ref := MessageRef{
+			ID:                m.ID,
+			InternetMessageID: strings.Trim(m.InternetMessageID, "<>"),
+			Subject:           m.Subject,
+			To:                addrsOf(m.ToRecipients),
+			Cc:                addrsOf(m.CcRecipients),
+			HasAttachments:    m.HasAttachments,
+			Importance:        m.Importance,
+			IsRead:            m.IsRead,
+			Categories:        m.Categories,
+			Sensitivity:       sens,
+			ParentFolderID:    m.ParentFolderID,
+			SizeHint:          size,
+		}
+		if m.From != nil {
+			ref.From = strings.TrimSpace(m.From.EmailAddress.Address)
+			ref.FromName = m.From.EmailAddress.Name
+		}
+		if t, err := time.Parse(time.RFC3339, m.Received); err == nil {
+			ref.Received = t
+		}
+		if honored {
+			ref.PhysID = m.ID
+		}
+		refs = append(refs, ref)
+	}
+	return refs, body.Next, nil
 }
 
 // FolderCount reads one folder's totalItemCount: the second read of the

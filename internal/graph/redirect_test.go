@@ -25,7 +25,10 @@ import (
 func meClient(t *testing.T, srv *httptest.Server, cfg Config, expiry time.Time) *Client {
 	t.Helper()
 	cfg.Tenant, cfg.ClientID = "t", "c"
-	cfg.BaseURL, cfg.TokenURL, cfg.DeviceAuthURL = srv.URL, srv.URL+"/token", srv.URL+"/devicecode"
+	if cfg.BaseURL == "" {
+		cfg.BaseURL = srv.URL
+	}
+	cfg.TokenURL, cfg.DeviceAuthURL = srv.URL+"/token", srv.URL+"/devicecode"
 	cfg.TokenCachePath = filepath.Join(t.TempDir(), "graph.token")
 	cfg.Prompt = func(DeviceAuth) {}
 	if err := storeTokenCache(cfg.TokenCachePath, "alice@contoso.org",

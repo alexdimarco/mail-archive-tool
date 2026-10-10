@@ -455,6 +455,14 @@ type MessageRef struct {
 	Cc             []string
 	HasAttachments bool
 
+	// Set by the extraction workspace's MessagePage only (Messages leaves them
+	// zero): the sender's display name (raw, untrusted), the folder the message is
+	// in as Graph says (parentFolderId), and the message's size in bytes as
+	// PidTagMessageSize, best-effort — -1 when Graph did not return it.
+	FromName       string
+	ParentFolderID string
+	SizeHint       int64
+
 	Importance string   // Graph "low"/"normal"/"high"; "" when the tenant omits it
 	IsRead     *bool    // nil when the tenant omits it (read state then unknown)
 	Categories []string // the message's category tags; nil when the tenant omits them
