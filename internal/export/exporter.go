@@ -49,6 +49,15 @@ type Stats struct {
 	Filled          int // retries that recovered content and were rewritten
 	StillIncomplete int // retries that recovered nothing (nothing rewritten)
 	Resolved        int // legacy "unknown" records resolved without recapture (complete-at-fetch sources)
+
+	// Fault isolation (§4.2). Unreadable counts partly-read records — one that
+	// carries an unreadable:* label — written or re-examined this run: it is what
+	// makes a run partial besides the ledger's gaps. Unparsed counts unparsed stubs
+	// written or seen. Kept counts the degraded captures the KEEP guard held back
+	// from an archived record (P15).
+	Unreadable int
+	Unparsed   int
+	Kept       int
 }
 
 // Issue is one verification finding: something referenced but not fully
@@ -127,6 +136,23 @@ type Exporter struct {
 	// identity with multiple distinct fingerprints is reported once per run, not
 	// once per folder-observation.
 	reuseLogged map[string]bool
+
+	// gapRunAt is the stamp ledger gaps the exporter records carry when the caller
+	// set no RunAt (a test, or a run that keeps no timeline): fixed on first use, so
+	// every observation of one Exporter belongs to one run.
+	gapRunAt time.Time
+}
+
+// runStamp is the run's timestamp for a ledger observation: RunAt when the
+// caller set it, else one stamp for the Exporter's life.
+func (e *Exporter) runStamp() time.Time {
+	if !e.RunAt.IsZero() {
+		return e.RunAt
+	}
+	if e.gapRunAt.IsZero() {
+		e.gapRunAt = time.Now().UTC()
+	}
+	return e.gapRunAt
 }
 
 // Export writes a single message. It returns true if the message was written
@@ -160,6 +186,14 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		key = state.LiveKey(store, m.Identity())
 	} else {
 		key = state.Key(store, folderKey, m.Identity())
+	}
+
+	// KEEP guard (P15, FC5): a capture that carries a read-gap label never replaces
+	// an archived record that does not already carry it. It runs on every source and
+	// in both modes, ahead of key placement and of any write, so a degraded read can
+	// neither overwrite a complete page and zip nor mint a #fp-split sibling.
+	if len(m.ReadGaps) > 0 && e.keepDegraded(store, folderKey, folderPath, m, key) {
+		return false, nil
 	}
 
 	// A DIFFERENT message reusing an already-archived Message-ID is a distinct
@@ -217,7 +251,12 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		}
 	}
 
-	for !physResolved && seen && prev.Fingerprint != "" && prev.Fingerprint != fp &&
+	// A capture that carries a read gap is never #fp-split (§4.7.2): its envelope is
+	// what the reader could read of an item that already has a record here, so a
+	// differing fingerprint is no evidence of a distinct message. And a partly-read
+	// record's fingerprint was computed over zero attachments, so a healthy read of
+	// the same item is compared in that form too (§4.7.4(1)).
+	for !physResolved && len(m.ReadGaps) == 0 && seen && prev.Fingerprint != "" && !sameFingerprint(prev, m, fp) &&
 		!(e.DedupMailboxWide && prev.FpScheme != state.FpSchemeCurrent && !identityMultiRecord) {
 		// A DIFFERENT message reused this key's Message-ID: file it under a
 		// fingerprint-qualified key. The separator is NUL (state.Qualify), never a
@@ -264,12 +303,21 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 					e.OnManifestSkip(key, folderPath, assert)
 				}
 			}
+			// A healthy read of an item that an earlier run only partly read, which
+			// already has its own record here: the partly-read record is settled.
+			e.supersedePartial(store, key, m)
+			e.countReadGaps(m)
 			e.Stats.SkippedManifest++
 			return false, nil
 		}
 		e.Stats.Retried++
 		if !probeImproves(m, prev.Missing) {
 			e.Stats.StillIncomplete++
+			// Still partly read: it counts as a partly-read record seen this run, and
+			// a Locator an older binary's save dropped is restored from the capture
+			// (§4.2).
+			e.countReadGaps(m)
+			e.Manifest.SetLocator(key, m.Locator)
 			return false, nil
 		}
 		retry = true
@@ -312,6 +360,8 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		RootRel:        strings.Repeat("../", 1+len(writeFolderPath)), // store dir + folders
 		FolderIndexRel: "index.html",
 		RawName:        rawName,
+		Store:          store,
+		Folder:         folderKey,
 	}
 	// The zip's name can be offered before inline embedding is known: the page
 	// links it only beside the attachments it lists — those NOT embedded
@@ -407,6 +457,25 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	} else {
 		rec.Missing = gaps
 	}
+	// What the reader could not read of this item (§4.7.3): each label goes in the
+	// list its class says (state.GapClass is the single owner). A label this build
+	// does not know is filed by what the source can deliver, like any other gap.
+	for _, l := range m.ReadGaps {
+		class := state.GapClass(l)
+		if class == "" && e.SourceComplete {
+			class = state.ClassTerminal
+		}
+		if class == state.ClassFillable || class == "" {
+			rec.Missing = appendUnique(rec.Missing, l)
+		} else {
+			rec.Terminal = appendUnique(rec.Terminal, l)
+		}
+	}
+	// Only a partly-read record carries its Locator (FC6(3)): no other record's
+	// bytes change, so a healthy input is what it was (P14).
+	if rec.Unreadable() {
+		rec.Locator = m.Locator
+	}
 	if rec.HasIssues() {
 		rec.Subject = m.Subject
 		if !date.IsZero() {
@@ -467,6 +536,8 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		}
 	}
 	e.Manifest.Add(key, rec)
+	e.countReadGaps(m)
+	e.supersedePartial(store, key, m)
 	if e.OnExported != nil {
 		e.OnExported(store, folderPath, m, relSlash, key)
 	}
@@ -562,6 +633,149 @@ func hasBody(m *model.Message) bool {
 	return strings.TrimSpace(m.HTMLBody) != "" || strings.TrimSpace(m.PlainBody) != "" || strings.TrimSpace(m.RTFBody) != ""
 }
 
+// sameFingerprint reports whether the capture is the item prev records. Besides
+// the plain fingerprint, a partly-read record whose whole attachment table
+// failed has a fingerprint computed over ZERO attachments, so a healthy read of
+// the same item is compared in that form too: it must land on the partly-read
+// record's key, not split from it as a "Message-ID reuse" (§4.7.4(1)).
+func sameFingerprint(prev state.Record, m *model.Message, fp string) bool {
+	if prev.Fingerprint == fp {
+		return true
+	}
+	return prev.HasLabels([]string{state.LabelUnreadableAttachments}) && prev.Fingerprint == m.FingerprintNoAttachments()
+}
+
+// hasReadGap reports whether the capture carries the read-gap label.
+func hasReadGap(m *model.Message, label string) bool {
+	for _, l := range m.ReadGaps {
+		if l == label {
+			return true
+		}
+	}
+	return false
+}
+
+// appendUnique appends s unless the list already holds it.
+func appendUnique(list []string, s string) []string {
+	for _, x := range list {
+		if x == s {
+			return list
+		}
+	}
+	return append(list, s)
+}
+
+// countReadGaps counts the capture as a partly-read record and/or an unparsed
+// stub seen this run (Stats.Unreadable makes the run partial; Unparsed does not).
+func (e *Exporter) countReadGaps(m *model.Message) {
+	unreadable, unparsed := false, false
+	for _, l := range m.ReadGaps {
+		unreadable = unreadable || state.IsUnreadableLabel(l)
+		unparsed = unparsed || l == state.LabelUnparsed
+	}
+	if unreadable {
+		e.Stats.Unreadable++
+	}
+	if unparsed {
+		e.Stats.Unparsed++
+	}
+}
+
+// supersedePartial settles, after a healthy capture of an item (no read gap)
+// that carries a Locator, a same-token partly-read record of the same item that
+// sits under ANOTHER key: its unreadable:* labels become the info label
+// "superseded" and RecoveredBy names the new key (§4.7.4(3)). Metadata only — no
+// file is written, rendered or deleted, so no fixity can mismatch and no crash
+// window exists.
+func (e *Exporter) supersedePartial(store, key string, m *model.Message) {
+	if len(m.ReadGaps) == 0 && m.Locator != "" {
+		e.Manifest.SupersedePartial(store, m.Locator, key)
+	}
+}
+
+// keepDegraded is the KEEP guard (P15, FC5). A capture that carries read-gap
+// labels is never written over an existing same-token record of the same
+// identity (on Graph, the same immutable id first) that does not already carry
+// those labels: nothing is written, renamed or removed, the record is stamped
+// seen (so the walk's sweep never calls it gone), the capture counts as Kept and
+// an info "refresh-failed" gap names the label. It reports whether it held the
+// capture back. A record that already carries the labels is the item's own
+// partly-read record: that capture goes on to heal or re-examine it.
+func (e *Exporter) keepDegraded(store, folderKey string, folderPath []string, m *model.Message, baseKey string) bool {
+	prevKey, prev, ok := e.archivedRecordFor(store, m, baseKey)
+	if !ok || prev.HasLabels(m.ReadGaps) {
+		return false
+	}
+	seenAt := e.runStamp()
+	if e.DedupMailboxWide {
+		// The same stamp the incremental skip makes: the record's timeline follows the
+		// observation, and a move or a present-again is recorded by the live path.
+		exact := m.PhysID != "" && e.Manifest.HasPhysID(prevKey, m.PhysID)
+		assert := prev.Folder != folderKey || !prev.Present
+		e.Manifest.MergeFields(prevKey, folderKey, seenAt, true)
+		if !exact {
+			// A capture that is not matched to one immutable id cannot say WHICH
+			// #fp-qualified sibling it observed: stamp them all (R21).
+			prefix := store + "\x00"
+			for _, sib := range e.Manifest.KeysForIdentity(m.Identity()) {
+				if sib.Key != prevKey && strings.HasPrefix(sib.Key, prefix) {
+					e.Manifest.TouchSeen(sib.Key, seenAt)
+				}
+			}
+		}
+		if e.OnManifestSkip != nil {
+			e.OnManifestSkip(prevKey, folderPath, assert)
+		}
+	} else {
+		e.Manifest.TouchSeen(prevKey, seenAt)
+	}
+	e.Stats.Kept++
+	e.observeKept(store, folderKey, m)
+	return true
+}
+
+// archivedRecordFor finds the record a degraded capture would have replaced: on
+// the live path the same-token record that stores the capture's immutable id,
+// else the record at the key the capture would have been filed under.
+func (e *Exporter) archivedRecordFor(store string, m *model.Message, baseKey string) (string, state.Record, bool) {
+	if e.DedupMailboxWide && m.PhysID != "" {
+		prefix := store + "\x00"
+		for _, sib := range e.Manifest.KeysForIdentity(m.Identity()) {
+			if strings.HasPrefix(sib.Key, prefix) && e.Manifest.HasPhysID(sib.Key, m.PhysID) {
+				if r, ok := e.Manifest.Get(sib.Key); ok {
+					return sib.Key, r, true
+				}
+			}
+		}
+	}
+	r, ok := e.Manifest.Get(baseKey)
+	return baseKey, r, ok
+}
+
+// observeKept records the info gap a held-back capture leaves: reason
+// refresh-failed, locator graph:<immutable id> on the live path (else
+// ident:<identity>), naming the labels the capture carried. Info does not make a
+// run partial; it says that an item's newest read was worse than its archived
+// copy.
+func (e *Exporter) observeKept(store, folderKey string, m *model.Message) {
+	loc := "ident:" + m.Identity()
+	if e.DedupMailboxWide && m.PhysID != "" {
+		loc = "graph:" + m.PhysID
+	}
+	detail := "a newer read of this item was only partly readable (" + strings.Join(m.ReadGaps, ", ") + "); the archived copy was kept unchanged"
+	if m.ReadError != "" {
+		detail += ": " + m.ReadError
+	}
+	g := state.CaptureGap{
+		Token: store, Folder: folderKey, Scope: state.GapScopeItem, Locator: loc,
+		Reason: "refresh-failed", Class: state.ClassInfo, Subject: m.Subject, Detail: detail,
+	}
+	if d := m.Date(); !d.IsZero() {
+		g.Received = d.UTC().Format(time.RFC3339)
+	}
+	e.Manifest.ObserveGap(g, e.runStamp())
+}
+
 // probeImproves reports whether any item in oldMissing is now present in the
 // source message — the subset rule (a retry is promoted when the old missing set
 // is not contained in the new one) evaluated without rendering or writing
@@ -569,6 +783,15 @@ func hasBody(m *model.Message) bool {
 // once so it can carry the truth.
 func probeImproves(m *model.Message, oldMissing []string) bool {
 	for _, item := range oldMissing {
+		// A read-gap label improves when the new read no longer carries it
+		// (§4.7.4(2)); state.GapClass owns which labels those are. For
+		// unreadable:attachments that also covers a real, empty attachment set.
+		if state.IsUnreadableLabel(item) || item == state.LabelUnparsed {
+			if !hasReadGap(m, item) {
+				return true
+			}
+			continue
+		}
 		switch item {
 		case state.UnknownSentinel:
 			return true

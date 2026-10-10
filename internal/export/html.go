@@ -20,6 +20,7 @@ import (
 	"golang.org/x/net/html/atom"
 
 	"mail-archive-tool/internal/model"
+	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/util"
 )
 
@@ -79,6 +80,12 @@ type RenderContext struct {
 	FolderIndexRel string
 	ZipName        string
 	RawName        string
+
+	// Store and Folder say where the item came from, for the notice a partly-read
+	// page carries (§4.7.5): the store's token and the folder path. Empty on a
+	// zero context, and unused for a message that carries no read gap.
+	Store  string
+	Folder string
 }
 
 // RenderResult is a rendered page plus what the renderer learned about it.
@@ -2273,8 +2280,73 @@ func renderHeader(m *model.Message, ctx RenderContext, consumed map[int]bool) st
 	if ctx.RawName != "" {
 		b.WriteString(`<div class="mailarchive-raw"><a href="` + html.EscapeString(ctx.RawName) + `">Original message (.eml)</a></div>`)
 	}
+	b.WriteString(readGapNotice(m, ctx))
 	b.WriteString(`</div>`)
 	return b.String()
+}
+
+// maxNoticeReason bounds the reason a reader gave for a partly-read item: it is
+// untrusted text from a damaged store.
+const maxNoticeReason = 300
+
+// readGapNotice is the page's own account of an item the reader could only partly
+// read (R7, R19; fault-isolation §4.7.5): fixed text with every value escaped and
+// control-stripped, inside the tool's own header and in the tool's own
+// `mailarchive-` namespace, which mail cannot forge (MA-187). `reindex -rebuild`
+// reads the header's tagged fields only, so the notice never reaches a rebuilt
+// index. It is empty for a message that carries no read gap.
+func readGapNotice(m *model.Message, ctx RenderContext) string {
+	if len(m.ReadGaps) == 0 {
+		return ""
+	}
+	var what []string
+	unparsed := false
+	for _, l := range m.ReadGaps {
+		switch l {
+		case state.LabelUnreadableBody:
+			what = append(what, "its body")
+		case state.LabelUnreadableAttachments:
+			what = append(what, "its attachments")
+		case state.LabelUnparsed:
+			what = append(what, "the message's structure (shown here as text)")
+			unparsed = true
+		default:
+			what = append(what, util.StripControl(l))
+		}
+	}
+	var b strings.Builder
+	b.WriteString(`<div class="mailarchive-notice">This item could only be partly read from the source: `)
+	b.WriteString(html.EscapeString(strings.Join(what, " and ")))
+	b.WriteString(`.`)
+	if ctx.Store != "" {
+		b.WriteString(` Source: ` + html.EscapeString(util.StripControl(ctx.Store)) + `, folder ` + html.EscapeString(util.StripControl(ctx.Folder)) + `.`)
+	}
+	if reason := boundReason(m.ReadError); reason != "" {
+		b.WriteString(` Reason: ` + html.EscapeString(reason) + `.`)
+	}
+	if unparsed {
+		b.WriteString(` The full original bytes are kept in the .eml file when the archive is made with -raw.`)
+	}
+	b.WriteString(`</div>`)
+	return b.String()
+}
+
+// boundReason strips control characters from a reader's reason and cuts it to
+// maxNoticeReason bytes on a rune boundary.
+func boundReason(s string) string {
+	s = util.StripControl(s)
+	if len(s) <= maxNoticeReason {
+		return s
+	}
+	s = s[:maxNoticeReason]
+	for len(s) > 0 {
+		if r, size := utf8.DecodeLastRuneInString(s); r == utf8.RuneError && size <= 1 {
+			s = s[:len(s)-1]
+			continue
+		}
+		break
+	}
+	return s
 }
 
 func displaySubject(m *model.Message) string {

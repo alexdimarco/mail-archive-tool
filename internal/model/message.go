@@ -109,6 +109,29 @@ type Message struct {
 	// pre-download skip hint and a distinctness tie-breaker (closure rev-6).
 	PhysID string
 
+	// Locator names where a LOCAL reader found the message in its store, stable for
+	// the life of that item: pst-nid:<store-uid>/<nid> for a PST item,
+	// maildir:<folder>/<unique> for a maildir file; Graph sets none (fault-isolation
+	// §4.2). It is the key a recovery or a healing matches on (a healthy read of an
+	// item that was read only in part finds the partial record by it) and the
+	// locator of its ledger gap. Like PhysID it is a capture-time value that is
+	// NEVER part of Identity(), Fingerprint() or contentHash(): no identity anywhere
+	// folds a locator (FC7), so a healthy input's keys are exactly what they were
+	// (P14).
+	Locator string
+
+	// ReadGaps are the labels of what the reader could not read of an item it
+	// could partly read (state.LabelUnreadableBody, state.LabelUnreadableAttachments,
+	// state.LabelUnparsed): the exporter records each in the record's gap lists, the
+	// KEEP guard never lets such a capture replace an archived record, and the page
+	// carries a notice (§4.7). It is empty for every healthy message and for an item
+	// with nothing readable, which is a ledger gap and has no Message at all (FC7).
+	ReadGaps []string
+
+	// ReadError is the bounded detail of why the item was only partly read, shown in
+	// the record notice. Untrusted: the exporter strips and bounds it.
+	ReadError string
+
 	Attachments []Attachment
 }
 
@@ -158,6 +181,18 @@ func (m *Message) Fingerprint() string {
 		fmt.Fprintf(h, "%d:%s\x00", i, a.Filename)
 	}
 	return hex.EncodeToString(h.Sum(nil))[:16]
+}
+
+// FingerprintNoAttachments is Fingerprint() as it would be computed over zero
+// attachments: exactly what a record's fingerprint is when the capture lost its
+// whole attachment table (unreadable:attachments set no attachments). A later
+// healthy read of the same item compares THIS with that record's fingerprint, so
+// it lands on the partly-read record's key instead of minting a distinct
+// "Message-ID reuse" (§4.7.4(1), FC6).
+func (m *Message) FingerprintNoAttachments() string {
+	bare := *m
+	bare.Attachments = nil
+	return bare.Fingerprint()
 }
 
 // ContentDigest is the live-path PhysID closure's churn-vs-distinct arbiter (design

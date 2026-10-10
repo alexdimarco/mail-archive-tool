@@ -793,7 +793,7 @@ func (m *Manifest) KeyForLocator(token, locator string) (string, bool) {
 
 // SupersedePartial settles a partly-read record whose item a later capture
 // stored under another key (§4.7.4(3)): the same-token record with this Locator
-// that carries an unreadable:* label gets those labels re-classed to the info
+// that carries an unreadable:* label has its gaps re-classed to the info
 // label "superseded" and RecoveredBy set to newKey, in one record update. It is
 // METADATA ONLY: no file is written, rendered or deleted, so nothing can mismatch
 // Fixity and there is no crash window; the Locator is cleared because the record
@@ -811,17 +811,12 @@ func (m *Manifest) SupersedePartial(token, locator, newKey string) bool {
 		return false
 	}
 	m.locatorDropLocked(key, r)
-	kept := r.Missing[:0:0]
-	for _, l := range r.Missing {
-		if !IsUnreadableLabel(l) {
-			kept = append(kept, l)
-		}
-	}
-	r.Missing = kept
-	if len(r.Missing) == 0 {
-		r.Missing = nil
-	}
-	r.Terminal = append(append([]string(nil), r.Terminal...), LabelSuperseded)
+	// The record is settled as a whole: every gap it carried (the unreadable:*
+	// labels and the "body" gap a body that could not be read leaves beside them)
+	// is moot once the item sits whole under newKey, so its one label is
+	// "superseded", of class info. The page stays; it is no longer "missing".
+	r.Missing = nil
+	r.Terminal = []string{LabelSuperseded}
 	r.RecoveredBy, r.Locator = newKey, ""
 	m.Entries[key] = r
 	return true
