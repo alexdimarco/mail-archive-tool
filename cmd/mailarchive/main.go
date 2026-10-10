@@ -363,7 +363,7 @@ func runServe(args []string) error {
 	if !server.IsLoopback(*addr) {
 		fmt.Fprintf(os.Stderr, "WARNING: serve has no authentication. Binding %s exposes every archived message to anyone who can reach this machine on that port; use 127.0.0.1 (the default) unless you mean it.\n", *addr)
 	} else if len(allowHosts) > 0 {
-		fmt.Fprintf(os.Stderr, "note: -allow-host has no effect with a loopback -addr (%s): only 127.0.0.1, localhost and [::1] are accepted there\n", *addr)
+		fmt.Fprintf(os.Stderr, "note: -allow-host has no effect with a loopback -addr (%s): only 127.0.0.1, localhost, [::1] and the bound address itself are accepted there\n", *addr)
 	}
 	ln, err := net.Listen("tcp", *addr)
 	if err != nil {

@@ -62,6 +62,38 @@ gate was changed.
    `config_in_archive` check, as a refusal or a warning. Encoder:
    `TestArchiveNowKeepsTheConfigInArchiveWarning`.
 
+4. **AO5, loopback bind other than 127.0.0.1.** The AO5 fix (`f8e9dc0`) makes a serve
+   on 127.0.0.2 accept 127.0.0.2, so the URL it prints works. Design P6 ("IP literals
+   only for a non-loopback serve"), S43 and MA-371 state the loopback set as exactly
+   127.0.0.1, localhost and [::1]. Either amend those three to the fix, or refuse such
+   a bind at start (then the fix and its tombstone change). No security impact (an IP
+   literal cannot be a rebinding name). Encoder:
+   `TestLoopbackBindOtherThan127_0_0_1KeepsTheDesignsExactSet` (the design as written).
+   Residual: a non-canonical spelling of the bind (`-addr 127.1:8099`) is still
+   printed and refused.
+
+## Re-verification (fresh-eyes check of the fixes)
+
+The "every response" wording in the parse-time escalation (1) is design §4.C1's, not
+the MA-378 row's; the encoders' covers (MA-371, MA-378, R23, R19, S43) stand. AI2 and
+AC4 cite MA-375, R12, S45; R18 (status integrity) is the closer invariant for AI2, the
+owner may re-point it.
+
+| Item | Outcome |
+|---|---|
+| AI1 (AO4 dup) | Confirmed fixed, no change. |
+| AC8 OPTIONS * half | Confirmed fixed, no change. |
+| AC1 | Confirmed fixed. Note: only the dot-folder subtest depends on `sameDir` alone; the others are also stopped by `os.Root`. Not a defect. Linux and Windows not run. |
+| AC2 | Confirmed fixed. Linux and Windows `O_NONBLOCK` behaviour not run. |
+| AO3 | Finding closed for `.eml`; the zip pin had no fail-then-pass proof (the host mime table maps `.zip`). Fixed: the test maps both suffixes to `text/html` and serves hostile bytes in the zip; with only the zip pin mutated out it is red ("-attachments.zip: Content-Type text/html; charset=utf-8, want application/zip"), restored it is green. Commit `a9c63e6`. |
+| AO5 | Mechanism works, but the fix departs from design P6 without a ruling and left false operator text. Texts fixed (main.go note, `serveHandler`, `Surface.ExtraHosts`); the design departure is escalation 4 with a skip encoder (unskipped it is red: 127.0.0.2 answered 200, want 403). |
+| AC3 | Confirmed fixed. The test skips on a file system that keeps spellings apart (ext4); Windows `SameFile` on network shares unchecked. |
+| Escalations AC8, AI2, AC4 | Confirmed real and correctly escalated; unchanged. |
+| New: OPTIONS * structural bypass (`http.Serve`/`ListenAndServe`, `var http.Server`, `new(http.Server)`) | Real, no live instance (all four servers are literals). Fixed in the check: those calls and any non-literal use of `http.Server` are now violations. Tombstone `TestStructuralChecksFailClosedOnHiddenHTTP`; with both refusals mutated out it is red for all three forms. Commit `a9c63e6`. |
+| New: AO3 zip pin unproven | Fixed, see AO3. |
+| New: AO5 stale text and undocumented departure | Texts fixed; departure escalated, see AO5. |
+| New: `4755eb2` edits the test source for a gate quirk (info) | Noted for the operator, not a defect here: the covers-map/no-vacuous-tests gate ends a test body at a column-0 `func` inside a raw string, so any test embedding Go source must indent it. No gate was changed. |
+
 ## Notes
 
 - AO3 pins only the Content-Type. A `Content-Disposition: attachment` for `.eml` and

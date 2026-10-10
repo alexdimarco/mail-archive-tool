@@ -25,7 +25,9 @@ type Surface struct {
 	Listener net.Addr
 	// ExtraHosts are host names or IP literals accepted, with any port, beyond
 	// 127.0.0.1, localhost and [::1]. Only a `serve` bound to a non-loopback
-	// address has any: its IP literals and the -allow-host names. An IPv6 literal
+	// address has -allow-host names; its IP literals are accepted there too, and a
+	// `serve` on a loopback address other than 127.0.0.1 or ::1 accepts its own
+	// literal. An IPv6 literal
 	// is written bracketed, as a Host header carries it ("[2001:db8::1]").
 	ExtraHosts []string
 }

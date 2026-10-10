@@ -21,7 +21,8 @@ import (
 // serveHandler is the archive reader as `serve` serves it, on the listener at.
 // A serve bound to a non-loopback address also accepts its own IP literals and
 // the -allow-host names (serveExtraHosts); a loopback serve, only the loopback
-// names.
+// names and, when bound to a loopback address other than 127.0.0.1 or ::1, that
+// address's own literal (the URL it prints; see the open decision on design P6).
 func serveHandler(out string, ix *index.Index, at net.Addr, allowHosts []string) http.Handler {
 	s := localweb.Surface{Name: "serve", Listener: at, ExtraHosts: serveExtraHosts(at, allowHosts)}
 	return localweb.Wrap(s, server.New(out, ix))
