@@ -22,18 +22,30 @@ func TestArchiveWriterNamesKeepF75F91F111(t *testing.T) {
 }
 
 // covers: MA-419, R29, R17, S52
-func TestCopyExportRowMA419(t *testing.T) {
-	t.Skip("MA-419: the Microsoft 365 adapter and its byte-exact originals are not built; lands in EW-E2")
-}
-
-// covers: MA-426, R29, R10, R1, S52
-func TestCopyExportRowMA426(t *testing.T) {
-	t.Skip("MA-426: per-message isolation is not built; lands in EW-E2")
+// With Readable HTML on, one message's MIME and its decoded attachments are held, and
+// its readable copy is made only within the render bound (32 MiB of predicted rendered
+// HTML, which MA-509 pins): the on half of MA-419's two modes.
+func TestCopyExportReadableHTMLHoldsOneMessage(t *testing.T) {
+	t.Skip("MA-419: Readable HTML is slice E5's (the render bound RR2b-C2, MA-509); until it lands the engine refuses the option and runs with it off, which TestCopyExportM365OriginalsAreByteExact covers")
 }
 
 // covers: MA-427, R29, R5, R12
-func TestCopyExportRowMA427(t *testing.T) {
-	t.Skip("MA-427: the run-fatal classes are not built; lands in EW-E2")
+// The archive's root or manifest gone after a read error is run-fatal R-o2 ("the archive
+// is no longer available"), not a list of thousands of false "damaged" messages, and
+// "Export the remaining messages" is offered.
+func TestCopyExportArchiveGoneMidRunIsRO2(t *testing.T) {
+	t.Skip("MA-427: the archive source and its R-o2 class are slice E4's (extraction design §4.6 item 7, §10); until it lands there is no archive read to fail")
+}
+
+// covers: MA-427, R29, R5, R12
+// "Export the remaining messages" on a stopped run builds a new preview from the run
+// record into the next part of the set (-part2, with the whole chain in its manifest),
+// and the activity page offers it, "Export failed messages again" and "Finish as partial"
+// by the run's status. The engine's reads of the record (RunRemaining, RunFailed) are
+// asserted by the run-fatal tests above; the preview, the part naming and the offers are
+// the desktop page's.
+func TestCopyExportRetryPreviewAndOfferedLabels(t *testing.T) {
+	t.Skip("MA-427: the retry preview, the -partN root names and the activity page's offered labels are slice E3's (XC28, design §4.13 Retry, §4.16)")
 }
 
 // covers: MA-428, R29, R5

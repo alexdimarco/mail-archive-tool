@@ -92,17 +92,35 @@ func (r *CopyRun) finalize(proposed CopyStatus, stop *CopyStop) (*CopyResult, er
 		res.RunID, res.Root, res.RootName = r.runID, r.rootAbs, r.rootName
 	}
 	if err != nil {
-		var se *ceStateErr
-		if errors.As(err, &se) {
-			// The state directory would not take a line: the marker stays, and Finish as
-			// partial completes the part once space is freed (RR2-C7).
-			s := &CopyStop{RID: "R-d2", Class: stopClassState}
-			s.Message = refusalText("R-d2", int(r.done.Load()), len(r.plan.Messages), "", r.plan, e.StateDir)
-			_ = r.rec.append(ceStoppedLine{T: "stopped", RID: "R-d2", Class: stopClassState, Reason: stopReason("R-d2"), At: e.nowTime()})
-			return &CopyResult{RunID: r.runID, Root: r.rootAbs, RootName: r.rootName, Status: CopyStatusFailed,
-				Outcome: CopyOutcomeFailed, Stop: s, Label: "Stopped: " + stopReason("R-d2")}, nil
+		if sum, serr := readSummary(r.rec.path); serr == nil && sum.Sealed != nil && res != nil {
+			// The seal is written, and its marker action or journal end is still owed:
+			// "Finished writing", which Check and finish completes.
+			res.Label = "Finished writing (" + res.Label + ") — this folder's marker may still need updating"
+			return res, nil
 		}
-		return res, err
+		// Finalization could not finish: the marker stays and no seal is written, so
+		// the run is unsealed and Finish as partial completes the part once the cause
+		// is cleared (RR2-C7). The reason is recorded when the state volume takes it.
+		s := &CopyStop{RID: "R-d2", Class: stopClassState}
+		var se *ceStateErr
+		if !errors.As(err, &se) {
+			if stop != nil && stop.RID != "" {
+				s = stop
+			} else {
+				s = &CopyStop{RID: "R-g", Class: stopClassDestination}
+			}
+		}
+		if !s.ready {
+			extra := ""
+			if !errors.As(err, &se) {
+				extra = leaveName(err)
+			}
+			s = r.complete(s, int(r.done.Load()), extra)
+		}
+		_ = r.rec.append(ceStoppedLine{T: "stopped", RID: s.RID, Class: s.Class, Reason: stopReason(s.RID), At: e.nowTime()})
+		_ = e.journalAppend(ceJournalLine{Run: r.runID, Event: "stopped", Reason: stopReasonText(s)})
+		return &CopyResult{RunID: r.runID, Root: r.rootAbs, RootName: r.rootName, Status: CopyStatusFailed,
+			Outcome: CopyOutcomeFailed, Stop: s, Label: "Stopped: " + stopReason(s.RID)}, nil
 	}
 	return res, nil
 }
@@ -212,6 +230,11 @@ func (f *ceFinish) presence(rehash bool) error {
 		}
 		for _, file := range m.Files {
 			fi, err := f.fs.Lstat(file.Path)
+			if err != nil && !fileGone(err) {
+				// The volume does not answer (an I/O error, a stick that dropped off): that
+				// says nothing about this file, so no message is marked missing on it.
+				return finalWriteErr(err)
+			}
 			if err != nil || !fi.Mode().IsRegular() {
 				if rehash {
 					amend = append(amend, ceMsgLine{T: "msg", N: m.N, Status: statusNotAttempted, Amend: true,
@@ -223,7 +246,11 @@ func (f *ceFinish) presence(rehash bool) error {
 				return nil
 			}
 			if rehash {
-				if got, err := hashInRoot(f.fs, file.Path); err != nil || got != file.SHA256 || fi.Size() != file.Size {
+				got, err := hashInRoot(f.fs, file.Path)
+				if err != nil && !fileGone(err) {
+					return finalWriteErr(err)
+				}
+				if err != nil || got != file.SHA256 || fi.Size() != file.Size {
 					amend = append(amend, ceMsgLine{T: "msg", N: m.N, Status: statusFailed, Class: classRetryable, Amend: true,
 						Reason: "damaged when the computer stopped"})
 					return nil
@@ -241,6 +268,13 @@ func (f *ceFinish) presence(rehash bool) error {
 		}
 	}
 	return nil
+}
+
+// fileGone reports whether an error from looking a recorded file up says the file
+// is not there: it does not exist, or its directory was swapped for a link out of
+// the root, so the path no longer reaches it.
+func fileGone(err error) bool {
+	return errors.Is(err, fs.ErrNotExist) || strings.Contains(err.Error(), "path escapes")
 }
 
 func readAll(r io.Reader) ([]byte, error) { return io.ReadAll(r) }
