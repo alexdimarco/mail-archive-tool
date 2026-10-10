@@ -660,7 +660,13 @@ func recordRun(opts Options, lr state.LastRun, result *Result, err *error, logge
 	// because the "running" record then stays and status reads it as a run that
 	// never finished although this log says how it ended.
 	if werr := writeLastRun(opts.Out, lr); werr != nil && logger != nil {
-		logger.Printf("warning: could not record this run in %s (%v): `mailarchive status` may show this run as \"never finished\" or still show the previous result although it ended as logged above — run again once the file can be written (on Windows, exclude the archive folder from antivirus real-time scanning)", filepath.Join(opts.Out, state.LastRunName), werr)
+		// This line comes before the run's own Done/FAILED line (recordRun runs
+		// from a defer), so it must not refer to lines "above".
+		hint := ""
+		if runtime.GOOS == "windows" {
+			hint = " (a sharing violation: exclude the archive folder from antivirus real-time scanning)"
+		}
+		logger.Printf("warning: could not record this run in %s (%v): `mailarchive status` may show this run as \"never finished\" or still show the previous result, whatever this log says about how it ended — run again once the file can be written%s", filepath.Join(opts.Out, state.LastRunName), werr, hint)
 	}
 }
 

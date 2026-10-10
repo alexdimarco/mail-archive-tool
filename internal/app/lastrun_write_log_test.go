@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -45,9 +46,20 @@ func TestFailedLastRunWriteIsLogged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a refused record write must not fail the run: %v", err)
 	}
-	for _, want := range []string{"could not record this run", state.LastRunName, "sharing violation", "never finished", "antivirus"} {
+	for _, want := range []string{"could not record this run", state.LastRunName, "sharing violation", "never finished", "whatever this log says"} {
 		if !strings.Contains(logs, want) {
 			t.Fatalf("the log lacks %q:\n%s", want, logs)
 		}
+	}
+	// The warning is printed from recordRun's defer, before the run's own
+	// Done/FAILED line, so it must not point "above" at lines that are not there
+	// (g7 friction re-verification of F12) ...
+	if strings.Contains(logs, "logged above") {
+		t.Fatalf("the warning points at log lines above it, but it comes first:\n%s", logs)
+	}
+	// ... and the antivirus advice is the Windows sharing-violation remedy, not
+	// advice for a permission or rename failure on another OS.
+	if got := strings.Contains(logs, "antivirus"); got != (runtime.GOOS == "windows") {
+		t.Fatalf("antivirus advice present=%v on %s:\n%s", got, runtime.GOOS, logs)
 	}
 }
