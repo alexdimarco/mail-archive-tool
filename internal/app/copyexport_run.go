@@ -116,13 +116,16 @@ func (r *CopyRun) Cancel() {
 
 // Progress is the run's counters, ETA included.
 func (r *CopyRun) Progress() CopyProgress {
+	r.mu.Lock()
+	started := r.started // Run sets it while the UI polls
+	r.mu.Unlock()
 	p := CopyProgress{Selected: len(r.plan.Messages), Done: int(r.done.Load()), Failed: int(r.failed.Load()),
-		Bytes: r.bytes.Load(), Started: r.started}
+		Bytes: r.bytes.Load(), Started: started}
 	if f, _ := r.folder.Load().(string); f != "" {
 		p.Folder = f
 	}
-	if p.Done > 0 && !r.started.IsZero() {
-		per := r.env.nowTime().Sub(r.started) / time.Duration(p.Done)
+	if p.Done > 0 && !started.IsZero() {
+		per := r.env.nowTime().Sub(started) / time.Duration(p.Done)
 		p.ETA = per * time.Duration(p.Selected-p.Done)
 	}
 	return p
@@ -145,11 +148,11 @@ func (r *CopyRun) Run(parent context.Context) (res *CopyResult, err error) {
 	r.mu.Lock()
 	r.cancel = cancel
 	was := r.cancelled
+	r.started = e.nowTime()
 	r.mu.Unlock()
 	if was {
 		cancel()
 	}
-	r.started = e.nowTime()
 
 	if refusal := r.start(); refusal != nil {
 		return nil, refusal

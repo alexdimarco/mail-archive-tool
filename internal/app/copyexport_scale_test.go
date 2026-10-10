@@ -88,8 +88,8 @@ func TestCopyExportScalesToSixtyThousandMessages(t *testing.T) {
 		t.Fatalf("the 60,000-message export: %+v", res)
 	}
 	t.Logf("peak heap growth during the run: %d MiB", peak>>20)
-	if peak > heapBound60k {
-		t.Errorf("the heap grew by %d MiB over %d messages (bound %d MiB): per-message state is being held in memory", peak>>20, n, heapBound60k>>20)
+	if bound := uint64(heapBound60k + raceHeapAllowance); uint64(peak) > bound {
+		t.Errorf("the heap grew by %d MiB over %d messages (bound %d MiB): per-message state is being held in memory", peak>>20, n, bound>>20)
 	}
 	dirs := 0
 	filepath.WalkDir(res.Root, func(path string, d fs.DirEntry, err error) error {
