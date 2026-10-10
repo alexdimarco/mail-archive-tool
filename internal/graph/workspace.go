@@ -269,6 +269,7 @@ func (c *Client) MessagePage(ctx context.Context, userID, folderID, next string,
 		pref, err = c.getJSON(ctx, plain, &body)
 	}
 	if err != nil {
+		guard.forget(link) // a failed page may be retried through the same guard
 		return nil, "", err
 	}
 	honored := o.Honored || strings.Contains(strings.ToLower(pref), "immutableid")

@@ -93,6 +93,17 @@ func (g *pageGuard) admit(link string) error {
 	return nil
 }
 
+// forget undoes admit for a link whose request failed, so the loop's own retry of
+// that page is not read as a repeat: the guard counts a page once it has been
+// fetched. A link that was fetched stays in the set.
+func (g *pageGuard) forget(link string) {
+	h := sha256.Sum256([]byte(link))
+	if g.seen[h] {
+		delete(g.seen, h)
+		g.pages--
+	}
+}
+
 // onBase reports whether link stays on base, compared after url.Parse with the
 // extraction review's XC25 normalization: the same scheme; the same host,
 // case-insensitively; the same port once each scheme's default is filled in;
