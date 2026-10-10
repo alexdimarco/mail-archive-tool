@@ -1,0 +1,526 @@
+package state
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"mail-archive-tool/internal/assure"
+)
+
+var gapBase = time.Date(2026, 10, 1, 10, 0, 0, 0, time.UTC)
+
+// gapManifest is a manifest on disk with one registered store; it returns the
+// manifest, its path and the store's token (the ledger drops a token that is not
+// a value in Stores at Load).
+func gapManifest(t *testing.T) (*Manifest, string, string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), ".mailarchive-manifest.json")
+	m, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m, path, m.Token("mailbox:ann@contoso.com", "ann@contoso.com")
+}
+
+func reload(t *testing.T, m *Manifest, path string) *Manifest {
+	t.Helper()
+	if err := m.Save(); err != nil {
+		t.Fatal(err)
+	}
+	m2, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m2
+}
+
+func itemGap(token, loc string) CaptureGap {
+	return CaptureGap{Token: token, Folder: "Inbox", Scope: GapScopeItem, Locator: loc, Reason: "fetch-failed", Class: ClassFillable}
+}
+
+// covers: MA-323, R1, R5, S46
+// The ledger's lifecycle (§4.2, §4.3): it survives Save and Load, a manifest
+// written before it exists loads empty, Runs counts runs (not calls, one per UTC
+// day), Skipped resets per run, ObserveGap follows the item's folder, a completed
+// walk closes the gaps its folder no longer holds and keeps the rest (shown as
+// not attempted), and a rolling -since window never closes a gap dated before it.
+func TestCaptureGapLedgerLifecycle(t *testing.T) {
+	m, path, tok := gapManifest(t)
+
+	// A v6 manifest that has no capture_gaps key loads with an empty ledger.
+	legacy := filepath.Join(t.TempDir(), "legacy.json")
+	if err := os.WriteFile(legacy, []byte(`{"version":6,"entries":{}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if lm, err := Load(legacy); err != nil || lm.GapCount() != 0 {
+		t.Fatalf("a v6 manifest without capture_gaps: err %v, %d gaps; want nil, 0", err, lm.GapCount())
+	}
+
+	// First observation: one entry, Runs 1, FirstRun = LastRun = the run.
+	g := itemGap(tok, "graph:AAA")
+	g.Subject, g.Received, g.Detail = "Quarterly report", "2026-03-02T09:00:00Z", "500 ErrorMimeContentConversionFailed"
+	key, created := m.ObserveGap(g, gapBase)
+	if !created || key != GapKey(tok, GapScopeItem, "graph:AAA") {
+		t.Fatalf("ObserveGap = (%q, %v); want a new entry under token\\x00item\\x00locator", key, created)
+	}
+	m2 := reload(t, m, path)
+	got := m2.CaptureGapsSorted()
+	if len(got) != 1 || got[0].Runs != 1 || !got[0].FirstRun.Equal(gapBase) || got[0].Subject != "Quarterly report" || got[0].Class != ClassFillable {
+		t.Fatalf("after Save and Load the ledger holds %+v; want the one entry, Runs 1, unchanged", got)
+	}
+
+	// Two observations in ONE run count once, and Skipped accumulates within it.
+	m = m2
+	f := CaptureGap{Token: tok, Folder: "Projects", Scope: GapScopeFolder, Locator: "folder:Projects", Reason: "folder-unwritable", Class: ClassFillable, Skipped: 1}
+	m.ObserveGap(f, gapBase)
+	m.ObserveGap(f, gapBase)
+	fk := GapKey(tok, GapScopeFolder, "folder:Projects")
+	if e := m.CaptureGaps[fk]; e.Runs != 1 || e.Skipped != 2 {
+		t.Fatalf("two observations in one run: Runs %d Skipped %d; want 1 and 2", e.Runs, e.Skipped)
+	}
+
+	// A LATER run (next day) increments Runs, keeps FirstRun, resets Skipped and
+	// follows the folder and the subject the later observation carries [FC14].
+	next := gapBase.Add(26 * time.Hour)
+	moved := f
+	moved.Folder, moved.Subject = "Projects/2026", "Moved item"
+	m.ObserveGap(moved, next)
+	e := m.CaptureGaps[fk]
+	if e.Runs != 2 || !e.FirstRun.Equal(gapBase) || !e.LastRun.Equal(next) || e.Skipped != 1 || e.Folder != "Projects/2026" || e.Subject != "Moved item" {
+		t.Fatalf("a later run: %+v; want Runs 2, FirstRun kept, Skipped reset to 1, Folder and Subject updated", e)
+	}
+	// A second run on the SAME UTC day is one observation (owner ruling OR5).
+	m.ObserveGap(moved, next.Add(2*time.Hour))
+	if e := m.CaptureGaps[fk]; e.Runs != 2 {
+		t.Errorf("a second run on the same day: Runs %d, want 2 (at most one observation per day)", e.Runs)
+	}
+
+	// Completed walk of the token: the item gap was not re-observed this run and
+	// its folder was read, so it closes; the folder gap the run did observe stays;
+	// a gap in a folder the walk never read is retained and counts as not attempted.
+	m.ObserveGap(CaptureGap{Token: tok, Folder: "Archive", Scope: GapScopeItem, Locator: "graph:UNWALKED", Reason: "fetch-failed", Class: ClassFillable}, gapBase)
+	run3 := next.Add(48 * time.Hour)
+	m.ObserveGap(moved, run3)
+	walked := func(g CaptureGap) bool { return g.Folder != "Archive" }
+	if n := m.CloseUnobserved(tok, walked, run3, time.Time{}); n != 1 {
+		t.Fatalf("CloseUnobserved closed %d, want 1 (the item gap whose folder was fully read)", n)
+	}
+	if _, ok := m.CaptureGaps[GapKey(tok, GapScopeItem, "graph:AAA")]; ok {
+		t.Error("the gap in the walked folder that was not re-observed is still there")
+	}
+	if _, ok := m.CaptureGaps[GapKey(tok, GapScopeItem, "graph:UNWALKED")]; !ok {
+		t.Error("the gap in the unwalked folder was closed; it must be retained")
+	}
+	fill, term, info, stuck, notAtt, oldest := m.CaptureGapCounts(map[string]time.Time{tok: run3}, run3, 24*time.Hour)
+	// The folder gap was attempted on 3 runs on 3 days, 74 h apart from first to
+	// last: it is stuck (OR5); the unwalked folder's gap is not attempted.
+	if fill != 1 || term != 0 || info != 0 || stuck != 1 || notAtt != 1 || !oldest.Equal(gapBase) {
+		t.Errorf("counts = fillable %d terminal %d info %d stuck %d not-attempted %d oldest %v; want 1 0 0 1 1 %v (attempted vs not)", fill, term, info, stuck, notAtt, oldest, gapBase)
+	}
+
+	// A rolling -since window: a gap dated before it is retained although this
+	// run did not re-observe it, and an export-stage gap closes only by recovery
+	// or being observed again [FC13].
+	old := itemGap(tok, "graph:OLD")
+	old.Received = "2026-01-05T08:00:00Z"
+	m.ObserveGap(old, gapBase)
+	inWindow := itemGap(tok, "graph:INWINDOW")
+	inWindow.Received = "2026-09-20T08:00:00Z"
+	m.ObserveGap(inWindow, gapBase)
+	exportStage := itemGap(tok, "file:exp")
+	exportStage.Reason, exportStage.Received = "export-failed", "2026-09-21T08:00:00Z"
+	m.ObserveGap(exportStage, gapBase)
+	since := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	run4 := run3.Add(24 * time.Hour)
+	m.CloseUnobserved(tok, nil, run4, since)
+	if _, ok := m.CaptureGaps[GapKey(tok, GapScopeItem, "graph:OLD")]; !ok {
+		t.Error("a gap dated before -since was closed by absence; it must be retained and still reported")
+	}
+	if _, ok := m.CaptureGaps[GapKey(tok, GapScopeItem, "graph:INWINDOW")]; ok {
+		t.Error("a gap inside the -since window that was not re-observed should have closed")
+	}
+	if _, ok := m.CaptureGaps[GapKey(tok, GapScopeItem, "file:exp")]; !ok {
+		t.Error("an export-stage gap closed in a -since run; it closes only by recovery or re-observation")
+	}
+
+	// CloseGap (an item exported after all) removes exactly the one entry.
+	if !m.CloseGap(GapKey(tok, GapScopeItem, "graph:OLD")) || m.CloseGap(GapKey(tok, GapScopeItem, "graph:OLD")) {
+		t.Error("CloseGap must remove the entry once and report false the second time")
+	}
+}
+
+// covers: MA-323, R1, R5, S46
+// P13: the lifetime caps are per token and over the archive's life. Past 1000
+// item entries, 1000 folder entries or 100 info entries, a new entry is not
+// added: its folder's overflow entry counts it exactly, with the most severe
+// class it absorbed (so it still feeds partial), and info never consumes the item
+// cap.
+func TestCaptureGapLifetimeCaps(t *testing.T) {
+	m, path, tok := gapManifest(t)
+	for i := 0; i < maxGapItems; i++ {
+		m.ObserveGap(itemGap(tok, fmt.Sprintf("graph:%d", i)), gapBase)
+	}
+	// The 1001st and 1002nd fillable and a terminal one are counted, not added.
+	_, created := m.ObserveGap(itemGap(tok, "graph:1001"), gapBase)
+	m.ObserveGap(itemGap(tok, "graph:1002"), gapBase)
+	term := itemGap(tok, "graph:1003")
+	term.Class = ClassTerminal
+	m.ObserveGap(term, gapBase)
+	if created {
+		t.Error("the 1001st item gap was added as an entry; it must be counted in the overflow entry")
+	}
+	ok := GapKey(tok, GapScopeOverflow, "overflow:Inbox")
+	o, found := m.CaptureGaps[ok]
+	if !found || o.Skipped != 3 || o.Class != ClassTerminal || o.Scope != GapScopeOverflow {
+		t.Fatalf("overflow entry = %+v (found %v); want Skipped 3 and class terminal, the most severe absorbed", o, found)
+	}
+	if n := m.gapBucketCountLocked(tok, GapScopeItem); n != maxGapItems {
+		t.Errorf("%d live item entries, want exactly the cap %d", n, maxGapItems)
+	}
+
+	// Info has its own pool: it is added although the item cap is full.
+	for i := 0; i < maxGapInfo; i++ {
+		ig := itemGap(tok, fmt.Sprintf("ident:%d", i))
+		ig.Reason, ig.Class = "refresh-failed", ClassInfo
+		if _, c := m.ObserveGap(ig, gapBase); !c {
+			t.Fatalf("info gap %d was not added: info must not consume (or be blocked by) the item cap", i)
+		}
+	}
+	ig := itemGap(tok, "ident:over")
+	ig.Reason, ig.Class = "refresh-failed", ClassInfo
+	if _, c := m.ObserveGap(ig, gapBase); c {
+		t.Error("the 101st info gap was added; the info cap is 100")
+	}
+	// It was counted in the folder's overflow entry, which keeps the class the
+	// terminal item gave it (info is the least severe).
+	if o := m.CaptureGaps[ok]; o.Skipped != 4 || o.Class != ClassTerminal {
+		t.Errorf("after the 101st info gap the overflow is %+v; want 4 absorbed, still terminal", o)
+	}
+
+	// Folder scope has its own cap too.
+	for i := 0; i < maxGapFolders; i++ {
+		m.ObserveGap(CaptureGap{Token: tok, Folder: fmt.Sprintf("F%d", i), Scope: GapScopeFolder, Locator: fmt.Sprintf("folder:F%d", i), Reason: "folder-unreadable", Class: ClassTerminal}, gapBase)
+	}
+	if _, c := m.ObserveGap(CaptureGap{Token: tok, Folder: "Fover", Scope: GapScopeFolder, Locator: "folder:Fover", Reason: "folder-unreadable", Class: ClassFillable}, gapBase); c {
+		t.Error("the 1001st folder gap was added; the folder cap is 1000")
+	}
+	if fo := m.CaptureGaps[GapKey(tok, GapScopeOverflow, "overflow:Fover")]; fo.Skipped != 1 || fo.Class != ClassFillable {
+		t.Errorf("the folder overflow = %+v; want 1 absorbed, fillable", fo)
+	}
+
+	// The overflow survives Save and Load, and a LATER run resets its count and
+	// class to what that run absorbed (the cap is a lifetime bound, the count a
+	// per-run exact one).
+	m = reload(t, m, path)
+	if o := m.CaptureGaps[ok]; o.Skipped != 4 || o.Class != ClassTerminal {
+		t.Fatalf("after Save and Load the overflow is %+v; want it unchanged", o)
+	}
+	later := gapBase.Add(30 * time.Hour)
+	m.ObserveGap(itemGap(tok, "graph:1001"), later)
+	if o := m.CaptureGaps[ok]; o.Skipped != 1 || o.Class != ClassFillable || o.Runs != 2 {
+		t.Errorf("a later run's overflow = %+v; want Skipped 1, class fillable (this run's), Runs 2", o)
+	}
+	if w := m.CaptureGaps[ok].Weight(); w != 1 {
+		t.Errorf("an overflow entry's weight is its absorbed count: got %d, want 1", w)
+	}
+}
+
+// covers: MA-323, R1, R5, S46
+// Load treats the ledger as untrusted (MA-157): strings are stripped and bounded;
+// an entry whose token is not a SafeToken or not a value in Stores is dropped; a
+// future time is clamped; a known class survives an unknown reason; an unknown
+// class fails closed to terminal (never info); the per-token caps and a total cap
+// hold for a hostile manifest, the excess counted in overflow entries.
+func TestCaptureGapLoadSanitisation(t *testing.T) {
+	m, path, tok := gapManifest(t)
+	now := time.Now().UTC()
+	raw := func(g CaptureGap) CaptureGap {
+		g.FirstRun, g.LastRun, g.Runs = gapBase, gapBase, 1
+		return g
+	}
+	hostile := raw(itemGap(tok, "graph:HOSTILE"))
+	hostile.Detail = "\x1b[2J\x1b]0;pwned\x07boom\n" + strings.Repeat("x", 5000)
+	hostile.Subject = "line one\r\nline two " + strings.Repeat("é", 1000)
+	hostile.Reason = "new-\x1breason"
+	hostile.Class = "fillable"
+	future := raw(itemGap(tok, "graph:FUTURE"))
+	future.FirstRun, future.LastRun = now.Add(400*24*time.Hour), now.Add(500*24*time.Hour)
+	unknownClass := raw(itemGap(tok, "graph:CLASS"))
+	unknownClass.Class = "from-a-newer-build"
+	badToken := raw(itemGap("../escape", "graph:BADTOKEN"))
+	foreignToken := raw(itemGap("not-a-store", "graph:FOREIGN"))
+
+	m.CaptureGaps = map[string]CaptureGap{}
+	for _, g := range []CaptureGap{hostile, future, unknownClass, badToken, foreignToken} {
+		m.CaptureGaps[GapKey(g.Token, g.Scope, g.Locator)] = g
+	}
+	m = reload(t, m, path)
+	by := map[string]CaptureGap{}
+	for _, g := range m.CaptureGapsSorted() {
+		by[g.Locator] = g
+	}
+	assure.Reached(t, by, "the entries that survive Load")
+
+	h := by["graph:HOSTILE"]
+	if len(h.Detail) > 300 || strings.ContainsAny(h.Detail, "\x1b\x07\n") || strings.Contains(h.Detail, "pwned\x07") {
+		t.Errorf("hostile Detail survived Load: %d bytes %q", len(h.Detail), h.Detail[:min(40, len(h.Detail))])
+	}
+	if n := len([]rune(h.Subject)); n > 200 || strings.ContainsAny(h.Subject, "\r\n") {
+		t.Errorf("hostile Subject survived Load: %d runes", n)
+	}
+	if h.Class != ClassFillable || h.Reason != "new-reason" {
+		t.Errorf("a known class with an unknown reason: class %q reason %q; want fillable kept, reason bounded and stripped", h.Class, h.Reason)
+	}
+	if u := by["graph:CLASS"]; u.Class != ClassTerminal {
+		t.Errorf("an unknown class loaded as %q; it must fail closed to terminal, never info", u.Class)
+	}
+	if f := by["graph:FUTURE"]; f.LastRun.After(time.Now()) || f.FirstRun.After(time.Now()) {
+		t.Errorf("a future time survived Load: first %v last %v", f.FirstRun, f.LastRun)
+	}
+	if _, ok := by["graph:BADTOKEN"]; ok {
+		t.Error("an entry with a token that is not a SafeToken survived Load")
+	}
+	if _, ok := by["graph:FOREIGN"]; ok {
+		t.Error("an entry whose token is not a value in Stores survived Load")
+	}
+
+	// A hostile manifest past the per-token caps: only the cap is kept, the rest
+	// is counted in overflow entries.
+	m.CaptureGaps = map[string]CaptureGap{}
+	for i := 0; i < maxGapItems+250; i++ {
+		g := raw(itemGap(tok, fmt.Sprintf("graph:%05d", i)))
+		m.CaptureGaps[GapKey(tok, g.Scope, g.Locator)] = g
+	}
+	m = reload(t, m, path)
+	items, absorbed := 0, 0
+	for _, g := range m.CaptureGapsSorted() {
+		switch g.Scope {
+		case GapScopeItem:
+			items++
+		case GapScopeOverflow:
+			absorbed += g.Skipped
+		}
+	}
+	if items != maxGapItems || absorbed != 250 {
+		t.Errorf("a manifest with %d item gaps loaded as %d entries + %d absorbed; want %d + 250", maxGapItems+250, items, absorbed, maxGapItems)
+	}
+
+	// The total is capped too: a manifest of many tokens' worth of gaps keeps
+	// maxGapTotal entries and counts the rest, weight for weight.
+	big, bpath, _ := gapManifest(t)
+	total := 0
+	for i := 0; i < 25; i++ {
+		tk := big.Token(fmt.Sprintf("mailbox:u%d@x", i), fmt.Sprintf("u%d", i))
+		for j := 0; j < 900; j++ {
+			g := raw(itemGap(tk, fmt.Sprintf("graph:%d", j)))
+			big.CaptureGaps = ensure(big.CaptureGaps)
+			big.CaptureGaps[GapKey(tk, g.Scope, g.Locator)] = g
+			total++
+		}
+	}
+	big = reload(t, big, bpath)
+	entries, weight := 0, 0
+	for _, g := range big.CaptureGapsSorted() {
+		entries++
+		weight += g.Weight()
+	}
+	if entries > maxGapTotal+25 || weight != total {
+		t.Errorf("a %d-gap manifest loaded as %d entries weighing %d; want at most %d entries and every gap still counted", total, entries, weight, maxGapTotal+25)
+	}
+}
+
+func ensure(m map[string]CaptureGap) map[string]CaptureGap {
+	if m == nil {
+		return map[string]CaptureGap{}
+	}
+	return m
+}
+
+// covers: MA-323, R1, R5, S46
+// The stuck threshold (owner ruling OR5): a fillable gap with Runs >= 3 whose first
+// observation is at least max(72 h, two schedule periods) old. Terminal and info
+// gaps never are, and a gap that was not attempted on its store's last run never
+// is (FC14).
+func TestCaptureGapStuckThreshold(t *testing.T) {
+	now := gapBase.Add(10 * 24 * time.Hour)
+	g := CaptureGap{Token: "t", Class: ClassFillable, Runs: 3, FirstRun: now.Add(-73 * time.Hour), LastRun: now}
+	cases := []struct {
+		name   string
+		mutate func(*CaptureGap)
+		period time.Duration
+		want   bool
+	}{
+		{"3 runs and 73 h on a daily schedule", func(*CaptureGap) {}, 24 * time.Hour, true},
+		{"2 runs is not enough", func(g *CaptureGap) { g.Runs = 2 }, 24 * time.Hour, false},
+		{"71 h is not enough", func(g *CaptureGap) { g.FirstRun = now.Add(-71 * time.Hour) }, 24 * time.Hour, false},
+		{"two weekly periods outlast 72 h", func(*CaptureGap) {}, 7 * 24 * time.Hour, false},
+		{"two weekly periods elapsed", func(g *CaptureGap) { g.FirstRun = now.Add(-15 * 24 * time.Hour) }, 7 * 24 * time.Hour, true},
+		{"terminal never escalates", func(g *CaptureGap) { g.Class = ClassTerminal }, 24 * time.Hour, false},
+		{"info never escalates", func(g *CaptureGap) { g.Class = ClassInfo }, 24 * time.Hour, false},
+	}
+	for _, c := range cases {
+		x := g
+		c.mutate(&x)
+		if got := GapStuck(x, now, c.period); got != c.want {
+			t.Errorf("%s: GapStuck = %v, want %v", c.name, got, c.want)
+		}
+	}
+	// Stuck feeds the tally only through an attempted gap.
+	last := map[string]time.Time{"t": now}
+	if tl := TallyGaps([]CaptureGap{g}, last, now, 24*time.Hour); tl.Stuck != 1 || tl.Fillable != 1 || tl.NotAttempted != 0 {
+		t.Errorf("an attempted stuck gap tallies %+v; want fillable 1, stuck 1", tl)
+	}
+	if tl := TallyGaps([]CaptureGap{g}, map[string]time.Time{"t": now.Add(time.Hour)}, now, 24*time.Hour); tl.Stuck != 0 || tl.Fillable != 0 || tl.NotAttempted != 1 {
+		t.Errorf("a gap not attempted on its token's last run tallies %+v; want not-attempted 1 and never stuck", tl)
+	}
+}
+
+// covers: MA-323, R1, R5, S46
+// state.GapClass is the single owner of record gap labels (J5): the partly-read
+// labels are fillable (Missing), unparsed is terminal and superseded is info; an
+// ordinary content label has no class of its own, so the list it sits in decides.
+// Counts treats an info-class terminal label as nothing missing.
+func TestGapClassOwnsTheLabels(t *testing.T) {
+	for label, want := range map[string]string{
+		"unreadable:body":        ClassFillable,
+		"unreadable:attachments": ClassFillable,
+		"unparsed":               ClassTerminal,
+		"superseded":             ClassInfo,
+		"body":                   "",
+		"report.pdf":             "",
+	} {
+		if got := GapClass(label); got != want {
+			t.Errorf("GapClass(%q) = %q, want %q", label, got, want)
+		}
+	}
+	if RecordGapClass("body", true) != ClassTerminal || RecordGapClass("body", false) != ClassFillable || RecordGapClass("superseded", true) != ClassInfo {
+		t.Error("RecordGapClass must let the list decide for an ordinary label and GapClass for a special one")
+	}
+
+	m, _, tok := gapManifest(t)
+	m.Add(Key(tok, "Inbox", "mid:a"), Record{Path: tok + "/Inbox/a.html", Missing: []string{"body"}})
+	m.Add(Key(tok, "Inbox", "mid:b"), Record{Path: tok + "/Inbox/b.html", Missing: []string{"unreadable:attachments"}, Locator: "pst-nid:u/1"})
+	m.Add(Key(tok, "Inbox", "mid:c"), Record{Path: tok + "/Inbox/c.html", Terminal: []string{"unparsed"}})
+	m.Add(Key(tok, "Inbox", "mid:d"), Record{Path: tok + "/Inbox/d.html", Terminal: []string{"superseded"}, RecoveredBy: Key(tok, "Inbox", "mid:a")})
+	m.Add(Key(tok, "Inbox", "mid:e"), Record{Path: tok + "/Inbox/e.html", Terminal: []string{"report.pdf"}})
+	fillable, terminal, unknown := m.Counts()
+	if fillable != 2 || terminal != 2 || unknown != 0 {
+		t.Errorf("Counts = fillable %d terminal %d unknown %d; want 2 2 0 (a superseded record is nothing missing)", fillable, terminal, unknown)
+	}
+	if n := m.UnreadableCount(); n != 1 {
+		t.Errorf("UnreadableCount = %d, want 1", n)
+	}
+	if n := m.UnparsedCount(); n != 1 {
+		t.Errorf("UnparsedCount = %d, want 1", n)
+	}
+	if any, only := m.UnreadableCount(), m.UnreadableOnlyCount(); any != 1 || only != 1 {
+		t.Errorf("unreadable records: %d, of which only unreadable %d; want 1 and 1", any, only)
+	}
+}
+
+// covers: MA-323, R1, R5, S46
+// Load drops a Locator from a record that carries no unreadable:* label and a
+// RecoveredBy that names no existing key (§4.2, FC6(4)); a Locator that belongs
+// survives.
+func TestRecordLocatorAndRecoveredByAreChecked(t *testing.T) {
+	m, path, tok := gapManifest(t)
+	k1, k2, k3 := Key(tok, "Inbox", "mid:a"), Key(tok, "Inbox", "mid:b"), Key(tok, "Inbox", "mid:c")
+	m.Add(k1, Record{Path: tok + "/a.html", Missing: []string{"unreadable:body"}, Locator: "pst-nid:u/1"})
+	m.Add(k2, Record{Path: tok + "/b.html", Locator: "pst-nid:u/2", RecoveredBy: "no\x00such\x00key"})
+	m.Add(k3, Record{Path: tok + "/c.html", Terminal: []string{"superseded"}, RecoveredBy: k1})
+	m = reload(t, m, path)
+	r1, _ := m.Get(k1)
+	r2, _ := m.Get(k2)
+	r3, _ := m.Get(k3)
+	if r1.Locator != "pst-nid:u/1" {
+		t.Errorf("the partly-read record lost its Locator: %q", r1.Locator)
+	}
+	if r2.Locator != "" || r2.RecoveredBy != "" {
+		t.Errorf("a record without an unreadable label kept Locator %q and RecoveredBy %q; Load must drop both", r2.Locator, r2.RecoveredBy)
+	}
+	if r3.RecoveredBy != k1 {
+		t.Errorf("a RecoveredBy that names an existing key was dropped: %q", r3.RecoveredBy)
+	}
+	if k, ok := m.KeyForLocator(tok, "pst-nid:u/1"); !ok || k != k1 {
+		t.Errorf("KeyForLocator = %q, %v; want the partly-read record", k, ok)
+	}
+	if _, ok := m.KeyForLocator(tok, "pst-nid:u/2"); ok {
+		t.Error("KeyForLocator found a record that carries no unreadable label")
+	}
+}
+
+// covers: MA-323, R1, R5, S46
+// A legacy collapsed stub (F33's merged record) is re-classed to
+// legacy-placeholder once, on a run only, and `status` never writes it.
+func TestLegacyPlaceholderReclassOnce(t *testing.T) {
+	t.Skip("MA-323: the legacy collapsed-stub re-class is S2a's (FC27: the slice whose changes orphan the legacy record); closes when FI-S2a lands")
+}
+
+// covers: MA-323, R1, R5, S46
+// A Graph legacy stub is adopted on the first upgraded run (matched by PhysID or
+// Received) and is not swept gone.
+func TestGraphLegacyStubIsAdoptedNotSwept(t *testing.T) {
+	t.Skip("MA-323: Graph legacy-stub adoption (FC27) is S3's, with the Graph walk's sweep rules; closes when FI-S3 lands")
+}
+
+// covers: MA-323, R1, R5, S46
+// A stale-ParserGen unparsed Graph stub is re-fetched exactly once (FC25).
+func TestStaleParserGenStubRefetchedOnce(t *testing.T) {
+	t.Skip("MA-323: the parser-generation stamp and its one re-fetch (FC25) need the stub producers (S2b) and the Graph walk (S3); closes when both land")
+}
+
+// covers: MA-323, R1, R5, S46
+// A Graph walk under -since records no gap for an item it was not asked for and
+// keeps an existing gap (§4.8.2 step 1).
+func TestGraphSinceRuleRecordsNoGapForUnrequestedItem(t *testing.T) {
+	t.Skip("MA-323: the Graph walk's -since rule (§4.8.2 step 1) is S3's; the ledger half (CloseUnobserved never closes a gap dated before -since) is asserted in TestCaptureGapLedgerLifecycle; closes when FI-S3 lands")
+}
+
+// covers: MA-323, R1, R5, S46
+// What the ledger looks like on disk: keys are token \x00 scope \x00 locator,
+// the fields are those of §4.2, an empty ledger writes no key, and the manifest
+// version stays 6 (J2: no bump).
+func TestCaptureGapJSONShape(t *testing.T) {
+	m, _, tok := gapManifest(t)
+	g := itemGap(tok, "graph:AAA")
+	g.Subject = "s"
+	m.ObserveGap(g, gapBase)
+	b, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(b, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var gaps map[string]map[string]any
+	if err := json.Unmarshal(doc["capture_gaps"], &gaps); err != nil || len(gaps) != 1 {
+		t.Fatalf("the manifest has no capture_gaps object (%v): %s", err, b)
+	}
+	for k, e := range gaps {
+		if k != GapKey(tok, GapScopeItem, "graph:AAA") {
+			t.Errorf("ledger key %q", k)
+		}
+		for _, f := range []string{"token", "folder", "scope", "loc", "reason", "class", "subject", "first", "last", "runs"} {
+			if _, ok := e[f]; !ok {
+				t.Errorf("a ledger entry has no %q field: %v", f, e)
+			}
+		}
+	}
+	// No manifest version bump, and an empty ledger writes no key (J2).
+	var empty map[string]json.RawMessage
+	em, _, _ := gapManifest(t)
+	eb, _ := json.Marshal(em)
+	json.Unmarshal(eb, &empty)
+	if _, has := empty["capture_gaps"]; has {
+		t.Error("an empty ledger wrote a capture_gaps key")
+	}
+	if string(doc["version"]) != "6" {
+		t.Errorf("manifest version %s, want 6 (no bump, J2)", doc["version"])
+	}
+}

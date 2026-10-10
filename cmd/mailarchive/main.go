@@ -188,11 +188,7 @@ func runExport(args []string) error {
 		return err
 	}
 	defer closeLog()
-	defer func() { // a failed unattended run leaves its reason in its own log too
-		if err != nil {
-			logger.Printf("FAILED: %v", err)
-		}
-	}()
+	defer func() { logFailure(logger, err) }() // a failed unattended run leaves its reason in its own log too
 
 	outlook, outlookSyncWait, auto := o.outlook, o.outlookSyncWait, o.auto
 	doIndex, keepRaw := o.index, o.keepRaw
@@ -245,11 +241,12 @@ func runExport(args []string) error {
 
 	result, runErr := app.Run(ctx, opts, logger, nil)
 	// The "Done. …" summary (and its -raw/verification lines) belongs to a run
-	// that reached completion — a clean finish or a saved interrupt. A run that
-	// FAILED (refused before the lock, or aborted mid-walk) prints only the
-	// "FAILED:" line, never a misleading "Done. exported=0 … manifest=0" first
-	// (friction #7b/#22).
-	if runErr == nil || errors.Is(runErr, context.Canceled) {
+	// that reached completion — a clean finish, a saved interrupt, or a partial
+	// run (its walk finished; the "Not captured" block says what it could not
+	// capture). A run that FAILED (refused before the lock, or aborted mid-walk)
+	// prints only the "FAILED:" line, never a misleading "Done. exported=0 …
+	// manifest=0" first (friction #7b/#22).
+	if printsSummary(runErr) {
 		printSummary(logger, result, *doIndex, *keepRaw, *out)
 	}
 
@@ -1291,11 +1288,7 @@ func runGraph(args []string) (err error) {
 		return err
 	}
 	defer closeLog()
-	defer func() {
-		if err != nil {
-			logger.Printf("FAILED: %v", err)
-		}
-	}()
+	defer func() { logFailure(logger, err) }()
 
 	for _, w := range setupWarnings {
 		logger.Printf("warning: %s", w.Message)
@@ -1314,6 +1307,25 @@ func runGraph(args []string) (err error) {
 	printSummary(logger, result, *o.index, *o.keepRaw, *o.out)
 	err = graphOutcome(logger, runErr)
 	return err
+}
+
+// printsSummary says whether a run that returned runErr reached completion, so
+// the export verb prints its "Done. …" summary: a clean finish, a handled
+// interrupt, and a partial run (its walk finished and the summary's "Not
+// captured" block says what it could not capture). A failed run prints only its
+// "FAILED:" line.
+func printsSummary(runErr error) bool {
+	return runErr == nil || errors.Is(runErr, context.Canceled) || errors.Is(runErr, app.ErrPartial)
+}
+
+// logFailure writes the run log's "FAILED:" line for a run that returned err. A
+// partial run is not a failure of the run: its summary, "Not captured" block and
+// report already say what happened, so it logs no "FAILED:" line (S1a still maps
+// it to exit 1, like a failure, §4.9).
+func logFailure(logger *log.Logger, err error) {
+	if err != nil && !errors.Is(err, app.ErrPartial) {
+		logger.Printf("FAILED: %v", err)
+	}
 }
 
 // graphOutcome is the graph verb's result for RunGraph's error: a handled
@@ -1569,6 +1581,37 @@ func waitForSync(ctx context.Context, store string, logger *log.Logger) error {
 	}
 }
 
+// printNotCaptured prints the summary's account of what the run could not
+// capture (fault-isolation §4.10): when it observed any fillable or terminal gap,
+// how many items (and how many are new this run) and folders, how many will be
+// retried when the archive runs again and how many need action, the report that
+// lists them, and one line per gap (at most 20, then "+N more"), each led by the
+// store's source id. A partly-read record is its own line. The "Recovered" line
+// says how many earlier gaps this run closed by capturing the item.
+func printNotCaptured(logger *log.Logger, r app.Result) {
+	g := r.Gaps
+	if g.Observed > 0 {
+		head := fmt.Sprintf("Not captured: %d item(s) (%d new this run)", g.ItemGaps, g.New)
+		if g.FolderGaps > 0 {
+			head += fmt.Sprintf(", %d folder%s", g.FolderGaps, plural(g.FolderGaps, "", "s"))
+		}
+		head += fmt.Sprintf(" — %d will be retried when you run again, %d need action", g.Fillable, g.Terminal)
+		if r.ReportPath != "" {
+			head += fmt.Sprintf(" — details in %s", r.ReportPath)
+		}
+		logger.Printf("%s", head)
+		for _, l := range g.Lines {
+			logger.Printf("%s", l)
+		}
+	}
+	if r.Stats.Unreadable > 0 {
+		logger.Printf("Partly read: %d message(s) were saved with what could be read from them (their pages say what is missing)", r.Stats.Unreadable)
+	}
+	if g.Recovered > 0 {
+		logger.Printf("Recovered: %d item(s) that failed on an earlier run were captured this run.", g.Recovered)
+	}
+}
+
 func printSummary(logger *log.Logger, r app.Result, indexed, keepRaw bool, out string) {
 	s := r.Stats
 	msg := fmt.Sprintf("Done. exported=%d filled=%d skipped(seen)=%d skipped(date)=%d attachments=%d inline=%d non-html=%d no-body=%d manifest=%d",
@@ -1588,6 +1631,7 @@ func printSummary(logger *log.Logger, r app.Result, indexed, keepRaw bool, out s
 	if replaced := s.Exported - newMsgs; newMsgs >= 0 && replaced > s.Filled {
 		logger.Printf("Note:   %d exports made %d new message(s); %d replaced an earlier copy of the same message, so exported is above the growth in manifest and indexed.", s.Exported, newMsgs, replaced-s.Filled)
 	}
+	printNotCaptured(logger, r)
 	// An index that holds fewer messages than the manifest (search.db lost or
 	// emptied and re-created by this run, or earlier runs skipped indexing)
 	// would otherwise end in a quiet exit 0 (F4). Rows the run itself could not
@@ -1622,6 +1666,21 @@ func printSummary(logger *log.Logger, r app.Result, indexed, keepRaw bool, out s
 		}
 		if r.Unknown > 0 {
 			logger.Printf("  %d entr%s predate completeness tracking and are re-examined by incremental runs until none remain.", r.Unknown, plural(r.Unknown, "y", "ies"))
+		}
+	}
+	// Partly-read and unparsed records are complete as far as the source went, so
+	// they are not "missing content to download": their own line, their own remedy.
+	if r.Unreadable > 0 || r.Unparsed > 0 {
+		line := fmt.Sprintf("Verification: %d message(s) read only in part, %d unparsed (kept as text)", r.Unreadable, r.Unparsed)
+		if r.ReportPath != "" {
+			line += fmt.Sprintf(" — details in %s", r.ReportPath)
+		}
+		logger.Printf("%s", line)
+		if r.Unreadable > 0 {
+			logger.Printf("  A damaged data file can usually be repaired in place (Outlook's scanpst.exe for a .pst, Windows), then run again.")
+		}
+		if r.Unparsed > 0 {
+			logger.Printf("  An unparsed message is kept as text, and its original bytes as .eml when the archive is made with -raw; after upgrading, the next run re-examines it once.")
 		}
 	}
 	// -raw is silently a no-op on sources that carry no original message bytes

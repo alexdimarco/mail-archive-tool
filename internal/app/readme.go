@@ -70,6 +70,24 @@ re-exported or baselined with "mailarchive verify -record". This detects a
 changed, truncated or missing file; it is not a signature, so it proves the
 files have not changed, not who wrote them.
 
+Items that could not be captured: if the tool could not read or download
+something its source holds, it says so instead of hiding it. A page whose title
+is "(unreadable message)", or whose top says "This item could only be partly
+read from the source", holds what the tool could read of that message (the
+original bytes are in the .eml beside it when the archive was made with -raw).
+A message or folder the tool could not read at all has no page: it is a row in
+attachments-report.tsv, which names its source, folder, date and subject. Each
+row has a class:
+  fillable = a later run of the tool against the original source may capture it;
+  terminal = the source itself would not deliver it as it stands;
+  info = nothing missing (the tool only noticed something odd).
+If no one runs the tool against the source anymore, every fillable or terminal
+row is missing from this archive. The end of the detail of a row for a message
+or folder that left no page says why it happened and what to do about it, and
+whether the original still exists; any other row names the problem in its kind
+and detail columns. With the mailarchive program, run "mailarchive status -out ." in this folder for the
+same in plain words.
+
 Housekeeping files (safe to leave alone):
   .mailarchive-manifest.json   which messages are archived (used for
                                incremental updates); do not edit
@@ -83,10 +101,11 @@ Housekeeping files (safe to leave alone):
                                live capture writes it); appended each run and
                                rewritten only by reindex when redacting; read
                                by "mailarchive serve" for the point-in-time view
-  attachments-report.tsv       messages whose attachments or bodies could
-                               not be captured (opens in a spreadsheet);
+  attachments-report.tsv       messages, folders, attachments or bodies that
+                               could not be captured (opens in a spreadsheet);
                                absent when there is nothing to report
-  BACKUP-NEEDS-ATTENTION.txt   present only when the last backup run failed;
+  BACKUP-NEEDS-ATTENTION.txt   present only when the last backup run failed
+                               or finished with items it could not capture;
                                explains what to do; removed after the next
                                successful run
   ARCHIVE-INTEGRITY-ATTENTION.txt present only when a verify found modified or

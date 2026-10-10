@@ -24,6 +24,7 @@ import (
 	"mail-archive-tool/internal/pages"
 	"mail-archive-tool/internal/source"
 	"mail-archive-tool/internal/state"
+	"mail-archive-tool/internal/util"
 )
 
 // Options describes a single export run.
@@ -72,9 +73,19 @@ type Result struct {
 	IndexErrors    int    // messages the index refused (R8 parity broken; surfaced, not swallowed)
 	Issues         int    // rows in the regenerated verification report
 	ReportPath     string // path to the verification report ("" when nothing to report)
-	Fillable       int    // manifest records still missing content an on-demand source may deliver
+	Fillable       int    // manifest records still missing content an on-demand source may deliver (a record that is only partly read is counted in Unreadable instead)
 	Terminal       int    // records missing content the source can never deliver (recorded, never retried)
 	Unknown        int    // legacy records not yet re-examined (migrated from a version-1 manifest)
+
+	// Fault isolation (§4.2). Unreadable and Unparsed are the manifest's partly-read
+	// and unparsed records; Gaps is what this run observed in the capture-gap
+	// ledger; Partial says the run observed something it could not capture (a
+	// fillable or terminal gap, or a partly-read record written or re-examined), so
+	// it returns *PartialError (S1a: a failure, §4.9).
+	Unreadable int
+	Unparsed   int
+	Gaps       GapSummary
+	Partial    bool
 }
 
 // finish fills the manifest-derived fields of a Result and regenerates the
@@ -107,7 +118,16 @@ func finish(out string, r *Result, exp *export.Exporter, manifest *state.Manifes
 		r.IndexErrors += idx.Lost()
 	}
 	r.Fillable, r.Terminal, r.Unknown = manifest.Counts()
+	// A partly-read record is fillable too, but it is not "missing content" to
+	// download: it has its own count, its own line and its own remedy.
+	r.Fillable -= manifest.UnreadableOnlyCount()
+	r.Unreadable, r.Unparsed = manifest.UnreadableCount(), manifest.UnparsedCount()
 	r.ReportPath, r.Issues = writeReport(out, manifest, manifest.Migrated > 0, logger)
+	// What this run observed in the capture-gap ledger (its own runAt is the stamp
+	// every observation carries). The stuck count uses a daily period: `status`
+	// judges it against the installed schedule's.
+	r.Gaps = summarizeGaps(manifest, out, exp.RunAt, time.Now().UTC(), 24*time.Hour)
+	r.Partial = r.partial()
 }
 
 // indexOpenError is the refusal of an export or a Graph run whose search.db
@@ -280,8 +300,13 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	defer lock.Release()
 	// Every run that begins is recorded (R18): "running" now, before any early
 	// return, finalized on the way out — so a run that never finishes is
-	// visible as such to `status`.
-	defer recordRun(opts, beginRun(opts), &result, &err, logger)
+	// visible as such to `status`. The record's start is the run's own timestamp,
+	// the stamp every capture-gap observation carries: a gap whose LastRun equals
+	// it was attempted by this run, and `status` tells attempted from not attempted
+	// by comparing with the last-run record's start (FC14).
+	begun := beginRun(opts)
+	defer recordRun(opts, begun, &result, &err, logger)
+	runAt := begun.Started
 
 	// On -auto, warn up front when a live Exchange/IMAP .ost is about to be read
 	// by the direct go-pst reader, which cannot read every .ost — the -outlook
@@ -316,6 +341,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		Since:    opts.Since,
 		Log:      logger,
 		KeepRaw:  opts.KeepRaw,
+		RunAt:    runAt,
 	}
 
 	// One-time upgrade logs BEFORE the index repair, so cause (the manifest
@@ -394,6 +420,8 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 
 	result = Result{Files: len(files), ManifestBefore: manifestBefore}
 	var failures int
+	var firstFailed string
+	var firstErr error
 	for _, f := range files {
 		runErr := runFile(ctx, exp, f, opts.Out, opts.CopyFirst, logger, func(stats export.Stats) {
 			checkpoint(stats)
@@ -422,15 +450,18 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		}
 		if runErr != nil {
 			failures++
-			logger.Printf("error: %s: %v%s", f, runErr, ostOpenRemedy(f))
+			if failures == 1 {
+				firstFailed, firstErr = f, runErr
+			}
+			logger.Printf("error: %s: %v%s", f, runErr, dataFileRemedyFor(f, runErr))
 		}
 	}
 
 	// Browsable folder index pages, built from the finished index. Regenerate
 	// them only when this run exported something or the root index.html is not
 	// yet there (nas-02): a zero-change re-run must not rewrite every page.
-	if idx != nil && opts.Pages && pagesNeeded(opts.Out, exp.Stats.Exported) {
-		if pErr := pages.Generate(opts.Out, idx, logger); pErr != nil {
+	if gaps := gapBannerCount(manifest); idx != nil && opts.Pages && pagesNeeded(opts.Out, exp.Stats.Exported, gaps) {
+		if pErr := pages.Generate(opts.Out, idx, logger, gaps); pErr != nil {
 			logger.Printf("warning: folder pages: %v", pErr)
 		}
 	}
@@ -438,14 +469,14 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	finish(opts.Out, &result, exp, manifest, idx, indexErrors, true, logger)
 	if saveErr != nil {
 		if failures > 0 {
-			return result, fmt.Errorf("%d file(s) failed; %w", failures, manifestSaveFailure(mpath, saveErr))
+			return result, fmt.Errorf("%w; %w", fileFailureError(failures, firstFailed, firstErr), manifestSaveFailure(mpath, saveErr))
 		}
 		return result, manifestSaveFailure(mpath, saveErr)
 	}
 	if failures > 0 {
-		return result, fmt.Errorf("%d file(s) failed", failures)
+		return result, fileFailureError(failures, firstFailed, firstErr)
 	}
-	return result, nil
+	return result, partialOutcome(result)
 }
 
 // manifestSaveFailure is the run error when the run's final manifest save
@@ -477,16 +508,17 @@ func effectiveEvery(floor, n int) int {
 }
 
 // pagesNeeded reports whether the browsable folder pages should be regenerated:
-// only when this run exported at least one message, or the root index.html does
-// not yet exist. A zero-change re-run then leaves the pages (and their mtimes)
-// untouched (nas-02). reindex regenerates unconditionally — it reconciles the
-// pages to what survives on disk.
-func pagesNeeded(out string, exported int) bool {
+// only when this run exported at least one message, the root index.html does
+// not yet exist, or the gap count it was stamped with is not the manifest's now
+// (a ledger-only change must reach the banner, FC24). A zero-change re-run then
+// leaves the pages (and their mtimes) untouched (nas-02). reindex regenerates
+// unconditionally — it reconciles the pages to what survives on disk.
+func pagesNeeded(out string, exported, gaps int) bool {
 	if exported > 0 {
 		return true
 	}
-	_, err := os.Stat(filepath.Join(out, "index.html"))
-	return errors.Is(err, fs.ErrNotExist)
+	stamped, ok := pages.StampedGaps(out)
+	return !ok || stamped != gaps
 }
 
 // ostAdvisory returns the up-front guidance to print before an -auto run reads
@@ -664,6 +696,12 @@ func recordRun(opts Options, lr state.LastRun, result *Result, err *error, logge
 	}
 	lr.Exported, lr.Filled = result.Stats.Exported, result.Stats.Filled
 	lr.Fillable, lr.Terminal, lr.Unknown, lr.IndexErrors = result.Fillable, result.Terminal, result.Unknown, result.IndexErrors
+	// What this run observed in the capture-gap ledger (additive; a monitor keys on
+	// gaps_new, FC23(2)). A partial run is recorded as the failure it maps to in
+	// S1a: status "failed" with the *PartialError's one-line text.
+	g := result.Gaps
+	lr.GapsObserved, lr.GapsNew, lr.GapsRecovered = g.Observed, g.New, g.Recovered
+	lr.GapsFillable, lr.GapsTerminal, lr.GapsStuck, lr.Unreadable = g.Fillable, g.Terminal, g.Stuck, result.Stats.Unreadable
 	// Best effort: a refused write never fails the run, but it is logged (F12),
 	// because the "running" record then stays and status reads it as a run that
 	// never finished although this log says how it ended.
@@ -729,6 +767,96 @@ func ostOpenRemedy(path string) string {
 	return " — a live Exchange / Microsoft 365 .ost often cannot be read directly;" +
 		" on Windows run `mailarchive -outlook` (Outlook exports a clean .pst first)," +
 		" or archive a Microsoft 365 mailbox server-side with `mailarchive graph -auth device`"
+}
+
+// dataFileRemedy is the guidance appended to the run log's error line when a
+// data file fails to open or read: a `.ost` gets ostOpenRemedy; a damaged `.pst`
+// gets the in-place repair — repair it with Outlook's Inbox Repair Tool, or put
+// the repaired copy at the SAME path, because the store's token is seeded from
+// the input path and a copy archived from another path starts a separate archive
+// tree (fault-isolation §4.4). Any other source gets none.
+func dataFileRemedy(path string) string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".ost":
+		return ostOpenRemedy(path)
+	case ".pst":
+		return " — a damaged .pst can usually be repaired: " + state.PSTRepairRemedy
+	}
+	return ""
+}
+
+// dataFileRemedyFor is dataFileRemedy keyed by the cause (friction F1): the
+// in-place repair is for a file that opens and does not parse. A file that cannot
+// be opened at all (permissions, another program holding it, a wrong path, a disk
+// error) is told what to do about THAT, because a repair tool cannot help it, and
+// neither can a change of route (an .ost held by Outlook or locked is no more
+// readable through -outlook; FI-S1a re-verification, OP-5). An .ost whose cause is a parse or
+// format error keeps ostOpenRemedy and any other source gets none.
+func dataFileRemedyFor(path string, err error) string {
+	ext := strings.ToLower(filepath.Ext(path))
+	if (ext != ".pst" && ext != ".ost") || err == nil {
+		return dataFileRemedy(path)
+	}
+	text := strings.ToLower(err.Error())
+	switch {
+	case errors.Is(err, fs.ErrPermission), state.GapErrnoClass(text) == state.ErrnoPerm:
+		return " — the file could not be opened because of its permissions: fix the permissions on the file (and that your account may read its folder), then run again"
+	case strings.Contains(text, "used by another process"), strings.Contains(text, "sharing violation"), strings.Contains(text, "text file busy"):
+		return " — another program has the file open: close Outlook (or whichever program is using it), then run again"
+	case errors.Is(err, fs.ErrNotExist), strings.Contains(text, "no such file"), strings.Contains(text, "cannot find the"):
+		return " — the file was not found: check the path (and that the drive or share is connected), then run again"
+	case state.GapErrnoClass(text) == state.ErrnoIO:
+		return " — the disk returned a read error: check the drive the file is on, then run again"
+	}
+	return dataFileRemedy(path)
+}
+
+// shortFileRemedy is dataFileRemedyFor for the run's returned error, which the
+// run log prints twice more (the FAILED line and the final error): the two long
+// generic remedies (the .pst repair with its path rule, the .ost routes) shrink to
+// one clause, and the full text stays on the per-file `error:` line. The
+// cause-specific remedies are already one clause.
+func shortFileRemedy(path string, err error) string {
+	full := dataFileRemedyFor(path, err)
+	if full == "" || full != dataFileRemedy(path) {
+		return full
+	}
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".pst":
+		return " — repair it in place with Outlook's Inbox Repair Tool (scanpst.exe, Windows), keeping its path, then run again"
+	case ".ost":
+		return " — on Windows run `mailarchive -outlook`, or use `mailarchive graph -auth device` for a Microsoft 365 mailbox"
+	}
+	return full
+}
+
+// fileFailureError is the run's error when data files failed to open or read
+// (friction F2). It names the first failing file, the cause in a few words and
+// the remedy for that cause, on one line, so the last-run record, `status` and
+// BACKUP-NEEDS-ATTENTION.txt (which all carry this text and send the reader to
+// `status`) are not a dead end. The run log still has every file.
+func fileFailureError(failures int, firstPath string, firstErr error) error {
+	cause := ""
+	if firstErr != nil {
+		cause = firstErr.Error()
+		// go-pst and os wrap the path in front of the cause two or three times.
+		for {
+			i := strings.LastIndex(cause, firstPath+": ")
+			if i < 0 {
+				break
+			}
+			cause = cause[i+len(firstPath)+2:]
+		}
+	}
+	msg := fmt.Sprintf("%d file(s) failed: %s", failures, util.StripControl(firstPath))
+	if cause != "" {
+		msg += ": " + util.StripControl(cause)
+	}
+	msg += util.StripControl(shortFileRemedy(firstPath, firstErr))
+	if failures > 1 {
+		msg += fmt.Sprintf(" (the run log names the other %d)", failures-1)
+	}
+	return errors.New(msg)
 }
 
 // runFile opens one data file (optionally via a temp snapshot) and exports every

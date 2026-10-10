@@ -67,6 +67,17 @@ type Report struct {
 	Unexpected int `json:"unexpected"`
 	Recorded   int `json:"recorded,omitempty"` // files baselined this run (-record)
 
+	// What the capture-gap ledger says the source holds that this archive does not
+	// (fillable and terminal gaps: an item, an overflow entry for the items it
+	// absorbed, a folder). Informational: it never changes the verdict or the exit
+	// code (X1 for verify), because verify attests the files that ARE recorded.
+	GapItems   int `json:"gap_items,omitempty"`
+	GapFolders int `json:"gap_folders,omitempty"`
+	// Of those (items counted as gap_items counts them, a folder as one), how many a
+	// later run may capture (fillable) and how many need action (terminal); additive.
+	GapRetryable  int `json:"gap_retryable,omitempty"`
+	GapNeedAction int `json:"gap_need_action,omitempty"`
+
 	Problems  []Problem      `json:"problems"`            // bounded per category (see maxVerifyDetail)
 	Truncated map[string]int `json:"truncated,omitempty"` // kind → count omitted from Problems
 }
@@ -188,6 +199,25 @@ func Verify(out string, opts VerifyOptions, logger *log.Logger, onProgress func(
 
 	records := manifest.All()
 	v.rep.Records = len(records)
+	for _, g := range manifest.CaptureGapsSorted() {
+		switch {
+		case g.Class != state.ClassFillable && g.Class != state.ClassTerminal:
+			continue
+		case g.Scope == state.GapScopeFolder:
+			v.rep.GapFolders++
+		default:
+			v.rep.GapItems += g.Weight()
+		}
+		w := g.Weight()
+		if g.Scope == state.GapScopeFolder {
+			w = 1
+		}
+		if g.Class == state.ClassFillable {
+			v.rep.GapRetryable += w
+		} else {
+			v.rep.GapNeedAction += w
+		}
+	}
 
 	keys := make([]string, 0, len(records))
 	for k := range records {
@@ -623,6 +653,36 @@ func VerifySummary(r Report) []string {
 	// is deleted. Not an attestation failure; a heads-up about portability.
 	if r.Records > 0 && r.WithEML == 0 {
 		out = append(out, "note: no preserved original bytes (.eml) in this archive — `mailarchive extract` would produce nothing. A PST/OST archive never has originals; an mbox/maildir/Graph archive must be captured with -raw to be extractable.")
+	}
+	// What the source holds that was never captured (the capture-gap ledger): a
+	// heads-up for the custodian, not a verdict — verify attests the files that are
+	// recorded, and a gap has none.
+	if r.GapItems > 0 || r.GapFolders > 0 {
+		var what []string
+		if r.GapItems > 0 {
+			what = append(what, fmt.Sprintf("%d item(s)", r.GapItems))
+		}
+		if r.GapFolders > 0 {
+			what = append(what, fmt.Sprintf("%d folder(s)", r.GapFolders))
+		}
+		out = append(out, fmt.Sprintf("Not in this archive: %s from the source could not be captured (see attachments-report.tsv) — this does not affect attestation", strings.Join(what, ", ")))
+		// Which of them a later run may capture and which need action (friction F9),
+		// and what the verdict below does not say.
+		var split []string
+		if r.GapRetryable > 0 {
+			split = append(split, fmt.Sprintf("%d will be retried the next time the archive runs", r.GapRetryable))
+		}
+		if r.GapNeedAction > 0 {
+			split = append(split, fmt.Sprintf("%d need action", r.GapNeedAction))
+		}
+		if len(split) > 0 {
+			out = append(out, fmt.Sprintf("  Of these, %s — `mailarchive status -out %q` says what to do.", strings.Join(split, " and "), r.Out))
+		}
+		if r.Attested() {
+			out = append(out, "  \"attested\" below means the files this archive holds are intact, not that the archive is complete.")
+		} else {
+			out = append(out, "  The verdict below is about the files this archive holds, not that the archive is complete.")
+		}
 	}
 	if r.Attested() {
 		out = append(out, "attested: every recorded file was checked and intact")

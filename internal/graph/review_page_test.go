@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// covers: MA-314, R10, R17
+// covers: MA-314, R10, R17, S46
 // AO2: a JSON listing page is bounded in size, not only in time. A page that
 // streams on past the bound fails the listing with a typed *ListingError of kind
 // page-size instead of growing the heap until the request timeout.

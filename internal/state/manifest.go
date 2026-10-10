@@ -159,6 +159,19 @@ type Record struct {
 	FirstSeen   time.Time `json:"first_seen,omitempty"`
 	LastSeen    time.Time `json:"last_seen,omitempty"`
 	Present     bool      `json:"present,omitempty"`
+
+	// Locator (additive; fault-isolation §4.2, FC6(3)) names where a partly-read
+	// item sat in its store (pst-nid:<store-uid>/<nid>, maildir:<folder>/<unique>),
+	// so a later healthy read of the same item — which may land on another key —
+	// finds and supersedes it, and a recovery never matches across stores. It is
+	// set ONLY on a record that carries an unreadable:* label, so a healthy
+	// input's records are byte-identical to before (P14). Load drops it from any
+	// other record, and a re-examine restores one an older binary's save lost.
+	Locator string `json:"loc,omitempty"`
+	// RecoveredBy (additive) is the key of the record that replaced this partly-read
+	// one (§4.7.4): its unreadable:* labels became the info label "superseded" and
+	// nothing was written or deleted. Load drops one that names no existing key.
+	RecoveredBy string `json:"recovered_by,omitempty"`
 }
 
 // FileDigest is the recorded fixity of one exported file: the sha256 (hex) of
@@ -219,6 +232,14 @@ type Manifest struct {
 	// files already use.
 	Stores map[string]string `json:"stores,omitempty"`
 
+	// CaptureGaps is the capture-gap ledger: the items and folders a source holds
+	// that no record represents (gaps.go). INERT: never consulted by any skip,
+	// fetch or export decision (P5); not part of Entries, byIdent or byPath, so its
+	// keys can never collide with a record key. Additive and omitted when empty, so
+	// the manifest version stays 6 (J2): an older binary ignores it and drops it on
+	// its next save, which loses diagnostics only (§6).
+	CaptureGaps map[string]CaptureGap `json:"capture_gaps,omitempty"`
+
 	// CollapsedTokens records, per store token, that the one-time v3→v5
 	// identity-collapse (CollapseByIdentity) has run for that mailbox — set after
 	// the first successful live run of the token whether or not it had anything to
@@ -256,6 +277,11 @@ type Manifest struct {
 	// byPath is a lazily built reverse index (export path → key) used to
 	// detect a file-stem collision between two different keys (R4).
 	byPath map[string]string
+
+	// byLocator is a lazily built reverse index (token\x00locator → key) over
+	// exactly the records that carry an unreadable:* label and a Locator — a
+	// handful, so a lookup per exported message costs nothing on a healthy input.
+	byLocator map[string]string
 
 	// byIdent is the mailbox-wide identity index (message identity → every
 	// manifest key carrying it, with that key's fingerprint), built at load and
@@ -649,6 +675,25 @@ func Load(path string) (*Manifest, error) {
 		}
 		m.Stores = migrated
 	}
+	// The ledger and the partly-read records' fields are untrusted on read, like
+	// the last-run record (MA-157): the ledger is bounded, stripped and checked
+	// against Stores; a Locator that no unreadable:* label owns and a RecoveredBy
+	// that names no record are dropped (§4.2).
+	m.sanitizeGaps(time.Now().UTC())
+	for key, r := range m.Entries {
+		changed := false
+		if r.Locator != "" && !r.hasUnreadable() {
+			r.Locator, changed = "", true
+		}
+		if r.RecoveredBy != "" {
+			if _, ok := m.Entries[r.RecoveredBy]; !ok {
+				r.RecoveredBy, changed = "", true
+			}
+		}
+		if changed {
+			m.Entries[key] = r
+		}
+	}
 	if m.Version < manifestVersion {
 		m.Version = manifestVersion
 	}
@@ -685,7 +730,114 @@ func (m *Manifest) Add(key string, r Record) {
 		}
 	}
 	m.identUpsertLocked(key, r.Fingerprint, r.PhysID)
+	if m.byLocator != nil {
+		if old, ok := m.Entries[key]; ok {
+			m.locatorDropLocked(key, old)
+		}
+		m.locatorAddLocked(key, r)
+	}
 	m.Entries[key] = r
+}
+
+// locatorIndexKey is the byLocator key of a record under key: the store token
+// (the key's first component) and the record's locator.
+func locatorIndexKey(key, locator string) string {
+	tok := key
+	if i := strings.IndexByte(key, keySeparator[0]); i >= 0 {
+		tok = key[:i]
+	}
+	return tok + keySeparator + locator
+}
+
+// locatorAddLocked indexes r when it is a partly-read record with a Locator. The
+// caller holds m.mu and m.byLocator is built.
+func (m *Manifest) locatorAddLocked(key string, r Record) {
+	if r.Locator != "" && r.hasUnreadable() {
+		m.byLocator[locatorIndexKey(key, r.Locator)] = key
+	}
+}
+
+// locatorDropLocked removes old's index entry when it points at key. The caller
+// holds m.mu and m.byLocator is built.
+func (m *Manifest) locatorDropLocked(key string, old Record) {
+	if old.Locator == "" {
+		return
+	}
+	lk := locatorIndexKey(key, old.Locator)
+	if m.byLocator[lk] == key {
+		delete(m.byLocator, lk)
+	}
+}
+
+// KeyForLocator returns the key of the same-token partly-read record (one that
+// carries an unreadable:* label) whose Locator is locator, if any (§4.7.4). The
+// reverse index is built on first use and covers exactly those records, so a
+// lookup per exported message is a map hit. A locator never matches across
+// tokens, and a PST locator carries its store's uid, so it never matches across
+// two stores either (FC8).
+func (m *Manifest) KeyForLocator(token, locator string) (string, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if locator == "" {
+		return "", false
+	}
+	if m.byLocator == nil {
+		m.byLocator = map[string]string{}
+		for k, r := range m.Entries {
+			m.locatorAddLocked(k, r)
+		}
+	}
+	k, ok := m.byLocator[token+keySeparator+locator]
+	return k, ok
+}
+
+// SupersedePartial settles a partly-read record whose item a later capture
+// stored under another key (§4.7.4(3)): the same-token record with this Locator
+// that carries an unreadable:* label has its gaps re-classed to the info
+// label "superseded" and RecoveredBy set to newKey, in one record update. It is
+// METADATA ONLY: no file is written, rendered or deleted, so nothing can mismatch
+// Fixity and there is no crash window; the Locator is cleared because the record
+// no longer carries an unreadable label. It reports whether a record was
+// superseded (never the record at newKey itself — that one is healed in place).
+func (m *Manifest) SupersedePartial(token, locator, newKey string) bool {
+	key, ok := m.KeyForLocator(token, locator)
+	if !ok || key == newKey {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.Entries[key]
+	if !ok || !r.hasUnreadable() {
+		return false
+	}
+	m.locatorDropLocked(key, r)
+	// The record is settled as a whole: every gap it carried (the unreadable:*
+	// labels and the "body" gap a body that could not be read leaves beside them)
+	// is moot once the item sits whole under newKey, so its one label is
+	// "superseded", of class info. The page stays; it is no longer "missing".
+	r.Missing = nil
+	r.Terminal = []string{LabelSuperseded}
+	r.RecoveredBy, r.Locator = newKey, ""
+	m.Entries[key] = r
+	return true
+}
+
+// SetLocator restores the Locator an older binary's save dropped from a partly-
+// read record (§4.2: any re-examine restores it from the capture); it is a no-op
+// on a record that does not carry an unreadable:* label or already has one.
+func (m *Manifest) SetLocator(key, locator string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.Entries[key]
+	if !ok || locator == "" || r.Locator != "" || !r.hasUnreadable() {
+		return false
+	}
+	r.Locator = locator
+	m.Entries[key] = r
+	if m.byLocator != nil {
+		m.locatorAddLocked(key, r)
+	}
+	return true
 }
 
 // KeyForPath returns the key whose record owns the export path, if any. The
@@ -748,7 +900,12 @@ func (m *Manifest) Issues() []Record {
 }
 
 // Counts returns how many records are fillable (excluding sentinels), terminal,
-// and unknown (legacy sentinels).
+// and unknown (legacy sentinels). A partly-read record (an unreadable:* label) is
+// fillable, as it is in the record's Missing list; a Terminal label of class info
+// (superseded) is nothing missing and counts as neither. The classes come from
+// GapClass, the single owner of record gap labels (J5, FC26): MIME fidelity's and
+// re-capture's labels join it as new cases, never as a second rewrite of this
+// function.
 func (m *Manifest) Counts() (fillable, terminal, unknown int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -758,11 +915,111 @@ func (m *Manifest) Counts() (fillable, terminal, unknown int) {
 			unknown++
 		case r.Fillable():
 			fillable++
-		case len(r.Terminal) > 0:
+		case r.terminalGap():
 			terminal++
 		}
 	}
 	return
+}
+
+// UnreadableCount returns how many records are partly read: they carry an
+// unreadable:* label (§4.10). They are fillable records, but status reports them
+// under their own reason with their own remedy, never as "missing content".
+func (m *Manifest) UnreadableCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, r := range m.Entries {
+		if r.hasUnreadable() {
+			n++
+		}
+	}
+	return n
+}
+
+// UnreadableOnlyCount returns how many records are fillable only because they
+// are partly read: every fillable label they carry is an unreadable:* one. These
+// are the records status leaves out of its incomplete_content count and the
+// run summary out of "still missing content".
+func (m *Manifest) UnreadableOnlyCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, r := range m.Entries {
+		if !r.Fillable() || r.Unknown() {
+			continue
+		}
+		only := true
+		for _, l := range r.Missing {
+			if !IsUnreadableLabel(l) {
+				only = false
+				break
+			}
+		}
+		if only {
+			n++
+		}
+	}
+	return n
+}
+
+// UnparsedCount returns how many records are unparsed stubs (§4.1): their MIME
+// parse panicked or fell back, and the bytes are kept as text.
+func (m *Manifest) UnparsedCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, r := range m.Entries {
+		if r.hasLabel(LabelUnparsed) {
+			n++
+		}
+	}
+	return n
+}
+
+// UnparsedTerminalCount returns how many records Counts() puts in its terminal
+// tally only because they are unparsed stubs: not fillable, not legacy, and no
+// other terminal label of class terminal. An unparsed message is kept as raw text,
+// so status leaves these out of "source-empty (never fillable)" (friction F7).
+func (m *Manifest) UnparsedTerminalCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, r := range m.Entries {
+		if r.Unknown() || r.Fillable() || !r.hasLabel(LabelUnparsed) || !r.terminalGap() {
+			continue
+		}
+		only := true
+		for _, l := range r.Terminal {
+			if l != LabelUnparsed && RecordGapClass(l, true) == ClassTerminal {
+				only = false
+				break
+			}
+		}
+		if only {
+			n++
+		}
+	}
+	return n
+}
+
+// PartlyReadPaths returns the page paths (relative to the archive, control-
+// stripped, sorted) of up to limit partly-read records, so status can name them
+// (friction F7).
+func (m *Manifest) PartlyReadPaths(limit int) []string {
+	m.mu.Lock()
+	var out []string
+	for _, r := range m.Entries {
+		if r.hasUnreadable() {
+			out = append(out, util.StripControl(r.Path))
+		}
+	}
+	m.mu.Unlock()
+	sort.Strings(out)
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out
 }
 
 // FallbackCounts returns, per reason, how many records show their page as
@@ -820,6 +1077,11 @@ func (m *Manifest) Delete(key string) {
 	if m.byPath != nil {
 		if old, ok := m.Entries[key]; ok {
 			delete(m.byPath, old.Path)
+		}
+	}
+	if m.byLocator != nil {
+		if old, ok := m.Entries[key]; ok {
+			m.locatorDropLocked(key, old)
 		}
 	}
 	m.identRemoveLocked(key)
@@ -1320,6 +1582,7 @@ func (m *Manifest) CollapseByIdentity(sameContent func(relA, relB string) bool, 
 
 	m.Entries = newEntries
 	m.byPath = nil // export paths unchanged, but the reverse map is rebuilt lazily
+	m.byLocator = nil
 	m.buildIdentIndexLocked()
 	m.Collapsed = len(losses)
 	return losses, remap

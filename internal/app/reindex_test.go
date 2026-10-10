@@ -84,7 +84,7 @@ func buildArchive(t *testing.T, out string) map[string]string {
 	if err := idx.Flush(); err != nil {
 		t.Fatal(err)
 	}
-	if err := pages.Generate(out, idx, log.New(io.Discard, "", 0)); err != nil {
+	if err := pages.Generate(out, idx, log.New(io.Discard, "", 0), 0); err != nil {
 		t.Fatal(err)
 	}
 	if err := idx.Close(); err != nil {

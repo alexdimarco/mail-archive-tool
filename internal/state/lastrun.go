@@ -85,6 +85,19 @@ type LastRun struct {
 	// (-index=false), so `status` does not warn that an archive deliberately
 	// kept without search.db has lost it. Absent (false) on older records.
 	NoIndex bool `json:"no_index,omitempty"`
+
+	// The capture gaps this run observed (fault-isolation §4.2, additive, omitted
+	// when zero): how many fillable and terminal ledger gaps it observed, how many
+	// of them were new this run (what a monitor keys on, FC23(2)), how many earlier
+	// gaps it recovered, how many fillable ones are stuck, and how many partly-read
+	// records it wrote or re-examined.
+	GapsObserved  int `json:"gaps_observed,omitempty"`
+	GapsNew       int `json:"gaps_new,omitempty"`
+	GapsRecovered int `json:"gaps_recovered,omitempty"`
+	GapsFillable  int `json:"gaps_fillable,omitempty"`
+	GapsTerminal  int `json:"gaps_terminal,omitempty"`
+	GapsStuck     int `json:"gaps_stuck,omitempty"`
+	Unreadable    int `json:"unreadable,omitempty"`
 }
 
 // RunWarning is one problem a run found with its own setup that does not stop

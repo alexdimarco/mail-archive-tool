@@ -18,7 +18,7 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-// covers: MA-540, R10, R17, R18, R21, S37
+// covers: MA-540, R10, R17, R18, R21, S37, S46
 // graph's exit code for SG's stops on the shipped capture path. `graph` takes no
 // base-URL setting, so it cannot reach the fake server; this test runs RunGraph
 // on the same fake (graphtest, MA-540's Fixture and Stops, its scaled bounds)
