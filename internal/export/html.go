@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -135,7 +136,7 @@ func RenderWith(m *model.Message, ctx RenderContext) (RenderResult, error) {
 		// that runs on past its own end can swallow the header and the body.
 		// The page itself is parsed, in every reading a browser can make.
 		headExtra, bodyAttrs, inner, fallback = sanitizeChecked(body, func(h, a, b string) string {
-			return pageFallback(assemblePage(m, ctx, consumed, h, a, b))
+			return pageFallback(assemblePage(m, ctx, consumed, h, a, b), b)
 		})
 	} else {
 		inner = `<pre class="plain">` + html.EscapeString(body) + `</pre>`
@@ -173,43 +174,165 @@ func assemblePage(m *model.Message, ctx RenderContext, consumed map[int]bool, he
 // words (MA-187, R8). Such a page is unsafe-after-reparse (and, when the mail
 // has a noscript tag, gets the in-place noscript retry; see sanitizeChecked);
 // the fallback page keeps the header, so the record stays recoverable.
-func pageFallback(page string) string {
+//
+// The page is also read as a whole, not only as the check document the
+// sanitizer parsed (a bare <body> with no div around the mail): in every
+// reading the mail must stay INSIDE div.mailarchive-body (R3-AO1, AF4, AC2) —
+// a stray `</div>` that a reader with JavaScript off meets inside a <noscript>
+// closes the tool's own div, which the check document never had, and what the
+// mail hid after it (a refresh, a preconnect, a second charset, a forged
+// header) then comes out live; and in the scripting-on reading `reindex
+// -rebuild` reads, the body div must hold exactly the markup that was
+// sanitized, so a serialization that is not a fixed point (a script left in an
+// escape state beside a foster-parented table, a stray end tag that closes the
+// div early) cannot hide words from the page or from the rebuilt index (R3-AC3).
+// And the page's own meta, link and header markers are counted: nothing the
+// mail holds adds a charset or hostile meta beyond the template's, a resource
+// hint, a second header or a second body div.
+func pageFallback(page, inner string) string {
 	for _, scripting := range scriptingModes(page) {
 		root, err := reparse(page, scripting)
 		if err != nil {
 			return parseFailure(err)
 		}
-		if !anchoredPage(root) {
+		header, bodyDiv := pageAnchors(root)
+		if header == nil || bodyDiv == nil {
+			return FallbackHostile
+		}
+		if !mailStaysInBodyDiv(bodyDiv, inner, scripting) || !pageMarkersAreOurs(root) {
 			return FallbackHostile
 		}
 	}
 	return ""
 }
 
-// anchoredPage reports whether a parsed page has the renderer's own layout
-// live: the first div.mailarchive-header directly in the first <body>, and the
-// next element after it a div.mailarchive-body — exactly the anchor
-// `reindex -rebuild` reads a current page's record by (internal/app
-// readArchivedTree: findFirst body, firstChildDiv, nextElementSibling).
-func anchoredPage(root *xhtml.Node) bool {
+// pageAnchors finds, in a parsed page, the renderer's own layout: the first
+// div.mailarchive-header directly in the first <body>, and the next element
+// after it, which must be a div.mailarchive-body — exactly the anchor `reindex
+// -rebuild` reads a current page's record by (internal/app readArchivedTree:
+// findFirst body, firstChildDiv, nextElementSibling). Either is nil when it is
+// not live there.
+func pageAnchors(root *xhtml.Node) (header, bodyDiv *xhtml.Node) {
 	body := firstElement(root, "body")
 	if body == nil {
-		return false
+		return nil, nil
 	}
-	var header *xhtml.Node
 	for c := body.FirstChild; c != nil && header == nil; c = c.NextSibling {
 		if c.Type == xhtml.ElementNode && c.Data == "div" && classToken(c, "mailarchive-header") {
 			header = c
 		}
 	}
 	if header == nil {
-		return false
+		return nil, nil
 	}
 	next := header.NextSibling
 	for next != nil && next.Type != xhtml.ElementNode {
 		next = next.NextSibling
 	}
-	return next != nil && next.Data == "div" && classToken(next, "mailarchive-body")
+	if next == nil || next.Data != "div" || !classToken(next, "mailarchive-body") {
+		return header, nil
+	}
+	return header, next
+}
+
+// pageClosers are the bytes the template writes after the mail's body: what a
+// <plaintext>, or a script left in an escape state, at the very end of the mail
+// swallows as its own text (the mail's, read back without them).
+const pageClosers = "\n</div>\n</body>\n</html>\n"
+
+// mailStaysInBodyDiv reports whether the mail is contained in div.mailarchive-
+// body: nothing but whitespace follows the div in <body> in any reading, and,
+// with scripting on (the reading the index and the rebuild take), the div's
+// children serialize to exactly the sanitized markup between the template's
+// newlines. The one deviation allowed is the page's own closing tags read as
+// the text of a final <plaintext> (written with no end tag), or of a final
+// script left in an escape state (written with its </script>): inert text the
+// mail's own raw-text element swallowed, which the reader removes again.
+func mailStaysInBodyDiv(bodyDiv *xhtml.Node, inner string, scripting bool) bool {
+	for s := bodyDiv.NextSibling; s != nil; s = s.NextSibling {
+		if s.Type != xhtml.TextNode || strings.TrimSpace(s.Data) != "" {
+			return false
+		}
+	}
+	if !scripting {
+		return true
+	}
+	var b strings.Builder
+	for c := bodyDiv.FirstChild; c != nil; c = c.NextSibling {
+		if err := xhtml.Render(&b, c); err != nil {
+			return false
+		}
+	}
+	// A rewritten noscript may end in the end tags of noscripts nested at its
+	// end (closesItself); with scripting on they are stray end tags the parser
+	// ignores, so they are in the sanitized markup and not in the page's.
+	const strayEnd = "</noscript>"
+	got, want := strings.ReplaceAll(b.String(), strayEnd, ""), strings.ReplaceAll("\n"+inner, strayEnd, "")
+	switch {
+	case got == want+"\n", got == want+pageClosers:
+		return true
+	case strings.HasSuffix(want, "</script>") && got == want+pageClosers+"</script>":
+		return true
+	}
+	return false
+}
+
+// templateOwnMetas is how many metas the template itself writes that
+// pageMarkersAreOurs counts (the charset and the policy).
+var templateOwnMetas = sync.OnceValue(func() int {
+	root, err := xhtml.Parse(strings.NewReader(fmt.Sprintf(docTemplate, "", "", "", "", "")))
+	if err != nil {
+		return -1
+	}
+	n, _ := countPageMarkers(root)
+	return n
+})
+
+// pageMarkersAreOurs reports whether a parsed page holds exactly the metas the
+// template wrote (no mail charset or hostile http-equiv meta beyond them), no
+// live resource-hint link, one header marker element and one body marker
+// element, in this reading.
+func pageMarkersAreOurs(root *xhtml.Node) bool {
+	metas, ok := countPageMarkers(root)
+	return ok && metas == templateOwnMetas()
+}
+
+// countPageMarkers counts the metas that are a charset or a hostile http-equiv,
+// and reports false on a live resource-hint link or when the page does not hold
+// exactly one element with each of the header and body classes.
+func countPageMarkers(root *xhtml.Node) (metas int, ok bool) {
+	ok = true
+	headers, bodies := 0, 0
+	var walk func(n *xhtml.Node)
+	walk = func(n *xhtml.Node) {
+		if n.Type == xhtml.ElementNode {
+			switch {
+			case strings.EqualFold(n.Data, "meta"):
+				hostile := metaIsCharset(n)
+				for _, a := range n.Attr {
+					if strings.EqualFold(a.Key, "http-equiv") && hostileEquiv(a.Val) {
+						hostile = true
+					}
+				}
+				if hostile {
+					metas++
+				}
+			case strings.EqualFold(n.Data, "link") && liveResourceHint(n):
+				ok = false
+			}
+			if classToken(n, "mailarchive-header") {
+				headers++
+			}
+			if classToken(n, "mailarchive-body") {
+				bodies++
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(root)
+	return metas, ok && headers <= 1 && bodies <= 1
 }
 
 // firstElement returns the first element named name in document order.
