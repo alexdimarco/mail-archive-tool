@@ -1091,6 +1091,21 @@ The owner stated that the software is for single-user computers only. Consequenc
 - **No gate is reduced:** no catalog row, test or baseline changes with this ruling. The co-account
   personas in the designs become out of scope only if the owner says so for a specific row.
 
+### 13.11 FI-S1a built and merged (2026-10-10)
+
+FI-S1a's friction review (rulings §9 row 5) ran: 18 cells, SHIPPABLE after 18 fixes with prove-fail,
+`docs/review-fi-s1a-friction.md`. No capture records a ledger gap yet (S2a and S3 produce them), so
+the walk seeded archives and ran the real binary. Delegated rulings: the stuck counter rises at most
+once per UTC day; the remedy table lives in `internal/state` with `app.GapRemedy` as the exported
+entry; the no-Message-ID stuck sentence (FC23(4)) needs a field the design does not name, so **S3
+adds an additive ledger field for it** (additions are accepted, §0 rule 1); its test stays a skip
+encoder. The remaining friction backlog items are owned by S1b (F13, F15, OR1..OR3), S2a (F19) or
+documented (F17, F18).
+
+| Id | The question for the owner | Recommended answer | Safe interim |
+|---|---|---|---|
+| **ESC-16** (FI-S1a friction R5) | Rows in the verification report for an unreadable or unparsed record carry only a bare code ("unparsed", "unreadable:attachments") with no why or what-to-do. Giving them one means loosening `TestReportKindsForReadGapLabels` (MA-327), which pins that detail to the bare code. Allow that change? | Yes: a bare code leaves the inheritor with no remedy, and the test would be tightened to the new wording rather than dropped | The banner and README.txt promise a why and a remedy only for ledger rows; MA-327 unchanged |
+
 ### 13.7 Escalations from LC-C1's adversarial pass (merged 2026-10-10)
 
 None blocks anything: each has a skip encoder or a safe interim in force.
