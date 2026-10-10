@@ -41,6 +41,14 @@ const (
 	RunCancelled = "cancelled"
 )
 
+// LastRun.ErrorKind values: the search-index refusals a failed run records.
+const (
+	ErrKindIndexBusy              = "index_busy"                // another program holds search.db
+	ErrKindIndexUnwritable        = "index_unwritable"          // read-only file or folder, full or failing disk
+	ErrKindIndexDamaged           = "index_damaged"             // unreadable, a manifest to rebuild from
+	ErrKindIndexDamagedNoManifest = "index_damaged_no_manifest" // unreadable, nothing to rebuild from
+)
+
 // LastRun is written as "running" the moment a run holds the archive lock —
 // before any early return — and finalized when it ends, so `status` can tell
 // a run that never finished (power loss, kill) from one that succeeded.
@@ -68,6 +76,15 @@ type LastRun struct {
 	// Warnings are problems the run found with its own setup that did not stop
 	// it (additive and optional: absent on older records and on a clean run).
 	Warnings []RunWarning `json:"warnings,omitempty"`
+	// ErrorKind names the refusal Error carries when it is one the app owner's
+	// surfaces say in their own words (an ErrKind* constant), so the desktop's and
+	// mailarchive-gui's health views need not print the CLI command and SQLite's
+	// text recorded in Error. Absent on older records and on any other failure.
+	ErrorKind string `json:"error_kind,omitempty"`
+	// NoIndex records that the run was told not to build the search index
+	// (-index=false), so `status` does not warn that an archive deliberately
+	// kept without search.db has lost it. Absent (false) on older records.
+	NoIndex bool `json:"no_index,omitempty"`
 }
 
 // RunWarning is one problem a run found with its own setup that does not stop
@@ -89,7 +106,10 @@ const (
 	LastRunPresent
 )
 
-// WriteLastRun writes the record atomically into out.
+// WriteLastRun writes the record atomically into out. Its rename waits out a
+// moment of Windows file sharing (replaceFile) — `status` reading the record
+// while a run finalizes must not cost the run its "ok" — and its callers keep
+// it best effort: a refusal that persists is returned, never fails a run.
 func WriteLastRun(out string, r LastRun) error {
 	r.Version = 1
 	data, err := json.MarshalIndent(r, "", "  ")
@@ -115,7 +135,7 @@ func WriteLastRun(out string, r LastRun) error {
 		os.Remove(tmp.Name())
 		return err
 	}
-	if err := os.Rename(tmp.Name(), path); err != nil {
+	if err := replaceFile(tmp.Name(), path); err != nil {
 		return err
 	}
 	updateAttentionSidecar(out, r)
@@ -156,7 +176,9 @@ func updateAttentionSidecar(out string, r LastRun) {
 }
 
 // writeSidecarAtomic writes data to path via a temp file and rename, so a torn
-// write never leaves a half-written attention notice.
+// write never leaves a half-written attention notice. The rename waits out a
+// moment of Windows file sharing (replaceFile): a notice open in a viewer must
+// not keep a stale one standing.
 func writeSidecarAtomic(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".mailarchive-attention-*.tmp")
@@ -172,7 +194,7 @@ func writeSidecarAtomic(path string, data []byte) error {
 		os.Remove(tmp.Name())
 		return err
 	}
-	return os.Rename(tmp.Name(), path)
+	return replaceFile(tmp.Name(), path)
 }
 
 // ReadLastRun reads the record, distinguishing absent from unreadable (a torn
@@ -225,6 +247,27 @@ type LastVerify struct {
 	Unexpected int        `json:"unexpected"`
 	Recorded   int        `json:"recorded"`
 	ExitCode   int        `json:"exit_code"`
+	// Previous carries the last FINISHED verdict inside a "running" record, so
+	// a verify that never finishes (crash, kill, power loss) cannot erase it:
+	// status keeps judging it until a new verdict is final (F79). Absent on a
+	// done record and when no verify ever finished.
+	Previous *LastVerify `json:"previous,omitempty"`
+}
+
+// LastVerdict returns the most recent FINISHED verify verdict recorded in out
+// — the done record itself, or the one a running record carries — with no
+// further nesting, or nil when there is none. A new verify stores it in its
+// running record before it starts checking.
+func LastVerdict(out string) *LastVerify {
+	v, st, _ := ReadLastVerify(out)
+	if st != LastVerifyPresent {
+		return nil
+	}
+	if v.Status != VerifyDone {
+		return v.Previous
+	}
+	v.Previous = nil
+	return &v
 }
 
 // LastVerify statuses.
@@ -234,10 +277,16 @@ const (
 )
 
 // WriteLastVerify writes the verify record atomically into out and, when the
-// record is finalized, updates verify's own integrity sidecar.
+// record is finalized, updates verify's own integrity sidecar. Its rename waits
+// out a moment of Windows file sharing (replaceFile), as WriteLastRun's does.
 func WriteLastVerify(out string, v LastVerify) error {
 	v.Version = 1
 	v.Status = util.StripControl(v.Status)
+	if v.Previous != nil {
+		p := *v.Previous
+		p.Status, p.Previous = util.StripControl(p.Status), nil
+		v.Previous = &p
+	}
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err
@@ -261,7 +310,7 @@ func WriteLastVerify(out string, v LastVerify) error {
 		os.Remove(tmp.Name())
 		return err
 	}
-	if err := os.Rename(tmp.Name(), path); err != nil {
+	if err := replaceFile(tmp.Name(), path); err != nil {
 		return err
 	}
 	if v.Status == VerifyDone {
@@ -326,5 +375,8 @@ func ReadLastVerify(out string) (LastVerify, LastVerifyState, error) {
 		return v, LastVerifyUnreadable, err
 	}
 	v.Status = util.StripControl(v.Status)
+	if v.Previous != nil {
+		v.Previous.Status, v.Previous.Previous = util.StripControl(v.Previous.Status), nil
+	}
 	return v, LastVerifyPresent, nil
 }

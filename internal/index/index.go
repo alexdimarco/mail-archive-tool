@@ -10,10 +10,14 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 
 	"mail-archive-tool/internal/model"
 )
@@ -62,19 +66,52 @@ CREATE TABLE IF NOT EXISTS meta(version INTEGER);`
 // snippet().
 const bodyColumn = 5
 
+// ErrNewerFormat is wrapped by Open's refusal of a search.db written by a
+// newer mailarchive (a stored format version above indexVersion). That refusal
+// names the file and the upgrade itself, so a caller can tell it from a
+// damaged file, whose remedy is the rebuild — which would replace a newer
+// index with an older one.
+var ErrNewerFormat = errors.New("written by a newer mailarchive")
+
 // Index is an open search index.
 type Index struct {
 	db      *sql.DB
 	tx      *sql.Tx
 	pending int
+	lost    int // rows whose Add succeeded but whose batch was later lost (see Lost)
 	version int // key-format version read at Open (see indexVersion)
 }
 
 // Open opens (creating if needed) a writable index at path and begins a batch.
+// It opens through the same escaped file: URI as OpenReadonly (fileURI), so a
+// '?', '#' or '%' in the archive path is part of the file name — never URI
+// parameters that cut the path short — and its connection waits out a lock
+// another connection holds for a moment (writerBusyTimeout): a status, search
+// or serve read-only open running WAL recovery, or a writer committing. Without
+// that wait such a moment failed the open with SQLITE_BUSY(_RECOVERY), and with
+// it the whole export run. A damaged file is not busy and still fails at once.
 func Open(path string) (*Index, error) {
-	db, err := sql.Open("sqlite", path)
+	dsn, err := fileURI(path, "mode=rwc", writerBusyTimeout)
 	if err != nil {
 		return nil, fmt.Errorf("open index: %w", err)
+	}
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open index: %w", err)
+	}
+	// A refused open of a read-only search.db leaves a -wal/-shm pair SQLite
+	// created with the file's own read-only mode, which would keep refusing
+	// after the owner makes search.db writable (F7): remove what this open made.
+	var madeSidecars []string
+	for _, s := range []string{"-wal", "-shm"} {
+		if _, serr := os.Lstat(path + s); errors.Is(serr, fs.ErrNotExist) {
+			madeSidecars = append(madeSidecars, path+s)
+		}
+	}
+	dropSidecars := func() {
+		for _, p := range madeSidecars {
+			_ = os.Remove(p)
+		}
 	}
 	db.SetMaxOpenConns(1) // single writer avoids "database is locked"
 	if _, err := db.Exec(pragmas); err != nil {
@@ -97,7 +134,24 @@ func Open(path string) (*Index, error) {
 	}
 	if version > indexVersion {
 		db.Close()
-		return nil, fmt.Errorf("search index %s was written by a newer mailarchive (format version %d; this build understands %d): upgrade this copy of mailarchive, or point -out at an archive this version wrote", path, version, indexVersion)
+		return nil, fmt.Errorf("search index %s was %w (format version %d; this build understands %d): upgrade this copy of mailarchive, or point -out at an archive this version wrote", path, ErrNewerFormat, version, indexVersion)
+	}
+	// SQLite opens a file it may not write (mode 0444, Windows' Read-only
+	// attribute) read-only without a word, and every later write then fails one
+	// row at a time. Write the database header once, here, with the value it
+	// already holds (user_version, which nothing else uses), so that open
+	// refuses with SQLITE_READONLY instead (F7). It comes after the newer-format
+	// refusal, which must leave the file's bytes alone.
+	var uv int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&uv); err != nil {
+		db.Close()
+		dropSidecars()
+		return nil, fmt.Errorf("index write check: %w", err)
+	}
+	if _, err := db.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, uv)); err != nil {
+		db.Close()
+		dropSidecars()
+		return nil, fmt.Errorf("index write check: %w", err)
 	}
 	// Transactions are opened lazily on the first Add so that read methods are
 	// never blocked waiting for the single connection an open write tx holds.
@@ -140,34 +194,213 @@ func resolveIndexVersion(db *sql.DB, hadDocs, hadMeta bool) (int, error) {
 	return indexVersion, nil
 }
 
-// OpenReadonly opens an existing index for querying (serve/search).
+// OpenReadonly opens an existing index for querying (serve/search/status). The
+// connection is genuinely read-only (SQLite URI mode=ro): it can never write
+// search.db, even by checkpointing a crashed writer's WAL. A WAL database needs
+// its -shm to be read, so on read-only media (a DVD, a write-protected USB
+// stick, a read-only share) where none exists and none can be created, the open
+// is retried as immutable=1 — safe there because nothing can be writing the
+// file — instead of failing with SQLITE_READONLY_DIRECTORY (F85/N14). On a
+// writable archive with no live writer, a read-only WAL reader cannot remove
+// the empty -wal/-shm pair it needed; the next writer reclaims them.
 func OpenReadonly(path string) (*Index, error) {
 	// Check for the file first, so a missing index yields a clean "run an export
 	// first" rather than the SQLite driver's misleading low-level open error.
 	if _, statErr := os.Stat(path); errors.Is(statErr, fs.ErrNotExist) {
+		// An archive that was exported to (its manifest is here) lost its
+		// index: the rebuild brings it back, "run an export first" would not (F6).
+		if hasManifest(path) {
+			return nil, fmt.Errorf("no search index at %s, but the archive's manifest is intact: rebuild the index from the archive with `mailarchive reindex -rebuild -out %q`", path, filepath.Dir(path))
+		}
 		return nil, fmt.Errorf("no search index at %s (run an export first)", path)
 	}
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		return nil, fmt.Errorf("open index: %w", err)
+	db, err := openProbed(path, "mode=ro")
+	if err != nil && readonlyMediaErr(err) {
+		db, err = openProbed(path, "mode=ro&immutable=1")
 	}
-	// Probe that docs exists and is readable, fully consuming the one-row result
-	// so the connection (and its OS file handle) is returned to the pool. The old
-	// db.Query discarded an unclosed *sql.Rows that pinned a connection open past
-	// ix.Close(): harmless on POSIX, but on Windows it blocks a later
-	// os.Remove/os.Rename of search.db (a Rebuild then fails "Access is denied").
-	// An empty index is still usable, so sql.ErrNoRows counts as success.
-	var probe int
-	switch err := db.QueryRow(`SELECT 1 FROM docs LIMIT 1`).Scan(&probe); {
-	case err == nil, errors.Is(err, sql.ErrNoRows):
-	default:
-		db.Close()
-		return nil, fmt.Errorf("no usable index at %s (run an export first): %w", path, err)
+	if err != nil && Busy(err) {
+		// In use, not damaged: the rebuild remedy would be wrong advice.
+		return nil, fmt.Errorf("search index %s is busy (%w): another program or run kept it locked for longer than %s — try again in a moment", path, err, readonlyBusyTimeout)
+	}
+	if err != nil {
+		return nil, &UnreadableError{Path: path, Cause: err}
 	}
 	return &Index{db: db}, nil
 }
 
-// Add records (or replaces, by key) one message in the index.
+// UnreadableError is OpenReadonly's refusal of a search.db that is present but
+// cannot be read (damaged, not a database, a table missing). Its message names
+// the file, SQLite's own cause and the rebuild remedy; Cause alone is that root
+// cause, for a caller such as `status` that names the file and the remedy
+// itself and must not print either twice.
+type UnreadableError struct {
+	Path  string // the search.db that could not be read
+	Cause error  // SQLite's (or the driver's) own error
+}
+
+func (e *UnreadableError) Error() string {
+	if !hasManifest(e.Path) {
+		// `reindex -rebuild` refuses without the archive's manifest, so say what
+		// works: move the file aside, and the next run builds a fresh index (F6).
+		return fmt.Sprintf("search index %s is present but cannot be read (%v): there is no manifest in %s to rebuild it from, so `mailarchive reindex -rebuild` would refuse — if it is damaged, move search.db out of %s; the next run builds a fresh index", e.Path, e.Cause, filepath.Dir(e.Path), filepath.Dir(e.Path))
+	}
+	return fmt.Sprintf("search index %s is present but cannot be read (%v): if it is damaged, rebuild it from the archive with `mailarchive reindex -rebuild -out %q` (on read-only media, copy the archive to a writable location first)", e.Path, e.Cause, filepath.Dir(e.Path))
+}
+
+// hasManifest reports whether the archive manifest sits beside the search.db at
+// path: the file `reindex -rebuild` rebuilds from, and refuses without.
+func hasManifest(path string) bool {
+	_, err := os.Stat(filepath.Join(filepath.Dir(path), ".mailarchive-manifest.json"))
+	return !errors.Is(err, fs.ErrNotExist)
+}
+
+// Unwrap exposes Cause, so errors.As still reaches the *sqlite.Error.
+func (e *UnreadableError) Unwrap() error { return e.Cause }
+
+// readonlyBusyTimeout is how long a read-only open waits for a lock another
+// connection holds before giving up with SQLITE_BUSY: a writer committing or
+// checkpointing, or the WAL recovery the next opener runs after a read-only
+// reader left the -wal/-shm pair behind. Without it every such moment failed
+// the open at once, and `status` reported a healthy index as unreadable. A
+// var so a test can shrink it.
+var readonlyBusyTimeout = 5 * time.Second
+
+// writerBusyTimeout is the same wait for the writable connection Open makes
+// (an export, a Graph run, reindex): every statement on it waits out a lock
+// another connection holds for up to this long before SQLITE_BUSY. A var so a
+// test can change it.
+var writerBusyTimeout = 5 * time.Second
+
+// Busy reports whether err is SQLite's "in use" answer — SQLITE_BUSY (with its
+// BUSY_RECOVERY/BUSY_SNAPSHOT variants) or SQLITE_LOCKED, by primary result
+// code — which says another connection held the database past the busy
+// timeout, and nothing about whether the file is damaged.
+func Busy(err error) bool {
+	var se *sqlite.Error
+	if !errors.As(err, &se) {
+		return false
+	}
+	switch se.Code() & 0xff {
+	case sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED:
+		return true
+	}
+	return false
+}
+
+// fileURI is the SQLite file: URI for the database at path, carrying the given
+// query (e.g. "mode=ro") and a busy timeout of busy. It is built from the
+// absolute path with every special character percent-escaped, so a '?', '#'
+// or '%' in an archive path is never parsed as a URI parameter. The busy
+// timeout rides on the URI as the driver's _pragma parameter (SQLite ignores
+// it), so it is set on every connection the pool opens.
+func fileURI(path, query string, busy time.Duration) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	p := filepath.ToSlash(abs)
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p // a Windows drive path: file:///C:/...
+	}
+	query += fmt.Sprintf("&_pragma=busy_timeout(%d)", busy.Milliseconds())
+	u := url.URL{Scheme: "file", Path: p, RawQuery: query}
+	return u.String(), nil
+}
+
+// openProbed opens the database at path through its file: URI (fileURI)
+// carrying the given query and the read-only busy timeout, and probes that
+// docs exists and is readable.
+func openProbed(path, query string) (*sql.DB, error) {
+	dsn, err := fileURI(path, query, readonlyBusyTimeout)
+	if err != nil {
+		return nil, err
+	}
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, err
+	}
+	// Probe, fully consuming the one-row result so the connection (and its OS
+	// file handle) is returned to the pool. The old db.Query discarded an
+	// unclosed *sql.Rows that pinned a connection open past ix.Close():
+	// harmless on POSIX, but on Windows it blocks a later os.Remove/os.Rename
+	// of search.db (a Rebuild then fails "Access is denied"). An empty index is
+	// still usable, so sql.ErrNoRows counts as success.
+	var probe int
+	switch err := db.QueryRow(`SELECT 1 FROM docs LIMIT 1`).Scan(&probe); {
+	case err == nil, errors.Is(err, sql.ErrNoRows):
+		return db, nil
+	default:
+		db.Close()
+		return nil, err
+	}
+}
+
+// readonlyMediaErr reports whether a read-only open failed because the media
+// cannot host the WAL reader's -shm (SQLITE_READONLY_* or SQLITE_CANTOPEN, by
+// primary result code), the one case the immutable retry is for. A corrupt
+// file (SQLITE_NOTADB) or a missing table is not retried.
+func readonlyMediaErr(err error) bool {
+	var se *sqlite.Error
+	if !errors.As(err, &se) {
+		return false
+	}
+	switch se.Code() & 0xff {
+	case sqlite3.SQLITE_READONLY, sqlite3.SQLITE_CANTOPEN:
+		return true
+	}
+	return false
+}
+
+// ReadOnly reports whether err is SQLite's answer that search.db, or the
+// folder that must hold its -wal/-shm, cannot be written here: SQLITE_READONLY
+// (with its READONLY_DIRECTORY, READONLY_RECOVERY, … variants), SQLITE_CANTOPEN
+// or SQLITE_PERM, by primary result code. It says nothing about damage, so its
+// remedy is never the rebuild, which would fail the same way.
+func ReadOnly(err error) bool {
+	if readonlyMediaErr(err) {
+		return true
+	}
+	var se *sqlite.Error
+	return errors.As(err, &se) && se.Code()&0xff == sqlite3.SQLITE_PERM
+}
+
+// ReadOnlyDir reports whether a ReadOnly err names the folder rather than the
+// file: SQLITE_READONLY_DIRECTORY (SQLite cannot create the -wal, -shm or
+// journal beside search.db) or SQLITE_CANTOPEN (it cannot open or create the
+// file there).
+func ReadOnlyDir(err error) bool {
+	var se *sqlite.Error
+	if !errors.As(err, &se) {
+		return false
+	}
+	return se.Code() == sqlite3.SQLITE_READONLY_DIRECTORY || se.Code()&0xff == sqlite3.SQLITE_CANTOPEN
+}
+
+// DiskError reports whether err is SQLite's answer that a write to the disk
+// holding search.db failed — SQLITE_FULL, or SQLITE_IOERR with any of its
+// variants (SHMSIZE, WRITE, FSYNC, …), by primary result code: a full disk, a
+// file-size limit, or a failing or vanished drive. Not damage either: the
+// rebuild writes to the same disk and fails the same way.
+func DiskError(err error) bool {
+	var se *sqlite.Error
+	if !errors.As(err, &se) {
+		return false
+	}
+	switch se.Code() & 0xff {
+	case sqlite3.SQLITE_FULL, sqlite3.SQLITE_IOERR:
+		return true
+	}
+	return false
+}
+
+// Add records (or replaces, by key) one message in the index. Each row is
+// written under its own SAVEPOINT inside the batch transaction, so a failure is
+// isolated to that row (F49): it is rolled back to the savepoint — leaving no
+// docs row without its docs_fts twin (INT-2) — while the earlier rows of the
+// uncommitted batch stay and commit with it. The returned error reports that
+// one row. If SQLite itself abandoned the whole transaction (a RAISE(ROLLBACK),
+// or a disk-full/I-O error it may answer that way), the earlier rows went with
+// it: the error says so and they are counted in Lost.
 func (ix *Index) Add(store string, folderPath []string, m *model.Message, relPath, key string) error {
 	if ix.tx == nil {
 		tx, err := ix.db.Begin()
@@ -188,58 +421,107 @@ func (ix *Index) Add(store string, folderPath []string, m *model.Message, relPat
 		date = d.Unix()
 	}
 
+	if _, err := ix.tx.Exec(`SAVEPOINT add_row`); err != nil {
+		return ix.abandonBatch(err)
+	}
 	// Replace any existing row with the same key (full-mode re-export).
 	if err := deleteByKeyTx(ix.tx, key); err != nil {
-		return ix.abandonBatch(err)
+		return ix.rollbackRow(err)
 	}
 
 	res, err := ix.tx.Exec(`INSERT INTO docs(key,store,folder,sender_name,sender_email,recipients,subject,date,path,has_attach,attach_names,snippet)
 		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
 		key, store, folder, m.SenderName, m.SenderEmail, recipients, m.Subject, date, relPath, boolToInt(len(m.Attachments) > 0), attach, snippet)
 	if err != nil {
-		return ix.abandonBatch(fmt.Errorf("index insert: %w", err))
+		return ix.rollbackRow(fmt.Errorf("index insert: %w", err))
 	}
 	id, err := res.LastInsertId()
 	if err != nil {
-		return ix.abandonBatch(err)
+		return ix.rollbackRow(err)
 	}
 	if _, err := ix.tx.Exec(`INSERT INTO docs_fts(rowid,subject,sender,recipients,folder,attachments,body)
 		VALUES(?,?,?,?,?,?,?)`, id, m.Subject, sender, recipients, folder, attach, body); err != nil {
 		// A docs row inserted without its docs_fts twin would leave the two
-		// tables misaligned; roll the whole uncommitted batch back so neither a
-		// later Flush nor Close can commit the orphan (INT-2).
-		return ix.abandonBatch(fmt.Errorf("index fts insert: %w", err))
+		// tables misaligned; rolling back to the savepoint removes it, so
+		// neither a later Flush nor Close can commit the orphan (INT-2).
+		return ix.rollbackRow(fmt.Errorf("index fts insert: %w", err))
+	}
+	if _, err := ix.tx.Exec(`RELEASE add_row`); err != nil {
+		return ix.abandonBatch(err)
 	}
 
 	ix.pending++
 	if ix.pending >= batchSize {
-		return ix.commitPending()
+		return ix.commitBatch(1) // this row's loss, if any, is reported by the error
 	}
 	return nil
 }
 
-// commitPending commits the current batch (if any) and releases the connection.
-// A new transaction is begun lazily on the next Add.
-// abandonBatch rolls back the current uncommitted batch and clears it, so a row
-// that failed mid-insert can never be committed by a later Flush/Close and the
-// next Add begins a fresh transaction. It returns the original error.
-func (ix *Index) abandonBatch(cause error) error {
-	if ix.tx != nil {
-		_ = ix.tx.Rollback()
-		ix.tx = nil
-		ix.pending = 0
+// rollbackRow undoes the failed row back to its savepoint, keeping the rest of
+// the batch, and returns cause. When the savepoint is gone because SQLite has
+// already abandoned the whole transaction, the batch is abandoned and counted
+// as lost (abandonBatch).
+func (ix *Index) rollbackRow(cause error) error {
+	if _, err := ix.tx.Exec(`ROLLBACK TO add_row`); err != nil {
+		return ix.abandonBatch(cause)
+	}
+	if _, err := ix.tx.Exec(`RELEASE add_row`); err != nil {
+		return ix.abandonBatch(cause)
 	}
 	return cause
 }
 
+// abandonBatch rolls back the current uncommitted batch and clears it, so a row
+// that failed mid-insert can never be committed by a later Flush/Close and the
+// next Add begins a fresh transaction. It is reached only when the batch
+// transaction itself is lost, so the earlier rows of the batch (whose Add had
+// succeeded) are counted in Lost and named in the returned error, which wraps
+// cause.
+func (ix *Index) abandonBatch(cause error) error {
+	if ix.tx == nil {
+		return cause
+	}
+	_ = ix.tx.Rollback()
+	ix.tx = nil
+	lost := ix.pending
+	ix.pending = 0
+	if lost == 0 {
+		return cause
+	}
+	ix.lost += lost
+	return fmt.Errorf("%w (the batch transaction was lost with it: %d earlier message(s) were not indexed)", cause, lost)
+}
+
+// commitPending commits the current batch (if any) and releases the connection.
+// A new transaction is begun lazily on the next Add. If the commit fails, the
+// whole batch is lost and its rows are counted in Lost.
 func (ix *Index) commitPending() error {
+	return ix.commitBatch(0)
+}
+
+// commitBatch is commitPending for a caller whose own error already reports
+// `reported` of the pending rows (Add committing at the batch size reports its
+// own row); only the rest are added to Lost on a failed commit.
+func (ix *Index) commitBatch(reported int) error {
 	if ix.tx == nil {
 		return nil
 	}
 	err := ix.tx.Commit()
+	if err != nil {
+		ix.lost += ix.pending - reported
+	}
 	ix.tx = nil
 	ix.pending = 0
 	return err
+}
+
+// Lost is how many rows this Index accepted (their Add returned nil) but never
+// committed, because their batch transaction was lost afterwards — SQLite
+// abandoned it on a later row's failure, or the commit itself failed. A caller
+// counting index errors adds it to the failed Adds it saw, so no lost row goes
+// uncounted (R8).
+func (ix *Index) Lost() int {
+	return ix.lost
 }
 
 // Flush commits everything added so far, making it visible to queries.

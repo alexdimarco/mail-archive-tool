@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -33,12 +34,27 @@ func (d *dashboard) runJob(fn func(*log.Logger) (string, error)) error {
 		}()
 		result, err := fn(log.New(c, "", 0))
 		if err != nil {
-			c.finish("", err.Error())
+			c.finish("", jobErrorText(err))
 			return
 		}
 		c.finish(result, "")
 	}()
 	return nil
+}
+
+// rebuildButton is the label of the Maintenance card's rebuild control, which
+// the owner-facing texts name instead of a command line.
+const rebuildButton = "Maintenance → Rebuild search index"
+
+// jobErrorText is a failed job's text for the owner: an index refusal says what
+// is wrong and names the Rebuild button instead of `mailarchive reindex`
+// (g7 F3); any other failure keeps its own text.
+func jobErrorText(err error) string {
+	var ie *app.IndexOpenError
+	if errors.As(err, &ie) {
+		return ie.ForOwner(rebuildButton)
+	}
+	return err.Error()
 }
 
 func (d *dashboard) requireOut() (string, bool) {
@@ -107,6 +123,7 @@ func (d *dashboard) healthAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in := health.Gather(out, "")
+	in.Surface = "desktop" // name the Rebuild button, not a command line
 	rep := health.Assess(in, time.Now())
 	writeJSON(w, map[string]any{"posture": rep.Posture, "summary": health.Summary(in, rep)})
 }

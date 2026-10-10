@@ -28,7 +28,7 @@ func TestRunRecordsSetupWarnings(t *testing.T) {
 
 	var res Result
 	var runErr error
-	recordRun(opts, lr, &res, &runErr)
+	recordRun(opts, lr, &res, &runErr, nil)
 	final, _, _ := state.ReadLastRun(out)
 	if final.Status != state.RunOK || !reflect.DeepEqual(final.Warnings, warnings) {
 		t.Errorf("the final record is %s with warnings %+v, want ok with %+v", final.Status, final.Warnings, warnings)

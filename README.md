@@ -548,8 +548,9 @@ Incomplete: 12 still missing content · 0 source-empty (never fillable) · 0 not
             (still missing content = not downloaded yet; fills on the next run)
 Fixity coverage: 1843 of 1843 records recorded (run `mailarchive verify -out "/home/alex/export"` to check the bytes)
 Extractable: 1843 of 1843 records have a preserved original (.eml) on disk
-Last run:   2026-09-02 02:00 → ok · exported 5 · filled 2 · took 41s
+Last run:   2026-09-02 02:00 EDT → ok · exported 5 · filled 2 · took 41s
 Last verify: 2026-09-01 02:05 → attested
+            (verify times are UTC)
 Schedule:   "mailarchive-3fa2b1c0" installed · daily at 02:00 · runs /usr/local/bin/mailarchive · installed 2026-09-01 (UTC) on laptop
 Posture:    WARN
   WARN: 12 message(s) still missing content — download for offline use in your mail app, then re-run; incremental fills them (see …)
@@ -586,32 +587,52 @@ carries any operator conversation) so a monitor or CI gate keys on fields, not
 prose.
 
 **`status -json` (version 2).** Top-level keys: `version`, `posture`, `reasons`,
-`reason_codes`, `out`, `messages`, `indexed`, `fillable`, `terminal`, `unknown`,
-`fixity`, `extractable`, `last_run`, `last_verify`, `schedule`. (`extractable` is
-a backward-compatible addition at version 2 — a new optional key, so a consumer
+`reason_codes`, `out`, `messages`, `indexed`, `indexed_known`, `fillable`,
+`terminal`, `unknown`, `fixity`, `extractable`, `last_run`, `last_verify`,
+`schedule`. (`extractable`, `indexed_known` and `last_run.in_progress` are
+backward-compatible additions at version 2 — new optional keys, so a consumer
 that ignores unknown keys is unaffected and the version is not bumped.)
+
+- `indexed` is how many messages the search index holds, **only when
+  `indexed_known` is `true`**: while `search.db` is busy (another program has it
+  locked) or unreadable, `indexed_known` is `false` and `indexed`'s `0` is not a
+  count — read `reason_codes` (`index_busy`, `index_unreadable`).
 
 - `posture` is one of `GREEN` · `WARN` · `RED`.
 - `reasons` is the human WARN/RED lines; `reason_codes` is a **parallel** array
   (same length, same order) of stable snake_case codes, so a gate matches a code
   instead of wording that can change. The codes: `manifest_unreadable`,
-  `incomplete_content`, `unexamined_entries`, `index_behind`, `cloud_sync`,
+  `incomplete_content`, `unexamined_entries`, `index_behind`,
+  `index_unreadable`, `index_missing`, `index_busy`, `cloud_sync`,
   `lastrun_unreadable`, `never_ran`, `run_failed`, `auth_remedy`,
   `run_in_progress`, `run_stuck`, `run_never_finished`, `run_cancelled`,
   `stale`, `not_attested`, `verify_unrecorded`, `verify_stale`,
+  `verify_in_progress`, `verify_never_finished`, `verify_failed`,
   `descriptor_unreadable`, `no_schedule`, `moved_archive`, `other_host`,
-  `scheduler_unavailable`, `not_installed`, `exe_missing`, `exe_moved`.
+  `scheduler_unavailable`, `not_installed`, `exe_missing`, `exe_moved`,
+  `archive_unwritable` (a scheduled backup whose archive folder takes no write:
+  read-only, full or lost drive — a run there cannot record its own failure, so
+  this is where it shows; the probe is a write by the account running `status`,
+  so a read-only monitoring account on the backup's host sees it for a healthy
+  backup: run `status` as the account the job runs as).
 - `fixity` is `{records, with_fixity}` (coverage, not integrity), or `null` when
   there is no manifest.
 - `extractable` is `{records, records_with_eml}` — how many records have a
   preserved original (`.eml`) present on disk (file presence, the same signal
   `extract` and `verify` use), or `null` when there is no manifest.
-- `last_run` is `{status, started, finished, error?, exported, filled}`, where
-  `status` is one of `ok` · `failed` · `cancelled` · `running` and `finished` is
-  `null` while a run is in progress.
+- `last_run` is `{status, started, finished, error?, exported, filled,
+  in_progress}`, where `status` is one of `ok` · `failed` · `cancelled` ·
+  `running` and `finished` is `null` while a run is in progress **or** when the
+  run died without finishing. `status: running` alone does not say a run is
+  alive: `in_progress` is `true` only while a run really holds the archive lock,
+  and a `running` record with `in_progress: false` is the run that never
+  finished (`run_never_finished` in `reason_codes`).
 - `last_verify` is `verify`'s own verdict — `{status, started, finished,
   attested, records, with_fixity, checked, ok, modified, missing, unrecorded,
-  unexpected, recorded, exit_code}` — or `null` when no verify has run.
+  unexpected, recorded, exit_code}` — or `null` when no verify has run. While
+  a verify is running (or after one that never finished) `status` is
+  `running` and an optional `previous` object carries the last finished
+  verdict, which the posture still judges.
 - `schedule` is `{name, state, interval, at, exe, host}` (present only when a
   schedule is recorded).
 
@@ -644,6 +665,10 @@ mailarchive reindex -out ./export
 # reindexed: kept=1843 pruned=12
 ```
 
+Plain `reindex` only removes; it never adds a missing row. When the index holds
+fewer messages than the manifest (status `index_behind`, or a run that reported
+`INDEX-ERRORS`), rebuild it instead — see below.
+
 ### Rebuilding the search index
 
 If `search.db` is lost, corrupted, or left out of a copy — but the archive's
@@ -674,7 +699,19 @@ copy that skips dotfiles dropped it, restore it from a backup.
 
 For a byte-faithful index rather than re-derived text, archive with `-raw` (so
 the `.eml` originals are on disk to parse), or re-export from the original
-source. Plain `reindex` on an archive whose index is gone points you here.
+source. Plain `reindex` on an archive whose index is gone points you here, as do
+`status`'s `index_behind` warning, its `index_unreadable` (damaged `search.db`)
+and `index_missing` (no `search.db`) postures, a run that refuses a damaged
+`search.db` before it exports anything, and a run summary's `INDEX-ERRORS` and
+"index holds N of M messages" warnings.
+
+The rebuild fixes a damaged or missing index, nothing else. When a run says
+`search.db` or the archive folder is **read-only**, or the **disk is full**, the
+rebuild would fail the same way: make the folder writable (or free space), then
+run again. A busy `search.db` (another program has it open) is not damage either:
+close that program and retry. With no manifest in the folder there is nothing to
+rebuild from; move a damaged `search.db` out of the folder and the next run
+builds a fresh index.
 
 ### Migrating the archive out (mbox/eml)
 
@@ -844,7 +881,14 @@ Per OS:
   start** when the PC next wakes and **runs on battery**, so a night the machine
   merely slept is not lost — but it **cannot power on an off machine** (a night
   the PC is off is still skipped; `status` shows it). `-remove` deletes the task,
-  the wrapper and the XML.
+  the wrapper and the XML. Antivirus real-time scanning (and Windows Search
+  indexing) can hold a freshly written file open for a moment: the tool waits up
+  to about 2 seconds for each record it renames (manifest, last-run record, logs)
+  and then refuses naming the file. If that persists, exclude the archive folder
+  from real-time scanning; to find which program holds a file, open **Resource
+  Monitor → CPU → Associated Handles** and search for the file's name. A run whose
+  last-run record could not be written logs "could not record this run", and
+  `status` may then show it as "never finished" although the log says it ended.
 
 Upgrading or moving the binary: the entry keeps pointing at the old path. Re-run
 `schedule … -install` from the new one (`status` warns "not this binary" until

@@ -23,6 +23,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net"
@@ -158,14 +159,28 @@ func runExport(args []string) error {
 	// previews the discovered stores and stops. -outlook supplies its own inputs
 	// later, so an empty set is not yet a refusal in that case.
 	discovered, err := app.DiscoverInputs(inputs, *o.auto)
-	if err != nil {
-		return err
-	}
-	if *o.list {
+	if err == nil && *o.list {
 		return listStores(discovered)
 	}
-	if len(discovered) == 0 && !*o.outlook {
-		return errors.New("no input mail sources found: pass -input PATH (a .pst/.ost file, an mbox file, or a mail directory), or -auto to discover Outlook/Thunderbird/Evolution stores")
+	if err == nil && len(discovered) == 0 && !*o.outlook {
+		err = errors.New("no input mail sources found: pass -input PATH (a .pst/.ost file, an mbox file, or a mail directory), or -auto to discover Outlook/Thunderbird/Evolution stores")
+	}
+	if err != nil {
+		// A scheduled run's refusal is still a run (N13, R18): on an archive
+		// that already exists it is recorded failed (status, attention
+		// sidecar) and logged to its own -log, instead of leaving the previous
+		// success as the archive's last word. A first run still creates
+		// nothing (RecordRefusedRun writes only into an existing archive).
+		if *o.unattended && !*o.list {
+			app.RecordRefusedRun(exportOptions(o, inputs, mode, since), err)
+			if *o.log != "" {
+				if l, closeLog, lerr := newRunLogger(*o.log); lerr == nil {
+					l.Printf("FAILED: %v", err)
+					closeLog()
+				}
+			}
+		}
+		return err
 	}
 
 	logger, closeLog, err := newRunLogger(*o.log)
@@ -179,8 +194,8 @@ func runExport(args []string) error {
 		}
 	}()
 
-	outlook, outlookSyncWait, auto, copyFirst := o.outlook, o.outlookSyncWait, o.auto, o.copyFirst
-	manifestPath, doIndex, doPages, keepRaw := o.manifest, o.index, o.pages, o.keepRaw
+	outlook, outlookSyncWait, auto := o.outlook, o.outlookSyncWait, o.auto
+	doIndex, keepRaw := o.index, o.keepRaw
 	enableOffline, syncWait, modeStr := o.enableOffline, o.syncWait, o.mode
 	out := o.out
 
@@ -210,19 +225,7 @@ func runExport(args []string) error {
 		logger.Printf("Outlook: %d PST(s) ready; archiving them now.", len(stores))
 	}
 
-	opts := app.Options{
-		Inputs:    inputs,
-		Auto:      *auto,
-		Out:       *out,
-		Mode:      mode,
-		Since:     since,
-		CopyFirst: *copyFirst,
-		Manifest:  *manifestPath,
-		Index:     *doIndex,
-		Pages:     *doPages,
-		KeepRaw:   *keepRaw,
-	}
-	_ = modeStr
+	opts := exportOptions(o, inputs, mode, since)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -265,6 +268,24 @@ func runExport(args []string) error {
 	}
 	err = runErr
 	return err
+}
+
+// exportOptions builds the app.Options an export run (or its recorded refusal)
+// uses from the parsed flags and the final input list.
+func exportOptions(o *exportOpts, inputs []string, mode export.Mode, since time.Time) app.Options {
+	return app.Options{
+		Inputs:     inputs,
+		Auto:       *o.auto,
+		Out:        *o.out,
+		Mode:       mode,
+		Since:      since,
+		CopyFirst:  *o.copyFirst,
+		Manifest:   *o.manifest,
+		Index:      *o.index,
+		Pages:      *o.pages,
+		KeepRaw:    *o.keepRaw,
+		Unattended: *o.unattended,
+	}
 }
 
 // reclaimPSTDir removes the temporary per-account PST directory that -outlook's
@@ -659,6 +680,13 @@ func runVerify(args []string) error {
 	}
 	defer closeLog()
 
+	// Ctrl-C or a terminate says what happened (F10); the running record is
+	// left as a kill leaves it, so status reports the verify as never finished.
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+	stopWatch := watchVerifyInterrupt(sigs, os.Stderr, abspath(*o.out), os.Exit)
+	defer func() { signal.Stop(sigs); stopWatch() }()
+
 	rep, verr := app.Verify(abspath(*o.out), app.VerifyOptions{Record: *o.record}, logger, nil)
 	if verr != nil {
 		if *o.log != "" { // a scheduled run leaves its reason in its own log
@@ -684,6 +712,29 @@ func runVerify(args []string) error {
 		return &exitError{code: code}
 	}
 	return nil
+}
+
+// watchVerifyInterrupt waits for a signal on sigs and, when one arrives, prints
+// one line to w saying the verify did not finish and what still stands, then
+// calls exit with the shell's code for that signal (130 for Ctrl-C, 143 for
+// terminate). The returned func stops the watcher and waits for it, so a verify
+// that finished normally prints nothing.
+func watchVerifyInterrupt(sigs <-chan os.Signal, w io.Writer, out string, exit func(int)) (stop func()) {
+	quit, done := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(done)
+		select {
+		case s := <-sigs:
+			fmt.Fprintf(w, "mailarchive: verify interrupted: the archive was not fully checked and no new verdict was recorded; the last finished verdict still stands (see `mailarchive status`). Run `mailarchive verify -out %q` again to finish.\n", out)
+			if s == syscall.SIGTERM {
+				exit(143)
+			} else {
+				exit(130)
+			}
+		case <-quit:
+		}
+	}()
+	return func() { close(quit); <-done }
 }
 
 func verifyUsage(fs *flag.FlagSet) func() {
@@ -1447,6 +1498,21 @@ func printSummary(logger *log.Logger, r app.Result, indexed, keepRaw bool, out s
 		msg += fmt.Sprintf(" INDEX-ERRORS=%d", r.IndexErrors)
 	}
 	logger.Printf("%s", msg)
+	// Exports that were not new messages: a key exported again replaces its
+	// earlier copy, so exported exceeds the growth in manifest and indexed.
+	// A fill is its own explanation ("filled="); anything beyond it gets one
+	// line saying so (F13).
+	newMsgs := r.ManifestSize - r.ManifestBefore
+	if replaced := s.Exported - newMsgs; newMsgs >= 0 && replaced > s.Filled {
+		logger.Printf("Note:   %d exports made %d new message(s); %d replaced an earlier copy of the same message, so exported is above the growth in manifest and indexed.", s.Exported, newMsgs, replaced-s.Filled)
+	}
+	// An index that holds fewer messages than the manifest (search.db lost or
+	// emptied and re-created by this run, or earlier runs skipped indexing)
+	// would otherwise end in a quiet exit 0 (F4). Rows the run itself could not
+	// index have their own warning below.
+	if indexed && r.IndexErrors == 0 && r.Indexed < r.ManifestSize {
+		logger.Printf("WARNING: the search index holds %d of the archive's %d messages (search.db was missing or emptied, or earlier runs skipped indexing); search will not find the rest. Rebuild it from the archive with `mailarchive reindex -rebuild -out %q`.", r.Indexed, r.ManifestSize, out)
+	}
 
 	// One coherent Verification line: what is still missing, what the source can
 	// never deliver, what has not been re-examined yet, how many fillable gaps
@@ -1489,8 +1555,10 @@ func printSummary(logger *log.Logger, r app.Result, indexed, keepRaw bool, out s
 	if !keepRaw && s.RawAvailable > 0 {
 		logger.Printf("WARNING: these sources carry original message bytes, but -raw was not set — no .eml was preserved, so `mailarchive extract` will produce nothing from this archive. Re-run with -raw to keep the originals BEFORE deleting the source.")
 	}
+	// Plain `reindex` only prunes; the rebuild re-adds the missing rows from the
+	// archived files (F50).
 	if r.IndexErrors > 0 {
-		logger.Printf("WARNING: %d message(s) were exported but could not be indexed; run `mailarchive reindex -out %q` and re-check.", r.IndexErrors, out)
+		logger.Printf("WARNING: %d message(s) were exported but could not be indexed; rebuild the index from the archive with `mailarchive reindex -rebuild -out %q` and re-check.", r.IndexErrors, out)
 	}
 
 	if indexed && r.Indexed > 0 {

@@ -101,7 +101,7 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		return Result{}, err
 	}
 	defer lock.Release()
-	defer recordRun(opts, beginRun(opts), &result, &err)
+	defer recordRun(opts, beginRun(opts), &result, &err, logger)
 
 	mpath := opts.Manifest
 	if mpath == "" {
@@ -111,6 +111,7 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	if err != nil {
 		return Result{}, err
 	}
+	manifestBefore := manifest.Len()
 
 	exp := &export.Exporter{
 		OutDir:   opts.Out,
@@ -163,7 +164,7 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		idxPath := filepath.Join(opts.Out, "search.db")
 		idx, err = index.Open(idxPath)
 		if err != nil {
-			return Result{}, fmt.Errorf("open search index: %w", err)
+			return Result{}, indexOpenError(idxPath, opts.Out, err)
 		}
 		defer idx.Close()
 		if _, rkErr := idx.RepairKeys(manifest.Rekeyed > 0, state.MigrateKey, logger); rkErr != nil {
@@ -233,11 +234,13 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	// folder-assertion under its CURRENT folder — the timeline event the fold and
 	// serve read (T2). The key is the exporter's own (possibly #fp-qualified) key,
 	// so the assertion and the index row agree with the manifest record.
+	warns := newIndexWarnings(logger)
+	defer warns.flush()
 	exp.OnExported = func(store string, folderPath []string, m *model.Message, relPath, key string) {
 		if idx != nil {
 			if addErr := idx.Add(store, folderPath, m, relPath, key); addErr != nil {
 				indexErrors++
-				logger.Printf("warning: index: %v", addErr)
+				warns.add(addErr)
 			}
 		}
 		if hist != nil {
@@ -268,6 +271,9 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	}
 	lastCheckpoint := 0
 	var lockLost error
+	// saveErr is the most recent manifest save's outcome; a run whose last save
+	// failed kept no progress and fails (F53), exactly as Run does.
+	var saveErr error
 	checkpoint := func() {
 		// Gate on messages PROCESSED (written + skipped-as-already-archived), not
 		// just Exported: a migration or steady-state run is nearly all skips
@@ -284,13 +290,13 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 			lockLost = err
 			return
 		}
-		commit(hist, idx, manifest, logger)
+		saveErr = commit(hist, idx, manifest, logger)
 	}
 
 	// Deleted Items / Junk Email are excluded by default; the flags opt in (T7).
 	filter := graph.FolderFilter{IncludeDeleted: g.IncludeDeleted, IncludeJunk: g.IncludeJunk}
 
-	result = Result{Files: len(g.Mailboxes)}
+	result = Result{Files: len(g.Mailboxes), ManifestBefore: manifestBefore}
 	var failures int
 	var firstErr error
 	for _, mbx := range g.Mailboxes {
@@ -302,7 +308,7 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 			// message files already written (INT-CC-2/R5).
 			return result, lockLost
 		}
-		commit(hist, idx, manifest, logger)
+		saveErr = commit(hist, idx, manifest, logger)
 		// "Cancelled" is decided from RunGraph's own context, never from the
 		// error chain (fault-isolation §4.8.6, RR6-C1): a mailbox error can carry
 		// a context.Canceled no operator raised (a transport's own), and reading
@@ -314,6 +320,9 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		interrupted := ctx.Err() != nil
 		if interrupted && runErr != nil {
 			finish(opts.Out, &result, exp, manifest, idx, indexErrors, true, logger)
+			if saveErr != nil {
+				return result, manifestSaveFailure(mpath, saveErr)
+			}
 			return result, context.Canceled
 		}
 		if runErr != nil {
@@ -346,13 +355,19 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 			logger.Printf("warning: history run footer: %v", werr)
 		}
 	}
-	commit(hist, idx, manifest, logger)
+	saveErr = commit(hist, idx, manifest, logger)
 	if idx != nil && opts.Pages && !allFailed && pagesNeeded(opts.Out, exp.Stats.Exported) {
 		if pErr := pages.Generate(opts.Out, idx, logger); pErr != nil {
 			logger.Printf("warning: folder pages: %v", pErr)
 		}
 	}
 	finish(opts.Out, &result, exp, manifest, idx, indexErrors, !allFailed, logger)
+	if saveErr != nil {
+		if failures > 0 && firstErr != nil {
+			return result, fmt.Errorf("%d mailbox(es) failed; first error: %w; and %w", failures, firstErr, manifestSaveFailure(mpath, saveErr))
+		}
+		return result, manifestSaveFailure(mpath, saveErr)
+	}
 	if failures > 0 {
 		// Carry the first per-mailbox error (including any AADSTS code) into the
 		// returned error so it lands in the last-run record and `status` can fire

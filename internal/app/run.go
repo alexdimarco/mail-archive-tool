@@ -52,6 +52,11 @@ type Options struct {
 	// P10). The run records them in its last-run record, where `status` WARNs
 	// them.
 	Warnings []state.RunWarning
+	// Unattended marks a scheduled run (the CLI's -unattended, the GUI's
+	// headless job). A discovery refusal (a vanished -input, no sources found)
+	// on an archive that already exists is then recorded as a failed run, so
+	// `status` reports it (N13, R18); see RecordRefusedRun.
+	Unattended bool
 }
 
 // Result summarizes a completed (or cancelled) run.
@@ -59,13 +64,17 @@ type Result struct {
 	Stats        export.Stats
 	Files        int
 	ManifestSize int
-	Indexed      int    // messages in the search index (0 if indexing disabled)
-	IndexErrors  int    // messages the index refused (R8 parity broken; surfaced, not swallowed)
-	Issues       int    // rows in the regenerated verification report
-	ReportPath   string // path to the verification report ("" when nothing to report)
-	Fillable     int    // manifest records still missing content an on-demand source may deliver
-	Terminal     int    // records missing content the source can never deliver (recorded, never retried)
-	Unknown      int    // legacy records not yet re-examined (migrated from a version-1 manifest)
+	// ManifestBefore is the manifest's size when the run began, so the summary
+	// can tell how many of the run's exports were new messages and how many
+	// replaced an earlier copy of the same key (F13).
+	ManifestBefore int
+	Indexed        int    // messages in the search index (0 if indexing disabled)
+	IndexErrors    int    // messages the index refused (R8 parity broken; surfaced, not swallowed)
+	Issues         int    // rows in the regenerated verification report
+	ReportPath     string // path to the verification report ("" when nothing to report)
+	Fillable       int    // manifest records still missing content an on-demand source may deliver
+	Terminal       int    // records missing content the source can never deliver (recorded, never retried)
+	Unknown        int    // legacy records not yet re-examined (migrated from a version-1 manifest)
 }
 
 // finish fills the manifest-derived fields of a Result and regenerates the
@@ -81,10 +90,153 @@ func finish(out string, r *Result, exp *export.Exporter, manifest *state.Manifes
 	}
 	r.Stats = exp.Stats
 	r.ManifestSize = manifest.Len()
-	r.Indexed = indexCount(idx)
+	r.Indexed = indexCount(idx) // commits any pending batch first
+	// The failed Adds the caller counted, plus every row whose Add succeeded but
+	// whose batch was lost afterwards (F49), so every message this run exported
+	// has its row added or replaced in the index, or is counted. Indexed is the
+	// index's total, so the index's growth plus IndexErrors == exported (on a
+	// fresh archive, Indexed + IndexErrors == exported) only when the run
+	// exports each key once and none is already indexed: a fill, a re-capture
+	// of a legacy "unknown" record, a full-mode re-export, and — on a fresh
+	// archive too — a key the same run exports twice (full mode over a source
+	// holding a message twice, or an in-run fill of an earlier copy's gap) all
+	// export a message again under the same key, and idx.Add replaces that
+	// key's row instead of adding one.
 	r.IndexErrors = indexErrors
+	if idx != nil {
+		r.IndexErrors += idx.Lost()
+	}
 	r.Fillable, r.Terminal, r.Unknown = manifest.Counts()
 	r.ReportPath, r.Issues = writeReport(out, manifest, manifest.Migrated > 0, logger)
+}
+
+// indexOpenError is the refusal of an export or a Graph run whose search.db
+// at idxPath cannot be opened for writing (index.Open's err). Like reindex's,
+// it names the file and the remedy its cause has (R12, X6), never SQLite's
+// bare error:
+//   - a busy index is in use, not damaged — another program kept it locked
+//     past the writable open's wait — so the remedy is to retry, never the
+//     rebuild (MA-398);
+//   - a newer format's refusal already names the file and the upgrade, and
+//     stands: a rebuild would replace a newer index with an older one;
+//   - a file or folder SQLite cannot write (index.ReadOnly: a read-only
+//     remount, changed permissions, a read-only search.db) or a disk that
+//     refuses the write (index.DiskError: full, a file-size limit, a failing
+//     drive) is not damage: the rebuild writes a new index to the same place
+//     and fails the same way, so the remedy is the writable folder or the
+//     free space (F1);
+//   - anything else, a damaged file (SQLITE_NOTADB) above all, is rebuilt
+//     from the archive's own files, which needs the archive's manifest
+//     (Rebuild refuses without one). With no manifest in out there is nothing
+//     to rebuild from, and nothing in that file a run needs, so the remedy is
+//     to move it aside: the next run builds a fresh index.
+func indexOpenError(idxPath, out string, err error) error {
+	switch {
+	case errors.Is(err, index.ErrNewerFormat):
+		return err
+	case index.Busy(err):
+		return &IndexOpenError{Kind: IndexBusy, Out: out, Err: err,
+			msg: fmt.Sprintf("search index %s is busy (%v): another program kept it locked — close any other program that has it open, then run again", idxPath, err)}
+	case index.ReadOnly(err) || index.DiskError(err):
+		remedy := unwritableRemedy(idxPath, out, err)
+		return &IndexOpenError{Kind: IndexUnwritable, Out: out, Err: err, remedy: remedy,
+			msg: fmt.Sprintf("search index %s cannot be written (%v): %s, then run again", idxPath, err, remedy)}
+	}
+	mpath := filepath.Join(out, ".mailarchive-manifest.json")
+	if _, serr := os.Stat(mpath); errors.Is(serr, fs.ErrNotExist) {
+		return &IndexOpenError{Kind: IndexDamagedNoManifest, Out: out, Err: err,
+			msg: fmt.Sprintf("search index %s cannot be opened (%v), and there is no manifest (%s) to rebuild it from: move it out of %s, then run again", idxPath, err, mpath, out)}
+	}
+	return &IndexOpenError{Kind: IndexDamaged, Out: out, Err: err,
+		msg: fmt.Sprintf("search index %s cannot be opened (%v): rebuild it from the archive with `mailarchive reindex -rebuild -out %q`, then run again", idxPath, err, out)}
+}
+
+// IndexOpenKind says which refusal an IndexOpenError is.
+type IndexOpenKind int
+
+const (
+	IndexBusy              IndexOpenKind = iota // another program holds search.db
+	IndexUnwritable                             // read-only file or folder, full or failing disk
+	IndexDamaged                                // unreadable, a manifest to rebuild from
+	IndexDamagedNoManifest                      // unreadable, nothing to rebuild from
+)
+
+// IndexOpenError is indexOpenError's refusal. Error() is the full text for the
+// CLI and the log (SQLite's own words, the `mailarchive reindex` command);
+// ForOwner is the same refusal in the words of an app whose owner has no
+// command line (F3). It unwraps to SQLite's error.
+type IndexOpenError struct {
+	Kind   IndexOpenKind
+	Out    string // the archive folder
+	Err    error  // SQLite's error
+	remedy string // IndexUnwritable: what to fix, in plain words
+	msg    string
+}
+
+func (e *IndexOpenError) Error() string { return e.msg }
+func (e *IndexOpenError) Unwrap() error { return e.Err }
+
+// ForOwner renders the refusal for an app owner: the folder, the cause in plain
+// terms, and the remedy that app offers — rebuildAction names its own rebuild
+// control (for example "Maintenance → Rebuild search index") — with no command
+// line and no SQLite text.
+func (e *IndexOpenError) ForOwner(rebuildAction string) string {
+	switch e.Kind {
+	case IndexBusy:
+		return fmt.Sprintf("The search index in %s is in use by another program. Close any other program that has it open, then try again.", e.Out)
+	case IndexUnwritable:
+		return fmt.Sprintf("Your archive in %s cannot be written to: %s, then try again.", e.Out, e.remedy)
+	case IndexDamagedNoManifest:
+		return fmt.Sprintf("The search index in %s is damaged, and the archive has no manifest to rebuild it from. Move search.db out of that folder, then try again — a fresh index is built.", e.Out)
+	}
+	return fmt.Sprintf("The search index in %s is damaged. Choose %s to rebuild it from your archive, then try again.", e.Out, rebuildAction)
+}
+
+// unwritableRemedy names what to fix when SQLite cannot write the index at
+// dbPath in folder out (err is index.ReadOnly or index.DiskError): the disk
+// (full or failing), search.db itself (opened read-only because the file is
+// not writable), the folder (SQLite cannot create the -wal/-shm or the file
+// there), or, when neither can be told, both.
+func unwritableRemedy(dbPath, out string, err error) string {
+	if index.DiskError(err) {
+		return fmt.Sprintf("the disk holding %s is full or failing — free space on it (or check the drive)", out)
+	}
+	// search.db and the -wal/-shm pair a reader left beside it: SQLite creates
+	// those with the file's own mode, so a read-only search.db that a status or
+	// search read first leaves read-only sidecars, which keep refusing after
+	// search.db alone is made writable (the re-verification of F7).
+	var roFiles []string
+	for _, s := range []string{"", "-wal", "-shm"} {
+		if fileReadOnly(dbPath + s) {
+			roFiles = append(roFiles, filepath.Base(dbPath)+s)
+		}
+	}
+	dirRO := index.ReadOnlyDir(err)
+	switch {
+	case len(roFiles) == 1 && dirRO:
+		return fmt.Sprintf("%s and the archive folder %s are read-only — make both writable (or remount the drive read-write)", roFiles[0], out)
+	case len(roFiles) > 1 && dirRO:
+		return fmt.Sprintf("%s and the archive folder %s are read-only — make all of them writable (or remount the drive read-write)", strings.Join(roFiles, ", "), out)
+	case len(roFiles) == 1:
+		return fmt.Sprintf("%s is read-only — make it writable (on Windows, clear its Read-only attribute)", roFiles[0])
+	case len(roFiles) > 1:
+		return fmt.Sprintf("%s are read-only — make them writable (on Windows, clear their Read-only attribute)", strings.Join(roFiles, ", "))
+	case dirRO:
+		return fmt.Sprintf("the archive folder %s is read-only — make it writable (or remount the drive read-write)", out)
+	}
+	return fmt.Sprintf("%s or the archive folder %s is not writable — make both writable", filepath.Base(dbPath), out)
+}
+
+// fileReadOnly reports whether the file at path exists and refuses to be
+// opened for writing for lack of permission (a 0444 file, Windows' Read-only
+// attribute). Opening it write-only and closing it changes nothing.
+func fileReadOnly(path string) bool {
+	f, err := os.OpenFile(path, os.O_WRONLY, 0)
+	if err == nil {
+		f.Close()
+		return false
+	}
+	return errors.Is(err, fs.ErrPermission)
 }
 
 // ProgressFunc, if provided, is called after each processed message with the
@@ -103,12 +255,17 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// -input path, or no sources at all, must refuse naming the problem while
 	// creating no output dir, no lock, and no last-run record — a guaranteed
 	// failure must not first leave a half-built archive and a failed run behind.
+	// A scheduled run's refusal is still a run (N13): recorded failed when the
+	// archive already exists, so it never leaves the previous success standing.
 	files, err := DiscoverInputs(opts.Inputs, opts.Auto)
-	if err != nil {
-		return Result{}, err
+	if err == nil && len(files) == 0 {
+		err = errors.New("no input mail sources found (a .pst/.ost file, an mbox file, or a mail directory; or enable auto-discovery)")
 	}
-	if len(files) == 0 {
-		return Result{}, errors.New("no input mail sources found (a .pst/.ost file, an mbox file, or a mail directory; or enable auto-discovery)")
+	if err != nil {
+		if opts.Unattended {
+			RecordRefusedRun(opts, err)
+		}
+		return Result{}, err
 	}
 
 	if err := os.MkdirAll(opts.Out, 0o755); err != nil {
@@ -124,7 +281,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// Every run that begins is recorded (R18): "running" now, before any early
 	// return, finalized on the way out — so a run that never finishes is
 	// visible as such to `status`.
-	defer recordRun(opts, beginRun(opts), &result, &err)
+	defer recordRun(opts, beginRun(opts), &result, &err, logger)
 
 	// On -auto, warn up front when a live Exchange/IMAP .ost is about to be read
 	// by the direct go-pst reader, which cannot read every .ost — the -outlook
@@ -150,6 +307,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	if err != nil {
 		return Result{}, err
 	}
+	manifestBefore := manifest.Len()
 
 	exp := &export.Exporter{
 		OutDir:   opts.Out,
@@ -179,7 +337,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		idxPath := filepath.Join(opts.Out, "search.db")
 		idx, err = index.Open(idxPath)
 		if err != nil {
-			return Result{}, fmt.Errorf("open search index: %w", err)
+			return Result{}, indexOpenError(idxPath, opts.Out, err)
 		}
 		defer idx.Close()
 		// Repair legacy index keys to match the re-scoped manifest, driven by
@@ -188,10 +346,12 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		if _, rkErr := idx.RepairKeys(manifest.Rekeyed > 0, state.MigrateKey, logger); rkErr != nil {
 			return Result{}, fmt.Errorf("migrate search index keys: %w", rkErr)
 		}
+		warns := newIndexWarnings(logger)
+		defer warns.flush()
 		exp.OnExported = func(store string, folderPath []string, m *model.Message, relPath, key string) {
 			if addErr := idx.Add(store, folderPath, m, relPath, key); addErr != nil {
 				indexErrors++
-				logger.Printf("warning: index: %v", addErr)
+				warns.add(addErr)
 			}
 		}
 	}
@@ -211,6 +371,10 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	}
 	lastCheckpoint := 0
 	var lockLost error
+	// saveErr is the outcome of the most recent manifest save: a failed
+	// mid-walk checkpoint is healed by a later save that succeeds, but a run
+	// whose LAST save failed has kept no progress and must fail (F53).
+	var saveErr error
 	checkpoint := func(stats export.Stats) {
 		if stats.Exported-lastCheckpoint < effectiveEvery(floor, manifest.Len()) {
 			return
@@ -225,10 +389,10 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		}
 		// A one-shot local import keeps no go-back timeline (its dedup is
 		// folder-scoped, §3.6), so there is no history writer to sync here.
-		commit(nil, idx, manifest, logger)
+		saveErr = commit(nil, idx, manifest, logger)
 	}
 
-	result = Result{Files: len(files)}
+	result = Result{Files: len(files), ManifestBefore: manifestBefore}
 	var failures int
 	for _, f := range files {
 		runErr := runFile(ctx, exp, f, opts.Out, opts.CopyFirst, logger, func(stats export.Stats) {
@@ -246,10 +410,14 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 			// (INT-CC-2/R5.)
 			return result, lockLost
 		}
-		commit(nil, idx, manifest, logger)
+		saveErr = commit(nil, idx, manifest, logger)
 
 		if errors.Is(runErr, context.Canceled) {
 			finish(opts.Out, &result, exp, manifest, idx, indexErrors, true, logger)
+			if saveErr != nil {
+				// "progress was kept" would be false: record it failed.
+				return result, manifestSaveFailure(mpath, saveErr)
+			}
 			return result, context.Canceled
 		}
 		if runErr != nil {
@@ -268,10 +436,25 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	}
 
 	finish(opts.Out, &result, exp, manifest, idx, indexErrors, true, logger)
+	if saveErr != nil {
+		if failures > 0 {
+			return result, fmt.Errorf("%d file(s) failed; %w", failures, manifestSaveFailure(mpath, saveErr))
+		}
+		return result, manifestSaveFailure(mpath, saveErr)
+	}
 	if failures > 0 {
 		return result, fmt.Errorf("%d file(s) failed", failures)
 	}
 	return result, nil
+}
+
+// manifestSaveFailure is the run error when the run's final manifest save
+// failed (F53): the manifest is the run's whole persisted result, so nothing
+// this run did is recorded and the next run repeats it. It names the file and
+// the remedy; recordRun finalizes the last-run record failed with it, so
+// `status` reports RED instead of a green "ok".
+func manifestSaveFailure(mpath string, err error) error {
+	return fmt.Errorf("could not save the manifest %s (%w): this run's progress was not recorded and the next run will repeat it — make sure the manifest file and its folder are writable (on Windows, that no other program holds the manifest open), then run again", mpath, err)
 }
 
 // defaultCheckpointEvery aligns with the index's own batch size.
@@ -339,8 +522,9 @@ func ostAdvisory(goos string, paths []string, classicOutlook bool) string {
 // history is a superset of the manifest and the index is a superset too, and the
 // next run re-observes the tail idempotently (a duplicate history event folds
 // away; idx.Add replaces by key). A move is therefore never lost. hist and idx
-// may be nil (a one-shot local run writes no timeline; indexing may be off).
-func commit(hist *state.HistoryWriter, idx *index.Index, manifest *state.Manifest, logger *log.Logger) {
+// may be nil (a one-shot local run writes no timeline; indexing may be off). It
+// returns the manifest save's error, so a run whose final save failed fails.
+func commit(hist *state.HistoryWriter, idx *index.Index, manifest *state.Manifest, logger *log.Logger) error {
 	var syncHistory, flushIndex, saveManifest func() error
 	if hist != nil {
 		syncHistory = hist.Sync
@@ -351,16 +535,18 @@ func commit(hist *state.HistoryWriter, idx *index.Index, manifest *state.Manifes
 	if manifest != nil {
 		saveManifest = manifest.Save
 	}
-	commitInOrder(syncHistory, flushIndex, saveManifest, logger)
+	return commitInOrder(syncHistory, flushIndex, saveManifest, logger)
 }
 
 // commitInOrder is the single definition of the crash-safe durability order
 // (history → index → manifest, §3.5); commit wires the real stores to it and a
 // test drives it with recording doubles to prove the order holds. A nil step is
-// skipped. Each error is logged and does not abort the later steps: a save is
-// best-effort, and the invariant is only about ORDER (the manifest is written
-// last), never that every step succeeds.
-func commitInOrder(syncHistory, flushIndex, saveManifest func() error, logger *log.Logger) {
+// skipped. Each error is logged and does not abort the later steps: the
+// invariant here is only about ORDER (the manifest is written last), never that
+// every step succeeds. The manifest save's error is also returned: a mid-walk
+// checkpoint may fail and be healed by a later save, but the caller fails a run
+// whose last save failed (F53).
+func commitInOrder(syncHistory, flushIndex, saveManifest func() error, logger *log.Logger) error {
 	if syncHistory != nil {
 		if err := syncHistory(); err != nil {
 			logger.Printf("warning: history sync: %v", err)
@@ -374,20 +560,56 @@ func commitInOrder(syncHistory, flushIndex, saveManifest func() error, logger *l
 	if saveManifest != nil {
 		if err := saveManifest(); err != nil {
 			logger.Printf("warning: could not save manifest: %v", err)
+			return err
 		}
 	}
+	return nil
 }
 
 // beginRun writes the "running" last-run record and returns it for recordRun.
 func beginRun(opts Options) state.LastRun {
+	lr := newRunRecord(opts)
+	_ = state.WriteLastRun(opts.Out, lr) // best effort: the run itself must not fail on this
+	return lr
+}
+
+// newRunRecord is the "running" last-run record for a run of opts, starting now.
+func newRunRecord(opts Options) state.LastRun {
 	exe, _ := os.Executable()
 	mode := "incremental"
 	if opts.Mode == export.Full {
 		mode = "full"
 	}
-	lr := state.LastRun{Status: state.RunRunning, Started: time.Now().UTC(), PID: os.Getpid(), Exe: exe, Mode: mode, Job: canonicalJob(opts, mode), Warnings: opts.Warnings}
-	_ = state.WriteLastRun(opts.Out, lr) // best effort: the run itself must not fail on this
-	return lr
+	return state.LastRun{Status: state.RunRunning, Started: time.Now().UTC(), PID: os.Getpid(), Exe: exe, Mode: mode, Job: canonicalJob(opts, mode), NoIndex: !opts.Index, Warnings: opts.Warnings}
+}
+
+// RecordRefusedRun records a scheduled run that refused before it began — its
+// -input vanished, or discovery found no sources — as a FAILED run of the
+// archive at opts.Out (N13, R18): the last-run record names the cause and the
+// attention sidecar is written, so `status` reports RED run_failed instead of
+// the previous success. It writes only into an archive that already exists (a
+// manifest or a last-run record is present): a first run that refuses still
+// creates nothing (friction #2, MA-103). It takes the archive lock for the
+// write and skips it when another run holds the lock — that run's own record
+// is authoritative. Best effort, like every last-run write.
+func RecordRefusedRun(opts Options, cause error) {
+	mpath := opts.Manifest
+	if mpath == "" {
+		mpath = filepath.Join(opts.Out, ".mailarchive-manifest.json")
+	}
+	_, mErr := os.Stat(mpath)
+	_, lrErr := os.Stat(filepath.Join(opts.Out, state.LastRunName))
+	if mErr != nil && lrErr != nil {
+		return
+	}
+	lock, err := lockfile.AcquireAs(filepath.Join(opts.Out, lockfile.Name), "export")
+	if err != nil {
+		return
+	}
+	defer lock.Release()
+	lr := newRunRecord(opts)
+	lr.Status, lr.Finished, lr.Error = state.RunFailed, lr.Started, cause.Error()
+	_ = state.WriteLastRun(opts.Out, lr)
 }
 
 // canonicalJob reconstructs the run's export flags in the same shape the
@@ -425,7 +647,10 @@ func absOrSame(p string) string {
 }
 
 // recordRun finalizes the last-run record from the run's outcome.
-func recordRun(opts Options, lr state.LastRun, result *Result, err *error) {
+// writeLastRun is the finalizing record write; a var so a test can refuse it.
+var writeLastRun = state.WriteLastRun
+
+func recordRun(opts Options, lr state.LastRun, result *Result, err *error, logger *log.Logger) {
 	lr.Finished = time.Now().UTC()
 	switch {
 	case *err == nil:
@@ -435,10 +660,41 @@ func recordRun(opts Options, lr state.LastRun, result *Result, err *error) {
 	default:
 		lr.Status = state.RunFailed
 		lr.Error = (*err).Error()
+		lr.ErrorKind = errorKindOf(*err)
 	}
 	lr.Exported, lr.Filled = result.Stats.Exported, result.Stats.Filled
 	lr.Fillable, lr.Terminal, lr.Unknown, lr.IndexErrors = result.Fillable, result.Terminal, result.Unknown, result.IndexErrors
-	_ = state.WriteLastRun(opts.Out, lr)
+	// Best effort: a refused write never fails the run, but it is logged (F12),
+	// because the "running" record then stays and status reads it as a run that
+	// never finished although this log says how it ended.
+	if werr := writeLastRun(opts.Out, lr); werr != nil && logger != nil {
+		// This line comes before the run's own Done/FAILED line (recordRun runs
+		// from a defer), so it must not refer to lines "above".
+		hint := ""
+		if runtime.GOOS == "windows" {
+			hint = " (a sharing violation: exclude the archive folder from antivirus real-time scanning)"
+		}
+		logger.Printf("warning: could not record this run in %s (%v): `mailarchive status` may show this run as \"never finished\" or still show the previous result, whatever this log says about how it ended — run again once the file can be written%s", filepath.Join(opts.Out, state.LastRunName), werr, hint)
+	}
+}
+
+// errorKindOf names the search-index refusal err is (state.ErrKind*), or ""
+// for any other failure, for the last-run record: an owner surface's health
+// view renders the refusal in its own words from the kind.
+func errorKindOf(err error) string {
+	var ioe *IndexOpenError
+	if !errors.As(err, &ioe) {
+		return ""
+	}
+	switch ioe.Kind {
+	case IndexBusy:
+		return state.ErrKindIndexBusy
+	case IndexUnwritable:
+		return state.ErrKindIndexUnwritable
+	case IndexDamagedNoManifest:
+		return state.ErrKindIndexDamagedNoManifest
+	}
+	return state.ErrKindIndexDamaged
 }
 
 func plural(n int, one, many string) string {

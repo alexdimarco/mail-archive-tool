@@ -420,8 +420,9 @@ func HistoryStatus(path string) (HistoryStat, error) {
 // rewrite also heals a torn tail). A missing log is a no-op. It returns the
 // number of per-message events dropped; when that is zero the file is left
 // byte-for-byte untouched (no needless churn). The rewrite is atomic — a temp
-// sibling fsync'd and renamed into place (R5) — so an interrupted compaction
-// leaves the original log intact.
+// sibling fsync'd and renamed into place (R5), the rename waiting out a moment
+// of Windows file sharing (replaceFile) — so an interrupted compaction leaves
+// the original log intact.
 func CompactHistory(path string, keep func(key string) bool) (dropped int, err error) {
 	events, err := ReadHistory(path)
 	if err != nil {
@@ -470,7 +471,7 @@ func CompactHistory(path string, keep func(key string) bool) (dropped int, err e
 		os.Remove(tmpName)
 		return 0, fmt.Errorf("compact history log %s: %w", path, err)
 	}
-	if err := os.Rename(tmpName, path); err != nil {
+	if err := replaceFile(tmpName, path); err != nil {
 		os.Remove(tmpName)
 		return 0, fmt.Errorf("compact history log %s: %w", path, err)
 	}
