@@ -176,6 +176,11 @@ func OpenReadonly(path string) (*Index, error) {
 	// Check for the file first, so a missing index yields a clean "run an export
 	// first" rather than the SQLite driver's misleading low-level open error.
 	if _, statErr := os.Stat(path); errors.Is(statErr, fs.ErrNotExist) {
+		// An archive that was exported to (its manifest is here) lost its
+		// index: the rebuild brings it back, "run an export first" would not (F6).
+		if hasManifest(path) {
+			return nil, fmt.Errorf("no search index at %s, but the archive's manifest is intact: rebuild the index from the archive with `mailarchive reindex -rebuild -out %q`", path, filepath.Dir(path))
+		}
 		return nil, fmt.Errorf("no search index at %s (run an export first)", path)
 	}
 	db, err := openProbed(path, "mode=ro")
@@ -203,7 +208,19 @@ type UnreadableError struct {
 }
 
 func (e *UnreadableError) Error() string {
+	if !hasManifest(e.Path) {
+		// `reindex -rebuild` refuses without the archive's manifest, so say what
+		// works: move the file aside, and the next run builds a fresh index (F6).
+		return fmt.Sprintf("search index %s is present but cannot be read (%v): there is no manifest in %s to rebuild it from, so `mailarchive reindex -rebuild` would refuse — if it is damaged, move search.db out of %s; the next run builds a fresh index", e.Path, e.Cause, filepath.Dir(e.Path), filepath.Dir(e.Path))
+	}
 	return fmt.Sprintf("search index %s is present but cannot be read (%v): if it is damaged, rebuild it from the archive with `mailarchive reindex -rebuild -out %q` (on read-only media, copy the archive to a writable location first)", e.Path, e.Cause, filepath.Dir(e.Path))
+}
+
+// hasManifest reports whether the archive manifest sits beside the search.db at
+// path: the file `reindex -rebuild` rebuilds from, and refuses without.
+func hasManifest(path string) bool {
+	_, err := os.Stat(filepath.Join(filepath.Dir(path), ".mailarchive-manifest.json"))
+	return !errors.Is(err, fs.ErrNotExist)
 }
 
 // Unwrap exposes Cause, so errors.As still reaches the *sqlite.Error.
