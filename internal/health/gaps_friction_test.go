@@ -3,6 +3,7 @@ package health
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -385,4 +386,69 @@ func TestGatherReadsUnparsedAndPartlyReadRecords(t *testing.T) {
 	}
 	b, _ := json.Marshal(JSON(in, Assess(in, time.Now())))
 	assure.Reached(t, b, "the JSON")
+}
+
+// covers: MA-326, R18, S48
+// F8: README.md's `status -json` contract names every key and code the capture-gap
+// work added, taken from the real output so a new key cannot be added without the
+// docs: top-level, capture_gaps and its items, last_run's gap counts, the reason
+// codes of every gap rule, and verify -json's gap keys; and it says which counts
+// are the ledger's and what an older build does.
+func TestReadmeDocumentsTheStatusJSONGapContract(t *testing.T) {
+	stuck := fetchFailed("graph:S")
+	stuck.Runs, stuck.FirstRun = 6, gapNow.Add(-10*24*time.Hour)
+	term := state.CaptureGap{Folder: "Inbox", Locator: "graph:BIG", Reason: "fetch-too-large", Class: state.ClassTerminal}
+	na := fetchFailed("graph:NA")
+	na.LastRun = gapNow.Add(-40 * 24 * time.Hour)
+	in := gapInput(stuck, fetchFailed("graph:A1"), term, na)
+	in.Unreadable, in.UnreadableOnly, in.Unparsed = 1, 1, 1
+	in.LastRun.GapsObserved = 3
+	rep := Assess(in, gapNow)
+	b, err := json.Marshal(JSON(in, rep))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(b, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var keys []string
+	cg := assure.Reached(t, doc["capture_gaps"], "capture_gaps").(map[string]any)
+	for k := range cg {
+		keys = append(keys, k)
+	}
+	items := assure.Reached(t, cg["items"], "capture_gaps.items").([]any)
+	for k := range items[0].(map[string]any) {
+		keys = append(keys, k)
+	}
+	for k := range doc["last_run"].(map[string]any) {
+		if strings.HasPrefix(k, "gaps_") {
+			keys = append(keys, k)
+		}
+	}
+	keys = append(keys, "capture_gaps", "unreadable", "original", "deadline", "gap_items", "gap_folders", "gap_retryable", "gap_need_action")
+	for _, c := range rep.Codes {
+		if strings.HasPrefix(c, "capture_gaps_") || c == "unreadable_messages" || c == "unparsed_messages" {
+			keys = append(keys, c)
+		}
+	}
+	for _, c := range []string{"capture_gaps_stuck", "capture_gaps_fillable", "capture_gaps_terminal", "capture_gaps_not_attempted", "unreadable_messages", "unparsed_messages"} {
+		keys = append(keys, c)
+	}
+	rb, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	readme := string(rb)
+	for _, k := range keys {
+		if !strings.Contains(readme, "`"+k+"`") {
+			t.Errorf("README.md does not document `%s`", k)
+		}
+	}
+	flat := strings.Join(strings.Fields(readme), " ")
+	for _, want := range []string{"are **items**", "from the **ledger**", "count manifest **records**", "Older builds", "0` in a record an older build wrote"} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("README.md lacks the explanation %q", want)
+		}
+	}
 }

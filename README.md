@@ -606,9 +606,9 @@ prose.
 **`status -json` (version 2).** Top-level keys: `version`, `posture`, `reasons`,
 `reason_codes`, `out`, `messages`, `indexed`, `indexed_known`, `fillable`,
 `terminal`, `unknown`, `fixity`, `extractable`, `last_run`, `last_verify`,
-`schedule`, `verify_schedule`, `shown_as_source`. (`extractable`,
-`indexed_known`, `verify_schedule`, `shown_as_source` and
-`last_run.in_progress` are backward-compatible additions
+`schedule`, `verify_schedule`, `shown_as_source`, `capture_gaps`, `unreadable`.
+(`extractable`, `indexed_known`, `verify_schedule`, `shown_as_source`,
+`capture_gaps`, `unreadable` and `last_run.in_progress` are backward-compatible additions
 at version 2 — new optional keys, so a consumer that ignores unknown keys is
 unaffected and the version is not bumped.)
 
@@ -636,7 +636,47 @@ unaffected and the version is not bumped.)
   read-only, full or lost drive — a run there cannot record its own failure, so
   this is where it shows; the probe is a write by the account running `status`,
   so a read-only monitoring account on the backup's host sees it for a healthy
-  backup: run `status` as the account the job runs as).
+  backup: run `status` as the account the job runs as), and the capture-gap
+  codes `capture_gaps_stuck` (WARN, listed first of the gap codes, never RED),
+  `capture_gaps_fillable` (WARN), `capture_gaps_terminal` (WARN),
+  `capture_gaps_not_attempted` (a note: the last run did not walk that source or
+  folder, or no run record exists to say), `unreadable_messages` (WARN) and
+  `unparsed_messages` (a note); see the next items.
+- `capture_gaps` is what the source holds that this archive does not (the
+  capture-gap ledger), or `null` with no manifest: `{fillable, terminal, info,
+  stuck, not_attempted, oldest_first_run, deadline?, items}`. The four counts
+  are **items** (a folder counts as one, an overflow entry as the items it
+  stands for) from the **ledger**: `fillable` and `terminal` are the gaps the
+  last run observed, `stuck` is the part of `fillable` that has failed on three
+  or more runs over at least 72 hours (two schedule periods if longer),
+  `not_attempted` the fillable and terminal gaps whose source or folder the last
+  run did not walk, `info` anomalies where nothing is missing. They are **not**
+  the top-level `fillable` and `terminal`, which count manifest **records**
+  (messages with content or attachments still missing, or empty at the source);
+  a monitor of lost mail reads `capture_gaps`, a monitor of incomplete pages
+  reads both. `oldest_first_run` is the earliest first sighting among the
+  missing items, or `null`. `items` is at most 20, most severe first (stuck,
+  terminal, fillable, not attempted); each has `source` (the mailbox or input
+  path), `folder`, `subject` and `date` (omitted when unknown), `scope`
+  (`item`, `folder` or `overflow`), `reason` (a code such as `fetch-failed`),
+  `class` (`fillable`, `terminal` or `info`; an unknown class from a newer build
+  reads as `terminal`), `remedy` (the sentence `status` prints), `original`
+  (whether the original still exists; omitted when nothing true can be said),
+  `runs`, `attempted` (the last run walked it) and `stuck`. `deadline` is the
+  sentence for a user about to lose a Microsoft 365 mailbox, present while a
+  fillable Microsoft 365 gap is being retried.
+- `unreadable` is how many messages could only be partly read (pages with what
+  was readable); `unparsed` records are kept as raw text and appear as the
+  `unparsed_messages` note only.
+- `last_run` also carries `gaps_observed`, `gaps_new`, `gaps_recovered`,
+  `gaps_fillable`, `gaps_terminal`, `gaps_stuck` and `unreadable`: what that run
+  observed in the ledger (`gaps_new` is what a monitor alerts on, so a known,
+  unfixable gap does not hide a new loss). They are `0` in a record an older
+  build wrote. A run that finished but could not capture something is recorded
+  `failed` (exit 1) for now, with `error` starting `partial:`.
+- **Older builds** know none of this: their `status` and `verify` show no gap
+  line for an archive that has a ledger, so a mixed-version fleet should key on
+  the presence of `capture_gaps`, not on its absence meaning "no gaps".
 - `shown_as_source` is `{count, reasons}` — how many messages are shown as plain
   text instead of a formatted page, and a count per reason (`unsafe-after-reparse`,
   `unparseable`, `too-deeply-nested`, `too-large`; see the report kinds above);
@@ -674,7 +714,10 @@ unaffected and the version is not bumped.)
 bool), `out`, `records`, `with_fixity`, `checked`, `ok`, `modified`, `missing`,
 `unrecorded`, `unexpected`, `recorded`, `problems` (`[{path, kind, detail}]`,
 `kind` ∈ `modified` · `missing` · `unrecorded` · `unexpected`), and `truncated`
-when a per-category list was capped. The **exit code** is the verdict too: `0`
+when a per-category list was capped, and, only when the ledger holds missing
+items or folders, `gap_items`, `gap_folders`, `gap_retryable` and
+`gap_need_action` (omitted when zero; informational, they never change
+`attested` or the exit code). The **exit code** is the verdict too: `0`
 attested · `2` not attested · `1` refusal.
 
 **`search -json`** is a bare JSON array of results, while the running server's
