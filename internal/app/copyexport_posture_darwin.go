@@ -115,7 +115,8 @@ func parseFilesec(b []byte) ([]ceMacACE, bool) {
 }
 
 // macWho names an ACE's principal GUID. The compatibility GUIDs encode a user or
-// group id in their last four bytes (big-endian) and "everyone" is 0xC; any other GUID
+// group id in their last four bytes (big-endian), and "everyone" is the group with gid
+// 12 (ABCDEFAB-CDEF-ABCD-EFAB-CDEF0000000C); any other GUID
 // belongs to a directory account the line cannot look up without libc's
 // membership service, so it is named as another account.
 func macWho(g []byte) string {
@@ -123,8 +124,12 @@ func macWho(g []byte) string {
 	group := []byte{0xAB, 0xCD, 0xEF, 0xAB, 0xCD, 0xEF, 0xAB, 0xCD, 0xEF, 0xAB, 0xCD, 0xEF}
 	id := binary.BigEndian.Uint32(g[12:16])
 	switch {
-	case string(g[:12]) == string(user) && id == 0xC:
+	case string(g[:12]) == string(group) && id == 12: // the "everyone" group, gid 12
 		return "everyone"
+	case string(g[:12]) == string(group) && id == 20:
+		return "group staff"
+	case string(g[:12]) == string(group) && id == 80:
+		return "group admin"
 	case string(g[:12]) == string(user):
 		return "user " + strconv.FormatUint(uint64(id), 10)
 	case string(g[:12]) == string(group):
