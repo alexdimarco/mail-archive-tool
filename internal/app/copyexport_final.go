@@ -93,9 +93,15 @@ func (r *CopyRun) finalize(proposed CopyStatus, stop *CopyStop) (*CopyResult, er
 	}
 	if err != nil {
 		if sum, serr := readSummary(r.rec.path); serr == nil && sum.Sealed != nil && res != nil {
-			// The seal is written, and its marker action or journal end is still owed:
-			// "Finished writing", which Check and finish completes.
+			// The seal is written, and its ledger line, marker action or journal end is
+			// still owed: "Finished writing", which reconcile or Check and finish
+			// completes. A state-directory failure is R-d2, which the page shows.
 			res.Label = "Finished writing (" + res.Label + ") — this folder's marker may still need updating"
+			var se *ceStateErr
+			if errors.As(err, &se) && res.Stop == nil {
+				s := &CopyStop{RID: "R-d2", Class: stopClassState}
+				res.Stop = r.complete(s, int(r.done.Load()), "")
+			}
 			return res, nil
 		}
 		// Finalization could not finish: the marker stays and no seal is written, so
@@ -141,6 +147,7 @@ type ceFinish struct {
 // asks the presence check to re-hash each recorded file (Finish as partial).
 func (f *ceFinish) run(proposed CopyStatus, stop *CopyStop, replace, rehash bool) (*CopyResult, error) {
 	e := f.env
+	e.step("W7pre")
 	// 1. Presence check (XC14): a recorded file gone since its write (an antivirus
 	// quarantine, say) makes the run partial and is named in the failures.
 	if err := f.presence(rehash); err != nil {
@@ -151,7 +158,6 @@ func (f *ceFinish) run(proposed CopyStatus, stop *CopyStop, replace, rehash bool
 		return nil, err
 	}
 	status := finalStatus(proposed, counts)
-	e.step("W7pre")
 
 	finished := e.nowTime()
 	// 2. README, whose status is conditional in its own text (XC5).

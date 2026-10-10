@@ -48,29 +48,9 @@ func TestCopyExportRetryPreviewAndOfferedLabels(t *testing.T) {
 	t.Skip("MA-427: the retry preview, the -partN root names and the activity page's offered labels are slice E3's (XC28, design §4.13 Retry, §4.16)")
 }
 
-// covers: MA-428, R29, R5
-func TestCopyExportRowMA428(t *testing.T) {
-	t.Skip("MA-428: cancel is not built; lands in EW-E2")
-}
-
-// covers: MA-429, R29, R5
-func TestCopyExportRowMA429(t *testing.T) {
-	t.Skip("MA-429: the write order W1..W12 and its kill points are not built; lands in EW-E2")
-}
-
 // covers: MA-432, R29, S52
 func TestCopyExportRowMA432(t *testing.T) {
 	t.Skip("MA-432: the run record's bounded engine is not built; lands in EW-E2")
-}
-
-// covers: MA-440, R29, R12
-func TestCopyExportRowMA440(t *testing.T) {
-	t.Skip("MA-440: the outcome mapping is not built; lands in EW-E2")
-}
-
-// covers: MA-447, R29, R5, S52
-func TestCopyExportRowMA447(t *testing.T) {
-	t.Skip("MA-447: the run record and the seal-and-finish step are not built; lands in EW-E2")
 }
 
 // covers: MA-532, R29, R12, S52

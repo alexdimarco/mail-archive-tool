@@ -160,7 +160,7 @@ func (e *CopyExportEnv) ReconcileRun(run string) (CopyObservation, error) {
 
 	// The folder is the run's own. The outcome is the marker and the seal.
 	switch {
-	case sum.Sealed == nil && sum.Progress == 0 && !seen.HasReadme:
+	case sum.Sealed == nil && sum.Progress == 0 && !seen.HasReadme && !seen.HasMarker:
 		obs.Kind, obs.Label = obsEmpty, "interrupted: empty export folder — the app stopped before writing anything"
 		obs.Actions = []string{ActFinishAsPartial}
 	case sum.Sealed == nil && seen.HasMarker:
