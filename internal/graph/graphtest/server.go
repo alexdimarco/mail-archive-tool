@@ -237,6 +237,17 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request, upn, folderID 
 	writePage(w, vals, next(r, l, n, more))
 }
 
+// MA-540's scaled bounds (fault-isolation §9): the JSON request timeout, the
+// $value idle and header windows, capture's overall cap (Config.MIMETimeout
+// until S3) and the page cap, which the tests pass as the client's overrides.
+const (
+	RequestTimeout = 100 * time.Millisecond
+	IdleTimeout    = 200 * time.Millisecond
+	HeaderTimeout  = 600 * time.Millisecond
+	OverallCap     = 2 * time.Second
+	PageCap        = 5
+)
+
 // Stop is one of MA-540's stop cases: Apply makes mailbox u1 of the Fixture
 // misbehave before the case run, which must then fail that mailbox with a
 // typed error naming the stop.
@@ -275,8 +286,8 @@ func valueStop(h http.HandlerFunc) func(s *Server) {
 	}
 }
 
-// Stops are MA-540's stop cases on the Fixture, with its scaled bounds (idle
-// 200 ms, header window 600 ms, page cap 5, capture's overall cap 2 s): (1) a
+// Stops are MA-540's stop cases on the Fixture, with its scaled bounds (above):
+// (1) a
 // repeating nextLink in u1's Inbox after its first page; (2) fresh nextLinks
 // past the page cap in u1's Inbox, and in u1's folder list; (3) NewItem's
 // $value stalling mid-body past the idle window, sending no headers within the

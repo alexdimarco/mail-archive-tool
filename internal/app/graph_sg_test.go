@@ -43,9 +43,9 @@ func sgOptions(s *graphtest.Server) GraphOptions {
 	return GraphOptions{
 		Tenant: "t", ClientID: "c", ClientSecret: "s", Mailboxes: []string{"u1", "u2"},
 		BaseURL: s.URL, TokenURL: s.URL + "/token",
-		RequestTimeout: 100 * time.Millisecond, MIMETimeout: 2 * time.Second,
-		MIMEIdleTimeout: 200 * time.Millisecond, MIMEHeaderTimeout: 600 * time.Millisecond,
-		PageCap: 5,
+		RequestTimeout: graphtest.RequestTimeout, MIMETimeout: graphtest.OverallCap,
+		MIMEIdleTimeout: graphtest.IdleTimeout, MIMEHeaderTimeout: graphtest.HeaderTimeout,
+		PageCap: graphtest.PageCap,
 	}
 }
 
@@ -177,11 +177,11 @@ func TestRunGraphGuardStopsFailTheMailbox(t *testing.T) {
 	}
 	expect := map[string]func(*testing.T, error){
 		"repeating nextLink in Messages": wantListing(graph.ListingRepeat, 0),
-		"page cap in Messages":           wantListing(graph.ListingPageCap, 5),
-		"page cap in Folders":            wantListing(graph.ListingPageCap, 5),
-		"$value idle":                    wantTimeout(graph.TimeoutIdle, 200*time.Millisecond),
-		"$value header":                  wantTimeout(graph.TimeoutHeader, 600*time.Millisecond),
-		"$value overall":                 wantTimeout(graph.TimeoutOverall, 2*time.Second),
+		"page cap in Messages":           wantListing(graph.ListingPageCap, graphtest.PageCap),
+		"page cap in Folders":            wantListing(graph.ListingPageCap, graphtest.PageCap),
+		"$value idle":                    wantTimeout(graph.TimeoutIdle, graphtest.IdleTimeout),
+		"$value header":                  wantTimeout(graph.TimeoutHeader, graphtest.HeaderTimeout),
+		"$value overall":                 wantTimeout(graph.TimeoutOverall, graphtest.OverallCap),
 	}
 	for _, stop := range graphtest.Stops {
 		check, ok := expect[stop.Name]

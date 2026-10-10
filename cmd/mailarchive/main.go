@@ -78,11 +78,10 @@ func main() {
 		// already printed its report; it is not a refusal, so it gets no
 		// "mailarchive:" prefix. Everything else is a refusal/error (exit 1).
 		var ee *exitError
-		if errors.As(err, &ee) {
-			os.Exit(ee.code)
+		if !errors.As(err, &ee) {
+			fmt.Fprintln(os.Stderr, "mailarchive: "+err.Error())
 		}
-		fmt.Fprintln(os.Stderr, "mailarchive: "+err.Error())
-		os.Exit(1)
+		os.Exit(exitCode(err))
 	}
 }
 
@@ -93,6 +92,20 @@ func main() {
 type exitError struct{ code int }
 
 func (e *exitError) Error() string { return fmt.Sprintf("exit status %d", e.code) }
+
+// exitCode is the process exit status for a verb's result (docs/ux-contract.md
+// X1): 0 for success, an exitError's own code, and 1 for any other error, a
+// refusal or a failed run.
+func exitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	var ee *exitError
+	if errors.As(err, &ee) {
+		return ee.code
+	}
+	return 1
+}
 
 // stringSlice is a repeatable / comma-separated string flag.
 type stringSlice []string
@@ -1137,12 +1150,22 @@ func runGraph(args []string) (err error) {
 
 	result, runErr := app.RunGraph(ctx, gopts, opts, logger)
 	printSummary(logger, result, *o.index, *o.keepRaw, *o.out)
+	err = graphOutcome(logger, runErr)
+	return err
+}
+
+// graphOutcome is the graph verb's result for RunGraph's error: a handled
+// interrupt (RunGraph returned context.Canceled, X1) is a success, logged as
+// one, and any other error is the verb's failure; main turns the result into
+// the exit code (exitCode). It is its own function so a test can pass
+// RunGraph's error through the verb's mapping (fault-isolation MA-540), which
+// the verb cannot reach a fake server to show.
+func graphOutcome(logger *log.Logger, runErr error) error {
 	if errors.Is(runErr, context.Canceled) {
 		logger.Printf("interrupted; progress saved to the manifest")
 		return nil
 	}
-	err = runErr
-	return err
+	return runErr
 }
 
 // flagWasSet reports whether a flag was explicitly passed (as opposed to left at
