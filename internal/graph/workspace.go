@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"slices"
 	"strconv"
@@ -301,6 +302,36 @@ func (c *Client) MessagePage(ctx context.Context, userID, folderID, next string,
 		refs = append(refs, ref)
 	}
 	return refs, body.Next, nil
+}
+
+// probeTimeout bounds Probe's one request.
+const probeTimeout = 30 * time.Second
+
+// Probe is the copy export's one control request (extraction design §4.13,
+// RR2b-C7): GET /me?$select=id, sent once, with no retry loop and a 30 s bound.
+// It is never sent through get, whose Retry-After sleep under a request-timeout
+// context would turn a long throttle into a deadline error (F17), so a 429 or a
+// 503 comes back at once as the typed *StatusError, and a server that does not
+// answer as the transport's error. nil is a 2xx: the connection is fine.
+func (c *Client) Probe(ctx context.Context) error {
+	if err := c.requireOwnMailbox(); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+c.userSeg("")+"?$select=id", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return statusErr(resp)
+	}
+	return nil
 }
 
 // FolderCount reads one folder's totalItemCount: the second read of the
