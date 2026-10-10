@@ -417,6 +417,26 @@ func TestLiveAndRebuiltIndexAgreeOnCorpusResidualShapes(t *testing.T) {
 	}
 }
 
+// covers: MA-492, R8, R1
+// R3-AF3. A mail whose HTML document is a <frameset> has no <body> for the
+// renderer to write: its page was an empty body div with no fallback, so the
+// words of its <noframes> alternate text were found on the live index (which
+// reads the mail) and not after a rebuild (which read the empty page): live=1
+// rebuilt=0. The page now shows the mail as source, which the rebuild indexes
+// by the mail's words, so both sides find them once.
+func TestLiveAndRebuiltIndexAgreeOnAFramesetMail(t *testing.T) {
+	bodies := map[string]string{
+		"frameset case": `<html><head><title>t</title></head><frameset cols="*"><frame src="http://x.example/"><noframes>framesetword alternate text</noframes></frameset></html>`,
+		"ordinary case": `<html><body><p>framesetordinary words</p></body></html>`,
+	}
+	want := map[string]int{"framesetword": 1, "alternate": 1, "framesetordinary": 1}
+	live, rebuilt := parityArchive(t, bodies, keysOf(want))
+	assure.Reached(t, live["framesetword"]+rebuilt["framesetword"], "hits for a frameset mail's word")
+	for _, p := range parityProblems(want, live, rebuilt) {
+		t.Error(p)
+	}
+}
+
 // covers: MA-492, R8, R13, S33
 // Deep mails, at and past the depth where an exporter would flatten them (480)
 // and past the tree parser's cap (512), keep their word boundaries and their

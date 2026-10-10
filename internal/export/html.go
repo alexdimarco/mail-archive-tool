@@ -532,14 +532,19 @@ func sanitizeParsed(doc string, inputLen int, neutralizeNoscript bool) (headExtr
 			}
 		}
 	}
-	if bodyNode != nil {
-		for c := bodyNode.FirstChild; c != nil; c = c.NextSibling {
-			if err := renderNode(bb, c); err != nil {
-				return "", "", "", renderFailure(err)
-			}
-		}
-		bodyAttrs = bodyAttributes(bodyNode)
+	if bodyNode == nil {
+		// The parser builds a <body> for every mail but a <frameset> document
+		// (the frameset replaces it): there is no body to write, and an empty
+		// page would lose the mail silently — its <noframes> text is the only
+		// readable part (R1, R7; R3-AF3). Show the source instead.
+		return "", "", "", FallbackUnparseable
 	}
+	for c := bodyNode.FirstChild; c != nil; c = c.NextSibling {
+		if err := renderNode(bb, c); err != nil {
+			return "", "", "", renderFailure(err)
+		}
+	}
+	bodyAttrs = bodyAttributes(bodyNode)
 	if reason := hostileSurvives(hb.String(), bb.String()); reason != "" {
 		return "", "", "", reason
 	}

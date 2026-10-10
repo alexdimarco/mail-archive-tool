@@ -173,6 +173,51 @@ func onlyWhitespaceAfter(n *xhtml.Node) bool {
 	return true
 }
 
+// covers: MA-303, R1, R7
+// R3-AF3, R3-AO3, R3-AC4. A mail whose HTML document is a <frameset> has no
+// <body> in the tree (the parser replaces it with the frameset), and the
+// renderer used to write only the body's children: an empty body div, no
+// fallback, no issue and no Verification line, so the mail's words — its
+// <noframes> alternate text is the only readable part — were silently lost from
+// the page and from the rebuilt index. A mail with no body to show is shown as
+// its escaped source, counted and recorded like any other fallback, and its
+// words are on the page. Positive twins: a frameset that follows body content
+// (the parser ignores it) and an ordinary document render as HTML.
+func TestRenderFramesetMailIsShownAsSource(t *testing.T) {
+	bodies := map[string]string{
+		"frameset document": `<html><head><title>t</title></head><frameset cols="*"><frame src="http://x.example/"><noframes>framesetword alternate text</noframes></frameset></html>`,
+		"bare frameset":     `<frameset rows="50%,50%"><frame src=x><noframes><p>f2beta words</p></noframes></frameset>`,
+	}
+	for name, body := range bodies {
+		out, err := RenderWith(&model.Message{Subject: name, HTMLBody: body}, RenderContext{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		page := assure.Reached(t, string(out.HTML), name+" exported page")
+		if out.BodyFallback == "" {
+			t.Errorf("%s: a mail with no body must be shown as source, not as an empty page:\n%s", name, bodyPart(page))
+		}
+		for i, root := range pageTrees(t, name, page) {
+			if _, b := pageLayout(root); b == nil || !shownWords(b, out.BodyFallback != "", "alternate text") && !shownWords(b, out.BodyFallback != "", "f2beta words") {
+				t.Errorf("%s (reading %d): the mail's words must be on the page:\n%s", name, i, bodyPart(page))
+			}
+		}
+	}
+	for name, body := range map[string]string{
+		"frameset after content": `<p>twin words</p><frameset><frame src=x></frameset>`,
+		"ordinary document":      `<html><head><title>t</title></head><body><p>twin words</p></body></html>`,
+		"empty body":             `<html><head></head><body></body></html>`,
+	} {
+		out, err := RenderWith(&model.Message{Subject: name, HTMLBody: body}, RenderContext{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out.BodyFallback != "" {
+			t.Errorf("positive twin %s: must render as HTML, got fallback %q", name, out.BodyFallback)
+		}
+	}
+}
+
 // covers: MA-474, MA-492, R8, R13, R7
 // R3-AC2, R3-AF4, R3-AC3. The sanitizer's serialization is not a fixed point
 // for some malformed markup, and the page is where that shows. Nested li or
