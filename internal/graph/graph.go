@@ -124,6 +124,7 @@ type Client struct {
 	// (mimeTransport) under the same token source as hc; mimeIdle and
 	// mimeHeader are MIMETo's idle and response-header windows (§4.8.6).
 	mimeHC     *http.Client
+	tokens     oauth2.TokenSource // the one caching source both clients share; MIMETo fetches the token through it before it arms a timer
 	mimeIdle   time.Duration
 	mimeHeader time.Duration
 
@@ -208,12 +209,14 @@ func (cfg Config) settings() settings {
 // base transport (mimeTransport), under the same token source.
 func newClient(ctx context.Context, base string, src oauth2.TokenSource, b settings, meMode bool) *Client {
 	mimeCtx := context.WithValue(ctx, oauth2.HTTPClient, mimeTransport(b.wrap))
+	src = oauth2.ReuseTokenSource(nil, src)
 	return &Client{
 		base:        strings.TrimRight(base, "/"),
 		hc:          oauth2.NewClient(ctx, src),
 		reqTimeout:  b.req,
 		mimeTimeout: b.mime,
 		mimeHC:      oauth2.NewClient(mimeCtx, src),
+		tokens:      src,
 		mimeIdle:    b.idle,
 		mimeHeader:  b.header,
 		pageCap:     b.pageCap,
@@ -847,6 +850,12 @@ func (c *Client) getOn(ctx context.Context, hc *http.Client, u string, perAttemp
 		req.Header.Set("Prefer", `IdType="ImmutableId"`)
 		disarm := func() {}
 		if perAttempt != nil {
+			// The token is fetched before the attempt's timer starts: oauth2's
+			// transport asks its source without the request's context, so a refresh
+			// would neither be cut by MIMETo's stops nor stay out of the header window.
+			if err := c.warmToken(ctx, u); err != nil {
+				return nil, err
+			}
 			disarm = perAttempt()
 		}
 		resp, err := hc.Do(req)
@@ -867,6 +876,30 @@ func (c *Client) getOn(ctx context.Context, hc *http.Client, u string, perAttemp
 			return nil, ctx.Err()
 		case <-time.After(wait):
 		}
+	}
+}
+
+// warmToken makes the client's token current before a request that runs its own
+// timers, and gives up as soon as ctx is done (the refresh itself runs on, and
+// its result is cached for the next request). A refresh error reads as the one
+// http.Client.Do would return for it.
+func (c *Client) warmToken(ctx context.Context, u string) error {
+	if c.tokens == nil {
+		return nil
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := c.tokens.Token()
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			return &url.Error{Op: "Get", URL: u, Err: err}
+		}
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
