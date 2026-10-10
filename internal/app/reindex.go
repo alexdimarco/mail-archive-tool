@@ -63,10 +63,11 @@ func Reindex(out string, logger *log.Logger) (kept, pruned int, err error) {
 	}
 	idx, err := index.Open(idxPath)
 	if err != nil {
-		if manifestPresent {
-			return 0, 0, fmt.Errorf("search index at %s cannot be opened (%v): rebuild it from the archive with `mailarchive reindex -rebuild -out %s`", idxPath, err, out)
-		}
-		return 0, 0, fmt.Errorf("open search index at %s: %w", idxPath, err)
+		// The same refusals a run gives (F5): busy names the retry, a newer
+		// format the upgrade, an unwritable folder or full disk its own
+		// remedy, a damaged file the rebuild (or, with no manifest, moving
+		// it aside).
+		return 0, 0, indexOpenError(idxPath, out, err)
 	}
 	defer idx.Close()
 
