@@ -240,7 +240,7 @@ func pageAnchors(root *xhtml.Node) (header, bodyDiv *xhtml.Node) {
 // swallows as its own text. `reindex -rebuild` removes them from a final
 // <plaintext>'s text before it indexes the page (they are the page's, not the
 // mail's words; R8).
-const PageClosers ="\n</div>\n</body>\n</html>\n"
+const PageClosers = "\n</div>\n</body>\n</html>\n"
 
 // mailStaysInBodyDiv reports whether the mail is contained in div.mailarchive-
 // body: nothing but whitespace follows the div in <body> in any reading, and,
@@ -452,7 +452,12 @@ func sanitizeChecked(doc string, pageCheck func(headExtra, bodyAttrs, body strin
 	// Markup nested past flattenDepth loses its container tags (not its text)
 	// first, as a browser flattens past its own cap, so deep mail renders
 	// instead of failing the parser's 512-element cap (DIFF-FP-2).
-	flat := flattenDeep(doc)
+	flat, ok := flattenDeepChecked(doc)
+	if !ok {
+		// A start tag the flattener cannot drop without changing what the mail
+		// shows or hides (see flattener.refuses): show the source (R3-AC5).
+		return "", "", "", FallbackTooDeep
+	}
 	headExtra, bodyAttrs, body, fallback = withPage(sanitizeParsed(flat, len(doc), false))
 	if fallback == FallbackHostile && hasNoscriptTag(flat) {
 		// Without a noscript tag the scripting-off parse is the same tree
@@ -645,13 +650,27 @@ const flattenDepth = 480
 // parsed once more as a whole before it is accepted.
 func flattenDeep(doc string) string { return flattenAt(doc, flattenDepth) }
 
+// flattenDeepChecked is flattenDeep that also reports whether every dropped tag
+// could be dropped without changing what the mail shows or hides: false when a
+// start tag the flattener refuses to drop (flattener.refuses) comes past the
+// cap, in which case the caller shows the mail's source.
+func flattenDeepChecked(doc string) (string, bool) { return flattenChecked(doc, flattenDepth) }
+
 func flattenAt(doc string, limit int) string {
+	out, _ := flattenChecked(doc, limit)
+	return out
+}
+
+func flattenChecked(doc string, limit int) (string, bool) {
 	z := xhtml.NewTokenizer(strings.NewReader(doc))
 	f := &flattener{limit: limit}
 	var out *strings.Builder
 	var last byte // the last byte written to out
 	pos := 0      // bytes of doc covered by the tokens read so far (tokens are contiguous)
 	for {
+		if f.refused {
+			return doc, false
+		}
 		top := f.top()
 		z.AllowCDATA(top != nil && top.ns != "") // as the parser does: CDATA only in foreign content
 		tt := z.Next()
@@ -660,7 +679,17 @@ func flattenAt(doc string, limit int) string {
 		}
 		raw := z.Raw()
 		keep, name := true, ""
+		var repl string // written in place of a dropped token
 		switch tt {
+		case xhtml.TextToken:
+			if top != nil && top.ns != "" && len(f.drop) > 0 && bytes.HasPrefix(raw, []byte("<![CDATA[")) {
+				// A CDATA section is text only in foreign content. Its SVG or
+				// MathML root is dropped here, so written as it is the section would
+				// be a bogus comment in HTML and its text would vanish from the page
+				// (R3-AC5): write its text, escaped, as the foreign reading holds it.
+				keep = false
+				repl = html.EscapeString(strings.TrimSuffix(strings.TrimPrefix(string(raw), "<![CDATA["), "]]>"))
+			}
 		case xhtml.StartTagToken, xhtml.SelfClosingTagToken:
 			nameB, hasAttr := z.TagName()
 			name = string(nameB)
@@ -682,6 +711,9 @@ func flattenAt(doc string, limit int) string {
 		case keep && out != nil && len(raw) > 0:
 			out.Write(raw)
 			last = raw[len(raw)-1]
+		case !keep && repl != "":
+			out.WriteString(repl)
+			last = repl[len(repl)-1]
 		case !keep && flatBlock[name] && !isASCIIWhitespace(rune(last)):
 			// The dropped tag separated words (a browser shows them on
 			// separate lines; the index tokenizes them apart): keep a word
@@ -694,11 +726,14 @@ func flattenAt(doc string, limit int) string {
 		}
 		pos += len(raw)
 	}
+	if f.refused {
+		return doc, false
+	}
 	if out == nil {
-		return doc
+		return doc, true
 	}
 	out.WriteString(doc[pos:]) // bytes the tokenizer returned no token for (an unterminated tag at EOF)
-	return out.String()
+	return out.String(), true
 }
 
 // flatEl is one open element in flattener's model.
@@ -732,6 +767,30 @@ type flattener struct {
 	open     map[string]int // count of stack by name
 	drop     []flatEl       // dropped open elements, above every kept one
 	dropOpen map[string]int // count of drop by name
+	refused  bool           // a start tag past the cap that cannot be dropped (refuses)
+}
+
+// refuses reports whether dropping el's start tag past the cap would change
+// what the mail shows or hides, not merely how its content is grouped. The
+// flattener keeps text and drops container tags, which is exact for a container
+// that only groups. These are not that, and the dropped tag makes the page and
+// the rebuilt index read the mail differently from the original (R3-AC5, san-Q2
+// shape 2): a <template>, whose content is inert; an SVG <style> or <script>,
+// which no reader renders or indexes (their text, once the tags are gone, is
+// shown and indexed); and a <noscript>, raw text to the scripting-on reading and
+// markup to the scripting-off one, whose end tag then ends differently than the
+// mail's. Mail with one of these that deep is shown as source instead (the
+// reason it had before flattening existed). An SVG or MathML root itself is
+// dropped as before: what its scope changes for the leaves written in its place
+// (a self-closing <textarea/>, a CDATA section) is handled where they are read.
+func (el flatEl) refuses() bool {
+	switch {
+	case el.ns == "" && (el.a == atom.Template || el.a == atom.Noscript):
+		return true
+	case el.ns == "svg" && (el.a == atom.Style || el.a == atom.Script):
+		return true
+	}
+	return false
 }
 
 // top is the current node: the innermost open element, dropped or kept.
@@ -787,6 +846,9 @@ func (f *flattener) push(el flatEl, implied ...flatEl) bool {
 		}
 		f.dropOpen[el.name]++
 		f.drop = append(f.drop, el)
+		if el.refuses() {
+			f.refused = true
+		}
 		return false
 	}
 	if f.open == nil {
@@ -852,7 +914,12 @@ func (f *flattener) start(z *xhtml.Tokenizer, a atom.Atom, name string, hasAttr,
 			// self-closing tag closes itself.
 			z.NextIsNotRawText()
 			if selfClosing {
-				return true
+				// A leaf. In the dropped region its SVG or MathML root is gone,
+				// and written as it is `<textarea/>` (or style, title, xmp, ...)
+				// would be an HTML raw-text element that swallows the rest of
+				// the page, in a mail where it was a closed foreign element
+				// (R3-AC5): drop it, there is nothing in it to keep.
+				return len(f.drop) == 0
 			}
 			el := flatEl{a: a, name: name, ns: top.ns}
 			switch {

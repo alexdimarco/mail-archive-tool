@@ -173,6 +173,98 @@ func onlyWhitespaceAfter(n *xhtml.Node) bool {
 	return true
 }
 
+// covers: MA-473, MA-492, R7, R13
+// R3-AC5 and san-Q2 (2). The flattener drops the container tags of mail nested
+// past flattenDepth and keeps their text, which is exact for a container that
+// only groups content. It is not for one whose job is to hide or to scope what
+// is inside it: a <template> (its content is inert, dropped it is shown), an
+// SVG or MathML root (the <style>, <script> and <textarea> inside are foreign
+// elements, dropped they are HTML raw text or visible text, and a CDATA section
+// becomes a bogus comment), an SVG <style> or <script> (not rendered, indexed
+// by no one), and a <noscript> (raw text to the scripting-on reading, markup to
+// the scripting-off reading: dropped, an <xmp> or <template> straddling its raw
+// text's end reads differently). Such a start tag that would be dropped makes
+// the mail too deep to flatten: it is shown as source, `too-deeply-nested`, as
+// it was before the flattener existed, and its words are the same on both
+// indexes. The positive twins still flatten: nested tables, divs, an SVG whose
+// plain groups nest past the cap, and the same elements below the cap.
+func TestFlattenerRefusesWhatItCouldNotDropWithoutChangingTheMail(t *testing.T) {
+	divs := func(n int, inner string) string {
+		return strings.Repeat("<div>", n) + inner + strings.Repeat("</div>", n)
+	}
+	refused := map[string]string{
+		"template":        divs(485, `<p>shown f5visible</p><template><p>f5secret words</p></template>`),
+		"svg style":       strings.Repeat("<svg><g>", 505) + `<style> f6hidden </style>` + strings.Repeat("</g></svg>", 505),
+		"noscript":        strings.Repeat("<noscript>", 481) + `</noscript> f7shown ` + strings.Repeat("</noscript>", 481),
+		"noscript in div": divs(500, `<noscript><meta charset=utf-8><xmp></noscript><p>x</p></xmp></noscript>`) + `<p>residxmpafter</p>`,
+		"svg style kept":  `<svg>` + strings.Repeat("<g>", 600) + `<style> f6deep </style>` + strings.Repeat("</g>", 600) + `</svg>`,
+	}
+	for name, body := range refused {
+		out, err := RenderWith(&model.Message{Subject: name, HTMLBody: body}, RenderContext{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out.BodyFallback != FallbackTooDeep {
+			t.Errorf("%s: a mail whose %s tag would be dropped past the cap must be shown as source (%q), got %q", name, name, FallbackTooDeep, out.BodyFallback)
+		}
+		pageTrees(t, name, string(out.HTML))
+	}
+
+	// An SVG or MathML root dropped past the cap is still dropped, as the
+	// flattener always did, but what its scope held for the leaves written in
+	// its place is kept: a self-closing <textarea/> would be an unclosed HTML
+	// textarea that swallows the rest of the page (and its closing tags, indexed
+	// as 480 extra "div" terms), and a CDATA section would be a bogus comment
+	// that hides its text (R3-AC5 (c), (e)).
+	leaves := map[string]struct{ body, words string }{
+		"svg textarea": {divs(485, `<p>f8before</p><svg><textarea/><p>f8after</p><p>f8tail</p>`), "f8tail"},
+		"svg cdata":    {divs(482, `<svg><![CDATA[ f9cdata ]]></svg>`), "f9cdata"},
+		"math cdata":   {divs(482, `<math><![CDATA[ f9mathcdata ]]></math>`), "f9mathcdata"},
+	}
+	for name, c := range leaves {
+		out, err := RenderWith(&model.Message{Subject: name, HTMLBody: c.body}, RenderContext{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out.BodyFallback != "" {
+			t.Errorf("%s: must render flattened, got fallback %q", name, out.BodyFallback)
+		}
+		for i, root := range pageTrees(t, name, string(out.HTML)) {
+			_, b := pageLayout(root)
+			if b == nil || !shownWords(b, false, c.words) {
+				t.Errorf("%s (reading %d): %q must be live text in the body div", name, i, c.words)
+				continue
+			}
+			if findElem(b, func(n *xhtml.Node) bool { return n.Data == "textarea" || n.Type == xhtml.CommentNode }) != nil ||
+				strings.Contains(textOf(b), "</div>") {
+				t.Errorf("%s (reading %d): an HTML textarea or a comment swallowed the mail, or its closing tags became text:\n%s", name, i, clipped(bodyPart(string(out.HTML))))
+			}
+		}
+	}
+
+	flattened := map[string]string{
+		"600 divs":              nestedHTML(600, "<p>plain deep words</p>"),
+		"150 tables":            nestedTables(150, "<p>table deep words</p>"),
+		"svg groups":            "<svg>" + strings.Repeat("<g>", 600) + "<text>group words</text>" + strings.Repeat("</g>", 600) + "</svg>",
+		"template below cap":    nestedHTML(100, `<template><p>inert</p></template><p>tw words</p>`),
+		"noscript below cap":    nestedHTML(100, `<noscript><p>ns</p></noscript><p>nw words</p>`),
+		"svg below cap":         nestedHTML(100, `<svg><style>.a{}</style><rect/></svg><p>sw words</p>`),
+		"svg before the cap":    `<svg><style>.a{}</style></svg>` + nestedHTML(600, "<p>bw words</p>"),
+		"template then deep":    `<template><p>t</p></template>` + nestedHTML(600, "<p>tdw words</p>"),
+		"noscript then deep":    `<noscript><p>n</p></noscript>` + nestedHTML(600, "<p>ndw words</p>"),
+		"deep then plain texts": nestedHTML(600, "<p>a</p><textarea>t</textarea><style>x{}</style><script>y</script><p>b</p>"),
+	}
+	for name, body := range flattened {
+		out, err := RenderWith(&model.Message{Subject: name, HTMLBody: body}, RenderContext{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out.BodyFallback != "" {
+			t.Errorf("positive twin %s: must render as HTML, got fallback %q", name, out.BodyFallback)
+		}
+	}
+}
+
 // covers: MA-303, R1, R7
 // R3-AF3, R3-AO3, R3-AC4. A mail whose HTML document is a <frameset> has no
 // <body> in the tree (the parser replaces it with the frameset), and the

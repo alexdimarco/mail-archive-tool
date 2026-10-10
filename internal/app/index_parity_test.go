@@ -377,6 +377,41 @@ func TestLiveAndRebuiltIndexAgreeOnTablePartsPastTheCap(t *testing.T) {
 	}
 }
 
+// covers: MA-492, MA-473, R8
+// R3-AC5 (a)-(e). Flattening drops a deep container's tags and keeps its text,
+// which changes what the page and the rebuilt index read for a container whose
+// meaning is to hide or scope its content: past depth 480 a <template>'s content
+// became visible text (f5secret live=0 rebuilt=1), an SVG <style> beyond a
+// dropped <g> was indexed (f6hidden live=0 rebuilt=1), an SVG <textarea/>
+// that lost its SVG scope swallowed the rest of the page, whose closing tags
+// were indexed as 480 extra "div" terms (rebuilt only), a <noscript> wrapper's
+// raw text hid the words after it (f7shown live=1 rebuilt=0) and a CDATA
+// section past the cap became a bogus comment (f9cdata live=1 rebuilt=0). Mail
+// whose such tag would be dropped is shown as source, which both sides read
+// with the one extractor: each word is found the same number of times live and
+// rebuilt.
+func TestLiveAndRebuiltIndexAgreeOnTagsThePageCannotFlatten(t *testing.T) {
+	divs := func(n int, inner string) string {
+		return strings.Repeat("<div>", n) + inner + strings.Repeat("</div>", n)
+	}
+	bodies := map[string]string{
+		"flat template": divs(485, `<p>shown f5visible</p><template><p>f5secret words</p></template>`),
+		"flat svgstyle": strings.Repeat("<svg><g>", 505) + `<style> f6hidden </style>` + strings.Repeat("</g></svg>", 505),
+		"flat noscript": strings.Repeat("<noscript>", 481) + `</noscript> f7shown ` + strings.Repeat("</noscript>", 481),
+		"flat textarea": divs(485, `<p>f8before</p><svg><textarea/><p>f8after</p><p>f8tail</p>`),
+		"flat cdata":    divs(482, `<svg><![CDATA[ f9cdata ]]></svg>`),
+	}
+	want := map[string]int{
+		"f5visible": 1, "f5secret": 0, "f6hidden": 0, "f7shown": 1,
+		"f8before": 1, "f8after": 1, "f8tail": 1, "f9cdata": 1, "div": 0,
+	}
+	live, rebuilt := parityArchive(t, bodies, keysOf(want))
+	assure.Reached(t, live["f5visible"]+rebuilt["f5visible"], "hits for a word beside a template past the cap")
+	for _, p := range parityProblems(want, live, rebuilt) {
+		t.Error(p)
+	}
+}
+
 // covers: MA-492, R8
 // san-Q2 (1). A <plaintext> that runs to the end of the mail has no end tag, so
 // on re-parse the page's own closing `</div></body></html>` are its text, and
@@ -405,10 +440,10 @@ func TestLiveAndRebuiltIndexAgreeOnAFinalPlaintext(t *testing.T) {
 }
 
 // covers: MA-492, R8
-// OPEN GAP in R8, NOT accepted, encoded the kit's way: a t.Skip that FAILS if
-// un-skipped today. The fresh-eyes corpus run (rv3/corpus-adv, 372 vectors)
-// leaves 8 mails whose words differ live and rebuilt, all of them already at
-// 8f900c9 (the pre-integration merge), in two shapes. (1) A <plaintext> that
+// san-Q2, CLOSED in round 3 (a permanent guard now; its Skip is removed). The
+// fresh-eyes corpus run (rv3/corpus-adv, 372 vectors) left 8 mails whose words
+// differed live and rebuilt, all of them already at 8f900c9 (the
+// pre-integration merge), in two shapes. (1) A <plaintext> that
 // runs to the end of the mail (adv_plaintext_{body,head}_{esc,lnk,ref}_b) also
 // swallows the page's own closing `</div></body></html>`, which the rebuild
 // then indexes as the words "div", "body" and "html" (rebuilt only). (2) A
@@ -418,12 +453,14 @@ func TestLiveAndRebuiltIndexAgreeOnAFinalPlaintext(t *testing.T) {
 // noscript's raw text — and an <xmp> or <template> straddling its end — reads
 // differently on the page: the refresh's words are found rebuilt only, and so
 // is a word after a <template> whose </template> sat in the noscript's raw
-// text (in the mail it is template content, which no reader sees). Fixing
-// either changes what the page or the flattener writes, which is for the
-// round-3 pass and the owner; until then this stays skipped. When it passes,
-// REMOVE the Skip.
+// text (in the mail it is template content, which no reader sees). Fixed
+// without a design change: (1) the rebuild removes the template's closing tags
+// from a final plaintext's text (trimSwallowedClosers); (2) the flattener
+// refuses to drop a noscript, template or SVG style/script start tag past the
+// cap, so such deep mail is shown as source (export flattener.refuses), which
+// both indexes read with the one extractor. Every word is now found the same
+// number of times on both sides.
 func TestLiveAndRebuiltIndexAgreeOnCorpusResidualShapes(t *testing.T) {
-	t.Skip("R8 open gap: a noscript dropped past flattenDepth changes the scripting-on reading (rv3/corpus-adv adv_deep_xmp, adv_deep2_template, pre-existing at 8f900c9); the final-plaintext shape is closed")
 	divs := func(n int, inner string) string {
 		return strings.Repeat("<div>", n) + inner + strings.Repeat("</div>", n)
 	}
