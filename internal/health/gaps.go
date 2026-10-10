@@ -75,9 +75,32 @@ func countGaps(gaps []state.CaptureGap) string {
 	return fmt.Sprintf("%d item(s)", items)
 }
 
-// remedyFor names what to do about a set of gaps: the remedy of each distinct
-// (reason, source kind, errno class), most numerous first, at most three.
-func remedyFor(in Input, gaps []state.CaptureGap, stuck bool) string {
+// kindLabel names a source kind in a headline ("" for an unknown one).
+func kindLabel(kind string) string {
+	switch kind {
+	case state.SourceGraph:
+		return "Microsoft 365"
+	case state.SourcePST:
+		return ".pst file"
+	case state.SourceOutlookScratch:
+		return "Outlook export"
+	case state.SourceLocal:
+		return "local mail store"
+	}
+	return ""
+}
+
+// retryTail is the sentence the fillable headline already says once ("they are
+// retried ..."), so a remedy that ends with it, or is only it, drops it there.
+const retryTail = "it is retried when you run again"
+
+// remedyFor names what to do about a set of gaps in a headline: the most numerous
+// remedy of each source kind, said once, labelled with the kind when more than one
+// kind is present (a remedy holds "; " and " — " itself, so a label is what tells
+// which source it is for). withOriginal adds whether the original still exists
+// (friction F12); dropRetry leaves out the "retried" sentence a fillable headline
+// has already said (friction F4). "" when nothing is left to say.
+func remedyFor(in Input, gaps []state.CaptureGap, stuck, withOriginal, dropRetry bool) string {
 	type key struct{ reason, kind, errno string }
 	count := map[key]int{}
 	var order []key
@@ -89,22 +112,121 @@ func remedyFor(in Input, gaps []state.CaptureGap, stuck bool) string {
 		count[k] += g.Weight()
 	}
 	sort.SliceStable(order, func(i, j int) bool { return count[order[i]] > count[order[j]] })
-	var out []string
-	seen := map[string]bool{}
+	var kinds []string
+	byKind := map[string][]key{}
 	for _, k := range order {
-		text := state.GapRemedy(k.reason, k.kind, k.errno)
-		if stuck {
-			text = state.GapStuckRemedy(k.reason, k.kind, k.errno)
+		if _, ok := byKind[k.kind]; !ok {
+			kinds = append(kinds, k.kind)
 		}
-		if !seen[text] {
-			seen[text] = true
-			out = append(out, text)
+		byKind[k.kind] = append(byKind[k.kind], k)
+	}
+	type picked struct{ text, original string }
+	var out []string
+	for _, kind := range kinds {
+		// The most numerous remedy that still has something to say is the one named;
+		// any other distinct remedy of this kind is counted, and listed below.
+		var first picked
+		seen := map[string]bool{}
+		others := 0
+		for _, k := range byKind[kind] {
+			text := state.GapRemedy(k.reason, k.kind, k.errno)
+			if stuck {
+				text = state.GapStuckRemedy(k.reason, k.kind, k.errno)
+			}
+			if dropRetry {
+				text = strings.TrimSuffix(text, "; "+retryTail)
+				if text == retryTail {
+					text = ""
+				}
+			}
+			orig := ""
+			if withOriginal {
+				orig = state.GapOriginal(k.reason, k.kind)
+			}
+			if text == "" && orig == "" || seen[text+"\x00"+orig] {
+				continue
+			}
+			seen[text+"\x00"+orig] = true
+			if first.text == "" && first.original == "" {
+				first = picked{text, orig}
+			} else {
+				others++
+			}
 		}
-		if len(out) == 3 {
-			break
+		text := first.text
+		if first.original != "" {
+			if text != "" {
+				text += " (" + first.original + ")"
+			} else {
+				text = first.original
+			}
+		}
+		if others > 0 {
+			text += fmt.Sprintf(" (+%d other cause(s): see the list below)", others)
+		}
+		if text == "" {
+			continue
+		}
+		if len(kinds) > 1 && kindLabel(kind) != "" {
+			text = "[" + kindLabel(kind) + "] " + text
+		}
+		out = append(out, text)
+	}
+	return strings.Join(out, " | ")
+}
+
+// noRunRecord reports that no last-run record vouches for the ledger (the file is
+// absent or unreadable, as in a copy that skipped dotfiles): whether a gap was
+// attempted cannot be judged then (friction F14).
+func (in Input) noRunRecord() bool {
+	return in.LastRunState != state.LastRunPresent && len(in.GapLastRun) == 0
+}
+
+// attempted is state.GapAttempted, except that with no run record a terminal gap
+// counts as attempted: it needs action whatever the last run did, so it keeps its
+// WARN; any other gap cannot be judged and reads as not attempted.
+func (in Input) attempted(g state.CaptureGap) bool {
+	if in.noRunRecord() {
+		return g.Class == state.ClassTerminal
+	}
+	return state.GapAttempted(g, in.GapLastRun)
+}
+
+// tally is state.TallyGaps with the same no-run-record rule as attempted.
+func (in Input) tally(now time.Time, period time.Duration) state.GapTally {
+	t := state.TallyGaps(in.Gaps, in.GapLastRun, now, period)
+	if in.noRunRecord() {
+		for _, g := range in.Gaps {
+			if g.Class == state.ClassTerminal {
+				t.Terminal += g.Weight()
+				t.NotAttempted -= g.Weight()
+			}
 		}
 	}
-	return strings.Join(out, "; ")
+	return t
+}
+
+// noRecordText is the clause that replaces "not in recent runs" when there is no
+// run record to say whether a run still reaches the gap.
+func (in Input) noRecordText() string {
+	if in.LastRunState == state.LastRunUnreadable {
+		return "no readable run record"
+	}
+	return "no run record"
+}
+
+// gapRank orders the listed gaps most severe first: stuck, terminal, fillable,
+// then not attempted (friction F3).
+func gapRank(in Input, g state.CaptureGap, now time.Time) int {
+	switch {
+	case !in.attempted(g):
+		return 3
+	case g.Class == state.ClassTerminal:
+		return 1
+	case state.GapStuck(g, now, schedulePeriod(in)):
+		return 0
+	}
+	return 2
 }
 
 // assessCaptureGaps adds the capture-gap reasons to r: stuck (WARN, listed first
@@ -117,7 +239,7 @@ func assessCaptureGaps(r *Report, in Input, now time.Time) {
 			continue
 		}
 		switch {
-		case !state.GapAttempted(g, in.GapLastRun):
+		case !in.attempted(g):
 			notAttempted = append(notAttempted, g)
 		case g.Class == state.ClassTerminal:
 			terminal = append(terminal, g)
@@ -134,8 +256,8 @@ func assessCaptureGaps(r *Report, in Input, now time.Time) {
 				first = g.FirstRun
 			}
 		}
-		r.warn("capture_gaps_stuck", fmt.Sprintf("%s have failed on every run since %s — %s",
-			countGaps(stuck), first.UTC().Format("2006-01-02"), remedyFor(in, stuck, true)))
+		r.warn("capture_gaps_stuck", fmt.Sprintf("%s have failed on every run since %s (each run could not capture them; the rest of the archive is unaffected) — %s",
+			countGaps(stuck), first.UTC().Format("2006-01-02"), remedyFor(in, stuck, true, false, false)))
 	}
 	if len(fillable) > 0 {
 		when := "whenever the archive runs again"
@@ -146,11 +268,22 @@ func assessCaptureGaps(r *Report, in Input, now time.Time) {
 		if in.ReportExists {
 			msg += fmt.Sprintf(" (see %s)", in.ReportPath)
 		}
-		r.warn("capture_gaps_fillable", msg+" — "+remedyFor(in, fillable, false))
+		// Each remedy once, the retry sentence not repeated (F4), and a user about to
+		// lose a Microsoft 365 mailbox told how to save the item now (F11).
+		if rem := remedyFor(in, fillable, false, false, true); rem != "" {
+			msg += " — " + rem
+		}
+		if in.anyKind(fillable, state.SourceGraph) {
+			msg += ". " + state.GapDeadlineRemedy
+		}
+		r.warn("capture_gaps_fillable", msg)
 	}
 	if len(terminal) > 0 {
-		r.warn("capture_gaps_terminal", fmt.Sprintf("%s are NOT in this archive and will not be without action — %s",
-			countGaps(terminal), remedyFor(in, terminal, false)))
+		msg := fmt.Sprintf("%s are NOT in this archive and will not be without action", countGaps(terminal))
+		if in.ReportExists {
+			msg += fmt.Sprintf(" (see %s)", in.ReportPath)
+		}
+		r.warn("capture_gaps_terminal", msg+" — "+remedyFor(in, terminal, false, true, false))
 	}
 	if len(notAttempted) > 0 {
 		last := notAttempted[0].LastRun
@@ -165,8 +298,13 @@ func assessCaptureGaps(r *Report, in Input, now time.Time) {
 		if len(sources) > 1 {
 			from = fmt.Sprintf("from %d sources", len(sources))
 		}
-		r.note("capture_gaps_not_attempted", fmt.Sprintf("%s %s were never captured (last attempted %s; this source or folder is not in recent runs)",
-			countGaps(notAttempted), from, last.UTC().Format("2006-01-02")))
+		if in.noRunRecord() {
+			r.note("capture_gaps_not_attempted", fmt.Sprintf("%s %s were never captured; there is %s (.mailarchive-lastrun.json), so whether a run is still retrying them cannot be judged — run mailarchive against the source again",
+				countGaps(notAttempted), from, in.noRecordText()))
+		} else {
+			r.note("capture_gaps_not_attempted", fmt.Sprintf("%s %s were never captured (last attempted %s; this source or folder is not in recent runs)",
+				countGaps(notAttempted), from, last.UTC().Format("2006-01-02")))
+		}
 	}
 }
 
@@ -189,16 +327,21 @@ func gapLine(in Input, g state.CaptureGap, now time.Time) string {
 	if g.Folder != "" {
 		where += "/" + util.StripControl(g.Folder)
 	}
+	// Why, and whether the original still exists (F12).
+	why := state.GapWhy(g.Reason)
+	if o := state.GapOriginal(g.Reason, in.gapSourceKind(g)); o != "" {
+		why += " (" + o + ")"
+	}
 	var b strings.Builder
 	b.WriteString("  " + where + ": ")
 	switch {
 	case g.Scope == state.GapScopeFolder:
-		b.WriteString(state.GapWhy(g.Reason))
+		b.WriteString(why)
 		if g.Skipped > 0 {
 			fmt.Fprintf(&b, " (%d item(s) not read)", g.Skipped)
 		}
 	case g.Scope == state.GapScopeOverflow:
-		fmt.Fprintf(&b, "%d more item(s): %s", g.Skipped, state.GapWhy(g.Reason))
+		fmt.Fprintf(&b, "%d more item(s): %s", g.Skipped, why)
 	default:
 		if g.Subject != "" {
 			fmt.Fprintf(&b, "%q", util.StripControl(g.Subject))
@@ -208,14 +351,15 @@ func gapLine(in Input, g state.CaptureGap, now time.Time) string {
 		if d := gapDate(g); d != "" {
 			b.WriteString(" (" + d + ")")
 		}
-		b.WriteString(" — " + state.GapWhy(g.Reason))
+		b.WriteString(" — " + why)
 	}
-	attempted := state.GapAttempted(g, in.GapLastRun)
 	switch {
-	case !attempted:
+	case !in.attempted(g) && in.noRunRecord():
+		fmt.Fprintf(&b, "; never captured (%s, so whether a run still retries it cannot be judged)", in.noRecordText())
+	case !in.attempted(g):
 		fmt.Fprintf(&b, "; never captured (last attempted %s; not in recent runs)", g.LastRun.UTC().Format("2006-01-02"))
 	case state.GapStuck(g, now, schedulePeriod(in)):
-		b.WriteString("; " + state.GapStuckRemedy(g.Reason, in.gapSourceKind(g), state.GapErrnoClass(g.Detail)))
+		b.WriteString("; stuck since " + g.FirstRun.UTC().Format("2006-01-02") + ": " + state.GapStuckRemedy(g.Reason, in.gapSourceKind(g), state.GapErrnoClass(g.Detail)))
 	default:
 		b.WriteString("; " + state.GapRemedy(g.Reason, in.gapSourceKind(g), state.GapErrnoClass(g.Detail)))
 	}
@@ -231,30 +375,112 @@ func gapDate(g state.CaptureGap) string {
 	return ""
 }
 
-// listedGaps is the gaps Summary and the JSON list: what is missing, in the
-// ledger's stable order.
-func listedGaps(in Input) []state.CaptureGap {
+// listedGaps is the gaps Summary and the JSON list: what is missing, most severe
+// first (stuck, terminal, fillable, not attempted) and in the ledger's stable
+// order within each, so the cap never hides the worst one (friction F3).
+func listedGaps(in Input, now time.Time) []state.CaptureGap {
 	var out []state.CaptureGap
 	for _, g := range in.Gaps {
 		if missingGap(g) {
 			out = append(out, g)
 		}
 	}
+	rank := make(map[string]int, len(out))
+	for _, g := range out {
+		rank[state.GapKey(g.Token, g.Scope, g.Locator)] = gapRank(in, g, now)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return rank[state.GapKey(out[i].Token, out[i].Scope, out[i].Locator)] < rank[state.GapKey(out[j].Token, out[j].Scope, out[j].Locator)]
+	})
 	return out
+}
+
+// anyKind reports whether any of gaps is of the given source kind.
+func (in Input) anyKind(gaps []state.CaptureGap, kind string) bool {
+	for _, g := range gaps {
+		if in.gapSourceKind(g) == kind {
+			return true
+		}
+	}
+	return false
+}
+
+// moreLine is the line after the capped list. It counts what is behind it: when
+// the entries left are all single items it says "+N more"; otherwise (an overflow
+// entry stands for thousands, a folder is not an item) it says entries and what
+// they stand for. It names the report's path when the report exists (friction F5).
+func moreLine(in Input, rest []state.CaptureGap) string {
+	n := len(rest)
+	what := fmt.Sprintf("+%d more", n)
+	if counted := countGaps(rest); counted != fmt.Sprintf("%d item(s)", n) {
+		what = fmt.Sprintf("+%d more entries (%s)", n, counted)
+	}
+	line := "  " + what + " — see the report"
+	if in.ReportExists {
+		line += " (" + in.ReportPath + ")"
+	}
+	return line
 }
 
 // gapLines is the up-to-20 gap list under the reasons (FC22), then "+N more".
 func gapLines(in Input, now time.Time) []string {
-	gaps := listedGaps(in)
+	gaps := listedGaps(in, now)
 	var lines []string
 	for i, g := range gaps {
 		if i == maxGapLines {
-			lines = append(lines, fmt.Sprintf("  +%d more — see the report", len(gaps)-maxGapLines))
+			lines = append(lines, moreLine(in, gaps[maxGapLines:]))
 			break
 		}
 		lines = append(lines, gapLine(in, g, now))
 	}
 	return lines
+}
+
+// notCapturedLine is Summary's "Not captured:" line (friction F6): what the ledger
+// says the source holds that this archive does not, split by what the reader can
+// do about it, with the report's path. "" when nothing is missing, so a healthy
+// archive prints none. The count is the ledger's (items and folders); the records
+// the Incomplete line counts are a separate tally.
+func notCapturedLine(in Input, now time.Time) string {
+	gaps := listedGaps(in, now)
+	if len(gaps) == 0 {
+		return ""
+	}
+	var retried, stuck, action, judged int
+	for _, g := range gaps {
+		w := g.Weight()
+		switch rank := gapRank(in, g, now); {
+		case rank == 0:
+			stuck += w
+		case rank == 1:
+			action += w
+		case rank == 2:
+			retried += w
+		default:
+			judged += w
+		}
+	}
+	var parts []string
+	for _, p := range []struct {
+		n    int
+		text string
+	}{{retried, "retried on each run"}, {stuck, "stuck"}, {action, "need action"}} {
+		if p.n > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", p.n, p.text))
+		}
+	}
+	if judged > 0 {
+		if in.noRunRecord() {
+			parts = append(parts, fmt.Sprintf("%d cannot be judged (%s)", judged, in.noRecordText()))
+		} else {
+			parts = append(parts, fmt.Sprintf("%d not tried on the last run", judged))
+		}
+	}
+	line := fmt.Sprintf("Not captured: %s from the source (%s)", countGaps(gaps), strings.Join(parts, ", "))
+	if in.ReportExists {
+		line += " — " + in.ReportPath
+	}
+	return line
 }
 
 // JSONGapItem is one entry of capture_gaps.items.
@@ -267,6 +493,7 @@ type JSONGapItem struct {
 	Reason    string `json:"reason"`
 	Class     string `json:"class"`
 	Remedy    string `json:"remedy"`
+	Original  string `json:"original,omitempty"` // whether the original still exists (friction F12); omitted when nothing true can be said
 	Runs      int    `json:"runs"`
 	Attempted bool   `json:"attempted"`
 	Stuck     bool   `json:"stuck"`
@@ -277,13 +504,17 @@ type JSONGapItem struct {
 // not attempted on their store's last run, the oldest first observation) and up
 // to 20 items.
 type JSONCaptureGaps struct {
-	Fillable       int           `json:"fillable"`
-	Terminal       int           `json:"terminal"`
-	Info           int           `json:"info"`
-	Stuck          int           `json:"stuck"`
-	NotAttempted   int           `json:"not_attempted"`
-	OldestFirstRun *time.Time    `json:"oldest_first_run"`
-	Items          []JSONGapItem `json:"items"`
+	Fillable       int        `json:"fillable"`
+	Terminal       int        `json:"terminal"`
+	Info           int        `json:"info"`
+	Stuck          int        `json:"stuck"`
+	NotAttempted   int        `json:"not_attempted"`
+	OldestFirstRun *time.Time `json:"oldest_first_run"`
+	// Deadline is the sentence for a user who is about to lose a Microsoft 365
+	// mailbox, present while an attempted fillable gap is of a Microsoft 365 source
+	// (friction F11); omitted otherwise.
+	Deadline string        `json:"deadline,omitempty"`
+	Items    []JSONGapItem `json:"items"`
 }
 
 // jsonCaptureGaps builds the capture_gaps facet, judging stuck at the time the
@@ -294,17 +525,23 @@ func jsonCaptureGaps(in Input, rep Report) *JSONCaptureGaps {
 		now = time.Now()
 	}
 	period := schedulePeriod(in)
-	t := state.TallyGaps(in.Gaps, in.GapLastRun, now, period)
+	t := in.tally(now, period)
 	doc := &JSONCaptureGaps{Fillable: t.Fillable, Terminal: t.Terminal, Info: t.Info, Stuck: t.Stuck, NotAttempted: t.NotAttempted, Items: []JSONGapItem{}}
 	if !t.Oldest.IsZero() {
 		o := t.Oldest.UTC()
 		doc.OldestFirstRun = &o
 	}
-	for i, g := range listedGaps(in) {
+	for _, g := range in.Gaps {
+		if g.Class == state.ClassFillable && in.attempted(g) && in.gapSourceKind(g) == state.SourceGraph {
+			doc.Deadline = state.GapDeadlineRemedy
+			break
+		}
+	}
+	for i, g := range listedGaps(in, now) {
 		if i == maxGapLines {
 			break
 		}
-		attempted := state.GapAttempted(g, in.GapLastRun)
+		attempted := in.attempted(g)
 		stuck := attempted && state.GapStuck(g, now, period)
 		remedy := state.GapRemedy(g.Reason, in.gapSourceKind(g), state.GapErrnoClass(g.Detail))
 		if stuck {
@@ -313,7 +550,8 @@ func jsonCaptureGaps(in Input, rep Report) *JSONCaptureGaps {
 		doc.Items = append(doc.Items, JSONGapItem{
 			Source: in.gapSourceName(g), Folder: util.StripControl(g.Folder), Subject: util.StripControl(g.Subject),
 			Date: gapDate(g), Scope: g.Scope, Reason: util.StripControl(g.Reason), Class: g.Class, Remedy: remedy,
-			Runs: g.Runs, Attempted: attempted, Stuck: stuck,
+			Original: state.GapOriginal(g.Reason, in.gapSourceKind(g)),
+			Runs:     g.Runs, Attempted: attempted, Stuck: stuck,
 		})
 	}
 	return doc

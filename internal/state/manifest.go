@@ -977,6 +977,51 @@ func (m *Manifest) UnparsedCount() int {
 	return n
 }
 
+// UnparsedTerminalCount returns how many records Counts() puts in its terminal
+// tally only because they are unparsed stubs: not fillable, not legacy, and no
+// other terminal label of class terminal. An unparsed message is kept as raw text,
+// so status leaves these out of "source-empty (never fillable)" (friction F7).
+func (m *Manifest) UnparsedTerminalCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, r := range m.Entries {
+		if r.Unknown() || r.Fillable() || !r.hasLabel(LabelUnparsed) || !r.terminalGap() {
+			continue
+		}
+		only := true
+		for _, l := range r.Terminal {
+			if l != LabelUnparsed && RecordGapClass(l, true) == ClassTerminal {
+				only = false
+				break
+			}
+		}
+		if only {
+			n++
+		}
+	}
+	return n
+}
+
+// PartlyReadPaths returns the page paths (relative to the archive, control-
+// stripped, sorted) of up to limit partly-read records, so status can name them
+// (friction F7).
+func (m *Manifest) PartlyReadPaths(limit int) []string {
+	m.mu.Lock()
+	var out []string
+	for _, r := range m.Entries {
+		if r.hasUnreadable() {
+			out = append(out, util.StripControl(r.Path))
+		}
+	}
+	m.mu.Unlock()
+	sort.Strings(out)
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out
+}
+
 // FallbackCounts returns, per reason, how many records show their page as
 // source (RV-10), from the additive body_fallback field. Records without one
 // (rendered as HTML, or written before the field) count nothing; nil when none.

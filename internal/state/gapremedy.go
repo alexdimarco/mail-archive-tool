@@ -189,6 +189,29 @@ func GapRemedy(reason, sourceKind, errnoClass string) string {
 	return "see the report, then run again"
 }
 
+// GapOriginal says whether the original still exists, by reason and source kind
+// (friction F12): the owner's first question about an item "NOT in this archive"
+// is whether it is lost or only not archived. "" when there is nothing true and
+// useful to say (a deleted message, a non-message file, the scratch .pst whose
+// remedy already says so, an unknown source).
+func GapOriginal(reason, sourceKind string) string {
+	switch reason {
+	case "vanished-at-fetch", "vanished-during-read", "not-a-message-file", "refresh-failed":
+		return ""
+	case "export-failed", "export-panic", "folder-unwritable":
+		return "the original is untouched"
+	}
+	switch sourceKind {
+	case SourceGraph:
+		return "the original is still in your mailbox"
+	case SourcePST:
+		return "the .pst file is the only copy: keep a copy of it before repairing"
+	case SourceLocal:
+		return "the original is still in the source folder"
+	}
+	return ""
+}
+
 // GapStuckRemedy is the remedy once a fillable gap has failed on every run for
 // the stuck threshold (§4.10): the reasons that a retry cannot fix say what to do
 // instead. For a Microsoft 365 error the honest line is that the service will not

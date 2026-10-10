@@ -110,12 +110,38 @@ func summarizeGaps(m *state.Manifest, out string, runAt, now time.Time, period t
 	})
 	for i, r := range obs {
 		if i == maxSummaryGapLines {
-			s.Lines = append(s.Lines, fmt.Sprintf("  +%d more — see the report", len(obs)-maxSummaryGapLines))
+			s.Lines = append(s.Lines, summaryMoreLine(obs[maxSummaryGapLines:], func(r row) state.CaptureGap { return r.g }))
 			break
 		}
 		s.Lines = append(s.Lines, gapSummaryLine(r.g, r.source, r.kind, out, runAt))
 	}
 	return s
+}
+
+// summaryMoreLine is the line after the capped list, in the words `status` uses
+// (friction F5): "+N more" when every entry left is a single item, else it counts
+// what the entries stand for (an overflow entry is thousands of items, a folder is
+// not an item). The head line above it names the report's path.
+func summaryMoreLine[T any](rest []T, gap func(T) state.CaptureGap) string {
+	items, folders := 0, 0
+	for _, r := range rest {
+		g := gap(r)
+		if g.Scope == state.GapScopeFolder {
+			folders++
+		} else {
+			items += g.Weight()
+		}
+	}
+	if folders == 0 && items == len(rest) {
+		return fmt.Sprintf("  +%d more — see the report", len(rest))
+	}
+	what := fmt.Sprintf("%d item(s)", items)
+	if folders > 0 && items > 0 {
+		what = fmt.Sprintf("%d item(s) and %d folder(s)", items, folders)
+	} else if folders > 0 {
+		what = fmt.Sprintf("%d folder(s)", folders)
+	}
+	return fmt.Sprintf("  +%d more entries (%s) — see the report", len(rest), what)
 }
 
 // destinationWhy words a reason that is the archive location's fault: it names

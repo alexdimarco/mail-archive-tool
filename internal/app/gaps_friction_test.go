@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"log"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/export"
@@ -19,6 +21,25 @@ import (
 
 // FI-S1a friction review fixes (docs/review-fi-s1a-friction.md): the app-level
 // ones. Each test asserts what the actor now sees.
+
+// covers: MA-328, R18, R12, S48
+// F5: the run summary's "+N more" counts what is behind it, in `status`'s words: an
+// overflow entry standing for 4000 items is not "1 more". With only single items
+// left it keeps its plain form.
+func TestSummaryMoreLineCountsItemsNotEntries(t *testing.T) {
+	m, mailbox, _, _, runAt := summaryFixture(t)
+	for i := 0; i < 25; i++ {
+		m.ObserveGap(state.CaptureGap{Token: mailbox, Folder: "Inbox", Scope: state.GapScopeItem, Locator: fmt.Sprintf("graph:%02d", i), Reason: "fetch-failed", Class: state.ClassFillable, Subject: fmt.Sprintf("S%02d", i)}, runAt)
+	}
+	// The ledger makes an overflow entry itself when a lifetime cap is hit; put one
+	// in directly rather than fill a cap.
+	m.CaptureGaps[state.GapKey(mailbox, state.GapScopeOverflow, "overflow:Zz")] = state.CaptureGap{Token: mailbox, Folder: "Zz", Scope: state.GapScopeOverflow,
+		Locator: "overflow:Zz", Reason: "overflow", Class: state.ClassFillable, Skipped: 4000, FirstRun: runAt, LastRun: runAt, Runs: 1}
+	g := summarizeGaps(m, "/archive", runAt, runAt, 24*time.Hour)
+	if len(g.Lines) != 21 || g.Lines[20] != "  +6 more entries (4005 item(s)) — see the report" {
+		t.Errorf("%d lines, last %q; want 21 and '  +6 more entries (4005 item(s)) — see the report'", len(g.Lines), g.Lines[len(g.Lines)-1])
+	}
+}
 
 // covers: MA-328, R18, S48
 // F1: the .pst open remedy follows the cause. A permission or in-use error says to

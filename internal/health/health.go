@@ -172,6 +172,11 @@ type Input struct {
 	Unreadable     int
 	UnreadableOnly int
 	Unparsed       int
+	// UnparsedTerminal is how many of Terminal are unparsed stubs only (kept as raw
+	// text, so not "source-empty"); PartlyRead names up to 20 partly-read pages
+	// (friction F7).
+	UnparsedTerminal int
+	PartlyRead       []string
 }
 
 // Extractable is the extractability facet of an archive: WithEML of Total
@@ -1074,6 +1079,7 @@ func Gather(out, nameOverride string) Input {
 			in.ShownAsSource = m.FallbackCounts()
 			in.WithFixity, _ = m.FixityCounts()
 			in.Unreadable, in.UnreadableOnly, in.Unparsed = m.UnreadableCount(), m.UnreadableOnlyCount(), m.UnparsedCount()
+			in.UnparsedTerminal, in.PartlyRead = m.UnparsedTerminalCount(), m.PartlyReadPaths(20)
 			// The capture-gap ledger, with each store's source id and last run, so a
 			// gap can be told attempted from not attempted (FC14).
 			in.Gaps = m.CaptureGapsSorted()
@@ -1183,6 +1189,18 @@ func sameFile(a, b string) bool {
 	return os.SameFile(fa, fb)
 }
 
+// maxPartlyReadNamed is how many partly-read pages Summary names (the rest is
+// "+N more").
+const maxPartlyReadNamed = 5
+
+// summaryNow is the instant a Summary judges stuck at: the Report's.
+func summaryNow(rep Report) time.Time {
+	if rep.now.IsZero() {
+		return time.Now()
+	}
+	return rep.now
+}
+
 // Summary renders the facts and the judgement as the lines `status` prints.
 func Summary(in Input, rep Report) []string {
 	var lines []string
@@ -1203,8 +1221,11 @@ func Summary(in Input, rep Report) []string {
 		}
 		// A partly-read record is fillable too, but it has its own line and reason
 		// (below and in the posture): it is not "missing content" to download.
-		if content := in.Fillable - in.UnreadableOnly; content > 0 || in.Terminal > 0 || in.Unknown > 0 {
-			line := fmt.Sprintf("Incomplete: %d still missing content · %d source-empty (never fillable) · %d not yet re-examined", content, in.Terminal, in.Unknown)
+		// An unparsed record is kept as raw text, not source-empty (it has its own
+		// line below), so it is left out of the terminal count here (F7).
+		sourceEmpty := in.Terminal - in.UnparsedTerminal
+		if content := in.Fillable - in.UnreadableOnly; content > 0 || sourceEmpty > 0 || in.Unknown > 0 {
+			line := fmt.Sprintf("Incomplete: %d still missing content · %d source-empty (never fillable) · %d not yet re-examined", content, sourceEmpty, in.Unknown)
 			if in.ReportExists {
 				line += " — " + in.ReportPath
 			}
@@ -1213,8 +1234,31 @@ func Summary(in Input, rep Report) []string {
 		} else {
 			lines = append(lines, "Incomplete: none")
 		}
+		// What the source holds that the capture-gap ledger says is not in the archive:
+		// the records above are complete or not on their own terms; this line is the
+		// ledger's, so "Incomplete: none" is never the whole story (F6).
+		if l := notCapturedLine(in, summaryNow(rep)); l != "" {
+			lines = append(lines, l)
+		}
 		if in.Unreadable > 0 {
 			lines = append(lines, fmt.Sprintf("Partly read: %d message(s) could only be partly read from the source (see the posture below)", in.Unreadable))
+			shown := in.PartlyRead
+			if len(shown) > maxPartlyReadNamed {
+				shown = shown[:maxPartlyReadNamed]
+			}
+			for _, p := range shown {
+				lines = append(lines, "            "+p)
+			}
+			if more := in.Unreadable - len(shown); more > 0 && len(shown) > 0 {
+				line := fmt.Sprintf("            +%d more", more)
+				if in.ReportExists {
+					line += " — see " + in.ReportPath
+				}
+				lines = append(lines, line)
+			}
+		}
+		if in.Unparsed > 0 {
+			lines = append(lines, fmt.Sprintf("Raw text:   %d message(s) could not be parsed and are kept as raw text (see the posture below)", in.Unparsed))
 		}
 		// RV-10: a page shown as plain text is complete, but the owner should
 		// be able to learn it here, not only from the run log.
@@ -1341,11 +1385,7 @@ func Summary(in Input, rep Report) []string {
 	// What was not captured, at most 20 gaps with their source, folder, subject,
 	// date and remedy, then "+N more" (FC22).
 	if in.HasManifest {
-		now := rep.now
-		if now.IsZero() {
-			now = time.Now()
-		}
-		lines = append(lines, gapLines(in, now)...)
+		lines = append(lines, gapLines(in, summaryNow(rep))...)
 	}
 	return lines
 }
