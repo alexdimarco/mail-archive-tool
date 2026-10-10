@@ -301,8 +301,12 @@ func TestRenderMissingInlineImageWithItsOwnAttributesRendersAsHTML(t *testing.T)
 		if imgs != 3 {
 			t.Errorf("reading %d: want the 3 images kept, got %d", i, imgs)
 		}
-		first := findElem(b, func(n *xhtml.Node) bool { return n.Data == "img" && attrOf(n, "data-mailarchive-missing") == "cid:gone@x" })
-		second := findElem(b, func(n *xhtml.Node) bool { return n.Data == "img" && attrOf(n, "data-mailarchive-missing") == "cid:gone2@x" })
+		first := findElem(b, func(n *xhtml.Node) bool {
+			return n.Data == "img" && attrOf(n, "data-mailarchive-missing") == "cid:gone@x"
+		})
+		second := findElem(b, func(n *xhtml.Node) bool {
+			return n.Data == "img" && attrOf(n, "data-mailarchive-missing") == "cid:gone2@x"
+		})
 		if first == nil || second == nil {
 			t.Fatalf("reading %d: the missing images must be marked data-mailarchive-missing", i)
 		}
