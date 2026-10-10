@@ -288,6 +288,13 @@ func Rebuild(out string, logger *log.Logger) (RebuildReport, error) {
 	removeDBFiles(tmpPath) // clear any leftover temp from an interrupted rebuild
 	idx, err := openRebuildIndex(tmpPath)
 	if err != nil {
+		// A temp the failed open created (the file, its -wal/-shm) is
+		// garbage; the live index was never touched.
+		removeDBFiles(tmpPath)
+		if index.ReadOnly(err) || index.DiskError(err) {
+			// Not something a rebuild can get past: name the cause (F1).
+			return rep, fmt.Errorf("cannot build the new search index at %s (%w): %s, then run the rebuild again", tmpPath, err, unwritableRemedy(tmpPath, out, err))
+		}
 		return rep, fmt.Errorf("open rebuild index at %s: %w", tmpPath, err)
 	}
 

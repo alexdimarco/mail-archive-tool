@@ -110,6 +110,12 @@ func finish(out string, r *Result, exp *export.Exporter, manifest *state.Manifes
 //     rebuild (MA-398);
 //   - a newer format's refusal already names the file and the upgrade, and
 //     stands: a rebuild would replace a newer index with an older one;
+//   - a file or folder SQLite cannot write (index.ReadOnly: a read-only
+//     remount, changed permissions, a read-only search.db) or a disk that
+//     refuses the write (index.DiskError: full, a file-size limit, a failing
+//     drive) is not damage: the rebuild writes a new index to the same place
+//     and fails the same way, so the remedy is the writable folder or the
+//     free space (F1);
 //   - anything else, a damaged file (SQLITE_NOTADB) above all, is rebuilt
 //     from the archive's own files, which needs the archive's manifest
 //     (Rebuild refuses without one). With no manifest in out there is nothing
@@ -121,12 +127,48 @@ func indexOpenError(idxPath, out string, err error) error {
 		return err
 	case index.Busy(err):
 		return fmt.Errorf("search index %s is busy (%w): another program kept it locked — close any other program that has it open, then run again", idxPath, err)
+	case index.ReadOnly(err) || index.DiskError(err):
+		return fmt.Errorf("search index %s cannot be written (%w): %s, then run again", idxPath, err, unwritableRemedy(idxPath, out, err))
 	}
 	mpath := filepath.Join(out, ".mailarchive-manifest.json")
 	if _, serr := os.Stat(mpath); errors.Is(serr, fs.ErrNotExist) {
 		return fmt.Errorf("search index %s cannot be opened (%w), and there is no manifest (%s) to rebuild it from: move it out of %s, then run again", idxPath, err, mpath, out)
 	}
 	return fmt.Errorf("search index %s cannot be opened (%w): rebuild it from the archive with `mailarchive reindex -rebuild -out %q`, then run again", idxPath, err, out)
+}
+
+// unwritableRemedy names what to fix when SQLite cannot write the index at
+// dbPath in folder out (err is index.ReadOnly or index.DiskError): the disk
+// (full or failing), search.db itself (opened read-only because the file is
+// not writable), the folder (SQLite cannot create the -wal/-shm or the file
+// there), or, when neither can be told, both.
+func unwritableRemedy(dbPath, out string, err error) string {
+	if index.DiskError(err) {
+		return fmt.Sprintf("the disk holding %s is full or failing — free space on it (or check the drive)", out)
+	}
+	fileRO := fileReadOnly(dbPath)
+	dirRO := index.ReadOnlyDir(err)
+	switch {
+	case fileRO && dirRO:
+		return fmt.Sprintf("%s and the archive folder %s are read-only — make both writable (or remount the drive read-write)", filepath.Base(dbPath), out)
+	case fileRO:
+		return fmt.Sprintf("%s is read-only — make it writable (on Windows, clear its Read-only attribute)", filepath.Base(dbPath))
+	case dirRO:
+		return fmt.Sprintf("the archive folder %s is read-only — make it writable (or remount the drive read-write)", out)
+	}
+	return fmt.Sprintf("%s or the archive folder %s is not writable — make both writable", filepath.Base(dbPath), out)
+}
+
+// fileReadOnly reports whether the file at path exists and refuses to be
+// opened for writing for lack of permission (a 0444 file, Windows' Read-only
+// attribute). Opening it write-only and closing it changes nothing.
+func fileReadOnly(path string) bool {
+	f, err := os.OpenFile(path, os.O_WRONLY, 0)
+	if err == nil {
+		f.Close()
+		return false
+	}
+	return errors.Is(err, fs.ErrPermission)
 }
 
 // ProgressFunc, if provided, is called after each processed message with the

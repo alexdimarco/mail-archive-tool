@@ -303,6 +303,48 @@ func readonlyMediaErr(err error) bool {
 	return false
 }
 
+// ReadOnly reports whether err is SQLite's answer that search.db, or the
+// folder that must hold its -wal/-shm, cannot be written here: SQLITE_READONLY
+// (with its READONLY_DIRECTORY, READONLY_RECOVERY, … variants), SQLITE_CANTOPEN
+// or SQLITE_PERM, by primary result code. It says nothing about damage, so its
+// remedy is never the rebuild, which would fail the same way.
+func ReadOnly(err error) bool {
+	if readonlyMediaErr(err) {
+		return true
+	}
+	var se *sqlite.Error
+	return errors.As(err, &se) && se.Code()&0xff == sqlite3.SQLITE_PERM
+}
+
+// ReadOnlyDir reports whether a ReadOnly err names the folder rather than the
+// file: SQLITE_READONLY_DIRECTORY (SQLite cannot create the -wal, -shm or
+// journal beside search.db) or SQLITE_CANTOPEN (it cannot open or create the
+// file there).
+func ReadOnlyDir(err error) bool {
+	var se *sqlite.Error
+	if !errors.As(err, &se) {
+		return false
+	}
+	return se.Code() == sqlite3.SQLITE_READONLY_DIRECTORY || se.Code()&0xff == sqlite3.SQLITE_CANTOPEN
+}
+
+// DiskError reports whether err is SQLite's answer that a write to the disk
+// holding search.db failed — SQLITE_FULL, or SQLITE_IOERR with any of its
+// variants (SHMSIZE, WRITE, FSYNC, …), by primary result code: a full disk, a
+// file-size limit, or a failing or vanished drive. Not damage either: the
+// rebuild writes to the same disk and fails the same way.
+func DiskError(err error) bool {
+	var se *sqlite.Error
+	if !errors.As(err, &se) {
+		return false
+	}
+	switch se.Code() & 0xff {
+	case sqlite3.SQLITE_FULL, sqlite3.SQLITE_IOERR:
+		return true
+	}
+	return false
+}
+
 // Add records (or replaces, by key) one message in the index. Each row is
 // written under its own SAVEPOINT inside the batch transaction, so a failure is
 // isolated to that row (F49): it is rolled back to the savepoint — leaving no
