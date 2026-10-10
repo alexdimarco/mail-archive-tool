@@ -1104,7 +1104,7 @@ documented (F17, F18).
 
 | Id | The question for the owner | Recommended answer | Safe interim |
 |---|---|---|---|
-| **ESC-16** (FI-S1a friction R5) | Rows in the verification report for an unreadable or unparsed record carry only a bare code ("unparsed", "unreadable:attachments") with no why or what-to-do. Giving them one means loosening `TestReportKindsForReadGapLabels` (MA-327), which pins that detail to the bare code. Allow that change? | Yes: a bare code leaves the inheritor with no remedy, and the test would be tightened to the new wording rather than dropped | The banner and README.txt promise a why and a remedy only for ledger rows; MA-327 unchanged |
+| **ESC-16 RULED: ALLOWED by the owner, 2026-10-10 ("I allow the change")** (FI-S1a friction R5) | Rows in the verification report for an unreadable or unparsed record carry only a bare code ("unparsed", "unreadable:attachments") with no why or what-to-do. Giving them one means loosening `TestReportKindsForReadGapLabels` (MA-327), which pins that detail to the bare code. Allow that change? | Yes: a bare code leaves the inheritor with no remedy, and the test would be tightened to the new wording rather than dropped | The banner and README.txt promise a why and a remedy only for ledger rows; MA-327 unchanged |
 
 ### 13.7 Escalations from LC-C1's adversarial pass (merged 2026-10-10)
 
