@@ -835,8 +835,12 @@ func runSchedule(args []string) error {
 				// archive's BACKUP schedule and must not be what this removes.
 				n = defaultScheduleName(rj)
 			default:
-				if d, derr := schedule.ReadDescriptor(out); derr == nil {
-					n = d.Name
+				if rn, rerr := schedule.RecordedBackupName(out); rerr == nil {
+					n = rn
+				} else if _, derr := schedule.ReadDescriptor(out); derr == nil {
+					// The descriptor reads, but the entry it names is not this
+					// archive's (a handed-over or copied folder): never act on it.
+					return fmt.Errorf("-remove will not act on the schedule name %s records: %w", filepath.Join(out, schedule.DescriptorName), rerr)
 				} else {
 					n = schedule.DefaultNameFor(out)
 				}
@@ -1218,11 +1222,13 @@ func flagWasSet(fs *flag.FlagSet, name string) bool {
 // an automatic removal: on launchd and Task Scheduler a shared name may by now
 // hold another archive's verify.
 func verifyRemoveHint(out string) string {
-	if d, err := schedule.ReadVerifyDescriptor(out); err == nil {
-		return fmt.Sprintf("The archive's verify descriptor records a verify schedule named %q; if it is still this archive's verify, run this command again with -name %s before -- to remove it.", d.Name, d.Name)
-	}
-	if d, err := schedule.ReadDescriptor(out); err == nil && len(d.Job) > 0 && d.Job[0] == "verify" {
-		return fmt.Sprintf("The archive's descriptor records a verify schedule named %q (written before a verify got its own entry name); if it is this archive's verify, run this command again with -name %s before -- to remove it.", d.Name, d.Name)
+	// Only a recorded name that binds to this archive is offered (a descriptor
+	// handed over with the folder can record any entry's name).
+	if name, ok := schedule.RecordedVerifyName(out); ok {
+		if _, err := schedule.ReadVerifyDescriptor(out); err == nil {
+			return fmt.Sprintf("The archive's verify descriptor records a verify schedule named %q; if it is still this archive's verify, run this command again with -name %s before -- to remove it.", name, name)
+		}
+		return fmt.Sprintf("The archive's descriptor records a verify schedule named %q (written before a verify got its own entry name); if it is this archive's verify, run this command again with -name %s before -- to remove it.", name, name)
 	}
 	return "If this archive's verify was installed with -name NAME, run this command again with -name NAME before -- to remove it."
 }

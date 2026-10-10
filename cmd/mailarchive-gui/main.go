@@ -800,7 +800,13 @@ func removeSchedule(out string) error {
 	if err != nil {
 		return err
 	}
-	name, err := schedule.SanitizeName(d.Name)
+	// The descriptor is untrusted: its name drives the removal only when it is
+	// this archive's entry (a handed-over folder can record any entry's name).
+	recorded, err := schedule.RecordedBackupName(out)
+	if err != nil {
+		return err
+	}
+	name, err := schedule.SanitizeName(recorded)
 	if err != nil {
 		return err
 	}
@@ -814,10 +820,10 @@ func removeSchedule(out string) error {
 	if err := schedule.Remove(spec); err != nil {
 		return err
 	}
-	if jp, err := job.PathFor(d.Name); err == nil {
+	if jp, err := job.PathFor(name); err == nil {
 		_ = os.Remove(jp)
 	}
-	return zenity.Info(fmt.Sprintf("Removed the scheduled backup %q for\n%s", d.Name, out), zenity.Title(appTitle))
+	return zenity.Info(fmt.Sprintf("Removed the scheduled backup %q for\n%s", name, out), zenity.Title(appTitle))
 }
 
 // ---- IMAP prep ------------------------------------------------------------

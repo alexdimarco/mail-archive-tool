@@ -135,18 +135,27 @@ func ReadVerifyDescriptor(out string) (Descriptor, error) {
 		return d, fmt.Errorf("verify schedule descriptor %s records %s, not a verify: %s", path, what, UnreadableVerifyDescriptorRemedy)
 	}
 	if host, _ := os.Hostname(); d.Host == "" || host == "" || d.Host == host {
-		if jo := jobOut(d.Job); !sameDir(jo, out) {
+		// A verify recorded for a folder that no longer exists is this archive's own
+		// record from before it was renamed on this host (its entry still runs
+		// against the old path), so it stays visible; one for a folder that is
+		// still there is that archive's record, copied.
+		if jo := jobOut(d.Job); !sameDir(jo, out) && (jo == "" || !errors.Is(statErr(jo), os.ErrNotExist)) {
 			if jo == "" {
 				jo = "no -out"
 			}
 			return d, fmt.Errorf("verify schedule descriptor %s records a verify of %s, not of this archive: %s", path, jo, UnreadableVerifyDescriptorRemedy)
 		}
 	}
+	if err := bindDescriptorName(out, d, path); err != nil {
+		return d, fmt.Errorf("%w: %s", err, UnreadableVerifyDescriptorRemedy)
+	}
 	if b, berr := ReadDescriptor(out); berr == nil && !descriptorIsVerify(b) && b.Name == d.Name {
 		return d, fmt.Errorf("verify schedule descriptor %s records %q, the name of this archive's backup schedule — the install refuses a verify under the backup's name, so this record is not the verify's: %s", path, d.Name, UnreadableVerifyDescriptorRemedy)
 	}
 	return d, nil
 }
+
+func statErr(p string) error { _, err := os.Stat(p); return err }
 
 // jobOut returns the -out a recorded job carries (`-out V` or `-out=V`, one
 // dash or two), or "".

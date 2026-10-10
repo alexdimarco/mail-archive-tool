@@ -812,12 +812,9 @@ func SupersededVerify(s Spec) string {
 	if !isVerifyJob(s) || s.Out == "" {
 		return ""
 	}
-	old := ""
-	if d, err := ReadVerifyDescriptor(s.Out); err == nil {
-		old = d.Name
-	} else if d, err := ReadDescriptor(s.Out); err == nil && descriptorIsVerify(d) {
-		old = d.Name
-	}
+	// The recorded name is untrusted (a handed-over folder can record any entry
+	// name): it is named for removal only when it binds to this archive.
+	old, _ := RecordedVerifyName(s.Out)
 	if old == "" || old == s.Name || Query(old) != Installed {
 		return ""
 	}
