@@ -1,6 +1,7 @@
 package util
 
 import (
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -41,7 +42,69 @@ func ResolveExisting(p string) string {
 // component-wise on cleaned absolute paths (no string-prefix false positives
 // like /a/bc under /a/b) and, on Windows and macOS, whose file systems are
 // case-insensitive by default, regardless of case.
-func Within(base, target string) bool { return within(runtime.GOOS, base, target) }
+//
+// A spelling that differs only in a way the file system ignores (Unicode
+// normalization on APFS, case on a case-insensitive Linux mount) is still the
+// same place, so a path that the string comparison puts outside is also compared
+// by file identity: base is within-reach when it is, by os.SameFile, an ancestor
+// of target's deepest existing ancestor (or its equal, for a base that does not
+// exist yet, with the not-yet-created tails compared as names).
+func Within(base, target string) bool {
+	return within(runtime.GOOS, base, target) || identityWithin(runtime.GOOS, base, target)
+}
+
+// splitExisting splits an absolute path into its deepest existing ancestor (with
+// its Stat) and the components below it that do not exist yet. ok is false when
+// no ancestor can be stat'ed.
+func splitExisting(p string) (anchor string, info os.FileInfo, tail []string, ok bool) {
+	cur := filepath.Clean(p)
+	for {
+		if fi, err := os.Stat(cur); err == nil {
+			return cur, fi, reverseStrings(tail), true
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return "", nil, nil, false
+		}
+		tail = append(tail, filepath.Base(cur))
+		cur = parent
+	}
+}
+
+func identityWithin(goos, base, target string) bool {
+	_, iB, tB, ok := splitExisting(base)
+	if !ok {
+		return false
+	}
+	aT, iT, tT, ok := splitExisting(target)
+	if !ok {
+		return false
+	}
+	if len(tB) > 0 {
+		// base does not exist: target is under it only if it shares base's existing
+		// anchor and carries base's not-yet-created components as its own.
+		if !os.SameFile(iB, iT) || len(tT) < len(tB) {
+			return false
+		}
+		for i, c := range tB {
+			if tT[i] != c && !((goos == "windows" || goos == "darwin") && strings.EqualFold(tT[i], c)) {
+				return false
+			}
+		}
+		return true
+	}
+	for x := aT; ; {
+		if fi, err := os.Stat(x); err == nil && os.SameFile(iB, fi) {
+			return true
+		}
+		parent := filepath.Dir(x)
+		if parent == x {
+			break
+		}
+		x = parent
+	}
+	return false
+}
 
 func within(goos, base, target string) bool {
 	if goos == "windows" || goos == "darwin" {
