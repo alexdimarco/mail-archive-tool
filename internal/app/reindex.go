@@ -57,7 +57,7 @@ func Reindex(out string, logger *log.Logger) (kept, pruned int, err error) {
 	// create the file). This mirrors serve/search naming the missing index.
 	if _, statErr := os.Stat(idxPath); errors.Is(statErr, fs.ErrNotExist) {
 		if manifestPresent {
-			return 0, 0, fmt.Errorf("no search index at %s, but the archive's manifest is intact: rebuild the index from the archive with `mailarchive reindex -rebuild -out %s`", idxPath, out)
+			return 0, 0, fmt.Errorf("no search index at %s, but the archive's manifest is intact: rebuild the index from the archive with `mailarchive reindex -rebuild -out %q`", idxPath, out)
 		}
 		return 0, 0, fmt.Errorf("no search index at %s (run an export first)", idxPath)
 	}
