@@ -3,6 +3,7 @@ package graph
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -184,12 +185,67 @@ func TestRepeatingNextLinkIsAFolderListFailedGap(t *testing.T) {
 	t.Skip("MA-314: the folder-list-failed gap case needs the S1a/S3 capture-gap ledger; until fault-isolation S3 a Messages stop fails the mailbox through today's error path (MA-540); lands in FI-S3")
 }
 
+// roundTripFunc is an http.RoundTripper made of a function (fault injection).
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
 // covers: MA-314, R10, R17
 // MA-314's capture foreign-host case: a nextLink in capture's Folders or Messages
-// that leaves the base host is refused, no request goes there and no bearer
-// token reaches it.
+// that leaves the base host is refused with a typed stop naming that host, no
+// request goes there and no bearer token reaches it. The foreign host is a name
+// the client's transport answers itself (WrapTransport), recording what reached
+// it, so nothing leaves the process. A skip encoder until step SGc turns the pin
+// on in capture's loops: run without the skip today, the token reaches the
+// foreign host from both loops.
 func TestCaptureNextLinkForeignHostRefused(t *testing.T) {
 	t.Skip("MA-314: capture's Folders and Messages carry no host/path pin until fault-isolation step FI-SGc, which waits for MA-443's recorded nextLink shapes (XC25's gate; lifting it is the owner's ESC-7); a foreign nextLink in capture's listings is an open gap, not accepted")
+	const foreign = "foreign.example.test"
+	var mu sync.Mutex
+	var reached []string // the Authorization header of each request sent to the foreign host
+	trap := func(rt http.RoundTripper) http.RoundTripper {
+		return roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			if r.URL.Hostname() != foreign {
+				return rt.RoundTrip(r)
+			}
+			mu.Lock()
+			reached = append(reached, r.Header.Get("Authorization"))
+			mu.Unlock()
+			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}},
+				Body: io.NopCloser(strings.NewReader(`{"value":[]}`)), Request: r}, nil
+		})
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/token", tokenHandler)
+	mux.HandleFunc("/users/u/mailFolders", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, `{"value":[{"id":"F_IN","displayName":"Inbox","childFolderCount":0}],
+			"@odata.nextLink":"http://`+foreign+`/users/u/mailFolders?page=2"}`)
+	})
+	mux.HandleFunc("/users/u/mailFolders/F_IN/messages", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, `{"value":[{"id":"M1","internetMessageId":"<m1@x>","receivedDateTime":"2025-03-01T09:00:00Z"}],
+			"@odata.nextLink":"http://`+foreign+`/users/u/mailFolders/F_IN/messages?page=2"}`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	c := boundedClient(srv, Config{WrapTransport: trap})
+	ctx := context.Background()
+
+	_, ferr := c.Folders(ctx, "u", FolderFilter{IncludeDeleted: true, IncludeJunk: true})
+	merr := c.Messages(ctx, "u", "F_IN", func(MessageRef) error { return nil })
+	for _, l := range []struct {
+		loop string
+		err  error
+	}{{"Folders", ferr}, {"Messages", merr}} {
+		var le *ListingError
+		if !errors.As(l.err, &le) || le.Kind != ListingForeignHost || le.Host != foreign {
+			t.Errorf("%s: a nextLink to %s is not a typed foreign-host stop naming it: %v", l.loop, foreign, l.err)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(reached) != 0 {
+		t.Errorf("%d request(s) went to the foreign host %s, with Authorization %q: the bearer token left Microsoft Graph", len(reached), foreign, reached)
+	}
 }
 
 // hierarchyServer serves mailbox u's folders: children(parent) lists a folder's
@@ -356,7 +412,30 @@ func TestFoldersHierarchyIsBounded(t *testing.T) {
 // MA-541's breadth case: a childFolders response that invents two fresh child
 // folders at every level, inside the depth cap, is bounded in depth and per
 // loop by the page cap but not in total, so a misbehaving endpoint keeps one
-// walk going for as long as it answers; Folders must return under a time guard.
+// walk going for as long as it answers; Folders must return under a time guard,
+// with a typed stop, never a quiet end of the walk. The fake's tree is 32 levels
+// deep, well inside the 300-level cap, so only a total-folder cap can end it. A
+// skip encoder until such a cap lands: run without the skip today, the walk is
+// still going when the guard fires.
 func TestFoldersBreadthIsBounded(t *testing.T) {
 	t.Skip("MA-541 (R10): no total-folder cap: Microsoft documents no per-mailbox folder count (the 2026-10-09 confirmation), so ESC-9's safe interim (owner ruling RR6-OR2) gives none; an open gap, not accepted, until a documented figure lets a cap land")
+	const depth = 32
+	srv, _ := hierarchyServer(t, func(parent string) []string {
+		switch {
+		case parent == "":
+			return []string{"N0", "N1"}
+		case len(parent)-1 < depth: // "N" plus one digit per level
+			return []string{parent + "0", parent + "1"}
+		}
+		return nil
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel) // ends the walk once the guard has fired
+	var err error
+	within(t, 10*time.Second, "Folders over a childFolders response that invents two fresh folders at every level", func() {
+		_, err = newTestClient(srv).Folders(ctx, "u", FolderFilter{IncludeDeleted: true, IncludeJunk: true})
+	})
+	if err == nil || isContextErr(err) {
+		t.Errorf("a folder tree that never stops widening ended without a typed stop: %v", err)
+	}
 }
