@@ -105,6 +105,25 @@ func onBase(base *url.URL, link string) (host string, ok bool) {
 	return host, prefix == "" || p == prefix || strings.HasPrefix(p, prefix+"/")
 }
 
+// maxFolderDepth is Folders' depth cap: Exchange Online's documented maximum
+// folder hierarchy depth, 300 for every plan (confirmed 2026-10-09,
+// fault-isolation §4.8.7). Levels count as Graph lists them: a folder from
+// /mailFolders is level 1 and one in its childFolders level 2, so the cap is at
+// or above the documented limit whether or not Exchange also counts the root or
+// Top of Information Store.
+const maxFolderDepth = 300
+
+// DepthError is Folders' depth-cap stop (fault-isolation §4.8.7, RR6-C6): the
+// mailbox's folder hierarchy goes deeper than the cap. The mailbox fails
+// loudly, and no level is dropped silently.
+type DepthError struct {
+	Limit int
+}
+
+func (e *DepthError) Error() string {
+	return fmt.Sprintf("graph folder hierarchy is deeper than %d levels (Exchange Online's maximum folder depth), so its walk stopped", e.Limit)
+}
+
 // portOf is u's port, or its scheme's default.
 func portOf(u *url.URL) string {
 	if p := u.Port(); p != "" {

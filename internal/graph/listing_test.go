@@ -192,10 +192,171 @@ func TestCaptureNextLinkForeignHostRefused(t *testing.T) {
 	t.Skip("MA-314: capture's Folders and Messages carry no host/path pin until fault-isolation step FI-SGc, which waits for MA-443's recorded nextLink shapes (XC25's gate; lifting it is the owner's ESC-7); a foreign nextLink in capture's listings is an open gap, not accepted")
 }
 
+// hierarchyServer serves mailbox u's folders: children(parent) lists a folder's
+// child ids ("" is the top level), each folder named by its id and claiming
+// children exactly when it has some. It counts the childFolders requests made
+// for each parent.
+func hierarchyServer(t *testing.T, children func(parent string) []string) (*httptest.Server, func(parent string) int) {
+	t.Helper()
+	var mu sync.Mutex
+	expanded := map[string]int{}
+	list := func(w http.ResponseWriter, parent string) {
+		var vals []string
+		for _, id := range children(parent) {
+			n := 0
+			if len(children(id)) > 0 {
+				n = 1
+			}
+			vals = append(vals, `{"id":"`+id+`","displayName":"`+id+`","childFolderCount":`+strconv.Itoa(n)+`}`)
+		}
+		writeJSON(w, `{"value":[`+strings.Join(vals, ",")+`]}`)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/token", tokenHandler)
+	mux.HandleFunc("/users/u/mailFolders", func(w http.ResponseWriter, r *http.Request) { list(w, "") })
+	mux.HandleFunc("/users/u/mailFolders/", func(w http.ResponseWriter, r *http.Request) {
+		id, ok := strings.CutSuffix(strings.TrimPrefix(r.URL.Path, "/users/u/mailFolders/"), "/childFolders")
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		mu.Lock()
+		expanded[id]++
+		mu.Unlock()
+		list(w, id)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv, func(parent string) int {
+		mu.Lock()
+		defer mu.Unlock()
+		return expanded[parent]
+	}
+}
+
+// chain is a hierarchy of n levels, L1 at the top, each level the only child of
+// the one above it.
+func chain(n int) func(string) []string {
+	return func(parent string) []string {
+		k := 0
+		if parent != "" {
+			k, _ = strconv.Atoi(strings.TrimPrefix(parent, "L"))
+		}
+		if k >= n {
+			return nil
+		}
+		return []string{"L" + strconv.Itoa(k+1)}
+	}
+}
+
+// folderIDs returns the walk's folder ids in order and fails on a duplicate.
+func folderIDs(t *testing.T, fs []Folder) []string {
+	t.Helper()
+	seen := map[string]bool{}
+	var ids []string
+	for _, f := range fs {
+		if seen[f.ID] {
+			t.Errorf("folder %s listed twice", f.ID)
+		}
+		seen[f.ID] = true
+		ids = append(ids, f.ID)
+	}
+	return ids
+}
+
 // covers: MA-541, R10, R17
 // Folders keeps one visited folder-id set across the call and a depth cap of
-// 300: a cycle ends, a moved folder is listed once, and a level past the cap
-// fails with a typed error while a chain exactly at the cap completes.
+// 300 levels, the Graph twin of MA-317. A childFolders response that lists an
+// ancestor (A → B → A) returns under a 1 s guard with A and B each listed once
+// and no second childFolders request for A. A folder listed under two parents
+// (moved during the walk) is listed once and the walk completes. A chain of
+// fresh folders 301 levels deep fails with the typed depth error naming the
+// cap, under a time guard. Twins: a healthy three-level tree, and a chain of
+// exactly 300 levels (counted as the confirmation counts them: /mailFolders is
+// level 1), each listed once with no error.
 func TestFoldersHierarchyIsBounded(t *testing.T) {
-	t.Skip("MA-541: Folders has no visited folder-id set and no depth cap yet; lands in FI-SG")
+	ctx := context.Background()
+	all := FolderFilter{IncludeDeleted: true, IncludeJunk: true}
+	from := func(tree map[string][]string) func(string) []string {
+		return func(parent string) []string { return tree[parent] }
+	}
+
+	t.Run("healthy three-level tree", func(t *testing.T) {
+		srv, _ := hierarchyServer(t, from(map[string][]string{"": {"A", "B"}, "A": {"A1"}, "A1": {"A1a"}}))
+		fs, err := newTestClient(srv).Folders(ctx, "u", all)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ids := folderIDs(t, fs); !reflect.DeepEqual(ids, []string{"A", "A1", "A1a", "B"}) {
+			t.Errorf("folders = %v, want [A A1 A1a B]", ids)
+		}
+	})
+
+	t.Run("a cycle ends", func(t *testing.T) {
+		srv, expanded := hierarchyServer(t, from(map[string][]string{"": {"A"}, "A": {"B"}, "B": {"A"}}))
+		var fs []Folder
+		var err error
+		within(t, time.Second, "Folders over a cyclic childFolders response", func() {
+			fs, err = newTestClient(srv).Folders(ctx, "u", all)
+		})
+		if err != nil {
+			t.Fatalf("a revisited folder failed the walk: %v", err)
+		}
+		if ids := folderIDs(t, fs); !reflect.DeepEqual(ids, []string{"A", "B"}) {
+			t.Errorf("folders = %v, want [A B]", ids)
+		}
+		if n := expanded("A"); n != 1 {
+			t.Errorf("A's childFolders were requested %d times, want 1", n)
+		}
+	})
+
+	t.Run("a moved folder is listed once", func(t *testing.T) {
+		srv, _ := hierarchyServer(t, from(map[string][]string{"": {"P1", "P2"}, "P1": {"X"}, "P2": {"X"}}))
+		fs, err := newTestClient(srv).Folders(ctx, "u", all)
+		if err != nil {
+			t.Fatalf("a folder listed under two parents failed the walk: %v", err)
+		}
+		if ids := folderIDs(t, fs); !reflect.DeepEqual(ids, []string{"P1", "X", "P2"}) {
+			t.Errorf("folders = %v, want [P1 X P2]", ids)
+		}
+	})
+
+	t.Run("a chain at the cap completes", func(t *testing.T) {
+		srv, _ := hierarchyServer(t, chain(maxFolderDepth))
+		var fs []Folder
+		var err error
+		within(t, 10*time.Second, "Folders over a 300-level chain", func() {
+			fs, err = newTestClient(srv).Folders(ctx, "u", all)
+		})
+		if err != nil {
+			t.Fatalf("a chain exactly at the %d-level cap failed: %v", maxFolderDepth, err)
+		}
+		if ids := folderIDs(t, fs); len(ids) != maxFolderDepth || ids[len(ids)-1] != "L300" {
+			t.Errorf("the at-cap chain listed %d folders (last %v), want 300 ending at L300", len(ids), ids[len(ids)-1:])
+		}
+	})
+
+	t.Run("a chain past the cap fails typed", func(t *testing.T) {
+		srv, _ := hierarchyServer(t, chain(maxFolderDepth+1))
+		var err error
+		within(t, 10*time.Second, "Folders over a 301-level chain", func() {
+			_, err = newTestClient(srv).Folders(ctx, "u", all)
+		})
+		var de *DepthError
+		if !errors.As(err, &de) || de.Limit != 300 {
+			t.Fatalf("a chain 301 levels deep is not the typed depth error at 300: %v", err)
+		}
+		if !strings.Contains(err.Error(), "300") {
+			t.Errorf("the depth error does not name the cap: %v", err)
+		}
+	})
+}
+
+// covers: MA-541, R10
+// MA-541's breadth case: a childFolders response that invents two fresh child
+// folders at every level, inside the depth cap, is bounded in depth and per
+// loop by the page cap but not in total, so a misbehaving endpoint keeps one
+// walk going for as long as it answers; Folders must return under a time guard.
+func TestFoldersBreadthIsBounded(t *testing.T) {
+	t.Skip("MA-541 (R10): no total-folder cap: Microsoft documents no per-mailbox folder count (the 2026-10-09 confirmation), so ESC-9's safe interim (owner ruling RR6-OR2) gives none; an open gap, not accepted, until a documented figure lets a cap land")
 }

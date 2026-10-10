@@ -292,8 +292,16 @@ func (c *Client) Folders(ctx context.Context, userID string, filter FolderFilter
 	}
 
 	var out []Folder
-	var walk func(parentID string, prefix []string) error
-	walk = func(parentID string, prefix []string) error {
+	// One visited folder-id set across the whole call (fault-isolation §4.8.7,
+	// RR6-C6): the client builds each level's first URL, so a cyclic or endless
+	// childFolders response never repeats a nextLink. A folder already visited
+	// is neither listed nor expanded again, so a cycle ends; a revisit is
+	// skipped, never fatal, because a live mailbox lists a folder twice when it
+	// moves during the walk. level counts as Graph lists folders (/mailFolders is
+	// level 1), and a fresh folder past maxFolderDepth stops the walk, typed.
+	visited := map[string]bool{}
+	var walk func(parentID string, prefix []string, level int) error
+	walk = func(parentID string, prefix []string, level int) error {
 		path := c.userSeg(userID) + "/mailFolders"
 		if parentID != "" {
 			path = c.userSeg(userID) + "/mailFolders/" + url.PathEscape(parentID) + "/childFolders"
@@ -322,13 +330,17 @@ func (c *Client) Folders(ctx context.Context, userID string, filter FolderFilter
 				// entire subtree are dropped by resolved ID before any message in
 				// them is listed, so nothing under them is walked (T7). Never a
 				// display-name match, which would break under a non-English mailbox.
-				if excluded[f.ID] {
+				if excluded[f.ID] || visited[f.ID] {
 					continue
 				}
+				if level > maxFolderDepth {
+					return &DepthError{Limit: maxFolderDepth}
+				}
+				visited[f.ID] = true
 				fp := append(append([]string{}, prefix...), util.SanitizeSegment(f.DisplayName))
 				out = append(out, Folder{ID: f.ID, Path: fp})
 				if f.ChildFolderCount > 0 {
-					if err := walk(f.ID, fp); err != nil {
+					if err := walk(f.ID, fp, level+1); err != nil {
 						return err
 					}
 				}
@@ -337,7 +349,7 @@ func (c *Client) Folders(ctx context.Context, userID string, filter FolderFilter
 		}
 		return nil
 	}
-	if err := walk("", nil); err != nil {
+	if err := walk("", nil, 1); err != nil {
 		return nil, err
 	}
 	return out, nil
