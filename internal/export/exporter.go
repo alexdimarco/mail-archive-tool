@@ -38,7 +38,7 @@ type Stats struct {
 	AttachmentsEmpty    int // declared attachments that produced zero bytes (e.g. not downloaded)
 	AttachmentErrors    int // attachments whose stream failed mid-read (torn fetch); reported, not archived
 	UnresolvedInlineRef int // cid: references in the HTML with no matching image present
-	HTMLFallback        int // HTML bodies shown as escaped source (too deep / unparseable / unsafe after re-parse)
+	HTMLFallback        int // HTML bodies shown as escaped source, for any of the four Fallback* reasons (too deep / unparseable / unsafe after re-parse / too large)
 	NonHTMLBodies       int // messages exported from plain/RTF because no HTML body existed
 	NoBody              int // messages exported with no body content at all
 	RawWritten          int // original .eml files written (KeepRaw; 0 for sources with no original bytes, e.g. Outlook items)
@@ -313,20 +313,19 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		FolderIndexRel: "index.html",
 		RawName:        rawName,
 	}
-	if hasArchivable(m.Attachments, map[int]bool{}) { // refined below once inline embedding is known
+	// The zip's name can be offered before inline embedding is known: the page
+	// links it only beside the attachments it lists — those NOT embedded
+	// inline (renderHeader) — which is exactly when the zip below is written
+	// (hasArchivable over rr.Consumed). A message whose every attachment is
+	// inline shows no link, so the message is rendered ONCE (RV-8: it used to
+	// be rendered a second time only to drop a link that was never shown, and
+	// each render runs the sanitizer's parses).
+	if hasArchivable(m.Attachments, map[int]bool{}) {
 		ctx.ZipName = base + zipSuffix
 	}
-	rr, err := RenderWith(m, ctx)
+	rr, err := renderMessage(m, ctx)
 	if err != nil {
 		return false, fmt.Errorf("render %q: %w", m.Subject, err)
-	}
-	if ctx.ZipName != "" && !hasArchivable(m.Attachments, rr.Consumed) {
-		// Every attachment was embedded inline: no zip will exist, so re-render
-		// without the link (cheap: such messages are small).
-		ctx.ZipName = ""
-		if rr, err = RenderWith(m, ctx); err != nil {
-			return false, fmt.Errorf("render %q: %w", m.Subject, err)
-		}
 	}
 	htmlBytes, inlineConsumed := rr.HTML, rr.Consumed
 
@@ -778,3 +777,8 @@ func hasArchivable(atts []model.Attachment, inlineConsumed map[int]bool) bool {
 	}
 	return false
 }
+
+// renderMessage renders one message's page. It is a variable only so a test
+// can count the renders (the RV-8 cost guard: one per message); production
+// always uses RenderWith.
+var renderMessage = RenderWith

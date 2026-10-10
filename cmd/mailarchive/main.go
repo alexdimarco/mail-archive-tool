@@ -1610,7 +1610,7 @@ func printSummary(logger *log.Logger, r app.Result, indexed, keepRaw bool, out s
 			line += fmt.Sprintf(", %d unresolved inline image(s) this run", s.UnresolvedInlineRef)
 		}
 		if s.HTMLFallback > 0 {
-			line += fmt.Sprintf(", %d HTML message(s) shown as source this run (too deeply nested or unsafe to render; content kept)", s.HTMLFallback)
+			line += fmt.Sprintf(", %d HTML message(s) shown as source this run (could not be rendered safely: too deep, unparseable, unsafe after re-parse or too large; content kept)", s.HTMLFallback)
 		}
 		if r.ReportPath != "" {
 			line += fmt.Sprintf(" — details in %s", r.ReportPath)
