@@ -283,8 +283,15 @@ func TestLiveAndRebuiltIndexAgreeOnOuterNoscriptEscapedText(t *testing.T) {
 
 	bodies := map[string]string{
 		"outer escaped case": `<p>outerescbody</p><noscript>&lt;outeresctag&gt;outeresctext&lt;/outeresctag&gt;<meta charset=utf-8></noscript>`,
+		// R3-AC1: the retry rewrites EVERY outermost noscript once any one trips
+		// the re-check, so the trigger is broader than one noscript with its own
+		// charset meta: a harmless charset-meta noscript BEFORE a noscript of
+		// escaped text decodes that text once (`&lt;b&gt;` becomes a <b> element
+		// for a reader with JavaScript off, `&amp;lt;i&amp;gt;` becomes `&lt;i&gt;`),
+		// so the tag names "lt" and "gt" are found live only.
+		"outer escaped twin": `<p>fzintro</p><noscript><meta charset=utf-8></noscript><noscript>A &lt;b&gt;fzbolded&lt;/b&gt; B &amp;lt;i&amp;gt;fzital&amp;lt;/i&amp;gt; C</noscript>`,
 	}
-	want := map[string]int{"outerescbody": 1, "outeresctext": 1, "outeresctag": 1}
+	want := map[string]int{"outerescbody": 1, "outeresctext": 1, "outeresctag": 1, "fzintro": 1, "fzbolded": 1, "fzital": 1, "lt": 1, "gt": 1}
 	live, rebuilt := parityArchive(t, bodies, keysOf(want))
 	assure.Reached(t, live["outerescbody"]+rebuilt["outerescbody"], "hits for the body word")
 	for _, p := range parityProblems(want, live, rebuilt) {
