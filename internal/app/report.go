@@ -168,6 +168,19 @@ func writeGapRows(w *bufio.Writer, out string, manifest *state.Manifest, gaps []
 		if lrState == state.LastRunPresent && !g.LastRun.Equal(lastRun.Started) {
 			parts = append(parts, "not attempted since "+g.LastRun.UTC().Format(time.RFC3339))
 		}
+		// Why, and what to do, in the words every surface shares (X10), with whether
+		// the original still exists: an inheritor with no tool reads this and nothing
+		// else (friction F10). A fillable Microsoft 365 row adds the deadline.
+		kind := state.SourceKind(manifest.GapSourceID(g.Token))
+		why := state.GapWhy(g.Reason)
+		if o := state.GapOriginal(g.Reason, kind); o != "" {
+			why += " (" + o + ")"
+		}
+		remedy := state.GapRemedy(g.Reason, kind, state.GapErrnoClass(g.Detail))
+		if g.Class == state.ClassFillable && kind == state.SourceGraph {
+			remedy += ". " + state.GapDeadlineRemedy
+		}
+		parts = append(parts, "why: "+why, "what to do: "+remedy)
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			tsv(g.Reason), tsv(g.Class), tsv(g.Folder), tsv(date), tsv(g.Subject), tsv(strings.Join(parts, " · ")), tsv(r.source))
 	}

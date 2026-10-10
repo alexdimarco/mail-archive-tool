@@ -82,7 +82,10 @@ row has a class:
   terminal = the source itself would not deliver it as it stands;
   info = nothing missing (the tool only noticed something odd).
 If no one runs the tool against the source anymore, every fillable or terminal
-row is missing from this archive.
+row is missing from this archive. The end of each row's detail says why it
+happened and what to do about it, and whether the original still exists. With
+the mailarchive program, run "mailarchive status -out ." in this folder for the
+same in plain words.
 
 Housekeeping files (safe to leave alone):
   .mailarchive-manifest.json   which messages are archived (used for

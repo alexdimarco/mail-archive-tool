@@ -3,8 +3,10 @@ package app
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"os"
@@ -21,6 +23,144 @@ import (
 
 // FI-S1a friction review fixes (docs/review-fi-s1a-friction.md): the app-level
 // ones. Each test asserts what the actor now sees.
+
+// covers: MA-327, R1, R7, R19, S48
+// F10: the inheritor's way from the root page to a remedy has no dead end. The
+// banner (its words unchanged) is followed by a link to the report and its count,
+// and names `mailarchive status -out .`; each ledger row of the report ends with
+// why it happened and what to do (the header is unchanged), including whether the
+// original still exists; README.txt names the same command.
+func TestInheritorPathFromBannerToRemedy(t *testing.T) {
+	const banner = "Some items from the original mail source may not be in this archive — see attachments-report.tsv"
+	src := filepath.Join(tmpDir(t), "Inbox")
+	maildirMessages(t, src, 2)
+	out := tmpDir(t)
+	logger := log.New(io.Discard, "", 0)
+	opts := Options{Inputs: []string{src}, Out: out, Mode: export.Incremental, Index: true, Pages: true}
+	if _, err := Run(context.Background(), opts, logger, nil); err != nil {
+		t.Fatal(err)
+	}
+	mpath := filepath.Join(out, ".mailarchive-manifest.json")
+	m, err := state.Load(mpath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tok string
+	for _, tk := range m.Stores {
+		tok = tk
+	}
+	m.ObserveGap(state.CaptureGap{Token: tok, Folder: "Inbox", Scope: state.GapScopeItem, Locator: "file:Inbox/x", Reason: "file-unreadable", Class: state.ClassTerminal,
+		Subject: "Lost", Detail: "open x: permission denied"}, time.Now().UTC().Add(-time.Hour))
+	if err := m.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Reindex(out, logger); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(out, "index.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(b)
+	for _, want := range []string{banner, `href="attachments-report.tsv"`, "1 item(s)", "mailarchive status -out ."} {
+		if !strings.Contains(page, want) {
+			t.Errorf("the root page lacks %q", want)
+		}
+	}
+
+	path, rows := writeReport(out, m, false, logger)
+	if rows != 1 {
+		t.Fatalf("%d report rows, want 1", rows)
+	}
+	lines := readLines(t, path)
+	if lines[0] != "kind\tclass\tfolder\tdate\tsubject\tdetail\tpath" {
+		t.Errorf("the report header changed: %q", lines[0])
+	}
+	detail := strings.Split(lines[1], "\t")[5]
+	for _, want := range []string{"why: the message file could not be read", "still in the source folder", "what to do: fix the permissions on the file"} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("the row's detail lacks %q: %q", want, detail)
+		}
+	}
+	if !strings.Contains(strings.Join(strings.Fields(archiveReadme), " "), `"mailarchive status -out ."`) {
+		t.Error("README.txt does not name `mailarchive status -out .`")
+	}
+}
+
+// covers: MA-327, R1, R7, R19, S48
+// F9: verify's "Not in this archive" line drops a zero part ("0 folder(s)"), says
+// how many of the missing items are retried and how many need action (and where
+// to read what to do), and says that "attested" means the files held are intact,
+// not that the archive is complete. The existing line's words, the verdict and the
+// exit code stay (TestVerifyPrintsTheNotInThisArchiveLine); `verify -json` gains
+// the split additively; a healthy archive's output has none of it.
+func TestVerifyNotInThisArchiveSplitsRetryableFromNeedsAction(t *testing.T) {
+	src := filepath.Join(tmpDir(t), "Inbox")
+	maildirMessages(t, src, 2)
+	out := tmpDir(t)
+	logger := log.New(io.Discard, "", 0)
+	if _, err := Run(context.Background(), Options{Inputs: []string{src}, Out: out, Mode: export.Incremental}, logger, nil); err != nil {
+		t.Fatal(err)
+	}
+	healthy, err := Verify(out, VerifyOptions{}, logger, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, l := range VerifySummary(healthy) {
+		if strings.Contains(l, "Not in this archive") || strings.Contains(l, "complete") {
+			t.Fatalf("a healthy archive's verify mentions gaps: %q", l)
+		}
+	}
+
+	mpath := filepath.Join(out, ".mailarchive-manifest.json")
+	m, _ := state.Load(mpath)
+	var tok string
+	for _, tk := range m.Stores {
+		tok = tk
+	}
+	run := time.Now().UTC().Add(-time.Hour)
+	m.ObserveGap(state.CaptureGap{Token: tok, Folder: "Inbox", Scope: state.GapScopeItem, Locator: "file:a", Reason: "file-unreadable", Class: state.ClassFillable}, run)
+	m.ObserveGap(state.CaptureGap{Token: tok, Folder: "Inbox", Scope: state.GapScopeItem, Locator: "file:b", Reason: "file-unreadable", Class: state.ClassTerminal}, run)
+	if err := m.Save(); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := Verify(out, VerifyOptions{}, logger, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.ExitCode() != 0 || !rep.Attested() || rep.GapRetryable != 1 || rep.GapNeedAction != 1 {
+		t.Fatalf("exit %d attested %v retryable %d need-action %d; want 0, true, 1, 1", rep.ExitCode(), rep.Attested(), rep.GapRetryable, rep.GapNeedAction)
+	}
+	lines := VerifySummary(rep)
+	joined := strings.Join(lines, "\n")
+	if strings.Contains(joined, "0 folder(s)") {
+		t.Errorf("a zero part is printed:\n%s", joined)
+	}
+	for _, want := range []string{"Not in this archive: 2 item(s) from the source could not be captured", "1 retried whenever the archive runs again", "1 need action", "mailarchive status -out", "means the files this archive holds are intact, not that the archive is complete"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("verify's summary lacks %q:\n%s", want, joined)
+		}
+	}
+	at, verdict := -1, -1
+	for i, l := range lines {
+		if strings.Contains(l, "not that the archive is complete") {
+			at = i
+		}
+		if strings.HasPrefix(l, "attested:") {
+			verdict = i
+		}
+	}
+	if at < 0 || verdict < 0 || at > verdict {
+		t.Errorf("the 'not complete' sentence (line %d) must come before the verdict (line %d)", at, verdict)
+	}
+	data, err := json.Marshal(rep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"gap_retryable":1`) || !strings.Contains(string(data), `"gap_need_action":1`) {
+		t.Errorf("verify -json lacks the split: %s", data)
+	}
+}
 
 // covers: MA-328, R18, R12, S48
 // F5: the run summary's "+N more" counts what is behind it, in `status`'s words: an

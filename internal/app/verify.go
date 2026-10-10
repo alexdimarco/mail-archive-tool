@@ -73,6 +73,10 @@ type Report struct {
 	// code (X1 for verify), because verify attests the files that ARE recorded.
 	GapItems   int `json:"gap_items,omitempty"`
 	GapFolders int `json:"gap_folders,omitempty"`
+	// Of those (items counted as gap_items counts them, a folder as one), how many a
+	// later run may capture (fillable) and how many need action (terminal); additive.
+	GapRetryable  int `json:"gap_retryable,omitempty"`
+	GapNeedAction int `json:"gap_need_action,omitempty"`
 
 	Problems  []Problem      `json:"problems"`            // bounded per category (see maxVerifyDetail)
 	Truncated map[string]int `json:"truncated,omitempty"` // kind → count omitted from Problems
@@ -198,10 +202,20 @@ func Verify(out string, opts VerifyOptions, logger *log.Logger, onProgress func(
 	for _, g := range manifest.CaptureGapsSorted() {
 		switch {
 		case g.Class != state.ClassFillable && g.Class != state.ClassTerminal:
+			continue
 		case g.Scope == state.GapScopeFolder:
 			v.rep.GapFolders++
 		default:
 			v.rep.GapItems += g.Weight()
+		}
+		w := g.Weight()
+		if g.Scope == state.GapScopeFolder {
+			w = 1
+		}
+		if g.Class == state.ClassFillable {
+			v.rep.GapRetryable += w
+		} else {
+			v.rep.GapNeedAction += w
 		}
 	}
 
@@ -644,7 +658,27 @@ func VerifySummary(r Report) []string {
 	// heads-up for the custodian, not a verdict — verify attests the files that are
 	// recorded, and a gap has none.
 	if r.GapItems > 0 || r.GapFolders > 0 {
-		out = append(out, fmt.Sprintf("Not in this archive: %d item(s), %d folder(s) from the source could not be captured (see attachments-report.tsv) — this does not affect attestation", r.GapItems, r.GapFolders))
+		var what []string
+		if r.GapItems > 0 {
+			what = append(what, fmt.Sprintf("%d item(s)", r.GapItems))
+		}
+		if r.GapFolders > 0 {
+			what = append(what, fmt.Sprintf("%d folder(s)", r.GapFolders))
+		}
+		out = append(out, fmt.Sprintf("Not in this archive: %s from the source could not be captured (see attachments-report.tsv) — this does not affect attestation", strings.Join(what, ", ")))
+		// Which of them a later run may capture and which need action (friction F9),
+		// and what the verdict below does not say.
+		var split []string
+		if r.GapRetryable > 0 {
+			split = append(split, fmt.Sprintf("%d retried whenever the archive runs again", r.GapRetryable))
+		}
+		if r.GapNeedAction > 0 {
+			split = append(split, fmt.Sprintf("%d need action", r.GapNeedAction))
+		}
+		if len(split) > 0 {
+			out = append(out, fmt.Sprintf("  Of these, %s — `mailarchive status -out %q` says what to do.", strings.Join(split, " and "), r.Out))
+		}
+		out = append(out, "  \"attested\" below means the files this archive holds are intact, not that the archive is complete.")
 	}
 	if r.Attested() {
 		out = append(out, "attested: every recorded file was checked and intact")
