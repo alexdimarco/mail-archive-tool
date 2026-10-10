@@ -307,15 +307,24 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		// error chain (fault-isolation §4.8.6, RR6-C1): a mailbox error can carry
 		// a context.Canceled no operator raised (a transport's own), and reading
 		// it as an interrupt would skip every later mailbox, record the run
-		// cancelled and let the CLI exit 0.
-		if ctx.Err() != nil {
+		// cancelled and let the CLI exit 0. It is about a walk the interrupt cut
+		// short: a mailbox that finished cleanly stays finished (an interrupt after
+		// the last one leaves a complete run), and the next mailbox's first request
+		// meets the cancel itself.
+		interrupted := ctx.Err() != nil
+		if interrupted && runErr != nil {
 			finish(opts.Out, &result, exp, manifest, idx, indexErrors, true, logger)
 			return result, context.Canceled
 		}
 		if runErr != nil {
 			failures++
 			if firstErr == nil {
+				// The context is live here, so a context.Canceled in the chain is a
+				// transport's own: it loses its chain now, not after a later cancel.
 				firstErr = runErr
+				if errors.Is(runErr, context.Canceled) {
+					firstErr = errors.New(runErr.Error())
+				}
 			}
 			logger.Printf("error: mailbox %s: %v", mbx, runErr)
 		}
