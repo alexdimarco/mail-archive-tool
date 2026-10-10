@@ -766,8 +766,23 @@ func (m *Manifest) Counts() (fillable, terminal, unknown int) {
 }
 
 // FallbackCounts returns, per reason, how many records show their page as
-// source (RV-10). TODO(RV-10): skeleton, filled in test-first.
-func (m *Manifest) FallbackCounts() map[string]int { return nil }
+// source (RV-10), from the additive body_fallback field. Records without one
+// (rendered as HTML, or written before the field) count nothing; nil when none.
+func (m *Manifest) FallbackCounts() map[string]int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out map[string]int
+	for _, r := range m.Entries {
+		if r.BodyFallback == "" {
+			continue
+		}
+		if out == nil {
+			out = map[string]int{}
+		}
+		out[r.BodyFallback]++
+	}
+	return out
+}
 
 // FixityCounts returns how many records carry at least one recorded file
 // digest (withFixity) and the total number of records (total). `status` prints

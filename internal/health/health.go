@@ -1041,6 +1041,7 @@ func Gather(out, nameOverride string) Input {
 			in.HasManifest = true
 			in.Messages = m.Len()
 			in.Fillable, in.Terminal, in.Unknown = m.Counts()
+			in.ShownAsSource = m.FallbackCounts()
 			in.WithFixity, _ = m.FixityCounts()
 		} else {
 			// The file exists but does not load (newer format, corrupt). Keep the

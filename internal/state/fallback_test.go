@@ -11,7 +11,6 @@ import (
 // message that rendered as HTML, and every record from before the field) count
 // nothing, and the count survives a save and a reload.
 func TestFallbackCountsPerReason(t *testing.T) {
-	t.Skip("open (RV-10): Manifest.FallbackCounts does not exist yet")
 	path := filepath.Join(t.TempDir(), "m.json")
 	m, err := Load(path)
 	if err != nil {

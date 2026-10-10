@@ -21,7 +21,6 @@ func shownInput(now time.Time) Input {
 // Gather carries the manifest's per-reason count on Input; a manifest with no
 // fallback records reads as none.
 func TestGatherCarriesShownAsSource(t *testing.T) {
-	t.Skip("open (RV-10): Input.ShownAsSource does not exist yet")
 	out := t.TempDir()
 	m, _ := state.Load(filepath.Join(out, ".mailarchive-manifest.json"))
 	m.Add("a", state.Record{Path: "a.html", Folder: "F"})
