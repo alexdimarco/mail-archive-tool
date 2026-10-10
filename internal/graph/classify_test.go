@@ -81,6 +81,7 @@ func TestClassifyIsTheSharedClassifier(t *testing.T) {
 		{"idle stop", stalled, ctx, ClassTimeout, true},
 		{"overall stop, wrapped", fmt.Errorf("fetch message M: %w", &TimeoutError{Kind: TimeoutOverall, Limit: time.Hour, MessageID: "M"}), ctx, ClassTimeout, true},
 		{"over the size cap", &TooLargeError{MessageID: "M", Limit: 1}, ctx, ClassTooLarge, false},
+		{"a listing guard stop", fmt.Errorf("list: %w", &ListingError{Kind: ListingPageCap, Limit: 5}), ctx, ClassFailed, false},
 		{"anything else", syntax, ctx, ClassFailed, false},
 		{"the walk context is done", stalled, done, ClassCancelled, false},
 		{"the walk context is done, any error", &StatusError{Code: 500}, done, ClassCancelled, false},

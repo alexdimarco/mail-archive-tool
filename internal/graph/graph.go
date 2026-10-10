@@ -48,10 +48,11 @@ type Config struct {
 
 	// The $value download's idle window and its own response-header window
 	// (zero = the defaults, 2 minutes each; the header window is never below the
-	// idle one). They are fixed by design (fault-isolation §4.8.5); only tests
-	// scale them.
+	// idle one), and the page cap of one paging loop (zero = 100 000). They are
+	// fixed by design (fault-isolation §4.8.5); only tests scale them.
 	MIMEIdleTimeout   time.Duration
 	MIMEHeaderTimeout time.Duration
+	PageCap           int
 
 	// Delegated (per-user, device-code) fields — used only by NewDelegated.
 	// DeviceAuthURL defaults to the Microsoft devicecode endpoint; tests override
@@ -86,6 +87,7 @@ const (
 	defaultMIMETimeout       = 10 * time.Minute
 	defaultMIMEIdleTimeout   = 2 * time.Minute
 	defaultMIMEHeaderTimeout = 2 * time.Minute
+	defaultPageCap           = 100000
 )
 
 // MIMEMaxDuration is the shared overall cap on one $value download, Retry-After
@@ -119,6 +121,10 @@ type Client struct {
 	mimeHC     *http.Client
 	mimeIdle   time.Duration
 	mimeHeader time.Duration
+
+	// pageCap bounds each paging loop's pages (pageGuard); each loop counts its
+	// own.
+	pageCap int
 
 	// meMode addresses the signed-in user's OWN mailbox at /me instead of
 	// /users/{upn}: it is set by the delegated (device-code) constructor, where
@@ -162,13 +168,15 @@ func New(ctx context.Context, cfg Config) *Client {
 	return newClient(ctx, base, cc.TokenSource(ctx), b, false)
 }
 
-// bounds are a client's deadlines, each resolved to its default when unset.
+// bounds are a client's deadlines and page cap, each resolved to its default
+// when unset.
 type bounds struct {
 	req, mime, idle, header time.Duration
+	pageCap                 int
 }
 
 func (cfg Config) bounds() bounds {
-	b := bounds{req: cfg.RequestTimeout, mime: cfg.MIMETimeout, idle: cfg.MIMEIdleTimeout, header: cfg.MIMEHeaderTimeout}
+	b := bounds{req: cfg.RequestTimeout, mime: cfg.MIMETimeout, idle: cfg.MIMEIdleTimeout, header: cfg.MIMEHeaderTimeout, pageCap: cfg.PageCap}
 	if b.req <= 0 {
 		b.req = defaultRequestTimeout
 	}
@@ -180,6 +188,9 @@ func (cfg Config) bounds() bounds {
 	}
 	if b.header <= 0 {
 		b.header = defaultMIMEHeaderTimeout
+	}
+	if b.pageCap <= 0 {
+		b.pageCap = defaultPageCap
 	}
 	return b
 }
@@ -198,6 +209,7 @@ func newClient(ctx context.Context, base string, src oauth2.TokenSource, b bound
 		mimeHC:      oauth2.NewClient(mimeCtx, src),
 		mimeIdle:    b.idle,
 		mimeHeader:  b.header,
+		pageCap:     b.pageCap,
 		meMode:      meMode,
 	}
 }
@@ -287,7 +299,13 @@ func (c *Client) Folders(ctx context.Context, userID string, filter FolderFilter
 			path = c.userSeg(userID) + "/mailFolders/" + url.PathEscape(parentID) + "/childFolders"
 		}
 		next := c.base + path + "?$select=id,displayName,childFolderCount&$top=100"
+		// Each level is a paging loop of its own, with its own nextLink guard
+		// (the repeat set and the page cap; no host/path pin until step SGc).
+		guard := c.newPageGuard(false)
 		for next != "" {
+			if err := guard.admit(next); err != nil {
+				return err
+			}
 			var body struct {
 				Value []struct {
 					ID               string `json:"id"`
@@ -500,7 +518,13 @@ func (c *Client) Messages(ctx context.Context, userID, folderID string, fn func(
 	msgs := c.base + c.userSeg(userID) + "/mailFolders/" + url.PathEscape(folderID) + "/messages"
 	next := msgs + "?$select=" + sel + "&$expand=" + sensitivityExpand + "&$top=1000"
 	honored, firstPage := false, true // whether Prefer: IdType="ImmutableId" is in effect this run
+	// The listing's nextLink guard: the repeat set and the page cap; capture's
+	// loops get no host/path pin until fault-isolation step SGc (XC25's gate).
+	guard := c.newPageGuard(false)
 	for next != "" {
+		if err := guard.admit(next); err != nil {
+			return err
+		}
 		var body struct {
 			Value []struct {
 				ID                string               `json:"id"`
