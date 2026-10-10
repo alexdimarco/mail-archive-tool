@@ -1048,6 +1048,20 @@ Neither depends on rows 2–7, and catalog changes still land one at a time.
 - **Unblocks:** EW-E2 once EW-E1 is built and RR-2b passes; EW-E4 (RR-3) once EW-E2 and
   EW-E3 are built.
 
+### 13.8 RV-10 built (2026-10-10), delegated-judgement
+
+RV-10 (status, desktop and GUI visibility of messages shown as source) is built on the
+sanitizer's free ids MA-494, MA-495 and MA-497..MA-499. Two delegated rulings:
+- **Where the count comes from.** From the manifest's per-message `body_fallback` reason, not from
+  new last-run fields: it persists across incremental runs (the gap the review named: run 2
+  printed nothing), and it adds no record field. It is a note with code `shown_as_source`, never a
+  WARN or RED, so a healthy backup stays GREEN. `status -json` gains an optional `shown_as_source`
+  key (version unchanged). The desktop and GUI reuse `health.Summary`.
+- **Wording.** The plain-words line ("N message(s) are shown as plain text instead of formatted
+  pages … Nothing is lost … Nothing to do.") follows the what / why / remedy rule; X6 and X10 only
+  require that the apps mirror `status`. Not done, and left to a later slice: the GUI export
+  summary and the desktop capture result message do not mention the fallback count.
+
 ### 13.7 Escalations from LC-C1's adversarial pass (merged 2026-10-10)
 
 None blocks anything: each has a skip encoder or a safe interim in force.
