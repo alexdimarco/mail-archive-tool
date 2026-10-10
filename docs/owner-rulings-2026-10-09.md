@@ -1050,6 +1050,15 @@ Neither depends on rows 2–7, and catalog changes still land one at a time.
 
 ### 13.6 Escalation from the g8 branch
 
+**ESC-10 RULED by the owner on 2026-10-10 ("esc-10 go"): the recommended answer.** One rule for
+every removal: never delete a descriptor the tool cannot read; print its path and the remedy, and
+status keeps naming it. This is owner-accepted, so it narrows MA-455's old guarantee on purpose:
+`5090706`'s default-named deletion is reversed, and MA-455's covering assertion for the
+default-named case changes from "the file goes with the entry" to "the file stays and is named".
+It is built on the g8 branch after its adversarial pass finishes (the pass is reading that code),
+as its own commit with prove-fail, and MA-455's row text is updated in the same commit. The table
+below is kept as the record of the question.
+
 | Id | The question for the owner | Recommended answer | Safe interim | Blocks |
 |---|---|---|---|---|
 | **ESC-10** (g8 review, issue 1; §13.3 g8-R2) | Should `schedule -out X -remove`, and the dashboard's remove, keep and name an unreadable backup descriptor, as a custom-named removal now does, instead of deleting it with the archive's default-named schedule? Adopting this narrows MA-455's existing guarantee and reverses 568c992's covering assertion (§0, rule 2) | Yes. One rule for every removal: never delete a descriptor the tool cannot read, because it cannot tell whose it is. Status names the file with the remedy | 568c992's rule, restored in `5090706`: the file goes with the default-named entry and stays, named, with any other entry. The residual: a damaged descriptor that was rewritten for a custom-named backup is deleted when a default-named entry for the same archive is removed | nothing |
