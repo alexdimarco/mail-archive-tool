@@ -34,9 +34,28 @@ medium, with reasons given below. All 4 are fixed in `aa1c98d`. **Round 2 (`aa1c
 / 12 confirmed / 0 refuted**, rated 0 high, 3 medium and 9 low; the finder had rated RV-3 medium
 and the skeptic lowered it to low. **Both rounds: 16 found / 16 confirmed / 0 refuted (0 high,
 6 medium, 10 low); 15 fixed (round 1's 4 in `aa1c98d`, 11 of round 2's 12 on
-`wip/sanitizer-r2-integrated`, not yet re-verified by a round-3 pass), 1 open (RV-10, low).**
+`wip/sanitizer-r2-integrated`, which round 3 then attacked), 1 open (RV-10, low).**
 
-**Verdict: FINDINGS OPEN.** As of round 2 the twelve findings were: three confirmed medium, all
+**Round 3** (2026-10-09, `wip/sanitizer-r2-integrated` at `829f51d`, the adversarial pass the
+rulings log's §9 row 1 owes before the branch merges) used three lenses (outside aggressor, the
+rebuild forger, integrity and the differential): **14 found / 8 confirmed / 0 refuted**, with 5
+duplicates and 1 non-goal counted separately; the confirmed ones are rated 0 high, 1 medium (R3-AO1)
+and 7 low. **All three rounds: 30 found / 24 confirmed / 0 refuted (0 high, 7 medium, 17 low); 22
+fixed, 2 open (RV-10, R3-AF2).** Seven of round 3's eight are fixed on the same branch (see *Round 3*
+at the end, with its commits, tombstones and a corpus run on a binary built at the fixed head), and
+so are both san-Q2 shapes. The two round-3 duplicates of known gaps (R3-AF1, R3-AC1) and the
+non-goal (R3-AO2) are named there as still open or ruled.
+
+**Verdict: FINDINGS OPEN.** Open: **RV-10** (the fallback is not surfaced in `status`, the GUI or
+the desktop message; the status branch owns it), **R3-AF2** (a quoted local part holding ` <` makes
+the rebuilt sender differ from the live one; the fix changes the page's sender format, so it is the
+owner's decision and a skipped MA-187 encoder holds it), the known gaps encoded as skipped guards and
+not accepted — **MA-187's erase half** (R3-AF1; FB-1, FX-187's writer signal) and **MA-492's
+outer-noscript escaped text** (R3-AC1; MA-476's escaped twin) — the owner question behind **R3-AO2**
+(fail closed on any live mail `<link href>`?), and **no adversarial pass has yet read round 3's own
+fixes** (a corpus run caught one false positive of the first of them). The verdict can say
+"no findings open" only when every finding of every round is fixed and re-verified. As of round 2
+the twelve findings were: three confirmed medium, all
 present at `066f86d` — RV-1 (a pre-v0.3.0 page lets a mail forge its own subject, sender and date
 on `reindex -rebuild`), RV-2 (`<link rel="preconnect">` survives sanitizing and opens a
 connection to the sender's host when the archived page is viewed) and RV-4 (benign mail that
@@ -44,8 +63,8 @@ omits `</head>` gets no body words in the live index) — and nine low: DIFF-FP-
 and RV-5 to RV-10. Eleven of the twelve are now fixed on `wip/sanitizer-r2-integrated`; only
 RV-10 is still open (its owner is the status branch). See *Round-2 fixes* below for the commits,
 tombstones, open owner questions and residuals; the "Fix commit"/"Tombstone test" columns name
-each finding's guards. **The verdict stays FINDINGS OPEN** regardless: these fixes have had no
-adversarial round-3 pass, and RV-10 remains open. Round 1's four findings (OUT-1, INT-1, INT-2,
+each finding's guards. **The verdict stays FINDINGS OPEN** regardless (round 3 attacked these
+fixes; see above): RV-10 remains open. Round 1's four findings (OUT-1, INT-1, INT-2,
 INT-3) are fixed in `aa1c98d` and were re-verified. In round 1 the commit's central claim, that
 the round trip is re-checked "as a browser will" parse it, held only for a browser with
 scripting **on**; `aa1c98d` re-checks under both scripting modes, and the differential lens
@@ -317,8 +336,8 @@ The round-2 findings were fixed on three parallel branches and integrated on
 `8f900c9` index), with the cross-branch problems closed by the integration
 commits below. The "Fix commit" and "Tombstone test" columns above name each
 finding's commits and guards; all commit ids are on that branch. **The verdict
-stays FINDINGS OPEN:** these fixes have not had an adversarial round-3 pass, and
-RV-10 is still open.
+stays FINDINGS OPEN:** these fixes were attacked in round 3 (see the end of this
+report, and the header for what is still open), and RV-10 is still open.
 
 Fixed (11 of 12): DIFF-FP-1, DIFF-FP-2, RV-1, RV-2, RV-3, RV-4, RV-5, RV-6,
 RV-7, RV-8, RV-9. **Still open: RV-10** (the fallback is not surfaced in
@@ -421,7 +440,9 @@ closing tags, whose names the rebuild indexes; and a `<noscript>` nested past
 `flattenDepth` (adv_deep_xmp, adv_deep2_template) loses its tags to the
 flattener, so an `<xmp>` or `<template>` straddling the noscript's raw-text end
 reads differently on the page. Encoded by the skipped MA-492
-`TestLiveAndRebuiltIndexAgreeOnCorpusResidualShapes`, which fails if un-skipped.
+`TestLiveAndRebuiltIndexAgreeOnCorpusResidualShapes`, which failed if un-skipped.
+**CLOSED in round 3 (san-Q2, `6bea1cd` and `9f6a850`): the encoder passes and its Skip is
+removed.**
 
 ### Differential lens results
 
@@ -563,3 +584,196 @@ headless Edge processes were killed, and the main working tree was not touched. 
 archives, beacon logs and binaries are in the session scratchpad (`adv2-scripts/`,
 `adv2-data/`, `out-*`, `adv2-bin/`), with the differential harness in
 `adv2-differential/cmd/advdiff`.
+
+## Round 3 (`wip/sanitizer-r2-integrated` at `829f51d`)
+
+**Scope.** The adversarial pass owed by the rulings log's §9 row 1 (FX-SAN) before the sanitizer
+branch merges: everything on `wip/sanitizer-r2-integrated` since `176c4b2`, the base it shares
+with `fix/review-2026-10` (42 commits; `git diff 176c4b2..829f51d -- internal/ cmd/`). That is
+the round-2 fixes on three branches, merged as `4e4db2f` (export: link hints, render once and
+too-large, flatten past 480, re-check reasons, noscript retry), `de3f2f2` (reader: old-page header
+anchoring, fallback layout, tree-validated deep split, legacy full documents, UTC-only stamps) and
+`8f900c9` (index: tree-walk extractor, depth-cap fallback tokenizer, noscript as markup,
+live/rebuild parity guards), and the integration fixes `a397085` to `829f51d` (the in-place noscript
+retry `d787013` with `fd28e01` and `c3b26a6`'s structure check, `cbc9047`'s reserved markers,
+`0f824b9` and `e8e6129`'s block set, `7f2fd05`'s implied head, `a9cea49`'s Verification line,
+`9f4cb6a`'s MA-187 encoder, `829f51d`'s R8 encoder). Rulings san-Q1 (the retry also runs on a
+failed page check; stray noscript end tags under SVG/MathML integration points are refused) and
+san-Q2 (the two R8 shapes left after `c3b26a6`) name two of the things attacked.
+
+Three lenses, each a finder followed by a refutation-default skeptic who reproduced the claim with
+a harness of its own (the same finder → skeptic process as rounds 1 and 2):
+
+- **Outside aggressor (hostile sender against export):** crafted mail through `export.RenderWith`
+  and the CLI, read in BOTH scripting readings with x/net (the oracle of rounds 1 and 2, which
+  agreed with Edge 143 there) plus grammar fuzzing of noscript/head/svg/plaintext shapes (about
+  48M mails). No browser was run.
+- **The rebuild forger (hostile mail and legacy pages against `reindex -rebuild`):** forging and
+  erasing subject, sender and date on current and old-format pages, the fallback attribute, the
+  date stamp readers, the deep-page split (about 1.45M fuzzed mails).
+- **Integrity and the differential (live index against rebuilt index):** export → `reindex
+  -rebuild` → per-term counts through `fts5vocab`, page layout in both readings over 612 pages,
+  cost, the deep-flatten differential (about 3.5M fuzz cases).
+
+**Round 3: 14 found / 8 confirmed / 0 refuted** (5 duplicates and 1 non-goal counted separately;
+the skeptic rated the 8 confirmed 0 high, 1 medium and 7 low, the finders' own ratings unchanged).
+Counting each defect once, R3-AF3 stands for three reports (R3-AO3, R3-AC4), R3-AC5 for two
+(R3-AF5) and R3-AC2 for two (R3-AF4): 7 distinct confirmed defects. **Fixed: 7 of the 8
+confirmed** (R3-AO1, AF3, AF4, AC2, AC3, AC5, AC6; with them the duplicates R3-AO3, R3-AC4 and
+R3-AF5) and both san-Q2 shapes. **Open: R3-AF2** (low; its fix changes the page's sender format, an owner
+decision: a skip encoder cites MA-187). The duplicates R3-AF1 (MA-187's erase half, FB-1/FX-187)
+and R3-AC1 (MA-492's outer-noscript escaped text, pending the owner on MA-476) are the known
+open gaps, unchanged; R3-AO2 is the stated policy (rulings: "whether the re-check should fail
+closed on any live mail `<link href>`" is an open question).
+
+| ID | Lens | Claim (file:line) | Verdict | Evidence (repro or refutation) | Fix commit | Tombstone test |
+|---|---|---|---|---|---|---|
+| R3-AO1 | outside aggressor | A stray `</div>` in a body `<noscript>` makes a meta refresh, preconnect, second charset or forged header live for a reader with JavaScript off. `hostileSurvives` (`internal/export/html.go:1210`) re-checks the sanitized body in a bare `<body>` with no `div.mailarchive-body` around it, so the stray `</div>` is inert there and a later `<plaintext>` swallows the payload as text; in the page, with scripting off, it closes the noscript and the page's own body div, `</noscript>` no longer closes an `<svg>` opened inside it, `<plaintext>` becomes an SVG element and `<meta>` breaks out. `pageFallback` (`:176`) tested only header/body anchoring and `sanitizeChecked` (`:320`) accepted the first pass on that basis | CONFIRMED (medium) | Body `<p>x</p><noscript></div><svg></noscript><plaintext><meta http-equiv=refresh content='0;url=http://e.test/r'>`: no fallback, no Verification line, the page keeps the bytes verbatim; pagecheck (x/net, both readings) reports `meta:refresh(scripting=false)`, scripting on is clean. Variants `<math>`, `<svg><textarea>`, `<xmp>`, a full ESP document, `</div></div></div>`, `<link rel=preconnect>` (`hint(scripting=false)`), a second charset and a forged `<div class=mailarchive-header data-mailarchive-field=from>` (`hdrs=2(scripting=false)`) all reproduce. Control: a harmless `<noscript><meta charset=x></noscript>` first makes the retry rewrite every noscript and neutralize it. JS-off readers only; a JS-on reader and the rebuild are unaffected. Same class as round 1 OUT-1 (its check document has the same shape). Reproduced in-process and end to end by the skeptic; no browser | `1406fe8` | MA-300/MA-474 `TestRenderStrayDivInNoscriptCannotMakeBreakoutLive` (RED at `829f51d`: `svg plaintext: a live hostile meta ... [refresh (scripting=false)]`, `resource hint ... [preconnect http://e.test (scripting=false)]`, `second charset ... got [1 2]`, `forged header (reading 1) ... got 2 and 1`) |
+| R3-AO2 | outside aggressor | A non-hint `<link href>` (`rel=icon`, `manifest`) inside a `<noscript>` stays live for a reader with JavaScript off: `hostileIn` fails closed only on resource-hint rels (`html.go:1176-1187`, `:1299-1301`), and the noscript copy is raw text to `neutralizeLink` (`:1624-1644`) | NON-GOAL | Parser-level reproduction is true (`<p>x</p><noscript><link rel=icon href=http://e.test/i.ico></noscript>` exports with no fallback and a live `link-href:icon` with scripting off). But it is the stated policy: `neutralizeLink`'s own comment says a noscript copy fails closed only for a hint and "any other link type there keeps its href in that reading, its fetch refused by the policy" (ArchiveCSP `default-src 'none'; img-src data:; font-src data:`), the round-2 report lists the missing JS-off browser check of the noscript link/meta copies as a residual, and the rulings log lists "whether the re-check should fail closed on any live mail `<link href>`" as an open question, not ruled. No request was shown (no browser; a favicon fetch from the browser process outside the page policy is a suspicion only). The one network effect CSP cannot govern, the hints, is already closed (RV-2). Cheap to close if the owner wants it | none (owner question) | none |
+| R3-AO3 | outside aggressor | A `<frameset>` mail archives an empty page with no fallback (`html.go:412-419` bodyNode nil) | DUPLICATE of R3-AF3 | Same defect; reproduced: `<div class="mailarchive-body">\n\n</div>`, `BodyFallback ""`, clean pagecheck | `36cfa22` | `TestRenderFramesetMailIsShownAsSource` |
+| R3-AF1 | rebuild forger | MA-187's erase half is open for every page this release writes; a head `<style>`/`<script>` carrying the old header's bytes makes the rebuild read a current page as a legacy one (`internal/app/htmlheader.go:244` `legacyHeaderSpan`, `:271` `anchorHeader`); a writer-side refusal in `pageFallback` (`html.go:176`) would close it for new pages | DUPLICATE of the MA-187 erase-half open gap | Reproduces (CLI: unrecovered-fields=3, empty subject and sender, date 0, nothing forged) but it is the known, ruled, encoded gap: the catalog's MA-187 row, the skipped `TestRebuildCurrentPageRecoversRealHeaderDespiteMimicInHead` (`internal/app/rebuild_mimic_test.go:137`) and ruling FB-1 (an out-of-band writer signal, FX-187, with "erase, never forge" kept until then). The finder's writer-side guard is an alternative to FB-1's choice, so the owner's call; it would not cover pages already on disk. Unchanged by this round (the `erase` corpus: unrecovered=3 before and after) | none (FX-187) | the skipped MA-187 encoder (unchanged) |
+| R3-AF2 | rebuild forger | Rebuild re-splits sender names on the last ` <`, so a quoted local part holding ` <` rewrites or swaps the indexed sender (`internal/app/htmlheader.go:579` `splitSender`, `internal/export/html.go:1945` `formatSender`) | CONFIRMED (low) | Reproduced end to end with real mbox parsing. `From: Mallory <"x <ceo"@bank.example>`: live ("Mallory", `x <ceo@bank.example`), rebuilt ("Mallory <x", `ceo@bank.example`); `From: "ceo@bank.example> <mallory"@evil.example`: live name "" and email the whole string, rebuilt the reverse (name the string, email ""). Display-level only: FTS tokenizes the sender column the same and `from:` matches both columns. Pre-existing | **open**: needs an owner decision (the page's sender format changes, or the live index takes the same lossy round trip) | MA-187 `TestRebuildRecoversSenderWithAnEmbeddedAngleBracket` (SKIPPED encoder, `c1c9ec0`; un-skipped it fails with `sender after the rebuild = ["Mallory <x" "ceo@bank.example"], live = ["Mallory" "x <ceo@bank.example"]`) |
+| R3-AF3 | rebuild forger | A frameset mail loses its whole body from the page, with no fallback, no manifest note and no words in the rebuilt index (`html.go:354-419` `sanitizeParsed`, bodyNode nil) | CONFIRMED (low) | Frameset mail `<html>...<frameset cols="*"><frame src=...><noframes>framesetword alternate text</noframes></frameset></html>`: no Verification line, the page holds an empty body div, `search framesetword` live 1, rebuilt 0. Pre-existing (the base has the same nil-body path). Canonical for R3-AO3 and R3-AC4 | `36cfa22` | MA-303 `TestRenderFramesetMailIsShownAsSource` (RED: `a mail with no body must be shown as source, not as an empty page`); MA-492 `TestLiveAndRebuiltIndexAgreeOnAFramesetMail` (RED: `search "framesetword": live=1 rebuilt=0`) |
+| R3-AF4 | rebuild forger | Serialization that is not a fixed point lets mail content leave `div.mailarchive-body`; visible on the page, never indexed on rebuild (`html.go:176-213` `pageFallback`/`anchoredPage` check no containment; `internal/app/htmlheader.go:334`) | CONFIRMED (low; same mechanism as R3-AC2, fixed with it) | `<li><table><div><li></div> escapeword visible tail`: the page's body div closes at the mail's `</div>` and the tail is body-level text after it; CLI: `search escapeword` live 1, rebuilt 0; no fallback. Other trigger `<button><table><div><button></div> endmarker`. Kept as a duplicate of R3-AC2 | `1406fe8` | MA-474 `TestRenderKeepsTheWholeMailInsideItsBodyDiv` (RED: `li table div li (reading 0, fallback ""): content follows div.mailarchive-body in <body>`) |
+| R3-AF5 | rebuild forger | `flattenDeep` drops `<template>` tags past depth 480, so the page shows hidden content the live index skips (`html.go:499-1000` `flattenAt`; `internal/index/htmltext.go` `walkElement`) | DUPLICATE of R3-AC5 | Variant (a) of R3-AC5: 485 or 500 nested `<div>` then `<template>hiddenword</template> visibleword` gives hiddenword live 0, rebuilt 1 (10 divs: both 0) | `9f6a850` | `TestFlattenerRefusesWhatItCouldNotDropWithoutChangingTheMail`, `TestLiveAndRebuiltIndexAgreeOnTagsThePageCannotFlatten` |
+| R3-AC1 | integrity / differential | The in-place noscript retry decodes the text of EVERY noscript in the mail once any one trips the re-check, so escaped text can become live markup for a JS-off reader and live/rebuilt words differ (`html.go` `neutralizeNoscriptContents`/`neutralizeOneNoscript` ~`:1385-1497`) | DUPLICATE of the MA-492 / MA-476 open gap | Reproduced (`<noscript><meta charset=utf-8></noscript><noscript>A &lt;b&gt;fzbolded&lt;/b&gt; ...`: live `lt`=1 `gt`=1, rebuilt 0) but it is the known skipped `TestLiveAndRebuiltIndexAgreeOnOuterNoscriptEscapedText` (pending the owner on MA-476's escaped twin); only the trigger is broader (a charset meta in a different noscript). Safety unaffected: the dual-mode re-check still runs after the rewrite | `c1c9ec0` (the skipped encoder gains this fixture; no assertion loosened) | `TestLiveAndRebuiltIndexAgreeOnOuterNoscriptEscapedText` (SKIPPED; un-skipped: `search "lt": live=1 rebuilt=0`, `gt` 1/0, `outeresctag` 1/0) |
+| R3-AC2 | integrity / differential | Serialization is not a fixed point for malformed nesting, so mail markup closes `div.mailarchive-body` early and content falls outside it; rebuild loses those words (`html.go` `anchoredPage` `:194-213`, `pageFallback` `:176`) | CONFIRMED (low) | `<button> f4zero <table/> f4one <div> f4two <button> f4three </div> f4four`: live f4four 1, rebuilt 0 (f4zero..f4three 1/1); `<li> f3zero <table> f3one <div> f3two <li> f3three <colgroup> f3four` likewise; no fallback, pagecheck clean. Fuzz rate 2 of 800k. Canonical for R3-AF4 | `1406fe8` | MA-474 `TestRenderKeepsTheWholeMailInsideItsBodyDiv` (RED: `f3 li colgroup: "f3four" must be shown in the body div`, `f4 button table: content follows div.mailarchive-body`) |
+| R3-AC3 | integrity / differential | A script left in an escape state plus foster-parenting hides the first table cell's words from the page and the rebuilt index (`html.go` `sanitizeParsed` serialization, `hostileSurvives`/`pageFallback` compare no text) | CONFIRMED (low) | `<table><tr><td> f1zero <thead> f1one <menuitem> f1two <script><!-- f1three <script><!-- f1four </div>`: f1zero live 1, rebuilt 0; in the page the script swallows the table (a visible-text walk shows only `f1one f1two`). Fuzz: 25 of 1.5M shallow cases, all this family. Same family as R3-AC2, a different symptom and fix (a words check) | `1406fe8` | MA-474 `TestRenderKeepsTheWholeMailInsideItsBodyDiv` (RED: `f1 script escape table: "f1zero" must be shown in the body div`) |
+| R3-AC4 | integrity / differential | A mail with a body-level `<frameset>` renders an empty page with no fallback (`html.go` `sanitizeParsed` ~`:412-419`) | DUPLICATE of R3-AF3 | Same defect; reproduced (`f2beta` live 1, rebuilt 0; empty page, `BodyFallback ""`). Its fix direction (fall back when body is nil and the mail was non-empty) was taken | `36cfa22` | `TestRenderFramesetMailIsShownAsSource` |
+| R3-AC5 | integrity / differential | Flattening past depth 480 changes what hidden or foreign content means: (a) `<template>` dropped, its text shown and indexed (rebuilt only); (b) an SVG `<style>` beyond a dropped `<g>` indexed (rebuilt only); (c) a dropped SVG's self-closing `<textarea/>` becomes an HTML textarea that swallows the rest of the page, whose closing tags are indexed as 480 extra `div` terms; (d) a 481-deep `<noscript>` wrapper hides the words after it (live only; the known second san-Q2 gap); (e) a CDATA section past the cap becomes a bogus comment, its text live only (`html.go` `flattenAt`/`flattener` `:516-1010`; `internal/index/htmltext.go`) | CONFIRMED (low) | Reproduced in-process (live index against rebuild): f5secret live 0 rebuilt 1 (485 or 500 divs, 10 divs both 0), f6hidden 0/1, the term `div` 0/1, f7shown 1/0, f9cdata 1/0. All shapes need 480+ nested elements and are hostile-shaped; the ordinary-mail and nested-table parity tests are unaffected; no R19 effect. (a), (b), (c), (e) new; (d) is the known gap. Canonical for R3-AF5 | `9f6a850` | MA-473/MA-492 `TestFlattenerRefusesWhatItCouldNotDropWithoutChangingTheMail` and `TestLiveAndRebuiltIndexAgreeOnTagsThePageCannotFlatten` (RED at `6bea1cd`: `template ... must be shown as source ("too-deeply-nested"), got ""`, `svg cdata ... "f9cdata" must be live text`, `search "f5secret": live=0 rebuilt=1`, `"f9cdata": live=1 rebuilt=0`) |
+| R3-AC6 | integrity / differential | The 16x serialization cap (`432509a`) scales with input size, so padding the mail lifts the cost guard (`html.go` `serializedCap` `:435`, `capWriter`, `sanitizeParsed` `:397-423`) | CONFIRMED (low) | A mail of `<!--` + pad + `-->` + `<p>` + 400 `<b id=iN>` + 20000 `<p>x</p>`: with no pad (0.16 MB) 1.3 s and a too-large fallback (the guard works); with a 10 MB pad the cap is 160 MB, so it exports in 17.4 s, 3.4 GB peak and a 134 MB rendered page (the finder: 18.6 s, 3.2 GB, 126 MB). Linear (about 1.7 s per padded MB), not quadratic; the archive lock is held. RV-8's direction had been "16x or an absolute cap (say 32 MB)" and only the relative half was taken | `655861c` | MA-472 `TestSerializedCapDoesNotScaleWithPadding` (RED: `serializedCap(10485760) = 167772160, want 44040192`), `TestPaddingCannotLiftTheSerializationCap` |
+
+**Known items this round also closed (san-Q2, rulings §13.3).** Both R8 shapes of the skipped
+`TestLiveAndRebuiltIndexAgreeOnCorpusResidualShapes` (8 of the 372 corpus-adv mails) were fixable
+without a design change, and its Skip is removed (it is a permanent guard):
+
+- **A `<plaintext>` at the end of a mail swallows the page's closing tags** (`6bea1cd`): the
+  rebuild removes the template's closing bytes (`export.PageClosers`, `\n</div>\n</body>\n</html>\n`)
+  from a final plaintext's text before indexing (`trimSwallowedClosers`), so "div", "body" and
+  "html" are found on neither side. The writer cannot close a plaintext, and the exporter's page
+  check allows exactly this deviation (the existing twin "body plaintext at the end" still renders
+  as HTML). Tombstone `TestLiveAndRebuiltIndexAgreeOnAFinalPlaintext` (MA-492; RED with the trim
+  mutated out: `search "body": live=1 rebuilt=3`, also `div` and `html`).
+- **The flattener drops a noscript's tags past depth 480** (`9f6a850`): with R3-AC5, it now
+  declines to drop a `<noscript>`, `<template>` or SVG `<style>`/`<script>` start tag past the cap
+  (the mail is shown as source, `too-deeply-nested`, as before the flattener existed), drops a
+  self-closing leaf in a dropped SVG/MathML region with it, and writes a CDATA section there as its
+  escaped text. The existing tests that keep the SVG root dropped (`tp foreignobject cell`, a
+  600-deep SVG group) still render as HTML.
+
+**What the fixes are.** One page-level check carries R3-AO1, AC2, AC3 and AF4 (`1406fe8`):
+`pageFallback` now takes the sanitized body and, in every reading, requires that nothing but
+whitespace follows `div.mailarchive-body`, that the page holds exactly the template's own charset
+and policy metas, no live resource-hint link and at most one header and one body marker element;
+with scripting on, the body div's children must serialize to exactly the sanitized markup (modulo
+the stray `</noscript>` end tags of a rewritten noscript and the closing tags swallowed by a final
+`<plaintext>` or script escape). A failing page is `unsafe-after-reparse`, and a noscript mail still
+gets the in-place retry first. The catalog rows MA-474, MA-303, MA-472, MA-473, MA-492 and MA-187
+carry the new statements.
+
+**A regression of my own fix, found by the corpus run and fixed (`c076187`).** The first version of
+the body-div check (`1406fe8`) pushed 8 of the 49 benign corpus mails (Outlook simple and chains,
+Mailchimp, HubSpot, Litmus, a video/picture mail) into the fallback: `neutralize` had always appended
+a second `alt` and `class` to an `<img src="cid:...">` with no matching part that already had its own,
+which the parser drops on re-parse (the first attribute wins), so the serialization was not a fixed
+point. `neutralize` now adds the caption and the marker class only where the image has none, which is
+what a browser used anyway. Tombstone `TestRenderMissingInlineImageWithItsOwnAttributesRendersAsHTML`
+(MA-80/MA-474; RED at `c1c9ec0`: `a mail whose inline images are missing must render as HTML, got
+fallback "unsafe-after-reparse"`). Benign new fallbacks: 8, then 0.
+
+**Corpora, end to end, on a binary built at the final code head (`c076187`) against one built at
+`829f51d`** (`reindex -rebuild` against the live index through `fts5vocab`, every term; pagecheck:
+x/net parses each page in both scripting readings):
+
+| Corpus | Mails | Per-term count differences, final vs base | Documents whose body terms differ | Fallback pages | Unrecovered fields | Pages with a live header/body/meta/hint/marker issue |
+|---|---|---|---|---|---|---|
+| rv3/corpus-adv | 372 | 0 vs 14 | 0 vs 8 | 39 vs 30 | 0 vs 0 | 0 vs 0 |
+| rv3/corpus-benign | 49 | 0 vs 0 | 0 vs 0 | **0 vs 0** | 0 vs 0 | 0 vs 0 |
+| r3v/corpus-blocks | 96 | 0 vs 0 | 0 vs 0 | 0 vs 0 | 0 vs 0 | 0 vs 0 |
+| rv3/rv5.mbox | 5 | 0 vs 0 | 0 vs 0 | 0 vs 0 | 0 vs 0 | 0 vs 0 |
+| the 76-mail hostile set | 76 | 0 vs 0 | 0 vs 0 | 3 vs 2 | 0 vs 0 | 0 vs 0 |
+| fv4 corpus | 35 | 0 vs 0 | 0 vs 0 | 0 vs 0 | 0 vs 0 | 0 vs 0 |
+| rv3/corpus-findings | 46 | 0 vs 0 | 0 vs 0 | 2 vs 2 | 0 vs 0 | 0 vs 0 |
+| round-3 vectors (generated: AO1 and variants, AC2/AC3/AF4, frameset, AC5 shapes, san-Q2, benign twins) | 41 | 0 vs 31 | 0 vs 30 | 11 vs 0 | 0 vs 0 | 0 vs 18 |
+| fv4/runs/erase (the MA-187 erase half, known) | 4 | 8 vs 8 | 2 vs 2 | 0 vs 0 | 3 vs 3 | 0 vs 0 |
+
+Reading it: the 8 corpus-adv documents that differed at `829f51d` (the san-Q2 shapes) now agree on
+every term, with 9 more adversarial fallbacks (deep noscript/template/SVG-style shapes and the
+page-check ones); no new fallback on benign mail (corpus-benign, corpus-blocks, fv4, rv5: 0 before and
+after; the `.words` tokens missing on corpus-benign, 8 of them, are the same 8 before and after:
+single-letter MathML tokens and accented words, outside this change set); the one new fallback in the
+hostile set is its `own deep hide` mail (a deep SVG `<style>` payload, now shown as source, parity
+kept); the round-3 vectors show 18 live issues at `829f51d` and 0 now; the `erase` corpus is
+unchanged (the known MA-187 gap, 3 unrecovered). Cost: `explode.mbox` and `explode8k.mbox` fall back as
+too-large in 0.2 s and 0.6 s, as before; the padded RV-8 mail (10 MB comment) exports in 1.7 s as a
+10.9 MB too-large page where `829f51d` took 18.0 s and wrote a 134 MB rendered page.
+
+**What held** (finders, round 3):
+- **Outside aggressor.** No live meta, link hint, reserved marker, second charset, header-count or
+  anchoring fault in any JS-on page across about 48M fuzzed mails (general and noscript/head
+  grammars, about 12M noscript-heavy with a retry trigger: a charset-meta noscript, a head
+  `<noscript><div>`, a preconnect link; foreignObject, desc, annotation-xml and mtext noscripts,
+  select/table/template contexts, plaintext, escape-state scripts, CDATA, bogus comments, duplicate
+  attributes, NUL in attribute values). 120k mails with a ~480 nesting prefix were clean: the
+  flattener past 480 added no live content. In the JS-off reading, noscript-heavy mail with no
+  stray `</div>` gave nothing beyond that class (10M mails), including the retry on page-check
+  failure (san-Q1 part 1) and the retry mixed with a plain meta/charset/link trigger. san-Q1 part 2
+  (stray noscript end tags under SVG/MathML integration points): the `foreignParent` refusal in
+  `closesItself` held; a noscript under foreignObject, desc, title, annotation-xml or mtext produced
+  no live element in either reading. The rewritten-noscript path is guarded against the same `</div>`
+  trick (`neutralizeOneNoscript` drops the stray end tag in the fragment parse; `closesItself`'s
+  scripting-off sentinel check). `http-equiv` matching (ASCII case, whitespace, `refresh\x00`,
+  duplicate attributes), link-pragma metas and mixed-case or multi-token `rel` all behaved as a
+  browser reads them. Fallback pages: `plainFallback` escapes every byte; the size cap and too-large
+  path fall back before any re-parse; render-once renders once. Left to CSP, not tested in a
+  browser: remote img/srcset/picture, CSS url()/@import/@font-face, object/embed/iframe/form/base.
+  `cid:` embedding (the attacker's MIME type goes into a data: URI before sanitizing), search
+  snippets (escaped before `<mark>`).
+- **Rebuild forger.** Forging subject, sender or date on a CURRENT page: none in about 1.45M fuzz
+  mails; exactly one live header and one body div in both readings. On OLD pages: v0.2.3-shaped pages
+  with a forged header in the head, at the body start, after a stray `</div>`, doubled, 600 deep, with
+  a `<title><body>` placement never read the forged values (the only effect is an erase when the real
+  span is not live, counted honestly, as at `066f86d`); benign v0.2.3 pages recover every field. Deep
+  aa1c98d-format pages (509-570 nested): no forged field in 50k pages. Date stamps (`affd96f`,
+  `aa565c7`, `7b22df7`): no forged or wrong date; only UTC reads the abbreviated v0.2 stamp, a
+  non-UTC offset loses seconds by design. The fallback attribute cannot be made to fire on a current
+  page or honoured on an old one. A rejected noscript rewrite keeps the raw text, a failed retry keeps
+  the first pass's reason. Reserved markers (MA-496): never live in either reading. `splitAtBodyDiv` and
+  `splitAtLegacyHeader` cannot be moved by decoys. Corrections to expectations: today's exporter
+  rewrites a head noscript or comment mimic, so only a head `<style>` or `<script>` erases (R3-AF1).
+- **Integrity.** Header: 0 subject/from/date loss or forgery in about 3.5M fuzz cases and the 24-shape
+  matrix. Page layout in both readings over 612 pages: 0 pages with a missing header or body div and
+  0 with content after the body div (at `829f51d`, before R3-AC2's shapes were generated). Benign
+  parity on corpus-benign, corpus-blocks, fv4, rv5 and the glue and pre corpora. The skipped residual
+  encoder was accurate: corpus-adv left exactly the 8 documented mails. Block-set parity (`0f824b9`,
+  `e8e6129`) and the implied head (`7f2fd05`). Cost: no quadratic shape found (34 shapes at 20k/40k,
+  8 at 160k/320k, 7 explode-plus-b variants, linear). Tokenizer fallback against the tree on 100k
+  self-differential cases: only the documented residuals (frameset, svg-title plus template, table-mode
+  around svg style, NUL as a word). `go test -race` on export, app, index: ok. Not filed (out of scope or
+  pre-existing): the index prefers the plain body over HTML (MA-493); nameless attachments index as ''
+  live and `attachment-N` after a rebuild (zip names).
+
+**Not covered by round 3** (nothing here counts as a negative result):
+- **No browser was run** by any finder or by the fixes: the oracle is x/net in both scripting
+  readings. R3-AO2's suspicion (a favicon fetch outside the page policy) and the noscript link/meta
+  copies in a JS-off browser (a standing residual since round 2) are unverified.
+- **The round-3 fixes themselves have had no adversarial pass.** The page check (fixed-point comparison
+  with its two allowed deviations, the stray-`</noscript>` normalization, the marker counts), the
+  flattener's refusal set and leaf handling, `trimSwallowedClosers` and the cap's headroom were written
+  and tested by the fixing agent, and one of them produced a false positive on benign mail that only
+  the corpus run caught (the duplicate `alt` above). Other non-fixed-point serializations that benign
+  mail may hit are known only through the corpora listed, which were chosen by hand, not drawn from
+  real traffic.
+- oauth2 and Graph token handling, the GODEBUG defaults of the `go 1.26` directive, a PST fixture end
+  to end, and Chromium 143's customizable-select parsing against x/net's `<noscript>`-in-`<select>`
+  (still open from rounds 1 and 2); the finders' fuzz counts are theirs, not re-run by the skeptic.
+- RV-10's GUI and desktop legs (still open).
+
+**Open after round 3.** Still FINDINGS OPEN, each named: **RV-10** (round 2: the fallback is not
+surfaced in `status`, the GUI or the desktop message; its owner is the status branch); **R3-AF2**
+(a skipped MA-187 encoder; an owner decision on the page's sender format); the known gaps that
+duplicate findings, still encoded as skipped guards and not accepted: **MA-187's erase half** (R3-AF1,
+FB-1, FX-187's writer signal) and **MA-492's outer-noscript escaped text** (R3-AC1, MA-476's escaped
+twin); the owner question behind R3-AO2 (**fail closed on any live mail `<link href>`?**); and the
+round-3 fixes' own re-verification (a round 4 before the branch merges, if the owner wants the
+guarantee "every finding of every round is fixed and re-verified").
