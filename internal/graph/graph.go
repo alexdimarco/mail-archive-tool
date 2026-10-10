@@ -54,6 +54,11 @@ type Config struct {
 	MIMEHeaderTimeout time.Duration
 	PageCap           int
 
+	// WrapTransport, when set, wraps each base transport the client sends
+	// through (the JSON requests' and token endpoint's, and the $value
+	// download's): fault injection for tests. Production callers leave it nil.
+	WrapTransport func(http.RoundTripper) http.RoundTripper
+
 	// Delegated (per-user, device-code) fields — used only by NewDelegated.
 	// DeviceAuthURL defaults to the Microsoft devicecode endpoint; tests override
 	// it. TokenCachePath is where the per-user refresh/access token is persisted
@@ -161,22 +166,24 @@ func New(ctx context.Context, cfg Config) *Client {
 		Scopes:       []string{"https://graph.microsoft.com/.default"},
 		AuthStyle:    oauth2.AuthStyleInParams,
 	}
-	b := cfg.bounds()
+	b := cfg.settings()
 	// The oauth2 client wraps this transport (the token request uses it too):
 	// a server that accepts the connection and then goes silent is cut off.
-	ctx = context.WithValue(ctx, oauth2.HTTPClient, httpTransport(b.req))
+	ctx = context.WithValue(ctx, oauth2.HTTPClient, httpTransport(b.req, b.wrap))
 	return newClient(ctx, base, cc.TokenSource(ctx), b, false)
 }
 
-// bounds are a client's deadlines and page cap, each resolved to its default
-// when unset.
-type bounds struct {
+// settings are a client's deadlines and page cap, each resolved to its default
+// when unset, and its tests' transport hook.
+type settings struct {
 	req, mime, idle, header time.Duration
 	pageCap                 int
+	wrap                    func(http.RoundTripper) http.RoundTripper
 }
 
-func (cfg Config) bounds() bounds {
-	b := bounds{req: cfg.RequestTimeout, mime: cfg.MIMETimeout, idle: cfg.MIMEIdleTimeout, header: cfg.MIMEHeaderTimeout, pageCap: cfg.PageCap}
+func (cfg Config) settings() settings {
+	b := settings{req: cfg.RequestTimeout, mime: cfg.MIMETimeout, idle: cfg.MIMEIdleTimeout, header: cfg.MIMEHeaderTimeout,
+		pageCap: cfg.PageCap, wrap: cfg.WrapTransport}
 	if b.req <= 0 {
 		b.req = defaultRequestTimeout
 	}
@@ -199,8 +206,8 @@ func (cfg Config) bounds() bounds {
 // requests go through ctx's oauth2 HTTP client, the request-timeout-bounded
 // transport the token endpoint shares; the $value request goes through its own
 // base transport (mimeTransport), under the same token source.
-func newClient(ctx context.Context, base string, src oauth2.TokenSource, b bounds, meMode bool) *Client {
-	mimeCtx := context.WithValue(ctx, oauth2.HTTPClient, mimeTransport())
+func newClient(ctx context.Context, base string, src oauth2.TokenSource, b settings, meMode bool) *Client {
+	mimeCtx := context.WithValue(ctx, oauth2.HTTPClient, mimeTransport(b.wrap))
 	return &Client{
 		base:        strings.TrimRight(base, "/"),
 		hc:          oauth2.NewClient(ctx, src),
@@ -217,12 +224,13 @@ func newClient(ctx context.Context, base string, src oauth2.TokenSource, b bound
 // httpTransport builds the deadline-bounded HTTP client the oauth2 layer wraps for
 // both the token exchange and the Graph API calls: a server that accepts the
 // connection and then goes silent is cut off after reqTimeout (app-only and
-// delegated share it, so device sign-in is bounded too — R17/MA-98, D-C5).
-func httpTransport(reqTimeout time.Duration) *http.Client {
+// delegated share it, so device sign-in is bounded too — R17/MA-98, D-C5). A
+// test's wrap, when set, wraps its transport.
+func httpTransport(reqTimeout time.Duration, wrap func(http.RoundTripper) http.RoundTripper) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.ResponseHeaderTimeout = reqTimeout
 	transport.TLSHandshakeTimeout = 30 * time.Second
-	return &http.Client{Transport: transport}
+	return &http.Client{Transport: wrapped(transport, wrap)}
 }
 
 // mimeTransport is the $value request's own base transport (fault-isolation
@@ -231,10 +239,17 @@ func httpTransport(reqTimeout time.Duration) *http.Client {
 // every run, and a context timer can only shorten it; this one sets none, and
 // MIMETo runs its own header timer instead. It sets no Client.Timeout either,
 // which would bound the whole download.
-func mimeTransport() *http.Client {
+func mimeTransport(wrap func(http.RoundTripper) http.RoundTripper) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSHandshakeTimeout = 30 * time.Second
-	return &http.Client{Transport: transport}
+	return &http.Client{Transport: wrapped(transport, wrap)}
+}
+
+func wrapped(t http.RoundTripper, wrap func(http.RoundTripper) http.RoundTripper) http.RoundTripper {
+	if wrap == nil {
+		return t
+	}
+	return wrap(t)
 }
 
 // Folder is a mail folder with its full, sanitized path (root → leaf).

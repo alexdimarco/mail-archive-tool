@@ -52,12 +52,12 @@ func NewDelegated(ctx context.Context, cfg Config) (*Client, error) {
 		return nil, errors.New("internal: NewDelegated requires a token cache path or a token store")
 	}
 	be := tokenBackend{store: cfg.TokenStore, path: cfg.TokenCachePath}
-	b := cfg.bounds()
+	b := cfg.settings()
 	// One deadline-bounded transport for BOTH the device/token exchanges and the
 	// Graph API calls, so a stalled sign-in or a stalled listing fails within the
 	// deadline instead of hanging an unattended job (design D-C5, R17/MA-98). The
 	// $value download alone has its own (newClient, fault-isolation §4.8.6).
-	transport := httpTransport(b.req)
+	transport := httpTransport(b.req, b.wrap)
 	ctx = context.WithValue(ctx, oauth2.HTTPClient, transport)
 	conf := &oauth2.Config{
 		ClientID: cfg.ClientID,

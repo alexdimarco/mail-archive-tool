@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -57,6 +58,17 @@ type GraphOptions struct {
 	// well-known-folder id, so it is locale-independent (§3.6).
 	IncludeDeleted bool
 	IncludeJunk    bool
+
+	// Test overrides of the Graph client's bounds and its transport (zero or
+	// nil = the client's defaults, which are fixed by design, fault-isolation
+	// §4.8.5). The CLI, the GUI and the desktop leave them unset; tests scale
+	// the bounds and inject transport faults (MA-540).
+	RequestTimeout    time.Duration
+	MIMETimeout       time.Duration
+	MIMEIdleTimeout   time.Duration
+	MIMEHeaderTimeout time.Duration
+	PageCap           int
+	WrapTransport     func(http.RoundTripper) http.RoundTripper
 }
 
 // RunGraph archives the given mailboxes server-side via Microsoft Graph (app-only
@@ -75,7 +87,7 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	// told one. App mode returns the given mailboxes unchanged.
 	client, mailboxes, err := buildGraphClient(ctx, g, logger)
 	if err != nil {
-		return Result{}, err
+		return Result{}, asFailure(ctx, err)
 	}
 	g.Mailboxes = mailboxes
 	if len(g.Mailboxes) == 0 {
@@ -291,7 +303,12 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 			return result, lockLost
 		}
 		commit(hist, idx, manifest, logger)
-		if errors.Is(runErr, context.Canceled) {
+		// "Cancelled" is decided from RunGraph's own context, never from the
+		// error chain (fault-isolation §4.8.6, RR6-C1): a mailbox error can carry
+		// a context.Canceled no operator raised (a transport's own), and reading
+		// it as an interrupt would skip every later mailbox, record the run
+		// cancelled and let the CLI exit 0.
+		if ctx.Err() != nil {
 			finish(opts.Out, &result, exp, manifest, idx, indexErrors, true, logger)
 			return result, context.Canceled
 		}
@@ -332,11 +349,23 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		// returned error so it lands in the last-run record and `status` can fire
 		// the expired-secret remedy (friction #6).
 		if firstErr != nil {
-			return result, fmt.Errorf("%d mailbox(es) failed; first error: %w", failures, firstErr)
+			return result, fmt.Errorf("%d mailbox(es) failed; first error: %w", failures, asFailure(ctx, firstErr))
 		}
 		return result, fmt.Errorf("%d mailbox(es) failed", failures)
 	}
 	return result, nil
+}
+
+// asFailure is RR6-C1's second guard on what RunGraph returns: while its
+// context is live it never returns an error that matches context.Canceled,
+// because recordRun and the CLI test the chain and would record the run
+// cancelled and exit 0. Such an error keeps its text and loses its chain; any
+// other error is returned as it is.
+func asFailure(ctx context.Context, err error) error {
+	if err != nil && ctx.Err() == nil && errors.Is(err, context.Canceled) {
+		return errors.New(err.Error())
+	}
+	return err
 }
 
 // buildGraphClient constructs the Graph client for the selected auth mode and
@@ -346,18 +375,25 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 // mailbox — refusing a -mailbox that names anyone else, so the operator can never
 // believe they are archiving a mailbox other than their own (design P3/D-C1).
 func buildGraphClient(ctx context.Context, g GraphOptions, logger *log.Logger) (*graph.Client, []string, error) {
+	cfg := graph.Config{
+		Tenant:            g.Tenant,
+		ClientID:          g.ClientID,
+		BaseURL:           g.BaseURL,
+		TokenURL:          g.TokenURL,
+		RequestTimeout:    g.RequestTimeout,
+		MIMETimeout:       g.MIMETimeout,
+		MIMEIdleTimeout:   g.MIMEIdleTimeout,
+		MIMEHeaderTimeout: g.MIMEHeaderTimeout,
+		PageCap:           g.PageCap,
+		WrapTransport:     g.WrapTransport,
+	}
 	if strings.EqualFold(g.Auth, "device") {
-		client, err := graph.NewDelegated(ctx, graph.Config{
-			Tenant:         g.Tenant,
-			ClientID:       g.ClientID,
-			BaseURL:        g.BaseURL,
-			TokenURL:       g.TokenURL,
-			DeviceAuthURL:  g.DeviceAuthURL,
-			TokenCachePath: g.TokenCachePath,
-			TokenStore:     g.TokenStore,
-			Unattended:     g.Unattended,
-			Prompt:         g.Prompt,
-		})
+		cfg.DeviceAuthURL = g.DeviceAuthURL
+		cfg.TokenCachePath = g.TokenCachePath
+		cfg.TokenStore = g.TokenStore
+		cfg.Unattended = g.Unattended
+		cfg.Prompt = g.Prompt
+		client, err := graph.NewDelegated(ctx, cfg)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -376,13 +412,8 @@ func buildGraphClient(ctx context.Context, g GraphOptions, logger *log.Logger) (
 		logger.Printf("Signed in as %s (device flow); archiving your own mailbox", upn)
 		return client, []string{upn}, nil
 	}
-	return graph.New(ctx, graph.Config{
-		Tenant:       g.Tenant,
-		ClientID:     g.ClientID,
-		ClientSecret: g.ClientSecret,
-		BaseURL:      g.BaseURL,
-		TokenURL:     g.TokenURL,
-	}), g.Mailboxes, nil
+	cfg.ClientSecret = g.ClientSecret
+	return graph.New(ctx, cfg), g.Mailboxes, nil
 }
 
 // applyGraphState overlays the message-state fields carried on the widened
