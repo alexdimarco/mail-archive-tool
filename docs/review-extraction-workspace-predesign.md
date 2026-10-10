@@ -1399,3 +1399,379 @@ No folded change is reverted. Each fix adds a check or a refusal, corrects an as
 encoded a confirmed defect (MA-447's unconditional `end`), or moves a case between proposed
 rows without dropping it (MA-423 to MA-420). These fixes are re-verified again before E2
 code.
+
+## Addendum: RR-2b (2026-10-09), the delta design check before EW-E2 code
+
+**Design reviewed:** `docs/design-extraction-workspace.md`, revision 2, with the RR-2
+conditions and their first re-verification folded, at `9ba49f8` (branch `wip/rr2b`). Also
+read: `docs/design-fault-isolation.md` for SG (§4.8 and its §10 SG row), and
+`docs/owner-rulings-2026-10-09.md` (J3, J4, §13.4, §13.5). Where the log and the design
+disagree, the log wins.
+
+**Scope** (owner rulings §13.5, "RR-2b, before EW-E2 code"):
+- **(a) Re-verification.** A fresh-eyes check of the four conditions that RR-2's fixer
+  re-fixed: RR2-C2, RR2-C3, RR2-C4 and RR2-C13.
+- **(b) Lenses 6 and 7 on fault-isolation RR-6's edits to this design**, which RR-2 never
+  saw (§13.4's follow-up):
+  - the six size-cap figures, now 256 MiB or higher;
+  - capture's interim 10-minute overall cap;
+  - §4.5's redirect bullet about SG's `$value` client;
+  - MA-528.
+
+  This includes the question RR-6 left for EW-E1's note: is the copy export's own 2 h
+  overall cap bounded by the workspace's no-progress clock?
+
+Not reopened: OW1–OW4, Q3's yes, the log's rulings, J3's amended mechanism (RR2-C6), and
+the RR-2 conditions that passed their first re-verification.
+
+**Procedure:** the battery of `assurance-kit/process/design-review.md`, run as one small
+design check:
+- **Re-verifier:** one fresh-eyes reviewer checked each condition's delivered text against
+  the condition and the log.
+- **Finders:** lens 6 (security / adversarial) and lens 7 (failure domains /
+  recoverability), on RR-6's edits and the text they touch.
+- **Skeptic:** one refutation-default reviewer checked every finding against the design
+  text, the code and the log.
+- **Clerk:** this filing. The run's instructions give each confirmed finding the smallest
+  mechanism change that dissolves it, folded as a condition. No separate rescue agent ran.
+  The clerk took each finder's named fix as the skeptic endorsed it, and refined it where
+  noted below. The clerk did not find these issues, and re-read the cited code before
+  folding: `oauth2.go:357-366` at v0.37.0, `net/http/client.go:502-508`, `:719-726` and
+  `:833-838`, `internal/export/html.go:640-677`, `internal/graph/graph.go:129-142` and
+  `:529-561`, `delegated.go:65-102`, and the runtime's per-OS monotonic clocks.
+
+**Lenses run:** 6 security / adversarial · 7 failure domains / recoverability.
+
+**Result:**
+- **Re-verification:** all four conditions FAIL again. RR2-C2 has 6 gaps, RR2-C3 5, RR2-C4
+  3 (plus a lens-6 side note), and RR2-C13 4. Each gap is fixed in the design and marked
+  `[RR-2b re-verification]`.
+- **Findings: 12 found · 10 confirmed · 2 duplicates** (L7-2 of L6-1, L7-5 of L6-3) ·
+  0 refuted. After the skeptic: 0 blocker, 3 major (L6-1, L6-2, L7-1) and 7 minor. L6-3
+  was confirmed in part: its "no row turns red" claim is refuted by fault-isolation's
+  MA-540 twin.
+- Every confirmed finding is dissolved by a named change: **RR2b-C1..RR2b-C10**.
+
+**Verdict: GO_WITH_CONDITIONS.** No lens fails: no blocker survives, and each major is
+dissolved by a modest mechanism change.
+- **Folded.** The re-verification fixes and RR2b-C1..RR2b-C10 are folded into the design as
+  tracked changes, marked where they land, with an RR-2b condition map in its header.
+- **Re-verification owed.** They are re-verified before EW-E2 code (design-review.md
+  step 4). RR2b-C2 belongs to slice E5 and is owed before E5 code.
+- **Another design.** RR2b-C3 and RR2b-C8 also land in `docs/design-fault-isolation.md`
+  §4.8.6 and its §10 SG row, marked the same way, because SG builds the `$value` client and
+  its size stop.
+- **No OWNER RULING** is raised (below). **No MA row** is added, and MA-533..MA-539 stay
+  reserved to the workspace (§13.5).
+
+### Re-verification (RR2-C2, RR2-C3, RR2-C4, RR2-C13)
+
+| Condition | Result | What was still short (the re-verifier's gaps) | Fix, marked `[RR-2b re-verification]` | Where it landed |
+|---|---|---|---|---|
+| RR2-C2 seal-and-finish, ledger, set fingerprint | FAIL (6 gaps) | (1) A ledger line that reconcile appends after a W9a–W9b kill or a failed append cannot hold the set state. The state comes from the part's in-memory SUMS bytes, the sealed line held only status, counts and fingerprint, and reconcile may not read the folder. The chain's next part then has no state to resume, or the set skips a sealed part. MA-447 and MA-521 never test it. (2) "A part marked gone never seals and never enters it" is false: a sealed run with no `end` can be marked gone after its SUMS entered the set. (3) A part that seals late cannot find the chain's most recent ledger line, because no ledger line names its chain. (4) §4.2's finish row put the marker before the seal. (5) The log's "A record is deleted only after its ledger line exists" (§13.5) was broken by two §4.19 deletion cases: R-d's refused start, and a run marked gone before it sealed. (6) A failed ledger append had no failure class | (1) The ledger's mutex is taken before the set state is computed and held through W9b. The sealed line stores the new state, the set fingerprint and the parts covered, and the ledger line and reconcile copy them. Before computing, a seal appends any ledger line its chain is missing, from that part's sealed line. The launch sweep indexes records by chain id and appends missing ledger lines before the export slot opens. (2) Stated as it is: a part marked gone after it sealed stays in the set. The page and the receipt name it as gone, say the set cannot be checked without it, and list each other part's own fingerprint. (3) A chain id, the first part's run id, in every header, sealed line and ledger line. (4) The row runs the seal-and-finish step in §4.13's order. (5) The log's rule is kept as written. A run that never seals gets a ledger line of its own, `gone` or `refused`, before its record is deleted. If R-d's append fails too, the record is kept and adopted as an interrupted empty export folder. (6) The state-directory row covers a fingerprint-ledger append. The step stops there with R-d2, the marker stays, and reconcile or Check and finish completes it | §4.2 finish and locate rows; §4.10 `chain` and fingerprint; §4.13 steps 6, 7 and 9, and the state-directory row; §4.16 When `start` is written, Launch sweep, Recording, Set fingerprint; §4.19 Header, Seal, Stop and gone, Lifetime; §5.1 W9a, W9b; §5.2 ledger row; §7.6 R-d2; MA-430, MA-447, MA-521 |
+| RR2-C3 absent or slow folders, gone, Locate… | FAIL (5 gaps) | (1) "Export these N messages again" for a gone part that had sealed subtracted that part's own messages, so N = 0 for a complete part whose stick is lost (MA-448's own scenario). (2) §4.16 and §4.19 defined unresolved runs differently, so a sealed, not-ended run marked gone was kept for ever under one and deletable under the other. (3) The first re-fix made a positive mismatch terminal. The log's §13.5 makes only the marker-and-seal outcomes terminal, and the log wins. (4) R-r's remedy ("find the folder yourself, then run Check this export") was stale, because Check this export checks the recorded root. (5) "Whose whole retry chain is complete" was undefined, so a gone single-part run could lose the record that its offered export action reads | (1) For a gone part, `rest` subtracts only the messages exported in the chain's other sealed parts that are not marked gone. (2) One definition, in §4.19, which §4.16 cites. A settled run has its ledger line and is either sealed and ended, or gone; every run that is not settled is unresolved. (3) A positive mismatch is now an observation. It is probed again each launch and by Look again, and still offers Locate… and This folder is gone. MA-448's re-verification case reads "probed again". (4) R-r points at Locate… and This folder is gone. (5) A complete chain is defined: every part is settled, and no part's card still offers an export action. A settled run whose chain is incomplete keeps its record while compaction keeps its lines | §4.2 locate row; §4.9; §4.13 Retry; §4.16 Outcomes, Recording, The bound, Launch sweep; §4.19 Lifetime; §7.6 R-r; MA-430, MA-437, MA-438, MA-448 |
+| RR2-C4 identity tuple, no-nonce folders | FAIL (3 gaps, and a side note) | (1) §4.16 still gave "no nonce to read" as a cause of "couldn't confirm", against §4.9, which confirms a no-nonce folder by its file identity where that can decide. (2) The summaries in §4.10 and §4.13 covered only a root with no nonce *yet*. They left out a root whose marker is gone and that has no README. (3) No row asserted that second case. Side note (lens 6, not a delivery failure): on POSIX, dev+inode alone confirms a directory recreated at the same path that reuses the freed inode number | (1) "No nonce, and no file identity that can decide". (2) Both summaries now name both no-nonce cases and cite §4.9. (3) MA-430 adds the marker-deleted, README-less root: on a stable filesystem, Finish as partial is offered; on a fake vfat, "couldn't confirm" and R-r2. The side note is note RR2b-N1 below, stated as an open condition at §4.9 | §4.9, §4.10, §4.13 Finish as partial, §4.16 Outcomes; MA-430 |
+| RR2-C13 R-f by identity, R-f2 | FAIL (4 gaps) | (1) The view classifier read only the filesystem type, which cannot see a share or name its server. On Windows, `GetVolumeInformationW` reports NTFS for an SMB share, so a share classified as local and the identity compare decided, which a NAS that gives each share its own volume serial defeats. No row exercised the real classifier. (2) Create folder checked the parent, then re-walked the path with `os.Mkdir(parent/name)`. (3) R-f2 applies on either side, so an archive on a self-served share or on a FUSE or stacking mount refuses every destination, and §7.2's and §7.6's remedies do not work there. (4) No row covered "the reverse" (a local destination beside a share-held archive), or an archive walk that met an unreadable directory | (1) Named inputs per OS: on Windows, the canonical path's UNC prefix and `GetDriveTypeW`; on Linux, `/proc/self/mountinfo`; on macOS, `statfs`'s `f_fstypename` and `f_mntfromname`. "Served by this computer" compares the named server with this computer's names and addresses, and a remote view is never classified local. (2) The mkdir goes through the parent handle the check opened, with no path re-walk. (3) The archive-side causes are stated, including that Microsoft 365 exports are refused too, with remedies that work: the archive's own local path, or the OS's own SMB or NFS client. A §7.2 cell and R-f2 variants. (4) MA-414 adds the reverse twin, the unreadable-directory case and the real classifier on each CI leg. MA-434 adds a hook that swaps the parent | §4.2 mkdir row; §4.7 step 3; §4.8; §5.1 W1; §7.2; §7.6 R-f2; §8.1 #5; MA-414, MA-434, MA-438 |
+
+### Re-verification 2
+
+A second fresh-eyes check of the fold above found four gaps in RR2-C2 and RR2-C3. Each is fixed
+in `docs/design-extraction-workspace.md` wherever the mechanism is described, tests rows
+included, and marked `[RR-2b re-verification 2]`. No invariant, catalog row guarantee or X line
+is narrowed.
+
+| Item | Condition | Gap | Outcome (fix) | Where it landed |
+|---|---|---|---|---|
+| 1 | RR2-C2 (a) | The seal resumed "the chain's most recent ledger line", but `gone` and `refused` lines carry no set state, so a part marked gone before sealing, or a refused retry start, left the next seal a stateless line to resume from | FIXED. The seal resumes from the chain's most recent ledger line that carries a set state | §4.13 step 6 and step 7; §4.16 Set fingerprint; §4.19 Seal; MA-521 (part 1 sealed, part 2 gone unsealed, part 3 seals, the set covers parts 1 and 3; the same with a `refused` line) |
+| 2 | RR2-C2 (b) | "A later part never resumes past a part that sealed" rested on an index only the launch sweep built, so a part that sealed after launch with its ledger append failing (R-d2) was missing from it | FIXED. The index is updated in-process whenever a record header is written or a sealed line is appended | §4.13 step 7; §4.16 Set fingerprint; MA-521 (the late earlier part case) |
+| 3 | RR2-C2 (c) | §4.19's one definition of settled left out a refused start (R-d), though deletion case 1 deletes its record and an unresolved run's record is never deleted | FIXED. Settled now also covers a run whose start was refused (R-d) | §4.19 Lifetime |
+| 4 | RR2-C3 | R-r's remedy sent the user to Locate… and This folder is gone, but both write to the run record, and §4.19 deletes a settled, chain-complete run's record at once, and reconcile never probes such a run | FIXED. For a settled run whose record is deleted, both work from the journal line (run id as the nonce, its `dest_dir` and `root_id`) and append a `located` or `reconciled` journal line | §4.16 Recording; §4.19 Lifetime; §7.6 R-r; MA-430, MA-448 (Open folder on a complete export whose folder was replaced gives R-r, and Locate… then accepts the real folder) |
+
+### Findings
+
+Severity is the skeptic's. Duplicates cite their twin.
+
+| ID | Lens | Design section (or OMISSION) | Claimed failure | Verdict | Evidence / refuting quote | Condition # |
+|---|---|---|---|---|---|---|
+| L6-1 | 6 | §4.13 transport and no-progress rows (RR2-C8); §4.5 `MIMETo`; P12 | A download that keeps being cut after its 2xx retries for ever, and the message is never named. Every 2xx is progress, the backoff is at most 60 s, a trickle runs each attempt to the 2 h cap, SG's header and overall stops are unmapped, and nothing caps attempts on one message. The power request stays held | CONFIRMED (major) | §4.13 "Progress is a 2xx response, or body bytes of a 2xx response received"; transport row "back off on the same message … never recorded as a failure; counts only toward the no-progress clock"; P12 "A transport-class error never fails a message"; fault-isolation §4.8.1 rule 5 ("Idle, header or overall timeout → fetch-timeout. Transport."); "Subjects appear only in the failure list". This answers RR-6's question to EW-E1's note: the 2 h cap is not bounded by the no-progress clock | RR2b-C1 |
+| L6-2 | 6 | P16; §4.15 run memory; §8.2 MIME row; §8.4 misbehaving server; §4.11 panic recovery; MA-419 | Readable HTML memory is not bounded by the size cap. The renderer writes the whole data URI at every `cid:` reference and re-parses the result. Go's out-of-memory is fatal, so §4.11's recover misses it, and Finish as partial then starts on the same message again: a crash loop | CONFIRMED (major; owed before E5 code, not E2) | `html.go:649-665` (`ref.ReplaceAllString(body, dataURI)`); `drain`, `html.go:671-677`; `sanitizeHTML`, `:164`; `hostileSurvives`, `:250-256`; `parseMessage`'s `io.ReadAll`, `mbox.go:289`, `:334`; P16 "bounded by the shared size cap"; §8.4 "none"; MA-419 "on (one message held)". The flaw predates RR-6, whose edit restated the bound with the new figure | RR2b-C2 |
+| L6-3 | 6 | §4.5 Redirects and bodies (XC26) [fault-isolation RR-6]; §4.18 F15; §10 E1 contents and gate cell; MA-402, MA-516, MA-527, MA-528 | §4.5's premise that `oauth2.NewClient` uses the context's client only for token acquisition is false, so E1's `Timeout` reaches every client `NewClient` builds. The `$value` exception and §13.4's fourth question are missing from §4.18 and §10, and no row turns red if the timeout reaches SG's `$value` client | CONFIRMED in part (minor) | `oauth2.go:357-366` at v0.37.0 (`go.mod:12`) copies `CheckRedirect`, `Jar` and `Timeout`; `graph.go:129-130`; `delegated.go:65-66`, `:89`, `:102`; the E1 gate cell omits §13.4's question. **Refuted part:** fault-isolation's MA-540 twin ("headers that arrive after the scaled JSON request timeout but inside the header window → the item is archived", with a 100 ms JSON timeout) turns red if that `Timeout` reaches SG's `$value` client | RR2b-C3 |
+| L6-4 | 6 | §4.5 Redirects (XC26); §4.13; §7.6; §8.4; MA-528 | A refused redirect has no typed error, class or wording. net/http returns a `*url.Error`, `graph.Classify` reads it as a network error, the run backs off and stops with R-u ("check your network"), and the foreign host is never named. A custom `CheckRedirect` also drops net/http's 10-hop limit | CONFIRMED (minor) | `client.go:719-726` returns the 3xx response with a `*url.Error`; `graph.go:543-545` (`if err != nil { return nil, err }`); fault-isolation §4.8.1 rule 4; nextLink's "a typed error naming the foreign host", by contrast (§4.5, J4); `client.go:502-508`, `833-838`; MA-528 asserts zero foreign hits only | RR2b-C4 |
+| L6-5 | 6 | §4.13 "Before each message" and the transport row; §3; MA-427, MA-516 | The free-space budget is read per message, but a backed-off message downloads again, and nothing says the cut attempt's temp file is removed. Cut temps can therefore use the reserve, and finalization fails with the marker left for the user | CONFIRMED (minor) | the transport row states no temp removal, while the budget abort, a write error, cancel and the `linkat` fallback each state one; temps are `.mailexport-<16 hex>.tmp` with `O_CREATE\|O_EXCL`, one per attempt; §3 "The app never deletes in the destination"; MA-402's "no partial output" is SG's primitive | RR2b-C5 |
+| L7-1 | 7 | §4.13 RR2-C5 budget stop, in-flight rule, Retry; §7.6 R-g, R-u, R-u2; §7.2; MA-427, MA-437 | The message in flight at a run-fatal stop is reachable by no remedy. It is in `failures`, "Export the remaining messages" takes the `not_attempted` ids, and "Export failed messages again" is offered only for partial runs. So R-g's own remedy drops the message that needed the space, and R-u2's remedy never retries its 25 failures | CONFIRMED (major) | §4.13 "listed in `failures`, never at the head of `not_attempted`"; Retry's offers; MA-437 "yields its `not_attempted` ids"; MA-517; R-u "none of them was marked failed"; the budget row's "before that message is written" contradicts the prose | RR2b-C6 |
+| L7-2 | 7 | §4.13; §4.5 | SG's header and overall stops have no class in §4.13, and RR2-C8's progress rule turns the overall and stall stops into an endless same-message retry | DUPLICATE of L6-1 | the same failure. Its extra detail (the arithmetic for 205.3 MiB at 25 KB/s, the 37 KB/s floor, the missing §5.2 row for the `$value` download, the per-OS timer note) is folded into RR2b-C1 and RR2b-C9 | RR2b-C1 |
+| L7-3 | 7 | §4.13 no-progress and 429 rows; §7.6 R-u; §4.5 redirect bullet [fault-isolation RR-6]; MA-528; §4.14 | R-u ("check your network") is reached by causes that are not a lost connection: (a) header stops on a slow conversion, (b) throttle waits, (c) a refused redirect, (d) the capture back-off. A breaker abort of the in-flight call also cannot be told from a user's Cancel | CONFIRMED (minor) | R-u is reached from "No progress for 5 minutes of awake time" with no other test of cause; fault-isolation §4.8.6 `MIMEHeaderTimeout`, 2 min per attempt; `get` sleeps up to 5 × Retry-After (`graph.go:532-559`), unclamped until FI-S3; §4.14 "429s are expected and handled"; fault-isolation's breaker has a control probe (§4.8.5), the copy export none; RR6-C1's second guard covers `RunGraph` only. (c) is L6-4 | RR2b-C7; (c) RR2b-C4 |
+| L7-4 | 7 | §4.13 above-cap row and budget bullet [merge of RR-2 with RR-6]; §4.5; P16; the XC25 line; §8.2; rulings §13.4 ESC-8 | Under ESC-8's interim the 256 MiB cap is confirmed against nothing, yet an over-cap item is "retryable (a later export may succeed)". With one `maxBytes` = min(cap, budget), an item above the cap can also be reported as a full disk and stop the whole run | CONFIRMED (minor) | §13.4 ESC-8's interim, "the copy export alone carries the cap (256 MiB) from E1"; fault-isolation §4.8.6, the same; fault-isolation §4.8.5 "Every threshold … is fixed by design"; `MIMETo`'s `(int64, error)` exposes no length and no bound | RR2b-C8 |
+| L7-5 | 7 | MA-528; §4.5 | MA-528 guards only the `CheckRedirect` half of SG's `$value` seam; `oauth2.NewClient` copies `Timeout` with it | DUPLICATE of L6-3 | the same failure, with L6-3's partial refutation (MA-540's twin). Its fix (SG's `$value` client never built from a copy of the shared client; an E1 case where a long `$value` completes) is folded into RR2b-C3 | RR2b-C3 |
+| L7-6 | 7 | §4.13 no-progress row (RR2-C8); §4.15; §7.2 lid-closed cell; MA-516 | The suspend detector's clock is unstated. Go's monotonic clock stops in suspend on Linux and macOS, so a ticker timed by it never sees the gap; on Windows SG's timers count the sleep. The in-flight download restarts from zero on wake, which §7.2's "the sleep only" understates | CONFIRMED (minor) | runtime `sys_linux_amd64.s:270` (`CLOCK_MONOTONIC`); `sys_darwin_arm64.s:147` (`mach_absolute_time`); Windows reads interrupt time (`time_windows_amd64.s`); §4.13 "a 1-second ticker … a gap above 30 s is a suspend", with no clock named; MA-516's suspend is clock-injected | RR2b-C9; the per-message bound RR2b-C1 |
+| L7-7 | 7 | §4.13 step 6 and the `stopped` line; §4.19 Seal; §4.16 journal lines and outcomes | A sealed failed run records no stop reason, so after a restart "Stopped: <reason>" and its reason-specific remedy have no source | CONFIRMED (minor; at the edge of the delta) | step 6: status, counts and fingerprint, no reason; a `stopped` line only for runs that stop before their seal; the journal fields carry no reason; reconciliation never reads the marker or README | RR2b-C10 |
+
+### Conditions (must-fix-before-code; folded into the design)
+
+- **RR2b-C1 — A download that is cut again and again after its body started is listed, never
+  retried for ever.** (L6-1; folds L7-2.)
+  - **SG's stops by kind.** `header` and `idle` are transport-class: the run backs off on
+    the same message. So is an `overall` stop on an attempt that spanned a suspend.
+  - **The download bound.** Per message, 5 cuts, or 2 h of awake time since its first
+    attempt. A cut is an attempt that delivered body bytes and then ended in a
+    transport-class stop before the body did. A cut whose attempt spanned a suspend is not
+    counted. An `overall` stop with no suspend reaches the 2 h at once. Past the bound, the
+    message is listed as retryable ("kept stopping partway", or "didn't finish downloading
+    within 2 hours of download time"), and the run moves on.
+  - **Unchanged.** Attempts with no body bytes stay under the no-progress window, with
+    RR2b-C7's control request. So MA-516's 30 s outage still completes with zero failures.
+  - **P12** restated, and a §5.2 row for the `$value` download.
+  - **Rows:** MA-516 adds a stall five times (listed, and the run continues), a trickle to
+    the scaled overall cap (listed, never a backoff), and a cut across a seam suspend (not
+    counted). Its new prove-fail counts only attempts with no body bytes.
+  - **Landed:** P12, §4.5, §4.13, §4.15, §5.2, §7.2, §8.4, §9 (MA-516), §10 (E2).
+
+  *Closes:* L6-1, L7-2. It answers RR-6's question to EW-E1's note: each message's 2 h is now
+  bounded.
+- **RR2b-C2 — A readable copy has a render bound.** (L6-2; slice E5, owed before E5 code.)
+  - **The bound.** Before `RenderWith`, the export predicts the render's size: the selected
+    body, plus, for each attachment a `cid:` reference names, its base64 length times the
+    references. Above 32 MiB, a fixed design threshold, no readable copy is made: the entry
+    is `exported-original-only`, "too large for a readable copy", not offered for retry
+    (XC35's outcome).
+  - **The text.** §4.11 says why the cap does not bound the render, and that Go's
+    out-of-memory is fatal, not a panic. P16, §4.15, §8.2 and §8.4 say the render is bounded
+    by the render bound.
+  - **Rows:** MA-509 pins the bound: an 8 MiB image referenced 10 times gives the original
+    only, with the heap under the bound, plus a prove-fail. MA-419's "on" mode cites it.
+    MA-509 is E5's row, so the bound and its row share one slice (XC28).
+  - **Landed:** P10, P16, §4.11, §4.15, §8.2, §8.4, §9 (MA-419, MA-509), §10 (E5).
+
+  *Closes:* L6-2. The archive exporter's own expansion is a follow-up.
+- **RR2b-C3 — `Client.Timeout` reaches every client `oauth2.NewClient` builds, so SG's
+  `$value` client is built without it.** (L6-3; folds L7-5.)
+  - **§4.5** states `NewClient`'s real behaviour at v0.37.0 and its reach. §4.18's F15 row
+    names the `$value` exception.
+  - **SG** builds the `$value` client itself, over its own base transport and the client's
+    token source, with E1's `CheckRedirect` and a zero `Timeout`. It never builds it with
+    `NewClient` from a context carrying `httpTransport`'s client. Fault-isolation §4.8.6 says
+    the same, marked `[RR-2b RR2b-C3]`.
+  - **E1's gate cell** carries §13.4's fourth question.
+  - **Rows:** MA-527 adds a `$value` longer than `reqTimeout` that completes, and a second
+    prove-fail.
+  - **Landed:** §4.5, §4.18, §9 (MA-527), §10 (E1); fault-isolation §4.8.6 and its §10 SG
+    row.
+
+  *Closes:* L6-3, L7-5.
+- **RR2b-C4 — A refused redirect is a typed error naming the host, with the 10-hop limit and
+  its own class.** (L6-4; L7-3 (c).)
+  - **The error.** `CheckRedirect` returns `*graph.RedirectError{Host, Hops}`, which a caller
+    finds with `errors.As` through the `*url.Error`. It keeps net/http's 10-hop limit itself.
+  - **The class.** §4.13 matches it before `graph.Classify`. Another host is run-fatal, with
+    the new R-u3 naming the host. Past 10 same-host hops is a per-message retryable failure.
+  - **Rows:** MA-528 adds the typed error on both clients and the eleventh hop. MA-427 adds a
+    foreign redirect → R-u3, never R-u. MA-438 adds R-u3's wording.
+  - **Landed:** P4, P12, §4.5, §4.13, §5.2, §7.2, §7.6 (R-u3), §8.2, §8.4, §9 (MA-427,
+    MA-438, MA-528), §10 (E1, E2).
+
+  *Closes:* L6-4, L7-3 (c).
+- **RR2b-C5 — A cut attempt's temp file is removed before the backoff, and the budget is read
+  again before each retry.** (L6-5.)
+  - The transport row states the removal. "Before each message" becomes "before each
+    message, and again before every retry".
+  - **Rows:** MA-427 and MA-516 assert that no `.mailexport-*.tmp` survives a retried
+    message. MA-427 adds a volume that fills between two attempts → R-g at the second.
+  - **Landed:** §4.13, §4.15, §5.2, §9 (MA-427, MA-516), §10 (E2).
+
+  *Closes:* L6-5.
+- **RR2b-C6 — The message in flight at a run-fatal stop is exported by the next part, last.**
+  (L7-1.)
+  - **The record.** Its progress line records it as retryable, with the stop's R-id and
+    class.
+  - **The offers.** "Export the remaining messages" on a run that stopped run-fatal takes the
+    `not_attempted` ids, then the run's retryable failures, the in-flight message last. For a
+    cancelled run it stays the `not_attempted` ids, so MA-437's assertion stands, and
+    "Export failed messages again" is offered on a cancelled run with retryable failures.
+  - **The text agrees.** A message stopped before its first byte stays first in
+    `not_attempted`; one aborted at its budget is the in-flight failure. R-u loses "none of
+    them was marked failed". R-g, R-u and R-u2 say that the next part includes the message,
+    or the 25.
+  - **Rows:** MA-427 (message 813 is in part 2, last); MA-437 (the order, R-u2's 25 and the
+    cancelled-run offer); MA-438.
+  - **Landed:** P12, §4.13, §7.2, §7.6, §9 (MA-427, MA-437, MA-438), §10 (E2, E3).
+
+  *Closes:* L7-1.
+- **RR2b-C7 — R-u only when a control request also goes unanswered; throttling and a stalled
+  message get their own outcome.** (L7-3 (a), (b), (d).)
+  - **The control request.** At the 5-minute mark the run sends `GET /me?$select=id` once,
+    with no retry loop and a 30 s bound (`Client.Probe`, E1), never through `get`.
+    - No HTTP answer → R-u.
+    - A 429 or 503 → the new R-v2 (run-fatal: throttled).
+    - A 2xx → the in-flight message is listed as retryable with its last error ("didn't
+      start sending … N times" after header stops), the window restarts, and the run moves
+      on.
+    - Any other answer takes its own row.
+  - **Pauses.** The run's own pauses (§4.14's capture back-off) are not counted toward the
+    window.
+  - **Cancel.** A breaker stop cancels that message's own child context, never the walk
+    context. The run decides "cancelled" only from the walk context's `Err()`, never from an
+    error chain.
+  - **Rows:** MA-516 adds header stops with healthy JSON (listed, never R-u), a long 429
+    (R-v2), a capture pause (no R-u), a sustained outage (R-u), and a breaker stop that is
+    never recorded as cancelled. MA-438 adds R-v2 and R-u's wording.
+  - **Landed:** P12, §4.13, §4.14, §4.15, §5.2, §7.2, §7.6 (R-u, R-v2), §8.3, §9 (MA-438,
+    MA-516), §10 (E1, E2).
+
+  *Closes:* L7-3 (a), (b), (d).
+- **RR2b-C8 — Above the size cap is terminal for this version, ESC-8's condition stands next
+  to each cap claim, and the cap is decided before the budget.** (L7-4.)
+  - **The class.** The 400 / conversion row and the above-cap row are split. Above the cap
+    is terminal for this version, listed "larger than this version of MailArchive exports
+    (256 MiB)", and not offered for retry by a build with the same cap.
+  - **ESC-8's condition** is stated next to the cap claims: the header's XC25 line, P16,
+    §4.5, §4.13 and §8.2. It is an open condition, not accepted.
+  - **Cap before budget.** `maxBytes` stays min(cap, budget), as the log's §13.5 records
+    RR2-C5. SG's size stop is typed, `*graph.TooLargeError{Limit, Declared}` (fault-isolation
+    §4.8.6, marked `[RR-2b RR2b-C8]`). A declared length above the cap is the above-cap
+    class, whatever limit was passed; a stop at the budget is the free-space stop.
+  - **Rows:** MA-402 (the typed fields); MA-426 (above the cap: listed terminal, and the run
+    continues); MA-427 (a declared length above the cap with a small budget → above-cap,
+    never R-g; one within the cap → R-g).
+  - **Landed:** header, P16, §4.5, §4.13, §7.2, §8.2, §9 (MA-402, MA-426, MA-427), §10 (E2);
+    fault-isolation §4.8.6 and its §10 SG row.
+
+  *Closes:* L7-4.
+- **RR2b-C9 — The suspend detector names its clock, and the in-flight re-download is
+  stated.** (L7-6.)
+  - **The clock.** The gap is measured on a clock that keeps counting in suspend:
+    `CLOCK_BOOTTIME` on Linux, `mach_continuous_time` on macOS, and Go's own monotonic clock
+    on Windows, which reads interrupt time.
+  - **The re-download.** §4.15 and §7.2 state that the message that was downloading starts
+    again from its first byte. The sleep counts toward neither the breaker nor the message's
+    2 h (RR2b-C1). On Windows SG's timers count the sleep, so an `overall` stop after a long
+    sleep is a cut, not a failure; SG is not changed.
+  - **Rows:** MA-516 runs the real ticker with a seam suspend-counting clock: 3 minutes of no
+    progress before the jump and 2.5 after give no R-u. Its third prove-fail measures the gap
+    with Go's monotonic clock.
+  - **Landed:** §4.13, §4.15, §7.2, §9 (MA-516), §10 (E2).
+
+  *Closes:* L7-6.
+- **RR2b-C10 — The sealed line and the journal `end` carry the stop's reason.** (L7-7.)
+  - The sealed line records the stop's R-id (none for a Cancel), its class and the in-flight
+    message's id. A stop between messages records its R-id with no message.
+  - The journal's `stopped` and `end` lines gain `reason`: the R-id and class, with no
+    subject.
+  - **Rows:** MA-430 (after a restart, runs stopped by R-g, R-u, R-c and R-z are labelled
+    from the sealed line).
+  - **Landed:** §4.13, §4.16, §4.19, §5.1, §9 (MA-430), §10 (E2, E3).
+
+  *Closes:* L7-7.
+
+### Rescue outcomes (the skeptic's majors)
+
+| Finding | Outcome | Named change (short) | Condition |
+|---|---|---|---|
+| L6-1 | DISSOLVED-BY | a per-message download bound (5 cuts after body bytes, or 2 h of awake time); SG's overall stop listed, never a backoff | RR2b-C1 |
+| L6-2 | DISSOLVED-BY | a predicted-render bound before `RenderWith`; the original only above it | RR2b-C2 |
+| L7-1 | DISSOLVED-BY | the in-flight message recorded retryable, and exported last by "Export the remaining messages" | RR2b-C6 |
+
+No finding SURVIVES, and none is PARTIAL.
+
+**What the clerk changed in the named fixes.** Each change is a strengthening, or keeps an
+existing assertion; none is a narrowing:
+- **RR2b-C1** counts only cuts after body bytes, so an outage with no 2xx stays under the
+  no-progress window, and MA-516's "a 30 s outage → zero failures" holds. It does not count a
+  cut whose attempt spanned a suspend, and its 2 h is awake time. On Windows SG's timers count
+  the sleep, so the finder's "overall → listed" alone would list a message after an
+  overnight lid close.
+- **RR2b-C2** puts the bound's row in MA-509 (E5), not MA-419 (E2), so one slice builds both
+  (XC28). It sets the bound at 32 MiB.
+- **RR2b-C4** makes a redirect to another host run-fatal, since it would repeat on every
+  message, and a same-host loop past 10 hops a per-message failure.
+- **RR2b-C6** keeps a cancelled run's `rest` as its `not_attempted` ids, so MA-437's
+  assertion stands, and offers "Export failed messages again" there instead.
+- **RR2b-C7** sends the control request once, outside `get`. Through `getJSON`, a Retry-After
+  longer than its 60 s context ends as a deadline error (F17), which would read as an
+  outage. A throttled answer stops the run with R-v2, rather than waiting without a bound.
+- **RR2b-C8** keeps `maxBytes` = min(cap, budget), which the log's §13.5 records for RR2-C5.
+  It puts the declared length in SG's typed size stop, instead of moving the budget into the
+  export's own writer.
+
+**Where the log won.** Three gaps were closed by following the rulings log, not the first
+suggestion:
+- **RR2-C2 (5).** The re-verifier suggested scoping "A record is deleted only after its
+  ledger line exists" to sealed runs. That would narrow the log's rule, so the rule is kept
+  as written, and the two kinds of unsealed record get a ledger line of their own.
+- **RR2-C3 (3).** A positive mismatch is not terminal, because §13.5 makes only the
+  marker-and-seal outcomes terminal. This withdraws the first re-fix's change (3). If the
+  owner wants it terminal, the log's next revision can record that (follow-ups).
+- **RR2b-C8.** `maxBytes` stays min(cap, budget), as the log records RR2-C5.
+
+### Escalations (OWNER RULING items)
+
+None. No fix or condition narrows an invariant, a catalog row's guarantee or an X line,
+accepts a residual, or changes what an existing covering test asserts:
+- **Nothing is built, and no workspace row is in the catalog.** `docs/scenario-catalog.md`
+  has no R29, S52 or workspace MA row, and `docs/ux-contract.md` has no X13–X15. Every row
+  changed here is a proposed row in the design's own test plan.
+- **No assertion is dropped.** Two re-verification cells are corrected in place. MA-448's
+  encoded a claim the log does not record (a terminal positive mismatch). MA-521's encoded a
+  claim the mechanism cannot meet (a sealed part leaving the set). Its case still holds for
+  a part marked gone before it sealed.
+- **P12's "A transport-class error never fails a message"** is a mechanism sentence, not
+  catalog text, and no R-invariant promises it. Restating it makes P12's headline ("finishes
+  around bad messages and names them") true.
+- **Above the cap**, an item is no longer offered a retry that the same binary cannot
+  complete. The legal-item gap under ESC-8's interim stays an open condition, not accepted,
+  stated at each claim.
+- **The render bound and the download bound** list the message with its reason, as XC35 and
+  P12 already do for a render panic and a failure. The original, or the rest of the run, is
+  still exported.
+- Not reopened: OW1–OW4, Q3's yes, the log's rulings, and J3's amended mechanism.
+
+### Follow-ups for other owners
+
+- **The renderer's owner (`internal/export`).** The archive exporter calls `RenderWith` too
+  (`exporter.go:319`, `:327`), so its `cid:` expansion is unbounded there as well. That
+  predates these designs (L6-2). RR2b-C2 bounds only the workspace's call.
+- **Fault-isolation's author.**
+  - Two SG edits are marked `[RR-2b]` in `docs/design-fault-isolation.md` §4.8.6 and its §10
+    SG row: the typed size stop (RR2b-C8) and how SG builds the `$value` client (RR2b-C3).
+    Its next re-verification, or FI-SG's adversarial pass, should check them.
+  - Capture's `app.classifyFetch` (S3) will read E1's refused redirect as a network error,
+    through its rule 4, as the copy export would have. Matching `*graph.RedirectError` first
+    would name the host on capture's path too (RR2b-C4).
+- **The rulings log's next revision** (not edited here):
+  - §13.5's RR-2b follow-up now has a result: this addendum, GO_WITH_CONDITIONS, with
+    RR2b-C1..RR2b-C10.
+  - Should a positive mismatch be terminal? That was the first re-fix's choice, withdrawn
+    here because §13.5 does not record it.
+  - Is §13.5's "A record is deleted only after its ledger line exists" meant for sealed runs
+    only? If so, the `gone` and `refused` ledger lines become optional.
+- **EW-E1's short adversarial note.** §13.4's fourth question is now in E1's gate cell
+  (RR2b-C3).
+
+### Notes (not conditions)
+
+None of these is accepted as a gap. Each stays open, owed in the slice named.
+- **RR2b-N1 (E2; lens 6).** It comes from the re-verifier's side note beside RR2-C4. It was
+  not run through the skeptic, so it is recorded as a note and not graded.
+  - **The gap.** On POSIX a folder with no nonce is confirmed by dev+inode alone (§4.9).
+    ext4 and xfs commonly reuse a freed inode number. So a directory that someone else
+    recreated at the same path can confirm, and Finish as partial would then write README,
+    manifest, sums and marker into a folder the app did not create. Where the destination
+    does not enforce file modes, the manifest's per-message entries (P9) are then readable
+    there.
+  - **Named fix.** Record the directory's birth time at mkdir (`statx` `stx_btime` on Linux,
+    `st_birthtime` on macOS), and require it to match for a folder with no nonce. Where the
+    filesystem reports none, the folder is "couldn't confirm".
+  - **Windows.** An NTFS file ID carries a sequence number that changes on reuse. A FAT or
+    exFAT file ID follows the directory entry's position, and name tunnelling can carry a
+    creation time over for a short window, so the fix must be checked there too.
+  - §4.9 states the open condition at the claim.
+
+### Mechanical check (RR-2b)
+
+`docs/design-extraction-workspace.md` keeps BUILD STATUS "approved with conditions, not
+built" and cites this review. Its header says that RR-2b ran and is filed
+(GO_WITH_CONDITIONS), with an RR-2b condition map, and each change is marked
+`[RR-2b RR2b-Cn]` or `[RR-2b re-verification]`.
+- **Before E2 code:** a re-verification of everything folded here. RR2b-C2's result gates E5
+  code, not E2.
+- **After E3:** the adversarial pass and the friction review, as before. The friction review
+  walks §7.2's new cells.
