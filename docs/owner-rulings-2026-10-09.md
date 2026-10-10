@@ -1078,6 +1078,19 @@ record it from the first page's refs** (an empty first page cannot carry it).
 |---|---|---|---|
 | **ESC-15** (EW-E1 AI1, XC7) | The token write-back is serialised within one process only. A sign-in in the dashboard process during a scheduled run's load-to-write window can be overwritten, forcing a re-sign-in (never a token under another identity). Add a cross-process lock on the token file and each vault backend? | Yes, in the slice that owns sign-in (LC-C2 or E3), because it needs a lock per vault backend | Left as is; `TestTokenWriteBackCrossProcessSignIn` is a skip encoder (MA-515, XC7) |
 
+### 13.10 Product scope: single-user computers only (owner-direct, 2026-10-10)
+
+The owner stated that the software is for single-user computers only. Consequences, delegated:
+- **LC-A (private at rest, §9 row 2) is deferred.** Its exposure, other local accounts reading the
+  archive's files, does not arise on a single-user computer. It stays designed and approved with
+  conditions, not built, and is not dropped: the owner can reopen it.
+- **Not touched by this:** LC-C1 is merged (its Host check and `/files/` allow-list defend against
+  web pages, not other accounts). LC-C2 stays in the build order because the extraction workspace
+  depends on it (§9 row 24: E0 = rows 3 + 11); whether its per-account session machinery can be
+  slimmed for a single-user scope is a design question for its own slice, not decided here.
+- **No gate is reduced:** no catalog row, test or baseline changes with this ruling. The co-account
+  personas in the designs become out of scope only if the owner says so for a specific row.
+
 ### 13.7 Escalations from LC-C1's adversarial pass (merged 2026-10-10)
 
 None blocks anything: each has a skip encoder or a safe interim in force.
