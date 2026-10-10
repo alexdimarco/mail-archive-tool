@@ -1477,6 +1477,70 @@ recursion carries the visited folder-id set and the depth cap (§4.8.7) [RR-6 RR
   - **The figure.** 150 MiB of attachment bytes is 150 × 4/3 × 78/76 ≈ 205.3 MiB of MIME
     before headers, which is above 200 MiB. The shared cap is therefore 256 MiB, or higher if
     the confirmation requires it.
+  - **[FI-SG confirmation, 2026-10-09] The result.** No documented figure bounds every stored
+    item, so the cap does not reach capture: owner ruling RR6-OR1's safe interim applies
+    (below). Checked on 2026-10-09 against Microsoft's documentation:
+    - *Exchange Online limits*, page date 2026-04-07, updated 2026-09-09:
+      <https://learn.microsoft.com/en-us/office365/servicedescriptions/exchange-online-service-description/exchange-online-limits>.
+      The message size limit: "These limits include attachments, and apply organization-wide
+      to all messages (inbound, outbound, and internal). Messages larger than this limit won't
+      be delivered". Its default and maximum: "The default maximum message size for Microsoft
+      mailboxes is 35 MB for sending and 36 MB for receiving. Microsoft administrators can
+      specify a custom limit between 1 MB and 150 MB." Routing: "You can send and receive up
+      to 150 MB messages between users (where the message never leaves the Microsoft
+      datacenters). Messages that are routed outside of the Microsoft datacenters are subject
+      to an additional 33% translation encoding increase, in which case the maximum message
+      size is 112 MB." Migration: "Message size limit - migration" is 150 MB, and "Other
+      migration methods (Cutover, Staged, IMAP, PST) and other third-party tools are limited
+      by the general message size limit." Per attachment: Outlook 150 MB, Outlook on the web
+      112 MB (its larger OneDrive figure is for a link: Graph's referenceAttachment is "A link
+      to a file", and its size is "the size of the metadata that is stored on the message");
+      at most 250 attachments and 250 MIME parts; headers at most 256 KB.
+    - *Learn about importing organization PST files*, 2026-06-11:
+      <https://learn.microsoft.com/en-us/purview/pst-import-overview>. "If a PST file contains
+      a mailbox item that's larger than 150 MB, the import process skips the item and doesn't
+      import it."
+    - *Set-MailboxPlan*, updated 2026-05-16:
+      <https://learn.microsoft.com/en-us/powershell/module/exchangepowershell/set-mailboxplan>.
+      MaxSendSize and MaxReceiveSize take "a number up to 150 MB", and "Base64 encoding
+      increases the size of messages by approximately 33%, so specify a value that's 33%
+      larger than the actual maximum message size that you want to enforce."
+    - *Can't migrate a user's mailbox data from the on-premises to Microsoft 365* (KB 2584294),
+      updated 2025-06-25:
+      <https://learn.microsoft.com/en-us/troubleshoot/exchange/move-or-migrate-mailboxes/mailbox-exceeded-maximum-number-of-large-itmes>.
+      A move fails on "one or more messages that exceed the 150-megabyte (MB) message limit".
+      *Large items are skipped during public folder migration*, 2026-05-27:
+      <https://learn.microsoft.com/en-us/troubleshoot/exchange/public-folders/large-items-skipped>.
+      "By design, migration skips items that are larger than 150 MB."
+    - *Attach large files to Outlook messages or events*, updated 2025-08-06:
+      <https://learn.microsoft.com/en-us/graph/outlook-large-attachments>. "you can attach
+      files up to 150 MB to an Outlook message or event item", and "To attach multiple files
+      to a message, choose the approach for each file based on its file size and attach the
+      files individually." *attachment: createUploadSession*, updated 2026-06-19:
+      <https://learn.microsoft.com/en-us/graph/api/attachment-createuploadsession>. A file
+      "between 3 MB and 150 MB", with a tip that the mailbox's message size limit includes
+      "any message attachments".
+    - **What they bound.** Three routes hold an item to 150 MB: send and receive, move-based
+      and other migrations (third-party tools included), and PST import. Exchange's MB is binary (the public folder article prints 16.63 MB as 17,436,461
+      bytes), so 150 MB is 150 MiB. The limits are not counted alike. Set-MailboxPlan counts
+      base64's 33% against the limit. The limits page lets 150 MB messages pass inside
+      Microsoft's datacenters and adds the 33% only when a message leaves them. The worst case
+      is therefore 150 MiB of stored attachment bytes: 150 × 4/3 × 78/76 ≈ 205.3 MiB of
+      base64, plus the headers. The message's own headers are at most 256 KB, and the part
+      headers of its at most 250 MIME parts would need more than 200 KiB each to reach
+      256 MiB. The arithmetic assumes base64, as Microsoft's "33%" does.
+    - **What they do not bound.** None of the pages checked gives a limit that holds for
+      every item the store saves (the save-time refusal the public folder article shows is
+      migration's). Graph limits each upload-session attachment to 150 MB and attaches several
+      files one at a time, and none of the pages checked gives a total for a draft built that
+      way. The createUploadSession tip links large attachments to the mailbox's message size
+      limit, but it does not say that limit is checked when the draft is saved. A stored item
+      assembled through the API is therefore not bounded by the documentation.
+    - **The figures.** Capture: `Client.MIME` passes no size cap, as today, and MA-540's case
+      (4) and MA-314's `fetch-too-large` gap case stay skip encoders citing their rows. The
+      copy export: 256 MiB from E1, at or above every route the documentation bounds. The cap
+      reaches capture under RR6-OR1's rule only once Microsoft documents a bound on an item as
+      stored: a per-item limit, or the message size limit applied when an item is saved.
   - **Early refusal.** A response whose `Content-Length` exceeds the cap is refused before its
     body is read, so an over-cap item is not downloaded again on every run.
   - **[RR-2b RR2b-C8] A typed size stop.** Like the timers' stops, the size refusal is typed:
@@ -1586,6 +1650,27 @@ and no loop reaches the page cap. `Folders` also keeps two guards:
   counted as the confirmation counts levels, and MA-541's at-cap twin asserts it. If the
   confirmation gives a higher figure, the cap is that figure. If it gives none, `Folders`
   carries no depth cap until one is bounded (P3).
+  - **[FI-SG confirmation, 2026-10-09]** The figure, 300, is documented. How Exchange counts
+    levels is not. Checked on 2026-10-09:
+    - *Exchange Online limits* (§4.8.6's source, updated 2026-09-09): "Maximum folder
+      hierarchy depth: Specifies the maximum number of levels in the folder hierarchy of a
+      mailbox. The mailbox owner can't create another level in the folder hierarchy of the
+      mailbox folder when this limit is reached." Its table gives 300 for every plan,
+      Exchange Online Plan 1, Plan 2 and Kiosk included, with a warning at 250. It states the
+      figure as a limit of the mailbox, and none of the pages checked describes a route that
+      builds a deeper hierarchy.
+    - *Learn about importing organization PST files* (§4.8.6's source, 2026-06-11): "You
+      can't import a PST file that has 300 or more levels of nested folders."
+    - Neither page, nor Set-Mailbox's on-premises FolderHierarchyDepthReceiveQuota ("the
+      maximum number of levels in the folder hierarchy of a mailbox folder"), says whether the
+      mailbox root or Top of Information Store (Graph's msgfolderroot) counts as a level.
+    - **The count SG uses.** Only the levels Graph lists count: a folder that `/mailFolders`
+      returns is level 1, a folder in its `childFolders` is level 2, and so on. Counting the
+      root or Top of Information Store as well could only lower the number of levels Graph
+      lists, so a cap of 300 at this count is at or above the documented limit whether or not
+      Exchange counts either of them.
+    - **The figures.** The cap is 300. MA-541's at-cap chain is 300 levels at this count and
+      completes. Its over-depth chain is 301 levels and fails with the typed depth error.
 
 MA-541 asserts both. A response that invents fresh folders at every level is bounded in depth
 only, and in breadth only by the per-loop page cap. That is an open condition, not accepted
@@ -1593,6 +1678,22 @@ only, and in breadth only by the per-loop page cap. That is an open condition, n
 and MA-541's breadth case encodes it as a skip encoder citing R10: a fake server that invents
 two fresh child folders at every level must see `Folders` return under a time guard. Whether
 to close it with a total-folder cap is owner ruling RR6-OR2.
+
+**[FI-SG confirmation, 2026-10-09] For RR6-OR2 (ESC-9).** Microsoft's Exchange Online limits
+give no per-mailbox folder count, so ESC-9's recommended answer gives no cap and its safe
+interim stands. Checked on 2026-10-09:
+- *Exchange Online limits* (§4.8.6's source, updated 2026-09-09) has no folders-per-mailbox
+  row. Its per-folder figure is "Maximum number of subfolders per mailbox folder", 10,000
+  (warning 9,000), with the footnote "This is a store limit; it's one of the mailbox shape
+  constraints. There can be only 10,000 direct child folders for any given parent. This
+  applies regardless of migration or other clients creating folders." The same page's table
+  across standalone plans gives 1000 (warning 900) for Exchange Online Plan 1, Plan 2 and
+  Kiosk.
+- *Set-Mailbox*, updated 2026-05-16:
+  <https://learn.microsoft.com/en-us/powershell/module/exchangepowershell/set-mailbox>. Its
+  FoldersCountReceiveQuota "is used to specify a maximum number of folders within a mailbox,
+  typically a public folder mailbox", but "This parameter is available only in on-premises
+  Exchange", and it states no default.
 
 ### 4.9 Outcome: errors, exit codes, last-run record
 

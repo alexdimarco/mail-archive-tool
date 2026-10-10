@@ -52,17 +52,12 @@ func NewDelegated(ctx context.Context, cfg Config) (*Client, error) {
 		return nil, errors.New("internal: NewDelegated requires a token cache path or a token store")
 	}
 	be := tokenBackend{store: cfg.TokenStore, path: cfg.TokenCachePath}
-	reqTimeout, mimeTimeout := cfg.RequestTimeout, cfg.MIMETimeout
-	if reqTimeout <= 0 {
-		reqTimeout = defaultRequestTimeout
-	}
-	if mimeTimeout <= 0 {
-		mimeTimeout = defaultMIMETimeout
-	}
+	b := cfg.settings()
 	// One deadline-bounded transport for BOTH the device/token exchanges and the
 	// Graph API calls, so a stalled sign-in or a stalled listing fails within the
-	// deadline instead of hanging an unattended job (design D-C5, R17/MA-98).
-	transport := httpTransport(reqTimeout)
+	// deadline instead of hanging an unattended job (design D-C5, R17/MA-98). The
+	// $value download alone has its own (newClient, fault-isolation §4.8.6).
+	transport := httpTransport(b.req, b.wrap)
 	ctx = context.WithValue(ctx, oauth2.HTTPClient, transport)
 	conf := &oauth2.Config{
 		ClientID: cfg.ClientID,
@@ -86,7 +81,7 @@ func NewDelegated(ctx context.Context, cfg Config) (*Client, error) {
 		}
 		// Read the signer from Graph (not a self-asserted token) so the cache is
 		// bound to the right UPN, using the fresh token directly.
-		tmp := &Client{base: base, hc: oauth2.NewClient(ctx, oauth2.StaticTokenSource(tok)), reqTimeout: reqTimeout, mimeTimeout: mimeTimeout, meMode: true}
+		tmp := newClient(ctx, base, oauth2.StaticTokenSource(tok), b, true)
 		upn, err = tmp.Me(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("read the signed-in user: %w", err)
@@ -99,7 +94,7 @@ func NewDelegated(ctx context.Context, cfg Config) (*Client, error) {
 	}
 
 	src := newDeviceSource(ctx, conf, be, upn, tok)
-	return &Client{base: base, hc: oauth2.NewClient(ctx, src), reqTimeout: reqTimeout, mimeTimeout: mimeTimeout, meMode: true}, nil
+	return newClient(ctx, base, src, b, true), nil
 }
 
 // Me returns the signed-in user's userPrincipalName, read from GET /me (delegated
