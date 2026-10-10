@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"mail-archive-tool/internal/index"
@@ -120,6 +121,12 @@ type Input struct {
 	LockVerb string
 
 	PIDAlive func(int) bool
+
+	// WriteProbeErr is why a small file could not be written into the archive
+	// folder (read-only, full, a lost drive), nil when it could. A run that
+	// cannot write there cannot record its own failure, so status is where the
+	// custodian sees it (F2).
+	WriteProbeErr error
 }
 
 // Extractable is the extractability facet of an archive: WithEML of Total
@@ -342,6 +349,19 @@ func Assess(in Input, now time.Time) Report {
 		r.warn("history_corrupt", fmt.Sprintf("the go-back history log has %d unreadable line(s) — those events are skipped, so past-date views may be incomplete; run `mailarchive reindex -out %q` to compact the log", in.History.BadLines, in.Out))
 	}
 
+	// A scheduled backup that cannot write into its archive folder fails every
+	// run and cannot record the failure there (no last-run record, no attention
+	// file), so the previous ok would stand: say it here (F2). Only for a
+	// schedule recorded for this host — a read-only copy with no schedule, or
+	// another machine's job, is not a failing backup.
+	if in.WriteProbeErr != nil && in.HasDescriptor && (in.ThisHost == "" || in.Desc.Host == "" || in.ThisHost == in.Desc.Host) {
+		remedy := "make the folder writable (or remount the drive read-write)"
+		if diskFull(in.WriteProbeErr) {
+			remedy = "free space on the disk that holds it"
+		}
+		r.red("archive_unwritable", fmt.Sprintf("the archive folder %s cannot be written (%s) — the scheduled backup cannot save its manifest, its last-run record or this failure, so the last run shown above may be out of date; %s, then run the job again", in.Out, util.StripControl(probeCause(in.WriteProbeErr)), remedy))
+	}
+
 	// Schedule.
 	switch {
 	case in.DescErr != nil && !errors.Is(in.DescErr, os.ErrNotExist):
@@ -408,6 +428,48 @@ func (r *Report) worstFirst() {
 		}
 	}
 	r.Reasons, r.Codes = reasons, codes
+}
+
+// probeCause is the operating system's own words for a failed write probe,
+// without the probe file's name (the reason names the folder).
+func probeCause(err error) string {
+	var pe *os.PathError
+	if errors.As(err, &pe) {
+		return pe.Err.Error()
+	}
+	return err.Error()
+}
+
+// diskFull reports whether err is the operating system's "no space left".
+func diskFull(err error) bool {
+	if errors.Is(err, syscall.ENOSPC) {
+		return true
+	}
+	var en syscall.Errno
+	if runtime.GOOS == "windows" && errors.As(err, &en) {
+		return en == 112 || en == 39 // ERROR_DISK_FULL, ERROR_HANDLE_DISK_FULL
+	}
+	return false
+}
+
+// probeWrite writes and removes a small file in dir, enough (64 KiB, synced)
+// that a full disk or a failing drive refuses it; nil when dir takes a write.
+func probeWrite(dir string) error {
+	f, err := os.CreateTemp(dir, ".mailarchive-status-probe-*.tmp")
+	if err != nil {
+		return err
+	}
+	name := f.Name()
+	defer os.Remove(name)
+	if _, err := f.Write(make([]byte, 64<<10)); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 // rebuildHow is the remedy sentence for a damaged, missing or lagging search
@@ -710,6 +772,10 @@ func Gather(out, nameOverride string) Input {
 		}
 	}
 	in.History, in.HistoryReadErr = state.HistoryStatus(filepath.Join(out, state.HistoryName))
+
+	if fi, err := os.Stat(out); err == nil && fi.IsDir() {
+		in.WriteProbeErr = probeWrite(out)
+	}
 
 	d, derr := schedule.ReadDescriptor(out)
 	in.DescErr = derr
