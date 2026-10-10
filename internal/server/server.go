@@ -74,7 +74,7 @@ func New(outDir string, ix *index.Index) http.Handler {
 	// the archive holds — through an os.Root that never resolves outside the
 	// archive root and never follows a link (R4/R19, design-local-confidentiality
 	// P9); the policy headers are applied by secureHeaders below.
-	files := http.StripPrefix("/files/", http.FileServer(allowedFiles{dir: outDir}))
+	files := http.StripPrefix("/files/", pinFileTypes(http.FileServer(allowedFiles{dir: outDir})))
 	mux.Handle("/files/", files)
 
 	return localweb.Routed(secureHeaders(mux), mux)

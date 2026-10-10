@@ -70,6 +70,22 @@ func fileAllowed(depth int, name string) bool {
 	return strings.HasSuffix(name, ".html") || strings.HasSuffix(name, ".eml") || strings.HasSuffix(name, "-attachments.zip")
 }
 
+// pinFileTypes fixes the Content-Type of an archived .eml and an attachment zip
+// before http.FileServer picks one: the type otherwise comes from the host's mime
+// database, or from sniffing the first bytes, and a raw message that begins with
+// HTML must never be served as a page (AO3). A page keeps text/html.
+func pinFileTypes(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, ".eml"):
+			w.Header().Set("Content-Type", "message/rfc822")
+		case strings.HasSuffix(r.URL.Path, "-attachments.zip"):
+			w.Header().Set("Content-Type", "application/zip")
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 type entryKind int
 
 const (
