@@ -12,6 +12,17 @@ import (
 	"time"
 )
 
+// covers: MA-515, R17, R5, S20
+// AI1's cross-process half, an open gap and not accepted: the write-back lock is
+// per process, so a sign-in made by the dashboard process inside a scheduled
+// run's load-to-write window can still be overwritten by that run's rotation
+// (the loss is a forced re-sign-in; no token is written under another identity).
+// Closing it needs a file or vault lock shared by the processes, which is an owner
+// decision (platform locking on all three OSes).
+func TestTokenWriteBackCrossProcessSignIn(t *testing.T) {
+	t.Skip("MA-515 (XC7, 'a live source never decides who is signed in'): the write-back lock is per process; a cross-process sign-in inside putIfNewer's load-to-write window is still overwritten. Needs an owner decision on a cross-process token-store lock")
+}
+
 // covers: MA-528, R17, R29
 // AO1 tombstone (adversarial pass, slice EW-E1): the first request FolderTree
 // makes, the well-known folder id, reads its JSON body through the same size limit
