@@ -73,16 +73,6 @@ func TestCopyExportRowMA447(t *testing.T) {
 	t.Skip("MA-447: the run record and the seal-and-finish step are not built; lands in EW-E2")
 }
 
-// covers: MA-516, R29, R10, S52
-func TestCopyExportRowMA516(t *testing.T) {
-	t.Skip("MA-516: the transport backoff and the awake-time breaker are not built; lands in EW-E2")
-}
-
-// covers: MA-517, R17, R29, S52
-func TestCopyExportRowMA517(t *testing.T) {
-	t.Skip("MA-517: the sign-in classification is not built; lands in EW-E2")
-}
-
 // covers: MA-532, R29, R12, S52
 func TestCopyExportRowMA532(t *testing.T) {
 	t.Skip("MA-532: the hand-over posture over the inherited descriptor is not built; lands in EW-E2")
