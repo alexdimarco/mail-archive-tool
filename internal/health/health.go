@@ -1336,6 +1336,16 @@ type JSONReport struct {
 	// the schedule facet's shape; omitted when none is recorded. A later,
 	// backward-compatible addition at version 2, like `extractable`.
 	VerifySchedule *JSONSchedule `json:"verify_schedule,omitempty"`
+	// ShownAsSource (RV-10) counts messages whose page is shown as plain text,
+	// by reason; omitted when none. A backward-compatible addition at version 2.
+	ShownAsSource *JSONShownAsSource `json:"shown_as_source,omitempty"`
+}
+
+// JSONShownAsSource is the shown-as-source facet: the total and a count per
+// reason code (unsafe-after-reparse, unparseable, too-deeply-nested, too-large).
+type JSONShownAsSource struct {
+	Count   int            `json:"count"`
+	Reasons map[string]int `json:"reasons"`
 }
 
 // JSONFixity is the fixity-coverage facet: how many records carry a digest
@@ -1457,6 +1467,11 @@ func JSON(in Input, rep Report) JSONReport {
 		Fillable:     in.Fillable,
 		Terminal:     in.Terminal,
 		Unknown:      in.Unknown,
+	}
+	// RV-10: messages shown as plain text, per reason. An additive optional key,
+	// omitted when none, so the version is not bumped.
+	if n := shownAsSourceTotal(in.ShownAsSource); n > 0 {
+		doc.ShownAsSource = &JSONShownAsSource{Count: n, Reasons: in.ShownAsSource}
 	}
 	if doc.Reasons == nil {
 		doc.Reasons = []string{}

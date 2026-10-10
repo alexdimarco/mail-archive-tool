@@ -135,7 +135,6 @@ func TestReadmeNamesShownAsSource(t *testing.T) {
 // covers: MA-498, R18
 // status -json: additive shown_as_source key, omitted when none, version stays 2.
 func TestStatusJSONCarriesShownAsSource(t *testing.T) {
-	t.Skip("open (RV-10): the JSON report has no shown_as_source key yet")
 	now := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
 	in := shownInput(now)
 	b, err := json.Marshal(JSON(in, Assess(in, now)))
