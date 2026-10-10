@@ -145,16 +145,10 @@ func guardedExpr(e ast.Expr, lw string, funcs map[string]pkgFunc, depth int) boo
 	return returns > 0 && all
 }
 
-// covers: MA-378, R23, R19
-// Every handler a production binary serves is built by localweb.Wrap [CC15]:
-// each http.Server literal and Handler assignment in cmd/, and each
-// http.Serve/ServeTLS/ListenAndServe/ListenAndServeTLS call there, is given
-// localweb.Wrap(...) or a call to a package function whose every return is one.
-// A server with no Handler would serve the DefaultServeMux, so it fails too.
-func TestEveryServedHandlerIsGuarded(t *testing.T) {
-	root := moduleRoot(t)
-	files := assure.Reached(t, productionFiles(t, root, "cmd"), "production Go files under cmd/")
-	funcs := map[string]map[string]pkgFunc{} // package dir → function name → declaration
+// servedViolations checks every http.Server and Serve call in files for a
+// localweb.Wrap handler, and returns what it found wrong and how many servers it saw.
+func servedViolations(files []sourceFile) ([]string, int) {
+	funcs := map[string]map[string]pkgFunc{} // package dir -> function name -> declaration
 	for _, sf := range files {
 		if funcs[sf.dir] == nil {
 			funcs[sf.dir] = map[string]pkgFunc{}
@@ -173,8 +167,14 @@ func TestEveryServedHandlerIsGuarded(t *testing.T) {
 		if httpName == "" {
 			continue
 		}
-		lw := importName(sf.file, "mail-archive-tool/internal/localweb")
 		at := func(n ast.Node) string { return sf.rel + ":" + strconv.Itoa(sf.fset.Position(n.Pos()).Line) }
+		if httpName == "." {
+			// No selector would ever name http.Server or http.Serve: refuse the
+			// import rather than let the check pass over what it cannot see.
+			bad = append(bad, sf.rel+": a dot-import of net/http hides every http.Server and http.Serve from this check")
+			continue
+		}
+		lw := importName(sf.file, "mail-archive-tool/internal/localweb")
 		check := func(n ast.Node, e ast.Expr, what string) {
 			if !guardedExpr(e, lw, funcs[sf.dir], 0) {
 				bad = append(bad, at(n)+": "+what+" is given "+types.ExprString(e)+", not a localweb.Wrap handler")
@@ -182,6 +182,10 @@ func TestEveryServedHandlerIsGuarded(t *testing.T) {
 		}
 		ast.Inspect(sf.file, func(n ast.Node) bool {
 			switch x := n.(type) {
+			case *ast.TypeSpec:
+				if isSel(x.Type, httpName, "Server") {
+					bad = append(bad, at(x)+": a type declared from http.Server hides its literals from this check")
+				}
 			case *ast.CompositeLit:
 				if !isSel(x.Type, httpName, "Server") {
 					return true
@@ -221,23 +225,80 @@ func TestEveryServedHandlerIsGuarded(t *testing.T) {
 			return true
 		})
 	}
-	assure.Reached(t, servers, "HTTP servers the binaries start")
 	sort.Strings(bad)
+	return bad, servers
+}
+
+// covers: MA-378, R23, R19
+// Every handler a production binary serves is built by localweb.Wrap [CC15]:
+// each http.Server literal and Handler assignment in cmd/, and each
+// http.Serve/ServeTLS/ListenAndServe/ListenAndServeTLS call there, is given
+// localweb.Wrap(...) or a call to a package function whose every return is one.
+// A server with no Handler would serve the DefaultServeMux, so it fails too.
+func TestEveryServedHandlerIsGuarded(t *testing.T) {
+	root := moduleRoot(t)
+	files := assure.Reached(t, productionFiles(t, root, "cmd"), "production Go files under cmd/")
+	bad, servers := servedViolations(files)
+	assure.Reached(t, servers, "HTTP servers the binaries start")
 	if len(bad) > 0 {
 		t.Errorf("binaries serve handlers the local-surface guard does not wrap:\n  %s", strings.Join(bad, "\n  "))
 	}
 }
 
+// parseSource parses one synthetic production file, for the checks' own tests.
+func parseSource(t *testing.T, rel, src string) sourceFile {
+	t.Helper()
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, rel, src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sourceFile{rel: rel, dir: filepath.ToSlash(filepath.Dir(rel)), fset: fset, file: f}
+}
+
 // covers: MA-378, R23, R19
-// One route model [CC15]: no production code outside internal/localweb builds an
-// http.ServeMux or registers on the DefaultServeMux, so every route a surface
-// serves is registered through localweb.Mux and recorded — none can escape the
-// probe of every registered pattern. Any use of the http.ServeMux type counts,
-// not only NewServeMux, a literal or new(): a `var m http.ServeMux` (its zero
-// value is a working mux), a field or a parameter of that type is a mux too.
-func TestNoRouteOutsideTheRegistry(t *testing.T) {
-	root := moduleRoot(t)
-	files := assure.Reached(t, productionFiles(t, root, "cmd", "internal"), "production Go files under cmd/ and internal/")
+// The structural checks fail closed on what they cannot see [CC15]: a dot-import
+// of net/http (no selector would ever match), and a type declared from
+// http.Server or http.ServeMux (an alias hides its literals). A healthy file is
+// the positive twin. (Adversarial pass AI1, AO4.)
+func TestStructuralChecksFailClosedOnHiddenHTTP(t *testing.T) {
+	healthy := parseSource(t, "cmd/x/ok.go", `package x
+import (
+	"net/http"
+	"mail-archive-tool/internal/localweb"
+)
+func serve() { _ = &http.Server{Handler: localweb.Wrap(localweb.Surface{}, nil)} }
+`)
+	if bad, n := servedViolations([]sourceFile{healthy}); len(bad) != 0 || n != 1 {
+		t.Fatalf("positive twin: violations %v, servers %d; want none and 1", bad, n)
+	}
+	if bad := routeViolations([]sourceFile{healthy}); len(bad) != 0 {
+		t.Fatalf("positive twin: route violations %v", bad)
+	}
+	dot := parseSource(t, "cmd/x/dot.go", `package x
+import . "net/http"
+func serve() { m := NewServeMux(); m.HandleFunc("/leak", nil); s := &Server{Handler: m}; _ = s }
+`)
+	alias := parseSource(t, "cmd/x/alias.go", `package x
+import "net/http"
+type S = http.Server
+type M = http.ServeMux
+`)
+	for name, sf := range map[string]sourceFile{"dot-import": dot, "alias": alias} {
+		sv, _ := servedViolations([]sourceFile{sf})
+		rv := routeViolations([]sourceFile{sf})
+		if len(sv) == 0 {
+			t.Errorf("%s: the served-handler check passed over a file it cannot read", name)
+		}
+		if len(rv) == 0 {
+			t.Errorf("%s: the route-model check passed over a file it cannot read", name)
+		}
+	}
+}
+
+// routeViolations lists every route-registering use of net/http in files outside
+// internal/localweb.
+func routeViolations(files []sourceFile) []string {
 	var bad []string
 	for _, sf := range files {
 		if sf.dir == "internal/localweb" || strings.HasPrefix(sf.dir, "internal/localweb/") {
@@ -247,9 +308,18 @@ func TestNoRouteOutsideTheRegistry(t *testing.T) {
 		if httpName == "" {
 			continue
 		}
+		if httpName == "." {
+			bad = append(bad, sf.rel+": a dot-import of net/http hides every http.ServeMux and http.Handle from this check")
+			continue
+		}
 		named := map[token.Pos]bool{} // http.ServeMux types a literal or new() already reported
 		ast.Inspect(sf.file, func(n ast.Node) bool {
 			switch x := n.(type) {
+			case *ast.TypeSpec:
+				if isSel(x.Type, httpName, "ServeMux") {
+					named[x.Type.Pos()] = true
+					bad = append(bad, sf.rel+":"+strconv.Itoa(sf.fset.Position(x.Pos()).Line)+": a type declared from http.ServeMux")
+				}
 			case *ast.SelectorExpr:
 				for _, name := range []string{"NewServeMux", "Handle", "HandleFunc", "DefaultServeMux"} {
 					if isSel(x, httpName, name) {
@@ -276,7 +346,20 @@ func TestNoRouteOutsideTheRegistry(t *testing.T) {
 		})
 	}
 	sort.Strings(bad)
-	if len(bad) > 0 {
+	return bad
+}
+
+// covers: MA-378, R23, R19
+// One route model [CC15]: no production code outside internal/localweb builds an
+// http.ServeMux or registers on the DefaultServeMux, so every route a surface
+// serves is registered through localweb.Mux and recorded — none can escape the
+// probe of every registered pattern. Any use of the http.ServeMux type counts,
+// not only NewServeMux, a literal or new(): a `var m http.ServeMux` (its zero
+// value is a working mux), a field or a parameter of that type is a mux too.
+func TestNoRouteOutsideTheRegistry(t *testing.T) {
+	root := moduleRoot(t)
+	files := assure.Reached(t, productionFiles(t, root, "cmd", "internal"), "production Go files under cmd/ and internal/")
+	if bad := routeViolations(files); len(bad) > 0 {
 		t.Errorf("routes registered outside localweb.Mux (register them on a localweb.NewMux() so the route probe sees them):\n  %s", strings.Join(bad, "\n  "))
 	}
 }
