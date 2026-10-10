@@ -217,7 +217,13 @@ func Assess(in Input, now time.Time) Report {
 			r.warn("index_busy", msg+" — close any other program that has it open, then run status again")
 		}
 	case in.HasIndexFile && !in.HasIndex && in.IndexErr != nil:
-		r.red("index_unreadable", fmt.Sprintf("the search index %s cannot be read (%s) — search, serve and the folder pages need it; rebuild it from the archive with `mailarchive reindex -rebuild -out %q`", idxPath, util.StripControl(indexOpenCause(in.IndexErr)), in.Out))
+		// The rebuild needs the archive's manifest (it refuses without one), so
+		// with none here the remedy that works is moving the file aside (F6).
+		remedy := fmt.Sprintf("rebuild it from the archive with `mailarchive reindex -rebuild -out %q`", in.Out)
+		if !in.HasManifest && !in.HasManifestFile {
+			remedy = fmt.Sprintf("there is no manifest in %s to rebuild it from, so move search.db out of that folder; the next run builds a fresh index", in.Out)
+		}
+		r.red("index_unreadable", fmt.Sprintf("the search index %s cannot be read (%s) — search, serve and the folder pages need it; %s", idxPath, util.StripControl(indexOpenCause(in.IndexErr)), remedy))
 	case !in.HasIndex && !in.HasIndexFile && in.HasManifest && in.Messages > 0 && !(in.LastRunState == state.LastRunPresent && in.LastRun.NoIndex):
 		r.warn("index_missing", fmt.Sprintf("the archive has no search index (%s) although the manifest records %d message(s) — search, serve and the folder pages need it; rebuild it from the archive with `mailarchive reindex -rebuild -out %q` (or ignore this if the archive is deliberately kept without one, -index=false)", idxPath, in.Messages, in.Out))
 	}
@@ -283,7 +289,7 @@ func Assess(in Input, now time.Time) Report {
 		if verifyRunning(in) {
 			r.note("verify_in_progress", fmt.Sprintf("a verify is in progress (started %s UTC)", started))
 		} else {
-			r.warn("verify_never_finished", fmt.Sprintf("the verify started %s UTC never finished (crash, kill, or power loss) — run `mailarchive verify -out %q` again; the last finished verify's verdict is still reported", started, in.Out))
+			r.warn("verify_never_finished", fmt.Sprintf("the verify started %s UTC never finished (Ctrl-C, crash, kill, or power loss) — run `mailarchive verify -out %q` again; the last finished verify's verdict is still reported", started, in.Out))
 		}
 		judge = lv.Previous != nil
 		if judge {
@@ -355,7 +361,43 @@ func Assess(in Input, now time.Time) Report {
 			}
 		}
 	}
+	r.worstFirst()
 	return r
+}
+
+// worstFirst orders the reasons RED, then WARN, then notes (F20), keeping the
+// check order within each class and every indented remedy line ("  remedy: …")
+// directly under the reason it belongs to. Reasons and Codes stay parallel.
+func (r *Report) worstFirst() {
+	type group struct {
+		reasons, codes []string
+		rank           int
+	}
+	var groups []group
+	for i, reason := range r.Reasons {
+		if strings.HasPrefix(reason, "  ") && len(groups) > 0 {
+			g := &groups[len(groups)-1]
+			g.reasons, g.codes = append(g.reasons, reason), append(g.codes, r.Codes[i])
+			continue
+		}
+		rank := 2
+		switch {
+		case strings.HasPrefix(reason, "RED:"):
+			rank = 0
+		case strings.HasPrefix(reason, "WARN:"):
+			rank = 1
+		}
+		groups = append(groups, group{[]string{reason}, []string{r.Codes[i]}, rank})
+	}
+	var reasons, codes []string
+	for rank := 0; rank <= 2; rank++ {
+		for _, g := range groups {
+			if g.rank == rank {
+				reasons, codes = append(reasons, g.reasons...), append(codes, g.codes...)
+			}
+		}
+	}
+	r.Reasons, r.Codes = reasons, codes
 }
 
 // verifyRunning reports whether a verify is running now: the archive lock is
@@ -603,6 +645,12 @@ func Gather(out, nameOverride string) Input {
 		in.LockHeld = true
 		in.LockVerb = lockfile.HolderVerb(lockPath)
 	}
+	// The run records are read with the lock probe, as one snapshot of the
+	// run (F14): reading them after the index open — which can wait seconds on
+	// a busy index — let a run that failed in the meantime print "a run is
+	// using this archive" beside its own failure.
+	in.LastRun, in.LastRunState, in.LastRunErr = state.ReadLastRun(out)
+	in.LastVerify, in.LastVerifyState, in.LastVerifyErr = state.ReadLastVerify(out)
 
 	mpath := filepath.Join(out, ".mailarchive-manifest.json")
 	if _, serr := os.Stat(mpath); serr == nil {
@@ -639,8 +687,6 @@ func Gather(out, nameOverride string) Input {
 		}
 	}
 	in.History, in.HistoryReadErr = state.HistoryStatus(filepath.Join(out, state.HistoryName))
-	in.LastRun, in.LastRunState, in.LastRunErr = state.ReadLastRun(out)
-	in.LastVerify, in.LastVerifyState, in.LastVerifyErr = state.ReadLastVerify(out)
 
 	d, derr := schedule.ReadDescriptor(out)
 	in.DescErr = derr
@@ -759,7 +805,8 @@ func Summary(in Input, rep Report) []string {
 		if lr.Status == state.RunRunning && !runRunning(in) {
 			how = "never finished"
 		}
-		line := fmt.Sprintf("Last run:   %s → %s", lr.Started.Local().Format("2006-01-02 15:04"), how)
+		// Local time, with its zone named: the verify lines below are UTC (F9).
+		line := fmt.Sprintf("Last run:   %s → %s", lr.Started.Local().Format("2006-01-02 15:04 MST"), how)
 		if lr.Status == state.RunOK {
 			line += fmt.Sprintf(" · exported %d · filled %d · took %s", lr.Exported, lr.Filled, lr.Finished.Sub(lr.Started).Round(time.Second))
 		} else if lr.Error != "" {
@@ -787,6 +834,7 @@ func Summary(in Input, rep Report) []string {
 		} else {
 			lines = append(lines, "Last verify: "+verifyVerdict(lv))
 		}
+		lines = append(lines, "            (verify times are UTC)")
 	}
 	if in.HasDescriptor {
 		lines = append(lines, fmt.Sprintf("Schedule:   %q %s · %s at %s · runs %s · installed %s (UTC) on %s",
@@ -816,22 +864,25 @@ func verifyVerdict(lv state.LastVerify) string {
 // is bumped when a field's meaning changes so a consumer can refuse a shape it
 // does not understand.
 type JSONReport struct {
-	Version     int              `json:"version"`
-	Posture     string           `json:"posture"`
-	Reasons     []string         `json:"reasons"`
-	ReasonCodes []string         `json:"reason_codes"` // parallel to Reasons; a stable code per WARN/RED
-	Out         string           `json:"out"`
-	Messages    int              `json:"messages"`
-	Indexed     int              `json:"indexed"`
-	Fillable    int              `json:"fillable"`
-	Terminal    int              `json:"terminal"`
-	Unknown     int              `json:"unknown"`
-	Fixity      *JSONFixity      `json:"fixity"`      // fixity COVERAGE; null when no manifest
-	Extractable *JSONExtractable `json:"extractable"` // records with a preserved .eml present on disk (file presence, design K4); null when no manifest
-	History     *JSONHistory     `json:"history"`     // go-back timeline coverage (design §3.4); always present (exists=false when no log)
-	LastRun     *JSONLastRun     `json:"last_run,omitempty"`
-	LastVerify  *JSONLastVerify  `json:"last_verify"` // verify's integrity verdict; null when none recorded
-	Schedule    *JSONSchedule    `json:"schedule,omitempty"`
+	Version     int      `json:"version"`
+	Posture     string   `json:"posture"`
+	Reasons     []string `json:"reasons"`
+	ReasonCodes []string `json:"reason_codes"` // parallel to Reasons; a stable code per WARN/RED
+	Out         string   `json:"out"`
+	Messages    int      `json:"messages"`
+	Indexed     int      `json:"indexed"`
+	// IndexedKnown is false when search.db exists but could not be read (busy
+	// or damaged), so Indexed's 0 is not a count (F8). Additive; version stays.
+	IndexedKnown bool             `json:"indexed_known"`
+	Fillable     int              `json:"fillable"`
+	Terminal     int              `json:"terminal"`
+	Unknown      int              `json:"unknown"`
+	Fixity       *JSONFixity      `json:"fixity"`      // fixity COVERAGE; null when no manifest
+	Extractable  *JSONExtractable `json:"extractable"` // records with a preserved .eml present on disk (file presence, design K4); null when no manifest
+	History      *JSONHistory     `json:"history"`     // go-back timeline coverage (design §3.4); always present (exists=false when no log)
+	LastRun      *JSONLastRun     `json:"last_run,omitempty"`
+	LastVerify   *JSONLastVerify  `json:"last_verify"` // verify's integrity verdict; null when none recorded
+	Schedule     *JSONSchedule    `json:"schedule,omitempty"`
 }
 
 // JSONFixity is the fixity-coverage facet: how many records carry a digest
@@ -872,6 +923,10 @@ type JSONLastRun struct {
 	Error    string     `json:"error,omitempty"`
 	Exported int        `json:"exported"`
 	Filled   int        `json:"filled"`
+	// InProgress is true only while a run really holds the archive lock: a
+	// "running" status whose run is dead (RED run_never_finished) has
+	// in_progress false (F8). Additive; version stays.
+	InProgress bool `json:"in_progress"`
 }
 
 // JSONLastVerify is verify's integrity verdict, from its separate record; null
@@ -938,16 +993,17 @@ const JSONVersion = 2
 // Summary it only reports (R18).
 func JSON(in Input, rep Report) JSONReport {
 	doc := JSONReport{
-		Version:     JSONVersion,
-		Posture:     rep.Posture,
-		Reasons:     rep.Reasons,
-		ReasonCodes: rep.Codes,
-		Out:         in.Out,
-		Messages:    in.Messages,
-		Indexed:     in.Indexed,
-		Fillable:    in.Fillable,
-		Terminal:    in.Terminal,
-		Unknown:     in.Unknown,
+		Version:      JSONVersion,
+		Posture:      rep.Posture,
+		Reasons:      rep.Reasons,
+		ReasonCodes:  rep.Codes,
+		Out:          in.Out,
+		Messages:     in.Messages,
+		Indexed:      in.Indexed,
+		IndexedKnown: !(in.HasIndexFile && !in.HasIndex),
+		Fillable:     in.Fillable,
+		Terminal:     in.Terminal,
+		Unknown:      in.Unknown,
 	}
 	if doc.Reasons == nil {
 		doc.Reasons = []string{}
@@ -974,11 +1030,12 @@ func JSON(in Input, rep Report) JSONReport {
 	if in.LastRunState == state.LastRunPresent {
 		lr := in.LastRun
 		jlr := &JSONLastRun{
-			Status:   lr.Status,
-			Started:  lr.Started,
-			Error:    lr.Error,
-			Exported: lr.Exported,
-			Filled:   lr.Filled,
+			Status:     lr.Status,
+			Started:    lr.Started,
+			Error:      lr.Error,
+			Exported:   lr.Exported,
+			Filled:     lr.Filled,
+			InProgress: lr.Status == state.RunRunning && runRunning(in),
 		}
 		// Finished stays null while a run is in progress (UJ-A5).
 		if lr.Status != state.RunRunning && !lr.Finished.IsZero() {
