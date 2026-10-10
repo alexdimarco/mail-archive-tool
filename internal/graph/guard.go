@@ -15,7 +15,14 @@ const (
 	ListingRepeat      ListingKind = "repeat"       // a nextLink the loop has already fetched
 	ListingPageCap     ListingKind = "page-cap"     // a page past the loop's page cap
 	ListingForeignHost ListingKind = "foreign-host" // a nextLink off the client's base scheme, host, port or path
+	ListingPageSize    ListingKind = "page-size"    // one page whose body runs past maxPageBytes
 )
+
+// maxPageBytes bounds one JSON page's body. A listing page is at most a few
+// hundred kilobytes in practice (1000 message refs with their selected fields);
+// a page that streams past this is an endpoint that does not end, and decoding
+// it would grow the heap until the request timeout.
+const maxPageBytes = 64 << 20
 
 // ListingError is a paging loop's guard stop (fault-isolation §4.8.7). Every
 // stop ends its loop with this error, never as a quiet end of listing: a quiet
@@ -33,6 +40,8 @@ func (e *ListingError) Error() string {
 		return "graph listing did not terminate: it pointed back at a page it had already fetched"
 	case ListingPageCap:
 		return fmt.Sprintf("graph listing did not terminate: it ran past %d pages (the listing's page limit)", e.Limit)
+	case ListingPageSize:
+		return fmt.Sprintf("graph listing did not terminate: one page ran past %d bytes (the listing's page size limit)", e.Limit)
 	default:
 		return fmt.Sprintf("graph listing left Microsoft Graph: its next page is on %q, and no request was sent there", e.Host)
 	}

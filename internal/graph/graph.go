@@ -823,7 +823,14 @@ func (c *Client) getJSON(ctx context.Context, u string, v any) (string, error) {
 	if resp.StatusCode != http.StatusOK {
 		return "", statusErr(resp)
 	}
-	return resp.Header.Get("Preference-Applied"), json.NewDecoder(resp.Body).Decode(v)
+	// A page is bounded in size as well as time: an endpoint that streams a page
+	// without end would otherwise grow the heap until the request timeout.
+	page := &io.LimitedReader{R: resp.Body, N: maxPageBytes + 1}
+	err = json.NewDecoder(page).Decode(v)
+	if page.N <= 0 {
+		return "", &ListingError{Kind: ListingPageSize, Limit: maxPageBytes}
+	}
+	return resp.Header.Get("Preference-Applied"), err
 }
 
 // get issues a GET with bounded retries that honour Graph throttling
