@@ -265,6 +265,59 @@ func TestFlattenerRefusesWhatItCouldNotDropWithoutChangingTheMail(t *testing.T) 
 	}
 }
 
+// covers: MA-80, MA-474, R7, R19
+// Found by the round-3 corpus run (rv3/corpus-benign: Outlook, Mailchimp,
+// HubSpot, Litmus and a video/picture mail fell back as unsafe-after-reparse
+// with the page check of the round-3 fix commit): an <img src="cid:..."> with no
+// matching part that already has an alt or a class got a SECOND alt and class
+// from neutralize, which the parser drops on re-parse (the first attribute
+// wins), so the serialization was not a fixed point and the body div's content
+// differed from the sanitized markup. Ordinary mail with a missing inline image
+// now renders as HTML again: the image keeps its own alt and class (the
+// attributes a browser used anyway), gets the caption and the marker class only
+// where it had none, and no element carries a duplicate attribute.
+func TestRenderMissingInlineImageWithItsOwnAttributesRendersAsHTML(t *testing.T) {
+	body := `<p>top</p><img src="cid:gone@x" alt="logo" class="hero" width="10"><img src="cid:gone2@x" width="10"><picture><source srcset="a.webp"><img src="cid:gone3@x" alt="pic"></picture>`
+	out, err := RenderWith(&model.Message{Subject: "missing images", HTMLBody: body}, RenderContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.BodyFallback != "" {
+		t.Fatalf("a mail whose inline images are missing must render as HTML, got fallback %q", out.BodyFallback)
+	}
+	for i, root := range pageTrees(t, "missing images", string(out.HTML)) {
+		_, b := pageLayout(root)
+		imgs := 0
+		var walk func(n *xhtml.Node)
+		walk = func(n *xhtml.Node) {
+			if n.Type == xhtml.ElementNode && n.Data == "img" {
+				imgs++
+			}
+			for c := n.FirstChild; c != nil; c = c.NextSibling {
+				walk(c)
+			}
+		}
+		walk(b)
+		if imgs != 3 {
+			t.Errorf("reading %d: want the 3 images kept, got %d", i, imgs)
+		}
+		first := findElem(b, func(n *xhtml.Node) bool { return n.Data == "img" && attrOf(n, "data-mailarchive-missing") == "cid:gone@x" })
+		second := findElem(b, func(n *xhtml.Node) bool { return n.Data == "img" && attrOf(n, "data-mailarchive-missing") == "cid:gone2@x" })
+		if first == nil || second == nil {
+			t.Fatalf("reading %d: the missing images must be marked data-mailarchive-missing", i)
+		}
+		if attrOf(first, "alt") != "logo" || attrOf(first, "class") != "hero" {
+			t.Errorf("reading %d: an image keeps its own alt and class, got alt=%q class=%q", i, attrOf(first, "alt"), attrOf(first, "class"))
+		}
+		if attrOf(second, "alt") != "[inline image not included in the archived message]" || attrOf(second, "class") != "mailarchive-missing-image" {
+			t.Errorf("reading %d: an image with none gets the caption and the marker class, got alt=%q class=%q", i, attrOf(second, "alt"), attrOf(second, "class"))
+		}
+	}
+	if strings.Contains(string(out.HTML), `alt="logo" alt=`) || strings.Contains(string(out.HTML), `class="hero" alt=`) {
+		t.Errorf("an image must not carry a duplicate attribute:\n%s", bodyPart(string(out.HTML)))
+	}
+}
+
 // covers: MA-472, R1, R7, R19
 // R3-AC6. The serialization cap scaled with the input without bound: 16x a
 // 10 MB mail is 160 MB, so a small inflating mail (400 unclosed `<b id=i>` and

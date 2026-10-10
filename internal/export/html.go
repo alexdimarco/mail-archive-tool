@@ -1818,9 +1818,17 @@ func neutralize(n *xhtml.Node) {
 				for i, a := range c.Attr {
 					if strings.EqualFold(a.Key, "src") && strings.HasPrefix(strings.ToLower(strings.TrimSpace(a.Val)), "cid:") {
 						c.Attr[i].Key = "data-mailarchive-missing"
-						c.Attr = append(c.Attr,
-							xhtml.Attribute{Key: "alt", Val: "[inline image not included in the archived message]"},
-							xhtml.Attribute{Key: "class", Val: "mailarchive-missing-image"})
+						// The caption and the marker class only where the image has
+						// none: a second alt or class is dropped by the parser on
+						// re-parse (the first attribute wins, so the browser used the
+						// image's own anyway) and the serialization would no longer be
+						// a fixed point, which the page check reads as hostile.
+						if !hasAttrKey(c, "alt") {
+							c.Attr = append(c.Attr, xhtml.Attribute{Key: "alt", Val: "[inline image not included in the archived message]"})
+						}
+						if !hasAttrKey(c, "class") {
+							c.Attr = append(c.Attr, xhtml.Attribute{Key: "class", Val: "mailarchive-missing-image"})
+						}
 					}
 				}
 			}
@@ -1879,6 +1887,16 @@ func foreignReservedMarker(n *xhtml.Node) bool {
 					return true
 				}
 			}
+		}
+	}
+	return false
+}
+
+// hasAttrKey reports whether n has an attribute named key (ASCII case-folded).
+func hasAttrKey(n *xhtml.Node, key string) bool {
+	for _, a := range n.Attr {
+		if strings.EqualFold(a.Key, key) {
+			return true
 		}
 	}
 	return false
