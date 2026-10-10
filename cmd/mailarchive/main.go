@@ -23,6 +23,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
@@ -647,6 +648,13 @@ func runVerify(args []string) error {
 	}
 	defer closeLog()
 
+	// Ctrl-C or a terminate says what happened (F10); the running record is
+	// left as a kill leaves it, so status reports the verify as never finished.
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+	stopWatch := watchVerifyInterrupt(sigs, os.Stderr, abspath(*o.out), os.Exit)
+	defer func() { signal.Stop(sigs); stopWatch() }()
+
 	rep, verr := app.Verify(abspath(*o.out), app.VerifyOptions{Record: *o.record}, logger, nil)
 	if verr != nil {
 		if *o.log != "" { // a scheduled run leaves its reason in its own log
@@ -672,6 +680,29 @@ func runVerify(args []string) error {
 		return &exitError{code: code}
 	}
 	return nil
+}
+
+// watchVerifyInterrupt waits for a signal on sigs and, when one arrives, prints
+// one line to w saying the verify did not finish and what still stands, then
+// calls exit with the shell's code for that signal (130 for Ctrl-C, 143 for
+// terminate). The returned func stops the watcher and waits for it, so a verify
+// that finished normally prints nothing.
+func watchVerifyInterrupt(sigs <-chan os.Signal, w io.Writer, out string, exit func(int)) (stop func()) {
+	quit, done := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(done)
+		select {
+		case s := <-sigs:
+			fmt.Fprintf(w, "mailarchive: verify interrupted: the archive was not fully checked and no new verdict was recorded; the last finished verdict still stands (see `mailarchive status`). Run `mailarchive verify -out %q` again to finish.\n", out)
+			if s == syscall.SIGTERM {
+				exit(143)
+			} else {
+				exit(130)
+			}
+		case <-quit:
+		}
+	}()
+	return func() { close(quit); <-done }
 }
 
 func verifyUsage(fs *flag.FlagSet) func() {
