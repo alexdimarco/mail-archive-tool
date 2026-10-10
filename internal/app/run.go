@@ -341,10 +341,12 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		if _, rkErr := idx.RepairKeys(manifest.Rekeyed > 0, state.MigrateKey, logger); rkErr != nil {
 			return Result{}, fmt.Errorf("migrate search index keys: %w", rkErr)
 		}
+		warns := newIndexWarnings(logger)
+		defer warns.flush()
 		exp.OnExported = func(store string, folderPath []string, m *model.Message, relPath, key string) {
 			if addErr := idx.Add(store, folderPath, m, relPath, key); addErr != nil {
 				indexErrors++
-				logger.Printf("warning: index: %v", addErr)
+				warns.add(addErr)
 			}
 		}
 	}

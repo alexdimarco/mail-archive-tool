@@ -222,11 +222,13 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	// folder-assertion under its CURRENT folder — the timeline event the fold and
 	// serve read (T2). The key is the exporter's own (possibly #fp-qualified) key,
 	// so the assertion and the index row agree with the manifest record.
+	warns := newIndexWarnings(logger)
+	defer warns.flush()
 	exp.OnExported = func(store string, folderPath []string, m *model.Message, relPath, key string) {
 		if idx != nil {
 			if addErr := idx.Add(store, folderPath, m, relPath, key); addErr != nil {
 				indexErrors++
-				logger.Printf("warning: index: %v", addErr)
+				warns.add(addErr)
 			}
 		}
 		if hist != nil {
