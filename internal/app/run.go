@@ -24,6 +24,7 @@ import (
 	"mail-archive-tool/internal/pages"
 	"mail-archive-tool/internal/source"
 	"mail-archive-tool/internal/state"
+	"mail-archive-tool/internal/util"
 )
 
 // Options describes a single export run.
@@ -419,6 +420,8 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 
 	result = Result{Files: len(files), ManifestBefore: manifestBefore}
 	var failures int
+	var firstFailed string
+	var firstErr error
 	for _, f := range files {
 		runErr := runFile(ctx, exp, f, opts.Out, opts.CopyFirst, logger, func(stats export.Stats) {
 			checkpoint(stats)
@@ -447,7 +450,10 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		}
 		if runErr != nil {
 			failures++
-			logger.Printf("error: %s: %v%s", f, runErr, dataFileRemedy(f))
+			if failures == 1 {
+				firstFailed, firstErr = f, runErr
+			}
+			logger.Printf("error: %s: %v%s", f, runErr, dataFileRemedyFor(f, runErr))
 		}
 	}
 
@@ -463,12 +469,12 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	finish(opts.Out, &result, exp, manifest, idx, indexErrors, true, logger)
 	if saveErr != nil {
 		if failures > 0 {
-			return result, fmt.Errorf("%d file(s) failed; %w", failures, manifestSaveFailure(mpath, saveErr))
+			return result, fmt.Errorf("%w; %w", fileFailureError(failures, firstFailed, firstErr), manifestSaveFailure(mpath, saveErr))
 		}
 		return result, manifestSaveFailure(mpath, saveErr)
 	}
 	if failures > 0 {
-		return result, fmt.Errorf("%d file(s) failed", failures)
+		return result, fileFailureError(failures, firstFailed, firstErr)
 	}
 	return result, partialOutcome(result)
 }
@@ -777,6 +783,58 @@ func dataFileRemedy(path string) string {
 		return " — a damaged .pst can usually be repaired: " + state.PSTRepairRemedy
 	}
 	return ""
+}
+
+// dataFileRemedyFor is dataFileRemedy keyed by the cause (friction F1): the
+// in-place repair is for a file that opens and does not parse. A file that cannot
+// be opened at all (permissions, another program holding it, a wrong path, a disk
+// error) is told what to do about THAT, because a repair tool cannot help it. An
+// .ost keeps ostOpenRemedy and any other source gets none.
+func dataFileRemedyFor(path string, err error) string {
+	if !strings.EqualFold(filepath.Ext(path), ".pst") || err == nil {
+		return dataFileRemedy(path)
+	}
+	text := strings.ToLower(err.Error())
+	switch {
+	case errors.Is(err, fs.ErrPermission), state.GapErrnoClass(text) == state.ErrnoPerm:
+		return " — the file could not be opened because of its permissions: fix the permissions on the file (and that your account may read its folder), then run again"
+	case strings.Contains(text, "used by another process"), strings.Contains(text, "sharing violation"), strings.Contains(text, "text file busy"):
+		return " — another program has the file open: close Outlook (or whichever program is using it), then run again"
+	case errors.Is(err, fs.ErrNotExist), strings.Contains(text, "no such file"), strings.Contains(text, "cannot find the"):
+		return " — the file was not found: check the path (and that the drive or share is connected), then run again"
+	case state.GapErrnoClass(text) == state.ErrnoIO:
+		return " — the disk returned a read error: check the drive the file is on, then run again"
+	}
+	return dataFileRemedy(path)
+}
+
+// fileFailureError is the run's error when data files failed to open or read
+// (friction F2). It names the first failing file, the cause in a few words and
+// the remedy for that cause, on one line, so the last-run record, `status` and
+// BACKUP-NEEDS-ATTENTION.txt (which all carry this text and send the reader to
+// `status`) are not a dead end. The run log still has every file.
+func fileFailureError(failures int, firstPath string, firstErr error) error {
+	cause := ""
+	if firstErr != nil {
+		cause = firstErr.Error()
+		// go-pst and os wrap the path in front of the cause two or three times.
+		for {
+			i := strings.LastIndex(cause, firstPath+": ")
+			if i < 0 {
+				break
+			}
+			cause = cause[i+len(firstPath)+2:]
+		}
+	}
+	msg := fmt.Sprintf("%d file(s) failed: %s", failures, util.StripControl(firstPath))
+	if cause != "" {
+		msg += ": " + util.StripControl(cause)
+	}
+	msg += util.StripControl(dataFileRemedyFor(firstPath, firstErr))
+	if failures > 1 {
+		msg += fmt.Sprintf(" (the run log names the other %d)", failures-1)
+	}
+	return errors.New(msg)
 }
 
 // runFile opens one data file (optionally via a temp snapshot) and exports every
