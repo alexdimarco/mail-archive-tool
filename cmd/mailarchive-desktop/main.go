@@ -107,9 +107,10 @@ func run(args []string) error {
 		return fmt.Errorf("archive reader could not bind %s: %w", *readerAddr, err)
 	}
 
-	dash := &http.Server{Handler: dashboardHandler(dcfg, ln.Addr()), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute}
+	// DisableGeneralOptionsHandler: net/http would answer OPTIONS * before the Host guard (AC8).
+	dash := &http.Server{Handler: dashboardHandler(dcfg, ln.Addr()), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute, DisableGeneralOptionsHandler: true}
 	rm := desktop.ReaderHandler(dcfg)
-	reader := &http.Server{Handler: readerHandler(rm, readerLn.Addr()), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute}
+	reader := &http.Server{Handler: readerHandler(rm, readerLn.Addr()), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute, DisableGeneralOptionsHandler: true}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

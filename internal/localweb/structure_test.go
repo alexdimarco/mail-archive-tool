@@ -192,12 +192,23 @@ func servedViolations(files []sourceFile) ([]string, int) {
 				}
 				servers++
 				var handler ast.Expr
+				noOptions := false
 				for _, el := range x.Elts {
 					if kv, ok := el.(*ast.KeyValueExpr); ok {
 						if k, ok := kv.Key.(*ast.Ident); ok && k.Name == "Handler" {
 							handler = kv.Value
 						}
+						if k, ok := kv.Key.(*ast.Ident); ok && k.Name == "DisableGeneralOptionsHandler" {
+							if v, ok := kv.Value.(*ast.Ident); ok && v.Name == "true" {
+								noOptions = true
+							}
+						}
 					}
+				}
+				if !noOptions {
+					// net/http answers `OPTIONS *` itself, before Handler runs, so the
+					// guard would see neither the Host nor the headers (AC8).
+					bad = append(bad, at(x)+": an http.Server without DisableGeneralOptionsHandler: true answers OPTIONS * past the guard")
 				}
 				if handler == nil {
 					bad = append(bad, at(x)+": an http.Server with no Handler serves the DefaultServeMux")
@@ -267,7 +278,7 @@ import (
 	"net/http"
 	"mail-archive-tool/internal/localweb"
 )
-func serve() { _ = &http.Server{Handler: localweb.Wrap(localweb.Surface{}, nil)} }
+func serve() { _ = &http.Server{Handler: localweb.Wrap(localweb.Surface{}, nil), DisableGeneralOptionsHandler: true} }
 `)
 	if bad, n := servedViolations([]sourceFile{healthy}); len(bad) != 0 || n != 1 {
 		t.Fatalf("positive twin: violations %v, servers %d; want none and 1", bad, n)

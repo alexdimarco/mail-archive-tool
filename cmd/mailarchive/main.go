@@ -376,6 +376,8 @@ func runServe(args []string) error {
 		Handler:           serveHandler(*out, ix, ln.Addr(), allowHosts),
 		ReadHeaderTimeout: 10 * time.Second, // a stalled client cannot hold a connection open forever
 		IdleTimeout:       2 * time.Minute,
+		// OPTIONS * would be answered by net/http before the Host guard (AC8).
+		DisableGeneralOptionsHandler: true,
 	}
 	return srv.Serve(ln)
 }
@@ -415,6 +417,8 @@ func runSetup(args []string) error {
 		Handler:           setupHandler(cfgPath, store, ln.Addr()),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
+		// OPTIONS * would be answered by net/http before the Host guard (AC8).
+		DisableGeneralOptionsHandler: true,
 	}
 	fmt.Printf("Microsoft 365 setup — open this page in a browser:\n  %s\n", servedURL(*addr, ln.Addr()))
 	fmt.Printf("Config:        %s\n", cfgPath)
