@@ -1,8 +1,9 @@
 # Design — Extraction workspace: a one-off copy export from Microsoft 365 or the archive, inside MailArchive Desktop
 
-**Revision:** 2 (2026-10-09), with the RR-2 conditions folded. **BUILD STATUS:** approved
-with conditions, not built; owner rulings folded (`docs/owner-rulings-2026-10-09.md`); RR-2
-addendum filed and its conditions folded.
+**Revision:** 2 (2026-10-09), with the RR-2 and RR-2b conditions folded. **BUILD STATUS:**
+approved with conditions, not built; owner rulings folded (`docs/owner-rulings-2026-10-09.md`);
+RR-2 addendum filed and its conditions folded; RR-2b ran (addendum filed,
+GO_WITH_CONDITIONS), and its re-verification fixes and conditions are folded [RR-2b].
 The 10-lens pre-code review is filed as `docs/review-extraction-workspace-predesign.md`:
 GO_WITH_CONDITIONS, 118 findings (111 confirmed, 7 refuted). Conditions **XC1..XC40** are
 folded into this revision, and the build must not start from revision 1. Nothing in this
@@ -18,7 +19,19 @@ Gates before code:
   them, never from the text before them. **Re-verified once:** the check found RR2-C2,
   RR2-C3, RR2-C4 and RR2-C13 not fully delivered, with stale passages beside them. Their
   fixes are folded under the same marks (the addendum's "Re-verification"), and they are
-  re-verified again before E2 code.
+  re-verified again before E2 code. RR-2b did that (next bullet).
+- **RR-2b: filed [RR-2b].** The delta design check before E2 code (owner rulings §13.5). It
+  re-verified the four re-fixed conditions with fresh eyes, and ran lenses 6 and 7 on
+  fault-isolation RR-6's edits to this text ("Addendum: RR-2b" in the review). Verdict:
+  **GO_WITH_CONDITIONS.**
+  - All four re-verifications failed again. Their fixes are folded under each condition's
+    own mark and also marked `[RR-2b re-verification]`.
+  - Ten confirmed findings became conditions **RR2b-C1..RR2b-C10**, each marked
+    `[RR-2b RR2b-Cn]` where it lands (map below). RR2b-C3 and RR2b-C8 also land in
+    `docs/design-fault-isolation.md` §4.8.6 and its §10 SG row, because SG builds the
+    `$value` client and its size stop. They are marked the same way there.
+  - E2 code starts from this text with them, after they are re-verified. RR2b-C2 belongs to
+    E5 and is owed before E5 code.
 - **RR-3 [ruling W1]: filed with RR-2.** Lenses 3, 6 and 7 on the second archive source's
   text (Q3), before E4 code, folded into RR-2 as allowed. Its W1 conditions are RR2-C9,
   RR2-C11, RR2-C13 and RR2-C14. Its W1 notes stay open, owed as "W1's text completed as
@@ -42,6 +55,10 @@ Key conditions:
   cap is the figure SG confirms against Exchange Online's largest item (256 MiB or higher, not
   200 MiB), and capture keeps a 10-minute overall cap until fault-isolation S3 while this
   design's stays 2 h. Each change it makes here is marked `[fault-isolation RR-6]`.
+  **Conditional (ESC-8) [RR-2b RR2b-C8]:** the figure is confirmed only where Microsoft's
+  documentation bounds a stored item. Under ESC-8's safe interim, the copy export alone
+  carries 256 MiB, confirmed against nothing. That is an open condition, not accepted
+  (§4.13).
 - **XC28** each slice ships only what it builds.
 
 **Ids are allocated [ruling Q11 = J1].** Revision 2's provisional R22 / S42 / X12–X14 are now
@@ -118,6 +135,25 @@ with its slice's catalog-first PR, for the OPERATOR to accept into
 | RR2-C12 run records are found without the journal | §4.2, §4.16, §4.19, §5.1, §5.2, §9 (MA-430), §10 |
 | RR2-C13 R-f compares identities, not only paths | §3, §4.7, §4.8, §7.2, §7.6, §8.1, §9 (MA-414, MA-434, MA-438, MA-531), §10, §11 Q3 |
 | RR2-C14 an export from another archive folder saves no setting | §4.3, §4.17, §9 (MA-531), §10, §11 Q3 |
+
+**RR-2b condition map [RR-2b]** (the RR-2b addendum's conditions → where each lands, marked
+`[RR-2b RR2b-Cn]`). The re-verification fixes to RR2-C2, RR2-C3, RR2-C4 and RR2-C13 are marked
+`[RR-2b re-verification]` beside their own condition's marks: §4.2, §4.7, §4.8, §4.9, §4.10,
+§4.13, §4.16, §4.19, §5.1, §5.2, §7.2, §7.6, §8.1, §9 (MA-414, MA-430, MA-434, MA-437,
+MA-438, MA-447, MA-448, MA-521) and §10.
+
+| Condition | Lands in |
+|---|---|
+| RR2b-C1 a download cut again and again after its body started is listed, never retried for ever | P12, §4.5, §4.13, §4.15, §5.2, §7.2, §8.4, §9 (MA-516), §10 |
+| RR2b-C2 a readable copy has a render bound (slice E5) | P10, P16, §4.11, §4.15, §8.2, §8.4, §9 (MA-419, MA-509), §10 |
+| RR2b-C3 `Client.Timeout` reaches every client `oauth2.NewClient` builds, so SG's `$value` client is built without it | §4.5, §4.18, §9 (MA-527), §10, fault-isolation §4.8.6 and §10 |
+| RR2b-C4 a refused redirect is a typed error naming the host, with a hop limit and its own class | P4, P12, §4.5, §4.13, §5.2, §7.2, §7.6 (R-u3), §8.2, §8.4, §9 (MA-427, MA-438, MA-528), §10 |
+| RR2b-C5 a cut attempt's temp file is removed, and the budget is read again before each retry | §4.13, §4.15, §5.2, §9 (MA-427, MA-516), §10 |
+| RR2b-C6 the message in flight at a run-fatal stop is exported by the next part, last | P12, §4.13, §7.2, §7.6, §9 (MA-427, MA-437, MA-438), §10 |
+| RR2b-C7 R-u only when a control request also goes unanswered; throttling and a stalled message get their own outcome | P12, §4.13, §4.14, §4.15, §5.2, §7.2, §7.6 (R-u, R-v2), §8.3, §9 (MA-438, MA-516), §10 |
+| RR2b-C8 above the size cap is terminal for this version, ESC-8's condition stands next to each cap claim, and the cap is decided before the budget | header, P16, §4.5, §4.13, §7.2, §8.2, §9 (MA-402, MA-426, MA-427), §10, fault-isolation §4.8.6 and §10 |
+| RR2b-C9 the suspend detector names its clock, and the in-flight re-download is stated | §4.13, §4.15, §7.2, §9 (MA-516), §10 |
+| RR2b-C10 the sealed line and the journal `end` carry the stop's reason | §4.13, §4.16, §4.19, §5.1, §9 (MA-430), §10 |
 
 **Owner rulings (already made, not reopened here):**
 - **OW1** — the workspace is a new page inside MailArchive Desktop
@@ -241,7 +277,8 @@ rows that will prove it (§9).
   session's cached tree (XC17). List cursors are opaque server-side handles. A Graph
   `nextLink` is never handed to the page, and one that points anywhere other than the
   client's own base URL is refused before any request. A redirect that leaves the base
-  scheme, host and port is refused too (XC26). Against a misbehaving or compromised
+  scheme, host and port is refused too (XC26), as a typed error naming the host
+  [RR-2b RR2b-C4]. Against a misbehaving or compromised
   server, the pin and the redirect refusal are defence in depth. Against a TLS-intercepting
   proxy they do nothing: that proxy already holds the token, which is today's trust (XC26).
   **Second admission path (XC2):** an id is also accepted if it is in this app's own run
@@ -322,7 +359,9 @@ rows that will prove it (§9).
   derived.** With "Readable HTML" on, each message also gets `<stem>.html` from
   `export.RenderWith` (`internal/export/html.go:115`; citation refreshed, XC30): the same parse → neutralize →
   re-parse fail-closed path the archive uses (MA-300/MA-301), the same `ArchiveCSP` meta
-  first in `<head>`, inert offline. An archived page copied from the archive (archive
+  first in `<head>`, inert offline. A message whose readable copy would pass the render
+  bound gets no `.html` and is exported without a readable copy, as after a render panic
+  (§4.11) [RR-2b RR2b-C2]. An archived page copied from the archive (archive
   source, no `.eml`) keeps `.html` only if its bytes begin with the renderer's exact
   prefix (doctype, `<html>`, `<head>`, the charset meta, then `inertMetas`, so the
   `ArchiveCSP` meta governs everything after it) and the same live-meta detector finds no
@@ -344,14 +383,21 @@ rows that will prove it (§9).
   is classified (§4.13): per-message *retryable*, per-message *terminal*, or *run-fatal*.
   Only run-fatal classes stop the run (sign-in refused, cleared or changed; destination
   gone or full; the local state directory unwritable [RR-2 RR2-C7]; archive gone; no
-  progress for 5 minutes of awake time [RR-2 RR2-C8]; cancel; XC7, XC9, XC10). A
-  transport-class error never fails a message, because it backs off on the same message
-  (XC9). The message in flight at a run-fatal stop is listed in `failures`, never first in
-  `not_attempted` (XC9). Every failure is listed with subject, folder, received time and
+  progress for 5 minutes of awake time [RR-2 RR2-C8], once a control request also goes
+  unanswered or is throttled [RR-2b RR2b-C7]; a redirect to another host [RR-2b RR2b-C4];
+  cancel; XC7, XC9, XC10). A transport-class error that delivers no body bytes never fails
+  a message, because it backs off on the same message (XC9). **[RR-2b RR2b-C1, RR2b-C7]** A
+  message that would hold the run for ever is listed as a retryable failure, and the run
+  moves on. That covers a download cut 5 times after its body started, one that has run for
+  2 h of awake time, and one that stalls while the control request is answered. The message
+  in flight at a run-fatal stop is listed in `failures`, never first in `not_attempted`
+  (XC9). It is recorded as retryable with the stop's reason, and "Export the remaining
+  messages" exports it last [RR-2b RR2b-C6]. Every failure is listed with subject, folder, received time and
   reason. A render-only problem is counted as "exported without a readable copy", not as
   "not exported" (XC35). The outcome uses `extract`'s partition: complete = 0,
-  partial = 3, failed/refused = 1. Proven (MA-426, MA-427, MA-440). Serves R1, R10, R12,
-  X1.
+  partial = 3, failed/refused = 1. Proven (MA-426, MA-427, MA-440; the download bound and
+  the control request by MA-516, the in-flight message's next part by MA-437 [RR-2b]).
+  Serves R1, R10, R12, X1.
 - **P13 — Cancel is clean and visible.** Cancel stops after the in-flight message
   (aborting its download and removing its temp file). The directory keeps
   `_EXPORT-NOT-FINISHED.txt`, rewritten to say CANCELLED with counts, plus a manifest
@@ -394,9 +440,14 @@ rows that will prove it (§9).
   state goes to the local run record (XC1), never to an in-memory slice. Originals stream
   to disk. **Conditional (XC30):** originals are streamed when Readable HTML is off. With
   it on, one message's MIME plus its decoded attachments are held, bounded by the shared size
-  cap (256 MiB or higher, the figure SG confirms) [fault-isolation RR-6], and MA-419 runs in
-  both modes. The session's caches are byte-capped and released after 30 idle minutes
-  (XC18). Proven (MA-432). Proposes R29.
+  cap (256 MiB or higher, the figure SG confirms) [fault-isolation RR-6]. Its readable copy
+  is bounded by the render bound (32 MiB of rendered HTML, §4.11), not by the cap: the cap
+  bounds the bytes downloaded, and the renderer writes a whole data URI at every `cid:`
+  reference [RR-2b RR2b-C2]. MA-419 runs in both modes, and MA-509 pins the render bound.
+  **Conditional (ESC-8) [RR-2b RR2b-C8]:** "the figure SG confirms" holds only where
+  Microsoft's documentation bounds a stored item. Under ESC-8's safe interim the copy export
+  alone carries 256 MiB, confirmed against nothing (§4.13). The session's caches are
+  byte-capped and released after 30 idle minutes (XC18). Proven (MA-432). Proposes R29.
 - **P17 — The workspace surface is guarded end to end.** Every workspace endpoint is a
   POST through `GuardLocalPOST`, including the reads (folder trees, message lists,
   progress), because they return mailbox content. The two HTML pages carry no mailbox
@@ -571,7 +622,7 @@ MA-405 keeps the method and guard twins, and MA-406 is deleted (XC23).
 | `/api/workspace/messages` | One page (100 rows) of a folder, newest first, plus an opaque cursor | Graph GETs or one index read; seen-set |
 | `/api/workspace/count` | Count for a selection description | none (cache only) |
 | `/api/workspace/browse` | Opens the native folder picker and returns `{path}`, `{canceled}` or `{unavailable}` | an OS dialog |
-| `/api/workspace/mkdir` | Creates one directory `{parent, name}` | one `os.Mkdir` |
+| `/api/workspace/mkdir` | Creates one directory `{parent, name}` | one mkdir through the handle on `parent` that its checks opened (§4.8) [RR-2 RR2-C13; RR-2b re-verification] |
 | `/api/workspace/preview` | Starts the dry-run job and returns `{previewId}` | Graph GETs; memory only |
 | `/api/workspace/preview-status` | Polls the job → progress or result | none |
 | `/api/exports/start` | `{previewId}` → `{runId}`; starts the run | export directory, files, run record, journal |
@@ -580,8 +631,8 @@ MA-405 keeps the method and guard twins, and MA-406 is deleted (XC23).
 | `/api/exports/history` | The cached journal view, kept by the background reconciler (XC4), including the run records its launch sweep adopts (§4.16) [RR-2 RR2-C12] | none |
 | `/api/exports/open-folder` | `{runId}` → reveals the recorded export directory after the identity check, never launching anything (XC33) | `open -R` / `explorer.exe /select,` / `xdg-open` on the verified directory (helper moved from `cmd/mailarchive-gui/main.go:1184`) |
 | `/api/exports/retry` | `{runId, which: "failed"\|"rest"}` → a new preview from that run's **run record**, never the destination manifest (XC2) | memory only |
-| `/api/exports/finish` | `{runId}` → "Finish as partial" for any unsealed run (killed, finalization failed, panicked or wedged) [RR-2 RR2-C7], or "Check and finish" for a sealed one, from its run record (XC2, XC5) | writes README, manifest, sums and marker in its own root only; then appends the run record's sealed line, the fingerprint-ledger line and the journal `end` (the seal-and-finish step, §4.13) [RR-2 RR2-C2] |
-| `/api/exports/locate` | `{runId, "again"\|"gone"\|{path}}` → "Look again", "This folder is gone" or "Locate…" for a run whose folder was not found, did not answer, could not be confirmed, or was moved or replaced (§4.16) [RR-2 RR2-C3] | one bounded probe; "gone" appends a `gone` line to the run record and a terminal `reconciled` record to the journal; a located path is accepted only when the identity check passes (§4.9), and is appended to the run record |
+| `/api/exports/finish` | `{runId}` → "Finish as partial" for any unsealed run (killed, finalization failed, panicked or wedged) [RR-2 RR2-C7], or "Check and finish" for a sealed one, from its run record (XC2, XC5) | writes README, manifest and sums in its own root only; then runs the seal-and-finish step (§4.13 steps 6–9): the run record's sealed line, the fingerprint-ledger line, the sealed status's marker action in its own root, then the journal `end` [RR-2 RR2-C2; RR-2b re-verification] |
+| `/api/exports/locate` | `{runId, "again"\|"gone"\|{path}}` → "Look again", "This folder is gone" or "Locate…" for a run whose folder was not found, did not answer, could not be confirmed, or was moved or replaced (§4.16) [RR-2 RR2-C3] | one bounded probe; "gone" appends a `gone` line to the run record, a `gone` line to the fingerprint ledger for a run that never sealed (§4.19) [RR-2b re-verification], and a terminal `reconciled` record to the journal; a located path is accepted only when the identity check passes (§4.9), and is appended to the run record |
 | `/api/exports/check` | `{runId}` → "Check this export": re-hash against `SHA256SUMS.txt`, compare the sealed fingerprint, list unlisted files (XC14) | reads only |
 
 New files: `internal/desktop/workspace.go` (session, selection, count, preview store,
@@ -760,8 +811,9 @@ one type:
 - `MIMETo(w, maxBytes, idle, overall)`, one bounded download, whose `$value` request has its
   own response-header timeout of at least the idle window, for both consumers. Idle is 2 min.
   The size cap is the figure SG confirms against the largest `$value` an Exchange Online item
-  can produce, 256 MiB or higher. The overall cap is 2 h for this design, and today's 10
-  minutes for capture until fault-isolation S3 [fault-isolation RR-6];
+  can produce, 256 MiB or higher (conditional on ESC-8, below) [RR-2b RR2b-C8]. The overall
+  cap is 2 h for this design, and today's 10 minutes for capture until fault-isolation S3
+  [fault-isolation RR-6];
 - the nextLink guard: a repeat set and a page cap in every paging loop, and the host/path pin
   below.
 
@@ -804,6 +856,18 @@ J4], still gated as XC25 says (below).
   **XC26:** the `$value` request gets its own response-header timeout of at least the idle
   window. The shared transport's 60 s `ResponseHeaderTimeout` (`graph.go:136-141`) would
   otherwise fail a large conversion before its first byte, on every retry. MA-443 records time-to-first-byte against size.
+  - **Typed stops [RR-2b RR2b-C1, RR2b-C8].** Its timer stops are SG's
+    `*graph.TimeoutError{Kind: idle|header|overall}` (fault-isolation §4.8.6, RR6-C1), and
+    §4.13 maps each kind. Its size stop is typed too, `*graph.TooLargeError{Limit,
+    Declared}` (fault-isolation §4.8.6). It names the limit applied and the response's
+    declared length (−1 when none). The copy export passes its free-space budget when that
+    is below the cap, so it needs the declared length to tell an item above the cap from
+    its own budget (§4.13).
+  - **Conditional (ESC-8) [RR-2b RR2b-C8].** The cap is confirmed only where Microsoft's
+    documentation bounds a stored item. Under ESC-8's safe interim (owner rulings §13.4)
+    the copy export alone carries 256 MiB, confirmed against nothing. An item above it is
+    then listed as larger than this version exports (§4.13). That is an open condition,
+    not accepted.
 - **Typed errors (XC25) [ruling J4].** `StatusError` is SG's `{Code, GraphCode, Text}`
   with a bounded `Text`, and `Error()` keeps today's exact text. Callers use `errors.As` to
   tell 404/401/403/5xx apart. Classification maps SG's `graph.Classify` onto this design's
@@ -821,13 +885,33 @@ J4], still gated as XC25 says (below).
 - **Redirects and bodies (XC26).** `httpTransport`'s client sets `CheckRedirect` to refuse
   any redirect that leaves the base scheme, host and port. oauth2's Transport attaches
   `Authorization` on every hop, so a cross-host 302 would otherwise carry the bearer
-  token. Graph JSON bodies are read through `io.LimitReader`. The client also sets
-  `Timeout: reqTimeout`. That is the **F15 fix, required in E1**: `oauth2.NewClient` uses
-  the context's client only for token acquisition, so the timeout bounds token fetches
-  and the `deviceSource` mutex hold, and a stalled `/token` body can no longer block every
-  workspace endpoint and the run. **[fault-isolation RR-6]** SG's `$value` request runs on its
-  own base transport (fault-isolation §4.8.6), so `CheckRedirect` is set on that client too,
-  and `Timeout: reqTimeout` is not, because it would bound the whole download.
+  token.
+  - **The refusal is typed [RR-2b RR2b-C4].** `CheckRedirect` returns
+    `*graph.RedirectError{Host, Hops}`, naming the host the redirect pointed at. net/http
+    returns it inside a `*url.Error` (`client.go:719-726`), so a caller finds it with
+    `errors.As`. A non-nil `CheckRedirect` replaces net/http's 10-hop default
+    (`client.go:502-508`, `833-838`), so it keeps that limit itself: an eleventh same-host
+    hop is the same typed error. §4.13 gives the error its own class and wording, which
+    `graph.Classify` cannot, because it reads the error as a network failure.
+  - Graph JSON bodies are read through `io.LimitReader`.
+  - **The F15 fix, required in E1.** The client also sets `Timeout: reqTimeout`.
+    **Corrected [RR-2b RR2b-C3]:** `oauth2.NewClient` does not use the context's client
+    only for token acquisition, whatever its doc comment says. At v0.37.0 (`go.mod:12`) it
+    copies that client's `CheckRedirect`, `Jar` and `Timeout` into the client it returns
+    (`oauth2.go:357-366`). Every Graph client is built that way over `httpTransport`'s
+    client (`graph.go:129-130`; `delegated.go:65-66`, `:89`, `:102`). So the timeout bounds
+    token fetches and the `deviceSource` mutex hold, and a stalled `/token` body can no
+    longer block every workspace endpoint and the run. It also bounds every Graph request
+    made through those clients. That changes nothing for JSON requests, each of which
+    already runs under a `reqTimeout` context (`graph.go:516`). The same copy is how
+    `CheckRedirect` reaches them.
+  - **SG's `$value` client [fault-isolation RR-6].** SG's `$value` request runs on its own
+    base transport (fault-isolation §4.8.6), so `CheckRedirect` is set on that client too,
+    and `Timeout: reqTimeout` is not, because it would bound the whole download.
+    **[RR-2b RR2b-C3]** So SG builds that client itself, over its own base transport and
+    the client's token source, with E1's `CheckRedirect` set on it and `Timeout` left zero.
+    It is never built by `oauth2.NewClient` from a context that carries `httpTransport`'s
+    client, because that copy would bring the timeout with it. MA-527 asserts both halves.
 
 ### 4.6 Archive source adapter (slice E4)
 
@@ -922,8 +1006,27 @@ cancels the old one). It:
    - **Where identity cannot decide: R-f2.** Identity decides only between two views that
      keep it: both on this computer's local filesystems, or both through one network mount
      or share whose client reports the server's file ids (the OS's own NFS and SMB
-     clients). Views are classified from the filesystem type that the "Filesystem type"
-     item below reads (XC12), and a type the table does not know is treated as stacking.
+     clients).
+
+     **How a view is classified [RR-2b re-verification].** A filesystem type cannot tell a
+     share from a local disk: `GetVolumeInformationW` reports a share's own type, NTFS from
+     a Windows server and NTFS by default from Samba. So each view is classified from inputs
+     that see a share and name its server:
+     - **Windows:** the canonical path of the opened handle (`GetFinalPathNameByHandleW`).
+       A `\\?\UNC\<server>\<share>\…` path is a share on `<server>`, and so is a volume
+       whose root `GetDriveTypeW` reports as `DRIVE_REMOTE` (a mapped drive, named by its UNC
+       form). A remote view is never classified local, whatever its filesystem type.
+     - **Linux:** the mount that holds the path, from `/proc/self/mountinfo`: its type and
+       its mount source (`//<server>/<share>` for cifs and smb3, `<server>:/<path>` for nfs
+       and nfs4, `<user>@<host>:<path>` for fuse.sshfs, the layer directories for overlay).
+     - **macOS:** `statfs`'s `f_fstypename` and `f_mntfromname` (`//<user>@<server>/<share>`
+       for smbfs, `<server>:/<path>` for nfs, macFUSE's types for FUSE).
+     - **Served by this computer:** the server those inputs name, compared with
+       `localhost`, the loopback addresses, this computer's names and its interface
+       addresses.
+
+     A type or mount source the classifier does not know is treated as stacking. The
+     "Filesystem type" item below (XC12) keeps its own warnings and is not the classifier.
      Where the two views cannot reach the same storage, no identity is needed: a
      destination on another computer's share beside an archive on this computer's local
      filesystems is outside, and so is the reverse. Every other pairing is refused with **R-f2** ("couldn't confirm
@@ -940,6 +1043,15 @@ cancels the old one). It:
        table, but its ids are its own, so it never decides by identity;
      - a walk that passed its bound or met a directory it could not read, when the set
        would have had to decide.
+
+     **The archive's own side [RR-2b re-verification].** These cases apply on either side.
+     So an archive reached through a share this computer serves, or held on a FUSE or
+     stacking filesystem, has no destination that R-f2 lets through. That includes
+     Microsoft 365 exports, because R-f checks the configured archive for every source. The
+     remedy is on the archive's side, and R-f2's archive-side wording names it: give
+     Archive location (or Another archive folder…) the archive's own local path, or mount
+     its share with the system's own SMB or NFS client instead of sshfs or another FUSE
+     client (§7.2, §7.6).
 
    `extract`'s own `destOverlapsOut` is unchanged.
    It also reports:
@@ -1067,9 +1179,13 @@ OS user can drive the dashboard" (E0).
 archive, by §4.7 step 3's checks (path and identity, R-f and R-f2), against the
 configured archive and any other archive folder this session has validated, because its
 mkdir is a write too [RR-2 RR2-C13]. `name` must equal `util.SanitizeSegment(name)` (no separator, `..`, reserved
-name or empty; otherwise R-q with the sanitized suggestion). Then one `os.Mkdir(parent/name,
-0o700)`; an existing name is R-q ("already exists — pick it with Browse, or use another
-name"). It returns the new path for the box.
+name or empty; otherwise R-q with the sanitized suggestion). Then the directory is created,
+0o700, through the handle on `parent` that those checks opened (`mkdirat` on POSIX, a
+handle-relative create on Windows), as Start creates the export root (§4.7). There is no
+path re-walk between the check and the mkdir. A parent swapped for a symlink, junction or
+bind mount after the check therefore cannot move the new directory into the archive or
+into the other archive folder [RR-2b re-verification]. An existing name is R-q ("already
+exists — pick it with Browse, or use another name"). It returns the new path for the box.
 
 ### 4.9 Output layout, naming and sanitization
 
@@ -1118,12 +1234,19 @@ name"). It returns the new path for the box.
   its file identity alone: on Windows its volume serial + file ID, on POSIX its dev+inode
   while dev is unchanged on a stable-inode filesystem. Otherwise (a replugged FAT stick,
   a remount) it is "couldn't confirm".
+  **Open, not accepted [RR-2b note RR2b-N1]:** ext4 and xfs commonly give a newly created
+  directory a freed inode number. So on POSIX, dev+inode alone can confirm a folder that
+  someone else recreated at the same path, and Finish as partial would then write README,
+  manifest, sums and marker into it. The fix is owed in E2, and the review's RR-2b notes
+  name one: a folder with no nonce also matches a creation stamp recorded at mkdir (the
+  directory's birth time, `statx` `stx_btime` on Linux, `st_birthtime` on macOS), and is
+  "couldn't confirm" where the filesystem reports none.
 
   A positive mismatch is another run id, a non-directory, a symlink or reparse point, a
   Windows identity mismatch, or a new inode on the same mount of a stable-inode
-  filesystem. That is "moved or replaced" (R-r). Anything else is "couldn't confirm",
-  which is looked for again (§4.16); an action that needs a confirmed folder refuses it
-  with R-r2, never R-r [RR-2 RR2-C4].
+  filesystem. That is "moved or replaced" (R-r). Anything else is "couldn't confirm".
+  Both are looked for again (§4.16) [RR-2b re-verification]. An action that needs a
+  confirmed folder refuses "couldn't confirm" with R-r2, never R-r [RR-2 RR2-C4].
 - **Directory size (XC12):** no export directory holds more than 1,000 files. Messages go
   under a month subdirectory (`messages/<folder>/2026-03/…`, or `messages/2026-03/…` with
   Preserve OFF), split as `2026-03~2`, `~3` … past 1,000. That is about 8,000 FAT
@@ -1227,12 +1350,15 @@ Notes on the fields:
   `valid_if_absent` says in the manifest's own text (XC5). The marker carries the same
   `run.id`, and so does README's first line [RR-2 RR2-C4]. Reconciliation acts on a
   directory only when §4.9's tuple confirms it: the ids match, or, for a folder with no
-  nonce yet, its file identity does (XC3) [RR-2 RR2-C4].
+  nonce, its file identity does where that can decide (XC3) [RR-2 RR2-C4]. A folder with no
+  nonce is either an empty or temp-only root, or a root whose marker is gone and that has
+  no README (§4.9) [RR-2b re-verification].
 - **`immutable_ids`** comes from the first page's "honored" flag recorded per cursor
   (XC27).
 - **`chain`** lists every part of a retry set (XC15). A part not sealed when this one was
   written has an empty `fingerprint`; the set fingerprint follows seal order (§4.16)
-  [RR-2 RR2-C2].
+  [RR-2 RR2-C2]. The first part's run id is the **chain id**. Every part's run-record
+  header, sealed line and ledger line carry it (§4.16, §4.19) [RR-2b re-verification].
 - **Archive source (XC21):** `source` is
   `{"kind":"archive","archive":"C:\\MailArchive","stores":[{"store":"…","mailbox":"alex@contoso.com"},…]}`,
   and each message entry carries `"mailbox"`.
@@ -1286,7 +1412,11 @@ so the plain coreutils form is unambiguous. UTF-8, no BOM.
 bytes at seal time, never by re-reading the file. It is recorded in the run record's
 `sealed` line and in a small **fingerprint ledger** (`<state dir>/export-fingerprints.jsonl`,
 0600, never compacted), by the seal-and-finish step of every finishing path, Finish as
-partial included (§4.13) [RR-2 RR2-C2]. It is shown on the Export activity page in groups of 8 hex digits
+partial included (§4.13) [RR-2 RR2-C2]. **[RR-2b re-verification]** Each ledger line
+carries the run id and the chain id. A sealed run's line also carries the fingerprint and
+the set state (§4.16). A record is deleted only after its ledger line exists (owner rulings
+§13.5, §4.19). So a run that never seals still gets a ledger line, with no fingerprint,
+when it is settled another way: `gone` (the user's answer) or `refused` (R-d). It is shown on the Export activity page in groups of 8 hex digits
 for reading aloud, with a **copy** button and **"Save fingerprint receipt"** (a small text
 file the page offers as a download, for the user to keep outside the export). It is
 deliberately not written into the export, where it would prove nothing. **Losing the
@@ -1319,6 +1449,30 @@ no navigation (`html.go:68-78`). The
 CSP and no-referrer metas come first (R19). The parse → serialize → re-parse fail-closed
 check (`sanitizeHTML`, MA-301) applies unchanged.
 
+**The render bound [RR-2b RR2b-C2].** The size cap bounds the bytes downloaded, not what the
+renderer makes of them:
+- `embedInlineImages` writes the image's whole base64 data URI at every occurrence of each
+  `cid:` reference (`ReplaceAllString`, `html.go:649-665`), and `drain` buffers each part
+  whole (`html.go:671-677`);
+- `sanitizeHTML` and `hostileSurvives` then parse, serialize and re-parse the result
+  (`html.go:164`, `:250-256`);
+- K references to one N-byte image make about K × 4N/3 bytes, so the heap is not a function
+  of the cap.
+
+Go's out-of-memory is fatal, not a panic, so the recovery below cannot catch it. The
+dashboard process would exit and the run would be a kill. Finish as partial would then list
+the message `not_attempted`, and "Export the remaining messages" would start on it and die
+again.
+
+So before `RenderWith` the export computes the render's size from the parsed message: the
+selected body's length, plus, for each attachment that a `cid:` reference in that body
+names, its base64 length times the number of references. Above **32 MiB** (a fixed design
+threshold) no readable copy is made. The original stays, and the entry is
+`exported-original-only` with the note "too large for a readable copy" (XC35's outcome, not
+offered for retry). MA-509 pins the bound and measures the heap. The archive exporter calls
+the same renderer (`exporter.go:319`, `:327`). Its expansion predates this design and is a
+follow-up for the renderer's owner (the review's RR-2b follow-ups).
+
 Archive source without an original: the archived page is copied byte-exact. Its
 back-links to the archive's folder and root pages do not resolve in the export (README
 says so). Before copying, the bytes go through a live-meta detector built on the
@@ -1348,7 +1502,9 @@ folder's author wrote [ruling W1]. The preview counts these pages (§4.7). The g
 `LiveRefreshIn` and the quarantine path are built in E4, the slice that copies archived
 pages; E5 builds only Readable HTML.
 
-A panic in parse or render for one message is recovered: the original stays, the
+A panic in parse or render for one message is recovered (a panic only: out-of-memory is
+fatal, and the render bound above is what keeps a render from reaching it
+[RR-2b RR2b-C2]): the original stays, the
 `.html` is absent, and the entry gets `notes:["readable copy could not be made: …"]`
 with status `exported-original-only`. It counts as partial (§4.13), but it is labelled
 "exported without a readable copy", never "not exported", and is not offered for retry
@@ -1378,13 +1534,22 @@ States: `preparing` → `running` → `finalizing` → `complete` | `partial` | 
 `failed`, plus `interrupted`, which is derived on reload (§4.16). The goroutine has the
 DC3 `recover`: a panic becomes `failed`, and the marker stays.
 
-**Before each message [RR-2 RR2-C5]**, free bytes are read on the destination and on the
+**Before each message [RR-2 RR2-C5]**, and again before every retry of it after a backoff
+[RR-2b RR2b-C5], free bytes are read on the destination and on the
 state volume (one `statfs` / `GetDiskFreeSpaceEx` call each, `lpFreeBytesAvailableToCaller`,
-which respects quotas). The destination's budget for the message is free − reserve:
+which respects quotas). The destination's budget for the attempt is free − reserve:
 - Microsoft 365: `MIMETo` gets `maxBytes` = min(the shared size cap, budget). Passing the
-  cap stays the retryable "above the size cap" class; passing the budget is the
+  cap is the "above the size cap" class, terminal for this version (table)
+  [RR-2b RR2b-C8]; passing the budget is the
   free-space stop below. **[merge of RR-2 with fault-isolation RR-6]** The cap is the figure
   SG confirms (256 MiB or higher, §4.5), not the earlier 200 MiB.
+  **The cap is decided before the budget [RR-2b RR2b-C8].** SG's size stop names the limit
+  it applied and the response's declared length (§4.5):
+  - a declared length above the cap is the above-cap class, whatever limit was passed, so an
+    item that no freed space could fit never stops the run as a full disk;
+  - a stop at the budget, with a declared length within the cap or with none, is the
+    free-space stop;
+  - a stop at the cap itself (the budget was the larger) is the above-cap class.
 - Archive source: the file's recorded or Lstat size is checked against the budget before
   the copy.
 - Derived files are checked against what is left before they are written.
@@ -1403,18 +1568,24 @@ sorts every Graph error, and this design maps its classes onto the table below. 
 wrapper, `app.classifyFetch`, is fault-isolation's and is not used here. The 404 class, the
 403 handling and the breaker thresholds are this design's own, with this justification: a
 copy export is a one-off for one selection, so a message that is gone is terminal for that
-selection, whereas capture retries through its ledger on every later run. Destination write errors are matched with `errors.As`
+selection, whereas capture retries through its ledger on every later run. The same reason
+sets the per-message download bound (5 cuts, 2 h of awake time) and the control request
+before R-u: a message that would hold a one-off run is listed for a later retry instead
+[RR-2b RR2b-C1, RR2b-C7]. Destination write errors are matched with `errors.As`
 on `syscall.Errno` against a per-OS table, never with `errors.Is(err, syscall.ENOSPC)`.
 On Windows, `syscall.ENOSPC` is an invented constant that no disk-full code maps to.
 
 | Condition | Class | Effect |
 |---|---|---|
 | `/$value` 404 | terminal (for this selection) | listed: "no longer in the mailbox (moved or deleted after you selected it)"; never retried in-run (F9 hazard 4) |
-| 400 / `ErrorMimeContentConversionFailed` / above the shared size cap (256 MiB or higher [fault-isolation RR-6]) | retryable (a later export may succeed) | listed with the reason; offered by "Export failed messages again" |
-| **Transport-class**: no HTTP status (dial, DNS, reset, token-endpoint network failure); 502/503/504 after the client's retries; idle timeout (XC9) | **back off on the same message** (1 s → 60 s, exponential) | never recorded as a failure; counts only toward the no-progress clock |
-| No progress for **5 minutes of awake time** (XC9) [RR-2 RR2-C8]. Progress is a 2xx response, or body bytes of a 2xx response received, so a slow, healthy download never trips it; the body of a non-2xx answer is never progress. Awake time is counted by a 1-second ticker in the run: a gap above 30 s is a suspend, is not counted, and restarts the window | **run-fatal: connection lost** | stop → R-u (names the 5 minutes) |
+| 400 / `ErrorMimeContentConversionFailed` | retryable (a later export may succeed) | listed with the reason; offered by "Export failed messages again" |
+| Above the shared size cap (256 MiB or higher [fault-isolation RR-6]): SG's size stop with a declared length above the cap, or a stop at the cap itself [RR-2b RR2b-C8] | **terminal for this version** [RR-2b RR2b-C8] | listed "larger than this version of MailArchive exports (256 MiB)". It is not offered by "Export failed messages again" from a build with the same cap, because the cap is fixed for the binary (fault-isolation §4.8.5). **Conditional (ESC-8):** 256 MiB covers every legal item only where Microsoft's documentation bounds a stored item. Under ESC-8's safe interim it is confirmed against nothing, and a legal item above it fails here: an open condition, not accepted |
+| **Transport-class**: no HTTP status (dial, DNS, reset, token-endpoint network failure); 502/503/504 after the client's retries; SG's `*graph.TimeoutError` of kind `header` or `idle`, and of kind `overall` on an attempt that spanned a suspend (XC9) [RR-2b RR2b-C1] | **back off on the same message** (1 s → 60 s, exponential) | the attempt's temp file is removed before the backoff, and the budget is read again before the retry [RR-2b RR2b-C5]; not recorded as a failure; counts toward the no-progress clock, and a cut counts toward the message's download bound (next row) [RR-2b RR2b-C1] |
+| **A download that will not finish [RR-2b RR2b-C1]:** 5 *cuts* of one message, or 2 h of awake time (§4.15) since its first attempt. A cut is an attempt that delivered body bytes and then ended in a transport-class stop before the body did; an attempt that spanned a suspend is not counted. An `overall` stop with no suspend reaches the 2 h at once | **retryable** | listed "the download from Microsoft 365 kept stopping partway (5 tries)" or "didn't finish downloading within 2 hours of download time", and the run moves to the next message. A slow, healthy download stays below the bound: 256 MiB in 2 h needs about 37 KB/s |
+| No progress for **5 minutes of awake time** (XC9) [RR-2 RR2-C8]. Progress is a 2xx response, or body bytes of a 2xx response received, so a slow, healthy download never trips it; the body of a non-2xx answer is never progress. Awake time is counted by a 1-second ticker in the run: a gap above 30 s is a suspend, is not counted, and restarts the window. **[RR-2b RR2b-C9]** The gap is measured on a clock that keeps counting in suspend: `CLOCK_BOOTTIME` on Linux, `mach_continuous_time` on macOS, and on Windows Go's own monotonic clock, which reads interrupt time. Go's monotonic clock stops in suspend on Linux (`CLOCK_MONOTONIC`) and macOS (`mach_absolute_time`), so a ticker timed by it alone never sees the gap. Time the run spends paused for a capture (§4.14) is not counted either [RR-2b RR2b-C7] | **run-fatal: connection lost**, only once a control request also goes unanswered [RR-2b RR2b-C7] | first one control request: `GET /me?$select=id`, sent once with no retry loop and a 30 s bound (`Client.Probe`, E1). It is never sent through `get`, whose `Retry-After` sleep under a 60 s context would turn a long throttle into a deadline error (F17). No HTTP answer → stop → R-u (names the 5 minutes). A 429 or 503 → stop → R-v2 (**run-fatal: throttled**). A 2xx → the stall is the message's, not the connection's: it is listed as a retryable failure with its last error ("Microsoft 365 didn't start sending this message within 2 minutes, N times" after header stops), the window restarts, and the run moves on. Any other answer takes its own row (a 401 the forced refresh) |
 | 25 consecutive per-message server-class failures (5xx with a body) (XC9) | **run-fatal: Microsoft 365 having problems** | stop → R-u2 |
-| 429 | handled in `get` with Retry-After (`graph.go:547`) | none unless retries run out → transport-class |
+| 429 | handled in `get` with Retry-After (`graph.go:547`) | none unless retries run out → transport-class. A throttle that holds the run for 5 minutes of awake time is told from a lost connection by the control request above, and stops with R-v2, never R-u [RR-2b RR2b-C7] |
+| A redirect that `CheckRedirect` refuses: `*graph.RedirectError` (§4.5), matched with `errors.As` before `graph.Classify`, which would read it as a network error [RR-2b RR2b-C4] | to another host: **run-fatal: redirected**; same host, past 10 hops: retryable | another host → stop → R-u3, naming the host (the bearer token was never sent there). Past 10 hops → listed "Microsoft 365 redirected this download more than 10 times" |
 | Derived-file failure (parse or render panic, attachment stream error, read-back hash ≠ recorded, XC1) | partial content | original kept; entry `exported-original-only` ("exported without a readable copy", XC35) or a note |
 | Write error on one file, not in the destination-fatal table | retryable | temp removed; message listed; then the root is probed through the `os.Root` (`Stat(".")`), and a failed probe is run-fatal (XC10) |
 | Rename fails with `ERROR_SHARING_VIOLATION` / `ERROR_ACCESS_DENIED` (OneDrive, AV) (XC10) | retried in place | 5 tries, 100 ms → 2 s, before the message fails |
@@ -1427,15 +1598,22 @@ On Windows, `syscall.ENOSPC` is an invented constant that no disk-full code maps
 | `*oauth2.RetrieveError` with `invalid_grant` / `interaction_required` / `invalid_client` / `unauthorized_client` / `consent_required` (XC9) | **run-fatal: sign-in** | stop → R-c (also in preview and list endpoints, as R-b/R-c) |
 | Clear sign-in, any sign-in, or `graph.SignedIn` UPN changed or vanished (checked every 100 messages) (XC7) | **run-fatal: sign-in cleared or changed** | stop → R-z; finalized; retryable from the run record |
 | Destination-fatal errno: Unix ENOSPC, EDQUOT, EROFS, EIO, ENXIO, ENODEV, ESTALE, ETIMEDOUT; Windows ERROR_DISK_FULL 112, ERROR_HANDLE_DISK_FULL 39, ERROR_WRITE_PROTECT 19, ERROR_NOT_READY 21, ERROR_DEVICE_NOT_CONNECTED 1167, ERROR_DEV_NOT_EXIST 55, ERROR_NETNAME_DELETED 64, ERROR_UNEXP_NET_ERR 59, ERROR_CANNOT_MAKE 82; export root gone (XC10) | **run-fatal: destination** | stop → R-g |
-| Free space on the destination below the reserve plus the next message's budget, checked **before every message** (XC11) [RR-2 RR2-C5] | **run-fatal: destination** | stop → R-g before that message is written. Finalization fits against this run's own writes. Another program or a quota can still use the reserve; the marker then stays, and Finish as partial completes the part once space is freed |
-| A run-record or journal append or fsync fails, or the state volume is below the run record's remaining bound (the local state directory) [RR-2 RR2-C7] | **run-fatal: state directory**, never matched against the destination table | stop → R-d2; finalized if the state volume takes the sealed line, otherwise the marker stays and Finish as partial completes the part once space is freed |
+| Free space on the destination below the reserve plus the next message's budget, checked **before every message**, and before each retry (XC11) [RR-2 RR2-C5; RR-2b RR2b-C5] | **run-fatal: destination** | stop → R-g. **[RR-2b RR2b-C6]** A message that the check stops before its first byte stays first in `not_attempted`, because the disk stopped the run, not the message. One aborted at its budget mid-download is the in-flight failure (below). Finalization fits against this run's own writes. Another program or a quota can still use the reserve; the marker then stays, and Finish as partial completes the part once space is freed |
+| A run-record, journal or fingerprint-ledger append or fsync fails [RR-2b re-verification], or the state volume is below the run record's remaining bound (the local state directory) [RR-2 RR2-C7] | **run-fatal: state directory**, never matched against the destination table | stop → R-d2; finalized if the state volume takes the sealed line, otherwise the marker stays and Finish as partial completes the part once space is freed. **[RR-2b re-verification]** In the seal-and-finish step, the step stops at the part that failed. A ledger line that cannot be appended leaves the marker action and the `end` undone, so the marker stays, and reconcile or Check and finish completes the step once the state volume takes the line |
 | Cancel; app stop via `Drain` (XC6) | **cancel** | stop after the in-flight message; its temp removed |
 | Windows logoff / shutdown / MSI upgrade **without** the end-session window; any kill (XC6) | **kill** | no finalization; recovered by "Finish as partial" from the run record (XC2) |
 
 The message in flight at any run-fatal stop is listed in `failures`, never at the head of
 `not_attempted`. So "Export the remaining messages" never starts on the message that
-stopped the run (XC9). The cancel and the breakers test the walk context, not the
-per-download deadline (F9 hazard 3). The export never writes the archive manifest, so
+stopped the run (XC9). **[RR-2b RR2b-C6]** Its progress line records it as **retryable**,
+with the stop's R-id and class as its reason. "Export the remaining messages" on the stopped
+run exports it last, after the `not_attempted` ids and the run's other retryable failures
+(Retry, below), so it can neither block the rest nor be dropped. The cancel and the
+breakers test the walk context, not the per-download deadline (F9 hazard 3).
+**[RR-2b RR2b-C7]** A breaker that stops the run aborts the in-flight download by cancelling
+that message's own child context, never the walk context. The run decides "cancelled" only
+from the walk context's `Err()`, never from an error chain, as RR6-C1's second guard does
+for `RunGraph`. So a breaker stop is never recorded as the user's Cancel. The export never writes the archive manifest, so
 F9's hazards 1 and 2 (recording a failure under the message's identity; false "gone"
 sweeps) cannot arise.
 
@@ -1471,16 +1649,37 @@ it is completed by reconcile (§4.16) or by running the step again:
    is "Stopped: <reason> (finished as partial)", with the reason from the run's `stopped`
    line (below), or "the app stopped while this export was running" when it recorded
    none, as after a kill [RR-2 RR2-C7].
-7. Append the fingerprint-ledger line, once per run id. It also carries the retry
-   chain's set fingerprint, the SHA-256 state behind it and the parts it covers, in the
-   order they sealed (§4.16) [RR-2 RR2-C2].
+   - **The stop [RR-2b RR2b-C10].** A run that stopped (cancelled, failed or
+     finished-as-partial) also records its stop here: the R-id (none for a Cancel or a
+     `Drain`), the class and, when a message was in flight, that message's id. A stop between messages (R-z at the
+     100-message poll, a free-space stop before a message's first byte) records its R-id
+     and class with no message. After a restart, the "Stopped: <reason>" label and its
+     remedy come from here, never from the marker or README, which reconciliation never
+     reads.
+   - **The set state [RR-2b re-verification].** It also carries the chain id and the set
+     state this seal computes, under the ledger's mutex (step 7): the SHA-256 state saved
+     in the chain's most recent ledger line, resumed with this part's in-memory SUMS bytes
+     (§4.16). The new state, the set fingerprint and the parts it covers, in the order they
+     sealed, are stored here.
+7. Append the fingerprint-ledger line, once per run id, copied from the sealed line: the
+   run id, the chain id, the fingerprint, and the retry chain's set fingerprint, the
+   SHA-256 state behind it and the parts it covers, in the order they sealed (§4.16)
+   [RR-2 RR2-C2]. **[RR-2b re-verification]**
+   - Steps 6 and 7 run under the ledger's mutex. It is taken before the set state is
+     computed and held until this line is fsynced.
+   - Before computing, the step appends any ledger line its chain is still missing (after
+     a kill, or a failed append, between steps 6 and 7 of another part), copied from that
+     part's sealed line. The launch sweep's index finds the chain's records (§4.16).
+   - A failed append here is the state-directory class (table): the step stops, steps 8
+     and 9 wait, and reconcile or Check and finish completes it.
 8. The sealed status's marker action [RR-2 RR2-C1]. **Complete/partial:** remove
    `_EXPORT-NOT-FINISHED.txt`. **Cancelled/failed/finished-as-partial:** rewrite it as
    "CANCELLED / STOPPED at <time>: <exported> of <selected> exported, reason …; do not
    hand this folder over as complete", by one atomic replacing rename of the run's own
    marker through the root (a temp file, fsync, then `os.Root.Rename` over it; P6's
    exception). It is never removed first. Then sync the directory.
-9. Append the journal `end` record.
+9. Append the journal `end` record, with the stop's `reason` for a run that stopped
+   (§4.16) [RR-2b RR2b-C10].
 
 If finalization itself fails, the marker stays, the activity page says so, and **Finish
 as partial** completes the part from the run record once the cause is cleared (§4.16)
@@ -1508,14 +1707,21 @@ written, current folder, rate (moving average) and ETA, and the last 400 log lin
 never waits on history reconciliation. Subjects appear only in the failure list.
 
 **Retry (XC2; in slice E3 per XC28)** (`api/exports/retry`). "Export failed messages
-again" (partial) and "Export the remaining messages" (cancelled, stopped, finished as
-partial, or any unsealed run, interrupted runs included [RR-2 RR2-C7]) build a new
+again" (partial, and a cancelled run with retryable failures [RR-2b RR2b-C6]) and "Export
+the remaining messages" (cancelled, stopped, finished as partial, or any unsealed run,
+interrupted runs included [RR-2 RR2-C7]) build a new
 **preview** from that run's **run record** (§4.19), never from the destination's
 `export-manifest.json`:
 - `failed` takes the retryable failures. `rest` takes the plan minus the done messages.
-  For a part marked gone (§4.16), `rest` is the plan minus only the messages in sealed
-  parts of its chain, so its done but never-finalized messages are exported again
-  ("Export these N messages again") [RR-2 RR2-C7].
+- **[RR-2b RR2b-C6]** For a cancelled run, `rest` is its `not_attempted` ids. For a run
+  that stopped run-fatal (stopped, or finished as partial), it is the `not_attempted` ids,
+  then the run's retryable failures, with the in-flight message last. So R-g's, R-u's and
+  R-u2's own remedy ("Export the remaining messages") reaches every message the stop left.
+- For a part marked gone (§4.16), `rest` is the part's plan minus only the messages
+  exported in the chain's **other** sealed parts that are not marked gone. So every message
+  lost with its folder is exported again ("Export these N messages again"), whether the
+  part sealed or not [RR-2 RR2-C7; RR-2b re-verification]. The earlier rule subtracted
+  every sealed part's messages, the gone part's own included when it had sealed.
 - Signer must match (R-l). Admission is P4's second path. There is no seen-set and no
   per-id GET: names and metadata come from the record. Retries sit outside the 10,000
   pick cap and inside the 200,000 run cap.
@@ -1527,8 +1733,10 @@ partial, or any unsealed run, interrupted runs included [RR-2 RR2-C7]) build a n
   planted changes nothing.
 
 **Finish as partial (XC2).** Every unsealed run whose root is found and confirmed is
-finished by the app from its run record alone, after §4.9's tuple confirms the root (a
-root with no nonce yet by its file identity alone) (XC3) [RR-2 RR2-C4, RR2-C7]. That covers a killed run, a run whose
+finished by the app from its run record alone, after §4.9's tuple confirms the root (XC3)
+[RR-2 RR2-C4, RR2-C7]. A root with no nonce (an empty or temp-only root, or one whose
+marker is gone and that has no README; §4.9) is confirmed by its file identity alone, where
+that can decide [RR-2b re-verification]. Finish as partial covers a killed run, a run whose
 finalization failed (a pulled stick plugged back in), a panicked run, and a wedged run
 once its goroutine has returned or after a restart. README, manifest and sums list
 exactly the recorded files that are present under the root (Lstat) and whose bytes,
@@ -1549,7 +1757,8 @@ spool" item.
     the scheduled backup can then make that backup fail ("context deadline exceeded"),
     not merely slow it down.
   - **Until then,** the export backs off while a capture runs (in-process, or signalled by
-    the archive lock being held) and after any 429.
+    the archive lock being held) and after any 429. That pause is the run's own, so it is
+    not counted toward the no-progress window, like a suspend (§4.13) [RR-2b RR2b-C7].
   - **Concurrency budget (XC30).** The run, a capture, a preview and browsing would be up
     to five request streams against Exchange's 4-concurrent-per-app-per-mailbox limit,
     beside 10,000 requests per 10 minutes. So previews and listings are serialized while
@@ -1589,8 +1798,10 @@ spool" item.
   reads one `.eml` back (bounded by the shared size cap, 256 MiB or higher [fault-isolation
   RR-6]; large attachments are buffered whole in memory, the catalog's existing
   acknowledged limit). So with Readable HTML on, one message's MIME plus decoded
-  attachments is held (XC30). Per-message state is written to the local run record, not
-  held (XC1).
+  attachments is held (XC30). Its readable copy is rendered only within the render bound
+  (32 MiB of rendered HTML, §4.11), because the renderer's output grows with the number of
+  `cid:` references, not with the cap [RR-2b RR2b-C2]. Per-message state is written to the
+  local run record, not held (XC1).
 - Throughput: sequential. An estimated ~2–5 messages/s means 50,000 messages take about
   3–7 hours. This is **aspirational** and unsourced until measured on a real tenant and on
   a USB-stick destination, sync cost included (MA-443; XC30, XC5). The preview gives this
@@ -1602,11 +1813,19 @@ spool" item.
     multi-hour export. macOS and Linux use an in-process equivalent where one is
     available, and otherwise none. Nothing is shelled out, so desktop P1 stands.
   - **Sleep is a pause, not a kill.** A lid close or any other sleep is not counted
-    toward the breaker (§4.13), and the run resumes on wake.
+    toward the breaker (§4.13), and the run resumes on wake. **[RR-2b RR2b-C9]**
+    - The suspend is seen on a clock that keeps counting in suspend (§4.13's no-progress
+      row names it per OS).
+    - The message that was downloading starts again from its first byte on wake. Its temp
+      file is removed (RR2b-C5), and there is no resume.
+    - The time asleep counts neither toward the breaker nor toward the message's 2 h, and a
+      cut whose attempt spans the suspend is not counted against the message (§4.13)
+      [RR-2b RR2b-C1]. On Windows SG's own timers count the sleep, so an `overall` stop
+      there can follow a long sleep; it is then a cut, not a failure.
   - A short drop (Wi-Fi roam, wake, VPN reconnect) costs only time. The run backs off on
-    the same message and continues (XC9). Only 5 minutes of awake time with no progress
-    stops it (R-u), and then "Export the remaining messages" continues into the next part
-    of the set (XC15).
+    the same message and continues (XC9). Only 5 minutes of awake time with no progress,
+    with a control request that also goes unanswered, stops it (R-u) [RR-2b RR2b-C7]. Then
+    "Export the remaining messages" continues into the next part of the set (XC15).
 
 ### 4.16 Export activity, the journal, and the Microsoft 365 entry
 
@@ -1617,7 +1836,10 @@ spool" item.
   which folder-redirected RDS/VDI profiles share across hosts.
   - **Lines.** 0600, append-only lines of at most 4 KB: `{v:1, host, run,
     event:"start"|"stopped"|"end"|"reconciled", at, source_kind, mailbox|archive, dest_dir,
-    root_id, planned, exported, failed, status, fingerprint}`. No subjects (privacy).
+    root_id, planned, exported, failed, status, fingerprint, reason}`. No subjects (privacy).
+    **[RR-2b RR2b-C10]** `reason` is the stop's R-id and class, on a `stopped` line and on
+    the `end` of a run that stopped. The in-flight message's id stays in the run record's
+    sealed line.
     **[RR-2 RR2-C2, RR2-C3]** The run record's `sealed` line is the seal, so the journal
     has no `sealed` event. `stopped` marks a run that stopped before its seal while the
     app ran on (a wedge, a failed finalization, a recovered panic; §4.13), and it is not
@@ -1625,8 +1847,12 @@ spool" item.
   - **When `start` is written (XC3):** **after** the exclusive mkdir of the export root,
     with the real directory name and the root's identity. A failed journal or run-record
     write refuses the start with R-d, naming the state directory. The empty root is then
-    left in place and reported, and R-d removes the run record it had written, so a refused
-    start is never adopted by the launch sweep [RR-2 RR2-C12].
+    left in place and reported. R-d appends a `refused` line to the fingerprint ledger and
+    then removes the run record it had written, so a refused start is never adopted by the
+    launch sweep [RR-2 RR2-C12]. **[RR-2b re-verification]** A record is deleted only after
+    its ledger line exists (owner rulings §13.5). So if that append fails too, the record
+    is kept, and the next launch's sweep adopts it as an interrupted empty export folder
+    (§5.1 W3). Finish as partial or This folder is gone then settles it.
   - **Torn tails and locking (XC3).** Before each append the journal's torn tail is
     truncated (`state.OpenHistory`'s `truncateTornTail`, `internal/state/history.go`). One
     mutex covers append and compaction.
@@ -1649,9 +1875,14 @@ spool" item.
     kill inside W3, a lost or damaged journal, a compaction stopped before its
     deletions), rebuilding its `start` line from the record's header and, from a `gone`
     line, its terminal `reconciled` record (this host only), and reconciles it as usual; a
-    gone run is not probed. It deletes any record whose run is settled (§4.19 Lifetime:
-    sealed, ledgered and ended, or gone) and whose chain is complete, so a sealed run whose
-    marker action is still owed keeps the record Check and finish needs [RR-2 RR2-C3]. The
+    gone run is not probed. **[RR-2b re-verification]** This listing reads only the state
+    directory, and it runs before the export slot opens. It indexes the records by chain id
+    for the seal-and-finish step (§4.13 step 7). It also appends every missing ledger line,
+    copied from a record's sealed line, or from its `gone` line for a run that never
+    sealed. It deletes any record whose run is settled and whose chain is complete, both as
+    §4.19's Lifetime defines them [RR-2b re-verification]. So a sealed run whose marker
+    action is still owed keeps the record Check and finish needs, and a run whose card still
+    offers an export action keeps the record that action reads [RR-2 RR2-C3]. The
     journal is an index, so losing it no longer hides a run whose record survives.
   - **What it reads.** Status comes **only** from the journal and the run record. The
     export directory is probed only for presence, for the marker, and for an identity
@@ -1663,11 +1894,15 @@ spool" item.
       [RR-2 RR2-C3];
     - no answer within 5 s → "the folder did not answer (at <time>)", not terminal
       [RR-2 RR2-C3];
-    - identity neither confirmed nor positively mismatched (no nonce to read, or a
-      comparison the filesystem cannot make) → "couldn't confirm this is the same folder
-      — Look again", not terminal [RR-2 RR2-C3, RR2-C4];
+    - identity neither confirmed nor positively mismatched (no nonce, and no file identity
+      that can decide; §4.9) → "couldn't confirm this is the same folder — Look again", not
+      terminal [RR-2 RR2-C3, RR2-C4; RR-2b re-verification];
     - a positive mismatch (§4.9) → "this folder was moved or replaced since the export",
-      terminal, offering **Locate…** and **This folder is gone** [RR-2 RR2-C3];
+      offering **Locate…** and **This folder is gone** [RR-2 RR2-C3]. **Not terminal
+      [RR-2b re-verification]:** owner rulings §13.5 makes only the marker-and-seal outcomes
+      terminal. So it is probed again like the observations below, and a folder put back at
+      its path, such as the right stick replugged under the same drive letter, is then
+      found;
     - an empty or temp-only root, no `sealed` record and no progress line (a W2–W4 kill),
       confirmed by its file identity (§4.9) → "interrupted: empty export folder — the app
       stopped before writing anything", offering **Finish as partial**, or deleting the
@@ -1686,22 +1921,26 @@ spool" item.
     - marker absent and a `sealed` record → the sealed status's label with "(recovered)"
       and the sealed fingerprint: "Complete (recovered)"; "Finished with problems — N not
       exported (recovered)", with **Export failed messages again**; "Cancelled" or
-      "Stopped: <reason>", saying the folder's marker is missing [RR-2 RR2-C1];
+      "Stopped: <reason>", saying the folder's marker is missing [RR-2 RR2-C1]. The reason
+      and its remedy come from the sealed line's stop (§4.13 step 6) [RR-2b RR2b-C10];
     - marker absent and no `sealed` record, with progress lines → "changed after the
       export: its marker is gone — run Check this export", with "fingerprint not recorded
       at export time", offering **Finish as partial** once §4.9's tuple confirms the
       folder, as for every unsealed run [RR-2 RR2-C4, RR2-C7].
   - **Recording [RR-2 RR2-C3].** The terminal outcomes are the marker-and-seal outcomes
-    and a positive mismatch. Each is appended once as a `reconciled` record, and that run
-    is not probed again unless a user action changes it.
-    - "Folder not found", "did not answer" and "couldn't confirm" are observations. They
+    (owner rulings §13.5) [RR-2b re-verification]. Each is appended once as a `reconciled`
+    record, and that run is not probed again unless a user action changes it.
+    - "Folder not found", "did not answer", "couldn't confirm" and a positive mismatch are
+      observations [RR-2b re-verification]. They
       are cached for `/api/exports/history`, never journaled, and probed again once per
       launch (5 s bound, in the background) for each run that has a run record and no
       terminal outcome, and by the card's guarded **Look again**.
     - **This folder is gone** (the user's answer) is terminal. It is written as a `gone`
       line in the run record (fsynced) as well as to the journal, so it outlives
       compaction and a lost journal, and it offers **Export these N messages again**
-      (§4.13).
+      (§4.13). A run that never sealed also gets a `gone` line in the fingerprint ledger,
+      which the launch sweep appends from the record's `gone` line if that append was lost
+      (§4.19) [RR-2b re-verification].
     - **Locate…** (Browse) accepts the folder at a new path, after a drive-letter or
       mount change or a "moved or replaced", only when the identity check passes, and
       appends that path to the run record; the run is then reconciled at that path.
@@ -1713,7 +1952,8 @@ spool" item.
       is seen with the marker, Check and finish does the marker action and appends the
       `end` itself. So an `end` always means no marker action is left to do.
     - **The bound** is §4.19's Lifetime: the records of the last 200 runs, plus the
-      records of unresolved runs (unsealed and not gone, or sealed without an `end`).
+      records of unresolved runs, which §4.19 defines as every run that is not settled
+      [RR-2b re-verification].
       Compaction keeps an unresolved run's lines, so the run stays on this page with its
       actions until it is finished or the user says its folder is gone.
 
@@ -1735,14 +1975,36 @@ spool" item.
     **sealed** parts, **in the order they sealed** [RR-2 RR2-C2]. It is computed at each
     part's seal, under the ledger's mutex, by resuming the SHA-256 state saved in the
     chain's most recent ledger line (Go's `sha256` digest marshals its state), with this
-    part's in-memory SUMS bytes. Every ledger line saves that state, the set fingerprint
-    and the parts it covers, in order (a first sealed part starts the state with its own
-    bytes). Parts need not seal in part order: an interrupted part 1 can be finished as
-    partial after "Export the remaining messages" has sealed part 2, and a part marked gone
-    never seals and never enters it. So the page and the receipt give the set fingerprint
+    part's in-memory SUMS bytes. **[RR-2b re-verification]** How each seal finds and keeps
+    that state:
+    - **By chain id.** The chain id is the first part's run id. Every run record's header,
+      sealed line and ledger line carry it. So a part that seals late (an interrupted part 1
+      finished as partial after part 2 sealed) finds the chain's most recent ledger line,
+      although its own header names no later part.
+    - **In the sealed line first.** The mutex is taken before the state is computed and is
+      held until the ledger line is fsynced (§4.13 steps 6–7). The sealed line stores the
+      new state, the set fingerprint and the parts it covers, and the ledger line copies
+      them. A ledger line that reconcile appends after a kill or a failed append between the
+      two therefore holds the same state, although reconcile never reads the folder.
+    - **No gap in the chain.** Before computing, a seal appends any ledger line its chain is
+      missing, copied from that part's sealed line. The launch sweep indexes the records by
+      chain id before the export slot opens (above), so a later part never resumes past a
+      part that sealed.
+
+    Every sealed part's ledger line saves that state, the set fingerprint and the parts it
+    covers, in order (a first sealed part starts the state with its own bytes). Parts need
+    not seal in part order: an interrupted part 1 can be finished as partial after "Export
+    the remaining messages" has sealed part 2. A part marked gone before it sealed never
+    enters the set. **A part marked gone after it sealed stays in it [RR-2b
+    re-verification]:** its SUMS bytes entered the state at its seal, and nothing is ever
+    re-read from disk to take them out. The page and the receipt then name that part as
+    gone beside the set fingerprint. They say that a recipient without that part cannot
+    check the set, and they list each other part's own fingerprint from the ledger, which
+    checks that part alone. So the page and the receipt give the set fingerprint
     with its part order, and a recipient hashes the parts' SUMS files in that order. No
     earlier part's SUMS is re-read from disk, and no earlier run record is needed, so
-    compaction may delete one while its chain is open.
+    compaction may delete one while its chain is open, once its ledger line exists
+    (§4.19).
 - **"Open folder" (XC33)** never takes a path from the request. Before opening the
   recorded export root it requires all of these:
   - Lstat shows no symlink or reparse point;
@@ -1805,7 +2067,7 @@ saves settings drops these fields, which is harmless (§6).
 | F5 reader holds `search.db` | The workspace opens it per request, read-only, and closes it. A list request's shared lock keeps it out of the in-process Rebuild's rename window (XC20). It narrows F5's window to the request; it does not remove F5. |
 | F9 one bad `$value` halts the walk (`graph.go:621`) | Avoided: per-message classes (§4.13). Hazards 1 and 2 cannot arise (no manifest writes); hazards 3–5 adopted. |
 | F11 position paging | Mitigated by count reconciliation (§4.7); residual stated. |
-| F15 token fetch without overall timeout | **Fixed in E1 (XC26):** `httpTransport`'s client gets `Timeout: reqTimeout`, which bounds token fetches and the `deviceSource` mutex hold. That fixes F15 for capture and the CLI too. |
+| F15 token fetch without overall timeout | **Fixed in E1 (XC26):** `httpTransport`'s client gets `Timeout: reqTimeout`, which bounds token fetches and the `deviceSource` mutex hold. That fixes F15 for capture and the CLI too. **[RR-2b RR2b-C3]** `oauth2.NewClient` copies that `Timeout` into every Graph client it builds over that client (`oauth2.go:357-366`), so it also bounds every Graph request made through them; JSON requests already run under `reqTimeout`. The exception is SG's `$value` client. SG builds it itself with `Timeout` zero, because the timeout would cut every download longer than `reqTimeout` (§4.5). MA-527 asserts both. |
 | F17 throttle waits count against the 60 s deadline; 5xx not retried | Dependency, owned by fault-isolation as its slice FI-GF17, after its S3 [ruling Q15]. **Conditional (XC26):** a listing under a long Retry-After shows R-v only once FI-GF17 or S3's typed throttle error lands. Until then it surfaces as a deadline error that the preview reports as "Microsoft 365 didn't answer in time — try again in a few minutes", not as R-v. 502/503/504 after retries are transport-class (backoff, XC9). F17 also conditions §4.14. |
 | F55 case-only folder collisions | Avoided by sibling FoldKey de-duplication (MA-418). |
 | F75 bidi / F91 byte cap / F111 reserved names (`util/paths.go`) | **[ruling Q15]** For exports: an export-only, stricter naming pass layered over the util sanitizers, built in E2, so MA-417's sub-cases pass with no archive migration. The archive-side fix needs its own migration and stays open outside this design, as an open gap, not accepted: E2 lands a skip encoder citing R4 for the archive writer's names. `os.Root` is the Windows backstop. |
@@ -1831,7 +2093,8 @@ recipient's.
   archive path, plus per-store mailboxes), destination, export root path and **identity**
   (§4.9's tuple: dev+inode with the filesystem type, or Windows volume serial + file ID,
   read after the exclusive mkdir; the run id is the content nonce) [RR-2 RR2-C4], the
-  retry chain (the earlier parts' run ids and roots) [RR-2 RR2-C2], and options. The
+  retry chain (the earlier parts' run ids and roots) [RR-2 RR2-C2] and its chain id, the
+  first part's run id (for a first part, its own) [RR-2b re-verification], and options. The
   realized posture of the root and marker (§4.7) is appended as its own line once it is
   read [RR-2 RR2-C6].
 - **Plan:** the whole previewed plan, one line per message: source id, folder path,
@@ -1843,13 +2106,18 @@ recipient's.
   message.
 - **Seal [RR-2 RR2-C1, RR2-C2]:** after `SHA256SUMS.txt` is written (W9) and before the
   marker action (W10), a `sealed` line carries the run's final status and counts and the
-  fingerprint, computed from the in-memory SUMS bytes, and is fsynced. It is the first
+  fingerprint, computed from the in-memory SUMS bytes, and is fsynced. It also carries the
+  stop's R-id, class and in-flight message id for a run that stopped [RR-2b RR2b-C10]. It
+  carries the chain id with the set state, set fingerprint and parts covered that the seal
+  computes under the ledger's mutex (§4.16) [RR-2b re-verification]. It is the first
   part of the seal-and-finish step (§4.13), which then writes the same fingerprint to the
   ledger (W9b) and ends with the journal `end` (W11). The journal has no `sealed` event.
 - **Stop and gone [RR-2 RR2-C3, RR2-C7].** A run that stops before its seal while the app
   runs on appends a `stopped` line with its reason (§4.13), when the state volume takes
   it. The user's "This folder is gone" appends a `gone` line (fsynced), so that answer
-  outlives the journal (§4.16).
+  outlives the journal (§4.16). For a run that never sealed, a `gone` line goes to the
+  fingerprint ledger as well, so its record can be deleted once it is settled (below)
+  [RR-2b re-verification].
 - **What is built from it.** `export-manifest.json` and `SHA256SUMS.txt` are streamed from
   the record, and their per-file hashes are the recorded ones. Derived HTML is rendered
   only from read-back bytes whose hash equals the recorded one. There is no destination
@@ -1867,22 +2135,38 @@ recipient's.
   fingerprint from destination content.
 - **Version rules (XC3).** A reader refuses a newer `format_version` with "made by a newer
   MailArchive Desktop — update to retry", and tolerates additive fields.
-- **Lifetime [RR-2 RR2-C2, RR2-C3, RR2-C12].** A run is **settled** when it is sealed, its
-  ledger line exists and its journal `end` does (no marker action is left), or when the
-  user has said its folder is gone. Any other run is **unresolved**. A record is deleted
-  in three cases only:
-  - a refused start: R-d removes the record it wrote (§4.16);
-  - a settled run whose whole retry chain is complete: at once, or by the launch sweep;
+- **Lifetime [RR-2 RR2-C2, RR2-C3, RR2-C12; RR-2b re-verification].** One definition of
+  each term, which §4.16 uses too:
+  - **Settled.** A run is settled when its ledger line exists and either it is sealed and
+    its journal `end` exists (no marker action is left), or the user has said its folder is
+    gone. Its ledger line is the one the seal-and-finish step writes or, for a run that
+    never sealed, its `gone` or `refused` line (§4.10).
+  - **Unresolved.** Any run that is not settled: an unsealed run that is not gone, a sealed
+    run without its ledger line or its `end`, or a gone run whose ledger line is still
+    missing (the launch sweep appends it from the record's `gone` line).
+  - **A complete chain.** Every part of the chain is settled, and no part's card offers an
+    export action any more. Every message of every part's plan was exported in a sealed
+    part not marked gone, or failed with a terminal class (§4.13).
+
+  A record is deleted only after its ledger line exists (owner rulings §13.5), and in
+  three cases only:
+  - a refused start: R-d appends its `refused` ledger line, then removes the record it
+    wrote. If that append fails, the record is kept and the launch sweep adopts it (§4.16);
+  - a settled run whose chain is complete: at once, or by the launch sweep;
   - a settled run that journal compaction drops: only after the new journal is in place.
     A record left by a compaction stopped before its deletions is re-adopted by the launch
     sweep (§4.16) and ages out again.
 
   An unresolved run's record is never deleted, and compaction keeps its lines, so it stays
   on the activity page with its actions (Finish as partial, Check and finish, Look again,
-  Locate…, This folder is gone) until the user resolves it. The records are therefore
-  those of the last 200 runs plus the unresolved ones, and each holds at most its plan
-  (200,000 lines). A deleted record's fingerprint, and the set-fingerprint state for a
-  retry chain, survive in the ledger.
+  Locate…, This folder is gone) until the user resolves it. A settled run whose chain is
+  incomplete keeps its record while compaction keeps its lines. So the export action its
+  card offers ("Export failed messages again", "Export the remaining messages", "Export
+  these N messages again") keeps the record it reads. With the earlier undefined "whole
+  retry chain is complete", a gone single-part run could lose that record at once
+  [RR-2b re-verification]. The records are therefore those of the last 200 runs plus the
+  unresolved ones, and each holds at most its plan (200,000 lines). A deleted record's
+  fingerprint, and the set-fingerprint state for a retry chain, survive in the ledger.
 - **Residual (stated, §8.4).** A co-writer on the destination can still alter or add files
   *after* they are written. The recipient's check, the extra-files check and "Check this
   export" detect that. Nothing in the run vouches for it.
@@ -1897,7 +2181,7 @@ Revision 2 order (XC1, XC3, XC5): the exclusive mkdir now comes **before** the j
 | # | Write (order) | Killed before | Killed during | Killed after | Fails toward | Operator sees |
 |---|---|---|---|---|---|---|
 | W0 | Preview (writes nothing) | — | — | — | nothing | preview lost; preview again |
-| W1 | Create folder: one `os.Mkdir` | nothing | atomic | an empty folder | harmless | the folder exists, empty |
+| W1 | Create folder: one mkdir through the checked parent's handle (§4.8) [RR-2b re-verification] | nothing | atomic | an empty folder | harmless | the folder exists, empty |
 | W2 | Export root: exclusive mkdir through the destination handle; random-suffixed name; identity read (XC3, XC32) | no folder | atomic | an empty folder with no marker and no journal record (sub-second window) | an empty folder is plainly not an export, and no record points at it | an empty `MailExport-…` folder; README-less, so nothing claims it |
 | W3 | Run record header + plan (append, fsync), then journal `start` with the real name and root identity (append after `truncateTornTail`, fsync) (XC1, XC3) | empty root, no record | torn line, truncated before the next append | record | a record for an empty, marker-less root; a kill between the two appends leaves a record no journal line names, which the launch sweep adopts (§4.16) [RR-2 RR2-C12] | "interrupted" ("empty export folder", once its file identity confirms it, RR2-C4); **Finish as partial** writes a 0-message STOPPED export, or the folder can be deleted |
 | W4 | `_EXPORT-NOT-FINISHED.txt` carrying the run id (temp → fsync → rename → dir sync) | root + record, no marker | temp residue | marker | unfinished | "interrupted"; marker explains; Finish as partial |
@@ -1906,8 +2190,8 @@ Revision 2 order (XC1, XC3, XC5): the exclusive mkdir now comes **before** the j
 | W7 | Presence check, then `README.txt` (atomic; status conditional in its own text, XC5) | — | temp residue | README, which says "complete — valid only while no _EXPORT-NOT-FINISHED.txt is in this folder" | unfinished (marker present); README's own text says not to trust its status | "interrupted"; Finish as partial |
 | W8 | `export-manifest.json` (temp, streamed from the run record → fsync → rename; `valid_if_absent`) | — | temp residue | manifest | unfinished (marker present); **reconcile never reads it** (XC4) | "interrupted"; Finish as partial |
 | W9 | Directory syncs, then `SHA256SUMS.txt` (atomic, built from recorded hashes) | — | temp residue | sums | unfinished (marker present) | "interrupted"; Finish as partial |
-| W9a | Run record `sealed` line: the final status and counts [RR-2 RR2-C1] and the in-memory fingerprint (fsync) (XC1, XC5) | sums on disk, not sealed | torn line | sealed | unfinished (marker present) but provably written | "Finished writing (<the sealed status's label>)" → **Check and finish**, which then does the sealed status's marker action (RR2-C1) |
-| W9b | Fingerprint-ledger line, once per run id (append, fsync) [RR-2 RR2-C2] | sealed, no ledger line | torn line, truncated | ledger line | unfinished (marker present); reconcile appends a missing ledger line from the sealed line | as W9a |
+| W9a | Run record `sealed` line: the final status and counts [RR-2 RR2-C1], the stop's reason [RR-2b RR2b-C10], the in-memory fingerprint, and the chain id with the set state computed under the ledger's mutex, which is held through W9b [RR-2b re-verification] (fsync) (XC1, XC5) | sums on disk, not sealed | torn line | sealed | unfinished (marker present) but provably written | "Finished writing (<the sealed status's label>)" → **Check and finish**, which then does the sealed status's marker action (RR2-C1) |
+| W9b | Fingerprint-ledger line, once per run id (append, fsync) [RR-2 RR2-C2] | sealed, no ledger line | torn line, truncated | ledger line | unfinished (marker present); reconcile, or the chain's next seal, appends the missing ledger line from the sealed line, which holds the set state [RR-2b re-verification]; a failed append stops the step with R-d2 (§4.13) | as W9a |
 | W10 | The sealed status's marker action: remove the marker (complete/partial) or rewrite it CANCELLED / STOPPED by one atomic replacing rename (cancelled/failed/finished-as-partial) [RR-2 RR2-C1]; dir sync | marker present: claims less than the truth (safe); Check and finish performs the same action from the sealed status | atomic | done | as the sealed status says | the sealed status's label |
 | W11 | Journal `end` [RR-2 RR2-C2] | sealed, the marker action done; reconcile appends a missing ledger line, and the `end` once a probe sees the marker absent; a rewritten CANCELLED / STOPPED marker gets it from Check and finish [RR-2 RR2-C3] | torn line | record | reconcile reads the **sealed** line, never the folder (XC4) | the sealed status's label with "(recovered)" and the sealed fingerprint once the marker is seen absent; with a rewritten marker, "Finished writing (<that label>)" and Check and finish (RR2-C3); "complete" only if that status is complete (RR2-C1) |
 | W12 | Journal compaction (temp → rename, under the journal mutex, unknown-`v` lines kept verbatim) (XC3); the dropped runs' records are deleted only after the new journal is in place [RR-2 RR2-C12]; an unresolved run is never dropped (§4.19 Lifetime) [RR-2 RR2-C3] | old journal | temp residue | new journal | at worst, history lost; fingerprints kept in the ledger; a leftover record is found by the launch sweep | shorter history |
@@ -1943,11 +2227,12 @@ tell the user the folder can be deleted.
 | Graph session | rebuilt from the token store; R-b if the token is gone; released after 30 idle minutes (XC18) | a token leak is the existing capture posture (D3/D4). **XC7:** the session holds the refresh token in memory for its lifetime. It writes back only same-UPN rotations to an *existing* entry, so a sign-in cleared in the dashboard, in Credential Manager or by deleting the token file is never re-created | closed | sign-in prompt; a running export stops with R-z |
 | Preview store | lost on restart, expiry or a new preview | ids validated against the session (P4) | closed (R-k, R-y) | "preview again" |
 | Run goroutine | killed with the process (§5.1); recovered by Finish as partial from the run record (XC2) | panic recovered → `failed`, marker kept; wedged in the kernel 30 s after Cancel → slot released, "Stopped: the destination is not responding", one OS thread held until the syscall returns or the app restarts (XC10) | closed | "Stopped: an internal error" / "not responding" |
+| A message's download (`$value`) [RR-2b RR2b-C1] | cut: the run backs off on the same message, its temp removed and its budget read again (RR2b-C5) | a 2xx that stalls or trickles, headers that never come, a redirect elsewhere: the download bound (5 cuts or 2 h of awake time), the control request before R-u (RR2b-C7), and R-u3 for a redirect (RR2b-C4) | closed per message | the message listed with its reason, retryable, and the run continues; R-u3 for a redirect |
 | **Run record** (XC1) | its run can no longer be retried or finished from the app; the export on disk is unaffected and still self-verifies | same-user file, 0600, local; a reader refuses a newer format legibly | closed (no retry offered) | "this export's run record is missing — Check this export still works" |
 | Destination volume | removed or full → run-fatal; the per-OS errno table, root probe, 5-failure breaker and free-space reserve make that hold on Windows, SMB and FAT too (XC10, XC11) | another program writing there: only the export root is ours, under `os.Root`. The app's truth is the run record, never this volume (XC1, XC4) | closed, marker kept; finalization fits against this run's own writes (RR2-C5); if another program used the reserve, Finish as partial completes the part later (RR2-C7) [RR-2] | R-g / R-g2; "Export the remaining messages" from the run record |
 | Archive (source) | missing → R-o; gone mid-run → run-fatal R-o2 (XC10) | damaged or swapped files → fixity mismatch per message; hard links refused (XC19) | closed per message | listed failures; "run Check integrity" |
 | Journal | the next launch's sweep re-adopts every surviving run record, so each unfinished run comes back with its actions; only runs whose records are gone too leave the history [RR-2 RR2-C12]; fingerprints survive in the ledger (XC14) | malformed lines skipped; torn tail truncated (XC3); a journal path is never used to write or delete anything; the only deletions are the app's own run records in the state directory, chosen by run id (§4.19 Lifetime) [RR-2] | open (exports unaffected) | shorter history |
-| Fingerprint ledger (XC14) | the sender's tamper anchor for past exports is lost, unless a receipt was saved | same-user file, 0600 | open | "fingerprint not recorded" |
+| Fingerprint ledger (XC14) | the sender's tamper anchor for past exports is lost, unless a receipt was saved. An append that fails stops the seal-and-finish step with R-d2, and the marker stays until reconcile or Check and finish completes it [RR-2b re-verification] | same-user file, 0600 | open | "fingerprint not recorded" |
 | Native picker | unavailable → typed path | **crash** in a shell extension (Windows, in-process) kills the dashboard process: the run is interrupted and recovered by Finish as partial. **Hang**: `zenity.Context` cannot dismiss it, and Browse stays refused until restart. Browse is disabled while an export runs (XC31) | open to the typed fallback | R-n; "a folder picker is already open" |
 | An export after hand-over | — | tampered → `sha256sum -c` mismatch; re-hashed throughout → caught only by the fingerprint; files **added** → caught only by the extra-files check or Check this export (XC14) | detectable | the recipient's check fails |
 
@@ -2061,13 +2346,17 @@ slice.
 |---|---|---|---|
 | One message cannot convert | "Finished with problems — 1 message not exported" (subject, folder, reason) | **Export failed messages again** → **Start export** (2) · that message only | I (Microsoft's conversion) |
 | Sign-in expires or is revoked mid-run | R-c (also when the refresh token itself is refused, XC9); the run stops; the marker says STOPPED | **Sign in** (3) → **Export the remaining messages** → **Start** (2) · the remaining messages | I |
-| USB stick full | R-g before the message that would enter the reserve, so finalization fits against this run's own writes (XC11, RR2-C5); marker says STOPPED. If another program filled the stick, finalization can still fail; the marker stays, and **Finish as partial** completes the part once space is freed (RR2-C7) [RR-2] | free space or choose another destination; **Export the remaining messages** → **Start** (2), from the run record even if the stick was removed | I |
+| USB stick full | R-g before the message that would enter the reserve, so finalization fits against this run's own writes (XC11, RR2-C5); marker says STOPPED. If another program filled the stick, finalization can still fail; the marker stays, and **Finish as partial** completes the part once space is freed (RR2-C7) [RR-2]. A message aborted at its budget is listed, and the next part exports it last [RR-2b RR2b-C6] | free space or choose another destination; **Export the remaining messages** → **Start** (2), from the run record even if the stick was removed · the remaining messages, that one included | I |
 | Stick pulled mid-run, then plugged back in [RR-2 RR2-C3, RR2-C7] | R-g; finalization fails and the marker stays; once the stick is back (**Look again** if it was missing at launch), the card offers Finish as partial | **Finish as partial** (1) → **Export the remaining messages** → **Start** (2) · the remaining messages | I |
 | Changed their mind | **Cancel** (1); marker says CANCELLED | delete the folder by hand (1) | I |
-| Laptop lid closed, or the computer sleeps [RR-2 RR2-C8] | the run pauses and resumes on wake; time asleep is not counted toward the 5-minute breaker | none (0) · the sleep only | I |
+| Laptop lid closed, or the computer sleeps [RR-2 RR2-C8; RR-2b RR2b-C9] | the run pauses and resumes on wake; time asleep is not counted toward the 5-minute breaker or the message's 2 h; the message that was downloading starts again from its first byte | none (0) · the sleep, plus that one message's download again (up to 2 h for a large message on a slow link) | I |
 | App killed or crashed, or a power loss (XC2) | next launch: "Interrupted"; folder has the marker | **Finish as partial** (1) → **Export the remaining messages** → **Start** (2) · re-work is the remaining messages only, not a redo | I (revision 1 was Type II; resume-from-spool retired) |
 | Network blip mid-run (Wi-Fi roam, wake, VPN) (XC9) | the run backs off on the same message and continues; nothing fails | none (0) · seconds | I |
-| Network down > 5 minutes (XC9) | R-u, outcome 1 | **Export the remaining messages** → **Start** (2) · the remaining messages | I |
+| Network down > 5 minutes (XC9) | R-u, outcome 1, once a control request also goes unanswered [RR-2b RR2b-C7]; the message that was downloading is listed, and the next part exports it last [RR-2b RR2b-C6] | **Export the remaining messages** → **Start** (2) · the remaining messages | I |
+| One large message's download keeps stopping partway, or trickles [RR-2b RR2b-C1] | after 5 cuts, or 2 h of download time, it is listed ("kept stopping partway"), and the run exports the rest | **Export failed messages again** → **Start** (2), later or on a better connection · that message only | I (the network's) |
+| Microsoft 365 throttles the export for 5 minutes [RR-2b RR2b-C7] | R-v2, outcome 1; the message that was downloading is exported last by the next part | wait, then **Export the remaining messages** → **Start** (2) · the remaining messages | I (Microsoft's limits) |
+| One message is larger than 256 MiB [RR-2b RR2b-C8] | listed "larger than this version of MailArchive exports (256 MiB)"; the run continues, and no retry is offered | none in the app (0); the message stays in the mailbox · that message | I (the size cap; conditional on ESC-8, §4.13) |
+| Microsoft 365 redirects a download to another server [RR-2b RR2b-C4] | R-u3 naming the server; the sign-in token was never sent there | report the server named to IT; **Export the remaining messages** → **Start** (2) once resolved · the remaining messages | I |
 | FAT32 stick, 10,000-message Inbox (XC12) | the preview WARNs (FAT32, 4 GiB per file, permissions not kept); ≤1,000 files per directory, so no directory-full failure | none (0) | I |
 | Clears the sign-in, or signs in as someone else, mid-run (XC7) | R-z; the run stops cleanly; the token is not re-persisted | **Sign in** as the intended account (3) → **Export the remaining messages** → **Start** (2) | I |
 | Forced Windows restart overnight (XC6) | with the end-session window: drained → "Cancelled"; without it: "Interrupted" | **Export the remaining messages** (or **Finish as partial** first) → **Start** (2–3) · the remaining messages | I |
@@ -2075,6 +2364,7 @@ slice.
 | Retry after a restart (XC2) | retry reads the run record, so it works after any restart | **Export the remaining messages** → **Start** (2) | I |
 | Linux, no zenity | R-n | type the path (1) | III (bundling a picker is backlog) |
 | Destination on another network share than a share-held archive, on a share served by this computer, or on an sshfs or other FUSE mount [RR-2 RR2-C13] | R-f2 at preview; nothing written | choose a local folder, a USB drive, or a folder on the archive's own share outside it (1) · none | I (identity cannot be compared across those views, and the archive must stay unwritten) |
+| The archive itself is reached through a share this computer serves, or held on an sshfs, other FUSE or overlay mount [RR-2b re-verification] | R-f2 for every destination, Microsoft 365 exports included, because R-f checks the configured archive for every source; R-f2's archive-side wording names the cause | give Archive location (or Another archive folder…) the archive's local path, or mount its share with the system's own SMB or NFS client (1–2) · none | I (identity cannot be compared through those views) |
 | Picks 12,000 rows by hand | R-j (reachable now that picks are row handles, XC17) | **Select current folder** + untick (2) | I (bound) |
 
 ### 7.3 Admin / IT handing over a departing user's mail
@@ -2147,11 +2437,11 @@ choices are **Save and keep the backup**, **Save and remove the weekly backup**,
 | R-a2 | (XC35) "This installation is set up for app-only access, which can't sign in as you — the workspace reads your own mailbox with a device sign-in. In the app registration, turn on 'Allow public client flows' and add the Delegated Mail.Read permission, or register a separate device app (docs/graph-app-setup.md)." |
 | R-c | "Microsoft 365 refused the request (your sign-in expired or access was revoked) — the export stopped after 1,203 of 2,088 messages. Sign in again, then click 'Export the remaining messages' on Export activity." Also raised when the refresh token itself is refused (`invalid_grant`, `interaction_required` …), never shown as "check your network" (XC9). |
 | R-d | (XC3) "MailArchive Desktop couldn't record this export in C:\Users\alex\AppData\Local\MailArchive (disk full or access denied) — nothing was exported. Free some space there, then click Start export again." |
-| R-d2 | [RR-2 RR2-C7] "MailArchive Desktop couldn't record this export's progress in C:\Users\alex\AppData\Local\MailArchive (disk full or access denied) — the export stopped after 812 of 2,088 messages and the folder is marked unfinished. Free some space there, then click 'Finish as partial' or 'Export the remaining messages' on Export activity." Raised when a run-record or journal write fails during a run; never matched against the destination table. |
+| R-d2 | [RR-2 RR2-C7] "MailArchive Desktop couldn't record this export's progress in C:\Users\alex\AppData\Local\MailArchive (disk full or access denied) — the export stopped after 812 of 2,088 messages and the folder is marked unfinished. Free some space there, then click 'Finish as partial' or 'Export the remaining messages' on Export activity." Raised when a run-record, journal or fingerprint-ledger write fails during a run or its seal-and-finish step [RR-2b re-verification]; never matched against the destination table. |
 | R-e | "The folder C:\Users\alex\Downloads\Archive Folder doesn't exist — an export is written into an existing folder. Click Browse to choose one, or Create folder." |
 | R-f | "That folder is inside your archive (C:\MailArchive) — an export written there would mix into the archive. Choose a folder outside C:\MailArchive." |
-| R-f2 | [RR-2 RR2-C13] "MailArchive couldn't confirm that \\\\nas\\mail is outside your archive (\\\\nas\\share\\MailArchive) — the two are reached through different network shares, which can show one folder under two names, so nothing was written. Choose a folder on a local drive or a USB drive, or one on the archive's own share outside the archive." Variants name the cause: a share on this computer ("use the folder's local path instead"), a FUSE or overlay mount, or an archive too large or partly unreadable to check. Also raised by Create folder. |
-| R-g | "The destination is full or no longer available (E:\ — no space left) — the export stopped after 812 of 2,088 messages and the folder is marked unfinished. Free some space or choose another destination, then click 'Export the remaining messages'." The remedy works even when the destination is gone, because it reads the run record (XC2, XC11). It names the real cause from the per-OS table, e.g. "the drive was removed" or "the network share is gone" (XC10). |
+| R-f2 | [RR-2 RR2-C13] "MailArchive couldn't confirm that \\\\nas\\mail is outside your archive (\\\\nas\\share\\MailArchive) — the two are reached through different network shares, which can show one folder under two names, so nothing was written. Choose a folder on a local drive or a USB drive, or one on the archive's own share outside the archive." Variants name the cause: a share on this computer ("use the folder's local path instead"), a FUSE or overlay mount, or an archive too large or partly unreadable to check. Also raised by Create folder. **Archive-side variants [RR-2b re-verification]:** "Your archive at \\\\localhost\\mail is reached through a share on this computer, so MailArchive can't confirm any folder is outside it — set Archive location to its local path (D:\MailArchive), then click Preview copy export again." "Your archive is on an sshfs or other FUSE mount, where MailArchive can't compare folder identities — set Archive location to the archive's own path, or mount its share with your system's SMB or NFS client." For Another archive folder…, the same wording names that folder. |
+| R-g | "The destination is full or no longer available (E:\ — no space left) — the export stopped after 812 of 2,088 messages and the folder is marked unfinished. Free some space or choose another destination, then click 'Export the remaining messages'." That part also exports, last, the message that was being written when the space ran out [RR-2b RR2b-C6]. The remedy works even when the destination is gone, because it reads the run record (XC2, XC11). It names the real cause from the per-OS table, e.g. "the drive was removed" or "the network share is gone" (XC10). |
 | R-g2 | (XC11) "E:\ has 1.1 GB free, but this export needs about 1.4 GB plus room to finish (the manifest and checksums) — nothing was written. Free some space or choose another destination." |
 | R-h | (Preview disabled) "Select at least one folder or message to preview." |
 | R-i | "This selection has 240,000 messages — one export copies up to 200,000. Split it into several exports, for example by folder." |
@@ -2168,13 +2458,15 @@ choices are **Save and keep the backup**, **Save and remove the weekly backup**,
 | R-o4 | [RR-2 RR2-C11] "D:\Inherited\Mail's manifest is larger than MailArchive reads from another archive folder (2.4 GB; the limit is 1 GB) — nothing was read beyond that check, and nothing was written. If you trust this archive, make it the archive location in Settings (Save asks first when a weekly backup is installed)." Checked before anything is unmarshalled. |
 | R-p | (the loader's own wording) e.g. "The archive's manifest was written by a newer MailArchive (format 7) — update MailArchive Desktop to export from it." |
 | R-q | "A folder named 'Archive Folder' already exists here — choose it with Browse, or use another name." / "'a/b' can't be a folder name (it contains '/') — try 'a b'." |
-| R-r | (XC33) "This export's folder was moved or replaced since the export (E:\…\MailExport-2026-10-09_142233-7f3a) — MailArchive won't open it. Find the folder yourself, then run Check this export." |
+| R-r | (XC33) "This export's folder was moved or replaced since the export (E:\…\MailExport-2026-10-09_142233-7f3a) — MailArchive won't open it. If the folder is somewhere else now, click Locate… on Export activity and choose it; if it's lost, click This folder is gone." [RR-2b re-verification] Check this export checks the recorded root, so it is not the remedy until Locate… has accepted the folder at its new path. |
 | R-r2 | [RR-2 RR2-C4] "MailArchive couldn't confirm that E:\…\MailExport-2026-10-09_142233-7f3a is this export's folder (the drive may have been plugged in again, or the folder's marker and README are missing) — it won't open a folder it can't confirm. Click Look again on Export activity, or find the folder yourself." Raised for "couldn't confirm", never for a positive mismatch. |
 | R-s | "This mailbox has more than 10,000 folders — more than the workspace can show. Export from the archive instead, or contact support." |
 | R-t | "Couldn't create a new export folder in C:\…\Archive Folder (MailExport-2026-10-09_142233 through -99 already exist) — choose another destination." |
-| R-u | (XC9) "The connection to Microsoft 365 has been down for 5 minutes — the export stopped after 1,500 of 2,088 messages; none of them was marked failed. Check your network, then click 'Export the remaining messages'." |
-| R-u2 | (XC9) "Microsoft 365 is having problems (25 messages in a row returned a server error) — the export stopped after 1,500 of 2,088 messages. Try again later with 'Export the remaining messages'." |
+| R-u | (XC9) "The connection to Microsoft 365 has been down for 5 minutes — the export stopped after 1,500 of 2,088 messages. Check your network, then click 'Export the remaining messages', which also tries again the message that was downloading." [RR-2b RR2b-C6] The earlier "none of them was marked failed" was false, since the in-flight message is listed. Raised only when a control request also goes unanswered [RR-2b RR2b-C7]. |
+| R-u2 | (XC9) "Microsoft 365 is having problems (25 messages in a row returned a server error) — the export stopped after 1,500 of 2,088 messages. Try again later with 'Export the remaining messages'." [RR-2b RR2b-C6] That action now includes those 25 messages, after the rest. |
+| R-u3 | [RR-2b RR2b-C4] "Microsoft 365 redirected a download to another server (cdn.example.net). MailArchive doesn't follow redirects away from Microsoft 365, so your sign-in was never sent there — the export stopped after 812 of 2,088 messages. If it happens again, something on your network may be redirecting Microsoft 365 traffic: check with your IT team, then click 'Export the remaining messages'." Raised for a redirect to another host; never shown as "check your network". |
 | R-v | "Microsoft 365 is limiting requests right now (throttled) — the preview couldn't list Inbox. Try again in a few minutes." **Conditional (XC26):** shown only once F17 (fault-isolation's FI-GF17, [ruling Q15]) or S3's typed throttle error lands; until then a long Retry-After surfaces as "Microsoft 365 didn't answer in time — try again in a few minutes." |
+| R-v2 | [RR-2b RR2b-C7] "Microsoft 365 is limiting this app's requests right now (throttled) — nothing downloaded for 5 minutes, so the export stopped after 1,500 of 2,088 messages. Try again in a few minutes with 'Export the remaining messages', which also tries again the message that was downloading." Raised during a run when the control request is answered 429 or 503; never shown as R-u. It does not wait for F17, because the control request is sent once, outside `get`'s retry loop. |
 | R-w | (XC12) "MailArchive couldn't create a folder in E:\Exports (access denied) — choose another folder, or allow MailArchive Desktop in Windows Security → Controlled folder access (macOS: System Settings → Privacy & Security → Files and Folders)." Nothing is written. |
 | R-w2 | [RR-2 RR2-C6] "Other accounts can read what you export to E:\Exports (BUILTIN\Users) — the preview said only you could, so nothing was exported. Check the folder's permissions or choose another destination, then click Preview copy export again." Raised at Start when the recomputed line is broader than the preview's, and before the first message when the created root or marker is more open than the line; in that case the empty export folder is marked STOPPED. |
 | R-x | (XC18) "This list expired — reloading Inbox from the newest message." (shown when a keyset continuation is impossible; the selection is kept) |
@@ -2213,8 +2505,11 @@ No refusal echoes a token, a Graph URL with its query, or a stack trace (MA-438;
    any folder inside it) is refused with R-f, against the identities of all the archive's
    directories. Where identity cannot be compared (a share served by this computer, such
    as `\\localhost`; another share than a share-held archive's; a FUSE or overlay mount),
-   the destination is refused as unconfirmed (R-f2). Create folder's parent is checked the
-   same way (§4.8). A symlinked
+   the destination is refused as unconfirmed (R-f2). Views are classified from the
+   canonical path, the drive type and the mount source, never from the filesystem type
+   alone (§4.7) [RR-2b re-verification]. Create folder's parent is checked the same way,
+   and the new directory is created through the handle the check opened (§4.8)
+   [RR-2b re-verification]. A symlinked
    destination is allowed (the user's choice). At start the destination is opened once as a directory handle, its
    identity is re-checked, and the export root is created through that handle and then
    pinned with `os.Root` (XC32).
@@ -2239,9 +2534,9 @@ No refusal echoes a token, a Graph URL with its query, or a stack trace (MA-438;
 |---|---|---|
 | Folder display names, subjects, sender names/addresses | mail senders; the mailbox owner | JSON-escaped, control-stripped, `textContent`; sanitized and FoldKey-unique on disk |
 | Attachment file names | mail senders | `SanitizeFilename`, FoldKey-unique, root-contained; bidi conditional on F75 |
-| MIME bytes | mail senders via Graph | written verbatim (bounded by the shared size cap, 256 MiB or higher [fault-isolation RR-6]); parsed only for derived files, under the existing panic guard |
+| MIME bytes | mail senders via Graph | written verbatim (bounded by the shared size cap, 256 MiB or higher [fault-isolation RR-6]; conditional on ESC-8, §4.13 [RR-2b RR2b-C8]); parsed only for derived files, under the existing panic guard; rendered only within the render bound, because the cap does not bound the render (§4.11) [RR-2b RR2b-C2] |
 | Message HTML | mail senders | `RenderWith` + re-parse fail-closed (MA-300/301) |
-| Graph JSON, `nextLink`, redirects | Microsoft, or a misbehaving or compromised server | bodies read through `io.LimitReader` (XC26); `nextLink` pinned to the base after normalization (XC25); redirects off the base refused (XC26) |
+| Graph JSON, `nextLink`, redirects | Microsoft, or a misbehaving or compromised server | bodies read through `io.LimitReader` (XC26); `nextLink` pinned to the base after normalization (XC25); redirects off the base refused (XC26), as a typed error naming the host, with a 10-hop limit [RR-2b RR2b-C4] |
 | Archive manifest, paths, zips | whoever can write the archive, or whoever wrote another archive folder chosen as a source [ruling W1] | path gates, no symlinks, fixity, zip-bomb bounds; for another archive folder also R-o3, R-p and the read-only open of §4.3 (MA-531), with the manifest read under a 1 GiB cap (R-o4) and `search.db` opened with `trusted_schema=OFF`, `cell_size_check=ON`, `mmap_size=0` and a `docs` table check [RR-2 RR2-C11] |
 | Archived `.html` (no original) | the archive, or whoever wrote another archive folder [ruling W1] | kept as `.html` only with the renderer's exact prefix and no other hostile meta; otherwise quarantined as `.txt`; built in E4 [RR-2 RR2-C9] |
 | Selection JSON, row handles, folder ids, cursors | the page | 1 MiB cap (413 → R-j-style refusal); row handles resolved through the seen-set; M365 folder ids only from the cached tree; message folders from `parentFolderId`; opaque cursors; caps (XC17) |
@@ -2254,7 +2549,8 @@ Nineteen POST endpoints (§4.2; `/api/exports/locate` is RR-2's [RR-2 RR2-C3]) a
 page shells. A native dialog in-process. A
 filesystem write primitive: create one new directory tree under a user-named path, one
 mkdir, and finishing the app's own interrupted root (XC2). New Graph read methods
-(folder tree with counts, page listing, streaming `$value`). One 0600 journal, per-run
+(folder tree with counts, page listing, streaming `$value`, and `Client.Probe`, the
+one-shot control GET before R-u [RR-2b RR2b-C7]). One 0600 journal, per-run
 0600 run records and a fingerprint ledger in the local state directory (XC1). On
 Windows, a hidden end-session window (XC6). No new listener, port, permission or scope.
 **Corrected (XC31):** no new *module* dependency, but ncruces/zenity is new to the
@@ -2272,7 +2568,7 @@ records zenity's new reachability.
 | Another local account (shared PC, RDS) | scrape the CSRF token, export the victim's mailbox to `C:\Users\Public` (and, today, already via `/api/settings` + `/api/capture`, XC24) | **E0** = local-confidentiality C2's per-user session and instance (F3/F4) (XC23) | **not shippable before E0** ([ruling Q5]) |
 | Malicious sender | traversal or reserved names, bidi spoofing, long names, script or refresh in HTML, MIME/zip bombs, markup in a subject aimed at the dashboard | sanitizers + `os.Root`; R19 renderer; bounds; `textContent` | bidi/reserved/byte-length conditional on the util fixes (P7); the `.eml` is the original (README caution) |
 | Archive-writer insider | symlink, hard link or swapped files to read outside the archive or poison the export | `extractInspect` + `os.Root` + nlink 1 (XC19) + fixity | a pre-fixity record is "unattested" (stated); the in-root check-then-use window is caught by fixity only when recorded |
-| Misbehaving or compromised server | redirect paging or a 302 to an attacker host to harvest the bearer token; huge JSON or `$value` | `nextLink` pinning after normalization (XC25); `CheckRedirect` refusing off-base redirects (XC26); `io.LimitReader` on JSON; size cap on `$value` | none (defence in depth) |
+| Misbehaving or compromised server | redirect paging or a 302 to an attacker host to harvest the bearer token; huge JSON or `$value`; a `$value` that stalls or trickles after its 2xx [RR-2b RR2b-C1] | `nextLink` pinning after normalization (XC25); `CheckRedirect` refusing off-base redirects (XC26) as a typed error naming the host, which stops the run with R-u3 [RR-2b RR2b-C4]; `io.LimitReader` on JSON; size cap on `$value`, and the render bound on its readable copy (§4.11) [RR-2b RR2b-C2]; the per-message download bound (5 cuts, 2 h of awake time) [RR-2b RR2b-C1] | none (defence in depth) |
 | TLS-intercepting proxy | read the token | none: it already sees `Authorization` on every request (XC26) | today's TLS trust; not mitigated by the pin |
 | **Destination co-writer during the run** (shared drive, USB, SMB, inherited ACL; XC1) | replace a written `.eml` (and, in revision 1, its spool line) so the sums vouch for forged bytes; swap the `.eml` before the HTML read-back; pre-create the next export names; plant a manifest or delete the marker to promote a killed run; swap the root for a symlink or `.app` before "Open folder" | no destination spool: hashes live in the local run record, and the sums and fingerprint are built from it; read-back verified against the recorded hash before parsing; random-suffixed root created through a re-checked handle, identity recorded after the mkdir (XC3, XC32); final placement renamed relative to the directory handle, so a parent swapped for a junction or symlink cannot redirect a file (RR2-C10) [RR-2]; reconciliation downgrade-only, never reading destination content (XC4); "Open folder" re-checks identity and only reveals (XC33) | a file altered or added **after** it was written is detected by the recipient's check, the extra-files check and Check this export, not prevented (stated) |
 | Recipient-side tamperer | alter files, re-hash everything, or **add** files | `SHA256SUMS.txt`; out-of-band fingerprint; README's extra-files check (XC14) | without the fingerprint, only accidental damage is detected (P9, conditional); added files are detected only by the extra-files check or Check this export, never by `sha256sum -c` alone (XC14) |
@@ -2434,12 +2730,12 @@ noted.
 | MA-437 | adds: Finish as partial leaves a ledger fingerprint equal to sha256 of the SUMS it wrote, and a journal `end`; a present recorded file whose bytes changed is listed "damaged when the computer stopped", never in SUMS; Finish as partial on a run whose finalization failed, labelled with the reason its `stopped` line recorded, never "the app stopped while this export was running" [re-verification]; for a part marked gone, `rest` includes its done but never-finalized messages | RR2-C2, RR2-C7 |
 | MA-438 | adds R-d2 and R-w2; adds [re-verification] R-f2 and R-r2 | RR2-C4, RR2-C6, RR2-C7, RR2-C13 |
 | MA-447 | adds [corrected by re-verification]: a kill between W9a and W9b leaves, after the next launch's reconcile, exactly one ledger line equal to the sealed fingerprint and no journal `end` (the marker is still present), and Check and finish then appends the `end`; a kill between W10 and W11 of a complete run leaves one ledger line and an `end` once the reconcile sees the marker absent | RR2-C2, RR2-C3 |
-| MA-448 | "gets a terminal reconciled record" holds for the marker-and-seal outcomes and a positive mismatch only, and "an identity mismatch" reads "a positive identity mismatch (§4.9)"; adds: a folder absent at the first launch and present at the second → interrupted, with Finish as partial offered; a sealed run killed between W9a and W10 whose folder is absent at the next launch gets its ledger line but no `end`, is probed again at the launch after, and is then offered Check and finish [re-verification]; a positive mismatch offers Locate… and This folder is gone and is not probed again [re-verification]; a probe that times out is recorded as a timeout and probed again; Look again re-probes; "This folder is gone" is terminal; Locate… accepts a moved folder only when the identity check passes; a wedged run is offered Finish as partial after a restart; the dev-and-inode-change fake as in MA-430 | RR2-C3, RR2-C4 |
+| MA-448 | "gets a terminal reconciled record" holds for the marker-and-seal outcomes only (owner rulings §13.5) [RR-2b re-verification], and "an identity mismatch" reads "a positive identity mismatch (§4.9)"; adds: a folder absent at the first launch and present at the second → interrupted, with Finish as partial offered; a sealed run killed between W9a and W10 whose folder is absent at the next launch gets its ledger line but no `end`, is probed again at the launch after, and is then offered Check and finish [re-verification]; a positive mismatch offers Locate… and This folder is gone [re-verification], and is probed again at the next launch, never recorded as terminal [RR-2b re-verification]; a probe that times out is recorded as a timeout and probed again; Look again re-probes; "This folder is gone" is terminal; Locate… accepts a moved folder only when the identity check passes; a wedged run is offered Finish as partial after a restart; the dev-and-inode-change fake as in MA-430 | RR2-C3, RR2-C4 |
 | MA-512 | adds R-l2 and R-o4 | RR2-C4, RR2-C11 |
 | MA-516 | adds (clock-injected): a 60-minute suspend followed by 30 s of transport errors, then success → the run completes with zero failures; a 12-minute body download with bytes arriving → no R-u; a sustained 5-minute awake outage → R-u | RR2-C8 |
 | MA-518 | adds: a plan with 150-character ids and Readable HTML on → the reserve is above 1 KB per message, and R-g2 compares against it; the state-volume check uses the run record's bound | RR2-C5 |
 | MA-520 | adds: Check and finish on a sealed cancelled run verifies, then rewrites the marker CANCELLED and never removes it; on a sealed partial run it removes the marker | RR2-C1 |
-| MA-521 | adds: part 1's run record deleted by compaction before part 3 seals → the set fingerprint still equals SHA-256 over the three SUMS files in order; adds [re-verification]: part 1 interrupted, part 2 ("Export the remaining messages") sealed, then part 1 finished as partial → the set fingerprint equals SHA-256 over part 2's then part 1's SUMS, and the ledger line names that order; a part marked gone never enters it | RR2-C2 |
+| MA-521 | adds: part 1's run record deleted by compaction before part 3 seals → the set fingerprint still equals SHA-256 over the three SUMS files in order; adds [re-verification]: part 1 interrupted, part 2 ("Export the remaining messages") sealed, then part 1 finished as partial → the set fingerprint equals SHA-256 over part 2's then part 1's SUMS, and the ledger line names that order; a part marked gone before it sealed never enters it, and one marked gone after it sealed stays in it, named as gone (RR-2b row changes) [RR-2b re-verification] | RR2-C2 |
 | MA-531 | adds: a page with `<script>` and no CSP prefix → `.archived-page.txt`, and a current-renderer page stays `.html` (RR2-C9); an over-cap manifest → R-o4 before any unmarshal, with no unbounded allocation; a `search.db` whose `docs` is a view → the list is disabled and whole-folder selection works (RR2-C11); a destination reached through an alias of the folder (`subst` on the Windows CI leg, a bind mount on Linux) → R-f, with nothing written (RR2-C13); adds [re-verification]: a destination reached through a bind mount of a subfolder of the folder (Linux leg) → R-f, the seam's unconfirmable views → R-f2, and a Create folder whose parent is such an alias → R-f, each with no file or directory added under the folder (RR2-C13). "Settings … unchanged" stays as written, and RR2-C14 makes it hold | RR2-C9, RR2-C11, RR2-C13, RR2-C14 |
 
 **RR-2 new row [RR-2 RR2-C6]** (from the RR-2/RR-3 reserve).
@@ -2448,8 +2744,34 @@ noted.
 |---|---|---|---|---|---|
 | MA-532 | U (Windows and macOS legs) | hand-over posture: on Windows, an owner-only destination DACL plus an inherit-only (`OI\|CI\|IO`) ACE granting BUILTIN\Users read → the preview line names Users; an inheritable ACE for one other account → the line names that account; a destination whose DACL gains such an ACE between preview and Start → Start refuses with R-w2, nothing written; an ACE added between Start's check and W4 (fault hook) → the realized check stops the run before W5, nothing exported, the marker STOPPED; a destination whose descriptor the test makes unreadable → "couldn't check who can read this folder", never "only you"; on macOS, an inheritable `everyone allow read` ACL entry on the destination → the line names everyone | R29, R12, S52 | compute the line from the destination's own effective access → it says "only you can read this folder" | E2 |
 
-MA-532 is RR-2's new row (RR2-C6), and MA-533..MA-534 stay in reserve [RR-2]. Revision
+MA-532 is RR-2's new row (RR2-C6), and MA-533..MA-539 stay reserved to the workspace
+(owner rulings §13.5, which widened RR-2's MA-533..MA-534) [RR-2; RR-2b]. Revision
 2's reserve MA-467..MA-469 is released, because it lies in g8's range [ruling Q11 = J1].
+
+**RR-2b row changes [RR-2b]** (existing rows amended by the RR-2b addendum's conditions and
+re-verification fixes; RR-2b adds no row). Each change is part of its row's assertion, and
+the prove-fail column is unchanged unless noted. No change drops an assertion. The two
+cells corrected in place above (MA-448, MA-521) encoded claims that owner rulings §13.5 does
+not record (a terminal positive mismatch), or that the mechanism cannot meet (a sealed part
+leaving the set).
+
+| Row | Change | Condition |
+|---|---|---|
+| MA-402 | adds: SG's size stop is a `*graph.TooLargeError` naming the limit applied and the declared length (−1 when none), early refusal included (fault-isolation §4.8.6) | RR2b-C8 |
+| MA-414 | adds [RR-2b re-verification]: through the seam, a local destination beside a share-held archive is allowed (the reverse twin); an archive walk that meets an unreadable directory (mode 000 on the Linux and macOS legs, a denying ACE on Windows), with the destination on the same local filesystem → R-f2; through the seam, an archive on an sshfs or overlay mount → R-f2 for a local destination, with the archive-side wording; the real classifier, not the seam, on each CI leg: on Windows a share created on the runner and reached as `\\localhost\<share>` → R-f2 (served by this computer), whatever `GetVolumeInformationW` reports; on Linux, recorded `/proc/self/mountinfo` lines for cifs, nfs4, fuse.sshfs and overlay classify as a share on the named server or as stacking; on macOS a local APFS path classifies local; each with nothing written. Third prove-fail: classify from the filesystem type alone → the `\\localhost` share classifies local and R-f2 is not raised | RR2-C13 |
+| MA-419 | "on (one message held)" reads "on (one message held, its readable copy within the render bound, which MA-509 pins)" | RR2b-C2 |
+| MA-426 | adds: a message above the (scaled) size cap is listed "larger than this version of MailArchive exports", terminal, not offered by "Export failed messages again", and the run continues | RR2b-C8 |
+| MA-427 | adds: the RR2-C5 budget case continued: "Export the remaining messages" on the stopped run builds a part whose plan holds message 813, last; with free space below the cap, a `$value` whose declared length is above the cap is listed above-cap and the run continues (never R-g), while one whose declared length is within the cap but above the budget stops with R-g; a `$value` redirected to a foreign host stops the run with R-u3 naming the host, never R-u, with the message in `failures` as retryable; a retried message leaves no `.mailexport-*.tmp`, and a fake volume that fills between two attempts stops the run with R-g at the second | RR2b-C4, RR2b-C5, RR2b-C6, RR2b-C8 |
+| MA-430 | adds [RR-2b re-verification]: a root that holds message files, whose marker was deleted and that has no README: on a stable-inode filesystem with dev unchanged → Finish as partial offered; on a fake vfat → "couldn't confirm", and Open folder refuses with R-r2; R-d's `refused` ledger line precedes its record's deletion, and with that append failing too (fault hook) the record is kept and adopted at the next launch as an interrupted empty export folder; a run marked gone before it sealed gets a `gone` ledger line before its record is deleted; a sealed run without its `end` that is marked gone is settled; a single-part run marked gone keeps its record while its card offers "Export these N messages again", and a sealed partial run keeps its record while "Export failed messages again" is offered. Adds (RR2b-C10): after a restart, sealed failed runs stopped by R-g, R-u, R-c and R-z are each labelled "Stopped: <reason>" with that R-id's remedy, from the sealed line; a stop between messages (R-z at the poll) records its reason with no message | RR2-C2, RR2-C3, RR2-C4, RR2b-C10 |
+| MA-434 | adds [RR-2b re-verification]: a fault hook between the check and the mkdir swaps the parent for a symlink (a junction on the Windows leg) into the archive → no directory appears inside the archive | RR2-C13 |
+| MA-437 | adds: "Export the remaining messages" on a stopped run yields its `not_attempted` ids, then its retryable failures, the in-flight message last; after R-u2 the next part holds the 25 failed messages; "Export failed messages again" is offered on a cancelled run with retryable failures. Adds [RR-2b re-verification]: for a sealed part marked gone, `rest` is its whole plan minus the messages exported in other sealed parts not marked gone, which is its whole plan when no other part covers them | RR2b-C6, RR2-C3 |
+| MA-438 | adds R-u3 and R-v2; R-u without "none of them was marked failed"; R-r's Locate… remedy and R-f2's archive-side variants [RR-2b re-verification] | RR2b-C4, RR2b-C6, RR2b-C7, RR2-C3, RR2-C13 |
+| MA-447 | adds [RR-2b re-verification]: the ledger line that reconcile appends after a W9a–W9b kill carries the chain id, the set state, the set fingerprint and the parts that the sealed line stored; a ledger append that fails (fault hook) stops the step with R-d2, the marker kept, and Check and finish then appends the line, does the marker action and appends the `end` | RR2-C2 |
+| MA-509 | adds: Readable HTML on, a message within the cap whose HTML body references one 8 MiB inline image 10 times (a predicted render over the 32 MiB bound) → `exported-original-only` with the note "too large for a readable copy", not offered for retry, and the heap delta stays under the stated bound; the same image referenced twice renders. Second prove-fail: remove the render bound → the heap bound fails | RR2b-C2 |
+| MA-516 | adds (fake `$value`, clock-scaled): a 2xx whose body stalls, five times → the message is listed retryable ("kept stopping partway") and the run exports the rest, outcome 3; a trickle that runs the scaled overall cap → listed after that one attempt, never a backoff; a cut whose attempt spans a (seam) suspend is not counted. Adds (RR2b-C7): a `$value` that never sends headers while JSON requests succeed → after 5 awake minutes the control request is answered 2xx, the message is listed "didn't start sending", and the run continues, never R-u; 429 with a long Retry-After to the `$value` and to the control request → R-v2, never R-u; a 6-minute capture pause → no R-u; a sustained outage with the control request unanswered → R-u as before; a breaker stop is never recorded as cancelled. Adds (RR2b-C9): with the real 1-second ticker, and the suspend-counting clock read through a seam that jumps 60 minutes between two ticks, 3 minutes of no progress before the jump and 2.5 after → no R-u. Adds (RR2b-C5): a retried message leaves no `.mailexport-*.tmp`. Second prove-fail: count only attempts that delivered no body bytes (the text before RR2b-C1) → the stall case never ends (test timeout). Third prove-fail: measure the suspend gap with Go's monotonic clock → R-u in the before-and-after case | RR2b-C1, RR2b-C5, RR2b-C7, RR2b-C9 |
+| MA-521 | adds [RR-2b re-verification]: part 2 killed between W9a and W9b with its folder absent, then part 3 seals → the set fingerprint equals SHA-256 over parts 1, 2 and 3's SUMS in seal order, and part 2's reconciled ledger line equals what its sealed line stored; part 2's ledger append failing while the app runs on, then part 3 sealing → part 3's seal appends part 2's line first, with the same result; part 1 finished as partial after part 2 sealed finds the chain's state by chain id; a part marked gone after it sealed stays in the set, and the page and the receipt name it as gone and list each other part's own fingerprint; every ledger line carries the chain id | RR2-C2 |
+| MA-527 | adds: through the clients E1 builds, a `$value` download longer than `reqTimeout` with bytes arriving (scaled: `reqTimeout` 100 ms, a byte every 20 ms for 1 s) completes byte-exact, while a stalled `/token` body is still released within `reqTimeout`. Second prove-fail: build SG's `$value` client with `oauth2.NewClient` from a context carrying `httpTransport`'s client → the long download is cut at `reqTimeout` | RR2b-C3 |
+| MA-528 | adds: the refused redirect is a `*graph.RedirectError` naming the foreign host, found with `errors.As` through the `*url.Error`, on a JSON request and on SG's `$value` client; a same-host redirect loop stops at the eleventh hop with the same typed error | RR2b-C4 |
 
 ## 10. Build slices and order
 
@@ -2463,19 +2785,23 @@ this table. **No E2 code starts** until lenses 3, 6 and 7 have re-run on revisio
 addendum to the review (**XC40**, RR-2). That addendum is filed (GO_WITH_CONDITIONS), and
 its conditions RR2-C1..RR2-C14 are folded into this text, so E2 starts from this text with
 them, never from the text before them [RR-2]. The fixes from the first re-verification
-(RR2-C2, RR2-C3, RR2-C4, RR2-C13) are re-verified again before E2 code [re-verification]. Q12 (which engine) and Q10 (export-root ACL
+(RR2-C2, RR2-C3, RR2-C4, RR2-C13) are re-verified again before E2 code [re-verification].
+**RR-2b** did that and found each still short. It also ran lenses 6 and 7 on
+fault-isolation RR-6's edits. Its re-verification fixes and its conditions RR2b-C1..RR2b-C10
+are folded here, and they are re-verified before E2 code. RR2b-C2 is E5's and is owed
+before E5 code [RR-2b]. Q12 (which engine) and Q10 (export-root ACL
 posture) are ruled [ruling Q12, Q10 = J3]. **No E4 code starts** until RR-3 has re-run lenses
 3, 6 and 7 on the W1 text [ruling W1]; RR-3 is folded into the same addendum [RR-2].
 
 | Slice | Contents | Depends on | Rows | Gate owed after build |
 |---|---|---|---|---|
 | **E0** (prerequisite; XC23) | **= `docs/design-local-confidentiality.md` slices C1** (Host allow-list on every method and route, `localweb.Mux` route registry; its MA-371/374/375) **and C2** (per-launch per-user session under `/s/<P>/`, relative UI URLs, instance file and handoff; its MA-372/373/376/378), both merged before E3. Not built here: revision 1's "otherwise built here as the first slice" is withdrawn | — | local-confidentiality's rows | local-confidentiality's own gates (adversarial pass; C2 friction review) |
-| **E1** | Graph additions (§4.5): `FolderTree`, `FolderCount`, `MessagePage` (widened `$select`, id-aware extended properties, "honored" flag; XC27), the use of SG's `MIMETo` and nextLink guard, the host/path pin on the workspace paths (XC25), `CheckRedirect` + `io.LimitReader` (XC26), **the F15 fix** (`Client.Timeout`; XC26), identity-safe `putIfNewer`/`reload` (XC7) | **`docs/design-fault-isolation.md` slice SG** [ruling J4] (`StatusError{Code, GraphCode, Text}` with today's `Error()` text, `graph.Classify`, `MIMETo`, the nextLink guard; XC25), not S3 | MA-400, MA-401, MA-403, MA-515, MA-527, MA-528 (MA-402 is built in SG [ruling J4]) | short adversarial note, always: redirect refusal and token write-back touch capture (L2-3) [ruling J4] |
+| **E1** | Graph additions (§4.5): `FolderTree`, `FolderCount`, `MessagePage` (widened `$select`, id-aware extended properties, "honored" flag; XC27), the use of SG's `MIMETo` and nextLink guard, the host/path pin on the workspace paths (XC25), `CheckRedirect` + `io.LimitReader` (XC26), **the F15 fix** (`Client.Timeout`; XC26), identity-safe `putIfNewer`/`reload` (XC7); **from RR-2b [RR-2b]:** the refusal as `*graph.RedirectError` with the 10-hop limit (RR2b-C4); `Client.Timeout` kept off SG's `$value` client, which `oauth2.NewClient`'s copy would bring (RR2b-C3); `Client.Probe`, the one-shot control GET (RR2b-C7) | **`docs/design-fault-isolation.md` slice SG** [ruling J4] (`StatusError{Code, GraphCode, Text}` with today's `Error()` text, `graph.Classify`, `MIMETo`, the nextLink guard; XC25), not S3 | MA-400, MA-401, MA-403, MA-515, MA-527, MA-528 (MA-402 is built in SG [ruling J4]) | short adversarial note, always: redirect refusal and token write-back touch capture (L2-3) [ruling J4]. It also answers owner rulings §13.4's fourth question: does `CheckRedirect` cover SG's `$value` client, and does `Client.Timeout` stay off it? [RR-2b RR2b-C3] |
 | ~~E1c~~ | **Moved [ruling J4]:** capture's nextLink pin is fault-isolation's step FI-SGc, still gated on MA-443's nextLink-shape sub-case (XC25); lifting that gate is ESC-7 | — | MA-505 (built in FI-SGc) | FI-SGc's short adversarial note |
-| **E2** | Engine (`internal/app/copyexport*.go`): plan, **run record** (§4.19, XC1), `os.Root` writer with no-replace placement (XC13), naming with ≤1,000 files per directory (XC12) and the export-only stricter naming pass for F75/F91/F111 [ruling Q15], marker, README, manifest and sums built from the run record, outcomes, failure classes with backoff and time breaker (XC9), per-OS destination classes and write breaker (XC10), cancel, M365 adapter (originals only), `util.FreeBytes`/`FoldKey`; R29 and S52 land with SG's catalog-first PR (MA-402 cites them, [ruling J4]); the archive writer's F75/F91/F111 gap gets a skip encoder citing R4 [ruling Q15]; **from RR-2 [RR-2]:** the seal-and-finish step with the outcome in the sealed line (RR2-C1, RR2-C2), the identity tuple and README's run-id line (RR2-C4), the per-message free-space budget and the plan-sized reserve (RR2-C5), the hand-over posture over the inherited descriptor and its realized check before W5 (RR2-C6), the state-directory write class (RR2-C7), the awake-time breaker and the Windows power request (RR2-C8), handle-relative no-replace placement (RR2-C10) | E1; **XC40 addendum filed (RR-2), its conditions folded**; Q10 and Q12 are ruled | MA-416..419, MA-421, MA-422, MA-508, MA-426, MA-427..429, MA-432, MA-439, MA-440, MA-441, MA-447, MA-516, MA-517, MA-519, MA-532 | adversarial pass on the write side (combined with E3's) |
-| **E3** — first shippable | Desktop: `workspace`, `exports`, endpoints through `localweb.Mux` with relative URLs (XC23), Graph session on the process-lifetime context with `Drain` (XC6), selection with row handles (XC17) and count, preview, start/cancel, progress/history split with the background reconciler (XC4), journal (XC3), the Microsoft 365 card and the sign-in slot (XC8), picker (disabled during a run, XC31), Create folder, settings (serialized, XC34), **retry, Finish as partial, Check this export and retry chains (revision 1's E7 folded in; XC2, XC14, XC15, XC28)**, the deployment switch [ruling Q6], and the Export sidebar group, which does not declare desktop P7 superseded [ruling ESC-5]. Source: Microsoft 365. Output: original EML + manifest. Readable HTML **hidden, `exportHTML` OFF** (XC28). X13 (scoped, Partial; XC24), X14 (scoped to the dashboard, [ruling J7]) and X15 land under their allocated ids; **from RR-2 [RR-2]:** reconciliation whose absence and timeout outcomes are not terminal, with Look again, This folder is gone and Locate… (RR2-C3), status-driven labels and Check and finish (RR2-C1), Finish as partial for every unsealed run and Export the remaining messages for interrupted runs (RR2-C7), the launch sweep of run records (RR2-C12), R-f by identity over the archive's directory set, and R-f2 where identity cannot decide, for the configured archive and Create folder (RR2-C13) | E2, **E0 merged** | MA-506, MA-404, MA-405, MA-407..410, MA-411, MA-412..415, MA-430, MA-431, MA-511, MA-433, MA-434, MA-437, MA-438, MA-444..446, MA-448, MA-449, MA-514, MA-518, MA-520..522, MA-524, MA-526, MA-529, MA-530 | **adversarial pass** (`docs/review-extraction-workspace-adversarial.md`: new loopback read surface returning mailbox content, a filesystem write primitive, a native dialog newly linked into the desktop binary, the run record) and **friction review** (`docs/review-extraction-workspace-friction.md`, every §7.2 cell, retry and Finish as partial included) |
+| **E2** | Engine (`internal/app/copyexport*.go`): plan, **run record** (§4.19, XC1), `os.Root` writer with no-replace placement (XC13), naming with ≤1,000 files per directory (XC12) and the export-only stricter naming pass for F75/F91/F111 [ruling Q15], marker, README, manifest and sums built from the run record, outcomes, failure classes with backoff and time breaker (XC9), per-OS destination classes and write breaker (XC10), cancel, M365 adapter (originals only), `util.FreeBytes`/`FoldKey`; R29 and S52 land with SG's catalog-first PR (MA-402 cites them, [ruling J4]); the archive writer's F75/F91/F111 gap gets a skip encoder citing R4 [ruling Q15]; **from RR-2 [RR-2]:** the seal-and-finish step with the outcome in the sealed line (RR2-C1, RR2-C2), the identity tuple and README's run-id line (RR2-C4), the per-message free-space budget and the plan-sized reserve (RR2-C5), the hand-over posture over the inherited descriptor and its realized check before W5 (RR2-C6), the state-directory write class (RR2-C7), the awake-time breaker and the Windows power request (RR2-C8), handle-relative no-replace placement (RR2-C10); **from RR-2b [RR-2b]:** the per-message download bound (RR2b-C1); the cut attempt's temp removal and the budget before each retry (RR2b-C5); the in-flight message recorded retryable and exported last (RR2b-C6); the control request before R-u, R-v2, and the breaker's own child context (RR2b-C7); the above-cap class, and the cap decided before the budget (RR2b-C8); the named suspend clock (RR2b-C9); the stop's reason in the sealed line (RR2b-C10); the refused-redirect class (RR2b-C4); [re-verification] the set state in the sealed line under the ledger's mutex, the chain id and the chain's ledger completion, the ledger-append class, and the `refused` ledger line | E1; **XC40 addendum filed (RR-2), its conditions folded**; **RR-2b filed, its fixes and conditions folded; their re-verification passes before code** [RR-2b]; Q10 and Q12 are ruled | MA-416..419, MA-421, MA-422, MA-508, MA-426, MA-427..429, MA-432, MA-439, MA-440, MA-441, MA-447, MA-516, MA-517, MA-519, MA-532 | adversarial pass on the write side (combined with E3's) |
+| **E3** — first shippable | Desktop: `workspace`, `exports`, endpoints through `localweb.Mux` with relative URLs (XC23), Graph session on the process-lifetime context with `Drain` (XC6), selection with row handles (XC17) and count, preview, start/cancel, progress/history split with the background reconciler (XC4), journal (XC3), the Microsoft 365 card and the sign-in slot (XC8), picker (disabled during a run, XC31), Create folder, settings (serialized, XC34), **retry, Finish as partial, Check this export and retry chains (revision 1's E7 folded in; XC2, XC14, XC15, XC28)**, the deployment switch [ruling Q6], and the Export sidebar group, which does not declare desktop P7 superseded [ruling ESC-5]. Source: Microsoft 365. Output: original EML + manifest. Readable HTML **hidden, `exportHTML` OFF** (XC28). X13 (scoped, Partial; XC24), X14 (scoped to the dashboard, [ruling J7]) and X15 land under their allocated ids; **from RR-2 [RR-2]:** reconciliation whose absence and timeout outcomes are not terminal, with Look again, This folder is gone and Locate… (RR2-C3), status-driven labels and Check and finish (RR2-C1), Finish as partial for every unsealed run and Export the remaining messages for interrupted runs (RR2-C7), the launch sweep of run records (RR2-C12), R-f by identity over the archive's directory set, and R-f2 where identity cannot decide, for the configured archive and Create folder (RR2-C13); **from RR-2b [RR-2b]:** [re-verification] a positive mismatch probed again; settled and unresolved runs and a complete chain as §4.19 defines them; the `gone` ledger line; `rest` for a gone sealed part; R-r's Locate… remedy; the R-f2 classifier's named inputs; Create folder's mkdir through the checked handle; R-f2's archive-side wording; and RR2b-C6's offers ("Export failed messages again" on a cancelled run, and the remaining messages of a stopped run) and RR2b-C10's labels after a restart | E2, **E0 merged** | MA-506, MA-404, MA-405, MA-407..410, MA-411, MA-412..415, MA-430, MA-431, MA-511, MA-433, MA-434, MA-437, MA-438, MA-444..446, MA-448, MA-449, MA-514, MA-518, MA-520..522, MA-524, MA-526, MA-529, MA-530 | **adversarial pass** (`docs/review-extraction-workspace-adversarial.md`: new loopback read surface returning mailbox content, a filesystem write primitive, a native dialog newly linked into the desktop binary, the run record) and **friction review** (`docs/review-extraction-workspace-friction.md`, every §7.2 cell, retry and Finish as partial included) |
 | **E4** | Archive source: adapter (§4.6) with the redaction belt, nlink check, `UnknownSentinel` filter and archive-gone class (XC19, XC10); `index.ListFolder` read-only with the version check and Rebuild lock (XC19, XC20); tree from the share-delete snapshot (XC20) with per-store mailboxes (XC21); content disclosure; the Settings-save guard (XC22); **the second archive source, another archive folder, read-only (§4.3, R-o3) [ruling W1]**; **from RR-2 [RR-2]:** the archived-page gate, `export.LiveRefreshIn` and the quarantine path, moved from E5 (RR2-C9), the W1 manifest cap and the defensive `search.db` open (RR2-C11), R-f by identity and R-f2 for the W1 folder (RR2-C13), no settings save for a W1 export (RR2-C14) | E2, E3; Q3 is ruled yes (owner-direct) [ruling Q3]; **RR-3 before code: filed with RR-2** [RR-2] | MA-507, MA-420, MA-510, MA-435, MA-436, MA-512, MA-523, MA-531 | adversarial addendum (archive read gates, the read-only open of another archive folder, the archived-page gate, concurrency, Windows share mode) + friction re-run (the inheritor walk §7.4) |
-| **E5** | Readable HTML (`RenderContext.AttachDirName` with the guarded sentence, read-back hash check); `exportHTML` default flips to ON. `export.LiveRefreshIn` and the quarantine path moved to E4 [RR-2 RR2-C9] | E2 (E4 for the archived-page gate) [RR-2 RR2-C9] | MA-423, MA-509, MA-513, MA-525 | none new (renderer reused; R19 rows); noted in the E4 addendum |
+| **E5** | Readable HTML (`RenderContext.AttachDirName` with the guarded sentence, read-back hash check); `exportHTML` default flips to ON. `export.LiveRefreshIn` and the quarantine path moved to E4 [RR-2 RR2-C9]. **From RR-2b [RR-2b RR2b-C2]:** the render bound (32 MiB of predicted rendered HTML; above it, `exported-original-only`, "too large for a readable copy"), folded now and owed before E5 code | E2 (E4 for the archived-page gate) [RR-2 RR2-C9]; RR2b-C2's re-verification passes before code [RR-2b] | MA-423, MA-509, MA-513, MA-525 | none new (renderer reused; R19 rows); noted in the E4 addendum |
 | **E6** | Extract attachments, including archive zip extraction with bounds | E2, E5, **mime-fidelity S2, which carries the C1-1 fix** [ruling Q9] | MA-424, MA-425 | adversarial addendum (untrusted names → loose files; zip bounds) |
 
 E1 → E2 → E3 is the smallest independently reviewable shippable unit (M365 → original
