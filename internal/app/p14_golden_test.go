@@ -142,6 +142,10 @@ func p14Collect(t *testing.T, out string) p14Fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A healthy input leaves no gap behind: the ledger is empty (MA-329).
+	if n := m.GapCount(); n != 0 {
+		t.Errorf("a healthy input left %d capture gap(s) in the ledger: %+v", n, m.CaptureGapsSorted())
+	}
 	f := p14Fixture{Entries: map[string]state.Record{}, Files: map[string]string{}}
 	for k, r := range m.All() {
 		r.ExportedAt, r.FirstSeen, r.LastSeen = time.Time{}, time.Time{}, time.Time{}
