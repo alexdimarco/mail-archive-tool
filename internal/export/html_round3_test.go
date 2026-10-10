@@ -265,6 +265,70 @@ func TestFlattenerRefusesWhatItCouldNotDropWithoutChangingTheMail(t *testing.T) 
 	}
 }
 
+// covers: MA-472, R1, R7, R19
+// R3-AC6. The serialization cap scaled with the input without bound: 16x a
+// 10 MB mail is 160 MB, so a small inflating mail (400 unclosed `<b id=i>` and
+// thousands of paragraphs, which falls back as too-large in 1.3 s on its own)
+// plus a 10 MB harmless comment was rendered, serialized to a 126 MB page and
+// re-parsed in both readings: 18.6 s and 3.2 GB while the archive lock was
+// held, linear in the padding. The cap is now 16x the input AND at most a fixed
+// headroom (32 MiB) beyond it: ordinary mail never grows by more than a few
+// times (MA-472's ~5x worst case is 8 MB of input against the headroom), a big
+// inline image (output about its size) is far inside it, and padding cannot lift
+// the guard.
+func TestSerializedCapDoesNotScaleWithPadding(t *testing.T) {
+	const mib = 1 << 20
+	for _, c := range []struct{ n, want int }{
+		{0, mib},                // the floor
+		{1000, mib},             // small mail: the floor
+		{100 << 10, 1600 << 10}, // 16x
+		{1 * mib, 16 * mib},     // 16x
+		{2 * mib, 32 * mib},     // 16x still binds (the headroom would allow 34)
+		{3 * mib, 35 * mib},     // the headroom takes over past about 2.1 MiB
+		{10 * mib, 42 * mib},    // the padded RV-8 mail: not 160 MiB
+		{64 * mib, 96 * mib},    // a very large mail grows by the headroom only
+	} {
+		if got := serializedCap(c.n); got != c.want {
+			t.Errorf("serializedCap(%d) = %d, want %d", c.n, got, c.want)
+		}
+	}
+}
+
+// covers: MA-472, R1, R7
+// R3-AC6, end to end with the headroom lowered (the real one is 32 MiB, too big
+// to inflate past in a unit test): a harmless 2 MiB comment pads the RV-8 body,
+// which alone is far over the 1 MiB floor and falls back, and whose 16x cap
+// with the padding (32 MiB) would let its ~12 MiB serialization through. The
+// headroom is what refuses it, as too-large and never re-parsed. The positive
+// twin: the same padding with ordinary markup renders as HTML.
+func TestPaddingCannotLiftTheSerializationCap(t *testing.T) {
+	old := serializedHeadroom
+	serializedHeadroom = 4 << 20
+	t.Cleanup(func() { serializedHeadroom = old })
+
+	pad := "<!--" + strings.Repeat("x", 2<<20) + "-->"
+	doc := pad + inflatingPart(2000)
+	if got, was := serializedCap(len(doc)), 16*len(doc); got >= was {
+		t.Fatalf("precondition: the headroom must bind, cap %d vs 16x %d", got, was)
+	}
+	parses := countReparses(t)
+	out, err := RenderWith(&model.Message{Subject: "padded explode", HTMLBody: doc}, RenderContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.BodyFallback != FallbackTooLarge || parses.on+parses.off != 0 {
+		t.Errorf("a padded inflating mail must fall back as %q, never re-parsed: got %q (on=%d off=%d)", FallbackTooLarge, out.BodyFallback, parses.on, parses.off)
+	}
+
+	twin, err := RenderWith(&model.Message{Subject: "padded ordinary", HTMLBody: pad + `<p>ordinary words</p>`}, RenderContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if twin.BodyFallback != "" {
+		t.Errorf("positive twin: padding with ordinary markup must render, got %q", twin.BodyFallback)
+	}
+}
+
 // covers: MA-303, R1, R7
 // R3-AF3, R3-AO3, R3-AC4. A mail whose HTML document is a <frameset> has no
 // <body> in the tree (the parser replaces it with the frameset), and the

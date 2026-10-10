@@ -567,7 +567,19 @@ func sanitizeParsed(doc string, inputLen int, neutralizeNoscript bool) (headExtr
 // keeps small mail, which implied tags can double, far from the cap. Every
 // check after it re-parses at most 16x the input, so its cost stays linear in
 // the mail's size.
-func serializedCap(n int) int { return max(16*n, 1<<20) }
+//
+// 16x alone scaled with the padding, though (R3-AC6): a small inflating mail plus
+// a 10 MB harmless comment was allowed 160 MB, serialized to a 126 MB page and
+// re-parsed in both readings (18.6 s, 3.2 GB, the archive lock held). The cap is
+// therefore also at most serializedHeadroom beyond the input: ordinary output is
+// within a few times its input, so only mail past some MB of input feels it, and
+// the cost the re-checks can be made to spend is bounded by the headroom.
+func serializedCap(n int) int { return max(min(16*n, n+serializedHeadroom), 1<<20) }
+
+// serializedHeadroom is how far past its input the sanitized serialization may
+// grow (see serializedCap). A variable only so a test can lower it (the real one
+// is too big to inflate past in a unit test); production never changes it.
+var serializedHeadroom = 32 << 20
 
 // errTooLarge stops the serializer once its output passes the size cap.
 var errTooLarge = errors.New("serialized mail HTML exceeds the size cap")
