@@ -182,7 +182,7 @@ func runHeadless(path string) int {
 		// on the next line for whoever helps (F3).
 		var ie *app.IndexOpenError
 		if errors.As(runErr, &ie) {
-			logger.Printf("FAILED: %s", ie.ForOwner(rebuildChoice))
+			logger.Printf("FAILED: %s", ie.ForOwner(`"`+rebuildChoice+`" in the window that opens with this program`))
 			logger.Printf("detail: %v", runErr)
 		} else {
 			logger.Printf("FAILED: %v", runErr)
