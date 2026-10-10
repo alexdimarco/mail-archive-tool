@@ -98,7 +98,31 @@ func writeDescriptorFile(out, name string, d Descriptor) error {
 		os.Remove(tmp.Name())
 		return err
 	}
-	return os.Rename(tmp.Name(), path)
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		os.Remove(tmp.Name()) // a failed write leaves nothing in the archive (G8-AC3)
+		return err
+	}
+	return nil
+}
+
+// descriptorFileFor is the descriptor file an install of s writes: the verify's
+// own for a verify job, the backup's for any other.
+func descriptorFileFor(s Spec) string {
+	if isVerifyJob(s) {
+		return VerifyDescriptorName
+	}
+	return DescriptorName
+}
+
+// descriptorPathUsable refuses a path a descriptor write could never replace: a
+// directory (whoever handed the folder over can plant one — the rename over it
+// fails on every retry). A missing path, a file or a symlink (replaced, never
+// followed) is fine.
+func descriptorPathUsable(path string) error {
+	if fi, err := os.Lstat(path); err == nil && fi.IsDir() {
+		return fmt.Errorf("%s is a directory, so the archive's schedule cannot be recorded there — nothing was installed; move or delete it and install again", path)
+	}
+	return nil
 }
 
 // ReadDescriptor reads the archive's descriptor. A missing file is reported

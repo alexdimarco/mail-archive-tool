@@ -553,6 +553,15 @@ func installOn(s Spec, goos string) error {
 	if err := refuseCollision(s, goos); err != nil {
 		return err
 	}
+	// A descriptor path the write could never take (a directory planted by whoever
+	// handed the folder over) is refused before the scheduler has the entry, so the
+	// install does not leave an entry nothing records (and nothing, on a retry, a
+	// second temp file).
+	if s.Out != "" {
+		if err := descriptorPathUsable(filepath.Join(s.Out, descriptorFileFor(s))); err != nil {
+			return err
+		}
+	}
 	var err error
 	switch goos {
 	case "darwin":
@@ -577,10 +586,10 @@ func installOn(s Spec, goos string) error {
 	if s.Out != "" {
 		if isVerifyJob(s) {
 			if derr := WriteVerifyDescriptor(s.Out, DescribeSpec(s)); derr != nil {
-				return fmt.Errorf("verify schedule installed, but its descriptor could not be written: %w", derr)
+				return fmt.Errorf("verify schedule %q is installed, but its descriptor could not be written: %w — `mailarchive schedule -name %s -remove -- verify -out %q` takes the entry out; fix the folder and re-run the install to record it", s.Name, derr, s.Name, s.Out)
 			}
 		} else if derr := WriteDescriptor(s.Out, DescribeSpec(s)); derr != nil {
-			return fmt.Errorf("schedule installed, but its descriptor could not be written: %w", derr)
+			return fmt.Errorf("schedule %q is installed, but its descriptor could not be written: %w — `mailarchive schedule -name %s -remove` takes the entry out; fix the folder and re-run the install to record it", s.Name, derr, s.Name)
 		}
 	}
 	return nil
@@ -605,24 +614,71 @@ func refuseCollision(s Spec, goos string) error {
 		if isVerifyJob(s) {
 			// An older release's descriptor may record a verify itself; that is this
 			// verify's own record, not the backup's name.
-			if d, err := ReadDescriptor(s.Out); err == nil && !descriptorIsVerify(d) && d.Name == s.Name {
+			if d, err := ReadDescriptor(s.Out); err == nil && !descriptorIsVerify(d) && sameName(d.Name, s.Name, goos) {
 				return fmt.Errorf("%q is the backup schedule of archive %s: a verify under the same -name would replace it — %s", s.Name, s.Out, otherNameRemedy("verify", s.Name, DefaultNameFor(s.Out)+"-verify"))
 			}
 		} else {
-			if d, err := ReadDescriptor(s.Out); err == nil && d.Name != s.Name {
+			if d, err := ReadDescriptor(s.Out); err == nil && descriptorIsVerify(d) {
+				// An older release recorded the archive's verify here. It is not a backup
+				// to re-install under (G8-AI3): the entry is the verify's, and a backup
+				// installed under its name would replace it, so that name is never
+				// advised and a backup under it is refused as the clash it is.
+				if sameName(d.Name, s.Name, goos) {
+					return fmt.Errorf("%q is the verify schedule of archive %s (an older release recorded it in the backup's descriptor): a backup under the same -name would replace it — %s, or remove it first (`mailarchive schedule -name %s -remove -- verify -out %q`)", s.Name, s.Out, otherNameRemedy("backup", s.Name, DefaultNameFor(s.Out)), d.Name, s.Out)
+				}
+				return fmt.Errorf("archive %s already has a schedule named %q, a verify an older release recorded in the backup's descriptor: remove it first (`mailarchive schedule -out %q -remove`), then install the backup", s.Out, d.Name, s.Out)
+			} else if err == nil && !sameName(d.Name, s.Name, goos) {
 				return fmt.Errorf("archive %s already has a schedule named %q: remove it first (`mailarchive schedule -out %q -remove`) or re-install with -name %s", s.Out, d.Name, s.Out, d.Name)
 			}
-			if d, err := ReadVerifyDescriptor(s.Out); err == nil && d.Name == s.Name {
+			if d, err := ReadVerifyDescriptor(s.Out); err == nil && sameName(d.Name, s.Name, goos) {
 				return fmt.Errorf("%q is the verify schedule of archive %s: a backup under the same -name would replace it — %s", s.Name, s.Out, otherNameRemedy("backup", s.Name, DefaultNameFor(s.Out)))
 			}
 		}
 	}
 	if goos == "linux" || goos == "freebsd" || goos == "openbsd" || goos == "netbsd" {
-		if other := cronBlockOut(readCrontab(), CronMarker(s.Name)); other != "" && s.Out != "" && other != s.Out {
+		tab := readCrontab()
+		if other := cronBlockOut(tab, CronMarker(s.Name)); other != "" && s.Out != "" && other != s.Out {
 			return fmt.Errorf("a schedule named %q already backs up %s: choose another -name, or remove that schedule first", s.Name, other)
+		}
+		// The block says what kind of entry holds the name, so the cross-kind guard
+		// holds when the archive's descriptors are gone or were never written (G8-AC6).
+		if kind := cronBlockKind(tab, CronMarker(s.Name)); kind != "" && s.Out != "" && cronBlockOut(tab, CronMarker(s.Name)) == s.Out {
+			if mine := jobKind(s); kind != mine {
+				alt := DefaultNameFor(s.Out)
+				if mine == "verify" {
+					alt += "-verify"
+				}
+				return fmt.Errorf("%q is the %s schedule of archive %s (its crontab block): a %s under the same -name would replace it — %s", s.Name, kind, s.Out, mine, otherNameRemedy(mine, s.Name, alt))
+			}
 		}
 	}
 	return nil
+}
+
+// jobKind is "verify" for a verify job and "backup" for any other.
+func jobKind(s Spec) string {
+	if isVerifyJob(s) {
+		return "verify"
+	}
+	return "backup"
+}
+
+// cronBlockKind returns "verify" or "backup" for the managed block with marker
+// (what its command line runs), or "" when absent or unparseable.
+func cronBlockKind(crontab, marker string) string {
+	lines := strings.Split(crontab, "\n")
+	for i, line := range lines {
+		if strings.TrimSpace(line) == marker && i+1 < len(lines) {
+			argv := cronLineArgv(lines[i+1])
+			switch {
+			case len(argv) > 1 && argv[1] == "verify":
+				return "verify"
+			case len(argv) > 0:
+				return "backup"
+			}
+		}
+	}
+	return ""
 }
 
 // otherNameRemedy is the way out of a name the archive's other entry already
@@ -689,7 +745,7 @@ func removeOn(s Spec, goos string) error {
 	}
 	// Both decisions are taken before either file goes: whether the verify
 	// descriptor is trusted can depend on the backup's (ReadVerifyDescriptor).
-	backupGoes, verifyGoes := descriptorGoesWith(s.Out, s.Name), VerifyRecorded(s.Out, s.Name)
+	backupGoes, verifyGoes := descriptorGoesWith(s.Out, s.Name, goos), verifyRecordedOn(s.Out, s.Name, goos)
 	if backupGoes {
 		if err := RemoveDescriptor(s.Out); err != nil {
 			return err
@@ -710,14 +766,14 @@ func removeOn(s Spec, goos string) error {
 // is gone. With any other name an unreadable descriptor stays: nothing in it
 // says it was that entry's (a backup under a custom -name writes it too), so the
 // caller names it with UnreadableDescriptorRemedy instead (MA-455).
-func descriptorGoesWith(out, name string) bool {
+func descriptorGoesWith(out, name, goos string) bool {
 	if out == "" {
 		return false
 	}
 	d, err := ReadDescriptor(out)
 	switch {
 	case err == nil:
-		return d.Name == name
+		return sameName(d.Name, name, goos)
 	case errors.Is(err, fs.ErrNotExist):
 		return false
 	default:
@@ -782,18 +838,32 @@ func descriptorRecords(out, name string) bool {
 		return false
 	}
 	d, err := ReadDescriptor(out)
-	return err == nil && d.Name == name
+	return err == nil && sameName(d.Name, name, runtime.GOOS)
+}
+
+// sameName reports whether two schedule names are the same entry on the
+// scheduler goos selects: Task Scheduler task names, the Windows wrapper and XML
+// file names and the launchd plist file are case-insensitive on Windows and on
+// default macOS volumes, so two names that differ only in case are one entry
+// there (G8-AO3); cron marker lines are compared exactly.
+func sameName(a, b, goos string) bool {
+	if goos == "darwin" || goos == "windows" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
 }
 
 // VerifyRecorded reports whether the archive at out has a readable verify
 // descriptor that records the schedule called name: that entry is the
 // archive's scheduled verify, whatever -name it was installed under.
-func VerifyRecorded(out, name string) bool {
+func VerifyRecorded(out, name string) bool { return verifyRecordedOn(out, name, runtime.GOOS) }
+
+func verifyRecordedOn(out, name, goos string) bool {
 	if out == "" {
 		return false
 	}
 	d, err := ReadVerifyDescriptor(out)
-	return err == nil && d.Name == name
+	return err == nil && sameName(d.Name, name, goos)
 }
 
 // SupersededVerify returns the name of the archive's earlier scheduled verify
@@ -873,11 +943,19 @@ func installCron(s Spec) error {
 	if err != nil {
 		return err
 	}
-	return writeCrontab(UpsertCronBlock(readCrontab(), CronMarker(s.Name), block))
+	tab, err := readCrontabForEdit()
+	if err != nil {
+		return err
+	}
+	return writeCrontab(UpsertCronBlock(tab, CronMarker(s.Name), block))
 }
 
 func removeCron(s Spec) error {
-	return writeCrontab(RemoveCronBlock(readCrontab(), CronMarker(s.Name)))
+	tab, err := readCrontabForEdit()
+	if err != nil {
+		return err
+	}
+	return writeCrontab(RemoveCronBlock(tab, CronMarker(s.Name)))
 }
 
 // crontabList and crontabInstall are the two crontab side effects, indirected
@@ -908,12 +986,30 @@ var schtasksRun = func(args ...string) ([]byte, error) {
 	return exec.Command("schtasks", args...).CombinedOutput()
 }
 
+// readCrontab is the crontab for a read-only look (the name guard): an
+// unreadable one reads as empty there, and the edit that follows is refused by
+// readCrontabForEdit.
 func readCrontab() string {
-	out, err := crontabList()
-	if err != nil {
-		return "" // no crontab yet (or none for this user)
-	}
+	out, _ := readCrontabForEdit()
 	return out
+}
+
+// readCrontabForEdit returns the user's crontab for an edit that writes the whole
+// table back. "No crontab yet" is an empty one; any other `crontab -l` failure
+// (a permission or spool error) is an error, never an empty table — writing back
+// only our block would destroy the user's other jobs (G8-AC5).
+func readCrontabForEdit() (string, error) {
+	out, err := crontabList()
+	if err == nil {
+		return out, nil
+	}
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		if t := strings.ToLower(out); strings.Contains(t, "no crontab") || strings.TrimSpace(t) == "" {
+			return "", nil // no crontab yet (or none for this user)
+		}
+	}
+	return "", fmt.Errorf("crontab -l failed, so the crontab was left alone rather than overwritten: %w: %s", err, strings.TrimSpace(out))
 }
 
 func writeCrontab(content string) error { return crontabInstall(content) }
@@ -1036,16 +1132,31 @@ func installSchtasks(s Spec) error {
 // or cron block does: when /Delete fails and /Query no longer finds the task,
 // the removal goes on to the task's files and the descriptor that records it,
 // so a recorded-but-gone entry's stale record is cleared on Windows too. A task
-// Task Scheduler still has (or cannot be asked about) keeps the /Delete error.
+// Task Scheduler still has — or that it cannot be asked about, or refuses to
+// answer about (access denied, a stopped Task Scheduler service: schtasks exits
+// 1 for those as for a missing task) — keeps the /Delete error (G8-AC1): only
+// /Query saying the task is not there clears it.
 func removeSchtasks(s Spec) error {
 	out, err := schtasksRun("/Delete", "/TN", s.Name, "/F")
 	if err == nil {
 		return nil
 	}
-	if _, qerr := schtasksRun(SchtasksQueryArgv(s.Name)...); schtasksState(qerr) == NotInstalled {
+	if qout, qerr := schtasksRun(SchtasksQueryArgv(s.Name)...); schtasksState(qerr) == NotInstalled && schtasksSaysMissing(qout) {
 		return nil
 	}
-	return fmt.Errorf("schtasks /Delete: %w: %s", err, strings.TrimSpace(string(out)))
+	return fmt.Errorf("schtasks /Delete: %w: %s — the task may still be registered; delete it by hand with `schtasks /Delete /TN %s /F` or in Task Scheduler", err, strings.TrimSpace(string(out)), s.Name)
+}
+
+// schtasksSaysMissing reports whether a failed `schtasks /Query /TN name` said
+// the task does not exist ("ERROR: The system cannot find the file specified." /
+// "...the specified task name ... does not exist in the system"), as opposed to
+// failing for another reason with the same exit status. The wording is the
+// system's own; on a localised Windows nothing matches, and the removal keeps the
+// /Delete error and names the by-hand delete rather than claim a removal it
+// could not confirm.
+func schtasksSaysMissing(out []byte) bool {
+	t := strings.ToLower(string(out))
+	return strings.Contains(t, "cannot find") || strings.Contains(t, "does not exist")
 }
 
 // removeSchtasksSideFiles deletes the wrapper and the XML definition Install
