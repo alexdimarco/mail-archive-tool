@@ -190,4 +190,50 @@ func TestTokenWriteBackIsIdentitySafe(t *testing.T) {
 			}
 		})
 	}
+
+	// AI1 tombstone: a sign-in as another account that lands between putIfNewer's
+	// load and its write is not overwritten by the old account's rotation.
+	t.Run("a sign-in inside the load-to-write window is not lost", func(t *testing.T) {
+		hs := &windowStore{memTokenStore: &memTokenStore{}}
+		be := tokenBackend{store: hs}
+		if err := be.put("alice@contoso.org", older); err != nil {
+			t.Fatal(err)
+		}
+		done := make(chan struct{})
+		hs.onLoad = func() {
+			go func() {
+				_ = be.put("bob@contoso.org", &oauth2.Token{RefreshToken: "RT_B", Expiry: time.Now().Add(time.Hour)})
+				close(done)
+			}()
+			select {
+			case <-done:
+			case <-time.After(200 * time.Millisecond):
+			}
+		}
+		fresh := &oauth2.Token{RefreshToken: "RT_A2", Expiry: time.Now().Add(time.Hour)}
+		if err := be.putIfNewer("alice@contoso.org", fresh); err != nil {
+			t.Fatal(err)
+		}
+		<-done
+		tc, err := be.load()
+		if err != nil || tc.UPN != "bob@contoso.org" || tc.Token.RefreshToken != "RT_B" {
+			t.Errorf("the old account's write-back overwrote a newer sign-in: %+v, %v", tc, err)
+		}
+	})
+}
+
+// windowStore runs onLoad once, inside the first LoadToken, to place an event in
+// the window between a caller's load and its write.
+type windowStore struct {
+	*memTokenStore
+	onLoad func()
+}
+
+func (w *windowStore) LoadToken() ([]byte, error) {
+	d, err := w.memTokenStore.LoadToken()
+	if f := w.onLoad; f != nil {
+		w.onLoad = nil
+		f()
+	}
+	return d, err
 }

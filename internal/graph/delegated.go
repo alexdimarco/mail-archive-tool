@@ -272,6 +272,17 @@ func (b tokenBackend) load() (*tokenCache, error) {
 // token (refresh token + type + expiry, no access token). The 0600 file keeps the full
 // token byte-for-byte, exactly as the shipped device tests exercise it (DC2).
 func (b tokenBackend) put(upn string, tok *oauth2.Token) error {
+	tokenWriteMu.Lock()
+	defer tokenWriteMu.Unlock()
+	return b.putLocked(upn, tok)
+}
+
+// tokenWriteMu serialises this process's token-store writes and putIfNewer's
+// load-compare-write, so a sign-in made inside that window is not overwritten by
+// a live source's write-back (EW-E1 AI1). It does not order two processes.
+var tokenWriteMu sync.Mutex
+
+func (b tokenBackend) putLocked(upn string, tok *oauth2.Token) error {
 	stored := tok
 	if b.store != nil {
 		stored = slimToken(tok)
@@ -310,6 +321,8 @@ func slimToken(tok *oauth2.Token) *oauth2.Token {
 // left for its owner. The write-back is best-effort, so each of these is a quiet
 // no-op; NewDelegated's first-sign-in put is unchanged.
 func (b tokenBackend) putIfNewer(upn string, tok *oauth2.Token) error {
+	tokenWriteMu.Lock()
+	defer tokenWriteMu.Unlock()
 	existing, err := b.load()
 	if err != nil || !strings.EqualFold(existing.UPN, upn) {
 		return nil
@@ -317,10 +330,12 @@ func (b tokenBackend) putIfNewer(upn string, tok *oauth2.Token) error {
 	if existing.Token != nil && !tok.Expiry.IsZero() && !existing.Token.Expiry.IsZero() && !tok.Expiry.After(existing.Token.Expiry) {
 		return nil
 	}
-	return b.put(upn, tok)
+	return b.putLocked(upn, tok)
 }
 
 func (b tokenBackend) clear() error {
+	tokenWriteMu.Lock()
+	defer tokenWriteMu.Unlock()
 	if b.store != nil {
 		return b.store.ClearToken()
 	}
