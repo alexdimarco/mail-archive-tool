@@ -158,6 +158,20 @@ type Input struct {
 	// cannot write there cannot record its own failure, so status is where the
 	// custodian sees it (F2).
 	WriteProbeErr error
+
+	// The capture-gap ledger (fault-isolation §4.10): Gaps is the manifest's ledger
+	// in its stable order; GapLastRun maps each store token to its last run's start
+	// (a gap is ATTEMPTED when its LastRun equals it, FC14); GapSource maps a token
+	// to its store id (the mailbox address or input path, the reverse of the
+	// manifest's Stores). Unreadable counts partly-read records, UnreadableOnly the
+	// fillable records that are fillable only because they are partly read (status
+	// leaves them out of incomplete_content), Unparsed the unparsed stubs.
+	Gaps           []state.CaptureGap
+	GapLastRun     map[string]time.Time
+	GapSource      map[string]string
+	Unreadable     int
+	UnreadableOnly int
+	Unparsed       int
 }
 
 // Extractable is the extractability facet of an archive: WithEML of Total
@@ -178,6 +192,10 @@ type Report struct {
 	Posture string // GREEN | WARN | RED
 	Reasons []string
 	Codes   []string
+
+	// now is the time the report was assessed at, so the JSON judges the capture
+	// gaps' stuck threshold at the same instant the reasons did.
+	now time.Time
 }
 
 func (r *Report) warn(code, msg string) {
@@ -215,7 +233,7 @@ func IntervalOf(iv string) time.Duration {
 
 // Assess applies the posture rules, failing closed on missing evidence.
 func Assess(in Input, now time.Time) Report {
-	r := Report{Posture: "GREEN"}
+	r := Report{Posture: "GREEN", now: now}
 
 	// A manifest that exists on disk but cannot be loaded (a newer format, or a
 	// corrupt/truncated file) is a RED that names the file, the loader's own
@@ -226,14 +244,20 @@ func Assess(in Input, now time.Time) Report {
 		r.red("manifest_unreadable", fmt.Sprintf("the archive's manifest cannot be read: %s", util.StripControl(in.ManifestLoadErr.Error())))
 	}
 
-	// Completeness.
-	if in.Fillable > 0 {
-		msg := fmt.Sprintf("%d message(s) still missing content — download for offline use in your mail app, then re-run; incremental fills them", in.Fillable)
+	// Items and folders the source holds that the last runs could not capture (the
+	// capture-gap ledger): the stuck ones first of every WARN, never RED (FC18).
+	assessCaptureGaps(&r, in, now)
+
+	// Completeness. A partly-read record is fillable too, but it has its own
+	// reason and its own remedy below; it is left out of this count and text.
+	if n := in.Fillable - in.UnreadableOnly; n > 0 {
+		msg := fmt.Sprintf("%d message(s) still missing content — download for offline use in your mail app, then re-run; incremental fills them", n)
 		if in.ReportExists {
 			msg += fmt.Sprintf(" (see %s)", in.ReportPath)
 		}
 		r.warn("incomplete_content", msg)
 	}
+	assessPartlyRead(&r, in)
 	// Shown as source (RV-10): not wrong and nothing to fix, but an owner whose
 	// mail is shown as plain text should be able to learn it here. A note — it
 	// never moves the posture.
@@ -1049,6 +1073,20 @@ func Gather(out, nameOverride string) Input {
 			in.Fillable, in.Terminal, in.Unknown = m.Counts()
 			in.ShownAsSource = m.FallbackCounts()
 			in.WithFixity, _ = m.FixityCounts()
+			in.Unreadable, in.UnreadableOnly, in.Unparsed = m.UnreadableCount(), m.UnreadableOnlyCount(), m.UnparsedCount()
+			// The capture-gap ledger, with each store's source id and last run, so a
+			// gap can be told attempted from not attempted (FC14).
+			in.Gaps = m.CaptureGapsSorted()
+			in.GapSource = map[string]string{}
+			in.GapLastRun = map[string]time.Time{}
+			for _, g := range in.Gaps {
+				if _, ok := in.GapSource[g.Token]; !ok {
+					in.GapSource[g.Token] = m.GapSourceID(g.Token)
+					if in.LastRunState == state.LastRunPresent {
+						in.GapLastRun[g.Token] = in.LastRun.Started
+					}
+				}
+			}
 		} else {
 			// The file exists but does not load (newer format, corrupt). Keep the
 			// loader's error so Assess can RED it instead of saying "no archive".
@@ -1163,8 +1201,10 @@ func Summary(in Input, rep Report) []string {
 		if in.HasRange {
 			lines = append(lines, fmt.Sprintf("Archived range: %s – %s (UTC)", in.RangeOldest.Format("2006-01-02"), in.RangeNewest.Format("2006-01-02")))
 		}
-		if in.Fillable > 0 || in.Terminal > 0 || in.Unknown > 0 {
-			line := fmt.Sprintf("Incomplete: %d still missing content · %d source-empty (never fillable) · %d not yet re-examined", in.Fillable, in.Terminal, in.Unknown)
+		// A partly-read record is fillable too, but it has its own line and reason
+		// (below and in the posture): it is not "missing content" to download.
+		if content := in.Fillable - in.UnreadableOnly; content > 0 || in.Terminal > 0 || in.Unknown > 0 {
+			line := fmt.Sprintf("Incomplete: %d still missing content · %d source-empty (never fillable) · %d not yet re-examined", content, in.Terminal, in.Unknown)
 			if in.ReportExists {
 				line += " — " + in.ReportPath
 			}
@@ -1172,6 +1212,9 @@ func Summary(in Input, rep Report) []string {
 			lines = append(lines, "            (still missing content = not downloaded yet; fills on the next run)")
 		} else {
 			lines = append(lines, "Incomplete: none")
+		}
+		if in.Unreadable > 0 {
+			lines = append(lines, fmt.Sprintf("Partly read: %d message(s) could only be partly read from the source (see the posture below)", in.Unreadable))
 		}
 		// RV-10: a page shown as plain text is complete, but the owner should
 		// be able to learn it here, not only from the run log.
@@ -1295,6 +1338,15 @@ func Summary(in Input, rep Report) []string {
 		}
 		lines = append(lines, "  "+reason)
 	}
+	// What was not captured, at most 20 gaps with their source, folder, subject,
+	// date and remedy, then "+N more" (FC22).
+	if in.HasManifest {
+		now := rep.now
+		if now.IsZero() {
+			now = time.Now()
+		}
+		lines = append(lines, gapLines(in, now)...)
+	}
 	return lines
 }
 
@@ -1339,6 +1391,14 @@ type JSONReport struct {
 	// ShownAsSource (RV-10) counts messages whose page is shown as plain text,
 	// by reason; omitted when none. A backward-compatible addition at version 2.
 	ShownAsSource *JSONShownAsSource `json:"shown_as_source,omitempty"`
+
+	// CaptureGaps is the capture-gap ledger's tally and up to 20 of its items
+	// (fault-isolation §4.10), and Unreadable the records read only in part: two
+	// backward-compatible additions at version 2 (owner ruling OR1: the version
+	// stays 2 and only additive keys are added). CaptureGaps is null when there is
+	// no manifest.
+	CaptureGaps *JSONCaptureGaps `json:"capture_gaps"`
+	Unreadable  int              `json:"unreadable"`
 }
 
 // JSONShownAsSource is the shown-as-source facet: the total and a count per
@@ -1390,6 +1450,16 @@ type JSONLastRun struct {
 	// "running" status whose run is dead (RED run_never_finished) has
 	// in_progress false (F8). Additive; version stays.
 	InProgress bool `json:"in_progress"`
+	// The capture gaps this run observed (fault-isolation §4.10, FC23(2)):
+	// GapsNew is what a monitor keys on, so a known, unfixable gap does not drown
+	// a new loss. Additive; version stays 2.
+	GapsObserved  int `json:"gaps_observed"`
+	GapsNew       int `json:"gaps_new"`
+	GapsRecovered int `json:"gaps_recovered"`
+	GapsFillable  int `json:"gaps_fillable"`
+	GapsTerminal  int `json:"gaps_terminal"`
+	GapsStuck     int `json:"gaps_stuck"`
+	Unreadable    int `json:"unreadable"`
 }
 
 // JSONLastVerify is verify's integrity verdict, from its separate record; null
@@ -1494,7 +1564,9 @@ func JSON(in Input, rep Report) JSONReport {
 		// Extractability (design K4): the file-presence count `extract`/`verify`
 		// share, carried alongside fixity coverage. null when no manifest.
 		doc.Extractable = &JSONExtractable{Records: in.Extractable.Total, RecordsWithEML: in.Extractable.WithEML}
+		doc.CaptureGaps = jsonCaptureGaps(in, rep)
 	}
+	doc.Unreadable = in.Unreadable
 	if in.LastRunState == state.LastRunPresent {
 		lr := in.LastRun
 		jlr := &JSONLastRun{
@@ -1504,6 +1576,10 @@ func JSON(in Input, rep Report) JSONReport {
 			Exported:   lr.Exported,
 			Filled:     lr.Filled,
 			InProgress: lr.Status == state.RunRunning && runRunning(in),
+
+			GapsObserved: lr.GapsObserved, GapsNew: lr.GapsNew, GapsRecovered: lr.GapsRecovered,
+			GapsFillable: lr.GapsFillable, GapsTerminal: lr.GapsTerminal, GapsStuck: lr.GapsStuck,
+			Unreadable: lr.Unreadable,
 		}
 		// Finished stays null while a run is in progress (UJ-A5).
 		if lr.Status != state.RunRunning && !lr.Finished.IsZero() {
