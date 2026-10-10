@@ -131,6 +131,46 @@ func TestStatusStuckIsWarnListedFirstNeverRed(t *testing.T) {
 }
 
 // covers: MA-326, R18, S48
+// The stuck threshold reaches status with the installed schedule's period (owner
+// ruling OR5: Runs >= 3 and at least max(72 h, two schedule periods)): the same
+// gap, 5 days after its first sighting on its 4th run, is stuck under a daily
+// schedule and under no schedule at all (a day is assumed), but not under a
+// weekly one, which needs 14 days; the JSON judges it the same way.
+func TestStatusStuckThresholdFollowsTheSchedulePeriod(t *testing.T) {
+	g := fetchFailed("graph:SLOW")
+	g.Runs, g.FirstRun = 4, gapNow.Add(-5*24*time.Hour)
+	stuckCount := func(in Input) (bool, int) {
+		rep := Assess(in, gapNow)
+		return codeIndex(rep, "capture_gaps_stuck") >= 0, JSON(in, rep).CaptureGaps.Stuck
+	}
+	cases := []struct {
+		name      string
+		interval  string
+		scheduled bool
+		first     time.Time
+		want      bool
+	}{
+		{"daily schedule", "daily", true, g.FirstRun, true},
+		{"no schedule (a day is assumed)", "", false, g.FirstRun, true},
+		{"weekly schedule needs two weeks", "weekly", true, g.FirstRun, false},
+		{"weekly schedule, two weeks elapsed", "weekly", true, gapNow.Add(-15 * 24 * time.Hour), true},
+	}
+	for _, c := range cases {
+		x := g
+		x.FirstRun = c.first
+		in := gapInput(x)
+		in.HasDescriptor = c.scheduled
+		if c.scheduled {
+			in.Desc.Interval = c.interval
+		}
+		got, jsonStuck := stuckCount(in)
+		if got != c.want || (jsonStuck == 1) != c.want {
+			t.Errorf("%s: status stuck=%v, JSON capture_gaps.stuck=%d; want stuck=%v", c.name, got, jsonStuck, c.want)
+		}
+	}
+}
+
+// covers: MA-326, R18, S48
 // A terminal gap is a WARN whose remedy is keyed by the source kind (§4.10): a
 // .pst says to repair it in place with scanpst, a scratch .pst that -outlook
 // rebuilds says to open the item in Outlook, never "repair the .pst".

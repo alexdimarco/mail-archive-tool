@@ -218,6 +218,8 @@ func TestRootBannerAppearsFromEveryCaller(t *testing.T) {
 	if strings.Contains(rootPage(), "may not be in this archive") {
 		t.Fatal("a healthy archive's root page carries the banner")
 	}
+	healthyMetas := metaTags(rootPage())
+	assure.Reached(t, healthyMetas, "the root page's meta tags")
 
 	// A ledger-only gap (hostile text in it): the next run, which exports nothing,
 	// still regenerates the page because the count changed.
@@ -245,6 +247,11 @@ func TestRootBannerAppearsFromEveryCaller(t *testing.T) {
 			t.Errorf("the root page carries untrusted text or a script: %q", bad)
 		}
 	}
+	// The page's policy and head metas are intact (R19): the banner adds a line of
+	// body text, never a meta, and drops none.
+	if got := metaTags(page); strings.Join(got, "\n") != strings.Join(healthyMetas, "\n") {
+		t.Errorf("the banner changed the root page's meta tags:\n got  %q\n want %q", got, healthyMetas)
+	}
 	stamp := mtime(t, filepath.Join(out, "index.html"))
 	time.Sleep(20 * time.Millisecond)
 	run()
@@ -270,6 +277,24 @@ func TestRootBannerAppearsFromEveryCaller(t *testing.T) {
 	}
 	if !strings.Contains(rootPage(), banner) {
 		t.Error("reindex -rebuild dropped the banner")
+	}
+}
+
+// metaTags returns every <meta ...> tag of a page, in order.
+func metaTags(page string) []string {
+	var out []string
+	for rest := page; ; {
+		i := strings.Index(strings.ToLower(rest), "<meta")
+		if i < 0 {
+			return out
+		}
+		rest = rest[i:]
+		j := strings.IndexByte(rest, '>')
+		if j < 0 {
+			return out
+		}
+		out = append(out, rest[:j+1])
+		rest = rest[j+1:]
 	}
 }
 

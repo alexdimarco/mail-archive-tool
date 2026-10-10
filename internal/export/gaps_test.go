@@ -403,6 +403,17 @@ func TestRecordNoticeOnAPartlyReadPage(t *testing.T) {
 		t.Error("the notice is outside the tool's header")
 	}
 
+	// The archive CSP meta is intact (R19): the notice adds markup to the header,
+	// never a script, and the page carries our one CSP meta ahead of it, exactly as
+	// a page without a notice does.
+	csp := `<meta http-equiv="Content-Security-Policy" content="` + ArchiveCSP + `">`
+	if strings.Count(page, csp) != 1 || strings.Index(page, csp) > i {
+		t.Errorf("a page with a record notice must carry exactly one archive CSP meta, before the notice")
+	}
+	if strings.Contains(strings.ToLower(page[:i]+notice), "<script") {
+		t.Errorf("the notice's page carries a script")
+	}
+
 	stub, _ := RenderWith(gapMsg("Stub", "<s@x>", func(m *model.Message) { m.ReadGaps = []string{state.LabelUnparsed} }), RenderContext{Store: "s", Folder: "f"})
 	if !strings.Contains(string(stub.HTML), "-raw") || !strings.Contains(string(stub.HTML), "structure (shown here as text)") {
 		t.Error("an unparsed page's notice must say what was not read and where the full bytes are (the .eml under -raw)")
