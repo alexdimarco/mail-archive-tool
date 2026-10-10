@@ -1173,6 +1173,14 @@ func Summary(in Input, rep Report) []string {
 		} else {
 			lines = append(lines, "Incomplete: none")
 		}
+		// RV-10: a page shown as plain text is complete, but the owner should
+		// be able to learn it here, not only from the run log.
+		if txt := shownAsSourceText(in.ShownAsSource); txt != "" {
+			if in.ReportExists {
+				txt += " Details: " + in.ReportPath
+			}
+			lines = append(lines, "Shown as source: "+txt)
+		}
 		// Fixity COVERAGE: how many records carry file digests, from manifest
 		// fields alone — this hashes nothing (that is `verify`), so it measures
 		// coverage, not integrity. The line says so and points at `verify` to
@@ -1280,7 +1288,11 @@ func Summary(in Input, rep Report) []string {
 		lines = append(lines, "Verify schedule: (descriptor present but unreadable — see the posture below)")
 	}
 	lines = append(lines, fmt.Sprintf("Posture:    %s", rep.Posture))
-	for _, reason := range rep.Reasons {
+	for i, reason := range rep.Reasons {
+		// The "Shown as source" line above already says it in full (RV-10).
+		if i < len(rep.Codes) && rep.Codes[i] == "shown_as_source" && in.HasManifest {
+			continue
+		}
 		lines = append(lines, "  "+reason)
 	}
 	return lines

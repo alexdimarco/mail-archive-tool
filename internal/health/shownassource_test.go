@@ -85,7 +85,6 @@ func TestShownAsSourceIsANoteNotAWarn(t *testing.T) {
 // The status line says what happened, why in plain words, and that there is
 // nothing to do; it is absent when nothing is shown as source.
 func TestStatusSaysMessagesAreShownAsSourceInPlainWords(t *testing.T) {
-	t.Skip("open (RV-10): Summary has no Shown as source line yet")
 	now := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
 	in := shownInput(now)
 	lines := Summary(in, Assess(in, now))
