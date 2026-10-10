@@ -217,6 +217,16 @@ func (s *deviceSource) Token() (*oauth2.Token, error) {
 	return t, nil
 }
 
+// forceRefresh makes the next Token() refresh from the refresh token even though
+// the cached access token has not expired (Client.ForceRefresh).
+func (s *deviceSource) forceRefresh() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.last != nil && s.last.RefreshToken != "" {
+		s.cur = s.conf.TokenSource(s.ctx, &oauth2.Token{RefreshToken: s.last.RefreshToken})
+	}
+}
+
 // reload re-reads the cache when a refresh failed, returning a token worth
 // retrying only if a concurrent run wrote a DIFFERENT refresh token than ours,
 // and only for OUR account: another account's stored token is never adopted
