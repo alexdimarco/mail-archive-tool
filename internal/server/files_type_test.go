@@ -22,14 +22,21 @@ func TestFilesPinsTheTypeOfAnEmlAndAZip(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(msgStem+".eml")), []byte(hostile), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	prior := mime.TypeByExtension(".eml")
-	t.Cleanup(func() {
-		if prior != "" {
-			mime.AddExtensionType(".eml", prior)
-		}
-	})
-	if err := mime.AddExtensionType(".eml", "text/html; charset=utf-8"); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(msgStem+"-attachments.zip")), []byte(hostile), 0o600); err != nil {
 		t.Fatal(err)
+	}
+	// Both suffixes are mapped to a page by the simulated host, so each pin is
+	// proved on its own whatever this machine's mime table says (re-verification).
+	for _, ext := range []string{".eml", ".zip"} {
+		prior := mime.TypeByExtension(ext)
+		t.Cleanup(func() {
+			if prior != "" {
+				mime.AddExtensionType(ext, prior)
+			}
+		})
+		if err := mime.AddExtensionType(ext, "text/html; charset=utf-8"); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	// Positive twin: a page is text/html.

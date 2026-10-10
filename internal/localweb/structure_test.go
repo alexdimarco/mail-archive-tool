@@ -175,6 +175,7 @@ func servedViolations(files []sourceFile) ([]string, int) {
 			continue
 		}
 		lw := importName(sf.file, "mail-archive-tool/internal/localweb")
+		literalType := map[token.Pos]bool{} // http.Server types a literal already counted
 		check := func(n ast.Node, e ast.Expr, what string) {
 			if !guardedExpr(e, lw, funcs[sf.dir], 0) {
 				bad = append(bad, at(n)+": "+what+" is given "+types.ExprString(e)+", not a localweb.Wrap handler")
@@ -186,10 +187,18 @@ func servedViolations(files []sourceFile) ([]string, int) {
 				if isSel(x.Type, httpName, "Server") {
 					bad = append(bad, at(x)+": a type declared from http.Server hides its literals from this check")
 				}
+			case *ast.SelectorExpr:
+				// Any use of the type other than a literal: a var (its zero value
+				// is a working server), new(), a field or a parameter. Its
+				// DisableGeneralOptionsHandler cannot be seen from here.
+				if isSel(x, httpName, "Server") && !literalType[x.Pos()] {
+					bad = append(bad, at(x)+": http.Server used other than as a literal hides its options from this check")
+				}
 			case *ast.CompositeLit:
 				if !isSel(x.Type, httpName, "Server") {
 					return true
 				}
+				literalType[x.Type.Pos()] = true
 				servers++
 				var handler ast.Expr
 				noOptions := false
@@ -225,6 +234,9 @@ func servedViolations(files []sourceFile) ([]string, int) {
 				for name, arg := range serveArg {
 					if isSel(x.Fun, httpName, name) {
 						servers++
+						// These build an internal Server with the general OPTIONS
+						// handler on, so OPTIONS * is answered past the guard.
+						bad = append(bad, at(x)+": http."+name+" builds a server that answers OPTIONS * past the guard; use an http.Server literal with DisableGeneralOptionsHandler: true")
 						if len(x.Args) <= arg {
 							bad = append(bad, at(x)+": http."+name+" without a handler serves the DefaultServeMux")
 						} else {
@@ -295,6 +307,35 @@ import "net/http"
 type S = http.Server
 type M = http.ServeMux
 `)
+	// OPTIONS * bypasses (re-verification): http.Serve and friends build a server
+	// with the general OPTIONS handler on; a var or new() of http.Server never
+	// shows its options to a literal check.
+	serveFn := parseSource(t, "cmd/x/servefn.go", `package x
+import (
+	"net/http"
+	"mail-archive-tool/internal/localweb"
+)
+	func serve() { _ = http.ListenAndServe(":0", localweb.Wrap(localweb.Surface{}, nil)) }
+`)
+	varSrv := parseSource(t, "cmd/x/varsrv.go", `package x
+import (
+	"net/http"
+	"mail-archive-tool/internal/localweb"
+)
+	func serve() { var s http.Server; s.Handler = localweb.Wrap(localweb.Surface{}, nil); _ = s }
+`)
+	newSrv := parseSource(t, "cmd/x/newsrv.go", `package x
+import (
+	"net/http"
+	"mail-archive-tool/internal/localweb"
+)
+	func serve() { s := new(http.Server); s.Handler = localweb.Wrap(localweb.Surface{}, nil) }
+`)
+	for name, sf := range map[string]sourceFile{"http.ListenAndServe": serveFn, "var http.Server": varSrv, "new(http.Server)": newSrv} {
+		if sv, _ := servedViolations([]sourceFile{sf}); len(sv) == 0 {
+			t.Errorf("%s: the served-handler check let OPTIONS * past the guard", name)
+		}
+	}
 	refused := 0
 	for name, sf := range map[string]sourceFile{"dot-import": dot, "alias": alias} {
 		sv, _ := servedViolations([]sourceFile{sf})
