@@ -416,7 +416,13 @@ func (c *Client) WellKnownFolderID(ctx context.Context, userID, wellKnown string
 	var body struct {
 		ID string `json:"id"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+	// Bounded like every other Graph JSON body (XC26, MA-528).
+	page := &io.LimitedReader{R: resp.Body, N: maxPageBytes + 1}
+	err = json.NewDecoder(page).Decode(&body)
+	if page.N <= 0 {
+		return "", &ListingError{Kind: ListingPageSize, Limit: maxPageBytes}
+	}
+	if err != nil {
 		return "", err
 	}
 	return body.ID, nil
