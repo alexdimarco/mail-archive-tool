@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -106,6 +107,36 @@ func TestDashboardAndReaderRefuseForeignHost(t *testing.T) {
 		Forbid:  []string{"Quarterly merger", "store/Inbox", out},
 	}.Run(t, readerHandler(rm, loopback(8099)))
 	assure.Reached(t, probed, "reader routes probed")
+}
+
+// covers: MA-378, R23
+// MA-378's other half for the desktop, an open gap until sessions land (P7,
+// slice LC-C2): with a loopback Host but no session, every route the dashboard
+// and the reader register must refuse on GET, POST and HEAD — 401, the locked
+// page or a JSON 401 — with none of the dashboard's CSRF token or identity data
+// and none of the archive's subject or path. A strict encoder: while any such
+// request is still answered it skips, naming them; once none is, it fails, so
+// its skip is removed and it stays as the permanent guard. The handlers are
+// built directly, with no request to read a token first, so the encoder still
+// runs once a page needs a session.
+func TestDashboardAndReaderRefuseWithoutSession(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "graph-config.json")
+	if err := graphconfig.Save(cfgPath, &graphconfig.Config{Tenant: "contoso-tenant-0451", ClientID: "app-client-7788", Auth: "device"}); err != nil {
+		t.Fatal(err)
+	}
+	dash := dashboardHandler(desktop.Config{ConfigPath: cfgPath, SettingsPath: filepath.Join(dir, "desktop-settings.json"), TokenCachePath: filepath.Join(dir, "tok.json")}, loopback(8097))
+	out, rm := readerFixture(t)
+
+	admitted := localwebtest.Probe{Surface: "dashboard", Forbid: []string{`name="csrf"`, "contoso-tenant-0451", "app-client-7788"}}.
+		Admitted(t, dash, "127.0.0.1:8097")
+	admitted = append(admitted, localwebtest.Probe{Surface: "reader", Forbid: []string{"Quarterly merger", "store/Inbox", out}}.
+		Admitted(t, readerHandler(rm, loopback(8099)), "127.0.0.1:8099")...)
+	if len(admitted) == 0 {
+		t.Fatal("MA-378: every dashboard and reader route now refuses a loopback request with no session — the gap is closed: remove this encoder's skip so it stays as a permanent guard")
+	}
+	t.Skipf("MA-378 / R23 open until LC-C2 (no sessions yet, P7): %d loopback-Host request(s) with no session were answered, e.g. %s",
+		len(admitted), strings.Join(admitted[:min(3, len(admitted))], "; "))
 }
 
 // covers: MA-378, R23, R19

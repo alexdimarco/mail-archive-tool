@@ -119,6 +119,54 @@ func (p Probe) Run(t assure.TB, h http.Handler) []string {
 	return probed
 }
 
+// Admitted probes h, which must be built by localweb.Wrap for p.Surface, as
+// MA-378's other half needs once sessions exist (P7, slice LC-C2): every route
+// h names, on GET, POST and HEAD, with Host host and no session cookie. Such a
+// request is refused when it is answered 401 — the locked page, or a JSON 401
+// under /api/ (design §4.C2) — with none of p.Forbid. Admitted returns each
+// request answered any other way, as "surface: METHOD target (status)"; it is
+// empty only when every route refused. A strict encoder of an open gap skips
+// while it is not empty and fails once it is.
+func (p Probe) Admitted(t assure.TB, h http.Handler, host string) []string {
+	t.Helper()
+	s, ok := localweb.Guarded(h)
+	if !ok {
+		t.Fatalf("%s: the production constructor returned %T, not a handler built by localweb.Wrap", p.Surface, h)
+	}
+	if s.Name != p.Surface {
+		t.Fatalf("%s: the guard is for surface %q", p.Surface, s.Name)
+	}
+	routes := localweb.RoutesOf(h)
+	if len(routes) == 0 {
+		t.Fatalf("%s: the guarded handler names no routes — register them on a localweb.Mux", p.Surface)
+	}
+	var admitted []string
+	for _, pattern := range routes {
+		req, err := Request(http.MethodGet, pattern)
+		if err != nil {
+			t.Fatalf("%s: %v", p.Surface, err)
+		}
+		target := req.URL.RequestURI()
+		for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodHead} {
+			rec := send(h, method, target, host)
+			if rec.Code == http.StatusUnauthorized && !containsAny(rec.Body.String(), p.Forbid) {
+				continue
+			}
+			admitted = append(admitted, fmt.Sprintf("%s: %s %s (%d)", p.Surface, method, target, rec.Code))
+		}
+	}
+	return admitted
+}
+
+func containsAny(s string, needles []string) bool {
+	for _, n := range needles {
+		if n != "" && strings.Contains(s, n) {
+			return true
+		}
+	}
+	return false
+}
+
 func send(h http.Handler, method, target, host string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, target, nil)
 	req.Host = host

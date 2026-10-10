@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"strings"
 	"testing"
 
 	"mail-archive-tool/internal/assure"
@@ -183,8 +184,27 @@ func TestServeAndSetupServeOnlyThroughTheGuard(t *testing.T) {
 }
 
 // covers: MA-378, R23
-// MA-378's other half: with a loopback Host but no session, every registered
-// route of every surface must refuse as well (the locked page or a JSON 401).
+// MA-378's other half, an open gap until sessions land (P7, slice LC-C2): with
+// a loopback Host but no session, every route `serve` and `setup` register must
+// refuse on GET, POST and HEAD — 401, the locked page or a JSON 401 — with none
+// of the archive's subjects or paths, nor setup's CSRF token or config path.
+// A strict encoder: while any such request is still answered it skips, naming
+// them; once none is, it fails, so its skip is removed and it stays as the
+// permanent guard. The desktop's surfaces have their own
+// (TestDashboardAndReaderRefuseWithoutSession).
 func TestEveryRouteRefusesWithoutSession(t *testing.T) {
-	t.Skip("MA-378: a loopback-Host request with no session still reaches every route — there are no sessions yet (P7); lands in LC-C2")
+	out, ix := readerFixture(t)
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "graph-config.json")
+	setup := setupHandler(cfgPath, graphconfig.NewFileSecretStore(filepath.Join(dir, "secrets")), loopback(8097))
+
+	admitted := localwebtest.Probe{Surface: "serve", Forbid: []string{"Acme invoice", "store/Inbox", out}}.
+		Admitted(t, serveHandler(out, ix, loopback(8099), nil), "127.0.0.1:8099")
+	admitted = append(admitted, localwebtest.Probe{Surface: "setup", Forbid: []string{`name="csrf"`, cfgPath}}.
+		Admitted(t, setup, "127.0.0.1:8097")...)
+	if len(admitted) == 0 {
+		t.Fatal("MA-378: every serve and setup route now refuses a loopback request with no session — the gap is closed: remove this encoder's skip so it stays as a permanent guard")
+	}
+	t.Skipf("MA-378 / R23 open until LC-C2 (no sessions yet, P7): %d loopback-Host request(s) with no session were answered, e.g. %s",
+		len(admitted), strings.Join(admitted[:min(3, len(admitted))], "; "))
 }
