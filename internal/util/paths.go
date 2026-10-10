@@ -159,6 +159,21 @@ func StripControl(s string) string {
 	}, s)
 }
 
+// StripBidi removes the Unicode bidirectional formatting controls (U+202A to
+// U+202E, the embeddings and overrides, and U+2066 to U+2069, the isolates): a
+// right-to-left override in an untrusted field reverses what follows it in a
+// spreadsheet or a page, so "invoice.pdf" can read as "fdp.eciovni". StripControl
+// leaves them because they are printable text; fields that are echoed from mail
+// into a report or a status line strip them too (friction F16).
+func StripBidi(s string) string {
+	return strings.Map(func(r rune) rune {
+		if (r >= 0x202a && r <= 0x202e) || (r >= 0x2066 && r <= 0x2069) {
+			return -1
+		}
+		return r
+	}, s)
+}
+
 // UnderCloudSync reports whether absPath sits inside a consumer cloud-sync
 // folder that re-uploads on every change (P3). It recognises OneDrive by the
 // OneDrive* environment variables the client sets to its sync roots, and every

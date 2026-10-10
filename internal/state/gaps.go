@@ -92,7 +92,7 @@ func GapKey(token, scope, locator string) string {
 // boundary (the ledger is untrusted on read, MA-157, and its text is echoed into
 // terminals, reports and pages).
 func boundString(s string, max int) string {
-	s = util.StripControl(s)
+	s = util.StripBidi(util.StripControl(s))
 	if len(s) <= max {
 		return s
 	}
@@ -109,7 +109,7 @@ func boundString(s string, max int) string {
 
 // boundRunes strips control characters and cuts s to at most max runes.
 func boundRunes(s string, max int) string {
-	s = util.StripControl(s)
+	s = util.StripBidi(util.StripControl(s))
 	if utf8.RuneCountInString(s) <= max {
 		return s
 	}
