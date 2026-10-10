@@ -723,19 +723,26 @@ func (c *Client) MIMETo(ctx context.Context, userID, messageID string, w io.Writ
 		return 0, mimeStop(ctx, dctx, err)
 	}
 	defer resp.Body.Close()
+	body := &idleReader{r: resp.Body, idle: idle, timer: time.AfterFunc(idle, stopOn(TimeoutIdle, idle))}
+	defer body.timer.Stop()
 	if resp.StatusCode != http.StatusOK {
-		return 0, statusErr(resp)
+		// An error answer's body is under the idle watchdog too, and a read that a
+		// timer cut short is that typed stop, not a *StatusError holding a cut text.
+		se, rerr := statusErrFrom(resp, body)
+		if rerr != nil {
+			return 0, mimeStop(ctx, dctx, se)
+		}
+		return 0, se
 	}
 	if maxBytes > 0 && resp.ContentLength > maxBytes {
 		return 0, &TooLargeError{MessageID: messageID, Limit: maxBytes}
 	}
-	body := &idleReader{r: resp.Body, idle: idle, timer: time.AfterFunc(idle, stopOn(TimeoutIdle, idle))}
-	defer body.timer.Stop()
 	var src io.Reader = body
 	if maxBytes > 0 {
 		src = io.LimitReader(body, maxBytes)
 	}
-	n, err := io.Copy(w, src)
+	// The idle window times the server: it is paused while the destination writes.
+	n, err := io.Copy(&pausingWriter{w: w, ir: body}, src)
 	if err == nil && maxBytes > 0 && n == maxBytes {
 		// The cap is reached; one more byte means the body is larger than it.
 		var one [1]byte
@@ -781,6 +788,21 @@ func (ir *idleReader) Read(p []byte) (int, error) {
 	if n > 0 {
 		ir.timer.Reset(ir.idle)
 	}
+	return n, err
+}
+
+// pausingWriter stops the idle timer while the destination's Write runs and
+// starts it again after, so a slow destination (a disk, a NAS) is never counted
+// as a server that went quiet.
+type pausingWriter struct {
+	w  io.Writer
+	ir *idleReader
+}
+
+func (p *pausingWriter) Write(b []byte) (int, error) {
+	p.ir.timer.Stop()
+	n, err := p.w.Write(b)
+	p.ir.timer.Reset(p.ir.idle)
 	return n, err
 }
 
@@ -866,10 +888,16 @@ type StatusError struct {
 	Code      int    // the HTTP status code
 	GraphCode string // the body's error.code; "" when the body carries none
 	Text      string // the body, bounded to its first statusTextMax bytes and trimmed
+
+	status string // the response's status line after the protocol ("401 Unauthorized"), as the server sent it
 }
 
 func (e *StatusError) Error() string {
-	return "graph " + strconv.Itoa(e.Code) + " " + http.StatusText(e.Code) + ": " + e.Text
+	status := e.status
+	if status == "" {
+		status = strconv.Itoa(e.Code) + " " + http.StatusText(e.Code)
+	}
+	return "graph " + status + ": " + e.Text
 }
 
 // statusTextMax bounds the error body a StatusError keeps.
@@ -989,15 +1017,63 @@ func (e *throttledError) Error() string {
 // GraphCode comes from the body's {"error":{"code":…}}; a body that is not that
 // JSON (or is cut by the bound) leaves it empty.
 func statusErr(resp *http.Response) error {
-	b, _ := io.ReadAll(io.LimitReader(resp.Body, statusTextMax))
-	e := &StatusError{Code: resp.StatusCode, Text: strings.TrimSpace(string(b))}
-	var body struct {
-		Error struct {
-			Code string `json:"code"`
-		} `json:"error"`
-	}
-	if json.Unmarshal(b, &body) == nil {
-		e.GraphCode = body.Error.Code
-	}
+	e, _ := statusErrFrom(resp, resp.Body)
 	return e
+}
+
+// statusErrFrom is statusErr reading the body from r, which may be a guarded
+// reader of resp.Body. It also returns the error that cut the read short, if one
+// did (a stop of MIMETo's timers, a dropped connection); the *StatusError holds
+// what was read either way.
+func statusErrFrom(resp *http.Response, r io.Reader) (*StatusError, error) {
+	b, rerr := io.ReadAll(io.LimitReader(r, statusTextMax))
+	return &StatusError{
+		Code: resp.StatusCode, GraphCode: graphErrorCode(b), Text: strings.TrimSpace(string(b)),
+		status: resp.Status,
+	}, rerr
+}
+
+// graphErrorCode reads error.code from the start of a Graph error body, which
+// may be cut by statusTextMax in the middle of a later field: the body is walked
+// token by token, so the code survives a truncation after it. A body that is not
+// {"error":{"code":"…"}} yields "".
+func graphErrorCode(b []byte) string {
+	dec := json.NewDecoder(bytes.NewReader(b))
+	if !enterObject(dec) || !findKey(dec, "error") || !enterObject(dec) || !findKey(dec, "code") {
+		return ""
+	}
+	if s, ok := stringToken(dec); ok {
+		return s
+	}
+	return ""
+}
+
+func enterObject(dec *json.Decoder) bool {
+	t, err := dec.Token()
+	return err == nil && t == json.Delim('{')
+}
+
+// findKey advances to the value of key in the object dec is inside, skipping the
+// values of the keys before it; false when the object ends or the input is cut.
+func findKey(dec *json.Decoder, key string) bool {
+	for dec.More() {
+		t, err := dec.Token()
+		if err != nil {
+			return false
+		}
+		if k, ok := t.(string); ok && strings.EqualFold(k, key) {
+			return true
+		}
+		var skip json.RawMessage
+		if dec.Decode(&skip) != nil {
+			return false
+		}
+	}
+	return false
+}
+
+func stringToken(dec *json.Decoder) (string, bool) {
+	t, err := dec.Token()
+	s, ok := t.(string)
+	return s, err == nil && ok
 }
