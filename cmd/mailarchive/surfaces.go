@@ -35,14 +35,23 @@ func setupHandler(cfgPath string, store graphconfig.SecretStore, at net.Addr) ht
 
 // serveExtraHosts is what the guard accepts, with any port, beyond 127.0.0.1,
 // localhost and [::1] for a serve listening at at (P6): nothing on a loopback
-// bind; on a non-loopback one the bound IP literal — or, bound to every
+// bind (but its own IP literal when that is not 127.0.0.1 or ::1); on a non-loopback one the bound IP literal — or, bound to every
 // interface (0.0.0.0, [::] or no host), the IP literals of this machine's
 // interfaces as they are now, at start-up — plus the -allow-host names. IP
 // literals are safe against DNS rebinding: a rebinding page's Host carries the
 // attacker's name.
 func serveExtraHosts(at net.Addr, allowHosts []string) []string {
 	tcp, ok := at.(*net.TCPAddr)
-	if !ok || tcp.IP.IsLoopback() {
+	if !ok {
+		return nil
+	}
+	if tcp.IP.IsLoopback() {
+		// 127.0.0.1 and ::1 are already accepted. Any other loopback literal
+		// (127.0.0.2) is what servedURL prints, so the surface accepts it; the
+		// -allow-host names still widen nothing on a loopback bind.
+		if ip := ipLiteral(tcp.IP); ip != "127.0.0.1" && ip != "[::1]" {
+			return []string{ip}
+		}
 		return nil
 	}
 	var hosts []string
