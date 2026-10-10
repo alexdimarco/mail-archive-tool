@@ -105,8 +105,11 @@ func TestStatusErrorGraphCodeSurvivesTheBound(t *testing.T) {
 	srv := valueServer(t, map[string]http.HandlerFunc{
 		"LONG": func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(500); io.WriteString(w, long) },
 		// Code after a field that fills the bound is beyond it: no code, never a wrong one.
-		"LATE":  func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(500); io.WriteString(w, other) },
-		"SHORT": func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(500); io.WriteString(w, `{"error":{"code":"ErrorItemNotFound"}}`) },
+		"LATE": func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(500); io.WriteString(w, other) },
+		"SHORT": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(500)
+			io.WriteString(w, `{"error":{"code":"ErrorItemNotFound"}}`)
+		},
 	})
 	c := boundedClient(srv, Config{})
 	for id, want := range map[string]string{"LONG": "ErrorItemNotFound", "SHORT": "ErrorItemNotFound", "LATE": ""} {
