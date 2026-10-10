@@ -53,9 +53,9 @@ type Input struct {
 	// ShownAsSource counts records whose page is shown as plain text, per reason
 	// (RV-10), from the manifest's body_fallback; nil when none.
 	ShownAsSource map[string]int
-	WithFixity                 int // records carrying at least one file digest (N of Messages)
-	ReportPath                  string
-	ReportExists                bool // the verification report exists on disk
+	WithFixity    int // records carrying at least one file digest (N of Messages)
+	ReportPath    string
+	ReportExists  bool // the verification report exists on disk
 
 	// Extractable is how many records have a preserved original (.eml) present
 	// on disk (WithEML) out of the total (Total) — extract's migration signal
