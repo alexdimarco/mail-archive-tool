@@ -326,8 +326,8 @@ func TestClientTimeoutBoundsTokenFetchNotValue(t *testing.T) {
 	}
 	began := time.Now()
 	var listErr error
-	within(t, 3*time.Second, "an unrelated list behind a stalled /token body", func() {
-		_, listErr = c.Folders(ctx, "ignored", FolderFilter{IncludeDeleted: true, IncludeJunk: true})
+	within(t, 3*time.Second, "an unrelated workspace list behind a stalled /token body", func() {
+		_, listErr = c.FolderTree(ctx, "ignored", 0)
 	})
 	if waited := time.Since(began); waited > req+900*time.Millisecond {
 		t.Errorf("the unrelated list waited %v behind the stalled token fetch; reqTimeout is %v", waited, req)
