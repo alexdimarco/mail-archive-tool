@@ -89,7 +89,7 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		return Result{}, err
 	}
 	defer lock.Release()
-	defer recordRun(opts, beginRun(opts), &result, &err)
+	defer recordRun(opts, beginRun(opts), &result, &err, logger)
 
 	mpath := opts.Manifest
 	if mpath == "" {

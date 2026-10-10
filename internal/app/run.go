@@ -217,7 +217,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// Every run that begins is recorded (R18): "running" now, before any early
 	// return, finalized on the way out — so a run that never finishes is
 	// visible as such to `status`.
-	defer recordRun(opts, beginRun(opts), &result, &err)
+	defer recordRun(opts, beginRun(opts), &result, &err, logger)
 
 	// On -auto, warn up front when a live Exchange/IMAP .ost is about to be read
 	// by the direct go-pst reader, which cannot read every .ost — the -outlook
@@ -581,7 +581,10 @@ func absOrSame(p string) string {
 }
 
 // recordRun finalizes the last-run record from the run's outcome.
-func recordRun(opts Options, lr state.LastRun, result *Result, err *error) {
+// writeLastRun is the finalizing record write; a var so a test can refuse it.
+var writeLastRun = state.WriteLastRun
+
+func recordRun(opts Options, lr state.LastRun, result *Result, err *error, logger *log.Logger) {
 	lr.Finished = time.Now().UTC()
 	switch {
 	case *err == nil:
@@ -594,7 +597,12 @@ func recordRun(opts Options, lr state.LastRun, result *Result, err *error) {
 	}
 	lr.Exported, lr.Filled = result.Stats.Exported, result.Stats.Filled
 	lr.Fillable, lr.Terminal, lr.Unknown, lr.IndexErrors = result.Fillable, result.Terminal, result.Unknown, result.IndexErrors
-	_ = state.WriteLastRun(opts.Out, lr)
+	// Best effort: a refused write never fails the run, but it is logged (F12),
+	// because the "running" record then stays and status reads it as a run that
+	// never finished although this log says how it ended.
+	if werr := writeLastRun(opts.Out, lr); werr != nil && logger != nil {
+		logger.Printf("warning: could not record this run in %s (%v): `mailarchive status` may show this run as \"never finished\" or still show the previous result although it ended as logged above — run again once the file can be written (on Windows, exclude the archive folder from antivirus real-time scanning)", filepath.Join(opts.Out, state.LastRunName), werr)
+	}
 }
 
 func plural(n int, one, many string) string {
