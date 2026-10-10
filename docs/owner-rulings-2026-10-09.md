@@ -1062,6 +1062,22 @@ sanitizer's free ids MA-494, MA-495 and MA-497..MA-499. Two delegated rulings:
   require that the apps mirror `status`. Not done, and left to a later slice: the GUI export
   summary and the desktop capture result message do not mention the fallback count.
 
+### 13.9 EW-E1 built and merged (2026-10-10)
+
+EW-E1's short adversarial note (rulings §9 row 15) ran: 12 found / 3 confirmed, fixed, report in
+`docs/review-ew-e1-adversarial.md`. All four of the note's questions are answered yes by tests:
+CheckRedirect refuses a cross-host redirect on the workspace clients and on SG's `$value` client;
+`Client.Timeout` stays off `$value`; the host/path pin refuses only a foreign host or path (not a
+healthy tenant's variation, with XC25's normalization); the identity-safe write-back never writes
+one account's token under another's identity. Delegated detail rulings: CheckRedirect compares each
+hop with the origin its request was first sent to; the workspace read paths refuse a client that is
+not the delegated `/me` one; the "honored" flag travels as `PhysID = ID` on each ref, so **E2 must
+record it from the first page's refs** (an empty first page cannot carry it).
+
+| Id | The question for the owner | Recommended answer | Safe interim |
+|---|---|---|---|
+| **ESC-15** (EW-E1 AI1, XC7) | The token write-back is serialised within one process only. A sign-in in the dashboard process during a scheduled run's load-to-write window can be overwritten, forcing a re-sign-in (never a token under another identity). Add a cross-process lock on the token file and each vault backend? | Yes, in the slice that owns sign-in (LC-C2 or E3), because it needs a lock per vault backend | Left as is; `TestTokenWriteBackCrossProcessSignIn` is a skip encoder (MA-515, XC7) |
+
 ### 13.7 Escalations from LC-C1's adversarial pass (merged 2026-10-10)
 
 None blocks anything: each has a skip encoder or a safe interim in force.
