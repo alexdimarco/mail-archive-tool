@@ -965,8 +965,8 @@ func runSchedule(args []string) error {
 			return nil
 		}
 		fmt.Printf("Removed scheduled %s %q.\n", kind, n)
-		// A descriptor that cannot be read goes only with the archive's
-		// default-named backup (nothing in it says it was any other entry's), so a
+		// A descriptor that cannot be read is never deleted, whatever the entry's
+		// name (nothing in it says whose it was; rulings §13.6, ESC-10), so a
 		// removal names the one of its own kind it left — the backup's for a
 		// backup, the verify's for a verify — with the remedy; `status` keeps
 		// reporting it until the operator acts.

@@ -101,7 +101,16 @@ func (d *dashboard) scheduleRemove(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
-	writeJSON(w, map[string]any{"ok": true, "removed": removed})
+	resp := map[string]any{"ok": true, "removed": removed}
+	// A descriptor the tool cannot read is never deleted (rulings §13.6, ESC-10):
+	// name it with the remedy, as `schedule -remove` does.
+	if removed {
+		if left := schedule.UnreadableDescriptor(spec.Out); left != "" {
+			resp["left"] = left
+			resp["remedy"] = schedule.UnreadableDescriptorRemedy
+		}
+	}
+	writeJSON(w, resp)
 }
 
 // scheduleState reports the weekly-backup posture for the UI (GET; no side effect).
