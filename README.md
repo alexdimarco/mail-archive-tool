@@ -612,7 +612,9 @@ that ignores unknown keys is unaffected and the version is not bumped.)
   `scheduler_unavailable`, `not_installed`, `exe_missing`, `exe_moved`,
   `archive_unwritable` (a scheduled backup whose archive folder takes no write:
   read-only, full or lost drive — a run there cannot record its own failure, so
-  this is where it shows).
+  this is where it shows; the probe is a write by the account running `status`,
+  so a read-only monitoring account on the backup's host sees it for a healthy
+  backup: run `status` as the account the job runs as).
 - `fixity` is `{records, with_fixity}` (coverage, not integrity), or `null` when
   there is no manifest.
 - `extractable` is `{records, records_with_eml}` — how many records have a

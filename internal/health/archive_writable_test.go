@@ -59,7 +59,10 @@ func TestStatusProbesThatTheArchiveFolderIsWritable(t *testing.T) {
 	if rep.Posture != "RED" || !strings.HasPrefix(got, "RED:") {
 		t.Fatalf("a scheduled backup that cannot write is RED: %s %v", rep.Posture, rep.Reasons)
 	}
-	for _, want := range []string{"/a", "cannot be written", "last-run record", "make the folder writable", "permission denied"} {
+	// The probe is the status runner's own write, not the job account's: the
+	// RED says so (g7 friction re-verification of F2), because a read-only
+	// monitoring account on the same host reads it for a healthy backup.
+	for _, want := range []string{"/a", "cannot be written", "last-run record", "make the folder writable", "permission denied", "as the account running status", "if the backup runs as another account"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("reason lacks %q: %s", want, got)
 		}

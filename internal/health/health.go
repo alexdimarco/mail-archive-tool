@@ -359,7 +359,7 @@ func Assess(in Input, now time.Time) Report {
 		if diskFull(in.WriteProbeErr) {
 			remedy = "free space on the disk that holds it"
 		}
-		r.red("archive_unwritable", fmt.Sprintf("the archive folder %s cannot be written (%s) — the scheduled backup cannot save its manifest, its last-run record or this failure, so the last run shown above may be out of date; %s, then run the job again", in.Out, util.StripControl(probeCause(in.WriteProbeErr)), remedy))
+		r.red("archive_unwritable", fmt.Sprintf("the archive folder %s cannot be written (%s, as the account running status; if the backup runs as another account, check that one) — a scheduled backup that cannot write there cannot save its manifest, its last-run record or this failure, so the last run shown above may be out of date; %s, then run the job again", in.Out, util.StripControl(probeCause(in.WriteProbeErr)), remedy))
 	}
 
 	// Schedule.
