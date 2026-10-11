@@ -3,8 +3,10 @@
 This folder is the WiX/RMM layer that turns our release payload into a deployable
 `MailArchiveDesktop.msi`. The binaries come from **our** repo:
 
-- `mailarchive-desktop.exe` — the dashboard (`127.0.0.1:8097`) + archive reader
-  (`127.0.0.1:8099`), served **in-process**. It does not shell out to a child
+- `mailarchive-desktop.exe` — the dashboard + archive reader, served
+  **in-process**, each on a free loopback port of its own (there is no fixed
+  address to type or bookmark) and each opened only through a private one-time
+  link the app makes for its own Windows account. It does not shell out to a child
   `mailarchive.exe` the way the earlier out-of-repo wrapper did.
 - `mailarchive.exe` — the headless engine / CLI (app-only & multi-mailbox scheduled
   captures, plus every other verb).
@@ -61,16 +63,37 @@ The script prints the MSI SHA256.
 
 ## C. Deploy via RMM
 
-Silent install:
+Silent install (use the script: it ends running `mailarchive-desktop.exe`
+instances first, as the MSI's own CloseApplication does):
 ```cmd
-msiexec.exe /i MailArchiveDesktop.msi /qn /norestart
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Install-RMM.ps1
 ```
+or `msiexec.exe /i MailArchiveDesktop.msi /qn /norestart` directly.
+
+**An upgrade takes effect at once, in every signed-in session.** Instances that were
+already running before the upgrade served their dashboard with no private link until
+their user signed out. `Install-RMM.ps1` stops every running `mailarchive-desktop.exe`
+before `msiexec`, and the MSI ends any that remain (`util:CloseApplication`); the
+new version's own instance, started from a shortcut, finds an older one still
+holding the former address `127.0.0.1:8097`, ends it when it is that account's, and
+otherwise names it in the dashboard header and in `status` ("An older MailArchive
+Desktop is still running … sign out and back in"). Typing the old
+dashboard address `127.0.0.1:8097` no longer reaches MailArchive at all.
+
 Detection: `powershell -NoProfile -ExecutionPolicy Bypass -File .\Detect-RMM.ps1` (exit 0 = installed).
 Silent uninstall: `powershell -NoProfile -ExecutionPolicy Bypass -File .\Uninstall-RMM.ps1`.
 
 Install is per-machine to `C:\Program Files\MailArchive Desktop\` and creates: an
 all-users Desktop shortcut, an all-users Startup shortcut, Start Menu + Uninstall
-shortcuts, the Apps & Features entry, and `HKLM\Software\MailArchive Desktop`.
+shortcuts, a Start Menu **Copy MailArchive link** shortcut (`-copy-link`: shows a
+fresh private link in a dialog with a Copy button, for a default browser that cannot
+be opened), the Apps & Features entry, and `HKLM\Software\MailArchive Desktop`.
+
+Each Windows account runs its own instance, and each Terminal Services session of an
+account (an RDS host, fast user switching) its own: the lock and instance file live
+in `%LOCALAPPDATA%\MailArchiveDesktop` (not roaming, not a cache folder a cleaner
+purges), so a second account never reaches the first account's dashboard, and a
+second session's shortcut opens a browser in that session.
 
 ### DC6 — clean replacement of the earlier build
 `Product.wxs` keeps the **same UpgradeCode** (`4CE5B43F-…-2D11`) and the **same**
@@ -81,9 +104,10 @@ The ProductCode is auto-generated (`Id="*"`) per build — correct for MajorUpgr
 
 ### What uninstall preserves
 Uninstall removes the Program Files payload, shortcuts, and MSI registry data. It
-intentionally keeps the user's **mail archive**, `%LOCALAPPDATA%\MailArchiveDesktop`,
-and the **Microsoft sign-in in Windows Credential Manager**. For full per-user
-deprovisioning run `Cleanup-CurrentUser.ps1` in that user's Windows context.
+intentionally keeps the user's **mail archive**, `%LOCALAPPDATA%\MailArchiveDesktop`
+(the per-account lock and instance files), and the **Microsoft sign-in in Windows
+Credential Manager**. For full per-user deprovisioning run `Cleanup-CurrentUser.ps1`
+in that user's Windows context; it also removes the lock and instance files.
 
 ---
 
@@ -100,15 +124,31 @@ integration below is **lab-pending** and is exactly what this round covers:
      back from the vault via `CredReadW`).
    - "Clear sign-in" removes the `cmdkey` entry.
 
-2. **Desktop / Startup shortcuts.** After install, the Desktop and Start Menu
-   shortcuts and the all-users **Startup** shortcut (`shell:common startup`) all
-   launch `mailarchive-desktop.exe`. The binary is windowsgui (no console) but now
-   opens the dashboard in the OS default browser itself once listening (MA-281), so
-   a Desktop/Start-menu click should pop `http://127.0.0.1:8097/` straight away —
-   verify the page appears. The **Startup** shortcut passes `-no-browser` so the
-   at-login launch starts the background server quietly (no browser tab every
-   sign-in); verify by then clicking the Desktop shortcut, which should reconnect to
-   the running instance and open the browser to it (not error on the bound port).
+2. **Desktop / Startup shortcuts and the install check.** After install, the Desktop
+   and Start Menu shortcuts and the all-users **Startup** shortcut (`shell:common
+   startup`) all launch `mailarchive-desktop.exe`. The binary is windowsgui (no
+   console) but opens the dashboard in the OS default browser itself once listening
+   (MA-281), at a private one-time link, so a Desktop/Start-menu click should pop the
+   dashboard straight away — **verify the install this way: open MailArchive Desktop
+   from its shortcut and see the page.** The **Startup** shortcut passes
+   `-no-browser` so the at-login launch starts the background server quietly (no
+   browser tab every sign-in); verify by then clicking the Desktop shortcut, which
+   should reconnect to the running instance — after it proves itself — and open the
+   browser to it (not error, and not start a second one). Then verify the lock: in a
+   browser, type `http://127.0.0.1:<port>/` for a port the app is listening on (`netstat
+   -ano` shows it beside the pid of `mailarchive-desktop.exe` in Task Manager) — it
+   must show the **locked page** ("This MailArchive Desktop page has to be opened from the app"), never the
+   dashboard. Typing the old address `127.0.0.1:8097` shows nothing of MailArchive.
+
+   A broken default-browser association: the launch shows the link in a dialog with a
+   Copy button; the Start Menu **Copy MailArchive link** shortcut does the same on
+   demand. Check both.
+
+   Multi-account (fast user switching, an RDS host): sign in as two test accounts and
+   confirm each sees its own dashboard, that account B's browser at account A's port
+   sees only the locked page, and that the upgrade ending running instances (above)
+   holds for sessions that were running during it. This is the lab drill MA-377
+   (pending, with a friction log).
 
 3. **Weekly scheduled headless capture** (DC1, slice S4 shipped — MA-279). The
    dashboard installs/updates/removes the weekly backup itself (the **Weekly backup**
@@ -144,17 +184,17 @@ It is already produced by `build-release.sh` as
 GOOS=windows GOARCH=amd64 go build -o mailarchive-desktop.exe ./cmd/mailarchive-desktop
 ```
 
-On Windows, **run it from a terminal** (PowerShell/cmd) so its startup line is
+On Windows, **run it from a terminal** (PowerShell/cmd) so its startup lines are
 visible — it is a windowsgui binary, so a double-click starts it invisibly:
 
 ```
-MailArchive Desktop — open this page in a browser:
-  http://127.0.0.1:8097/
-Archive reader: http://127.0.0.1:8099/
+MailArchive Desktop is running: dashboard on 127.0.0.1:<port> and archive reader on 127.0.0.1:<port>, each opened only through a private link.
+If your browser does not open, run: mailarchive-desktop -copy-link
 ```
 
-Open `http://127.0.0.1:8097/`, choose an archive folder, sign in with the device
-code, capture. This exercises the **real** dashboard, the in-process engine, the
+It opens your browser at a private one-time link; if that fails a dialog shows the
+link, and `mailarchive-desktop.exe -copy-link` shows a fresh one. Choose an archive
+folder, sign in with the device code, capture. This exercises the **real** dashboard, the in-process engine, the
 Credential Manager token path, and the reader — everything except the MSI's
 install/shortcut/schedule plumbing. It needs no WiX, no admin, no RMM. Headless
 capture can be tried the same way: `mailarchive-desktop.exe -capture`.
@@ -166,9 +206,12 @@ capture can be tried the same way: `mailarchive-desktop.exe -capture`.
 - **R1 — no-console, no browser-open. RESOLVED (MA-281).** `mailarchive-desktop.exe`
   is built `-H=windowsgui` (build-release.sh) with no console, so its stdout URL is
   invisible. The binary now opens the OS default browser to the dashboard itself once
-  the server is listening, and if an instance is already running it reconnects and
-  opens the browser to that one instead of failing to bind. So a shortcut click shows
-  the page, never a silent server. An optional tray/stop UI remains possible future
+  the server is listening, and if an instance of this account is already running it
+  reconnects to it — after a challenge-response proves it is that account's own — and
+  has it open the browser, instead of failing to bind. So a shortcut click shows the
+  page, never a silent server; and every refusal (another configuration, an instance
+  that does not respond, a port already in use) is shown in a dialog, since there is
+  no console. An optional tray/stop UI remains possible future
   polish but is no longer needed for a visible launch. Lab: verify on Windows.
 - **R2 — a real startup flag exists now (`-no-browser`). RESOLVED.** The old Startup
   shortcut passed `--startup`, which our binary rejected (exit 1). The binary now has

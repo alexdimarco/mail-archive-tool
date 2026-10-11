@@ -30,6 +30,29 @@ local control panel (double-click to open; it opens the dashboard in your browse
 IT/RMM rollout, `mailarchive-desktop-windows-msi-payload.zip` builds a self-contained MSI
 (`packaging/mailarchive-desktop/`).
 
+### Opening the reader and the dashboard now needs a private link
+`serve`, `setup` and MailArchive Desktop are opened only through a **private one-time link** the
+program makes each time it starts, so other accounts on the same computer and web pages cannot
+open your archive or dashboard (a program running as you still can).
+- **`mailarchive serve`** opens your browser itself at its link (not with `-no-browser`, or without
+  a display); on a terminal it also prints a second link, and Enter prints another. With no
+  terminal (nohup, launchd, systemd, a detached tmux) run **`mailarchive serve -link -out <folder>`**
+  from any terminal of your account for a fresh link; an `ssh -L` tunnel keeps working (open the
+  link through the forwarded port). `mailarchive setup` now picks a free port.
+- **Scripts that called `serve`'s HTTP API with `curl` stop working** (they have no session): use
+  `mailarchive search` (same query grammar; `-json` for machine output).
+- **`serve -addr 0.0.0.0`** keeps its warning and now says the archive and the session cookie
+  cross the network in clear text; each browser still needs its own link.
+- **MailArchive Desktop (Windows):** the dashboard and the reader each take a free port, so a
+  bookmark of `http://127.0.0.1:8097/` or `:8099/` no longer reaches them — open it from its
+  shortcut; the Start Menu has **Copy MailArchive link** for a default browser that cannot be
+  opened. Each Windows account (and each sign-in session) has its own instance. An upgrade ends
+  running instances so the fix applies in every session at once.
+- On Linux and macOS another account that can list running programs could read a link in the
+  instant a browser is opened with it; macOS now hands the link to the browser without putting it
+  in the program list. A link works once, and "already used" when you did not use it means: stop
+  and start the program again.
+
 ### Fixed in 0.7.1
 - **Windows: rebuilding the search index no longer fails while the archive is open.** A leaked database handle kept `search.db` open, so `reindex -rebuild` (and the dashboard's *Rebuild index*) could fail with "Access is denied" on Windows while a viewer held the index. The handle is now released; rebuild and reindex work with the archive open.
 - **Windows: a lost or overwritten archive lock is now detected mid-run.** The lock-loss check relied on POSIX file identity, which Windows cannot provide, so in rare cases two runs on the same archive could overlap on Windows. The lock now carries a content marker re-checked during the run, so a run whose lock is taken over stops instead of racing (R5) — on every OS.

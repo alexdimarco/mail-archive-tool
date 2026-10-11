@@ -138,10 +138,11 @@ $msiVersioned = Join-Path $OutputDirectory "MailArchiveDesktop-$Version-x64.msi"
 $msiStable    = Join-Path $OutputDirectory 'MailArchiveDesktop.msi'
 
 Write-Host "Building self-contained MailArchive Desktop MSI v$Version..."
-& $candle -nologo -arch x64 -dProductVersion=$Version "-dSourceDir=$Payload" -out $obj $ProductWxs
+# WixUtilExtension: Product.wxs ends running instances with util:CloseApplication.
+& $candle -nologo -arch x64 -ext WixUtilExtension -dProductVersion=$Version "-dSourceDir=$Payload" -out $obj $ProductWxs
 if ($LASTEXITCODE -ne 0) { throw "candle.exe failed with exit code $LASTEXITCODE" }
 
-& $light -nologo -sval -out $msiVersioned $obj
+& $light -nologo -sval -ext WixUtilExtension -out $msiVersioned $obj
 if ($LASTEXITCODE -ne 0) { throw "light.exe failed with exit code $LASTEXITCODE" }
 
 Copy-Item $msiVersioned $msiStable -Force
