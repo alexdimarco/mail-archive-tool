@@ -148,10 +148,16 @@ type CopyFolderRef struct {
 func (m *CopyMessage) FolderPath() string {
 	names := make([]string, len(m.Folder))
 	for i, f := range m.Folder {
-		names[i] = util.StripControl(f.Name)
+		names[i] = plainText(f.Name)
 	}
 	return strings.Join(names, "/")
 }
+
+// plainText is text a source supplied (a subject, a folder or store name, a reason) as the README, the
+// manifest and the page may show it: with no control character and no bidirectional formatting control,
+// which StripControl keeps and which makes the rest of a line read reversed or reordered (E4-AO7,
+// friction F16). The names of files are made by util.ExportSegment, which strips them already.
+func plainText(s string) string { return util.StripBidi(util.StripControl(s)) }
 
 // CopyOptions are a run's options.
 type CopyOptions struct {

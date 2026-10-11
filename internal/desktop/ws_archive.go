@@ -15,6 +15,7 @@ import (
 	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/graph"
 	"mail-archive-tool/internal/index"
+	"mail-archive-tool/internal/util"
 )
 
 // The archive source's endpoints (extraction design §4.2, §4.3, §4.6, §4.7, slice E4): the
@@ -333,9 +334,11 @@ func (d *dashboard) archiveMessages(w http.ResponseWriter, r *http.Request, in w
 		if !ok {
 			continue // a row the manifest does not list: it cannot be selected (R13, R21)
 		}
-		hnd := sess.seen.add(seenEntry{id: key, folder: in.Folder, subject: row.Subject, from: row.SenderEmail, fromName: row.SenderName,
+		// the text of a row is the folder's: shown with no control or bidi control in it (E4-AO7)
+		subj, from, fromName := plainRowText(row.Subject), plainRowText(row.SenderEmail), plainRowText(row.SenderName)
+		hnd := sess.seen.add(seenEntry{id: key, folder: in.Folder, subject: subj, from: from, fromName: fromName,
 			received: row.Date, size: -1})
-		rows = append(rows, wsRowOut{H: hnd, Subject: row.Subject, From: row.SenderEmail, FromName: row.SenderName, Received: row.Date.UTC().Format(time.RFC3339), Size: -1})
+		rows = append(rows, wsRowOut{H: hnd, Subject: subj, From: from, FromName: fromName, Received: row.Date.UTC().Format(time.RFC3339), Size: -1})
 	}
 	if len(raw) > 0 && len(rows) == 0 && offset == 0 && version < 2 {
 		out["listUnavailable"] = "This archive's search index predates its format; whole-folder selection works; Rebuild search index fixes the list."
@@ -364,6 +367,9 @@ func (d *dashboard) archiveMessages(w http.ResponseWriter, r *http.Request, in w
 	sess.touch(now)
 	d.reply(w, out)
 }
+
+// plainRowText is a row's text as the page shows it.
+func plainRowText(s string) string { return util.StripBidi(util.StripControl(s)) }
 
 // newerIndexRefusal is R-p for a search.db a newer MailArchive wrote.
 func newerIndexRefusal(ni *index.NewerIndexError) error {

@@ -427,7 +427,7 @@ func (a *ArchiveSource) build() error {
 				parent, name = archiveNodeID(tok, p[:i]), p[i+1:]
 			}
 			id := archiveNodeID(tok, p)
-			a.nodes = append(a.nodes, ArchiveNode{ID: id, Parent: parent, Name: name, Count: len(a.byNode[id])})
+			a.nodes = append(a.nodes, ArchiveNode{ID: id, Parent: parent, Name: plainText(name), Count: len(a.byNode[id])})
 			a.loc[id] = archiveLoc{token: tok, folder: p}
 		}
 	}
@@ -648,7 +648,7 @@ func (a *ArchiveSource) resolve(key string, rec state.Record, meta map[string]in
 			m.Received = t.UTC()
 		}
 	}
-	m.Subject = util.StripControl(m.Subject)
+	m.Subject = plainText(m.Subject)
 	if rec.Fixity != nil {
 		fx := *rec.Fixity
 		m.Fix = &fx
@@ -744,7 +744,7 @@ func archiveGapNotes(rec state.Record) []string {
 		}
 	}
 	for _, label := range append(append([]string(nil), rec.Missing...), rec.Terminal...) {
-		label = util.StripControl(label)
+		label = plainText(label)
 		switch {
 		case label == state.UnknownSentinel:
 			add("completeness was not tracked by the version that captured this message")
@@ -759,7 +759,7 @@ func archiveGapNotes(rec state.Record) []string {
 		}
 	}
 	for _, cid := range rec.Unresolved {
-		add("the archive records an inline image (cid:" + util.StripControl(cid) + ") it could not find in the message")
+		add("the archive records an inline image (cid:" + plainText(cid) + ") it could not find in the message")
 	}
 	return notes
 }
