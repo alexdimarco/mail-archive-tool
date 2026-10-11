@@ -150,7 +150,7 @@ func (w *mailboxWalk) stub(ref graph.MessageRef, m *model.Message, folderKey str
 		w.s.observe(graphItemGap(ref, folderKey, "refresh-failed", state.ClassInfo, "a newer read of this item could not be parsed; the archived copy was kept unchanged"))
 		return true
 	}
-	if n := w.manifest.AdoptLegacyGraphStubs(w.token, ref.PhysID, ref.Received, w.lr.runAt); n > 0 {
+	if n := w.manifest.AdoptLegacyGraphStubs(w.token, ref.PhysID, ref.Received, w.lr.runAt, legacyStubIdentity); n > 0 {
 		w.lr.logger.Printf("re-classed %d legacy placeholder(s); this version records each unreadable message separately", n)
 	}
 	m.InternetMessageID = ref.InternetMessageID
@@ -173,6 +173,13 @@ func cleanErr(err error) error {
 		return err
 	}
 	return &cleanedError{err}
+}
+
+// legacyStubIdentity is the identity an older build gave the Graph stub of a
+// message it could not parse, received at t: the content hash of the placeholder
+// subject and t (§4.8.2, FC27). The adoption of such a stub matches on it.
+func legacyStubIdentity(t time.Time) string {
+	return (&model.Message{Subject: state.LegacyPlaceholderSubject, Received: t}).Identity()
 }
 
 // walkAbort wraps an error that ends the mailbox's walk, so the walk's own caller

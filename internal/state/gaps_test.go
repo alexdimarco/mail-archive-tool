@@ -550,7 +550,7 @@ func TestGraphLegacyStubIsAdoptedNotSwept(t *testing.T) {
 	m.Add(kLocal, stub("Inbox", received.Format(time.RFC3339), ""))
 
 	seen := gapBase
-	if n := m.AdoptLegacyGraphStubs(tok, "PHYS1", received, seen); n != 2 {
+	if n := m.AdoptLegacyGraphStubs(tok, "PHYS1", received, seen, nil); n != 2 {
 		t.Fatalf("adopted %d records, want the Received match and the PhysID match", n)
 	}
 	for _, k := range []string{kDate, kPhys} {
@@ -582,7 +582,7 @@ func TestGraphLegacyStubIsAdoptedNotSwept(t *testing.T) {
 	// Without the spare they are records like any other.
 	m2, _, tok2 := gapManifest(t)
 	m2.Add(LiveKey(tok2, "sha:aaaa"), stub("Inbox", received.Format(time.RFC3339), ""))
-	m2.AdoptLegacyGraphStubs(tok2, "", received, seen)
+	m2.AdoptLegacyGraphStubs(tok2, "", received, seen, nil)
 	w2 := NewWalkedFolders()
 	w2.Mark("Inbox")
 	if g := m2.SweepGoneSparing(tok2, w2, later, SweepSpare{}); len(g) != 1 {

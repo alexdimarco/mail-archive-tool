@@ -17,6 +17,7 @@ import (
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/graph"
 	"mail-archive-tool/internal/graph/graphtest"
+	"mail-archive-tool/internal/model"
 	"mail-archive-tool/internal/state"
 )
 
@@ -504,6 +505,50 @@ func TestGraphUnwritableFolderGapRecordsThatItDefersGoneDetection(t *testing.T) 
 			t.Errorf("ledger %+v; want B's gap to defer nothing: every message it counted matched an archived record", gaps)
 		}
 	})
+}
+
+// covers: MA-323, R1, R5, S46
+// S3-AI8: the adoption of an older build's Graph stub (FC27) proves the record is
+// that stub: it has the stub's identity (a content hash of the placeholder subject
+// and the message's received time and nothing else), not only the subject, a hash
+// identity, the body label and the received time. A real archived message that
+// looks like one (the subject "(unreadable message)", no Message-ID, no body, the
+// same second) was relabelled a legacy placeholder, "standing for no message in
+// particular", and then spared from gone-detection for good. It keeps its own words
+// now, and the genuine legacy stub of the same second is still adopted.
+func TestGraphAdoptionLeavesARealMessageThatLooksLikeAStub(t *testing.T) {
+	parseGivesUp(t)
+	received := time.Date(2025, 2, 1, 10, 0, 0, 0, time.UTC)
+	s := sweepServer(false, []string{"Y"}, nil, nil)
+	defer s.Close()
+	s.SetReceived("Y", received)
+	out := tmpDir(t)
+	tok := mailboxToken(t, out, "u1")
+	m := loadArchive(t, out)
+	old := time.Now().UTC().Add(-72 * time.Hour)
+	look := func(name string) state.Record {
+		return state.Record{Path: tok + "/Inbox/" + name + ".html", Folder: "Inbox", FirstFolder: "Inbox", ExportedAt: old, FirstSeen: old, LastSeen: old,
+			Present: true, Subject: state.LegacyPlaceholderSubject, Date: received.Format(time.RFC3339), Terminal: []string{state.MissingBody}}
+	}
+	// A real message: a no-Message-ID content hash over more than the placeholder.
+	kReal := state.LiveKey(tok, (&model.Message{Subject: state.LegacyPlaceholderSubject, SenderEmail: "someone@example.com", Received: received}).Identity())
+	// The genuine legacy stub: the hash of the placeholder subject and the time only.
+	kStub := state.LiveKey(tok, (&model.Message{Subject: state.LegacyPlaceholderSubject, Received: received}).Identity())
+	m.Add(kReal, look("real"))
+	m.Add(kStub, look("stub"))
+	if err := m.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sweepRun(isoOptions(s), out, export.Incremental); err != nil {
+		t.Fatalf("the run: %v", err)
+	}
+	m = loadArchive(t, out)
+	if r, _ := m.Get(kStub); len(r.Terminal) != 1 || r.Terminal[0] != state.LabelLegacyPlaceholder {
+		t.Errorf("the genuine legacy stub = %+v; want it adopted (Terminal [legacy-placeholder])", r)
+	}
+	if r, _ := m.Get(kReal); len(r.Terminal) != 1 || r.Terminal[0] != state.MissingBody {
+		t.Errorf("the real message that looks like a stub = %+v; want its own Terminal [body], not relabelled a legacy placeholder", r)
+	}
 }
 
 // covers: MA-313, R5, R12, R18, S46
