@@ -130,7 +130,9 @@ func (r *rootFS) Remove(rel string) error { return r.root.Remove(rel) }
 
 func (r *rootFS) Lstat(rel string) (fs.FileInfo, error) { return r.root.Lstat(rel) }
 
-func (r *rootFS) Open(rel string) (*os.File, error) { return r.root.Open(rel) }
+// Open opens a regular file of the export for reading, without blocking: a pipe or any
+// other special file planted in its place is refused (EW-AI2, EW-AI3).
+func (r *rootFS) Open(rel string) (*os.File, error) { return openRegularIn(r.root, rel) }
 
 func (r *rootFS) SyncDir(rel string) error {
 	if runtime.GOOS == "windows" {
@@ -166,13 +168,9 @@ func (r *rootFS) Identity() (ceIdentity, error) {
 
 func (r *rootFS) Close() error { return r.root.Close() }
 
-// openExportRoot opens the export directory at abs as a contained root.
-func (e *CopyExportEnv) openExportRoot(abs string) (ceFS, error) {
-	root, err := os.OpenRoot(abs)
-	if err != nil {
-		return nil, err
-	}
-	return e.wrapFS(&rootFS{root: root, abs: abs, randHex: e.rand, syncFile: e.syncFile}), nil
+// fsFromRoot is the contained writer over a root already opened on abs.
+func (e *CopyExportEnv) fsFromRoot(root *os.Root, abs string) ceFS {
+	return e.wrapFS(&rootFS{root: root, abs: abs, randHex: e.rand, syncFile: e.syncFile})
 }
 
 func (e *CopyExportEnv) wrapFS(f ceFS) ceFS {

@@ -319,11 +319,23 @@ func (e *CopyExportEnv) confirmedRoot(sum *ceRecSummary) (ceFS, string, error) {
 	case idUnconfirmed:
 		return nil, path, refusalR2(path)
 	}
-	f, err := e.openExportRoot(path)
+	// The probe judged the path; the folder written through is the one this open
+	// reaches, so it is judged again on the handle itself. A folder swapped for a link
+	// or another directory after the probe is refused here, before anything is written
+	// (EW-AI1).
+	root, err := os.OpenRoot(path)
 	if err != nil {
 		return nil, path, refusalR2(path)
 	}
-	return f, path, nil
+	switch v, _ := judgeIdentity(sum.Header.Run, sum.Header.Identity, seenFromRoot(root)); v {
+	case idMismatch:
+		root.Close()
+		return nil, path, refusalR(path)
+	case idUnconfirmed:
+		root.Close()
+		return nil, path, refusalR2(path)
+	}
+	return e.fsFromRoot(root, path), path, nil
 }
 
 // FinishAsPartial completes an unsealed run from its run record alone, once §4.9's
@@ -443,6 +455,9 @@ func checkSums(fsys ceFS, fingerprint string) error {
 			return &errCheckFailed{"a line of SHA256SUMS.txt is malformed"}
 		}
 		got, err := hashInRoot(fsys, path)
+		if errors.Is(err, errNotRegular) {
+			return &errCheckFailed{path + " is not a regular file any more"}
+		}
 		if err != nil {
 			return &errCheckFailed{path + " is missing"}
 		}

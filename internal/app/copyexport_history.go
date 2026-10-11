@@ -607,9 +607,17 @@ func (e *CopyExportEnv) CheckExport(run string) (*CopyCheck, error) {
 		return nil, refusalR2(spec.Path)
 	}
 	defer root.Close()
+	// What is read is what this open reached, so it is judged on the handle, not only
+	// on the path the probe saw a moment earlier (EW-AI1).
+	switch v, _ := judgeIdentity(spec.Run, spec.Identity, seenFromRoot(root)); v {
+	case idMismatch:
+		return nil, refusalR(spec.Path)
+	case idUnconfirmed:
+		return nil, refusalR2(spec.Path)
+	}
 
 	problem := func(format string, a ...any) { res.Problems = append(res.Problems, fmt.Sprintf(format, a...)) }
-	f, err := root.Open(copySumsName)
+	f, err := openRegularIn(root, copySumsName)
 	if err != nil {
 		problem("%s is missing, so nothing in this folder can be checked", copySumsName)
 		return res, nil
@@ -694,15 +702,11 @@ func hashReader(r io.Reader) (string, error) {
 
 // hashRootFile is the SHA-256 of rel in root, read through the root.
 func hashRootFile(root *os.Root, rel string) (string, error) {
-	f, err := root.Open(rel)
+	f, err := openRegularIn(root, rel)
 	if err != nil {
 		return "", err
 	}
 	defer f.Close()
-	fi, err := f.Stat()
-	if err != nil || !fi.Mode().IsRegular() {
-		return "", fmt.Errorf("%s is not a regular file", rel)
-	}
 	return hashReader(f)
 }
 
