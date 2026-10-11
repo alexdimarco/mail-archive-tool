@@ -44,7 +44,7 @@ button:disabled{opacity:.45;cursor:default}
   <div class="row">
     <input id="q" type="search" placeholder="Search subject, body, people, attachments…  (try  from:bob after:2025-01 invoice)" autofocus>
     <select id="sort"><option value="relevance">Relevance</option><option value="date">Newest</option></select>
-    <a href="/goback" style="font-size:13px;white-space:nowrap">Go back in time →</a>
+    <a href="goback" style="font-size:13px;white-space:nowrap">Go back in time →</a>
   </div>
   <div class="filters">
     <label>Folder <select id="folder"><option value="">all</option></select></label>
@@ -58,7 +58,7 @@ button:disabled{opacity:.45;cursor:default}
   <div id="results"></div>
   <div class="pager"><button id="prev">‹ Prev</button><button id="next">Next ›</button></div>
 </div>
-<script src="/app.js"></script>
+<script src="app.js"></script>
 </body></html>`
 
 // appJS is the UI script, served at /app.js.
@@ -66,14 +66,14 @@ const appJS = `const $=s=>document.querySelector(s);
 let offset=0,limit=50,lastTotal=0;
 const state=()=>({q:$('#q').value,sort:$('#sort').value,folder:$('#folder').value,year:$('#year').value,attach:$('#attach').checked?'1':'',limit,offset});
 
-function fileURL(p){return '/files/'+p.split('/').map(encodeURIComponent).join('/');}
+function fileURL(p){return 'files/'+p.split('/').map(encodeURIComponent).join('/');}
 function zipURL(p){return fileURL(p.replace(/\.html$/,'-attachments.zip'));}
 function fmtDate(s){if(!s)return '';const d=new Date(s);return isNaN(d)?'':d.toISOString().slice(0,10);}
 function esc(s){return (s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
 
 async function search(){
   const p=new URLSearchParams(state());
-  const r=await fetch('/api/search?'+p);const d=await r.json();
+  const r=await fetch('api/search?'+p);const d=await r.json();
   lastTotal=d.total;render(d);
 }
 function render(d){
@@ -96,7 +96,7 @@ function render(d){
   $('#next').disabled=offset+limit>=d.total;
 }
 async function facets(){
-  const d=await(await fetch('/api/facets')).json();
+  const d=await(await fetch('api/facets')).json();
   $('#count').textContent=(d.total||0).toLocaleString()+' messages indexed';
   for(const f of (d.folders||[])){const o=document.createElement('option');o.value=f.folder;o.textContent=f.folder+' ('+f.count+')';$('#folder').appendChild(o);}
   for(const y of (d.years||[])){const o=document.createElement('option');o.value=y;o.textContent=y;$('#year').appendChild(o);}

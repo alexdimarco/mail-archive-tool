@@ -352,7 +352,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
     <div class="brand">MailArchive<span>Desktop</span></div>
     <nav class="nav">
       <div class="nav-title">Workspace</div>
-      <a class="active" href="/">Overview</a>
+      <a class="active" href="./">Overview</a>
       <a href="#sec-archive" id="navArchive">Archive now</a>
       {{if .ReaderURL}}<a href="{{.ReaderURL}}" target="_blank" rel="noopener">Open archive</a>
       <a href="{{.ReaderURL}}goback" target="_blank" rel="noopener">Go back in time</a>{{else}}<span class="nav-disabled" title="The archive reader is not running">Open archive</span>
@@ -452,7 +452,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
     </div>
   </div></main>
 </div>
-<script src="/dashboard.js"></script>
+<script src="dashboard.js"></script>
 </body></html>`))
 
 // dashboardJS wires the action buttons (clear sign-in, settings, archive-now with
@@ -465,7 +465,7 @@ const post=path=>fetch(path,{method:'POST',headers:{'X-CSRF-Token':csrf}});
 const clr=$('clearSignin');
 if(clr)clr.addEventListener('click',async()=>{
   const n=$('note');
-  try{const d=await(await post('/api/clear-signin')).json();
+  try{const d=await(await post('api/clear-signin')).json();
     if(n){n.hidden=false;n.textContent=d.ok?'Signed out. The next capture will sign in again.':(d.error||'Could not clear the sign-in.');}
     if(d.ok)setTimeout(()=>location.reload(),900);
   }catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}
@@ -475,7 +475,7 @@ const save=$('saveSettings');
 if(save)save.addEventListener('click',async()=>{
   const n=$('settingsNote');
   const body={out:$('outDir').value,keepRaw:$('keepRaw').checked,includeDeleted:$('incDeleted').checked,includeJunk:$('incJunk').checked};
-  try{const d=await(await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(body)})).json();
+  try{const d=await(await fetch('api/settings',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(body)})).json();
     if(n){n.hidden=false;n.textContent=d.ok?'Settings saved.':(d.error||'Could not save.');}
   }catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}
 });
@@ -490,20 +490,20 @@ function markNav(){
   const h=location.hash||'';
   document.querySelectorAll('.nav a').forEach(a=>{
     const href=a.getAttribute('href')||'';
-    a.classList.toggle('active',h?href===h:href==='/');
+    a.classList.toggle('active',h?href===h:href==='./');
   });
 }
 window.addEventListener('hashchange',markNav);markNav();
 if(btn)btn.addEventListener('click',async()=>{
   btn.disabled=true;const r=$('captureResult');if(r)r.hidden=true;
-  try{const d=await(await post('/api/capture')).json();
+  try{const d=await(await post('api/capture')).json();
     if(!d.ok){btn.disabled=false;if(r){r.hidden=false;r.textContent=d.error||'Could not start.';}return;}
     start();
   }catch(e){btn.disabled=false;if(r){r.hidden=false;r.textContent='Error: '+e;}}
 });
 function start(){if(!polling){polling=true;poll();}}
 async function poll(){
-  try{const d=await(await fetch('/api/activity')).json();render(d);
+  try{const d=await(await fetch('api/activity')).json();render(d);
     if(d.running){setTimeout(poll,1500);return;}
   }catch(e){}
   polling=false;if(btn)btn.disabled=false;
@@ -515,11 +515,11 @@ function render(d){
   if(d.log&&d.log.length){act.hidden=false;act.textContent=d.log.join('\n');act.scrollTop=act.scrollHeight;}
   if(!d.running&&res){res.hidden=false;res.textContent=d.error?('Capture failed: '+d.error):(d.result||'Done.');}
 }
-fetch('/api/activity').then(r=>r.json()).then(d=>{if(d.running)start();}).catch(()=>{});
+fetch('api/activity').then(r=>r.json()).then(d=>{if(d.running)start();}).catch(()=>{});
 
 async function schedState(){
   const n=$('schedState');if(!n)return;
-  try{const d=await(await fetch('/api/schedule-state')).json();
+  try{const d=await(await fetch('api/schedule-state')).json();
     n.hidden=false;
     if(!d.schedulerAvailable)n.textContent='The OS scheduler is unavailable on this machine.';
     else if(d.state==='installed')n.textContent='Installed'+(d.interval?(' ('+d.interval+(d.at?' at '+d.at:'')+')'):'')+'.';
@@ -534,13 +534,13 @@ function schedPost(path){
       return schedState().then(()=>{if(n&&d.left){n.hidden=false;n.textContent='Removed. Left in place: '+d.left+' cannot be read, so removal cannot tell which schedule it records - '+d.remedy+'.';}});});
 }
 const si=$('schedInstall'),sr=$('schedRemove');
-if(si)si.addEventListener('click',()=>schedPost('/api/schedule-install'));
-if(sr)sr.addEventListener('click',()=>schedPost('/api/schedule-remove'));
+if(si)si.addEventListener('click',()=>schedPost('api/schedule-install'));
+if(sr)sr.addEventListener('click',()=>schedPost('api/schedule-remove'));
 schedState();
 
 async function health(){
   const p=$('healthPosture'),b=$('healthBody');if(!b)return;
-  try{const d=await(await fetch('/api/health')).json();
+  try{const d=await(await fetch('api/health')).json();
     if(p)p.textContent=d.posture?('Posture: '+d.posture):'';
     b.textContent=(d.summary||[]).join('\n')||'No archive yet.';
   }catch(e){b.textContent='Could not read status.';}
@@ -549,6 +549,6 @@ health();
 function job(path){const r=$('captureResult');if(r)r.hidden=true;
   post(path).then(x=>x.json()).then(d=>{if(d.ok)start();else if(r){r.hidden=false;r.textContent=d.error||'Could not start.';}});}
 const vb=$('verifyBtn'),rb=$('rebuildBtn');
-if(vb)vb.addEventListener('click',()=>job('/api/verify'));
-if(rb)rb.addEventListener('click',()=>{if(confirm('Rebuild the search index from the archive files? This can take a while for a large archive.'))job('/api/rebuild');});
+if(vb)vb.addEventListener('click',()=>job('api/verify'));
+if(rb)rb.addEventListener('click',()=>{if(confirm('Rebuild the search index from the archive files? This can take a while for a large archive.'))job('api/rebuild');});
 `

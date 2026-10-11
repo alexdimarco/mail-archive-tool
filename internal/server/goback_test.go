@@ -162,7 +162,7 @@ func TestGobackCurrentAndAtDateProjection(t *testing.T) {
 	}
 	// The physical file link stays at the first-captured path (static pages
 	// untouched, R13): grouping follows current, the file does not move.
-	if !strings.Contains(cur, `href="/files/store/Inbox/alpha.html"`) {
+	if !strings.Contains(cur, `href="files/store/Inbox/alpha.html"`) { // relative, to resolve under /s/<P>/ (CC17)
 		t.Errorf("moved message's link must stay at its first-captured physical path:\n%s", cur)
 	}
 

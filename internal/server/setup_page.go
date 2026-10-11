@@ -106,7 +106,7 @@ input{width:100%;padding:10px 11px;border:1px solid var(--line);border-radius:8p
     </p>
   </div>
 </div>
-<script src="/setup.js"></script>
+<script src="setup.js"></script>
 </body></html>`))
 
 // setupJS drives the mode toggle and POSTs the config via fetch with the CSRF
@@ -127,7 +127,7 @@ $('#save').addEventListener('click',async()=>{
     auth:document.querySelector('input[name=auth]:checked').value,secret:$('#secret')?$('#secret').value:''};
   $('#save').disabled=true;
   try{
-    const r=await fetch('/api/setup',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(body)});
+    const r=await fetch('api/setup',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(body)});
     const d=await r.json();
     if(d.ok){note.className='note ok';note.textContent='Saved. '+(d.auth==='device'?'Run a capture to sign in (device code).':(d.configured?'Secret stored.':'No secret stored.'));
       if($('#secret'))$('#secret').value='';}
