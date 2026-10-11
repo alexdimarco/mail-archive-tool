@@ -90,11 +90,6 @@ func TestLegacyPlaceholderIsReclassedByARunOnce(t *testing.T) {
 // test cites it, so an unbuilt half must not hide behind the built one.
 
 // covers: MA-316, R10, R6, R1, S46
-func TestGraphListingPageErrorCostsOneFolder(t *testing.T) {
-	t.Skip("MA-316: a Graph listing page error in one folder is a folder-list-failed gap that leaves the next folder walked and the mailbox unswept; the Graph isolation is FI-S3's; closes when FI-S3 lands")
-}
-
-// covers: MA-316, R10, R6, R1, S46
 func TestLocalFolderFaultsCostOneFolder(t *testing.T) {
 	t.Skip("MA-316: a maildir non-root ReadDir failure, an mbox open failure, an mbox mid-stream error (folder-partially-read with the count read) and the Evolution walkers' folder errors are FI-S2b's (the mbox, maildir and Evolution readers); closes when FI-S2b lands")
 }

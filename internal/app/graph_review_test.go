@@ -97,16 +97,20 @@ func TestRunGraphCancelAfterTheWalkDoesNotRewriteTheOutcome(t *testing.T) {
 	t.Run("a failed mailbox then an interrupt", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
+		// From FI-S3 a transport's own context.Canceled on a $value is that item's
+		// gap and no longer fails the mailbox (MA-540 case (6)); the mailbox that
+		// still fails with one in its chain is one whose folder list the transport
+		// cancelled.
 		c := runSGCase(t, ctx,
-			func(s *graphtest.Server) { addLast(s); s.AddMessage("u1", "F_IN", graphtest.NewItem) },
+			addLast,
 			func(g *GraphOptions) {
-				fail, stop := cancelValue(graphtest.NewItem), cancelAtEOF(lastItem, cancel)
+				fail, stop := cancelOn("/users/u1/mailFolders"), cancelAtEOF(lastItem, cancel)
 				g.WrapTransport = func(rt http.RoundTripper) http.RoundTripper { return stop(fail(rt)) }
 			})
 		if ctx.Err() == nil {
 			t.Fatal("the fault never cancelled the run's context: the case tests nothing")
 		}
-		if c.err == nil || !strings.Contains(c.err.Error(), graphtest.NewItem) {
+		if c.err == nil || !strings.Contains(c.err.Error(), "list folders") {
 			t.Errorf("the failed mailbox's error does not reach the run's: %v", c.err)
 		}
 		if errors.Is(c.err, context.Canceled) {

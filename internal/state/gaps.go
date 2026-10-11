@@ -351,6 +351,23 @@ func (m *Manifest) CloseGap(key string) bool {
 	return true
 }
 
+// CloseGapReason closes the entry stored under key if it carries reason, and
+// reports whether it did. A walk that answers one kind of gap (a folder that lists
+// again, a folder that can be written again) must not close another kind that
+// happens to share its locator: Graph's folder-list-failed gap is keyed
+// folder:<folder id>, a local folder gap folder:<path>, and a folder's display name
+// can read like another folder's id.
+func (m *Manifest) CloseGapReason(key, reason string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	g, ok := m.CaptureGaps[key]
+	if !ok || g.Reason != reason {
+		return false
+	}
+	delete(m.CaptureGaps, key)
+	return true
+}
+
 // CloseGapInFolder closes the entry stored under key if it is recorded for folder
 // (or for no folder: an entry an older build or a seed left unplaced) and reports
 // whether it did. A locator that is not the item's own (the post-parse ident: of a

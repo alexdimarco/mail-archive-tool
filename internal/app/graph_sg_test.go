@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -108,7 +109,7 @@ func archived(t *testing.T, out, identity string) bool {
 func failedNotCancelled(t *testing.T, c sgCase) {
 	t.Helper()
 	if c.err == nil {
-		t.Error("the case run did not fail mailbox 1")
+		t.Error("the case run neither failed mailbox 1 nor was partial")
 	}
 	if errors.Is(c.err, context.Canceled) || errors.Is(c.err, context.DeadlineExceeded) {
 		t.Errorf("the run's error matches a context error, which recordRun and the CLI read as an interrupt: %v", c.err)
@@ -139,6 +140,16 @@ func failedNotCancelled(t *testing.T, c sgCase) {
 	}
 }
 
+// u1Gap is the one ledger entry mailbox 1's case run left: what a stop became.
+func u1Gap(t *testing.T, c sgCase) state.CaptureGap {
+	t.Helper()
+	gaps := ledgerOf(t, c.out)
+	if len(gaps) != 1 {
+		t.Fatalf("the ledger holds %+v, want the one gap of the stop", gaps)
+	}
+	return gaps[0]
+}
+
 // covers: MA-540, R10, R17, R18, R21, S37, S46
 // SG's stops on the shipped capture path, through RunGraph on the shared fake:
 // two mailboxes, a healthy first run, then a case run in which mailbox 1 meets
@@ -146,10 +157,14 @@ func failedNotCancelled(t *testing.T, c sgCase) {
 // first page; (2) fresh nextLinks past the page cap in Messages, and in
 // Folders; (3) a new item's $value that stalls mid-body past the idle window,
 // sends no headers within the header window, or trickles past capture's
-// overall cap. Each fails mailbox 1 (before S3, today's error path) with a
-// typed error naming the stop, and for (3) the message and the limit, matching
-// no context error; no {k,gone} is recorded and every record stays Present;
-// mailbox 2 is walked; the run is recorded failed with the sidecar written.
+// overall cap. A stop in Folders fails mailbox 1 with the typed error naming it.
+// From S3 on a stop in Messages or in a $value is MA-314's gap case instead: a
+// folder-list-failed or a fetch-timeout gap whose detail is the typed error's
+// text, naming the stop and, for (3), the message and the limit; the mailbox
+// goes on, and the run is partial (before S3 each failed mailbox 1, today's
+// error path). In every case the error matches no context error; no {k,gone} is
+// recorded and every record stays Present; mailbox 2 is walked; the run is
+// recorded failed with the sidecar written.
 func TestRunGraphGuardStopsFailTheMailbox(t *testing.T) {
 	wantListing := func(kind graph.ListingKind, limit int) func(*testing.T, error) {
 		return func(t *testing.T, err error) {
@@ -163,34 +178,50 @@ func TestRunGraphGuardStopsFailTheMailbox(t *testing.T) {
 			}
 		}
 	}
-	wantTimeout := func(kind graph.TimeoutKind, limit time.Duration) func(*testing.T, error) {
-		return func(t *testing.T, err error) {
-			var te *graph.TimeoutError
-			if !errors.As(err, &te) || te.Kind != kind || te.Limit != limit || te.MessageID != graphtest.NewItem {
-				t.Errorf("the stop is not the typed %s timeout of %v for %s: %v", kind, limit, graphtest.NewItem, err)
-				return
-			}
-			if !strings.Contains(err.Error(), graphtest.NewItem) || !strings.Contains(err.Error(), limit.String()) {
-				t.Errorf("the run's error does not name the message and the limit: %v", err)
-			}
-		}
+	// A stop that is a gap: the entry's reason and scope, and what its detail names.
+	type gapWant struct {
+		reason, scope, folder string
+		detail                []string
 	}
-	expect := map[string]func(*testing.T, error){
-		"repeating nextLink in Messages": wantListing(graph.ListingRepeat, 0),
-		"page cap in Messages":           wantListing(graph.ListingPageCap, graphtest.PageCap),
-		"page cap in Folders":            wantListing(graph.ListingPageCap, graphtest.PageCap),
-		"$value idle":                    wantTimeout(graph.TimeoutIdle, graphtest.IdleTimeout),
-		"$value header":                  wantTimeout(graph.TimeoutHeader, graphtest.HeaderTimeout),
-		"$value overall":                 wantTimeout(graph.TimeoutOverall, graphtest.OverallCap),
+	listingGap := func(detail ...string) gapWant {
+		return gapWant{"folder-list-failed", state.GapScopeFolder, "Inbox", append([]string{"did not terminate"}, detail...)}
+	}
+	// A timeout's gap names the message, the limit, and which of the three limits
+	// (the typed *graph.TimeoutError's Kind) fired.
+	timeoutGap := func(phrase string, limit time.Duration) gapWant {
+		return gapWant{"fetch-timeout", state.GapScopeItem, "Inbox", []string{graphtest.NewItem, limit.String(), phrase}}
+	}
+	failsMailbox := map[string]func(*testing.T, error){
+		"page cap in Folders": wantListing(graph.ListingPageCap, graphtest.PageCap),
+	}
+	becomesGap := map[string]gapWant{
+		"repeating nextLink in Messages": listingGap("already fetched"),
+		"page cap in Messages":           listingGap(fmt.Sprintf("%d pages", graphtest.PageCap)),
+		"$value idle":                    timeoutGap("the download's idle limit", graphtest.IdleTimeout),
+		"$value header":                  timeoutGap("the download's response limit", graphtest.HeaderTimeout),
+		"$value overall":                 timeoutGap("the download's overall limit", graphtest.OverallCap),
 	}
 	for _, stop := range graphtest.Stops {
-		check, ok := expect[stop.Name]
-		if !ok {
-			t.Fatalf("no expectation for the stop %q", stop.Name)
-		}
 		t.Run(stop.Name, func(t *testing.T) {
 			c := runSGCase(t, context.Background(), stop.Apply, nil)
-			check(t, c.err)
+			if check, ok := failsMailbox[stop.Name]; ok {
+				check(t, c.err)
+			} else if want, ok := becomesGap[stop.Name]; ok {
+				if !errors.Is(c.err, ErrPartial) {
+					t.Errorf("the run returned %v, want ErrPartial: the stop is mailbox 1's gap, and the mailbox goes on", c.err)
+				}
+				g := u1Gap(t, c)
+				if g.Reason != want.reason || g.Scope != want.scope || g.Class != state.ClassFillable || g.Folder != want.folder {
+					t.Errorf("the stop's gap = %+v; want %s, %s scope, fillable, in %s", g, want.reason, want.scope, want.folder)
+				}
+				for _, s := range want.detail {
+					if !strings.Contains(g.Detail, s) {
+						t.Errorf("the gap's detail %q does not name %q", g.Detail, s)
+					}
+				}
+			} else {
+				t.Fatalf("no expectation for the stop %q", stop.Name)
+			}
 			failedNotCancelled(t, c)
 		})
 	}
@@ -240,12 +271,12 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-// cancelValue is a transport fault: the $value request for message id fails
-// with context.Canceled, though no context was cancelled.
-func cancelValue(id string) func(http.RoundTripper) http.RoundTripper {
+// cancelOn is a transport fault: a request whose path ends in suffix fails with
+// context.Canceled, though no context was cancelled.
+func cancelOn(suffix string) func(http.RoundTripper) http.RoundTripper {
 	return func(rt http.RoundTripper) http.RoundTripper {
 		return roundTripFunc(func(r *http.Request) (*http.Response, error) {
-			if strings.HasSuffix(r.URL.Path, "/messages/"+id+"/$value") {
+			if strings.HasSuffix(r.URL.Path, suffix) {
 				return nil, context.Canceled
 			}
 			return rt.RoundTrip(r)
@@ -253,18 +284,27 @@ func cancelValue(id string) func(http.RoundTripper) http.RoundTripper {
 	}
 }
 
+// cancelValue is cancelOn for the $value request of message id.
+func cancelValue(id string) func(http.RoundTripper) http.RoundTripper {
+	return cancelOn("/messages/" + id + "/$value")
+}
+
 // covers: MA-540, R10, R17, R18, R21, S37, S46
 // MA-540's case (6), RunGraph's second guard: a transport that returns
 // context.Canceled for mailbox 1's new $value while the run's own context is
-// live fails mailbox 1 (before S3) but is never read as an interrupt: mailbox 2
-// is walked, the run is recorded failed, not cancelled, and RunGraph's error
-// does not match context.Canceled, so the CLI exits 1.
+// live is never read as an interrupt: the item is a fetch-transport gap naming
+// it (§4.8.1 rule 4) and the mailbox goes on (before S3 it failed the mailbox);
+// mailbox 2 is walked, the run is recorded failed, not cancelled, and RunGraph's
+// error does not match context.Canceled, so the CLI exits 1.
 func TestRunGraphTransportCancelIsNotAnInterrupt(t *testing.T) {
 	c := runSGCase(t, context.Background(),
 		func(s *graphtest.Server) { s.AddMessage("u1", "F_IN", graphtest.NewItem) },
 		func(g *GraphOptions) { g.WrapTransport = cancelValue(graphtest.NewItem) })
-	if c.err == nil || !strings.Contains(c.err.Error(), graphtest.NewItem) {
-		t.Errorf("the run's error does not name the message whose download failed: %v", c.err)
+	if !errors.Is(c.err, ErrPartial) {
+		t.Errorf("the run returned %v, want ErrPartial", c.err)
+	}
+	if g := u1Gap(t, c); g.Reason != "fetch-transport" || g.Scope != state.GapScopeItem || !strings.Contains(g.Detail, graphtest.NewItem) {
+		t.Errorf("the item's gap = %+v; want fetch-transport, item scope, naming the message whose download failed", g)
 	}
 	failedNotCancelled(t, c)
 }

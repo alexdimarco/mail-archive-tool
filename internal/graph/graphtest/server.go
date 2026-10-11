@@ -35,6 +35,18 @@ type Server struct {
 	boxes  map[string]*mailbox
 	values map[string]http.HandlerFunc
 	reqs   []string
+
+	// What a fault-isolation test (MA-310..MA-313, MA-501) turns on: whether the
+	// tenant honours the immutable-id preference, which messages carry no
+	// Message-ID or another received time, a listing page or the folder-detail
+	// (control) request served by a handler of the test's own.
+	honor    bool
+	noMid    map[string]bool
+	received map[string]time.Time
+	lists    map[string]http.HandlerFunc // upn/folderID -> the folder's message listing
+	probe    http.HandlerFunc            // GET /users/{upn}/mailFolders/{id}
+	token    http.HandlerFunc            // the token endpoint, when a test's own answers it
+	shortTok bool                        // the token it hands out expires at once, so every request fetches one
 }
 
 type mailbox struct {
@@ -51,7 +63,8 @@ type folder struct {
 
 // NewServer starts an empty fake.
 func NewServer() *Server {
-	s := &Server{boxes: map[string]*mailbox{}, values: map[string]http.HandlerFunc{}}
+	s := &Server{boxes: map[string]*mailbox{}, values: map[string]http.HandlerFunc{},
+		noMid: map[string]bool{}, received: map[string]time.Time{}, lists: map[string]http.HandlerFunc{}}
 	s.srv = httptest.NewServer(http.HandlerFunc(s.serve))
 	s.URL = s.srv.URL
 	return s
@@ -119,6 +132,89 @@ func (s *Server) SetValue(id string, h http.HandlerFunc) {
 	s.values[id] = h
 }
 
+// HonorImmutableIDs makes the message listings answer Preference-Applied:
+// IdType="ImmutableId", as a tenant that honours the preference does: each id the
+// listing returns is then the message's immutable id.
+func (s *Server) HonorImmutableIDs(on bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.honor = on
+}
+
+// SetNoMid makes message id carry no Message-ID, in its listing entry and in its
+// $value: capture knows it only by a content hash.
+func (s *Server) SetNoMid(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.noMid[id] = true
+}
+
+// SetReceived sets message id's receivedDateTime (it defaults to 2025-03-01 09:00 UTC).
+func (s *Server) SetReceived(id string, t time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.received[id] = t
+}
+
+// RemoveMessage deletes message id from upn's folder: the mailbox no longer lists it.
+func (s *Server) RemoveMessage(upn, folderID, id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if f := s.folder(upn, folderID); f != nil {
+		for i, m := range f.msgs {
+			if m == id {
+				f.msgs = append(f.msgs[:i:i], f.msgs[i+1:]...)
+				return
+			}
+		}
+	}
+}
+
+// MoveMessage moves message id from one of upn's folders to another, as a user
+// moving mail does: the listing of the new folder holds it, the old one does not.
+func (s *Server) MoveMessage(upn, from, to, id string) {
+	s.RemoveMessage(upn, from, id)
+	s.AddMessage(upn, to, id)
+}
+
+// SetListHandler serves upn's folder folderID's message listing through h instead
+// of its messages (nil restores them): a page that errors.
+func (s *Server) SetListHandler(upn, folderID string, h http.HandlerFunc) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if h == nil {
+		delete(s.lists, upn+"/"+folderID)
+		return
+	}
+	s.lists[upn+"/"+folderID] = h
+}
+
+// SetProbe serves the folder-detail request (GET /users/{upn}/mailFolders/{id}
+// ?$select=id), the breaker's control request, through h (nil restores the
+// answer 200 for a folder the mailbox has).
+func (s *Server) SetProbe(h http.HandlerFunc) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.probe = h
+}
+
+// ShortTokens makes the token endpoint hand out a token that is stale at once, so
+// the client fetches a new one for every request: the window in which a test makes
+// the endpoint refuse a refresh (SetToken) in the middle of a walk.
+func (s *Server) ShortTokens(on bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.shortTok = on
+}
+
+// SetToken serves the token endpoint through h (nil restores its answer): a
+// sign-in that is refused, as a revoked or expired client secret is.
+func (s *Server) SetToken(h http.HandlerFunc) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.token = h
+}
+
 // ResetRequests forgets the requests recorded so far.
 func (s *Server) ResetRequests() {
 	s.mu.Lock()
@@ -146,7 +242,17 @@ func writeJSON(w http.ResponseWriter, s string) {
 
 func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/token" {
-		writeJSON(w, `{"access_token":"t","token_type":"Bearer","expires_in":3600}`)
+		s.mu.Lock()
+		h, short := s.token, s.shortTok
+		s.mu.Unlock()
+		switch {
+		case h != nil:
+			h(w, r)
+		case short:
+			writeJSON(w, `{"access_token":"t","token_type":"Bearer","expires_in":1}`)
+		default:
+			writeJSON(w, `{"access_token":"t","token_type":"Bearer","expires_in":3600}`)
+		}
 		return
 	}
 	s.mu.Lock()
@@ -161,14 +267,21 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case len(parts) == 2 && parts[1] == "mailFolders":
 		s.folderList(w, r, parts[0], page)
+	case len(parts) == 3 && parts[1] == "mailFolders":
+		s.folderDetail(w, r, parts[0], parts[2])
 	case len(parts) == 4 && parts[1] == "mailFolders" && parts[3] == "messages":
 		s.messages(w, r, parts[0], parts[2], page)
 	case len(parts) == 4 && parts[1] == "messages" && parts[3] == "$value":
 		s.mu.Lock()
 		h := s.values[parts[2]]
+		noMid := s.noMid[parts[2]]
 		s.mu.Unlock()
 		if h != nil {
 			h(w, r)
+			return
+		}
+		if noMid {
+			io.WriteString(w, BodyNoMid(parts[2]))
 			return
 		}
 		io.WriteString(w, Body(parts[2]))
@@ -211,6 +324,24 @@ func (s *Server) folderList(w http.ResponseWriter, r *http.Request, upn string, 
 	writePage(w, vals, next(r, l, n, false))
 }
 
+// folderDetail answers GET /users/{upn}/mailFolders/{id}: the well-known folder
+// resolutions (deletedItems, junkemail) are 404, a folder the mailbox has is 200,
+// and a test's SetProbe handler answers instead when set.
+func (s *Server) folderDetail(w http.ResponseWriter, r *http.Request, upn, id string) {
+	s.mu.Lock()
+	h := s.probe
+	known := s.folder(upn, id) != nil
+	s.mu.Unlock()
+	switch {
+	case h != nil:
+		h(w, r)
+	case known:
+		writeJSON(w, `{"id":"`+id+`"}`)
+	default:
+		http.NotFound(w, r)
+	}
+}
+
 func (s *Server) messages(w http.ResponseWriter, r *http.Request, upn, folderID string, n int) {
 	s.mu.Lock()
 	f := s.folder(upn, folderID)
@@ -219,6 +350,12 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request, upn, folderID 
 		http.NotFound(w, r)
 		return
 	}
+	if h := s.lists[upn+"/"+folderID]; h != nil {
+		s.mu.Unlock()
+		h(w, r)
+		return
+	}
+	honor := s.honor
 	l := f.listing
 	var ids []string
 	if l != Endless || n == 1 {
@@ -227,12 +364,22 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request, upn, folderID 
 		}
 	}
 	more := n*f.pageSize < len(f.msgs)
-	s.mu.Unlock()
-	received := time.Date(2025, 3, 1, 9, 0, 0, 0, time.UTC).Format(time.RFC3339)
 	var vals []string
 	for _, id := range ids {
-		vals = append(vals, `{"id":"`+id+`","internetMessageId":"<`+strings.ToLower(id)+`@x>","subject":"subj-`+id+
-			`","from":{"emailAddress":{"address":"a@example.com"}},"receivedDateTime":"`+received+`"}`)
+		received := time.Date(2025, 3, 1, 9, 0, 0, 0, time.UTC)
+		if t, ok := s.received[id]; ok {
+			received = t
+		}
+		mid := `"internetMessageId":"<` + strings.ToLower(id) + `@x>",`
+		if s.noMid[id] {
+			mid = ""
+		}
+		vals = append(vals, `{"id":"`+id+`",`+mid+`"subject":"subj-`+id+
+			`","from":{"emailAddress":{"address":"a@example.com"}},"receivedDateTime":"`+received.UTC().Format(time.RFC3339)+`"}`)
+	}
+	s.mu.Unlock()
+	if honor {
+		w.Header().Set("Preference-Applied", `IdType="ImmutableId"`)
 	}
 	writePage(w, vals, next(r, l, n, more))
 }
