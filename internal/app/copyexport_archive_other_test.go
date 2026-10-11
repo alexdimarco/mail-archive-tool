@@ -5,11 +5,55 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/util"
 )
+
+// covers: MA-531, MA-512, R9, R29, S52
+// An over-cap manifest in another archive folder is R-o4 on its size alone, before anything is read or
+// unmarshalled and with no unbounded allocation (RR2-C11): a sparse manifest of 1 GiB and a byte is
+// refused having allocated almost nothing (R-o4 says "nothing was read beyond that check"), where a
+// read of it would allocate the cap; and the folder is not written. The positive twin: a healthy folder
+// opens as another archive folder.
+func TestAnotherArchiveFolderOverTheManifestCapIsRefusedUnread(t *testing.T) {
+	healthy := buildCEArchive(t)
+	if s, err := OpenArchive(healthy.dir, ArchiveOptions{Other: true}); err != nil {
+		t.Fatalf("the positive twin, a healthy folder: %v", err)
+	} else {
+		s.Close()
+	}
+	big := filepath.Join(tmpDir(t), "big")
+	if err := os.MkdirAll(big, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Create(filepath.Join(big, archiveManifestName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(archiveOtherManifestCap + 1); err != nil {
+		f.Close()
+		t.Skipf("no sparse files here: %v", err)
+	}
+	f.Close()
+	before := lsTree(t, big)
+
+	var m0, m1 runtime.MemStats
+	runtime.ReadMemStats(&m0)
+	_, err = OpenArchive(big, ArchiveOptions{Other: true})
+	runtime.ReadMemStats(&m1)
+	var ref *CopyRefusal
+	if !errors.As(err, &ref) || ref.ID != "R-o4" {
+		t.Fatalf("an over-cap manifest: %v, want R-o4", err)
+	}
+	assure.Refused(t, ref.ExitCode(), ref.Message, assure.Code(1), assure.Names(big, "larger than MailArchive reads from another archive folder", "the limit is 1 GB", "nothing was written"),
+		assure.NoSideEffect(func() bool { return reflect.DeepEqual(lsTree(t, big), before) }))
+	if got := m1.TotalAlloc - m0.TotalAlloc; got > 64<<20 {
+		t.Errorf("refusing an over-cap manifest allocated %d MiB: it was read before it was refused", got>>20)
+	}
+}
 
 // covers: MA-512, R12, S52
 // R-f2's archive-side wording for another archive folder (design §7.6, RR2-C13) carries what, why and
