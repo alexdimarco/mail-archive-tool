@@ -249,6 +249,36 @@ func TestGraphFaultsNeverSweepAPresentMessageGone(t *testing.T) {
 		wantGone(t, out, "N1, on the next clean run", k, rec)
 	})
 
+	t.Run("(c'') a known-identity failure in Sent still lets a deleted Sent message be swept", func(t *testing.T) {
+		// MA-312 (c)'s contrast, in the folder the row names: the fault is in Sent and its
+		// identity matches a record (B1's Message-ID), so it spares nothing, and B2, a
+		// PhysID-less record that an unknown-identity fault would have spared (case (c)),
+		// is swept gone in the same run.
+		s := sweepServer(false, nil, []string{"B1", "B2"}, nil)
+		defer s.Close()
+		out := tmpDir(t)
+		g := isoOptions(s)
+		if _, err := sweepRun(g, out, export.Incremental); err != nil {
+			t.Fatalf("run 1: %v", err)
+		}
+		s.SetValue("B1", poison500)
+		s.RemoveMessage("u1", "F_SE", "B2")
+		if _, err := sweepRun(g, out, export.Full); err != nil {
+			t.Fatalf("run 2 (Full, B1's refresh fails): %v", err)
+		}
+		runAt := runStart(t, out)
+		k, rec := recordForID(t, out, "b1@x")
+		wantSeenNotGone(t, out, "B1 (the known-identity failure in Sent)", k, rec, runAt)
+		if rec.PhysID != "" {
+			t.Fatalf("B1 holds the immutable id %q: the case needs PhysID-less records", rec.PhysID)
+		}
+		if g := graphGaps(t, out); len(g) != 1 || g[0].Locator != "graph:B1" || g[0].Folder != "Sent" || g[0].DefersGone {
+			t.Errorf("ledger %+v; want B1's one gap in Sent, deferring nothing: its identity matched a record", g)
+		}
+		k, rec = recordForID(t, out, "b2@x")
+		wantGone(t, out, "B2 (deleted in Sent, PhysID-less: a known-identity failure spares nothing)", k, rec)
+	})
+
 	t.Run("(d) a message moved into a folder whose listing then fails", func(t *testing.T) {
 		s := sweepServer(false, []string{"A1", "A2"}, []string{"B1"}, nil)
 		defer s.Close()
