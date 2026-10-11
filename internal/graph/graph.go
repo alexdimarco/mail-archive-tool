@@ -396,7 +396,7 @@ func (c *Client) Folders(ctx context.Context, userID string, filter FolderFilter
 				return err
 			}
 			var body struct {
-				Value []struct {
+				Value *[]struct {
 					ID               string `json:"id"`
 					DisplayName      string `json:"displayName"`
 					ChildFolderCount int    `json:"childFolderCount"`
@@ -406,7 +406,11 @@ func (c *Client) Folders(ctx context.Context, userID string, filter FolderFilter
 			if _, err := c.getJSON(ctx, next, &body); err != nil {
 				return err
 			}
-			for _, f := range body.Value {
+			// A page with no value array is no page of folders (S3-AO1); see Messages.
+			if body.Value == nil {
+				return &ListingError{Kind: ListingMalformed}
+			}
+			for _, f := range *body.Value {
 				// An excluded well-known folder (Deleted Items / Junk Email) and its
 				// entire subtree are dropped by resolved ID before any message in
 				// them is listed, so nothing under them is walked (T7). Never a
@@ -432,6 +436,13 @@ func (c *Client) Folders(ctx context.Context, userID string, filter FolderFilter
 	}
 	if err := walk("", nil, 1); err != nil {
 		return nil, err
+	}
+	// A mailbox always has folders (its Inbox, at least): a folder list with none
+	// would end the walk at once with every record unobserved and nothing wrong
+	// said, so it is a malformed answer, not an empty mailbox (S3-AO1). A mailbox
+	// whose only folders are the excluded ones cannot exist.
+	if len(out) == 0 {
+		return nil, &ListingError{Kind: ListingMalformed}
 	}
 	return out, nil
 }
@@ -632,8 +643,10 @@ func (c *Client) Messages(ctx context.Context, userID, folderID string, fn func(
 		if err := guard.admit(next); err != nil {
 			return err
 		}
+		// Value is a pointer so a page with no value array (absent or null) is told
+		// from an empty one: a real page always carries the array.
 		var body struct {
-			Value []struct {
+			Value *[]struct {
 				ID                string               `json:"id"`
 				InternetMessageID string               `json:"internetMessageId"`
 				Subject           string               `json:"subject"`
@@ -664,6 +677,13 @@ func (c *Client) Messages(ctx context.Context, userID, folderID string, fn func(
 			}
 			return err
 		}
+		// A 2xx page with no value array ({}, null, an error object: a proxy, a
+		// captive portal, an impersonator) is not an empty folder: reading it as one
+		// would count the folder walked and let the sweep mark every record in it
+		// gone. It ends the loop as a typed stop, a folder-list-failed gap (S3-AO1).
+		if body.Value == nil {
+			return &ListingError{Kind: ListingMalformed}
+		}
 		if firstPage {
 			// Namespace-once (rev-6 §2): the first page's Preference-Applied says
 			// whether the tenant honored the immutable-id preference. When honored,
@@ -672,7 +692,7 @@ func (c *Client) Messages(ctx context.Context, userID, folderID string, fn func(
 			honored = strings.Contains(strings.ToLower(pref), "immutableid")
 			firstPage = false
 		}
-		for _, m := range body.Value {
+		for _, m := range *body.Value {
 			ref := MessageRef{
 				ID:                m.ID,
 				InternetMessageID: strings.Trim(m.InternetMessageID, "<>"),

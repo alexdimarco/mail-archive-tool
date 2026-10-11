@@ -17,6 +17,7 @@ const (
 	ListingPageCap     ListingKind = "page-cap"     // a page past the loop's page cap
 	ListingForeignHost ListingKind = "foreign-host" // a nextLink off the client's base scheme, host, port or path
 	ListingPageSize    ListingKind = "page-size"    // one page whose body runs past maxPageBytes
+	ListingMalformed   ListingKind = "malformed"    // a 2xx answer that carries no value array, or a folder list with no folder
 )
 
 // maxPageBytes bounds one JSON page's body. A listing page is at most a few
@@ -43,6 +44,8 @@ func (e *ListingError) Error() string {
 		return fmt.Sprintf("graph listing did not terminate: it ran past %d pages (the listing's page limit)", e.Limit)
 	case ListingPageSize:
 		return fmt.Sprintf("graph listing did not terminate: one page ran past %d bytes (the listing's page size limit)", e.Limit)
+	case ListingMalformed:
+		return "graph listing is not a Graph answer: the page carries no list of items (a proxy or a captive portal may be answering)"
 	default:
 		return fmt.Sprintf("graph listing left Microsoft Graph: its next page is on %q, and no request was sent there", e.Host)
 	}

@@ -46,9 +46,11 @@ type Server struct {
 	bodyMids map[string]string // message id -> the Message-ID its $value carries, when not the listing's
 	received map[string]time.Time
 	lists    map[string]http.HandlerFunc // upn/folderID -> the folder's message listing
-	probe    http.HandlerFunc            // GET /users/{upn}/mailFolders/{id}
-	token    http.HandlerFunc            // the token endpoint, when a test's own answers it
-	shortTok bool                        // the token it hands out expires at once, so every request fetches one
+	// folderLists serves a mailbox's folder list through a handler of the test's own.
+	folderLists map[string]http.HandlerFunc
+	probe       http.HandlerFunc // GET /users/{upn}/mailFolders/{id}
+	token       http.HandlerFunc // the token endpoint, when a test's own answers it
+	shortTok    bool             // the token it hands out expires at once, so every request fetches one
 }
 
 type mailbox struct {
@@ -67,7 +69,7 @@ type folder struct {
 func NewServer() *Server {
 	s := &Server{boxes: map[string]*mailbox{}, values: map[string]http.HandlerFunc{},
 		noMid: map[string]bool{}, mids: map[string]string{}, bodyMids: map[string]string{},
-		received: map[string]time.Time{}, lists: map[string]http.HandlerFunc{}}
+		received: map[string]time.Time{}, lists: map[string]http.HandlerFunc{}, folderLists: map[string]http.HandlerFunc{}}
 	s.srv = httptest.NewServer(http.HandlerFunc(s.serve))
 	s.URL = s.srv.URL
 	return s
@@ -209,6 +211,29 @@ func (s *Server) SetListHandler(upn, folderID string, h http.HandlerFunc) {
 	s.lists[upn+"/"+folderID] = h
 }
 
+// SetFolderListHandler serves upn's folder list (GET /users/{upn}/mailFolders)
+// through h instead of its folders (nil restores them): a list that errors or
+// answers something that is not a folder list.
+func (s *Server) SetFolderListHandler(upn string, h http.HandlerFunc) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if h == nil {
+		delete(s.folderLists, upn)
+		return
+	}
+	s.folderLists[upn] = h
+}
+
+// Answer serves status with body as a JSON answer: a page that is well-formed
+// JSON and a 2xx, whatever it says.
+func Answer(status int, body string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		io.WriteString(w, body)
+	}
+}
+
 // SetProbe serves the folder-detail request (GET /users/{upn}/mailFolders/{id}
 // ?$select=id), the breaker's control request, through h (nil restores the
 // answer 200 for a folder the mailbox has).
@@ -339,6 +364,11 @@ func writePage(w http.ResponseWriter, values []string, nextLink string) {
 
 func (s *Server) folderList(w http.ResponseWriter, r *http.Request, upn string, n int) {
 	s.mu.Lock()
+	if h := s.folderLists[upn]; h != nil {
+		s.mu.Unlock()
+		h(w, r)
+		return
+	}
 	b := s.box(upn)
 	var vals []string
 	if n == 1 {

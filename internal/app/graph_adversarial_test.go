@@ -87,6 +87,71 @@ func TestGraphCloseDelimitedBodyIsATransportFault(t *testing.T) {
 	}
 }
 
+// covers: MA-316, R10, R6, R1, S46
+// S3-AO1: a listing answer that is not a Graph page is never an empty folder. A real
+// page always carries a value array; a 2xx whose body is {}, null or an error object
+// (a proxy, a captive portal, an impersonator) used to decode to zero items and no
+// nextLink, so the folder counted as fully walked and the sweep marked every record
+// of it gone. It is a folder-list-failed gap now, the next folder walks, and the
+// mailbox's sweep is deferred. A folder list that is not a folder list (no value
+// array, or no folder at all: a mailbox always has its Inbox) fails the mailbox
+// before anything is walked. The twin documents the limit: an honest-looking
+// {"value":[]} cannot be told from an empty folder and is swept like one.
+func TestGraphMalformedListingIsNeverAnEmptyFolder(t *testing.T) {
+	setup := func(t *testing.T) (*graphtest.Server, GraphOptions, string) {
+		s := sweepServer(false, []string{"A1", "A2"}, []string{"B1"}, nil)
+		t.Cleanup(s.Close)
+		g, out := isoOptions(s), tmpDir(t)
+		if _, err := sweepRun(g, out, export.Incremental); err != nil {
+			t.Fatalf("run 1: %v", err)
+		}
+		return s, g, out
+	}
+	t.Run("the twin: an honest empty value array is an empty folder", func(t *testing.T) {
+		s, g, out := setup(t)
+		s.SetListHandler("u1", "F_IN", graphtest.Answer(200, `{"value":[]}`))
+		if _, err := sweepRun(g, out, export.Incremental); err != nil {
+			t.Fatalf("run 2: %v", err)
+		}
+		for _, id := range []string{"a1@x", "a2@x"} {
+			k, rec := recordForID(t, out, id)
+			wantGone(t, out, id+" (the folder listed empty)", k, rec)
+		}
+	})
+	for _, body := range []string{`{}`, `null`, `{"error":{"code":"Oops"}}`, `[]`, `"<html>sign in to the guest wifi</html>"`} {
+		t.Run("a folder's listing answers "+body, func(t *testing.T) {
+			s, g, out := setup(t)
+			s.SetListHandler("u1", "F_IN", graphtest.Answer(200, body))
+			s.RemoveMessage("u1", "F_SE", "B1")
+			if _, err := sweepRun(g, out, export.Incremental); !errors.Is(err, ErrPartial) {
+				t.Fatalf("run 2 returned %v, want ErrPartial: the folder was not read", err)
+			}
+			for _, id := range []string{"a1@x", "a2@x", "b1@x"} {
+				k, rec := recordForID(t, out, id)
+				wantDeferred(t, out, id+" (the walk could not read the Inbox: its sweep is deferred)", k, rec)
+			}
+			gaps := graphGaps(t, out)
+			if len(gaps) != 1 || gaps[0].Reason != "folder-list-failed" || gaps[0].Scope != state.GapScopeFolder || gaps[0].Folder != "Inbox" {
+				t.Errorf("the ledger holds %+v; want one folder-list-failed gap for the Inbox", gaps)
+			}
+		})
+	}
+	for _, body := range []string{`{}`, `null`, `{"value":[]}`} {
+		t.Run("the folder list answers "+body, func(t *testing.T) {
+			s, g, out := setup(t)
+			s.SetFolderListHandler("u1", graphtest.Answer(200, body))
+			s.RemoveMessage("u1", "F_IN", "A2")
+			if _, err := sweepRun(g, out, export.Incremental); err == nil || errors.Is(err, ErrPartial) {
+				t.Fatalf("run 2 returned %v, want the mailbox to fail: a folder list with no folder in it is not a mailbox", err)
+			}
+			for _, id := range []string{"a1@x", "a2@x", "b1@x"} {
+				k, rec := recordForID(t, out, id)
+				wantDeferred(t, out, id+" (no folder was walked)", k, rec)
+			}
+		})
+	}
+}
+
 // covers: MA-313, R5, R12, R18, S46
 // S3-AO7: a mailbox-fatal fault (a 403 or 401 on a $value, a 401 on a listing) puts
 // the server's own words in RunGraph's error and in the run log; those words are the
