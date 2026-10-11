@@ -1316,6 +1316,27 @@ friction wording); the owner's Rebuild label is the page's own "Maintenance → 
 a count of one reads singular; and removed messages are listed as removed and settled in a retry rather
 than offered again. Another archive folder's index advice no longer names the Maintenance button.
 
+### 13.22 FI-S3 built and merged (2026-10-11), delegated-judgement
+
+Graph isolation: `classifyFetch` (token-refresh auth, 403 mailbox-fatal per OR7), per-item gaps with no
+record, per-folder listing gaps, immutable-id locators, the `-since` rule, the sweep rules with OR10's
+stricter rule (a fault never sweeps a present message gone), legacy-stub adoption, the stub hold-back
+(a stub is not written over an archived record), the rate/time breaker with the known-poison exemption,
+the control probe and run-level breaker, the `Retry-After` clamp, and **capture's overall cap raised from
+10 minutes to 2 hours**. New additive ledger field `CaptureGap.DefersGone` (§13.11) for the no-Message-ID
+stuck sentence. Conform: GAPS_FIXED (one assertion gap, MA-312 case c). **Owed: the adversarial pass**
+(network input, go-back sweep integrity). **Owner attention:** this slice changes the behaviour of the
+`graph` capture path you proved earlier: faults that used to fail the mailbox are now gaps and the
+mailbox continues, and the time cap is 2 h. **Existing-test change for the owner to confirm or reject
+(rulings 0, rule 2):** MA-540's stop cases and transport-cancel case asserted "before S3 the mailbox fails";
+the row's own text says that from S3 a Messages or `$value` stop is MA-314's gap case, so those tests now
+assert the gap (reason, scope, class, stop named, no gone events, all Present, mailbox 2 walked, run
+recorded failed not cancelled) and keep every other assertion; one subtest's fault moved to the folder
+list. Skip encoders remain: MA-314 `fetch-too-large` and MA-540 case 4 (capture passes no size cap,
+RR6-OR1/ESC-8), MA-314's foreign-host case (ESC-7), MA-323's parser-generation re-fetch and MA-318's
+raw-preserving stub (FI-S2b), and two no-Message-ID stubs with the same Received time still collapse
+(ESC-1). Real-tenant behaviour is proven only against the fake server, as the design says.
+
 ### 13.7 Escalations from LC-C1's adversarial pass (merged 2026-10-10)
 
 None blocks anything: each has a skip encoder or a safe interim in force.
