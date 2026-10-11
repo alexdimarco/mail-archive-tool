@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -742,6 +743,94 @@ func outByNID(t *testing.T, o walkOut) map[pst.Identifier]*model.Message {
 		m[nidOf(t, msg.Locator)] = msg
 	}
 	return m
+}
+
+// covers: MA-315, R10, R1, S46
+// Reader faults reach the caller (FC29). A caller that registers no callback gets
+// them as a *FaultsError when Walk returns — non-nil on purpose, so ignoring faults
+// is loud — with the faults in order, at most 10 000 of them and the rest counted
+// (Dropped); a walk that ends in Walk's outer recover (a panic in the traversal, here
+// the handler's) returns the faults already met TOGETHER WITH the store-level error;
+// and Abort, asked between rows, ends the walk with its error even where every row
+// is unreadable and the handler is never reached.
+func TestWalkFaultsReachACallerWithoutACallback(t *testing.T) {
+	data := fixtureData(t)
+	ref := referenceOf(t, data)
+	mut := corruptMessage(t, data, ref.messages[0])
+
+	t.Run("no callback", func(t *testing.T) {
+		var got int
+		err := openData(t, mut).Walk(func(_ []string, m *model.Message) error { got++; return nil })
+		var fe *FaultsError
+		if !errors.As(err, &fe) || len(fe.Faults) != 1 || fe.Dropped != 0 || fe.Err != nil || got != 16 {
+			t.Fatalf("Walk = %v, %d messages; want a *FaultsError holding the one fault and no store error", err, got)
+		}
+		if fe.Faults[0].Reason != "pst-message-unreadable" {
+			t.Errorf("fault %+v", fe.Faults[0])
+		}
+		if healthy := openData(t, data).Walk(func([]string, *model.Message) error { return nil }); healthy != nil {
+			t.Errorf("a healthy walk returned %v; want nil", healthy)
+		}
+	})
+	t.Run("the list is bounded and the rest counted", func(t *testing.T) {
+		r := openData(t, data)
+		damaged := func(nid pst.Identifier) bool { return nid>>5 >= 700000 }
+		real := r.ops
+		r.ops.nodeExists = func(nid pst.Identifier) bool { return damaged(nid) || real.nodeExists(nid) }
+		r.ops.getMessage = func(nid pst.Identifier) (*pst.Message, error) {
+			if damaged(nid) {
+				return nil, errors.New("damaged")
+			}
+			return real.getMessage(nid)
+		}
+		nids := make([]pst.Identifier, maxFaults+50)
+		for i := range nids {
+			nids[i] = pst.Identifier((700000+i)<<5 | 4)
+		}
+		onlyFolder(r, draftsFolder, tableOf(r, nids...))
+		err := r.Walk(func([]string, *model.Message) error { return nil })
+		var fe *FaultsError
+		if !errors.As(err, &fe) || len(fe.Faults) != maxFaults || fe.Dropped != 50 {
+			t.Fatalf("Walk = %v; want %d faults kept and 50 dropped", err, maxFaults)
+		}
+	})
+	t.Run("a panic in the traversal keeps the faults already met", func(t *testing.T) {
+		calls := 0
+		err := openData(t, mut).Walk(func(_ []string, m *model.Message) error {
+			if calls++; calls == 3 {
+				panic("handler fault")
+			}
+			return nil
+		})
+		var fe *FaultsError
+		if !errors.As(err, &fe) || len(fe.Faults) != 1 || fe.Err == nil || !strings.Contains(fe.Err.Error(), "handler fault") {
+			t.Fatalf("Walk = %v; want the store-level error together with the one fault met before it", err)
+		}
+	})
+	t.Run("Abort ends a stretch of unreadable rows", func(t *testing.T) {
+		r := openData(t, data)
+		onlyFolder(r, draftsFolder, tableOf(r, func() []pst.Identifier {
+			n := make([]pst.Identifier, 50)
+			for i := range n {
+				n[i] = pst.Identifier(i<<5 | 2)
+			}
+			return n
+		}()...))
+		stop := errors.New("the run was cancelled")
+		rows := 0
+		err := r.WalkWithFaults(func([]string, *model.Message) error { return nil }, WalkOptions{
+			Faults: func(Fault) {},
+			Abort: func() error {
+				if rows++; rows > 10 {
+					return stop
+				}
+				return nil
+			},
+		})
+		if !errors.Is(err, stop) {
+			t.Errorf("Walk = %v; want the abort's error", err)
+		}
+	})
 }
 
 // covers: R1

@@ -533,6 +533,43 @@ func TestGraphSinceRuleRecordsNoGapForUnrequestedItem(t *testing.T) {
 	t.Skip("MA-323: the Graph walk's -since rule (§4.8.2 step 1) is S3's; the ledger half (CloseUnobserved never closes a gap dated before -since) is asserted in TestCaptureGapLedgerLifecycle; closes when FI-S3 lands")
 }
 
+// covers: MA-327, R1, R7, S46
+// Every gap kind FI-S2a records has its own words in the shared table (owner ruling
+// §13.11): a why, a remedy and a report remedy that are NOT the generic fallbacks,
+// for each source kind it can come from, so no summary line, status line or report
+// row appears with a bare code. A PST gap's remedy is the in-place repair, except on
+// the -outlook scratch .pst, which is rebuilt every run and says to open the item in
+// Outlook.
+func TestEveryGapKindFISlice2aRecordsHasItsOwnWords(t *testing.T) {
+	reasons := []string{
+		"pst-message-unreadable", "pst-messages-unreadable", "pst-row-unreadable", "pst-row-invalid",
+		"folder-unreadable", "folder-partially-read", "folder-cycle", "folder-too-deep",
+		"folder-unwritable", "export-failed", "export-panic", "refresh-failed",
+		"outlook-export-skipped", "outlook-account-skipped",
+	}
+	for _, reason := range reasons {
+		if GapWhy(reason) == GapWhy("no-such-reason") {
+			t.Errorf("%s has no why of its own", reason)
+		}
+		for _, kind := range []string{SourcePST, SourceOutlookScratch, SourceLocal} {
+			for _, errno := range []string{"", ErrnoPerm, ErrnoIO} {
+				if r := GapRemedy(reason, kind, errno); r == remedyUnknown || r == "" {
+					t.Errorf("%s (%s, %q) has no remedy of its own", reason, kind, errno)
+				}
+				if r := GapReportRemedy(reason, kind, errno); r == "run again; if it is listed again, keep the original, because this version of mailarchive does not know the cause" || r == "" {
+					t.Errorf("%s (%s, %q) has no report remedy of its own", reason, kind, errno)
+				}
+			}
+		}
+	}
+	if r := GapRemedy("pst-message-unreadable", SourcePST, ""); !strings.Contains(r, "scanpst.exe") || !strings.Contains(r, "same path") {
+		t.Errorf("a .pst gap's remedy %q must be the in-place repair", r)
+	}
+	if r := GapRemedy("pst-messages-unreadable", SourceOutlookScratch, ""); !strings.Contains(r, "open it in Outlook") || strings.Contains(r, "scanpst") {
+		t.Errorf("an -outlook scratch gap's remedy %q must say to open the item in Outlook, never to repair the rebuilt file", r)
+	}
+}
+
 // covers: MA-323, R1, R5, S46
 // What the ledger looks like on disk: keys are token \x00 scope \x00 locator,
 // the fields are those of §4.2, an empty ledger writes no key, and the manifest
