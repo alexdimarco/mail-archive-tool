@@ -69,9 +69,10 @@ type CopyRun struct {
 	// differ, whether the realized posture is acceptable; nil declines a broader one.
 	ConfirmPosture func(CopyPosture) bool
 
-	mu        sync.Mutex
-	cancel    context.CancelFunc
-	cancelled bool
+	mu          sync.Mutex
+	cancel      context.CancelFunc
+	cancelled   bool
+	pendingStop *CopyStop // a stop asked for before the run's watch existed
 
 	started time.Time
 	done    atomic.Int64
@@ -111,6 +112,24 @@ func (r *CopyRun) Cancel() {
 	r.mu.Unlock()
 	if c != nil {
 		c()
+	}
+}
+
+// StopForSignInChange stops the run run-fatal with R-z after aborting the message in
+// flight (its download cancelled through that message's own context, never the walk's, so
+// it is never read as the user's Cancel): the Microsoft 365 sign-in was cleared, or
+// changed to now, in the dashboard (XC7). The run finalizes (manifest `failed`, marker
+// STOPPED) and is retryable from its record. now is "" when the sign-in was cleared.
+func (r *CopyRun) StopForSignInChange(now string) {
+	stop := &CopyStop{RID: "R-z", Class: stopClassSignInMoved, Message: now}
+	r.mu.Lock()
+	w := r.watch
+	if w == nil {
+		r.pendingStop = stop
+	}
+	r.mu.Unlock()
+	if w != nil {
+		w.fatalStop(stop)
 	}
 }
 
@@ -161,8 +180,15 @@ func (r *CopyRun) Run(parent context.Context) (res *CopyResult, err error) {
 	release := holdAwake()
 	defer release()
 	wctx, wcancel := context.WithCancel(context.WithoutCancel(walk))
-	r.watch = &ceWatch{env: e, src: r.src}
-	go r.watch.loop(wctx)
+	w := &ceWatch{env: e, src: r.src}
+	r.mu.Lock()
+	r.watch = w
+	pending := r.pendingStop
+	r.mu.Unlock()
+	if pending != nil {
+		w.fatalStop(pending) // a stop asked for before the run reached its first message
+	}
+	go w.loop(wctx)
 	defer wcancel()
 
 	status, stop := r.loop(walk)
@@ -502,8 +528,8 @@ func (r *CopyRun) complete(s *CopyStop, done int, extra string) *CopyStop {
 		return s
 	}
 	arg := extra
-	if s.RID == "R-u3" && s.Message != "" {
-		arg = s.Message // the redirect's host, which the classifier left in Message
+	if (s.RID == "R-u3" || s.RID == "R-z") && s.Message != "" {
+		arg = s.Message // the redirect's host, or the account now signed in: left in Message by the stop
 	}
 	s.Message = refusalText(s.RID, done, len(r.plan.Messages), arg, r.plan, r.env.StateDir)
 	s.StoppedAt = r.env.nowTime().UTC().Format(time.RFC3339)
