@@ -11,6 +11,7 @@ import (
 
 	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/index"
+	"mail-archive-tool/internal/state"
 )
 
 // covers: MA-531, MA-434, R29, R12, S52
@@ -44,6 +45,49 @@ func TestCreateFolderNeverWritesInAnotherArchiveFolderTheOwnerHasNamed(t *testin
 	refusedBody(t, code, body, "R-f", "inside your archive", other)
 	if got := listing(); got != was || dirDigest(t, other) != before {
 		t.Errorf("Create folder wrote into the folder: %s, was %s", got, was)
+	}
+}
+
+// covers: MA-435, R20, R29, S52
+// A list that is not what the owner loaded says so (E4-AC5): the tree and its counts are the manifest read at
+// "Load folders", and the list is the index as it is now, paged by offset. After a capture the newest-first
+// first page held nothing the snapshot knew ("Showing 0 of 2", a Load more button, no word why), and a message
+// added between two pages repeats one at the page break. The list now says so when rows it read are not in
+// the snapshot, and when the archive's manifest changed since it was loaded. The positive twin: a list of an
+// archive that did not change says nothing of the kind.
+func TestArchiveListSaysWhenTheArchiveChangedSinceItWasLoaded(t *testing.T) {
+	e := newWsEnv(t)
+	f := buildArchiveAt(t, e.out)
+	arch := archSource("archive", e.out)
+	e.archFolders(arch)
+	_, out := e.archRows(arch, "alice")
+	if n, _ := out["listNote"].(string); n != "" || len(out["rows"].([]any)) != 2 {
+		t.Fatalf("the positive twin, a list of an archive that did not change: %v", out)
+	}
+
+	// 150 newer messages in the index, which the loaded tree does not know (the manifest is not touched)
+	db, err := sqlOpen(f.path("search.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 150; i++ {
+		if _, err := db.Exec(`INSERT INTO docs(key, store, folder, subject, date, path, has_attach) VALUES (?, 'alice', '', ?, ?, ?, 0)`,
+			"alice\x00\x00newer"+string(rune('A'+i%26))+string(rune('a'+i/26)), "newer message", 1900000000+i, "alice/new/x.html"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+	_, out = e.archRows(arch, "alice")
+	n, _ := out["listNote"].(string)
+	if len(out["rows"].([]any)) != 0 || out["more"] != true || !strings.Contains(n, "not shown") || !strings.Contains(n, "Load folders again") {
+		t.Errorf("the first page of 100 rows the loaded tree does not know: rows %d, more %v, note %q; want it said why the page is empty", len(out["rows"].([]any)), out["more"], n)
+	}
+
+	// the manifest changed since it was loaded (a capture saved its checkpoint)
+	f.edit(func(m *state.Manifest) { m.Add(state.Key("alice", "", "later"), state.Record{Path: "alice/later.html"}) })
+	_, out = e.archRows(arch, "bob")
+	if n, _ := out["listNote"].(string); !strings.Contains(n, "changed since you loaded") || !strings.Contains(n, "Load folders again") {
+		t.Errorf("a list after the archive's manifest changed: %q, want it said to load the folders again", n)
 	}
 }
 

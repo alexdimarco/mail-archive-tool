@@ -385,9 +385,11 @@ func (d *dashboard) archiveMessages(w http.ResponseWriter, r *http.Request, in w
 		return
 	}
 	var rows []wsRowOut
+	notInSnapshot := 0
 	for _, row := range raw {
 		key, ok := a.MapKey(version, row)
 		if !ok {
+			notInSnapshot++
 			continue // a row the manifest does not list: it cannot be selected (R13, R21)
 		}
 		// the text of a row is the folder's: shown with no control or bidi control in it (E4-AO7)
@@ -416,6 +418,18 @@ func (d *dashboard) archiveMessages(w http.ResponseWriter, r *http.Request, in w
 	}
 	if a.Other() && a.WALBeside() {
 		notes = append(notes, listNoteWAL)
+	}
+	// The list is the index as it is now, the tree the manifest as it was loaded (E4-AC5): a page that
+	// holds rows the snapshot does not know (newest first, so they come first) is shown without them, and
+	// the owner is told why, and that a list paged by offset may skip or repeat a message while the
+	// archive changes.
+	if notInSnapshot > 0 {
+		notes = append(notes, fmt.Sprintf("%s messages the search index lists for this folder are not shown: they are not in the archive as you loaded its folders (a backup or capture ran since). Load folders again to include them.", commaInt(notInSnapshot)))
+	}
+	if size, mod, serr := a.StampNow(); serr == nil {
+		if s0, m0 := a.Stamp(); size != s0 || !mod.Equal(m0) {
+			notes = append(notes, "This archive changed since you loaded its folders (a backup or capture ran), so this list may skip or repeat a message. Load folders again.")
+		}
 	}
 	if len(notes) > 0 {
 		out["listNote"] = strings.Join(notes, " ")
