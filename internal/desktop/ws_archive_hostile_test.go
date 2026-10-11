@@ -3,6 +3,7 @@ package desktop
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -43,6 +44,79 @@ func TestCreateFolderNeverWritesInAnotherArchiveFolderTheOwnerHasNamed(t *testin
 	refusedBody(t, code, body, "R-f", "inside your archive", other)
 	if got := listing(); got != was || dirDigest(t, other) != before {
 		t.Errorf("Create folder wrote into the folder: %s, was %s", got, was)
+	}
+}
+
+// covers: MA-531, MA-435, MA-512, R29, S52
+// What the archive's notes say of its index and of its records is true of the archive they are about
+// (E4-AI8): "Rebuild search index (Maintenance)" acts on the configured archive, so a note about another
+// archive folder never sends the owner to it, and a search.db a newer MailArchive wrote is not "an index that
+// can't be used" to be rebuilt (a rebuild by this older build would replace it with an index of the older
+// format): it says it was written by a newer MailArchive and to update. The preview of a whole folder still
+// works from the manifest, with names that carry no subject or date, as it did. The positive twin: the
+// configured archive with no search.db is still told to rebuild it.
+func TestArchiveIndexNotesNeverSendTheOwnerToRebuildTheWrongArchive(t *testing.T) {
+	e := newWsEnv(t)
+	f := buildArchiveAt(t, e.out)
+	other := filepath.Join(e.dir, "inherited")
+	g := buildArchiveAt(t, other)
+	warnings := func(src map[string]any, folder string) string {
+		e.archFolders(src)
+		_, res := e.preview(e.archSel(src, entry(folder, false)))
+		return strings.Join(toStrings(res["warnings"]), " | ")
+	}
+	cfgSrc, otherSrc := archSource("archive", e.out), archSource("archive-other", other)
+
+	// the positive twin: no index at all, the configured archive
+	os.Rename(f.path("search.db"), f.path("search.db.away"))
+	if got := warnings(cfgSrc, "alice"); !strings.Contains(got, "Rebuild search index (Maintenance)") {
+		t.Errorf("the configured archive with no search.db: %q, want the advice to rebuild it", got)
+	}
+	_, out := e.archRows(cfgSrc, "alice")
+	if n, _ := out["listUnavailable"].(string); !strings.Contains(n, "Rebuild search index (Maintenance)") {
+		t.Errorf("the configured archive's list with no search.db: %q", n)
+	}
+	os.Rename(f.path("search.db.away"), f.path("search.db"))
+
+	// a newer index, the configured archive and another folder
+	versionOf := func(p string) (v int) {
+		t.Helper()
+		db, err := sqlOpen(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer db.Close()
+		if err := db.QueryRow(`SELECT version FROM meta`).Scan(&v); err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	fv, gv := versionOf(f.path("search.db")), versionOf(g.path("search.db"))
+	setIndexVersion(t, f.path("search.db"), 99)
+	setIndexVersion(t, g.path("search.db"), 99)
+	for name, src := range map[string]map[string]any{"configured": cfgSrc, "another folder": otherSrc} {
+		got := warnings(src, "alice")
+		if !strings.Contains(got, "newer MailArchive") || !strings.Contains(got, "format 99") || !strings.Contains(got, "Update MailArchive Desktop") || strings.Contains(got, "Rebuild search index") {
+			t.Errorf("%s, a search.db a newer MailArchive wrote: %q, want it said so and no rebuild", name, got)
+		}
+	}
+	setIndexVersion(t, f.path("search.db"), fv)
+	setIndexVersion(t, g.path("search.db"), gv)
+
+	// another folder: nothing here is Maintenance's to rebuild
+	os.Remove(g.path("search.db"))
+	if got := warnings(otherSrc, "alice"); strings.Contains(got, "Rebuild") || !strings.Contains(got, "has no search index") {
+		t.Errorf("another folder with no search.db: %q, want its index named and no rebuild", got)
+	}
+	_, out = e.archRows(otherSrc, "alice")
+	if n, _ := out["listUnavailable"].(string); n == "" || strings.Contains(n, "Rebuild") || !strings.Contains(n, "Whole-folder selection works") {
+		t.Errorf("another folder's list with no search.db: %q", n)
+	}
+	rec := g.rec("hello")
+	os.Remove(g.path(rec.Path)) // a record whose files were removed since: skipped, and counted
+	os.Remove(g.path(strings.TrimSuffix(rec.Path, ".html") + ".eml"))
+	if got := warnings(otherSrc, "alice"); !strings.Contains(got, "records whose files were removed are skipped") || strings.Contains(got, "Rebuild") {
+		t.Errorf("another folder with a record whose files were removed: %q", got)
 	}
 }
 

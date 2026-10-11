@@ -295,18 +295,32 @@ const (
 )
 
 // listUnavailable words why an archive's message list cannot be shown while whole-folder
-// selection still works from the manifest (F85).
-func listUnavailable(err error) string {
+// selection still works from the manifest (F85). Rebuild search index (Maintenance) acts on the
+// configured archive: for another archive folder the words do not send the owner to it (E4-AI8).
+func listUnavailable(err error, other bool) string {
 	var ue *index.ListUnavailableError
 	switch {
+	case errors.Is(err, os.ErrNotExist) && other:
+		return "This archive folder has no search index, so there is no message list. Whole-folder selection works."
 	case errors.Is(err, os.ErrNotExist):
 		return "This archive has no search index, so there is no message list. Whole-folder selection works; Rebuild search index (Maintenance) brings the list back."
 	case errors.As(err, &ue) && index.Busy(ue.Cause):
 		return "The search index is in use right now, so the message list is unavailable for a moment. Whole-folder selection works; try the list again in a few seconds."
 	case index.ReadOnly(err):
 		return "The search index can't be opened on this medium, so there is no message list. Whole-folder selection works."
+	case other:
+		return "This archive folder's search index can't be used for a message list. Whole-folder selection works."
 	}
 	return "This archive's search index can't be used for a message list. Whole-folder selection works; Rebuild search index (Maintenance) fixes the list."
+}
+
+// rebuildAdvice is the clause that sends the owner to Maintenance's Rebuild, which acts on the configured
+// archive: it is not said of another archive folder (E4-AI8).
+func rebuildAdvice(other bool, clause string) string {
+	if other {
+		return "."
+	}
+	return clause
 }
 
 // archiveMessages is one page of an archive folder, newest first, at most 100 rows, from
@@ -358,7 +372,7 @@ func (d *dashboard) archiveMessages(w http.ResponseWriter, r *http.Request, in w
 			d.refuse(w, *copyRefusal(newerIndexRefusal(ni)))
 			return
 		}
-		out["listUnavailable"] = listUnavailable(err)
+		out["listUnavailable"] = listUnavailable(err, a.Other())
 		d.reply(w, out)
 		return
 	}
@@ -366,7 +380,7 @@ func (d *dashboard) archiveMessages(w http.ResponseWriter, r *http.Request, in w
 	version := h.Version
 	h.Close() // closed at the end of the request, never held (XC20)
 	if err != nil {
-		out["listUnavailable"] = listUnavailable(err)
+		out["listUnavailable"] = listUnavailable(err, a.Other())
 		d.reply(w, out)
 		return
 	}
@@ -383,7 +397,7 @@ func (d *dashboard) archiveMessages(w http.ResponseWriter, r *http.Request, in w
 		rows = append(rows, wsRowOut{H: hnd, Subject: subj, From: from, FromName: fromName, Received: row.Date.UTC().Format(time.RFC3339), Size: -1})
 	}
 	if len(raw) > 0 && len(rows) == 0 && offset == 0 && version < 2 {
-		out["listUnavailable"] = "This archive's search index predates its format; whole-folder selection works; Rebuild search index fixes the list."
+		out["listUnavailable"] = "This archive's search index predates its format; whole-folder selection works" + rebuildAdvice(a.Other(), "; Rebuild search index fixes the list.")
 		d.reply(w, out)
 		return
 	}
@@ -398,7 +412,7 @@ func (d *dashboard) archiveMessages(w http.ResponseWriter, r *http.Request, in w
 	}
 	var notes []string
 	if total < folder.TotalItemCount {
-		notes = append(notes, fmt.Sprintf("%s messages in this folder are not in the search index — Rebuild search index fixes the list.", commaInt(folder.TotalItemCount-total)))
+		notes = append(notes, fmt.Sprintf("%s messages in this folder are not in the search index%s", commaInt(folder.TotalItemCount-total), rebuildAdvice(a.Other(), " — Rebuild search index fixes the list.")))
 	}
 	if a.Other() && a.WALBeside() {
 		notes = append(notes, listNoteWAL)
@@ -420,6 +434,26 @@ func newerIndexRefusal(ni *index.NewerIndexError) error {
 
 // ---- the preview ---------------------------------------------------------------------------
 
+// noNames is what an export without the archive's index says of its names and its manifest.
+const noNames = "most messages in this export carry no subject, sender or date in their names and in the manifest."
+
+// metaUnavailable is the preview's warning that the index could not be read, in words true of the
+// archive it is about (E4-AI8): an index a newer MailArchive wrote is said to be that (and to update, never to
+// rebuild: a rebuild by this build would replace it with one of the older format), and another archive
+// folder is never sent to Maintenance's Rebuild, which acts on the configured archive.
+func metaUnavailable(err error, other bool) string {
+	var ni *index.NewerIndexError
+	switch {
+	case errors.As(err, &ni):
+		return fmt.Sprintf("The archive's search index was written by a newer MailArchive (format %d), so %s Update MailArchive Desktop to read it.", ni.Version, noNames)
+	case other && errors.Is(err, os.ErrNotExist):
+		return "This archive folder has no search index, so " + noNames
+	case other:
+		return "This archive folder's search index can't be read, so " + noNames
+	}
+	return "The archive's search index can't be read (" + strings.TrimSuffix(listUnavailable(err, false), ".") + "), so " + noNames
+}
+
 // archiveMeta reads what the index knows of each message of the selected folders (subject, sender,
 // date), for the names and the manifest: one read-only open, closed before the plan is made. Without
 // the index, the names carry what the manifest holds, and the preview says so.
@@ -434,7 +468,7 @@ func (d *dashboard) archiveMeta(ctx context.Context, a *app.ArchiveSource, ids [
 	}
 	h, err := a.OpenList()
 	if err != nil {
-		return nil, "The archive's search index can't be read (" + strings.TrimSuffix(listUnavailable(err), ".") + "), so most messages in this export carry no subject, sender or date in their names and in the manifest.", nil
+		return nil, metaUnavailable(err, a.Other()), nil
 	}
 	defer h.Close()
 	meta := map[string]index.ListRow{}
@@ -581,7 +615,8 @@ func (d *dashboard) resolveAndPlanArchive(ctx context.Context, job *wsPreviewJob
 	}
 	var warns, infos []string
 	if res.Skipped > 0 {
-		warns = append(warns, fmt.Sprintf("%s records whose files were removed are skipped — run Rebuild search index (Maintenance) to bring the list and the counts back in step.", commaInt(res.Skipped)))
+		warns = append(warns, fmt.Sprintf("%s records whose files were removed are skipped%s", commaInt(res.Skipped),
+			rebuildAdvice(a.Other(), " — run Rebuild search index (Maintenance) to bring the list and the counts back in step.")))
 	}
 	if metaNote != "" {
 		warns = append(warns, metaNote)
