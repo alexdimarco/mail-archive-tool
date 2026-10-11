@@ -396,7 +396,38 @@ func TestGatherReadsTheLedgerAndTheAttemptedSplit(t *testing.T) {
 // messages in its folder are not being detected, and how to resume deletion
 // tracking (§4.10, FC23(4)).
 func TestStatusStuckNoMessageIDGapExplainsDeletionTracking(t *testing.T) {
-	t.Skip("MA-326: the ledger does not record that a Graph fault had no listing Message-ID (CaptureGap has no field for it, and the design names none), so status cannot tell when the sweep sentence applies; closes when FI-S3 records it and the design says where")
+	stuck := func(loc, folder string, defers bool) state.CaptureGap {
+		g := fetchFailed(loc)
+		g.Folder, g.Runs, g.FirstRun, g.DefersGone = folder, 6, gapNow.Add(-10*24*time.Hour), defers
+		return g
+	}
+	const note = "deleted messages in Inbox are not being detected while this persists; after saving a copy, move or delete the item out of Inbox in the mailbox to resume deletion tracking there"
+
+	// A stuck gap whose item the walk could not match to a record (DefersGone) says what
+	// it costs and how to end it, once per folder.
+	rep := Assess(gapInput(stuck("graph:N1", "Inbox", true), stuck("graph:N2", "Inbox", true)), gapNow)
+	i := codeIndex(rep, "capture_gaps_stuck")
+	if i < 0 {
+		t.Fatalf("no stuck line in %v", rep.Codes)
+	}
+	if line := rep.Reasons[i]; strings.Count(line, note) != 1 {
+		t.Errorf("the stuck line %q must carry the deletion-tracking sentence once: %q", line, note)
+	}
+	if rep.Posture != "WARN" {
+		t.Errorf("the posture is %s, want WARN: the sentence never makes a gap RED", rep.Posture)
+	}
+
+	// A stuck gap whose item was matched, and a gap that is not stuck yet, do not.
+	rep = Assess(gapInput(stuck("graph:M1", "Inbox", false)), gapNow)
+	if line := rep.Reasons[codeIndex(rep, "capture_gaps_stuck")]; strings.Contains(line, "deletion tracking") {
+		t.Errorf("a stuck gap that defers nothing says %q", line)
+	}
+	young := fetchFailed("graph:Y1")
+	young.DefersGone = true
+	rep = Assess(gapInput(young), gapNow)
+	if codeIndex(rep, "capture_gaps_stuck") >= 0 || strings.Contains(strings.Join(rep.Reasons, "\n"), "deletion tracking") {
+		t.Errorf("a gap that is not stuck yet says it defers deletion tracking: %v", rep.Reasons)
+	}
 }
 
 // covers: MA-326, R18, S48

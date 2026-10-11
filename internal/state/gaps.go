@@ -63,19 +63,25 @@ const (
 
 // CaptureGap is one ledger entry.
 type CaptureGap struct {
-	Token    string    `json:"token"`
-	Folder   string    `json:"folder"`             // same spelling as Record.Folder; "" = store root. Updated on every observation [FC14]
-	Scope    string    `json:"scope"`              // "item" | "folder" | "overflow"
-	Locator  string    `json:"loc"`                // graph:<immutable id, else id> | pst-nid:<store-uid>/<nid> | ident:<identity> | maildir:<folder>/<unique> | file:<store-rel path> | folder:<store-rel path> | outlook:<account>/<folder> [FC8, FC28]
-	Reason   string    `json:"reason"`             // §4.1 table; an unknown reason is kept, bounded and stripped [FC17]
-	Class    string    `json:"class"`              // fillable | terminal | info; overflow = the most severe class absorbed [FC16]
-	Subject  string    `json:"subject,omitempty"`  // listing or post-parse subject; <=200 runes, control-stripped
-	Received string    `json:"received,omitempty"` // RFC 3339; Graph listing or post-parse m.Date() [FC13]
-	Detail   string    `json:"detail,omitempty"`   // error text; <=300 bytes, control-stripped
-	Skipped  int       `json:"skipped,omitempty"`  // folder/overflow: items not attempted (or absorbed) THIS run (reset at the run's first observation [FC15])
-	FirstRun time.Time `json:"first"`
-	LastRun  time.Time `json:"last"`
-	Runs     int       `json:"runs"` // distinct runs that observed it, at most one per UTC day (not calls; not necessarily consecutive) [FC15, OR5]
+	Token    string `json:"token"`
+	Folder   string `json:"folder"`             // same spelling as Record.Folder; "" = store root. Updated on every observation [FC14]
+	Scope    string `json:"scope"`              // "item" | "folder" | "overflow"
+	Locator  string `json:"loc"`                // graph:<immutable id, else id> | pst-nid:<store-uid>/<nid> | ident:<identity> | maildir:<folder>/<unique> | file:<store-rel path> | folder:<store-rel path> | outlook:<account>/<folder> [FC8, FC28]
+	Reason   string `json:"reason"`             // §4.1 table; an unknown reason is kept, bounded and stripped [FC17]
+	Class    string `json:"class"`              // fillable | terminal | info; overflow = the most severe class absorbed [FC16]
+	Subject  string `json:"subject,omitempty"`  // listing or post-parse subject; <=200 runes, control-stripped
+	Received string `json:"received,omitempty"` // RFC 3339; Graph listing or post-parse m.Date() [FC13]
+	Detail   string `json:"detail,omitempty"`   // error text; <=300 bytes, control-stripped
+	Skipped  int    `json:"skipped,omitempty"`  // folder/overflow: items not attempted (or absorbed) THIS run (reset at the run's first observation [FC15])
+	// DefersGone is set on a Graph item gap whose item the walk could not match to a
+	// record (no same-token record for its listing Message-ID, none for its immutable
+	// id): while it persists, the mailbox's gone-detection is deferred for the records
+	// it could hide (FC4, owner ruling OR10), and `status` says so with the way to end
+	// it (FC23(4)). Additive; an older binary drops it.
+	DefersGone bool      `json:"defers_gone,omitempty"`
+	FirstRun   time.Time `json:"first"`
+	LastRun    time.Time `json:"last"`
+	Runs       int       `json:"runs"` // distinct runs that observed it, at most one per UTC day (not calls; not necessarily consecutive) [FC15, OR5]
 }
 
 // Weight is how many items the entry stands for: an overflow entry counts the
@@ -262,6 +268,7 @@ func (m *Manifest) ObserveGap(g CaptureGap, runAt time.Time) (key string, create
 		// refresh-failed note over an export-failed loss, S2A-AI1).
 		if !sameRun || severity(old.Class) <= severity(g.Class) {
 			old.Reason, old.Class, old.Detail, old.Folder = g.Reason, g.Class, g.Detail, g.Folder
+			old.DefersGone = g.DefersGone
 		}
 		if g.Subject != "" {
 			old.Subject = g.Subject

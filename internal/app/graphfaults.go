@@ -201,8 +201,9 @@ func graphItemGap(ref graph.MessageRef, folderKey, reason, class, detail string)
 // observeItem records ref's gap and what the fault does to the mailbox's sweep
 // (faultIdentity). m is the parsed message when the fault came after the parse.
 func (w *mailboxWalk) observeItem(ref graph.MessageRef, m *model.Message, folderKey, reason, class, detail string) {
-	w.faultIdentity(ref, m)
-	w.s.observe(graphItemGap(ref, folderKey, reason, class, detail))
+	g := graphItemGap(ref, folderKey, reason, class, detail)
+	g.DefersGone = w.faultIdentity(ref, m)
+	w.s.observe(g)
 }
 
 // faultIdentity is what a fault on one item does to this run's gone-detection
@@ -217,7 +218,9 @@ func (w *mailboxWalk) observeItem(ref graph.MessageRef, m *model.Message, folder
 // immutable id (OR10; the stricter rule, which includes a pre-v6 record whose
 // listing and parsed Message-IDs differ), and, where this run's ids are not
 // immutable, every content-hash record too. The folder stays swept for the rest.
-func (w *mailboxWalk) faultIdentity(ref graph.MessageRef, m *model.Message) {
+// It reports whether it deferred anything (the fault matched no record): the gap
+// records it, so `status` can say gone-detection waits while the gap persists.
+func (w *mailboxWalk) faultIdentity(ref graph.MessageRef, m *model.Message) (deferred bool) {
 	matched := false
 	stamp := func(identity string) {
 		for _, sib := range w.sameToken(identity) {
@@ -243,6 +246,7 @@ func (w *mailboxWalk) faultIdentity(ref graph.MessageRef, m *model.Message) {
 			w.spare.ShaIdentity = true
 		}
 	}
+	return !matched
 }
 
 // physIDKeys is the token's records by immutable id as they stood at the first fault

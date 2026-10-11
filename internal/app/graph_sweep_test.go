@@ -168,6 +168,9 @@ func TestGraphFaultsNeverSweepAPresentMessageGone(t *testing.T) {
 		runAt := runStart(t, out)
 		k, rec := recordForID(t, out, "a2@x")
 		wantSeenNotGone(t, out, "A2 (its re-issued id failed to download)", k, rec, runAt)
+		if g := graphGaps(t, out); len(g) != 1 || g[0].Locator != "graph:A2R" || g[0].DefersGone {
+			t.Errorf("ledger %+v; want A2R's gap to defer nothing: its identity matched a record", g)
+		}
 		k, rec = recordForID(t, out, "b2@x")
 		wantGone(t, out, "B2 (deleted at the source)", k, rec)
 	})
@@ -202,6 +205,9 @@ func TestGraphFaultsNeverSweepAPresentMessageGone(t *testing.T) {
 		}
 		k, rec := recordWith(t, out, "subj-n2")
 		wantDeferred(t, out, "N2 (a genuinely deleted no-Message-ID message, PhysID-less)", k, rec)
+		if g := graphGaps(t, out); len(g) != 1 || g[0].Locator != "graph:N3" || !g[0].DefersGone {
+			t.Errorf("ledger %+v; want N3's gap to record that it defers gone-detection (status says so)", g)
+		}
 		k, rec = recordForID(t, out, "b2@x")
 		wantGone(t, out, "B2 (deleted in Sent; its record has an immutable id)", k, rec)
 		// Run 4: nothing is wrong, and the deferred sweep is made.
