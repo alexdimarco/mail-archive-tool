@@ -255,8 +255,14 @@ func (m *Manifest) ObserveGap(g CaptureGap, runAt time.Time) (key string, create
 		if runAt.Before(old.FirstRun) {
 			old.FirstRun = runAt
 		}
+		sameRun := old.LastRun.Equal(runAt)
 		old.LastRun = runAt
-		old.Reason, old.Class, old.Detail, old.Folder = g.Reason, g.Class, g.Detail, g.Folder
+		// Two observations of one key in ONE run (two copies of a message in different
+		// folders share an ident: key): the milder never downgrades the other's word (a
+		// refresh-failed note over an export-failed loss, S2A-AI1).
+		if !sameRun || severity(old.Class) <= severity(g.Class) {
+			old.Reason, old.Class, old.Detail, old.Folder = g.Reason, g.Class, g.Detail, g.Folder
+		}
 		if g.Subject != "" {
 			old.Subject = g.Subject
 		}
@@ -343,6 +349,35 @@ func (m *Manifest) CloseGap(key string) bool {
 	}
 	delete(m.CaptureGaps, key)
 	return true
+}
+
+// CloseGapInFolder closes the entry stored under key if it is recorded for folder
+// (or for no folder: an entry an older build or a seed left unplaced) and reports
+// whether it did. A locator that is not the item's own (the post-parse ident: of a
+// message that sits in several folders) names a gap per copy, and one folder's
+// success must not close the gap of another's failure (S2A-AI1).
+func (m *Manifest) CloseGapInFolder(key, folder string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	g, ok := m.CaptureGaps[key]
+	if !ok || (g.Folder != "" && g.Folder != GapFolder(folder)) {
+		return false
+	}
+	delete(m.CaptureGaps, key)
+	return true
+}
+
+// GapObservedIn reports the folder of the entry under key if this run (runAt)
+// already observed it: a second observation of one key from another folder is
+// another copy's gap and needs a key of its own.
+func (m *Manifest) GapObservedIn(key string, runAt time.Time) (folder string, ok bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	g, found := m.CaptureGaps[key]
+	if !found || !g.LastRun.Equal(runAt) {
+		return "", false
+	}
+	return g.Folder, true
 }
 
 // exportStageReason says whether a gap comes from the export step, which a

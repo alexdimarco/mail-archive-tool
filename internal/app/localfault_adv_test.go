@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -142,6 +143,117 @@ func TestFolderFaultGuardMatchesTheLedgersSpelling(t *testing.T) {
 				t.Errorf("closed %d, ledger %+v; want only the gap in Elsewhere closed and the gap in the unreadable folder kept", closed, left)
 			}
 		})
+	}
+}
+
+// twinStore is an mbox store whose folders A and B each hold the same message (one
+// Message-ID), the commonest shape of a duplicate: labels, rule copies, Sent and Archive.
+func twinStore(t *testing.T, parent string) string {
+	t.Helper()
+	dir := filepath.Join(parent, "twinstore")
+	body := "From alice@example.com Mon Mar  3 09:00:00 2025\n" + strings.ReplaceAll(p14Plain("Twin message", "twin"), "\r\n", "\n") + "\n"
+	p14Write(t, filepath.Join(dir, "A"), body)
+	p14Write(t, filepath.Join(dir, "B"), body)
+	return dir
+}
+
+// covers: MA-319, MA-320, R1, R3
+// S2A-AI1 (and S2A-AC1): the ledger's ident: locator is token-wide (a message with no
+// Locator of its own, mbox, maildir, every .ost and -outlook scratch PST), and the
+// record keys are per folder (R3), so the SAME message in folders A and B is two
+// items with one gap key. A's copy failed to write; B's copy was written, and its
+// success closed A's gap in the same run: the run ended clean with one folder's copy
+// missing and nothing saying so (in Full mode, on every run). A twin's success closes
+// only the gap of its own folder, and two twins that both fail are two gaps, not one.
+func TestATwinInAnotherFolderDoesNotCloseAFailedCopysGap(t *testing.T) {
+	underA := func(path string) bool { return strings.Contains(path, string(filepath.Separator)+"A"+string(filepath.Separator)) }
+	underB := func(path string) bool { return strings.Contains(path, string(filepath.Separator)+"B"+string(filepath.Separator)) }
+
+	for _, mode := range []string{"incremental", "full"} {
+		t.Run("A fails, B is written; "+mode, func(t *testing.T) {
+			store := twinStore(t, tmpDir(t))
+			out := tmpDir(t)
+			failWrites(t, func(n int, path string) error {
+				if underA(path) {
+					return pathErr(path, syscall.EACCES)
+				}
+				return nil
+			})
+			run := runLocal
+			if mode == "full" {
+				run = runLocalFull
+			}
+			for i := 1; i <= 2; i++ {
+				res, err := run(t, out, store)
+				if !errors.Is(err, ErrPartial) || !res.Partial {
+					t.Fatalf("run %d: err %v, partial %v; want ErrPartial: A's copy is archived nowhere", i, err, res.Partial)
+				}
+				gaps := ledgerOf(t, out)
+				if len(gaps) != 1 || gaps[0].Folder != "A" || gaps[0].Reason != "export-failed" {
+					t.Fatalf("run %d ledger %+v; want one export-failed gap at A", i, gaps)
+				}
+				ageLedger(t, out, 48*time.Hour)
+			}
+		})
+	}
+
+	t.Run("both fail", func(t *testing.T) {
+		store := twinStore(t, tmpDir(t))
+		out := tmpDir(t)
+		failWrites(t, func(n int, path string) error { return pathErr(path, syscall.EACCES) })
+		if _, err := runLocal(t, out, store); !errors.Is(err, ErrPartial) {
+			t.Fatalf("run: %v; want ErrPartial", err)
+		}
+		folders := map[string]bool{}
+		for _, g := range ledgerOf(t, out) {
+			folders[g.Folder] = true
+		}
+		if len(ledgerOf(t, out)) != 2 || !folders["A"] || !folders["B"] {
+			t.Errorf("ledger %+v; want two gaps, one per folder's lost copy", ledgerOf(t, out))
+		}
+	})
+
+	t.Run("B fails after A was written, then A and B heal in turn", func(t *testing.T) {
+		store := twinStore(t, tmpDir(t))
+		out := tmpDir(t)
+		failWrites(t, func(n int, path string) error {
+			if underB(path) {
+				return pathErr(path, syscall.EACCES)
+			}
+			return nil
+		})
+		if _, err := runLocal(t, out, store); !errors.Is(err, ErrPartial) {
+			t.Fatalf("run 1: %v; want ErrPartial", err)
+		}
+		exporterSetup = nil
+		ageLedger(t, out, 48*time.Hour)
+		res, err := runLocal(t, out, store)
+		if err != nil || res.Partial || len(ledgerOf(t, out)) != 0 || loadArchive(t, out).Len() != 2 {
+			t.Errorf("run 2 with B writable: err %v, partial %v, ledger %+v, %d records; want clean, empty, 2", err, res.Partial, ledgerOf(t, out), loadArchive(t, out).Len())
+		}
+	})
+}
+
+// covers: MA-323, R1
+// S2A-AI1's second half: a milder observation of a gap in the SAME run never
+// downgrades it. A refresh-failed (info) gap that a KEEP guard writes at an ident:
+// key overwrote the class and reason of a fillable export-failed gap another copy of
+// the message had left at that key in the same run, turning a loss into a note.
+func TestAMilderObservationInTheSameRunDoesNotDowngradeAGap(t *testing.T) {
+	_, m := advSourceRun(t)
+	runAt := time.Now().UTC()
+	fail := state.CaptureGap{Token: "tok", Folder: "A", Scope: state.GapScopeItem, Locator: "ident:x", Reason: "export-failed", Class: state.ClassFillable, Detail: "write: permission denied"}
+	keep := state.CaptureGap{Token: "tok", Folder: "B", Scope: state.GapScopeItem, Locator: "ident:x", Reason: "refresh-failed", Class: state.ClassInfo}
+	m.ObserveGap(fail, runAt)
+	m.ObserveGap(keep, runAt)
+	gaps := m.CaptureGapsSorted()
+	if len(gaps) != 1 || gaps[0].Class != state.ClassFillable || gaps[0].Reason != "export-failed" || gaps[0].Folder != "A" {
+		t.Errorf("ledger %+v; want the fillable export-failed gap at A untouched", gaps)
+	}
+	// A later run's observation is a fresh word about the item and still replaces it.
+	m.ObserveGap(keep, runAt.Add(48*time.Hour))
+	if gaps := m.CaptureGapsSorted(); len(gaps) != 1 || gaps[0].Reason != "refresh-failed" {
+		t.Errorf("ledger %+v; want a later run's observation to replace the old one", gaps)
 	}
 }
 

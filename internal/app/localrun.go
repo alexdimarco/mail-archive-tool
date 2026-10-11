@@ -15,6 +15,7 @@ import (
 	"mail-archive-tool/internal/model"
 	"mail-archive-tool/internal/source"
 	"mail-archive-tool/internal/state"
+	"mail-archive-tool/internal/util"
 )
 
 // The local run's handling of what goes wrong (fault-isolation §4.6, FC12, FC29).
@@ -171,6 +172,14 @@ const folderFaultCap = 2000
 // observe records one gap of this source in the ledger and counts it as processed.
 func (s *sourceRun) observe(g state.CaptureGap) {
 	g.Token = s.token
+	if g.Scope == state.GapScopeItem && strings.HasPrefix(g.Locator, "ident:") {
+		// Another folder's copy of the same message already lost its write in this run
+		// and holds the plain locator: this copy's loss is its own gap.
+		key := state.GapKey(s.token, state.GapScopeItem, g.Locator)
+		if f, seen := s.lr.exp.Manifest.GapObservedIn(key, s.lr.runAt); seen && f != state.GapFolder(g.Folder) {
+			g.Locator += identFolderSep + util.ShortHash(g.Folder)
+		}
+	}
 	s.lr.exp.Manifest.ObserveGap(g, s.lr.runAt)
 	if g.Scope == state.GapScopeFolder {
 		// The ledger stores a folder stripped of control and bidi characters and cut to a
@@ -219,16 +228,31 @@ func itemGap(m *model.Message, folderKey, reason, class, detail string) state.Ca
 // recovered closes the gaps this message's capture answers: one at its Locator
 // and one at its ident: (an export that failed before). Each is counted
 // (`Recovered`), and nothing is written or deleted — the entry just goes (§4.3).
-func (s *sourceRun) recovered(m *model.Message) {
-	for _, loc := range []string{m.Locator, "ident:" + m.Identity()} {
-		if loc == "ident:" || loc == "" {
-			continue
-		}
-		if s.lr.exp.Manifest.CloseGap(state.GapKey(s.token, state.GapScopeItem, loc)) {
+//
+// A message's own Locator names one item, so its gap closes whoever writes it. The
+// ident: locator is token-wide: the same message in folders A and B has ONE such
+// locator and two copies, so a copy closes only the gap recorded for its own folder
+// (the other copy is still missing), and a second copy that failed in the same run
+// has a gap of its own at ident:<identity>#<hash of its folder> (S2A-AI1).
+func (s *sourceRun) recovered(m *model.Message, folderKey string) {
+	mf := s.lr.exp.Manifest
+	if m.Locator != "" && mf.CloseGap(state.GapKey(s.token, state.GapScopeItem, m.Locator)) {
+		s.lr.recovered++
+	}
+	ident := "ident:" + m.Identity()
+	if ident == "ident:" {
+		return
+	}
+	for _, loc := range []string{ident, ident + identFolderSep + util.ShortHash(folderKey)} {
+		if mf.CloseGapInFolder(state.GapKey(s.token, state.GapScopeItem, loc), folderKey) {
 			s.lr.recovered++
 		}
 	}
 }
+
+// identFolderSep joins an ident: locator to the hash of the folder it was lost in,
+// when another folder's copy of the same message already owns the plain locator.
+const identFolderSep = "#"
 
 // handle exports one message and sorts what goes wrong by whose fault it is.
 func (s *sourceRun) handle(ctx context.Context, abort func() error, folderPath []string, m *model.Message) (err error) {
@@ -261,7 +285,7 @@ func (s *sourceRun) handle(ctx context.Context, abort func() error, folderPath [
 	if exportErr == nil {
 		if written {
 			s.wrote, s.streak = true, 0
-			s.recovered(m)
+			s.recovered(m, folderKey)
 		}
 		return nil
 	}
