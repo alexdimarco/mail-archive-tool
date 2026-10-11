@@ -146,7 +146,11 @@ func (n *ceNamer) stem(m *CopyMessage, dir, key string) string {
 	slug := 60
 	for {
 		cand := export.StemName(m.Received, subjectSlug(m.Subject, slug), m.SourceID, 8)
-		if slug == 0 || utf16Len(n.rootAbs+"/"+dir+"/"+cand+".eml") <= copyPathBudget {
+		// The name must also fit the 255-byte NAME_MAX of ext4, xfs, btrfs, tmpfs and
+		// NFS, with the longest digest the de-duplication below can use: the slug is
+		// bounded in runes, and a letter can take four bytes (EW-AO1).
+		widest := export.StemName(m.Received, subjectSlug(m.Subject, slug), m.SourceID, 40)
+		if slug == 0 || (utf16Len(n.rootAbs+"/"+dir+"/"+cand+".eml") <= copyPathBudget && len(widest)+len(".eml") <= copyNameMaxBytes) {
 			break
 		}
 		if slug == 60 {

@@ -86,11 +86,12 @@ const (
 	copyTempPrefix   = ".mailexport-"
 	copyTempSuffix   = ".tmp"
 
-	copyMaxMessages = 200000 // R-i
-	copyFilesPerDir = 1000   // XC12
-	copyPathBudget  = 250    // UTF-16 units before the slug shrinks
-	copyPathWarn    = 259    // the length Windows Explorer and some zip tools cannot open
-	copyFormatVer   = 1      // the manifest's and the run record's format version
+	copyMaxMessages  = 200000 // R-i
+	copyFilesPerDir  = 1000   // XC12
+	copyPathBudget   = 250    // UTF-16 units before the slug shrinks
+	copyNameMaxBytes = 255    // one file name's bytes: NAME_MAX on ext4, xfs, btrfs, tmpfs and NFS
+	copyPathWarn     = 259    // the length Windows Explorer and some zip tools cannot open
+	copyFormatVer    = 1      // the manifest's and the run record's format version
 
 	// copyRecordLineBound is the bound on one progress line of the run record the
 	// free-space policy reserves on the state volume: its JSON with one file's
