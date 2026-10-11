@@ -730,13 +730,32 @@ func (d *dashboard) retryArchive(w http.ResponseWriter, in runBody, info app.Cop
 			m.Subject, m.From, m.FromName, m.Received = old.Subject, old.From, old.FromName, old.Received
 		}
 	}
-	input.Messages, input.Folders = res.Messages, app.PlanFoldersOf(res.Messages)
+	// A message whose files were removed since (a redaction) stays in the plan, as the first plan had it:
+	// the run lists it as removed from the archive, which settles it for the whole set, where a message
+	// left out of every part was offered by the first part's card for ever (E4-AC10). Its files are
+	// not read: they are gone, and the run opens them behind the same gate as any other.
+	vanished := map[string]bool{}
+	for _, k := range res.Vanished {
+		vanished[k] = true
+	}
+	msgs, resolved := make([]app.CopyMessage, 0, len(res.Messages)+len(vanished)), 0
+	for _, k := range keys {
+		switch {
+		case resolved < len(res.Messages) && res.Messages[resolved].SourceID == k:
+			msgs = append(msgs, res.Messages[resolved])
+			resolved++
+		case vanished[k]:
+			msgs = append(msgs, was[k])
+		}
+	}
+	input.Messages, input.Folders = msgs, app.PlanFoldersOf(msgs)
 	input.Source = a.Describe()
 	other := ""
 	if info.Other {
 		other = a.Dir()
 	}
-	input.Archives, input.OtherArchive, input.ArchiveSkipped = d.archivesWith(other), other, res.Skipped
+	leftOut := res.Skipped - len(res.Vanished) // records the manifest no longer lists at all
+	input.Archives, input.OtherArchive, input.ArchiveSkipped = d.archivesWith(other), other, leftOut
 	bind := wsBind{arch: true, path: a.Dir(), other: info.Other}
 	job := d.ws.startJob(func(ctx context.Context, job *wsPreviewJob) (*app.CopyPlan, map[string]any, *refusal) {
 		defer a.Close()
@@ -746,8 +765,11 @@ func (d *dashboard) retryArchive(w http.ResponseWriter, in runBody, info app.Cop
 			return nil, nil, copyRefusal(perr)
 		}
 		var warns []string
-		if res.Skipped > 0 {
-			warns = append(warns, fmt.Sprintf("%s of these messages are no longer in the archive and were left out.", commaInt(res.Skipped)))
+		if n := len(res.Vanished); n > 0 {
+			warns = append(warns, fmt.Sprintf("%s of these messages are no longer in the archive: they will be listed as removed from it and not exported.", commaInt(n)))
+		}
+		if leftOut > 0 {
+			warns = append(warns, fmt.Sprintf("%s of these messages are no longer in the archive and were left out.", commaInt(leftOut)))
 		}
 		out := planResult(plan, job.id, foldersOut(input.Folders), len(input.Messages), len(input.Messages), warns, archiveInfos(plan.Archive, len(input.Messages)))
 		out["retryWhich"] = in.Which

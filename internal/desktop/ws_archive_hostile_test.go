@@ -48,6 +48,59 @@ func TestCreateFolderNeverWritesInAnotherArchiveFolderTheOwnerHasNamed(t *testin
 	}
 }
 
+// covers: MA-437, MA-512, R29, R5, R12
+// "Export the remaining messages" does not stay offered for a message that is no longer in the archive
+// (E4-AC10): a retry of an R-o2 stop drops the records whose files were removed since (a redaction) from its
+// plan, so no part of the set ever recorded them, and part 1's card went on offering to export what
+// the archive no longer has: a button that answered R-h for ever, and a set that read "5 of 6 exported so
+// far" for ever. The retry now carries such a message into its plan, where it is listed as removed from the
+// archive (terminal) as a message of Microsoft 365 that is gone is, and a message another part settled that
+// way is not offered again.
+func TestExportTheRemainingMessagesIsNotOfferedForAMessageTheArchiveNoLongerHas(t *testing.T) {
+	e := newWsEnv(t)
+	f := buildArchiveAt(t, e.out)
+	os.Remove(e.tok)
+	arch := archSource("archive", e.out)
+	e.archFolders(arch)
+	id, res := e.preview(e.archSel(arch, entry("alice", true), entry("bob", false)))
+	if res["count"] != float64(6) {
+		t.Fatalf("the preview: %v", res)
+	}
+	stash := filepath.Join(e.dir, "stash")
+	os.MkdirAll(stash, 0o755)
+	ents, _ := os.ReadDir(e.out)
+	for _, ent := range ents {
+		os.Rename(filepath.Join(e.out, ent.Name()), filepath.Join(stash, ent.Name()))
+	}
+	run := e.ok("/api/exports/start", map[string]any{"previewId": id})["runId"].(string)
+	if last := e.waitRun()["last"].(map[string]any); last["stopId"] != "R-o2" {
+		t.Fatalf("the stopped export: %v", last)
+	}
+	for _, ent := range ents { // reconnected, and a redaction has removed one message's files since
+		os.Rename(filepath.Join(stash, ent.Name()), filepath.Join(e.out, ent.Name()))
+	}
+	rec := f.rec("hello")
+	os.Remove(f.path(rec.Path))
+	os.Remove(f.path(strings.TrimSuffix(rec.Path, ".html") + ".eml"))
+
+	rid := e.ok("/api/exports/retry", map[string]any{"runId": run, "which": "rest"})["previewId"].(string)
+	rres := e.waitPreview(rid)
+	if w := strings.Join(toStrings(rres["warnings"]), " | "); !strings.Contains(w, "no longer in the archive") {
+		t.Errorf("the retry's preview does not say a message is gone: %q", w)
+	}
+	e.ok("/api/exports/start", map[string]any{"previewId": rid})
+	l := e.waitRun()["last"].(map[string]any)
+	if l["exported"] != float64(5) || l["failed"] != float64(1) {
+		t.Errorf("the second part: %v, want 5 exported and the removed message listed", l)
+	} else if man := e.manifestOf(l["rootName"].(string)); man["failures"] == nil || !strings.Contains(man["failures"].([]any)[0].(map[string]any)["reason"].(string), "removed from the archive") {
+		t.Errorf("the second part's failures: %v", man["failures"])
+	}
+	if card := e.card(run); hasStr(card["actions"], "export-remaining") {
+		code, out := e.post("/api/exports/retry", map[string]any{"runId": run, "which": "rest"})
+		t.Errorf("part 1 still offers Export the remaining messages (it answers %d %v)", code, out["id"])
+	}
+}
+
 // covers: MA-435, R20, R29, S52
 // A list that is not what the owner loaded says so (E4-AC5): the tree and its counts are the manifest read at
 // "Load folders", and the list is the index as it is now, paged by offset. After a capture the newest-first

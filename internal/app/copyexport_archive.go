@@ -572,6 +572,10 @@ type ArchiveResolved struct {
 	// manifest and index still list them (a redaction not yet reindexed, §4.6 item 5).
 	// Their subject, sender and time are never written into the export.
 	Skipped int
+	// Vanished are the keys, of those Skipped, whose record the manifest still has but whose files
+	// are gone: a retry carries such a message into its plan, where the run lists it as removed from
+	// the archive, so that no part of a set offers to export it for ever (E4-AC10).
+	Vanished []string
 }
 
 // Messages resolves manifest keys into the plan's messages, in the order given, with the
@@ -599,6 +603,7 @@ func (a *ArchiveSource) Messages(ctx context.Context, keys []string, meta map[st
 		m, ok := a.resolve(key, rec, meta)
 		if !ok {
 			out.Skipped++
+			out.Vanished = append(out.Vanished, key)
 			continue
 		}
 		out.Messages = append(out.Messages, m)

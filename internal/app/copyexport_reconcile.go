@@ -812,8 +812,9 @@ func (e *CopyExportEnv) RunRemaining(run string) ([]CopyMessage, error) {
 }
 
 // exportedElsewhere is the ids that the chain's other sealed parts, not marked gone,
-// exported: what a retry of run must not export a second time (EW-AC7). It is nil for a
-// chain of one part, which reads no other record.
+// exported, or listed with a terminal failure (a message that is no longer in the archive or
+// the mailbox: another try would only fail the same way, E4-AC10): what a retry of run must not
+// do a second time (EW-AC7). It is nil for a chain of one part, which reads no other record.
 func (e *CopyExportEnv) exportedElsewhere(run, chain string) map[string]bool {
 	e.ledgerMu.Lock()
 	parts := e.chainRunsLocked(chain)
@@ -831,7 +832,8 @@ func (e *CopyExportEnv) exportedElsewhere(run, chain string) map[string]bool {
 			continue
 		}
 		walkMessages(e.recordPath(p), func(pl *cePlanLine, m *ceMsgLine) error {
-			if m != nil && (m.Status == statusExported || m.Status == statusWithoutOrig || m.Status == statusOriginalOnly) {
+			if m != nil && (m.Status == statusExported || m.Status == statusWithoutOrig || m.Status == statusOriginalOnly ||
+				(m.Status == statusFailed && m.Class == classTerminal)) {
 				exported[pl.SourceID] = true
 			}
 			return nil
