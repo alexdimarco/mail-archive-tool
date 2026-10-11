@@ -55,7 +55,10 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
 .tree ul{list-style:none;margin:0;padding-left:18px}.tree>ul{padding-left:0}
 .node{display:flex;align-items:center;gap:6px;padding:3px 0}.node .name{cursor:pointer;overflow-wrap:anywhere}.node .name.current{font-weight:800;color:var(--accent)}
 .node .cnt{color:var(--muted);font-size:.85rem}.node .tag{font-size:.72rem;color:var(--warn);border:1px solid var(--warn);border-radius:6px;padding:0 5px}
-.arrow{width:18px;text-align:center;cursor:pointer;color:var(--muted);user-select:none}
+.arrow{width:22px;text-align:center;cursor:pointer;color:var(--muted);user-select:none}
+.node button.name,.node button.arrow{background:none;border:0;font:inherit;color:inherit;padding:0 2px;text-align:left}
+.node button.name.current{color:var(--accent)}.node button.arrow:disabled{cursor:default}
+.node button:focus-visible,.msg input:focus-visible,.run-card button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .msgs{max-height:420px;overflow:auto;border:1px solid var(--line);border-radius:10px}
 .msg{display:grid;grid-template-columns:24px minmax(0,1fr) 120px;gap:8px;padding:7px 10px;border-bottom:1px solid var(--line);align-items:start}
 .msg .subj{font-weight:650;overflow-wrap:anywhere}.msg .sub{color:var(--muted);font-size:.85rem;overflow-wrap:anywhere}.msg .when{color:var(--muted);font-size:.85rem}
@@ -132,22 +135,22 @@ var pageTmpl = template.Must(template.New("pages").Funcs(pageFuncs).Parse(`
     <div class="card" id="sourceCard">
       <h2><span class="step">1</span>Mailbox source</h2>
       <div class="row"><div class="k">Source</div><div class="v">Microsoft 365 — your mailbox</div></div>
-      <div class="row"><div class="k">Mailbox</div><div class="v" id="mbox">checking…</div></div>
+      <div class="row"><div class="k">Mailbox</div><div class="v" id="mbox" aria-live="polite">checking…</div></div>
       <p class="card-sub">Shared mailboxes aren't available in this version. MailArchive signs in with read access to your own mailbox only.</p>
       <div id="signInArea" hidden><button class="btn" id="signInBtn" type="button">Sign in</button>
       {{template "signinbox" .}}</div>
       <button class="btn" id="loadFolders" type="button" disabled>Load folders</button>
-      <div class="note" id="selNote" hidden></div>
+      <div class="note" id="selNote" role="status" aria-live="polite" hidden></div>
     </div>
 
     <div class="card" id="pickCard" hidden>
       <div class="split">
         <div><div class="listbar"><label class="checkline" style="margin:0"><input type="checkbox" id="inclSub" checked> Include subfolders</label></div>
-          <div class="tree" id="tree"></div></div>
+          <div class="tree" id="tree" role="group" aria-label="Mailbox folders"></div></div>
         <div><div class="listbar"><button class="btn small secondary" id="selectFolder" type="button" disabled>Select current folder</button>
-          <input type="text" id="filter" placeholder="Filter loaded messages by subject / sender" style="max-width:300px"></div>
-          <div class="listbar"><label class="checkline" style="margin:0"><input type="checkbox" id="selAll"> Select all loaded</label><span id="shown" class="card-sub" style="margin:0"></span></div>
-          <div class="msgs" id="msgs"></div>
+          <input type="text" id="filter" aria-label="Filter the loaded messages by subject or sender" placeholder="Filter loaded messages by subject / sender" style="max-width:300px"></div>
+          <div class="listbar"><label class="checkline" style="margin:0"><input type="checkbox" id="selAll"> Select all loaded</label><span id="shown" class="card-sub" style="margin:0" aria-live="polite"></span></div>
+          <div class="msgs" id="msgs" role="group" aria-label="Messages in the open folder"></div>
           <div class="listbar"><button class="btn small secondary" id="loadMore" type="button" hidden>Load more messages</button></div></div>
       </div>
     </div>
@@ -166,14 +169,14 @@ var pageTmpl = template.Must(template.New("pages").Funcs(pageFuncs).Parse(`
     </div>
 
     <div class="footer-sel" id="footerSel" hidden>
-      <span id="selCount">0 messages selected</span>
+      <span id="selCount" role="status" aria-live="polite">0 messages selected</span>
       <button class="btn secondary small" id="clearSel" type="button">Clear selection</button>
       <button class="btn" id="previewBtn" type="button" disabled>Preview copy export</button>
     </div>
 
     <div class="card" id="previewCard" hidden>
       <h2>Preview</h2>
-      <div id="previewBody"></div>
+      <div id="previewBody" aria-live="polite"></div>
       <div class="actions"><button class="btn" id="startBtn" type="button">Start export</button> <button class="btn secondary" id="backBtn" type="button">Back</button></div>
     </div>
   </div></main>
@@ -200,15 +203,15 @@ var pageTmpl = template.Must(template.New("pages").Funcs(pageFuncs).Parse(`
     <div class="card" id="runningCard" hidden>
       <h2>Running export</h2>
       <div id="runLabel" class="row"></div>
-      <div class="bar"><div id="runBar" style="width:0%"></div></div>
+      <div class="bar" id="runBarWrap" role="progressbar" aria-label="Export progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div id="runBar" style="width:0%"></div></div>
       <div id="runStats"></div>
       <div class="actions"><button class="btn secondary small" id="cancelBtn" type="button">Cancel</button></div>
       <pre id="runLog"></pre>
     </div>
-    <div class="card" id="lastCard" hidden><h2>Finished</h2><div id="lastBody"></div></div>
+    <div class="card" id="lastCard" hidden><h2>Finished</h2><div id="lastBody" aria-live="polite"></div></div>
     <div class="card" id="historyCard">
       <h2>History</h2>
-      <div id="history"></div>
+      <div id="history" role="group" aria-label="Exports you have made"></div>
       <p class="card-sub" id="historyEmpty" hidden>No exports yet. Start one in the <a href="workspace">Extraction workspace</a>.</p>
     </div>
   </div></main>

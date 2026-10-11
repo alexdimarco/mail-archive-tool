@@ -72,7 +72,7 @@ poll();
 // workspaceJS is the Extraction workspace page: the source, the folder tree and its
 // selection, the message list, the destination, the options and the preview.
 var workspaceJS = scoped(commonJS + `(function(){
-const st={upn:'',folders:[],byId:{},kids:{},entries:[],picks:{},current:'',rows:[],more:false,cursor:'',total:0,previewId:'',countTimer:null,running:false,counts:0};
+const st={upn:'',folders:[],byId:{},kids:{},open:{},entries:[],picks:{},current:'',rows:[],more:false,cursor:'',total:0,previewId:'',countTimer:null,running:false,counts:0};
 function errText(d){return d.error||'Something went wrong.';}
 function showErr(d){
   show('banner',errText(d));
@@ -104,7 +104,7 @@ $('loadFolders').addEventListener('click',()=>{
     if(!d.ok){showErr(d);return;}
     st.upn=d.upn;st.folders=d.folders;st.byId={};st.kids={};
     d.folders.forEach(f=>{st.byId[f.id]=f;const p=f.parent||'';(st.kids[p]=st.kids[p]||[]).push(f.id);});
-    st.entries=[];st.picks={};st.current='';st.rows=[];
+    st.entries=[];st.picks={};st.current='';st.rows=[];st.open={};
     $('pickCard').hidden=false;$('destCard').hidden=false;$('footerSel').hidden=false;
     renderTree();renderRows();updateCount();
   });
@@ -123,7 +123,18 @@ function isUnder(id,anc){
   while(cur&&cur.parent&&n++<400){if(cur.parent===anc)return true;cur=st.byId[cur.parent];}
   return false;
 }
-function renderTree(){
+// The tree and the list are redrawn after every tick, open or close. A redraw keeps what is
+// open (st.open) and puts the keyboard focus back on the same control (data-key), so a
+// keyboard user is not thrown to the top of the page, and a mouse user's open folders stay open.
+function keepFocus(root,draw){
+  const a=document.activeElement;
+  const key=(a&&root.contains(a)&&a.dataset)?a.dataset.key:'';
+  draw();
+  if(!key)return;
+  for(const n of root.querySelectorAll('[data-key]')){if(n.dataset.key===key){n.focus();break;}}
+}
+function renderTree(){keepFocus($('tree'),drawTree);}
+function drawTree(){
   const root=$('tree');clear(root);
   const ul=el('ul');
   (st.kids['']||[]).forEach(id=>ul.appendChild(nodeEl(id)));
@@ -133,23 +144,30 @@ function nodeEl(id){
   const f=st.byId[id];const li=el('li');
   const row=el('div',null,'node');
   const kids=st.kids[id]||[];
-  const arrow=el('span',kids.length?'▸':'','arrow');
-  const cb=el('input');cb.type='checkbox';
+  const arrow=el('button',kids.length?(st.open[id]?'▾':'▸'):'','arrow');arrow.type='button';arrow.dataset.key='a:'+id;
+  if(kids.length){
+    arrow.setAttribute('aria-expanded',st.open[id]?'true':'false');
+    arrow.setAttribute('aria-label',(st.open[id]?'Hide':'Show')+' the subfolders of '+f.name);
+  }else{arrow.disabled=true;arrow.tabIndex=-1;arrow.setAttribute('aria-hidden','true');}
+  const cb=el('input');cb.type='checkbox';cb.dataset.key='c:'+id;
   const cov=covering(id);
   cb.checked=!!cov;
   if(cov&&cov.id!==id)cb.disabled=true;
+  cb.setAttribute('aria-label','Select '+f.name+' ('+fmt(f.count)+' messages)'+((cov&&cov.id!==id)?', included with its parent folder':''));
   cb.addEventListener('change',()=>toggleFolder(id,cb.checked));
-  const name=el('span',f.name,'name'+(st.current===id?' current':''));
+  const name=el('button',f.name,'name'+(st.current===id?' current':''));name.type='button';name.dataset.key='n:'+id;
+  name.setAttribute('aria-label','Open '+f.name+' to see its messages');
+  if(st.current===id)name.setAttribute('aria-current','true');
   name.addEventListener('click',()=>openFolder(id));
   const cnt=el('span','('+fmt(f.count)+')','cnt');
   row.appendChild(arrow);row.appendChild(cb);row.appendChild(name);row.appendChild(cnt);
   if(f.wellKnown){row.appendChild(el('span',f.wellKnown==='deleted'?'Deleted Items':'Junk Email','tag'));}
   li.appendChild(row);
   if(kids.length){
-    const sub=el('ul');sub.hidden=true;
+    const sub=el('ul');sub.hidden=!st.open[id];
     kids.forEach(k=>sub.appendChild(nodeEl(k)));
     li.appendChild(sub);
-    arrow.addEventListener('click',()=>{sub.hidden=!sub.hidden;arrow.textContent=sub.hidden?'▸':'▾';});
+    arrow.addEventListener('click',()=>{st.open[id]=!st.open[id];renderTree();});
   }
   return li;
 }
@@ -196,7 +214,8 @@ function setRow(h,on){
   if(cov){const i=cov.exclude.indexOf(h);if(on&&i>=0)cov.exclude.splice(i,1);if(!on&&i<0)cov.exclude.push(h);}
   else{if(on)st.picks[h]=true;else delete st.picks[h];}
 }
-function renderRows(){
+function renderRows(){keepFocus($('msgs'),drawRows);}
+function drawRows(){
   const box=$('msgs');clear(box);
   const q=$('filter').value.toLowerCase();
   let shown=0;
@@ -204,7 +223,8 @@ function renderRows(){
     if(q&&(r.subject+' '+r.from+' '+r.fromName).toLowerCase().indexOf(q)<0)return;
     shown++;
     const row=el('div',null,'msg');
-    const cb=el('input');cb.type='checkbox';cb.checked=rowChecked(r.h);
+    const cb=el('input');cb.type='checkbox';cb.checked=rowChecked(r.h);cb.dataset.key='m:'+r.h;
+    cb.setAttribute('aria-label','Select the message '+(r.subject||'(no subject)')+(r.fromName?' from '+r.fromName:''));
     cb.addEventListener('change',()=>{setRow(r.h,cb.checked);updateCount();});
     const mid=el('div');
     mid.appendChild(el('div',r.subject||'(no subject)','subj'));
@@ -353,6 +373,7 @@ function renderRun(p){
     card.hidden=false;runId=p.runId;
     const pct=p.selected?Math.round(100*p.done/p.selected):0;
     $('runBar').style.width=pct+'%';
+    const wrap=$('runBarWrap');wrap.setAttribute('aria-valuenow',String(pct));wrap.setAttribute('aria-valuetext',fmt(p.done)+' of '+fmt(p.selected)+' done');
     $('runLabel').textContent=fmt(p.done)+' of '+fmt(p.selected)+' done, '+fmt(p.failed)+' failed';
     const eta=p.etaSeconds>0?' · about '+Math.ceil(p.etaSeconds/60)+' min left':'';
     $('runStats').textContent=p.bytesText+' written · '+(p.folder||'')+' · '+fmt(p.rate)+' B/s'+eta;
@@ -398,10 +419,11 @@ function cardEl(c){
     let label=LABELS[a]||a;
     if(a==='export-these-again'&&c.remaining)label='Export these '+fmt(c.remaining)+' messages again';
     const b=el('button',label,'btn small'+(a==='open-folder'||a==='check-this-export'?' secondary':''));b.type='button';
+    b.dataset.run=c.run;b.dataset.act=a;
     b.addEventListener('click',()=>act(a,c,box));acts.appendChild(b);
   });
   box.appendChild(acts);
-  const res=el('div');res.className='cardres';
+  const res=el('div');res.className='cardres';res.setAttribute('aria-live','polite');
   if(c.result&&c.result.error)res.appendChild(el('div',c.result.error,'note warnbox'));
   box.appendChild(res);
   return box;
@@ -417,11 +439,11 @@ function act(a,c,box){
   // A refusal is kept by the server on this run's card (it comes back with the next history
   // answer, which rebuilds every card), and is shown at once here and in the page's alert.
   const fail=d=>{const t=d.error||'That did not work.';out.appendChild(el('div',t,'note warnbox'));note(t);};
-  const done=d=>{if(!d.ok)fail(d);loadHistory();};
+  const done=d=>{if(!d.ok)fail(d);loadHistory(true);};
   switch(a){
-  case 'open-folder':api('api/exports/open-folder',{runId:c.run}).then(d=>{if(!d.ok){fail(d);loadHistory();}});break;
+  case 'open-folder':api('api/exports/open-folder',{runId:c.run}).then(d=>{if(!d.ok){fail(d);loadHistory(true);}});break;
   case 'check-this-export':api('api/exports/check',{runId:c.run}).then(d=>{
-      if(!d.ok){fail(d);loadHistory();return;}
+      if(!d.ok){fail(d);loadHistory(true);return;}
       out.appendChild(el('div',(d.green?'GREEN':'RED')+': '+fmt(d.files)+' files checked','v '+(d.green?'good':'bad')));
       (d.problems||[]).forEach(p=>out.appendChild(el('div',p,'note warnbox')));
     });break;
@@ -444,15 +466,23 @@ function renderSignIn(s){
   if(on)$('signInWhy').textContent=(s.why||'')+(s.as?' Sign in as '+s.as+'.':'');
   c.hidden=!on;
 }
-function loadHistory(){
-  if(busy)return;busy=true;
+// The history is redrawn from the server's answer. A timed refresh never redraws under the
+// card the keyboard is in; a redraw after a click (force) puts the focus back on the button
+// that was pressed (the same run, the same action), so a keyboard user keeps their place.
+function loadHistory(force){
+  const h=$('history');
+  if(busy||(!force&&h.contains(document.activeElement)))return;
+  busy=true;
   api('api/exports/history',{}).then(d=>{
     busy=false;
     if(!d.ok){note(d.error);return;}
     renderSignIn(d.signIn);
-    const h=$('history');clear(h);
+    const a=document.activeElement;
+    const keep=(a&&h.contains(a)&&a.dataset)?{run:a.dataset.run,act:a.dataset.act}:null;
+    clear(h);
     (d.runs||[]).forEach(c=>h.appendChild(cardEl(c)));
     $('historyEmpty').hidden=(d.runs||[]).length>0;
+    if(keep&&keep.act){for(const b of h.querySelectorAll('button[data-act]')){if(b.dataset.run===keep.run&&b.dataset.act===keep.act){b.focus();break;}}}
   });
 }
 pollRun();loadHistory();
