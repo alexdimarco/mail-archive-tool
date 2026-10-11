@@ -1,0 +1,59 @@
+# recorded: 2026-10-11, by slice MF-S1 of docs/design-mime-fidelity.md, when the frozen v1 replay and its vendored dependencies were added
+# toolchain: go1.26.9 on darwin/arm64 (unicode.Version 15.0.0); the stdlib copies under internal/source/parsev1/_dep/ are that release's
+# dependencies: github.com/emersion/go-message v0.16.0, github.com/emersion/go-textwrapper 65d896831594, github.com/emersion/go-mbox v1.0.4, github.com/mooijtech/go-pst/v6 v6.0.2, golang.org/x/text v0.42.0, golang.org/x/net v0.60.0, as this branch's go.mod and go.sum pin them
+# frozen-source: parsev1.go is the v0.7.1 tag's parseMessage, fallbackParse, addressList and bytesWriterTo (internal/source/mbox.go at the tag, byte-identical to the base of this slice, 4148af1); the tag is commit 066f86dbae867f00f5d0340a2ce6a83cbed2e088
+# baseline: a baseline in the CLAUDE.md sense; regenerating it is an operator-accepted act under design section 5, never a fix
+unicode.Version 15.0.0
+sha256 814734ed79e50dbccfc61267846ed5610c954b994f3dbd6fac4c8573bd1404f3 internal/source/parsev1.go
+sha256 911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad internal/source/parsev1/LICENSE-go
+sha256 9e84a70e67cb6d9e79df2612bd111d5c505b40422ce146afe8477bb1af83155a internal/source/parsev1/LICENSE-go-message
+sha256 0e98a5e907c72bd63b5eaf64c662fa146f139931b2608a1427286577b9900cc4 internal/source/parsev1/LICENSE-go-textwrapper
+sha256 d5658e64be6187d790b5a5184dcd00fe66c1b1dcde32128c1e298e3f15333a25 internal/source/parsev1/README.txt
+sha256 6d9e5e34d19d909fc5070f23d0ff338b74bf87fb19f8274351413f99532f06df internal/source/parsev1/_dep/base64/base64.go
+sha256 c31dade373ba9a6970fdec0943cdf95b2a8ae1f0e057fdd581e50165aca26fbb internal/source/parsev1/_dep/byteorder/byteorder.go
+sha256 ddfdfd59cf1c8c8d64252431b901a171d42a0c955d5efcf08b0a0c8cffee6946 internal/source/parsev1/_dep/charset/charset.go
+sha256 22aa57be8b9138a60f9219e3fe8b1745d46ad6877acee6280e44da6bf532bdde internal/source/parsev1/_dep/charset/gopst.go
+sha256 d9bcc7eb968a185fd154e07cf125edec359316fa75802c07c61a249c52668c52 internal/source/parsev1/_dep/mail/address.go
+sha256 d26a3ca5dbd0dc9f3fdfe76f1bbdde39736024a6474205b2381ab784df131aa7 internal/source/parsev1/_dep/mail/attachment.go
+sha256 64f6175c3e081294a6dd3a083e60340f1b6f3b629ef1ed4df200e1bcf21624c8 internal/source/parsev1/_dep/mail/header.go
+sha256 be59bd535379f39a506c9df9f78050bdfde7fc95d4e6ad400dd56bb006eb132f internal/source/parsev1/_dep/mail/inline.go
+sha256 a7f46f0e4e3c5073a02018d99ce1b429e98e6308a7d614d8a7314dae22b2b1b0 internal/source/parsev1/_dep/mail/mail.go
+sha256 760a31f73ccc479e0ff1afe8cbe5c03518b972ee1916f8e569e3c25e9e6854c3 internal/source/parsev1/_dep/mail/reader.go
+sha256 23d7e6f956401867b7daae6c3503c85e5b4cbb6092b94f43c681bbb2263e418f internal/source/parsev1/_dep/mail/writer.go
+sha256 426dca60c56eb3f5d4ef8e1d0549bf97a9bd35b2ef832505de495dced45fe594 internal/source/parsev1/_dep/message/charset.go
+sha256 d79ff992951a8cb8595a75eb30235fe89d864f67720bc54befe2fc23e3bf906e internal/source/parsev1/_dep/message/encoding.go
+sha256 54ec0a36175a70a6cfa9e4a459434e938a5d2b387461d30f4a20192478b619e0 internal/source/parsev1/_dep/message/entity.go
+sha256 268ddb43165796a0d005d83bf3c8b113298f0a1b09adcdfc36540b7b6e098550 internal/source/parsev1/_dep/message/header.go
+sha256 127b07eee3e57a5bca85c807e0751a43c705d2f2ac2d0a108606a6d61ae56b4f internal/source/parsev1/_dep/message/message.go
+sha256 e249ec046f4626de4d171706f6ebd7aa5a84f250f288f12d7273f9777db7a454 internal/source/parsev1/_dep/message/multipart.go
+sha256 41850c5f4c8235150005a620522fa3ec5a6203b43474ec3190260b49fbb87bb1 internal/source/parsev1/_dep/message/writer.go
+sha256 ecf1cc19ee97b0ff3ae9c68c3c4bf84ea9852bade0433c21736c764220f3b56d internal/source/parsev1/_dep/mime/encodedword.go
+sha256 85d1052199201e6ad52e27db50104842295dbf10e87f3914c803c6ce533772a6 internal/source/parsev1/_dep/mime/grammar.go
+sha256 2179fd195097a382a2ac3cdcbcbc6961f2770dbd61adfabfc60535c1acc5faa0 internal/source/parsev1/_dep/mime/mediatype.go
+sha256 58c7244e778fa5f3c6bd7fd2ec0a870f6e957142e07864c048dd5d956d5f618e internal/source/parsev1/_dep/netmail/message.go
+sha256 8caa6835cbdea786381063601d021dc775751bf39c5b8d41a965f6370648227b internal/source/parsev1/_dep/quotedprintable/reader.go
+sha256 c180dbcf62cfe6c686698b698883891703bdf93da7d27c722dac85e628683114 internal/source/parsev1/_dep/quotedprintable/writer.go
+sha256 12324b8929b9ba4cf5d6cb0f79c72a8622f912f21c35aebd772a3540da58930c internal/source/parsev1/_dep/textproto/header.go
+sha256 1a5aa86641f98021fd6f37466c07e62f2662f4f55d88b9d09ebf032988e5d110 internal/source/parsev1/_dep/textproto/multipart.go
+sha256 fd8c495461ba7fce700ee54a5b7c9e93a57403ff76fd27a83cdefbcee85ceb0f internal/source/parsev1/_dep/textproto/textproto.go
+sha256 295576b69dcf7960a8c03fefaae1399a0ca9482d17d3063536e1027368db892b internal/source/parsev1/_dep/textwrapper/wrapper.go
+go.sum github.com/emersion/go-mbox v1.0.4 h1:vayGeB4QcC64MIEnJySQCSyJG46vRvVyAohD/sgCQsU=
+go.sum github.com/emersion/go-mbox v1.0.4/go.mod h1:Yp9IVuuOYLEuMv4yjgDHvhb5mHOcYH6x92Oas3QqEZI=
+go.sum github.com/emersion/go-message v0.16.0 h1:uZLz8ClLv3V5fSFF/fFdW9jXjrZkXIpE1Fn8fKx7pO4=
+go.sum github.com/emersion/go-message v0.16.0/go.mod h1:pDJDgf/xeUIF+eicT6B/hPX/ZbEorKkUMPOxrPVG2eQ=
+go.sum github.com/emersion/go-textwrapper v0.0.0-20200911093747-65d896831594 h1:IbFBtwoTQyw0fIM5xv1HF+Y+3ZijDR839WMulgxCcUY=
+go.sum github.com/emersion/go-textwrapper v0.0.0-20200911093747-65d896831594/go.mod h1:aqO8z8wPrjkscevZJFVE1wXJrLpC5LtJG7fqLOsPb2U=
+go.sum github.com/mooijtech/go-pst/v6 v6.0.2 h1:mXzOgcSZ30UPuCWpz4DAQCTm0ttOmiejOuF/CN32C2Q=
+go.sum github.com/mooijtech/go-pst/v6 v6.0.2/go.mod h1:pF4o5rQwF33uLJQ0c+CZICeK4GwcKTpGVq6yVOHrvkY=
+go.sum golang.org/x/net v0.0.0-20190620200207-3b0461eec859/go.mod h1:z5CRVTTTmAJ677TzLLGU+0bjPO0LkuOLi4/5GtJWs/s=
+go.sum golang.org/x/net v0.0.0-20210226172049-e18ecbb05110/go.mod h1:m0MpNAwzfU5UDzcl9v0D8zg8gWTRqZa9RBIspLL5mdg=
+go.sum golang.org/x/net v0.0.0-20220722155237-a158d28d115b/go.mod h1:XRhObCWvk6IyKnWLug+ECip1KBveYUHfp+8e9klMJ9c=
+go.sum golang.org/x/net v0.3.0/go.mod h1:MBQ8lrhLObU/6UmLb4fmbmk5OcyYmqtbGd/9yIeKjEE=
+go.sum golang.org/x/net v0.60.0 h1:79p50tfZlm0J9YfoDsSi639qSXNGVwEzOPLCxM2FsYU=
+go.sum golang.org/x/net v0.60.0/go.mod h1:2DA/G1UfVbCpQPeWTmMPGY7Cs2PkBkwu743bVX5PIVg=
+go.sum golang.org/x/text v0.3.0/go.mod h1:NqM8EUOU14njkJ3fqMW+pc6Ldnwhi/IjpwHt7yyuwOQ=
+go.sum golang.org/x/text v0.3.3/go.mod h1:5Zoc/QRtKVWzQhOtBMvqHzDpF6irO9z98xDceosuGiQ=
+go.sum golang.org/x/text v0.3.7/go.mod h1:u+2+/6zg+i71rQMx5EYifcz6MCKuco9NR6JIITiCfzQ=
+go.sum golang.org/x/text v0.5.0/go.mod h1:mrYo+phRRbMaCq/xk9113O4dZlRixOauAjOtrjsXDZ8=
+go.sum golang.org/x/text v0.42.0 h1:JbOZXgfeCPU9gacVtYliJqOhD+zhrEqK4LfdpmlUZqI=
+go.sum golang.org/x/text v0.42.0/go.mod h1:ojzP1Z+2QtioaF8DTtO8K5q7JWVVYwZKenzujK0Zd0E=

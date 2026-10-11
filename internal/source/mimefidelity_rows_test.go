@@ -17,12 +17,6 @@ func TestFidelityParserKeepsTheIdentityGoldenOnTheCorpus(t *testing.T) {
 	t.Skip("MA-330: there is no fidelity parser, IdentityTerms or idv() to compare with the golden; encoder lands in MF-S0, turns green in MF-S1")
 }
 
-// covers: MA-331, R27, R3
-// The replay's charset table, source files and identity dependencies are pinned.
-func TestFrozenReplayPinsTheCharsetTableAndItsSources(t *testing.T) {
-	t.Skip("MA-331: parsev1 and its vendored dependencies do not exist, so there is nothing to hash, snapshot or list with go list -deps; encoder lands in MF-S0, turns green in MF-S1")
-}
-
 // covers: MA-332, R2, R7, R27
 // A corpus message with no fidelity note has the content golden's fields, renders
 // as the current renderer renders the v1 message, and carries IdentityTerms equal
