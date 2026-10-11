@@ -816,6 +816,13 @@ MA-343; S7: MA-344, MA-345, MA-346 (b, d), MA-347 (repair half)). MA-343 is tier
 and pending: its lab story is the Outlook-on-Windows export the row states, and
 S6 may not merge while it is L. Each row's Prove-fail mutation is folded into the
 end of its Asserts cell, because this table has four columns. R27 cites R28, which
-lands with re-capture integrity's slice S1. The design's R2 clarification (§6) does
+lands with re-capture integrity's slice S1. The fidelity corpus (`testdata/mime/`,
+indexed by `corpus.tsv`, with the PST twin `testdata/support.pst`) and the identity
+and content goldens recorded over it from the release build v0.7.1 are in place, with
+their provenance in the goldens' headers; `TestMimeCorpusIsComplete` and
+`TestMimeGoldensHoldForTheBuild` (citing R27) guard them until S1 points them at the
+frozen replay. No corpus input panics the v1 parse, so MA-330's panicking-item case
+stays open as a skip, and the identity golden pins the stub from a constructed
+message. The design's R2 clarification (§6) does
 not land here (ruling J7): it waits for ESC-2, as one joint paragraph with
 re-capture integrity's R2 amendment.
