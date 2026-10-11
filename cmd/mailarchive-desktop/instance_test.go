@@ -243,7 +243,7 @@ func TestDesktopFirstLaunchIsTheInstance(t *testing.T) {
 	}
 }
 
-// covers: MA-376, MA-281, R23, S43
+// covers: MA-376, MA-281, R23, R12, S41, S43
 // A second launch of the same account hands off to the instance after it has
 // proved itself with its key: the instance's own browser opener is called once and
 // the launch returns nil; the launch's own opener is never called and no second
@@ -272,7 +272,7 @@ func TestDesktopReconnectsWhenAlreadyRunning(t *testing.T) {
 	}
 }
 
-// covers: MA-376, MA-281, R23
+// covers: MA-376, MA-281, R23, S41
 // An opener that errors in the instance → "opened: false" and the launch shows the
 // fresh link through the dialog seam, a link that works; a second handoff inside a
 // second is "busy" and counts as success, opening nothing more; and -no-browser,

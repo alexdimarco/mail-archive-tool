@@ -63,6 +63,7 @@ func (c *countingReader) Read(p []byte) (int, error) { c.calls.Add(1); return c.
 // whether the browser opener fails.
 type rigOpts struct {
 	stdoutTTY, stdinTTY, foreground, display bool
+	stderrTTY                                bool
 	openErr                                  error
 }
 
@@ -109,14 +110,18 @@ func newLinkRig(t *testing.T, o rigOpts) *linkRig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { stdoutF.Close(); stdinF.Close() })
+	stderrF, err := os.CreateTemp(t.TempDir(), "stderr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { stdoutF.Close(); stdinF.Close(); stderrF.Close() })
 	pr, pw := io.Pipe()
 	g.stdinW = pw
 	g.stdinR = &countingReader{r: pr}
 	t.Cleanup(func() { pw.Close() })
 	g.fg.Store(o.foreground)
 	g.env = &linkEnv{
-		Stdin: stdinF, StdinReader: g.stdinR, Stdout: g.stdout, StdoutFile: stdoutF, Stderr: g.stderr,
+		Stdin: stdinF, StdinReader: g.stdinR, Stdout: g.stdout, StdoutFile: stdoutF, Stderr: g.stderr, StderrFile: stderrF,
 		Getenv: func(k string) string {
 			if k == "DISPLAY" && o.display {
 				return ":0"
@@ -130,8 +135,10 @@ func newLinkRig(t *testing.T, o rigOpts) *linkRig {
 			g.mu.Unlock()
 			return o.openErr
 		},
-		StateDir:   func() (string, error) { return g.state, nil },
-		IsTerminal: func(f *os.File) bool { return (f == stdoutF && o.stdoutTTY) || (f == stdinF && o.stdinTTY) },
+		StateDir: func() (string, error) { return g.state, nil },
+		IsTerminal: func(f *os.File) bool {
+			return (f == stdoutF && o.stdoutTTY) || (f == stdinF && o.stdinTTY) || (f == stderrF && o.stderrTTY)
+		},
 		Foreground: func(*os.File) bool { return g.fg.Load() },
 		Now:        g.clock.Now,
 	}
@@ -376,6 +383,55 @@ func TestServeEnterPrintsAFreshLinkOnlyInTheForeground(t *testing.T) {
 	time.Sleep(300 * time.Millisecond)
 	if n := noTTY.stdinR.calls.Load(); n != 0 {
 		t.Errorf("stdin that is no terminal was read %d time(s)", n)
+	}
+}
+
+// covers: MA-373, R23, X8
+// Enter's fresh link goes only where a person reads it, never into a log [CC5]:
+// stdout when that is a terminal; otherwise stderr when that is one; and with
+// neither (a `serve > serve.log 2>&1` run from a terminal, so stdin is one) there
+// is nowhere to show it: Enter is not offered, stdin is not read, and no token is
+// written.
+func TestServeEnterNeverPrintsATokenToANonTerminal(t *testing.T) {
+	out := buildSearchFixture(t)
+	for _, c := range []struct {
+		name                 string
+		stdoutTTY, stderrTTY bool
+		onStdout, onStderr   bool
+	}{
+		{"stdout a terminal", true, false, true, false},
+		{"only stderr a terminal", false, true, false, true},
+		{"neither a terminal (both redirected to logs)", false, false, false, false},
+	} {
+		g := startSurface(t, rigOpts{stdoutTTY: c.stdoutTTY, stderrTTY: c.stderrTTY, stdinTTY: true, foreground: true, display: true}, serveMain, out, serveArgs(out)...)
+		beforeOut := len(openLinkRe.FindAllString(g.stdout.String(), -1))
+		beforeErr := len(openLinkRe.FindAllString(g.stderr.String(), -1))
+		go g.stdinW.Write([]byte("\n")) // the user presses Enter
+		wantOut, wantErr := beforeOut, beforeErr
+		if c.onStdout {
+			wantOut++
+		}
+		if c.onStderr {
+			wantErr++
+		}
+		offered := strings.Contains(g.stdout.String(), "Press Enter")
+		if offered != (c.stdoutTTY || c.stderrTTY) {
+			t.Errorf("%s: Enter offered = %v in the start-up text:\n%s", c.name, offered, g.stdout.String())
+		}
+		if c.onStdout || c.onStderr {
+			waitFor(t, c.name+": the Enter to be read", 5*time.Second, func() bool { return g.stdinR.calls.Load() > 0 })
+		}
+		time.Sleep(400 * time.Millisecond) // a link, if one is going to be printed, is printed by now
+		if n := g.stdinR.calls.Load(); (n > 0) != (c.onStdout || c.onStderr) {
+			t.Errorf("%s: stdin was read %d time(s)", c.name, n)
+		}
+		if got := len(openLinkRe.FindAllString(g.stdout.String(), -1)); got != wantOut {
+			t.Errorf("%s: %d link(s) on stdout after Enter, want %d:\n%s", c.name, got, wantOut, g.stdout.String())
+		}
+		if got := len(openLinkRe.FindAllString(g.stderr.String(), -1)); got != wantErr {
+			t.Errorf("%s: %d link(s) on stderr after Enter, want %d:\n%s", c.name, got, wantErr, g.stderr.String())
+		}
+		g.stop()
 	}
 }
 

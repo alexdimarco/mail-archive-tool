@@ -28,6 +28,7 @@ type linkEnv struct {
 	Stdout      io.Writer
 	StdoutFile  *os.File // the file behind Stdout, for the terminal check
 	Stderr      io.Writer
+	StderrFile  *os.File // the file behind Stderr, for the terminal check
 	Getenv      func(string) string
 	GOOS        string
 	Open        func(url string) error
@@ -42,7 +43,7 @@ type linkEnv struct {
 
 func osLinkEnv() *linkEnv {
 	return &linkEnv{
-		Stdin: os.Stdin, Stdout: os.Stdout, StdoutFile: os.Stdout, Stderr: os.Stderr,
+		Stdin: os.Stdin, Stdout: os.Stdout, StdoutFile: os.Stdout, Stderr: os.Stderr, StderrFile: os.Stderr,
 		Getenv: os.Getenv, GOOS: runtime.GOOS, Open: browser.Open, StateDir: instance.Dir,
 		IsTerminal: tty.IsTerminal, Foreground: tty.Foreground, Now: time.Now,
 	}
@@ -74,6 +75,17 @@ func (l *surfaceLinks) stdoutIsTerminal() bool {
 
 func (l *surfaceLinks) stdinIsTerminal() bool {
 	return l.env.Stdin != nil && l.env.IsTerminal(l.env.Stdin)
+}
+
+func (l *surfaceLinks) stderrIsTerminal() bool {
+	return l.env.StderrFile != nil && l.env.IsTerminal(l.env.StderrFile)
+}
+
+// canShowFresh: a fresh link has somewhere a person reads it — a terminal stdout, or
+// else a terminal stderr. With neither (both redirected to logs) it is shown nowhere
+// and Enter is not offered: a token never goes into a log [CC5].
+func (l *surfaceLinks) canShowFresh() bool {
+	return l.stdoutIsTerminal() || l.stderrIsTerminal()
 }
 
 // mint makes a one-time link of the given lifetime and returns it with its token.
@@ -117,15 +129,16 @@ func (l *surfaceLinks) start() {
 
 // printFresh prints a new 10-minute link for a second browser or device. The
 // token goes to a terminal only: stdout when it is one, else stderr when that is
-// (stdin is a terminal here), else nowhere — never into a log.
+// one, else nowhere (no token is even made) — never into a log.
 func (l *surfaceLinks) printFresh() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	link, _ := l.mint(localweb.LinkTTL)
 	switch {
 	case l.stdoutIsTerminal():
+		link, _ := l.mint(localweb.LinkTTL)
 		fmt.Fprintf(l.env.Stdout, "Open this link in your browser: %s\n", link)
-	case l.env.Stdin != nil && l.env.IsTerminal(l.env.Stdin):
+	case l.stderrIsTerminal():
+		link, _ := l.mint(localweb.LinkTTL)
 		fmt.Fprintf(l.env.Stderr, "Open this link in your browser: %s\n", link)
 	}
 }
@@ -137,9 +150,10 @@ const pollForeground = 250 * time.Millisecond
 // and this process is in the terminal's foreground process group — checked
 // before each read, so a backgrounded `serve &` never reads (SIGTTIN would stop
 // it) and picks the line up once `fg` brings it back [CC18]. It returns at once,
-// reading nothing, when stdin is not a terminal. It reports whether it started.
+// reading nothing, when stdin is not a terminal or no terminal can show the link.
+// It reports whether it started.
 func (l *surfaceLinks) enter(ctx context.Context) bool {
-	if !l.stdinIsTerminal() {
+	if !l.stdinIsTerminal() || !l.canShowFresh() {
 		return false
 	}
 	var rd io.Reader = l.env.StdinReader
