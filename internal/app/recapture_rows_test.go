@@ -2,11 +2,15 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"io"
 	"io/fs"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"mail-archive-tool/internal/assure"
@@ -285,8 +289,101 @@ func TestLegacyReExaminationKeepsWhatItWouldDegrade(t *testing.T) {
 // covers: MA-356, R28, R21, R17, R1, S50
 // §1.6: on the live path a full run over a message whose attachment was removed
 // server-side under the same immutable id keeps the archived zip.
+//
+// The Graph service is answered in-process through the client's own transport seam
+// (GraphOptions.WrapTransport), so no socket is opened. The row's DEMOTE half (a
+// legacy-scheme record), the timeline stamps of a KEEP and the live-path UNCHANGED
+// twins of the first full run after an upgrade are RI-S5's, with the verdicts that
+// produce them.
 func TestLiveFullRunKeepsAnAttachmentRemovedUnderTheSameImmutableID(t *testing.T) {
+	g := &rcGraph{}
+	gopts := GraphOptions{Tenant: "t", ClientID: "c", ClientSecret: "s", Mailboxes: []string{"u1"},
+		BaseURL: "https://graph.test", TokenURL: "https://graph.test/token",
+		WrapTransport: func(http.RoundTripper) http.RoundTripper { return g }}
+	run := func(t *testing.T, out string) {
+		t.Helper()
+		_, err := RunGraph(context.Background(), gopts, Options{Out: out, Mode: export.Full, KeepRaw: true}, rcLogger())
+		var partial *PartialError
+		if err != nil && !errors.As(err, &partial) {
+			t.Fatalf("graph run: %v", err)
+		}
+	}
+	withZip := rcMail("live@x", "Contract", "<p>the contract</p>", "contract.pdf", []byte("%PDF-1.4 the contract"))
+	without := rcMail("live@x", "Contract", "<p>the contract</p>", "", nil)
+
+	// Twin: the attachment is intact on the second full run, so the archive keeps
+	// what was recorded, at the same path.
+	outT := tmpDir(t)
+	g.set(withZip)
+	run(t, outT)
+	_, t1 := recordForID(t, outT, "live@x")
+	if t1.PhysID != "M1" || t1.Fixity == nil || t1.Fixity.Zip == nil || t1.Fixity.EML == nil {
+		t.Fatalf("the first capture should record the immutable id, a zip and an original: %+v", t1)
+	}
+	run(t, outT)
+	_, t2 := recordForID(t, outT, "live@x")
+	if bad := rcAsRecorded(t, outT, t1); len(bad) != 0 || t2.Path != t1.Path {
+		t.Fatalf("a full run over an intact message changed the archive: %v (path %s then %s)", bad, t1.Path, t2.Path)
+	}
+
 	t.Skip("MA-356 (§1.6, R1): placement by immutable id bypasses the fingerprint guard and the commit deletes the zip; encoder lands in RI-S1, turns green in RI-S5")
+
+	// The attachment is removed server-side; the message keeps its immutable id.
+	out := tmpDir(t)
+	g.set(withZip)
+	run(t, out)
+	_, rec1 := recordForID(t, out, "live@x")
+	g.set(without)
+	run(t, out)
+	_, rec2 := recordForID(t, out, "live@x") // fails the test unless the placement adopted the one record
+	if rec2.Path != rec1.Path {
+		t.Fatalf("the run did not adopt the record by its immutable id (path %s then %s): the case is vacuous", rec1.Path, rec2.Path)
+	}
+	for _, bad := range rcAsRecorded(t, out, rec1) {
+		t.Errorf("a full run over a message whose attachment was removed server-side changed the archive: %s", bad)
+	}
+	if !rec2.Present {
+		t.Errorf("the record is not present after the full run: %+v", rec2)
+	}
+}
+
+// rcGraph is an in-process Microsoft Graph with one mailbox, one folder and one
+// message, M1, whose $value the test sets. It honours the immutable-id preference,
+// so the listing's id is the message's PhysID.
+type rcGraph struct {
+	mu   sync.Mutex
+	mime []byte
+}
+
+func (g *rcGraph) set(b []byte) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.mime = b
+}
+
+func (g *rcGraph) RoundTrip(r *http.Request) (*http.Response, error) {
+	h := http.Header{}
+	reply := func(code int, ctype, body string) (*http.Response, error) {
+		h.Set("Content-Type", ctype)
+		return &http.Response{StatusCode: code, Status: http.StatusText(code), Proto: "HTTP/1.1", ProtoMajor: 1, ProtoMinor: 1,
+			Header: h, Body: io.NopCloser(strings.NewReader(body)), ContentLength: int64(len(body)), Request: r}, nil
+	}
+	switch p := r.URL.Path; {
+	case p == "/token":
+		return reply(200, "application/json", `{"access_token":"t","token_type":"Bearer","expires_in":3600}`)
+	case p == "/users/u1/mailFolders":
+		return reply(200, "application/json", `{"value":[{"id":"F_IN","displayName":"Inbox","childFolderCount":0}]}`)
+	case p == "/users/u1/mailFolders/F_IN/messages":
+		if strings.Contains(strings.ToLower(r.Header.Get("Prefer")), "immutableid") {
+			h.Set("Preference-Applied", `IdType="ImmutableId"`)
+		}
+		return reply(200, "application/json", `{"value":[{"id":"M1","internetMessageId":"<live@x>","subject":"Contract","from":{"emailAddress":{"address":"alice@example.com"}},"receivedDateTime":"2025-03-03T09:00:00Z"}]}`)
+	case p == "/users/u1/messages/M1/$value":
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		return reply(200, "message/rfc822", string(g.mime))
+	}
+	return reply(404, "application/json", `{}`) // the well-known folder resolutions, and anything else
 }
 
 // covers: MA-357, R28, R20, R5, S50, S34
