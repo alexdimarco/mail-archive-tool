@@ -1337,6 +1337,27 @@ RR6-OR1/ESC-8), MA-314's foreign-host case (ESC-7), MA-323's parser-generation r
 raw-preserving stub (FI-S2b), and two no-Message-ID stubs with the same Received time still collapse
 (ESC-1). Real-tenant behaviour is proven only against the fake server, as the design says.
 
+### 13.23 FI-S3's adversarial pass (merged 2026-10-11)
+
+`docs/review-fault-isolation-s3-adversarial.md`: 25 found, 15 confirmed, 1 refuted, 14 of 16 confirmed
+fixed with tombstone tests (the report counts the id-confirmed variant of S3-AI1 separately). Serious:
+a close-delimited truncated `$value` was accepted as a whole message permanently; a 200 listing with no
+`value` array was read as an empty folder and swept its records gone; a `Retry-After` that overflows
+`Duration` bypassed the clamp; a Full run with `-since` downloaded archived messages older than the
+window and then swept them gone; a long item id collided in the ledger. **K6 confirmed:** the MA-540
+tests adapted by the S3 build keep every original assertion except the sanctioned typed-error to
+gap-detail change (one gap closed with a new test), which answers the §13.22 question for the owner;
+your confirmation is still wanted since §0 rule 2 makes it yours. **Open, owner decisions, each a skip
+encoder:** (1) **ESC-S3-1:** a message restored under a new immutable id whose download fails has its
+archived record swept gone (reversible); sparing every record on an unmatched fault would let each new
+poison item defer the whole mailbox's gone-detection, and contradicts OR10. [Accept: the sweep is
+reversible and rare.] (2) **ESC-S3-2:** a breaker trip's own gaps become known poison in the next run, so
+each outage run fetches 25 more items before it trips; the fix changes FC10's known-poison rule (RR6-C4).
+[Accept for now.] (3) **ESC-S3-3:** a parse-failing item that reuses an archived Message-ID but has an
+unmatched immutable id is held back under an info gap that says nothing is lost, when it may be a
+different message; the fix changes P15's hold-back and the §4.1 reason table. [Owner to rule; the
+conservative fix is an `#fp` split or a fillable gap with its own reason.]
+
 ### 13.7 Escalations from LC-C1's adversarial pass (merged 2026-10-10)
 
 None blocks anything: each has a skip encoder or a safe interim in force.
