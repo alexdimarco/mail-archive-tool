@@ -411,6 +411,17 @@ func (e *errCheckFailed) Error() string {
 	return "this export's checksums don't match what MailArchive recorded when it finished it (" + e.what + ") — the marker is kept. Run Check this export, or export the messages again."
 }
 
+// IsCheckFailed reports whether err is Check and finish's refusal: the folder's files do not
+// match what was recorded when the export finished, and the marker was kept.
+func IsCheckFailed(err error) bool {
+	var c *errCheckFailed
+	return errors.As(err, &c)
+}
+
+// IsNewerFormat reports whether err says a run record was written by a newer MailArchive
+// Desktop than this one.
+func IsNewerFormat(err error) bool { return errors.Is(err, errCopyNewerFormat) }
+
 // checkSums verifies SHA256SUMS.txt against the sealed fingerprint and every file it
 // lists against its line.
 func checkSums(fsys ceFS, fingerprint string) error {

@@ -240,7 +240,14 @@ func (ex *exportsState) runSlot(slot *exportSlot, plan *app.CopyPlan) {
 	if res != nil && res.RunID != "" {
 		ex.rec.Forget(res.RunID)
 		if !ex.env.Ended(res.RunID) {
-			ex.rec.LookAgain(res.RunID) // stopped before its end: the page says what and offers Finish as partial
+			// stopped before its end: the page says what and offers Finish as partial. This
+			// process knows why it stopped, so its card keeps the run's own "Stopped: ..." words
+			// (a panic is "Stopped: an internal error"); after a restart the reconciled
+			// "interrupted: <reason>" is the design's.
+			if obs := ex.rec.LookAgain(res.RunID); obs.Kind == "interrupted" && strings.HasPrefix(res.Label, "Stopped:") {
+				obs.Label = res.Label
+				ex.rec.Record(obs)
+			}
 		}
 		_ = ex.env.CompactJournal()
 	}
@@ -452,10 +459,10 @@ func engineRefusal(err error) refusal {
 		return refusal{ID: ref.ID, Text: ref.Message, Status: statusRefused}
 	}
 	msg := err.Error()
-	if strings.Contains(msg, "the marker is kept") { // Check and finish's own refusal
+	if app.IsCheckFailed(err) { // Check and finish's own refusal
 		return refusal{ID: "R-check", Text: msg, Status: statusRefused}
 	}
-	if strings.Contains(msg, "made by a newer MailArchive Desktop") {
+	if app.IsNewerFormat(err) {
 		return refusal{ID: "R-newer", Text: msg, Status: statusRefused}
 	}
 	return refusal{ID: "R-d2", Text: "MailArchive Desktop couldn't do that: " + util.StripControl(msg) + " — nothing was changed.", Status: statusRefused}

@@ -168,6 +168,9 @@ func (e *CopyExportEnv) historyOne(run string, jl []ceJournalLine, ledger []ceLe
 		h := sum.Header
 		info.Chain, info.RetryOf, info.Started, info.Planned = h.Chain, h.RetryOf, h.Started, h.Planned
 		info.RootName, info.Part = h.RootName, len(h.ChainParts)+1
+		if p := folderPath(sum); p != "" {
+			info.Dest = util.StripControl(p) // where the folder is now: the located path, else the recorded root
+		}
 		if sum.Sealed != nil {
 			c := sum.Sealed.Counts
 			info.Status, info.Fingerprint, info.Stop = sum.Sealed.Status, sum.Sealed.Fingerprint, sum.Sealed.Stop
