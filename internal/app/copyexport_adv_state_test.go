@@ -34,6 +34,67 @@ func cancelledRun(t *testing.T, e *CopyExportEnv, src *fakeSrc, killAt string) *
 	return res
 }
 
+// covers: MA-437, MA-521, R29
+// EW-AC7 tombstone. "Export failed messages again" read only the one run's record, so
+// after part 2 had exported part 1's failed messages, part 1's card still offered the
+// retry and a second retry rebuilt the same messages into part 3: the same message in
+// two parts of one set, fetched again, and the set fingerprint over the duplicates. The
+// retry and remaining readers (and the offers on the card) now take away what the
+// chain's other sealed parts exported. The first retry, offered and run, is the twin.
+func TestCopyExportRetryDoesNotRepeatWhatAnotherPartExported(t *testing.T) {
+	e, src := newCEEnv(t), newFakeSrc()
+	failing := map[string]bool{"M00002": true, "M00003": true}
+	failIDs(src, failing)
+	p1 := cePlan(t, e, src, ceMsgs(5))
+	r1 := mustRun(t, e, p1, src)
+	if r1.Outcome != CopyOutcomePartial {
+		t.Fatalf("part 1: %s", r1.Label)
+	}
+	offers := func(run string) []string {
+		hist, err := e.History(nil, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range hist {
+			if c.Run == run {
+				return c.Actions
+			}
+		}
+		t.Fatalf("no card for %s", run)
+		return nil
+	}
+	if !contains(offers(r1.RunID), ActExportFailed) {
+		t.Fatalf("part 1 does not offer the retry before it is made: %v", offers(r1.RunID))
+	}
+
+	delete(failing, "M00002")
+	delete(failing, "M00003")
+	in, err := e.RetryInput(r1.RunID, "failed", "alice@contoso.org")
+	if err != nil || len(in.Messages) != 2 {
+		t.Fatalf("the first retry: %v (%v)", in, err)
+	}
+	in.Dest = p1.Dest
+	p2, err := e.PlanCopyExport(*in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r2 := mustRun(t, e, p2, src); r2.Outcome != CopyOutcomeComplete || r2.Counts.Exported != 2 {
+		t.Fatalf("part 2: %s %+v", r2.Label, r2.Counts)
+	}
+
+	if contains(offers(r1.RunID), ActExportFailed) {
+		t.Errorf("part 1 still offers its failed messages after part 2 exported them: %v", offers(r1.RunID))
+	}
+	_, err = e.RetryInput(r1.RunID, "failed", "alice@contoso.org")
+	refusedWith(t, err, "R-h", []string{"no messages left"})
+	if rest, err := e.RunRemaining(r1.RunID); err != nil || len(rest) != 0 {
+		t.Errorf("part 1's remaining messages after part 2 exported them: %d (%v), want none", len(rest), err)
+	}
+	if n := src.fetched("M00002"); n != 2 {
+		t.Errorf("M00002 was fetched %d times (once failing in part 1, once in part 2), want 2", n)
+	}
+}
+
 // covers: MA-448, R29, R5
 // EW-AC10 tombstone. A cancelled, failed or finished-as-partial run keeps its marker by
 // design (rewritten CANCELLED or STOPPED), so a reconcile of such a run that has ended

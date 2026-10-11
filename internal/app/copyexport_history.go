@@ -267,7 +267,7 @@ func (e *CopyExportEnv) endedActions(sum *ceRecSummary, info CopyRunInfo) []stri
 	case CopyStatusFailed, CopyStatusFinishedAsPartial:
 		acts = append(acts, ActExportRemaining)
 	}
-	return acts
+	return e.pruneRetryOffers(info.Run, &sum.Header, acts)
 }
 
 // cardActions are the actions a reconciler observation allows, with the folder actions

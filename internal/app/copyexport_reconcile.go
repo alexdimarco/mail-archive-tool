@@ -303,7 +303,7 @@ func (e *CopyExportEnv) actionsFor(sum *ceRecSummary, kind string) []string {
 			acts = append(acts, ActExportRemaining)
 		}
 	}
-	return acts
+	return e.pruneRetryOffers(sum.Header.Run, &sum.Header, acts)
 }
 
 func (e *CopyExportEnv) goneActions(sum *ceRecSummary) []string { return []string{ActExportThese} }
@@ -758,26 +758,8 @@ func (e *CopyExportEnv) RunRemaining(run string) ([]CopyMessage, error) {
 		return nil, err
 	}
 	path := e.recordPath(run)
+	exported := e.exportedElsewhere(run, sum.Header.Chain)
 	if sum.Gone {
-		exported := map[string]bool{}
-		e.ledgerMu.Lock()
-		parts := e.chainRunsLocked(sum.Header.Chain)
-		e.ledgerMu.Unlock()
-		for _, p := range parts {
-			if p == run {
-				continue
-			}
-			ps, perr := readSummary(e.recordPath(p))
-			if perr != nil || ps.Sealed == nil || ps.Gone {
-				continue
-			}
-			walkMessages(e.recordPath(p), func(pl *cePlanLine, m *ceMsgLine) error {
-				if m != nil && (m.Status == statusExported || m.Status == statusWithoutOrig || m.Status == statusOriginalOnly) {
-					exported[pl.SourceID] = true
-				}
-				return nil
-			})
-		}
 		var out []CopyMessage
 		walkMessages(path, func(pl *cePlanLine, m *ceMsgLine) error {
 			if !exported[pl.SourceID] {
@@ -795,6 +777,9 @@ func (e *CopyExportEnv) RunRemaining(run string) ([]CopyMessage, error) {
 	var notDone, retry []CopyMessage
 	var last *CopyMessage
 	err = walkMessages(path, func(pl *cePlanLine, m *ceMsgLine) error {
+		if exported[pl.SourceID] {
+			return nil // another sealed part of the chain has exported it (EW-AC7)
+		}
 		switch {
 		case m == nil || m.Status == statusNotAttempted:
 			notDone = append(notDone, pl.CopyMessage)
@@ -818,12 +803,75 @@ func (e *CopyExportEnv) RunRemaining(run string) ([]CopyMessage, error) {
 	return out, nil
 }
 
+// exportedElsewhere is the ids that the chain's other sealed parts, not marked gone,
+// exported: what a retry of run must not export a second time (EW-AC7). It is nil for a
+// chain of one part, which reads no other record.
+func (e *CopyExportEnv) exportedElsewhere(run, chain string) map[string]bool {
+	e.ledgerMu.Lock()
+	parts := e.chainRunsLocked(chain)
+	e.ledgerMu.Unlock()
+	if len(parts) < 2 {
+		return nil
+	}
+	exported := map[string]bool{}
+	for _, p := range parts {
+		if p == run {
+			continue
+		}
+		ps, perr := readSummary(e.recordPath(p))
+		if perr != nil || ps.Sealed == nil || ps.Gone {
+			continue
+		}
+		walkMessages(e.recordPath(p), func(pl *cePlanLine, m *ceMsgLine) error {
+			if m != nil && (m.Status == statusExported || m.Status == statusWithoutOrig || m.Status == statusOriginalOnly) {
+				exported[pl.SourceID] = true
+			}
+			return nil
+		})
+	}
+	return exported
+}
+
+// pruneRetryOffers takes "Export failed messages again" and "Export the remaining
+// messages" off the card of a part whose messages the chain's other parts have already
+// exported (EW-AC7).
+func (e *CopyExportEnv) pruneRetryOffers(run string, hdr *ceHeaderLine, acts []string) []string {
+	if hdr == nil || (!hasAction(acts, ActExportFailed) && !hasAction(acts, ActExportRemaining)) {
+		return acts
+	}
+	e.ledgerMu.Lock()
+	n := len(e.chainRunsLocked(hdr.Chain))
+	e.ledgerMu.Unlock()
+	if n < 2 {
+		return acts
+	}
+	out := make([]string, 0, len(acts))
+	for _, a := range acts {
+		switch a {
+		case ActExportFailed:
+			if left, err := e.RunFailed(run); err == nil && len(left) == 0 {
+				continue
+			}
+		case ActExportRemaining:
+			if left, err := e.RunRemaining(run); err == nil && len(left) == 0 {
+				continue
+			}
+		}
+		out = append(out, a)
+	}
+	return out
+}
+
 // RunFailed is what "Export failed messages again" reads: the run's retryable
-// failures, from its run record.
+// failures, from its run record, less what the chain's other sealed parts exported.
 func (e *CopyExportEnv) RunFailed(run string) ([]CopyMessage, error) {
+	var exported map[string]bool
+	if h, err := readHeaderOnly(e.recordPath(run)); err == nil {
+		exported = e.exportedElsewhere(run, h.Chain)
+	}
 	var out []CopyMessage
 	err := walkMessages(e.recordPath(run), func(pl *cePlanLine, m *ceMsgLine) error {
-		if m != nil && m.Status == statusFailed && m.Class == classRetryable {
+		if m != nil && m.Status == statusFailed && m.Class == classRetryable && !exported[pl.SourceID] {
 			out = append(out, pl.CopyMessage)
 		}
 		return nil
