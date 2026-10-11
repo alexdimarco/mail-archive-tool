@@ -253,28 +253,31 @@ func (d *dashboard) registerWorkspace(mux *localweb.Mux) {
 	mux.HandleFunc("/workspace.js", serveJS(workspaceJS))
 	mux.HandleFunc("/exports.js", serveJS(exportsJS))
 	mux.HandleFunc("/signin.js", serveJS(signinJS))
-	for path, h := range map[string]func(http.ResponseWriter, *http.Request){
-		"/api/m365/signin":              d.signInAction,
-		"/api/m365/signin-status":       d.signInStatusAction,
-		"/api/workspace/source":         d.sourceAction,
-		"/api/workspace/folders":        d.foldersAction,
-		"/api/workspace/messages":       d.messagesAction,
-		"/api/workspace/count":          d.countAction,
-		"/api/workspace/browse":         d.browseAction,
-		"/api/workspace/mkdir":          d.mkdirAction,
-		"/api/workspace/preview":        d.previewAction,
-		"/api/workspace/preview-status": d.previewStatusAction,
-		"/api/exports/start":            d.startAction,
-		"/api/exports/cancel":           d.cancelAction,
-		"/api/exports/progress":         d.progressAction,
-		"/api/exports/history":          d.historyAction,
-		"/api/exports/open-folder":      d.openFolderAction,
-		"/api/exports/retry":            d.retryAction,
-		"/api/exports/finish":           d.finishAction,
-		"/api/exports/locate":           d.locateAction,
-		"/api/exports/check":            d.checkAction,
+	for _, r := range []struct {
+		path string
+		h    func(http.ResponseWriter, *http.Request)
+	}{
+		{"/api/m365/signin", d.signInAction},
+		{"/api/m365/signin-status", d.signInStatusAction},
+		{"/api/workspace/source", d.sourceAction},
+		{"/api/workspace/folders", d.foldersAction},
+		{"/api/workspace/messages", d.messagesAction},
+		{"/api/workspace/count", d.countAction},
+		{"/api/workspace/browse", d.browseAction},
+		{"/api/workspace/mkdir", d.mkdirAction},
+		{"/api/workspace/preview", d.previewAction},
+		{"/api/workspace/preview-status", d.previewStatusAction},
+		{"/api/exports/start", d.startAction},
+		{"/api/exports/cancel", d.cancelAction},
+		{"/api/exports/progress", d.progressAction},
+		{"/api/exports/history", d.historyAction},
+		{"/api/exports/open-folder", d.openFolderAction},
+		{"/api/exports/retry", d.retryAction},
+		{"/api/exports/finish", d.finishAction},
+		{"/api/exports/locate", d.locateAction},
+		{"/api/exports/check", d.checkAction},
 	} {
-		mux.HandleFunc(path, d.api(h))
+		mux.HandleFunc(r.path, d.api(r.h))
 	}
 }
 

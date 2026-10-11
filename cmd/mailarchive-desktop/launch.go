@@ -48,6 +48,14 @@ type launchEnv struct {
 	WatchEvery, Window time.Duration
 	// Ready, when set, is told once an instance is serving: how a test finds it.
 	Ready func(instance.Info)
+	// ExportDir is the per-user, local state directory the Extraction workspace keeps its
+	// run records and journal in (desktop.StateDir); nil or "" leaves the workspace able
+	// to preview but not to export, and writes nothing — what a test that runs a launch
+	// in-process wants.
+	ExportDir func() string
+	// WorkspaceOff reports the machine policy that turns the Extraction workspace off
+	// (Windows: an administrator's HKLM value); nil is "not set".
+	WorkspaceOff func() bool
 }
 
 func osEnv() *launchEnv {
@@ -57,6 +65,7 @@ func osEnv() *launchEnv {
 		Probe:      func() string { return probeFormer(instance.FormerAddress, 800*time.Millisecond) },
 		EndOld:     func() bool { return endPreUpgrade(instance.FormerAddress) },
 		WatchEvery: time.Minute, Window: instance.DefaultWait,
+		ExportDir: desktop.StateDir, WorkspaceOff: workspacePolicyOff,
 	}
 }
 
@@ -116,6 +125,7 @@ func launch(ctx context.Context, args []string, env *launchEnv) error {
 	logPath := fs.String("log", "", "capture mode: append the run log here (default: desktop-capture.log under your OS config dir)")
 	noBrowser := fs.Bool("no-browser", false, "do not open the dashboard in a browser on start (use for a background/Startup launch)")
 	copyLink := fs.Bool("copy-link", false, "show a fresh one-time link in a dialog, to copy into a browser, instead of opening one (for a default browser that cannot be opened)")
+	noWorkspace := fs.Bool("no-workspace", false, "turn the Extraction workspace off: its pages and endpoints are not served and the Export group is hidden (an administrator can also set the machine policy)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -133,7 +143,11 @@ func launch(ctx context.Context, args []string, env *launchEnv) error {
 	store, _ := graphconfig.DefaultSecretStore() // informational shell tolerates a nil store
 	settingsPath := filepath.Join(filepath.Dir(cfgPath), "desktop-settings.json")
 	exe, _ := os.Executable() // recorded in a scheduled task so the weekly backup runs this binary
-	dcfg := desktop.Config{Out: *out, ConfigPath: cfgPath, Store: store, SettingsPath: settingsPath, Exe: exe}
+	dcfg := desktop.Config{Out: *out, ConfigPath: cfgPath, Store: store, SettingsPath: settingsPath, Exe: exe, Version: buildVersion()}
+	dcfg.WorkspaceOff = *noWorkspace || (env.WorkspaceOff != nil && env.WorkspaceOff())
+	if env.ExportDir != nil {
+		dcfg.StateDir = env.ExportDir()
+	}
 
 	// Scheduled headless capture (DC1): no server, no prompt — read the saved
 	// config + sign-in and run one incremental capture, logging to a file.
@@ -293,6 +307,12 @@ func serveInstance(ctx context.Context, h *instance.Holder, o *launchOpts, env *
 	sess := localweb.NewSession()
 	origin := "http://" + ln.Addr().String()
 	dcfg := o.dcfg
+	// The workspace's Graph session and every preview and export run on this process's own
+	// life: cancelling ctx (Ctrl-C, a logoff) drains them, and the process waits for the
+	// running export to finalize (its manifest says cancelled, its marker CANCELLED) before it
+	// lets go of the account's lock, within desktop.DrainBudget (XC6, MA-514).
+	life := desktop.NewLifecycle(ctx)
+	dcfg.Lifecycle = life
 	dcfg.ReaderURL = "http://" + readerLn.Addr().String() + sess.Prefix()
 	dcfg.Sessions = sess.Opened
 	dcfg.Former = former
@@ -365,6 +385,12 @@ func serveInstance(ctx context.Context, h *instance.Holder, o *launchOpts, env *
 		if c, ok := rm.(io.Closer); ok {
 			_ = c.Close() // release the reader's open index handle on shutdown
 		}
-		return dash.Shutdown(shutCtx)
+		err := dash.Shutdown(shutCtx)
+		// the running export finalizes before the process lets go (its own budget)
+		select {
+		case <-life.Drained():
+		case <-time.After(desktop.DrainBudget + 5*time.Second):
+		}
+		return err
 	}
 }

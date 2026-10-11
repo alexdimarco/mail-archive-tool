@@ -75,6 +75,9 @@ type dRig struct {
 	endCalls   int
 	session    string
 	prefix     string // the session's path prefix, learned by cookieFromLink
+
+	exportDir string // the Extraction workspace's state directory ("" = none: it writes nothing)
+	policyOff bool   // the machine policy that turns the workspace off
 }
 
 func newDRig(t *testing.T) *dRig {
@@ -105,6 +108,7 @@ func (g *dRig) env(rec *recorder) *launchEnv {
 		Probe:      func() string { g.probeCalls++; return g.probe },
 		EndOld:     func() bool { g.endCalls++; return g.endOld },
 		WatchEvery: 50 * time.Millisecond, Window: 2 * time.Second,
+		ExportDir: func() string { return g.exportDir }, WorkspaceOff: func() bool { return g.policyOff },
 	}
 }
 
