@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	pst "github.com/mooijtech/go-pst/v6/pkg"
+
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/outlookcom"
@@ -368,6 +370,48 @@ func TestALockLostFoundByTheProbeWritesNoSharedState(t *testing.T) {
 	}
 	if _, serr := os.Stat(filepath.Join(out, "README.txt")); serr == nil {
 		t.Error("README.txt was written into an archive another run now owns")
+	}
+}
+
+// covers: MA-318, R1, R10
+// S2A-AC7, end to end on a real hostile PST: the fixture's two attachments lie about
+// the type of their data (0x3701 as a 4-byte integer), so go-pst's attachment stream
+// dereferences nil. The panic reached the export step, which lost the whole message as
+// an export-panic gap although its body was readable, and left the zip's temp file
+// in the archive. The attachments are now each an error of their own: the message is
+// archived, its attachments are named as unreadable, no panic is counted and nothing is
+// left behind.
+func TestAnAttachmentThatPanicsCostsThatAttachmentOnly(t *testing.T) {
+	data := pstFixtureData(t)
+	dec := &pst.HeapOnNodeReader{}
+	var inv [256]byte
+	for b := 0; b < 256; b++ {
+		inv[dec.DecodeCompressibleEncryption([]byte{byte(b)})[0]] = byte(b)
+	}
+	mut := append([]byte(nil), data...)
+	for _, off := range []int{596573, 597309} {
+		if got := dec.DecodeCompressibleEncryption([]byte{data[off], data[off+1]}); got[0] != 0x02 || got[1] != 0x01 {
+			t.Fatalf("precondition: the record at %d reads % x, want 02 01", off, got)
+		}
+		mut[off], mut[off+1] = inv[0x03], inv[0x00]
+	}
+	path := writeData(t, tmpDir(t), "old.pst", mut)
+	out := tmpDir(t)
+	res, err := runLocal(t, out, path)
+	if res.Stats.ExportPanics != 0 || loadArchive(t, out).Len() != 17 {
+		t.Errorf("%d export panics, %d records; want 0 and all 17 (the message is archived, its attachments are not)", res.Stats.ExportPanics, loadArchive(t, out).Len())
+	}
+	for _, g := range ledgerOf(t, out) {
+		if g.Reason == "export-panic" {
+			t.Errorf("gap %+v: the message was lost to a panic in its attachment", g)
+		}
+	}
+	if err != nil && !errors.Is(err, ErrPartial) {
+		t.Errorf("run err = %v; want nil or ErrPartial (the attachments are unreadable)", err)
+	}
+	leftovers, _ := filepath.Glob(filepath.Join(out, "*", "*", ".mailarchive-*"))
+	if more, _ := filepath.Glob(filepath.Join(out, "*", ".mailarchive-*")); len(leftovers)+len(more) != 0 {
+		t.Errorf("temp files left in the archive: %v %v", leftovers, more)
 	}
 }
 

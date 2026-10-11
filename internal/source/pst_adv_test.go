@@ -3,6 +3,8 @@ package source
 import (
 	"bytes"
 	"fmt"
+	"io"
+	"strings"
 	"testing"
 
 	pst "github.com/mooijtech/go-pst/v6/pkg"
@@ -272,6 +274,58 @@ func TestPSTCycleAndDeepRowsCountTowardTheBreaker(t *testing.T) {
 			t.Errorf("err %v, %d messages; want all 17 read: no 100 in a row", out.err, len(out.msgs))
 		}
 	})
+}
+
+// lieAboutAttachmentType patches the 2-byte property type of the attachment-data
+// record (PidTagAttachDataBinary 0x3701) of the fixture's two attachments from 0x0102
+// (binary) to 0x0003 (a 4-byte integer): go-pst then hands back a property reader
+// with no heap behind it, and its attachment's WriteTo dereferences nil. The first
+// real PST trigger for S2A-AC7's premise.
+func lieAboutAttachmentType(t *testing.T, data []byte) []byte {
+	t.Helper()
+	mut := append([]byte(nil), data...)
+	for _, off := range []int{596573, 597309} {
+		if got := decode(data[off : off+2]); !bytes.Equal(got, []byte{0x02, 0x01}) {
+			t.Fatalf("precondition: the attachment record at %d reads % x; want type 0x0102 (binary) of the property 0x3701", off, got)
+		}
+		mut[off], mut[off+1] = encode(0x03), encode(0x00)
+	}
+	return mut
+}
+
+// covers: MA-318, R1, R10
+// S2A-AC7: a panic in an attachment's lazy stream (go-pst's attachment WriteTo is a
+// closure over its heap reader, and a property that lies about its type leaves it
+// nil) is an error of THAT attachment, like a torn stream: the message and its other
+// attachments are kept (design 4.4: attachments never fail the message). The panic
+// escaped every guard of the reader (convertMessage's covers only the iteration) and
+// was caught by the export step as a lost message, with its zip's temp file left in
+// the archive.
+func TestPSTAttachmentStreamPanicIsThatAttachmentsError(t *testing.T) {
+	data := fixtureData(t)
+	out := walkOnce(t, openData(t, lieAboutAttachmentType(t, data)), WalkOptions{})
+	if out.err != nil || len(out.msgs) != 17 || len(out.faults) != 0 {
+		t.Fatalf("walk: %d messages, %d faults, err %v; want all 17 and no fault (the lie is in the attachment's data, not the table)", len(out.msgs), len(out.faults), out.err)
+	}
+	checked := 0
+	for _, m := range out.msgs {
+		for i, a := range m.Attachments {
+			func() {
+				defer func() {
+					if rec := recover(); rec != nil {
+						t.Errorf("%q attachment %d: WriteTo panicked: %v; want an error", m.Subject, i, rec)
+					}
+				}()
+				if _, err := a.WriteTo(io.Discard); err == nil && strings.Contains(m.Subject, "Support portal downtime") {
+					t.Errorf("%q attachment %d: WriteTo of a lying property returned no error", m.Subject, i)
+				}
+				checked++
+			}()
+		}
+	}
+	if checked < 2 {
+		t.Errorf("only %d attachments were written; the fixture's message has two", checked)
+	}
 }
 
 // covers: R1
