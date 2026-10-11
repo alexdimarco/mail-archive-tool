@@ -91,11 +91,11 @@ type ArchiveSource struct {
 	man           *state.Manifest // the snapshot; nil for a source opened only to run
 	emptyManifest bool            // the manifest file was zero bytes
 	stamp         archiveStamp
-	stores []ArchiveStore
-	nodes  []ArchiveNode
-	byNode map[string][]string
-	loc    map[string]archiveLoc
-	pst    map[string]bool
+	stores        []ArchiveStore
+	nodes         []ArchiveNode
+	byNode        map[string][]string
+	loc           map[string]archiveLoc
+	pst           map[string]bool
 
 	mu       sync.Mutex
 	live     *state.Manifest // the manifest as it reads now, for Changed

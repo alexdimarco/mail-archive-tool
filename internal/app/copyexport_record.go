@@ -374,19 +374,19 @@ func scanLines(path string, fn func(line []byte) error) error {
 
 // ceRecSummary is what a pass over a run record learns, without holding its plan.
 type ceRecSummary struct {
-	Header     ceHeaderLine
-	Planned    int
-	Progress   int // message lines, amendments not counted twice
-	Statuses   map[string]int
+	Header   ceHeaderLine
+	Planned  int
+	Progress int // message lines, amendments not counted twice
+	Statuses map[string]int
 	// RetryableFailed is how many messages failed with a reason a retry can change (class
 	// retryable), as the card decides whether to offer "Export failed messages again" (F3).
 	RetryableFailed int
-	Stopped    *ceStoppedLine
-	Sealed     *ceSealedLine
-	Gone       bool
-	Located    []ceLocatedLine
-	Realized   *cePostureLine
-	NewerMajor bool // a header of a newer format_version
+	Stopped         *ceStoppedLine
+	Sealed          *ceSealedLine
+	Gone            bool
+	Located         []ceLocatedLine
+	Realized        *cePostureLine
+	NewerMajor      bool // a header of a newer format_version
 }
 
 // summaryScans counts the full passes readSummary has made over run records: a test's
