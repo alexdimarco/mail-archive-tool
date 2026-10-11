@@ -103,6 +103,8 @@ func gapKind(item string) string {
 		return "unparsed-message"
 	case state.LabelSuperseded:
 		return "superseded"
+	case state.LabelLegacyPlaceholder:
+		return "unreadable-legacy-placeholder"
 	default:
 		return "empty-attachment"
 	}

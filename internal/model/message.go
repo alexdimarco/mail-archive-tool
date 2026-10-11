@@ -166,6 +166,17 @@ func (m *Message) Identity() string {
 	return "sha:" + m.contentHash()
 }
 
+// LegacyStubIdentity is the identity an older build gave EVERY local item it could
+// not read: its stub was `&Message{Subject: "(unreadable message)"}`, an empty
+// message whose identity is the content hash of its empty fields, the same for
+// every stub, which is why they collapsed into one record per folder (F33). A run
+// re-classes those records (state.Manifest.ReclassLegacyPlaceholders, FC27). The
+// PST reader no longer mints a stub (FC7); the mbox and maildir readers still do
+// until FI-S2b, and a run re-classes their record again on its next pass.
+func LegacyStubIdentity() string {
+	return (&Message{Subject: "(unreadable message)"}).Identity()
+}
+
 // Fingerprint is a short (16 hex) digest of the message's STABLE envelope —
 // subject, sender, recipients, date, attachment names — recorded on every
 // manifest entry so that a DIFFERENT message reusing an already-archived

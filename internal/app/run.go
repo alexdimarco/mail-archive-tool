@@ -355,6 +355,13 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		logger.Printf("re-scoped %d manifest entr%s by store (one-time upgrade; cost scales with archive size)",
 			manifest.Rekeyed, plural(manifest.Rekeyed, "y", "ies"))
 	}
+	// An older build's collapsed "(unreadable message)" record stands for no message
+	// in particular: it becomes the info label legacy-placeholder, once, here and
+	// only in a run — `status` never writes (FC27). Its page stays; the items it
+	// stood for are now listed one by one when the source is read again.
+	if n := manifest.ReclassLegacyPlaceholders(model.LegacyStubIdentity()); n > 0 {
+		logger.Printf("re-classed %d legacy placeholder(s); this version records each unreadable message separately", n)
+	}
 
 	// Optional search index, fed as each message is written.
 	var idx *index.Index

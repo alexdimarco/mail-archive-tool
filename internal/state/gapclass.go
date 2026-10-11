@@ -23,6 +23,11 @@ const (
 	// when a later capture of the same item landed under another key: metadata
 	// only, nothing missing any more (FC6(4)).
 	LabelSuperseded = "superseded"
+	// LabelLegacyPlaceholder is what the record of an old build's collapsed
+	// "(unreadable message)" stub becomes when a run first sees it (FC27): every
+	// local stub of that build shared one identity, so the record stands for no
+	// message in particular and nothing it could hold is still missing. Info.
+	LabelLegacyPlaceholder = "legacy-placeholder"
 )
 
 // unreadablePrefix starts every label of a partly-read PST record.
@@ -33,7 +38,8 @@ func IsUnreadableLabel(label string) bool { return strings.HasPrefix(label, unre
 
 // GapClass is the class of a special record gap label: unreadable:* is fillable
 // (a repair in place, or a later read, may deliver it), unparsed is terminal
-// (same bytes, same parser, same result), superseded is info. It returns "" for
+// (same bytes, same parser, same result), superseded and legacy-placeholder are
+// info (nothing is missing). It returns "" for
 // an ordinary content label ("body", an attachment's label, the legacy
 // "unknown" sentinel): the list the label sits in (Missing: fillable, Terminal:
 // terminal) decides its class — see RecordGapClass.
@@ -43,7 +49,7 @@ func GapClass(label string) string {
 		return ClassFillable
 	case label == LabelUnparsed:
 		return ClassTerminal
-	case label == LabelSuperseded:
+	case label == LabelSuperseded, label == LabelLegacyPlaceholder:
 		return ClassInfo
 	}
 	return ""
