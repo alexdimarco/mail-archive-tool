@@ -96,6 +96,9 @@ type ArchiveSource struct {
 	loc    map[string]archiveLoc
 	pst    map[string]bool
 
+	refMu sync.Mutex
+	refs  map[string][]CopyFolderRef // a folder's chain of folders, as the plan names them, made once
+
 	mu       sync.Mutex
 	live     *state.Manifest // the manifest as it reads now, for Changed
 	liveSeen archiveStamp
@@ -238,8 +241,74 @@ func (a *ArchiveSource) load() error {
 		return refuse("R-p", fmt.Sprintf("The archive's manifest can't be read (%s) — nothing was written.", util.StripControl(err.Error())))
 	}
 	a.man, a.stamp = man, stamp
-	a.build()
+	if err := a.build(); err != nil {
+		a.man = nil
+		return refuse("R-p", fmt.Sprintf("The archive's manifest can't be read (%s) — nothing was written.", err.Error()))
+	}
 	return nil
+}
+
+// The tree of another archive's manifest is bounded as the Graph tree is (graph.MaxWorkspaceFolders,
+// Exchange's own nesting limit) and in the bytes its node ids add up to: every node's id is the whole
+// path of its folder, so the cost of a deep path grows with the square of its depth (E4-AO2).
+const (
+	archiveMaxFolderDepth = 300
+	archiveMaxFolderName  = 1024
+	archiveMaxNodes       = 10000
+	archiveMaxIDBytes     = 8 << 20
+)
+
+// archiveShapeError is a manifest whose folders are beyond what the tree lists.
+type archiveShapeError string
+
+func (e archiveShapeError) Error() string { return string(e) }
+
+const (
+	archiveTooDeep    = archiveShapeError("a folder in it is nested more than 300 levels deep")
+	archiveNameTooBig = archiveShapeError("a folder name in it is longer than 1,024 bytes")
+	archiveTooMany    = archiveShapeError("it lists more than 10,000 folders and stores")
+	archiveIDsTooBig  = archiveShapeError("its folder names add up to more than 8 MiB")
+)
+
+// archiveCanonFolder is a record's folder path as the folder its names spell: empty segments
+// ("/Sub", "a//b", "a/") are dropped, so that no folder has the id of its store or of another
+// folder (E4-AC8). A path deeper than archiveMaxFolderDepth, or with a name longer than
+// archiveMaxFolderName, is refused, before anything is split or joined.
+func archiveCanonFolder(folder string) (string, error) {
+	depth, rewrite := 0, false
+	for i, start := 0, 0; i <= len(folder); i++ {
+		if i < len(folder) && folder[i] != '/' {
+			continue
+		}
+		switch n := i - start; {
+		case n == 0:
+			rewrite = true
+		case n > archiveMaxFolderName:
+			return "", archiveNameTooBig
+		default:
+			if depth++; depth > archiveMaxFolderDepth {
+				return "", archiveTooDeep
+			}
+		}
+		start = i + 1
+	}
+	if !rewrite {
+		return folder, nil
+	}
+	var b strings.Builder
+	for i, start := 0, 0; i <= len(folder); i++ {
+		if i < len(folder) && folder[i] != '/' {
+			continue
+		}
+		if i > start {
+			if b.Len() > 0 {
+				b.WriteByte('/')
+			}
+			b.WriteString(folder[start:i])
+		}
+		start = i + 1
+	}
+	return b.String(), nil
 }
 
 // nodeID is the id of a store's folder in the tree.
@@ -253,7 +322,11 @@ func archiveNodeID(token, folder string) string {
 // build makes the stores, the tree and the keys of each folder from the snapshot: the tree
 // is store token → folder path, from each record's key prefix and current Folder, and
 // each store is labelled with its mailbox (XC21).
-func (a *ArchiveSource) build() {
+//
+// The tree is bounded (archiveMaxFolderDepth and the limits beside it): a manifest over a limit
+// is refused with an archiveShapeError before the tree is built. A record's folder is read as
+// the folder its names spell (archiveCanonFolder).
+func (a *ArchiveSource) build() error {
 	recs := a.man.All()
 	mailbox, pst := map[string]string{}, map[string]bool{}
 	for id, tok := range a.man.Stores {
@@ -262,7 +335,7 @@ func (a *ArchiveSource) build() {
 		}
 		switch {
 		case strings.HasPrefix(id, "mailbox:"):
-			mailbox[tok] = util.StripControl(strings.TrimPrefix(id, "mailbox:"))
+			mailbox[tok] = util.StripBidi(util.StripControl(strings.TrimPrefix(id, "mailbox:")))
 		case strings.HasSuffix(strings.ToLower(id), ".pst"), strings.HasSuffix(strings.ToLower(id), ".ost"):
 			pst[tok] = true
 		}
@@ -271,24 +344,64 @@ func (a *ArchiveSource) build() {
 	a.byNode = map[string][]string{}
 	a.loc = map[string]archiveLoc{}
 	folders := map[string]map[string]bool{} // token → every folder path with a record at or below it
+	nodes, idBytes := 0, 0
+	add := func(id string) error { // one more node in the tree, within its limits
+		nodes++
+		idBytes += len(id)
+		switch {
+		case nodes > archiveMaxNodes:
+			return archiveTooMany
+		case idBytes > archiveMaxIDBytes:
+			return archiveIDsTooBig
+		}
+		return nil
+	}
+	store := func(tok string) error {
+		if folders[tok] != nil {
+			return nil
+		}
+		folders[tok] = map[string]bool{} // a store with no record yet is still a store
+		return add(tok)
+	}
 	for key, rec := range recs {
 		tok, _, _ := strings.Cut(key, "\x00")
 		if !state.SafeToken(tok) {
 			continue
 		}
-		id := archiveNodeID(tok, rec.Folder)
-		a.byNode[id] = append(a.byNode[id], key)
-		if folders[tok] == nil {
-			folders[tok] = map[string]bool{}
+		folder, err := archiveCanonFolder(rec.Folder)
+		if err != nil {
+			return err
 		}
-		segs := strings.Split(rec.Folder, "/")
-		for i := 1; rec.Folder != "" && i <= len(segs); i++ {
-			folders[tok][strings.Join(segs[:i], "/")] = true
+		if err := store(tok); err != nil {
+			return err
+		}
+		id := archiveNodeID(tok, folder)
+		a.byNode[id] = append(a.byNode[id], key)
+		if folder == "" || folders[tok][folder] {
+			continue
+		}
+		// every prefix of the path is a folder, the longest first: a prefix that is already there
+		// has all of its own prefixes there too, so only the new ones are made (and counted)
+		segs := strings.Split(folder, "/")
+		for i := len(segs); i >= 1; i-- {
+			p := folder
+			if i < len(segs) {
+				p = strings.Join(segs[:i], "/")
+			}
+			if folders[tok][p] {
+				break
+			}
+			folders[tok][p] = true
+			if err := add(archiveNodeID(tok, p)); err != nil {
+				return err
+			}
 		}
 	}
 	for _, tok := range a.man.Stores {
-		if state.SafeToken(tok) && folders[tok] == nil {
-			folders[tok] = map[string]bool{} // a store with no record yet is still a store
+		if state.SafeToken(tok) {
+			if err := store(tok); err != nil {
+				return err
+			}
 		}
 	}
 	tokens := make([]string, 0, len(folders))
@@ -297,6 +410,7 @@ func (a *ArchiveSource) build() {
 	}
 	sort.Strings(tokens)
 	a.stores, a.nodes = nil, nil
+	a.refs = nil
 	for _, tok := range tokens {
 		a.stores = append(a.stores, ArchiveStore{Token: tok, Mailbox: mailbox[tok], PST: pst[tok]})
 		a.nodes = append(a.nodes, ArchiveNode{ID: tok, Name: tok, Count: len(a.byNode[tok]), Store: true, Mailbox: mailbox[tok]})
@@ -307,31 +421,70 @@ func (a *ArchiveSource) build() {
 		}
 		sort.Slice(paths, func(i, j int) bool { return pathLess(paths[i], paths[j]) })
 		for _, p := range paths {
-			segs := strings.Split(p, "/")
-			parent := tok
-			if len(segs) > 1 {
-				parent = archiveNodeID(tok, strings.Join(segs[:len(segs)-1], "/"))
+			parent, name := tok, p // a path's parent is its own prefix: a substring, nothing joined
+			if i := strings.LastIndexByte(p, '/'); i >= 0 {
+				parent, name = archiveNodeID(tok, p[:i]), p[i+1:]
 			}
 			id := archiveNodeID(tok, p)
-			a.nodes = append(a.nodes, ArchiveNode{ID: id, Parent: parent, Name: segs[len(segs)-1], Count: len(a.byNode[id])})
+			a.nodes = append(a.nodes, ArchiveNode{ID: id, Parent: parent, Name: name, Count: len(a.byNode[id])})
 			a.loc[id] = archiveLoc{token: tok, folder: p}
 		}
 	}
 	for id := range a.byNode {
 		sort.Strings(a.byNode[id]) // a stable order of keys within a folder
 	}
+	return nil
 }
 
 // pathLess orders two folder paths segment by segment, so a folder comes right before its
 // children and its siblings' subtrees stay together.
 func pathLess(a, b string) bool {
-	as, bs := strings.Split(a, "/"), strings.Split(b, "/")
-	for i := 0; i < len(as) && i < len(bs); i++ {
-		if as[i] != bs[i] {
-			return as[i] < bs[i]
+	for {
+		as, ar, aMore := strings.Cut(a, "/")
+		bs, br, bMore := strings.Cut(b, "/")
+		if as != bs {
+			return as < bs
 		}
+		switch {
+		case !aMore:
+			return bMore // a is b, or the folder b is below
+		case !bMore:
+			return false
+		}
+		a, b = ar, br
 	}
-	return len(as) < len(bs)
+}
+
+// folderRefs is the chain of folders a record filed in folder of store tok is in: the store, then
+// each level, as the plan names them. It is made once per folder, each from its parent's, so a
+// deep path costs its depth and not the square of it (E4-AO2).
+func (a *ArchiveSource) folderRefs(tok, folder string) []CopyFolderRef {
+	a.refMu.Lock()
+	defer a.refMu.Unlock()
+	return append([]CopyFolderRef(nil), a.refsLocked(tok, folder)...)
+}
+
+func (a *ArchiveSource) refsLocked(tok, folder string) []CopyFolderRef {
+	id := archiveNodeID(tok, folder)
+	if r, ok := a.refs[id]; ok {
+		return r
+	}
+	var r []CopyFolderRef
+	if folder == "" {
+		r = []CopyFolderRef{{ID: tok, Name: tok}}
+	} else {
+		parent, name := "", folder
+		if i := strings.LastIndexByte(folder, '/'); i >= 0 {
+			parent, name = folder[:i], folder[i+1:]
+		}
+		up := a.refsLocked(tok, parent)
+		r = append(append(make([]CopyFolderRef, 0, len(up)+1), up...), CopyFolderRef{ID: id, Name: name})
+	}
+	if a.refs == nil {
+		a.refs = map[string][]CopyFolderRef{}
+	}
+	a.refs[id] = r
+	return r
 }
 
 // Stores are the stores the archive holds, by token.
@@ -474,13 +627,11 @@ func (a *ArchiveSource) exists(rel string) (present bool, size int64) {
 func (a *ArchiveSource) resolve(key string, rec state.Record, meta map[string]index.ListRow) (CopyMessage, bool) {
 	tok, _, _ := strings.Cut(key, "\x00")
 	m := CopyMessage{SourceID: key, SizeHint: -1, Rel: rec.Path, Gone: !(rec.Present || rec.LastSeen.IsZero())}
-	m.Folder = []CopyFolderRef{{ID: tok, Name: tok}}
-	if rec.Folder != "" {
-		segs := strings.Split(rec.Folder, "/")
-		for i, s := range segs {
-			m.Folder = append(m.Folder, CopyFolderRef{ID: archiveNodeID(tok, strings.Join(segs[:i+1], "/")), Name: s})
-		}
+	folder, err := archiveCanonFolder(rec.Folder)
+	if err != nil { // build refused such a manifest: a record the tree does not hold is the store's own
+		folder = ""
 	}
+	m.Folder = a.folderRefs(tok, folder)
 	for _, s := range a.stores {
 		if s.Token == tok {
 			m.Mailbox = s.Mailbox
