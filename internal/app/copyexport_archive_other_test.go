@@ -35,7 +35,7 @@ func TestAnotherArchiveFolderRf2WordingCarriesWhatWhyAndRemedy(t *testing.T) {
 		view  ceView
 		names []string
 	}{
-		"an sshfs mount": {ceView{Kind: viewStacking, Type: "fuse.sshfs"}, []string{"The archive folder " + other, "sshfs or other FUSE mount", "can't compare folder identities", "Another archive folder…", "SMB or NFS client"}},
+		"an sshfs mount":           {ceView{Kind: viewStacking, Type: "fuse.sshfs"}, []string{"The archive folder " + other, "sshfs or other FUSE mount", "can't compare folder identities", "Another archive folder…", "SMB or NFS client"}},
 		"a share on this computer": {ceView{Kind: viewShare, Server: "thiscomputer", Mount: "//thiscomputer/mail"}, []string{"The archive folder " + other, "share on this computer", "can't confirm any folder is outside it", "Another archive folder…", "local path", "Preview copy export again"}},
 	} {
 		e.view = viewOf(c.view)

@@ -2,6 +2,7 @@ package app
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -139,6 +140,63 @@ func TestArchiveSourceOriginalsAndTheArchivedPageGate(t *testing.T) {
 			}
 			if len(keys) == 2 && entryOf(t, man, second)["status"] != "exported" {
 				t.Errorf("the message beside it was not exported: %v", entryOf(t, man, second))
+			}
+			if left := tempResidue(t, res.Root); len(left) != 0 {
+				t.Errorf("a failed message left temp files: %v", left)
+			}
+		})
+	}
+}
+
+// covers: MA-420, R20, R29, R4, S52
+// The gate's component-wise Lstat walk refuses a symlink at any level, not only the file's own (design
+// §4.6 item 1, XC19): a folder directory or the store's own directory replaced, after the preview, by a
+// link to a copy of itself inside the archive (which os.Root follows, and whose bytes match the recorded
+// fixity, so that only the walk can tell) makes each message beneath it a listed failure, never emitted,
+// while the message beside it is exported.
+func TestArchiveSourceRefusesALinkAtAnyLevelOfAPath(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		bad    string // the slug whose path is replaced by a link
+		beside string
+		dir    func(a *ceArchive, slug string) string // the directory that becomes a link
+	}{
+		{"a folder directory", "client-mail", "second", func(a *ceArchive, slug string) string {
+			_, eml, _ := a.files(slug)
+			return filepath.Dir(eml) // the month directory, below the folder's
+		}},
+		{"the store's own directory", "hello", "plain-page", func(a *ceArchive, slug string) string {
+			_, eml, _ := a.files(slug)
+			rel, _ := filepath.Rel(a.dir, eml)
+			return filepath.Join(a.dir, strings.SplitN(filepath.ToSlash(rel), "/", 2)[0])
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			a := buildCEArchive(t)
+			e := newCEEnv(t)
+			s := a.open()
+			bad, beside := a.key(c.bad), a.key(c.beside)
+			p := a.plan(e, s, []string{bad, beside})
+			dir := c.dir(a, c.bad)
+			if err := os.Rename(dir, dir+".real"); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(filepath.Base(dir)+".real", dir); err != nil {
+				t.Skipf("symlinks unavailable: %v", err)
+			}
+			res := a.run(e, p, s)
+			man := manifestOf(t, res.Root)
+			f := failureListed(man, bad)
+			if f == nil || f["class"] != "terminal" || !strings.Contains(f["reason"].(string), "a link stands in the archive") {
+				t.Fatalf("%s: the message beneath a link is %v, want a terminal failure naming the link", c.name, f)
+			}
+			for name := range treeFiles(t, res.Root) {
+				if strings.Contains(name, "_"+c.bad+"_") {
+					t.Errorf("a file beneath a link was emitted: %s", name)
+				}
+			}
+			if entryOf(t, man, beside)["status"] == "" || failureListed(man, beside) != nil {
+				t.Errorf("the message beside it was not exported: %v", failureListed(man, beside))
 			}
 			if left := tempResidue(t, res.Root); len(left) != 0 {
 				t.Errorf("a failed message left temp files: %v", left)
