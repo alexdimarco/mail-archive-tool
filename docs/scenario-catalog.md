@@ -874,9 +874,15 @@ green when the gap is fixed and, with its skip removed, fails today for the reas
 its skip message names; the kept, unverified and wording assertions of a row (`Kept`,
 `Stats.Kept`, the report and summary lines) and the fault seams it names (the kill
 points C1..C8, the injected ENOSPC, the probe's temp counter) are added by the slice
-that builds them. The crash cases (MA-358) observe the archive from inside the run,
-after a message is committed and before the next checkpoint save, which is the state
-a hard kill there leaves; the unchanged-path result (§1.7) goes with ESC-3.
+that builds them; so do the cases that need the inventory or the verdicts themselves
+(the client-placeholder part, the frozen-fingerprint label drift, the relabelled item
+matched by CRC, a refused earlier original, the DEMOTE half and the timeline stamps of
+MA-356, case (c) of MA-357 and its carried pre-fixity original). The crash cases
+(MA-358) observe the archive from inside the run, after a message is committed and
+before the next checkpoint save, which is the state a hard kill there leaves, and
+assert that witness first: the snapshot holds the stale lock file and the manifest
+the run started from, and, with the index kept, none of the run's index batch. The
+unchanged-path result (§1.7) goes with ESC-3.
 The slices that turn them green: RI-S5 (MA-350, MA-351, MA-352, MA-355, MA-356, MA-357), RI-S4
 (MA-358, MA-359; MA-358's same-path case waits on ESC-3) and RI-S2 (MA-361). MA-361
 spans two slices: its `-vN` redaction and N2-adoption twins are skip encoders that
