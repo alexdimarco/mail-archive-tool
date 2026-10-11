@@ -709,6 +709,21 @@ func (m *Manifest) Has(key string) bool {
 	return ok
 }
 
+// HasToken reports whether any record is filed under the store token: an archive
+// that holds its tree on disk. The local run asks it when it probes whether the
+// archive location is still there (FC12).
+func (m *Manifest) HasToken(token string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	prefix := token + keySeparator
+	for k := range m.Entries {
+		if strings.HasPrefix(k, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 // Get returns the record for key.
 func (m *Manifest) Get(key string) (Record, bool) {
 	m.mu.Lock()

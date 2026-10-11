@@ -227,6 +227,8 @@ func RecordRowWhy(kind string) string {
 		return "this message was archived by an older version that did not track whether anything was missing"
 	case "superseded":
 		return "a complete copy of this message was archived later, so this partly-read page no longer misses anything"
+	case "unreadable-legacy-placeholder":
+		return "an earlier version of mailarchive kept every message it could not read as this one page, so it stands for no message in particular"
 	case "unresolved-inline-image":
 		return "the message's HTML shows an inline image that is not in the message (common in replies and forwards)"
 	case "html-shown-as-source":
@@ -262,6 +264,8 @@ func RecordRowRemedy(kind, class string) string {
 		return "run again: it is checked once and this row closes; " + kept
 	case "superseded":
 		return "nothing to do: the complete copy is kept"
+	case "unreadable-legacy-placeholder":
+		return "nothing to do: when it reads the source again this version lists each message it cannot read as its own row of this report; this page is kept"
 	case "unresolved-inline-image":
 		return "nothing to do: it is usually not recoverable; " + kept
 	case "html-shown-as-source":

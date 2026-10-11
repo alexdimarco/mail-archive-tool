@@ -197,6 +197,7 @@ func runExport(args []string) error {
 	// go-pst can't read directly. Windows + classic Outlook only; elsewhere it
 	// refuses with a legible message.
 	pstDir := ""
+	var outlookSkips []outlookcom.Skip
 	if *outlook {
 		// Refuse up front on a platform that can't run Outlook automation, before
 		// printing the completeness note or any "exporting…" progress — a guaranteed
@@ -207,7 +208,7 @@ func runExport(args []string) error {
 		logger.Printf("%s", outlookcom.CompletenessNote)
 		pstDir = filepath.Join(*out, "_outlook-pst")
 		logger.Printf("Outlook: exporting each account to a PST under %s ...", pstDir)
-		stores, cerr := outlookcom.CreatePSTs(pstDir,
+		stores, skips, cerr := outlookcom.CreatePSTs(pstDir,
 			outlookcom.Options{Sync: *outlookSyncWait > 0, SyncWait: *outlookSyncWait}, logger)
 		if cerr != nil {
 			return cerr
@@ -215,10 +216,12 @@ func runExport(args []string) error {
 		for _, s := range stores {
 			inputs = append(inputs, s.Path)
 		}
+		outlookSkips = skips
 		logger.Printf("Outlook: %d PST(s) ready; archiving them now.", len(stores))
 	}
 
 	opts := exportOptions(o, inputs, mode, since)
+	opts.OutlookSkips = outlookSkips // what Outlook's export left out is recorded as a gap, never only logged (FC28)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

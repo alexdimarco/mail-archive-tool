@@ -458,7 +458,59 @@ func TestRecordLocatorAndRecoveredByAreChecked(t *testing.T) {
 // A legacy collapsed stub (F33's merged record) is re-classed to
 // legacy-placeholder once, on a run only, and `status` never writes it.
 func TestLegacyPlaceholderReclassOnce(t *testing.T) {
-	t.Skip("MA-323: the legacy collapsed-stub re-class is S2a's (FC27: the slice whose changes orphan the legacy record); closes when FI-S2a lands")
+	const legacy = "sha:0123456789abcdef"
+	m, path, tok := gapManifest(t)
+	stub := func(folder string) Record {
+		return Record{Path: tok + "/" + folder + "/stub.html", Folder: folder, Missing: []string{MissingBody}, Subject: LegacyPlaceholderSubject}
+	}
+	k1, k2 := Key(tok, "Inbox", legacy), Key(tok, "Sent", legacy)
+	kGraph, kOther, kHealthy := Key(tok, "Inbox", "sha:graphstub"), Key(tok, "Inbox", legacy+"x"), Key(tok, "Inbox", "mid:a")
+	m.Add(k1, stub("Inbox"))
+	m.Add(k2, stub("Sent"))
+	// A Graph legacy stub has a distinct identity (and Terminal:["body"]): it is the
+	// Graph walk's to adopt (FC27, S3), never this re-class's.
+	m.Add(kGraph, Record{Path: tok + "/g.html", Terminal: []string{MissingBody}, Subject: LegacyPlaceholderSubject})
+	// The legacy identity with a real subject, and a real message, are not stubs.
+	m.Add(kOther, Record{Path: tok + "/o.html", Missing: []string{MissingBody}, Subject: LegacyPlaceholderSubject})
+	m.Add(kHealthy, Record{Path: tok + "/h.html"})
+	assure.Reached(t, m.Len(), "records before the re-class")
+
+	// Load never re-classes: a status read of the archive writes nothing.
+	m = reload(t, m, path)
+	if r, _ := m.Get(k1); len(r.Missing) != 1 {
+		t.Fatalf("Load re-classed a legacy stub (Missing %v): only a run may", r.Missing)
+	}
+
+	if n := m.ReclassLegacyPlaceholders(legacy); n != 2 {
+		t.Fatalf("re-classed %d records; want the two collapsed stubs", n)
+	}
+	for _, k := range []string{k1, k2} {
+		r, _ := m.Get(k)
+		if len(r.Missing) != 0 || len(r.Terminal) != 1 || r.Terminal[0] != LabelLegacyPlaceholder || r.Subject != LegacyPlaceholderSubject || r.Path == "" {
+			t.Errorf("stub %q = %+v; want Terminal [legacy-placeholder], no Missing, the record kept whole", k, r)
+		}
+	}
+	if r, _ := m.Get(kGraph); len(r.Terminal) != 1 || r.Terminal[0] != MissingBody {
+		t.Errorf("a Graph legacy stub was re-classed: %+v", r)
+	}
+	if r, _ := m.Get(kOther); len(r.Missing) != 1 {
+		t.Errorf("a record that merely shares the identity prefix was re-classed: %+v", r)
+	}
+	// The class is info: nothing is missing, so neither count carries it.
+	if f, term, _ := m.Counts(); f != 1 || term != 1 {
+		t.Errorf("Counts() = fillable %d, terminal %d; want 1 (the lookalike) and 1 (the Graph stub): a placeholder is info", f, term)
+	}
+	if GapClass(LabelLegacyPlaceholder) != ClassInfo {
+		t.Errorf("GapClass(legacy-placeholder) = %q, want info", GapClass(LabelLegacyPlaceholder))
+	}
+	// Once: it survives a save and a load, and a second pass finds nothing.
+	m = reload(t, m, path)
+	if n := m.ReclassLegacyPlaceholders(legacy); n != 0 {
+		t.Errorf("a second re-class touched %d records; it is a one-time upgrade", n)
+	}
+	if r, _ := m.Get(k1); len(r.Terminal) != 1 || r.Terminal[0] != LabelLegacyPlaceholder {
+		t.Errorf("the re-class did not survive Save and Load: %+v", r)
+	}
 }
 
 // covers: MA-323, R1, R5, S46
@@ -479,6 +531,43 @@ func TestStaleParserGenStubRefetchedOnce(t *testing.T) {
 // keeps an existing gap (§4.8.2 step 1).
 func TestGraphSinceRuleRecordsNoGapForUnrequestedItem(t *testing.T) {
 	t.Skip("MA-323: the Graph walk's -since rule (§4.8.2 step 1) is S3's; the ledger half (CloseUnobserved never closes a gap dated before -since) is asserted in TestCaptureGapLedgerLifecycle; closes when FI-S3 lands")
+}
+
+// covers: MA-327, R1, R7, S46
+// Every gap kind FI-S2a records has its own words in the shared table (owner ruling
+// §13.11): a why, a remedy and a report remedy that are NOT the generic fallbacks,
+// for each source kind it can come from, so no summary line, status line or report
+// row appears with a bare code. A PST gap's remedy is the in-place repair, except on
+// the -outlook scratch .pst, which is rebuilt every run and says to open the item in
+// Outlook.
+func TestEveryGapKindFISlice2aRecordsHasItsOwnWords(t *testing.T) {
+	reasons := []string{
+		"pst-message-unreadable", "pst-messages-unreadable", "pst-row-unreadable", "pst-row-invalid",
+		"folder-unreadable", "folder-partially-read", "folder-cycle", "folder-too-deep",
+		"folder-unwritable", "export-failed", "export-panic", "refresh-failed",
+		"outlook-export-skipped", "outlook-account-skipped",
+	}
+	for _, reason := range reasons {
+		if GapWhy(reason) == GapWhy("no-such-reason") {
+			t.Errorf("%s has no why of its own", reason)
+		}
+		for _, kind := range []string{SourcePST, SourceOutlookScratch, SourceLocal} {
+			for _, errno := range []string{"", ErrnoPerm, ErrnoIO} {
+				if r := GapRemedy(reason, kind, errno); r == remedyUnknown || r == "" {
+					t.Errorf("%s (%s, %q) has no remedy of its own", reason, kind, errno)
+				}
+				if r := GapReportRemedy(reason, kind, errno); r == "run again; if it is listed again, keep the original, because this version of mailarchive does not know the cause" || r == "" {
+					t.Errorf("%s (%s, %q) has no report remedy of its own", reason, kind, errno)
+				}
+			}
+		}
+	}
+	if r := GapRemedy("pst-message-unreadable", SourcePST, ""); !strings.Contains(r, "scanpst.exe") || !strings.Contains(r, "same path") {
+		t.Errorf("a .pst gap's remedy %q must be the in-place repair", r)
+	}
+	if r := GapRemedy("pst-messages-unreadable", SourceOutlookScratch, ""); !strings.Contains(r, "open it in Outlook") || strings.Contains(r, "scanpst") {
+		t.Errorf("an -outlook scratch gap's remedy %q must say to open the item in Outlook, never to repair the rebuilt file", r)
+	}
 }
 
 // covers: MA-323, R1, R5, S46

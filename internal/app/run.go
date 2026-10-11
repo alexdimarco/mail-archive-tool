@@ -53,6 +53,12 @@ type Options struct {
 	// P10). The run records them in its last-run record, where `status` WARNs
 	// them.
 	Warnings []state.RunWarning
+	// OutlookSkips are the folders and accounts `-outlook`'s Outlook export did not
+	// carry into its PSTs (outlookcom.CreatePSTs): the run records each as a gap
+	// (outlook-export-skipped, fillable; or outlook-account-skipped, info), so the
+	// archive is never silently smaller than the mailbox and the run is partial
+	// (FC28).
+	OutlookSkips []outlookcom.Skip
 	// Unattended marks a scheduled run (the CLI's -unattended, the GUI's
 	// headless job). A discovery refusal (a vanished -input, no sources found)
 	// on an archive that already exists is then recorded as a failed run, so
@@ -86,6 +92,11 @@ type Result struct {
 	Unparsed   int
 	Gaps       GapSummary
 	Partial    bool
+
+	// The gaps this run closed (§4.3): because their item was captured, and because a
+	// completed walk of their folder no longer found them. The producers count them;
+	// finish puts them in Gaps.
+	gapsRecovered, gapsClosedGone int
 }
 
 // finish fills the manifest-derived fields of a Result and regenerates the
@@ -127,6 +138,7 @@ func finish(out string, r *Result, exp *export.Exporter, manifest *state.Manifes
 	// every observation carries). The stuck count uses a daily period: `status`
 	// judges it against the installed schedule's.
 	r.Gaps = summarizeGaps(manifest, out, exp.RunAt, time.Now().UTC(), 24*time.Hour)
+	r.Gaps.Recovered, r.Gaps.ClosedGone = r.gapsRecovered, r.gapsClosedGone
 	r.Partial = r.partial()
 }
 
@@ -259,6 +271,12 @@ func fileReadOnly(path string) bool {
 	return errors.Is(err, fs.ErrPermission)
 }
 
+// exporterSetup is a seam for tests: set, it is called with the run's Exporter
+// before the first message, so a test can inject a write fault through
+// Exporter.BeforeWrite (a full disk, a vanished volume) without a real one. It is
+// nil in production.
+var exporterSetup func(*export.Exporter)
+
 // ProgressFunc, if provided, is called after each processed message with the
 // running stats. Keep it cheap; it runs inline with the export loop.
 type ProgressFunc func(stats export.Stats)
@@ -344,6 +362,10 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		RunAt:    runAt,
 	}
 
+	if exporterSetup != nil {
+		exporterSetup(exp)
+	}
+
 	// One-time upgrade logs BEFORE the index repair, so cause (the manifest
 	// re-scope) precedes effect (the index-key migration) — matching reindex and
 	// the README sample (friction #17).
@@ -355,6 +377,16 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		logger.Printf("re-scoped %d manifest entr%s by store (one-time upgrade; cost scales with archive size)",
 			manifest.Rekeyed, plural(manifest.Rekeyed, "y", "ies"))
 	}
+	// An older build's collapsed "(unreadable message)" record stands for no message
+	// in particular: it becomes the info label legacy-placeholder, once, here and
+	// only in a run — `status` never writes (FC27). Its page stays; the items it
+	// stood for are now listed one by one when the source is read again.
+	if n := manifest.ReclassLegacyPlaceholders(model.LegacyStubIdentity()); n > 0 {
+		logger.Printf("re-classed %d legacy placeholder(s); this version records each unreadable message separately", n)
+	}
+	// What -outlook's export skipped is this run's observation: recorded before the
+	// walk, under the token of the PST it belongs to.
+	recordOutlookSkips(manifest, opts.OutlookSkips, runAt, logger)
 
 	// Optional search index, fed as each message is written.
 	var idx *index.Index
@@ -401,11 +433,16 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// mid-walk checkpoint is healed by a later save that succeeds, but a run
 	// whose LAST save failed has kept no progress and must fail (F53).
 	var saveErr error
+	// The local run's own state: what it records of faults and closes of gaps. A
+	// fault counts as processed for the checkpoint gate below, so a stretch of
+	// nothing but faults still saves and still re-checks the lock (FC12).
+	lr := &localRun{exp: exp, out: opts.Out, runAt: runAt, logger: logger, lock: lock}
 	checkpoint := func(stats export.Stats) {
-		if stats.Exported-lastCheckpoint < effectiveEvery(floor, manifest.Len()) {
+		processed := stats.Exported + lr.faults
+		if processed-lastCheckpoint < effectiveEvery(floor, manifest.Len()) {
 			return
 		}
-		lastCheckpoint = stats.Exported
+		lastCheckpoint = processed
 		// The lock file is the run's guarantee of exclusivity; if it was removed
 		// or replaced under us, another run may now hold a fresh one. Stop
 		// rather than race it (R5).
@@ -418,12 +455,14 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		saveErr = commit(nil, idx, manifest, logger)
 	}
 
+	lr.onFault = func() { checkpoint(exp.Stats) }
 	result = Result{Files: len(files), ManifestBefore: manifestBefore}
 	var failures int
 	var firstFailed string
 	var firstErr error
+	var fatal *RunFatalError // a run-level fault of the archive itself: it ends the run
 	for _, f := range files {
-		runErr := runFile(ctx, exp, f, opts.Out, opts.CopyFirst, logger, func(stats export.Stats) {
+		runErr := runFile(ctx, lr, f, opts.CopyFirst, func(stats export.Stats) {
 			checkpoint(stats)
 			if onProgress != nil {
 				onProgress(stats)
@@ -441,12 +480,19 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		saveErr = commit(nil, idx, manifest, logger)
 
 		if errors.Is(runErr, context.Canceled) {
+			result.gapsRecovered, result.gapsClosedGone = lr.recovered, lr.closedGone
 			finish(opts.Out, &result, exp, manifest, idx, indexErrors, true, logger)
 			if saveErr != nil {
 				// "progress was kept" would be false: record it failed.
 				return result, manifestSaveFailure(mpath, saveErr)
 			}
 			return result, context.Canceled
+		}
+		if errors.As(runErr, &fatal) {
+			// The archive's location or volume can no longer be written: the next source
+			// would fail the same way, so the run stops here, with what it kept (§4.6).
+			logger.Printf("error: %s: %v", f, fatal)
+			break
 		}
 		if runErr != nil {
 			failures++
@@ -466,12 +512,19 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		}
 	}
 
+	result.gapsRecovered, result.gapsClosedGone = lr.recovered, lr.closedGone
 	finish(opts.Out, &result, exp, manifest, idx, indexErrors, true, logger)
 	if saveErr != nil {
+		if fatal != nil {
+			return result, fmt.Errorf("%w; %w", fatal, manifestSaveFailure(mpath, saveErr))
+		}
 		if failures > 0 {
 			return result, fmt.Errorf("%w; %w", fileFailureError(failures, firstFailed, firstErr), manifestSaveFailure(mpath, saveErr))
 		}
 		return result, manifestSaveFailure(mpath, saveErr)
+	}
+	if fatal != nil {
+		return result, fatal
 	}
 	if failures > 0 {
 		return result, fileFailureError(failures, firstFailed, firstErr)
@@ -860,8 +913,11 @@ func fileFailureError(failures int, firstPath string, firstErr error) error {
 }
 
 // runFile opens one data file (optionally via a temp snapshot) and exports every
-// message it contains, honouring ctx cancellation between messages.
-func runFile(ctx context.Context, exp *export.Exporter, path, out string, copyFirst bool, logger *log.Logger, onProgress ProgressFunc, abort func() error) error {
+// message it contains, honouring ctx cancellation between messages. What goes
+// wrong with one item or folder is recorded in the capture-gap ledger and the walk
+// goes on; what goes wrong with the archive itself ends the source (localrun.go).
+func runFile(ctx context.Context, lr *localRun, path string, copyFirst bool, onProgress ProgressFunc, abort func() error) error {
+	exp, out, logger := lr.exp, lr.out, lr.logger
 	openPath := path
 	if copyFirst {
 		// Snapshotting only applies to single files (e.g. a locked .ost);
@@ -894,36 +950,28 @@ func runFile(ctx context.Context, exp *export.Exporter, path, out string, copyFi
 	token := exp.Manifest.Token(state.PathSourceID(path), store)
 	logger.Printf("Reading %s (store: %s)", path, store)
 
-	return reader.Walk(func(folderPath []string, m *model.Message) (err error) {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-		// Stop promptly once the run lost its lock: bound continued writing to a
-		// contended archive to the next message boundary (INT-CC-2/R5).
-		if abort != nil {
-			if e := abort(); e != nil {
-				return e
-			}
-		}
-		// A panic exporting one crafted message must not abort the whole run
-		// (R10); log it and skip that message.
-		defer func() {
-			if r := recover(); r != nil {
-				logger.Printf("warning: recovered from panic on a message in %s (skipped): %v",
-					strings.Join(folderPath, "/"), r)
-				err = nil
-			}
-		}()
-		if _, exportErr := exp.Export(token, folderPath, m); exportErr != nil {
-			return exportErr
+	src := &sourceRun{lr: lr, token: token, path: path}
+	handler := func(folderPath []string, m *model.Message) error {
+		if err := src.handle(ctx, abort, folderPath, m); err != nil {
+			return err
 		}
 		if onProgress != nil {
 			onProgress(exp.Stats)
 		}
 		return nil
-	})
+	}
+	// A reader that reports its faults as they happen (the PST reader) records them
+	// during the walk, so they reach the checkpoints of an hours-long file (FC29);
+	// the others return what they hit as an error, as they always did.
+	if fw, ok := reader.(source.FaultWalker); ok {
+		src.reportsFaults = true
+		return src.finish(fw.WalkWithFaults(handler, source.WalkOptions{
+			Faults:     src.onReaderFault,
+			Abort:      func() error { return src.stop(ctx, abort) },
+			NoStoreUID: noStoreUID(path),
+		}))
+	}
+	return src.finish(reader.Walk(handler))
 }
 
 // snapshot copies src to a temporary file ON THE ARCHIVE'S VOLUME (the drive

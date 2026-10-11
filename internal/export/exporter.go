@@ -58,6 +58,12 @@ type Stats struct {
 	Unreadable int
 	Unparsed   int
 	Kept       int
+	// ExportPanics counts the messages whose export panicked (the run records each as
+	// an export-panic gap, never only in the log, F33); ExportFaults the messages
+	// and folders the archive could not be written for (export-failed and
+	// folder-unwritable gaps).
+	ExportPanics int
+	ExportFaults int
 }
 
 // Issue is one verification finding: something referenced but not fully
@@ -128,6 +134,12 @@ type Exporter struct {
 	// an unchanged re-observation costs no history/index write. It is the no-mid
 	// analogue of the pre-download fast-path's move recording.
 	OnManifestSkip func(key string, folderPath []string, moved bool)
+
+	// BeforeWrite, if set, is called with the path of each file the exporter is
+	// about to write (the page and the preserved original); a non-nil error is that
+	// write's failure. It is nil in production — the seam a test injects an errno
+	// through (a full disk, a read-only volume) without a real one (MA-320).
+	BeforeWrite func(path string) error
 
 	Stats  Stats
 	Issues []Issue // verification findings (attachments/inline images not fully exported)
@@ -332,7 +344,7 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	// safe path segment, so a tampered manifest can never redirect a write outside
 	// the output root no matter what reached here (INS2-1/R4).
 	if !state.SafeToken(store) {
-		return false, fmt.Errorf("refusing to export: store token %q is not a single safe path segment; a write to %s could otherwise escape the archive (tampered manifest?)", store, e.OutDir)
+		return false, &unsafeTokenError{fmt.Sprintf("refusing to export: store token %q is not a single safe path segment; a write to %s could otherwise escape the archive (tampered manifest?)", store, e.OutDir)}
 	}
 	// store is used verbatim as the directory segment — the same string that
 	// scopes the key, so the on-disk tree and the manifest never disagree (F1).
@@ -348,7 +360,7 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	dirParts := append([]string{e.OutDir, store}, writeFolderPath...)
 	dir := filepath.Join(dirParts...)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return false, fmt.Errorf("create output dir %s: %w", dir, err)
+		return false, &FolderError{Dir: dir, Err: err}
 	}
 
 	base, htmlPath, relSlash := e.stemFor(dir, date, m.Subject, key)
@@ -375,7 +387,7 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	}
 	rr, err := renderMessage(m, ctx)
 	if err != nil {
-		return false, fmt.Errorf("render %q: %w", m.Subject, err)
+		return false, &ItemError{msg: fmt.Sprintf("render %q", m.Subject), Err: err}
 	}
 	htmlBytes, inlineConsumed := rr.HTML, rr.Consumed
 
@@ -384,9 +396,9 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	// (F3). A re-capture builds a fresh Fixity, replacing any earlier one.
 	var fx state.Fixity
 	if rawName != "" {
-		d, err := writeFileAtomicDigest(filepath.Join(dir, rawName), m.Raw)
+		d, err := e.writeDigest(filepath.Join(dir, rawName), m.Raw)
 		if err != nil {
-			return false, fmt.Errorf("write %s: %w", rawName, err)
+			return false, &ItemError{Path: filepath.Join(dir, rawName), msg: "write " + rawName, Err: err}
 		}
 		fx.EML = &d
 		e.Stats.RawWritten++
@@ -431,9 +443,9 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		os.Remove(zipPath) // a re-capture with nothing archivable must not keep a stale zip
 	}
 
-	hd, err := writeFileAtomicDigest(htmlPath, htmlBytes)
+	hd, err := e.writeDigest(htmlPath, htmlBytes)
 	if err != nil {
-		return false, fmt.Errorf("write %s: %w", htmlPath, err)
+		return false, &ItemError{Path: htmlPath, msg: "write " + htmlPath, Err: err}
 	}
 	fx.HTML = &hd
 
@@ -576,6 +588,16 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	}
 	e.Stats.Exported++
 	return true, nil
+}
+
+// writeDigest is writeFileAtomicDigest behind the BeforeWrite seam.
+func (e *Exporter) writeDigest(dst string, data []byte) (state.FileDigest, error) {
+	if e.BeforeWrite != nil {
+		if err := e.BeforeWrite(dst); err != nil {
+			return state.FileDigest{}, err
+		}
+	}
+	return writeFileAtomicDigest(dst, data)
 }
 
 // stemFor picks the file stem for key inside dir. The 8-hex digest of the key is
