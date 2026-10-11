@@ -181,7 +181,9 @@ func (e *CopyExportEnv) createRecord(h ceHeaderLine, plan []CopyMessage) (*ceRec
 		return nil, stateErr(err)
 	}
 	path := e.recordPath(h.Run)
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	// O_APPEND: a second handle of this record (WedgeStop's) must write after whatever
+	// this one wrote, not over it at a stale offset (EW-AC1).
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|os.O_APPEND, 0o600)
 	if err != nil {
 		return nil, stateErr(err)
 	}
@@ -222,15 +224,33 @@ func (e *CopyExportEnv) createRecord(h ceHeaderLine, plan []CopyMessage) (*ceRec
 // first (a kill can leave half a line), as the journal does.
 func (e *CopyExportEnv) openRecord(run string) (*ceRecord, error) {
 	path := e.recordPath(run)
-	f, err := os.OpenFile(path, os.O_RDWR, 0o600)
+	f, err := openAppendable(path, false)
 	if err != nil {
 		return nil, stateErr(err)
 	}
-	if err := truncateTornTail(f); err != nil {
-		f.Close()
-		return nil, stateErr(err)
-	}
 	return &ceRecord{env: e, path: path, f: f}, nil
+}
+
+// openAppendable opens path for appending after cutting a torn tail back to the last
+// complete line. The cut is made through a read-write handle and the file is then
+// reopened O_APPEND, because a handle opened for append only (FILE_APPEND_DATA on
+// Windows) cannot truncate, and every later write must go to the end of the file
+// whatever other handle has written meanwhile (EW-AC1). create makes a missing file.
+func openAppendable(path string, create bool) (*os.File, error) {
+	flag := os.O_RDWR
+	if create {
+		flag |= os.O_CREATE
+	}
+	f, err := os.OpenFile(path, flag, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	err = truncateTornTail(f)
+	f.Close()
+	if err != nil {
+		return nil, err
+	}
+	return os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o600)
 }
 
 // append writes one line and fsyncs it. A failure is a state-directory error.
@@ -723,14 +743,11 @@ func (e *CopyExportEnv) appendJSONL(path string, v any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return stateErr(err)
 	}
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+	f, err := openAppendable(path, true)
 	if err != nil {
 		return stateErr(err)
 	}
 	defer f.Close()
-	if err := truncateTornTail(f); err != nil {
-		return stateErr(err)
-	}
 	if _, err := f.Write(append(b, '\n')); err != nil {
 		return stateErr(err)
 	}

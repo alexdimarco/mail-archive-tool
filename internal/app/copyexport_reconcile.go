@@ -200,6 +200,15 @@ func (e *CopyExportEnv) ReconcileRun(run string) (CopyObservation, error) {
 	case sum.Sealed == nil:
 		obs.Kind, obs.Label = obsChanged, "changed after the export: its marker is gone — run Check this export (fingerprint not recorded at export time)"
 		obs.Actions = []string{ActFinishAsPartial}
+	case seen.HasMarker && markerStays(sum.Sealed.Status) && e.journalHas(run, "end"):
+		// A cancelled, failed or finished-as-partial run keeps its marker (rewritten
+		// CANCELLED or STOPPED) once it has ended: nothing is owed, and the card keeps
+		// its own label and retry offers (EW-AC10). Not journaled: a settled run is
+		// read from its own journal lines, not from this observation.
+		obs.Kind = obsSettledRun
+		obs.Label = copyLabel(sum.Sealed.Status, sum.Sealed.Counts, sum.Sealed.Stop)
+		obs.Actions = e.actionsFor(sum, obsRecovered)
+		return obs, nil
 	case seen.HasMarker:
 		obs.Kind = obsFinishing
 		obs.Label = "Finished writing (" + copyLabel(sum.Sealed.Status, sum.Sealed.Counts, sum.Sealed.Stop) + ") — this folder's marker may still need updating"
@@ -224,6 +233,13 @@ func (e *CopyExportEnv) ReconcileRun(run string) (CopyObservation, error) {
 		return obs, err
 	}
 	return obs, nil
+}
+
+// markerStays reports whether a sealed status leaves the app's own marker in the folder
+// for good (rewritten CANCELLED or STOPPED), as against complete and partial, which
+// remove it.
+func markerStays(s CopyStatus) bool {
+	return s == CopyStatusCancelled || s == CopyStatusFailed || s == CopyStatusFinishedAsPartial
 }
 
 // terminalKinds are the marker-and-seal outcomes.
