@@ -205,6 +205,7 @@ var pageTmpl = template.Must(template.New("pages").Funcs(pageFuncs).Parse(`
       <div id="runLabel" class="row"></div>
       <div class="bar" id="runBarWrap" role="progressbar" aria-label="Export progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div id="runBar" style="width:0%"></div></div>
       <div id="runStats"></div>
+      <div class="note" id="runWaiting" role="status" hidden></div>
       <div class="actions"><button class="btn secondary small" id="cancelBtn" type="button">Cancel</button></div>
       <pre id="runLog"></pre>
     </div>

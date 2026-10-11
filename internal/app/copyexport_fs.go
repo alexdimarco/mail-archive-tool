@@ -9,6 +9,7 @@ import (
 	"path"
 	"runtime"
 	"strings"
+	"syscall"
 )
 
 // The contained writer (design P6, §4.9). Every write of an export goes through an
@@ -224,13 +225,25 @@ func writeTempFile(f ceFS, dir, final string, data []byte, replace bool) error {
 // failure line: the error's own text can hold the absolute destination path, which
 // a listed reason never repeats.
 func leaveName(err error) string {
+	// What the owner reads is what happened, not the system call that met it ("openat",
+	// "mkdirat"): the folder is not there, is write-protected, or the disk is full. The
+	// system's own words stay in brackets after, where they say more (friction F8).
+	sys := strings.TrimSpace(err.Error())
 	var pe *fs.PathError
-	if errors.As(err, &pe) {
-		return pe.Op + ": " + pe.Err.Error()
-	}
 	var le *os.LinkError
-	if errors.As(err, &le) {
-		return le.Op + ": " + le.Err.Error()
+	switch {
+	case errors.As(err, &pe):
+		sys = pe.Err.Error()
+	case errors.As(err, &le):
+		sys = le.Err.Error()
 	}
-	return strings.TrimSpace(err.Error())
+	switch {
+	case errors.Is(err, syscall.ENOSPC):
+		return "the disk is full (" + sys + ")"
+	case errors.Is(err, fs.ErrNotExist):
+		return "the folder isn't there any more"
+	case errors.Is(err, fs.ErrPermission):
+		return "the folder is write-protected, or this account isn't allowed to write to it (" + sys + ")"
+	}
+	return sys
 }

@@ -94,6 +94,14 @@ func (e *CopyExportEnv) PlanCopyExport(in CopyPlanInput) (*CopyPlan, error) {
 
 	if free, err := e.freeOnDest(dest); err == nil {
 		p.FreeBytes = free
+		// The sentence Start would refuse with, raised while the owner can still choose
+		// another destination (friction F17).
+		if need := p.EstimateBytes + p.Reserve; int64(free) < need {
+			p.Warnings = append(p.Warnings, refusalG2(dest, free, need).Message)
+		}
+	}
+	if why := destNotWritable(dest); why != "" {
+		p.Warnings = append(p.Warnings, refusalW(dest, why).Message)
 	}
 	if svc, ok := util.UnderCloudSync(dest); ok {
 		p.Warnings = append(p.Warnings, fmt.Sprintf("files you export here will be uploaded to %s", svc))

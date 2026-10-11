@@ -103,7 +103,7 @@ func (r *CopyRun) finalize(proposed CopyStatus, stop *CopyStop) (*CopyResult, er
 			// The seal is written, and its ledger line, marker action or journal end is
 			// still owed: "Finished writing", which reconcile or Check and finish
 			// completes. A state-directory failure is R-d2, which the page shows.
-			res.Label = "Finished writing (" + res.Label + ") — this folder's marker may still need updating"
+			res.Label = "Finished writing (" + res.Label + ")" + finishingTail
 			var se *ceStateErr
 			if errors.As(err, &se) && res.Stop == nil {
 				s := &CopyStop{RID: "R-d2", Class: stopClassState}
@@ -324,19 +324,20 @@ func (f *ceFinish) readmeText(status CopyStatus, c CopyCounts, stop *CopyStop, f
 	h := f.hdr
 	var b strings.Builder
 	line := func(format string, a ...any) { fmt.Fprintf(&b, format+"\n", a...) }
+	// The first line is the run id: the folder's identity check reads it (§4.9), so it stays
+	// first; what follows is for a person: what this is, whether it is whole, what it holds,
+	// how to check it, and last the technical notes.
 	line("%s%s", copyRunLinePrefix, h.Run)
 	line("MailArchive Desktop copy export")
 	line("")
-	statusWord := string(status)
 	switch status {
 	case CopyStatusComplete:
 		line("Status: complete — valid only while no %s is in this folder and the check below passes.", copyMarkerName)
 	default:
-		line("Status: %s — and valid only while no %s is in this folder.", copyLabel(status, c, stop), copyMarkerName)
+		line("Status: %s. This status is valid only while no %s is in this folder.", plainStatus(copyLabel(status, c, stop)), copyMarkerName)
 		line("This export is not complete: %s of %s selected messages are in it; %s were not exported, %s were not attempted.",
 			commas(c.Exported), commas(c.Selected), commas(c.Failed), commas(c.NotAttempted))
 	}
-	_ = statusWord
 	line("")
 	switch h.Source.Kind {
 	case "m365":
@@ -346,23 +347,38 @@ func (f *ceFinish) readmeText(status CopyStatus, c CopyCounts, stop *CopyStop, f
 	}
 	line("Exported: %s to %s (UTC)", h.Started.UTC().Format("2006-01-02 15:04:05"), finished.UTC().Format("2006-01-02 15:04:05"))
 	line("Counts: %s selected, %s exported, %s failed, %s not attempted.", commas(c.Selected), commas(c.Exported), commas(c.Failed), commas(c.NotAttempted))
+	if len(h.Folders) > 0 {
+		var names []string
+		for i, f := range h.Folders {
+			if i == 20 {
+				names = append(names, fmt.Sprintf("and %d more", len(h.Folders)-20))
+				break
+			}
+			names = append(names, fmt.Sprintf("%s (%s)", util.StripControl(f.Folder), commas(f.Messages)))
+		}
+		line("Selected folders: %s.", strings.Join(names, ", "))
+	}
+	if c.Failed > 0 {
+		line("Messages that were not exported: %s. export-manifest.json lists each one under \"failures\", with its subject, folder and the reason.", commas(c.Failed))
+		shown := 0
+		_ = walkMessages(f.rec.path, func(p *cePlanLine, m *ceMsgLine) error {
+			if m != nil && m.Status == statusFailed && shown < 10 {
+				shown++
+				line("  - %s (%s): %s", util.StripControl(p.Subject), p.FolderPath(), util.StripControl(m.Reason))
+			}
+			return nil
+		})
+		if c.Failed > shown {
+			line("  - and %s more, in the manifest.", commas(c.Failed-shown))
+		}
+	}
+	if c.NotAttempted > 0 {
+		line("Messages that were never tried: %s. export-manifest.json lists their ids under \"not_attempted\".", commas(c.NotAttempted))
+	}
 	line("Layout: messages/<folder>/<year-month>/<date>_<time>_<subject>_<id>.eml, at most %d files to a folder; export-manifest.json lists every message and file; %s lists every file with its SHA-256.", copyFilesPerDir, copySumsName)
 	if len(h.ChainParts) > 0 {
-		line("This is one part of a set made by retrying an export. The other parts: %s.", joinChain(h.ChainParts))
+		line("This is part %d of a set made by retrying an export. The earlier parts: %s.", len(h.ChainParts)+1, joinChain(h.ChainParts))
 	}
-	line("")
-	line("What the files are")
-	switch h.Source.Kind {
-	case "m365":
-		line("- Each .eml is the exact byte stream Microsoft 365 returned for the message when it was exported (its MIME content). It is not guaranteed to equal the bytes that arrived over SMTP, and two downloads of the same message are not guaranteed identical. The hashes prove the files are unchanged since the export, nothing earlier.")
-	}
-	line("- Open the originals with the same caution as email: they can hold links and attachments.")
-	line("- Files whose names end .html, .attachments or .archived-page.txt, where present, are conveniences made from the original, which stays the authoritative copy.")
-	line("")
-	line("Caveats")
-	line("- Windows Explorer and some zip tools cannot open paths over 260 characters: choose a shorter destination, or turn off Preserve folder structure, if a path is too long.")
-	line("- On FAT, exFAT and most network shares, file permissions are not kept: the drive or the share decides who can read these files. On Windows this folder inherited its destination's permissions.")
-	line("- On removable media: eject the drive before unplugging it.")
 	line("")
 	line("How to check this export")
 	line("Open a terminal in this folder: on Windows, type powershell in the Explorer address bar; on macOS, Finder > Services > New Terminal at Folder; on Linux, your file manager's Open in Terminal.")
@@ -378,7 +394,32 @@ func (f *ceFinish) readmeText(status CopyStatus, c CopyCounts, stop *CopyStop, f
 	line("- Windows PowerShell:  %s", readmeExtraPS)
 	line("")
 	line("Fingerprint: run `sha256sum %s` (Linux), `shasum -a 256 %s` (macOS) or `Get-FileHash %s` (Windows) and compare it with the fingerprint the sender gave you separately (email, phone). Matching hashes prove the listed files are unchanged since the export only if that fingerprint also matches. There are no signatures: who made this export is not claimed.", copySumsName, copySumsName, copySumsName)
+	line("")
+	line("What the files are")
+	switch h.Source.Kind {
+	case "m365":
+		line("- Each .eml is the exact byte stream Microsoft 365 returned for the message when it was exported (its MIME content). It is not guaranteed to equal the bytes that arrived over SMTP, and two downloads of the same message are not guaranteed identical. The hashes prove the files are unchanged since the export, nothing earlier.")
+	}
+	line("- Open the originals with the same caution as email: they can hold links and attachments.")
+	line("- Files whose names end .html, .attachments or .archived-page.txt, where present, are conveniences made from the original, which stays the authoritative copy.")
+	line("")
+	line("Caveats")
+	line("- Windows Explorer and some zip tools cannot open paths over 260 characters: choose a shorter destination, or turn off Preserve folder structure, if a path is too long.")
+	line("- On FAT, exFAT and most network shares, file permissions are not kept: the drive or the share decides who can read these files. On Windows this folder inherited its destination's permissions.")
+	line("- On removable media: eject the drive before unplugging it.")
 	return b.String()
+}
+
+// plainStatus words a sealed status's label for the README's status line: "Stopped: the app
+// stopped (finished as partial)" reads "stopped — the app stopped (finished as partial)".
+func plainStatus(label string) string {
+	if rest, ok := strings.CutPrefix(label, "Stopped: "); ok {
+		return "stopped — " + rest
+	}
+	if label == "" {
+		return label
+	}
+	return strings.ToLower(label[:1]) + label[1:]
 }
 
 func joinChain(parts []CopyChainRef) string {

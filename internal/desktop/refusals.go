@@ -43,11 +43,11 @@ const statusRefused = http.StatusUnprocessableEntity
 func refusedWith(id, text string) refusal { return refusal{ID: id, Text: text, Status: statusRefused} }
 
 func refusalA() refusal {
-	return refusedWith("R-a", "Microsoft 365 isn't set up yet — the workspace needs your tenant and application ID to read your mailbox. Run `mailarchive setup`, then come back.")
+	return refusedWith("R-a", "Microsoft 365 isn't set up yet — the workspace needs your tenant and application ID to read your mailbox. They are saved by MailArchive's command-line tool, a separate download from MailArchive Desktop: run `mailarchive setup` there (or ask whoever installed MailArchive for you to), then come back.")
 }
 
 func refusalA2() refusal {
-	return refusedWith("R-a2", "This installation is set up for app-only access, which can't sign in as you — the workspace reads your own mailbox with a device sign-in. In the app registration, turn on 'Allow public client flows' and add the Delegated Mail.Read permission, or register a separate device app (docs/graph-app-setup.md).")
+	return refusedWith("R-a2", "This installation can't sign in as you: it is set up for app-only access (a program signing in for itself), and the workspace reads your own mailbox with a device sign-in. Whoever manages your Microsoft 365 app registration needs to turn on 'Allow public client flows' and add the Delegated Mail.Read permission, or register a separate device app (docs/graph-app-setup.md).")
 }
 
 func refusalB() refusal {
@@ -101,7 +101,7 @@ func refusalJ2(what string) refusal {
 }
 
 func refusalK() refusal {
-	return refusedWith("R-k", "This preview is out of date (older than 30 minutes, or the selection or destination changed) — click Preview copy export again.")
+	return refusedWith("R-k", "This preview is out of date — it is older than 30 minutes, you changed the selection or destination, or another window started a new preview. Click Preview copy export again.")
 }
 
 func refusalL(was, now string) refusal {

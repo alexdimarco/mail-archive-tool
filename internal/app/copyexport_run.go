@@ -57,7 +57,13 @@ type CopyProgress struct {
 	Folder   string
 	Started  time.Time
 	ETA      time.Duration
+	// Waiting says why the export is not moving when it is held back (a capture or the weekly
+	// backup has the archive), "" otherwise. Without it a paused export looks frozen (F11).
+	Waiting string
 }
+
+// copyWaitingCapture is the page's sentence for an export held back by a capture.
+const copyWaitingCapture = "Waiting: a backup or Archive now is using the archive. This export carries on by itself when that finishes; you can also cancel it."
 
 // CopyRun is one export being run.
 type CopyRun struct {
@@ -84,6 +90,7 @@ type CopyRun struct {
 	done    atomic.Int64
 	failed  atomic.Int64
 	bytes   atomic.Int64
+	waiting atomic.Bool  // held back by a capture
 	folder  atomic.Value // string
 
 	runID    string
@@ -156,6 +163,9 @@ func (r *CopyRun) Progress() CopyProgress {
 	r.mu.Unlock()
 	p := CopyProgress{Selected: len(r.plan.Messages), Done: int(r.done.Load()), Failed: int(r.failed.Load()),
 		Bytes: r.bytes.Load(), Started: started}
+	if r.waiting.Load() {
+		p.Waiting = copyWaitingCapture
+	}
 	if f, _ := r.folder.Load().(string); f != "" {
 		p.Folder = f
 	}
@@ -488,10 +498,13 @@ func (r *CopyRun) loop(walk context.Context) (CopyStatus, *CopyStop) {
 			}
 		}
 		for e.busy() { // a capture is running: the export backs off, uncounted
+			r.waiting.Store(true)
 			if err := e.pause(walk, e.backoffFirst()); err != nil {
+				r.waiting.Store(false)
 				return CopyStatusCancelled, nil
 			}
 		}
+		r.waiting.Store(false)
 		r.folder.Store(m.FolderPath())
 		if stop := r.preMessage(i); stop != nil {
 			return CopyStatusFailed, stop

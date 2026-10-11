@@ -88,7 +88,7 @@ function loadSource(){
     if(m.state==='ready'){st.upn=m.upn;show('mbox','Mailbox: '+m.upn+' (your own mailbox)');$('loadFolders').disabled=false;}
     else if(m.state==='needs-sign-in'){show('mbox',m.note||'Microsoft 365 refused your saved sign-in. Click Sign in to sign in again.');$('signInArea').hidden=false;}
     else if(m.state==='not-signed-in'){show('mbox','Not signed in to Microsoft 365');$('signInArea').hidden=false;}
-    else{show('mbox','Microsoft 365 isn\'t set up yet — run mailarchive setup, then come back.');}
+    else{show('mbox','Microsoft 365 isn\'t set up yet — its settings are saved by MailArchive\'s command-line tool (a separate download): run mailarchive setup there, then come back.');}
     const s=d.settings||{};
     if(s.dest&&!$('destPath').value)$('destPath').value=s.dest;
     $('optPreserve').checked=s.preserve!==false;
@@ -343,11 +343,13 @@ $('startBtn').addEventListener('click',()=>{
   api('api/exports/start',{previewId:st.previewId}).then(d=>{
     $('startBtn').disabled=false;
     if(!d.ok){showErr(d);$('previewCard').hidden=true;return;}
+    st.leaving=true; // the export started: leaving this page is not losing a selection
     location.href='exports';
   });
 });
 $('backBtn').addEventListener('click',()=>{$('previewCard').hidden=true;st.previewId='';});
 window.addEventListener('beforeunload',e=>{
+  if(st.leaving)return;
   if(st.entries.length||Object.keys(st.picks).length){e.preventDefault();e.returnValue='';}
 });
 loadSource();
@@ -378,6 +380,7 @@ function renderRun(p){
     const eta=p.etaSeconds>0?' · about '+Math.ceil(p.etaSeconds/60)+' min left':'';
     $('runStats').textContent=p.bytesText+' written · '+(p.folder||'')+' · '+fmt(p.rate)+' B/s'+eta;
     $('runLog').textContent=(p.log||[]).join('\n');
+    const w=$('runWaiting');w.hidden=!p.waiting;w.textContent=p.waiting||'';
   }
   const last=$('lastCard');
   if(!p.running&&p.last){last.hidden=false;const b=$('lastBody');clear(b);
@@ -397,8 +400,17 @@ function cardEl(c){
   box.appendChild(el('h3',c.label));
   const when=c.started?new Date(c.started).toLocaleString():'';
   box.appendChild(el('div',when+' · '+(c.mailbox||c.source)+' · '+c.rootName,'card-sub'));
-  box.appendChild(el('div',fmt(c.exported)+' exported, '+fmt(c.failed)+' failed, '+fmt(c.notAttempted)+' not attempted of '+fmt(c.planned)));
+  if(c.running)box.appendChild(el('div','Writing now: see Running export above.'));
+  else box.appendChild(el('div',fmt(c.exported)+' exported, '+fmt(c.failed)+' failed, '+fmt(c.notAttempted)+' not attempted of '+fmt(c.planned)));
   if(c.stop)box.appendChild(el('div',c.stop,'note warnbox'));
+  if(c.next)box.appendChild(el('div',c.next,'note'));
+  if((c.failures||[]).length){
+    const d=el('details');d.appendChild(el('summary','Which ones? ('+fmt(c.failed)+' not exported)'));
+    const ul=el('ul',null,'plain');
+    c.failures.forEach(f=>ul.appendChild(el('li',f.subject+' — '+f.folder+' — '+f.reason)));
+    if(c.failuresMore)ul.appendChild(el('li','and '+fmt(c.failuresMore)+' more, listed in the export\'s export-manifest.json'));
+    d.appendChild(ul);box.appendChild(d);
+  }
   if(c.fingerprint){
     const f=el('div');f.appendChild(el('span','Fingerprint '));f.appendChild(el('span',c.fingerprintGrouped,'fp'));
     const cp=el('button','Copy','btn small secondary');cp.type='button';
@@ -446,6 +458,7 @@ function act(a,c,box){
       if(!d.ok){fail(d);loadHistory(true);return;}
       out.appendChild(el('div',(d.green?'GREEN':'RED')+': '+fmt(d.files)+' files checked','v '+(d.green?'good':'bad')));
       (d.problems||[]).forEach(p=>out.appendChild(el('div',p,'note warnbox')));
+      if(d.remedy)out.appendChild(el('div',d.remedy,'note warnbox'));
     });break;
   case 'export-failed-again':api('api/exports/retry',{runId:c.run,which:'failed'}).then(d=>{if(!d.ok){done(d);return;}location.href='workspace#preview='+d.previewId;});break;
   case 'export-remaining':case 'export-these-again':api('api/exports/retry',{runId:c.run,which:'rest'}).then(d=>{if(!d.ok){done(d);return;}location.href='workspace#preview='+d.previewId;});break;

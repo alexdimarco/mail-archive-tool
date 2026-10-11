@@ -384,7 +384,7 @@ func (d *dashboard) progressAction(w http.ResponseWriter, r *http.Request) {
 	}
 	out := map[string]any{"ok": true, "running": !s.finished && !s.released, "runId": s.runID, "started": s.started.UTC().Format(time.RFC3339),
 		"selected": p.Selected, "done": p.Done, "failed": p.Failed, "bytes": p.Bytes, "bytesText": humanSize(p.Bytes), "folder": util.StripControl(p.Folder),
-		"rate": int64(s.rate), "etaSeconds": int(p.ETA.Seconds()), "log": append([]string(nil), s.log...)}
+		"rate": int64(s.rate), "etaSeconds": int(p.ETA.Seconds()), "log": append([]string(nil), s.log...), "waiting": p.Waiting}
 	if s.released {
 		out["released"] = true
 		out["label"] = "Stopped: the destination is not responding"
@@ -403,31 +403,40 @@ func (d *dashboard) progressAction(w http.ResponseWriter, r *http.Request) {
 // ---- history and the card actions -------------------------------------------
 
 type cardOut struct {
-	Run          string   `json:"run"`
-	Started      string   `json:"started"`
-	Source       string   `json:"source"`
-	Mailbox      string   `json:"mailbox"`
-	Dest         string   `json:"dest"`
-	RootName     string   `json:"rootName"`
-	Label        string   `json:"label"`
-	Kind         string   `json:"kind"`
-	Running      bool     `json:"running"`
-	Planned      int      `json:"planned"`
-	Exported     int      `json:"exported"`
-	Failed       int      `json:"failed"`
-	NotAttempted int      `json:"notAttempted"`
-	Fingerprint  string   `json:"fingerprint"`
-	Grouped      string   `json:"fingerprintGrouped"`
-	NoFinger     string   `json:"fingerprintNote,omitempty"`
-	Actions      []string `json:"actions"`
-	Stop         string   `json:"stop,omitempty"`
-	StopID       string   `json:"stopId,omitempty"`
-	Remaining    int      `json:"remaining,omitempty"`
-	Part         int      `json:"part"`
-	RetryOf      string   `json:"retryOf,omitempty"`
-	Set          *setOut  `json:"set,omitempty"`
-	Receipt      string   `json:"receipt,omitempty"`
-	Result       *resOut  `json:"result,omitempty"` // what the last refused button said, kept until the next click (F1)
+	Run          string    `json:"run"`
+	Started      string    `json:"started"`
+	Source       string    `json:"source"`
+	Mailbox      string    `json:"mailbox"`
+	Dest         string    `json:"dest"`
+	RootName     string    `json:"rootName"`
+	Label        string    `json:"label"`
+	Kind         string    `json:"kind"`
+	Running      bool      `json:"running"`
+	Planned      int       `json:"planned"`
+	Exported     int       `json:"exported"`
+	Failed       int       `json:"failed"`
+	NotAttempted int       `json:"notAttempted"`
+	Fingerprint  string    `json:"fingerprint"`
+	Grouped      string    `json:"fingerprintGrouped"`
+	NoFinger     string    `json:"fingerprintNote,omitempty"`
+	Actions      []string  `json:"actions"`
+	Stop         string    `json:"stop,omitempty"`
+	StopID       string    `json:"stopId,omitempty"`
+	Remaining    int       `json:"remaining,omitempty"`
+	Part         int       `json:"part"`
+	RetryOf      string    `json:"retryOf,omitempty"`
+	Set          *setOut   `json:"set,omitempty"`
+	Receipt      string    `json:"receipt,omitempty"`
+	Result       *resOut   `json:"result,omitempty"`   // what the last refused button said, kept until the next click (F1)
+	Next         string    `json:"next,omitempty"`     // what to do with a card that waits on the owner (F13)
+	Failures     []failOut `json:"failures,omitempty"` // "Which ones?": the messages not exported and why (F7)
+	FailuresMore int       `json:"failuresMore,omitempty"`
+}
+
+type failOut struct {
+	Subject string `json:"subject"`
+	Folder  string `json:"folder"`
+	Reason  string `json:"reason"`
 }
 
 type resOut struct {
@@ -479,7 +488,11 @@ func (d *dashboard) historyAction(w http.ResponseWriter, r *http.Request) {
 	for _, h := range hist {
 		c := cardOut{Run: h.Run, Started: h.Started.UTC().Format(time.RFC3339), Source: h.SourceKind, Mailbox: h.Mailbox, Dest: h.Dest, RootName: h.RootName,
 			Label: h.Label, Kind: h.Kind, Running: h.Running, Planned: h.Planned, Exported: h.Exported, Failed: h.Failed, NotAttempted: h.NotAttempted,
-			Fingerprint: h.Fingerprint, Actions: h.Actions, Remaining: h.Remaining, Part: h.Part, RetryOf: h.RetryOf, Receipt: h.Receipt}
+			Fingerprint: h.Fingerprint, Actions: h.Actions, Remaining: h.Remaining, Part: h.Part, RetryOf: h.RetryOf, Receipt: h.Receipt, Next: h.Next,
+			FailuresMore: h.FailuresMore}
+		for _, f := range h.Failures {
+			c.Failures = append(c.Failures, failOut{Subject: f.Subject, Folder: f.Folder, Reason: f.Reason})
+		}
 		if c.Actions == nil {
 			c.Actions = []string{}
 		}
@@ -495,8 +508,10 @@ func (d *dashboard) historyAction(w http.ResponseWriter, r *http.Request) {
 		}
 		if h.Fingerprint != "" {
 			c.Grouped = app.GroupFingerprint(h.Fingerprint)
-		} else if h.Status == "" || h.Running {
-			c.NoFinger = "fingerprint not recorded at export time"
+		} else if h.Running {
+			c.NoFinger = "" // still writing: it has no fingerprint yet, and the card says so by saying "writing"
+		} else if h.Status == "" {
+			c.NoFinger = "no fingerprint: this export was never finished"
 		}
 		if h.Stop != nil {
 			c.Stop, c.StopID = h.Stop.Message, h.Stop.RID
@@ -790,7 +805,7 @@ func (d *dashboard) checkAction(w http.ResponseWriter, r *http.Request) {
 	}
 	d.reply(w, map[string]any{"ok": true, "posture": posture, "green": chk.OK, "files": chk.Files, "changed": list(chk.Changed), "missing": list(chk.Missing),
 		"unlisted": list(chk.Unlisted), "problems": list(chk.Problems), "fingerprint": app.GroupFingerprint(chk.Fingerprint), "fingerprintOK": chk.FingerprintOK,
-		"noFingerprint": chk.NoFingerprint, "markerPresent": chk.MarkerPresent})
+		"noFingerprint": chk.NoFingerprint, "markerPresent": chk.MarkerPresent, "remedy": chk.Remedy})
 }
 
 // drain is the shutdown path (XC6): cancel the preview and the running export and wait

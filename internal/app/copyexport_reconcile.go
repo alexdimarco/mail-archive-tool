@@ -202,7 +202,7 @@ func (e *CopyExportEnv) ReconcileRun(run string) (CopyObservation, error) {
 		obs.Actions = []string{ActFinishAsPartial}
 	case seen.HasMarker:
 		obs.Kind = obsFinishing
-		obs.Label = "Finished writing (" + copyLabel(sum.Sealed.Status, sum.Sealed.Counts, sum.Sealed.Stop) + ") — this folder's marker may still need updating"
+		obs.Label = "Finished writing (" + copyLabel(sum.Sealed.Status, sum.Sealed.Counts, sum.Sealed.Stop) + ")" + finishingTail
 		obs.Actions = []string{ActCheckAndFinish}
 	default:
 		obs.Kind = obsRecovered
