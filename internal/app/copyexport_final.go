@@ -342,6 +342,12 @@ func (f *ceFinish) readmeText(status CopyStatus, c CopyCounts, stop *CopyStop, f
 	switch h.Source.Kind {
 	case "m365":
 		line("Source: Microsoft 365, the mailbox of %s, read with that account's own sign-in (read-only).", h.Source.Mailbox)
+	case "archive":
+		what := "the MailArchive archive at"
+		if h.Source.Other {
+			what = "another MailArchive archive folder, read-only:"
+		}
+		line("Source: %s %s, read without changing it.%s", what, util.StripControl(h.Source.Archive), storesLine(h.Source.Stores))
 	default:
 		line("Source: %s", h.Source.Kind)
 	}
@@ -375,7 +381,11 @@ func (f *ceFinish) readmeText(status CopyStatus, c CopyCounts, stop *CopyStop, f
 	if c.NotAttempted > 0 {
 		line("Messages that were never tried: %s. export-manifest.json lists their ids under \"not_attempted\".", commas(c.NotAttempted))
 	}
-	line("Layout: messages/<folder>/<year-month>/<date>_<time>_<subject>_<id>.eml, at most %d files to a folder; export-manifest.json lists every message and file; %s lists every file with its SHA-256.", copyFilesPerDir, copySumsName)
+	if h.Source.Kind == "archive" {
+		line("Layout: messages/<store>/<folder>/<year-month>/<date>_<time>_<subject>_<id>.eml (or .html and -attachments.zip where the archive kept no original), at most %d files to a folder; export-manifest.json lists every message and file; %s lists every file with its SHA-256.", copyFilesPerDir, copySumsName)
+	} else {
+		line("Layout: messages/<folder>/<year-month>/<date>_<time>_<subject>_<id>.eml, at most %d files to a folder; export-manifest.json lists every message and file; %s lists every file with its SHA-256.", copyFilesPerDir, copySumsName)
+	}
 	if len(h.ChainParts) > 0 {
 		line("This is part %d of a set made by retrying an export. The earlier parts: %s.", len(h.ChainParts)+1, joinChain(h.ChainParts))
 	}
@@ -399,6 +409,8 @@ func (f *ceFinish) readmeText(status CopyStatus, c CopyCounts, stop *CopyStop, f
 	switch h.Source.Kind {
 	case "m365":
 		line("- Each .eml is the exact byte stream Microsoft 365 returned for the message when it was exported (its MIME content). It is not guaranteed to equal the bytes that arrived over SMTP, and two downloads of the same message are not guaranteed identical. The hashes prove the files are unchanged since the export, nothing earlier.")
+	case "archive":
+		line("- Each .eml is the original message file the MailArchive archive kept, copied byte-exact and checked against the checksum the archive recorded for it (a file with no recorded checksum is copied as stored, and its entry in export-manifest.json says so). Where the archive kept no original, the message is its archived page (.html) and attachments zip (-attachments.zip), as the archive wrote them: the page's links back to the archive's folder and root pages do not work in this export. A page that does not carry MailArchive's security policy is copied as text (.archived-page.txt) instead of as a page. The hashes prove the files are unchanged since the export, nothing earlier.")
 	}
 	line("- Open the originals with the same caution as email: they can hold links and attachments.")
 	line("- Files whose names end .html, .attachments or .archived-page.txt, where present, are conveniences made from the original, which stays the authoritative copy.")
@@ -408,6 +420,23 @@ func (f *ceFinish) readmeText(status CopyStatus, c CopyCounts, stop *CopyStop, f
 	line("- On FAT, exFAT and most network shares, file permissions are not kept: the drive or the share decides who can read these files. On Windows this folder inherited its destination's permissions.")
 	line("- On removable media: eject the drive before unplugging it.")
 	return b.String()
+}
+
+// storesLine is the README's sentence naming every store the archive holds and its
+// mailbox (XC21); empty when the source recorded none.
+func storesLine(stores []CopyStoreInfo) string {
+	var parts []string
+	for _, s := range stores {
+		name := util.StripControl(s.Store)
+		if s.Mailbox != "" {
+			name += " (" + util.StripControl(s.Mailbox) + ")"
+		}
+		parts = append(parts, name)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " It holds: " + strings.Join(parts, ", ") + "."
 }
 
 // plainStatus words a sealed status's label for the README's status line: "Stopped: the app
@@ -478,6 +507,17 @@ func (f *ceFinish) writeManifest(status CopyStatus, c CopyCounts, stop *CopyStop
 	src := map[string]any{"kind": h.Source.Kind, "mailbox": h.Source.Mailbox, "tenant": h.Source.Tenant, "immutable_ids": h.Source.ImmutableIDs}
 	if h.Source.Kind == "m365" {
 		src["original_means"] = "MIME bytes returned by Microsoft Graph /$value at export time"
+	}
+	if h.Source.Kind == "archive" { // design §4.10: the archive and every store it holds with its mailbox (XC21)
+		stores := make([]CopyStoreInfo, 0, len(h.Source.Stores))
+		for _, s := range h.Source.Stores {
+			stores = append(stores, CopyStoreInfo{Store: util.StripControl(s.Store), Mailbox: util.StripControl(s.Mailbox)})
+		}
+		src = map[string]any{"kind": "archive", "archive": util.StripControl(h.Source.Archive), "stores": stores,
+			"original_means": "the .eml file the archive kept for the message, copied byte-exact"}
+		if h.Source.Other {
+			src["other_archive_folder"] = true
+		}
 	}
 	put(src)
 	bw.WriteString(`,"selection":`)

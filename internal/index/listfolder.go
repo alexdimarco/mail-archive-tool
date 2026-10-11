@@ -173,10 +173,24 @@ func openListQuery(path, query string) (*ListHandle, error) {
 	}
 	if version > indexVersion {
 		db.Close()
-		return nil, fmt.Errorf("search index %s was %w (format version %d; this build understands %d): upgrade this copy of mailarchive, or point -out at an archive this version wrote", path, ErrNewerFormat, version, indexVersion)
+		return nil, &NewerIndexError{Path: path, Version: version, Understood: indexVersion}
 	}
 	return &ListHandle{db: db, Version: version}, nil
 }
+
+// NewerIndexError is a list's refusal of a search.db a newer mailarchive wrote. It is
+// ErrNewerFormat, with the version, for the caller that words the refusal itself.
+type NewerIndexError struct {
+	Path       string
+	Version    int // the format version the file holds
+	Understood int // the version this build understands
+}
+
+func (e *NewerIndexError) Error() string {
+	return fmt.Sprintf("search index %s was %v (format version %d; this build understands %d): upgrade this copy of mailarchive, or point -out at an archive this version wrote", e.Path, ErrNewerFormat, e.Version, e.Understood)
+}
+
+func (e *NewerIndexError) Unwrap() error { return ErrNewerFormat }
 
 // Close releases the index. It is safe to call twice.
 func (h *ListHandle) Close() error {

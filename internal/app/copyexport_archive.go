@@ -1,0 +1,947 @@
+package app
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"mail-archive-tool/internal/export"
+	"mail-archive-tool/internal/index"
+	"mail-archive-tool/internal/state"
+	"mail-archive-tool/internal/util"
+)
+
+// The archive source (extraction design §4.3, §4.6, slice E4). It reads the configured
+// archive, or another archive folder [ruling W1], and writes nothing there: no lock, no
+// manifest save, no index repair, no temp file. The folder is untrusted input, so every
+// read goes through an *os.Root opened on it, behind the component-wise Lstat walk
+// (no symlink at any level, a regular file, one hard link), bounded to the recorded size,
+// and held to the fixity the plan recorded. The same adapter serves both archives; only
+// the manifest cap and the way search.db is opened differ for another folder.
+
+const (
+	archiveManifestName = ".mailarchive-manifest.json"
+	archiveIndexName    = "search.db"
+
+	// archiveOtherManifestCap is what another archive folder's manifest may weigh before
+	// anything is unmarshalled (R-o4, RR2-C11).
+	archiveOtherManifestCap = 1 << 30
+)
+
+// ArchiveOptions say how an archive is opened.
+type ArchiveOptions struct {
+	// Other is another archive folder, chosen with the picker or typed, read-only: the
+	// manifest is read under a cap, search.db is opened immutable, and nothing is ever
+	// written there.
+	Other bool
+}
+
+// ArchiveStore is a store of the archive: the token that names its directory and its
+// keys, and the mailbox it holds.
+type ArchiveStore struct {
+	Token   string
+	Mailbox string // empty for a store that is not a mailbox (a .pst file, an mbox, a maildir)
+	PST     bool   // an Outlook data file, which never has an original
+}
+
+// Label is the store as the page names it: the token, and the mailbox it holds.
+func (s ArchiveStore) Label() string {
+	if s.Mailbox != "" {
+		return s.Token + " — " + s.Mailbox
+	}
+	return s.Token
+}
+
+// ArchiveNode is one node of the archive's folder tree: a store, or a folder of one.
+type ArchiveNode struct {
+	ID      string // "<store>" or "<store>/<folder path>": validated against the snapshot, never used to build a path
+	Parent  string // "" for a store
+	Name    string
+	Count   int // the records filed directly in it
+	Store   bool
+	Mailbox string // for a store
+}
+
+type archiveLoc struct{ token, folder string }
+
+// archiveStamp is what identifies one reading of the manifest: a snapshot is cached by it.
+type archiveStamp struct {
+	size int64
+	mod  time.Time
+}
+
+// ArchiveSource is an open archive: a snapshot of its manifest to browse and resolve
+// selections from, and the CopyFilesSource a run copies files through.
+type ArchiveSource struct {
+	dir   string
+	other bool
+	root  *os.Root
+
+	man    *state.Manifest // the snapshot; nil for a source opened only to run
+	stamp  archiveStamp
+	stores []ArchiveStore
+	nodes  []ArchiveNode
+	byNode map[string][]string
+	loc    map[string]archiveLoc
+	pst    map[string]bool
+
+	mu       sync.Mutex
+	live     *state.Manifest // the manifest as it reads now, for Changed
+	liveSeen archiveStamp
+}
+
+// OpenArchive opens dir and reads its manifest snapshot. Refusals are *CopyRefusal: R-o
+// (no archive at the configured location), R-o3 (another folder with no manifest), R-o4
+// (a manifest over the cap) and R-p (a manifest or an index written by a newer
+// MailArchive, or a manifest that can't be read).
+func OpenArchive(dir string, opt ArchiveOptions) (*ArchiveSource, error) {
+	a, err := openArchiveRoot(dir, opt)
+	if err != nil {
+		return nil, err
+	}
+	if err := a.load(); err != nil {
+		a.Close()
+		return nil, err
+	}
+	return a, nil
+}
+
+// OpenArchiveForRun opens dir for a run: the root and nothing else. The run copies from
+// the plan's own records and reads the manifest again only when a file no longer matches
+// (Changed).
+func OpenArchiveForRun(dir string, opt ArchiveOptions) (*ArchiveSource, error) {
+	return openArchiveRoot(dir, opt)
+}
+
+func openArchiveRoot(dir string, opt ArchiveOptions) (*ArchiveSource, error) {
+	abs := absPath(dir)
+	fi, err := os.Stat(abs)
+	if err != nil || !fi.IsDir() {
+		return nil, archiveMissing(abs, opt.Other, "")
+	}
+	root, err := os.OpenRoot(abs)
+	if err != nil {
+		return nil, archiveMissing(abs, opt.Other, "")
+	}
+	return &ArchiveSource{dir: abs, other: opt.Other, root: root}, nil
+}
+
+// archiveMissing is R-o for the configured archive and R-o3 for another folder.
+func archiveMissing(dir string, other bool, why string) *CopyRefusal {
+	if other {
+		return refuse("R-o3", fmt.Sprintf("%s isn't a MailArchive archive (it has no %s%s) — choose the archive's top folder, the one that holds index.html and README.txt.", printable(dir), archiveManifestName, why))
+	}
+	return refuse("R-o", fmt.Sprintf("There's no archive at %s yet — run Archive now first, or choose Microsoft 365 as the source.", printable(dir)))
+}
+
+// Dir is the archive folder's absolute path.
+func (a *ArchiveSource) Dir() string { return a.dir }
+
+// Other reports whether this is another archive folder, read-only.
+func (a *ArchiveSource) Other() bool { return a.other }
+
+// Close releases the root.
+func (a *ArchiveSource) Close() error { return a.root.Close() }
+
+// Stamp identifies the manifest the snapshot was read from (its size and mtime).
+func (a *ArchiveSource) Stamp() (int64, time.Time) { return a.stamp.size, a.stamp.mod }
+
+// StampNow is the manifest's size and mtime as they are now, so a cached snapshot can be
+// told from the manifest it was read from.
+func (a *ArchiveSource) StampNow() (int64, time.Time, error) {
+	fi, err := a.root.Lstat(archiveManifestName)
+	if err != nil {
+		return 0, time.Time{}, err
+	}
+	return fi.Size(), fi.ModTime(), nil
+}
+
+// readManifest reads the manifest through the root, under the cap for another folder.
+func (a *ArchiveSource) readManifest() ([]byte, archiveStamp, error) {
+	fi, err := a.root.Lstat(archiveManifestName)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return nil, archiveStamp{}, archiveMissing(a.dir, a.other, "")
+	case err != nil:
+		return nil, archiveStamp{}, archiveMissing(a.dir, a.other, " that can be read: "+leaveName(err))
+	case fi.Mode()&fs.ModeSymlink != 0 || !fi.Mode().IsRegular():
+		return nil, archiveStamp{}, archiveMissing(a.dir, a.other, " that is a file: it is a link or a folder")
+	}
+	if a.other && fi.Size() > archiveOtherManifestCap {
+		return nil, archiveStamp{}, archiveTooBig(a.dir, fi.Size())
+	}
+	f, err := openRegularIn(a.root, archiveManifestName)
+	if err != nil {
+		return nil, archiveStamp{}, archiveMissing(a.dir, a.other, " that can be read: "+leaveName(err))
+	}
+	defer f.Close()
+	var r io.Reader = f
+	if a.other {
+		r = io.LimitReader(f, archiveOtherManifestCap+1)
+	}
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return nil, archiveStamp{}, archiveMissing(a.dir, a.other, " that can be read: "+leaveName(err))
+	}
+	if a.other && int64(len(data)) > archiveOtherManifestCap {
+		return nil, archiveStamp{}, archiveTooBig(a.dir, int64(len(data)))
+	}
+	return data, archiveStamp{size: fi.Size(), mod: fi.ModTime()}, nil
+}
+
+func archiveTooBig(dir string, size int64) *CopyRefusal {
+	return refuse("R-o4", fmt.Sprintf("%s's manifest is larger than MailArchive reads from another archive folder (%s; the limit is 1 GB) — nothing was read beyond that check, and nothing was written. If you trust this archive, make it the archive location in Settings (Save asks first when a weekly backup is installed).", printable(dir), humanBytes(size)))
+}
+
+// archiveNewer is R-p for a manifest or an index a newer MailArchive wrote.
+func archiveNewer(what string, version int) *CopyRefusal {
+	return refuse("R-p", fmt.Sprintf("The archive's %s was written by a newer MailArchive (format %d) — update MailArchive Desktop to export from it.", what, version))
+}
+
+// load reads the manifest and builds the tree.
+func (a *ArchiveSource) load() error {
+	data, stamp, err := a.readManifest()
+	if err != nil {
+		return err
+	}
+	man, err := state.LoadFrom(filepath.Join(a.dir, archiveManifestName), data)
+	if err != nil {
+		var nf *state.NewerFormatError
+		if errors.As(err, &nf) {
+			return archiveNewer("manifest", nf.Version)
+		}
+		return refuse("R-p", fmt.Sprintf("The archive's manifest can't be read (%s) — nothing was written.", util.StripControl(err.Error())))
+	}
+	a.man, a.stamp = man, stamp
+	a.build()
+	return nil
+}
+
+// nodeID is the id of a store's folder in the tree.
+func archiveNodeID(token, folder string) string {
+	if folder == "" {
+		return token
+	}
+	return token + "/" + folder
+}
+
+// build makes the stores, the tree and the keys of each folder from the snapshot: the tree
+// is store token → folder path, from each record's key prefix and current Folder, and
+// each store is labelled with its mailbox (XC21).
+func (a *ArchiveSource) build() {
+	recs := a.man.All()
+	mailbox, pst := map[string]string{}, map[string]bool{}
+	for id, tok := range a.man.Stores {
+		if !state.SafeToken(tok) {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(id, "mailbox:"):
+			mailbox[tok] = util.StripControl(strings.TrimPrefix(id, "mailbox:"))
+		case strings.HasSuffix(strings.ToLower(id), ".pst"), strings.HasSuffix(strings.ToLower(id), ".ost"):
+			pst[tok] = true
+		}
+	}
+	a.pst = pst
+	a.byNode = map[string][]string{}
+	a.loc = map[string]archiveLoc{}
+	folders := map[string]map[string]bool{} // token → every folder path with a record at or below it
+	for key, rec := range recs {
+		tok, _, _ := strings.Cut(key, "\x00")
+		if !state.SafeToken(tok) {
+			continue
+		}
+		id := archiveNodeID(tok, rec.Folder)
+		a.byNode[id] = append(a.byNode[id], key)
+		if folders[tok] == nil {
+			folders[tok] = map[string]bool{}
+		}
+		segs := strings.Split(rec.Folder, "/")
+		for i := 1; rec.Folder != "" && i <= len(segs); i++ {
+			folders[tok][strings.Join(segs[:i], "/")] = true
+		}
+	}
+	for _, tok := range a.man.Stores {
+		if state.SafeToken(tok) && folders[tok] == nil {
+			folders[tok] = map[string]bool{} // a store with no record yet is still a store
+		}
+	}
+	tokens := make([]string, 0, len(folders))
+	for tok := range folders {
+		tokens = append(tokens, tok)
+	}
+	sort.Strings(tokens)
+	a.stores, a.nodes = nil, nil
+	for _, tok := range tokens {
+		a.stores = append(a.stores, ArchiveStore{Token: tok, Mailbox: mailbox[tok], PST: pst[tok]})
+		a.nodes = append(a.nodes, ArchiveNode{ID: tok, Name: tok, Count: len(a.byNode[tok]), Store: true, Mailbox: mailbox[tok]})
+		a.loc[tok] = archiveLoc{token: tok}
+		paths := make([]string, 0, len(folders[tok]))
+		for p := range folders[tok] {
+			paths = append(paths, p)
+		}
+		sort.Slice(paths, func(i, j int) bool { return pathLess(paths[i], paths[j]) })
+		for _, p := range paths {
+			segs := strings.Split(p, "/")
+			parent := tok
+			if len(segs) > 1 {
+				parent = archiveNodeID(tok, strings.Join(segs[:len(segs)-1], "/"))
+			}
+			id := archiveNodeID(tok, p)
+			a.nodes = append(a.nodes, ArchiveNode{ID: id, Parent: parent, Name: segs[len(segs)-1], Count: len(a.byNode[id])})
+			a.loc[id] = archiveLoc{token: tok, folder: p}
+		}
+	}
+	for id := range a.byNode {
+		sort.Strings(a.byNode[id]) // a stable order of keys within a folder
+	}
+}
+
+// pathLess orders two folder paths segment by segment, so a folder comes right before its
+// children and its siblings' subtrees stay together.
+func pathLess(a, b string) bool {
+	as, bs := strings.Split(a, "/"), strings.Split(b, "/")
+	for i := 0; i < len(as) && i < len(bs); i++ {
+		if as[i] != bs[i] {
+			return as[i] < bs[i]
+		}
+	}
+	return len(as) < len(bs)
+}
+
+// Stores are the stores the archive holds, by token.
+func (a *ArchiveSource) Stores() []ArchiveStore { return append([]ArchiveStore(nil), a.stores...) }
+
+// Tree is the folder tree in tree order: each store, then its folders, depth first.
+func (a *ArchiveSource) Tree() []ArchiveNode { return append([]ArchiveNode(nil), a.nodes...) }
+
+// Records is how many records the snapshot holds.
+func (a *ArchiveSource) Records() int { return a.man.Len() }
+
+// Rekeyed is how many records the load re-scoped in memory (a pre-v3 manifest).
+func (a *ArchiveSource) Rekeyed() int { return a.man.Rekeyed }
+
+// Locate resolves a tree node id to its store and folder path.
+func (a *ArchiveSource) Locate(id string) (token, folder string, ok bool) {
+	l, ok := a.loc[id]
+	return l.token, l.folder, ok
+}
+
+// Keys are the manifest keys of the records filed directly in node id.
+func (a *ArchiveSource) Keys(id string) []string { return append([]string(nil), a.byNode[id]...) }
+
+// Describe names the source for the header and the manifest (XC21).
+func (a *ArchiveSource) Describe() CopySourceInfo {
+	info := CopySourceInfo{Kind: "archive", Archive: a.dir, Other: a.other,
+		OriginalMeans: "the .eml file the archive kept for the message, copied byte-exact"}
+	for _, s := range a.stores {
+		info.Stores = append(info.Stores, CopyStoreInfo{Store: s.Token, Mailbox: s.Mailbox})
+	}
+	return info
+}
+
+// ---- the index -------------------------------------------------------------------
+
+// OpenList opens search.db for one list request, read-only (immutable for another
+// archive folder), after the same gate every archive file passes: no symlink, a regular
+// file, one hard link. The caller closes it at the end of the request. A -wal beside the
+// file is not read by an immutable open; WALBeside says so, for the page's note.
+func (a *ArchiveSource) OpenList() (*index.ListHandle, error) {
+	f, _, err := a.openGated(archiveIndexName)
+	if err != nil {
+		var af *ArchiveFileError
+		if errors.As(err, &af) && af.Kind == AFMissing {
+			return nil, fmt.Errorf("no search index in the archive: %w", fs.ErrNotExist)
+		}
+		return nil, err
+	}
+	f.Close()
+	return index.OpenForList(filepath.Join(a.dir, archiveIndexName), index.ListOptions{Immutable: a.other})
+}
+
+// WALBeside reports whether a non-empty search.db-wal sits beside the index: an immutable
+// open does not read it, so the list may miss recent messages.
+func (a *ArchiveSource) WALBeside() bool {
+	fi, err := a.root.Lstat(archiveIndexName + "-wal")
+	return err == nil && fi.Size() > 0
+}
+
+// MapKey is the manifest key an index row stands for. A row's key is the manifest's when
+// the manifest has it; for an index of the pre-meta format, or a manifest that was
+// re-scoped in memory, the key is mapped through state.MigrateKey as the loader does.
+func (a *ArchiveSource) MapKey(version int, row index.ListRow) (string, bool) {
+	if _, ok := a.man.Get(row.Key); ok {
+		return row.Key, true
+	}
+	if version < 2 || a.man.Rekeyed > 0 {
+		if k, ok := state.MigrateKey(row.Key, row.Path); ok {
+			if _, in := a.man.Get(k); in {
+				return k, true
+			}
+		}
+	}
+	return "", false
+}
+
+// ---- resolution --------------------------------------------------------------------
+
+// ArchiveResolved is what resolving keys into a plan's messages found.
+type ArchiveResolved struct {
+	Messages []CopyMessage
+	// Skipped is how many records were left out because their files were deleted but the
+	// manifest and index still list them (a redaction not yet reindexed, §4.6 item 5).
+	// Their subject, sender and time are never written into the export.
+	Skipped int
+}
+
+// Messages resolves manifest keys into the plan's messages, in the order given, with the
+// redaction belt (§4.6 item 5): the record's page, and the files its fixity says exist,
+// are Lstat-ed through the root, and a record whose files are gone is left out and
+// counted. meta carries what the index knows of a message (subject, sender, date) where
+// it could be read; without it the manifest's own fields are used. progress, when set, is
+// called now and then with how many keys have been read.
+func (a *ArchiveSource) Messages(ctx context.Context, keys []string, meta map[string]index.ListRow, progress func(done, total int)) (ArchiveResolved, error) {
+	var out ArchiveResolved
+	for i, key := range keys {
+		if i%256 == 0 {
+			if err := ctx.Err(); err != nil {
+				return out, err
+			}
+			if progress != nil {
+				progress(i, len(keys))
+			}
+		}
+		rec, ok := a.man.Get(key)
+		if !ok {
+			out.Skipped++
+			continue
+		}
+		m, ok := a.resolve(key, rec, meta)
+		if !ok {
+			out.Skipped++
+			continue
+		}
+		out.Messages = append(out.Messages, m)
+	}
+	return out, nil
+}
+
+// archiveKinds are the sibling files of a record, from the page's path.
+func archiveSiblings(rel string) (page, eml, zip string) {
+	stem := strings.TrimSuffix(rel, verifyHTMLSuffix)
+	return rel, stem + verifyEMLSuffix, stem + verifyZipSuffix
+}
+
+// exists reports whether rel is in the archive as far as one Lstat through the root can
+// tell; an error other than "not there" says nothing, and counts as there (the run lists
+// the file when it cannot read it).
+func (a *ArchiveSource) exists(rel string) (present bool, size int64) {
+	fi, err := a.root.Lstat(filepath.FromSlash(rel))
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, 0
+	}
+	if err != nil {
+		return true, -1
+	}
+	return true, fi.Size()
+}
+
+func (a *ArchiveSource) resolve(key string, rec state.Record, meta map[string]index.ListRow) (CopyMessage, bool) {
+	tok, _, _ := strings.Cut(key, "\x00")
+	m := CopyMessage{SourceID: key, SizeHint: -1, Rel: rec.Path, Gone: !(rec.Present || rec.LastSeen.IsZero())}
+	m.Folder = []CopyFolderRef{{ID: tok, Name: tok}}
+	if rec.Folder != "" {
+		segs := strings.Split(rec.Folder, "/")
+		for i, s := range segs {
+			m.Folder = append(m.Folder, CopyFolderRef{ID: archiveNodeID(tok, strings.Join(segs[:i+1], "/")), Name: s})
+		}
+	}
+	for _, s := range a.stores {
+		if s.Token == tok {
+			m.Mailbox = s.Mailbox
+		}
+	}
+	if row, ok := meta[key]; ok {
+		m.Subject, m.From, m.FromName, m.Received = row.Subject, row.SenderEmail, row.SenderName, row.Date
+	} else {
+		m.Subject = rec.Subject
+		if t, err := time.Parse(time.RFC3339, rec.Date); err == nil {
+			m.Received = t.UTC()
+		}
+	}
+	m.Subject = util.StripControl(m.Subject)
+	if rec.Fixity != nil {
+		fx := *rec.Fixity
+		m.Fix = &fx
+	}
+	m.Notes = archiveGapNotes(rec)
+
+	// The belt: only a path the gate would walk is looked at, an unsafe one is listed by the run.
+	if _, ok := validRelPath(rec.Path); !ok || !strings.HasSuffix(rec.Path, verifyHTMLSuffix) {
+		return m, true
+	}
+	page, eml, zip := archiveSiblings(rec.Path)
+	pagePresent, pageSize := a.exists(page)
+	if !pagePresent {
+		return m, false
+	}
+	var size int64
+	known := true
+	add := func(dig *state.FileDigest, onDisk int64) {
+		switch {
+		case dig != nil:
+			size += dig.Size
+		case onDisk >= 0:
+			size += onDisk
+		default:
+			known = false
+		}
+	}
+	emlPresent, emlSize := a.exists(eml)
+	hasFix := func(f func(*state.Fixity) *state.FileDigest) *state.FileDigest {
+		if rec.Fixity == nil {
+			return nil
+		}
+		return f(rec.Fixity)
+	}
+	emlDig := hasFix(func(f *state.Fixity) *state.FileDigest { return f.EML })
+	zipDig := hasFix(func(f *state.Fixity) *state.FileDigest { return f.Zip })
+	htmlDig := hasFix(func(f *state.Fixity) *state.FileDigest { return f.HTML })
+	if !emlPresent && emlDig != nil {
+		return m, false // the original the archive recorded is gone: removed since (§4.6 item 5)
+	}
+	if emlPresent {
+		add(emlDig, emlSize)
+		m.SizeHint = size
+		if !known {
+			m.SizeHint = -1
+		}
+		return m, true
+	}
+	m.NoOrig = noOrigNotKept
+	if a.pst[tok] {
+		m.NoOrig = noOrigPST
+	}
+	zipPresent, zipSize := a.exists(zip)
+	if !zipPresent && zipDig != nil {
+		return m, false
+	}
+	m.Zip = zipPresent
+	add(htmlDig, pageSize)
+	if zipPresent {
+		add(zipDig, zipSize)
+	}
+	if known {
+		m.SizeHint = size
+	}
+	if page, err := a.pageBytes(rec.Path); err == nil {
+		m.Quarantine = !export.ArchivedPageInert(page)
+	} else if errors.Is(err, errPageTooLarge) {
+		m.Quarantine = true
+	}
+	return m, true
+}
+
+// archiveGapNotes are the archive's own gaps for a record, in words (§4.6 item 3):
+// state.UnknownSentinel, which state.Load puts on every issue-free v1 record, is replaced
+// by what it means.
+func archiveGapNotes(rec state.Record) []string {
+	var notes []string
+	seen := map[string]bool{}
+	add := func(s string) {
+		if !seen[s] {
+			seen[s] = true
+			notes = append(notes, s)
+		}
+	}
+	for _, label := range append(append([]string(nil), rec.Missing...), rec.Terminal...) {
+		label = util.StripControl(label)
+		switch {
+		case label == state.UnknownSentinel:
+			add("completeness was not tracked by the version that captured this message")
+		case label == state.MissingBody:
+			add("the archive records this message's body as never downloaded")
+		case label == state.LabelUnparsed:
+			add("the archive records this message as one it could not parse")
+		case state.IsUnreadableLabel(label):
+			add("the archive records part of this message as unreadable (" + label + ")")
+		default:
+			add("the archive records attachment '" + label + "' as never downloaded")
+		}
+	}
+	for _, cid := range rec.Unresolved {
+		add("the archive records an inline image (cid:" + util.StripControl(cid) + ") it could not find in the message")
+	}
+	return notes
+}
+
+// errPageTooLarge says a page is above what the gate reads.
+var errPageTooLarge = errors.New("the page is above what the archived-page gate reads")
+
+// pageBytes reads an archived page for the gate: through the root, behind the file gate,
+// and not above export.ArchivedPageMaxBytes.
+func (a *ArchiveSource) pageBytes(rel string) ([]byte, error) {
+	f, fi, err := a.openGated(rel)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	if fi.Size() > export.ArchivedPageMaxBytes {
+		return nil, errPageTooLarge
+	}
+	return io.ReadAll(io.LimitReader(f, fi.Size()+1))
+}
+
+// ---- the file gate ------------------------------------------------------------------
+
+// ArchiveFileKind says why a file of the archive was not read.
+type ArchiveFileKind int
+
+const (
+	AFMissing   ArchiveFileKind = iota // not there (removed, or the archive is gone)
+	AFRead                             // there, and could not be read
+	AFSymlink                          // a link stands where the file should be, at some level
+	AFIrregular                        // not a regular file
+	AFLinks                            // a regular file with more than one hard link
+	AFPath                             // the record's path is not one that stays inside the archive
+	AFChanged                          // the bytes do not match what the plan recorded
+	AFTooLarge                         // above the limit applied
+)
+
+// ArchiveFileError is a per-message failure of the archive gate.
+type ArchiveFileError struct {
+	Kind  ArchiveFileKind
+	Rel   string
+	Err   error
+	Size  int64 // AFTooLarge: the file's declared size
+	Limit int64 // AFTooLarge: the limit applied
+}
+
+func (e *ArchiveFileError) Error() string {
+	what := map[ArchiveFileKind]string{AFMissing: "is not in the archive", AFRead: "could not be read", AFSymlink: "has a link in its path",
+		AFIrregular: "is not a regular file", AFLinks: "has more than one hard link", AFPath: "is not a safe path inside the archive",
+		AFChanged: "does not match what the archive recorded", AFTooLarge: "is larger than this version exports"}[e.Kind]
+	if e.Err != nil {
+		return e.Rel + " " + what + ": " + e.Err.Error()
+	}
+	return e.Rel + " " + what
+}
+
+func (e *ArchiveFileError) Unwrap() error { return e.Err }
+
+func archiveReadErr(rel string, err error) *ArchiveFileError {
+	if errors.Is(err, fs.ErrNotExist) {
+		return &ArchiveFileError{Kind: AFMissing, Rel: rel, Err: err}
+	}
+	return &ArchiveFileError{Kind: AFRead, Rel: rel, Err: err}
+}
+
+// openGated opens the archive's file rel behind the §4.6 gate: a validated relative path,
+// a component-wise Lstat through the root with no symlink or reparse point at any level, a
+// regular file, an open that cannot block on a pipe, the opened handle the same file the
+// walk saw, and exactly one hard link (XC19). Within the root the window between the check
+// and the use remains: a co-writer can swap a file between Lstat and open, which the
+// fixity check then catches when a digest is recorded.
+func (a *ArchiveSource) openGated(rel string) (*os.File, os.FileInfo, error) {
+	parts, ok := validRelPath(rel)
+	if !ok {
+		return nil, nil, &ArchiveFileError{Kind: AFPath, Rel: rel}
+	}
+	var last os.FileInfo
+	for i := range parts {
+		fi, err := a.root.Lstat(filepath.FromSlash(strings.Join(parts[:i+1], "/")))
+		if err != nil {
+			return nil, nil, archiveReadErr(rel, err)
+		}
+		if fi.Mode()&fs.ModeSymlink != 0 || isReparsePoint(fi) {
+			return nil, nil, &ArchiveFileError{Kind: AFSymlink, Rel: rel}
+		}
+		if i < len(parts)-1 {
+			if !fi.IsDir() {
+				return nil, nil, &ArchiveFileError{Kind: AFMissing, Rel: rel}
+			}
+			continue
+		}
+		if !fi.Mode().IsRegular() {
+			return nil, nil, &ArchiveFileError{Kind: AFIrregular, Rel: rel}
+		}
+		last = fi
+	}
+	f, err := openRegularIn(a.root, filepath.FromSlash(rel))
+	if err != nil {
+		if errors.Is(err, errNotRegular) {
+			return nil, nil, &ArchiveFileError{Kind: AFIrregular, Rel: rel}
+		}
+		return nil, nil, archiveReadErr(rel, err)
+	}
+	fi, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, nil, archiveReadErr(rel, err)
+	}
+	if !os.SameFile(last, fi) {
+		f.Close()
+		return nil, nil, &ArchiveFileError{Kind: AFChanged, Rel: rel, Err: errors.New("it was replaced while it was being opened")}
+	}
+	if n, err := fileLinks(f); err != nil {
+		f.Close()
+		return nil, nil, archiveReadErr(rel, err)
+	} else if n > 1 {
+		f.Close()
+		return nil, nil, &ArchiveFileError{Kind: AFLinks, Rel: rel}
+	}
+	return f, fi, nil
+}
+
+// ---- the run's side ------------------------------------------------------------------
+
+// Fetch is not how an archive message is copied: it has files, not one stream (Files).
+func (a *ArchiveSource) Fetch(ctx context.Context, m *CopyMessage, w io.Writer, maxBytes int64) (int64, error) {
+	return 0, errors.New("an archive message is copied as files")
+}
+
+// ArchiveGoneError is the archive itself, not one file, being gone.
+type ArchiveGoneError struct{ Why string }
+
+func (e *ArchiveGoneError) Error() string {
+	return "the archive is no longer available (" + e.Why + ")"
+}
+
+// Probe is the breaker's control request: the archive's folder and manifest still answer.
+func (a *ArchiveSource) Probe(ctx context.Context) error {
+	if why, gone := a.Gone(); gone {
+		return &ArchiveGoneError{Why: why}
+	}
+	return nil
+}
+
+// RefreshAuth: nothing signs in to an archive.
+func (a *ArchiveSource) RefreshAuth(ctx context.Context) error { return nil }
+
+// SignedIn is true for the source's own mailbox, which an archive export has none of: the
+// run's sign-in poll compares it with the plan's, and both are empty.
+func (a *ArchiveSource) SignedIn() (string, bool) { return "", true }
+
+// Gone reports whether the archive's root or manifest is gone (§4.6 item 7): looked at by
+// path, because a root handle on a deleted folder still answers.
+func (a *ArchiveSource) Gone() (string, bool) {
+	if fi, err := os.Stat(a.dir); err != nil || !fi.IsDir() {
+		return archiveWhy(err), true
+	}
+	if _, err := os.Lstat(filepath.Join(a.dir, archiveManifestName)); err != nil {
+		return archiveWhy(err), true
+	}
+	return "", false
+}
+
+func archiveWhy(err error) string {
+	if err == nil || errors.Is(err, fs.ErrNotExist) {
+		return "it was disconnected or moved"
+	}
+	return leaveName(err)
+}
+
+// Changed reports whether the archive's record for m no longer says what the plan recorded:
+// it was removed, or a capture rewrote it (its recorded digests differ). The manifest is
+// read again only when it has changed since the last time it was read.
+func (a *ArchiveSource) Changed(m *CopyMessage) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	fi, err := a.root.Lstat(archiveManifestName)
+	if err != nil {
+		return true
+	}
+	stamp := archiveStamp{size: fi.Size(), mod: fi.ModTime()}
+	if a.live == nil || a.liveSeen != stamp {
+		data, st, rerr := a.readManifest()
+		if rerr != nil {
+			return true
+		}
+		man, lerr := state.LoadFrom(filepath.Join(a.dir, archiveManifestName), data)
+		if lerr != nil {
+			return true
+		}
+		a.live, a.liveSeen = man, st
+	}
+	rec, ok := a.live.Get(m.SourceID)
+	if !ok {
+		return true
+	}
+	return !sameFixity(rec.Fixity, m.Fix) || rec.Path != m.Rel
+}
+
+func sameFixity(a, b *state.Fixity) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	same := func(x, y *state.FileDigest) bool {
+		if x == nil || y == nil {
+			return x == y
+		}
+		return *x == *y
+	}
+	return same(a.EML, b.EML) && same(a.HTML, b.HTML) && same(a.Zip, b.Zip)
+}
+
+// Files opens the files m yields, behind the gate: its original, or, when the archive kept
+// none, its archived page (kept as .html only when it passes the archived-page gate,
+// otherwise copied as text) and its attachments zip. Nothing is read from the original
+// until the part is copied, and each part is held to the fixity the plan recorded.
+func (a *ArchiveSource) Files(ctx context.Context, m *CopyMessage) (*CopyFiles, error) {
+	if _, ok := validRelPath(m.Rel); !ok || !strings.HasSuffix(m.Rel, verifyHTMLSuffix) {
+		return nil, &ArchiveFileError{Kind: AFPath, Rel: m.Rel}
+	}
+	page, eml, zip := archiveSiblings(m.Rel)
+	files := &CopyFiles{Status: statusExported, Notes: append([]string(nil), m.Notes...)}
+	fix := func(pick func(*state.Fixity) *state.FileDigest) *state.FileDigest {
+		if m.Fix == nil {
+			return nil
+		}
+		return pick(m.Fix)
+	}
+	var open []*os.File
+	files.release = func() {
+		for _, f := range open {
+			f.Close()
+		}
+	}
+	fail := func(err error) (*CopyFiles, error) {
+		files.release()
+		return nil, err
+	}
+	if m.NoOrig == "" {
+		f, fi, err := a.openGated(eml)
+		if err != nil {
+			return fail(err)
+		}
+		open = append(open, f)
+		dig := fix(func(x *state.Fixity) *state.FileDigest { return x.EML })
+		if dig == nil {
+			files.Notes = append(files.Notes, "copied as stored: the archive recorded no checksum for this original, so it can't be attested (run Verify on the archive to record one)")
+		}
+		files.Parts = append(files.Parts, a.streamPart(f, fi, eml, dig, roleOriginal, verifyEMLSuffix))
+		return files, nil
+	}
+	files.Status = statusWithoutOrig
+	files.Notes = append(files.Notes, noOriginalNote(m.NoOrig))
+	dig := fix(func(x *state.Fixity) *state.FileDigest { return x.HTML })
+	f, fi, err := a.openGated(page)
+	if err != nil {
+		return fail(err)
+	}
+	if fi.Size() > export.ArchivedPageMaxBytes {
+		// Too large to check: it is not trusted, and is copied as text.
+		open = append(open, f)
+		files.Notes = append(files.Notes, quarantineNote+" (it is too large for MailArchive to check)")
+		files.Parts = append(files.Parts, a.streamPart(f, fi, page, dig, roleQuarantinedPage, archivedPageTxtSuffix))
+	} else {
+		data, err := io.ReadAll(io.LimitReader(f, fi.Size()+1))
+		f.Close()
+		if err != nil {
+			return fail(archiveReadErr(page, err))
+		}
+		if int64(len(data)) != fi.Size() || (dig != nil && !digestMatches(dig, data)) {
+			return fail(&ArchiveFileError{Kind: AFChanged, Rel: page})
+		}
+		role, suffix := roleArchivedPage, verifyHTMLSuffix
+		if !export.ArchivedPageInert(data) {
+			role, suffix = roleQuarantinedPage, archivedPageTxtSuffix
+			files.Notes = append(files.Notes, quarantineNote)
+		}
+		files.Parts = append(files.Parts, bytesPart(data, role, suffix))
+	}
+	if m.Zip {
+		zf, zfi, err := a.openGated(zip)
+		if err != nil {
+			return fail(err)
+		}
+		open = append(open, zf)
+		files.Parts = append(files.Parts, a.streamPart(zf, zfi, zip, fix(func(x *state.Fixity) *state.FileDigest { return x.Zip }), roleArchivedZip, verifyZipSuffix))
+	}
+	return files, nil
+}
+
+// archivedPageTxtSuffix names an archived page that fails the gate.
+const archivedPageTxtSuffix = ".archived-page.txt"
+
+// quarantineNote is what an entry says of a page copied as text (design §4.11, P10).
+const quarantineNote = "this archived page doesn't begin with the security policy a page of MailArchive carries, or it holds a live refresh, so it is copied as text (.archived-page.txt) and not as a page: open it as text only"
+
+func noOriginalNote(why string) string {
+	if why == noOrigPST {
+		return "Outlook .pst items never have an original .eml: the archived page and its attachments are copied instead"
+	}
+	return "the archive kept no original: it was captured without 'Keep each message's original .eml', so the archived page and its attachments are copied instead"
+}
+
+func digestMatches(d *state.FileDigest, data []byte) bool {
+	sum := sha256.Sum256(data)
+	return int64(len(data)) == d.Size && hex.EncodeToString(sum[:]) == d.SHA256
+}
+
+// bytesPart is a part whose bytes are already in memory, read and checked.
+func bytesPart(data []byte, role, suffix string) CopyFilePart {
+	return CopyFilePart{Role: role, Suffix: suffix, Size: int64(len(data)), Copy: func(w io.Writer, maxBytes int64) (int64, error) {
+		if maxBytes > 0 && int64(len(data)) > maxBytes {
+			return 0, &ArchiveFileError{Kind: AFTooLarge, Size: int64(len(data)), Limit: maxBytes}
+		}
+		n, err := io.Copy(w, bytes.NewReader(data))
+		return n, err
+	}}
+}
+
+// readTagged marks an error of reading the archive's file, so that a failure of the
+// destination writer, which io.Copy returns the same way, is never taken for one.
+type readTagged struct{ r io.Reader }
+
+type archiveReadFailure struct{ err error }
+
+func (e *archiveReadFailure) Error() string { return e.err.Error() }
+func (e *archiveReadFailure) Unwrap() error { return e.err }
+
+func (t readTagged) Read(p []byte) (int, error) {
+	n, err := t.r.Read(p)
+	if err != nil && err != io.EOF {
+		return n, &archiveReadFailure{err}
+	}
+	return n, err
+}
+
+// streamPart is a part copied by streaming the open file, bounded and checked against the
+// recorded digest: one byte past the recorded size is read, so a file longer than
+// recorded (a correct prefix with appended bytes) fails on its length (PC13).
+func (a *ArchiveSource) streamPart(f *os.File, fi os.FileInfo, rel string, dig *state.FileDigest, role, suffix string) CopyFilePart {
+	declared := fi.Size()
+	if dig != nil {
+		declared = dig.Size
+	}
+	return CopyFilePart{Role: role, Suffix: suffix, Size: declared, Copy: func(w io.Writer, maxBytes int64) (int64, error) {
+		if maxBytes > 0 && declared > maxBytes {
+			return 0, &ArchiveFileError{Kind: AFTooLarge, Rel: rel, Size: declared, Limit: maxBytes}
+		}
+		h := sha256.New()
+		n, err := io.Copy(io.MultiWriter(w, h), io.LimitReader(readTagged{f}, declared+1))
+		if err != nil {
+			var rf *archiveReadFailure
+			if errors.As(err, &rf) {
+				return n, archiveReadErr(rel, rf.err)
+			}
+			return n, err // the destination's own failure
+		}
+		if n != declared || (dig != nil && hex.EncodeToString(h.Sum(nil)) != dig.SHA256) {
+			return n, &ArchiveFileError{Kind: AFChanged, Rel: rel}
+		}
+		return n, nil
+	}}
+}

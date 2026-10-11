@@ -30,6 +30,9 @@ type CopyPlanInput struct {
 	// by identity (R-f, R-f2; design §4.7 step 3): the configured archive, and in
 	// slice E4 another archive folder chosen as the source. Empty: none.
 	Archives []string
+	// ArchiveSkipped is how many records the archive source left out because their files
+	// were removed (the redaction belt, §4.6 item 5); the preview reports the count.
+	ArchiveSkipped int
 }
 
 // copyRootName is the name the export directory takes: MailExport-<local
@@ -110,6 +113,27 @@ func (e *CopyExportEnv) PlanCopyExport(in CopyPlanInput) (*CopyPlan, error) {
 	p.Expires = p.Created.Add(copyPlanTTL)
 	p.ExportName = e.copyRootName(in.Chain)
 	e.sizePlan(p)
+	if in.Source.Kind == "archive" {
+		p.Archive = &CopyArchiveCounts{Skipped: in.ArchiveSkipped}
+		for i := range in.Messages {
+			m := &in.Messages[i]
+			switch {
+			case m.NoOrig == "":
+				p.Archive.WithOriginal++
+				if m.Fix == nil || m.Fix.EML == nil {
+					p.Archive.Unattested++
+				}
+			default:
+				p.Archive.WithoutOriginal++
+				if m.Quarantine {
+					p.Archive.Quarantined++
+				}
+			}
+			if m.Gone {
+				p.Archive.Gone++
+			}
+		}
+	}
 
 	h := sha256.New()
 	for i := range in.Messages {
@@ -167,12 +191,12 @@ func (e *CopyExportEnv) sizePlan(p *CopyPlan) {
 		} else {
 			p.UnknownSize++
 		}
-		pl := namer.place(m, 1)
-		rel := pl.Path()
+		pl := namer.place(m, copyFileCount(m))
+		rel := pl.Dir + "/" + pl.Stem + copyFirstSuffix(m)
 		if len(p.SamplePaths) < 10 {
 			p.SamplePaths = append(p.SamplePaths, rel)
 		}
-		n := utf16Len(filepath.ToSlash(rootAbs) + "/" + rel)
+		n := utf16Len(filepath.ToSlash(rootAbs) + "/" + pl.Dir + "/" + pl.Stem + copyLongestSuffix(m))
 		if n > p.LongestPath {
 			p.LongestPath = n
 		}
@@ -184,6 +208,18 @@ func (e *CopyExportEnv) sizePlan(p *CopyPlan) {
 		strs := len(m.SourceID) + len(m.InternetMessageID) + len(m.Subject) + len(m.From) + len(m.FromName) + len(m.FolderPath()) + len(rel)
 		reserve += int64(400+12*strs) + int64(64+2+len(rel)+1)
 		record += int64(copyRecordLineBound) + int64(300+6*strs)
+		if copyFileCount(m) == 2 { // the archived page and its zip: a second file, with its manifest entry and sums line
+			reserve += int64(200 + 64 + 2 + len(rel) + len(copyLongestSuffix(m)) + 1)
+			record += int64(copyRecordLineBound)
+		}
+		// The archive's own fields ride in the plan line of the run record: the fixity and the notes.
+		if m.Rel != "" {
+			record += int64(len(m.Rel) + 400)
+		}
+		for _, note := range m.Notes {
+			reserve += int64(6*len(note) + 8)
+			record += int64(6*len(note) + 8)
+		}
 	}
 	// README's bound, and one allocation cluster for each finalization file and its
 	// temp (README, manifest, sums, the marker's rewrite).

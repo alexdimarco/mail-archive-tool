@@ -28,11 +28,3 @@ func TestArchiveWriterNamesKeepF75F91F111(t *testing.T) {
 func TestCopyExportReadableHTMLHoldsOneMessage(t *testing.T) {
 	t.Skip("MA-419: Readable HTML is slice E5's (the render bound RR2b-C2, MA-509); until it lands the engine refuses the option and runs with it off, which TestCopyExportM365OriginalsAreByteExact covers")
 }
-
-// covers: MA-427, R29, R5, R12
-// The archive's root or manifest gone after a read error is run-fatal R-o2 ("the archive
-// is no longer available"), not a list of thousands of false "damaged" messages, and
-// "Export the remaining messages" is offered.
-func TestCopyExportArchiveGoneMidRunIsRO2(t *testing.T) {
-	t.Skip("MA-427: the archive source and its R-o2 class are slice E4's (extraction design §4.6 item 7, §10); until it lands there is no archive read to fail")
-}
