@@ -3,10 +3,13 @@ package app
 import (
 	"bytes"
 	"errors"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/model"
 	"mail-archive-tool/internal/state"
@@ -288,30 +291,266 @@ func TestLiveFullRunKeepsAnAttachmentRemovedUnderTheSameImmutableID(t *testing.T
 // covers: MA-357, R28, R20, R5, S50, S34
 // §1.5: a full run without -raw over an archive captured with it keeps the
 // preserved original and its recorded fixity, in place and when the message moves.
+// The row's (c) and (d) (the merge and the flipped earlier original) specify new
+// behaviour and land with RI-S5.
 func TestRecaptureWithoutRawKeepsThePreservedOriginal(t *testing.T) {
+	mail := func(body string) []byte { return rcMail("raw@x", "Original", body, "a.pdf", []byte("%PDF a")) }
+	eml := func(rec state.Record) string { return strings.TrimSuffix(rec.Path, ".html") + ".eml" }
+
+	// Twin: -raw over an intact source whose message changed writes the new original
+	// and records it.
+	srcT, outT := rcSource(t), tmpDir(t)
+	rcPut(t, srcT, mail("<p>first</p>"))
+	rcRun(t, srcT, outT, export.Full, true, nil)
+	_, t1 := recordForID(t, outT, "raw@x")
+	rcPut(t, srcT, mail("<p>second, a longer body</p>"))
+	rcRun(t, srcT, outT, export.Full, true, nil)
+	_, t2 := recordForID(t, outT, "raw@x")
+	got, ok := rcDigest(t, filepath.Join(outT, filepath.FromSlash(eml(t2))))
+	if !ok || t2.Fixity == nil || t2.Fixity.EML == nil || got != *t2.Fixity.EML || got == *t1.Fixity.EML {
+		t.Fatalf("a -raw full run over a changed source should write and record the new original: file %+v, record %+v", got, t2.Fixity)
+	}
+
+	// A -raw archive, then the same source.
+	src, out := rcSource(t), tmpDir(t)
+	rcPut(t, src, mail("<p>first</p>"))
+	rcRun(t, src, out, export.Full, true, nil)
+	_, rec1 := recordForID(t, out, "raw@x")
+	if rec1.Fixity == nil || rec1.Fixity.EML == nil {
+		t.Fatalf("the -raw capture should record its original: %+v", rec1)
+	}
+	srcB, outB := rcSource(t), tmpDir(t)
+	rcPut(t, srcB, mail("<p>first</p>"))
+	rcRun(t, srcB, outB, export.Full, true, nil)
+	keyB, recB := recordForID(t, outB, "raw@x")
+	moved := rcRenameStem(t, outB, keyB, "2025-03-03_0900_Original_OLDRULE_92544786")
+	if bad := rcAsRecorded(t, outB, moved); len(bad) != 0 {
+		t.Fatalf("the archive under the earlier naming rule should attest: %v", bad)
+	}
+
 	t.Skip("MA-357 (§1.5, R20): a re-capture without -raw un-fixes or deletes the preserved .eml; encoder lands in RI-S1, turns green in RI-S5")
+
+	// (a) A full run without -raw at an unchanged path: the original stays as
+	// recorded, and the record still carries its fixity.
+	rcRun(t, src, out, export.Full, false, nil)
+	_, rec2 := recordForID(t, out, "raw@x")
+	if rec2.Fixity == nil || rec2.Fixity.EML == nil {
+		t.Errorf("(a) the record lost the fixity of its preserved original: %+v", rec2.Fixity)
+	}
+	for _, bad := range rcAsRecorded(t, out, rec1) {
+		t.Errorf("(a) a full run without -raw changed the archive: %s", bad)
+	}
+	if rep := rcVerify(t, out); !rep.Attested() {
+		t.Errorf("(a) verify does not attest the archive after the run: %+v", rep.Problems)
+	}
+
+	// (b) The same with a forced naming change: the original moves with the message,
+	// byte-identical, with the same digest.
+	rcRun(t, srcB, outB, export.Full, false, nil)
+	_, rec2B := recordForID(t, outB, "raw@x")
+	if rec2B.Path == moved.Path {
+		t.Fatalf("(b) the run did not rename the message: the case is vacuous")
+	}
+	gotB, okB := rcDigest(t, filepath.Join(outB, filepath.FromSlash(eml(rec2B))))
+	if !okB || gotB != *recB.Fixity.EML {
+		t.Errorf("(b) the preserved original did not move with the message, byte-identical (present=%v)", okB)
+	}
+	if rec2B.Fixity == nil || rec2B.Fixity.EML == nil || *rec2B.Fixity.EML != *recB.Fixity.EML {
+		t.Errorf("(b) the moved record does not carry the original's fixity: %+v", rec2B.Fixity)
+	}
 }
 
 // covers: MA-358, R28, R5, R8, S51, S2
 // N2: a re-capture that moves a message never leaves the persisted manifest naming
 // a file it deleted before the manifest was saved.
+//
+// The run is observed from inside, from its progress callback: after the message
+// is committed and before the next checkpoint save, the state a hard kill there
+// leaves (RC31). The archive is copied then and verified as a fresh process would
+// find it. The per-step kill points C1..C8 of the design need the exporter's
+// kill-point seam, which RI-S4 adds with the write path; the finder's numbers are
+// reproduced here through the callback. The design's "stale lock and uncommitted
+// index batch are present" witness is not asserted: this run keeps no index, and
+// the lock is left out of the copy, as a dead holder's is stale.
 func TestMovingRecaptureNeverLeavesARecordNamingAMissingFile(t *testing.T) {
+	src, out := rcSource(t), tmpDir(t)
+	rcPut(t, src, rcMail("mv@x", "Move me", "<p>text</p>", "a.pdf", []byte("%PDF a")))
+	rcRun(t, src, out, export.Full, true, nil)
+	key, _ := recordForID(t, out, "mv@x")
+	// The archive as a release under an earlier naming rule left it.
+	old := rcRenameStem(t, out, key, "2025-03-03_0900_Move-me_OLDRULE_92544786")
+	if rep := rcVerify(t, out); !rep.Attested() {
+		t.Fatalf("the archive under the earlier naming rule should attest: %+v", rep.Problems)
+	}
+
+	// The full re-export the README recommends, observed after its first message.
+	var snap string
+	var exported int
+	rcRun(t, src, out, export.Full, true, func(s export.Stats) {
+		if snap == "" {
+			snap, exported = rcSnapshot(t, out), s.Exported
+		}
+	})
+	assure.Reached(t, snap, "the snapshot taken inside the run")
+	if exported != 1 {
+		t.Fatalf("the snapshot was taken after %d exports, want the first message committed", exported)
+	}
+	_, rec2 := recordForID(t, out, "mv@x")
+	if rec2.Path == old.Path {
+		t.Fatalf("the run did not rename the message (%s): the case is vacuous", rec2.Path)
+	}
+
+	// Twin: a run that finishes leaves a consistent archive.
+	if rep := rcVerify(t, out); !rep.Attested() {
+		t.Fatalf("a finished run should leave the archive attested: %+v", rep.Problems)
+	}
+
 	t.Skip("MA-358 (N2, R5): the old files are deleted before the new path is durable; encoder lands in RI-S1, turns green in RI-S4")
+
+	rep := rcVerify(t, snap)
+	if !rep.Attested() || rep.Missing != 0 {
+		t.Errorf("after a kill right after the message committed, verify of the archive finds missing=%d modified=%d unexpected=%d unrecorded=%d (attested=%v): the persisted manifest names files the run deleted: %+v",
+			rep.Missing, rep.Modified, rep.Unexpected, rep.Unrecorded, rep.Attested(), rep.Problems)
+	}
 }
 
 // covers: MA-358, R28, R5, R8, S51, S2
 // §1.7: a re-capture at an unchanged path never leaves files whose bytes no longer
 // match the persisted fixity. The result of this encoder on today's code goes with
 // the owner's ruling ESC-3 (design Q1).
+//
+// Observed as the N2 encoder above is: from inside the run, after the changed
+// message is committed and before the next checkpoint save.
 func TestSamePathRecaptureNeverBreaksTheRecordedFixity(t *testing.T) {
+	src, out := rcSource(t), tmpDir(t)
+	rcPut(t, src, rcMail("same@x", "Same place", "<p>first text</p>", "a.pdf", []byte("%PDF a")))
+	rcRun(t, src, out, export.Full, true, nil)
+	_, rec1 := recordForID(t, out, "same@x")
+
+	// The message changed at the source: its body is longer, its envelope the same.
+	rcPut(t, src, rcMail("same@x", "Same place", "<p>second text, now longer</p>", "a.pdf", []byte("%PDF a")))
+	var snap string
+	var exported int
+	rcRun(t, src, out, export.Full, true, func(s export.Stats) {
+		if snap == "" {
+			snap, exported = rcSnapshot(t, out), s.Exported
+		}
+	})
+	assure.Reached(t, snap, "the snapshot taken inside the run")
+	if exported != 1 {
+		t.Fatalf("the snapshot was taken after %d exports, want the first message committed", exported)
+	}
+	_, rec2 := recordForID(t, out, "same@x")
+	if rec2.Path != rec1.Path || rec2.Fixity == nil || rec2.Fixity.HTML == nil || *rec2.Fixity.HTML == *rec1.Fixity.HTML {
+		t.Fatalf("the run should re-capture the message at its own path with new content: %+v then %+v", rec1, rec2)
+	}
+
+	// Twin: a run that finishes leaves a consistent archive.
+	if rep := rcVerify(t, out); !rep.Attested() {
+		t.Fatalf("a finished run should leave the archive attested: %+v", rep.Problems)
+	}
+
 	t.Skip("MA-358 (§1.7, R5): a re-capture renames new bytes over the recorded files before the manifest is saved; encoder lands in RI-S1, turns green in RI-S4 once ESC-3 is answered")
+
+	rep := rcVerify(t, snap)
+	if rep.Modified != 0 || !rep.Attested() {
+		t.Errorf("after a kill right after the message committed, verify of the archive finds modified=%d missing=%d (attested=%v): the files' bytes no longer match the persisted fixity: %+v",
+			rep.Modified, rep.Missing, rep.Attested(), rep.Problems)
+	}
 }
 
 // covers: MA-359, R5, R28, S51
 // N3: a failed page write leaves the earlier page, zip and original byte-unchanged
 // and attested.
+//
+// The fault is a rename refusal on the page: while the new zip is being built, the
+// page's path becomes a directory with a file in it (the earlier page is set aside),
+// so the rename of the staged page over it fails, as a sharing violation on
+// Windows does; the earlier page is put back afterwards. The injected ENOSPC on the
+// page's temp and the W3 twin (a refused rename after the original and zip renames)
+// need the write path's fault seam, which RI-S4 adds.
 func TestPageWriteFailureLeavesTheEarlierFilesAttested(t *testing.T) {
+	pdf := &rcBlob{}
+	msg := func(v string) *model.Message {
+		return rcMsg("n3@x", "Contract", "<p>the contract</p>", []byte("raw bytes, "+v), pdf.att("c.pdf"))
+	}
+	first := func() (string, state.Record) {
+		out := tmpDir(t)
+		pdf.data, pdf.hook = []byte("%PDF-1.4 version one"), nil
+		if _, err := rcExport(t, out, export.Full, true, msg("one")); err != nil {
+			t.Fatal(err)
+		}
+		_, rec := recordForID(t, out, "n3@x")
+		return out, rec
+	}
+
+	// Twin: with no fault the changed message commits and the archive attests.
+	outT, _ := first()
+	pdf.data = []byte("%PDF-1.4 version two, a longer attachment")
+	if _, err := rcExport(t, outT, export.Full, true, msg("two")); err != nil {
+		t.Fatal(err)
+	}
+	if rep := rcVerify(t, outT); !rep.Attested() {
+		t.Fatalf("a changed message without a fault should commit and attest: %+v", rep.Problems)
+	}
+
 	t.Skip("MA-359 (N3, R5): the zip is replaced or removed before the page is written; encoder lands in RI-S1, turns green in RI-S4")
+
+	out, rec1 := first()
+	page := filepath.Join(out, filepath.FromSlash(rec1.Path))
+	pdf.data = []byte("%PDF-1.4 version two, a longer attachment")
+	pdf.hook = func() {
+		if err := os.Rename(page, page+".keep"); err != nil {
+			t.Error(err)
+		}
+		if err := os.MkdirAll(page, 0o755); err != nil {
+			t.Error(err)
+		}
+		if err := os.WriteFile(filepath.Join(page, "occupied"), []byte("x"), 0o644); err != nil {
+			t.Error(err)
+		}
+	}
+	_, err := rcExport(t, out, export.Full, true, msg("two"))
+	pdf.hook = nil
+	if rerr := os.RemoveAll(page); rerr != nil {
+		t.Fatal(rerr)
+	}
+	if rerr := os.Rename(page+".keep", page); rerr != nil {
+		t.Fatal(rerr)
+	}
+
+	rc, text := 0, ""
+	if err != nil {
+		rc, text = 1, err.Error()
+	}
+	assure.Refused(t, rc, text, assure.Code(1), assure.Names(page), assure.NoSideEffect(func() bool {
+		bad := rcAsRecorded(t, out, rec1)
+		for _, b := range bad {
+			t.Logf("after the refused page write: %s", b)
+		}
+		var temps []string
+		filepath.WalkDir(out, func(p string, d fs.DirEntry, werr error) error {
+			if werr == nil && !d.IsDir() && strings.HasPrefix(d.Name(), ".mailarchive-") && strings.HasSuffix(d.Name(), ".tmp") {
+				temps = append(temps, p)
+			}
+			return nil
+		})
+		for _, p := range temps {
+			t.Logf("a temp file remains: %s", p)
+		}
+		return len(bad) == 0 && len(temps) == 0
+	}))
+	if rep := rcVerify(t, out); !rep.Attested() {
+		t.Errorf("verify does not attest the earlier files after the refused page write: missing=%d modified=%d %+v", rep.Missing, rep.Modified, rep.Problems)
+	}
+
+	// The fault is gone: the next run commits.
+	if _, err := rcExport(t, out, export.Full, true, msg("two")); err != nil {
+		t.Fatalf("the next run did not commit: %v", err)
+	}
+	if rep := rcVerify(t, out); !rep.Attested() {
+		t.Errorf("the next run did not leave the archive attested: %+v", rep.Problems)
+	}
 }
 
 // covers: MA-361, R13, R8, S51, S13
