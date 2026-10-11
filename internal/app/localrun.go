@@ -115,6 +115,8 @@ type localRun struct {
 	logger *log.Logger
 	lock   *lockfile.Lock // the archive lock the probe asks "still held?"; nil in a test
 
+	outlookFresh map[string]bool // source ids (state.PathSourceID) of the PSTs this run's Outlook export wrote
+
 	faults      int // faults recorded: they count as processed for the checkpoint gate (FC12)
 	writeFaults int // folder and item write faults, which pace the probe
 	recovered   int // gaps closed because their item was captured
@@ -182,6 +184,7 @@ type sourceRun struct {
 	folderSeen    map[string]bool // the same, for the "once each"
 	folderFlood   bool            // more folders faulted than folderFaultCap: the run cannot say which it read, so it closes nothing
 	seenFolders   map[string]bool // the folders this walk reached (whole paths and last segments), for what -outlook says it left out
+	freshOutlook  bool            // the file is a PST this run's Outlook export wrote: a fresh image of the mailbox (NF1)
 }
 
 // noteFolder records a folder the reader reached. Each path is kept as its joined
@@ -310,7 +313,8 @@ func (s *sourceRun) handle(ctx context.Context, abort func() error, folderPath [
 	// terminal export-panic gap, counted, never only a log line (F33).
 	defer func() {
 		if r := recover(); r != nil {
-			lr.logger.Printf("warning: recovered from panic on a message in %s (skipped): %v", folderKey, r)
+			// The folder name and the panic's words can both be the data file's own bytes.
+			lr.logger.Printf("warning: recovered from panic on a message in %s (skipped): %s", cleanText(folderKey), cleanText(fmt.Sprint(r)))
 			lr.exp.Stats.ExportPanics++
 			s.observe(itemGap(m, folderKey, "export-panic", state.ClassTerminal, fmt.Sprint(r)))
 			err = nil
@@ -452,8 +456,11 @@ func (s *sourceRun) covered(g state.CaptureGap) bool {
 		return false
 	}
 	// What Outlook left out of the export is not in the file: the file answers it only
-	// by now holding the folder.
-	if g.Reason == "outlook-export-skipped" && g.Folder != "" && !s.seenFolders[g.Folder] {
+	// by now holding the folder. The exception is a file this run's own export wrote: it
+	// is Outlook's image today, so a folder it neither holds nor skipped again (the gap
+	// was not observed this run, or it would not be here) is no longer in Outlook, or
+	// is one Outlook could not even name (NF1).
+	if g.Reason == "outlook-export-skipped" && g.Folder != "" && !s.freshOutlook && !s.seenFolders[g.Folder] {
 		return false
 	}
 	for _, p := range s.folderFaults {

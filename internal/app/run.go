@@ -59,6 +59,12 @@ type Options struct {
 	// archive is never silently smaller than the mailbox and the run is partial
 	// (FC28).
 	OutlookSkips []outlookcom.Skip
+	// OutlookExported are the PSTs `-outlook`'s Outlook export wrote in THIS run
+	// (outlookcom.CreatePSTs' stores). Such a PST is a fresh image of the mailbox, so a
+	// folder Outlook once failed to export that it neither carries nor skips again is
+	// no longer in Outlook, and a complete walk of it closes that gap (NF1). A PST that
+	// is merely left over from an earlier export says nothing about Outlook today.
+	OutlookExported []string
 	// Unattended marks a scheduled run (the CLI's -unattended, the GUI's
 	// headless job). A discovery refusal (a vanished -input, no sources found)
 	// on an archive that already exists is then recorded as a failed run, so
@@ -437,6 +443,12 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// fault counts as processed for the checkpoint gate below, so a stretch of
 	// nothing but faults still saves and still re-checks the lock (FC12).
 	lr := &localRun{exp: exp, out: opts.Out, runAt: runAt, logger: logger, lock: lock}
+	for _, p := range opts.OutlookExported {
+		if lr.outlookFresh == nil {
+			lr.outlookFresh = map[string]bool{}
+		}
+		lr.outlookFresh[state.PathSourceID(p)] = true
+	}
 	checkpoint := func(stats export.Stats) {
 		processed := stats.Exported + lr.faults
 		if processed-lastCheckpoint < effectiveEvery(floor, manifest.Len()) {
@@ -981,7 +993,7 @@ func runFile(ctx context.Context, lr *localRun, path string, copyFirst bool, onP
 	token := exp.Manifest.Token(state.PathSourceID(path), store)
 	logger.Printf("Reading %s (store: %s)", path, store)
 
-	src := &sourceRun{lr: lr, token: token, path: path}
+	src := &sourceRun{lr: lr, token: token, path: path, freshOutlook: lr.outlookFresh[state.PathSourceID(path)]}
 	handler := func(folderPath []string, m *model.Message) error {
 		if err := src.handle(ctx, abort, folderPath, m); err != nil {
 			return err
