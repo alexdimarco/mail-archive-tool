@@ -455,7 +455,9 @@ func exportStageReason(reason string) bool {
 // gap that the run did not look for: an item gap dated before since is never
 // closed by absence, and in a run with since set an export-stage gap
 // (export-failed, export-panic, folder-unwritable) closes only by recovery or by
-// being observed again. A walk aborted by a run-level fault closes nothing: the
+// being observed again; an overflow entry (items the ledger could not list, whose
+// dates are unknown) is kept by every run with since set. A walk aborted by a
+// run-level fault closes nothing: the
 // caller does not call this. It returns how many entries it closed.
 func (m *Manifest) CloseUnobserved(token string, scopeFn func(CaptureGap) bool, runAt, since time.Time) (closed int) {
 	m.mu.Lock()
@@ -468,7 +470,9 @@ func (m *Manifest) CloseUnobserved(token string, scopeFn func(CaptureGap) bool, 
 			continue
 		}
 		if !since.IsZero() {
-			if exportStageReason(g.Reason) {
+			// An overflow entry stands for items the ledger could not list, and it has
+			// no date: a window cannot say they are outside it (S3-AI2).
+			if g.Scope == GapScopeOverflow || exportStageReason(g.Reason) {
 				continue
 			}
 			if g.Scope == GapScopeItem && g.Received != "" {

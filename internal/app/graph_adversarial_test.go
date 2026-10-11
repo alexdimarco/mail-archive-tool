@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/graph"
@@ -330,6 +332,59 @@ func TestGraphReissuedIDFaultSparesTheArchivedRecord(t *testing.T) {
 	}
 	k, rec := recordForID(t, out, "n-body@x")
 	wantDeferred(t, out, "N (restored under a new id, its download fails)", k, rec)
+}
+
+// covers: MA-323, R1, R5, S46, R11
+// S3-AI2: a -since run does not close the folder's overflow entry. The entry stands
+// for items the ledger could not list (the lifetime cap of 1000 item gaps) and has no
+// date of its own, so the rule that keeps an item gap dated before the window never
+// covered it, and a run whose window put those items out of scope (none re-observed:
+// SkippedDate) deleted it: the 10 items beyond the cap were then in neither the
+// archive nor the ledger, and the status counted 1000, not 1010 (R10). A run without
+// -since still re-observes them.
+func TestGraphSinceRunKeepsTheOverflowEntry(t *testing.T) {
+	const n = 1010
+	s := sweepServer(false, nil, nil, nil)
+	defer s.Close()
+	for i := 0; i < n; i++ {
+		id := fmt.Sprintf("P%04d", i)
+		s.AddMessage("u1", "F_IN", id)
+		s.SetValue(id, poison500)
+	}
+	out := tmpDir(t)
+	g := isoOptions(s)
+	if _, err := sweepRun(g, out, export.Incremental); !errors.Is(err, ErrPartial) {
+		t.Fatalf("run 1 returned %v, want ErrPartial", err)
+	}
+	if got := loadArchive(t, out).MissingGapCount(); got != n {
+		t.Fatalf("run 1: the ledger counts %d items missing, want %d (1000 listed and 10 in the overflow entry)", got, n)
+	}
+
+	res, err := RunGraph(context.Background(), g, Options{Out: out, Mode: export.Incremental, Since: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}, log.New(io.Discard, "", 0))
+	if err != nil || res.Stats.SkippedDate != n {
+		t.Fatalf("the -since run: err %v, skipped by date %d; want nil and %d: every item is older than the window", err, res.Stats.SkippedDate, n)
+	}
+	m := loadArchive(t, out)
+	if got := m.MissingGapCount(); got != n {
+		t.Errorf("after the -since run the ledger counts %d items missing, want %d: the overflow entry stands for items this run never looked at", got, n)
+	}
+	overflow := 0
+	for _, gap := range m.CaptureGapsSorted() {
+		if gap.Scope == state.GapScopeOverflow {
+			overflow++
+		}
+	}
+	if overflow != 1 {
+		t.Errorf("the ledger holds %d overflow entries after the -since run, want the 1 of run 1", overflow)
+	}
+
+	// A run without -since attempts them again: the entry is observed again, not stale.
+	if _, err := sweepRun(g, out, export.Incremental); !errors.Is(err, ErrPartial) {
+		t.Fatalf("run 3 returned %v, want ErrPartial", err)
+	}
+	if got := loadArchive(t, out).MissingGapCount(); got != n {
+		t.Errorf("run 3: the ledger counts %d items missing, want %d", got, n)
+	}
 }
 
 // covers: MA-313, R5, R12, R18, S46
