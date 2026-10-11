@@ -373,13 +373,16 @@ func (e *CopyExportEnv) endedActions(sum *ceRecSummary, info CopyRunInfo) []stri
 	if sum == nil { // the record is deleted: its chain is complete, nothing is left to export
 		return acts
 	}
+	// "Export failed messages again" is offered while a failure a retry can change is left: a
+	// message whose file is a link, damaged or removed fails for good, and a button whose click is
+	// refused is no help (friction F3).
 	switch info.Status {
 	case CopyStatusPartial:
-		if info.Failed > 0 {
+		if info.Failed > 0 && sum.RetryableFailed > 0 {
 			acts = append(acts, ActExportFailed)
 		}
 	case CopyStatusCancelled:
-		if info.Failed > 0 {
+		if info.Failed > 0 && sum.RetryableFailed > 0 {
 			acts = append(acts, ActExportFailed)
 		}
 		acts = append(acts, ActExportRemaining)
@@ -935,7 +938,7 @@ func (e *CopyExportEnv) RetryInput(run, which, signer string) (*CopyPlanInput, e
 		return nil, err
 	}
 	if len(msgs) == 0 {
-		return nil, refuse("R-h", "There are no messages left to export from this export.")
+		return nil, refuse("R-h", noRetryText(which, sum.Statuses[statusFailed], sum.RetryableFailed))
 	}
 	first := h.RootName
 	if len(h.ChainParts) > 0 {
@@ -954,6 +957,26 @@ func (e *CopyExportEnv) RetryInput(run, which, signer string) (*CopyPlanInput, e
 	next := max(own.Part+1, n+1)
 	chain := CopyChain{ID: h.Chain, RetryOf: run, Parts: parts, RootName: fmt.Sprintf("%s-part%d", first, next)}
 	return &CopyPlanInput{Source: h.Source, Folders: foldersOf(msgs), Messages: msgs, Options: h.Options, Dest: h.Dest, Chain: chain}, nil
+}
+
+// noRetryText is R-h for a retry with nothing to retry (friction F3): what happened, why, and what to
+// do. failed is how many messages of the run failed. A message that failed for a reason a retry
+// cannot change (a link, a damaged or removed file, a message over the size limit) is never offered
+// again, and the owner is told where the reasons are and what can still be done.
+func noRetryText(which string, failed, retryable int) string {
+	switch {
+	case failed == 0 && which == "failed":
+		return "There are no messages left to export from this export — no message failed in it, so there is nothing to export again."
+	case failed == 0:
+		return "There are no messages left to export from this export — every message in it was exported."
+	case retryable > 0: // they could be tried again, and another part of the set already did
+		return "There are no messages left to export from this export — the messages that failed were exported by another part of its set, so there is nothing left to do (the set's total is on this export's card)."
+	}
+	n := "1 message that failed"
+	if failed != 1 {
+		n = commas(failed) + " messages that failed"
+	}
+	return fmt.Sprintf("The %s in this export can't be tried again — each failed for a reason that trying again won't change, and the reason is listed under 'Which ones?' on this export's card. Fix that (restore the file from a backup of the archive, say), then choose the folder again in the Extraction workspace and export it as a new export.", n)
 }
 
 // foldersOf summarizes msgs by folder path, in the order first met: the retry's
