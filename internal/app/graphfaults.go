@@ -32,26 +32,72 @@ var parseRFC822 = source.ParseRFC822
 // item's fetch-failed fault (S3-AO2).
 var errNotAMessage = errors.New("the answer to the download is not an e-mail message (it has no RFC 5322 header)")
 
+// messageFields are the header fields a message the service converted carries at
+// least one of (lower case). An answer whose header block has none of them is a
+// page or an error text that happens to have a colon in it (S3-AO2).
+var messageFields = map[string]bool{
+	"from": true, "date": true, "message-id": true, "subject": true, "to": true,
+	"received": true, "mime-version": true, "content-type": true,
+	"return-path": true, "sender": true,
+}
+
+// headerScanLimit bounds how much of an answer looksLikeMessage reads for a
+// corroborating field: a header block longer than this is read no further.
+const headerScanLimit = 256 << 10
+
 // looksLikeMessage says whether data starts like an RFC 5322 message: its first
-// line is a header field (a name of printable characters, then a colon). Every
-// message Graph converts opens with headers; an HTML page, an empty body or a
-// plain sentence does not. It is a check that an answer is a message at all, not
-// that it parses.
+// line is a header field (a name of letters, digits, hyphen and underscore, then a
+// colon) and its header block (up to the first blank line) holds at least one of the
+// fields every message has (messageFields). Every message Graph converts opens with
+// headers; an HTML page, an empty body, a plain sentence, "Error: sign in required"
+// and a one-line JSON error do not. It is a check that an answer is a message at all,
+// not that it parses; an answer that imitates a header block is indistinguishable
+// from a message and is archived as one.
 func looksLikeMessage(data []byte) bool {
-	line := data
-	if i := bytes.IndexByte(line, '\n'); i >= 0 {
-		line = line[:i]
+	if len(data) > headerScanLimit {
+		data = data[:headerScanLimit]
 	}
-	i := bytes.IndexByte(line, ':')
-	if i <= 0 {
-		return false
-	}
-	for _, c := range line[:i] {
-		if c < '!' || c > '~' {
-			return false
+	corroborated := false
+	for n := 0; len(data) > 0; n++ {
+		line := data
+		if i := bytes.IndexByte(data, '\n'); i >= 0 {
+			line, data = data[:i], data[i+1:]
+		} else {
+			data = nil
+		}
+		line = bytes.TrimSuffix(line, []byte("\r"))
+		if len(line) == 0 {
+			break // the blank line that ends the header block
+		}
+		if line[0] == ' ' || line[0] == '\t' {
+			if n == 0 {
+				return false // a header block does not open with a folded line
+			}
+			continue
+		}
+		i := bytes.IndexByte(line, ':')
+		if i <= 0 {
+			if n == 0 {
+				return false
+			}
+			continue
+		}
+		name := line[:i]
+		for _, c := range name {
+			if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_' {
+				continue
+			}
+			if n == 0 {
+				return false
+			}
+			name = nil
+			break
+		}
+		if messageFields[strings.ToLower(string(name))] {
+			corroborated = true
 		}
 	}
-	return true
+	return corroborated
 }
 
 // classifyFetch sorts a failed Graph request for one message (§4.8.1). It wraps

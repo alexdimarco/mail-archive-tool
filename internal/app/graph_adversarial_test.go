@@ -210,6 +210,49 @@ func TestGraphValueThatIsNotAMessageIsAGapNotARecord(t *testing.T) {
 	}
 }
 
+// covers: MA-310, R1, R10, R17, S46
+// S3-AO2 (second round): a one-line answer that merely has a colon in it is no message
+// either. A gateway that answers 200 with a one-line JSON error, "Error: sign in
+// required" or minified HTML used to pass the first-line check (a name of printable
+// characters, then a colon) and was archived as a record, with no gap and a clean exit.
+// A header-field name is letters, digits, hyphen and underscore, and a message the
+// service converted carries at least one of the fields every message has (From, Date,
+// Message-ID, Subject, ...); the answer that has neither is a fetch-failed gap. Twin
+// first: a real message with only a Subject field is a message.
+func TestGraphOneLineErrorAnswerIsNotAMessage(t *testing.T) {
+	s := sweepServer(false, []string{"A1", "A2", "A3", "A4"}, nil, nil)
+	defer s.Close()
+	g := isoOptions(s)
+	out := tmpDir(t)
+	s.SetValue("A4", graphtest.Answer(200, "Subject: only a subject\r\n\r\nbody of a4\r\n"))
+	s.SetValue("A1", graphtest.Answer(200, `{"error":{"code":"x","message":"y"}}`))
+	s.SetValue("A2", graphtest.Answer(200, "Error: sign in required"))
+	s.SetValue("A3", graphtest.Answer(200, "<html><body>login: please"))
+	res, err := sweepRun(g, out, export.Incremental)
+	if !errors.Is(err, ErrPartial) {
+		t.Fatalf("three one-line answers that are no message: the run returned %v, want ErrPartial", err)
+	}
+	if res.Stats.Exported != 1 || loadArchive(t, out).Len() != 1 {
+		t.Errorf("exported %d, records %d; want only A4, the message with a Subject field", res.Stats.Exported, loadArchive(t, out).Len())
+	}
+	gaps := graphGaps(t, out)
+	if len(gaps) != 3 {
+		t.Fatalf("the ledger holds %+v; want a fetch-failed gap for each of A1, A2 and A3", gaps)
+	}
+	for _, g := range gaps {
+		if g.Reason != "fetch-failed" || g.Class != state.ClassFillable || g.Scope != state.GapScopeItem {
+			t.Errorf("gap %+v; want a fillable fetch-failed item gap", g)
+		}
+	}
+	for _, id := range []string{"A1", "A2", "A3"} {
+		s.SetValue(id, nil)
+	}
+	res, err = sweepRun(g, out, export.Incremental)
+	if err != nil || res.Gaps.Recovered != 3 || len(graphGaps(t, out)) != 0 {
+		t.Errorf("the healed run: err %v, recovered %d, gaps %+v; want nil, 3, none", err, res.Gaps.Recovered, graphGaps(t, out))
+	}
+}
+
 // covers: MA-311, MA-323, R1, R10, S46
 // S3-AO9 / S3-AI6: a hostile or very long item id keeps its own ledger entry. The
 // ledger stores a locator control-stripped and cut at 512 bytes, and a key built from
