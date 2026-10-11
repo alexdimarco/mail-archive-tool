@@ -346,3 +346,55 @@ func TestHasSubFoldersFlagLieHidesASubtree(t *testing.T) {
 		t.Errorf("%d of 17 messages read, %d faults: the subtree vanished silently", len(out.msgs), len(out.faults))
 	}
 }
+
+// emptyRowMatrix makes the row matrix of table node nid hold no bytes: its heap
+// allocation is cut to size 0 in the heap's page map, while the table's header, its
+// row size and its columns stay exactly as they were (so the geometry is healthy).
+func emptyRowMatrix(t *testing.T, data []byte, nid pst.Identifier) []byte {
+	t.Helper()
+	off, size := tableBlock(t, data, nid)
+	dec := decode(data[off : off+size])
+	pm := int(dec[0]) | int(dec[1])<<8 // ibHnpm: where the page map starts
+	hnid := uint32(dec[34]) | uint32(dec[35])<<8 | uint32(dec[36])<<16 | uint32(dec[37])<<24
+	if hnid&0x1f != 0 {
+		t.Fatalf("precondition: the row matrix HNID %#x is not a heap allocation", hnid)
+	}
+	idx := int(hnid >> 5) // 1-based allocation: it spans rgibAlloc[idx-1]..rgibAlloc[idx]
+	end := pm + 4 + 2*idx
+	start := pm + 4 + 2*(idx-1)
+	mut := append([]byte(nil), data...)
+	mut[off+int64(end)] = encode(dec[start])
+	mut[off+int64(end)+1] = encode(dec[start+1])
+	return mut
+}
+
+// covers: MA-316, R1
+// S2A-AO2's last clause (NF2 of its re-verification): a folder that says it has
+// sub-folders whose table holds no rows is a fault, never a leaf. A table whose row
+// matrix is empty but whose header, row size and columns are all healthy reads as no
+// rows and no error from go-pst (only a table with no matrix at all errors, and a row
+// size that does not fit is a geometry fault of its own), so without this check the
+// whole subtree is gone with nothing recorded.
+func TestPSTSubFolderTableWithNoRowsIsAFault(t *testing.T) {
+	data := fixtureData(t)
+	if silent, out := silentLoss(t, data); silent || len(out.msgs) != 17 || len(out.faults) != 0 {
+		t.Fatalf("twin: the healthy fixture yielded %d messages, %d faults", len(out.msgs), len(out.faults))
+	}
+	mut := emptyRowMatrix(t, data, rootFolder+11)
+	out := walkOnce(t, openData(t, mut), WalkOptions{})
+	if out.err != nil {
+		t.Fatalf("walk: %v", out.err)
+	}
+	var f *Fault
+	for i := range out.faults {
+		if out.faults[i].Reason == "folder-unreadable" && strings.Contains(out.faults[i].Detail, "says it has sub-folders") {
+			f = &out.faults[i]
+		}
+	}
+	if f == nil {
+		t.Fatalf("%d of 17 messages read, faults %+v; want a folder-unreadable fault that says the folder claims sub-folders its table does not list", len(out.msgs), out.faults)
+	}
+	if len(out.msgs) != 0 {
+		t.Errorf("%d messages read; the mutation leaves the store with no listed folder, want 0", len(out.msgs))
+	}
+}
