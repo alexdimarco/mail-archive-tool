@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -353,5 +354,81 @@ func TestAnArchiveThatWentAwayIsSaidToHaveGone(t *testing.T) {
 		if strings.Contains(body["error"].(string), "isn't a MailArchive archive") {
 			t.Errorf("a folder that went away is described as one that is not an archive: %v", body["error"])
 		}
+	})
+}
+
+// covers: MA-507, MA-437, MA-512, R12, R29
+// F1 (the wording half): a retry is bound to the archive the export was made from, and when that archive has
+// moved the refusal names the real options instead of one that exports everything ("Load folders again to start
+// a new selection") or one that cannot work ("Reconnect it" for a folder that was moved): set the Archive
+// location back and click the button again (it exports just what is left), or start a new export from the new
+// place, which exports every message again, the ones already exported being in this export. The positive twin:
+// with the archive back at the path, the same retry goes through.
+func TestRetryOfAnArchiveExportThatMovedNamesTheRealOptions(t *testing.T) {
+	stop := func(e *wsEnv, src map[string]any, dir string, entries ...map[string]any) (run string, stash string, ents []os.DirEntry) {
+		e.archFolders(src)
+		id, _ := e.preview(e.archSel(src, entries...))
+		stash = filepath.Join(e.dir, "stash-"+filepath.Base(dir))
+		os.MkdirAll(stash, 0o755)
+		ents, _ = os.ReadDir(dir)
+		var once sync.Once
+		e.d.ex.env.SetStepHook(func(step string) { // the drive stops answering after the first message
+			if step == "W6:1" {
+				once.Do(func() {
+					for _, ent := range ents {
+						os.Rename(filepath.Join(dir, ent.Name()), filepath.Join(stash, ent.Name()))
+					}
+				})
+			}
+		})
+		run = e.ok("/api/exports/start", map[string]any{"previewId": id})["runId"].(string)
+		if last := e.waitRun()["last"].(map[string]any); last["stopId"] != "R-o2" {
+			t.Fatalf("the export did not stop with R-o2: %v", last)
+		}
+		return run, stash, ents
+	}
+
+	t.Run("the configured archive was copied to a new place and Settings points there", func(t *testing.T) {
+		e := newWsEnv(t)
+		buildArchiveAt(t, e.out)
+		os.Remove(e.tok)
+		run, stash, ents := stop(e, archSource("archive", e.out), e.out, entry("alice", true), entry("bob", false))
+		moved := filepath.Join(e.dir, "new-drive")
+		os.MkdirAll(moved, 0o755)
+		copyTree(t, stash, moved)
+		if err := UpdateSettings(e.cfg.SettingsPath, "test", func(s *Settings) { s.Out = moved }); err != nil {
+			t.Fatal(err)
+		}
+		code, out := e.post("/api/exports/retry", map[string]any{"runId": run, "which": "rest"})
+		if out["id"] != "R-l2" {
+			t.Fatalf("the retry after the archive moved: %d %v", code, out)
+		}
+		msg, _ := out["error"].(string)
+		assure.Refused(t, code, msg, assure.Code(statusRefused),
+			assure.Names(e.out, moved, "set the Archive location in Settings back to "+e.out, "'Export the remaining messages'", "every message again", "already exported"),
+			assure.Forbid("Load folders again to start a new selection"),
+			assure.NoSideEffect(func() bool { entries, _ := os.ReadDir(e.dest); return len(entries) == 1 })) // only the stopped export's folder
+
+		// the twin: Settings back, the archive back at its path: the retry goes through
+		UpdateSettings(e.cfg.SettingsPath, "test", func(s *Settings) { s.Out = e.out })
+		for _, ent := range ents {
+			os.Rename(filepath.Join(stash, ent.Name()), filepath.Join(e.out, ent.Name()))
+		}
+		e.waitPreview(e.ok("/api/exports/retry", map[string]any{"runId": run, "which": "rest"})["previewId"].(string))
+	})
+
+	t.Run("another archive folder was moved", func(t *testing.T) {
+		e := newWsEnv(t)
+		other := filepath.Join(e.dir, "inherited")
+		buildArchiveAt(t, other)
+		os.Remove(e.tok)
+		run, _, _ := stop(e, archSource("archive-other", other), other, entry("bob", false))
+		code, out := e.post("/api/exports/retry", map[string]any{"runId": run, "which": "rest"})
+		if out["id"] != "R-o2" {
+			t.Fatalf("the retry while the folder is away: %d %v", code, out)
+		}
+		msg, _ := out["error"].(string)
+		assure.Refused(t, code, msg, assure.Code(statusRefused),
+			assure.Names(other, "isn't available", "Reconnect it", "Export the remaining messages", "can't follow it", "put it back at "+other, "Another archive folder", "every message again", "already exported"))
 	})
 }

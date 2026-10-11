@@ -651,7 +651,7 @@ func (d *dashboard) retryArchive(w http.ResponseWriter, in runBody, info app.Cop
 		input.Dest = dest
 	}
 	if !samePath(info.Archive, d.cfg.effectiveOut()) && !info.Other {
-		r := refusalL2Configured(info.Archive, d.cfg.effectiveOut())
+		r := retryL2Configured(info.Archive, d.cfg.effectiveOut(), in.Which)
 		d.refuseRun(w, in.RunID, r)
 		return
 	}
@@ -659,7 +659,7 @@ func (d *dashboard) retryArchive(w http.ResponseWriter, in runBody, info app.Cop
 	if oerr != nil {
 		ref := *copyRefusal(oerr)
 		if ref.ID == "R-o" || ref.ID == "R-o3" { // the archive is not there: reconnect it, then try again
-			ref = refusedWith("R-o2", fmt.Sprintf("The archive at %s isn't available (it was disconnected or moved) — nothing was previewed. Reconnect it, then click '%s' again.", info.Archive, app.RetryButton(in.Which)))
+			ref = refusedWith("R-o2", fmt.Sprintf("The archive at %s isn't available (it was disconnected or moved) — nothing was previewed. Reconnect it, then click '%s' again.%s", info.Archive, app.RetryButton(in.Which), retryMovedNote(info.Archive)))
 		}
 		d.refuseRun(w, in.RunID, ref)
 		return

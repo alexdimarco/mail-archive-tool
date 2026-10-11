@@ -153,6 +153,24 @@ func refusalL2Configured(was, now string) refusal {
 	return refusedWith("R-l2", fmt.Sprintf("This selection was made in the archive at %s, but Settings now points at %s — Load folders again to start a new selection.", was, now))
 }
 
+// retryL2Configured is R-l2 for a retry of an archive export when Settings now points at another
+// location: the retry is bound to the archive the export was made from (RR2-C4), so the words name
+// the two things that can be done and what each costs, not "Load folders again to start a new
+// selection", which exports every message again (friction F1).
+func retryL2Configured(was, now, which string) refusal {
+	if strings.TrimSpace(now) == "" {
+		now = "no archive location"
+	}
+	return refusedWith("R-l2", fmt.Sprintf("This export was made from the archive at %s, but Settings now points at %s, and a retry reads only the archive the export was made from. To finish it, set the Archive location in Settings back to %s (reconnect the drive if it is on one), then click '%s' again: it exports just what is left. If you copied the archive to %s and want to carry on from there, choose it as the Source and select the folders again: that exports every message again, not only the ones left (the ones already exported are in this export).",
+		was, now, was, app.RetryButton(which), now))
+}
+
+// retryMovedNote is what a retry says, after "isn't available", about an archive that was moved or
+// copied rather than disconnected: the retry cannot follow it, and what can be done instead (friction F1).
+func retryMovedNote(path string) string {
+	return fmt.Sprintf(" If you moved or copied the archive, this retry can't follow it: it reads only the archive the export was made from, so put it back at %s, or start a new export from the new place (Source: Another archive folder…), which exports every message again, not only the ones left (the ones already exported are in this export).", path)
+}
+
 // refusalL2Other is R-l2 for a selection made from another archive folder that is no longer at that
 // path (design §7.6, RR2-C4): the folder is chosen again, never found by what it was. It may be on a
 // drive that was unplugged, so reconnecting it comes first (friction F5).
