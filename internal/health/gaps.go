@@ -308,7 +308,9 @@ func assessCaptureGaps(r *Report, in Input, now time.Time) {
 		if in.ReportExists {
 			msg += fmt.Sprintf(" (see %s)", in.ReportPath)
 		}
-		r.warn("capture_gaps_terminal", msg+" — "+remedyFor(in, terminal, false, true, false))
+		// A terminal gap never escalates to stuck, so the deferral of gone-detection it
+		// may carry is named here, or it would be named for no terminal gap (S3-AI3).
+		r.warn("capture_gaps_terminal", msg+" — "+remedyFor(in, terminal, false, true, false)+deletionTrackingNote(terminal))
 	}
 	if len(notAttempted) > 0 {
 		last := notAttempted[0].LastRun
@@ -352,8 +354,13 @@ func gapLine(in Input, g state.CaptureGap, now time.Time) string {
 	if g.Folder != "" {
 		where += "/" + util.StripControl(g.Folder)
 	}
-	// Why, and whether the original still exists (F12).
+	// Why, and whether the original still exists (F12). A gap that has failed on
+	// every run for the stuck threshold is worded for what it has become (S3-AI5).
+	stuck := in.attempted(g) && state.GapStuck(g, now, schedulePeriod(in))
 	why := state.GapWhy(g.Reason)
+	if stuck {
+		why = state.GapStuckWhy(g.Reason, in.gapSourceKind(g))
+	}
 	if o := state.GapOriginal(g.Reason, in.gapSourceKind(g)); o != "" {
 		why += " (" + o + ")"
 	}

@@ -740,8 +740,7 @@ func runGraphMailbox(ctx context.Context, lr *localRun, client *graph.Client, ma
 			// and not downloaded (§4.8.2). One the archive already holds was skipped
 			// above and kept its stamp.
 			if w.s.unwritable[filepath.Join(append([]string{lr.out, token}, f.Path...)...)] {
-				w.faultIdentity(ref, nil)
-				w.folderUnwritable(folderKey, "")
+				w.folderUnwritable(folderKey, "", w.faultIdentity(ref, nil))
 				return nil
 			}
 			began := time.Now()

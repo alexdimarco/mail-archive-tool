@@ -8,6 +8,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -429,6 +431,79 @@ func TestGraphFullModeSinceRunStampsArchivedMessagesOlderThanTheWindow(t *testin
 			wantGone(t, out, "B1 (deleted at the source)", k, rec)
 		})
 	}
+}
+
+// covers: MA-501, MA-312, R1, R6, R10, R21, S46
+// S3-AI3 (b): a folder-unwritable gap says whether the faults it counts deferred
+// gone-detection. The walk calls faultIdentity for each message it counts under the
+// folder's gap, and the sweep is deferred when one matched no record, but the gap
+// used to discard the answer, so status could never name the deferral for it. Now
+// the gap carries DefersGone when ANY message it counted did (the first observation
+// of the run must not be overwritten by a later one that matched a record); a folder
+// whose every counted message matched an archived record defers nothing.
+func TestGraphUnwritableFolderGapRecordsThatItDefersGoneDetection(t *testing.T) {
+	t.Run("new messages that no record matches", func(t *testing.T) {
+		s := unwritableServer()
+		defer s.Close()
+		out := tmpDir(t)
+		tok := mailboxToken(t, out, "u1")
+		writeData(t, filepath.Join(out, tok), "B", []byte("not a directory"))
+		if _, err := isoRun(isoOptions(s), out); !errors.Is(err, ErrPartial) {
+			t.Fatalf("the run returned %v, want ErrPartial", err)
+		}
+		gaps := graphGaps(t, out)
+		if len(gaps) != 1 || gaps[0].Reason != "folder-unwritable" || !gaps[0].DefersGone {
+			t.Errorf("ledger %+v; want B's folder-unwritable gap to record that it defers gone-detection", gaps)
+		}
+	})
+	t.Run("an unmatched message first, matched ones after it", func(t *testing.T) {
+		s := unwritableServer()
+		defer s.Close()
+		out := tmpDir(t)
+		g := isoOptions(s)
+		if _, err := sweepRun(g, out, export.Incremental); err != nil {
+			t.Fatalf("run 1: %v", err)
+		}
+		tok := mailboxToken(t, out, "u1")
+		if err := os.RemoveAll(filepath.Join(out, tok, "B")); err != nil {
+			t.Fatal(err)
+		}
+		writeData(t, filepath.Join(out, tok), "B", []byte("not a directory"))
+		for _, id := range []string{"B1", "B2", "B3"} {
+			s.RemoveMessage("u1", "B", id)
+		}
+		for _, id := range []string{"B4", "B1", "B2", "B3"} {
+			s.AddMessage("u1", "B", id)
+		}
+		if _, err := sweepRun(g, out, export.Full); !errors.Is(err, ErrPartial) {
+			t.Fatalf("run 2 returned %v, want ErrPartial", err)
+		}
+		gaps := graphGaps(t, out)
+		if len(gaps) != 1 || gaps[0].Reason != "folder-unwritable" || !gaps[0].DefersGone {
+			t.Errorf("ledger %+v; want B's gap to defer gone-detection: B4 matched no record, and B1..B3 counted after it must not undo that", gaps)
+		}
+	})
+	t.Run("only messages the archive already holds", func(t *testing.T) {
+		s := unwritableServer()
+		defer s.Close()
+		out := tmpDir(t)
+		g := isoOptions(s)
+		if _, err := sweepRun(g, out, export.Incremental); err != nil {
+			t.Fatalf("run 1: %v", err)
+		}
+		tok := mailboxToken(t, out, "u1")
+		if err := os.RemoveAll(filepath.Join(out, tok, "B")); err != nil {
+			t.Fatal(err)
+		}
+		writeData(t, filepath.Join(out, tok), "B", []byte("not a directory"))
+		if _, err := sweepRun(g, out, export.Full); !errors.Is(err, ErrPartial) {
+			t.Fatalf("run 2 returned %v, want ErrPartial", err)
+		}
+		gaps := graphGaps(t, out)
+		if len(gaps) != 1 || gaps[0].Reason != "folder-unwritable" || gaps[0].DefersGone {
+			t.Errorf("ledger %+v; want B's gap to defer nothing: every message it counted matched an archived record", gaps)
+		}
+	})
 }
 
 // covers: MA-313, R5, R12, R18, S46

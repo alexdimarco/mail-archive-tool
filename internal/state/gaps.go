@@ -287,9 +287,15 @@ func (m *Manifest) ObserveGap(g CaptureGap, runAt time.Time) (key string, create
 		// Two observations of one key in ONE run (two copies of a message in different
 		// folders share an ident: key): the milder never downgrades the other's word (a
 		// refresh-failed note over an export-failed loss, S2A-AI1).
+		// What one run observed of the key is one answer to "did the sweep wait for
+		// it": any observation that deferred it makes the entry say so, whichever
+		// came last (a folder gap counts many messages, S3-AI3).
+		defers := g.DefersGone || (sameRun && old.DefersGone)
 		if !sameRun || severity(old.Class) <= severity(g.Class) {
 			old.Reason, old.Class, old.Detail, old.Folder = g.Reason, g.Class, g.Detail, g.Folder
-			old.DefersGone = g.DefersGone
+			old.DefersGone = defers
+		} else if defers {
+			old.DefersGone = true
 		}
 		if g.Subject != "" {
 			old.Subject = g.Subject

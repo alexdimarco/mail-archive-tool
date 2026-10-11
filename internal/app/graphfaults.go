@@ -415,9 +415,13 @@ func (w *mailboxWalk) covered(g state.CaptureGap) bool { return w.walkedGap[g.Fo
 // folderUnwritable records a message that would need a download into a folder
 // whose directory could not be created earlier in this run: it is counted under
 // the folder's gap and not downloaded (§4.8.2).
-func (w *mailboxWalk) folderUnwritable(folderKey string, detail string) {
+//
+// defers is what faultIdentity said of the message: the gap records that the sweep
+// was deferred because of a message it counted (S3-AI3), and the ledger keeps it
+// when any observation of the run says so.
+func (w *mailboxWalk) folderUnwritable(folderKey string, detail string, defers bool) {
 	w.s.observe(state.CaptureGap{Folder: folderKey, Scope: state.GapScopeFolder, Locator: folderLocator(folderKey),
-		Reason: "folder-unwritable", Class: state.ClassFillable, Detail: detail, Skipped: 1})
+		Reason: "folder-unwritable", Class: state.ClassFillable, Detail: detail, Skipped: 1, DefersGone: defers})
 }
 
 // exportOne exports one parsed message and sorts what goes wrong by whose fault
@@ -468,8 +472,7 @@ func (w *mailboxWalk) exportOne(ref graph.MessageRef, f graph.Folder, folderKey 
 		}
 		s.unwritable[fe.Dir] = true
 		lr.exp.Stats.ExportFaults++
-		w.faultIdentity(ref, m)
-		w.folderUnwritable(folderKey, exportErr.Error())
+		w.folderUnwritable(folderKey, exportErr.Error(), w.faultIdentity(ref, m))
 	case errors.As(exportErr, &ie):
 		if perr := lr.probe(s); perr != nil {
 			return &walkAbort{perr}
