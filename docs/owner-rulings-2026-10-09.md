@@ -1121,6 +1121,28 @@ listed them. The Windows legs (placement, DACL, power, MA-532, MA-417 junction) 
 vet-checked only and need the Windows CI host. The 60,000-message scale test takes about 55 s under
 `-race`.
 
+### 13.13 LC-C2 built and merged (2026-10-11), delegated-judgement
+
+Per-account surfaces built whole (nothing slimmed, §13.10) and merged: sessions, `/s/<P>/`, relative
+URLs, `/_open`, link delivery, the instance lock, file and handoff, the ephemeral dashboard port
+with the former-address notice, the security copy and packaging. Conform fixed two gaps: `serve`
+printed a one-time link to a redirected log (CC5), and two covers markers (R12, S41) lost in a test
+replacement were restored. **Owed before ship, co-equal blockers: the adversarial pass and the
+friction review** (neither has run; X9/X11/X12 stay "Partial"). **J7:** two desktop tests
+(`TestDesktopReconnectsWhenAlreadyRunning`, `TestDesktopNoBrowserSuppressesOpen`) were replaced by
+stronger verified-handoff tests; the adversarial pass must confirm that is no weakening. MA-377
+stays lab-pending; MA-384's workspace sign-in half is a skip encoder closed by E3.
+
+The build asks, as one owner decision (single-user scope): would you simplify C2? **Q1** the
+lock/instance file/HMAC to a plain "already running" check. **Q2** the marker cookie and three link
+pages to one "already used" page. **Q3** the secret `/s/<P>/` prefix and path-scoped cookie to a
+host-wide cookie plus Host check and CSRF. **Q4** the two tokens and the macOS stdin opener to one
+token and plain `open`. **Q5** `serve -link`, its instance file and the Enter loop. **Q6** the
+session count and account banner. **Q7** the 8097 former-address notice (CC22's upgrade part
+stays). **Q8** the "other accounts" wording to "web pages". Recommended: **keep as built** until the
+adversarial pass and E3 are done, then simplify as a deliberate change with rows amended. Any
+simplification amends catalog rows, so it needs your word (§0 rule 2). E3 builds on C2 as built.
+
 ### 13.7 Escalations from LC-C1's adversarial pass (merged 2026-10-10)
 
 None blocks anything: each has a skip encoder or a safe interim in force.
