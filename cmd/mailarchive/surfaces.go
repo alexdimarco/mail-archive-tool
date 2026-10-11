@@ -23,15 +23,18 @@ import (
 // the -allow-host names (serveExtraHosts); a loopback serve, only the loopback
 // names and, when bound to a loopback address other than 127.0.0.1 or ::1, that
 // address's own literal (the URL it prints; see the open decision on design P6).
-func serveHandler(out string, ix *index.Index, at net.Addr, allowHosts []string) http.Handler {
-	s := localweb.Surface{Name: "serve", Listener: at, ExtraHosts: serveExtraHosts(at, allowHosts)}
-	return localweb.Wrap(s, server.New(out, ix))
+// Every request, whatever its route, needs the session s: the cookie a one-time
+// link gives, under /s/<P>/ (P7). handoff answers `serve -link`'s POST /_handoff
+// (design §4.C3).
+func serveHandler(out string, ix *index.Index, at net.Addr, allowHosts []string, s *localweb.Session, handoff http.Handler) http.Handler {
+	surf := localweb.Surface{Name: "serve", Listener: at, ExtraHosts: serveExtraHosts(at, allowHosts), Session: s, Handoff: handoff}
+	return localweb.Wrap(surf, server.New(out, ix))
 }
 
 // setupHandler is the Microsoft 365 setup wizard as `setup` serves it, on the
-// listener at.
-func setupHandler(cfgPath string, store graphconfig.SecretStore, at net.Addr) http.Handler {
-	return localweb.Wrap(localweb.Surface{Name: "setup", Listener: at}, server.SetupHandler(cfgPath, store))
+// listener at, behind the session s.
+func setupHandler(cfgPath string, store graphconfig.SecretStore, at net.Addr, s *localweb.Session) http.Handler {
+	return localweb.Wrap(localweb.Surface{Name: "setup", Listener: at, Session: s}, server.SetupHandler(cfgPath, store))
 }
 
 // serveExtraHosts is what the guard accepts, with any port, beyond 127.0.0.1,

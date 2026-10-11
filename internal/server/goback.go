@@ -264,7 +264,7 @@ func fileURL(rel string) template.URL {
 	for i, p := range parts {
 		parts[i] = url.PathEscape(p)
 	}
-	return template.URL("/files/" + strings.Join(parts, "/"))
+	return template.URL("files/" + strings.Join(parts, "/"))
 }
 
 // parseGobackDate parses a ?at value STRICTLY as YYYY-MM-DD in UTC; anything
@@ -320,12 +320,12 @@ h1{font-size:16px;margin:18px 0 6px}
 .empty{color:var(--muted);padding:30px 0;text-align:center}
 </style></head>
 <body>
-<header class="bar"><div class="row"><strong>Archive · point in time</strong><a href="/">Search →</a></div></header>
+<header class="bar"><div class="row"><strong>Archive · point in time</strong><a href="./">Search →</a></div></header>
 <main class="main">
 <div class="avail avail-{{.Availability}}">{{.AvailNote}}</div>
 {{if .BadDate}}<div class="note">That date could not be read — use the YYYY-MM-DD form, or pick one from the date track below.</div>{{end}}
 {{if .ManifestErr}}<div class="note">The archive manifest could not be read, so the message set is unknown here. Run <code>mailarchive status</code> for the posture.</div>{{end}}
-{{if .DateTrack}}<nav class="track" aria-label="observed run dates"><span class="track-label">Jump to:</span><a class="chip{{if .Current}} sel{{end}}" href="/goback">now</a>{{range .DateTrack}}<a class="chip{{if eq $.AtDate .}} sel{{end}}" href="/goback?at={{.}}">{{.}}</a>{{end}}</nav>{{end}}
+{{if .DateTrack}}<nav class="track" aria-label="observed run dates"><span class="track-label">Jump to:</span><a class="chip{{if .Current}} sel{{end}}" href="goback">now</a>{{range .DateTrack}}<a class="chip{{if eq $.AtDate .}} sel{{end}}" href="goback?at={{.}}">{{.}}</a>{{end}}</nav>{{end}}
 <h1>{{if .Current}}The mailbox now{{else}}As of {{.AtDate}}{{end}} · {{.Total}} message{{if ne .Total 1}}s{{end}}</h1>
 {{if not .Folders}}<div class="empty">No messages{{if not .Current}} were archived as of {{.AtDate}}{{end}}.</div>{{end}}
 {{range .Folders}}<section class="folder"><h2>{{.Name}}</h2><ul>{{range .Messages}}<li><a href="{{.URL}}" target="_blank" rel="noopener">{{.Label}}</a></li>{{end}}</ul></section>

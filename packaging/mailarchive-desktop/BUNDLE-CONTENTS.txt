@@ -5,12 +5,14 @@ Checked into the repo — the WiX/RMM layer (hand to Steve with the payload zip)
   Product.wxs               WiX installer definition (DC6 UpgradeCode preserved)
   Build-MSI.ps1             MSI builder — consumes the payload zip, stages notices, runs WiX
   BUILD-MSI.cmd             double-click wrapper for Build-MSI.ps1
-  Install-RMM.ps1           optional RMM install helper
+  Install-RMM.ps1           RMM install helper (ends running instances first, CC22)
   Detect-RMM.ps1            RMM detection helper (exit 0 = installed)
   Uninstall-RMM.ps1         RMM silent uninstaller
-  Cleanup-CurrentUser.ps1   optional per-user credential/state cleanup
+  Cleanup-CurrentUser.ps1   optional per-user credential/state cleanup (also stops the
+                            user's instances and removes the lock + instance files)
   SOURCE-NOTICE.txt         AGPL source pointer + attribution (staged into payload)
-  DEPLOYMENT.txt            deployment metadata: ports, token store, schedule (staged)
+  DEPLOYMENT.txt            deployment metadata: ports (free ones, per start), per-account
+                            state, token store, schedule (staged)
   THIRD-PARTY-NOTICES.md    bundled Go module notices (staged)
   README-RMM.md             build + deploy + verify instructions (read this)
   BUNDLE-CONTENTS.txt       this file

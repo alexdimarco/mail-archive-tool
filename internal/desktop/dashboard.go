@@ -8,13 +8,17 @@ package desktop
 
 import (
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"net/http"
+	"os/user"
 	"runtime"
 	"strings"
+	"time"
 
 	"mail-archive-tool/internal/graph"
 	"mail-archive-tool/internal/graphconfig"
+	"mail-archive-tool/internal/instance"
 	"mail-archive-tool/internal/localweb"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/server"
@@ -46,6 +50,56 @@ type Config struct {
 	// Exe is the absolute path to this binary, recorded in the scheduled task so a
 	// weekly backup runs the right program (default os.Executable()); set by tests.
 	Exe string
+
+	// Account names the OS account this process runs as: the banner, and the
+	// device-sign-in box ("this sign-in will be saved for <account>"), so a
+	// dashboard of another account that was opened by mistake is recognisable
+	// (design-local-confidentiality P15, §8.4 login-CSRF). Default: the current user.
+	Account string
+	// Sessions reports how many browser links were redeemed this run and when the
+	// last was; the header shows it at rest, kept apart from the capture log's
+	// bounded ring [CC24]. Nil shows none opened.
+	Sessions func() (int, time.Time)
+	// Former is what this start found at MailArchive's former address 127.0.0.1:8097
+	// (instance.FormerProgram or instance.FormerPreUpgrade): the header says so, so
+	// a typed address or a bookmark is never trusted silently [CC22, CC23].
+	Former string
+	// NewLink makes a fresh one-time link to the dashboard, for "Use another
+	// browser…"; nil when this process cannot (the endpoint then says so).
+	NewLink func() string
+	// GOOS overrides runtime.GOOS in the OS-aware copy (tests).
+	GOOS string
+}
+
+func (cfg Config) goos() string {
+	if cfg.GOOS != "" {
+		return cfg.GOOS
+	}
+	return runtime.GOOS
+}
+
+// account is the OS account the page names.
+func (cfg Config) account() string {
+	if cfg.Account != "" {
+		return cfg.Account
+	}
+	if u, err := user.Current(); err == nil && u.Username != "" {
+		return u.Username
+	}
+	return "this account"
+}
+
+// sessionsLine is the header's count of browser sessions opened this run, read
+// from the session itself, never from the capture log's ring [CC24].
+func (cfg Config) sessionsLine() string {
+	n, last := 0, time.Time{}
+	if cfg.Sessions != nil {
+		n, last = cfg.Sessions()
+	}
+	if n == 0 {
+		return "browser sessions opened this run: 0"
+	}
+	return fmt.Sprintf("browser sessions opened this run: %d (last at %s)", n, last.Local().Format("15:04"))
 }
 
 // tokenCfg locates the device sign-in token for a configured tenant/client: the
@@ -106,7 +160,28 @@ func DashboardHandler(cfg Config) http.Handler {
 	mux.HandleFunc("/api/verify", d.verifyAction)
 	mux.HandleFunc("/api/rebuild", d.rebuildAction)
 	mux.HandleFunc("/api/health", d.healthAction)
+	mux.HandleFunc("/api/browser-link", d.browserLink)
 	return localweb.Routed(dashboardHeaders(mux), mux)
+}
+
+// browserLink mints a fresh one-time link for a second browser (a guarded POST:
+// inside the session, with the CSRF token, from a loopback Origin and Host). The
+// link is the way into a browser the shortcut does not open; it works once and
+// lives ten minutes (design §4.C3).
+func (d *dashboard) browserLink(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	if !server.GuardLocalPOST(r, d.csrf) {
+		http.Error(w, "refused: same-origin, tokened, local requests only", http.StatusForbidden)
+		return
+	}
+	if d.cfg.NewLink == nil {
+		writeJSON(w, map[string]any{"ok": false, "error": "This MailArchive cannot make another link: close it and open it from its shortcut."})
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "link": d.cfg.NewLink()})
 }
 
 // saveSettings persists the dashboard preferences (loopback-only, CSRF-guarded).
@@ -282,9 +357,14 @@ func (cfg Config) overview(csrf string) string {
 		IncludeJunk    bool
 		Interval       string
 		WeeklyTime     string
+		Account        string
+		SessionsLine   string
+		FormerNotice   string
+		ResidualOS     string // "macOS" or "Linux": where another account can read a just-opened link's argv
 	}{CSRF: csrf, Cards: cfg.cards(), Vault: vaultPhrase(), OutDir: cfg.effectiveOut(), ReaderURL: cfg.ReaderURL, SignedIn: signedIn, UPN: upn,
 		KeepRaw: s.KeepRaw, IncludeDeleted: s.IncludeDeleted, IncludeJunk: s.IncludeJunk,
-		Interval: orElse(s.Interval, "weekly"), WeeklyTime: orElse(s.WeeklyTime, "03:00")}
+		Interval: orElse(s.Interval, "weekly"), WeeklyTime: orElse(s.WeeklyTime, "03:00"),
+		Account: cfg.account(), SessionsLine: cfg.sessionsLine(), FormerNotice: instance.NoticeFor(cfg.Former), ResidualOS: residualOS(cfg.goos())}
 	if c != nil {
 		data.Configured = strings.TrimSpace(c.Tenant) != ""
 		data.Tenant, data.ClientID, data.Auth = c.Tenant, c.ClientID, authLabel(c.Auth)
@@ -294,6 +374,19 @@ func (cfg Config) overview(csrf string) string {
 		return "<!doctype html><p>dashboard template error</p>"
 	}
 	return b.String()
+}
+
+// residualOS names the systems where another account can read the command line
+// of a program a browser was just opened with (P7, §8.4): Linux through
+// /proc/*/cmdline and macOS through the setuid ps. Windows has neither.
+func residualOS(goos string) string {
+	switch goos {
+	case "darwin":
+		return "macOS"
+	case "linux":
+		return "Linux"
+	}
+	return ""
 }
 
 // Loopback re-exports server.IsLoopback so main can gate the bind without importing
@@ -318,6 +411,8 @@ body{margin:0;font:15px system-ui,-apple-system,Segoe UI,Roboto,sans-serif;backg
 .nav a.active{background:rgba(255,255,255,.11)}.nav a:hover{background:rgba(255,255,255,.08)}
 .nav .nav-disabled{display:block;color:var(--sidebar-muted);padding:9px 11px;font-weight:650;cursor:not-allowed}
 .sidebar-foot{margin-top:auto;color:var(--sidebar-muted);font-size:.78rem}
+.whoami{display:flex;flex-wrap:wrap;gap:4px 18px;color:var(--muted);font-size:.85rem;margin:0 0 14px}
+.warnbox{border-color:var(--warn);color:var(--text)}
 .content{padding:30px 34px 52px;min-width:0}.inner{max-width:1040px;margin:0 auto}
 h1{font-size:1.8rem;letter-spacing:-.02em;margin:0 0 4px}.lede{color:var(--muted);margin:0 0 22px}
 .status-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:20px}
@@ -352,7 +447,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
     <div class="brand">MailArchive<span>Desktop</span></div>
     <nav class="nav">
       <div class="nav-title">Workspace</div>
-      <a class="active" href="/">Overview</a>
+      <a class="active" href="./">Overview</a>
       <a href="#sec-archive" id="navArchive">Archive now</a>
       {{if .ReaderURL}}<a href="{{.ReaderURL}}" target="_blank" rel="noopener">Open archive</a>
       <a href="{{.ReaderURL}}goback" target="_blank" rel="noopener">Go back in time</a>{{else}}<span class="nav-disabled" title="The archive reader is not running">Open archive</span>
@@ -367,6 +462,11 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
     <div class="sidebar-foot">Local control panel<br>127.0.0.1</div>
   </aside>
   <main class="content"><div class="inner">
+    <div class="whoami" id="whoami" role="status">
+      <span>MailArchive Desktop is running as <b>{{.Account}}</b> on this computer.</span>
+      <span id="sessionsLine">{{.SessionsLine}}</span>
+    </div>
+    {{if .FormerNotice}}<div class="note warnbox" id="formerNotice" role="alert">{{.FormerNotice}}</div>{{end}}
     <h1>Overview</h1>
     <p class="lede">Your personal Microsoft 365 archive, running locally on this PC.</p>
 
@@ -393,9 +493,12 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <p class="card-sub">Fetch the latest mail into your archive. The first time, you sign in with a Microsoft device code shown here.</p>
       <button class="btn" id="archiveBtn">Archive now</button>
       {{if .ReaderURL}}<a class="btn secondary" href="{{.ReaderURL}}" target="_blank" rel="noopener">Open archive</a> <a class="btn secondary" href="{{.ReaderURL}}goback" target="_blank" rel="noopener">Go back in time</a>{{end}}
+      <button class="btn secondary" id="anotherBrowser" type="button">Use another browser…</button>
+      <div class="note" id="linkNote" hidden></div>
       <div class="device-box" id="device" hidden>
         <div>To sign in, open <a id="deviceUrl" target="_blank" rel="noopener">this Microsoft page</a> and enter the code:</div>
         <div class="device-code" id="deviceCode"></div>
+        <div class="card-sub" style="margin:10px 0 0">This sign-in will be saved for <b>{{.Account}}</b> on this computer. MailArchive shows a Microsoft sign-in code only in a window it opened from its shortcut.</div>
       </div>
       <div id="sec-activity" class="anchor"></div>
       <pre id="activity" hidden></pre>
@@ -441,7 +544,10 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
     <div class="card sec">
       <h2>Security &amp; privacy</h2>
       <ul>
-        <li><b>Runs entirely on this PC.</b> The control panel and your archive are local; this page is served only on 127.0.0.1 (this computer) and refuses any network address.</li>
+        <li><b>Runs entirely on this PC.</b> The control panel and your archive are local; nothing here is served to the network.</li>
+        <li><b>Only you can open it.</b> This page and your archive open only through a private link MailArchive makes each time it starts, so other accounts on this computer and web pages cannot open the dashboard or the archive. A program running as you can: it already has your files.</li>
+        <li><b>Sign-in codes.</b> MailArchive shows a Microsoft sign-in code only in a window it opened from its shortcut — do not trust a code on a page you reached by typing or bookmarking an address.</li>
+        {{if .ResidualOS}}<li><b>One residual on {{.ResidualOS}}.</b> Another account on this computer that can list running programs can read a link's address in the instant a browser is opened with it, and race to use it first (a link works once, and the opener's lives about a minute). If a page says a link was "already used" and you did not use it, quit MailArchive and start it again — that ends every session.</li>{{end}}
         <li><b>Read-only to your mailbox.</b> The tool makes only Microsoft read requests (Mail.Read). It can never send, move, change, or delete anything in your mailbox.</li>
         <li><b>Your sign-in stays on this machine.</b> Your Microsoft sign-in (and any app secret) is stored in {{.Vault}} — never uploaded anywhere.</li>
         <li><b>No third-party servers.</b> Your mail travels only between Microsoft and this PC — nothing goes to us or any other third party.</li>
@@ -452,7 +558,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
     </div>
   </div></main>
 </div>
-<script src="/dashboard.js"></script>
+<script src="dashboard.js"></script>
 </body></html>`))
 
 // dashboardJS wires the action buttons (clear sign-in, settings, archive-now with
@@ -462,10 +568,20 @@ const dashboardJS = `const csrf=document.querySelector('meta[name=csrf]').conten
 const $=id=>document.getElementById(id);
 const post=path=>fetch(path,{method:'POST',headers:{'X-CSRF-Token':csrf}});
 
+// "Use another browser…": a fresh one-time link to copy into a browser that is not
+// the default one the shortcut opens.
+const ab=$('anotherBrowser');
+if(ab)ab.addEventListener('click',async()=>{
+  const n=$('linkNote');
+  try{const d=await(await post('api/browser-link')).json();
+    if(n){n.hidden=false;n.textContent=d.ok?('Copy this link into the other browser — it works once, for ten minutes: '+d.link):(d.error||'Could not make a link.');}
+  }catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}
+});
+
 const clr=$('clearSignin');
 if(clr)clr.addEventListener('click',async()=>{
   const n=$('note');
-  try{const d=await(await post('/api/clear-signin')).json();
+  try{const d=await(await post('api/clear-signin')).json();
     if(n){n.hidden=false;n.textContent=d.ok?'Signed out. The next capture will sign in again.':(d.error||'Could not clear the sign-in.');}
     if(d.ok)setTimeout(()=>location.reload(),900);
   }catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}
@@ -475,7 +591,7 @@ const save=$('saveSettings');
 if(save)save.addEventListener('click',async()=>{
   const n=$('settingsNote');
   const body={out:$('outDir').value,keepRaw:$('keepRaw').checked,includeDeleted:$('incDeleted').checked,includeJunk:$('incJunk').checked};
-  try{const d=await(await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(body)})).json();
+  try{const d=await(await fetch('api/settings',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(body)})).json();
     if(n){n.hidden=false;n.textContent=d.ok?'Settings saved.':(d.error||'Could not save.');}
   }catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}
 });
@@ -490,20 +606,20 @@ function markNav(){
   const h=location.hash||'';
   document.querySelectorAll('.nav a').forEach(a=>{
     const href=a.getAttribute('href')||'';
-    a.classList.toggle('active',h?href===h:href==='/');
+    a.classList.toggle('active',h?href===h:href==='./');
   });
 }
 window.addEventListener('hashchange',markNav);markNav();
 if(btn)btn.addEventListener('click',async()=>{
   btn.disabled=true;const r=$('captureResult');if(r)r.hidden=true;
-  try{const d=await(await post('/api/capture')).json();
+  try{const d=await(await post('api/capture')).json();
     if(!d.ok){btn.disabled=false;if(r){r.hidden=false;r.textContent=d.error||'Could not start.';}return;}
     start();
   }catch(e){btn.disabled=false;if(r){r.hidden=false;r.textContent='Error: '+e;}}
 });
 function start(){if(!polling){polling=true;poll();}}
 async function poll(){
-  try{const d=await(await fetch('/api/activity')).json();render(d);
+  try{const d=await(await fetch('api/activity')).json();render(d);
     if(d.running){setTimeout(poll,1500);return;}
   }catch(e){}
   polling=false;if(btn)btn.disabled=false;
@@ -515,11 +631,11 @@ function render(d){
   if(d.log&&d.log.length){act.hidden=false;act.textContent=d.log.join('\n');act.scrollTop=act.scrollHeight;}
   if(!d.running&&res){res.hidden=false;res.textContent=d.error?('Capture failed: '+d.error):(d.result||'Done.');}
 }
-fetch('/api/activity').then(r=>r.json()).then(d=>{if(d.running)start();}).catch(()=>{});
+fetch('api/activity').then(r=>r.json()).then(d=>{if(d.running)start();}).catch(()=>{});
 
 async function schedState(){
   const n=$('schedState');if(!n)return;
-  try{const d=await(await fetch('/api/schedule-state')).json();
+  try{const d=await(await fetch('api/schedule-state')).json();
     n.hidden=false;
     if(!d.schedulerAvailable)n.textContent='The OS scheduler is unavailable on this machine.';
     else if(d.state==='installed')n.textContent='Installed'+(d.interval?(' ('+d.interval+(d.at?' at '+d.at:'')+')'):'')+'.';
@@ -534,13 +650,13 @@ function schedPost(path){
       return schedState().then(()=>{if(n&&d.left){n.hidden=false;n.textContent='Removed. Left in place: '+d.left+' cannot be read, so removal cannot tell which schedule it records - '+d.remedy+'.';}});});
 }
 const si=$('schedInstall'),sr=$('schedRemove');
-if(si)si.addEventListener('click',()=>schedPost('/api/schedule-install'));
-if(sr)sr.addEventListener('click',()=>schedPost('/api/schedule-remove'));
+if(si)si.addEventListener('click',()=>schedPost('api/schedule-install'));
+if(sr)sr.addEventListener('click',()=>schedPost('api/schedule-remove'));
 schedState();
 
 async function health(){
   const p=$('healthPosture'),b=$('healthBody');if(!b)return;
-  try{const d=await(await fetch('/api/health')).json();
+  try{const d=await(await fetch('api/health')).json();
     if(p)p.textContent=d.posture?('Posture: '+d.posture):'';
     b.textContent=(d.summary||[]).join('\n')||'No archive yet.';
   }catch(e){b.textContent='Could not read status.';}
@@ -549,6 +665,6 @@ health();
 function job(path){const r=$('captureResult');if(r)r.hidden=true;
   post(path).then(x=>x.json()).then(d=>{if(d.ok)start();else if(r){r.hidden=false;r.textContent=d.error||'Could not start.';}});}
 const vb=$('verifyBtn'),rb=$('rebuildBtn');
-if(vb)vb.addEventListener('click',()=>job('/api/verify'));
-if(rb)rb.addEventListener('click',()=>{if(confirm('Rebuild the search index from the archive files? This can take a while for a large archive.'))job('/api/rebuild');});
+if(vb)vb.addEventListener('click',()=>job('api/verify'));
+if(rb)rb.addEventListener('click',()=>{if(confirm('Rebuild the search index from the archive files? This can take a while for a large archive.'))job('api/rebuild');});
 `

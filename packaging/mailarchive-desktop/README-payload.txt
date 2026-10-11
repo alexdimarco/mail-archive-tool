@@ -26,15 +26,24 @@ build-windows target produces and that shortcuts / schtasks reference.
 
 How the MSI launches it (no-console note)
 -----------------------------------------
-mailarchive-desktop.exe is a GUI-subsystem binary, so it has NO console: the URL
-it prints to stdout (http://127.0.0.1:8097/) is invisible when double-clicked.
-The binary therefore opens that URL in the OS default browser itself once the
-server is listening (MA-281, former risk R1) — the Desktop/Start-menu shortcut
-needs no custom action. If an instance is already running (the Startup shortcut
-started one at login) it reconnects and opens the browser to that instance
-instead of failing to bind. The Startup shortcut passes -no-browser so the
-at-login launch stays quiet (no browser tab every sign-in). The dashboard and its
-reader bind loopback only and refuse any other address (design P2 / X9).
+mailarchive-desktop.exe is a GUI-subsystem binary, so it has NO console: nothing it
+prints is visible when double-clicked. The binary therefore opens the dashboard in
+the OS default browser itself once the server is listening (MA-281, former risk
+R1) — the Desktop/Start-menu shortcut needs no custom action. It opens it at a
+private one-time link it makes for the Windows account that started it: the
+dashboard and the reader each listen on a free loopback port (there is no fixed
+address, and none is to be typed or bookmarked), and a page reached without the
+link shows only "This MailArchive Desktop page has to be opened from the app". If
+an instance of this account is already running (the Startup shortcut started one at
+login) the launch reconnects to it — once the instance has proved itself with a key
+only this account can read — and has it open the browser, instead of starting a
+second one; a launch with another configuration, or that finds the instance not
+responding, says so in a dialog. If the browser cannot be opened, a dialog shows
+the link with a Copy button, and the Start-menu shortcut "Copy MailArchive link"
+(mailarchive-desktop.exe -copy-link) does the same on demand. The Startup shortcut
+passes -no-browser so the at-login launch stays quiet (no browser tab every
+sign-in). The dashboard and its reader bind loopback only and refuse any other
+address (design P2 / X9).
 
 MSI identity (design DC6): use a stable UpgradeCode so our MSI cleanly replaces
 Steve's earlier out-of-repo build (both detect HKLM\Software\MailArchive Desktop);
