@@ -1289,6 +1289,33 @@ follows the MS-PST layout; a real producer that pads rows would get a folder-par
 capture lost); to be confirmed on real Outlook PSTs with MA-504 in the Windows lab. FI-S3 (Graph
 isolation) may now start: its dependency, S2a, has its review.
 
+### 13.21 EW-E4's friction re-run and adversarial addendum (merged 2026-10-11)
+
+**Friction re-run** (`docs/review-extraction-workspace-archive-friction.md`): 25 cells, 22 findings plus
+four from re-verification; 15 of 20 in-scope findings built, 3 in part, 2 deferred (F14, F20); high-friction
+cells 4 to 2. Verdict **HIGH_FRICTION_NOT_SHIPPABLE**, for two reasons only: **OW-9** (a stopped archive
+export cannot be finished from a copy of its archive, because retry is bound to the archive path; the
+re-binding changes a design rule, so it is the owner's decision; recommended: leave as is, the case is
+rare) and **OW-20** (the browser click-through, now also covering the Source control). **Adversarial
+addendum** (`docs/review-extraction-workspace-archive-adversarial.md`): 29 found, 20 confirmed, 2 refuted,
+18 fixed with tombstone tests. Serious: a manifest store id was resolved on the local filesystem (a UNC
+path would leak an NTLM hash on Windows); a 40 KB manifest with deep folder paths took 56 s and 98 GB of
+allocation to build the tree; a forged fixity size stopped the run with a false "destination is full";
+the Settings guard went blind after "Save and keep the backup"; the archive session held an open root
+between requests (blocks ejecting the drive). **Open, owner decisions, each a skip encoder:**
+(1) **E4-AO5:** the 1 GiB manifest cap bounds bytes, not memory (a 9 MiB manifest held 208 MiB); the
+remedy is a record-count or per-record limit with its own R-o4 wording, or a lower cap [suggested start:
+refuse above 2,000,000 records, read the version before the full unmarshal]. (2) **E4-AI10:** a real
+attachment named like a legacy sentinel word is worded as an old-version caveat; it needs a
+non-colliding label. (3) OW-9, above.
+
+**Merge reconciliation.** The two branches changed the same archive code; the merge (`393f6f0`) kept both
+sides and updated four superseded test expectations to the other branch's deliberate behaviour, none
+loosened: the Settings guard names the launch location when the field is cleared (truth over the
+friction wording); the owner's Rebuild label is the page's own "Maintenance → Rebuild search index";
+a count of one reads singular; and removed messages are listed as removed and settled in a retry rather
+than offered again. Another archive folder's index advice no longer names the Maintenance button.
+
 ### 13.7 Escalations from LC-C1's adversarial pass (merged 2026-10-10)
 
 None blocks anything: each has a skip encoder or a safe interim in force.
