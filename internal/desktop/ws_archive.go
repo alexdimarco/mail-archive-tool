@@ -91,6 +91,9 @@ func (d *dashboard) sourceOther(w http.ResponseWriter, raw string) {
 		d.refuse(w, *ref)
 		return
 	}
+	if app.ArchiveAt(path) { // named for the Source control: Create folder keeps out of it from now on (E4-AI4)
+		d.ws.rememberOther(path)
+	}
 	a, err := app.OpenArchive(path, app.ArchiveOptions{Other: true})
 	if err != nil {
 		d.refuse(w, *copyRefusal(err))
@@ -113,6 +116,9 @@ func (d *dashboard) archiveFolders(w http.ResponseWriter, r *http.Request, src w
 			return
 		}
 		path = p
+		if app.ArchiveAt(path) {
+			d.ws.rememberOther(path)
+		}
 	} else if path = d.cfg.effectiveOut(); path == "" {
 		d.refuse(w, refusalO(""))
 		return
@@ -160,6 +166,42 @@ func (ws *workspace) otherNow() string {
 		return s.archPath
 	}
 	return ""
+}
+
+// maxOthers is how many archive folders the workspace remembers the owner named.
+const maxOthers = 8
+
+// rememberOther notes an archive folder the owner has named for Another archive folder, validated or
+// loaded or not: nothing is ever written there (RR2-C13), so Create folder refuses it for as long as the
+// page lives, not only while an archive session for it exists (E4-AI4).
+func (ws *workspace) rememberOther(path string) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return
+	}
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+	for i, o := range ws.others {
+		if samePath(o, path) {
+			ws.others = append(ws.others[:i:i], ws.others[i+1:]...)
+			break
+		}
+	}
+	ws.others = append(ws.others, path)
+	if len(ws.others) > maxOthers {
+		ws.others = ws.others[len(ws.others)-maxOthers:]
+	}
+}
+
+// otherPaths are the archive folders the owner has named, and the one open now, newest last.
+func (ws *workspace) otherPaths() []string {
+	ws.mu.Lock()
+	out := append([]string(nil), ws.others...)
+	ws.mu.Unlock()
+	if now := ws.otherNow(); now != "" {
+		out = append(out, now)
+	}
+	return out
 }
 
 // setArch makes s the archive session. The session it replaces is released unless a preview is

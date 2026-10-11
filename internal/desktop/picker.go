@@ -85,10 +85,15 @@ func (d *dashboard) mkdirAction(w http.ResponseWriter, r *http.Request) {
 	if !d.readBody(w, r, &in) {
 		return
 	}
-	// With another archive folder open as the source [ruling W1], a parent inside it, or an alias of
-	// it, is refused as one inside the configured archive is: Create folder's mkdir is a write too.
-	other := d.ws.otherNow()
-	path, err := d.copyEnv().CreateFolderOther(strings.TrimSpace(in.Parent), in.Name, d.archivesWith(other), other)
+	// With another archive folder named as the source [ruling W1], a parent inside it, or an alias of
+	// it, is refused as one inside the configured archive is: Create folder's mkdir is a write too. The
+	// folders the owner has named count from the moment they are named (not only while an archive
+	// session for one is loaded), and the newest is the one a refusal speaks of (E4-AI4).
+	archives, other := d.archives(), ""
+	for _, o := range d.ws.otherPaths() {
+		archives, other = append(archives, o), o
+	}
+	path, err := d.copyEnv().CreateFolderOther(strings.TrimSpace(in.Parent), in.Name, archives, other)
 	if err != nil {
 		d.refuse(w, *copyRefusal(err))
 		return

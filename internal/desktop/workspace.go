@@ -40,6 +40,7 @@ type workspace struct {
 	job        *wsPreviewJob
 	prev       *wsPreview
 	pickerBusy bool
+	others     []string // the archive folders the owner has named for Another archive folder, oldest first (E4-AI4)
 
 	listMu     sync.Mutex // one listing at a time: the workspace stays inside the 4-concurrent budget (§4.14)
 	reaperOnce sync.Once
