@@ -183,12 +183,18 @@ type signInSlot struct {
 	// testPause is a test seam, called between the check for a sign-in already running and
 	// the start of a new one.
 	testPause func()
+	// testBeforeRelease is a test seam, called by a finished sign-in job just before it
+	// decides whether to free the device flow (a job's late release under its successor).
+	testBeforeRelease func(job *signInJob)
 }
 
 func (d *dashboard) runSignIn(job *signInJob) {
 	defer func() {
 		// Only the sign-in that holds the slot frees the device flow: a finished job whose
 		// successor already started must not free it under the successor (EW-AC13).
+		if d.si.testBeforeRelease != nil {
+			d.si.testBeforeRelease(job)
+		}
 		d.si.mu.Lock()
 		current := d.si.job == job
 		d.si.mu.Unlock()

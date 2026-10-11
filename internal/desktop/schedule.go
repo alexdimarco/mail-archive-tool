@@ -54,6 +54,19 @@ func (cfg Config) backupSpec() (schedule.Spec, error) {
 	}, nil
 }
 
+// saveScheduleChoice remembers the interval and time chosen for the weekly backup, the
+// settings step of an install, before anything is handed to the OS scheduler.
+func saveScheduleChoice(path, interval, at string) error {
+	return UpdateSettings(path, "schedule", func(s *Settings) {
+		if strings.TrimSpace(interval) != "" {
+			s.Interval = strings.ToLower(strings.TrimSpace(interval))
+		}
+		if strings.TrimSpace(at) != "" {
+			s.WeeklyTime = strings.TrimSpace(at)
+		}
+	})
+}
+
 // scheduleInstall installs/updates the weekly backup (loopback-only, CSRF-guarded).
 func (d *dashboard) scheduleInstall(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost || !server.GuardLocalPOST(r, d.csrf) {
@@ -62,14 +75,7 @@ func (d *dashboard) scheduleInstall(w http.ResponseWriter, r *http.Request) {
 	}
 	var in struct{ Interval, Time string }
 	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&in)
-	s := d.cfg.settings()
-	if strings.TrimSpace(in.Interval) != "" {
-		s.Interval = strings.ToLower(strings.TrimSpace(in.Interval))
-	}
-	if strings.TrimSpace(in.Time) != "" {
-		s.WeeklyTime = strings.TrimSpace(in.Time)
-	}
-	if err := SaveSettings(d.cfg.SettingsPath, s); err != nil {
+	if err := saveScheduleChoice(d.cfg.SettingsPath, in.Interval, in.Time); err != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}

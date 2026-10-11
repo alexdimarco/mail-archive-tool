@@ -297,6 +297,90 @@ func TestTwoSignInsAtOnceStartOneDeviceFlow(t *testing.T) {
 	}
 }
 
+// covers: MA-404, R17, R19, S41
+// EW-AC13 tombstone, the second part (the fresh-eyes check found the first test pinned only the
+// check-and-start step). A sign-in that signed in as another account while a weekly backup is
+// installed waits for the user's Keep or Sign out, and a second POST in that wait used to find
+// "nothing running", take the same device flow (its owner is the same) and start a second
+// device flow beside the waiting one. A sign-in waiting for the answer is under way: the POST is
+// answered "already", no second device flow starts, and the answer still finishes the first.
+func TestSignInWaitingForAnswerIsNotRestarted(t *testing.T) {
+	e := newWsEnv(t)
+	e.cfg.BackupInstalled = func() bool { return true }
+	e.d.cfg.BackupInstalled = e.cfg.BackupInstalled
+	e.fg.mutate(func() { e.fg.upn = "bob@contoso.org" })
+	e.ok("/api/m365/signin", nil)
+	e.waitSignIn("confirm")
+	flows := e.fg.count("/devicecode")
+	if out := e.ok("/api/m365/signin", nil); out["already"] != true {
+		t.Errorf("a second sign-in while the first waits for Keep or Sign out: %v", out)
+	}
+	if n := e.fg.count("/devicecode"); n != flows {
+		t.Errorf("a sign-in waiting for its answer was restarted: device flows %d -> %d", flows, n)
+	}
+	if out := e.waitSignIn("confirm"); out["state"] != "confirm" {
+		t.Errorf("the waiting sign-in was replaced: %v", out)
+	}
+	e.signInStatus("signout")
+	e.waitSignIn("done")
+}
+
+// covers: MA-404, R17, R19, S41
+// EW-AC13 tombstone, the third part. A finished sign-in frees the process-wide device flow in
+// its own deferred step, a moment after it shows "done"; if the user starts the next sign-in in
+// that moment, the older job's late release freed the flow under the newer one, and a capture
+// could then start its own device flow beside it. Only the job that holds the slot frees the
+// flow. The seam holds the older job's release until the newer sign-in is running.
+func TestOlderSignInsLateReleaseDoesNotFreeTheNewersFlow(t *testing.T) {
+	e := newWsEnv(t)
+	hold := make(chan struct{})
+	var first atomic.Bool
+	e.d.si.testBeforeRelease = func(*signInJob) {
+		if first.CompareAndSwap(false, true) {
+			<-hold
+		}
+	}
+	e.ok("/api/m365/signin", nil)
+	e.waitSignIn("done") // the first job is done; its release is held
+
+	gate := make(chan struct{})
+	e.fg.mutate(func() { e.fg.tokenGate = gate })
+	t.Cleanup(func() {
+		select {
+		case <-gate:
+		default:
+			close(gate)
+		}
+	})
+	if out := e.ok("/api/m365/signin", nil); out["already"] == true {
+		t.Fatalf("the sign-in after a finished one was not started: %v", out)
+	}
+	for i := 0; i < 200 && e.fg.count("/devicecode") < 2; i++ {
+		time.Sleep(25 * time.Millisecond)
+	}
+	if n := e.fg.count("/devicecode"); n != 2 {
+		t.Fatalf("the second sign-in started %d device flows in all, want 2", n)
+	}
+
+	close(hold) // the older job now decides whether to free the flow
+	time.Sleep(300 * time.Millisecond)
+	if who := e.d.flow.busy(); who != "workspace" {
+		t.Errorf("the device flow is held by %q while the newer sign-in runs, want the workspace", who)
+	}
+	if e.d.flow.hold("capture") { // what a capture that has to sign in asks for first
+		e.d.flow.release("capture")
+		t.Error("a capture could take the device flow beside the newer sign-in")
+	}
+	close(gate)
+	e.waitSignIn("done")
+	for i := 0; i < 80 && e.d.flow.busy() != ""; i++ {
+		time.Sleep(25 * time.Millisecond)
+	}
+	if who := e.d.flow.busy(); who != "" {
+		t.Errorf("the device flow is still held by %q after the newer sign-in", who)
+	}
+}
+
 // covers: MA-430, R29, R12, S52
 // EW-AI7 skip encoder (OWNER DECISION PENDING, see the report's escalations). Open folder checks
 // the recorded folder's identity and then starts `xdg-open <root>` on Linux: a destination
@@ -363,6 +447,100 @@ func TestUpdateSettingsDoesNotEraseWhatItCannotRead(t *testing.T) {
 	}
 	if s := LoadSettings(path); s.ExportDest != "/d" {
 		t.Errorf("the new file: %+v", s)
+	}
+	if b, err := os.ReadFile(path + ".unreadable"); err != nil || string(b) != garbage {
+		t.Errorf("the unparseable file was not kept as %s.unreadable: %q (%v)", filepath.Base(path), b, err)
+	}
+}
+
+// covers: MA-445, MA-524, R12
+// EW-AC14 tombstone, the remaining half (the fresh-eyes check, NF4). A settings file written by a
+// newer build parses, so it was not set aside, and saving it dropped every field this build does
+// not know and rewrote its version to 1: the newer build's choices were gone the next time an
+// export started. The save now keeps the keys it has no field for, and a version above its own.
+// A field this build does know and the caller cleared stays cleared.
+func TestSettingsSaveKeepsWhatANewerBuildWrote(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	original := `{"version":2,"out":"/archive","weeklyDay":"Sunday","fromTheFuture":{"a":1},"alsoNew":"x"}`
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	raw := func() map[string]any {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(b, &m); err != nil {
+			t.Fatalf("the saved settings do not parse: %v\n%s", err, b)
+		}
+		return m
+	}
+	if err := UpdateSettings(path, "export", func(s *Settings) { s.ExportDest = "/d" }); err != nil {
+		t.Fatal(err)
+	}
+	m := raw()
+	if m["exportDest"] != "/d" || m["out"] != "/archive" || m["weeklyDay"] != "Sunday" {
+		t.Errorf("the fields this build knows: %v", m)
+	}
+	if fut, ok := m["fromTheFuture"].(map[string]any); !ok || fut["a"] != float64(1) || m["alsoNew"] != "x" {
+		t.Errorf("the fields a newer build wrote were dropped: %v", m)
+	}
+	if m["version"] != float64(2) {
+		t.Errorf("a newer build's version %v was rewritten", m["version"])
+	}
+
+	// A known field the caller cleared is not brought back by the keeping of the unknown ones.
+	if err := UpdateSettings(path, "export", func(s *Settings) { s.Out = "" }); err != nil {
+		t.Fatal(err)
+	}
+	if m := raw(); m["out"] != nil || m["alsoNew"] != "x" {
+		t.Errorf("after clearing out: %v", m)
+	}
+}
+
+// covers: MA-445, MA-524, R12
+// EW-AC14 tombstone, the weekly-backup half (NF4). The install's settings step loaded the file
+// (an unreadable one as empty), changed the interval and saved over it, without the refusal and the
+// set-aside UpdateSettings gives: an unreadable file lost the archive location it named, and
+// the install went on to schedule a backup of whatever was left. It now goes through UpdateSettings:
+// an unreadable file is left as it is and the step refuses before anything is handed to the OS
+// scheduler; an unparseable one is kept as <name>.unreadable. The step is called directly: a test
+// never installs a real scheduled task.
+func TestScheduleChoiceDoesNotEraseWhatItCannotRead(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	original := `{"version":1,"out":"/archive","weeklyDay":"Sunday","keepRaw":true}`
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveScheduleChoice(path, "Daily", " 04:15 "); err != nil {
+		t.Fatal(err)
+	}
+	if s := LoadSettings(path); s.Interval != "daily" || s.WeeklyTime != "04:15" || s.Out != "/archive" || !s.KeepRaw {
+		t.Fatalf("a readable file: %+v", s)
+	}
+
+	if runtime.GOOS != "windows" && os.Getuid() != 0 {
+		before, _ := os.ReadFile(path)
+		if err := os.Chmod(path, 0o000); err != nil {
+			t.Fatal(err)
+		}
+		err := saveScheduleChoice(path, "weekly", "05:00")
+		os.Chmod(path, 0o600)
+		if err == nil {
+			t.Error("the schedule step saved over a settings file it could not read")
+		}
+		if after, _ := os.ReadFile(path); string(after) != string(before) {
+			t.Errorf("the unreadable settings file was changed:\n%s", after)
+		}
+	}
+
+	garbage := `{"out": "/keep-me", "x": [`
+	if err := os.WriteFile(path, []byte(garbage), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveScheduleChoice(path, "weekly", "05:00"); err != nil {
+		t.Fatalf("a file that cannot be parsed: %v", err)
 	}
 	if b, err := os.ReadFile(path + ".unreadable"); err != nil || string(b) != garbage {
 		t.Errorf("the unparseable file was not kept as %s.unreadable: %q (%v)", filepath.Base(path), b, err)
