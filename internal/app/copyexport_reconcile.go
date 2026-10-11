@@ -840,24 +840,50 @@ func (e *CopyExportEnv) pruneRetryOffers(run string, hdr *ceHeaderLine, acts []s
 		return acts
 	}
 	e.ledgerMu.Lock()
-	n := len(e.chainRunsLocked(hdr.Chain))
+	parts := append([]string(nil), e.chainRunsLocked(hdr.Chain)...)
 	e.ledgerMu.Unlock()
-	if n < 2 {
+	if len(parts) < 2 {
 		return acts
 	}
+	// The page polls this on every History call, and each answer reads every record of
+	// the chain: it is kept per card against the chain's record sizes and times, and
+	// recomputed only when a record of the chain has grown (EW-AC8, chain half).
+	sig := e.chainSignature(run, parts)
+	e.sumMu.Lock()
+	c := e.pruneCache[run]
+	if sig == "" || c.sig != sig {
+		c = cePruneCached{sig: sig}
+	}
+	e.sumMu.Unlock()
 	out := make([]string, 0, len(acts))
 	for _, a := range acts {
 		switch a {
 		case ActExportFailed:
-			if left, err := e.RunFailed(run); err == nil && len(left) == 0 {
+			if !c.haveFailed {
+				left, err := e.RunFailed(run)
+				c.haveFailed, c.failedNone = err == nil, err == nil && len(left) == 0
+			}
+			if c.failedNone {
 				continue
 			}
 		case ActExportRemaining:
-			if left, err := e.RunRemaining(run); err == nil && len(left) == 0 {
+			if !c.haveRemain {
+				left, err := e.RunRemaining(run)
+				c.haveRemain, c.remainNone = err == nil, err == nil && len(left) == 0
+			}
+			if c.remainNone {
 				continue
 			}
 		}
 		out = append(out, a)
+	}
+	if sig != "" {
+		e.sumMu.Lock()
+		if e.pruneCache == nil || len(e.pruneCache) > 4096 {
+			e.pruneCache = map[string]cePruneCached{}
+		}
+		e.pruneCache[run] = c
+		e.sumMu.Unlock()
 	}
 	return out
 }

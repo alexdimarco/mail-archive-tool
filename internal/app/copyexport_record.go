@@ -247,7 +247,11 @@ func openAppendable(path string, create bool) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Under the write mutex: the cut must not land inside a line another handle of this
+	// process is writing (EW-AC1, the window the fresh-eyes check named).
+	recordWriteMu.Lock()
 	err = truncateTornTail(f)
+	recordWriteMu.Unlock()
 	f.Close()
 	if err != nil {
 		return nil, err
@@ -385,6 +389,10 @@ type ceRecSummary struct {
 // summaryScans counts the full passes readSummary has made over run records: a test's
 // measure of how often a page's poll rereads them (EW-AC8).
 var summaryScans atomic.Int64
+
+// messageWalks counts the passes walkMessages has made over run records, the other full
+// read of a record: a test's measure of what a chain's retry offers cost a poll (EW-AC8).
+var messageWalks atomic.Int64
 
 // readSummary reads a run record's header, counts and last stop, seal, gone and
 // located lines. A record of a newer format is refused with the update remedy.
@@ -530,6 +538,7 @@ func amendments(path string) (map[int]ceMsgLine, error) {
 // come in plan order, so a single pass over the plan section and one over the
 // progress section are merged.
 func walkMessages(path string, fn func(p *cePlanLine, m *ceMsgLine) error) error {
+	messageWalks.Add(1)
 	amend, err := amendments(path)
 	if err != nil {
 		return err
