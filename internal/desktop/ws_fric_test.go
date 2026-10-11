@@ -4,12 +4,119 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	"mail-archive-tool/internal/assure"
 )
+
+var scriptSrcRe = regexp.MustCompile(`<script src="([^"]+)"`)
+
+// topLevelDecls lists the names a classic script declares with const, let or class outside
+// any function: the names the browser's one shared global lexical scope holds for the whole
+// page, so a second script that declares the same name never runs (SyntaxError). It skips
+// strings, template literals, comments and regular-expression literals.
+func topLevelDecls(src string) []string {
+	var out []string
+	depth := 0
+	prev := byte(';') // the last significant byte, to tell a regex from a division
+	atStart := true   // at the start of a statement at depth 0
+	for i := 0; i < len(src); i++ {
+		c := src[i]
+		switch {
+		case c == '/' && i+1 < len(src) && src[i+1] == '/':
+			for i < len(src) && src[i] != '\n' {
+				i++
+			}
+			continue
+		case c == '/' && i+1 < len(src) && src[i+1] == '*':
+			end := strings.Index(src[i+2:], "*/")
+			if end < 0 {
+				return out
+			}
+			i += end + 3
+			continue
+		case c == '\'' || c == '"' || c == '`':
+			for i++; i < len(src) && src[i] != c; i++ {
+				if src[i] == '\\' {
+					i++
+				}
+			}
+			prev = 'x'
+			continue
+		case c == '/' && strings.IndexByte("(,=:[!&|?{};", prev) >= 0:
+			inClass := false
+			for i++; i < len(src); i++ {
+				if src[i] == '\\' {
+					i++
+				} else if src[i] == '[' {
+					inClass = true
+				} else if src[i] == ']' {
+					inClass = false
+				} else if src[i] == '/' && !inClass {
+					break
+				}
+			}
+			prev = 'x'
+			continue
+		case c == '(' || c == '[' || c == '{':
+			depth++
+		case c == ')' || c == ']' || c == '}':
+			depth--
+		}
+		if c == ' ' || c == '\n' || c == '\t' || c == '\r' {
+			continue
+		}
+		if depth == 0 && atStart {
+			for _, kw := range []string{"const ", "let ", "class "} {
+				if strings.HasPrefix(src[i:], kw) {
+					rest := src[i+len(kw):]
+					j := 0
+					for j < len(rest) && (rest[j] == '$' || rest[j] == '_' || rest[j] >= '0' && rest[j] <= '9' || rest[j] >= 'a' && rest[j] <= 'z' || rest[j] >= 'A' && rest[j] <= 'Z') {
+						j++
+					}
+					out = append(out, rest[:j])
+				}
+			}
+		}
+		atStart = depth == 0 && (c == ';' || c == '}')
+		prev = c
+	}
+	return out
+}
+
+// covers: MA-407, R12, S52
+// F27 (found fixing F2): two classic scripts on one page share one global lexical scope, so a
+// second script that declares the same top-level const never runs at all. The workspace page
+// loaded signin.js and workspace.js, the Overview dashboard.js and signin.js, each with
+// `const csrf`: the second of each pair would have thrown "Identifier 'csrf' has already been
+// declared", leaving the workspace page dead. No two scripts of a page may declare the same
+// top-level name (the workspace's scripts keep theirs inside one function).
+func TestFricNoTwoScriptsOfAPageShareATopLevelName(t *testing.T) {
+	e := newWsEnv(t)
+	if got := topLevelDecls("const a=1;function f(){const b=2;}\nlet c=/[/]x/.test('const d');"); !reflect.DeepEqual(got, []string{"a", "c"}) {
+		t.Fatalf("the scanner reads %v, want [a c]", got)
+	}
+	for _, page := range []string{"/", "/workspace", "/exports"} {
+		body := e.get(page).Body.String()
+		srcs := assure.Reached(t, scriptSrcRe.FindAllStringSubmatch(body, -1), page+": its scripts")
+		seen := map[string]string{}
+		for _, m := range srcs {
+			rec := e.get("/" + m[1])
+			if rec.Code != 200 {
+				t.Fatalf("%s: script %s answers %d", page, m[1], rec.Code)
+			}
+			for _, name := range topLevelDecls(rec.Body.String()) {
+				if other, dup := seen[name]; dup {
+					t.Errorf("%s: %s and %s both declare %q at the top level: the second script would not run", page, other, m[1], name)
+				}
+				seen[name] = m[1]
+			}
+		}
+	}
+}
 
 // The friction review's fixes (docs/review-extraction-workspace-friction.md, F1..F22): each
 // test asserts what the owner now sees, through the dashboard's own handlers.

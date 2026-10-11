@@ -21,10 +21,16 @@ function show(id,text){const e=$(id);if(!e)return;e.hidden=!text;e.textContent=t
 function fmt(n){return Number(n).toLocaleString('en-US');}
 `
 
-// signinJS drives the sign-in box on the Overview's Microsoft 365 card and on the
-// workspace page: it starts the sign-in, shows the code the guarded status POST returns,
-// and asks the weekly-backup question when the account changes (XC7, XC8).
-const signinJS = commonJS + `(function(){
+// scoped puts a whole script, its shared helpers included, inside one function. Classic
+// scripts on one page share a single global lexical scope, so two that each declared
+// `const csrf` at the top level (the Overview's dashboard.js and signin.js; the workspace's
+// signin.js and workspace.js) made the second one a SyntaxError that never ran (F27).
+func scoped(body string) string { return "(function(){\n" + body + "\n})();\n" }
+
+// signinJS drives the sign-in box on the Overview's Microsoft 365 card, on the workspace page
+// and on Export activity: it starts the sign-in, shows the code the guarded status POST
+// returns, and asks the weekly-backup question when the account changes (XC7, XC8).
+var signinJS = scoped(commonJS + `(function(){
 const btn=$('signInBtn');if(!btn)return;
 let timer=null;
 function render(d){
@@ -61,11 +67,11 @@ if(k)k.addEventListener('click',()=>poll('keep'));
 if(o)o.addEventListener('click',()=>poll('signout'));
 poll();
 })();
-`
+`)
 
 // workspaceJS is the Extraction workspace page: the source, the folder tree and its
 // selection, the message list, the destination, the options and the preview.
-const workspaceJS = commonJS + `(function(){
+var workspaceJS = scoped(commonJS + `(function(){
 const st={upn:'',folders:[],byId:{},kids:{},entries:[],picks:{},current:'',rows:[],more:false,cursor:'',total:0,previewId:'',countTimer:null,running:false,counts:0};
 function errText(d){return d.error||'Something went wrong.';}
 function showErr(d){
@@ -306,11 +312,11 @@ window.addEventListener('beforeunload',e=>{
 });
 loadSource();
 })();
-`
+`)
 
 // exportsJS is the Export activity page: the running export with Cancel, and the history
 // with each card's actions.
-const exportsJS = commonJS + `(function(){
+var exportsJS = scoped(commonJS + `(function(){
 let busy=false;
 const LABELS={
   'open-folder':'Open folder','check-this-export':'Check this export','export-failed-again':'Export failed messages again',
@@ -424,4 +430,4 @@ pollRun();loadHistory();
 setInterval(pollRun,1500);
 setInterval(()=>{if(!document.querySelector('.cardres .v'))loadHistory();},5000);
 })();
-`
+`)
