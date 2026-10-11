@@ -222,3 +222,64 @@ func TestCopyExportCheckDoesNotBlockOnSpecialFiles(t *testing.T) {
 		t.Errorf("the probe read a run id from a pipe: %+v (%v)", seen, err)
 	}
 }
+
+// covers: MA-421, MA-422, R5
+// EW-NF1 tombstone (the fresh-eyes check of the EW-AI2 and EW-AI3 fixes). The finishing
+// step that flushes each message directory opened it with a blocking open(2) and no look
+// at what it was, so a co-writer who renamed a message directory away and put a named
+// pipe at its name hung the run's finalization for ever, past the ledger mutex and the
+// slot. The flush now opens without blocking and treats anything but a directory as the
+// presence check treats a directory that is gone: not a reason to leave the folder
+// unfinished. The unswapped run just before it is the positive twin.
+func TestCopyExportDirectorySyncDoesNotBlockOnAPlantedPipe(t *testing.T) {
+	e, src := newCEEnv(t), newFakeSrc()
+
+	// Positive twin: no swap, the run completes and flushes its directories.
+	if ok := mustRun(t, e, cePlan(t, e, src, ceMsgs(2)), src); ok.Status != CopyStatusComplete {
+		t.Fatalf("the unswapped run: %s", ok.Label)
+	}
+
+	p := cePlan(t, e, src, ceMsgs(2))
+	root := filepath.Join(p.Dest, p.ExportName)
+	e.SetStepHook(func(step string) {
+		if step != "W8" {
+			return
+		}
+		dir := filepath.Dir(firstEml(t, root))
+		if err := os.Rename(dir, dir+".away"); err != nil {
+			t.Error(err)
+			return
+		}
+		if err := syscall.Mkfifo(dir, 0o600); err != nil {
+			t.Skipf("no FIFOs here: %v", err)
+		}
+	})
+	defer e.SetStepHook(nil)
+	var res *CopyResult
+	var err error
+	within(t, 5*time.Second, "the finalization with a named pipe in place of a message directory", func() {
+		res, err = e.NewCopyRun(p, src).Run(context.Background())
+	})
+	if err != nil || res == nil || res.Status != CopyStatusComplete {
+		t.Fatalf("the run with a pipe for a message directory: %+v (%v)", res, err)
+	}
+}
+
+// covers: MA-414, MA-421, R5
+// EW-NF1 tombstone, the planning side: the identity chain of a destination was read by
+// opening each folder of the path with a blocking open(2), so a destination (or one of
+// its ancestors) that is a named pipe hung the plan for ever. The chain is now read
+// through non-blocking opens: it answers, and the pipe is no folder anyone can export to.
+func TestCopyExportDestinationChainDoesNotBlockOnAPlantedPipe(t *testing.T) {
+	e := newCEEnv(t)
+	dir := t.TempDir()
+	good, err := e.destChain(dir)
+	if err != nil || len(good) == 0 {
+		t.Fatalf("the chain of a folder: %v (%v)", good, err)
+	}
+	pipe := filepath.Join(dir, "pipe")
+	if merr := syscall.Mkfifo(pipe, 0o600); merr != nil {
+		t.Skipf("no FIFOs here: %v", merr)
+	}
+	within(t, 5*time.Second, "the identity chain of a destination that is a named pipe", func() { _, _ = e.destChain(pipe) })
+}

@@ -159,7 +159,9 @@ func (e *CopyExportEnv) destChain(dest string) ([]ceIdentity, error) {
 	cur := util.ResolveExisting(dest)
 	var out []ceIdentity
 	for {
-		f, err := os.Open(cur)
+		// Without blocking: a folder of the path that is a named pipe must not hang the
+		// plan (EW-NF1).
+		f, err := os.OpenFile(cur, os.O_RDONLY|openNoBlock, 0)
 		if err != nil {
 			return out, err
 		}

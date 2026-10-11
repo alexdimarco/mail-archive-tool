@@ -20,6 +20,11 @@ import (
 // or a directory where a file was expected.
 var errNotRegular = errors.New("not a regular file")
 
+// errNotDirectory is the refusal of a directory sync of something that is not a
+// directory any more (a pipe or a file planted in its place); the finalization treats it
+// as it treats a directory that is gone.
+var errNotDirectory = errors.New("not a directory")
+
 // openRegularIn opens rel in root for reading, only if it is a regular file.
 func openRegularIn(root *os.Root, rel string) (*os.File, error) {
 	f, err := root.OpenFile(rel, os.O_RDONLY|openNoBlock, 0)

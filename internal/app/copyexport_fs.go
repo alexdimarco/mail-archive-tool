@@ -141,11 +141,20 @@ func (r *rootFS) SyncDir(rel string) error {
 	if rel == "" {
 		rel = "."
 	}
-	d, err := r.root.Open(rel)
+	// Opened without blocking and looked at before it is used: a directory a co-writer
+	// replaced with a named pipe must not hang the finalization (EW-NF1, the class of
+	// EW-AI2 and EW-AI3). Anything that is not a directory is the finding of the presence
+	// check, like a directory that is gone.
+	d, err := r.root.OpenFile(rel, os.O_RDONLY|openNoBlock, 0)
 	if err != nil {
 		return err
 	}
 	defer d.Close()
+	if fi, serr := d.Stat(); serr != nil {
+		return serr
+	} else if !fi.IsDir() {
+		return &fs.PathError{Op: "sync", Path: rel, Err: errNotDirectory}
+	}
 	if r.syncFile != nil {
 		return r.syncFile(d)
 	}
