@@ -119,6 +119,20 @@ func (d *dashboard) scheduleRemove(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, resp)
 }
 
+// removeBackup removes the weekly backup of the archive the settings point at now: what
+// "Save and remove the weekly backup" does before it saves the new location (XC22).
+func (d *dashboard) removeBackup() error {
+	if d.cfg.RemoveBackup != nil {
+		return d.cfg.RemoveBackup()
+	}
+	spec, err := d.cfg.backupSpec()
+	if err != nil {
+		return err
+	}
+	_, err = schedule.RemoveIfInstalled(spec)
+	return err
+}
+
 // scheduleState reports the weekly-backup posture for the UI (GET; no side effect).
 func (d *dashboard) scheduleState(w http.ResponseWriter, r *http.Request) {
 	out := d.cfg.effectiveOut()

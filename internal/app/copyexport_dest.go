@@ -88,6 +88,7 @@ type ceArchiveSet struct {
 type CopyOutside struct {
 	archives []string
 	sets     []*ceArchiveSet
+	other    string // the archive that is another archive folder, read-only [ruling W1]: its refusals name it
 }
 
 func (e *CopyExportEnv) walkLimits() (int, time.Duration) {
@@ -307,10 +308,17 @@ func (e *CopyExportEnv) decideViews(av, dv ceView) viewDecision {
 // identity cannot be compared with an archive's (else R-f2). It writes nothing. It
 // returns what Start compares again, and a *CopyRefusal on a refusal.
 func (e *CopyExportEnv) CheckDestination(dest string, archives []string) (*CopyOutside, error) {
+	return e.CheckDestinationOther(dest, archives, "")
+}
+
+// CheckDestinationOther is CheckDestination where one of the archives is another archive
+// folder, the export's source [ruling W1]: the destination stays outside it too, by path and
+// by identity, and a refusal about its view names that folder.
+func (e *CopyExportEnv) CheckDestinationOther(dest string, archives []string, other string) (*CopyOutside, error) {
 	if err := checkDestPath(dest); err != nil {
 		return nil, err
 	}
-	out := &CopyOutside{}
+	out := &CopyOutside{other: strings.TrimSpace(other)}
 	for _, a := range archives {
 		a = strings.TrimSpace(a)
 		if a == "" {
@@ -325,7 +333,7 @@ func (e *CopyExportEnv) CheckDestination(dest string, archives []string) (*CopyO
 		set := e.walkArchive(a)
 		out.archives = append(out.archives, a)
 		out.sets = append(out.sets, set)
-		if r := e.refuseByIdentity(dest, a, set); r != nil {
+		if r := e.refuseByIdentity(dest, a, set, a == out.other); r != nil {
 			return nil, r
 		}
 	}
@@ -346,7 +354,7 @@ func (o *CopyOutside) Recheck(e *CopyExportEnv, dest string) error {
 		if r := refusePathInside(dest, a); r != nil {
 			return r
 		}
-		if r := e.refuseByIdentity(dest, a, o.sets[i]); r != nil {
+		if r := e.refuseByIdentity(dest, a, o.sets[i], a == o.other); r != nil {
 			return r
 		}
 	}
@@ -406,18 +414,18 @@ func refusalF(archive string) *CopyRefusal {
 // refuseByIdentity applies the view table and the identity set: R-f when the
 // destination or one of its ancestors is a directory of the archive, R-f2 where
 // identity cannot decide.
-func (e *CopyExportEnv) refuseByIdentity(dest, archive string, set *ceArchiveSet) *CopyRefusal {
+func (e *CopyExportEnv) refuseByIdentity(dest, archive string, set *ceArchiveSet, other bool) *CopyRefusal {
 	dv := e.viewFor(dest)
 	d := e.decideViews(set.View, dv)
 	if d.unconfirm != "" {
-		return refusalF2(dest, archive, d.unconfirm, d.archive)
+		return refusalF2(dest, archive, d.unconfirm, d.archive, other)
 	}
 	if !d.byIdentity {
 		return nil
 	}
 	ids, err := e.destChain(dest)
 	if err != nil && len(ids) == 0 {
-		return refusalF2(dest, archive, "walk", false)
+		return refusalF2(dest, archive, "walk", false, other)
 	}
 	onArchiveVolume := false
 	for _, id := range ids {
@@ -429,17 +437,23 @@ func (e *CopyExportEnv) refuseByIdentity(dest, archive string, set *ceArchiveSet
 		}
 	}
 	if !set.Complete && onArchiveVolume {
-		return refusalF2(dest, archive, "walk", false)
+		return refusalF2(dest, archive, "walk", false, other)
 	}
 	return nil
 }
 
 // refusalF2 is R-f2 (design §7.6): the destination's place cannot be confirmed to be
 // outside the archive. why names the cause; archiveSide is true when it is the
-// archive's own view, whose remedy is on the archive's side.
-func refusalF2(dest, archive, why string, archiveSide bool) *CopyRefusal {
+// archive's own view, whose remedy is on the archive's side. For another archive folder
+// the same wording names that folder, and the remedy is on the Another archive folder
+// control [ruling W1].
+func refusalF2(dest, archive, why string, archiveSide, other bool) *CopyRefusal {
 	var msg string
 	switch {
+	case archiveSide && other && why == "here":
+		msg = fmt.Sprintf("The archive folder %s is reached through a share on this computer, so MailArchive can't confirm any folder is outside it — choose its local path in Another archive folder…, then click Preview copy export again.", archive)
+	case archiveSide && other:
+		msg = fmt.Sprintf("The archive folder %s is on an sshfs or other FUSE mount, where MailArchive can't compare folder identities — choose the archive's own path in Another archive folder…, or mount its share with your system's SMB or NFS client.", archive)
 	case archiveSide && why == "here":
 		msg = fmt.Sprintf("Your archive at %s is reached through a share on this computer, so MailArchive can't confirm any folder is outside it — set Archive location to its local path, then click Preview copy export again.", archive)
 	case archiveSide:

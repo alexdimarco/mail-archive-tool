@@ -145,6 +145,20 @@ func archiveMissing(dir string, other bool, why string) *CopyRefusal {
 	return refuse("R-o", fmt.Sprintf("There's no archive at %s yet — run Archive now first, or choose Microsoft 365 as the source.", printable(dir)))
 }
 
+// ArchiveAt reports whether dir holds an archive's manifest as a regular file: the cheap
+// check a selection's binding and the source control's availability line make. It reads no
+// file and writes nothing.
+func ArchiveAt(dir string) bool {
+	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+		return false
+	}
+	fi, err := os.Lstat(filepath.Join(dir, archiveManifestName))
+	return err == nil && fi.Mode().IsRegular()
+}
+
+// PlanFoldersOf summarizes msgs by folder path, in the order first met: a retry's selection.
+func PlanFoldersOf(msgs []CopyMessage) []CopyPlanFolder { return foldersOf(msgs) }
+
 // Dir is the archive folder's absolute path.
 func (a *ArchiveSource) Dir() string { return a.dir }
 

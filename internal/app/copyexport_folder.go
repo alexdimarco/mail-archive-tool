@@ -69,6 +69,13 @@ func folderNameWhy(name string) string {
 // is made through the handle at 0700, with no path walked again between the check and
 // the mkdir. Nothing is created on a refusal.
 func (e *CopyExportEnv) CreateFolder(parent, name string, archives []string) (string, error) {
+	return e.CreateFolderOther(parent, name, archives, "")
+}
+
+// CreateFolderOther is CreateFolder where one of the archives is another archive folder
+// the workspace has open as its source [ruling W1]: a parent inside it, or an alias of it, is
+// refused too.
+func (e *CopyExportEnv) CreateFolderOther(parent, name string, archives []string, other string) (string, error) {
 	if err := checkDestPath(parent); err != nil {
 		return "", err
 	}
@@ -80,7 +87,7 @@ func (e *CopyExportEnv) CreateFolder(parent, name string, archives []string) (st
 		return "", destMissing(parent)
 	}
 	defer root.Close()
-	if _, err := e.CheckDestination(parent, archives); err != nil {
+	if _, err := e.CheckDestinationOther(parent, archives, other); err != nil {
 		return "", err
 	}
 	// The checks read the folder by path: it must be the folder the handle holds.

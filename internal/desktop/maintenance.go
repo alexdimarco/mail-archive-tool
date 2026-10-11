@@ -101,6 +101,11 @@ func (d *dashboard) rebuildAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	err := d.runJob(func(l *log.Logger) (string, error) {
+		// The workspace's list reads search.db for one request at a time. The rebuild waits out the
+		// request in flight, and holds the next ones off until it is done, so the index is never
+		// open inside its rename window (XC20).
+		d.beginRebuild()
+		defer d.endRebuild()
 		rr, rerr := app.Rebuild(out, l)
 		if rerr != nil {
 			return "", rerr

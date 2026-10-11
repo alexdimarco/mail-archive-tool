@@ -30,6 +30,9 @@ type CopyPlanInput struct {
 	// by identity (R-f, R-f2; design §4.7 step 3): the configured archive, and in
 	// slice E4 another archive folder chosen as the source. Empty: none.
 	Archives []string
+	// OtherArchive is the member of Archives that is another archive folder, the export's
+	// source, read-only [ruling W1]: empty for any other source.
+	OtherArchive string
 	// ArchiveSkipped is how many records the archive source left out because their files
 	// were removed (the redaction belt, §4.6 item 5); the preview reports the count.
 	ArchiveSkipped int
@@ -101,7 +104,7 @@ func (e *CopyExportEnv) PlanCopyExport(in CopyPlanInput) (*CopyPlan, error) {
 	id, _ := readIdentity(f)
 	f.Close()
 	droot.Close()
-	outside, err := e.CheckDestination(dest, in.Archives)
+	outside, err := e.CheckDestinationOther(dest, in.Archives, in.OtherArchive)
 	if err != nil {
 		return nil, err
 	}

@@ -94,6 +94,7 @@ func (d *dashboard) resultsNow() map[string]cardResult {
 type exportSlot struct {
 	runID    string
 	run      *app.CopyRun
+	src      app.CopySource // closed when the run is over, for a source that holds a root (the archive)
 	started  time.Time
 	selected int
 	mailbox  string
@@ -187,30 +188,46 @@ func (d *dashboard) startAction(w http.ResponseWriter, r *http.Request) {
 		d.refuse(w, refusalM(st.started, st.done, st.selected))
 		return
 	}
-	if ref := d.signerRefusal(prev.upn); ref != nil {
-		d.refuse(w, *ref)
-		return
+	if !prev.bind.arch {
+		if ref := d.signerRefusal(prev.upn); ref != nil {
+			d.refuse(w, *ref)
+			return
+		}
 	}
 	if d.cfg.StateDir == "" {
 		d.refuse(w, refusedWith("R-d", "MailArchive Desktop has no folder of its own to record this export in — nothing was exported. Sign out and back in to Windows (or set up your profile folder), then start MailArchive again."))
 		return
 	}
-	sess, ref := ws.session(r.Context())
-	if ref != nil {
-		d.refuse(w, *ref)
-		return
+	var src app.CopySource
+	var mailbox string
+	if prev.bind.arch {
+		// The archive source (slice E4): bound to the archive folder by its path, which must
+		// still be the one the preview was made from (R-l2); the run reads it through a root
+		// opened now, and holds each file to the fixity the plan recorded.
+		as, ref := d.archiveRunSource(prev.bind)
+		if ref != nil {
+			d.refuse(w, *ref)
+			return
+		}
+		src = as
+	} else {
+		sess, ref := ws.session(r.Context())
+		if ref != nil {
+			d.refuse(w, *ref)
+			return
+		}
+		if !strings.EqualFold(sess.upn, prev.upn) {
+			d.refuse(w, refusalL(prev.upn, sess.upn))
+			return
+		}
+		m365 := app.NewM365Source(sess.client, sess.upn, sess.tenant, func() (string, bool) { return d.signedInNow() })
+		m365.Idle, m365.Overall = d.cfg.MIMEIdleTimeout, d.cfg.MIMETimeout
+		src, mailbox = m365, sess.upn
 	}
-	if !strings.EqualFold(sess.upn, prev.upn) {
-		d.refuse(w, refusalL(prev.upn, sess.upn))
-		return
-	}
-
-	src := app.NewM365Source(sess.client, sess.upn, sess.tenant, func() (string, bool) { return d.signedInNow() })
-	src.Idle, src.Overall = d.cfg.MIMEIdleTimeout, d.cfg.MIMETimeout
 	run := ex.env.NewCopyRun(prev.plan, src)
 	started := make(chan string, 1)
 	run.OnStart = func(id string) { started <- id }
-	slot := &exportSlot{run: run, started: d.now(), selected: len(prev.plan.Messages), mailbox: sess.upn, done: make(chan struct{})}
+	slot := &exportSlot{run: run, src: src, started: d.now(), selected: len(prev.plan.Messages), mailbox: mailbox, done: make(chan struct{})}
 
 	ex.mu.Lock()
 	if ex.slot != nil && ex.slot.live() { // another start won the race
@@ -252,7 +269,9 @@ func (d *dashboard) startAction(w http.ResponseWriter, r *http.Request) {
 		slot.runID = id
 		slot.addLog(fmt.Sprintf("%s Started: %s messages to %s", slot.started.Format("15:04:05"), commaInt(slot.selected), prev.plan.ExportName))
 		slot.mu.Unlock()
-		d.saveExportSettings(prev.plan)
+		if !prev.plan.Source.Other { // an export from another archive folder saves no setting at all [RR2-C14]
+			d.saveExportSettings(prev.plan)
+		}
 		d.reply(w, map[string]any{"ok": true, "runId": id})
 	default:
 		ex.mu.Lock()
@@ -299,6 +318,9 @@ func (ex *exportsState) runSlot(slot *exportSlot, plan *app.CopyPlan) {
 		}()
 		res, err = slot.run.Run(d.life.Context())
 	}()
+	if c, ok := slot.src.(interface{ Close() error }); ok { // the archive's root, once the run is over
+		c.Close()
+	}
 	slot.mu.Lock()
 	slot.finished, slot.res, slot.err = true, res, err
 	if res != nil && res.Stop != nil && res.Stop.RID == "R-c" {
@@ -710,6 +732,10 @@ func (d *dashboard) retryAction(w http.ResponseWriter, r *http.Request) {
 		d.refuseRun(w, in.RunID, refusalM(st.started, st.done, st.selected))
 		return
 	}
+	if info, known := d.ex.env.RunSource(in.RunID); known && info.Kind == "archive" {
+		d.retryArchive(w, in, info) // an archive export needs no sign-in: it is read from the archive again
+		return
+	}
 	mailbox := d.ex.env.RunMailbox(in.RunID)
 	now, signed := d.signedInNow()
 	if !signed {
@@ -742,7 +768,7 @@ func (d *dashboard) retryAction(w http.ResponseWriter, r *http.Request) {
 		res := planResult(plan, job.id, foldersOut(input.Folders), len(input.Messages), len(input.Messages), nil, nil)
 		res["retryWhich"] = in.Which // so the page can preview this retry again for another destination (F5)
 		return plan, res, nil
-	}, now, in.RunID)
+	}, wsBind{upn: now}, in.RunID)
 	d.reply(w, map[string]any{"ok": true, "previewId": job.id})
 }
 

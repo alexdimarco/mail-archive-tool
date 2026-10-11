@@ -16,6 +16,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"mail-archive-tool/internal/graph"
@@ -92,6 +94,9 @@ type Config struct {
 	// BackupInstalled reports whether the weekly backup is installed (tests); nil asks the
 	// OS scheduler about the configured archive.
 	BackupInstalled func() bool
+	// RemoveBackup removes the weekly backup (tests); nil asks the OS scheduler, as the
+	// Weekly backup card's Remove does. Settings' "Save and remove the weekly backup" calls it.
+	RemoveBackup func() error
 
 	// Test overrides of the Graph client's bounds (zero = its defaults, fixed by design).
 	RequestTimeout    time.Duration
@@ -169,6 +174,13 @@ type dashboard struct {
 	lapse lapse
 
 	planMax int // a test lowers the 200,000-message limit of one export (R-i)
+
+	// listGate keeps the workspace's list requests out of Rebuild's rename window: a list
+	// holds it shared while search.db is open, the rebuild job takes it exclusively for an
+	// instant to wait for them and then sets rebuilding, which makes every later list answer
+	// "the index is being rebuilt" until the job ends (XC20).
+	listGate   sync.RWMutex
+	rebuilding atomic.Bool
 
 	// seams a test replaces
 	now    func() time.Time
@@ -319,6 +331,9 @@ func (d *dashboard) saveSettings(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Out                                  string
 		KeepRaw, IncludeDeleted, IncludeJunk bool
+		// Backup answers the question a save that retargets the weekly backup asks first
+		// (XC22): "keep" or "remove". Empty is the first ask.
+		Backup string
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&in); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -330,6 +345,29 @@ func (d *dashboard) saveSettings(w http.ResponseWriter, r *http.Request) {
 	if out != "" {
 		if err := d.cfg.settingsOverlap(out); err != nil {
 			writeJSONStatus(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
+			return
+		}
+	}
+	// A weekly backup reads the archive location at run time (MA-279), so a save that changes it
+	// would silently make the next scheduled capture write the signed-in mailbox into that folder:
+	// the harmful save is an informed one, at the moment it happens (XC22, MA-523). Nothing is
+	// written, and nothing removed, until the user has answered.
+	if !samePath(out, d.cfg.effectiveOut()) && d.backupInstalled() {
+		switch in.Backup {
+		case "keep":
+		case "remove":
+			if err := d.removeBackup(); err != nil {
+				writeJSON(w, map[string]any{"ok": false, "error": "The weekly backup could not be removed, so the settings were not saved: " + err.Error()})
+				return
+			}
+		default:
+			who, _ := d.signedInNow()
+			if who == "" {
+				who = "the Microsoft 365 account you are signed in as"
+			}
+			writeJSON(w, map[string]any{"ok": false, "confirm": true, "upn": who, "folder": out,
+				"error":   fmt.Sprintf("Your weekly backup will now archive %s into %s.", who, out),
+				"choices": []string{"keep", "remove", "cancel"}})
 			return
 		}
 	}
@@ -664,6 +702,12 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <label class="checkline"><input type="checkbox" id="incJunk"{{if .IncludeJunk}} checked{{end}}> Include Junk Email</label>
       <div style="margin-top:14px"><button class="btn secondary" id="saveSettings">Save settings</button></div>
       <div class="note" id="settingsNote" hidden></div>
+      <div class="note warnbox" id="settingsConfirm" role="alert" hidden>
+        <div id="settingsConfirmText"></div>
+        <div class="actions" style="margin-top:10px"><button class="btn" id="settingsKeep" type="button">Save and keep the backup</button>
+          <button class="btn secondary" id="settingsRemoveBackup" type="button">Save and remove the weekly backup</button>
+          <button class="btn secondary" id="settingsCancel" type="button">Cancel</button></div>
+      </div>
     </div>
 
     <div class="card" id="sec-backup">
@@ -738,13 +782,31 @@ if(clr)clr.addEventListener('click',async()=>{
   }catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}
 });
 
+// Saving a new archive location while the weekly backup is installed asks first (XC22): the
+// backup reads the location when it runs, so it would archive the signed-in mailbox into the new
+// folder. The answers are the server's own three: keep the backup, remove it, or cancel.
 const save=$('saveSettings');
-if(save)save.addEventListener('click',async()=>{
-  const n=$('settingsNote');
-  const body={out:$('outDir').value,keepRaw:$('keepRaw').checked,includeDeleted:$('incDeleted').checked,includeJunk:$('incJunk').checked};
+async function doSave(backup){
+  const n=$('settingsNote'),c=$('settingsConfirm');
+  const body={out:$('outDir').value,keepRaw:$('keepRaw').checked,includeDeleted:$('incDeleted').checked,includeJunk:$('incJunk').checked,backup:backup||''};
   try{const d=await(await fetch('api/settings',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(body)})).json();
-    if(n){n.hidden=false;n.textContent=d.ok?'Settings saved.':(d.error||'Could not save.');}
+    if(d.confirm){
+      if(n)n.hidden=true;
+      if(c){c.hidden=false;$('settingsConfirmText').textContent=d.error+' Choose what happens to the weekly backup, or Cancel to leave your settings as they are.';}
+      return;
+    }
+    if(c)c.hidden=true;
+    if(n){n.hidden=false;n.textContent=d.ok?(backup==='remove'?'Settings saved, and the weekly backup removed.':'Settings saved.'):(d.error||'Could not save.');}
   }catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}
+}
+if(save)save.addEventListener('click',()=>doSave(''));
+const keepB=$('settingsKeep'),removeB=$('settingsRemoveBackup'),cancelB=$('settingsCancel');
+if(keepB)keepB.addEventListener('click',()=>doSave('keep'));
+if(removeB)removeB.addEventListener('click',()=>doSave('remove'));
+if(cancelB)cancelB.addEventListener('click',()=>{
+  const n=$('settingsNote'),c=$('settingsConfirm');
+  if(c)c.hidden=true;
+  if(n){n.hidden=false;n.textContent='Not saved: your settings are as they were.';}
 });
 
 let polling=false;

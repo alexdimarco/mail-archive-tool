@@ -892,6 +892,17 @@ func (e *CopyExportEnv) RunMailbox(run string) string {
 	return ""
 }
 
+// RunSource is the source a run exported from, read from its record: its kind and, for an
+// archive, its folder and whether it is another archive folder. ok is false when the record
+// is gone, which a retry cannot do without (XC2).
+func (e *CopyExportEnv) RunSource(run string) (CopySourceInfo, bool) {
+	sum, err := readSummary(e.recordPath(run))
+	if err != nil {
+		return CopySourceInfo{}, false
+	}
+	return sum.Header.Source, true
+}
+
 // RetryInput builds the preview input of "Export failed messages again" (which
 // "failed") or "Export the remaining messages" (which "rest") from run's RUN RECORD,
 // never the destination's manifest (XC2, P4's second admission path): the ids, names and
