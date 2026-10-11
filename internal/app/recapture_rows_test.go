@@ -1,7 +1,9 @@
 package app
 
 import (
+	"bytes"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -175,8 +177,105 @@ func TestFullRunKeepsAnAttachmentWhoseStreamNowErrors(t *testing.T) {
 // covers: MA-355, R28, R1, R5, S50, S6
 // F46 on legacy records: a re-examination that would degrade leaves the files as
 // archived, and a legacy record is never claimed complete or fillable for ever.
+// Cases (a) a v6 record with an equal fingerprint, (b) a version-1 `unknown`
+// record, (c) `unknown` with an inline image in the earlier page, and the twin (d)
+// `unknown` over an intact source. The UNVERIFIED field, its report row and the
+// presumed wording are the row's own, added with the slice that builds them.
 func TestLegacyReExaminationKeepsWhatItWouldDegrade(t *testing.T) {
+	// (a) twin: a full run over an intact source leaves a v6 record as recorded.
+	outA := tmpDir(t)
+	pdfA := &rcBlob{data: []byte("%PDF-1.4 legacy a")}
+	msgA := func() *model.Message { return rcMsg("lega@x", "Old A", "<p>old a</p>", nil, pdfA.att("old.pdf")) }
+	if _, err := rcExport(t, outA, export.Full, false, msgA()); err != nil {
+		t.Fatal(err)
+	}
+	_, recA := recordForID(t, outA, "lega@x")
+	if _, err := rcExport(t, outA, export.Full, false, msgA()); err != nil {
+		t.Fatal(err)
+	}
+	if bad := rcAsRecorded(t, outA, recA); len(bad) != 0 || recA.Fingerprint == "" {
+		t.Fatalf("a full run over an intact source changed a v6 record's files: %v", bad)
+	}
+
+	// (d) twin: an `unknown` record over an intact source commits, with real gaps
+	// (here none) recorded.
+	outD := tmpDir(t)
+	pdfD := &rcBlob{data: []byte("%PDF-1.4 legacy d")}
+	msgD := func() *model.Message { return rcMsg("legd@x", "Old D", "<p>old d</p>", nil, pdfD.att("old.pdf")) }
+	if _, err := rcExport(t, outD, export.Incremental, false, msgD()); err != nil {
+		t.Fatal(err)
+	}
+	rcLegacy(t, outD, "legd@x")
+	if st, err := rcExport(t, outD, export.Incremental, false, msgD()); err != nil || st.Retried != 1 {
+		t.Fatalf("the re-examination of an unknown record over an intact source: stats %+v, err %v", st, err)
+	}
+	if _, r := recordForID(t, outD, "legd@x"); !r.Complete() || r.Unknown() || len(rcAsRecorded(t, outD, r)) != 0 {
+		t.Fatalf("an unknown record over an intact source should resolve complete with fixity: %+v", r)
+	}
+
+	// (c) twin: the inline image is embedded in the page while the source delivers it.
+	outC := tmpDir(t)
+	logo := &rcBlob{data: rcPNG, cid: "logo", ctype: "image/png"}
+	msgC := func() *model.Message {
+		return rcMsg("legc@x", "Old C", `<p>logo</p><img src="cid:logo">`, nil, logo.att("logo.png"))
+	}
+	if _, err := rcExport(t, outC, export.Incremental, false, msgC()); err != nil {
+		t.Fatal(err)
+	}
+	_, recC := recordForID(t, outC, "legc@x")
+	pageC := rcRead(t, outC, recC.Path)
+	if !strings.Contains(string(pageC), "data:image/png;base64") {
+		t.Fatalf("the first capture should embed the inline image in the page")
+	}
+	rcLegacy(t, outC, "legc@x")
+
+	// (b) setup: an `unknown` record over files it has no fixity for.
+	outB := tmpDir(t)
+	pdfB := &rcBlob{data: []byte("%PDF-1.4 legacy b")}
+	msgB := func() *model.Message { return rcMsg("legb@x", "Old B", "<p>old b</p>", nil, pdfB.att("old.pdf")) }
+	if _, err := rcExport(t, outB, export.Incremental, false, msgB()); err != nil {
+		t.Fatal(err)
+	}
+	_, recB := recordForID(t, outB, "legb@x")
+	stemB := strings.TrimSuffix(recB.Path, ".html")
+	pageB, zipB := rcRead(t, outB, stemB+".html"), rcRead(t, outB, stemB+"-attachments.zip")
+	rcLegacy(t, outB, "legb@x")
+
 	t.Skip("MA-355 (F46, R1): a legacy or unknown record's first re-examination commits whatever the source holds now; encoder lands in RI-S1, turns green in RI-S5")
+
+	// (a) the attachment is now empty in a full run.
+	pdfA.data = nil
+	if _, err := rcExport(t, outA, export.Full, false, msgA()); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range rcAsRecorded(t, outA, recA) {
+		t.Errorf("(a) a full run over a source that holds less changed a v6 record's files: %s", bad)
+	}
+
+	// (b) the attachment is now empty at an unknown record's first re-examination:
+	// the files stay byte for byte, and the record is not left fillable for ever.
+	pdfB.data = nil
+	if _, err := rcExport(t, outB, export.Incremental, false, msgB()); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := rcDigest(t, filepath.Join(outB, filepath.FromSlash(stemB+"-attachments.zip"))); got != rcSum(zipB) {
+		t.Errorf("(b) the archived zip of an unknown record changed or was removed")
+	}
+	if !bytes.Equal(rcRead(t, outB, stemB+".html"), pageB) {
+		t.Errorf("(b) the archived page of an unknown record was rewritten")
+	}
+	if st, err := rcExport(t, outB, export.Incremental, false, msgB()); err != nil || st.Retried != 0 {
+		t.Errorf("(b) the next incremental run re-examined the record (retried=%d, err %v): an unverified record is never fillable", st.Retried, err)
+	}
+
+	// (c) the inline image is now empty: the page must keep the embedded image.
+	logo.data = nil
+	if _, err := rcExport(t, outC, export.Incremental, false, msgC()); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(rcRead(t, outC, recC.Path), pageC) {
+		t.Errorf("(c) the page lost its embedded inline image to a re-examination that found it empty")
+	}
 }
 
 // covers: MA-356, R28, R21, R17, R1, S50

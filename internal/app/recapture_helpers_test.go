@@ -251,6 +251,31 @@ func rcExport(t *testing.T, out string, mode export.Mode, raw bool, m *model.Mes
 	return exp.Stats, nil
 }
 
+// rcPNG is a valid 1x1 PNG, the bytes of an inline image the page embeds.
+var rcPNG, _ = base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+
+// rcSum is the fixity of b.
+func rcSum(b []byte) state.FileDigest {
+	sum := sha256.Sum256(b)
+	return state.FileDigest{SHA256: hex.EncodeToString(sum[:]), Size: int64(len(b))}
+}
+
+// rcLegacy rewrites the record of the message with id into what a version-1
+// manifest holds: its path and the `unknown` sentinel, with no fingerprint and no
+// fixity, so the next incremental run re-examines it once.
+func rcLegacy(t *testing.T, out, id string) {
+	t.Helper()
+	key, rec := recordForID(t, out, id)
+	man, err := state.Load(filepath.Join(out, ".mailarchive-manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	man.Add(key, state.Record{Path: rec.Path, Folder: rec.Folder, Missing: []string{state.UnknownSentinel}})
+	if err := man.Save(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func rcRead(t *testing.T, out, rel string) []byte {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join(out, filepath.FromSlash(rel)))
