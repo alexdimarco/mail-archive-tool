@@ -15,9 +15,10 @@ import (
 func archiveStoppedBeforeAnyMessage(t *testing.T) (*wsEnv, *archFixture, string) {
 	t.Helper()
 	e := newWsEnv(t)
-	f := buildArchiveAt(t, e.out)
+	dir := e.out
+	f := buildArchiveAt(t, dir)
 	os.Remove(e.tok)
-	arch := archSource("archive", e.out)
+	arch := archSource("archive", dir)
 	e.archFolders(arch)
 	id, res := e.preview(e.archSel(arch, entry("alice", true), entry("bob", false)))
 	if res["count"] != float64(6) {
@@ -25,16 +26,16 @@ func archiveStoppedBeforeAnyMessage(t *testing.T) (*wsEnv, *archFixture, string)
 	}
 	stash := filepath.Join(e.dir, "stash")
 	os.MkdirAll(stash, 0o755)
-	ents, _ := os.ReadDir(e.out)
+	ents, _ := os.ReadDir(dir)
 	for _, ent := range ents {
-		os.Rename(filepath.Join(e.out, ent.Name()), filepath.Join(stash, ent.Name()))
+		os.Rename(filepath.Join(dir, ent.Name()), filepath.Join(stash, ent.Name()))
 	}
 	run := e.ok("/api/exports/start", map[string]any{"previewId": id})["runId"].(string)
 	if last := e.waitRun()["last"].(map[string]any); last["stopId"] != "R-o2" {
 		t.Fatalf("the stopped export: %v", last)
 	}
 	for _, ent := range ents {
-		os.Rename(filepath.Join(stash, ent.Name()), filepath.Join(e.out, ent.Name()))
+		os.Rename(filepath.Join(stash, ent.Name()), filepath.Join(dir, ent.Name()))
 	}
 	return e, f, run
 }

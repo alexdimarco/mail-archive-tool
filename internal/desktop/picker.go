@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -93,12 +94,45 @@ func (d *dashboard) mkdirAction(w http.ResponseWriter, r *http.Request) {
 	for _, o := range d.ws.otherPaths() {
 		archives, other = append(archives, o), o
 	}
+	// And whatever the parent is, or lies inside, that is an archive folder, named or not: the folders the
+	// workspace remembers are a handful, and a folder it forgot is still one (E4-AI4).
+	for _, o := range archivesAbove(strings.TrimSpace(in.Parent)) {
+		archives, other = append(archives, o), o
+	}
 	path, err := d.copyEnv().CreateFolderOther(strings.TrimSpace(in.Parent), in.Name, archives, other)
 	if err != nil {
 		d.refuse(w, *copyRefusal(err))
 		return
 	}
 	d.reply(w, map[string]any{"ok": true, "path": path})
+}
+
+// archivesAbove are the archive folders (a folder with an archive's manifest in it) that parent is or lies
+// inside, by the path as it is given and as it resolves, nearest first. Create folder writes in none of them.
+func archivesAbove(parent string) []string {
+	var out []string
+	seen := map[string]bool{}
+	starts := []string{parent}
+	if r, err := filepath.EvalSymlinks(parent); err == nil && r != parent {
+		starts = append(starts, r)
+	}
+	for _, start := range starts {
+		if !filepath.IsAbs(start) {
+			continue
+		}
+		for p := filepath.Clean(start); ; {
+			if !seen[p] && app.ArchiveAt(p) {
+				seen[p] = true
+				out = append(out, p)
+			}
+			up := filepath.Dir(p)
+			if up == p {
+				break
+			}
+			p = up
+		}
+	}
+	return out
 }
 
 var _ = app.CopyRefusal{}

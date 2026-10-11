@@ -423,13 +423,26 @@ func (d *dashboard) archiveMessages(w http.ResponseWriter, r *http.Request, in w
 	// holds rows the snapshot does not know (newest first, so they come first) is shown without them, and
 	// the owner is told why, and that a list paged by offset may skip or repeat a message while the
 	// archive changes.
-	if notInSnapshot > 0 {
-		notes = append(notes, fmt.Sprintf("%s messages the search index lists for this folder are not shown: they are not in the archive as you loaded its folders (a backup or capture ran since). Load folders again to include them.", commaInt(notInSnapshot)))
-	}
+	changed := false
 	if size, mod, serr := a.StampNow(); serr == nil {
 		if s0, m0 := a.Stamp(); size != s0 || !mod.Equal(m0) {
-			notes = append(notes, "This archive changed since you loaded its folders (a backup or capture ran), so this list may skip or repeat a message. Load folders again.")
+			changed = true
 		}
+	}
+	if notInSnapshot > 0 {
+		if changed {
+			notes = append(notes, fmt.Sprintf("%s messages the search index lists for this folder are not shown: they are not in the archive as you loaded its folders (a backup or capture ran since). Load folders again to include them.", commaInt(notInSnapshot)))
+		} else {
+			// the manifest is as it was loaded, so loading again may include nothing: the index is written ahead of the
+			// manifest while a capture runs (loading again, when it has finished, includes those), and it lists a
+			// record the manifest no longer has until it is rebuilt (loading again never includes that one, and it
+			// cannot be exported). Both causes are named, each with its remedy.
+			notes = append(notes, fmt.Sprintf("%s messages the search index lists for this folder are not shown: the archive's manifest, as you loaded it, does not list them. A capture still running may have added them (Load folders again, when it has finished, includes them); a message removed from the archive stays in the search index until it is brought in step%s", commaInt(notInSnapshot),
+				rebuildAdvice(a.Other(), " (Rebuild search index in Maintenance does that).")))
+		}
+	}
+	if changed {
+		notes = append(notes, "This archive changed since you loaded its folders (a backup or capture ran), so this list may skip or repeat a message. Load folders again.")
 	}
 	if len(notes) > 0 {
 		out["listNote"] = strings.Join(notes, " ")
@@ -702,6 +715,9 @@ func (d *dashboard) retryArchive(w http.ResponseWriter, in runBody, info app.Cop
 		r := refusalL2Configured(info.Archive, d.cfg.effectiveOut())
 		d.refuseRun(w, in.RunID, r)
 		return
+	}
+	if info.Other && app.ArchiveAt(info.Archive) { // a retry names the folder as the Source control does: a dashboard started since has not heard of it (E4-AI4)
+		d.ws.rememberOther(info.Archive)
 	}
 	a, oerr := app.OpenArchive(info.Archive, app.ArchiveOptions{Other: info.Other})
 	if oerr != nil {
