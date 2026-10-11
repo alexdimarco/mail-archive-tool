@@ -14,6 +14,7 @@ package outlookcom
 
 import (
 	"errors"
+	"path/filepath"
 	"time"
 
 	"mail-archive-tool/internal/util"
@@ -44,6 +45,28 @@ type Options struct {
 type Store struct {
 	Name string // Outlook account/store display name
 	Path string // the .pst file created for it
+}
+
+// Skip is one folder or account that Outlook's export did not carry into a PST
+// (fault-isolation §4.6, FC28). Today the export only logged these; each is now
+// returned, so the run records it as a gap and ends partial instead of leaving a
+// silently smaller archive.
+type Skip struct {
+	Account string // Outlook's display name of the account (the store)
+	Folder  string // the top-level folder whose CopyTo failed; "" = the whole account
+	// Path is the .pst the account is exported to (the store the run archives, so
+	// the gap sits under its token); for AlreadyPST it is the file to archive
+	// directly instead.
+	Path   string
+	Reason string // the cause, as Outlook or COM reported it (untrusted text)
+	// AlreadyPST says the account is already a .pst file on disk: nothing is lost,
+	// it only is not copied, and its Path can be archived directly.
+	AlreadyPST bool
+}
+
+// PSTPath is the .pst the export writes for the account named account under outDir.
+func PSTPath(outDir, account string) string {
+	return filepath.Join(outDir, pstFileName(account))
 }
 
 // pstFileName derives a safe .pst file name for an Outlook account display name,

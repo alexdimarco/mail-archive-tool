@@ -135,12 +135,13 @@ func runHeadless(path string) int {
 	defer stop()
 
 	inputs := j.Inputs
+	var outlookSkips []outlookcom.Skip
 	if j.Outlook {
 		wait := 5 * time.Minute
 		if d, err := time.ParseDuration(j.OutlookSyncWait); err == nil {
 			wait = d
 		}
-		stores, cerr := outlookcom.CreatePSTs(filepath.Join(j.Out, "_outlook-pst"),
+		stores, skips, cerr := outlookcom.CreatePSTs(filepath.Join(j.Out, "_outlook-pst"),
 			outlookcom.Options{Sync: wait > 0, SyncWait: wait}, logger)
 		if cerr != nil {
 			logger.Printf("FAILED: %v", cerr)
@@ -152,6 +153,7 @@ func runHeadless(path string) int {
 		for _, s := range stores {
 			inputs = append(inputs, s.Path)
 		}
+		outlookSkips = skips
 	}
 	mode := export.Incremental
 	if strings.EqualFold(j.Mode, "full") {
@@ -168,7 +170,8 @@ func runHeadless(path string) int {
 	// Unattended: a vanished input on this existing archive is recorded as a
 	// failed run, exactly as the CLI's -unattended does (N13, R18).
 	opts := app.Options{Inputs: inputs, Auto: j.Auto, Out: j.Out, Mode: mode, Since: since,
-		CopyFirst: j.CopyFirst, Index: true, Pages: true, KeepRaw: j.KeepRaw, Unattended: true}
+		CopyFirst: j.CopyFirst, Index: true, Pages: true, KeepRaw: j.KeepRaw, Unattended: true,
+		OutlookSkips: outlookSkips}
 	logger.Printf("Scheduled job %q: exporting to %s", j.Name, j.Out)
 	result, runErr := app.Run(ctx, opts, logger, nil)
 	// "Done." only for a run that finished or was cancelled: a refused or failed
@@ -1128,11 +1131,12 @@ func runExport(c wizardChoice) error {
 	}()
 
 	inputs := c.inputs
+	var outlookSkips []outlookcom.Skip
 	// Outlook-automation path: have Outlook write a fresh PST per account, then
 	// archive those. Reliable for Exchange/IMAP .ost caches go-pst can't read.
 	if c.outlookCOM {
 		_ = dlg.Text("Running Send/Receive, then exporting each account to a PST…\nThis can take several minutes for large mailboxes.")
-		stores, cerr := outlookcom.CreatePSTs(filepath.Join(c.out, "_outlook-pst"),
+		stores, skips, cerr := outlookcom.CreatePSTs(filepath.Join(c.out, "_outlook-pst"),
 			outlookcom.Options{Sync: true, SyncWait: 5 * time.Minute}, logger)
 		if cerr != nil {
 			_ = dlg.Close()
@@ -1142,6 +1146,7 @@ func runExport(c wizardChoice) error {
 		for _, s := range stores {
 			inputs = append(inputs, s.Path)
 		}
+		outlookSkips = skips
 	}
 
 	var since time.Time
@@ -1158,6 +1163,8 @@ func runExport(c wizardChoice) error {
 		Index:     true,
 		Pages:     true,
 		KeepRaw:   c.keepRaw,
+
+		OutlookSkips: outlookSkips,
 	}
 
 	var ticks int

@@ -53,6 +53,12 @@ type Options struct {
 	// P10). The run records them in its last-run record, where `status` WARNs
 	// them.
 	Warnings []state.RunWarning
+	// OutlookSkips are the folders and accounts `-outlook`'s Outlook export did not
+	// carry into its PSTs (outlookcom.CreatePSTs): the run records each as a gap
+	// (outlook-export-skipped, fillable; or outlook-account-skipped, info), so the
+	// archive is never silently smaller than the mailbox and the run is partial
+	// (FC28).
+	OutlookSkips []outlookcom.Skip
 	// Unattended marks a scheduled run (the CLI's -unattended, the GUI's
 	// headless job). A discovery refusal (a vanished -input, no sources found)
 	// on an archive that already exists is then recorded as a failed run, so
@@ -378,6 +384,9 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	if n := manifest.ReclassLegacyPlaceholders(model.LegacyStubIdentity()); n > 0 {
 		logger.Printf("re-classed %d legacy placeholder(s); this version records each unreadable message separately", n)
 	}
+	// What -outlook's export skipped is this run's observation: recorded before the
+	// walk, under the token of the PST it belongs to.
+	recordOutlookSkips(manifest, opts.OutlookSkips, runAt, logger)
 
 	// Optional search index, fed as each message is written.
 	var idx *index.Index
