@@ -103,6 +103,19 @@ func TestArchiveExportOffersRetryOnlyWhileARetryableFailureIsLeft(t *testing.T) 
 		}
 	})
 
+	t.Run("the words fit the source: no backup of an archive for a Microsoft 365 export", func(t *testing.T) {
+		m365 := noRetryText("failed", 2, 0, "m365")
+		archive := noRetryText("failed", 2, 0, "archive")
+		for _, want := range []string{"The 2 messages that failed in this export can't be tried again", "Which ones?"} {
+			if !strings.Contains(m365, want) || !strings.Contains(archive, want) {
+				t.Errorf("a retry with nothing to retry lacks %q:\n%s\n%s", want, m365, archive)
+			}
+		}
+		if strings.Contains(m365, "archive") || !strings.Contains(archive, "backup of the archive") || !strings.Contains(archive, "plain folder") {
+			t.Errorf("the words do not fit the source:\n%s\n%s", m365, archive)
+		}
+	})
+
 	t.Run("a terminal and a retryable failure: the offer stays, for the retryable one only", func(t *testing.T) {
 		e, a, res := run(t, func(a *ceArchive) {
 			linkInPlaceOf(t, a, "hello", "client-mail")
