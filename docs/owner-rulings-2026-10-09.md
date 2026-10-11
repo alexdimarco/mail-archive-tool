@@ -1270,6 +1270,25 @@ asks for); a failed page write leaves the zip and eml no longer matching their r
 fixes are RI-S2 (F48), RI-S4 and RI-S5, which wait on ESC-2 and ESC-3. **Owner attention:** F46 and F48
 are data-loss paths in released behaviour, not only in this branch; a note for the release plan.
 
+### 13.20 FI-S2a's adversarial pass (merged 2026-10-11)
+
+Report `docs/review-fault-isolation-s2a-adversarial.md`: 24 found, 12 confirmed, none refuted, 12
+fixed with tombstone tests, each reproduced from byte-patched PST fixtures. The serious ones: a store
+display name with one DEL byte permanently killed every run and silently dropped gaps (high); a 2-byte
+row-size lie in a table header made a store, folder or part of one vanish and erased old gaps; the
+lifetime ledger cap was bypassed by per-folder overflow entries; a copy in another folder closed a
+failed copy's gap; an attachment-stream panic lost the whole message and leaked a temp file; the local
+breaker let a source's own too-deep paths end every later source. `TestCorruptedMessageCountHidesAFolder`
+(the R1 gap, formerly a skip) is now a permanent guard. **Open, owner decisions, each a skip encoder:**
+(1) **ESC-S2A-1:** a sub-folder flag flipped true to false hides a whole subtree with no trace; go-pst's
+gate (kept by FC30) believes the flag, and the healthy fixture itself holds hierarchy tables under
+flagged leaves, so reading every leaf's table changes what is archived. [Recommended: accept for now,
+state it as a known limit; revisit with a real PST corpus.] (2) **K2**, the interim stub hole
+(§13.17 item 1), unchanged: land FI-S2b before any release. (3) **ESC-S2A-2:** the row-size check
+follows the MS-PST layout; a real producer that pads rows would get a folder-partially-read gap (no
+capture lost); to be confirmed on real Outlook PSTs with MA-504 in the Windows lab. FI-S3 (Graph
+isolation) may now start: its dependency, S2a, has its review.
+
 ### 13.7 Escalations from LC-C1's adversarial pass (merged 2026-10-10)
 
 None blocks anything: each has a skip encoder or a safe interim in force.
