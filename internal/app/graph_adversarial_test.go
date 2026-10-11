@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/graph/graphtest"
+	"mail-archive-tool/internal/state"
 )
 
 // The tombstones of the FI-S3 adversarial pass (docs/review-fault-isolation-s3-
@@ -35,6 +37,53 @@ func wantNoTerminalControl(t *testing.T, what, s string) {
 	t.Helper()
 	if strings.ContainsAny(s, "\x1b\x07‮") {
 		t.Errorf("%s carries a terminal escape or a bidi override: %q", what, s)
+	}
+}
+
+// covers: MA-314, R10, R17, S46
+// S3-AO3: a $value whose end the framing does not mark (200 with neither a
+// Content-Length nor chunked encoding: the body ends where the connection closes)
+// cannot be told from a dropped connection, so it is a transport fault and never a
+// complete message: its record would be terminal (SourceComplete) and the
+// Message-ID fast path would skip it on every later run, a silent permanent
+// truncation. It is a fetch-transport gap (the same as the Content-Length and
+// chunked truncations), the message is not archived, and the next healthy run
+// archives it whole and closes the gap. Twin first: a gzip-compressed answer, whose
+// length net/http does not report, is complete (the gzip trailer marks its end) and
+// is archived.
+func TestGraphCloseDelimitedBodyIsATransportFault(t *testing.T) {
+	s := sweepServer(false, []string{"A1", "A2", "A3"}, nil, nil)
+	defer s.Close()
+	out := tmpDir(t)
+	g := isoOptions(s)
+
+	s.SetValue("A2", graphtest.Gzipped(graphtest.Body("A2")))
+	if res, err := sweepRun(g, out, export.Incremental); err != nil || res.Stats.Exported != 3 || len(graphGaps(t, out)) != 0 {
+		t.Fatalf("the twin (a gzip answer): exported %d, err %v, gaps %d; want 3, nil, 0", res.Stats.Exported, err, len(graphGaps(t, out)))
+	}
+
+	out = tmpDir(t)
+	whole := graphtest.Body("A2")
+	s.SetValue("A2", graphtest.CloseDelimited(whole[:30]))
+	if _, err := sweepRun(g, out, export.Incremental); !errors.Is(err, ErrPartial) {
+		t.Fatalf("a close-delimited $value: the run returned %v, want ErrPartial (a truncated body is not a capture)", err)
+	}
+	if archived(t, out, "a2@x") {
+		t.Fatal("A2 was archived from a body its framing does not show to be whole")
+	}
+	if !archived(t, out, "a1@x") || !archived(t, out, "a3@x") {
+		t.Error("the items around A2 were not archived")
+	}
+	gaps := graphGaps(t, out)
+	if len(gaps) != 1 || gaps[0].Locator != "graph:A2" || gaps[0].Reason != "fetch-transport" || gaps[0].Class != state.ClassFillable {
+		t.Fatalf("the ledger holds %+v; want one fillable fetch-transport gap at graph:A2", gaps)
+	}
+
+	s.SetValue("A2", nil)
+	res, err := sweepRun(g, out, export.Incremental)
+	if err != nil || !archived(t, out, "a2@x") || len(graphGaps(t, out)) != 0 || res.Gaps.Recovered != 1 {
+		t.Errorf("the healed run: err %v, archived %v, gaps %+v, recovered %d; want A2 archived whole and its gap closed as recovered",
+			err, archived(t, out, "a2@x"), graphGaps(t, out), res.Gaps.Recovered)
 	}
 }
 

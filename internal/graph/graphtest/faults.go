@@ -5,6 +5,8 @@
 package graphtest
 
 import (
+	"bytes"
+	"compress/gzip"
 	"io"
 	"net/http"
 	"strconv"
@@ -162,6 +164,43 @@ func Sized(n int64, contentLength bool) http.HandlerFunc {
 			}
 			left -= int64(len(c))
 		}
+	}
+}
+
+// CloseDelimited answers 200 with neither a Content-Length nor a chunked body, as
+// an HTTP/1.0-style proxy does, sends part and closes the connection cleanly: a
+// client that takes the close for the end of the message holds a truncated body
+// that nothing in the framing says is short (S3-AO3).
+func CloseDelimited(part string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			http.Error(w, "no hijack", http.StatusInternalServerError)
+			return
+		}
+		conn, buf, err := hj.Hijack()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		io.WriteString(buf, "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: text/plain\r\n\r\n"+part)
+		buf.Flush()
+	}
+}
+
+// Gzipped answers 200 with body gzip-compressed (Content-Encoding: gzip, length
+// declared), as Graph may when the client accepts it: net/http decompresses it
+// and hands the client a response of unknown length, which is complete.
+func Gzipped(body string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var z bytes.Buffer
+		zw := gzip.NewWriter(&z)
+		io.WriteString(zw, body)
+		zw.Close()
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Set("Content-Length", strconv.Itoa(z.Len()))
+		w.WriteHeader(http.StatusOK)
+		w.Write(z.Bytes())
 	}
 }
 

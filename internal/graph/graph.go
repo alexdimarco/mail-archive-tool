@@ -16,6 +16,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -845,6 +846,16 @@ func (c *Client) MIMETo(ctx context.Context, userID, messageID string, w io.Writ
 	}
 	if maxBytes > 0 && resp.ContentLength > maxBytes {
 		return 0, &TooLargeError{MessageID: messageID, Limit: maxBytes, Declared: resp.ContentLength}
+	}
+	// A body whose end the framing does not mark (HTTP/1.x with neither a
+	// Content-Length nor chunked encoding) ends where the connection closes, and
+	// a clean close of a cut-short body reads as a complete one: net/http reports
+	// EOF, not an error. Such an answer is refused as a dropped connection (a
+	// transport fault), never kept as a message, whose record would be terminal
+	// (S3-AO3). A gzip answer reports no length either, but its trailer marks the
+	// end (a cut one is an unexpected EOF), and HTTP/2 frames its own end.
+	if resp.ProtoMajor == 1 && resp.ContentLength < 0 && !resp.Uncompressed && !slices.Contains(resp.TransferEncoding, "chunked") {
+		return 0, mimeStop(ctx, dctx, fmt.Errorf("download message %s: %w (the answer is neither length-delimited nor chunked, so a cut-short body cannot be told from a whole one)", messageID, io.ErrUnexpectedEOF))
 	}
 	var src io.Reader = body
 	if maxBytes > 0 {
