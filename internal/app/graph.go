@@ -89,7 +89,7 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	// told one. App mode returns the given mailboxes unchanged.
 	client, mailboxes, err := buildGraphClient(ctx, g, logger)
 	if err != nil {
-		return Result{}, asFailure(ctx, err)
+		return Result{}, cleanErr(asFailure(ctx, err))
 	}
 	g.Mailboxes = mailboxes
 	if len(g.Mailboxes) == 0 {
@@ -424,11 +424,13 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		// Carry the first per-mailbox error (including any AADSTS code) into the
 		// returned error so it lands in the last-run record and `status` can fire
 		// the expired-secret remedy (friction #6).
+		// A run whose first failure is the breaker's refusal is an outage and is
+		// recorded as one (asOutage), not left to the reader of its text (S3-AC5).
 		if firstErr != nil {
 			if runBreaker != nil {
-				return result, fmt.Errorf("%d mailbox(es) failed; first error: %w; %w", failures, asFailure(ctx, firstErr), runBreaker)
+				return result, asOutage(fmt.Errorf("%d mailbox(es) failed; first error: %w; %w", failures, asFailure(ctx, firstErr), runBreaker), firstErr)
 			}
-			return result, fmt.Errorf("%d mailbox(es) failed; first error: %w", failures, asFailure(ctx, firstErr))
+			return result, asOutage(fmt.Errorf("%d mailbox(es) failed; first error: %w", failures, asFailure(ctx, firstErr)), firstErr)
 		}
 		return result, fmt.Errorf("%d mailbox(es) failed", failures)
 	}
@@ -583,7 +585,7 @@ func runGraphMailbox(ctx context.Context, lr *localRun, client *graph.Client, ma
 	// unwalked folder — are never marked gone by the sweep below (§3.4/S38).
 	folders, err := client.Folders(ctx, mailbox, filter)
 	if err != nil {
-		return fmt.Errorf("list folders: %w", err)
+		return cleanErr(fmt.Errorf("list folders: %w", err))
 	}
 
 	walked := state.NewWalkedFolders()
@@ -740,14 +742,20 @@ func runGraphMailbox(ctx context.Context, lr *localRun, client *graph.Client, ma
 			// and not downloaded (§4.8.2). One the archive already holds was skipped
 			// above and kept its stamp.
 			if w.s.unwritable[filepath.Join(append([]string{lr.out, token}, f.Path...)...)] {
-				w.faultIdentity(ref, nil)
-				w.folderUnwritable(folderKey, "")
+				w.folderUnwritable(folderKey, "", w.faultIdentity(ref, nil))
 				return nil
 			}
 			began := time.Now()
 			data, fetchErr := client.MIME(ctx, mailbox, ref.ID)
 			if fetchErr != nil {
 				return w.fetchFault(ctx, ref, folderKey, fetchErr, time.Since(began))
+			}
+			// A 200 that is not a message (an HTML page, an empty body: a captive portal
+			// or a proxy answering for the service) is a fault of this item's download,
+			// not a message the parser would accept headerless (S3-AO2). It is not a
+			// success, so it does not end the run of consecutive faults either.
+			if !looksLikeMessage(data) {
+				return w.fetchFault(ctx, ref, folderKey, errNotAMessage, time.Since(began))
 			}
 			w.br.attempt(attemptOK, 0) // a download that succeeded ends the run of consecutive faults
 			m := parseRFC822(data)

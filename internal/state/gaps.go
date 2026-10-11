@@ -1,6 +1,8 @@
 package state
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"sort"
 	"strings"
 	"time"
@@ -125,6 +127,25 @@ func boundRunes(s string, max int) string {
 		return s
 	}
 	return string([]rune(s)[:max])
+}
+
+// BoundLocator is the locator to build a ledger key from when the locator's text is
+// the source's own (a Graph item id, a folder id): raw itself when the ledger would
+// store it unchanged, else its cleaned, shortened form with a digest of raw. The
+// ledger strips control characters and cuts a locator at its bound, so a key built
+// from the raw text found no entry (a recovery or a known-poison lookup missed it)
+// and two ids that agreed on the first 512 bytes, or differed only in stripped
+// characters, shared one entry and the count of what is missing was too low
+// (S3-AO9). With the digest every distinct raw locator has its own entry, and the
+// text ObserveGap stores is the text a lookup builds. The result is a fixed point of
+// the ledger's own cleaning.
+func BoundLocator(raw string) string {
+	if boundString(raw, maxGapLocator) == raw {
+		return raw
+	}
+	sum := sha256.Sum256([]byte(raw))
+	suffix := "#" + hex.EncodeToString(sum[:8])
+	return boundString(raw, maxGapLocator-len(suffix)) + suffix
 }
 
 // GapFolder is the spelling the ledger stores a folder path in: control and bidi
@@ -266,9 +287,15 @@ func (m *Manifest) ObserveGap(g CaptureGap, runAt time.Time) (key string, create
 		// Two observations of one key in ONE run (two copies of a message in different
 		// folders share an ident: key): the milder never downgrades the other's word (a
 		// refresh-failed note over an export-failed loss, S2A-AI1).
+		// What one run observed of the key is one answer to "did the sweep wait for
+		// it": any observation that deferred it makes the entry say so, whichever
+		// came last (a folder gap counts many messages, S3-AI3).
+		defers := g.DefersGone || (sameRun && old.DefersGone)
 		if !sameRun || severity(old.Class) <= severity(g.Class) {
 			old.Reason, old.Class, old.Detail, old.Folder = g.Reason, g.Class, g.Detail, g.Folder
-			old.DefersGone = g.DefersGone
+			old.DefersGone = defers
+		} else if defers {
+			old.DefersGone = true
 		}
 		if g.Subject != "" {
 			old.Subject = g.Subject
@@ -434,7 +461,9 @@ func exportStageReason(reason string) bool {
 // gap that the run did not look for: an item gap dated before since is never
 // closed by absence, and in a run with since set an export-stage gap
 // (export-failed, export-panic, folder-unwritable) closes only by recovery or by
-// being observed again. A walk aborted by a run-level fault closes nothing: the
+// being observed again; an overflow entry (items the ledger could not list, whose
+// dates are unknown) is kept by every run with since set. A walk aborted by a
+// run-level fault closes nothing: the
 // caller does not call this. It returns how many entries it closed.
 func (m *Manifest) CloseUnobserved(token string, scopeFn func(CaptureGap) bool, runAt, since time.Time) (closed int) {
 	m.mu.Lock()
@@ -447,7 +476,9 @@ func (m *Manifest) CloseUnobserved(token string, scopeFn func(CaptureGap) bool, 
 			continue
 		}
 		if !since.IsZero() {
-			if exportStageReason(g.Reason) {
+			// An overflow entry stands for items the ledger could not list, and it has
+			// no date: a window cannot say they are outside it (S3-AI2).
+			if g.Scope == GapScopeOverflow || exportStageReason(g.Reason) {
 				continue
 			}
 			if g.Scope == GapScopeItem && g.Received != "" {

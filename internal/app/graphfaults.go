@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -26,6 +27,78 @@ import (
 // parseRFC822 is how the walk parses a message's MIME: source.ParseRFC822, a
 // variable so a test can make one parse fail the way a crafted message would.
 var parseRFC822 = source.ParseRFC822
+
+// errNotAMessage is what a 200 $value that is no RFC 5322 message becomes: the
+// item's fetch-failed fault (S3-AO2).
+var errNotAMessage = errors.New("the answer to the download is not an e-mail message (it has no RFC 5322 header)")
+
+// messageFields are the header fields a message the service converted carries at
+// least one of (lower case). An answer whose header block has none of them is a
+// page or an error text that happens to have a colon in it (S3-AO2).
+var messageFields = map[string]bool{
+	"from": true, "date": true, "message-id": true, "subject": true, "to": true,
+	"received": true, "mime-version": true, "content-type": true,
+	"return-path": true, "sender": true,
+}
+
+// headerScanLimit bounds how much of an answer looksLikeMessage reads for a
+// corroborating field: a header block longer than this is read no further.
+const headerScanLimit = 256 << 10
+
+// looksLikeMessage says whether data starts like an RFC 5322 message: its first
+// line is a header field (a name of letters, digits, hyphen and underscore, then a
+// colon) and its header block (up to the first blank line) holds at least one of the
+// fields every message has (messageFields). Every message Graph converts opens with
+// headers; an HTML page, an empty body, a plain sentence, "Error: sign in required"
+// and a one-line JSON error do not. It is a check that an answer is a message at all,
+// not that it parses; an answer that imitates a header block is indistinguishable
+// from a message and is archived as one.
+func looksLikeMessage(data []byte) bool {
+	if len(data) > headerScanLimit {
+		data = data[:headerScanLimit]
+	}
+	corroborated := false
+	for n := 0; len(data) > 0; n++ {
+		line := data
+		if i := bytes.IndexByte(data, '\n'); i >= 0 {
+			line, data = data[:i], data[i+1:]
+		} else {
+			data = nil
+		}
+		line = bytes.TrimSuffix(line, []byte("\r"))
+		if len(line) == 0 {
+			break // the blank line that ends the header block
+		}
+		if line[0] == ' ' || line[0] == '\t' {
+			if n == 0 {
+				return false // a header block does not open with a folded line
+			}
+			continue
+		}
+		i := bytes.IndexByte(line, ':')
+		if i <= 0 {
+			if n == 0 {
+				return false
+			}
+			continue
+		}
+		name := line[:i]
+		for _, c := range name {
+			if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_' {
+				continue
+			}
+			if n == 0 {
+				return false
+			}
+			name = nil
+			break
+		}
+		if messageFields[strings.ToLower(string(name))] {
+			corroborated = true
+		}
+	}
+	return corroborated
+}
 
 // classifyFetch sorts a failed Graph request for one message (§4.8.1). It wraps
 // graph.Classify, which both consumers share, with capture's own readings: a
@@ -77,7 +150,14 @@ func classifyListing(err error, walk context.Context) (fatal, transport bool) {
 // immutable id, which survives a move and a folder rename, so a moved item
 // re-observes its own entry instead of stranding it (§4.8.2, FC8(5), FC14);
 // otherwise it is the id the listing gave.
-func graphLocator(ref graph.MessageRef) string { return "graph:" + ref.ID }
+//
+// The locator is built through state.BoundLocator, so the key every lookup builds
+// (recovery, the known-poison read) is the key the ledger stored the entry under,
+// whatever the server's id looks like, and two ids never share an entry (S3-AO9).
+func graphLocator(ref graph.MessageRef) string { return state.BoundLocator("graph:" + ref.ID) }
+
+// folderLocator is the ledger locator of a folder-scope gap: folder:<id or path>.
+func folderLocator(s string) string { return state.BoundLocator("folder:" + s) }
 
 // runPartial says, before finish has built the run's Result, whether the run
 // observed something it could not capture (§4.1): a fillable or terminal gap its
@@ -116,11 +196,36 @@ func (w *mailboxWalk) stub(ref graph.MessageRef, m *model.Message, folderKey str
 		w.s.observe(graphItemGap(ref, folderKey, "refresh-failed", state.ClassInfo, "a newer read of this item could not be parsed; the archived copy was kept unchanged"))
 		return true
 	}
-	if n := w.manifest.AdoptLegacyGraphStubs(w.token, ref.PhysID, ref.Received, w.lr.runAt); n > 0 {
+	if n := w.manifest.AdoptLegacyGraphStubs(w.token, ref.PhysID, ref.Received, w.lr.runAt, legacyStubIdentity); n > 0 {
 		w.lr.logger.Printf("re-classed %d legacy placeholder(s); this version records each unreadable message separately", n)
 	}
 	m.InternetMessageID = ref.InternetMessageID
 	return false
+}
+
+// cleanedError is an error whose text is cleaned (control and bidi characters
+// stripped) and whose chain is kept: errors.Is and errors.As still reach the
+// typed fault inside. The words of a Graph error are the endpoint's own and go to
+// the operator's terminal, the run log and the returned error, so a fault that ends
+// a mailbox is cleaned where it is built, as S2A's are (S3-AO7).
+type cleanedError struct{ err error }
+
+func (e *cleanedError) Error() string { return cleanText(e.err.Error()) }
+func (e *cleanedError) Unwrap() error { return e.err }
+
+// cleanErr is err with clean text: err itself when its text is clean already.
+func cleanErr(err error) error {
+	if err == nil || cleanText(err.Error()) == err.Error() {
+		return err
+	}
+	return &cleanedError{err}
+}
+
+// legacyStubIdentity is the identity an older build gave the Graph stub of a
+// message it could not parse, received at t: the content hash of the placeholder
+// subject and t (§4.8.2, FC27). The adoption of such a stub matches on it.
+func legacyStubIdentity(t time.Time) string {
+	return (&model.Message{Subject: state.LegacyPlaceholderSubject, Received: t}).Identity()
 }
 
 // walkAbort wraps an error that ends the mailbox's walk, so the walk's own caller
@@ -243,7 +348,12 @@ func (w *mailboxWalk) faultIdentity(ref graph.MessageRef, m *model.Message) (def
 	if !matched {
 		w.spare.NoPhysID = true
 		if ref.PhysID == "" {
+			// This run's ids are not immutable (or the item has none), so no record can
+			// be told from the fault's item by its id: a record that holds an immutable
+			// id and whose listing and parsed Message-IDs differ is as likely to be it
+			// as a content-hash one (S3-AI1, S3-AO4).
 			w.spare.ShaIdentity = true
+			w.spare.AllRecords = true
 		}
 	}
 	return !matched
@@ -289,7 +399,7 @@ func (w *mailboxWalk) recovered(ref graph.MessageRef) {
 func (w *mailboxWalk) fetchFault(ctx context.Context, ref graph.MessageRef, folderKey string, err error, took time.Duration) error {
 	reason, class, fatal, transport := classifyFetch(err, ctx)
 	if fatal {
-		return &walkAbort{fmt.Errorf("fetch message %s: %w", ref.ID, err)}
+		return &walkAbort{cleanErr(fmt.Errorf("fetch message %s: %w", ref.ID, err))}
 	}
 	// Known poison is read before this fault is recorded, which would stamp the gap.
 	kind := attemptItemFault
@@ -329,10 +439,10 @@ func (w *mailboxWalk) sameToken(identity string) []state.IdentRef {
 func (w *mailboxWalk) listingFault(ctx context.Context, f graph.Folder, folderKey string, err error) error {
 	fatal, transport := classifyListing(err, ctx)
 	if fatal {
-		return err
+		return cleanErr(err)
 	}
 	w.folderFault = true
-	w.s.observe(state.CaptureGap{Folder: folderKey, Scope: state.GapScopeFolder, Locator: "folder:" + f.ID,
+	w.s.observe(state.CaptureGap{Folder: folderKey, Scope: state.GapScopeFolder, Locator: folderLocator(f.ID),
 		Reason: "folder-list-failed", Class: state.ClassFillable, Detail: err.Error()})
 	// A listing the service could not answer counts toward the breaker as a fault
 	// of the service; one it refused or one the guard stopped is the folder's own.
@@ -346,7 +456,7 @@ func (w *mailboxWalk) listingFault(ctx context.Context, f graph.Folder, folderKe
 // earlier is answered, and the folder is in the scope of closing gaps.
 func (w *mailboxWalk) folderRead(f graph.Folder, folderKey string) {
 	w.walkedGap[state.GapFolder(folderKey)] = true
-	if w.manifest.CloseGapReason(state.GapKey(w.token, state.GapScopeFolder, "folder:"+f.ID), "folder-list-failed") {
+	if w.manifest.CloseGapReason(state.GapKey(w.token, state.GapScopeFolder, folderLocator(f.ID)), "folder-list-failed") {
 		w.lr.recovered++
 	}
 }
@@ -358,9 +468,13 @@ func (w *mailboxWalk) covered(g state.CaptureGap) bool { return w.walkedGap[g.Fo
 // folderUnwritable records a message that would need a download into a folder
 // whose directory could not be created earlier in this run: it is counted under
 // the folder's gap and not downloaded (§4.8.2).
-func (w *mailboxWalk) folderUnwritable(folderKey string, detail string) {
-	w.s.observe(state.CaptureGap{Folder: folderKey, Scope: state.GapScopeFolder, Locator: "folder:" + folderKey,
-		Reason: "folder-unwritable", Class: state.ClassFillable, Detail: detail, Skipped: 1})
+//
+// defers is what faultIdentity said of the message: the gap records that the sweep
+// was deferred because of a message it counted (S3-AI3), and the ledger keeps it
+// when any observation of the run says so.
+func (w *mailboxWalk) folderUnwritable(folderKey string, detail string, defers bool) {
+	w.s.observe(state.CaptureGap{Folder: folderKey, Scope: state.GapScopeFolder, Locator: folderLocator(folderKey),
+		Reason: "folder-unwritable", Class: state.ClassFillable, Detail: detail, Skipped: 1, DefersGone: defers})
 }
 
 // exportOne exports one parsed message and sorts what goes wrong by whose fault
@@ -388,7 +502,7 @@ func (w *mailboxWalk) exportOne(ref graph.MessageRef, f graph.Folder, folderKey 
 			w.recovered(ref)
 			// A folder the archive could not write earlier is writable now: its gap is
 			// answered, as the first message that lands in it shows.
-			if w.manifest.CloseGapReason(state.GapKey(w.token, state.GapScopeFolder, "folder:"+folderKey), "folder-unwritable") {
+			if w.manifest.CloseGapReason(state.GapKey(w.token, state.GapScopeFolder, folderLocator(folderKey)), "folder-unwritable") {
 				lr.recovered++
 			}
 		}
@@ -411,8 +525,7 @@ func (w *mailboxWalk) exportOne(ref graph.MessageRef, f graph.Folder, folderKey 
 		}
 		s.unwritable[fe.Dir] = true
 		lr.exp.Stats.ExportFaults++
-		w.faultIdentity(ref, m)
-		w.folderUnwritable(folderKey, exportErr.Error())
+		w.folderUnwritable(folderKey, exportErr.Error(), w.faultIdentity(ref, m))
 	case errors.As(exportErr, &ie):
 		if perr := lr.probe(s); perr != nil {
 			return &walkAbort{perr}

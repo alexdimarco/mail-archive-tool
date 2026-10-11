@@ -308,7 +308,20 @@ func GapStuckRemedy(reason, sourceKind, errnoClass string) string {
 			return "Microsoft 365 will not export this item; save a copy from Outlook on the web. The row stays listed while the item remains in the mailbox"
 		case "fetch-transport", "fetch-timeout":
 			return "Microsoft 365 has not delivered this item on any run; save a copy from Outlook on the web. The row stays listed while the item remains in the mailbox"
+		case "vanished-at-fetch":
+			return "Microsoft 365 still lists this item but answers 'not found' when asked for it, on every run; save a copy from Outlook on the web. The row stays listed while the item remains in the mailbox"
 		}
 	}
 	return GapRemedy(reason, sourceKind, errnoClass)
+}
+
+// GapStuckWhy is GapWhy for a gap that has failed on every run for the stuck
+// threshold. A Graph item whose download answers 'not found' on every run was not
+// deleted while the run was reading it: the mailbox still lists it (S3-AI5). Every
+// other reason reads as it does before.
+func GapStuckWhy(reason, sourceKind string) string {
+	if sourceKind == SourceGraph && reason == "vanished-at-fetch" {
+		return "the mailbox still lists this message, but Microsoft 365 reports it missing when asked for it"
+	}
+	return GapWhy(reason)
 }

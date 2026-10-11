@@ -23,6 +23,12 @@ type SweepSpare struct {
 	// the listing's ids are not immutable, a fault with no Message-ID cannot be told
 	// from any content-hash record, whatever its id (§4.8.3 rule 3).
 	ShaIdentity bool
+	// AllRecords spares every record of the mailbox: when this run's listing did not
+	// confirm immutable ids, a fault whose identity matched no record can be the
+	// message of any record at all, one that holds an immutable id included (its
+	// listing and parsed Message-IDs may differ, so no Message-ID names it), and the
+	// run cannot match ids to tell (S3-AI1).
+	AllRecords bool
 	// LegacyPlaceholders spares the records an adoption re-classed to the info label
 	// legacy-placeholder: such a record stands for a message that now has a record of
 	// its own, and it is never marked gone because its identity changed (FC27).
@@ -31,6 +37,8 @@ type SweepSpare struct {
 
 func (s SweepSpare) spares(key string, r Record) bool {
 	switch {
+	case s.AllRecords:
+		return true
 	case s.NoPhysID && r.PhysID == "":
 		return true
 	case s.ShaIdentity && strings.HasPrefix(identityOf(key), "sha:"):
@@ -112,7 +120,16 @@ func (m *Manifest) PhysIDKeys(token string) map[string][]string {
 // match is stamped seen (so this run's sweep does not mark it gone) and re-classed
 // to the info label legacy-placeholder, as the local legacy stubs are (§6); the
 // sweep then spares it for good. It returns how many it adopted.
-func (m *Manifest) AdoptLegacyGraphStubs(token, physID string, received, seen time.Time) int {
+//
+// legacyIdentity is the identity an older build gave the stub of a message received
+// at t (the content hash of the placeholder subject and t, nothing else): a record
+// is adopted only when its identity IS that one for this message's received time, so
+// a real archived message that merely looks like a stub (the placeholder subject, no
+// Message-ID, no body, the same second) is no match (S3-AI8). The records with that
+// identity are read from the identity index, so a walk's every unparseable message
+// costs a lookup, not a scan of the archive (S3-AI11). A nil legacyIdentity checks no
+// identity and looks at every record of the token.
+func (m *Manifest) AdoptLegacyGraphStubs(token, physID string, received, seen time.Time, legacyIdentity func(time.Time) string) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	prefix := token + keySeparator
@@ -120,10 +137,30 @@ func (m *Manifest) AdoptLegacyGraphStubs(token, physID string, received, seen ti
 	if !received.IsZero() {
 		when = received.UTC().Format(time.RFC3339)
 	}
+	var candidates []string
+	wantIdentity := ""
+	if legacyIdentity == nil {
+		candidates = make([]string, 0, len(m.Entries))
+		for key := range m.Entries {
+			candidates = append(candidates, key)
+		}
+	} else {
+		wantIdentity = legacyIdentity(received)
+		if m.byIdent == nil {
+			m.buildIdentIndexLocked()
+		}
+		for _, ref := range m.byIdent[wantIdentity] {
+			candidates = append(candidates, ref.Key)
+		}
+	}
 	n := 0
-	for key, r := range m.Entries {
-		if !strings.HasPrefix(key, prefix) || r.Subject != LegacyPlaceholderSubject || !strings.HasPrefix(identityOf(key), "sha:") ||
+	for _, key := range candidates {
+		r, ok := m.Entries[key]
+		if !ok || !strings.HasPrefix(key, prefix) || r.Subject != LegacyPlaceholderSubject || !strings.HasPrefix(identityOf(key), "sha:") ||
 			len(r.Terminal) != 1 || r.Terminal[0] != MissingBody || len(r.Missing) != 0 {
+			continue
+		}
+		if legacyIdentity != nil && identityOf(key) != wantIdentity {
 			continue
 		}
 		if !(physID != "" && recordHasPhysID(r, physID)) && !(when != "" && r.Date == when) {

@@ -350,3 +350,38 @@ func TestGraphRetryAfterIsClamped(t *testing.T) {
 		t.Errorf("the run took %v: the hour's Retry-After was not clamped", took)
 	}
 }
+
+// covers: MA-313, R5, R12, R18, S46
+// S3-AO6 / S3-AC3: the Retry-After clamp holds for EVERY value the server can send.
+// A value whose seconds overflow time.Duration (9223372037 s is 9.2e18 ns, past
+// int64) used to wrap negative, so the sleep fired at once and a throttling service
+// that asked for a long back-off got none: all six attempts went out back to back.
+// Scaled: each sleep is clamped to 100 ms and a request's sleeps to 500 ms in all,
+// so a request that is throttled to the end waits about 500 ms whatever number the
+// server names (the twin, 3600, is the ordinary large value).
+func TestGraphRetryAfterOverflowIsClamped(t *testing.T) {
+	for _, value := range []string{"3600", "9223372037", "9223372036854775807"} {
+		t.Run(value, func(t *testing.T) {
+			s := graphtest.NewServer()
+			defer s.Close()
+			s.AddFolder("u1", "F_IN", "Inbox", 10)
+			s.AddMessage("u1", "F_IN", "T1")
+			s.SetValue("T1", graphtest.Status(503, value))
+			g := isoOptions(s)
+			g.RetryAfterMax, g.RetryAfterBudget = 100*time.Millisecond, 500*time.Millisecond
+			began := time.Now()
+			var err error
+			returnsWithin(t, 20*time.Second, "the run", func() { _, err = isoRun(g, tmpDir(t)) })
+			took := time.Since(began)
+			if !errors.Is(err, ErrPartial) {
+				t.Fatalf("the run returned %v, want ErrPartial: the item stays throttled to the end of its budget", err)
+			}
+			if n := s.Requests("/users/u1/messages/T1/"); n != 6 {
+				t.Errorf("T1 was requested %d times, want 6 (the first and five retries)", n)
+			}
+			if took < 400*time.Millisecond {
+				t.Errorf("Retry-After %s: the run took %v; the clamp must make each of the five retries wait 100 ms, about 500 ms in all", value, took)
+			}
+		})
+	}
+}
