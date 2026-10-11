@@ -241,6 +241,9 @@ func (w *pstWalk) walk(folder *pst.Folder, path []string, depth int) error {
 	if name := strings.TrimSpace(folder.Name); name != "" && !syntheticFolders[name] {
 		folderPath = append(append([]string{}, path...), util.SanitizeSegment(name))
 	}
+	if w.opts.Folder != nil {
+		w.opts.Folder(folderPath)
+	}
 
 	// go-pst's gate: a folder that says it holds no messages has no table to read. The
 	// row is the file's CLAIM, though, and a claim the file's own table contradicts is

@@ -69,6 +69,12 @@ type WalkOptions struct {
 	// zero-content failures are then counted in one per-folder aggregate instead of
 	// being listed by NID (FC8).
 	NoStoreUID bool
+	// Folder, if set, is called with the path of every folder the walk reaches
+	// (mirrored, sanitized segments; the store root is the empty path), so a caller can
+	// tell what the store holds without having been handed a message from it: an
+	// -outlook export that skipped a folder is carried by this file only if the file has
+	// the folder (S2A-AI4).
+	Folder func(path []string)
 }
 
 // FaultWalker is a Source that reports what it could not read as it goes. The PST

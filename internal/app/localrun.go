@@ -146,6 +146,20 @@ type sourceRun struct {
 	folderFaults  []string        // folders a folder-scope fault was recorded in this run, once each, in the ledger's spelling
 	folderSeen    map[string]bool // the same, for the "once each"
 	folderFlood   bool            // more folders faulted than folderFaultCap: the run cannot say which it read, so it closes nothing
+	seenFolders   map[string]bool // the folders this walk reached (whole paths and last segments), for what -outlook says it left out
+}
+
+// noteFolder records a folder the reader reached. Each path is kept as its joined
+// spelling and as its last segment, which is how -outlook names a skipped folder.
+func (s *sourceRun) noteFolder(path []string) {
+	if len(path) == 0 {
+		return
+	}
+	if s.seenFolders == nil {
+		s.seenFolders = map[string]bool{}
+	}
+	s.seenFolders[state.GapFolder(strings.Join(path, "/"))] = true
+	s.seenFolders[state.GapFolder(path[len(path)-1])] = true
 }
 
 // folderFaultCap bounds the list of folders that faulted. A hostile source whose
@@ -310,6 +324,20 @@ func exportStageGap(reason string) bool {
 	return false
 }
 
+// pstReaderGap says whether a walk of a PST can see again the gap a reason names:
+// the faults the PST reader produces, the overflow entry that counts the ones beyond
+// the ledger's caps, and what -outlook left out of the export (whose closure is
+// decided by covered, since the file must now hold the folder).
+func pstReaderGap(reason string) bool {
+	switch reason {
+	case "pst-message-unreadable", "pst-messages-unreadable", "pst-row-unreadable", "pst-row-invalid",
+		"folder-unreadable", "folder-partially-read", "folder-cycle", "folder-too-deep",
+		"overflow", "outlook-export-skipped", "outlook-account-skipped":
+		return true
+	}
+	return false
+}
+
 // noStoreUID says whether the file's identity is not stable across runs, so its
 // zero-content failures are counted per folder instead of by NID (FC8): the .pst
 // that -outlook's Outlook export rebuilds every run, and an .ost Outlook rebuilds
@@ -357,6 +385,16 @@ func (s *sourceRun) covered(g state.CaptureGap) bool {
 		return false
 	}
 	if s.folderFlood {
+		return false
+	}
+	// A reader that reports its faults sees the reasons it produces and the run's own;
+	// a reason it cannot see (a newer build's, another source's) is kept (S2A-AI4).
+	if s.reportsFaults && !exportStageGap(g.Reason) && !pstReaderGap(g.Reason) {
+		return false
+	}
+	// What Outlook left out of the export is not in the file: the file answers it only
+	// by now holding the folder.
+	if g.Reason == "outlook-export-skipped" && g.Folder != "" && !s.seenFolders[g.Folder] {
 		return false
 	}
 	for _, p := range s.folderFaults {

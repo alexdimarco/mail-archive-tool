@@ -969,6 +969,7 @@ func runFile(ctx context.Context, lr *localRun, path string, copyFirst bool, onP
 			Faults:     src.onReaderFault,
 			Abort:      func() error { return src.stop(ctx, abort) },
 			NoStoreUID: noStoreUID(path),
+			Folder:     src.noteFolder,
 		}))
 	}
 	return src.finish(reader.Walk(handler))

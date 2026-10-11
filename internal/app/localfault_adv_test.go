@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"mail-archive-tool/internal/export"
+	"mail-archive-tool/internal/outlookcom"
 	"mail-archive-tool/internal/source"
 	"mail-archive-tool/internal/state"
 )
@@ -141,6 +143,72 @@ func TestFolderFaultGuardMatchesTheLedgersSpelling(t *testing.T) {
 			}
 		})
 	}
+}
+
+// covers: MA-320, MA-323, R1
+// S2A-AI4 (and S2A-AC10): an outlook-export-skipped gap says Outlook left a folder out
+// of the PST, so a walk of that PST can only answer it if the PST NOW has the folder.
+// A later run that walks the same file without the skip (a job without -outlook, the
+// _outlook-pst folder given as an input) closed the gap although the folder was never
+// carried over. Twins: a PST that does carry the folder closes it, and an account that
+// is already a .pst (an info gap whose remedy is "archive it directly") closes when it
+// is archived directly. A reason the PST reader cannot see (a newer build's, or one
+// another source's) is never closed by its walk.
+func TestOutlookExportSkipIsClosedOnlyByAWalkThatCarriesTheFolder(t *testing.T) {
+	data := pstFixtureData(t)
+	for _, c := range []struct {
+		name       string
+		skip       func(path string) outlookcom.Skip
+		wantClosed int
+	}{
+		{"the PST lacks the folder", func(p string) outlookcom.Skip {
+			return outlookcom.Skip{Account: "ann@contoso.com", Folder: "Projects", Path: p, Reason: "CopyTo: 0x80040119"}
+		}, 0},
+		{"the PST carries the folder", func(p string) outlookcom.Skip {
+			return outlookcom.Skip{Account: "ann@contoso.com", Folder: "Drafts", Path: p, Reason: "CopyTo: 0x80040119"}
+		}, 1},
+		{"the account is archived directly", func(p string) outlookcom.Skip {
+			return outlookcom.Skip{Account: "Old data", Path: p, AlreadyPST: true, Reason: "already a .pst file"}
+		}, 1},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			pstPath := writeData(t, filepath.Join(tmpDir(t), "_outlook-pst"), "ann@contoso.com.pst", data)
+			out := tmpDir(t)
+			_, err := Run(context.Background(), Options{Inputs: []string{pstPath}, Out: out, Mode: export.Incremental, OutlookSkips: []outlookcom.Skip{c.skip(pstPath)}}, discard(), nil)
+			if len(ledgerOf(t, out)) != 1 || (err != nil && !errors.Is(err, ErrPartial)) {
+				t.Fatalf("run 1: err %v, ledger %+v; want the one skip gap", err, ledgerOf(t, out))
+			}
+			ageLedger(t, out, 48*time.Hour)
+			res, err := Run(context.Background(), Options{Inputs: []string{pstPath}, Out: out, Mode: export.Incremental}, discard(), nil)
+			if err != nil && !errors.Is(err, ErrPartial) {
+				t.Fatalf("run 2: %v", err)
+			}
+			if res.Gaps.ClosedGone != c.wantClosed || len(ledgerOf(t, out)) != 1-c.wantClosed {
+				t.Errorf("run 2 closed %d, ledger %+v; want %d closed", res.Gaps.ClosedGone, ledgerOf(t, out), c.wantClosed)
+			}
+		})
+	}
+
+	t.Run("a reason the PST reader cannot see", func(t *testing.T) {
+		pstPath := writeData(t, tmpDir(t), "old.pst", data)
+		tok := tokenOf(t, pstPath)
+		out := tmpDir(t)
+		m := loadArchive(t, out)
+		m.Token(state.PathSourceID(pstPath), tok)
+		m.ObserveGap(state.CaptureGap{Token: tok, Folder: "Inbox", Scope: state.GapScopeItem, Locator: "graph:AAA", Reason: "fetch-failed", Class: state.ClassFillable}, time.Now().Add(-72*time.Hour))
+		m.ObserveGap(state.CaptureGap{Token: tok, Folder: "Inbox", Scope: state.GapScopeItem, Locator: "pst-nid:gone/1", Reason: "pst-message-unreadable", Class: state.ClassTerminal}, time.Now().Add(-72*time.Hour))
+		if err := m.Save(); err != nil {
+			t.Fatal(err)
+		}
+		res, err := runLocal(t, out, pstPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		left := ledgerOf(t, out)
+		if res.Gaps.ClosedGone != 1 || len(left) != 1 || left[0].Reason != "fetch-failed" {
+			t.Errorf("closed %d, ledger %+v; want the PST's own gap closed and the reason it cannot see kept", res.Gaps.ClosedGone, left)
+		}
+	})
 }
 
 // covers: MA-323, MA-316, R10
