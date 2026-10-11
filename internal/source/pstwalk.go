@@ -306,7 +306,7 @@ func (w *pstWalk) walk(folder *pst.Folder, path []string, depth int) error {
 	if readable > 0 && noFlag == readable {
 		w.fault(Fault{Reason: "folder-partially-read", Scope: scopeFolder, Class: classTerm, Folder: folderPath,
 			Locator: folderLocator(folderPath, "subfolders-columns"),
-			Detail: fmt.Sprintf("none of the %d sub-folder rows carries the sub-folder flag: its column is damaged, so the folders below these may not be listed", readable)})
+			Detail:  fmt.Sprintf("none of the %d sub-folder rows carries the sub-folder flag: its column is damaged, so the folders below these may not be listed", readable)})
 	}
 	streak := 0
 	for i, row := range rows {

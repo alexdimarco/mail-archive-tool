@@ -460,7 +460,8 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	var failures int
 	var firstFailed string
 	var firstErr error
-	var fatal *RunFatalError // a run-level fault of the archive itself: it ends the run
+	var fatal *RunFatalError        // a run-level fault of the archive itself: it ends the run
+	var stopped *SourceStoppedError // the first source the local breaker ended: the run goes on without it
 	for _, f := range files {
 		runErr := runFile(ctx, lr, f, opts.CopyFirst, func(stats export.Stats) {
 			checkpoint(stats)
@@ -494,6 +495,15 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 			logger.Printf("error: %s: %v", f, fatal)
 			break
 		}
+		var stop *SourceStoppedError
+		if errors.As(runErr, &stop) {
+			// The local breaker ended this source: the next one is read (S2A-AC3).
+			logger.Printf("error: %s: %v", f, stop)
+			if stopped == nil {
+				stopped = stop
+			}
+			continue
+		}
 		if runErr != nil {
 			failures++
 			if failures == 1 {
@@ -514,20 +524,28 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 
 	result.gapsRecovered, result.gapsClosedGone = lr.recovered, lr.closedGone
 	finish(opts.Out, &result, exp, manifest, idx, indexErrors, true, logger)
+	// What ended the run or its sources, most serious first: the archive's own fault, a
+	// source the breaker stopped (with the files that failed to open, if any), the
+	// files that failed to open.
+	var end error
+	switch {
+	case fatal != nil:
+		end = fatal
+	case stopped != nil && failures > 0:
+		end = fmt.Errorf("%w; %w", stopped, fileFailureError(failures, firstFailed, firstErr))
+	case stopped != nil:
+		end = stopped
+	case failures > 0:
+		end = fileFailureError(failures, firstFailed, firstErr)
+	}
 	if saveErr != nil {
-		if fatal != nil {
-			return result, fmt.Errorf("%w; %w", fatal, manifestSaveFailure(mpath, saveErr))
-		}
-		if failures > 0 {
-			return result, fmt.Errorf("%w; %w", fileFailureError(failures, firstFailed, firstErr), manifestSaveFailure(mpath, saveErr))
+		if end != nil {
+			return result, fmt.Errorf("%w; %w", end, manifestSaveFailure(mpath, saveErr))
 		}
 		return result, manifestSaveFailure(mpath, saveErr)
 	}
-	if fatal != nil {
-		return result, fatal
-	}
-	if failures > 0 {
-		return result, fileFailureError(failures, firstFailed, firstErr)
+	if end != nil {
+		return result, end
 	}
 	return result, partialOutcome(result)
 }

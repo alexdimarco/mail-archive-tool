@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -166,8 +167,12 @@ func twinStore(t *testing.T, parent string) string {
 // missing and nothing saying so (in Full mode, on every run). A twin's success closes
 // only the gap of its own folder, and two twins that both fail are two gaps, not one.
 func TestATwinInAnotherFolderDoesNotCloseAFailedCopysGap(t *testing.T) {
-	underA := func(path string) bool { return strings.Contains(path, string(filepath.Separator)+"A"+string(filepath.Separator)) }
-	underB := func(path string) bool { return strings.Contains(path, string(filepath.Separator)+"B"+string(filepath.Separator)) }
+	underA := func(path string) bool {
+		return strings.Contains(path, string(filepath.Separator)+"A"+string(filepath.Separator))
+	}
+	underB := func(path string) bool {
+		return strings.Contains(path, string(filepath.Separator)+"B"+string(filepath.Separator))
+	}
 
 	for _, mode := range []string{"incremental", "full"} {
 		t.Run("A fails, B is written; "+mode, func(t *testing.T) {
@@ -232,6 +237,89 @@ func TestATwinInAnotherFolderDoesNotCloseAFailedCopysGap(t *testing.T) {
 			t.Errorf("run 2 with B writable: err %v, partial %v, ledger %+v, %d records; want clean, empty, 2", err, res.Partial, ledgerOf(t, out), loadArchive(t, out).Len())
 		}
 	})
+}
+
+// covers: MA-320, R10, R12
+// S2A-AC3 (and S2A-AO4, S2A-AI3): the local write breaker ends one SOURCE, as design
+// 4.6 says ("an error for this source"), not the run. Fifty writes in a row that fail
+// at one input are the file's own business as often as the drive's (a folder tree or
+// names too long for the destination come straight from the file), and a hostile
+// input listed first must not keep every later input from being archived, run after
+// run. What IS the archive's (a full, read-only or vanished volume, an unsafe token, a
+// lost lock) still ends the run: see TestRunFatalVolumeErrorsStopTheRun. The stopped
+// source's gaps are kept, the run exits 1 naming it, and the healthy source after it is archived.
+func TestTheLocalBreakerEndsTheSourceNotTheRun(t *testing.T) {
+	parent := tmpDir(t)
+	bad := mboxStore(t, parent, "bad", []string{"B"}, 60)
+	good := mboxStore(t, parent, "good", []string{"G"}, 3)
+	out := tmpDir(t)
+	failWrites(t, func(n int, path string) error {
+		if strings.Contains(path, string(filepath.Separator)+"bad"+string(filepath.Separator)) {
+			return pathErr(path, syscall.ENAMETOOLONG)
+		}
+		return nil
+	})
+	res, err := runLocal(t, out, bad, good)
+	var fatal *RunFatalError
+	if err == nil || errors.As(err, &fatal) || errors.Is(err, ErrPartial) {
+		t.Fatalf("run err = %v (run-fatal %v); want an exit-1 error that is not run-fatal", err, fatal)
+	}
+	for _, want := range []string{"stopped reading", bad, "after 50 writes in a row failed", "file name too long"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q lacks %q", err, want)
+		}
+	}
+	if res.Stats.Exported != 3 || loadArchive(t, out).Len() != 3 {
+		t.Errorf("exported %d, %d records; want the 3 messages of the healthy source after the stopped one", res.Stats.Exported, loadArchive(t, out).Len())
+	}
+	if g := ledgerOf(t, out); len(g) != 50 {
+		t.Errorf("%d gaps; want the 50 failed attempts of the stopped source, kept", len(g))
+	}
+}
+
+// covers: MA-320, R12, R19
+// S2A-AO5: what a run-fatal or breaker refusal says is built from the data file's own
+// folder names, which keep C1 controls (the 8-bit CSI U+009B), DEL and bidi overrides
+// through util.SanitizeSegment. The ledger, the report and the last-run read strip
+// them; this text went raw into the returned error, the log, the last-run record and
+// BACKUP-NEEDS-ATTENTION.txt (a terminal escape and a spoofed line, from a PST's folder
+// name). It is stripped where it is built, in both refusals.
+func TestFatalTextCarriesNoControlBytesFromAFolderName(t *testing.T) {
+	const bad = "Fo\u009bl‮de\x7fr"
+	for _, c := range []struct {
+		name  string
+		errno syscall.Errno
+		want  string
+	}{
+		{"full drive", syscall.ENOSPC, "the archive drive is full"},
+		{"breaker", syscall.EACCES, "after 50 writes in a row failed"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			store := mboxStore(t, tmpDir(t), "mstore", []string{bad}, 60)
+			out := tmpDir(t)
+			failWrites(t, func(n int, path string) error { return pathErr(path, c.errno) })
+			_, err := runLocal(t, out, store)
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("run err = %v; want a refusal that says %q", err, c.want)
+			}
+			texts := map[string]string{"the returned error": err.Error()}
+			if b, rerr := os.ReadFile(filepath.Join(out, state.AttentionName)); rerr == nil {
+				texts["BACKUP-NEEDS-ATTENTION.txt"] = string(b)
+			} else {
+				t.Errorf("no %s: %v", state.AttentionName, rerr)
+			}
+			if b, rerr := os.ReadFile(filepath.Join(out, state.LastRunName)); rerr == nil {
+				texts["the last-run record"] = string(b)
+			}
+			for where, text := range texts {
+				for _, r := range text {
+					if r == '\u009b' || r == '‮' || r == 0x7f {
+						t.Errorf("%s carries %U from the folder name", where, r)
+					}
+				}
+			}
+		})
+	}
 }
 
 // covers: MA-323, R1

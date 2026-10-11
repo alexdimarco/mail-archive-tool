@@ -44,6 +44,25 @@ type RunFatalError struct {
 func (e *RunFatalError) Error() string { return e.Msg }
 func (e *RunFatalError) Unwrap() error { return e.Err }
 
+// SourceStoppedError ends ONE source's walk, not the run: the local breaker's refusal
+// (50 writes in a row failed at this input). What it stopped is recorded in the
+// ledger and kept; the next source is read. Writes that fail like this at the
+// archive's own volume are run-fatal first (RunFatalError), and a vanished location
+// is caught by the probe, so what reaches the breaker is the file's own failures as
+// often as the drive's (S2A-AC3).
+type SourceStoppedError struct {
+	Msg string
+	Err error
+}
+
+func (e *SourceStoppedError) Error() string { return e.Msg }
+func (e *SourceStoppedError) Unwrap() error { return e.Err }
+
+// cleanText strips what a data file's own text must not carry into a terminal, the
+// last-run record or BACKUP-NEEDS-ATTENTION.txt: control characters (C0, DEL, C1,
+// the 8-bit CSI among them) and the bidi overrides (S2A-AO5).
+func cleanText(s string) string { return util.StripBidi(util.StripControl(s)) }
+
 const keptNote = "Messages written before this point are kept; nothing was recorded as archived that was not fully written."
 
 // runFatalFor words err (which export.IsRunFatal or the probe judged fatal) for the
@@ -51,13 +70,15 @@ const keptNote = "Messages written before this point are kept; nothing was recor
 // gone, each with its remedy (§7.5).
 func runFatalFor(out string, kind export.FatalKind, err error) *RunFatalError {
 	where := writtenPath(err)
+	// The words carry paths that include the data file's own folder names: cleaned
+	// where they are built (S2A-AO5).
 	switch kind {
 	case export.FatalToken:
-		return &RunFatalError{Msg: err.Error(), Err: err}
+		return &RunFatalError{Msg: cleanText(err.Error()), Err: err}
 	case export.FatalFull:
-		return &RunFatalError{Err: err, Msg: fmt.Sprintf("the archive drive is full (writing %s): free space on the drive that holds %s, or choose another archive location, then re-run. %s", where, out, keptNote)}
+		return &RunFatalError{Err: err, Msg: cleanText(fmt.Sprintf("the archive drive is full (writing %s): free space on the drive that holds %s, or choose another archive location, then re-run. %s", where, out, keptNote))}
 	case export.FatalReadOnly:
-		return &RunFatalError{Err: err, Msg: fmt.Sprintf("the archive location %s is read-only (writing %s): make it writable or choose another location, then re-run.", out, where)}
+		return &RunFatalError{Err: err, Msg: cleanText(fmt.Sprintf("the archive location %s is read-only (writing %s): make it writable or choose another location, then re-run.", out, where))}
 	}
 	return unavailable(out, err)
 }
@@ -65,7 +86,7 @@ func runFatalFor(out string, kind export.FatalKind, err error) *RunFatalError {
 // unavailable is the refusal for an archive location that is gone (a removed
 // drive, a dropped share, a root deleted under the run).
 func unavailable(out string, cause error) *RunFatalError {
-	return &RunFatalError{Err: cause, Msg: fmt.Sprintf("the archive location %s is unavailable (%v) — reconnect the drive or share and re-run. %s", out, cause, keptNote)}
+	return &RunFatalError{Err: cause, Msg: cleanText(fmt.Sprintf("the archive location %s is unavailable (%v) — reconnect the drive or share and re-run. %s", out, cause, keptNote))}
 }
 
 // writtenPath is the file or directory an export error names ("" if none).
@@ -319,7 +340,7 @@ func (s *sourceRun) handle(ctx context.Context, abort func() error, folderPath [
 	}
 	s.streak++
 	if s.streak >= writeBreaker {
-		return &RunFatalError{Err: exportErr, Msg: fmt.Sprintf("stopped reading %s after %d writes in a row failed (last: %v) — check that the archive drive is connected and writable, then re-run.", s.path, writeBreaker, exportErr)}
+		return &SourceStoppedError{Err: exportErr, Msg: cleanText(fmt.Sprintf("stopped reading %s after %d writes in a row failed (last: %v) — check that the archive drive is connected and writable, then re-run.", s.path, writeBreaker, exportErr))}
 	}
 	return nil
 }
