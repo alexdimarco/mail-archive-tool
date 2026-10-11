@@ -36,14 +36,3 @@ func TestCopyExportReadableHTMLHoldsOneMessage(t *testing.T) {
 func TestCopyExportArchiveGoneMidRunIsRO2(t *testing.T) {
 	t.Skip("MA-427: the archive source and its R-o2 class are slice E4's (extraction design §4.6 item 7, §10); until it lands there is no archive read to fail")
 }
-
-// covers: MA-427, R29, R5, R12
-// "Export the remaining messages" on a stopped run builds a new preview from the run
-// record into the next part of the set (-part2, with the whole chain in its manifest),
-// and the activity page offers it, "Export failed messages again" and "Finish as partial"
-// by the run's status. The engine's reads of the record (RunRemaining, RunFailed) are
-// asserted by the run-fatal tests above; the preview, the part naming and the offers are
-// the desktop page's.
-func TestCopyExportRetryPreviewAndOfferedLabels(t *testing.T) {
-	t.Skip("MA-427: the retry preview, the -partN root names and the activity page's offered labels are slice E3's (XC28, design §4.13 Retry, §4.16)")
-}

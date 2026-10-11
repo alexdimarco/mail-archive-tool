@@ -135,6 +135,24 @@ func (l *Lock) StillHeld() error {
 	return nil
 }
 
+// Held reports whether another run holds the lock at path right now, WITHOUT creating
+// the file or writing to it: an existing file is opened (never through a symlink) and
+// locked non-blocking, then unlocked at once. A missing, unreadable or read-only lock file
+// reports false. It is how a reader that must never write the archive (the extraction
+// workspace's copy export, which backs off while a capture runs) can see a capture.
+func Held(path string) bool {
+	f, err := os.OpenFile(path, os.O_RDWR|noFollow, 0)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	if err := tryLock(f); err != nil {
+		return true
+	}
+	unlock(f)
+	return false
+}
+
 // Holder returns the pid/started/host line written by the current holder, or
 // "" when the file is absent or unreadable. The content is untrusted (any
 // writer of the archive directory can change it): control characters are

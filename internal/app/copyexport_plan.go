@@ -26,6 +26,10 @@ type CopyPlanInput struct {
 	Options  CopyOptions
 	Dest     string // an absolute directory
 	Chain    CopyChain
+	// Archives are the archive folders the export must stay outside of, by path and
+	// by identity (R-f, R-f2; design §4.7 step 3): the configured archive, and in
+	// slice E4 another archive folder chosen as the source. Empty: none.
+	Archives []string
 }
 
 // copyRootName is the name the export directory takes: MailExport-<local
@@ -68,8 +72,12 @@ func (e *CopyExportEnv) PlanCopyExport(in CopyPlanInput) (*CopyPlan, error) {
 	id, _ := readIdentity(f)
 	f.Close()
 	droot.Close()
+	outside, err := e.CheckDestination(dest, in.Archives)
+	if err != nil {
+		return nil, err
+	}
 
-	p := &CopyPlan{
+	p := &CopyPlan{Outside: outside,
 		ID: e.rand(16), Created: e.nowTime(), Source: in.Source, Folders: in.Folders, Messages: in.Messages,
 		Options: in.Options, Chain: in.Chain, Dest: dest, DestIdentity: id, FSType: id.FSType,
 	}
@@ -90,14 +98,22 @@ func (e *CopyExportEnv) PlanCopyExport(in CopyPlanInput) (*CopyPlan, error) {
 	if svc, ok := util.UnderCloudSync(dest); ok {
 		p.Warnings = append(p.Warnings, fmt.Sprintf("files you export here will be uploaded to %s", svc))
 	}
-	if un, share := unenforceableFS(id.FSType); un && !share {
-		p.Warnings = append(p.Warnings, "this drive is FAT or exFAT: a message over 4 GiB can't be written to FAT32, and file permissions aren't kept")
-	}
+	p.Warnings = append(p.Warnings, fsTypeWarnings(id.FSType)...)
 	if p.UnknownSize > 0 {
 		p.Warnings = append(p.Warnings, fmt.Sprintf("%s messages are of unknown size, so the space this export needs is an estimate", commas(p.UnknownSize)))
 	}
 	p.Posture = e.destinationPosture(dest, id.FSType)
 	return p, nil
+}
+
+// fsTypeWarnings are the preview's notes for the destination's filesystem type (MA-412): a
+// FAT or exFAT drive cannot hold a message over 4 GiB and keeps no permissions. A share is
+// not named here; its line is the posture's.
+func fsTypeWarnings(fsType string) []string {
+	if un, share := unenforceableFS(fsType); un && !share {
+		return []string{"this drive is FAT or exFAT: a message over 4 GiB can't be written to FAT32, and file permissions aren't kept"}
+	}
+	return nil
 }
 
 func destMissing(dest string) *CopyRefusal {

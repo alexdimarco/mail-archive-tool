@@ -194,6 +194,9 @@ type CopyPlan struct {
 
 	Dest         string // the absolute destination directory the export root is created in
 	DestIdentity ceIdentity
+	// Outside is what the preview learned about the destination's place against the
+	// archives (R-f, R-f2); Start compares the destination against it again.
+	Outside *CopyOutside
 
 	SelectionHash string // SHA-256 of the ordered message ids
 
@@ -321,6 +324,13 @@ type CopyExportEnv struct {
 	realized    func(path string, forDir bool) CopyPosture
 	faults      *copyFaults
 	fsWrap      func(ceFS) ceFS // test wrapper around the contained writer
+
+	// the destination check's seams (design §4.7 step 3)
+	view     func(path string) ceView                // classifies how a path is reached
+	served   func(server string) bool                // whether a share's server is this computer
+	destIDs  func(dest string) ([]ceIdentity, error) // the identities of the destination and its ancestors
+	walkDirs int                                     // the archive walk's directory bound
+	walkTime time.Duration                           // and its time bound
 }
 
 // NewCopyExportEnv is the production environment for stateDir.

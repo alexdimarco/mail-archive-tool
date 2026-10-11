@@ -19,8 +19,28 @@ import (
 // are slice E3's.
 
 // copyProbeTimeout bounds one probe of an export folder (a hung probe leaks only its
-// own goroutine).
-const copyProbeTimeout = 5 * time.Second
+// own goroutine). It is a variable so a test can shorten it.
+var copyProbeTimeout = 5 * time.Second
+
+// probeFolderFn is the probe itself, and probeHook, when set, runs inside it first: the
+// seams a test uses to make a folder's stat block (MA-448).
+var (
+	probeFolderFn = probeFolder
+	probeHook     func(path string)
+)
+
+// SetProbeHook makes fn run inside every folder probe, before it looks at the folder,
+// and returns what undoes it. It is a test seam: a hook that blocks stands for a stat
+// on a dead network mount (XC4's background reconciler must not make the page wait),
+// and a short timeout stands for the 5 s bound.
+func SetProbeHook(fn func(path string), timeout time.Duration) (restore func()) {
+	oldHook, oldTimeout := probeHook, copyProbeTimeout
+	probeHook = fn
+	if timeout > 0 {
+		copyProbeTimeout = timeout
+	}
+	return func() { probeHook, copyProbeTimeout = oldHook, oldTimeout }
+}
 
 // Observation kinds.
 const (
@@ -81,14 +101,18 @@ func probeBounded(path string) (ceFolderSeen, error, bool) {
 		err  error
 	}
 	ch := make(chan res, 1)
+	hook, timeout := probeHook, copyProbeTimeout
 	go func() {
-		s, err := probeFolder(path)
+		if hook != nil {
+			hook(path)
+		}
+		s, err := probeFolderFn(path)
 		ch <- res{s, err}
 	}()
 	select {
 	case r := <-ch:
 		return r.seen, r.err, false
-	case <-time.After(copyProbeTimeout):
+	case <-time.After(timeout):
 		return ceFolderSeen{}, nil, true
 	}
 }
@@ -387,6 +411,17 @@ func (e *errCheckFailed) Error() string {
 	return "this export's checksums don't match what MailArchive recorded when it finished it (" + e.what + ") — the marker is kept. Run Check this export, or export the messages again."
 }
 
+// IsCheckFailed reports whether err is Check and finish's refusal: the folder's files do not
+// match what was recorded when the export finished, and the marker was kept.
+func IsCheckFailed(err error) bool {
+	var c *errCheckFailed
+	return errors.As(err, &c)
+}
+
+// IsNewerFormat reports whether err says a run record was written by a newer MailArchive
+// Desktop than this one.
+func IsNewerFormat(err error) bool { return errors.Is(err, errCopyNewerFormat) }
+
 // checkSums verifies SHA256SUMS.txt against the sealed fingerprint and every file it
 // lists against its line.
 func checkSums(fsys ceFS, fingerprint string) error {
@@ -427,6 +462,9 @@ func checkSums(fsys ceFS, fingerprint string) error {
 func (e *CopyExportEnv) MarkGone(run string) (CopyObservation, error) {
 	rec, err := e.openRecord(run)
 	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return e.goneFromJournal(run)
+		}
 		return CopyObservation{}, err
 	}
 	defer rec.Close()
@@ -460,6 +498,9 @@ func (e *CopyExportEnv) MarkGone(run string) (CopyObservation, error) {
 func (e *CopyExportEnv) Locate(run, path string) error {
 	sum, err := readSummary(e.recordPath(run))
 	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return e.locateFromJournal(run, path)
+		}
 		return err
 	}
 	if !filepath.IsAbs(path) {
@@ -481,6 +522,44 @@ func (e *CopyExportEnv) Locate(run, path string) error {
 	}
 	defer rec.Close()
 	return rec.append(ceLocatedLine{T: "located", Path: path, Identity: seen.Cur, At: e.nowTime()})
+}
+
+// goneFromJournal is "This folder is gone" for a settled run whose record is deleted
+// (§4.19 deletes a settled, chain-complete run's record at once): there is no record to
+// write to, so the answer is a terminal `reconciled` journal line.
+func (e *CopyExportEnv) goneFromJournal(run string) (CopyObservation, error) {
+	if _, err := e.folderSpec(run); err != nil {
+		return CopyObservation{}, err
+	}
+	if err := e.journalAppend(ceJournalLine{Run: run, Event: "reconciled", Status: obsGone, Reason: "This folder is gone"}); err != nil {
+		return CopyObservation{}, err
+	}
+	return CopyObservation{Run: run, Kind: obsGone, Label: "This folder is gone", Terminal: true}, nil
+}
+
+// locateFromJournal is Locate… for a run whose record is deleted: the journal run id is
+// the nonce, and the start line's dest_dir and root_id are the recorded identity; an
+// accepted folder is recorded as a `located` journal line, since there is no record.
+func (e *CopyExportEnv) locateFromJournal(run, path string) error {
+	spec, err := e.folderSpec(run)
+	if err != nil {
+		return err
+	}
+	if !filepath.IsAbs(path) {
+		return refusalR2(path)
+	}
+	seen, perr, timedOut := probeBounded(path)
+	if timedOut || perr != nil || !seen.Exists {
+		return refusalR2(path)
+	}
+	switch v, _ := judgeIdentity(run, spec.Identity, seen); v {
+	case idMismatch:
+		return refusalR(path)
+	case idUnconfirmed:
+		return refusalR2(path)
+	}
+	cur := seen.Cur
+	return e.journalAppend(ceJournalLine{Run: run, Event: "located", DestDir: path, RootID: &cur})
 }
 
 // ---- the launch sweep and the record lifetime -------------------------------

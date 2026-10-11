@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"mail-archive-tool/internal/graphconfig"
 	"mail-archive-tool/internal/util"
@@ -23,6 +24,49 @@ type Settings struct {
 	WeeklyDay      string `json:"weeklyDay,omitempty"`  // "Sunday".."Saturday" (weekly runs Sunday for now)
 	WeeklyTime     string `json:"weeklyTime,omitempty"` // "03:00"
 	Interval       string `json:"interval,omitempty"`   // "daily" | "weekly" (default weekly)
+
+	// The extraction workspace's remembered destination and options (design §4.17).
+	// nil means the default: Preserve folder structure ON, Readable HTML OFF until slice
+	// E5 lands (XC28), extracted attachments OFF. They are saved when an export starts.
+	ExportDest        string `json:"exportDest,omitempty"`
+	ExportPreserve    *bool  `json:"exportPreserve,omitempty"`
+	ExportHTML        *bool  `json:"exportHTML,omitempty"`
+	ExportAttachments *bool  `json:"exportAttachments,omitempty"`
+}
+
+// Preserve is the remembered "Preserve folder structure": ON when never set.
+func (s Settings) Preserve() bool { return s.ExportPreserve == nil || *s.ExportPreserve }
+
+// ReadableHTML is the remembered "Readable HTML": OFF when never set, and hidden, until
+// slice E5 lands (XC28).
+func (s Settings) ReadableHTML() bool { return s.ExportHTML != nil && *s.ExportHTML }
+
+// ExtractAttachments is the remembered "Extract attachments": OFF when never set.
+func (s Settings) ExtractAttachments() bool {
+	return s.ExportAttachments != nil && *s.ExportAttachments
+}
+
+// settingsMu serializes every settings load-modify-save, the /api/settings save and an
+// export start alike (XC34): each reloads the file under the lock and changes only the
+// fields its caller owns, so two tabs, or a settings save racing an export start, can
+// never write back a stale Out that the scheduled backup would then read.
+var settingsMu sync.Mutex
+
+// settingsHook, when set, is called with the caller's name after the file is loaded and
+// before it is saved, with the lock held: the interleaving point a test uses (MA-524).
+var settingsHook func(who string)
+
+// UpdateSettings reloads the settings file under the lock, lets fn change the fields
+// its caller owns, and saves the result atomically at 0600.
+func UpdateSettings(path, who string, fn func(*Settings)) error {
+	settingsMu.Lock()
+	defer settingsMu.Unlock()
+	s := LoadSettings(path)
+	if settingsHook != nil {
+		settingsHook(who)
+	}
+	fn(&s)
+	return SaveSettings(path, s)
 }
 
 // LoadSettings reads the settings file, returning the zero value (all defaults) on

@@ -193,11 +193,3 @@ func TestAnotherBrowserLinkIsAGuardedPost(t *testing.T) {
 		t.Errorf("with no way to make a link: %q, want ok:false", rr.Body.String())
 	}
 }
-
-// covers: MA-384, R23
-// Skip encoder (open by design): the extraction workspace's own sign-in surface
-// (`/api/m365/signin`) carries the account banner and the "a sign-in code only in
-// a window opened from the shortcut" copy [CC3, CC23].
-func TestWorkspaceSignInSurfaceCarriesTheAccountBanner(t *testing.T) {
-	t.Skip("MA-384: the extraction workspace's sign-in surface does not exist yet; its banner and sign-in-code copy land with slice E3 (rulings §9 row 24)")
-}

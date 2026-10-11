@@ -156,12 +156,39 @@ func TestWorkspaceClientIsDeviceMeOnly(t *testing.T) {
 	}
 }
 
-// covers: MA-403, R17, R9, R29, S52
-// MA-403's other half, E3's: the workspace's session built from settings is the
-// device client whatever the configured auth mode (even auth=app), and a whole
-// Microsoft 365 preview and export issue only GET (MA-506).
-func TestWorkspaceSessionIgnoresAppAuthConfig(t *testing.T) {
-	t.Skip("MA-403: the workspace session is built from settings in the desktop app, which lands in EW-E3 (with MA-506); E1 holds the device client and its read paths only")
+// covers: MA-522, R29
+// PageOpts.Before makes the first page of a listing a keyset continuation (extraction
+// design §4.1, XC18): the same newest-first order with a receivedDateTime le filter at the
+// last loaded row's time, so a list whose cursor expired continues instead of restarting.
+// Without it the request carries no filter (the positive twin, first).
+func TestMessagePageBeforeIsAKeysetFilter(t *testing.T) {
+	f := newMeFake(t)
+	ctx := context.Background()
+	c, err := NewDelegated(ctx, f.config(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lastQuery := func() map[string][]string {
+		reqs := f.rec.all()
+		return reqs[len(reqs)-1].URL.Query()
+	}
+	if _, _, err := c.MessagePage(ctx, "", "F_IN", "", PageOpts{Top: 100}); err != nil {
+		t.Fatal(err)
+	}
+	if q := lastQuery(); len(q["$filter"]) != 0 || q["$orderby"][0] != "receivedDateTime desc" {
+		t.Fatalf("a plain first page: %v", q)
+	}
+	at := time.Date(2026, 3, 28, 9, 30, 15, 0, time.UTC)
+	if _, _, err := c.MessagePage(ctx, "", "F_IN", "", PageOpts{Top: 100, Before: at}); err != nil {
+		t.Fatal(err)
+	}
+	q := lastQuery()
+	if got := assure.Reached(t, q["$filter"], "the keyset filter"); got[0] != "receivedDateTime le 2026-03-28T09:30:15Z" {
+		t.Errorf("the keyset filter is %q", got[0])
+	}
+	if q["$orderby"][0] != "receivedDateTime desc" || q["$top"][0] != "100" {
+		t.Errorf("the keyset page lost its order or its bound: %v", q)
+	}
 }
 
 // covers: MA-403, R17, R29

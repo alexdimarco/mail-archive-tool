@@ -147,6 +147,10 @@ type PageOpts struct {
 	Top     int        // $top of the first page: 100 for browsing, 1000 for resolution (zero = 100; above 1000 = 1000)
 	Honored bool       // the first page's recorded "immutable ids honored" flag, for a page reached by nextLink
 	Guard   *PageGuard // the caller's loop guard (NewPageGuard); nil = a guard for this one call
+	// Before, when set, makes the first page a keyset continuation (extraction design
+	// §4.1, XC18): only messages received at or before this time, in the same order, so a
+	// listing whose cursor expired continues after the last row the page holds.
+	Before time.Time
 }
 
 // PageGuard is the nextLink guard of a caller's loop over MessagePage: the repeat
@@ -233,6 +237,9 @@ func (c *Client) MessagePage(ctx context.Context, userID, folderID, next string,
 	plain := c.base + c.userSeg(userID) + "/mailFolders/" + url.PathEscape(folderID) + "/messages" +
 		"?$select=" + strings.Join(messageSelectFields, ",") + ",parentFolderId" +
 		"&$orderby=receivedDateTime%20desc&$top=" + strconv.Itoa(top)
+	if !o.Before.IsZero() {
+		plain += "&$filter=receivedDateTime%20le%20" + o.Before.UTC().Format("2006-01-02T15:04:05Z")
+	}
 	link, expanded := next, false
 	if link == "" {
 		link, expanded = plain+"&$expand="+messagePageExpand, true

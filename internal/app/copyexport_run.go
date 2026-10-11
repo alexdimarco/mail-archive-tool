@@ -69,9 +69,16 @@ type CopyRun struct {
 	// differ, whether the realized posture is acceptable; nil declines a broader one.
 	ConfirmPosture func(CopyPosture) bool
 
-	mu        sync.Mutex
-	cancel    context.CancelFunc
-	cancelled bool
+	// OnStart, when set, is called with the run id once Start's checks have passed and
+	// the export root and its run record exist, before the first message: how a caller
+	// that runs the export in the background tells "refused" from "started".
+	OnStart func(runID string)
+
+	mu          sync.Mutex
+	cancel      context.CancelFunc
+	cancelled   bool
+	pendingStop *CopyStop // a stop asked for before the run's watch existed
+	abandoned   atomic.Bool
 
 	started time.Time
 	done    atomic.Int64
@@ -111,6 +118,34 @@ func (r *CopyRun) Cancel() {
 	r.mu.Unlock()
 	if c != nil {
 		c()
+	}
+}
+
+// Abandon is what a caller does to a run that did not stop within 30 s of Cancel (a write
+// stuck in the kernel on a hard NFS mount or a hung SMB session, design §4.13 "a wedged
+// run"): the run is cancelled, and it makes no further writes when its syscall returns, so
+// it can neither touch the export folder nor its record after the caller has released
+// the export slot and recorded the stop.
+func (r *CopyRun) Abandon() {
+	r.abandoned.Store(true)
+	r.Cancel()
+}
+
+// StopForSignInChange stops the run run-fatal with R-z after aborting the message in
+// flight (its download cancelled through that message's own context, never the walk's, so
+// it is never read as the user's Cancel): the Microsoft 365 sign-in was cleared, or
+// changed to now, in the dashboard (XC7). The run finalizes (manifest `failed`, marker
+// STOPPED) and is retryable from its record. now is "" when the sign-in was cleared.
+func (r *CopyRun) StopForSignInChange(now string) {
+	stop := &CopyStop{RID: "R-z", Class: stopClassSignInMoved, Message: now}
+	r.mu.Lock()
+	w := r.watch
+	if w == nil {
+		r.pendingStop = stop
+	}
+	r.mu.Unlock()
+	if w != nil {
+		w.fatalStop(stop)
 	}
 }
 
@@ -157,16 +192,34 @@ func (r *CopyRun) Run(parent context.Context) (res *CopyResult, err error) {
 	if refusal := r.start(); refusal != nil {
 		return nil, refusal
 	}
+	if r.OnStart != nil {
+		r.OnStart(r.runID)
+	}
 	// From here the root exists and the run record names it.
 	release := holdAwake()
 	defer release()
 	wctx, wcancel := context.WithCancel(context.WithoutCancel(walk))
-	r.watch = &ceWatch{env: e, src: r.src}
-	go r.watch.loop(wctx)
-	defer wcancel()
+	w := &ceWatch{env: e, src: r.src}
+	r.mu.Lock()
+	r.watch = w
+	pending := r.pendingStop
+	r.mu.Unlock()
+	if pending != nil {
+		w.fatalStop(pending) // a stop asked for before the run reached its first message
+	}
+	wdone := make(chan struct{})
+	go func() { defer close(wdone); w.loop(wctx) }()
+	defer func() { wcancel(); <-wdone }() // the breaker's goroutine never outlives the run
 
 	status, stop := r.loop(walk)
 	wcancel()
+	<-wdone
+	if r.abandoned.Load() {
+		r.fs.Close()
+		r.rec.Close()
+		return &CopyResult{RunID: r.runID, Root: r.rootAbs, RootName: r.rootName, Status: CopyStatusFailed, Outcome: CopyOutcomeFailed,
+			Label: "Stopped: the destination is not responding"}, nil
+	}
 	return r.finalize(status, stop)
 }
 
@@ -232,6 +285,14 @@ func (r *CopyRun) start() *CopyRefusal {
 		if !sameDir(cur, p.DestIdentity) {
 			return refuse("R-k", "This preview is out of date (older than 30 minutes, or the selection or destination changed) — click Preview copy export again.")
 		}
+	}
+	// The destination is still outside the archives, by path and by identity: the
+	// walk the preview did is not repeated, the destination is read again (MA-444).
+	if err := p.Outside.Recheck(e, p.Dest); err != nil {
+		if ref, ok := err.(*CopyRefusal); ok {
+			return ref
+		}
+		return destMissing(p.Dest)
 	}
 	name := p.ExportName
 	made := false
@@ -408,6 +469,9 @@ func (r *CopyRun) loop(walk context.Context) (CopyStatus, *CopyStop) {
 	n := len(p.Messages)
 	for i := 0; i < n; i++ {
 		m := &p.Messages[i]
+		if r.abandoned.Load() {
+			return CopyStatusFailed, nil
+		}
 		if walk.Err() != nil {
 			return CopyStatusCancelled, nil
 		}
@@ -433,6 +497,9 @@ func (r *CopyRun) loop(walk context.Context) (CopyStatus, *CopyStop) {
 			return CopyStatusFailed, stop
 		}
 		line, stop, cancelled := r.exportOne(walk, i+1, m)
+		if r.abandoned.Load() {
+			return CopyStatusFailed, nil // released: no further writes, to the folder or the record
+		}
 		if cancelled {
 			return CopyStatusCancelled, nil
 		}
@@ -494,8 +561,8 @@ func (r *CopyRun) complete(s *CopyStop, done int, extra string) *CopyStop {
 		return s
 	}
 	arg := extra
-	if s.RID == "R-u3" && s.Message != "" {
-		arg = s.Message // the redirect's host, which the classifier left in Message
+	if (s.RID == "R-u3" || s.RID == "R-z") && s.Message != "" {
+		arg = s.Message // the redirect's host, or the account now signed in: left in Message by the stop
 	}
 	s.Message = refusalText(s.RID, done, len(r.plan.Messages), arg, r.plan, r.env.StateDir)
 	s.StoppedAt = r.env.nowTime().UTC().Format(time.RFC3339)

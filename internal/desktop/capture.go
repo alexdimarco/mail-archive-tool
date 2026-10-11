@@ -141,7 +141,20 @@ func (d *dashboard) startCapture() error {
 	}
 	s := d.cfg.settings()
 	tcfg := d.cfg.tokenCfg(cfg)
-	return d.runJob(func(logger *log.Logger) (string, error) {
+	// A capture that has to sign in holds the process-wide sign-in mutex for its whole run,
+	// so two device flows never run at once: the workspace's sign-in is refused meanwhile,
+	// and this one is refused while the workspace signs in (XC8).
+	needsFlow := false
+	if _, signed := d.cfg.signInState(); !signed {
+		if !d.flow.hold("capture") {
+			return fmt.Errorf("a Microsoft sign-in is already in progress (started from the Extraction workspace) — finish it first")
+		}
+		needsFlow = true
+	}
+	err := d.runJob(func(logger *log.Logger) (string, error) {
+		if needsFlow {
+			defer d.flow.release("capture")
+		}
 		g := app.GraphOptions{
 			Auth: "device", Tenant: cfg.Tenant, ClientID: cfg.ClientID,
 			TokenStore: tcfg.TokenStore, TokenCachePath: tcfg.TokenCachePath,
@@ -156,6 +169,10 @@ func (d *dashboard) startCapture() error {
 		}
 		return archivedLine(res), nil
 	})
+	if err != nil && needsFlow {
+		d.flow.release("capture")
+	}
+	return err
 }
 
 // archivedLine is the result text of a finished capture. When more messages
