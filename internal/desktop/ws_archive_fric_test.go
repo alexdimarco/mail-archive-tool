@@ -625,6 +625,9 @@ func TestArchiveAdviceIsTrueForTheFolderItIsAbout(t *testing.T) {
 			_, res = e.preview(e.archSel(src, entry("bob", false)))
 			w = strings.Join(toStrings(res["warnings"]), " | ")
 			if s.other {
+				if !strings.Contains(note, "to pick single messages, copy the folder") || !strings.Contains(w, "to get their names back, copy the folder") {
+					t.Errorf("each sentence gives the goal it is about: list %q, preview %q", note, w)
+				}
 				for _, text := range []string{note, w} {
 					for _, want := range []string{"read-only", "copy the folder to one of your own", "archive location in Settings"} {
 						if !strings.Contains(text, want) {

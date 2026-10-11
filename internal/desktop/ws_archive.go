@@ -302,13 +302,15 @@ const (
 // copyToYourOwn is what is true of the index, or the files, of another archive folder: it is read-only,
 // Maintenance acts on the configured archive only, so the way to a repaired list is a folder of your own
 // (friction F4).
-const copyToYourOwn = "this folder is read-only, so nothing here can repair it — to pick single messages, copy the folder to one of your own, make that the archive location in Settings, then use " + rebuildButton
+func copyToYourOwn(goal string) string {
+	return "this folder is read-only, so nothing here can repair it — " + goal + ", copy the folder to one of your own, make that the archive location in Settings, then use " + rebuildButton
+}
 
 // rebuildFixes is the advice for an index that is missing or unusable: the button, for the owner's own
 // archive, and the true thing for another archive folder.
 func rebuildFixes(other bool, brings string) string {
 	if other {
-		return copyToYourOwn + "."
+		return copyToYourOwn("to pick single messages") + "."
 	}
 	return rebuildButton + " " + brings + "."
 }
@@ -511,7 +513,7 @@ func metaAdvice(err error, other bool) string {
 		return "Wait a few seconds, then click Preview copy export again."
 	}
 	if other {
-		return "The messages themselves are included, byte for byte; " + copyToYourOwn + " if you want their names back."
+		return "The messages themselves are included, byte for byte; " + copyToYourOwn("to get their names back") + "."
 	}
 	return rebuildButton + " fixes it; then preview again."
 }
