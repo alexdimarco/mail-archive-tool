@@ -677,7 +677,262 @@ func TestReadableHTMLIsSizedInThePlan(t *testing.T) {
 	}
 }
 
+// covers: MA-513, MA-520, R29, S52
+// Check this export names a readable copy as one: a clean export with readable copies is GREEN
+// (the positive twin); a readable copy that changed or is missing is RED, named as "the readable
+// copy", saying it is a convenience that tells nothing of the .eml beside it, with a remedy that
+// says every original is as it was; a changed original is RED with the usual remedy, never the
+// readable one, and so is a readable copy together with a changed original.
+func TestCheckThisExportNamesAReadableCopyAsOne(t *testing.T) {
+	fresh := func() (*CopyExportEnv, *CopyResult) {
+		e, src := newCEEnv(t), newFakeSrc()
+		p := cePlan(t, e, src, ceMsgs(3))
+		p.Options.ReadableHTML = true
+		return e, mustRun(t, e, p, src)
+	}
+	e, res := fresh()
+	chk, err := e.CheckExport(res.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !chk.OK || chk.Files != 8 || chk.ReadableOnly || len(chk.Problems) != 0 {
+		t.Fatalf("a clean export with readable copies: %+v, want GREEN with 8 files (3 messages of two, README, manifest)", chk)
+	}
+
+	damage := func(t *testing.T, e *CopyExportEnv, res *CopyResult, html bool, eml bool) *CopyCheck {
+		t.Helper()
+		changed, gone := e5Find(t, res.Root, ".html", "subj-M00001"), e5Find(t, res.Root, ".html", "subj-M00002")
+		if html {
+			b, _ := os.ReadFile(filepath.Join(res.Root, changed))
+			os.WriteFile(filepath.Join(res.Root, changed), append(b, '!'), 0o600)
+			os.Remove(filepath.Join(res.Root, gone))
+		}
+		if eml {
+			p := filepath.Join(res.Root, e5Find(t, res.Root, ".eml", "subj-M00003"))
+			b, _ := os.ReadFile(p)
+			os.WriteFile(p, append(b, '!'), 0o600)
+		}
+		chk, err := e.CheckExport(res.RunID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return chk
+	}
+
+	e, res = fresh()
+	chk = damage(t, e, res, true, false)
+	said := strings.Join(chk.Problems, "\n")
+	if chk.OK || !chk.ReadableOnly || len(chk.Changed) != 1 || len(chk.Missing) != 1 || chk.Remedy != checkReadableRemedy ||
+		!strings.Contains(said, "the readable copy "+chk.Changed[0]+" has changed") || !strings.Contains(said, "the readable copy "+chk.Missing[0]+" is missing") ||
+		!strings.Contains(said, "says nothing about that .eml") || !strings.Contains(chk.Remedy, "Every original in this folder is as it was") {
+		t.Errorf("a changed and a missing readable copy: %+v", chk)
+	}
+
+	e, res = fresh()
+	chk = damage(t, e, res, false, true)
+	if chk.OK || chk.ReadableOnly || chk.Remedy != checkRemedy || strings.Contains(strings.Join(chk.Problems, "\n"), "readable copy") {
+		t.Errorf("a changed original: %+v, want the usual remedy and no word of readable copies", chk)
+	}
+
+	e, res = fresh()
+	chk = damage(t, e, res, true, true)
+	if chk.OK || chk.ReadableOnly || chk.Remedy != checkRemedy {
+		t.Errorf("a changed original with changed readable copies: %+v, want the usual remedy", chk)
+	}
+}
+
+// covers: MA-513, MA-437, R29, S52
+// A retry of an export with Readable HTML on keeps the option and what the plan lines held, and
+// offers only the messages that failed: a message exported without a readable copy is settled,
+// so it is neither offered again nor exported a second time, and the messages that are retried
+// come back with readable copies.
+func TestARetryKeepsReadableHTMLAndLeavesAMessageWithoutACopyAlone(t *testing.T) {
+	real := readableRender
+	t.Cleanup(func() { readableRender = real })
+	readableRender = func(m *model.Message, ctx export.RenderContext) (export.RenderResult, error) {
+		if strings.HasPrefix(m.Subject, "subj-M00003") {
+			panic("renderer blew up")
+		}
+		return real(m, ctx)
+	}
+	e, src := newCEEnv(t), newFakeSrc()
+	failIDs(src, map[string]bool{"M00002": true})
+	msgs := ceMsgs(4)
+	msgs[1].State = &CopyMsgState{Importance: "high"}
+	p := cePlan(t, e, src, msgs)
+	p.Options.ReadableHTML = true
+	first := mustRun(t, e, p, src)
+	if first.Counts.Exported != 3 || first.Counts.Failed != 1 || first.Counts.OriginalOnly != 1 || first.Outcome != CopyOutcomePartial {
+		t.Fatalf("%s %+v", first.Label, first.Counts)
+	}
+	in, err := e.RetryInput(first.RunID, "failed", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(in.Messages) != 1 || in.Messages[0].SourceID != "M00002" || !in.Options.ReadableHTML || in.Messages[0].State == nil || in.Messages[0].State.Importance != "high" {
+		t.Fatalf("the retry's input: %d messages %+v, options %+v", len(in.Messages), in.Messages, in.Options)
+	}
+	if rest, _ := e.RunRemaining(first.RunID); len(rest) != 1 || rest[0].SourceID != "M00002" {
+		t.Errorf("the remaining messages of the partial run: %v", rest)
+	}
+
+	// the retry's plan is made as the first was, and its message comes back with a readable copy
+	failIDs(src, nil)
+	opts := in.Options
+	in.Options.ReadableHTML = false
+	plan, err := e.PlanCopyExport(*in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.Options = opts
+	second := mustRun(t, e, plan, src)
+	if second.Counts.Exported != 1 || second.Counts.OriginalOnly != 0 || second.Outcome != CopyOutcomeComplete {
+		t.Fatalf("%s %+v", second.Label, second.Counts)
+	}
+	if got := len(treeFilesWith(t, second.Root, ".html")); got != 1 {
+		t.Errorf("the retried message has %d readable copies, want 1", got)
+	}
+	if src.fetched("M00003") != 1 {
+		t.Errorf("the message exported without a readable copy was fetched %d times, want once", src.fetched("M00003"))
+	}
+}
+
+// e5Find is the path, relative to root, of the file with the suffix whose bytes hold the
+// word, "" when there is none.
+func e5Find(t *testing.T, root, suffix, word string) string {
+	t.Helper()
+	for p := range treeFiles(t, root) {
+		if !strings.HasSuffix(p, suffix) {
+			continue
+		}
+		if b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(p))); err == nil && strings.Contains(string(b), word) {
+			return p
+		}
+	}
+	return ""
+}
+
 // covers: MA-513, R29, R12
+// A readable copy is requested and missing: one that is gone when the export is finished
+// makes the run partial (outcome 3), labelled "Finished with problems — 1 exported without a
+// readable copy", and its message stays exported with its original (status
+// exported-original-only, the note saying the copy was no longer there), never failed: the
+// original is in the sums, the missing copy is not, the message is not offered for retry and
+// the run's other messages are untouched. If the original is gone as well the message is
+// failed, as before. Finish as partial, which re-hashes what it finds, treats a readable copy
+// that was damaged when the computer stopped the same way, and a copy that was never written
+// because the run was killed first leaves its message not attempted.
 func TestAMissingReadableCopyMakesARunPartialNotFailed(t *testing.T) {
-	t.Skip("MA-513: a readable copy that is gone or damaged when the export is finished, in Finish as partial, Check this export and retry, is not built yet; lands in EW-E5")
+	root := func(p *CopyPlan) string { // the export folder the run made: the one folder in the destination
+		ents, _ := os.ReadDir(p.Dest)
+		if len(ents) != 1 {
+			t.Fatalf("the destination holds %d entries", len(ents))
+		}
+		return filepath.Join(p.Dest, ents[0].Name())
+	}
+
+	// finalization: the copy of message 2 is gone; of message 3 both files are
+	e, src := newCEEnv(t), newFakeSrc()
+	msgs := ceMsgs(4)
+	p := cePlan(t, e, src, msgs)
+	p.Options.ReadableHTML = true
+	e.faults = &copyFaults{hook: func(step string) {
+		if step != "W7pre" {
+			return
+		}
+		r := root(p)
+		os.Remove(filepath.Join(r, e5Find(t, r, ".html", "subj-M00002")))
+		os.Remove(filepath.Join(r, e5Find(t, r, ".html", "subj-M00003")))
+		os.Remove(filepath.Join(r, e5Find(t, r, ".eml", "subj-M00003")))
+	}}
+	res := mustRun(t, e, p, src)
+	if res.Counts.Exported != 3 || res.Counts.OriginalOnly != 1 || res.Counts.Failed != 1 || res.Status != CopyStatusPartial || res.Outcome != CopyOutcomePartial {
+		t.Fatalf("%s %+v", res.Label, res.Counts)
+	}
+	man := manifestOf(t, res.Root)
+	ent := man["messages"].([]any)[1].(map[string]any)
+	if ent["status"] != statusOriginalOnly || len(ent["files"].([]any)) != 1 || ent["files"].([]any)[0].(map[string]any)["role"] != roleOriginal ||
+		!strings.Contains(notesOf(ent), noteReadableFailed+"it was no longer in the export folder") {
+		t.Errorf("message 2: %v", ent)
+	}
+	if f := failureListed(man, msgs[2].SourceID); f == nil || f["class"] != classRetryable || !strings.Contains(f["reason"].(string), "no longer in the export folder") {
+		t.Errorf("message 3, whose original is gone too: %v", f)
+	}
+	if failureListed(man, msgs[1].SourceID) != nil {
+		t.Error("message 2, whose copy is gone, is listed as failed")
+	}
+	if bad, missing, extra := sumsCheck(t, res.Root); len(bad)+len(missing)+len(extra) != 0 {
+		t.Errorf("sums: changed %v, missing %v, unlisted %v", bad, missing, extra)
+	}
+	if sums := readText(t, res.Root, copySumsName); !strings.Contains(sums, filepath.Base(e5Find(t, res.Root, ".eml", "subj-M00002"))) || strings.Contains(sums, "M00002.html") {
+		t.Errorf("the sums must hold message 2's original and not its missing copy:\n%s", sums)
+	}
+	if failed, _ := e.RunFailed(res.RunID); len(failed) != 1 || failed[0].SourceID != "M00003" {
+		t.Errorf("\"Export failed messages again\" offers %v, want only message 3", failed)
+	}
+	if res.Label == "" || !strings.Contains(readText(t, res.Root, copyReadmeName), "Exported without a readable copy") && !strings.Contains(readText(t, res.Root, copyReadmeName), "without a readable copy") {
+		t.Errorf("README does not say a message is without a readable copy")
+	}
+
+	// the copy of message 2 is the only problem: the label says so, and nothing is offered for retry
+	e, src = newCEEnv(t), newFakeSrc()
+	p = cePlan(t, e, src, ceMsgs(3))
+	p.Options.ReadableHTML = true
+	e.faults = &copyFaults{hook: func(step string) {
+		if step == "W7pre" {
+			r := root(p)
+			os.Remove(filepath.Join(r, e5Find(t, r, ".html", "subj-M00002")))
+		}
+	}}
+	res = mustRun(t, e, p, src)
+	if res.Label != "Finished with problems — 1 exported without a readable copy" || res.Outcome != CopyOutcomePartial || res.Counts.Failed != 0 {
+		t.Fatalf("%s %+v", res.Label, res.Counts)
+	}
+	if failed, _ := e.RunFailed(res.RunID); len(failed) != 0 {
+		t.Errorf("%d messages offered for retry", len(failed))
+	}
+	if readme := readText(t, res.Root, copyReadmeName); !strings.Contains(readme, "Every selected message is in this export with its original; 1 of them has no readable copy") {
+		t.Errorf("README: %s", readme)
+	}
+
+	// Finish as partial: killed after message 3; the copy of message 1 gone, that of message 2
+	// damaged; message 4 was never tried
+	e, src = newCEEnv(t), newFakeSrc()
+	p = cePlan(t, e, src, ceMsgs(4))
+	p.Options.ReadableHTML = true
+	e.faults = &copyFaults{killAt: "W6:3"}
+	k := mustRun(t, e, p, src)
+	e.faults = nil
+	if k.Killed != "W6:3" {
+		t.Fatalf("killed at %q", k.Killed)
+	}
+	gone := e5Find(t, k.Root, ".html", "subj-M00001")
+	damaged := e5Find(t, k.Root, ".html", "subj-M00002")
+	os.Remove(filepath.Join(k.Root, gone))
+	b, _ := os.ReadFile(filepath.Join(k.Root, damaged))
+	os.WriteFile(filepath.Join(k.Root, damaged), append(b, []byte("torn by a power loss")...), 0o600)
+	fin, err := e.FinishAsPartial(k.RunID)
+	if err != nil {
+		t.Fatalf("Finish as partial: %v", err)
+	}
+	if fin.Counts.Exported != 3 || fin.Counts.OriginalOnly != 2 || fin.Counts.Failed != 0 || fin.Counts.NotAttempted != 1 {
+		t.Fatalf("%s %+v", fin.Label, fin.Counts)
+	}
+	man = manifestOf(t, k.Root)
+	for i, want := range []string{"it was no longer in the export folder", "it was damaged when the computer stopped"} {
+		ent := man["messages"].([]any)[i].(map[string]any)
+		if ent["status"] != statusOriginalOnly || len(ent["files"].([]any)) != 1 || !strings.Contains(notesOf(ent), want) {
+			t.Errorf("message %d: %v, want exported-original-only, one file and %q", i+1, ent, want)
+		}
+	}
+	bad, missing, extra := sumsCheck(t, k.Root)
+	if len(bad)+len(missing) != 0 || len(extra) != 1 || extra[0] != damaged {
+		t.Errorf("sums: changed %v, missing %v, unlisted %v: the damaged copy must be the one file the sums do not list", bad, missing, extra)
+	}
+	if rest, _ := e.RunRemaining(k.RunID); len(rest) != 1 || rest[0].SourceID != "M00004" {
+		t.Errorf("\"Export the remaining messages\" offers %v, want message 4 only", rest)
+	}
+	if failed, _ := e.RunFailed(k.RunID); len(failed) != 0 {
+		t.Errorf("a readable copy lost is offered for retry: %v", failed)
+	}
 }
