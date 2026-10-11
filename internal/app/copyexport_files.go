@@ -219,6 +219,15 @@ func (r *CopyRun) writeFiles(ctx context.Context, n int, m *CopyMessage, files *
 	return &ceMsgLine{T: "msg", N: n, Status: files.Status, Files: recs, Notes: slices.Clone(files.Notes)}, nil, nil
 }
 
+const (
+	// reasonArchiveRemoved is why a message whose file is not in the archive is listed as failed for good.
+	reasonArchiveRemoved = "removed from the archive after you selected it"
+	// reasonArchiveWentAway replaces it for a message that failed in the moments before the run saw the
+	// archive itself was gone (a share failing file by file, a folder deleted under the run): the file
+	// may well not have been removed (friction F6).
+	reasonArchiveWentAway = "its file could not be found because the archive went away while this export was running; a retry looks again once the archive is back"
+)
+
 // classifyFiles reads one failed message of a source that yields files (design §4.6,
 // §4.13). A file that is not there, or cannot be read, makes the source probe itself: if
 // the archive's folder or manifest is gone the run stops run-fatal with R-o2 and does not
@@ -248,7 +257,7 @@ func (r *CopyRun) classifyFiles(err error, mctx, walk context.Context, src CopyF
 			return verdict{kind: verdictFatal, stop: &CopyStop{RID: "R-o2", Class: stopClassArchive, Message: why}}
 		}
 		if af.Kind == AFMissing {
-			return verdict{kind: verdictList, class: classTerminal, reason: "removed from the archive after you selected it"}
+			return verdict{kind: verdictList, class: classTerminal, reason: reasonArchiveRemoved}
 		}
 		return verdict{kind: verdictList, class: classRetryable, reason: "the archive's file could not be read (" + leaveName(af.Err) + ")"}
 	case AFSymlink:
