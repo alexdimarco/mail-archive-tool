@@ -11,6 +11,7 @@ import (
 
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/export"
+	"mail-archive-tool/internal/index"
 	"mail-archive-tool/internal/model"
 	"mail-archive-tool/internal/state"
 )
@@ -556,6 +557,114 @@ func TestPageWriteFailureLeavesTheEarlierFilesAttested(t *testing.T) {
 // covers: MA-361, R13, R8, S51, S13
 // F48: reindex meeting rows that name earlier files of messages whose current
 // files are intact deletes nothing and re-points every row.
+//
+// The stale rows are built as the finder's PoC does: the records name new files (a
+// message renamed by a re-capture) while the index rows, whose update was lost, still
+// name the earlier, missing ones. The row's repaired count and its repair lines are
+// the slice's own; the case asserts what is checkable today: nothing is deleted,
+// nothing is pruned, every record stays and every row names its record's file. The
+// symlink, EACCES, suffix-less-row and MA-227 variants, and the two ESC-2 twins
+// (the `-v2` orphan and the N2 victim's adoption), land with RI-S2.
 func TestReindexKeepsACurrentRecordsFilesWhenItsIndexRowIsStale(t *testing.T) {
+	plant := func(t *testing.T, out, rel string) {
+		t.Helper()
+		stem := filepath.Join(out, filepath.FromSlash(strings.TrimSuffix(rel, ".html")))
+		for _, suffix := range []string{"-attachments.zip", ".eml"} {
+			if err := os.WriteFile(stem+suffix, []byte("x"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	exists := func(out, rel string) bool {
+		_, err := os.Stat(filepath.Join(out, filepath.FromSlash(rel)))
+		return err == nil
+	}
+
+	// Twin: deleting a record's current page still prunes it and deletes its zip and
+	// original, while the others stay (MA-40 and the redaction-reach rows).
+	outT := tmpDir(t)
+	relsT := buildArchive(t, outT)
+	for _, rel := range relsT {
+		plant(t, outT, rel)
+	}
+	gone := relsT["prune-beta"]
+	if err := os.Remove(filepath.Join(outT, filepath.FromSlash(gone))); err != nil {
+		t.Fatal(err)
+	}
+	if kept, pruned, err := Reindex(outT, rcLogger()); err != nil || kept != 2 || pruned != 1 {
+		t.Fatalf("reindex after deleting one page: kept=%d pruned=%d err=%v, want 2, 1", kept, pruned, err)
+	}
+	stemGone := strings.TrimSuffix(gone, ".html")
+	if exists(outT, stemGone+".eml") || exists(outT, stemGone+"-attachments.zip") {
+		t.Fatalf("redaction left the pruned message's original or zip behind")
+	}
+	for subj, rel := range relsT {
+		if subj != "prune-beta" && !(exists(outT, rel) && exists(outT, strings.TrimSuffix(rel, ".html")+".eml")) {
+			t.Fatalf("reindex deleted the files of %s, which was not redacted", subj)
+		}
+	}
+
 	t.Skip("MA-361 (F48, R13): reindex deletes a message's current files when its index row names an earlier, missing path; encoder lands in RI-S1, turns green in RI-S2")
+
+	out := tmpDir(t)
+	rels := buildArchive(t, out)
+	man, err := state.Load(filepath.Join(out, ".mailarchive-manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := map[string]bool{} // the records' new paths
+	for key, rec := range man.All() {
+		newRel := strings.TrimSuffix(rec.Path, ".html") + "-v2.html"
+		if err := os.Rename(filepath.Join(out, filepath.FromSlash(rec.Path)), filepath.Join(out, filepath.FromSlash(newRel))); err != nil {
+			t.Fatal(err)
+		}
+		plant(t, out, newRel)
+		rec.Path = newRel
+		man.Add(key, rec)
+		current[newRel] = true
+	}
+	if err := man.Save(); err != nil {
+		t.Fatal(err)
+	}
+	assure.Reached(t, current, "the records' current paths")
+	if len(current) != len(rels) {
+		t.Fatalf("expected %d current paths, got %d", len(rels), len(current))
+	}
+
+	_, pruned, err := Reindex(out, rcLogger())
+	if err != nil {
+		t.Fatalf("reindex: %v", err)
+	}
+	if pruned != 0 {
+		t.Errorf("reindex pruned %d record(s) whose current files are intact", pruned)
+	}
+	for rel := range current {
+		stem := strings.TrimSuffix(rel, ".html")
+		for _, suffix := range []string{".html", "-attachments.zip", ".eml"} {
+			if !exists(out, stem+suffix) {
+				t.Errorf("reindex deleted %s, a file of a record that is current and intact", stem+suffix)
+			}
+		}
+	}
+	man2, err := state.Load(filepath.Join(out, ".mailarchive-manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if man2.Len() != len(rels) {
+		t.Errorf("the manifest holds %d records after reindex, want %d kept", man2.Len(), len(rels))
+	}
+	ix, err := index.OpenReadonly(filepath.Join(out, "search.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ix.Close()
+	rows := map[string]bool{}
+	if err := ix.EachRow(func(_ int64, _, path string) error { rows[path] = true; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	for rel := range current {
+		if !rows[rel] {
+			t.Errorf("no index row names %s: searches do not hit the record's current file", rel)
+		}
+	}
 }
