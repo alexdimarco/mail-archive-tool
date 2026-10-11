@@ -175,7 +175,7 @@ func (d *dashboard) startAction(w http.ResponseWriter, r *http.Request) {
 	prev := ws.prev
 	ws.mu.Unlock()
 	if prev == nil || prev.id != in.PreviewID || d.now().Sub(prev.created) > previewTTL {
-		d.refuse(w, refusalK())
+		d.refuse(w, refusalK(ws.inRetryMode()))
 		return
 	}
 	if st, live := d.exportState(); live {

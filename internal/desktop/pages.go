@@ -4,6 +4,8 @@ import (
 	"html/template"
 	"net/http"
 	"strings"
+
+	"mail-archive-tool/internal/app"
 )
 
 // The workspace's two page shells and their scripts (extraction design §4.2): the pages
@@ -78,6 +80,8 @@ type pageData struct {
 	Account   string
 	ReaderURL string
 	Active    string // "workspace" or "exports"
+	// DestExample is an example full folder path in the shape of this computer's own.
+	DestExample string
 }
 
 var pageFuncs = template.FuncMap{}
@@ -158,7 +162,7 @@ var pageTmpl = template.Must(template.New("pages").Funcs(pageFuncs).Parse(`
     <div class="card" id="destCard" hidden>
       <h2><span class="step">2</span>Export destination</h2>
       <label for="destPath">Destination folder</label>
-      <input type="text" id="destPath" spellcheck="false" placeholder="An existing folder, e.g. C:\Users\you\Downloads">
+      <input type="text" id="destPath" spellcheck="false" placeholder="An existing folder, e.g. {{.DestExample}}">
       <div class="listbar"><button class="btn small secondary" id="browse" type="button">Browse…</button><span id="browseNote" class="card-sub" style="margin:0"></span></div>
       <label for="newName">New subfolder name</label>
       <div class="listbar"><input type="text" id="newName" spellcheck="false" style="max-width:320px"><button class="btn small secondary" id="mkdir" type="button">Create folder</button></div>
@@ -230,7 +234,7 @@ type pageHead struct {
 }
 
 func (d *dashboard) renderPage(w http.ResponseWriter, name, title string) {
-	data := pageHead{pageData: pageData{CSRF: d.csrf, Epoch: d.boot, Account: d.cfg.account(), ReaderURL: d.cfg.ReaderURL, Active: name}, Title: title, CSS: template.CSS(pageCSS)}
+	data := pageHead{pageData: pageData{CSRF: d.csrf, Epoch: d.boot, Account: d.cfg.account(), ReaderURL: d.cfg.ReaderURL, Active: name, DestExample: app.DestExampleFor(d.cfg.goos())}, Title: title, CSS: template.CSS(pageCSS)}
 	var b strings.Builder
 	if err := pageTmpl.ExecuteTemplate(&b, name, data); err != nil {
 		http.Error(w, "page template error", http.StatusInternalServerError)

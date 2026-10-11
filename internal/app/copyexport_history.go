@@ -287,9 +287,11 @@ func (e *CopyExportEnv) historyOne(run string, jl []ceJournalLine, ledger []ceLe
 			}
 		}
 	}
-	if info.Stop != nil && info.Stop.RID != "" && info.Stop.Message == "" {
+	if info.Stop != nil && info.Stop.RID != "" && (info.Stop.Message == "" || info.Status == CopyStatusFinishedAsPartial) {
 		// An unsealed run keeps only the stop's id: its card still says why it stopped and what
-		// to do, whatever the reconciler found about the folder since (F8).
+		// to do, whatever the reconciler found about the folder since (F8). A run finished as
+		// partial was finished from that record alone, so what its seal holds is the same short
+		// reason, and its card says the same full words (the re-verification of F8).
 		plan := &CopyPlan{Dest: info.Dest, Source: CopySourceInfo{Mailbox: info.Mailbox}}
 		stop := *info.Stop
 		stop.Message = refusalText(stop.RID, info.Exported, info.Planned, "", plan, e.StateDir)

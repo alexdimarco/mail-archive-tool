@@ -54,6 +54,21 @@ type wsPreview struct {
 
 func newWorkspace(d *dashboard) *workspace { return &workspace{d: d} }
 
+// previewMessageCap is the most messages one export holds (R-i). A variable only so a test can
+// lower it: serving 200,001 messages from the fake mailbox is not worth the time.
+var previewMessageCap = 200000
+
+// inRetryMode reports whether the preview the workspace holds, or the last one it was asked
+// for, is a retry's: the page's buttons and so the words of a refusal differ (R-k).
+func (ws *workspace) inRetryMode() bool {
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+	if ws.prev != nil {
+		return ws.prev.retry != ""
+	}
+	return ws.job != nil && ws.job.retry != ""
+}
+
 // ---- the guarded endpoint shell ------------------------------------------------
 
 // api wraps a workspace endpoint: POST only (405), the CSRF, Origin and Host guard (403,
@@ -738,7 +753,7 @@ func (d *dashboard) previewStatusAction(w http.ResponseWriter, r *http.Request) 
 	job := d.ws.job
 	d.ws.mu.Unlock()
 	if job == nil || job.id != in.PreviewID {
-		d.refuse(w, refusalK())
+		d.refuse(w, refusalK(d.ws.inRetryMode()))
 		return
 	}
 	job.mu.Lock()
@@ -824,8 +839,9 @@ func (d *dashboard) resolveAndPlan(ctx context.Context, job *wsPreviewJob, sess 
 			fc.msgs++
 		}
 		perFolder = append(perFolder, fc)
-		if len(msgs) > 200000 {
-			return nil, nil, &refusal{ID: "R-i", Status: statusRefused, Text: fmt.Sprintf("This selection has more than %s messages — one export copies up to 200,000. Split it into several exports, for example by folder.", commaInt(200000))}
+		if len(msgs) > previewMessageCap {
+			ref := refusalI(len(ids) == 1 && len(picks) == 0)
+			return nil, nil, &ref
 		}
 	}
 	// the individual picks outside the folder set

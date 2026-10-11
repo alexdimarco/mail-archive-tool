@@ -33,7 +33,11 @@ func scoped(body string) string { return "(function(){\n" + body + "\n})();\n" }
 var signinJS = scoped(commonJS + `(function(){
 const btn=$('signInBtn');if(!btn)return;
 let timer=null;
+// started: this page started the sign-in or saw it running. Only then does a 'done' reload the
+// page; a page that merely loaded never reloads for a sign-in that finished earlier (F28).
+let started=false;
 function render(d){
+  if(d.state==='running'||d.state==='confirm')started=true;
   const box=$('signInBox');box.hidden=false;
   const b=$('signInBanner');if(b&&d.account)b.textContent='MailArchive Desktop is running as '+d.account+' on this computer.';
   const n=$('signInNotice');if(n&&d.notice)n.textContent=d.notice;
@@ -43,15 +47,17 @@ function render(d){
   else dev.hidden=true;
   const c=$('signInConfirm');
   if(d.state==='confirm'&&d.confirm){c.hidden=false;$('signInConfirmText').textContent=d.confirm.text;}else c.hidden=true;
-  if(d.state==='done'){stop();btn.disabled=false;
+  if(d.state==='done'&&started){stop();btn.disabled=false;
     show('banner',d.signedOut?'You chose Sign out: the new sign-in was not saved.':'Signed in as '+d.upn+'.');
     setTimeout(()=>location.reload(),900);}
-  if(d.state==='failed'){stop();btn.disabled=false;show('banner',d.error||'The sign-in did not finish.');}
+  if(d.state==='failed'&&started){stop();btn.disabled=false;show('banner',d.error||'The sign-in did not finish.');}
 }
-function poll(answer){
-  api('api/m365/signin-status',answer?{answer:answer}:{}).then(d=>{
+function poll(answer,initial){
+  api('api/m365/signin-status',answer?{answer:answer}:(initial?{initial:true}:{})).then(d=>{
     if(!d.ok){stop();btn.disabled=false;show('banner',d.error||RESTART);return;}
     render(d);
+    // a page reloaded while a sign-in is running picks the polling back up
+    if(initial&&started&&!timer&&(d.state==='running'||d.state==='confirm')){btn.disabled=true;timer=setInterval(()=>poll(),1500);}
   });
 }
 function stop(){if(timer){clearInterval(timer);timer=null;}}
@@ -59,13 +65,13 @@ btn.addEventListener('click',()=>{
   btn.disabled=true;show('banner','');
   api('api/m365/signin',{}).then(d=>{
     if(!d.ok){btn.disabled=false;show('banner',d.error||'Could not start the sign-in.');return;}
-    poll();timer=setInterval(()=>poll(),1500);
+    started=true;poll();if(!timer)timer=setInterval(()=>poll(),1500);
   });
 });
 const k=$('signInKeep'),o=$('signInOut');
 if(k)k.addEventListener('click',()=>poll('keep'));
 if(o)o.addEventListener('click',()=>poll('signout'));
-poll();
+poll(undefined,true);
 })();
 `)
 
@@ -279,7 +285,11 @@ function updateCount(){
     api('api/workspace/count',selection()).then(d=>{
       if(!d.ok){showErr(d);return;}
       // One export holds up to 200,000 messages: say so now, not after Preview has read them all.
-      $('selCount').textContent=fmt(d.count)+' messages selected (items Microsoft 365 reports)'+(d.count>200000?' — more than the 200,000 one export can hold: select fewer folders or messages':'');
+      // One folder alone cannot be split across exports in this version: "select fewer folders" is no remedy (F15).
+      const oneFolder=st.entries.length===1&&!Object.keys(st.picks).length;
+      const over=oneFolder?' — more than the 200,000 one export can hold, and one folder can\'t be split across exports yet: pick up to 10,000 of its messages by hand, or export its subfolders one at a time'
+        :' — more than the 200,000 one export can hold: select fewer folders or messages';
+      $('selCount').textContent=fmt(d.count)+' messages selected (items Microsoft 365 reports)'+(d.count>200000?over:'');
     });
   },300);
 }

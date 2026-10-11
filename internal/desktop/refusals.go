@@ -100,8 +100,25 @@ func refusalJ2(what string) refusal {
 	return refusedWith("R-j2", "A message in this selection wasn't listed in this session — the page may be out of date. Reload the folder and select again.")
 }
 
-func refusalK() refusal {
-	return refusedWith("R-k", "This preview is out of date — it is older than 30 minutes, you changed the selection or destination, or another window started a new preview. Click Preview copy export again.")
+// refusalI is a selection past the 200,000 an export holds, found while the preview reads the
+// folders. "Split it by folder" is no remedy when the selection is one folder (F15): that case
+// says what cannot be done yet and the two things that can.
+func refusalI(oneFolder bool) refusal {
+	if oneFolder {
+		return refusedWith("R-i", fmt.Sprintf("This folder has more than %s messages — one export copies up to 200,000, and MailArchive can't split one folder across exports in this version. Export part of it by picking its messages by hand (up to %s at a time), or, if it has subfolders, export those one at a time.", commaInt(200000), commaInt(maxSelectionPicks)))
+	}
+	return refusedWith("R-i", fmt.Sprintf("This selection has more than %s messages — one export copies up to 200,000. Split it into several exports, for example by folder.", commaInt(200000)))
+}
+
+// refusalK is the stale or replaced preview. A retry's page has no "Preview copy export"
+// button (that is the selection's); its own is "Preview again for this destination", and the
+// remedy names the one that is there.
+func refusalK(retry bool) refusal {
+	button := "Preview copy export again"
+	if retry {
+		button = "Preview again for this destination"
+	}
+	return refusedWith("R-k", "This preview is out of date — it is older than 30 minutes, you changed the selection or destination, or another window started a new preview. Click "+button+".")
 }
 
 func refusalL(was, now string) refusal {

@@ -261,6 +261,42 @@ func TestFricInterruptedAndFinishedWritingCardsSayWhatToDo(t *testing.T) {
 	}
 }
 
+// covers: MA-430, MA-448, R12, S52
+// F12/F13, the branch the test above never reached: a card whose export was fully written
+// before the app was killed, read before the reconciler has looked at its folder (no
+// observation yet, which is what the page shows first after a restart), already offers Check
+// this export beside Check and finish and says what to click. The positive twin first: a
+// finished export's card offers neither.
+func TestFricFinishedWritingCardBeforeTheReconcilerOffersTheChecks(t *testing.T) {
+	e0, src := newCEEnv(t), newFakeSrc()
+	done := mustRun(t, e0, cePlan(t, e0, src, ceMsgs(2)), src)
+	hist0, err := e0.History(nil, "")
+	if err != nil || len(hist0) != 1 || contains(hist0[0].Actions, ActCheckAndFinish) || hist0[0].Next != "" {
+		t.Fatalf("a finished export's card: %+v %v", hist0, err)
+	}
+	_ = done
+
+	e, res, _ := killedRun(t, "W9a", 3)
+	n := relaunch(e)
+	if _, err := n.SweepRunRecords(); err != nil {
+		t.Fatal(err)
+	}
+	hist, err := n.History(nil, "")
+	if err != nil || len(hist) != 1 || hist[0].Run != res.RunID {
+		t.Fatalf("history: %v %v", hist, err)
+	}
+	c := hist[0]
+	if !strings.HasPrefix(c.Label, "Finished writing") {
+		t.Fatalf("the card before the reconciler: %q %v", c.Label, c.Actions)
+	}
+	if !contains(c.Actions, ActCheckAndFinish) || !contains(c.Actions, ActCheckThis) {
+		t.Errorf("the finished-writing card (no observation) offers %v, want Check and finish and Check this export", c.Actions)
+	}
+	if !strings.Contains(c.Next, "Check and finish") {
+		t.Errorf("the finished-writing card (no observation) does not say what to click: %q", c.Next)
+	}
+}
+
 // covers: MA-422, MA-430, R29, S52
 // F7, F13, F22: the README of an export with failures names them (count, the manifest's
 // "failures" list, the first few with subject, folder and reason), lists the selected folders,

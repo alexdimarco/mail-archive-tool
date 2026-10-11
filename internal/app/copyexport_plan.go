@@ -42,6 +42,30 @@ func (e *CopyExportEnv) copyRootName(chain CopyChain) string {
 	return "MailExport-" + e.nowTime().Format("2006-01-02_150405") + "-" + e.rand(4)
 }
 
+// oneFolder reports whether every message of a selection is in one and the same folder.
+func oneFolder(ms []CopyMessage) bool {
+	if len(ms) == 0 || len(ms[0].Folder) == 0 {
+		return false
+	}
+	id := ms[0].Folder[len(ms[0].Folder)-1].ID
+	for _, m := range ms {
+		if len(m.Folder) == 0 || m.Folder[len(m.Folder)-1].ID != id {
+			return false
+		}
+	}
+	return true
+}
+
+// copyTooManyText is R-i: what the selection holds, the cap and what to do. "Split it by folder"
+// is no remedy for a selection that is one folder (friction F15), so that case says what
+// MailArchive can't do yet and the two things the owner can.
+func copyTooManyText(n int, single bool) string {
+	if single {
+		return fmt.Sprintf("This folder has %s messages — one export copies up to 200,000, and MailArchive can't split one folder across exports in this version. Export part of it by picking its messages by hand (up to 10,000 at a time), or, if it has subfolders, export those one at a time.", commas(n))
+	}
+	return fmt.Sprintf("This selection has %s messages — one export copies up to 200,000. Split it into several exports, for example by folder.", commas(n))
+}
+
 // PlanCopyExport sizes and names a resolved selection and binds it to its source,
 // destination and options. It is a dry run: it writes nothing to the destination,
 // the archive or the state directory (P5, MA-412), and only reads free space, the
@@ -51,7 +75,7 @@ func (e *CopyExportEnv) PlanCopyExport(in CopyPlanInput) (*CopyPlan, error) {
 		return nil, &CopyRefusal{ID: "R-h", Message: "Select at least one folder or message to preview."}
 	}
 	if len(in.Messages) > copyMaxMessages {
-		return nil, &CopyRefusal{ID: "R-i", Message: fmt.Sprintf("This selection has %s messages — one export copies up to 200,000. Split it into several exports, for example by folder.", commas(len(in.Messages)))}
+		return nil, &CopyRefusal{ID: "R-i", Message: copyTooManyText(len(in.Messages), oneFolder(in.Messages))}
 	}
 	if in.Options.ReadableHTML || in.Options.Attachments {
 		return nil, &CopyRefusal{ID: "R-h", Message: "Readable HTML and extracted attachments aren't available in this version of MailArchive — turn them off and preview again."}

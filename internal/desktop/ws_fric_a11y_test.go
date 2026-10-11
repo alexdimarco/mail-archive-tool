@@ -102,6 +102,10 @@ func TestFricTheTreeAndTheAnnouncementsAreReachableWithoutAMouse(t *testing.T) {
 		"el('button',f.name,", "el('button',kids.length", // a folder's name and its arrow are buttons
 		"setAttribute('aria-expanded'", "setAttribute('aria-label','Select ", // the arrow says open/closed, checkboxes are named
 		"st.open[", "dataset.key", // what is open, and where the focus was, survive a redraw
+		// the folder checkbox's own name (its words differ from the message row's, which the line
+		// above also matches), and that of a folder covered by its parent
+		"cb.setAttribute('aria-label','Select '+f.name+' ('+fmt(f.count)+' messages)'", "included with its parent folder",
+		"cb.setAttribute('aria-label','Select the message '",
 	} {
 		if !strings.Contains(workspaceJS, want) {
 			t.Errorf("workspace.js does not contain %q", want)

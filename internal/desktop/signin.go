@@ -283,6 +283,11 @@ func (d *dashboard) signInRefusal(err error, configAuth string) refusal {
 func (d *dashboard) signInStatusAction(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Answer string `json:"answer"`
+		// Initial is a page that has just loaded asking what is going on (F28). It is told of a
+		// sign-in that is still running or waiting for its answer, and nothing of one that
+		// finished: the server keeps the finished job, and a page that reloaded on "done" would
+		// be told "done" again by the page it loaded, and reload again.
+		Initial bool `json:"initial"`
 	}
 	if !d.readBody(w, r, &in) {
 		return
@@ -292,6 +297,11 @@ func (d *dashboard) signInStatusAction(w http.ResponseWriter, r *http.Request) {
 	d.si.mu.Lock()
 	job := d.si.job
 	d.si.mu.Unlock()
+	if job != nil && in.Initial && in.Answer == "" {
+		if s := job.snapshot(); s["state"] == "done" || s["state"] == "failed" {
+			job = nil
+		}
+	}
 	if job != nil {
 		if in.Answer == "keep" || in.Answer == "signout" {
 			select {

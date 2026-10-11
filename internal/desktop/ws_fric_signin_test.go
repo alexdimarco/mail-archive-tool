@@ -100,6 +100,54 @@ func TestFricARefusedSavedSignInCanBeSignedInAgainFromExportActivity(t *testing.
 	}
 }
 
+// covers: MA-404, MA-437, MA-438, R12, S52
+// F28 (found by the fresh-eyes check of F2): signin.js asks for the sign-in's status when a
+// page loads and reloads the page when the answer is "done". The server keeps the finished job
+// for the life of the process, and the workspace and Export activity always carry a Sign in
+// button, so after any completed sign-in every load of those pages would answer "done",
+// reload, and answer "done" again: a reload about every second, and the workspace's selection
+// lost each time. A page that has just loaded is told nothing of a finished job (it asks with
+// "initial"); the page that started the sign-in keeps its polls and its answer.
+func TestFricAFinishedSignInIsNotReplayedToAPageThatDidNotStartIt(t *testing.T) {
+	e := newWsEnv(t)
+	os.Remove(e.tok)
+	e.d.signInChanged("")
+
+	// the positive twin: nothing has happened, a fresh page is told nothing
+	if st := e.ok("/api/m365/signin-status", map[string]any{"initial": true}); st["state"] != "idle" {
+		t.Fatalf("a fresh page before any sign-in: %v", st)
+	}
+
+	e.ok("/api/m365/signin", nil)
+	if done := e.waitSignIn("done"); done["upn"] != "alice@contoso.org" {
+		t.Fatalf("the sign-in: %v", done)
+	}
+	// the page that runs the sign-in keeps polling and still gets its answer, again and again
+	for i := 0; i < 3; i++ {
+		if st := e.signInStatus(""); st["state"] != "done" {
+			t.Fatalf("the polling page's answer %d: %v", i, st)
+		}
+	}
+	// a page that loads afterwards is not told of the finished sign-in, however often it loads
+	for i := 0; i < 3; i++ {
+		st := e.ok("/api/m365/signin-status", map[string]any{"initial": true})
+		if st["state"] != "idle" || st["upn"] != nil {
+			t.Errorf("load %d after the sign-in finished: %v (the page would reload on 'done' forever)", i, st)
+		}
+		if st["account"] == nil || st["notice"] == nil {
+			t.Errorf("load %d: the sign-in box lost its account line: %v", i, st)
+		}
+	}
+
+	// the script asks as a fresh page when it loads, reloads only a sign-in it saw start, and
+	// picks a running sign-in back up after a reload (the code and the polling)
+	for _, want := range []string{"{initial:true}", "started", "if(d.state==='done'&&started)"} {
+		if !strings.Contains(signinJS, want) {
+			t.Errorf("signin.js lacks %q: a loaded page would reload on a finished sign-in", want)
+		}
+	}
+}
+
 // covers: MA-437, MA-438, R12, S52
 // F3: the retry's refusals give the retry's remedy. Signed out (R-b): the account the export
 // was made in, the Sign in button on this page, then the button to click again. Signed in as
