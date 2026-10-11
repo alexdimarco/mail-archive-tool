@@ -45,6 +45,46 @@ func TestStatusTerminalGapThatDefersGoneNamesIt(t *testing.T) {
 }
 
 // covers: MA-326, R18, S48
+// S3-AI3 (b), second round: a stuck FOLDER-scope gap that defers gone-detection (the
+// archive could not create the folder's directory) is a local problem with no item
+// in it to move or delete, and its remedy already says to make the archive location
+// writable. The deletion-tracking sentence it carries must say what it costs and when
+// it ends, not send the owner to move or delete mail in the mailbox over a disk fault.
+// An item gap keeps the sentence it always had.
+func TestStatusStuckFolderUnwritableGapDoesNotSendTheOwnerToMoveMail(t *testing.T) {
+	folderGap := func() state.CaptureGap {
+		g := fetchFailed("folder:Inbox")
+		g.Scope, g.Reason, g.Subject, g.Received, g.Detail = state.GapScopeFolder, "folder-unwritable", "", "", "the folder's directory could not be created"
+		g.Runs, g.FirstRun, g.DefersGone = 6, gapNow.Add(-10*24*time.Hour), true
+		return g
+	}
+	rep := Assess(gapInput(folderGap()), gapNow)
+	i := codeIndex(rep, "capture_gaps_stuck")
+	if i < 0 {
+		t.Fatalf("no stuck line in %v", rep.Codes)
+	}
+	line := rep.Reasons[i]
+	if !strings.Contains(line, "deleted messages in Inbox are not being detected while this persists") {
+		t.Errorf("the stuck folder line must still say deletion tracking is off: %q", line)
+	}
+	for _, bad := range []string{"move or delete the item", "after saving a copy"} {
+		if strings.Contains(line, bad) {
+			t.Errorf("a stuck folder-unwritable line says %q, advice for a message in a mailbox and not for a local directory: %q", bad, line)
+		}
+	}
+	if !strings.Contains(line, "writable") || !strings.Contains(line, "resumes once") {
+		t.Errorf("the stuck folder line must say deletion tracking resumes once the archive location is writable: %q", line)
+	}
+
+	item := fetchFailed("graph:N1")
+	item.Runs, item.FirstRun, item.DefersGone = 6, gapNow.Add(-10*24*time.Hour), true
+	rep = Assess(gapInput(item), gapNow)
+	if line := rep.Reasons[codeIndex(rep, "capture_gaps_stuck")]; strings.Count(line, inboxDeletionNote) != 1 {
+		t.Errorf("an item gap keeps its sentence: %q", line)
+	}
+}
+
+// covers: MA-326, R18, S48
 // S3-AI5: a Graph item that is listed on every run and answers 404 on every $value
 // is classed vanished-at-fetch, whose words say the message was deleted while the
 // run was reading it and that the row closes on the next run. Once the gap is stuck

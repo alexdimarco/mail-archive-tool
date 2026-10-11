@@ -235,16 +235,27 @@ func gapRank(in Input, g state.CaptureGap, now time.Time) int {
 // gone-detection is deferred for the records it could hide, so a message deleted
 // in the folder is not noticed. It names the folders and how to end it: after
 // saving a copy, move or delete the item out of the folder in the mailbox (§4.10,
-// FC23(4), owner ruling OR10). "" when no stuck gap defers anything.
+// FC23(4), owner ruling OR10). A gap of the folder's own scope (the archive could not
+// create its directory) has no item to move: its sentence says deletion tracking
+// resumes once the archive location is writable. "" when no stuck gap defers anything.
 func deletionTrackingNote(stuck []state.CaptureGap) string {
 	seen := map[string]bool{}
 	var parts []string
 	for _, g := range stuck {
-		if !g.DefersGone || seen[g.Folder] {
+		folderScope := g.Scope == state.GapScopeFolder
+		key := fmt.Sprintf("%t\x00%s", folderScope, g.Folder)
+		if !g.DefersGone || seen[key] {
 			continue
 		}
-		seen[g.Folder] = true
+		seen[key] = true
 		f := util.StripControl(g.Folder)
+		if folderScope {
+			// The gap is the folder's own (its directory in the archive could not be
+			// created): there is no item to move or delete, and the remedy is the
+			// archive location (S3-AI3).
+			parts = append(parts, fmt.Sprintf("deleted messages in %s are not being detected while this persists; deletion tracking resumes once the archive location is writable and a run reaches %s again", f, f))
+			continue
+		}
 		parts = append(parts, fmt.Sprintf("deleted messages in %s are not being detected while this persists; after saving a copy, move or delete the item out of %s in the mailbox to resume deletion tracking there", f, f))
 	}
 	sort.Strings(parts)
