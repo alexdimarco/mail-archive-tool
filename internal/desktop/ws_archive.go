@@ -353,7 +353,8 @@ func (d *dashboard) archiveMessages(w http.ResponseWriter, r *http.Request, in w
 	}
 	var notes []string
 	if total < folder.TotalItemCount {
-		notes = append(notes, fmt.Sprintf("%s messages in this folder are not in the search index — Rebuild search index fixes the list.", commaInt(folder.TotalItemCount-total)))
+		missing := folder.TotalItemCount - total
+		notes = append(notes, fmt.Sprintf("%s %s in this folder %s not in the search index — Rebuild search index fixes the list.", commaInt(missing), one(missing, "message", "messages"), one(missing, "is", "are")))
 	}
 	if a.Other() && a.WALBeside() {
 		notes = append(notes, listNoteWAL)
@@ -379,7 +380,7 @@ func (d *dashboard) archiveMeta(a *app.ArchiveSource, ids []string) (map[string]
 	d.listGate.RLock()
 	defer d.listGate.RUnlock()
 	if d.rebuilding.Load() {
-		return nil, "The search index is being rebuilt, so most messages in this export carry no subject, sender or date in their names and in the manifest."
+		return nil, "The search index is being rebuilt, so most messages in this export carry no subject, sender or date in their names and in the manifest. Wait until Maintenance says the rebuild is done, then click Preview copy export again."
 	}
 	h, err := a.OpenList()
 	if err != nil {
@@ -521,7 +522,8 @@ func (d *dashboard) resolveAndPlanArchive(ctx context.Context, job *wsPreviewJob
 	}
 	var warns, infos []string
 	if res.Skipped > 0 {
-		warns = append(warns, fmt.Sprintf("%s records whose files were removed are skipped — run Rebuild search index (Maintenance) to bring the list and the counts back in step.", commaInt(res.Skipped)))
+		warns = append(warns, fmt.Sprintf("%s %s whose files were removed %s skipped — run Rebuild search index (Maintenance) to bring the list and the counts back in step.",
+			commaInt(res.Skipped), one(res.Skipped, "record", "records"), one(res.Skipped, "is", "are")))
 	}
 	if metaNote != "" {
 		warns = append(warns, metaNote)
@@ -551,25 +553,35 @@ func (d *dashboard) resolveAndPlanArchive(ctx context.Context, job *wsPreviewJob
 	return plan, planResult(plan, job.id, folderOut, reportedTotal, len(msgs), warns, infos), nil
 }
 
+// one picks the word for a count: the singular for exactly one, the plural otherwise (F19).
+func one(n int, singular, plural string) string {
+	if n == 1 {
+		return singular
+	}
+	return plural
+}
+
 // archiveInfos are the preview's lines about what the archive holds (design §4.7 step 4, §7.4).
 func archiveInfos(c *app.CopyArchiveCounts, selected int) []string {
 	if c == nil {
 		return nil
 	}
 	var out []string
-	line := fmt.Sprintf("Of %s selected, %s have an original .eml", commaInt(selected), commaInt(c.WithOriginal))
+	line := fmt.Sprintf("Of %s selected, %s %s an original .eml", commaInt(selected), commaInt(c.WithOriginal), one(c.WithOriginal, "has", "have"))
 	if c.WithoutOriginal > 0 {
 		line += fmt.Sprintf("; %s will be copied as the archived page and attachment zip (no original was kept)", commaInt(c.WithoutOriginal))
 	}
 	out = append(out, line+".")
 	if c.Gone > 0 {
-		out = append(out, fmt.Sprintf("%s are no longer in the mailbox (kept in the archive).", commaInt(c.Gone)))
+		out = append(out, fmt.Sprintf("%s %s no longer in the mailbox (kept in the archive).", commaInt(c.Gone), one(c.Gone, "is", "are")))
 	}
 	if c.Quarantined > 0 {
-		out = append(out, fmt.Sprintf("%s archived pages don't begin with the security policy a page of MailArchive carries, or hold a live refresh, so they will be copied as text (.archived-page.txt) and not as pages.", commaInt(c.Quarantined)))
+		out = append(out, fmt.Sprintf("%s archived %s begin with the security policy a page of MailArchive carries, or %s a live refresh, so %s will be copied as text (.archived-page.txt) and not as %s.",
+			commaInt(c.Quarantined), one(c.Quarantined, "page doesn't", "pages don't"), one(c.Quarantined, "holds", "hold"), one(c.Quarantined, "it", "they"), one(c.Quarantined, "a page", "pages")))
 	}
 	if c.Unattested > 0 {
-		out = append(out, fmt.Sprintf("%s originals have no checksum recorded in the archive, so they are copied as stored (Verify records one).", commaInt(c.Unattested)))
+		out = append(out, fmt.Sprintf("%s %s no checksum recorded in the archive, so %s copied as stored (Verify records one).",
+			commaInt(c.Unattested), one(c.Unattested, "original has", "originals have"), one(c.Unattested, "it is", "they are")))
 	}
 	return out
 }
@@ -638,7 +650,7 @@ func (d *dashboard) retryArchive(w http.ResponseWriter, in runBody, info app.Cop
 		}
 		var warns []string
 		if res.Skipped > 0 {
-			warns = append(warns, fmt.Sprintf("%s of these messages are no longer in the archive and were left out.", commaInt(res.Skipped)))
+			warns = append(warns, fmt.Sprintf("%s of these messages %s no longer in the archive and %s left out.", commaInt(res.Skipped), one(res.Skipped, "is", "are"), one(res.Skipped, "was", "were")))
 		}
 		out := planResult(plan, job.id, foldersOut(input.Folders), len(input.Messages), len(input.Messages), warns, archiveInfos(plan.Archive, len(input.Messages)))
 		out["retryWhich"] = in.Which
