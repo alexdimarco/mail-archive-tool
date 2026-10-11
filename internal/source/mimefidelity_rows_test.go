@@ -8,15 +8,6 @@ import "testing"
 // that turns it into the real test; its covering marker stays on it until then.
 // MA-343 is tier L (pending, a lab story in the catalog) and has no encoder.
 
-// covers: MA-330, R3, R2, R27, S49
-// Identity, Fingerprint, ContentDigest and the local and live keys of every corpus
-// message equal the identity golden, for messages the fidelity parser changes and
-// for unchanged ones, including the v1-panicking item and one item per go-pst
-// nameMap label; the PST twin on support.pst.
-func TestFidelityParserKeepsTheIdentityGoldenOnTheCorpus(t *testing.T) {
-	t.Skip("MA-330: there is no fidelity parser, IdentityTerms or idv() to compare with the golden; encoder lands in MF-S0, turns green in MF-S1")
-}
-
 // covers: MA-332, R2, R7, R27
 // A corpus message with no fidelity note has the content golden's fields, renders
 // as the current renderer renders the v1 message, and carries IdentityTerms equal
