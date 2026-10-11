@@ -34,12 +34,20 @@ type seenEntry struct {
 	fromName string
 	imid     string
 	received time.Time
-	size     int64 // -1 = unknown
+	size     int64             // -1 = unknown
+	state    *app.CopyMsgState // the listing's importance, read flag, categories and sensitivity, for a readable copy (slice E5)
 	el       *list.Element
 }
 
 func (e *seenEntry) bytes() int64 {
-	return int64(len(e.handle)+len(e.id)+len(e.subject)+len(e.from)+len(e.fromName)+len(e.imid)) + 160
+	n := int64(len(e.handle)+len(e.id)+len(e.subject)+len(e.from)+len(e.fromName)+len(e.imid)) + 160
+	if st := e.state; st != nil {
+		n += int64(len(st.Importance)+len(st.Sensitivity)) + 48
+		for _, c := range st.Categories {
+			n += int64(len(c)) + 16
+		}
+	}
+	return n
 }
 
 // seenSet is the gate for the row handles the page sends back: a listed message gets a

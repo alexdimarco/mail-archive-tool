@@ -132,6 +132,20 @@ type CopyMessage struct {
 	Removed    bool          `json:"removed,omitempty"` // a retry's reading: the archive's manifest no longer lists the record; none of its files are read and the run lists it as removed (E4-AC10)
 	Fix        *state.Fixity `json:"fix,omitempty"`
 	Notes      []string      `json:"notes,omitempty"` // the archive's own gaps for this message (§4.6 item 3)
+
+	// State is the message state the Microsoft 365 listing carried (importance, read flag,
+	// categories, sensitivity; XC27): Graph is authoritative for them, so a readable copy
+	// shows them as the archive's pages do (slice E5, design §4.11 step 3). nil when the
+	// listing carried none, and always nil for the archive source.
+	State *CopyMsgState `json:"state,omitempty"`
+}
+
+// CopyMsgState is the state of a Microsoft 365 message as its listing gave it.
+type CopyMsgState struct {
+	Importance  string   `json:"importance,omitempty"`
+	IsRead      *bool    `json:"is_read,omitempty"`
+	Categories  []string `json:"categories,omitempty"`
+	Sensitivity string   `json:"sensitivity,omitempty"`
 }
 
 // Why the archive kept no original (design §4.6 item 2).

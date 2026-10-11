@@ -39,6 +39,7 @@ type ceNamer struct {
 	root     *ceDir              // "messages"
 	stems    map[uint64]struct{} // 64-bit digests of (directory, stem fold key): a stem already placed in a month directory. A digest keeps the map small for 200,000 messages, and a collision of two digests only costs the later message a longer hash in its name.
 	counts   map[string]int      // files placed per month directory
+	readable bool                // a readable copy (<stem>.html) goes beside each original: the longest name is the .html, one byte more than the .eml (slice E5)
 }
 
 func newCeNamer(preserve bool, rootAbs string) *ceNamer {
@@ -144,13 +145,17 @@ func (n *ceNamer) place(m *CopyMessage, files int) cePlace {
 // the same fold key in the directory (deterministic from this message alone).
 func (n *ceNamer) stem(m *CopyMessage, dir, key string) string {
 	slug := 60
+	suffix := ".eml"
+	if n.readable {
+		suffix = ".html"
+	}
 	for {
 		cand := export.StemName(m.Received, subjectSlug(m.Subject, slug), m.SourceID, 8)
 		// The name must also fit the 255-byte NAME_MAX of ext4, xfs, btrfs, tmpfs and
 		// NFS, with the longest digest the de-duplication below can use: the slug is
 		// bounded in runes, and a letter can take four bytes (EW-AO1).
 		widest := export.StemName(m.Received, subjectSlug(m.Subject, slug), m.SourceID, 40)
-		if slug == 0 || (utf16Len(n.rootAbs+"/"+dir+"/"+cand+".eml") <= copyPathBudget && len(widest)+len(".eml") <= copyNameMaxBytes) {
+		if slug == 0 || (utf16Len(n.rootAbs+"/"+dir+"/"+cand+suffix) <= copyPathBudget && len(widest)+len(suffix) <= copyNameMaxBytes) {
 			break
 		}
 		if slug == 60 {

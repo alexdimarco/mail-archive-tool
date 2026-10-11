@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path"
 	"runtime"
 	"slices"
 	"strings"
@@ -85,6 +86,15 @@ func copyLongestSuffix(m *CopyMessage) string {
 		return archivedPageTxtSuffix
 	}
 	return ".html"
+}
+
+// copyLongestSuffixFor is copyLongestSuffix with a readable copy beside an original: its
+// .html is a byte longer than the .eml it sits by.
+func copyLongestSuffixFor(m *CopyMessage, opts CopyOptions) string {
+	if opts.ReadableHTML && m.NoOrig == "" {
+		return ".html"
+	}
+	return copyLongestSuffix(m)
 }
 
 // copyFirstSuffix is the first file's name after the stem.
@@ -168,7 +178,7 @@ func (r *CopyRun) exportFiles(walk context.Context, n int, m *CopyMessage, src C
 // caller removes them) after removing every temp itself.
 func (r *CopyRun) writeFiles(ctx context.Context, n int, m *CopyMessage, files *CopyFiles, maxBytes int64) (*ceMsgLine, []string, error) {
 	e := r.env
-	pl := r.namer.place(m, copyFileCount(m))
+	pl := r.namer.place(m, copyFileCountFor(m, r.plan.Options))
 	if err := r.ensureDir(pl.Dir); err != nil {
 		return nil, nil, &ceWriteError{err}
 	}
@@ -221,7 +231,15 @@ func (r *CopyRun) writeFiles(ctx context.Context, n int, m *CopyMessage, files *
 		placed = append(placed, ceJoin(pl.Dir, name))
 		recs = append(recs, ceFileRec{Path: pl.Dir + "/" + name, Role: t.part.Role, SHA256: hex.EncodeToString(t.hw.h.Sum(nil)), Size: t.got})
 	}
-	return &ceMsgLine{T: "msg", N: n, Status: files.Status, Files: recs, Notes: slices.Clone(files.Notes)}, nil, nil
+	line := &ceMsgLine{T: "msg", N: n, Status: files.Status, Files: recs, Notes: slices.Clone(files.Notes)}
+	if r.plan.Options.ReadableHTML && m.NoOrig == "" && len(recs) > 0 && recs[0].Role == roleOriginal {
+		// the readable copy of the original just placed (slice E5): an original that is not what
+		// was written fails the message, and the caller removes every file it placed
+		if err := r.addReadable(ctx, n, m, pl.Dir, path.Base(recs[0].Path), recs[0], line); err != nil {
+			return nil, placed, err
+		}
+	}
+	return line, nil, nil
 }
 
 const (
@@ -262,6 +280,9 @@ func (r *CopyRun) classifyFiles(err error, mctx, walk context.Context, src CopyF
 	var cause *ceBreakerCause
 	if errors.As(context.Cause(mctx), &cause) {
 		return cause.verdict
+	}
+	if errors.Is(err, errOriginalChanged) { // the read-back for the readable copy (slice E5)
+		return verdict{kind: verdictList, class: classRetryable, reason: reasonOriginalChanged}
 	}
 	var we *ceWriteError
 	if errors.As(err, &we) {

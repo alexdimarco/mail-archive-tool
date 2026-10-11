@@ -532,7 +532,7 @@ func (d *dashboard) messagesAction(w http.ResponseWriter, r *http.Request) {
 			f = in.Folder
 		}
 		h := sess.seen.add(seenEntry{id: m.ID, folder: f, subject: m.Subject, from: m.From, fromName: m.FromName, imid: m.InternetMessageID,
-			received: m.Received, size: m.SizeHint})
+			received: m.Received, size: m.SizeHint, state: app.StateOf(m)})
 		rows = append(rows, wsRowOut{H: h, Subject: m.Subject, From: m.From, FromName: m.FromName, Received: m.Received.UTC().Format(time.RFC3339), Size: m.SizeHint})
 		lastReceived = m.Received
 		honored = honored || m.PhysID != ""
@@ -966,7 +966,7 @@ func (d *dashboard) resolveAndPlan(ctx context.Context, job *wsPreviewJob, sess 
 			warns = append(warns, "A message you picked is in a folder that is no longer in the mailbox; it is exported under \"Unknown folder\".")
 		}
 		msgs = append(msgs, app.CopyMessage{SourceID: e.id, InternetMessageID: e.imid, Folder: path, Subject: e.subject, From: e.from, FromName: e.fromName,
-			Received: e.received, SizeHint: e.size, Mailbox: sess.upn})
+			Received: e.received, SizeHint: e.size, Mailbox: sess.upn, State: e.state})
 		picked++
 	}
 	if picked > 0 {
