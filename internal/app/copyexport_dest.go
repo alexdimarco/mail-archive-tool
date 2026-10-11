@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -159,7 +160,9 @@ func (e *CopyExportEnv) destChain(dest string) ([]ceIdentity, error) {
 	cur := util.ResolveExisting(dest)
 	var out []ceIdentity
 	for {
-		f, err := os.Open(cur)
+		// Without blocking: a folder of the path that is a named pipe must not hang the
+		// plan (EW-NF1).
+		f, err := os.OpenFile(cur, os.O_RDONLY|openNoBlock, 0)
 		if err != nil {
 			return out, err
 		}
@@ -192,15 +195,15 @@ func (e *CopyExportEnv) servedHere(server string) bool {
 	if e.served != nil {
 		return e.served(server)
 	}
-	s := strings.ToLower(strings.Trim(server, "[]"))
+	s := strings.TrimSuffix(strings.ToLower(strings.Trim(server, "[]")), ".")
 	if s == "" {
 		return false
 	}
 	if s == "localhost" || strings.HasPrefix(s, "localhost.") {
 		return true
 	}
-	if ip := net.ParseIP(s); ip != nil {
-		if ip.IsLoopback() {
+	if ip := parseServerIP(s); ip != nil {
+		if ip.IsLoopback() || ip.IsUnspecified() {
 			return true
 		}
 		addrs, _ := net.InterfaceAddrs()
@@ -214,11 +217,53 @@ func (e *CopyExportEnv) servedHere(server string) bool {
 	if h, err := os.Hostname(); err == nil {
 		h = strings.ToLower(h)
 		short, _, _ := strings.Cut(h, ".")
-		if s == h || s == short {
+		// The host's bare name, its own dotted name, and its name qualified by a
+		// domain: Windows reports only the host label, so a share by the fully
+		// qualified name would otherwise look like another computer. A different
+		// computer that shares the label is refused as unconfirmable, never trusted.
+		if s == h || s == short || (short != "" && strings.HasPrefix(s, short+".")) {
 			return true
 		}
 	}
 	return false
+}
+
+// parseServerIP reads the spellings of an address a share path can carry: a literal Go
+// parses, the classic inet_aton forms (127.1, a decimal or hexadecimal number, an octal
+// part), and Windows' IPv6-literal UNC name ("--1.ipv6-literal.net", with an "s" before
+// a zone index). It returns nil for a name.
+func parseServerIP(s string) net.IP {
+	if ip := net.ParseIP(s); ip != nil {
+		return ip
+	}
+	if body, ok := strings.CutSuffix(s, ".ipv6-literal.net"); ok {
+		body, _, _ = strings.Cut(body, "s")
+		return net.ParseIP(strings.ReplaceAll(body, "-", ":"))
+	}
+	parts := strings.Split(s, ".")
+	if len(parts) > 4 {
+		return nil
+	}
+	var v uint64
+	for i, p := range parts {
+		n, err := strconv.ParseUint(p, 0, 64)
+		if err != nil {
+			return nil
+		}
+		if i < len(parts)-1 {
+			if n > 255 {
+				return nil
+			}
+			v = v<<8 | n
+			continue
+		}
+		room := uint(8 * (5 - len(parts))) // the bits the last part fills
+		if n >= uint64(1)<<room {
+			return nil
+		}
+		v = v<<room | n
+	}
+	return net.IPv4(byte(v>>24), byte(v>>16), byte(v>>8), byte(v))
 }
 
 // viewDecision is what two views allow: identity decides, they cannot reach the same

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"io"
 	"time"
 
@@ -34,8 +35,16 @@ type M365Source struct {
 	// the 2-hour overall cap the copy export carries (graph.MIMEMaxDuration).
 	Idle, Overall time.Duration
 
+	// MaxListed, when positive, is the most messages one ListFolder may collect: the
+	// listing stops after the page that passes it, with ErrListTooLarge, instead of
+	// reading a folder of millions into memory first (EW-AC11).
+	MaxListed int
+
 	listed, honored int // first pages seen, and how many said "honored" (XC27)
 }
+
+// ErrListTooLarge is ListFolder's stop at MaxListed.
+var ErrListTooLarge = errors.New("the folder holds more messages than one export copies")
 
 // NewM365Source is the source for the signed-in user upn. signedIn reads the saved
 // sign-in locally (graph.SignedIn on the same config); nil means "still upn".
@@ -85,6 +94,9 @@ func (s *M365Source) ListFolder(ctx context.Context, path []CopyFolderRef) ([]Co
 		for _, r := range refs {
 			out = append(out, CopyMessage{SourceID: r.ID, InternetMessageID: r.InternetMessageID, Folder: path, Subject: r.Subject,
 				From: r.From, FromName: r.FromName, Received: r.Received, SizeHint: r.SizeHint, Mailbox: s.upn})
+		}
+		if s.MaxListed > 0 && len(out) > s.MaxListed {
+			return nil, ErrListTooLarge
 		}
 		if link == "" {
 			return out, nil

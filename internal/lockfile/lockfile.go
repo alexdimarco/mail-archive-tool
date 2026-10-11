@@ -51,7 +51,7 @@ func AcquireAs(path, verb string) (*Lock, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open lock %s: %w", path, err)
 	}
-	if err := tryLock(f); err != nil {
+	if err := tryLockFor(f, acquireGrace); err != nil {
 		f.Close()
 		holder := readHolder(path)
 		if holder != "" {
@@ -135,18 +135,42 @@ func (l *Lock) StillHeld() error {
 	return nil
 }
 
+// acquireGrace and probeGrace are how long a refused tryLock is retried before the lock
+// is called held. Held probes by taking the lock for an instant, so an Acquire (or
+// another probe) that lands in that instant would be refused for a lock nobody holds,
+// and a scheduled capture would be skipped (EW-AC9). A real holder holds for the length
+// of a run, so a refusal that lasts this long is real; the retry costs only the
+// refusal, and only by this much. Acquire still never gives the lock to two holders.
+const (
+	acquireGrace = 100 * time.Millisecond
+	probeGrace   = 20 * time.Millisecond
+)
+
+// tryLockFor is tryLock retried every couple of milliseconds until grace has passed.
+func tryLockFor(f *os.File, grace time.Duration) error {
+	err := tryLock(f)
+	for deadline := time.Now().Add(grace); err != nil && time.Now().Before(deadline); {
+		time.Sleep(2 * time.Millisecond)
+		err = tryLock(f)
+	}
+	return err
+}
+
 // Held reports whether another run holds the lock at path right now, WITHOUT creating
 // the file or writing to it: an existing file is opened (never through a symlink) and
 // locked non-blocking, then unlocked at once. A missing, unreadable or read-only lock file
 // reports false. It is how a reader that must never write the archive (the extraction
 // workspace's copy export, which backs off while a capture runs) can see a capture.
+// Holding the lock for that instant is a probe's cost, which is why Acquire retries
+// briefly before it refuses (see acquireGrace), and why a probe that meets another probe
+// retries too.
 func Held(path string) bool {
 	f, err := os.OpenFile(path, os.O_RDWR|noFollow, 0)
 	if err != nil {
 		return false
 	}
 	defer f.Close()
-	if err := tryLock(f); err != nil {
+	if err := tryLockFor(f, probeGrace); err != nil {
 		return true
 	}
 	unlock(f)

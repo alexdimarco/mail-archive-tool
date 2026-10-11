@@ -168,6 +168,8 @@ type dashboard struct {
 	flow  deviceFlow
 	lapse lapse
 
+	planMax int // a test lowers the 200,000-message limit of one export (R-i)
+
 	// seams a test replaces
 	now    func() time.Time
 	pick   func(ctx context.Context, title string) (string, error)
@@ -192,7 +194,9 @@ func newDashboard(cfg Config) *dashboard {
 
 // captureRunning is whether a capture (or a verify or rebuild) runs in this process, or the
 // archive lock is held by another run: the copy export backs off meanwhile, uncounted, until
-// the throttle fix lands (design §4.14, XC30). It only reads: it never takes the lock.
+// the throttle fix lands (design §4.14, XC30). It writes nothing: lockfile.Held probes by
+// taking the lock for an instant, and Acquire retries briefly so a capture is never refused
+// by that probe (EW-AC9).
 func (d *dashboard) captureRunning() bool {
 	d.cap.mu.Lock()
 	running := d.cap.running

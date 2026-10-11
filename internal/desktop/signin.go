@@ -146,19 +146,29 @@ func (d *dashboard) signInAction(w http.ResponseWriter, r *http.Request) {
 		d.refuse(w, refusalA())
 		return
 	}
+	// Looking for a sign-in already under way, taking the device flow and putting the new job
+	// in its slot are one step under the slot's lock: two POSTs at once (a double click, two
+	// tabs) otherwise both saw "none running" and each started a device flow (EW-AC13). A
+	// sign-in waiting for the user's Keep or Sign out answer is under way too: a second job
+	// beside it would share the one flow mutex, and the older one's release at its timeout
+	// would free it under the newer.
 	d.si.mu.Lock()
-	cur := d.si.job
-	d.si.mu.Unlock()
-	if cur != nil && cur.snapshot()["state"] == "running" {
-		d.reply(w, map[string]any{"ok": true, "already": true})
-		return
+	if cur := d.si.job; cur != nil {
+		if st := cur.snapshot()["state"]; st == "running" || st == "confirm" {
+			d.si.mu.Unlock()
+			d.reply(w, map[string]any{"ok": true, "already": true})
+			return
+		}
+	}
+	if d.si.testPause != nil {
+		d.si.testPause()
 	}
 	if !d.flow.hold("workspace") {
+		d.si.mu.Unlock()
 		d.refuse(w, refusedWith("R-m", "A Microsoft sign-in is already in progress (started from Archive now) — finish it, or wait for it to end, before signing in here."))
 		return
 	}
 	job := &signInJob{state: "running", answer: make(chan string, 1)}
-	d.si.mu.Lock()
 	d.si.job = job
 	d.si.mu.Unlock()
 	go d.runSignIn(job)
@@ -169,10 +179,29 @@ func (d *dashboard) signInAction(w http.ResponseWriter, r *http.Request) {
 type signInSlot struct {
 	mu  sync.Mutex
 	job *signInJob
+
+	// testPause is a test seam, called between the check for a sign-in already running and
+	// the start of a new one.
+	testPause func()
+	// testBeforeRelease is a test seam, called by a finished sign-in job just before it
+	// decides whether to free the device flow (a job's late release under its successor).
+	testBeforeRelease func(job *signInJob)
 }
 
 func (d *dashboard) runSignIn(job *signInJob) {
-	defer d.flow.release("workspace")
+	defer func() {
+		// Only the sign-in that holds the slot frees the device flow: a finished job whose
+		// successor already started must not free it under the successor (EW-AC13).
+		if d.si.testBeforeRelease != nil {
+			d.si.testBeforeRelease(job)
+		}
+		d.si.mu.Lock()
+		current := d.si.job == job
+		d.si.mu.Unlock()
+		if current {
+			d.flow.release("workspace")
+		}
+	}()
 	defer func() {
 		if p := recover(); p != nil {
 			job.mu.Lock()
@@ -255,11 +284,7 @@ func (d *dashboard) persistSignIn(data []byte) error {
 	if cfg == nil {
 		return errors.New("not configured")
 	}
-	t := d.cfg.tokenCfg(cfg)
-	if t.TokenStore != nil {
-		return t.TokenStore.StoreToken(data)
-	}
-	return util.WriteFileAtomic0600(t.TokenCachePath, data)
+	return graph.PersistSignIn(d.cfg.tokenCfg(cfg), data)
 }
 
 // signInRefusal is the refusal of a sign-in that did not complete: an app-only

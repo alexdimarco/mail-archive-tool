@@ -186,7 +186,7 @@ func (f *ceFinish) run(proposed CopyStatus, stop *CopyStop, replace, rehash bool
 		// A directory that is gone, or that was swapped for a link out of the root, is
 		// the presence check's finding (its files are listed as failures), not a
 		// reason to leave the folder unfinished.
-		if err := f.fs.SyncDir(d); err != nil && d != "" && (errors.Is(err, fs.ErrNotExist) || strings.Contains(err.Error(), "path escapes")) {
+		if err := f.fs.SyncDir(d); err != nil && d != "" && (errors.Is(err, fs.ErrNotExist) || errors.Is(err, errNotDirectory) || strings.Contains(err.Error(), "path escapes")) {
 			continue
 		} else if err != nil {
 			return nil, finalWriteErr(err)

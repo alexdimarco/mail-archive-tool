@@ -35,6 +35,7 @@ type workspace struct {
 
 	mu         sync.Mutex
 	sess       *wsSession
+	gen        int // counts dropSession calls: a session built across one is not kept (EW-AC5)
 	job        *wsPreviewJob
 	prev       *wsPreview
 	pickerBusy bool
@@ -166,33 +167,49 @@ func (d *dashboard) signedInNow() (string, bool) {
 func (ws *workspace) session(req context.Context) (*wsSession, *refusal) {
 	d := ws.d
 	_ = req // the request's context is for the request's own Graph calls, never for the session
-	ws.mu.Lock()
-	if ws.sess != nil {
-		s := ws.sess
+	// A sign-in change that comes in while the session is being built (a GET /me over the
+	// network, with the lock released) drops a session that is not stored yet; the build
+	// would then be cached for the account that is no longer signed in. The count of drops
+	// is read before the build and compared after it, and a build that crossed one is
+	// thrown away and made again for whoever is signed in now (EW-AC5).
+	for attempt := 0; attempt < 3; attempt++ {
+		ws.mu.Lock()
+		if ws.sess != nil {
+			s := ws.sess
+			ws.mu.Unlock()
+			s.touch(d.now())
+			return s, nil
+		}
+		gen := ws.gen
 		ws.mu.Unlock()
-		s.touch(d.now())
+		opts, ref := d.graphOptions()
+		if ref != nil {
+			return nil, ref
+		}
+		client, upn, err := app.OpenGraphSession(d.life.Context(), opts)
+		if err != nil {
+			r := graphRefusal(err, "your mailbox", d.cfgAuth())
+			d.noteRefused(r)
+			return nil, &r
+		}
+		s := newWsSession(client, upn, opts.Tenant, d.now())
+		ws.mu.Lock()
+		if ws.sess != nil { // another request built it first
+			built := ws.sess
+			ws.mu.Unlock()
+			return built, nil
+		}
+		if ws.gen != gen { // the sign-in changed while this was built
+			ws.mu.Unlock()
+			continue
+		}
+		ws.sess = s
+		ws.mu.Unlock()
+		ws.reaperOnce.Do(ws.startReaper)
 		return s, nil
 	}
-	ws.mu.Unlock()
-	opts, ref := d.graphOptions()
-	if ref != nil {
-		return nil, ref
-	}
-	client, upn, err := app.OpenGraphSession(d.life.Context(), opts)
-	if err != nil {
-		r := graphRefusal(err, "your mailbox", d.cfgAuth())
-		d.noteRefused(r)
-		return nil, &r
-	}
-	s := newWsSession(client, upn, opts.Tenant, d.now())
-	ws.mu.Lock()
-	defer ws.mu.Unlock()
-	if ws.sess != nil { // another request built it first
-		return ws.sess, nil
-	}
-	ws.sess = s
-	ws.reaperOnce.Do(ws.startReaper)
-	return s, nil
+	r := refusalB() // the sign-in kept changing under the build: ask the user to sign in again
+	return nil, &r
 }
 
 // startReaper releases an idle session's caches once a minute (XC18) until the process
@@ -230,6 +247,7 @@ func (d *dashboard) cfgAuth() string {
 func (ws *workspace) dropSession() {
 	ws.mu.Lock()
 	ws.sess = nil
+	ws.gen++
 	job := ws.job
 	ws.mu.Unlock()
 	if job != nil {
@@ -819,8 +837,16 @@ func (d *dashboard) resolveAndPlan(ctx context.Context, job *wsPreviewJob, sess 
 		f := fresh.byID[id]
 		job.set(func() { job.progress = fmt.Sprintf("Reading %s (%d of %d folders)", f.DisplayName, i+1, len(ids)) })
 		path := fresh.path(id)
+		// The listing stops as soon as this folder cannot fit what is already kept: a
+		// folder of millions is refused after the page that shows it, not after it has
+		// been read whole (EW-AC11). Exclusions only remove messages from what is listed.
+		src.MaxListed = max(d.planLimit()-len(msgs)+len(excl), 1)
 		ms, reported, w, info, lerr := d.listFolder(ctx, sess, src, f, path)
 		if lerr != nil {
+			if errors.Is(lerr, app.ErrListTooLarge) {
+				ref := refusalI(len(ids) == 1 && len(picks) == 0)
+				return nil, nil, &ref
+			}
 			r := d.listRefusal(lerr, f.DisplayName)
 			return nil, nil, &r
 		}
@@ -839,7 +865,7 @@ func (d *dashboard) resolveAndPlan(ctx context.Context, job *wsPreviewJob, sess 
 			fc.msgs++
 		}
 		perFolder = append(perFolder, fc)
-		if len(msgs) > previewMessageCap {
+		if len(msgs) > d.planLimit() {
 			ref := refusalI(len(ids) == 1 && len(picks) == 0)
 			return nil, nil, &ref
 		}
@@ -975,6 +1001,14 @@ func unionMessages(a, b []app.CopyMessage) []app.CopyMessage {
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Received.After(out[j].Received) })
 	return out
+}
+
+// planLimit is previewMessageCap (R-i) unless a test lowers it for this dashboard.
+func (d *dashboard) planLimit() int {
+	if d.planMax > 0 {
+		return d.planMax
+	}
+	return previewMessageCap
 }
 
 // archives are the archive folders an export must stay outside of: the configured one.

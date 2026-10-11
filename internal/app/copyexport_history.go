@@ -233,7 +233,7 @@ func (e *CopyExportEnv) historyOne(run string, jl []ceJournalLine, ledger []ceLe
 	if l := lastEvent(jl, "located"); l != nil {
 		info.Dest = util.StripControl(l.DestDir)
 	}
-	sum, serr := readSummary(e.recordPath(run))
+	sum, serr := e.readSummaryCached(e.recordPath(run))
 	hasRec := serr == nil
 	if hasRec {
 		h := sum.Header
@@ -244,7 +244,11 @@ func (e *CopyExportEnv) historyOne(run string, jl []ceJournalLine, ledger []ceLe
 		}
 		if sum.Sealed != nil {
 			c := sum.Sealed.Counts
-			info.Status, info.Fingerprint, info.Stop = sum.Sealed.Status, sum.Sealed.Fingerprint, sum.Sealed.Stop
+			info.Status, info.Fingerprint = sum.Sealed.Status, sum.Sealed.Fingerprint
+			if sum.Sealed.Stop != nil {
+				st := *sum.Sealed.Stop // a copy: the summary may be the cached one
+				info.Stop = &st
+			}
 			info.Exported, info.Failed, info.NotAttempted, info.OriginalOnly = c.Exported, c.Failed, c.NotAttempted, c.OriginalOnly
 			if sum.Sealed.Stop != nil && sum.Sealed.Stop.InFlight != "" && info.Failed > 0 {
 				// the message the stop cut off is listed as failed so a retry takes it; the card says
@@ -382,7 +386,7 @@ func (e *CopyExportEnv) endedActions(sum *ceRecSummary, info CopyRunInfo) []stri
 	case CopyStatusFailed, CopyStatusFinishedAsPartial:
 		acts = append(acts, ActExportRemaining)
 	}
-	return acts
+	return e.pruneRetryOffers(info.Run, &sum.Header, acts)
 }
 
 // cardActions are the actions a reconciler observation allows, with the folder actions
@@ -434,7 +438,7 @@ func (e *CopyExportEnv) chainSet(chain string, ledger []ceLedgerLine, journal []
 	set := &CopySetInfo{Fingerprint: latest.SetFingerprint}
 	for _, run := range latest.Parts {
 		p := CopySetPart{Run: run, Fingerprint: own[run], Part: 1}
-		if sum, err := readSummary(e.recordPath(run)); err == nil {
+		if sum, err := e.readSummaryCached(e.recordPath(run)); err == nil {
 			p.RootName, p.Part, p.Gone = sum.Header.RootName, len(sum.Header.ChainParts)+1, sum.Gone
 		} else {
 			for _, l := range journal {
@@ -736,9 +740,17 @@ func (e *CopyExportEnv) CheckExport(run string) (*CopyCheck, error) {
 		return nil, refusalR2(spec.Path)
 	}
 	defer root.Close()
+	// What is read is what this open reached, so it is judged on the handle, not only
+	// on the path the probe saw a moment earlier (EW-AI1).
+	switch v, _ := judgeIdentity(spec.Run, spec.Identity, seenFromRoot(root)); v {
+	case idMismatch:
+		return nil, refusalR(spec.Path)
+	case idUnconfirmed:
+		return nil, refusalR2(spec.Path)
+	}
 
 	problem := func(format string, a ...any) { res.Problems = append(res.Problems, fmt.Sprintf(format, a...)) }
-	f, err := root.Open(copySumsName)
+	f, err := openRegularIn(root, copySumsName)
 	if err != nil {
 		if spec.Sum != nil && spec.Sum.Sealed == nil {
 			problem("this export is unfinished: it has no %s yet, so there is nothing to check it against. Finish it first (Finish as partial, on its card)", copySumsName)
@@ -835,15 +847,11 @@ func hashReader(r io.Reader) (string, error) {
 
 // hashRootFile is the SHA-256 of rel in root, read through the root.
 func hashRootFile(root *os.Root, rel string) (string, error) {
-	f, err := root.Open(rel)
+	f, err := openRegularIn(root, rel)
 	if err != nil {
 		return "", err
 	}
 	defer f.Close()
-	fi, err := f.Stat()
-	if err != nil || !fi.Mode().IsRegular() {
-		return "", fmt.Errorf("%s is not a regular file", rel)
-	}
 	return hashReader(f)
 }
 

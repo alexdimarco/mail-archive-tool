@@ -222,13 +222,28 @@ func buildTree(infos []graph.FolderInfo) *wsTree {
 
 // subtree is id and every descendant, in tree order.
 func (t *wsTree) subtree(id string) []string {
-	f := t.byID[id]
-	if f == nil {
+	if t.byID[id] == nil {
 		return nil
 	}
-	out := []string{id}
-	for _, c := range f.children {
-		out = append(out, t.subtree(c)...)
+	// Children are built from the parentFolderId Graph reports, so two folders may name
+	// each other as parent: each folder is listed once (a visited set), and the walk is
+	// an explicit stack, so neither a cycle nor a very deep tree can overflow the stack,
+	// which recover cannot catch (EW-AC6).
+	var out []string
+	seen := map[string]bool{}
+	stack := []string{id}
+	for len(stack) > 0 {
+		cur := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		f := t.byID[cur]
+		if f == nil || seen[cur] {
+			continue
+		}
+		seen[cur] = true
+		out = append(out, cur)
+		for i := len(f.children) - 1; i >= 0; i-- { // pushed in reverse: popped in tree order
+			stack = append(stack, f.children[i])
+		}
 	}
 	return out
 }

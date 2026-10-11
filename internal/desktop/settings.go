@@ -2,9 +2,12 @@ package desktop
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 
@@ -58,10 +61,31 @@ var settingsHook func(who string)
 
 // UpdateSettings reloads the settings file under the lock, lets fn change the fields
 // its caller owns, and saves the result atomically at 0600.
+//
+// A file that cannot be read (a sharing violation, an antivirus scan, a permission error)
+// is left as it is and the update is refused: the next call finds it again. A file that
+// reads but does not parse as settings (damaged, or written by a newer build in a shape
+// this one does not know) is set aside as "<name>.unreadable" before the new file is
+// written, so what it held is not lost (EW-AC14). A file that parses keeps the keys this
+// build has no field for, and a newer version number, through the save (SaveSettings). A
+// missing file starts from the defaults.
 func UpdateSettings(path, who string, fn func(*Settings)) error {
 	settingsMu.Lock()
 	defer settingsMu.Unlock()
-	s := LoadSettings(path)
+	var s Settings
+	data, rerr := os.ReadFile(path)
+	switch {
+	case rerr == nil:
+		if json.Unmarshal(data, &s) != nil {
+			s = Settings{}
+			if err := util.WriteFileAtomic0600(path+".unreadable", data); err != nil {
+				return fmt.Errorf("the settings file can't be read and a copy of it could not be kept, so it was left as it is: %w", err)
+			}
+		}
+	case errors.Is(rerr, fs.ErrNotExist):
+	default:
+		return fmt.Errorf("the settings file can't be read right now, so it was left as it is: %w", rerr)
+	}
 	if settingsHook != nil {
 		settingsHook(who)
 	}
@@ -83,14 +107,63 @@ func LoadSettings(path string) Settings {
 	return s
 }
 
-// SaveSettings writes the settings atomically at 0600.
+// SaveSettings writes the settings atomically at 0600. A key the file holds that this build
+// has no field for (written by a newer build) is kept as it was, and so is a version above
+// this build's own: saving never turns a newer build's file into an older one's (EW-AC14).
 func SaveSettings(path string, s Settings) error {
-	s.Version = 1
+	if s.Version < 1 {
+		s.Version = 1
+	}
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return err
 	}
-	return util.WriteFileAtomic0600(path, data)
+	return util.WriteFileAtomic0600(path, keepUnknownSettings(path, data))
+}
+
+// settingsKeys is the JSON keys Settings has a field for.
+var settingsKeys = func() map[string]bool {
+	keys := map[string]bool{}
+	t := reflect.TypeOf(Settings{})
+	for i := 0; i < t.NumField(); i++ {
+		if name, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ","); name != "" && name != "-" {
+			keys[name] = true
+		}
+	}
+	return keys
+}()
+
+// keepUnknownSettings adds to the encoded settings the keys of the file at path that
+// Settings has no field for. A file that is missing, unreadable or not a JSON object has
+// none to keep.
+func keepUnknownSettings(path string, encoded []byte) []byte {
+	old, err := os.ReadFile(path)
+	if err != nil {
+		return encoded
+	}
+	var oldKeys map[string]json.RawMessage
+	if json.Unmarshal(old, &oldKeys) != nil {
+		return encoded
+	}
+	var merged map[string]json.RawMessage
+	if json.Unmarshal(encoded, &merged) != nil {
+		return encoded
+	}
+	kept := false
+	for k, v := range oldKeys {
+		if !settingsKeys[k] {
+			merged[k] = v
+			kept = true
+		}
+	}
+	if !kept {
+		return encoded
+	}
+	out, err := json.MarshalIndent(merged, "", "  ")
+	if err != nil {
+		return encoded
+	}
+	return out
 }
 
 func (cfg Config) settings() Settings { return LoadSettings(cfg.SettingsPath) }

@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -181,7 +183,9 @@ func (e *CopyExportEnv) createRecord(h ceHeaderLine, plan []CopyMessage) (*ceRec
 		return nil, stateErr(err)
 	}
 	path := e.recordPath(h.Run)
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	// Append mode where the OS has it: a second handle of this record (WedgeStop's) must
+	// write after whatever this one wrote, not over it at a stale offset (EW-AC1).
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|appendFlag, 0o600)
 	if err != nil {
 		return nil, stateErr(err)
 	}
@@ -222,15 +226,66 @@ func (e *CopyExportEnv) createRecord(h ceHeaderLine, plan []CopyMessage) (*ceRec
 // first (a kill can leave half a line), as the journal does.
 func (e *CopyExportEnv) openRecord(run string) (*ceRecord, error) {
 	path := e.recordPath(run)
-	f, err := os.OpenFile(path, os.O_RDWR, 0o600)
+	f, err := openAppendable(path, false)
 	if err != nil {
 		return nil, stateErr(err)
 	}
-	if err := truncateTornTail(f); err != nil {
-		f.Close()
-		return nil, stateErr(err)
-	}
 	return &ceRecord{env: e, path: path, f: f}, nil
+}
+
+// openAppendable opens path for appending after cutting a torn tail back to the last
+// complete line. The cut is made through a read-write handle and the file is then
+// reopened in append mode (a handle opened for append only cannot truncate on Windows),
+// and every later write goes to the end of the file whatever other handle has written
+// meanwhile (EW-AC1). create makes a missing file.
+func openAppendable(path string, create bool) (*os.File, error) {
+	flag := os.O_RDWR
+	if create {
+		flag |= os.O_CREATE
+	}
+	f, err := os.OpenFile(path, flag, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	// Under the write mutex: the cut must not land inside a line another handle of this
+	// process is writing (EW-AC1, the window the fresh-eyes check named).
+	recordWriteMu.Lock()
+	err = truncateTornTail(f)
+	recordWriteMu.Unlock()
+	f.Close()
+	if err != nil {
+		return nil, err
+	}
+	af, err := os.OpenFile(path, os.O_WRONLY|appendFlag, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := af.Seek(0, io.SeekEnd); err != nil {
+		af.Close()
+		return nil, err
+	}
+	return af, nil
+}
+
+// recordWriteMu orders the appends of this process to the run record, the journal and the
+// ledger. Where the OS has an append mode (every OS but Windows, where an append-only handle
+// cannot be flushed with the access Go gives it) the kernel puts each write at the end of
+// the file whichever handle makes it; without it, a write seeks to the end first, and this
+// mutex keeps two handles from seeking and writing across each other (EW-AC1).
+var recordWriteMu sync.Mutex
+
+// writeAtEnd writes b to f at the end of its file, in order with every other append of this
+// process.
+func writeAtEnd(f *os.File, b []byte) error {
+	recordWriteMu.Lock()
+	defer recordWriteMu.Unlock()
+	if appendFlag == 0 {
+		if _, err := f.Seek(0, io.SeekEnd); err != nil {
+			return err
+		}
+	}
+	_, err := f.Write(b)
+	return err
 }
 
 // append writes one line and fsyncs it. A failure is a state-directory error.
@@ -245,7 +300,7 @@ func (r *ceRecord) append(v any) error {
 		return stateErr(err)
 	}
 	b = append(b, '\n')
-	if _, err := r.f.Write(b); err != nil {
+	if err := writeAtEnd(r.f, b); err != nil {
 		return stateErr(err)
 	}
 	return stateErr(r.env.fsync(r.f))
@@ -331,9 +386,18 @@ type ceRecSummary struct {
 	NewerMajor bool // a header of a newer format_version
 }
 
+// summaryScans counts the full passes readSummary has made over run records: a test's
+// measure of how often a page's poll rereads them (EW-AC8).
+var summaryScans atomic.Int64
+
+// messageWalks counts the passes walkMessages has made over run records, the other full
+// read of a record: a test's measure of what a chain's retry offers cost a poll (EW-AC8).
+var messageWalks atomic.Int64
+
 // readSummary reads a run record's header, counts and last stop, seal, gone and
 // located lines. A record of a newer format is refused with the update remedy.
 func readSummary(path string) (*ceRecSummary, error) {
+	summaryScans.Add(1)
 	s := &ceRecSummary{Statuses: map[string]int{}}
 	last := map[int]string{}
 	err := scanLines(path, func(line []byte) error {
@@ -481,6 +545,7 @@ func amendments(path string) (map[int]ceMsgLine, error) {
 // come in plan order, so a single pass over the plan section and one over the
 // progress section are merged.
 func walkMessages(path string, fn func(p *cePlanLine, m *ceMsgLine) error) error {
+	messageWalks.Add(1)
 	amend, err := amendments(path)
 	if err != nil {
 		return err
@@ -730,15 +795,12 @@ func (e *CopyExportEnv) appendJSONL(path string, v any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return stateErr(err)
 	}
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+	f, err := openAppendable(path, true)
 	if err != nil {
 		return stateErr(err)
 	}
 	defer f.Close()
-	if err := truncateTornTail(f); err != nil {
-		return stateErr(err)
-	}
-	if _, err := f.Write(append(b, '\n')); err != nil {
+	if err := writeAtEnd(f, append(b, '\n')); err != nil {
 		return stateErr(err)
 	}
 	return stateErr(e.fsync(f))

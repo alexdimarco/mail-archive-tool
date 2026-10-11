@@ -151,39 +151,21 @@ func probeFolder(path string) (ceFolderSeen, error) {
 		return seen, err
 	}
 	defer root.Close()
-	if f, err := root.Open("."); err == nil {
-		seen.Cur, _ = readIdentity(f)
-		f.Close()
-	}
-	if _, err := root.Lstat(copyMarkerName); err == nil {
-		seen.HasMarker = true
-		seen.Nonce = nonceFrom(root, copyMarkerName)
-	}
-	if _, err := root.Lstat(copyReadmeName); err == nil {
-		seen.HasReadme = true
-		if seen.Nonce == "" {
-			seen.Nonce = nonceFrom(root, copyReadmeName)
-		}
-	}
+	handle := seenFromRoot(root)
+	seen.Cur, seen.HasMarker, seen.HasReadme, seen.Nonce = handle.Cur, handle.HasMarker, handle.HasReadme, handle.Nonce
 	return seen, nil
 }
 
 // nonceFrom reads the run id from the first line of a marker or README ("Run: <id>").
-// It is read only to match, never to admit (design §4.9).
+// It is read only to match, never to admit (design §4.9), and it never blocks on a
+// pipe planted in the file's place (EW-AI2).
 func nonceFrom(root *os.Root, name string) string {
-	f, err := root.Open(name)
+	f, err := openRegularIn(root, name)
 	if err != nil {
 		return ""
 	}
 	defer f.Close()
-	buf := make([]byte, 256)
-	n, _ := f.Read(buf)
-	line, _, _ := strings.Cut(string(buf[:n]), "\n")
-	id, ok := strings.CutPrefix(strings.TrimSpace(line), copyRunLinePrefix)
-	if !ok {
-		return ""
-	}
-	return strings.TrimSpace(id)
+	return nonceFromReader(f)
 }
 
 // copyRunLinePrefix starts the first line of the marker and of README.txt, which

@@ -200,6 +200,15 @@ func (e *CopyExportEnv) ReconcileRun(run string) (CopyObservation, error) {
 	case sum.Sealed == nil:
 		obs.Kind, obs.Label = obsChanged, "changed after the export: its marker is gone — run Check this export (fingerprint not recorded at export time)"
 		obs.Actions = []string{ActFinishAsPartial}
+	case seen.HasMarker && markerStays(sum.Sealed.Status) && e.journalHas(run, "end"):
+		// A cancelled, failed or finished-as-partial run keeps its marker (rewritten
+		// CANCELLED or STOPPED) once it has ended: nothing is owed, and the card keeps
+		// its own label and retry offers (EW-AC10). Not journaled: a settled run is
+		// read from its own journal lines, not from this observation.
+		obs.Kind = obsSettledRun
+		obs.Label = copyLabel(sum.Sealed.Status, sum.Sealed.Counts, sum.Sealed.Stop)
+		obs.Actions = e.actionsFor(sum, obsRecovered)
+		return obs, nil
 	case seen.HasMarker:
 		obs.Kind = obsFinishing
 		obs.Label = "Finished writing (" + copyLabel(sum.Sealed.Status, sum.Sealed.Counts, sum.Sealed.Stop) + ")" + finishingTail
@@ -224,6 +233,13 @@ func (e *CopyExportEnv) ReconcileRun(run string) (CopyObservation, error) {
 		return obs, err
 	}
 	return obs, nil
+}
+
+// markerStays reports whether a sealed status leaves the app's own marker in the folder
+// for good (rewritten CANCELLED or STOPPED), as against complete and partial, which
+// remove it.
+func markerStays(s CopyStatus) bool {
+	return s == CopyStatusCancelled || s == CopyStatusFailed || s == CopyStatusFinishedAsPartial
 }
 
 // terminalKinds are the marker-and-seal outcomes.
@@ -287,7 +303,7 @@ func (e *CopyExportEnv) actionsFor(sum *ceRecSummary, kind string) []string {
 			acts = append(acts, ActExportRemaining)
 		}
 	}
-	return acts
+	return e.pruneRetryOffers(sum.Header.Run, &sum.Header, acts)
 }
 
 func (e *CopyExportEnv) goneActions(sum *ceRecSummary) []string { return []string{ActExportThese} }
@@ -327,11 +343,23 @@ func (e *CopyExportEnv) confirmedRoot(sum *ceRecSummary) (ceFS, string, error) {
 	case idUnconfirmed:
 		return nil, path, refusalR2(path)
 	}
-	f, err := e.openExportRoot(path)
+	// The probe judged the path; the folder written through is the one this open
+	// reaches, so it is judged again on the handle itself. A folder swapped for a link
+	// or another directory after the probe is refused here, before anything is written
+	// (EW-AI1).
+	root, err := os.OpenRoot(path)
 	if err != nil {
 		return nil, path, refusalR2(path)
 	}
-	return f, path, nil
+	switch v, _ := judgeIdentity(sum.Header.Run, sum.Header.Identity, seenFromRoot(root)); v {
+	case idMismatch:
+		root.Close()
+		return nil, path, refusalR(path)
+	case idUnconfirmed:
+		root.Close()
+		return nil, path, refusalR2(path)
+	}
+	return e.fsFromRoot(root, path), path, nil
 }
 
 // FinishAsPartial completes an unsealed run from its run record alone, once §4.9's
@@ -451,6 +479,9 @@ func checkSums(fsys ceFS, fingerprint string) error {
 			return &errCheckFailed{"a line of SHA256SUMS.txt is malformed"}
 		}
 		got, err := hashInRoot(fsys, path)
+		if errors.Is(err, errNotRegular) {
+			return &errCheckFailed{path + " is not a regular file any more"}
+		}
 		if err != nil {
 			return &errCheckFailed{path + " is missing"}
 		}
@@ -735,26 +766,8 @@ func (e *CopyExportEnv) RunRemaining(run string) ([]CopyMessage, error) {
 		return nil, err
 	}
 	path := e.recordPath(run)
+	exported := e.exportedElsewhere(run, sum.Header.Chain)
 	if sum.Gone {
-		exported := map[string]bool{}
-		e.ledgerMu.Lock()
-		parts := e.chainRunsLocked(sum.Header.Chain)
-		e.ledgerMu.Unlock()
-		for _, p := range parts {
-			if p == run {
-				continue
-			}
-			ps, perr := readSummary(e.recordPath(p))
-			if perr != nil || ps.Sealed == nil || ps.Gone {
-				continue
-			}
-			walkMessages(e.recordPath(p), func(pl *cePlanLine, m *ceMsgLine) error {
-				if m != nil && (m.Status == statusExported || m.Status == statusWithoutOrig || m.Status == statusOriginalOnly) {
-					exported[pl.SourceID] = true
-				}
-				return nil
-			})
-		}
 		var out []CopyMessage
 		walkMessages(path, func(pl *cePlanLine, m *ceMsgLine) error {
 			if !exported[pl.SourceID] {
@@ -772,6 +785,9 @@ func (e *CopyExportEnv) RunRemaining(run string) ([]CopyMessage, error) {
 	var notDone, retry []CopyMessage
 	var last *CopyMessage
 	err = walkMessages(path, func(pl *cePlanLine, m *ceMsgLine) error {
+		if exported[pl.SourceID] {
+			return nil // another sealed part of the chain has exported it (EW-AC7)
+		}
 		switch {
 		case m == nil || m.Status == statusNotAttempted:
 			notDone = append(notDone, pl.CopyMessage)
@@ -795,12 +811,101 @@ func (e *CopyExportEnv) RunRemaining(run string) ([]CopyMessage, error) {
 	return out, nil
 }
 
+// exportedElsewhere is the ids that the chain's other sealed parts, not marked gone,
+// exported: what a retry of run must not export a second time (EW-AC7). It is nil for a
+// chain of one part, which reads no other record.
+func (e *CopyExportEnv) exportedElsewhere(run, chain string) map[string]bool {
+	e.ledgerMu.Lock()
+	parts := e.chainRunsLocked(chain)
+	e.ledgerMu.Unlock()
+	if len(parts) < 2 {
+		return nil
+	}
+	exported := map[string]bool{}
+	for _, p := range parts {
+		if p == run {
+			continue
+		}
+		ps, perr := readSummary(e.recordPath(p))
+		if perr != nil || ps.Sealed == nil || ps.Gone {
+			continue
+		}
+		walkMessages(e.recordPath(p), func(pl *cePlanLine, m *ceMsgLine) error {
+			if m != nil && (m.Status == statusExported || m.Status == statusWithoutOrig || m.Status == statusOriginalOnly) {
+				exported[pl.SourceID] = true
+			}
+			return nil
+		})
+	}
+	return exported
+}
+
+// pruneRetryOffers takes "Export failed messages again" and "Export the remaining
+// messages" off the card of a part whose messages the chain's other parts have already
+// exported (EW-AC7).
+func (e *CopyExportEnv) pruneRetryOffers(run string, hdr *ceHeaderLine, acts []string) []string {
+	if hdr == nil || (!hasAction(acts, ActExportFailed) && !hasAction(acts, ActExportRemaining)) {
+		return acts
+	}
+	e.ledgerMu.Lock()
+	parts := append([]string(nil), e.chainRunsLocked(hdr.Chain)...)
+	e.ledgerMu.Unlock()
+	if len(parts) < 2 {
+		return acts
+	}
+	// The page polls this on every History call, and each answer reads every record of
+	// the chain: it is kept per card against the chain's record sizes and times, and
+	// recomputed only when a record of the chain has grown (EW-AC8, chain half).
+	sig := e.chainSignature(run, parts)
+	e.sumMu.Lock()
+	c := e.pruneCache[run]
+	if sig == "" || c.sig != sig {
+		c = cePruneCached{sig: sig}
+	}
+	e.sumMu.Unlock()
+	out := make([]string, 0, len(acts))
+	for _, a := range acts {
+		switch a {
+		case ActExportFailed:
+			if !c.haveFailed {
+				left, err := e.RunFailed(run)
+				c.haveFailed, c.failedNone = err == nil, err == nil && len(left) == 0
+			}
+			if c.failedNone {
+				continue
+			}
+		case ActExportRemaining:
+			if !c.haveRemain {
+				left, err := e.RunRemaining(run)
+				c.haveRemain, c.remainNone = err == nil, err == nil && len(left) == 0
+			}
+			if c.remainNone {
+				continue
+			}
+		}
+		out = append(out, a)
+	}
+	if sig != "" {
+		e.sumMu.Lock()
+		if e.pruneCache == nil || len(e.pruneCache) > 4096 {
+			e.pruneCache = map[string]cePruneCached{}
+		}
+		e.pruneCache[run] = c
+		e.sumMu.Unlock()
+	}
+	return out
+}
+
 // RunFailed is what "Export failed messages again" reads: the run's retryable
-// failures, from its run record.
+// failures, from its run record, less what the chain's other sealed parts exported.
 func (e *CopyExportEnv) RunFailed(run string) ([]CopyMessage, error) {
+	var exported map[string]bool
+	if h, err := readHeaderOnly(e.recordPath(run)); err == nil {
+		exported = e.exportedElsewhere(run, h.Chain)
+	}
 	var out []CopyMessage
 	err := walkMessages(e.recordPath(run), func(pl *cePlanLine, m *ceMsgLine) error {
-		if m != nil && m.Status == statusFailed && m.Class == classRetryable {
+		if m != nil && m.Status == statusFailed && m.Class == classRetryable && !exported[pl.SourceID] {
 			out = append(out, pl.CopyMessage)
 		}
 		return nil
