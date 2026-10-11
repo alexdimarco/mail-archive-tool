@@ -13,7 +13,6 @@ import (
 	"golang.org/x/oauth2"
 
 	"mail-archive-tool/internal/graph"
-	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/util"
 )
 
@@ -126,13 +125,14 @@ func (d *dashboard) signInNotice() (account, notice string) {
 	return a, fmt.Sprintf("MailArchive Desktop is running as %s on this computer. This sign-in will be saved for %s. MailArchive shows a Microsoft sign-in code only in a window it opened from its shortcut — do not trust a code on a page you reached by typing or bookmarking an address.", a, a)
 }
 
-// backupInstalled reports whether the weekly backup is installed for the configured archive.
+// backupInstalled reports whether the weekly backup is installed: the task named for the configured
+// archive, or the one named for the location it was installed for (Save and keep the backup, E4-AI6).
 func (d *dashboard) backupInstalled() bool {
 	if d.cfg.BackupInstalled != nil {
 		return d.cfg.BackupInstalled()
 	}
-	out := d.cfg.effectiveOut()
-	return out != "" && schedule.Query(schedule.DefaultNameFor(out)) == schedule.Installed
+	path, _ := d.cfg.backupTask()
+	return path != ""
 }
 
 // signInAction starts the sign-in job and returns at once; the page polls signin-status.
