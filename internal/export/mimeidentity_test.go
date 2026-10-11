@@ -38,13 +38,13 @@ func termsFor(m *model.Message) *model.IdentityTerms {
 	return t
 }
 
-// v1Message is what a build from before the identity view made of data: the v1
-// content and no terms. A run "by v1 semantics" exports these.
+// v1Message is what a build from before the identity view made of data: the frozen v1
+// replay's message and no terms (MA-347: the exporter is fed replayV1 messages). It is
+// the replay itself, not the content parser stripped of its terms, so it stays v1 when
+// a later slice changes the content parser.
 func v1Message(t *testing.T, data []byte) *model.Message {
 	t.Helper()
-	m := source.ParseRFC822(data)
-	m.IdentityTerms, m.V1Inventory = nil, nil
-	return m
+	return source.ParseRFC822V1(data)
 }
 
 // contentMoved is m as a later parser would make it: every field a parser may change

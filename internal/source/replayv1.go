@@ -26,6 +26,20 @@ func replayV1(data []byte) (m *model.Message, panicked bool) {
 	return v1Parse(data), false
 }
 
+// ParseRFC822V1 is what a build from before the identity view returned from
+// ParseRFC822: the frozen v1 replay's message with the transport headers on it (the
+// constant stub when v1 panics), and no identity terms. A run "by v1 semantics" is an
+// exporter fed these (MA-347); the production routing never calls it, and it does not
+// move when the content parser does.
+func ParseRFC822V1(data []byte) *model.Message {
+	m, panicked := replayV1(data)
+	if panicked || m == nil {
+		return unreadableStub()
+	}
+	m.TransportHeaders = headerBlock(data)
+	return m
+}
+
 // identityTermsOf copies the identity inputs out of a v1 message, which is how
 // they are frozen: the terms hold values, not the message's slices or readers.
 func identityTermsOf(m *model.Message) model.IdentityTerms {
