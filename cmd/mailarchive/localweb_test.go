@@ -203,6 +203,54 @@ func TestServeAndSetupServeOnlyThroughTheGuard(t *testing.T) {
 	}
 }
 
+// covers: MA-372, R23, X9, X12
+// The setup wizard's POST is refused without a session even when the request is
+// otherwise perfect — the page's own CSRF token, a loopback Origin and Host — and
+// writes nothing: no config file, no secret. Healthy twin first: the same POST
+// inside the session, under /s/<P>/, is accepted and writes the config.
+func TestSetupPostWithoutASessionWritesNothing(t *testing.T) {
+	const body = `{"tenant":"contoso-tenant-0451","clientId":"app-client-7788","auth":"device"}`
+	post := func(h http.Handler, path, csrf string, cookie *http.Cookie) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		req.Host = "127.0.0.1:8097"
+		req.Header.Set("Origin", "http://127.0.0.1:8097")
+		req.Header.Set("X-CSRF-Token", csrf)
+		req.Header.Set("Content-Type", "application/json")
+		if cookie != nil {
+			req.AddCookie(cookie)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+
+	h, cfgPath, csrf := setupFixture(t)
+	surface, ok := localweb.Guarded(h)
+	if !ok || surface.Session == nil {
+		t.Fatalf("the setup handler is not a session-guarded surface")
+	}
+	cookie := sessionCookie(t, h, surface.Session, "127.0.0.1:8097")
+	if rec := post(h, surface.Session.Prefix()+"api/setup", csrf, cookie); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"ok":true`) {
+		t.Fatalf("a POST inside the session was refused: %d %q", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(cfgPath); err != nil {
+		t.Fatalf("the healthy POST wrote no config: %v", err)
+	}
+
+	// No cookie, under the prefix and at the bare path.
+	for _, path := range []func(*localweb.Session) string{
+		func(s *localweb.Session) string { return s.Prefix() + "api/setup" },
+		func(*localweb.Session) string { return "/api/setup" },
+	} {
+		h, cfgPath, csrf := setupFixture(t)
+		s, _ := localweb.Guarded(h)
+		rec := post(h, path(s.Session), csrf, nil)
+		assure.Refused(t, rec.Code, rec.Body.String(), assure.Code(http.StatusUnauthorized),
+			assure.Names(`"ok":false`), assure.Forbid(csrf, "contoso-tenant-0451", "app-client-7788"),
+			assure.NoSideEffect(func() bool { _, err := os.Stat(cfgPath); return os.IsNotExist(err) }))
+	}
+}
+
 // covers: MA-378, R23
 // MA-378's other half, closed by sessions (P7, slice LC-C2): with a loopback
 // Host but no session, every route `serve` and `setup` register must refuse on
