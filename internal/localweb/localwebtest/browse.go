@@ -42,12 +42,20 @@ const maxLoaded = 80
 // which is "reached". It returns everything it loaded, in order.
 func Browse(t testing.TB, origin string, s *localweb.Session, entry string) []Loaded {
 	t.Helper()
+	loaded, _ := BrowseFrom(t, s.Link(origin, localweb.LinkTTL), entry)
+	return loaded
+}
+
+// BrowseFrom is Browse starting from a launch link the process itself made (the
+// one it handed its opener, or printed), for a surface whose session a test
+// cannot reach. It returns what it loaded and the session prefix the link led to.
+func BrowseFrom(t testing.TB, link, entry string) ([]Loaded, string) {
+	t.Helper()
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	client := &http.Client{Jar: jar}
-	link := s.Link(origin, localweb.LinkTTL)
 	body, _, err := get(client, link)
 	if err != nil {
 		t.Fatalf("redeeming the launch link: %v", err)
@@ -61,6 +69,7 @@ func Browse(t testing.TB, origin string, s *localweb.Session, entry string) []Lo
 	if err != nil {
 		t.Fatalf("the launch page's refresh target %q: %v", m[1], err)
 	}
+	prefix := start.Path
 	if entry != "" {
 		if start, err = start.Parse(entry); err != nil {
 			t.Fatalf("entry %q: %v", entry, err)
@@ -118,7 +127,7 @@ func Browse(t testing.TB, origin string, s *localweb.Session, entry string) []Lo
 			queue = append(queue, next.String())
 		}
 	}
-	return loaded
+	return loaded, prefix
 }
 
 // Check reports every loaded URL that left the session's prefix, and every one a

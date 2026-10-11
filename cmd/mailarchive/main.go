@@ -26,8 +26,6 @@ import (
 	"io"
 	"io/fs"
 	"log"
-	"net"
-	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -44,7 +42,6 @@ import (
 	"mail-archive-tool/internal/outlookcom"
 	"mail-archive-tool/internal/runlog"
 	"mail-archive-tool/internal/schedule"
-	"mail-archive-tool/internal/server"
 	"mail-archive-tool/internal/source"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/thunderbird"
@@ -366,96 +363,6 @@ func newRunLogger(path string) (*log.Logger, func(), error) {
 		return nil, nil, err
 	}
 	return log.New(f, "", log.LstdFlags), func() { f.Close() }, nil
-}
-
-func runServe(args []string) error {
-	fs := flag.NewFlagSet("mailarchive serve", flag.ContinueOnError)
-	out := fs.String("out", ".", "export directory to serve (contains search.db)")
-	addr := fs.String("addr", "127.0.0.1:8099", "address to listen on")
-	var allow stringSlice
-	fs.Var(&allow, "allow-host", "with a non-loopback -addr: also accept requests addressed to this host name (repeatable); this machine's own IP addresses are accepted already")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	allowHosts, err := allowHostNames(allow)
-	if err != nil {
-		return err
-	}
-
-	idxPath := filepath.Join(*out, "search.db")
-	ix, err := index.OpenReadonly(idxPath)
-	if err != nil {
-		return err
-	}
-	defer ix.Close()
-
-	count, _ := ix.Count()
-
-	if !server.IsLoopback(*addr) {
-		fmt.Fprintf(os.Stderr, "WARNING: serve has no authentication. Binding %s exposes every archived message to anyone who can reach this machine on that port; use 127.0.0.1 (the default) unless you mean it.\n", *addr)
-	} else if len(allowHosts) > 0 {
-		fmt.Fprintf(os.Stderr, "note: -allow-host has no effect with a loopback -addr (%s): only 127.0.0.1, localhost, [::1] and the bound address itself are accepted there\n", *addr)
-	}
-	ln, err := net.Listen("tcp", *addr)
-	if err != nil {
-		return err
-	}
-	fmt.Printf("Serving %d indexed messages from %s\n", count, *out)
-	fmt.Printf("Search UI:  %s\n", servedURL(*addr, ln.Addr()))
-	fmt.Println("Press Ctrl-C to stop.")
-	srv := &http.Server{
-		Handler:           serveHandler(*out, ix, ln.Addr(), allowHosts),
-		ReadHeaderTimeout: 10 * time.Second, // a stalled client cannot hold a connection open forever
-		IdleTimeout:       2 * time.Minute,
-		// OPTIONS * would be answered by net/http before the Host guard (AC8).
-		DisableGeneralOptionsHandler: true,
-	}
-	return srv.Serve(ln)
-}
-
-// runSetup launches the Microsoft 365 setup wizard: a loopback-only local web page
-// where an admin enters the Entra app-registration values (tenant, application id,
-// auth mode, and — app-only — a client secret stored in the OS credential manager).
-// It REFUSES a non-loopback bind: the surface writes credentials and must never be
-// reachable from the network (design-graph-setup-wizard P4/W-C1).
-func runSetup(args []string) error {
-	fs := flag.NewFlagSet("mailarchive setup", flag.ContinueOnError)
-	addr := fs.String("addr", "127.0.0.1:8097", "loopback address to serve the wizard on (must be loopback)")
-	cfg := fs.String("config", "", "config file to write (default: under your OS config dir)")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if !server.IsLoopback(*addr) {
-		return fmt.Errorf("-addr %s is not a loopback address: the setup wizard writes credentials and is served only on 127.0.0.1/localhost", *addr)
-	}
-	cfgPath := *cfg
-	if cfgPath == "" {
-		p, err := graphconfig.DefaultConfigPath()
-		if err != nil {
-			return err
-		}
-		cfgPath = p
-	}
-	store, err := graphconfig.DefaultSecretStore()
-	if err != nil {
-		return err
-	}
-	ln, err := net.Listen("tcp", *addr)
-	if err != nil {
-		return err
-	}
-	srv := &http.Server{
-		Handler:           setupHandler(cfgPath, store, ln.Addr()),
-		ReadHeaderTimeout: 10 * time.Second,
-		IdleTimeout:       2 * time.Minute,
-		// OPTIONS * would be answered by net/http before the Host guard (AC8).
-		DisableGeneralOptionsHandler: true,
-	}
-	fmt.Printf("Microsoft 365 setup — open this page in a browser:\n  %s\n", servedURL(*addr, ln.Addr()))
-	fmt.Printf("Config:        %s\n", cfgPath)
-	fmt.Printf("Secret store:  %s\n", store.Name())
-	fmt.Println("Press Ctrl-C to stop.")
-	return srv.Serve(ln)
 }
 
 var markTags = regexp.MustCompile(`</?mark>`)

@@ -40,15 +40,35 @@ func readerFixture(t *testing.T) (string, *index.Index) {
 
 var setupCSRFRe = regexp.MustCompile(`name="csrf" content="([0-9a-f]+)"`)
 
+// sessionCookie redeems a fresh one-time link of s on h and returns the cookie a
+// browser would then hold, so a fixture can read what only an admitted browser sees.
+func sessionCookie(t *testing.T, h http.Handler, s *localweb.Session, host string) *http.Cookie {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, localweb.OpenPath(s.Mint(localweb.LinkTTL)), nil)
+	req.Host = host
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == localweb.SessionCookie {
+			return c
+		}
+	}
+	t.Fatalf("redeeming a launch link on %s gave no session cookie (status %d)", host, rec.Code)
+	return nil
+}
+
 // setupFixture is the setup wizard as `setup` serves it, with its CSRF token read
-// through a loopback Host the way the page delivers it.
+// through a loopback Host the way the page delivers it: inside the session, under
+// /s/<P>/, which only a browser that redeemed a launch link can reach.
 func setupFixture(t *testing.T) (http.Handler, string, string) {
 	t.Helper()
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "graph-config.json")
-	h := setupHandler(cfgPath, graphconfig.NewFileSecretStore(filepath.Join(dir, "secrets")), loopback(8097))
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	sess := localweb.NewSession()
+	h := setupHandler(cfgPath, graphconfig.NewFileSecretStore(filepath.Join(dir, "secrets")), loopback(8097), sess)
+	req := httptest.NewRequest(http.MethodGet, sess.Prefix(), nil)
 	req.Host = "127.0.0.1:8097"
+	req.AddCookie(sessionCookie(t, h, sess, req.Host))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	m := setupCSRFRe.FindStringSubmatch(rec.Body.String())
@@ -79,7 +99,7 @@ func loopbackHosts(p string) []string {
 // literals and its -allow-host names, and still refuses every other name.
 func TestServeAndSetupRefuseForeignHost(t *testing.T) {
 	out, ix := readerFixture(t)
-	serve := serveHandler(out, ix, loopback(8099), nil)
+	serve := serveHandler(out, ix, loopback(8099), nil, localweb.NewSession(), nil)
 	probed := localwebtest.Probe{
 		Surface: "serve",
 		Refused: hostileHosts("8099"),
@@ -106,7 +126,7 @@ func TestServeAndSetupRefuseForeignHost(t *testing.T) {
 	} else {
 		t.Log("this machine has no non-loopback IPv4 interface; the interface-literal case is not shown")
 	}
-	lan := serveHandler(out, ix, &net.TCPAddr{IP: net.IPv4zero, Port: 8099}, []string{"nas.example"})
+	lan := serveHandler(out, ix, &net.TCPAddr{IP: net.IPv4zero, Port: 8099}, []string{"nas.example"}, localweb.NewSession(), nil)
 	localwebtest.Probe{
 		Surface: "serve",
 		Refused: []string{"attacker.example:8099", "nas.example.:8099", "192.0.2.1:8099"},
@@ -115,7 +135,7 @@ func TestServeAndSetupRefuseForeignHost(t *testing.T) {
 	}.Run(t, lan)
 
 	// On a loopback bind the -allow-host names widen nothing.
-	loop := serveHandler(out, ix, loopback(8099), []string{"nas.example"})
+	loop := serveHandler(out, ix, loopback(8099), []string{"nas.example"}, localweb.NewSession(), nil)
 	localwebtest.Probe{Surface: "serve", Refused: []string{"nas.example:8099"}, Forbid: []string{"Acme invoice"}}.Run(t, loop)
 }
 
@@ -168,8 +188,8 @@ func TestServeAndSetupServeOnlyThroughTheGuard(t *testing.T) {
 		served     http.Handler
 		registered []string
 	}{
-		{"serve", "8099", serveHandler(out, ix, loopback(8099), nil), localweb.RoutesOf(server.New(out, ix))},
-		{"setup", "8097", setupHandler(cfgPath, store, loopback(8097)), localweb.RoutesOf(server.SetupHandler(cfgPath, store))},
+		{"serve", "8099", serveHandler(out, ix, loopback(8099), nil, localweb.NewSession(), nil), localweb.RoutesOf(server.New(out, ix))},
+		{"setup", "8097", setupHandler(cfgPath, store, loopback(8097), localweb.NewSession()), localweb.RoutesOf(server.SetupHandler(cfgPath, store))},
 	} {
 		probed := localwebtest.Probe{
 			Surface: c.name,
@@ -184,27 +204,26 @@ func TestServeAndSetupServeOnlyThroughTheGuard(t *testing.T) {
 }
 
 // covers: MA-378, R23
-// MA-378's other half, an open gap until sessions land (P7, slice LC-C2): with
-// a loopback Host but no session, every route `serve` and `setup` register must
-// refuse on GET, POST and HEAD — 401, the locked page or a JSON 401 — with none
-// of the archive's subjects or paths, nor setup's CSRF token or config path.
-// A strict encoder: while any such request is still answered it skips, naming
-// them; once none is, it fails, so its skip is removed and it stays as the
+// MA-378's other half, closed by sessions (P7, slice LC-C2): with a loopback
+// Host but no session, every route `serve` and `setup` register must refuse on
+// GET, POST and HEAD — 401, the locked page or a JSON 401 — with none of the
+// archive's subjects or paths, nor setup's CSRF token or config path. This was
+// the strict encoder that skipped while any such request was still answered; it
+// failed the day none was, its skip was removed as it said, and it stays as the
 // permanent guard. The desktop's surfaces have their own
 // (TestDashboardAndReaderRefuseWithoutSession).
 func TestEveryRouteRefusesWithoutSession(t *testing.T) {
 	out, ix := readerFixture(t)
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "graph-config.json")
-	setup := setupHandler(cfgPath, graphconfig.NewFileSecretStore(filepath.Join(dir, "secrets")), loopback(8097))
+	setup := setupHandler(cfgPath, graphconfig.NewFileSecretStore(filepath.Join(dir, "secrets")), loopback(8097), localweb.NewSession())
 
 	admitted := localwebtest.Probe{Surface: "serve", Forbid: []string{"Acme invoice", "store/Inbox", out}}.
-		Admitted(t, serveHandler(out, ix, loopback(8099), nil), "127.0.0.1:8099")
+		Admitted(t, serveHandler(out, ix, loopback(8099), nil, localweb.NewSession(), nil), "127.0.0.1:8099")
 	admitted = append(admitted, localwebtest.Probe{Surface: "setup", Forbid: []string{`name="csrf"`, cfgPath}}.
 		Admitted(t, setup, "127.0.0.1:8097")...)
-	if len(admitted) == 0 {
-		t.Fatal("MA-378: every serve and setup route now refuses a loopback request with no session — the gap is closed: remove this encoder's skip so it stays as a permanent guard")
+	if len(admitted) != 0 {
+		t.Fatalf("MA-378 / R23: %d loopback-Host request(s) with no session were answered, e.g. %s",
+			len(admitted), strings.Join(admitted[:min(3, len(admitted))], "; "))
 	}
-	t.Skipf("MA-378 / R23 open until LC-C2 (no sessions yet, P7): %d loopback-Host request(s) with no session were answered, e.g. %s",
-		len(admitted), strings.Join(admitted[:min(3, len(admitted))], "; "))
 }
