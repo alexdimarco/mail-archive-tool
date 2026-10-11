@@ -275,14 +275,22 @@ type wsCursor struct {
 	guard   *graph.PageGuard
 	expires time.Time
 	last    time.Time // the last loaded row's received time, for a keyset continuation
+	offset  int       // an archive folder's list: the index rows already shown
 }
 
 // wsSession is the Graph session of one dashboard process: the client, the signer, and
-// the caches a "Load folders" and the list pages fill.
+// the caches a "Load folders" and the list pages fill. The archive source has a session of
+// its own, with no client: the snapshot of the archive it was loaded from, and the same
+// tree, seen-set and cursors.
 type wsSession struct {
 	client *graph.Client
 	upn    string
 	tenant string
+
+	// the archive source's session (slice E4); nil for the Microsoft 365 one
+	arch      *app.ArchiveSource
+	archPath  string // the archive folder the snapshot was read from
+	archOther bool   // another archive folder, read-only [ruling W1]
 
 	mu       sync.Mutex
 	tree     *wsTree
@@ -293,6 +301,18 @@ type wsSession struct {
 
 func newWsSession(client *graph.Client, upn, tenant string, now time.Time) *wsSession {
 	return &wsSession{client: client, upn: upn, tenant: tenant, seen: newSeenSet(), cursors: map[string]*wsCursor{}, lastUsed: now}
+}
+
+// newArchSession is the session of an archive loaded with "Load folders".
+func newArchSession(a *app.ArchiveSource, other bool, now time.Time) *wsSession {
+	return &wsSession{arch: a, archPath: a.Dir(), archOther: other, seen: newSeenSet(), cursors: map[string]*wsCursor{}, lastUsed: now}
+}
+
+// archSource is the archive snapshot, or nil once the session was released.
+func (s *wsSession) archSource() *app.ArchiveSource {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.arch
 }
 
 func (s *wsSession) treeNow() *wsTree {
@@ -320,6 +340,10 @@ func (s *wsSession) release() {
 	s.tree = nil
 	s.seen = newSeenSet()
 	s.cursors = map[string]*wsCursor{}
+	if s.arch != nil { // the snapshot goes with them: the next "Load folders" reads the archive again
+		s.arch.Close()
+		s.arch = nil
+	}
 	s.mu.Unlock()
 }
 

@@ -313,7 +313,7 @@ func (w *ceWatch) loop(ctx context.Context) {
 			lastSeq = w.progress.Load()
 			continue
 		}
-		if e.busy() {
+		if e.busyFor(w.src) {
 			lastSeq = w.progress.Load()
 			continue // paused for a capture: the run's own pause, not counted
 		}
@@ -339,9 +339,14 @@ func (w *ceWatch) loop(ctx context.Context) {
 func (w *ceWatch) trip(ctx context.Context) {
 	err := w.src.Probe(ctx)
 	var se *graph.StatusError
+	var ag *ArchiveGoneError
 	switch {
 	case ctx.Err() != nil:
 		return
+	case errors.As(err, &ag):
+		// The archive's folder or manifest no longer answers: the run's own R-o2, never a
+		// "connection to Microsoft 365" (design §4.6 item 7).
+		w.fatalStop(&CopyStop{RID: "R-o2", Class: stopClassArchive, Message: ag.Why})
 	case err == nil:
 		// The connection answers, so the stall is the message's. It is listed, the
 		// window restarts, and the run moves on.
@@ -352,7 +357,9 @@ func (w *ceWatch) trip(ctx context.Context) {
 		w.bump()
 		if c != nil {
 			reason := "Microsoft 365 didn't start sending this message within 2 minutes"
-			if n > 0 {
+			if _, files := w.src.(CopyFilesSource); files {
+				reason = "the archive didn't deliver this message's files within 2 minutes"
+			} else if n > 0 {
 				reason += fmt.Sprintf(", %d times", n)
 			}
 			c(&ceBreakerCause{verdict{kind: verdictList, class: classRetryable, reason: reason}})

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"mail-archive-tool/internal/graph"
+	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/util"
 )
 
@@ -31,8 +32,10 @@ import (
 // classes and the awake-time breaker), copyexport_final.go (README, manifest,
 // sums, the seal-and-finish step, Finish as partial and Check and finish),
 // copyexport_reconcile.go (the launch sweep and the identity checks),
-// copyexport_posture.go (the hand-over posture) and copyexport_graph.go (the
-// Microsoft 365 adapter).
+// copyexport_posture.go (the hand-over posture), copyexport_graph.go (the
+// Microsoft 365 adapter) and copyexport_archive.go with copyexport_files.go (the
+// archive adapter, slice E4, and what the engine does with a source whose message is
+// several files).
 
 // CopyOutcome is the engine's exit partition, extract's (X1): complete is 0, a
 // run with any problem or a cancel is 3, a run-fatal stop or a refusal is 1.
@@ -114,7 +117,26 @@ type CopyMessage struct {
 	Received          time.Time       `json:"received"`
 	SizeHint          int64           `json:"size"` // bytes, or -1 when unknown
 	Mailbox           string          `json:"mailbox,omitempty"`
+
+	// The archive source's own fields (slice E4; design §4.6). SourceID is then the
+	// manifest key, and every field below is empty for a Microsoft 365 message. Fix is
+	// the fixity the archive recorded when the plan was made: the run holds each file to
+	// it, so a record a concurrent capture rewrote is "changed in the archive during
+	// export" and never emitted mixed.
+	Rel        string        `json:"rel,omitempty"`     // the record's page, relative to the archive, forward slashes
+	NoOrig     string        `json:"no_orig,omitempty"` // why the archive kept no .eml: noOrigPST or noOrigNotKept; empty when it has one
+	Zip        bool          `json:"zip,omitempty"`     // the record has an attachments zip
+	Gone       bool          `json:"gone,omitempty"`    // no longer in the mailbox, kept in the archive (ruling Q4)
+	Quarantine bool          `json:"quar,omitempty"`    // the preview's reading: the archived page fails the gate and is copied as text
+	Fix        *state.Fixity `json:"fix,omitempty"`
+	Notes      []string      `json:"notes,omitempty"` // the archive's own gaps for this message (§4.6 item 3)
 }
+
+// Why the archive kept no original (design §4.6 item 2).
+const (
+	noOrigPST     = "pst"      // an Outlook .pst or .ost item never has one
+	noOrigNotKept = "not-kept" // captured without "Keep each message's original .eml"
+)
 
 // CopyFolderRef is one level of a message's folder path.
 type CopyFolderRef struct {
@@ -140,11 +162,25 @@ type CopyOptions struct {
 
 // CopySourceInfo describes the source a plan was resolved from.
 type CopySourceInfo struct {
-	Kind          string `json:"kind"`                     // "m365"; the archive is slice E4's
+	Kind          string `json:"kind"`                     // "m365" or "archive"
 	Mailbox       string `json:"mailbox,omitempty"`        // the signer
 	Tenant        string `json:"tenant,omitempty"`         // the tenant id, when known
 	ImmutableIDs  bool   `json:"immutable_ids"`            // the first page's "honored" flag (XC27)
 	OriginalMeans string `json:"original_means,omitempty"` // what "original" means for this source (P8)
+
+	// The archive source (slice E4): the archive folder, whether it is another archive
+	// folder read-only [ruling W1] rather than the configured archive, and every store it
+	// holds with its mailbox (XC21).
+	Archive string          `json:"archive,omitempty"`
+	Other   bool            `json:"other,omitempty"`
+	Stores  []CopyStoreInfo `json:"stores,omitempty"`
+}
+
+// CopyStoreInfo names a store of the archive and the mailbox it holds (empty for a store
+// that is not a mailbox: a .pst file, an mbox or a maildir).
+type CopyStoreInfo struct {
+	Store   string `json:"store"`
+	Mailbox string `json:"mailbox,omitempty"`
 }
 
 // CopyPlanFolder is one selected folder of the plan: the manifest's selection
@@ -201,6 +237,10 @@ type CopyPlan struct {
 
 	SelectionHash string // SHA-256 of the ordered message ids
 
+	// Archive is what the archive source's preview counts (design §4.7 step 4); nil for
+	// another source.
+	Archive *CopyArchiveCounts
+
 	// What the preview reports (design §4.7 step 3 and 4).
 	EstimateBytes int64
 	UnknownSize   int
@@ -214,6 +254,20 @@ type CopyPlan struct {
 	Posture       CopyPosture
 	FSType        string
 	Warnings      []string
+}
+
+// CopyArchiveCounts are what an archive-source preview counts about the selection: how many
+// messages have an original .eml and how many will be copied as the archived page and
+// zip, how many are no longer in the mailbox (kept in the archive, ruling Q4), how many
+// archived pages fail the gate and will be copied as text, how many carry no recorded
+// checksum, and how many records were left out because their files were removed.
+type CopyArchiveCounts struct {
+	WithOriginal    int
+	WithoutOriginal int
+	Gone            int
+	Quarantined     int
+	Unattested      int
+	Skipped         int
 }
 
 // CopyCounts are a run's counts as the manifest and the sealed line carry them.
@@ -423,6 +477,15 @@ func (e *CopyExportEnv) pause(ctx context.Context, d time.Duration) error {
 }
 
 func (e *CopyExportEnv) busy() bool { return e.captureBusy != nil && e.captureBusy() }
+
+// busyFor is busy for a run of src: an export from the archive takes no lock and shares no
+// request budget with a capture, so it never backs off for one (design §4.14, MA-510).
+func (e *CopyExportEnv) busyFor(src CopySource) bool {
+	if _, files := src.(CopyFilesSource); files {
+		return false
+	}
+	return e.busy()
+}
 
 // copyDefaultSizeCap is the shared size cap on one $value body: graph.MIMEMaxBytes,
 // 256 MiB (ESC-8's safe interim, which the copy export alone carries). It is the

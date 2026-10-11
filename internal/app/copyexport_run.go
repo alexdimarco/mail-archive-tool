@@ -497,7 +497,7 @@ func (r *CopyRun) loop(walk context.Context) (CopyStatus, *CopyStop) {
 				return CopyStatusFailed, r.complete(&CopyStop{RID: "R-z", Class: stopClassSignInMoved}, i, now)
 			}
 		}
-		for e.busy() { // a capture is running: the export backs off, uncounted
+		for e.busyFor(r.src) { // a capture is running: the export backs off, uncounted
 			r.waiting.Store(true)
 			if err := e.pause(walk, e.backoffFirst()); err != nil {
 				r.waiting.Store(false)
@@ -638,6 +638,9 @@ func (r *CopyRun) placeRetry(ctx context.Context, dir, tmp, final string) error 
 // exportOne copies one message's original. It returns the progress line to record
 // (nil when the message was not started), a run-fatal stop, or cancelled.
 func (r *CopyRun) exportOne(walk context.Context, n int, m *CopyMessage) (line *ceMsgLine, stop *CopyStop, cancelled bool) {
+	if fsrc, ok := r.src.(CopyFilesSource); ok { // the archive: a message is files, not one stream (slice E4)
+		return r.exportFiles(walk, n, m, fsrc)
+	}
 	e := r.env
 	pl := r.namer.place(m, 1)
 	final := pl.Stem + ".eml"
@@ -785,13 +788,18 @@ func (r *CopyRun) exportOne(walk context.Context, n int, m *CopyMessage) (line *
 // there) is never replaced: the stem moves to the next unique variant, and the
 // message fails when none is free (XC13). It returns the name that was used.
 func (r *CopyRun) placeFinal(ctx context.Context, dir, tmp, final string) (string, error) {
+	return r.placeFinalAs(ctx, dir, tmp, strings.TrimSuffix(final, ".eml"), ".eml")
+}
+
+// placeFinalAs is placeFinal for a file named stem + suffix.
+func (r *CopyRun) placeFinalAs(ctx context.Context, dir, tmp, stem, suffix string) (string, error) {
+	final := stem + suffix
 	err := r.placeRetry(ctx, dir, tmp, final)
 	if err == nil {
 		return final, nil
 	}
-	stem := strings.TrimSuffix(final, ".eml")
 	for k := 2; isExist(err) && k <= 9; k++ {
-		alt := fmt.Sprintf("%s~%d.eml", stem, k)
+		alt := fmt.Sprintf("%s~%d%s", stem, k, suffix)
 		if err = r.placeRetry(ctx, dir, tmp, alt); err == nil {
 			return alt, nil
 		}

@@ -78,14 +78,65 @@ poll(undefined,true);
 // workspaceJS is the Extraction workspace page: the source, the folder tree and its
 // selection, the message list, the destination, the options and the preview.
 var workspaceJS = scoped(commonJS + `(function(){
-const st={upn:'',folders:[],byId:{},kids:{},open:{},entries:[],picks:{},current:'',rows:[],more:false,cursor:'',total:0,previewId:'',countTimer:null,running:false,counts:0};
+const st={upn:'',src:'m365',archivePath:'',archAvail:{},m365Ready:false,folders:[],byId:{},kids:{},open:{},entries:[],picks:{},current:'',rows:[],more:false,cursor:'',total:0,previewId:'',countTimer:null,running:false,counts:0};
 function errText(d){return d.error||'Something went wrong.';}
 function showErr(d){
   show('banner',errText(d));
-  if(d&&(d.id==='R-j2'||d.id==='R-y'||d.id==='R-l'||d.id==='R-b'||d.id==='R-c'))$('loadFolders').disabled=false;
+  // after these the page's folders are out of date: Load folders is the way on (R-l2 for an archive that moved)
+  if(d&&(d.id==='R-j2'||d.id==='R-y'||d.id==='R-l'||d.id==='R-l2'||d.id==='R-b'||d.id==='R-c'||d.id==='R-o'||d.id==='R-o3'||d.id==='R-o4'||d.id==='R-p'))$('loadFolders').disabled=false;
   // the refusals that say "sign in" put the Sign in button in front of the owner (F2)
-  if(d&&(d.id==='R-b'||d.id==='R-c'||d.id==='R-l'))$('signInArea').hidden=false;
+  if(d&&st.src==='m365'&&(d.id==='R-b'||d.id==='R-c'||d.id==='R-l'))$('signInArea').hidden=false;
 }
+
+// ---- the source: Microsoft 365, the configured archive, or another archive folder (read-only) ----
+// What a request says its source is: the archive path is the folder the selection was made from, as
+// "Load folders" reported it, so the server can tell a selection made in an archive that has since moved.
+function srcReq(loading){
+  if(st.src==='m365')return {kind:'m365',mailbox:st.upn};
+  if(st.src==='archive-other')return {kind:'archive-other',archive:loading?$('otherPath').value:st.archivePath};
+  return {kind:'archive',archive:loading?'':st.archivePath};
+}
+const UNIT={m365:'items Microsoft 365 reports',archive:'records the archive lists','archive-other':'records the archive lists'};
+function panelText(extra,arch){
+  if(!arch&&st.src==='m365')return 'Always exports the original EML and a manifest with hashes. Each run creates a separate export directory.';
+  return 'Exports the original EML where your archive kept one'+(extra||'')+'; otherwise the archived page and attachments. Always writes a manifest with hashes. Each run creates a separate export directory.';
+}
+function renderSource(){
+  const k=st.src,a=st.archAvail||{};
+  $('m365Part').hidden=k!=='m365';$('archivePart').hidden=k==='m365';$('otherPart').hidden=k!=='archive-other';
+  if(k==='archive')show('archLine',a.state==='ready'?('MailArchive archive — '+a.path):(a.note||'There is no archive yet.'));
+  if(k==='archive-other')show('archLine',st.otherHolds||'Another archive folder — read-only');
+  $('loadFolders').disabled=k==='m365'?!st.m365Ready:(k==='archive'?a.state!=='ready':false);
+  $('panelNote').textContent=panelText('');
+}
+function resetPick(){
+  st.entries=[];st.picks={};st.current='';st.rows=[];st.open={};st.folders=[];st.byId={};st.kids={};st.previewId='';st.archivePath='';st.otherHolds='';
+  $('pickCard').hidden=true;$('destCard').hidden=true;$('footerSel').hidden=true;$('previewCard').hidden=true;
+  show('selNote','');show('listNote','');clear($('tree'));clear($('msgs'));
+}
+$('srcKind').addEventListener('change',()=>{
+  st.src=$('srcKind').value;resetPick();show('banner','');renderSource();
+});
+$('otherPath').addEventListener('input',()=>{if(st.archivePath){resetPick();}$('otherNote').textContent='';});
+// Browse chooses the other archive folder, and checking it names the mailboxes it holds, or says why it is not one
+$('browseOther').addEventListener('click',()=>{
+  $('otherNote').textContent='A folder picker has opened — it may be behind this window.';
+  api('api/workspace/browse',{title:'Choose the archive\'s top folder'}).then(d=>{
+    $('otherNote').textContent='';
+    if(d.path){$('otherPath').value=d.path;checkOther();}
+    else if(d.unavailable||d.disabled||d.busy)show('banner',errText(d));
+  });
+});
+function checkOther(){
+  const p=$('otherPath').value;if(!p)return;
+  api('api/workspace/source',{otherArchive:p}).then(d=>{
+    if(!d.ok){showErr(d);return;}
+    const a=d.archive||{};
+    st.otherHolds='Another archive folder — '+a.path+(a.stores&&a.stores.length?' (holds: '+a.stores.map(s=>s.label).join(', ')+')':'')+', read-only';
+    show('archLine',st.otherHolds);show('banner','');
+  });
+}
+$('otherPath').addEventListener('change',checkOther);
 
 // ---- source ------------------------------------------------------------
 function loadSource(){
@@ -93,10 +144,12 @@ function loadSource(){
     if(!d.ok){showErr(d);return;}
     st.running=!!d.running;
     const m=d.m365||{};
-    if(m.state==='ready'){st.upn=m.upn;show('mbox','Mailbox: '+m.upn+' (your own mailbox)');$('loadFolders').disabled=false;}
+    st.archAvail=d.archive||{};
+    if(m.state==='ready'){st.upn=m.upn;st.m365Ready=true;show('mbox','Mailbox: '+m.upn+' (your own mailbox)');}
     else if(m.state==='needs-sign-in'){show('mbox',m.note||'Microsoft 365 refused your saved sign-in. Click Sign in to sign in again.');$('signInArea').hidden=false;}
     else if(m.state==='not-signed-in'){show('mbox','Not signed in to Microsoft 365');$('signInArea').hidden=false;}
     else{show('mbox','Microsoft 365 isn\'t set up yet — its settings are saved by MailArchive\'s command-line tool (a separate download): run mailarchive setup there, then come back.');}
+    renderSource();
     const s=d.settings||{};
     if(s.dest&&!$('destPath').value)$('destPath').value=s.dest;
     $('optPreserve').checked=s.preserve!==false;
@@ -107,10 +160,17 @@ function loadSource(){
 }
 $('loadFolders').addEventListener('click',()=>{
   $('loadFolders').disabled=true;show('banner','');
-  api('api/workspace/folders',{}).then(d=>{
+  api('api/workspace/folders',{source:srcReq(true)}).then(d=>{
     $('loadFolders').disabled=false;
     if(!d.ok){showErr(d);return;}
-    st.upn=d.upn;st.folders=d.folders;st.byId={};st.kids={};
+    if(st.src==='m365')st.upn=d.upn;
+    else{
+      st.archivePath=d.archive;
+      const holds=(d.stores||[]).map(s=>s.label).join(', ');
+      show('archLine',(st.src==='archive'?'MailArchive archive — ':'Another archive folder — ')+d.archive+(holds?' (holds: '+holds+')':'')+(st.src==='archive-other'?', read-only':''));
+    }
+    d.folders.forEach(f=>{if(f.label)f.name=f.label;}); // an archive's store is shown with the mailbox it holds
+    st.folders=d.folders;st.byId={};st.kids={};
     d.folders.forEach(f=>{st.byId[f.id]=f;const p=f.parent||'';(st.kids[p]=st.kids[p]||[]).push(f.id);});
     st.entries=[];st.picks={};st.current='';st.rows=[];st.open={};
     $('pickCard').hidden=false;$('destCard').hidden=false;$('footerSel').hidden=false;
@@ -217,7 +277,7 @@ function openFolder(id){
   renderTree();loadRows(false);
 }
 function loadRows(more){
-  const body={folder:st.current};
+  const body={folder:st.current,source:srcReq()};
   if(more){body.cursor=st.cursor;if(st.rows.length)body.after=st.rows[st.rows.length-1].h;}
   api('api/workspace/messages',body).then(d=>{
     if(!d.ok){
@@ -226,6 +286,9 @@ function loadRows(more){
       return;
     }
     st.rows=st.rows.concat(d.rows);st.more=d.more;st.cursor=d.cursor||'';st.total=d.count;
+    // an archive's list may be unavailable (no index, a newer one, a rebuild running) or incomplete: the
+    // note says so, and whole-folder selection from the manifest still works
+    show('listNote',d.listUnavailable||d.listNote||'');
     renderRows();
   });
 }
@@ -273,7 +336,7 @@ $('selAll').addEventListener('change',()=>{
 // ---- the selection and its count -----------------------------------------------
 function selection(){
   const messages=Object.keys(st.picks).map(h=>({h:h}));
-  return {source:{kind:'m365',mailbox:st.upn},folders:st.entries.map(e=>({id:e.id,subtree:e.subtree,exclude:e.exclude})),messages:messages,
+  return {source:srcReq(),folders:st.entries.map(e=>({id:e.id,subtree:e.subtree,exclude:e.exclude})),messages:messages,
     dest:$('destPath').value,options:{preserve:$('optPreserve').checked}};
 }
 function updateCount(){
@@ -289,7 +352,7 @@ function updateCount(){
       const oneFolder=st.entries.length===1&&!Object.keys(st.picks).length;
       const over=oneFolder?' — more than the 200,000 one export can hold, and one folder can\'t be split across exports yet: pick up to 10,000 of its messages by hand, or export its subfolders one at a time'
         :' — more than the 200,000 one export can hold: select fewer folders or messages';
-      $('selCount').textContent=fmt(d.count)+' messages selected (items Microsoft 365 reports)'+(d.count>200000?over:'');
+      $('selCount').textContent=fmt(d.count)+' messages selected ('+UNIT[st.src]+')'+(d.count>200000?over:'');
     });
   },300);
 }
@@ -356,14 +419,17 @@ function line(k,v){const r=el('div',null,'row');r.appendChild(el('div',k,'k'));r
 function renderPreview(p){
   if(p.retryOf)retryDestination(p.retryOf,p.retryWhich,p.dest);
   const body=$('previewBody');clear(body);
+  const arch=!!p.archive;
   let count=fmt(p.count)+' messages';
-  if(p.reported!==p.count)count+=' ('+fmt(p.reported)+' reported by Microsoft 365)';
+  if(p.reported!==p.count)count+=' ('+fmt(p.reported)+(arch?' listed in the archive':' reported by Microsoft 365')+')';
+  // the archive's panel note says how many of the selected messages have an original .eml (ruling Q8)
+  if(arch)$('panelNote').textContent=panelText(' ('+fmt(p.archive.withOriginal)+' of '+fmt(p.count)+' selected)',true);
   body.appendChild(line('Messages',count));
   body.appendChild(line('Size','about '+p.estimate+(p.unknownSize?' ('+fmt(p.unknownSize)+' of unknown size)':'')));
   body.appendChild(line('Into',p.exportDir));
   body.appendChild(line('Free space',p.free+' free; about '+p.reserveText+' is kept back to finish'));
   body.appendChild(line('Who can read it',p.posture.line));
-  (p.folders||[]).forEach(f=>body.appendChild(line(f.folder,fmt(f.found)+' found, '+fmt(f.reported)+' reported'+(f.excluded?', '+fmt(f.excluded)+' left out':''))));
+  (p.folders||[]).forEach(f=>body.appendChild(line(f.folder,fmt(f.found)+' found, '+fmt(f.reported)+(arch?' listed':' reported')+(f.excluded?', '+fmt(f.excluded)+' left out':''))));
   if(p.longestPath)body.appendChild(line('Longest path',p.longestPath+' characters'+(p.over259?' ('+fmt(p.over259)+' over 259)':'')));
   (p.warnings||[]).forEach(w=>{body.appendChild(el('div','Warning: '+w,'note warnbox'));});
   (p.info||[]).forEach(w=>{body.appendChild(el('div',w,'note'));});

@@ -125,6 +125,40 @@ func refusalL(was, now string) refusal {
 	return refusedWith("R-l", fmt.Sprintf("This selection was made in %s's mailbox, but you're now signed in as %s. Load folders again to start a new selection.", was, now))
 }
 
+// refusalO is R-o for an archive source with no archive to read: the configured location holds
+// none yet, or no location is set (design §7.6). The engine words the others of the archive's
+// (R-o3, R-o4, R-p, and R-o2 for a run that stopped).
+func refusalO(path string) refusal {
+	if strings.TrimSpace(path) == "" {
+		return refusedWith("R-o", "There's no archive yet — set the Archive location in Settings and run Archive now first, or choose Microsoft 365 as the source.")
+	}
+	return refusedWith("R-o", fmt.Sprintf("There's no archive at %s yet — run Archive now first, or choose Microsoft 365 as the source.", path))
+}
+
+// refusalO3Path is R-o3 for a path the box does not hold a usable folder in: nothing is chosen, or
+// what is typed is not a full path, so nothing was read.
+func refusalO3Path(path, example string) refusal {
+	if strings.TrimSpace(path) == "" {
+		return refusedWith("R-o3", "No archive folder is chosen — click Browse and choose the archive's top folder, the one that holds index.html and README.txt, or type its full path.")
+	}
+	return refusedWith("R-o3", fmt.Sprintf("%s isn't a full path to an archive folder — type the full path of the archive's top folder (for example %s), the one that holds index.html and README.txt, or click Browse to choose it.", strings.ReplaceAll(path, "\x00", ""), example))
+}
+
+// refusalL2Configured is R-l2 for a selection made in the configured archive, when Settings now
+// points at another location (design §7.6, RR2-C4).
+func refusalL2Configured(was, now string) refusal {
+	if strings.TrimSpace(now) == "" {
+		now = "no archive location"
+	}
+	return refusedWith("R-l2", fmt.Sprintf("This selection was made in the archive at %s, but Settings now points at %s — Load folders again to start a new selection.", was, now))
+}
+
+// refusalL2Other is R-l2 for a selection made from another archive folder that is no longer at that
+// path (design §7.6, RR2-C4): the folder is chosen again, never found by what it was.
+func refusalL2Other(path string) refusal {
+	return refusedWith("R-l2", fmt.Sprintf("This selection was made from the archive at %s, which is no longer at that path — choose the folder again (Another archive folder…), then Load folders.", path))
+}
+
 func refusalM(started time.Time, done, total int) refusal {
 	return refusedWith("R-m", fmt.Sprintf("An export is already running (started %s, %s of %s done) — only one runs at a time. Wait for it or cancel it on Export activity.",
 		started.Format("15:04"), commaInt(done), commaInt(total)))

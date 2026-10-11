@@ -45,7 +45,8 @@ h1{font-size:1.8rem;letter-spacing:-.02em;margin:0 0 4px}.lede{color:var(--muted
 .btn.small{padding:5px 10px;font-size:.85rem}
 .btn:disabled{opacity:.5;cursor:not-allowed}
 label{display:block;font-weight:700;margin:14px 0 5px}
-input[type=text],input:not([type]){width:100%;padding:10px 11px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text)}
+input[type=text],input:not([type]),select{width:100%;padding:10px 11px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text)}
+select{font:inherit}
 .checkline{display:flex;align-items:center;gap:8px;font-weight:600;margin-top:10px}.checkline input{width:auto}
 .device-box{margin-top:14px;padding:14px;border:2px dashed var(--accent);border-radius:10px;background:var(--accent-soft)}
 .device-code{font:800 1.7rem/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.1em;margin-top:6px}
@@ -133,16 +134,32 @@ var pageTmpl = template.Must(template.New("pages").Funcs(pageFuncs).Parse(`
   <main class="content"><div class="inner">
     <div class="whoami" id="whoami" role="status"><span>MailArchive Desktop is running as <b>{{.Account}}</b> on this computer.</span></div>
     <h1>Extraction workspace</h1>
-    <p class="lede">Copy selected folders and messages from your Microsoft 365 mailbox to a folder, with a manifest the recipient can check.</p>
+    <p class="lede">Copy selected folders and messages from your Microsoft 365 mailbox, or from a MailArchive archive, to a folder, with a manifest the recipient can check.</p>
     <div class="note warnbox" id="banner" role="alert" hidden></div>
 
     <div class="card" id="sourceCard">
-      <h2><span class="step">1</span>Mailbox source</h2>
-      <div class="row"><div class="k">Source</div><div class="v">Microsoft 365 — your mailbox</div></div>
-      <div class="row"><div class="k">Mailbox</div><div class="v" id="mbox" aria-live="polite">checking…</div></div>
-      <p class="card-sub">Shared mailboxes aren't available in this version. MailArchive signs in with read access to your own mailbox only.</p>
-      <div id="signInArea" hidden><button class="btn" id="signInBtn" type="button">Sign in</button>
-      {{template "signinbox" .}}</div>
+      <h2><span class="step">1</span>Source</h2>
+      <label for="srcKind">Source</label>
+      <select id="srcKind">
+        <option value="m365">Microsoft 365 — your mailbox</option>
+        <option value="archive">MailArchive archive</option>
+        <option value="archive-other">Another archive folder… (read-only)</option>
+      </select>
+      <div id="m365Part">
+        <div class="row"><div class="k">Mailbox</div><div class="v" id="mbox" aria-live="polite">checking…</div></div>
+        <p class="card-sub">Shared mailboxes aren't available in this version. MailArchive signs in with read access to your own mailbox only.</p>
+        <div id="signInArea" hidden><button class="btn" id="signInBtn" type="button">Sign in</button>
+        {{template "signinbox" .}}</div>
+      </div>
+      <div id="archivePart" hidden>
+        <div class="row"><div class="k">Archive</div><div class="v" id="archLine" aria-live="polite"></div></div>
+        <div id="otherPart" hidden>
+          <label for="otherPath">Archive folder</label>
+          <input type="text" id="otherPath" spellcheck="false" placeholder="The archive's top folder, e.g. {{.DestExample}}">
+          <div class="listbar"><button class="btn small secondary" id="browseOther" type="button">Browse…</button><span id="otherNote" class="card-sub" style="margin:0" aria-live="polite"></span></div>
+          <p class="card-sub">Read-only: nothing is ever written in this folder, and your settings and weekly backup are left as they are. Use this to read an archive you were handed without pointing MailArchive at it.</p>
+        </div>
+      </div>
       <button class="btn" id="loadFolders" type="button" disabled>Load folders</button>
       <div class="note" id="selNote" role="status" aria-live="polite" hidden></div>
     </div>
@@ -155,6 +172,7 @@ var pageTmpl = template.Must(template.New("pages").Funcs(pageFuncs).Parse(`
           <input type="text" id="filter" aria-label="Filter the loaded messages by subject or sender" placeholder="Filter loaded messages by subject / sender" style="max-width:300px"></div>
           <div class="listbar"><label class="checkline" style="margin:0"><input type="checkbox" id="selAll"> Select all loaded</label><span id="shown" class="card-sub" style="margin:0" aria-live="polite"></span></div>
           <div class="msgs" id="msgs" role="group" aria-label="Messages in the open folder"></div>
+          <div class="note" id="listNote" role="status" aria-live="polite" hidden></div>
           <div class="listbar"><button class="btn small secondary" id="loadMore" type="button" hidden>Load more messages</button></div></div>
       </div>
     </div>

@@ -85,7 +85,10 @@ func (d *dashboard) mkdirAction(w http.ResponseWriter, r *http.Request) {
 	if !d.readBody(w, r, &in) {
 		return
 	}
-	path, err := d.copyEnv().CreateFolder(strings.TrimSpace(in.Parent), in.Name, d.archives())
+	// With another archive folder open as the source [ruling W1], a parent inside it, or an alias of
+	// it, is refused as one inside the configured archive is: Create folder's mkdir is a write too.
+	other := d.ws.otherNow()
+	path, err := d.copyEnv().CreateFolderOther(strings.TrimSpace(in.Parent), in.Name, d.archivesWith(other), other)
 	if err != nil {
 		d.refuse(w, *copyRefusal(err))
 		return

@@ -35,7 +35,8 @@ type workspace struct {
 
 	mu         sync.Mutex
 	sess       *wsSession
-	gen        int // counts dropSession calls: a session built across one is not kept (EW-AC5)
+	arch       *wsSession // the archive source's session (slice E4): the snapshot "Load folders" read
+	gen        int        // counts dropSession calls: a session built across one is not kept (EW-AC5)
 	job        *wsPreviewJob
 	prev       *wsPreview
 	pickerBusy bool
@@ -44,11 +45,23 @@ type workspace struct {
 	reaperOnce sync.Once
 }
 
-// wsPreview is the one live preview: the plan, bound to the signer it was made under.
+// wsBind is what a preview is bound to (design §4.7 step 5): the signer for a Microsoft 365 one,
+// the archive folder, by path, for an archive one (MA-411, MA-507). Never the folder's dev+inode,
+// which a remount changes [RR2-C4].
+type wsBind struct {
+	upn   string
+	arch  bool
+	path  string // the archive folder
+	other bool   // another archive folder, read-only [ruling W1]
+}
+
+// wsPreview is the one live preview: the plan, bound to the signer it was made under, or to the
+// archive it was made from.
 type wsPreview struct {
 	id      string
 	plan    *app.CopyPlan
 	upn     string
+	bind    wsBind
 	created time.Time
 	retry   string // the run a retry preview was built from
 }
@@ -259,16 +272,24 @@ func (ws *workspace) dropSession() {
 // (XC18), and a preview that is past its 30 minutes.
 func (ws *workspace) reap(now time.Time) {
 	ws.mu.Lock()
-	s, job, prev := ws.sess, ws.job, ws.prev
+	s, job, prev, a := ws.sess, ws.job, ws.prev, ws.arch
 	if prev != nil && now.Sub(prev.created) > previewTTL {
 		ws.prev = nil
 	}
 	ws.mu.Unlock()
-	if s == nil || (job != nil && job.running()) || ws.d.exportLive() {
+	if (job != nil && job.running()) || ws.d.exportLive() {
 		return
 	}
-	if now.Sub(s.idleSince()) > sessionIdle {
+	if s != nil && now.Sub(s.idleSince()) > sessionIdle {
 		s.release()
+	}
+	if a != nil && now.Sub(a.idleSince()) > sessionIdle { // the archive snapshot goes too (XC18)
+		a.release()
+		ws.mu.Lock()
+		if ws.arch == a {
+			ws.arch = nil
+		}
+		ws.mu.Unlock()
 	}
 }
 
@@ -296,14 +317,22 @@ type wsSourceOut struct {
 	Settings map[string]any `json:"settings"`
 	Running  bool           `json:"running"`
 	Account  string         `json:"account"`
-	Archive  string         `json:"archive,omitempty"`
+	Archive  map[string]any `json:"archive"`
 }
 
 // sourceAction describes the sources' availability and the remembered settings. It reads
-// the saved sign-in locally and calls nothing.
+// the saved sign-in locally and calls nothing. With {otherArchive: path} (from Browse or typed)
+// it validates that folder [ruling W1] and returns its mailboxes, or R-o3, R-o4 or R-p; it
+// reads in that folder and writes nothing there.
 func (d *dashboard) sourceAction(w http.ResponseWriter, r *http.Request) {
-	var in struct{}
+	var in struct {
+		OtherArchive string `json:"otherArchive"`
+	}
 	if !d.readBody(w, r, &in) {
+		return
+	}
+	if strings.TrimSpace(in.OtherArchive) != "" {
+		d.sourceOther(w, in.OtherArchive)
 		return
 	}
 	m := map[string]any{"state": "not-configured"}
@@ -318,7 +347,7 @@ func (d *dashboard) sourceAction(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s := d.cfg.settings()
-	d.reply(w, wsSourceOut{OK: true, Epoch: d.boot, M365: m, Account: d.cfg.account(), Running: d.exportLive(),
+	d.reply(w, wsSourceOut{OK: true, Epoch: d.boot, M365: m, Archive: d.archiveState(), Account: d.cfg.account(), Running: d.exportLive(),
 		Settings: map[string]any{"dest": s.ExportDest, "preserve": s.Preserve(), "html": s.ReadableHTML(), "attachments": s.ExtractAttachments()}})
 }
 
@@ -329,13 +358,21 @@ type wsFolderOut struct {
 	Count     int    `json:"count"`
 	Children  int    `json:"children"`
 	WellKnown string `json:"wellKnown,omitempty"` // "deleted" or "junk": listed, labelled and unticked (ruling Q2)
+	Label     string `json:"label,omitempty"`     // an archive store's name with the mailbox it holds (XC21)
 }
 
 // foldersAction is "Load folders": the whole tree with its counts, cached so the page's
-// folder ids can be checked against it (XC17).
+// folder ids can be checked against it (XC17). For the archive source it reads the archive's
+// manifest snapshot instead (ws_archive.go).
 func (d *dashboard) foldersAction(w http.ResponseWriter, r *http.Request) {
-	var in struct{}
+	var in struct {
+		Source wsSourceReq `json:"source"`
+	}
 	if !d.readBody(w, r, &in) {
+		return
+	}
+	if in.Source.isArchive() {
+		d.archiveFolders(w, r, in.Source)
 		return
 	}
 	sess, ref := d.ws.session(r.Context())
@@ -385,9 +422,10 @@ func (d *dashboard) listRefusal(err error, doing string) refusal {
 // ---- the message list ---------------------------------------------------------
 
 type wsMessagesIn struct {
-	Folder string `json:"folder"`
-	Cursor string `json:"cursor"`
-	After  string `json:"after"` // the last loaded row's handle, for a continuation after the cursor expired
+	Folder string      `json:"folder"`
+	Cursor string      `json:"cursor"`
+	After  string      `json:"after"` // the last loaded row's handle, for a continuation after the cursor expired
+	Source wsSourceReq `json:"source"`
 }
 
 type wsRowOut struct {
@@ -405,6 +443,10 @@ type wsRowOut struct {
 func (d *dashboard) messagesAction(w http.ResponseWriter, r *http.Request) {
 	var in wsMessagesIn
 	if !d.readBody(w, r, &in) {
+		return
+	}
+	if in.Source.isArchive() {
+		d.archiveMessages(w, r, in)
 		return
 	}
 	sess, ref := d.ws.session(r.Context())
@@ -493,10 +535,7 @@ func (d *dashboard) messagesAction(w http.ResponseWriter, r *http.Request) {
 // wsSelection is a selection as the page describes it: folder entries and individual
 // picks, never a message list (P3).
 type wsSelection struct {
-	Source struct {
-		Kind    string `json:"kind"`
-		Mailbox string `json:"mailbox"`
-	} `json:"source"`
+	Source  wsSourceReq `json:"source"`
 	Folders []struct {
 		ID      string   `json:"id"`
 		Subtree bool     `json:"subtree"`
@@ -599,14 +638,23 @@ func (d *dashboard) countAction(w http.ResponseWriter, r *http.Request) {
 		d.refuse(w, *ref)
 		return
 	}
-	if ref := d.signerRefusal(sel.Source.Mailbox); ref != nil {
-		d.refuse(w, *ref)
-		return
-	}
-	sess, ref := d.ws.session(r.Context())
-	if ref != nil {
-		d.refuse(w, *ref)
-		return
+	var sess *wsSession
+	if sel.Source.isArchive() {
+		var ref *refusal
+		if sess, ref = d.archiveSession(sel.Source); ref != nil {
+			d.refuse(w, *ref)
+			return
+		}
+	} else {
+		if ref := d.signerRefusal(sel.Source.Mailbox); ref != nil {
+			d.refuse(w, *ref)
+			return
+		}
+		var ref *refusal
+		if sess, ref = d.ws.session(r.Context()); ref != nil {
+			d.refuse(w, *ref)
+			return
+		}
 	}
 	tree := sess.treeNow()
 	if tree == nil { // released after 30 idle minutes, or never loaded: nothing here can be resolved
@@ -687,15 +735,24 @@ func (d *dashboard) previewAction(w http.ResponseWriter, r *http.Request) {
 		d.refuse(w, *ref)
 		return
 	}
-	if ref := d.signerRefusal(sel.Source.Mailbox); ref != nil {
-		d.refuse(w, *ref)
-		return
+	archive := sel.Source.isArchive()
+	if !archive {
+		if ref := d.signerRefusal(sel.Source.Mailbox); ref != nil {
+			d.refuse(w, *ref)
+			return
+		}
 	}
 	if st, live := d.exportState(); live {
 		d.refuse(w, refusalM(st.started, st.done, st.selected))
 		return
 	}
-	sess, ref := d.ws.session(r.Context())
+	var sess *wsSession
+	var ref *refusal
+	if archive {
+		sess, ref = d.archiveSession(sel.Source)
+	} else {
+		sess, ref = d.ws.session(r.Context())
+	}
 	if ref != nil {
 		d.refuse(w, *ref)
 		return
@@ -709,15 +766,22 @@ func (d *dashboard) previewAction(w http.ResponseWriter, r *http.Request) {
 		opts.PreserveFolders = *sel.Options.Preserve
 	}
 	// Readable HTML and extracted attachments are slices E5 and E6: hidden, and off.
+	if archive {
+		job := d.ws.startJob(func(ctx context.Context, job *wsPreviewJob) (*app.CopyPlan, map[string]any, *refusal) {
+			return d.resolveAndPlanArchive(ctx, job, sess, &sel, opts)
+		}, wsBind{arch: true, path: sess.archPath, other: sess.archOther}, "")
+		d.reply(w, map[string]any{"ok": true, "previewId": job.id})
+		return
+	}
 	job := d.ws.startJob(func(ctx context.Context, job *wsPreviewJob) (*app.CopyPlan, map[string]any, *refusal) {
 		return d.resolveAndPlan(ctx, job, sess, &sel, opts)
-	}, sess.upn, "")
+	}, wsBind{upn: sess.upn}, "")
 	d.reply(w, map[string]any{"ok": true, "previewId": job.id})
 }
 
 // startJob runs fn as the preview job in a recovered goroutine on the process-lifetime
 // context, cancelling the previous one, and keeps its plan as the one live preview.
-func (ws *workspace) startJob(fn func(ctx context.Context, job *wsPreviewJob) (*app.CopyPlan, map[string]any, *refusal), upn, retry string) *wsPreviewJob {
+func (ws *workspace) startJob(fn func(ctx context.Context, job *wsPreviewJob) (*app.CopyPlan, map[string]any, *refusal), bind wsBind, retry string) *wsPreviewJob {
 	d := ws.d
 	ctx, cancel := context.WithCancel(d.life.Context())
 	job := &wsPreviewJob{id: randomID(16), cancel: cancel, state: "running", retry: retry}
@@ -742,7 +806,7 @@ func (ws *workspace) startJob(fn func(ctx context.Context, job *wsPreviewJob) (*
 		ws.mu.Lock()
 		current := ws.job == job
 		if current && ref == nil && plan != nil {
-			ws.prev = &wsPreview{id: job.id, plan: plan, upn: upn, created: d.now(), retry: retry}
+			ws.prev = &wsPreview{id: job.id, plan: plan, upn: bind.upn, bind: bind, created: d.now(), retry: retry}
 		}
 		ws.mu.Unlock()
 		if !current {
@@ -1019,6 +1083,16 @@ func (d *dashboard) archives() []string {
 	return nil
 }
 
+// archivesWith is archives and, for an export from another archive folder, that folder too
+// [ruling W1]: an export never lands in the archive it reads, whichever one it is.
+func (d *dashboard) archivesWith(other string) []string {
+	out := d.archives()
+	if other = strings.TrimSpace(other); other != "" {
+		out = append(out, other)
+	}
+	return out
+}
+
 // copyRefusal turns an engine refusal into the page's refusal.
 func copyRefusal(err error) *refusal {
 	var ref *app.CopyRefusal
@@ -1042,7 +1116,7 @@ func planResult(p *app.CopyPlan, id string, folders any, reported, found int, wa
 		infos = []string{}
 	}
 	posture := map[string]any{"kind": p.Posture.Kind, "line": p.Posture.Line, "readers": p.Posture.Readers, "predicted": p.Posture.Predicted}
-	return map[string]any{
+	out := map[string]any{
 		"previewId": id, "count": found, "reported": reported, "folders": folders,
 		"estimateBytes": p.EstimateBytes, "estimate": humanSize(p.EstimateBytes), "unknownSize": p.UnknownSize,
 		"freeBytes": p.FreeBytes, "free": humanSize(int64(p.FreeBytes)), "reserve": p.Reserve, "reserveText": humanSize(p.Reserve), "recordBound": p.RecordBound,
@@ -1051,6 +1125,11 @@ func planResult(p *app.CopyPlan, id string, folders any, reported, found int, wa
 		"posture": posture, "fsType": p.FSType, "warnings": warnings, "info": infos,
 		"preserve": p.Options.PreserveFolders, "retryOf": p.Chain.RetryOf, "part": len(p.Chain.Parts) + 1,
 	}
+	if c := p.Archive; c != nil { // the archive source's own counts (design §4.7 step 4)
+		out["archive"] = map[string]any{"withOriginal": c.WithOriginal, "withoutOriginal": c.WithoutOriginal, "gone": c.Gone,
+			"quarantined": c.Quarantined, "unattested": c.Unattested, "skipped": c.Skipped, "other": p.Source.Other, "path": p.Source.Archive}
+	}
+	return out
 }
 
 // humanSize is a size as the preview shows it: "1.4 GB".

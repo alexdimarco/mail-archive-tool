@@ -24,6 +24,7 @@ const (
 	stopClassSignInMoved = "sign-in cleared or changed"
 	stopClassPosture     = "posture"
 	stopClassInternal    = "internal error"
+	stopClassArchive     = "archive gone"
 )
 
 func ofTotal(done, total int) string { return commas(done) + " of " + commas(total) }
@@ -46,6 +47,16 @@ func refusalText(id string, done, total int, extra string, plan *CopyPlan, state
 			why = " (" + extra + ")"
 		}
 		return fmt.Sprintf("The destination is full or no longer available%s — the export stopped after %s messages and the folder is marked unfinished. Free some space or choose another destination, then click 'Export the remaining messages' (the page lets you choose another destination before you start it).", why, at)
+	case "R-o2":
+		why := "it was disconnected or moved"
+		if extra != "" {
+			why = extra
+		}
+		where := "the archive"
+		if plan != nil && plan.Source.Archive != "" {
+			where = plan.Source.Archive
+		}
+		return fmt.Sprintf("The archive at %s is no longer available (%s) — the export stopped after %s messages; nothing in the archive is damaged. Reconnect it, then click 'Export the remaining messages' on Export activity.", where, why, at)
 	case "R-u":
 		return fmt.Sprintf("The connection to Microsoft 365 has been down for 5 minutes — the export stopped after %s messages. Check your network, then click 'Export the remaining messages', which also tries again the message that was downloading.", at)
 	case "R-u2":
@@ -78,6 +89,8 @@ func stopReason(id string) string {
 		return "MailArchive Desktop couldn't record this export's progress"
 	case "R-g":
 		return "the destination is full or no longer available"
+	case "R-o2":
+		return "the archive is no longer available"
 	case "R-u":
 		return "the connection to Microsoft 365 was lost"
 	case "R-u2":
