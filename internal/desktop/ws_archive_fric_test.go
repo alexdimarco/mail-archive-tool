@@ -3,6 +3,7 @@ package desktop
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -726,5 +727,85 @@ func TestExportActivityCardNamesTheArchiveItIsOf(t *testing.T) {
 	}
 	if !strings.Contains(exportsJS, "c.sourceLabel||c.mailbox||c.source") {
 		t.Error("exports.js does not show the label ahead of the bare source *(script)*")
+	}
+}
+
+// jsBalanced is a structural check of a script's brackets, with no JavaScript engine to run it in: braces,
+// brackets and parentheses balance outside strings, comments and regular expressions' escapes.
+func jsBalanced(src string) error {
+	var stack []rune
+	pairs := map[rune]rune{')': '(', ']': '[', '}': '{'}
+	rs := []rune(src)
+	line := 1
+	for i := 0; i < len(rs); i++ {
+		c := rs[i]
+		switch {
+		case c == '\n':
+			line++
+		case c == '\\':
+			i++ // an escape: the next character is not structure
+		case c == '\'' || c == '"' || c == '`':
+			for i++; i < len(rs) && rs[i] != c; i++ {
+				if rs[i] == '\\' {
+					i++
+				} else if rs[i] == '\n' {
+					line++
+					if c != '`' {
+						return fmt.Errorf("line %d: a string is not closed", line-1)
+					}
+				}
+			}
+		case c == '/' && i+1 < len(rs) && rs[i+1] == '/':
+			for i < len(rs) && rs[i] != '\n' {
+				i++
+			}
+			line++
+		case c == '/' && i+1 < len(rs) && rs[i+1] == '*':
+			for i += 2; i+1 < len(rs) && !(rs[i] == '*' && rs[i+1] == '/'); i++ {
+				if rs[i] == '\n' {
+					line++
+				}
+			}
+			i++
+		case c == '(' || c == '[' || c == '{':
+			stack = append(stack, c)
+		case c == ')' || c == ']' || c == '}':
+			if len(stack) == 0 || stack[len(stack)-1] != pairs[c] {
+				return fmt.Errorf("line %d: %q closes nothing that is open", line, c)
+			}
+			stack = stack[:len(stack)-1]
+		}
+	}
+	if len(stack) != 0 {
+		return fmt.Errorf("%d bracket(s) are never closed", len(stack))
+	}
+	return nil
+}
+
+// covers: MA-407, MA-408, R19, R12, S52
+// F16: with no Microsoft 365 set up, the first screen of the workspace is not a dead end for someone who was
+// handed an archive: the page's script starts on the archive source (the owner's own archive when there is one,
+// Another archive folder when not), which needs no Microsoft 365, and its line says so instead of only sending
+// them to "mailarchive setup (a separate download)". A source the person already chose is not overridden. The
+// scripts are not run (there is no browser or JavaScript engine here); their structure is checked and their
+// source read *(script)*: the owner's click-through of the page (E3's OW-19) is still owed and now covers this.
+func TestWorkspacePageStartsOnTheArchiveWhenMicrosoft365IsNotSetUp(t *testing.T) {
+	for name, src := range map[string]string{"workspace.js": workspaceJS, "exports.js": exportsJS, "signin.js": signinJS, "dashboard.js": dashboardJS} {
+		if err := jsBalanced(src); err != nil {
+			t.Errorf("%s is not balanced: %v", name, err)
+		}
+	}
+	for _, want := range []string{
+		"To read an archive you were given, or your own, choose it in the Source list above: no Microsoft 365 is needed for that.",
+		"if(st.src==='m365'){const k=(st.archAvail&&st.archAvail.state==='ready')?'archive':'archive-other';$('srcKind').value=k;st.src=k;}",
+	} {
+		if !strings.Contains(workspaceJS, want) {
+			t.Errorf("workspace.js does not carry %q", want)
+		}
+	}
+	// the branch is the not-set-up one, and sits before the source is drawn
+	i, j, k := strings.Index(workspaceJS, "isn\\'t set up yet"), strings.Index(workspaceJS, "$('srcKind').value=k"), strings.Index(workspaceJS, "renderSource();\n    const s=d.settings")
+	if i < 0 || j < i || k < j {
+		t.Errorf("the switch to the archive source is not in the branch for Microsoft 365 not set up, before renderSource: %d %d %d", i, j, k)
 	}
 }

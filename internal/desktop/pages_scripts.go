@@ -148,7 +148,8 @@ function loadSource(){
     if(m.state==='ready'){st.upn=m.upn;st.m365Ready=true;show('mbox','Mailbox: '+m.upn+' (your own mailbox)');}
     else if(m.state==='needs-sign-in'){show('mbox',m.note||'Microsoft 365 refused your saved sign-in. Click Sign in to sign in again.');$('signInArea').hidden=false;}
     else if(m.state==='not-signed-in'){show('mbox','Not signed in to Microsoft 365');$('signInArea').hidden=false;}
-    else{show('mbox','Microsoft 365 isn\'t set up yet — its settings are saved by MailArchive\'s command-line tool (a separate download): run mailarchive setup there, then come back.');}
+    else{show('mbox','Microsoft 365 isn\'t set up yet — its settings are saved by MailArchive\'s command-line tool (a separate download): run mailarchive setup there, then come back. To read an archive you were given, or your own, choose it in the Source list above: no Microsoft 365 is needed for that.');
+      if(st.src==='m365'){const k=(st.archAvail&&st.archAvail.state==='ready')?'archive':'archive-other';$('srcKind').value=k;st.src=k;}}
     renderSource();
     const s=d.settings||{};
     if(s.dest&&!$('destPath').value)$('destPath').value=s.dest;
