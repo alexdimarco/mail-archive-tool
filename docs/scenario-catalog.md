@@ -868,6 +868,15 @@ the existing invariant its defect breaks: F46 and the legacy re-examination
 (MA-350, MA-351, MA-352, MA-355) and the immutable-id placement of §1.6 (MA-356)
 cite R1, the preserved original of §1.5 (MA-357) cites R20, N2, N3 and the
 unchanged-path window of §1.7 (MA-358, MA-359) cite R5, and F48 (MA-361) cites R13.
+Each encoder builds its archive with the real pipeline and runs a healthy twin first
+(green today), then asserts what the row requires of today's surface, so it goes
+green when the gap is fixed and, with its skip removed, fails today for the reason
+its skip message names; the kept, unverified and wording assertions of a row (`Kept`,
+`Stats.Kept`, the report and summary lines) and the fault seams it names (the kill
+points C1..C8, the injected ENOSPC, the probe's temp counter) are added by the slice
+that builds them. The crash cases (MA-358) observe the archive from inside the run,
+after a message is committed and before the next checkpoint save, which is the state
+a hard kill there leaves; the unchanged-path result (§1.7) goes with ESC-3.
 The slices that turn them green: RI-S5 (MA-350, MA-351, MA-352, MA-355, MA-356, MA-357), RI-S4
 (MA-358, MA-359; MA-358's same-path case waits on ESC-3) and RI-S2 (MA-361). MA-361
 spans two slices: its `-vN` redaction and N2-adoption twins are skip encoders that
