@@ -477,6 +477,7 @@ func (r *CopyRun) loop(walk context.Context) (CopyStatus, *CopyStop) {
 		return CopyStatusFailed, r.postureStop
 	}
 	n := len(p.Messages)
+	var removed []int // messages listed as removed from the archive, until the archive itself is seen to be gone
 	for i := 0; i < n; i++ {
 		m := &p.Messages[i]
 		if r.abandoned.Load() {
@@ -522,6 +523,9 @@ func (r *CopyRun) loop(walk context.Context) (CopyStatus, *CopyStop) {
 			}
 			if line.Status == statusFailed {
 				r.failed.Add(1)
+				if line.Class == classTerminal && strings.HasPrefix(line.Reason, reasonArchiveRemoved) {
+					removed = append(removed, line.N)
+				}
 			}
 			r.done.Add(1)
 			e.step(fmt.Sprintf("W6:%d", i+1))
@@ -531,10 +535,23 @@ func (r *CopyRun) loop(walk context.Context) (CopyStatus, *CopyStop) {
 			if line != nil {
 				stop.InFlight = m.SourceID
 			}
+			if stop.RID == "R-o2" {
+				r.removedMayBeBack(removed)
+			}
 			return CopyStatusFailed, stop
 		}
 	}
 	return CopyStatusComplete, nil
+}
+
+// removedMayBeBack takes back the verdict "removed from the archive" on the messages of this run that
+// failed that way before the run saw the archive itself was gone: they are failures a retry can change,
+// and the retry reads the archive as it is then, so a record whose files really are gone is left out by
+// the redaction belt and never exported (friction F6).
+func (r *CopyRun) removedMayBeBack(removed []int) {
+	for _, n := range removed {
+		_ = r.rec.append(ceMsgLine{T: "msg", N: n, Status: statusFailed, Class: classRetryable, Amend: true, Reason: reasonArchiveWentAway})
+	}
 }
 
 // preMessage is the free-space and state-volume check before every message (RR2-C5,

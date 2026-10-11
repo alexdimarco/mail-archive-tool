@@ -352,7 +352,15 @@ func (f *ceFinish) readmeText(status CopyStatus, c CopyCounts, stop *CopyStop, f
 		line("Source: %s", h.Source.Kind)
 	}
 	line("Exported: %s to %s (UTC)", h.Started.UTC().Format("2006-01-02 15:04:05"), finished.UTC().Format("2006-01-02 15:04:05"))
-	line("Counts: %s selected, %s exported, %s failed, %s not attempted.", commas(c.Selected), commas(c.Exported), commas(c.Failed), commas(c.NotAttempted))
+	without := ""
+	if h.Source.Kind == "archive" && c.WithoutOriginal > 0 {
+		without = fmt.Sprintf(" (%s without an original)", commas(c.WithoutOriginal)) // the manifest counts them too (friction F7)
+	}
+	line("Counts: %s selected, %s exported%s, %s failed, %s not attempted.", commas(c.Selected), commas(c.Exported), without, commas(c.Failed), commas(c.NotAttempted))
+	var gone, noted, asText int
+	if h.Source.Kind == "archive" {
+		gone, noted, asText = f.archiveFacts()
+	}
 	if len(h.Folders) > 0 {
 		var names []string
 		for i, f := range h.Folders {
@@ -363,6 +371,13 @@ func (f *ceFinish) readmeText(status CopyStatus, c CopyCounts, stop *CopyStop, f
 			names = append(names, fmt.Sprintf("%s (%s)", util.StripControl(f.Folder), commas(f.Messages)))
 		}
 		line("Selected folders: %s.", strings.Join(names, ", "))
+	}
+	if gone > 0 {
+		line("%s %s left the mailbox when this was exported (the archive keeps %s).", commas(gone), plural(gone, "message had", "messages had"), plural(gone, "it", "them"))
+	}
+	if noted > 0 {
+		line("%s %s a note about what the archive itself lacks (an attachment never downloaded, a message captured by a version that did not track completeness, an unreadable part): %s under \"notes\" in export-manifest.json.",
+			commas(noted), plural(noted, "message carries", "messages carry"), plural(noted, "the note is", "each note is"))
 	}
 	if c.Failed > 0 {
 		line("Messages that were not exported: %s. export-manifest.json lists each one under \"failures\", with its subject, folder and the reason.", commas(c.Failed))
@@ -413,13 +428,49 @@ func (f *ceFinish) readmeText(status CopyStatus, c CopyCounts, stop *CopyStop, f
 		line("- Each .eml is the original message file the MailArchive archive kept, copied byte-exact and checked against the checksum the archive recorded for it (a file with no recorded checksum is copied as stored, and its entry in export-manifest.json says so). Where the archive kept no original, the message is its archived page (.html) and attachments zip (-attachments.zip), as the archive wrote them: the page's links back to the archive's folder and root pages do not work in this export. A page that does not carry MailArchive's security policy is copied as text (.archived-page.txt) instead of as a page. The hashes prove the files are unchanged since the export, nothing earlier.")
 	}
 	line("- Open the originals with the same caution as email: they can hold links and attachments.")
-	line("- Files whose names end .html, .attachments or .archived-page.txt, where present, are conveniences made from the original, which stays the authoritative copy.")
+	if h.Source.Kind != "archive" {
+		line("- Files whose names end .html, .attachments or .archived-page.txt, where present, are conveniences made from the original, which stays the authoritative copy.")
+	} else {
+		// For a message the archive kept no original of, the page and the zip are the copy there is (friction F7).
+		if n := c.WithoutOriginal; n > 0 {
+			line("- %s of the exported messages %s no original: the archive kept none (it was captured without 'Keep each message's original .eml', or the message comes from an Outlook data file). For %s the archived page (.html) and the attachments zip (-attachments.zip) are the copy there is, not a convenience made from an original; their status in export-manifest.json is exported-without-original.",
+				commas(n), plural(n, "has", "have"), plural(n, "it", "them"))
+		}
+		if asText > 0 {
+			line("- %s archived %s not carry MailArchive's security policy, or held a live refresh, so %s copied as text (.archived-page.txt): open %s as text only.",
+				commas(asText), plural(asText, "page did", "pages did"), plural(asText, "it was", "they were"), plural(asText, "it", "them"))
+		}
+	}
 	line("")
 	line("Caveats")
 	line("- Windows Explorer and some zip tools cannot open paths over 260 characters: choose a shorter destination, or turn off Preserve folder structure, if a path is too long.")
 	line("- On FAT, exFAT and most network shares, file permissions are not kept: the drive or the share decides who can read these files. On Windows this folder inherited its destination's permissions.")
 	line("- On removable media: eject the drive before unplugging it.")
 	return b.String()
+}
+
+// archiveFacts counts, among the exported messages of an archive-sourced run, those that had left the
+// mailbox when the plan was made, those that carry a note about what the archive itself lacks, and those
+// whose page was copied as text: what the README tells the recipient besides the counts (friction F7).
+func (f *ceFinish) archiveFacts() (gone, noted, asText int) {
+	_ = walkMessages(f.rec.path, func(p *cePlanLine, m *ceMsgLine) error {
+		if m == nil || (m.Status != statusExported && m.Status != statusWithoutOrig && m.Status != statusOriginalOnly) {
+			return nil
+		}
+		if p.Gone {
+			gone++
+		}
+		if len(p.Notes) > 0 {
+			noted++
+		}
+		for _, file := range m.Files {
+			if file.Role == roleQuarantinedPage {
+				asText++
+			}
+		}
+		return nil
+	})
+	return gone, noted, asText
 }
 
 // storesLine is the README's sentence naming every store the archive holds and its

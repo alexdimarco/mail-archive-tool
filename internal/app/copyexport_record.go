@@ -374,16 +374,19 @@ func scanLines(path string, fn func(line []byte) error) error {
 
 // ceRecSummary is what a pass over a run record learns, without holding its plan.
 type ceRecSummary struct {
-	Header     ceHeaderLine
-	Planned    int
-	Progress   int // message lines, amendments not counted twice
-	Statuses   map[string]int
-	Stopped    *ceStoppedLine
-	Sealed     *ceSealedLine
-	Gone       bool
-	Located    []ceLocatedLine
-	Realized   *cePostureLine
-	NewerMajor bool // a header of a newer format_version
+	Header   ceHeaderLine
+	Planned  int
+	Progress int // message lines, amendments not counted twice
+	Statuses map[string]int
+	// RetryableFailed is how many messages failed with a reason a retry can change (class
+	// retryable), as the card decides whether to offer "Export failed messages again" (F3).
+	RetryableFailed int
+	Stopped         *ceStoppedLine
+	Sealed          *ceSealedLine
+	Gone            bool
+	Located         []ceLocatedLine
+	Realized        *cePostureLine
+	NewerMajor      bool // a header of a newer format_version
 }
 
 // summaryScans counts the full passes readSummary has made over run records: a test's
@@ -399,7 +402,8 @@ var messageWalks atomic.Int64
 func readSummary(path string) (*ceRecSummary, error) {
 	summaryScans.Add(1)
 	s := &ceRecSummary{Statuses: map[string]int{}}
-	last := map[int]string{}
+	type seen struct{ status, class string }
+	last := map[int]seen{}
 	err := scanLines(path, func(line []byte) error {
 		switch lineKind(line) { // a malformed line has no kind: skipped, never reinterpreted
 		case "header":
@@ -417,12 +421,18 @@ func readSummary(path string) (*ceRecSummary, error) {
 				return nil
 			}
 			if prev, ok := last[m.N]; ok {
-				s.Statuses[prev]--
+				s.Statuses[prev.status]--
+				if prev.status == statusFailed && prev.class == classRetryable {
+					s.RetryableFailed--
+				}
 			} else {
 				s.Progress++
 			}
-			last[m.N] = m.Status
+			last[m.N] = seen{m.Status, m.Class}
 			s.Statuses[m.Status]++
+			if m.Status == statusFailed && m.Class == classRetryable {
+				s.RetryableFailed++
+			}
 		case "stopped":
 			var st ceStoppedLine
 			if json.Unmarshal(line, &st) == nil {

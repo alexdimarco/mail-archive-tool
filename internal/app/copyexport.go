@@ -128,6 +128,7 @@ type CopyMessage struct {
 	Zip        bool          `json:"zip,omitempty"`     // the record has an attachments zip
 	Gone       bool          `json:"gone,omitempty"`    // no longer in the mailbox, kept in the archive (ruling Q4)
 	Quarantine bool          `json:"quar,omitempty"`    // the preview's reading: the archived page fails the gate and is copied as text
+	Blocked    string        `json:"-"`                 // the preview's reading: the file the run copies is one the gate refuses ("link", "hardlink", "irregular" or "path"); never recorded
 	Fix        *state.Fixity `json:"fix,omitempty"`
 	Notes      []string      `json:"notes,omitempty"` // the archive's own gaps for this message (§4.6 item 3)
 }
@@ -268,6 +269,12 @@ type CopyArchiveCounts struct {
 	Quarantined     int
 	Unattested      int
 	Skipped         int
+	// Blocked is how many messages have a file the archive gate refuses (a link where the file
+	// should be, more than one hard link, not a regular file, a path outside the archive): the run
+	// lists each as failed for good. They are counted by the reason, in BlockedWhy ("link",
+	// "hardlink", "irregular", "path"), and not as having an original or not (friction F2).
+	Blocked    int
+	BlockedWhy map[string]int
 }
 
 // CopyCounts are a run's counts as the manifest and the sealed line carry them.

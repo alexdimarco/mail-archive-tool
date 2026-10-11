@@ -228,6 +228,32 @@ func writeTempFile(f ceFS, dir, final string, data []byte, replace bool) error {
 	return nil
 }
 
+// readDeniedWords is how a read the account may not make is worded; the R-o2 stop keys its remedy on it, so
+// a reason about permissions says to make the archive readable and any other reason says to reconnect it.
+const readDeniedWords = "this account isn't allowed to read it"
+
+// readName is leaveName for something MailArchive only reads (the archive): the same plain account of
+// what happened, in read words (a read is never "write-protected", friction F12), with the system's own
+// text after it.
+func readName(err error) string {
+	sys := strings.TrimSpace(err.Error())
+	var pe *fs.PathError
+	var le *os.LinkError
+	switch {
+	case errors.As(err, &pe):
+		sys = pe.Err.Error()
+	case errors.As(err, &le):
+		sys = le.Err.Error()
+	}
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return "it isn't there any more"
+	case errors.Is(err, fs.ErrPermission):
+		return readDeniedWords + ": " + sys
+	}
+	return sys
+}
+
 // leaveName turns a path error into the name that failed, for a refusal or a
 // failure line: the error's own text can hold the absolute destination path, which
 // a listed reason never repeats.

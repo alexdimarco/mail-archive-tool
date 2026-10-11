@@ -361,16 +361,23 @@ func (d *dashboard) saveSettings(w http.ResponseWriter, r *http.Request) {
 		case "keep":
 		case "remove":
 			if err := d.removeBackup(); err != nil {
-				writeJSON(w, map[string]any{"ok": false, "error": "The weekly backup could not be removed, so the settings were not saved: " + err.Error()})
+				writeJSON(w, map[string]any{"ok": false, "error": "The weekly backup could not be removed (the scheduler said: " + err.Error() + "), so nothing was saved and your settings are as they were. Remove it yourself with Remove on the Weekly backup card, or choose Save and keep the backup."})
 				return
 			}
 		default:
 			who, _ := d.signedInNow()
-			if who == "" {
-				who = "the Microsoft 365 account you are signed in as"
+			signedIn := who != ""
+			ask := fmt.Sprintf("Your weekly backup will now archive %s into %s.", who, out)
+			switch {
+			case !signedIn && out == "":
+				ask = "You cleared the Archive location, so your weekly backup (it archives the Microsoft 365 account it uses; nobody is signed in right now) would have no folder to archive into."
+			case !signedIn:
+				ask = fmt.Sprintf("Your weekly backup will now archive the Microsoft 365 account it uses (nobody is signed in right now) into %s.", out)
+			case out == "":
+				ask = fmt.Sprintf("You cleared the Archive location, so your weekly backup (it archives %s) would have no folder to archive into.", who)
 			}
-			writeJSON(w, map[string]any{"ok": false, "confirm": true, "upn": who, "folder": out,
-				"error":   fmt.Sprintf("Your weekly backup will now archive %s into %s.", who, out),
+			ask += " If you only want to read an archive someone gave you, choose Cancel: Extraction workspace → Source → Another archive folder reads it without changing any setting or your weekly backup."
+			writeJSON(w, map[string]any{"ok": false, "confirm": true, "upn": who, "folder": out, "error": ask,
 				"choices": []string{"keep", "remove", "cancel"}})
 			return
 		}
@@ -708,9 +715,9 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <div class="note" id="settingsNote" hidden></div>
       <div class="note warnbox" id="settingsConfirm" role="alert" hidden>
         <div id="settingsConfirmText"></div>
-        <div class="actions" style="margin-top:10px"><button class="btn" id="settingsKeep" type="button">Save and keep the backup</button>
-          <button class="btn secondary" id="settingsRemoveBackup" type="button">Save and remove the weekly backup</button>
-          <button class="btn secondary" id="settingsCancel" type="button">Cancel</button></div>
+        <div class="actions" style="margin-top:10px"><button class="btn" id="settingsCancel" type="button">Cancel</button>
+          <button class="btn secondary" id="settingsKeep" type="button">Save and keep the backup</button>
+          <button class="btn secondary" id="settingsRemoveBackup" type="button">Save and remove the weekly backup</button></div>
       </div>
     </div>
 
@@ -800,7 +807,7 @@ async function doSave(backup){
       return;
     }
     if(c)c.hidden=true;
-    if(n){n.hidden=false;n.textContent=d.ok?(backup==='remove'?'Settings saved, and the weekly backup removed.':'Settings saved.'):(d.error||'Could not save.');}
+    if(n){n.hidden=false;n.textContent=d.ok?(backup==='remove'?'Settings saved, and the weekly backup removed. To run it again, click Install / update on the Weekly backup card.':'Settings saved.'):(d.error||'Could not save.');}
   }catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}
 }
 if(save)save.addEventListener('click',()=>doSave(''));

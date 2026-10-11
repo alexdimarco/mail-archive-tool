@@ -56,7 +56,11 @@ func refusalText(id string, done, total int, extra string, plan *CopyPlan, state
 		if plan != nil && plan.Source.Archive != "" {
 			where = plan.Source.Archive
 		}
-		return fmt.Sprintf("The archive at %s is no longer available (%s) — the export stopped after %s messages; nothing in the archive is damaged. Reconnect it, then click 'Export the remaining messages' on Export activity.", where, why, at)
+		fix := "Reconnect it"
+		if strings.Contains(why, readDeniedWords) { // the reason is about permissions: reconnecting would not help
+			fix = "Make it readable by this account again"
+		}
+		return fmt.Sprintf("The archive at %s is no longer available (%s) — the export stopped after %s messages; nothing in the archive is damaged. %s, then click 'Export the remaining messages' on Export activity.", where, why, at, fix)
 	case "R-u":
 		return fmt.Sprintf("The connection to Microsoft 365 has been down for 5 minutes — the export stopped after %s messages. Check your network, then click 'Export the remaining messages', which also tries again the message that was downloading.", at)
 	case "R-u2":

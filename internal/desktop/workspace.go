@@ -35,14 +35,30 @@ type workspace struct {
 
 	mu         sync.Mutex
 	sess       *wsSession
-	arch       *wsSession // the archive source's session (slice E4): the snapshot "Load folders" read
-	gen        int        // counts dropSession calls: a session built across one is not kept (EW-AC5)
+	arch       *wsSession   // the archive source's session (slice E4): the snapshot "Load folders" read
+	idled      *idleRelease // the archive session the reaper let go of after 30 idle minutes, until the next Load folders
+	gen        int          // counts dropSession calls: a session built across one is not kept (EW-AC5)
 	job        *wsPreviewJob
 	prev       *wsPreview
 	pickerBusy bool
 
 	listMu     sync.Mutex // one listing at a time: the workspace stays inside the 4-concurrent budget (§4.14)
 	reaperOnce sync.Once
+}
+
+// idleRelease is which archive session the reaper released: its folder, and whether it was another
+// archive folder.
+type idleRelease struct {
+	path  string
+	other bool
+}
+
+// idleReleased reports whether the archive at path (of this kind) is the session the reaper let go
+// of for being idle, and nothing has loaded one since.
+func (ws *workspace) idleReleased(path string, other bool) bool {
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+	return ws.idled != nil && ws.idled.other == other && samePath(ws.idled.path, path)
 }
 
 // wsBind is what a preview is bound to (design §4.7 step 5): the signer for a Microsoft 365 one,
@@ -288,6 +304,7 @@ func (ws *workspace) reap(now time.Time) {
 		ws.mu.Lock()
 		if ws.arch == a {
 			ws.arch = nil
+			ws.idled = &idleRelease{path: a.archPath, other: a.archOther} // so the next click can say why (friction F15)
 		}
 		ws.mu.Unlock()
 	}
@@ -1127,7 +1144,7 @@ func planResult(p *app.CopyPlan, id string, folders any, reported, found int, wa
 	}
 	if c := p.Archive; c != nil { // the archive source's own counts (design §4.7 step 4)
 		out["archive"] = map[string]any{"withOriginal": c.WithOriginal, "withoutOriginal": c.WithoutOriginal, "gone": c.Gone,
-			"quarantined": c.Quarantined, "unattested": c.Unattested, "skipped": c.Skipped, "other": p.Source.Other, "path": p.Source.Archive}
+			"quarantined": c.Quarantined, "unattested": c.Unattested, "skipped": c.Skipped, "blocked": c.Blocked, "other": p.Source.Other, "path": p.Source.Archive}
 	}
 	return out
 }

@@ -83,6 +83,8 @@ type pageData struct {
 	Active    string // "workspace" or "exports"
 	// DestExample is an example full folder path in the shape of this computer's own.
 	DestExample string
+	// ArchiveExample is an example full path of an archive's top folder, in the same shape.
+	ArchiveExample string
 }
 
 var pageFuncs = template.FuncMap{}
@@ -155,7 +157,7 @@ var pageTmpl = template.Must(template.New("pages").Funcs(pageFuncs).Parse(`
         <div class="row"><div class="k">Archive</div><div class="v" id="archLine" aria-live="polite"></div></div>
         <div id="otherPart" hidden>
           <label for="otherPath">Archive folder</label>
-          <input type="text" id="otherPath" spellcheck="false" placeholder="The archive's top folder, e.g. {{.DestExample}}">
+          <input type="text" id="otherPath" spellcheck="false" placeholder="The archive's top folder, e.g. {{.ArchiveExample}}">
           <div class="listbar"><button class="btn small secondary" id="browseOther" type="button">Browse…</button><span id="otherNote" class="card-sub" style="margin:0" aria-live="polite"></span></div>
           <p class="card-sub">Read-only: nothing is ever written in this folder, and your settings and weekly backup are left as they are. Use this to read an archive you were handed without pointing MailArchive at it.</p>
         </div>
@@ -252,7 +254,7 @@ type pageHead struct {
 }
 
 func (d *dashboard) renderPage(w http.ResponseWriter, name, title string) {
-	data := pageHead{pageData: pageData{CSRF: d.csrf, Epoch: d.boot, Account: d.cfg.account(), ReaderURL: d.cfg.ReaderURL, Active: name, DestExample: app.DestExampleFor(d.cfg.goos())}, Title: title, CSS: template.CSS(pageCSS)}
+	data := pageHead{pageData: pageData{CSRF: d.csrf, Epoch: d.boot, Account: d.cfg.account(), ReaderURL: d.cfg.ReaderURL, Active: name, DestExample: app.DestExampleFor(d.cfg.goos()), ArchiveExample: app.ArchiveExampleFor(d.cfg.goos())}, Title: title, CSS: template.CSS(pageCSS)}
 	var b strings.Builder
 	if err := pageTmpl.ExecuteTemplate(&b, name, data); err != nil {
 		http.Error(w, "page template error", http.StatusInternalServerError)

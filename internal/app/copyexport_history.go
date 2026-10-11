@@ -51,6 +51,7 @@ type CopyRunInfo struct {
 	Chain        string
 	Started      time.Time
 	SourceKind   string
+	SourceLabel  string // for an archive-sourced run: which archive, and the stores of the selected folders (friction F9)
 	Mailbox      string
 	Dest         string // the export directory's recorded path
 	RootName     string
@@ -239,6 +240,9 @@ func (e *CopyExportEnv) historyOne(run string, jl []ceJournalLine, ledger []ceLe
 		h := sum.Header
 		info.Chain, info.RetryOf, info.Started, info.Planned = h.Chain, h.RetryOf, h.Started, h.Planned
 		info.RootName, info.Part = h.RootName, len(h.ChainParts)+1
+		if h.Source.Kind == "archive" {
+			info.SourceLabel = archiveCardLabel(h.Source, h.Folders)
+		}
 		if p := folderPath(sum); p != "" {
 			info.Dest = util.StripControl(p) // where the folder is now: the located path, else the recorded root
 		}
@@ -343,6 +347,38 @@ func (e *CopyExportEnv) historyOne(run string, jl []ceJournalLine, ledger []ceLe
 	return info, true
 }
 
+// archiveCardLabel names the archive an export activity card is of: "your archive, folder <name>" for the
+// configured archive, "another archive folder <name>" for a folder read-only, and, in brackets, the stores of the
+// folders that were selected (with the mailbox a store holds), so that two cards can be told apart (friction F9).
+func archiveCardLabel(src CopySourceInfo, folders []CopyPlanFolder) string {
+	label := "your archive, folder " + util.StripControl(filepath.Base(src.Archive))
+	if src.Other {
+		label = "another archive folder " + util.StripControl(filepath.Base(src.Archive))
+	}
+	mailbox := map[string]string{}
+	for _, s := range src.Stores {
+		mailbox[s.Store] = s.Mailbox
+	}
+	var stores []string
+	seen := map[string]bool{}
+	for _, f := range folders {
+		tok, _, _ := strings.Cut(f.Folder, "/")
+		if tok == "" || seen[tok] || tok == "Individually picked messages" {
+			continue
+		}
+		seen[tok] = true
+		name := util.StripControl(tok)
+		if mb := mailbox[tok]; mb != "" {
+			name += " — " + util.StripControl(mb)
+		}
+		stores = append(stores, name)
+	}
+	if len(stores) > 0 {
+		label += " (" + strings.Join(stores, ", ") + ")"
+	}
+	return label
+}
+
 // nextFor is the sentence that tells the owner what to do with a card that is waiting on them
 // (friction F13): finishing an interrupted export is the first of three clicks, and nothing
 // else on the card says so.
@@ -373,13 +409,16 @@ func (e *CopyExportEnv) endedActions(sum *ceRecSummary, info CopyRunInfo) []stri
 	if sum == nil { // the record is deleted: its chain is complete, nothing is left to export
 		return acts
 	}
+	// "Export failed messages again" is offered while a failure a retry can change is left: a
+	// message whose file is a link, damaged or removed fails for good, and a button whose click is
+	// refused is no help (friction F3).
 	switch info.Status {
 	case CopyStatusPartial:
-		if info.Failed > 0 {
+		if info.Failed > 0 && sum.RetryableFailed > 0 {
 			acts = append(acts, ActExportFailed)
 		}
 	case CopyStatusCancelled:
-		if info.Failed > 0 {
+		if info.Failed > 0 && sum.RetryableFailed > 0 {
 			acts = append(acts, ActExportFailed)
 		}
 		acts = append(acts, ActExportRemaining)
@@ -935,7 +974,11 @@ func (e *CopyExportEnv) RetryInput(run, which, signer string) (*CopyPlanInput, e
 		return nil, err
 	}
 	if len(msgs) == 0 {
-		return nil, refuse("R-h", "There are no messages left to export from this export.")
+		kind := h.Source.Kind
+		if kind == "archive" && h.Source.Other {
+			kind = kindArchiveOther
+		}
+		return nil, refuse("R-h", noRetryText(which, sum.Statuses[statusFailed], sum.RetryableFailed, kind))
 	}
 	first := h.RootName
 	if len(h.ChainParts) > 0 {
@@ -954,6 +997,36 @@ func (e *CopyExportEnv) RetryInput(run, which, signer string) (*CopyPlanInput, e
 	next := max(own.Part+1, n+1)
 	chain := CopyChain{ID: h.Chain, RetryOf: run, Parts: parts, RootName: fmt.Sprintf("%s-part%d", first, next)}
 	return &CopyPlanInput{Source: h.Source, Folders: foldersOf(msgs), Messages: msgs, Options: h.Options, Dest: h.Dest, Chain: chain}, nil
+}
+
+// kindArchiveOther is the kind noRetryText is given for another archive folder (read-only, someone else's).
+const kindArchiveOther = "archive-other"
+
+// noRetryText is R-h for a retry with nothing to retry (friction F3): what happened, why, and what to
+// do. failed is how many messages of the run failed. A message that failed for a reason a retry
+// cannot change (a link, a damaged or removed file, a message over the size limit) is never offered
+// again, and the owner is told where the reasons are and what can still be done.
+func noRetryText(which string, failed, retryable int, kind string) string {
+	switch {
+	case failed == 0 && which == "failed":
+		return "There are no messages left to export from this export — no message failed in it, so there is nothing to export again."
+	case failed == 0:
+		return "There are no messages left to export from this export — every message in it was exported."
+	case retryable > 0: // they could be tried again, and another part of the set already did
+		return "There are no messages left to export from this export — the messages that failed were exported by another part of its set, so there is nothing left to do (the set's total is on this export's card)."
+	}
+	n := "1 message that failed"
+	if failed != 1 {
+		n = commas(failed) + " messages that failed"
+	}
+	fix := "If you can fix that, choose the folder again in the Extraction workspace and export it as a new export."
+	switch kind {
+	case "archive":
+		fix = "Fix that first (restore a file that is missing or damaged from a backup of the archive, or copy an archive that holds links into a plain folder), then choose the folder again in the Extraction workspace and export it as a new export."
+	case kindArchiveOther: // read-only, and its reader has no backup of it: the owner of the copy is the one to ask
+		fix = "Fix that first (ask whoever gave you the archive for a complete copy of a file that is missing or damaged, or copy an archive that holds links into a plain folder), then choose the folder again in the Extraction workspace and export it as a new export."
+	}
+	return fmt.Sprintf("The %s in this export can't be tried again — each failed for a reason that trying again won't change, and the reason is listed under 'Which ones?' on this export's card. %s", n, fix)
 }
 
 // foldersOf summarizes msgs by folder path, in the order first met: the retry's

@@ -83,7 +83,7 @@ function errText(d){return d.error||'Something went wrong.';}
 function showErr(d){
   show('banner',errText(d));
   // after these the page's folders are out of date: Load folders is the way on (R-l2 for an archive that moved)
-  if(d&&(d.id==='R-j2'||d.id==='R-y'||d.id==='R-l'||d.id==='R-l2'||d.id==='R-b'||d.id==='R-c'||d.id==='R-o'||d.id==='R-o3'||d.id==='R-o4'||d.id==='R-p'))$('loadFolders').disabled=false;
+  if(d&&(d.id==='R-j2'||d.id==='R-y'||d.id==='R-l'||d.id==='R-l2'||d.id==='R-b'||d.id==='R-c'||d.id==='R-o'||d.id==='R-o2'||d.id==='R-o3'||d.id==='R-o4'||d.id==='R-p'))$('loadFolders').disabled=false;
   // the refusals that say "sign in" put the Sign in button in front of the owner (F2)
   if(d&&st.src==='m365'&&(d.id==='R-b'||d.id==='R-c'||d.id==='R-l'))$('signInArea').hidden=false;
 }
@@ -106,7 +106,7 @@ function renderSource(){
   $('m365Part').hidden=k!=='m365';$('archivePart').hidden=k==='m365';$('otherPart').hidden=k!=='archive-other';
   if(k==='archive')show('archLine',a.state==='ready'?('MailArchive archive — '+a.path):(a.note||'There is no archive yet.'));
   if(k==='archive-other')show('archLine',st.otherHolds||'Another archive folder — read-only');
-  $('loadFolders').disabled=k==='m365'?!st.m365Ready:(k==='archive'?a.state!=='ready':false);
+  $('loadFolders').disabled=k==='m365'?!st.m365Ready:(k==='archive'?(a.state!=='ready'&&a.state!=='gone'):false);
   $('panelNote').textContent=panelText('');
 }
 function resetPick(){
@@ -133,7 +133,7 @@ function checkOther(){
     if(!d.ok){showErr(d);return;}
     const a=d.archive||{};
     st.otherHolds='Another archive folder — '+a.path+(a.stores&&a.stores.length?' (holds: '+a.stores.map(s=>s.label).join(', ')+')':'')+', read-only';
-    show('archLine',st.otherHolds);show('banner','');
+    show('archLine',st.otherHolds);show('banner',a.note||'');
   });
 }
 $('otherPath').addEventListener('change',checkOther);
@@ -148,7 +148,8 @@ function loadSource(){
     if(m.state==='ready'){st.upn=m.upn;st.m365Ready=true;show('mbox','Mailbox: '+m.upn+' (your own mailbox)');}
     else if(m.state==='needs-sign-in'){show('mbox',m.note||'Microsoft 365 refused your saved sign-in. Click Sign in to sign in again.');$('signInArea').hidden=false;}
     else if(m.state==='not-signed-in'){show('mbox','Not signed in to Microsoft 365');$('signInArea').hidden=false;}
-    else{show('mbox','Microsoft 365 isn\'t set up yet — its settings are saved by MailArchive\'s command-line tool (a separate download): run mailarchive setup there, then come back.');}
+    else{show('mbox','Microsoft 365 isn\'t set up yet — its settings are saved by MailArchive\'s command-line tool (a separate download): run mailarchive setup there, then come back. To read an archive you were given, or your own, choose it in the Source list above: no Microsoft 365 is needed for that.');
+      if(st.src==='m365'){const k=(st.archAvail&&st.archAvail.state==='ready')?'archive':'archive-other';$('srcKind').value=k;st.src=k;}}
     renderSource();
     const s=d.settings||{};
     if(s.dest&&!$('destPath').value)$('destPath').value=s.dest;
@@ -175,6 +176,7 @@ $('loadFolders').addEventListener('click',()=>{
     st.entries=[];st.picks={};st.current='';st.rows=[];st.open={};
     $('pickCard').hidden=false;$('destCard').hidden=false;$('footerSel').hidden=false;
     renderTree();renderRows();updateCount();
+    if(d.note)show('banner',d.note);
   });
 });
 
@@ -502,7 +504,7 @@ function cardEl(c){
   const box=el('div',null,'run-card');
   box.appendChild(el('h3',c.label));
   const when=c.started?new Date(c.started).toLocaleString():'';
-  box.appendChild(el('div',when+' · '+(c.mailbox||c.source)+' · '+c.rootName,'card-sub'));
+  box.appendChild(el('div',when+' · '+(c.sourceLabel||c.mailbox||c.source)+' · '+c.rootName,'card-sub'));
   if(c.running)box.appendChild(el('div','Writing now: see Running export above.'));
   else box.appendChild(el('div',fmt(c.exported)+' exported, '+fmt(c.failed)+' failed, '+fmt(c.notAttempted)+' not attempted of '+fmt(c.planned)));
   if(c.setNote)box.appendChild(el('div',c.setNote,'card-sub'));

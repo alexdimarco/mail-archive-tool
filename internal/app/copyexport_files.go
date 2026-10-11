@@ -219,6 +219,33 @@ func (r *CopyRun) writeFiles(ctx context.Context, n int, m *CopyMessage, files *
 	return &ceMsgLine{T: "msg", N: n, Status: files.Status, Files: recs, Notes: slices.Clone(files.Notes)}, nil, nil
 }
 
+const (
+	// checkIntegrityButton is the label of Desktop's Maintenance control that checks the archive's files
+	// against their checksums (the command-line tool calls it verify): the owner's word, not the verb.
+	checkIntegrityButton = "Maintenance → Check integrity"
+	// plainFolderRemedy is what to do about a link, or a file with several hard links, in the archive.
+	plainFolderRemedy = "copy the archive into a plain folder that holds real files, not links, and export from that folder instead"
+)
+
+// damagedRemedy is the next step for a file that does not match its checksum, or a record that does not
+// hold together: the owner's own archive can be checked and restored from a backup; another archive folder
+// is read-only and cannot be checked from here (friction F17).
+func damagedRemedy(other bool) string {
+	if other {
+		return "this folder is read-only, so ask whoever gave you the archive for a fresh copy of the file, then export again"
+	}
+	return "restore the file from a backup of the archive, or run " + checkIntegrityButton + " to see what else is affected, then export again"
+}
+
+const (
+	// reasonArchiveRemoved is why a message whose file is not in the archive is listed as failed for good.
+	reasonArchiveRemoved = "removed from the archive after you selected it"
+	// reasonArchiveWentAway replaces it for a message that failed in the moments before the run saw the
+	// archive itself was gone (a share failing file by file, a folder deleted under the run): the file
+	// may well not have been removed (friction F6).
+	reasonArchiveWentAway = "its file could not be found because the archive went away while this export was running; a retry looks again once the archive is back"
+)
+
 // classifyFiles reads one failed message of a source that yields files (design §4.6,
 // §4.13). A file that is not there, or cannot be read, makes the source probe itself: if
 // the archive's folder or manifest is gone the run stops run-fatal with R-o2 and does not
@@ -240,30 +267,34 @@ func (r *CopyRun) classifyFiles(err error, mctx, walk context.Context, src CopyF
 	}
 	var af *ArchiveFileError
 	if !errors.As(err, &af) {
-		return verdict{kind: verdictList, class: classRetryable, reason: "the archive's files could not be read (" + leaveName(err) + ")"}
+		return verdict{kind: verdictList, class: classRetryable, reason: "the archive's files could not be read (" + readName(err) + ")"}
 	}
+	other := r.plan != nil && r.plan.Source.Other // another archive folder is read-only: nothing here can check or repair it
 	switch af.Kind {
 	case AFMissing, AFRead:
 		if why, gone := src.Gone(); gone {
 			return verdict{kind: verdictFatal, stop: &CopyStop{RID: "R-o2", Class: stopClassArchive, Message: why}}
 		}
 		if af.Kind == AFMissing {
-			return verdict{kind: verdictList, class: classTerminal, reason: "removed from the archive after you selected it"}
+			if other {
+				return verdict{kind: verdictList, class: classTerminal, reason: reasonArchiveRemoved + " — if that was not on purpose, ask whoever gave you the archive for a complete copy"}
+			}
+			return verdict{kind: verdictList, class: classTerminal, reason: reasonArchiveRemoved + " — if that was not on purpose, restore the file from a backup of the archive, then export again"}
 		}
-		return verdict{kind: verdictList, class: classRetryable, reason: "the archive's file could not be read (" + leaveName(af.Err) + ")"}
+		return verdict{kind: verdictList, class: classRetryable, reason: "the archive's file could not be read (" + readName(af.Err) + ")"}
 	case AFSymlink:
-		return verdict{kind: verdictList, class: classTerminal, reason: "a link stands in the archive where this file should be, so it was not followed"}
+		return verdict{kind: verdictList, class: classTerminal, reason: "a link stands in the archive where this file should be, so it was not followed — " + plainFolderRemedy}
 	case AFIrregular:
-		return verdict{kind: verdictList, class: classTerminal, reason: "the archive's file is not a regular file"}
+		return verdict{kind: verdictList, class: classTerminal, reason: "the archive's file is not a regular file — " + plainFolderRemedy}
 	case AFLinks:
-		return verdict{kind: verdictList, class: classTerminal, reason: "the archive's file has more than one hard link, so MailArchive can't be sure it is the archive's own"}
+		return verdict{kind: verdictList, class: classTerminal, reason: "the archive's file has more than one hard link, so MailArchive can't be sure it is the archive's own — " + plainFolderRemedy}
 	case AFPath:
-		return verdict{kind: verdictList, class: classTerminal, reason: "the archive's record names a path that is not inside the archive"}
+		return verdict{kind: verdictList, class: classTerminal, reason: "the archive's record names a path that is not inside the archive — the record is damaged: " + damagedRemedy(other)}
 	case AFChanged:
 		if src.Changed(m) {
 			return verdict{kind: verdictList, class: classRetryable, reason: "changed in the archive during export (a capture rewrote this message); preview again for the new copy"}
 		}
-		return verdict{kind: verdictList, class: classTerminal, reason: "the archive's file doesn't match the checksum the archive recorded for it (modified or damaged): run Verify on the archive"}
+		return verdict{kind: verdictList, class: classTerminal, reason: "the archive's file doesn't match the checksum the archive recorded for it (modified or damaged): " + damagedRemedy(other)}
 	case AFTooLarge:
 		if af.Size > r.env.cap() || af.Limit >= r.env.cap() {
 			return verdict{kind: verdictList, class: classTerminal, reason: fmt.Sprintf("larger than this version of MailArchive exports (%d MiB)", r.env.cap()>>20)}
