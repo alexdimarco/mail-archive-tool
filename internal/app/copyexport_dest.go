@@ -373,6 +373,19 @@ func DestExampleFor(goos string) string {
 	return "/home/you/Downloads"
 }
 
+// ArchiveExampleFor is an example of the full path of an archive's top folder in the shape of the given
+// system's: the words and the box for Another archive folder show it, not the Downloads folder an archive
+// is never in (friction F10).
+func ArchiveExampleFor(goos string) string {
+	switch goos {
+	case "windows":
+		return `D:\MailArchive`
+	case "darwin":
+		return "/Volumes/Backup/MailArchive"
+	}
+	return "/media/you/Backup/MailArchive"
+}
+
 // checkDestPath is R-e: the destination is absolute, clean, has no NUL, exists and is a folder.
 func checkDestPath(dest string) *CopyRefusal {
 	example := DestExampleFor(runtime.GOOS)

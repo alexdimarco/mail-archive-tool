@@ -88,8 +88,9 @@ type ArchiveSource struct {
 	other bool
 	root  *os.Root
 
-	man    *state.Manifest // the snapshot; nil for a source opened only to run
-	stamp  archiveStamp
+	man           *state.Manifest // the snapshot; nil for a source opened only to run
+	emptyManifest bool            // the manifest file was zero bytes
+	stamp         archiveStamp
 	stores []ArchiveStore
 	nodes  []ArchiveNode
 	byNode map[string][]string
@@ -127,8 +128,15 @@ func OpenArchiveForRun(dir string, opt ArchiveOptions) (*ArchiveSource, error) {
 func openArchiveRoot(dir string, opt ArchiveOptions) (*ArchiveSource, error) {
 	abs := absPath(dir)
 	fi, err := os.Stat(abs)
-	if err != nil || !fi.IsDir() {
+	switch {
+	case err != nil && errors.Is(err, fs.ErrNotExist):
+		return nil, archiveNoFolder(abs, opt.Other)
+	case err != nil && opt.Other:
+		return nil, refuse("R-o3", fmt.Sprintf("%s can't be opened (%s) — check that this account can read the folder, or click Browse to choose another archive folder.", printable(abs), readName(err)))
+	case err != nil:
 		return nil, archiveMissing(abs, opt.Other, "")
+	case !fi.IsDir():
+		return nil, archiveNotFolder(abs, opt.Other)
 	}
 	root, err := os.OpenRoot(abs)
 	if err != nil {
@@ -137,10 +145,32 @@ func openArchiveRoot(dir string, opt ArchiveOptions) (*ArchiveSource, error) {
 	return &ArchiveSource{dir: abs, other: opt.Other, root: root}, nil
 }
 
-// archiveMissing is R-o for the configured archive and R-o3 for another folder.
+// archiveNoFolder is R-o3 for a path where there is no folder at all (a typo, a drive that is not
+// connected), and R-o for the configured archive (friction F10).
+func archiveNoFolder(dir string, other bool) *CopyRefusal {
+	if other {
+		return refuse("R-o3", fmt.Sprintf("There is no folder at %s — check the spelling, or click Browse to choose the archive's top folder, the one that holds index.html and README.txt.", printable(dir)))
+	}
+	return archiveMissing(dir, other, "")
+}
+
+// archiveNotFolder is R-o3 for a path that is a file.
+func archiveNotFolder(dir string, other bool) *CopyRefusal {
+	if other {
+		return refuse("R-o3", fmt.Sprintf("%s is a file, not a folder — choose the archive's top folder, the one that holds index.html and README.txt, or click Browse.", printable(dir)))
+	}
+	return archiveMissing(dir, other, "")
+}
+
+// archiveMissing is R-o for the configured archive and R-o3 for another folder that is a folder but
+// holds no archive's manifest. why, when set, says what is wrong with the manifest that is there.
 func archiveMissing(dir string, other bool, why string) *CopyRefusal {
 	if other {
-		return refuse("R-o3", fmt.Sprintf("%s isn't a MailArchive archive (it has no %s%s) — choose the archive's top folder, the one that holds index.html and README.txt.", printable(dir), archiveManifestName, why))
+		what := "it has no " + archiveManifestName
+		if why != "" {
+			what = "its " + archiveManifestName + why
+		}
+		return refuse("R-o3", fmt.Sprintf("%s isn't a MailArchive archive (%s) — choose the archive's top folder, the one that holds index.html and README.txt.", printable(dir), what))
 	}
 	return refuse("R-o", fmt.Sprintf("There's no archive at %s yet — run Archive now first, or choose Microsoft 365 as the source.", printable(dir)))
 }
@@ -188,16 +218,16 @@ func (a *ArchiveSource) readManifest() ([]byte, archiveStamp, error) {
 	case errors.Is(err, fs.ErrNotExist):
 		return nil, archiveStamp{}, archiveMissing(a.dir, a.other, "")
 	case err != nil:
-		return nil, archiveStamp{}, archiveMissing(a.dir, a.other, " that can be read: "+leaveName(err))
+		return nil, archiveStamp{}, archiveMissing(a.dir, a.other, " can't be read: "+readName(err))
 	case fi.Mode()&fs.ModeSymlink != 0 || !fi.Mode().IsRegular():
-		return nil, archiveStamp{}, archiveMissing(a.dir, a.other, " that is a file: it is a link or a folder")
+		return nil, archiveStamp{}, archiveMissing(a.dir, a.other, " is a link or a folder, not the archive's own file")
 	}
 	if a.other && fi.Size() > archiveOtherManifestCap {
 		return nil, archiveStamp{}, archiveTooBig(a.dir, fi.Size())
 	}
 	f, err := openRegularIn(a.root, archiveManifestName)
 	if err != nil {
-		return nil, archiveStamp{}, archiveMissing(a.dir, a.other, " that can be read: "+leaveName(err))
+		return nil, archiveStamp{}, archiveMissing(a.dir, a.other, " can't be read: "+readName(err))
 	}
 	defer f.Close()
 	var r io.Reader = f
@@ -206,7 +236,7 @@ func (a *ArchiveSource) readManifest() ([]byte, archiveStamp, error) {
 	}
 	data, err := io.ReadAll(r)
 	if err != nil {
-		return nil, archiveStamp{}, archiveMissing(a.dir, a.other, " that can be read: "+leaveName(err))
+		return nil, archiveStamp{}, archiveMissing(a.dir, a.other, " can't be read: "+readName(err))
 	}
 	if a.other && int64(len(data)) > archiveOtherManifestCap {
 		return nil, archiveStamp{}, archiveTooBig(a.dir, int64(len(data)))
@@ -235,11 +265,34 @@ func (a *ArchiveSource) load() error {
 		if errors.As(err, &nf) {
 			return archiveNewer("manifest", nf.Version)
 		}
-		return refuse("R-p", fmt.Sprintf("The archive's manifest can't be read (%s) — nothing was written.", util.StripControl(err.Error())))
+		return archiveManifestDamaged(a.dir, a.other)
 	}
 	a.man, a.stamp = man, stamp
+	a.emptyManifest = len(data) == 0
 	a.build()
 	return nil
+}
+
+// archiveManifestDamaged is R-p for a manifest that is cut short or is not what MailArchive writes (friction
+// F11): an interrupted copy leaves one. The words never carry the parser's own text; for another folder, which
+// is read-only, the remedy is a fresh copy, and for the owner's own archive it is the backup.
+func archiveManifestDamaged(dir string, other bool) *CopyRefusal {
+	if other {
+		return refuse("R-p", fmt.Sprintf("The copy of the archive at %s looks incomplete: its manifest (%s) is cut short or damaged, so nothing was read from it, and nothing was written. Copy the archive again from where you got it (an interrupted copy leaves a file like this), then choose the new copy.", printable(dir), archiveManifestName))
+	}
+	return refuse("R-p", fmt.Sprintf("The archive's manifest (%s in %s) is cut short or damaged — nothing was changed. Restore it from a backup of the archive; if there is none, deleting it makes the next Archive now export every message again (the archived files themselves are untouched).", archiveManifestName, printable(dir)))
+}
+
+// Note is a sentence for an archive that holds no messages, or "": a manifest of zero bytes (a copy or a
+// sync that has not finished) is told apart from an archive that has had nothing captured yet.
+func (a *ArchiveSource) Note() string {
+	if a.man == nil || a.man.Len() > 0 {
+		return ""
+	}
+	if a.emptyManifest {
+		return "This archive holds no messages yet — its manifest is empty. If the folder is still being copied or synced, wait until that finishes and load it again."
+	}
+	return "This archive holds no messages yet."
 }
 
 // nodeID is the id of a store's folder in the tree.

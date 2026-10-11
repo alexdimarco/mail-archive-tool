@@ -65,12 +65,22 @@ func (d *dashboard) archiveState() map[string]any {
 
 // otherPath checks the path typed or browsed for Another archive folder: a full path, with no NUL.
 func (d *dashboard) otherPath(raw string) (string, *refusal) {
-	p := strings.TrimSpace(raw)
+	p := unquotePath(raw)
 	if p == "" || strings.ContainsRune(p, 0) || !filepath.IsAbs(p) {
-		r := refusalO3Path(p, app.DestExampleFor(d.cfg.goos()))
+		r := refusalO3Path(p, app.ArchiveExampleFor(d.cfg.goos()))
 		return "", &r
 	}
 	return filepath.Clean(p), nil
+}
+
+// unquotePath is a typed or pasted path without the one pair of quotes around it that Explorer's Copy as
+// path (and a shell's drag and drop) puts there, and without surrounding space (friction F10).
+func unquotePath(raw string) string {
+	p := strings.TrimSpace(raw)
+	if len(p) >= 2 && (p[0] == '"' && p[len(p)-1] == '"' || p[0] == '\'' && p[len(p)-1] == '\'') {
+		p = strings.TrimSpace(p[1 : len(p)-1])
+	}
+	return p
 }
 
 func storesOut(a *app.ArchiveSource) []map[string]any {
@@ -96,7 +106,11 @@ func (d *dashboard) sourceOther(w http.ResponseWriter, raw string) {
 		return
 	}
 	defer a.Close()
-	d.reply(w, map[string]any{"ok": true, "archive": map[string]any{"state": "ready", "path": a.Dir(), "other": true, "stores": storesOut(a), "records": a.Records()}})
+	info := map[string]any{"state": "ready", "path": a.Dir(), "other": true, "stores": storesOut(a), "records": a.Records()}
+	if n := a.Note(); n != "" {
+		info["note"] = n // an archive that holds no messages says so (friction F11)
+	}
+	d.reply(w, map[string]any{"ok": true, "archive": info})
 }
 
 // archiveFolders is "Load folders" for an archive source: the tree and its counts come from the
@@ -144,7 +158,11 @@ func (d *dashboard) archiveFolders(w http.ResponseWriter, r *http.Request, src w
 		}
 		out = append(out, o)
 	}
-	d.reply(w, map[string]any{"ok": true, "archive": a.Dir(), "other": other, "stores": storesOut(a), "records": a.Records(), "folders": out})
+	reply := map[string]any{"ok": true, "archive": a.Dir(), "other": other, "stores": storesOut(a), "records": a.Records(), "folders": out}
+	if n := a.Note(); n != "" {
+		reply["note"] = n
+	}
+	d.reply(w, reply)
 }
 
 func (ws *workspace) archNow() *wsSession {

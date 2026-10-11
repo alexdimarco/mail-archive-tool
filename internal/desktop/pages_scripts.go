@@ -133,7 +133,7 @@ function checkOther(){
     if(!d.ok){showErr(d);return;}
     const a=d.archive||{};
     st.otherHolds='Another archive folder — '+a.path+(a.stores&&a.stores.length?' (holds: '+a.stores.map(s=>s.label).join(', ')+')':'')+', read-only';
-    show('archLine',st.otherHolds);show('banner','');
+    show('archLine',st.otherHolds);show('banner',a.note||'');
   });
 }
 $('otherPath').addEventListener('change',checkOther);
@@ -175,6 +175,7 @@ $('loadFolders').addEventListener('click',()=>{
     st.entries=[];st.picks={};st.current='';st.rows=[];st.open={};
     $('pickCard').hidden=false;$('destCard').hidden=false;$('footerSel').hidden=false;
     renderTree();renderRows();updateCount();
+    if(d.note)show('banner',d.note);
   });
 });
 
