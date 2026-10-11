@@ -1,0 +1,263 @@
+package app
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"errors"
+	"io"
+	"io/fs"
+	"log"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	"mail-archive-tool/internal/assure"
+	"mail-archive-tool/internal/export"
+	"mail-archive-tool/internal/lockfile"
+	"mail-archive-tool/internal/model"
+	"mail-archive-tool/internal/state"
+)
+
+// The helpers the re-capture rows share. A row builds an archive with the real
+// pipeline (a maildir read by Run, or messages handed to an Exporter), degrades its
+// source or interrupts its run, and asks what the archive then holds against what
+// its manifest recorded.
+
+const rcStore = "Store"
+
+func rcLogger() *log.Logger { return log.New(io.Discard, "", 0) }
+
+// rcMail is one RFC 822 message as a maildir file holds it: an html body and, when
+// attName is set, one attachment of attData (empty data is an attachment the
+// source declares but does not deliver). id is the Message-ID without brackets.
+func rcMail(id, subject, body, attName string, attData []byte) []byte {
+	hdr := "From: Alice <alice@example.com>\r\nTo: bob@example.com\r\nSubject: " + subject +
+		"\r\nMessage-ID: <" + id + ">\r\nDate: Mon, 03 Mar 2025 09:00:00 +0000\r\nMIME-Version: 1.0\r\n"
+	if attName == "" {
+		return []byte(hdr + "Content-Type: text/html; charset=utf-8\r\n\r\n" + body + "\r\n")
+	}
+	return []byte(hdr + "Content-Type: multipart/mixed; boundary=\"B\"\r\n\r\n" +
+		"--B\r\nContent-Type: text/html; charset=utf-8\r\n\r\n" + body + "\r\n" +
+		"--B\r\nContent-Type: application/pdf; name=\"" + attName + "\"\r\n" +
+		"Content-Disposition: attachment; filename=\"" + attName + "\"\r\n" +
+		"Content-Transfer-Encoding: base64\r\n\r\n" +
+		base64.StdEncoding.EncodeToString(attData) + "\r\n--B--\r\n")
+}
+
+// rcSource is an empty maildir folder; rcPut writes (or rewrites) its one message.
+func rcSource(t *testing.T) string {
+	t.Helper()
+	dir := filepath.Join(tmpDir(t), "Inbox")
+	if err := os.MkdirAll(filepath.Join(dir, "cur"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func rcPut(t *testing.T, src string, raw []byte) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(src, "cur", "m1"), raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// rcRun is a CLI-shaped run over the maildir. A partial outcome (a gap observed) is
+// an outcome, not a failure.
+func rcRun(t *testing.T, src, out string, mode export.Mode, raw bool, progress ProgressFunc) Result {
+	t.Helper()
+	res, err := Run(context.Background(), Options{Inputs: []string{src}, Out: out, Mode: mode, KeepRaw: raw}, rcLogger(), progress)
+	var partial *PartialError
+	if err != nil && !errors.As(err, &partial) {
+		t.Fatalf("run: %v", err)
+	}
+	return res
+}
+
+// rcVerify is `verify` over an archive.
+func rcVerify(t *testing.T, out string) Report {
+	t.Helper()
+	rep, err := Verify(out, VerifyOptions{}, rcLogger(), nil)
+	if err != nil {
+		t.Fatalf("verify %s: %v", out, err)
+	}
+	return rep
+}
+
+// rcDigest is the fixity of the file at path, and whether it exists.
+func rcDigest(t *testing.T, path string) (state.FileDigest, bool) {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return state.FileDigest{}, false
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(b)
+	return state.FileDigest{SHA256: hex.EncodeToString(sum[:]), Size: int64(len(b))}, true
+}
+
+// rcAsRecorded lists what is wrong with the files rec records, read from disk
+// under out: an expected file that is absent, or whose bytes differ from the
+// recorded digest. The page is always expected; the zip and the original when a
+// digest of them is recorded. An empty list means the archive holds exactly what
+// rec says it holds.
+func rcAsRecorded(t *testing.T, out string, rec state.Record) []string {
+	t.Helper()
+	fx := assure.Reached(t, rec.Fixity, "the record's fixity")
+	stem := strings.TrimSuffix(rec.Path, ".html")
+	var bad []string
+	for _, f := range []struct {
+		rel  string
+		want *state.FileDigest
+	}{
+		{stem + ".html", fx.HTML},
+		{stem + "-attachments.zip", fx.Zip},
+		{stem + ".eml", fx.EML},
+	} {
+		if f.want == nil {
+			continue
+		}
+		got, ok := rcDigest(t, filepath.Join(out, filepath.FromSlash(f.rel)))
+		switch {
+		case !ok:
+			bad = append(bad, f.rel+" is gone")
+		case got != *f.want:
+			bad = append(bad, f.rel+" no longer has its recorded bytes")
+		}
+	}
+	return bad
+}
+
+// rcSnapshot copies the archive as it stands, from inside a callback: the state a
+// hard kill at that instant leaves (RC31). Everything on disk is copied except the
+// lock file, which a killed run leaves held by a dead process and the live run here
+// still holds by this one.
+func rcSnapshot(t *testing.T, out string) string {
+	t.Helper()
+	snap := tmpDir(t)
+	err := filepath.WalkDir(out, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, rerr := filepath.Rel(out, p)
+		if rerr != nil {
+			return rerr
+		}
+		if d.IsDir() {
+			return os.MkdirAll(filepath.Join(snap, rel), 0o755)
+		}
+		if d.Name() == lockfile.Name {
+			return nil
+		}
+		b, rerr := os.ReadFile(p)
+		if rerr != nil {
+			return rerr
+		}
+		return os.WriteFile(filepath.Join(snap, rel), b, 0o644)
+	})
+	if err != nil {
+		t.Fatalf("snapshot of %s: %v", out, err)
+	}
+	return snap
+}
+
+// rcRenameStem moves a record's files to another stem and persists the manifest
+// naming them: the shape of an archive written under an earlier naming rule, which
+// a full re-export renames (the README's recommended re-export of a v0.1 or v0.2
+// archive). Its fixity is unchanged, since the bytes are.
+func rcRenameStem(t *testing.T, out, key, base string) state.Record {
+	t.Helper()
+	mpath := filepath.Join(out, ".mailarchive-manifest.json")
+	man, err := state.Load(mpath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, ok := man.Get(key)
+	if !ok {
+		t.Fatalf("no record %q to rename", key)
+	}
+	oldStem := filepath.Join(out, filepath.FromSlash(strings.TrimSuffix(rec.Path, ".html")))
+	newStem := filepath.Join(filepath.Dir(oldStem), base)
+	for _, suffix := range []string{".html", "-attachments.zip", ".eml"} {
+		if err := os.Rename(oldStem+suffix, newStem+suffix); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			t.Fatal(err)
+		}
+	}
+	rec.Path = filepath.ToSlash(filepath.Join(filepath.Dir(rec.Path), base+".html"))
+	man.Add(key, rec)
+	if err := man.Save(); err != nil {
+		t.Fatal(err)
+	}
+	return rec
+}
+
+// rcMsg is a message handed straight to an Exporter, for the cases whose fault (a
+// stream that errors, a write that is refused) a maildir cannot carry.
+func rcMsg(id, subject, body string, raw []byte, atts ...model.Attachment) *model.Message {
+	d := time.Date(2025, 3, 3, 9, 0, 0, 0, time.UTC)
+	return &model.Message{Subject: subject, SenderEmail: "alice@example.com", To: "bob@example.com",
+		Received: d, IdentityDate: d, InternetMessageID: "<" + id + ">", HTMLBody: body, Raw: raw, Attachments: atts}
+}
+
+// rcBlob is an attachment whose bytes, failure and read-time side effect the test
+// controls between runs.
+type rcBlob struct {
+	data  []byte
+	err   error  // the stream delivers half of data, then fails: a torn read
+	hook  func() // runs when the stream is read, the instant a fault can be injected
+	cid   string
+	ctype string
+}
+
+func (b *rcBlob) att(name string) model.Attachment {
+	ct := b.ctype
+	if ct == "" {
+		ct = "application/pdf"
+	}
+	return model.Attachment{Filename: name, MimeType: ct, ContentID: b.cid, WriteTo: func(w io.Writer) (int64, error) {
+		if b.hook != nil {
+			b.hook()
+		}
+		if b.err != nil {
+			n, _ := w.Write(b.data[:len(b.data)/2])
+			return int64(n), b.err
+		}
+		n, err := w.Write(b.data)
+		return int64(n), err
+	}}
+}
+
+// rcExport runs one message through a fresh Exporter over the archive's manifest
+// and, when the export succeeds, saves the manifest as a finished run would.
+func rcExport(t *testing.T, out string, mode export.Mode, raw bool, m *model.Message) (export.Stats, error) {
+	t.Helper()
+	man, err := state.Load(filepath.Join(out, ".mailarchive-manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	exp := &export.Exporter{OutDir: out, Manifest: man, Mode: mode, KeepRaw: raw, Log: rcLogger()}
+	if _, err := exp.Export(rcStore, []string{"Inbox"}, m); err != nil {
+		return exp.Stats, err
+	}
+	if err := man.Save(); err != nil {
+		t.Fatal(err)
+	}
+	return exp.Stats, nil
+}
+
+func rcRead(t *testing.T, out, rel string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(out, filepath.FromSlash(rel)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+func rcHas(list []string, s string) bool { return slices.Contains(list, s) }
