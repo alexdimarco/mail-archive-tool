@@ -23,6 +23,12 @@ type SweepSpare struct {
 	// the listing's ids are not immutable, a fault with no Message-ID cannot be told
 	// from any content-hash record, whatever its id (§4.8.3 rule 3).
 	ShaIdentity bool
+	// AllRecords spares every record of the mailbox: when this run's listing did not
+	// confirm immutable ids, a fault whose identity matched no record can be the
+	// message of any record at all, one that holds an immutable id included (its
+	// listing and parsed Message-IDs may differ, so no Message-ID names it), and the
+	// run cannot match ids to tell (S3-AI1).
+	AllRecords bool
 	// LegacyPlaceholders spares the records an adoption re-classed to the info label
 	// legacy-placeholder: such a record stands for a message that now has a record of
 	// its own, and it is never marked gone because its identity changed (FC27).
@@ -31,6 +37,8 @@ type SweepSpare struct {
 
 func (s SweepSpare) spares(key string, r Record) bool {
 	switch {
+	case s.AllRecords:
+		return true
 	case s.NoPhysID && r.PhysID == "":
 		return true
 	case s.ShaIdentity && strings.HasPrefix(identityOf(key), "sha:"):

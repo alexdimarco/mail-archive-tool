@@ -295,7 +295,12 @@ func (w *mailboxWalk) faultIdentity(ref graph.MessageRef, m *model.Message) (def
 	if !matched {
 		w.spare.NoPhysID = true
 		if ref.PhysID == "" {
+			// This run's ids are not immutable (or the item has none), so no record can
+			// be told from the fault's item by its id: a record that holds an immutable
+			// id and whose listing and parsed Message-IDs differ is as likely to be it
+			// as a content-hash one (S3-AI1, S3-AO4).
 			w.spare.ShaIdentity = true
+			w.spare.AllRecords = true
 		}
 	}
 	return !matched

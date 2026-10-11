@@ -247,6 +247,91 @@ func TestGraphLongItemIDsKeepTheirOwnGaps(t *testing.T) {
 	}
 }
 
+// covers: MA-312, R21, R1, S37, S46
+// S3-AI1 / S3-AO4 (OR10's hole): a run whose listing does not confirm immutable ids
+// cannot match a fault's item to a record by id, and a record that holds an
+// immutable id can still be that item (its listing and parsed Message-IDs differ,
+// the L10-3 mismatch, so no Message-ID names it). The fault matched no record, so
+// every record is spared this run's sweep: the message that is still in the mailbox
+// gets no phantom {k,gone}, the gap's "defers gone-detection" says what happened,
+// and the deferred sweep is made on the next run that meets no such fault. Twin:
+// the same run without the fault sweeps the deleted message.
+func TestGraphUnconfirmedIDsFaultSparesRecordsThatHoldAnImmutableID(t *testing.T) {
+	s := sweepServer(true, []string{"N", "D"}, nil, nil)
+	defer s.Close()
+	s.SetMid("N", "n-list@x") // the listing's Message-ID is not the message's own
+	s.SetBodyMid("N", "n-body@x")
+	out := tmpDir(t)
+	g := isoOptions(s)
+	if _, err := sweepRun(g, out, export.Incremental); err != nil {
+		t.Fatalf("run 1: %v", err)
+	}
+	if _, rec := recordForID(t, out, "n-body@x"); rec.PhysID != "N" {
+		t.Fatalf("N's record holds the immutable id %q, want N: the case needs a record that carries one", rec.PhysID)
+	}
+
+	// Run 2: the tenant no longer honours immutable ids, D is deleted at the source and
+	// N cannot be downloaded.
+	s.HonorImmutableIDs(false)
+	s.RemoveMessage("u1", "F_IN", "D")
+	s.SetValue("N", poison500)
+	if _, err := sweepRun(g, out, export.Incremental); !errors.Is(err, ErrPartial) {
+		t.Fatalf("run 2 returned %v, want ErrPartial", err)
+	}
+	k, rec := recordForID(t, out, "n-body@x")
+	wantDeferred(t, out, "N (it holds an immutable id this run cannot match)", k, rec)
+	k, rec = recordForID(t, out, "d@x")
+	wantDeferred(t, out, "D (deleted, but this run cannot tell it from N's record)", k, rec)
+	if gaps := graphGaps(t, out); len(gaps) != 1 || gaps[0].Locator != "graph:N" || !gaps[0].DefersGone {
+		t.Errorf("ledger %+v; want N's gap to record that it defers gone-detection", gaps)
+	}
+
+	// Run 3: the fault is gone; the deferred sweep is made (the twin: a clean walk sweeps).
+	s.SetValue("N", nil)
+	if _, err := sweepRun(g, out, export.Incremental); err != nil {
+		t.Fatalf("run 3: %v", err)
+	}
+	k, rec = recordForID(t, out, "n-body@x")
+	wantSeenNotGone(t, out, "N, once it downloads", k, rec, runStart(t, out))
+	k, rec = recordForID(t, out, "d@x")
+	wantGone(t, out, "D, on the next clean run", k, rec)
+}
+
+// covers: MA-312, R21, R1, S37, S46
+// ESC-S3-1 (open, owner decision): the same hole with this run's ids CONFIRMED. A
+// message restored under a new immutable id whose listing and parsed Message-IDs
+// differ, and whose download fails, matches no record by Message-ID or by id; its
+// archived record (the old id) is swept gone while the message is still there. The
+// only rule that closes it spares every record on every fault that matched nothing,
+// which with confirmed ids would make each NEW poison item (never archived, so
+// always unmatched) defer the whole mailbox's gone-detection for as long as it
+// persists, where OR10 as ruled spares only the records without an immutable id.
+// That narrows deletion tracking and contradicts the ruling's text, so it is the
+// owner's call; the phantom gone is reversible (the next run that lists the
+// message records it present again).
+func TestGraphReissuedIDFaultSparesTheArchivedRecord(t *testing.T) {
+	t.Skip("ESC-S3-1: sparing every record on an unmatched fault in an id-confirmed run narrows gone-detection (OR10 ruled PhysID-less records only); owner decision. Invariant: R21 / MA-312 (a fault never sweeps a present message gone)")
+	s := sweepServer(true, []string{"N"}, nil, nil)
+	defer s.Close()
+	s.SetMid("N", "n-list@x")
+	s.SetBodyMid("N", "n-body@x")
+	out := tmpDir(t)
+	g := isoOptions(s)
+	if _, err := sweepRun(g, out, export.Incremental); err != nil {
+		t.Fatalf("run 1: %v", err)
+	}
+	s.RemoveMessage("u1", "F_IN", "N")
+	s.AddMessage("u1", "F_IN", "N2") // N restored under a new immutable id
+	s.SetMid("N2", "n-list@x")
+	s.SetBodyMid("N2", "n-body@x")
+	s.SetValue("N2", poison500)
+	if _, err := sweepRun(g, out, export.Incremental); !errors.Is(err, ErrPartial) {
+		t.Fatalf("run 2 returned %v, want ErrPartial", err)
+	}
+	k, rec := recordForID(t, out, "n-body@x")
+	wantDeferred(t, out, "N (restored under a new id, its download fails)", k, rec)
+}
+
 // covers: MA-313, R5, R12, R18, S46
 // S3-AO7: a mailbox-fatal fault (a 403 or 401 on a $value, a 401 on a listing) puts
 // the server's own words in RunGraph's error and in the run log; those words are the
