@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -182,9 +183,9 @@ func (e *CopyExportEnv) createRecord(h ceHeaderLine, plan []CopyMessage) (*ceRec
 		return nil, stateErr(err)
 	}
 	path := e.recordPath(h.Run)
-	// O_APPEND: a second handle of this record (WedgeStop's) must write after whatever
-	// this one wrote, not over it at a stale offset (EW-AC1).
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|os.O_APPEND, 0o600)
+	// Append mode where the OS has it: a second handle of this record (WedgeStop's) must
+	// write after whatever this one wrote, not over it at a stale offset (EW-AC1).
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|appendFlag, 0o600)
 	if err != nil {
 		return nil, stateErr(err)
 	}
@@ -234,9 +235,9 @@ func (e *CopyExportEnv) openRecord(run string) (*ceRecord, error) {
 
 // openAppendable opens path for appending after cutting a torn tail back to the last
 // complete line. The cut is made through a read-write handle and the file is then
-// reopened O_APPEND, because a handle opened for append only (FILE_APPEND_DATA on
-// Windows) cannot truncate, and every later write must go to the end of the file
-// whatever other handle has written meanwhile (EW-AC1). create makes a missing file.
+// reopened in append mode (a handle opened for append only cannot truncate on Windows),
+// and every later write goes to the end of the file whatever other handle has written
+// meanwhile (EW-AC1). create makes a missing file.
 func openAppendable(path string, create bool) (*os.File, error) {
 	flag := os.O_RDWR
 	if create {
@@ -251,7 +252,36 @@ func openAppendable(path string, create bool) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	return os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o600)
+	af, err := os.OpenFile(path, os.O_WRONLY|appendFlag, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := af.Seek(0, io.SeekEnd); err != nil {
+		af.Close()
+		return nil, err
+	}
+	return af, nil
+}
+
+// recordWriteMu orders the appends of this process to the run record, the journal and the
+// ledger. Where the OS has an append mode (every OS but Windows, where an append-only handle
+// cannot be flushed with the access Go gives it) the kernel puts each write at the end of
+// the file whichever handle makes it; without it, a write seeks to the end first, and this
+// mutex keeps two handles from seeking and writing across each other (EW-AC1).
+var recordWriteMu sync.Mutex
+
+// writeAtEnd writes b to f at the end of its file, in order with every other append of this
+// process.
+func writeAtEnd(f *os.File, b []byte) error {
+	recordWriteMu.Lock()
+	defer recordWriteMu.Unlock()
+	if appendFlag == 0 {
+		if _, err := f.Seek(0, io.SeekEnd); err != nil {
+			return err
+		}
+	}
+	_, err := f.Write(b)
+	return err
 }
 
 // append writes one line and fsyncs it. A failure is a state-directory error.
@@ -266,7 +296,7 @@ func (r *ceRecord) append(v any) error {
 		return stateErr(err)
 	}
 	b = append(b, '\n')
-	if _, err := r.f.Write(b); err != nil {
+	if err := writeAtEnd(r.f, b); err != nil {
 		return stateErr(err)
 	}
 	return stateErr(r.env.fsync(r.f))
@@ -754,7 +784,7 @@ func (e *CopyExportEnv) appendJSONL(path string, v any) error {
 		return stateErr(err)
 	}
 	defer f.Close()
-	if _, err := f.Write(append(b, '\n')); err != nil {
+	if err := writeAtEnd(f, append(b, '\n')); err != nil {
 		return stateErr(err)
 	}
 	return stateErr(e.fsync(f))
