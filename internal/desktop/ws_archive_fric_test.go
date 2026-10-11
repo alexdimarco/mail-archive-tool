@@ -22,7 +22,7 @@ func lacks(t *testing.T, what, text string, phrases ...string) {
 	t.Helper()
 	for _, p := range phrases {
 		if strings.Contains(text, p) {
-			t.Errorf("%s says %q, which is wrong for a count of one: %q", what, p, text)
+			t.Errorf("%s says %q, which is wrong here: %q", what, p, text)
 		}
 	}
 }
@@ -528,5 +528,132 @@ func TestArchivePreviewWarnsBeforeStartAboutFilesTheGateWillRefuse(t *testing.T)
 	e.ok("/api/exports/start", map[string]any{"previewId": id})
 	if last := e.waitRun()["last"].(map[string]any); last["failed"] != float64(3) || last["exported"] != float64(3) {
 		t.Errorf("the run: %v, want the 3 the preview said would not be copied to fail, and the other 3 exported", last)
+	}
+}
+
+// covers: MA-435, MA-531, R12, R20, S52
+// F4 (and the desktop half of F17): the words about the search index and about records whose files are gone say
+// what is true for the folder they are about. For the owner's own archive they name the button as it is
+// labelled (Maintenance → Rebuild search index), and for records whose files are gone they say what Rebuild does
+// (it forgets the records, which are the only proof the messages were archived) and to run Maintenance → Check
+// integrity first when the loss was not on purpose. For another archive folder, which is read-only and which
+// Maintenance cannot act on, they say that, and what can be done (copy it to a folder of your own, or ask for a
+// complete copy), and never send the inheritor to a button that cannot help.
+func TestArchiveAdviceIsTrueForTheFolderItIsAbout(t *testing.T) {
+	type setup struct {
+		name  string
+		other bool
+	}
+	for _, s := range []setup{{"the owner's archive", false}, {"another archive folder", true}} {
+		t.Run(s.name, func(t *testing.T) {
+			e := newWsEnv(t)
+			dir := e.out
+			kind := "archive"
+			if s.other {
+				dir, kind = filepath.Join(e.dir, "inherited"), "archive-other"
+			}
+			f := buildArchiveAt(t, dir)
+			src := archSource(kind, dir)
+			e.archFolders(src)
+			sel := e.archSel(src, entry("alice", false))
+
+			// the twin: a complete archive says nothing about repairs
+			if _, out := e.archRows(src, "alice"); out["listUnavailable"] != nil || out["listNote"] != nil {
+				t.Fatalf("a complete archive's list: %v", out)
+			}
+			_, res := e.preview(sel)
+			if w := strings.Join(toStrings(res["warnings"]), " | "); strings.Contains(w, "Rebuild") || strings.Contains(w, "Check integrity") {
+				t.Fatalf("a complete archive's preview advises: %q", w)
+			}
+
+			// records whose files were removed
+			if err := os.Remove(f.emlOf("hello")); err != nil {
+				t.Fatal(err)
+			}
+			e.archFolders(src)
+			_, res = e.preview(sel)
+			w := strings.Join(toStrings(res["warnings"]), " | ")
+			if !strings.Contains(w, "1 record whose files were removed is skipped: nothing of it is exported.") {
+				t.Errorf("the skipped record: %q", w)
+			}
+			if s.other {
+				for _, want := range []string{"read-only", "ask whoever gave you the archive for a complete copy"} {
+					if !strings.Contains(w, want) {
+						t.Errorf("another folder's skipped-record words lack %q: %q", want, w)
+					}
+				}
+				lacks(t, "another folder's skipped-record words", w, "Rebuild", "Check integrity")
+			} else {
+				for _, want := range []string{"Maintenance → Rebuild search index forgets those records", "Maintenance → Check integrity first", "the only proof"} {
+					if !strings.Contains(w, want) {
+						t.Errorf("the owner's skipped-record words lack %q: %q", want, w)
+					}
+				}
+			}
+
+			// an original with no checksum recorded: who can record one
+			ckey := f.key("client-mail")
+			f.edit(func(m *state.Manifest) {
+				r, _ := m.Get(ckey)
+				r.Fixity = nil
+				m.Add(ckey, r)
+			})
+			e.archFolders(src)
+			_, res = e.preview(e.archSel(src, entry("alice/Clients", false)))
+			infos := strings.Join(toStrings(res["info"]), " | ")
+			if s.other {
+				if !strings.Contains(infos, "this folder is read-only, so none can be recorded here") || strings.Contains(infos, "Check integrity") {
+					t.Errorf("another folder's no-checksum line: %q", infos)
+				}
+			} else if !strings.Contains(infos, "copied as stored ("+checkButton+" records one)") || strings.Contains(infos, "Verify") {
+				t.Errorf("the owner's no-checksum line: %q", infos)
+			}
+
+			// no search index at all
+			os.Remove(filepath.Join(dir, "search.db"))
+			os.Remove(filepath.Join(dir, "search.db-wal"))
+			os.Remove(filepath.Join(dir, "search.db-shm"))
+			e.archFolders(src)
+			_, out := e.archRows(src, "alice")
+			note, _ := out["listUnavailable"].(string)
+			assure.Reached(t, note, "the list's note")
+			if !strings.Contains(note, "Whole-folder selection works") {
+				t.Errorf("the list's note: %q", note)
+			}
+			_, res = e.preview(e.archSel(src, entry("bob", false)))
+			w = strings.Join(toStrings(res["warnings"]), " | ")
+			if s.other {
+				for _, text := range []string{note, w} {
+					for _, want := range []string{"read-only", "copy the folder to one of your own", "archive location in Settings"} {
+						if !strings.Contains(text, want) {
+							t.Errorf("another folder's index words lack %q: %q", want, text)
+						}
+					}
+					lacks(t, "another folder's index words", text, "brings the list back", "fixes the list", "fixes it", "Rebuild search index (Maintenance)")
+				}
+			} else {
+				if !strings.Contains(note, "Maintenance → Rebuild search index brings the list back") {
+					t.Errorf("the owner's list note: %q", note)
+				}
+				for _, want := range []string{"Maintenance → Rebuild search index fixes it", "preview again"} {
+					if !strings.Contains(w, want) {
+						t.Errorf("the owner's preview warning lacks %q: %q", want, w)
+					}
+				}
+			}
+		})
+	}
+}
+
+// covers: MA-435, R12, S52
+// F17: Desktop's labels in the owner's words are the labels the page has.
+func TestDesktopAdviceNamesButtonsThePageHas(t *testing.T) {
+	e := newWsEnv(t)
+	page := e.get("/").Body.String()
+	for _, label := range []string{rebuildButton, checkButton} {
+		_, name, _ := strings.Cut(label, "→ ")
+		if !strings.Contains(page, ">"+name+"<") {
+			t.Errorf("the Overview has no %q button, but the advice names %q", name, label)
+		}
 	}
 }

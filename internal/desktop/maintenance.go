@@ -46,6 +46,10 @@ func (d *dashboard) runJob(fn func(*log.Logger) (string, error)) error {
 // the owner-facing texts name instead of a command line.
 const rebuildButton = "Maintenance → Rebuild search index"
 
+// checkButton is the label of the Maintenance card's integrity check (the command-line tool calls it
+// verify), which the owner-facing texts name, as the engine's own words do (friction F17).
+const checkButton = "Maintenance → Check integrity"
+
 // jobErrorText is a failed job's text for the owner: an index refusal says what
 // is wrong and names the Rebuild button instead of `mailarchive reindex`
 // (g7 F3); any other failure keeps its own text.

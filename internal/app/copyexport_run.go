@@ -523,7 +523,7 @@ func (r *CopyRun) loop(walk context.Context) (CopyStatus, *CopyStop) {
 			}
 			if line.Status == statusFailed {
 				r.failed.Add(1)
-				if line.Class == classTerminal && line.Reason == reasonArchiveRemoved {
+				if line.Class == classTerminal && strings.HasPrefix(line.Reason, reasonArchiveRemoved) {
 					removed = append(removed, line.N)
 				}
 			}

@@ -945,7 +945,7 @@ func (a *ArchiveSource) Files(ctx context.Context, m *CopyMessage) (*CopyFiles, 
 		open = append(open, f)
 		dig := fix(func(x *state.Fixity) *state.FileDigest { return x.EML })
 		if dig == nil {
-			files.Notes = append(files.Notes, "copied as stored: the archive recorded no checksum for this original, so it can't be attested (run Verify on the archive to record one)")
+			files.Notes = append(files.Notes, "copied as stored: the archive recorded no checksum for this original, so it can't be attested ("+checkIntegrityButton+" in MailArchive Desktop, or the command-line verify, records one)")
 		}
 		files.Parts = append(files.Parts, a.streamPart(f, fi, eml, dig, roleOriginal, verifyEMLSuffix))
 		return files, nil

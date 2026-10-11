@@ -323,3 +323,103 @@ func TestArchivePreviewRunsTheGateOnWhatItCounts(t *testing.T) {
 		}
 	})
 }
+
+// covers: MA-420, MA-510, R12, R20, R29
+// F17: the failure reasons of an archive export name the button the owner has ("Maintenance → Check integrity"),
+// never the command-line verb ("run Verify"), and each reason that cannot change on its own gives a next step: a
+// damaged file (restore it, or ask for a fresh copy of a read-only folder, which cannot be checked from here), a
+// removed one (restore it if that was not on purpose), a link or a file with several hard links (copy the archive
+// into a plain folder). The words the existing assertions pin stay. The positive twin: a retryable reason keeps its
+// own sentence.
+func TestArchiveFailureReasonsSayWhatToDoNext(t *testing.T) {
+	type damage struct {
+		name   string
+		mutate func(a *ceArchive)
+		reason string   // what is pinned already, and what the reason adds
+		self   []string // for the owner's own archive
+		other  []string // for another archive folder, which is read-only
+	}
+	cases := []damage{
+		{"a damaged file", func(a *ceArchive) {
+			_, eml, _ := a.files("hello")
+			b := a.read(eml)
+			b[len(b)-3] ^= 0x20
+			os.WriteFile(eml, b, 0o644)
+		}, "doesn't match the checksum the archive recorded", []string{"restore the file from a backup of the archive", "Maintenance → Check integrity"},
+			[]string{"this folder is read-only", "ask whoever gave you the archive for a fresh copy"}},
+		{"a removed file", func(a *ceArchive) {
+			_, eml, _ := a.files("hello")
+			os.Remove(eml)
+		}, "removed from the archive after you selected it", []string{"if that was not on purpose", "restore the file from a backup of the archive"},
+			[]string{"if that was not on purpose", "ask whoever gave you the archive for a complete copy"}},
+		{"a link", func(a *ceArchive) { linkInPlaceOf(t, a, "hello", "second") }, "a link stands in the archive",
+			[]string{"copy the archive into a plain folder that holds real files, not links"}, []string{"copy the archive into a plain folder that holds real files, not links"}},
+		{"a hard link", func(a *ceArchive) {
+			_, eml, _ := a.files("hello")
+			if err := os.Link(eml, eml+".also"); err != nil {
+				t.Skipf("hard links unavailable: %v", err)
+			}
+		}, "more than one hard link", []string{"copy the archive into a plain folder that holds real files, not links"}, []string{"copy the archive into a plain folder that holds real files, not links"}},
+	}
+	for _, other := range []bool{false, true} {
+		for _, c := range cases {
+			name := c.name + ", the owner's archive"
+			if other {
+				name = c.name + ", another archive folder"
+			}
+			t.Run(name, func(t *testing.T) {
+				a := buildCEArchive(t)
+				e := newCEEnv(t)
+				s, err := OpenArchive(a.dir, ArchiveOptions{Other: other})
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer s.Close()
+				hello := a.key("hello")
+				p := a.plan(e, s, []string{hello, a.key("second")})
+				c.mutate(a) // after the preview, as a capture, a redaction or bit-rot does
+				res := a.run(e, p, s)
+				f := failureListed(manifestOf(t, res.Root), hello)
+				if f == nil {
+					t.Fatalf("hello is not listed as failed: %v", manifestOf(t, res.Root)["failures"])
+				}
+				reason := f["reason"].(string)
+				want := append([]string{c.reason}, c.self...)
+				if other {
+					want = append([]string{c.reason}, c.other...)
+				}
+				for _, w := range want {
+					if !strings.Contains(reason, w) {
+						t.Errorf("the reason %q lacks %q", reason, w)
+					}
+				}
+				if strings.Contains(reason, "Verify") {
+					t.Errorf("the reason names the command-line verb, not the button: %q", reason)
+				}
+				if other && strings.Contains(reason, "Check integrity") {
+					t.Errorf("a read-only folder is told to run a check that cannot run on it: %q", reason)
+				}
+			})
+		}
+	}
+
+	// the twin: a reason a retry can change keeps its own sentence, with no next step to add
+	a := buildCEArchive(t)
+	e := newCEEnv(t)
+	s := a.open()
+	p := a.plan(e, s, []string{a.key("hello"), a.key("second")})
+	rewrittenByACapture(a, "hello")
+	res := a.run(e, p, s)
+	if f := failureListed(manifestOf(t, res.Root), a.key("hello")); f == nil || !strings.Contains(f["reason"].(string), "preview again for the new copy") {
+		t.Errorf("the retryable reason: %v", f)
+	}
+	// the manifest's note for an original with no checksum names the button too
+	a = buildCEArchive(t)
+	e = newCEEnv(t)
+	a.setRec("hello", func(r *state.Record) { r.Fixity.EML = nil })
+	s = a.open()
+	res = a.run(e, a.plan(e, s, []string{a.key("hello")}), s)
+	if n := notesOf(entryOf(t, manifestOf(t, res.Root), a.key("hello"))); !strings.Contains(n, "Check integrity") || strings.Contains(n, "run Verify") {
+		t.Errorf("the note for an original with no recorded checksum: %q", n)
+	}
+}

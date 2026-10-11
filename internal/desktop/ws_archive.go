@@ -299,19 +299,52 @@ const (
 	listNoteWAL        = "Recent messages may be missing from this list; whole-folder selection includes them."
 )
 
-// listUnavailable words why an archive's message list cannot be shown while whole-folder
-// selection still works from the manifest (F85).
-func listUnavailable(err error) string {
+// copyToYourOwn is what is true of the index, or the files, of another archive folder: it is read-only,
+// Maintenance acts on the configured archive only, so the way to a repaired list is a folder of your own
+// (friction F4).
+const copyToYourOwn = "this folder is read-only, so nothing here can repair it — to pick single messages, copy the folder to one of your own, make that the archive location in Settings, then use " + rebuildButton
+
+// rebuildFixes is the advice for an index that is missing or unusable: the button, for the owner's own
+// archive, and the true thing for another archive folder.
+func rebuildFixes(other bool, brings string) string {
+	if other {
+		return copyToYourOwn + "."
+	}
+	return rebuildButton + " " + brings + "."
+}
+
+// listCause is why the index cannot be read, in a few words.
+func listCause(err error) string {
 	var ue *index.ListUnavailableError
 	switch {
 	case errors.Is(err, os.ErrNotExist):
-		return "This archive has no search index, so there is no message list. Whole-folder selection works; Rebuild search index (Maintenance) brings the list back."
+		return "this archive has no search index"
+	case errors.As(err, &ue) && index.Busy(ue.Cause):
+		return "the search index is in use right now"
+	case index.ReadOnly(err):
+		return "the search index can't be opened on this medium"
+	}
+	return "the search index can't be used"
+}
+
+// listUnavailable words why an archive's message list cannot be shown while whole-folder
+// selection still works from the manifest (F85). The remedy is true for the archive it is about:
+// for another archive folder, which is read-only, it is not the Rebuild button (friction F4).
+func listUnavailable(err error, other bool) string {
+	var ue *index.ListUnavailableError
+	what := "archive"
+	if other {
+		what = "archive folder"
+	}
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return "This " + what + " has no search index, so there is no message list. Whole-folder selection works; " + rebuildFixes(other, "brings the list back")
 	case errors.As(err, &ue) && index.Busy(ue.Cause):
 		return "The search index is in use right now, so the message list is unavailable for a moment. Whole-folder selection works; try the list again in a few seconds."
 	case index.ReadOnly(err):
 		return "The search index can't be opened on this medium, so there is no message list. Whole-folder selection works."
 	}
-	return "This archive's search index can't be used for a message list. Whole-folder selection works; Rebuild search index (Maintenance) fixes the list."
+	return "This " + what + "'s search index can't be used for a message list. Whole-folder selection works; " + rebuildFixes(other, "fixes the list")
 }
 
 // listUnavailableFor words why the list of archive a cannot be shown: an archive that went away is said
@@ -320,7 +353,7 @@ func (d *dashboard) listUnavailableFor(a *app.ArchiveSource, err error) string {
 	if _, gone := a.Gone(); gone {
 		return archiveGoneNote(a.Dir(), "click Load folders again")
 	}
-	return listUnavailable(err)
+	return listUnavailable(err, a.Other())
 }
 
 // archiveMessages is one page of an archive folder, newest first, at most 100 rows, from
@@ -395,7 +428,7 @@ func (d *dashboard) archiveMessages(w http.ResponseWriter, r *http.Request, in w
 		rows = append(rows, wsRowOut{H: hnd, Subject: row.Subject, From: row.SenderEmail, FromName: row.SenderName, Received: row.Date.UTC().Format(time.RFC3339), Size: -1})
 	}
 	if len(raw) > 0 && len(rows) == 0 && offset == 0 && version < 2 {
-		out["listUnavailable"] = "This archive's search index predates its format; whole-folder selection works; Rebuild search index fixes the list."
+		out["listUnavailable"] = "This archive's search index predates its format; whole-folder selection works; " + rebuildFixes(a.Other(), "fixes the list")
 		d.reply(w, out)
 		return
 	}
@@ -411,7 +444,14 @@ func (d *dashboard) archiveMessages(w http.ResponseWriter, r *http.Request, in w
 	var notes []string
 	if total < folder.TotalItemCount {
 		missing := folder.TotalItemCount - total
-		notes = append(notes, fmt.Sprintf("%s %s in this folder %s not in the search index — Rebuild search index fixes the list.", commaInt(missing), one(missing, "message", "messages"), one(missing, "is", "are")))
+		fix := rebuildButton + " fixes the list."
+		if a.Other() { // read-only: they are missing from this list only
+			fix = "they are missing from this list only; whole-folder selection includes them."
+			if missing == 1 {
+				fix = "it is missing from this list only; whole-folder selection includes it."
+			}
+		}
+		notes = append(notes, fmt.Sprintf("%s %s in this folder %s not in the search index — %s", commaInt(missing), one(missing, "message", "messages"), one(missing, "is", "are"), fix))
 	}
 	if a.Other() && a.WALBeside() {
 		notes = append(notes, listNoteWAL)
@@ -441,7 +481,7 @@ func (d *dashboard) archiveMeta(a *app.ArchiveSource, ids []string) (map[string]
 	}
 	h, err := a.OpenList()
 	if err != nil {
-		return nil, "The archive's search index can't be read (" + strings.TrimSuffix(listUnavailable(err), ".") + "), so most messages in this export carry no subject, sender or date in their names and in the manifest."
+		return nil, "The archive's search index can't be read (" + listCause(err) + "), so most messages in this export carry no subject, sender or date in their names and in the manifest. " + metaAdvice(err, a.Other())
 	}
 	defer h.Close()
 	meta := map[string]index.ListRow{}
@@ -456,10 +496,24 @@ func (d *dashboard) archiveMeta(a *app.ArchiveSource, ids []string) (map[string]
 			}
 			return nil
 		}); err != nil {
-			return meta, "Part of the archive's search index can't be read, so some messages in this export carry no subject, sender or date in their names and in the manifest."
+			return meta, "Part of the archive's search index can't be read, so some messages in this export carry no subject, sender or date in their names and in the manifest. " + metaAdvice(nil, a.Other())
 		}
 	}
 	return meta, ""
+}
+
+// metaAdvice is what to do about names and a manifest made without the index's subject, sender and date:
+// for the owner's own archive, wait or rebuild and preview again; for another archive folder, which is
+// read-only, the export is still whole and the messages are the archive's own (friction F4).
+func metaAdvice(err error, other bool) string {
+	var ue *index.ListUnavailableError
+	if err != nil && errors.As(err, &ue) && index.Busy(ue.Cause) {
+		return "Wait a few seconds, then click Preview copy export again."
+	}
+	if other {
+		return "The messages themselves are included, byte for byte; " + copyToYourOwn + " if you want their names back."
+	}
+	return rebuildButton + " fixes it; then preview again."
 }
 
 // resolveAndPlanArchive turns the selection into the plan (design §4.4, §4.7): the folder set from
@@ -579,8 +633,13 @@ func (d *dashboard) resolveAndPlanArchive(ctx context.Context, job *wsPreviewJob
 	}
 	var warns, infos []string
 	if res.Skipped > 0 {
-		warns = append(warns, fmt.Sprintf("%s %s whose files were removed %s skipped — run Rebuild search index (Maintenance) to bring the list and the counts back in step.",
-			commaInt(res.Skipped), one(res.Skipped, "record", "records"), one(res.Skipped, "is", "are")))
+		head := fmt.Sprintf("%s %s whose files were removed %s skipped: nothing of %s is exported.",
+			commaInt(res.Skipped), one(res.Skipped, "record", "records"), one(res.Skipped, "is", "are"), one(res.Skipped, "it", "them"))
+		if a.Other() {
+			warns = append(warns, head+" This folder is read-only, so it can't be tidied from here; if you did not expect files to be missing, ask whoever gave you the archive for a complete copy.")
+		} else {
+			warns = append(warns, head+" If the files were removed on purpose, "+rebuildButton+" forgets those records and brings the list and the counts back in step; if you did not expect it, run "+checkButton+" first, because a record is the only proof the message was archived and Rebuild deletes it.")
+		}
 	}
 	if metaNote != "" {
 		warns = append(warns, metaNote)
@@ -606,7 +665,7 @@ func (d *dashboard) resolveAndPlanArchive(ctx context.Context, job *wsPreviewJob
 	if perr != nil {
 		return nil, nil, copyRefusal(perr)
 	}
-	infos = archiveInfos(plan.Archive, len(msgs))
+	infos = archiveInfos(plan.Archive, len(msgs), a.Other())
 	if w := archiveBlockedWarning(plan.Archive); w != "" {
 		warns = append(warns, w)
 	}
@@ -648,7 +707,7 @@ func one(n int, singular, plural string) string {
 }
 
 // archiveInfos are the preview's lines about what the archive holds (design §4.7 step 4, §7.4).
-func archiveInfos(c *app.CopyArchiveCounts, selected int) []string {
+func archiveInfos(c *app.CopyArchiveCounts, selected int, other bool) []string {
 	if c == nil {
 		return nil
 	}
@@ -666,8 +725,12 @@ func archiveInfos(c *app.CopyArchiveCounts, selected int) []string {
 			commaInt(c.Quarantined), one(c.Quarantined, "page doesn't", "pages don't"), one(c.Quarantined, "holds", "hold"), one(c.Quarantined, "it", "they"), one(c.Quarantined, "a page", "pages")))
 	}
 	if c.Unattested > 0 {
-		out = append(out, fmt.Sprintf("%s %s no checksum recorded in the archive, so %s copied as stored (Verify records one).",
-			commaInt(c.Unattested), one(c.Unattested, "original has", "originals have"), one(c.Unattested, "it is", "they are")))
+		fix := checkButton + " records one"
+		if other {
+			fix = "this folder is read-only, so none can be recorded here"
+		}
+		out = append(out, fmt.Sprintf("%s %s no checksum recorded in the archive, so %s copied as stored (%s).",
+			commaInt(c.Unattested), one(c.Unattested, "original has", "originals have"), one(c.Unattested, "it is", "they are"), fix))
 	}
 	return out
 }
@@ -741,7 +804,7 @@ func (d *dashboard) retryArchive(w http.ResponseWriter, in runBody, info app.Cop
 		if w := archiveBlockedWarning(plan.Archive); w != "" {
 			warns = append(warns, w)
 		}
-		out := planResult(plan, job.id, foldersOut(input.Folders), len(input.Messages), len(input.Messages), warns, archiveInfos(plan.Archive, len(input.Messages)))
+		out := planResult(plan, job.id, foldersOut(input.Folders), len(input.Messages), len(input.Messages), warns, archiveInfos(plan.Archive, len(input.Messages), info.Other))
 		out["retryWhich"] = in.Which
 		return plan, out, nil
 	}, bind, in.RunID)
