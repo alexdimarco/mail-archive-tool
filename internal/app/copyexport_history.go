@@ -162,7 +162,7 @@ func (e *CopyExportEnv) historyOne(run string, jl []ceJournalLine, ledger []ceLe
 	if l := lastEvent(jl, "located"); l != nil {
 		info.Dest = util.StripControl(l.DestDir)
 	}
-	sum, serr := readSummary(e.recordPath(run))
+	sum, serr := e.readSummaryCached(e.recordPath(run))
 	hasRec := serr == nil
 	if hasRec {
 		h := sum.Header
@@ -173,7 +173,11 @@ func (e *CopyExportEnv) historyOne(run string, jl []ceJournalLine, ledger []ceLe
 		}
 		if sum.Sealed != nil {
 			c := sum.Sealed.Counts
-			info.Status, info.Fingerprint, info.Stop = sum.Sealed.Status, sum.Sealed.Fingerprint, sum.Sealed.Stop
+			info.Status, info.Fingerprint = sum.Sealed.Status, sum.Sealed.Fingerprint
+			if sum.Sealed.Stop != nil {
+				st := *sum.Sealed.Stop // a copy: the summary may be the cached one
+				info.Stop = &st
+			}
 			info.Exported, info.Failed, info.NotAttempted, info.OriginalOnly = c.Exported, c.Failed, c.NotAttempted, c.OriginalOnly
 		} else {
 			info.Exported = sum.Statuses[statusExported] + sum.Statuses[statusWithoutOrig] + sum.Statuses[statusOriginalOnly]
@@ -319,7 +323,7 @@ func (e *CopyExportEnv) chainSet(chain string, ledger []ceLedgerLine, journal []
 	set := &CopySetInfo{Fingerprint: latest.SetFingerprint}
 	for _, run := range latest.Parts {
 		p := CopySetPart{Run: run, Fingerprint: own[run], Part: 1}
-		if sum, err := readSummary(e.recordPath(run)); err == nil {
+		if sum, err := e.readSummaryCached(e.recordPath(run)); err == nil {
 			p.RootName, p.Part, p.Gone = sum.Header.RootName, len(sum.Header.ChainParts)+1, sum.Gone
 		} else {
 			for _, l := range journal {

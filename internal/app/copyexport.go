@@ -302,6 +302,8 @@ type CopyExportEnv struct {
 	ledgerMu    sync.Mutex
 	chains      map[string][]string // run record ids by chain id, kept under ledgerMu (§4.16)
 	chainsBuilt bool
+	sumMu       sync.Mutex // covers sumCache
+	sumCache    map[string]ceSumCached
 
 	// seams
 	now         func() time.Time

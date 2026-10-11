@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -351,9 +352,14 @@ type ceRecSummary struct {
 	NewerMajor bool // a header of a newer format_version
 }
 
+// summaryScans counts the full passes readSummary has made over run records: a test's
+// measure of how often a page's poll rereads them (EW-AC8).
+var summaryScans atomic.Int64
+
 // readSummary reads a run record's header, counts and last stop, seal, gone and
 // located lines. A record of a newer format is refused with the update remedy.
 func readSummary(path string) (*ceRecSummary, error) {
+	summaryScans.Add(1)
 	s := &ceRecSummary{Statuses: map[string]int{}}
 	last := map[int]string{}
 	err := scanLines(path, func(line []byte) error {
