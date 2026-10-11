@@ -274,11 +274,41 @@ func (d *dashboard) archiveRunSource(b wsBind) (*app.ArchiveSource, *refusal) {
 	if err != nil {
 		ref := *copyRefusal(err)
 		if ref.ID == "R-o" || ref.ID == "R-o3" { // the preview was made from it: it went away (friction F5)
-			ref = refusalGone(b.path, "exported", "click Preview copy export again (if you moved it, set the Archive location in Settings to where it is now, then Load folders)")
+			ref = refusalGone(b.path, "exported", previewAgainAfterGone(b.other))
 		}
 		return nil, &ref
 	}
 	return a, nil
+}
+
+// noneLeftInArchive is R-h for a retry whose messages the archive no longer holds (re-verification RV1): a
+// file removed from the archive, and then the drive going away in the same run, leaves the removed message
+// retryable (only the archive itself can say its files are gone), so the card offers the button and the
+// click finds nothing. It says what happened, why, and what to do, in the words of the kind of folder.
+// stopped is a read cut short (the application closing), which is not about the archive's files.
+func noneLeftInArchive(n int, stopped, other bool, button string) string {
+	if stopped {
+		return fmt.Sprintf("MailArchive was closing before it finished looking in the archive for the messages left in this export — nothing was previewed. Open it again, then click '%s' again.", button)
+	}
+	subject := "The 1 message left in this export is"
+	if n != 1 {
+		subject = fmt.Sprintf("The %s messages left in this export are", commaInt(n))
+	}
+	fix := "restore them from a backup of the archive"
+	if other {
+		fix = "ask whoever gave you the archive for a complete copy"
+	}
+	return fmt.Sprintf("%s no longer in the archive — their files were removed from it after you selected them, so there is nothing to export and nothing was previewed. If that was not on purpose, %s, then click '%s' again. If it was, there is nothing more to do for them: the button stays on this export's card only because the archive itself is what says its files are gone.", subject, fix, button)
+}
+
+// previewAgainAfterGone is what to do when the archive a preview was made from is not there at Start: the
+// owner's own archive can be pointed at its new place in Settings; another archive folder is chosen again
+// in the workspace, and Settings has nothing to do with it (re-verification RV4).
+func previewAgainAfterGone(other bool) string {
+	if other {
+		return "click Preview copy export again (if you moved it, choose it again under Source → Another archive folder, then Load folders)"
+	}
+	return "click Preview copy export again (if you moved it, set the Archive location in Settings to where it is now, then Load folders)"
 }
 
 // beginRebuild is what the Rebuild job does first: it waits for the list request in flight to
@@ -809,7 +839,7 @@ func (d *dashboard) retryArchive(w http.ResponseWriter, in runBody, info app.Cop
 	res, rerr := a.Messages(d.life.Context(), keys, nil, nil)
 	if rerr != nil || len(res.Messages) == 0 {
 		a.Close()
-		d.refuseRun(w, in.RunID, refusedWith("R-h", "None of those messages is in the archive any more — nothing was previewed."))
+		d.refuseRun(w, in.RunID, refusedWith("R-h", noneLeftInArchive(len(keys), rerr != nil, info.Other, app.RetryButton(in.Which))))
 		return
 	}
 	for i := range res.Messages { // the names and the metadata the first export was made with
