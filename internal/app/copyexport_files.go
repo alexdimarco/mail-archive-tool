@@ -32,6 +32,11 @@ type CopyFilesSource interface {
 	// Changed reports whether the source's own record for m no longer says what the plan
 	// recorded (a concurrent capture rewrote it, or it was removed).
 	Changed(m *CopyMessage) bool
+	// Capturing reports whether something is writing to the source right now (a capture holds
+	// the archive's lock): the source's record of a message is then behind its files, and a
+	// file that does not match it, or is missing, may be a message being rewritten and not one
+	// that is damaged or removed.
+	Capturing() bool
 }
 
 // CopyFiles are the files of one message, ready to copy.
@@ -248,6 +253,9 @@ func (r *CopyRun) classifyFiles(err error, mctx, walk context.Context, src CopyF
 			return verdict{kind: verdictFatal, stop: &CopyStop{RID: "R-o2", Class: stopClassArchive, Message: why}}
 		}
 		if af.Kind == AFMissing {
+			if src.Capturing() { // a re-capture removes the zip before it writes the page again (E4-AI2)
+				return verdict{kind: verdictList, class: classRetryable, reason: "changed in the archive during export (a capture is rewriting this message); preview again for the new copy"}
+			}
 			return verdict{kind: verdictList, class: classTerminal, reason: "removed from the archive after you selected it"}
 		}
 		return verdict{kind: verdictList, class: classRetryable, reason: "the archive's file could not be read (" + leaveName(af.Err) + ")"}
@@ -260,7 +268,9 @@ func (r *CopyRun) classifyFiles(err error, mctx, walk context.Context, src CopyF
 	case AFPath:
 		return verdict{kind: verdictList, class: classTerminal, reason: "the archive's record names a path that is not inside the archive"}
 	case AFChanged:
-		if src.Changed(m) {
+		// The manifest is saved at a capture's checkpoints, after the files are written, so while a
+		// capture runs a rewritten file is ahead of the checksum the manifest still has (E4-AI2).
+		if src.Changed(m) || src.Capturing() {
 			return verdict{kind: verdictList, class: classRetryable, reason: "changed in the archive during export (a capture rewrote this message); preview again for the new copy"}
 		}
 		return verdict{kind: verdictList, class: classTerminal, reason: "the archive's file doesn't match the checksum the archive recorded for it (modified or damaged): run Verify on the archive"}

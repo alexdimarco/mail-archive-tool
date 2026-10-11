@@ -19,6 +19,7 @@ import (
 
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/index"
+	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/util"
 )
@@ -957,6 +958,15 @@ func (a *ArchiveSource) Changed(m *CopyMessage) bool {
 		return true
 	}
 	return !sameFixity(rec.Fixity, m.Fix) || rec.Path != m.Rel
+}
+
+// Capturing reports whether a capture holds the archive's lock now. It is asked only after a file failed
+// its check, never to wait for one: the export takes no lock and never backs off (MA-510). The probe
+// opens an existing lock file and takes the lock for an instant (lockfile.Held), creating and writing
+// nothing; it is not made for another archive folder, which this export opens read-only and which
+// no capture of this computer writes.
+func (a *ArchiveSource) Capturing() bool {
+	return !a.other && lockfile.Held(filepath.Join(a.dir, lockfile.Name))
 }
 
 func sameFixity(a, b *state.Fixity) bool {
