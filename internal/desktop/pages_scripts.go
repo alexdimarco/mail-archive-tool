@@ -86,6 +86,7 @@ function loadSource(){
     st.running=!!d.running;
     const m=d.m365||{};
     if(m.state==='ready'){st.upn=m.upn;show('mbox','Mailbox: '+m.upn+' (your own mailbox)');$('loadFolders').disabled=false;}
+    else if(m.state==='needs-sign-in'){show('mbox',m.note||'Microsoft 365 refused your saved sign-in. Click Sign in to sign in again.');$('signInArea').hidden=false;}
     else if(m.state==='not-signed-in'){show('mbox','Not signed in to Microsoft 365');$('signInArea').hidden=false;}
     else{show('mbox','Microsoft 365 isn\'t set up yet — run mailarchive setup, then come back.');}
     const s=d.settings||{};
@@ -416,11 +417,20 @@ function act(a,c,box){
   case 'this-folder-is-gone':if(confirm('Tell MailArchive this folder is gone? You can then export its messages again.'))api('api/exports/locate',{runId:c.run,action:'gone'}).then(done);break;
   }
 }
+// The Sign in card: shown when a retry was refused for the sign-in, or the saved sign-in was
+// refused, so "Sign in again" in those messages names a button that is on this page.
+function renderSignIn(s){
+  const c=$('signInCard');if(!c)return;
+  const on=!!(s&&s.needed);
+  if(on)$('signInWhy').textContent=(s.why||'')+(s.as?' Sign in as '+s.as+'.':'');
+  c.hidden=!on;
+}
 function loadHistory(){
   if(busy)return;busy=true;
   api('api/exports/history',{}).then(d=>{
     busy=false;
     if(!d.ok){note(d.error);return;}
+    renderSignIn(d.signIn);
     const h=$('history');clear(h);
     (d.runs||[]).forEach(c=>h.appendChild(cardEl(c)));
     $('historyEmpty').hidden=(d.runs||[]).length>0;

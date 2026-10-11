@@ -34,7 +34,7 @@ func refusalText(id string, done, total int, extra string, plan *CopyPlan, state
 	at := ofTotal(done, total)
 	switch id {
 	case "R-c":
-		return fmt.Sprintf("Microsoft 365 refused the request (your sign-in expired or access was revoked) — the export stopped after %s messages. Sign in again, then click 'Export the remaining messages' on Export activity.", at)
+		return fmt.Sprintf("Microsoft 365 refused the request (your sign-in expired or access was revoked) — the export stopped after %s messages. Sign in again (click Sign in on Export activity), then click 'Export the remaining messages' there.", at)
 	case "R-d":
 		return fmt.Sprintf("MailArchive Desktop couldn't record this export in %s (disk full or access denied) — nothing was exported. Free some space there, then click Start export again.", statePath)
 	case "R-d2":
@@ -57,7 +57,7 @@ func refusalText(id string, done, total int, extra string, plan *CopyPlan, state
 		if now == "" {
 			now = "signed out"
 		}
-		return fmt.Sprintf("The Microsoft 365 sign-in was cleared or changed (now: %s) — the export of %s's mailbox stopped after %s messages, so nothing is read with the wrong account. Sign in as %s, then click 'Export the remaining messages'.", now, signer, at, signer)
+		return fmt.Sprintf("The Microsoft 365 sign-in was cleared or changed (now: %s) — the export of %s's mailbox stopped after %s messages, so nothing is read with the wrong account. Sign in as %s (click Sign in on Export activity), then click 'Export the remaining messages' there.", now, signer, at, signer)
 	case "internal":
 		return fmt.Sprintf("MailArchive Desktop stopped this export after %s messages because of an internal error. The folder is marked unfinished: click 'Finish as partial' or 'Export the remaining messages' on Export activity.", at)
 	}

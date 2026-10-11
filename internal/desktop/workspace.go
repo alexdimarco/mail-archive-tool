@@ -166,6 +166,7 @@ func (ws *workspace) session(req context.Context) (*wsSession, *refusal) {
 	client, upn, err := app.OpenGraphSession(d.life.Context(), opts)
 	if err != nil {
 		r := graphRefusal(err, "your mailbox", d.cfgAuth())
+		d.noteRefused(r)
 		return nil, &r
 	}
 	s := newWsSession(client, upn, opts.Tenant, d.now())
@@ -277,6 +278,10 @@ func (d *dashboard) sourceAction(w http.ResponseWriter, r *http.Request) {
 		m["state"], m["auth"] = "not-signed-in", authLabel(c.Auth)
 		if upn, ok := d.signedInNow(); ok {
 			m["state"], m["upn"] = "ready", upn
+			if d.signInLapsed() != "" { // saved, but Microsoft 365 refused it: sign in again
+				m["state"] = "needs-sign-in"
+				m["note"] = fmt.Sprintf("Microsoft 365 refused your saved sign-in as %s (it expired or access was revoked). Click Sign in to sign in again.", upn)
+			}
 		}
 	}
 	s := d.cfg.settings()
@@ -338,6 +343,7 @@ func (d *dashboard) foldersAction(w http.ResponseWriter, r *http.Request) {
 func (d *dashboard) listRefusal(err error, doing string) refusal {
 	ref := graphRefusal(err, doing, d.cfgAuth())
 	if ref.ID == "R-c" {
+		d.noteRefused(ref)
 		d.ws.dropSession()
 	}
 	return ref

@@ -715,6 +715,36 @@ func refusalL(was, now string) *CopyRefusal {
 	return refuse("R-l", fmt.Sprintf("This selection was made in %s's mailbox, but you're now signed in as %s. Load folders again to start a new selection.", was, now))
 }
 
+// RetryButton is the label of the card button a retry of kind which ("failed" or "rest") is
+// started from.
+func RetryButton(which string) string {
+	if which == "failed" {
+		return "Export failed messages again"
+	}
+	return "Export the remaining messages"
+}
+
+// RunMailbox is the mailbox a run exported, from its record, or its journal line once the
+// record is deleted: "" when neither names one.
+func (e *CopyExportEnv) RunMailbox(run string) string {
+	if sum, err := readSummary(e.recordPath(run)); err == nil {
+		return util.StripControl(sum.Header.Source.Mailbox)
+	}
+	lines, _ := e.readJournal()
+	if l := lastEvent(func() []ceJournalLine {
+		var own []ceJournalLine
+		for _, l := range lines {
+			if l.Run == run {
+				own = append(own, l)
+			}
+		}
+		return own
+	}(), "start"); l != nil {
+		return util.StripControl(l.Mailbox)
+	}
+	return ""
+}
+
 // RetryInput builds the preview input of "Export failed messages again" (which
 // "failed") or "Export the remaining messages" (which "rest") from run's RUN RECORD,
 // never the destination's manifest (XC2, P4's second admission path): the ids, names and

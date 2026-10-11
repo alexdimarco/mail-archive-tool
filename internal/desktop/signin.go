@@ -307,11 +307,47 @@ func (d *dashboard) signInStatusAction(w http.ResponseWriter, r *http.Request) {
 	d.reply(w, out)
 }
 
+// lapse remembers that the saved sign-in was refused by Microsoft 365 (R-c): the token file
+// is still there, so "is a sign-in saved" says yes, but the mailbox is not ready until the
+// owner signs in again. It lives for the process; a restart finds out again on first use.
+type lapse struct {
+	mu  sync.Mutex
+	upn string
+}
+
+// noteRefused records the refusal when it is the sign-in's (R-c), for the account now saved.
+func (d *dashboard) noteRefused(ref refusal) {
+	if ref.ID != "R-c" {
+		return
+	}
+	upn, _ := d.signedInNow()
+	d.lapse.mu.Lock()
+	d.lapse.upn = upn
+	d.lapse.mu.Unlock()
+}
+
+// signInLapsed is the account whose saved sign-in was refused, "" when it was not.
+func (d *dashboard) signInLapsed() string {
+	d.lapse.mu.Lock()
+	defer d.lapse.mu.Unlock()
+	return d.lapse.upn
+}
+
 // signInChanged is what a sign-in cleared or changed does (XC7): the session, every
 // outstanding selection and preview are dropped, and a running Microsoft 365 export stops
 // with R-z, finalized and retryable from its run record, so nothing is read with the wrong
 // account. now is the account signed in now, "" when the sign-in was cleared.
 func (d *dashboard) signInChanged(now string) {
+	d.lapse.mu.Lock()
+	d.lapse.upn = ""
+	d.lapse.mu.Unlock()
+	d.ex.mu.Lock()
+	for run, r := range d.ex.results { // what a card said about the sign-in is out of date now
+		if signInResultIDs[r.id] {
+			delete(d.ex.results, run)
+		}
+	}
+	d.ex.mu.Unlock()
 	d.ws.dropSession()
 	d.ex.mu.Lock()
 	s := d.ex.slot

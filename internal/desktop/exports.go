@@ -278,6 +278,9 @@ func (ex *exportsState) runSlot(slot *exportSlot, plan *app.CopyPlan) {
 	}()
 	slot.mu.Lock()
 	slot.finished, slot.res, slot.err = true, res, err
+	if res != nil && res.Stop != nil && res.Stop.RID == "R-c" {
+		d.noteRefused(refusalC()) // the saved sign-in is refused: the workspace says so, and Export activity shows Sign in
+	}
 	if res != nil {
 		slot.addLog(fmt.Sprintf("%s %s", d.now().Format("15:04:05"), res.Label))
 	}
@@ -507,7 +510,54 @@ func (d *dashboard) historyAction(w http.ResponseWriter, r *http.Request) {
 		}
 		cards = append(cards, c)
 	}
-	d.reply(w, map[string]any{"ok": true, "runs": cards})
+	d.reply(w, map[string]any{"ok": true, "runs": cards, "signIn": d.signInBlock(cards)})
+}
+
+// signInResultIDs are the refusals that are about the sign-in: the page shows Sign in for them.
+var signInResultIDs = map[string]bool{"R-b": true, "R-c": true, "R-l": true, "R-z": true}
+
+type signInOut struct {
+	Needed bool   `json:"needed"`
+	As     string `json:"as,omitempty"`  // the account to sign in as
+	Why    string `json:"why,omitempty"` // in words
+}
+
+// signInBlock says whether Export activity should show its Sign in button, and why (F2): the
+// "Sign in again" of R-b, R-c, R-l and R-z names a control the owner has to be able to reach
+// from the page the refusal appears on. It is needed when a retry was refused for the sign-in,
+// when the saved sign-in was refused, or when nobody is signed in and something could be
+// retried.
+func (d *dashboard) signInBlock(cards []cardOut) signInOut {
+	if c := d.cfg.load(); c == nil || strings.TrimSpace(c.Tenant) == "" || strings.TrimSpace(c.ClientID) == "" {
+		return signInOut{}
+	}
+	upn, signed := d.signedInNow()
+	lapsed := d.signInLapsed()
+	retryable := func(c cardOut) bool {
+		return hasString(c.Actions, app.ActExportRemaining) || hasString(c.Actions, app.ActExportFailed) || hasString(c.Actions, app.ActExportThese)
+	}
+	for _, c := range cards {
+		if c.Result != nil && signInResultIDs[c.Result.ID] {
+			return signInOut{Needed: true, As: c.Mailbox, Why: c.Result.Error}
+		}
+	}
+	for _, c := range cards {
+		if !retryable(c) || c.Mailbox == "" {
+			continue
+		}
+		switch {
+		case !signed:
+			return signInOut{Needed: true, As: c.Mailbox, Why: "You're not signed in to Microsoft 365."}
+		case lapsed != "":
+			return signInOut{Needed: true, As: c.Mailbox, Why: "Microsoft 365 refused your saved sign-in as " + lapsed + " (it expired or access was revoked)."}
+		case (c.StopID == "R-c" || c.StopID == "R-z") && !strings.EqualFold(upn, c.Mailbox):
+			return signInOut{Needed: true, As: c.Mailbox, Why: c.Stop}
+		}
+	}
+	if lapsed != "" {
+		return signInOut{Needed: true, As: lapsed, Why: "Microsoft 365 refused your saved sign-in as " + lapsed + " (it expired or access was revoked)."}
+	}
+	return signInOut{}
 }
 
 func hasString(list []string, s string) bool {
@@ -615,18 +665,23 @@ func (d *dashboard) retryAction(w http.ResponseWriter, r *http.Request) {
 		d.refuseRun(w, in.RunID, refusalM(st.started, st.done, st.selected))
 		return
 	}
+	mailbox := d.ex.env.RunMailbox(in.RunID)
 	now, signed := d.signedInNow()
 	if !signed {
-		d.refuseRun(w, in.RunID, refusalB())
+		d.refuseRun(w, in.RunID, retrySignInRefusal(refusalB(), mailbox, in.Which))
 		return
 	}
 	if _, ref := d.ws.session(r.Context()); ref != nil {
-		d.refuseRun(w, in.RunID, *ref)
+		d.refuseRun(w, in.RunID, retrySignInRefusal(*ref, mailbox, in.Which))
 		return
 	}
 	input, err := d.ex.env.RetryInput(in.RunID, in.Which, now)
 	if err != nil {
-		d.refuseRun(w, in.RunID, engineRefusal(err))
+		ref := engineRefusal(err)
+		if ref.ID == "R-l" {
+			ref = retryLRefusal(mailbox, now, in.Which)
+		}
+		d.refuseRun(w, in.RunID, ref)
 		return
 	}
 	if dest := strings.TrimSpace(in.Dest); dest != "" {

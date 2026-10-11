@@ -189,6 +189,12 @@ var pageTmpl = template.Must(template.New("pages").Funcs(pageFuncs).Parse(`
     <h1>Export activity</h1>
     <p class="lede">The export that is running, and the exports you have made.</p>
     <div class="note warnbox" id="banner" role="alert" hidden></div>
+    <div class="card" id="signInCard" hidden>
+      <h2>Sign in to Microsoft 365</h2>
+      <p id="signInWhy"></p>
+      <button class="btn" id="signInBtn" type="button">Sign in</button>
+      {{template "signinbox" .}}
+    </div>
     <div class="card" id="runningCard" hidden>
       <h2>Running export</h2>
       <div id="runLabel" class="row"></div>
@@ -205,6 +211,7 @@ var pageTmpl = template.Must(template.New("pages").Funcs(pageFuncs).Parse(`
     </div>
   </div></main>
 </div>
+<script src="signin.js"></script>
 <script src="exports.js"></script>
 </body></html>{{end}}
 `))

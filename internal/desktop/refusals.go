@@ -58,6 +58,37 @@ func refusalC() refusal {
 	return refusedWith("R-c", "Microsoft 365 refused the request (your sign-in expired or access was revoked) — nothing was read. Sign in again, then try again.")
 }
 
+// retrySignInRefusal rewords a sign-in refusal (R-b, R-c) for a retry from Export activity: the
+// remedy there is the Sign in button on that page, as the account the export was made in, and
+// then the button that was clicked, not the workspace's "Click Sign in and enter the code
+// shown". Any other refusal passes through.
+func retrySignInRefusal(ref refusal, mailbox, which string) refusal {
+	as := "Click Sign in on this page"
+	if mailbox != "" {
+		as += " and sign in as " + mailbox
+	}
+	next := as + ", then click '" + app.RetryButton(which) + "' again."
+	switch ref.ID {
+	case "R-b":
+		whose := ""
+		if mailbox != "" {
+			whose = " — this export is of " + mailbox + "'s mailbox"
+		}
+		ref.Text = "You're not signed in to Microsoft 365" + whose + ", so nothing was previewed. " + next
+	case "R-c":
+		ref.Text = "Microsoft 365 refused your saved sign-in (it expired or access was revoked) — nothing was previewed. " + next
+	}
+	return ref
+}
+
+// retryLRefusal is R-l for a retry: the owner has no selection to start again (the engine's
+// §7.6 text says "Load folders again"), the export is of one mailbox and the remedy is to
+// sign in as that account and click the button again.
+func retryLRefusal(was, now, which string) refusal {
+	return refusedWith("R-l", fmt.Sprintf("This export is of %s's mailbox, but you're signed in as %s — nothing was previewed. Click Sign in on this page. Sign in as %s, then click '%s' again.",
+		was, now, was, app.RetryButton(which)))
+}
+
 func refusalJ(picks int) refusal {
 	return refusedWith("R-j", fmt.Sprintf("You've picked %s individual messages — the most one selection can hold. Select the whole folder (Select current folder) and untick the ones you don't want.", commaInt(picks)))
 }
