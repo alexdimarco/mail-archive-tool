@@ -424,3 +424,48 @@ func TestTokenLifetimesTableAndNotice(t *testing.T) {
 		t.Errorf("a LAN session's cookie lacks its Max-Age: %q", rec.Result().Header.Values("Set-Cookie"))
 	}
 }
+
+// covers: MA-373, MA-376, R23
+// POST /_handoff is the one route besides /_open that needs no cookie, and only
+// where a surface is given a Handoff handler to answer it: without one it is
+// refused like any request with no session; with one it is reached with no
+// cookie, after the Host check and with the policy headers, and the handler's own
+// proof — not the session — decides [CC20].
+func TestHandoffRouteNeedsNoCookieOnlyWhereGiven(t *testing.T) {
+	plain := newRig(t, "dashboard")
+	got := plain.do(http.MethodPost, "/_handoff")
+	assure.Refused(t, got.Code, got.Body.String(), assure.Code(http.StatusUnauthorized), assure.Names("Why"))
+
+	s := NewSession()
+	calls := 0
+	h := Wrap(Surface{Name: "dashboard", Listener: loopbackAt(8097), Session: s, Handoff: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Write([]byte("handoff reached"))
+	})}, &sessionInner{})
+	for _, c := range []struct {
+		host string
+		code int
+	}{{sessHost, http.StatusOK}, {"attacker.example:8097", http.StatusForbidden}, {"", http.StatusForbidden}} {
+		req := httptest.NewRequest(http.MethodPost, "/_handoff", nil)
+		req.Host = c.host
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != c.code {
+			t.Errorf("POST /_handoff with Host %q: status %d, want %d", c.host, rec.Code, c.code)
+		}
+		if rec.Header().Get("Cache-Control") != "no-store" || rec.Header().Get("Content-Security-Policy") == "" {
+			t.Errorf("POST /_handoff with Host %q carries no policy headers", c.host)
+		}
+	}
+	if calls != 1 {
+		t.Errorf("the handoff handler was reached %d times, want once (only the loopback Host)", calls)
+	}
+	// Nothing else is opened by it: any other path is still locked.
+	req := httptest.NewRequest(http.MethodPost, "/_handoff/x", nil)
+	req.Host = sessHost
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized || calls != 1 {
+		t.Errorf("POST /_handoff/x: status %d, handler calls %d; want the locked page and no call", rec.Code, calls)
+	}
+}

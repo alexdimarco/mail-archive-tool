@@ -35,6 +35,12 @@ type Surface struct {
 	// Session, when set, makes the surface admit only a browser that redeemed one
 	// of its one-time links (P7, slice C2); nil keeps the Host guard alone.
 	Session *Session
+	// Handoff, when set (with a Session), answers POST /_handoff, which needs no
+	// cookie: the instance that serves it proves itself and its caller with a key
+	// the caller must hold (design §4.C4, `serve -link` and the desktop launch). It
+	// is a guard route like /_open, not a registered one: it does exactly one thing,
+	// and refuses everything it cannot verify.
+	Handoff http.Handler
 }
 
 // denyCSP is the policy a response gets when its handler set none (the Host
@@ -92,6 +98,10 @@ func (g *guard) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // never sees it. ok is false when admit has answered.
 func (g *guard) admit(w *policyWriter, r *http.Request, s *Session) (h http.Handler, ok bool) {
 	p := r.URL.Path
+	if p == "/_handoff" && g.s.Handoff != nil {
+		g.s.Handoff.ServeHTTP(w, r)
+		return nil, false
+	}
 	if p == "/_open" {
 		if r.Method != http.MethodGet {
 			// A HEAD or POST must never spend a one-time link (link previewers send them).
