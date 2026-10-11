@@ -690,3 +690,41 @@ func TestArchivePreviewSaysWhichStoresTheExportWillName(t *testing.T) {
 		t.Errorf("alice's folders selected: %q", got)
 	}
 }
+
+// covers: MA-446, MA-435, R12, S52
+// F9: an Export activity card of an archive-sourced export says which archive it is of: the folder the archive is
+// in (for another archive folder, "another archive folder" and its folder), and the stores of the folders that were
+// selected, so two exports a week apart, or one of the owner's own archive and one of an inherited one, can be told
+// apart without opening them. The page's card subtitle shows that label ahead of the bare source *(script)*. The
+// positive twin: a Microsoft 365 card still shows the mailbox and no label.
+func TestExportActivityCardNamesTheArchiveItIsOf(t *testing.T) {
+	e := newWsEnv(t)
+	ids := e.folders()
+	m365 := e.startExport(e.selection(entry(ids["Sent Items"], false)))
+	e.waitRun()
+	if c := e.card(m365); c["mailbox"] != "alice@contoso.org" || c["sourceLabel"] != nil {
+		t.Fatalf("the Microsoft 365 card: %v", c)
+	}
+
+	buildArchiveAt(t, e.out)
+	arch := archSource("archive", e.out)
+	e.archFolders(arch)
+	own := e.ok("/api/exports/start", map[string]any{"previewId": func() string { id, _ := e.preview(e.archSel(arch, entry("bob", false))); return id }()})["runId"].(string)
+	e.waitRun()
+	other := filepath.Join(e.dir, "inherited")
+	buildArchiveAt(t, other)
+	oarch := archSource("archive-other", other)
+	e.archFolders(oarch)
+	inh := e.ok("/api/exports/start", map[string]any{"previewId": func() string { id, _ := e.preview(e.archSel(oarch, entry("alice", true))); return id }()})["runId"].(string)
+	e.waitRun()
+
+	if got, _ := e.card(own)["sourceLabel"].(string); got != "your archive, folder archive (bob)" {
+		t.Errorf("the owner's archive card: %q, want %q", got, "your archive, folder archive (bob)")
+	}
+	if got, _ := e.card(inh)["sourceLabel"].(string); got != "another archive folder inherited (alice)" {
+		t.Errorf("the inherited folder's card: %q, want %q", got, "another archive folder inherited (alice)")
+	}
+	if !strings.Contains(exportsJS, "c.sourceLabel||c.mailbox||c.source") {
+		t.Error("exports.js does not show the label ahead of the bare source *(script)*")
+	}
+}

@@ -451,6 +451,7 @@ type cardOut struct {
 	Run          string    `json:"run"`
 	Started      string    `json:"started"`
 	Source       string    `json:"source"`
+	SourceLabel  string    `json:"sourceLabel,omitempty"` // an archive-sourced export: which archive, and the stores selected (F9)
 	Mailbox      string    `json:"mailbox"`
 	Dest         string    `json:"dest"`
 	RootName     string    `json:"rootName"`
@@ -532,7 +533,7 @@ func (d *dashboard) historyAction(w http.ResponseWriter, r *http.Request) {
 	cards := make([]cardOut, 0, len(hist))
 	results := d.resultsNow()
 	for _, h := range hist {
-		c := cardOut{Run: h.Run, Started: h.Started.UTC().Format(time.RFC3339), Source: h.SourceKind, Mailbox: h.Mailbox, Dest: h.Dest, RootName: h.RootName,
+		c := cardOut{Run: h.Run, Started: h.Started.UTC().Format(time.RFC3339), Source: h.SourceKind, SourceLabel: h.SourceLabel, Mailbox: h.Mailbox, Dest: h.Dest, RootName: h.RootName,
 			Label: h.Label, Kind: h.Kind, Running: h.Running, Planned: h.Planned, Exported: h.Exported, Failed: h.Failed, NotAttempted: h.NotAttempted,
 			Fingerprint: h.Fingerprint, Actions: h.Actions, Remaining: h.Remaining, Part: h.Part, RetryOf: h.RetryOf, Receipt: h.Receipt, Next: h.Next, SetNote: h.SetNote,
 			FailuresMore: h.FailuresMore}

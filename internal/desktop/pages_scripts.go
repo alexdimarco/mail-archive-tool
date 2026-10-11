@@ -503,7 +503,7 @@ function cardEl(c){
   const box=el('div',null,'run-card');
   box.appendChild(el('h3',c.label));
   const when=c.started?new Date(c.started).toLocaleString():'';
-  box.appendChild(el('div',when+' · '+(c.mailbox||c.source)+' · '+c.rootName,'card-sub'));
+  box.appendChild(el('div',when+' · '+(c.sourceLabel||c.mailbox||c.source)+' · '+c.rootName,'card-sub'));
   if(c.running)box.appendChild(el('div','Writing now: see Running export above.'));
   else box.appendChild(el('div',fmt(c.exported)+' exported, '+fmt(c.failed)+' failed, '+fmt(c.notAttempted)+' not attempted of '+fmt(c.planned)));
   if(c.setNote)box.appendChild(el('div',c.setNote,'card-sub'));

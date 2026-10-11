@@ -51,6 +51,7 @@ type CopyRunInfo struct {
 	Chain        string
 	Started      time.Time
 	SourceKind   string
+	SourceLabel  string // for an archive-sourced run: which archive, and the stores of the selected folders (friction F9)
 	Mailbox      string
 	Dest         string // the export directory's recorded path
 	RootName     string
@@ -239,6 +240,9 @@ func (e *CopyExportEnv) historyOne(run string, jl []ceJournalLine, ledger []ceLe
 		h := sum.Header
 		info.Chain, info.RetryOf, info.Started, info.Planned = h.Chain, h.RetryOf, h.Started, h.Planned
 		info.RootName, info.Part = h.RootName, len(h.ChainParts)+1
+		if h.Source.Kind == "archive" {
+			info.SourceLabel = archiveCardLabel(h.Source, h.Folders)
+		}
 		if p := folderPath(sum); p != "" {
 			info.Dest = util.StripControl(p) // where the folder is now: the located path, else the recorded root
 		}
@@ -341,6 +345,38 @@ func (e *CopyExportEnv) historyOne(run string, jl []ceJournalLine, ledger []ceLe
 		info.Next = "MailArchive is looking for this export's folder; its buttons appear in a few seconds (up to 5 on a network drive)."
 	}
 	return info, true
+}
+
+// archiveCardLabel names the archive an export activity card is of: "your archive, folder <name>" for the
+// configured archive, "another archive folder <name>" for a folder read-only, and, in brackets, the stores of the
+// folders that were selected (with the mailbox a store holds), so that two cards can be told apart (friction F9).
+func archiveCardLabel(src CopySourceInfo, folders []CopyPlanFolder) string {
+	label := "your archive, folder " + util.StripControl(filepath.Base(src.Archive))
+	if src.Other {
+		label = "another archive folder " + util.StripControl(filepath.Base(src.Archive))
+	}
+	mailbox := map[string]string{}
+	for _, s := range src.Stores {
+		mailbox[s.Store] = s.Mailbox
+	}
+	var stores []string
+	seen := map[string]bool{}
+	for _, f := range folders {
+		tok, _, _ := strings.Cut(f.Folder, "/")
+		if tok == "" || seen[tok] || tok == "Individually picked messages" {
+			continue
+		}
+		seen[tok] = true
+		name := util.StripControl(tok)
+		if mb := mailbox[tok]; mb != "" {
+			name += " — " + util.StripControl(mb)
+		}
+		stores = append(stores, name)
+	}
+	if len(stores) > 0 {
+		label += " (" + strings.Join(stores, ", ") + ")"
+	}
+	return label
 }
 
 // nextFor is the sentence that tells the owner what to do with a card that is waiting on them
