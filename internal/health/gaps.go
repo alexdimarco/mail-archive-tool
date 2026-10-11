@@ -229,6 +229,31 @@ func gapRank(in Input, g state.CaptureGap, now time.Time) int {
 	return 2
 }
 
+// deletionTrackingNote is the sentence a stuck gap adds when its item could not be
+// matched to any archived record (it had no listing Message-ID, or none that
+// matched, CaptureGap.DefersGone): while the gap persists the mailbox's
+// gone-detection is deferred for the records it could hide, so a message deleted
+// in the folder is not noticed. It names the folders and how to end it: after
+// saving a copy, move or delete the item out of the folder in the mailbox (§4.10,
+// FC23(4), owner ruling OR10). "" when no stuck gap defers anything.
+func deletionTrackingNote(stuck []state.CaptureGap) string {
+	seen := map[string]bool{}
+	var parts []string
+	for _, g := range stuck {
+		if !g.DefersGone || seen[g.Folder] {
+			continue
+		}
+		seen[g.Folder] = true
+		f := util.StripControl(g.Folder)
+		parts = append(parts, fmt.Sprintf("deleted messages in %s are not being detected while this persists; after saving a copy, move or delete the item out of %s in the mailbox to resume deletion tracking there", f, f))
+	}
+	sort.Strings(parts)
+	if len(parts) == 0 {
+		return ""
+	}
+	return ". " + strings.Join(parts, "; ")
+}
+
 // assessCaptureGaps adds the capture-gap reasons to r: stuck (WARN, listed first
 // of the gap reasons), fillable (WARN), terminal (WARN), not-attempted (a note).
 func assessCaptureGaps(r *Report, in Input, now time.Time) {
@@ -256,8 +281,8 @@ func assessCaptureGaps(r *Report, in Input, now time.Time) {
 				first = g.FirstRun
 			}
 		}
-		r.warn("capture_gaps_stuck", fmt.Sprintf("%s have failed on every run since %s (each run could not capture them; the rest of the archive is unaffected) — %s",
-			countGaps(stuck), first.UTC().Format("2006-01-02"), remedyFor(in, stuck, true, false, false)))
+		r.warn("capture_gaps_stuck", fmt.Sprintf("%s have failed on every run since %s (each run could not capture them; the rest of the archive is unaffected) — %s%s",
+			countGaps(stuck), first.UTC().Format("2006-01-02"), remedyFor(in, stuck, true, false, false), deletionTrackingNote(stuck)))
 	}
 	if len(fillable) > 0 {
 		when := "whenever the archive runs again"

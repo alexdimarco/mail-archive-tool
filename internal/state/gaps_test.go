@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -515,22 +516,84 @@ func TestLegacyPlaceholderReclassOnce(t *testing.T) {
 
 // covers: MA-323, R1, R5, S46
 // A Graph legacy stub is adopted on the first upgraded run (matched by PhysID or
-// Received) and is not swept gone.
+// Received) and is not swept gone (FC27). The stub an older build left for a
+// message it could not parse has the placeholder subject, Terminal ["body"] and a
+// content-hash identity over its received time; the adoption stamps the matches
+// seen and re-classes them to the info label legacy-placeholder, and the sweep then
+// spares them for good, so the change of identity never marks one gone. A record
+// that merely looks like one (another subject, an unmatched id and date, a local
+// folder-scoped stub, a Missing instead of a Terminal body) is no match, and an
+// unmatched legacy stub is swept as any record whose message has gone.
 func TestGraphLegacyStubIsAdoptedNotSwept(t *testing.T) {
-	t.Skip("MA-323: Graph legacy-stub adoption (FC27) is S3's, with the Graph walk's sweep rules; closes when FI-S3 lands")
+	m, _, tok := gapManifest(t)
+	received := time.Date(2025, 2, 1, 10, 0, 0, 0, time.UTC)
+	old := gapBase.Add(-48 * time.Hour)
+	stub := func(folder, date, physID string) Record {
+		return Record{Path: tok + "/" + folder + "/stub.html", Folder: folder, FirstFolder: folder, Present: true, LastSeen: old,
+			Subject: LegacyPlaceholderSubject, Date: date, Terminal: []string{MissingBody}, PhysID: physID}
+	}
+	kDate := LiveKey(tok, "sha:aaaa")
+	kPhys := LiveKey(tok, "sha:bbbb")
+	kOther := LiveKey(tok, "sha:cccc")
+	kReal := LiveKey(tok, "sha:dddd")
+	kMissing := LiveKey(tok, "sha:eeee")
+	kLocal := Key(tok, "Inbox", "sha:ffff")
+	m.Add(kDate, stub("Inbox", received.Format(time.RFC3339), ""))
+	m.Add(kPhys, stub("Inbox", "2020-01-01T00:00:00Z", "PHYS1"))
+	m.Add(kOther, stub("Inbox", "2020-01-02T00:00:00Z", "PHYS9"))
+	real := stub("Inbox", received.Format(time.RFC3339), "")
+	real.Subject = "Quarterly report"
+	m.Add(kReal, real)
+	missing := stub("Inbox", received.Format(time.RFC3339), "")
+	missing.Terminal, missing.Missing = nil, []string{MissingBody}
+	m.Add(kMissing, missing)
+	m.Add(kLocal, stub("Inbox", received.Format(time.RFC3339), ""))
+
+	seen := gapBase
+	if n := m.AdoptLegacyGraphStubs(tok, "PHYS1", received, seen); n != 2 {
+		t.Fatalf("adopted %d records, want the Received match and the PhysID match", n)
+	}
+	for _, k := range []string{kDate, kPhys} {
+		r, _ := m.Get(k)
+		if len(r.Missing) != 0 || len(r.Terminal) != 1 || r.Terminal[0] != LabelLegacyPlaceholder || !r.LastSeen.Equal(seen) || !r.Present || r.Path == "" {
+			t.Errorf("adopted stub %q = %+v; want it kept whole, stamped seen, Terminal [legacy-placeholder]", k, r)
+		}
+	}
+	for _, k := range []string{kOther, kReal, kMissing, kLocal} {
+		if r, _ := m.Get(k); len(r.Terminal) == 1 && r.Terminal[0] == LabelLegacyPlaceholder || r.LastSeen.Equal(seen) {
+			t.Errorf("%q = %+v was adopted though it is no legacy Graph stub of this message", k, r)
+		}
+	}
+
+	// The sweep of a later run (nothing stamps the adopted stubs now) spares them; every
+	// other record of the walked folder that was not seen goes.
+	later := gapBase.Add(24 * time.Hour)
+	walked := NewWalkedFolders()
+	walked.Mark("Inbox")
+	gone := m.SweepGoneSparing(tok, walked, later, SweepSpare{LegacyPlaceholders: true})
+	if !reflect.DeepEqual(gone, []string{kLocal, kOther, kReal, kMissing}) {
+		t.Errorf("the sweep marked %q gone; want the four records that are no adopted stub", gone)
+	}
+	for _, k := range []string{kDate, kPhys} {
+		if r, _ := m.Get(k); !r.Present {
+			t.Errorf("the adopted stub %q was marked gone: it is never marked gone because its identity changed", k)
+		}
+	}
+	// Without the spare they are records like any other.
+	m2, _, tok2 := gapManifest(t)
+	m2.Add(LiveKey(tok2, "sha:aaaa"), stub("Inbox", received.Format(time.RFC3339), ""))
+	m2.AdoptLegacyGraphStubs(tok2, "", received, seen)
+	w2 := NewWalkedFolders()
+	w2.Mark("Inbox")
+	if g := m2.SweepGoneSparing(tok2, w2, later, SweepSpare{}); len(g) != 1 {
+		t.Errorf("a sweep that spares nothing marked %q gone, want the adopted stub (the guard is the spare)", g)
+	}
 }
 
 // covers: MA-323, R1, R5, S46
 // A stale-ParserGen unparsed Graph stub is re-fetched exactly once (FC25).
 func TestStaleParserGenStubRefetchedOnce(t *testing.T) {
-	t.Skip("MA-323: the parser-generation stamp and its one re-fetch (FC25) need the stub producers (S2b) and the Graph walk (S3); closes when both land")
-}
-
-// covers: MA-323, R1, R5, S46
-// A Graph walk under -since records no gap for an item it was not asked for and
-// keeps an existing gap (§4.8.2 step 1).
-func TestGraphSinceRuleRecordsNoGapForUnrequestedItem(t *testing.T) {
-	t.Skip("MA-323: the Graph walk's -since rule (§4.8.2 step 1) is S3's; the ledger half (CloseUnobserved never closes a gap dated before -since) is asserted in TestCaptureGapLedgerLifecycle; closes when FI-S3 lands")
+	t.Skip("MA-323: the parser-generation stamp (Record.ParserGen on an unparsed stub) is FI-S2b's and the Graph walk's one re-fetch of a stale stub needs it (FC25); FI-S3 built the walk's other half; closes when FI-S2b lands")
 }
 
 // covers: MA-327, R1, R7, S46

@@ -42,10 +42,18 @@ type Config struct {
 	// stalled connection while holding the archive lock: every JSON request is
 	// bounded by RequestTimeout (the token endpoint too, whose transport gives up
 	// waiting for response headers after it), and capture's MIME download by
-	// MIMETimeout, its overall cap, today's 10 minutes until fault-isolation S3
+	// MIMETimeout, its overall cap, MIMEMaxDuration (2 h) since fault-isolation S3
 	// (a deprecated alias for that cap, §4.8.6).
 	RequestTimeout time.Duration
 	MIMETimeout    time.Duration
+
+	// How long get sleeps for a Retry-After (zero = the defaults): at most
+	// RetryAfterMax each, and at most RetryAfterBudget in all for one request,
+	// whatever the server asks for (fault-isolation §4.8.6, FC10), until F17 lands.
+	// Without the clamp the 2 h overall cap would let a throttled mailbox hold the
+	// archive lock for hours. Fixed by design; only tests scale them.
+	RetryAfterMax    time.Duration
+	RetryAfterBudget time.Duration
 
 	// The $value download's idle window and its own response-header window
 	// (zero = the defaults, 2 minutes each; the header window is never below the
@@ -90,16 +98,19 @@ type TokenStore interface {
 
 const (
 	defaultRequestTimeout    = 60 * time.Second
-	defaultMIMETimeout       = 10 * time.Minute
+	defaultMIMETimeout       = MIMEMaxDuration
 	defaultMIMEIdleTimeout   = 2 * time.Minute
 	defaultMIMEHeaderTimeout = 2 * time.Minute
 	defaultPageCap           = 100000
+	defaultRetryAfterMax     = 60 * time.Second
+	defaultRetryAfterBudget  = 5 * time.Minute
 )
 
 // MIMEMaxDuration is the shared overall cap on one $value download, Retry-After
-// sleeps included: the copy export's from its slice E1. Capture's Client.MIME
-// keeps Config.MIMETimeout (today's 10 minutes) until fault-isolation S3 raises
-// it to this, together with the Retry-After clamp and the breakers (RR6-C2).
+// sleeps included: the copy export's from its slice E1, and capture's since
+// fault-isolation S3, which raised it from the 10 minutes capture had until then
+// (RR6-C2) in the same slice as the Retry-After clamp and the breakers, so that
+// the 2 h never reaches a scheduled run without them.
 const MIMEMaxDuration = 2 * time.Hour
 
 // MIMEMaxBytes is the shared size cap on one $value body, confirmed against
@@ -128,6 +139,10 @@ type Client struct {
 	tokens     oauth2.TokenSource // the one caching source both clients share; MIMETo fetches the token through it before it arms a timer
 	mimeIdle   time.Duration
 	mimeHeader time.Duration
+
+	// retryMax and retryBudget clamp get's Retry-After sleeps: each, and in all
+	// for one request (§4.8.6).
+	retryMax, retryBudget time.Duration
 
 	// pageCap bounds each paging loop's pages (pageGuard); each loop counts its
 	// own.
@@ -179,13 +194,20 @@ func New(ctx context.Context, cfg Config) *Client {
 // when unset, and its tests' transport hook.
 type settings struct {
 	req, mime, idle, header time.Duration
+	retryMax, retryBudget   time.Duration
 	pageCap                 int
 	wrap                    func(http.RoundTripper) http.RoundTripper
 }
 
 func (cfg Config) settings() settings {
 	b := settings{req: cfg.RequestTimeout, mime: cfg.MIMETimeout, idle: cfg.MIMEIdleTimeout, header: cfg.MIMEHeaderTimeout,
-		pageCap: cfg.PageCap, wrap: cfg.WrapTransport}
+		retryMax: cfg.RetryAfterMax, retryBudget: cfg.RetryAfterBudget, pageCap: cfg.PageCap, wrap: cfg.WrapTransport}
+	if b.retryMax <= 0 {
+		b.retryMax = defaultRetryAfterMax
+	}
+	if b.retryBudget <= 0 {
+		b.retryBudget = defaultRetryAfterBudget
+	}
 	if b.req <= 0 {
 		b.req = defaultRequestTimeout
 	}
@@ -225,11 +247,13 @@ func newClient(ctx context.Context, base string, src oauth2.TokenSource, b setti
 			Transport:     &oauth2.Transport{Base: mime.Transport, Source: src},
 			CheckRedirect: mime.CheckRedirect,
 		},
-		tokens:     src,
-		mimeIdle:   b.idle,
-		mimeHeader: b.header,
-		pageCap:    b.pageCap,
-		meMode:     meMode,
+		tokens:      src,
+		mimeIdle:    b.idle,
+		mimeHeader:  b.header,
+		retryMax:    b.retryMax,
+		retryBudget: b.retryBudget,
+		pageCap:     b.pageCap,
+		meMode:      meMode,
 	}
 }
 
@@ -680,15 +704,40 @@ func (c *Client) Messages(ctx context.Context, userID, folderID string, fn func(
 
 // MIME fetches a message's raw RFC 5322 bytes (including attachments) via
 // /messages/{id}/$value, ready for the shared parser. It is capture's MIMETo:
-// the client's idle window, Config.MIMETimeout as the overall cap until
-// fault-isolation S3, and no size cap (owner ruling RR6-OR1's safe interim). On
-// any error it returns no bytes.
+// the client's idle window, Config.MIMETimeout (MIMEMaxDuration by default) as
+// the overall cap, and no size cap (owner ruling RR6-OR1's safe interim). On any
+// error it returns no bytes.
 func (c *Client) MIME(ctx context.Context, userID, messageID string) ([]byte, error) {
 	var buf bytes.Buffer
 	if _, err := c.MIMETo(ctx, userID, messageID, &buf, 0, c.mimeIdle, c.mimeTimeout); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// ProbeFolder is capture's control request for its breaker (fault-isolation
+// §4.8.5, FC10): GET /mailFolders/{id}?$select=id, a request unrelated to the
+// failing items, sent once with no retry loop and bounded by the request timeout.
+// It is never sent through get, whose Retry-After sleep would turn a throttle into
+// a wait: a 429 or a 503 comes back at once as the typed *StatusError, and a
+// server that does not answer as the transport's error. nil is a 2xx: the service
+// answers, so what fails is the items.
+func (c *Client) ProbeFolder(ctx context.Context, userID, folderID string) error {
+	ctx, cancel := context.WithTimeout(ctx, c.reqTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+c.userSeg(userID)+"/mailFolders/"+url.PathEscape(folderID)+"?$select=id", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return statusErr(resp)
+	}
+	return nil
 }
 
 // TimeoutKind names which of MIMETo's own timers stopped a download.
@@ -902,6 +951,7 @@ func (c *Client) get(ctx context.Context, u string) (*http.Response, error) {
 // and never runs during a Retry-After sleep (fault-isolation §4.8.6).
 func (c *Client) getOn(ctx context.Context, hc *http.Client, u string, perAttempt func() (disarm func())) (*http.Response, error) {
 	const maxRetry = 5
+	slept := time.Duration(0) // the Retry-After sleeps of this request so far (§4.8.6, FC10)
 	for attempt := 0; ; attempt++ {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 		if err != nil {
@@ -930,11 +980,17 @@ func (c *Client) getOn(ctx context.Context, hc *http.Client, u string, perAttemp
 		if resp.StatusCode != http.StatusTooManyRequests && resp.StatusCode != http.StatusServiceUnavailable {
 			return resp, nil
 		}
-		wait := retryAfter(resp)
+		// The server's Retry-After is clamped, each sleep and the sum of them for this
+		// request: a service that asks for an hour must not hold an unattended run, and
+		// the archive lock with it, for the 2 h overall cap (FC10). A request whose
+		// budget is spent is answered as one that is still throttled.
+		wait := min(retryAfter(resp), c.retryMax)
 		resp.Body.Close()
-		if attempt >= maxRetry {
+		if attempt >= maxRetry || slept >= c.retryBudget {
 			return nil, &throttledError{code: resp.StatusCode, retries: attempt}
 		}
+		wait = min(wait, c.retryBudget-slept)
+		slept += wait
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()

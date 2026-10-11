@@ -63,7 +63,7 @@ func GapWhy(reason string) string {
 	case "vanished-at-fetch":
 		return "the message was deleted from the mailbox while the run was reading it"
 	case "refresh-failed":
-		return "a newer read of this item was only partly readable, so the archived copy was kept"
+		return "a newer read of this item failed or was only partly readable, so the archived copy was kept"
 	case "folder-list-failed":
 		return "the folder's message list could not be read from Microsoft 365"
 	case "export-failed":

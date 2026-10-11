@@ -178,12 +178,8 @@ func TestNextLinkGuardPageCapAndPin(t *testing.T) {
 	}
 }
 
-// covers: MA-314, R10, R17, S46
-// MA-314's folder-list-failed gap case: a repeating nextLink in Messages ends
-// that folder as a folder-list-failed gap, and the walk goes on.
-func TestRepeatingNextLinkIsAFolderListFailedGap(t *testing.T) {
-	t.Skip("MA-314: the folder-list-failed gap case needs the S1a/S3 capture-gap ledger; until fault-isolation S3 a Messages stop fails the mailbox through today's error path (MA-540); lands in FI-S3")
-}
+// MA-314's folder-list-failed gap case, which needs capture's ledger, is
+// TestRepeatingNextLinkIsAFolderListFailedGap in internal/app (FI-S3).
 
 // roundTripFunc is an http.RoundTripper made of a function (fault injection).
 type roundTripFunc func(*http.Request) (*http.Response, error)

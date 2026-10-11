@@ -24,6 +24,41 @@ func Body(id string) string {
 		"@x>\r\nDate: Mon, 03 Mar 2025 09:00:00 +0000\r\n\r\nbody-" + id + "\r\n"
 }
 
+// BodyWithMid is Body with the Message-ID mid (without angle brackets) in place of
+// the one its id gives.
+func BodyWithMid(id, mid string) string {
+	return "From: a@example.com\r\nSubject: subj-" + id + "\r\nMessage-ID: <" + mid +
+		">\r\nDate: Mon, 03 Mar 2025 09:00:00 +0000\r\n\r\nbody-" + id + "\r\n"
+}
+
+// BodyNoMid is Body without a Message-ID: a message capture knows only by a
+// content hash.
+func BodyNoMid(id string) string {
+	return "From: a@example.com\r\nSubject: subj-" + id +
+		"\r\nDate: Mon, 03 Mar 2025 09:00:00 +0000\r\n\r\nbody-" + id + "\r\n"
+}
+
+// Fail answers with an HTTP error status and Graph's error body carrying code:
+// 500 with ErrorMimeContentConversionFailed is the poison message of F9.
+func Fail(status int, code string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		io.WriteString(w, `{"error":{"code":"`+code+`","message":"the service said no"}}`)
+	}
+}
+
+// Status answers with a bare HTTP status and, when retryAfter is not empty, that
+// Retry-After (seconds): a 503 with "0" is a throttle capture retries at once.
+func Status(status int, retryAfter string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if retryAfter != "" {
+			w.Header().Set("Retry-After", retryAfter)
+		}
+		w.WriteHeader(status)
+	}
+}
+
 func flush(w http.ResponseWriter) {
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
