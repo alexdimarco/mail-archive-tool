@@ -1,9 +1,49 @@
 package desktop
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
+
+	"mail-archive-tool/internal/app"
+	"mail-archive-tool/internal/index"
 )
+
+// covers: MA-435, MA-531, R29, S52
+// The preview's read of the index (the subject, sender and date of each message of the selected folders)
+// stops when the preview is cancelled (E4-AC7): it ignored the context, so a cancelled preview of a
+// folder of a million rows read them all, holding the list gate Rebuild waits behind, and the index
+// is closed all the same.
+func TestArchiveMetaStopsWhenThePreviewIsCancelled(t *testing.T) {
+	e := newWsEnv(t)
+	buildArchiveAt(t, e.out)
+	a, err := app.OpenArchive(e.out, app.ArchiveOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	var ids []string
+	for _, n := range a.Tree() {
+		ids = append(ids, n.ID)
+	}
+	meta, _, err := e.d.archiveMeta(context.Background(), a, ids) // the positive twin: nobody cancels
+	if err != nil || len(meta) != 6 {
+		t.Fatalf("the positive twin: %d rows, %v", len(meta), err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	meta, _, err = e.d.archiveMeta(ctx, a, ids)
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("a cancelled preview's read of the index: %v, want context.Canceled", err)
+	}
+	if len(meta) != 0 {
+		t.Errorf("a cancelled preview read %d rows of the index", len(meta))
+	}
+	if n := index.OpenListHandles(); n != 0 {
+		t.Errorf("%d index handle(s) left open", n)
+	}
+}
 
 // covers: MA-435, MA-531, R29, S52
 // The text of a row of an archive's index is shown with no control character and no bidirectional

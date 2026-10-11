@@ -582,13 +582,13 @@ type ArchiveResolved struct {
 func (a *ArchiveSource) Messages(ctx context.Context, keys []string, meta map[string]index.ListRow, progress func(done, total int)) (ArchiveResolved, error) {
 	var out ArchiveResolved
 	for i, key := range keys {
-		if i%256 == 0 {
-			if err := ctx.Err(); err != nil {
-				return out, err
-			}
-			if progress != nil {
-				progress(i, len(keys))
-			}
+		// a cancel is looked for at every record, not every 256th: a record without an original
+		// reads its archived page whole, up to 32 MiB, and parses it twice (E4-AC7)
+		if err := ctx.Err(); err != nil {
+			return out, err
+		}
+		if i%256 == 0 && progress != nil {
+			progress(i, len(keys))
 		}
 		rec, ok := a.man.Get(key)
 		if !ok {

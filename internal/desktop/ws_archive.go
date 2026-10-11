@@ -381,15 +381,18 @@ func newerIndexRefusal(ni *index.NewerIndexError) error {
 // archiveMeta reads what the index knows of each message of the selected folders (subject, sender,
 // date), for the names and the manifest: one read-only open, closed before the plan is made. Without
 // the index, the names carry what the manifest holds, and the preview says so.
-func (d *dashboard) archiveMeta(a *app.ArchiveSource, ids []string) (map[string]index.ListRow, string) {
+func (d *dashboard) archiveMeta(ctx context.Context, a *app.ArchiveSource, ids []string) (map[string]index.ListRow, string, error) {
 	d.listGate.RLock()
 	defer d.listGate.RUnlock()
+	if err := ctx.Err(); err != nil {
+		return nil, "", err
+	}
 	if d.rebuilding.Load() {
-		return nil, "The search index is being rebuilt, so most messages in this export carry no subject, sender or date in their names and in the manifest."
+		return nil, "The search index is being rebuilt, so most messages in this export carry no subject, sender or date in their names and in the manifest.", nil
 	}
 	h, err := a.OpenList()
 	if err != nil {
-		return nil, "The archive's search index can't be read (" + strings.TrimSuffix(listUnavailable(err), ".") + "), so most messages in this export carry no subject, sender or date in their names and in the manifest."
+		return nil, "The archive's search index can't be read (" + strings.TrimSuffix(listUnavailable(err), ".") + "), so most messages in this export carry no subject, sender or date in their names and in the manifest.", nil
 	}
 	defer h.Close()
 	meta := map[string]index.ListRow{}
@@ -399,15 +402,21 @@ func (d *dashboard) archiveMeta(a *app.ArchiveSource, ids []string) (map[string]
 			continue
 		}
 		if err := h.EachInFolder(token, path, func(row index.ListRow) error {
+			if err := ctx.Err(); err != nil { // a cancelled preview stops reading, and lets Rebuild in (E4-AC7)
+				return err
+			}
 			if key, ok := a.MapKey(h.Version, row); ok {
 				meta[key] = row
 			}
 			return nil
 		}); err != nil {
-			return meta, "Part of the archive's search index can't be read, so some messages in this export carry no subject, sender or date in their names and in the manifest."
+			if cerr := ctx.Err(); cerr != nil {
+				return nil, "", cerr
+			}
+			return meta, "Part of the archive's search index can't be read, so some messages in this export carry no subject, sender or date in their names and in the manifest.", nil
 		}
 	}
-	return meta, ""
+	return meta, "", ctx.Err()
 }
 
 // resolveAndPlanArchive turns the selection into the plan (design §4.4, §4.7): the folder set from
@@ -475,12 +484,15 @@ func (d *dashboard) resolveAndPlanArchive(ctx context.Context, job *wsPreviewJob
 		return nil, nil, &ref
 	}
 	job.set(func() { job.progress = "Reading the archive's search index…" })
-	meta, metaNote := d.archiveMeta(a, ids)
-	res, err := a.Messages(ctx, keys, meta, func(done, total int) {
-		job.set(func() {
-			job.progress = fmt.Sprintf("Checking the archive's files (%s of %s)", commaInt(done), commaInt(total))
+	meta, metaNote, err := d.archiveMeta(ctx, a, ids)
+	var res app.ArchiveResolved
+	if err == nil {
+		res, err = a.Messages(ctx, keys, meta, func(done, total int) {
+			job.set(func() {
+				job.progress = fmt.Sprintf("Checking the archive's files (%s of %s)", commaInt(done), commaInt(total))
+			})
 		})
-	})
+	}
 	if err != nil {
 		r := refusedWith("R-timeout", "MailArchive stopped reading the archive before it finished — try Preview copy export again.")
 		return nil, nil, &r
