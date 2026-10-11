@@ -1072,10 +1072,16 @@ func (c *Client) warmToken(ctx context.Context, u string) error {
 	}
 }
 
+// retryAfterCeil bounds the seconds retryAfter converts to a Duration: far above
+// any clamp (a year), and far enough below the 9.2e9 seconds at which a Duration
+// overflows int64 that a server cannot name a number that wraps negative and so
+// waits for nothing (S3-AO6).
+const retryAfterCeil = 366 * 24 * 60 * 60
+
 func retryAfter(resp *http.Response) time.Duration {
 	if s := resp.Header.Get("Retry-After"); s != "" {
 		if n, err := strconv.Atoi(strings.TrimSpace(s)); err == nil && n >= 0 {
-			return time.Duration(n) * time.Second
+			return time.Duration(min(n, retryAfterCeil)) * time.Second
 		}
 	}
 	return 5 * time.Second
