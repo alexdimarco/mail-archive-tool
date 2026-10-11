@@ -1,0 +1,58 @@
+Message-ID: <c11-text-attachments@corpus.example>
+Date: Mon, 02 Jan 2023 15:04:05 +0000
+From: Alice Example <alice@example.test>
+To: bob@example.test
+Subject: Text attachments in legacy charsets
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="tx-bd"
+
+--tx-bd
+Content-Type: text/plain; charset=utf-8
+
+Text attachments follow.
+
+--tx-bd
+Content-Type: text/csv; charset=iso-8859-1; name="latin1.csv"
+Content-Disposition: attachment; filename="latin1.csv"
+Content-Transfer-Encoding: base64
+
+bmFtZTtjaXR5DQpN/GxsZXI7S/Zsbg0KSm9z6Tta/HJpY2gNCg==
+
+--tx-bd
+Content-Type: text/xml; charset=iso-8859-1; name="latin1.xml"
+Content-Disposition: attachment; filename="latin1.xml"
+Content-Transfer-Encoding: quoted-printable
+
+<?xml version=3D"1.0" encoding=3D"ISO-8859-1"?>
+<invoice><name>Gr=FC=DFe K=F6ln</name></invoice>
+
+--tx-bd
+Content-Type: text/plain; charset=utf-16; name="utf16.txt"
+Content-Disposition: attachment; filename="utf16.txt"
+Content-Transfer-Encoding: base64
+
+//5HAHIA/ADfAGUAIADlZSxnnooNAAoA
+
+--tx-bd
+Content-Type: text/plain; charset=shift_jis; name="sjis.txt"
+Content-Disposition: attachment; filename="sjis.txt"
+Content-Transfer-Encoding: base64
+
+k/qWe4zqgsyDgYOCDQo=
+
+--tx-bd
+Content-Type: text/calendar; charset=windows-1252; name="cp1252.ics"
+Content-Disposition: attachment; filename="cp1252.ics"
+Content-Transfer-Encoding: base64
+
+QkVHSU46VkNBTEVOREFSDQpCRUdJTjpWRVZFTlQNClNVTU1BUlk6Q2Fm6SCTcXVvdGVklA0KRU5E
+OlZFVkVOVA0KRU5EOlZDQUxFTkRBUg0K
+
+--tx-bd
+Content-Type: text/html; charset=iso-8859-1; name="page.html"
+Content-Disposition: attachment; filename="page.html"
+Content-Transfer-Encoding: base64
+
+PGh0bWw+PGJvZHk+PHA+R3L832UgYXVzIEv2bG48L3A+PC9ib2R5PjwvaHRtbD4NCg==
+
+--tx-bd--

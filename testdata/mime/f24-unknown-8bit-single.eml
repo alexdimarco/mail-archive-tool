@@ -1,0 +1,10 @@
+Message-ID: <f24-unknown-8bit-single@corpus.example>
+Date: Mon, 02 Jan 2023 15:04:05 +0000
+From: Alice Example <alice@example.test>
+To: bob@example.test
+Subject: =?unknown-8bit?Q?Gr=FC=DFe_caf=E9?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset="unknown-8bit"
+Content-Transfer-Encoding: quoted-printable
+
+Gr=FC=DFe aus K=F6ln, caf=E9

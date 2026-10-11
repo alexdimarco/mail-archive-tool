@@ -1,0 +1,22 @@
+Message-ID: <c14-unquoted-boundary-eq@corpus.example>
+Date: Mon, 02 Jan 2023 15:04:05 +0000
+From: Alice Example <alice@example.test>
+To: bob@example.test
+Subject: Unquoted boundary with an equals sign
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary=----=_NextPart_000_0001_01D9
+
+------=_NextPart_000_0001_01D9
+Content-Type: text/plain; charset=utf-8
+
+The body of an Outlook-style message.
+
+------=_NextPart_000_0001_01D9
+Content-Type: application/pdf; name="r.pdf"
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment; filename="r.pdf"
+
+JVBERi0xLjQKJeLjz9MgbWltZS1jb3JwdXMgci5wZGYKMSAwIG9iajw8L1R5cGUvQ2F0YWxvZz4+
+ZW5kb2JqCnRyYWlsZXI8PC9Sb290IDEgMCBSPj4KJSVFT0YK
+
+------=_NextPart_000_0001_01D9--

@@ -1,0 +1,9 @@
+Message-ID: <c110-from-leading-dot@corpus.example>
+Date: Mon, 02 Jan 2023 15:04:05 +0000
+From: <.john@example.jp>
+To: bob@example.test
+Subject: From header leading-dot
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+The From header is the trigger.

@@ -1,0 +1,14 @@
+Message-ID: <ctl-state-headers@corpus.example>
+Date: Mon, 02 Jan 2023 15:04:05 +0000
+From: Alice Example <alice@example.test>
+To: bob@example.test
+Subject: Message state headers
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+Importance: high
+X-Priority: 1
+Sensitivity: Company-Confidential
+X-Mozilla-Status: 0001
+X-Mozilla-Keys: $label1 "Project X"
+
+State and categories are a snapshot, outside identity.

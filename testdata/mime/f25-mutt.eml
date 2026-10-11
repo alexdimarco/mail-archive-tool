@@ -1,0 +1,28 @@
+Message-ID: <f25-mutt@corpus.example>
+Date: Mon, 02 Jan 2023 15:04:05 +0000
+From: Mutt User <mutt@example.test>
+To: bob@example.test
+Subject: mutt named text parts
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="mutt-bd"
+User-Agent: Mutt/2.2.9 (2022-11-12)
+
+--mutt-bd
+Content-Type: text/plain; charset=us-ascii
+Content-Disposition: inline
+
+Build output attached below.
+
+--mutt-bd
+Content-Type: text/plain; charset=us-ascii
+Content-Disposition: inline; filename=build.log
+
+make: *** [all] Error 2
+
+--mutt-bd
+Content-Type: text/plain; charset=us-ascii; name="notes.txt"
+Content-Disposition: attachment; filename=notes.txt
+
+remember the notes
+
+--mutt-bd--

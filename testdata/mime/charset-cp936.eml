@@ -1,0 +1,10 @@
+Message-ID: <charset-cp936@corpus.example>
+Date: Mon, 02 Jan 2023 15:04:05 +0000
+From: Alice Example <alice@example.test>
+To: bob@example.test
+Subject: nameMap label cp936
+MIME-Version: 1.0
+Content-Type: text/plain; charset=cp936
+Content-Transfer-Encoding: 8bit
+
+Grüße café ¤¤¤å “q”

@@ -1,0 +1,28 @@
+Message-ID: <f24-empty-after-body@corpus.example>
+Date: Mon, 02 Jan 2023 15:04:05 +0000
+From: Alice Example <alice@example.test>
+To: bob@example.test
+Subject: Charset  after the body
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="mx"
+
+--mx
+Content-Type: text/plain; charset=utf-8
+
+The body, in UTF-8.
+
+--mx
+Content-Type: text/plain; charset=""
+Content-Transfer-Encoding: quoted-printable
+
+Gr=FC=DFe aus K=F6ln, caf=E9
+
+--mx
+Content-Type: application/pdf; name="r.pdf"
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment; filename="r.pdf"
+
+JVBERi0xLjQKJeLjz9MgbWltZS1jb3JwdXMgci5wZGYKMSAwIG9iajw8L1R5cGUvQ2F0YWxvZz4+
+ZW5kb2JqCnRyYWlsZXI8PC9Sb290IDEgMCBSPj4KJSVFT0YK
+
+--mx--

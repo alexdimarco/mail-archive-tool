@@ -1,0 +1,10 @@
+Message-ID: <shape-bounce-nullsender@corpus.example>
+Date: Mon, 02 Jan 2023 15:04:05 +0000
+From: <>
+To: bob@example.test
+Subject: Bounce with a null sender
+MIME-Version: 1.0
+Content-Type: text/plain; charset=us-ascii
+Return-Path: <>
+
+A bounce whose From is the null address.

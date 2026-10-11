@@ -1,0 +1,19 @@
+Message-ID: <ctl-html-alternative@corpus.example>
+Date: Mon, 02 Jan 2023 15:04:05 +0000
+From: Alice Example <alice@example.test>
+To: bob@example.test
+Subject: Alternative plain and html
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="alt1"
+
+--alt1
+Content-Type: text/plain; charset=utf-8
+
+Plain version
+
+--alt1
+Content-Type: text/html; charset=utf-8
+
+<html><body><p>HTML <b>version</b></p></body></html>
+
+--alt1--

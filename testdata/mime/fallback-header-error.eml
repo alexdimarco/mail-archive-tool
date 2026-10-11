@@ -1,0 +1,7 @@
+Message-ID: <fallback-header-error@corpus.example>
+Date: Mon, 02 Jan 2023 15:04:05 +0000
+From: Alice <alice@example.test>
+this line has no colon
+Subject: After the bad line
+
+Body after a header block go-message rejects.

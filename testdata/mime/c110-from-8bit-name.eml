@@ -1,0 +1,9 @@
+Message-ID: <c110-from-8bit-name@corpus.example>
+Date: Mon, 02 Jan 2023 15:04:05 +0000
+From: Jürgen <juergen@example.test>
+To: bob@example.test
+Subject: From header 8bit-name
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+The From header is the trigger.

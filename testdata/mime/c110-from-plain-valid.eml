@@ -1,0 +1,9 @@
+Message-ID: <c110-from-plain-valid@corpus.example>
+Date: Mon, 02 Jan 2023 15:04:05 +0000
+From: Hans Mueller <hans@example.de>
+To: bob@example.test
+Subject: From header plain-valid
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+The From header is the trigger.
