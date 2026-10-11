@@ -318,7 +318,10 @@ func (a *ArchiveSource) load() error {
 
 // The tree of another archive's manifest is bounded as the Graph tree is (graph.MaxWorkspaceFolders,
 // Exchange's own nesting limit) and in the bytes its node ids add up to: every node's id is the whole
-// path of its folder, so the cost of a deep path grows with the square of its depth (E4-AO2).
+// path of its folder, so the cost of a deep path grows with the square of its depth (E4-AO2). The count
+// and the bytes are the limits of another archive folder only: the owner's configured archive, which may
+// hold several accounts, is the archive R-o4 sends a trusted folder to, and is not refused for its size.
+// What one path may spell (depth and the length of a name) is bounded for both.
 const (
 	archiveMaxFolderDepth = 300
 	archiveMaxFolderName  = 1024
@@ -414,6 +417,9 @@ func (a *ArchiveSource) build() error {
 	folders := map[string]map[string]bool{} // token → every folder path with a record at or below it
 	nodes, idBytes := 0, 0
 	add := func(id string) error { // one more node in the tree, within its limits
+		if !a.other { // the owner's own archive: its size is its owner's (R-o4's remedy for a trusted folder)
+			return nil
+		}
 		nodes++
 		idBytes += len(id)
 		switch {

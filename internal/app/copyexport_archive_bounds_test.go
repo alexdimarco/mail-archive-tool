@@ -109,6 +109,47 @@ func TestArchiveSourceBoundsTheFolderTreeOfAHostileManifest(t *testing.T) {
 	}
 }
 
+// covers: MA-531, MA-435, MA-512, R29
+// The count of folders and the bytes of their ids are limits of another archive folder (E4-AO2, re-verified):
+// they were applied to the owner's configured archive too, and across all its stores together, so a healthy
+// archive of several accounts (or an IMAP cache) over 10,000 folders was refused as "can't be read" with no way
+// to export from it, where before it loaded. R-o4's own remedy for a folder one trusts is to make it the
+// archive location in Settings, and that archive is the owner's, written by their own captures; what a
+// path may spell (300 levels, 1,024 bytes a name) stays bounded for both, as a path no filesystem holds.
+// The positive twin: the same manifest handed over as another archive folder is still refused.
+func TestArchiveSourceTreeCountLimitsAreForAnotherFolderNotTheConfiguredArchive(t *testing.T) {
+	a := buildCEArchive(t)
+	a.edit(func(m *state.Manifest) {
+		for i := 0; i < 10001; i++ {
+			f := fmt.Sprintf("f%05d", i)
+			m.Add(state.Key("alice", f, "id"+f), state.Record{Path: "alice/" + f + "/x.html", Folder: f})
+		}
+		long := strings.Join(slicesOf(300, strings.Repeat("n", 1000)), "/") // ids of 45 MB together
+		m.Add(state.Key("bob", long, "idlong"), state.Record{Path: "bob/long/x.html", Folder: long})
+	})
+	other, err := OpenArchive(a.dir, ArchiveOptions{Other: true})
+	var ref *CopyRefusal
+	if !errors.As(err, &ref) || ref.ID != "R-p" || other != nil {
+		t.Fatalf("another archive folder with 10,001 folders: %v, want R-p", err)
+	}
+	s, err := OpenArchive(a.dir, ArchiveOptions{})
+	if err != nil {
+		t.Fatalf("the configured archive with 10,001 folders and 45 MB of folder ids: %v, want it loaded", err)
+	}
+	defer s.Close()
+	if n := len(s.Tree()); n < 10001+300 {
+		t.Errorf("the configured archive's tree has %d nodes, want every folder", n)
+	}
+}
+
+func slicesOf(n int, s string) []string {
+	out := make([]string, n)
+	for i := range out {
+		out[i] = s
+	}
+	return out
+}
+
 // covers: MA-435, MA-531, R29
 // A folder path with an empty segment ("/Sub", "a//b", "a/") is read as the folder its names
 // spell (E4-AC8): it used to give a node whose id was the store's own token, which overwrote the
