@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -18,6 +19,7 @@ import (
 
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/export"
+	"mail-archive-tool/internal/index"
 	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/model"
 	"mail-archive-tool/internal/state"
@@ -71,6 +73,18 @@ func rcPut(t *testing.T, src string, raw []byte) {
 func rcRun(t *testing.T, src, out string, mode export.Mode, raw bool, progress ProgressFunc) Result {
 	t.Helper()
 	res, err := Run(context.Background(), Options{Inputs: []string{src}, Out: out, Mode: mode, KeepRaw: raw}, rcLogger(), progress)
+	var partial *PartialError
+	if err != nil && !errors.As(err, &partial) {
+		t.Fatalf("run: %v", err)
+	}
+	return res
+}
+
+// rcRunIndexed is rcRun with the search index kept, so a run's uncommitted index
+// batch is part of what an interruption leaves.
+func rcRunIndexed(t *testing.T, src, out string, mode export.Mode, raw bool, progress ProgressFunc) Result {
+	t.Helper()
+	res, err := Run(context.Background(), Options{Inputs: []string{src}, Out: out, Mode: mode, KeepRaw: raw, Index: true}, rcLogger(), progress)
 	var partial *PartialError
 	if err != nil && !errors.As(err, &partial) {
 		t.Fatalf("run: %v", err)
@@ -135,9 +149,12 @@ func rcAsRecorded(t *testing.T, out string, rec state.Record) []string {
 }
 
 // rcSnapshot copies the archive as it stands, from inside a callback: the state a
-// hard kill at that instant leaves (RC31). Everything on disk is copied except the
-// lock file, which a killed run leaves held by a dead process and the live run here
-// still holds by this one.
+// hard kill at that instant leaves (RC31). Everything on disk is copied: the
+// manifest, the index with its -wal and -shm, the history, every message file. The
+// lock file is copied by its holder line, not its bytes (a held lock is a mandatory
+// byte-range lock on Windows): the copy is a new file nobody holds, which is the
+// stale lock a killed run leaves behind (the lock is an OS lock, released when its
+// holder dies).
 func rcSnapshot(t *testing.T, out string) string {
 	t.Helper()
 	snap := tmpDir(t)
@@ -153,7 +170,7 @@ func rcSnapshot(t *testing.T, out string) string {
 			return os.MkdirAll(filepath.Join(snap, rel), 0o755)
 		}
 		if d.Name() == lockfile.Name {
-			return nil
+			return os.WriteFile(filepath.Join(snap, rel), []byte(lockfile.Holder(p)+"\n"), 0o600)
 		}
 		b, rerr := os.ReadFile(p)
 		if rerr != nil {
@@ -165,6 +182,37 @@ func rcSnapshot(t *testing.T, out string) string {
 		t.Fatalf("snapshot of %s: %v", out, err)
 	}
 	return snap
+}
+
+// rcAssertKilledState is the harness's own check (RC31, MA-358): the snapshot is the
+// residue of a run killed inside it, not the archive of a run that finished. The
+// persisted manifest is byte for byte the one the run started from, and the lock
+// file is present and held by no one (a stale lock). A harness that observed
+// post-commit state fails here, instead of passing the encoder vacuously.
+func rcAssertKilledState(t *testing.T, snap string, manifestBefore []byte) {
+	t.Helper()
+	if got := rcRead(t, snap, ".mailarchive-manifest.json"); !bytes.Equal(got, manifestBefore) {
+		t.Fatalf("the snapshot's manifest is not the one the run started from: the snapshot observed saved state, not the state a kill leaves")
+	}
+	lock := filepath.Join(snap, lockfile.Name)
+	if _, err := os.Stat(lock); err != nil || lockfile.Held(lock) || lockfile.Holder(lock) == "" {
+		t.Fatalf("the snapshot should hold the stale lock file of the killed run (stat %v, held %v, holder %q)", err, lockfile.Held(lock), lockfile.Holder(lock))
+	}
+}
+
+// rcIndexNames is the set of paths the index at out holds rows for.
+func rcIndexNames(t *testing.T, out string) map[string]bool {
+	t.Helper()
+	ix, err := index.OpenReadonly(filepath.Join(out, "search.db"))
+	if err != nil {
+		t.Fatalf("open the index of %s: %v", out, err)
+	}
+	defer ix.Close()
+	rows := map[string]bool{}
+	if err := ix.EachRow(func(_ int64, _, path string) error { rows[path] = true; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	return rows
 }
 
 // rcRenameStem moves a record's files to another stem and persists the manifest

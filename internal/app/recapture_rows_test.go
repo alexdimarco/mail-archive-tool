@@ -467,9 +467,10 @@ func TestRecaptureWithoutRawKeepsThePreservedOriginal(t *testing.T) {
 // leaves (RC31). The archive is copied then and verified as a fresh process would
 // find it. The per-step kill points C1..C8 of the design need the exporter's
 // kill-point seam, which RI-S4 adds with the write path; the finder's numbers are
-// reproduced here through the callback. The design's "stale lock and uncommitted
-// index batch are present" witness is not asserted: this run keeps no index, and
-// the lock is left out of the copy, as a dead holder's is stale.
+// reproduced here through the callback. The harness asserts its own witnesses before
+// the skip, as the design requires: the snapshot holds the stale lock file and the
+// manifest the run started from, and (here, with the index kept) the run's
+// uncommitted index batch is not in it.
 func TestMovingRecaptureNeverLeavesARecordNamingAMissingFile(t *testing.T) {
 	src, out := rcSource(t), tmpDir(t)
 	rcPut(t, src, rcMail("mv@x", "Move me", "<p>text</p>", "a.pdf", []byte("%PDF a")))
@@ -482,9 +483,10 @@ func TestMovingRecaptureNeverLeavesARecordNamingAMissingFile(t *testing.T) {
 	}
 
 	// The full re-export the README recommends, observed after its first message.
+	before := rcRead(t, out, ".mailarchive-manifest.json")
 	var snap string
 	var exported int
-	rcRun(t, src, out, export.Full, true, func(s export.Stats) {
+	rcRunIndexed(t, src, out, export.Full, true, func(s export.Stats) {
 		if snap == "" {
 			snap, exported = rcSnapshot(t, out), s.Exported
 		}
@@ -496,6 +498,18 @@ func TestMovingRecaptureNeverLeavesARecordNamingAMissingFile(t *testing.T) {
 	_, rec2 := recordForID(t, out, "mv@x")
 	if rec2.Path == old.Path {
 		t.Fatalf("the run did not rename the message (%s): the case is vacuous", rec2.Path)
+	}
+
+	// The harness's own witnesses (RC31): the snapshot holds the stale lock and the
+	// earlier manifest, and the run's index batch is not in it (the archive had no
+	// index before this run, so the snapshot's holds no row). The finished run's
+	// index, the twin, names the new file.
+	rcAssertKilledState(t, snap, before)
+	if rows := rcIndexNames(t, snap); len(rows) != 0 {
+		t.Fatalf("the snapshot's index already holds %d row(s): the snapshot observed the committed index batch, not the state a kill leaves", len(rows))
+	}
+	if !rcIndexNames(t, out)[rec2.Path] {
+		t.Fatalf("the finished run's index does not name %s", rec2.Path)
 	}
 
 	// Twin: a run that finishes leaves a consistent archive.
@@ -527,6 +541,7 @@ func TestSamePathRecaptureNeverBreaksTheRecordedFixity(t *testing.T) {
 
 	// The message changed at the source: its body is longer, its envelope the same.
 	rcPut(t, src, rcMail("same@x", "Same place", "<p>second text, now longer</p>", "a.pdf", []byte("%PDF a")))
+	before := rcRead(t, out, ".mailarchive-manifest.json")
 	var snap string
 	var exported int
 	rcRun(t, src, out, export.Full, true, func(s export.Stats) {
@@ -542,6 +557,7 @@ func TestSamePathRecaptureNeverBreaksTheRecordedFixity(t *testing.T) {
 	if rec2.Path != rec1.Path || rec2.Fixity == nil || rec2.Fixity.HTML == nil || *rec2.Fixity.HTML == *rec1.Fixity.HTML {
 		t.Fatalf("the run should re-capture the message at its own path with new content: %+v then %+v", rec1, rec2)
 	}
+	rcAssertKilledState(t, snap, before) // the harness's own witness (RC31)
 
 	// Twin: a run that finishes leaves a consistent archive.
 	if rep := rcVerify(t, out); !rep.Attested() {
