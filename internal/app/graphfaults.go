@@ -104,7 +104,14 @@ func classifyListing(err error, walk context.Context) (fatal, transport bool) {
 // immutable id, which survives a move and a folder rename, so a moved item
 // re-observes its own entry instead of stranding it (§4.8.2, FC8(5), FC14);
 // otherwise it is the id the listing gave.
-func graphLocator(ref graph.MessageRef) string { return "graph:" + ref.ID }
+//
+// The locator is built through state.BoundLocator, so the key every lookup builds
+// (recovery, the known-poison read) is the key the ledger stored the entry under,
+// whatever the server's id looks like, and two ids never share an entry (S3-AO9).
+func graphLocator(ref graph.MessageRef) string { return state.BoundLocator("graph:" + ref.ID) }
+
+// folderLocator is the ledger locator of a folder-scope gap: folder:<id or path>.
+func folderLocator(s string) string { return state.BoundLocator("folder:" + s) }
 
 // runPartial says, before finish has built the run's Result, whether the run
 // observed something it could not capture (§4.1): a fillable or terminal gap its
@@ -377,7 +384,7 @@ func (w *mailboxWalk) listingFault(ctx context.Context, f graph.Folder, folderKe
 		return cleanErr(err)
 	}
 	w.folderFault = true
-	w.s.observe(state.CaptureGap{Folder: folderKey, Scope: state.GapScopeFolder, Locator: "folder:" + f.ID,
+	w.s.observe(state.CaptureGap{Folder: folderKey, Scope: state.GapScopeFolder, Locator: folderLocator(f.ID),
 		Reason: "folder-list-failed", Class: state.ClassFillable, Detail: err.Error()})
 	// A listing the service could not answer counts toward the breaker as a fault
 	// of the service; one it refused or one the guard stopped is the folder's own.
@@ -391,7 +398,7 @@ func (w *mailboxWalk) listingFault(ctx context.Context, f graph.Folder, folderKe
 // earlier is answered, and the folder is in the scope of closing gaps.
 func (w *mailboxWalk) folderRead(f graph.Folder, folderKey string) {
 	w.walkedGap[state.GapFolder(folderKey)] = true
-	if w.manifest.CloseGapReason(state.GapKey(w.token, state.GapScopeFolder, "folder:"+f.ID), "folder-list-failed") {
+	if w.manifest.CloseGapReason(state.GapKey(w.token, state.GapScopeFolder, folderLocator(f.ID)), "folder-list-failed") {
 		w.lr.recovered++
 	}
 }
@@ -404,7 +411,7 @@ func (w *mailboxWalk) covered(g state.CaptureGap) bool { return w.walkedGap[g.Fo
 // whose directory could not be created earlier in this run: it is counted under
 // the folder's gap and not downloaded (§4.8.2).
 func (w *mailboxWalk) folderUnwritable(folderKey string, detail string) {
-	w.s.observe(state.CaptureGap{Folder: folderKey, Scope: state.GapScopeFolder, Locator: "folder:" + folderKey,
+	w.s.observe(state.CaptureGap{Folder: folderKey, Scope: state.GapScopeFolder, Locator: folderLocator(folderKey),
 		Reason: "folder-unwritable", Class: state.ClassFillable, Detail: detail, Skipped: 1})
 }
 
@@ -433,7 +440,7 @@ func (w *mailboxWalk) exportOne(ref graph.MessageRef, f graph.Folder, folderKey 
 			w.recovered(ref)
 			// A folder the archive could not write earlier is writable now: its gap is
 			// answered, as the first message that lands in it shows.
-			if w.manifest.CloseGapReason(state.GapKey(w.token, state.GapScopeFolder, "folder:"+folderKey), "folder-unwritable") {
+			if w.manifest.CloseGapReason(state.GapKey(w.token, state.GapScopeFolder, folderLocator(folderKey)), "folder-unwritable") {
 				lr.recovered++
 			}
 		}

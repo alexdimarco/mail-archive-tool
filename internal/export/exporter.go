@@ -782,7 +782,7 @@ func (e *Exporter) archivedRecordFor(store string, m *model.Message, baseKey str
 func (e *Exporter) observeKept(store, folderKey string, m *model.Message) {
 	loc := "ident:" + m.Identity()
 	if e.DedupMailboxWide && m.PhysID != "" {
-		loc = "graph:" + m.PhysID
+		loc = state.BoundLocator("graph:" + m.PhysID) // the key the walk builds for the item (S3-AO9)
 	}
 	detail := "a newer read of this item was only partly readable (" + strings.Join(m.ReadGaps, ", ") + "); the archived copy was kept unchanged"
 	if m.ReadError != "" {

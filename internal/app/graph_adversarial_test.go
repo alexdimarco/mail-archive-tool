@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"mail-archive-tool/internal/export"
+	"mail-archive-tool/internal/graph"
 	"mail-archive-tool/internal/graph/graphtest"
 	"mail-archive-tool/internal/state"
 )
@@ -199,6 +200,50 @@ func TestGraphValueThatIsNotAMessageIsAGapNotARecord(t *testing.T) {
 		if !archived(t, out, id) {
 			t.Errorf("%s is not archived under its own Message-ID", id)
 		}
+	}
+}
+
+// covers: MA-311, MA-323, R1, R10, S46
+// S3-AO9 / S3-AI6: a hostile or very long item id keeps its own ledger entry. The
+// ledger stores a locator control-stripped and cut at 512 bytes, and a key built from
+// the raw id (what recovered and the known-poison lookup built) then found nothing,
+// while distinct ids that shared the first 512 bytes collapsed into ONE entry: the
+// run said "1 item(s) not captured" for three (R10), and healing them closed the
+// entry as "gone from the source" and not as recovered. Three items whose 600-byte
+// ids differ only at the end each keep an entry, are recovered by their own capture,
+// and the entry's key is the one the lookups build.
+func TestGraphLongItemIDsKeepTheirOwnGaps(t *testing.T) {
+	s := sweepServer(false, nil, nil, nil)
+	defer s.Close()
+	long := strings.Repeat("a", 600)
+	ids := []string{long + "1", long + "2", long + "3"}
+	for _, id := range ids {
+		s.AddMessage("u1", "F_IN", id)
+		s.SetValue(id, poison500)
+	}
+	out := tmpDir(t)
+	g := isoOptions(s)
+	if _, err := sweepRun(g, out, export.Incremental); !errors.Is(err, ErrPartial) {
+		t.Fatalf("run 1 returned %v, want ErrPartial", err)
+	}
+	m := loadArchive(t, out)
+	if got := len(m.CaptureGapsSorted()); got != 3 || m.MissingGapCount() != 3 {
+		t.Fatalf("the ledger holds %d entries and counts %d missing; want one entry per item, 3 and 3", got, m.MissingGapCount())
+	}
+	tok := mailboxToken(t, out, "u1")
+	for _, id := range ids {
+		if _, ok := m.GapFor(state.GapKey(tok, state.GapScopeItem, graphLocator(graph.MessageRef{ID: id}))); !ok {
+			t.Errorf("no entry under the key the walk builds for the item ending %q: its recovery and its known-poison lookup would miss it", id[len(id)-3:])
+		}
+	}
+
+	for _, id := range ids {
+		s.SetValue(id, nil)
+	}
+	res, err := sweepRun(g, out, export.Incremental)
+	if err != nil || res.Stats.Exported != 3 || res.Gaps.Recovered != 3 || res.Gaps.ClosedGone != 0 || len(graphGaps(t, out)) != 0 {
+		t.Errorf("the healed run: exported %d, err %v, recovered %d, closed-gone %d, gaps %d; want 3, nil, 3, 0, 0",
+			res.Stats.Exported, err, res.Gaps.Recovered, res.Gaps.ClosedGone, len(graphGaps(t, out)))
 	}
 }
 

@@ -1,6 +1,8 @@
 package state
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"sort"
 	"strings"
 	"time"
@@ -125,6 +127,25 @@ func boundRunes(s string, max int) string {
 		return s
 	}
 	return string([]rune(s)[:max])
+}
+
+// BoundLocator is the locator to build a ledger key from when the locator's text is
+// the source's own (a Graph item id, a folder id): raw itself when the ledger would
+// store it unchanged, else its cleaned, shortened form with a digest of raw. The
+// ledger strips control characters and cuts a locator at its bound, so a key built
+// from the raw text found no entry (a recovery or a known-poison lookup missed it)
+// and two ids that agreed on the first 512 bytes, or differed only in stripped
+// characters, shared one entry and the count of what is missing was too low
+// (S3-AO9). With the digest every distinct raw locator has its own entry, and the
+// text ObserveGap stores is the text a lookup builds. The result is a fixed point of
+// the ledger's own cleaning.
+func BoundLocator(raw string) string {
+	if boundString(raw, maxGapLocator) == raw {
+		return raw
+	}
+	sum := sha256.Sum256([]byte(raw))
+	suffix := "#" + hex.EncodeToString(sum[:8])
+	return boundString(raw, maxGapLocator-len(suffix)) + suffix
 }
 
 // GapFolder is the spelling the ledger stores a folder path in: control and bidi
