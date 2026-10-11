@@ -5,14 +5,16 @@
 // Host carries the attacker's name) is refused before any handler runs, and it
 // stamps the policy headers onto every response, errors and redirects included.
 // Routes are registered through Mux, a recording ServeMux, so a structural test
-// can probe every route a binary serves by name (MA-378). Sessions (P7) are a
-// later slice's.
+// can probe every route a binary serves by name (MA-378). A surface with a
+// Session (P7, slice C2) also admits only a browser that redeemed one of its
+// one-time launch links, and serves everything under a secret /s/<P>/ prefix.
 package localweb
 
 import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 )
@@ -30,6 +32,9 @@ type Surface struct {
 	// literal. An IPv6 literal
 	// is written bracketed, as a Host header carries it ("[2001:db8::1]").
 	ExtraHosts []string
+	// Session, when set, makes the surface admit only a browser that redeemed one
+	// of its one-time links (P7, slice C2); nil keeps the Host guard alone.
+	Session *Session
 }
 
 // denyCSP is the policy a response gets when its handler set none (the Host
@@ -61,13 +66,58 @@ func (g *guard) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		g.refuse(pw)
 		return
 	}
-	g.inner.ServeHTTP(pw, r)
+	inner := g.inner
+	if s := g.s.Session; s != nil {
+		var ok bool
+		if inner, ok = g.admit(pw, r, s); !ok {
+			return
+		}
+		pw.prefix = strings.TrimSuffix(s.Prefix(), "/")
+	}
+	inner.ServeHTTP(pw, r)
 	// A handler that wrote nothing gets net/http's own empty 200, written on the
 	// underlying writer after it returns, past the policyWriter: write that 200
 	// here instead, so it carries the policy headers like every other response.
 	if !pw.wrote {
 		pw.WriteHeader(http.StatusOK)
 	}
+}
+
+// admit is the session layer of a surface that has one (P7), run after the Host
+// check. GET /_open?t=T redeems a launch link on any surface; a request under
+// /s/<P>/ with the session cookie reaches the surface's handler with the prefix
+// stripped, so it sees "/", "/api/…", "/files/…" and "/goback" exactly as it
+// always has; every other request — any route, any method, GET included — is
+// refused with the locked page, or JSON when it is an API call, and the surface
+// never sees it. ok is false when admit has answered.
+func (g *guard) admit(w *policyWriter, r *http.Request, s *Session) (h http.Handler, ok bool) {
+	p := r.URL.Path
+	if p == "/_open" {
+		if r.Method != http.MethodGet {
+			// A HEAD or POST must never spend a one-time link (link previewers send them).
+			w.Header().Set("Allow", http.MethodGet)
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			io.WriteString(w, "method not allowed\n")
+			return nil, false
+		}
+		s.open(w, r, g.s.Name)
+		return nil, false
+	}
+	under, exact := s.inPrefix(p)
+	if !under || !s.admits(r) {
+		if isAPIPath(p) {
+			lockedJSON(w)
+		} else {
+			lockedPage(w, g.s.Name, pageLocked)
+		}
+		return nil, false
+	}
+	if exact {
+		http.Redirect(w, r, s.Prefix(), http.StatusFound)
+		return nil, false
+	}
+	return http.StripPrefix(strings.TrimSuffix(s.Prefix(), "/"), g.inner), true
 }
 
 // allowed reports whether host, a request's Host, names this machine as the
@@ -189,13 +239,36 @@ func setPolicy(h http.Header) {
 // reach every answer whatever the handler set or removed before — net/http's
 // own error and redirect paths included (http.FileServer's error path deletes
 // Cache-Control just before it writes).
+//
+// Behind a session it also keeps a redirect inside the prefix: the surface's own
+// handler issues path-absolute Locations ("/files/", from a ServeMux's
+// trailing-slash or clean-path 301), which would leave /s/<P>/, so prefix is put
+// in front of them; a Location that names a scheme or a host would leave the
+// surface and is refused (502, no Location) [CC17].
 type policyWriter struct {
 	http.ResponseWriter
-	wrote bool
+	wrote   bool
+	prefix  string // "/s/<P>" behind a session, else ""
+	discard bool   // a refused redirect's own body is dropped
 }
 
 func (w *policyWriter) WriteHeader(code int) {
 	setPolicy(w.Header())
+	if w.prefix != "" && code >= 300 && code < 400 {
+		if loc := w.Header().Get("Location"); loc != "" {
+			if u, err := url.Parse(loc); err != nil || u.Scheme != "" || u.Host != "" {
+				w.Header().Del("Location")
+				w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+				w.wrote = true
+				w.ResponseWriter.WriteHeader(http.StatusBadGateway)
+				io.WriteString(w.ResponseWriter, "refused: a redirect that leaves this page\n")
+				w.discard = true
+				return
+			} else if strings.HasPrefix(loc, "/") {
+				w.Header().Set("Location", w.prefix+loc)
+			}
+		}
+	}
 	if code >= 200 || code == http.StatusSwitchingProtocols {
 		w.wrote = true
 	}
@@ -203,6 +276,9 @@ func (w *policyWriter) WriteHeader(code int) {
 }
 
 func (w *policyWriter) Write(b []byte) (int, error) {
+	if w.discard {
+		return len(b), nil
+	}
 	if !w.wrote {
 		w.WriteHeader(http.StatusOK)
 	}
