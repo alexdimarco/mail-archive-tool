@@ -341,11 +341,6 @@ func TestGraphAuthAndCancelEndTheMailboxWithoutAGap(t *testing.T) {
 	})
 }
 
-// covers: MA-313, R5, R12, R18, S46
-func TestGraphBreakerAndRetryAfterClamp(t *testing.T) {
-	t.Skip("MA-313: the rate and time breaker, its control probe, the known-poison exemption, the run-level breaker and the Retry-After clamp (FC10); lands in FI-S3")
-}
-
 // unwritableServer is MA-501's mailbox u1: folders A, B and C of two, three and
 // two messages, each listed in one page.
 func unwritableServer() *graphtest.Server {

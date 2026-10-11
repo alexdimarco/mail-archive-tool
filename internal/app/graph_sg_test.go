@@ -39,7 +39,8 @@ func returnsWithin(t *testing.T, d time.Duration, what string, fn func()) {
 
 // sgOptions are MA-540's options on the shared fake, with its scaled bounds:
 // JSON request timeout 100 ms, $value idle 200 ms and header window 600 ms,
-// page cap 5, and capture's overall cap (Config.MIMETimeout until S3) 2 s.
+// page cap 5, and capture's overall cap (Config.MIMETimeout, MIMEMaxDuration by
+// default since S3) 2 s.
 func sgOptions(s *graphtest.Server) GraphOptions {
 	return GraphOptions{
 		Tenant: "t", ClientID: "c", ClientSecret: "s", Mailboxes: []string{"u1", "u2"},

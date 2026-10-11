@@ -360,12 +360,12 @@ func (s *Server) folderDetail(w http.ResponseWriter, r *http.Request, upn, id st
 	known := s.folder(upn, id) != nil
 	s.mu.Unlock()
 	switch {
-	case h != nil:
+	case known && h != nil:
 		h(w, r)
 	case known:
 		writeJSON(w, `{"id":"`+id+`"}`)
 	default:
-		http.NotFound(w, r)
+		http.NotFound(w, r) // a well-known name is never the control request
 	}
 }
 
@@ -415,8 +415,9 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request, upn, folderID 
 }
 
 // MA-540's scaled bounds (fault-isolation §9): the JSON request timeout, the
-// $value idle and header windows, capture's overall cap (Config.MIMETimeout
-// until S3) and the page cap, which the tests pass as the client's overrides.
+// $value idle and header windows, capture's overall cap (Config.MIMETimeout, 2 h
+// by default since S3) and the page cap, which the tests pass as the client's
+// overrides.
 const (
 	RequestTimeout = 100 * time.Millisecond
 	IdleTimeout    = 200 * time.Millisecond

@@ -136,6 +136,7 @@ type mailboxWalk struct {
 	lr       *localRun
 	s        *sourceRun // the mailbox as a source: its token, its writes, its unwritable folders
 	manifest *state.Manifest
+	client   *graph.Client
 	mailbox  string
 	token    string
 
@@ -143,13 +144,47 @@ type mailboxWalk struct {
 	folderFault bool                // a folder-scope fault: the mailbox's sweep and the closing of gaps are deferred
 	spare       state.SweepSpare    // the records an item fault the run could not match to a record keeps out of this run's sweep
 	physKeys    map[string][]string // the token's records by immutable id, read on the first fault that needs it
+
+	br       *graphBreaker // this mailbox's counts of faults about the service (§4.8.5)
+	folderID string        // the folder being listed: the control request's target
+	mark     time.Time     // when the walk last finished with an item, or began the listing: a listing fault's time is what has passed since
 }
 
-func newMailboxWalk(lr *localRun, manifest *state.Manifest, mailbox, token string) *mailboxWalk {
+func newMailboxWalk(lr *localRun, client *graph.Client, manifest *state.Manifest, mailbox, token string, breakerTime time.Duration) *mailboxWalk {
 	return &mailboxWalk{
-		lr: lr, s: &sourceRun{lr: lr, token: token, path: mailbox},
+		lr: lr, s: &sourceRun{lr: lr, token: token, path: mailbox}, client: client,
 		manifest: manifest, mailbox: mailbox, token: token, walkedGap: map[string]bool{},
+		br: newGraphBreaker(breakerTime),
 	}
+}
+
+// breakerCheck is what happens when a counted fault crossed one of the breaker's
+// bounds (fired says which): one control request, unrelated to the failing items,
+// decides (§4.8.5). If it fails too, the service or the network is down and the
+// mailbox ends with *GraphBreakerError, its gaps kept, no sweep and no closings.
+// If it is answered, the failing items are the items' own, the counts start again
+// and the walk goes on.
+func (w *mailboxWalk) breakerCheck(ctx context.Context, fired string, last error) error {
+	if fired == "" {
+		return nil
+	}
+	perr := w.client.ProbeFolder(ctx, w.mailbox, w.folderID)
+	if perr == nil {
+		w.br.reset()
+		return nil
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return &GraphBreakerError{Mailbox: w.mailbox, Threshold: fired, Last: boundText(last.Error()), Out: w.lr.out}
+}
+
+// boundText cuts a fault's text for a refusal that carries it.
+func boundText(s string) string {
+	if r := []rune(s); len(r) > 200 {
+		return string(r[:200]) + "…"
+	}
+	return s
 }
 
 // graphItemGap is the ledger entry of a message that could not be captured: its
@@ -247,20 +282,28 @@ func (w *mailboxWalk) recovered(ref graph.MessageRef) {
 //  2. in Full mode, a message whose Message-ID is already archived under this
 //     mailbox keeps its archived capture: the failed refresh is an info gap;
 //  3. otherwise its reason and class from classifyFetch.
-func (w *mailboxWalk) fetchFault(ctx context.Context, ref graph.MessageRef, folderKey string, err error) error {
-	reason, class, fatal, _ := classifyFetch(err, ctx)
+func (w *mailboxWalk) fetchFault(ctx context.Context, ref graph.MessageRef, folderKey string, err error, took time.Duration) error {
+	reason, class, fatal, transport := classifyFetch(err, ctx)
 	if fatal {
 		return &walkAbort{fmt.Errorf("fetch message %s: %w", ref.ID, err)}
+	}
+	// Known poison is read before this fault is recorded, which would stamp the gap.
+	kind := attemptItemFault
+	if transport && !w.knownPoison(ref, reason) {
+		kind = attemptCounted
 	}
 	if since := w.lr.exp.Since; !since.IsZero() && !ref.Received.IsZero() && ref.Received.Before(since) && !w.hasRecord(ref) {
 		w.lr.exp.Stats.SkippedDate++
 		w.faultIdentity(ref, nil)
-		return nil
+	} else {
+		if w.lr.exp.Mode == export.Full && ref.InternetMessageID != "" && len(w.sameToken("mid:"+ref.InternetMessageID)) > 0 {
+			reason, class = "refresh-failed", state.ClassInfo
+		}
+		w.observeItem(ref, nil, folderKey, reason, class, err.Error())
 	}
-	if w.lr.exp.Mode == export.Full && ref.InternetMessageID != "" && len(w.sameToken("mid:"+ref.InternetMessageID)) > 0 {
-		reason, class = "refresh-failed", state.ClassInfo
+	if berr := w.breakerCheck(ctx, w.br.attempt(kind, took), err); berr != nil {
+		return &walkAbort{berr}
 	}
-	w.observeItem(ref, nil, folderKey, reason, class, err.Error())
 	return nil
 }
 
@@ -280,13 +323,19 @@ func (w *mailboxWalk) sameToken(identity string) []state.IdentRef {
 // fault ends the mailbox, any other is the folder's gap. The folder is not
 // walked, and the mailbox's sweep and closings wait for a run that reads it.
 func (w *mailboxWalk) listingFault(ctx context.Context, f graph.Folder, folderKey string, err error) error {
-	if fatal, _ := classifyListing(err, ctx); fatal {
+	fatal, transport := classifyListing(err, ctx)
+	if fatal {
 		return err
 	}
 	w.folderFault = true
 	w.s.observe(state.CaptureGap{Folder: folderKey, Scope: state.GapScopeFolder, Locator: "folder:" + f.ID,
 		Reason: "folder-list-failed", Class: state.ClassFillable, Detail: err.Error()})
-	return nil
+	// A listing the service could not answer counts toward the breaker as a fault
+	// of the service; one it refused or one the guard stopped is the folder's own.
+	if !transport {
+		return nil
+	}
+	return w.breakerCheck(ctx, w.br.attempt(attemptCounted, time.Since(w.mark)), err)
 }
 
 // folderRead notes that folder f's listing was consumed: a gap its listing left

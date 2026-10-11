@@ -66,6 +66,9 @@ type GraphOptions struct {
 	MIMETimeout       time.Duration
 	MIMEIdleTimeout   time.Duration
 	MIMEHeaderTimeout time.Duration
+	RetryAfterMax     time.Duration // each Retry-After sleep (default 60 s)
+	RetryAfterBudget  time.Duration // all of one request's Retry-After sleeps (default 5 min)
+	BreakerTimeBound  time.Duration // the breaker's cumulative time in failed downloads, per mailbox (default 30 min)
 	PageCap           int
 	WrapTransport     func(http.RoundTripper) http.RoundTripper
 }
@@ -319,8 +322,10 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	var failures int
 	var firstErr error
 	unread := 0 // mailboxes a run-level stop left unread
+	var lastTrip *GraphBreakerError
+	var runBreaker *RunBreakerError
 	for i, mbx := range g.Mailboxes {
-		runErr := runGraphMailbox(ctx, lr, client, manifest, hist, idx, mbx, filter, checkpoint, func() error { return lockLost })
+		runErr := runGraphMailbox(ctx, lr, client, manifest, hist, idx, mbx, filter, g.BreakerTimeBound, checkpoint, func() error { return lockLost })
 		if lockLost != nil {
 			// Lock removed/replaced mid-run: another run may own this archive now.
 			// Write no shared state (manifest/index/README); the deferred recordRun
@@ -346,6 +351,13 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 			}
 			return result, context.Canceled
 		}
+		// Two mailboxes in a row that tripped the breaker say the service or the network
+		// is down: the run stops, and an outage costs about two mailboxes' budget, not
+		// every mailbox's (§4.8.5, FC10).
+		var trip *GraphBreakerError
+		if !errors.As(runErr, &trip) {
+			lastTrip = nil
+		}
 		if runErr != nil {
 			failures++
 			if firstErr == nil {
@@ -364,6 +376,15 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 				// kept (§4.6).
 				unread = len(g.Mailboxes) - i - 1
 				break
+			}
+			if trip != nil {
+				if lastTrip != nil {
+					runBreaker = &RunBreakerError{First: lastTrip, Second: trip}
+					logger.Printf("error: %v", runBreaker)
+					unread = len(g.Mailboxes) - i - 1
+					break
+				}
+				lastTrip = trip
 			}
 		}
 	}
@@ -404,6 +425,9 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		// returned error so it lands in the last-run record and `status` can fire
 		// the expired-secret remedy (friction #6).
 		if firstErr != nil {
+			if runBreaker != nil {
+				return result, fmt.Errorf("%d mailbox(es) failed; first error: %w; %w", failures, asFailure(ctx, firstErr), runBreaker)
+			}
 			return result, fmt.Errorf("%d mailbox(es) failed; first error: %w", failures, asFailure(ctx, firstErr))
 		}
 		return result, fmt.Errorf("%d mailbox(es) failed", failures)
@@ -439,6 +463,8 @@ func buildGraphClient(ctx context.Context, g GraphOptions, logger *log.Logger) (
 		MIMETimeout:       g.MIMETimeout,
 		MIMEIdleTimeout:   g.MIMEIdleTimeout,
 		MIMEHeaderTimeout: g.MIMEHeaderTimeout,
+		RetryAfterMax:     g.RetryAfterMax,
+		RetryAfterBudget:  g.RetryAfterBudget,
 		PageCap:           g.PageCap,
 		WrapTransport:     g.WrapTransport,
 	}
@@ -542,7 +568,7 @@ func recordMove(hist *state.HistoryWriter, idx *index.Index, key, folder string,
 // and idx (either may be nil) receive the go-back timeline events and the
 // body-free index folder update the move fast-path issues; runAt is the run's
 // timestamp, stamped as LastSeen on every observation (§3.2/§3.4).
-func runGraphMailbox(ctx context.Context, lr *localRun, client *graph.Client, manifest *state.Manifest, hist *state.HistoryWriter, idx *index.Index, mailbox string, filter graph.FolderFilter, checkpoint func(), abort func() error) error {
+func runGraphMailbox(ctx context.Context, lr *localRun, client *graph.Client, manifest *state.Manifest, hist *state.HistoryWriter, idx *index.Index, mailbox string, filter graph.FolderFilter, breakerTime time.Duration, checkpoint func(), abort func() error) error {
 	exp, runAt, logger := lr.exp, lr.runAt, lr.logger
 	logger.Printf("Reading mailbox %s via Microsoft Graph", mailbox)
 	// The store token for a Graph source is seeded from the CANONICAL mailbox id
@@ -561,7 +587,7 @@ func runGraphMailbox(ctx context.Context, lr *localRun, client *graph.Client, ma
 	}
 
 	walked := state.NewWalkedFolders()
-	w := newMailboxWalk(lr, manifest, mailbox, token)
+	w := newMailboxWalk(lr, client, manifest, mailbox, token, breakerTime)
 	for _, f := range folders {
 		select {
 		case <-ctx.Done():
@@ -569,7 +595,9 @@ func runGraphMailbox(ctx context.Context, lr *localRun, client *graph.Client, ma
 		default:
 		}
 		folderKey := strings.Join(f.Path, "/")
+		w.folderID, w.mark = f.ID, time.Now()
 		err := client.Messages(ctx, mailbox, f.ID, func(ref graph.MessageRef) error {
+			defer func() { w.mark = time.Now() }()
 			select {
 			case <-ctx.Done():
 				return &walkAbort{ctx.Err()}
@@ -716,10 +744,12 @@ func runGraphMailbox(ctx context.Context, lr *localRun, client *graph.Client, ma
 				w.folderUnwritable(folderKey, "")
 				return nil
 			}
+			began := time.Now()
 			data, fetchErr := client.MIME(ctx, mailbox, ref.ID)
 			if fetchErr != nil {
-				return w.fetchFault(ctx, ref, folderKey, fetchErr)
+				return w.fetchFault(ctx, ref, folderKey, fetchErr, time.Since(began))
 			}
+			w.br.attempt(attemptOK, 0) // a download that succeeded ends the run of consecutive faults
 			m := parseRFC822(data)
 			if m == nil {
 				// Unreachable today (parseMessage never returns nil), and silent if it

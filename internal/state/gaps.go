@@ -384,6 +384,18 @@ func (m *Manifest) CloseGapInFolder(key, folder string) bool {
 	return true
 }
 
+// GapFor returns the entry stored under key. The Graph breaker reads it to tell a
+// fault on an item that has failed the same way on an earlier run (known poison:
+// evidence about that item, not about the service) from a new one (§4.8.5, FC10).
+// Nothing reads it to decide whether an item is fetched or exported: the ledger
+// stays inert (P5).
+func (m *Manifest) GapFor(key string) (CaptureGap, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	g, ok := m.CaptureGaps[key]
+	return g, ok
+}
+
 // GapObservedIn reports the folder of the entry under key if this run (runAt)
 // already observed it: a second observation of one key from another folder is
 // another copy's gap and needs a key of its own.
