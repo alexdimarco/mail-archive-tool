@@ -1239,6 +1239,37 @@ Load-sensitive tests: `TestCopyExportTransportOutageAndTheBreaker`, `...TwentyFi
 workflows running) and pass alone three of three. The 60,000-message heap bound (40 MiB) sits at its
 limit under load. [Keep as is; revisit if CI flakes.]
 
+### 13.18 EW-E4 built and merged (2026-10-11), delegated-judgement
+
+The archive source is built: the Source control offers Microsoft 365, this archive, and **another
+archive folder, read-only** (W1). Includes the archive adapter with the redaction belt, the component-wise
+no-symlink walk and one-hard-link check, the archived-page gate and quarantine (moved from E5, RR2-C9),
+`index.ListFolder` read-only with the Rebuild lock, the tree from the manifest with per-store mailbox
+labels, the Settings-save guard (MA-523), R-o, R-o2, R-o3, R-o4 and R-l2, no archive lock beside a capture
+(MA-510), and a retry that re-resolves against the archive as it is now. E3's skip encoder for MA-427's
+archive-root-gone half is replaced by a real test. Conform fixed nine gaps, each with a test (a page too
+large for the gate, the Rebuild lock through the real job, the M365 export leaving an archive
+byte-identical, the manifest cap checked before any allocation, among them). **Owed: the adversarial
+addendum and the friction re-run (§7.4 inheritor cell).** Delegated: records whose recorded file is
+missing are skipped, not served from the archived page; an archived page over 32 MiB is quarantined unread;
+a typed another-archive path must be absolute; the archive snapshot is released after 30 idle minutes.
+Windows legs (fileLinks, subst) are vet-checked only.
+
+### 13.19 RI-S1 built and merged (2026-10-11), delegated-judgement
+
+Interim re-capture-integrity slice, catalog and encoders only: R28, S50 and S51 land (R27's reference to
+R28 now resolves), and nine skip encoders for the confirmed-open gaps: MA-350, 351, 352, 355 (F46),
+356 (1.6), 357 (1.5), 358 (N2 and 1.7), 359 (N3), 361 (F48). No product code; the R2, R13 and S24
+amendments, R1's added sentence and R5's write-beside sentence are not made (ESC-2, ESC-3). **The
+encoders are red without their skip, which confirms these defects exist in today's code:** a full run
+over a source whose attachment is now empty deletes the archived attachments zip and rewrites the page
+(F46, loses a held attachment); `reindex` deletes message files whose index rows are stale, in the
+reproduction three current files and an emptied manifest (F48); a kill right after a changed message is
+re-captured makes `verify` report two files modified (1.7, a false integrity alarm, the result ESC-3
+asks for); a failed page write leaves the zip and eml no longer matching their recorded bytes (N3). The
+fixes are RI-S2 (F48), RI-S4 and RI-S5, which wait on ESC-2 and ESC-3. **Owner attention:** F46 and F48
+are data-loss paths in released behaviour, not only in this branch; a note for the release plan.
+
 ### 13.7 Escalations from LC-C1's adversarial pass (merged 2026-10-10)
 
 None blocks anything: each has a skip encoder or a safe interim in force.
