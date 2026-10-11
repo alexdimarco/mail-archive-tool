@@ -1158,10 +1158,11 @@ retry preview, MA-430, 437, 438, 448 and 521 halves, and MA-384's workspace sign
 **Owed before ship: the combined adversarial pass (E2 write side plus E3) and the friction review.**
 X13 stays Partial; X14 and X15 are Partial, not Met, until both gates close.
 
-Open, owner: (1) the Overview sidebar's Export group jumps to a card with the two links rather
-than linking straight, because MA-302 holds the Overview to same-page anchors; a straight link
-amends MA-302. Recommended: keep the card (no gate change). (2) MSI property wiring for the
-deployment switch is not built; only the flag and the policy are. Skip encoders remaining:
+Owner decisions (2026-10-11): (1) **RULED: keep the card.** The Overview sidebar's Export group
+jumps to a card with the two links; MA-302 is unchanged. (2) **RULED: defer.** The MSI property
+for the deployment switch is not built; only the `-no-workspace` flag and the Windows
+`DisableExtractionWorkspace` policy are. It stays on the list and is built if MSI fleet deployment
+is ever needed (it would also need a Windows lab check). Skip encoders remaining:
 ESC-15's token lock, E4's archive-root-gone, E5's Readable HTML, R4's archive-writer names. The
 Linux mocked-zenity argv test and all Windows legs have not run here.
 
