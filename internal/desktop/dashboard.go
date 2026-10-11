@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"log"
 	"net/http"
 	"os/user"
 	"path/filepath"
@@ -20,6 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/graph"
 	"mail-archive-tool/internal/graphconfig"
 	"mail-archive-tool/internal/instance"
@@ -181,6 +183,8 @@ type dashboard struct {
 	// "the index is being rebuilt" until the job ends (XC20).
 	listGate   sync.RWMutex
 	rebuilding atomic.Bool
+	// rebuild is the Rebuild job's work; a test replaces it to stand inside the rebuild (nil: app.Rebuild).
+	rebuild func(out string, l *log.Logger) (app.RebuildReport, error)
 
 	// seams a test replaces
 	now    func() time.Time

@@ -106,7 +106,11 @@ func (d *dashboard) rebuildAction(w http.ResponseWriter, r *http.Request) {
 		// open inside its rename window (XC20).
 		d.beginRebuild()
 		defer d.endRebuild()
-		rr, rerr := app.Rebuild(out, l)
+		rebuild := d.rebuild
+		if rebuild == nil {
+			rebuild = app.Rebuild
+		}
+		rr, rerr := rebuild(out, l)
 		if rerr != nil {
 			return "", rerr
 		}
