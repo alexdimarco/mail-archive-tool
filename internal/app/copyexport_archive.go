@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"mail-archive-tool/internal/export"
@@ -88,15 +89,20 @@ type archiveStamp struct {
 type ArchiveSource struct {
 	dir   string
 	other bool
-	root  *os.Root
 
-	man    *state.Manifest // the snapshot; nil for a source opened only to run
-	stamp  archiveStamp
-	stores []ArchiveStore
-	nodes  []ArchiveNode
-	byNode map[string][]string
-	loc    map[string]archiveLoc
-	pst    map[string]bool
+	// root is the handle a source opened for a run holds for the run; a loaded archive holds none
+	// between requests, and each request reads through a root it opens (rootFor, E4-AI9).
+	rootMu sync.Mutex
+	root   *os.Root
+
+	man     *state.Manifest // the snapshot; nil for a source opened only to run
+	stamp   archiveStamp
+	stores  []ArchiveStore
+	nodes   []ArchiveNode
+	byNode  map[string][]string
+	loc     map[string]archiveLoc
+	pst     map[string]bool
+	mailbox map[string]string // a store's token → the mailbox it holds
 
 	refMu sync.Mutex
 	refs  map[string][]CopyFolderRef // a folder's chain of folders, as the plan names them, made once
@@ -119,6 +125,7 @@ func OpenArchive(dir string, opt ArchiveOptions) (*ArchiveSource, error) {
 		a.Close()
 		return nil, err
 	}
+	a.release() // a loaded archive holds no handle on the folder between requests (E4-AI9)
 	return a, nil
 }
 
@@ -135,7 +142,7 @@ func openArchiveRoot(dir string, opt ArchiveOptions) (*ArchiveSource, error) {
 	if err != nil || !fi.IsDir() {
 		return nil, archiveMissing(abs, opt.Other, "")
 	}
-	root, err := os.OpenRoot(abs)
+	root, err := openArchiveDir(abs)
 	if err != nil {
 		return nil, archiveMissing(abs, opt.Other, "")
 	}
@@ -170,8 +177,56 @@ func (a *ArchiveSource) Dir() string { return a.dir }
 // Other reports whether this is another archive folder, read-only.
 func (a *ArchiveSource) Other() bool { return a.other }
 
-// Close releases the root.
-func (a *ArchiveSource) Close() error { return a.root.Close() }
+// rootsOpen counts the directory handles the archive source holds on archive folders, so that a test
+// can see one that is held between requests (E4-AI9).
+var rootsOpen atomic.Int64
+
+// ArchiveRootsOpen is how many archive roots are open now: none between requests of a loaded archive.
+func ArchiveRootsOpen() int { return int(rootsOpen.Load()) }
+
+func openArchiveDir(abs string) (*os.Root, error) {
+	r, err := os.OpenRoot(abs)
+	if err == nil {
+		rootsOpen.Add(1)
+	}
+	return r, err
+}
+
+func closeArchiveDir(r *os.Root) {
+	if r != nil && r.Close() == nil {
+		rootsOpen.Add(-1)
+	}
+}
+
+// Close releases the root a source opened for a run holds; a loaded archive holds none.
+func (a *ArchiveSource) Close() error {
+	a.rootMu.Lock()
+	r := a.root
+	a.root = nil
+	a.rootMu.Unlock()
+	closeArchiveDir(r)
+	return nil
+}
+
+// rootFor is the root a request reads the archive through, and what to call when it is done: the one a
+// source opened for a run holds, or, for a loaded archive, a root opened for this request and closed at its end
+// (E4-AI9). The files a request opened through it stay open after it is closed.
+func (a *ArchiveSource) rootFor() (*os.Root, func(), error) {
+	a.rootMu.Lock()
+	held := a.root
+	a.rootMu.Unlock()
+	if held != nil {
+		return held, func() {}, nil
+	}
+	r, err := openArchiveDir(a.dir)
+	if err != nil {
+		return nil, func() {}, archiveMissing(a.dir, a.other, "")
+	}
+	return r, func() { closeArchiveDir(r) }, nil
+}
+
+// release lets go of the root a loaded archive was opened with: from here every request opens its own.
+func (a *ArchiveSource) release() { a.Close() }
 
 // Stamp identifies the manifest the snapshot was read from (its size and mtime).
 func (a *ArchiveSource) Stamp() (int64, time.Time) { return a.stamp.size, a.stamp.mod }
@@ -179,7 +234,12 @@ func (a *ArchiveSource) Stamp() (int64, time.Time) { return a.stamp.size, a.stam
 // StampNow is the manifest's size and mtime as they are now, so a cached snapshot can be
 // told from the manifest it was read from.
 func (a *ArchiveSource) StampNow() (int64, time.Time, error) {
-	fi, err := a.root.Lstat(archiveManifestName)
+	root, done, err := a.rootFor()
+	if err != nil {
+		return 0, time.Time{}, err
+	}
+	defer done()
+	fi, err := root.Lstat(archiveManifestName)
 	if err != nil {
 		return 0, time.Time{}, err
 	}
@@ -188,7 +248,12 @@ func (a *ArchiveSource) StampNow() (int64, time.Time, error) {
 
 // readManifest reads the manifest through the root, under the cap for another folder.
 func (a *ArchiveSource) readManifest() ([]byte, archiveStamp, error) {
-	fi, err := a.root.Lstat(archiveManifestName)
+	root, done, rerr := a.rootFor()
+	if rerr != nil {
+		return nil, archiveStamp{}, rerr
+	}
+	defer done()
+	fi, err := root.Lstat(archiveManifestName)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		return nil, archiveStamp{}, archiveMissing(a.dir, a.other, "")
@@ -200,7 +265,7 @@ func (a *ArchiveSource) readManifest() ([]byte, archiveStamp, error) {
 	if a.other && fi.Size() > archiveOtherManifestCap {
 		return nil, archiveStamp{}, archiveTooBig(a.dir, fi.Size())
 	}
-	f, err := openRegularIn(a.root, archiveManifestName)
+	f, err := openRegularIn(root, archiveManifestName)
 	if err != nil {
 		return nil, archiveStamp{}, archiveMissing(a.dir, a.other, " that can be read: "+leaveName(err))
 	}
@@ -342,7 +407,7 @@ func (a *ArchiveSource) build() error {
 			pst[tok] = true
 		}
 	}
-	a.pst = pst
+	a.pst, a.mailbox = pst, mailbox
 	a.byNode = map[string][]string{}
 	a.loc = map[string]archiveLoc{}
 	folders := map[string]map[string]bool{} // token → every folder path with a record at or below it
@@ -542,7 +607,12 @@ func (a *ArchiveSource) OpenList() (*index.ListHandle, error) {
 // WALBeside reports whether a non-empty search.db-wal sits beside the index: an immutable
 // open does not read it, so the list may miss recent messages.
 func (a *ArchiveSource) WALBeside() bool {
-	fi, err := a.root.Lstat(archiveIndexName + "-wal")
+	root, done, err := a.rootFor()
+	if err != nil {
+		return false
+	}
+	defer done()
+	fi, err := root.Lstat(archiveIndexName + "-wal")
 	return err == nil && fi.Size() > 0
 }
 
@@ -586,6 +656,11 @@ type ArchiveResolved struct {
 // called now and then with how many keys have been read.
 func (a *ArchiveSource) Messages(ctx context.Context, keys []string, meta map[string]index.ListRow, progress func(done, total int)) (ArchiveResolved, error) {
 	var out ArchiveResolved
+	root, done, err := a.rootFor() // one root for the whole resolution, closed at its end (E4-AI9)
+	if err != nil {
+		return out, err
+	}
+	defer done()
 	for i, key := range keys {
 		// a cancel is looked for at every record, not every 256th: a record without an original
 		// reads its archived page whole, up to 32 MiB, and parses it twice (E4-AC7)
@@ -600,7 +675,7 @@ func (a *ArchiveSource) Messages(ctx context.Context, keys []string, meta map[st
 			out.Skipped++
 			continue
 		}
-		m, ok := a.resolve(key, rec, meta)
+		m, ok := a.resolve(root, key, rec, meta)
 		if !ok {
 			out.Skipped++
 			out.Vanished = append(out.Vanished, key)
@@ -620,8 +695,8 @@ func archiveSiblings(rel string) (page, eml, zip string) {
 // exists reports whether rel is in the archive as far as one Lstat through the root can
 // tell; an error other than "not there" says nothing, and counts as there (the run lists
 // the file when it cannot read it).
-func (a *ArchiveSource) exists(rel string) (present bool, size int64) {
-	fi, err := a.root.Lstat(filepath.FromSlash(rel))
+func (a *ArchiveSource) exists(root *os.Root, rel string) (present bool, size int64) {
+	fi, err := root.Lstat(filepath.FromSlash(rel))
 	if errors.Is(err, fs.ErrNotExist) {
 		return false, 0
 	}
@@ -631,7 +706,7 @@ func (a *ArchiveSource) exists(rel string) (present bool, size int64) {
 	return true, fi.Size()
 }
 
-func (a *ArchiveSource) resolve(key string, rec state.Record, meta map[string]index.ListRow) (CopyMessage, bool) {
+func (a *ArchiveSource) resolve(root *os.Root, key string, rec state.Record, meta map[string]index.ListRow) (CopyMessage, bool) {
 	tok, _, _ := strings.Cut(key, "\x00")
 	m := CopyMessage{SourceID: key, SizeHint: -1, Rel: rec.Path, Gone: !(rec.Present || rec.LastSeen.IsZero())}
 	folder, err := archiveCanonFolder(rec.Folder)
@@ -639,11 +714,7 @@ func (a *ArchiveSource) resolve(key string, rec state.Record, meta map[string]in
 		folder = ""
 	}
 	m.Folder = a.folderRefs(tok, folder)
-	for _, s := range a.stores {
-		if s.Token == tok {
-			m.Mailbox = s.Mailbox
-		}
-	}
+	m.Mailbox = a.mailbox[tok]
 	if row, ok := meta[key]; ok {
 		m.Subject, m.From, m.FromName, m.Received = row.Subject, row.SenderEmail, row.SenderName, row.Date
 	} else {
@@ -666,7 +737,7 @@ func (a *ArchiveSource) resolve(key string, rec state.Record, meta map[string]in
 		return m, true
 	}
 	page, eml, zip := archiveSiblings(rec.Path)
-	pagePresent, pageSize := a.exists(page)
+	pagePresent, pageSize := a.exists(root, page)
 	if !pagePresent {
 		return m, false
 	}
@@ -692,7 +763,7 @@ func (a *ArchiveSource) resolve(key string, rec state.Record, meta map[string]in
 			size += n
 		}
 	}
-	emlPresent, emlSize := a.exists(eml)
+	emlPresent, emlSize := a.exists(root, eml)
 	hasFix := func(f func(*state.Fixity) *state.FileDigest) *state.FileDigest {
 		if rec.Fixity == nil {
 			return nil
@@ -717,7 +788,7 @@ func (a *ArchiveSource) resolve(key string, rec state.Record, meta map[string]in
 	if a.pst[tok] {
 		m.NoOrig = noOrigPST
 	}
-	zipPresent, zipSize := a.exists(zip)
+	zipPresent, zipSize := a.exists(root, zip)
 	if !zipPresent && zipDig != nil {
 		return m, false
 	}
@@ -729,7 +800,7 @@ func (a *ArchiveSource) resolve(key string, rec state.Record, meta map[string]in
 	if known {
 		m.SizeHint = size
 	}
-	if page, err := a.pageBytes(rec.Path); err == nil {
+	if page, err := a.pageBytes(root, rec.Path); err == nil {
 		m.Quarantine = !export.ArchivedPageInert(page)
 	} else if errors.Is(err, errPageTooLarge) {
 		m.Quarantine = true
@@ -775,8 +846,8 @@ var errPageTooLarge = errors.New("the page is above what the archived-page gate 
 
 // pageBytes reads an archived page for the gate: through the root, behind the file gate,
 // and not above export.ArchivedPageMaxBytes.
-func (a *ArchiveSource) pageBytes(rel string) ([]byte, error) {
-	f, fi, err := a.openGated(rel)
+func (a *ArchiveSource) pageBytes(root *os.Root, rel string) ([]byte, error) {
+	f, fi, err := a.openGatedIn(root, rel)
 	if err != nil {
 		return nil, err
 	}
@@ -838,13 +909,23 @@ func archiveReadErr(rel string, err error) *ArchiveFileError {
 // and the use remains: a co-writer can swap a file between Lstat and open, which the
 // fixity check then catches when a digest is recorded.
 func (a *ArchiveSource) openGated(rel string) (*os.File, os.FileInfo, error) {
+	root, done, err := a.rootFor()
+	if err != nil { // the folder could not be opened: a read error, which asks Gone whether it is the archive
+		return nil, nil, archiveReadErr(rel, errors.New("the archive's folder could not be opened"))
+	}
+	defer done()
+	return a.openGatedIn(root, rel)
+}
+
+// openGatedIn is openGated through a root the caller holds.
+func (a *ArchiveSource) openGatedIn(root *os.Root, rel string) (*os.File, os.FileInfo, error) {
 	parts, ok := validRelPath(rel)
 	if !ok {
 		return nil, nil, &ArchiveFileError{Kind: AFPath, Rel: rel}
 	}
 	var last os.FileInfo
 	for i := range parts {
-		fi, err := a.root.Lstat(filepath.FromSlash(strings.Join(parts[:i+1], "/")))
+		fi, err := root.Lstat(filepath.FromSlash(strings.Join(parts[:i+1], "/")))
 		if err != nil {
 			return nil, nil, archiveReadErr(rel, err)
 		}
@@ -862,7 +943,7 @@ func (a *ArchiveSource) openGated(rel string) (*os.File, os.FileInfo, error) {
 		}
 		last = fi
 	}
-	f, err := openRegularIn(a.root, filepath.FromSlash(rel))
+	f, err := openRegularIn(root, filepath.FromSlash(rel))
 	if err != nil {
 		if errors.Is(err, errNotRegular) {
 			return nil, nil, &ArchiveFileError{Kind: AFIrregular, Rel: rel}
@@ -942,7 +1023,12 @@ func archiveWhy(err error) string {
 func (a *ArchiveSource) Changed(m *CopyMessage) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	fi, err := a.root.Lstat(archiveManifestName)
+	root, done, rerr0 := a.rootFor()
+	if rerr0 != nil {
+		return true
+	}
+	fi, err := root.Lstat(archiveManifestName)
+	done()
 	if err != nil {
 		return true
 	}
