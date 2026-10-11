@@ -249,7 +249,7 @@ func (r *CopyRun) classifyFiles(err error, mctx, walk context.Context, src CopyF
 	}
 	var af *ArchiveFileError
 	if !errors.As(err, &af) {
-		return verdict{kind: verdictList, class: classRetryable, reason: "the archive's files could not be read (" + leaveName(err) + ")"}
+		return verdict{kind: verdictList, class: classRetryable, reason: "the archive's files could not be read (" + readName(err) + ")"}
 	}
 	switch af.Kind {
 	case AFMissing, AFRead:
@@ -259,7 +259,7 @@ func (r *CopyRun) classifyFiles(err error, mctx, walk context.Context, src CopyF
 		if af.Kind == AFMissing {
 			return verdict{kind: verdictList, class: classTerminal, reason: reasonArchiveRemoved}
 		}
-		return verdict{kind: verdictList, class: classRetryable, reason: "the archive's file could not be read (" + leaveName(af.Err) + ")"}
+		return verdict{kind: verdictList, class: classRetryable, reason: "the archive's file could not be read (" + readName(af.Err) + ")"}
 	case AFSymlink:
 		return verdict{kind: verdictList, class: classTerminal, reason: "a link stands in the archive where this file should be, so it was not followed"}
 	case AFIrregular:

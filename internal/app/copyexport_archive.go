@@ -763,7 +763,7 @@ func archiveWhy(err error) string {
 	if err == nil || errors.Is(err, fs.ErrNotExist) {
 		return "it was disconnected or moved"
 	}
-	return leaveName(err)
+	return readName(err)
 }
 
 // Changed reports whether the archive's record for m no longer says what the plan recorded:

@@ -3,9 +3,11 @@ package app
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
+	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/state"
 )
 
@@ -113,6 +115,64 @@ func TestArchiveExportOffersRetryOnlyWhileARetryableFailureIsLeft(t *testing.T) 
 			t.Fatalf("the retry: %v, %v, want only the retryable message", in, err)
 		}
 	})
+}
+
+// covers: MA-512, MA-420, R12, R29
+// F12: an archive that stops being readable is described as one this account cannot READ, never as
+// "write-protected" (MailArchive only reads it): the R-o2 stop says what happened (the archive is no longer
+// available, with the system's own text after the reason), that nothing in the archive is damaged, and how to
+// carry on (reconnect it, or make it readable again, then Export the remaining messages); and one file that
+// cannot be read is listed with the read wording. The positive twin: the same export of a readable archive
+// completes.
+func TestArchiveReadFailuresAreWordedAsReads(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("an unreadable folder is modelled with permission bits, for a user who is not root")
+	}
+	a := buildCEArchive(t)
+	e := newCEEnv(t)
+	s := a.open()
+	if res := a.run(e, a.plan(e, s, allKeys(s)), s); res.Status != CopyStatusComplete {
+		t.Fatalf("the positive twin, a readable archive: %+v", res)
+	}
+
+	// one file the account may not read, the archive itself fine: a listed failure, in read words
+	a = buildCEArchive(t)
+	e = newCEEnv(t)
+	s = a.open()
+	p := a.plan(e, s, allKeys(s))
+	_, eml, _ := a.files("hello")
+	os.Chmod(eml, 0)
+	t.Cleanup(func() { os.Chmod(eml, 0o644) })
+	res := a.run(e, p, s)
+	f := failureListed(manifestOf(t, res.Root), a.key("hello"))
+	if f == nil || f["class"] != "retryable" {
+		t.Fatalf("the unreadable file: %v, want a retryable failure", f)
+	}
+	reason := f["reason"].(string)
+	if !strings.Contains(reason, "isn't allowed to read it") || strings.Contains(reason, "write") {
+		t.Errorf("the unreadable file's reason: %q, want read words and no write words", reason)
+	}
+	os.Chmod(eml, 0o644)
+
+	// the whole archive stops answering as unreadable, mid-run
+	a = buildCEArchive(t)
+	e = newCEEnv(t)
+	s = a.open()
+	p = a.plan(e, s, allKeys(s))
+	e.faults = &copyFaults{hook: func(step string) {
+		if step == "W6:2" {
+			os.Chmod(a.dir, 0)
+		}
+	}}
+	t.Cleanup(func() { os.Chmod(a.dir, 0o755) })
+	res = a.run(e, p, s)
+	os.Chmod(a.dir, 0o755)
+	if res.Stop == nil || res.Stop.RID != "R-o2" {
+		t.Fatalf("the run: %+v, stop %+v; want R-o2", res.Counts, res.Stop)
+	}
+	assure.Refused(t, int(res.Outcome), res.Stop.Message, assure.Code(1),
+		assure.Names(a.dir, "no longer available", "isn't allowed to read it", "nothing in the archive is damaged", "Export the remaining messages"),
+		assure.Forbid("write-protected", "allowed to write"))
 }
 
 // removeFilesOf deletes every file the archive holds for a planned message: its page, original and zip.
