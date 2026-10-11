@@ -302,6 +302,9 @@ type CopyExportEnv struct {
 	chains      map[string][]string // run record ids by chain id, kept under ledgerMu (§4.16)
 	chainsBuilt bool
 
+	offerMu    sync.Mutex
+	offerCache map[string]chainOffer // a retry set's offers, by chain, valid while its records are unchanged (F9)
+
 	// seams
 	now         func() time.Time
 	randHex     func(n int) string

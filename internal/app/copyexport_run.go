@@ -57,7 +57,13 @@ type CopyProgress struct {
 	Folder   string
 	Started  time.Time
 	ETA      time.Duration
+	// Waiting says why the export is not moving when it is held back (a capture or the weekly
+	// backup has the archive), "" otherwise. Without it a paused export looks frozen (F11).
+	Waiting string
 }
+
+// copyWaitingCapture is the page's sentence for an export held back by a capture.
+const copyWaitingCapture = "Waiting: a backup or Archive now is using the archive. This export carries on by itself when that finishes; you can also cancel it."
 
 // CopyRun is one export being run.
 type CopyRun struct {
@@ -84,6 +90,7 @@ type CopyRun struct {
 	done    atomic.Int64
 	failed  atomic.Int64
 	bytes   atomic.Int64
+	waiting atomic.Bool  // held back by a capture
 	folder  atomic.Value // string
 
 	runID    string
@@ -156,6 +163,9 @@ func (r *CopyRun) Progress() CopyProgress {
 	r.mu.Unlock()
 	p := CopyProgress{Selected: len(r.plan.Messages), Done: int(r.done.Load()), Failed: int(r.failed.Load()),
 		Bytes: r.bytes.Load(), Started: started}
+	if r.waiting.Load() {
+		p.Waiting = copyWaitingCapture
+	}
 	if f, _ := r.folder.Load().(string); f != "" {
 		p.Folder = f
 	}
@@ -237,7 +247,7 @@ func (r *CopyRun) recovered(p any) (*CopyResult, error) {
 	}
 	stop := &CopyStop{RID: "internal", Class: stopClassInternal}
 	if r.runID != "" && r.rec != nil {
-		stop.Message = refusalText("internal", int(r.done.Load()), len(r.plan.Messages), "", r.plan, r.env.StateDir)
+		stop.Message = refusalText("internal", r.exportedSoFar(), len(r.plan.Messages), "", r.plan, r.env.StateDir)
 		_ = r.rec.append(ceStoppedLine{T: "stopped", RID: stop.RID, Class: stop.Class, Reason: stopReason("internal"), At: r.env.nowTime()})
 		_ = r.env.journalAppend(ceJournalLine{Run: r.runID, Event: "stopped", Reason: "internal, " + stopClassInternal})
 	}
@@ -488,10 +498,13 @@ func (r *CopyRun) loop(walk context.Context) (CopyStatus, *CopyStop) {
 			}
 		}
 		for e.busy() { // a capture is running: the export backs off, uncounted
+			r.waiting.Store(true)
 			if err := e.pause(walk, e.backoffFirst()); err != nil {
+				r.waiting.Store(false)
 				return CopyStatusCancelled, nil
 			}
 		}
+		r.waiting.Store(false)
 		r.folder.Store(m.FolderPath())
 		if stop := r.preMessage(i); stop != nil {
 			return CopyStatusFailed, stop
@@ -564,10 +577,22 @@ func (r *CopyRun) complete(s *CopyStop, done int, extra string) *CopyStop {
 	if (s.RID == "R-u3" || s.RID == "R-z") && s.Message != "" {
 		arg = s.Message // the redirect's host, or the account now signed in: left in Message by the stop
 	}
-	s.Message = refusalText(s.RID, done, len(r.plan.Messages), arg, r.plan, r.env.StateDir)
+	// "after N of M messages" counts the messages that were exported, not the ones attempted: a
+	// run that failed seven writes in a row did not stop "after 7 of 7" (friction F8).
+	_ = done
+	s.Message = refusalText(s.RID, r.exportedSoFar(), len(r.plan.Messages), arg, r.plan, r.env.StateDir)
 	s.StoppedAt = r.env.nowTime().UTC().Format(time.RFC3339)
 	s.ready = true
 	return s
+}
+
+// exportedSoFar is the messages the run has exported: those it has finished less those it listed
+// as failed.
+func (r *CopyRun) exportedSoFar() int {
+	if n := r.done.Load() - r.failed.Load(); n > 0 {
+		return int(n)
+	}
+	return 0
 }
 
 // ensureDir makes dir (relative to the export root, forward slashes) one level at a

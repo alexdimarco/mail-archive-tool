@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -307,13 +308,34 @@ func (o *CopyOutside) Recheck(e *CopyExportEnv, dest string) error {
 	return nil
 }
 
+// DestExampleFor is an example of a full folder path in the shape of the given system's, for
+// the words that tell an owner what to type (R-e) and the destination box's placeholder.
+func DestExampleFor(goos string) string {
+	switch goos {
+	case "windows":
+		return `C:\Users\you\Downloads`
+	case "darwin":
+		return "/Users/you/Downloads"
+	}
+	return "/home/you/Downloads"
+}
+
 // checkDestPath is R-e: the destination is absolute, clean, has no NUL, exists and is a folder.
 func checkDestPath(dest string) *CopyRefusal {
-	if dest == "" || strings.ContainsRune(dest, 0) || !filepath.IsAbs(dest) || dest != filepath.Clean(dest) {
-		return &CopyRefusal{ID: "R-e", Message: fmt.Sprintf("The folder %s isn't a full path to an existing folder — an export is written into an existing folder. Click Browse to choose one, or Create folder.", printable(dest))}
+	example := DestExampleFor(runtime.GOOS)
+	switch {
+	case strings.TrimSpace(dest) == "":
+		return &CopyRefusal{ID: "R-e", Message: "No destination folder is chosen — type the full path of an existing folder, or click Browse to choose one, or Create folder. An export is written into an existing folder."}
+	case !filepath.IsAbs(dest) && (strings.HasPrefix(dest, "~") || strings.Contains(dest, "%") || strings.HasPrefix(dest, "$")):
+		return &CopyRefusal{ID: "R-e", Message: fmt.Sprintf("The folder %s isn't a full path — MailArchive doesn't expand ~, %%NAME%% or $NAME in a path. Type the full path of an existing folder (for example %s), or click Browse to choose one, or Create folder.", printable(dest), example)}
+	case strings.ContainsRune(dest, 0) || !filepath.IsAbs(dest) || dest != filepath.Clean(dest):
+		return &CopyRefusal{ID: "R-e", Message: fmt.Sprintf("The folder %s isn't a full path to an existing folder — an export is written into an existing folder. Type the full path (for example %s), or click Browse to choose one, or Create folder.", printable(dest), example)}
 	}
 	fi, err := os.Stat(dest)
-	if err != nil || !fi.IsDir() {
+	if err == nil && !fi.IsDir() {
+		return &CopyRefusal{ID: "R-e", Message: fmt.Sprintf("The folder %s doesn't exist — that is a file, not a folder. An export is written into an existing folder. Click Browse to choose one, or Create folder.", dest)}
+	}
+	if err != nil {
 		return destMissing(dest)
 	}
 	return nil

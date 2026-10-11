@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -34,13 +35,17 @@ func refusalText(id string, done, total int, extra string, plan *CopyPlan, state
 	at := ofTotal(done, total)
 	switch id {
 	case "R-c":
-		return fmt.Sprintf("Microsoft 365 refused the request (your sign-in expired or access was revoked) — the export stopped after %s messages. Sign in again, then click 'Export the remaining messages' on Export activity.", at)
+		return fmt.Sprintf("Microsoft 365 refused the request (your sign-in expired or access was revoked) — the export stopped after %s messages. Sign in again (click Sign in on Export activity), then click 'Export the remaining messages' there.", at)
 	case "R-d":
 		return fmt.Sprintf("MailArchive Desktop couldn't record this export in %s (disk full or access denied) — nothing was exported. Free some space there, then click Start export again.", statePath)
 	case "R-d2":
 		return fmt.Sprintf("MailArchive Desktop couldn't record this export's progress in %s (disk full or access denied) — the export stopped after %s messages and the folder is marked unfinished. Free some space there, then click 'Finish as partial' or 'Export the remaining messages' on Export activity.", statePath, at)
 	case "R-g":
-		return fmt.Sprintf("The destination is full or no longer available (%s) — the export stopped after %s messages and the folder is marked unfinished. Free some space or choose another destination, then click 'Export the remaining messages'.", extra, at)
+		why := ""
+		if extra != "" {
+			why = " (" + extra + ")"
+		}
+		return fmt.Sprintf("The destination is full or no longer available%s — the export stopped after %s messages and the folder is marked unfinished. Free some space or choose another destination, then click 'Export the remaining messages' (the page lets you choose another destination before you start it).", why, at)
 	case "R-u":
 		return fmt.Sprintf("The connection to Microsoft 365 has been down for 5 minutes — the export stopped after %s messages. Check your network, then click 'Export the remaining messages', which also tries again the message that was downloading.", at)
 	case "R-u2":
@@ -57,7 +62,7 @@ func refusalText(id string, done, total int, extra string, plan *CopyPlan, state
 		if now == "" {
 			now = "signed out"
 		}
-		return fmt.Sprintf("The Microsoft 365 sign-in was cleared or changed (now: %s) — the export of %s's mailbox stopped after %s messages, so nothing is read with the wrong account. Sign in as %s, then click 'Export the remaining messages'.", now, signer, at, signer)
+		return fmt.Sprintf("The Microsoft 365 sign-in was cleared or changed (now: %s) — the export of %s's mailbox stopped after %s messages, so nothing is read with the wrong account. Sign in as %s (click Sign in on Export activity), then click 'Export the remaining messages' there.", now, signer, at, signer)
 	case "internal":
 		return fmt.Sprintf("MailArchive Desktop stopped this export after %s messages because of an internal error. The folder is marked unfinished: click 'Finish as partial' or 'Export the remaining messages' on Export activity.", at)
 	}
@@ -96,8 +101,12 @@ func refuse(id, msg string) *CopyRefusal { return &CopyRefusal{ID: id, Message: 
 // refusalG2 is Start's free-space refusal (R-g2, XC11): the estimate plus the
 // reserve does not fit.
 func refusalG2(dest string, free uint64, need int64) *CopyRefusal {
+	f, n := humanBytes(int64(free)), humanBytes(need)
+	if f == n { // both round to the same text: show the bytes, so the sentence does not contradict itself
+		f, n = commas(int(free))+" bytes", commas(int(need))+" bytes"
+	}
 	return refuse("R-g2", fmt.Sprintf("%s has %s free, but this export needs about %s plus room to finish (the manifest and checksums) — nothing was written. Free some space or choose another destination.",
-		dest, humanBytes(int64(free)), humanBytes(need)))
+		dest, f, n))
 }
 
 // refusalT is the refusal of a destination in which every candidate root name is taken (R-t).
@@ -108,7 +117,19 @@ func refusalT(dest, first string) *CopyRefusal {
 // refusalW is the refusal of a destination the OS will not let the export create a
 // folder in (R-w, XC12).
 func refusalW(dest, why string) *CopyRefusal {
-	return refuse("R-w", fmt.Sprintf("MailArchive couldn't create a folder in %s (%s) — choose another folder, or allow MailArchive Desktop in Windows Security → Controlled folder access (macOS: System Settings → Privacy & Security → Files and Folders). Nothing was written.", dest, why))
+	// The advice for this computer's own system comes first; the other one is kept after it.
+	win := "allow MailArchive Desktop in Windows Security → Controlled folder access"
+	mac := "allow it in System Settings → Privacy & Security → Files and Folders"
+	var fix string
+	switch runtime.GOOS {
+	case "windows":
+		fix = win + " (macOS: " + mac + ")"
+	case "darwin":
+		fix = mac + " (Windows: " + win + ")"
+	default:
+		fix = "check the folder's permissions (Windows: " + win + "; macOS: " + mac + ")"
+	}
+	return refuse("R-w", fmt.Sprintf("MailArchive couldn't create a folder in %s (%s) — choose another folder, or %s. Nothing was written.", dest, why, fix))
 }
 
 func refusalD(statePath string) *CopyRefusal {

@@ -391,10 +391,17 @@ func readSummary(path string) (*ceRecSummary, error) {
 		return s, errCopyNewerFormat
 	}
 	if s.Header.Run == "" {
-		return s, fmt.Errorf("the run record %s has no header", filepath.Base(path))
+		return s, fmt.Errorf("%w: the run record %s has no header", ErrRecordDamaged, filepath.Base(path))
 	}
 	return s, nil
 }
+
+// ErrRecordDamaged is a run record that cannot be read (no header, say): the page words it as
+// such, with what still works, instead of echoing the error and a file name (friction F20).
+var ErrRecordDamaged = errors.New("this export's record is damaged")
+
+// IsRecordDamaged reports whether err is, or wraps, ErrRecordDamaged.
+func IsRecordDamaged(err error) bool { return errors.Is(err, ErrRecordDamaged) }
 
 // lineKind is a record line's "t". Every line this package writes starts `{"t":"`, so
 // the kind is read without decoding the line (a 200,000-message plan is read often);

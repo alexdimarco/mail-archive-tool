@@ -21,13 +21,23 @@ function show(id,text){const e=$(id);if(!e)return;e.hidden=!text;e.textContent=t
 function fmt(n){return Number(n).toLocaleString('en-US');}
 `
 
-// signinJS drives the sign-in box on the Overview's Microsoft 365 card and on the
-// workspace page: it starts the sign-in, shows the code the guarded status POST returns,
-// and asks the weekly-backup question when the account changes (XC7, XC8).
-const signinJS = commonJS + `(function(){
+// scoped puts a whole script, its shared helpers included, inside one function. Classic
+// scripts on one page share a single global lexical scope, so two that each declared
+// `const csrf` at the top level (the Overview's dashboard.js and signin.js; the workspace's
+// signin.js and workspace.js) made the second one a SyntaxError that never ran (F27).
+func scoped(body string) string { return "(function(){\n" + body + "\n})();\n" }
+
+// signinJS drives the sign-in box on the Overview's Microsoft 365 card, on the workspace page
+// and on Export activity: it starts the sign-in, shows the code the guarded status POST
+// returns, and asks the weekly-backup question when the account changes (XC7, XC8).
+var signinJS = scoped(commonJS + `(function(){
 const btn=$('signInBtn');if(!btn)return;
 let timer=null;
+// started: this page started the sign-in or saw it running. Only then does a 'done' reload the
+// page; a page that merely loaded never reloads for a sign-in that finished earlier (F28).
+let started=false;
 function render(d){
+  if(d.state==='running'||d.state==='confirm')started=true;
   const box=$('signInBox');box.hidden=false;
   const b=$('signInBanner');if(b&&d.account)b.textContent='MailArchive Desktop is running as '+d.account+' on this computer.';
   const n=$('signInNotice');if(n&&d.notice)n.textContent=d.notice;
@@ -37,15 +47,17 @@ function render(d){
   else dev.hidden=true;
   const c=$('signInConfirm');
   if(d.state==='confirm'&&d.confirm){c.hidden=false;$('signInConfirmText').textContent=d.confirm.text;}else c.hidden=true;
-  if(d.state==='done'){stop();btn.disabled=false;
+  if(d.state==='done'&&started){stop();btn.disabled=false;
     show('banner',d.signedOut?'You chose Sign out: the new sign-in was not saved.':'Signed in as '+d.upn+'.');
     setTimeout(()=>location.reload(),900);}
-  if(d.state==='failed'){stop();btn.disabled=false;show('banner',d.error||'The sign-in did not finish.');}
+  if(d.state==='failed'&&started){stop();btn.disabled=false;show('banner',d.error||'The sign-in did not finish.');}
 }
-function poll(answer){
-  api('api/m365/signin-status',answer?{answer:answer}:{}).then(d=>{
+function poll(answer,initial){
+  api('api/m365/signin-status',answer?{answer:answer}:(initial?{initial:true}:{})).then(d=>{
     if(!d.ok){stop();btn.disabled=false;show('banner',d.error||RESTART);return;}
     render(d);
+    // a page reloaded while a sign-in is running picks the polling back up
+    if(initial&&started&&!timer&&(d.state==='running'||d.state==='confirm')){btn.disabled=true;timer=setInterval(()=>poll(),1500);}
   });
 }
 function stop(){if(timer){clearInterval(timer);timer=null;}}
@@ -53,24 +65,26 @@ btn.addEventListener('click',()=>{
   btn.disabled=true;show('banner','');
   api('api/m365/signin',{}).then(d=>{
     if(!d.ok){btn.disabled=false;show('banner',d.error||'Could not start the sign-in.');return;}
-    poll();timer=setInterval(()=>poll(),1500);
+    started=true;poll();if(!timer)timer=setInterval(()=>poll(),1500);
   });
 });
 const k=$('signInKeep'),o=$('signInOut');
 if(k)k.addEventListener('click',()=>poll('keep'));
 if(o)o.addEventListener('click',()=>poll('signout'));
-poll();
+poll(undefined,true);
 })();
-`
+`)
 
 // workspaceJS is the Extraction workspace page: the source, the folder tree and its
 // selection, the message list, the destination, the options and the preview.
-const workspaceJS = commonJS + `(function(){
-const st={upn:'',folders:[],byId:{},kids:{},entries:[],picks:{},current:'',rows:[],more:false,cursor:'',total:0,previewId:'',countTimer:null,running:false,counts:0};
+var workspaceJS = scoped(commonJS + `(function(){
+const st={upn:'',folders:[],byId:{},kids:{},open:{},entries:[],picks:{},current:'',rows:[],more:false,cursor:'',total:0,previewId:'',countTimer:null,running:false,counts:0};
 function errText(d){return d.error||'Something went wrong.';}
 function showErr(d){
   show('banner',errText(d));
-  if(d&&(d.id==='R-j2'||d.id==='R-y'||d.id==='R-l'||d.id==='R-b'))$('loadFolders').disabled=false;
+  if(d&&(d.id==='R-j2'||d.id==='R-y'||d.id==='R-l'||d.id==='R-b'||d.id==='R-c'))$('loadFolders').disabled=false;
+  // the refusals that say "sign in" put the Sign in button in front of the owner (F2)
+  if(d&&(d.id==='R-b'||d.id==='R-c'||d.id==='R-l'))$('signInArea').hidden=false;
 }
 
 // ---- source ------------------------------------------------------------
@@ -80,8 +94,9 @@ function loadSource(){
     st.running=!!d.running;
     const m=d.m365||{};
     if(m.state==='ready'){st.upn=m.upn;show('mbox','Mailbox: '+m.upn+' (your own mailbox)');$('loadFolders').disabled=false;}
+    else if(m.state==='needs-sign-in'){show('mbox',m.note||'Microsoft 365 refused your saved sign-in. Click Sign in to sign in again.');$('signInArea').hidden=false;}
     else if(m.state==='not-signed-in'){show('mbox','Not signed in to Microsoft 365');$('signInArea').hidden=false;}
-    else{show('mbox','Microsoft 365 isn\'t set up yet — run mailarchive setup, then come back.');}
+    else{show('mbox','Microsoft 365 isn\'t set up yet — its settings are saved by MailArchive\'s command-line tool (a separate download): run mailarchive setup there, then come back.');}
     const s=d.settings||{};
     if(s.dest&&!$('destPath').value)$('destPath').value=s.dest;
     $('optPreserve').checked=s.preserve!==false;
@@ -97,7 +112,7 @@ $('loadFolders').addEventListener('click',()=>{
     if(!d.ok){showErr(d);return;}
     st.upn=d.upn;st.folders=d.folders;st.byId={};st.kids={};
     d.folders.forEach(f=>{st.byId[f.id]=f;const p=f.parent||'';(st.kids[p]=st.kids[p]||[]).push(f.id);});
-    st.entries=[];st.picks={};st.current='';st.rows=[];
+    st.entries=[];st.picks={};st.current='';st.rows=[];st.open={};
     $('pickCard').hidden=false;$('destCard').hidden=false;$('footerSel').hidden=false;
     renderTree();renderRows();updateCount();
   });
@@ -116,7 +131,18 @@ function isUnder(id,anc){
   while(cur&&cur.parent&&n++<400){if(cur.parent===anc)return true;cur=st.byId[cur.parent];}
   return false;
 }
-function renderTree(){
+// The tree and the list are redrawn after every tick, open or close. A redraw keeps what is
+// open (st.open) and puts the keyboard focus back on the same control (data-key), so a
+// keyboard user is not thrown to the top of the page, and a mouse user's open folders stay open.
+function keepFocus(root,draw){
+  const a=document.activeElement;
+  const key=(a&&root.contains(a)&&a.dataset)?a.dataset.key:'';
+  draw();
+  if(!key)return;
+  for(const n of root.querySelectorAll('[data-key]')){if(n.dataset.key===key){n.focus();break;}}
+}
+function renderTree(){keepFocus($('tree'),drawTree);}
+function drawTree(){
   const root=$('tree');clear(root);
   const ul=el('ul');
   (st.kids['']||[]).forEach(id=>ul.appendChild(nodeEl(id)));
@@ -126,23 +152,30 @@ function nodeEl(id){
   const f=st.byId[id];const li=el('li');
   const row=el('div',null,'node');
   const kids=st.kids[id]||[];
-  const arrow=el('span',kids.length?'▸':'','arrow');
-  const cb=el('input');cb.type='checkbox';
+  const arrow=el('button',kids.length?(st.open[id]?'▾':'▸'):'','arrow');arrow.type='button';arrow.dataset.key='a:'+id;
+  if(kids.length){
+    arrow.setAttribute('aria-expanded',st.open[id]?'true':'false');
+    arrow.setAttribute('aria-label',(st.open[id]?'Hide':'Show')+' the subfolders of '+f.name);
+  }else{arrow.disabled=true;arrow.tabIndex=-1;arrow.setAttribute('aria-hidden','true');}
+  const cb=el('input');cb.type='checkbox';cb.dataset.key='c:'+id;
   const cov=covering(id);
   cb.checked=!!cov;
   if(cov&&cov.id!==id)cb.disabled=true;
+  cb.setAttribute('aria-label','Select '+f.name+' ('+fmt(f.count)+' messages)'+((cov&&cov.id!==id)?', included with its parent folder':''));
   cb.addEventListener('change',()=>toggleFolder(id,cb.checked));
-  const name=el('span',f.name,'name'+(st.current===id?' current':''));
+  const name=el('button',f.name,'name'+(st.current===id?' current':''));name.type='button';name.dataset.key='n:'+id;
+  name.setAttribute('aria-label','Open '+f.name+' to see its messages');
+  if(st.current===id)name.setAttribute('aria-current','true');
   name.addEventListener('click',()=>openFolder(id));
   const cnt=el('span','('+fmt(f.count)+')','cnt');
   row.appendChild(arrow);row.appendChild(cb);row.appendChild(name);row.appendChild(cnt);
   if(f.wellKnown){row.appendChild(el('span',f.wellKnown==='deleted'?'Deleted Items':'Junk Email','tag'));}
   li.appendChild(row);
   if(kids.length){
-    const sub=el('ul');sub.hidden=true;
+    const sub=el('ul');sub.hidden=!st.open[id];
     kids.forEach(k=>sub.appendChild(nodeEl(k)));
     li.appendChild(sub);
-    arrow.addEventListener('click',()=>{sub.hidden=!sub.hidden;arrow.textContent=sub.hidden?'▸':'▾';});
+    arrow.addEventListener('click',()=>{st.open[id]=!st.open[id];renderTree();});
   }
   return li;
 }
@@ -151,11 +184,29 @@ function toggleFolder(id,on){
   else{st.entries=st.entries.filter(e=>e.id!==id);}
   renderTree();renderRows();updateCount();
 }
+// The messages a folder holds, with its subfolders' when they are included: the number the note
+// under Selected says (it used to say the folder's own count beside "and its subfolders").
+function subtreeCount(id){
+  let n=(st.byId[id]||{}).count||0;
+  (st.kids[id]||[]).forEach(k=>{n+=subtreeCount(k);});
+  return n;
+}
+function selectionNote(id){
+  const f=st.byId[id];const withSub=$('inclSub').checked&&(st.kids[id]||[]).length>0;
+  return 'Selected '+fmt(withSub?subtreeCount(id):f.count)+' messages from '+f.name+(withSub?' and its subfolders.':'.');
+}
 $('selectFolder').addEventListener('click',()=>{
   if(!st.current)return;
   if(!covering(st.current))st.entries.push({id:st.current,subtree:$('inclSub').checked,exclude:[]});
-  const f=st.byId[st.current];
-  show('selNote','Selected '+fmt(f.count)+' messages from '+f.name+(($('inclSub').checked&&(st.kids[st.current]||[]).length)?' (and its subfolders).':'.'));
+  show('selNote',selectionNote(st.current));
+  renderTree();renderRows();updateCount();
+});
+// Include subfolders applies to every folder that is selected, now and later, so the box means
+// what it says: unticking it takes the subfolders out of the folders already ticked.
+$('inclSub').addEventListener('change',()=>{
+  const on=$('inclSub').checked;
+  st.entries.forEach(e=>{e.subtree=on;});
+  if(st.current&&covering(st.current))show('selNote',selectionNote(st.current));
   renderTree();renderRows();updateCount();
 });
 
@@ -189,7 +240,8 @@ function setRow(h,on){
   if(cov){const i=cov.exclude.indexOf(h);if(on&&i>=0)cov.exclude.splice(i,1);if(!on&&i<0)cov.exclude.push(h);}
   else{if(on)st.picks[h]=true;else delete st.picks[h];}
 }
-function renderRows(){
+function renderRows(){keepFocus($('msgs'),drawRows);}
+function drawRows(){
   const box=$('msgs');clear(box);
   const q=$('filter').value.toLowerCase();
   let shown=0;
@@ -197,7 +249,8 @@ function renderRows(){
     if(q&&(r.subject+' '+r.from+' '+r.fromName).toLowerCase().indexOf(q)<0)return;
     shown++;
     const row=el('div',null,'msg');
-    const cb=el('input');cb.type='checkbox';cb.checked=rowChecked(r.h);
+    const cb=el('input');cb.type='checkbox';cb.checked=rowChecked(r.h);cb.dataset.key='m:'+r.h;
+    cb.setAttribute('aria-label','Select the message '+(r.subject||'(no subject)')+(r.fromName?' from '+r.fromName:''));
     cb.addEventListener('change',()=>{setRow(r.h,cb.checked);updateCount();});
     const mid=el('div');
     mid.appendChild(el('div',r.subject||'(no subject)','subj'));
@@ -231,7 +284,12 @@ function updateCount(){
   st.countTimer=setTimeout(()=>{
     api('api/workspace/count',selection()).then(d=>{
       if(!d.ok){showErr(d);return;}
-      $('selCount').textContent=fmt(d.count)+' messages selected (items Microsoft 365 reports)';
+      // One export holds up to 200,000 messages: say so now, not after Preview has read them all.
+      // One folder alone cannot be split across exports in this version: "select fewer folders" is no remedy (F15).
+      const oneFolder=st.entries.length===1&&!Object.keys(st.picks).length;
+      const over=oneFolder?' — more than the 200,000 one export can hold, and one folder can\'t be split across exports yet: pick up to 10,000 of its messages by hand, or export its subfolders one at a time'
+        :' — more than the 200,000 one export can hold: select fewer folders or messages';
+      $('selCount').textContent=fmt(d.count)+' messages selected (items Microsoft 365 reports)'+(d.count>200000?over:'');
     });
   },300);
 }
@@ -269,6 +327,7 @@ function resumePreview(id){
   st.previewId=id;$('previewCard').hidden=false;
   const body=$('previewBody');clear(body);body.appendChild(el('p','Reading your folders…'));
   const tick=()=>api('api/workspace/preview-status',{previewId:id}).then(d=>{
+    if(d.retryOf)retryDestination(d.retryOf,d.retryWhich,'');
     if(!d.ok&&d.state!=='failed'){showErr(d);$('previewCard').hidden=true;return;}
     if(d.state==='running'){clear(body);body.appendChild(el('p',d.progress||'Reading your folders…'));setTimeout(tick,1000);return;}
     if(d.state==='failed'){showErr(d);$('previewCard').hidden=true;return;}
@@ -276,8 +335,26 @@ function resumePreview(id){
   });
   tick();
 }
+// A retry (Export the remaining messages, Export failed messages again) is previewed here too.
+// It needs no folders, but it needs somewhere to go: the destination controls are shown, so a
+// full or missing drive (R-g2, R-e) can be answered with another folder (F5).
+function retryDestination(run,which,dest){
+  st.retry={run:run,which:which||'rest'};
+  $('destCard').hidden=false;$('retryDest').hidden=false;
+  if(dest&&!$('destPath').dataset.touched)$('destPath').value=dest;
+}
+$('destPath').addEventListener('input',()=>{$('destPath').dataset.touched='1';});
+$('rePreviewBtn').addEventListener('click',()=>{
+  if(!st.retry)return;
+  show('banner','');
+  api('api/exports/retry',{runId:st.retry.run,which:st.retry.which,dest:$('destPath').value}).then(d=>{
+    if(!d.ok){showErr(d);return;}
+    resumePreview(d.previewId);
+  });
+});
 function line(k,v){const r=el('div',null,'row');r.appendChild(el('div',k,'k'));r.appendChild(el('div',v,'v'));return r;}
 function renderPreview(p){
+  if(p.retryOf)retryDestination(p.retryOf,p.retryWhich,p.dest);
   const body=$('previewBody');clear(body);
   let count=fmt(p.count)+' messages';
   if(p.reported!==p.count)count+=' ('+fmt(p.reported)+' reported by Microsoft 365)';
@@ -297,20 +374,22 @@ $('startBtn').addEventListener('click',()=>{
   api('api/exports/start',{previewId:st.previewId}).then(d=>{
     $('startBtn').disabled=false;
     if(!d.ok){showErr(d);$('previewCard').hidden=true;return;}
+    st.leaving=true; // the export started: leaving this page is not losing a selection
     location.href='exports';
   });
 });
 $('backBtn').addEventListener('click',()=>{$('previewCard').hidden=true;st.previewId='';});
 window.addEventListener('beforeunload',e=>{
+  if(st.leaving)return;
   if(st.entries.length||Object.keys(st.picks).length){e.preventDefault();e.returnValue='';}
 });
 loadSource();
 })();
-`
+`)
 
 // exportsJS is the Export activity page: the running export with Cancel, and the history
 // with each card's actions.
-const exportsJS = commonJS + `(function(){
+var exportsJS = scoped(commonJS + `(function(){
 let busy=false;
 const LABELS={
   'open-folder':'Open folder','check-this-export':'Check this export','export-failed-again':'Export failed messages again',
@@ -327,10 +406,12 @@ function renderRun(p){
     card.hidden=false;runId=p.runId;
     const pct=p.selected?Math.round(100*p.done/p.selected):0;
     $('runBar').style.width=pct+'%';
+    const wrap=$('runBarWrap');wrap.setAttribute('aria-valuenow',String(pct));wrap.setAttribute('aria-valuetext',fmt(p.done)+' of '+fmt(p.selected)+' done');
     $('runLabel').textContent=fmt(p.done)+' of '+fmt(p.selected)+' done, '+fmt(p.failed)+' failed';
     const eta=p.etaSeconds>0?' · about '+Math.ceil(p.etaSeconds/60)+' min left':'';
     $('runStats').textContent=p.bytesText+' written · '+(p.folder||'')+' · '+fmt(p.rate)+' B/s'+eta;
     $('runLog').textContent=(p.log||[]).join('\n');
+    const w=$('runWaiting');w.hidden=!p.waiting;w.textContent=p.waiting||'';
   }
   const last=$('lastCard');
   if(!p.running&&p.last){last.hidden=false;const b=$('lastBody');clear(b);
@@ -342,7 +423,13 @@ $('cancelBtn').addEventListener('click',()=>{
   if(!runId)return;
   api('api/exports/cancel',{runId:runId}).then(d=>{if(!d.ok)note(d.error);});
 });
-function pollRun(){api('api/exports/progress',{}).then(d=>{if(d.ok)renderRun(d);});}
+// A tab whose MailArchive Desktop has gone says so (the answer has no HTTP status when the
+// request itself failed), instead of keeping a Running card frozen; it clears when the app answers.
+let down=false;
+function pollRun(){api('api/exports/progress',{}).then(d=>{
+  if(d.ok){if(down){down=false;note('');}renderRun(d);}
+  else if(d.status===undefined){down=true;note(d.error);}
+});}
 
 // ---- the history ----------------------------------------------------------------------
 function cardEl(c){
@@ -350,8 +437,18 @@ function cardEl(c){
   box.appendChild(el('h3',c.label));
   const when=c.started?new Date(c.started).toLocaleString():'';
   box.appendChild(el('div',when+' · '+(c.mailbox||c.source)+' · '+c.rootName,'card-sub'));
-  box.appendChild(el('div',fmt(c.exported)+' exported, '+fmt(c.failed)+' failed, '+fmt(c.notAttempted)+' not attempted of '+fmt(c.planned)));
+  if(c.running)box.appendChild(el('div','Writing now: see Running export above.'));
+  else box.appendChild(el('div',fmt(c.exported)+' exported, '+fmt(c.failed)+' failed, '+fmt(c.notAttempted)+' not attempted of '+fmt(c.planned)));
+  if(c.setNote)box.appendChild(el('div',c.setNote,'card-sub'));
   if(c.stop)box.appendChild(el('div',c.stop,'note warnbox'));
+  if(c.next)box.appendChild(el('div',c.next,'note'));
+  if((c.failures||[]).length){
+    const d=el('details');d.appendChild(el('summary','Which ones? ('+fmt(c.failed)+' not exported)'));
+    const ul=el('ul',null,'plain');
+    c.failures.forEach(f=>ul.appendChild(el('li',f.subject+' — '+f.folder+' — '+f.reason)));
+    if(c.failuresMore)ul.appendChild(el('li','and '+fmt(c.failuresMore)+' more, listed in the export\'s export-manifest.json'));
+    d.appendChild(ul);box.appendChild(d);
+  }
   if(c.fingerprint){
     const f=el('div');f.appendChild(el('span','Fingerprint '));f.appendChild(el('span',c.fingerprintGrouped,'fp'));
     const cp=el('button','Copy','btn small secondary');cp.type='button';
@@ -372,10 +469,13 @@ function cardEl(c){
     let label=LABELS[a]||a;
     if(a==='export-these-again'&&c.remaining)label='Export these '+fmt(c.remaining)+' messages again';
     const b=el('button',label,'btn small'+(a==='open-folder'||a==='check-this-export'?' secondary':''));b.type='button';
+    b.dataset.run=c.run;b.dataset.act=a;
     b.addEventListener('click',()=>act(a,c,box));acts.appendChild(b);
   });
   box.appendChild(acts);
-  const res=el('div');res.className='cardres';box.appendChild(res);
+  const res=el('div');res.className='cardres';res.setAttribute('aria-live','polite');
+  if(c.result&&c.result.error)res.appendChild(el('div',c.result.error,'note warnbox'));
+  box.appendChild(res);
   return box;
 }
 function saveReceipt(c){
@@ -385,14 +485,18 @@ function saveReceipt(c){
 }
 function resultOf(box){return box.querySelector('.cardres');}
 function act(a,c,box){
-  const out=resultOf(box);clear(out);
-  const done=d=>{if(!d.ok)out.appendChild(el('div',d.error||'That did not work.','note warnbox'));loadHistory();};
+  const out=resultOf(box);clear(out);note('');
+  // A refusal is kept by the server on this run's card (it comes back with the next history
+  // answer, which rebuilds every card), and is shown at once here and in the page's alert.
+  const fail=d=>{const t=d.error||'That did not work.';out.appendChild(el('div',t,'note warnbox'));note(t);};
+  const done=d=>{if(!d.ok)fail(d);loadHistory(true);};
   switch(a){
-  case 'open-folder':api('api/exports/open-folder',{runId:c.run}).then(d=>{if(!d.ok)out.appendChild(el('div',d.error,'note warnbox'));});break;
+  case 'open-folder':api('api/exports/open-folder',{runId:c.run}).then(d=>{if(!d.ok){fail(d);loadHistory(true);}});break;
   case 'check-this-export':api('api/exports/check',{runId:c.run}).then(d=>{
-      if(!d.ok){out.appendChild(el('div',d.error,'note warnbox'));return;}
+      if(!d.ok){fail(d);loadHistory(true);return;}
       out.appendChild(el('div',(d.green?'GREEN':'RED')+': '+fmt(d.files)+' files checked','v '+(d.green?'good':'bad')));
       (d.problems||[]).forEach(p=>out.appendChild(el('div',p,'note warnbox')));
+      if(d.remedy)out.appendChild(el('div',d.remedy,'note warnbox'));
     });break;
   case 'export-failed-again':api('api/exports/retry',{runId:c.run,which:'failed'}).then(d=>{if(!d.ok){done(d);return;}location.href='workspace#preview='+d.previewId;});break;
   case 'export-remaining':case 'export-these-again':api('api/exports/retry',{runId:c.run,which:'rest'}).then(d=>{if(!d.ok){done(d);return;}location.href='workspace#preview='+d.previewId;});break;
@@ -400,23 +504,40 @@ function act(a,c,box){
   case 'check-and-finish':api('api/exports/finish',{runId:c.run}).then(done);break;
   case 'look-again':api('api/exports/locate',{runId:c.run,action:'again'}).then(done);break;
   case 'locate':api('api/workspace/browse',{title:'Choose the export folder'}).then(d=>{
-      if(!d.path){if(!d.canceled)out.appendChild(el('div',d.error,'note warnbox'));return;}
+      if(!d.path){if(!d.canceled)fail(d);return;}
       api('api/exports/locate',{runId:c.run,action:'locate',path:d.path}).then(done);});break;
   case 'this-folder-is-gone':if(confirm('Tell MailArchive this folder is gone? You can then export its messages again.'))api('api/exports/locate',{runId:c.run,action:'gone'}).then(done);break;
   }
 }
-function loadHistory(){
-  if(busy)return;busy=true;
+// The Sign in card: shown when a retry was refused for the sign-in, or the saved sign-in was
+// refused, so "Sign in again" in those messages names a button that is on this page.
+function renderSignIn(s){
+  const c=$('signInCard');if(!c)return;
+  const on=!!(s&&s.needed);
+  if(on)$('signInWhy').textContent=(s.why||'')+(s.as?' Sign in as '+s.as+'.':'');
+  c.hidden=!on;
+}
+// The history is redrawn from the server's answer. A timed refresh never redraws under the
+// card the keyboard is in; a redraw after a click (force) puts the focus back on the button
+// that was pressed (the same run, the same action), so a keyboard user keeps their place.
+function loadHistory(force){
+  const h=$('history');
+  if(busy||(!force&&h.contains(document.activeElement)))return;
+  busy=true;
   api('api/exports/history',{}).then(d=>{
     busy=false;
     if(!d.ok){note(d.error);return;}
-    const h=$('history');clear(h);
+    renderSignIn(d.signIn);
+    const a=document.activeElement;
+    const keep=(a&&h.contains(a)&&a.dataset)?{run:a.dataset.run,act:a.dataset.act}:null;
+    clear(h);
     (d.runs||[]).forEach(c=>h.appendChild(cardEl(c)));
     $('historyEmpty').hidden=(d.runs||[]).length>0;
+    if(keep&&keep.act){for(const b of h.querySelectorAll('button[data-act]')){if(b.dataset.run===keep.run&&b.dataset.act===keep.act){b.focus();break;}}}
   });
 }
 pollRun();loadHistory();
 setInterval(pollRun,1500);
-setInterval(()=>{if(!document.querySelector('.cardres:not(:empty)'))loadHistory();},5000);
+setInterval(()=>{if(!document.querySelector('.cardres .v'))loadHistory();},5000);
 })();
-`
+`)

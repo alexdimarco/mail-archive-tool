@@ -160,12 +160,13 @@ type dashboard struct {
 	csrf string
 	cap  *captureState
 
-	boot string // this process's epoch: a page that carries another one was made before a restart (R-y)
-	life *Lifecycle
-	ws   *workspace
-	ex   *exportsState
-	si   *signInSlot
-	flow deviceFlow
+	boot  string // this process's epoch: a page that carries another one was made before a restart (R-y)
+	life  *Lifecycle
+	ws    *workspace
+	ex    *exportsState
+	si    *signInSlot
+	flow  deviceFlow
+	lapse lapse
 
 	// seams a test replaces
 	now    func() time.Time

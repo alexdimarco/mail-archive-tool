@@ -202,7 +202,7 @@ func (e *CopyExportEnv) ReconcileRun(run string) (CopyObservation, error) {
 		obs.Actions = []string{ActFinishAsPartial}
 	case seen.HasMarker:
 		obs.Kind = obsFinishing
-		obs.Label = "Finished writing (" + copyLabel(sum.Sealed.Status, sum.Sealed.Counts, sum.Sealed.Stop) + ") — this folder's marker may still need updating"
+		obs.Label = "Finished writing (" + copyLabel(sum.Sealed.Status, sum.Sealed.Counts, sum.Sealed.Stop) + ")" + finishingTail
 		obs.Actions = []string{ActCheckAndFinish}
 	default:
 		obs.Kind = obsRecovered
@@ -303,6 +303,12 @@ func refusalR2(path string) *CopyRefusal {
 	return refuse("R-r2", fmt.Sprintf("MailArchive couldn't confirm that %s is this export's folder (the drive may have been plugged in again, or the folder's marker and README are missing) — it won't open a folder it can't confirm. Click Look again on Export activity, or find the folder yourself.", path))
 }
 
+// refusalR2Missing is R-r2 for a folder that is plainly not there (moved, renamed, deleted,
+// or its drive unplugged): it names the three buttons the card offers after it (friction F4).
+func refusalR2Missing(path string) *CopyRefusal {
+	return refuse("R-r2", fmt.Sprintf("MailArchive couldn't confirm that %s is this export's folder — nothing is there. It may have been moved, renamed or deleted, or its drive isn't plugged in. If it's somewhere else now, click Locate… on this export's card and choose it; if the drive is back, click Look again; if you deleted it, click This folder is gone.", path))
+}
+
 // confirmedRoot opens run's export folder as a contained root, only when §4.9's
 // tuple confirms it: a positive mismatch is R-r, an identity it could not confirm is
 // R-r2, and a folder that is not there is R-r2 too ("look again").
@@ -310,6 +316,8 @@ func (e *CopyExportEnv) confirmedRoot(sum *ceRecSummary) (ceFS, string, error) {
 	path := folderPath(sum)
 	seen, err, timedOut := probeBounded(path)
 	switch {
+	case !timedOut && (err == nil || errors.Is(err, fs.ErrNotExist)) && !seen.Exists:
+		return nil, path, refusalR2Missing(path)
 	case timedOut || (err != nil && !errors.Is(err, fs.ErrNotExist)) || !seen.Exists:
 		return nil, path, refusalR2(path)
 	}

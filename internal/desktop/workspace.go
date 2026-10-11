@@ -54,6 +54,21 @@ type wsPreview struct {
 
 func newWorkspace(d *dashboard) *workspace { return &workspace{d: d} }
 
+// previewMessageCap is the most messages one export holds (R-i). A variable only so a test can
+// lower it: serving 200,001 messages from the fake mailbox is not worth the time.
+var previewMessageCap = 200000
+
+// inRetryMode reports whether the preview the workspace holds, or the last one it was asked
+// for, is a retry's: the page's buttons and so the words of a refusal differ (R-k).
+func (ws *workspace) inRetryMode() bool {
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+	if ws.prev != nil {
+		return ws.prev.retry != ""
+	}
+	return ws.job != nil && ws.job.retry != ""
+}
+
 // ---- the guarded endpoint shell ------------------------------------------------
 
 // api wraps a workspace endpoint: POST only (405), the CSRF, Origin and Host guard (403,
@@ -166,6 +181,7 @@ func (ws *workspace) session(req context.Context) (*wsSession, *refusal) {
 	client, upn, err := app.OpenGraphSession(d.life.Context(), opts)
 	if err != nil {
 		r := graphRefusal(err, "your mailbox", d.cfgAuth())
+		d.noteRefused(r)
 		return nil, &r
 	}
 	s := newWsSession(client, upn, opts.Tenant, d.now())
@@ -277,6 +293,10 @@ func (d *dashboard) sourceAction(w http.ResponseWriter, r *http.Request) {
 		m["state"], m["auth"] = "not-signed-in", authLabel(c.Auth)
 		if upn, ok := d.signedInNow(); ok {
 			m["state"], m["upn"] = "ready", upn
+			if d.signInLapsed() != "" { // saved, but Microsoft 365 refused it: sign in again
+				m["state"] = "needs-sign-in"
+				m["note"] = fmt.Sprintf("Microsoft 365 refused your saved sign-in as %s (it expired or access was revoked). Click Sign in to sign in again.", upn)
+			}
 		}
 	}
 	s := d.cfg.settings()
@@ -338,6 +358,7 @@ func (d *dashboard) foldersAction(w http.ResponseWriter, r *http.Request) {
 func (d *dashboard) listRefusal(err error, doing string) refusal {
 	ref := graphRefusal(err, doing, d.cfgAuth())
 	if ref.ID == "R-c" {
+		d.noteRefused(ref)
 		d.ws.dropSession()
 	}
 	return ref
@@ -617,6 +638,8 @@ type wsPreviewJob struct {
 	progress string
 	result   map[string]any
 	ref      *refusal
+	retry    string // the run a retry preview is for, "" for a selection's
+	which    string // "failed" or "rest" for a retry preview
 }
 
 func (j *wsPreviewJob) running() bool {
@@ -679,7 +702,7 @@ func (d *dashboard) previewAction(w http.ResponseWriter, r *http.Request) {
 func (ws *workspace) startJob(fn func(ctx context.Context, job *wsPreviewJob) (*app.CopyPlan, map[string]any, *refusal), upn, retry string) *wsPreviewJob {
 	d := ws.d
 	ctx, cancel := context.WithCancel(d.life.Context())
-	job := &wsPreviewJob{id: randomID(16), cancel: cancel, state: "running"}
+	job := &wsPreviewJob{id: randomID(16), cancel: cancel, state: "running", retry: retry}
 	ws.mu.Lock()
 	old := ws.job
 	ws.job, ws.prev = job, nil
@@ -730,21 +753,25 @@ func (d *dashboard) previewStatusAction(w http.ResponseWriter, r *http.Request) 
 	job := d.ws.job
 	d.ws.mu.Unlock()
 	if job == nil || job.id != in.PreviewID {
-		d.refuse(w, refusalK())
+		d.refuse(w, refusalK(d.ws.inRetryMode()))
 		return
 	}
 	job.mu.Lock()
 	defer job.mu.Unlock()
+	var out map[string]any
 	switch job.state {
 	case "done":
-		d.reply(w, map[string]any{"ok": true, "state": "done", "result": job.result})
+		out = map[string]any{"ok": true, "state": "done", "result": job.result}
 	case "failed":
-		out := job.ref.body()
+		out = job.ref.body()
 		out["state"] = "failed"
-		d.reply(w, out)
 	default:
-		d.reply(w, map[string]any{"ok": true, "state": "running", "progress": job.progress})
+		out = map[string]any{"ok": true, "state": "running", "progress": job.progress}
 	}
+	if job.retry != "" { // a retry's page keeps the destination controls, even when its preview is refused (F5)
+		out["retryOf"], out["retryWhich"] = job.retry, job.which
+	}
+	d.reply(w, out)
 }
 
 // resolveAndPlan turns the selection into the plan (design §4.4, §4.7): the folder set
@@ -812,8 +839,9 @@ func (d *dashboard) resolveAndPlan(ctx context.Context, job *wsPreviewJob, sess 
 			fc.msgs++
 		}
 		perFolder = append(perFolder, fc)
-		if len(msgs) > 200000 {
-			return nil, nil, &refusal{ID: "R-i", Status: statusRefused, Text: fmt.Sprintf("This selection has more than %s messages — one export copies up to 200,000. Split it into several exports, for example by folder.", commaInt(200000))}
+		if len(msgs) > previewMessageCap {
+			ref := refusalI(len(ids) == 1 && len(picks) == 0)
+			return nil, nil, &ref
 		}
 	}
 	// the individual picks outside the folder set

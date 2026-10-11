@@ -71,6 +71,48 @@ type CopyRunInfo struct {
 	Part         int
 	Remaining    int // for "Export these N messages again" (a gone run)
 	Receipt      string
+	Next         string        // what to do next, in a sentence, for a card that is waiting on the owner (F13)
+	SetNote      string        // for a part of a retry set: how much of the whole set is exported (F10)
+	Failures     []CopyFailure // the first few messages that were not exported, from the run record (F7)
+	FailuresMore int           // how many more there are
+}
+
+// CopyFailure is one message that was not exported and why, as the card's "Which ones?" shows.
+type CopyFailure struct {
+	Subject string
+	Folder  string
+	Reason  string
+}
+
+// finishingTail ends the label of a run that was fully written and sealed but whose marker
+// action is still owed: what to click, in the owner's words.
+const finishingTail = " — click Check and finish to confirm it"
+
+// copyFailuresShown is how many failed messages a card lists.
+const copyFailuresShown = 20
+
+// failuresOf lists the first messages of a run record that failed, with their reasons.
+func failuresOf(path string) (list []CopyFailure, more int) {
+	_ = walkMessages(path, func(p *cePlanLine, m *ceMsgLine) error {
+		if m == nil || m.Status != statusFailed {
+			return nil
+		}
+		if len(list) >= copyFailuresShown {
+			more++
+			return nil
+		}
+		list = append(list, CopyFailure{Subject: util.StripControl(p.Subject), Folder: p.FolderPath(), Reason: plainReason(util.StripControl(m.Reason))})
+		return nil
+	})
+	return list, more
+}
+
+// plainReason words a failed message's recorded reason for the card.
+func plainReason(r string) string {
+	if strings.HasPrefix(r, "the export stopped while this message was being exported") {
+		return "the export stopped while this message was downloading"
+	}
+	return r
 }
 
 var partSuffix = regexp.MustCompile(`-part(\d+)(?:-\d+)?$`)
@@ -142,12 +184,41 @@ func (e *CopyExportEnv) History(obs map[string]CopyObservation, live string) ([]
 				info.Set = s
 			}
 		}
-		if info.Fingerprint != "" {
-			info.Receipt = receiptText(info, info.Set)
-		}
 		out = append(out, info)
 	}
+	// A retry set's offers and totals are those of the whole set (F9, F10); the receipt, which
+	// carries the set's total, is made last.
+	byRun := map[string]*CopyRunInfo{}
+	for i := range out {
+		byRun[out[i].Run] = &out[i]
+	}
+	for i := range out {
+		info := &out[i]
+		if info.Set != nil {
+			planned := 0
+			if first := firstPart(info.Set); first != "" {
+				if f := byRun[first]; f != nil {
+					planned = f.Planned
+				}
+			}
+			e.applySet(info, planned)
+		}
+		if info.Fingerprint != "" {
+			info.Receipt = receiptText(*info, info.Set)
+		}
+	}
 	return out, nil
+}
+
+// firstPart is the run of a set's part 1.
+func firstPart(set *CopySetInfo) string {
+	first := set.Parts[0]
+	for _, p := range set.Parts {
+		if p.Part < first.Part {
+			first = p
+		}
+	}
+	return first.Run
 }
 
 // historyOne is one card. ok is false for a run the journal names with no start line.
@@ -175,6 +246,12 @@ func (e *CopyExportEnv) historyOne(run string, jl []ceJournalLine, ledger []ceLe
 			c := sum.Sealed.Counts
 			info.Status, info.Fingerprint, info.Stop = sum.Sealed.Status, sum.Sealed.Fingerprint, sum.Sealed.Stop
 			info.Exported, info.Failed, info.NotAttempted, info.OriginalOnly = c.Exported, c.Failed, c.NotAttempted, c.OriginalOnly
+			if sum.Sealed.Stop != nil && sum.Sealed.Stop.InFlight != "" && info.Failed > 0 {
+				// the message the stop cut off is listed as failed so a retry takes it; the card says
+				// it was not tried again, instead of counting a sign-in or a disk as a bad message (F8)
+				info.Failed--
+				info.NotAttempted++
+			}
 		} else {
 			info.Exported = sum.Statuses[statusExported] + sum.Statuses[statusWithoutOrig] + sum.Statuses[statusOriginalOnly]
 			info.Failed = sum.Statuses[statusFailed]
@@ -184,6 +261,9 @@ func (e *CopyExportEnv) historyOne(run string, jl []ceJournalLine, ledger []ceLe
 			}
 		}
 	} else if end != nil {
+		if IsRecordDamaged(serr) {
+			info.Next = "MailArchive can't read the record it keeps of this export, so Finish, Export again and the other retry buttons are not possible. The folder itself is untouched: Open folder and Check this export still work."
+		}
 		info.Exported, info.Failed = end.Exported, end.Failed
 		info.NotAttempted = max(0, end.Planned-end.Exported-end.Failed)
 		info.Planned, info.Status, info.Fingerprint = end.Planned, CopyStatus(end.Status), end.Fingerprint
@@ -191,6 +271,11 @@ func (e *CopyExportEnv) historyOne(run string, jl []ceJournalLine, ledger []ceLe
 	} else if serr != nil && !errors.Is(serr, fs.ErrNotExist) {
 		// a record of a newer format, or one that cannot be read: its own words
 		info.Label = "this export's run record can't be read (" + serr.Error() + ")"
+		if IsRecordDamaged(serr) {
+			info.Label = "this export's record is damaged, so it can't be finished or retried from here"
+			info.Next = "The folder itself is untouched: Open folder and Check this export still work."
+			info.Actions = []string{ActOpenFolder, ActCheckThis}
+		}
 		return info, true
 	} else {
 		return CopyRunInfo{}, false // no record and no end: nothing to show
@@ -201,6 +286,20 @@ func (e *CopyExportEnv) historyOne(run string, jl []ceJournalLine, ledger []ceLe
 				info.Fingerprint = l.Fingerprint
 			}
 		}
+	}
+	if info.Stop != nil && info.Stop.RID != "" && (info.Stop.Message == "" || info.Status == CopyStatusFinishedAsPartial) {
+		// An unsealed run keeps only the stop's id: its card still says why it stopped and what
+		// to do, whatever the reconciler found about the folder since (F8). A run finished as
+		// partial was finished from that record alone, so what its seal holds is the same short
+		// reason, and its card says the same full words (the re-verification of F8).
+		plan := &CopyPlan{Dest: info.Dest, Source: CopySourceInfo{Mailbox: info.Mailbox}}
+		stop := *info.Stop
+		stop.Message = refusalText(stop.RID, info.Exported, info.Planned, "", plan, e.StateDir)
+		info.Stop = &stop
+	}
+	if hasRec && info.Failed > 0 {
+		info.Failures, info.FailuresMore = failuresOf(e.recordPath(run))
+		info.FailuresMore = max(0, info.Failed-len(info.Failures))
 	}
 
 	o, hasObs := obs[run]
@@ -220,21 +319,37 @@ func (e *CopyExportEnv) historyOne(run string, jl []ceJournalLine, ledger []ceLe
 		info.Label, info.Kind = "This folder is gone", obsGone
 	case hasObs && o.Kind != obsSettledRun && o.Kind != obsNoRecord && o.Label != "":
 		info.Label, info.Actions = o.Label, e.cardActions(sum, o)
+		info.Next = nextFor(o.Kind)
 	case info.Status != "" && end != nil:
 		info.Label = copyLabel(info.Status, CopyCounts{Selected: info.Planned, Exported: info.Exported, Failed: info.Failed, NotAttempted: info.NotAttempted,
 			OriginalOnly: info.OriginalOnly}, info.Stop)
 		info.Actions = e.endedActions(sum, info)
 	case info.Status != "":
 		info.Label = "Finished writing (" + copyLabel(info.Status, CopyCounts{Selected: info.Planned, Exported: info.Exported, Failed: info.Failed,
-			NotAttempted: info.NotAttempted, OriginalOnly: info.OriginalOnly}, info.Stop) + ") — this folder's marker may still need updating"
-		info.Actions = []string{ActCheckAndFinish}
+			NotAttempted: info.NotAttempted, OriginalOnly: info.OriginalOnly}, info.Stop) + ")" + finishingTail
+		info.Actions = []string{ActCheckAndFinish, ActCheckThis}
+		info.Next = nextFor(obsFinishing)
 	default:
 		info.Label = "interrupted — looking for its folder"
 		if info.Stop != nil && info.Stop.RID != "" {
 			info.Label = "Stopped: " + stopReason(info.Stop.RID) + " — looking for its folder"
 		}
+		info.Next = "MailArchive is looking for this export's folder; its buttons appear in a few seconds (up to 5 on a network drive)."
 	}
 	return info, true
+}
+
+// nextFor is the sentence that tells the owner what to do with a card that is waiting on them
+// (friction F13): finishing an interrupted export is the first of three clicks, and nothing
+// else on the card says so.
+func nextFor(kind string) string {
+	switch kind {
+	case obsInterrupt, obsEmpty, obsChanged:
+		return "To continue: click Finish as partial (it keeps everything written so far and lists the rest), then click Export the remaining messages, then Start export."
+	case obsFinishing:
+		return "Everything was written. Click Check and finish to confirm it; nothing else is needed."
+	}
+	return ""
 }
 
 // hasReconciled reports whether a journal reconciled line of kind status exists among lines.
@@ -356,7 +471,15 @@ func (e *CopyExportEnv) Receipt(run string) (string, error) {
 	if !ok || info.Fingerprint == "" {
 		return "", fmt.Errorf("the fingerprint was not recorded at export time, so there is no receipt to save")
 	}
-	return receiptText(info, e.chainSet(info.Chain, ledger, lines)), nil
+	if set := e.chainSet(info.Chain, ledger, lines); set != nil && len(set.Parts) > 1 {
+		info.Set = set
+		planned := 0
+		if l := lastEvent(by[firstPart(set)], "start"); l != nil {
+			planned = l.Planned
+		}
+		e.applySet(&info, planned)
+	}
+	return receiptText(info, info.Set), nil
 }
 
 // receiptText words the receipt of one card, with its retry set when it has one.
@@ -373,6 +496,9 @@ func receiptText(info CopyRunInfo, chain *CopySetInfo) string {
 	fmt.Fprintf(&b, "Counts: %d selected, %d exported, %d failed, %d not attempted\n", info.Planned, info.Exported, info.Failed, info.NotAttempted)
 	fmt.Fprintf(&b, "Fingerprint (SHA-256 of SHA256SUMS.txt): %s\n", GroupFingerprint(info.Fingerprint))
 	if chain != nil && len(chain.Parts) > 1 {
+		if info.SetNote != "" {
+			fmt.Fprintf(&b, "\nSet total: %s\n", info.SetNote)
+		}
 		fmt.Fprintf(&b, "\nThis export is one part of a set. Set fingerprint: %s\n", GroupFingerprint(chain.Fingerprint))
 		fmt.Fprintf(&b, "It is the SHA-256 over the parts' SHA256SUMS.txt files, in the order the parts were finished:\n")
 		for i, p := range chain.Parts {
@@ -418,7 +544,7 @@ func (e *CopyExportEnv) folderSpec(run string) (*ceFolderSpec, error) {
 	if err == nil {
 		return &ceFolderSpec{Run: run, Path: folderPath(sum), Identity: sum.Header.Identity, Sum: sum}, nil
 	}
-	if !errors.Is(err, fs.ErrNotExist) {
+	if !errors.Is(err, fs.ErrNotExist) && !IsRecordDamaged(err) { // a damaged record is read as a deleted one: the journal knows the folder
 		return nil, err
 	}
 	lines, _ := e.readJournal()
@@ -450,6 +576,8 @@ func (e *CopyExportEnv) folderSpec(run string) (*ceFolderSpec, error) {
 func (e *CopyExportEnv) confirmedFolder(spec *ceFolderSpec) (ceFolderSeen, error) {
 	seen, err, timedOut := probeBounded(spec.Path)
 	switch {
+	case !timedOut && (err == nil || errors.Is(err, fs.ErrNotExist)) && !seen.Exists:
+		return seen, refusalR2Missing(spec.Path)
 	case timedOut || (err != nil && !errors.Is(err, fs.ErrNotExist)) || !seen.Exists:
 		return seen, refusalR2(spec.Path)
 	}
@@ -571,6 +699,7 @@ type CopyCheck struct {
 	NoFingerprint bool
 	MarkerPresent bool
 	Problems      []string // the findings in words
+	Remedy        string   // what to do about a RED, "" when GREEN
 }
 
 // copyCheckFileCap bounds the number of lines of SHA256SUMS.txt that Check reads.
@@ -611,7 +740,12 @@ func (e *CopyExportEnv) CheckExport(run string) (*CopyCheck, error) {
 	problem := func(format string, a ...any) { res.Problems = append(res.Problems, fmt.Sprintf(format, a...)) }
 	f, err := root.Open(copySumsName)
 	if err != nil {
-		problem("%s is missing, so nothing in this folder can be checked", copySumsName)
+		if spec.Sum != nil && spec.Sum.Sealed == nil {
+			problem("this export is unfinished: it has no %s yet, so there is nothing to check it against. Finish it first (Finish as partial, on its card)", copySumsName)
+		} else {
+			problem("%s is missing, so nothing in this folder can be checked", copySumsName)
+		}
+		res.Remedy = checkRemedy
 		return res, nil
 	}
 	data, err := readLimited(f, copyCheckSumsCap)
@@ -668,8 +802,15 @@ func (e *CopyExportEnv) CheckExport(run string) (*CopyCheck, error) {
 		problem("%s is in the folder but is not listed in %s: it is not part of the export", p, copySumsName)
 	}
 	res.OK = len(res.Problems) == 0 && res.FingerprintOK
+	if !res.OK {
+		res.Remedy = checkRemedy
+	}
 	return res, nil
 }
+
+// checkRemedy is what a RED check tells the owner to do (friction F12): the findings name the
+// files, this says what follows from them.
+const checkRemedy = "Do not hand this folder over as it is. Put back the files named above, or export the messages again from the Extraction workspace."
 
 // readLimited reads r whole, refusing more than n bytes.
 func readLimited(r io.Reader, n int64) ([]byte, error) {
@@ -711,6 +852,36 @@ func hashRootFile(root *os.Root, rel string) (string, error) {
 // R-l and the refusals a retry meets (design §7.6).
 func refusalL(was, now string) *CopyRefusal {
 	return refuse("R-l", fmt.Sprintf("This selection was made in %s's mailbox, but you're now signed in as %s. Load folders again to start a new selection.", was, now))
+}
+
+// RetryButton is the label of the card button a retry of kind which ("failed" or "rest") is
+// started from.
+func RetryButton(which string) string {
+	if which == "failed" {
+		return "Export failed messages again"
+	}
+	return "Export the remaining messages"
+}
+
+// RunMailbox is the mailbox a run exported, from its record, or its journal line once the
+// record is deleted: "" when neither names one.
+func (e *CopyExportEnv) RunMailbox(run string) string {
+	if sum, err := readSummary(e.recordPath(run)); err == nil {
+		return util.StripControl(sum.Header.Source.Mailbox)
+	}
+	lines, _ := e.readJournal()
+	if l := lastEvent(func() []ceJournalLine {
+		var own []ceJournalLine
+		for _, l := range lines {
+			if l.Run == run {
+				own = append(own, l)
+			}
+		}
+		return own
+	}(), "start"); l != nil {
+		return util.StripControl(l.Mailbox)
+	}
+	return ""
 }
 
 // RetryInput builds the preview input of "Export failed messages again" (which

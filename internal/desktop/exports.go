@@ -38,6 +38,51 @@ type exportsState struct {
 	mu         sync.Mutex
 	slot       *exportSlot
 	wedgeAfter time.Duration
+	results    map[string]cardResult // the last refusal of a card's button, by run (F1)
+}
+
+// cardResult is what a card's last refused button said: kept on the server so the page's
+// next history answer, a reload or a second window still shows it, instead of the rebuild
+// of the cards wiping the one sentence that says what to do (friction F1).
+type cardResult struct {
+	id, text string
+	at       time.Time
+}
+
+// cardResultTTL is how long a refusal stays on its card.
+const cardResultTTL = 30 * time.Minute
+
+// refuseRun answers a card button's refusal and keeps it on that run's card.
+func (d *dashboard) refuseRun(w http.ResponseWriter, run string, ref refusal) {
+	d.ex.mu.Lock()
+	if d.ex.results == nil {
+		d.ex.results = map[string]cardResult{}
+	}
+	d.ex.results[run] = cardResult{id: ref.ID, text: ref.Text, at: d.now()}
+	d.ex.mu.Unlock()
+	d.refuse(w, ref)
+}
+
+// clearResult drops a run's kept refusal: a new click replaces it.
+func (d *dashboard) clearResult(run string) {
+	d.ex.mu.Lock()
+	delete(d.ex.results, run)
+	d.ex.mu.Unlock()
+}
+
+// resultsNow is the live kept refusals.
+func (d *dashboard) resultsNow() map[string]cardResult {
+	d.ex.mu.Lock()
+	defer d.ex.mu.Unlock()
+	out := map[string]cardResult{}
+	for run, r := range d.ex.results {
+		if d.now().Sub(r.at) > cardResultTTL {
+			delete(d.ex.results, run)
+			continue
+		}
+		out[run] = r
+	}
+	return out
 }
 
 // exportSlot is the running export, or the last one until the next starts.
@@ -130,7 +175,7 @@ func (d *dashboard) startAction(w http.ResponseWriter, r *http.Request) {
 	prev := ws.prev
 	ws.mu.Unlock()
 	if prev == nil || prev.id != in.PreviewID || d.now().Sub(prev.created) > previewTTL {
-		d.refuse(w, refusalK())
+		d.refuse(w, refusalK(ws.inRetryMode()))
 		return
 	}
 	if st, live := d.exportState(); live {
@@ -233,6 +278,9 @@ func (ex *exportsState) runSlot(slot *exportSlot, plan *app.CopyPlan) {
 	}()
 	slot.mu.Lock()
 	slot.finished, slot.res, slot.err = true, res, err
+	if res != nil && res.Stop != nil && res.Stop.RID == "R-c" {
+		d.noteRefused(refusalC()) // the saved sign-in is refused: the workspace says so, and Export activity shows Sign in
+	}
 	if res != nil {
 		slot.addLog(fmt.Sprintf("%s %s", d.now().Format("15:04:05"), res.Label))
 	}
@@ -336,7 +384,7 @@ func (d *dashboard) progressAction(w http.ResponseWriter, r *http.Request) {
 	}
 	out := map[string]any{"ok": true, "running": !s.finished && !s.released, "runId": s.runID, "started": s.started.UTC().Format(time.RFC3339),
 		"selected": p.Selected, "done": p.Done, "failed": p.Failed, "bytes": p.Bytes, "bytesText": humanSize(p.Bytes), "folder": util.StripControl(p.Folder),
-		"rate": int64(s.rate), "etaSeconds": int(p.ETA.Seconds()), "log": append([]string(nil), s.log...)}
+		"rate": int64(s.rate), "etaSeconds": int(p.ETA.Seconds()), "log": append([]string(nil), s.log...), "waiting": p.Waiting}
 	if s.released {
 		out["released"] = true
 		out["label"] = "Stopped: the destination is not responding"
@@ -355,31 +403,52 @@ func (d *dashboard) progressAction(w http.ResponseWriter, r *http.Request) {
 // ---- history and the card actions -------------------------------------------
 
 type cardOut struct {
-	Run          string   `json:"run"`
-	Started      string   `json:"started"`
-	Source       string   `json:"source"`
-	Mailbox      string   `json:"mailbox"`
-	Dest         string   `json:"dest"`
-	RootName     string   `json:"rootName"`
-	Label        string   `json:"label"`
-	Kind         string   `json:"kind"`
-	Running      bool     `json:"running"`
-	Planned      int      `json:"planned"`
-	Exported     int      `json:"exported"`
-	Failed       int      `json:"failed"`
-	NotAttempted int      `json:"notAttempted"`
-	Fingerprint  string   `json:"fingerprint"`
-	Grouped      string   `json:"fingerprintGrouped"`
-	NoFinger     string   `json:"fingerprintNote,omitempty"`
-	Actions      []string `json:"actions"`
-	Stop         string   `json:"stop,omitempty"`
-	StopID       string   `json:"stopId,omitempty"`
-	Remaining    int      `json:"remaining,omitempty"`
-	Part         int      `json:"part"`
-	RetryOf      string   `json:"retryOf,omitempty"`
-	Set          *setOut  `json:"set,omitempty"`
-	Receipt      string   `json:"receipt,omitempty"`
+	Run          string    `json:"run"`
+	Started      string    `json:"started"`
+	Source       string    `json:"source"`
+	Mailbox      string    `json:"mailbox"`
+	Dest         string    `json:"dest"`
+	RootName     string    `json:"rootName"`
+	Label        string    `json:"label"`
+	Kind         string    `json:"kind"`
+	Running      bool      `json:"running"`
+	Planned      int       `json:"planned"`
+	Exported     int       `json:"exported"`
+	Failed       int       `json:"failed"`
+	NotAttempted int       `json:"notAttempted"`
+	Fingerprint  string    `json:"fingerprint"`
+	Grouped      string    `json:"fingerprintGrouped"`
+	NoFinger     string    `json:"fingerprintNote,omitempty"`
+	Actions      []string  `json:"actions"`
+	Stop         string    `json:"stop,omitempty"`
+	StopID       string    `json:"stopId,omitempty"`
+	Remaining    int       `json:"remaining,omitempty"`
+	Part         int       `json:"part"`
+	RetryOf      string    `json:"retryOf,omitempty"`
+	Set          *setOut   `json:"set,omitempty"`
+	Receipt      string    `json:"receipt,omitempty"`
+	Result       *resOut   `json:"result,omitempty"`   // what the last refused button said, kept until the next click (F1)
+	Next         string    `json:"next,omitempty"`     // what to do with a card that waits on the owner (F13)
+	SetNote      string    `json:"setNote,omitempty"`  // how much of its retry set is exported (F10)
+	Failures     []failOut `json:"failures,omitempty"` // "Which ones?": the messages not exported and why (F7)
+	FailuresMore int       `json:"failuresMore,omitempty"`
 }
+
+type failOut struct {
+	Subject string `json:"subject"`
+	Folder  string `json:"folder"`
+	Reason  string `json:"reason"`
+}
+
+type resOut struct {
+	ID    string `json:"id"`
+	Error string `json:"error"`
+}
+
+// folderLostActions are the three answers to a folder that is not where it was: shown on a
+// card after Open folder, Check this export or a retry was refused with R-r or R-r2, the
+// refusals whose own words tell the owner to click them (F4).
+var folderLostActions = []string{app.ActLookAgain, app.ActLocate, app.ActGone}
 
 type setOut struct {
 	Fingerprint string    `json:"fingerprint"`
@@ -416,17 +485,34 @@ func (d *dashboard) historyAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cards := make([]cardOut, 0, len(hist))
+	results := d.resultsNow()
 	for _, h := range hist {
 		c := cardOut{Run: h.Run, Started: h.Started.UTC().Format(time.RFC3339), Source: h.SourceKind, Mailbox: h.Mailbox, Dest: h.Dest, RootName: h.RootName,
 			Label: h.Label, Kind: h.Kind, Running: h.Running, Planned: h.Planned, Exported: h.Exported, Failed: h.Failed, NotAttempted: h.NotAttempted,
-			Fingerprint: h.Fingerprint, Actions: h.Actions, Remaining: h.Remaining, Part: h.Part, RetryOf: h.RetryOf, Receipt: h.Receipt}
+			Fingerprint: h.Fingerprint, Actions: h.Actions, Remaining: h.Remaining, Part: h.Part, RetryOf: h.RetryOf, Receipt: h.Receipt, Next: h.Next, SetNote: h.SetNote,
+			FailuresMore: h.FailuresMore}
+		for _, f := range h.Failures {
+			c.Failures = append(c.Failures, failOut{Subject: f.Subject, Folder: f.Folder, Reason: f.Reason})
+		}
 		if c.Actions == nil {
 			c.Actions = []string{}
 		}
+		if r, ok := results[h.Run]; ok && !h.Running {
+			c.Result = &resOut{ID: r.id, Error: r.text}
+			if (r.id == "R-r" || r.id == "R-r2") && h.Kind != "gone" {
+				for _, a := range folderLostActions {
+					if !hasString(c.Actions, a) {
+						c.Actions = append(c.Actions, a)
+					}
+				}
+			}
+		}
 		if h.Fingerprint != "" {
 			c.Grouped = app.GroupFingerprint(h.Fingerprint)
-		} else if h.Status == "" || h.Running {
-			c.NoFinger = "fingerprint not recorded at export time"
+		} else if h.Running {
+			c.NoFinger = "" // still writing: it has no fingerprint yet, and the card says so by saying "writing"
+		} else if h.Status == "" {
+			c.NoFinger = "no fingerprint: this export was never finished"
 		}
 		if h.Stop != nil {
 			c.Stop, c.StopID = h.Stop.Message, h.Stop.RID
@@ -440,7 +526,63 @@ func (d *dashboard) historyAction(w http.ResponseWriter, r *http.Request) {
 		}
 		cards = append(cards, c)
 	}
-	d.reply(w, map[string]any{"ok": true, "runs": cards})
+	d.reply(w, map[string]any{"ok": true, "runs": cards, "signIn": d.signInBlock(cards)})
+}
+
+// signInResultIDs are the refusals that are about the sign-in: the page shows Sign in for them.
+var signInResultIDs = map[string]bool{"R-b": true, "R-c": true, "R-l": true, "R-z": true}
+
+type signInOut struct {
+	Needed bool   `json:"needed"`
+	As     string `json:"as,omitempty"`  // the account to sign in as
+	Why    string `json:"why,omitempty"` // in words
+}
+
+// signInBlock says whether Export activity should show its Sign in button, and why (F2): the
+// "Sign in again" of R-b, R-c, R-l and R-z names a control the owner has to be able to reach
+// from the page the refusal appears on. It is needed when a retry was refused for the sign-in,
+// when the saved sign-in was refused, or when nobody is signed in and something could be
+// retried.
+func (d *dashboard) signInBlock(cards []cardOut) signInOut {
+	if c := d.cfg.load(); c == nil || strings.TrimSpace(c.Tenant) == "" || strings.TrimSpace(c.ClientID) == "" {
+		return signInOut{}
+	}
+	upn, signed := d.signedInNow()
+	lapsed := d.signInLapsed()
+	retryable := func(c cardOut) bool {
+		return hasString(c.Actions, app.ActExportRemaining) || hasString(c.Actions, app.ActExportFailed) || hasString(c.Actions, app.ActExportThese)
+	}
+	for _, c := range cards {
+		if c.Result != nil && signInResultIDs[c.Result.ID] {
+			return signInOut{Needed: true, As: c.Mailbox, Why: c.Result.Error}
+		}
+	}
+	for _, c := range cards {
+		if !retryable(c) || c.Mailbox == "" {
+			continue
+		}
+		switch {
+		case !signed:
+			return signInOut{Needed: true, As: c.Mailbox, Why: "You're not signed in to Microsoft 365."}
+		case lapsed != "":
+			return signInOut{Needed: true, As: c.Mailbox, Why: "Microsoft 365 refused your saved sign-in as " + lapsed + " (it expired or access was revoked)."}
+		case (c.StopID == "R-c" || c.StopID == "R-z") && !strings.EqualFold(upn, c.Mailbox):
+			return signInOut{Needed: true, As: c.Mailbox, Why: c.Stop}
+		}
+	}
+	if lapsed != "" {
+		return signInOut{Needed: true, As: lapsed, Why: "Microsoft 365 refused your saved sign-in as " + lapsed + " (it expired or access was revoked)."}
+	}
+	return signInOut{}
+}
+
+func hasString(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
 }
 
 // runBody is the body of the endpoints that act on one run.
@@ -465,7 +607,13 @@ func engineRefusal(err error) refusal {
 	if app.IsNewerFormat(err) {
 		return refusal{ID: "R-newer", Text: msg, Status: statusRefused}
 	}
-	return refusal{ID: "R-d2", Text: "MailArchive Desktop couldn't do that: " + util.StripControl(msg) + " — nothing was changed.", Status: statusRefused}
+	if app.IsRecordDamaged(err) {
+		return refusal{ID: "R-rec", Status: statusRefused, Text: "MailArchive can't read the record it keeps of this export (its file in MailArchive Desktop's own folder is damaged), so nothing was changed. The export folder itself is untouched: Open folder and Check this export still work, or you can keep or delete the folder yourself."}
+	}
+	// Anything else: no raw error and no file name for the owner to decode; the detail rides in the
+	// answer's `detail` for whoever reports it (friction F20).
+	return refusal{ID: "R-x2", Status: statusRefused, Text: "MailArchive Desktop couldn't do that, and nothing was changed. Reload the page and try again; if it happens again, restart MailArchive Desktop.",
+		Extra: map[string]any{"detail": util.StripControl(msg)}}
 }
 
 // guardRun reads the run body and refuses an action on the run the slot is running now.
@@ -478,6 +626,7 @@ func (d *dashboard) runBodyOf(w http.ResponseWriter, r *http.Request) (runBody, 
 		d.refuse(w, refusedWith("R-h", "Choose an export on Export activity first."))
 		return in, false
 	}
+	d.clearResult(in.RunID) // a new click replaces what the last one said
 	return in, true
 }
 
@@ -497,12 +646,12 @@ func (d *dashboard) openFolderAction(w http.ResponseWriter, r *http.Request) {
 	}
 	t, err := d.ex.env.OpenTarget(in.RunID)
 	if err != nil {
-		d.refuse(w, engineRefusal(err))
+		d.refuseRun(w, in.RunID, engineRefusal(err))
 		return
 	}
 	name, args := revealArgv(runtime.GOOS, t.Root)
 	if rerr := d.reveal(name, args); rerr != nil {
-		d.refuse(w, refusedWith("R-w", "MailArchive couldn't open that folder in your file manager — open it yourself: "+t.Root))
+		d.refuseRun(w, in.RunID, refusedWith("R-w", "MailArchive couldn't open that folder in your file manager — open it yourself: "+t.Root))
 		return
 	}
 	d.reply(w, map[string]any{"ok": true})
@@ -535,21 +684,26 @@ func (d *dashboard) retryAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if st, live := d.exportState(); live {
-		d.refuse(w, refusalM(st.started, st.done, st.selected))
+		d.refuseRun(w, in.RunID, refusalM(st.started, st.done, st.selected))
 		return
 	}
+	mailbox := d.ex.env.RunMailbox(in.RunID)
 	now, signed := d.signedInNow()
 	if !signed {
-		d.refuse(w, refusalB())
+		d.refuseRun(w, in.RunID, retrySignInRefusal(refusalB(), mailbox, in.Which))
 		return
 	}
 	if _, ref := d.ws.session(r.Context()); ref != nil {
-		d.refuse(w, *ref)
+		d.refuseRun(w, in.RunID, retrySignInRefusal(*ref, mailbox, in.Which))
 		return
 	}
 	input, err := d.ex.env.RetryInput(in.RunID, in.Which, now)
 	if err != nil {
-		d.refuse(w, engineRefusal(err))
+		ref := engineRefusal(err)
+		if ref.ID == "R-l" {
+			ref = retryLRefusal(mailbox, now, in.Which)
+		}
+		d.refuseRun(w, in.RunID, ref)
 		return
 	}
 	if dest := strings.TrimSpace(in.Dest); dest != "" {
@@ -557,11 +711,14 @@ func (d *dashboard) retryAction(w http.ResponseWriter, r *http.Request) {
 	}
 	input.Archives = d.archives()
 	job := d.ws.startJob(func(ctx context.Context, job *wsPreviewJob) (*app.CopyPlan, map[string]any, *refusal) {
+		job.set(func() { job.which = in.Which })
 		plan, perr := d.copyEnv().PlanCopyExport(*input)
 		if perr != nil {
 			return nil, nil, copyRefusal(perr)
 		}
-		return plan, planResult(plan, job.id, foldersOut(input.Folders), len(input.Messages), len(input.Messages), nil, nil), nil
+		res := planResult(plan, job.id, foldersOut(input.Folders), len(input.Messages), len(input.Messages), nil, nil)
+		res["retryWhich"] = in.Which // so the page can preview this retry again for another destination (F5)
+		return plan, res, nil
 	}, now, in.RunID)
 	d.reply(w, map[string]any{"ok": true, "previewId": job.id})
 }
@@ -582,12 +739,12 @@ func (d *dashboard) finishAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if d.isLiveRun(in.RunID) {
-		d.refuse(w, refusedWith("R-m", "That export is still running — cancel it on Export activity first."))
+		d.refuseRun(w, in.RunID, refusedWith("R-m", "That export is still running — cancel it on Export activity first."))
 		return
 	}
 	res, err := d.ex.env.FinishRun(in.RunID)
 	if err != nil {
-		d.refuse(w, engineRefusal(err))
+		d.refuseRun(w, in.RunID, engineRefusal(err))
 		return
 	}
 	d.ex.rec.Forget(in.RunID)
@@ -602,7 +759,7 @@ func (d *dashboard) locateAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if d.isLiveRun(in.RunID) {
-		d.refuse(w, refusedWith("R-m", "That export is still running — cancel it on Export activity first."))
+		d.refuseRun(w, in.RunID, refusedWith("R-m", "That export is still running — cancel it on Export activity first."))
 		return
 	}
 	ex := d.ex
@@ -613,14 +770,14 @@ func (d *dashboard) locateAction(w http.ResponseWriter, r *http.Request) {
 	case "gone":
 		obs, err := ex.env.MarkGone(in.RunID)
 		if err != nil {
-			d.refuse(w, engineRefusal(err))
+			d.refuseRun(w, in.RunID, engineRefusal(err))
 			return
 		}
 		ex.rec.Record(obs)
 		d.reply(w, map[string]any{"ok": true, "kind": obs.Kind, "label": obs.Label})
 	case "locate":
 		if err := ex.env.Locate(in.RunID, strings.TrimSpace(in.Path)); err != nil {
-			d.refuse(w, engineRefusal(err))
+			d.refuseRun(w, in.RunID, engineRefusal(err))
 			return
 		}
 		obs := ex.rec.LookAgain(in.RunID)
@@ -640,7 +797,7 @@ func (d *dashboard) checkAction(w http.ResponseWriter, r *http.Request) {
 	}
 	chk, err := d.ex.env.CheckExport(in.RunID)
 	if err != nil {
-		d.refuse(w, engineRefusal(err))
+		d.refuseRun(w, in.RunID, engineRefusal(err))
 		return
 	}
 	posture := "RED"
@@ -655,7 +812,7 @@ func (d *dashboard) checkAction(w http.ResponseWriter, r *http.Request) {
 	}
 	d.reply(w, map[string]any{"ok": true, "posture": posture, "green": chk.OK, "files": chk.Files, "changed": list(chk.Changed), "missing": list(chk.Missing),
 		"unlisted": list(chk.Unlisted), "problems": list(chk.Problems), "fingerprint": app.GroupFingerprint(chk.Fingerprint), "fingerprintOK": chk.FingerprintOK,
-		"noFingerprint": chk.NoFingerprint, "markerPresent": chk.MarkerPresent})
+		"noFingerprint": chk.NoFingerprint, "markerPresent": chk.MarkerPresent, "remedy": chk.Remedy})
 }
 
 // drain is the shutdown path (XC6): cancel the preview and the running export and wait
