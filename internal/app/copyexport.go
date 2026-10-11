@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"mail-archive-tool/internal/graph"
 	"mail-archive-tool/internal/util"
 )
 
@@ -406,8 +407,9 @@ func (e *CopyExportEnv) pause(ctx context.Context, d time.Duration) error {
 func (e *CopyExportEnv) busy() bool { return e.captureBusy != nil && e.captureBusy() }
 
 // copyDefaultSizeCap is the shared size cap on one $value body: graph.MIMEMaxBytes,
-// 256 MiB (ESC-8's safe interim, which the copy export alone carries).
-const copyDefaultSizeCap = 256 << 20
+// 256 MiB (ESC-8's safe interim, which the copy export alone carries). It is the
+// graph package's own constant, so a later rise of the cap there is the export's too.
+const copyDefaultSizeCap = graph.MIMEMaxBytes
 
 // commas formats n with thousands separators, as the refusal texts show counts.
 func commas(n int) string {

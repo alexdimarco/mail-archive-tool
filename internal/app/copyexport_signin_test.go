@@ -114,3 +114,76 @@ func TestCopyExportReadsTheSignInEveryHundredMessages(t *testing.T) {
 		}
 	}
 }
+
+// covers: MA-517, R17, R29, S52
+// A 403 on a $value is told from a revoked sign-in by one control request (design §4.13,
+// XC9): when the control request is answered, the 403 is that item's alone, listed
+// terminal and never retried in-run, and the run goes on; when the control request is
+// refused too (a 403 or a 401), the sign-in is gone and the run stops with R-c, outcome
+// 1, the message in flight listed retryable and the rest not attempted; when the control
+// request gets no answer at all, the sign-in is not blamed (never R-c): the connection
+// is, and the breaker ends the run with R-u.
+func TestCopyExportA403IsToldFromARevokedSignInByAControlRequest(t *testing.T) {
+	denied := func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(403)
+		io.WriteString(w, `{"error":{"code":"ErrorAccessDenied","message":"denied"}}`)
+	}
+
+	// Answered: this item's alone.
+	f := newMeFake(t)
+	f.value("D1", denied)
+	e := newCEEnv(t)
+	src := f.source(t)
+	probes := f.hit("/me")
+	res := runWith(t, e, planFor(t, e, src, idMsgs("A1", "D1", "A3")), src)
+	if res.Stop != nil || res.Outcome != CopyOutcomePartial || res.Counts.Exported != 2 || res.Counts.Failed != 1 {
+		t.Fatalf("a 403 on one item with a working sign-in ended as %s (%+v) %+v, want the item listed and the run on", res.Label, res.Stop, res.Counts)
+	}
+	if fail := failureOf(t, res.Root, "D1"); fail == nil || fail["class"] != classTerminal {
+		t.Errorf("D1 is listed as %v, want terminal", fail)
+	}
+	if f.hit("D1") != 1 {
+		t.Errorf("D1 was requested %d times: a 403 is never retried in-run", f.hit("D1"))
+	}
+	if got := f.hit("/me") - probes; got != 1 {
+		t.Errorf("%d control requests for one 403, want 1", got)
+	}
+
+	// Refused: the sign-in is gone.
+	for _, code := range []int{403, 401} {
+		f = newMeFake(t)
+		f.value("D1", denied)
+		f.meFn = func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(code)
+			io.WriteString(w, `{"error":{"code":"Forbidden","message":"no"}}`)
+		}
+		e = newCEEnv(t)
+		src = f.source(t)
+		res = runWith(t, e, planFor(t, e, src, idMsgs("A1", "D1", "A3", "A4")), src)
+		if res.Stop == nil || res.Stop.RID != "R-c" || res.Outcome != CopyOutcomeFailed {
+			t.Fatalf("a 403 with the control request refused (%d) ended as %s (%+v), want R-c", code, res.Label, res.Stop)
+		}
+		assure.Refused(t, int(res.Outcome), res.Stop.Message, assure.Code(1), assure.Names("Sign in again", "Export the remaining messages", "1 of 4 messages"),
+			assure.Forbid("down for 5 minutes"))
+		if res.Counts.Exported != 1 || res.Counts.Failed != 1 || res.Counts.NotAttempted != 2 {
+			t.Errorf("counts = %+v, want 1 exported, the in-flight D1 failed, 2 not attempted", res.Counts)
+		}
+		if fail := failureOf(t, res.Root, "D1"); fail == nil || fail["class"] != classRetryable {
+			t.Errorf("the message in flight is %v, want a retryable failure", fail)
+		}
+		if f.hit("A3") != 0 {
+			t.Errorf("the run went on past the refused sign-in (A3 requested %d times)", f.hit("A3"))
+		}
+	}
+
+	// No answer to the control request: the connection, never the sign-in.
+	f = newMeFake(t)
+	f.value("D1", denied)
+	f.meFn = dropConn
+	e = newCEEnv(t)
+	src = f.source(t)
+	res = runWith(t, e, planFor(t, e, src, idMsgs("A1", "D1", "A3")), src)
+	if res.Stop == nil || res.Stop.RID != "R-u" {
+		t.Fatalf("a 403 whose control request is not answered ended as %s (%+v), want R-u, never R-c", res.Label, res.Stop)
+	}
+}

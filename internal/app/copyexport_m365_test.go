@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"mail-archive-tool/internal/assure"
+	"mail-archive-tool/internal/graph"
 	"mail-archive-tool/internal/graph/graphtest"
 )
 
@@ -129,8 +130,30 @@ func TestCopyExportM365OriginalsAreByteExact(t *testing.T) {
 			t.Errorf("BIG is %d bytes, want 50 MiB", len(onDisk))
 		}
 	}
-	if man := manifestOf(t, res.Root); man["counts"].(map[string]any)["exported"] != 3.0 {
+	man := manifestOf(t, res.Root)
+	if man["counts"].(map[string]any)["exported"] != 3.0 {
 		t.Errorf("manifest counts = %v", man["counts"])
+	}
+	// The manifest's own SHA-256 and size for each .eml equal the file's.
+	ents := assure.Reached(t, man["messages"].([]any), "manifest messages")
+	if len(ents) != len(msgs) {
+		t.Fatalf("%d manifest entries, want %d", len(ents), len(msgs))
+	}
+	for i, raw := range ents {
+		ent := raw.(map[string]any)
+		files := ent["files"].([]any)
+		if len(files) != 1 {
+			t.Fatalf("manifest entry %d has %d files", i, len(files))
+		}
+		mf := files[0].(map[string]any)
+		onDisk, err := os.ReadFile(filepath.Join(res.Root, filepath.FromSlash(mf["path"].(string))))
+		if err != nil {
+			t.Fatal(err)
+		}
+		h := sha256.Sum256(onDisk)
+		if mf["sha256"] != hex.EncodeToString(h[:]) || mf["size"] != float64(len(onDisk)) || mf["role"] != roleOriginal {
+			t.Errorf("%s: the manifest says %v / %v, the file is %x / %d", msgs[i].SourceID, mf["sha256"], mf["size"], h, len(onDisk))
+		}
 	}
 }
 
@@ -170,6 +193,41 @@ func TestCopyExportRecordsTheHonoredFlagFromTheFirstPage(t *testing.T) {
 				t.Errorf("%s: the listing lost a field: %+v", tc.name, got[0])
 			}
 		}
+	}
+}
+
+// covers: MA-426, R29, R10, R1, S52
+// The export's size cap is the shared one, graph.MIMEMaxBytes (256 MiB), not a figure of
+// its own: with no cap set, MIMETo's limit is min(that cap, the free-space budget), and a
+// message declared above it is listed as larger than this version of MailArchive exports
+// (256 MiB), terminal.
+func TestCopyExportTheSizeCapIsTheSharedOne(t *testing.T) {
+	e, src := newCEEnv(t), newFakeSrc()
+	e.freeDest = func(string) (uint64, error) { return 1 << 40, nil }
+	if e.cap() != graph.MIMEMaxBytes {
+		t.Fatalf("the export's cap is %d, the shared cap is %d", e.cap(), graph.MIMEMaxBytes)
+	}
+	var limits []int64
+	src.fetchFn = func(ctx context.Context, m *CopyMessage, w io.Writer, max int64) (int64, error) {
+		limits = append(limits, max)
+		if m.SourceID == "M00002" {
+			return 0, &graph.TooLargeError{MessageID: m.SourceID, Limit: max, Declared: graph.MIMEMaxBytes + 1}
+		}
+		n, err := w.Write(ceBody(m.SourceID))
+		return int64(n), err
+	}
+	res := mustRun(t, e, cePlan(t, e, src, ceMsgs(3)), src)
+	if res.Counts.Exported != 2 || res.Counts.Failed != 1 || res.Stop != nil {
+		t.Fatalf("a message above the cap ended the run as %s (%+v) %+v", res.Label, res.Stop, res.Counts)
+	}
+	for _, l := range limits {
+		if l != graph.MIMEMaxBytes {
+			t.Errorf("MIMETo was given a limit of %d, want min(shared cap, budget) = %d", l, int64(graph.MIMEMaxBytes))
+		}
+	}
+	if fail := failureOf(t, res.Root, "M00002"); fail == nil || fail["class"] != classTerminal ||
+		!strings.Contains(fail["reason"].(string), "larger than this version of MailArchive exports (256 MiB)") {
+		t.Errorf("M00002 is listed as %v", fail)
 	}
 }
 

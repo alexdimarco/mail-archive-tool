@@ -142,8 +142,7 @@ func (r *CopyRun) classifyFetch(err error, mctx, walk context.Context, delivered
 	}
 	var rerr *oauth2.RetrieveError
 	if errors.As(err, &rerr) {
-		switch rerr.ErrorCode {
-		case "invalid_grant", "interaction_required", "invalid_client", "unauthorized_client", "consent_required":
+		if signInRefused(rerr) {
 			return verdict{kind: verdictFatal, stop: &CopyStop{RID: "R-c", Class: stopClassSignIn}}
 		}
 		return verdict{kind: verdictTransport, cut: delivered > 0 && !spanned}
@@ -157,7 +156,7 @@ func (r *CopyRun) classifyFetch(err error, mctx, walk context.Context, delivered
 			}
 			return verdict{kind: verdictAuth}
 		case se.Code == http.StatusForbidden:
-			return verdict{kind: verdictList, class: classTerminal, reason: "Microsoft 365 refused access to this message (HTTP 403)"}
+			return r.forbidden(walk)
 		case se.Code == http.StatusNotFound || se.GraphCode == "ErrorItemNotFound":
 			return verdict{kind: verdictList, class: classTerminal, reason: "no longer in the mailbox (moved or deleted after you selected it)"}
 		case se.GraphCode == "ErrorMimeContentConversionFailed":
@@ -197,6 +196,40 @@ func (r *CopyRun) classifyFetch(err error, mctx, walk context.Context, delivered
 		return verdict{kind: verdictCancelled}
 	}
 	return verdict{kind: verdictList, class: classRetryable, reason: "Microsoft 365 could not deliver this message"}
+}
+
+// signInRefused reports whether the token endpoint refused the refresh token itself
+// (invalid_grant and its kin, XC9): the sign-in is gone, never a network failure.
+func signInRefused(rerr *oauth2.RetrieveError) bool {
+	switch rerr.ErrorCode {
+	case "invalid_grant", "interaction_required", "invalid_client", "unauthorized_client", "consent_required":
+		return true
+	}
+	return false
+}
+
+// forbidden is the 403 row (design §4.13, XC9): one control request (the same GET /me
+// as the breaker's, sent once) tells a sign-in that has lost access from one item this
+// account may not read. A control request that is refused (a 401 or 403, or the token
+// endpoint refusing the refresh token) means the sign-in is gone: run-fatal R-c. One
+// that is answered makes the 403 this item's alone, terminal for this selection. One
+// that gets no answer says nothing about the sign-in: it is the connection's, so the
+// message backs off like any transport failure and the breaker decides R-u.
+func (r *CopyRun) forbidden(walk context.Context) verdict {
+	perr := r.src.Probe(walk)
+	if walk.Err() != nil {
+		return verdict{kind: verdictCancelled}
+	}
+	if perr == nil {
+		return verdict{kind: verdictList, class: classTerminal, reason: "Microsoft 365 refused access to this message (HTTP 403)"}
+	}
+	var se *graph.StatusError
+	var rerr *oauth2.RetrieveError
+	if errors.As(perr, &se) && (se.Code == http.StatusUnauthorized || se.Code == http.StatusForbidden) ||
+		errors.As(perr, &rerr) && signInRefused(rerr) {
+		return verdict{kind: verdictFatal, stop: &CopyStop{RID: "R-c", Class: stopClassSignIn}}
+	}
+	return verdict{kind: verdictTransport}
 }
 
 // ceBreakerCause is the cancellation cause of a message's own context when the

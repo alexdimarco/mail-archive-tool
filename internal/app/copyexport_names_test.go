@@ -163,6 +163,40 @@ func TestCopyExportFoldKeyDedup(t *testing.T) {
 	}
 }
 
+// covers: MA-418, R4, R6, R29
+// An 8.3 short-name alias beside the long name it stands for, end to end, in either order:
+// folders "report-quarterly-final" and "REPORT~1" are exported to two distinct
+// directories, the long name keeps its own and the alias-pattern name is never written
+// as it stands (on the Windows CI leg NTFS gives the long folder the alias REPORT~1, so a
+// mkdir of "REPORT~1" would land on it and merge the two). Nothing is lost: both
+// messages are exported and the export verifies.
+func TestCopyExportShortNameAliasBesideItsLongName(t *testing.T) {
+	for _, names := range [][]string{{"report-quarterly-final", "REPORT~1"}, {"REPORT~1", "report-quarterly-final"}} {
+		e, src := newCEEnv(t), newFakeSrc()
+		res := mustRun(t, e, cePlan(t, e, src, folderMsgs(names)), src)
+		if res.Outcome != CopyOutcomeComplete || res.Counts.Exported != 2 {
+			t.Fatalf("%q: %s, %+v", names, res.Label, res.Counts)
+		}
+		segs := segmentsUnder(t, res.Root)
+		if len(segs) != 2 {
+			t.Fatalf("%q became %d directories %q: the alias and the long name merged", names, len(segs), segs)
+		}
+		long := false
+		for _, s := range segs {
+			long = long || s == "report-quarterly-final"
+			if s == "REPORT~1" || strings.HasPrefix(strings.ToUpper(s), "REPORT~1.") {
+				t.Errorf("%q: the alias-pattern name was written as it stands: %q", names, s)
+			}
+		}
+		if !long {
+			t.Errorf("%q: the long name did not keep its own directory: %q", names, segs)
+		}
+		if bad, missing, extra := sumsCheck(t, res.Root); len(bad)+len(missing)+len(extra) != 0 {
+			t.Errorf("%q: the export fails its check: %v %v %v", names, bad, missing, extra)
+		}
+	}
+}
+
 // covers: MA-418, R4, R29
 // A file planted under a message's final name is never replaced: the placement is a
 // no-replace rename, so the message takes the next unique variant of its name, and
