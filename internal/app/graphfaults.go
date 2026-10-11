@@ -123,6 +123,24 @@ func (w *mailboxWalk) stub(ref graph.MessageRef, m *model.Message, folderKey str
 	return false
 }
 
+// cleanedError is an error whose text is cleaned (control and bidi characters
+// stripped) and whose chain is kept: errors.Is and errors.As still reach the
+// typed fault inside. The words of a Graph error are the endpoint's own and go to
+// the operator's terminal, the run log and the returned error, so a fault that ends
+// a mailbox is cleaned where it is built, as S2A's are (S3-AO7).
+type cleanedError struct{ err error }
+
+func (e *cleanedError) Error() string { return cleanText(e.err.Error()) }
+func (e *cleanedError) Unwrap() error { return e.err }
+
+// cleanErr is err with clean text: err itself when its text is clean already.
+func cleanErr(err error) error {
+	if err == nil || cleanText(err.Error()) == err.Error() {
+		return err
+	}
+	return &cleanedError{err}
+}
+
 // walkAbort wraps an error that ends the mailbox's walk, so the walk's own caller
 // can tell it from a listing error, which costs only that folder.
 type walkAbort struct{ err error }
@@ -289,7 +307,7 @@ func (w *mailboxWalk) recovered(ref graph.MessageRef) {
 func (w *mailboxWalk) fetchFault(ctx context.Context, ref graph.MessageRef, folderKey string, err error, took time.Duration) error {
 	reason, class, fatal, transport := classifyFetch(err, ctx)
 	if fatal {
-		return &walkAbort{fmt.Errorf("fetch message %s: %w", ref.ID, err)}
+		return &walkAbort{cleanErr(fmt.Errorf("fetch message %s: %w", ref.ID, err))}
 	}
 	// Known poison is read before this fault is recorded, which would stamp the gap.
 	kind := attemptItemFault
@@ -329,7 +347,7 @@ func (w *mailboxWalk) sameToken(identity string) []state.IdentRef {
 func (w *mailboxWalk) listingFault(ctx context.Context, f graph.Folder, folderKey string, err error) error {
 	fatal, transport := classifyListing(err, ctx)
 	if fatal {
-		return err
+		return cleanErr(err)
 	}
 	w.folderFault = true
 	w.s.observe(state.CaptureGap{Folder: folderKey, Scope: state.GapScopeFolder, Locator: "folder:" + f.ID,

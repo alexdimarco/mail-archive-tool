@@ -89,7 +89,7 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	// told one. App mode returns the given mailboxes unchanged.
 	client, mailboxes, err := buildGraphClient(ctx, g, logger)
 	if err != nil {
-		return Result{}, asFailure(ctx, err)
+		return Result{}, cleanErr(asFailure(ctx, err))
 	}
 	g.Mailboxes = mailboxes
 	if len(g.Mailboxes) == 0 {
@@ -583,7 +583,7 @@ func runGraphMailbox(ctx context.Context, lr *localRun, client *graph.Client, ma
 	// unwalked folder — are never marked gone by the sweep below (§3.4/S38).
 	folders, err := client.Folders(ctx, mailbox, filter)
 	if err != nil {
-		return fmt.Errorf("list folders: %w", err)
+		return cleanErr(fmt.Errorf("list folders: %w", err))
 	}
 
 	walked := state.NewWalkedFolders()
