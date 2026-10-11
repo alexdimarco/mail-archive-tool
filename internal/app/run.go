@@ -59,6 +59,12 @@ type Options struct {
 	// archive is never silently smaller than the mailbox and the run is partial
 	// (FC28).
 	OutlookSkips []outlookcom.Skip
+	// OutlookExported are the PSTs `-outlook`'s Outlook export wrote in THIS run
+	// (outlookcom.CreatePSTs' stores). Such a PST is a fresh image of the mailbox, so a
+	// folder Outlook once failed to export that it neither carries nor skips again is
+	// no longer in Outlook, and a complete walk of it closes that gap (NF1). A PST that
+	// is merely left over from an earlier export says nothing about Outlook today.
+	OutlookExported []string
 	// Unattended marks a scheduled run (the CLI's -unattended, the GUI's
 	// headless job). A discovery refusal (a vanished -input, no sources found)
 	// on an archive that already exists is then recorded as a failed run, so
@@ -437,6 +443,12 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// fault counts as processed for the checkpoint gate below, so a stretch of
 	// nothing but faults still saves and still re-checks the lock (FC12).
 	lr := &localRun{exp: exp, out: opts.Out, runAt: runAt, logger: logger, lock: lock}
+	for _, p := range opts.OutlookExported {
+		if lr.outlookFresh == nil {
+			lr.outlookFresh = map[string]bool{}
+		}
+		lr.outlookFresh[state.PathSourceID(p)] = true
+	}
 	checkpoint := func(stats export.Stats) {
 		processed := stats.Exported + lr.faults
 		if processed-lastCheckpoint < effectiveEvery(floor, manifest.Len()) {
@@ -456,11 +468,17 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	}
 
 	lr.onFault = func() { checkpoint(exp.Stats) }
+	lr.onLockLost = func(err error) {
+		if lockLost == nil {
+			lockLost = err
+		}
+	}
 	result = Result{Files: len(files), ManifestBefore: manifestBefore}
 	var failures int
 	var firstFailed string
 	var firstErr error
-	var fatal *RunFatalError // a run-level fault of the archive itself: it ends the run
+	var fatal *RunFatalError        // a run-level fault of the archive itself: it ends the run
+	var stopped *SourceStoppedError // the first source the local breaker ended: the run goes on without it
 	for _, f := range files {
 		runErr := runFile(ctx, lr, f, opts.CopyFirst, func(stats export.Stats) {
 			checkpoint(stats)
@@ -494,6 +512,15 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 			logger.Printf("error: %s: %v", f, fatal)
 			break
 		}
+		var stop *SourceStoppedError
+		if errors.As(runErr, &stop) {
+			// The local breaker ended this source: the next one is read (S2A-AC3).
+			logger.Printf("error: %s: %v", f, stop)
+			if stopped == nil {
+				stopped = stop
+			}
+			continue
+		}
 		if runErr != nil {
 			failures++
 			if failures == 1 {
@@ -514,20 +541,28 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 
 	result.gapsRecovered, result.gapsClosedGone = lr.recovered, lr.closedGone
 	finish(opts.Out, &result, exp, manifest, idx, indexErrors, true, logger)
+	// What ended the run or its sources, most serious first: the archive's own fault, a
+	// source the breaker stopped (with the files that failed to open, if any), the
+	// files that failed to open.
+	var end error
+	switch {
+	case fatal != nil:
+		end = fatal
+	case stopped != nil && failures > 0:
+		end = fmt.Errorf("%w; %w", stopped, fileFailureError(failures, firstFailed, firstErr))
+	case stopped != nil:
+		end = stopped
+	case failures > 0:
+		end = fileFailureError(failures, firstFailed, firstErr)
+	}
 	if saveErr != nil {
-		if fatal != nil {
-			return result, fmt.Errorf("%w; %w", fatal, manifestSaveFailure(mpath, saveErr))
-		}
-		if failures > 0 {
-			return result, fmt.Errorf("%w; %w", fileFailureError(failures, firstFailed, firstErr), manifestSaveFailure(mpath, saveErr))
+		if end != nil {
+			return result, fmt.Errorf("%w; %w", end, manifestSaveFailure(mpath, saveErr))
 		}
 		return result, manifestSaveFailure(mpath, saveErr)
 	}
-	if fatal != nil {
-		return result, fatal
-	}
-	if failures > 0 {
-		return result, fileFailureError(failures, firstFailed, firstErr)
+	if end != nil {
+		return result, end
 	}
 	return result, partialOutcome(result)
 }
@@ -925,6 +960,14 @@ func runFile(ctx context.Context, lr *localRun, path string, copyFirst bool, onP
 		if fi, err := os.Stat(path); err == nil && !fi.IsDir() {
 			snap, cleanup, err := snapshot(path, out)
 			if err != nil {
+				// A failure of the ARCHIVE's volume (full, read-only, gone) is the run's, as
+				// when an export write meets it; one reading the source file is the file's
+				// own (S2A-AC9).
+				var pe *fs.PathError
+				toArchive := errors.As(err, &pe) && strings.HasPrefix(filepath.Base(pe.Path), snapshotPrefix)
+				if kind := export.FatalKindAt(err, out); kind != export.FatalNone && toArchive {
+					return runFatalFor(out, kind, err)
+				}
 				return err
 			}
 			defer cleanup()
@@ -950,7 +993,7 @@ func runFile(ctx context.Context, lr *localRun, path string, copyFirst bool, onP
 	token := exp.Manifest.Token(state.PathSourceID(path), store)
 	logger.Printf("Reading %s (store: %s)", path, store)
 
-	src := &sourceRun{lr: lr, token: token, path: path}
+	src := &sourceRun{lr: lr, token: token, path: path, freshOutlook: lr.outlookFresh[state.PathSourceID(path)]}
 	handler := func(folderPath []string, m *model.Message) error {
 		if err := src.handle(ctx, abort, folderPath, m); err != nil {
 			return err
@@ -969,10 +1012,19 @@ func runFile(ctx context.Context, lr *localRun, path string, copyFirst bool, onP
 			Faults:     src.onReaderFault,
 			Abort:      func() error { return src.stop(ctx, abort) },
 			NoStoreUID: noStoreUID(path),
+			Folder:     src.noteFolder,
 		}))
 	}
 	return src.finish(reader.Walk(handler))
 }
+
+// snapshotPrefix starts the name of a -copy-first snapshot's temp file, which is how a
+// failure of its WRITE (the archive's volume) is told from one reading the source.
+const snapshotPrefix = ".mailarchive-snapshot-"
+
+// snapshotCopy is the copy a -copy-first snapshot makes; a var so a test can fail it
+// the way a full drive does.
+var snapshotCopy = io.Copy
 
 // snapshot copies src to a temporary file ON THE ARCHIVE'S VOLUME (the drive
 // the operator chose and sized — a multi-gigabyte .ost must not land in a
@@ -984,11 +1036,11 @@ func snapshot(src, out string) (string, func(), error) {
 	}
 	defer in.Close()
 
-	tmp, err := os.CreateTemp(out, ".mailarchive-snapshot-*"+filepath.Ext(src))
+	tmp, err := os.CreateTemp(out, snapshotPrefix+"*"+filepath.Ext(src))
 	if err != nil {
 		return "", nil, fmt.Errorf("create snapshot: %w", err)
 	}
-	if _, err := io.Copy(tmp, in); err != nil {
+	if _, err := snapshotCopy(tmp, in); err != nil {
 		tmp.Close()
 		os.Remove(tmp.Name())
 		return "", nil, fmt.Errorf("copy snapshot: %w", err)

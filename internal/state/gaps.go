@@ -37,7 +37,12 @@ const (
 	maxGapItems   = 1000
 	maxGapFolders = 1000
 	maxGapInfo    = 100
-	maxGapTotal   = 20000
+	// maxGapOverflow bounds the per-folder overflow entries a token keeps: the entries
+	// that absorb a folder's excess are keyed by folder, so without a bound a source
+	// whose faults each name a different folder made one entry per fault (S2A-AO3).
+	// Beyond it the excess is counted in the token's own overflow entry.
+	maxGapOverflow = 100
+	maxGapTotal    = 20000
 
 	maxGapDetail   = 300 // bytes
 	maxGapSubject  = 200 // runes
@@ -115,6 +120,13 @@ func boundRunes(s string, max int) string {
 	}
 	return string([]rune(s)[:max])
 }
+
+// GapFolder is the spelling the ledger stores a folder path in: control and bidi
+// characters stripped, cut to its bound. A caller that compares a path it holds raw
+// with the ledger's entries (the local run's closure guard) compares it in this
+// spelling, or it never matches a folder whose name the ledger had to change
+// (S2A-AI7).
+func GapFolder(folder string) string { return boundString(folder, maxGapFolder) }
 
 // knownClass reports whether c is one of the three classes.
 func knownClass(c string) bool { return c == ClassFillable || c == ClassTerminal || c == ClassInfo }
@@ -243,8 +255,14 @@ func (m *Manifest) ObserveGap(g CaptureGap, runAt time.Time) (key string, create
 		if runAt.Before(old.FirstRun) {
 			old.FirstRun = runAt
 		}
+		sameRun := old.LastRun.Equal(runAt)
 		old.LastRun = runAt
-		old.Reason, old.Class, old.Detail, old.Folder = g.Reason, g.Class, g.Detail, g.Folder
+		// Two observations of one key in ONE run (two copies of a message in different
+		// folders share an ident: key): the milder never downgrades the other's word (a
+		// refresh-failed note over an export-failed loss, S2A-AI1).
+		if !sameRun || severity(old.Class) <= severity(g.Class) {
+			old.Reason, old.Class, old.Detail, old.Folder = g.Reason, g.Class, g.Detail, g.Folder
+		}
 		if g.Subject != "" {
 			old.Subject = g.Subject
 		}
@@ -274,6 +292,17 @@ func (m *Manifest) gapBucketCountLocked(token, bucket string) int {
 	return n
 }
 
+// overflowCountLocked counts token's overflow entries. The caller holds m.mu.
+func (m *Manifest) overflowCountLocked(token string) int {
+	n := 0
+	for _, e := range m.CaptureGaps {
+		if e.Token == token && e.Scope == GapScopeOverflow {
+			n++
+		}
+	}
+	return n
+}
+
 // absorbGapLocked counts g into its folder's overflow entry instead of adding a
 // row (P13): the entry's Skipped is the exact number absorbed this run and its
 // class the most severe class absorbed this run. It returns the overflow entry's
@@ -282,6 +311,14 @@ func (m *Manifest) absorbGapLocked(g CaptureGap, runAt time.Time) string {
 	loc := overflowLocator(g.Folder)
 	key := GapKey(g.Token, GapScopeOverflow, loc)
 	o, ok := m.CaptureGaps[key]
+	if !ok && m.overflowCountLocked(g.Token) >= maxGapOverflow {
+		// A source whose faults name a new folder each time is bounded here, not by the
+		// folder caps: the excess is counted in the token's own entry (the store root's).
+		g.Folder = ""
+		loc = overflowLocator("")
+		key = GapKey(g.Token, GapScopeOverflow, loc)
+		o, ok = m.CaptureGaps[key]
+	}
 	switch {
 	case !ok:
 		o = CaptureGap{
@@ -312,6 +349,35 @@ func (m *Manifest) CloseGap(key string) bool {
 	}
 	delete(m.CaptureGaps, key)
 	return true
+}
+
+// CloseGapInFolder closes the entry stored under key if it is recorded for folder
+// (or for no folder: an entry an older build or a seed left unplaced) and reports
+// whether it did. A locator that is not the item's own (the post-parse ident: of a
+// message that sits in several folders) names a gap per copy, and one folder's
+// success must not close the gap of another's failure (S2A-AI1).
+func (m *Manifest) CloseGapInFolder(key, folder string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	g, ok := m.CaptureGaps[key]
+	if !ok || (g.Folder != "" && g.Folder != GapFolder(folder)) {
+		return false
+	}
+	delete(m.CaptureGaps, key)
+	return true
+}
+
+// GapObservedIn reports the folder of the entry under key if this run (runAt)
+// already observed it: a second observation of one key from another folder is
+// another copy's gap and needs a key of its own.
+func (m *Manifest) GapObservedIn(key string, runAt time.Time) (folder string, ok bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	g, found := m.CaptureGaps[key]
+	if !found || !g.LastRun.Equal(runAt) {
+		return "", false
+	}
+	return g.Folder, true
 }
 
 // exportStageReason says whether a gap comes from the export step, which a

@@ -22,7 +22,9 @@ import (
 // .pst is an info outlook-account-skipped gap naming the path to archive directly,
 // and alone it is no reason for a partial run. A later run whose export carries the
 // folder closes its gap when that PST's walk completes, and the one whose PST was
-// never walked stays listed.
+// never walked stays listed. (The skipped folder is one the fixture PST holds, Drafts:
+// the next run's export carries it only if the walked file has it, S2A-AI4 — a file
+// without the folder, walked without the skip, no longer closes the gap.)
 func TestOutlookExportSkipsBecomeGaps(t *testing.T) {
 	data := pstFixtureData(t)
 	dir := tmpDir(t)
@@ -32,7 +34,7 @@ func TestOutlookExportSkipsBecomeGaps(t *testing.T) {
 		t.Fatalf("PSTPath = %q; want %q", got, ann)
 	}
 	skips := []outlookcom.Skip{
-		{Account: "ann@contoso.com", Folder: "Archive 2019", Path: ann, Reason: "CopyTo: 0x80040119"},
+		{Account: "ann@contoso.com", Folder: "Drafts", Path: ann, Reason: "CopyTo: 0x80040119"},
 		{Account: "bob@contoso.com", Path: outlookcom.PSTPath(pstDir, "bob@contoso.com"), Reason: "could not create the PST"},
 		{Account: "Old data", Path: "/data/old.pst", AlreadyPST: true, Reason: "already a .pst file"},
 	}
@@ -42,7 +44,7 @@ func TestOutlookExportSkipsBecomeGaps(t *testing.T) {
 	if len(gaps) != 3 {
 		t.Fatalf("%d gaps; want 3", len(gaps))
 	}
-	if g := gaps[0].gap; g.Reason != "outlook-export-skipped" || g.Class != state.ClassFillable || g.Scope != state.GapScopeFolder || g.Folder != "Archive 2019" || g.Locator != "outlook:ann@contoso.com/Archive 2019" {
+	if g := gaps[0].gap; g.Reason != "outlook-export-skipped" || g.Class != state.ClassFillable || g.Scope != state.GapScopeFolder || g.Folder != "Drafts" || g.Locator != "outlook:ann@contoso.com/Drafts" {
 		t.Errorf("folder skip -> %+v", g)
 	}
 	if g := gaps[1].gap; g.Reason != "outlook-export-skipped" || g.Class != state.ClassFillable || g.Folder != "" || g.Locator != "outlook:bob@contoso.com/" {
@@ -102,7 +104,7 @@ func TestOutlookExportSkipsBecomeGaps(t *testing.T) {
 		t.Errorf("after the export carried the folder: %d gaps, closed %d; want the folder gap closed and bob's account and the info gap kept", len(left), res.Gaps.ClosedGone)
 	}
 	for _, g := range left {
-		if strings.Contains(g.Locator, "Archive 2019") {
+		if strings.Contains(g.Locator, "Drafts") {
 			t.Errorf("the carried folder's gap %+v is still listed", g)
 		}
 	}

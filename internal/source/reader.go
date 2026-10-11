@@ -579,7 +579,18 @@ func collectAttachments(m *pst.Message) ([]model.Attachment, error) {
 			Filename:  name,
 			MimeType:  a.GetAttachMimeTag(),
 			ContentID: a.GetAttachContentId(),
-			WriteTo:   func(w io.Writer) (int64, error) { return a.WriteTo(w) },
+			WriteTo: func(w io.Writer) (n int64, err error) {
+				// The stream is lazy, so it runs long after convertMessage's guard has
+				// returned: a panic in it (a property that lies about its type leaves
+				// go-pst's reader nil, S2A-AC7) is this attachment's error, like a torn
+				// stream, never the message's.
+				defer func() {
+					if rec := recover(); rec != nil {
+						n, err = 0, fmt.Errorf("go-pst panicked reading the attachment: %v", rec)
+					}
+				}()
+				return a.WriteTo(w)
+			},
 		})
 		idx++
 	}

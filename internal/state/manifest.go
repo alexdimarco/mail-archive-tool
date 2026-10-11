@@ -463,7 +463,7 @@ func (m *Manifest) Token(sourceID, store string) string {
 	// rather than trusted, so a write can never be redirected outside the output
 	// root (INS2-1/R4). Re-derivation keeps a corrupted archive usable while
 	// guaranteeing containment.
-	seg := util.SanitizeSegment(store)
+	seg := tokenSegment(store)
 	if !m.segmentOwnedLocked(seg) {
 		m.Stores[sourceID] = seg
 		return seg
@@ -485,6 +485,25 @@ func (m *Manifest) Token(sourceID, store string) string {
 			return tok
 		}
 	}
+}
+
+// tokenSegment is the store token's first choice for a store's display name: its
+// sanitized segment, which must also pass SafeToken, because the exporter refuses
+// (run-fatal) a store whose token does not. util.SanitizeSegment keeps DEL
+// (U+007F), which SafeToken refuses, and the name of a store comes from the data
+// file itself, so a name with one DEL byte would otherwise end every run at that
+// input (S2A-AO1). Such a name loses its control bytes and gets a hash of the
+// original name, so it never merges with a plain name that spells the same.
+func tokenSegment(store string) string {
+	seg := util.SanitizeSegment(store)
+	if SafeToken(seg) {
+		return seg
+	}
+	stripped := util.SanitizeSegment(util.StripControl(store))
+	if SafeToken(stripped) {
+		return stripped + "~" + util.ShortHash(store)
+	}
+	return "store~" + util.ShortHash(store)
 }
 
 // segmentOwnedLocked reports whether some source already holds token tok. The

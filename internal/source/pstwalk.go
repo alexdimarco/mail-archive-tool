@@ -54,7 +54,10 @@ type subRow struct {
 	name   string
 	count  int32
 	hasSub bool
-	err    error
+	// noSubCell: the row holds no sub-folder flag at all (its column is missing or
+	// its cell is absent), so hasSub is go-pst's default, not the file's word.
+	noSubCell bool
+	err       error
 }
 
 // pstOps is what the walk asks of go-pst. fileOps is the production wiring; a
@@ -65,6 +68,14 @@ type pstOps struct {
 	nodeExists    func(nid pst.Identifier) bool
 	getMessage    func(nid pst.Identifier) (*pst.Message, error)
 	subFolderRows func(f *pst.Folder) ([]subRow, error)
+	// contentsRows says how many rows the message table the file holds for a folder
+	// lists, for a folder whose own row SAYS it holds no messages: the row is the file's
+	// claim and the table is the file's content, so a claim that the table contradicts
+	// is a lie, and the table wins (K7). (0, nil) is "the file holds no such table or
+	// an empty one"; an error means the table exists and cannot be read, and a
+	// *tableGeometryError travels with the count. nil: no probe (a test's substitute),
+	// which says nothing.
+	contentsRows func(f *pst.Folder) (int, error)
 }
 
 func fileOps(file *pst.File) pstOps {
@@ -76,12 +87,18 @@ func fileOps(file *pst.File) pstOps {
 		},
 		getMessage:    file.GetMessage,
 		subFolderRows: func(f *pst.Folder) ([]subRow, error) { return readSubFolderRows(file, f) },
+		contentsRows: func(f *pst.Folder) (int, error) {
+			return tableProbe(file, f.Identifier+12, func() (pst.TableContext, error) { return f.GetMessageTableContext() })
+		},
 	}
 }
 
 // readSubFolderRows reads a folder's hierarchy table the way GetSubFolders does,
 // but a row that fails is returned as a row with an error instead of failing the
-// table. A failure of the table itself is the returned error.
+// table. A failure of the table itself is the returned error; a table whose header
+// does not fit its columns is returned with its rows and a *tableGeometryError, and a
+// folder that says it has sub-folders whose table lists none is an error: the rows
+// the file holds are the truth, and none is not what the folder says.
 func readSubFolderRows(file *pst.File, f *pst.Folder) (rows []subRow, err error) {
 	defer func() {
 		if rec := recover(); rec != nil {
@@ -96,7 +113,14 @@ func readSubFolderRows(file *pst.File, f *pst.Folder) (rows []subRow, err error)
 	for i, row := range tc.Properties {
 		rows[i] = parseSubFolderRow(file, &tc, row)
 	}
-	return rows, nil
+	geometry := checkTableGeometry(&tc)
+	if len(rows) == 0 && f.HasSubFolders {
+		if geometry != nil {
+			return nil, fmt.Errorf("the folder says it has sub-folders but its table lists none: %w", geometry)
+		}
+		return nil, errors.New("the folder says it has sub-folders but its table lists none")
+	}
+	return rows, geometry
 }
 
 func parseSubFolderRow(file *pst.File, tc *pst.TableContext, row []pst.Property) (out subRow) {
@@ -105,7 +129,8 @@ func parseSubFolderRow(file *pst.File, tc *pst.TableContext, row []pst.Property)
 			out.err = fmt.Errorf("go-pst panicked reading the row: %v", rec)
 		}
 	}()
-	sawID := false
+	sawID, sawSub := false, false
+	defer func() { out.noSubCell = !sawSub }()
 	for _, property := range row {
 		pr, err := tc.GetPropertyReader(property)
 		if err != nil {
@@ -141,7 +166,7 @@ func parseSubFolderRow(file *pst.File, tc *pst.TableContext, row []pst.Property)
 				out.err = fmt.Errorf("has sub-folders: %w", err)
 				return out
 			}
-			out.hasSub = b
+			out.hasSub, sawSub = b, true
 		}
 	}
 	if !sawID {
@@ -216,23 +241,72 @@ func (w *pstWalk) walk(folder *pst.Folder, path []string, depth int) error {
 	if name := strings.TrimSpace(folder.Name); name != "" && !syntheticFolders[name] {
 		folderPath = append(append([]string{}, path...), util.SanitizeSegment(name))
 	}
+	if w.opts.Folder != nil {
+		w.opts.Folder(folderPath)
+	}
 
-	if folder.MessageCount > 0 {
+	// go-pst's gate: a folder that says it holds no messages has no table to read. The
+	// row is the file's CLAIM, though, and a claim the file's own table contradicts is
+	// a lie that would hide the folder with no trace (K7, S2A-AC2): a folder that says
+	// it is empty is read anyway when the file holds a table that lists rows for it.
+	read := folder.MessageCount > 0
+	if !read && folder.Identifier.GetType() != pst.IdentifierTypeSearchFolder {
+		n, perr := w.probe(w.r.ops.contentsRows, folder)
+		switch {
+		case perr != nil && !isGeometry(perr):
+			w.fault(Fault{Reason: "folder-unreadable", Scope: scopeFolder, Class: classTerm, Folder: folderPath,
+				Locator: folderLocator(folderPath, "messages"), Detail: "the folder says it holds no messages, but the message table the file holds for it could not be read: " + perr.Error()})
+		case n > 0:
+			read = true
+		case perr != nil: // an empty table with a lying header: its rows may be hidden
+			w.fault(Fault{Reason: "folder-partially-read", Scope: scopeFolder, Class: classTerm, Folder: folderPath,
+				Locator: folderLocator(folderPath, "messages-header"), Detail: perr.Error()})
+		}
+	}
+	if read {
 		if err := w.walkMessages(folder, folderPath); err != nil {
 			return err
 		}
 	}
 	// go-pst's gate: a leaf folder has no hierarchy node, so reading its table would
-	// fail for a folder that is simply fine.
+	// fail for a folder that is simply fine. Unlike the messages' gate this one is
+	// kept as it is: a healthy file also holds hierarchy tables under flagged leaves
+	// (the hidden folders below Recoverable Items), which go-pst has never read and
+	// FC30 keeps unread, so a flag that reads false is believed. A flag that lies is
+	// the owner's to rule on (ESC-S2A-1); a flag whose whole COLUMN is gone is caught
+	// below, in the table that lost it.
 	if !folder.HasSubFolders {
 		return nil
 	}
 	rows, err := w.subFolderRows(folder)
+	if isGeometry(err) {
+		// The rows are still read; the lie is recorded, because rows may be missing.
+		w.fault(Fault{Reason: "folder-partially-read", Scope: scopeFolder, Class: classTerm, Folder: folderPath,
+			Locator: folderLocator(folderPath, "subfolders-header"), Detail: err.Error()})
+		err = nil
+	}
 	if err != nil {
 		// The sub-tree is lost, never the siblings: the parent's loop goes on.
 		w.fault(Fault{Reason: "folder-unreadable", Scope: scopeFolder, Class: classTerm, Folder: folderPath,
 			Locator: folderLocator(folderPath, "subfolders"), Detail: "the sub-folder table could not be read: " + err.Error()})
 		return nil
+	}
+	// A table whose rows carry no sub-folder flag AT ALL has lost that column (its
+	// descriptor is damaged, S2A-AC2): every folder below would read as a leaf, with
+	// nothing recorded. A healthy table has the flag for most rows.
+	readable, noFlag := 0, 0
+	for _, row := range rows {
+		if row.err == nil {
+			readable++
+			if row.noSubCell {
+				noFlag++
+			}
+		}
+	}
+	if readable > 0 && noFlag == readable {
+		w.fault(Fault{Reason: "folder-partially-read", Scope: scopeFolder, Class: classTerm, Folder: folderPath,
+			Locator: folderLocator(folderPath, "subfolders-columns"),
+			Detail:  fmt.Sprintf("none of the %d sub-folder rows carries the sub-folder flag: its column is damaged, so the folders below these may not be listed", readable)})
 	}
 	streak := 0
 	for i, row := range rows {
@@ -251,18 +325,28 @@ func (w *pstWalk) walk(folder *pst.Folder, path []string, depth int) error {
 				Locator: folderLocator(folderPath, "subfolders/row"+strconv.Itoa(i)), Detail: "a sub-folder row could not be read: " + row.err.Error()})
 			continue
 		}
-		streak = 0
 		childPath := append(append([]string{}, folderPath...), util.SanitizeSegment(strings.TrimSpace(row.name)))
-		switch {
-		case w.visited[row.id]:
-			w.fault(Fault{Reason: "folder-cycle", Scope: scopeFolder, Class: classTerm, Folder: childPath,
-				Locator: folderLocator(childPath, "cycle"), Detail: fmt.Sprintf("the folder tree loops back to folder %d, which was already read", row.id)})
-			continue
-		case depth+1 > maxFolderDepth:
-			w.fault(Fault{Reason: "folder-too-deep", Scope: scopeFolder, Class: classTerm, Folder: childPath,
-				Locator: folderLocator(childPath, "deep"), Detail: fmt.Sprintf("the folder is nested more than %d levels deep; it and the folders below it were not read", maxFolderDepth)})
+		if looped, deep := w.visited[row.id], depth+1 > maxFolderDepth; looped || deep {
+			// A row that loops back, or goes too deep, is structure that does not work, like
+			// a row that cannot be read: it counts toward the breaker, so a table of them
+			// costs one folder entry and not one per row (S2A-AO3).
+			streak++
+			if streak >= rowBreaker {
+				w.fault(Fault{Reason: "folder-partially-read", Scope: scopeFolder, Class: classTerm, Folder: folderPath,
+					Locator: folderLocator(folderPath, "subfolders"), Skipped: len(rows) - i,
+					Detail: fmt.Sprintf("%d sub-folder rows in a row could not be read; the rest of the table was not read", rowBreaker)})
+				return nil
+			}
+			if looped {
+				w.fault(Fault{Reason: "folder-cycle", Scope: scopeFolder, Class: classTerm, Folder: childPath,
+					Locator: folderLocator(childPath, "cycle"), Detail: fmt.Sprintf("the folder tree loops back to folder %d, which was already read", row.id)})
+			} else {
+				w.fault(Fault{Reason: "folder-too-deep", Scope: scopeFolder, Class: classTerm, Folder: childPath,
+					Locator: folderLocator(childPath, "deep"), Detail: fmt.Sprintf("the folder is nested more than %d levels deep; it and the folders below it were not read", maxFolderDepth)})
+			}
 			continue
 		}
+		streak = 0
 		child := pst.Folder{Identifier: row.id, Name: row.name, HasSubFolders: row.hasSub, MessageCount: row.count, File: w.r.file}
 		if err := w.walk(&child, folderPath, depth+1); err != nil {
 			return err
@@ -278,6 +362,26 @@ func (w *pstWalk) subFolderRows(f *pst.Folder) (rows []subRow, err error) {
 		}
 	}()
 	return w.r.ops.subFolderRows(f)
+}
+
+// probe asks one of the ops' table probes (nil: none, which says nothing) under its
+// own recover, like every other call into go-pst.
+func (w *pstWalk) probe(fn func(f *pst.Folder) (int, error), f *pst.Folder) (n int, err error) {
+	if fn == nil {
+		return 0, nil
+	}
+	defer func() {
+		if rec := recover(); rec != nil {
+			n, err = 0, fmt.Errorf("go-pst panicked probing the table: %v", rec)
+		}
+	}()
+	return fn(f)
+}
+
+// isGeometry says err is (or wraps) a table header that does not fit its columns.
+func isGeometry(err error) bool {
+	var ge *tableGeometryError
+	return errors.As(err, &ge)
 }
 
 func (w *pstWalk) messageTable(f *pst.Folder) (tc pst.TableContext, err error) {
@@ -341,9 +445,21 @@ func (w *pstWalk) walkMessages(f *pst.Folder, folderPath []string) error {
 			Locator: folderLocator(folderPath, "messages"), Detail: "the message table could not be read: " + err.Error()})
 		return nil
 	}
+	// A table that lists fewer rows than its folder says it holds, or whose header
+	// does not fit its columns, has lost rows with no error (S2A-AO2): the rows that
+	// are listed are read, and the folder says what the table does not.
+	rows := tc.Properties
+	if gerr := checkTableGeometry(&tc); gerr != nil {
+		w.fault(Fault{Reason: "folder-partially-read", Scope: scopeFolder, Class: classTerm, Folder: folderPath,
+			Locator: folderLocator(folderPath, "messages-header"), Detail: gerr.Error()})
+	}
+	if f.MessageCount > 0 && len(rows) < int(f.MessageCount) {
+		w.fault(Fault{Reason: "folder-partially-read", Scope: scopeFolder, Class: classTerm, Folder: folderPath,
+			Locator: folderLocator(folderPath, "messages-listed"), Skipped: int(f.MessageCount) - len(rows),
+			Detail: fmt.Sprintf("the folder says it holds %d messages but its table lists %d", f.MessageCount, len(rows))})
+	}
 	var unreadable, invalid, damaged aggregate
 	streak, skipped := 0, 0
-	rows := tc.Properties
 	for i := range rows {
 		if err := w.abort(); err != nil {
 			return err

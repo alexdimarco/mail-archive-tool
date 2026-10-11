@@ -48,6 +48,16 @@ func WriteZip(zipPath string, atts []model.Attachment, skip map[int]bool) (ZipRe
 		os.Remove(tmp.Name())
 		return res, werr
 	}
+	// A panic out of an attachment's stream is the caller's to catch (the run records
+	// the message as an export-panic gap), but it must not leave this temp file and its
+	// descriptor behind in the archive (S2A-AC7).
+	defer func() {
+		if rec := recover(); rec != nil {
+			tmp.Close()
+			os.Remove(tmp.Name())
+			panic(rec)
+		}
+	}()
 
 	// Tee every byte the zip writer emits through a sha256 hasher and a byte
 	// counter, so the committed archive's fixity is known without re-reading

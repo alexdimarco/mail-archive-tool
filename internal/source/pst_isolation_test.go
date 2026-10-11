@@ -840,7 +840,6 @@ func TestWalkFaultsReachACallerWithoutACallback(t *testing.T) {
 // says 0 messages (a real byte patch) must still yield Drafts' six messages, or at
 // least record that the folder holds more than its count says; today it yields neither.
 func TestCorruptedMessageCountHidesAFolder(t *testing.T) {
-	t.Skip("R1 (N9): a corrupted MessageCount that reads 0 hides the folder's messages and nothing records it — go-pst's count is trusted (the MessageCount > 0 gate); closes when the loops stop trusting an unverified zero")
 	data := fixtureData(t)
 	ref := referenceOf(t, data)
 	mut := patchCell(t, data, topFolder, draftsFolder, 12, 0)

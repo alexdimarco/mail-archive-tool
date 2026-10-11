@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	"mail-archive-tool/internal/model"
 	"mail-archive-tool/internal/source"
 	"mail-archive-tool/internal/state"
+	"mail-archive-tool/internal/util"
 )
 
 // The local run's handling of what goes wrong (fault-isolation §4.6, FC12, FC29).
@@ -43,6 +45,25 @@ type RunFatalError struct {
 func (e *RunFatalError) Error() string { return e.Msg }
 func (e *RunFatalError) Unwrap() error { return e.Err }
 
+// SourceStoppedError ends ONE source's walk, not the run: the local breaker's refusal
+// (50 writes in a row failed at this input). What it stopped is recorded in the
+// ledger and kept; the next source is read. Writes that fail like this at the
+// archive's own volume are run-fatal first (RunFatalError), and a vanished location
+// is caught by the probe, so what reaches the breaker is the file's own failures as
+// often as the drive's (S2A-AC3).
+type SourceStoppedError struct {
+	Msg string
+	Err error
+}
+
+func (e *SourceStoppedError) Error() string { return e.Msg }
+func (e *SourceStoppedError) Unwrap() error { return e.Err }
+
+// cleanText strips what a data file's own text must not carry into a terminal, the
+// last-run record or BACKUP-NEEDS-ATTENTION.txt: control characters (C0, DEL, C1,
+// the 8-bit CSI among them) and the bidi overrides (S2A-AO5).
+func cleanText(s string) string { return util.StripBidi(util.StripControl(s)) }
+
 const keptNote = "Messages written before this point are kept; nothing was recorded as archived that was not fully written."
 
 // runFatalFor words err (which export.IsRunFatal or the probe judged fatal) for the
@@ -50,13 +71,15 @@ const keptNote = "Messages written before this point are kept; nothing was recor
 // gone, each with its remedy (§7.5).
 func runFatalFor(out string, kind export.FatalKind, err error) *RunFatalError {
 	where := writtenPath(err)
+	// The words carry paths that include the data file's own folder names: cleaned
+	// where they are built (S2A-AO5).
 	switch kind {
 	case export.FatalToken:
-		return &RunFatalError{Msg: err.Error(), Err: err}
+		return &RunFatalError{Msg: cleanText(err.Error()), Err: err}
 	case export.FatalFull:
-		return &RunFatalError{Err: err, Msg: fmt.Sprintf("the archive drive is full (writing %s): free space on the drive that holds %s, or choose another archive location, then re-run. %s", where, out, keptNote)}
+		return &RunFatalError{Err: err, Msg: cleanText(fmt.Sprintf("the archive drive is full (writing %s): free space on the drive that holds %s, or choose another archive location, then re-run. %s", where, out, keptNote))}
 	case export.FatalReadOnly:
-		return &RunFatalError{Err: err, Msg: fmt.Sprintf("the archive location %s is read-only (writing %s): make it writable or choose another location, then re-run.", out, where)}
+		return &RunFatalError{Err: err, Msg: cleanText(fmt.Sprintf("the archive location %s is read-only (writing %s): make it writable or choose another location, then re-run.", out, where))}
 	}
 	return unavailable(out, err)
 }
@@ -64,7 +87,7 @@ func runFatalFor(out string, kind export.FatalKind, err error) *RunFatalError {
 // unavailable is the refusal for an archive location that is gone (a removed
 // drive, a dropped share, a root deleted under the run).
 func unavailable(out string, cause error) *RunFatalError {
-	return &RunFatalError{Err: cause, Msg: fmt.Sprintf("the archive location %s is unavailable (%v) — reconnect the drive or share and re-run. %s", out, cause, keptNote)}
+	return &RunFatalError{Err: cause, Msg: cleanText(fmt.Sprintf("the archive location %s is unavailable (%v) — reconnect the drive or share and re-run. %s", out, cause, keptNote))}
 }
 
 // writtenPath is the file or directory an export error names ("" if none).
@@ -77,6 +100,10 @@ func writtenPath(err error) string {
 	if errors.As(err, &ie) {
 		return ie.Path
 	}
+	var pe *fs.PathError // a -copy-first snapshot's write
+	if errors.As(err, &pe) {
+		return pe.Path
+	}
 	return ""
 }
 
@@ -88,6 +115,8 @@ type localRun struct {
 	logger *log.Logger
 	lock   *lockfile.Lock // the archive lock the probe asks "still held?"; nil in a test
 
+	outlookFresh map[string]bool // source ids (state.PathSourceID) of the PSTs this run's Outlook export wrote
+
 	faults      int // faults recorded: they count as processed for the checkpoint gate (FC12)
 	writeFaults int // folder and item write faults, which pace the probe
 	recovered   int // gaps closed because their item was captured
@@ -96,6 +125,9 @@ type localRun struct {
 	// onFault runs after every recorded fault (Run's checkpoint, which re-checks the
 	// lock too, so a stretch of nothing but faults still does).
 	onFault func()
+	// onLockLost runs when the probe finds the archive lock removed or replaced; Run
+	// then ends without writing shared state.
+	onLockLost func(error)
 }
 
 func (lr *localRun) noteFault() {
@@ -127,6 +159,11 @@ func (lr *localRun) probe(s *sourceRun) error {
 	}
 	if lr.lock != nil {
 		if err := lr.lock.StillHeld(); err != nil {
+			// Another run may own the archive now: the run writes nothing more into it, not
+			// even its manifest, exactly as when the checkpoint finds it (INT-CC-2, S2A-AC6).
+			if lr.onLockLost != nil {
+				lr.onLockLost(err)
+			}
 			return unavailable(lr.out, err)
 		}
 	}
@@ -143,15 +180,59 @@ type sourceRun struct {
 	wrote         bool            // this store has written a message this run: its directory exists
 	unwritable    map[string]bool // output directories that could not be created, this run
 	streak        int             // consecutive failed write attempts (the local breaker)
-	folderFaults  []string        // folders a folder-scope fault was recorded in, this run
+	folderFaults  []string        // folders a folder-scope fault was recorded in this run, once each, in the ledger's spelling
+	folderSeen    map[string]bool // the same, for the "once each"
+	folderFlood   bool            // more folders faulted than folderFaultCap: the run cannot say which it read, so it closes nothing
+	seenFolders   map[string]bool // the folders this walk reached (whole paths and last segments), for what -outlook says it left out
+	freshOutlook  bool            // the file is a PST this run's Outlook export wrote: a fresh image of the mailbox (NF1)
 }
+
+// noteFolder records a folder the reader reached. Each path is kept as its joined
+// spelling and as its last segment, which is how -outlook names a skipped folder.
+func (s *sourceRun) noteFolder(path []string) {
+	if len(path) == 0 {
+		return
+	}
+	if s.seenFolders == nil {
+		s.seenFolders = map[string]bool{}
+	}
+	s.seenFolders[state.GapFolder(strings.Join(path, "/"))] = true
+	s.seenFolders[state.GapFolder(path[len(path)-1])] = true
+}
+
+// folderFaultCap bounds the list of folders that faulted. A hostile source whose
+// faults name a different folder each time (a hierarchy of 100,000 loop rows under
+// distinct names) would otherwise grow it a string per fault, and the closure guard
+// scans it for every older gap (S2A-AO3).
+const folderFaultCap = 2000
 
 // observe records one gap of this source in the ledger and counts it as processed.
 func (s *sourceRun) observe(g state.CaptureGap) {
 	g.Token = s.token
+	if g.Scope == state.GapScopeItem && strings.HasPrefix(g.Locator, "ident:") {
+		// Another folder's copy of the same message already lost its write in this run
+		// and holds the plain locator: this copy's loss is its own gap.
+		key := state.GapKey(s.token, state.GapScopeItem, g.Locator)
+		if f, seen := s.lr.exp.Manifest.GapObservedIn(key, s.lr.runAt); seen && f != state.GapFolder(g.Folder) {
+			g.Locator += identFolderSep + util.ShortHash(g.Folder)
+		}
+	}
 	s.lr.exp.Manifest.ObserveGap(g, s.lr.runAt)
 	if g.Scope == state.GapScopeFolder {
-		s.folderFaults = append(s.folderFaults, g.Folder)
+		// The ledger stores a folder stripped of control and bidi characters and cut to a
+		// bound; the guard compares in that spelling, or it never matches (S2A-AI7).
+		p := state.GapFolder(g.Folder)
+		switch {
+		case s.folderSeen[p]:
+		case len(s.folderFaults) >= folderFaultCap:
+			s.folderFlood = true
+		default:
+			if s.folderSeen == nil {
+				s.folderSeen = map[string]bool{}
+			}
+			s.folderSeen[p] = true
+			s.folderFaults = append(s.folderFaults, p)
+		}
 	}
 	s.lr.noteFault()
 }
@@ -184,16 +265,31 @@ func itemGap(m *model.Message, folderKey, reason, class, detail string) state.Ca
 // recovered closes the gaps this message's capture answers: one at its Locator
 // and one at its ident: (an export that failed before). Each is counted
 // (`Recovered`), and nothing is written or deleted — the entry just goes (§4.3).
-func (s *sourceRun) recovered(m *model.Message) {
-	for _, loc := range []string{m.Locator, "ident:" + m.Identity()} {
-		if loc == "ident:" || loc == "" {
-			continue
-		}
-		if s.lr.exp.Manifest.CloseGap(state.GapKey(s.token, state.GapScopeItem, loc)) {
+//
+// A message's own Locator names one item, so its gap closes whoever writes it. The
+// ident: locator is token-wide: the same message in folders A and B has ONE such
+// locator and two copies, so a copy closes only the gap recorded for its own folder
+// (the other copy is still missing), and a second copy that failed in the same run
+// has a gap of its own at ident:<identity>#<hash of its folder> (S2A-AI1).
+func (s *sourceRun) recovered(m *model.Message, folderKey string) {
+	mf := s.lr.exp.Manifest
+	if m.Locator != "" && mf.CloseGap(state.GapKey(s.token, state.GapScopeItem, m.Locator)) {
+		s.lr.recovered++
+	}
+	ident := "ident:" + m.Identity()
+	if ident == "ident:" {
+		return
+	}
+	for _, loc := range []string{ident, ident + identFolderSep + util.ShortHash(folderKey)} {
+		if mf.CloseGapInFolder(state.GapKey(s.token, state.GapScopeItem, loc), folderKey) {
 			s.lr.recovered++
 		}
 	}
 }
+
+// identFolderSep joins an ident: locator to the hash of the folder it was lost in,
+// when another folder's copy of the same message already owns the plain locator.
+const identFolderSep = "#"
 
 // handle exports one message and sorts what goes wrong by whose fault it is.
 func (s *sourceRun) handle(ctx context.Context, abort func() error, folderPath []string, m *model.Message) (err error) {
@@ -205,9 +301,10 @@ func (s *sourceRun) handle(ctx context.Context, abort func() error, folderPath [
 	dir := filepath.Join(append([]string{lr.out, s.token}, folderPath...)...)
 
 	// A folder the archive could not create this run: its later items are counted
-	// into the gap, not attempted — except one the archive already holds, which the
-	// exporter skips without writing (FC12).
-	if s.unwritable[dir] && !lr.exp.Manifest.Has(state.Key(s.token, folderKey, m.Identity())) {
+	// into the gap, not attempted — except one the archive already holds, which an
+	// Incremental run's exporter skips without writing (FC12). A Full run re-writes
+	// every message, so there it spares nothing (S2A-AC5).
+	if s.unwritable[dir] && (lr.exp.Mode != export.Incremental || !lr.exp.Manifest.Has(state.Key(s.token, folderKey, m.Identity()))) {
 		s.observe(state.CaptureGap{Folder: folderKey, Scope: state.GapScopeFolder, Locator: "folder:" + folderKey, Reason: "folder-unwritable", Class: state.ClassFillable, Skipped: 1})
 		return nil
 	}
@@ -216,7 +313,8 @@ func (s *sourceRun) handle(ctx context.Context, abort func() error, folderPath [
 	// terminal export-panic gap, counted, never only a log line (F33).
 	defer func() {
 		if r := recover(); r != nil {
-			lr.logger.Printf("warning: recovered from panic on a message in %s (skipped): %v", folderKey, r)
+			// The folder name and the panic's words can both be the data file's own bytes.
+			lr.logger.Printf("warning: recovered from panic on a message in %s (skipped): %s", cleanText(folderKey), cleanText(fmt.Sprint(r)))
 			lr.exp.Stats.ExportPanics++
 			s.observe(itemGap(m, folderKey, "export-panic", state.ClassTerminal, fmt.Sprint(r)))
 			err = nil
@@ -226,7 +324,7 @@ func (s *sourceRun) handle(ctx context.Context, abort func() error, folderPath [
 	if exportErr == nil {
 		if written {
 			s.wrote, s.streak = true, 0
-			s.recovered(m)
+			s.recovered(m, folderKey)
 		}
 		return nil
 	}
@@ -260,7 +358,7 @@ func (s *sourceRun) handle(ctx context.Context, abort func() error, folderPath [
 	}
 	s.streak++
 	if s.streak >= writeBreaker {
-		return &RunFatalError{Err: exportErr, Msg: fmt.Sprintf("stopped reading %s after %d writes in a row failed (last: %v) — check that the archive drive is connected and writable, then re-run.", s.path, writeBreaker, exportErr)}
+		return &SourceStoppedError{Err: exportErr, Msg: cleanText(fmt.Sprintf("stopped reading %s after %d writes in a row failed (last: %v) — check that the archive drive is connected and writable, then re-run.", s.path, writeBreaker, exportErr))}
 	}
 	return nil
 }
@@ -284,6 +382,20 @@ func (s *sourceRun) stop(ctx context.Context, abort func() error) error {
 func exportStageGap(reason string) bool {
 	switch reason {
 	case "export-failed", "export-panic", "folder-unwritable", "refresh-failed":
+		return true
+	}
+	return false
+}
+
+// pstReaderGap says whether a walk of a PST can see again the gap a reason names:
+// the faults the PST reader produces, the overflow entry that counts the ones beyond
+// the ledger's caps, and what -outlook left out of the export (whose closure is
+// decided by covered, since the file must now hold the folder).
+func pstReaderGap(reason string) bool {
+	switch reason {
+	case "pst-message-unreadable", "pst-messages-unreadable", "pst-row-unreadable", "pst-row-invalid",
+		"folder-unreadable", "folder-partially-read", "folder-cycle", "folder-too-deep",
+		"overflow", "outlook-export-skipped", "outlook-account-skipped":
 		return true
 	}
 	return false
@@ -333,6 +445,22 @@ func (s *sourceRun) finish(walkErr error) error {
 // for any source, are closed by a walk that no longer meets them.
 func (s *sourceRun) covered(g state.CaptureGap) bool {
 	if !s.reportsFaults && !exportStageGap(g.Reason) {
+		return false
+	}
+	if s.folderFlood {
+		return false
+	}
+	// A reader that reports its faults sees the reasons it produces and the run's own;
+	// a reason it cannot see (a newer build's, another source's) is kept (S2A-AI4).
+	if s.reportsFaults && !exportStageGap(g.Reason) && !pstReaderGap(g.Reason) {
+		return false
+	}
+	// What Outlook left out of the export is not in the file: the file answers it only
+	// by now holding the folder. The exception is a file this run's own export wrote: it
+	// is Outlook's image today, so a folder it neither holds nor skipped again (the gap
+	// was not observed this run, or it would not be here) is no longer in Outlook, or
+	// is one Outlook could not even name (NF1).
+	if g.Reason == "outlook-export-skipped" && g.Folder != "" && !s.freshOutlook && !s.seenFolders[g.Folder] {
 		return false
 	}
 	for _, p := range s.folderFaults {

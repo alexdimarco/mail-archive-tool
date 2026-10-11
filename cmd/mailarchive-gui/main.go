@@ -136,6 +136,7 @@ func runHeadless(path string) int {
 
 	inputs := j.Inputs
 	var outlookSkips []outlookcom.Skip
+	var outlookExported []string // the PSTs this run's export wrote: a fresh image of the mailbox (NF1)
 	if j.Outlook {
 		wait := 5 * time.Minute
 		if d, err := time.ParseDuration(j.OutlookSyncWait); err == nil {
@@ -152,6 +153,7 @@ func runHeadless(path string) int {
 		inputs = nil
 		for _, s := range stores {
 			inputs = append(inputs, s.Path)
+			outlookExported = append(outlookExported, s.Path)
 		}
 		outlookSkips = skips
 	}
@@ -171,7 +173,7 @@ func runHeadless(path string) int {
 	// failed run, exactly as the CLI's -unattended does (N13, R18).
 	opts := app.Options{Inputs: inputs, Auto: j.Auto, Out: j.Out, Mode: mode, Since: since,
 		CopyFirst: j.CopyFirst, Index: true, Pages: true, KeepRaw: j.KeepRaw, Unattended: true,
-		OutlookSkips: outlookSkips}
+		OutlookSkips: outlookSkips, OutlookExported: outlookExported}
 	logger.Printf("Scheduled job %q: exporting to %s", j.Name, j.Out)
 	result, runErr := app.Run(ctx, opts, logger, nil)
 	// "Done." only for a run that finished or was cancelled: a refused or failed
@@ -1132,6 +1134,7 @@ func runExport(c wizardChoice) error {
 
 	inputs := c.inputs
 	var outlookSkips []outlookcom.Skip
+	var outlookExported []string // the PSTs this run's export wrote: a fresh image of the mailbox (NF1)
 	// Outlook-automation path: have Outlook write a fresh PST per account, then
 	// archive those. Reliable for Exchange/IMAP .ost caches go-pst can't read.
 	if c.outlookCOM {
@@ -1145,6 +1148,7 @@ func runExport(c wizardChoice) error {
 		inputs = nil
 		for _, s := range stores {
 			inputs = append(inputs, s.Path)
+			outlookExported = append(outlookExported, s.Path)
 		}
 		outlookSkips = skips
 	}
@@ -1164,7 +1168,8 @@ func runExport(c wizardChoice) error {
 		Pages:     true,
 		KeepRaw:   c.keepRaw,
 
-		OutlookSkips: outlookSkips,
+		OutlookSkips:    outlookSkips,
+		OutlookExported: outlookExported,
 	}
 
 	var ticks int

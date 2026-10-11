@@ -198,6 +198,7 @@ func runExport(args []string) error {
 	// refuses with a legible message.
 	pstDir := ""
 	var outlookSkips []outlookcom.Skip
+	var outlookExported []string // the PSTs this run's export wrote: a fresh image of the mailbox (NF1)
 	if *outlook {
 		// Refuse up front on a platform that can't run Outlook automation, before
 		// printing the completeness note or any "exporting…" progress — a guaranteed
@@ -215,6 +216,7 @@ func runExport(args []string) error {
 		}
 		for _, s := range stores {
 			inputs = append(inputs, s.Path)
+			outlookExported = append(outlookExported, s.Path)
 		}
 		outlookSkips = skips
 		logger.Printf("Outlook: %d PST(s) ready; archiving them now.", len(stores))
@@ -222,6 +224,7 @@ func runExport(args []string) error {
 
 	opts := exportOptions(o, inputs, mode, since)
 	opts.OutlookSkips = outlookSkips // what Outlook's export left out is recorded as a gap, never only logged (FC28)
+	opts.OutlookExported = outlookExported
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
