@@ -71,33 +71,49 @@ func TestRetryOfRemovedMessagesAfterTheDriveWentAwayTellsWhatToDo(t *testing.T) 
 				os.Rename(filepath.Join(stash, ent.Name()), filepath.Join(dir, ent.Name()))
 			}
 
-			// the twin: the retry previews what is there (the two removed files are left out) and exports it
+			// the twin: the retry previews what is there (the two removed messages are carried into the plan
+			// and listed as removed from the archive, E4-AC10) and exports it
 			pid := e.ok("/api/exports/retry", map[string]any{"runId": run, "which": "rest"})["previewId"].(string)
 			res := e.waitPreview(pid)
-			if w := strings.Join(toStrings(res["warnings"]), " | "); !strings.Contains(w, "2 of these messages are no longer in the archive and were left out") {
-				t.Fatalf("the retry's preview: %q, want the two removed messages left out", w)
+			if w := strings.Join(toStrings(res["warnings"]), " | "); !strings.Contains(w, "2 of these messages are no longer in the archive: they will be listed as removed from it and not exported") {
+				t.Fatalf("the retry's preview: %q, want the two removed messages named as removed", w)
 			}
 			e.ok("/api/exports/start", map[string]any{"previewId": pid})
-			if last := e.waitRun()["last"].(map[string]any); last["stopId"] != nil && last["stopId"] != "" {
+			last := e.waitRun()["last"].(map[string]any)
+			if last["stopId"] != nil && last["stopId"] != "" {
 				t.Fatalf("the retry stopped: %v", last)
 			}
-
-			// the first export's card still offers the rest, and the click says what to do
-			before, _ := os.ReadDir(e.dest)
-			code, out := e.post("/api/exports/retry", map[string]any{"runId": run, "which": "rest"})
-			msg, _ := out["error"].(string)
+			// the retry's own list says what happened (removed from the archive), and what to do, in the words of the kind of folder
 			fix := []string{"restore", "backup of the archive"}
 			if kind == "archive-other" {
 				fix = []string{"ask whoever gave you the archive"}
 			}
-			names := append([]string{"The 2 messages", "left in this export", "no longer in the archive", "removed", "nothing was previewed", "Export the remaining messages"}, fix...)
+			fails, _ := e.manifestOf(last["rootName"].(string))["failures"].([]any)
+			if len(fails) != 2 {
+				t.Fatalf("the retry's failures: %v, want the two removed messages", fails)
+			}
+			for _, fl := range fails {
+				reason, _ := fl.(map[string]any)["reason"].(string)
+				assure.Refused(t, 1, reason, assure.Code(1), assure.Names(append([]string{"removed from the archive after you selected it", "if that was not on purpose"}, fix...)...))
+			}
+			// the removed messages are settled by that retry: the first export's card does not offer them again
+			if card := e.card(run); hasStr(card["actions"], "export-remaining") {
+				t.Errorf("the first export's card still offers Export the remaining messages: %v", card["actions"])
+			}
+
+			// a click that arrives anyway (a stale page) is refused and says there is nothing left, and writes nothing
+			before, _ := os.ReadDir(e.dest)
+			code, out := e.post("/api/exports/retry", map[string]any{"runId": run, "which": "rest"})
+			msg, _ := out["error"].(string)
 			if out["id"] != "R-h" {
 				t.Fatalf("the click on the first export's card: %d %v, want R-h", code, out)
 			}
-			assure.Refused(t, code, msg, assure.Code(statusRefused), assure.Names(names...),
+			assure.Refused(t, code, msg, assure.Code(statusRefused), assure.Names("no messages left to export", "nothing left to do"),
 				assure.NoSideEffect(func() bool { after, _ := os.ReadDir(e.dest); return len(after) == len(before) }))
 			if kind == "archive-other" {
-				lacks(t, "another folder's refusal", msg, "backup of the archive", "Settings")
+				for _, text := range []string{msg, fails[0].(map[string]any)["reason"].(string)} {
+					lacks(t, "another folder's words", text, "backup of the archive", "Settings")
+				}
 			}
 		})
 	}

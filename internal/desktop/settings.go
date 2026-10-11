@@ -28,6 +28,11 @@ type Settings struct {
 	WeeklyTime     string `json:"weeklyTime,omitempty"` // "03:00"
 	Interval       string `json:"interval,omitempty"`   // "daily" | "weekly" (default weekly)
 
+	// BackupFor is the archive location the installed weekly backup task is named for, when that is not
+	// the archive location (Out): after "Save and keep the backup" the task keeps its old name and
+	// archives into the new location, and the guard, the card and Remove look for it here (E4-AI6).
+	BackupFor string `json:"backupFor,omitempty"`
+
 	// The extraction workspace's remembered destination and options (design §4.17).
 	// nil means the default: Preserve folder structure ON, Readable HTML OFF until slice
 	// E5 lands (XC28), extracted attachments OFF. They are saved when an export starts.

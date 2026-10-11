@@ -98,6 +98,7 @@ type exportSlot struct {
 	started  time.Time
 	selected int
 	mailbox  string
+	archive  bool // an archive export: it has no sign-in, so a sign-in change does not stop it (E4-AI5)
 	done     chan struct{}
 
 	mu       sync.Mutex
@@ -198,6 +199,16 @@ func (d *dashboard) startAction(w http.ResponseWriter, r *http.Request) {
 		d.refuse(w, refusedWith("R-d", "MailArchive Desktop has no folder of its own to record this export in — nothing was exported. Sign out and back in to Windows (or set up your profile folder), then start MailArchive again."))
 		return
 	}
+	// The destination stays outside the archives that are the archives now: Settings can have named
+	// another archive location since the preview was made (E4-AI1, R29).
+	other := ""
+	if prev.bind.arch && prev.bind.other {
+		other = prev.bind.path
+	}
+	if err := ex.env.RefreshOutside(prev.plan, d.archivesWith(other), other); err != nil {
+		d.refuse(w, *copyRefusal(err))
+		return
+	}
 	var src app.CopySource
 	var mailbox string
 	if prev.bind.arch {
@@ -227,7 +238,7 @@ func (d *dashboard) startAction(w http.ResponseWriter, r *http.Request) {
 	run := ex.env.NewCopyRun(prev.plan, src)
 	started := make(chan string, 1)
 	run.OnStart = func(id string) { started <- id }
-	slot := &exportSlot{run: run, src: src, started: d.now(), selected: len(prev.plan.Messages), mailbox: mailbox, done: make(chan struct{})}
+	slot := &exportSlot{run: run, src: src, started: d.now(), selected: len(prev.plan.Messages), mailbox: mailbox, archive: prev.bind.arch, done: make(chan struct{})}
 
 	ex.mu.Lock()
 	if ex.slot != nil && ex.slot.live() { // another start won the race

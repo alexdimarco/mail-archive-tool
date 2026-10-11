@@ -129,6 +129,7 @@ type CopyMessage struct {
 	Gone       bool          `json:"gone,omitempty"`    // no longer in the mailbox, kept in the archive (ruling Q4)
 	Quarantine bool          `json:"quar,omitempty"`    // the preview's reading: the archived page fails the gate and is copied as text
 	Blocked    string        `json:"-"`                 // the preview's reading: the file the run copies is one the gate refuses ("link", "hardlink", "irregular" or "path"); never recorded
+	Removed    bool          `json:"removed,omitempty"` // a retry's reading: the archive's manifest no longer lists the record; none of its files are read and the run lists it as removed (E4-AC10)
 	Fix        *state.Fixity `json:"fix,omitempty"`
 	Notes      []string      `json:"notes,omitempty"` // the archive's own gaps for this message (§4.6 item 3)
 }
@@ -149,10 +150,16 @@ type CopyFolderRef struct {
 func (m *CopyMessage) FolderPath() string {
 	names := make([]string, len(m.Folder))
 	for i, f := range m.Folder {
-		names[i] = util.StripControl(f.Name)
+		names[i] = plainText(f.Name)
 	}
 	return strings.Join(names, "/")
 }
+
+// plainText is text a source supplied (a subject, a folder or store name, a reason) as the README, the
+// manifest and the page may show it: with no control character and no bidirectional formatting control,
+// which StripControl keeps and which makes the rest of a line read reversed or reordered (E4-AO7,
+// friction F16). The names of files are made by util.ExportSegment, which strips them already.
+func plainText(s string) string { return util.StripBidi(util.StripControl(s)) }
 
 // CopyOptions are a run's options.
 type CopyOptions struct {
@@ -245,6 +252,7 @@ type CopyPlan struct {
 	// What the preview reports (design §4.7 step 3 and 4).
 	EstimateBytes int64
 	UnknownSize   int
+	OverCap       int // messages above the per-message cap: listed as failed, not counted in the estimate (E4-AO3)
 	FreeBytes     uint64
 	Reserve       int64 // finalization reserve, sized from the plan (RR2-C5)
 	RecordBound   int64 // the run record's bound on the state volume

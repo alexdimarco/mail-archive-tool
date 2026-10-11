@@ -41,6 +41,7 @@ type workspace struct {
 	job        *wsPreviewJob
 	prev       *wsPreview
 	pickerBusy bool
+	others     []string // the archive folders the owner has named for Another archive folder, oldest first (E4-AI4)
 
 	listMu     sync.Mutex // one listing at a time: the workspace stays inside the 4-concurrent budget (§4.14)
 	reaperOnce sync.Once
@@ -279,7 +280,7 @@ func (ws *workspace) dropSession() {
 	ws.gen++
 	job := ws.job
 	ws.mu.Unlock()
-	if job != nil {
+	if job != nil && !job.arch { // an archive preview reads no mailbox: it has no sign-in to go stale (E4-AI5)
 		job.cancel()
 	}
 }
@@ -715,6 +716,7 @@ func (d *dashboard) countAction(w http.ResponseWriter, r *http.Request) {
 type wsPreviewJob struct {
 	id     string
 	cancel context.CancelFunc
+	arch   bool // the job reads an archive: a Microsoft 365 sign-in change does not concern it (E4-AI5)
 
 	mu       sync.Mutex
 	state    string // running | done | failed
@@ -801,7 +803,7 @@ func (d *dashboard) previewAction(w http.ResponseWriter, r *http.Request) {
 func (ws *workspace) startJob(fn func(ctx context.Context, job *wsPreviewJob) (*app.CopyPlan, map[string]any, *refusal), bind wsBind, retry string) *wsPreviewJob {
 	d := ws.d
 	ctx, cancel := context.WithCancel(d.life.Context())
-	job := &wsPreviewJob{id: randomID(16), cancel: cancel, state: "running", retry: retry}
+	job := &wsPreviewJob{id: randomID(16), cancel: cancel, arch: bind.arch, state: "running", retry: retry}
 	ws.mu.Lock()
 	old := ws.job
 	ws.job, ws.prev = job, nil

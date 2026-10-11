@@ -169,6 +169,9 @@ func (e *CopyExportEnv) PlanCopyExport(in CopyPlanInput) (*CopyPlan, error) {
 	if p.UnknownSize > 0 {
 		p.Warnings = append(p.Warnings, fmt.Sprintf("%s messages are of unknown size, so the space this export needs is an estimate", commas(p.UnknownSize)))
 	}
+	if p.OverCap > 0 {
+		p.Warnings = append(p.Warnings, fmt.Sprintf("%s messages are larger than this version of MailArchive exports (%d MiB): they will be listed as failed and not copied", commas(p.OverCap), e.cap()>>20))
+	}
 	p.Posture = e.destinationPosture(dest, id.FSType)
 	return p, nil
 }
@@ -195,9 +198,12 @@ func (e *CopyExportEnv) sizePlan(p *CopyPlan) {
 	var reserve, record int64
 	for i := range p.Messages {
 		m := &p.Messages[i]
-		if m.SizeHint >= 0 {
+		switch {
+		case m.SizeHint > e.cap():
+			p.OverCap++ // listed as larger than this version exports, and no space needed for it
+		case m.SizeHint >= 0:
 			p.EstimateBytes += m.SizeHint
-		} else {
+		default:
 			p.UnknownSize++
 		}
 		pl := namer.place(m, copyFileCount(m))

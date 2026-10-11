@@ -361,6 +361,50 @@ func (o *CopyOutside) Recheck(e *CopyExportEnv, dest string) error {
 	return nil
 }
 
+// RefreshOutside makes the plan's record of the archives its destination stays outside of match the
+// archives that are the archives now (E4-AI1). The preview collected them when it was made, and Settings can
+// name another archive location afterwards, in a second tab: Recheck compares the destination against
+// the archives the preview knew, so an export previewed into <arch2>/exports and started after Settings
+// named arch2 was written inside the new archive. Where the archives are the same as the preview's,
+// nothing is walked again; where one is new, the destination is checked against all of them afresh
+// (R-f, R-f2) and the plan keeps what that learned. A refusal leaves the plan as it was.
+func (e *CopyExportEnv) RefreshOutside(p *CopyPlan, archives []string, other string) error {
+	if p.Outside.knows(archives, other) {
+		return nil
+	}
+	outside, err := e.CheckDestinationOther(p.Dest, archives, other)
+	if err != nil {
+		return err
+	}
+	p.Outside = outside
+	return nil
+}
+
+// knows reports whether o was collected for these archives: every archive that is a folder now is in it,
+// and it names the same other archive folder.
+func (o *CopyOutside) knows(archives []string, other string) bool {
+	if o == nil || o.other != strings.TrimSpace(other) {
+		return false
+	}
+	have := map[string]bool{}
+	for _, a := range o.archives {
+		have[a] = true
+	}
+	for _, a := range archives {
+		a = strings.TrimSpace(a)
+		if a == "" {
+			continue
+		}
+		if fi, err := os.Stat(a); err != nil || !fi.IsDir() {
+			continue // no archive there: nothing to be inside of
+		}
+		if !have[a] {
+			return false
+		}
+	}
+	return true
+}
+
 // DestExampleFor is an example of a full folder path in the shape of the given system's, for
 // the words that tell an owner what to type (R-e) and the destination box's placeholder.
 func DestExampleFor(goos string) string {

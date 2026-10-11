@@ -8,6 +8,7 @@ import (
 	"os"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 )
 
 // The extraction workspace's message list (design §4.3, XC19, XC20, RR2-C11): one folder
@@ -18,6 +19,18 @@ import (
 
 // MaxListRows is the most rows one ListFolder page returns, whatever the caller asks.
 const MaxListRows = 100
+
+// The bounds on what one row of a list may carry (E4-AO6): a search.db handed over is data, and its
+// text cells are not the size of a message's subject. A cell above its bound is cut at a character.
+const (
+	MaxListSubjectBytes = 2048
+	MaxListSenderBytes  = 512   // a sender's name, and its address
+	MaxListKeyBytes     = 65536 // a key or a path: a manifest key is a token, a folder path and an id
+
+	// listLastDate is the last second of year 9999: the latest time a JSON document can hold, so the
+	// latest date a row may carry (E4-AO4).
+	listLastDate = 253402300799
+)
 
 // ListRow is one indexed message of a folder, with the manifest key that names it.
 type ListRow struct {
@@ -201,7 +214,17 @@ func (h *ListHandle) Close() error {
 	return h.db.Close()
 }
 
-const listSelect = `SELECT key, path, subject, sender_name, sender_email, date, has_attach FROM docs WHERE store = ? AND folder = ? ORDER BY date DESC, id DESC`
+// listSelect cuts a cell above its bound in SQLite, so that a row of 100 MB cells is not carried
+// into the process whole (E4-AO6): a key or a path above MaxListKeyBytes is NULL (it matches no
+// manifest key), a text cell is cut at its bound. The size is the cell's bytes (a blob's length), as
+// substr and length of a text stop at an embedded NUL; a cell within its bound is returned as it is.
+const listSelect = `SELECT
+ CASE WHEN length(CAST(key AS BLOB)) > 65536 THEN NULL ELSE key END,
+ CASE WHEN length(CAST(path AS BLOB)) > 65536 THEN NULL ELSE path END,
+ CASE WHEN length(CAST(subject AS BLOB)) > 2048 THEN substr(subject, 1, 2048) ELSE subject END,
+ CASE WHEN length(CAST(sender_name AS BLOB)) > 512 THEN substr(sender_name, 1, 512) ELSE sender_name END,
+ CASE WHEN length(CAST(sender_email AS BLOB)) > 512 THEN substr(sender_email, 1, 512) ELSE sender_email END,
+ date, has_attach FROM docs WHERE store = ? AND folder = ? ORDER BY date DESC, id DESC`
 
 // ListFolder is one page of the messages of folder in store (an exact match: a subfolder's
 // messages are not its parent's), newest first, with the folder's total. A page holds at
@@ -254,6 +277,17 @@ func (h *ListHandle) EachInFolder(store, folder string, fn func(ListRow) error) 
 	return rows.Err()
 }
 
+// cutText is s cut to at most max bytes, at a character.
+func cutText(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	for max > 0 && !utf8.RuneStart(s[max]) {
+		max--
+	}
+	return s[:max]
+}
+
 func scanListRow(rows *sql.Rows) (ListRow, error) {
 	var (
 		r                              ListRow
@@ -263,8 +297,10 @@ func scanListRow(rows *sql.Rows) (ListRow, error) {
 	if err := rows.Scan(&key, &path, &subj, &sname, &semail, &date, &hasAttach); err != nil {
 		return r, err
 	}
-	r.Key, r.Path, r.Subject, r.SenderName, r.SenderEmail = key.String, path.String, subj.String, sname.String, semail.String
-	if date.Valid && date.Int64 > 0 {
+	// SQLite cut a cell by characters: the bound is in bytes, and a cut never splits a character
+	r.Key, r.Path = cutText(key.String, MaxListKeyBytes), cutText(path.String, MaxListKeyBytes)
+	r.Subject, r.SenderName, r.SenderEmail = cutText(subj.String, MaxListSubjectBytes), cutText(sname.String, MaxListSenderBytes), cutText(semail.String, MaxListSenderBytes)
+	if date.Valid && date.Int64 > 0 && date.Int64 <= listLastDate { // a date past year 9999 is no date (E4-AO4)
 		r.Date = time.Unix(date.Int64, 0).UTC()
 	}
 	r.HasAttach = hasAttach.Valid && hasAttach.Int64 != 0

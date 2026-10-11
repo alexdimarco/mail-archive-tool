@@ -856,7 +856,18 @@ func TestSettingsGuardWordsTheReadOnlyWayAndWhatToDoAfter(t *testing.T) {
 	assure.Refused(t, 1, msg, assure.Code(1), untouched, assure.Names("Microsoft 365 account", "nobody is signed in right now"), assure.Forbid("you are signed in as", " into ."))
 	e.writeToken("alice@contoso.org", time.Hour)
 
-	// a cleared Archive location is said as that
+	// a cleared Archive location, with a launch location in use, archives into that one, and says so (E4-AI6)
+	launch := e.cfg.Out
+	b = save("", "")
+	msg, _ = b["error"].(string)
+	if b["confirm"] != true || launch == "" {
+		t.Fatalf("clearing the Archive location with a launch location was not asked about: %v", b)
+	}
+	assure.Refused(t, 1, msg, assure.Code(1), untouched, assure.Names("alice@contoso.org", "will now archive", launch), assure.Forbid(" into ."))
+
+	// a cleared Archive location, with no launch location either, is said as that
+	e.cfg.Out = ""
+	e.d.cfg = e.cfg
 	b = save("", "")
 	msg, _ = b["error"].(string)
 	if b["confirm"] != true {

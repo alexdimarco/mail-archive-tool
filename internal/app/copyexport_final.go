@@ -15,8 +15,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	"mail-archive-tool/internal/util"
 )
 
 // Finalization (design §4.13): the presence check, README, manifest, directory syncs
@@ -347,7 +345,7 @@ func (f *ceFinish) readmeText(status CopyStatus, c CopyCounts, stop *CopyStop, f
 		if h.Source.Other {
 			what = "another MailArchive archive folder, read-only:"
 		}
-		line("Source: %s %s, read without changing it.%s", what, util.StripControl(h.Source.Archive), storesLine(h.Source.Stores))
+		line("Source: %s %s, read without changing it.%s", what, plainText(h.Source.Archive), storesLine(h.Source.Stores))
 	default:
 		line("Source: %s", h.Source.Kind)
 	}
@@ -368,7 +366,7 @@ func (f *ceFinish) readmeText(status CopyStatus, c CopyCounts, stop *CopyStop, f
 				names = append(names, fmt.Sprintf("and %d more", len(h.Folders)-20))
 				break
 			}
-			names = append(names, fmt.Sprintf("%s (%s)", util.StripControl(f.Folder), commas(f.Messages)))
+			names = append(names, fmt.Sprintf("%s (%s)", plainText(f.Folder), commas(f.Messages)))
 		}
 		line("Selected folders: %s.", strings.Join(names, ", "))
 	}
@@ -385,7 +383,7 @@ func (f *ceFinish) readmeText(status CopyStatus, c CopyCounts, stop *CopyStop, f
 		_ = walkMessages(f.rec.path, func(p *cePlanLine, m *ceMsgLine) error {
 			if m != nil && m.Status == statusFailed && shown < 10 {
 				shown++
-				line("  - %s (%s): %s", util.StripControl(p.Subject), p.FolderPath(), util.StripControl(m.Reason))
+				line("  - %s (%s): %s", plainText(p.Subject), p.FolderPath(), plainText(m.Reason))
 			}
 			return nil
 		})
@@ -478,9 +476,9 @@ func (f *ceFinish) archiveFacts() (gone, noted, asText int) {
 func storesLine(stores []CopyStoreInfo) string {
 	var parts []string
 	for _, s := range stores {
-		name := util.StripControl(s.Store)
+		name := plainText(s.Store)
 		if s.Mailbox != "" {
-			name += " (" + util.StripControl(s.Mailbox) + ")"
+			name += " (" + plainText(s.Mailbox) + ")"
 		}
 		parts = append(parts, name)
 	}
@@ -543,7 +541,7 @@ func (f *ceFinish) writeManifest(status CopyStatus, c CopyCounts, stop *CopyStop
 		_, err = bw.Write(b)
 		return err
 	}
-	str := func(s string) []byte { b, _ := json.Marshal(util.StripControl(s)); return b }
+	str := func(s string) []byte { b, _ := json.Marshal(plainText(s)); return b }
 
 	h := f.hdr
 	chain := append([]CopyChainRef(nil), h.ChainParts...)
@@ -562,9 +560,9 @@ func (f *ceFinish) writeManifest(status CopyStatus, c CopyCounts, stop *CopyStop
 	if h.Source.Kind == "archive" { // design §4.10: the archive and every store it holds with its mailbox (XC21)
 		stores := make([]CopyStoreInfo, 0, len(h.Source.Stores))
 		for _, s := range h.Source.Stores {
-			stores = append(stores, CopyStoreInfo{Store: util.StripControl(s.Store), Mailbox: util.StripControl(s.Mailbox)})
+			stores = append(stores, CopyStoreInfo{Store: plainText(s.Store), Mailbox: plainText(s.Mailbox)})
 		}
-		src = map[string]any{"kind": "archive", "archive": util.StripControl(h.Source.Archive), "stores": stores,
+		src = map[string]any{"kind": "archive", "archive": plainText(h.Source.Archive), "stores": stores,
 			"original_means": "the .eml file the archive kept for the message, copied byte-exact"}
 		if h.Source.Other {
 			src["other_archive_folder"] = true
@@ -589,7 +587,7 @@ func (f *ceFinish) writeManifest(status CopyStatus, c CopyCounts, stop *CopyStop
 		}
 		first = false
 		entry := map[string]any{"n": p.N, "source_id": p.SourceID, "internet_message_id": p.InternetMessageID,
-			"subject": util.StripControl(p.Subject), "from": util.StripControl(p.From), "received_utc": p.Received.UTC().Format(time.RFC3339),
+			"subject": plainText(p.Subject), "from": plainText(p.From), "received_utc": p.Received.UTC().Format(time.RFC3339),
 			"folder": p.FolderPath(), "status": statusNotAttempted, "files": []ceFileRec{}, "notes": []string{}}
 		if p.Mailbox != "" {
 			entry["mailbox"] = p.Mailbox
@@ -619,8 +617,8 @@ func (f *ceFinish) writeManifest(status CopyStatus, c CopyCounts, stop *CopyStop
 			bw.WriteByte(',')
 		}
 		first = false
-		return put(map[string]any{"n": p.N, "source_id": p.SourceID, "subject": util.StripControl(p.Subject), "folder": p.FolderPath(),
-			"received_utc": p.Received.UTC().Format(time.RFC3339), "class": m.Class, "reason": util.StripControl(m.Reason)})
+		return put(map[string]any{"n": p.N, "source_id": p.SourceID, "subject": plainText(p.Subject), "folder": p.FolderPath(),
+			"received_utc": p.Received.UTC().Format(time.RFC3339), "class": m.Class, "reason": plainText(m.Reason)})
 	})
 	if err != nil {
 		cleanup()

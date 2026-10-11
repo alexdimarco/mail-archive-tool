@@ -99,6 +99,16 @@ type Config struct {
 	// RemoveBackup removes the weekly backup (tests); nil asks the OS scheduler, as the
 	// Weekly backup card's Remove does. Settings' "Save and remove the weekly backup" calls it.
 	RemoveBackup func() error
+	// BackupInstalledFor reports whether a weekly backup task named for the archive location out is
+	// installed, and RemoveBackupFor removes it (tests, the OS scheduler's stand-in); nil asks the OS
+	// scheduler. The task is named for the location it was installed for (schedule.DefaultNameFor),
+	// which Settings can change afterwards (E4-AI6). BackupInstalled and RemoveBackup, when set, answer
+	// for the configured archive alone and are used before these.
+	BackupInstalledFor func(out string) bool
+	RemoveBackupFor    func(out string) error
+	// InstallBackup installs the weekly backup task (tests, the OS scheduler's stand-in); nil hands the
+	// Spec to the OS scheduler (schedule.Install).
+	InstallBackup func(spec schedule.Spec) error
 
 	// Test overrides of the Graph client's bounds (zero = its defaults, fixed by design).
 	RequestTimeout    time.Duration
@@ -356,38 +366,62 @@ func (d *dashboard) saveSettings(w http.ResponseWriter, r *http.Request) {
 	// would silently make the next scheduled capture write the signed-in mailbox into that folder:
 	// the harmful save is an informed one, at the moment it happens (XC22, MA-523). Nothing is
 	// written, and nothing removed, until the user has answered.
-	if !samePath(out, d.cfg.effectiveOut()) && d.backupInstalled() {
+	// The location after this save: an empty field means the launch location, so the question is about
+	// that, and a save that leaves the location as it is asks nothing.
+	after := out
+	if after == "" {
+		after = strings.TrimSpace(d.cfg.Out)
+	}
+	backupFor := "" // the location the weekly task is named for, when it is not the archive location
+	removedBackup := false
+	if !samePath(after, d.cfg.effectiveOut()) && d.backupInstalled() {
 		switch in.Backup {
 		case "keep":
+			// the task keeps its name, and archives into the new location: the guard, the card and
+			// Remove look for it under the name it has (E4-AI6)
+			if p, _ := d.cfg.backupTask(); p != "" && !samePath(p, after) {
+				backupFor = p
+			}
 		case "remove":
 			if err := d.removeBackup(); err != nil {
 				writeJSON(w, map[string]any{"ok": false, "error": "The weekly backup could not be removed (the scheduler said: " + err.Error() + "), so nothing was saved and your settings are as they were. Remove it yourself with Remove on the Weekly backup card, or choose Save and keep the backup."})
 				return
 			}
+			removedBackup = true
 		default:
 			who, _ := d.signedInNow()
 			signedIn := who != ""
-			ask := fmt.Sprintf("Your weekly backup will now archive %s into %s.", who, out)
+			ask := fmt.Sprintf("Your weekly backup will now archive %s into %s.", who, after)
 			switch {
-			case !signedIn && out == "":
+			case !signedIn && after == "":
 				ask = "You cleared the Archive location, so your weekly backup (it archives the Microsoft 365 account it uses; nobody is signed in right now) would have no folder to archive into."
 			case !signedIn:
-				ask = fmt.Sprintf("Your weekly backup will now archive the Microsoft 365 account it uses (nobody is signed in right now) into %s.", out)
-			case out == "":
+				ask = fmt.Sprintf("Your weekly backup will now archive the Microsoft 365 account it uses (nobody is signed in right now) into %s.", after)
+			case after == "":
 				ask = fmt.Sprintf("You cleared the Archive location, so your weekly backup (it archives %s) would have no folder to archive into.", who)
 			}
+			if out == "" && after != "" {
+				ask = strings.TrimSuffix(ask, ".") + " (the Archive location is empty, so it is the folder MailArchive was started with)."
+			}
 			ask += " If you only want to read an archive someone gave you, choose Cancel: Extraction workspace → Source → Another archive folder reads it without changing any setting or your weekly backup."
-			writeJSON(w, map[string]any{"ok": false, "confirm": true, "upn": who, "folder": out, "error": ask,
+			writeJSON(w, map[string]any{"ok": false, "confirm": true, "upn": who, "folder": after, "error": ask,
 				"choices": []string{"keep", "remove", "cancel"}})
 			return
 		}
+	} else if p, _ := d.cfg.backupTask(); p != "" && !samePath(p, after) {
+		backupFor = p // the location is not changing, and the task is still named for another one
 	}
 	// Reloaded under the settings lock: only the fields this save owns change, so a
 	// racing export start's own fields are never written back stale (XC34).
 	if err := UpdateSettings(d.cfg.SettingsPath, "settings", func(s *Settings) {
 		s.Out, s.KeepRaw, s.IncludeDeleted, s.IncludeJunk = out, in.KeepRaw, in.IncludeDeleted, in.IncludeJunk
+		s.BackupFor = backupFor
 	}); err != nil {
-		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		msg := err.Error()
+		if removedBackup { // "Save and remove" removes first: say so, or Cancel is what the owner thinks happened
+			msg = "The weekly backup was removed, but the settings were not saved, so the archive location is as it was: " + msg + " Click Save settings again when the file can be read."
+		}
+		writeJSON(w, map[string]any{"ok": false, "error": msg})
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true})
@@ -466,7 +500,8 @@ func (cfg Config) cards() []card {
 
 	sc := card{"Weekly backup", "Not installed", "warn"}
 	if eo := cfg.effectiveOut(); eo != "" {
-		switch schedule.Query(schedule.DefaultNameFor(eo)) {
+		_, st := cfg.backupTask()
+		switch st {
 		case schedule.Installed:
 			sc = card{"Weekly backup", "Installed", "good"}
 		case schedule.SchedulerUnavailable:

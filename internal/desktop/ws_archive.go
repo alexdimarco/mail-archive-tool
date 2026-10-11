@@ -15,6 +15,7 @@ import (
 	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/graph"
 	"mail-archive-tool/internal/index"
+	"mail-archive-tool/internal/util"
 )
 
 // The archive source's endpoints (extraction design §4.2, §4.3, §4.6, §4.7, slice E4): the
@@ -110,6 +111,9 @@ func (d *dashboard) sourceOther(w http.ResponseWriter, raw string) {
 		d.refuse(w, *ref)
 		return
 	}
+	if app.ArchiveAt(path) { // named for the Source control: Create folder keeps out of it from now on (E4-AI4)
+		d.ws.rememberOther(path)
+	}
 	a, err := app.OpenArchive(path, app.ArchiveOptions{Other: true})
 	if err != nil {
 		d.refuse(w, *copyRefusal(err))
@@ -136,6 +140,9 @@ func (d *dashboard) archiveFolders(w http.ResponseWriter, r *http.Request, src w
 			return
 		}
 		path = p
+		if app.ArchiveAt(path) {
+			d.ws.rememberOther(path)
+		}
 	} else if path = d.cfg.effectiveOut(); path == "" {
 		d.refuse(w, refusalO(""))
 		return
@@ -195,6 +202,42 @@ func (ws *workspace) otherNow() string {
 		return s.archPath
 	}
 	return ""
+}
+
+// maxOthers is how many archive folders the workspace remembers the owner named.
+const maxOthers = 8
+
+// rememberOther notes an archive folder the owner has named for Another archive folder, validated or
+// loaded or not: nothing is ever written there (RR2-C13), so Create folder refuses it for as long as the
+// page lives, not only while an archive session for it exists (E4-AI4).
+func (ws *workspace) rememberOther(path string) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return
+	}
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+	for i, o := range ws.others {
+		if samePath(o, path) {
+			ws.others = append(ws.others[:i:i], ws.others[i+1:]...)
+			break
+		}
+	}
+	ws.others = append(ws.others, path)
+	if len(ws.others) > maxOthers {
+		ws.others = ws.others[len(ws.others)-maxOthers:]
+	}
+}
+
+// otherPaths are the archive folders the owner has named, and the one open now, newest last.
+func (ws *workspace) otherPaths() []string {
+	ws.mu.Lock()
+	out := append([]string(nil), ws.others...)
+	ws.mu.Unlock()
+	if now := ws.otherNow(); now != "" {
+		out = append(out, now)
+	}
+	return out
 }
 
 // setArch makes s the archive session. The session it replaces is released unless a preview is
@@ -331,9 +374,10 @@ const (
 
 // copyToYourOwn is what is true of the index, or the files, of another archive folder: it is read-only,
 // Maintenance acts on the configured archive only, so the way to a repaired list is a folder of your own
-// (friction F4).
+// (friction F4). It does not name Maintenance's button for the folder it is about (E4-AI8): the button
+// is the owner's once the copy is the archive location, and the words say that, not the button's label.
 func copyToYourOwn(goal string) string {
-	return "this folder is read-only, so nothing here can repair it — " + goal + ", copy the folder to one of your own, make that the archive location in Settings, then use " + rebuildButton
+	return "this folder is read-only, so nothing here can repair it — " + goal + ", copy the folder to one of your own, make that the archive location in Settings, then rebuild its search index in Maintenance"
 }
 
 // rebuildFixes is the advice for an index that is missing or unusable: the button, for the owner's own
@@ -375,6 +419,8 @@ func listUnavailable(err error, other bool) string {
 		return "The search index is in use right now, so the message list is unavailable for a moment. Whole-folder selection works; try the list again in a few seconds."
 	case index.ReadOnly(err):
 		return "The search index can't be opened on this medium, so there is no message list. Whole-folder selection works."
+	case other:
+		return "This archive folder's search index can't be used for a message list. Whole-folder selection works."
 	}
 	return "This " + what + "'s search index can't be used for a message list. Whole-folder selection works; " + rebuildFixes(other, "fixes the list")
 }
@@ -386,6 +432,15 @@ func (d *dashboard) listUnavailableFor(a *app.ArchiveSource, err error) string {
 		return archiveGoneNote(a.Dir(), "click Load folders again")
 	}
 	return listUnavailable(err, a.Other())
+}
+
+// rebuildAdvice is the clause that sends the owner to Maintenance's Rebuild, which acts on the configured
+// archive: it is not said of another archive folder (E4-AI8).
+func rebuildAdvice(other bool, clause string) string {
+	if other {
+		return "."
+	}
+	return clause
 }
 
 // archiveMessages is one page of an archive folder, newest first, at most 100 rows, from
@@ -450,14 +505,18 @@ func (d *dashboard) archiveMessages(w http.ResponseWriter, r *http.Request, in w
 		return
 	}
 	var rows []wsRowOut
+	notInSnapshot := 0
 	for _, row := range raw {
 		key, ok := a.MapKey(version, row)
 		if !ok {
+			notInSnapshot++
 			continue // a row the manifest does not list: it cannot be selected (R13, R21)
 		}
-		hnd := sess.seen.add(seenEntry{id: key, folder: in.Folder, subject: row.Subject, from: row.SenderEmail, fromName: row.SenderName,
+		// the text of a row is the folder's: shown with no control or bidi control in it (E4-AO7)
+		subj, from, fromName := plainRowText(row.Subject), plainRowText(row.SenderEmail), plainRowText(row.SenderName)
+		hnd := sess.seen.add(seenEntry{id: key, folder: in.Folder, subject: subj, from: from, fromName: fromName,
 			received: row.Date, size: -1})
-		rows = append(rows, wsRowOut{H: hnd, Subject: row.Subject, From: row.SenderEmail, FromName: row.SenderName, Received: row.Date.UTC().Format(time.RFC3339), Size: -1})
+		rows = append(rows, wsRowOut{H: hnd, Subject: subj, From: from, FromName: fromName, Received: row.Date.UTC().Format(time.RFC3339), Size: -1})
 	}
 	if len(raw) > 0 && len(rows) == 0 && offset == 0 && version < 2 {
 		out["listUnavailable"] = "This archive's search index predates its format; whole-folder selection works; " + rebuildFixes(a.Other(), "fixes the list")
@@ -488,12 +547,40 @@ func (d *dashboard) archiveMessages(w http.ResponseWriter, r *http.Request, in w
 	if a.Other() && a.WALBeside() {
 		notes = append(notes, listNoteWAL)
 	}
+	// The list is the index as it is now, the tree the manifest as it was loaded (E4-AC5): a page that
+	// holds rows the snapshot does not know (newest first, so they come first) is shown without them, and
+	// the owner is told why, and that a list paged by offset may skip or repeat a message while the
+	// archive changes.
+	changed := false
+	if size, mod, serr := a.StampNow(); serr == nil {
+		if s0, m0 := a.Stamp(); size != s0 || !mod.Equal(m0) {
+			changed = true
+		}
+	}
+	if notInSnapshot > 0 {
+		if changed {
+			notes = append(notes, fmt.Sprintf("%s messages the search index lists for this folder are not shown: they are not in the archive as you loaded its folders (a backup or capture ran since). Load folders again to include them.", commaInt(notInSnapshot)))
+		} else {
+			// the manifest is as it was loaded, so loading again may include nothing: the index is written ahead of the
+			// manifest while a capture runs (loading again, when it has finished, includes those), and it lists a
+			// record the manifest no longer has until it is rebuilt (loading again never includes that one, and it
+			// cannot be exported). Both causes are named, each with its remedy.
+			notes = append(notes, fmt.Sprintf("%s messages the search index lists for this folder are not shown: the archive's manifest, as you loaded it, does not list them. A capture still running may have added them (Load folders again, when it has finished, includes them); a message removed from the archive stays in the search index until it is brought in step%s", commaInt(notInSnapshot),
+				rebuildAdvice(a.Other(), " (Rebuild search index in Maintenance does that).")))
+		}
+	}
+	if changed {
+		notes = append(notes, "This archive changed since you loaded its folders (a backup or capture ran), so this list may skip or repeat a message. Load folders again.")
+	}
 	if len(notes) > 0 {
 		out["listNote"] = strings.Join(notes, " ")
 	}
 	sess.touch(now)
 	d.reply(w, out)
 }
+
+// plainRowText is a row's text as the page shows it.
+func plainRowText(s string) string { return util.StripBidi(util.StripControl(s)) }
 
 // newerIndexRefusal is R-p for a search.db a newer MailArchive wrote.
 func newerIndexRefusal(ni *index.NewerIndexError) error {
@@ -502,18 +589,41 @@ func newerIndexRefusal(ni *index.NewerIndexError) error {
 
 // ---- the preview ---------------------------------------------------------------------------
 
+// noNames is what an export without the archive's index says of its names and its manifest.
+const noNames = "most messages in this export carry no subject, sender or date in their names and in the manifest."
+
+// metaUnavailable is the preview's warning that the index could not be read, in words true of the
+// archive it is about (E4-AI8): an index a newer MailArchive wrote is said to be that (and to update, never to
+// rebuild: a rebuild by this build would replace it with one of the older format), and another archive
+// folder is never sent to Maintenance's Rebuild, which acts on the configured archive.
+func metaUnavailable(err error, other bool) string {
+	var ni *index.NewerIndexError
+	switch {
+	case errors.As(err, &ni):
+		return fmt.Sprintf("The archive's search index was written by a newer MailArchive (format %d), so %s Update MailArchive Desktop to read it.", ni.Version, noNames)
+	case other && errors.Is(err, os.ErrNotExist):
+		return "This archive folder has no search index, so " + noNames + " " + metaAdvice(err, other)
+	case other:
+		return "This archive folder's search index can't be read, so " + noNames + " " + metaAdvice(err, other)
+	}
+	return "The archive's search index can't be read (" + listCause(err) + "), so " + noNames + " " + metaAdvice(err, other)
+}
+
 // archiveMeta reads what the index knows of each message of the selected folders (subject, sender,
 // date), for the names and the manifest: one read-only open, closed before the plan is made. Without
 // the index, the names carry what the manifest holds, and the preview says so.
-func (d *dashboard) archiveMeta(a *app.ArchiveSource, ids []string) (map[string]index.ListRow, string) {
+func (d *dashboard) archiveMeta(ctx context.Context, a *app.ArchiveSource, ids []string) (map[string]index.ListRow, string, error) {
 	d.listGate.RLock()
 	defer d.listGate.RUnlock()
+	if err := ctx.Err(); err != nil {
+		return nil, "", err
+	}
 	if d.rebuilding.Load() {
-		return nil, "The search index is being rebuilt, so most messages in this export carry no subject, sender or date in their names and in the manifest. Wait until Maintenance says the rebuild is done, then click Preview copy export again."
+		return nil, "The search index is being rebuilt, so most messages in this export carry no subject, sender or date in their names and in the manifest. Wait until Maintenance says the rebuild is done, then click Preview copy export again.", nil
 	}
 	h, err := a.OpenList()
 	if err != nil {
-		return nil, "The archive's search index can't be read (" + listCause(err) + "), so most messages in this export carry no subject, sender or date in their names and in the manifest. " + metaAdvice(err, a.Other())
+		return nil, metaUnavailable(err, a.Other()), nil
 	}
 	defer h.Close()
 	meta := map[string]index.ListRow{}
@@ -523,15 +633,21 @@ func (d *dashboard) archiveMeta(a *app.ArchiveSource, ids []string) (map[string]
 			continue
 		}
 		if err := h.EachInFolder(token, path, func(row index.ListRow) error {
+			if err := ctx.Err(); err != nil { // a cancelled preview stops reading, and lets Rebuild in (E4-AC7)
+				return err
+			}
 			if key, ok := a.MapKey(h.Version, row); ok {
 				meta[key] = row
 			}
 			return nil
 		}); err != nil {
-			return meta, "Part of the archive's search index can't be read, so some messages in this export carry no subject, sender or date in their names and in the manifest. " + metaAdvice(nil, a.Other())
+			if cerr := ctx.Err(); cerr != nil {
+				return nil, "", cerr
+			}
+			return meta, "Part of the archive's search index can't be read, so some messages in this export carry no subject, sender or date in their names and in the manifest. " + metaAdvice(nil, a.Other()), nil
 		}
 	}
-	return meta, ""
+	return meta, "", ctx.Err()
 }
 
 // metaAdvice is what to do about names and a manifest made without the index's subject, sender and date:
@@ -613,12 +729,15 @@ func (d *dashboard) resolveAndPlanArchive(ctx context.Context, job *wsPreviewJob
 		return nil, nil, &ref
 	}
 	job.set(func() { job.progress = "Reading the archive's search index…" })
-	meta, metaNote := d.archiveMeta(a, ids)
-	res, err := a.Messages(ctx, keys, meta, func(done, total int) {
-		job.set(func() {
-			job.progress = fmt.Sprintf("Checking the archive's files (%s of %s)", commaInt(done), commaInt(total))
+	meta, metaNote, err := d.archiveMeta(ctx, a, ids)
+	var res app.ArchiveResolved
+	if err == nil {
+		res, err = a.Messages(ctx, keys, meta, func(done, total int) {
+			job.set(func() {
+				job.progress = fmt.Sprintf("Checking the archive's files (%s of %s)", commaInt(done), commaInt(total))
+			})
 		})
-	})
+	}
 	if err != nil {
 		r := refusedWith("R-timeout", "MailArchive stopped reading the archive before it finished — try Preview copy export again.")
 		return nil, nil, &r
@@ -821,6 +940,9 @@ func (d *dashboard) retryArchive(w http.ResponseWriter, in runBody, info app.Cop
 		d.refuseRun(w, in.RunID, r)
 		return
 	}
+	if info.Other && app.ArchiveAt(info.Archive) { // a retry names the folder as the Source control does: a dashboard started since has not heard of it (E4-AI4)
+		d.ws.rememberOther(info.Archive)
+	}
 	a, oerr := app.OpenArchive(info.Archive, app.ArchiveOptions{Other: info.Other})
 	if oerr != nil {
 		ref := *copyRefusal(oerr)
@@ -837,7 +959,7 @@ func (d *dashboard) retryArchive(w http.ResponseWriter, in runBody, info app.Cop
 		was[m.SourceID] = m
 	}
 	res, rerr := a.Messages(d.life.Context(), keys, nil, nil)
-	if rerr != nil || len(res.Messages) == 0 {
+	if rerr != nil || len(keys) == 0 {
 		a.Close()
 		d.refuseRun(w, in.RunID, refusedWith("R-h", noneLeftInArchive(len(keys), rerr != nil, info.Other, app.RetryButton(in.Which))))
 		return
@@ -848,13 +970,39 @@ func (d *dashboard) retryArchive(w http.ResponseWriter, in runBody, info app.Cop
 			m.Subject, m.From, m.FromName, m.Received = old.Subject, old.From, old.FromName, old.Received
 		}
 	}
-	input.Messages, input.Folders = res.Messages, app.PlanFoldersOf(res.Messages)
+	// A message the archive no longer has stays in the plan, as the first plan had it: the run lists it as
+	// removed from the archive, which settles it for the whole set, where a message left out of every part
+	// was offered by the first part's card for ever (E4-AC10). That is a message whose files were removed since
+	// (a redaction: the run opens them behind the gate, and they are gone) and a record the manifest no longer
+	// lists (it is marked, and none of its files is read, whatever is left of them). A retry of messages that
+	// are all gone is a retry like any other, and settles them.
+	vanished := map[string]bool{}
+	for _, k := range res.Vanished {
+		vanished[k] = true
+	}
+	msgs, resolved := make([]app.CopyMessage, 0, len(keys)), 0
+	for _, k := range keys {
+		switch {
+		case resolved < len(res.Messages) && res.Messages[resolved].SourceID == k:
+			msgs = append(msgs, res.Messages[resolved])
+			resolved++
+		case vanished[k]:
+			msgs = append(msgs, was[k])
+		default:
+			m := was[k]
+			m.Removed = true
+			msgs = append(msgs, m)
+		}
+	}
+	gone := len(keys) - len(res.Messages) // the messages the archive no longer has
+
+	input.Messages, input.Folders = msgs, app.PlanFoldersOf(msgs)
 	input.Source = a.Describe()
 	other := ""
 	if info.Other {
 		other = a.Dir()
 	}
-	input.Archives, input.OtherArchive, input.ArchiveSkipped = d.archivesWith(other), other, res.Skipped
+	input.Archives, input.OtherArchive, input.ArchiveSkipped = d.archivesWith(other), other, 0
 	bind := wsBind{arch: true, path: a.Dir(), other: info.Other}
 	job := d.ws.startJob(func(ctx context.Context, job *wsPreviewJob) (*app.CopyPlan, map[string]any, *refusal) {
 		defer a.Close()
@@ -864,8 +1012,8 @@ func (d *dashboard) retryArchive(w http.ResponseWriter, in runBody, info app.Cop
 			return nil, nil, copyRefusal(perr)
 		}
 		var warns []string
-		if res.Skipped > 0 {
-			warns = append(warns, fmt.Sprintf("%s of these messages %s no longer in the archive and %s left out.", commaInt(res.Skipped), one(res.Skipped, "is", "are"), one(res.Skipped, "was", "were")))
+		if gone > 0 {
+			warns = append(warns, fmt.Sprintf("%s of these messages %s no longer in the archive: %s will be listed as removed from it and not exported.", commaInt(gone), one(gone, "is", "are"), one(gone, "it", "they")))
 		}
 		if w := archiveBlockedWarning(plan.Archive); w != "" {
 			warns = append(warns, w)

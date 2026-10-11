@@ -421,6 +421,26 @@ func migrateStoreID(old string) string {
 	return PathSourceID(old)
 }
 
+// snapshotStoreID is migrateStoreID for a manifest read as a snapshot (LoadFrom): the id is the
+// lexical form and the file system is never asked about it. A manifest handed over in another
+// archive folder is data, and a store id in it is text its writer chose: resolved with
+// filepath.EvalSymlinks it would make this machine Lstat that path (on Windows a UNC id opens an
+// SMB connection and offers the owner's credentials) and follow a link out of the folder
+// (E4-AO1). The snapshot's only uses of an id are its prefix and its ".pst"/".ost" suffix.
+func snapshotStoreID(old string) string {
+	if strings.HasPrefix(old, "path:") || strings.HasPrefix(old, "mailbox:") {
+		return old
+	}
+	if strings.Contains(old, "@") && !filepath.IsAbs(old) {
+		return MailboxSourceID(old)
+	}
+	p := filepath.Clean(old)
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		p = strings.ToLower(p)
+	}
+	return "path:" + p
+}
+
 // preferPlainToken picks which store token to keep when two source spellings
 // collapse to one id: the plain (hashless) segment if exactly one is plain, else
 // the lexicographically smaller — a stable, order-independent choice. The stale
@@ -709,7 +729,12 @@ func parseManifest(path, name string, data []byte) (*Manifest, error) {
 				m.StoresMigrated++ // dropped; Token re-derives a fresh one on next use
 				continue
 			}
-			id := migrateStoreID(old)
+			var id string
+			if path == "" { // a snapshot (LoadFrom): nothing in the manifest is looked up on disk
+				id = snapshotStoreID(old)
+			} else {
+				id = migrateStoreID(old)
+			}
 			changed := id != old
 			if existing, ok := migrated[id]; ok {
 				migrated[id] = preferPlainToken(existing, tok)
