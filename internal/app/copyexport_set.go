@@ -18,6 +18,7 @@ type chainOffer struct {
 	sig           string
 	dropRemaining map[string]bool // runs whose "Export the remaining messages" would only repeat
 	dropFailed    map[string]bool // runs whose "Export failed messages again" would only repeat
+	retryable     map[string]int  // each run's retryable failures
 	exported      int             // distinct messages exported across the set's parts
 }
 
@@ -65,7 +66,7 @@ func (e *CopyExportEnv) setOffers(chain string, set *CopySetInfo) chainOffer {
 			return nil
 		})
 	}
-	off := chainOffer{sig: sig, dropRemaining: map[string]bool{}, dropFailed: map[string]bool{}, exported: len(covered)}
+	off := chainOffer{sig: sig, dropRemaining: map[string]bool{}, dropFailed: map[string]bool{}, retryable: map[string]int{}, exported: len(covered)}
 	allCovered := func(msgs []CopyMessage, err error) bool {
 		if err != nil {
 			return false
@@ -87,7 +88,9 @@ func (e *CopyExportEnv) setOffers(chain string, set *CopySetInfo) chainOffer {
 		if allCovered(e.RunRemaining(p.Run)) {
 			off.dropRemaining[p.Run] = true
 		}
-		if allCovered(e.RunFailed(p.Run)) {
+		failed, ferr := e.RunFailed(p.Run)
+		off.retryable[p.Run] = len(failed)
+		if allCovered(failed, ferr) {
 			off.dropFailed[p.Run] = true
 		}
 	}
@@ -121,6 +124,16 @@ func (e *CopyExportEnv) applySet(info *CopyRunInfo, planned int) {
 	info.Actions = keep
 	if planned > 0 {
 		if off.exported >= planned {
+			// the set is whole: what an earlier part lists as not exported is in a later one
+			if info.Failed > 0 && off.dropFailed[info.Run] && off.retryable[info.Run] == info.Failed {
+				info.Failures, info.FailuresMore = nil, 0
+			}
+			if info.Kind == "" || info.Kind == obsSettledRun { // a card the reconciler is still reporting on keeps its label
+				switch info.Status {
+				case CopyStatusPartial, CopyStatusCancelled, CopyStatusFailed, CopyStatusFinishedAsPartial:
+					info.Label += " — the rest was exported in a later part of this set"
+				}
+			}
 			info.SetNote = fmt.Sprintf("All %s messages are exported, across the %d parts of this set.", commas(planned), len(info.Set.Parts))
 		} else {
 			info.SetNote = fmt.Sprintf("%s of %s messages are exported so far, across the %d parts of this set.", commas(off.exported), commas(planned), len(info.Set.Parts))

@@ -247,7 +247,7 @@ func (r *CopyRun) recovered(p any) (*CopyResult, error) {
 	}
 	stop := &CopyStop{RID: "internal", Class: stopClassInternal}
 	if r.runID != "" && r.rec != nil {
-		stop.Message = refusalText("internal", int(r.done.Load()), len(r.plan.Messages), "", r.plan, r.env.StateDir)
+		stop.Message = refusalText("internal", r.exportedSoFar(), len(r.plan.Messages), "", r.plan, r.env.StateDir)
 		_ = r.rec.append(ceStoppedLine{T: "stopped", RID: stop.RID, Class: stop.Class, Reason: stopReason("internal"), At: r.env.nowTime()})
 		_ = r.env.journalAppend(ceJournalLine{Run: r.runID, Event: "stopped", Reason: "internal, " + stopClassInternal})
 	}
@@ -577,10 +577,22 @@ func (r *CopyRun) complete(s *CopyStop, done int, extra string) *CopyStop {
 	if (s.RID == "R-u3" || s.RID == "R-z") && s.Message != "" {
 		arg = s.Message // the redirect's host, or the account now signed in: left in Message by the stop
 	}
-	s.Message = refusalText(s.RID, done, len(r.plan.Messages), arg, r.plan, r.env.StateDir)
+	// "after N of M messages" counts the messages that were exported, not the ones attempted: a
+	// run that failed seven writes in a row did not stop "after 7 of 7" (friction F8).
+	_ = done
+	s.Message = refusalText(s.RID, r.exportedSoFar(), len(r.plan.Messages), arg, r.plan, r.env.StateDir)
 	s.StoppedAt = r.env.nowTime().UTC().Format(time.RFC3339)
 	s.ready = true
 	return s
+}
+
+// exportedSoFar is the messages the run has exported: those it has finished less those it listed
+// as failed.
+func (r *CopyRun) exportedSoFar() int {
+	if n := r.done.Load() - r.failed.Load(); n > 0 {
+		return int(n)
+	}
+	return 0
 }
 
 // ensureDir makes dir (relative to the export root, forward slashes) one level at a

@@ -76,7 +76,9 @@ const st={upn:'',folders:[],byId:{},kids:{},open:{},entries:[],picks:{},current:
 function errText(d){return d.error||'Something went wrong.';}
 function showErr(d){
   show('banner',errText(d));
-  if(d&&(d.id==='R-j2'||d.id==='R-y'||d.id==='R-l'||d.id==='R-b'))$('loadFolders').disabled=false;
+  if(d&&(d.id==='R-j2'||d.id==='R-y'||d.id==='R-l'||d.id==='R-b'||d.id==='R-c'))$('loadFolders').disabled=false;
+  // the refusals that say "sign in" put the Sign in button in front of the owner (F2)
+  if(d&&(d.id==='R-b'||d.id==='R-c'||d.id==='R-l'))$('signInArea').hidden=false;
 }
 
 // ---- source ------------------------------------------------------------
@@ -411,7 +413,13 @@ $('cancelBtn').addEventListener('click',()=>{
   if(!runId)return;
   api('api/exports/cancel',{runId:runId}).then(d=>{if(!d.ok)note(d.error);});
 });
-function pollRun(){api('api/exports/progress',{}).then(d=>{if(d.ok)renderRun(d);});}
+// A tab whose MailArchive Desktop has gone says so (the answer has no HTTP status when the
+// request itself failed), instead of keeping a Running card frozen; it clears when the app answers.
+let down=false;
+function pollRun(){api('api/exports/progress',{}).then(d=>{
+  if(d.ok){if(down){down=false;note('');}renderRun(d);}
+  else if(d.status===undefined){down=true;note(d.error);}
+});}
 
 // ---- the history ----------------------------------------------------------------------
 function cardEl(c){

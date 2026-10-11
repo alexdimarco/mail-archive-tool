@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"mail-archive-tool/internal/assure"
 )
@@ -53,6 +54,51 @@ func TestFricTheSelectionNoteCountsTheSubfolders(t *testing.T) {
 	}
 	if strings.Contains(workspaceJS, "fmt(f.count)+' messages from '+f.name+(($('inclSub')") {
 		t.Error("workspace.js still counts the folder's own messages beside 'and its subfolders'")
+	}
+}
+
+// covers: MA-414, R29, R12, S52
+// F19: through the Preview button, the destination box's refusals say what is wrong: an empty box
+// says no folder is chosen, ~ and %NAME% are said not to be expanded, a file is said to be a
+// file, not a folder; the pinned words (doesn't exist, full path, Browse, Create folder) stay.
+// The positive twin first: the real folder previews.
+func TestFricThePreviewsDestinationMessagesSayWhatIsWrong(t *testing.T) {
+	e := newWsEnv(t)
+	ids := e.folders()
+	sel := e.selection(entry(ids["Sent Items"], false))
+	e.preview(sel)
+	file := filepath.Join(e.dir, "afile.txt")
+	os.WriteFile(file, []byte("x"), 0o600)
+	for _, c := range []struct {
+		name, dest string
+		names      []string
+		not        string
+	}{
+		{"empty", "", []string{"No destination folder is chosen", "Browse", "Create folder"}, "folder  isn't"},
+		{"a home folder", "~/Downloads", []string{"isn't a full path", "doesn't expand ~", "Browse"}, ""},
+		{"a Windows variable", `%USERPROFILE%\Downloads`, []string{"isn't a full path", "doesn't expand", "Browse"}, ""},
+		{"a relative path", "Downloads", []string{"full path", "Type the full path", "Browse"}, ""},
+		{"a file", file, []string{"doesn't exist", "a file, not a folder", "Create folder"}, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			sel["dest"] = c.dest
+			// the endpoint may refuse at once, or a preview job may refuse after it started
+			code, out := e.post("/api/workspace/preview", sel)
+			if out["ok"] == true {
+				id := out["previewId"].(string)
+				for i := 0; i < 300; i++ {
+					if _, st := e.post("/api/workspace/preview-status", map[string]any{"previewId": id}); st["state"] == "failed" {
+						out, code = st, statusRefused // the job's refusal, as the page shows it
+						break
+					}
+					time.Sleep(20 * time.Millisecond)
+				}
+			}
+			refusedBody(t, code, out, "R-e", c.names...)
+			if c.not != "" && strings.Contains(out["error"].(string), c.not) {
+				t.Errorf("the refusal still says %q: %v", c.not, out["error"])
+			}
+		})
 	}
 }
 

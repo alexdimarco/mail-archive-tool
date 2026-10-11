@@ -59,5 +59,13 @@ func TestFricOffersFollowTheWholeRetrySet(t *testing.T) {
 		if !hasAct(c, "open-folder") || !hasAct(c, "check-this-export") {
 			t.Errorf("part %d lost Open folder or Check this export: %v", i+1, actionsOf(c))
 		}
+		if i < 2 { // an earlier part no longer says its messages were not exported, or lists them
+			if l, _ := c["label"].(string); !strings.Contains(l, "the rest was exported in a later part of this set") {
+				t.Errorf("part %d's label is stale: %q", i+1, l)
+			}
+			if c["failures"] != nil {
+				t.Errorf("part %d lists as not exported what part 3 exported: %v", i+1, c["failures"])
+			}
+		}
 	}
 }

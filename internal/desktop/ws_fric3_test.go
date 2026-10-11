@@ -39,6 +39,9 @@ func TestFricSmallWordingAndTheLeaveSitePrompt(t *testing.T) {
 	if !strings.Contains(exportsJS, "Writing now") || !strings.Contains(exportsJS, "c.running") {
 		t.Error("exports.js still shows a running card's counts as 'not attempted'")
 	}
+	if !strings.Contains(exportsJS, "d.status===undefined){down=true;note(d.error)") || !strings.Contains(commonJS, "could not be reached") {
+		t.Error("a tab whose MailArchive Desktop has gone keeps a frozen Running card and says nothing")
+	}
 	e.ok("/api/exports/cancel", map[string]any{"runId": run})
 	e.waitRun()
 

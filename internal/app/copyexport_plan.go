@@ -57,8 +57,10 @@ func (e *CopyExportEnv) PlanCopyExport(in CopyPlanInput) (*CopyPlan, error) {
 		return nil, &CopyRefusal{ID: "R-h", Message: "Readable HTML and extracted attachments aren't available in this version of MailArchive — turn them off and preview again."}
 	}
 	dest := in.Dest
-	if !filepath.IsAbs(dest) || dest != filepath.Clean(dest) {
-		return nil, &CopyRefusal{ID: "R-e", Message: fmt.Sprintf("The folder %s isn't a full path to an existing folder — an export is written into an existing folder. Click Browse to choose one, or Create folder.", dest)}
+	// the same words wherever the destination is checked: empty box, ~ and %NAME% not expanded,
+	// a file that is not a folder, a folder that is not there (friction F19)
+	if r := checkDestPath(dest); r != nil {
+		return nil, r
 	}
 	droot, err := os.OpenRoot(dest)
 	if err != nil {

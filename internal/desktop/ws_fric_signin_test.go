@@ -63,6 +63,11 @@ func TestFricARefusedSavedSignInCanBeSignedInAgainFromExportActivity(t *testing.
 		t.Errorf("the refusal leaks the identity provider's text: %v", out["error"])
 	}
 
+	// the workspace page puts Sign in in front of the owner when it is refused for the sign-in
+	if !strings.Contains(workspaceJS, "d.id==='R-c'||d.id==='R-l'))$('signInArea').hidden=false") || !strings.Contains(workspaceJS, "m.state==='needs-sign-in'") {
+		t.Error("workspace.js does not show Sign in for a refused sign-in")
+	}
+
 	// the workspace stops saying ready, and Export activity shows its Sign in
 	m := e.ok("/api/workspace/source", nil)["m365"].(map[string]any)
 	if m["state"] != "needs-sign-in" || m["upn"] != "alice@contoso.org" {

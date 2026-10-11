@@ -239,11 +239,11 @@ func leaveName(err error) string {
 	}
 	switch {
 	case errors.Is(err, syscall.ENOSPC):
-		return "the disk is full (" + sys + ")"
+		return "the disk is full: " + sys
 	case errors.Is(err, fs.ErrNotExist):
 		return "the folder isn't there any more"
 	case errors.Is(err, fs.ErrPermission):
-		return "the folder is write-protected, or this account isn't allowed to write to it (" + sys + ")"
+		return "the folder is write-protected, or this account isn't allowed to write to it: " + sys
 	}
 	return sys
 }

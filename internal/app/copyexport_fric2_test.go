@@ -90,7 +90,7 @@ func TestFricOwnerTextNamesWhatHappenedNotTheSystemCall(t *testing.T) {
 		not  []string
 	}{
 		{"gone", &fs.PathError{Op: "openat", Path: "x", Err: syscall.ENOENT}, []string{"the folder isn't there any more"}, []string{"openat", "no such file"}},
-		{"write-protected", &fs.PathError{Op: "mkdirat", Path: "x", Err: syscall.EACCES}, []string{"write-protected", "(permission denied)"}, []string{"mkdirat"}},
+		{"write-protected", &fs.PathError{Op: "mkdirat", Path: "x", Err: syscall.EACCES}, []string{"write-protected", ": permission denied"}, []string{"mkdirat", "(permission denied)"}},
 		{"full", &fs.PathError{Op: "write", Path: "x", Err: syscall.ENOSPC}, []string{"the disk is full", "no space left"}, []string{"write:"}},
 		{"other", &fs.PathError{Op: "write", Path: "x", Err: syscall.EIO}, []string{"input/output error"}, []string{"write:"}},
 	} {
@@ -139,6 +139,42 @@ func TestFricOwnerTextNamesWhatHappenedNotTheSystemCall(t *testing.T) {
 	}
 	if c := hist[0]; c.Exported != 0 || c.Failed != 0 || c.NotAttempted != 4 {
 		t.Errorf("a sign-in refusal is counted as a bad message: %d exported, %d failed, %d not attempted", c.Exported, c.Failed, c.NotAttempted)
+	}
+}
+
+// covers: MA-427, R29, R5, R12
+// F8: "the export stopped after N of M messages" counts the messages that were exported. Five
+// write failures in a row stop a run that exported nothing: it says "after 0 of 8", not "after
+// 5 of 8" or "8 of 8", and says nothing of a system call. The positive twin: a run that
+// exported four before the failures says four.
+func TestFricAStopCountsTheMessagesExportedNotAttempted(t *testing.T) {
+	run := func(okFirst int) *CopyResult {
+		e, src := newCEEnv(t), newFakeSrc()
+		fake := newFaultFS()
+		n := 0
+		fake.placeErr = func(dir, tmp, final string) error {
+			if !strings.HasPrefix(dir, "messages") {
+				return nil
+			}
+			n++
+			if n > okFirst {
+				return &os.LinkError{Op: "rename", Err: syscall.EPERM}
+			}
+			return nil
+		}
+		e.fsWrap = func(f ceFS) ceFS { fake.ceFS = f; return fake }
+		return mustRun(t, e, cePlan(t, e, src, ceMsgs(12)), src)
+	}
+	for _, c := range []struct {
+		okFirst int
+		want    string
+	}{{4, "after 4 of 12 messages"}, {0, "after 0 of 12 messages"}} {
+		res := run(c.okFirst)
+		if res.Stop == nil || res.Stop.RID != "R-g" {
+			t.Fatalf("%d first: %s (stop %+v), want R-g", c.okFirst, res.Label, res.Stop)
+		}
+		assure.Refused(t, int(res.Outcome), res.Stop.Message, assure.Code(1), assure.Names(c.want, "operation not permitted", "Export the remaining messages"),
+			assure.Forbid("rename:", "openat", "mkdirat"))
 	}
 }
 
