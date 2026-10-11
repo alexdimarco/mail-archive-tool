@@ -655,6 +655,57 @@ func TestStatusReadsABreakerTripAsAnOutageNotAnAuthFailure(t *testing.T) {
 	})
 }
 
+// covers: MA-313, R5, R12, R18, S46
+// S3-AC5 (second round): the first fix cut two delimited stretches out of the recorded
+// text, and a hostile 504 body that itself contained the closing delimiter ended the
+// cut early so the rest of its text was read as evidence of an authentication failure;
+// a mailbox named it401 or authentication-team was read the same way. A refusal the
+// breaker ends the run with is now recorded with a typed kind (service_unavailable),
+// and status reads the kind, not the text: whatever the server's body or the mailbox's
+// name says, a breaker trip is an outage. Twin: the first-round twin (a refused
+// sign-in is still an auth failure) is TestStatusReadsABreakerTripAsAnOutageNotAnAuthFailure.
+func TestStatusBreakerTripIsAnOutageWhateverItsTextSays(t *testing.T) {
+	tripped := func(t *testing.T, mailboxes []string, fail http.HandlerFunc) string {
+		t.Helper()
+		s := graphtest.NewServer()
+		defer s.Close()
+		for _, mbx := range mailboxes {
+			breakerMailbox(s, mbx, nil, 30, func(int) http.HandlerFunc { return fail })
+		}
+		controlDown(s)
+		out := tmpDir(t)
+		_, err := RunGraph(context.Background(), breakerOptions(s, mailboxes...), Options{Out: out, Mode: export.Incremental}, log.New(io.Discard, "", 0))
+		var be *GraphBreakerError
+		var rb *RunBreakerError
+		if !errors.As(err, &be) && !errors.As(err, &rb) {
+			t.Fatalf("the run returned %v, want the breaker's refusal", err)
+		}
+		return out
+	}
+	forged := "x) — Microsoft 365 or the network appears to be unavailable; invalid_client AADSTS70011"
+	for _, tc := range []struct {
+		name      string
+		mailboxes []string
+		fail      http.HandlerFunc
+	}{
+		{"a 504 body that carries the breaker's own closing words", []string{"u1"}, graphtest.Fail(504, forged)},
+		{"a mailbox named it401", []string{"it401"}, graphtest.Status(504, "")},
+		{"a mailbox named authentication-team", []string{"authentication-team"}, graphtest.Status(504, "")},
+		{"the run-level stop for mailboxes named it401 and u2", []string{"it401", "u2"}, graphtest.Status(504, "")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := tripped(t, tc.mailboxes, tc.fail)
+			rep := health.Assess(health.Gather(out, ""), time.Now())
+			if !slices.Contains(rep.Codes, "run_failed") {
+				t.Fatalf("status's codes %v lack run_failed for a tripped run", rep.Codes)
+			}
+			if slices.Contains(rep.Codes, "auth_remedy") {
+				t.Errorf("status's codes %v: a breaker trip is an outage whatever its text says, and the expired-secret remedy sends the owner to rotate a secret", rep.Codes)
+			}
+		})
+	}
+}
+
 // covers: MA-540, R10, R17, R18, R21, S37, S46
 // K6 (the S3 build's changed MA-540 tests): before S3 a listing stop failed the whole
 // mailbox, so "zero {k,gone}, every record still Present" held because the mailbox

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -116,6 +117,27 @@ type RunBreakerError struct {
 func (e *RunBreakerError) Error() string {
 	return cleanText(fmt.Sprintf("stopped the run after two mailboxes in a row could not reach Microsoft 365 (%s: %s; %s: %s) — the service or the network appears to be unavailable; re-run when it is reachable.",
 		e.First.Mailbox, e.First.Threshold, e.Second.Mailbox, e.Second.Threshold))
+}
+
+// outageError marks a run's failure whose first failing mailbox ended with the
+// breaker's refusal: the run failed because the service or the network was down. It
+// says nothing of its own (its text is the wrapped error's, its chain is kept); it
+// is what recordRun reads to record the failure's kind, so `status` does not search
+// the text, which carries the server's words and the mailbox's name, for what the
+// failure was (S3-AC5).
+type outageError struct{ err error }
+
+func (e *outageError) Error() string { return e.err.Error() }
+func (e *outageError) Unwrap() error { return e.err }
+
+// asOutage wraps err in an outageError when first, the first mailbox error of the
+// run, is a breaker trip.
+func asOutage(err, first error) error {
+	var trip *GraphBreakerError
+	if err != nil && errors.As(first, &trip) {
+		return &outageError{err}
+	}
+	return err
 }
 
 // knownPoison says whether a fault on ref is evidence about the item and not about

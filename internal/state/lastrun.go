@@ -41,8 +41,11 @@ const (
 	RunCancelled = "cancelled"
 )
 
-// LastRun.ErrorKind values: the search-index refusals a failed run records.
+// LastRun.ErrorKind values: the search-index refusals a failed run records, and
+// the Graph breaker's refusal (ErrKindServiceUnavailable: the run failed because
+// Microsoft 365 or the network was unreachable, whatever the server's text said).
 const (
+	ErrKindServiceUnavailable     = "service_unavailable"       // the Graph breaker tripped
 	ErrKindIndexBusy              = "index_busy"                // another program holds search.db
 	ErrKindIndexUnwritable        = "index_unwritable"          // read-only file or folder, full or failing disk
 	ErrKindIndexDamaged           = "index_damaged"             // unreadable, a manifest to rebuild from

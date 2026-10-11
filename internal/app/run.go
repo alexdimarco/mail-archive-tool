@@ -808,6 +808,10 @@ func recordRun(opts Options, lr state.LastRun, result *Result, err *error, logge
 // for any other failure, for the last-run record: an owner surface's health
 // view renders the refusal in its own words from the kind.
 func errorKindOf(err error) string {
+	var outage *outageError
+	if errors.As(err, &outage) {
+		return state.ErrKindServiceUnavailable
+	}
 	var ioe *IndexOpenError
 	if !errors.As(err, &ioe) {
 		return ""

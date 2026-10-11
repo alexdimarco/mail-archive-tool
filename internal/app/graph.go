@@ -424,11 +424,13 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		// Carry the first per-mailbox error (including any AADSTS code) into the
 		// returned error so it lands in the last-run record and `status` can fire
 		// the expired-secret remedy (friction #6).
+		// A run whose first failure is the breaker's refusal is an outage and is
+		// recorded as one (asOutage), not left to the reader of its text (S3-AC5).
 		if firstErr != nil {
 			if runBreaker != nil {
-				return result, fmt.Errorf("%d mailbox(es) failed; first error: %w; %w", failures, asFailure(ctx, firstErr), runBreaker)
+				return result, asOutage(fmt.Errorf("%d mailbox(es) failed; first error: %w; %w", failures, asFailure(ctx, firstErr), runBreaker), firstErr)
 			}
-			return result, fmt.Errorf("%d mailbox(es) failed; first error: %w", failures, asFailure(ctx, firstErr))
+			return result, asOutage(fmt.Errorf("%d mailbox(es) failed; first error: %w", failures, asFailure(ctx, firstErr)), firstErr)
 		}
 		return result, fmt.Errorf("%d mailbox(es) failed", failures)
 	}

@@ -352,7 +352,9 @@ func Assess(in Input, now time.Time) Report {
 		switch lr.Status {
 		case state.RunFailed:
 			r.red("run_failed", fmt.Sprintf("the last run (%s) FAILED: %s", lr.Started.Local().Format("2006-01-02 15:04"), runErrorText(in, lr)))
-			if looksLikeAuthFailure(lr.Error) {
+			// A breaker trip is recorded by kind as an outage; its text (the server's
+			// last words, the mailbox's name) is not read for needles (S3-AC5).
+			if lr.ErrorKind != state.ErrKindServiceUnavailable && looksLikeAuthFailure(lr.Error) {
 				r.note("auth_remedy", "  remedy: authentication failed — for an app-auth job the client secret may have expired (rotate it in Entra and rewrite the secret file); for a device-auth job the sign-in may have expired (re-run `mailarchive graph -auth device …` to sign in again)")
 			}
 		case state.RunRunning:
@@ -893,38 +895,13 @@ func jobWithOut(job []string, out string) []string {
 	return append(cp, "-out", out)
 }
 
-// breakerParts are the two stretches of the Graph breaker's refusal that are not its
-// own words (fault-isolation §7.5; app.GraphBreakerError): the server's last fault
-// text, between "(last: " and the sentence that follows it, and the archive path in
-// the `mailarchive status -out ...` hint. Neither says anything about
-// authentication, and either may hold a needle ("401" in a path, "invalid_client" in
-// a 504's body), so looksLikeAuthFailure reads the message without them (S3-AC5).
-var breakerParts = [][2]string{
-	{"(last: ", ") — Microsoft 365 or the network appears to be unavailable"},
-	{"`mailarchive status -out ", "` shows what is missing"},
-}
-
-// withoutBreakerParts is msg with the breaker's server text and archive path cut
-// out; a part whose end is missing is left as it is.
-func withoutBreakerParts(msg string) string {
-	for _, p := range breakerParts {
-		for {
-			i := strings.Index(msg, p[0])
-			if i < 0 {
-				break
-			}
-			j := strings.Index(msg[i+len(p[0]):], p[1])
-			if j < 0 {
-				break
-			}
-			msg = msg[:i] + msg[i+len(p[0])+j:]
-		}
-	}
-	return msg
-}
-
+// looksLikeAuthFailure reads a failed run's recorded text for what an authentication
+// failure says. It is never asked of a run whose failure the record names by kind as
+// an outage (state.ErrKindServiceUnavailable: the Graph breaker's refusal): that text
+// carries the server's last words and the mailbox's name, and the kind, not the text,
+// says what the failure was (S3-AC5).
 func looksLikeAuthFailure(msg string) bool {
-	m := strings.ToLower(withoutBreakerParts(msg))
+	m := strings.ToLower(msg)
 	for _, needle := range []string{"401", "unauthorized", "invalid_client", "invalid_grant", "aadsts", "authentication", "invalid client secret", "sign in", "sign-in", "token cache", "device sign"} {
 		if strings.Contains(m, needle) {
 			return true
