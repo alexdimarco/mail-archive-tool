@@ -203,6 +203,7 @@ func (ws *workspace) setArch(s *wsSession) {
 	ws.mu.Lock()
 	old, job := ws.arch, ws.job
 	ws.arch = s
+	ws.idled = nil // an archive is loaded again: nothing is "released for being idle" any more
 	ws.mu.Unlock()
 	if old != nil && (job == nil || !job.running()) {
 		old.release()
@@ -218,6 +219,13 @@ func (d *dashboard) archiveSession(src wsSourceReq) (*wsSession, *refusal) {
 	s := d.ws.archNow()
 	stale := func() (*wsSession, *refusal) {
 		r := refusalJ2("folder")
+		path := src.Archive
+		if src.Kind == "archive" {
+			path = d.cfg.effectiveOut()
+		}
+		if d.ws.idleReleased(path, src.Kind != "archive") { // say why the page is out of date (friction F15)
+			r.Text = "You were away from this page for more than 30 minutes, so MailArchive let go of the archive's folder list (it keeps nothing open while you are away). " + r.Text
+		}
 		return nil, &r
 	}
 	if src.Kind == "archive" {

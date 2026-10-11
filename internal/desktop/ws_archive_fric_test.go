@@ -432,3 +432,48 @@ func TestRetryOfAnArchiveExportThatMovedNamesTheRealOptions(t *testing.T) {
 			assure.Names(other, "isn't available", "Reconnect it", "Export the remaining messages", "can't follow it", "put it back at "+other, "Another archive folder", "every message again", "already exported"))
 	})
 }
+
+// covers: MA-435, MA-522, R12, R20, S52
+// F15 (the wording half): after the archive snapshot is released for 30 idle minutes, the next click says so
+// ("You were away from this page for more than 30 minutes ... let go of the archive's folder list") besides the
+// R-j2 sentence the existing assertions pin, with the remedy (Load folders again, select again); a page that was
+// never loaded (or loaded another archive) keeps the plain R-j2 words, and Load folders brings the count back.
+func TestIdleReleasedArchiveSessionSaysYouWereAway(t *testing.T) {
+	e := newWsEnv(t)
+	buildArchiveAt(t, e.out)
+	other := filepath.Join(e.dir, "inherited")
+	buildArchiveAt(t, other)
+	arch, oarch := archSource("archive", e.out), archSource("archive-other", other)
+	sel := e.archSel(arch, entry("alice", true))
+
+	// never loaded: the plain words, nothing about being away
+	code, out := e.post("/api/workspace/count", sel)
+	refusedBody(t, code, out, "R-j2", "wasn't listed in this session")
+	lacks2 := func(msg string) {
+		t.Helper()
+		if strings.Contains(msg, "30 minutes") {
+			t.Errorf("a page that was never idle says it was: %q", msg)
+		}
+	}
+	lacks2(out["error"].(string))
+
+	e.archFolders(arch)
+	e.ok("/api/workspace/count", sel)
+	e.d.ws.reap(time.Now().Add(sessionIdle + time.Minute))
+	for _, route := range []string{"/api/workspace/count", "/api/workspace/preview"} {
+		code, out = e.post(route, sel)
+		refusedBody(t, code, out, "R-j2", "wasn't listed in this session", "more than 30 minutes", "Load folders again")
+	}
+	// Load folders again brings it back, and the note does not outlive the load
+	e.archFolders(arch)
+	e.ok("/api/workspace/count", sel)
+
+	// another archive folder: the same, and a selection from the other kind of source does not claim it
+	e.archFolders(oarch)
+	e.d.ws.reap(time.Now().Add(2*sessionIdle + time.Minute))
+	code, out = e.post("/api/workspace/count", e.archSel(oarch, entry("bob", false)))
+	refusedBody(t, code, out, "R-j2", "wasn't listed in this session", "more than 30 minutes")
+	code, out = e.post("/api/workspace/count", sel) // the configured archive was not the one released
+	refusedBody(t, code, out, "R-j2", "wasn't listed in this session")
+	lacks2(out["error"].(string))
+}
