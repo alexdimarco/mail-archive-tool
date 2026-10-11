@@ -137,7 +137,9 @@ func TestArchiveListSaysWhenTheArchiveChangedSinceItWasLoaded(t *testing.T) {
 	}
 
 	// the manifest changed since it was loaded (a capture saved its checkpoint)
-	f.edit(func(m *state.Manifest) { m.Add(state.Key("alice", "", "later"), state.Record{Path: "alice/later.html"}) })
+	f.edit(func(m *state.Manifest) {
+		m.Add(state.Key("alice", "", "later"), state.Record{Path: "alice/later.html"})
+	})
 	_, out = e.archRows(arch, "bob")
 	if n, _ := out["listNote"].(string); !strings.Contains(n, "changed since you loaded") || !strings.Contains(n, "Load folders again") {
 		t.Errorf("a list after the archive's manifest changed: %q, want it said to load the folders again", n)
