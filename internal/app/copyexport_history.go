@@ -450,6 +450,8 @@ func (e *CopyExportEnv) folderSpec(run string) (*ceFolderSpec, error) {
 func (e *CopyExportEnv) confirmedFolder(spec *ceFolderSpec) (ceFolderSeen, error) {
 	seen, err, timedOut := probeBounded(spec.Path)
 	switch {
+	case !timedOut && (err == nil || errors.Is(err, fs.ErrNotExist)) && !seen.Exists:
+		return seen, refusalR2Missing(spec.Path)
 	case timedOut || (err != nil && !errors.Is(err, fs.ErrNotExist)) || !seen.Exists:
 		return seen, refusalR2(spec.Path)
 	}

@@ -375,7 +375,9 @@ function cardEl(c){
     b.addEventListener('click',()=>act(a,c,box));acts.appendChild(b);
   });
   box.appendChild(acts);
-  const res=el('div');res.className='cardres';box.appendChild(res);
+  const res=el('div');res.className='cardres';
+  if(c.result&&c.result.error)res.appendChild(el('div',c.result.error,'note warnbox'));
+  box.appendChild(res);
   return box;
 }
 function saveReceipt(c){
@@ -385,12 +387,15 @@ function saveReceipt(c){
 }
 function resultOf(box){return box.querySelector('.cardres');}
 function act(a,c,box){
-  const out=resultOf(box);clear(out);
-  const done=d=>{if(!d.ok)out.appendChild(el('div',d.error||'That did not work.','note warnbox'));loadHistory();};
+  const out=resultOf(box);clear(out);note('');
+  // A refusal is kept by the server on this run's card (it comes back with the next history
+  // answer, which rebuilds every card), and is shown at once here and in the page's alert.
+  const fail=d=>{const t=d.error||'That did not work.';out.appendChild(el('div',t,'note warnbox'));note(t);};
+  const done=d=>{if(!d.ok)fail(d);loadHistory();};
   switch(a){
-  case 'open-folder':api('api/exports/open-folder',{runId:c.run}).then(d=>{if(!d.ok)out.appendChild(el('div',d.error,'note warnbox'));});break;
+  case 'open-folder':api('api/exports/open-folder',{runId:c.run}).then(d=>{if(!d.ok){fail(d);loadHistory();}});break;
   case 'check-this-export':api('api/exports/check',{runId:c.run}).then(d=>{
-      if(!d.ok){out.appendChild(el('div',d.error,'note warnbox'));return;}
+      if(!d.ok){fail(d);loadHistory();return;}
       out.appendChild(el('div',(d.green?'GREEN':'RED')+': '+fmt(d.files)+' files checked','v '+(d.green?'good':'bad')));
       (d.problems||[]).forEach(p=>out.appendChild(el('div',p,'note warnbox')));
     });break;
@@ -400,7 +405,7 @@ function act(a,c,box){
   case 'check-and-finish':api('api/exports/finish',{runId:c.run}).then(done);break;
   case 'look-again':api('api/exports/locate',{runId:c.run,action:'again'}).then(done);break;
   case 'locate':api('api/workspace/browse',{title:'Choose the export folder'}).then(d=>{
-      if(!d.path){if(!d.canceled)out.appendChild(el('div',d.error,'note warnbox'));return;}
+      if(!d.path){if(!d.canceled)fail(d);return;}
       api('api/exports/locate',{runId:c.run,action:'locate',path:d.path}).then(done);});break;
   case 'this-folder-is-gone':if(confirm('Tell MailArchive this folder is gone? You can then export its messages again.'))api('api/exports/locate',{runId:c.run,action:'gone'}).then(done);break;
   }
@@ -417,6 +422,6 @@ function loadHistory(){
 }
 pollRun();loadHistory();
 setInterval(pollRun,1500);
-setInterval(()=>{if(!document.querySelector('.cardres:not(:empty)'))loadHistory();},5000);
+setInterval(()=>{if(!document.querySelector('.cardres .v'))loadHistory();},5000);
 })();
 `
