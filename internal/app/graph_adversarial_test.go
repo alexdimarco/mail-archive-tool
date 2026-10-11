@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/graph"
 	"mail-archive-tool/internal/graph/graphtest"
+	"mail-archive-tool/internal/health"
 	"mail-archive-tool/internal/model"
 	"mail-archive-tool/internal/state"
 )
@@ -549,6 +551,65 @@ func TestGraphAdoptionLeavesARealMessageThatLooksLikeAStub(t *testing.T) {
 	if r, _ := m.Get(kReal); len(r.Terminal) != 1 || r.Terminal[0] != state.MissingBody {
 		t.Errorf("the real message that looks like a stub = %+v; want its own Terminal [body], not relabelled a legacy placeholder", r)
 	}
+}
+
+// covers: MA-313, R5, R12, R18, S46
+// S3-AC5: the breaker's refusal says Microsoft 365 or the network is unavailable, and
+// carries two strings that are not its own words: the server's last fault text and
+// the archive path in the `mailarchive status -out ...` hint. `status` read the whole
+// recorded error for auth needles ("401", "invalid_client", ...), so an archive path
+// containing 401, or a 504 whose body named invalid_client, made it print the
+// expired-secret remedy for what is an outage. Those two parts are no evidence of an
+// authentication failure; a refused sign-in is still read as one (the twin).
+func TestStatusReadsABreakerTripAsAnOutageNotAnAuthFailure(t *testing.T) {
+	trip := func(t *testing.T, out string, fail http.HandlerFunc) {
+		t.Helper()
+		s := breakerServer("u1", nil, 30, func(int) http.HandlerFunc { return fail })
+		defer s.Close()
+		controlDown(s)
+		_, err := RunGraph(context.Background(), breakerOptions(s, "u1"), Options{Out: out, Mode: export.Incremental}, log.New(io.Discard, "", 0))
+		var be *GraphBreakerError
+		if !errors.As(err, &be) {
+			t.Fatalf("the run returned %v, want the breaker's refusal", err)
+		}
+	}
+	codes := func(t *testing.T, out string) []string {
+		t.Helper()
+		rep := health.Assess(health.Gather(out, ""), time.Now())
+		if !slices.Contains(rep.Codes, "run_failed") {
+			t.Fatalf("status's codes %v lack run_failed for a tripped run", rep.Codes)
+		}
+		return rep.Codes
+	}
+	for _, tc := range []struct {
+		name string
+		dir  string
+		fail http.HandlerFunc
+	}{
+		{"a plain path and a plain 504", "archive", graphtest.Status(504, "")},
+		{"an archive path that contains 401", "backup-2401", graphtest.Status(504, "")},
+		{"a 504 whose body names invalid_client", "archive", graphtest.Fail(504, "invalid_client")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := filepath.Join(tmpDir(t), tc.dir)
+			trip(t, out, tc.fail)
+			if c := codes(t, out); slices.Contains(c, "auth_remedy") {
+				t.Errorf("status's codes %v: a breaker trip is an outage, and the expired-secret remedy sends the owner to rotate a secret", c)
+			}
+		})
+	}
+	t.Run("the twin: a refused sign-in still is an auth failure", func(t *testing.T) {
+		s := isoServer(false)
+		defer s.Close()
+		s.SetValue("POISON", graphtest.Fail(401, "InvalidAuthenticationToken"))
+		out := tmpDir(t)
+		if _, err := isoRun(isoOptions(s), out); err == nil {
+			t.Fatal("the run did not fail")
+		}
+		if c := codes(t, out); !slices.Contains(c, "auth_remedy") {
+			t.Errorf("status's codes %v lack auth_remedy for a 401", c)
+		}
+	})
 }
 
 // covers: MA-313, R5, R12, R18, S46
