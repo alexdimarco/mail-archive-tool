@@ -642,7 +642,9 @@ func (a *ArchiveSource) resolve(key string, rec state.Record, meta map[string]in
 		m.Subject, m.From, m.FromName, m.Received = row.Subject, row.SenderEmail, row.SenderName, row.Date
 	} else {
 		m.Subject = rec.Subject
-		if t, err := time.Parse(time.RFC3339, rec.Date); err == nil {
+	}
+	if m.Received.IsZero() { // no row, or a row with no valid date (E4-AO4): the manifest record's own
+		if t, err := time.Parse(time.RFC3339, rec.Date); err == nil && t.Year() > 0 && t.Year() <= 9999 {
 			m.Received = t.UTC()
 		}
 	}
