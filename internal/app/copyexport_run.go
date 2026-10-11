@@ -545,7 +545,7 @@ func (r *CopyRun) preMessage(i int) *CopyStop {
 	p := r.plan
 	if budget, err := r.budget(); err != nil {
 		return r.complete(&CopyStop{RID: "R-g", Class: stopClassDestination, Message: leaveName(err)}, i, leaveName(err))
-	} else if m := &p.Messages[i]; budget <= 0 || (m.SizeHint >= 0 && budget < m.SizeHint) {
+	} else if m := &p.Messages[i]; budget <= 0 || r.exceedsBudget(m, budget) {
 		return r.complete(&CopyStop{RID: "R-g", Class: stopClassDestination}, i, "no space left")
 	}
 	remaining := int64(len(p.Messages)-i)*copyRecordLineBound + 4096
@@ -553,6 +553,14 @@ func (r *CopyRun) preMessage(i int) *CopyStop {
 		return r.complete(&CopyStop{RID: "R-d2", Class: stopClassState}, i, "")
 	}
 	return nil
+}
+
+// exceedsBudget is true when m's size hint is more than the destination's budget holds. A message
+// above the per-message cap is not a matter of space: it is listed as larger than this version
+// exports, whatever the free space says (cap before budget, MA-427), so a size claimed by the
+// source never stops a run with "the destination is full" (E4-AO3).
+func (r *CopyRun) exceedsBudget(m *CopyMessage, budget int64) bool {
+	return m.SizeHint >= 0 && m.SizeHint <= r.env.cap() && budget < m.SizeHint
 }
 
 // budget is the destination's free bytes less the finalization reserve.
@@ -659,7 +667,7 @@ func (r *CopyRun) exportOne(walk context.Context, n int, m *CopyMessage) (line *
 			return failure(classRetryable, stopLineReason(s)), r.complete(s, int(r.done.Load()), s.Message), false
 		}
 		budget, berr := r.budget()
-		if berr != nil || budget <= 0 || (m.SizeHint >= 0 && budget < m.SizeHint) {
+		if berr != nil || budget <= 0 || r.exceedsBudget(m, budget) {
 			// Before this attempt's first byte: the disk stopped the run, not the
 			// message, so it stays first in not_attempted (RR2b-C6).
 			why := "no space left"

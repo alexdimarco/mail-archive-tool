@@ -244,6 +244,7 @@ type CopyPlan struct {
 	// What the preview reports (design §4.7 step 3 and 4).
 	EstimateBytes int64
 	UnknownSize   int
+	OverCap       int // messages above the per-message cap: listed as failed, not counted in the estimate (E4-AO3)
 	FreeBytes     uint64
 	Reserve       int64 // finalization reserve, sized from the plan (RR2-C5)
 	RecordBound   int64 // the run record's bound on the state volume

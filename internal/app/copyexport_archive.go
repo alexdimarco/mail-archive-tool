@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -661,16 +662,26 @@ func (a *ArchiveSource) resolve(key string, rec state.Record, meta map[string]in
 	if !pagePresent {
 		return m, false
 	}
+	// What a message weighs is what its files weigh on disk, which the run copies at most: the
+	// size the manifest records is a claim, held to the file when it is copied (streamPart), and
+	// a forged one (4 EiB, or a negative number) must not size the plan (E4-AO3).
 	var size int64
 	known := true
 	add := func(dig *state.FileDigest, onDisk int64) {
+		var n int64
 		switch {
-		case dig != nil:
-			size += dig.Size
 		case onDisk >= 0:
-			size += onDisk
+			n = onDisk
+		case dig != nil && dig.Size >= 0:
+			n = dig.Size
 		default:
 			known = false
+			return
+		}
+		if size > math.MaxInt64-n {
+			size = math.MaxInt64
+		} else {
+			size += n
 		}
 	}
 	emlPresent, emlSize := a.exists(eml)
@@ -1091,7 +1102,13 @@ func (a *ArchiveSource) streamPart(f *os.File, fi os.FileInfo, rel string, dig *
 	if dig != nil {
 		declared = dig.Size
 	}
+	// The recorded size is a claim: a file that weighs another size is not what the archive
+	// recorded, whatever the claim, and is said so before the cap or a byte is looked at (E4-AO3).
+	mismatch := dig != nil && fi.Size() != dig.Size
 	return CopyFilePart{Role: role, Suffix: suffix, Size: declared, Copy: func(w io.Writer, maxBytes int64) (int64, error) {
+		if mismatch {
+			return 0, &ArchiveFileError{Kind: AFChanged, Rel: rel}
+		}
 		if maxBytes > 0 && declared > maxBytes {
 			return 0, &ArchiveFileError{Kind: AFTooLarge, Rel: rel, Size: declared, Limit: maxBytes}
 		}

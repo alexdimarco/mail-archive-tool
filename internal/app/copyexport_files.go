@@ -107,7 +107,7 @@ func (r *CopyRun) exportFiles(walk context.Context, n int, m *CopyMessage, src C
 		return failure(classRetryable, stopLineReason(s)), r.complete(s, int(r.done.Load()), s.Message), false
 	}
 	budget, berr := r.budget()
-	if berr != nil || budget <= 0 || (m.SizeHint >= 0 && budget < m.SizeHint) {
+	if berr != nil || budget <= 0 || r.exceedsBudget(m, budget) {
 		// Before the message's first byte: the disk stopped the run, not the message, so it
 		// stays first in not_attempted (RR2b-C6).
 		why := "no space left"
