@@ -612,6 +612,46 @@ func TestStatusReadsABreakerTripAsAnOutageNotAnAuthFailure(t *testing.T) {
 	})
 }
 
+// covers: MA-540, R10, R17, R18, R21, S37, S46
+// K6 (the S3 build's changed MA-540 tests): before S3 a listing stop failed the whole
+// mailbox, so "zero {k,gone}, every record still Present" held because the mailbox
+// returned before its sweep. From S3 the stop is the folder's gap and the walk goes
+// on, and what keeps the Present assertion true is the sweep's deferral (a folder
+// that could not be listed defers the mailbox's sweep: a message that moved into it
+// would be swept from the folder it left). The adapted case alone does not exercise
+// that: nothing moves in the fixture and the stalled folder is never marked walked, so
+// removing the deferral left it green. Here a message is moved from Archive into the
+// Inbox that stops; the walk never reaches it there and Archive lists without it, so
+// only the deferral keeps it from being marked gone.
+func TestRunGraphListingStopDefersTheSweepOfAMovedMessage(t *testing.T) {
+	for _, name := range []string{"repeating nextLink in Messages", "page cap in Messages"} {
+		var stop graphtest.Stop
+		for _, s := range graphtest.Stops {
+			if s.Name == name {
+				stop = s
+			}
+		}
+		if stop.Apply == nil {
+			t.Fatalf("no stop named %q", name)
+		}
+		t.Run(name, func(t *testing.T) {
+			c := runSGCase(t, context.Background(), func(s *graphtest.Server) {
+				stop.Apply(s)
+				s.MoveMessage("u1", "F_AR", "F_IN", "U1AR1")
+			}, nil)
+			if !errors.Is(c.err, ErrPartial) {
+				t.Fatalf("the run returned %v, want ErrPartial", c.err)
+			}
+			failedNotCancelled(t, c)
+			k, rec := recordForID(t, c.out, "u1ar1@x")
+			wantDeferred(t, c.out, "U1AR1 (moved into the Inbox whose listing stopped)", k, rec)
+			if g := u1Gap(t, c); g.Reason != "folder-list-failed" || g.Folder != "Inbox" {
+				t.Errorf("the stop's gap = %+v; want folder-list-failed in Inbox", g)
+			}
+		})
+	}
+}
+
 // covers: MA-313, R5, R12, R18, S46
 // ESC-S3-2 (open, owner decision; S3-AC2): a breaker trip manufactures its own
 // known-poison list. Every tripped run leaves about 25 fetch-transport gaps; in the
