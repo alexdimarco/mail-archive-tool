@@ -974,7 +974,11 @@ func (e *CopyExportEnv) RetryInput(run, which, signer string) (*CopyPlanInput, e
 		return nil, err
 	}
 	if len(msgs) == 0 {
-		return nil, refuse("R-h", noRetryText(which, sum.Statuses[statusFailed], sum.RetryableFailed, h.Source.Kind))
+		kind := h.Source.Kind
+		if kind == "archive" && h.Source.Other {
+			kind = kindArchiveOther
+		}
+		return nil, refuse("R-h", noRetryText(which, sum.Statuses[statusFailed], sum.RetryableFailed, kind))
 	}
 	first := h.RootName
 	if len(h.ChainParts) > 0 {
@@ -995,6 +999,9 @@ func (e *CopyExportEnv) RetryInput(run, which, signer string) (*CopyPlanInput, e
 	return &CopyPlanInput{Source: h.Source, Folders: foldersOf(msgs), Messages: msgs, Options: h.Options, Dest: h.Dest, Chain: chain}, nil
 }
 
+// kindArchiveOther is the kind noRetryText is given for another archive folder (read-only, someone else's).
+const kindArchiveOther = "archive-other"
+
 // noRetryText is R-h for a retry with nothing to retry (friction F3): what happened, why, and what to
 // do. failed is how many messages of the run failed. A message that failed for a reason a retry
 // cannot change (a link, a damaged or removed file, a message over the size limit) is never offered
@@ -1013,8 +1020,11 @@ func noRetryText(which string, failed, retryable int, kind string) string {
 		n = commas(failed) + " messages that failed"
 	}
 	fix := "If you can fix that, choose the folder again in the Extraction workspace and export it as a new export."
-	if kind == "archive" {
+	switch kind {
+	case "archive":
 		fix = "Fix that first (restore a file that is missing or damaged from a backup of the archive, or copy an archive that holds links into a plain folder), then choose the folder again in the Extraction workspace and export it as a new export."
+	case kindArchiveOther: // read-only, and its reader has no backup of it: the owner of the copy is the one to ask
+		fix = "Fix that first (ask whoever gave you the archive for a complete copy of a file that is missing or damaged, or copy an archive that holds links into a plain folder), then choose the folder again in the Extraction workspace and export it as a new export."
 	}
 	return fmt.Sprintf("The %s in this export can't be tried again — each failed for a reason that trying again won't change, and the reason is listed under 'Which ones?' on this export's card. %s", n, fix)
 }
