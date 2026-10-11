@@ -1143,6 +1143,28 @@ stays). **Q8** the "other accounts" wording to "web pages". Recommended: **keep 
 adversarial pass and E3 are done, then simplify as a deliberate change with rows amended. Any
 simplification amends catalog rows, so it needs your word (§0 rule 2). E3 builds on C2 as built.
 
+### 13.14 EW-E3 built and merged (2026-10-11), delegated-judgement
+
+The first shippable workspace is built and merged: the Extraction workspace and Export activity
+pages, selection with row handles, preview, start and cancel, progress and history with the
+background reconciler, retry and retry chains, Finish as partial, Check this export and Check and
+finish, the Microsoft 365 card and sign-in slot, the picker, Create folder, serialized settings, the
+deployment switch (`-no-workspace`, Windows `DisableExtractionWorkspace` policy) and the Export
+sidebar group. Source is Microsoft 365 only, output original EML plus manifest, Readable HTML hidden.
+Conform fixed seven gaps (journal text not stripped of control characters, Start's destination
+re-check unproven, Open folder argv, a damaged file on Finish as partial, R-i wording, the FAT
+warning, the moved-or-replaced re-probe), all with tests. Closed here: E2's skip encoders for the
+retry preview, MA-430, 437, 438, 448 and 521 halves, and MA-384's workspace sign-in banner.
+**Owed before ship: the combined adversarial pass (E2 write side plus E3) and the friction review.**
+X13 stays Partial; X14 and X15 are Partial, not Met, until both gates close.
+
+Open, owner: (1) the Overview sidebar's Export group jumps to a card with the two links rather
+than linking straight, because MA-302 holds the Overview to same-page anchors; a straight link
+amends MA-302. Recommended: keep the card (no gate change). (2) MSI property wiring for the
+deployment switch is not built; only the flag and the policy are. Skip encoders remaining:
+ESC-15's token lock, E4's archive-root-gone, E5's Readable HTML, R4's archive-writer names. The
+Linux mocked-zenity argv test and all Windows legs have not run here.
+
 ### 13.7 Escalations from LC-C1's adversarial pass (merged 2026-10-10)
 
 None blocks anything: each has a skip encoder or a safe interim in force.
