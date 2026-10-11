@@ -613,6 +613,72 @@ func TestStatusReadsABreakerTripAsAnOutageNotAnAuthFailure(t *testing.T) {
 }
 
 // covers: MA-313, R5, R12, R18, S46
+// ESC-S3-2 (open, owner decision; S3-AC2): a breaker trip manufactures its own
+// known-poison list. Every tripped run leaves about 25 fetch-transport gaps; in the
+// next run those items are known poison (they never count, and are never probed, even
+// while the control request fails), and the breaker then needs 25 FRESH counted
+// faults on top, so under a persistent outage run k fetches 25(k-1) items before its
+// own 25 and each run costs more than the last, up to the ledger's 1000-item cap.
+// The remedy (an item whose gap was recorded in a run whose mailbox the breaker ended
+// is not known poison) changes FC10's rule as ruled ("known poison never counts,
+// whatever the control request returns", RR6-C4) and adds a persisted mark to the
+// ledger, so it is the owner's call. Until then the cost is the documented open
+// condition of P3 and FC10.
+func TestGraphOutageDoesNotRatchetTheKnownPoisonList(t *testing.T) {
+	t.Skip("ESC-S3-2: a trip's own gaps become known poison and each outage run fetches 25 more items before it trips; the remedy changes FC10's known-poison rule (RR6-C4) and adds a ledger mark: owner decision. Invariant: FC10 / MA-313 (an outage costs a bounded number of timeouts per mailbox)")
+	s := breakerServer("u1", nil, 400, func(int) http.HandlerFunc { return graphtest.Status(504, "") })
+	defer s.Close()
+	controlDown(s)
+	g := breakerOptions(s, "u1")
+	out := tmpDir(t)
+	var fetched []int
+	for run := 1; run <= 4; run++ {
+		s.ResetRequests()
+		_, err := isoRun(g, out)
+		var be *GraphBreakerError
+		if !errors.As(err, &be) {
+			t.Fatalf("run %d returned %v, want the breaker's refusal", run, err)
+		}
+		fetched = append(fetched, s.Requests("/users/u1/messages/"))
+	}
+	if fetched[3] > fetched[0]+5 {
+		t.Errorf("fetches before the trip, run by run: %v; want no growth: the gaps a trip leaves are the service's evidence, not the items'", fetched)
+	}
+}
+
+// covers: MA-318, R1, R10, S46
+// ESC-S3-3 (open, owner decision; S3-AI7, S3-AO5(b)): the stub hold-back writes
+// nothing for a message that cannot be parsed when the mailbox already holds a record
+// for its Message-ID, and says only "nothing is lost: the earlier, complete copy is
+// kept" in an info gap. For an item whose own immutable id matches no archived record
+// that is not known: it can be a DIFFERENT message that reuses the Message-ID (the
+// #8 floor residual), which is then in neither the archive nor a missing-item count.
+// The choices (write the stub as an #fp-split record; record a fillable gap with its
+// own reason and words; or keep the info row and only correct its wording) change the
+// P15 hold-back, the §4.1 reason table and the remedy wording the design pins, so it
+// is the owner's call.
+func TestGraphHeldBackStubOfAnUnprovenItemIsNotQuietlyDropped(t *testing.T) {
+	t.Skip("ESC-S3-3: a parse-failing item that reuses an archived Message-ID but not its immutable id is held back under an info gap whose words say nothing is lost; the remedy (write it as an #fp split, or a fillable gap) changes P15's hold-back and §4.1's reasons: owner decision. Invariant: R10 (a hidden item is a visible gap, never a quiet drop)")
+	s := sweepServer(true, []string{"A1"}, nil, nil)
+	defer s.Close()
+	out := tmpDir(t)
+	g := isoOptions(s)
+	if _, err := sweepRun(g, out, export.Incremental); err != nil {
+		t.Fatalf("run 1: %v", err)
+	}
+	s.AddMessage("u1", "F_IN", "B1") // a different message with the archived Message-ID
+	s.SetMid("B1", "a1@x")
+	parseGivesUp(t)
+	if _, err := sweepRun(g, out, export.Incremental); err != nil && !errors.Is(err, ErrPartial) {
+		t.Fatalf("run 2: %v", err)
+	}
+	m := loadArchive(t, out)
+	if len(m.KeysForIdentity("mid:a1@x")) < 2 && m.MissingGapCount() == 0 {
+		t.Errorf("B1 is in neither the archive nor a missing-item count: records %d, missing %d, ledger %+v", len(m.KeysForIdentity("mid:a1@x")), m.MissingGapCount(), m.CaptureGapsSorted())
+	}
+}
+
+// covers: MA-313, R5, R12, R18, S46
 // S3-AO7: a mailbox-fatal fault (a 403 or 401 on a $value, a 401 on a listing) puts
 // the server's own words in RunGraph's error and in the run log; those words are the
 // endpoint's, so they reach the operator's terminal cleaned where they are built
