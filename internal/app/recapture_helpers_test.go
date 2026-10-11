@@ -302,6 +302,28 @@ func rcExport(t *testing.T, out string, mode export.Mode, raw bool, m *model.Mes
 // rcPNG is a valid 1x1 PNG, the bytes of an inline image the page embeds.
 var rcPNG, _ = base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
 
+// rcWritten is a record's page, zip and original as written: each file's bytes and
+// modification time, so a run that rewrites a file with identical bytes still shows
+// (a re-capture that writes nothing leaves the inode's mtime alone).
+func rcWritten(t *testing.T, out string, rec state.Record) map[string]string {
+	t.Helper()
+	stem := strings.TrimSuffix(rec.Path, ".html")
+	got := map[string]string{}
+	for _, suffix := range []string{".html", "-attachments.zip", ".eml"} {
+		p := filepath.Join(out, filepath.FromSlash(stem+suffix))
+		fi, err := os.Stat(p)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		sum, _ := rcDigest(t, p)
+		got[stem+suffix] = sum.SHA256 + "@" + fi.ModTime().UTC().Format(time.RFC3339Nano)
+	}
+	return got
+}
+
 // rcSum is the fixity of b.
 func rcSum(b []byte) state.FileDigest {
 	sum := sha256.Sum256(b)

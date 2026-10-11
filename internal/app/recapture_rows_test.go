@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -53,6 +54,36 @@ func TestFullRunKeepsAnAttachmentTheSourceNowHoldsEmpty(t *testing.T) {
 		t.Fatalf("a full run over an intact source changed the archive: %v (record %+v)", bad, twin)
 	}
 
+	// Twin: a source that gained a body is a real improvement and commits.
+	srcG, outG := rcSource(t), tmpDir(t)
+	rcPut(t, srcG, rcMail("gain@x", "Notes", "", "n.pdf", []byte("%PDF-1.4 notes")))
+	rcRun(t, srcG, outG, export.Full, true, nil)
+	rcPut(t, srcG, rcMail("gain@x", "Notes", "<p>now with a body</p>", "n.pdf", []byte("%PDF-1.4 notes")))
+	rcRun(t, srcG, outG, export.Full, true, nil)
+	_, gain := recordForID(t, outG, "gain@x")
+	if !bytes.Contains(rcRead(t, outG, gain.Path), []byte("now with a body")) || rcHas(gain.Missing, state.MissingBody) || len(rcAsRecorded(t, outG, gain)) != 0 {
+		t.Fatalf("a source that gained a body should commit it: %+v", gain)
+	}
+
+	// T1 inline-image setup (the regression is below): a record whose page embeds an
+	// inline image the source delivers. There is no earlier-inventory record in this
+	// code, so the T1 and T2 shapes of the design are one case here.
+	outI := tmpDir(t)
+	logo := &rcBlob{data: rcPNG, cid: "logo", ctype: "image/png"}
+	msgI := func() *model.Message {
+		return rcMsg("inl@x", "Logo", `<p>logo</p><img src="cid:logo">`, nil, logo.att("logo.png"))
+	}
+	if _, err := rcExport(t, outI, export.Full, false, msgI()); err != nil {
+		t.Fatal(err)
+	}
+	_, inl1 := recordForID(t, outI, "inl@x")
+	if _, err := rcExport(t, outI, export.Full, false, msgI()); err != nil {
+		t.Fatal(err)
+	}
+	if bad := rcAsRecorded(t, outI, inl1); len(bad) != 0 || !strings.Contains(string(rcRead(t, outI, inl1.Path)), "data:image/png;base64") {
+		t.Fatalf("a full run over an intact source should keep the embedded inline image: %v", bad)
+	}
+
 	t.Skip("MA-350 (F46, R1): a full run commits a degraded capture over a good archived copy and deletes its zip; encoder lands in RI-S1, turns green in RI-S5")
 
 	// The attachment is now declared but delivers nothing.
@@ -67,6 +98,24 @@ func TestFullRunKeepsAnAttachmentTheSourceNowHoldsEmpty(t *testing.T) {
 	}
 	if rep := rcVerify(t, out); !rep.Attested() {
 		t.Errorf("verify does not attest the archive after the run: %+v", rep.Problems)
+	}
+
+	// A second full pass over the same degraded source writes nothing: no file is
+	// rewritten or replaced, so the first pass's files keep their bytes and times.
+	written := rcWritten(t, out, rec2)
+	rcRun(t, src, out, export.Full, true, nil)
+	_, rec3 := recordForID(t, out, "rep@x")
+	if again := rcWritten(t, out, rec3); !maps.Equal(written, again) || rec3.Path != rec2.Path {
+		t.Errorf("a second full pass over the degraded source wrote files: %v then %v (path %s then %s)", written, again, rec2.Path, rec3.Path)
+	}
+
+	// The inline image is now empty: the page keeps the embedded image.
+	logo.data = nil
+	if _, err := rcExport(t, outI, export.Full, false, msgI()); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range rcAsRecorded(t, outI, inl1) {
+		t.Errorf("a full run over an inline image that is now empty changed the archive: %s", bad)
 	}
 }
 
@@ -249,7 +298,80 @@ func TestLegacyReExaminationKeepsWhatItWouldDegrade(t *testing.T) {
 	pageB, zipB := rcRead(t, outB, stemB+".html"), rcRead(t, outB, stemB+"-attachments.zip")
 	rcLegacy(t, outB, "legb@x")
 
+	// A truncated earlier zip: the held attachment cannot be read back, and it is
+	// presumed held (RC9).
+	outZ := tmpDir(t)
+	pdfZ := &rcBlob{data: []byte("%PDF-1.4 legacy z, long enough to cut in half")}
+	msgZ := func() *model.Message { return rcMsg("legz@x", "Old Z", "<p>old z</p>", nil, pdfZ.att("old.pdf")) }
+	if _, err := rcExport(t, outZ, export.Full, false, msgZ()); err != nil {
+		t.Fatal(err)
+	}
+	_, recZ := recordForID(t, outZ, "legz@x")
+	stemZ := strings.TrimSuffix(recZ.Path, ".html")
+	zipZ := rcRead(t, outZ, stemZ+"-attachments.zip")
+	cutZ := zipZ[:len(zipZ)/2]
+	if err := os.WriteFile(filepath.Join(outZ, filepath.FromSlash(stemZ+"-attachments.zip")), cutZ, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pageZ := rcRead(t, outZ, stemZ+".html")
+
+	// Attachments named like the record's own sentinels: ambiguous with them, never
+	// read as one. Twin: with the source intact they archive and re-run unchanged.
+	outN := tmpDir(t)
+	oddNames := []string{"body", "unknown", "unverified"}
+	oddBlobs := map[string]*rcBlob{}
+	for _, n := range oddNames {
+		oddBlobs[n] = &rcBlob{data: []byte("%PDF-1.4 named " + n)}
+	}
+	msgN := func() *model.Message {
+		var atts []model.Attachment
+		for _, n := range oddNames {
+			atts = append(atts, oddBlobs[n].att(n))
+		}
+		return rcMsg("legn@x", "Odd names", "<p>odd</p>", nil, atts...)
+	}
+	if _, err := rcExport(t, outN, export.Full, false, msgN()); err != nil {
+		t.Fatal(err)
+	}
+	_, recN := recordForID(t, outN, "legn@x")
+	if _, err := rcExport(t, outN, export.Full, false, msgN()); err != nil {
+		t.Fatal(err)
+	}
+	if bad := rcAsRecorded(t, outN, recN); len(bad) != 0 || !recN.Complete() || recN.Unknown() {
+		t.Fatalf("attachments named body, unknown and unverified over an intact source should archive complete and stay as recorded: %v (%+v)", bad, recN)
+	}
+
 	t.Skip("MA-355 (F46, R1): a legacy or unknown record's first re-examination commits whatever the source holds now; encoder lands in RI-S1, turns green in RI-S5")
+
+	// A truncated earlier zip stays as it is when the source now holds less.
+	pdfZ.data = nil
+	if _, err := rcExport(t, outZ, export.Full, false, msgZ()); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(filepath.Join(outZ, filepath.FromSlash(stemZ+"-attachments.zip"))); err != nil || !bytes.Equal(got, cutZ) {
+		t.Errorf("a truncated earlier zip was replaced or removed by a re-capture that found the attachment empty (err %v)", err)
+	}
+	if !bytes.Equal(rcRead(t, outZ, stemZ+".html"), pageZ) {
+		t.Errorf("the page of a record with a truncated zip was rewritten by a re-capture that found the attachment empty")
+	}
+
+	// Attachments named body, unknown and unverified are now empty: the archive keeps
+	// them, and none is read as a sentinel.
+	for _, n := range oddNames {
+		oddBlobs[n].data = nil
+	}
+	if _, err := rcExport(t, outN, export.Full, false, msgN()); err != nil {
+		t.Fatal(err)
+	}
+	_, recN2 := recordForID(t, outN, "legn@x")
+	for _, bad := range rcAsRecorded(t, outN, recN) {
+		t.Errorf("a full run over empty attachments named body, unknown and unverified changed the archive: %s", bad)
+	}
+	for _, n := range oddNames {
+		if rcHas(recN2.Missing, n) || rcHas(recN2.Terminal, n) {
+			t.Errorf("the held attachment %q is listed as a gap or read as a sentinel: missing=%v terminal=%v", n, recN2.Missing, recN2.Terminal)
+		}
+	}
 
 	// (a) the attachment is now empty in a full run.
 	pdfA.data = nil
@@ -274,6 +396,15 @@ func TestLegacyReExaminationKeepsWhatItWouldDegrade(t *testing.T) {
 	}
 	if st, err := rcExport(t, outB, export.Incremental, false, msgB()); err != nil || st.Retried != 0 {
 		t.Errorf("(b) the next incremental run re-examined the record (retried=%d, err %v): an unverified record is never fillable", st.Retried, err)
+	}
+	// (b) re-check twin: the source recovers, a full run commits it, and the record
+	// is complete again with what it now holds on record.
+	pdfB.data = []byte("%PDF-1.4 legacy b")
+	if _, err := rcExport(t, outB, export.Full, false, msgB()); err != nil {
+		t.Fatal(err)
+	}
+	if _, rB := recordForID(t, outB, "legb@x"); !rB.Complete() || rB.Unknown() || len(rcAsRecorded(t, outB, rB)) != 0 || rB.Fixity == nil || rB.Fixity.Zip == nil {
+		t.Errorf("(b) a full run over a recovered source did not leave the record complete with its zip on record: %+v", rB)
 	}
 
 	// (c) the inline image is now empty: the page must keep the embedded image.
@@ -426,6 +557,21 @@ func TestRecaptureWithoutRawKeepsThePreservedOriginal(t *testing.T) {
 		t.Fatalf("the archive under the earlier naming rule should attest: %v", bad)
 	}
 
+	// (d) setup: a -raw archive whose preserved original has a flipped byte (its
+	// length unchanged), so it no longer matches its recorded fixity.
+	srcD, outD := rcSource(t), tmpDir(t)
+	rcPut(t, srcD, mail("<p>first</p>"))
+	rcRun(t, srcD, outD, export.Full, true, nil)
+	_, recD := recordForID(t, outD, "raw@x")
+	flipped := rcRead(t, outD, eml(recD))
+	flipped[len(flipped)/2] ^= 0xff
+	if err := os.WriteFile(filepath.Join(outD, filepath.FromSlash(eml(recD))), flipped, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if rep := rcVerify(t, outD); rep.Modified != 1 {
+		t.Fatalf("the flipped original should be the one modified file: %+v", rep.Problems)
+	}
+
 	t.Skip("MA-357 (§1.5, R20): a re-capture without -raw un-fixes or deletes the preserved .eml; encoder lands in RI-S1, turns green in RI-S5")
 
 	// (a) A full run without -raw at an unchanged path: the original stays as
@@ -455,6 +601,21 @@ func TestRecaptureWithoutRawKeepsThePreservedOriginal(t *testing.T) {
 	}
 	if rec2B.Fixity == nil || rec2B.Fixity.EML == nil || *rec2B.Fixity.EML != *recB.Fixity.EML {
 		t.Errorf("(b) the moved record does not carry the original's fixity: %+v", rec2B.Fixity)
+	}
+
+	// (d) An earlier original with a flipped byte and no new raw: kept as it is, and
+	// still recorded as what it was (verify keeps finding it modified; nothing is
+	// laundered into a fresh digest, nothing is deleted).
+	rcRun(t, srcD, outD, export.Full, false, nil)
+	_, rec2D := recordForID(t, outD, "raw@x")
+	if got, err := os.ReadFile(filepath.Join(outD, filepath.FromSlash(eml(rec2D)))); err != nil || !bytes.Equal(got, flipped) {
+		t.Errorf("(d) the earlier original with a flipped byte was replaced or removed by a re-capture without -raw (err %v)", err)
+	}
+	if rec2D.Fixity == nil || rec2D.Fixity.EML == nil || *rec2D.Fixity.EML != *recD.Fixity.EML {
+		t.Errorf("(d) the record's fixity of the original was dropped or re-baselined: %+v", rec2D.Fixity)
+	}
+	if rep := rcVerify(t, outD); rep.Modified != 1 || rep.Missing != 0 {
+		t.Errorf("(d) verify should still find exactly the flipped original modified: %+v", rep.Problems)
 	}
 }
 
@@ -717,32 +878,41 @@ func TestReindexKeepsACurrentRecordsFilesWhenItsIndexRowIsStale(t *testing.T) {
 		}
 	}
 
+	// stale builds the finder's state: every record names new files, and its index row
+	// still names the earlier, missing page. It returns the subjects' earlier paths and
+	// the records' current paths.
+	stale := func(t *testing.T, out string) (map[string]string, map[string]bool) {
+		t.Helper()
+		rels := buildArchive(t, out)
+		man, err := state.Load(filepath.Join(out, ".mailarchive-manifest.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		current := map[string]bool{} // the records' new paths
+		for key, rec := range man.All() {
+			newRel := strings.TrimSuffix(rec.Path, ".html") + "-v2.html"
+			if err := os.Rename(filepath.Join(out, filepath.FromSlash(rec.Path)), filepath.Join(out, filepath.FromSlash(newRel))); err != nil {
+				t.Fatal(err)
+			}
+			plant(t, out, newRel)
+			rec.Path = newRel
+			man.Add(key, rec)
+			current[newRel] = true
+		}
+		if err := man.Save(); err != nil {
+			t.Fatal(err)
+		}
+		assure.Reached(t, current, "the records' current paths")
+		if len(current) != len(rels) {
+			t.Fatalf("expected %d current paths, got %d", len(rels), len(current))
+		}
+		return rels, current
+	}
+
 	t.Skip("MA-361 (F48, R13): reindex deletes a message's current files when its index row names an earlier, missing path; encoder lands in RI-S1, turns green in RI-S2")
 
 	out := tmpDir(t)
-	rels := buildArchive(t, out)
-	man, err := state.Load(filepath.Join(out, ".mailarchive-manifest.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	current := map[string]bool{} // the records' new paths
-	for key, rec := range man.All() {
-		newRel := strings.TrimSuffix(rec.Path, ".html") + "-v2.html"
-		if err := os.Rename(filepath.Join(out, filepath.FromSlash(rec.Path)), filepath.Join(out, filepath.FromSlash(newRel))); err != nil {
-			t.Fatal(err)
-		}
-		plant(t, out, newRel)
-		rec.Path = newRel
-		man.Add(key, rec)
-		current[newRel] = true
-	}
-	if err := man.Save(); err != nil {
-		t.Fatal(err)
-	}
-	assure.Reached(t, current, "the records' current paths")
-	if len(current) != len(rels) {
-		t.Fatalf("expected %d current paths, got %d", len(rels), len(current))
-	}
+	rels, current := stale(t, out)
 
 	_, pruned, err := Reindex(out, rcLogger())
 	if err != nil {
@@ -778,6 +948,40 @@ func TestReindexKeepsACurrentRecordsFilesWhenItsIndexRowIsStale(t *testing.T) {
 	for rel := range current {
 		if !rows[rel] {
 			t.Errorf("no index row names %s: searches do not hit the record's current file", rel)
+		}
+	}
+
+	// A message whose current and earlier paths are both missing is pruned, with its
+	// zip and original, while the others are repaired and kept.
+	outP := tmpDir(t)
+	relsP, currentP := stale(t, outP)
+	goneP := strings.TrimSuffix(relsP["prune-beta"], ".html") + "-v2.html"
+	if !currentP[goneP] {
+		t.Fatalf("the record of prune-beta should be current at %s", goneP)
+	}
+	if err := os.Remove(filepath.Join(outP, filepath.FromSlash(goneP))); err != nil {
+		t.Fatal(err)
+	}
+	keptP, prunedP, err := Reindex(outP, rcLogger())
+	if err != nil {
+		t.Fatalf("reindex: %v", err)
+	}
+	if keptP != 2 || prunedP != 1 {
+		t.Errorf("reindex over two repairable records and one with both paths gone: kept=%d pruned=%d, want 2, 1", keptP, prunedP)
+	}
+	stemP := strings.TrimSuffix(goneP, ".html")
+	if exists(outP, stemP+".eml") || exists(outP, stemP+"-attachments.zip") {
+		t.Errorf("the pruned message's original or zip was left behind")
+	}
+	for rel := range currentP {
+		if rel == goneP {
+			continue
+		}
+		stem := strings.TrimSuffix(rel, ".html")
+		for _, suffix := range []string{".html", "-attachments.zip", ".eml"} {
+			if !exists(outP, stem+suffix) {
+				t.Errorf("reindex deleted %s, a file of a record that is current and intact", stem+suffix)
+			}
 		}
 	}
 }
