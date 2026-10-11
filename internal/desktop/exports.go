@@ -38,6 +38,11 @@ type exportsState struct {
 	mu         sync.Mutex
 	slot       *exportSlot
 	wedgeAfter time.Duration
+
+	// afterLaunch is a test seam, called between starting a run's goroutine and waiting
+	// for it to say it started: the point at which a very short export can already have
+	// finished.
+	afterLaunch func(*exportSlot)
 }
 
 // exportSlot is the running export, or the last one until the next starts.
@@ -177,16 +182,34 @@ func (d *dashboard) startAction(w http.ResponseWriter, r *http.Request) {
 	ws.mu.Unlock()
 
 	go ex.runSlot(slot, prev.plan)
+	if ex.afterLaunch != nil {
+		ex.afterLaunch(slot)
+	}
 
+	// A short export can have started and finished before this handler waits, so both
+	// channels are ready and a plain select picks one at random: a run that said it started
+	// is answered as started whichever way the select goes (EW-AC12).
+	var id string
+	didStart := false
 	select {
-	case id := <-started:
+	case id = <-started:
+		didStart = true
+	case <-slot.done:
+		select {
+		case id = <-started:
+			didStart = true
+		default:
+		}
+	}
+	switch {
+	case didStart:
 		slot.mu.Lock()
 		slot.runID = id
 		slot.addLog(fmt.Sprintf("%s Started: %s messages to %s", slot.started.Format("15:04:05"), commaInt(slot.selected), prev.plan.ExportName))
 		slot.mu.Unlock()
 		d.saveExportSettings(prev.plan)
 		d.reply(w, map[string]any{"ok": true, "runId": id})
-	case <-slot.done:
+	default:
 		ex.mu.Lock()
 		if ex.slot == slot {
 			ex.slot = nil

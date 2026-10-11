@@ -2,7 +2,9 @@ package desktop
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -58,10 +60,29 @@ var settingsHook func(who string)
 
 // UpdateSettings reloads the settings file under the lock, lets fn change the fields
 // its caller owns, and saves the result atomically at 0600.
+//
+// A file that cannot be read (a sharing violation, an antivirus scan, a permission error)
+// is left as it is and the update is refused: the next call finds it again. A file that
+// reads but does not parse as settings (damaged, or written by a newer build in a shape
+// this one does not know) is set aside as "<name>.unreadable" before the new file is
+// written, so what it held is not lost (EW-AC14). A missing file starts from the defaults.
 func UpdateSettings(path, who string, fn func(*Settings)) error {
 	settingsMu.Lock()
 	defer settingsMu.Unlock()
-	s := LoadSettings(path)
+	var s Settings
+	data, rerr := os.ReadFile(path)
+	switch {
+	case rerr == nil:
+		if json.Unmarshal(data, &s) != nil {
+			s = Settings{}
+			if err := util.WriteFileAtomic0600(path+".unreadable", data); err != nil {
+				return fmt.Errorf("the settings file can't be read and a copy of it could not be kept, so it was left as it is: %w", err)
+			}
+		}
+	case errors.Is(rerr, fs.ErrNotExist):
+	default:
+		return fmt.Errorf("the settings file can't be read right now, so it was left as it is: %w", rerr)
+	}
 	if settingsHook != nil {
 		settingsHook(who)
 	}

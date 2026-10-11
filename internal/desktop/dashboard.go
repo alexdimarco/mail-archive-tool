@@ -167,6 +167,8 @@ type dashboard struct {
 	si   *signInSlot
 	flow deviceFlow
 
+	planMax int // a test lowers the 200,000-message limit of one export (R-i)
+
 	// seams a test replaces
 	now    func() time.Time
 	pick   func(ctx context.Context, title string) (string, error)

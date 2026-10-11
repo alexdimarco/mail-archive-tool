@@ -62,8 +62,10 @@ type fakeGraph struct {
 	reads     map[string]int
 	listFn    func(folder string, r *http.Request) // runs before a message listing is answered
 	ignoreTop bool
-	grants    []string // the grant_type of each token request
-	tokenErr  string   // when set, the token endpoint refuses with this OAuth error code
+	grants    []string      // the grant_type of each token request
+	tokenErr  string        // when set, the token endpoint refuses with this OAuth error code
+	meFn      func()        // runs in /me after the account is decided and before the answer is written
+	tokenGate chan struct{} // when set, the token endpoint answers only after it is closed
 }
 
 // mutate runs fn with the fake's lock held: the way a test changes the mailbox while the
@@ -120,8 +122,15 @@ func newFakeGraph(t *testing.T) *fakeGraph {
 		f.mu.Lock()
 		f.tokens++
 		f.grants = append(f.grants, r.PostForm.Get("grant_type"))
-		ttl, n, fail := f.ttl, f.tokens, f.tokenErr
+		ttl, n, fail, gate := f.ttl, f.tokens, f.tokenErr, f.tokenGate
 		f.mu.Unlock()
+		if gate != nil { // a test keeps the device flow waiting for the user
+			select {
+			case <-gate:
+			case <-r.Context().Done():
+				return
+			}
+		}
 		if fail != "" { // the token endpoint refuses the refresh token
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
@@ -132,8 +141,11 @@ func newFakeGraph(t *testing.T) *fakeGraph {
 	})
 	mux.HandleFunc("/me", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
-		upn := f.upn
+		upn, fn := f.upn, f.meFn
 		f.mu.Unlock()
+		if fn != nil { // a test holds the answer, which was already decided above
+			fn()
+		}
 		j(w, map[string]any{"userPrincipalName": upn, "id": "OID1"})
 	})
 	mux.HandleFunc("/me/mailFolders", f.serveFolders)

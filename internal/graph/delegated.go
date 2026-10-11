@@ -355,6 +355,21 @@ func (b tokenBackend) clear() error {
 	return nil
 }
 
+// PersistSignIn saves a finished sign-in's token cache (the bytes a sign-in made against an
+// in-memory store holds) to the saved sign-in's location: the token store, or the 0600 file
+// cache. It takes the same lock as a live source's write-back, so a rotated token of the
+// account that was signed in before, which read the cache before this sign-in and is about to
+// write, cannot land after this save and put the previous account back (EW-AC4). It orders
+// writes within this process only, as putIfNewer does (ESC-15 is the cross-process half).
+func PersistSignIn(cfg Config, data []byte) error {
+	tokenWriteMu.Lock()
+	defer tokenWriteMu.Unlock()
+	if cfg.TokenStore != nil {
+		return cfg.TokenStore.StoreToken(data)
+	}
+	return util.WriteFileAtomic0600(cfg.TokenCachePath, data)
+}
+
 // File-path wrappers — the signatures the shipped tests use (store == nil).
 func loadTokenCache(path string) (*tokenCache, error) { return tokenBackend{path: path}.load() }
 func storeTokenCache(path, upn string, tok *oauth2.Token) error {
