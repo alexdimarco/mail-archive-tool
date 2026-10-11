@@ -128,6 +128,7 @@ type CopyMessage struct {
 	Zip        bool          `json:"zip,omitempty"`     // the record has an attachments zip
 	Gone       bool          `json:"gone,omitempty"`    // no longer in the mailbox, kept in the archive (ruling Q4)
 	Quarantine bool          `json:"quar,omitempty"`    // the preview's reading: the archived page fails the gate and is copied as text
+	Removed    bool          `json:"removed,omitempty"` // a retry's reading: the archive's manifest no longer lists the record; none of its files are read and the run lists it as removed (E4-AC10)
 	Fix        *state.Fixity `json:"fix,omitempty"`
 	Notes      []string      `json:"notes,omitempty"` // the archive's own gaps for this message (§4.6 item 3)
 }

@@ -719,7 +719,7 @@ func (d *dashboard) retryArchive(w http.ResponseWriter, in runBody, info app.Cop
 		was[m.SourceID] = m
 	}
 	res, rerr := a.Messages(d.life.Context(), keys, nil, nil)
-	if rerr != nil || len(res.Messages) == 0 {
+	if rerr != nil || len(keys) == 0 {
 		a.Close()
 		d.refuseRun(w, in.RunID, refusedWith("R-h", "None of those messages is in the archive any more — nothing was previewed."))
 		return
@@ -730,15 +730,17 @@ func (d *dashboard) retryArchive(w http.ResponseWriter, in runBody, info app.Cop
 			m.Subject, m.From, m.FromName, m.Received = old.Subject, old.From, old.FromName, old.Received
 		}
 	}
-	// A message whose files were removed since (a redaction) stays in the plan, as the first plan had it:
-	// the run lists it as removed from the archive, which settles it for the whole set, where a message
-	// left out of every part was offered by the first part's card for ever (E4-AC10). Its files are
-	// not read: they are gone, and the run opens them behind the same gate as any other.
+	// A message the archive no longer has stays in the plan, as the first plan had it: the run lists it as
+	// removed from the archive, which settles it for the whole set, where a message left out of every part
+	// was offered by the first part's card for ever (E4-AC10). That is a message whose files were removed since
+	// (a redaction: the run opens them behind the gate, and they are gone) and a record the manifest no longer
+	// lists (it is marked, and none of its files is read, whatever is left of them). A retry of messages that
+	// are all gone is a retry like any other, and settles them.
 	vanished := map[string]bool{}
 	for _, k := range res.Vanished {
 		vanished[k] = true
 	}
-	msgs, resolved := make([]app.CopyMessage, 0, len(res.Messages)+len(vanished)), 0
+	msgs, resolved := make([]app.CopyMessage, 0, len(keys)), 0
 	for _, k := range keys {
 		switch {
 		case resolved < len(res.Messages) && res.Messages[resolved].SourceID == k:
@@ -746,16 +748,21 @@ func (d *dashboard) retryArchive(w http.ResponseWriter, in runBody, info app.Cop
 			resolved++
 		case vanished[k]:
 			msgs = append(msgs, was[k])
+		default:
+			m := was[k]
+			m.Removed = true
+			msgs = append(msgs, m)
 		}
 	}
+	gone := len(keys) - len(res.Messages) // the messages the archive no longer has
+
 	input.Messages, input.Folders = msgs, app.PlanFoldersOf(msgs)
 	input.Source = a.Describe()
 	other := ""
 	if info.Other {
 		other = a.Dir()
 	}
-	leftOut := res.Skipped - len(res.Vanished) // records the manifest no longer lists at all
-	input.Archives, input.OtherArchive, input.ArchiveSkipped = d.archivesWith(other), other, leftOut
+	input.Archives, input.OtherArchive, input.ArchiveSkipped = d.archivesWith(other), other, 0
 	bind := wsBind{arch: true, path: a.Dir(), other: info.Other}
 	job := d.ws.startJob(func(ctx context.Context, job *wsPreviewJob) (*app.CopyPlan, map[string]any, *refusal) {
 		defer a.Close()
@@ -765,11 +772,8 @@ func (d *dashboard) retryArchive(w http.ResponseWriter, in runBody, info app.Cop
 			return nil, nil, copyRefusal(perr)
 		}
 		var warns []string
-		if n := len(res.Vanished); n > 0 {
-			warns = append(warns, fmt.Sprintf("%s of these messages are no longer in the archive: they will be listed as removed from it and not exported.", commaInt(n)))
-		}
-		if leftOut > 0 {
-			warns = append(warns, fmt.Sprintf("%s of these messages are no longer in the archive and were left out.", commaInt(leftOut)))
+		if gone > 0 {
+			warns = append(warns, fmt.Sprintf("%s of these messages are no longer in the archive: they will be listed as removed from it and not exported.", commaInt(gone)))
 		}
 		out := planResult(plan, job.id, foldersOut(input.Folders), len(input.Messages), len(input.Messages), warns, archiveInfos(plan.Archive, len(input.Messages)))
 		out["retryWhich"] = in.Which

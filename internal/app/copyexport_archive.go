@@ -1101,6 +1101,9 @@ func sameFixity(a, b *state.Fixity) bool {
 // otherwise copied as text) and its attachments zip. Nothing is read from the original
 // until the part is copied, and each part is held to the fixity the plan recorded.
 func (a *ArchiveSource) Files(ctx context.Context, m *CopyMessage) (*CopyFiles, error) {
+	if m.Removed { // a record the manifest no longer lists is not exported, whatever of its files is left (E4-AC10)
+		return nil, &ArchiveFileError{Kind: AFMissing, Rel: m.Rel}
+	}
 	if _, ok := validRelPath(m.Rel); !ok || !strings.HasSuffix(m.Rel, verifyHTMLSuffix) {
 		return nil, &ArchiveFileError{Kind: AFPath, Rel: m.Rel}
 	}
