@@ -70,6 +70,7 @@ type CopyRunInfo struct {
 	RetryOf      string
 	Part         int
 	Remaining    int // for "Export these N messages again" (a gone run)
+	Receipt      string
 }
 
 var partSuffix = regexp.MustCompile(`-part(\d+)(?:-\d+)?$`)
@@ -140,6 +141,9 @@ func (e *CopyExportEnv) History(obs map[string]CopyObservation, live string) ([]
 			if s := chainSets[info.Chain]; s != nil && len(s.Parts) > 1 {
 				info.Set = s
 			}
+		}
+		if info.Fingerprint != "" {
+			info.Receipt = receiptText(info, info.Set)
 		}
 		out = append(out, info)
 	}
@@ -349,18 +353,22 @@ func (e *CopyExportEnv) Receipt(run string) (string, error) {
 	if !ok || info.Fingerprint == "" {
 		return "", fmt.Errorf("the fingerprint was not recorded at export time, so there is no receipt to save")
 	}
+	return receiptText(info, e.chainSet(info.Chain, ledger, lines)), nil
+}
+
+// receiptText words the receipt of one card, with its retry set when it has one.
+func receiptText(info CopyRunInfo, chain *CopySetInfo) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "MailArchive export fingerprint receipt\n")
 	fmt.Fprintf(&b, "Keep this outside the export: it is the sender's anchor. Give the fingerprint to the recipient separately (email, phone).\n\n")
 	fmt.Fprintf(&b, "Export folder: %s\n", info.RootName)
-	fmt.Fprintf(&b, "Run: %s\n", run)
+	fmt.Fprintf(&b, "Run: %s\n", info.Run)
 	if info.Mailbox != "" {
 		fmt.Fprintf(&b, "Mailbox: %s\n", info.Mailbox)
 	}
 	fmt.Fprintf(&b, "Started (UTC): %s\n", info.Started.UTC().Format("2006-01-02 15:04:05"))
 	fmt.Fprintf(&b, "Counts: %d selected, %d exported, %d failed, %d not attempted\n", info.Planned, info.Exported, info.Failed, info.NotAttempted)
 	fmt.Fprintf(&b, "Fingerprint (SHA-256 of SHA256SUMS.txt): %s\n", GroupFingerprint(info.Fingerprint))
-	chain := e.chainSet(info.Chain, ledger, lines)
 	if chain != nil && len(chain.Parts) > 1 {
 		fmt.Fprintf(&b, "\nThis export is one part of a set. Set fingerprint: %s\n", GroupFingerprint(chain.Fingerprint))
 		fmt.Fprintf(&b, "It is the SHA-256 over the parts' SHA256SUMS.txt files, in the order the parts were finished:\n")
@@ -372,7 +380,7 @@ func (e *CopyExportEnv) Receipt(run string) (string, error) {
 			fmt.Fprintf(&b, "  %d. %s: %s%s\n", i+1, p.RootName, GroupFingerprint(p.Fingerprint), note)
 		}
 	}
-	return b.String(), nil
+	return b.String()
 }
 
 // GroupFingerprint is a fingerprint in groups of 8 hex digits, for reading aloud.
@@ -478,6 +486,67 @@ func (e *CopyExportEnv) OpenTarget(run string) (*CopyOpenTarget, error) {
 		}
 	}
 	return &CopyOpenTarget{Root: spec.Path, Readme: filepath.Join(spec.Path, copyReadmeName)}, nil
+}
+
+// FinishRun is the activity page's "Finish as partial" for an unsealed run and "Check and
+// finish" for a sealed one (XC2, XC5), both from the run record alone, in the folder
+// §4.9's tuple confirms.
+func (e *CopyExportEnv) FinishRun(run string) (*CopyResult, error) {
+	sum, err := readSummary(e.recordPath(run))
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, refuse("R-h", "This export's run record is missing, so MailArchive can't finish it — Check this export still works.")
+		}
+		return nil, err
+	}
+	if sum.Sealed != nil {
+		return e.CheckAndFinish(run)
+	}
+	return e.FinishAsPartial(run)
+}
+
+// SetCaptureBusy tells the engine how to see a capture: while fn reports true a run backs
+// off before each message, and that pause is its own, never counted toward the no-progress
+// window (design §4.14). The desktop passes "a capture runs in this process, or the
+// archive lock is held".
+func (e *CopyExportEnv) SetCaptureBusy(fn func() bool) { e.captureBusy = fn }
+
+// SetFreeBytes replaces how free space is read on the destination and on the state
+// volume: a test seam for the free-space policy (XC11).
+func (e *CopyExportEnv) SetFreeBytes(dest, state func(dir string) (uint64, error)) {
+	e.freeDest, e.freeState = dest, state
+}
+
+// SetStepHook installs fn to be called after each named write of a run (the engine's own
+// fault points, "W6:<n>" after message n among them): a test's seam. It runs in the run's
+// goroutine, so it may block (a wedged destination) or panic (a bug in the run, which the
+// DC3 recover turns into "Stopped: an internal error"). Set it before a run starts.
+func (e *CopyExportEnv) SetStepHook(fn func(step string)) {
+	if e.faults == nil {
+		e.faults = &copyFaults{}
+	}
+	e.faults.hook = fn
+}
+
+// Ended reports whether the journal holds the run's `end`: no marker action is left.
+func (e *CopyExportEnv) Ended(run string) bool { return e.journalHas(run, "end") }
+
+// WedgeStop records that a run did not stop when it was cancelled, after its caller
+// released the export slot and Abandoned the run (design §4.13, "a wedged run", XC10): a
+// `stopped` line in the run record and a `stopped` journal event, never an `end`, so
+// once the goroutine has returned, or after a restart, the run is reconciled like any
+// unsealed run and Finish as partial is offered (RR2-C3).
+func (e *CopyExportEnv) WedgeStop(run string) error {
+	reason := "the destination is not responding"
+	rec, err := e.openRecord(run)
+	if err != nil {
+		return err
+	}
+	defer rec.Close()
+	if err := rec.append(ceStoppedLine{T: "stopped", RID: "R-g", Class: stopClassDestination, Reason: reason, At: e.nowTime()}); err != nil {
+		return err
+	}
+	return e.journalAppend(ceJournalLine{Run: run, Event: "stopped", Reason: "R-g, " + stopClassDestination})
 }
 
 // ---- Check this export --------------------------------------------------------
@@ -785,6 +854,14 @@ func (r *CopyReconciler) reconcile(run string) CopyObservation {
 	r.obs[run] = obs
 	r.mu.Unlock()
 	return obs
+}
+
+// Record caches an outcome a user action reached (This folder is gone, say), so the
+// history shows it without waiting for a probe.
+func (r *CopyReconciler) Record(obs CopyObservation) {
+	r.mu.Lock()
+	r.obs[obs.Run] = obs
+	r.mu.Unlock()
 }
 
 // LookAgain probes run's folder now (the card's "Look again", or a user action that

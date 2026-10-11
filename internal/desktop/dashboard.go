@@ -7,11 +7,13 @@
 package desktop
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"html/template"
 	"net/http"
 	"os/user"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -20,6 +22,7 @@ import (
 	"mail-archive-tool/internal/graphconfig"
 	"mail-archive-tool/internal/instance"
 	"mail-archive-tool/internal/localweb"
+	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/server"
 )
@@ -69,6 +72,32 @@ type Config struct {
 	NewLink func() string
 	// GOOS overrides runtime.GOOS in the OS-aware copy (tests).
 	GOOS string
+
+	// Lifecycle is the process's own life (extraction design §4.3, XC6): its context is
+	// what the workspace's Graph session and every preview and run are built on, and its
+	// Drain stops and finalizes the running export. Nil: the background context, no drain.
+	Lifecycle *Lifecycle
+	// StateDir is the per-user, local, non-roaming state directory the run records, the
+	// journal and the fingerprint ledger live in (design §4.16, §4.19); see StateDir().
+	// Empty: the workspace can preview but cannot start an export.
+	StateDir string
+	// Host names this computer in the journal and the run records. Default os.Hostname().
+	Host string
+	// Version is the tool's version, written into each export's manifest.
+	Version string
+	// WorkspaceOff is the deployment switch (ruling Q6, MA-526): an administrator turns the
+	// Extraction workspace off, so its pages and endpoints are never registered (404) and the
+	// sidebar's Export group is hidden. Exports already on disk are unaffected.
+	WorkspaceOff bool
+	// BackupInstalled reports whether the weekly backup is installed (tests); nil asks the
+	// OS scheduler about the configured archive.
+	BackupInstalled func() bool
+
+	// Test overrides of the Graph client's bounds (zero = its defaults, fixed by design).
+	RequestTimeout    time.Duration
+	MIMETimeout       time.Duration
+	MIMEIdleTimeout   time.Duration
+	MIMEHeaderTimeout time.Duration
 }
 
 func (cfg Config) goos() string {
@@ -124,19 +153,67 @@ func (cfg Config) signInState() (string, bool) {
 	return graph.SignedIn(cfg.tokenCfg(c))
 }
 
-// dashboard holds the per-process CSRF token and the live capture state.
+// dashboard holds the per-process CSRF token and the live capture state, and the
+// extraction workspace's: its session, its export slot and its sign-in slot.
 type dashboard struct {
 	cfg  Config
 	csrf string
 	cap  *captureState
+
+	boot string // this process's epoch: a page that carries another one was made before a restart (R-y)
+	life *Lifecycle
+	ws   *workspace
+	ex   *exportsState
+	si   *signInSlot
+	flow deviceFlow
+
+	// seams a test replaces
+	now    func() time.Time
+	pick   func(ctx context.Context, title string) (string, error)
+	reveal func(name string, args []string) error
+}
+
+// newDashboard builds the dashboard's state. With a StateDir it also runs the launch
+// sweep of the run records, then reconciles each unresolved run once in the background
+// (design §4.16, XC4), before any export can start.
+func newDashboard(cfg Config) *dashboard {
+	d := &dashboard{cfg: cfg, csrf: server.NewCSRFToken(), cap: &captureState{}, boot: randomID(8), life: cfg.Lifecycle,
+		si: &signInSlot{}, now: time.Now, pick: pickFolder, reveal: defaultReveal}
+	d.ws = newWorkspace(d)
+	d.ex = newExportsState(d)
+	d.ex.env.SetCaptureBusy(d.captureRunning)
+	if cfg.StateDir != "" && !cfg.WorkspaceOff {
+		_ = d.ex.rec.Launch()
+	}
+	d.life.OnDrain(d.drain)
+	return d
+}
+
+// captureRunning is whether a capture (or a verify or rebuild) runs in this process, or the
+// archive lock is held by another run: the copy export backs off meanwhile, uncounted, until
+// the throttle fix lands (design §4.14, XC30). It only reads: it never takes the lock.
+func (d *dashboard) captureRunning() bool {
+	d.cap.mu.Lock()
+	running := d.cap.running
+	d.cap.mu.Unlock()
+	if running {
+		return true
+	}
+	if out := d.cfg.effectiveOut(); out != "" {
+		return lockfile.Held(filepath.Join(out, lockfile.Name))
+	}
+	return false
 }
 
 // DashboardHandler serves the dashboard: GET "/" (Overview), the static script,
 // and the loopback-only, CSRF/Origin/Host-guarded action endpoints. Its routes are
 // registered on a localweb.Mux so the binary's guard and route probe name them
 // (design-local-confidentiality CC15).
-func DashboardHandler(cfg Config) http.Handler {
-	d := &dashboard{cfg: cfg, csrf: server.NewCSRFToken(), cap: &captureState{}}
+func DashboardHandler(cfg Config) http.Handler { return newDashboard(cfg).router() }
+
+// router registers the dashboard's routes: the Overview's, and, unless the deployment
+// switch is off, the Extraction workspace's pages and endpoints.
+func (d *dashboard) router() localweb.Router {
 	mux := localweb.NewMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
@@ -144,7 +221,7 @@ func DashboardHandler(cfg Config) http.Handler {
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write([]byte(d.cfg.overview(d.csrf)))
+		w.Write([]byte(d.cfg.overviewFor(d.csrf, d.boot)))
 	})
 	mux.HandleFunc("/dashboard.js", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
@@ -161,7 +238,44 @@ func DashboardHandler(cfg Config) http.Handler {
 	mux.HandleFunc("/api/rebuild", d.rebuildAction)
 	mux.HandleFunc("/api/health", d.healthAction)
 	mux.HandleFunc("/api/browser-link", d.browserLink)
+	if !d.cfg.WorkspaceOff {
+		d.registerWorkspace(mux)
+	}
 	return localweb.Routed(dashboardHeaders(mux), mux)
+}
+
+// registerWorkspace registers the Extraction workspace's two page shells, its scripts and
+// its nineteen POST endpoints on the dashboard's route registry (XC23): every one is seen
+// by the guard and the route probe, and every URL they use is relative.
+func (d *dashboard) registerWorkspace(mux *localweb.Mux) {
+	mux.HandleFunc("/workspace", d.workspacePage)
+	mux.HandleFunc("/exports", d.exportsPage)
+	mux.HandleFunc("/workspace.js", serveJS(workspaceJS))
+	mux.HandleFunc("/exports.js", serveJS(exportsJS))
+	mux.HandleFunc("/signin.js", serveJS(signinJS))
+	for path, h := range map[string]func(http.ResponseWriter, *http.Request){
+		"/api/m365/signin":              d.signInAction,
+		"/api/m365/signin-status":       d.signInStatusAction,
+		"/api/workspace/source":         d.sourceAction,
+		"/api/workspace/folders":        d.foldersAction,
+		"/api/workspace/messages":       d.messagesAction,
+		"/api/workspace/count":          d.countAction,
+		"/api/workspace/browse":         d.browseAction,
+		"/api/workspace/mkdir":          d.mkdirAction,
+		"/api/workspace/preview":        d.previewAction,
+		"/api/workspace/preview-status": d.previewStatusAction,
+		"/api/exports/start":            d.startAction,
+		"/api/exports/cancel":           d.cancelAction,
+		"/api/exports/progress":         d.progressAction,
+		"/api/exports/history":          d.historyAction,
+		"/api/exports/open-folder":      d.openFolderAction,
+		"/api/exports/retry":            d.retryAction,
+		"/api/exports/finish":           d.finishAction,
+		"/api/exports/locate":           d.locateAction,
+		"/api/exports/check":            d.checkAction,
+	} {
+		mux.HandleFunc(path, d.api(h))
+	}
 }
 
 // browserLink mints a fresh one-time link for a second browser (a guarded POST:
@@ -202,18 +316,20 @@ func (d *dashboard) saveSettings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	s := d.cfg.settings()
-	s.Out = strings.TrimSpace(in.Out)
+	out := strings.TrimSpace(in.Out)
 	// The archive is copied, synced and browsed; MailArchive's own settings and
 	// sign-in must not travel with it (design-local-confidentiality P10).
-	if s.Out != "" {
-		if err := d.cfg.settingsOverlap(s.Out); err != nil {
+	if out != "" {
+		if err := d.cfg.settingsOverlap(out); err != nil {
 			writeJSONStatus(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
 			return
 		}
 	}
-	s.KeepRaw, s.IncludeDeleted, s.IncludeJunk = in.KeepRaw, in.IncludeDeleted, in.IncludeJunk
-	if err := SaveSettings(d.cfg.SettingsPath, s); err != nil {
+	// Reloaded under the settings lock: only the fields this save owns change, so a
+	// racing export start's own fields are never written back stale (XC34).
+	if err := UpdateSettings(d.cfg.SettingsPath, "settings", func(s *Settings) {
+		s.Out, s.KeepRaw, s.IncludeDeleted, s.IncludeJunk = out, in.KeepRaw, in.IncludeDeleted, in.IncludeJunk
+	}); err != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
@@ -240,6 +356,7 @@ func (d *dashboard) clearSignin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
+	d.signInChanged("") // the workspace's session, previews and a running export go with it (XC7)
 	writeJSON(w, map[string]any{"ok": true})
 }
 
@@ -336,11 +453,17 @@ func vaultPhrase() string {
 	return "a file only you can read"
 }
 
-func (cfg Config) overview(csrf string) string {
+func (cfg Config) overview(csrf string) string { return cfg.overviewFor(csrf, "") }
+
+// overviewFor is the Overview page for a process whose epoch is epoch (the workspace's
+// scripts send it back, so a page made before a restart is told so, R-y).
+func (cfg Config) overviewFor(csrf, epoch string) string {
 	c := cfg.load()
 	upn, signedIn := cfg.signInState()
 	s := cfg.settings()
 	data := struct {
+		Export         bool // the Extraction workspace is on (not turned off by the deployment switch, MA-526)
+		Epoch          string
 		CSRF           string
 		Cards          []card
 		Configured     bool
@@ -361,7 +484,7 @@ func (cfg Config) overview(csrf string) string {
 		SessionsLine   string
 		FormerNotice   string
 		ResidualOS     string // "macOS" or "Linux": where another account can read a just-opened link's argv
-	}{CSRF: csrf, Cards: cfg.cards(), Vault: vaultPhrase(), OutDir: cfg.effectiveOut(), ReaderURL: cfg.ReaderURL, SignedIn: signedIn, UPN: upn,
+	}{Export: !cfg.WorkspaceOff, Epoch: epoch, CSRF: csrf, Cards: cfg.cards(), Vault: vaultPhrase(), OutDir: cfg.effectiveOut(), ReaderURL: cfg.ReaderURL, SignedIn: signedIn, UPN: upn,
 		KeepRaw: s.KeepRaw, IncludeDeleted: s.IncludeDeleted, IncludeJunk: s.IncludeJunk,
 		Interval: orElse(s.Interval, "weekly"), WeeklyTime: orElse(s.WeeklyTime, "03:00"),
 		Account: cfg.account(), SessionsLine: cfg.sessionsLine(), FormerNotice: instance.NoticeFor(cfg.Former), ResidualOS: residualOS(cfg.goos())}
@@ -396,7 +519,7 @@ func Loopback(addr string) bool { return server.IsLoopback(addr) }
 var overviewTmpl = template.Must(template.New("overview").Parse(`<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="csrf" content="{{.CSRF}}">
+<meta name="csrf" content="{{.CSRF}}">{{if .Export}}<meta name="epoch" content="{{.Epoch}}">{{end}}
 <title>MailArchive Desktop</title>
 <style>
 :root{color-scheme:light dark;--bg:#f3f5f8;--panel:#fff;--text:#18212b;--muted:#667085;--line:#d9e0e8;--accent:#2563eb;--accent-soft:#eaf1ff;--good:#157347;--warn:#a15c00;--danger:#b42318;--sidebar:#0f172a;--sidebar-text:#e5e7eb;--sidebar-muted:#94a3b8}
@@ -452,6 +575,9 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       {{if .ReaderURL}}<a href="{{.ReaderURL}}" target="_blank" rel="noopener">Open archive</a>
       <a href="{{.ReaderURL}}goback" target="_blank" rel="noopener">Go back in time</a>{{else}}<span class="nav-disabled" title="The archive reader is not running">Open archive</span>
       <span class="nav-disabled" title="The archive reader is not running">Go back in time</span>{{end}}
+      {{if .Export}}<div class="nav-title">Export</div>
+      <a href="#sec-export">Extraction workspace</a>
+      <a href="#sec-export-activity">Export activity</a>{{end}}
       <div class="nav-title">Diagnostics</div>
       <a href="#sec-health">Status &amp; health</a>
       <a href="#sec-activity">Activity log</a>
@@ -480,13 +606,29 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <div class="row"><div class="k">Tenant</div><div class="v mono">{{.Tenant}}</div></div>
       <div class="row"><div class="k">Application (client) ID</div><div class="v mono">{{.ClientID}}</div></div>
       <div class="row"><div class="k">Sign-in mode</div><div class="v">{{.Auth}}</div></div>
-      <div class="row"><div class="k">Sign-in</div><div class="v">{{if .SignedIn}}<span class="good">Signed in as {{.UPN}}</span> &nbsp; <button class="btn-link" id="clearSignin">Clear sign-in</button>{{else}}<span class="warn">Sign-in needed</span> — the first capture signs you in with a Microsoft device code.{{end}}</div></div>
+      <div class="row"><div class="k">Sign-in</div><div class="v">{{if .SignedIn}}<span class="good">Signed in as {{.UPN}}</span> &nbsp; <button class="btn-link" id="clearSignin">Clear sign-in</button>{{else}}<span class="warn">Sign-in needed</span> — the first capture signs you in with a Microsoft device code.{{if .Export}} <button class="btn-link" id="signInBtn" type="button">Sign in</button>{{end}}{{end}}</div></div>
+      <div class="row"><div class="k">Scope</div><div class="v">Microsoft 365: your own mailbox only{{if .UPN}} ({{.UPN}}){{end}}, read-only (Mail.Read). Shared mailboxes and other people's live mailboxes aren't available in this version. They would need a different Microsoft permission (Mail.Read.Shared) that this app does not request.</div></div>
+      {{if and .Export (not .SignedIn)}}<div class="device-box" id="signInBox" hidden>
+        <div id="signInBanner" class="whoami"></div>
+        <div id="signInDevice" hidden>To sign in, open <a id="signInUrl" target="_blank" rel="noopener">this Microsoft page</a> and enter the code:
+          <div class="device-code" id="signInCode"></div></div>
+        <div id="signInConfirm" hidden><div id="signInConfirmText"></div>
+          <div style="margin-top:8px"><button class="btn" id="signInKeep" type="button">Keep</button> <button class="btn secondary" id="signInOut" type="button">Sign out</button></div></div>
+        <div class="card-sub" style="margin:10px 0 0" id="signInNotice"></div>
+      </div><div class="note" id="banner" hidden></div>{{end}}
       {{else}}
       <div class="row"><div class="k">Status</div><div class="v warn">Not configured — run <span class="mono">mailarchive setup</span> to add your tenant and application ID.</div></div>
       {{end}}
       {{if .OutDir}}<div class="row"><div class="k">Archive location</div><div class="v mono">{{.OutDir}}</div></div>{{end}}
       <div class="note" id="note" hidden></div>
     </div>
+
+    {{if .Export}}<div class="card" id="sec-export">
+      <h2>Export</h2>
+      <p class="card-sub">Copy selected folders and messages from your Microsoft 365 mailbox to a folder, with a manifest and checksums the recipient can check. Each export is a new folder; nothing is ever changed in your mailbox or your archive.</p>
+      <a class="btn" href="workspace">Open the Extraction workspace</a>
+      <a class="btn secondary" href="exports" id="sec-export-activity">Export activity</a>
+    </div>{{end}}
 
     <div class="card" id="sec-archive">
       <h2>Archive now</h2>
@@ -559,6 +701,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
   </div></main>
 </div>
 <script src="dashboard.js"></script>
+{{if .Export}}<script src="signin.js"></script>{{end}}
 </body></html>`))
 
 // dashboardJS wires the action buttons (clear sign-in, settings, archive-now with
