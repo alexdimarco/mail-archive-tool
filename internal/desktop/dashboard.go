@@ -106,6 +106,9 @@ type Config struct {
 	// for the configured archive alone and are used before these.
 	BackupInstalledFor func(out string) bool
 	RemoveBackupFor    func(out string) error
+	// InstallBackup installs the weekly backup task (tests, the OS scheduler's stand-in); nil hands the
+	// Spec to the OS scheduler (schedule.Install).
+	InstallBackup func(spec schedule.Spec) error
 
 	// Test overrides of the Graph client's bounds (zero = its defaults, fixed by design).
 	RequestTimeout    time.Duration

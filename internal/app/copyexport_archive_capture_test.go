@@ -69,6 +69,50 @@ func TestArchiveExportBesideARunningCaptureIsChangedNotDamaged(t *testing.T) {
 	}
 }
 
+// covers: MA-510, MA-531, R29, R5, S25
+// The archive's lock tells a capture from damage only for the configured archive (E4-AI2, re-verified): another
+// archive folder is read-only and no capture of this computer writes it, so a lock file in it (a copy of an
+// archive taken while a capture ran, or a lock left by one that died, or planted) says nothing about its files.
+// A file that does not match its checksum, or is gone, in another archive folder with a lock held is told as
+// it is (terminal), never as "changed during export", which would offer it again for ever.
+func TestArchiveExportFromAnotherFolderIgnoresItsLock(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		damage func(t *testing.T, a *ceArchive)
+		reason string
+	}{
+		{"a file that no longer matches", flipEML, "doesn't match the checksum the archive recorded"},
+		{"a file that is gone", removeEML, "removed from the archive after you selected it"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			a := buildCEArchive(t)
+			os.Remove(filepath.Join(a.dir, lockfile.Name))
+			e := newCEEnv(t)
+			s, err := OpenArchive(a.dir, ArchiveOptions{Other: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+			hello, second := a.key("hello"), a.key("second")
+			p := a.plan(e, s, []string{hello, second})
+			lk, err := lockfile.AcquireAs(filepath.Join(a.dir, lockfile.Name), "graph")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer lk.Release()
+			if s.Capturing() {
+				t.Fatalf("another archive folder reports a capture running because its lock is held")
+			}
+			c.damage(t, a)
+			res := a.run(e, p, s)
+			f := failureListed(manifestOf(t, res.Root), hello)
+			if f == nil || f["class"] != "terminal" || !strings.Contains(f["reason"].(string), c.reason) {
+				t.Errorf("hello's failure = %v, want terminal and %q", f, c.reason)
+			}
+		})
+	}
+}
+
 func flipEML(t *testing.T, a *ceArchive) {
 	t.Helper()
 	_, eml, _ := a.files("hello")

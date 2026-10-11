@@ -142,6 +142,44 @@ func TestArchiveSourceTreeCountLimitsAreForAnotherFolderNotTheConfiguredArchive(
 	}
 }
 
+// covers: MA-531, MA-435, MA-512, R29, S52
+// The folder chain of a message is made once per folder (E4-AO2, the second half, re-verified): resolve joined
+// every prefix of a message's folder path for each message, so the many records of a deep folder cost
+// the square of its depth each (a path 300 levels deep, the deepest the tree takes, costs 1.4 MB a message: 500
+// messages 700 MB). The chains are kept by folder, each made from its parent's, and a message takes a copy.
+// The test is the memory of resolving 500 messages of a folder 300 levels deep, which the memo keeps to a few MB.
+func TestArchiveResolveMakesTheFolderChainOnceForTheManyMessagesOfADeepFolder(t *testing.T) {
+	a := buildCEArchive(t)
+	deepFolder := strings.Join(slicesOf(300, "d"), "/")
+	var keys []string
+	a.edit(func(m *state.Manifest) {
+		for i := 0; i < 500; i++ {
+			id := fmt.Sprintf("m%03d", i)
+			k := state.Key("alice", deepFolder, id)
+			m.Add(k, state.Record{Path: "alice/deep/" + id + ".html", Folder: deepFolder})
+			keys = append(keys, k)
+		}
+	})
+	s := a.open()
+	var m0, m1 runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&m0)
+	res, err := s.Messages(t.Context(), keys, nil, nil)
+	runtime.ReadMemStats(&m1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Skipped != 500 { // their files are not there: the belt leaves them out, after the chain is made
+		t.Fatalf("the fixture: %d records skipped, want 500", res.Skipped)
+	}
+	if got := m1.TotalAlloc - m0.TotalAlloc; got > 96<<20 {
+		t.Errorf("resolving 500 records of a folder 300 levels deep allocated %d MiB: the chain of folders is made again for each", got>>20)
+	}
+	if refs := s.folderRefs("alice", deepFolder); len(refs) != 301 || refs[300].ID != "alice/"+deepFolder {
+		t.Errorf("the chain of the deep folder: %d levels", len(refs))
+	}
+}
+
 func slicesOf(n int, s string) []string {
 	out := make([]string, n)
 	for i := range out {

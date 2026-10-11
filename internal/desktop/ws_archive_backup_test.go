@@ -5,6 +5,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"mail-archive-tool/internal/schedule"
 )
 
 // backupFake is an OS scheduler that holds weekly-backup tasks by the archive location each is named for.
@@ -97,6 +99,64 @@ func TestSettingsGuardKeepsGuardingAfterSaveAndKeepTheBackup(t *testing.T) {
 	}
 	if body := save(c, ""); body["ok"] != true {
 		t.Errorf("a save with no backup installed asks nothing: %v", body)
+	}
+}
+
+// covers: MA-523, R12, S41
+// Two halves of E4-AI6 that no test held (re-verification): a plain Save that does not change the location
+// leaves the location the installed task is named for as it is (a Save of another checkbox after "Save and
+// keep the backup" must not make the guard blind again), and installing the weekly backup after a keep
+// removes the task that kept the old location's name (it would run beside the new one and archive into the
+// same folder). The install is the code's stand-in: no OS scheduler is touched.
+func TestSettingsKeepTheBackupNameAcrossASaveAndAnInstallRemovesTheOldTask(t *testing.T) {
+	e := newWsEnv(t)
+	a, b, c := t.TempDir(), t.TempDir(), t.TempDir()
+	fake := &backupFake{tasks: map[string]bool{a: true}}
+	useBackupFake(e, fake)
+	var installed []string
+	e.cfg.InstallBackup = func(spec schedule.Spec) error {
+		installed = append(installed, spec.Out)
+		fake.tasks[spec.Out] = true
+		return nil
+	}
+	e.d.cfg = e.cfg
+	if err := UpdateSettings(e.cfg.SettingsPath, "test", func(s *Settings) { s.Out = a }); err != nil {
+		t.Fatal(err)
+	}
+	save := func(out, backup string, keepRaw bool) map[string]any {
+		_, body := e.post("/api/settings", map[string]any{"out": out, "backup": backup, "keepRaw": keepRaw})
+		return body
+	}
+	if body := save(b, "keep", false); body["ok"] != true || LoadSettings(e.cfg.SettingsPath).BackupFor != a {
+		t.Fatalf("Save and keep the backup: %v, backupFor %q", body, LoadSettings(e.cfg.SettingsPath).BackupFor)
+	}
+
+	// a plain Save of another setting, the location as it is
+	if body := save(b, "", true); body["ok"] != true || body["confirm"] == true {
+		t.Fatalf("a save that leaves the location as it is: %v", body)
+	}
+	if got := LoadSettings(e.cfg.SettingsPath); got.BackupFor != a || !got.KeepRaw {
+		t.Errorf("after a plain Save the settings name the task for %q (keepRaw %v), want it still named for %s", got.BackupFor, got.KeepRaw, a)
+	}
+	if got := weeklyBackupCard(e); got != "Installed" || !e.d.backupInstalled() {
+		t.Errorf("after a plain Save the card says %q: the guard is blind to the task named for %s", got, a)
+	}
+	if body := save(c, "", true); body["confirm"] != true {
+		t.Errorf("a retarget after a plain Save was not asked about: %v", body)
+	}
+
+	// install: the task is named for the location now, and the one that kept the old name is removed
+	if _, out := e.post("/api/schedule-install", map[string]any{}); out["ok"] != true {
+		t.Fatalf("Install: %v", out)
+	}
+	if len(installed) != 1 || installed[0] != b {
+		t.Fatalf("the install was handed %v, want a task for %s", installed, b)
+	}
+	if fake.tasks[a] || !fake.tasks[b] || len(fake.removed) != 1 || fake.removed[0] != a {
+		t.Errorf("after Install the tasks are %v (removed %v): the task named for %s runs beside the new one", fake.tasks, fake.removed, a)
+	}
+	if got := LoadSettings(e.cfg.SettingsPath).BackupFor; got != "" {
+		t.Errorf("after Install the settings still name the task for %q", got)
 	}
 }
 

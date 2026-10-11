@@ -120,7 +120,11 @@ func (d *dashboard) scheduleInstall(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
-	if err := schedule.Install(spec); err != nil {
+	install := schedule.Install
+	if d.cfg.InstallBackup != nil {
+		install = d.cfg.InstallBackup
+	}
+	if err := install(spec); err != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
