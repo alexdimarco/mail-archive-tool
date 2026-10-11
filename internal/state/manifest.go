@@ -1298,29 +1298,7 @@ func (w *WalkedFolders) Len() int {
 // did not complete (a folder error, a ctx cancel, or a lost lock), so a
 // partial/aborted run marks nothing gone.
 func (m *Manifest) SweepGone(token string, walked *WalkedFolders, thisRun time.Time) []string {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	prefix := token + keySeparator
-	var gone []string
-	for key, r := range m.Entries {
-		if !strings.HasPrefix(key, prefix) {
-			continue // another mailbox's record — out of this sweep's scope
-		}
-		if !r.Present || !r.LastSeen.Before(thisRun) {
-			continue // already gone, or observed this run
-		}
-		if !walked.Has(r.Folder) {
-			continue // excluded/unwalked folder — retain its last state
-		}
-		gone = append(gone, key)
-	}
-	sort.Strings(gone)
-	for _, key := range gone {
-		r := m.Entries[key]
-		r.Present = false // keep the last known Folder/LastSeen; the file stays (R13)
-		m.Entries[key] = r
-	}
-	return gone
+	return m.SweepGoneSparing(token, walked, thisRun, SweepSpare{})
 }
 
 // KeysForIdentity returns every (key, fingerprint) sharing the message identity

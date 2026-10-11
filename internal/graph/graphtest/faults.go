@@ -24,6 +24,13 @@ func Body(id string) string {
 		"@x>\r\nDate: Mon, 03 Mar 2025 09:00:00 +0000\r\n\r\nbody-" + id + "\r\n"
 }
 
+// BodyWithMid is Body with the Message-ID mid (without angle brackets) in place of
+// the one its id gives.
+func BodyWithMid(id, mid string) string {
+	return "From: a@example.com\r\nSubject: subj-" + id + "\r\nMessage-ID: <" + mid +
+		">\r\nDate: Mon, 03 Mar 2025 09:00:00 +0000\r\n\r\nbody-" + id + "\r\n"
+}
+
 // BodyNoMid is Body without a Message-ID: a message capture knows only by a
 // content hash.
 func BodyNoMid(id string) string {

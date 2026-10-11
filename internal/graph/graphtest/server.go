@@ -42,6 +42,8 @@ type Server struct {
 	// (control) request served by a handler of the test's own.
 	honor    bool
 	noMid    map[string]bool
+	mids     map[string]string // message id -> the Message-ID its listing carries, when not its own
+	bodyMids map[string]string // message id -> the Message-ID its $value carries, when not the listing's
 	received map[string]time.Time
 	lists    map[string]http.HandlerFunc // upn/folderID -> the folder's message listing
 	probe    http.HandlerFunc            // GET /users/{upn}/mailFolders/{id}
@@ -64,7 +66,8 @@ type folder struct {
 // NewServer starts an empty fake.
 func NewServer() *Server {
 	s := &Server{boxes: map[string]*mailbox{}, values: map[string]http.HandlerFunc{},
-		noMid: map[string]bool{}, received: map[string]time.Time{}, lists: map[string]http.HandlerFunc{}}
+		noMid: map[string]bool{}, mids: map[string]string{}, bodyMids: map[string]string{},
+		received: map[string]time.Time{}, lists: map[string]http.HandlerFunc{}}
 	s.srv = httptest.NewServer(http.HandlerFunc(s.serve))
 	s.URL = s.srv.URL
 	return s
@@ -147,6 +150,23 @@ func (s *Server) SetNoMid(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.noMid[id] = true
+}
+
+// SetMid gives message id the Message-ID mid (without angle brackets) in its
+// listing entry: a message whose Graph id is not its Message-ID, as a restored
+// or re-imported one. Its $value carries the same Message-ID unless SetBodyMid
+// says another (a listing that does not agree with the message).
+func (s *Server) SetMid(id, mid string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mids[id] = mid
+}
+
+// SetBodyMid gives message id's $value the Message-ID mid, whatever its listing says.
+func (s *Server) SetBodyMid(id, mid string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.bodyMids[id] = mid
 }
 
 // SetReceived sets message id's receivedDateTime (it defaults to 2025-03-01 09:00 UTC).
@@ -275,16 +295,23 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		h := s.values[parts[2]]
 		noMid := s.noMid[parts[2]]
+		mid, ok := s.bodyMids[parts[2]]
+		if !ok {
+			mid, ok = s.mids[parts[2]]
+		}
 		s.mu.Unlock()
 		if h != nil {
 			h(w, r)
 			return
 		}
-		if noMid {
+		switch {
+		case noMid:
 			io.WriteString(w, BodyNoMid(parts[2]))
-			return
+		case ok:
+			io.WriteString(w, BodyWithMid(parts[2], mid))
+		default:
+			io.WriteString(w, Body(parts[2]))
 		}
-		io.WriteString(w, Body(parts[2]))
 	default:
 		http.NotFound(w, r) // the well-known folder resolutions, and anything else
 	}
@@ -371,6 +398,9 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request, upn, folderID 
 			received = t
 		}
 		mid := `"internetMessageId":"<` + strings.ToLower(id) + `@x>",`
+		if m, ok := s.mids[id]; ok {
+			mid = `"internetMessageId":"<` + m + `>",`
+		}
 		if s.noMid[id] {
 			mid = ""
 		}

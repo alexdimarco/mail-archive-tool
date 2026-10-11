@@ -3,16 +3,30 @@ package app
 import (
 	"bytes"
 	"context"
+	"io"
 	"log"
+	"net/http"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/export"
+	"mail-archive-tool/internal/graph/graphtest"
 	"mail-archive-tool/internal/model"
+	"mail-archive-tool/internal/source"
 	"mail-archive-tool/internal/state"
 )
+
+// withAttachment is a multipart message with one attachment: its capture writes a
+// page and a zip.
+func withAttachment(id string) string {
+	return "From: a@example.com\r\nSubject: subj-" + id + "\r\nMessage-ID: <" + strings.ToLower(id) + "@x>\r\n" +
+		"Date: Mon, 03 Mar 2025 09:00:00 +0000\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"b\"\r\n\r\n" +
+		"--b\r\nContent-Type: text/plain\r\n\r\nbody-" + id + "\r\n--b\r\nContent-Type: application/octet-stream\r\n" +
+		"Content-Disposition: attachment; filename=\"a.bin\"\r\nContent-Transfer-Encoding: base64\r\n\r\nQUJDRA==\r\n--b--\r\n"
+}
 
 // covers: MA-323, R1, R5, S46
 // An older build's collapsed "(unreadable message)" record is re-classed by a RUN
@@ -96,12 +110,78 @@ func TestLocalFolderFaultsCostOneFolder(t *testing.T) {
 
 // covers: MA-318, R1, R3, R7, R10, S46
 func TestRawStubsKeepTheirBytesAndTheirRecord(t *testing.T) {
-	t.Skip("MA-318: a MIME-panicking mbox, maildir or Graph message keeps Raw (the .eml under -raw), shows the headers plus the first 64 KiB on its page and in the index, and is an unparsed record with ParserGen and RawDigest (FC25); the raw-preserving stub is FI-S2b's (and FI-S3's for Graph); closes when they land")
+	t.Skip("MA-318: a MIME-panicking mbox, maildir or Graph message keeps Raw (the .eml under -raw), shows the headers plus the first 64 KiB on its page and in the index, and is an unparsed record with ParserGen and RawDigest (FC25); the raw-preserving stub is FI-S2b's, for Graph too: FI-S3 gave the Graph stub its listing Message-ID and holds it back from an archived record, but source.ParseRFC822 still returns the bare stub with no Raw to keep; closes when FI-S2b lands")
 }
 
 // covers: MA-318, R1, R3, R7, R10, S46
+// KEEP twin on Graph (P15, FC5): a message archived complete (a page and a zip)
+// whose Full-mode re-read now fails to parse — under a RE-ISSUED immutable id, the
+// case in which an adopted stub would also move the id — leaves the record, the
+// page and the zip as they were: nothing is written, the record is stamped seen,
+// it adopts no new immutable id, no stub record is minted (the archive holds the
+// same records), and one info refresh-failed gap names the held-back capture. It
+// is not a partial run: nothing is missing from the archive.
 func TestGraphFullModeKeepsAnArchivedRecordWhenItsParseNowPanics(t *testing.T) {
-	t.Skip("MA-318: a Graph Full-mode run where an archived message's parse now panics leaves the record, page and zip unchanged and adopts no PhysID (P15's Graph twin); the Graph walk is FI-S3's; closes when FI-S3 lands")
+	s := graphtest.NewServer()
+	defer s.Close()
+	s.HonorImmutableIDs(true)
+	s.AddFolder("u1", "F_IN", "Inbox", 10)
+	s.AddMessage("u1", "F_IN", "M")
+	s.SetValue("M", func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, withAttachment("M")) })
+	out := tmpDir(t)
+	g := isoOptions(s)
+	if res, err := sweepRun(g, out, export.Incremental); err != nil || res.Stats.Exported != 1 {
+		t.Fatalf("run 1: exported %d, err %v; want 1, nil", res.Stats.Exported, err)
+	}
+	files := messageFiles(t, out)
+	zips := 0
+	for name := range files {
+		if strings.HasSuffix(name, "-attachments.zip") {
+			zips++
+		}
+	}
+	if zips != 1 {
+		t.Fatalf("the archived message has %d zips, want its one attachment zip", zips)
+	}
+	before := loadArchive(t, out)
+	k, rec := recordForID(t, out, "m@x")
+
+	// The mailbox re-issues M's id; the service's body is as it was, but this build's
+	// parse of it fails.
+	s.RemoveMessage("u1", "F_IN", "M")
+	s.AddMessage("u1", "F_IN", "M2")
+	s.SetMid("M2", "m@x")
+	parseRFC822 = func([]byte) *model.Message { return &model.Message{Subject: "(unreadable message)"} }
+	t.Cleanup(func() { parseRFC822 = source.ParseRFC822 })
+	res, err := sweepRun(g, out, export.Full)
+	if err != nil {
+		t.Fatalf("run 2 (Full, the parse fails): %v; a held-back capture is info, not a partial run", err)
+	}
+	if res.Stats.Kept != 1 || res.Stats.Exported != 0 {
+		t.Errorf("Kept %d, Exported %d; want 1 and 0", res.Stats.Kept, res.Stats.Exported)
+	}
+	if after := messageFiles(t, out); !reflect.DeepEqual(after, files) {
+		t.Errorf("the archive's files changed: %v -> %v", files, after)
+	}
+	k2, rec2 := recordForID(t, out, "m@x")
+	seen := rec2.LastSeen
+	rec2.LastSeen = rec.LastSeen
+	if k2 != k || !reflect.DeepEqual(rec2, rec) {
+		t.Errorf("the record changed: %+v -> %+v (key %q -> %q); want it as it was, but for its stamp", rec, rec2, k, k2)
+	}
+	if !seen.Equal(runStart(t, out)) {
+		t.Errorf("the record was not stamped seen by the run (LastSeen %v, run %v)", seen, runStart(t, out))
+	}
+	if rec2.PhysID != "M" || len(rec2.AltPhysIDs) != 0 {
+		t.Errorf("the record's immutable ids are %q + %v; want M alone: a held-back capture adopts no id", rec2.PhysID, rec2.AltPhysIDs)
+	}
+	if after := loadArchive(t, out); after.Len() != before.Len() {
+		t.Errorf("the archive holds %d records, want the same %d: no stub record is minted", after.Len(), before.Len())
+	}
+	g2 := graphGaps(t, out)
+	if len(g2) != 1 || g2[0].Reason != "refresh-failed" || g2[0].Class != state.ClassInfo || g2[0].Locator != "graph:M2" {
+		t.Errorf("ledger %+v; want one info refresh-failed gap at graph:M2", g2)
+	}
 }
 
 // covers: MA-318, R1

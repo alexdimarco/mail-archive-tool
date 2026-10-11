@@ -712,6 +712,7 @@ func runGraphMailbox(ctx context.Context, lr *localRun, client *graph.Client, ma
 			// and not downloaded (§4.8.2). One the archive already holds was skipped
 			// above and kept its stamp.
 			if w.s.unwritable[filepath.Join(append([]string{lr.out, token}, f.Path...)...)] {
+				w.faultIdentity(ref, nil)
 				w.folderUnwritable(folderKey, "")
 				return nil
 			}
@@ -723,10 +724,14 @@ func runGraphMailbox(ctx context.Context, lr *localRun, client *graph.Client, ma
 			if m == nil {
 				// Unreachable today (parseMessage never returns nil), and silent if it
 				// were reached: it is an export-failed gap (§4.8 item 6).
-				w.observeItem(ref, folderKey, "export-failed", state.ClassFillable, "the message could not be parsed")
+				w.observeItem(ref, nil, folderKey, "export-failed", state.ClassFillable, "the message could not be parsed")
 				return nil
 			}
+			stub := parseStub(m) // before applyGraphState gives the stub its received time
 			applyGraphState(m, ref)
+			if stub && w.stub(ref, m, folderKey) {
+				return nil
+			}
 			// A panic exporting one crafted message must not abort the mailbox (R10).
 			return w.exportOne(ref, f, folderKey, m, checkpoint)
 		})
@@ -759,13 +764,16 @@ func runGraphMailbox(ctx context.Context, lr *localRun, client *graph.Client, ma
 			return e
 		}
 	}
-	// Any fault this mailbox met defers gone-detection for the whole mailbox: a
-	// message that moved into a folder whose listing failed would be swept from its
-	// old one, and one whose fetch failed was not seen (H2, FC4). Deferred, never
-	// wrong: the next run that meets no fault sweeps.
+	// A folder that could not be listed defers gone-detection for the whole mailbox: a
+	// message that moved into it would be swept from the folder it left (§4.8.3 rule 1,
+	// H2, FC4). A fault on one item defers it only for the records that fault could
+	// hide (faultIdentity). Deferred, never wrong: the next run that meets no such
+	// fault sweeps.
 	var gone []string
-	if !w.folderFault && !w.itemFault {
-		gone = manifest.SweepGone(token, walked, runAt)
+	if !w.folderFault {
+		spare := w.spare
+		spare.LegacyPlaceholders = true
+		gone = manifest.SweepGoneSparing(token, walked, runAt, spare)
 	}
 	// A completed walk closes the gaps of the folders it read that it did not meet
 	// again: "no longer in the source" (§4.3 step 3). A folder that failed to list

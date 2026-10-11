@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -86,6 +87,42 @@ func runPartial(m *state.Manifest, exp *export.Exporter, out string, runAt time.
 	return summarizeGaps(m, out, runAt, time.Now().UTC(), 24*time.Hour).Observed > 0 || exp.Stats.Unreadable > 0
 }
 
+// parseStub says whether a parse gave up on the message: the constant
+// "(unreadable message)" stub safeParseMessage leaves when the MIME stack
+// panics, or a message that carries the unparsed label (§4.8.2).
+func parseStub(m *model.Message) bool {
+	return m.Identity() == model.LegacyStubIdentity() || slices.Contains(m.ReadGaps, state.LabelUnparsed)
+}
+
+// stub is the Graph stub rule (§4.8.2, FC5, FC27) for a message whose parse gave
+// up. Its identity is a content hash that folds the received time, which the fast
+// path never recognises, so without a Message-ID the stub would be downloaded again
+// on every run. With the listing's Message-ID the stub's identity is mid:<id> and
+// the fast path skips it, but only when the mailbox holds no record for that
+// Message-ID or for the item's immutable id: a worse read of a message already
+// archived (a Full-mode refresh, a re-issued id) is a degraded capture that never
+// replaces it (P15). It is held back: nothing is written, the archived record is
+// stamped seen, it adopts no new immutable id, and an info refresh-failed gap says
+// so. It reports whether the capture was held back. Where the stub goes on, a
+// legacy Graph stub this message left under its old content-hash identity is
+// adopted, so the change of identity does not leave it to the sweep.
+func (w *mailboxWalk) stub(ref graph.MessageRef, m *model.Message, folderKey string) (held bool) {
+	if ref.InternetMessageID == "" {
+		return false
+	}
+	if w.hasRecord(ref) {
+		w.faultIdentity(ref, nil)
+		w.lr.exp.Stats.Kept++
+		w.s.observe(graphItemGap(ref, folderKey, "refresh-failed", state.ClassInfo, "a newer read of this item could not be parsed; the archived copy was kept unchanged"))
+		return true
+	}
+	if n := w.manifest.AdoptLegacyGraphStubs(w.token, ref.PhysID, ref.Received, w.lr.runAt); n > 0 {
+		w.lr.logger.Printf("re-classed %d legacy placeholder(s); this version records each unreadable message separately", n)
+	}
+	m.InternetMessageID = ref.InternetMessageID
+	return false
+}
+
 // walkAbort wraps an error that ends the mailbox's walk, so the walk's own caller
 // can tell it from a listing error, which costs only that folder.
 type walkAbort struct{ err error }
@@ -102,9 +139,10 @@ type mailboxWalk struct {
 	mailbox  string
 	token    string
 
-	walkedGap   map[string]bool // folders whose listing was consumed this run, in the ledger's spelling: the scope of closing a gap
-	folderFault bool            // a folder-scope fault: the mailbox's sweep and the closing of gaps are deferred
-	itemFault   bool            // an item fault: the mailbox's sweep is deferred
+	walkedGap   map[string]bool     // folders whose listing was consumed this run, in the ledger's spelling: the scope of closing a gap
+	folderFault bool                // a folder-scope fault: the mailbox's sweep and the closing of gaps are deferred
+	spare       state.SweepSpare    // the records an item fault the run could not match to a record keeps out of this run's sweep
+	physKeys    map[string][]string // the token's records by immutable id, read on the first fault that needs it
 }
 
 func newMailboxWalk(lr *localRun, manifest *state.Manifest, mailbox, token string) *mailboxWalk {
@@ -125,10 +163,70 @@ func graphItemGap(ref graph.MessageRef, folderKey, reason, class, detail string)
 	return g
 }
 
-// observeItem records ref's gap and defers the mailbox's sweep.
-func (w *mailboxWalk) observeItem(ref graph.MessageRef, folderKey, reason, class, detail string) {
-	w.itemFault = true
+// observeItem records ref's gap and what the fault does to the mailbox's sweep
+// (faultIdentity). m is the parsed message when the fault came after the parse.
+func (w *mailboxWalk) observeItem(ref graph.MessageRef, m *model.Message, folderKey, reason, class, detail string) {
+	w.faultIdentity(ref, m)
 	w.s.observe(graphItemGap(ref, folderKey, reason, class, detail))
+}
+
+// faultIdentity is what a fault on one item does to this run's gone-detection
+// (§4.8.3, FC4, owner ruling OR10): the item was listed but not captured, so
+// "LastSeen is stale" would call a record gone that is still there. Every same-token
+// record that carries the item's identity is stamped seen: the Message-ID the
+// listing gave, the parsed message's identity when the fault came after the parse,
+// and, where this run's listing confirmed immutable ids, every record that holds
+// the item's immutable id, which survives a move. A fault whose identity matched
+// no record at all might be the message of any record the run cannot tell from it,
+// so the records it could be are spared this run's sweep instead: every one with no
+// immutable id (OR10; the stricter rule, which includes a pre-v6 record whose
+// listing and parsed Message-IDs differ), and, where this run's ids are not
+// immutable, every content-hash record too. The folder stays swept for the rest.
+func (w *mailboxWalk) faultIdentity(ref graph.MessageRef, m *model.Message) {
+	matched := false
+	stamp := func(identity string) {
+		for _, sib := range w.sameToken(identity) {
+			w.manifest.TouchSeen(sib.Key, w.lr.runAt)
+			matched = true
+		}
+	}
+	if ref.InternetMessageID != "" {
+		stamp("mid:" + ref.InternetMessageID)
+	}
+	if m != nil {
+		stamp(m.Identity())
+	}
+	if ref.PhysID != "" {
+		for _, k := range w.physIDKeys()[ref.PhysID] {
+			w.manifest.TouchSeen(k, w.lr.runAt)
+			matched = true
+		}
+	}
+	if !matched {
+		w.spare.NoPhysID = true
+		if ref.PhysID == "" {
+			w.spare.ShaIdentity = true
+		}
+	}
+}
+
+// physIDKeys is the token's records by immutable id as they stood at the first fault
+// that asked: the faulting items were not exported, so the records they could match
+// are all there already.
+func (w *mailboxWalk) physIDKeys() map[string][]string {
+	if w.physKeys == nil {
+		w.physKeys = w.manifest.PhysIDKeys(w.token)
+	}
+	return w.physKeys
+}
+
+// hasRecord says whether this mailbox already holds a record of the item: one for the
+// listing's Message-ID, or one that holds its immutable id.
+func (w *mailboxWalk) hasRecord(ref graph.MessageRef) bool {
+	if ref.InternetMessageID != "" && len(w.sameToken("mid:"+ref.InternetMessageID)) > 0 {
+		return true
+	}
+	return ref.PhysID != "" && len(w.physIDKeys()[ref.PhysID]) > 0
 }
 
 // recovered closes the gap an item's capture (or its being archived already)
@@ -141,17 +239,28 @@ func (w *mailboxWalk) recovered(ref graph.MessageRef) {
 
 // fetchFault is what a failed $value costs (§4.8.2): a fatal fault ends the
 // mailbox with today's error; any other is the item's own gap and the walk goes
-// on. In Full mode a message whose Message-ID is already archived under this
-// mailbox keeps its archived capture: the failed refresh is an info gap.
+// on. In order:
+//  1. a run with -since, a message received before it that has no record: it was
+//     not requested, so it is counted (SkippedDate) and records no gap. A gap an
+//     earlier run left for it is not touched: it is retained, never closed by this
+//     run's absence (FC13);
+//  2. in Full mode, a message whose Message-ID is already archived under this
+//     mailbox keeps its archived capture: the failed refresh is an info gap;
+//  3. otherwise its reason and class from classifyFetch.
 func (w *mailboxWalk) fetchFault(ctx context.Context, ref graph.MessageRef, folderKey string, err error) error {
 	reason, class, fatal, _ := classifyFetch(err, ctx)
 	if fatal {
 		return &walkAbort{fmt.Errorf("fetch message %s: %w", ref.ID, err)}
 	}
+	if since := w.lr.exp.Since; !since.IsZero() && !ref.Received.IsZero() && ref.Received.Before(since) && !w.hasRecord(ref) {
+		w.lr.exp.Stats.SkippedDate++
+		w.faultIdentity(ref, nil)
+		return nil
+	}
 	if w.lr.exp.Mode == export.Full && ref.InternetMessageID != "" && len(w.sameToken("mid:"+ref.InternetMessageID)) > 0 {
 		reason, class = "refresh-failed", state.ClassInfo
 	}
-	w.observeItem(ref, folderKey, reason, class, err.Error())
+	w.observeItem(ref, nil, folderKey, reason, class, err.Error())
 	return nil
 }
 
@@ -197,7 +306,6 @@ func (w *mailboxWalk) covered(g state.CaptureGap) bool { return w.walkedGap[g.Fo
 // whose directory could not be created earlier in this run: it is counted under
 // the folder's gap and not downloaded (§4.8.2).
 func (w *mailboxWalk) folderUnwritable(folderKey string, detail string) {
-	w.itemFault = true
 	w.s.observe(state.CaptureGap{Folder: folderKey, Scope: state.GapScopeFolder, Locator: "folder:" + folderKey,
 		Reason: "folder-unwritable", Class: state.ClassFillable, Detail: detail, Skipped: 1})
 }
@@ -215,7 +323,7 @@ func (w *mailboxWalk) exportOne(ref graph.MessageRef, f graph.Folder, folderKey 
 			// The folder name and the panic's words can both be the mailbox's own bytes.
 			lr.logger.Printf("warning: recovered from panic on a message in %s (skipped): %s", cleanText(folderKey), cleanText(fmt.Sprint(r)))
 			lr.exp.Stats.ExportPanics++
-			w.observeItem(ref, folderKey, "export-panic", state.ClassTerminal, fmt.Sprint(r))
+			w.observeItem(ref, m, folderKey, "export-panic", state.ClassTerminal, fmt.Sprint(r))
 			err = nil
 		}
 	}()
@@ -250,13 +358,14 @@ func (w *mailboxWalk) exportOne(ref graph.MessageRef, f graph.Folder, folderKey 
 		}
 		s.unwritable[fe.Dir] = true
 		lr.exp.Stats.ExportFaults++
+		w.faultIdentity(ref, m)
 		w.folderUnwritable(folderKey, exportErr.Error())
 	case errors.As(exportErr, &ie):
 		if perr := lr.probe(s); perr != nil {
 			return &walkAbort{perr}
 		}
 		lr.exp.Stats.ExportFaults++
-		w.observeItem(ref, folderKey, "export-failed", state.ClassFillable, exportErr.Error())
+		w.observeItem(ref, m, folderKey, "export-failed", state.ClassFillable, exportErr.Error())
 	default:
 		return &walkAbort{exportErr}
 	}

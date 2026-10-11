@@ -196,11 +196,6 @@ func TestGraphLedgerIsInertAndHeals(t *testing.T) {
 	}
 }
 
-// covers: MA-312, R21, R1, S37, S46
-func TestGraphFaultsNeverSweepAPresentMessageGone(t *testing.T) {
-	t.Skip("MA-312: a Graph fetch or listing fault defers gone-detection for exactly the records it could hide (FC4, OR10) and never marks a present message gone; lands in FI-S3")
-}
-
 // covers: MA-313, MA-310, R5, R12, R18, R1, R10, R17, S46
 // classifyFetch sorts every fault of a Graph request for one message by the table
 // of §4.8.1: a cancelled walk, a refused sign-in (401, a failed token refresh) and
