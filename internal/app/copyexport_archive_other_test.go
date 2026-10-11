@@ -1,13 +1,52 @@
 package app
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
 
+	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/util"
 )
+
+// covers: MA-512, R12, S52
+// R-f2's archive-side wording for another archive folder (design §7.6, RR2-C13) carries what, why and
+// remedy: the folder it names, the view it cannot compare (a share on this computer, an sshfs or other
+// FUSE mount) and the remedy on the Another archive folder control; and none of it holds a token, a
+// Graph URL query, "panic" or "goroutine" (assure's forbid list).
+func TestAnotherArchiveFolderRf2WordingCarriesWhatWhyAndRemedy(t *testing.T) {
+	_, other, dest := destFixture(t)
+	archives := []string{t.TempDir(), other}
+	e := newCEEnv(t)
+	e.served = func(s string) bool { return s == "thiscomputer" }
+	otherReal := util.ResolveExisting(other)
+	viewOf := func(v ceView) func(string) ceView {
+		return func(p string) ceView {
+			if pathUnder(filepath.ToSlash(util.ResolveExisting(p)), filepath.ToSlash(otherReal)) {
+				return v
+			}
+			return ceView{Kind: viewLocal}
+		}
+	}
+	forbid := assure.Forbid("panic", "goroutine", "access_token", "refresh_token", "graph.microsoft.com")
+	for name, c := range map[string]struct {
+		view  ceView
+		names []string
+	}{
+		"an sshfs mount": {ceView{Kind: viewStacking, Type: "fuse.sshfs"}, []string{"The archive folder " + other, "sshfs or other FUSE mount", "can't compare folder identities", "Another archive folder…", "SMB or NFS client"}},
+		"a share on this computer": {ceView{Kind: viewShare, Server: "thiscomputer", Mount: "//thiscomputer/mail"}, []string{"The archive folder " + other, "share on this computer", "can't confirm any folder is outside it", "Another archive folder…", "local path", "Preview copy export again"}},
+	} {
+		e.view = viewOf(c.view)
+		_, err := e.CheckDestinationOther(dest, archives, other)
+		var ref *CopyRefusal
+		if !errors.As(err, &ref) || ref.ID != "R-f2" {
+			t.Fatalf("%s: %v, want R-f2", name, err)
+		}
+		assure.Refused(t, ref.ExitCode(), ref.Message, assure.Code(1), assure.Names(c.names...), forbid)
+	}
+}
 
 // covers: MA-531, MA-414, MA-434, R29, R4, R12, S52
 // Another archive folder (ruling W1, RR2-C13): the destination stays outside it, by path and by
