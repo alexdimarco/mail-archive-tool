@@ -2,10 +2,55 @@ package index
 
 import (
 	"database/sql"
+	"runtime"
 	"strings"
 	"testing"
 	"unicode/utf8"
 )
+
+// covers: MA-435, MA-531, R20, R29
+// The cut of a cell is made in SQLite, before the cell is carried into the process (E4-AO6): the cut in Go
+// (cutText) bounds what is returned, but not what was read to get it, so a row of 100 MB cells was
+// still read whole, once as the driver's copy and once as the string, and three rows made 900 MB. One
+// cell of 8 MiB in each of the five columns the list reads (a key, a path, a subject, a sender name, a
+// sender address), each in a row of its own: each of the five cuts is pinned by the memory it saves, which the
+// size of what is returned does not show. Reading the folder, whole and as a page, allocates less than one
+// of the cells.
+func TestListFolderReadsNoMoreOfACellThanItsBound(t *testing.T) {
+	path := listFixture(t, 0)
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	huge := strings.Repeat("H", 8<<20)
+	for _, c := range []struct{ col, row string }{{"path", "1"}, {"subject", "2"}, {"sender_name", "2"}, {"sender_email", "3"}, {"key", "1"}} { // the key last: it finds the rows
+		if _, err := db.Exec(`UPDATE docs SET `+c.col+` = ? WHERE key = ?`, huge, "s\x00Inbox\x00k"+c.row); err != nil {
+			t.Fatalf("%s: %v", c.col, err)
+		}
+	}
+	db.Close()
+
+	h, err := OpenForList(path, ListOptions{Immutable: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+	var m0, m1 runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&m0)
+	rows, total, err := h.ListFolder("s", "Inbox", 0, 100)
+	if err != nil || total != 3 || len(rows) != 3 {
+		t.Fatalf("the list: %d rows, total %d, %v", len(rows), total, err)
+	}
+	var each int
+	if err := h.EachInFolder("s", "Inbox", func(r ListRow) error { each++; return nil }); err != nil || each != 3 {
+		t.Fatalf("the whole folder: %d rows, %v", each, err)
+	}
+	runtime.ReadMemStats(&m1)
+	if got := m1.TotalAlloc - m0.TotalAlloc; got > 6<<20 {
+		t.Errorf("reading three rows with a cell of 8 MiB in five columns allocated %d MiB: a cell is read whole and cut after, not cut where it is read", got>>20)
+	}
+}
 
 // covers: MA-435, MA-531, R20, R29
 // A search.db handed over holds text the list returns whole and dates the list believes (E4-AO6,

@@ -17,6 +17,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/index"
@@ -725,7 +726,9 @@ func (a *ArchiveSource) resolve(root *os.Root, key string, rec state.Record, met
 			m.Received = t.UTC()
 		}
 	}
-	m.Subject = plainText(m.Subject)
+	// The subject is cut before it is cleaned: a record with no index row takes the manifest's own, which
+	// is bounded in bytes only, and the plan reserves twelve bytes for each byte of it (E4-AO6).
+	m.Subject = plainText(archiveCut(m.Subject, archiveMaxSubjectBytes))
 	if rec.Fixity != nil {
 		fx := *rec.Fixity
 		m.Fix = &fx
@@ -808,6 +811,26 @@ func (a *ArchiveSource) resolve(root *os.Root, key string, rec state.Record, met
 	return m, true
 }
 
+// The text of a manifest record that reaches the plan is bounded where the plan takes it: a manifest
+// is bounded in bytes only, and the plan holds, reserves for and writes what it is given (E4-AO6). The
+// subject has the bound the list puts on an index row's; a gap label or an inline-image id is a file name
+// or a content id, which 512 bytes hold.
+const (
+	archiveMaxSubjectBytes = index.MaxListSubjectBytes
+	archiveMaxLabelBytes   = 512
+)
+
+// archiveCut is s cut to at most max bytes, at a character.
+func archiveCut(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	for max > 0 && !utf8.RuneStart(s[max]) {
+		max--
+	}
+	return s[:max]
+}
+
 // archiveGapNotes are the archive's own gaps for a record, in words (§4.6 item 3):
 // state.UnknownSentinel, which state.Load puts on every issue-free v1 record, is replaced
 // by what it means.
@@ -821,7 +844,7 @@ func archiveGapNotes(rec state.Record) []string {
 		}
 	}
 	for _, label := range append(append([]string(nil), rec.Missing...), rec.Terminal...) {
-		label = plainText(label)
+		label = plainText(archiveCut(label, archiveMaxLabelBytes))
 		switch {
 		case label == state.UnknownSentinel:
 			add("completeness was not tracked by the version that captured this message")
@@ -836,7 +859,7 @@ func archiveGapNotes(rec state.Record) []string {
 		}
 	}
 	for _, cid := range rec.Unresolved {
-		add("the archive records an inline image (cid:" + plainText(cid) + ") it could not find in the message")
+		add("the archive records an inline image (cid:" + plainText(archiveCut(cid, archiveMaxLabelBytes)) + ") it could not find in the message")
 	}
 	return notes
 }
