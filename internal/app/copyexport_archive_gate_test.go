@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"os"
 	"strings"
 	"testing"
@@ -63,6 +64,58 @@ func TestArchiveSourceQuarantinesAPageThatFailsTheGate(t *testing.T) {
 	}
 	if zipEnt := fileOf(entryOf(t, man, a.key("with-attachment")), "archived-attachments-zip"); zipEnt == nil {
 		t.Errorf("the zip of a quarantined page is still copied byte-exact beside it")
+	}
+}
+
+// covers: MA-420, R19, R29, R4, S52
+// A page too large to read for the gate (above export.ArchivedPageMaxBytes) is not trusted: it is
+// copied as <stem>.archived-page.txt with a note that says it was too large to check, role
+// quarantined-archived-page, its hash still equal to the archive's fixity, and the preview counts it;
+// a page of the current renderer just under the bound stays .html (the positive twin).
+func TestArchiveSourceQuarantinesAPageTooLargeToCheck(t *testing.T) {
+	a := buildCEArchive(t)
+	e := newCEEnv(t)
+	good := a.read(mustPagePath(a, "plain-page"))
+	pad := func(n int64) []byte { // a page of the current renderer, padded inside a comment to n bytes
+		page := append(append([]byte(nil), good...), []byte("\n<!--")...)
+		page = append(page, bytes.Repeat([]byte{' '}, int(n)-len(page)-len("-->"))...)
+		return append(page, []byte("-->")...)
+	}
+	big := pad(export.ArchivedPageMaxBytes + 1)
+	atBound := pad(export.ArchivedPageMaxBytes)
+	if !export.ArchivedPageInert(atBound) || len(big) != export.ArchivedPageMaxBytes+1 {
+		t.Fatalf("the fixture pages: a page at the bound is inert %v, the big one is %d bytes", export.ArchivedPageInert(atBound), len(big))
+	}
+	a.replacePage("with-attachment", big)
+	a.replacePage("third-page", atBound)
+
+	s := a.open()
+	p := a.plan(e, s, []string{a.key("with-attachment"), a.key("third-page")})
+	if c := p.Archive; c == nil || c.Quarantined != 1 || c.WithoutOriginal != 2 {
+		t.Fatalf("the preview counts %+v, want the one page too large to check quarantined", c)
+	}
+	res := a.run(e, p, s)
+	if res.Counts.Exported != 2 || res.Counts.Failed != 0 {
+		t.Fatalf("the run: %+v", res.Counts)
+	}
+	man := manifestOf(t, res.Root)
+	ent := entryOf(t, man, a.key("with-attachment"))
+	q := fileOf(ent, "quarantined-archived-page")
+	if q == nil || fileOf(ent, "archived-page") != nil || !strings.HasSuffix(q["path"].(string), ".archived-page.txt") {
+		t.Fatalf("a page too large to check: %v, want it as .archived-page.txt with role quarantined-archived-page", ent)
+	}
+	_, rec := a.rec("with-attachment")
+	if q["sha256"] != rec.Fixity.HTML.SHA256 || int64(q["size"].(float64)) != rec.Fixity.HTML.Size {
+		t.Errorf("the copy's hash %v and size %v are not the archive's fixity %s and %d", q["sha256"], q["size"], rec.Fixity.HTML.SHA256, rec.Fixity.HTML.Size)
+	}
+	if n := notesOf(ent); !strings.Contains(n, "too large for MailArchive to check") || !strings.Contains(n, "doesn't begin with the security policy") {
+		t.Errorf("no note says why: %q", n)
+	}
+	if zipEnt := fileOf(ent, "archived-attachments-zip"); zipEnt == nil {
+		t.Errorf("the zip of a quarantined page is still copied byte-exact beside it")
+	}
+	if f := fileOf(entryOf(t, man, a.key("third-page")), "archived-page"); f == nil || !strings.HasSuffix(f["path"].(string), ".html") {
+		t.Errorf("a page of the current renderer at the bound is not kept as .html: %v", entryOf(t, man, a.key("third-page")))
 	}
 }
 
