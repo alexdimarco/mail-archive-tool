@@ -302,7 +302,7 @@ func (e *CopyExportEnv) historyOne(run string, jl []ceJournalLine, ledger []ceLe
 		info.Stop = &stop
 	}
 	if hasRec && info.Failed > 0 {
-		info.Failures, info.FailuresMore = failuresOf(e.recordPath(run))
+		info.Failures, info.FailuresMore = e.failuresCached(run)
 		info.FailuresMore = max(0, info.Failed-len(info.Failures))
 	}
 

@@ -308,6 +308,7 @@ type CopyExportEnv struct {
 
 	offerMu    sync.Mutex
 	offerCache map[string]chainOffer // a retry set's offers, by chain, valid while its records are unchanged (F9)
+	failCache  map[string]failCached // a run's listed failures, valid while its record is unchanged
 
 	// seams
 	now         func() time.Time

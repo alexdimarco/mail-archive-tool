@@ -241,10 +241,25 @@ func TestFricARetryPreviewCanBePointedAtAnotherDestination(t *testing.T) {
 		t.Fatalf("the retry preview: %v", res)
 	}
 
+	// a destination that is not there is refused after the preview starts, naming Browse. This
+	// comes before the retry runs: once part 2 has exported the rest, nothing is left to retry
+	// (the chain-aware RunRemaining, EW-AC7), and the refusal would be R-h, not R-e.
+	pid := e.ok("/api/exports/retry", map[string]any{"runId": run, "which": "rest", "dest": filepath.Join(e.dir, "unplugged")})["previewId"].(string)
+	var failed map[string]any
+	for i := 0; i < 300 && failed == nil; i++ {
+		if _, out := e.post("/api/workspace/preview-status", map[string]any{"previewId": pid}); out["state"] == "failed" {
+			failed = out
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if failed == nil || failed["id"] != "R-e" || !strings.Contains(failed["error"].(string), "Browse") || failed["retryOf"] != run || failed["retryWhich"] != "rest" {
+		t.Errorf("a retry into a missing destination: %v", failed)
+	}
+
 	// another destination (a different stick): the preview goes there, the export lands there
 	stick := filepath.Join(e.dir, "stick")
 	os.Mkdir(stick, 0o755)
-	pid := e.ok("/api/exports/retry", map[string]any{"runId": run, "which": "rest", "dest": stick})["previewId"].(string)
+	pid = e.ok("/api/exports/retry", map[string]any{"runId": run, "which": "rest", "dest": stick})["previewId"].(string)
 	res = e.waitPreview(pid)
 	if res["dest"] != stick || res["retryOf"] != run || res["retryWhich"] != "rest" || !strings.HasSuffix(res["exportName"].(string), "-part2") {
 		t.Fatalf("the retry preview for another destination: %v", res)
@@ -259,19 +274,6 @@ func TestFricARetryPreviewCanBePointedAtAnotherDestination(t *testing.T) {
 	}
 	if got := treeState(t, filepath.Join(e.dest, root)); !reflect.DeepEqual(got, before) {
 		t.Errorf("the earlier export changed: %v", diffKeys(before, got))
-	}
-
-	// a destination that is not there is refused after the preview starts, naming Browse
-	pid = e.ok("/api/exports/retry", map[string]any{"runId": run, "which": "rest", "dest": filepath.Join(e.dir, "unplugged")})["previewId"].(string)
-	var failed map[string]any
-	for i := 0; i < 300 && failed == nil; i++ {
-		if _, out := e.post("/api/workspace/preview-status", map[string]any{"previewId": pid}); out["state"] == "failed" {
-			failed = out
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	if failed == nil || failed["id"] != "R-e" || !strings.Contains(failed["error"].(string), "Browse") || failed["retryOf"] != run || failed["retryWhich"] != "rest" {
-		t.Errorf("a retry into a missing destination: %v", failed)
 	}
 }
 
