@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -325,6 +326,9 @@ func TestFullModeSkipsABlockedFolderOnceNotItemByItem(t *testing.T) {
 // manifest, write the README and the report: over a second run's manifest. The other
 // holder's manifest and README are left alone.
 func TestALockLostFoundByTheProbeWritesNoSharedState(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("an open lock file cannot be removed on Windows; the lock's content check (R5) is what finds a replaced one there")
+	}
 	src := filepath.Join(tmpDir(t), "Inbox")
 	maildirMessages(t, src, 6)
 	out := filepath.Join(tmpDir(t), "archive")
@@ -415,6 +419,20 @@ func TestAnAttachmentThatPanicsCostsThatAttachmentOnly(t *testing.T) {
 	if more, _ := filepath.Glob(filepath.Join(out, "*", ".mailarchive-*")); len(leftovers)+len(more) != 0 {
 		t.Errorf("temp files left in the archive: %v %v", leftovers, more)
 	}
+}
+
+// covers: R1
+// K2 (owner decision pending, rulings 13.17 item 1), NOT accepted: mbox.go still mints
+// the constant "(unreadable message)" stub for a MIME-panicking mbox, maildir or Graph
+// message, and the next run's legacy-placeholder re-class (FC27) turns that record into
+// an info label with nothing missing, so the loss leaves the partial and Not-captured
+// surfaces with no ledger gap behind it, until FI-S2b gives these messages gaps of their
+// own. The re-class cannot tell this build's stub from an older build's: no stamp
+// separates them. Closes when FI-S2b lands (or the owner restricts the re-class to
+// records older than the build, which needs that stamp): a stub minted by this build
+// then stays a visible gap after the re-class run.
+func TestAReclassDoesNotHideAStubThisBuildMinted(t *testing.T) {
+	t.Skip("R1 (K2, ruling 13.17.1): the re-class hides the loss of a stub the current mbox, maildir and Graph readers mint, until FI-S2b records those messages as gaps; closes when FI-S2b lands")
 }
 
 // covers: MA-320, R12
