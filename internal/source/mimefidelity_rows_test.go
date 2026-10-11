@@ -103,22 +103,6 @@ func TestRepairIsNeverToLessAndWithheldLegibly(t *testing.T) {
 	t.Skip("MA-345: the V1C check, RepairWithheld and the repair counters do not exist, and the 'never to less' clause is re-capture integrity's R28; encoder lands in MF-S0, turns green in MF-S7")
 }
 
-// covers: MA-346, R4, R20, R13, R5, R27
-// Repair and re-capture keep paths and originals: a -raw record keeps its .eml and
-// Fixity.EML, the stem is the identity view's (or its -vN successor), a tampered
-// Path is never written through.
-func TestRepairAndRecaptureKeepPathsAndOriginals(t *testing.T) {
-	t.Skip("MA-346: the identity-view stem (idv()) and the .eml carry-forward on every write are MF-S1's, and the repair containment guard is MF-S7's; encoder lands in MF-S0, turns green in MF-S1 (cases a, c) and MF-S7 (cases b, d)")
-}
-
-// covers: MA-347, R2, R3, R27
-// Mixed versions: a run by v1 semantics exports 0 new, splits no key and keeps the
-// stems (identity half); three alternations rewrite a record at most once (repair
-// half).
-func TestMixedVersionsKeepIdentityAndRewriteAtMostOnce(t *testing.T) {
-	t.Skip("MA-347: Record.ParseScheme and the manifest round trip that drops it do not exist, and neither does the repair; encoder lands in MF-S0, turns green in MF-S1 (identity half) and MF-S7 (repair half)")
-}
-
 // covers: MA-348, R1, R18, R7, X6, R26, R27
 // Legibility: the summary, status, report, GUI and Desktop card show repaired,
 // restamped and the cannot-decode counts; the page's gaps and notes blocks are

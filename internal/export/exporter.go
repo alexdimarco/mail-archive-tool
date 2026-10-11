@@ -363,10 +363,22 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		return false, &FolderError{Dir: dir, Err: err}
 	}
 
-	base, htmlPath, relSlash := e.stemFor(dir, date, m.Subject, key)
-	rawName := ""
-	if e.KeepRaw && len(m.Raw) > 0 {
+	// The stem is built from the identity view's subject, never the displayed one: a
+	// parser that decodes the subject differently cannot rename the files of a message
+	// already archived, and an older binary computes the same stem (MC8).
+	base, htmlPath, relSlash := e.stemFor(dir, date, m.IdentitySubject(), key)
+	rawName, writeRaw := "", e.KeepRaw && len(m.Raw) > 0
+	if writeRaw {
 		rawName = base + ".eml"
+	}
+	// A re-capture that preserves no original of its own keeps the one the record has:
+	// the page still links it and its fixity is carried on (MC8).
+	var carriedEML *state.FileDigest
+	if !writeRaw && seen {
+		var carried bool
+		if carriedEML, carried = carriedOriginal(dir, base, relSlash, prev); carried {
+			rawName = base + ".eml"
+		}
 	}
 	ctx := RenderContext{
 		RootRel:        strings.Repeat("../", 1+len(writeFolderPath)), // store dir + folders
@@ -395,13 +407,15 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	// as they are written so `verify` can later detect bit-rot or truncation
 	// (F3). A re-capture builds a fresh Fixity, replacing any earlier one.
 	var fx state.Fixity
-	if rawName != "" {
+	if writeRaw {
 		d, err := e.writeDigest(filepath.Join(dir, rawName), m.Raw)
 		if err != nil {
 			return false, &ItemError{Path: filepath.Join(dir, rawName), msg: "write " + rawName, Err: err}
 		}
 		fx.EML = &d
 		e.Stats.RawWritten++
+	} else if carriedEML != nil {
+		fx.EML = carriedEML
 	}
 
 	e.Stats.AttachmentsInline += len(inlineConsumed)
@@ -568,7 +582,11 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		old := filepath.Join(e.OutDir, filepath.FromSlash(prev.Path))
 		os.Remove(old)
 		os.Remove(strings.TrimSuffix(old, ".html") + zipSuffix)
-		os.Remove(strings.TrimSuffix(old, ".html") + ".eml")
+		if writeRaw {
+			// The original goes only when this run wrote a new one beside the new
+			// page: otherwise it is the record's only copy of the message (R20, MC8).
+			os.Remove(strings.TrimSuffix(old, ".html") + ".eml")
+		}
 	}
 
 	switch {
@@ -588,6 +606,27 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	}
 	e.Stats.Exported++
 	return true, nil
+}
+
+// carriedOriginal says whether the preserved original (.eml) a seen record holds is on
+// disk at the stem a re-capture writes to, and returns the fixity to carry on with it
+// (nil for a record from before fixity). It carries only an original at the SAME stem:
+// when the stem changed (a naming rule, the path budget, a moved message date) the old
+// .eml stays where it is — the re-capture removes it only when it writes a new one —
+// and the page no longer links it; moving it with its record is the commit of
+// re-capture integrity (ruling J6), not this write.
+func carriedOriginal(dir, base, relSlash string, prev state.Record) (*state.FileDigest, bool) {
+	if prev.Path == "" || prev.Path != relSlash {
+		return nil, false
+	}
+	if fi, err := os.Lstat(filepath.Join(dir, base+".eml")); err != nil || !fi.Mode().IsRegular() {
+		return nil, false
+	}
+	if prev.Fixity != nil && prev.Fixity.EML != nil {
+		d := *prev.Fixity.EML
+		return &d, true
+	}
+	return nil, true
 }
 
 // writeDigest is writeFileAtomicDigest behind the BeforeWrite seam.
