@@ -429,6 +429,7 @@ type cardOut struct {
 	Receipt      string    `json:"receipt,omitempty"`
 	Result       *resOut   `json:"result,omitempty"`   // what the last refused button said, kept until the next click (F1)
 	Next         string    `json:"next,omitempty"`     // what to do with a card that waits on the owner (F13)
+	SetNote      string    `json:"setNote,omitempty"`  // how much of its retry set is exported (F10)
 	Failures     []failOut `json:"failures,omitempty"` // "Which ones?": the messages not exported and why (F7)
 	FailuresMore int       `json:"failuresMore,omitempty"`
 }
@@ -488,7 +489,7 @@ func (d *dashboard) historyAction(w http.ResponseWriter, r *http.Request) {
 	for _, h := range hist {
 		c := cardOut{Run: h.Run, Started: h.Started.UTC().Format(time.RFC3339), Source: h.SourceKind, Mailbox: h.Mailbox, Dest: h.Dest, RootName: h.RootName,
 			Label: h.Label, Kind: h.Kind, Running: h.Running, Planned: h.Planned, Exported: h.Exported, Failed: h.Failed, NotAttempted: h.NotAttempted,
-			Fingerprint: h.Fingerprint, Actions: h.Actions, Remaining: h.Remaining, Part: h.Part, RetryOf: h.RetryOf, Receipt: h.Receipt, Next: h.Next,
+			Fingerprint: h.Fingerprint, Actions: h.Actions, Remaining: h.Remaining, Part: h.Part, RetryOf: h.RetryOf, Receipt: h.Receipt, Next: h.Next, SetNote: h.SetNote,
 			FailuresMore: h.FailuresMore}
 		for _, f := range h.Failures {
 			c.Failures = append(c.Failures, failOut{Subject: f.Subject, Folder: f.Folder, Reason: f.Reason})
@@ -606,7 +607,13 @@ func engineRefusal(err error) refusal {
 	if app.IsNewerFormat(err) {
 		return refusal{ID: "R-newer", Text: msg, Status: statusRefused}
 	}
-	return refusal{ID: "R-d2", Text: "MailArchive Desktop couldn't do that: " + util.StripControl(msg) + " — nothing was changed.", Status: statusRefused}
+	if app.IsRecordDamaged(err) {
+		return refusal{ID: "R-rec", Status: statusRefused, Text: "MailArchive can't read the record it keeps of this export (its file in MailArchive Desktop's own folder is damaged), so nothing was changed. The export folder itself is untouched: Open folder and Check this export still work, or you can keep or delete the folder yourself."}
+	}
+	// Anything else: no raw error and no file name for the owner to decode; the detail rides in the
+	// answer's `detail` for whoever reports it (friction F20).
+	return refusal{ID: "R-x2", Status: statusRefused, Text: "MailArchive Desktop couldn't do that, and nothing was changed. Reload the page and try again; if it happens again, restart MailArchive Desktop.",
+		Extra: map[string]any{"detail": util.StripControl(msg)}}
 }
 
 // guardRun reads the run body and refuses an action on the run the slot is running now.

@@ -72,6 +72,7 @@ type CopyRunInfo struct {
 	Remaining    int // for "Export these N messages again" (a gone run)
 	Receipt      string
 	Next         string        // what to do next, in a sentence, for a card that is waiting on the owner (F13)
+	SetNote      string        // for a part of a retry set: how much of the whole set is exported (F10)
 	Failures     []CopyFailure // the first few messages that were not exported, from the run record (F7)
 	FailuresMore int           // how many more there are
 }
@@ -183,12 +184,41 @@ func (e *CopyExportEnv) History(obs map[string]CopyObservation, live string) ([]
 				info.Set = s
 			}
 		}
-		if info.Fingerprint != "" {
-			info.Receipt = receiptText(info, info.Set)
-		}
 		out = append(out, info)
 	}
+	// A retry set's offers and totals are those of the whole set (F9, F10); the receipt, which
+	// carries the set's total, is made last.
+	byRun := map[string]*CopyRunInfo{}
+	for i := range out {
+		byRun[out[i].Run] = &out[i]
+	}
+	for i := range out {
+		info := &out[i]
+		if info.Set != nil {
+			planned := 0
+			if first := firstPart(info.Set); first != "" {
+				if f := byRun[first]; f != nil {
+					planned = f.Planned
+				}
+			}
+			e.applySet(info, planned)
+		}
+		if info.Fingerprint != "" {
+			info.Receipt = receiptText(*info, info.Set)
+		}
+	}
 	return out, nil
+}
+
+// firstPart is the run of a set's part 1.
+func firstPart(set *CopySetInfo) string {
+	first := set.Parts[0]
+	for _, p := range set.Parts {
+		if p.Part < first.Part {
+			first = p
+		}
+	}
+	return first.Run
 }
 
 // historyOne is one card. ok is false for a run the journal names with no start line.
@@ -231,6 +261,9 @@ func (e *CopyExportEnv) historyOne(run string, jl []ceJournalLine, ledger []ceLe
 			}
 		}
 	} else if end != nil {
+		if IsRecordDamaged(serr) {
+			info.Next = "MailArchive can't read the record it keeps of this export, so Finish, Export again and the other retry buttons are not possible. The folder itself is untouched: Open folder and Check this export still work."
+		}
 		info.Exported, info.Failed = end.Exported, end.Failed
 		info.NotAttempted = max(0, end.Planned-end.Exported-end.Failed)
 		info.Planned, info.Status, info.Fingerprint = end.Planned, CopyStatus(end.Status), end.Fingerprint
@@ -238,6 +271,11 @@ func (e *CopyExportEnv) historyOne(run string, jl []ceJournalLine, ledger []ceLe
 	} else if serr != nil && !errors.Is(serr, fs.ErrNotExist) {
 		// a record of a newer format, or one that cannot be read: its own words
 		info.Label = "this export's run record can't be read (" + serr.Error() + ")"
+		if IsRecordDamaged(serr) {
+			info.Label = "this export's record is damaged, so it can't be finished or retried from here"
+			info.Next = "The folder itself is untouched: Open folder and Check this export still work."
+			info.Actions = []string{ActOpenFolder, ActCheckThis}
+		}
 		return info, true
 	} else {
 		return CopyRunInfo{}, false // no record and no end: nothing to show
@@ -431,7 +469,15 @@ func (e *CopyExportEnv) Receipt(run string) (string, error) {
 	if !ok || info.Fingerprint == "" {
 		return "", fmt.Errorf("the fingerprint was not recorded at export time, so there is no receipt to save")
 	}
-	return receiptText(info, e.chainSet(info.Chain, ledger, lines)), nil
+	if set := e.chainSet(info.Chain, ledger, lines); set != nil && len(set.Parts) > 1 {
+		info.Set = set
+		planned := 0
+		if l := lastEvent(by[firstPart(set)], "start"); l != nil {
+			planned = l.Planned
+		}
+		e.applySet(&info, planned)
+	}
+	return receiptText(info, info.Set), nil
 }
 
 // receiptText words the receipt of one card, with its retry set when it has one.
@@ -448,6 +494,9 @@ func receiptText(info CopyRunInfo, chain *CopySetInfo) string {
 	fmt.Fprintf(&b, "Counts: %d selected, %d exported, %d failed, %d not attempted\n", info.Planned, info.Exported, info.Failed, info.NotAttempted)
 	fmt.Fprintf(&b, "Fingerprint (SHA-256 of SHA256SUMS.txt): %s\n", GroupFingerprint(info.Fingerprint))
 	if chain != nil && len(chain.Parts) > 1 {
+		if info.SetNote != "" {
+			fmt.Fprintf(&b, "\nSet total: %s\n", info.SetNote)
+		}
 		fmt.Fprintf(&b, "\nThis export is one part of a set. Set fingerprint: %s\n", GroupFingerprint(chain.Fingerprint))
 		fmt.Fprintf(&b, "It is the SHA-256 over the parts' SHA256SUMS.txt files, in the order the parts were finished:\n")
 		for i, p := range chain.Parts {
@@ -493,7 +542,7 @@ func (e *CopyExportEnv) folderSpec(run string) (*ceFolderSpec, error) {
 	if err == nil {
 		return &ceFolderSpec{Run: run, Path: folderPath(sum), Identity: sum.Header.Identity, Sum: sum}, nil
 	}
-	if !errors.Is(err, fs.ErrNotExist) {
+	if !errors.Is(err, fs.ErrNotExist) && !IsRecordDamaged(err) { // a damaged record is read as a deleted one: the journal knows the folder
 		return nil, err
 	}
 	lines, _ := e.readJournal()

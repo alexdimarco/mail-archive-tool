@@ -176,11 +176,29 @@ function toggleFolder(id,on){
   else{st.entries=st.entries.filter(e=>e.id!==id);}
   renderTree();renderRows();updateCount();
 }
+// The messages a folder holds, with its subfolders' when they are included: the number the note
+// under Selected says (it used to say the folder's own count beside "and its subfolders").
+function subtreeCount(id){
+  let n=(st.byId[id]||{}).count||0;
+  (st.kids[id]||[]).forEach(k=>{n+=subtreeCount(k);});
+  return n;
+}
+function selectionNote(id){
+  const f=st.byId[id];const withSub=$('inclSub').checked&&(st.kids[id]||[]).length>0;
+  return 'Selected '+fmt(withSub?subtreeCount(id):f.count)+' messages from '+f.name+(withSub?' and its subfolders.':'.');
+}
 $('selectFolder').addEventListener('click',()=>{
   if(!st.current)return;
   if(!covering(st.current))st.entries.push({id:st.current,subtree:$('inclSub').checked,exclude:[]});
-  const f=st.byId[st.current];
-  show('selNote','Selected '+fmt(f.count)+' messages from '+f.name+(($('inclSub').checked&&(st.kids[st.current]||[]).length)?' (and its subfolders).':'.'));
+  show('selNote',selectionNote(st.current));
+  renderTree();renderRows();updateCount();
+});
+// Include subfolders applies to every folder that is selected, now and later, so the box means
+// what it says: unticking it takes the subfolders out of the folders already ticked.
+$('inclSub').addEventListener('change',()=>{
+  const on=$('inclSub').checked;
+  st.entries.forEach(e=>{e.subtree=on;});
+  if(st.current&&covering(st.current))show('selNote',selectionNote(st.current));
   renderTree();renderRows();updateCount();
 });
 
@@ -258,7 +276,8 @@ function updateCount(){
   st.countTimer=setTimeout(()=>{
     api('api/workspace/count',selection()).then(d=>{
       if(!d.ok){showErr(d);return;}
-      $('selCount').textContent=fmt(d.count)+' messages selected (items Microsoft 365 reports)';
+      // One export holds up to 200,000 messages: say so now, not after Preview has read them all.
+      $('selCount').textContent=fmt(d.count)+' messages selected (items Microsoft 365 reports)'+(d.count>200000?' — more than the 200,000 one export can hold: select fewer folders or messages':'');
     });
   },300);
 }
@@ -402,6 +421,7 @@ function cardEl(c){
   box.appendChild(el('div',when+' · '+(c.mailbox||c.source)+' · '+c.rootName,'card-sub'));
   if(c.running)box.appendChild(el('div','Writing now: see Running export above.'));
   else box.appendChild(el('div',fmt(c.exported)+' exported, '+fmt(c.failed)+' failed, '+fmt(c.notAttempted)+' not attempted of '+fmt(c.planned)));
+  if(c.setNote)box.appendChild(el('div',c.setNote,'card-sub'));
   if(c.stop)box.appendChild(el('div',c.stop,'note warnbox'));
   if(c.next)box.appendChild(el('div',c.next,'note'));
   if((c.failures||[]).length){
