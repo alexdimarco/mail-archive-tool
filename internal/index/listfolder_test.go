@@ -151,6 +151,30 @@ func TestListFolderIsExactPagedAndReadOnly(t *testing.T) {
 	}
 }
 
+// covers: MA-531, R8, R20
+// The list opens search.db with SQLite's settings for an untrusted file (design §4.3, RR2-C11), for the
+// configured archive and for another archive folder alike: no unsafe functions in a schema
+// (trusted_schema off), every cell checked (cell_size_check on), no memory map (mmap_size 0), and a
+// connection that cannot write (query_only on).
+func TestListOpensTheIndexWithTheSettingsForAnUntrustedFile(t *testing.T) {
+	path := listFixture(t, 0)
+	for _, opt := range []ListOptions{{}, {Immutable: true}} {
+		h, err := OpenForList(path, opt)
+		if err != nil {
+			t.Fatalf("OpenForList(%+v): %v", opt, err)
+		}
+		for pragma, want := range map[string]int{"trusted_schema": 0, "cell_size_check": 1, "mmap_size": 0, "query_only": 1} {
+			var got int
+			if err := h.db.QueryRow("PRAGMA " + pragma).Scan(&got); err != nil {
+				t.Errorf("%+v: PRAGMA %s: %v", opt, pragma, err)
+			} else if got != want {
+				t.Errorf("%+v: PRAGMA %s = %d, want %d", opt, pragma, got, want)
+			}
+		}
+		h.Close()
+	}
+}
+
 func contains(list []string, s string) bool {
 	for _, x := range list {
 		if x == s {
