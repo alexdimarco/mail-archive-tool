@@ -77,7 +77,7 @@ func serveMain(ctx context.Context, args []string, env *linkEnv) error {
 	count, _ := ix.Count()
 
 	if !server.IsLoopback(*addr) {
-		fmt.Fprintf(env.Stderr, "WARNING: serve is open to your network. Binding %s sends the archive and the session cookie in clear text to anyone who can read that traffic, and each browser still needs a private link (press Enter here, or run mailarchive serve -link -out %s); use 127.0.0.1 (the default) unless you mean it.\n", *addr, quoteForHint(*out))
+		fmt.Fprintln(env.Stderr, lanWarning(*addr, *out))
 	} else if len(allowHosts) > 0 {
 		fmt.Fprintf(env.Stderr, "note: -allow-host has no effect with a loopback -addr (%s): only 127.0.0.1, localhost, [::1] and the bound address itself are accepted there\n", *addr)
 	}
@@ -114,6 +114,14 @@ func serveMain(ctx context.Context, args []string, env *linkEnv) error {
 		env.Ready(l.origin)
 	}
 	return serveUntil(ctx, srv.Shutdown, errc)
+}
+
+// lanWarning is the warning a serve bound beyond loopback prints: the archive and
+// the session cookie cross the network in clear text (there is no TLS), and each
+// browser still needs a private link of its own. It no longer says serve "has no
+// authentication": it has one, and says what it does and does not cover.
+func lanWarning(addr, out string) string {
+	return fmt.Sprintf("WARNING: serve is open to your network. Binding %s sends the archive and the session cookie in clear text to anyone who can read that traffic, and each browser still needs a private link (press Enter here, or run mailarchive serve -link -out %s); use 127.0.0.1 (the default) unless you mean it.", addr, quoteForHint(out))
 }
 
 // newServeSession is the session of a serve listening at addr: its notices go to

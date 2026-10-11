@@ -119,8 +119,9 @@ func secureHeaders(next http.Handler) http.Handler {
 
 // IsLoopback reports whether addr (host:port) binds only to this machine —
 // "localhost" or a loopback IP. An empty host (":8099") binds every interface,
-// so it is NOT loopback: `serve` has no authentication, and anything else
-// exposes the whole archive to the network.
+// so it is NOT loopback: a `serve` there sends the archive and its session cookie
+// across the network in clear text (its private link is no defence against anyone
+// who can read that traffic).
 func IsLoopback(addr string) bool {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {

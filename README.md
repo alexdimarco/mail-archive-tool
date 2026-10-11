@@ -77,7 +77,7 @@ mailarchive -auto -out ./archive                       # first archive (incremen
 mailarchive status -out ./archive                      # is it complete? did the last run work?
 mailarchive schedule -out ./archive -auto              # print the nightly entry (nothing applied)
 mailarchive schedule -out ./archive -auto -install     # keep it current, every night at 02:00
-mailarchive serve -out ./archive                       # search + read at http://127.0.0.1:8099/
+mailarchive serve -out ./archive                       # search + read: opens your browser at a private link
 ```
 
 `-auto` archives **every** mail store it discovers (Outlook on Windows;
@@ -327,7 +327,7 @@ also writes **browsable folder pages**. Both update incrementally.
 **Local search + reader UI** (scales to millions of messages):
 
 ```sh
-mailarchive serve -out ./export          # then open http://127.0.0.1:8099/
+mailarchive serve -out ./export          # opens your browser at its own private link
 ```
 
 Ranked full-text over subject, body, people and attachment names, with filters
@@ -335,10 +335,30 @@ for folder, year and has-attachment. Click a result to read the email; grab its
 attachments as a zip. The box also understands inline tokens —
 `from:bob folder:Inbox after:2025-01 before:2025-07 has:attach invoice` — where a
 date can be a whole year (`2025`), a month (`2025-01`) or a day (`2025-01-15`).
-`serve` has **no authentication**: it binds to localhost by default and warns
-loudly if you bind it elsewhere. Archived pages are served under the same strict
-policy they carry, symlinks cannot lead outside the archive, and search snippets
-are escaped.
+**Who can open it.** `serve` binds to localhost by default and is opened only
+through a **private link** it makes each time it starts: it opens your browser at
+one (a one-time link that works for about a minute) and, on a terminal, prints a
+second (ten minutes) in case your browser did not open — press Enter in that
+terminal for another, for a second browser or device. Other accounts on this
+computer, and web pages, cannot open your archive; a program running as you can,
+since it already has your files. Nothing is printed to a log: with no terminal
+(`nohup`, `launchd`, `systemd`, a detached `tmux`) `serve` tells you to run
+**`mailarchive serve -link -out ./export`** from any terminal of your account for
+a fresh link; `-no-browser` prints a link instead of opening one, and none is
+opened without a display (a headless ssh session). A tunnel such as
+`ssh -L 9000:127.0.0.1:8099` works: open the link through the forwarded port. A
+page opened without its link shows a short "needs its private link" page, never
+your mail. Scripts that called the HTTP API with `curl` have no session: use
+`mailarchive search` (the same query grammar, `-json` for machine output). On
+Linux and macOS another account that can list running programs could read a link
+in the instant a browser is opened with it and use it first (macOS hands the link
+to the browser by a path that keeps it out of the program list); a link works
+once, and a page that says a link was "already used" when you did not use it
+means: stop `serve` and start it again, which ends every session. Binding `serve`
+to another address warns loudly — the archive and the session cookie then cross
+the network in clear text — and each browser still needs its own link.
+Archived pages are served under the same strict policy they carry, symlinks cannot
+lead outside the archive, and search snippets are escaped.
 
 **Terminal search** (no browser):
 
