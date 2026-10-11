@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/state"
@@ -421,5 +422,61 @@ func TestArchiveFailureReasonsSayWhatToDoNext(t *testing.T) {
 	res = a.run(e, a.plan(e, s, []string{a.key("hello")}), s)
 	if n := notesOf(entryOf(t, manifestOf(t, res.Root), a.key("hello"))); !strings.Contains(n, "Check integrity") || strings.Contains(n, "run Verify") {
 		t.Errorf("the note for an original with no recorded checksum: %q", n)
+	}
+}
+
+// covers: MA-420, MA-435, R20, R29, R4
+// F7: the README of an archive-sourced export tells the inheritor what the manifest knows. For a message with no
+// original it does not call the page and zip "conveniences made from the original, which stays the authoritative
+// copy" (they are the copy there is); the Counts line says how many have no original; and one sentence each,
+// with the count, says how many pages were copied as text, how many messages had left the mailbox, and how many
+// carry a note about what the archive itself lacks. The Microsoft 365 README keeps its sentence, and an archive
+// with none of these says none of it (the positive twin first: an export of the originals only).
+func TestArchiveReadmeSaysWhatTheManifestKnows(t *testing.T) {
+	readme := func(t *testing.T, res *CopyResult) string { return readText(t, res.Root, copyReadmeName) }
+
+	// the twin: only messages that have their originals
+	a := buildCEArchive(t)
+	e := newCEEnv(t)
+	s := a.open()
+	res := a.run(e, a.plan(e, s, []string{a.key("hello"), a.key("second"), a.key("client-mail")}), s)
+	plain := readme(t, res)
+	for _, unwanted := range []string{"have no original: the archive kept none", "had left the mailbox", "carries a note about what the archive itself lacks", "carry a note about what the archive itself lacks", "did not carry MailArchive's security policy"} {
+		if strings.Contains(plain, unwanted) {
+			t.Errorf("the README of an export of originals only says %q", unwanted)
+		}
+	}
+
+	// an archive with some life in it
+	a = buildCEArchive(t)
+	e = newCEEnv(t)
+	a.setRec("second", func(r *state.Record) { r.Present, r.LastSeen = false, time.Now().UTC() })
+	a.setRec("plain-page", func(r *state.Record) { r.Missing = []string{state.MissingBody} })
+	a.replacePage("third-page", []byte("<!DOCTYPE html><html><head></head><body><script>alert(1)</script></body></html>"))
+	s = a.open()
+	res = a.run(e, a.plan(e, s, allKeys(s)), s)
+	if res.Status != CopyStatusComplete {
+		t.Fatalf("the run: %+v", res)
+	}
+	text := readme(t, res)
+	for _, want := range []string{
+		"Counts: 6 selected, 6 exported (3 without an original), 0 failed, 0 not attempted.",
+		"3 of the exported messages have no original: the archive kept none",
+		"the archived page (.html) and the attachments zip (-attachments.zip) are the copy there is, not a convenience made from an original",
+		"1 archived page did not carry MailArchive's security policy, or held a live refresh, so it was copied as text (.archived-page.txt): open it as text only",
+		"1 message had left the mailbox when this was exported (the archive keeps it)",
+		"1 message carries a note about what the archive itself lacks",
+		"under \"notes\" in export-manifest.json",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the README lacks %q", want)
+		}
+	}
+	if strings.Contains(text, "conveniences made from the original") {
+		t.Error("the README of an export with messages that have no original still calls their files conveniences made from the original")
+	}
+	// the Microsoft 365 README keeps the sentence that is true for it
+	if src := (&ceFinish{hdr: ceHeaderLine{Source: CopySourceInfo{Kind: "m365", Mailbox: "alice@contoso.org"}}}); !strings.Contains(src.readmeText(CopyStatusComplete, CopyCounts{}, nil, time.Now()), "conveniences made from the original") {
+		t.Error("the Microsoft 365 README lost its sentence about the original")
 	}
 }

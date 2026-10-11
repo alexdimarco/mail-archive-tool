@@ -657,3 +657,36 @@ func TestDesktopAdviceNamesButtonsThePageHas(t *testing.T) {
 		}
 	}
 }
+
+// covers: MA-435, MA-420, R20, S52
+// F8 (the part inside the design): an export of one folder of a multi-mailbox archive carries the archive's full
+// list of stores in its README and manifest (XC21), and the preview now says so before Start, naming the stores
+// that will be named and the ones selected, so the owner who is about to hand one person's folder to that person
+// knows what the recipient will learn. Whether the list should be narrowed to the selected stores is the owner's
+// (it is XC21's choice) and is not changed here. The twins: a selection that covers every store, and an archive
+// with one store, say nothing of the kind.
+func TestArchivePreviewSaysWhichStoresTheExportWillName(t *testing.T) {
+	e := newWsEnv(t)
+	buildArchiveAt(t, e.out)
+	arch := archSource("archive", e.out)
+	e.archFolders(arch)
+	infoOf := func(sel map[string]any) string {
+		_, res := e.preview(sel)
+		return strings.Join(toStrings(res["info"]), " | ")
+	}
+
+	// the twin: both stores are selected
+	if got := infoOf(e.archSel(arch, entry("alice", true), entry("bob", false))); strings.Contains(got, "name every store") {
+		t.Errorf("a selection of every store says it names more than the selection: %q", got)
+	}
+	// one store of two
+	got := infoOf(e.archSel(arch, entry("bob", false)))
+	want := "The README and manifest of this export will name every store the archive holds (alice, bob), not only the one you selected (bob)."
+	if !strings.Contains(got, want) {
+		t.Errorf("one store selected: %q, want %q", got, want)
+	}
+	// a selection across folders of one store, picked from the folder of the first
+	if got := infoOf(e.archSel(arch, entry("alice", true))); !strings.Contains(got, "not only the one you selected (alice)") {
+		t.Errorf("alice's folders selected: %q", got)
+	}
+}

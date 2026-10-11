@@ -666,10 +666,44 @@ func (d *dashboard) resolveAndPlanArchive(ctx context.Context, job *wsPreviewJob
 		return nil, nil, copyRefusal(perr)
 	}
 	infos = archiveInfos(plan.Archive, len(msgs), a.Other())
+	if line := archiveStoresInfo(plan.Source.Stores, msgs); line != "" {
+		infos = append(infos, line)
+	}
 	if w := archiveBlockedWarning(plan.Archive); w != "" {
 		warns = append(warns, w)
 	}
 	return plan, planResult(plan, job.id, folderOut, reportedTotal, len(msgs), warns, infos), nil
+}
+
+// archiveStoresInfo says, when the selection is of fewer stores than the archive holds, that the README
+// and the manifest of the export will name every store the archive holds (XC21), so the owner handing one
+// person's folder to that person knows what the recipient will read (friction F8). Empty when the selection
+// covers every store, or the archive holds one.
+func archiveStoresInfo(all []app.CopyStoreInfo, msgs []app.CopyMessage) string {
+	chosen := map[string]bool{}
+	for _, m := range msgs {
+		if len(m.Folder) > 0 {
+			chosen[m.Folder[0].ID] = true
+		}
+	}
+	name := func(s app.CopyStoreInfo) string {
+		if s.Mailbox != "" {
+			return s.Store + " (" + s.Mailbox + ")"
+		}
+		return s.Store
+	}
+	var every, picked []string
+	for _, s := range all {
+		every = append(every, name(s))
+		if chosen[s.Store] {
+			picked = append(picked, name(s))
+		}
+	}
+	if len(all) < 2 || len(picked) == 0 || len(picked) == len(all) {
+		return ""
+	}
+	return fmt.Sprintf("The README and manifest of this export will name every store the archive holds (%s), not only the %s you selected (%s).",
+		strings.Join(every, ", "), one(len(picked), "one", "ones"), strings.Join(picked, ", "))
 }
 
 // archiveBlockedWarning is the preview's sentence about messages whose file the archive gate refuses for good
