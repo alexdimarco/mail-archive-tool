@@ -948,6 +948,14 @@ func runFile(ctx context.Context, lr *localRun, path string, copyFirst bool, onP
 		if fi, err := os.Stat(path); err == nil && !fi.IsDir() {
 			snap, cleanup, err := snapshot(path, out)
 			if err != nil {
+				// A failure of the ARCHIVE's volume (full, read-only, gone) is the run's, as
+				// when an export write meets it; one reading the source file is the file's
+				// own (S2A-AC9).
+				var pe *fs.PathError
+				toArchive := errors.As(err, &pe) && strings.HasPrefix(filepath.Base(pe.Path), snapshotPrefix)
+				if kind := export.FatalKindAt(err, out); kind != export.FatalNone && toArchive {
+					return runFatalFor(out, kind, err)
+				}
 				return err
 			}
 			defer cleanup()
@@ -998,6 +1006,14 @@ func runFile(ctx context.Context, lr *localRun, path string, copyFirst bool, onP
 	return src.finish(reader.Walk(handler))
 }
 
+// snapshotPrefix starts the name of a -copy-first snapshot's temp file, which is how a
+// failure of its WRITE (the archive's volume) is told from one reading the source.
+const snapshotPrefix = ".mailarchive-snapshot-"
+
+// snapshotCopy is the copy a -copy-first snapshot makes; a var so a test can fail it
+// the way a full drive does.
+var snapshotCopy = io.Copy
+
 // snapshot copies src to a temporary file ON THE ARCHIVE'S VOLUME (the drive
 // the operator chose and sized — a multi-gigabyte .ost must not land in a
 // small system temp directory at 02:00), returning its path and a cleanup func.
@@ -1008,11 +1024,11 @@ func snapshot(src, out string) (string, func(), error) {
 	}
 	defer in.Close()
 
-	tmp, err := os.CreateTemp(out, ".mailarchive-snapshot-*"+filepath.Ext(src))
+	tmp, err := os.CreateTemp(out, snapshotPrefix+"*"+filepath.Ext(src))
 	if err != nil {
 		return "", nil, fmt.Errorf("create snapshot: %w", err)
 	}
-	if _, err := io.Copy(tmp, in); err != nil {
+	if _, err := snapshotCopy(tmp, in); err != nil {
 		tmp.Close()
 		os.Remove(tmp.Name())
 		return "", nil, fmt.Errorf("copy snapshot: %w", err)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
@@ -98,6 +99,10 @@ func writtenPath(err error) string {
 	var ie *export.ItemError
 	if errors.As(err, &ie) {
 		return ie.Path
+	}
+	var pe *fs.PathError // a -copy-first snapshot's write
+	if errors.As(err, &pe) {
+		return pe.Path
 	}
 	return ""
 }

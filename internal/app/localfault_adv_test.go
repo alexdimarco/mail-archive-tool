@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -412,6 +414,55 @@ func TestAnAttachmentThatPanicsCostsThatAttachmentOnly(t *testing.T) {
 	leftovers, _ := filepath.Glob(filepath.Join(out, "*", "*", ".mailarchive-*"))
 	if more, _ := filepath.Glob(filepath.Join(out, "*", ".mailarchive-*")); len(leftovers)+len(more) != 0 {
 		t.Errorf("temp files left in the archive: %v %v", leftovers, more)
+	}
+}
+
+// covers: MA-320, R12
+// S2A-AC9: -copy-first copies a data file onto the archive's own volume before reading
+// it. A full drive found there is the same fault as a full drive found by an export
+// write: run-fatal, the drive's remedy, and no further source (each would copy a
+// multi-gigabyte file onto the full drive before failing). It was an ordinary
+// "could not read this file" failure: the next source copied too, and an .ost was
+// told to run `mailarchive -outlook`, the wrong remedy for a full drive. A failure
+// READING the source file is still that file's own.
+func TestSnapshotOnAFullDriveIsRunFatal(t *testing.T) {
+	data := pstFixtureData(t)
+	dir := tmpDir(t)
+	first := writeData(t, dir, "first.ost", data)
+	second := writeData(t, dir, "second.pst", data)
+	copies := 0
+	orig := snapshotCopy
+	t.Cleanup(func() { snapshotCopy = orig })
+	snapshotCopy = func(dst io.Writer, src io.Reader) (int64, error) {
+		copies++
+		if f, ok := dst.(*os.File); ok {
+			return 0, &fs.PathError{Op: "write", Path: f.Name(), Err: syscall.ENOSPC}
+		}
+		return 0, syscall.ENOSPC
+	}
+	out := tmpDir(t)
+	_, err := Run(context.Background(), Options{Inputs: []string{first, second}, Out: out, CopyFirst: true}, discard(), nil)
+	var fatal *RunFatalError
+	if !errors.As(err, &fatal) || !strings.Contains(err.Error(), "the archive drive is full") || strings.Contains(err.Error(), "-outlook") {
+		t.Fatalf("run err = %v; want the full-drive refusal, not an .ost remedy", err)
+	}
+	if copies != 1 {
+		t.Errorf("%d snapshots attempted; want 1: the second source must not be copied onto a full drive", copies)
+	}
+	if left, _ := filepath.Glob(filepath.Join(out, ".mailarchive-snapshot-*")); len(left) != 0 {
+		t.Errorf("snapshot temp files left behind: %v", left)
+	}
+
+	// A failure READING the source is the file's own: the run goes on to the next one.
+	copies = 0
+	snapshotCopy = func(dst io.Writer, src io.Reader) (int64, error) {
+		copies++
+		return 0, &fs.PathError{Op: "read", Path: first, Err: syscall.EIO}
+	}
+	out2 := tmpDir(t)
+	_, err = Run(context.Background(), Options{Inputs: []string{first, second}, Out: out2, CopyFirst: true}, discard(), nil)
+	if errors.As(err, &fatal) || copies != 2 {
+		t.Errorf("a read error of the source: err %v, %d snapshots; want a per-file failure and both sources attempted", err, copies)
 	}
 }
 
