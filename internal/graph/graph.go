@@ -18,6 +18,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -208,7 +209,7 @@ func (cfg Config) settings() settings {
 // transport the token endpoint shares; the $value request goes through its own
 // base transport (mimeTransport), under the same token source.
 func newClient(ctx context.Context, base string, src oauth2.TokenSource, b settings, meMode bool) *Client {
-	src = oauth2.ReuseTokenSource(nil, src)
+	src = &refreshSource{inner: src}
 	// The $value client is built here, over its own base transport and the
 	// shared token source, never by oauth2.NewClient from a context that carries
 	// httpTransport's client: NewClient copies that client's Timeout (RR2b-C3),
@@ -217,7 +218,7 @@ func newClient(ctx context.Context, base string, src oauth2.TokenSource, b setti
 	mime := mimeTransport(b.wrap)
 	return &Client{
 		base:        strings.TrimRight(base, "/"),
-		hc:          oauth2.NewClient(ctx, src),
+		hc:          clientOver(ctx, src),
 		reqTimeout:  b.req,
 		mimeTimeout: b.mime,
 		mimeHC: &http.Client{
@@ -229,6 +230,24 @@ func newClient(ctx context.Context, base string, src oauth2.TokenSource, b setti
 		mimeHeader: b.header,
 		pageCap:    b.pageCap,
 		meMode:     meMode,
+	}
+}
+
+// clientOver is oauth2.NewClient(ctx, src) without the ReuseTokenSource it wraps
+// around src: a second token cache that ForceRefresh could not reach. It takes
+// what NewClient takes from the context's client (its transport, CheckRedirect,
+// Jar and Timeout: oauth2.go:357-366, RR2b-C3), so the JSON clients carry the
+// redirect refusal and the request timeout exactly as before.
+func clientOver(ctx context.Context, src oauth2.TokenSource) *http.Client {
+	base, _ := ctx.Value(oauth2.HTTPClient).(*http.Client)
+	if base == nil {
+		base = http.DefaultClient
+	}
+	return &http.Client{
+		Transport:     &oauth2.Transport{Base: base.Transport, Source: src},
+		CheckRedirect: base.CheckRedirect,
+		Jar:           base.Jar,
+		Timeout:       base.Timeout,
 	}
 }
 
@@ -704,10 +723,15 @@ func (e *TimeoutError) Error() string {
 
 // TooLargeError is MIMETo's size-cap stop: the body is larger than the cap its
 // caller passed. It names the message and the cap, and the body is never
-// truncated into a success.
+// truncated into a success. Declared is the response's Content-Length (-1 when it
+// sent none), for the early refusal and for a body that streams past the limit
+// alike: a caller that passes a limit below the shared cap (the copy export's
+// free-space budget) tells an item above the cap from its own budget by it
+// (extraction design §4.13, RR2b-C8; fault-isolation §4.8.6).
 type TooLargeError struct {
 	MessageID string
 	Limit     int64
+	Declared  int64
 }
 
 func (e *TooLargeError) Error() string {
@@ -771,7 +795,7 @@ func (c *Client) MIMETo(ctx context.Context, userID, messageID string, w io.Writ
 		return 0, se
 	}
 	if maxBytes > 0 && resp.ContentLength > maxBytes {
-		return 0, &TooLargeError{MessageID: messageID, Limit: maxBytes}
+		return 0, &TooLargeError{MessageID: messageID, Limit: maxBytes, Declared: resp.ContentLength}
 	}
 	var src io.Reader = body
 	if maxBytes > 0 {
@@ -784,7 +808,7 @@ func (c *Client) MIMETo(ctx context.Context, userID, messageID string, w io.Writ
 		var one [1]byte
 		switch _, perr := io.ReadFull(body, one[:]); {
 		case perr == nil:
-			return n, &TooLargeError{MessageID: messageID, Limit: maxBytes}
+			return n, &TooLargeError{MessageID: messageID, Limit: maxBytes, Declared: resp.ContentLength}
 		case perr != io.EOF:
 			err = perr
 		}
@@ -917,6 +941,55 @@ func (c *Client) getOn(ctx context.Context, hc *http.Client, u string, perAttemp
 		case <-time.After(wait):
 		}
 	}
+}
+
+// refreshSource caches its inner source's token until it is no longer valid, as
+// oauth2.ReuseTokenSource does, and can be told to drop it: ForceRefresh, the copy
+// export's one forced refresh after a 401 (extraction design §4.13, XC9). A cached
+// token the server has stopped accepting (revoked, or clock skew) is otherwise
+// reused until its own expiry.
+type refreshSource struct {
+	inner oauth2.TokenSource
+	mu    sync.Mutex
+	tok   *oauth2.Token
+}
+
+func (s *refreshSource) Token() (*oauth2.Token, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.tok.Valid() {
+		return s.tok, nil
+	}
+	t, err := s.inner.Token()
+	if err != nil {
+		return nil, err
+	}
+	s.tok = t
+	return t, nil
+}
+
+// force drops the cached token, and the inner source's own when it keeps one.
+func (s *refreshSource) force() {
+	s.mu.Lock()
+	s.tok = nil
+	s.mu.Unlock()
+	if f, ok := s.inner.(interface{ forceRefresh() }); ok {
+		f.forceRefresh()
+	}
+}
+
+// ForceRefresh drops the client's cached access token and fetches a fresh one
+// from the refresh token now. A nil result means the sign-in still refreshes; an
+// error is the refresh's own (an *oauth2.RetrieveError inside the returned
+// *url.Error when the token endpoint refused it), which the copy export reads as
+// "sign-in refused" (R-c). It is a no-op for a source that keeps no cache.
+func (c *Client) ForceRefresh(ctx context.Context) error {
+	rs, ok := c.tokens.(*refreshSource)
+	if !ok {
+		return nil
+	}
+	rs.force()
+	return c.warmToken(ctx, c.base)
 }
 
 // warmToken makes the client's token current before a request that runs its own

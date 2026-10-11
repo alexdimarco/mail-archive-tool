@@ -977,6 +977,12 @@ func baseName(date time.Time, subject, key string) string {
 	return baseNameN(date, util.Slug(subject, slugMax), key, 8)
 }
 
+// StemName is a message's file stem by the archive's own convention (baseNameN),
+// exported so the copy export names its files the same way and an inheritor sees
+// one scheme (extraction design §4.9, XC36). slug is the subject's util.Slug,
+// already bounded, or "" under the path budget.
+func StemName(date time.Time, slug, key string, n int) string { return baseNameN(date, slug, key, n) }
+
 // baseNameN is baseName with an n-hex digest and a pre-computed slug (which
 // may be empty under the path budget; see stemFor).
 func baseNameN(date time.Time, slug, key string, n int) string {
