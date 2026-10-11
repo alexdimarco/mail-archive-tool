@@ -98,6 +98,7 @@ type exportSlot struct {
 	started  time.Time
 	selected int
 	mailbox  string
+	archive  bool // an archive export: it has no sign-in, so a sign-in change does not stop it (E4-AI5)
 	done     chan struct{}
 
 	mu       sync.Mutex
@@ -237,7 +238,7 @@ func (d *dashboard) startAction(w http.ResponseWriter, r *http.Request) {
 	run := ex.env.NewCopyRun(prev.plan, src)
 	started := make(chan string, 1)
 	run.OnStart = func(id string) { started <- id }
-	slot := &exportSlot{run: run, src: src, started: d.now(), selected: len(prev.plan.Messages), mailbox: mailbox, done: make(chan struct{})}
+	slot := &exportSlot{run: run, src: src, started: d.now(), selected: len(prev.plan.Messages), mailbox: mailbox, archive: prev.bind.arch, done: make(chan struct{})}
 
 	ex.mu.Lock()
 	if ex.slot != nil && ex.slot.live() { // another start won the race

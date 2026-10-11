@@ -46,6 +46,60 @@ func TestCreateFolderNeverWritesInAnotherArchiveFolderTheOwnerHasNamed(t *testin
 	}
 }
 
+// covers: MA-510, MA-530, R29, R12, S41, S52
+// A Microsoft 365 sign-in that completes or is cleared (XC7) does not touch the export or the preview of an
+// archive (E4-AI5): an archive source needs no sign-in (MA-510), and the account in "Sign in as <nobody>"
+// was empty because the run never had one. signInChanged compared the running slot's mailbox ("" for an
+// archive) with the new account and stopped it with R-z (0 of N exported, "Sign in as  (click Sign in...)");
+// and dropSession cancelled the preview job whatever its source. The positive twin: the same change stops a
+// Microsoft 365 export's preview job, as before.
+func TestASignInChangeLeavesAnArchiveExportAndPreviewAlone(t *testing.T) {
+	e := newWsEnv(t)
+	buildArchiveAt(t, e.out)
+	addBulkStore(t, e.out, 150)
+	arch := archSource("archive", e.out)
+	e.archFolders(arch)
+
+	// the preview job: archive-bound jobs are not cancelled, a Microsoft 365 one is
+	for _, c := range []struct {
+		name      string
+		bind      wsBind
+		cancelled bool
+	}{{"an archive preview", wsBind{arch: true, path: e.out}, false}, {"a Microsoft 365 preview", wsBind{upn: "alice@contoso.org"}, true}} {
+		release := make(chan struct{})
+		sawCancel := make(chan bool, 1)
+		e.d.ws.startJob(func(ctx context.Context, job *wsPreviewJob) (*app.CopyPlan, map[string]any, *refusal) {
+			select {
+			case <-ctx.Done():
+				sawCancel <- true
+			case <-release:
+				sawCancel <- false
+			}
+			return nil, nil, nil
+		}, c.bind, "")
+		e.d.signInChanged("carol@contoso.org")
+		time.Sleep(50 * time.Millisecond)
+		close(release)
+		select {
+		case got := <-sawCancel:
+			if got != c.cancelled {
+				t.Errorf("%s: cancelled by a sign-in change = %v, want %v", c.name, got, c.cancelled)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s: the job never ended", c.name)
+		}
+	}
+
+	// the export: a sign-in as another account while an archive export runs
+	id, _ := e.preview(e.archSel(arch, entry("bulk", false)))
+	e.d.ex.afterLaunch = func(s *exportSlot) { e.d.signInChanged("carol@contoso.org") }
+	e.ok("/api/exports/start", map[string]any{"previewId": id})
+	last := e.waitRun()["last"].(map[string]any)
+	if last["status"] != "complete" || last["exported"] != float64(150) {
+		t.Errorf("an archive export that a Microsoft 365 sign-in change met: %v, want it complete (no R-z: it never had a sign-in)", last)
+	}
+}
+
 // covers: MA-435, MA-531, R29, S52
 // The preview's read of the index (the subject, sender and date of each message of the selected folders)
 // stops when the preview is cancelled (E4-AC7): it ignored the context, so a cancelled preview of a

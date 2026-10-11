@@ -387,7 +387,7 @@ func (d *dashboard) signInChanged(now string) {
 	d.ex.mu.Lock()
 	s := d.ex.slot
 	d.ex.mu.Unlock()
-	if s != nil && s.live() && !strings.EqualFold(s.mailbox, now) {
+	if s != nil && s.live() && !s.archive && !strings.EqualFold(s.mailbox, now) {
 		s.run.StopForSignInChange(now)
 	}
 }
