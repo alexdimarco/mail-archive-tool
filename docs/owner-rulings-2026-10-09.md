@@ -1166,6 +1166,32 @@ is ever needed (it would also need a Windows lab check). Skip encoders remaining
 ESC-15's token lock, E4's archive-root-gone, E5's Readable HTML, R4's archive-writer names. The
 Linux mocked-zenity argv test and all Windows legs have not run here.
 
+### 13.15 The extraction workspace's adversarial pass and friction review (merged 2026-10-11)
+
+**Adversarial pass** (E2 write side plus E3, `docs/review-extraction-workspace-adversarial.md`): 30
+found, 21 confirmed, 19 fixed with tombstone tests. Notable: file names from 4-byte letters
+exceeding 255 bytes; a planted FIFO wedging the seal; a folder-parent cycle overflowing the stack;
+Open folder and Check judging a folder other than the one probed; sign-in saved out of order with
+a live write-back; a retry repeating another part's messages; History rescanning every poll. **J7
+confirmed**: LC-C2's two replaced desktop tests lose nothing the originals asserted, and the old
+"any bare listener is the instance" behaviour is deliberately reversed. Two owner decisions, each
+a skip encoder, **recommended: defer** (single-user): **EW-AI4** (Windows second logon session: a
+second engine reconciles the first's LIVE export as interrupted; the fix is a per-run liveness
+lock and new wording) and **EW-AI7** (Linux Open folder: `xdg-open` could launch a file swapped in
+within milliseconds; a trailing separator on the argv closes it but changes MA-430's pinned argv).
+
+**Friction review** (`docs/review-extraction-workspace-friction.md`): 25 cells, 31 findings,
+high-friction cells 6 to 1. Verdict **HIGH_FRICTION_NOT_SHIPPABLE**: the one cell left (OW-19) is
+the browser click-through of the three page scripts, keyboard-only and with a screen reader, which
+needs a real browser and assistive technology. It is the owner's or a lab's check and gates ship.
+F15 (no date range in the selection; one folder over 200,000 messages cannot be exported) is an
+owner question, recommended with E4.
+
+The two branches both changed retry-chain handling and merged textually but not in behaviour;
+three tests failed after the merge and were reconciled in `8cffbcf` (failure lists now share the
+set's one source; the card failure list is cached; one fixture step reordered with no assertion
+loosened). Clean-clone suite, vet on three OSes and gofmt are green.
+
 ### 13.7 Escalations from LC-C1's adversarial pass (merged 2026-10-10)
 
 None blocks anything: each has a skip encoder or a safe interim in force.
