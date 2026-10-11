@@ -535,20 +535,49 @@ func firstSegment(path string) string {
 // Load reads the manifest at path. A missing file yields an empty manifest
 // bound to that path (so a later Save creates it).
 func Load(path string) (*Manifest, error) {
-	m := &Manifest{path: path, Version: manifestVersion, LoadedVersion: manifestVersion, Entries: map[string]Record{}, byIdent: map[string][]IdentRef{}}
-
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		return m, nil
+		return newManifest(path), nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("read manifest: %w", err)
 	}
+	return parseManifest(path, path, data)
+}
+
+// LoadFrom parses the bytes of the manifest called name, which the caller read itself
+// (through an os.Root on the archive, under a size cap, so that a concurrent writer's
+// rename cannot fail the read on Windows and a hostile folder cannot make it read
+// without bound). The result is a snapshot: it is bound to no path, so Save refuses,
+// and every migration Load makes stays in memory (the extraction workspace's second
+// archive source writes nothing in the folder it reads, design §4.3).
+func LoadFrom(name string, data []byte) (*Manifest, error) {
+	return parseManifest("", name, data)
+}
+
+func newManifest(path string) *Manifest {
+	return &Manifest{path: path, Version: manifestVersion, LoadedVersion: manifestVersion, Entries: map[string]Record{}, byIdent: map[string][]IdentRef{}}
+}
+
+// NewerFormatError is the refusal of a manifest a newer mailarchive wrote.
+type NewerFormatError struct {
+	Name       string // the manifest as the caller named it
+	Version    int    // the format version it holds
+	Understood int    // the version this build understands
+}
+
+func (e *NewerFormatError) Error() string {
+	return fmt.Sprintf("manifest %s was written by a newer mailarchive (format version %d; this build understands %d): upgrade this copy of mailarchive, or point -out at an archive this version wrote", e.Name, e.Version, e.Understood)
+}
+
+// parseManifest is Load's work on the bytes data of the manifest called name, bound to path.
+func parseManifest(path, name string, data []byte) (*Manifest, error) {
+	m := newManifest(path)
 	if len(data) == 0 {
 		return m, nil
 	}
 	if err := json.Unmarshal(data, m); err != nil {
-		return nil, fmt.Errorf("manifest %s is corrupt or truncated (%v): restore it from a backup, or delete it to re-export everything (the archived files are untouched; incremental runs will rewrite them in place)", path, err)
+		return nil, fmt.Errorf("manifest %s is corrupt or truncated (%v): restore it from a backup, or delete it to re-export everything (the archived files are untouched; incremental runs will rewrite them in place)", name, err)
 	}
 	if m.Entries == nil {
 		m.Entries = map[string]Record{}
@@ -559,7 +588,7 @@ func Load(path string) (*Manifest, error) {
 	// later from still-newer binaries; a shared/synced -out must be written only
 	// by upgraded binaries (README rule). (FC1.)
 	if m.Version > manifestVersion {
-		return nil, fmt.Errorf("manifest %s was written by a newer mailarchive (format version %d; this build understands %d): upgrade this copy of mailarchive, or point -out at an archive this version wrote", path, m.Version, manifestVersion)
+		return nil, &NewerFormatError{Name: name, Version: m.Version, Understood: manifestVersion}
 	}
 	// Remember the on-disk version before any upgrade rewrites it: the live path
 	// consults LoadedVersion to know whether the v3→v4 collapse still owes a run.
@@ -1666,6 +1695,9 @@ func (m *Manifest) identRemoveLocked(key string) {
 func (m *Manifest) Save() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.path == "" {
+		return errors.New("this manifest is a read-only snapshot (LoadFrom) and has no file to save to")
+	}
 
 	m.Version = manifestVersion
 	// Compact, not pretty-printed: the manifest is machine state (one record per

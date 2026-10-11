@@ -39,12 +39,18 @@ const ArchiveCSP = "default-src 'none'; img-src data:; style-src 'unsafe-inline'
 const inertMetas = `<meta http-equiv="Content-Security-Policy" content="` + ArchiveCSP + `">` + "\n" +
 	`<meta name="referrer" content="no-referrer">`
 
-// docTemplate: %s = title, mail head extras (styles etc.), our header, body attrs, body.
-const docTemplate = `<!DOCTYPE html>
+// docPrefix is the exact opening of every page the renderer writes: the doctype, the
+// root element, the head, our charset meta and the policy metas, before anything the
+// mail supplies. It is a constant of its own so that the archived-page gate
+// (ArchivedPageInert) and the template cannot drift apart.
+const docPrefix = `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-` + inertMetas + `
+` + inertMetas
+
+// docTemplate: %s = title, mail head extras (styles etc.), our header, body attrs, body.
+const docTemplate = docPrefix + `
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>%s</title>
 <style>
@@ -1579,7 +1585,13 @@ var reparse = func(doc string, scripting bool) (*xhtml.Node, error) {
 	return xhtml.ParseWithOptions(strings.NewReader(doc), xhtml.ParseOptionEnableScripting(scripting))
 }
 
-func hostileIn(doc string, scripting bool) string {
+func hostileIn(doc string, scripting bool) string { return hostileScan(doc, scripting, true) }
+
+// hostileScan is hostileIn with the reserved-marker check optional: the archived-page gate
+// reads pages that carry the tool's own header classes (mailarchive-header and the rest),
+// which are reserved markers only in mail, so it asks about metas and resource hints alone
+// (LiveRefreshIn).
+func hostileScan(doc string, scripting, markers bool) string {
 	root, err := reparse(doc, scripting)
 	if err != nil {
 		return parseFailure(err)
@@ -1600,7 +1612,7 @@ func hostileIn(doc string, scripting bool) string {
 			if c.Type == xhtml.ElementNode && strings.EqualFold(c.Data, "link") && liveResourceHint(c) {
 				return true
 			}
-			if c.Type == xhtml.ElementNode && foreignReservedMarker(c) {
+			if markers && c.Type == xhtml.ElementNode && foreignReservedMarker(c) {
 				// A mail element wearing the tool's private namespace (a
 				// mailarchive-* class or a data-mailarchive-* attribute that is
 				// not one neutralize adds): stripReservedNamespace never reached
