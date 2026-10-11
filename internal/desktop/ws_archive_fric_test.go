@@ -3,6 +3,7 @@ package desktop
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -807,5 +808,78 @@ func TestWorkspacePageStartsOnTheArchiveWhenMicrosoft365IsNotSetUp(t *testing.T)
 	i, j, k := strings.Index(workspaceJS, "isn\\'t set up yet"), strings.Index(workspaceJS, "$('srcKind').value=k"), strings.Index(workspaceJS, "renderSource();\n    const s=d.settings")
 	if i < 0 || j < i || k < j {
 		t.Errorf("the switch to the archive source is not in the branch for Microsoft 365 not set up, before renderSource: %d %d %d", i, j, k)
+	}
+}
+
+// covers: MA-523, R12, S41
+// F13: the Settings-save guard's words and buttons. The ask names the read-only way (Cancel, then Extraction
+// workspace → Source → Another archive folder, which changes no setting and touches no backup); the safe button
+// (Cancel) is the page's primary one and the harmful one (Save and keep) is not; with nobody signed in the ask
+// does not claim an account that "you are signed in as", and a cleared Archive location is not "into ."; a
+// removal the scheduler refuses says what was and was not done and what to do, with the scheduler's own text
+// after it; and after Save and remove the page says how to get the backup back. The head of the ask the existing
+// assertions pin ("Your weekly backup will now archive <account> into <folder>") is unchanged.
+func TestSettingsGuardWordsTheReadOnlyWayAndWhatToDoAfter(t *testing.T) {
+	e := newWsEnv(t)
+	installed := true
+	removed := 0
+	e.cfg.BackupInstalled = func() bool { return installed }
+	e.cfg.RemoveBackup = func() error { removed++; installed = false; return nil }
+	e.d.cfg = e.cfg
+	newOut, orig := t.TempDir(), t.TempDir()
+	save := func(out, backup string) map[string]any {
+		_, body := e.post("/api/settings", map[string]any{"out": out, "keepRaw": true, "backup": backup})
+		return body
+	}
+	if err := UpdateSettings(e.cfg.SettingsPath, "test", func(s *Settings) { s.Out = orig }); err != nil {
+		t.Fatal(err)
+	}
+	before := readFileString(t, e.cfg.SettingsPath)
+	untouched := assure.NoSideEffect(func() bool { return readFileString(t, e.cfg.SettingsPath) == before && removed == 0 && installed })
+
+	// the ask, with the read-only way
+	b := save(newOut, "")
+	if b["confirm"] != true {
+		t.Fatalf("a retargeting save was not asked about: %v", b)
+	}
+	msg, _ := b["error"].(string)
+	assure.Refused(t, 1, msg, assure.Code(1), untouched,
+		assure.Names("Your weekly backup will now archive alice@contoso.org into "+newOut, "choose Cancel", "Extraction workspace", "Another archive folder", "without changing any setting"))
+
+	// nobody signed in: no account is claimed
+	os.Remove(e.tok)
+	b = save(newOut, "")
+	msg, _ = b["error"].(string)
+	assure.Refused(t, 1, msg, assure.Code(1), untouched, assure.Names("Microsoft 365 account", "nobody is signed in right now"), assure.Forbid("you are signed in as", " into ."))
+	e.writeToken("alice@contoso.org", time.Hour)
+
+	// a cleared Archive location is said as that
+	b = save("", "")
+	msg, _ = b["error"].(string)
+	if b["confirm"] != true {
+		t.Fatalf("clearing the Archive location with a weekly backup installed was not asked about: %v", b)
+	}
+	assure.Refused(t, 1, msg, assure.Code(1), untouched, assure.Names("alice@contoso.org", "cleared the Archive location", "no folder to archive into"), assure.Forbid(" into ."))
+
+	// the scheduler refuses the removal
+	e.cfg.RemoveBackup = func() error { return errors.New("schtasks /Delete failed: Access is denied. (0x80070005)") }
+	e.d.cfg = e.cfg
+	b = save(newOut, "remove")
+	msg, _ = b["error"].(string)
+	if b["ok"] != false {
+		t.Fatalf("a refused removal saved: %v", b)
+	}
+	assure.Refused(t, 1, msg, assure.Code(1), untouched,
+		assure.Names("could not be removed", "the scheduler said: schtasks /Delete failed: Access is denied. (0x80070005)", "nothing was saved", "Weekly backup card", "Save and keep the backup"))
+
+	// the page: Cancel is the primary button, and what is said after a removal
+	page := e.get("/").Body.String()
+	for _, want := range []string{`<button class="btn" id="settingsCancel"`, `<button class="btn secondary" id="settingsKeep"`, `<button class="btn secondary" id="settingsRemoveBackup"`} {
+		if !strings.Contains(page, want) {
+			t.Errorf("the Settings guard's buttons: the page lacks %q", want)
+		}
+	}
+	if !strings.Contains(dashboardJS, "Settings saved, and the weekly backup removed. To run it again, click Install / update on the Weekly backup card.") {
+		t.Error("dashboard.js does not say how to get the weekly backup back after it was removed *(script)*")
 	}
 }
