@@ -26,6 +26,10 @@ type CopyPlanInput struct {
 	Options  CopyOptions
 	Dest     string // an absolute directory
 	Chain    CopyChain
+	// Archives are the archive folders the export must stay outside of, by path and
+	// by identity (R-f, R-f2; design §4.7 step 3): the configured archive, and in
+	// slice E4 another archive folder chosen as the source. Empty: none.
+	Archives []string
 }
 
 // copyRootName is the name the export directory takes: MailExport-<local
@@ -68,8 +72,12 @@ func (e *CopyExportEnv) PlanCopyExport(in CopyPlanInput) (*CopyPlan, error) {
 	id, _ := readIdentity(f)
 	f.Close()
 	droot.Close()
+	outside, err := e.CheckDestination(dest, in.Archives)
+	if err != nil {
+		return nil, err
+	}
 
-	p := &CopyPlan{
+	p := &CopyPlan{Outside: outside,
 		ID: e.rand(16), Created: e.nowTime(), Source: in.Source, Folders: in.Folders, Messages: in.Messages,
 		Options: in.Options, Chain: in.Chain, Dest: dest, DestIdentity: id, FSType: id.FSType,
 	}

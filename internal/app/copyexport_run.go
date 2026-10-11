@@ -233,6 +233,14 @@ func (r *CopyRun) start() *CopyRefusal {
 			return refuse("R-k", "This preview is out of date (older than 30 minutes, or the selection or destination changed) — click Preview copy export again.")
 		}
 	}
+	// The destination is still outside the archives, by path and by identity: the
+	// walk the preview did is not repeated, the destination is read again (MA-444).
+	if err := p.Outside.Recheck(e, p.Dest); err != nil {
+		if ref, ok := err.(*CopyRefusal); ok {
+			return ref
+		}
+		return destMissing(p.Dest)
+	}
 	name := p.ExportName
 	made := false
 	for i := 1; i <= 99; i++ {
