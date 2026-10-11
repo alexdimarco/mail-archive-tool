@@ -1207,6 +1207,38 @@ R28, which does not exist until RI-S1 lands it. (3) MF-S1 must point `corpusV1Pa
 `corpusV1Panics` at the frozen v1 parser so the goldens keep pinning v1. (4) OR4 residual: the
 goldens used the go1.26.9 stdlib, not the release's toolchain; MF-S1's MA-331 closes it.
 
+### 13.17 FI-S2a built and merged (2026-10-11), delegated-judgement
+
+PST (and `-outlook`) isolation and healing: per-row and per-sub-folder loops with go-pst's gates kept
+(differential test, v6.0.2 pinned, `0x0FF9` read on the fixtures), structural breakers, visited and
+depth guards (S47), zero-content failures as ledger gaps, the local run's classification (run-fatal
+volume errors, unwritable folders, a 50-write breaker, fault-driven checkpoint), `-outlook` export
+skips as gaps, and the legacy-placeholder re-class. Every new gap kind has its why and remedy
+(MA-327). Conform: CONFORMS. **Owed: the adversarial pass** (untrusted PST parsing, exporter write
+paths). MA-504 stays tier L, pending. Skip encoders remain for the Graph and FI-S2b halves (MA-316,
+MA-318, MA-323), and R1 for N9's corrupted `MessageCount` and the raw-stub identity (ESC-1).
+
+Owner decisions raised by the conform check, none blocking, recommendations in brackets:
+1. **Interim hole between S2a and S2b.** `mbox.go` still mints the constant "(unreadable message)"
+   stub for a MIME-panicking mbox, maildir or Graph message; the re-class then hides that loss from
+   the partial and Not-captured surfaces on the next run, and no ledger gap exists until FI-S2b.
+   [Land FI-S2b before any release, or restrict the re-class to records older than the build. The
+   branch is local and unreleased, so nothing is exposed meanwhile.]
+2. **F19 and N4/R7** (the `.pst` open error repeating its path; one failing file's record): §13.11
+   assigns them to S2a but the design's S2a row does not list them, and the folder-link remedy needs
+   S2b. [Treat as FI-S2b's.]
+3. **N9 stdout capture** was not built: a process-global stdout swap would swallow other writers
+   (the device-code prompt). [Accept and state it in the design: go-pst's stray prints are visible.]
+4. **MA-316 row wording:** the mechanism emits an aggregate plus one folder-partially-read (two
+   entries) where the prose says one. [Tighten the prose.]
+5. If mbox, maildir and Evolution walks should close unobserved reader-stage gaps before FI-S2b,
+   FI-S1a's `TestRootBannerAppearsFromEveryCaller` seeds a gap that would be deleted: the owner's call.
+
+Load-sensitive tests: `TestCopyExportTransportOutageAndTheBreaker`, `...TwentyFiveServerErrorsAreRU2`,
+`...ASuspendRestartsTheWindow` and `...ScalesToSixtyThousandMessages` fail on a busy machine (several
+workflows running) and pass alone three of three. The 60,000-message heap bound (40 MiB) sits at its
+limit under load. [Keep as is; revisit if CI flakes.]
+
 ### 13.7 Escalations from LC-C1's adversarial pass (merged 2026-10-10)
 
 None blocks anything: each has a skip encoder or a safe interim in force.
