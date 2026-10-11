@@ -749,6 +749,13 @@ func runGraphMailbox(ctx context.Context, lr *localRun, client *graph.Client, ma
 			if fetchErr != nil {
 				return w.fetchFault(ctx, ref, folderKey, fetchErr, time.Since(began))
 			}
+			// A 200 that is not a message (an HTML page, an empty body: a captive portal
+			// or a proxy answering for the service) is a fault of this item's download,
+			// not a message the parser would accept headerless (S3-AO2). It is not a
+			// success, so it does not end the run of consecutive faults either.
+			if !looksLikeMessage(data) {
+				return w.fetchFault(ctx, ref, folderKey, errNotAMessage, time.Since(began))
+			}
 			w.br.attempt(attemptOK, 0) // a download that succeeded ends the run of consecutive faults
 			m := parseRFC822(data)
 			if m == nil {

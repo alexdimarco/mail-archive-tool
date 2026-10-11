@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -26,6 +27,32 @@ import (
 // parseRFC822 is how the walk parses a message's MIME: source.ParseRFC822, a
 // variable so a test can make one parse fail the way a crafted message would.
 var parseRFC822 = source.ParseRFC822
+
+// errNotAMessage is what a 200 $value that is no RFC 5322 message becomes: the
+// item's fetch-failed fault (S3-AO2).
+var errNotAMessage = errors.New("the answer to the download is not an e-mail message (it has no RFC 5322 header)")
+
+// looksLikeMessage says whether data starts like an RFC 5322 message: its first
+// line is a header field (a name of printable characters, then a colon). Every
+// message Graph converts opens with headers; an HTML page, an empty body or a
+// plain sentence does not. It is a check that an answer is a message at all, not
+// that it parses.
+func looksLikeMessage(data []byte) bool {
+	line := data
+	if i := bytes.IndexByte(line, '\n'); i >= 0 {
+		line = line[:i]
+	}
+	i := bytes.IndexByte(line, ':')
+	if i <= 0 {
+		return false
+	}
+	for _, c := range line[:i] {
+		if c < '!' || c > '~' {
+			return false
+		}
+	}
+	return true
+}
 
 // classifyFetch sorts a failed Graph request for one message (§4.8.1). It wraps
 // graph.Classify, which both consumers share, with capture's own readings: a

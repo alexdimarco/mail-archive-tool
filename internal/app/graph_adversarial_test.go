@@ -152,6 +152,56 @@ func TestGraphMalformedListingIsNeverAnEmptyFolder(t *testing.T) {
 	}
 }
 
+// covers: MA-310, R1, R10, R17, S46
+// S3-AO2: a $value that is not a message (a 200 HTML page, an empty body: a captive
+// portal, an impersonating proxy) is a fetch-failed gap, never a record. It used to
+// parse to a headerless "message", and three such items collapsed into ONE sha:
+// record under no labels and no gap, with a clean exit, so a portal that persisted
+// made every run a silent non-capture. The next healthy run archives each under its
+// own Message-ID and closes the gaps as recovered. Twin first: the healthy mailbox.
+func TestGraphValueThatIsNotAMessageIsAGapNotARecord(t *testing.T) {
+	s := sweepServer(false, []string{"A1", "A2", "A3"}, nil, nil)
+	defer s.Close()
+	g := isoOptions(s)
+	if res, err := sweepRun(g, tmpDir(t), export.Incremental); err != nil || res.Stats.Exported != 3 {
+		t.Fatalf("the twin: exported %d, err %v; want 3, nil", res.Stats.Exported, err)
+	}
+
+	out := tmpDir(t)
+	s.SetValue("A1", graphtest.Answer(200, "<html><body>Sign in to the guest wifi</body></html>"))
+	s.SetValue("A2", graphtest.Answer(200, "<!DOCTYPE html>\n<title>Access denied</title>"))
+	s.SetValue("A3", graphtest.Answer(200, ""))
+	res, err := sweepRun(g, out, export.Incremental)
+	if !errors.Is(err, ErrPartial) {
+		t.Fatalf("three answers that are no message: the run returned %v, want ErrPartial", err)
+	}
+	if res.Stats.Exported != 0 || loadArchive(t, out).Len() != 0 {
+		t.Errorf("exported %d, records %d; want none: a page that is not a message is not an archived message", res.Stats.Exported, loadArchive(t, out).Len())
+	}
+	gaps := graphGaps(t, out)
+	if len(gaps) != 3 {
+		t.Fatalf("the ledger holds %+v; want one gap per item", gaps)
+	}
+	for _, g := range gaps {
+		if g.Reason != "fetch-failed" || g.Class != state.ClassFillable || g.Scope != state.GapScopeItem {
+			t.Errorf("gap %+v; want a fillable fetch-failed item gap", g)
+		}
+	}
+
+	for _, id := range []string{"A1", "A2", "A3"} {
+		s.SetValue(id, nil)
+	}
+	res, err = sweepRun(g, out, export.Incremental)
+	if err != nil || res.Stats.Exported != 3 || res.Gaps.Recovered != 3 || len(graphGaps(t, out)) != 0 {
+		t.Errorf("the healed run: exported %d, err %v, recovered %d, gaps %+v; want 3, nil, 3, none", res.Stats.Exported, err, res.Gaps.Recovered, graphGaps(t, out))
+	}
+	for _, id := range []string{"a1@x", "a2@x", "a3@x"} {
+		if !archived(t, out, id) {
+			t.Errorf("%s is not archived under its own Message-ID", id)
+		}
+	}
+}
+
 // covers: MA-313, R5, R12, R18, S46
 // S3-AO7: a mailbox-fatal fault (a 403 or 401 on a $value, a 401 on a listing) puts
 // the server's own words in RunGraph's error and in the run log; those words are the
