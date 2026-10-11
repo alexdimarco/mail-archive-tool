@@ -265,3 +265,61 @@ func TestArchiveStopLetsEarlierRemovedFailuresBeRetried(t *testing.T) {
 		t.Errorf("the retry resolved against the archive as it is now: %d messages, %d left out (%v), want 3 and the 2 whose files are gone left out", len(got.Messages), got.Skipped, rerr)
 	}
 }
+
+// covers: MA-420, MA-435, R20, R29, S52
+// F2: the preview runs the archive gate on what it counts. A message whose file is a link, or has more than one
+// hard link (an archive restored from a hard-link backup, a store folder linked to another disk), is counted as
+// one the run will not copy, by the reason the run will list it under, and is not counted among those that "have
+// an original"; the run then fails exactly those messages and no others. The positive twin: the plain archive's
+// preview counts none.
+func TestArchivePreviewRunsTheGateOnWhatItCounts(t *testing.T) {
+	// the twin
+	a := buildCEArchive(t)
+	e := newCEEnv(t)
+	s := a.open()
+	p := a.plan(e, s, allKeys(s))
+	if c := p.Archive; c == nil || c.Blocked != 0 || c.WithOriginal != 3 || c.WithoutOriginal != 3 {
+		t.Fatalf("the plain archive's counts: %+v, want none blocked, 3 with an original and 3 without", c)
+	}
+
+	t.Run("a hard-linked original", func(t *testing.T) {
+		a := buildCEArchive(t)
+		e := newCEEnv(t)
+		_, eml, _ := a.files("hello")
+		if err := os.Link(eml, eml+".also"); err != nil {
+			t.Skipf("hard links unavailable: %v", err)
+		}
+		s := a.open()
+		p := a.plan(e, s, allKeys(s))
+		if c := p.Archive; c.Blocked != 1 || c.BlockedWhy["hardlink"] != 1 || c.WithOriginal != 2 || c.WithoutOriginal != 3 {
+			t.Fatalf("the counts: %+v, want 1 blocked for a hard link, 2 with an original, 3 without", c)
+		}
+		res := a.run(e, p, s)
+		if res.Counts.Failed != 1 || failureListed(manifestOf(t, res.Root), a.key("hello")) == nil {
+			t.Errorf("the run: %+v, want exactly the message the preview counted as blocked to fail", res.Counts)
+		}
+	})
+
+	t.Run("a store folder linked to another disk", func(t *testing.T) {
+		a := buildCEArchive(t)
+		e := newCEEnv(t)
+		store := filepath.Join(a.dir, "alice")
+		elsewhere := filepath.Join(tmpDir(t), "alice")
+		if err := os.Rename(store, elsewhere); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(elsewhere, store); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+		s := a.open()
+		p := a.plan(e, s, allKeys(s))
+		c := p.Archive
+		if c.Blocked != 3 || c.BlockedWhy["link"] != 3 || c.WithOriginal != 0 || c.WithoutOriginal != 3 {
+			t.Fatalf("the counts: %+v, want alice's 3 blocked for a link and not counted as having an original, bob's 3 without", c)
+		}
+		res := a.run(e, p, s)
+		if res.Counts.Failed != 3 || res.Counts.Exported != 3 {
+			t.Errorf("the run: %+v, want the 3 the preview counted as blocked to fail and bob's 3 exported", res.Counts)
+		}
+	})
+}

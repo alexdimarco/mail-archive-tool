@@ -1144,7 +1144,7 @@ func planResult(p *app.CopyPlan, id string, folders any, reported, found int, wa
 	}
 	if c := p.Archive; c != nil { // the archive source's own counts (design §4.7 step 4)
 		out["archive"] = map[string]any{"withOriginal": c.WithOriginal, "withoutOriginal": c.WithoutOriginal, "gone": c.Gone,
-			"quarantined": c.Quarantined, "unattested": c.Unattested, "skipped": c.Skipped, "other": p.Source.Other, "path": p.Source.Archive}
+			"quarantined": c.Quarantined, "unattested": c.Unattested, "skipped": c.Skipped, "blocked": c.Blocked, "other": p.Source.Other, "path": p.Source.Archive}
 	}
 	return out
 }

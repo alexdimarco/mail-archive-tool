@@ -607,7 +607,36 @@ func (d *dashboard) resolveAndPlanArchive(ctx context.Context, job *wsPreviewJob
 		return nil, nil, copyRefusal(perr)
 	}
 	infos = archiveInfos(plan.Archive, len(msgs))
+	if w := archiveBlockedWarning(plan.Archive); w != "" {
+		warns = append(warns, w)
+	}
 	return plan, planResult(plan, job.id, folderOut, reportedTotal, len(msgs), warns, infos), nil
+}
+
+// archiveBlockedWarning is the preview's sentence about messages whose file the archive gate refuses for good
+// (a link where the file should be, a file with several hard links): how many, why, and what to do before Start,
+// not a failure list after it with no remedy (friction F2).
+func archiveBlockedWarning(c *app.CopyArchiveCounts) string {
+	if c == nil || c.Blocked == 0 {
+		return ""
+	}
+	why := map[string]string{
+		"link":      "a link stands in the archive where the file should be",
+		"hardlink":  "the file has more than one hard link",
+		"irregular": "the file is not a regular file",
+		"path":      "the archive's record names a path that is not inside the archive",
+	}
+	var kinds []string
+	for k := range c.BlockedWhy {
+		kinds = append(kinds, k)
+	}
+	sort.Strings(kinds)
+	var parts []string
+	for _, k := range kinds {
+		parts = append(parts, fmt.Sprintf("%s because %s", commaInt(c.BlockedWhy[k]), why[k]))
+	}
+	return fmt.Sprintf("%s of the selected messages will not be copied (%s). MailArchive refuses a file it can't be sure is the archive's own, so each will be listed as failed when you start, and trying again will not change that. If this archive was restored from a hard-link backup, or its folders are linked to another disk, copy it into a new plain folder that holds real files, not links (on macOS or Linux: cp -RL <the archive> <a new folder>), and choose that folder instead.",
+		commaInt(c.Blocked), strings.Join(parts, ", "))
 }
 
 // one picks the word for a count: the singular for exactly one, the plural otherwise (F19).
@@ -708,6 +737,9 @@ func (d *dashboard) retryArchive(w http.ResponseWriter, in runBody, info app.Cop
 		var warns []string
 		if res.Skipped > 0 {
 			warns = append(warns, fmt.Sprintf("%s of these messages %s no longer in the archive and %s left out.", commaInt(res.Skipped), one(res.Skipped, "is", "are"), one(res.Skipped, "was", "were")))
+		}
+		if w := archiveBlockedWarning(plan.Archive); w != "" {
+			warns = append(warns, w)
 		}
 		out := planResult(plan, job.id, foldersOut(input.Folders), len(input.Messages), len(input.Messages), warns, archiveInfos(plan.Archive, len(input.Messages)))
 		out["retryWhich"] = in.Which

@@ -477,3 +477,56 @@ func TestIdleReleasedArchiveSessionSaysYouWereAway(t *testing.T) {
 	refusedBody(t, code, out, "R-j2", "wasn't listed in this session")
 	lacks2(out["error"].(string))
 }
+
+// covers: MA-435, MA-420, MA-531, R20, R29, S52
+// F2: the preview says, before Start, how many messages the archive gate will refuse (a link where the file
+// should be, a file with several hard links), why, and what to do (copy the archive into a plain folder that
+// holds real files, and choose that folder), and the run then fails exactly that many. The positive twin: a plain
+// archive's preview says nothing of the kind. Nothing is written in the archive or the destination by looking.
+func TestArchivePreviewWarnsBeforeStartAboutFilesTheGateWillRefuse(t *testing.T) {
+	e := newWsEnv(t)
+	buildArchiveAt(t, e.out)
+	arch := archSource("archive", e.out)
+	e.archFolders(arch)
+	sel := e.archSel(arch, entry("alice", true), entry("bob", false))
+	_, res := e.preview(sel)
+	if w := strings.Join(toStrings(res["warnings"]), " | "); strings.Contains(w, "will not be copied") {
+		t.Fatalf("the plain archive's preview warns: %q", w)
+	}
+
+	// the alice store is a folder linked to another disk
+	store := filepath.Join(e.out, "alice")
+	elsewhere := filepath.Join(e.dir, "other-disk")
+	if err := os.MkdirAll(elsewhere, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(store, filepath.Join(elsewhere, "alice")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(elsewhere, "alice"), store); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	before := dirDigest(t, e.out)
+	e.archFolders(arch)
+	id, res := e.preview(sel)
+	warns := strings.Join(toStrings(res["warnings"]), " | ")
+	for _, want := range []string{"3 of the selected messages will not be copied", "a link stands in the archive where the file should be",
+		"listed as failed when you start", "copy it into a new plain folder that holds real files, not links", "choose that folder instead"} {
+		if !strings.Contains(warns, want) {
+			t.Errorf("the preview's warnings lack %q: %q", want, warns)
+		}
+	}
+	if a := res["archive"].(map[string]any); a["blocked"] != float64(3) || a["withOriginal"] != float64(0) {
+		t.Errorf("the preview's archive counts: %v, want 3 blocked and none counted as having an original", a)
+	}
+	if got := dirDigest(t, e.out); got != before {
+		t.Error("the preview changed the archive")
+	}
+	if entries, _ := os.ReadDir(e.dest); len(entries) != 0 {
+		t.Errorf("the preview wrote into the destination: %v", entries)
+	}
+	e.ok("/api/exports/start", map[string]any{"previewId": id})
+	if last := e.waitRun()["last"].(map[string]any); last["failed"] != float64(3) || last["exported"] != float64(3) {
+		t.Errorf("the run: %v, want the 3 the preview said would not be copied to fail, and the other 3 exported", last)
+	}
+}

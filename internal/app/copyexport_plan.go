@@ -121,6 +121,12 @@ func (e *CopyExportEnv) PlanCopyExport(in CopyPlanInput) (*CopyPlan, error) {
 		for i := range in.Messages {
 			m := &in.Messages[i]
 			switch {
+			case m.Blocked != "": // the run will list it as failed for good: not counted as having an original or not
+				p.Archive.Blocked++
+				if p.Archive.BlockedWhy == nil {
+					p.Archive.BlockedWhy = map[string]int{}
+				}
+				p.Archive.BlockedWhy[m.Blocked]++
 			case m.NoOrig == "":
 				p.Archive.WithOriginal++
 				if m.Fix == nil || m.Fix.EML == nil {

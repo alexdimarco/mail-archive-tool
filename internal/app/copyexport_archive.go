@@ -524,7 +524,57 @@ func (a *ArchiveSource) exists(rel string) (present bool, size int64) {
 	return true, fi.Size()
 }
 
+// resolve is resolveRecord and the gate's reading of the files the run would copy for the message: the
+// preview says how many the gate will refuse before Start, not only after (friction F2).
 func (a *ArchiveSource) resolve(key string, rec state.Record, meta map[string]index.ListRow) (CopyMessage, bool) {
+	m, ok := a.resolveRecord(key, rec, meta)
+	if !ok {
+		return m, false
+	}
+	if _, valid := validRelPath(rec.Path); !valid || !strings.HasSuffix(rec.Path, verifyHTMLSuffix) {
+		m.Blocked = "path"
+		return m, true
+	}
+	page, eml, zip := archiveSiblings(rec.Path)
+	files := []string{eml} // what Files opens for a message with an original
+	if m.NoOrig != "" {
+		files = []string{page}
+		if m.Zip {
+			files = append(files, zip)
+		}
+	}
+	m.Blocked = a.blockedBy(files)
+	return m, true
+}
+
+// blockedBy opens each file behind the gate and returns the reason the gate refuses the first one it
+// refuses for good ("link", "hardlink", "irregular", "path"), or "": a file that is only unreadable or
+// missing is not the gate's refusal, and the run lists it by its own reason.
+func (a *ArchiveSource) blockedBy(rels []string) string {
+	for _, rel := range rels {
+		f, _, err := a.openGated(rel)
+		if err == nil {
+			f.Close()
+			continue
+		}
+		var af *ArchiveFileError
+		if errors.As(err, &af) {
+			switch af.Kind {
+			case AFSymlink:
+				return "link"
+			case AFLinks:
+				return "hardlink"
+			case AFIrregular:
+				return "irregular"
+			case AFPath:
+				return "path"
+			}
+		}
+	}
+	return ""
+}
+
+func (a *ArchiveSource) resolveRecord(key string, rec state.Record, meta map[string]index.ListRow) (CopyMessage, bool) {
 	tok, _, _ := strings.Cut(key, "\x00")
 	m := CopyMessage{SourceID: key, SizeHint: -1, Rel: rec.Path, Gone: !(rec.Present || rec.LastSeen.IsZero())}
 	m.Folder = []CopyFolderRef{{ID: tok, Name: tok}}
