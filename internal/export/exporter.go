@@ -305,15 +305,7 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 				// `!prev.Present` twin a no-Message-ID message that went gone and
 				// reappeared in the SAME folder got no event, so the fold reported
 				// it gone forever after (#5, adversarial 2026-09-12).
-				assert := prev.Folder != folderKey || !prev.Present
-				seenAt := e.RunAt
-				if seenAt.IsZero() {
-					seenAt = time.Now().UTC()
-				}
-				e.Manifest.MergeFields(key, folderKey, seenAt, true)
-				if e.OnManifestSkip != nil {
-					e.OnManifestSkip(key, folderPath, assert)
-				}
+				e.observeArchived(key, prev, folderKey, folderPath)
 			}
 			// A healthy read of an item that an earlier run only partly read, which
 			// already has its own record here: the partly-read record is settled.
@@ -335,6 +327,14 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		retry = true
 	}
 	if !retry && !e.Since.IsZero() && !date.IsZero() && date.Before(e.Since) {
+		// A message older than the window that the archive already holds (a Full run
+		// downloads it; an Incremental one never reaches here with a record) is still
+		// seen this run: it is stamped, and a move is followed, before the date skips
+		// it. Left unstamped, a sweep of the walked folder would mark it gone while it
+		// sits in the mailbox (S3-AI4).
+		if e.DedupMailboxWide && seen {
+			e.observeArchived(key, prev, folderKey, folderPath)
+		}
 		e.Stats.SkippedDate++
 		return false, nil
 	}
@@ -700,6 +700,27 @@ func (e *Exporter) countReadGaps(m *model.Message) {
 	}
 	if unparsed {
 		e.Stats.Unparsed++
+	}
+}
+
+// observeArchived is a mailbox-wide observation of an already-archived message that
+// writes nothing: the record's timeline follows it (LastSeen = this run, Present)
+// and, on a MOVE (folder changed) or a present-again (the record was gone and is
+// seen again), the live path's callback records the folder-assertion. Both are one
+// folder-assertion shape, and the fold reads an assertion after a gone event as
+// present-again (§3.3); without the !prev.Present twin a no-Message-ID message that
+// went gone and reappeared in the SAME folder got no event, so the fold reported it
+// gone forever after (#5, adversarial 2026-09-12). prev is the record's state before
+// this observation.
+func (e *Exporter) observeArchived(key string, prev state.Record, folderKey string, folderPath []string) {
+	assert := prev.Folder != folderKey || !prev.Present
+	seenAt := e.RunAt
+	if seenAt.IsZero() {
+		seenAt = time.Now().UTC()
+	}
+	e.Manifest.MergeFields(key, folderKey, seenAt, true)
+	if e.OnManifestSkip != nil {
+		e.OnManifestSkip(key, folderPath, assert)
 	}
 }
 

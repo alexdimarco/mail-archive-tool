@@ -387,6 +387,50 @@ func TestGraphSinceRunKeepsTheOverflowEntry(t *testing.T) {
 	}
 }
 
+// covers: MA-312, R21, R11, S37, S46
+// S3-AI4: `-mode full -since D` observes the archived messages older than D, and the
+// sweep sees that. The exporter's date check came after its mailbox-wide stamp only
+// for an Incremental run, so a Full run downloaded each older archived message,
+// skipped it by date and never stamped it: the sweep then marked every one gone (a
+// {k,gone} per message still in the mailbox) and the run's footer said the timeline
+// was complete. Now each is stamped seen (and a move is followed) before the date
+// skips it; a message deleted at the source is still swept gone in the same run, and
+// the Incremental twin leaves the older messages present as it always did.
+func TestGraphFullModeSinceRunStampsArchivedMessagesOlderThanTheWindow(t *testing.T) {
+	for _, mode := range []export.Mode{export.Incremental, export.Full} {
+		t.Run(fmt.Sprint("mode ", mode), func(t *testing.T) {
+			s := sweepServer(false, []string{"A1", "A2"}, []string{"B1"}, nil)
+			defer s.Close()
+			out := tmpDir(t)
+			g := isoOptions(s)
+			if _, err := sweepRun(g, out, export.Incremental); err != nil {
+				t.Fatalf("run 1: %v", err)
+			}
+			s.RemoveMessage("u1", "F_SE", "B1")
+			s.MoveMessage("u1", "F_IN", "F_PR", "A2")
+			res, err := RunGraph(context.Background(), g, Options{Out: out, Mode: mode, Since: time.Date(2025, 4, 1, 0, 0, 0, 0, time.UTC)}, log.New(io.Discard, "", 0))
+			if err != nil {
+				t.Fatalf("the -since run: %v", err)
+			}
+			// An Incremental run recognises the archived messages by Message-ID before the
+			// date matters; a Full run downloads them and the exporter skips them by date.
+			if wantDate := map[export.Mode]int{export.Incremental: 0, export.Full: 2}[mode]; res.Stats.SkippedDate != wantDate {
+				t.Fatalf("skipped by date %d, want %d", res.Stats.SkippedDate, wantDate)
+			}
+			runAt := runStart(t, out)
+			k, rec := recordForID(t, out, "a1@x")
+			wantSeenNotGone(t, out, "A1 (older than the window, still in the mailbox)", k, rec, runAt)
+			k, rec = recordForID(t, out, "a2@x")
+			wantSeenNotGone(t, out, "A2 (older than the window, moved to Projects)", k, rec, runAt)
+			if rec.Folder != "Projects" {
+				t.Errorf("A2 is recorded in %q, want its new folder Projects", rec.Folder)
+			}
+			k, rec = recordForID(t, out, "b1@x")
+			wantGone(t, out, "B1 (deleted at the source)", k, rec)
+		})
+	}
+}
+
 // covers: MA-313, R5, R12, R18, S46
 // S3-AO7: a mailbox-fatal fault (a 403 or 401 on a $value, a 401 on a listing) puts
 // the server's own words in RunGraph's error and in the run log; those words are the
