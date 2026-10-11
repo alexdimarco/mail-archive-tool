@@ -184,15 +184,27 @@ func errString(err error) string {
 // lock so the next launch is the instance [CC21].
 func TestHolderLockAndInstanceFile(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "state")
-	h, err := Acquire(dir)
+	h, err := Acquire(dir, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Acquire(dir); !IsHeld(err) {
+	if _, err := Acquire(dir, ""); !IsHeld(err) {
 		t.Fatalf("a second Acquire: %v, want the lock held", err)
 	}
+	if !LockIsHeld(dir, "") {
+		t.Errorf("LockIsHeld says a held lock is free")
+	}
+	// Another logon session of the same account has a lock and a file of its own.
+	other, err := Acquire(dir, "2")
+	if err != nil {
+		t.Fatalf("a second logon session could not take its own lock: %v", err)
+	}
+	if other.FilePath() == h.FilePath() || LockIsHeld(dir, "3") {
+		t.Errorf("sessions share a file (%s, %s) or a lock", other.FilePath(), h.FilePath())
+	}
+	other.Close()
 	if runtime.GOOS != "windows" { // a Windows byte-range lock hides its holder line from other readers
-		if got := HolderPID(dir); got != os.Getpid() {
+		if got := HolderPID(dir, ""); got != os.Getpid() {
 			t.Errorf("HolderPID = %d, want %d", got, os.Getpid())
 		}
 	}
@@ -227,9 +239,12 @@ func TestHolderLockAndInstanceFile(t *testing.T) {
 	if _, err := os.Lstat(h.FilePath()); !os.IsNotExist(err) {
 		t.Errorf("Close left the instance file behind")
 	}
-	again, err := Acquire(dir)
+	again, err := Acquire(dir, "")
 	if err != nil {
 		t.Fatalf("the lock is not free after Close: %v", err)
 	}
 	again.Close()
+	if LockIsHeld(dir, "") {
+		t.Errorf("LockIsHeld says a released lock is held")
+	}
 }

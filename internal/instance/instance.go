@@ -26,6 +26,7 @@ import (
 	"runtime"
 	"time"
 
+	"mail-archive-tool/internal/procs"
 	"mail-archive-tool/internal/util"
 )
 
@@ -90,8 +91,59 @@ type Info struct {
 	// Former records what the start found at MailArchive's former address
 	// 127.0.0.1:8097 [CC22, CC23, ruling OQ-9]: "" nothing, "program" an unverified
 	// listener (a program that is not MailArchive), "preupgrade" an older instance
-	// that could not be ended. `status` reads it from here.
+	// that could not be ended (the Former constants). `status` reads it from here.
 	Former string `json:"former,omitempty"`
+}
+
+// What a desktop start found at MailArchive's former address 127.0.0.1:8097
+// [CC22, CC23, ruling OQ-9]. The dashboard now takes a free port of its own, so
+// nothing of this version listens there; whatever does is named, never silent.
+const (
+	// FormerAddress is where the dashboard used to live.
+	FormerAddress = "127.0.0.1:8097"
+	// FormerProgram: a listener that is not a MailArchive Desktop answers there; it
+	// could be a look-alike, so a typed address or a bookmark is not to be trusted.
+	FormerProgram = "program"
+	// FormerPreUpgrade: an older MailArchive Desktop (one with no /_handoff) still
+	// runs and could not be ended.
+	FormerPreUpgrade = "preupgrade"
+
+	// FormerProgramNotice and PreUpgradeNotice are the texts of the dashboard's
+	// header and of `status` (§7.6).
+	FormerProgramNotice = "Another program is using MailArchive's former address 127.0.0.1:8097. Open MailArchive only from its shortcut — a page you reach by typing that address or a bookmark may not be MailArchive."
+	PreUpgradeNotice    = "An older MailArchive Desktop is still running (in this session or another account's). Do this: sign out and back in, or restart the computer, to finish the upgrade."
+)
+
+// NoticeFor is the text for a Former kind, "" for none or an unknown kind.
+func NoticeFor(kind string) string {
+	switch kind {
+	case FormerProgram:
+		return FormerProgramNotice
+	case FormerPreUpgrade:
+		return PreUpgradeNotice
+	}
+	return ""
+}
+
+// Former is what the running desktop instance of this account recorded at start
+// about the former address, for `status` and the dashboard's health view: "" when
+// no live instance recorded one. The file is read like any instance file, and a
+// recorded kind this version does not know is ignored (§8.2).
+func Former() string {
+	dir, err := Dir()
+	if err != nil {
+		return ""
+	}
+	return FormerIn(dir, LogonSession())
+}
+
+// FormerIn is Former for the instance file of a session in dir.
+func FormerIn(dir, session string) string {
+	info, err := Read(FilePathIn(dir, session))
+	if err != nil || !procs.Alive(info.PID) || NoticeFor(info.Former) == "" {
+		return ""
+	}
+	return info.Former
 }
 
 // NewKey returns a fresh key K and its hex form.

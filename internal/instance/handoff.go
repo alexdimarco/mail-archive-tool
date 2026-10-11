@@ -40,6 +40,11 @@ const (
 	DefaultWait = 15 * time.Second
 )
 
+// CallTimeout bounds one handoff call: the instance may wait DefaultWait for the
+// browser to arrive before it answers, so it outlasts that. A var so a test of a
+// listener that never answers need not wait it out.
+var CallTimeout = DefaultWait + 10*time.Second
+
 // Handoff is the server side: it makes one instance open a browser for, or hand
 // a link to, a caller that proves it holds the instance's key.
 type Handoff struct {
@@ -173,7 +178,7 @@ func Call(ctx context.Context, addr string, key []byte, quiet bool) (Reply, erro
 		Transport: &http.Transport{DialContext: (&net.Dialer{Timeout: 3 * time.Second}).DialContext, DisableKeepAlives: true},
 		// The instance waits up to DefaultWait for the browser to arrive before it
 		// answers, so the whole call outlasts that.
-		Timeout:       DefaultWait + 10*time.Second,
+		Timeout:       CallTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 	resp, err := c.Do(req)

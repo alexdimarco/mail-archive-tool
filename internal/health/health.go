@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"mail-archive-tool/internal/index"
+	"mail-archive-tool/internal/instance"
 	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/procs"
 	"mail-archive-tool/internal/schedule"
@@ -39,6 +40,13 @@ type Input struct {
 	// OutUnderSync names the cloud-sync service (e.g. "OneDrive") when the
 	// archive sits inside a synced folder; "" when it does not.
 	OutUnderSync string
+
+	// DesktopFormer is what the running MailArchive Desktop recorded at start about
+	// MailArchive's former address 127.0.0.1:8097 (instance.FormerProgram or
+	// instance.FormerPreUpgrade), "" when it found nothing or none runs: the
+	// squat-and-phish notice of design-local-confidentiality CC23 [ruling OQ-9] and
+	// the pre-upgrade instance of CC22.
+	DesktopFormer string
 
 	// HasManifestFile is true when a manifest file exists on disk (even if it
 	// cannot be loaded); HasManifest is true only when it loaded. A present-but-
@@ -315,6 +323,16 @@ func Assess(in Input, now time.Time) Report {
 	// and can conflict with the sync (P3).
 	if in.OutUnderSync != "" {
 		r.warn("cloud_sync", fmt.Sprintf("the archive is inside %s's synced folder — a backup here re-uploads on every change and can corrupt during a sync; use a local, non-synced folder, or exclude it from sync / keep it always on this device", in.OutUnderSync))
+	}
+
+	// The desktop's former address: never silent when another program holds it, or
+	// an older MailArchive Desktop still runs there (CC22, CC23).
+	if txt := instance.NoticeFor(in.DesktopFormer); txt != "" {
+		code := "desktop_former_address"
+		if in.DesktopFormer == instance.FormerPreUpgrade {
+			code = "desktop_preupgrade"
+		}
+		r.warn(code, txt)
 	}
 
 	// Last run.
@@ -1049,6 +1067,7 @@ func jobOutOf(job []string) string {
 // schedule name instead of the descriptor's.
 func Gather(out, nameOverride string) Input {
 	in := Input{Out: out, GOOS: runtime.GOOS, PIDAlive: procs.Alive}
+	in.DesktopFormer = instance.Former()
 	in.ThisHost, _ = os.Hostname()
 	if svc, ok := util.UnderCloudSync(out); ok {
 		in.OutUnderSync = svc

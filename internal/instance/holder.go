@@ -15,32 +15,65 @@ import (
 // instance file published while it holds it. Whoever holds the lock is the
 // account's only instance of this configuration (P8).
 type Holder struct {
-	Dir string
+	Dir     string
+	Session string
 
 	lock *lockfile.Lock
 	info *Info
 	stop chan struct{}
 }
 
-// Acquire takes the per-account lock without waiting, creating dir 0700. When
-// another process holds it the error wraps lockfile.ErrHeld: an instance exists
-// or is starting.
-func Acquire(dir string) (*Holder, error) {
+// Names are the lock and instance file names of a logon session: the account's
+// own for session "" (and for the one session a POSIX login has), and one pair
+// per Terminal Services session otherwise, so a second sign-in of the same
+// account on the same computer (RDS, fast user switching) gets an instance of its
+// own, whose browser opens in its own session, instead of a handoff that opens
+// one in a session its user cannot see [CC21].
+func Names(session string) (lock, file string) {
+	if session == "" {
+		return LockName, FileName
+	}
+	return "desktop-s" + session + ".lock", "desktop-instance-s" + session + ".json"
+}
+
+// Acquire takes the per-account lock of the logon session without waiting,
+// creating dir 0700. When another process holds it the error wraps
+// lockfile.ErrHeld: an instance exists or is starting.
+func Acquire(dir, session string) (*Holder, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	l, err := lockfile.AcquireAs(filepath.Join(dir, LockName), "desktop")
+	lockName, _ := Names(session)
+	l, err := lockfile.AcquireAs(filepath.Join(dir, lockName), "desktop")
 	if err != nil {
 		return nil, err
 	}
-	return &Holder{Dir: dir, lock: l}, nil
+	return &Holder{Dir: dir, Session: session, lock: l}, nil
 }
 
 // IsHeld reports whether err says another process holds the lock.
 func IsHeld(err error) bool { return errors.Is(err, lockfile.ErrHeld) }
 
+// LockIsHeld reports whether another process holds the lock of the session in
+// dir, by taking it and letting go at once; it touches no instance file.
+func LockIsHeld(dir, session string) bool {
+	lockName, _ := Names(session)
+	l, err := lockfile.AcquireAs(filepath.Join(dir, lockName), "desktop")
+	if err != nil {
+		return errors.Is(err, lockfile.ErrHeld)
+	}
+	l.Release()
+	return false
+}
+
 // FilePath is the instance file's path.
-func (h *Holder) FilePath() string { return filepath.Join(h.Dir, FileName) }
+func (h *Holder) FilePath() string { return FilePathIn(h.Dir, h.Session) }
+
+// FilePathIn is the instance file of the session in dir.
+func FilePathIn(dir, session string) string {
+	_, file := Names(session)
+	return filepath.Join(dir, file)
+}
 
 // RemoveStale removes any instance file left by an earlier run: the lock holder
 // owns the name now, so what is there is stale by definition. It is done right
@@ -114,8 +147,9 @@ func (h *Holder) Close() {
 // HolderPID is the pid the lock's holder line records, or 0 when it cannot be
 // read (a Windows lock is a byte-range lock the holder line may not be readable
 // through). The line is untrusted content; only a plain integer is believed.
-func HolderPID(dir string) int {
-	for _, f := range strings.Fields(lockfile.Holder(filepath.Join(dir, LockName))) {
+func HolderPID(dir, session string) int {
+	lockName, _ := Names(session)
+	for _, f := range strings.Fields(lockfile.Holder(filepath.Join(dir, lockName))) {
 		if v, ok := strings.CutPrefix(f, "pid="); ok {
 			if n, err := strconv.Atoi(v); err == nil && n > 0 {
 				return n
