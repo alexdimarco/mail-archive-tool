@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"mail-archive-tool/internal/export"
+	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/outlookcom"
 	"mail-archive-tool/internal/source"
 	"mail-archive-tool/internal/state"
@@ -274,6 +275,99 @@ func TestTheLocalBreakerEndsTheSourceNotTheRun(t *testing.T) {
 	}
 	if g := ledgerOf(t, out); len(g) != 50 {
 		t.Errorf("%d gaps; want the 50 failed attempts of the stopped source, kept", len(g))
+	}
+}
+
+// covers: MA-320, R10
+// S2A-AC5 (and S2A-AI6): the unwritable-folder set spares an item the archive already
+// holds only where the exporter skips it without writing (Incremental). In Full mode
+// the exporter re-writes every message, so each archived item of a blocked folder
+// re-attempted the folder, failed, counted toward the breaker and ended the source at
+// 50: the other folders after it were never refreshed. Now a Full run counts the whole
+// blocked folder into its one gap, as an incremental run counts the new items, and the
+// folders after it are archived.
+func TestFullModeSkipsABlockedFolderOnceNotItemByItem(t *testing.T) {
+	parent := tmpDir(t)
+	store := mboxStore(t, parent, "mstore", []string{"A", "B", "C"}, 60)
+	tok := tokenOf(t, store)
+	out := tmpDir(t)
+	if res, err := runLocal(t, out, store); err != nil || res.Stats.Exported != 180 {
+		t.Fatalf("run 1: err %v, exported %d; want 180", err, res.Stats.Exported)
+	}
+	// The folder's directory is replaced by a file: the archive cannot write it.
+	if err := os.RemoveAll(filepath.Join(out, tok, "B")); err != nil {
+		t.Fatal(err)
+	}
+	p14Write(t, filepath.Join(out, tok, "B"), "a file, not a folder")
+
+	res, err := runLocalFull(t, out, store)
+	if !errors.Is(err, ErrPartial) {
+		t.Fatalf("full run: err %v; want ErrPartial (B could not be written), not a breaker refusal", err)
+	}
+	g := ledgerOf(t, out)
+	if len(g) != 1 || g[0].Reason != "folder-unwritable" || g[0].Folder != "B" || g[0].Skipped != 60 {
+		t.Errorf("ledger %+v; want one folder-unwritable gap at B counting its 60 items", g)
+	}
+	if res.Stats.Exported != 120 {
+		t.Errorf("exported %d; want A's and C's 60 each re-written (B is blocked)", res.Stats.Exported)
+	}
+}
+
+// covers: MA-320, R5
+// S2A-AC6: a lock lost to another run is run-fatal WITHOUT writing shared state, whichever
+// check finds it. The checkpoint's lock check sets lockLost and Run returns before any
+// write into the archive (INT-CC-2); the archive-root probe found the same loss after a
+// write fault but returned an ordinary run-fatal error, so Run went on to commit the
+// manifest, write the README and the report: over a second run's manifest. The other
+// holder's manifest and README are left alone.
+func TestALockLostFoundByTheProbeWritesNoSharedState(t *testing.T) {
+	src := filepath.Join(tmpDir(t), "Inbox")
+	maildirMessages(t, src, 6)
+	out := filepath.Join(tmpDir(t), "archive")
+	var other *lockfile.Lock
+	failWrites(t, func(n int, path string) error {
+		if n != 2 {
+			return nil
+		}
+		// Another run takes over the archive: the lock file goes, a fresh one is acquired,
+		// and that run saves its own manifest. This write then fails (the first fault of
+		// the run, so the probe asks whether the archive is still ours).
+		lockPath := filepath.Join(out, lockfile.Name)
+		if err := os.Remove(lockPath); err != nil {
+			t.Errorf("removing the lock: %v", err)
+		}
+		l, err := lockfile.Acquire(lockPath)
+		if err != nil {
+			t.Errorf("the second holder: %v", err)
+			return nil
+		}
+		other = l
+		m, err := state.Load(filepath.Join(out, ".mailarchive-manifest.json"))
+		if err != nil {
+			t.Errorf("load: %v", err)
+			return nil
+		}
+		m.Token("path:/the-other-run", "other-source")
+		if err := m.Save(); err != nil {
+			t.Errorf("the other run's save: %v", err)
+		}
+		return pathErr(path, syscall.EACCES)
+	})
+	t.Cleanup(func() { other.Release() })
+
+	_, err := runLocal(t, out, src)
+	if err == nil || !strings.Contains(err.Error(), "lock") {
+		t.Fatalf("run err = %v; want the refusal that the lock was lost", err)
+	}
+	m, lerr := state.Load(filepath.Join(out, ".mailarchive-manifest.json"))
+	if lerr != nil {
+		t.Fatal(lerr)
+	}
+	if _, ok := m.Stores["path:/the-other-run"]; !ok {
+		t.Errorf("the other run's manifest was overwritten: stores now %v", m.Stores)
+	}
+	if _, serr := os.Stat(filepath.Join(out, "README.txt")); serr == nil {
+		t.Error("README.txt was written into an archive another run now owns")
 	}
 }
 

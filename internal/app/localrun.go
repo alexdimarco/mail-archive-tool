@@ -118,6 +118,9 @@ type localRun struct {
 	// onFault runs after every recorded fault (Run's checkpoint, which re-checks the
 	// lock too, so a stretch of nothing but faults still does).
 	onFault func()
+	// onLockLost runs when the probe finds the archive lock removed or replaced; Run
+	// then ends without writing shared state.
+	onLockLost func(error)
 }
 
 func (lr *localRun) noteFault() {
@@ -149,6 +152,11 @@ func (lr *localRun) probe(s *sourceRun) error {
 	}
 	if lr.lock != nil {
 		if err := lr.lock.StillHeld(); err != nil {
+			// Another run may own the archive now: the run writes nothing more into it, not
+			// even its manifest, exactly as when the checkpoint finds it (INT-CC-2, S2A-AC6).
+			if lr.onLockLost != nil {
+				lr.onLockLost(err)
+			}
 			return unavailable(lr.out, err)
 		}
 	}
@@ -285,9 +293,10 @@ func (s *sourceRun) handle(ctx context.Context, abort func() error, folderPath [
 	dir := filepath.Join(append([]string{lr.out, s.token}, folderPath...)...)
 
 	// A folder the archive could not create this run: its later items are counted
-	// into the gap, not attempted — except one the archive already holds, which the
-	// exporter skips without writing (FC12).
-	if s.unwritable[dir] && !lr.exp.Manifest.Has(state.Key(s.token, folderKey, m.Identity())) {
+	// into the gap, not attempted — except one the archive already holds, which an
+	// Incremental run's exporter skips without writing (FC12). A Full run re-writes
+	// every message, so there it spares nothing (S2A-AC5).
+	if s.unwritable[dir] && (lr.exp.Mode != export.Incremental || !lr.exp.Manifest.Has(state.Key(s.token, folderKey, m.Identity()))) {
 		s.observe(state.CaptureGap{Folder: folderKey, Scope: state.GapScopeFolder, Locator: "folder:" + folderKey, Reason: "folder-unwritable", Class: state.ClassFillable, Skipped: 1})
 		return nil
 	}

@@ -456,6 +456,11 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	}
 
 	lr.onFault = func() { checkpoint(exp.Stats) }
+	lr.onLockLost = func(err error) {
+		if lockLost == nil {
+			lockLost = err
+		}
+	}
 	result = Result{Files: len(files), ManifestBefore: manifestBefore}
 	var failures int
 	var firstFailed string
