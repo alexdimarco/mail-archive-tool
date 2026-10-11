@@ -689,11 +689,14 @@ func (d *dashboard) retryAction(w http.ResponseWriter, r *http.Request) {
 	}
 	input.Archives = d.archives()
 	job := d.ws.startJob(func(ctx context.Context, job *wsPreviewJob) (*app.CopyPlan, map[string]any, *refusal) {
+		job.set(func() { job.which = in.Which })
 		plan, perr := d.copyEnv().PlanCopyExport(*input)
 		if perr != nil {
 			return nil, nil, copyRefusal(perr)
 		}
-		return plan, planResult(plan, job.id, foldersOut(input.Folders), len(input.Messages), len(input.Messages), nil, nil), nil
+		res := planResult(plan, job.id, foldersOut(input.Folders), len(input.Messages), len(input.Messages), nil, nil)
+		res["retryWhich"] = in.Which // so the page can preview this retry again for another destination (F5)
+		return plan, res, nil
 	}, now, in.RunID)
 	d.reply(w, map[string]any{"ok": true, "previewId": job.id})
 }

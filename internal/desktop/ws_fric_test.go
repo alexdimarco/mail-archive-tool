@@ -210,6 +210,84 @@ func TestFricACardButtonsRefusalStaysOnItsCard(t *testing.T) {
 	}
 }
 
+// covers: MA-437, MA-444, MA-446, R12, S52
+// F5: a retry can be pointed at another destination. The remedies of a full or missing stick
+// (R-g2 "choose another destination", R-e "Click Browse") need a destination control on the
+// retry's preview: the preview says which retry it is (retryOf, retryWhich) and where it
+// goes, the workspace page has a button that previews it again for the path in the box, and
+// the engine honours it (the next part lands in the other folder, the earlier export
+// untouched); a destination that is not there is R-e naming Browse. The positive twin (the
+// same retry into its own destination) first.
+func TestFricARetryPreviewCanBePointedAtAnotherDestination(t *testing.T) {
+	e := newWsEnv(t)
+	run, root := e.cancelledRun()
+	before := treeState(t, filepath.Join(e.dest, root))
+	exported := e.card(run)["exported"].(float64)
+
+	// the page: a button on the workspace that previews the retry again for the path typed
+	page := e.get("/workspace").Body.String()
+	if !strings.Contains(page, `id="rePreviewBtn"`) {
+		t.Error("the workspace page has no button to preview a retry again with another destination")
+	}
+	for _, want := range []string{"api('api/exports/retry',{runId:", "retryWhich", "dest:$('destPath').value"} {
+		if !strings.Contains(workspaceJS, want) {
+			t.Errorf("workspace.js does not contain %q: the retry preview cannot send a destination", want)
+		}
+	}
+
+	// the positive twin: the retry into its own destination
+	res := e.waitPreview(e.ok("/api/exports/retry", map[string]any{"runId": run, "which": "rest"})["previewId"].(string))
+	if res["retryOf"] != run || res["retryWhich"] != "rest" || res["dest"] != e.dest || !strings.HasSuffix(res["exportName"].(string), "-part2") {
+		t.Fatalf("the retry preview: %v", res)
+	}
+
+	// another destination (a different stick): the preview goes there, the export lands there
+	stick := filepath.Join(e.dir, "stick")
+	os.Mkdir(stick, 0o755)
+	pid := e.ok("/api/exports/retry", map[string]any{"runId": run, "which": "rest", "dest": stick})["previewId"].(string)
+	res = e.waitPreview(pid)
+	if res["dest"] != stick || res["retryOf"] != run || res["retryWhich"] != "rest" || !strings.HasSuffix(res["exportName"].(string), "-part2") {
+		t.Fatalf("the retry preview for another destination: %v", res)
+	}
+	e.ok("/api/exports/start", map[string]any{"previewId": pid})
+	last := e.waitRun()["last"].(map[string]any)
+	if last["status"] != "complete" || last["rootName"] != root+"-part2" {
+		t.Fatalf("the retry run: %v", last)
+	}
+	if got, want := len(e.emlsOfIn(stick, root+"-part2")), 7-int(exported); got != want {
+		t.Errorf("the other destination holds %d messages, want the %d that were left", got, want)
+	}
+	if got := treeState(t, filepath.Join(e.dest, root)); !reflect.DeepEqual(got, before) {
+		t.Errorf("the earlier export changed: %v", diffKeys(before, got))
+	}
+
+	// a destination that is not there is refused after the preview starts, naming Browse
+	pid = e.ok("/api/exports/retry", map[string]any{"runId": run, "which": "rest", "dest": filepath.Join(e.dir, "unplugged")})["previewId"].(string)
+	var failed map[string]any
+	for i := 0; i < 300 && failed == nil; i++ {
+		if _, out := e.post("/api/workspace/preview-status", map[string]any{"previewId": pid}); out["state"] == "failed" {
+			failed = out
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if failed == nil || failed["id"] != "R-e" || !strings.Contains(failed["error"].(string), "Browse") || failed["retryOf"] != run || failed["retryWhich"] != "rest" {
+		t.Errorf("a retry into a missing destination: %v", failed)
+	}
+}
+
+// emlsOfIn lists the .eml files of a root inside the given destination.
+func (e *wsEnv) emlsOfIn(dest, root string) []string {
+	e.t.Helper()
+	var out []string
+	filepath.WalkDir(filepath.Join(dest, root), func(p string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && strings.HasSuffix(p, ".eml") {
+			out = append(out, p)
+		}
+		return nil
+	})
+	return out
+}
+
 // covers: MA-446, MA-448, R12, S52
 // F4: a finished export's folder is renamed. Open folder refuses (R-r2, in plain words: nothing
 // is there), and the card now offers the three buttons the refusal tells the owner to click:

@@ -276,6 +276,7 @@ function resumePreview(id){
   st.previewId=id;$('previewCard').hidden=false;
   const body=$('previewBody');clear(body);body.appendChild(el('p','Reading your folders…'));
   const tick=()=>api('api/workspace/preview-status',{previewId:id}).then(d=>{
+    if(d.retryOf)retryDestination(d.retryOf,d.retryWhich,'');
     if(!d.ok&&d.state!=='failed'){showErr(d);$('previewCard').hidden=true;return;}
     if(d.state==='running'){clear(body);body.appendChild(el('p',d.progress||'Reading your folders…'));setTimeout(tick,1000);return;}
     if(d.state==='failed'){showErr(d);$('previewCard').hidden=true;return;}
@@ -283,8 +284,26 @@ function resumePreview(id){
   });
   tick();
 }
+// A retry (Export the remaining messages, Export failed messages again) is previewed here too.
+// It needs no folders, but it needs somewhere to go: the destination controls are shown, so a
+// full or missing drive (R-g2, R-e) can be answered with another folder (F5).
+function retryDestination(run,which,dest){
+  st.retry={run:run,which:which||'rest'};
+  $('destCard').hidden=false;$('retryDest').hidden=false;
+  if(dest&&!$('destPath').dataset.touched)$('destPath').value=dest;
+}
+$('destPath').addEventListener('input',()=>{$('destPath').dataset.touched='1';});
+$('rePreviewBtn').addEventListener('click',()=>{
+  if(!st.retry)return;
+  show('banner','');
+  api('api/exports/retry',{runId:st.retry.run,which:st.retry.which,dest:$('destPath').value}).then(d=>{
+    if(!d.ok){showErr(d);return;}
+    resumePreview(d.previewId);
+  });
+});
 function line(k,v){const r=el('div',null,'row');r.appendChild(el('div',k,'k'));r.appendChild(el('div',v,'v'));return r;}
 function renderPreview(p){
+  if(p.retryOf)retryDestination(p.retryOf,p.retryWhich,p.dest);
   const body=$('previewBody');clear(body);
   let count=fmt(p.count)+' messages';
   if(p.reported!==p.count)count+=' ('+fmt(p.reported)+' reported by Microsoft 365)';

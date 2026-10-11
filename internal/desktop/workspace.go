@@ -623,6 +623,8 @@ type wsPreviewJob struct {
 	progress string
 	result   map[string]any
 	ref      *refusal
+	retry    string // the run a retry preview is for, "" for a selection's
+	which    string // "failed" or "rest" for a retry preview
 }
 
 func (j *wsPreviewJob) running() bool {
@@ -685,7 +687,7 @@ func (d *dashboard) previewAction(w http.ResponseWriter, r *http.Request) {
 func (ws *workspace) startJob(fn func(ctx context.Context, job *wsPreviewJob) (*app.CopyPlan, map[string]any, *refusal), upn, retry string) *wsPreviewJob {
 	d := ws.d
 	ctx, cancel := context.WithCancel(d.life.Context())
-	job := &wsPreviewJob{id: randomID(16), cancel: cancel, state: "running"}
+	job := &wsPreviewJob{id: randomID(16), cancel: cancel, state: "running", retry: retry}
 	ws.mu.Lock()
 	old := ws.job
 	ws.job, ws.prev = job, nil
@@ -741,16 +743,20 @@ func (d *dashboard) previewStatusAction(w http.ResponseWriter, r *http.Request) 
 	}
 	job.mu.Lock()
 	defer job.mu.Unlock()
+	var out map[string]any
 	switch job.state {
 	case "done":
-		d.reply(w, map[string]any{"ok": true, "state": "done", "result": job.result})
+		out = map[string]any{"ok": true, "state": "done", "result": job.result}
 	case "failed":
-		out := job.ref.body()
+		out = job.ref.body()
 		out["state"] = "failed"
-		d.reply(w, out)
 	default:
-		d.reply(w, map[string]any{"ok": true, "state": "running", "progress": job.progress})
+		out = map[string]any{"ok": true, "state": "running", "progress": job.progress}
 	}
+	if job.retry != "" { // a retry's page keeps the destination controls, even when its preview is refused (F5)
+		out["retryOf"], out["retryWhich"] = job.retry, job.which
+	}
+	d.reply(w, out)
 }
 
 // resolveAndPlan turns the selection into the plan (design §4.4, §4.7): the folder set
