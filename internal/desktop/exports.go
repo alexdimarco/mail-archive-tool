@@ -198,6 +198,16 @@ func (d *dashboard) startAction(w http.ResponseWriter, r *http.Request) {
 		d.refuse(w, refusedWith("R-d", "MailArchive Desktop has no folder of its own to record this export in — nothing was exported. Sign out and back in to Windows (or set up your profile folder), then start MailArchive again."))
 		return
 	}
+	// The destination stays outside the archives that are the archives now: Settings can have named
+	// another archive location since the preview was made (E4-AI1, R29).
+	other := ""
+	if prev.bind.arch && prev.bind.other {
+		other = prev.bind.path
+	}
+	if err := ex.env.RefreshOutside(prev.plan, d.archivesWith(other), other); err != nil {
+		d.refuse(w, *copyRefusal(err))
+		return
+	}
 	var src app.CopySource
 	var mailbox string
 	if prev.bind.arch {
