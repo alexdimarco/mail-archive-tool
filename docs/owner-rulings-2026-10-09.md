@@ -1192,6 +1192,21 @@ three tests failed after the merge and were reconciled in `8cffbcf` (failure lis
 set's one source; the card failure list is cached; one fixture step reordered with no assertion
 loosened). Clean-clone suite, vet on three OSes and gofmt are green.
 
+### 13.16 MF-S0 built and merged (2026-10-11), delegated-judgement
+
+Catalog first (R26, R27 with the J6 text, S49), the fidelity corpus (`testdata/mime`, 110 messages)
+and the identity and content goldens, recorded at the **v0.7.1** release tag (066f86d; the design
+names no tag). MA-330..349 are skip encoders, each citing R26 or R27 and naming the slice that turns
+it green; MA-343 is tier L, pending. No production code changed; the R2 clarification is NOT added
+(J7, ESC-2). Conform: CONFORMS. Delegated: goldens were built with go1.26.9 and the tag's own
+`go.mod` (the branch's newer x/text reproduces them byte for byte); `.gitattributes` marks the
+corpus `-text` so CRLF bytes survive on Windows CI. **Open:** (1) MC7 asks for one corpus item
+that makes the v1 parser panic, and none was found (two fuzz runs, about 14 million executions),
+so MA-330's panic case stays a skip; the owner may rule the constructed stub enough. (2) R27 cites
+R28, which does not exist until RI-S1 lands it. (3) MF-S1 must point `corpusV1Parse` and
+`corpusV1Panics` at the frozen v1 parser so the goldens keep pinning v1. (4) OR4 residual: the
+goldens used the go1.26.9 stdlib, not the release's toolchain; MF-S1's MA-331 closes it.
+
 ### 13.7 Escalations from LC-C1's adversarial pass (merged 2026-10-10)
 
 None blocks anything: each has a skip encoder or a safe interim in force.
