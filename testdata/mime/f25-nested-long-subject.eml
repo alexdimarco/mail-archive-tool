@@ -1,0 +1,41 @@
+Message-ID: <f25-nested-long-subject@corpus.example>
+Date: Mon, 02 Jan 2023 15:04:05 +0000
+From: Alice Example <alice@example.test>
+To: bob@example.test
+Subject: Forwarded message with a very long subject
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="ns-bd"
+
+--ns-bd
+Content-Type: text/plain; charset=utf-8
+
+A forwarded message follows.
+
+--ns-bd
+Content-Type: message/rfc822
+Content-Disposition: attachment; filename="forwarded.eml"
+
+Message-ID: <ns-inner@corpus.example>
+Date: Mon, 02 Jan 2023 15:04:05 +0000
+From: Alice Example <alice@example.test>
+To: bob@example.test
+Subject: SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="ns-in"
+
+--ns-in
+Content-Type: text/plain; charset=utf-8
+
+Inner body.
+
+--ns-in
+Content-Type: application/pdf; name="inner.pdf"
+Content-Disposition: attachment; filename="inner.pdf"
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjQKJeLjz9MgbWltZS1jb3JwdXMgci5wZGYKMSAwIG9iajw8L1R5cGUvQ2F0YWxvZz4+
+ZW5kb2JqCnRyYWlsZXI8PC9Sb290IDEgMCBSPj4KJSVFT0YK
+
+--ns-in--
+
+--ns-bd--

@@ -1,0 +1,36 @@
+Message-ID: <shape-bounce-dsn@corpus.example>
+Date: Mon, 02 Jan 2023 15:04:05 +0000
+From: Mail Delivery System <MAILER-DAEMON@example.test>
+To: alice@example.test
+Subject: Undelivered Mail Returned to Sender
+Return-Path: <>
+MIME-Version: 1.0
+Content-Type: multipart/report; report-type=delivery-status; boundary="dsn-bd"
+
+--dsn-bd
+Content-Type: text/plain; charset=us-ascii
+
+This is the mail system. Delivery failed.
+
+--dsn-bd
+Content-Type: message/delivery-status
+
+Reporting-MTA: dns; mail.example.test
+
+Final-Recipient: rfc822; bob@example.test
+Action: failed
+Status: 5.1.1
+
+--dsn-bd
+Content-Type: message/rfc822
+
+Message-ID: <dsn-original@corpus.example>
+Date: Mon, 02 Jan 2023 15:04:05 +0000
+From: Alice Example <alice@example.test>
+To: bob@example.test
+Subject: The original subject
+Content-Type: text/plain; charset=us-ascii
+
+The original bounced body.
+
+--dsn-bd--

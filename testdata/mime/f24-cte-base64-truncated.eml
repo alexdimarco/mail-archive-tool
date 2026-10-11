@@ -1,0 +1,22 @@
+Message-ID: <f24-cte-base64-truncated@corpus.example>
+Date: Mon, 02 Jan 2023 15:04:05 +0000
+From: Alice Example <alice@example.test>
+To: bob@example.test
+Subject: Truncated base64 attachment
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="mx"
+
+--mx
+Content-Type: text/plain; charset=utf-8
+
+A truncated attachment follows.
+
+--mx
+Content-Type: application/pdf; name="cut.pdf"
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment; filename="cut.pdf"
+
+JVBERi0xLjQKJeLjz9MgbWltZS1jb3JwdXMgci5wZGYKMSAwIG9iajw8L1R5cGUvQ2F0YWxvZz4+
+ZW5kb2JqCnRyY
+
+--mx--

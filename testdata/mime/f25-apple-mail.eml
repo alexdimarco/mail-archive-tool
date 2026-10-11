@@ -1,0 +1,48 @@
+Message-ID: <f25-apple-mail@corpus.example>
+Date: Mon, 02 Jan 2023 15:04:05 +0000
+From: Alice Example <alice@icloud.test>
+To: bob@example.test
+Subject: Apple Mail split body
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="Apple-Alt"
+
+This is a multi-part message in MIME format.
+--Apple-Alt
+Content-Type: text/plain; charset=us-ascii
+Content-Transfer-Encoding: 7bit
+
+Plain alternative of the Apple Mail message.
+
+--Apple-Alt
+Content-Type: multipart/mixed; boundary="Apple-Mixed"
+
+--Apple-Mixed
+Content-Type: text/html; charset=us-ascii
+Content-Transfer-Encoding: 7bit
+
+<html><body><p>First html part.</p></body></html>
+
+--Apple-Mixed
+Content-Disposition: inline; filename=r.pdf
+Content-Type: application/pdf; name="r.pdf"
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjQKJeLjz9MgbWltZS1jb3JwdXMgci5wZGYKMSAwIG9iajw8L1R5cGUvQ2F0YWxvZz4+
+ZW5kb2JqCnRyYWlsZXI8PC9Sb290IDEgMCBSPj4KJSVFT0YK
+
+--Apple-Mixed
+Content-Type: text/html; charset=us-ascii
+Content-Transfer-Encoding: 7bit
+
+<html><body><p>Second html part, after the PDF.</p></body></html>
+
+--Apple-Mixed
+Content-Disposition: inline; filename=notes.txt
+Content-Type: text/plain; name="notes.txt"; charset=us-ascii
+Content-Transfer-Encoding: 7bit
+
+Named inline text notes.txt
+
+--Apple-Mixed--
+
+--Apple-Alt--

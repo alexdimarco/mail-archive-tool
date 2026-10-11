@@ -1,0 +1,63 @@
+Message-ID: <f25-inline-names@corpus.example>
+Date: Mon, 02 Jan 2023 15:04:05 +0000
+From: Alice Example <alice@example.test>
+To: bob@example.test
+Subject: Inline files and forwarded message
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="in-bd"
+
+--in-bd
+Content-Type: text/plain; charset=utf-8
+
+Inline files of several kinds.
+
+--in-bd
+Content-Type: application/pdf; name="inline-report.pdf"
+Content-Disposition: inline; filename=inline-report.pdf
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjQKJeLjz9MgbWltZS1jb3JwdXMgci5wZGYKMSAwIG9iajw8L1R5cGUvQ2F0YWxvZz4+
+ZW5kb2JqCnRyYWlsZXI8PC9Sb290IDEgMCBSPj4KJSVFT0YK
+
+--in-bd
+Content-Type: text/calendar; method=REQUEST; charset=utf-8
+Content-Disposition: inline
+
+BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+SUMMARY:Meeting
+END:VEVENT
+END:VCALENDAR
+
+--in-bd
+Content-Type: message/rfc822
+Content-Disposition: inline
+
+Message-ID: <fwd-inner@corpus.example>
+Date: Mon, 02 Jan 2023 15:04:05 +0000
+From: Alice Example <alice@example.test>
+To: bob@example.test
+Subject: The forwarded subject
+Content-Type: text/plain; charset=us-ascii
+
+Inner forwarded body.
+
+--in-bd
+Content-Type: image/png
+Content-Transfer-Encoding: base64
+Content-ID: <logo@corpus.example>
+Content-Disposition: inline
+
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP8z8DwHwAFAAH/iZk9
+HQAAAABJRU5ErkJggg==
+
+--in-bd
+Content-Type: image/png
+Content-Transfer-Encoding: base64
+Content-Disposition: inline
+
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP8z8DwHwAFAAH/iZk9
+HQAAAABJRU5ErkJggg==
+
+--in-bd--

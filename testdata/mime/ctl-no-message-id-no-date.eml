@@ -1,0 +1,7 @@
+From: Alice Example <alice@example.test>
+To: bob@example.test
+Subject: No Message-ID, no Date
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+No Message-ID and no Date: identity time is the zero time.

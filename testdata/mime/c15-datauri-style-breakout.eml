@@ -1,0 +1,22 @@
+Message-ID: <c15-datauri-style-breakout@corpus.example>
+Date: Mon, 02 Jan 2023 15:04:05 +0000
+From: Alice Example <alice@example.test>
+To: bob@example.test
+Subject: Attachment MimeType that breaks out of style
+MIME-Version: 1.0
+Content-Type: multipart/related; boundary="db-bd"
+
+--db-bd
+Content-Type: text/html; charset=utf-8
+
+<html><head><style>.x{background:url(cid:evil@corpus.example)}</style></head><body><p>Mail body</p></body></html>
+
+--db-bd
+Content-Type: image/png</style><div class="mailarchive-header">forged</div>
+Content-Transfer-Encoding: base64
+Content-ID: <evil@corpus.example>
+
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP8z8DwHwAFAAH/iZk9
+HQAAAABJRU5ErkJggg==
+
+--db-bd--

@@ -1,0 +1,9 @@
+Message-ID: <c14-charset-comment@corpus.example>
+Date: Mon, 02 Jan 2023 15:04:05 +0000
+From: Alice Example <alice@example.test>
+To: bob@example.test
+Subject: Charset with a comment
+MIME-Version: 1.0
+Content-Type: text/plain; charset=us-ascii (Plain text)
+
+The charset parameter carries a trailing comment.

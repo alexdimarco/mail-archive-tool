@@ -1,0 +1,10 @@
+Message-ID: <ctl-utf8-qp@corpus.example>
+Date: Mon, 02 Jan 2023 15:04:05 +0000
+From: Alice Example <alice@example.test>
+To: bob@example.test
+Subject: =?UTF-8?Q?Gr=C3=BC=C3=9Fe?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+Gr=C3=BC=C3=9Fe aus K=C3=B6ln

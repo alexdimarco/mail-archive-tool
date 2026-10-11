@@ -1,0 +1,4 @@
+# The MIME-fidelity corpus and its goldens are exact bytes: a checkout must never
+# rewrite a line ending (CRLF corpus items, LF-only items, and the goldens that
+# hash them).
+testdata/mime/** -text

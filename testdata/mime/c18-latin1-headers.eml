@@ -1,0 +1,9 @@
+Message-ID: <c18-latin1-headers@corpus.example>
+Date: Mon, 02 Jan 2023 15:04:05 +0000
+From: Jürgen Müller <juergen@example.test>
+To: François <francois@example.test>
+Subject: Grüße aus Köln
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Ascii body; the headers are raw Latin-1.

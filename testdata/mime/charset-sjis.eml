@@ -1,0 +1,10 @@
+Message-ID: <charset-sjis@corpus.example>
+Date: Mon, 02 Jan 2023 15:04:05 +0000
+From: Alice Example <alice@example.test>
+To: bob@example.test
+Subject: nameMap label sjis
+MIME-Version: 1.0
+Content-Type: text/plain; charset=sjis
+Content-Transfer-Encoding: 8bit
+
+Grüße café ¤¤¤å “q”

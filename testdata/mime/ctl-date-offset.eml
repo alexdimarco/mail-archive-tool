@@ -1,0 +1,14 @@
+Message-ID: <ctl-date-offset@corpus.example>
+Date: Tue, 03 Jan 2023 09:30:00 +0530
+From: Alice Example <alice@example.test>
+To: bob@example.test
+Subject: Date with an offset
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+Cc: carol@example.test, Dave D <dave@example.test>
+Bcc: erin@example.test
+Reply-To: reply@example.test
+In-Reply-To: <parent@corpus.example>
+References: <root@corpus.example> <parent@corpus.example>
+
+Date offsets and the recipient lists are part of identity.
