@@ -81,6 +81,37 @@ func TestArchiveListPagesByAHundredAndStaysOutOfARebuild(t *testing.T) {
 
 func (e *wsEnv) postJSON(path string, body any) (int, map[string]any) { return e.post(path, body) }
 
+// covers: MA-510, MA-435, R20, R29, S25
+// A capture that runs after "Load folders" changes the manifest the snapshot was read from: the preview says
+// so (the snapshot is cached by the manifest's size and mtime), the run still exports exactly the previewed
+// messages, and a message the capture added is not in them; with nothing changed, the preview says nothing.
+func TestArchivePreviewSaysWhenTheArchiveChangedSinceItWasLoaded(t *testing.T) {
+	e := newWsEnv(t)
+	f := buildArchiveAt(t, e.out)
+	arch := archSource("archive", e.out)
+	e.archFolders(arch)
+	sel := e.archSel(arch, entry("alice", false))
+	if _, res := e.preview(sel); strings.Contains(strings.Join(toStrings(res["warnings"]), "|"), "changed since you loaded") {
+		t.Fatalf("a preview of an unchanged archive warns: %v", res["warnings"])
+	}
+	putMaildirMsg(t, filepath.Join(f.src, "alice"), "a9.eml", archMsg("arrived later", "id9", "body nine"))
+	opts := app.Options{Inputs: []string{filepath.Join(f.src, "alice")}, Out: e.out, Mode: export.Incremental, Index: true, Pages: true, KeepRaw: true}
+	if _, err := app.Run(context.Background(), opts, log.New(io.Discard, "", 0), nil); err != nil {
+		t.Fatal(err)
+	}
+	id, res := e.preview(sel)
+	if w := strings.Join(toStrings(res["warnings"]), "|"); !strings.Contains(w, "changed since you loaded its folders") || !strings.Contains(w, "Load folders again") {
+		t.Errorf("the preview after a capture: %v", res["warnings"])
+	}
+	if res["count"] != float64(2) {
+		t.Errorf("the preview holds %v messages, want the 2 that were loaded (not the one the capture added)", res["count"])
+	}
+	e.ok("/api/exports/start", map[string]any{"previewId": id})
+	if l := e.waitRun()["last"].(map[string]any); l["status"] != "complete" || l["exported"] != float64(2) {
+		t.Errorf("the export: %v", l)
+	}
+}
+
 // covers: MA-427, MA-437, MA-512, R29, R5, R12
 // An archive export that stopped because the archive was gone (R-o2) is finished by "Export the remaining
 // messages", which needs no Microsoft 365 sign-in: while the archive is still away the retry says to reconnect

@@ -526,6 +526,13 @@ func (d *dashboard) resolveAndPlanArchive(ctx context.Context, job *wsPreviewJob
 	if metaNote != "" {
 		warns = append(warns, metaNote)
 	}
+	// the snapshot is cached by the manifest's size and mtime (XC18): a capture that ran since "Load folders"
+	// is not in it, and the preview says so instead of leaving the owner to wonder where a new message went
+	if size, mod, serr := a.StampNow(); serr == nil {
+		if s0, m0 := a.Stamp(); size != s0 || !mod.Equal(m0) {
+			warns = append(warns, "This archive changed since you loaded its folders (a backup or capture ran), so messages added since are not in this selection. Load folders again to include them.")
+		}
+	}
 	if a.Other() && a.WALBeside() {
 		warns = append(warns, "A recent change in this archive folder is in a file MailArchive does not read from another archive folder, so the subject and date of recent messages may be missing from the export's names. The messages themselves are included.")
 	}
