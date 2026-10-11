@@ -297,6 +297,23 @@ func TestTwoSignInsAtOnceStartOneDeviceFlow(t *testing.T) {
 	}
 }
 
+// covers: MA-430, R29, R12, S52
+// EW-AI7 skip encoder (OWNER DECISION PENDING, see the report's escalations). Open folder checks
+// the recorded folder's identity and then starts `xdg-open <root>` on Linux: a destination
+// co-writer who swaps the folder for a FILE between the check and the exec makes xdg-open launch
+// that file with its default handler, where XC33 says Open folder reveals and never launches.
+// The one-character remedy is a trailing separator on the argument ("<root>/"), which a regular
+// file answers with ENOTDIR so nothing is launched; it changes the argv that
+// TestOpenFolderRevealsOnlyTheVerifiedFolder pins ({"xdg-open", root}) and the design's wording
+// "xdg-open on the directory", so it is the owner's to rule. Remove the Skip when it is.
+func TestOpenFolderLinuxArgvCannotLaunchAFile(t *testing.T) {
+	t.Skip("OWNER DECISION PENDING (EW-AI7, XC33): the Linux reveal argument needs a trailing separator so a folder swapped for a file after the identity check is not launched; it changes an argv pinned by MA-430's test")
+	name, args := revealArgv("linux", "/home/u/export/MailExport-x")
+	if name != "xdg-open" || len(args) != 1 || !strings.HasSuffix(args[0], "/") {
+		t.Errorf("the Linux reveal is %s %q: a path with no trailing separator opens whatever is at it", name, args)
+	}
+}
+
 // covers: MA-445, MA-524, R12
 // EW-AC14 tombstone. UpdateSettings treated a settings file it could not read as empty and saved
 // over it, so a read that failed for a moment (a sharing violation, an antivirus scan) or a

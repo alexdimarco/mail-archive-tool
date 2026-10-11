@@ -34,6 +34,44 @@ func cancelledRun(t *testing.T, e *CopyExportEnv, src *fakeSrc, killAt string) *
 	return res
 }
 
+// covers: MA-448, R29, R5
+// EW-AI4 skip encoder (OWNER DECISION PENDING, see the report's escalations). The instance
+// lock is per Windows Terminal Services logon session but the state directory is per user, so
+// two sessions of one account run two engines over one journal, ledger and record directory,
+// and nothing records that a run is live in another process: the second one's launch sweep and
+// reconcile call the first one's running export "interrupted" and offer Finish as partial,
+// which rewrites its README, manifest and sums and seals it under its feet. The remedy is a
+// liveness lock per run (held by the engine for the length of a run, probed non-blocking by
+// reconcile) and a new observation ("running in another session of this account") whose
+// wording is the owner's. This is the body the fix must satisfy; remove the Skip when it does.
+func TestCopyExportSecondProcessDoesNotAdoptALiveRun(t *testing.T) {
+	t.Skip("OWNER DECISION PENDING (EW-AI4, design 4.19 'one environment serves one process', CC21): a run live in another logon session of the account is reconciled as interrupted by a second engine on the same state directory")
+	e1, src := newCEEnv(t), newFakeSrc()
+	e2 := relaunch(e1)
+	hold, held := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	e1.SetStepHook(func(step string) {
+		if step == "W6:2" {
+			once.Do(func() { close(held) })
+			<-hold
+		}
+	})
+	run := e1.NewCopyRun(cePlan(t, e1, src, ceMsgs(4)), src)
+	var runID string
+	run.OnStart = func(id string) { runID = id }
+	done := make(chan *CopyResult, 1)
+	go func() { res, _ := run.Run(context.Background()); done <- res }()
+	<-held
+	obs, err := e2.ReconcileRun(runID)
+	if err != nil || obs.Kind == obsInterrupt || contains(obs.Actions, ActFinishAsPartial) {
+		t.Errorf("a second process reconciled a LIVE run as %+v (%v)", obs, err)
+	}
+	close(hold)
+	if res := <-done; res == nil || res.Status != CopyStatusComplete {
+		t.Errorf("the live run did not complete: %+v", res)
+	}
+}
+
 // covers: MA-437, MA-521, R29
 // EW-AC7 tombstone. "Export failed messages again" read only the one run's record, so
 // after part 2 had exported part 1's failed messages, part 1's card still offered the
