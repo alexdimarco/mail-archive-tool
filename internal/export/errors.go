@@ -55,25 +55,44 @@ func IsRunFatal(err error) bool { return RunFatalAt(err) }
 // RunFatalAt is IsRunFatal that also counts Windows' "path not found" (3) as fatal
 // when the error names one of roots (the archive root or a store's directory): that
 // code is an ordinary missing parent anywhere else.
-func RunFatalAt(err error, roots ...string) bool {
+func RunFatalAt(err error, roots ...string) bool { return FatalKindAt(err, roots...) != FatalNone }
+
+// FatalKind is why an error is run-fatal, so the run words each cause with its own
+// remedy (§7.5).
+type FatalKind int
+
+const (
+	FatalNone     FatalKind = iota // not run-fatal: one folder's or one item's own
+	FatalFull                      // the drive is full or over its quota
+	FatalReadOnly                  // the location is read-only or write-protected
+	FatalGone                      // the volume or share is gone, not ready or failing
+	FatalToken                     // the store token is unsafe (ErrUnsafeToken)
+)
+
+// FatalKindAt classifies err (see RunFatalAt).
+func FatalKindAt(err error, roots ...string) FatalKind {
 	if err == nil {
-		return false
+		return FatalNone
 	}
 	if errors.Is(err, ErrUnsafeToken) {
-		return true
+		return FatalToken
 	}
 	var en syscall.Errno
 	if !errors.As(err, &en) {
-		return false
+		return FatalNone
 	}
 	if runtime.GOOS == "windows" {
-		return windowsRunFatal(uintptr(en), errorNames(err, roots))
+		return windowsFatalKind(uintptr(en), errorNames(err, roots))
 	}
 	switch en {
-	case syscall.ENOSPC, syscall.EDQUOT, syscall.EROFS, syscall.EIO, syscall.ENXIO, syscall.ENODEV, syscall.ENOTCONN, syscall.ESTALE, syscall.EHOSTDOWN:
-		return true
+	case syscall.ENOSPC, syscall.EDQUOT:
+		return FatalFull
+	case syscall.EROFS:
+		return FatalReadOnly
+	case syscall.EIO, syscall.ENXIO, syscall.ENODEV, syscall.ENOTCONN, syscall.ESTALE, syscall.EHOSTDOWN:
+		return FatalGone
 	}
-	return false
+	return FatalNone
 }
 
 // errorNames reports whether err is a path error naming one of roots.
@@ -98,11 +117,23 @@ func errorNames(err error, roots []string) bool {
 // 3 ERROR_PATH_NOT_FOUND is fatal only when onRoot (the archive root itself is
 // gone), since it is an ordinary missing parent anywhere else.
 func windowsRunFatal(code uintptr, onRoot bool) bool {
+	return windowsFatalKind(code, onRoot) != FatalNone
+}
+
+// windowsFatalKind is windowsRunFatal with the reason: 112 and 39 are a full disk,
+// 19 a write-protected one, the rest a volume that is gone.
+func windowsFatalKind(code uintptr, onRoot bool) FatalKind {
 	switch code {
-	case 112, 39, 19, 21, 53, 55, 64, 1167, 1295:
-		return true
+	case 112, 39:
+		return FatalFull
+	case 19:
+		return FatalReadOnly
+	case 21, 53, 55, 64, 1167, 1295:
+		return FatalGone
 	case 3:
-		return onRoot
+		if onRoot {
+			return FatalGone
+		}
 	}
-	return false
+	return FatalNone
 }

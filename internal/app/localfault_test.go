@@ -85,22 +85,31 @@ func TestLegacyPlaceholderIsReclassedByARunOnce(t *testing.T) {
 	}
 }
 
+// The cases of the rows FI-S2a lands that need a later slice's code stay skip
+// encoders citing their row (FC33): the covers-map reads a row as covered once any
+// test cites it, so an unbuilt half must not hide behind the built one.
+
+// covers: MA-316, R10, R6, R1, S46
+func TestGraphListingPageErrorCostsOneFolder(t *testing.T) {
+	t.Skip("MA-316: a Graph listing page error in one folder is a folder-list-failed gap that leaves the next folder walked and the mailbox unswept; the Graph isolation is FI-S3's; closes when FI-S3 lands")
+}
+
+// covers: MA-316, R10, R6, R1, S46
+func TestLocalFolderFaultsCostOneFolder(t *testing.T) {
+	t.Skip("MA-316: a maildir non-root ReadDir failure, an mbox open failure, an mbox mid-stream error (folder-partially-read with the count read) and the Evolution walkers' folder errors are FI-S2b's (the mbox, maildir and Evolution readers); closes when FI-S2b lands")
+}
+
 // covers: MA-318, R1, R3, R7, R10, S46
-func TestUnreadablePSTNodesAreLedgerGapsNotRecords(t *testing.T) {
-	t.Skip("MA-318: an unreadable PST node still becomes a stub record (or aborts the store); lands in FI-S2a")
+func TestRawStubsKeepTheirBytesAndTheirRecord(t *testing.T) {
+	t.Skip("MA-318: a MIME-panicking mbox, maildir or Graph message keeps Raw (the .eml under -raw), shows the headers plus the first 64 KiB on its page and in the index, and is an unparsed record with ParserGen and RawDigest (FC25); the raw-preserving stub is FI-S2b's (and FI-S3's for Graph); closes when they land")
 }
 
-// covers: MA-319, R1, R6, R13, S46
-func TestRecoveryAndClosureOfPSTGaps(t *testing.T) {
-	t.Skip("MA-319: nothing records a PST gap yet, so none can recover or close; lands in FI-S2a")
+// covers: MA-318, R1, R3, R7, R10, S46
+func TestGraphFullModeKeepsAnArchivedRecordWhenItsParseNowPanics(t *testing.T) {
+	t.Skip("MA-318: a Graph Full-mode run where an archived message's parse now panics leaves the record, page and zip unchanged and adopts no PhysID (P15's Graph twin); the Graph walk is FI-S3's; closes when FI-S3 lands")
 }
 
-// covers: MA-320, R1, R6, R10, R5, R12, S46
-func TestFolderUnwritableAndRunFatalOnTheLocalPath(t *testing.T) {
-	t.Skip("MA-320: runFile still returns every Export error and ends the source; lands in FI-S2a")
-}
-
-// covers: MA-324, R1, R17, S46
-func TestLedgerIsInertOnLocalSources(t *testing.T) {
-	t.Skip("MA-324: no local walker records or closes a gap yet; lands in FI-S2a")
+// covers: MA-318, R1
+func TestTwoUnparseableRawMessagesDoNotCollapse(t *testing.T) {
+	t.Skip("R1 (ruling J8 = ESC-1): two distinct MIME-panicking raw messages in one folder still share today's constant stub identity and collapse into one record; the fold that separates them moves MA-330's identity golden, so it waits for the owner's answer to ESC-1 (slice FI-S2b-id); closes when FI-S2b-id lands")
 }

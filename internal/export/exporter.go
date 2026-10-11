@@ -58,6 +58,12 @@ type Stats struct {
 	Unreadable int
 	Unparsed   int
 	Kept       int
+	// ExportPanics counts the messages whose export panicked (the run records each as
+	// an export-panic gap, never only in the log, F33); ExportFaults the messages
+	// and folders the archive could not be written for (export-failed and
+	// folder-unwritable gaps).
+	ExportPanics int
+	ExportFaults int
 }
 
 // Issue is one verification finding: something referenced but not fully
