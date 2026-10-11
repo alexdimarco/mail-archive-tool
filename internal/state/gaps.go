@@ -37,7 +37,12 @@ const (
 	maxGapItems   = 1000
 	maxGapFolders = 1000
 	maxGapInfo    = 100
-	maxGapTotal   = 20000
+	// maxGapOverflow bounds the per-folder overflow entries a token keeps: the entries
+	// that absorb a folder's excess are keyed by folder, so without a bound a source
+	// whose faults each name a different folder made one entry per fault (S2A-AO3).
+	// Beyond it the excess is counted in the token's own overflow entry.
+	maxGapOverflow = 100
+	maxGapTotal    = 20000
 
 	maxGapDetail   = 300 // bytes
 	maxGapSubject  = 200 // runes
@@ -115,6 +120,13 @@ func boundRunes(s string, max int) string {
 	}
 	return string([]rune(s)[:max])
 }
+
+// GapFolder is the spelling the ledger stores a folder path in: control and bidi
+// characters stripped, cut to its bound. A caller that compares a path it holds raw
+// with the ledger's entries (the local run's closure guard) compares it in this
+// spelling, or it never matches a folder whose name the ledger had to change
+// (S2A-AI7).
+func GapFolder(folder string) string { return boundString(folder, maxGapFolder) }
 
 // knownClass reports whether c is one of the three classes.
 func knownClass(c string) bool { return c == ClassFillable || c == ClassTerminal || c == ClassInfo }
@@ -274,6 +286,17 @@ func (m *Manifest) gapBucketCountLocked(token, bucket string) int {
 	return n
 }
 
+// overflowCountLocked counts token's overflow entries. The caller holds m.mu.
+func (m *Manifest) overflowCountLocked(token string) int {
+	n := 0
+	for _, e := range m.CaptureGaps {
+		if e.Token == token && e.Scope == GapScopeOverflow {
+			n++
+		}
+	}
+	return n
+}
+
 // absorbGapLocked counts g into its folder's overflow entry instead of adding a
 // row (P13): the entry's Skipped is the exact number absorbed this run and its
 // class the most severe class absorbed this run. It returns the overflow entry's
@@ -282,6 +305,14 @@ func (m *Manifest) absorbGapLocked(g CaptureGap, runAt time.Time) string {
 	loc := overflowLocator(g.Folder)
 	key := GapKey(g.Token, GapScopeOverflow, loc)
 	o, ok := m.CaptureGaps[key]
+	if !ok && m.overflowCountLocked(g.Token) >= maxGapOverflow {
+		// A source whose faults name a new folder each time is bounded here, not by the
+		// folder caps: the excess is counted in the token's own entry (the store root's).
+		g.Folder = ""
+		loc = overflowLocator("")
+		key = GapKey(g.Token, GapScopeOverflow, loc)
+		o, ok = m.CaptureGaps[key]
+	}
 	switch {
 	case !ok:
 		o = CaptureGap{

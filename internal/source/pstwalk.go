@@ -322,18 +322,28 @@ func (w *pstWalk) walk(folder *pst.Folder, path []string, depth int) error {
 				Locator: folderLocator(folderPath, "subfolders/row"+strconv.Itoa(i)), Detail: "a sub-folder row could not be read: " + row.err.Error()})
 			continue
 		}
-		streak = 0
 		childPath := append(append([]string{}, folderPath...), util.SanitizeSegment(strings.TrimSpace(row.name)))
-		switch {
-		case w.visited[row.id]:
-			w.fault(Fault{Reason: "folder-cycle", Scope: scopeFolder, Class: classTerm, Folder: childPath,
-				Locator: folderLocator(childPath, "cycle"), Detail: fmt.Sprintf("the folder tree loops back to folder %d, which was already read", row.id)})
-			continue
-		case depth+1 > maxFolderDepth:
-			w.fault(Fault{Reason: "folder-too-deep", Scope: scopeFolder, Class: classTerm, Folder: childPath,
-				Locator: folderLocator(childPath, "deep"), Detail: fmt.Sprintf("the folder is nested more than %d levels deep; it and the folders below it were not read", maxFolderDepth)})
+		if looped, deep := w.visited[row.id], depth+1 > maxFolderDepth; looped || deep {
+			// A row that loops back, or goes too deep, is structure that does not work, like
+			// a row that cannot be read: it counts toward the breaker, so a table of them
+			// costs one folder entry and not one per row (S2A-AO3).
+			streak++
+			if streak >= rowBreaker {
+				w.fault(Fault{Reason: "folder-partially-read", Scope: scopeFolder, Class: classTerm, Folder: folderPath,
+					Locator: folderLocator(folderPath, "subfolders"), Skipped: len(rows) - i,
+					Detail: fmt.Sprintf("%d sub-folder rows in a row could not be read; the rest of the table was not read", rowBreaker)})
+				return nil
+			}
+			if looped {
+				w.fault(Fault{Reason: "folder-cycle", Scope: scopeFolder, Class: classTerm, Folder: childPath,
+					Locator: folderLocator(childPath, "cycle"), Detail: fmt.Sprintf("the folder tree loops back to folder %d, which was already read", row.id)})
+			} else {
+				w.fault(Fault{Reason: "folder-too-deep", Scope: scopeFolder, Class: classTerm, Folder: childPath,
+					Locator: folderLocator(childPath, "deep"), Detail: fmt.Sprintf("the folder is nested more than %d levels deep; it and the folders below it were not read", maxFolderDepth)})
+			}
 			continue
 		}
+		streak = 0
 		child := pst.Folder{Identifier: row.id, Name: row.name, HasSubFolders: row.hasSub, MessageCount: row.count, File: w.r.file}
 		if err := w.walk(&child, folderPath, depth+1); err != nil {
 			return err

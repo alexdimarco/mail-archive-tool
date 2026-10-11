@@ -143,15 +143,36 @@ type sourceRun struct {
 	wrote         bool            // this store has written a message this run: its directory exists
 	unwritable    map[string]bool // output directories that could not be created, this run
 	streak        int             // consecutive failed write attempts (the local breaker)
-	folderFaults  []string        // folders a folder-scope fault was recorded in, this run
+	folderFaults  []string        // folders a folder-scope fault was recorded in this run, once each, in the ledger's spelling
+	folderSeen    map[string]bool // the same, for the "once each"
+	folderFlood   bool            // more folders faulted than folderFaultCap: the run cannot say which it read, so it closes nothing
 }
+
+// folderFaultCap bounds the list of folders that faulted. A hostile source whose
+// faults name a different folder each time (a hierarchy of 100,000 loop rows under
+// distinct names) would otherwise grow it a string per fault, and the closure guard
+// scans it for every older gap (S2A-AO3).
+const folderFaultCap = 2000
 
 // observe records one gap of this source in the ledger and counts it as processed.
 func (s *sourceRun) observe(g state.CaptureGap) {
 	g.Token = s.token
 	s.lr.exp.Manifest.ObserveGap(g, s.lr.runAt)
 	if g.Scope == state.GapScopeFolder {
-		s.folderFaults = append(s.folderFaults, g.Folder)
+		// The ledger stores a folder stripped of control and bidi characters and cut to a
+		// bound; the guard compares in that spelling, or it never matches (S2A-AI7).
+		p := state.GapFolder(g.Folder)
+		switch {
+		case s.folderSeen[p]:
+		case len(s.folderFaults) >= folderFaultCap:
+			s.folderFlood = true
+		default:
+			if s.folderSeen == nil {
+				s.folderSeen = map[string]bool{}
+			}
+			s.folderSeen[p] = true
+			s.folderFaults = append(s.folderFaults, p)
+		}
 	}
 	s.lr.noteFault()
 }
@@ -333,6 +354,9 @@ func (s *sourceRun) finish(walkErr error) error {
 // for any source, are closed by a walk that no longer meets them.
 func (s *sourceRun) covered(g state.CaptureGap) bool {
 	if !s.reportsFaults && !exportStageGap(g.Reason) {
+		return false
+	}
+	if s.folderFlood {
 		return false
 	}
 	for _, p := range s.folderFaults {

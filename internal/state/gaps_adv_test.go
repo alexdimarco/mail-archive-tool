@@ -1,8 +1,10 @@
 package state
 
 import (
+	"fmt"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // The FI-S2a adversarial pass's ledger and token tombstones
@@ -37,5 +39,39 @@ func TestTokenIsSafeForAnyStoreName(t *testing.T) {
 	}
 	if plain := m.Token("path:/x/plain", "support"); plain != "support" && !SafeToken(plain) {
 		t.Errorf("the plain name's token %q changed", plain)
+	}
+}
+
+// covers: MA-323, MA-316, R1, R10
+// S2A-AO3: the lifetime caps (P13) bound what a hostile source costs the ledger: the
+// overflow entries that absorb the excess are per folder, so a source whose faults
+// each name a DIFFERENT folder (a hierarchy table whose rows loop back to the root
+// under 100,000 distinct names) made one overflow entry per fault, with no cap, and
+// every new key rescanned the whole ledger. At most maxGapFolders folder entries and
+// maxGapOverflow overflow entries are kept per token; the rest are counted, exactly,
+// in the token's own overflow entry. The cost of the whole stays linear enough to
+// finish in a second, where 16,000 faults took two seconds and 100,000 about 77.
+func TestOverflowEntriesAreBoundedPerToken(t *testing.T) {
+	m, path, tok := gapManifest(t)
+	const faults = 6000
+	start := time.Now()
+	for run := 0; run < 2; run++ {
+		runAt := gapBase.Add(time.Duration(run) * 48 * time.Hour)
+		for i := 0; i < faults; i++ {
+			f := fmt.Sprintf("Loop/f%05d", i)
+			m.ObserveGap(CaptureGap{Token: tok, Folder: f, Scope: GapScopeFolder, Locator: "folder:" + f + "#cycle", Reason: "folder-cycle", Class: ClassTerminal}, runAt)
+		}
+		if n := m.GapCount(); n > maxGapFolders+maxGapOverflow+1 {
+			t.Fatalf("run %d: %d ledger entries after %d faults in distinct folders; want at most %d folder entries and %d overflow entries and the token's own", run+1, n, faults, maxGapFolders, maxGapOverflow)
+		}
+		if got := m.MissingGapCount(); got != faults {
+			t.Errorf("run %d: the ledger accounts for %d missing folders; want exactly %d (nothing dropped, nothing double-counted)", run+1, got, faults)
+		}
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Errorf("12,000 observations took %v; the ledger rescans itself per fault", d)
+	}
+	if m2 := reload(t, m, path); m2.GapCount() != m.GapCount() || m2.MissingGapCount() != faults {
+		t.Errorf("after Save and Load: %d entries counting %d; want %d counting %d", m2.GapCount(), m2.MissingGapCount(), m.GapCount(), faults)
 	}
 }

@@ -179,6 +179,101 @@ func TestPSTCountLiesAreReadThroughTheTable(t *testing.T) {
 	}
 }
 
+// covers: MA-317, MA-316, R10
+// S2A-AO3: a hostile hierarchy table costs one folder entry (design 4.4), whatever its
+// rows are. Rows that loop back to a folder already read (folder-cycle) and rows too
+// deep for the cap (folder-too-deep) each emitted a fault and never counted toward the
+// 100-row breaker, so a table of 100,000 such rows under distinct names was 100,000
+// faults. They count now, like the structurally bad rows beside them: 99 faults, then
+// one folder-partially-read with the rows not read.
+func TestPSTCycleAndDeepRowsCountTowardTheBreaker(t *testing.T) {
+	data := fixtureData(t)
+	loops := func(n int, id func(i int) pst.Identifier) func(f *pst.Folder) ([]subRow, error) {
+		return func(f *pst.Folder) ([]subRow, error) {
+			rows := make([]subRow, n)
+			for i := range rows {
+				rows[i] = subRow{id: id(i), name: fmt.Sprintf("Loop %05d", i)}
+			}
+			return rows, nil
+		}
+	}
+	t.Run("rows that loop back to a folder already read", func(t *testing.T) {
+		r := openData(t, data)
+		r.ops.subFolderRows = loops(5000, func(int) pst.Identifier { return rootFolder })
+		out := walkOnce(t, r, WalkOptions{})
+		cycles, partial := 0, 0
+		for _, f := range out.faults {
+			switch f.Reason {
+			case "folder-cycle":
+				cycles++
+			case "folder-partially-read":
+				partial++
+				if f.Skipped != 5000-99 || f.Scope != state.GapScopeFolder {
+					t.Errorf("breaker fault %+v; want the 4,901 rows from the 100th on counted", f)
+				}
+			}
+		}
+		if out.err != nil || cycles != 99 || partial != 1 || len(out.faults) != 100 {
+			t.Errorf("err %v, %d cycle faults, %d partially-read, %d faults in all; want 99, 1, 100", out.err, cycles, partial, len(out.faults))
+		}
+	})
+	t.Run("rows too deep for the cap", func(t *testing.T) {
+		r := openData(t, data)
+		r.ops.subFolderRows = func(f *pst.Folder) ([]subRow, error) {
+			d := 0
+			if f.Identifier != rootFolder {
+				d = int(f.Identifier) - 5000
+			}
+			if d < maxFolderDepth {
+				return []subRow{{id: pst.Identifier(5000 + d + 1), name: fmt.Sprintf("f%d", d+1), hasSub: true}}, nil
+			}
+			rows := make([]subRow, 3000) // the folder at the cap lists 3,000 children, each one too deep
+			for i := range rows {
+				rows[i] = subRow{id: pst.Identifier(900000 + i), name: fmt.Sprintf("Deep %05d", i)}
+			}
+			return rows, nil
+		}
+		out := walkOnce(t, r, WalkOptions{})
+		deep, partial := 0, 0
+		for _, f := range out.faults {
+			switch f.Reason {
+			case "folder-too-deep":
+				deep++
+			case "folder-partially-read":
+				partial++
+			}
+		}
+		if out.err != nil || deep != 99 || partial != 1 || len(out.faults) != 100 {
+			t.Errorf("err %v, %d too-deep faults, %d partially-read, %d faults in all; want 99, 1, 100", out.err, deep, partial, len(out.faults))
+		}
+	})
+	t.Run("a good row between them resets the count", func(t *testing.T) {
+		// 99 loop rows, a real folder, 99 more: a real row is structure that works, so the
+		// run is not closed (the same rule as the bad rows').
+		r := openData(t, data)
+		real := r.ops.subFolderRows
+		r.ops.subFolderRows = func(f *pst.Folder) ([]subRow, error) {
+			rows, err := real(f)
+			if f.Identifier != topFolder || err != nil {
+				return rows, err
+			}
+			var out []subRow
+			for i := 0; i < 99; i++ {
+				out = append(out, subRow{id: rootFolder, name: fmt.Sprintf("Loop A%02d", i)})
+			}
+			out = append(out, rows...)
+			for i := 0; i < 99; i++ {
+				out = append(out, subRow{id: rootFolder, name: fmt.Sprintf("Loop B%02d", i)})
+			}
+			return out, nil
+		}
+		out := walkOnce(t, r, WalkOptions{})
+		if out.err != nil || len(out.msgs) != 17 {
+			t.Errorf("err %v, %d messages; want all 17 read: no 100 in a row", out.err, len(out.msgs))
+		}
+	})
+}
+
 // covers: R1
 // ESC-S2A-1 (open, NOT accepted): a sub-folder flag (PidTagSubfolders) that reads
 // false over a folder whose hierarchy table lists sub-folders hides the whole subtree
