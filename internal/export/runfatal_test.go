@@ -89,7 +89,9 @@ func TestIsRunFatalClassifiesTheVolumeErrors(t *testing.T) {
 		for _, wrap := range []func(error) error{
 			func(e error) error { return e },
 			func(e error) error { return &fs.PathError{Op: "mkdir", Path: "/x", Err: e} },
-			func(e error) error { return &FolderError{Dir: "/x", Err: &fs.PathError{Op: "mkdir", Path: "/x", Err: e}} },
+			func(e error) error {
+				return &FolderError{Dir: "/x", Err: &fs.PathError{Op: "mkdir", Path: "/x", Err: e}}
+			},
 			func(e error) error { return &ItemError{Path: "/x/y.html", msg: "write /x/y.html", Err: e} },
 		} {
 			if err := wrap(en); !IsRunFatal(err) {
