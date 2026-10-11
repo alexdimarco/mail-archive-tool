@@ -8,14 +8,15 @@ S3-AI1 is fixed for the run whose ids are not confirmed, and S3-AI3 for its part
 an owner decision and each has a skip encoder that was run unskipped to show it red:
 **S3-AC2** (a breaker trip manufactures its own known-poison list; ESC-S3-2), **S3-AI7**
 (the stub hold-back of an item whose own immutable id matches no archived record, with
-S3-AO5 part b; ESC-S3-3) and the id-confirmed variant of **S3-AI1** (ESC-S3-1). Nothing in this
-round has been re-reviewed by a second pair of eyes beyond the fixer's own re-verification notes
-below.
+S3-AO5 part b; ESC-S3-3) and the id-confirmed variant of **S3-AI1** (ESC-S3-1). A fresh-eyes
+check of the fixes (a second reviewer, who did not write them) found three rows overstated
+(S3-AO2, S3-AI3 part b, S3-AC5); each was reproduced and fixed again in a second round, with
+a new tombstone seen red first (see "Re-verification"). The other fixes passed the check.
 
 | | |
 |---|---|
 | Reviewed commit | `039acaa` (branch `wip/fi-s3-adv`), base `5b1d78b` |
-| Fixes | `ae7f17d`..`e65fa86` on the same branch (12 fix commits, 2 test-only commits), not pushed |
+| Fixes | `ae7f17d`..`e65fa86` on the same branch (12 fix commits, 2 test-only commits), then the second round `b8d94a4` (S3-AO2), `c647c37` (S3-AI3 b), `d9c55a4` (S3-AC5) and this report's update; not pushed |
 | Reviewed file blobs at `039acaa` | `internal/app/graph.go` e94305e2f87d, `graphfaults.go` 6c2626901be1, `graphbreaker.go` a339cdff0157, `internal/state/sweep.go` 86582c1f9395, `gaps.go` 3aad3e34b4dc, `internal/graph/graph.go` 59d59f617318, `graphtest/server.go` b24320ed57ac, `graphtest/faults.go` bace5b6e0a12, `internal/health/gaps.go` be0485b9be5d, `internal/export/exporter.go` b248bc003e8e |
 | Finders and skeptic | three finder agents (lenses AO, AI, AC) and one separate skeptic agent, run by the workflow; the fixer (this session) did not find any of the issues |
 | Tool versions | Go 1.26.9 (scratchpad toolchain), run through `inhome` so no real settings, sign-ins or schedules are read |
@@ -63,7 +64,7 @@ Severities are the skeptic's, which may be lower than the finder's. "Fix commit"
 | ID | Lens | Claim (file:line) | Verdict | Evidence (repro or refutation) | Fix commit | Tombstone test |
 |---|---|---|---|---|---|---|
 | S3-AO1 | AO | A 200 listing with no `value` array (`{}`, `null`, an error object) reads as an empty folder and sweeps its records gone; a `{}` folder list walks nothing and records ok. `internal/graph/graph.go` Messages (decode, ~634-700) and Folders (~397-428); consumed at `internal/app/graph.go:783-806` | CONFIRMED (low) | Reproduced by the skeptic and again by the fixer (red: run 2 returned nil; folder list `{}`/`null`/`{"value":[]}` did not fail the mailbox). An honest `{"value":[]}` cannot be told from an empty folder and still sweeps (documented in the test's twin); a lying well-known-folder resolution is the same indistinguishable class, not addressed | `b4696f2` | `TestGraphMalformedListingIsNeverAnEmptyFolder` (MA-316) |
-| S3-AO2 | AO | A 200 `$value` that is not a message (HTML, empty) is archived as one headerless record, no gap, clean exit. `internal/app/graph.go:748-766`; `internal/graph/graph.go` MIMETo | CONFIRMED (low) | Reproduced (three items collapsed into one `sha:` record; red: run returned nil). Fix: the body must open with an RFC 5322 header field, else a fillable fetch-failed gap. Well-formed junk from a determined impersonator is out of its reach | `5c9af35` | `TestGraphValueThatIsNotAMessageIsAGapNotARecord` (MA-310) |
+| S3-AO2 | AO | A 200 `$value` that is not a message (HTML, empty) is archived as one headerless record, no gap, clean exit. `internal/app/graph.go:748-766`; `internal/graph/graph.go` MIMETo | CONFIRMED (low) | Reproduced (three items collapsed into one `sha:` record; red: run returned nil). Fix: the body must open with an RFC 5322 header field, else a fillable fetch-failed gap. Well-formed junk from a determined impersonator is out of its reach. Second round: the first test let a one-line JSON error, "Error: sign in required" and minified HTML through (a name of any printable characters before a colon); the check now needs a field name of letters, digits, hyphen and underscore and at least one of From, Date, Message-ID, Subject, To, Received, MIME-Version, Content-Type, Return-Path, Sender in the header block | `5c9af35`, `b8d94a4` | `TestGraphValueThatIsNotAMessageIsAGapNotARecord`, `TestGraphOneLineErrorAnswerIsNotAMessage` (MA-310) |
 | S3-AO3 | AO | A close-delimited (HTTP/1.x, no Content-Length, not chunked) `$value` ends at the first clean FIN and a truncated MIME is accepted as complete and terminal. `internal/graph/graph.go` MIMETo (~846-868), `internal/app/graph.go:129` | CONFIRMED (medium) | Reproduced (a hijacked 200 with 30 bytes, then close: err nil, exported 1; red). Fix refuses the answer as an unexpected EOF (transport class); gzip answers (`resp.Uncompressed`) and HTTP/2 are not refused. A body that frames a short length correctly stays undetectable. Trade-off: a genuine HTTP/1.0-style proxy in the path now makes every message a fetch-transport gap (loud, not silent) | `0b1f73e` | `TestGraphCloseDelimitedBodyIsATransportFault` (MA-314) |
 | S3-AO4 | AO | OR10's spare rule misses PhysID-bearing records: phantom gone while the gap says `defers=true`. `graphfaults.go:223-250` | DUPLICATE of S3-AI1 | Same mechanism; fixed under S3-AI1 | `569444f` | `TestGraphUnconfirmedIDsFaultSparesRecordsThatHoldAnImmutableID` |
 | S3-AO5 | AO | Message-ID membership closes a failed item's gap (a), and the stub hold-back hides a parse-failing distinct message under an info gap (b). `graph.go:732`; `graphfaults.go:113-117` | DUPLICATE of S3-AI7 (b); (a) is the acknowledged floor residual #8 | (b) is S3-AI7, open as ESC-S3-3. (a): the membership skip is documented in the code as the bounded #8 residual, and before S3 the item was skipped with no gap at all, so closing a stale gap there is consistent with the rule, not a new defect | none (see S3-AI7) | `TestGraphHeldBackStubOfAnUnprovenItemIsNotQuietlyDropped` (skip) |
@@ -73,7 +74,7 @@ Severities are the skeptic's, which may be lower than the finder's. "Fix commit"
 | S3-AO9 | AO | The gap key is built from the raw id but stored sanitized and cut at 512 bytes: long or odd ids collapse into one gap, and recovery and known-poison lookups miss. `graphfaults.go:80`, `273-277`; `graphbreaker.go:126-129`; `state/gaps.go:164-173` | CONFIRMED (low; skeptic UNJUDGED, reproduced by the fixer) | Red: three 601-byte ids left 1 ledger entry and "1 item(s) not captured"; the healed run closed it as gone, not recovered. Fix: `state.BoundLocator` (clean text kept; any other id gets its cleaned, shortened form plus a digest), used for item, folder and exporter locators | `049cee6` | `TestGraphLongItemIDsKeepTheirOwnGaps` (MA-311, MA-323); `TestBoundLocatorKeysEveryRawLocatorToItsOwnEntry` |
 | S3-AI1 | AI | OR10 hole: a present record that carries an immutable id is swept gone when the run's ids are unconfirmed and its download fails; the gap says `defers=true`. `graphfaults.go:223-250`; `state/sweep.go:32-42`; `graph.go:803-806` | CONFIRMED (low) | Reproduced; red with the fix mutated out (N: Present false, gone event true). Fixed for the id-less run (the unmatched fault spares every record: `SweepSpare.AllRecords`). **Open:** the same hole with ids confirmed (a message restored under a new immutable id, Message-IDs mismatched, download failing) is not closed: the only rule that closes it spares every record on every unmatched fault, which makes each new poison item defer the whole mailbox's gone-detection and contradicts OR10's text (PhysID-less records only). Escalated as ESC-S3-1 | `569444f` (id-less run) | `TestGraphUnconfirmedIDsFaultSparesRecordsThatHoldAnImmutableID` (MA-312 case h); *`TestGraphReissuedIDFaultSparesTheArchivedRecord`* (skip) |
 | S3-AI2 | AI | A `-since` run silently closes the folder's overflow entry, so items the ledger could not list leave the ledger and status. `state/gaps.go:439-463`; `graph.go:811-813` | CONFIRMED (low) | Reproduced (1010 failing items: after the -since run the ledger counted 1000, overflow entries 0; red). Fix: a -since run keeps every overflow entry | `287e321` | `TestGraphSinceRunKeepsTheOverflowEntry` (MA-323) |
-| S3-AI3 | AI | Deferred gone-detection is unannounced for terminal gaps, folder-unwritable gaps and young fillable gaps, and the note understates its scope. `health/gaps.go:239-255`, `277-286`; `graph.go:742-745`; `graphfaults.go:407-415`; `state/gaps.go:507-516` | CONFIRMED (low) for (a) and (b) only | (a) the terminal status line now carries the deletion-tracking sentence; (b) the folder-unwritable gap now records `DefersGone` when any message it counted deferred the sweep, and `ObserveGap` keeps a true over a later false in one run (a first version of that merge was caught by the test's second case). (c), and the young fillable case, follow the design (the stuck line names the gap's own folder; only a persisting gap is named) and are unchanged | `70fa50f` | `TestStatusTerminalGapThatDefersGoneNamesIt` (MA-326); `TestGraphUnwritableFolderGapRecordsThatItDefersGoneDetection` (MA-501, MA-312) |
+| S3-AI3 | AI | Deferred gone-detection is unannounced for terminal gaps, folder-unwritable gaps and young fillable gaps, and the note understates its scope. `health/gaps.go:239-255`, `277-286`; `graph.go:742-745`; `graphfaults.go:407-415`; `state/gaps.go:507-516` | CONFIRMED (low) for (a) and (b) only | (a) the terminal status line now carries the deletion-tracking sentence; (b) the folder-unwritable gap now records `DefersGone` when any message it counted deferred the sweep, and `ObserveGap` keeps a true over a later false in one run (a first version of that merge was caught by the test's second case). (c), and the young fillable case, follow the design (the stuck line names the gap's own folder; only a persisting gap is named) and are unchanged. Second round: (b) made a stuck folder-unwritable gap carry the item sentence ("move or delete the item out of B in the mailbox"), wrong for a local directory fault; a folder-scope gap now says deletion tracking resumes once the archive location is writable and a run reaches the folder again | `70fa50f`, `c647c37` | `TestStatusTerminalGapThatDefersGoneNamesIt` (MA-326); `TestGraphUnwritableFolderGapRecordsThatItDefersGoneDetection` (MA-501, MA-312); `TestStatusStuckFolderUnwritableGapDoesNotSendTheOwnerToMoveMail` (MA-326) |
 | S3-AI4 | AI | Full mode with `-since`: archived messages older than the window are downloaded, skipped by date, never stamped, and swept gone. `export/exporter.go:286-340`; `graph.go:803-806` | CONFIRMED (medium) | Reproduced (red: both records Present false with gone events, and a move not followed). Pre-existing exporter behaviour, not introduced by S3. Fix: one `observeArchived` helper stamps and follows a move before the date skip (Graph path only) | `9f65d0d` | `TestGraphFullModeSinceRunStampsArchivedMessagesOlderThanTheWindow` (MA-312) |
 | S3-AI5 | AI | The stuck line for vanished-at-fetch tells the owner the message was deleted and the row closes next run, for an item that is still listed and fails every run. `state/gapremedy.go:63-64`, `123-124`, `304-314`; `graphfaults.go:54-55` | CONFIRMED (low) | Reproduced in the status line and the gap list (red). Fix: a stuck Graph vanished-at-fetch gap says the mailbox still lists the message and how to save a copy (`GapStuckWhy`, a stuck remedy). The run summary and the report TSV have no stuck notion and keep the generic words (not changed) | `70fa50f` | `TestStatusStuckVanishedAtFetchDoesNotPromiseTheRowCloses` (MA-326) |
 | S3-AI6 | AI | A hostile or long item id merges distinct gaps; recovery and known-poison lookups use a different key than the stored one. `state/gaps.go:164-189`, `239-288`; `graphfaults.go:80`, `271-277`; `graphbreaker.go:126-129` | DUPLICATE of S3-AO9 | Same finding, reproduced under S3-AO9 | `049cee6` | as S3-AO9 |
@@ -86,7 +87,7 @@ Severities are the skeptic's, which may be lower than the finder's. "Fix commit"
 | S3-AC2 | AC | A breaker trip manufactures its own known-poison list, so each outage run costs more than the last. `graphfaults.go:295-297`; `graphbreaker.go:126-129`; `state/gaps.go:282` | CONFIRMED (low) | Reproduced (fetches before the trip, run by run: 25, 50, 75, 100). Not fixed: treating a gap recorded in a run whose mailbox tripped as not-known-poison changes FC10's rule as ruled ("known poison never counts, whatever the control request returns", RR6-C4) and needs a persisted mark in the ledger. Escalated as ESC-S3-2 | none | *`TestGraphOutageDoesNotRatchetTheKnownPoisonList`* (skip) |
 | S3-AC3 | AC | The Retry-After clamp is bypassed by a value that overflows Duration. `graph.go:1075-1082`, `987-998` | DUPLICATE of S3-AO6 | Same defect, reproduced under S3-AO6 | `ae7f17d` | as S3-AO6 |
 | S3-AC4 | AC | Gaps of a folder the mailbox no longer has are never closed and keep consuming the lifetime caps. `state/gaps.go:429-463`; `graphfaults.go:354-356` | DUPLICATE of S3-AI10 | Same behaviour, documented (FC14, MA-323); the cap erosion needs 1000 poison items in a deleted folder, and the entries show as not attempted | none | none |
-| S3-AC5 | AC | The breaker's refusal text carries the archive path and the server's words, which `status` reads as an authentication failure. `graphbreaker.go:105-108`; `health/health.go:355`, `896-904` | CONFIRMED (low) | Reproduced (red for a path ending `backup-2401` and for a 504 body naming `invalid_client`: `auth_remedy` printed for an outage). Fix: `looksLikeAuthFailure` reads the error without those two stretches; the pinned wording of the refusal is unchanged; a refused sign-in is still an auth failure (twin) | `2ae1243` | `TestStatusReadsABreakerTripAsAnOutageNotAnAuthFailure` (MA-313) |
+| S3-AC5 | AC | The breaker's refusal text carries the archive path and the server's words, which `status` reads as an authentication failure. `graphbreaker.go:105-108`; `health/health.go:355`, `896-904` | CONFIRMED (low) | Reproduced (red for a path ending `backup-2401` and for a 504 body naming `invalid_client`: `auth_remedy` printed for an outage). Fix: `looksLikeAuthFailure` reads the error without those two stretches; the pinned wording of the refusal is unchanged; a refused sign-in is still an auth failure (twin). Second round: cutting delimited stretches is forgeable (a 504 body carrying the closing words ended the cut early; a mailbox named `it401` or `authentication-team` was scanned). The run's failure is now recorded by kind (`error_kind: service_unavailable`, set when the first mailbox error is the breaker's refusal) and `status` does not read that text at all; the cutting code is removed | `2ae1243`, `d9c55a4` | `TestStatusReadsABreakerTripAsAnOutageNotAnAuthFailure`, `TestStatusBreakerTripIsAnOutageWhateverItsTextSays` (MA-313) |
 
 ## Known items this round also closes
 
@@ -115,9 +116,13 @@ Severities are the skeptic's, which may be lower than the finder's. "Fix commit"
   fetch-transport gap: loud and counted by the breaker, never silent. gzip and HTTP/2 answers
   are not refused (the twin passes). The whole app suite, the CLI tests and the copy export
   tests stayed green.
-- **S3-AO2** accepts any first line of the form `Name: ...`; a message Graph converts always
-  opens with headers, and a plain sentence, HTML or an empty body does not. A body that merely
-  starts like a header (an error line "Error: ...") is still taken for a message.
+- **S3-AO2** (as first fixed) accepted any first line of the form `Name: ...`, so a one-line
+  JSON error or "Error: ..." was still taken for a message; the second round closed that (see
+  "Re-verification"). What remains: an answer that imitates a header block (a first line
+  `From: x` or `Subject: x`) is indistinguishable from a message and is archived as one, and a
+  real message whose header block holds none of the ten fields in `messageFields` would become
+  a fillable fetch-failed gap (loud, retried every run; no Graph-converted message lacks all of
+  them in practice).
 - **S3-AO1**'s empty-folder-list error cannot fire on a real mailbox (an Inbox always exists).
 - **S3-AO9** changes a locator only when the ledger would have changed it, so every existing
   entry keeps its key; the exporter's refresh-failed locator takes the same function.
@@ -130,8 +135,47 @@ Severities are the skeptic's, which may be lower than the finder's. "Fix commit"
   genuine legacy stub is still adopted (the walk test adopts one in the same second as the
   look-alike); a timestamp with a fraction would leave an old stub un-adopted and swept like any
   record whose message left.
-- **S3-AC5** couples `health` to two delimiter strings of the breaker's wording; the
-  end-to-end test (a real trip, then `health.Assess`) fails if either side changes alone.
+- **S3-AC5** (as first fixed) coupled `health` to two delimiter strings of the breaker's
+  wording, and the cut was forgeable; the second round replaced it with a typed kind
+  (`service_unavailable`) that the app records and `status` reads. What remains: a run whose
+  first mailbox error is not a trip but whose later mailboxes tripped (the run-level stop)
+  is read from its text as any other failure is, and that text names the mailboxes, so a
+  mailbox named like an auth needle can still print the auth note there (the owner's own
+  configuration, not wire text; the server's words are not in that text).
+
+## Re-verification
+
+A second reviewer (who did not write the fixes or this report) checked the fixes at `8943815`:
+reverted each fix with its tombstone kept, mutated where the reverse patch no longer applied,
+and probed the shipped code. The outcome per item, and what this round did about each:
+
+| Item | Checker's result | Outcome |
+|---|---|---|
+| S3-AO6 (S3-AC3) | Pass: red for 9223372037 and MaxInt64 when reverted | Stands |
+| S3-AO7 | Pass: red for `$value` 403, 401 and listing 401 with `cleanErr` mutated to identity; no other path carries wire text | Stands |
+| S3-AO3 | Pass: red when reverted; gzip twin and HTTP/2 pass | Stands |
+| S3-AO1 | Pass: all six malformed subtests red when reverted | Stands |
+| S3-AO2 | **Fail**: closed for spaced HTML, a doctype and an empty body; a 200 `$value` of a one-line JSON error, `Error: sign in required` or `<html><body>login: please` is still archived as a record, no gap, clean exit | **Real, fixed** (`b8d94a4`). Reproduced first: `TestGraphOneLineErrorAnswerIsNotAMessage` red, "the run returned <nil>, want ErrPartial". `looksLikeMessage` now needs a field name of letters, digits, hyphen and underscore on the first line and one of ten message fields in the header block; the twin (a real message with only a Subject field) is archived and the three shapes are fillable fetch-failed gaps that close as recovered once the service answers properly. Residual, stated above: an answer that imitates a header block is archived as a message |
+| S3-AO9 (S3-AI6) | Pass: red with `BoundLocator` mutated to a pass-through | Stands |
+| S3-AI1 id-less variant (S3-AO4) | Pass: red when the AllRecords spare is reverted | Stands; the id-confirmed variant stays ESC-S3-1 |
+| S3-AI2 | Pass | Stands |
+| S3-AI4 | Pass: Full-mode subtest red when reverted | Stands |
+| S3-AI3 (a) and (b) | **Part (b) introduces a bad line**: a stuck folder-unwritable gap carries the item sentence "after saving a copy, move or delete the item out of B in the mailbox", for a local directory fault with no item | **Real, fixed** (`c647c37`). Reproduced first: `TestStatusStuckFolderUnwritableGapDoesNotSendTheOwnerToMoveMail` red (the line said "move or delete the item" and "after saving a copy", and not that tracking resumes once the location is writable). `deletionTrackingNote` words a folder-scope gap on its own; an item gap keeps its sentence (twin in the same test); sentences are deduplicated per folder and scope |
+| S3-AI5 | Pass | Stands |
+| S3-AI8 and S3-AI11 | Pass: look-alike relabelled when reverted; scan mutation red at 3.89 s for 500 adoptions | Stands |
+| S3-AC5 | **Fail**: the cut ends at the first closing delimiter, so a hostile 504 body containing it (`x) — Microsoft 365 or the network appears to be unavailable; invalid_client AADSTS70011`) still printed `auth_remedy`; so did mailboxes named `it401` and `authentication-team` | **Real, fixed** (`d9c55a4`). Reproduced first: `TestStatusBreakerTripIsAnOutageWhateverItsTextSays` red in all four cases (the forged 504 body, both mailbox names, the run-level stop). The remedy the finding itself proposed: a typed kind. RunGraph wraps a failure whose first mailbox error is the breaker's refusal in an `outageError` (text and chain unchanged), `recordRun` records `error_kind: service_unavailable`, and `status` does not read that text; the delimiter code is removed. The twin (a refused sign-in is still an auth failure) is green. Residual, stated above: a failure whose first error is not a trip is read from its text, as before |
+| K6 | Pass: every original assertion kept; the new test closes a real gap | Stands |
+| K1-K5, K7 | Pass: skip encoders present at the cited lines | Stands |
+| ESC-S3-1, ESC-S3-2, ESC-S3-3 | Pass: each real, red when unskipped, each cites its ruling | Stand; they still need the owner (their skip encoders are untouched) |
+| Suites and builds at `8943815` | Pass: one load-sensitive failure (`TestCopyExportScalesToSixtyThousandMessages`, a heap bound) that passed 3 of 3 alone; race, vet3, `gofor windows test -c` and gofmt clean | Re-run after the fixes, see "Final verification" |
+| Report header, counts and table | Counts, commit list, blob ids and encoder lines accurate; three rows overstated (S3-AO2, S3-AI3, S3-AC5) | Rows corrected above; counts are unchanged because no finding changed status: 14 fixed, 2 open, plus the id-confirmed variant of S3-AI1 |
+
+The checker's three new findings were the three failed rows above (S3-AI3(b), S3-AC5 and
+S3-AO2), not new defects beyond them; all three are fixed, none is an escalation. The
+checker noted the report's unfiltered-run flake (`TestCopyExportTransportOutageAndTheBreaker`)
+differed from the one it saw (`TestCopyExportScalesToSixtyThousandMessages`); both are
+copy-export tests sensitive to load, both passed alone, and this round's unfiltered run
+failed on the same two (see below).
 
 ## What held (reported by the finders; not re-run by the fixer except where a fix touched it)
 
@@ -177,7 +221,9 @@ are arithmetically right; per-mailbox breakers count across folders only.
   `status` was corrected (S3-AI5).
 - Token-endpoint 5xx classed as auth (pre-existing, FC11), and the 10-minute to 2-hour cap
   itself (a design decision, 13.22), were not re-examined.
-- No second review of the fixes; this report is the fixer's.
+- One second review of the fixes (see "Re-verification"); the second-round fixes (S3-AO2,
+  S3-AI3 b, S3-AC5) were written by a different session from the first and have had no
+  further review.
 
 ## Final verification
 
@@ -197,3 +243,18 @@ this report's own commit.
 During the fixes one other timing-sensitive test failed once under load and passed alone
 three times (`TestGraphBreakerTripsOnlyWithAFailingControlRequest`, the breaker's time bound,
 scaled to milliseconds).
+
+### Second round (after the re-verification fixes)
+
+All through `inhome` with a scratch home, at the head of the second-round fix commits
+(`d9c55a4`), before this report's own update (a documentation change only).
+
+| Command | Status |
+|---|---|
+| `go test ./...` (unfiltered), run 1 | exit 1: two failures, both copy-export tests that depend on load, not this slice: `TestCopyExportTransportOutageAndTheBreaker` (`copyexport_breaker_test.go:86`, a 30 ms wall-clock outage window) and `TestCopyExportScalesToSixtyThousandMessages` (a 40 MiB heap bound, grew 40 MiB) |
+| `go test -run '^(TestCopyExportTransportOutageAndTheBreaker\|TestCopyExportScalesToSixtyThousandMessages)$' -count=3 ./internal/app` | exit 0, both pass 3 of 3 |
+| `go test ./...` (unfiltered), run 2 | no failing line: every package `ok`, `assureblock` included |
+| `go test -race -count=1 ./internal/graph ./internal/state ./internal/health ./internal/app` | exit 0 |
+| `vet3` | clean on darwin, linux and windows |
+| `gofor windows test -c ./internal/app` | exit 0 (test binary built, not run) |
+| `gofmt -l internal cmd assureblock` | no files listed |
