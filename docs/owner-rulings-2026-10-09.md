@@ -1106,6 +1106,21 @@ documented (F17, F18).
 |---|---|---|---|
 | **ESC-16 RULED: ALLOWED by the owner, 2026-10-10 ("I allow the change")** (FI-S1a friction R5) | Rows in the verification report for an unreadable or unparsed record carry only a bare code ("unparsed", "unreadable:attachments") with no why or what-to-do. Giving them one means loosening `TestReportKindsForReadGapLabels` (MA-327), which pins that detail to the bare code. Allow that change? | Yes: a bare code leaves the inheritor with no remedy, and the test would be tightened to the new wording rather than dropped | The banner and README.txt promise a why and a remedy only for ledger rows; MA-327 unchanged |
 
+### 13.12 EW-E2 built and merged (2026-10-10), delegated-judgement
+
+The copy engine (`internal/app/copyexport*.go`, `util.FreeBytes`/`FoldKey`/export naming pass,
+`graph.Client.ForceRefresh`, `graph.TooLargeError.Declared`) is built catalog-first and merged. Its
+conformance check found four gaps, all fixed with tests: a 403 on a message body was listed per
+message instead of stopping the run with R-c (MA-517); the manifest hash and size were not checked
+against the file (MA-419); the size cap was a second literal copy of the shared cap (MA-426); the
+Windows junction test was missing (MA-417). The adversarial pass is COMBINED with EW-E3's (§9 row
+23) and runs after E3. Open skip encoders, each citing its row: MA-419 Readable HTML (E5), MA-427
+archive-root-gone (E4), MA-427 retry preview and offered labels (E3), and R4 for the archive
+writer's F75/F91/F111 names. R-f/R-f2 (MA-414/434) are E3's per design §10, though the E2 task text
+listed them. The Windows legs (placement, DACL, power, MA-532, MA-417 junction) are compile- and
+vet-checked only and need the Windows CI host. The 60,000-message scale test takes about 55 s under
+`-race`.
+
 ### 13.7 Escalations from LC-C1's adversarial pass (merged 2026-10-10)
 
 None blocks anything: each has a skip encoder or a safe interim in force.
