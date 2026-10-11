@@ -154,9 +154,22 @@ func refusalL2Configured(was, now string) refusal {
 }
 
 // refusalL2Other is R-l2 for a selection made from another archive folder that is no longer at that
-// path (design §7.6, RR2-C4): the folder is chosen again, never found by what it was.
+// path (design §7.6, RR2-C4): the folder is chosen again, never found by what it was. It may be on a
+// drive that was unplugged, so reconnecting it comes first (friction F5).
 func refusalL2Other(path string) refusal {
-	return refusedWith("R-l2", fmt.Sprintf("This selection was made from the archive at %s, which is no longer at that path — choose the folder again (Another archive folder…), then Load folders.", path))
+	return refusedWith("R-l2", fmt.Sprintf("This selection was made from the archive at %s, which is no longer at that path (disconnected, moved or deleted). If it is on a drive that was unplugged, reconnect it; then choose the folder again (Another archive folder…), then Load folders.", path))
+}
+
+// archiveGoneNote says an archive the page held a moment ago is not there now (friction F5): what
+// happened, and to reconnect it, never that it "has no search index" or "no archive yet".
+func archiveGoneNote(path, next string) string {
+	return fmt.Sprintf("The archive at %s isn't there any more (it was disconnected, moved or deleted). Reconnect it, then %s.", path, next)
+}
+
+// refusalGone is R-o2 for an archive the page held a moment ago and cannot find now: it went away,
+// it was not never made. did says what was not done ("exported", "loaded").
+func refusalGone(path, did, next string) refusal {
+	return refusedWith("R-o2", fmt.Sprintf("The archive at %s isn't there any more (it was disconnected, moved or deleted) — nothing was %s. Reconnect it, then %s.", path, did, next))
 }
 
 func refusalM(started time.Time, done, total int) refusal {

@@ -269,3 +269,89 @@ func TestAnArchiveManifestThatIsCutShortOrEmptySaysSo(t *testing.T) {
 		}
 	}
 }
+
+// covers: MA-512, MA-435, R12, S52
+// F5: an archive the page held a moment ago and cannot find now is said to have gone away ("isn't there any
+// more", with what to do: reconnect it), on every route: the message list, Start, Load folders and the Source
+// line, for the configured archive; Start (R-l2), then Load folders, for another folder. It is never described as
+// an archive that was never made ("no search index", "no archive yet - run Archive now first": on a Mac or Linux
+// whose mount point stays, Archive now would start a new archive in it). The twin: when nothing held the archive
+// (the page was open for more than 30 minutes, or was just opened), the old words stand.
+func TestAnArchiveThatWentAwayIsSaidToHaveGone(t *testing.T) {
+	forbid := assure.Forbid("no search index", "run Archive now first", "Rebuild", "yet —", "panic", "goroutine")
+	refused := func(t *testing.T, what string, code int, out map[string]any, id string, names ...string) {
+		t.Helper()
+		if out["id"] != id {
+			t.Fatalf("%s: want %s, got %d %v", what, id, code, out)
+		}
+		msg, _ := out["error"].(string)
+		assure.Refused(t, code, msg, assure.Code(statusRefused), assure.Names(names...), forbid)
+	}
+
+	t.Run("the configured archive", func(t *testing.T) {
+		e := newWsEnv(t)
+		buildArchiveAt(t, e.out)
+		arch := archSource("archive", e.out)
+		e.archFolders(arch)
+		sel := e.archSel(arch, entry("alice", true))
+		id, _ := e.preview(sel)
+		if rows, _ := e.archRows(arch, "alice"); len(rows) != 2 {
+			t.Fatalf("the twin: the list of the archive that is there: %d rows", len(rows))
+		}
+		if err := os.RemoveAll(e.out); err != nil { // the drive is unplugged: its folder is gone
+			t.Fatal(err)
+		}
+
+		out := e.ok("/api/workspace/messages", map[string]any{"folder": "alice", "source": arch})
+		note, _ := out["listUnavailable"].(string)
+		assure.Reached(t, note, "the list's note")
+		assure.Refused(t, statusRefused, note, assure.Code(statusRefused), assure.Names(e.out, "isn't there any more", "Reconnect it", "Load folders"), forbid)
+
+		code, body := e.post("/api/exports/start", map[string]any{"previewId": id})
+		refused(t, "Start", code, body, "R-o2", e.out, "isn't there any more", "nothing was exported", "Reconnect it", "Preview copy export again")
+		if entries, _ := os.ReadDir(e.dest); len(entries) != 0 {
+			t.Errorf("Start wrote into the destination: %v", entries)
+		}
+		if _, err := os.Lstat(e.out); err == nil {
+			t.Error("a click made the archive's folder again")
+		}
+
+		code, body = e.post("/api/workspace/folders", map[string]any{"source": arch})
+		refused(t, "Load folders", code, body, "R-o2", e.out, "isn't there any more", "Reconnect it", "Load folders again")
+		if a := e.ok("/api/workspace/source", nil)["archive"].(map[string]any); a["state"] == "ready" || !strings.Contains(a["note"].(string), "isn't there any more") {
+			t.Errorf("the Source line for an archive that went away: %v", a)
+		}
+
+		for _, want := range []string{"d.id==='R-o2'", "a.state!=='gone'"} { // Load folders stays within reach once it is reconnected *(script)*
+			if !strings.Contains(workspaceJS, want) {
+				t.Errorf("workspace.js does not carry %q", want)
+			}
+		}
+
+		// nothing held it any more (30 idle minutes): the old words, which are true for an archive never made
+		e.d.ws.reap(time.Now().Add(sessionIdle + time.Minute))
+		code, body = e.post("/api/workspace/folders", map[string]any{"source": arch})
+		if body["id"] != "R-o" || !strings.Contains(body["error"].(string), "run Archive now first") {
+			t.Errorf("an archive nothing held: %d %v, want R-o", code, body)
+		}
+	})
+
+	t.Run("another archive folder", func(t *testing.T) {
+		e := newWsEnv(t)
+		other := filepath.Join(e.dir, "inherited")
+		buildArchiveAt(t, other)
+		oarch := archSource("archive-other", other)
+		e.archFolders(oarch)
+		id, _ := e.preview(e.archSel(oarch, entry("bob", false)))
+		if err := os.RemoveAll(other); err != nil {
+			t.Fatal(err)
+		}
+		code, body := e.post("/api/exports/start", map[string]any{"previewId": id})
+		refused(t, "Start", code, body, "R-l2", other, "no longer at that path", "reconnect it", "choose the folder again", "Another archive folder")
+		code, body = e.post("/api/workspace/folders", map[string]any{"source": oarch})
+		refused(t, "Load folders", code, body, "R-o2", other, "isn't there any more", "Reconnect it", "choose it again", "Another archive folder")
+		if strings.Contains(body["error"].(string), "isn't a MailArchive archive") {
+			t.Errorf("a folder that went away is described as one that is not an archive: %v", body["error"])
+		}
+	})
+}

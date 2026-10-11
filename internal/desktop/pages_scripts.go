@@ -83,7 +83,7 @@ function errText(d){return d.error||'Something went wrong.';}
 function showErr(d){
   show('banner',errText(d));
   // after these the page's folders are out of date: Load folders is the way on (R-l2 for an archive that moved)
-  if(d&&(d.id==='R-j2'||d.id==='R-y'||d.id==='R-l'||d.id==='R-l2'||d.id==='R-b'||d.id==='R-c'||d.id==='R-o'||d.id==='R-o3'||d.id==='R-o4'||d.id==='R-p'))$('loadFolders').disabled=false;
+  if(d&&(d.id==='R-j2'||d.id==='R-y'||d.id==='R-l'||d.id==='R-l2'||d.id==='R-b'||d.id==='R-c'||d.id==='R-o'||d.id==='R-o2'||d.id==='R-o3'||d.id==='R-o4'||d.id==='R-p'))$('loadFolders').disabled=false;
   // the refusals that say "sign in" put the Sign in button in front of the owner (F2)
   if(d&&st.src==='m365'&&(d.id==='R-b'||d.id==='R-c'||d.id==='R-l'))$('signInArea').hidden=false;
 }
@@ -106,7 +106,7 @@ function renderSource(){
   $('m365Part').hidden=k!=='m365';$('archivePart').hidden=k==='m365';$('otherPart').hidden=k!=='archive-other';
   if(k==='archive')show('archLine',a.state==='ready'?('MailArchive archive — '+a.path):(a.note||'There is no archive yet.'));
   if(k==='archive-other')show('archLine',st.otherHolds||'Another archive folder — read-only');
-  $('loadFolders').disabled=k==='m365'?!st.m365Ready:(k==='archive'?a.state!=='ready':false);
+  $('loadFolders').disabled=k==='m365'?!st.m365Ready:(k==='archive'?(a.state!=='ready'&&a.state!=='gone'):false);
   $('panelNote').textContent=panelText('');
 }
 function resetPick(){

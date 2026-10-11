@@ -57,10 +57,20 @@ func samePath(a, b string) bool { return pathKey(a) == pathKey(b) }
 func (d *dashboard) archiveState() map[string]any {
 	out := d.cfg.effectiveOut()
 	if out == "" || !app.ArchiveAt(out) {
+		if out != "" && d.archiveHeld(out, false) { // the page held it a moment ago: it went away (friction F5)
+			return map[string]any{"state": "gone", "path": out, "note": archiveGoneNote(out, "click Load folders again")}
+		}
 		r := refusalO(out)
 		return map[string]any{"state": "none", "path": out, "note": r.Text}
 	}
 	return map[string]any{"state": "ready", "path": out}
+}
+
+// archiveHeld reports whether the workspace holds a snapshot of the archive at path, loaded with Load
+// folders and not yet released: an archive that is missing now, and was there then, went away.
+func (d *dashboard) archiveHeld(path string, other bool) bool {
+	s := d.ws.archNow()
+	return s != nil && s.archSource() != nil && s.archOther == other && samePath(s.archPath, path)
 }
 
 // otherPath checks the path typed or browsed for Another archive folder: a full path, with no NUL.
@@ -134,7 +144,15 @@ func (d *dashboard) archiveFolders(w http.ResponseWriter, r *http.Request, src w
 	defer d.ws.listMu.Unlock()
 	a, err := app.OpenArchive(path, app.ArchiveOptions{Other: other})
 	if err != nil {
-		d.refuse(w, *copyRefusal(err))
+		ref := *copyRefusal(err)
+		if (ref.ID == "R-o" || ref.ID == "R-o3") && d.archiveHeld(path, other) { // it was there a moment ago (friction F5)
+			next := "click Load folders again"
+			if other {
+				next = "choose it again (Another archive folder…) and click Load folders"
+			}
+			ref = refusalGone(path, "loaded", next)
+		}
+		d.refuse(w, ref)
 		return
 	}
 	var infos []graph.FolderInfo
@@ -246,7 +264,11 @@ func (d *dashboard) archiveRunSource(b wsBind) (*app.ArchiveSource, *refusal) {
 	}
 	a, err := app.OpenArchiveForRun(b.path, app.ArchiveOptions{Other: b.other})
 	if err != nil {
-		return nil, copyRefusal(err)
+		ref := *copyRefusal(err)
+		if ref.ID == "R-o" || ref.ID == "R-o3" { // the preview was made from it: it went away (friction F5)
+			ref = refusalGone(b.path, "exported", "click Preview copy export again (if you moved it, set the Archive location in Settings to where it is now, then Load folders)")
+		}
+		return nil, &ref
 	}
 	return a, nil
 }
@@ -282,6 +304,15 @@ func listUnavailable(err error) string {
 		return "The search index can't be opened on this medium, so there is no message list. Whole-folder selection works."
 	}
 	return "This archive's search index can't be used for a message list. Whole-folder selection works; Rebuild search index (Maintenance) fixes the list."
+}
+
+// listUnavailableFor words why the list of archive a cannot be shown: an archive that went away is said
+// to have gone (the snapshot was loaded from it a moment ago), whatever the index's own error was.
+func (d *dashboard) listUnavailableFor(a *app.ArchiveSource, err error) string {
+	if _, gone := a.Gone(); gone {
+		return archiveGoneNote(a.Dir(), "click Load folders again")
+	}
+	return listUnavailable(err)
 }
 
 // archiveMessages is one page of an archive folder, newest first, at most 100 rows, from
@@ -333,7 +364,7 @@ func (d *dashboard) archiveMessages(w http.ResponseWriter, r *http.Request, in w
 			d.refuse(w, *copyRefusal(newerIndexRefusal(ni)))
 			return
 		}
-		out["listUnavailable"] = listUnavailable(err)
+		out["listUnavailable"] = d.listUnavailableFor(a, err)
 		d.reply(w, out)
 		return
 	}
@@ -341,7 +372,7 @@ func (d *dashboard) archiveMessages(w http.ResponseWriter, r *http.Request, in w
 	version := h.Version
 	h.Close() // closed at the end of the request, never held (XC20)
 	if err != nil {
-		out["listUnavailable"] = listUnavailable(err)
+		out["listUnavailable"] = d.listUnavailableFor(a, err)
 		d.reply(w, out)
 		return
 	}
