@@ -95,7 +95,7 @@ func TestCopyExportIdentityTuple(t *testing.T) {
 	}
 }
 
-// covers: MA-429, R29, R5
+// covers: MA-429, MA-448, R29, R5
 // Reconciliation reads the record, the journal and a bounded probe of the folder, and only
 // the marker-and-seal outcomes are terminal: a folder not found, one that was replaced by
 // another folder, and one moved away are observations, cached by the caller and never
@@ -155,7 +155,7 @@ func TestCopyExportReconcileObservationsAreNotTerminal(t *testing.T) {
 	}
 }
 
-// covers: MA-429, R29, R5
+// covers: MA-429, MA-430, MA-448, R29, R5
 // Locate accepts a moved folder only when the identity check passes, and appends its path
 // to the run record, after which the run is reconciled and finished at that path; a
 // different export's folder (another run id) and an empty folder are refused with nothing
@@ -234,7 +234,7 @@ func (e *CopyExportEnv) terminalGone(run string) bool {
 	return j != nil && j.Status == obsGone
 }
 
-// covers: MA-429, R29, R5
+// covers: MA-429, MA-430, MA-448, R29, R5
 // The launch sweep (RR2-C12): a lost journal does not hide a run whose record survives:
 // the sweep adopts every record no journal line names, rebuilding its start line, appends
 // every ledger line that is missing, and deletes a record only when its run is settled and
@@ -322,7 +322,7 @@ func TestCopyExportLaunchSweepAdoptsAndDeletes(t *testing.T) {
 	}
 }
 
-// covers: MA-429, R29, R5
+// covers: MA-429, MA-430, R29, R5
 // A refused start (R-d): when the journal's start line cannot be written the run is refused
 // naming the state directory and leaving the empty export folder in place; a `refused`
 // ledger line is appended and then the run record is removed, so the launch sweep never
@@ -377,7 +377,7 @@ func TestCopyExportRefusedStartLeavesNoAdoptableRecord(t *testing.T) {
 	}
 }
 
-// covers: MA-429, R29, R5
+// covers: MA-429, MA-430, R29, R5
 // Journal compaction (W12): once the journal passes its bound it keeps the last runs and
 // every unresolved run whatever its age, and copies lines it cannot read or whose v it does
 // not know verbatim; a dropped run's record is deleted only after the new journal is in place
@@ -456,7 +456,7 @@ func TestCopyExportCompactionKeepsTheUnresolved(t *testing.T) {
 	}
 }
 
-// covers: MA-429, R29, R5
+// covers: MA-429, MA-430, R29, R5
 // A run record made by a newer MailArchive Desktop is refused legibly and never touched:
 // reconcile says to update, Finish as partial refuses, and the launch sweep neither adopts
 // nor deletes it; a record's torn tail is truncated before the next append.

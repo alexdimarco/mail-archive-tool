@@ -158,7 +158,7 @@ func (e *CopyExportEnv) historyOne(run string, jl []ceJournalLine, ledger []ceLe
 	}
 	end := lastEvent(jl, "end")
 	info := CopyRunInfo{Run: run, Started: start.At, SourceKind: util.StripControl(start.SourceKind), Mailbox: util.StripControl(start.Mailbox),
-		Dest: util.StripControl(start.DestDir), RootName: filepath.Base(start.DestDir), Planned: start.Planned, Part: partOfRoot(filepath.Base(start.DestDir))}
+		Dest: util.StripControl(start.DestDir), RootName: util.StripControl(filepath.Base(start.DestDir)), Planned: start.Planned, Part: partOfRoot(filepath.Base(start.DestDir))}
 	if l := lastEvent(jl, "located"); l != nil {
 		info.Dest = util.StripControl(l.DestDir)
 	}
@@ -324,7 +324,7 @@ func (e *CopyExportEnv) chainSet(chain string, ledger []ceLedgerLine, journal []
 		} else {
 			for _, l := range journal {
 				if l.Run == run && l.Event == "start" {
-					p.RootName = filepath.Base(l.DestDir)
+					p.RootName = util.StripControl(filepath.Base(l.DestDir))
 					p.Part = partOfRoot(p.RootName)
 				}
 			}
