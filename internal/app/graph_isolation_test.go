@@ -553,6 +553,23 @@ func TestGraphWriteFaultsCostOneMessageOrTheRun(t *testing.T) {
 			t.Errorf("run 2: err %v, Recovered %d, gaps %+v, A2 archived %v; want nil, 1, none, true", err, res.Gaps.Recovered, graphGaps(t, out), archived(t, out, "a2@x"))
 		}
 	})
+	t.Run("50 writes in a row", func(t *testing.T) {
+		s := breakerServer("u1", nil, 60, nil)
+		defer s.Close()
+		failWrites(t, func(n int, path string) error { return pathErr(path, syscall.EACCES) })
+		out := tmpDir(t)
+		_, err := isoRun(isoOptions(s), out)
+		var stop *SourceStoppedError
+		if !errors.As(err, &stop) || !strings.Contains(err.Error(), "stopped reading u1 after 50 writes in a row failed") {
+			t.Fatalf("the run returned %v, want the local breaker's refusal naming the mailbox", err)
+		}
+		if n := gapsOf(t, out, "export-failed"); n != 50 {
+			t.Errorf("%d export-failed gaps, want the 50 before the stop", n)
+		}
+		if n := s.Requests("/users/u1/messages/U1-I51/"); n != 0 {
+			t.Errorf("the 51st message was fetched %d times after the breaker stopped the mailbox", n)
+		}
+	})
 	t.Run("a full drive", func(t *testing.T) {
 		s := graphtest.NewServer()
 		defer s.Close()
@@ -707,5 +724,34 @@ func TestMIMEStallIsAFetchTimeoutGap(t *testing.T) {
 	if g := gaps[0]; g.Reason != "fetch-timeout" || g.Class != state.ClassFillable || g.Locator != "graph:STALL" ||
 		!strings.Contains(g.Detail, "STALL") || !strings.Contains(g.Detail, graphtest.IdleTimeout.String()) {
 		t.Errorf("STALL's gap = %+v; want fetch-timeout, fillable, graph:STALL, naming the message and the 200ms idle limit", g)
+	}
+}
+
+// covers: MA-311, R1, R17, S46
+// The locator is the id the listing gives, which is the immutable id when the
+// tenant honours the preference (§4.8.2, FC8(5), FC14): a poison message that is
+// moved to another folder is the same gap, observed again from its new folder, and
+// is not stranded beside a second entry; the gap counts its two runs (one per UTC
+// day) and follows the move.
+func TestGraphMovedPoisonReobservesItsOwnGap(t *testing.T) {
+	s := isoServer(true)
+	defer s.Close()
+	s.HonorImmutableIDs(true)
+	out := tmpDir(t)
+	g := isoOptions(s)
+	if _, err := isoRun(g, out); !errors.Is(err, ErrPartial) {
+		t.Fatalf("run 1 returned %v, want ErrPartial", err)
+	}
+	ageLedger(t, out, 24*time.Hour) // the next run is another day's
+	s.MoveMessage("u1", "F_IN", "F_SE", "POISON")
+	if _, err := isoRun(g, out); !errors.Is(err, ErrPartial) {
+		t.Fatalf("run 2 returned %v, want ErrPartial", err)
+	}
+	gaps := graphGaps(t, out)
+	if len(gaps) != 1 {
+		t.Fatalf("the ledger holds %+v, want the one gap, followed to its new folder", gaps)
+	}
+	if g := gaps[0]; g.Locator != "graph:POISON" || g.Folder != "Sent" || g.Runs != 2 {
+		t.Errorf("the gap = %+v; want graph:POISON, now in Sent, observed on 2 runs", g)
 	}
 }
