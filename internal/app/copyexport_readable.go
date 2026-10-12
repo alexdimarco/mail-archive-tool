@@ -208,7 +208,7 @@ func (r *CopyRun) addDerived(ctx context.Context, n int, m *CopyMessage, dir, em
 	if opts.Attachments {
 		attachDir = r.addAttachments(ctx, n, dir, stem, msg, why, line)
 	}
-	if opts.ReadableHTML {
+	if opts.ReadableHTML && !r.abandoned.Load() { // an abandoned run makes no further write (E6-AO3)
 		r.addReadable(ctx, n, m, dir, emlName, msg, why, attachDir, line)
 	}
 	return nil

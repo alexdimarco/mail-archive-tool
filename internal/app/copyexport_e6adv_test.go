@@ -3,9 +3,13 @@ package app
 import (
 	"encoding/binary"
 	"fmt"
+	"os"
 	"runtime"
 	"strings"
 	"testing"
+
+	"mail-archive-tool/internal/assure"
+	"mail-archive-tool/internal/state"
 )
 
 // The tombstones of the EW-E6 adversarial pass (docs/review-extraction-workspace-e6-adversarial.md):
@@ -28,8 +32,16 @@ func e6advZipRun(t *testing.T, e *CopyExportEnv, entries ...e6ZipEntry) (res *Co
 
 // e6advNote reports whether an entry carries an attachment note holding every one of the phrases.
 func e6advNote(ent map[string]any, phrases ...string) bool {
+	var notes []string
 	for _, n := range ent["notes"].([]any) {
-		s := n.(string)
+		notes = append(notes, n.(string))
+	}
+	return e6advHasNote(notes, phrases...)
+}
+
+// e6advHasNote is e6advNote for the notes of a run-record line.
+func e6advHasNote(notes []string, phrases ...string) bool {
+	for _, s := range notes {
 		ok := strings.HasPrefix(s, attachNotePrefix)
 		for _, p := range phrases {
 			ok = ok && strings.Contains(s, p)
@@ -57,6 +69,154 @@ func e6advDirectoryOnly(n int) []byte {
 	binary.LittleEndian.PutUint16(end[10:], uint16(n))
 	binary.LittleEndian.PutUint32(end[12:], uint32(46*n))
 	return append(b, end...)
+}
+
+// e6advOnTemp is a contained writer that calls onTemp when a temp file is made in an attachments
+// directory, before it is made: where a test presses Cancel, or the dashboard gives up on a run.
+type e6advOnTemp struct {
+	ceFS
+	onTemp func()
+}
+
+func (h *e6advOnTemp) CreateTemp(dir string) (ceFile, string, error) {
+	if strings.HasSuffix(dir, ".attachments") {
+		h.onTemp()
+	}
+	return h.ceFS.CreateTemp(dir)
+}
+
+// covers: MA-428, MA-424, R5
+// E6-AO3 (E6-AI3, E6-AC1): Cancel and Abandon are seen inside the message being extracted, not only
+// between messages. A message of 40 attachments, and the run cancelled (or abandoned, as the
+// dashboard does to a run still going 30 s after Cancel) as the third temp file is made: no more
+// than three files reach the destination and no temp file stays; a cancelled run lists the files it
+// placed and a note that says the rest were not extracted because the export was stopped; an
+// abandoned run's result is the stop, and it writes nothing after the call, where the code went on to
+// write all 40 files and was declared "not responding" while it did.
+func TestCancelAndAbandonAreSeenInsideAMessagesExtraction(t *testing.T) {
+	for _, abandon := range []bool{false, true} {
+		name := "cancel"
+		if abandon {
+			name = "abandon"
+		}
+		t.Run(name, func(t *testing.T) {
+			msgs := ceMsgs(2)
+			var parts []e6Part
+			for i := 0; i < 40; i++ {
+				parts = append(parts, e6Part{name: fmt.Sprintf("f%02d.bin", i), body: []byte(fmt.Sprintf("part %d of the message", i))})
+			}
+			mime := e6Mime(msgs[0].SourceID, "forty files", parts...)
+			e := newCEEnv(t)
+			src := newFakeSrc()
+			src.body = func(id string) []byte {
+				if id == msgs[0].SourceID {
+					return mime
+				}
+				return e6Mime(id, "second")
+			}
+			p := cePlan(t, e, src, msgs)
+			p.Options.Attachments = true
+			run := e.NewCopyRun(p, src)
+			made := 0
+			e.fsWrap = func(f ceFS) ceFS {
+				return &e6advOnTemp{ceFS: f, onTemp: func() {
+					if made++; made == 3 {
+						if abandon {
+							run.Abandon()
+						} else {
+							run.Cancel()
+						}
+					}
+				}}
+			}
+			res, err := run.Run(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			onDisk := 0
+			for p := range treeFiles(t, res.Root) {
+				if strings.Contains(p, ".attachments/f") {
+					onDisk++
+				}
+			}
+			if onDisk > 3 {
+				t.Errorf("%d attachments were written, %d of them after the call", onDisk, onDisk-3)
+			}
+			if made > 3 {
+				t.Errorf("%d temp files were made: the extraction went on after the call", made)
+			}
+			if r := tempResidue(t, res.Root); len(r) != 0 {
+				t.Errorf("temp files left: %v", r)
+			}
+			if abandon {
+				if res.Label != "Stopped: the destination is not responding" {
+					t.Errorf("the abandoned run ended %q", res.Label)
+				}
+				return
+			}
+			if res.Status != CopyStatusCancelled || res.Counts.Exported != 1 {
+				t.Fatalf("the cancelled run: %s, %+v", res.Label, res.Counts)
+			}
+			first := assure.Reached(t, e5Files(t, e, res)[1], "the first message's line")
+			if got := len(e6Derived(first)); got < 1 || got > 3 {
+				t.Errorf("the line lists %d extracted files", got)
+			}
+			if !e6advHasNote(first.Notes, "export was stopped", "were not extracted", ".eml beside it") {
+				t.Errorf("no note says the rest were not extracted because the export was stopped: %q", first.Notes)
+			}
+			if bad, missing, extra := sumsCheck(t, res.Root); len(bad)+len(missing)+len(extra) != 0 {
+				t.Errorf("sums: changed %v, missing %v, unlisted %v", bad, missing, extra)
+			}
+		})
+	}
+}
+
+// covers: MA-428, MA-424, R5
+// E6-AO3, for the entries of an archived zip: a zip of 40 entries, the run cancelled as the third
+// temp file is made, writes no more than three files and says the rest of its entries were not
+// extracted because the export was stopped.
+func TestCancelIsSeenInsideAZipsExtraction(t *testing.T) {
+	var entries []e6ZipEntry
+	for i := 0; i < 40; i++ {
+		entries = append(entries, e6ZipEntry{name: fmt.Sprintf("f%02d.bin", i), data: []byte(fmt.Sprintf("entry %d of the zip", i))})
+	}
+	a := buildE6Archive(t)
+	e := newCEEnv(t)
+	zb := e6Zip(t, entries...)
+	_, _, zipPath := a.files("zip-only")
+	if err := os.WriteFile(zipPath, zb, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a.setRec("zip-only", func(r *state.Record) { r.Fixity.Zip = digestOf(zb) })
+	s := a.open()
+	p := a.plan(e, s, []string{a.key("zip-only")})
+	p.Options.Attachments = true
+	run := e.NewCopyRun(p, s)
+	made := 0
+	e.fsWrap = func(f ceFS) ceFS {
+		return &e6advOnTemp{ceFS: f, onTemp: func() {
+			if made++; made == 3 {
+				run.Cancel()
+			}
+		}}
+	}
+	res, err := run.Run(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if made > 3 {
+		t.Errorf("%d temp files were made: the extraction went on after the call", made)
+	}
+	if res.Counts.Exported != 1 || res.Counts.Failed != 0 { // the cancel came in the last message: nothing follows it to stop
+		t.Fatalf("the run: %s, %+v", res.Label, res.Counts)
+	}
+	first := assure.Reached(t, e5Files(t, e, res)[1], "the message's line")
+	if got := len(e6Derived(first)); got < 1 || got > 3 {
+		t.Errorf("the line lists %d extracted files", got)
+	}
+	if !e6advHasNote(first.Notes, "export was stopped", "the rest of its entries were not extracted", "the zip beside it") {
+		t.Errorf("no note says the rest of the entries were not extracted because the export was stopped: %q", first.Notes)
+	}
 }
 
 // covers: MA-424, R1

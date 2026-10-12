@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"path"
 	"slices"
 	"strings"
@@ -140,13 +141,33 @@ func newAttachWriter(r *CopyRun, ctx context.Context, dir, stem string, line *ce
 	return &attachWriter{r: r, ctx: ctx, adir: ceJoin(dir, stem+attachDirSuffix), used: map[string]struct{}{}, line: line, holds: holds, from: "the message"}
 }
 
-// attachSpaceWriter refuses what no longer fits in the space the destination has left.
+// errAttachStopped is an extraction cut short because the run was cancelled or abandoned.
+var errAttachStopped = errors.New("the export was stopped")
+
+// stopped reports whether the run was cancelled or abandoned: an extraction of up to a thousand
+// files, or of a zip of up to 4 GiB, does not go on writing after Cancel, and after Abandon (the
+// dashboard's answer to a run still going 30 s later) it makes no further write (E6-AO3).
+func (w *attachWriter) stopped() bool {
+	return w.ctx.Err() != nil || w.r.abandoned.Load()
+}
+
+// stopNote says what an extraction that was stopped left undone.
+func (w *attachWriter) stopNote(rest string) {
+	w.notes.add(fmt.Sprintf("the export was stopped while this message's attachments were being extracted, so %s were not extracted; %s; export this message again", rest, w.holds))
+}
+
+// attachSpaceWriter refuses what no longer fits in the space the destination has left, and
+// anything more once the run was stopped.
 type attachSpaceWriter struct {
 	w    io.Writer
 	left int64
+	stop func() bool // nil: never
 }
 
 func (s *attachSpaceWriter) Write(p []byte) (int, error) {
+	if s.stop != nil && s.stop() {
+		return 0, errAttachStopped
+	}
 	if int64(len(p)) > s.left {
 		return 0, errAttachNoSpace
 	}
@@ -162,7 +183,7 @@ func classifyStream(err error) error {
 	var we *ceWriteError
 	var pe *attachPartError
 	switch {
-	case err == nil, errors.Is(err, errAttachNoSpace), errors.As(err, &we), errors.As(err, &pe):
+	case err == nil, errors.Is(err, errAttachNoSpace), errors.Is(err, errAttachStopped), errors.As(err, &we), errors.As(err, &pe):
 		return err
 	}
 	why := plainText(err.Error())
@@ -192,6 +213,9 @@ func guardStream(fn func(io.Writer) (int64, error)) func(io.Writer) (int64, erro
 // the entry's line as it is placed, so what the record says is what the disk holds.
 func (w *attachWriter) put(filename string, index int, stream func(io.Writer) (int64, error)) (ceFileRec, error) {
 	r := w.r
+	if w.stopped() {
+		return ceFileRec{}, errAttachStopped
+	}
 	budget, err := r.budget()
 	if err != nil {
 		return ceFileRec{}, &ceWriteError{err}
@@ -207,9 +231,12 @@ func (w *attachWriter) put(filename string, index int, stream func(io.Writer) (i
 		return ceFileRec{}, &ceWriteError{err}
 	}
 	hw := &ceHashWriter{w: f, h: sha256.New(), watch: r.watch, total: &r.bytes}
-	_, serr := stream(&attachSpaceWriter{w: hw, left: budget})
+	_, serr := stream(&attachSpaceWriter{w: hw, left: budget, stop: w.stopped})
 	w.written += hw.n // charged whether the part is kept or not: what was written is what the bound limits (E6-AO1)
 	serr = classifyStream(serr)
+	if serr != nil && w.stopped() {
+		serr = errAttachStopped // whatever the stream said, the run was stopped under it
+	}
 	if serr == nil {
 		if serr = f.Sync(); serr != nil {
 			serr = &ceWriteError{serr}
@@ -309,6 +336,10 @@ func partFilename(a model.Attachment, index int) string {
 // parts extracts the parsed message's attachments, inline images included, in order.
 func (w *attachWriter) parts(atts []model.Attachment) {
 	for i, a := range atts {
+		if w.stopped() {
+			w.stopNote(fmt.Sprintf("the last %s attachments", commas(len(atts)-i)))
+			return
+		}
 		name := partFilename(a, i)
 		label := plainText(util.ExportFilename(name, i))
 		if a.WriteTo == nil {
@@ -316,6 +347,10 @@ func (w *attachWriter) parts(atts []model.Attachment) {
 			continue
 		}
 		rec, err := w.put(name, i, guardStream(a.WriteTo))
+		if errors.Is(err, errAttachStopped) {
+			w.stopNote(fmt.Sprintf("the last %s attachments", commas(len(atts)-i)))
+			return
+		}
 		if err != nil {
 			w.problem(label, err)
 			continue
@@ -329,7 +364,7 @@ func (w *attachWriter) parts(atts []model.Attachment) {
 // finish adds the notes to the entry and, when no file was placed, takes the directory
 // back, so an entry never has an empty one.
 func (w *attachWriter) finish() {
-	if w.placed == 0 {
+	if w.placed == 0 && !w.r.abandoned.Load() { // an abandoned run makes no further write, not even this
 		w.r.dropDir(w.adir)
 	}
 	w.line.Notes = append(w.line.Notes, w.notes.done()...)
@@ -490,6 +525,10 @@ func (w *attachWriter) zipEntries(data []byte, bd attachBounds) {
 		files = files[:bd.entries]
 	}
 	for i, f := range files {
+		if w.stopped() {
+			w.stopNote("the rest of its entries")
+			return
+		}
 		if f.FileInfo().IsDir() || strings.HasSuffix(f.Name, "/") {
 			continue
 		}
@@ -508,11 +547,14 @@ func (w *attachWriter) zipEntries(data []byte, bd attachBounds) {
 			w.notes.add(fmt.Sprintf("%q (an entry of the zip) was not extracted: %s; %s", label, why, w.holds))
 			continue
 		}
-		if err != nil {
-			w.problem(label, err)
-			continue
+		if err == nil {
+			_, err = w.put(name, i, guardStream(zipStream(f)))
 		}
-		if _, err := w.put(name, i, guardStream(zipStream(f))); err != nil {
+		if errors.Is(err, errAttachStopped) {
+			w.stopNote("the rest of its entries")
+			return
+		}
+		if err != nil {
 			w.problem(label, err)
 		}
 	}
@@ -524,7 +566,7 @@ func (w *attachWriter) zipEntries(data []byte, bd attachBounds) {
 // data. Its bytes count toward the message's total whether or not the entry is then kept.
 func (w *attachWriter) expand(f *zip.File, src *zipSource, bd attachBounds) (n int64, why string, err error) {
 	src.read = 0
-	n, err = guardStream(zipStream(f))(io.Discard)
+	n, err = guardStream(zipStream(f))(&attachSpaceWriter{w: io.Discard, left: math.MaxInt64, stop: w.stopped})
 	if err = classifyStream(err); err != nil {
 		return n, "", err
 	}
