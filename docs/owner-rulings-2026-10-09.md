@@ -1588,6 +1588,28 @@ no per-directory bound; the whole central directory of a zip is read before the 
 attachment that is gone or changed after writing is a listed failure rather than a note.
 Note: there is no CLI copy-export path in this tree, so only the desktop workspace is touched.
 
+### 13.35 EW-E6 adversarial pass merged (2026-10-12), delegated-judgement
+
+Branch `wip/ew-e6-adv` (report `docs/review-extraction-workspace-e6-adversarial.md`). Found 26, confirmed 12,
+11 fixed with tombstones (the fresh-eyes check failed the first zip-ratio fix, E6-AO2, and it was fixed again).
+Fixed: failed zip entries count toward the per-message total; the 200:1 ratio is judged on the real packed size
+and on the whole zip against 200 times its own size (a lying header no longer passes); the central directory is
+bounded before it is read; Cancel and Abandon are seen inside an extraction; same-named parts are named in
+linear time; a vanished derived attachment is a note, not a failed message; extracted names lose controls,
+invisible characters, a leading dash and a leading tilde; derived attachments cannot crowd out a later original;
+extraction stops when the run record cannot list the files; README says extracted files carry no zone marker
+and can have long paths. Clean clone: full suite green, vet3 clean. **The whole-zip bound is new code on an
+untrusted-input path that only its fixer has looked at; it is owed a third look before the option is revealed.**
+
+**Open for the owner (each has a skip encoder; none blocks):**
+- **ESC-E6-AO5**: XC12 says no export directory holds more than 1,000 files; MA-424 says every attachment is
+  extracted; a message with 1,001 attachments cannot satisfy both. Recommended: cap at 1,000 with a note.
+- **ESC-E6-AO11**: the preview's longest-path and over-259 counts ignore extracted attachments' paths.
+  Recommended: a separate preview line (the README already says paths run longer).
+- **ESC-E6-AO10**: setting a Mark of the Web / macOS quarantine marker on extracted files is platform code that
+  could not be run here; the README remedy is done. Recommended: build it when there is a Windows/macOS lab.
+Known: the two heap-measurement tests under `-race` (one red at the base too); not touched.
+
 ### 13.7 Escalations from LC-C1's adversarial pass (merged 2026-10-10)
 
 None blocks anything: each has a skip encoder or a safe interim in force.
