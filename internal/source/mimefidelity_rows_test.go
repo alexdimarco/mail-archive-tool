@@ -15,6 +15,14 @@ func TestUnknownCharsetNoteShowsOnThePage(t *testing.T) {
 	t.Skip("MA-333 (page): the page has no collapsed notes block to show charset-fallback on (renderHeader holds none); lands in MF-S4")
 }
 
+// covers: MA-333, R1, R10, R26
+// F24 charsets, the later-text half of MA-333: a text part that comes after the body and
+// names a charset the table does not know is decoded (valid UTF-8, Windows-1252 where the
+// label is not known) and shown, not only archived around.
+func TestUnknownCharsetLaterTextPartIsDecoded(t *testing.T) {
+	t.Skip("MA-333 (later text): body assembly is slice S3's, so a second text part is still dropped as v1 dropped it (first of each kind) and its decoding cannot be observed; S2 asserts that every later part is archived and the first text is decoded; lands in MF-S3 with the assembly")
+}
+
 // covers: MA-335, R1, R7, R26
 // F25 bodies: Apple Mail's split html, the placeholder and the zip, mutt's named
 // text parts and Mailman's footer are all kept in document order.
@@ -39,7 +47,10 @@ func TestCidTextReferencesKeepTheAttachment(t *testing.T) {
 
 // covers: MA-340, R7, R8, R26, R3
 // C1-8, the headers half of MA-340: a raw Latin-1 Subject, From name and To are valid
-// UTF-8 on the page and in the index.
+// UTF-8 on the page and in the index, and the fuzz-seeded property covers the header
+// fields too (every text field of safeParseMessage(any bytes) is valid UTF-8, including
+// fault-injected fidelity fallbacks); S2's property, TestEveryBodyOfAnyMessageIsValidUTF8,
+// covers the body fields.
 func TestLegacy8BitHeadersBecomeValidUTF8(t *testing.T) {
 	t.Skip("MA-340 (headers): Subject and the address fields are still decoded as v1 decodes them, which keeps an 8-bit value as raw bytes (header decoding is S3's, P7); lands in MF-S3")
 }

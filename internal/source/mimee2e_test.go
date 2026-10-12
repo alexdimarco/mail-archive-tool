@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -334,18 +335,31 @@ func TestTextAttachmentsReachTheZipAsTheirSourceBytes(t *testing.T) {
 
 	_, rec := recordOf(t, m, "c11-text-attachments@corpus.example")
 	z := zipOf(t, out, rec)
-	for _, name := range []string{"latin1.csv", "latin1.xml", "utf16.txt", "sjis.txt", "cp1252.ics", "page.html"} {
+	// Each entry's sha256 is that of the transfer-decoded source bytes (the fixture's own
+	// base64 and quoted-printable, decoded here), never of a UTF-8 conversion of them.
+	b64 := func(s string) []byte {
+		b, err := base64.StdEncoding.DecodeString(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	sourceBytes := map[string][]byte{
+		"latin1.csv": b64("bmFtZTtjaXR5DQpN/GxsZXI7S/Zsbg0KSm9z6Tta/HJpY2gNCg=="),
+		"latin1.xml": []byte("<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?>\r\n<invoice><name>Gr\xfc\xdfe K\xf6ln</name></invoice>\r\n"),
+		"utf16.txt":  b64("//5HAHIA/ADfAGUAIADlZSxnnooNAAoA"),
+		"sjis.txt":   b64("k/qWe4zqgsyDgYOCDQo="),
+		"cp1252.ics": b64("QkVHSU46VkNBTEVOREFSDQpCRUdJTjpWRVZFTlQNClNVTU1BUlk6Q2Fm6SCTcXVvdGVklA0KRU5EOlZFVkVOVA0KRU5EOlZDQUxFTkRBUg0K"),
+		"page.html":  b64("PGh0bWw+PGJvZHk+PHA+R3L832UgYXVzIEv2bG48L3A+PC9ib2R5PjwvaHRtbD4NCg=="),
+	}
+	for name, want := range sourceBytes {
 		data, ok := z[name]
 		if !ok {
 			t.Errorf("%s is not in the zip (entries %v)", name, zipNames(z))
 			continue
 		}
-		// What the sender sent is, by construction of the fixture, not valid UTF-8 (or
-		// UTF-16/Shift_JIS); a converted entry would be valid UTF-8.
-		if name == "latin1.csv" || name == "latin1.xml" || name == "page.html" || name == "cp1252.ics" {
-			if utf8.Valid(data) {
-				t.Errorf("%s is valid UTF-8: it was converted, not kept as sent: %q", name, data)
-			}
+		if sha256.Sum256(data) != sha256.Sum256(want) {
+			t.Errorf("%s: the zip entry is %q, want the transfer-decoded source bytes %q", name, data, want)
 		}
 	}
 	if !bytes.HasPrefix(z["utf16.txt"], []byte{0xff, 0xfe}) {
