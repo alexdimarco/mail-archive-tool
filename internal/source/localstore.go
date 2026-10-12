@@ -62,6 +62,11 @@ func classifyMode(goos string, mode fs.FileMode, readlinkOK bool) entryKind {
 			return kindOutside // nothing on Unix is known to hold mail and be irregular
 		case readlinkOK:
 			return kindDirLink
+		case mode.IsDir():
+			// A directory whose reparse tag is not a name surrogate (a cloud placeholder
+			// folder) is ModeDir|ModeIrregular; a junction is ModeIrregular alone. It is a
+			// folder to list, never a file to read (S2B-AO5).
+			return kindDir
 		default:
 			return kindPlaceholder
 		}

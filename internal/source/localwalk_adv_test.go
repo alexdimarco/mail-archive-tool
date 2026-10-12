@@ -1,6 +1,7 @@
 package source
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"mail-archive-tool/internal/state"
+	"mail-archive-tool/internal/util"
 )
 
 // releasePipe lets a goroutine that blocked opening the pipe at path go, once the test is
@@ -67,6 +69,39 @@ func TestAnOverDeepStoreIsBoundedByTheDepthCap(t *testing.T) {
 	}
 	if rem := state.GapRemedy(f.Reason, state.SourceLocal, ""); strings.Contains(rem, "scanpst") || strings.Contains(rem, ".pst") {
 		t.Errorf("the remedy of a local store's deep folder names a .pst repair: %q", rem)
+	}
+}
+
+// covers: MA-322, R25, R10, S47
+// S2B-AO5: a cloud-placeholder FOLDER (OneDrive Files-On-Demand, Dropbox online-only) is a
+// folder. Go reports a directory whose reparse tag is not a name surrogate as
+// ModeDir|ModeIrregular (a junction is ModeIrregular alone), and the classifier tested
+// ModeIrregular first, so the folder was read as a placeholder FILE: a mailbox folder in a
+// cloud-synced store was dropped silently (an mbox store), or filed as "nothing to do"
+// (a maildir), against FC1. The rows are the classifier's table on any OS; the
+// placeholder FILE and the junction keep their rows of TestClassifyModeTable.
+func TestAPlaceholderFolderIsAFolder(t *testing.T) {
+	for _, c := range []struct {
+		name       string
+		goos       string
+		mode       fs.FileMode
+		readlinkOK bool
+		want       entryKind
+	}{
+		{"windows placeholder folder", "windows", fs.ModeDir | fs.ModeIrregular, false, kindDir},
+		{"windows placeholder folder, Readlink answers: a link", "windows", fs.ModeDir | fs.ModeIrregular, true, kindDirLink},
+		{"windows placeholder file is still a file to read", "windows", fs.ModeIrregular, false, kindPlaceholder},
+		{"windows junction is still a directory link", "windows", fs.ModeIrregular, true, kindDirLink},
+		{"nothing on unix is a placeholder folder", "linux", fs.ModeDir | fs.ModeIrregular, false, kindOutside},
+	} {
+		if got := classifyMode(c.goos, c.mode, c.readlinkOK); got != c.want {
+			t.Errorf("%s: classifyMode(%s, %v, %v) = %d, want %d", c.name, c.goos, c.mode, c.readlinkOK, got, c.want)
+		}
+	}
+	// A directory descriptor is never a file to read, placeholder or not (the folder is
+	// listed, not opened as a mailbox).
+	if util.DescriptorReadable("windows", fs.ModeDir|fs.ModeIrregular) {
+		t.Errorf("a placeholder folder's descriptor is readable as a mail file")
 	}
 }
 
