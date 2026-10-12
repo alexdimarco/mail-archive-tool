@@ -393,9 +393,9 @@ func attachCardWarn(n int) string {
 	case n <= 0:
 		return ""
 	case n == 1:
-		return "1 message was exported without all of its attachments, because the export was stopped, the disk was full or a file could not be written. Its .eml is complete. To get its attachments, select that message again in a new export; 'Export the remaining messages' does not include it, and its note in export-manifest.json says what is missing."
+		return "1 message was exported without all of its attachments, because the export was stopped, the disk was full or a file could not be written. Its .eml is complete. To get its attachments, select that message again in a new export; 'Export the remaining messages' does not include it. README.txt names it, and its note in export-manifest.json says what is missing."
 	}
-	return fmt.Sprintf("%s messages were exported without all of their attachments, because the export was stopped, the disk was full or a file could not be written. Their .eml files are complete. To get their attachments, select those messages again in a new export; 'Export the remaining messages' does not include them, and each one's note in export-manifest.json says what is missing.", commas(n))
+	return fmt.Sprintf("%s messages were exported without all of their attachments, because the export was stopped, the disk was full or a file could not be written. Their .eml files are complete. To get their attachments, select those messages again in a new export; 'Export the remaining messages' does not include them. README.txt names the first %d, and each one's note in export-manifest.json says what is missing.", commas(n), attachReadmeList)
 }
 
 // archiveCardLabel names the archive an export activity card is of: "your archive, folder <name>" for the

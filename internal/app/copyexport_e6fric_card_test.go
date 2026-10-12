@@ -86,10 +86,14 @@ func TestTheCardOfAnExportWithAttachmentsSaysWhatBecameOfThemAndWhoLostSome(t *t
 			}
 			warn := assure.Reached(t, card.AttachWarn, "the card's warning about the message that lost its attachments")
 			for _, want := range []string{"1 message was exported without all of its attachments", "the export was stopped, the disk was full or a file could not be written",
-				"Its .eml is complete", "select that message again in a new export", "'Export the remaining messages' does not include it", "export-manifest.json"} {
+				"Its .eml is complete", "select that message again in a new export", "'Export the remaining messages' does not include it", "README.txt names it", "export-manifest.json"} {
 				if !strings.Contains(warn, want) {
 					t.Errorf("the warning lacks %q: %q", want, warn)
 				}
+			}
+			// and what the warning says is true: the README names the message, and what to do
+			if readme := readText(t, res.Root, copyReadmeName); !strings.Contains(readme, "subject M00001 (Inbox): the export was stopped while this message's attachments were being extracted") || !strings.Contains(readme, "export this message again") {
+				t.Errorf("README.txt does not name the message that lost its attachments")
 			}
 
 			// the rest, as a later part of the set

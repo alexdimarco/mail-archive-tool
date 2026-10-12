@@ -399,13 +399,13 @@ type ceRecSummary struct {
 	RetryableFailed int
 	// Attach is what Extract attachments made across the run's messages, from their att counts and notes
 	// (EW-E6 friction F1, F3): what the card says of them.
-	Attach          ceAttachTotals
-	Stopped         *ceStoppedLine
-	Sealed          *ceSealedLine
-	Gone            bool
-	Located         []ceLocatedLine
-	Realized        *cePostureLine
-	NewerMajor      bool // a header of a newer format_version
+	Attach     ceAttachTotals
+	Stopped    *ceStoppedLine
+	Sealed     *ceSealedLine
+	Gone       bool
+	Located    []ceLocatedLine
+	Realized   *cePostureLine
+	NewerMajor bool // a header of a newer format_version
 }
 
 // ceAttachTotals is what a run's messages came to, attachment-wise: how many attachments the reader
