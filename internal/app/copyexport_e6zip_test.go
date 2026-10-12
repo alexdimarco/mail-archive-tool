@@ -676,6 +676,38 @@ func TestAZipThatIsNotWrittenLeavesNoNoteOfItsEntries(t *testing.T) {
 			t.Errorf("temp files left: %v", r)
 		}
 	})
+	// E6Z-AC3: Abandon lands while the finished zip is being flushed (an fsync stuck on a hard mount that then
+	// returns): the zip is not renamed into the export folder the caller has let go of.
+	t.Run("abandoned during the flush", func(t *testing.T) {
+		msgs := ceMsgs(2)
+		mime := e6Mime(msgs[0].SourceID, "one file", e6Part{name: "a.pdf", ctype: "application/pdf", body: []byte("%PDF a")})
+		e := newCEEnv(t)
+		src := newFakeSrc()
+		src.body = func(string) []byte { return mime }
+		p := cePlan(t, e, src, msgs)
+		p.Options.Attachments, p.Options.AttachmentsAsZip = true, true
+		run := e.NewCopyRun(p, src)
+		e.fsWrap = func(f ceFS) ceFS {
+			return &e6zZipTemp{ceFS: f, wrap: func(f ceFile) ceFile {
+				return &e6zFile{ceFile: f, sync: func() error { run.Abandon(); return f.Sync() }}
+			}}
+		}
+		res, err := run.Run(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Label != "Stopped: the destination is not responding" {
+			t.Errorf("the abandoned run ended %q", res.Label)
+		}
+		for p := range treeFiles(t, res.Root) {
+			if strings.HasSuffix(p, ".attachments.zip") {
+				t.Errorf("a zip was placed after Abandon: %s", p)
+			}
+		}
+		if r := tempResidue(t, res.Root); len(r) != 0 {
+			t.Errorf("temp files left: %v", r)
+		}
+	})
 	t.Run("write fails", func(t *testing.T) {
 		msgs := ceMsgs(1)
 		mime := e6Corpus(t, "f24-cte-x-uuencode.eml") // note.txt.undecoded, which a note says is kept as received, and r.pdf

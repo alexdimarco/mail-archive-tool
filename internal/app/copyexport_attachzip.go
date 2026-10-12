@@ -210,6 +210,12 @@ func (w *attachWriter) zipParts(dir, stem string, stamp time.Time, atts []model.
 		r.fs.Remove(ceJoin(dir, zf.tmp))
 		return failed(&ceWriteError{serr})
 	}
+	// A flush that was stuck (a hard mount) and returned after Cancel or Abandon: the zip is whole
+	// but the caller has let go of the folder, and an abandoned run makes no further write (E6-AO3,
+	// E6Z-AC3). The check cannot close the rename's own window, only the one the flush opens.
+	if w.stopped() {
+		return stopped()
+	}
 	placed, perr := r.placeFinalAs(w.ctx, dir, zf.tmp, stem, attachZipSuffix)
 	if perr != nil {
 		r.fs.Remove(ceJoin(dir, zf.tmp))
