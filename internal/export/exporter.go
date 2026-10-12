@@ -815,7 +815,9 @@ func parseGapLabels(m *model.Message) []string {
 	}
 	for i, a := range m.Attachments {
 		if a.GapKind != "" {
-			all = append(all, state.ParseGapLabel(a.GapKind, attachmentLabel(a, i)+" — "+a.GapDetail))
+			// The name the zip holds the part under, the one a reader can search it for
+			// (friction F9): the sender's spelling is not always creatable (CON, a control).
+			all = append(all, state.ParseGapLabel(a.GapKind, util.SanitizeFilename(a.Filename, i)+" — "+a.GapDetail))
 		}
 	}
 	if len(all) <= state.MaxParseGapLabels {

@@ -2275,11 +2275,25 @@ func renderHeader(m *model.Message, ctx RenderContext, consumed map[int]bool) st
 	// Archived attachments (those not embedded inline), with the zip link, so
 	// the page alone tells the reader what came with the message.
 	var names []string
+	var kept []string // the parts kept as received or cut short, by the name the zip holds them under
+	var cut []string
 	for i, a := range m.Attachments {
 		if consumed[i] {
 			continue
 		}
-		names = append(names, attachmentLabel(a, i))
+		name := attachmentLabel(a, i)
+		if a.GapKind != "" && ctx.ZipName != "" {
+			// A part this version kept as received or cut short is listed by the name its zip
+			// member has, so the page's name is a name in the zip (friction F9).
+			name = util.SanitizeFilename(a.Filename, i)
+		}
+		names = append(names, name)
+		switch a.GapKind {
+		case state.GapKindUndecodedPart, state.GapKindStructureLimit:
+			kept = append(kept, name)
+		case state.GapKindCorruptPart:
+			cut = append(cut, name)
+		}
 	}
 	if len(names) > 0 {
 		b.WriteString(`<div class="mailarchive-attachments"><b>Attachments:</b> `)
@@ -2299,12 +2313,36 @@ func renderHeader(m *model.Message, ctx RenderContext, consumed map[int]bool) st
 			b.WriteString(` — ` + attachmentsInEmlSentence)
 		}
 		b.WriteString(`</div>`)
+		b.WriteString(partNote(kept, cut))
 	}
 	if ctx.RawName != "" {
 		b.WriteString(`<div class="mailarchive-raw"><a href="` + html.EscapeString(ctx.RawName) + `">Original message (.eml)</a></div>`)
 	}
 	b.WriteString(readGapNotice(m, ctx))
 	b.WriteString(`</div>`)
+	return b.String()
+}
+
+// partNote is the page's own line about the parts of this message that were kept as received
+// (a name ending .undecoded: this program could not decode them, or stopped at a size or depth
+// limit) or cut short (a name ending .partial: only the readable start), for a reader with the
+// page and no tool (friction F8). It is fixed text and escaped names in the tool's own
+// mailarchive- namespace, driven by the parts' gaps and never by what a name looks like. It
+// sits on new pages only: a page is never rewritten after it is written. The report is the
+// authority, so the line points at it.
+func partNote(kept, cut []string) string {
+	if len(kept) == 0 && len(cut) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(`<div class="mailarchive-attachments mailarchive-partnote">`)
+	if len(kept) > 0 {
+		b.WriteString(html.EscapeString(strings.Join(kept, ", ")) + ` kept exactly as received: this program could not decode it, or stopped at a size or depth limit. `)
+	}
+	if len(cut) > 0 {
+		b.WriteString(html.EscapeString(strings.Join(cut, ", ")) + ` holds only the readable start of a part that was cut short or damaged. `)
+	}
+	b.WriteString(`The file attachments-report.tsv, in the archive's top folder, says which part and why.</div>`)
 	return b.String()
 }
 
