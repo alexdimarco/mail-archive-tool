@@ -909,6 +909,16 @@ Slice MF-S1 closes MA-347's identity half with every write recording `chash` (MC
 and `parse_scheme` (MC12); MA-329's baseline `internal/app/testdata/p14-golden.json`
 was regenerated with those two additive fields on the healthy records by the owner's
 decision of 2026-10-11, and nothing else in it moved.
+Slice MF-S2 (`docs/design-mime-fidelity.md` §10, rulings §9 row 20) lands the fidelity
+walker, its parameter, text and transfer decoding, the gap classes and bounds (P2, P4
+`.partial`, P5, P10, P13), the shared `internal/util` primitives (MC35), the report
+kinds, counts and wording, and `BenchmarkParseCorpus` (MC39). It adds no row and no
+R, S or X id: the rows are the S0 rows above. It turns MA-332, MA-333 (non-page),
+MA-334, MA-337, MA-338, MA-340 (bodies) and MA-349 (parser bounds) into real tests and
+MA-348's counts into a real test. What each of those rows leaves for a later slice is a
+skip encoder citing the row: MA-333's page assertion (MF-S4), MA-340's headers (MF-S3),
+MA-348's page blocks and repair figures (MF-S4, MF-S7) and MA-349's export-side recovers
+(MF-S4, MF-S7). Identity stays the frozen replay's: no identity or content golden moves.
 
 MA-350, MA-351, MA-352, MA-355, MA-356, MA-357, MA-358, MA-359 and MA-361 are
 re-capture integrity's slice S1, interim (`docs/design-recapture-integrity.md` §9

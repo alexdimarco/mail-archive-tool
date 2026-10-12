@@ -23,6 +23,13 @@ func TestUnknownCharsetsKeepLaterPartsAndDecode(t *testing.T) {
 	t.Skip("MA-333: the parse loop still ends at the first unknown charset (mbox.go:286-288); the page assertion also waits for the renderer; encoder lands in MF-S0, turns green in MF-S2 (non-page) and MF-S4 (page)")
 }
 
+// covers: MA-333, R26
+// F24 charsets, the page half of MA-333: a part decoded after a charset fallback
+// carries a charset-fallback note on the page.
+func TestUnknownCharsetNoteShowsOnThePage(t *testing.T) {
+	t.Skip("MA-333 (page): the page has no collapsed notes block to show charset-fallback on (renderHeader holds none); lands in MF-S4")
+}
+
 // covers: MA-334, R1, R10, R26
 // F24 transfer encodings: 8-bit and quoted-printable (encoded) decode with
 // lenient-cte; unknown encodings keep their bytes as <name>.undecoded with a
@@ -75,6 +82,13 @@ func TestLegacy8BitTextBecomesValidUTF8(t *testing.T) {
 	t.Skip("MA-340: only the PST reader has the valid-UTF-8-else-Windows-1252 step (reader.go:517-525); raw MIME passes the bytes through unchanged (charset.go:38-42); encoder lands in MF-S0, turns green in MF-S2 (bodies) and MF-S3 (headers)")
 }
 
+// covers: MA-340, R7, R8, R26, R3
+// C1-8, the headers half of MA-340: a raw Latin-1 Subject, From name and To are valid
+// UTF-8 on the page and in the index.
+func TestLegacy8BitHeadersBecomeValidUTF8(t *testing.T) {
+	t.Skip("MA-340 (headers): Subject and the address fields are still decoded as v1 decodes them, which keeps an 8-bit value as raw bytes (header decoding is S3's, P7); lands in MF-S3")
+}
+
 // covers: MA-341, R7, R8, R3, R26
 // C1-10: a From header net/mail rejects still gives the page, the folder page and
 // sender search a sender, and the fingerprint equals the golden.
@@ -109,6 +123,14 @@ func TestRepairIsNeverToLessAndWithheldLegibly(t *testing.T) {
 // escaped.
 func TestRepairAndCannotDecodeAreLegibleOnEverySurface(t *testing.T) {
 	t.Skip("MA-348: no repair counters, undecodable counts, fidelity_fallback, or page gaps and notes blocks exist to show; encoder lands in MF-S0, turns green in MF-S2 (counts), MF-S4 (page blocks) and MF-S7 (repair)")
+}
+
+// covers: MA-349, R10, R19
+// Bounds and isolation, the export side of MA-349: a panic in an embedded render, in
+// the cid tree embedding or in a repair attempt costs that feature or attempt, and
+// the outer message is exported.
+func TestHostileMIMEExportSideIsIsolated(t *testing.T) {
+	t.Skip("MA-349 (export side): the cid tree embedding and the embedded render do not exist yet (render-fallback lands in MF-S4) and neither does the repair attempt (withheld repair-error, MF-S7); lands in MF-S4 and MF-S7")
 }
 
 // covers: MA-349, R10, R1, R19, R26
