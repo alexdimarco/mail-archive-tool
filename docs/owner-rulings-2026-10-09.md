@@ -1517,6 +1517,32 @@ delegated judgement, neither a weakening:
 Clean clone: full suite green, vet3 and gofmt clean. **Still owed: the walker's adversarial pass (hostile MIME)
 and the friction review with the X-series check, now against the code that runs.**
 
+### 13.32 MF-S2 adversarial pass merged (2026-10-12), delegated-judgement
+
+Branch `wip/mf-s2-adv` (report `docs/review-mime-fidelity-s2-adversarial.md`). Found 23, confirmed 17, 15 fixed
+with tombstones, no existing test or baseline edited. The high one: a Content-Transfer-Encoding value with many
+comments cost seconds to minutes (AO1). Also fixed: nested-multipart memory (AO2, about 62 times a message
+before), the walker's part-header cap read after parsing (AO3, walker half), sender-chosen filenames forging
+parse-gap labels in the report (AO4), a replacement-encoding label turning a body into one U+FFFD (AO7), a
+Graph stub identity collapse introduced by the switch-on (AI2: distinct no-Message-ID messages whose parse
+panics collapsed into one record), a part cut on a base64 quantum boundary archived as complete (AC3), and a
+framing error dropping the rest of the message (AC4). Clean clone: full suite green (the known timing test
+passed alone), vet3 clean.
+
+**Open for the owner (each has a skip encoder; batched, none blocks):**
+- **ESC-MS2-1** (frozen half of AO3): the frozen v1 replay still parses a hostile part header whole (about 120
+  times the message; a 16 MiB one about 1.9 GB). Recommended: bound it, with MS1-AO2's bound, as a ruled drift
+  to the stub identity for such hostile messages.
+- **ESC-MS2-2** (AI5, AO10): the "cannot decode" count includes fallback, identity-stub and unsplit records and
+  says each is "kept as received in the attachments zip", untrue for those. Recommended: fix in the friction
+  review (MC39), counting only real undecodable parts and wording the rest for what they are.
+- **ESC-MS2-3** (AI1 plain-name facet, predates MF-S2): an attachment named like a reserved label
+  (`unparsed`, `unreadable:body`) is read as that label. Recommended: separate the namespaces in the repair
+  slice (S7).
+- **ESC-MS2-4** (AI6): the contains-v1 body rule is waived message-wide by any body-decoding note, so readable
+  v1 text can be replaced by mojibake without the fallback. Recommended: apply the rule to bodies no note
+  touched (the design's step 3a wording per body).
+
 ### 13.7 Escalations from LC-C1's adversarial pass (merged 2026-10-10)
 
 None blocks anything: each has a skip encoder or a safe interim in force.
