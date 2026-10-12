@@ -129,8 +129,11 @@ type attachWriter struct {
 	// written is every byte the writer has put into a temp file for this message, whether the part
 	// was kept or removed again after it failed: the per-message bound on a zip's entries counts it.
 	written int64
-	holds   string // what holds a part that was not extracted
-	from    string // where the parts are read from: "the message", or "the zip"
+	// expanded is the bytes a zip's entries expanded to when they were read through before being
+	// written (expand), kept or not: with written, what the per-message bound counts.
+	expanded int64
+	holds    string // what holds a part that was not extracted
+	from     string // where the parts are read from: "the message", or "the zip"
 }
 
 func newAttachWriter(r *CopyRun, ctx context.Context, dir, stem string, line *ceMsgLine, holds string) *attachWriter {
@@ -384,14 +387,30 @@ func zipReadError(err error) error {
 	return err
 }
 
+// zipSource is the ReaderAt a zip is read through. It counts the bytes read from the zip's data,
+// which is what an entry really occupies: the compressed size in an entry's header is the
+// sender's claim, and nothing in the zip reader checks it against the stream (E6-AO2).
+type zipSource struct {
+	r    *bytes.Reader
+	read int64 // bytes read since the last reset
+}
+
+func (s *zipSource) ReadAt(p []byte, off int64) (int, error) {
+	n, err := s.r.ReadAt(p, off)
+	s.read += int64(n)
+	return n, err
+}
+
 // openZip opens the zip's central directory under a panic guard.
-func openZip(data []byte) (zr *zip.Reader, err error) {
+func openZip(data []byte) (zr *zip.Reader, src *zipSource, err error) {
 	defer func() {
 		if p := recover(); p != nil {
-			zr, err = nil, errors.New(panicReason(p))
+			zr, src, err = nil, nil, errors.New(panicReason(p))
 		}
 	}()
-	return zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	src = &zipSource{r: bytes.NewReader(data)}
+	zr, err = zip.NewReader(src, int64(len(data)))
+	return zr, src, err
 }
 
 // breach says why an entry may not be extracted, judged on what its header declares and what
@@ -405,7 +424,7 @@ func (bd attachBounds) breach(f *zip.File, total int64) string {
 		return "it is encrypted, which this version cannot read"
 	case declared > uint64(bd.entryBytes):
 		return fmt.Sprintf("it is larger than %s uncompressed (the most this version extracts from one entry)", bytesBound(bd.entryBytes))
-	case declared > uint64(bd.ratio)*f.CompressedSize64:
+	case declared > 0 && (declared-1)/uint64(bd.ratio) >= f.CompressedSize64: // declared > ratio*packed, without the product, which wraps for a claim near 2^64 (E6-AI2)
 		return fmt.Sprintf("it would expand more than %d times (%s packed, %s unpacked), which this version takes for a zip bomb and does not expand",
 			bd.ratio, humanBytes(int64(min(f.CompressedSize64, 1<<62))), humanBytes(int64(min(declared, 1<<62))))
 	case total+int64(declared) > bd.totalBytes:
@@ -440,7 +459,7 @@ func zipStream(f *zip.File) func(io.Writer) (int64, error) {
 // entries are not attachments and are left out; every other entry is a file named by its base
 // name, or a note.
 func (w *attachWriter) zipEntries(data []byte, bd attachBounds) {
-	zr, err := openZip(data)
+	zr, src, err := openZip(data)
 	if err != nil {
 		w.notes.add(fmt.Sprintf("the zip could not be opened (%s), so its entries were not extracted; %s", plainText(err.Error()), w.holds))
 		return
@@ -456,14 +475,44 @@ func (w *attachWriter) zipEntries(data []byte, bd attachBounds) {
 		}
 		name := zipBase(f.Name)
 		label := plainText(util.ExportFilename(name, i))
-		if why := bd.breach(f, w.written); why != "" {
+		if why := bd.breach(f, max(w.written, w.expanded)); why != "" {
 			w.notes.add(fmt.Sprintf("%q (an entry of the zip) was not extracted: %s; %s", label, why, w.holds))
+			continue
+		}
+		// Nothing of an entry is written before it is known to be what it says: its data is read
+		// through to its end once to nowhere, which finds a damaged or mis-sized entry and a
+		// bomb whose header lied about its packed size, and costs time, not disk (E6-AO2).
+		n, why, err := w.expand(f, src, bd)
+		w.expanded += n
+		if why != "" {
+			w.notes.add(fmt.Sprintf("%q (an entry of the zip) was not extracted: %s; %s", label, why, w.holds))
+			continue
+		}
+		if err != nil {
+			w.problem(label, err)
 			continue
 		}
 		if _, err := w.put(name, i, guardStream(zipStream(f))); err != nil {
 			w.problem(label, err)
 		}
 	}
+}
+
+// expand reads one entry's data through to its end and throws it away: how many bytes it
+// expands to, and why it may not be extracted when it is a bomb whatever its header claims
+// (what it really packs into, which src counted, against the ratio), or the failure of its own
+// data. Its bytes count toward the message's total whether or not the entry is then kept.
+func (w *attachWriter) expand(f *zip.File, src *zipSource, bd attachBounds) (n int64, why string, err error) {
+	src.read = 0
+	n, err = guardStream(zipStream(f))(io.Discard)
+	if err = classifyStream(err); err != nil {
+		return n, "", err
+	}
+	if n > bd.ratio*src.read {
+		return n, fmt.Sprintf("its data expands more than %d times (%s packed, %s unpacked) whatever its header says, which this version takes for a zip bomb and does not extract",
+			bd.ratio, humanBytes(src.read), humanBytes(n)), nil
+	}
+	return n, "", nil
 }
 
 // addZipEntries extracts the entries of the archived attachments zip just placed as zrec into

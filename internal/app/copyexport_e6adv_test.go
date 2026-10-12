@@ -38,6 +38,34 @@ func e6advNote(ent map[string]any, phrases ...string) bool {
 	return false
 }
 
+// covers: MA-424, R4, R1
+// E6-AO2 (E6-AI2, E6-AC4): the 200:1 bound is judged on the compressed bytes the entry really has,
+// not on the compressed size its header claims, which is the sender's to write. A deflate stream of
+// 20 MiB of zeros (about 20 KB, 1000:1) whose header claims a compressed size that makes it look
+// 200:1 or less, or one so large that 200 times it wraps a uint64, is not extracted and not written,
+// and is a note that names a zip bomb; the entry beside it is extracted. The code judged the claim,
+// extracted all 20 MiB and said nothing.
+func TestAZipBombIsJudgedOnItsRealPackedSizeNotItsHeaders(t *testing.T) {
+	bomb := make([]byte, 20<<20)
+	for name, claim := range map[string]uint64{"a claim of 110,000 bytes": 110000, "a claim that wraps 200 times": 461168601842843648} {
+		t.Run(name, func(t *testing.T) {
+			res, ent, written := e6advZipRun(t, newCEEnv(t),
+				e6ZipEntry{name: "liar.bin", data: bomb, raw: true, declared: uint64(len(bomb)), packed: claim},
+				e6ZipEntry{name: "ok.txt", data: []byte("fine")})
+			got := e6Extracted(t, res.Root, ent)
+			if _, ok := got["liar.bin"]; ok || string(got["ok.txt"]) != "fine" || len(got) != 1 {
+				t.Errorf("extracted (name: bytes) %v", e6Sizes(got))
+			}
+			if !e6advNote(ent, `"liar.bin"`, "zip bomb") {
+				t.Errorf("no note says liar.bin is taken for a zip bomb: %v", ent["notes"])
+			}
+			if written > 1<<10+4 {
+				t.Errorf("%d bytes were written for an entry that expands 1000:1: it was expanded to disk", written)
+			}
+		})
+	}
+}
+
 // covers: MA-424, R1
 // E6-AO1 (E6-AC5): an entry that streams its whole size and then fails (a damaged checksum) is
 // charged against the message's total like one that succeeds, so the per-message bound limits what

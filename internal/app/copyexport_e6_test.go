@@ -551,6 +551,7 @@ type e6ZipEntry struct {
 	declared uint64
 	crc      uint32 // the header's CRC for a raw entry; the CRC of data when zero
 	flags    uint16
+	packed   uint64 // the header's compressed size for a raw entry, a claim the data does not keep; the real length when zero
 }
 
 // e6Zip writes a zip of entries.
@@ -571,7 +572,11 @@ func e6Zip(t *testing.T, entries ...e6ZipEntry) []byte {
 			if crc == 0 {
 				crc = crc32.ChecksumIEEE(en.data)
 			}
-			w, err = zw.CreateRaw(&zip.FileHeader{Name: en.name, Method: zip.Deflate, CRC32: crc, CompressedSize64: uint64(packed.Len()),
+			claim := uint64(packed.Len())
+			if en.packed != 0 {
+				claim = en.packed
+			}
+			w, err = zw.CreateRaw(&zip.FileHeader{Name: en.name, Method: zip.Deflate, CRC32: crc, CompressedSize64: claim,
 				UncompressedSize64: en.declared, Flags: en.flags})
 			if err == nil {
 				_, err = w.Write(packed.Bytes())
