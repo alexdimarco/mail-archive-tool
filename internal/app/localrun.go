@@ -418,7 +418,7 @@ func localReaderGap(reason, locator string) bool {
 	case "file-unreadable", "vanished-during-read":
 		return strings.HasPrefix(locator, "maildir:")
 	case "folder-unreadable", "folder-partially-read", "symlink-outside-store", "symlinked-folder-skipped",
-		"not-a-message-file", "folder-cycle", "overflow":
+		"not-a-message-file", "folder-cycle", "folder-too-deep", "overflow":
 		return true
 	}
 	return false

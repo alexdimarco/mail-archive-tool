@@ -27,6 +27,7 @@ type localWalk struct {
 	sink    faultSink
 	follow  bool          // the input's directory-link opt-in
 	visited []fs.FileInfo // under the opt-in: every directory the walk has entered
+	depth   int           // how many directories deep the walk is (every descent goes through into)
 }
 
 func newLocalWalk(handler MessageHandler, opts WalkOptions, follow bool) *localWalk {
@@ -112,22 +113,50 @@ func errnoRetryable(err error) bool {
 func (w *localWalk) into(sc *scope, rel string, v verdict, folder []string, read func(*scope, string) error) error {
 	switch v.kind {
 	case kindDir:
+		if w.tooDeep(sc, rel, folder) {
+			return nil
+		}
 		if w.follow {
 			if fi, err := sc.lstat(rel); err == nil && w.seen(fi) {
 				w.alreadyRead(sc, rel, folder)
 				return nil
 			}
 		}
-		return read(sc, rel)
+		return w.deeper(func() error { return read(sc, rel) })
 	case kindDirLink:
 		if !w.follow {
 			w.refuse(sc, rel, folder, v)
+			return nil
+		}
+		if w.tooDeep(sc, rel, folder) {
 			return nil
 		}
 		return w.followInto(sc, rel, folder, read)
 	}
 	w.refuse(sc, rel, folder, v)
 	return nil
+}
+
+// tooDeep says the walk is at the depth cap and records the directory it will not
+// enter: a terminal gap, since what is below it might hold mail (S2B-AO1). Every
+// descent goes through into, so the cap bounds the recursion of every local reader;
+// without it a chain of thousands of empty directories (cheap to make) made a run's
+// cost grow faster than its depth, as every level lists its whole relative path from
+// the root.
+func (w *localWalk) tooDeep(sc *scope, rel string, folder []string) bool {
+	if w.depth < maxFolderDepth {
+		return false
+	}
+	w.fault(Fault{Reason: "folder-too-deep", Scope: scopeFolder, Class: classTerm, Folder: folder, Locator: "folder:" + sc.at(rel),
+		Detail: fmt.Sprintf("the folder is nested more than %d levels deep; it and the folders below it were not read", maxFolderDepth)})
+	return true
+}
+
+// deeper runs read one directory level down.
+func (w *localWalk) deeper(read func() error) error {
+	w.depth++
+	defer func() { w.depth-- }()
+	return read()
 }
 
 // alreadyRead records that a directory the opt-in would have read again was read
@@ -163,7 +192,7 @@ func (w *localWalk) followInto(sc *scope, rel string, folder []string, read func
 	}
 	sub := &scope{root: root, path: real, prefix: sc.at(rel)}
 	defer sub.close()
-	return read(sub, ".")
+	return w.deeper(func() error { return read(sub, ".") })
 }
 
 // isMaildirIn reports whether the directory at rel has a cur or new entry that is a
