@@ -23,9 +23,20 @@ import (
 // sees comes from the fidelity walker, and v1's content is the fallback. Off, it routes
 // as slice S1 did: v1's content, no check, no gaps, so a build with it off writes what
 // the build before slice S2 wrote. It is off until the owner accepts what turning it on
-// changes in two tests of MF-S1 (identityrouting_test.go: "content from v1" asserts that
-// no content moves, and "v1 panics" asserts that a v1 panic leaves the stub), which
-// assert S1's behaviour and not S2's. Nothing else moves with it: it is one line.
+// changes in four assertions of MF-S1 tests, which assert S1's behaviour and not S2's,
+// and an existing test's assertion is the owner's to change (rulings §0, rule 2):
+//   - identityrouting_test.go, TestFidelityParserKeepsTheIdentityGoldenOnTheCorpus:
+//     "content from v1" (no content moves), "v1 panics: the stub and its identity" (a v1
+//     panic leaves the stub, where S2 shows the walker's content under the stub's
+//     identity with an identity-stub gap) and "the content parser panics: v1's content"
+//     (the fallback's body text is now valid UTF-8 and carries a fidelity-fallback gap);
+//   - export/mimeidentity_test.go, TestMixedVersionsKeepIdentityAndStems (line 578: every
+//     record re-read by this build is stamped with the current parse scheme, which a
+//     record whose message carries a note newer than its scheme is not, MS1-AI1).
+//
+// With the switch on, those are the only tests of the suite that fail (checked over
+// ./...; a timing test of the copy export flaked once under load and passes alone): the
+// flip is one line and the narrowing of those four.
 var fidelityContent = false
 
 // contentParser is the content parser of the mode safeParseMessage is in: a test's
