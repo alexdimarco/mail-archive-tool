@@ -1,8 +1,10 @@
 package util
 
 import (
+	"fmt"
 	"strings"
 	"testing"
+	"unicode"
 	"unicode/utf8"
 
 	"mail-archive-tool/internal/assure"
@@ -125,6 +127,48 @@ func TestExportFilenameStripsControlsAndNeverStartsWithADash(t *testing.T) {
 		}
 		if tc.want != "" && got != tc.want {
 			t.Errorf("ExportFilename(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// covers: MA-417, R4, R29
+// E6-AO8 (second round), E6-AO9's "~": the invisible-format class is stripped whole, not by a list. The
+// Unicode Cf (format) characters that a name can carry unseen (the word joiner U+2060, the soft hyphen
+// U+00AD, the invisible operators U+2061 to U+2064, the deprecated format controls U+206A to U+206F, the
+// Mongolian vowel separator U+180E, the interlinear annotation marks U+FFF9 to U+FFFB, the tag
+// characters U+E0000 to U+E007F, the Arabic number signs) and the combining grapheme joiner U+034F make
+// "invoice.pdf" and an invisibly different "invoice.pdf" the same name to the eye; only the
+// zero-width non-joiner and joiner, which Persian, Indic and emoji names need, are kept. A name that
+// starts with "~" is prefixed too: an unquoted ~user in a shell is a path.
+func TestExportFilenameStripsEveryInvisibleFormatCharacter(t *testing.T) {
+	var stripped []rune
+	for r := rune(0); r <= unicode.MaxRune; r++ {
+		if unicode.Is(unicode.Cf, r) && r != 0x200c && r != 0x200d {
+			stripped = append(stripped, r)
+		}
+	}
+	stripped = append(stripped, 0x34f)
+	if len(stripped) < 100 {
+		t.Fatalf("only %d format characters in the table: the test does not look at them all", len(stripped))
+	}
+	var kept []string
+	for _, r := range stripped {
+		if got := ExportFilename("in"+string(r)+"voice.pdf", 1); got != "invoice.pdf" {
+			kept = append(kept, fmt.Sprintf("U+%04X", r))
+		}
+	}
+	if len(kept) > 0 {
+		t.Errorf("%d of %d invisible format characters pass through ExportFilename unchanged: %s", len(kept), len(stripped), strings.Join(kept[:min(len(kept), 8)], " "))
+	}
+	for _, keep := range []rune{0x200c, 0x200d} {
+		in := "pe" + string(keep) + "rsian.txt"
+		if got := ExportFilename(in, 1); got != in {
+			t.Errorf("U+%04X was stripped: %q", keep, got)
+		}
+	}
+	for in, want := range map[string]string{"~root.txt": "_~root.txt", "~": "_~", "a~b.txt": "a~b.txt", "file~1.txt": "file~1.txt"} {
+		if got := ExportFilename(in, 1); got != want {
+			t.Errorf("ExportFilename(%q) = %q, want %q", in, got, want)
 		}
 	}
 }
