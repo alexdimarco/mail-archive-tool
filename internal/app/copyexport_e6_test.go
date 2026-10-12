@@ -885,6 +885,119 @@ func TestAnArchiveRecordWithAnOriginalExtractsFromItsEml(t *testing.T) {
 	}
 }
 
+// e6Swap flips one byte, in place, of the first file under dest whose name ends suffix and
+// whose bytes hold marker (any when marker is empty): the same length, so only the hash tells
+// it from what was written. It returns whether it found one.
+func e6Swap(dest, suffix, marker string) bool {
+	found := false
+	_ = filepath.WalkDir(dest, func(p string, d os.DirEntry, err error) error {
+		if err != nil || found || d.IsDir() || !strings.HasSuffix(p, suffix) {
+			return nil
+		}
+		if b, rerr := os.ReadFile(p); rerr == nil && strings.Contains(string(b), marker) {
+			b[len(b)/2] ^= 0x01
+			found = os.WriteFile(p, b, 0o600) == nil
+		}
+		return nil
+	})
+	return found
+}
+
+// covers: MA-424, R1, R29, S52
+// The attachments are extracted from the original read back from the destination under the hash
+// check of MA-423, with Readable HTML off: a .eml changed on the destination before the read-back
+// (a Microsoft 365 message), and an archived attachments zip changed before its read-back (an
+// archive record with no original), each make the message a retryable failure with the reason
+// "the original changed on the destination after it was written", nothing of it stays in the
+// export (no file, no attachments directory, no entry in the sums) and the other messages are
+// extracted as usual: what is read back is never trusted because it is where it was put.
+func TestExtractionReadsBackWhatItWroteUnderTheHashCheck(t *testing.T) {
+	t.Run("a changed .eml of a Microsoft 365 message", func(t *testing.T) {
+		msgs := ceMsgs(3)
+		body := map[string][]byte{}
+		for i, m := range msgs {
+			body[m.SourceID] = e6Mime(m.SourceID, fmt.Sprintf("swap-%d", i), e6Part{name: "r.pdf", ctype: "application/pdf", body: []byte(fmt.Sprintf("%%PDF part %d", i))})
+		}
+		e := newCEEnv(t)
+		src := newFakeSrc()
+		src.body = func(id string) []byte { return body[id] }
+		p := cePlan(t, e, src, msgs)
+		p.Options.Attachments = true
+		swapped := false
+		e.faults = &copyFaults{hook: func(step string) {
+			if step == "W5read:2" {
+				swapped = e6Swap(p.Dest, ".eml", "swap-1")
+			}
+		}}
+		res := mustRun(t, e, p, src)
+		if !swapped {
+			t.Fatal("the hook never found the second message's .eml to change")
+		}
+		if res.Counts.Exported != 2 || res.Counts.Failed != 1 || res.Outcome != CopyOutcomePartial {
+			t.Fatalf("%s, %+v", res.Label, res.Counts)
+		}
+		if f := failureOf(t, res.Root, msgs[1].SourceID); f == nil || f["class"] != classRetryable || f["reason"] != reasonOriginalChanged {
+			t.Errorf("the changed original is listed as %v", f)
+		}
+		lines := e5Files(t, e, res)
+		for _, n := range []int{1, 3} {
+			if got := e6Derived(assure.Reached(t, lines[n], "the record line of an unharmed message")); len(got) != 1 {
+				t.Errorf("message %d: %d files extracted, want 1", n, len(got))
+			}
+		}
+		if got := len(treeFilesWith(t, res.Root, ".eml")); got != 2 {
+			t.Errorf("%d originals in the export, want the two unharmed messages': %v", got, treeFiles(t, res.Root))
+		}
+		if got := len(treeFilesWith(t, res.Root, ".attachments/r.pdf")); got != 2 {
+			t.Errorf("%d extracted files in the export, want the two unharmed messages': %v", got, treeFiles(t, res.Root))
+		}
+		if bad, missing, extra := sumsCheck(t, res.Root); len(bad)+len(missing)+len(extra) != 0 {
+			t.Errorf("sums: changed %v, missing %v, unlisted %v", bad, missing, extra)
+		}
+	})
+
+	t.Run("a changed attachments zip of an archive record", func(t *testing.T) {
+		a := buildE6Archive(t)
+		e := newCEEnv(t)
+		_, _, zipPath := a.files("zip-only")
+		zb := e6Zip(t, e6ZipEntry{name: "r.pdf", data: []byte("%PDF fine")})
+		if err := os.WriteFile(zipPath, zb, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		a.setRec("zip-only", func(r *state.Record) { r.Fixity.Zip = digestOf(zb) })
+		s := a.open()
+		zipKey, plainKey := a.key("zip-only"), a.key("plain-page")
+		p := a.plan(e, s, []string{zipKey, plainKey})
+		p.Options.Attachments = true
+		swapped := false
+		e.faults = &copyFaults{hook: func(step string) {
+			if strings.HasPrefix(step, "W5zip:") {
+				swapped = e6Swap(p.Dest, "-attachments.zip", "")
+			}
+		}}
+		res := a.run(e, p, s)
+		if !swapped {
+			t.Fatal("the hook never found the zip to change")
+		}
+		if res.Counts.Exported != 1 || res.Counts.Failed != 1 || res.Outcome != CopyOutcomePartial {
+			t.Fatalf("%s, %+v", res.Label, res.Counts)
+		}
+		man := manifestOf(t, res.Root)
+		if f := failureListed(man, zipKey); f == nil || f["class"] != classRetryable || f["reason"] != reasonOriginalChanged {
+			t.Errorf("the record with a changed zip is listed as %v", f)
+		}
+		if ent := entryOf(t, man, plainKey); ent["status"] != statusWithoutOrig || fileOf(ent, roleArchivedPage) == nil {
+			t.Errorf("the other record: %v", ent)
+		}
+		if got := append(treeFilesWith(t, res.Root, ".zip"), treeFilesWith(t, res.Root, ".attachments/r.pdf")...); len(got) != 0 {
+			t.Errorf("something of the record with a changed zip stays in the export: %v", got)
+		}
+		if bad, missing, extra := sumsCheck(t, res.Root); len(bad)+len(missing)+len(extra) != 0 {
+			t.Errorf("sums: changed %v, missing %v, unlisted %v", bad, missing, extra)
+		}
+	})
+}
+
 // covers: MA-424, R1
 // README says, with Extract attachments on, how many files were extracted from how many
 // messages, names the messages that have an attachment note, says what the files are (decoded
