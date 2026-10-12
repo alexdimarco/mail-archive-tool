@@ -324,33 +324,56 @@ func (w *walker) container(p partInfo, raw []byte, depth int) {
 		w.unsplit(raw, "the multipart has no boundary parameter")
 		return
 	}
-	mr := textproto.NewMultipartReader(bytes.NewReader(raw), boundary)
-	read := 0
+	// The multipart reader parses a part's header with no cap of its own, so the parts whose
+	// header is over the cap are found first (MC22) and never handed to it: such a part is
+	// kept unread and the reader starts again at the next delimiter. cur is what the reader
+	// runs over, base the number of delimiters before it, read the parts it has given.
+	sc := scanParts(raw, boundary)
+	cur, base, read := raw, 0, 0
+	mr := textproto.NewMultipartReader(bytes.NewReader(cur), boundary)
 	for {
 		if w.parts >= maxParts {
-			if rest, ok := restFromPart(raw, boundary, read); ok {
+			if rest, ok := restFromPart(cur, boundary, read); ok {
 				w.limit(rest, fmt.Sprintf("the message has more than %d parts, so the rest is kept unread", maxParts))
 			}
 			return
+		}
+		if len(sc.over) > 0 && sc.over[0].idx == base+read {
+			s := sc.over[0]
+			sc.over = sc.over[1:]
+			w.parts++
+			w.site = fmt.Sprintf("part %d", w.parts)
+			w.leafN++
+			w.blob(fmt.Sprintf("part-%d", w.leafN), raw[s.bodyStart:s.bodyEnd:s.bodyEnd], state.GapKindStructureLimit,
+				"the part's header is larger than 1 MiB, so the part is kept unread")
+			if s.next >= len(raw) {
+				return
+			}
+			cur, base, read = raw[s.next:], s.idx+1, 0
+			mr = textproto.NewMultipartReader(bytes.NewReader(cur), boundary)
+			continue
 		}
 		part, err := mr.NextPart()
 		if err == io.EOF {
 			return
 		}
 		if err != nil {
-			w.framing(err, read, raw)
+			w.framing(err, base+read, cur)
 			return
 		}
 		read++
-		w.partOf(part, depth)
+		w.partOf(part, depth, raw, sc.end(raw, base+read-1))
 	}
 }
 
-// partOf reads one part of a container.
-func (w *walker) partOf(part *textproto.Part, depth int) {
+// partOf reads one part of a container. parent is the container's body and end where this
+// part's body ends in it: the part's raw is kept as a window onto parent, not as a copy, so
+// nesting does not hold one copy of the message per level (MS2-AO2).
+func (w *walker) partOf(part *textproto.Part, depth int, parent []byte, end int) {
 	w.parts++ // the root is not counted: maxParts bounds the parts of a message, not the message
 	w.site = fmt.Sprintf("part %d", w.parts)
-	raw, _ := io.ReadAll(part) // the raw, still transfer-encoded body; a read error ends it where it ended
+	body, _ := io.ReadAll(part) // the raw, still transfer-encoded body; a read error ends it where it ended
+	raw := windowOf(parent, end, body)
 	if headerSize(part.Header) > maxHeaderBytes {
 		w.leafN++
 		w.blob(fmt.Sprintf("part-%d", w.leafN), raw, state.GapKindStructureLimit,
@@ -358,6 +381,105 @@ func (w *walker) partOf(part *textproto.Part, depth int) {
 		return
 	}
 	w.entity(part.Header, raw, depth+1)
+}
+
+// windowOf is body as a slice of parent ending at end, when parent holds exactly it there;
+// otherwise (the scan and the multipart reader disagree about where the part ends) the copy
+// is returned as it is, so a window is never anything but the bytes the reader gave.
+func windowOf(parent []byte, end int, body []byte) []byte {
+	n := len(body)
+	if n == 0 || end < n || end > len(parent) || !bytes.Equal(parent[end-n:end], body) {
+		return body
+	}
+	return parent[end-n : end : end]
+}
+
+// headSpan is a part whose header is over the cap: its delimiter's ordinal in the
+// container, the span of its body and where the next delimiter starts.
+type headSpan struct{ idx, bodyStart, bodyEnd, next int }
+
+// partScan is what one pass over a container's body learns before the multipart reader
+// reads it: where its delimiter lines start (the first few, one per part the walker can
+// read) and which parts have a header over the cap.
+type partScan struct {
+	starts []int
+	over   []headSpan
+}
+
+// end is the offset in body at which the part of ordinal j ends: just before the line
+// break that precedes the next delimiter line, or the end of the data for the last part.
+func (s partScan) end(body []byte, j int) int {
+	if j+1 >= len(s.starts) {
+		return len(body)
+	}
+	e := s.starts[j+1]
+	switch {
+	case e >= 2 && body[e-2] == '\r' && body[e-1] == '\n':
+		return e - 2
+	case e >= 1 && body[e-1] == '\n':
+		return e - 1
+	}
+	return e
+}
+
+// scanParts reads a container's body line by line once. Delimiter lines are the multipart
+// reader's own: "--boundary" and nothing but white space after it, and the closing line
+// "--boundary--". A part's header runs from its delimiter line to the first blank line.
+func scanParts(body []byte, boundary string) partScan {
+	dash := []byte("--" + boundary)
+	var sc partScan
+	idx := -1
+	var hdrBytes, bodyStart int
+	open := false // a part's header is being measured or its body skipped
+	finish := func(next int) {
+		if !open || hdrBytes <= maxHeaderBytes {
+			return
+		}
+		if bodyStart < 0 {
+			bodyStart = next // the header ran into the next delimiter: no body
+		}
+		end := next
+		switch {
+		case end-bodyStart >= 2 && body[end-2] == '\r' && body[end-1] == '\n':
+			end -= 2
+		case end-bodyStart >= 1 && body[end-1] == '\n':
+			end--
+		}
+		sc.over = append(sc.over, headSpan{idx: idx, bodyStart: bodyStart, bodyEnd: max(end, bodyStart), next: next})
+	}
+	for i := 0; i < len(body); {
+		lineEnd := len(body)
+		if j := bytes.IndexByte(body[i:], '\n'); j >= 0 {
+			lineEnd = i + j + 1
+		}
+		line := body[i:lineEnd]
+		if bytes.HasPrefix(line, dash) {
+			rest := bytes.TrimRight(line[len(dash):], " \t\r\n")
+			if len(rest) == 0 || string(rest) == "--" {
+				finish(i)
+				if len(sc.starts) <= maxParts+1 {
+					sc.starts = append(sc.starts, i)
+				}
+				open = len(rest) == 0
+				if open {
+					idx++
+					hdrBytes, bodyStart = 0, -1
+				}
+				i = lineEnd
+				continue
+			}
+		}
+		if open && bodyStart < 0 {
+			if len(bytes.TrimRight(line, "\r\n")) == 0 {
+				bodyStart = lineEnd
+			} else {
+				hdrBytes += len(line)
+			}
+		}
+		i = lineEnd
+	}
+	finish(len(body))
+	return sc
 }
 
 // framing handles an error the multipart reader gave instead of the next part. With no
