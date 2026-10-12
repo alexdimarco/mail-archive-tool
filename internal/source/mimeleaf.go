@@ -119,6 +119,11 @@ func (w *walker) attach(name string, l leafPart) {
 		return
 	case transferCorrupt:
 		detail := fmt.Sprintf("the data is cut short or damaged after %d bytes: only the readable start is kept", len(l.data))
+		if l.hasCS {
+			// What v1 converted from the declared charset, the check converts these bytes from
+			// too, or it cannot find them and discards the walker's reading (MS2-AO5).
+			w.meta.declared[len(w.msg.Attachments)] = l.charset
+		}
 		w.msg.Attachments = append(w.msg.Attachments, model.Attachment{
 			Filename: partName(name, l.n) + ".partial", MimeType: l.info.mt, ContentID: l.info.cid,
 			WriteTo: bytesWriterTo(l.data), GapKind: state.GapKindCorruptPart, GapDetail: detail,
