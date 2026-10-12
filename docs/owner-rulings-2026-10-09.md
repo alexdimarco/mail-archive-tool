@@ -1654,6 +1654,19 @@ Clean clone: full suite green, vet3 clean.
   `attachmentLabel` for every page.
 Zip mode is closed for the bidi case by the AI1 fix. Still open as before: ESC-E6-AO10 (no Mark of the Web).
 
+### 13.38 EW-E6 option revealed (2026-10-12), OWNER APPROVAL
+
+**Owner said "reveal it" (2026-10-12)** to the held gate flip of §13.34/§13.36. Applied from
+`ew-e6-zip-gate-flip.patch` as commit 720db9f: the plan no longer refuses `Options.Attachments`; the workspace
+shows the Extract attachments checkbox (off by default) with "One zip per message" (selected) and "Loose files";
+the choice is remembered only by a start that extracted attachments. Existing assertions changed by owner
+approval: `TestCopyExportPlanIsADryRun`, `TestExportSettingsRoundTrip`. Vet3 clean; full suite green in the clean
+clone except `TestCopyExportScalesToSixtyThousandMessages` (heap growth 26 to 42 MiB over five alone runs against
+a 40 MiB bound, one in five red; the same on the base before E6; not loosened, on the owner batch as "heap-bound
+test margin"). `docs/trying-the-extraction-workspace.md` now describes the option and the parser. **Still owed on
+E6: the friction review of the revealed option, a third look at the zip writer's whole-zip bound in loose mode
+(the loose-mode zip extraction), and the owner decisions ESC-E6-AO5, AO10, AO11, ESC-E6Z-AO3, ESC-E6Z-AO4.**
+
 ### 13.7 Escalations from LC-C1's adversarial pass (merged 2026-10-10)
 
 None blocks anything: each has a skip encoder or a safe interim in force.

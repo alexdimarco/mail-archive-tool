@@ -66,7 +66,19 @@ you can. The refusal texts should each say what happened, why and what to do; te
 
 ## Not built yet
 
-Extracting attachments, a date range in the selection, and an installer option for the deployment switch.
+A date range in the selection, and an installer option for the deployment switch.
+
+New since the second version: **Extract attachments** is on the workspace page (off by default). With it on,
+choose "One zip per message" (the default: one `<name>.attachments.zip` beside each message) or "Loose files"
+(a `<name>.attachments` folder). Try it on a small folder with a few attachments, unzip one, and check the
+files open and their names look right. Files this tool writes carry no "downloaded from the internet" warning
+marker; open them with the usual care.
+
+Also new: a better message parser is switched on for every capture, including the Microsoft 365 `graph` path
+you already proved. Messages keep later parts after an unknown character set; parts the tool cannot decode
+are kept as `.undecoded` and cut-off attachments as `.partial`, and the run summary and `status` say how many.
+Message identities do not change. Please run your usual Microsoft 365 capture once and compare the message
+count and a few pages with your earlier archive.
 
 New since the first version of this note: **Readable HTML** is built and ON by default. Each exported
 message gets a `.html` page beside its `.eml`, made by the same sanitizing renderer the archive uses.
