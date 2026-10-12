@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -102,7 +101,15 @@ type Reader struct {
 func openPST(path string) (r *Reader, err error) {
 	registerCharsets()
 
-	f, err := os.Open(path)
+	// The operator's own spelling of the input may be a link (the file it names is what is
+	// read); the open itself neither follows one nor waits on a pipe, and the descriptor
+	// must be a regular file: a FIFO named like a data file used to hold the run, and the
+	// archive lock, until a writer appeared (FC2, S2B-AO4).
+	real := path
+	if p, err := filepath.EvalSymlinks(path); err == nil {
+		real = p
+	}
+	f, err := util.OpenRegularFile(real)
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", path, err)
 	}

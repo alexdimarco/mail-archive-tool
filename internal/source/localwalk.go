@@ -1,6 +1,7 @@
 package source
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -25,8 +26,13 @@ type localWalk struct {
 	handler MessageHandler
 	opts    WalkOptions
 	sink    faultSink
-	follow  bool          // the input's directory-link opt-in
-	visited []fs.FileInfo // under the opt-in: every directory the walk has entered
+	follow  bool                   // the input's directory-link opt-in
+	visited []fs.FileInfo          // under the opt-in: every directory the walk has entered, where its identity is not readable from a FileInfo (Windows)
+	reloc   map[string]*relocIndex // per directory (its place in the store): what relocate has listed
+	// visitedIDs is the same set keyed by (device, inode) where the file system gives them.
+	visitedIDs map[[2]uint64]bool
+	depth      int           // how many directories deep the walk is (every descent goes through into)
+	pending    []pendingLink // under the opt-in: the directory links found, to be followed after the plain directories
 }
 
 func newLocalWalk(handler MessageHandler, opts WalkOptions, follow bool) *localWalk {
@@ -52,14 +58,29 @@ func (w *localWalk) noteFolder(folder []string) {
 // when not. It is the (dev, inode) set of the opt-in: without the opt-in no link is
 // followed, so no directory can be reached twice and nothing is remembered.
 func (w *localWalk) seen(fi fs.FileInfo) bool {
+	if id, ok := dirIdentity(fi); ok {
+		// A map: the walk enters every directory of a store, and a list compared pair by
+		// pair made it quadratic in their number (S2B-AI10).
+		if w.visitedIDs[id] {
+			return true
+		}
+		if w.visitedIDs == nil {
+			w.visitedIDs = map[[2]uint64]bool{}
+		}
+		w.visitedIDs[id] = true
+		return false
+	}
 	for _, v := range w.visited {
-		if os.SameFile(v, fi) {
+		if sameFile(v, fi) {
 			return true
 		}
 	}
 	w.visited = append(w.visited, fi)
 	return false
 }
+
+// sameFile is os.SameFile; a var so a test can count the comparisons.
+var sameFile = os.SameFile
 
 // withFolder is folder with one more sanitized segment, in a slice of its own.
 func withFolder(folder []string, name string) []string {
@@ -112,22 +133,79 @@ func errnoRetryable(err error) bool {
 func (w *localWalk) into(sc *scope, rel string, v verdict, folder []string, read func(*scope, string) error) error {
 	switch v.kind {
 	case kindDir:
+		if w.tooDeep(sc, rel, folder) {
+			return nil
+		}
 		if w.follow {
 			if fi, err := sc.lstat(rel); err == nil && w.seen(fi) {
 				w.alreadyRead(sc, rel, folder)
 				return nil
 			}
 		}
-		return read(sc, rel)
+		return w.deeper(func() error { return read(sc, rel) })
 	case kindDirLink:
 		if !w.follow {
 			w.refuse(sc, rel, folder, v)
 			return nil
 		}
-		return w.followInto(sc, rel, folder, read)
+		if w.tooDeep(sc, rel, folder) {
+			return nil
+		}
+		// A link is followed after every plain directory has been read (drain): the visited
+		// set reads a directory once, under whichever path reaches it first, and a link
+		// that sorted before the folder it names must not take its place (S2B-AO7).
+		w.pending = append(w.pending, pendingLink{depth: w.depth, follow: func() error { return w.followInto(sc, rel, folder, read) }})
+		return nil
 	}
 	w.refuse(sc, rel, folder, v)
 	return nil
+}
+
+// pendingLink is a directory link the opt-in will follow once the plain directories are
+// read, at the depth it was found.
+type pendingLink struct {
+	depth  int
+	follow func() error
+}
+
+// drain follows the links the walk set aside, in the order they were found; a followed
+// directory's own links are set aside in their turn.
+func (w *localWalk) drain() error {
+	defer func() { w.depth = 0 }()
+	for len(w.pending) > 0 {
+		p := w.pending[0]
+		w.pending = w.pending[1:]
+		if err := w.abort(); err != nil {
+			return err
+		}
+		w.depth = p.depth
+		if err := p.follow(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// tooDeep says the walk is at the depth cap and records the directory it will not
+// enter: a terminal gap, since what is below it might hold mail (S2B-AO1). Every
+// descent goes through into, so the cap bounds the recursion of every local reader;
+// without it a chain of thousands of empty directories (cheap to make) made a run's
+// cost grow faster than its depth, as every level lists its whole relative path from
+// the root.
+func (w *localWalk) tooDeep(sc *scope, rel string, folder []string) bool {
+	if w.depth < maxFolderDepth {
+		return false
+	}
+	w.fault(Fault{Reason: "folder-too-deep", Scope: scopeFolder, Class: classTerm, Folder: folder, Locator: "folder:" + sc.at(rel),
+		Detail: fmt.Sprintf("the folder is nested more than %d levels deep; it and the folders below it were not read", maxFolderDepth)})
+	return true
+}
+
+// deeper runs read one directory level down.
+func (w *localWalk) deeper(read func() error) error {
+	w.depth++
+	defer func() { w.depth-- }()
+	return read()
 }
 
 // alreadyRead records that a directory the opt-in would have read again was read
@@ -144,12 +222,12 @@ func (w *localWalk) followInto(sc *scope, rel string, folder []string, read func
 	if err == nil {
 		fi, err = os.Stat(real)
 	}
-	if err != nil || !fi.IsDir() {
-		detail := "the link is not a folder"
-		if err != nil {
-			detail = "the link could not be followed: " + err.Error()
-		}
-		w.refuse(sc, rel, folder, verdict{kind: kindDirLink, detail: detail})
+	if err != nil {
+		w.refuse(sc, rel, folder, verdict{kind: kindUnreachable, detail: "the link's target could not be reached: " + err.Error()})
+		return nil
+	}
+	if !fi.IsDir() {
+		w.refuse(sc, rel, folder, verdict{kind: kindDirLink, detail: "the link is not a folder"})
 		return nil
 	}
 	if w.seen(fi) {
@@ -158,12 +236,12 @@ func (w *localWalk) followInto(sc *scope, rel string, folder []string, read func
 	}
 	root, err := os.OpenRoot(real)
 	if err != nil {
-		w.refuse(sc, rel, folder, verdict{kind: kindDirLink, detail: "the link could not be followed: " + err.Error()})
+		w.refuse(sc, rel, folder, verdict{kind: kindUnreachable, detail: "the link's target could not be opened: " + err.Error()})
 		return nil
 	}
 	sub := &scope{root: root, path: real, prefix: sc.at(rel)}
 	defer sub.close()
-	return read(sub, ".")
+	return w.deeper(func() error { return read(sub, ".") })
 }
 
 // isMaildirIn reports whether the directory at rel has a cur or new entry that is a
@@ -270,7 +348,11 @@ func readFileIn(sc *scope, rel string) ([]byte, error) {
 // permissions, the disk) and the walk goes on; no record is minted for it (FC7).
 func (w *localWalk) maildirMessage(sc *scope, rel, name string, folder []string) error {
 	key := strings.Join(folder, "/")
-	locator := "maildir:" + key + "/" + maildirUnique(name)
+	// The ledger strips control characters from a locator and cuts it at a bound, so the
+	// locator is built in the ledger's own spelling, with a digest where it had to be
+	// changed: two names that read alike once stripped have an entry each, and the key
+	// a recovery builds is the key the gap was stored under (S2B-AO2).
+	locator := state.BoundLocator("maildir:" + key + "/" + maildirUnique(name))
 	data, err := readFileIn(sc, rel)
 	if errors.Is(err, fs.ErrNotExist) {
 		// A live mail client renames a file to change its flags between the listing and
@@ -309,19 +391,61 @@ func (w *localWalk) maildirMessage(sc *scope, rel, name string, folder []string)
 	return w.handler(folder, m)
 }
 
-// relocate looks once in rel's directory for the file whose unique part is name's:
-// the same message under the flags a client has just given it.
+// relocateListing lists the directory relocate looks in; a var so a test can count the
+// listings.
+var relocateListing = func(sc *scope, dir string) ([]fs.DirEntry, error) { return sc.readDir(dir) }
+
+// maxRelocateListings bounds how many times one directory is listed to find the files
+// a client renamed under the run (S2B-AC5). Each vanished file used to list and sort
+// the whole directory, so a client emptying or re-flagging a big folder cost (files
+// gone) x (folder size). The listing is kept as an index, a hit needs no listing, and a
+// miss lists again until the bound: a bulk re-flag is found from one listing, a bulk
+// delete costs the bound and the rest are the vanished-during-read gaps they are.
+const maxRelocateListings = 64
+
+// relocIndex is what relocate knows of one directory: its regular files by unique part,
+// as of its last listing.
+type relocIndex struct {
+	names map[string]string // unique part -> the first file of that part, in name order
+	lists int               // how many times the directory has been listed
+}
+
+// relocate looks in rel's directory for the file whose unique part is name's: the same
+// message under the flags a client has just given it.
 func (w *localWalk) relocate(sc *scope, rel, name string) (nrel, nname string, ok bool) {
 	dir := path.Dir(rel)
-	entries, err := sc.readDir(dir)
+	want := maildirUnique(name)
+	key := sc.at(dir)
+	ix := w.reloc[key]
+	if ix == nil {
+		if w.reloc == nil {
+			w.reloc = map[string]*relocIndex{}
+		}
+		ix = &relocIndex{}
+		w.reloc[key] = ix
+	}
+	if cur, found := ix.names[want]; found && cur != name {
+		return relJoin(dir, cur), cur, true
+	}
+	if ix.lists >= maxRelocateListings {
+		return "", "", false
+	}
+	ix.lists++
+	entries, err := relocateListing(sc, dir)
 	if err != nil {
 		return "", "", false
 	}
-	want := maildirUnique(name)
+	ix.names = make(map[string]string, len(entries))
 	for _, e := range entries {
-		if e.Type().IsRegular() && maildirUnique(e.Name()) == want {
-			return relJoin(dir, e.Name()), e.Name(), true
+		if !e.Type().IsRegular() {
+			continue
 		}
+		if u := maildirUnique(e.Name()); ix.names[u] == "" {
+			ix.names[u] = e.Name()
+		}
+	}
+	if cur, found := ix.names[want]; found && cur != name {
+		return relJoin(dir, cur), cur, true
 	}
 	return "", "", false
 }
@@ -344,7 +468,7 @@ func (w *localWalk) mboxFile(sc *scope, rel string, folder []string) error {
 	}
 	defer f.Close()
 
-	mr := gombox.NewReader(wrapMboxStream(sc.at(rel), f))
+	mr := gombox.NewReader(skipBOM(wrapMboxStream(sc.at(rel), f)))
 	n := 0
 	partial := func(err error) {
 		w.folderFault(sc, rel, folder, "folder-partially-read", err, fmt.Sprintf("%d message(s) were read before the stream failed: ", n))
@@ -388,6 +512,16 @@ func (w *localWalk) mboxDir(sc *scope, rel string, prefix []string, top bool) er
 		w.folderFault(sc, rel, prefix, "folder-unreadable", err, "the folder could not be listed: ")
 		return nil
 	}
+	// A folder's subfolders live in "<name>.sbd", whatever the folder's own entry turns
+	// out to be: a parent with no messages of its own is an EMPTY file (or no file at
+	// all) beside its container, and a mailbox the sniff does not take is no reason to
+	// drop the folders below it (S2B-AO6). sub reads the container once, and the entries
+	// whose container no entry reached are read after the loop.
+	sbdDone := map[string]bool{}
+	sub := func(name string, folderPath []string) error {
+		sbdDone[name+".sbd"] = true
+		return w.sbd(sc, rel, name, folderPath)
+	}
 	for _, e := range entries {
 		if err := w.abort(); err != nil {
 			return err
@@ -404,20 +538,24 @@ func (w *localWalk) mboxDir(sc *scope, rel string, prefix []string, top bool) er
 			// A folder of the store is a maildir. A directory link is recorded where a
 			// folder would have been; with the opt-in it is read as the folder it names.
 			if v.kind == kindDir && !isMaildirIn(sc, erel) {
+				if err := sub(name, folderPath); err != nil {
+					return err
+				}
 				continue // a plain directory that is no folder
-			}
-			if v.kind == kindDirLink && !isMailboxCandidate(name) {
-				continue // a hidden or index entry, not a folder
 			}
 			if err := w.into(sc, erel, v, folderPath, func(s *scope, r string) error {
 				if !isMaildirIn(s, r) {
-					return nil
+					// A followed link to a directory that is no maildir: the folder of mbox files
+					// it usually is (a Thunderbird account directory), read as the directory of
+					// mailboxes it is, its mailboxes the subfolders of this one. Read as nothing,
+					// it lost the mail the opt-in's remedy promised to read (S2B-AC2).
+					return w.mboxDir(s, r, folderPath, false)
 				}
-				if err := w.maildir(s, r, folderPath); err != nil {
-					return err
-				}
-				return w.sbd(sc, rel, name, folderPath)
+				return w.maildir(s, r, folderPath)
 			}); err != nil {
+				return err
+			}
+			if err := sub(name, folderPath); err != nil {
 				return err
 			}
 		case kindFile, kindFileLink, kindPlaceholder:
@@ -426,20 +564,33 @@ func (w *localWalk) mboxDir(sc *scope, rel string, prefix []string, top bool) er
 			}
 			if ok, err := looksLikeMboxIn(sc, v.rel); err != nil {
 				w.folderFault(sc, erel, folderPath, "folder-unreadable", err, "the file could not be opened: ")
-				continue
-			} else if !ok {
-				continue
+			} else if ok {
+				if err := w.mboxFile(sc, v.rel, folderPath); err != nil {
+					return err
+				}
 			}
-			if err := w.mboxFile(sc, v.rel, folderPath); err != nil {
-				return err
-			}
-			if err := w.sbd(sc, rel, name, folderPath); err != nil {
+			if err := sub(name, folderPath); err != nil {
 				return err
 			}
 		default:
-			if isMailboxCandidate(name) {
-				w.refuse(sc, erel, prefix, v)
-			}
+			// A link out of the store, one that cannot be followed, a pipe or a device: recorded
+			// whatever its name. A hidden or index-like name does not make a link that might
+			// hold a dot folder no mail (S2B-AO9); only a regular file is judged by its name.
+			w.refuse(sc, erel, prefix, v)
+		}
+	}
+	// A container whose folder has no entry of its own (or none that was a folder).
+	for _, e := range entries {
+		name := e.Name()
+		base := strings.TrimSuffix(name, ".sbd")
+		if base == "" || base == name || sbdDone[name] {
+			continue
+		}
+		if err := w.abort(); err != nil {
+			return err
+		}
+		if err := sub(base, withFolder(prefix, base)); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -475,9 +626,45 @@ func looksLikeMboxIn(sc *scope, rel string) (bool, error) {
 		return false, err
 	}
 	defer f.Close()
-	buf := make([]byte, 5)
-	n, _ := f.Read(buf)
-	return n == 5 && string(buf) == "From ", nil
+	return sniffMbox(wrapMboxStream(sc.at(rel), f))
+}
+
+// utf8BOM is the byte order mark some editors and exporters put before a text file.
+const utf8BOM = "\xef\xbb\xbf"
+
+// sniffMbox reports whether r begins like an mbox: an optional UTF-8 byte order mark
+// and any blank lines, then the "From " separator. A mailbox with a mark or a leading
+// blank line is a mailbox (the reader skips the blank lines and mboxFile the mark). A
+// read that fails is no answer: it is returned, because a mailbox whose first read
+// fails (EIO, a share, a placeholder) must be recorded, never taken for no mailbox
+// (S2B-AI7), unless what was read already says what the file is (a failure further in
+// is the walk's own, a folder-partially-read). A short or empty file is an answer (no).
+func sniffMbox(r io.Reader) (bool, error) {
+	buf := make([]byte, 4096)
+	n, err := io.ReadFull(r, buf)
+	b := strings.TrimPrefix(string(buf[:n]), utf8BOM)
+	b = strings.TrimLeft(b, "\r\n")
+	if strings.HasPrefix(b, "From ") {
+		return true, nil
+	}
+	if len(b) < len("From ") && err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+		return false, err // too little arrived to say, and the read failed
+	}
+	return false, nil
+}
+
+// skipBOM is r without a leading UTF-8 byte order mark: the mbox reader takes the mark
+// for text before the first separator and refuses the file.
+func skipBOM(r io.Reader) io.Reader {
+	head := make([]byte, len(utf8BOM))
+	n, err := io.ReadFull(r, head)
+	if err == nil && string(head) == utf8BOM {
+		return r
+	}
+	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+		return io.MultiReader(bytes.NewReader(head[:n]), &failingRead{err: err})
+	}
+	return io.MultiReader(bytes.NewReader(head[:n]), r)
 }
 
 // wrapMboxStream wraps the stream an mbox file is read through. It is the identity in

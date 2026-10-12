@@ -42,6 +42,7 @@ const (
 	kindOutside                      // a link out of the store, or to anything but a file or folder: refused
 	kindSpecial                      // a pipe, socket or device: never opened
 	kindPlaceholder                  // a Windows reparse file that is not a link (a cloud placeholder): read it
+	kindUnreachable                  // a link the opt-in follows whose target cannot be reached: recorded, fillable
 )
 
 // classifyMode is FC1's classifier: what a directory entry of this mode is on goos.
@@ -62,6 +63,11 @@ func classifyMode(goos string, mode fs.FileMode, readlinkOK bool) entryKind {
 			return kindOutside // nothing on Unix is known to hold mail and be irregular
 		case readlinkOK:
 			return kindDirLink
+		case mode.IsDir():
+			// A directory whose reparse tag is not a name surrogate (a cloud placeholder
+			// folder) is ModeDir|ModeIrregular; a junction is ModeIrregular alone. It is a
+			// folder to list, never a file to read (S2B-AO5).
+			return kindDir
 		default:
 			return kindPlaceholder
 		}
@@ -82,6 +88,8 @@ func refusal(kind entryKind) (reason, class, scope string) {
 		return "not-a-message-file", state.ClassInfo, scopeItem
 	case kindDirLink:
 		return "symlinked-folder-skipped", classTerm, scopeFolder
+	case kindUnreachable:
+		return "folder-unreadable", state.ClassFillable, scopeFolder
 	}
 	return "symlink-outside-store", classTerm, scopeItem
 }
@@ -230,8 +238,12 @@ func (w *localWalk) judgeLink(sc *scope, rel string, pos position) verdict {
 	in, ok := lexicalLink(rel, target)
 	if !ok {
 		if w.follow {
-			if fi, err := os.Stat(sc.display(rel)); err == nil && fi.IsDir() {
+			fi, err := os.Stat(sc.display(rel))
+			switch {
+			case err == nil && fi.IsDir():
 				return verdict{kind: kindDirLink, rel: rel, detail: "a link to " + target}
+			case err != nil:
+				return unreachable(rel, target, err)
 			}
 			pos = posEither // not a folder: a link to a file out of the store, refused even with the opt-in
 		}
@@ -240,13 +252,39 @@ func (w *localWalk) judgeLink(sc *scope, rel string, pos position) verdict {
 	fi, err := sc.root.Lstat(filepath.FromSlash(in))
 	switch {
 	case err != nil:
+		if w.follow {
+			return unreachable(rel, target, err)
+		}
 		return verdict{kind: kindOutside, rel: rel, detail: "the link's target could not be read: " + err.Error()}
 	case fi.Mode().IsRegular():
 		return verdict{kind: kindFileLink, rel: in}
 	case fi.IsDir():
 		return verdict{kind: kindDirLink, rel: rel, detail: "a link to " + target}
+	case fi.Mode()&fs.ModeSymlink != 0:
+		// A link to a link. With the opt-in the chain is followed to what it names: a folder
+		// is read; a file out there is refused as any file link out of the store is. Without
+		// it nothing is touched: at a folder's place it is the directory link it is, and
+		// elsewhere a link the owner is told how to deal with, in words that are true (the
+		// link is in the store; what it points at is another link) (S2B-AO8).
+		if w.follow {
+			switch st, err := os.Stat(sc.display(rel)); {
+			case err != nil:
+				return unreachable(rel, target, err)
+			case st.IsDir():
+				return verdict{kind: kindDirLink, rel: rel, detail: "a link to " + target}
+			}
+		}
+		return verdict{kind: refusedLinkKind(pos), rel: rel, detail: "the link points at another link (" + target + ") and was not followed"}
 	}
 	return verdict{kind: kindOutside, rel: rel, detail: "the link's target is not a regular file or a folder (" + util.ModeKind(fi.Mode()) + ")"}
+}
+
+// unreachable is the verdict on a link the input's opt-in would follow whose target
+// cannot be reached (a drive that is not mounted, a folder that moved): a gap that says
+// so, fillable because the target may come back, and not the "outside the store" gap
+// whose remedy is the opt-in the input already has (S2B-AI8).
+func unreachable(rel, target string, err error) verdict {
+	return verdict{kind: kindUnreachable, rel: rel, detail: "the link's target could not be reached (the link points to " + target + "): " + err.Error()}
 }
 
 // refusedLinkKind is what a link whose target cannot be told is, by the place it sits

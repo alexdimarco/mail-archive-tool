@@ -141,9 +141,8 @@ func looksLikeMbox(path string) bool {
 		return false
 	}
 	defer f.Close()
-	buf := make([]byte, 5)
-	n, _ := f.Read(buf)
-	return n == 5 && string(buf) == "From "
+	ok, err := sniffMbox(f)
+	return ok && err == nil
 }
 
 // isMailboxCandidate excludes obvious non-mailbox files (indexes, config).

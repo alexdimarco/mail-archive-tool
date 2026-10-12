@@ -242,6 +242,31 @@ func truncateRunes(s string, max int) string {
 	return string(r[:max])
 }
 
+// ValidRecordedPath validates a path a manifest records as a clean, relative,
+// forward-slashed in-archive path whose first segment is a store token: no absolute
+// path, no backslash or drive colon, no empty, "." or ".." segment, and a first segment
+// that is not a dotfile (FC6). It returns the split segments on success. The manifest is
+// untrusted (someone else may have written it), so anything that acts on a recorded path
+// (verify, the rebuild, the exporter's removal of a record's previous files) asks first.
+func ValidRecordedPath(p string) ([]string, bool) {
+	if p == "" || strings.HasPrefix(p, "/") || filepath.IsAbs(p) {
+		return nil, false
+	}
+	if strings.ContainsAny(p, `\:`) {
+		return nil, false
+	}
+	parts := strings.Split(p, "/")
+	for i, s := range parts {
+		if s == "" || s == "." || s == ".." {
+			return nil, false
+		}
+		if i == 0 && strings.HasPrefix(s, ".") {
+			return nil, false
+		}
+	}
+	return parts, true
+}
+
 func itoa(i int) string {
 	// Small, allocation-free integer to string for non-negative indexes.
 	if i == 0 {

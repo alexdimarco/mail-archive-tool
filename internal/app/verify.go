@@ -527,24 +527,7 @@ func (v *verifier) add(kind, path, detail string) {
 // in-archive path whose first segment is a store token: no absolute path, no
 // backslash or drive colon, no empty/"."/".." segment, and a first segment that
 // is not a dotfile (FC6). It returns the split segments on success.
-func validRelPath(p string) ([]string, bool) {
-	if p == "" || strings.HasPrefix(p, "/") || filepath.IsAbs(p) {
-		return nil, false
-	}
-	if strings.ContainsAny(p, `\:`) {
-		return nil, false
-	}
-	parts := strings.Split(p, "/")
-	for i, s := range parts {
-		if s == "" || s == "." || s == ".." {
-			return nil, false
-		}
-		if i == 0 && strings.HasPrefix(s, ".") {
-			return nil, false
-		}
-	}
-	return parts, true
-}
+func validRelPath(p string) ([]string, bool) { return util.ValidRecordedPath(p) }
 
 // lastSegment returns the final forward-slash segment of a relative path.
 func lastSegment(p string) string {

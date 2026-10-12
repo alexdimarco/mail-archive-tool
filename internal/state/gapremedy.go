@@ -182,8 +182,17 @@ func GapRemedy(reason, sourceKind, errnoClass string) string {
 			return "nothing to do: the folder was read already, through its other path"
 		}
 		fallthrough
-	case "pst-message-unreadable", "pst-messages-unreadable", "pst-row-unreadable", "pst-row-invalid", "folder-too-deep":
+	case "pst-message-unreadable", "pst-messages-unreadable", "pst-row-unreadable", "pst-row-invalid":
 		if sourceKind == SourceOutlookScratch {
+			return scratchRemedy
+		}
+		return PSTRepairRemedy
+	case "folder-too-deep":
+		switch sourceKind {
+		case SourceLocal:
+			// A folder tree of a local store nested past the limit (S2B-AO1): not a PST to repair.
+			return "move the deeply nested folders up in your mail app, or archive the folder they sit in as an input of its own, then run again"
+		case SourceOutlookScratch:
 			return scratchRemedy
 		}
 		return PSTRepairRemedy

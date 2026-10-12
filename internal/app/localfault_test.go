@@ -245,4 +245,22 @@ func TestGraphFullModeKeepsAnArchivedRecordWhenItsParseNowPanics(t *testing.T) {
 // covers: MA-318, R1
 func TestTwoUnparseableRawMessagesDoNotCollapse(t *testing.T) {
 	t.Skip("R1 (ruling J8 = ESC-1): two distinct MIME-panicking raw messages in one folder still share today's constant stub identity and collapse into one record; the fold that separates them moves MA-330's identity golden, so it waits for the owner's answer to ESC-1 (slice FI-S2b-id); closes when FI-S2b-id lands")
+	// The body, written when the fresh-eyes check of the S2b adversarial pass found this
+	// encoder empty (it would have passed vacuously when un-skipped): two distinct
+	// panicking messages with no Message-ID are two records, and the text of each is in
+	// the archive.
+	panicOn(t, "POISON")
+	store := filepath.Join(tmpDir(t), "tb")
+	mbox := "From a@example.com Mon Mar  3 09:00:00 2025\n" + strings.ReplaceAll(p14Mail("POISON one", "", "", "FIRST-BODY"), "\r\n", "\n") +
+		"\nFrom a@example.com Mon Mar  3 09:00:00 2025\n" + strings.ReplaceAll(p14Mail("POISON two", "", "", "SECOND-BODY"), "\r\n", "\n") + "\n"
+	p14Write(t, filepath.Join(store, "Inbox"), mbox)
+	out := tmpDir(t)
+	res, err := Run(context.Background(), Options{Inputs: []string{store}, Out: out, Mode: export.Incremental, Index: true, Pages: true}, discard(), nil)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	text := archiveText(t, out)
+	if n := recordCount(t, out); n != 2 || res.Unparsed != 2 || !bytes.Contains(text, []byte("FIRST-BODY")) || !bytes.Contains(text, []byte("SECOND-BODY")) {
+		t.Errorf("%d records, %d unparsed; want 2 and 2, and both messages' text in the archive: the two collapsed into one stub", n, res.Unparsed)
+	}
 }

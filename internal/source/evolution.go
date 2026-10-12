@@ -89,10 +89,16 @@ func (r *evolutionReader) walk(w *localWalk) error {
 			w.seen(fi)
 		}
 	}
+	var walkErr error
 	if r.kind == evoCache {
-		return r.walkCache(w, sc)
+		walkErr = r.walkCache(w, sc)
+	} else {
+		walkErr = r.walkMaildirPP(w, sc)
 	}
-	return r.walkMaildirPP(w, sc)
+	if walkErr != nil {
+		return walkErr
+	}
+	return w.drain()
 }
 
 // isEvolutionMaildirStore reports whether dir is an Evolution Maildir++ store:
@@ -177,7 +183,7 @@ func (r *evolutionReader) walkMaildirPP(w *localWalk, sc *scope) error {
 			// store, though, may be a folder that holds mail (a link is told from a folder
 			// only by touching its target, which R25 never does): it is recorded, never
 			// dropped, and so is a pipe or device standing where a folder would be.
-			if v.kind == kindOutside || v.kind == kindSpecial {
+			if v.kind == kindOutside || v.kind == kindSpecial || v.kind == kindUnreachable {
 				w.refuse(sc, name, nil, v)
 			}
 			continue
@@ -191,7 +197,10 @@ func (r *evolutionReader) walkMaildirPP(w *localWalk, sc *scope) error {
 		}
 		if err := w.into(sc, name, v, folderPath, func(s *scope, rel string) error {
 			if !isMaildirIn(s, rel) {
-				return nil
+				// Only a followed link gets here (a plain directory that is no maildir was
+				// dropped above, as Maildir++ says): the directory of mailboxes it usually is,
+				// read as the mbox reader reads it, not as nothing (the twin of S2B-AC2).
+				return w.mboxDir(s, rel, folderPath, false)
 			}
 			return w.maildir(s, rel, folderPath)
 		}); err != nil {
@@ -247,7 +256,7 @@ func (r *evolutionReader) walkCacheChildren(w *localWalk, sc *scope, dir string,
 		erel := relJoin(dir, e.Name())
 		v := w.judge(sc, erel, e.Type(), posEither)
 		if v.kind != kindDir && v.kind != kindDirLink {
-			if v.kind == kindOutside || v.kind == kindSpecial {
+			if v.kind == kindOutside || v.kind == kindSpecial || v.kind == kindUnreachable {
 				if v.kind == kindOutside && e.Type()&fs.ModeSymlink == 0 {
 					continue // not a folder, and no link either
 				}

@@ -621,7 +621,9 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	// full resolution of the reuse-vs-same ambiguity is the deferred ImmutableId
 	// closure. (Adversarial re-check #1, 2026-09-12.)
 	adoptingLegacy := e.DedupMailboxWide && seen && prev.FpScheme != state.FpSchemeCurrent
-	if seen && prev.Path != "" && prev.Path != relSlash && !adoptingLegacy {
+	// The record's Path is the manifest's, which someone else may have written: only a safe
+	// in-archive path is deleted from, never one that walks out of it (S2B-AI9).
+	if _, safe := util.ValidRecordedPath(prev.Path); seen && safe && prev.Path != relSlash && !adoptingLegacy {
 		old := filepath.Join(e.OutDir, filepath.FromSlash(prev.Path))
 		os.Remove(old)
 		os.Remove(strings.TrimSuffix(old, ".html") + zipSuffix)
