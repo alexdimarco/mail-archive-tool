@@ -449,7 +449,7 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	// Gaps: what this capture could not deliver. Fillable or terminal per the
 	// source (SourceComplete); never silent (R1).
 	var gaps []string
-	if !hasBody(m) {
+	if !hasBody(m) && !restKeptUnread(m) {
 		gaps = append(gaps, state.MissingBody)
 	}
 
@@ -757,6 +757,20 @@ func subjectSlug(subject string, n int) string {
 	return util.Slug(subject, n)
 }
 
+// restKeptUnread reports whether a structure bound left part of the message unread, kept as
+// received in the attachments (design-mime-fidelity P13, MC22): the message's text may be in
+// it, and no download changes a bound, so a message with no body of its own is not also
+// reported as one that never delivered it. Its terminal structure-limit row says where the
+// bytes are (friction F5).
+func restKeptUnread(m *model.Message) bool {
+	for _, a := range m.Attachments {
+		if a.GapKind == state.GapKindStructureLimit {
+			return true
+		}
+	}
+	return false
+}
+
 // hasBody reports whether any body source is present.
 func hasBody(m *model.Message) bool {
 	return strings.TrimSpace(m.HTMLBody) != "" || strings.TrimSpace(m.PlainBody) != "" || strings.TrimSpace(m.RTFBody) != ""
@@ -1047,7 +1061,9 @@ func probeImproves(m *model.Message, oldMissing []string) bool {
 		case state.UnknownSentinel:
 			return true
 		case state.MissingBody:
-			if hasBody(m) {
+			// A body the message holds, or text kept as received past a structure bound,
+			// which closes the gap this build no longer records (friction F5).
+			if hasBody(m) || restKeptUnread(m) {
 				return true
 			}
 		default:
