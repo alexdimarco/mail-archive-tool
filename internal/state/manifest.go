@@ -339,9 +339,10 @@ type Manifest struct {
 	// exactly the records that carry an unreadable:* label and a Locator — a
 	// handful, so a lookup per exported message costs nothing on a healthy input.
 	byLocator map[string]string
-	// byRawDigest is the same for unparsed stubs: token\x00raw digest → key, built
-	// lazily over the records that carry both the label and a digest (FC25).
-	byRawDigest map[string]string
+	// byRawDigest is the same for unparsed stubs: token\x00raw digest → the keys, built
+	// lazily over the records that carry both the label and a digest (FC25). The same
+	// bytes in two folders are two stubs with one digest.
+	byRawDigest map[string][]string
 
 	// byIdent is the mailbox-wide identity index (message identity → every
 	// manifest key carrying it, with that key's fingerprint), built at load and
@@ -904,20 +905,37 @@ func (m *Manifest) Add(key string, r Record) {
 // digestAddLocked indexes r when it is an unparsed stub with a raw digest. The caller
 // holds m.mu and m.byRawDigest is built.
 func (m *Manifest) digestAddLocked(key string, r Record) {
-	if r.RawDigest != "" && r.hasLabel(LabelUnparsed) {
-		m.byRawDigest[locatorIndexKey(key, r.RawDigest)] = key
+	if r.RawDigest == "" || !r.hasLabel(LabelUnparsed) {
+		return
 	}
+	dk := locatorIndexKey(key, r.RawDigest)
+	for _, k := range m.byRawDigest[dk] {
+		if k == key {
+			return
+		}
+	}
+	// One entry per stub: the same bytes in two folders are two stubs with one digest.
+	m.byRawDigest[dk] = append(m.byRawDigest[dk], key)
 }
 
-// digestDropLocked removes old's index entry when it points at key.
+// digestDropLocked removes key from old's index entry.
 func (m *Manifest) digestDropLocked(key string, old Record) {
 	if old.RawDigest == "" {
 		return
 	}
 	dk := locatorIndexKey(key, old.RawDigest)
-	if m.byRawDigest[dk] == key {
-		delete(m.byRawDigest, dk)
+	keys := m.byRawDigest[dk]
+	for i, k := range keys {
+		if k == key {
+			keys = append(keys[:i:i], keys[i+1:]...)
+			break
+		}
 	}
+	if len(keys) == 0 {
+		delete(m.byRawDigest, dk)
+		return
+	}
+	m.byRawDigest[dk] = keys
 }
 
 // buildDigestIndexLocked builds byRawDigest on first use. The caller holds m.mu.
@@ -925,7 +943,7 @@ func (m *Manifest) buildDigestIndexLocked() {
 	if m.byRawDigest != nil {
 		return
 	}
-	m.byRawDigest = map[string]string{}
+	m.byRawDigest = map[string][]string{}
 	for k, r := range m.Entries {
 		m.digestAddLocked(k, r)
 	}
@@ -951,14 +969,28 @@ func (m *Manifest) SupersedeUnparsed(token, digest, newKey string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.buildDigestIndexLocked()
-	key, ok := m.byRawDigest[token+keySeparator+digest]
-	if !ok || key == newKey {
+	// The same bytes in two folders are two stubs with one digest: the stub of the
+	// capture's own folder is the one it settles, else (the message moved) the first in
+	// key order. Each other stub is settled by the healthy capture of its own copy
+	// (S2B-AC7).
+	var cands []string
+	for _, k := range m.byRawDigest[token+keySeparator+digest] {
+		if cand, ok := m.Entries[k]; ok && k != newKey && cand.hasLabel(LabelUnparsed) {
+			cands = append(cands, k)
+		}
+	}
+	if len(cands) == 0 {
 		return false
 	}
-	r, ok := m.Entries[key]
-	if !ok || !r.hasLabel(LabelUnparsed) {
-		return false
+	sort.Strings(cands)
+	key := cands[0]
+	for _, k := range cands {
+		if m.Entries[k].Folder == m.Entries[newKey].Folder {
+			key = k
+			break
+		}
 	}
+	r := m.Entries[key]
 	m.digestDropLocked(key, r)
 	r.Missing = nil
 	r.Terminal = []string{LabelSuperseded}
