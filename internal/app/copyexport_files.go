@@ -239,6 +239,15 @@ func (r *CopyRun) writeFiles(ctx context.Context, n int, m *CopyMessage, files *
 			return nil, placed, err
 		}
 	}
+	if r.plan.Options.Attachments && m.NoOrig != "" { // the archive kept no original: the zip's entries are extracted (slice E6)
+		for _, rec := range recs {
+			if rec.Role == roleArchivedZip {
+				if err := r.addZipEntries(ctx, n, pl.Dir, pl.Stem, rec, line); err != nil {
+					return nil, placed, err
+				}
+			}
+		}
+	}
 	return line, nil, nil
 }
 

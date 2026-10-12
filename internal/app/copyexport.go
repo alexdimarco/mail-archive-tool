@@ -415,6 +415,7 @@ type CopyExportEnv struct {
 	realized    func(path string, forDir bool) CopyPosture
 	faults      *copyFaults
 	fsWrap      func(ceFS) ceFS // test wrapper around the contained writer
+	zipLimit    attachBounds    // a test's lower bounds on extracting a zip's entries (slice E6); zero fields are the design's
 
 	// the destination check's seams (design §4.7 step 3)
 	view     func(path string) ceView                // classifies how a path is reached

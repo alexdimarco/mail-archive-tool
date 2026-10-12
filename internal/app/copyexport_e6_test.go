@@ -1,12 +1,15 @@
 package app
 
 import (
+	"archive/zip"
 	"bytes"
+	"compress/flate"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"os"
 	"path"
@@ -19,6 +22,7 @@ import (
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/model"
 	"mail-archive-tool/internal/source"
+	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/util"
 )
 
@@ -526,11 +530,274 @@ func TestDerivedAttachmentsAreCheckedAgainstFreeSpace(t *testing.T) {
 	}
 }
 
+// e6ZipEntry is one entry of a test zip. By default it is deflated from data; store keeps it
+// as it is. raw makes the entry a lie: the bytes are written as the entry's compressed data and
+// the header says declared bytes of uncompressed data with the CRC of data, whatever they are.
+type e6ZipEntry struct {
+	name     string
+	data     []byte
+	store    bool
+	raw      bool
+	declared uint64
+	crc      uint32 // the header's CRC for a raw entry; the CRC of data when zero
+	flags    uint16
+}
+
+// e6Zip writes a zip of entries.
+func e6Zip(t *testing.T, entries ...e6ZipEntry) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for _, en := range entries {
+		var w io.Writer
+		var err error
+		switch {
+		case en.raw:
+			var packed bytes.Buffer
+			fw, _ := flate.NewWriter(&packed, flate.BestCompression)
+			fw.Write(en.data)
+			fw.Close()
+			crc := en.crc
+			if crc == 0 {
+				crc = crc32.ChecksumIEEE(en.data)
+			}
+			w, err = zw.CreateRaw(&zip.FileHeader{Name: en.name, Method: zip.Deflate, CRC32: crc, CompressedSize64: uint64(packed.Len()),
+				UncompressedSize64: en.declared, Flags: en.flags})
+			if err == nil {
+				_, err = w.Write(packed.Bytes())
+			}
+		case en.store:
+			w, err = zw.CreateHeader(&zip.FileHeader{Name: en.name, Method: zip.Store, Flags: en.flags})
+			if err == nil {
+				_, err = w.Write(en.data)
+			}
+		default:
+			w, err = zw.CreateHeader(&zip.FileHeader{Name: en.name, Method: zip.Deflate, Flags: en.flags})
+			if err == nil {
+				_, err = w.Write(en.data)
+			}
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+// e6WithZip replaces the zip of the archive's "zip only" record, with the fixity the archive
+// would have recorded for it, and exports it with Extract attachments on. wrap, when set, wraps
+// the contained writer. It returns the run's result, its manifest entry and the key.
+func e6WithZip(t *testing.T, a *ceArchive, e *CopyExportEnv, zb []byte) (*CopyResult, map[string]any, string) {
+	t.Helper()
+	_, _, zipPath := a.files("zip-only")
+	if err := os.WriteFile(zipPath, zb, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a.setRec("zip-only", func(r *state.Record) { r.Fixity.Zip = digestOf(zb) })
+	s := a.open()
+	key := a.key("zip-only")
+	p := a.plan(e, s, []string{key})
+	p.Options.Attachments = true
+	res := a.run(e, p, s)
+	return res, entryOf(t, manifestOf(t, res.Root), key), key
+}
+
+// e6Sizes is the sizes of extracted files by name, for a failure message that must not print them.
+func e6Sizes(files map[string][]byte) map[string]int {
+	out := map[string]int{}
+	for name, b := range files {
+		out[name] = len(b)
+	}
+	return out
+}
+
+// e6Extracted is the derived-attachment files of a manifest entry, by name, with their bytes.
+func e6Extracted(t *testing.T, root string, ent map[string]any) map[string][]byte {
+	t.Helper()
+	out := map[string][]byte{}
+	for _, f := range ent["files"].([]any) {
+		if m := f.(map[string]any); m["role"] == roleDerivedAttach {
+			p := m["path"].(string)
+			out[path.Base(p)] = e6Read(t, root, p)
+		}
+	}
+	return out
+}
+
+// e6Counting counts the bytes written into temp files of attachments directories, as a co-writer
+// of the disk sees them: what an expansion costs before anything is checked afterwards.
+type e6Counting struct {
+	ceFS
+	n *int64
+}
+
+type e6CountedFile struct {
+	ceFile
+	n *int64
+}
+
+func (f *e6CountedFile) Write(p []byte) (int, error) {
+	k, err := f.ceFile.Write(p)
+	*f.n += int64(k)
+	return k, err
+}
+
+func (c *e6Counting) CreateTemp(dir string) (ceFile, string, error) {
+	f, name, err := c.ceFS.CreateTemp(dir)
+	if err == nil && strings.HasSuffix(dir, ".attachments") {
+		f = &e6CountedFile{ceFile: f, n: c.n}
+	}
+	return f, name, err
+}
+
 // covers: MA-424, R4, R1, R29, S52
-// An archive record without an original: the zip is copied byte-exact and its entries are also
-// extracted within the bounds; a bomb entry is skipped with a note and never expanded.
+// An archive record without an original: the zip is copied byte-exact (role
+// archived-attachments-zip, the archive's own hash) and its entries are also extracted, each
+// flattened to its base name, sanitized and made unique, directory entries left out, each file
+// holding its entry's bytes. The bounds hold: at most 1,000 entries; per-entry uncompressed and
+// per-message total sizes (here scaled down: the code's defaults are the design's 1 GiB and 4
+// GiB, which a test asserts directly); a compression ratio of at most 200:1, whether the header
+// tells the truth about a bomb (skipped before a byte is written) or lies low (stopped at the
+// size it states). A breach skips that entry with a note and the entries beside it are extracted;
+// a damaged entry, an empty one and an encrypted one are notes too.
 func TestArchiveZipEntriesAreExtractedWithinBounds(t *testing.T) {
-	t.Skip("MA-424: zip entry extraction is not built; lands in EW-E6")
+	if b := (&CopyExportEnv{}).zipBounds(); b != (attachBounds{entries: 1000, entryBytes: 1 << 30, totalBytes: 4 << 30, ratio: 200}) {
+		t.Errorf("the default bounds are %+v, want 1,000 entries, 1 GiB an entry, 4 GiB a message and 200:1", b)
+	}
+	note := func(t *testing.T, ent map[string]any, name, want string) {
+		t.Helper()
+		for _, n := range ent["notes"].([]any) {
+			if s := n.(string); strings.Contains(s, `"`+name+`"`) && strings.Contains(s, want) && strings.HasPrefix(s, attachNotePrefix) && strings.Contains(s, "the zip beside it") {
+				return
+			}
+		}
+		t.Errorf("no note names %q and says %q: %v", name, want, ent["notes"])
+	}
+	// written is what the run wrote into attachments directories, expanded or not
+	run := func(t *testing.T, e *CopyExportEnv, entries ...e6ZipEntry) (res *CopyResult, ent map[string]any, got map[string][]byte, written int64, zb []byte) {
+		t.Helper()
+		a := buildE6Archive(t)
+		e.fsWrap = func(f ceFS) ceFS { return &e6Counting{ceFS: f, n: &written} }
+		zb = e6Zip(t, entries...)
+		res, ent, _ = e6WithZip(t, a, e, zb)
+		if res.Counts.Exported != 1 || res.Status != CopyStatusComplete {
+			t.Fatalf("the run: %s, %+v", res.Label, res.Counts)
+		}
+		z := fileOf(ent, roleArchivedZip)
+		if ent["status"] != statusWithoutOrig || z == nil || z["sha256"] != digestOf(zb).SHA256 || !bytes.Equal(e6Read(t, res.Root, z["path"].(string)), zb) {
+			t.Errorf("the zip is not copied byte-exact under its role: %v", ent["files"])
+		}
+		if bad, missing, extra := sumsCheck(t, res.Root); len(bad)+len(missing)+len(extra) != 0 {
+			t.Errorf("sums: changed %v, missing %v, unlisted %v", bad, missing, extra)
+		}
+		return res, ent, e6Extracted(t, res.Root, ent), written, zb
+	}
+	random := func(n int, seed byte) []byte { return append([]byte{seed}, e5Image(n-1)...) }
+
+	t.Run("entries are flattened, sanitized and unique", func(t *testing.T) {
+		report1, report2, evil, win, deep := []byte("%PDF one"), []byte("%PDF two"), []byte("evil"), []byte("win"), []byte("deep")
+		_, ent, got, _, _ := run(t, newCEEnv(t),
+			e6ZipEntry{name: "report.pdf", data: report1}, e6ZipEntry{name: "Report.PDF", data: report2},
+			e6ZipEntry{name: "../../evil.txt", data: evil}, e6ZipEntry{name: `dir\sub\win.txt`, data: win},
+			e6ZipEntry{name: "sub/dir/"}, e6ZipEntry{name: "a/b/deep.txt", data: deep, store: true}, e6ZipEntry{name: "CON", data: []byte("device")})
+		want := map[string][]byte{"report.pdf": report1, "Report (2).PDF": report2, "evil.txt": evil, "win.txt": win, "deep.txt": deep, "_CON": []byte("device")}
+		if len(got) != len(want) {
+			t.Errorf("extracted %d files %v, want %d", len(got), e6Sizes(got), len(want))
+		}
+		for name, w := range want {
+			if !bytes.Equal(got[name], w) {
+				t.Errorf("%s holds %q, want %q", name, got[name], w)
+			}
+		}
+		for _, n := range ent["notes"].([]any) {
+			if strings.HasPrefix(n.(string), attachNotePrefix) {
+				t.Errorf("a note for a clean zip: %v", n)
+			}
+		}
+	})
+
+	t.Run("a bomb whose header tells the truth is skipped before a byte is written", func(t *testing.T) {
+		bomb := make([]byte, 20<<20) // zeros: about 1,000:1
+		_, ent, got, written, zb := run(t, newCEEnv(t), e6ZipEntry{name: "bomb.bin", data: bomb}, e6ZipEntry{name: "ok.txt", data: []byte("fine")})
+		if _, ok := got["bomb.bin"]; ok || string(got["ok.txt"]) != "fine" || len(got) != 1 {
+			t.Errorf("extracted (name: bytes) %v", e6Sizes(got))
+		}
+		note(t, ent, "bomb.bin", "zip bomb")
+		if written > 1<<20 || len(zb) > 1<<20 {
+			t.Errorf("%d bytes were written for a %d-byte zip: the bomb was expanded", written, len(zb))
+		}
+	})
+
+	t.Run("a bomb whose header lies low is stopped at the size it states", func(t *testing.T) {
+		_, ent, got, written, _ := run(t, newCEEnv(t), e6ZipEntry{name: "liar.bin", data: make([]byte, 20<<20), raw: true, declared: 10}, e6ZipEntry{name: "ok.txt", data: []byte("fine")})
+		if _, ok := got["liar.bin"]; ok || string(got["ok.txt"]) != "fine" {
+			t.Errorf("extracted (name: bytes) %v", e6Sizes(got))
+		}
+		note(t, ent, "liar.bin", "its data does not match the size its header states")
+		if written > 1<<10 {
+			t.Errorf("%d bytes were written for an entry whose header says 10: it was expanded", written)
+		}
+	})
+
+	t.Run("an entry over the per-entry bound is skipped and the rest are extracted", func(t *testing.T) {
+		e := newCEEnv(t)
+		e.zipLimit = attachBounds{entryBytes: 100 << 10}
+		big, small := random(150<<10, 1), random(50<<10, 2)
+		_, ent, got, written, _ := run(t, e, e6ZipEntry{name: "big.bin", data: big}, e6ZipEntry{name: "small.bin", data: small})
+		if len(got) != 1 || !bytes.Equal(got["small.bin"], small) {
+			t.Errorf("extracted (name: bytes) %v", e6Sizes(got))
+		}
+		note(t, ent, "big.bin", "larger than 100 KiB uncompressed")
+		if written > int64(len(small))+1<<10 {
+			t.Errorf("%d bytes written, want only the small entry's", written)
+		}
+	})
+
+	t.Run("an entry that would pass the per-message total is skipped", func(t *testing.T) {
+		e := newCEEnv(t)
+		e.zipLimit = attachBounds{totalBytes: 120 << 10}
+		a1, a2, a3, tail := random(50<<10, 1), random(50<<10, 2), random(50<<10, 3), []byte("tail")
+		_, ent, got, _, _ := run(t, e, e6ZipEntry{name: "a1.bin", data: a1}, e6ZipEntry{name: "a2.bin", data: a2}, e6ZipEntry{name: "a3.bin", data: a3}, e6ZipEntry{name: "tail.txt", data: tail})
+		if len(got) != 3 || !bytes.Equal(got["a1.bin"], a1) || !bytes.Equal(got["a2.bin"], a2) || !bytes.Equal(got["tail.txt"], tail) {
+			t.Errorf("extracted %v, want a1, a2 and the tail that still fits", e6Sizes(got))
+		}
+		note(t, ent, "a3.bin", "past 120 KiB")
+	})
+
+	t.Run("a zip with more than 1,000 entries has its first 1,000 extracted", func(t *testing.T) {
+		var entries []e6ZipEntry
+		for i := 0; i < 1002; i++ {
+			entries = append(entries, e6ZipEntry{name: fmt.Sprintf("f%04d.txt", i), data: []byte(fmt.Sprintf("n%d", i)), store: true})
+		}
+		_, ent, got, _, _ := run(t, newCEEnv(t), entries...)
+		if len(got) != 1000 || string(got["f0999.txt"]) != "n999" || got["f1000.txt"] != nil {
+			t.Errorf("extracted %d files", len(got))
+		}
+		found := false
+		for _, n := range ent["notes"].([]any) {
+			found = found || (strings.Contains(n.(string), "1,002 entries") && strings.Contains(n.(string), "first 1,000"))
+		}
+		if !found {
+			t.Errorf("no note says the zip has 1,002 entries and 1,000 were extracted: %v", ent["notes"])
+		}
+	})
+
+	t.Run("a damaged, an empty and an encrypted entry are notes", func(t *testing.T) {
+		_, ent, got, _, _ := run(t, newCEEnv(t),
+			e6ZipEntry{name: "bad.bin", data: []byte("some data"), raw: true, declared: 9, crc: 12345},
+			e6ZipEntry{name: "empty.txt", store: true},
+			e6ZipEntry{name: "locked.bin", data: []byte("secret"), store: true, flags: 0x1},
+			e6ZipEntry{name: "ok.txt", data: []byte("fine")})
+		if len(got) != 1 || string(got["ok.txt"]) != "fine" {
+			t.Errorf("extracted (name: bytes) %v", e6Sizes(got))
+		}
+		note(t, ent, "bad.bin", "could not be read from the zip (its data does not match its checksum, so it is damaged)")
+		note(t, ent, "empty.txt", "has no content")
+		note(t, ent, "locked.bin", "encrypted")
+	})
 }
 
 // e6Latin1CSV is a Latin-1 table that is not valid UTF-8.

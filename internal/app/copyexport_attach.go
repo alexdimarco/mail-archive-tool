@@ -1,6 +1,8 @@
 package app
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -42,6 +44,43 @@ const (
 	attachAuthorityEML = "the .eml beside it holds the message as it was sent"
 	attachAuthorityZip = "the zip beside it holds it as the archive kept it"
 )
+
+// The bounds on extracting a zip's entries (design §4.12): at most 1,000 entries, 1 GiB
+// uncompressed for one entry, 4 GiB for one message, and a compression ratio of at most 200:1.
+// An entry over a bound is skipped with a note; a zip is untrusted input (a bomb is a few
+// kilobytes), so none of them is ever expanded to find out.
+const (
+	copyZipEntries    = 1000
+	copyZipEntryBytes = 1 << 30
+	copyZipTotalBytes = 4 << 30
+	copyZipRatio      = 200
+)
+
+// attachBounds are the bounds a run extracts a zip under; a zero field is the design's.
+type attachBounds struct {
+	entries    int
+	entryBytes int64
+	totalBytes int64
+	ratio      int64
+}
+
+// zipBounds are the bounds in force: the design's, unless a test lowered one (zipLimit).
+func (e *CopyExportEnv) zipBounds() attachBounds {
+	b := e.zipLimit
+	if b.entries <= 0 {
+		b.entries = copyZipEntries
+	}
+	if b.entryBytes <= 0 {
+		b.entryBytes = copyZipEntryBytes
+	}
+	if b.totalBytes <= 0 {
+		b.totalBytes = copyZipTotalBytes
+	}
+	if b.ratio <= 0 {
+		b.ratio = copyZipRatio
+	}
+	return b
+}
 
 var (
 	// errAttachEmpty is a part with no content.
@@ -88,10 +127,11 @@ type attachWriter struct {
 	notes  attachNotes
 	placed int
 	holds  string // what holds a part that was not extracted
+	from   string // where the parts are read from: "the message", or "the zip"
 }
 
 func newAttachWriter(r *CopyRun, ctx context.Context, dir, stem string, line *ceMsgLine, holds string) *attachWriter {
-	return &attachWriter{r: r, ctx: ctx, adir: ceJoin(dir, stem+attachDirSuffix), used: map[string]struct{}{}, line: line, holds: holds}
+	return &attachWriter{r: r, ctx: ctx, adir: ceJoin(dir, stem+attachDirSuffix), used: map[string]struct{}{}, line: line, holds: holds, from: "the message"}
 }
 
 // attachSpaceWriter refuses what no longer fits in the space the destination has left.
@@ -212,7 +252,7 @@ func (w *attachWriter) problem(label string, err error) {
 	case errors.As(err, &we):
 		w.notes.add(fmt.Sprintf("%q was not extracted: it could not be written (%s); check the destination and export this message again", label, leaveName(we.err)))
 	case errors.As(err, &pe):
-		w.notes.add(fmt.Sprintf("%q was not extracted: it could not be read from the message (%s); %s", label, pe.why, w.holds))
+		w.notes.add(fmt.Sprintf("%q was not extracted: it could not be read from %s (%s); %s", label, w.from, pe.why, w.holds))
 	default:
 		w.notes.add(fmt.Sprintf("%q was not extracted: %s; %s", label, plainText(err.Error()), w.holds))
 	}
@@ -272,6 +312,154 @@ func (r *CopyRun) dropDir(rel string) {
 	}
 	delete(r.made, rel)
 	r.dirs = slices.DeleteFunc(r.dirs, func(d string) bool { return d == rel })
+}
+
+// bytesBound words a bound for a note: "1 GiB", "100 KiB".
+func bytesBound(n int64) string {
+	switch {
+	case n >= 1<<30 && n%(1<<30) == 0:
+		return fmt.Sprintf("%d GiB", n>>30)
+	case n >= 1<<20 && n%(1<<20) == 0:
+		return fmt.Sprintf("%d MiB", n>>20)
+	case n >= 1<<10 && n%(1<<10) == 0:
+		return fmt.Sprintf("%d KiB", n>>10)
+	}
+	return fmt.Sprintf("%d bytes", n)
+}
+
+// zipBase is a zip entry's name flattened to its base name: whatever stands before the last
+// slash or backslash is dropped, so "../x" and "a\b" are "x" and "b" and no entry can name a
+// place outside the attachments directory (zip-slip). What is left goes through the same
+// naming as any attachment.
+func zipBase(name string) string {
+	if i := strings.LastIndexAny(name, `/\`); i >= 0 {
+		return name[i+1:]
+	}
+	return name
+}
+
+// errZipSize is an entry whose data does not match the size its header states: it runs past
+// it (a header that lies low, which is how a bomb hides its size), or stops short of it.
+var errZipSize = &attachPartError{"its data does not match the size its header states"}
+
+// zipReadError is a failure to read one entry as words: the library's own (ErrFormat is what
+// it returns when the data runs past the declared size) said plainly.
+func zipReadError(err error) error {
+	switch {
+	case errors.Is(err, zip.ErrFormat), errors.Is(err, io.ErrUnexpectedEOF):
+		return errZipSize
+	case errors.Is(err, zip.ErrChecksum):
+		return &attachPartError{"its data does not match its checksum, so it is damaged"}
+	}
+	return err
+}
+
+// openZip opens the zip's central directory under a panic guard.
+func openZip(data []byte) (zr *zip.Reader, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			zr, err = nil, errors.New(panicReason(p))
+		}
+	}()
+	return zip.NewReader(bytes.NewReader(data), int64(len(data)))
+}
+
+// breach says why an entry may not be extracted, judged on what its header declares and what
+// has been extracted so far, before a byte of it is read: "" when it may. A zip header can lie
+// about its sizes, so the stream is held to the size it declares too (zipStream), and what
+// the declared sizes allow is never more than the bounds.
+func (bd attachBounds) breach(f *zip.File, total int64) string {
+	declared := f.UncompressedSize64
+	switch {
+	case f.Flags&0x1 != 0:
+		return "it is encrypted, which this version cannot read"
+	case declared > uint64(bd.entryBytes):
+		return fmt.Sprintf("it is larger than %s uncompressed (the most this version extracts from one entry)", bytesBound(bd.entryBytes))
+	case declared > uint64(bd.ratio)*f.CompressedSize64:
+		return fmt.Sprintf("it would expand more than %d times (%s packed, %s unpacked), which this version takes for a zip bomb and does not expand",
+			bd.ratio, humanBytes(int64(min(f.CompressedSize64, 1<<62))), humanBytes(int64(min(declared, 1<<62))))
+	case total+int64(declared) > bd.totalBytes:
+		return fmt.Sprintf("extracting it would take this message's extracted files past %s (the most this version extracts for one message)", bytesBound(bd.totalBytes))
+	}
+	return ""
+}
+
+// zipStream is the stream of one entry: its decompressed data, which may not pass the size
+// its header declares (a header that lies low is a bomb the declared bounds never saw) and
+// whose checksum the reader checks at the end.
+func zipStream(f *zip.File) func(io.Writer) (int64, error) {
+	return func(dst io.Writer) (int64, error) {
+		rc, err := f.Open()
+		if err != nil {
+			return 0, zipReadError(err)
+		}
+		defer rc.Close()
+		limit := int64(f.UncompressedSize64)
+		n, err := io.Copy(dst, io.LimitReader(rc, limit+1))
+		if err != nil {
+			return n, zipReadError(err)
+		}
+		if n > limit { // the library stops an entry at its declared size too; this does not rest on that
+			return n, errZipSize
+		}
+		return n, nil
+	}
+}
+
+// zipEntries extracts the entries of an archived attachments zip under the bounds. Directory
+// entries are not attachments and are left out; every other entry is a file named by its base
+// name, or a note.
+func (w *attachWriter) zipEntries(data []byte, bd attachBounds) {
+	zr, err := openZip(data)
+	if err != nil {
+		w.notes.add(fmt.Sprintf("the zip could not be opened (%s), so its entries were not extracted; %s", plainText(err.Error()), w.holds))
+		return
+	}
+	files := zr.File
+	if len(files) > bd.entries {
+		w.notes.add(fmt.Sprintf("the zip holds %s entries and this version extracts the first %s: the others were not extracted; %s", commas(len(files)), commas(bd.entries), w.holds))
+		files = files[:bd.entries]
+	}
+	var total int64
+	for i, f := range files {
+		if f.FileInfo().IsDir() || strings.HasSuffix(f.Name, "/") {
+			continue
+		}
+		name := zipBase(f.Name)
+		label := plainText(util.ExportFilename(name, i))
+		if why := bd.breach(f, total); why != "" {
+			w.notes.add(fmt.Sprintf("%q (an entry of the zip) was not extracted: %s; %s", label, why, w.holds))
+			continue
+		}
+		rec, err := w.put(name, i, guardStream(zipStream(f)))
+		if err != nil {
+			w.problem(label, err)
+			continue
+		}
+		total += rec.Size
+	}
+}
+
+// addZipEntries extracts the entries of the archived attachments zip just placed as zrec into
+// dir/<stem>.attachments/, for an archive record the archive kept no original of. The zip is
+// read back from the destination under the hash check, as an original is, and the entries are
+// read from those bytes. It returns errOriginalChanged when the zip is not what was written.
+func (r *CopyRun) addZipEntries(ctx context.Context, n int, dir, stem string, zrec ceFileRec, line *ceMsgLine) error {
+	r.env.step(fmt.Sprintf("W5zip:%d", n))
+	data, err := r.readBack(zrec)
+	if err != nil {
+		if errors.Is(err, errOriginalChanged) {
+			return err
+		}
+		line.Notes = append(line.Notes, attachNotePrefix+"the zip's entries were not extracted: the zip could not be read back ("+leaveName(err)+"); "+attachAuthorityZip)
+		return nil
+	}
+	w := newAttachWriter(r, ctx, dir, stem, line, attachAuthorityZip)
+	w.from = "the zip"
+	w.zipEntries(data, r.env.zipBounds())
+	w.finish()
+	r.env.step(fmt.Sprintf("W5att:%d", n))
+	return nil
 }
 
 // addAttachments extracts the attachments of the parsed original (or says why it could not)
