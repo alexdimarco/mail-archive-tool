@@ -489,6 +489,16 @@ func (f *ceFinish) readmeText(status CopyStatus, c CopyCounts, stop *CopyStop, f
 			if a.zips > 0 || a.archived == 0 {
 				line("Extract attachments: %s %s with attachments, each with its attachments in one zip named like the message's file with .attachments.zip added, beside it. A message with a huge number of attachments is still one file.", commas(a.zips), plural(a.zips, "message", "messages"))
 			}
+			// how many attachments the zips hold against how many the reader found (friction F12)
+			switch {
+			case a.found == 0:
+			case a.made == 0:
+				line("Attachments in the zips: none of the %s found in these messages; each has a note below.", commas(a.found))
+			case a.made == a.found:
+				line("Attachments in the zips: %s, in %s %s: every attachment found in these messages.", commas(a.made), commas(a.zips), plural(a.zips, "zip", "zips"))
+			default:
+				line("Attachments in the zips: %s of the %s found in these messages, in %s %s. The other %s %s a note below.", commas(a.made), commas(a.found), commas(a.zips), plural(a.zips, "zip", "zips"), commas(a.found-a.made), plural(a.found-a.made, "has", "have"))
+			}
 			if a.archived > 0 {
 				line("Extract attachments: %s %s with an attachments zip the archive kept, copied as it is (a file ending -attachments.zip), beside its page.", commas(a.archived), plural(a.archived, "message", "messages"))
 			}
@@ -542,8 +552,10 @@ func (f *ceFinish) readmeText(status CopyStatus, c CopyCounts, stop *CopyStop, f
 	}
 	if h.Options.Attachments && h.Options.AttachmentsAsZip {
 		line("- A .attachments.zip is made by MailArchive from the .eml beside it: every attachment of that message, each decoded to an entry of its own, in one zip however many attachments the message has. It is a convenience, not the message. A part this version could not decode is in it as received, with .undecoded added to its name, and one that was cut short is in it as far as it could be read, with .partial added: a note in export-manifest.json says so for each, and neither is the complete attachment. Where the archive kept no original, the archive's own -attachments.zip, described above, holds the attachments, copied as the archive kept it, and no second zip is made.")
+		line("- An attachment's name in a zip can differ from the one the sender gave it: a long name is shortened, characters that Windows or macOS do not allow in a file name are replaced, a path in the name (\"../\") is dropped, a name Windows reserves (CON, NUL) gets an underscore in front, and two attachments of one message with the same name are numbered (\"notes.txt\" and \"notes (2).txt\"). The .eml beside the zip holds the sender's names; export-manifest.json says, for a message, how many of its names were changed (\"renamed\").")
 	} else if h.Options.Attachments {
 		line("- The files in a .attachments folder are made by MailArchive from the .eml beside them (or, where the archive kept no original, from the archived attachments zip): each attachment decoded to a file of its own. They are conveniences, not the message. A part this version could not decode is there as received, with .undecoded added to its name, and one that was cut short is there as far as it could be read, with .partial added: a note in export-manifest.json says so for each, and neither is the complete attachment.")
+		line("- A file's name can differ from the one the sender gave it: a long name is shortened, characters that Windows or macOS do not allow in a file name are replaced, a path in the name (\"../\") is dropped, a name Windows reserves (CON, NUL) gets an underscore in front, and two attachments of one message with the same name are numbered (\"notes.txt\" and \"notes (2).txt\"). The .eml beside the folder holds the sender's names; export-manifest.json says, for a message, how many of its names were changed (\"renamed\").")
 	}
 	if h.Source.Kind != "archive" {
 		line("- Files whose names end .html, .attachments or .archived-page.txt, where present, are conveniences made from the original, which stays the authoritative copy.")
@@ -609,6 +621,7 @@ const attachReadmeList = 10
 // attachment that was not extracted or only partly (the first few by subject and folder).
 type attachFacts struct {
 	files, zips, msgs, problems int // files are loose extracted files, zips the attachments zips (zip mode)
+	found, made                 int // the attachments the reader found in the messages, and how many are in a zip or a folder (friction F12)
 	archived                    int // messages whose zip is the archive's own, copied as it is (no original to make one from)
 	listed                      []string
 }
@@ -637,6 +650,10 @@ func (f *ceFinish) attachFacts() attachFacts {
 		}
 		if n+z > 0 {
 			a.msgs++
+		}
+		if m.Att != nil {
+			a.found += m.Att.Found
+			a.made += m.Att.Made
 		}
 		for _, note := range m.Notes {
 			if strings.HasPrefix(note, attachNotePrefix) {
@@ -806,6 +823,9 @@ func (f *ceFinish) writeManifest(status CopyStatus, c CopyCounts, stop *CopyStop
 			if m.Notes != nil {
 				entry["notes"] = m.Notes
 			}
+			if m.Att != nil { // how many attachments the message had and how many are in its zip or folder (friction F12)
+				entry["attachments"] = manifestAttachments(m.Att, h.Options.AttachmentsAsZip)
+			}
 		}
 		return put(entry)
 	})
@@ -872,6 +892,25 @@ func (f *ceFinish) writeManifest(status CopyStatus, c CopyCounts, stop *CopyStop
 		return "", err
 	}
 	return hex.EncodeToString(hw.h.Sum(nil)), nil
+}
+
+// manifestAttachments is a message's "attachments" in export-manifest.json: how many the reader found,
+// how many are in its zip (zip mode, "in_zip") or are files of its folder (loose mode, "extracted"), how
+// many of those have a name other than the sender's ("renamed") and whether exporting the message again
+// would make some that were left out ("export_again"). Keys that are zero or false are left out.
+func manifestAttachments(a *ceAttCount, zipped bool) map[string]any {
+	made := "extracted"
+	if zipped {
+		made = "in_zip"
+	}
+	out := map[string]any{"found": a.Found, made: a.Made}
+	if a.Renamed > 0 {
+		out["renamed"] = a.Renamed
+	}
+	if a.Again {
+		out["export_again"] = true
+	}
+	return out
 }
 
 func (e *CopyExportEnv) versionString() string {

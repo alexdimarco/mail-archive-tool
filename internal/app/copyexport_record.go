@@ -105,7 +105,21 @@ type ceMsgLine struct {
 	Reason string      `json:"reason,omitempty"`
 	Files  []ceFileRec `json:"files,omitempty"`
 	Notes  []string    `json:"notes,omitempty"`
+	Att    *ceAttCount `json:"att,omitempty"`
 	Amend  bool        `json:"amend,omitempty"`
+}
+
+// ceAttCount is what Extract attachments made of one message's attachments: how many the reader found,
+// how many are in the message's zip (or are files of its folder), how many of those were given a name
+// other than the sender's, and whether a stop, a full disk or a failed write left some out that
+// exporting the message again would make. It is what the card, the README and the manifest count from
+// (friction F1, F3, F7, F12); a message with no attachment, and a record copied from an archive's own zip,
+// have none.
+type ceAttCount struct {
+	Found   int  `json:"found"`
+	Made    int  `json:"made"`
+	Renamed int  `json:"renamed,omitempty"`
+	Again   bool `json:"again,omitempty"`
 }
 
 // ceStoppedLine records why a run stopped before its seal while the app ran on (a
