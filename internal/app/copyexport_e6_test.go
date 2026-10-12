@@ -876,9 +876,52 @@ func TestAnArchiveRecordWithAnOriginalExtractsFromItsEml(t *testing.T) {
 }
 
 // covers: MA-424, R1
-// README and the manifest say what extracted files are and name the caveats.
+// README says, with Extract attachments on, how many files were extracted from how many
+// messages, names the messages that have an attachment note, says what the files are (decoded
+// conveniences, with .undecoded and .partial parts told apart) and names the caveats: parts
+// dropped or unnamed, zips written before the walker that may hold re-encoded text, and PST
+// forwarded-as-attachment stand-ins the export cannot detect. With the option off README says
+// none of it. The sums verify with it in.
 func TestReadmeNamesTheExtractedAttachmentsAndTheirCaveats(t *testing.T) {
-	t.Skip("MA-424: the README text is not written; lands in EW-E6")
+	phrases := []string{"Extract attachments: 1 file from 1 message", "Messages with an attachment that was not extracted, or only part of it: 1",
+		`subject M00001 (Inbox): "empty.txt" has no content`, "The files in a .attachments folder are made by MailArchive", ".undecoded", ".partial",
+		"A part the reader dropped is not among them", "Content-ID", "re-encoded as UTF-8", "forwarded as an attachment inside an Outlook data file", "cannot tell you which ones"}
+	msgs := ceMsgs(2)
+	body := map[string][]byte{
+		msgs[0].SourceID: e6Mime(msgs[0].SourceID, "with files", e6Part{name: "ok.pdf", ctype: "application/pdf", body: []byte("%PDF fine")}, e6Part{name: "empty.txt", ctype: "text/plain"}),
+		msgs[1].SourceID: e6Mime(msgs[1].SourceID, "plain"),
+	}
+	e := newCEEnv(t)
+	res, _ := e6Run(t, e, msgs, true, func(id string) []byte { return body[id] })
+	readme := readText(t, res.Root, copyReadmeName)
+	for _, want := range phrases {
+		if !strings.Contains(readme, want) {
+			t.Errorf("README lacks %q", want)
+		}
+	}
+	if bad, missing, extra := sumsCheck(t, res.Root); len(bad)+len(missing)+len(extra) != 0 {
+		t.Errorf("sums: changed %v, missing %v, unlisted %v", bad, missing, extra)
+	}
+
+	// the same caveats where the files come from an archived zip
+	res2, _, _ := e6WithZip(t, buildE6Archive(t), newCEEnv(t), e6Zip(t, e6ZipEntry{name: "r.pdf", data: []byte("%PDF")}))
+	readme2 := readText(t, res2.Root, copyReadmeName)
+	for _, want := range []string{"Extract attachments: 1 file from 1 message", "from the archived attachments zip", "re-encoded as UTF-8", "forwarded as an attachment inside an Outlook data file"} {
+		if !strings.Contains(readme2, want) {
+			t.Errorf("README of a zip export lacks %q", want)
+		}
+	}
+
+	// the option off: none of it
+	e3, src := newCEEnv(t), newFakeSrc()
+	src.body = func(id string) []byte { return body[id] }
+	res3 := mustRun(t, e3, cePlan(t, e3, src, msgs), src)
+	readme3 := readText(t, res3.Root, copyReadmeName)
+	for _, banned := range []string{"Extract attachments", ".attachments folder", "re-encoded as UTF-8", "Outlook data file (.pst) is kept"} {
+		if strings.Contains(readme3, banned) {
+			t.Errorf("README of a run without the option says %q", banned)
+		}
+	}
 }
 
 // covers: MA-424, R29
