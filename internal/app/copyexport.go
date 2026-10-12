@@ -180,6 +180,10 @@ type CopyOptions struct {
 	PreserveFolders bool `json:"preserve_folder_structure"`
 	ReadableHTML    bool `json:"readable_html"`       // slice E5: the engine refuses it until then
 	Attachments     bool `json:"extract_attachments"` // slice E6: the same
+	// AttachmentsAsZip, with Attachments on, makes a message's attachments one <stem>.attachments.zip
+	// instead of loose files under <stem>.attachments/ (owner ruling 2026-10-12; MA-533..MA-535). The zero
+	// value is loose files, MA-424's engine.
+	AttachmentsAsZip bool `json:"attachments_as_zip,omitempty"`
 }
 
 // CopySourceInfo describes the source a plan was resolved from.

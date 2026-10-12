@@ -71,9 +71,10 @@ func copyFileCountFor(m *CopyMessage, opts CopyOptions) int {
 }
 
 // hasAttachSource reports whether Extract attachments, on in opts, can extract anything of m:
-// it has an original to parse or an attachments zip to open.
+// it has an original to parse or, in loose mode, an attachments zip to open. In zip mode an archive
+// record without an original has nothing to extract: its zip is copied as it is (MA-534).
 func hasAttachSource(m *CopyMessage, opts CopyOptions) bool {
-	return opts.Attachments && (m.NoOrig == "" || m.Zip)
+	return opts.Attachments && (m.NoOrig == "" || (m.Zip && !opts.AttachmentsAsZip))
 }
 
 // readBack reads the .eml the run wrote, back from the destination into one buffer sized to
@@ -137,7 +138,7 @@ func parseOriginal(eml []byte) (msg *model.Message, why string) {
 // the name of the directory its attachments were extracted into, "" when there is none. A
 // panic in the render is recovered (a panic only: out of memory is fatal, and the render
 // bound is what keeps a render from reaching it).
-func buildReadable(msg *model.Message, m *CopyMessage, emlName, attachDir string) (page []byte, fallback, note string) {
+func buildReadable(msg *model.Message, m *CopyMessage, emlName, attachDir, attachZip string) (page []byte, fallback, note string) {
 	defer func() {
 		if p := recover(); p != nil {
 			page, fallback, note = nil, "", noteReadableFailed+panicReason(p)
@@ -153,6 +154,9 @@ func buildReadable(msg *model.Message, m *CopyMessage, emlName, attachDir string
 	ctx := export.RenderContext{RawName: url.PathEscape(emlName)}
 	if attachDir != "" {
 		ctx.AttachDirName = url.PathEscape(attachDir)
+	}
+	if attachZip != "" { // zip mode: the page links the one zip, as the archive's own pages link theirs
+		ctx.ZipName = url.PathEscape(attachZip)
 	}
 	rr, err := readableRender(msg, ctx)
 	if err != nil {
@@ -204,12 +208,16 @@ func (r *CopyRun) addDerived(ctx context.Context, n int, m *CopyMessage, dir, em
 	}
 	msg, why := parseOriginal(eml)
 	stem := strings.TrimSuffix(emlName, ".eml")
-	attachDir := ""
+	attachDir, attachZip := "", ""
 	if opts.Attachments {
-		attachDir = r.addAttachments(ctx, n, dir, stem, msg, why, line)
+		if opts.AttachmentsAsZip {
+			attachZip = r.addAttachmentsZip(ctx, n, dir, stem, m, msg, why, line)
+		} else {
+			attachDir = r.addAttachments(ctx, n, dir, stem, msg, why, line)
+		}
 	}
 	if opts.ReadableHTML && !r.abandoned.Load() { // an abandoned run makes no further write (E6-AO3)
-		r.addReadable(ctx, n, m, dir, emlName, msg, why, attachDir, line)
+		r.addReadable(ctx, n, m, dir, emlName, msg, why, attachDir, attachZip, line)
 	}
 	return nil
 }
@@ -217,12 +225,12 @@ func (r *CopyRun) addDerived(ctx context.Context, n int, m *CopyMessage, dir, em
 // addReadable makes the readable copy of the parsed original (why says it could not be
 // parsed) and adds it to the message's line: its file with the role derived-html, or a note
 // and the status exported-original-only.
-func (r *CopyRun) addReadable(ctx context.Context, n int, m *CopyMessage, dir, emlName string, msg *model.Message, why, attachDir string, line *ceMsgLine) {
+func (r *CopyRun) addReadable(ctx context.Context, n int, m *CopyMessage, dir, emlName string, msg *model.Message, why, attachDir, attachZip string, line *ceMsgLine) {
 	if why != "" {
 		originalOnly(line, noteReadableFailed+why)
 		return
 	}
-	page, fallback, note := buildReadable(msg, m, emlName, attachDir)
+	page, fallback, note := buildReadable(msg, m, emlName, attachDir, attachZip)
 	if note != "" {
 		originalOnly(line, note)
 		return

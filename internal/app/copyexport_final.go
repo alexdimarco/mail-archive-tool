@@ -250,7 +250,7 @@ func (f *ceFinish) presence(rehash bool) error {
 		// product's quarantine takes the files a sender chose first) or damaged is dropped from the
 		// record and named in a note, and the message stays exported with its original and its other
 		// files, where a retry would only extract the same file to lose it again (E6-AO4).
-		isDerived := func(x ceFileRec) bool { return x.Role == roleDerivedHTML || x.Role == roleDerivedAttach }
+		isDerived := func(x ceFileRec) bool { return x.Role == roleDerivedHTML || isDerivedAttach(x.Role) }
 		if slices.ContainsFunc(m.Files, isDerived) {
 			kept := make([]ceFileRec, 0, len(m.Files))
 			var reason string
@@ -267,7 +267,7 @@ func (f *ceFinish) presence(rehash bool) error {
 				switch {
 				case why == "":
 					kept = append(kept, file)
-				case file.Role == roleDerivedAttach:
+				case isDerivedAttach(file.Role):
 					lost = append(lost, fmt.Sprintf("%s%q is not listed in this export: %s; %s", attachNotePrefix, plainText(path.Base(file.Path)), why, attachAuthorityEML))
 				case reason == "":
 					reason = why
@@ -283,7 +283,7 @@ func (f *ceFinish) presence(rehash bool) error {
 			}
 		}
 		for _, file := range m.Files {
-			if file.Role == roleDerivedHTML || file.Role == roleDerivedAttach {
+			if file.Role == roleDerivedHTML || isDerivedAttach(file.Role) {
 				continue
 			}
 			fi, err := f.fs.Lstat(file.Path)
