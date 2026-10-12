@@ -1498,6 +1498,25 @@ branch was clean; the full suite and `vet3` pass in the clean clone.
 Known and unchanged: ESC-1 (K1), K2, MA-503 (now also needs placeholder-folder rows in the lab), the
 Windows tests are compiled and vetted, not run.
 
+### 13.31 MF-S2 fidelity walker switched ON (2026-10-12), owner decision
+
+**Owner said "yes to the MF-S2 fidelity walker" (2026-10-12).** `fidelityContent` is true and
+`ParseSchemeCurrent` is 2; `p14-golden.json` changed only `parse_scheme` 1 to 2 on 46 records; no identity
+golden moved. Narrowed, as approved: the three `TestFidelityParserKeepsTheIdentityGoldenOnTheCorpus`
+subtests and `TestMixedVersionsKeepIdentityAndStems` (MS1-AI1). Two things beyond §13.29's list, both
+delegated judgement, neither a weakening:
+1. **Identity bug found by the switch-on.** A message that panics v1 would have been re-filed under a new
+   identity (the walker's display dates fed the identity). Fixed in code (`IdentityTerms.NoIdentityDate`,
+   set by the stub terms, honoured by `identityTime`) with tombstone
+   `TestAStubIdentityMessageKeepsItsDisplayDatesAndTheStubIdentity`; the stub-identity assertion is unchanged.
+2. **§13.29 undercounted the failing tests.** About ten raw-stub tests failed because the fault injection only
+   crashed v1. Ruled: do not narrow them (raw-preserving stubs are the FI-S2b guarantee); `InjectParsePanics`
+   now also faults the walker, assertions unchanged, new test
+   `TestAMessagePanickingBothParsersIsARawStubWithTheWalkerOn`. The one literal `1` in
+   `TestStampParseSchemeOnlyRaises` now tracks `ParseSchemeCurrent` (same "only raises" intent).
+Clean clone: full suite green, vet3 and gofmt clean. **Still owed: the walker's adversarial pass (hostile MIME)
+and the friction review with the X-series check, now against the code that runs.**
+
 ### 13.7 Escalations from LC-C1's adversarial pass (merged 2026-10-10)
 
 None blocks anything: each has a skip encoder or a safe interim in force.
