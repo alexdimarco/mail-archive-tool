@@ -597,6 +597,36 @@ func TestAnAttachmentsFolderHoldsNoMoreThanTheDirectoryBound(t *testing.T) {
 }
 
 // covers: MA-424, R1
+// E6-AO10, E6-AO11, E6-AO5: README says, with Extract attachments on, what the extracted files lack and
+// where the preview cannot see. The files are written with no download marker (Mark of the Web on
+// Windows, the quarantine attribute on macOS), so Office's Protected View and Gatekeeper do not warn when
+// one is opened as they do for a file saved from a mail program; the path of an extracted file ends in a
+// name the sender chose, so it can pass the 260-character limit though the preview's longest path does
+// not; and a message with more than 1,000 attachments has them all in one folder. With the option off
+// README says none of it.
+func TestReadmeSaysWhatTheExtractedFilesLackAndHowLongTheirPathsRun(t *testing.T) {
+	phrases := []string{"carry no download marker", "Mark of the Web", "Protected View", "Gatekeeper", "unopened email attachment",
+		"longer than the longest path the preview shows", "more than 1,000 attachments has all of them in its one .attachments folder"}
+	msgs := ceMsgs(1)
+	res, _ := e6Run(t, newCEEnv(t), msgs, false, func(id string) []byte {
+		return e6Mime(id, "one file", e6Part{name: "ok.pdf", ctype: "application/pdf", body: []byte("%PDF fine")})
+	})
+	readme := readText(t, res.Root, copyReadmeName)
+	for _, want := range phrases {
+		if !strings.Contains(readme, want) {
+			t.Errorf("README lacks %q", want)
+		}
+	}
+	e, src := newCEEnv(t), newFakeSrc()
+	off := readText(t, mustRun(t, e, cePlan(t, e, src, msgs), src).Root, copyReadmeName)
+	for _, banned := range phrases[:2] {
+		if strings.Contains(off, banned) {
+			t.Errorf("README of a run without the option says %q", banned)
+		}
+	}
+}
+
+// covers: MA-424, R1
 // E6-AO7 (E6-AI5, E6-AC6): the zip's list of entries is bounded before it is read whole. Go's reader
 // allocates one record for every entry of the central directory (about 200 bytes each) before the
 // extraction can cut the list at 1,000, and a zip's size bound (256 MiB) is not an entry bound, so a
