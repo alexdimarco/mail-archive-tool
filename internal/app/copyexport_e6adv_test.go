@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -253,6 +254,171 @@ func TestSameNamedPartsAreNamedInLinearTime(t *testing.T) {
 			t.Fatalf("%q was given twice", g)
 		}
 		seen[g] = true
+	}
+}
+
+// covers: MA-424, R1, R29
+// E6-AO4 (E6-AI1, E6-AC3): an extracted attachment that is gone, or damaged, when the export is
+// finished is a note on a message that stays exported, as a readable copy is, never a failed message.
+// The attachment is a convenience made from the .eml beside it, and the files antivirus products
+// remove most are the ones a sender chose: the code listed the message as failed and retryable (a
+// retry extracts the same file and fails the same way) and dropped its intact .eml and its other
+// attachments from the sums. Now the file is dropped from the record, the message keeps its original
+// and its other attachments in the manifest and the sums, and a note names the file. Finish as partial,
+// which re-hashes what it finds, treats a damaged one the same way.
+func TestAnExtractedAttachmentThatIsGoneIsANoteNotAFailedMessage(t *testing.T) {
+	root := func(p *CopyPlan) string {
+		ents, _ := os.ReadDir(p.Dest)
+		if len(ents) != 1 {
+			t.Fatalf("the destination holds %d entries", len(ents))
+		}
+		return filepath.Join(p.Dest, ents[0].Name())
+	}
+	withFiles := func(msgs []CopyMessage) func(string) []byte {
+		return func(id string) []byte {
+			return e6Mime(id, "two files", e6Part{name: "invoice.pdf", ctype: "application/pdf", body: []byte("%PDF invoice of " + id)},
+				e6Part{name: "evil.exe", body: []byte("MZ the program of " + id)})
+		}
+	}
+	setup := func(t *testing.T, msgs []CopyMessage) (*CopyExportEnv, *fakeSrc, *CopyPlan) {
+		e, src := newCEEnv(t), newFakeSrc()
+		src.body = withFiles(msgs)
+		p := cePlan(t, e, src, msgs)
+		p.Options.Attachments = true
+		return e, src, p
+	}
+
+	// finalization: message 1's evil.exe is quarantined before the export is finished
+	msgs := ceMsgs(2)
+	e, src, p := setup(t, msgs)
+	e.faults = &copyFaults{hook: func(step string) {
+		if step == "W7pre" {
+			r := root(p)
+			os.Remove(filepath.Join(r, e5Find(t, r, "evil.exe", "of M00001")))
+		}
+	}}
+	res := mustRun(t, e, p, src)
+	if res.Counts.Exported != 2 || res.Counts.Failed != 0 || res.Status != CopyStatusComplete || res.Outcome != CopyOutcomeComplete {
+		t.Fatalf("a quarantined attachment: %s %+v", res.Label, res.Counts)
+	}
+	man := manifestOf(t, res.Root)
+	ent := man["messages"].([]any)[0].(map[string]any)
+	if ent["status"] != statusExported || len(ent["files"].([]any)) != 2 || !e6advNote(ent, `"evil.exe"`, "no longer in the export folder", ".eml beside it") {
+		t.Errorf("message 1: %v, want exported with its original and invoice.pdf, and a note naming evil.exe", ent)
+	}
+	if f := failureListed(man, msgs[0].SourceID); f != nil {
+		t.Errorf("message 1 is listed as failed: %v", f)
+	}
+	if bad, missing, extra := sumsCheck(t, res.Root); len(bad)+len(missing)+len(extra) != 0 {
+		t.Errorf("sums: changed %v, missing %v, unlisted %v: the intact original and attachment must be listed", bad, missing, extra)
+	}
+	if failed, _ := e.RunFailed(res.RunID); len(failed) != 0 {
+		t.Errorf("a retry is offered for %v", failed)
+	}
+	if readme := readText(t, res.Root, copyReadmeName); !strings.Contains(readme, "Messages with an attachment that was not extracted, or only part of it: 1") {
+		t.Errorf("README does not count the message with a lost attachment")
+	}
+
+	// Finish as partial, killed after message 2: message 1's evil.exe is gone, message 2's damaged
+	msgs = ceMsgs(3)
+	e, src, p = setup(t, msgs)
+	e.faults = &copyFaults{killAt: "W6:2"}
+	k := mustRun(t, e, p, src)
+	e.faults = nil
+	if k.Killed != "W6:2" {
+		t.Fatalf("killed at %q", k.Killed)
+	}
+	os.Remove(filepath.Join(k.Root, e5Find(t, k.Root, "evil.exe", "of M00001")))
+	damaged := e5Find(t, k.Root, "evil.exe", "of M00002")
+	b, _ := os.ReadFile(filepath.Join(k.Root, damaged))
+	b[len(b)/2] ^= 0x01
+	os.WriteFile(filepath.Join(k.Root, damaged), b, 0o600)
+	fin, err := e.FinishAsPartial(k.RunID)
+	if err != nil {
+		t.Fatalf("Finish as partial: %v", err)
+	}
+	if fin.Counts.Exported != 2 || fin.Counts.Failed != 0 || fin.Counts.NotAttempted != 1 {
+		t.Fatalf("Finish as partial: %s %+v", fin.Label, fin.Counts)
+	}
+	man = manifestOf(t, k.Root)
+	for i, want := range []string{"no longer in the export folder", "damaged when the computer stopped"} {
+		ent := man["messages"].([]any)[i].(map[string]any)
+		if ent["status"] != statusExported || len(ent["files"].([]any)) != 2 || !e6advNote(ent, `"evil.exe"`, want) {
+			t.Errorf("message %d: %v, want exported with its original and invoice.pdf, and a note that says %q", i+1, ent, want)
+		}
+	}
+	bad, missing, extra := sumsCheck(t, k.Root)
+	if len(bad)+len(missing) != 0 || len(extra) != 1 || extra[0] != damaged {
+		t.Errorf("sums: changed %v, missing %v, unlisted %v: the damaged attachment must be the one file the sums do not list", bad, missing, extra)
+	}
+	if failed, _ := e.RunFailed(k.RunID); len(failed) != 0 {
+		t.Errorf("a lost attachment is offered for retry: %v", failed)
+	}
+}
+
+// covers: MA-424, MA-520, R29
+// E6-AO4 (E6-AI1), the check's half: Check this export names an extracted attachment that changed or
+// is missing as what it is, a convenience made from the .eml beside it that says nothing about that
+// .eml, with a remedy that says every original is as it was; a clean export with attachments is GREEN
+// (the positive twin), and a changed original, alone or with a changed attachment, is the usual RED.
+func TestCheckThisExportNamesAnExtractedAttachmentAsOne(t *testing.T) {
+	fresh := func() (*CopyExportEnv, *CopyResult) {
+		e, src := newCEEnv(t), newFakeSrc()
+		src.body = func(id string) []byte {
+			return e6Mime(id, "two files", e6Part{name: "a.pdf", ctype: "application/pdf", body: []byte("%PDF a of " + id)},
+				e6Part{name: "b.pdf", ctype: "application/pdf", body: []byte("%PDF b of " + id)})
+		}
+		p := cePlan(t, e, src, ceMsgs(2))
+		p.Options.Attachments = true
+		return e, mustRun(t, e, p, src)
+	}
+	e, res := fresh()
+	chk, err := e.CheckExport(res.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !chk.OK || chk.Files != 8 || chk.DerivedOnly || len(chk.Problems) != 0 {
+		t.Fatalf("a clean export with extracted attachments: %+v, want GREEN with 8 files (2 messages of three, README, manifest)", chk)
+	}
+
+	damage := func(t *testing.T, e *CopyExportEnv, res *CopyResult, attachments, eml bool) *CopyCheck {
+		t.Helper()
+		if attachments {
+			changed, gone := e5Find(t, res.Root, "a.pdf", "of M00001"), e5Find(t, res.Root, "b.pdf", "of M00002")
+			b, _ := os.ReadFile(filepath.Join(res.Root, changed))
+			os.WriteFile(filepath.Join(res.Root, changed), append(b, '!'), 0o600)
+			os.Remove(filepath.Join(res.Root, gone))
+		}
+		if eml {
+			p := filepath.Join(res.Root, e5Find(t, res.Root, ".eml", "m00002@x"))
+			b, _ := os.ReadFile(p)
+			os.WriteFile(p, append(b, '!'), 0o600)
+		}
+		chk, err := e.CheckExport(res.RunID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return chk
+	}
+	e, res = fresh()
+	chk = damage(t, e, res, true, false)
+	said := strings.Join(chk.Problems, "\n")
+	if chk.OK || !chk.DerivedOnly || chk.ReadableOnly || len(chk.Changed) != 1 || len(chk.Missing) != 1 || chk.Remedy != checkDerivedRemedy ||
+		!strings.Contains(said, "the extracted attachment "+chk.Changed[0]+" has changed") || !strings.Contains(said, "the extracted attachment "+chk.Missing[0]+" is missing") ||
+		!strings.Contains(said, "says nothing about that .eml") || !strings.Contains(chk.Remedy, "Every original in this folder is as it was") {
+		t.Errorf("a changed and a missing attachment: %+v", chk)
+	}
+
+	e, res = fresh()
+	chk = damage(t, e, res, false, true)
+	if chk.OK || chk.DerivedOnly || chk.Remedy != checkRemedy || strings.Contains(strings.Join(chk.Problems, "\n"), "extracted attachment") {
+		t.Errorf("a changed original: %+v, want the usual remedy and no word of attachments", chk)
+	}
+
+	e, res = fresh()
+	chk = damage(t, e, res, true, true)
+	if chk.OK || chk.DerivedOnly || chk.Remedy != checkRemedy {
+		t.Errorf("a changed original with changed attachments: %+v, want the usual remedy", chk)
 	}
 }
 

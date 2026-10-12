@@ -12,6 +12,7 @@ import (
 	"hash"
 	"io"
 	"io/fs"
+	"path"
 	"slices"
 	"sort"
 	"strings"
@@ -245,11 +246,17 @@ func (f *ceFinish) presence(rehash bool) error {
 		// copy is dropped from the record, so the sums never list a file that is not the one
 		// that was written (MA-513). It is looked up first and the original after, so an
 		// original that is gone too still makes the message failed: the later amendment wins.
-		if slices.ContainsFunc(m.Files, func(x ceFileRec) bool { return x.Role == roleDerivedHTML }) {
+		// An extracted attachment is a convenience the same way: one that is gone (an antivirus
+		// product's quarantine takes the files a sender chose first) or damaged is dropped from the
+		// record and named in a note, and the message stays exported with its original and its other
+		// files, where a retry would only extract the same file to lose it again (E6-AO4).
+		isDerived := func(x ceFileRec) bool { return x.Role == roleDerivedHTML || x.Role == roleDerivedAttach }
+		if slices.ContainsFunc(m.Files, isDerived) {
 			kept := make([]ceFileRec, 0, len(m.Files))
 			var reason string
+			var lost []string
 			for _, file := range m.Files {
-				if file.Role != roleDerivedHTML {
+				if !isDerived(file) {
 					kept = append(kept, file)
 					continue
 				}
@@ -257,19 +264,26 @@ func (f *ceFinish) presence(rehash bool) error {
 				if err != nil {
 					return err
 				}
-				if why == "" {
+				switch {
+				case why == "":
 					kept = append(kept, file)
-				} else if reason == "" {
+				case file.Role == roleDerivedAttach:
+					lost = append(lost, fmt.Sprintf("%s%q is not listed in this export: %s; %s", attachNotePrefix, plainText(path.Base(file.Path)), why, attachAuthorityEML))
+				case reason == "":
 					reason = why
 				}
 			}
-			if reason != "" {
-				amend = append(amend, ceMsgLine{T: "msg", N: m.N, Status: statusOriginalOnly, Amend: true, Files: kept,
-					Notes: append(slices.Clone(m.Notes), noteReadableFailed+reason)})
+			if reason != "" || len(lost) > 0 {
+				status, notes := m.Status, slices.Clone(m.Notes)
+				if reason != "" {
+					status = statusOriginalOnly
+					notes = append(notes, noteReadableFailed+reason)
+				}
+				amend = append(amend, ceMsgLine{T: "msg", N: m.N, Status: status, Amend: true, Files: kept, Notes: append(notes, lost...)})
 			}
 		}
 		for _, file := range m.Files {
-			if file.Role == roleDerivedHTML {
+			if file.Role == roleDerivedHTML || file.Role == roleDerivedAttach {
 				continue
 			}
 			fi, err := f.fs.Lstat(file.Path)
