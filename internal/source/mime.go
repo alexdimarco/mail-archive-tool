@@ -346,6 +346,10 @@ func (w *walker) container(p partInfo, raw []byte, depth int) {
 	// kept unread and the reader starts again at the next delimiter. cur is what the reader
 	// runs over, base the number of delimiters before it, read the parts it has given.
 	sc := scanParts(raw, boundary)
+	// The data ends inside this container's last part only when this container is the message's
+	// own or its own part was the one the data ended in: a nested multipart that merely lacks its
+	// closing delimiter, inside a message that goes on, is not a cut message (MS2-AC3, round 2).
+	dataEndsHere := depth <= 1 || w.cut
 	cur, base, read := raw, 0, 0
 	mr := textproto.NewMultipartReader(bytes.NewReader(cur), boundary)
 	for {
@@ -379,14 +383,16 @@ func (w *walker) container(p partInfo, raw []byte, depth int) {
 			return
 		}
 		read++
-		w.partOf(part, depth, raw, sc.end(raw, base+read-1))
+		w.partOf(part, depth, raw, sc.end(raw, base+read-1), dataEndsHere)
 	}
 }
 
 // partOf reads one part of a container. parent is the container's body and end where this
 // part's body ends in it: the part's raw is kept as a window onto parent, not as a copy, so
-// nesting does not hold one copy of the message per level (MS2-AO2).
-func (w *walker) partOf(part *textproto.Part, depth int, parent []byte, end int) {
+// nesting does not hold one copy of the message per level (MS2-AO2). dataEndsHere says that
+// parent runs to the end of the message's data, so a part the reader found unfinished is one
+// the data ended in.
+func (w *walker) partOf(part *textproto.Part, depth int, parent []byte, end int, dataEndsHere bool) {
 	w.parts++ // the root is not counted: maxParts bounds the parts of a message, not the message
 	w.site = fmt.Sprintf("part %d", w.parts)
 	if w.v1Stopped {
@@ -404,7 +410,7 @@ func (w *walker) partOf(part *textproto.Part, depth int, parent []byte, end int)
 	// A part the data ended in the middle of (no closing delimiter, or a message cut off) is
 	// cut short, whatever it decodes to: the multipart reader says so with an unexpected
 	// EOF, and a leaf under it is kept as a cut part, never as a whole one (MS2-AC3).
-	w.cut = errors.Is(rerr, io.ErrUnexpectedEOF)
+	w.cut = dataEndsHere && errors.Is(rerr, io.ErrUnexpectedEOF)
 	w.entity(part.Header, raw, depth+1)
 	w.cut = false
 }
@@ -430,6 +436,15 @@ type headSpan struct{ idx, bodyStart, bodyEnd, next int }
 type partScan struct {
 	starts []int
 	over   []headSpan
+	nl     string // the line break the reader takes before a delimiter: CRLF, or LF
+}
+
+// beforeBreak is e less the line break nl that ends body[from:e], when it ends in one.
+func beforeBreak(body []byte, from, e int, nl string) int {
+	if e-from >= len(nl) && string(body[e-len(nl):e]) == nl {
+		return e - len(nl)
+	}
+	return e
 }
 
 // end is the offset in body at which the part of ordinal j ends: just before the line
@@ -438,23 +453,43 @@ func (s partScan) end(body []byte, j int) int {
 	if j+1 >= len(s.starts) {
 		return len(body)
 	}
-	e := s.starts[j+1]
-	switch {
-	case e >= 2 && body[e-2] == '\r' && body[e-1] == '\n':
-		return e - 2
-	case e >= 1 && body[e-1] == '\n':
-		return e - 1
-	}
-	return e
+	return beforeBreak(body, 0, s.starts[j+1], s.nl)
 }
 
-// scanParts reads a container's body line by line once. Delimiter lines are the multipart
-// reader's own: "--boundary" and nothing but white space after it, and the closing line
-// "--boundary--". A part's header runs from its delimiter line to the first blank line.
+// nextDashLine is the first line start at or after i (itself a line start) that begins with
+// dash and where the multipart reader can take it for a delimiter. Outside a part's header
+// the reader finds a delimiter after the container's line break nlDash starts with, or at
+// the start of a part's empty body, and before the first delimiter on any line (first); a
+// "--boundary" line that follows a lone LF in a CRLF container is part of a body to it. The
+// search is for that break and boundary together, so a body of nothing but line breaks costs
+// what a search for a short string costs, not a step per line (MS2-AO3, second round).
+func nextDashLine(body []byte, i int, dash, nlDash []byte, first, emptyBody bool) int {
+	nl := nlDash[:len(nlDash)-len(dash)]
+	if bytes.HasPrefix(body[i:], dash) &&
+		(first || emptyBody || i >= len(nl) && string(body[i-len(nl):i]) == string(nl)) {
+		return i
+	}
+	sep := nlDash
+	if first {
+		sep = nlDash[len(nl)-1:] // "\n--boundary": before the first delimiter every line is read
+	}
+	k := bytes.Index(body[i:], sep)
+	if k < 0 {
+		return -1
+	}
+	return i + k + len(sep) - len(dash)
+}
+
+// scanParts reads a container's body once. Delimiter lines are the multipart reader's own:
+// "--boundary" and nothing but white space after it, after the break the reader takes (CRLF,
+// or LF when the first delimiter line ends in one), and the closing line "--boundary--". A
+// part's header runs from its delimiter line to the first blank line; the scan reads that
+// line by line, and a body not at all but for the next delimiter. The closing line ends it.
 func scanParts(body []byte, boundary string) partScan {
 	dash := []byte("--" + boundary)
-	var sc partScan
-	idx, nl := -1, "\r\n"
+	nlDash := append([]byte("\r\n"), dash...)
+	sc := partScan{nl: "\r\n"}
+	idx := -1
 	var hdrBytes, bodyStart int
 	open := false // a part's header is being measured or its body skipped
 	finish := func(next int) {
@@ -464,16 +499,18 @@ func scanParts(body []byte, boundary string) partScan {
 		if bodyStart < 0 {
 			bodyStart = next // the header ran into the next delimiter: no body
 		}
-		end := next
-		switch {
-		case end-bodyStart >= 2 && body[end-2] == '\r' && body[end-1] == '\n':
-			end -= 2
-		case end-bodyStart >= 1 && body[end-1] == '\n':
-			end--
-		}
+		end := beforeBreak(body, bodyStart, next, sc.nl)
 		sc.over = append(sc.over, headSpan{idx: idx, bodyStart: bodyStart, bodyEnd: max(end, bodyStart), next: next})
 	}
 	for i := 0; i < len(body); {
+		inHeader := open && bodyStart < 0 // else only a delimiter line matters
+		if !inHeader {
+			j := nextDashLine(body, i, dash, nlDash, idx < 0, open && i == bodyStart)
+			if j < 0 {
+				break
+			}
+			i = j
+		}
 		lineEnd := len(body)
 		if j := bytes.IndexByte(body[i:], '\n'); j >= 0 {
 			lineEnd = i + j + 1
@@ -485,28 +522,30 @@ func scanParts(body []byte, boundary string) partScan {
 			// LF); the closing line has "--" after the dash boundary.
 			rest := bytes.TrimLeft(line[len(dash):], " \t")
 			if idx < 0 && string(rest) == "\n" {
-				nl = "\n"
+				sc.nl, nlDash = "\n", nlDash[1:]
 			}
 			closing := false
 			if r, ok := bytes.CutPrefix(line[len(dash):], []byte("--")); ok {
 				r = bytes.TrimLeft(r, " \t")
-				closing = len(r) == 0 || string(r) == nl
+				closing = len(r) == 0 || string(r) == sc.nl
 			}
-			if delim := string(rest) == nl; delim || closing {
+			if delim := string(rest) == sc.nl; delim || closing {
 				finish(i)
 				if len(sc.starts) <= maxParts+1 {
 					sc.starts = append(sc.starts, i)
 				}
-				open = delim
-				if open {
-					idx++
-					hdrBytes, bodyStart = 0, -1
+				if closing {
+					open = false
+					break // the reader ends here: what follows is not part of any part
 				}
+				open = true
+				idx++
+				hdrBytes, bodyStart = 0, -1
 				i = lineEnd
 				continue
 			}
 		}
-		if open && bodyStart < 0 {
+		if inHeader {
 			if len(bytes.TrimRight(line, "\r\n")) == 0 {
 				bodyStart = lineEnd
 			} else {
