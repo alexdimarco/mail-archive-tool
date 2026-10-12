@@ -4,6 +4,8 @@
 package export
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log"
@@ -268,7 +270,11 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	// differing fingerprint is no evidence of a distinct message. And a partly-read
 	// record's fingerprint was computed over zero attachments, so a healthy read of
 	// the same item is compared in that form too (§4.7.4(1)).
+	// An unparsed stub's fingerprint is that of the constant stub, so a different
+	// fingerprint says nothing about a healthy read of the same key: it heals the stub in
+	// place (FC25), it is not a distinct message reusing the Message-ID.
 	for !physResolved && len(m.ReadGaps) == 0 && seen && prev.Fingerprint != "" && !sameFingerprint(prev, m, fp) &&
+		!prev.HasLabels([]string{state.LabelUnparsed}) &&
 		!(e.DedupMailboxWide && prev.FpScheme != state.FpSchemeCurrent && !identityMultiRecord) {
 		// A DIFFERENT message reused this key's Message-ID: file it under a
 		// fingerprint-qualified key. The separator is NUL (state.Qualify), never a
@@ -284,7 +290,14 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 
 	retry := false
 	if e.Mode == Incremental && seen {
-		if !prev.Fillable() {
+		// An unparsed stub is terminal for the parser generation that gave up on it: a
+		// newer parser re-examines it once (FC25). An older build's collapsed placeholder
+		// stands for no message, so the first stub this build mints at its key replaces it
+		// instead of being skipped as "already archived": the re-class (FC27) must never
+		// hide the loss of a stub this build mints (K2).
+		stale := prev.StaleUnparsed(state.ParserGenCurrent)
+		replacesLegacy := prev.IsLegacyPlaceholder() && hasReadGap(m, state.LabelUnparsed)
+		if !prev.Fillable() && !stale && !replacesLegacy {
 			// A mailbox-wide observation of an already-archived, complete message
 			// writes nothing, but this run still SAW the message: stamp its timeline
 			// (LastSeen=thisRun, Present) and, when its observed folder differs,
@@ -321,16 +334,20 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 			return false, nil
 		}
 		e.Stats.Retried++
-		if !probeImproves(m, prev.Missing) {
+		if !replacesLegacy && !probeImproves(m, retryLabels(prev, stale)) {
 			e.Stats.StillIncomplete++
 			if examinedBy(m, prev) { // re-read, as above (MC12)
 				e.Manifest.StampParseScheme(key, state.ParseSchemeCurrent)
 			}
 			// Still partly read: it counts as a partly-read record seen this run, and
 			// a Locator an older binary's save dropped is restored from the capture
-			// (§4.2).
+			// (§4.2). A stub the current parser also gave up on is stamped with this
+			// generation, so it is not re-examined again until the parser changes.
 			e.countReadGaps(m)
 			e.Manifest.SetLocator(key, m.Locator)
+			if stale {
+				e.Manifest.StampParserGen(key, state.ParserGenCurrent)
+			}
 			return false, nil
 		}
 		retry = true
@@ -510,6 +527,14 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	// bytes change, so a healthy input is what it was (P14).
 	if rec.Unreadable() {
 		rec.Locator = m.Locator
+	}
+	// An unparsed stub carries the parser generation that gave up on it and the digest
+	// of its bytes (FC25); no other record does (P14).
+	if hasReadGap(m, state.LabelUnparsed) {
+		rec.ParserGen = state.ParserGenCurrent
+		if len(m.Raw) > 0 {
+			rec.RawDigest = rawDigest(m.Raw)
+		}
 	}
 	if rec.HasIssues() {
 		rec.Subject = m.Subject
@@ -806,9 +831,33 @@ func (e *Exporter) observeArchived(key string, prev state.Record, folderKey stri
 // file is written, rendered or deleted, so no fixity can mismatch and no crash
 // window exists.
 func (e *Exporter) supersedePartial(store, key string, m *model.Message) {
-	if len(m.ReadGaps) == 0 && m.Locator != "" {
+	if len(m.ReadGaps) != 0 {
+		return
+	}
+	if m.Locator != "" {
 		e.Manifest.SupersedePartial(store, m.Locator, key)
 	}
+	// A healthy capture of bytes an earlier run could not parse settles that stub the
+	// same way (§4.7.4(4)); the bytes are hashed only when the archive holds a stub.
+	if len(m.Raw) > 0 && e.Manifest.HasUnparsedStubs() {
+		e.Manifest.SupersedeUnparsed(store, rawDigest(m.Raw), key)
+	}
+}
+
+// rawDigest is the sha-256 (hex) of a message's raw bytes.
+func rawDigest(raw []byte) string {
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
+}
+
+// retryLabels are the labels a re-examination looks for improvement in: the record's
+// fillable gaps, and for an unparsed stub of an older parser generation that label
+// too (it improves when the new read no longer carries it).
+func retryLabels(prev state.Record, stale bool) []string {
+	if !stale {
+		return prev.Missing
+	}
+	return append(append([]string{}, prev.Missing...), state.LabelUnparsed)
 }
 
 // keepDegraded is the KEEP guard (P15, FC5). A capture that carries read-gap
@@ -821,7 +870,9 @@ func (e *Exporter) supersedePartial(store, key string, m *model.Message) {
 // partly-read record: that capture goes on to heal or re-examine it.
 func (e *Exporter) keepDegraded(store, folderKey string, folderPath []string, m *model.Message, baseKey string) bool {
 	prevKey, prev, ok := e.archivedRecordFor(store, m, baseKey)
-	if !ok || prev.HasLabels(m.ReadGaps) {
+	// A legacy placeholder is no archived copy of anything (it stands for no message in
+	// particular), so a stub is never held back for it (K2).
+	if !ok || prev.HasLabels(m.ReadGaps) || prev.IsLegacyPlaceholder() {
 		return false
 	}
 	seenAt := e.runStamp()

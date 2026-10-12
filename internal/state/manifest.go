@@ -182,7 +182,49 @@ type Record struct {
 	// write and, in memory, on every re-read (MA-329's golden carries it since the
 	// owner's decision of 2026-10-11).
 	ParseScheme int `json:"parse_scheme,omitempty"`
+
+	// ParserGen and RawDigest (additive; fault-isolation §4.2, FC25) stamp an unparsed
+	// stub, the record of a message whose MIME parse gave up: ParserGen is the parser
+	// generation that failed on it (unparsed is terminal FOR THAT GENERATION: same
+	// bytes, same parser, same result, so a newer parser re-examines it once), and
+	// RawDigest the sha-256 (hex) of its raw bytes, which a later healthy record of the
+	// same bytes finds the stub by (it is superseded, metadata only). Only an unparsed
+	// record carries them: a healthy input's records are byte-identical to before
+	// (P14), Load drops them from any other, and an older binary's save drops them
+	// from a stub, which the next run reads as generation 0 and re-examines once.
+	ParserGen int    `json:"parser_gen,omitempty"`
+	RawDigest string `json:"raw_sha256,omitempty"`
 }
+
+// ParserGenCurrent is the parser generation this build writes on an unparsed stub. It
+// is the parse scheme: a build that changes how a message is parsed bumps the scheme,
+// and so re-examines every stub the older parser gave up on, once (FC25).
+const ParserGenCurrent = ParseSchemeCurrent
+
+// validDigest says s is a lower-case hex sha-256.
+func validDigest(s string) bool {
+	if len(s) != 64 {
+		return false
+	}
+	for _, c := range s {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// StaleUnparsed reports whether the record is an unparsed stub that an older parser
+// generation than gen gave up on: a run re-examines it once (FC25). A stub no binary
+// stamped (an older binary's save dropped the field) is generation 0.
+func (r Record) StaleUnparsed(gen int) bool {
+	return r.hasLabel(LabelUnparsed) && r.ParserGen < gen
+}
+
+// IsLegacyPlaceholder reports whether the record is an older build's collapsed
+// "(unreadable message)" record, re-classed to the info label legacy-placeholder
+// (FC27): it stands for no message in particular.
+func (r Record) IsLegacyPlaceholder() bool { return r.hasLabel(LabelLegacyPlaceholder) }
 
 // ParseSchemeCurrent is the parser scheme this build writes and stamps. Slice S1 of
 // design-mime-fidelity bumps it to 1: it routes identity, stems and ContentHash but
@@ -297,6 +339,9 @@ type Manifest struct {
 	// exactly the records that carry an unreadable:* label and a Locator — a
 	// handful, so a lookup per exported message costs nothing on a healthy input.
 	byLocator map[string]string
+	// byRawDigest is the same for unparsed stubs: token\x00raw digest → key, built
+	// lazily over the records that carry both the label and a digest (FC25).
+	byRawDigest map[string]string
 
 	// byIdent is the mailbox-wide identity index (message identity → every
 	// manifest key carrying it, with that key's fingerprint), built at load and
@@ -778,6 +823,14 @@ func parseManifest(path, name string, data []byte) (*Manifest, error) {
 				r.RecoveredBy, changed = "", true
 			}
 		}
+		// The parser stamp and the raw digest belong to an unparsed stub only (FC25):
+		// elsewhere they are stray, and a digest that is no sha-256 is not one.
+		if !r.hasLabel(LabelUnparsed) && (r.ParserGen != 0 || r.RawDigest != "") {
+			r.ParserGen, r.RawDigest, changed = 0, "", true
+		}
+		if r.RawDigest != "" && !validDigest(r.RawDigest) {
+			r.RawDigest, changed = "", true
+		}
 		if changed {
 			m.Entries[key] = r
 		}
@@ -839,7 +892,95 @@ func (m *Manifest) Add(key string, r Record) {
 		}
 		m.locatorAddLocked(key, r)
 	}
+	if m.byRawDigest != nil {
+		if old, ok := m.Entries[key]; ok {
+			m.digestDropLocked(key, old)
+		}
+		m.digestAddLocked(key, r)
+	}
 	m.Entries[key] = r
+}
+
+// digestAddLocked indexes r when it is an unparsed stub with a raw digest. The caller
+// holds m.mu and m.byRawDigest is built.
+func (m *Manifest) digestAddLocked(key string, r Record) {
+	if r.RawDigest != "" && r.hasLabel(LabelUnparsed) {
+		m.byRawDigest[locatorIndexKey(key, r.RawDigest)] = key
+	}
+}
+
+// digestDropLocked removes old's index entry when it points at key.
+func (m *Manifest) digestDropLocked(key string, old Record) {
+	if old.RawDigest == "" {
+		return
+	}
+	dk := locatorIndexKey(key, old.RawDigest)
+	if m.byRawDigest[dk] == key {
+		delete(m.byRawDigest, dk)
+	}
+}
+
+// buildDigestIndexLocked builds byRawDigest on first use. The caller holds m.mu.
+func (m *Manifest) buildDigestIndexLocked() {
+	if m.byRawDigest != nil {
+		return
+	}
+	m.byRawDigest = map[string]string{}
+	for k, r := range m.Entries {
+		m.digestAddLocked(k, r)
+	}
+}
+
+// HasUnparsedStubs reports whether the manifest holds any unparsed stub with a raw
+// digest, so a caller does not hash the bytes of every healthy message of an archive
+// that has none (the index is built once; this is a map length).
+func (m *Manifest) HasUnparsedStubs() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.buildDigestIndexLocked()
+	return len(m.byRawDigest) > 0
+}
+
+// SupersedeUnparsed settles an unparsed stub whose bytes a later capture parsed whole
+// (§4.7.4(4), FC25): the same-token stub with this RawDigest has its unparsed label
+// re-classed to the info label "superseded" and RecoveredBy set to newKey, in one
+// record update. Like SupersedePartial it is METADATA ONLY: no file is written,
+// rendered or deleted. It never touches the record at newKey itself, and reports
+// whether a stub was superseded.
+func (m *Manifest) SupersedeUnparsed(token, digest, newKey string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.buildDigestIndexLocked()
+	key, ok := m.byRawDigest[token+keySeparator+digest]
+	if !ok || key == newKey {
+		return false
+	}
+	r, ok := m.Entries[key]
+	if !ok || !r.hasLabel(LabelUnparsed) {
+		return false
+	}
+	m.digestDropLocked(key, r)
+	r.Missing = nil
+	r.Terminal = []string{LabelSuperseded}
+	r.RecoveredBy, r.ParserGen, r.RawDigest = newKey, 0, ""
+	m.Entries[key] = r
+	return true
+}
+
+// StampParserGen records that this run re-examined the unparsed stub at key under
+// parser generation gen and it still could not be parsed: the generation is raised to
+// gen (never lowered), so the stub is not re-examined again until the parser changes
+// (FC25). It reports whether the record changed.
+func (m *Manifest) StampParserGen(key string, gen int) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.Entries[key]
+	if !ok || !r.hasLabel(LabelUnparsed) || r.ParserGen >= gen {
+		return false
+	}
+	r.ParserGen = gen
+	m.Entries[key] = r
+	return true
 }
 
 // locatorIndexKey is the byLocator key of a record under key: the store token
@@ -1185,6 +1326,11 @@ func (m *Manifest) Delete(key string) {
 	if m.byLocator != nil {
 		if old, ok := m.Entries[key]; ok {
 			m.locatorDropLocked(key, old)
+		}
+	}
+	if m.byRawDigest != nil {
+		if old, ok := m.Entries[key]; ok {
+			m.digestDropLocked(key, old)
 		}
 	}
 	m.identRemoveLocked(key)
@@ -1680,6 +1826,7 @@ func (m *Manifest) CollapseByIdentity(sameContent func(relA, relB string) bool, 
 	m.Entries = newEntries
 	m.byPath = nil // export paths unchanged, but the reverse map is rebuilt lazily
 	m.byLocator = nil
+	m.byRawDigest = nil
 	m.buildIdentIndexLocked()
 	m.Collapsed = len(losses)
 	return losses, remap
