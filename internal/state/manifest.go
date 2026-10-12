@@ -236,13 +236,10 @@ func (r Record) IsLegacyPlaceholder() bool { return r.hasLabel(LabelLegacyPlaceh
 // design-mime-fidelity bumps it to 1: it routes identity, stems and ContentHash but
 // registers no fidelity note, so no record is yet "damaged" by it.
 //
-// Slice S2 introduces the first fidelity notes, under ParseSchemeFidelity, and should
-// move this to 2. It does not: MA-329's golden (internal/app/testdata/p14-golden.json)
-// holds parse_scheme 1 on its 46 records, and moving the stamp is a baseline change that
-// is the owner's to accept. Until it moves, a record written under this build carries
-// 1, and a re-read that shows a note newer than that leaves it unstamped (examinedBy), so
-// the repair slice sees it as not yet examined.
-const ParseSchemeCurrent = 1
+// Slice S2 introduces the first fidelity notes, under ParseSchemeFidelity, and moves
+// this to 2 (owner-approved 2026-10-12, rulings §13.29): MA-329's golden
+// (internal/app/testdata/p14-golden.json) holds parse_scheme 2 on its 46 records.
+const ParseSchemeCurrent = 2
 
 // ParseSchemeFidelity is the parse scheme that introduced slice S2's fidelity notes
 // (design-mime-fidelity §4.10): every note it registers carries it as Since.

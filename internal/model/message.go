@@ -73,6 +73,10 @@ type IdentityTerms struct {
 	IdentityDate                                         time.Time
 	HTMLBody, PlainBody, RTFBody                         string
 	Attachments                                          []IdentityAttachment
+	// NoIdentityDate says the identity has no date, so identityTime does not fall back
+	// to the message's own Date(). The stub identity of a message the v1 parse panicked
+	// on is dateless, and the message shown under it (the walker's) carries display dates.
+	NoIdentityDate bool
 }
 
 // ParseNote is one fidelity event a parse recorded: a way the message differs
@@ -298,6 +302,9 @@ func (m *Message) Date() time.Time {
 func (m *Message) identityTime(t IdentityTerms) time.Time {
 	if !t.IdentityDate.IsZero() {
 		return t.IdentityDate
+	}
+	if t.NoIdentityDate {
+		return time.Time{}
 	}
 	return m.Date()
 }

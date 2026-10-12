@@ -18,5 +18,5 @@ func unreadableStub() *model.Message { return &model.Message{Subject: stubSubjec
 // ESC-1), and never the frozen file. data is the message's raw bytes, which a later
 // stub may fold in.
 func stubIdentityTerms(data []byte) model.IdentityTerms {
-	return model.IdentityTerms{Subject: stubSubject}
+	return model.IdentityTerms{Subject: stubSubject, NoIdentityDate: true}
 }

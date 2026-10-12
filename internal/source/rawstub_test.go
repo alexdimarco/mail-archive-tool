@@ -18,6 +18,35 @@ func poisoned(t *testing.T) {
 	t.Cleanup(restore)
 }
 
+// covers: MA-318, R1, R27
+// With the walker on, a message that panics BOTH parsers (the injection fires in v1 and
+// in the walk) is the raw-preserving stub with the stub identity; one that panics v1 only
+// shows the walker's content under that identity (the approved S2 behaviour).
+func TestAMessagePanickingBothParsersIsARawStubWithTheWalkerOn(t *testing.T) {
+	if !fidelityContent {
+		t.Fatal("the fidelity walker is off: this proves nothing")
+	}
+	poisoned(t)
+	data := []byte("From: a@example.com\r\nSubject: POISON both\r\nMessage-ID: <both@x>\r\nDate: Mon, 03 Mar 2025 09:00:00 +0000\r\n\r\nbody\r\n")
+	m := ParseRFC822(data)
+	if m.Subject != stubSubject || len(m.ReadGaps) != 1 || m.ReadGaps[0] != state.LabelUnparsed || !bytes.Equal(m.Raw, data) {
+		t.Fatalf("a message panicking both parsers = %+v; want the raw-preserving stub", m)
+	}
+	if m.Identity() != model.LegacyStubIdentity() {
+		t.Errorf("identity %q, want the stub's %q", m.Identity(), model.LegacyStubIdentity())
+	}
+
+	// v1 only: the walker reads it.
+	walkFault = nil
+	v1only := ParseRFC822(data)
+	if v1only.Subject != "POISON both" || len(v1only.ReadGaps) != 0 || !hasParseGap(v1only, state.GapKindIdentityStub) {
+		t.Errorf("a message panicking v1 only = subject %q, gaps %v; want the walker's content with an identity-stub gap", v1only.Subject, v1only.ReadGaps)
+	}
+	if v1only.Identity() != model.LegacyStubIdentity() {
+		t.Errorf("identity %q, want the stub's %q", v1only.Identity(), model.LegacyStubIdentity())
+	}
+}
+
 // covers: MA-318, R1, R3, R7, R10, S46
 // A MIME-panicking message keeps its bytes (design-fault-isolation §4.5, F33, FC25): it
 // is the "(unreadable message)" stub with Raw, the unparsed label, its transport headers

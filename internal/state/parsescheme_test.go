@@ -2,6 +2,7 @@ package state
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -28,7 +29,7 @@ func TestStampParseSchemeOnlyRaises(t *testing.T) {
 		t.Errorf("ParseScheme = %d, want %d", r.ParseScheme, ParseSchemeCurrent)
 	}
 	raw, _ = json.Marshal(m.Entries["k"])
-	if !strings.Contains(string(raw), `"parse_scheme":1`) {
+	if !strings.Contains(string(raw), fmt.Sprintf(`"parse_scheme":%d`, ParseSchemeCurrent)) {
 		t.Errorf("a stamped record does not serialise parse_scheme: %s", raw)
 	}
 	if m.StampParseScheme("k", ParseSchemeCurrent) {
