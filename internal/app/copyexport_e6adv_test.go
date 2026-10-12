@@ -620,6 +620,27 @@ func TestThePlansLongestPathCountsAnExtractedAttachmentsPath(t *testing.T) {
 }
 
 // covers: MA-424, R1
+// E6-AO2's read-through (found on re-reading the fix): an entry is read through to nowhere before it is
+// written, which can take seconds for a large one and writes nothing, so it is counted as progress for
+// the no-progress breaker; a read-through that was not would be read as a stalled message after the
+// window. The read-through of an entry bumps the run's watch.
+func TestTheReadThroughOfAZipEntryCountsAsProgress(t *testing.T) {
+	zb := e6Zip(t, e6ZipEntry{name: "a.txt", data: []byte(strings.Repeat("some text ", 1000))})
+	zr, src, err := openZip(zb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := &attachWriter{r: &CopyRun{watch: &ceWatch{}}, ctx: t.Context()}
+	n, why, err := w.expand(zr.File[0], src, (&CopyExportEnv{}).zipBounds())
+	if err != nil || why != "" || n != 10000 {
+		t.Fatalf("the read-through: %d bytes, %q, %v", n, why, err)
+	}
+	if w.r.watch.progress.Load() == 0 {
+		t.Error("the read-through of an entry was not counted as progress")
+	}
+}
+
+// covers: MA-424, R1
 // E6-AO10, E6-AO11, E6-AO5: README says, with Extract attachments on, what the extracted files lack and
 // where the preview cannot see. The files are written with no download marker (Mark of the Web on
 // Windows, the quarantine attribute on macOS), so Office's Protected View and Gatekeeper do not warn when

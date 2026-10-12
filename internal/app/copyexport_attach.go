@@ -167,11 +167,15 @@ type attachSpaceWriter struct {
 	w    io.Writer
 	left int64
 	stop func() bool // nil: never
+	tick func()      // nil: none; the run's progress, for a read-through that writes nothing
 }
 
 func (s *attachSpaceWriter) Write(p []byte) (int, error) {
 	if s.stop != nil && s.stop() {
 		return 0, errAttachStopped
+	}
+	if s.tick != nil {
+		s.tick()
 	}
 	if int64(len(p)) > s.left {
 		return 0, errAttachNoSpace
@@ -587,7 +591,7 @@ func (w *attachWriter) zipEntries(data []byte, bd attachBounds) {
 // data. Its bytes count toward the message's total whether or not the entry is then kept.
 func (w *attachWriter) expand(f *zip.File, src *zipSource, bd attachBounds) (n int64, why string, err error) {
 	src.read = 0
-	n, err = guardStream(zipStream(f))(&attachSpaceWriter{w: io.Discard, left: math.MaxInt64, stop: w.stopped})
+	n, err = guardStream(zipStream(f))(&attachSpaceWriter{w: io.Discard, left: math.MaxInt64, stop: w.stopped, tick: w.r.watch.bump}) // it is progress, so the no-progress breaker never reads a long read-through as a stall // it is progress, so the no-progress breaker never reads a long read-through as a stall
 	if err = classifyStream(err); err != nil {
 		return n, "", err
 	}
