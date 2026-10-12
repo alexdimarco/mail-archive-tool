@@ -1,6 +1,9 @@
 package app
 
 import (
+	"encoding/binary"
+	"fmt"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -36,6 +39,67 @@ func e6advNote(ent map[string]any, phrases ...string) bool {
 		}
 	}
 	return false
+}
+
+// e6advDirectoryOnly is a zip that is only a central directory of n entries with empty names (46
+// bytes each) and its end record: 23 MB for 500,000 entries, which Go's zip reader turns into
+// about 100 MB of heap before the extraction's own cut at 1,000 entries is reached. The record's
+// count is the 16 bits Go compares, so the reader takes the directory as well formed.
+func e6advDirectoryOnly(n int) []byte {
+	b := make([]byte, 0, 46*n+22)
+	for i := 0; i < n; i++ {
+		rec := make([]byte, 46)
+		binary.LittleEndian.PutUint32(rec, 0x02014b50)
+		b = append(b, rec...)
+	}
+	end := make([]byte, 22)
+	binary.LittleEndian.PutUint32(end, 0x06054b50)
+	binary.LittleEndian.PutUint16(end[10:], uint16(n))
+	binary.LittleEndian.PutUint32(end[12:], uint32(46*n))
+	return append(b, end...)
+}
+
+// covers: MA-424, R1
+// E6-AO7 (E6-AI5, E6-AC6): the zip's list of entries is bounded before it is read whole. Go's reader
+// allocates one record for every entry of the central directory (about 200 bytes each) before the
+// extraction can cut the list at 1,000, and a zip's size bound (256 MiB) is not an entry bound, so a
+// zip of 500,000 empty entries cost about 100 MB of heap and one of 256 MiB over a gigabyte, from a
+// message the archive writer could never make (it keeps at most 10,000 parts). The directory is
+// read through a budget (4 MiB, 10,000 entries with long names and room to spare), and a zip over it is not
+// opened: one note says so, nothing is extracted, the message stays exported. A zip of 1,002
+// entries (TestArchiveZipEntriesAreExtractedWithinBounds) still has its first 1,000 extracted.
+func TestAZipsListOfEntriesIsBoundedBeforeItIsRead(t *testing.T) {
+	data := e6advDirectoryOnly(500000)
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	zr, _, err := openZip(data)
+	runtime.ReadMemStats(&after)
+	if err == nil || zr != nil {
+		t.Errorf("a zip of 500,000 entries was opened (%v)", err)
+	}
+	if grown := after.TotalAlloc - before.TotalAlloc; grown > 32<<20 {
+		t.Errorf("opening it allocated %d MiB: the whole directory was read before it was refused", grown>>20)
+	}
+
+	// the positive twin: what the archive writer can make, 10,000 entries with names of 255 bytes, opens
+	var legit []e6ZipEntry
+	for i := 0; i < 10000; i++ {
+		legit = append(legit, e6ZipEntry{name: strings.Repeat("n", 245) + fmt.Sprintf("%05d", i), store: true})
+	}
+	if zr, _, err := openZip(e6Zip(t, legit...)); err != nil || len(zr.File) != 10000 {
+		t.Errorf("a zip of 10,000 entries with long names was refused: %v", err)
+	}
+
+	res, ent, _ := e6WithZip(t, buildE6Archive(t), newCEEnv(t), data)
+	if res.Counts.Exported != 1 || res.Status != CopyStatusComplete {
+		t.Fatalf("the run: %s, %+v", res.Label, res.Counts)
+	}
+	if got := e6Extracted(t, res.Root, ent); len(got) != 0 {
+		t.Errorf("extracted %v", e6Sizes(got))
+	}
+	if !e6advNote(ent, "could not be opened", "list of entries is larger than this version reads", "the zip beside it") {
+		t.Errorf("no note says the list of entries is too large: %v", ent["notes"])
+	}
 }
 
 // covers: MA-424, R4, R1

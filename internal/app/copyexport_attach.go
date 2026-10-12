@@ -391,25 +391,45 @@ func zipReadError(err error) error {
 // which is what an entry really occupies: the compressed size in an entry's header is the
 // sender's claim, and nothing in the zip reader checks it against the stream (E6-AO2).
 type zipSource struct {
-	r    *bytes.Reader
-	read int64 // bytes read since the last reset
+	r       *bytes.Reader
+	read    int64 // bytes read since the last reset
+	listing bool  // the central directory is being read
+	budget  int64 // what listing may still read
 }
 
 func (s *zipSource) ReadAt(p []byte, off int64) (int, error) {
+	if s.listing {
+		if s.budget -= int64(len(p)); s.budget < 0 {
+			return 0, errZipDirectory
+		}
+	}
 	n, err := s.r.ReadAt(p, off)
 	s.read += int64(n)
 	return n, err
 }
 
-// openZip opens the zip's central directory under a panic guard.
+// copyZipDirBytes bounds what is read to list a zip's entries: Go's reader allocates one record
+// for every entry of the central directory (about 200 bytes each, from 46 bytes of zip) before
+// anything can cut the list at the entry bound, and the zip's own size bound (the MIME cap) is no
+// bound on that. 4 MiB lists 10,000 entries with names of 255 bytes and their extra fields with
+// room to spare (the archive writer keeps at most 10,000 parts) and costs at most about 20 MB of
+// heap, where a zip of bare 46-byte records of the cap's size cost over a gigabyte (E6-AO7).
+const copyZipDirBytes = 4 << 20
+
+// errZipDirectory is a zip whose list of entries is over copyZipDirBytes.
+var errZipDirectory = fmt.Errorf("its list of entries is larger than this version reads (%s)", bytesBound(copyZipDirBytes))
+
+// openZip opens the zip's central directory under a panic guard, reading at most copyZipDirBytes
+// to do it.
 func openZip(data []byte) (zr *zip.Reader, src *zipSource, err error) {
 	defer func() {
 		if p := recover(); p != nil {
 			zr, src, err = nil, nil, errors.New(panicReason(p))
 		}
 	}()
-	src = &zipSource{r: bytes.NewReader(data)}
+	src = &zipSource{r: bytes.NewReader(data), listing: true, budget: copyZipDirBytes}
 	zr, err = zip.NewReader(src, int64(len(data)))
+	src.listing = false
 	return zr, src, err
 }
 
