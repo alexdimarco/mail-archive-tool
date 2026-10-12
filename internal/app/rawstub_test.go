@@ -242,6 +242,43 @@ func TestAReclassDoesNotHideAStubThisBuildMinted(t *testing.T) {
 // covers: MA-318, R1
 func TestTheUnparseableFallbackStubIsLabelledUnparsedAndBounded(t *testing.T) {
 	t.Skip("MA-318 (FC25): the fallback parser's \"(unparseable message)\" stub (a message net/mail cannot read at all) also keeps its bytes and is labelled unparsed, with its text bounded to 64 KiB. Labelling it makes the KEEP guard hold back every archived record of such a message (older records carry no label), and TestMixedVersionsKeepIdentityAndStems pins that such a re-read is stamped; bounding its text moves MA-330's content golden. Both are the owner's call (rulings 0, rule 2), or MF-S2's header-fallback branch (J5); closes when the owner decides")
+	// The body, written when the fresh-eyes check of the S2b adversarial pass found this
+	// encoder empty (it would have passed vacuously when un-skipped): a message net/mail
+	// cannot read at all keeps its bytes as a record that is labelled unparsed (terminal)
+	// and stamped, and its page and index carry at most the first 64 KiB of it.
+	store := filepath.Join(tmpDir(t), "Inbox")
+	// CRLF line ends, as the corpus's fallback-no-headers.eml has: the parse reads bare LF
+	// lines differently.
+	junk := strings.ReplaceAll("just some text with no headers at all\nHEAD-TOKEN and no blank line\n"+strings.Repeat("filler line of the message\n", 5000)+"TAIL-TOKEN-BEYOND-64KIB\n", "\n", "\r\n")
+	p14Write(t, filepath.Join(store, "cur", "j:2,S"), junk)
+	out := tmpDir(t)
+	res, err := Run(context.Background(), Options{Inputs: []string{store}, Out: out, Mode: export.Incremental, Index: true, Pages: true, KeepRaw: true}, discard(), nil)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	// The archive's one record is the fallback stub (the manifest keeps a subject only
+	// for a record with a gap, so the record is found by being the only one).
+	var rec state.Record
+	n := 0
+	for _, r := range loadArchive(t, out).All() {
+		rec, n = r, n+1
+	}
+	if n != 1 || !bytes.Contains(archiveText(t, out), []byte("(unparseable message)")) {
+		t.Fatalf("%d records in the archive; want exactly 1, the fallback stub of a message net/mail cannot read", n)
+	}
+	if len(rec.Terminal) != 1 || rec.Terminal[0] != state.LabelUnparsed || rec.ParserGen != state.ParserGenCurrent || rec.RawDigest == "" {
+		t.Errorf("the fallback record = terminal %v, gen %d, digest %q; want it labelled unparsed, stamped and digested", rec.Terminal, rec.ParserGen, rec.RawDigest)
+	}
+	if res.Unparsed != 1 {
+		t.Errorf("the run counts %d unparsed; want the fallback stub listed", res.Unparsed)
+	}
+	text := archiveText(t, out)
+	if !bytes.Contains(text, []byte("HEAD-TOKEN")) {
+		t.Error("neither the page nor the index carries the start of the message")
+	}
+	if bytes.Contains(text, []byte("TAIL-TOKEN-BEYOND-64KIB")) {
+		t.Error("the page or the index holds text from beyond the 64 KiB bound")
+	}
 }
 
 // stubServer is a mailbox u1 with an OK message and a STUB message whose $value is
