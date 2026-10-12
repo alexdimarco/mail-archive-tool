@@ -467,6 +467,19 @@ func (f *ceFinish) readmeText(status CopyStatus, c CopyCounts, stop *CopyStop, f
 			}
 		}
 	}
+	if h.Options.Attachments {
+		a := f.attachFacts()
+		line("Extract attachments: %s %s from %s %s, each in a folder named like the message's file with .attachments added, beside it.", commas(a.files), plural(a.files, "file", "files"), commas(a.msgs), plural(a.msgs, "message", "messages"))
+		if a.problems > 0 {
+			line("Messages with an attachment that was not extracted, or only part of it: %s. Each has a note beginning \"attachments:\" in export-manifest.json, and the message's own file still holds the part.", commas(a.problems))
+			for _, s := range a.listed {
+				line("  - %s", s)
+			}
+			if a.problems > len(a.listed) {
+				line("  - and %s more, in the manifest.", commas(a.problems-len(a.listed)))
+			}
+		}
+	}
 	if h.Source.Kind == "archive" {
 		line("Layout: messages/<store>/<folder>/<year-month>/<date>_<time>_<subject>_<id>.eml (or .html and -attachments.zip where the archive kept no original), at most %d files to a folder; export-manifest.json lists every message and file; %s lists every file with its SHA-256.", copyFilesPerDir, copySumsName)
 	} else {
@@ -502,6 +515,9 @@ func (f *ceFinish) readmeText(status CopyStatus, c CopyCounts, stop *CopyStop, f
 	if h.Options.ReadableHTML {
 		line("- A readable copy (.html) is made by MailArchive from the .eml beside it, so that the message can be read in a browser: it carries MailArchive's own security policy (no scripts, nothing loaded from the internet) and is a convenience, not the message. It shows what MailArchive's reader could make of the message: an unusual message (an unknown character set or encoding, a part with no name) can be shown with a part missing or re-encoded, and its attachments are not in it, so when a page looks incomplete the .eml is the authoritative copy.")
 	}
+	if h.Options.Attachments {
+		line("- The files in a .attachments folder are made by MailArchive from the .eml beside them (or, where the archive kept no original, from the archived attachments zip): each attachment decoded to a file of its own. They are conveniences, not the message. A part this version could not decode is there as received, with .undecoded added to its name, and one that was cut short is there as far as it could be read, with .partial added: a note in export-manifest.json says so for each, and neither is the complete attachment.")
+	}
 	if h.Source.Kind != "archive" {
 		line("- Files whose names end .html, .attachments or .archived-page.txt, where present, are conveniences made from the original, which stays the authoritative copy.")
 	} else {
@@ -517,6 +533,10 @@ func (f *ceFinish) readmeText(status CopyStatus, c CopyCounts, stop *CopyStop, f
 	}
 	line("")
 	line("Caveats")
+	if h.Options.Attachments {
+		line("- Extracted attachments show what MailArchive's reader made of the message. A part the reader dropped is not among them, and a part it could not name has the name of its Content-ID, \"inline\" or \"attachment-\" and a number: the .eml (or the archived attachments zip) is the authoritative copy, and the complete message is in it.")
+		line("- Attachments extracted from an archived attachments zip are as the archive kept them. A zip written before MailArchive kept a text attachment's own bytes can already hold it re-encoded as UTF-8, so a file in another character set (Latin-1, say) may read differently from the one that was sent. A message forwarded as an attachment inside an Outlook data file (.pst) is kept in that zip as a few-byte stand-in, with nothing recording that the archive lost it, so this export cannot tell you which ones those are.")
+	}
 	line("- Windows Explorer and some zip tools cannot open paths over 260 characters: choose a shorter destination, or turn off Preserve folder structure, if a path is too long.")
 	line("- On FAT, exFAT and most network shares, file permissions are not kept: the drive or the share decides who can read these files. On Windows this folder inherited its destination's permissions.")
 	line("- On removable media: eject the drive before unplugging it.")
@@ -545,6 +565,47 @@ func (f *ceFinish) archiveFacts() (gone, noted, asText int) {
 		return nil
 	})
 	return gone, noted, asText
+}
+
+// attachReadmeList is how many messages with an attachment problem the README names.
+const attachReadmeList = 10
+
+// attachFacts are what the README tells of a run with Extract attachments on: how many files
+// were extracted from how many messages, and how many messages carry a note about an
+// attachment that was not extracted or only partly (the first few by subject and folder).
+type attachFacts struct {
+	files, msgs, problems int
+	listed                []string
+}
+
+func (f *ceFinish) attachFacts() attachFacts {
+	var a attachFacts
+	_ = walkMessages(f.rec.path, func(p *cePlanLine, m *ceMsgLine) error {
+		if m == nil || (m.Status != statusExported && m.Status != statusWithoutOrig && m.Status != statusOriginalOnly) {
+			return nil
+		}
+		n := 0
+		for _, file := range m.Files {
+			if file.Role == roleDerivedAttach {
+				n++
+			}
+		}
+		a.files += n
+		if n > 0 {
+			a.msgs++
+		}
+		for _, note := range m.Notes {
+			if strings.HasPrefix(note, attachNotePrefix) {
+				a.problems++
+				if len(a.listed) < attachReadmeList {
+					a.listed = append(a.listed, fmt.Sprintf("%s (%s): %s", plainText(p.Subject), p.FolderPath(), plainText(strings.TrimPrefix(note, attachNotePrefix))))
+				}
+				break
+			}
+		}
+		return nil
+	})
+	return a
 }
 
 // readableFacts counts the messages that have a readable copy and lists, by subject and folder with

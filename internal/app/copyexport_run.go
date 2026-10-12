@@ -109,6 +109,11 @@ type CopyRun struct {
 	consecServer int
 	lastWriteErr string
 	postureStop  *CopyStop // R-w2, found by the realized check before the first message
+
+	// derivedReserve is what finalization needs for the extracted attachments placed so far:
+	// their count is not in the plan, so each one's manifest entry and sums line is added to
+	// the reserve as it is written (slice E6; budget).
+	derivedReserve int64
 }
 
 // NewCopyRun prepares a run of plan against src.
@@ -587,7 +592,7 @@ func (r *CopyRun) budget() (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	b := int64(free) - r.plan.Reserve
+	b := int64(free) - r.plan.Reserve - r.derivedReserve
 	if b < 0 {
 		return 0, nil
 	}
@@ -737,8 +742,8 @@ func (r *CopyRun) exportOne(walk context.Context, n int, m *CopyMessage) (line *
 				e.step(fmt.Sprintf("W5:%d", n))
 				line := &ceMsgLine{T: "msg", N: n, Status: statusExported, Files: []ceFileRec{f}}
 				var rerr error
-				if r.plan.Options.ReadableHTML { // the readable copy of the original just placed (slice E5)
-					rerr = r.addReadable(mctx, n, m, pl.Dir, placed, f, line)
+				if r.plan.Options.ReadableHTML || r.plan.Options.Attachments { // the derived files of the original just placed (slices E5, E6)
+					rerr = r.addDerived(mctx, n, m, pl.Dir, placed, f, line)
 				}
 				mcancel(nil)
 				r.watch.setMessage(nil)

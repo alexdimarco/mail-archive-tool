@@ -232,11 +232,20 @@ func (r *CopyRun) writeFiles(ctx context.Context, n int, m *CopyMessage, files *
 		recs = append(recs, ceFileRec{Path: pl.Dir + "/" + name, Role: t.part.Role, SHA256: hex.EncodeToString(t.hw.h.Sum(nil)), Size: t.got})
 	}
 	line := &ceMsgLine{T: "msg", N: n, Status: files.Status, Files: recs, Notes: slices.Clone(files.Notes)}
-	if r.plan.Options.ReadableHTML && m.NoOrig == "" && len(recs) > 0 && recs[0].Role == roleOriginal {
-		// the readable copy of the original just placed (slice E5): an original that is not what
-		// was written fails the message, and the caller removes every file it placed
-		if err := r.addReadable(ctx, n, m, pl.Dir, path.Base(recs[0].Path), recs[0], line); err != nil {
+	if (r.plan.Options.ReadableHTML || r.plan.Options.Attachments) && m.NoOrig == "" && len(recs) > 0 && recs[0].Role == roleOriginal {
+		// the derived files of the original just placed (slices E5, E6): an original that is not
+		// what was written fails the message, and the caller removes every file it placed
+		if err := r.addDerived(ctx, n, m, pl.Dir, path.Base(recs[0].Path), recs[0], line); err != nil {
 			return nil, placed, err
+		}
+	}
+	if r.plan.Options.Attachments && m.NoOrig != "" { // the archive kept no original: the zip's entries are extracted (slice E6)
+		for _, rec := range recs {
+			if rec.Role == roleArchivedZip {
+				if err := r.addZipEntries(ctx, n, pl.Dir, pl.Stem, rec, line); err != nil {
+					return nil, placed, err
+				}
+			}
 		}
 	}
 	return line, nil, nil

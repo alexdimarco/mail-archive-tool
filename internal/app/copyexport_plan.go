@@ -211,6 +211,9 @@ func (e *CopyExportEnv) sizePlan(p *CopyPlan) {
 		default:
 			p.UnknownSize++
 		}
+		if hasAttachSource(m, p.Options) && m.SizeHint >= 0 && m.SizeHint <= e.cap() {
+			p.EstimateBytes += m.SizeHint * 4 / 5 // the design's factor for extracted attachments: 0.8 of the message (§4.7 step 4)
+		}
 		pl := namer.place(m, copyFileCountFor(m, p.Options))
 		rel := pl.Dir + "/" + pl.Stem + copyFirstSuffix(m)
 		if len(p.SamplePaths) < 10 {
@@ -236,6 +239,9 @@ func (e *CopyExportEnv) sizePlan(p *CopyPlan) {
 		record += int64(copyRecordLineBound) + int64(300+6*strs)
 		if readable { // its manifest entry, its sums line, and a progress line that holds a second file and a note
 			reserve += int64(200 + 64 + 2 + len(rel) + len(".html") + 1 + 6*(len(noteReadableFailed)+240))
+			record += int64(copyRecordLineBound)
+		}
+		if hasAttachSource(m, p.Options) { // extracted files: a progress line that holds them, which the plan cannot count; each one's manifest entry and sums line join the run's reserve as it is written (CopyRun.derivedReserve)
 			record += int64(copyRecordLineBound)
 		}
 		if copyFileCount(m) == 2 { // the archived page and its zip: a second file, with its manifest entry and sums line
