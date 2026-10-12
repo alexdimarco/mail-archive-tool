@@ -1390,6 +1390,22 @@ means only an empty selection in design §7.6). The prepared change is the patch
 `scratchpad/ew-e5-gate-flip-v2.patch`. [Recommended: confirm.] Same question outstanding for the MA-540
 test edits in §13.22 and §13.23.
 
+### 13.26 Owner confirmations of 2026-10-11: E5's test flip and S3's MA-540 edits (merged)
+
+The owner answered "yes to both" to the two open questions of §13.22, §13.23 and §13.25. **(1) EW-E5 merged
+(`a74e656`):** Readable HTML is ON by default, the toggle is shown and checked, the plan accepts the option,
+the preview carries a "Readable HTML" line, and TestReadableHTMLToggleDecidesTheExport is a real test. The
+two staged tests were edited by owner authorisation, exactly as prepared: `TestExportSettingsRoundTrip`
+now asserts ON, shown, checked and html=false remembered (it asserted OFF and hidden); and
+`TestCopyExportPlanIsADryRun` no longer asserts the plan refuses the option with R-h and gains a positive
+twin. Prove-fail recorded for the default, the plan, the page checkbox and the preview `html` key. MA-445's
+catalog row now says ON after E5. A readable copy remains a convenience; its absence or damage never makes
+an original look failed. **(2) S3's MA-540 edits:** the adapted stop and transport-cancel tests, which now
+assert the gap behaviour the row specifies from S3 (the S3 adversarial pass confirmed they keep every
+original assertion except that sanctioned change), are confirmed by the owner. Open and unchanged: the
+"Which ones?" list for messages exported without a readable copy (they are in the README's first ten and
+the manifest; the card shows only a count), a usability residual for a friction pass.
+
 ### 13.7 Escalations from LC-C1's adversarial pass (merged 2026-10-10)
 
 None blocks anything: each has a skip encoder or a safe interim in force.
