@@ -65,6 +65,56 @@ func TestReadmeNamesTheArchivesZipOnlyWhereThereIsOneAndSaysHowToOpenIt(t *testi
 	}
 }
 
+// e6fricPage is the readable page of one message line of a run, as text.
+func e6fricPage(t *testing.T, root string, line *ceMsgLine) string {
+	t.Helper()
+	for _, f := range line.Files {
+		if f.Role == roleDerivedHTML {
+			return string(e6Read(t, root, f.Path))
+		}
+	}
+	t.Fatalf("no readable page among %+v", line.Files)
+	return ""
+}
+
+// covers: MA-417, MA-424, MA-533, R1, R7
+// F5 and F6 (friction review of EW-E6): the readable page of an export points the reader of a part kept as received
+// at the files an export has (its README.txt and export-manifest.json), not at the archive's
+// attachments-report.tsv "in the archive's top folder", which an export does not have, in every way of
+// making attachments and with the option off; and in zip mode a part that has no entry in the zip (an
+// empty one) is listed as "not in the zip", where it was listed beside "download zip" as if it were in it.
+// A part that is in the zip is listed by its name in the zip, as before.
+func TestTheReadablePageOfAnExportPointsAtTheExportsOwnFilesAndMarksWhatIsNotInTheZip(t *testing.T) {
+	msgs := ceMsgs(2)
+	body := map[string][]byte{
+		msgs[0].SourceID: e6Mime(msgs[0].SourceID, "one empty", e6Part{name: "ok.pdf", ctype: "application/pdf", body: []byte("%PDF fine")}, e6Part{name: "empty.txt", ctype: "text/plain"}),
+		msgs[1].SourceID: e6Corpus(t, "f24-cte-x-uuencode.eml"),
+	}
+	for _, mode := range []string{"zip", "loose", "off"} {
+		t.Run(mode, func(t *testing.T) {
+			e, src := newCEEnv(t), newFakeSrc()
+			src.body = func(id string) []byte { return body[id] }
+			p := cePlan(t, e, src, msgs)
+			p.Options.ReadableHTML = true
+			p.Options.Attachments, p.Options.AttachmentsAsZip = mode != "off", mode == "zip"
+			res := mustRun(t, e, p, src)
+			lines := e5Files(t, e, res)
+			uu := e6fricPage(t, res.Root, assure.Reached(t, lines[2], "the second message's line"))
+			if strings.Contains(uu, "attachments-report.tsv") || strings.Contains(uu, "archive's top folder") ||
+				!strings.Contains(uu, "The README.txt and export-manifest.json, in this export's top folder, say which part and why.") {
+				t.Errorf("the page of a part kept as received points the reader at %q", uu[strings.Index(uu, "mailarchive-partnote"):])
+			}
+			if mode != "zip" {
+				return
+			}
+			page := e6fricPage(t, res.Root, assure.Reached(t, lines[1], "the first message's line"))
+			if !strings.Contains(page, "ok.pdf, empty.txt (not in the zip)") || strings.Contains(page, "ok.pdf (not in the zip)") {
+				t.Errorf("the page's list of attachments: %q", page[strings.Index(page, "Attachments:"):strings.Index(page, "Attachments:")+120])
+			}
+		})
+	}
+}
+
 // covers: MA-424, MA-533, R1
 // F13 (friction review of EW-E6): a part left out for want of room says the same thing in both ways of
 // making attachments, ending with what holds the part: "free some space there and export this message again;

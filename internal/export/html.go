@@ -2294,7 +2294,13 @@ func renderHeader(m *model.Message, ctx RenderContext, consumed map[int]bool) st
 			// member has, so the page's name is a name in the zip (friction F9).
 			name = util.SanitizeFilename(a.Filename, i)
 		}
-		names = append(names, name)
+		shown := name
+		if ctx.ZipName != "" && a.ZipName == "" && exportRender(ctx) {
+			// The zip has no entry for this part (an empty one, or one that could not be read): the page lists
+			// it, as the message has it, and says it is not in the zip (EW-E6 friction F6).
+			shown += " (not in the zip)"
+		}
+		names = append(names, shown)
 		switch a.GapKind {
 		case state.GapKindUndecodedPart, state.GapKindStructureLimit:
 			kept = append(kept, name)
@@ -2320,7 +2326,7 @@ func renderHeader(m *model.Message, ctx RenderContext, consumed map[int]bool) st
 			b.WriteString(` — ` + attachmentsInEmlSentence)
 		}
 		b.WriteString(`</div>`)
-		b.WriteString(partNote(kept, cut))
+		b.WriteString(partNote(kept, cut, exportRender(ctx)))
 	}
 	if ctx.RawName != "" {
 		b.WriteString(`<div class="mailarchive-raw"><a href="` + html.EscapeString(ctx.RawName) + `">Original message (.eml)</a></div>`)
@@ -2337,7 +2343,7 @@ func renderHeader(m *model.Message, ctx RenderContext, consumed map[int]bool) st
 // mailarchive- namespace, driven by the parts' gaps and never by what a name looks like. It
 // sits on new pages only: a page is never rewritten after it is written. The report is the
 // authority, so the line points at it.
-func partNote(kept, cut []string) string {
+func partNote(kept, cut []string, export bool) string {
 	if len(kept) == 0 && len(cut) == 0 {
 		return ""
 	}
@@ -2349,8 +2355,21 @@ func partNote(kept, cut []string) string {
 	if len(cut) > 0 {
 		b.WriteString(html.EscapeString(strings.Join(cut, ", ")) + ` holds only the readable start of a part that was cut short or damaged. `)
 	}
+	if export {
+		// An export has no attachments-report.tsv and no archive: what says which part and why is its own
+		// README and manifest (EW-E6 friction F5).
+		b.WriteString(`The README.txt and export-manifest.json, in this export's top folder, say which part and why.</div>`)
+		return b.String()
+	}
 	b.WriteString(`The file attachments-report.tsv, in the archive's top folder, says which part and why.</div>`)
 	return b.String()
+}
+
+// exportRender reports whether a page is the export's own render: it has the original beside it and none
+// of the archive's navigation (the archive's pages always carry both navigation links, XC30), so the
+// archive's pages and their text stay byte-identical.
+func exportRender(ctx RenderContext) bool {
+	return ctx.RawName != "" && ctx.RootRel == "" && ctx.FolderIndexRel == ""
 }
 
 // attachmentsInEmlSentence is what an export's readable page says beside its attachment
