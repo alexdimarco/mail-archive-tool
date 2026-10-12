@@ -596,6 +596,29 @@ func TestAnAttachmentsFolderHoldsNoMoreThanTheDirectoryBound(t *testing.T) {
 	}
 }
 
+// covers: MA-441, MA-424, R4
+// E6-AO11 (E6-AI6a), the preview: MA-441 says the plan reports the longest path and the over-259 count,
+// and with Extract attachments on the longest path an export can write is an extracted file's, which ends
+// in a name the sender chose (up to 144 characters after the export pass), so the figure the preview
+// shows is low by up to that and ".attachments/". The plan cannot know the names before it reads the
+// messages; a worst-case allowance on every message with an original would put every long-pathed export
+// into the warning, and which of the two the owner wants shown is the owner's to rule (ESC-E6-AO11).
+// Until then README says the paths can be longer than the preview shows.
+func TestThePlansLongestPathCountsAnExtractedAttachmentsPath(t *testing.T) {
+	t.Skip("MA-441: the plan's longest path ignores <stem>.attachments/<name>, and the allowance it would carry is the owner's to rule (ESC-E6-AO11, review-extraction-workspace-e6-adversarial.md)")
+	e := newCEEnv(t)
+	msgs := ceMsgs(3)
+	size := func(attach bool) *CopyPlan {
+		p := &CopyPlan{Dest: t.TempDir(), ExportName: "MailExport-x", Messages: msgs, Options: CopyOptions{PreserveFolders: true, Attachments: attach}}
+		e.sizePlan(p)
+		return p
+	}
+	off, on := size(false), size(true)
+	if on.LongestPath < off.LongestPath+len(".attachments/")+1 {
+		t.Errorf("the longest path is %d with the option and %d without: an extracted file's path is not counted", on.LongestPath, off.LongestPath)
+	}
+}
+
 // covers: MA-424, R1
 // E6-AO10, E6-AO11, E6-AO5: README says, with Extract attachments on, what the extracted files lack and
 // where the preview cannot see. The files are written with no download marker (Mark of the Web on
