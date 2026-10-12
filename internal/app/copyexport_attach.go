@@ -332,11 +332,11 @@ func (w *attachWriter) problem(label string, err error) {
 	case errors.Is(err, errAttachEmpty):
 		w.notes.add(fmt.Sprintf("%q has no content (0 bytes), so no file was written for it; %s", label, w.holds))
 	case errors.Is(err, errAttachNoSpace):
-		w.notes.add(fmt.Sprintf("%q was not extracted: no space was left for it on the destination; free some space there and export this message again", label))
+		w.notes.add(fmt.Sprintf("%q was not extracted: no space was left for it on the destination; free some space there and export this message again; %s", label, w.holds))
 	case errors.Is(err, errAttachNoState):
-		w.notes.add(fmt.Sprintf("%q was not extracted: there was no room left on this computer's disk for MailArchive's record of this export, which lists every file it makes; free some space there and export this message again", label))
+		w.notes.add(fmt.Sprintf("%q was not extracted: there was no room left on this computer's disk for MailArchive's record of this export, which lists every file it makes; free some space there and export this message again; %s", label, w.holds))
 	case errors.As(err, &we):
-		w.notes.add(fmt.Sprintf("%q was not extracted: it could not be written (%s); check the destination and export this message again", label, leaveName(we.err)))
+		w.notes.add(fmt.Sprintf("%q was not extracted: it could not be written (%s); check the destination and export this message again; %s", label, leaveName(we.err), w.holds))
 	case errors.As(err, &pe):
 		w.notes.add(fmt.Sprintf("%q was not extracted: it could not be read from %s (%s); %s", label, w.from, pe.why, w.holds))
 	default:

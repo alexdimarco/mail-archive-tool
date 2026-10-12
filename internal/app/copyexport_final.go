@@ -470,7 +470,7 @@ func (f *ceFinish) readmeText(status CopyStatus, c CopyCounts, stop *CopyStop, f
 	}
 	if h.Options.ReadableHTML {
 		copies, noCopy := f.readableFacts()
-		line("Readable HTML: %s of the exported messages have a readable copy, a .html file beside the .eml of the same name.", commas(copies))
+		line("Readable HTML: %s of the exported messages %s a readable copy, a .html file beside the .eml of the same name.", commas(copies), plural(copies, "has", "have"))
 		if c.OriginalOnly > 0 {
 			line("Messages exported without a readable copy: %s. Each has its .eml here, and export-manifest.json gives it the status exported-original-only and a note saying why.", commas(c.OriginalOnly))
 			for _, s := range noCopy {
