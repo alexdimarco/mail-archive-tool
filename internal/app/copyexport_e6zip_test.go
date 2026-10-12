@@ -670,7 +670,7 @@ func TestZipEntryTimesAreInRangeForEveryDate(t *testing.T) {
 	}{
 		{"an ordinary date", time.Date(2026, 3, 28, 9, 0, 0, 0, time.FixedZone("y", 7200)), time.Date(2026, 3, 28, 7, 0, 0, 0, time.UTC)},
 		{"1979 in UTC, 1980 in its own zone", time.Date(1980, 1, 1, 0, 30, 0, 0, zone), attachZipEpoch},
-		{"1980 in UTC, 1979 in its own zone", time.Date(1979, 12, 31, 23, 30, 0, 0, time.FixedZone("z", -3600)),time.Date(1980, 1, 1, 0, 30, 0, 0, time.UTC)},
+		{"1980 in UTC, 1979 in its own zone", time.Date(1979, 12, 31, 23, 30, 0, 0, time.FixedZone("z", -3600)), time.Date(1980, 1, 1, 0, 30, 0, 0, time.UTC)},
 		{"the last day the extended timestamp holds", time.Date(2106, 2, 6, 12, 0, 0, 0, time.UTC), time.Date(2106, 2, 6, 12, 0, 0, 0, time.UTC)},
 		{"after 2106-02-07", time.Date(2106, 6, 1, 0, 0, 0, 0, time.UTC), attachZipEpoch},
 		{"year 2200", time.Date(2200, 1, 1, 0, 0, 0, 0, time.UTC), attachZipEpoch},
