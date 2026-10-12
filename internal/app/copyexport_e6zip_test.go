@@ -17,6 +17,7 @@ import (
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/model"
 	"mail-archive-tool/internal/source"
+	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/util"
 )
 
@@ -576,14 +577,127 @@ func TestZipModeReadableCopyLinksTheZip(t *testing.T) {
 	}
 }
 
+// e6zArchiveZip puts zb in as the archived attachments zip of the archive's "zip only" record and
+// exports that record with Extract attachments on, as zip mode or as loose files.
+func e6zArchiveZip(t *testing.T, e *CopyExportEnv, zb []byte, asZip bool) (*CopyResult, map[string]any, []byte) {
+	t.Helper()
+	a := buildE6Archive(t)
+	_, _, zipPath := a.files("zip-only")
+	if err := os.WriteFile(zipPath, zb, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a.setRec("zip-only", func(r *state.Record) { r.Fixity.Zip = digestOf(zb) })
+	s := a.open()
+	key := a.key("zip-only")
+	p := a.plan(e, s, []string{key})
+	p.Options.Attachments, p.Options.AttachmentsAsZip = true, asZip
+	res := a.run(e, p, s)
+	return res, entryOf(t, manifestOf(t, res.Root), key), zb
+}
+
 // covers: MA-534, R4, R1
+// An archive record without an original, in zip mode: its -attachments.zip is copied byte-exact
+// (role archived-attachments-zip, the archive's own hash) and nothing more: no second zip, no loose
+// file, no note, and no entry of it is read or expanded, so a zip of a bomb, an entry named ../ and
+// an encrypted one are all just bytes of the zip. A record WITH an original, in the same archive,
+// gets MA-533's derived zip from its .eml, the Latin-1 table byte-identical.
 func TestZipModeCopiesAnArchivedZipByteExactAndNothingMore(t *testing.T) {
-	t.Skip("MA-534: zip mode is not built yet")
+	zb := e6Zip(t,
+		e6ZipEntry{name: "../../evil.txt", data: []byte("escape")},
+		e6ZipEntry{name: "bomb.bin", data: bytes.Repeat([]byte{0}, 4<<20)},
+		e6ZipEntry{name: "locked.bin", data: []byte("secret"), flags: 0x1},
+		e6ZipEntry{name: "ok.pdf", data: []byte("%PDF fine")})
+	e := newCEEnv(t)
+	res, ent, _ := e6zArchiveZip(t, e, zb, true)
+	if res.Status != CopyStatusComplete || res.Counts.Exported != 1 {
+		t.Fatalf("the run: %s, %+v", res.Label, res.Counts)
+	}
+	z := assure.Reached(t, fileOf(ent, roleArchivedZip), "the archived zip's file entry")
+	if got := e6Read(t, res.Root, z["path"].(string)); !bytes.Equal(got, zb) {
+		t.Errorf("the copied zip is %d bytes, not the archive's %d", len(got), len(zb))
+	}
+	sum := sha256.Sum256(zb)
+	if z["sha256"] != hex.EncodeToString(sum[:]) {
+		t.Errorf("the recorded hash %v is not the archive's zip's", z["sha256"])
+	}
+	for _, f := range ent["files"].([]any) {
+		if role := f.(map[string]any)["role"]; role == roleDerivedAttach || role == roleDerivedAttachZip {
+			t.Errorf("a derived attachment file was made: %v", f)
+		}
+	}
+	if len(ent["files"].([]any)) != 2 { // the archived page and its zip
+		t.Errorf("the record's files: %v", ent["files"])
+	}
+	for _, n := range ent["notes"].([]any) {
+		if strings.HasPrefix(n.(string), attachNotePrefix) {
+			t.Errorf("an attachment note in zip mode for a copied zip: %q", n)
+		}
+	}
+	for p := range treeFiles(t, res.Root) {
+		if strings.Contains(p, ".attachments") || strings.Contains(p, "evil") || strings.Contains(p, "bomb") {
+			t.Errorf("something was extracted: %s", p)
+		}
+	}
+	if bad, missing, extra := sumsCheck(t, res.Root); len(bad)+len(missing)+len(extra) != 0 {
+		t.Errorf("sums: changed %v, missing %v, unlisted %v", bad, missing, extra)
+	}
+
+	// a record that has an original: the derived zip, from the .eml
+	a := buildE6Archive(t)
+	s := a.open()
+	key := a.key("alice-attach")
+	p := a.plan(newCEEnv(t), s, []string{key})
+	p.Options.Attachments, p.Options.AttachmentsAsZip = true, true
+	res = a.run(newCEEnv(t), p, s)
+	if res.Status != CopyStatusComplete || res.Counts.Exported != 1 {
+		t.Fatalf("the run: %s, %+v", res.Label, res.Counts)
+	}
+	ent = entryOf(t, manifestOf(t, res.Root), key)
+	dz := assure.Reached(t, fileOf(ent, roleDerivedAttachZip), "the derived zip's file entry")
+	_, data := e6zEntries(t, e6Read(t, res.Root, dz["path"].(string)))
+	if len(data) != 2 || string(data["report.pdf"]) != "%PDF-1.4 alice\x00\x01" || !bytes.Equal(data["data.csv"], e6Latin1CSV) {
+		t.Errorf("the derived zip's entries: %v", e6Sizes(data))
+	}
+	if len(ent["files"].([]any)) != 2 {
+		t.Errorf("the record's files: %v", ent["files"])
+	}
+	if bad, missing, extra := sumsCheck(t, res.Root); len(bad)+len(missing)+len(extra) != 0 {
+		t.Errorf("sums: changed %v, missing %v, unlisted %v", bad, missing, extra)
+	}
 }
 
 // covers: MA-534, MA-424
+// The zip-mode switch changes nothing of loose mode: with it unset, the run record's options carry no
+// attachments_as_zip key, a message's attachments are loose files under <stem>.attachments/ with the
+// role derived-attachment and no zip, and an archive record without an original has its zip copied
+// AND its entries extracted under the bounds (the bomb entry skipped with its note, ../ flattened).
 func TestLooseModeIsUnchangedByTheZipModeSwitch(t *testing.T) {
-	t.Skip("MA-534: zip mode is not built yet")
+	msgs := ceMsgs(1)
+	mime := e6Mime(msgs[0].SourceID, "loose", e6Part{name: "a.pdf", ctype: "application/pdf", body: []byte("%PDF a")})
+	e := newCEEnv(t)
+	res, _ := e6Run(t, e, msgs, false, func(string) []byte { return mime })
+	line := assure.Reached(t, e5Files(t, e, res)[1], "the record line")
+	if _, ok := e6zRec(line); ok || len(e6Derived(line)) != 1 || !strings.Contains(e6Derived(line)[0].Path, ".attachments/a.pdf") {
+		t.Errorf("loose mode's files: %+v", line.Files)
+	}
+	if opts := manifestOf(t, res.Root)["options"].(map[string]any); opts["extract_attachments"] != true {
+		t.Errorf("the manifest's options: %v", opts)
+	} else if _, has := opts["attachments_as_zip"]; has {
+		t.Errorf("a loose run's options carry the zip switch: %v", opts)
+	}
+
+	zb := e6Zip(t, e6ZipEntry{name: "../../evil.txt", data: []byte("escape")}, e6ZipEntry{name: "bomb.bin", data: bytes.Repeat([]byte{0}, 4<<20)})
+	res, ent, _ := e6zArchiveZip(t, newCEEnv(t), zb, false)
+	if fileOf(ent, roleArchivedZip) == nil {
+		t.Errorf("the archived zip was not copied: %v", ent["files"])
+	}
+	got := e6Extracted(t, res.Root, ent)
+	if len(got) != 1 || string(got["evil.txt"]) != "escape" {
+		t.Errorf("the extracted entries: %v", e6Sizes(got))
+	}
+	if !e6advNote(ent, "bomb.bin", "zip bomb") {
+		t.Errorf("no note names the bomb entry: %v", ent["notes"])
+	}
 }
 
 // covers: MA-535, R12
