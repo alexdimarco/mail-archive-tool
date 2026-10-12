@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -521,6 +522,77 @@ func TestExtractedAttachmentsNeverCrowdOutALaterOriginal(t *testing.T) {
 	}
 	if bad, missing, extra := sumsCheck(t, res.Root); len(bad)+len(missing)+len(extra) != 0 {
 		t.Errorf("sums: changed %v, missing %v, unlisted %v", bad, missing, extra)
+	}
+}
+
+// covers: MA-424, MA-427, R29
+// E6-AO5 (E6-AC8, E6-AI6b): a message's progress line in the run record lists every file it made, about
+// 230 bytes a file (a message of 1,000 attachments is a line of 230 KB, one of 9,990 over 2 MB), and the
+// state volume was checked for 1 KiB a message, so a volume that was nearly full passed that check, the
+// files were placed, and the line then failed to be written: an R-d2 stop with the files unrecorded in
+// the destination. The room for the line is now checked before each file, with the room the messages
+// after it need, and a file for which there is none is a note (nothing is placed that the record could
+// not then list). Here the state volume has room for the first two files' records and the plan's own
+// bound, and not for five.
+func TestExtractionStopsWhenTheRecordCouldNotListTheFiles(t *testing.T) {
+	var parts []e6Part
+	for i := 0; i < 5; i++ {
+		parts = append(parts, e6Part{name: fmt.Sprintf("f%d.bin", i), body: []byte(fmt.Sprintf("part %d of the message", i))})
+	}
+	msgs := ceMsgs(1)
+	e := newCEEnv(t)
+	src := newFakeSrc()
+	src.body = func(id string) []byte { return e6Mime(id, "five files", parts...) }
+	p := cePlan(t, e, src, msgs)
+	p.Options.Attachments = true
+	tight := false
+	e.freeState = func(string) (uint64, error) {
+		if tight {
+			return 6000, nil // 1,024 for the message's line and 4,096 for the rest, and room for two files' records
+		}
+		return 1 << 40, nil
+	}
+	e.faults = &copyFaults{hook: func(step string) { tight = tight || step == "W5:1" }}
+	res := mustRun(t, e, p, src)
+	if res.Counts.Exported != 1 || res.Counts.Failed != 0 || res.Stop != nil {
+		t.Fatalf("%s, %+v, stop %+v", res.Label, res.Counts, res.Stop)
+	}
+	line := assure.Reached(t, e5Files(t, e, res)[1], "the message's line")
+	if got := len(e6Derived(line)); got < 1 || got > 3 {
+		t.Errorf("%d files were extracted, want the two the record had room for (not five)", got)
+	}
+	if !e6advHasNote(line.Notes, "no room left", "record of this export", "export this message again") {
+		t.Errorf("no note says the record had no room: %q", line.Notes)
+	}
+	if bad, missing, extra := sumsCheck(t, res.Root); len(bad)+len(missing)+len(extra) != 0 {
+		t.Errorf("sums: changed %v, missing %v, unlisted %v", bad, missing, extra)
+	}
+}
+
+// covers: MA-424, R29
+// E6-AO5 (E6-AC8), the directory bound: XC12 says no export directory holds more than 1,000 files, and a
+// message of 1,001 attachments puts them all in its one <stem>.attachments folder (the reader keeps up
+// to 10,000 parts, and the README's Layout line says "at most 1000 files to a folder"). MA-424 says every
+// attachment the parser yields is extracted; the two cannot both hold for such a message. Capping the
+// files of a folder at 1,000 and noting the rest narrows MA-424, and splitting the rest into a second
+// folder changes the layout the readable copy links, so the owner decides (escalation ESC-E6-AO5). Until
+// then the README says the folder is not bounded (TestReadmeSaysWhatTheExtractedFilesLackAndHowLongTheirPathsRun).
+func TestAnAttachmentsFolderHoldsNoMoreThanTheDirectoryBound(t *testing.T) {
+	t.Skip("XC12, MA-424: an .attachments folder is not bounded at 1,000 files, and the bound or the split is the owner's to rule (ESC-E6-AO5, review-extraction-workspace-e6-adversarial.md)")
+	var parts []e6Part
+	for i := 0; i < copyFilesPerDir+1; i++ {
+		parts = append(parts, e6Part{name: fmt.Sprintf("f%04d.bin", i), body: []byte(fmt.Sprintf("part %d", i))})
+	}
+	msgs := ceMsgs(1)
+	res, _ := e6Run(t, newCEEnv(t), msgs, false, func(id string) []byte { return e6Mime(id, "a thousand and one", parts...) })
+	perDir := map[string]int{}
+	for p := range treeFiles(t, res.Root) {
+		perDir[path.Dir(p)]++
+	}
+	for dir, n := range perDir {
+		if n > copyFilesPerDir {
+			t.Errorf("%s holds %d files, over the %d bound (XC12)", dir, n, copyFilesPerDir)
+		}
 	}
 }
 

@@ -88,6 +88,8 @@ var (
 	errAttachEmpty = errors.New("the attachment has no content")
 	// errAttachNoSpace is a derived file that does not fit in what is left on the destination.
 	errAttachNoSpace = errors.New("no space left for it")
+	// errAttachNoState is a derived file the run record, on the state volume, could not then list.
+	errAttachNoState = errors.New("no room left for the record of it")
 )
 
 // attachPartError is a part whose own stream failed: it could not be read from the message
@@ -134,8 +136,10 @@ type attachWriter struct {
 	// expanded is the bytes a zip's entries expanded to when they were read through before being
 	// written (expand), kept or not: with written, what the per-message bound counts.
 	expanded int64
-	holds    string // what holds a part that was not extracted
-	from     string // where the parts are read from: "the message", or "the zip"
+	// lineBytes is what the files placed so far add to the message's line in the run record.
+	lineBytes int64
+	holds     string // what holds a part that was not extracted
+	from      string // where the parts are read from: "the message", or "the zip"
 }
 
 func newAttachWriter(r *CopyRun, ctx context.Context, dir, stem string, line *ceMsgLine, holds string) *attachWriter {
@@ -217,6 +221,15 @@ func (w *attachWriter) put(filename string, index int, stream func(io.Writer) (i
 	if w.stopped() {
 		return ceFileRec{}, errAttachStopped
 	}
+	// The message's line in the run record lists this file and every other the message made, at
+	// about 230 bytes each, where the check before the message reserved 1 KiB: nothing is placed
+	// that the record could not then list (E6-AO5).
+	if sfree, serr := r.env.freeOnState(); serr == nil {
+		need := w.lineBytes + attachRecordBytes(w.adir) + util.ExportSegmentMaxBytes + 1 + int64(len(r.plan.Messages)-int(r.done.Load()))*copyRecordLineBound + 4096
+		if int64(sfree) < need {
+			return ceFileRec{}, errAttachNoState
+		}
+	}
 	budget, err := r.derivedBudget()
 	if err != nil {
 		return ceFileRec{}, &ceWriteError{err}
@@ -262,10 +275,15 @@ func (w *attachWriter) put(filename string, index int, stream func(io.Writer) (i
 	}
 	rec := ceFileRec{Path: ceJoin(w.adir, placed), Role: roleDerivedAttach, SHA256: hex.EncodeToString(hw.h.Sum(nil)), Size: hw.n}
 	w.line.Files = append(w.line.Files, rec)
+	w.lineBytes += attachRecordBytes(rec.Path)
 	w.placed++
 	r.derivedReserve += derivedFileReserve(rec.Path)
 	return rec, nil
 }
+
+// attachRecordBytes is what one extracted file adds to its message's line in the run record: its
+// path (JSON can escape a byte to six), its role, its hash and its size.
+func attachRecordBytes(rel string) int64 { return int64(len(rel)) + 200 }
 
 // derivedFileReserve is what the finalization files need for one more recorded file: its
 // manifest entry, its line in SHA256SUMS.txt and its share of the run record, sized as the
@@ -284,6 +302,8 @@ func (w *attachWriter) problem(label string, err error) {
 		w.notes.add(fmt.Sprintf("%q has no content (0 bytes), so no file was written for it; %s", label, w.holds))
 	case errors.Is(err, errAttachNoSpace):
 		w.notes.add(fmt.Sprintf("%q was not extracted: no space was left for it on the destination; free some space there and export this message again", label))
+	case errors.Is(err, errAttachNoState):
+		w.notes.add(fmt.Sprintf("%q was not extracted: there was no room left on this computer's disk for MailArchive's record of this export, which lists every file it makes; free some space there and export this message again", label))
 	case errors.As(err, &we):
 		w.notes.add(fmt.Sprintf("%q was not extracted: it could not be written (%s); check the destination and export this message again", label, leaveName(we.err)))
 	case errors.As(err, &pe):
