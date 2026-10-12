@@ -356,6 +356,19 @@ func assessPartlyRead(r *Report, in Input) {
 	if in.Unparsed > 0 {
 		r.note("unparsed_messages", fmt.Sprintf("%d message(s) could not be parsed and are kept as raw text — the original bytes are in the .eml when the archive is made with -raw; after upgrading, the next run re-examines them once", in.Unparsed))
 	}
+	// Informational, as terminal is: a part this version cannot decode is kept as
+	// received, and a fallback message is the earlier parser's content, so nothing is
+	// lost and nothing the operator can do changes it (design-mime-fidelity §4.9).
+	if in.Undecodable > 0 {
+		msg := fmt.Sprintf("%d message(s) have parts this version cannot decode — each is kept as received in the attachments zip", in.Undecodable)
+		if in.ReportExists {
+			msg += fmt.Sprintf(" (see %s)", in.ReportPath)
+		}
+		r.note("undecodable_messages", msg)
+	}
+	if in.FidelityFallback > 0 {
+		r.note("fidelity_fallback", fmt.Sprintf("%d message(s) are kept as an earlier version read them, because this version could not decode them in full — nothing is lost", in.FidelityFallback))
+	}
 }
 
 // gapLine is one line of Summary's gap list: source, folder, subject, date,

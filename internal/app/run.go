@@ -99,6 +99,14 @@ type Result struct {
 	Gaps       GapSummary
 	Partial    bool
 
+	// Parse fidelity (design-mime-fidelity §4.9, MC19). Undecodable is the manifest's
+	// records with a part this version cannot decode, kept as received (counted apart
+	// from Terminal: a parse gap is not "source-empty"); FidelityFallback those written
+	// from the earlier parser's content. Both are informational: neither makes a run
+	// partial.
+	Undecodable      int
+	FidelityFallback int
+
 	// The gaps this run closed (§4.3): because their item was captured, and because a
 	// completed walk of their folder no longer found them. The producers count them;
 	// finish puts them in Gaps.
@@ -139,6 +147,7 @@ func finish(out string, r *Result, exp *export.Exporter, manifest *state.Manifes
 	// download: it has its own count, its own line and its own remedy.
 	r.Fillable -= manifest.UnreadableOnlyCount()
 	r.Unreadable, r.Unparsed = manifest.UnreadableCount(), manifest.UnparsedCount()
+	r.Undecodable, r.FidelityFallback = manifest.UndecodableCount(), manifest.FidelityFallbackCount()
 	r.ReportPath, r.Issues = writeReport(out, manifest, manifest.Migrated > 0, logger)
 	// What this run observed in the capture-gap ledger (its own runAt is the stamp
 	// every observation carries). The stuck count uses a daily period: `status`
@@ -790,6 +799,7 @@ func recordRun(opts Options, lr state.LastRun, result *Result, err *error, logge
 	g := result.Gaps
 	lr.GapsObserved, lr.GapsNew, lr.GapsRecovered = g.Observed, g.New, g.Recovered
 	lr.GapsFillable, lr.GapsTerminal, lr.GapsStuck, lr.Unreadable = g.Fillable, g.Terminal, g.Stuck, result.Stats.Unreadable
+	recordCounts(&lr, *result)
 	// Best effort: a refused write never fails the run, but it is logged (F12),
 	// because the "running" record then stays and status reads it as a run that
 	// never finished although this log says how it ended.
@@ -802,6 +812,12 @@ func recordRun(opts Options, lr state.LastRun, result *Result, err *error, logge
 		}
 		logger.Printf("warning: could not record this run in %s (%v): `mailarchive status` may show this run as \"never finished\" or still show the previous result, whatever this log says about how it ended — run again once the file can be written%s", filepath.Join(opts.Out, state.LastRunName), werr, hint)
 	}
+}
+
+// recordCounts puts a run's parse-fidelity counts in its last-run record, the numbers
+// the summary and `status` show (X6).
+func recordCounts(lr *state.LastRun, r Result) {
+	lr.Undecodable, lr.FidelityFallback = r.Undecodable, r.FidelityFallback
 }
 
 // errorKindOf names the search-index refusal err is (state.ErrKind*), or ""

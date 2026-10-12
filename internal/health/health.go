@@ -185,6 +185,12 @@ type Input struct {
 	// (friction F7).
 	UnparsedTerminal int
 	PartlyRead       []string
+	// Undecodable is how many records carry a part this version cannot decode or one cut
+	// short, kept as received (design-mime-fidelity §4.9): informational, like Terminal,
+	// and counted apart from it, so a parse gap is never "source-empty". FidelityFallback
+	// is how many records were written from the earlier parser's content (MC19).
+	Undecodable      int
+	FidelityFallback int
 }
 
 // Extractable is the extractability facet of an archive: WithEML of Total
@@ -1106,6 +1112,7 @@ func Gather(out, nameOverride string) Input {
 			in.WithFixity, _ = m.FixityCounts()
 			in.Unreadable, in.UnreadableOnly, in.Unparsed = m.UnreadableCount(), m.UnreadableOnlyCount(), m.UnparsedCount()
 			in.UnparsedTerminal, in.PartlyRead = m.UnparsedTerminalCount(), m.PartlyReadPaths(20)
+			in.Undecodable, in.FidelityFallback = m.UndecodableCount(), m.FidelityFallbackCount()
 			// The capture-gap ledger, with each store's source id and last run, so a
 			// gap can be told attempted from not attempted (FC14).
 			in.Gaps = m.CaptureGapsSorted()
@@ -1250,13 +1257,21 @@ func Summary(in Input, rep Report) []string {
 		// An unparsed record is kept as raw text, not source-empty (it has its own
 		// line below), so it is left out of the terminal count here (F7).
 		sourceEmpty := in.Terminal - in.UnparsedTerminal
-		if content := in.Fillable - in.UnreadableOnly; content > 0 || sourceEmpty > 0 || in.Unknown > 0 {
+		if content := in.Fillable - in.UnreadableOnly; content > 0 || sourceEmpty > 0 || in.Unknown > 0 || in.Undecodable > 0 {
+			// A record with a part this version cannot decode is its own count between the
+			// two: it is not empty at the source, its part is kept as received (§4.9).
 			line := fmt.Sprintf("Incomplete: %d still missing content · %d source-empty (never fillable) · %d not yet re-examined", content, sourceEmpty, in.Unknown)
+			if in.Undecodable > 0 {
+				line = fmt.Sprintf("Incomplete: %d still missing content · %d source-empty (never fillable) · %d with parts this version cannot decode · %d not yet re-examined", content, sourceEmpty, in.Undecodable, in.Unknown)
+			}
 			if in.ReportExists {
 				line += " — " + in.ReportPath
 			}
 			lines = append(lines, line)
 			lines = append(lines, "            (still missing content = not downloaded yet; fills on the next run)")
+			if in.Undecodable > 0 {
+				lines = append(lines, "            (with parts this version cannot decode = kept as received in the attachments zip; the report says which part and why)")
+			}
 		} else {
 			lines = append(lines, "Incomplete: none")
 		}
@@ -1285,6 +1300,13 @@ func Summary(in Input, rep Report) []string {
 		}
 		if in.Unparsed > 0 {
 			lines = append(lines, fmt.Sprintf("Raw text:   %d message(s) could not be parsed and are kept as raw text (see the posture below)", in.Unparsed))
+		}
+		if in.FidelityFallback > 0 {
+			line := fmt.Sprintf("Fallback:   %d message(s) are kept as an earlier version read them, because this version could not decode them in full; nothing is lost", in.FidelityFallback)
+			if in.ReportExists {
+				line += " — see " + in.ReportPath
+			}
+			lines = append(lines, line)
 		}
 		// RV-10: a page shown as plain text is complete, but the owner should
 		// be able to learn it here, not only from the run log.
@@ -1465,6 +1487,13 @@ type JSONReport struct {
 	// no manifest.
 	CaptureGaps *JSONCaptureGaps `json:"capture_gaps"`
 	Unreadable  int              `json:"unreadable"`
+
+	// Undecodable is how many records carry a part this version cannot decode, kept as
+	// received; FidelityFallback how many were written from the earlier parser's content
+	// (design-mime-fidelity §4.9, MC19): two more additions at version 2. Neither is in
+	// `terminal` (a parse gap is not empty at the source).
+	Undecodable      int `json:"undecodable"`
+	FidelityFallback int `json:"fidelity_fallback"`
 }
 
 // JSONShownAsSource is the shown-as-source facet: the total and a count per
@@ -1633,6 +1662,7 @@ func JSON(in Input, rep Report) JSONReport {
 		doc.CaptureGaps = jsonCaptureGaps(in, rep)
 	}
 	doc.Unreadable = in.Unreadable
+	doc.Undecodable, doc.FidelityFallback = in.Undecodable, in.FidelityFallback
 	if in.LastRunState == state.LastRunPresent {
 		lr := in.LastRun
 		jlr := &JSONLastRun{

@@ -73,11 +73,15 @@ func TestRepairIsNeverToLessAndWithheldLegibly(t *testing.T) {
 }
 
 // covers: MA-348, R1, R18, R7, X6, R26, R27
-// Legibility: the summary, status, report, GUI and Desktop card show repaired,
-// restamped and the cannot-decode counts; the page's gaps and notes blocks are
-// escaped.
+// Legibility, what is left of MA-348 after the cannot-decode counts: the summary, status,
+// GUI and Desktop card show repaired, restamped, not_reexamined and repair_withheld by
+// reason; the page's visible gaps block (incl. fidelity-fallback and identity-stub) and
+// collapsed notes block are escaped and list only display-qualifying notes, and
+// `reindex -rebuild` from HTML ignores both. The counts half is
+// TestStatusSplitsSourceEmptyFromCannotDecode, TestRunSummaryCountsMessagesThatCannotBeDecoded,
+// TestGUISummarySplitsEmptyFromCannotDecode and TestResultCountsUndecodableAndFallbackRecords.
 func TestRepairAndCannotDecodeAreLegibleOnEverySurface(t *testing.T) {
-	t.Skip("MA-348: no repair counters, undecodable counts, fidelity_fallback, or page gaps and notes blocks exist to show; encoder lands in MF-S0, turns green in MF-S2 (counts), MF-S4 (page blocks) and MF-S7 (repair)")
+	t.Skip("MA-348 (page blocks, repair): renderHeader has no mailarchive-gaps block or notes block (MF-S4), and no repair counter, Repaired/Restamped, not_reexamined or repair_withheld exists to show (MF-S7); lands in MF-S4 and MF-S7")
 }
 
 // covers: MA-349, R10, R19
