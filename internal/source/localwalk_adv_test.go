@@ -470,6 +470,28 @@ func TestMassVanishedFilesDoNotRelistTheFolderEachTime(t *testing.T) {
 	}
 }
 
+// covers: MA-322, R1
+// S2B-AO6 residual (escalated, owner decision; see the adversarial report): a non-empty
+// file whose name is a mailbox's and whose content is not an mbox at all is still skipped
+// with no row. It cannot be told from a mailbox in a format this tool does not read
+// (a leading "Return-Path:", a corrupt first line) without a row, and a row for every
+// stray file of a profile folder (a prefs.js, a lock) is noise on every run. Which class,
+// and for which names, is the owner's call (info "not a mailbox" would claim a proof the
+// tool does not have, which FC1 forbids; terminal would flood).
+func TestANonMboxFileNamedLikeAMailboxIsRecorded(t *testing.T) {
+	t.Skip("R1 (S2B-AO6 residual): a non-empty file named like a mailbox that sniffs as no mbox is dropped with no row; the class of the row (FC1 forbids info for what might hold mail, terminal would flood a profile folder) is the owner's decision; closes when it is made")
+	store := filepath.Join(t.TempDir(), "Mail")
+	writeLocal(t, filepath.Join(store, "Inbox"), mboxText("inbox"))
+	writeLocal(t, filepath.Join(store, "Odd"), "Return-Path: <a@example.com>\nSubject: not an mbox\n\nbody\n")
+	got := walkLocal(t, store, OpenOptions{})
+	for _, f := range got.faults {
+		if strings.HasSuffix(f.Locator, ":Odd") {
+			return
+		}
+	}
+	t.Errorf("faults %+v; want a row for the file Odd, which sniffs as no mbox and is not read", got.faults)
+}
+
 // covers: MA-322, R25, R10, S47
 // S2B-AO4 (and S2B-AC1): a pipe named like an Outlook data file is never opened. The PST
 // open was a plain os.Open, which waits for a writer on a pipe, so a FIFO named *.pst or

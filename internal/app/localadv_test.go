@@ -132,6 +132,80 @@ func TestAPipeAsAnInputFileDoesNotHoldTheRun(t *testing.T) {
 	}
 }
 
+// covers: MA-318, R1
+// S2B-AI2 (escalated, owner decision; see the adversarial report): an older binary's save
+// drops a stub's parser generation and the digest of its bytes, and the stub is then
+// settled by nothing. The documented recovery (the next run reads it as generation 0 and
+// re-examines it once) runs only when a message arrives at the stub's key; a message that
+// now parses lands on its own key, and without the digest the supersede index cannot
+// find the stub, so it stays "unparsed" in the status and the report for good though its
+// message has a healthy page. A fix needs a way to recover the digest (from the preserved
+// .eml, which exists only under -raw, or by re-reading the source for each digest-less
+// stub), which changes what a run reads: the owner's call.
+func TestAStubAnOlderBinarySavedIsSettledByAHealthyRead(t *testing.T) {
+	t.Skip("R1 (S2B-AI2): a stub whose digest an older binary's save dropped is never superseded by a healthy read of its bytes; recovering the digest changes what a run reads (the .eml under -raw, or the source again): the owner's decision; closes when it is made")
+	restore := panicOn(t, "POISON")
+	store := filepath.Join(tmpDir(t), "tb")
+	p14Write(t, filepath.Join(store, "Inbox"), "From a@example.com Mon Mar  3 09:00:00 2025\n"+
+		strings.ReplaceAll(p14Mail("POISON subject", "poison", "", "poison body"), "\r\n", "\n")+"\n")
+	out := tmpDir(t)
+	if _, err := runLocal(t, out, store); err != nil {
+		t.Fatalf("run 1: %v", err)
+	}
+	key, rec := stubRecord(t, out)
+	m := loadArchive(t, out)
+	rec.ParserGen, rec.RawDigest = 0, "" // what an older binary's save keeps of the stub
+	m.Add(key, rec)
+	if err := m.Save(); err != nil {
+		t.Fatal(err)
+	}
+	restore() // the parser now reads the message
+	res, err := runLocal(t, out, store)
+	if err != nil {
+		t.Fatalf("run 2: %v", err)
+	}
+	if got, _ := loadArchive(t, out).Get(key); res.Unparsed != 0 || len(got.Terminal) != 1 || got.Terminal[0] != state.LabelSuperseded {
+		t.Errorf("after a healthy read of the stub's bytes: unparsed %d, the stub = %+v; want it superseded", res.Unparsed, got)
+	}
+}
+
+// covers: R1
+// S2B-AC4 (escalated, owner decision; see the adversarial report): a message the client
+// is still appending is archived as the bytes that were there and stays that way. An
+// mbox has no end marker, so a torn last message cannot be told from a short one without
+// comparing the file's size and mtime across the read, which mboxFile does not do; the
+// next incremental run finds the message already archived (same key, same fingerprint) and
+// skips it, so the torn copy stays until a Full run. Detecting it (a stability check
+// that records a fillable gap or makes the run partial) changes what a run reports about
+// every live mailbox: the owner's call.
+func TestATornTailOfAnMboxIsNotArchivedAsComplete(t *testing.T) {
+	t.Skip("R1 (S2B-AC4): a last mbox message cut mid-append is archived as complete and skipped as archived by every later incremental run; a size/mtime stability check changes what a run reports for every live mailbox: the owner's decision; closes when it is made")
+	store := filepath.Join(tmpDir(t), "tb")
+	first := strings.ReplaceAll(p14Plain("first", "first"), "\r\n", "\n")
+	torn := strings.ReplaceAll(p14Mail("torn", "torn", "", "first half of the body"), "\r\n", "\n")
+	torn = strings.TrimSuffix(torn, "\n")
+	inbox := filepath.Join(store, "Inbox")
+	p14Write(t, inbox, "From a@example.com Mon Mar  3 09:00:00 2025\n"+first+"\nFrom a@example.com Mon Mar  3 09:00:00 2025\n"+torn)
+	out := tmpDir(t)
+	if _, err := runLocal(t, out, store); err != nil {
+		t.Fatalf("run 1: %v", err)
+	}
+	f, err := os.OpenFile(inbox, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(" and the second half\n\n"); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	if _, err := runLocal(t, out, store); err != nil {
+		t.Fatalf("run 2: %v", err)
+	}
+	if !bytes.Contains(archiveText(t, out), []byte("second half")) {
+		t.Error("the completed message is archived without its second half: the torn copy was kept as complete")
+	}
+}
+
 // covers: MA-321, R1, R10, S46
 // S2B-AI4 (and S2B-AC8): a maildir message the archive already holds that a client moves
 // from new/ to cur/ while the run is reading new/ is not a loss, and the run is not
