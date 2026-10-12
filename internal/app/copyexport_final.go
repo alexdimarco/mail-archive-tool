@@ -12,6 +12,7 @@ import (
 	"hash"
 	"io"
 	"io/fs"
+	"path"
 	"slices"
 	"sort"
 	"strings"
@@ -245,11 +246,17 @@ func (f *ceFinish) presence(rehash bool) error {
 		// copy is dropped from the record, so the sums never list a file that is not the one
 		// that was written (MA-513). It is looked up first and the original after, so an
 		// original that is gone too still makes the message failed: the later amendment wins.
-		if slices.ContainsFunc(m.Files, func(x ceFileRec) bool { return x.Role == roleDerivedHTML }) {
+		// An extracted attachment is a convenience the same way: one that is gone (an antivirus
+		// product's quarantine takes the files a sender chose first) or damaged is dropped from the
+		// record and named in a note, and the message stays exported with its original and its other
+		// files, where a retry would only extract the same file to lose it again (E6-AO4).
+		isDerived := func(x ceFileRec) bool { return x.Role == roleDerivedHTML || x.Role == roleDerivedAttach }
+		if slices.ContainsFunc(m.Files, isDerived) {
 			kept := make([]ceFileRec, 0, len(m.Files))
 			var reason string
+			var lost []string
 			for _, file := range m.Files {
-				if file.Role != roleDerivedHTML {
+				if !isDerived(file) {
 					kept = append(kept, file)
 					continue
 				}
@@ -257,19 +264,26 @@ func (f *ceFinish) presence(rehash bool) error {
 				if err != nil {
 					return err
 				}
-				if why == "" {
+				switch {
+				case why == "":
 					kept = append(kept, file)
-				} else if reason == "" {
+				case file.Role == roleDerivedAttach:
+					lost = append(lost, fmt.Sprintf("%s%q is not listed in this export: %s; %s", attachNotePrefix, plainText(path.Base(file.Path)), why, attachAuthorityEML))
+				case reason == "":
 					reason = why
 				}
 			}
-			if reason != "" {
-				amend = append(amend, ceMsgLine{T: "msg", N: m.N, Status: statusOriginalOnly, Amend: true, Files: kept,
-					Notes: append(slices.Clone(m.Notes), noteReadableFailed+reason)})
+			if reason != "" || len(lost) > 0 {
+				status, notes := m.Status, slices.Clone(m.Notes)
+				if reason != "" {
+					status = statusOriginalOnly
+					notes = append(notes, noteReadableFailed+reason)
+				}
+				amend = append(amend, ceMsgLine{T: "msg", N: m.N, Status: status, Amend: true, Files: kept, Notes: append(notes, lost...)})
 			}
 		}
 		for _, file := range m.Files {
-			if file.Role == roleDerivedHTML {
+			if file.Role == roleDerivedHTML || file.Role == roleDerivedAttach {
 				continue
 			}
 			fi, err := f.fs.Lstat(file.Path)
@@ -536,6 +550,9 @@ func (f *ceFinish) readmeText(status CopyStatus, c CopyCounts, stop *CopyStop, f
 	if h.Options.Attachments {
 		line("- Extracted attachments show what MailArchive's reader made of the message. A part the reader dropped is not among them, and a part it could not name has the name of its Content-ID, \"inline\" or \"attachment-\" and a number: the .eml (or the archived attachments zip) is the authoritative copy, and the complete message is in it.")
 		line("- Attachments extracted from an archived attachments zip are as the archive kept them. A zip written before MailArchive kept a text attachment's own bytes can already hold it re-encoded as UTF-8, so a file in another character set (Latin-1, say) may read differently from the one that was sent. A message forwarded as an attachment inside an Outlook data file (.pst) is kept in that zip as a few-byte stand-in, with nothing recording that the archive lost it, so this export cannot tell you which ones those are.")
+		line("- Extracted files carry no download marker: Windows (Mark of the Web, which makes Office open a file in Protected View) and macOS (the quarantine attribute, which makes Gatekeeper ask first) do not warn when one is opened, as they do for a file saved from an email program. Treat each as an unopened email attachment: a macro document, a program or a script the sender chose is as dangerous here as it was in the email.")
+		line("- The path of an extracted file is its message's path with .attachments and the attachment's own name added, a name the sender chose, so it can be longer than the longest path the preview shows, and pass the 260-character limit below although the preview named no path over it.")
+		line("- A message with more than 1,000 attachments has all of them in its one .attachments folder, which then holds more files than the limit on a folder stated above.")
 	}
 	line("- Windows Explorer and some zip tools cannot open paths over 260 characters: choose a shorter destination, or turn off Preserve folder structure, if a path is too long.")
 	line("- On FAT, exFAT and most network shares, file permissions are not kept: the drive or the share decides who can read these files. On Windows this folder inherited its destination's permissions.")

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"path"
 	"slices"
 	"strings"
@@ -48,7 +49,9 @@ const (
 // The bounds on extracting a zip's entries (design §4.12): at most 1,000 entries, 1 GiB
 // uncompressed for one entry, 4 GiB for one message, and a compression ratio of at most 200:1.
 // An entry over a bound is skipped with a note; a zip is untrusted input (a bomb is a few
-// kilobytes), so none of them is ever expanded to find out.
+// kilobytes), so nothing is written until an entry has been read through to nowhere and judged, and
+// that reading is cut as soon as the zip as a whole would expand past the ratio times its own size
+// (E6-AO2): what a zip costs to judge is bounded by what it is, and what it writes by that too.
 const (
 	copyZipEntries    = 1000
 	copyZipEntryBytes = 1 << 30
@@ -87,6 +90,8 @@ var (
 	errAttachEmpty = errors.New("the attachment has no content")
 	// errAttachNoSpace is a derived file that does not fit in what is left on the destination.
 	errAttachNoSpace = errors.New("no space left for it")
+	// errAttachNoState is a derived file the run record, on the state volume, could not then list.
+	errAttachNoState = errors.New("no room left for the record of it")
 )
 
 // attachPartError is a part whose own stream failed: it could not be read from the message
@@ -123,24 +128,56 @@ type attachWriter struct {
 	ctx    context.Context
 	adir   string // the attachments directory, relative to the export root, forward slashes
 	used   map[string]struct{}
+	next   map[string]int // the number to try next for a name already used (ceUniqueNameFrom)
 	line   *ceMsgLine
 	notes  attachNotes
 	placed int
-	holds  string // what holds a part that was not extracted
-	from   string // where the parts are read from: "the message", or "the zip"
+	// expanded is the bytes a zip's entries expanded to when they were read through before being
+	// written (expand), kept or not: what the per-message bound counts, and, against the zip's own
+	// size, what the whole zip may expand to. What is written is never more than what was read
+	// through first, so this is also the most that was written.
+	expanded int64
+	// lineBytes is what the files placed so far add to the message's line in the run record.
+	lineBytes int64
+	holds     string // what holds a part that was not extracted
+	from      string // where the parts are read from: "the message", or "the zip"
 }
 
 func newAttachWriter(r *CopyRun, ctx context.Context, dir, stem string, line *ceMsgLine, holds string) *attachWriter {
-	return &attachWriter{r: r, ctx: ctx, adir: ceJoin(dir, stem+attachDirSuffix), used: map[string]struct{}{}, line: line, holds: holds, from: "the message"}
+	return &attachWriter{r: r, ctx: ctx, adir: ceJoin(dir, stem+attachDirSuffix), used: map[string]struct{}{}, next: map[string]int{}, line: line, holds: holds, from: "the message"}
 }
 
-// attachSpaceWriter refuses what no longer fits in the space the destination has left.
+// errAttachStopped is an extraction cut short because the run was cancelled or abandoned.
+var errAttachStopped = errors.New("the export was stopped")
+
+// stopped reports whether the run was cancelled or abandoned: an extraction of up to a thousand
+// files, or of a zip of up to 4 GiB, does not go on writing after Cancel, and after Abandon (the
+// dashboard's answer to a run still going 30 s later) it makes no further write (E6-AO3).
+func (w *attachWriter) stopped() bool {
+	return w.ctx.Err() != nil || w.r.abandoned.Load()
+}
+
+// stopNote says what an extraction that was stopped left undone.
+func (w *attachWriter) stopNote(rest string) {
+	w.notes.add(fmt.Sprintf("the export was stopped while this message's attachments were being extracted, so %s were not extracted; %s; export this message again", rest, w.holds))
+}
+
+// attachSpaceWriter refuses what no longer fits in the space the destination has left, and
+// anything more once the run was stopped.
 type attachSpaceWriter struct {
 	w    io.Writer
 	left int64
+	stop func() bool // nil: never
+	tick func()      // nil: none; the run's progress, for a read-through that writes nothing
 }
 
 func (s *attachSpaceWriter) Write(p []byte) (int, error) {
+	if s.stop != nil && s.stop() {
+		return 0, errAttachStopped
+	}
+	if s.tick != nil {
+		s.tick()
+	}
 	if int64(len(p)) > s.left {
 		return 0, errAttachNoSpace
 	}
@@ -156,7 +193,7 @@ func classifyStream(err error) error {
 	var we *ceWriteError
 	var pe *attachPartError
 	switch {
-	case err == nil, errors.Is(err, errAttachNoSpace), errors.As(err, &we), errors.As(err, &pe):
+	case err == nil, errors.Is(err, errAttachNoSpace), errors.Is(err, errAttachStopped), errors.As(err, &we), errors.As(err, &pe):
 		return err
 	}
 	why := plainText(err.Error())
@@ -186,7 +223,19 @@ func guardStream(fn func(io.Writer) (int64, error)) func(io.Writer) (int64, erro
 // the entry's line as it is placed, so what the record says is what the disk holds.
 func (w *attachWriter) put(filename string, index int, stream func(io.Writer) (int64, error)) (ceFileRec, error) {
 	r := w.r
-	budget, err := r.budget()
+	if w.stopped() {
+		return ceFileRec{}, errAttachStopped
+	}
+	// The message's line in the run record lists this file and every other the message made, at
+	// about 230 bytes each, where the check before the message reserved 1 KiB: nothing is placed
+	// that the record could not then list (E6-AO5).
+	if sfree, serr := r.env.freeOnState(); serr == nil {
+		need := w.lineBytes + attachRecordBytes(w.adir) + util.ExportSegmentMaxBytes + 1 + int64(len(r.plan.Messages)-int(r.done.Load()))*copyRecordLineBound + 4096
+		if int64(sfree) < need {
+			return ceFileRec{}, errAttachNoState
+		}
+	}
+	budget, err := r.derivedBudget()
 	if err != nil {
 		return ceFileRec{}, &ceWriteError{err}
 	}
@@ -201,8 +250,11 @@ func (w *attachWriter) put(filename string, index int, stream func(io.Writer) (i
 		return ceFileRec{}, &ceWriteError{err}
 	}
 	hw := &ceHashWriter{w: f, h: sha256.New(), watch: r.watch, total: &r.bytes}
-	_, serr := stream(&attachSpaceWriter{w: hw, left: budget})
+	_, serr := stream(&attachSpaceWriter{w: hw, left: budget, stop: w.stopped})
 	serr = classifyStream(serr)
+	if serr != nil && w.stopped() {
+		serr = errAttachStopped // whatever the stream said, the run was stopped under it
+	}
 	if serr == nil {
 		if serr = f.Sync(); serr != nil {
 			serr = &ceWriteError{serr}
@@ -218,7 +270,7 @@ func (w *attachWriter) put(filename string, index int, stream func(io.Writer) (i
 		r.fs.Remove(ceJoin(w.adir, tmp))
 		return ceFileRec{}, serr
 	}
-	name := ceUniqueName(w.used, util.ExportFilename(filename, index))
+	name := ceUniqueNameFrom(w.used, w.next, util.ExportFilename(filename, index))
 	base, ext := splitExt(name)
 	placed, perr := r.placeFinalAs(w.ctx, w.adir, tmp, base, ext)
 	if perr != nil {
@@ -227,10 +279,15 @@ func (w *attachWriter) put(filename string, index int, stream func(io.Writer) (i
 	}
 	rec := ceFileRec{Path: ceJoin(w.adir, placed), Role: roleDerivedAttach, SHA256: hex.EncodeToString(hw.h.Sum(nil)), Size: hw.n}
 	w.line.Files = append(w.line.Files, rec)
+	w.lineBytes += attachRecordBytes(rec.Path)
 	w.placed++
 	r.derivedReserve += derivedFileReserve(rec.Path)
 	return rec, nil
 }
+
+// attachRecordBytes is what one extracted file adds to its message's line in the run record: its
+// path (JSON can escape a byte to six), its role, its hash and its size.
+func attachRecordBytes(rel string) int64 { return int64(len(rel)) + 200 }
 
 // derivedFileReserve is what the finalization files need for one more recorded file: its
 // manifest entry, its line in SHA256SUMS.txt and its share of the run record, sized as the
@@ -249,6 +306,8 @@ func (w *attachWriter) problem(label string, err error) {
 		w.notes.add(fmt.Sprintf("%q has no content (0 bytes), so no file was written for it; %s", label, w.holds))
 	case errors.Is(err, errAttachNoSpace):
 		w.notes.add(fmt.Sprintf("%q was not extracted: no space was left for it on the destination; free some space there and export this message again", label))
+	case errors.Is(err, errAttachNoState):
+		w.notes.add(fmt.Sprintf("%q was not extracted: there was no room left on this computer's disk for MailArchive's record of this export, which lists every file it makes; free some space there and export this message again", label))
 	case errors.As(err, &we):
 		w.notes.add(fmt.Sprintf("%q was not extracted: it could not be written (%s); check the destination and export this message again", label, leaveName(we.err)))
 	case errors.As(err, &pe):
@@ -302,6 +361,10 @@ func partFilename(a model.Attachment, index int) string {
 // parts extracts the parsed message's attachments, inline images included, in order.
 func (w *attachWriter) parts(atts []model.Attachment) {
 	for i, a := range atts {
+		if w.stopped() {
+			w.stopNote(fmt.Sprintf("the last %s attachments", commas(len(atts)-i)))
+			return
+		}
 		name := partFilename(a, i)
 		label := plainText(util.ExportFilename(name, i))
 		if a.WriteTo == nil {
@@ -309,6 +372,10 @@ func (w *attachWriter) parts(atts []model.Attachment) {
 			continue
 		}
 		rec, err := w.put(name, i, guardStream(a.WriteTo))
+		if errors.Is(err, errAttachStopped) {
+			w.stopNote(fmt.Sprintf("the last %s attachments", commas(len(atts)-i)))
+			return
+		}
 		if err != nil {
 			w.problem(label, err)
 			continue
@@ -322,7 +389,7 @@ func (w *attachWriter) parts(atts []model.Attachment) {
 // finish adds the notes to the entry and, when no file was placed, takes the directory
 // back, so an entry never has an empty one.
 func (w *attachWriter) finish() {
-	if w.placed == 0 {
+	if w.placed == 0 && !w.r.abandoned.Load() { // an abandoned run makes no further write, not even this
 		w.r.dropDir(w.adir)
 	}
 	w.line.Notes = append(w.line.Notes, w.notes.done()...)
@@ -380,14 +447,67 @@ func zipReadError(err error) error {
 	return err
 }
 
-// openZip opens the zip's central directory under a panic guard.
-func openZip(data []byte) (zr *zip.Reader, err error) {
+// zipSource is the ReaderAt a zip is read through. It counts the bytes read from the zip's data,
+// which is what an entry really occupies: the compressed size in an entry's header is the
+// sender's claim, and nothing in the zip reader checks it against the stream (E6-AO2).
+type zipSource struct {
+	r       *bytes.Reader
+	read    int64 // bytes read since the last reset
+	listing bool  // the central directory is being read
+	budget  int64 // what listing may still read
+}
+
+func (s *zipSource) ReadAt(p []byte, off int64) (int, error) {
+	if s.listing {
+		if s.budget -= int64(len(p)); s.budget < 0 {
+			return 0, errZipDirectory
+		}
+	}
+	n, err := s.r.ReadAt(p, off)
+	s.read += int64(n)
+	return n, err
+}
+
+// errZipWhole is what zipWholeWriter says when the zip's entries would expand past the ratio times
+// the zip's own size.
+var errZipWhole = errors.New("the zip as a whole expands past its bound")
+
+// zipWholeWriter takes what a read-through of a zip entry yields, to nowhere, up to left bytes: the
+// write that would pass it is refused, so an entry past the bound is cut where it passes it, not read
+// to its end.
+type zipWholeWriter struct{ left int64 }
+
+func (z *zipWholeWriter) Write(p []byte) (int, error) {
+	if int64(len(p)) > z.left {
+		return 0, errZipWhole
+	}
+	z.left -= int64(len(p))
+	return len(p), nil
+}
+
+// copyZipDirBytes bounds what is read to list a zip's entries: Go's reader allocates one record
+// for every entry of the central directory (about 200 bytes each, from 46 bytes of zip) before
+// anything can cut the list at the entry bound, and the zip's own size bound (the MIME cap) is no
+// bound on that. 4 MiB lists 10,000 entries with names of 255 bytes and their extra fields with
+// room to spare (the archive writer keeps at most 10,000 parts) and costs at most about 20 MB of
+// heap, where a zip of bare 46-byte records of the cap's size cost over a gigabyte (E6-AO7).
+const copyZipDirBytes = 4 << 20
+
+// errZipDirectory is a zip whose list of entries is over copyZipDirBytes.
+var errZipDirectory = fmt.Errorf("its list of entries is larger than this version reads (%s)", bytesBound(copyZipDirBytes))
+
+// openZip opens the zip's central directory under a panic guard, reading at most copyZipDirBytes
+// to do it.
+func openZip(data []byte) (zr *zip.Reader, src *zipSource, err error) {
 	defer func() {
 		if p := recover(); p != nil {
-			zr, err = nil, errors.New(panicReason(p))
+			zr, src, err = nil, nil, errors.New(panicReason(p))
 		}
 	}()
-	return zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	src = &zipSource{r: bytes.NewReader(data), listing: true, budget: copyZipDirBytes}
+	zr, err = zip.NewReader(src, int64(len(data)))
+	src.listing = false
+	return zr, src, err
 }
 
 // breach says why an entry may not be extracted, judged on what its header declares and what
@@ -401,7 +521,7 @@ func (bd attachBounds) breach(f *zip.File, total int64) string {
 		return "it is encrypted, which this version cannot read"
 	case declared > uint64(bd.entryBytes):
 		return fmt.Sprintf("it is larger than %s uncompressed (the most this version extracts from one entry)", bytesBound(bd.entryBytes))
-	case declared > uint64(bd.ratio)*f.CompressedSize64:
+	case declared > 0 && (declared-1)/uint64(bd.ratio) >= f.CompressedSize64: // declared > ratio*packed, without the product, which wraps for a claim near 2^64 (E6-AI2)
 		return fmt.Sprintf("it would expand more than %d times (%s packed, %s unpacked), which this version takes for a zip bomb and does not expand",
 			bd.ratio, humanBytes(int64(min(f.CompressedSize64, 1<<62))), humanBytes(int64(min(declared, 1<<62))))
 	case total+int64(declared) > bd.totalBytes:
@@ -436,7 +556,7 @@ func zipStream(f *zip.File) func(io.Writer) (int64, error) {
 // entries are not attachments and are left out; every other entry is a file named by its base
 // name, or a note.
 func (w *attachWriter) zipEntries(data []byte, bd attachBounds) {
-	zr, err := openZip(data)
+	zr, src, err := openZip(data)
 	if err != nil {
 		w.notes.add(fmt.Sprintf("the zip could not be opened (%s), so its entries were not extracted; %s", plainText(err.Error()), w.holds))
 		return
@@ -446,24 +566,68 @@ func (w *attachWriter) zipEntries(data []byte, bd attachBounds) {
 		w.notes.add(fmt.Sprintf("the zip holds %s entries and this version extracts the first %s: the others were not extracted; %s", commas(len(files)), commas(bd.entries), w.holds))
 		files = files[:bd.entries]
 	}
-	var total int64
 	for i, f := range files {
+		if w.stopped() {
+			w.stopNote("the rest of its entries")
+			return
+		}
 		if f.FileInfo().IsDir() || strings.HasSuffix(f.Name, "/") {
 			continue
 		}
 		name := zipBase(f.Name)
 		label := plainText(util.ExportFilename(name, i))
-		if why := bd.breach(f, total); why != "" {
+		if why := bd.breach(f, w.expanded); why != "" {
 			w.notes.add(fmt.Sprintf("%q (an entry of the zip) was not extracted: %s; %s", label, why, w.holds))
 			continue
 		}
-		rec, err := w.put(name, i, guardStream(zipStream(f)))
-		if err != nil {
-			w.problem(label, err)
+		// Nothing of an entry is written before it is known to be what it says: its data is read
+		// through to its end once to nowhere, which finds a damaged or mis-sized entry and a
+		// bomb whose header lied about its packed size, and costs time, not disk (E6-AO2).
+		n, why, err := w.expand(f, src, bd)
+		w.expanded += n
+		if why != "" {
+			w.notes.add(fmt.Sprintf("%q (an entry of the zip) was not extracted: %s; %s", label, why, w.holds))
 			continue
 		}
-		total += rec.Size
+		if err == nil {
+			_, err = w.put(name, i, guardStream(zipStream(f)))
+		}
+		if errors.Is(err, errAttachStopped) {
+			w.stopNote("the rest of its entries")
+			return
+		}
+		if err != nil {
+			w.problem(label, err)
+		}
 	}
+}
+
+// expand reads one entry's data through to its end and throws it away: how many bytes it
+// expands to, and why it may not be extracted when it is a bomb whatever its header claims
+// (what it really packs into, which src counted, against the ratio), or the failure of its own
+// data. Its bytes count toward the message's total whether or not the entry is then kept.
+//
+// What src counted is the bytes the reader pulled, which its read-ahead floors (4 KiB) and the
+// header's claim of the packed size caps: an entry that claims 4,096 and packs to 800 bytes passes
+// 200:1 at 819,200 bytes. So the zip as a whole is held to the ratio times its own size too, which no
+// claim of a header moves, and the reading is cut the moment the entries so far would pass it (E6-AO2).
+func (w *attachWriter) expand(f *zip.File, src *zipSource, bd attachBounds) (n int64, why string, err error) {
+	src.read = 0
+	whole := bd.ratio * src.r.Size() // what the whole zip may expand to
+	limit := &zipWholeWriter{left: whole - w.expanded}
+	n, err = guardStream(zipStream(f))(&attachSpaceWriter{w: limit, left: math.MaxInt64, stop: w.stopped, tick: w.r.watch.bump}) // it is progress, so the no-progress breaker never reads a long read-through as a stall
+	if errors.Is(err, errZipWhole) {
+		return n, fmt.Sprintf("the zip as a whole would expand to more than %d times its own size (%s), which this version takes for a zip bomb and does not extract the rest of",
+			bd.ratio, humanBytes(src.r.Size())), nil
+	}
+	if err = classifyStream(err); err != nil {
+		return n, "", err
+	}
+	if n > bd.ratio*src.read {
+		return n, fmt.Sprintf("its data expands more than %d times (%s packed, %s unpacked) whatever its header says, which this version takes for a zip bomb and does not extract",
+			bd.ratio, humanBytes(src.read), humanBytes(n)), nil
+	}
+	return n, "", nil
 }
 
 // addZipEntries extracts the entries of the archived attachments zip just placed as zrec into

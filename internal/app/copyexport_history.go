@@ -744,8 +744,12 @@ type CopyCheck struct {
 	// ReadableOnly is true when the RED is only readable copies (.html) that changed or are missing:
 	// every original is as it was (slice E5), and the Remedy says so.
 	ReadableOnly bool
-	Problems     []string // the findings in words
-	Remedy       string   // what to do about a RED, "" when GREEN
+	// DerivedOnly is true when the RED is only derived copies that changed or are missing: readable
+	// copies and extracted attachments (slice E6), each a convenience made from the .eml beside it.
+	// ReadableOnly implies it.
+	DerivedOnly bool
+	Problems    []string // the findings in words
+	Remedy      string   // what to do about a RED, "" when GREEN
 }
 
 // copyCheckFileCap bounds the number of lines of SHA256SUMS.txt that Check reads.
@@ -848,21 +852,29 @@ func (e *CopyExportEnv) CheckExport(run string) (*CopyCheck, error) {
 	sort.Strings(res.Unlisted)
 	// A readable copy is a convenience made from the .eml beside it: one that changed or is
 	// missing is named as that, and says nothing of the original (slice E5, MA-513).
-	readable := e.readablePaths(run)
-	nReadable := 0
+	// An extracted attachment is the same kind of file (slice E6, E6-AO4).
+	readable, attachments := e.derivedPaths(run)
+	nDerived, nAttach := 0, 0
+	derived := func(p, what string) bool {
+		switch {
+		case readable[p]:
+			problem("the readable copy %s "+what+". It is a convenience made from the .eml beside it, and says nothing about that .eml", p)
+		case attachments[p]:
+			problem("the extracted attachment %s "+what+". It is a convenience made from the .eml beside it, and says nothing about that .eml", p)
+			nAttach++
+		default:
+			return false
+		}
+		nDerived++
+		return true
+	}
 	for _, p := range res.Changed {
-		if readable[p] {
-			problem("the readable copy %s has changed. It is a convenience made from the .eml beside it, and says nothing about that .eml", p)
-			nReadable++
-		} else {
+		if !derived(p, "has changed") {
 			problem("%s has changed", p)
 		}
 	}
 	for _, p := range res.Missing {
-		if readable[p] {
-			problem("the readable copy %s is missing. It is a convenience made from the .eml beside it, and says nothing about that .eml", p)
-			nReadable++
-		} else {
+		if !derived(p, "is missing") {
 			problem("%s is missing", p)
 		}
 	}
@@ -870,37 +882,50 @@ func (e *CopyExportEnv) CheckExport(run string) (*CopyCheck, error) {
 		problem("%s is in the folder but is not listed in %s: it is not part of the export", p, copySumsName)
 	}
 	res.OK = len(res.Problems) == 0 && res.FingerprintOK
-	res.ReadableOnly = nReadable > 0 && len(res.Problems) == nReadable && res.FingerprintOK
+	res.DerivedOnly = nDerived > 0 && len(res.Problems) == nDerived && res.FingerprintOK
+	res.ReadableOnly = res.DerivedOnly && nAttach == 0
 	switch {
 	case res.ReadableOnly:
 		res.Remedy = checkReadableRemedy
+	case res.DerivedOnly:
+		res.Remedy = checkDerivedRemedy
 	case !res.OK:
 		res.Remedy = checkRemedy
 	}
 	return res, nil
 }
 
-// readablePaths is the set of readable copies the run record lists, by their path as the sums
-// give it; nil when the record is gone, and the copies are then reported like any other file.
-func (e *CopyExportEnv) readablePaths(run string) map[string]bool {
-	var set map[string]bool
+// derivedPaths are the readable copies and the extracted attachments the run record lists, by
+// their path as the sums give it; nil when the record is gone, and the files are then reported like
+// any other file.
+func (e *CopyExportEnv) derivedPaths(run string) (readable, attachments map[string]bool) {
 	_ = walkProgress(e.recordPath(run), func(m *ceMsgLine) error {
 		for _, f := range m.Files {
-			if f.Role == roleDerivedHTML {
-				if set == nil {
-					set = map[string]bool{}
+			switch f.Role {
+			case roleDerivedHTML:
+				if readable == nil {
+					readable = map[string]bool{}
 				}
-				set[sumsPath(f.Path)] = true
+				readable[sumsPath(f.Path)] = true
+			case roleDerivedAttach:
+				if attachments == nil {
+					attachments = map[string]bool{}
+				}
+				attachments[sumsPath(f.Path)] = true
 			}
 		}
 		return nil
 	})
-	return set
+	return readable, attachments
 }
 
 // checkReadableRemedy is what a RED check tells the owner when only readable copies are changed or
 // missing: every original in the folder is as it was, and the copies are conveniences.
 const checkReadableRemedy = "Every original in this folder is as it was: only the readable copies (.html) named above are changed or missing, and each is a convenience made from the .eml beside it. Open that .eml instead, put the copy back, or export the messages again from the Extraction workspace."
+
+// checkDerivedRemedy is what a RED check tells the owner when only derived copies are changed or
+// missing and at least one is an extracted attachment (slice E6): the originals are as they were.
+const checkDerivedRemedy = "Every original in this folder is as it was: only the derived copies named above (readable pages and extracted attachments) are changed or missing, and each is a convenience made from the .eml beside it. Open that .eml instead, put the copy back, or export the messages again from the Extraction workspace."
 
 // checkRemedy is what a RED check tells the owner to do (friction F12): the findings name the
 // files, this says what follows from them.

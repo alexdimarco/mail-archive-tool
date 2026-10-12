@@ -1,8 +1,10 @@
 package util
 
 import (
+	"fmt"
 	"strings"
 	"testing"
+	"unicode"
 	"unicode/utf8"
 
 	"mail-archive-tool/internal/assure"
@@ -72,6 +74,102 @@ func TestExportNamesHostile(t *testing.T) {
 	// A bidi override is stripped, and the stripped name still differs from the plain one.
 	if a, b := ExportSegment("evil\u202Egnp.exe"), ExportSegment("evilgnp.exe"); a == b {
 		t.Errorf("a name with an RLO and the same name without both became %q", a)
+	}
+}
+
+// covers: MA-417, R4, R29
+// E6-AO8, E6-AO9: an attachment name is chosen by whoever sent the mail, and it is written to disk, to
+// SHA256SUMS.txt and to the manifest, and echoed by `sha256sum -c`, `ls` and `find` into a terminal.
+// The export-only pass strips, as well as the bidi embeddings and isolates, what a terminal or a
+// line splitter acts on: DEL and the C1 controls (U+009B is CSI to a terminal in UTF-8 mode, U+0085
+// is NEL), the line and paragraph separators (str.splitlines breaks SHA256SUMS.txt at them), and the
+// invisible marks (the bidi marks LRM, RLM and ALM that make a name read backwards in a list, the
+// zero-width space, the byte order mark); and a name that starts with "-" is prefixed, so a glob in
+// the attachments folder (`tar czf x.tgz *`) never takes an attachment for an option. Ordinary names,
+// and the zero-width non-joiner and joiner that Persian, Indic and emoji text need, pass unchanged.
+func TestExportFilenameStripsControlsAndNeverStartsWithADash(t *testing.T) {
+	c := func(r rune) string { return string(r) }
+	for _, ok := range []string{"report.pdf", "über-Änderung.docx", "日本語.pdf", "a-b.txt", "x.tar.gz", "mid-dash.txt", "$(id).txt",
+		"persian" + c(0x200c) + "name.txt", "emoji" + c(0x200d) + "joined.png"} {
+		if got := ExportFilename(ok, 1); got != ok {
+			t.Errorf("ExportFilename(%q) = %q, an ordinary name must pass unchanged", ok, got)
+		}
+	}
+	cases := []struct{ in, want string }{
+		{"x" + c(0x9b) + "2Jy.txt", "x2Jy.txt"},
+		{"line" + c(0x85) + "two.txt", "linetwo.txt"},
+		{"sep" + c(0x2028) + "two.txt", "septwo.txt"},
+		{"para" + c(0x2029) + "two.txt", "paratwo.txt"},
+		{"del\x7fete.txt", "delete.txt"},
+		{"invoice" + c(0x200f) + "fdp.exe", "invoicefdp.exe"},
+		{"invoice" + c(0x200e) + "fdp.exe", "invoicefdp.exe"},
+		{"invoice" + c(0x61c) + "fdp.exe", "invoicefdp.exe"},
+		{c(0xfeff) + "bom.txt", "bom.txt"},
+		{"zero" + c(0x200b) + "width.txt", "zerowidth.txt"},
+		{"--checkpoint=1", "_--checkpoint=1"},
+		{"--checkpoint-action=exec=sh shell.sh", "_--checkpoint-action=exec=sh shell.sh"},
+		{"-rf", "_-rf"},
+		{c(0x200f) + "-rf", "_-rf"},
+		{"-", "_-"},
+		{strings.Repeat("-", 300) + ".pdf", ""},
+		{c(0x9b) + strings.Repeat("x", 300) + ".pdf", ""},
+	}
+	for _, tc := range cases {
+		got := ExportFilename(tc.in, 1)
+		exportNameOK(t, tc.in, got)
+		for _, r := range got {
+			if r == 0x7f || (r >= 0x80 && r < 0xa0) || r == 0x2028 || r == 0x2029 || r == 0x200b || r == 0x200e || r == 0x200f || r == 0x061c || r == 0xfeff {
+				t.Errorf("%q → %q keeps U+%04X", tc.in, got, r)
+			}
+		}
+		if strings.HasPrefix(got, "-") {
+			t.Errorf("%q → %q starts with a dash", tc.in, got)
+		}
+		if tc.want != "" && got != tc.want {
+			t.Errorf("ExportFilename(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// covers: MA-417, R4, R29
+// E6-AO8 (second round), E6-AO9's "~": the invisible-format class is stripped whole, not by a list. The
+// Unicode Cf (format) characters that a name can carry unseen (the word joiner U+2060, the soft hyphen
+// U+00AD, the invisible operators U+2061 to U+2064, the deprecated format controls U+206A to U+206F, the
+// Mongolian vowel separator U+180E, the interlinear annotation marks U+FFF9 to U+FFFB, the tag
+// characters U+E0000 to U+E007F, the Arabic number signs) and the combining grapheme joiner U+034F make
+// "invoice.pdf" and an invisibly different "invoice.pdf" the same name to the eye; only the
+// zero-width non-joiner and joiner, which Persian, Indic and emoji names need, are kept. A name that
+// starts with "~" is prefixed too: an unquoted ~user in a shell is a path.
+func TestExportFilenameStripsEveryInvisibleFormatCharacter(t *testing.T) {
+	var stripped []rune
+	for r := rune(0); r <= unicode.MaxRune; r++ {
+		if unicode.Is(unicode.Cf, r) && r != 0x200c && r != 0x200d {
+			stripped = append(stripped, r)
+		}
+	}
+	stripped = append(stripped, 0x34f)
+	if len(stripped) < 100 {
+		t.Fatalf("only %d format characters in the table: the test does not look at them all", len(stripped))
+	}
+	var kept []string
+	for _, r := range stripped {
+		if got := ExportFilename("in"+string(r)+"voice.pdf", 1); got != "invoice.pdf" {
+			kept = append(kept, fmt.Sprintf("U+%04X", r))
+		}
+	}
+	if len(kept) > 0 {
+		t.Errorf("%d of %d invisible format characters pass through ExportFilename unchanged: %s", len(kept), len(stripped), strings.Join(kept[:min(len(kept), 8)], " "))
+	}
+	for _, keep := range []rune{0x200c, 0x200d} {
+		in := "pe" + string(keep) + "rsian.txt"
+		if got := ExportFilename(in, 1); got != in {
+			t.Errorf("U+%04X was stripped: %q", keep, got)
+		}
+	}
+	for in, want := range map[string]string{"~root.txt": "_~root.txt", "~": "_~", "a~b.txt": "a~b.txt", "file~1.txt": "file~1.txt"} {
+		if got := ExportFilename(in, 1); got != want {
+			t.Errorf("ExportFilename(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
 
