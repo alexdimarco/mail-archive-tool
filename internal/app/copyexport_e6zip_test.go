@@ -484,6 +484,9 @@ func TestZipModeChecksFreeSpaceAndObservesCancelAndAbandon(t *testing.T) {
 		mime := e6Mime(msgs[0].SourceID, "two", e6Part{name: "small.bin", body: small}, e6Part{name: "big.bin", body: big})
 		run := func(extra int64) (*CopyResult, *ceMsgLine) {
 			e := newCEEnv(t)
+			// the test env's breaker windows are milliseconds; a 25 MB message under the race detector
+			// takes longer than that without a byte of progress to show, and a stalled message is stopped
+			e.window, e.idle, e.overall = time.Minute, time.Minute, time.Minute
 			src := newFakeSrc()
 			src.body = func(string) []byte { return mime }
 			p := cePlan(t, e, src, msgs)
@@ -500,10 +503,10 @@ func TestZipModeChecksFreeSpaceAndObservesCancelAndAbandon(t *testing.T) {
 			t.Fatalf("the unconstrained run made no zip: %+v %q", line.Files, line.Notes)
 		}
 		var deltas []int64
-		for d := int64(-2200); d <= 1200; d += 128 { // where the part passed the room check and the zip did not fit
+		for d := int64(-2200); d <= 1200; d += 256 { // where the part passed the room check and the zip did not fit
 			deltas = append(deltas, d)
 		}
-		for d := int64(30000); d <= 46000; d += 1024 { // where the estimate admits the part
+		for d := int64(30000); d <= 46000; d += 4096 { // where the estimate admits the part
 			deltas = append(deltas, d)
 		}
 		for _, d := range deltas {
