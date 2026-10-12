@@ -303,7 +303,6 @@ func (w *walker) describe(h textproto.Header) partInfo {
 
 // entity reads one part: a multipart is a container, anything else a leaf.
 func (w *walker) entity(h textproto.Header, raw []byte, depth int) {
-	w.parts++
 	p := w.describe(h)
 	if strings.HasPrefix(p.mt, "multipart/") {
 		w.container(p, raw, depth)
@@ -349,10 +348,10 @@ func (w *walker) container(p partInfo, raw []byte, depth int) {
 
 // partOf reads one part of a container.
 func (w *walker) partOf(part *textproto.Part, depth int) {
-	w.site = fmt.Sprintf("part %d", w.parts+1)
+	w.parts++ // the root is not counted: maxParts bounds the parts of a message, not the message
+	w.site = fmt.Sprintf("part %d", w.parts)
 	raw, _ := io.ReadAll(part) // the raw, still transfer-encoded body; a read error ends it where it ended
 	if headerSize(part.Header) > maxHeaderBytes {
-		w.parts++
 		w.leafN++
 		w.blob(fmt.Sprintf("part-%d", w.leafN), raw, state.GapKindStructureLimit,
 			"the part's header is larger than 1 MiB, so the part is kept unread")

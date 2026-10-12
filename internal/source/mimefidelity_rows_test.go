@@ -83,15 +83,8 @@ func TestRepairAndCannotDecodeAreLegibleOnEverySurface(t *testing.T) {
 // covers: MA-349, R10, R19
 // Bounds and isolation, the export side of MA-349: a panic in an embedded render, in
 // the cid tree embedding or in a repair attempt costs that feature or attempt, and
-// the outer message is exported.
+// the outer message is exported; the </style> breakout stays out of the page (MC23); a
+// fallback message with a cid text reference repairs 0 on the second run (MC19).
 func TestHostileMIMEExportSideIsIsolated(t *testing.T) {
-	t.Skip("MA-349 (export side): the cid tree embedding and the embedded render do not exist yet (render-fallback lands in MF-S4) and neither does the repair attempt (withheld repair-error, MF-S7); lands in MF-S4 and MF-S7")
-}
-
-// covers: MA-349, R10, R1, R19, R26
-// Bounds and isolation: every hostile shape completes within its deadline, records
-// a structure-limit or corrupt-part gap or reverts the message to v1 content with a
-// visible fidelity-fallback gap, and never yields a stub.
-func TestHostileMIMEIsBoundedAndNeverYieldsAStub(t *testing.T) {
-	t.Skip("MA-349: the depth, leaf, parameter and header bounds, the fidelity-superset check and the fallback gap do not exist; encoder lands in MF-S0, turns green in MF-S2 (parser bounds), MF-S4 (render) and MF-S7 (repair)")
+	t.Skip("MA-349 (export side): the cid tree embedding and the embedded render do not exist yet (render-fallback and the data-URI allowlist land in MF-S4) and neither does the repair attempt (withheld repair-error and the fallback-never-loops case, MF-S7); lands in MF-S4 and MF-S7")
 }
