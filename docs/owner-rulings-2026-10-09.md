@@ -1567,6 +1567,27 @@ Clean clone: full suite green, vet3 clean.
 Backlog: F10 (status note that records read by an older version exist and `-mode full` re-reads them), F13
 (the scanpst remedy is shown for mbox sources too).
 
+### 13.34 EW-E6 (Extract attachments) built and merged, option held off (2026-10-12)
+
+Branch `wip/ew-e6`; conform GAPS_FIXED. The engine is merged: loose decoded files under `<stem>.attachments/`
+with sanitized, contained, FoldKey-unique names; zero-byte, failed and kept (`.undecoded`/`.partial`) parts are
+notes, never silent; a free-space check before writing; an archive's `-attachments.zip` copied byte-exact and
+its entries extracted under bounds (1,000 entries, 1 GiB per entry, 4 GiB per message, 200:1; judged on the
+declared sizes before any read); README caveats; the plan sizes the attachments. MA-425 is a real permanent
+guard, not an xfail, because the walker is on (§13.31). Clean clone: full suite green, vet3 clean.
+
+**Held for the owner (same shape as E5, §13.25/§13.26): revealing the option.** `PlanCopyExport` still refuses
+it and the workspace page hides it, because showing it flips two existing tests, which §0 rule 2 reserves
+to the owner: `TestCopyExportPlanIsADryRun` (the plan refuses the option with R-h) and
+`TestExportSettingsRoundTrip` (MA-445: the page hides it). The prepared patch
+`scratchpad/ew-e6-gate-flip.patch` (applies cleanly; full suite green with it) adds the checkbox (off by
+default), the preview line, flips those two tests and turns the two held encoders into passing tests.
+Recommended: yes. **Owed: the adversarial pass (untrusted names to loose files, zip bounds) and the friction
+review with the X-series check.** Notes for those: up to 10,001 attachments in one `.attachments` directory with
+no per-directory bound; the whole central directory of a zip is read before the 1,000-entry cut; a derived
+attachment that is gone or changed after writing is a listed failure rather than a note.
+Note: there is no CLI copy-export path in this tree, so only the desktop workspace is touched.
+
 ### 13.7 Escalations from LC-C1's adversarial pass (merged 2026-10-10)
 
 None blocks anything: each has a skip encoder or a safe interim in force.
