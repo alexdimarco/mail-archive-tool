@@ -1427,6 +1427,26 @@ runs it beside the content parser, so the cost doubles. [Recommended: a deadline
 slow parse into the stub identity, ruled as a deliberate drift.] Both encoders cite R10 as well as R27 and
 MA-331. Merged with the S1 build's `TestCopyExportScalesToSixtyThousandMessages` heap bound untouched (§13.24).
 
+### 13.28 FI-S2b built and merged (2026-10-11), delegated-judgement
+
+Local containment: mbox, maildir, Thunderbird and Evolution are read through one checked open
+(`util.OpenRegularFile`, `ReadDirIn`, `os.Root`, a lexical link judgment and the Windows reparse
+classifier). A pipe or device where a mailbox or folder should be is a visible gap and never a hang; one
+fault costs one file or one folder; a message whose parse panics keeps its bytes as a raw-preserving stub
+(first 64 KiB, valid UTF-8, with `Record.ParserGen`, no identity fold, J8) that a later build re-examines
+once; the per-input directory-link opt-in (OR6) is carried by the CLI, the GUI wizard and the job; **K2, the
+interim hole of §13.17, is closed:** the legacy re-class can no longer hide a stub this build minted
+(`TestAReclassDoesNotHideAStubThisBuildMinted` is a real test), and the Graph raw-stub and parser-generation
+re-fetch skips of §13.22 are real tests. Conform: GAPS_FIXED (a silent drop in the Evolution Maildir++ root, a
+vacuous discovery guard, the missing EIO injection, a Windows-junction maildir). **Owed: the adversarial pass**
+(R25 containment, Windows). **Open:** ESC-1 (two distinct MIME-panicking raw messages with no Message-ID in
+one folder still collapse into one record; skip encoder citing R1; FI-S2b-id); a fallback "(unparseable
+message)" stub that is neither labelled `unparsed` nor bounded (skip encoder citing MA-318); MA-503 (tier L,
+pending: a real OneDrive Files-On-Demand placeholder); the Windows junction test is compiled and vetted, not run.
+Delegated choices: maildir messages carry a new `ReadLocator` (the S2a test pins an `ident:` locator for
+export panics); `ParserGenCurrent` follows `ParseSchemeCurrent`; a mailbox-shaped file in a Thunderbird folder
+that cannot be opened at the sniff is a fillable `folder-unreadable` gap (it used to be silently ignored).
+
 ### 13.7 Escalations from LC-C1's adversarial pass (merged 2026-10-10)
 
 None blocks anything: each has a skip encoder or a safe interim in force.
