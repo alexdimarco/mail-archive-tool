@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/source"
 	"mail-archive-tool/internal/state"
 )
@@ -74,6 +76,57 @@ func TestAHealthySiblingDoesNotCloseAnUnreadableFilesGap(t *testing.T) {
 			}
 			if !bytes.Contains(archiveText(t, out), []byte("LOSTSUBJECT-ONE")) {
 				t.Errorf("the fixed file was not archived")
+			}
+		})
+	}
+}
+
+// covers: MA-322, R25, R10, S47
+// S2B-AO4 (and S2B-AC1) end to end: a pipe named like an Outlook data file, in an input
+// folder or given as the input with -copy-first (whose snapshot opened it first), must
+// not hold the run, and the archive lock with it. The run returns within a guard, with
+// the pipe's refusal as the file's own failure.
+func TestAPipeAsAnInputFileDoesNotHoldTheRun(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("FIFOs need privileges on Windows")
+	}
+	for _, c := range []struct {
+		name      string
+		pipe      string // where the pipe is
+		input     string // what is given as the input ("" = the folder holding the pipe)
+		copyFirst bool
+	}{
+		{"a .pst pipe in an input folder", "evil.pst", "", false},
+		{"an .ost pipe in an input folder", "evil.ost", "", true},
+		{"a pipe given as the input with -copy-first", "box.mbox", "box.mbox", true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := tmpDir(t)
+			pipe := filepath.Join(dir, c.pipe)
+			if err := mkfifo(pipe); err != nil {
+				t.Skip("no FIFOs here:", err)
+			}
+			t.Cleanup(func() {
+				if f, err := os.OpenFile(pipe, os.O_RDWR, 0); err == nil {
+					f.Close()
+				}
+			})
+			input := dir
+			if c.input != "" {
+				input = filepath.Join(dir, c.input)
+			}
+			done := make(chan error, 1)
+			go func() {
+				_, err := Run(context.Background(), Options{Inputs: []string{input}, Out: tmpDir(t), Mode: export.Incremental, CopyFirst: c.copyFirst}, discard(), nil)
+				done <- err
+			}()
+			select {
+			case err := <-done:
+				if err == nil {
+					t.Errorf("run err = nil; want the pipe refused as a file that failed")
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("the run waited on a pipe: it holds the archive lock until a writer appears")
 			}
 		})
 	}

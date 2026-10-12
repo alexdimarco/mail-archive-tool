@@ -1082,7 +1082,14 @@ var snapshotCopy = io.Copy
 // the operator chose and sized — a multi-gigabyte .ost must not land in a
 // small system temp directory at 02:00), returning its path and a cleanup func.
 func snapshot(src, out string) (string, func(), error) {
-	in, err := os.Open(src)
+	// The operator's own spelling may be a link (the file it names is copied); the open
+	// neither follows one nor waits on a pipe: a FIFO given as the input held the run, and
+	// the archive lock, until a writer appeared (FC2, S2B-AO4).
+	real := src
+	if p, err := filepath.EvalSymlinks(src); err == nil {
+		real = p
+	}
+	in, err := util.OpenRegularFile(real)
 	if err != nil {
 		return "", nil, fmt.Errorf("open %s: %w", src, err)
 	}

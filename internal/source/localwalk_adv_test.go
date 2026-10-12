@@ -1,13 +1,26 @@
 package source
 
 import (
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"mail-archive-tool/internal/state"
 )
+
+// releasePipe lets a goroutine that blocked opening the pipe at path go, once the test is
+// over (a test that finds the hang must not leave a goroutine in the process).
+func releasePipe(t *testing.T, path string) {
+	t.Helper()
+	t.Cleanup(func() {
+		if f, err := os.OpenFile(path, os.O_RDWR, 0); err == nil {
+			f.Close()
+		}
+	})
+}
 
 // The tombstones of FI-S2b's adversarial pass (docs/review-fault-isolation-s2b-adversarial.md).
 
@@ -54,5 +67,45 @@ func TestAnOverDeepStoreIsBoundedByTheDepthCap(t *testing.T) {
 	}
 	if rem := state.GapRemedy(f.Reason, state.SourceLocal, ""); strings.Contains(rem, "scanpst") || strings.Contains(rem, ".pst") {
 		t.Errorf("the remedy of a local store's deep folder names a .pst repair: %q", rem)
+	}
+}
+
+// covers: MA-322, R25, R10, S47
+// S2B-AO4 (and S2B-AC1): a pipe named like an Outlook data file is never opened. The PST
+// open was a plain os.Open, which waits for a writer on a pipe, so a FIFO named *.pst or
+// *.ost in an input folder held the archive lock until someone opened it (FC2 says a pipe
+// is never opened). The positive twin first: a regular file of that name is opened (and
+// refused by the parser, not by the open).
+func TestAPipeNamedLikeADataFileIsNeverOpened(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("FIFOs need privileges on Windows")
+	}
+	dir := t.TempDir()
+	writeLocal(t, filepath.Join(dir, "plain.pst"), "not a pst")
+	if _, err := Open(filepath.Join(dir, "plain.pst")); err == nil || strings.Contains(err.Error(), "not a regular file") {
+		t.Fatalf("a regular file named .pst: error %v; want the parser's refusal, not the open's", err)
+	}
+	for _, name := range []string{"evil.pst", "evil.ost", "Upper.PST"} {
+		pipe := filepath.Join(dir, name)
+		if err := mkfifo(pipe); err != nil {
+			t.Skip("no FIFOs here:", err)
+		}
+		releasePipe(t, pipe)
+		done := make(chan error, 1)
+		go func() {
+			s, err := Open(pipe)
+			if err == nil {
+				s.Close()
+			}
+			done <- err
+		}()
+		select {
+		case err := <-done:
+			if err == nil || !strings.Contains(err.Error(), "not a regular file") {
+				t.Errorf("%s: error %v; want the refusal of a pipe", name, err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Errorf("%s: Open waited on a pipe", name)
+		}
 	}
 }
