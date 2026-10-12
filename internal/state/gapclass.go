@@ -1,6 +1,10 @@
 package state
 
-import "strings"
+import (
+	"strings"
+
+	"mail-archive-tool/internal/util"
+)
 
 // Record gap labels. A record's Missing and Terminal lists name what one capture
 // could not deliver: "body", an attachment's label, the legacy "unknown"
@@ -30,6 +34,76 @@ const (
 	LabelLegacyPlaceholder = "legacy-placeholder"
 )
 
+// Parse-gap kinds (design-mime-fidelity §4.9, P10): what the fidelity parser could not
+// decode of a message, kept as received where the bytes exist. A record carries one as a
+// label made by ParseGapLabel in its Missing or Terminal list, so an older binary keeps,
+// counts and reports it as an ordinary attachment gap. They register here, the single
+// owner of record gap labels (rulings J5), as informational: they never make a run partial.
+const (
+	// GapKindUndecodedPart is a part whose transfer encoding this version does not
+	// decode (x-uuencode and the like). Re-reading the same bytes gives the same answer,
+	// so it is terminal on every source.
+	GapKindUndecodedPart = "undecoded-part"
+	// GapKindStructureLimit is the rest of a message kept unread because it is nested
+	// or divided past a bound (P13). Terminal on every source.
+	GapKindStructureLimit = "structure-limit"
+	// GapKindFidelityFallback is a message kept as the earlier parser read it because the
+	// fidelity parser failed or held less (MC4, MC19). Terminal on every source.
+	GapKindFidelityFallback = "fidelity-fallback"
+	// GapKindIdentityStub is a message the earlier parser could not read at all, filed
+	// under that parser's placeholder identity (MC6). Terminal on every source.
+	GapKindIdentityStub = "identity-stub"
+	// GapKindCorruptPart is a part whose data is cut short or damaged, kept as far as it
+	// decoded. A truncation in an on-demand cache can be cured by a complete copy, so it
+	// is fillable there and terminal on a source that delivers a message whole (MC20).
+	GapKindCorruptPart = "corrupt-part"
+	// GapKindUnsplitMultipart is a multipart whose parts could not be separated, shown as
+	// one body of text. Fillable on an on-demand source, terminal on Graph (MC20).
+	GapKindUnsplitMultipart = "unsplit-multipart"
+)
+
+// maxParseGapDetail bounds the detail of a parse-gap label, in runes.
+const maxParseGapDetail = 300
+
+// parseGapSep delimits a parse-gap label: "\x00kind\x00detail". A name a build writes is
+// control-stripped, so no other label begins with it.
+const parseGapSep = "\x00"
+
+// ParseGapLabel is the record label of a parse gap: its kind and a detail that is
+// control-stripped and at most 300 runes.
+func ParseGapLabel(kind, detail string) string {
+	detail = util.StripControl(detail)
+	if r := []rune(detail); len(r) > maxParseGapDetail {
+		detail = string(r[:maxParseGapDetail])
+	}
+	return parseGapSep + kind + parseGapSep + detail
+}
+
+// ParseGapParts splits a parse-gap label into its kind and detail; ok is false for any
+// other label.
+func ParseGapParts(label string) (kind, detail string, ok bool) {
+	rest, found := strings.CutPrefix(label, parseGapSep)
+	if !found {
+		return "", "", false
+	}
+	kind, detail, found = strings.Cut(rest, parseGapSep)
+	if !found || kind == "" {
+		return "", "", false
+	}
+	return kind, detail, true
+}
+
+// IsParseGapLabel reports whether label is a parse-gap label.
+func IsParseGapLabel(label string) bool {
+	_, _, ok := ParseGapParts(label)
+	return ok
+}
+
+// parseGapFillable says a kind can be cured by a later, complete copy of the message.
+func parseGapFillable(kind string) bool {
+	return kind == GapKindCorruptPart || kind == GapKindUnsplitMultipart
+}
+
 // unreadablePrefix starts every label of a partly-read PST record.
 const unreadablePrefix = "unreadable:"
 
@@ -51,6 +125,11 @@ func GapClass(label string) string {
 		return ClassTerminal
 	case label == LabelSuperseded, label == LabelLegacyPlaceholder:
 		return ClassInfo
+	}
+	if kind, _, ok := ParseGapParts(label); ok && !parseGapFillable(kind) {
+		// A parse gap the same bytes will always give again. The fillable kinds follow the
+		// source like any other gap (the list they sit in decides).
+		return ClassTerminal
 	}
 	return ""
 }
@@ -98,10 +177,26 @@ func (r Record) hasLabel(label string) bool {
 }
 
 // terminalGap reports whether some Terminal label has the class terminal (a
-// superseded label is info: nothing is missing).
+// superseded label is info: nothing is missing). A parse gap is not one: the part is
+// kept as received and counted on its own (UndecodableCount), so it is not "source-empty".
 func (r Record) terminalGap() bool {
 	for _, l := range r.Terminal {
-		if RecordGapClass(l, true) == ClassTerminal {
+		if !IsParseGapLabel(l) && RecordGapClass(l, true) == ClassTerminal {
+			return true
+		}
+	}
+	return false
+}
+
+// hasParseGap reports whether the record carries a parse-gap label in either list.
+func (r Record) hasParseGap() bool {
+	for _, l := range r.Missing {
+		if IsParseGapLabel(l) {
+			return true
+		}
+	}
+	for _, l := range r.Terminal {
+		if IsParseGapLabel(l) {
 			return true
 		}
 	}

@@ -182,12 +182,29 @@ type Record struct {
 	// write and, in memory, on every re-read (MA-329's golden carries it since the
 	// owner's decision of 2026-10-11).
 	ParseScheme int `json:"parse_scheme,omitempty"`
+
+	// FidelityFallback (additive; design-mime-fidelity MC19) is the parse scheme under
+	// which this record was written from v1's content because the fidelity parser
+	// panicked or held less than v1 did. A later scheme may parse the message, so the
+	// repair slice re-examines it; the count of such records is what status shows.
+	FidelityFallback int `json:"fidelity_fallback,omitempty"`
 }
 
 // ParseSchemeCurrent is the parser scheme this build writes and stamps. Slice S1 of
 // design-mime-fidelity bumps it to 1: it routes identity, stems and ContentHash but
 // registers no fidelity note, so no record is yet "damaged" by it.
+//
+// Slice S2 introduces the first fidelity notes, under ParseSchemeFidelity, and should
+// move this to 2. It does not: MA-329's golden (internal/app/testdata/p14-golden.json)
+// holds parse_scheme 1 on its 46 records, and moving the stamp is a baseline change that
+// is the owner's to accept. Until it moves, a record written under this build carries
+// 1, and a re-read that shows a note newer than that leaves it unstamped (examinedBy), so
+// the repair slice sees it as not yet examined.
 const ParseSchemeCurrent = 1
+
+// ParseSchemeFidelity is the parse scheme that introduced slice S2's fidelity notes
+// (design-mime-fidelity §4.10): every note it registers carries it as Since.
+const ParseSchemeFidelity = 2
 
 // FileDigest is the recorded fixity of one exported file: the sha256 (hex) of
 // its bytes and its length as written. `verify` re-hashes the file, capped at
@@ -1094,12 +1111,44 @@ func (m *Manifest) UnparsedTerminalCount() int {
 		}
 		only := true
 		for _, l := range r.Terminal {
-			if l != LabelUnparsed && RecordGapClass(l, true) == ClassTerminal {
+			if l != LabelUnparsed && !IsParseGapLabel(l) && RecordGapClass(l, true) == ClassTerminal {
 				only = false
 				break
 			}
 		}
 		if only {
+			n++
+		}
+	}
+	return n
+}
+
+// UndecodableCount returns how many records carry at least one parse gap (§4.9): a part
+// this version could not decode, or one cut short, kept as received. It is informational
+// like the terminal count: it never makes a run partial. Counts() leaves such a record
+// out of terminal when every terminal label it has is a parse gap, so status can say
+// "cannot decode" instead of "source-empty".
+func (m *Manifest) UndecodableCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, r := range m.Entries {
+		if r.hasParseGap() {
+			n++
+		}
+	}
+	return n
+}
+
+// FidelityFallbackCount returns how many records were written from v1's content because
+// the fidelity parser failed or held less (MC19), from the additive fidelity_fallback
+// field. status -json reports it as fidelity_fallback.
+func (m *Manifest) FidelityFallbackCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, r := range m.Entries {
+		if r.FidelityFallback > 0 {
 			n++
 		}
 	}
