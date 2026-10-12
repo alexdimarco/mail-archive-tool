@@ -700,9 +700,88 @@ func TestLooseModeIsUnchangedByTheZipModeSwitch(t *testing.T) {
 	}
 }
 
-// covers: MA-535, R12
+// covers: MA-535, R12, R4
+// The plan, sized directly (PlanCopyExport still refuses the option, the owner's gate): zip mode
+// grows the estimate by 0.8 of each message that has an original, as loose mode does, and by nothing
+// for an archive record without one (its zip is copied as it is); the zip is one entry of its month
+// directory, so 900 messages of one month are two directories and a record with only a zip counts no
+// more than without the option; the longest path counts .attachments.zip after the stem, and the stem
+// is shortened for it, so no path of the export passes the budget the preview states (loose mode keeps
+// ESC-E6-AO11's encoder for itself).
 func TestThePlanSizesAndPlacesAZipModeExport(t *testing.T) {
-	t.Skip("MA-535: zip mode is not built yet")
+	e := newCEEnv(t)
+	msgs := ceMsgs(40)
+	for i := range msgs {
+		msgs[i].SizeHint = int64(1000 * (i + 1))
+	}
+	msgs[38].NoOrig, msgs[38].Zip = noOrigNotKept, true  // an archive record with a zip
+	msgs[39].NoOrig, msgs[39].Zip = noOrigNotKept, false // one with no zip
+	size := func(msgs []CopyMessage, attach, asZip bool) *CopyPlan {
+		p := &CopyPlan{Dest: t.TempDir(), ExportName: "MailExport-x", Messages: msgs, Options: CopyOptions{PreserveFolders: true, Attachments: attach, AttachmentsAsZip: asZip}}
+		e.sizePlan(p)
+		return p
+	}
+	off, loose, zipped := size(msgs, false, false), size(msgs, true, false), size(msgs, true, true)
+	var want, wantZip int64
+	for _, m := range msgs[:39] {
+		want += m.SizeHint * 4 / 5
+	}
+	for _, m := range msgs[:38] {
+		wantZip += m.SizeHint * 4 / 5
+	}
+	if loose.EstimateBytes != off.EstimateBytes+want || zipped.EstimateBytes != off.EstimateBytes+wantZip || wantZip == 0 || wantZip == want {
+		t.Errorf("the estimate is %d without the option, %d loose and %d as a zip, want +%d and +%d", off.EstimateBytes, loose.EstimateBytes, zipped.EstimateBytes, want, wantZip)
+	}
+	if zipped.RecordBound <= off.RecordBound || zipped.RecordBound >= loose.RecordBound {
+		t.Errorf("the record bound is %d without the option, %d loose and %d as a zip: the zip holds one file a message, the record lists it, and an archived zip adds nothing", off.RecordBound, loose.RecordBound, zipped.RecordBound)
+	}
+	if got, want := copyFileCountFor(&msgs[38], CopyOptions{Attachments: true, AttachmentsAsZip: true}), copyFileCount(&msgs[38]); got != want {
+		t.Errorf("an archive record with a zip counts %d files in zip mode, want %d (loose mode counts one more for its folder)", got, want)
+	}
+
+	month := ceMsgs(900)
+	for i := range month {
+		month[i].Received = month[0].Received
+	}
+	dirs := func(opts CopyOptions) int {
+		n := newCeNamer(false, "/root")
+		seen := map[string]bool{}
+		for i := range month {
+			seen[n.place(&month[i], copyFileCountFor(&month[i], opts)).Dir] = true
+		}
+		return len(seen)
+	}
+	if without, with := dirs(CopyOptions{}), dirs(CopyOptions{Attachments: true, AttachmentsAsZip: true}); without != 1 || with != 2 {
+		t.Errorf("900 messages of one month are %d directories without the option and %d in zip mode, want 1 and 2", without, with)
+	}
+
+	// the longest path counts the zip's name, and the stem gives way to it
+	long := ceMsgs(3)
+	for i := range long {
+		long[i].Subject = strings.Repeat("abcdefghij", 8)
+	}
+	root := strings.Repeat("d", 120)
+	sizeAt := func(asZip bool) *CopyPlan {
+		p := &CopyPlan{Dest: "/" + root, ExportName: "MailExport-x", Messages: long, Options: CopyOptions{PreserveFolders: true, Attachments: true, AttachmentsAsZip: asZip}}
+		e.sizePlan(p)
+		return p
+	}
+	looseLong, zipLong := sizeAt(false), sizeAt(true)
+	if zipLong.LongestPath > copyPathBudget {
+		t.Errorf("the longest path is %d in zip mode, over the budget %d: the stem was not shortened for .attachments.zip", zipLong.LongestPath, copyPathBudget)
+	}
+	if looseLong.LongestPath <= copyPathBudget-len(".attachments.zip")+len(".eml") {
+		t.Fatalf("the fixture is too short to show it: loose mode's longest path is %d", looseLong.LongestPath)
+	}
+	rootAbs := "/" + root + "/MailExport-x"
+	n := newCeNamer(true, rootAbs)
+	n.attachZip = true
+	for i := range long {
+		pl := n.place(&long[i], 1)
+		if got := utf16Len(rootAbs + "/" + pl.Dir + "/" + pl.Stem + attachZipSuffix); got > copyPathBudget {
+			t.Errorf("message %d: the zip's path is %d, over the budget %d", i, got, copyPathBudget)
+		}
+	}
 }
 
 // covers: MA-535, R1

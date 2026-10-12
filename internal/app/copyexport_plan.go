@@ -196,6 +196,7 @@ func (e *CopyExportEnv) sizePlan(p *CopyPlan) {
 	rootAbs := filepath.Join(p.Dest, p.ExportName)
 	namer := newCeNamer(p.Options.PreserveFolders, filepath.ToSlash(rootAbs))
 	namer.readable = p.Options.ReadableHTML
+	namer.attachZip = p.Options.Attachments && p.Options.AttachmentsAsZip
 	var reserve, record int64
 	for i := range p.Messages {
 		m := &p.Messages[i]

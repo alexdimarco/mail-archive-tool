@@ -91,6 +91,9 @@ func copyLongestSuffix(m *CopyMessage) string {
 // copyLongestSuffixFor is copyLongestSuffix with a readable copy beside an original: its
 // .html is a byte longer than the .eml it sits by.
 func copyLongestSuffixFor(m *CopyMessage, opts CopyOptions) string {
+	if opts.Attachments && opts.AttachmentsAsZip && m.NoOrig == "" { // the attachments zip beside the original (MA-535)
+		return attachZipSuffix
+	}
 	if opts.ReadableHTML && m.NoOrig == "" {
 		return ".html"
 	}

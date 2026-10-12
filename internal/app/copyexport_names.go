@@ -34,12 +34,13 @@ type cePart struct {
 }
 
 type ceNamer struct {
-	preserve bool
-	rootAbs  string              // the absolute path of the export root, for the path budget
-	root     *ceDir              // "messages"
-	stems    map[uint64]struct{} // 64-bit digests of (directory, stem fold key): a stem already placed in a month directory. A digest keeps the map small for 200,000 messages, and a collision of two digests only costs the later message a longer hash in its name.
-	counts   map[string]int      // files placed per month directory
-	readable bool                // a readable copy (<stem>.html) goes beside each original: the longest name is the .html, one byte more than the .eml (slice E5)
+	preserve  bool
+	rootAbs   string              // the absolute path of the export root, for the path budget
+	root      *ceDir              // "messages"
+	stems     map[uint64]struct{} // 64-bit digests of (directory, stem fold key): a stem already placed in a month directory. A digest keeps the map small for 200,000 messages, and a collision of two digests only costs the later message a longer hash in its name.
+	counts    map[string]int      // files placed per month directory
+	readable  bool                // a readable copy (<stem>.html) goes beside each original: the longest name is the .html, one byte more than the .eml (slice E5)
+	attachZip bool                // an attachments zip (<stem>.attachments.zip) may go beside each original: it is the longest name, so no path or name passes the budget with it (MA-535)
 }
 
 func newCeNamer(preserve bool, rootAbs string) *ceNamer {
@@ -148,6 +149,9 @@ func (n *ceNamer) stem(m *CopyMessage, dir, key string) string {
 	suffix := ".eml"
 	if n.readable {
 		suffix = ".html"
+	}
+	if n.attachZip {
+		suffix = attachZipSuffix
 	}
 	for {
 		cand := export.StemName(m.Received, subjectSlug(m.Subject, slug), m.SourceID, 8)
