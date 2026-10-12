@@ -483,9 +483,6 @@ func (w *localWalk) mboxDir(sc *scope, rel string, prefix []string, top bool) er
 				}
 				continue // a plain directory that is no folder
 			}
-			if v.kind == kindDirLink && !isMailboxCandidate(name) {
-				continue // a hidden or index entry, not a folder
-			}
 			if err := w.into(sc, erel, v, folderPath, func(s *scope, r string) error {
 				if !isMaildirIn(s, r) {
 					// A followed link to a directory that is no maildir: the folder of mbox files
@@ -516,9 +513,10 @@ func (w *localWalk) mboxDir(sc *scope, rel string, prefix []string, top bool) er
 				return err
 			}
 		default:
-			if isMailboxCandidate(name) {
-				w.refuse(sc, erel, prefix, v)
-			}
+			// A link out of the store, one that cannot be followed, a pipe or a device: recorded
+			// whatever its name. A hidden or index-like name does not make a link that might
+			// hold a dot folder no mail (S2B-AO9); only a regular file is judged by its name.
+			w.refuse(sc, erel, prefix, v)
 		}
 	}
 	// A container whose folder has no entry of its own (or none that was a folder).

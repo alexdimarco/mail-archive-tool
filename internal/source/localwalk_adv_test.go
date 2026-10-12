@@ -337,6 +337,47 @@ func TestAnUnreachableLinkIsNotToldToUseTheOptInItHas(t *testing.T) {
 	}
 }
 
+// covers: MA-322, R25, R1, R10, S47
+// S2B-AO9: a link or special file in an mbox store is recorded whatever its name. The walk
+// dropped, without a row, a directory link whose name is hidden or an index's (a leading
+// dot, .msf, .dat, ...) and every refused entry of such a name, while a real directory of
+// that name that is a maildir is read: a link that might hold a Maildir++-style dot folder
+// left no trace. Every refusal that might hold mail is a row (R25).
+func TestALinkWithAHiddenNameIsRecorded(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("links and FIFOs need privileges on Windows")
+	}
+	parent := t.TempDir()
+	store := filepath.Join(parent, "Mail")
+	writeLocal(t, filepath.Join(store, "Inbox"), mboxText("inbox"))
+	writeLocal(t, filepath.Join(parent, "outsidedir", "cur", "m:2,S"), localMail("outsidedir"))
+	writeLocal(t, filepath.Join(parent, "outsidefile"), mboxText("outsidefile"))
+	if err := os.Symlink(filepath.Join(parent, "outsidedir"), filepath.Join(store, ".hiddenlink")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(parent, "outsidefile"), filepath.Join(store, ".hiddenfile")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(parent, "outsidedir"), filepath.Join(store, "Inbox.msf")); err != nil {
+		t.Fatal(err)
+	}
+	got := walkLocal(t, store, OpenOptions{})
+	if strings.Join(got.subjects, " ") != "Inbox: inbox" {
+		t.Errorf("delivered %v; want the one message", got.subjects)
+	}
+	for _, loc := range []string{"file:.hiddenlink", "file:.hiddenfile", "file:Inbox.msf"} {
+		found := false
+		for _, f := range got.faults {
+			if f.Locator == loc && f.Class == state.ClassTerminal {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("no terminal gap at %s; faults %+v: a link named like a hidden or index entry was dropped without a trace", loc, got.faults)
+		}
+	}
+}
+
 // covers: MA-322, R25, R10, S47
 // S2B-AO4 (and S2B-AC1): a pipe named like an Outlook data file is never opened. The PST
 // open was a plain os.Open, which waits for a writer on a pipe, so a FIFO named *.pst or
