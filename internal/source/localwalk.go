@@ -299,7 +299,11 @@ func readFileIn(sc *scope, rel string) ([]byte, error) {
 // permissions, the disk) and the walk goes on; no record is minted for it (FC7).
 func (w *localWalk) maildirMessage(sc *scope, rel, name string, folder []string) error {
 	key := strings.Join(folder, "/")
-	locator := "maildir:" + key + "/" + maildirUnique(name)
+	// The ledger strips control characters from a locator and cuts it at a bound, so the
+	// locator is built in the ledger's own spelling, with a digest where it had to be
+	// changed: two names that read alike once stripped have an entry each, and the key
+	// a recovery builds is the key the gap was stored under (S2B-AO2).
+	locator := state.BoundLocator("maildir:" + key + "/" + maildirUnique(name))
 	data, err := readFileIn(sc, rel)
 	if errors.Is(err, fs.ErrNotExist) {
 		// A live mail client renames a file to change its flags between the listing and

@@ -279,7 +279,7 @@ func (s *sourceRun) recovered(m *model.Message, folderKey string) {
 	}
 	// A maildir file that could not be read on an earlier run is recorded at the place
 	// the reader found it: its capture answers that gap too.
-	if m.ReadLocator != "" && m.ReadLocator != m.Locator && mf.CloseGap(state.GapKey(s.token, state.GapScopeItem, m.ReadLocator)) {
+	if s.closeReadGap(m) {
 		s.lr.recovered++
 	}
 	ident := "ident:" + m.Identity()
@@ -291,6 +291,31 @@ func (s *sourceRun) recovered(m *model.Message, folderKey string) {
 			s.lr.recovered++
 		}
 	}
+}
+
+// closeReadGap closes the gap recorded at a local reader's own place for the message
+// (a maildir file's folder and unique part), and says whether it closed one.
+//
+// That locator names a message, not a file: new/abc and cur/abc:2,S, a client's rename,
+// share it. So a gap THIS run observed is answered only by a capture when the gap says
+// the file vanished (the walk then found it under its new name); a file the run could
+// not read (file-unreadable) is not answered by the capture of another file of the same
+// unique part, which is another message (S2B-AO2). A gap from an earlier run is closed
+// by any capture of the place, as before.
+func (s *sourceRun) closeReadGap(m *model.Message) bool {
+	if m.ReadLocator == "" || m.ReadLocator == m.Locator {
+		return false
+	}
+	mf := s.lr.exp.Manifest
+	key := state.GapKey(s.token, state.GapScopeItem, m.ReadLocator)
+	g, ok := mf.GapFor(key)
+	if !ok {
+		return false
+	}
+	if g.LastRun.Equal(s.lr.runAt) && g.Reason != "vanished-during-read" {
+		return false
+	}
+	return mf.CloseGapReason(key, g.Reason)
 }
 
 // identFolderSep joins an ident: locator to the hash of the folder it was lost in,
