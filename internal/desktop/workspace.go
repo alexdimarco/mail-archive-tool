@@ -366,7 +366,7 @@ func (d *dashboard) sourceAction(w http.ResponseWriter, r *http.Request) {
 	}
 	s := d.cfg.settings()
 	d.reply(w, wsSourceOut{OK: true, Epoch: d.boot, M365: m, Archive: d.archiveState(), Account: d.cfg.account(), Running: d.exportLive(),
-		Settings: map[string]any{"dest": s.ExportDest, "preserve": s.Preserve(), "html": s.ReadableHTML(), "attachments": s.ExtractAttachments()}})
+		Settings: map[string]any{"dest": s.ExportDest, "preserve": s.Preserve(), "html": s.ReadableHTML(), "attachments": s.ExtractAttachments(), "attachmentsAs": s.AttachmentsAs()}})
 }
 
 type wsFolderOut struct {
@@ -567,6 +567,8 @@ type wsSelection struct {
 		Preserve    *bool `json:"preserve"`
 		HTML        bool  `json:"html"`
 		Attachments bool  `json:"attachments"`
+		// AttachmentsAs is "zip" (one zip per message, the default) or "loose" (files in a folder).
+		AttachmentsAs string `json:"attachmentsAs"`
 	} `json:"options"`
 }
 
@@ -785,7 +787,8 @@ func (d *dashboard) previewAction(w http.ResponseWriter, r *http.Request) {
 		opts.PreserveFolders = *sel.Options.Preserve
 	}
 	opts.ReadableHTML = sel.Options.HTML
-	// Extracted attachments are slice E6: hidden, and off.
+	opts.Attachments = sel.Options.Attachments                                       // slice E6: OFF unless the page sends it
+	opts.AttachmentsAsZip = opts.Attachments && sel.Options.AttachmentsAs != "loose" // one zip per message unless loose files were chosen
 	if archive {
 		job := d.ws.startJob(func(ctx context.Context, job *wsPreviewJob) (*app.CopyPlan, map[string]any, *refusal) {
 			return d.resolveAndPlanArchive(ctx, job, sess, &sel, opts)
@@ -1143,7 +1146,7 @@ func planResult(p *app.CopyPlan, id string, folders any, reported, found int, wa
 		"exportName": p.ExportName, "exportDir": filepath.Join(p.Dest, p.ExportName), "dest": p.Dest,
 		"samplePaths": p.SamplePaths, "longestPath": p.LongestPath, "over259": p.Over259,
 		"posture": posture, "fsType": p.FSType, "warnings": warnings, "info": infos,
-		"preserve": p.Options.PreserveFolders, "html": p.Options.ReadableHTML, "retryOf": p.Chain.RetryOf, "part": len(p.Chain.Parts) + 1,
+		"preserve": p.Options.PreserveFolders, "html": p.Options.ReadableHTML, "attachments": p.Options.Attachments, "attachmentsZip": p.Options.AttachmentsAsZip, "retryOf": p.Chain.RetryOf, "part": len(p.Chain.Parts) + 1,
 	}
 	if c := p.Archive; c != nil { // the archive source's own counts (design §4.7 step 4)
 		out["archive"] = map[string]any{"withOriginal": c.WithOriginal, "withoutOriginal": c.WithoutOriginal, "gone": c.Gone,

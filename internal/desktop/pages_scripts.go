@@ -155,6 +155,9 @@ function loadSource(){
     if(s.dest&&!$('destPath').value)$('destPath').value=s.dest;
     $('optPreserve').checked=s.preserve!==false;
     $('optHTML').checked=s.html!==false;
+    $('optAttach').checked=s.attachments===true;
+    $(s.attachmentsAs==='loose'?'optAttachLoose':'optAttachZip').checked=true;
+    syncAttachMode();
     if(st.running)$('browseNote').textContent='Browse is off while an export runs — type the folder\'s path instead.';
     const h=location.hash||'';
     if(h.indexOf('#preview=')===0){resumePreview(h.substring(9));}
@@ -337,10 +340,13 @@ $('selAll').addEventListener('change',()=>{
 });
 
 // ---- the selection and its count -----------------------------------------------
+// the way attachments are saved is chosen only while Extract attachments is on
+function syncAttachMode(){const on=$('optAttach').checked;$('optAttachZip').disabled=!on;$('optAttachLoose').disabled=!on;}
+$('optAttach').addEventListener('change',syncAttachMode);
 function selection(){
   const messages=Object.keys(st.picks).map(h=>({h:h}));
   return {source:srcReq(),folders:st.entries.map(e=>({id:e.id,subtree:e.subtree,exclude:e.exclude})),messages:messages,
-    dest:$('destPath').value,options:{preserve:$('optPreserve').checked,html:$('optHTML').checked}};
+    dest:$('destPath').value,options:{preserve:$('optPreserve').checked,html:$('optHTML').checked,attachments:$('optAttach').checked,attachmentsAs:$('optAttachLoose').checked?'loose':'zip'}};
 }
 function updateCount(){
   clearTimeout(st.countTimer);
@@ -430,6 +436,7 @@ function renderPreview(p){
   body.appendChild(line('Messages',count));
   body.appendChild(line('Size','about '+p.estimate+(p.unknownSize?' ('+fmt(p.unknownSize)+' of unknown size)':'')));
   if(p.html)body.appendChild(line('Readable HTML',arch?('a page (.html) beside each of the '+fmt(p.archive.withOriginal)+' original messages; the size above includes them'):'a page (.html) beside each original; the size above includes them'));
+  if(p.attachments)body.appendChild(line('Extract attachments',p.attachmentsZip?(arch?'each message\'s attachments in one zip (.attachments.zip) beside its original, from the original where the archive kept one; a message the archive kept no original of has the archive\'s own attachments zip, copied as it is; the size above includes them':'each message\'s attachments in one zip (.attachments.zip) beside its original; the size above includes them'):(arch?'each attachment as a file in a folder beside its message, from the original where the archive kept one and from its attachments zip where it did not (up to 1,000 files and 4 GB a message); the size above includes them':'each attachment as a file in a folder beside its message; the size above includes them')));
   body.appendChild(line('Into',p.exportDir));
   body.appendChild(line('Free space',p.free+' free; about '+p.reserveText+' is kept back to finish'));
   body.appendChild(line('Who can read it',p.posture.line));

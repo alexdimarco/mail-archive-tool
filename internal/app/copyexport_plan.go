@@ -83,9 +83,6 @@ func (e *CopyExportEnv) PlanCopyExport(in CopyPlanInput) (*CopyPlan, error) {
 	if len(in.Messages) > copyMaxMessages {
 		return nil, &CopyRefusal{ID: "R-i", Message: copyTooManyText(len(in.Messages), oneFolder(in.Messages))}
 	}
-	if in.Options.Attachments {
-		return nil, &CopyRefusal{ID: "R-h", Message: "Extracted attachments aren't available in this version of MailArchive — turn them off and preview again."}
-	}
 	dest := in.Dest
 	// the same words wherever the destination is checked: empty box, ~ and %NAME% not expanded,
 	// a file that is not a folder, a folder that is not there (friction F19)

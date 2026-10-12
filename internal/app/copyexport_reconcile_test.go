@@ -507,8 +507,8 @@ func TestCopyExportARecordOfANewerFormatIsLeftAlone(t *testing.T) {
 // covers: MA-429, R29, S52
 // The plan is a dry run that binds the run: it refuses an empty selection (R-h), a
 // destination that is not an existing absolute folder (R-e), a selection past 200,000
-// (R-i) and the options the build does not have (extracted attachments, until slice E6);
-// it names the first ten target paths
+// (R-i); it accepts Extract attachments (slice E6), as one zip per message or as loose files,
+// and sizes it; it names the first ten target paths
 // and writes nothing, to the destination and to the state directory alike; and it reports
 // the free space, the reserve, the record bound and a cloud-sync warning.
 func TestCopyExportPlanIsADryRun(t *testing.T) {
@@ -546,10 +546,9 @@ func TestCopyExportPlanIsADryRun(t *testing.T) {
 		mod func(*CopyPlanInput)
 		id  string
 	}{
-		"empty":       {func(i *CopyPlanInput) { i.Messages = nil }, "R-h"},
-		"missing":     {func(i *CopyPlanInput) { i.Dest = filepath.Join(dest, "nope") }, "R-e"},
-		"relative":    {func(i *CopyPlanInput) { i.Dest = "dest" }, "R-e"},
-		"attachments": {func(i *CopyPlanInput) { i.Options.Attachments = true }, "R-h"},
+		"empty":    {func(i *CopyPlanInput) { i.Messages = nil }, "R-h"},
+		"missing":  {func(i *CopyPlanInput) { i.Dest = filepath.Join(dest, "nope") }, "R-e"},
+		"relative": {func(i *CopyPlanInput) { i.Dest = "dest" }, "R-e"},
 	} {
 		bad := in
 		tc.mod(&bad)
@@ -565,5 +564,14 @@ func TestCopyExportPlanIsADryRun(t *testing.T) {
 	ph, err := e.PlanCopyExport(withHTML)
 	if err != nil || !ph.Options.ReadableHTML || ph.Reserve <= p.Reserve || ph.EstimateBytes != 2*p.EstimateBytes {
 		t.Errorf("a plan with Readable HTML: %v, %+v", err, ph)
+	}
+	// Extract attachments is built (slice E6): the plan carries it and the way it is saved, sized for the files
+	for _, asZip := range []bool{true, false} {
+		withAtt := in
+		withAtt.Options.Attachments, withAtt.Options.AttachmentsAsZip = true, asZip
+		pa, err := e.PlanCopyExport(withAtt)
+		if err != nil || !pa.Options.Attachments || pa.Options.AttachmentsAsZip != asZip || pa.EstimateBytes <= p.EstimateBytes || pa.RecordBound <= p.RecordBound {
+			t.Errorf("a plan with Extract attachments (as a zip: %v): %v, %+v", asZip, err, pa)
+		}
 	}
 }

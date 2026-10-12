@@ -86,34 +86,34 @@ func TestExportSettingsRoundTrip(t *testing.T) {
 	}
 	os.WriteFile(path, []byte(old), 0o600)
 
-	// the source endpoint reports the defaults, Readable HTML ON (slice E5); the page offers
-	// it, checked, and still not the option that waits for its slice
+	// the source endpoint reports the defaults, Readable HTML ON (slice E5), Extract attachments
+	// OFF and, once on, one zip per message (slice E6); the page offers the first checked, the
+	// second unchecked and the way it is saved, one zip per message selected
 	src := e.ok("/api/workspace/source", nil)["settings"].(map[string]any)
-	if src["preserve"] != true || src["html"] != true || src["attachments"] != false || src["dest"] != "" {
+	if src["preserve"] != true || src["html"] != true || src["attachments"] != false || src["attachmentsAs"] != "zip" || src["dest"] != "" {
 		t.Errorf("the defaults the page sees: %v", src)
 	}
 	page := e.get("/workspace").Body.String()
 	if !strings.Contains(page, `<input type="checkbox" id="optHTML" checked> Readable HTML`) {
 		t.Error("the workspace page does not offer Readable HTML, checked")
 	}
-	for _, hidden := range []string{"Extract attachments", "optAttach"} {
-		if strings.Contains(page, hidden) {
-			t.Errorf("the workspace page offers %q before its slice lands", hidden)
+	for _, want := range []string{`<input type="checkbox" id="optAttach"> Extract attachments`, `id="optAttachZip" value="zip" checked disabled> One zip per message`, `id="optAttachLoose" value="loose" disabled> Loose files`} {
+		if !strings.Contains(page, want) {
+			t.Errorf("the workspace page lacks %q", want)
 		}
 	}
 
-	// a start remembers the destination and the options, and nothing else changes; the
-	// option that waits for its slice stays off whatever the request says
+	// a start remembers the destination and the options, and nothing else changes
 	ids := e.folders()
 	sel := e.selection(entry(ids["Sent Items"], false))
-	sel["options"] = map[string]any{"preserve": false, "html": false, "attachments": true}
+	sel["options"] = map[string]any{"preserve": false, "html": false, "attachments": true, "attachmentsAs": "loose"}
 	e.startExport(sel)
 	e.waitRun()
 	s := LoadSettings(path)
 	if s.Out != "/somewhere/archive" || !s.KeepRaw {
 		t.Errorf("a start changed fields that are not its own: %+v", s)
 	}
-	if s.ExportDest != e.dest || s.Preserve() || s.ExportHTML == nil || *s.ExportHTML || s.ExportAttachments == nil || *s.ExportAttachments {
+	if s.ExportDest != e.dest || s.Preserve() || s.ExportHTML == nil || *s.ExportHTML || s.ExportAttachments == nil || !*s.ExportAttachments || s.AttachmentsAs() != "loose" {
 		t.Errorf("the remembered export fields: %+v", s)
 	}
 	raw := readFileString(t, path)
@@ -126,7 +126,7 @@ func TestExportSettingsRoundTrip(t *testing.T) {
 		}
 	}
 	src = e.ok("/api/workspace/source", nil)["settings"].(map[string]any)
-	if src["dest"] != e.dest || src["preserve"] != false || src["html"] != false || src["attachments"] != false {
+	if src["dest"] != e.dest || src["preserve"] != false || src["html"] != false || src["attachments"] != true || src["attachmentsAs"] != "loose" {
 		t.Errorf("the remembered settings the page sees: %v", src)
 	}
 }

@@ -40,6 +40,18 @@ type Settings struct {
 	ExportPreserve    *bool  `json:"exportPreserve,omitempty"`
 	ExportHTML        *bool  `json:"exportHTML,omitempty"`
 	ExportAttachments *bool  `json:"exportAttachments,omitempty"`
+	// ExportAttachmentsAs is how extracted attachments are saved: "zip" (one zip per message, the
+	// default when never set) or "loose" (a folder of files beside the message). It is remembered
+	// only by a start that extracted attachments.
+	ExportAttachmentsAs string `json:"exportAttachmentsAs,omitempty"`
+}
+
+// AttachmentsAs is the remembered way attachments are saved: "zip" unless "loose" was chosen.
+func (s Settings) AttachmentsAs() string {
+	if s.ExportAttachmentsAs == "loose" {
+		return "loose"
+	}
+	return "zip"
 }
 
 // Preserve is the remembered "Preserve folder structure": ON when never set.

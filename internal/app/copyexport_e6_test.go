@@ -1102,10 +1102,53 @@ func TestThePlanSizesExtractedAttachments(t *testing.T) {
 }
 
 // covers: MA-424, R12
-// The plan accepts the option and carries it. Held for the owner: TestCopyExportPlanIsADryRun
-// pins the plan's R-h refusal of it until slice E6 (rulings §0, rule 2).
+// The plan accepts the option and carries it: a selection previewed with Extract attachments on
+// gives a plan whose options say so, sized for the files, and the run it binds extracts them, the
+// manifest's options saying so; as loose files, and as one zip per message (MA-533). The positive
+// twin is the same selection without it.
 func TestThePlanAcceptsExtractAttachments(t *testing.T) {
-	t.Skip("MA-424: PlanCopyExport refuses the option (R-h) and TestCopyExportPlanIsADryRun asserts that; the owner rules on that test before it changes")
+	msgs := ceMsgs(2)
+	for i := range msgs {
+		msgs[i].SizeHint = 1000
+	}
+	mime := func(id string) []byte {
+		return e6Mime(id, "one file", e6Part{name: "report.pdf", ctype: "application/pdf", body: []byte("%PDF " + id)})
+	}
+	e, src := newCEEnv(t), newFakeSrc()
+	src.body = mime
+	dest := filepath.Join(t.TempDir(), "dest")
+	if err := os.MkdirAll(dest, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	plan := func(att, asZip bool) *CopyPlan {
+		p, err := e.PlanCopyExport(CopyPlanInput{Source: src.Describe(), Messages: msgs, Dest: dest, Options: CopyOptions{PreserveFolders: true, Attachments: att, AttachmentsAsZip: asZip}})
+		if err != nil {
+			t.Fatalf("a plan with Extract attachments %v (zip %v) was refused: %v", att, asZip, err)
+		}
+		return p
+	}
+	off, loose, zipped := plan(false, false), plan(true, false), plan(true, true)
+	if off.Options.Attachments || !loose.Options.Attachments || loose.Options.AttachmentsAsZip || !zipped.Options.AttachmentsAsZip ||
+		loose.EstimateBytes <= off.EstimateBytes || loose.RecordBound <= off.RecordBound || zipped.EstimateBytes <= off.EstimateBytes || zipped.RecordBound <= off.RecordBound {
+		t.Errorf("the plans: off %+v, loose %+v, zip %+v", off.Options, loose.Options, zipped.Options)
+	}
+	res := mustRun(t, e, loose, src)
+	if res.Counts.Exported != 2 || len(treeFilesWith(t, res.Root, ".attachments/report.pdf")) != 2 {
+		t.Fatalf("%s, %+v, %v", res.Label, res.Counts, treeFiles(t, res.Root))
+	}
+	if opts := manifestOf(t, res.Root)["options"].(map[string]any); opts["extract_attachments"] != true || opts["attachments_as_zip"] != nil {
+		t.Errorf("the manifest's options: %v", opts)
+	}
+	res = mustRun(t, e, zipped, src)
+	if res.Counts.Exported != 2 || len(treeFilesWith(t, res.Root, ".attachments.zip")) != 2 || len(treeFilesWith(t, res.Root, ".attachments/")) != 0 {
+		t.Fatalf("%s, %+v, %v", res.Label, res.Counts, treeFiles(t, res.Root))
+	}
+	if opts := manifestOf(t, res.Root)["options"].(map[string]any); opts["extract_attachments"] != true || opts["attachments_as_zip"] != true {
+		t.Errorf("the manifest's options: %v", opts)
+	}
+	if res := mustRun(t, e, off, src); len(treeFilesWith(t, res.Root, ".attachments")) != 0 {
+		t.Error("a plan without the option extracted files")
+	}
 }
 
 // covers: MA-425, R1, R29

@@ -310,6 +310,12 @@ func (d *dashboard) saveExportSettings(plan *app.CopyPlan) {
 	html, att := plan.Options.ReadableHTML, plan.Options.Attachments
 	_ = UpdateSettings(d.cfg.SettingsPath, "export", func(s *Settings) {
 		s.ExportDest, s.ExportPreserve, s.ExportHTML, s.ExportAttachments = plan.Dest, &preserve, &html, &att
+		if att { // the way is remembered when it was used
+			s.ExportAttachmentsAs = "loose"
+			if plan.Options.AttachmentsAsZip {
+				s.ExportAttachmentsAs = "zip"
+			}
+		}
 	})
 }
 

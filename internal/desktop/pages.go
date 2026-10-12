@@ -189,6 +189,13 @@ var pageTmpl = template.Must(template.New("pages").Funcs(pageFuncs).Parse(`
       <label class="checkline"><input type="checkbox" id="optPreserve" checked> Preserve folder structure</label>
       <label class="checkline"><input type="checkbox" id="optHTML" checked> Readable HTML</label>
       <p class="card-sub" id="htmlNote">Also saves a web page (.html) beside each message's original, so it can be read in a browser. The original stays the exact copy; if a page can't be made, the original is still exported and the export says so.</p>
+      <label class="checkline"><input type="checkbox" id="optAttach"> Extract attachments</label>
+      <p class="card-sub" id="attachNote">Also saves each message's attachments, decoded, beside its original. They are copies made by MailArchive, not the message: the original stays the exact copy, and a part that can't be saved is named in the export.</p>
+      <div id="attachMode" class="card-sub">
+        <label class="checkline"><input type="radio" name="optAttachAs" id="optAttachZip" value="zip" checked disabled> One zip per message</label>
+        <label class="checkline"><input type="radio" name="optAttachAs" id="optAttachLoose" value="loose" disabled> Loose files</label>
+        <p class="card-sub" id="attachModeNote">One zip per message keeps a message's attachments in one compressed file beside it (its name with .attachments.zip added), however many it has. Loose files saves each attachment as a file of its own in a folder beside the message: a message with many attachments then makes a large folder, and a long path can be too long for Windows.</p>
+      </div>
       <p class="card-sub" id="panelNote">Always exports the original EML and a manifest with hashes. Each run creates a separate export directory.</p>
       <div id="retryDest" hidden><p class="card-sub" id="retryDestNote">This is the rest of an earlier export. To send it somewhere else (a full or missing drive, say), choose the folder above, then preview it again.</p>
       <button class="btn small" id="rePreviewBtn" type="button">Preview again for this destination</button></div>
