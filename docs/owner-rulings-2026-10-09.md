@@ -1634,6 +1634,26 @@ residue, one part buffered whole in memory, Zip64 for a part over 4 GiB, unteste
 green with it, the only failure the known timing test). Known flake: `TestCopyExportScalesToSixtyThousandMessages`
 fails intermittently on the base too (33 to 43 MiB against a 40 MiB bound; N5), not loosened.
 
+### 13.37 EW-E6 zip-mode adversarial pass merged (2026-10-12), delegated-judgement
+
+Branch `wip/ew-e6-zip-adv` (report `docs/review-extraction-workspace-e6-zip-adversarial.md`). Found 13, confirmed 9,
+8 fixed with tombstones; the fresh-eyes check caught an int64 overflow in one fix (destinations reporting 16 PiB or
+more free got no zip) and it was fixed again. Fixed: entries are named and flagged so macOS's built-in unzip
+extracts non-ASCII names (E6Z-AO1, the host byte was MS-DOS); a cancelled or failed zip leaves no notes about
+entries it does not hold (AO2); Abandon during the final flush no longer renames the zip into place (AC3);
+DOS/Unix times in range (AO6); export names never end in a space (AO5); the readable page names the zip's own
+entries (AI1); the archive-only README is accurate (AI2); the free-space edge no longer cuts a whole zip (AC1).
+Clean clone: full suite green, vet3 clean.
+
+**Open for the owner (skip encoders, none blocks):**
+- **ESC-E6Z-AO3**: nothing bounds the entries of one message's zip (70,000 one-byte parts make a 70,000-entry
+  Zip64 zip with no note). Recommended: cap at 65,535 entries with one note (the plain-zip limit every unzip
+  tool handles); this narrows MA-533's "still one file" for absurd messages only.
+- **ESC-E6Z-AO4 (bidi half)**: the readable page's Attachments list keeps a sender's right-to-left override
+  in loose mode and on archive pages (shared label code outside the zip change). Recommended: strip bidi in
+  `attachmentLabel` for every page.
+Zip mode is closed for the bidi case by the AI1 fix. Still open as before: ESC-E6-AO10 (no Mark of the Web).
+
 ### 13.7 Escalations from LC-C1's adversarial pass (merged 2026-10-10)
 
 None blocks anything: each has a skip encoder or a safe interim in force.
