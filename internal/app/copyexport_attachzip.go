@@ -55,6 +55,18 @@ func attachZipStamp(received time.Time) time.Time {
 	return received.UTC().Truncate(2 * time.Second)
 }
 
+// attachZipHeader is the header of one entry: deflated, dated, and made on a Unix host with a
+// plain 0644 file mode. Go's own default is host 0 (MS-DOS) and no mode, and macOS's unzip reads
+// the name of such an entry as CP437 whatever its UTF-8 flag says, makes it under a mangled name
+// and then stops at the first one ("write error (disk full?)", exit 50), so a sender's first
+// accented attachment would cost the owner every later one (E6Z-AO1). A zero mode would be
+// extracted unreadable, and the fixed mode keeps the zip the same bytes every time.
+func attachZipHeader(name string, stamp time.Time) *zip.FileHeader {
+	h := &zip.FileHeader{Name: name, Method: zip.Deflate, Modified: stamp}
+	h.SetMode(0o644)
+	return h
+}
+
 // attachZipFile is the zip while it is being made: a temp file made through the contained
 // writer, the hash of every byte as written, and the zip writer over them (through a writer
 // that refuses what the space left cannot hold).
@@ -159,7 +171,7 @@ func (w *attachWriter) zipParts(dir, stem string, stamp time.Time, atts []model.
 			zf = &attachZipFile{f: f, tmp: tmp, hw: hw, zw: zip.NewWriter(left)}
 		}
 		entry := ceUniqueNameFrom(w.used, w.next, util.ExportFilename(name, i))
-		ew, cerr := zf.zw.CreateHeader(&zip.FileHeader{Name: entry, Method: zip.Deflate, Modified: stamp})
+		ew, cerr := zf.zw.CreateHeader(attachZipHeader(entry, stamp))
 		if cerr == nil {
 			_, cerr = ew.Write(buf.Bytes())
 		}

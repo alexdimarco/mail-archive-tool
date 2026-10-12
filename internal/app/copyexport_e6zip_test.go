@@ -252,6 +252,13 @@ func TestZipModeEntriesAreNamedLikeLooseFilesAndTheZipIsReproducible(t *testing.
 			if !f.Modified.Equal(files[0].Modified) || f.Method != zip.Deflate {
 				t.Errorf("entry %d: modified %v, method %d", i, f.Modified, f.Method)
 			}
+			// E6Z-AO1: an entry made on "MS-DOS" (host 0) has its non-ASCII name read as CP437 by macOS's
+			// own unzip, which then stops at the first such entry and never extracts the rest (exit 50,
+			// "write error (disk full?)"); a Unix host byte with a plain 0644 mode is read by name and
+			// extracts readable files, with no link or directory flag.
+			if f.CreatorVersion>>8 != 3 || !f.Mode().IsRegular() || f.Mode().Perm() != 0o644 || f.Mode()&(os.ModeSymlink|os.ModeDir|os.ModeSetuid|os.ModeSetgid) != 0 {
+				t.Errorf("entry %d (%q): host byte %d, mode %v (attrs %#x): want Unix host, a regular 0644 file", i, f.Name, f.CreatorVersion>>8, f.Mode(), f.ExternalAttrs)
+			}
 			if d := f.Modified.Sub(msgs[0].Received); d < -2*time.Second || d > 2*time.Second {
 				t.Errorf("entry %d is dated %v, not the message's %v", i, f.Modified, msgs[0].Received)
 			}
