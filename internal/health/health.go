@@ -193,6 +193,12 @@ type Input struct {
 	FidelityFallback int
 	// ParseGapKinds is the number of records per parse-gap kind, for status -json.
 	ParseGapKinds map[string]int
+	// FillableParseGap is how many of the Fillable records are fillable because of a parse gap
+	// (a part cut short, a multipart with no boundary), also counted in Undecodable;
+	// FillableOnlyParseGap how many are fillable for nothing else, so the download remedy of a
+	// message a source has not delivered is not theirs (friction F3).
+	FillableParseGap     int
+	FillableOnlyParseGap int
 }
 
 // Extractable is the extractability facet of an archive: WithEML of Total
@@ -240,6 +246,13 @@ func (r *Report) note(code, msg string) {
 	r.Codes = append(r.Codes, code)
 }
 
+// onlyParseGap says every one of the n messages still missing content is so only because a part is
+// cut short or its parts could not be told apart (a fillable parse gap), so the remedy of a
+// message the source has not delivered is not theirs.
+func onlyParseGap(in Input, n int) bool {
+	return n > 0 && in.FillableOnlyParseGap >= n
+}
+
 // IntervalOf maps a cadence to its period.
 func IntervalOf(iv string) time.Duration {
 	switch schedule.Interval(iv) {
@@ -273,6 +286,11 @@ func Assess(in Input, now time.Time) Report {
 	// reason and its own remedy below; it is left out of this count and text.
 	if n := in.Fillable - in.UnreadableOnly; n > 0 {
 		msg := fmt.Sprintf("%d message(s) still missing content — download for offline use in your mail app, then re-run; incremental fills them", n)
+		if onlyParseGap(in, n) {
+			// Every one is cut short, or has parts that could not be told apart, in the file it was
+			// read from: a download returns the same bytes from a mailbox file (friction F3).
+			msg = fmt.Sprintf("%d message(s) still missing content: cut short, or with parts that could not be told apart, in the file they were read from — replace the mailbox file with a complete export from your mail app (an IMAP cache: download the messages for offline use), then re-run; incremental fills them", n)
+		}
 		if in.ReportExists {
 			msg += fmt.Sprintf(" (see %s)", in.ReportPath)
 		}
@@ -1116,6 +1134,7 @@ func Gather(out, nameOverride string) Input {
 			in.UnparsedTerminal, in.PartlyRead = m.UnparsedTerminalCount(), m.PartlyReadPaths(20)
 			in.Undecodable, in.FidelityFallback = m.UndecodableCount(), m.FidelityFallbackCount()
 			in.ParseGapKinds = m.ParseGapKindCounts()
+			in.FillableParseGap, in.FillableOnlyParseGap = m.FillableParseGapCounts()
 			// The capture-gap ledger, with each store's source id and last run, so a
 			// gap can be told attempted from not attempted (FC14).
 			in.Gaps = m.CaptureGapsSorted()
@@ -1271,7 +1290,14 @@ func Summary(in Input, rep Report) []string {
 				line += " — " + in.ReportPath
 			}
 			lines = append(lines, line)
-			lines = append(lines, "            (still missing content = not downloaded yet; fills on the next run)")
+			if onlyParseGap(in, content) {
+				lines = append(lines, "            (still missing content = cut short, or its parts could not be told apart, in the file it was read from; fills on the next run once a complete copy is there)")
+			} else {
+				lines = append(lines, "            (still missing content = not downloaded yet; fills on the next run)")
+			}
+			if in.FillableParseGap > 0 {
+				lines = append(lines, fmt.Sprintf("            (%d of the messages still missing content %s also counted as having parts this version cannot decode)", in.FillableParseGap, plural(in.FillableParseGap, "is", "are")))
+			}
 			if in.Undecodable > 0 {
 				lines = append(lines, "            (with parts this version cannot decode = kept as received in the attachments zip; the report says which part and why)")
 			}
