@@ -177,14 +177,22 @@ type Message struct {
 
 	// Locator names where a LOCAL reader found the message in its store, stable for
 	// the life of that item: pst-nid:<store-uid>/<nid> for a PST item,
-	// maildir:<folder>/<unique> for a maildir file; Graph sets none (fault-isolation
-	// §4.2). It is the key a recovery or a healing matches on (a healthy read of an
+	// a maildir file's is ReadLocator, below; Graph sets none (fault-isolation §4.2). It is the key a recovery or a healing matches on (a healthy read of an
 	// item that was read only in part finds the partial record by it) and the
 	// locator of its ledger gap. Like PhysID it is a capture-time value that is
 	// NEVER part of Identity(), Fingerprint() or contentHash(): no identity anywhere
 	// folds a locator (FC7), so a healthy input's keys are exactly what they were
 	// (P14).
 	Locator string
+
+	// ReadLocator is where a LOCAL raw-bytes reader (maildir) found the message in its
+	// store: maildir:<folder>/<unique>, the locator a file-unreadable or
+	// vanished-during-read gap of that file is recorded at, so the message's capture
+	// closes that gap as recovered (§4.3 step 2). It is NOT Locator: the export step's
+	// own faults for such a message keep their ident: locator (the post-parse rule of
+	// §4.6), and the record never carries it. Like Locator it is a capture-time value
+	// that is never part of Identity(), Fingerprint() or contentHash().
+	ReadLocator string
 
 	// ReadGaps are the labels of what the reader could not read of an item it
 	// could partly read (state.LabelUnreadableBody, state.LabelUnreadableAttachments,

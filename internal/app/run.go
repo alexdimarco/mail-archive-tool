@@ -70,6 +70,49 @@ type Options struct {
 	// on an archive that already exists is then recorded as a failed run, so
 	// `status` reports it (N13, R18); see RecordRefusedRun.
 	Unattended bool
+
+	// FollowLinks names the inputs whose directory links are followed (owner ruling
+	// OR6: the per-input opt-in; the CLI's -follow-links, the wizard's "Follow folder
+	// links" answer, a job file's follow_links). By default a local store is read
+	// without following a directory link, and each such link is a terminal gap whose
+	// remedy names this option. An input listed here keeps its token and its archive.
+	// A file link out of the store and a special file stay refused for it too (R25).
+	FollowLinks []string
+}
+
+// followsLinks says whether path is one of the inputs that opted in to following
+// directory links, compared as the canonical source id (the same input spelled
+// another way is the same input).
+func followsLinks(opted []string, path string) bool {
+	if len(opted) == 0 {
+		return false
+	}
+	id := state.PathSourceID(path)
+	for _, o := range opted {
+		if state.PathSourceID(o) == id {
+			return true
+		}
+	}
+	return false
+}
+
+// FollowLinksRefusal refuses a directory-link opt-in that names no input of the run:
+// it would be read as no opt-in at all, and the operator would believe their links
+// were being read. opted and inputs are compared as canonical source ids.
+func FollowLinksRefusal(opted, inputs []string) error {
+	for _, o := range opted {
+		id, found := state.PathSourceID(o), false
+		for _, in := range inputs {
+			if state.PathSourceID(in) == id {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("-follow-links %s is not one of the inputs being archived: name a mail directory exactly as it is given as an -input", util.StripControl(o))
+		}
+	}
+	return nil
 }
 
 // Result summarizes a completed (or cancelled) run.
@@ -480,7 +523,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	var fatal *RunFatalError        // a run-level fault of the archive itself: it ends the run
 	var stopped *SourceStoppedError // the first source the local breaker ended: the run goes on without it
 	for _, f := range files {
-		runErr := runFile(ctx, lr, f, opts.CopyFirst, func(stats export.Stats) {
+		runErr := runFile(ctx, lr, f, opts.CopyFirst, followsLinks(opts.FollowLinks, f), func(stats export.Stats) {
 			checkpoint(stats)
 			if onProgress != nil {
 				onProgress(stats)
@@ -751,6 +794,9 @@ func canonicalJob(opts Options, mode string) []string {
 	if opts.CopyFirst {
 		job = append(job, "-copy-first")
 	}
+	for _, in := range opts.FollowLinks {
+		job = append(job, "-follow-links", absOrSame(in))
+	}
 	if opts.KeepRaw {
 		job = append(job, "-raw")
 	}
@@ -955,7 +1001,7 @@ func fileFailureError(failures int, firstPath string, firstErr error) error {
 // message it contains, honouring ctx cancellation between messages. What goes
 // wrong with one item or folder is recorded in the capture-gap ledger and the walk
 // goes on; what goes wrong with the archive itself ends the source (localrun.go).
-func runFile(ctx context.Context, lr *localRun, path string, copyFirst bool, onProgress ProgressFunc, abort func() error) error {
+func runFile(ctx context.Context, lr *localRun, path string, copyFirst, followLinks bool, onProgress ProgressFunc, abort func() error) error {
 	exp, out, logger := lr.exp, lr.out, lr.logger
 	openPath := path
 	if copyFirst {
@@ -979,7 +1025,7 @@ func runFile(ctx context.Context, lr *localRun, path string, copyFirst bool, onP
 		}
 	}
 
-	reader, err := source.Open(openPath)
+	reader, err := source.OpenWith(openPath, source.OpenOptions{FollowLinks: followLinks})
 	if err != nil {
 		return err
 	}
@@ -1012,6 +1058,8 @@ func runFile(ctx context.Context, lr *localRun, path string, copyFirst bool, onP
 	// the others return what they hit as an error, as they always did.
 	if fw, ok := reader.(source.FaultWalker); ok {
 		src.reportsFaults = true
+		_, isPST := reader.(*source.Reader)
+		src.local = !isPST
 		return src.finish(fw.WalkWithFaults(handler, source.WalkOptions{
 			Faults:     src.onReaderFault,
 			Abort:      func() error { return src.stop(ctx, abort) },

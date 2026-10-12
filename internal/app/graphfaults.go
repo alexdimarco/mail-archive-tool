@@ -190,7 +190,7 @@ func (w *mailboxWalk) stub(ref graph.MessageRef, m *model.Message, folderKey str
 	if ref.InternetMessageID == "" {
 		return false
 	}
-	if w.hasRecord(ref) {
+	if w.archivedCopy(ref) {
 		w.faultIdentity(ref, nil)
 		w.lr.exp.Stats.Kept++
 		w.s.observe(graphItemGap(ref, folderKey, "refresh-failed", state.ClassInfo, "a newer read of this item could not be parsed; the archived copy was kept unchanged"))
@@ -376,6 +376,33 @@ func (w *mailboxWalk) hasRecord(ref graph.MessageRef) bool {
 		return true
 	}
 	return ref.PhysID != "" && len(w.physIDKeys()[ref.PhysID]) > 0
+}
+
+// archivedCopy says whether this mailbox holds a capture of the item that a stub must
+// not replace: a record for the listing's Message-ID or its immutable id that is not
+// itself an unparsed stub. A stub's own record (the item was downloaded again because
+// its parser generation is stale and still does not parse) is no archived copy: the
+// exporter stamps it with the current generation, or heals it, in place (FC25).
+func (w *mailboxWalk) archivedCopy(ref graph.MessageRef) bool {
+	stub := func(key string) bool {
+		r, ok := w.manifest.Get(key)
+		return ok && r.HasLabels([]string{state.LabelUnparsed})
+	}
+	if ref.InternetMessageID != "" {
+		for _, sib := range w.sameToken("mid:" + ref.InternetMessageID) {
+			if !stub(sib.Key) {
+				return true
+			}
+		}
+	}
+	if ref.PhysID != "" {
+		for _, k := range w.physIDKeys()[ref.PhysID] {
+			if !stub(k) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // recovered closes the gap an item's capture (or its being archived already)

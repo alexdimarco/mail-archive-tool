@@ -43,6 +43,11 @@ const GapDeadlineRemedy = "If you are about to lose access to this mailbox, save
 // copy from another path would start a second archive tree).
 const PSTRepairRemedy = "repair the file in place with Outlook's Inbox Repair Tool (scanpst.exe, Windows; it keeps a .bak backup), or put the repaired copy at the same path, then run again — a copy archived from a different path starts a separate archive tree"
 
+// FollowLinksRemedy names the per-input directory-link opt-in (owner ruling OR6): the
+// way to have an input's folder links read, on every surface that can start a run. The
+// input keeps its archive and its token, so nothing already archived is archived again.
+const FollowLinksRemedy = "run again with the directory-link opt-in for this input (`mailarchive -follow-links <the input>`, the wizard's \"Follow folder links\" answer, or \"follow_links\" in a schedule's job file): its folder links are then read, once each, and the input keeps its archive"
+
 // scratchRemedy is the remedy for an item lost from the .pst that -outlook's
 // Outlook export writes: that file is rebuilt every run, so repairing it is
 // pointless.
@@ -170,13 +175,26 @@ func GapRemedy(reason, sourceKind, errnoClass string) string {
 			return "the disk returned a read error — check the drive, then run again"
 		}
 		return "check the folder in your mail app, then run again"
-	case "pst-message-unreadable", "pst-messages-unreadable", "pst-row-unreadable", "pst-row-invalid", "folder-cycle", "folder-too-deep":
+	case "folder-cycle":
+		if sourceKind == SourceLocal {
+			// A local store's loop is a directory link that the input's opt-in followed back
+			// to a folder already read: nothing is missing.
+			return "nothing to do: the folder was read already, through its other path"
+		}
+		fallthrough
+	case "pst-message-unreadable", "pst-messages-unreadable", "pst-row-unreadable", "pst-row-invalid", "folder-too-deep":
 		if sourceKind == SourceOutlookScratch {
 			return scratchRemedy
 		}
 		return PSTRepairRemedy
-	case "symlink-outside-store", "symlinked-folder-skipped":
-		return "links are not followed: copy the mail into the store, or archive its real location as its own input"
+	case "symlink-outside-store":
+		// A link whose target is out of the store is judged by its text alone and its target is
+		// never touched (R25), so it cannot be told here from a link to a FOLDER out there,
+		// which is how most folder links are made (an absolute path). The folder is read when
+		// the input has the opt-in (OR6); the file is never read.
+		return "a link to a file outside the store is never read: copy the file into the store, then run again. If the link leads to a folder, that folder is read only when this input is told to follow folder links: " + FollowLinksRemedy
+	case "symlinked-folder-skipped":
+		return "folder links are not followed unless this input is told to: " + FollowLinksRemedy
 	case "not-a-message-file":
 		return "nothing to do"
 	case "outlook-export-skipped":

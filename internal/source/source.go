@@ -4,12 +4,14 @@
 package source
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"mail-archive-tool/internal/model"
+	"mail-archive-tool/internal/util"
 )
 
 // MessageHandler receives each mail item together with its mirrored folder path
@@ -30,7 +32,11 @@ type Source interface {
 //   - a .pst/.ost file            → Outlook reader
 //   - a mail-store directory      → mbox reader (e.g. a Thunderbird account dir)
 //   - any other file that is mbox → mbox reader (single mbox file)
-func Open(path string) (Source, error) {
+func Open(path string) (Source, error) { return OpenWith(path, OpenOptions{}) }
+
+// OpenWith is Open with what the caller says about the input (the directory-link
+// opt-in of a local store, OpenOptions).
+func OpenWith(path string, opts OpenOptions) (Source, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", path, err)
@@ -38,17 +44,23 @@ func Open(path string) (Source, error) {
 	if info.IsDir() {
 		// Evolution stores are maildir-based but arrange folders differently, so
 		// they get a dedicated reader before the generic mbox/maildir path.
-		if r, ok := openEvolution(path); ok {
+		if r, ok := openEvolution(path, opts); ok {
 			return r, nil
 		}
-		return openMboxDir(path)
+		return openMboxDir(path, opts)
 	}
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".pst", ".ost":
 		return openPST(path)
 	}
-	if looksLikeMbox(path) {
-		return openMboxFile(path)
+	// The operator's own spelling of the input may be a link; what is sniffed and read
+	// is the file it names, resolved once.
+	real := path
+	if r, err := filepath.EvalSymlinks(path); err == nil {
+		real = r
+	}
+	if looksLikeMbox(real) {
+		return openMboxFile(path, opts)
 	}
 	return nil, fmt.Errorf("unrecognized mail source: %s (expected a .pst/.ost file, an mbox file, or a mail directory)", path)
 }
@@ -102,9 +114,13 @@ func IsMailStoreDir(dir string) bool {
 // drop a real mailbox. Only a file that opens at the OS level but fails to parse
 // is reported unreadable (false).
 func DataFileReadable(path string) bool {
-	f, err := os.Open(path)
+	f, err := util.OpenRegularFile(path)
 	if err != nil {
-		return true // locked / no permission: don't hide a possibly-valid mailbox
+		var nr *util.NotRegularError
+		// A pipe, socket or device named like a data file is no mailbox (and a plain open
+		// of a pipe would wait for a writer, FC2); any other failure to open is a lock or a
+		// permission, and a possibly-valid mailbox is kept.
+		return !errors.As(err, &nr)
 	}
 	f.Close()
 
@@ -116,9 +132,11 @@ func DataFileReadable(path string) bool {
 	return true
 }
 
-// looksLikeMbox reports whether the file begins with an mbox "From " separator.
+// looksLikeMbox reports whether the file begins with an mbox "From " separator. It
+// opens the file through util.OpenRegularFile, so a pipe named like a mailbox is not
+// waited on (discovery runs before the lock is taken, FC2) and a link is not followed.
 func looksLikeMbox(path string) bool {
-	f, err := os.Open(path)
+	f, err := util.OpenRegularFile(path)
 	if err != nil {
 		return false
 	}

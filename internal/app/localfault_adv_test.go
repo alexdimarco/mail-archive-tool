@@ -421,19 +421,10 @@ func TestAnAttachmentThatPanicsCostsThatAttachmentOnly(t *testing.T) {
 	}
 }
 
-// covers: R1
-// K2 (owner decision pending, rulings 13.17 item 1), NOT accepted: mbox.go still mints
-// the constant "(unreadable message)" stub for a MIME-panicking mbox, maildir or Graph
-// message, and the next run's legacy-placeholder re-class (FC27) turns that record into
-// an info label with nothing missing, so the loss leaves the partial and Not-captured
-// surfaces with no ledger gap behind it, until FI-S2b gives these messages gaps of their
-// own. The re-class cannot tell this build's stub from an older build's: no stamp
-// separates them. Closes when FI-S2b lands (or the owner restricts the re-class to
-// records older than the build, which needs that stamp): a stub minted by this build
-// then stays a visible gap after the re-class run.
-func TestAReclassDoesNotHideAStubThisBuildMinted(t *testing.T) {
-	t.Skip("R1 (K2, ruling 13.17.1): the re-class hides the loss of a stub the current mbox, maildir and Graph readers mint, until FI-S2b records those messages as gaps; closes when FI-S2b lands")
-}
+// TestAReclassDoesNotHideAStubThisBuildMinted (K2, rulings 13.17 item 1), once a skip
+// encoder here, is a real test in rawstub_test.go: FI-S2b's raw-preserving stubs are
+// unparsed records the legacy re-class does not take, and one is minted over an older
+// build's placeholder at its key, never held back for it.
 
 // covers: MA-320, R12
 // S2A-AC9: -copy-first copies a data file onto the archive's own volume before reading

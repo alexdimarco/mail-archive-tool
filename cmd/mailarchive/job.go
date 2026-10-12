@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/graph"
 	"mail-archive-tool/internal/graphconfig"
 	"mail-archive-tool/internal/outlookcom"
@@ -29,6 +30,7 @@ type exportOpts struct {
 	since, manifest *string
 	log             *string
 	copyFirst, auto *bool
+	followLinks     stringSlice
 	outlook         *bool
 	outlookSyncWait *time.Duration
 	index, pages    *bool
@@ -48,6 +50,7 @@ func exportFlags(fs *flag.FlagSet) *exportOpts {
 	o.manifest = fs.String("manifest", "", "manifest path (default <out>/.mailarchive-manifest.json)")
 	o.log = fs.String("log", "", "write the run log to this file (size-capped, rotated) instead of stderr — what scheduled jobs use")
 	o.copyFirst = fs.Bool("copy-first", false, "copy each data file to a temp snapshot before reading (avoids locks when Outlook is open)")
+	fs.Var(&o.followLinks, "follow-links", "an -input whose folder links (symlinks; on Windows junctions) are read; repeatable, comma-separated. Without it a local store's folder links are recorded and not followed, each once, as a gap that names this flag. The input keeps its archive. A link to a file outside the store and a pipe or device are never read, with or without it")
 	o.auto = fs.Bool("auto", false, "auto-discover mail stores (Outlook on Windows; Thunderbird and Evolution on any OS)")
 	o.outlook = fs.Bool("outlook", false, "Windows + classic Outlook: have Outlook export each account to a .pst first, then archive that (use when a .ost can't be read directly)")
 	o.outlookSyncWait = fs.Duration("outlook-sync-wait", 5*time.Minute, "with -outlook: run Send/Receive and wait up to this long for downloads before creating the PST (0 to skip)")
@@ -222,10 +225,13 @@ func parseJob(args []string) (job, error) {
 				return job{}, err
 			}
 		}
-		for _, v := range append([]string{*o.out, *o.manifest, *o.log, *o.since}, o.inputs...) {
+		for _, v := range append(append([]string{*o.out, *o.manifest, *o.log, *o.since}, o.inputs...), o.followLinks...) {
 			if err := noControl("a job argument", v); err != nil {
 				return job{}, err
 			}
+		}
+		if err := app.FollowLinksRefusal(o.followLinks, o.inputs); err != nil {
+			return job{}, err
 		}
 		j := job{out: abspath(*o.out)}
 		j.args = []string{"-out", j.out, "-mode", strings.ToLower(strings.TrimSpace(*o.mode)), "-unattended"}
@@ -240,6 +246,9 @@ func parseJob(args []string) (job, error) {
 		}
 		if *o.copyFirst {
 			j.args = append(j.args, "-copy-first")
+		}
+		for _, in := range o.followLinks {
+			j.args = append(j.args, "-follow-links", abspath(in))
 		}
 		if *o.outlook {
 			j.args = append(j.args, "-outlook", "-outlook-sync-wait", o.outlookSyncWait.String())

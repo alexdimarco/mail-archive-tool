@@ -172,7 +172,7 @@ func runHeadless(path string) int {
 	// Unattended: a vanished input on this existing archive is recorded as a
 	// failed run, exactly as the CLI's -unattended does (N13, R18).
 	opts := app.Options{Inputs: inputs, Auto: j.Auto, Out: j.Out, Mode: mode, Since: since,
-		CopyFirst: j.CopyFirst, Index: true, Pages: true, KeepRaw: j.KeepRaw, Unattended: true,
+		CopyFirst: j.CopyFirst, Index: true, Pages: true, KeepRaw: j.KeepRaw, Unattended: true, FollowLinks: j.FollowLinks,
 		OutlookSkips: outlookSkips, OutlookExported: outlookExported}
 	logger.Printf("Scheduled job %q: exporting to %s", j.Name, j.Out)
 	result, runErr := app.Run(ctx, opts, logger, nil)
@@ -289,6 +289,9 @@ type wizardChoice struct {
 	copyFirst  bool
 	outlookCOM bool
 	keepRaw    bool // also keep each message's original .eml (raw-capable sources)
+	// followLinks are the inputs whose folder links the user asked to have read
+	// (owner ruling OR6: the per-input opt-in; a folder store only).
+	followLinks []string
 	// Deleted Items / Junk Email are excluded by default; set only for a
 	// live-path (Graph) source, which the GUI does not offer yet (T7, §3.6).
 	includeDeleted bool
@@ -474,6 +477,20 @@ func wizard() error {
 		choice.keepRaw = strings.HasPrefix(rawChoice, "Yes")
 	}
 
+	// 5b2. Read through the folder links of a mail folder? Not by default: a link in the
+	//      store is recorded and not followed, and its gap says to answer this question.
+	//      Asked only when a chosen input is a folder (a link lives in a folder store).
+	if followLinksWorthAsking(srcType, choice.inputs) {
+		linkChoice, err := zenity.List(
+			followLinksQuestion,
+			[]string{followLinksNo, followLinksYes},
+			zenity.Title(appTitle), zenity.DefaultItems(followLinksNo))
+		if err != nil {
+			return err
+		}
+		choice.followLinks = followLinksFor(linkChoice, choice.inputs)
+	}
+
 	// 5c. Include the Deleted Items / Junk Email folders? Excluded by default;
 	//     a click-through excludes them (T7). Only asked for a source whose walk
 	//     can honor the exclusion by resolved well-known-folder id — a live-path
@@ -561,6 +578,48 @@ func keepRawWorthAsking(srcType string, inputs []string) bool {
 		return false
 	}
 	return !allOutlookFiles(inputs)
+}
+
+// The directory-link opt-in question (owner ruling OR6). The default is No, so a
+// click-through reads no link out of the store; only the explicit Yes opts the folder
+// inputs in. The wording of the Yes answer is what the capture gap's remedy names.
+const (
+	followLinksQuestion = "Does this mail folder contain shortcuts (links) to other folders that should be read too? By default a link is not followed; each one is listed as not captured, so nothing is lost silently. Following links reads the folders they lead to, and the archive keeps using the same folder."
+	followLinksNo       = "No — do not follow folder links"
+	followLinksYes      = "Follow folder links"
+)
+
+// followLinksWorthAsking reports whether the directory-link question is worth putting
+// to the user: a link lives in a FOLDER store (Thunderbird, Evolution, or what
+// auto-detect found), never in a .pst/.ost, a single mbox file or the Outlook-app path,
+// so it needs a chosen input that is a directory.
+func followLinksWorthAsking(srcType string, inputs []string) bool {
+	switch srcType {
+	case srcThunderbird, srcEvolution, srcAuto:
+	default:
+		return false
+	}
+	return len(folderInputs(inputs)) > 0
+}
+
+// folderInputs are the chosen inputs that are directories.
+func folderInputs(paths []string) []string {
+	var out []string
+	for _, p := range paths {
+		if fi, err := os.Stat(p); err == nil && fi.IsDir() {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// followLinksFor maps the wizard's answer to the inputs that opt in: every folder input
+// on the explicit Yes, none on anything else (the default answer, a cancel).
+func followLinksFor(answer string, inputs []string) []string {
+	if answer != followLinksYes {
+		return nil
+	}
+	return folderInputs(inputs)
 }
 
 // isOutlookFile reports whether p is an Outlook data file by extension.
@@ -1168,6 +1227,8 @@ func runExport(c wizardChoice) error {
 		Pages:     true,
 		KeepRaw:   c.keepRaw,
 
+		FollowLinks: c.followLinks,
+
 		OutlookSkips:    outlookSkips,
 		OutlookExported: outlookExported,
 	}
@@ -1370,7 +1431,7 @@ func jobFor(name string, c wizardChoice) job.Job {
 		Name: name, Inputs: c.inputs, Auto: c.auto, Out: c.out,
 		Mode:  "incremental",
 		Since: c.since, CopyFirst: c.copyFirst, Outlook: c.outlookCOM,
-		KeepRaw: c.keepRaw,
+		KeepRaw: c.keepRaw, FollowLinks: c.followLinks,
 	}
 	if c.outlookCOM {
 		j.Inputs = nil

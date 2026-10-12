@@ -177,6 +177,7 @@ type sourceRun struct {
 	path  string
 
 	reportsFaults bool            // the reader reports what it could not read (source.FaultWalker)
+	local         bool            // the reader is an mbox, maildir or Evolution reader (its faults are the local readers' reasons; the PST reader's are the PST's)
 	wrote         bool            // this store has written a message this run: its directory exists
 	unwritable    map[string]bool // output directories that could not be created, this run
 	streak        int             // consecutive failed write attempts (the local breaker)
@@ -274,6 +275,11 @@ func itemGap(m *model.Message, folderKey, reason, class, detail string) state.Ca
 func (s *sourceRun) recovered(m *model.Message, folderKey string) {
 	mf := s.lr.exp.Manifest
 	if m.Locator != "" && mf.CloseGap(state.GapKey(s.token, state.GapScopeItem, m.Locator)) {
+		s.lr.recovered++
+	}
+	// A maildir file that could not be read on an earlier run is recorded at the place
+	// the reader found it: its capture answers that gap too.
+	if m.ReadLocator != "" && m.ReadLocator != m.Locator && mf.CloseGap(state.GapKey(s.token, state.GapScopeItem, m.ReadLocator)) {
 		s.lr.recovered++
 	}
 	ident := "ident:" + m.Identity()
@@ -401,6 +407,23 @@ func pstReaderGap(reason string) bool {
 	return false
 }
 
+// localReaderGap says whether a walk of an mbox, maildir or Evolution store can see
+// again the gap a reason and locator name: the faults the local readers produce, and
+// the overflow entry that counts the ones beyond the ledger's caps. A maildir file's
+// gap is seen again only at the locator the reader gives it (maildir:<folder>/<unique>):
+// a gap at another spelling is not one this reader would meet, so its walk says
+// nothing about it (S2A-AI4's rule: a walk closes only what it could have seen).
+func localReaderGap(reason, locator string) bool {
+	switch reason {
+	case "file-unreadable", "vanished-during-read":
+		return strings.HasPrefix(locator, "maildir:")
+	case "folder-unreadable", "folder-partially-read", "symlink-outside-store", "symlinked-folder-skipped",
+		"not-a-message-file", "folder-cycle", "overflow":
+		return true
+	}
+	return false
+}
+
 // noStoreUID says whether the file's identity is not stable across runs, so its
 // zero-content failures are counted per folder instead of by NID (FC8): the .pst
 // that -outlook's Outlook export rebuilds every run, and an .ost Outlook rebuilds
@@ -438,11 +461,12 @@ func (s *sourceRun) finish(walkErr error) error {
 
 // covered says whether this run covered the gap: it read the gap's folder fully (no
 // folder-scope fault was recorded this run in that folder or any ancestor of it), and
-// the walk could have SEEN what the gap records. A reader that reports its faults
-// (the PST reader) sees every reader-stage reason; the others (mbox, maildir,
-// Evolution, until FI-S2b) report none, so their walk says nothing about a
-// reader-stage gap — only the export-stage reasons, which the run itself observes
-// for any source, are closed by a walk that no longer meets them.
+// the walk could have SEEN what the gap records. Every reader reports its faults (the
+// PST reader and, since FI-S2b, the mbox, maildir and Evolution readers), and each
+// sees the reasons it produces (pstReaderGap, localReaderGap); the export-stage
+// reasons, which the run itself observes for any source, are closed by a completed
+// walk that no longer meets them. A reason or a locator the reader would not produce
+// is one its walk says nothing about, and is kept.
 func (s *sourceRun) covered(g state.CaptureGap) bool {
 	if !s.reportsFaults && !exportStageGap(g.Reason) {
 		return false
@@ -452,8 +476,10 @@ func (s *sourceRun) covered(g state.CaptureGap) bool {
 	}
 	// A reader that reports its faults sees the reasons it produces and the run's own;
 	// a reason it cannot see (a newer build's, another source's) is kept (S2A-AI4).
-	if s.reportsFaults && !exportStageGap(g.Reason) && !pstReaderGap(g.Reason) {
-		return false
+	if s.reportsFaults && !exportStageGap(g.Reason) {
+		if s.local && !localReaderGap(g.Reason, g.Locator) || !s.local && !pstReaderGap(g.Reason) {
+			return false
+		}
 	}
 	// What Outlook left out of the export is not in the file: the file answers it only
 	// by now holding the folder. The exception is a file this run's own export wrote: it

@@ -591,9 +591,139 @@ func TestGraphLegacyStubIsAdoptedNotSwept(t *testing.T) {
 }
 
 // covers: MA-323, R1, R5, S46
-// A stale-ParserGen unparsed Graph stub is re-fetched exactly once (FC25).
+// A stale-ParserGen unparsed Graph stub is re-fetched exactly once (FC25). This is the
+// record's half, in the manifest: the stub carries the parser generation that gave up
+// on it and the digest of its bytes, a stub of an older generation (or none: an older
+// binary's save drops the field) is stale until a run stamps it with the current one,
+// which it does once, and Load drops both fields from any record that is no stub. The
+// walk's half, one download of a stale stub in a Graph run, is
+// TestStaleStubIsFetchedOnceByTheGraphWalk (internal/app).
 func TestStaleParserGenStubRefetchedOnce(t *testing.T) {
-	t.Skip("MA-323: the parser-generation stamp (Record.ParserGen on an unparsed stub) is FI-S2b's and the Graph walk's one re-fetch of a stale stub needs it (FC25); FI-S3 built the walk's other half; closes when FI-S2b lands")
+	m, path, tok := gapManifest(t)
+	digest := strings.Repeat("ab", 32)
+	stubKey, plainKey := LiveKey(tok, "mid:stub@x"), LiveKey(tok, "mid:plain@x")
+	m.Add(stubKey, Record{Path: tok + "/Inbox/stub.html", Folder: "Inbox", Terminal: []string{LabelUnparsed}, Subject: "(unreadable message)", ParserGen: 0, RawDigest: digest})
+	m.Add(plainKey, Record{Path: tok + "/Inbox/plain.html", Folder: "Inbox", ParserGen: 7, RawDigest: "not a digest"})
+
+	// A stub no binary stamped is generation 0: stale now, and stamped once.
+	r, _ := m.Get(stubKey)
+	if !r.StaleUnparsed(ParserGenCurrent) {
+		t.Fatalf("a stub of generation 0 is not stale for generation %d", ParserGenCurrent)
+	}
+	if !m.StampParserGen(stubKey, ParserGenCurrent) {
+		t.Fatal("the stamp did not change a stale stub")
+	}
+	if m.StampParserGen(stubKey, ParserGenCurrent) {
+		t.Error("a second stamp changed the record again: the stub would be re-fetched on every run")
+	}
+	if r, _ := m.Get(stubKey); r.StaleUnparsed(ParserGenCurrent) || r.ParserGen != ParserGenCurrent {
+		t.Errorf("the stamped stub = %+v; want it current", r)
+	}
+	if !(Record{Terminal: []string{LabelUnparsed}, ParserGen: ParserGenCurrent}).StaleUnparsed(ParserGenCurrent + 1) {
+		t.Error("a stub of the current generation is not stale for the NEXT parser")
+	}
+	if m.StampParserGen(plainKey, ParserGenCurrent) {
+		t.Error("a record that is no stub was stamped")
+	}
+
+	// Disk: a stub keeps both fields; a record that is no stub loses them at Load, and a
+	// digest that is no sha-256 is dropped.
+	m2 := reload(t, m, path)
+	if r, _ := m2.Get(stubKey); r.ParserGen != ParserGenCurrent || r.RawDigest != digest {
+		t.Errorf("the stub after a round trip = %+v; want its generation and digest kept", r)
+	}
+	if r, _ := m2.Get(plainKey); r.ParserGen != 0 || r.RawDigest != "" {
+		t.Errorf("a healthy record after Load = %+v; want no parser stamp and no digest (P14)", r)
+	}
+	m2.Add(stubKey, Record{Path: tok + "/Inbox/stub.html", Terminal: []string{LabelUnparsed}, ParserGen: 1, RawDigest: "xyz"})
+	if r, _ := reload(t, m2, path).Get(stubKey); r.RawDigest != "" || r.ParserGen != 1 {
+		t.Errorf("a stub with a malformed digest after Load = %+v; want the digest dropped", r)
+	}
+}
+
+// covers: MA-318, R1, R3, S46
+// An unparsed stub is superseded, metadata only, by the capture of the same bytes
+// that a later parser reads whole (§4.7.4(4), FC25): its label becomes "superseded",
+// RecoveredBy names the new key, and nothing else about the record moves (no file is
+// touched by this layer). It is found by token and digest, never across tokens, and
+// never the record at the new key itself.
+func TestUnparsedStubIsSupersededByTheSameBytes(t *testing.T) {
+	m, _, tok := gapManifest(t)
+	other := m.Token("mailbox:bob@contoso.com", "bob@contoso.com")
+	digest := strings.Repeat("0f", 32)
+	stubKey, newKey := Key(tok, "Inbox", "sha:stub"), Key(tok, "Inbox", "mid:real@x")
+	m.Add(stubKey, Record{Path: tok + "/Inbox/stub.html", Terminal: []string{LabelUnparsed}, ParserGen: 1, RawDigest: digest})
+	m.Add(newKey, Record{Path: tok + "/Inbox/real.html", Folder: "Inbox"})
+	if !m.HasUnparsedStubs() {
+		t.Fatal("the manifest holds a stub with a digest but says it holds none")
+	}
+	if m.SupersedeUnparsed(other, digest, newKey) {
+		t.Error("a stub of another store was superseded")
+	}
+	if m.SupersedeUnparsed(tok, strings.Repeat("11", 32), newKey) {
+		t.Error("a stub with other bytes was superseded")
+	}
+	if m.SupersedeUnparsed(tok, digest, stubKey) {
+		t.Error("the stub was superseded by itself")
+	}
+	if !m.SupersedeUnparsed(tok, digest, newKey) {
+		t.Fatal("the stub of the same bytes was not superseded")
+	}
+	r, _ := m.Get(stubKey)
+	if len(r.Terminal) != 1 || r.Terminal[0] != LabelSuperseded || r.RecoveredBy != newKey || r.Path != tok+"/Inbox/stub.html" || r.RawDigest != "" || r.ParserGen != 0 {
+		t.Errorf("the superseded stub = %+v; want only its label and RecoveredBy changed", r)
+	}
+	if m.HasUnparsedStubs() || m.SupersedeUnparsed(tok, digest, newKey) {
+		t.Error("a superseded stub is still found")
+	}
+}
+
+// covers: MA-327, R1, R7, S46
+// Every gap kind FI-S2b records has its own words in the shared table (owner ruling
+// §13.11): a why, a remedy and a report remedy that are NOT the generic fallbacks. The
+// remedy of a directory link NAMES the input's opt-in, on every surface that can start
+// a run (OR6), and says the input keeps its archive; a looped folder read through its
+// other path is info with a "nothing to do".
+func TestEveryGapKindFISlice2bRecordsHasItsOwnWords(t *testing.T) {
+	reasons := []string{
+		"file-unreadable", "vanished-during-read", "symlink-outside-store", "symlinked-folder-skipped",
+		"not-a-message-file", "folder-cycle", "folder-unreadable", "folder-partially-read",
+	}
+	for _, reason := range reasons {
+		if GapWhy(reason) == GapWhy("no-such-reason") {
+			t.Errorf("%s has no why of its own", reason)
+		}
+		for _, errno := range []string{"", ErrnoPerm, ErrnoIO} {
+			if r := GapRemedy(reason, SourceLocal, errno); r == remedyUnknown || r == "" {
+				t.Errorf("%s (local, %q) has no remedy of its own", reason, errno)
+			}
+			if r := GapReportRemedy(reason, SourceLocal, errno); strings.HasPrefix(r, "run again; if it is listed again") || r == "" {
+				t.Errorf("%s (local, %q) has no report remedy of its own", reason, errno)
+			}
+		}
+	}
+	r := GapRemedy("symlinked-folder-skipped", SourceLocal, "")
+	for _, want := range []string{"-follow-links", "wizard", "follow_links", "keeps its archive"} {
+		if !strings.Contains(r, want) {
+			t.Errorf("the directory-link remedy %q does not name %q", r, want)
+		}
+	}
+	// A link out of the store is judged by its text alone, so the gap cannot tell a link to
+	// a file (never read, opt-in or not) from a link to a folder (read under the opt-in,
+	// OR6: an archive that captured through absolute folder links gets a remedy that names
+	// the opt-in). Its remedy says both, and still never offers the opt-in for a file.
+	r = GapRemedy("symlink-outside-store", SourceLocal, "")
+	for _, want := range []string{"never read", "copy the file into the store", "-follow-links", "keeps its archive"} {
+		if !strings.Contains(r, want) {
+			t.Errorf("the remedy of a link out of the store %q does not say %q", r, want)
+		}
+	}
+	if r := GapRemedy("folder-cycle", SourceLocal, ""); !strings.Contains(r, "nothing to do") || strings.Contains(r, "scanpst") {
+		t.Errorf("a looped local folder's remedy %q is the PST repair or no word at all", r)
+	}
+	if r := GapRemedy("folder-cycle", SourcePST, ""); !strings.Contains(r, "scanpst") {
+		t.Errorf("a PST's looped hierarchy keeps the repair remedy, got %q", r)
+	}
 }
 
 // covers: MA-327, R1, R7, S46
