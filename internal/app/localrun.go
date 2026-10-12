@@ -318,6 +318,23 @@ func (s *sourceRun) closeReadGap(m *model.Message) bool {
 	return mf.CloseGapReason(key, g.Reason)
 }
 
+// closeVanishedThisRun closes the vanished-during-read gap this run recorded for a
+// maildir file the walk then read after all, when the archive already holds the message
+// (nothing was written, so no capture answered the gap): a client's new/ to cur/ move
+// between the listing and the read is found when cur/ is read, and the message is not
+// missing (S2B-AI4). Any other gap, and one from an earlier run, is left to the end of
+// the walk, which closes what a completed walk no longer finds.
+func (s *sourceRun) closeVanishedThisRun(m *model.Message) {
+	if m.ReadLocator == "" {
+		return
+	}
+	mf := s.lr.exp.Manifest
+	key := state.GapKey(s.token, state.GapScopeItem, m.ReadLocator)
+	if g, ok := mf.GapFor(key); ok && g.LastRun.Equal(s.lr.runAt) {
+		mf.CloseGapReason(key, "vanished-during-read")
+	}
+}
+
 // identFolderSep joins an ident: locator to the hash of the folder it was lost in,
 // when another folder's copy of the same message already owns the plain locator.
 const identFolderSep = "#"
@@ -356,6 +373,8 @@ func (s *sourceRun) handle(ctx context.Context, abort func() error, folderPath [
 		if written {
 			s.wrote, s.streak = true, 0
 			s.recovered(m, folderKey)
+		} else {
+			s.closeVanishedThisRun(m)
 		}
 		return nil
 	}

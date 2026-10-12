@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"mail-archive-tool/internal/source"
 	"mail-archive-tool/internal/state"
 )
 
@@ -73,6 +74,58 @@ func TestAHealthySiblingDoesNotCloseAnUnreadableFilesGap(t *testing.T) {
 			}
 			if !bytes.Contains(archiveText(t, out), []byte("LOSTSUBJECT-ONE")) {
 				t.Errorf("the fixed file was not archived")
+			}
+		})
+	}
+}
+
+// covers: MA-321, R1, R10, S46
+// S2B-AI4 (and S2B-AC8): a maildir message the archive already holds that a client moves
+// from new/ to cur/ while the run is reading new/ is not a loss, and the run is not
+// partial for it. The walk lists new/, the client flags the message (the file moves to
+// cur/b:2,S), the read of new/b finds nothing (a vanished-during-read gap) and the walk
+// then reads cur/b:2,S fine; the exporter skips it as archived, so no capture closed the
+// gap and the run ended RED for a message that is in the archive. The twin first: the same
+// move of a message the archive does not hold yet is captured and closes its own gap.
+func TestAnArchivedMessageMovedFromNewToCurIsNoPartialRun(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("maildir names carry a colon")
+	}
+	for _, c := range []struct {
+		name     string
+		archived bool // run 1 archives the messages before the move
+	}{
+		{"a message not archived yet", false},
+		{"an archived message", true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			store := filepath.Join(tmpDir(t), "mail")
+			maildirStore(t, store, "Inbox/new/a", "Inbox/new/b", "Inbox/new/c")
+			out := tmpDir(t)
+			if c.archived {
+				if res, err := runLocal(t, out, store); err != nil || res.Partial || recordCount(t, out) != 3 {
+					t.Fatalf("run 1: err %v, partial %v, %d records; want 3 archived", err, res.Partial, recordCount(t, out))
+				}
+			}
+			moved := false
+			restore := source.InjectMaildirReadFaults(func(rel string) error {
+				if rel == "Inbox/new/a" && !moved {
+					moved = true
+					return os.Rename(filepath.Join(store, "Inbox", "new", "b"), filepath.Join(store, "Inbox", "cur", "b:2,S"))
+				}
+				return nil
+			})
+			defer restore()
+			// the rename needs cur/ to exist
+			if err := os.MkdirAll(filepath.Join(store, "Inbox", "cur"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			res, err := runLocal(t, out, store)
+			if !moved {
+				t.Fatal("the move never ran")
+			}
+			if err != nil || res.Partial || len(ledgerOf(t, out)) != 0 || recordCount(t, out) != 3 {
+				t.Errorf("run: err %v, partial %v, ledger %s, %d records; want a clean run with 3 records and no gap: nothing is lost", err, res.Partial, gapReasons(ledgerOf(t, out)), recordCount(t, out))
 			}
 		})
 	}
