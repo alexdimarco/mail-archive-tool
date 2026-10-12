@@ -96,6 +96,12 @@ func (r *CopyRun) readBack(orig ceFileRec) ([]byte, error) {
 	return buf[:n], nil
 }
 
+// originalParser is the parser the derived files read the original with: source.ParseRFC822,
+// the archive's own, whose walker keeps every part's bytes as the sender sent them (C1-1). It
+// is a variable only so a test can make a part's stream fail or panic; production always uses
+// ParseRFC822.
+var originalParser = source.ParseRFC822
+
 // parseOriginal parses the original's bytes, once, for both derived files (the readable copy
 // and the extracted attachments). It returns the message or, when none can be made, why. A
 // panic in the parse is recovered (a panic only: out of memory is fatal, and the size cap is
@@ -106,7 +112,7 @@ func parseOriginal(eml []byte) (msg *model.Message, why string) {
 			msg, why = nil, panicReason(p)
 		}
 	}()
-	msg = source.ParseRFC822(eml)
+	msg = originalParser(eml)
 	if msg == nil {
 		return nil, "the message could not be read"
 	}

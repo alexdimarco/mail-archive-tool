@@ -9,6 +9,7 @@ import (
 	"io"
 	"path"
 	"slices"
+	"strings"
 
 	"mail-archive-tool/internal/model"
 	"mail-archive-tool/internal/state"
@@ -108,6 +109,23 @@ func (s *attachSpaceWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
+// classifyStream sorts what a part's stream returned: nil, no space, a failed write of the
+// destination, or (anything else) the part's own failure to be read, with its reason made
+// plain and bounded.
+func classifyStream(err error) error {
+	var we *ceWriteError
+	var pe *attachPartError
+	switch {
+	case err == nil, errors.Is(err, errAttachNoSpace), errors.As(err, &we), errors.As(err, &pe):
+		return err
+	}
+	why := plainText(err.Error())
+	if len(why) > 200 {
+		why = strings.ToValidUTF8(why[:200], "")
+	}
+	return &attachPartError{why}
+}
+
 // guardStream makes a part's stream a call that cannot panic the run: a panic is the part's
 // failure.
 func guardStream(fn func(io.Writer) (int64, error)) func(io.Writer) (int64, error) {
@@ -144,6 +162,7 @@ func (w *attachWriter) put(filename string, index int, stream func(io.Writer) (i
 	}
 	hw := &ceHashWriter{w: f, h: sha256.New(), watch: r.watch, total: &r.bytes}
 	_, serr := stream(&attachSpaceWriter{w: hw, left: budget})
+	serr = classifyStream(serr)
 	if serr == nil {
 		if serr = f.Sync(); serr != nil {
 			serr = &ceWriteError{serr}

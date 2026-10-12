@@ -5,7 +5,9 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -14,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"mail-archive-tool/internal/assure"
+	"mail-archive-tool/internal/model"
 	"mail-archive-tool/internal/source"
 	"mail-archive-tool/internal/util"
 )
@@ -293,9 +296,90 @@ func TestExtractedAttachmentNamesAreSanitizedAndContained(t *testing.T) {
 }
 
 // covers: MA-424, R1
-// A zero-byte part and a part whose stream fails are entry notes, never silent, and write no file.
+// A zero-byte part, a part whose stream fails halfway, one that panics and one with no stream at
+// all each write no file and are an entry note that names the part and what holds it, never
+// silent; the parts around them are extracted, no temp file is left, and a message whose only
+// part is such a part has no directory. The message stays exported.
 func TestAZeroByteOrFailedPartIsANoteNeverSilent(t *testing.T) {
-	t.Skip("MA-424: attachment extraction is not built; lands in EW-E6")
+	real := originalParser
+	t.Cleanup(func() { originalParser = real })
+	originalParser = func(b []byte) *model.Message {
+		m := real(b)
+		for i := range m.Attachments {
+			switch m.Attachments[i].Filename {
+			case "torn.bin":
+				m.Attachments[i].WriteTo = func(w io.Writer) (int64, error) {
+					n, _ := w.Write([]byte("half of it"))
+					return int64(n), errors.New("the stream was torn")
+				}
+			case "panics.bin":
+				m.Attachments[i].WriteTo = func(w io.Writer) (int64, error) { panic("a decoder fell over") }
+			case "nothing.bin":
+				m.Attachments[i].WriteTo = nil
+			}
+		}
+		return m
+	}
+	msgs := ceMsgs(2)
+	body := map[string][]byte{
+		msgs[0].SourceID: e6Mime(msgs[0].SourceID, "mixed",
+			e6Part{name: "empty.txt", ctype: "text/plain"},
+			e6Part{name: "ok.pdf", ctype: "application/pdf", body: []byte("%PDF fine")},
+			e6Part{name: "torn.bin", body: []byte("whole")},
+			e6Part{name: "panics.bin", body: []byte("whole")},
+			e6Part{name: "nothing.bin", body: []byte("whole")}),
+		msgs[1].SourceID: e6Mime(msgs[1].SourceID, "only empty", e6Part{name: "empty.txt", ctype: "text/plain"}),
+	}
+	e := newCEEnv(t)
+	res, _ := e6Run(t, e, msgs, false, func(id string) []byte { return body[id] })
+	if res.Counts.Exported != 2 || res.Counts.Failed != 0 {
+		t.Fatalf("%s, %+v", res.Label, res.Counts)
+	}
+	lines := e5Files(t, e, res)
+	first := assure.Reached(t, lines[1], "the first message's line")
+	files := e6Derived(first)
+	if first.Status != statusExported || len(files) != 1 || path.Base(files[0].Path) != "ok.pdf" {
+		t.Fatalf("the first message: %s, %+v", first.Status, first.Files)
+	}
+	for name, reason := range map[string]string{"empty.txt": "has no content", "torn.bin": "could not be read from the message (the stream was torn)",
+		"panics.bin": "could not be read from the message (a decoder fell over", "nothing.bin": "nothing of it could be kept"} {
+		var note string
+		for _, n := range first.Notes {
+			if strings.Contains(n, `"`+name+`"`) {
+				note = n
+			}
+		}
+		if note == "" || !strings.HasPrefix(note, attachNotePrefix) || !strings.Contains(note, reason) || !strings.Contains(note, ".eml beside it") {
+			t.Errorf("%s: the note is %q, want one naming it, %q and what holds it", name, note, reason)
+		}
+		if exists(res.Root, path.Dir(files[0].Path)+"/"+name) {
+			t.Errorf("%s: a file was written for it", name)
+		}
+	}
+	if len(first.Notes) != 4 {
+		t.Errorf("the first message's notes: %q", first.Notes)
+	}
+	// the directory holds the one good file, and no temp is left anywhere
+	if got := treeFilesWith(t, res.Root, ".attachments/ok.pdf"); len(got) != 1 {
+		t.Errorf("the attachments directory: %v", treeFiles(t, res.Root))
+	}
+	if r := tempResidue(t, res.Root); len(r) != 0 {
+		t.Errorf("temp files left: %v", r)
+	}
+	// a message whose only part is empty: a note, no directory
+	second := assure.Reached(t, lines[2], "the second message's line")
+	if len(second.Files) != 1 || len(second.Notes) != 1 || !strings.Contains(second.Notes[0], "has no content") ||
+		exists(res.Root, strings.TrimSuffix(second.Files[0].Path, ".eml")+".attachments") {
+		t.Errorf("the second message: %+v, %q", second.Files, second.Notes)
+	}
+	// the notes are in the manifest
+	man := manifestOf(t, res.Root)
+	if n := man["messages"].([]any)[0].(map[string]any)["notes"].([]any); len(n) != 4 {
+		t.Errorf("the manifest's notes: %v", n)
+	}
+	if bad, missing, extra := sumsCheck(t, res.Root); len(bad)+len(missing)+len(extra) != 0 {
+		t.Errorf("sums: changed %v, missing %v, unlisted %v", bad, missing, extra)
+	}
 }
 
 // covers: MA-424, R1
