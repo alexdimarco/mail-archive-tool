@@ -65,19 +65,19 @@ func manifestStatus(m map[string]any) string { return m["run"].(map[string]any)[
 
 // covers: MA-445, R12
 // Settings: the remembered destination and options round-trip in the settings file (0600,
-// version 1; Preserve ON, Readable HTML OFF and hidden before slice E5, attachments OFF when
+// version 1; Preserve ON, Readable HTML ON from slice E5, attachments OFF when
 // absent); an older file without the fields loads with the defaults; an unknown field a
 // newer build wrote is tolerated; a start reloads the file under the lock and changes only
 // the four export fields.
 func TestExportSettingsRoundTrip(t *testing.T) {
 	e := newWsEnv(t)
 	path := e.cfg.SettingsPath
-	if s := LoadSettings(path); !s.Preserve() || s.ReadableHTML() || s.ExtractAttachments() || s.ExportDest != "" {
+	if s := LoadSettings(path); !s.Preserve() || !s.ReadableHTML() || s.ExtractAttachments() || s.ExportDest != "" {
 		t.Errorf("a missing file: %+v, want the defaults", s)
 	}
 	old := `{"version":1,"out":"/somewhere/archive","keepRaw":true}`
 	os.WriteFile(path, []byte(old), 0o600)
-	if s := LoadSettings(path); !s.Preserve() || s.ReadableHTML() || s.ExtractAttachments() || s.Out != "/somewhere/archive" || !s.KeepRaw {
+	if s := LoadSettings(path); !s.Preserve() || !s.ReadableHTML() || s.ExtractAttachments() || s.Out != "/somewhere/archive" || !s.KeepRaw {
 		t.Errorf("an older file: %+v, want its own fields and the export defaults", s)
 	}
 	os.WriteFile(path, []byte(`{"version":1,"out":"/somewhere/archive","keepRaw":true,"someFutureField":{"a":[1,2]},"exportDest":"/d"}`), 0o600)
@@ -86,23 +86,27 @@ func TestExportSettingsRoundTrip(t *testing.T) {
 	}
 	os.WriteFile(path, []byte(old), 0o600)
 
-	// the source endpoint reports the defaults; the page offers neither hidden option
+	// the source endpoint reports the defaults, Readable HTML ON (slice E5); the page offers
+	// it, checked, and still not the option that waits for its slice
 	src := e.ok("/api/workspace/source", nil)["settings"].(map[string]any)
-	if src["preserve"] != true || src["html"] != false || src["attachments"] != false || src["dest"] != "" {
+	if src["preserve"] != true || src["html"] != true || src["attachments"] != false || src["dest"] != "" {
 		t.Errorf("the defaults the page sees: %v", src)
 	}
 	page := e.get("/workspace").Body.String()
-	for _, hidden := range []string{"Readable HTML", "Extract attachments", "optHTML"} {
+	if !strings.Contains(page, `<input type="checkbox" id="optHTML" checked> Readable HTML`) {
+		t.Error("the workspace page does not offer Readable HTML, checked")
+	}
+	for _, hidden := range []string{"Extract attachments", "optAttach"} {
 		if strings.Contains(page, hidden) {
 			t.Errorf("the workspace page offers %q before its slice lands", hidden)
 		}
 	}
 
-	// a start remembers the destination and the options, and nothing else changes; the two
-	// hidden options stay off whatever the request says
+	// a start remembers the destination and the options, and nothing else changes; the
+	// option that waits for its slice stays off whatever the request says
 	ids := e.folders()
 	sel := e.selection(entry(ids["Sent Items"], false))
-	sel["options"] = map[string]any{"preserve": false, "html": true, "attachments": true}
+	sel["options"] = map[string]any{"preserve": false, "html": false, "attachments": true}
 	e.startExport(sel)
 	e.waitRun()
 	s := LoadSettings(path)

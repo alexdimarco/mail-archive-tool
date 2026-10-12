@@ -1,6 +1,11 @@
 package app
 
-import "testing"
+import (
+	"bytes"
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 // The extraction workspace's slice E2 (the copy-export engine, design
 // docs/design-extraction-workspace.md §9 and §10) lands catalog-first: each row
@@ -25,6 +30,46 @@ func TestArchiveWriterNamesKeepF75F91F111(t *testing.T) {
 // With Readable HTML on, one message's MIME and its decoded attachments are held, and
 // its readable copy is made only within the render bound (32 MiB of predicted rendered
 // HTML, which MA-509 pins): the on half of MA-419's two modes.
+//
+// Six messages of 12 MiB each (a 9 MiB attachment, base64-encoded) run with Readable HTML
+// on: every .eml is the served bytes and carries its readable copy, and the heap grows by
+// no more than a few messages' worth while the run lasts, because the one message being
+// rendered is the only one held (its .eml read back into one buffer, its parse, its page);
+// a run that kept each message's bytes would hold all six, and the bound sits between them.
 func TestCopyExportReadableHTMLHoldsOneMessage(t *testing.T) {
-	t.Skip("MA-419: Readable HTML is slice E5's (the render bound RR2b-C2, MA-509); until it lands the engine refuses the option and runs with it off, which TestCopyExportM365OriginalsAreByteExact covers")
+	const n = 6
+	e := newCEEnv(t)
+	msgs := ceMsgs(n)
+	body := map[string][]byte{}
+	for i := range msgs {
+		id := msgs[i].SourceID
+		pdf := e5Image(9 << 20)
+		pdf[0] = byte(i) // the messages differ
+		body[id] = e5Related(id, "held "+id, "<p>marker-text</p>", nil, string(pdf))
+	}
+	if len(body[msgs[0].SourceID]) < 12<<20 || len(body[msgs[0].SourceID]) > 13<<20 {
+		t.Fatalf("a message is %d bytes, want about 12 MiB", len(body[msgs[0].SourceID]))
+	}
+	var res *CopyResult
+	if peak := peakHeap(func() { res, _ = e5Run(t, e, msgs, func(id string) []byte { return body[id] }) }); peak > 80<<20 {
+		t.Errorf("the heap grew by %d MiB over %d messages of 12 MiB: more than the one being rendered is held", peak>>20, n)
+	}
+	if res.Counts.Exported != n || res.Counts.OriginalOnly != 0 || res.Outcome != CopyOutcomeComplete {
+		t.Fatalf("%s, %+v", res.Label, res.Counts)
+	}
+	for i, line := range e5Files(t, e, res) {
+		if len(line.Files) != 2 || line.Files[1].Role != roleDerivedHTML {
+			t.Fatalf("message %d: %+v", i, line)
+		}
+		orig, err := os.ReadFile(filepath.Join(res.Root, filepath.FromSlash(line.Files[0].Path)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(orig, body[msgs[i-1].SourceID]) {
+			t.Errorf("message %d: the .eml is not the served bytes", i)
+		}
+		if line.Files[1].Size > 64<<10 {
+			t.Errorf("message %d: its readable copy is %d bytes: the attachment is not in the page", i, line.Files[1].Size)
+		}
+	}
 }

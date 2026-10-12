@@ -356,6 +356,7 @@ func (r *CopyRun) start() *CopyRefusal {
 	e.step("W3")
 
 	r.namer = newCeNamer(p.Options.PreserveFolders, filepath.ToSlash(r.rootAbs))
+	r.namer.readable = p.Options.ReadableHTML
 	r.made = map[string]bool{}
 	if err := r.writeMarker(false); err != nil {
 		// The record names the root and the marker is missing: it is reconciled as
@@ -667,7 +668,7 @@ func (r *CopyRun) exportOne(walk context.Context, n int, m *CopyMessage) (line *
 		return r.exportFiles(walk, n, m, fsrc)
 	}
 	e := r.env
-	pl := r.namer.place(m, 1)
+	pl := r.namer.place(m, copyFileCountFor(m, r.plan.Options))
 	final := pl.Stem + ".eml"
 	start := r.watch.awake()
 	cuts := 0
@@ -732,13 +733,22 @@ func (r *CopyRun) exportOne(walk context.Context, n int, m *CopyMessage) (line *
 			e.step(fmt.Sprintf("W5tmp:%d", n))
 			placed, perr := r.placeFinal(mctx, pl.Dir, tmpName, final)
 			if perr == nil {
+				f := ceFileRec{Path: pl.Dir + "/" + placed, Role: roleOriginal, SHA256: hex.EncodeToString(hw.h.Sum(nil)), Size: got}
+				e.step(fmt.Sprintf("W5:%d", n))
+				line := &ceMsgLine{T: "msg", N: n, Status: statusExported, Files: []ceFileRec{f}}
+				var rerr error
+				if r.plan.Options.ReadableHTML { // the readable copy of the original just placed (slice E5)
+					rerr = r.addReadable(mctx, n, m, pl.Dir, placed, f, line)
+				}
 				mcancel(nil)
 				r.watch.setMessage(nil)
 				r.watch.bump()
+				if rerr != nil { // the original is not what was written: nothing of the message stays
+					r.fs.Remove(f.Path)
+					return failure(classRetryable, reasonOriginalChanged), nil, false
+				}
 				r.consecWrite, r.consecServer = 0, 0
-				f := ceFileRec{Path: pl.Dir + "/" + placed, Role: roleOriginal, SHA256: hex.EncodeToString(hw.h.Sum(nil)), Size: got}
-				e.step(fmt.Sprintf("W5:%d", n))
-				return &ceMsgLine{T: "msg", N: n, Status: statusExported, Files: []ceFileRec{f}}, nil, false
+				return line, nil, false
 			}
 			ferr = &ceWriteError{perr}
 			r.fs.Remove(ceJoin(pl.Dir, tmpName))

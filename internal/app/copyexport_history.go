@@ -741,8 +741,11 @@ type CopyCheck struct {
 	FingerprintOK bool
 	NoFingerprint bool
 	MarkerPresent bool
-	Problems      []string // the findings in words
-	Remedy        string   // what to do about a RED, "" when GREEN
+	// ReadableOnly is true when the RED is only readable copies (.html) that changed or are missing:
+	// every original is as it was (slice E5), and the Remedy says so.
+	ReadableOnly bool
+	Problems     []string // the findings in words
+	Remedy       string   // what to do about a RED, "" when GREEN
 }
 
 // copyCheckFileCap bounds the number of lines of SHA256SUMS.txt that Check reads.
@@ -843,21 +846,61 @@ func (e *CopyExportEnv) CheckExport(run string) (*CopyCheck, error) {
 	sort.Strings(res.Changed)
 	sort.Strings(res.Missing)
 	sort.Strings(res.Unlisted)
+	// A readable copy is a convenience made from the .eml beside it: one that changed or is
+	// missing is named as that, and says nothing of the original (slice E5, MA-513).
+	readable := e.readablePaths(run)
+	nReadable := 0
 	for _, p := range res.Changed {
-		problem("%s has changed", p)
+		if readable[p] {
+			problem("the readable copy %s has changed. It is a convenience made from the .eml beside it, and says nothing about that .eml", p)
+			nReadable++
+		} else {
+			problem("%s has changed", p)
+		}
 	}
 	for _, p := range res.Missing {
-		problem("%s is missing", p)
+		if readable[p] {
+			problem("the readable copy %s is missing. It is a convenience made from the .eml beside it, and says nothing about that .eml", p)
+			nReadable++
+		} else {
+			problem("%s is missing", p)
+		}
 	}
 	for _, p := range res.Unlisted {
 		problem("%s is in the folder but is not listed in %s: it is not part of the export", p, copySumsName)
 	}
 	res.OK = len(res.Problems) == 0 && res.FingerprintOK
-	if !res.OK {
+	res.ReadableOnly = nReadable > 0 && len(res.Problems) == nReadable && res.FingerprintOK
+	switch {
+	case res.ReadableOnly:
+		res.Remedy = checkReadableRemedy
+	case !res.OK:
 		res.Remedy = checkRemedy
 	}
 	return res, nil
 }
+
+// readablePaths is the set of readable copies the run record lists, by their path as the sums
+// give it; nil when the record is gone, and the copies are then reported like any other file.
+func (e *CopyExportEnv) readablePaths(run string) map[string]bool {
+	var set map[string]bool
+	_ = walkProgress(e.recordPath(run), func(m *ceMsgLine) error {
+		for _, f := range m.Files {
+			if f.Role == roleDerivedHTML {
+				if set == nil {
+					set = map[string]bool{}
+				}
+				set[sumsPath(f.Path)] = true
+			}
+		}
+		return nil
+	})
+	return set
+}
+
+// checkReadableRemedy is what a RED check tells the owner when only readable copies are changed or
+// missing: every original in the folder is as it was, and the copies are conveniences.
+const checkReadableRemedy = "Every original in this folder is as it was: only the readable copies (.html) named above are changed or missing, and each is a convenience made from the .eml beside it. Open that .eml instead, put the copy back, or export the messages again from the Extraction workspace."
 
 // checkRemedy is what a RED check tells the owner to do (friction F12): the findings name the
 // files, this says what follows from them.

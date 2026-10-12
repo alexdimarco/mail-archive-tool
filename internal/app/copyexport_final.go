@@ -12,6 +12,7 @@ import (
 	"hash"
 	"io"
 	"io/fs"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -239,7 +240,38 @@ func (f *ceFinish) presence(rehash bool) error {
 		if m.Status != statusExported && m.Status != statusWithoutOrig && m.Status != statusOriginalOnly {
 			return nil
 		}
+		// A readable copy is a convenience: one that is gone, or damaged, leaves the message
+		// exported with its original and without a readable copy (XC35), never failed, and the
+		// copy is dropped from the record, so the sums never list a file that is not the one
+		// that was written (MA-513). It is looked up first and the original after, so an
+		// original that is gone too still makes the message failed: the later amendment wins.
+		if slices.ContainsFunc(m.Files, func(x ceFileRec) bool { return x.Role == roleDerivedHTML }) {
+			kept := make([]ceFileRec, 0, len(m.Files))
+			var reason string
+			for _, file := range m.Files {
+				if file.Role != roleDerivedHTML {
+					kept = append(kept, file)
+					continue
+				}
+				why, err := f.readableProblem(file, rehash)
+				if err != nil {
+					return err
+				}
+				if why == "" {
+					kept = append(kept, file)
+				} else if reason == "" {
+					reason = why
+				}
+			}
+			if reason != "" {
+				amend = append(amend, ceMsgLine{T: "msg", N: m.N, Status: statusOriginalOnly, Amend: true, Files: kept,
+					Notes: append(slices.Clone(m.Notes), noteReadableFailed+reason)})
+			}
+		}
 		for _, file := range m.Files {
+			if file.Role == roleDerivedHTML {
+				continue
+			}
 			fi, err := f.fs.Lstat(file.Path)
 			if err != nil && !fileGone(err) {
 				// The volume does not answer (an I/O error, a stick that dropped off): that
@@ -279,6 +311,29 @@ func (f *ceFinish) presence(rehash bool) error {
 		}
 	}
 	return nil
+}
+
+// readableProblem looks one recorded readable copy up and says, in words, what is wrong
+// with it: "" when it is there and, with rehash (Finish as partial), still the bytes the
+// record holds. An error is the volume not answering, which says nothing about the file.
+func (f *ceFinish) readableProblem(file ceFileRec, rehash bool) (string, error) {
+	fi, err := f.fs.Lstat(file.Path)
+	if err != nil && !fileGone(err) {
+		return "", finalWriteErr(err)
+	}
+	if err != nil || !fi.Mode().IsRegular() {
+		return "it was no longer in the export folder when the export was finished", nil
+	}
+	if rehash {
+		got, err := hashInRoot(f.fs, file.Path)
+		if err != nil && !fileGone(err) && !errors.Is(err, errNotRegular) {
+			return "", finalWriteErr(err)
+		}
+		if err != nil || got != file.SHA256 || fi.Size() != file.Size {
+			return "it was damaged when the computer stopped", nil
+		}
+	}
+	return "", nil
 }
 
 // fileGone reports whether an error from looking a recorded file up says the file
@@ -333,8 +388,13 @@ func (f *ceFinish) readmeText(status CopyStatus, c CopyCounts, stop *CopyStop, f
 		line("Status: complete — valid only while no %s is in this folder and the check below passes.", copyMarkerName)
 	default:
 		line("Status: %s. This status is valid only while no %s is in this folder.", plainStatus(copyLabel(status, c, stop)), copyMarkerName)
-		line("This export is not complete: %s of %s selected messages are in it; %s were not exported, %s were not attempted.",
-			commas(c.Exported), commas(c.Selected), commas(c.Failed), commas(c.NotAttempted))
+		if c.Failed+c.NotAttempted == 0 && c.OriginalOnly > 0 && status == CopyStatusPartial {
+			// every message is here with its original; only a convenience is missing (XC35)
+			line("Every selected message is in this export with its original; %s of them %s no readable copy (listed below).", commas(c.OriginalOnly), plural(c.OriginalOnly, "has", "have"))
+		} else {
+			line("This export is not complete: %s of %s selected messages are in it; %s were not exported, %s were not attempted.",
+				commas(c.Exported), commas(c.Selected), commas(c.Failed), commas(c.NotAttempted))
+		}
 	}
 	line("")
 	switch h.Source.Kind {
@@ -394,6 +454,19 @@ func (f *ceFinish) readmeText(status CopyStatus, c CopyCounts, stop *CopyStop, f
 	if c.NotAttempted > 0 {
 		line("Messages that were never tried: %s. export-manifest.json lists their ids under \"not_attempted\".", commas(c.NotAttempted))
 	}
+	if h.Options.ReadableHTML {
+		copies, noCopy := f.readableFacts()
+		line("Readable HTML: %s of the exported messages have a readable copy, a .html file beside the .eml of the same name.", commas(copies))
+		if c.OriginalOnly > 0 {
+			line("Messages exported without a readable copy: %s. Each has its .eml here, and export-manifest.json gives it the status exported-original-only and a note saying why.", commas(c.OriginalOnly))
+			for _, s := range noCopy {
+				line("  - %s", s)
+			}
+			if c.OriginalOnly > len(noCopy) {
+				line("  - and %s more, in the manifest.", commas(c.OriginalOnly-len(noCopy)))
+			}
+		}
+	}
 	if h.Source.Kind == "archive" {
 		line("Layout: messages/<store>/<folder>/<year-month>/<date>_<time>_<subject>_<id>.eml (or .html and -attachments.zip where the archive kept no original), at most %d files to a folder; export-manifest.json lists every message and file; %s lists every file with its SHA-256.", copyFilesPerDir, copySumsName)
 	} else {
@@ -426,6 +499,9 @@ func (f *ceFinish) readmeText(status CopyStatus, c CopyCounts, stop *CopyStop, f
 		line("- Each .eml is the original message file the MailArchive archive kept, copied byte-exact and checked against the checksum the archive recorded for it (a file with no recorded checksum is copied as stored, and its entry in export-manifest.json says so). Where the archive kept no original, the message is its archived page (.html) and attachments zip (-attachments.zip), as the archive wrote them: the page's links back to the archive's folder and root pages do not work in this export. A page that does not carry MailArchive's security policy is copied as text (.archived-page.txt) instead of as a page. The hashes prove the files are unchanged since the export, nothing earlier.")
 	}
 	line("- Open the originals with the same caution as email: they can hold links and attachments.")
+	if h.Options.ReadableHTML {
+		line("- A readable copy (.html) is made by MailArchive from the .eml beside it, so that the message can be read in a browser: it carries MailArchive's own security policy (no scripts, nothing loaded from the internet) and is a convenience, not the message. It shows what MailArchive's reader could make of the message: an unusual message (an unknown character set or encoding, a part with no name) can be shown with a part missing or re-encoded, and its attachments are not in it, so when a page looks incomplete the .eml is the authoritative copy.")
+	}
 	if h.Source.Kind != "archive" {
 		line("- Files whose names end .html, .attachments or .archived-page.txt, where present, are conveniences made from the original, which stays the authoritative copy.")
 	} else {
@@ -469,6 +545,31 @@ func (f *ceFinish) archiveFacts() (gone, noted, asText int) {
 		return nil
 	})
 	return gone, noted, asText
+}
+
+// readableFacts counts the messages that have a readable copy and lists, by subject and folder with
+// its note, the first few that were exported without one: what the README tells the recipient
+// of a run with Readable HTML on.
+func (f *ceFinish) readableFacts() (copies int, noCopy []string) {
+	_ = walkMessages(f.rec.path, func(p *cePlanLine, m *ceMsgLine) error {
+		if m == nil {
+			return nil
+		}
+		for _, file := range m.Files {
+			if file.Role == roleDerivedHTML {
+				copies++
+			}
+		}
+		if m.Status == statusOriginalOnly && len(noCopy) < 10 {
+			why := ""
+			if len(m.Notes) > 0 {
+				why = m.Notes[len(m.Notes)-1]
+			}
+			noCopy = append(noCopy, fmt.Sprintf("%s (%s): %s", plainText(p.Subject), p.FolderPath(), plainText(why)))
+		}
+		return nil
+	})
+	return copies, noCopy
 }
 
 // storesLine is the README's sentence naming every store the archive holds and its

@@ -86,6 +86,11 @@ type RenderContext struct {
 	FolderIndexRel string
 	ZipName        string
 	RawName        string
+	// AttachDirName is the name of the directory the message's extracted attachments are
+	// in, beside the page (the extraction workspace's "<stem>.attachments", slice E6);
+	// empty when there is none. With it the header links the directory by relative name,
+	// and the sentence that says the attachments are inside the .eml file is not written.
+	AttachDirName string
 
 	// Store and Folder say where the item came from, for the notice a partly-read
 	// page carries (§4.7.5): the store's token and the folder path. Empty on a
@@ -2287,6 +2292,12 @@ func renderHeader(m *model.Message, ctx RenderContext, consumed map[int]bool) st
 		if ctx.ZipName != "" {
 			b.WriteString(` — <a href="` + html.EscapeString(ctx.ZipName) + `">download zip</a>`)
 		}
+		if ctx.AttachDirName != "" {
+			b.WriteString(` — <a href="` + html.EscapeString(ctx.AttachDirName) + `/">extracted files</a>`)
+		}
+		if inEmlOnly(ctx) {
+			b.WriteString(` — ` + attachmentsInEmlSentence)
+		}
 		b.WriteString(`</div>`)
 	}
 	if ctx.RawName != "" {
@@ -2295,6 +2306,20 @@ func renderHeader(m *model.Message, ctx RenderContext, consumed map[int]bool) st
 	b.WriteString(readGapNotice(m, ctx))
 	b.WriteString(`</div>`)
 	return b.String()
+}
+
+// attachmentsInEmlSentence is what an export's readable page says beside its attachment
+// list when the only copy of the attachments is the original beside it (extraction
+// workspace design §4.11).
+const attachmentsInEmlSentence = `the attachments are inside the .eml file`
+
+// inEmlOnly reports whether a page is the export's own render, with the original beside it
+// and nothing else that holds the attachments: it has an original (RawName), no zip and no
+// extracted-attachments directory, and no navigation. The archive's renders always carry
+// navigation (RootRel and FolderIndexRel) and a zip beside any attachment they list, so
+// they never say it and stay byte-identical (extraction design §4.11, XC30).
+func inEmlOnly(ctx RenderContext) bool {
+	return ctx.RawName != "" && ctx.ZipName == "" && ctx.AttachDirName == "" && ctx.RootRel == "" && ctx.FolderIndexRel == ""
 }
 
 // maxNoticeReason bounds the reason a reader gave for a partly-read item: it is

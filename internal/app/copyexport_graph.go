@@ -93,7 +93,7 @@ func (s *M365Source) ListFolder(ctx context.Context, path []CopyFolderRef) ([]Co
 		}
 		for _, r := range refs {
 			out = append(out, CopyMessage{SourceID: r.ID, InternetMessageID: r.InternetMessageID, Folder: path, Subject: r.Subject,
-				From: r.From, FromName: r.FromName, Received: r.Received, SizeHint: r.SizeHint, Mailbox: s.upn})
+				From: r.From, FromName: r.FromName, Received: r.Received, SizeHint: r.SizeHint, Mailbox: s.upn, State: StateOf(r)})
 		}
 		if s.MaxListed > 0 && len(out) > s.MaxListed {
 			return nil, ErrListTooLarge
@@ -103,6 +103,27 @@ func (s *M365Source) ListFolder(ctx context.Context, path []CopyFolderRef) ([]Co
 		}
 		next = link
 	}
+}
+
+// maxStateCategories bounds the categories a message's plan line keeps: a readable copy shows 64
+// and a note that there are more (the renderer's own bound), so a few more are kept for it to say so.
+const maxStateCategories = 80
+
+// StateOf is the message state a listing row carries that a readable copy shows (importance,
+// read flag, categories, sensitivity), kept with the planned message; nil when the row carries
+// none. Graph's "normal" importance is the empty state, as the archive's pages read it.
+func StateOf(r graph.MessageRef) *CopyMsgState {
+	st := &CopyMsgState{Importance: r.Importance, IsRead: r.IsRead, Sensitivity: r.Sensitivity}
+	if graphImportance(r.Importance) == "" {
+		st.Importance = ""
+	}
+	if len(r.Categories) > 0 {
+		st.Categories = append([]string(nil), r.Categories[:min(len(r.Categories), maxStateCategories)]...)
+	}
+	if st.Importance == "" && st.IsRead == nil && st.Sensitivity == "" && len(st.Categories) == 0 {
+		return nil
+	}
+	return st
 }
 
 // Fetch streams the message's /$value bytes into w, refusing a body above maxBytes

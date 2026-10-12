@@ -83,8 +83,8 @@ func (e *CopyExportEnv) PlanCopyExport(in CopyPlanInput) (*CopyPlan, error) {
 	if len(in.Messages) > copyMaxMessages {
 		return nil, &CopyRefusal{ID: "R-i", Message: copyTooManyText(len(in.Messages), oneFolder(in.Messages))}
 	}
-	if in.Options.ReadableHTML || in.Options.Attachments {
-		return nil, &CopyRefusal{ID: "R-h", Message: "Readable HTML and extracted attachments aren't available in this version of MailArchive — turn them off and preview again."}
+	if in.Options.Attachments {
+		return nil, &CopyRefusal{ID: "R-h", Message: "Extracted attachments aren't available in this version of MailArchive — turn them off and preview again."}
 	}
 	dest := in.Dest
 	// the same words wherever the destination is checked: empty box, ~ and %NAME% not expanded,
@@ -195,23 +195,28 @@ func destMissing(dest string) *CopyRefusal {
 func (e *CopyExportEnv) sizePlan(p *CopyPlan) {
 	rootAbs := filepath.Join(p.Dest, p.ExportName)
 	namer := newCeNamer(p.Options.PreserveFolders, filepath.ToSlash(rootAbs))
+	namer.readable = p.Options.ReadableHTML
 	var reserve, record int64
 	for i := range p.Messages {
 		m := &p.Messages[i]
+		readable := p.Options.ReadableHTML && m.NoOrig == "" // a readable copy beside the original (slice E5)
 		switch {
 		case m.SizeHint > e.cap():
 			p.OverCap++ // listed as larger than this version exports, and no space needed for it
 		case m.SizeHint >= 0:
 			p.EstimateBytes += m.SizeHint
+			if readable {
+				p.EstimateBytes += m.SizeHint // the design's factor: a readable copy is about the size of its original
+			}
 		default:
 			p.UnknownSize++
 		}
-		pl := namer.place(m, copyFileCount(m))
+		pl := namer.place(m, copyFileCountFor(m, p.Options))
 		rel := pl.Dir + "/" + pl.Stem + copyFirstSuffix(m)
 		if len(p.SamplePaths) < 10 {
 			p.SamplePaths = append(p.SamplePaths, rel)
 		}
-		n := utf16Len(filepath.ToSlash(rootAbs) + "/" + pl.Dir + "/" + pl.Stem + copyLongestSuffix(m))
+		n := utf16Len(filepath.ToSlash(rootAbs) + "/" + pl.Dir + "/" + pl.Stem + copyLongestSuffixFor(m, p.Options))
 		if n > p.LongestPath {
 			p.LongestPath = n
 		}
@@ -221,8 +226,18 @@ func (e *CopyExportEnv) sizePlan(p *CopyPlan) {
 		// The manifest entry's bound: its JSON-escaped strings (a byte can escape to
 		// six) plus the fixed fields, and one SUMS line per file (RR2-C5).
 		strs := len(m.SourceID) + len(m.InternetMessageID) + len(m.Subject) + len(m.From) + len(m.FromName) + len(m.FolderPath()) + len(rel)
+		if st := m.State; st != nil { // the listing's state rides in the plan line of the run record (slice E5)
+			strs += len(st.Importance) + len(st.Sensitivity)
+			for _, c := range st.Categories {
+				strs += len(c) + 4
+			}
+		}
 		reserve += int64(400+12*strs) + int64(64+2+len(rel)+1)
 		record += int64(copyRecordLineBound) + int64(300+6*strs)
+		if readable { // its manifest entry, its sums line, and a progress line that holds a second file and a note
+			reserve += int64(200 + 64 + 2 + len(rel) + len(".html") + 1 + 6*(len(noteReadableFailed)+240))
+			record += int64(copyRecordLineBound)
+		}
 		if copyFileCount(m) == 2 { // the archived page and its zip: a second file, with its manifest entry and sums line
 			reserve += int64(200 + 64 + 2 + len(rel) + len(copyLongestSuffix(m)) + 1)
 			record += int64(copyRecordLineBound)
