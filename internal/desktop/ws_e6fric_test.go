@@ -24,6 +24,28 @@ func (e *wsEnv) withAttachment(folder string) {
 	})
 }
 
+// covers: MA-424, MA-533, R12
+// F9, F10 (friction review of EW-E6): the page says when the way attachments are saved can be chosen (the choices are
+// greyed until Extract attachments is ticked, and the note under them says so), and the preview of a retry,
+// which keeps the earlier export's choices whatever the boxes say, shows those choices in the boxes and locks
+// them, with a sentence that says why. The page's script is read, not run (no browser here, E3 OW-19).
+func TestTheAttachmentChoicesSayWhenTheyApplyAndAreFixedOnARetry(t *testing.T) {
+	e := newWsEnv(t)
+	page := e.get("/workspace").Body.String()
+	for _, want := range []string{"Choose how once Extract attachments is ticked: until then both choices are greyed.", `id="retryChoicesNote"`,
+		"A retry keeps the choices of the export it continues (Preserve folder structure, Readable HTML and Extract attachments), so the boxes above show them and cannot be changed here."} {
+		if !strings.Contains(page, want) {
+			t.Errorf("the workspace page lacks %q", want)
+		}
+	}
+	for _, want := range []string{"if(p.retryOf){", "$('optPreserve').checked=!!p.preserve", "$('optHTML').checked=!!p.html", "$('optAttach').checked=!!p.attachments",
+		"$(p.attachmentsZip?'optAttachZip':'optAttachLoose').checked=true", "['optPreserve','optHTML','optAttach','optAttachZip','optAttachLoose'].forEach(id=>{$(id).disabled=true;})"} {
+		if !strings.Contains(workspaceJS, want) {
+			t.Errorf("workspace.js's retry preview lacks %q: the boxes would stay editable and unsynced with the plan", want)
+		}
+	}
+}
+
 // covers: MA-424, MA-535, R12
 // F8 (friction review of EW-E6): the preview says how much of its size is the attachments, in bytes and in the words
 // the page shows, only when Extract attachments is on, and the page's Extract attachments line says it is an

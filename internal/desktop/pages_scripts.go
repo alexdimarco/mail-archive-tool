@@ -427,6 +427,12 @@ $('rePreviewBtn').addEventListener('click',()=>{
 function line(k,v){const r=el('div',null,'row');r.appendChild(el('div',k,'k'));r.appendChild(el('div',v,'v'));return r;}
 function renderPreview(p){
   if(p.retryOf)retryDestination(p.retryOf,p.retryWhich,p.dest);
+  if(p.retryOf){
+    // a retry keeps the earlier export's choices whatever the boxes say: they show the plan's and are locked (friction F10 of EW-E6)
+    $('optPreserve').checked=!!p.preserve;$('optHTML').checked=!!p.html;$('optAttach').checked=!!p.attachments;
+    $(p.attachmentsZip?'optAttachZip':'optAttachLoose').checked=true;
+    ['optPreserve','optHTML','optAttach','optAttachZip','optAttachLoose'].forEach(id=>{$(id).disabled=true;});
+  }
   const body=$('previewBody');clear(body);
   const arch=!!p.archive;
   let count=fmt(p.count)+' messages';

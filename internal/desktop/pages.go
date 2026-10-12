@@ -194,10 +194,11 @@ var pageTmpl = template.Must(template.New("pages").Funcs(pageFuncs).Parse(`
       <div id="attachMode" class="card-sub">
         <label class="checkline"><input type="radio" name="optAttachAs" id="optAttachZip" value="zip" checked disabled> One zip per message</label>
         <label class="checkline"><input type="radio" name="optAttachAs" id="optAttachLoose" value="loose" disabled> Loose files</label>
-        <p class="card-sub" id="attachModeNote">One zip per message keeps a message's attachments in one compressed file beside it (its name with .attachments.zip added), however many it has. Loose files saves each attachment as a file of its own in a folder beside the message: a message with many attachments then makes a large folder, and a long path can be too long for Windows.</p>
+        <p class="card-sub" id="attachModeNote">Choose how once Extract attachments is ticked: until then both choices are greyed. One zip per message keeps a message's attachments in one compressed file beside it (its name with .attachments.zip added), however many it has. Loose files saves each attachment as a file of its own in a folder beside the message: a message with many attachments then makes a large folder, and a long path can be too long for Windows.</p>
       </div>
       <p class="card-sub" id="panelNote">Always exports the original EML and a manifest with hashes. Each run creates a separate export directory.</p>
       <div id="retryDest" hidden><p class="card-sub" id="retryDestNote">This is the rest of an earlier export. To send it somewhere else (a full or missing drive, say), choose the folder above, then preview it again.</p>
+      <p class="card-sub" id="retryChoicesNote">A retry keeps the choices of the export it continues (Preserve folder structure, Readable HTML and Extract attachments), so the boxes above show them and cannot be changed here.</p>
       <button class="btn small" id="rePreviewBtn" type="button">Preview again for this destination</button></div>
     </div>
 
