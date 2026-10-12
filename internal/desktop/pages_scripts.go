@@ -154,6 +154,7 @@ function loadSource(){
     const s=d.settings||{};
     if(s.dest&&!$('destPath').value)$('destPath').value=s.dest;
     $('optPreserve').checked=s.preserve!==false;
+    $('optHTML').checked=s.html!==false;
     if(st.running)$('browseNote').textContent='Browse is off while an export runs — type the folder\'s path instead.';
     const h=location.hash||'';
     if(h.indexOf('#preview=')===0){resumePreview(h.substring(9));}
@@ -339,7 +340,7 @@ $('selAll').addEventListener('change',()=>{
 function selection(){
   const messages=Object.keys(st.picks).map(h=>({h:h}));
   return {source:srcReq(),folders:st.entries.map(e=>({id:e.id,subtree:e.subtree,exclude:e.exclude})),messages:messages,
-    dest:$('destPath').value,options:{preserve:$('optPreserve').checked}};
+    dest:$('destPath').value,options:{preserve:$('optPreserve').checked,html:$('optHTML').checked}};
 }
 function updateCount(){
   clearTimeout(st.countTimer);
@@ -428,6 +429,7 @@ function renderPreview(p){
   if(arch)$('panelNote').textContent=panelText(' ('+fmt(p.archive.withOriginal)+' of '+fmt(p.count)+' selected)',true);
   body.appendChild(line('Messages',count));
   body.appendChild(line('Size','about '+p.estimate+(p.unknownSize?' ('+fmt(p.unknownSize)+' of unknown size)':'')));
+  if(p.html)body.appendChild(line('Readable HTML',arch?('a page (.html) beside each of the '+fmt(p.archive.withOriginal)+' original messages; the size above includes them'):'a page (.html) beside each original; the size above includes them'));
   body.appendChild(line('Into',p.exportDir));
   body.appendChild(line('Free space',p.free+' free; about '+p.reserveText+' is kept back to finish'));
   body.appendChild(line('Who can read it',p.posture.line));

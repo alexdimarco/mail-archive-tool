@@ -187,6 +187,8 @@ var pageTmpl = template.Must(template.New("pages").Funcs(pageFuncs).Parse(`
       <label for="newName">New subfolder name</label>
       <div class="listbar"><input type="text" id="newName" spellcheck="false" style="max-width:320px"><button class="btn small secondary" id="mkdir" type="button">Create folder</button></div>
       <label class="checkline"><input type="checkbox" id="optPreserve" checked> Preserve folder structure</label>
+      <label class="checkline"><input type="checkbox" id="optHTML" checked> Readable HTML</label>
+      <p class="card-sub" id="htmlNote">Also saves a web page (.html) beside each message's original, so it can be read in a browser. The original stays the exact copy; if a page can't be made, the original is still exported and the export says so.</p>
       <p class="card-sub" id="panelNote">Always exports the original EML and a manifest with hashes. Each run creates a separate export directory.</p>
       <div id="retryDest" hidden><p class="card-sub" id="retryDestNote">This is the rest of an earlier export. To send it somewhere else (a full or missing drive, say), choose the folder above, then preview it again.</p>
       <button class="btn small" id="rePreviewBtn" type="button">Preview again for this destination</button></div>

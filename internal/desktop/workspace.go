@@ -784,7 +784,8 @@ func (d *dashboard) previewAction(w http.ResponseWriter, r *http.Request) {
 	if sel.Options.Preserve != nil {
 		opts.PreserveFolders = *sel.Options.Preserve
 	}
-	// Readable HTML and extracted attachments are slices E5 and E6: hidden, and off.
+	opts.ReadableHTML = sel.Options.HTML
+	// Extracted attachments are slice E6: hidden, and off.
 	if archive {
 		job := d.ws.startJob(func(ctx context.Context, job *wsPreviewJob) (*app.CopyPlan, map[string]any, *refusal) {
 			return d.resolveAndPlanArchive(ctx, job, sess, &sel, opts)
@@ -1142,7 +1143,7 @@ func planResult(p *app.CopyPlan, id string, folders any, reported, found int, wa
 		"exportName": p.ExportName, "exportDir": filepath.Join(p.Dest, p.ExportName), "dest": p.Dest,
 		"samplePaths": p.SamplePaths, "longestPath": p.LongestPath, "over259": p.Over259,
 		"posture": posture, "fsType": p.FSType, "warnings": warnings, "info": infos,
-		"preserve": p.Options.PreserveFolders, "retryOf": p.Chain.RetryOf, "part": len(p.Chain.Parts) + 1,
+		"preserve": p.Options.PreserveFolders, "html": p.Options.ReadableHTML,"retryOf": p.Chain.RetryOf, "part": len(p.Chain.Parts) + 1,
 	}
 	if c := p.Archive; c != nil { // the archive source's own counts (design §4.7 step 4)
 		out["archive"] = map[string]any{"withOriginal": c.WithOriginal, "withoutOriginal": c.WithoutOriginal, "gone": c.Gone,

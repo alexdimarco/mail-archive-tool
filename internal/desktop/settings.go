@@ -34,8 +34,8 @@ type Settings struct {
 	BackupFor string `json:"backupFor,omitempty"`
 
 	// The extraction workspace's remembered destination and options (design §4.17).
-	// nil means the default: Preserve folder structure ON, Readable HTML OFF until slice
-	// E5 lands (XC28), extracted attachments OFF. They are saved when an export starts.
+	// nil means the default: Preserve folder structure ON, Readable HTML ON (slice E5,
+	// XC28), extracted attachments OFF. They are saved when an export starts.
 	ExportDest        string `json:"exportDest,omitempty"`
 	ExportPreserve    *bool  `json:"exportPreserve,omitempty"`
 	ExportHTML        *bool  `json:"exportHTML,omitempty"`
@@ -45,9 +45,8 @@ type Settings struct {
 // Preserve is the remembered "Preserve folder structure": ON when never set.
 func (s Settings) Preserve() bool { return s.ExportPreserve == nil || *s.ExportPreserve }
 
-// ReadableHTML is the remembered "Readable HTML": OFF when never set, and hidden, until
-// slice E5 lands (XC28).
-func (s Settings) ReadableHTML() bool { return s.ExportHTML != nil && *s.ExportHTML }
+// ReadableHTML is the remembered "Readable HTML": ON when never set (slice E5, XC28).
+func (s Settings) ReadableHTML() bool { return s.ExportHTML == nil || *s.ExportHTML }
 
 // ExtractAttachments is the remembered "Extract attachments": OFF when never set.
 func (s Settings) ExtractAttachments() bool {
