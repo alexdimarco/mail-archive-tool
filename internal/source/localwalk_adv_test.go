@@ -379,6 +379,38 @@ func TestALinkWithAHiddenNameIsRecorded(t *testing.T) {
 }
 
 // covers: MA-322, R25, R10, S47
+// S2B-AI10: the opt-in's visited set is a set, not a list. Every directory the walk
+// entered was compared with os.SameFile against every earlier one, so a store of many
+// shard directories made an opted-in run slower in proportion to the square of their
+// number (40,000 empty directories: 1.9 s without the opt-in, 3.5 s with it, tens of
+// seconds at 200,000). Where the file system's own identity is readable (a device and an
+// inode) the set is a map and no pair is ever compared; a loop is still stopped.
+func TestTheVisitedSetIsNotALinearScan(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the identity is the file index there, which only a handle reads: the list stays")
+	}
+	store := filepath.Join(t.TempDir(), "Inbox")
+	writeLocal(t, filepath.Join(store, "cur", "top:2,S"), localMail("top"))
+	for i := 0; i < 300; i++ {
+		writeLocal(t, filepath.Join(store, "cur", "s"+strings.Repeat("x", i%7), string(rune('a'+i%26))+strings.Repeat("y", i/26), "m:2,S"), localMail("m"))
+	}
+	if err := os.Symlink(".", filepath.Join(store, "cur", "loop")); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	old := sameFile
+	sameFile = func(a, b fs.FileInfo) bool { calls++; return os.SameFile(a, b) }
+	t.Cleanup(func() { sameFile = old })
+	got := walkLocal(t, store, OpenOptions{FollowLinks: true})
+	if calls != 0 {
+		t.Errorf("%d pair comparisons for %d messages; want none (a map keyed by device and inode)", calls, len(got.msgs))
+	}
+	if got.count("folder-cycle") != 1 {
+		t.Errorf("faults %+v; want the loop link read as a cycle, once", got.faults)
+	}
+}
+
+// covers: MA-322, R25, R10, S47
 // S2B-AO4 (and S2B-AC1): a pipe named like an Outlook data file is never opened. The PST
 // open was a plain os.Open, which waits for a writer on a pipe, so a FIFO named *.pst or
 // *.ost in an input folder held the archive lock until someone opened it (FC2 says a pipe

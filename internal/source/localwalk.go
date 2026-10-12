@@ -27,9 +27,11 @@ type localWalk struct {
 	opts    WalkOptions
 	sink    faultSink
 	follow  bool          // the input's directory-link opt-in
-	visited []fs.FileInfo // under the opt-in: every directory the walk has entered
-	depth   int           // how many directories deep the walk is (every descent goes through into)
-	pending []pendingLink // under the opt-in: the directory links found, to be followed after the plain directories
+	visited []fs.FileInfo // under the opt-in: every directory the walk has entered, where its identity is not readable from a FileInfo (Windows)
+	// visitedIDs is the same set keyed by (device, inode) where the file system gives them.
+	visitedIDs map[[2]uint64]bool
+	depth      int           // how many directories deep the walk is (every descent goes through into)
+	pending    []pendingLink // under the opt-in: the directory links found, to be followed after the plain directories
 }
 
 func newLocalWalk(handler MessageHandler, opts WalkOptions, follow bool) *localWalk {
@@ -55,14 +57,29 @@ func (w *localWalk) noteFolder(folder []string) {
 // when not. It is the (dev, inode) set of the opt-in: without the opt-in no link is
 // followed, so no directory can be reached twice and nothing is remembered.
 func (w *localWalk) seen(fi fs.FileInfo) bool {
+	if id, ok := dirIdentity(fi); ok {
+		// A map: the walk enters every directory of a store, and a list compared pair by
+		// pair made it quadratic in their number (S2B-AI10).
+		if w.visitedIDs[id] {
+			return true
+		}
+		if w.visitedIDs == nil {
+			w.visitedIDs = map[[2]uint64]bool{}
+		}
+		w.visitedIDs[id] = true
+		return false
+	}
 	for _, v := range w.visited {
-		if os.SameFile(v, fi) {
+		if sameFile(v, fi) {
 			return true
 		}
 	}
 	w.visited = append(w.visited, fi)
 	return false
 }
+
+// sameFile is os.SameFile; a var so a test can count the comparisons.
+var sameFile = os.SameFile
 
 // withFolder is folder with one more sanitized segment, in a slice of its own.
 func withFolder(folder []string, name string) []string {
