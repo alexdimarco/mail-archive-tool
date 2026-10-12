@@ -368,7 +368,7 @@ func (w *walker) container(p partInfo, raw []byte, depth int) {
 			return
 		}
 		if err != nil {
-			w.framing(err, base+read, cur)
+			w.framing(err, base+read, cur, boundary, read)
 			return
 		}
 		read++
@@ -501,8 +501,14 @@ func scanParts(body []byte, boundary string) partScan {
 // part read, the body could not be split at all (its boundary is not in it); a missing
 // closing boundary at the end of the data is the common benign case; anything else is a
 // multipart that ended early.
-func (w *walker) framing(err error, read int, raw []byte) {
-	if read == 0 {
+//
+// done is the number of parts the container gave, raw what the reader was reading, and
+// read how many of them it gave from raw. The bytes from the delimiter it failed on to the
+// end are there, so they are kept as received, as the depth and part limits keep theirs: a
+// delimiter line too long for the reader must not decide which attachments the archive
+// holds (MS2-AC4).
+func (w *walker) framing(err error, done int, raw []byte, boundary string, read int) {
+	if done == 0 {
 		if len(bytes.TrimSpace(raw)) > 0 {
 			w.unsplit(raw, "the parts could not be separated at the boundary")
 		}
@@ -511,7 +517,12 @@ func (w *walker) framing(err error, read int, raw []byte) {
 	if strings.HasSuffix(err.Error(), "EOF") {
 		return
 	}
-	w.gap(state.GapKindCorruptPart, fmt.Sprintf("the multipart ended early, after part %d: the rest of it could not be read", read))
+	why := fmt.Sprintf("the multipart ended early, after part %d: the rest of it could not be read", done)
+	if rest, ok := restFromPart(raw, boundary, read); ok {
+		w.blob("remaining-parts", rest, state.GapKindCorruptPart, why+", so it is kept as received")
+		return
+	}
+	w.gap(state.GapKindCorruptPart, why)
 }
 
 // unsplit keeps the body of a multipart whose parts cannot be separated as text.
