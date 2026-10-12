@@ -1406,6 +1406,27 @@ original assertion except that sanctioned change), are confirmed by the owner. O
 "Which ones?" list for messages exported without a readable copy (they are in the README's first ten and
 the manifest; the card shows only a count), a usability residual for a friction pass.
 
+### 13.27 MF-S1's adversarial pass (merged 2026-10-11)
+
+`docs/review-mime-fidelity-s1-adversarial.md`: 11 found, 4 confirmed, 1 refuted, 3 duplicates, 3 non-goals.
+Fixed with tombstone tests: the re-read stamp rule (a record is stamped current on re-read only when no
+standing note is unexamined, MA-347); two unpinned guards (the still-incomplete case and the carried-forward
+original at another stem); the `examinedBy` boundary (a mutant `>=` survived, now pinned); the nested-multipart
+cost is encoded. **Two findings need owner rulings under MC28, because any fix changes the frozen v1 replay
+that pins identity (J5, OR4); each is a skip encoder and not a regression of S1:**
+(1) **MS1-AO1 (medium):** the identity, fingerprint, content digest and file stem of a message whose `Date`
+header ends in an alphabetic zone abbreviation (`EST`, `PST`, `CET`) depend on the host's time zone: the same
+bytes give fingerprint `376f4140d094bcbd` under UTC and `2c977d1a7e6cc44b` under America/New_York, so one
+message can become two records when the same archive is captured from two computers or after a time-zone
+change. **This is in v1, i.e. in released behaviour.** [Recommended: rule a fixed table for common
+abbreviations as a deliberate, versioned identity migration, with the existing records kept as aliases;
+defer to a design slice; until then the single-user, single-computer case is not exposed.] (2) **MS1-AO2
+(medium):** the frozen replay is quadratic on an unclosed Message-ID comment (a 200 KB header took over a
+second) and on deeply nested multipart (a 6,000-deep, 401 KB message over a second), with no deadline; S1
+runs it beside the content parser, so the cost doubles. [Recommended: a deadline or depth cap that turns a
+slow parse into the stub identity, ruled as a deliberate drift.] Both encoders cite R10 as well as R27 and
+MA-331. Merged with the S1 build's `TestCopyExportScalesToSixtyThousandMessages` heap bound untouched (§13.24).
+
 ### 13.7 Escalations from LC-C1's adversarial pass (merged 2026-10-10)
 
 None blocks anything: each has a skip encoder or a safe interim in force.
