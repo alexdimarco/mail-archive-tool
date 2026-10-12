@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io/fs"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -20,7 +21,10 @@ import (
 // maildir:Inbox/<unique> with no record, and the run says the DISK's remedy. Once the
 // disk reads again the next run archives the file and the gap closes as recovered.
 func TestMaildirFileEIOIsTheSameGapWithTheDiskRemedy(t *testing.T) {
-	store := filepath.Join(tmpDir(t), "mail")
+	if runtime.GOOS == "windows" {
+		t.Skip("maildir names carry a colon")
+	}
+	store :=filepath.Join(tmpDir(t), "mail")
 	maildirStore(t, store, "Inbox/cur/a:2,S", "Inbox/cur/b:2,S", "Inbox/cur/c:2,S", "Work/cur/d:2,S")
 	restore := source.InjectMaildirReadFaults(func(rel string) error {
 		if rel == "Inbox/cur/b:2,S" {

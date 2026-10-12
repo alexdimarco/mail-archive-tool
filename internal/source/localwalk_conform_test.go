@@ -189,7 +189,10 @@ func TestAnEscapingLinkToAPipeIsRefusedUntouched(t *testing.T) {
 // with no message, and its remedy is the disk's, not the permissions'. The neighbours and
 // the next folder are read.
 func TestMaildirFileEIOIsContained(t *testing.T) {
-	store := filepath.Join(t.TempDir(), "store")
+	if runtime.GOOS == "windows" {
+		t.Skip("maildir names carry a colon")
+	}
+	store :=filepath.Join(t.TempDir(), "store")
 	for _, f := range []string{"Inbox/cur/a:2,S", "Inbox/cur/b:2,S", "Inbox/cur/c:2,S", "Work/cur/d:2,S"} {
 		writeLocal(t, filepath.Join(store, filepath.FromSlash(f)), localMail(strings.SplitN(filepath.Base(f), ":", 2)[0]))
 	}
