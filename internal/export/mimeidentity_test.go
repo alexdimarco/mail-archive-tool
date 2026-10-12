@@ -573,10 +573,33 @@ func TestMixedVersionsKeepIdentityAndStems(t *testing.T) {
 				t.Errorf("this build exported %d messages the archive already holds", e.Stats.Exported)
 			}
 			sameArchive("this build after the old binary", snapshot(manifest), want)
-			for k, r := range manifest.All() {
-				if r.ParseScheme != state.ParseSchemeCurrent {
-					t.Errorf("%q: re-read by this build, ParseScheme = %d, want %d", k, r.ParseScheme, state.ParseSchemeCurrent)
+			// MS1-AI1: a record whose re-read message carries a note newer than the
+			// record's scheme (0 after the drop) is not stamped, so the repair slice
+			// still sees it as unexamined; every other record is stamped current.
+			unexamined := 0
+			for _, data := range corpus {
+				for _, n := range fidelity(t, data).ParseNotes {
+					if n.Since > 0 {
+						unexamined++
+						break
+					}
 				}
+			}
+			if unexamined == 0 {
+				t.Error("no corpus message carries a fidelity note: the walker is not routed in, so this proves nothing")
+			}
+			unstamped := 0
+			for k, r := range manifest.All() {
+				switch r.ParseScheme {
+				case state.ParseSchemeCurrent:
+				case 0:
+					unstamped++
+				default:
+					t.Errorf("%q: re-read by this build, ParseScheme = %d, want %d or 0 (unexamined)", k, r.ParseScheme, state.ParseSchemeCurrent)
+				}
+			}
+			if unstamped != unexamined {
+				t.Errorf("%d records left unstamped, want %d (one per message with a note newer than its scheme)", unstamped, unexamined)
 			}
 			for k, r := range manifest.All() {
 				if r.Fixity == nil || r.Fixity.HTML == nil || *r.Fixity.HTML != fixity[k] {

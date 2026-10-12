@@ -20,7 +20,7 @@
     },
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "parse_scheme": 1
+    "parse_scheme": 2
    },
    "Evolution cacheacct\u0000INBOX\u0000mid:evo-new@ex": {
     "path": "Evolution cacheacct/INBOX/2025-03-03_0900_Cache-new_1d406398.html",
@@ -41,7 +41,7 @@
     },
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "parse_scheme": 1
+    "parse_scheme": 2
    },
    "Evolution cacheacct\u0000INBOX\u0000mid:evo-shard@ex": {
     "path": "Evolution cacheacct/INBOX/2025-03-03_0900_Cache-sharded_3b41a55d.html",
@@ -62,7 +62,7 @@
     },
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "parse_scheme": 1
+    "parse_scheme": 2
    }
   },
   "files": {
@@ -95,7 +95,7 @@
     },
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "parse_scheme": 1
+    "parse_scheme": 2
    },
    "On This Computer\u0000Work\u0000mid:evo-work@ex": {
     "path": "On This Computer/Work/2025-03-03_0900_Work-item_c9be9d2f.html",
@@ -116,7 +116,7 @@
     },
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "parse_scheme": 1
+    "parse_scheme": 2
    },
    "On This Computer\u0000Work/Projects\u0000mid:evo-proj@ex": {
     "path": "On This Computer/Work/Projects/2025-03-03_0900_Project-item_cd798175.html",
@@ -141,7 +141,7 @@
     },
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "parse_scheme": 1
+    "parse_scheme": 2
    }
   },
   "files": {
@@ -177,7 +177,7 @@
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
     "present": true,
-    "parse_scheme": 1
+    "parse_scheme": 2
    },
    "u1\u0000mid:u1in1@ex": {
     "path": "u1/Inbox/2025-03-01_0900_subj-U1IN1_a5e223d7.html",
@@ -204,7 +204,7 @@
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
     "present": true,
-    "parse_scheme": 1
+    "parse_scheme": 2
    },
    "u1\u0000mid:u1in2@x": {
     "path": "u1/Inbox/2025-03-01_0900_subj-U1IN2_9e164ffe.html",
@@ -227,7 +227,7 @@
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
     "present": true,
-    "parse_scheme": 1
+    "parse_scheme": 2
    },
    "u1\u0000mid:u1in3@x": {
     "path": "u1/Inbox/2025-03-01_0900_subj-U1IN3_d87e047d.html",
@@ -250,7 +250,7 @@
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
     "present": true,
-    "parse_scheme": 1
+    "parse_scheme": 2
    },
    "u1\u0000mid:u1se1@x": {
     "path": "u1/Sent/2025-03-01_0900_subj-U1SE1_1fdfe387.html",
@@ -273,7 +273,7 @@
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
     "present": true,
-    "parse_scheme": 1
+    "parse_scheme": 2
    },
    "u1\u0000mid:u1se2@x": {
     "path": "u1/Sent/2025-03-01_0900_subj-U1SE2_1c92ec91.html",
@@ -296,7 +296,7 @@
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
     "present": true,
-    "parse_scheme": 1
+    "parse_scheme": 2
    },
    "u2\u0000mid:u2ar1@x": {
     "path": "u2/Archive/2025-03-01_0900_subj-U2AR1_d552a4f2.html",
@@ -319,7 +319,7 @@
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
     "present": true,
-    "parse_scheme": 1
+    "parse_scheme": 2
    },
    "u2\u0000mid:u2in1@x": {
     "path": "u2/Inbox/2025-03-01_0900_subj-U2IN1_b00e0bc2.html",
@@ -342,7 +342,7 @@
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
     "present": true,
-    "parse_scheme": 1
+    "parse_scheme": 2
    },
    "u2\u0000mid:u2in2@x": {
     "path": "u2/Inbox/2025-03-01_0900_subj-U2IN2_bcb98ac0.html",
@@ -365,7 +365,7 @@
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
     "present": true,
-    "parse_scheme": 1
+    "parse_scheme": 2
    },
    "u2\u0000mid:u2in3@x": {
     "path": "u2/Inbox/2025-03-01_0900_subj-U2IN3_d59d2894.html",
@@ -388,7 +388,7 @@
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
     "present": true,
-    "parse_scheme": 1
+    "parse_scheme": 2
    },
    "u2\u0000mid:u2se1@x": {
     "path": "u2/Sent/2025-03-01_0900_subj-U2SE1_2d42acb1.html",
@@ -411,7 +411,7 @@
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
     "present": true,
-    "parse_scheme": 1
+    "parse_scheme": 2
    },
    "u2\u0000mid:u2se2@x": {
     "path": "u2/Sent/2025-03-01_0900_subj-U2SE2_2469c97d.html",
@@ -434,7 +434,7 @@
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
     "present": true,
-    "parse_scheme": 1
+    "parse_scheme": 2
    }
   },
   "files": {
@@ -486,7 +486,7 @@
     },
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "parse_scheme": 1
+    "parse_scheme": 2
    },
    "maildirstore\u0000\u0000mid:md2@ex": {
     "path": "maildirstore/2025-03-03_0900_Maildir-two_2ca914ac.html",
@@ -511,7 +511,7 @@
     },
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "parse_scheme": 1
+    "parse_scheme": 2
    },
    "maildirstore\u0000\u0000mid:md3@ex": {
     "path": "maildirstore/2025-03-03_0900_Maildir-three_0c0f3db3.html",
@@ -532,7 +532,7 @@
     },
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "parse_scheme": 1
+    "parse_scheme": 2
    }
   },
   "files": {
@@ -566,7 +566,7 @@
     },
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "parse_scheme": 1
+    "parse_scheme": 2
    },
    "tbstore\u0000Archive/Old\u0000mid:first@ex": {
     "path": "tbstore/Archive/Old/2025-03-03_0900_First_d9f9ea36.html",
@@ -587,7 +587,7 @@
     },
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "parse_scheme": 1
+    "parse_scheme": 2
    },
    "tbstore\u0000Inbox\u0000mid:first@ex": {
     "path": "tbstore/Inbox/2025-03-03_0900_First_ddc2d662.html",
@@ -608,7 +608,7 @@
     },
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "parse_scheme": 1
+    "parse_scheme": 2
    },
    "tbstore\u0000Inbox\u0000mid:reuse@ex": {
     "path": "tbstore/Inbox/2025-03-03_0900_Reuse-A_10600c0b.html",
@@ -629,7 +629,7 @@
     },
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "parse_scheme": 1
+    "parse_scheme": 2
    },
    "tbstore\u0000Inbox\u0000mid:reuse@ex\u00001224f50c751715df": {
     "path": "tbstore/Inbox/2025-03-03_0900_Reuse-B_26d87d34.html",
@@ -650,7 +650,7 @@
     },
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "parse_scheme": 1
+    "parse_scheme": 2
    },
    "tbstore\u0000Inbox\u0000mid:second@ex": {
     "path": "tbstore/Inbox/2025-03-03_0900_Second_c6f26588.html",
@@ -671,7 +671,7 @@
     },
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "parse_scheme": 1
+    "parse_scheme": 2
    },
    "tbstore\u0000Inbox\u0000mid:third@ex": {
     "path": "tbstore/Inbox/2025-03-03_0900_Third_543c8e41.html",
@@ -696,7 +696,7 @@
     },
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "parse_scheme": 1
+    "parse_scheme": 2
    },
    "tbstore\u0000Inbox\u0000sha:b4a0ea8ad11a810397de545e366c11e7c1d9a7af5bf4306ef13e38e78232d3ac": {
     "path": "tbstore/Inbox/2025-03-03_0900_Nameless_f40d2894.html",
@@ -717,7 +717,7 @@
     },
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "parse_scheme": 1
+    "parse_scheme": 2
    }
   },
   "files": {
@@ -757,7 +757,7 @@
     },
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "parse_scheme": 1
+    "parse_scheme": 2
    },
    "support\u0000Drafts\u0000mid:\u003c391A5179-A81A-4CC5-8557-B1F8ECD874D3@hackingteam.com\u003e": {
     "path": "support/Drafts/2015-02-02_0849_untitled_e3aaac1c.html",
@@ -774,7 +774,7 @@
     },
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "parse_scheme": 1
+    "parse_scheme": 2
    },
    "support\u0000Drafts\u0000mid:\u003c4C518F01-53EB-4B06-AC8F-75C80471EA14@hackingteam.com\u003e": {
     "path": "support/Drafts/2015-02-02_0850_untitled_2f195892.html",
@@ -791,7 +791,7 @@
     },
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "parse_scheme": 1
+    "parse_scheme": 2
    },
    "support\u0000Drafts\u0000mid:\u003c7B26FDE6-8BD5-46B0-9663-57B2DEE595A6@hackingteam.com\u003e": {
     "path": "support/Drafts/2015-02-02_1336_Release-9.5.2_838965b9.html",
@@ -808,7 +808,7 @@
     },
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "parse_scheme": 1
+    "parse_scheme": 2
    },
    "support\u0000Drafts\u0000mid:\u003c82588C59-C403-448D-93B5-2E6699A9AB6B@hackingteam.com\u003e": {
     "path": "support/Drafts/2015-03-06_1619_Desktop-exploits-suspension-notice_4452db0b.html",
@@ -825,7 +825,7 @@
     },
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "parse_scheme": 1
+    "parse_scheme": 2
    },
    "support\u0000Drafts\u0000mid:\u003cB04DCC96-1028-4DD5-92D8-29FB418BECDA@hackingteam.com\u003e": {
     "path": "support/Drafts/2015-02-02_1335_TEST-Release-9.5.2_d7496071.html",
@@ -842,7 +842,7 @@
     },
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "parse_scheme": 1
+    "parse_scheme": 2
    },
    "support\u0000Sent Messages\u0000mid:\u003c02D706F0-5492-42E6-B643-1198E4441D4F@hackingteam.com\u003e": {
     "path": "support/Sent Messages/2014-01-05_1751_Protect-your-identity_31dc5d49.html",
@@ -859,7 +859,7 @@
     },
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "parse_scheme": 1
+    "parse_scheme": 2
    },
    "support\u0000Sent Messages\u0000mid:\u003c197C9196-31D6-44B0-96ED-E47BD44DCBA2@hackingteam.com\u003e": {
     "path": "support/Sent Messages/2015-02-02_1338_Release-9.5.2_3fa203df.html",
@@ -876,7 +876,7 @@
     },
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "parse_scheme": 1
+    "parse_scheme": 2
    },
    "support\u0000Sent Messages\u0000mid:\u003c466A0AB5-FCFA-4201-8BDA-9F53E7100DD9@hackingteam.it\u003e": {
     "path": "support/Sent Messages/2014-03-14_0932_The-truth-about-latest-allegations_b249e044.html",
@@ -893,7 +893,7 @@
     },
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "parse_scheme": 1
+    "parse_scheme": 2
    },
    "support\u0000Sent Messages\u0000mid:\u003c4FC6F4CB-F6DB-4FD4-958F-5F32179903D6@hackingteam.com\u003e": {
     "path": "support/Sent Messages/2013-12-17_1156_Release-9.1.4_e5d50327.html",
@@ -910,7 +910,7 @@
     },
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "parse_scheme": 1
+    "parse_scheme": 2
    },
    "support\u0000Sent Messages\u0000mid:\u003c6E30F847-B792-4413-8525-21B816AC42E6@hackingteam.com\u003e": {
     "path": "support/Sent Messages/2015-02-02_1335_TEST-Release-9.5.2_7945b4fc.html",
@@ -927,7 +927,7 @@
     },
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "parse_scheme": 1
+    "parse_scheme": 2
    },
    "support\u0000Sent Messages\u0000mid:\u003c80611E75-16FD-4356-9C0E-603502650CA7@hackingteam.com\u003e": {
     "path": "support/Sent Messages/2013-12-09_1417_Release-9.1.3_48c34823.html",
@@ -944,7 +944,7 @@
     },
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "parse_scheme": 1
+    "parse_scheme": 2
    },
    "support\u0000Sent Messages\u0000mid:\u003c89F4257D-BB20-4B92-A900-8B6D703DC6E3@hackingteam.it\u003e": {
     "path": "support/Sent Messages/2014-04-02_0905_Release-9.2.1_3861de73.html",
@@ -961,7 +961,7 @@
     },
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "parse_scheme": 1
+    "parse_scheme": 2
    },
    "support\u0000Sent Messages\u0000mid:\u003c9300164F-BD56-4421-87E8-61035D726E39@hackingteam.com\u003e": {
     "path": "support/Sent Messages/2015-03-06_1621_Desktop-exploits-suspension-notice_71c4cec9.html",
@@ -978,7 +978,7 @@
     },
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "parse_scheme": 1
+    "parse_scheme": 2
    },
    "support\u0000Sent Messages\u0000mid:\u003cA2E2D8FE-61EC-49CA-855D-925EFDA4A28F@hackingteam.com\u003e": {
     "path": "support/Sent Messages/2013-12-09_1406_test_81aa76a7.html",
@@ -995,7 +995,7 @@
     },
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "parse_scheme": 1
+    "parse_scheme": 2
    },
    "support\u0000Sent Messages\u0000mid:\u003cA5C4B426-9872-490D-805C-03C5899CEF9F@hackingteam.it\u003e": {
     "path": "support/Sent Messages/2014-03-12_1914_IMPORTANT-Support-portal-downtime-for-maintenance_a5223131.html",
@@ -1016,7 +1016,7 @@
     },
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "parse_scheme": 1
+    "parse_scheme": 2
    },
    "support\u0000Sent Messages\u0000mid:\u003cBEE94EB9-6EB8-45F9-A2C3-76CCDE73B2DE@hackingteam.com\u003e": {
     "path": "support/Sent Messages/2013-12-24_1223_Release-9.1.4-HOTFIX_420942e8.html",
@@ -1033,7 +1033,7 @@
     },
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "parse_scheme": 1
+    "parse_scheme": 2
    }
   },
   "files": {

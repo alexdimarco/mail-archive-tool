@@ -6,9 +6,42 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"mail-archive-tool/internal/model"
+	"mail-archive-tool/internal/state"
 )
+
+// hasParseGap says m carries a message-level parse gap of the kind.
+func hasParseGap(m *model.Message, kind string) bool {
+	for _, g := range m.ParseGaps {
+		if g.Kind == kind {
+			return true
+		}
+	}
+	return false
+}
+
+// covers: MA-330, R3, R27
+// A message the v1 parse panics on keeps the stub identity with the walker on (the stub
+// terms carry no identity date) while the shown message keeps its own display dates.
+func TestAStubIdentityMessageKeepsItsDisplayDatesAndTheStubIdentity(t *testing.T) {
+	items := loadMimeCorpus(t)
+	injectPanics(t, true, false)
+	dated := 0
+	for _, it := range items {
+		m := safeParseMessage(it.data)
+		if got, want := m.Identity(), model.LegacyStubIdentity(); got != want {
+			t.Errorf("%s: Identity() = %q, want the stub's %q", it.name, got, want)
+		}
+		if !m.Date().IsZero() {
+			dated++
+		}
+	}
+	if dated == 0 {
+		t.Error("no message kept a display date, so this proves nothing")
+	}
+}
 
 // injectPanics makes the frozen v1 parse, the content parse, or both panic until the
 // test ends or the returned function is called. No input is known that panics v1 (see
@@ -96,9 +129,11 @@ func TestFidelityParserKeepsTheIdentityGoldenOnTheCorpus(t *testing.T) {
 		if id != wantID {
 			t.Errorf("the identity golden does not hold through safeParseMessage at %s", firstDiff(wantID, id))
 		}
-		// S1 changes nothing a user can see: the content is v1's, byte for byte.
-		if corpusPortion(t, content) != corpusPortion(t, wantContent) {
-			t.Errorf("the content moved at %s", firstDiff(corpusPortion(t, wantContent), corpusPortion(t, content)))
+		// S2 is on (owner-approved 2026-10-12, rulings §13.29): the content is the walker's,
+		// so it is no longer v1's byte for byte. It must have moved on the corpus (the walker
+		// is routed in), and the identity above is what holds it still.
+		if corpusPortion(t, content) == corpusPortion(t, wantContent) {
+			t.Error("the content equals v1's on the whole corpus: the fidelity walker is not routed in")
 		}
 	})
 
@@ -139,8 +174,13 @@ func TestFidelityParserKeepsTheIdentityGoldenOnTheCorpus(t *testing.T) {
 			if got, want := m.Identity(), model.LegacyStubIdentity(); got != want {
 				t.Errorf("%s: Identity() = %q, want the constant stub's %q", it.name, got, want)
 			}
-			if m.Subject != stubSubject || m.Raw != nil || m.TransportHeaders != "" || m.V1Inventory != nil || len(m.Attachments) != 0 {
-				t.Errorf("%s: the message is not today's stub: %+v", it.name, m)
+			// With S2 on, the walker's content is shown under the stub's identity, with a
+			// visible terminal identity-stub gap; the message is no longer the bare stub.
+			if m.Subject == stubSubject || m.Raw == nil {
+				t.Errorf("%s: the walker's content is not shown under the stub identity (subject %q)", it.name, m.Subject)
+			}
+			if !hasParseGap(m, state.GapKindIdentityStub) {
+				t.Errorf("%s: no identity-stub gap on a message filed under the stub identity", it.name)
 			}
 		}
 	})
@@ -151,12 +191,17 @@ func TestFidelityParserKeepsTheIdentityGoldenOnTheCorpus(t *testing.T) {
 		if id != wantID {
 			t.Errorf("a panicking content parser moved the identity at %s", firstDiff(wantID, id))
 		}
-		if corpusPortion(t, content) != corpusPortion(t, wantContent) {
-			t.Errorf("a panicking content parser did not fall back to v1's content, at %s", firstDiff(corpusPortion(t, wantContent), corpusPortion(t, content)))
-		}
+		_ = content // v1's content with its display text made valid UTF-8 (P7): no longer v1's bytes
 		for _, it := range items {
-			if m := safeParseMessage(it.data); !m.FellBack {
+			m := safeParseMessage(it.data)
+			if !m.FellBack {
 				t.Errorf("%s: the fallback is not marked", it.name)
+			}
+			if !hasParseGap(m, state.GapKindFidelityFallback) {
+				t.Errorf("%s: the fallback carries no fidelity-fallback gap", it.name)
+			}
+			if !utf8.ValidString(m.PlainBody) || !utf8.ValidString(m.HTMLBody) {
+				t.Errorf("%s: the fallback's body text is not valid UTF-8", it.name)
 			}
 		}
 	})

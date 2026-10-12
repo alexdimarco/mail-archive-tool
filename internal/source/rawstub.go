@@ -84,12 +84,15 @@ func rawStub(m *model.Message, data []byte) *model.Message {
 // of v1Parse the package's own tests make). It is for tests; nothing in production
 // calls it.
 func InjectParsePanics(match func(data []byte) bool) (restore func()) {
-	old := v1Parse
+	old, oldWalk := v1Parse, walkFault
 	v1Parse = func(data []byte) *model.Message {
 		if match(data) {
 			panic("injected panic in the v1 parse")
 		}
 		return old(data)
 	}
-	return func() { v1Parse = old }
+	// The fidelity walk panics on the same messages, so the injected message is a raw stub
+	// with the walker on as it was with v1 alone.
+	walkFault = func(data []byte) bool { return match(data) || (oldWalk != nil && oldWalk(data)) }
+	return func() { v1Parse, walkFault = old, oldWalk }
 }
