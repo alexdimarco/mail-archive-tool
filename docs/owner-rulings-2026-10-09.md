@@ -1543,6 +1543,30 @@ passed alone), vet3 clean.
   v1 text can be replaced by mojibake without the fallback. Recommended: apply the rule to bodies no note
   touched (the design's step 3a wording per body).
 
+### 13.33 MF-S2 friction review merged (2026-10-12), delegated-judgement
+
+Branch `wip/mf-s2-fric` (report `docs/review-mime-fidelity-s2-friction.md`). 17 cells walked: 6 yes, 10
+partial, 1 no at the walk; 9 yes, 7 partial, 1 no after the fixes. Ten findings built with prove-fail (F3, F5,
+F6, F7, F8, F9 for kept parts, F11, F12, F14 for parse-gap rows, F15): rows say what the page shows, where the
+original is and what cures a cut mailbox file; a message whose text sits past a structure bound gets no
+fillable missing-body row; pages say what a kept or cut part is; README.txt and README.md say kept and cut
+parts are in the archive (this closes the inheritor-note item); `status -json` last_run carries parse-gap
+counts and a per-kind split; the desktop capture line shows them; copy-export notes lose the walker's jargon.
+Clean clone: full suite green, vet3 clean.
+
+**Verdict stays HIGH_FRICTION_NOT_SHIPPABLE on two owner decisions** (plus one wording edit), for the final batch:
+- **F1 = ESC-MS2-4**: a plain-text message with a base64 label its text does not honour is shown as mojibake,
+  search misses its words, and `-mode full` replaces an older archive's readable page. Recommended: yes,
+  apply the contains-v1 body rule to bodies no note touched (more messages go to v1's reading with the gap).
+- **F4 = MC20**: a cut or boundary-less message in a mailbox file keeps the posture WARN for good (the remedy
+  now says what cures a cut message and that one malformed as sent stays listed). Recommended: yes, a
+  terminal-but-visible state that does not hold the posture at WARN once the owner has seen it.
+- **F2 = ESC-MS2-2**: count only real undecodable parts as "cannot decode" (proposed counts in the report:
+  4 / 2 / 1), count a fallback once, and reword the zip sentence. It edits three existing MA-348 assertions, so
+  it waits for the owner. Recommended: yes.
+Backlog: F10 (status note that records read by an older version exist and `-mode full` re-reads them), F13
+(the scanpst remedy is shown for mbox sources too).
+
 ### 13.7 Escalations from LC-C1's adversarial pass (merged 2026-10-10)
 
 None blocks anything: each has a skip encoder or a safe interim in force.
