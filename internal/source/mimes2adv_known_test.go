@@ -13,12 +13,12 @@ import (
 // ESC-MS2-1 (MS2-AO3, the frozen half). The route's peak heap on a part whose header is
 // millions of tiny fields stays a small multiple of the message. The walker's own read is
 // capped before it happens (TestAPartHeaderOverTheCapIsNotReadFirst); the frozen v1 replay,
-// which runs first on every message, parses the header whole, so the route peaks at about 150
-// times the message. Bounding the replay (refusing it above the cap, and giving the message
+// which runs first on every message, parses the header whole, so the route peaks at about 120
+// times the message (measured x120.4 on a 4 MiB message). Bounding the replay (refusing it above the cap, and giving the message
 // its stub identity) moves the frozen identity path for such a message: a drift decision under
 // MC28 that needs an owner ruling, with MS1-AO2 (the same replay's quadratic cost).
 func TestTheFrozenReplayDoesNotReadAnOversizedPartHeaderWhole(t *testing.T) {
-	t.Skip("ESC-MS2-1: the frozen v1 replay parses a part header of millions of tiny fields whole (about 150 times the message); bounding it moves the frozen identity path for that message and needs an owner ruling under MC28 (invariants R10, R27, MA-331; MS1-AO2 is the same replay)")
+	t.Skip("ESC-MS2-1: the frozen v1 replay parses a part header of millions of tiny fields whole (about 120 times the message); bounding it moves the frozen identity path for that message and needs an owner ruling under MC28 (invariants R10, R27, MA-331; MS1-AO2 is the same replay)")
 	useFidelity(t)
 	data := hostile(`multipart/mixed; boundary="bd"`,
 		"--bd\r\nContent-Type: text/plain\r\n\r\nfirst\r\n--bd\r\n"+strings.Repeat("X:\r\n", 1<<20)+"Content-Type: text/plain\r\n\r\nthe padded part\r\n--bd--\r\n")
