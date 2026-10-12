@@ -1610,6 +1610,30 @@ untrusted-input path that only its fixer has looked at; it is owed a third look 
   could not be run here; the README remedy is done. Recommended: build it when there is a Windows/macOS lab.
 Known: the two heap-measurement tests under `-race` (one red at the base too); not touched.
 
+### 13.36 EW-E6 zip-per-message mode (2026-10-12), OWNER RULING
+
+**Owner ruled (2026-10-12), after the question "what does the 1,000-file cap mean in practice":** store attachments
+in a compressed container; of the three options offered, "#2 makes the most sense": **"Attachments: one zip per
+message (the default) or loose files", chosen in the Export options.** This answers ESC-E6-AO5 (a message of 1,001
+attachments is one zip), ESC-E6-AO11 (the namer shortens the stem for `.attachments.zip`, so the plan's
+longest-path figure is honest) and in part ESC-E6-AO10. Built on `wip/ew-e6-zip`, merged: `CopyOptions.AttachmentsAsZip`
+(zero value = the loose engine unchanged) writes one `<stem>.attachments.zip` (new role `derived-attachments-zip`):
+sanitised, flattened, FoldKey-unique entries, deterministic bytes (entry time is the message date, or 1980-01-01),
+notes for empty, torn, panicking and kept parts, a free-space check, Cancel/Abandon seen (a cancel discards the
+whole zip with one note), the readable page links the zip, an archive record without an original copies its
+existing zip byte-exact and makes no second one, plan sizing, README, rows MA-533 to MA-535. Clean clone: full
+suite green, vet3 clean. **Correction to what I told the owner:** a zip this tool writes carries no Mark of the Web
+either (the marker is put on a download, not on a file a program creates), so ESC-E6-AO10 is NOT closed by the
+zip; the README says the files carry no download marker, and the question stays open (recommended: build the
+marker when there is a Windows/macOS lab). Loose mode keeps ESC-E6-AO5/AO11's skip encoders.
+**Owed: the adversarial addendum on the zip writer (hostile names inside and on unzip, many entries, cancel, crash
+residue, one part buffered whole in memory, Zip64 for a part over 4 GiB, untested) and the friction review.**
+**Held for the owner: revealing the option.** `scratchpad/ew-e6-zip-gate-flip.patch` supersedes the earlier patch
+(checkbox off by default, radios "One zip per message" (selected) and "Loose files", flips
+`TestCopyExportPlanIsADryRun` and `TestExportSettingsRoundTrip`, turns two held encoders into real tests; full suite
+green with it, the only failure the known timing test). Known flake: `TestCopyExportScalesToSixtyThousandMessages`
+fails intermittently on the base too (33 to 43 MiB against a 40 MiB bound; N5), not loosened.
+
 ### 13.7 Escalations from LC-C1's adversarial pass (merged 2026-10-10)
 
 None blocks anything: each has a skip encoder or a safe interim in force.
