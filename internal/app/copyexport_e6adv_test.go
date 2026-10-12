@@ -578,7 +578,7 @@ func TestExtractionStopsWhenTheRecordCouldNotListTheFiles(t *testing.T) {
 // folder changes the layout the readable copy links, so the owner decides (escalation ESC-E6-AO5). Until
 // then the README says the folder is not bounded (TestReadmeSaysWhatTheExtractedFilesLackAndHowLongTheirPathsRun).
 func TestAnAttachmentsFolderHoldsNoMoreThanTheDirectoryBound(t *testing.T) {
-	t.Skip("XC12, MA-424: an .attachments folder is not bounded at 1,000 files, and the bound or the split is the owner's to rule (ESC-E6-AO5, review-extraction-workspace-e6-adversarial.md)")
+	t.Skip("XC12, MA-424: an .attachments folder is not bounded at 1,000 files, and the bound or the split is the owner's to rule (ESC-E6-AO5, review-extraction-workspace-e6-adversarial.md). Closed for the default, zip mode, by MA-533 (one .attachments.zip a message holds any number of attachments; TestZipModeEntriesAreNamedLikeLooseFilesAndTheZipIsReproducible); still applies to LOOSE mode, so this encoder stays")
 	var parts []e6Part
 	for i := 0; i < copyFilesPerDir+1; i++ {
 		parts = append(parts, e6Part{name: fmt.Sprintf("f%04d.bin", i), body: []byte(fmt.Sprintf("part %d", i))})
@@ -605,7 +605,7 @@ func TestAnAttachmentsFolderHoldsNoMoreThanTheDirectoryBound(t *testing.T) {
 // into the warning, and which of the two the owner wants shown is the owner's to rule (ESC-E6-AO11).
 // Until then README says the paths can be longer than the preview shows.
 func TestThePlansLongestPathCountsAnExtractedAttachmentsPath(t *testing.T) {
-	t.Skip("MA-441: the plan's longest path ignores <stem>.attachments/<name>, and the allowance it would carry is the owner's to rule (ESC-E6-AO11, review-extraction-workspace-e6-adversarial.md)")
+	t.Skip("MA-441: the plan's longest path ignores <stem>.attachments/<name>, and the allowance it would carry is the owner's to rule (ESC-E6-AO11, review-extraction-workspace-e6-adversarial.md). Closed for the default, zip mode, by MA-535 (the plan counts <stem>.attachments.zip and shortens the stem for it; TestThePlanSizesAndPlacesAZipModeExport); still applies to LOOSE mode, so this encoder stays")
 	e := newCEEnv(t)
 	msgs := ceMsgs(3)
 	size := func(attach bool) *CopyPlan {
