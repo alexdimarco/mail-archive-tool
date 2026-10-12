@@ -195,12 +195,13 @@ func (r *mboxReader) walkFile(path string, folderPath []string, handler MessageH
 // uses it, since it fetches each message's raw MIME rather than reading a store.
 func ParseRFC822(data []byte) *model.Message { return safeParseMessage(data) }
 
-// parseContent is the parser whose result is the message a user sees and the index
-// holds. Slice S1 of design-mime-fidelity still has it be v1's parseMessage, so no
-// behaviour a user can see changes; slice S2 replaces it with the fidelity walker.
-// What it produces never reaches an identity: that is the v1 replay's, below (P1). It
-// is a variable only so a test can stand in a parser that changes every field.
-var parseContent = parseMessage
+// parseContent, when set, stands in for the content parser: the parser whose result is
+// the message a user sees and the index holds. It is nil in production, where
+// contentParser picks the parser of the mode (v1's parseMessage, or the fidelity walker
+// once fidelityContent is on). What it produces never reaches an identity: that is the
+// v1 replay's, below (P1). It is a variable only so a test can stand in a parser that
+// changes every field, or panics.
+var parseContent func([]byte) *model.Message
 
 // safeParseMessage parses one raw message. A panic in the MIME/charset stack on a
 // single crafted message becomes a visible stub instead of aborting the whole archive
@@ -213,6 +214,9 @@ var parseContent = parseMessage
 // v1 itself panics the message is the stub, with the stub's terms (stubIdentityTerms),
 // as it was before the replay existed.
 func safeParseMessage(data []byte) *model.Message {
+	if fidelityContent {
+		return safeParseFidelity(data)
+	}
 	v1, panicked := replayV1(data)
 	if panicked || v1 == nil {
 		m, terms := unreadableStub(), stubIdentityTerms(data)
@@ -242,7 +246,7 @@ func contentOf(data []byte) (m *model.Message) {
 			m = nil
 		}
 	}()
-	return parseContent(data)
+	return contentParser()(data)
 }
 
 // headerBlock returns a raw message's internet header section — the bytes
