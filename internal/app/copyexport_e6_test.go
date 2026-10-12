@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/source"
+	"mail-archive-tool/internal/util"
 )
 
 // The extraction workspace's slice E6 (Extract attachments, design
@@ -207,12 +209,87 @@ func TestExtractedAttachmentsAreLooseDecodedFilesUnderTheStem(t *testing.T) {
 	}
 }
 
+// e6Reserved reports whether name's base, as Windows reads it, is a device name. It is the test's
+// own list, written apart from the product's.
+func e6Reserved(name string) bool {
+	head := name
+	if i := strings.IndexByte(name, '.'); i >= 0 {
+		head = name[:i]
+	}
+	head = strings.ToUpper(strings.TrimRight(head, " "))
+	switch head {
+	case "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$", "CLOCK$", "COM0", "LPT0", "COM¹", "COM²", "COM³", "LPT¹", "LPT²", "LPT³":
+		return true
+	}
+	for _, p := range []string{"COM", "LPT"} {
+		if len(head) == 4 && strings.HasPrefix(head, p) && head[3] >= '1' && head[3] <= '9' {
+			return true
+		}
+	}
+	return false
+}
+
 // covers: MA-424, R4, R29
-// Hostile attachment names (.., separators, device names, bidi controls, 300 bytes of CJK) become
-// distinct, creatable names inside <stem>.attachments/, and a link planted where the directory is
-// is not written through.
+// Hostile attachment names (.., separators, device names, bidi controls, 300 bytes of CJK, a
+// name that differs only in case, none at all) become distinct, creatable, single-segment names
+// inside <stem>.attachments/, each file holding its own part's bytes, and nothing is written
+// outside the export root.
 func TestExtractedAttachmentNamesAreSanitizedAndContained(t *testing.T) {
-	t.Skip("MA-424: attachment extraction is not built; lands in EW-E6")
+	names := []string{
+		"../../escape.txt", `..\\..\\win.txt`, "/etc/passwd", "..", "CON", "COM1.txt", "NUL.txt", "CON .txt", "COM¹.txt",
+		"invoice‮gpj.exe", strings.Repeat("漢", 100) + ".pdf", "trailing. ", "report.pdf", "REPORT.PDF", "",
+	}
+	var parts []e6Part
+	for i, n := range names {
+		parts = append(parts, e6Part{name: n, ctype: "application/octet-stream", body: []byte(fmt.Sprintf("body of part %d", i))})
+	}
+	msgs := ceMsgs(1)
+	mime := e6Mime(msgs[0].SourceID, "hostile names", parts...)
+	e := newCEEnv(t)
+	res, p := e6Run(t, e, msgs, false, func(string) []byte { return mime })
+	if res.Counts.Exported != 1 || res.Outcome != CopyOutcomeComplete {
+		t.Fatalf("%s, %+v", res.Label, res.Counts)
+	}
+	line := assure.Reached(t, e5Files(t, e, res)[1], "the record line")
+	files := e6Derived(line)
+	if len(files) != len(names) {
+		t.Fatalf("%d files extracted, want %d: %+v", len(files), len(names), line.Notes)
+	}
+	attachDir := strings.TrimSuffix(line.Files[0].Path, ".eml") + ".attachments"
+	seen := map[string]string{}
+	for i, f := range files {
+		base := path.Base(f.Path)
+		if path.Dir(f.Path) != attachDir {
+			t.Errorf("file %d (%q) is at %q, not directly in %s", i, names[i], f.Path, attachDir)
+		}
+		key := util.FoldKey(base)
+		if other, dup := seen[key]; dup {
+			t.Errorf("file %d (%q) and %q fold to one name %q", i, names[i], other, base)
+		}
+		seen[key] = base
+		switch {
+		case base == "" || base == "." || base == "..", strings.ContainsAny(base, "/\\\x00"), len(base) > 255,
+			strings.HasSuffix(base, " "), strings.HasSuffix(base, "."), e6Reserved(base):
+			t.Errorf("file %d (%q) became %q, which a filesystem cannot take or reads as something else", i, names[i], base)
+		}
+		for _, r := range base {
+			if r < 0x20 || (r >= 0x202a && r <= 0x202e) || (r >= 0x2066 && r <= 0x2069) {
+				t.Errorf("file %d (%q) became %q, which holds the control or bidi character %U", i, names[i], base, r)
+			}
+		}
+		want := fmt.Sprintf("body of part %d", i)
+		if got := string(e6Read(t, res.Root, f.Path)); got != want {
+			t.Errorf("file %d (%q) holds %q, want %q", i, names[i], got, want)
+		}
+	}
+	// nothing outside the export root: the destination holds only it
+	entries, err := os.ReadDir(p.Dest)
+	if err != nil || len(entries) != 1 || entries[0].Name() != res.RootName {
+		t.Errorf("the destination holds %v (%v), want only %s", entries, err, res.RootName)
+	}
+	if bad, missing, extra := sumsCheck(t, res.Root); len(bad)+len(missing)+len(extra) != 0 {
+		t.Errorf("sums: changed %v, missing %v, unlisted %v", bad, missing, extra)
+	}
 }
 
 // covers: MA-424, R1
