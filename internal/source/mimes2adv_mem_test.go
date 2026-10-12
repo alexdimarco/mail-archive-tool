@@ -129,6 +129,27 @@ func TestAPartHeaderOverTheCapIsNotReadFirst(t *testing.T) {
 		t.Errorf("peak heap %d KiB is %.1f times the %d KiB message; want at most 2 times", peak>>10, float64(peak)/float64(len(data)), len(data)>>10)
 	}
 
+	// The same message with LF line ends (the reader switches to LF at the first delimiter):
+	// the scan finds the delimiters as the reader does.
+	lf := []byte(strings.ReplaceAll(string(data), "\r\n", "\n"))
+	got := parseFidelity(lf)
+	if a, ok := attNamed(got, "part-2.undecoded"); !ok || !bytes.Contains(bytesOf(t, a), []byte("the padded part")) {
+		t.Errorf("LF: attachments %v, want part-2.undecoded holding the padded part", attNames(got))
+	}
+	if s, ok := attNamed(got, "sibling.pdf"); !ok || string(bytesOf(t, s)) != "the sibling" {
+		t.Errorf("LF: the sibling of the oversized part: attachments %v", attNames(got))
+	}
+	// A first delimiter ending in a bare LF makes the reader take only LF line ends as
+	// delimiters, so it sees no second part: the padded header is part of the first part's body,
+	// is never parsed as a header, and the scan agrees (no part is wrongly cut out).
+	mixed := bytes.Replace(data, []byte("--bd\r\nContent-Type: text/plain\r\n\r\nfirst part"), []byte("--bd\nContent-Type: text/plain\n\nfirst part"), 1)
+	if mp := peakHeapOf(func() { got = parseFidelity(mixed) }); mp > 8*uint64(len(mixed)) {
+		t.Errorf("a mixed-ending message peaks at %d KiB, %.1f times its size", mp>>10, float64(mp)/float64(len(mixed)))
+	}
+	if _, ok := attNamed(got, "part-2.undecoded"); ok {
+		t.Errorf("the scan cut a part the reader does not see: attachments %v", attNames(got))
+	}
+
 	// The twin: a header just under the cap is read, as ever.
 	under := "--bd\r\nX-Pad: " + strings.Repeat("a", 1<<19) + "\r\nContent-Type: text/plain\r\n\r\nthe padded part\r\n--bd--\r\n"
 	if got := parseFidelity(hostile(`multipart/mixed; boundary="bd"`, under)); !strings.Contains(got.PlainBody, "the padded part") || len(got.Attachments) != 0 {

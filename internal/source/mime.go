@@ -454,7 +454,7 @@ func (s partScan) end(body []byte, j int) int {
 func scanParts(body []byte, boundary string) partScan {
 	dash := []byte("--" + boundary)
 	var sc partScan
-	idx := -1
+	idx, nl := -1, "\r\n"
 	var hdrBytes, bodyStart int
 	open := false // a part's header is being measured or its body skipped
 	finish := func(next int) {
@@ -480,13 +480,24 @@ func scanParts(body []byte, boundary string) partScan {
 		}
 		line := body[i:lineEnd]
 		if bytes.HasPrefix(line, dash) {
-			rest := bytes.TrimRight(line[len(dash):], " \t\r\n")
-			if len(rest) == 0 || string(rest) == "--" {
+			// As the multipart reader reads a line: a delimiter is the dash boundary, white
+			// space, and the line ending (CRLF, or LF when the first delimiter ends in a bare
+			// LF); the closing line has "--" after the dash boundary.
+			rest := bytes.TrimLeft(line[len(dash):], " \t")
+			if idx < 0 && string(rest) == "\n" {
+				nl = "\n"
+			}
+			closing := false
+			if r, ok := bytes.CutPrefix(line[len(dash):], []byte("--")); ok {
+				r = bytes.TrimLeft(r, " \t")
+				closing = len(r) == 0 || string(r) == nl
+			}
+			if delim := string(rest) == nl; delim || closing {
 				finish(i)
 				if len(sc.starts) <= maxParts+1 {
 					sc.starts = append(sc.starts, i)
 				}
-				open = len(rest) == 0
+				open = delim
 				if open {
 					idx++
 					hdrBytes, bodyStart = 0, -1
