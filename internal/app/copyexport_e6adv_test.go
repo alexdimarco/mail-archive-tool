@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"mail-archive-tool/internal/assure"
+	"mail-archive-tool/internal/model"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/util"
 )
@@ -419,6 +420,58 @@ func TestCheckThisExportNamesAnExtractedAttachmentAsOne(t *testing.T) {
 	chk = damage(t, e, res, true, true)
 	if chk.OK || chk.DerivedOnly || chk.Remedy != checkRemedy {
 		t.Errorf("a changed original with changed attachments: %+v, want the usual remedy", chk)
+	}
+}
+
+// covers: MA-424, R4, R29
+// E6-AO8, E6-AO9, through the engine: names a sender chose with C1 controls, line separators, bidi marks
+// and a leading dash are written under the stripped and prefixed names, and SHA256SUMS.txt, the
+// manifest and the directory hold those names only, so a line splitter reads the sums as the
+// number of files it lists, with no line broken or forged, and no name is an option to `tar *`.
+func TestHostileAttachmentNamesNeverReachTheSumsOrTheManifestRaw(t *testing.T) {
+	c := func(r rune) string { return string(r) }
+	hostile := []string{"x" + c(0x9b) + "2Jy.txt", "line" + c(0x85) + "two.txt", "sep" + c(0x2028) + "forged-line.txt", "invoice" + c(0x200f) + "fdp.exe", "--checkpoint-action=exec=sh shell.sh", "-rf"}
+	real := originalParser
+	t.Cleanup(func() { originalParser = real })
+	originalParser = func(b []byte) *model.Message {
+		m := real(b)
+		for i := range m.Attachments {
+			m.Attachments[i].Filename = hostile[i]
+		}
+		return m
+	}
+	var parts []e6Part
+	for i := range hostile {
+		parts = append(parts, e6Part{name: fmt.Sprintf("p%d.bin", i), body: []byte(fmt.Sprintf("part %d", i))})
+	}
+	msgs := ceMsgs(1)
+	e := newCEEnv(t)
+	res, _ := e6Run(t, e, msgs, false, func(id string) []byte { return e6Mime(id, "hostile names", parts...) })
+	if res.Counts.Exported != 1 || res.Outcome != CopyOutcomeComplete {
+		t.Fatalf("%s, %+v", res.Label, res.Counts)
+	}
+	forbidden := c(0x9b) + c(0x85) + c(0x2028) + c(0x2029) + c(0x200f) + c(0x200e) + c(0x61c) + c(0x200b) + c(0xfeff) + "\x7f"
+	sums := readText(t, res.Root, copySumsName)
+	manifest := readText(t, res.Root, copyManifestName)
+	if strings.ContainsAny(sums, forbidden) || strings.ContainsAny(manifest, forbidden) {
+		t.Errorf("a control or an invisible mark reached the sums or the manifest:\n%q", sums)
+	}
+	if got := len(strings.Split(strings.TrimSuffix(sums, "\n"), "\n")); got != 2+len(hostile)+1 { // the .eml, the README and manifest, the attachments
+		t.Errorf("the sums have %d lines, want %d", got, 2+len(hostile)+1)
+	}
+	names := map[string]bool{}
+	for p := range treeFiles(t, res.Root) {
+		if i := strings.Index(p, ".attachments/"); i >= 0 {
+			names[p[i+len(".attachments/"):]] = true
+		}
+	}
+	for _, want := range []string{"x2Jy.txt", "linetwo.txt", "sepforged-line.txt", "invoicefdp.exe", "_--checkpoint-action=exec=sh shell.sh", "_-rf"} {
+		if !names[want] {
+			t.Errorf("no attachment named %q among %v", want, names)
+		}
+	}
+	if bad, missing, extra := sumsCheck(t, res.Root); len(bad)+len(missing)+len(extra) != 0 {
+		t.Errorf("sums: changed %v, missing %v, unlisted %v", bad, missing, extra)
 	}
 }
 

@@ -44,9 +44,9 @@ func ExportSegment(name string) string {
 // cutting the base, never the extension (an extension longer than 32 bytes is cut
 // too).
 func ExportFilename(name string, index int) string {
-	clean := StripBidi(name)
+	clean := stripNameControls(StripBidi(name))
 	out := SanitizeFilename(clean, index)
-	if isReservedStrict(out) {
+	if isReservedStrict(out) || strings.HasPrefix(out, "-") { // a dash-led name is an option to `tar *` (E6-AO9)
 		out = "_" + out
 	}
 	if len(out) <= ExportSegmentMaxBytes {
@@ -59,6 +59,25 @@ func ExportFilename(name string, index int) string {
 	suffix := "~" + ShortHash(name)
 	base = strings.TrimRight(truncateBytes(base, ExportSegmentMaxBytes-len(ext)-len(suffix)), " .")
 	return base + suffix + ext
+}
+
+// stripNameControls removes from an attachment name what a terminal or a line splitter acts on
+// and what is not seen: DEL and the C1 controls (U+009B is CSI to a terminal in UTF-8 mode, U+0085
+// is NEL), the line and paragraph separators U+2028 and U+2029 (str.splitlines breaks a line of
+// SHA256SUMS.txt at them), and the invisible marks (the bidi marks LRM, RLM and ALM, which StripBidi
+// leaves because they are not embeddings; the zero-width space; the byte order mark). The
+// zero-width non-joiner and joiner are text in Persian, Indic and emoji names and are kept. C0
+// controls are SanitizeFilename's (E6-AO8).
+func stripNameControls(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r == 0x7f, r >= 0x80 && r < 0xa0,
+			r == 0x2028, r == 0x2029,
+			r == 0x200b, r == 0x200e, r == 0x200f, r == 0x061c, r == 0xfeff:
+			return -1
+		}
+		return r
+	}, s)
 }
 
 // JoinSuffix appends suffix to name and keeps the result within max bytes by

@@ -75,6 +75,60 @@ func TestExportNamesHostile(t *testing.T) {
 	}
 }
 
+// covers: MA-417, R4, R29
+// E6-AO8, E6-AO9: an attachment name is chosen by whoever sent the mail, and it is written to disk, to
+// SHA256SUMS.txt and to the manifest, and echoed by `sha256sum -c`, `ls` and `find` into a terminal.
+// The export-only pass strips, as well as the bidi embeddings and isolates, what a terminal or a
+// line splitter acts on: DEL and the C1 controls (U+009B is CSI to a terminal in UTF-8 mode, U+0085
+// is NEL), the line and paragraph separators (str.splitlines breaks SHA256SUMS.txt at them), and the
+// invisible marks (the bidi marks LRM, RLM and ALM that make a name read backwards in a list, the
+// zero-width space, the byte order mark); and a name that starts with "-" is prefixed, so a glob in
+// the attachments folder (`tar czf x.tgz *`) never takes an attachment for an option. Ordinary names,
+// and the zero-width non-joiner and joiner that Persian, Indic and emoji text need, pass unchanged.
+func TestExportFilenameStripsControlsAndNeverStartsWithADash(t *testing.T) {
+	c := func(r rune) string { return string(r) }
+	for _, ok := range []string{"report.pdf", "über-Änderung.docx", "日本語.pdf", "a-b.txt", "x.tar.gz", "mid-dash.txt", "$(id).txt",
+		"persian" + c(0x200c) + "name.txt", "emoji" + c(0x200d) + "joined.png"} {
+		if got := ExportFilename(ok, 1); got != ok {
+			t.Errorf("ExportFilename(%q) = %q, an ordinary name must pass unchanged", ok, got)
+		}
+	}
+	cases := []struct{ in, want string }{
+		{"x" + c(0x9b) + "2Jy.txt", "x2Jy.txt"},
+		{"line" + c(0x85) + "two.txt", "linetwo.txt"},
+		{"sep" + c(0x2028) + "two.txt", "septwo.txt"},
+		{"para" + c(0x2029) + "two.txt", "paratwo.txt"},
+		{"del\x7fete.txt", "delete.txt"},
+		{"invoice" + c(0x200f) + "fdp.exe", "invoicefdp.exe"},
+		{"invoice" + c(0x200e) + "fdp.exe", "invoicefdp.exe"},
+		{"invoice" + c(0x61c) + "fdp.exe", "invoicefdp.exe"},
+		{c(0xfeff) + "bom.txt", "bom.txt"},
+		{"zero" + c(0x200b) + "width.txt", "zerowidth.txt"},
+		{"--checkpoint=1", "_--checkpoint=1"},
+		{"--checkpoint-action=exec=sh shell.sh", "_--checkpoint-action=exec=sh shell.sh"},
+		{"-rf", "_-rf"},
+		{c(0x200f) + "-rf", "_-rf"},
+		{"-", "_-"},
+		{strings.Repeat("-", 300) + ".pdf", ""},
+		{c(0x9b) + strings.Repeat("x", 300) + ".pdf", ""},
+	}
+	for _, tc := range cases {
+		got := ExportFilename(tc.in, 1)
+		exportNameOK(t, tc.in, got)
+		for _, r := range got {
+			if r == 0x7f || (r >= 0x80 && r < 0xa0) || r == 0x2028 || r == 0x2029 || r == 0x200b || r == 0x200e || r == 0x200f || r == 0x061c || r == 0xfeff {
+				t.Errorf("%q → %q keeps U+%04X", tc.in, got, r)
+			}
+		}
+		if strings.HasPrefix(got, "-") {
+			t.Errorf("%q → %q starts with a dash", tc.in, got)
+		}
+		if tc.want != "" && got != tc.want {
+			t.Errorf("ExportFilename(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
 // covers: MA-417, MA-441, R4, R29
 // F91: a name over 255 bytes is cut at a rune boundary, never inside a UTF-8
 // sequence, keeps a hash of the original so two long names never merge, and the
