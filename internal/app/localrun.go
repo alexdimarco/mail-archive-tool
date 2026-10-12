@@ -176,16 +176,17 @@ type sourceRun struct {
 	token string
 	path  string
 
-	reportsFaults bool            // the reader reports what it could not read (source.FaultWalker)
-	local         bool            // the reader is an mbox, maildir or Evolution reader (its faults are the local readers' reasons; the PST reader's are the PST's)
-	wrote         bool            // this store has written a message this run: its directory exists
-	unwritable    map[string]bool // output directories that could not be created, this run
-	streak        int             // consecutive failed write attempts (the local breaker)
-	folderFaults  []string        // folders a folder-scope fault was recorded in this run, once each, in the ledger's spelling
-	folderSeen    map[string]bool // the same, for the "once each"
-	folderFlood   bool            // more folders faulted than folderFaultCap: the run cannot say which it read, so it closes nothing
-	seenFolders   map[string]bool // the folders this walk reached (whole paths and last segments), for what -outlook says it left out
-	freshOutlook  bool            // the file is a PST this run's Outlook export wrote: a fresh image of the mailbox (NF1)
+	reportsFaults bool              // the reader reports what it could not read (source.FaultWalker)
+	local         bool              // the reader is an mbox, maildir or Evolution reader (its faults are the local readers' reasons; the PST reader's are the PST's)
+	wrote         bool              // this store has written a message this run: its directory exists
+	unwritable    map[string]bool   // output directories that could not be created, this run
+	streak        int               // consecutive failed write attempts (the local breaker)
+	folderFaults  []string          // folders a folder-scope fault was recorded in this run, once each, in the ledger's spelling
+	folderSeen    map[string]bool   // the same, for the "once each"
+	folderFlood   bool              // more folders faulted than folderFaultCap: the run cannot say which it read, so it closes nothing
+	seenFolders   map[string]bool   // the folders this walk reached (whole paths and last segments), for what -outlook says it left out
+	freshOutlook  bool              // the file is a PST this run's Outlook export wrote: a fresh image of the mailbox (NF1)
+	lateClose     map[string]string // earlier runs' read gaps (key to reason) a capture answered, closed when the walk ends unless a file of the place faulted again
 }
 
 // noteFolder records a folder the reader reached. Each path is kept as its joined
@@ -301,7 +302,8 @@ func (s *sourceRun) recovered(m *model.Message, folderKey string) {
 // the file vanished (the walk then found it under its new name); a file the run could
 // not read (file-unreadable) is not answered by the capture of another file of the same
 // unique part, which is another message (S2B-AO2). A gap from an earlier run is closed
-// by any capture of the place, as before.
+// by a capture of the place, but only when the walk is over and no file of the place
+// faulted again (settleReadGaps); closeReadGap itself closes only the first kind.
 func (s *sourceRun) closeReadGap(m *model.Message) bool {
 	if m.ReadLocator == "" || m.ReadLocator == m.Locator {
 		return false
@@ -312,10 +314,36 @@ func (s *sourceRun) closeReadGap(m *model.Message) bool {
 	if !ok {
 		return false
 	}
-	if g.LastRun.Equal(s.lr.runAt) && g.Reason != "vanished-during-read" {
-		return false
+	if g.LastRun.Equal(s.lr.runAt) {
+		if g.Reason != "vanished-during-read" {
+			return false
+		}
+		return mf.CloseGapReason(key, g.Reason)
 	}
-	return mf.CloseGapReason(key, g.Reason)
+	// An earlier run's gap: the capture of a file at the place answers it only if no file
+	// of the place faults again before the walk ends (a healthy sibling walked first, then
+	// the unreadable file, would otherwise close it and re-open it as a new gap while the
+	// run said "Recovered", S2B-AO2's residual). The close waits for the walk's end.
+	if s.lateClose == nil {
+		s.lateClose = map[string]string{}
+	}
+	s.lateClose[key] = g.Reason
+	return false
+}
+
+// settleReadGaps closes, at the end of a walk, the earlier runs' gaps whose place a
+// capture answered and where no file faulted again this run, and counts each as recovered.
+func (s *sourceRun) settleReadGaps() {
+	mf := s.lr.exp.Manifest
+	for key, reason := range s.lateClose {
+		if g, ok := mf.GapFor(key); !ok || g.LastRun.Equal(s.lr.runAt) {
+			continue
+		}
+		if mf.CloseGapReason(key, reason) {
+			s.lr.recovered++
+		}
+	}
+	s.lateClose = nil
 }
 
 // closeVanishedThisRun closes the vanished-during-read gap this run recorded for a
@@ -496,6 +524,9 @@ func (s *sourceRun) finish(walkErr error) error {
 		}
 		walkErr = fe.Err
 	}
+	// After the faults above are recorded (a file that faulted again keeps its gap) and
+	// before the sweep below (which would count the same gap as no longer found).
+	s.settleReadGaps()
 	if walkErr != nil {
 		return walkErr
 	}

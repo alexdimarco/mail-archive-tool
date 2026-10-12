@@ -81,6 +81,59 @@ func TestAHealthySiblingDoesNotCloseAnUnreadableFilesGap(t *testing.T) {
 	}
 }
 
+// covers: MA-321, R1, R10, S46
+// S2B-AO2's residual (found by the fresh-eyes check of the adversarial pass's fixes): the
+// gap of an unreadable file recorded by an EARLIER run is closed by a capture of the same
+// place, and counted as recovered, when a different healthy file of the same unique part
+// (new/abc beside the unreadable cur/abc:2,S) is captured first in the walk; the unreadable
+// file then faults again and re-opens the gap. The ledger ended right but the run said
+// "Recovered: 1 item(s) ... were captured" for a message that is still missing, and the
+// re-opened gap lost its first-run date and count. A gap of an earlier run is now answered
+// only once the whole walk is over, and only when no file of the place faulted again.
+func TestAnEarlierRunsGapIsNotCountedRecoveredByAHealthySibling(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs a unix permission check that root and Windows do not make")
+	}
+	store := filepath.Join(tmpDir(t), "mail")
+	bad := filepath.Join(store, "Inbox", "cur", "abc:2,S")
+	p14Write(t, bad, strings.ReplaceAll(p14Plain("LOSTSUBJECT-ONE", "lost-one"), "\r\n", "\n"))
+	if err := os.Chmod(bad, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(bad, 0o644) })
+	out := tmpDir(t)
+	if _, err := runLocal(t, out, store); !errors.Is(err, ErrPartial) {
+		t.Fatalf("run 1 err = %v; want ErrPartial for the unreadable file", err)
+	}
+	first := ledgerOf(t, out)
+	if len(first) != 1 || first[0].Reason != "file-unreadable" {
+		t.Fatalf("run 1 ledger %s; want the unreadable file's gap", gapReasons(first))
+	}
+
+	// Run 2: another message of the same unique part appears in new/ (walked before cur/).
+	p14Write(t, filepath.Join(store, "Inbox", "new", "abc"), strings.ReplaceAll(p14Plain("HEALTHYSUBJECT-TWO", "healthy-two"), "\r\n", "\n"))
+	ageLedger(t, out, 48*time.Hour)
+	first = ledgerOf(t, out)
+	res, err := runLocal(t, out, store)
+	if !errors.Is(err, ErrPartial) || !res.Partial {
+		t.Errorf("run 2 err = %v, partial %v; want ErrPartial: the unreadable file is still not captured", err, res.Partial)
+	}
+	if res.Gaps.Recovered != 0 {
+		t.Errorf("run 2 recovered %d; want 0: the healthy file is another message and the unreadable one is still missing", res.Gaps.Recovered)
+	}
+	gaps := ledgerOf(t, out)
+	if len(gaps) != 1 || gaps[0].Reason != "file-unreadable" {
+		t.Fatalf("run 2 ledger %s; want the unreadable file's gap kept", gapReasons(gaps))
+	}
+	if !gaps[0].FirstRun.Equal(first[0].FirstRun) || gaps[0].Runs != 2 {
+		t.Errorf("run 2 gap first seen %v after %d run(s); want the first run's date (%v) and 2 runs: the gap was closed and re-opened", gaps[0].FirstRun, gaps[0].Runs, first[0].FirstRun)
+	}
+	text := archiveText(t, out)
+	if bytes.Contains(text, []byte("LOSTSUBJECT-ONE")) || !bytes.Contains(text, []byte("HEALTHYSUBJECT-TWO")) {
+		t.Errorf("the archive holds the unreadable message or lacks the healthy one")
+	}
+}
+
 // covers: MA-322, R25, R10, S47
 // S2B-AO4 (and S2B-AC1) end to end: a pipe named like an Outlook data file, in an input
 // folder or given as the input with -copy-first (whose snapshot opened it first), must
