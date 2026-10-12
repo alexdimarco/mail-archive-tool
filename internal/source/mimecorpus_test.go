@@ -41,7 +41,7 @@ type mimeCorpusItem struct {
 
 // loadMimeCorpus reads corpus.tsv and every item it lists, and checks the index
 // and the directory agree.
-func loadMimeCorpus(t *testing.T) []mimeCorpusItem {
+func loadMimeCorpus(t testing.TB) []mimeCorpusItem {
 	t.Helper()
 	index, err := os.ReadFile(filepath.Join(mimeCorpusDir, "corpus.tsv"))
 	if err != nil {

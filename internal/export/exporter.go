@@ -471,6 +471,9 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		fx.Zip = zr.Digest // nil unless a zip was actually committed
 		for _, name := range zr.Empty {
 			e.Stats.AttachmentsEmpty++
+			if parseGapNamed(m, name) {
+				continue // its parse gap says it already: an empty .partial is a part cut short
+			}
 			e.addIssue(folderKey, m, relSlash, "empty-attachment", name)
 			gaps = append(gaps, name)
 		}
@@ -513,15 +516,17 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	// list its class says (state.GapClass is the single owner). A label this build
 	// does not know is filed by what the source can deliver, like any other gap.
 	for _, l := range m.ReadGaps {
-		class := state.GapClass(l)
-		if class == "" && e.SourceComplete {
-			class = state.ClassTerminal
-		}
-		if class == state.ClassFillable || class == "" {
-			rec.Missing = appendUnique(rec.Missing, l)
-		} else {
-			rec.Terminal = appendUnique(rec.Terminal, l)
-		}
+		e.fileGap(&rec, l)
+	}
+	// What the parser could not decode of it (design-mime-fidelity §4.9): a part kept as
+	// received, one cut short, a multipart that could not be split. The same rule files
+	// them: the deterministic kinds are terminal on every source, the two a complete copy
+	// can cure follow SourceComplete (MC20). At most 32 labels and one summary.
+	for _, l := range parseGapLabels(m) {
+		e.fileGap(&rec, l)
+	}
+	if hasParseGapKind(m, state.GapKindFidelityFallback) {
+		rec.FidelityFallback = state.ParseSchemeCurrent // a later scheme parses it again
 	}
 	// Only a partly-read record carries its Locator (FC6(3)): no other record's
 	// bytes change, so a healthy input is what it was (P14).
@@ -767,6 +772,64 @@ func sameFingerprint(prev state.Record, m *model.Message, fp string) bool {
 	return prev.HasLabels([]string{state.LabelUnreadableAttachments}) && prev.Fingerprint == m.FingerprintNoAttachments()
 }
 
+// fileGap files one gap label in the list its class says: fillable in Missing, the rest
+// in Terminal. state.GapClass is the single owner of the special labels' class; a label
+// with none (an ordinary content label, a parse gap a later copy can cure) is filed by
+// what the source can deliver.
+func (e *Exporter) fileGap(rec *state.Record, label string) {
+	class := state.GapClass(label)
+	if class == "" && e.SourceComplete {
+		class = state.ClassTerminal
+	}
+	if class == state.ClassFillable || class == "" {
+		rec.Missing = appendUnique(rec.Missing, label)
+	} else {
+		rec.Terminal = appendUnique(rec.Terminal, label)
+	}
+}
+
+// parseGapLabels are the record labels of m's parse gaps: its message-level gaps, then
+// each attachment's, in order. A record holds at most state.MaxParseGapLabels of them and
+// one summary label for the rest (MC21), so a hostile message cannot grow the manifest;
+// the parts themselves are all archived.
+func parseGapLabels(m *model.Message) []string {
+	var all []string
+	for _, g := range m.ParseGaps {
+		all = append(all, state.ParseGapLabel(g.Kind, g.Detail))
+	}
+	for i, a := range m.Attachments {
+		if a.GapKind != "" {
+			all = append(all, state.ParseGapLabel(a.GapKind, attachmentLabel(a, i)+" — "+a.GapDetail))
+		}
+	}
+	if len(all) <= state.MaxParseGapLabels {
+		return all
+	}
+	more := len(all) - state.MaxParseGapLabels
+	return append(all[:state.MaxParseGapLabels:state.MaxParseGapLabels],
+		state.ParseGapLabel(state.GapKindStructureLimit, fmt.Sprintf("and %d more undecodable parts", more)))
+}
+
+// parseGapNamed reports whether an attachment called name carries a parse gap.
+func parseGapNamed(m *model.Message, name string) bool {
+	for i, a := range m.Attachments {
+		if a.GapKind != "" && attachmentLabel(a, i) == name {
+			return true
+		}
+	}
+	return false
+}
+
+// hasParseGapKind reports whether the capture carries a message-level parse gap of kind.
+func hasParseGapKind(m *model.Message, kind string) bool {
+	for _, g := range m.ParseGaps {
+		if g.Kind == kind {
+			return true
+		}
+	}
+	return false
+}
+
 // hasReadGap reports whether the capture carries the read-gap label.
 func hasReadGap(m *model.Message, label string) bool {
 	for _, l := range m.ReadGaps {
@@ -951,7 +1014,24 @@ func (e *Exporter) observeKept(store, folderKey string, m *model.Message) {
 // anything. The unknown sentinel always improves: a legacy record is re-captured
 // once so it can carry the truth.
 func probeImproves(m *model.Message, oldMissing []string) bool {
+	var parseGaps []string // this read's parse-gap labels, made when an old one asks
+	computed := false
 	for _, item := range oldMissing {
+		// A fillable parse gap (a part cut short, a multipart that could not be split)
+		// improves when a re-read no longer yields it: the complete message has arrived.
+		if state.IsParseGapLabel(item) {
+			if !computed {
+				parseGaps, computed = parseGapLabels(m), true
+			}
+			found := false
+			for _, l := range parseGaps {
+				found = found || l == item
+			}
+			if !found {
+				return true
+			}
+			continue
+		}
 		// A read-gap label improves when the new read no longer carries it
 		// (§4.7.4(2)); state.GapClass owns which labels those are. For
 		// unreadable:attachments that also covers a real, empty attachment set.

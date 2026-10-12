@@ -526,32 +526,12 @@ func (x *extractor) skip(path, reason string, counter *int) {
 }
 
 // extractInspect resolves segs component-wise under out, refusing to follow a
-// symlink at any level (the same posture verify's inspect uses). It returns
-// "missing" | "symlink" | "irregular" | "ok" plus the file size and resolved
-// path for the ok case.
+// symlink at any level (the same posture verify's inspect uses; both are
+// util.ArchiveFileGate, design-mime-fidelity MC35). It returns "missing" |
+// "symlink" | "irregular" | "ok" plus the file size and resolved path for the ok
+// case.
 func extractInspect(out string, segs []string) (kind string, size int64, full string) {
-	cur := out
-	for i, s := range segs {
-		cur = filepath.Join(cur, s)
-		fi, err := os.Lstat(cur)
-		if err != nil {
-			return "missing", 0, cur
-		}
-		if fi.Mode()&fs.ModeSymlink != 0 {
-			return "symlink", 0, cur
-		}
-		last := i == len(segs)-1
-		if last {
-			if !fi.Mode().IsRegular() {
-				return "irregular", 0, cur
-			}
-			return "ok", fi.Size(), cur
-		}
-		if !fi.IsDir() {
-			return "missing", 0, cur
-		}
-	}
-	return "missing", 0, cur
+	return util.ArchiveFileGate(out, segs)
 }
 
 // readBounded reads at most limit bytes of full and returns the bytes and their

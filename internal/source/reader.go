@@ -14,13 +14,11 @@ import (
 	"sync"
 	"time"
 	"unicode/utf16"
-	"unicode/utf8"
 
 	charsets "github.com/emersion/go-message/charset"
 	pst "github.com/mooijtech/go-pst/v6/pkg"
 	"github.com/mooijtech/go-pst/v6/pkg/properties"
 	"golang.org/x/text/encoding"
-	"golang.org/x/text/encoding/charmap"
 
 	"mail-archive-tool/internal/model"
 	"mail-archive-tool/internal/state"
@@ -540,16 +538,9 @@ func cleanCategory(s string) string {
 
 // decodeBytes turns raw binary text bytes into a Go string. Modern Outlook
 // stores PidTagHtml as UTF-8 bytes; legacy messages use a single-byte codepage,
-// for which Windows-1252 is the safe western default.
-func decodeBytes(buf []byte) string {
-	if utf8.Valid(buf) {
-		return string(buf)
-	}
-	if s, err := charmap.Windows1252.NewDecoder().String(string(buf)); err == nil {
-		return s
-	}
-	return string(buf)
-}
+// for which Windows-1252 is the safe western default. The rule is util.DecodeLegacy's,
+// which the raw-MIME body decoder shares (design-mime-fidelity MC35).
+func decodeBytes(buf []byte) string { return util.DecodeLegacy(buf) }
 
 func collectAttachments(m *pst.Message) ([]model.Attachment, error) {
 	it, err := m.GetAttachmentIterator()

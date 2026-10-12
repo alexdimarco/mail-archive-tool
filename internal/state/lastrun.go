@@ -101,6 +101,13 @@ type LastRun struct {
 	GapsTerminal  int `json:"gaps_terminal,omitempty"`
 	GapsStuck     int `json:"gaps_stuck,omitempty"`
 	Unreadable    int `json:"unreadable,omitempty"`
+
+	// Undecodable and FidelityFallback (design-mime-fidelity §4.9, MC19; additive,
+	// omitted when zero) are how many records, at the end of this run, carry a part this
+	// version cannot decode (kept as received) and how many were written from the earlier
+	// parser's content. Informational: neither makes the run partial.
+	Undecodable      int `json:"undecodable,omitempty"`
+	FidelityFallback int `json:"fidelity_fallback,omitempty"`
 }
 
 // RunWarning is one problem a run found with its own setup that does not stop

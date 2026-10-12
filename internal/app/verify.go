@@ -17,6 +17,7 @@ import (
 
 	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/state"
+	"mail-archive-tool/internal/util"
 )
 
 // The suffixes of the files a record owns. Kept in step with the exporter's own
@@ -430,29 +431,7 @@ func (v *verifier) saveFixity(key string, rec *state.Record, fx *state.Fixity) {
 //
 // full is the resolved absolute path (for the ok case).
 func (v *verifier) inspect(segs []string) (kind string, size int64, full string) {
-	cur := v.out
-	for i, s := range segs {
-		cur = filepath.Join(cur, s)
-		fi, err := os.Lstat(cur)
-		if err != nil {
-			return "missing", 0, cur
-		}
-		if fi.Mode()&fs.ModeSymlink != 0 {
-			return "symlink", 0, cur
-		}
-		last := i == len(segs)-1
-		if last {
-			if !fi.Mode().IsRegular() {
-				return "irregular", 0, cur
-			}
-			return "ok", fi.Size(), cur
-		}
-		if !fi.IsDir() {
-			// An intermediate component is a file: the recorded path cannot exist.
-			return "missing", 0, cur
-		}
-	}
-	return "missing", 0, cur
+	return util.ArchiveFileGate(v.out, segs) // shared with extract (design-mime-fidelity MC35)
 }
 
 // compare hashes the file once, capped at the recorded size + 1 byte, and

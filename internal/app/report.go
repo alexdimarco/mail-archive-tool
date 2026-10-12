@@ -90,6 +90,9 @@ func writeReport(out string, manifest *state.Manifest, migrated bool, logger *lo
 }
 
 func gapKind(item string) string {
+	if kind, _, ok := state.ParseGapParts(item); ok {
+		return kind // a parse gap (design-mime-fidelity §4.9) names its own kind
+	}
 	switch item {
 	case state.MissingBody:
 		return "missing-body"
@@ -198,6 +201,9 @@ func writeGapRows(w *bufio.Writer, out string, manifest *state.Manifest, gaps []
 func gapDetail(item string) string {
 	if item == state.MissingBody {
 		return "(message body)"
+	}
+	if _, detail, ok := state.ParseGapParts(item); ok {
+		return detail
 	}
 	return item
 }

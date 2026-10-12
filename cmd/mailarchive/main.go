@@ -1565,11 +1565,17 @@ func printSummary(logger *log.Logger, r app.Result, indexed, keepRaw bool, out s
 	// never deliver, what has not been re-examined yet, how many fillable gaps
 	// this run re-examined (invisible otherwise), and the report path only when a
 	// report file exists. Printed whenever any of those is non-zero.
-	if r.Fillable > 0 || r.Terminal > 0 || r.Unknown > 0 || s.UnresolvedInlineRef > 0 || s.HTMLFallback > 0 || s.Retried > 0 {
+	if r.Fillable > 0 || r.Terminal > 0 || r.Unknown > 0 || r.Undecodable > 0 || s.UnresolvedInlineRef > 0 || s.HTMLFallback > 0 || s.Retried > 0 {
 		line := fmt.Sprintf("Verification: %d message(s) still missing content, %d source-empty (never fillable), %d not yet re-examined",
 			r.Fillable, r.Terminal, r.Unknown)
 		if s.Retried > 0 {
 			line += fmt.Sprintf(", re-examined=%d", s.Retried)
+		}
+		// A part this version cannot decode is kept as received, and is neither missing
+		// nor empty at the source: its own count, what it means and where to read more
+		// (design-mime-fidelity §4.9).
+		if r.Undecodable > 0 {
+			line += fmt.Sprintf(", %d message(s) with parts this version cannot decode (kept as received; see the report)", r.Undecodable)
 		}
 		if s.UnresolvedInlineRef > 0 {
 			line += fmt.Sprintf(", %d unresolved inline image(s) this run", s.UnresolvedInlineRef)
@@ -1588,6 +1594,15 @@ func printSummary(logger *log.Logger, r app.Result, indexed, keepRaw bool, out s
 		if r.Unknown > 0 {
 			logger.Printf("  %d entr%s predate completeness tracking and are re-examined by incremental runs until none remain.", r.Unknown, plural(r.Unknown, "y", "ies"))
 		}
+	}
+	// A message this version could not decode in full is kept as the earlier version
+	// read it (MC19): nothing is lost, and the report lists it.
+	if r.FidelityFallback > 0 {
+		line := fmt.Sprintf("Verification: %d message(s) kept as an earlier version read them, because this version could not decode them in full (nothing is lost)", r.FidelityFallback)
+		if r.ReportPath != "" {
+			line += fmt.Sprintf(" — details in %s", r.ReportPath)
+		}
+		logger.Printf("%s", line)
 	}
 	// Partly-read and unparsed records are complete as far as the source went, so
 	// they are not "missing content to download": their own line, their own remedy.

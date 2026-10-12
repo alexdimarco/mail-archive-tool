@@ -84,6 +84,14 @@ type ParseNote struct {
 	Detail string
 }
 
+// ParseGap is a message-level parse gap (design-mime-fidelity §4.9): a part or the
+// whole message could not be decoded as the sender sent it, and Detail says what is not,
+// in words a person reads on the page and in the report. Kind is one of state's
+// GapKind* constants; a gap of one attachment sits on the attachment (GapKind) instead.
+type ParseGap struct {
+	Kind, Detail string
+}
+
 // V1Item is one attachment of the v1 replay: what a repair's precondition
 // compares an archived zip entry with (design-mime-fidelity §4.10 V1C).
 type V1Item struct {
@@ -215,6 +223,13 @@ type Message struct {
 	// ParseNotes are the fidelity events of the parse that produced the content
 	// fields (design-mime-fidelity §4.10). Empty while the content is v1's.
 	ParseNotes []ParseNote
+
+	// ParseGaps are the message-level parse gaps of the parse that produced the content
+	// fields: an unsplit multipart, a structure limit, a fallback to v1's content, a
+	// stub identity. A gap of one attachment is that attachment's GapKind. It is not
+	// ReadGaps: a parse gap is deterministic and is no degraded read, so the KEEP guard
+	// never holds a capture back for one (design-mime-fidelity §4.9, rulings J5).
+	ParseGaps []ParseGap
 
 	// V1Inventory is each attachment the v1 replay produced: its index, label, size
 	// and SHA-256, the baseline a repair's "never to less" check compares an

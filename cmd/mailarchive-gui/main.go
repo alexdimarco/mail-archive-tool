@@ -1307,7 +1307,15 @@ func exportSummary(out string, keepRaw bool, r app.Result) string {
 	if r.Terminal > 0 {
 		fmt.Fprintf(b, "Empty at the source (nothing to download): %d\n", r.Terminal)
 	}
-	if (notDone > 0 || r.Terminal > 0) && r.ReportPath != "" {
+	// A part this version cannot decode is kept as received: not empty at the source,
+	// and not a download to wait for (design-mime-fidelity §4.9).
+	if r.Undecodable > 0 {
+		fmt.Fprintf(b, "Kept as received, because this version cannot decode a part of them: %d (the files are in each message's attachments zip)\n", r.Undecodable)
+	}
+	if r.FidelityFallback > 0 {
+		fmt.Fprintf(b, "Kept as an earlier version read them, because this version could not decode them in full: %d (nothing is lost)\n", r.FidelityFallback)
+	}
+	if (notDone > 0 || r.Terminal > 0 || r.Undecodable > 0 || r.FidelityFallback > 0) && r.ReportPath != "" {
 		fmt.Fprintf(b, "Details: %s\n", r.ReportPath)
 	}
 	if r.IndexErrors > 0 {
