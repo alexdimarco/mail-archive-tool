@@ -382,18 +382,147 @@ func TestAZeroByteOrFailedPartIsANoteNeverSilent(t *testing.T) {
 	}
 }
 
+// e6Corpus reads a message of the fidelity corpus (testdata/mime).
+func e6Corpus(t *testing.T, name string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("..", "..", "testdata", "mime", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
 // covers: MA-424, R1
-// A part the walker kept as .undecoded or .partial is extracted under that name as what it is and
-// noted as not the complete decoded attachment.
+// A part the walker kept as .undecoded (a transfer encoding it does not decode) or .partial (a
+// base64 part cut short) is extracted under that name, holding the bytes the walker kept, and is
+// noted as not the complete decoded attachment, with what holds the message; the parts after it
+// are extracted as usual and carry no note.
 func TestKeptPartsAreExtractedAsWhatTheyAreAndNoted(t *testing.T) {
-	t.Skip("MA-424: attachment extraction is not built; lands in EW-E6")
+	msgs := ceMsgs(2)
+	body := map[string][]byte{
+		msgs[0].SourceID: e6Corpus(t, "f24-cte-x-uuencode.eml"),
+		msgs[1].SourceID: e6Corpus(t, "f24-cte-base64-truncated.eml"),
+	}
+	e := newCEEnv(t)
+	res, _ := e6Run(t, e, msgs, false, func(id string) []byte { return body[id] })
+	if res.Counts.Exported != 2 || res.Outcome != CopyOutcomeComplete {
+		t.Fatalf("%s, %+v", res.Label, res.Counts)
+	}
+	lines := e5Files(t, e, res)
+	// what the walker kept, by name, is what the file holds
+	kept := func(id, name string) []byte {
+		t.Helper()
+		for _, a := range source.ParseRFC822(body[id]).Attachments {
+			if a.Filename == name {
+				var buf bytes.Buffer
+				if _, err := a.WriteTo(&buf); err != nil {
+					t.Fatal(err)
+				}
+				return buf.Bytes()
+			}
+		}
+		t.Fatalf("the parser kept no %q", name)
+		return nil
+	}
+	check := func(line *ceMsgLine, name string, want []byte) {
+		t.Helper()
+		for _, f := range e6Derived(line) {
+			if path.Base(f.Path) == name {
+				if got := e6Read(t, res.Root, f.Path); !bytes.Equal(got, want) {
+					t.Errorf("%s holds %q, want the walker's %q", name, got, want)
+				}
+				return
+			}
+		}
+		t.Errorf("no file %s among %+v", name, line.Files)
+	}
+
+	first := assure.Reached(t, lines[1], "the first message's line")
+	undecoded := kept(msgs[0].SourceID, "note.txt.undecoded")
+	if !bytes.HasPrefix(undecoded, []byte("begin 644 note.txt")) {
+		t.Fatalf("the part as received is %q", undecoded)
+	}
+	check(first, "note.txt.undecoded", undecoded)
+	check(first, "r.pdf", kept(msgs[0].SourceID, "r.pdf"))
+	if len(first.Notes) != 1 || !strings.Contains(first.Notes[0], `"note.txt.undecoded"`) || !strings.Contains(first.Notes[0], "exactly as received, not a decoded attachment") ||
+		!strings.Contains(first.Notes[0], ".eml beside it") {
+		t.Errorf("the undecoded part's notes: %q", first.Notes)
+	}
+
+	second := assure.Reached(t, lines[2], "the second message's line")
+	partial := kept(msgs[1].SourceID, "cut.pdf.partial")
+	if !bytes.HasPrefix(partial, []byte("%PDF-1.4")) || len(partial) < 40 {
+		t.Fatalf("the cut part's readable start is %q", partial)
+	}
+	check(second, "cut.pdf.partial", partial)
+	if len(second.Notes) != 1 || !strings.Contains(second.Notes[0], `"cut.pdf.partial"`) || !strings.Contains(second.Notes[0], "only the readable start") ||
+		!strings.Contains(second.Notes[0], "not the complete attachment") {
+		t.Errorf("the cut part's notes: %q", second.Notes)
+	}
+}
+
+// e6Disk is a destination of a fixed size: the free bytes are what is left of capacity after
+// the bytes the files under dest hold.
+func e6Disk(dest string, capacity int64) func(string) (uint64, error) {
+	return func(string) (uint64, error) {
+		var used int64
+		_ = filepath.WalkDir(dest, func(_ string, d os.DirEntry, err error) error {
+			if err == nil && d.Type().IsRegular() {
+				if fi, ierr := d.Info(); ierr == nil {
+					used += fi.Size()
+				}
+			}
+			return nil
+		})
+		return uint64(max(capacity-used, 0)), nil
+	}
 }
 
 // covers: MA-424, R29
-// Each derived attachment is checked against the free space left before it is written; a part
-// that does not fit is a note, and the original and the run are unharmed.
+// Each derived attachment is checked against the free space left (less the reserve) before it is
+// written: on a destination with room for the original and the first of two 100 kB attachments,
+// the first is extracted, the second is not written at all and is a note that says no space was
+// left, and the original, the next message and the run are unharmed (the run is not stopped: the
+// free-space stop is the originals').
 func TestDerivedAttachmentsAreCheckedAgainstFreeSpace(t *testing.T) {
-	t.Skip("MA-424: attachment extraction is not built; lands in EW-E6")
+	big1, big2 := e5Image(100000), append([]byte("second"), e5Image(99994)...)
+	msgs := ceMsgs(2)
+	body := map[string][]byte{
+		msgs[0].SourceID: e6Mime(msgs[0].SourceID, "two big files",
+			e6Part{name: "first.bin", body: big1}, e6Part{name: "second.bin", body: big2}),
+		msgs[1].SourceID: e6Mime(msgs[1].SourceID, "after it"),
+	}
+	e := newCEEnv(t)
+	src := newFakeSrc()
+	src.body = func(id string) []byte { return body[id] }
+	p := cePlan(t, e, src, msgs)
+	p.Options.Attachments = true
+	e.freeDest = e6Disk(p.Dest, p.Reserve+int64(len(body[msgs[0].SourceID])+len(body[msgs[1].SourceID]))+160000)
+	res := mustRun(t, e, p, src)
+	if res.Counts.Exported != 2 || res.Counts.Failed != 0 || res.Stop != nil {
+		t.Fatalf("%s, %+v, stop %+v", res.Label, res.Counts, res.Stop)
+	}
+	lines := e5Files(t, e, res)
+	first := assure.Reached(t, lines[1], "the first message's line")
+	files := e6Derived(first)
+	if first.Status != statusExported || len(files) != 1 || path.Base(files[0].Path) != "first.bin" || !bytes.Equal(e6Read(t, res.Root, files[0].Path), big1) {
+		t.Fatalf("the first message: %s, %+v", first.Status, first.Files)
+	}
+	if len(first.Notes) != 1 || !strings.Contains(first.Notes[0], `"second.bin"`) || !strings.Contains(first.Notes[0], "no space was left") || !strings.Contains(first.Notes[0], "export this message again") {
+		t.Errorf("the notes: %q", first.Notes)
+	}
+	if exists(res.Root, path.Dir(files[0].Path)+"/second.bin") {
+		t.Error("the part that did not fit was written")
+	}
+	if r := tempResidue(t, res.Root); len(r) != 0 {
+		t.Errorf("temp files left: %v", r)
+	}
+	if second := assure.Reached(t, lines[2], "the second message's line"); second.Status != statusExported || len(second.Files) != 1 {
+		t.Errorf("the second message: %s, %+v", second.Status, second.Files)
+	}
+	if bad, missing, extra := sumsCheck(t, res.Root); len(bad)+len(missing)+len(extra) != 0 {
+		t.Errorf("sums: changed %v, missing %v, unlisted %v", bad, missing, extra)
+	}
 }
 
 // covers: MA-424, R4, R1, R29, S52
