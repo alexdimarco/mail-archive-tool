@@ -744,9 +744,12 @@ func TestAZipBombIsJudgedOnItsRealPackedSizeNotItsHeaders(t *testing.T) {
 // covers: MA-424, R1
 // E6-AO1 (E6-AC5): an entry that streams its whole size and then fails (a damaged checksum) is
 // charged against the message's total like one that succeeds, so the per-message bound limits what
-// is written, not only what is kept. Eight entries of 512 KiB that all fail, under a 1.5 MiB total:
-// no more than 1.5 MiB reaches the destination (three entries) and the rest are notes that the
-// total would be passed, where the code charged only the entries that succeeded and wrote all 4 MiB.
+// is processed, not only what is kept. Eight entries of 512 KiB that all fail, under a 1.5 MiB total:
+// the charge is made when the entry is read through (E6-AO2), which is where a damaged entry is found,
+// so nothing reaches the destination for them, and the entries after the third are notes that the
+// total would be passed, where the code charged only the entries that succeeded. (First fixed by
+// charging what the writer wrote, up to three entries; the read-through made that count dead and the
+// charge of what was expanded is the one that holds: this test goes red when it is removed.)
 func TestFailedZipEntriesCountTowardThePerMessageTotal(t *testing.T) {
 	e := newCEEnv(t)
 	e.zipLimit = attachBounds{totalBytes: 3 << 19}
@@ -760,5 +763,112 @@ func TestFailedZipEntriesCountTowardThePerMessageTotal(t *testing.T) {
 	}
 	if !e6advNote(ent, "extracting it would take", "past 1536 KiB") {
 		t.Errorf("no note says the total would be passed: %v", ent["notes"])
+	}
+}
+
+// covers: MA-424, R4, R1
+// E6-AO2, second round: the zip as a whole may not expand to more than the 200:1 bound times its own
+// size. The per-entry judgement rests on the bytes the reader pulled for the entry, which the read-ahead
+// of the stream (4 KiB at a time) floors and the header's claim of the packed size caps, so an attacker
+// who claims 4,096 packed bytes for entries that really pack to about 800 gets 200 x 4,096 = 819 KB from
+// each: 100 entries of 800,000 zeros in an 88 KB zip were extracted whole (80 MB, about 900:1) with no
+// note. What the whole zip expands to is bounded by what the whole zip is (and the cut is made while the
+// entry is read, so the work is bounded too): the entries past it are notes that name a zip bomb, the
+// ones before it are extracted, and an honest zip of many entries is not touched.
+func TestAZipsTotalExpansionIsBoundedByItsOwnSize(t *testing.T) {
+	zeros := make([]byte, 800000)
+	var entries []e6ZipEntry
+	for i := 0; i < 100; i++ {
+		entries = append(entries, e6ZipEntry{name: fmt.Sprintf("lie%03d.bin", i), data: zeros, raw: true, declared: uint64(len(zeros)), packed: 4096})
+	}
+	zipSize := int64(len(e6Zip(t, entries...)))
+	res, ent, written := e6advZipRun(t, newCEEnv(t), entries...)
+	got := e6Extracted(t, res.Root, ent)
+	var total int64
+	for _, b := range got {
+		total += int64(len(b))
+	}
+	if total > copyZipRatio*zipSize {
+		t.Errorf("%d bytes were extracted from a zip of %d: %d:1, over the %d:1 bound", total, zipSize, total/zipSize, copyZipRatio)
+	}
+	if written > copyZipRatio*zipSize {
+		t.Errorf("%d bytes were written from a zip of %d", written, zipSize)
+	}
+	if len(got) < 1 || len(got) >= 100 {
+		t.Errorf("%d of 100 entries were extracted: the first must be, and not all", len(got))
+	}
+	if !e6advNote(ent, "zip bomb", "as a whole") {
+		t.Errorf("no note says the zip as a whole is taken for a zip bomb: %v", ent["notes"])
+	}
+
+	// the positive twin: an honest zip of many entries (60 stored entries of 8 KiB) is extracted whole
+	var honest []e6ZipEntry
+	for i := 0; i < 60; i++ {
+		honest = append(honest, e6ZipEntry{name: fmt.Sprintf("ok%02d.bin", i), data: e5Image(8 << 10), store: true})
+	}
+	res, ent, _ = e6advZipRun(t, newCEEnv(t), honest...)
+	if got := e6Extracted(t, res.Root, ent); len(got) != 60 {
+		t.Errorf("an honest zip of 60 entries had %d extracted: %v", len(got), ent["notes"])
+	}
+}
+
+// covers: MA-428, MA-424, R5
+// E6-AO3's stragglers (found by mutation): after Abandon, with the readable copy on, a message's
+// extraction makes no further write of any kind. Abandon at the first temp file: no readable copy is
+// written, and the attachments directory the run made is not taken back (an abandoned run's syscall
+// returns into a folder the caller has released; it touches nothing more, not even to tidy).
+func TestAnAbandonedRunTouchesNothingAfterTheCallWithTheReadableCopyOn(t *testing.T) {
+	msgs := ceMsgs(1)
+	mime := e6Mime(msgs[0].SourceID, "one file", e6Part{name: "a.bin", body: []byte("the one attachment")})
+	e := newCEEnv(t)
+	src := newFakeSrc()
+	src.body = func(id string) []byte { return mime }
+	p := cePlan(t, e, src, msgs)
+	p.Options.Attachments, p.Options.ReadableHTML = true, true
+	run := e.NewCopyRun(p, src)
+	e.fsWrap = func(f ceFS) ceFS {
+		return &e6advOnTemp{ceFS: f, onTemp: func() { run.Abandon() }}
+	}
+	res, err := run.Run(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var html, adirs int
+	var adirFiles []string
+	filepath.WalkDir(res.Root, func(p string, d os.DirEntry, err error) error {
+		switch {
+		case err != nil:
+		case d.IsDir() && strings.HasSuffix(d.Name(), ".attachments"):
+			adirs++
+		case !d.IsDir() && strings.HasSuffix(d.Name(), ".html"):
+			html++
+		case !d.IsDir() && strings.Contains(p, ".attachments"):
+			adirFiles = append(adirFiles, d.Name())
+		}
+		return nil
+	})
+	if html != 0 {
+		t.Errorf("%d readable copies were written after Abandon", html)
+	}
+	if len(adirFiles) != 0 {
+		t.Errorf("files in the attachments directory after Abandon: %v", adirFiles)
+	}
+	if adirs != 1 {
+		t.Errorf("%d attachments directories on disk: an abandoned run took back the one it had made", adirs)
+	}
+}
+
+// covers: MA-428, R5
+// E6-AO3: Abandon is a stop on its own, whatever the context says: the writer of a message whose
+// context is still live (the message's own context is a child of the run's, and the caller may
+// abandon a run before the run has a context to cancel) sees the flag.
+func TestAbandonIsAStopWhateverTheContextSays(t *testing.T) {
+	w := &attachWriter{r: &CopyRun{}, ctx: t.Context()}
+	if w.stopped() {
+		t.Fatal("a writer of a run that was not stopped reports a stop")
+	}
+	w.r.Abandon()
+	if !w.stopped() {
+		t.Error("a writer of an abandoned run, whose context is live, reports no stop")
 	}
 }

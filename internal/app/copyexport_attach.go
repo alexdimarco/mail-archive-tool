@@ -49,7 +49,9 @@ const (
 // The bounds on extracting a zip's entries (design §4.12): at most 1,000 entries, 1 GiB
 // uncompressed for one entry, 4 GiB for one message, and a compression ratio of at most 200:1.
 // An entry over a bound is skipped with a note; a zip is untrusted input (a bomb is a few
-// kilobytes), so none of them is ever expanded to find out.
+// kilobytes), so nothing is written until an entry has been read through to nowhere and judged, and
+// that reading is cut as soon as the zip as a whole would expand past the ratio times its own size
+// (E6-AO2): what a zip costs to judge is bounded by what it is, and what it writes by that too.
 const (
 	copyZipEntries    = 1000
 	copyZipEntryBytes = 1 << 30
@@ -130,11 +132,10 @@ type attachWriter struct {
 	line   *ceMsgLine
 	notes  attachNotes
 	placed int
-	// written is every byte the writer has put into a temp file for this message, whether the part
-	// was kept or removed again after it failed: the per-message bound on a zip's entries counts it.
-	written int64
 	// expanded is the bytes a zip's entries expanded to when they were read through before being
-	// written (expand), kept or not: with written, what the per-message bound counts.
+	// written (expand), kept or not: what the per-message bound counts, and, against the zip's own
+	// size, what the whole zip may expand to. What is written is never more than what was read
+	// through first, so this is also the most that was written.
 	expanded int64
 	// lineBytes is what the files placed so far add to the message's line in the run record.
 	lineBytes int64
@@ -250,7 +251,6 @@ func (w *attachWriter) put(filename string, index int, stream func(io.Writer) (i
 	}
 	hw := &ceHashWriter{w: f, h: sha256.New(), watch: r.watch, total: &r.bytes}
 	_, serr := stream(&attachSpaceWriter{w: hw, left: budget, stop: w.stopped})
-	w.written += hw.n // charged whether the part is kept or not: what was written is what the bound limits (E6-AO1)
 	serr = classifyStream(serr)
 	if serr != nil && w.stopped() {
 		serr = errAttachStopped // whatever the stream said, the run was stopped under it
@@ -468,6 +468,23 @@ func (s *zipSource) ReadAt(p []byte, off int64) (int, error) {
 	return n, err
 }
 
+// errZipWhole is what zipWholeWriter says when the zip's entries would expand past the ratio times
+// the zip's own size.
+var errZipWhole = errors.New("the zip as a whole expands past its bound")
+
+// zipWholeWriter takes what a read-through of a zip entry yields, to nowhere, up to left bytes: the
+// write that would pass it is refused, so an entry past the bound is cut where it passes it, not read
+// to its end.
+type zipWholeWriter struct{ left int64 }
+
+func (z *zipWholeWriter) Write(p []byte) (int, error) {
+	if int64(len(p)) > z.left {
+		return 0, errZipWhole
+	}
+	z.left -= int64(len(p))
+	return len(p), nil
+}
+
 // copyZipDirBytes bounds what is read to list a zip's entries: Go's reader allocates one record
 // for every entry of the central directory (about 200 bytes each, from 46 bytes of zip) before
 // anything can cut the list at the entry bound, and the zip's own size bound (the MIME cap) is no
@@ -559,7 +576,7 @@ func (w *attachWriter) zipEntries(data []byte, bd attachBounds) {
 		}
 		name := zipBase(f.Name)
 		label := plainText(util.ExportFilename(name, i))
-		if why := bd.breach(f, max(w.written, w.expanded)); why != "" {
+		if why := bd.breach(f, w.expanded); why != "" {
 			w.notes.add(fmt.Sprintf("%q (an entry of the zip) was not extracted: %s; %s", label, why, w.holds))
 			continue
 		}
@@ -589,9 +606,20 @@ func (w *attachWriter) zipEntries(data []byte, bd attachBounds) {
 // expands to, and why it may not be extracted when it is a bomb whatever its header claims
 // (what it really packs into, which src counted, against the ratio), or the failure of its own
 // data. Its bytes count toward the message's total whether or not the entry is then kept.
+//
+// What src counted is the bytes the reader pulled, which its read-ahead floors (4 KiB) and the
+// header's claim of the packed size caps: an entry that claims 4,096 and packs to 800 bytes passes
+// 200:1 at 819,200 bytes. So the zip as a whole is held to the ratio times its own size too, which no
+// claim of a header moves, and the reading is cut the moment the entries so far would pass it (E6-AO2).
 func (w *attachWriter) expand(f *zip.File, src *zipSource, bd attachBounds) (n int64, why string, err error) {
 	src.read = 0
-	n, err = guardStream(zipStream(f))(&attachSpaceWriter{w: io.Discard, left: math.MaxInt64, stop: w.stopped, tick: w.r.watch.bump}) // it is progress, so the no-progress breaker never reads a long read-through as a stall // it is progress, so the no-progress breaker never reads a long read-through as a stall
+	whole := bd.ratio * src.r.Size() // what the whole zip may expand to
+	limit := &zipWholeWriter{left: whole - w.expanded}
+	n, err = guardStream(zipStream(f))(&attachSpaceWriter{w: limit, left: math.MaxInt64, stop: w.stopped, tick: w.r.watch.bump}) // it is progress, so the no-progress breaker never reads a long read-through as a stall
+	if errors.Is(err, errZipWhole) {
+		return n, fmt.Sprintf("the zip as a whole would expand to more than %d times its own size (%s), which this version takes for a zip bomb and does not extract the rest of",
+			bd.ratio, humanBytes(src.r.Size())), nil
+	}
 	if err = classifyStream(err); err != nil {
 		return n, "", err
 	}
