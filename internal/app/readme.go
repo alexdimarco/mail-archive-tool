@@ -94,12 +94,16 @@ carried it, because the tool could not decode its encoding (the row names the
 encoding, for example x-uuencode; a program that knows it can open the file).
 remaining-parts.undecoded is the unread rest of a message that has more parts,
 or nests them deeper, than the tool reads. A file ending .partial holds the
-readable start of an attachment that was cut short or damaged. A row of kind
-unsplit-multipart means the message's parts could not be told apart, so its
-page shows the whole text as one body. A row of kind fidelity-fallback or
-identity-stub means the page shows the message as an earlier version of the
-tool read it; a later version may read more. A page that lists a .undecoded or
-.partial file says so.
+readable start of an attachment that was cut short or damaged. A row for a
+message's text that was cut short or damaged names no file: the page shows what
+could be decoded of the text. A row of kind unsplit-multipart means the
+message's parts could not be told apart, so its page shows the whole text as one
+body. A row of kind fidelity-fallback means the page shows the message as an
+earlier version of the tool read it; a later version may read more. A row of
+kind identity-stub means an earlier version of the tool could not read the
+message at all and filed it under a placeholder; the page shows the message as
+the tool that wrote it read it. A page that lists a .undecoded or .partial file
+says so.
 
 Housekeeping files (safe to leave alone):
   .mailarchive-manifest.json   which messages are archived (used for
