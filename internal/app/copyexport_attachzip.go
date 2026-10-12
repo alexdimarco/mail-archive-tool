@@ -84,12 +84,17 @@ func (w *attachWriter) zipParts(dir, stem string, stamp time.Time, atts []model.
 	r := w.r
 	rel := ceJoin(dir, stem+attachZipSuffix)
 	var zf *attachZipFile
+	// A zip is whole or it is not there, so the notes made for its parts while it was being made
+	// (a kept part's "exactly as received", an empty part's) go with it when it is discarded: they
+	// would name entries of a file that does not exist (E6Z-AO2, E6Z-AC2).
+	noteMark, noteExtra := len(w.notes.list), w.notes.extra
 	abort := func() {
 		if zf != nil {
 			zf.f.Close()
 			r.fs.Remove(ceJoin(dir, zf.tmp))
 			zf = nil
 		}
+		w.notes.list, w.notes.extra = w.notes.list[:noteMark], noteExtra
 	}
 	// failed ends the zip: nothing of it stays, one note says why and where every part is.
 	failed := func(err error) (ceFileRec, bool) {
@@ -97,16 +102,17 @@ func (w *attachWriter) zipParts(dir, stem string, stamp time.Time, atts []model.
 		w.zipFailure(err)
 		return ceFileRec{}, false
 	}
-	stopped := func(rest string) (ceFileRec, bool) {
+	// stopped ends the zip too: a stop loses every attachment of the message, not the ones after it.
+	stopped := func() (ceFileRec, bool) {
 		abort()
-		w.stopNote(rest)
+		w.zipStopNote(len(atts))
 		return ceFileRec{}, false
 	}
 	if len(atts) == 0 {
 		return ceFileRec{}, false
 	}
 	if w.stopped() {
-		return stopped(fmt.Sprintf("the %s attachments", commas(len(atts))))
+		return stopped()
 	}
 	// The message's line in the run record lists the zip, at about 230 bytes: nothing is placed
 	// that the record could not then list (as for a loose file, E6-AO5).
@@ -134,7 +140,7 @@ func (w *attachWriter) zipParts(dir, stem string, stamp time.Time, atts []model.
 	var used int64
 	for i, a := range atts {
 		if w.stopped() {
-			return stopped(fmt.Sprintf("the last %s attachments", commas(len(atts)-i)))
+			return stopped()
 		}
 		name := partFilename(a, i)
 		label := plainText(util.ExportFilename(name, i))
@@ -152,7 +158,7 @@ func (w *attachWriter) zipParts(dir, stem string, stamp time.Time, atts []model.
 			serr = errAttachStopped
 		}
 		if errors.Is(serr, errAttachStopped) {
-			return stopped(fmt.Sprintf("the last %s attachments", commas(len(atts)-i)))
+			return stopped()
 		}
 		if serr == nil && buf.Len() == 0 {
 			serr = errAttachEmpty
@@ -177,7 +183,7 @@ func (w *attachWriter) zipParts(dir, stem string, stamp time.Time, atts []model.
 		}
 		if cerr != nil {
 			if w.stopped() {
-				return stopped(fmt.Sprintf("the last %s attachments", commas(len(atts)-i)))
+				return stopped()
 			}
 			return failed(classifyZipWrite(cerr))
 		}
@@ -192,7 +198,7 @@ func (w *attachWriter) zipParts(dir, stem string, stamp time.Time, atts []model.
 	}
 	if cerr := zf.zw.Close(); cerr != nil {
 		if w.stopped() {
-			return stopped("the attachments")
+			return stopped()
 		}
 		return failed(classifyZipWrite(cerr))
 	}
@@ -226,6 +232,16 @@ func classifyZipWrite(err error) error {
 		return err
 	}
 	return &ceWriteError{err}
+}
+
+// zipStopNote is the note for a zip the run was stopped in the making of: it is discarded whole
+// (the temp is removed), so every one of the message's n attachments is not extracted.
+func (w *attachWriter) zipStopNote(n int) {
+	what := "its attachment was"
+	if n != 1 {
+		what = fmt.Sprintf("all %s attachments were", commas(n))
+	}
+	w.notes.add(fmt.Sprintf("the export was stopped while this message's attachments were being extracted, so no attachments zip was written and %s not extracted; %s; export this message again", what, w.holds))
 }
 
 // zipFailure is the note for a zip that could not be written at all: every attachment is still in

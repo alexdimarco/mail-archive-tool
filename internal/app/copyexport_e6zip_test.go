@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -556,6 +557,143 @@ func TestZipModeChecksFreeSpaceAndObservesCancelAndAbandon(t *testing.T) {
 			}
 		})
 	}
+}
+
+// e6zFile is the zip's temp file with a fault: write and sync, when set, take the call over.
+type e6zFile struct {
+	ceFile
+	write func(p []byte) (int, error)
+	sync  func() error
+}
+
+func (f *e6zFile) Write(p []byte) (int, error) {
+	if f.write != nil {
+		return f.write(p)
+	}
+	return f.ceFile.Write(p)
+}
+
+func (f *e6zFile) Sync() error {
+	if f.sync != nil {
+		return f.sync()
+	}
+	return f.ceFile.Sync()
+}
+
+// e6zZipTemp wraps the second temp file made under messages/ (the first message's zip: the first is
+// its original) with wrap.
+type e6zZipTemp struct {
+	ceFS
+	n    int
+	wrap func(ceFile) ceFile
+}
+
+func (h *e6zZipTemp) CreateTemp(dir string) (ceFile, string, error) {
+	f, name, err := h.ceFS.CreateTemp(dir)
+	if err == nil && strings.HasPrefix(dir, "messages") {
+		if h.n++; h.n == 2 {
+			f = h.wrap(f)
+		}
+	}
+	return f, name, err
+}
+
+// e6zAttachNotes is a line's attachment notes.
+func e6zAttachNotes(notes []string) (out []string) {
+	for _, n := range notes {
+		if strings.HasPrefix(n, attachNotePrefix) {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// covers: MA-533, R1
+// E6Z-AO2 and E6Z-AC2: a zip is whole or it is not there, and the notes say so. When the run is stopped
+// late (part 25 of 40, with part 5 a part the walker kept as received) or the zip's last write fails,
+// no zip stays, and the one note says that NONE of the message's attachments was extracted (all 40,
+// not "the last 16"); the notes already made for parts that were headed for the zip (the kept part's
+// "exactly as received" note, an empty part's) are not left behind, for they name entries of a zip
+// that does not exist.
+func TestAZipThatIsNotWrittenLeavesNoNoteOfItsEntries(t *testing.T) {
+	kept := func(t *testing.T, line *ceMsgLine, wantNote string) {
+		t.Helper()
+		if _, ok := e6zRec(line); ok || len(line.Files) != 1 {
+			t.Errorf("a zip of a message that lost it stays: %+v", line.Files)
+		}
+		notes := e6zAttachNotes(line.Notes)
+		if len(notes) != 1 || !strings.Contains(notes[0], wantNote) || !strings.Contains(notes[0], ".eml beside it") {
+			t.Errorf("the notes are %q, want the one that says %q and nothing of an entry of the missing zip", notes, wantNote)
+		}
+		for _, n := range notes {
+			if strings.Contains(n, "exactly as received") || strings.Contains(n, "has no content") || strings.Contains(n, "last 16") {
+				t.Errorf("a stale or under-counted note: %q", n)
+			}
+		}
+	}
+	t.Run("stopped late", func(t *testing.T) {
+		msgs := ceMsgs(1)
+		var parts []e6Part
+		for i := 0; i < 40; i++ {
+			parts = append(parts, e6Part{name: fmt.Sprintf("f%02d.bin", i), body: []byte(fmt.Sprintf("part %d of the message", i))})
+		}
+		parts[2] = e6Part{name: "empty.txt", ctype: "text/plain"}
+		mime := e6Mime(msgs[0].SourceID, "forty files", parts...)
+		e := newCEEnv(t)
+		src := newFakeSrc()
+		src.body = func(string) []byte { return mime }
+		p := cePlan(t, e, src, msgs)
+		p.Options.Attachments, p.Options.AttachmentsAsZip = true, true
+		run := e.NewCopyRun(p, src)
+		real := originalParser
+		t.Cleanup(func() { originalParser = real })
+		originalParser = func(b []byte) *model.Message {
+			m := real(b)
+			m.Attachments[4].GapKind = state.GapKindUndecodedPart
+			for i := range m.Attachments {
+				inner := m.Attachments[i].WriteTo
+				m.Attachments[i].WriteTo = func(w io.Writer) (int64, error) {
+					if i == 24 {
+						run.Cancel()
+					}
+					return inner(w)
+				}
+			}
+			return m
+		}
+		res, err := run.Run(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		line := assure.Reached(t, e5Files(t, e, res)[1], "the message's line")
+		kept(t, line, "all 40 attachments were not extracted")
+		for p := range treeFiles(t, res.Root) {
+			if strings.HasSuffix(p, ".attachments.zip") {
+				t.Errorf("a zip of a stopped message stays: %s", p)
+			}
+		}
+		if r := tempResidue(t, res.Root); len(r) != 0 {
+			t.Errorf("temp files left: %v", r)
+		}
+	})
+	t.Run("write fails", func(t *testing.T) {
+		msgs := ceMsgs(1)
+		mime := e6Corpus(t, "f24-cte-x-uuencode.eml") // note.txt.undecoded, which a note says is kept as received, and r.pdf
+		e := newCEEnv(t)
+		e.fsWrap = func(f ceFS) ceFS {
+			return &e6zZipTemp{ceFS: f, wrap: func(f ceFile) ceFile {
+				return &e6zFile{ceFile: f, write: func([]byte) (int, error) { return 0, syscall.ENOSPC }}
+			}}
+		}
+		res, _ := e6zRun(t, e, msgs, false, func(string) []byte { return mime })
+		if res.Counts.Exported != 1 {
+			t.Fatalf("%s, %+v", res.Label, res.Counts)
+		}
+		kept(t, assure.Reached(t, e5Files(t, e, res)[1], "the message's line"), "the attachments zip was not written")
+		if r := tempResidue(t, res.Root); len(r) != 0 {
+			t.Errorf("temp files left: %v", r)
+		}
+	})
 }
 
 // covers: MA-533, R7
