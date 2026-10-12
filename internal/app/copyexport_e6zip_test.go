@@ -523,6 +523,35 @@ func TestZipModeChecksFreeSpaceAndObservesCancelAndAbandon(t *testing.T) {
 		}
 	})
 
+	// E6Z-AC1 (re-verification): the room is worked out from the free space the destination reports,
+	// and a mount that reports a nominal "unlimited" size (a network, FUSE or cloud mount) is
+	// above where the room's arithmetic could overflow: a negative room refused every part with "no
+	// space was left" and made no zip, where loose mode on the same mount extracts as usual.
+	t.Run("space reported huge", func(t *testing.T) {
+		for _, free := range []uint64{1 << 53, 1 << 54, 3 << 53, 1 << 56, 1 << 60, 1<<62 + 5, 1<<63 - 1} {
+			part := e6zNoise(3000, 7)
+			msgs := ceMsgs(1)
+			mime := e6Mime(msgs[0].SourceID, "one", e6Part{name: "a.bin", body: part})
+			e := newCEEnv(t)
+			src := newFakeSrc()
+			src.body = func(string) []byte { return mime }
+			p := cePlan(t, e, src, msgs)
+			p.Options.Attachments, p.Options.AttachmentsAsZip = true, true
+			e.freeDest = func(string) (uint64, error) { return free, nil }
+			res := mustRun(t, e, p, src)
+			line := assure.Reached(t, e5Files(t, e, res)[1], "the message's line")
+			zrec, ok := e6zRec(line)
+			if !ok {
+				t.Errorf("free space %d: no zip, notes %.200q", free, line.Notes)
+				continue
+			}
+			files, data := e6zEntries(t, e6Read(t, res.Root, zrec.Path))
+			if len(files) != 1 || !bytes.Equal(data["a.bin"], part) || len(line.Notes) != 0 {
+				t.Errorf("free space %d: the zip holds %v, notes %.200q", free, e6Sizes(data), line.Notes)
+			}
+		}
+	})
+
 	for _, abandon := range []bool{false, true} {
 		name := "cancel"
 		if abandon {

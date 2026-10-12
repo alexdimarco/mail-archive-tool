@@ -168,8 +168,12 @@ func (w *attachWriter) zipParts(dir, stem string, stamp time.Time, atts []model.
 		// used counts it) and its entry and record in the directory, on top of what is used and the
 		// end of the zip. Judged on its bytes alone, a part that passed could still overflow the
 		// zip's budget and cost every earlier entry (E6Z-AC1).
-		room := (budget - used - attachZipSlack - attachZipEntryOverhead) * 512 / 513
-		_, serr := guardStream(a.WriteTo)(&attachSpaceWriter{w: &buf, left: max(room, 0), stop: w.stopped, tick: r.watch.bump})
+		// The share deflate may add (1/513 of it, rounded up) is taken off without a multiplication: a
+		// destination that reports a nominal 16 PiB or more free overflowed budget*512 and refused
+		// every part as "no space" (E6Z-AC1 re-verification).
+		room := max(budget-used-attachZipSlack-attachZipEntryOverhead, 0)
+		room -= (room + 512) / 513
+		_, serr := guardStream(a.WriteTo)(&attachSpaceWriter{w: &buf, left: room, stop: w.stopped, tick: r.watch.bump})
 		serr = classifyStream(serr)
 		if serr != nil && w.stopped() {
 			serr = errAttachStopped
