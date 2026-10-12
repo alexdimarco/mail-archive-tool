@@ -7,6 +7,64 @@ import (
 	"mail-archive-tool/internal/assure"
 )
 
+// covers: MA-535, MA-534, R1
+// F4 and F2 (friction review of EW-E6): a Microsoft 365 export's README does not send the reader to an archive
+// that is not there ("the archive's own zip, described above", with nothing above), and an export that
+// holds a zip copied from an archive says what that zip is and what to do when the unzip command of macOS
+// stops on it ("write error (disk full?)", exit 50, at the first accented name): it is not damaged and the
+// disk is not full; Finder, 7-Zip, ditto -x -k and Python read it. An export whose messages all have their
+// own originals, and a Microsoft 365 one, say nothing of it. (The sentences that name an archived zip stay
+// in a Microsoft 365 README, in words that say only an export from an archive has one: the tests of MA-535
+// assert them.)
+func TestReadmeNamesTheArchivesZipOnlyWhereThereIsOneAndSaysHowToOpenIt(t *testing.T) {
+	const macWords = "write error (disk full?)"
+	zb := e6Zip(t, e6ZipEntry{name: "Rapport février.pdf", data: []byte("%PDF fine")})
+
+	// a Microsoft 365 export: no archive to describe, and nothing about macOS unzip
+	msgs := ceMsgs(1)
+	mime := e6Mime(msgs[0].SourceID, "one", e6Part{name: "a.bin", body: []byte("aaa")})
+	for _, asZip := range []bool{true, false} {
+		src := newFakeSrc()
+		src.body = func(string) []byte { return mime }
+		e := newCEEnv(t)
+		p := cePlan(t, e, src, msgs)
+		p.Options.Attachments, p.Options.AttachmentsAsZip = true, asZip
+		r := readText(t, mustRun(t, e, p, src).Root, copyReadmeName)
+		for _, banned := range []string{"described above", "(or, where the archive kept no original", macWords, "ditto"} {
+			if strings.Contains(r, banned) {
+				t.Errorf("a Microsoft 365 README (zip mode %v) says %q", asZip, banned)
+			}
+		}
+		if asZip && !strings.Contains(r, "no second zip is made") {
+			t.Errorf("a Microsoft 365 README (zip mode) no longer says that no second zip is made")
+		}
+	}
+
+	// an archive export with a record that has no original: its zip is copied, and the README says what to do with it
+	for _, asZip := range []bool{true, false} {
+		res, _, _ := e6zArchiveZip(t, newCEEnv(t), zb, asZip)
+		r := readText(t, res.Root, copyReadmeName)
+		for _, want := range []string{macWords, "exit 50", "not damaged", "the disk is not full", "double-click it in Finder", "ditto -x -k <zip> <folder>", "7-Zip", "python3 -m zipfile -e <zip> <folder>", "accented or non-Latin"} {
+			if !strings.Contains(r, want) {
+				t.Errorf("an archive export's README (zip mode %v) lacks %q", asZip, want)
+			}
+		}
+		if strings.Contains(r, "described above") {
+			t.Errorf("an archive export's README (zip mode %v) still says \"described above\"", asZip)
+		}
+	}
+
+	// an archive export in which every message has its own original: no archived zip, no such sentence
+	a := buildE6Archive(t)
+	s := a.open()
+	key := a.key("alice-attach")
+	p := a.plan(newCEEnv(t), s, []string{key})
+	p.Options.Attachments, p.Options.AttachmentsAsZip = true, true
+	if r := readText(t, a.run(newCEEnv(t), p, s).Root, copyReadmeName); strings.Contains(r, macWords) {
+		t.Errorf("a README of an export with no archived zip tells how to open one")
+	}
+}
+
 // covers: MA-424, MA-533, R1
 // F13 (friction review of EW-E6): a part left out for want of room says the same thing in both ways of
 // making attachments, ending with what holds the part: "free some space there and export this message again;

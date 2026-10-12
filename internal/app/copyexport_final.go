@@ -429,9 +429,9 @@ func (f *ceFinish) readmeText(status CopyStatus, c CopyCounts, stop *CopyStop, f
 		without = fmt.Sprintf(" (%s without an original)", commas(c.WithoutOriginal)) // the manifest counts them too (friction F7)
 	}
 	line("Counts: %s selected, %s exported%s, %s failed, %s not attempted.", commas(c.Selected), commas(c.Exported), without, commas(c.Failed), commas(c.NotAttempted))
-	var gone, noted, asText int
+	var gone, noted, asText, archZips int
 	if h.Source.Kind == "archive" {
-		gone, noted, asText = f.archiveFacts()
+		gone, noted, asText, archZips = f.archiveFacts()
 	}
 	if len(h.Folders) > 0 {
 		var names []string
@@ -551,10 +551,19 @@ func (f *ceFinish) readmeText(status CopyStatus, c CopyCounts, stop *CopyStop, f
 		line("- A readable copy (.html) is made by MailArchive from the .eml beside it, so that the message can be read in a browser: it carries MailArchive's own security policy (no scripts, nothing loaded from the internet) and is a convenience, not the message. It shows what MailArchive's reader could make of the message: an unusual message (an unknown character set or encoding, a part with no name) can be shown with a part missing or re-encoded, and its attachments are not in it, so when a page looks incomplete the .eml is the authoritative copy.")
 	}
 	if h.Options.Attachments && h.Options.AttachmentsAsZip {
-		line("- A .attachments.zip is made by MailArchive from the .eml beside it: every attachment of that message, each decoded to an entry of its own, in one zip however many attachments the message has. It is a convenience, not the message. A part this version could not decode is in it as received, with .undecoded added to its name, and one that was cut short is in it as far as it could be read, with .partial added: a note in export-manifest.json says so for each, and neither is the complete attachment. Where the archive kept no original, the archive's own -attachments.zip, described above, holds the attachments, copied as the archive kept it, and no second zip is made.")
+		// Only an export from an archive has an archived zip to name; the others say what is true of them (EW-E6 friction F4).
+		oneZip := "Each message has one zip, and no second zip is made for it."
+		if h.Source.Kind == "archive" {
+			oneZip = "Where the archive kept no original, the archive's own -attachments.zip (a file ending -attachments.zip, beside its page) holds the attachments, copied as the archive kept it, and no second zip is made."
+		}
+		line("- A .attachments.zip is made by MailArchive from the .eml beside it: every attachment of that message, each decoded to an entry of its own, in one zip however many attachments the message has. It is a convenience, not the message. A part this version could not decode is in it as received, with .undecoded added to its name, and one that was cut short is in it as far as it could be read, with .partial added: a note in export-manifest.json says so for each, and neither is the complete attachment. %s", oneZip)
 		line("- An attachment's name in a zip can differ from the one the sender gave it: a long name is shortened, characters that Windows or macOS do not allow in a file name are replaced, a path in the name (\"../\") is dropped, a name Windows reserves (CON, NUL) gets an underscore in front, and two attachments of one message with the same name are numbered (\"notes.txt\" and \"notes (2).txt\"). The .eml beside the zip holds the sender's names; export-manifest.json says, for a message, how many of its names were changed (\"renamed\").")
 	} else if h.Options.Attachments {
-		line("- The files in a .attachments folder are made by MailArchive from the .eml beside them (or, where the archive kept no original, from the archived attachments zip): each attachment decoded to a file of its own. They are conveniences, not the message. A part this version could not decode is there as received, with .undecoded added to its name, and one that was cut short is there as far as it could be read, with .partial added: a note in export-manifest.json says so for each, and neither is the complete attachment.")
+		from := ""
+		if h.Source.Kind == "archive" {
+			from = " (or, where the archive kept no original, from the archived attachments zip)"
+		}
+		line("- The files in a .attachments folder are made by MailArchive from the .eml beside them%s: each attachment decoded to a file of its own. They are conveniences, not the message. A part this version could not decode is there as received, with .undecoded added to its name, and one that was cut short is there as far as it could be read, with .partial added: a note in export-manifest.json says so for each, and neither is the complete attachment.", from)
 		line("- A file's name can differ from the one the sender gave it: a long name is shortened, characters that Windows or macOS do not allow in a file name are replaced, a path in the name (\"../\") is dropped, a name Windows reserves (CON, NUL) gets an underscore in front, and two attachments of one message with the same name are numbered (\"notes.txt\" and \"notes (2).txt\"). The .eml beside the folder holds the sender's names; export-manifest.json says, for a message, how many of its names were changed (\"renamed\").")
 	}
 	if h.Source.Kind != "archive" {
@@ -569,16 +578,25 @@ func (f *ceFinish) readmeText(status CopyStatus, c CopyCounts, stop *CopyStop, f
 			line("- %s archived %s not carry MailArchive's security policy, or held a live refresh, so %s copied as text (.archived-page.txt): open %s as text only.",
 				commas(asText), plural(asText, "page did", "pages did"), plural(asText, "it was", "they were"), plural(asText, "it", "them"))
 		}
+		if archZips > 0 { // the archive's own zip is copied as it is, and the unzip command of macOS stops on its accented names (EW-E6 friction F2)
+			line("- A zip copied from the archive (a file ending -attachments.zip) is as the archive wrote it, and the unzip command of macOS does not read it when a name in it has accented or non-Latin letters: it garbles such a name and then stops with \"write error (disk full?)\" (exit 50). The zip is not damaged and the disk is not full. To open it, double-click it in Finder, or use 7-Zip, or, in a macOS terminal, ditto -x -k <zip> <folder>, or, with Python, python3 -m zipfile -e <zip> <folder>.")
+		}
 	}
 	line("")
 	line("Caveats")
+	// Only an export from an archive has an archived zip to name (EW-E6 friction F4); the sentences about one
+	// say so where they are printed for the other sources, whose tests pin them.
+	orArch, archZip, archFiles := "", "In an export from a MailArchive archive, an archived attachments zip, copied as it is, is as the archive kept it.", "In an export from a MailArchive archive, attachments extracted from an archived attachments zip are as the archive kept them."
+	if h.Source.Kind == "archive" {
+		orArch, archZip, archFiles = " (or the archived attachments zip)", "An archived attachments zip, copied as it is, is as the archive kept it.", "Attachments extracted from an archived attachments zip are as the archive kept them."
+	}
 	if h.Options.Attachments && h.Options.AttachmentsAsZip {
-		line("- The attachments in a .attachments.zip show what MailArchive's reader made of the message. A part the reader dropped is not in it, and a part it could not name has the name of its Content-ID, \"inline\" or \"attachment-\" and a number: the .eml (or the archived attachments zip) is the authoritative copy, and the complete message is in it.")
-		line("- An archived attachments zip, copied as it is, is as the archive kept it. A zip written before MailArchive kept a text attachment's own bytes can already hold it re-encoded as UTF-8, so a file in another character set (Latin-1, say) may read differently from the one that was sent. A message forwarded as an attachment inside an Outlook data file (.pst) is kept in that zip as a few-byte stand-in, with nothing recording that the archive lost it, so this export cannot tell you which ones those are.")
+		line("- The attachments in a .attachments.zip show what MailArchive's reader made of the message. A part the reader dropped is not in it, and a part it could not name has the name of its Content-ID, \"inline\" or \"attachment-\" and a number: the .eml%s is the authoritative copy, and the complete message is in it.", orArch)
+		line("- %s A zip written before MailArchive kept a text attachment's own bytes can already hold it re-encoded as UTF-8, so a file in another character set (Latin-1, say) may read differently from the one that was sent. A message forwarded as an attachment inside an Outlook data file (.pst) is kept in that zip as a few-byte stand-in, with nothing recording that the archive lost it, so this export cannot tell you which ones those are.", archZip)
 		line("- A zip and the files taken out of it carry no download marker: Windows (Mark of the Web, which makes Office open a file in Protected View) and macOS (the quarantine attribute, which makes Gatekeeper ask first) do not warn when one is opened, as they do for a file saved from an email program. Treat each file you take out as an unopened email attachment: a macro document, a program or a script the sender chose is as dangerous here as it was in the email.")
 	} else if h.Options.Attachments {
-		line("- Extracted attachments show what MailArchive's reader made of the message. A part the reader dropped is not among them, and a part it could not name has the name of its Content-ID, \"inline\" or \"attachment-\" and a number: the .eml (or the archived attachments zip) is the authoritative copy, and the complete message is in it.")
-		line("- Attachments extracted from an archived attachments zip are as the archive kept them. A zip written before MailArchive kept a text attachment's own bytes can already hold it re-encoded as UTF-8, so a file in another character set (Latin-1, say) may read differently from the one that was sent. A message forwarded as an attachment inside an Outlook data file (.pst) is kept in that zip as a few-byte stand-in, with nothing recording that the archive lost it, so this export cannot tell you which ones those are.")
+		line("- Extracted attachments show what MailArchive's reader made of the message. A part the reader dropped is not among them, and a part it could not name has the name of its Content-ID, \"inline\" or \"attachment-\" and a number: the .eml%s is the authoritative copy, and the complete message is in it.", orArch)
+		line("- %s A zip written before MailArchive kept a text attachment's own bytes can already hold it re-encoded as UTF-8, so a file in another character set (Latin-1, say) may read differently from the one that was sent. A message forwarded as an attachment inside an Outlook data file (.pst) is kept in that zip as a few-byte stand-in, with nothing recording that the archive lost it, so this export cannot tell you which ones those are.", archFiles)
 		line("- Extracted files carry no download marker: Windows (Mark of the Web, which makes Office open a file in Protected View) and macOS (the quarantine attribute, which makes Gatekeeper ask first) do not warn when one is opened, as they do for a file saved from an email program. Treat each as an unopened email attachment: a macro document, a program or a script the sender chose is as dangerous here as it was in the email.")
 		line("- The path of an extracted file is its message's path with .attachments and the attachment's own name added, a name the sender chose, so it can be longer than the longest path the preview shows, and pass the 260-character limit below although the preview named no path over it.")
 		line("- A message with more than 1,000 attachments has all of them in its one .attachments folder, which then holds more files than the limit on a folder stated above.")
@@ -591,8 +609,9 @@ func (f *ceFinish) readmeText(status CopyStatus, c CopyCounts, stop *CopyStop, f
 
 // archiveFacts counts, among the exported messages of an archive-sourced run, those that had left the
 // mailbox when the plan was made, those that carry a note about what the archive itself lacks, and those
-// whose page was copied as text: what the README tells the recipient besides the counts (friction F7).
-func (f *ceFinish) archiveFacts() (gone, noted, asText int) {
+// whose page was copied as text, and how many archived attachments zips were copied as they are: what the
+// README tells the recipient besides the counts (friction F7; EW-E6 friction F2).
+func (f *ceFinish) archiveFacts() (gone, noted, asText, zips int) {
 	_ = walkMessages(f.rec.path, func(p *cePlanLine, m *ceMsgLine) error {
 		if m == nil || (m.Status != statusExported && m.Status != statusWithoutOrig && m.Status != statusOriginalOnly) {
 			return nil
@@ -604,13 +623,16 @@ func (f *ceFinish) archiveFacts() (gone, noted, asText int) {
 			noted++
 		}
 		for _, file := range m.Files {
-			if file.Role == roleQuarantinedPage {
+			switch file.Role {
+			case roleQuarantinedPage:
 				asText++
+			case roleArchivedZip:
+				zips++
 			}
 		}
 		return nil
 	})
-	return gone, noted, asText
+	return gone, noted, asText, zips
 }
 
 // attachReadmeList is how many messages with an attachment problem the README names.
