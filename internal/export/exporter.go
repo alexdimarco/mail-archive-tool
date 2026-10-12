@@ -629,6 +629,12 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 // good. Nothing records a note before slice S2, so until then every re-read is stamped;
 // the gate keeps a slice that bumps the scheme ahead of the repair slice (S7) from
 // marking records it never repaired (MS1-AI1).
+//
+// It reads m.ParseNotes only, which is the whole predicate at scheme 1. The repair's rule
+// (design, "Predicate") is wider: notes from renderNotes(m) (cid-text-ref, introduced by
+// S4), prev.ParseScheme in RevokedSchemes, and 0 < prev.FidelityFallback < current. The
+// slice that adds each of those inputs (S4 for renderNotes, S7 for the other two) must extend this gate in the same
+// change, or its records are stamped as examined without having been (MS1-AI1 re-check).
 func examinedBy(m *model.Message, prev state.Record) bool {
 	for _, n := range m.ParseNotes {
 		if n.Since > prev.ParseScheme {

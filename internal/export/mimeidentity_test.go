@@ -414,6 +414,35 @@ func TestReReadStampsTheParseSchemeUnlessANoteIsUnexamined(t *testing.T) {
 	}
 }
 
+// covers: MA-347, R27
+// The edge of the stamp gate (MS1-AI1 re-verification): a note is unexamined only when it
+// was introduced AFTER the scheme the record holds (Since above ParseScheme). A note the
+// record's own scheme already carried (Since equal) is one that scheme examined, so the
+// re-read stamps; reading the edge as unexamined would leave a record at scheme N that a
+// build at N+1 re-reads, with a standing note of Since N, unstamped for good. The gate is
+// pinned directly because with a single scheme no run can put a record at Since.
+func TestExaminedByGateEdge(t *testing.T) {
+	note := func(since int) *model.Message {
+		return &model.Message{ParseNotes: []model.ParseNote{{Code: "n", Since: since}}}
+	}
+	for _, tc := range []struct {
+		name   string
+		m      *model.Message
+		scheme int
+		want   bool
+	}{
+		{"no notes", &model.Message{}, 0, true},
+		{"note newer than the record's scheme", note(2), 1, false},
+		{"note introduced by the record's own scheme", note(1), 1, true},
+		{"note older than the record's scheme", note(1), 2, true},
+		{"note newer than an unexamined record", note(1), 0, false},
+	} {
+		if got := examinedBy(tc.m, state.Record{ParseScheme: tc.scheme}); got != tc.want {
+			t.Errorf("%s: examinedBy = %t, want %t", tc.name, got, tc.want)
+		}
+	}
+}
+
 // dropParseScheme is what an older binary's save does to a manifest: it rewrites it
 // without the field it does not know, parse_scheme, on every record. It returns the
 // manifest reloaded from the rewritten file.
