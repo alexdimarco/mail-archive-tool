@@ -233,6 +233,18 @@ func RecordRowWhy(kind string) string {
 		return "the message's HTML shows an inline image that is not in the message (common in replies and forwards)"
 	case "html-shown-as-source":
 		return "the message's HTML could not be shown safely as a page, so the page shows it as text"
+	case GapKindUndecodedPart:
+		return "the part uses a transfer encoding this version of mailarchive does not decode (for example x-uuencode), so it is kept exactly as it was received"
+	case GapKindCorruptPart:
+		return "the part's data is cut short or damaged, so only the readable start is kept, under a name ending .partial"
+	case GapKindUnsplitMultipart:
+		return "the message's parts could not be told apart (its boundary is missing or wrong), so its whole text is shown as one body"
+	case GapKindStructureLimit:
+		return "the message has more parts, or nests them deeper, than this version of mailarchive reads, so the rest is kept unread, exactly as it was received"
+	case GapKindFidelityFallback:
+		return "this version of mailarchive could not decode the message in full, so the page and attachments are as an earlier version made them"
+	case GapKindIdentityStub:
+		return "an earlier version of mailarchive could not read this message at all, so it is filed under the placeholder that version used; the page shows what this version reads"
 	}
 	return "this version of mailarchive does not know why this record has a gap"
 }
@@ -270,6 +282,24 @@ func RecordRowRemedy(kind, class string) string {
 		return "nothing to do: it is usually not recoverable; " + kept
 	case "html-shown-as-source":
 		return "nothing to do: the words are kept and searchable; " + kept
+	case GapKindUndecodedPart:
+		return "nothing to do: the part is in the attachments zip as received (its name ends .undecoded), and a program that knows the encoding can open it; " + kept
+	case GapKindCorruptPart:
+		if terminal {
+			return "nothing to do: the source cannot deliver a complete copy; the readable start is in the attachments zip (its name ends .partial); " + kept
+		}
+		return "download the complete message in your mail app, then run again; the readable start is in the attachments zip (its name ends .partial); " + kept
+	case GapKindUnsplitMultipart:
+		if terminal {
+			return "nothing to do: the source cannot deliver a better copy; the text is on the page; " + kept
+		}
+		return "download the complete message in your mail app, then run again; the text is on the page; " + kept
+	case GapKindStructureLimit:
+		return "nothing to do: the rest is in the attachments zip as received (a name ending .undecoded); " + kept
+	case GapKindFidelityFallback:
+		return "nothing to do now: nothing is lost, and a later version of mailarchive reads the message again; if you see this often, please report it; " + kept
+	case GapKindIdentityStub:
+		return "nothing to do: the page shows the message as this version reads it; " + kept
 	}
 	return "run again; if it is listed again, keep the original, because this version of mailarchive does not know the cause"
 }

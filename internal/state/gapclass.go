@@ -65,6 +65,10 @@ const (
 // maxParseGapDetail bounds the detail of a parse-gap label, in runes.
 const maxParseGapDetail = 300
 
+// MaxParseGapLabels is how many parse-gap labels one record carries; a message with more
+// has one summary label for the rest (design-mime-fidelity MC21).
+const MaxParseGapLabels = 32
+
 // parseGapSep delimits a parse-gap label: "\x00kind\x00detail". A name a build writes is
 // control-stripped, so no other label begins with it.
 const parseGapSep = "\x00"
