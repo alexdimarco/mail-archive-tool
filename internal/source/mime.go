@@ -449,20 +449,24 @@ const (
 // case are dropped, and "7-bit" and "8-bit" are the encodings they mean. changed says it
 // was not a clean token already.
 func normalizeCTE(v string) (norm string, changed bool) {
-	s := v
-	for {
+	// One pass: each "(" runs to the next ")" and an unclosed one runs to the end. The
+	// comments are dropped as the string is built, so a header made of a million of them
+	// costs a million steps, not a million copies of the rest of the string (MS2-AO1).
+	var b strings.Builder
+	for s := v; ; {
 		open := strings.IndexByte(s, '(')
 		if open < 0 {
+			b.WriteString(s)
 			break
 		}
+		b.WriteString(s[:open])
 		closeAt := strings.IndexByte(s[open:], ')')
 		if closeAt < 0 {
-			s = s[:open]
 			break
 		}
-		s = s[:open] + s[open+closeAt+1:]
+		s = s[open+closeAt+1:]
 	}
-	norm = strings.ToLower(strings.Trim(strings.TrimSpace(s), `"'`))
+	norm = strings.ToLower(strings.Trim(strings.TrimSpace(b.String()), `"'`))
 	norm = strings.TrimSpace(norm)
 	switch norm {
 	case "7-bit":
