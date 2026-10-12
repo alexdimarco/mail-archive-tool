@@ -1310,6 +1310,57 @@ func (m *Manifest) UndecodableCount() int {
 	return n
 }
 
+// ParseGapKindCounts returns, per parse-gap kind, how many records carry at least one gap of it
+// (a record counts once for each kind it has), so status -json can tell a fallback from a lost
+// part (friction F11). Nil when there is none.
+func (m *Manifest) ParseGapKindCounts() map[string]int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out map[string]int
+	for _, r := range m.Entries {
+		seen := map[string]bool{}
+		for _, l := range append(append([]string(nil), r.Missing...), r.Terminal...) {
+			if kind, _, ok := ParseGapParts(l); ok && !seen[kind] {
+				seen[kind] = true
+				if out == nil {
+					out = map[string]int{}
+				}
+				out[kind]++
+			}
+		}
+	}
+	return out
+}
+
+// FillableParseGapCounts returns how many fillable records (the ones Counts() puts in fillable,
+// a legacy sentinel and a partly-read record apart) also carry a fillable parse gap, and how many
+// of them are fillable ONLY for that: every label of their Missing list is a parse gap. These
+// records are not "missing" in the sense of a source that has not delivered them, so the run
+// summary and status say what cures them (friction F3).
+func (m *Manifest) FillableParseGapCounts() (also, only int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, r := range m.Entries {
+		if !r.Fillable() || r.Unknown() {
+			continue
+		}
+		parseGaps := 0
+		for _, l := range r.Missing {
+			if IsParseGapLabel(l) {
+				parseGaps++
+			}
+		}
+		if parseGaps == 0 {
+			continue
+		}
+		also++
+		if parseGaps == len(r.Missing) {
+			only++
+		}
+	}
+	return also, only
+}
+
 // FidelityFallbackCount returns how many records were written from v1's content because
 // the fidelity parser failed or held less (MC19), from the additive fidelity_fallback
 // field. status -json reports it as fidelity_fallback.

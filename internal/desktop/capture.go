@@ -185,5 +185,11 @@ func archivedLine(res app.Result) string {
 			line += fmt.Sprintf(" (%d of the exports replaced an earlier copy of the same message, so the archive holds %d new.)", replaced, added)
 		}
 	}
+	// The messages with a parse gap, as the CLI and mailarchive-gui count them (res.Undecodable is
+	// every record with one): in words true of each kind, since a fallback or an unsplit message
+	// has no part in a zip. The report says which part and why (friction F12).
+	if res.Undecodable > 0 {
+		line += fmt.Sprintf(" %d message(s) carry a gap in how they were read (a part kept as received or cut short, or a text read by an earlier version); attachments-report.tsv in the archive folder says which.", res.Undecodable)
+	}
 	return line
 }

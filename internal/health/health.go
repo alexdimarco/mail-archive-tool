@@ -191,6 +191,14 @@ type Input struct {
 	// is how many records were written from the earlier parser's content (MC19).
 	Undecodable      int
 	FidelityFallback int
+	// ParseGapKinds is the number of records per parse-gap kind, for status -json.
+	ParseGapKinds map[string]int
+	// FillableParseGap is how many of the Fillable records are fillable because of a parse gap
+	// (a part cut short, a multipart with no boundary), also counted in Undecodable;
+	// FillableOnlyParseGap how many are fillable for nothing else, so the download remedy of a
+	// message a source has not delivered is not theirs (friction F3).
+	FillableParseGap     int
+	FillableOnlyParseGap int
 }
 
 // Extractable is the extractability facet of an archive: WithEML of Total
@@ -238,6 +246,21 @@ func (r *Report) note(code, msg string) {
 	r.Codes = append(r.Codes, code)
 }
 
+// onlyParseGap says every one of the n messages still missing content is so only because a part is
+// cut short or its parts could not be told apart (a fillable parse gap), so the remedy of a
+// message the source has not delivered is not theirs.
+func onlyParseGap(in Input, n int) bool {
+	return n > 0 && in.FillableOnlyParseGap >= n
+}
+
+// mixedCutRemedy says what cures the n messages, among several still missing content, that are cut
+// short or have parts that could not be told apart in the mailbox file they were read from: the
+// download that cures the others does not change a file.
+func mixedCutRemedy(n int) string {
+	return fmt.Sprintf("%d of them %s cut short, or %s parts that could not be told apart, in the mailbox file: a download does not change it, so replace the file with a complete export from your mail app",
+		n, plural(n, "is", "are"), plural(n, "has", "have"))
+}
+
 // IntervalOf maps a cadence to its period.
 func IntervalOf(iv string) time.Duration {
 	switch schedule.Interval(iv) {
@@ -271,6 +294,15 @@ func Assess(in Input, now time.Time) Report {
 	// reason and its own remedy below; it is left out of this count and text.
 	if n := in.Fillable - in.UnreadableOnly; n > 0 {
 		msg := fmt.Sprintf("%d message(s) still missing content — download for offline use in your mail app, then re-run; incremental fills them", n)
+		if onlyParseGap(in, n) {
+			// Every one is cut short, or has parts that could not be told apart, in the file it was
+			// read from: a download returns the same bytes from a mailbox file (friction F3).
+			msg = fmt.Sprintf("%d message(s) still missing content: cut short, or with parts that could not be told apart, in the file they were read from — replace the mailbox file with a complete export from your mail app (an IMAP cache: download the messages for offline use), then re-run; incremental fills them. A message that was malformed when it was sent cannot be completed by either, and stays listed", n)
+		} else if in.FillableParseGap > 0 {
+			// A mix: the download is for the messages a source has not delivered, and a cut one among
+			// them is not changed by it (friction F3, re-verification).
+			msg += "; " + mixedCutRemedy(in.FillableParseGap)
+		}
 		if in.ReportExists {
 			msg += fmt.Sprintf(" (see %s)", in.ReportPath)
 		}
@@ -1113,6 +1145,8 @@ func Gather(out, nameOverride string) Input {
 			in.Unreadable, in.UnreadableOnly, in.Unparsed = m.UnreadableCount(), m.UnreadableOnlyCount(), m.UnparsedCount()
 			in.UnparsedTerminal, in.PartlyRead = m.UnparsedTerminalCount(), m.PartlyReadPaths(20)
 			in.Undecodable, in.FidelityFallback = m.UndecodableCount(), m.FidelityFallbackCount()
+			in.ParseGapKinds = m.ParseGapKindCounts()
+			in.FillableParseGap, in.FillableOnlyParseGap = m.FillableParseGapCounts()
 			// The capture-gap ledger, with each store's source id and last run, so a
 			// gap can be told attempted from not attempted (FC14).
 			in.Gaps = m.CaptureGapsSorted()
@@ -1268,7 +1302,17 @@ func Summary(in Input, rep Report) []string {
 				line += " — " + in.ReportPath
 			}
 			lines = append(lines, line)
-			lines = append(lines, "            (still missing content = not downloaded yet; fills on the next run)")
+			if onlyParseGap(in, content) {
+				lines = append(lines, "            (still missing content = cut short, or its parts could not be told apart, in the file it was read from; fills on the next run once a complete copy is there)")
+			} else {
+				lines = append(lines, "            (still missing content = not downloaded yet; fills on the next run)")
+			}
+			if in.FillableParseGap > 0 {
+				lines = append(lines, fmt.Sprintf("            (%d of the messages still missing content %s also counted as having parts this version cannot decode)", in.FillableParseGap, plural(in.FillableParseGap, "is", "are")))
+			}
+			if in.FillableParseGap > 0 && !onlyParseGap(in, content) {
+				lines = append(lines, "            ("+mixedCutRemedy(in.FillableParseGap)+")")
+			}
 			if in.Undecodable > 0 {
 				lines = append(lines, "            (with parts this version cannot decode = kept as received in the attachments zip; the report says which part and why)")
 			}
@@ -1494,6 +1538,12 @@ type JSONReport struct {
 	// `terminal` (a parse gap is not empty at the source).
 	Undecodable      int `json:"undecodable"`
 	FidelityFallback int `json:"fidelity_fallback"`
+
+	// ParseGaps is the number of records per parse-gap kind (undecoded-part, corrupt-part,
+	// unsplit-multipart, structure-limit, fidelity-fallback, identity-stub), so a monitor can tell
+	// a fallback from a lost part without reading the report; omitted when there is none. An
+	// additive key at version 2 (friction F11).
+	ParseGaps map[string]int `json:"parse_gaps,omitempty"`
 }
 
 // JSONShownAsSource is the shown-as-source facet: the total and a count per
@@ -1555,6 +1605,12 @@ type JSONLastRun struct {
 	GapsTerminal  int `json:"gaps_terminal"`
 	GapsStuck     int `json:"gaps_stuck"`
 	Unreadable    int `json:"unreadable"`
+
+	// Undecodable and FidelityFallback are the parse-gap counts the run ended with, as the
+	// last-run record holds them, omitted when zero (friction F11: the README says last_run
+	// carries them). Additive; version stays 2.
+	Undecodable      int `json:"undecodable,omitempty"`
+	FidelityFallback int `json:"fidelity_fallback,omitempty"`
 }
 
 // JSONLastVerify is verify's integrity verdict, from its separate record; null
@@ -1663,6 +1719,9 @@ func JSON(in Input, rep Report) JSONReport {
 	}
 	doc.Unreadable = in.Unreadable
 	doc.Undecodable, doc.FidelityFallback = in.Undecodable, in.FidelityFallback
+	if len(in.ParseGapKinds) > 0 {
+		doc.ParseGaps = in.ParseGapKinds
+	}
 	if in.LastRunState == state.LastRunPresent {
 		lr := in.LastRun
 		jlr := &JSONLastRun{
@@ -1676,6 +1735,8 @@ func JSON(in Input, rep Report) JSONReport {
 			GapsObserved: lr.GapsObserved, GapsNew: lr.GapsNew, GapsRecovered: lr.GapsRecovered,
 			GapsFillable: lr.GapsFillable, GapsTerminal: lr.GapsTerminal, GapsStuck: lr.GapsStuck,
 			Unreadable: lr.Unreadable,
+
+			Undecodable: lr.Undecodable, FidelityFallback: lr.FidelityFallback,
 		}
 		// Finished stays null while a run is in progress (UJ-A5).
 		if lr.Status != state.RunRunning && !lr.Finished.IsZero() {

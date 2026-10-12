@@ -149,6 +149,12 @@ type Result struct {
 	// partial.
 	Undecodable      int
 	FidelityFallback int
+	// FillableParseGap is how many of the Fillable records are so because of a fillable parse
+	// gap (a part cut short, a multipart with no boundary), which is also counted in
+	// Undecodable; FillableOnlyParseGap how many are fillable for nothing else. A download in the
+	// mail app does not cure these in a mailbox file (friction F3).
+	FillableParseGap     int
+	FillableOnlyParseGap int
 
 	// The gaps this run closed (§4.3): because their item was captured, and because a
 	// completed walk of their folder no longer found them. The producers count them;
@@ -191,6 +197,7 @@ func finish(out string, r *Result, exp *export.Exporter, manifest *state.Manifes
 	r.Fillable -= manifest.UnreadableOnlyCount()
 	r.Unreadable, r.Unparsed = manifest.UnreadableCount(), manifest.UnparsedCount()
 	r.Undecodable, r.FidelityFallback = manifest.UndecodableCount(), manifest.FidelityFallbackCount()
+	r.FillableParseGap, r.FillableOnlyParseGap = manifest.FillableParseGapCounts()
 	r.ReportPath, r.Issues = writeReport(out, manifest, manifest.Migrated > 0, logger)
 	// What this run observed in the capture-gap ledger (its own runAt is the stamp
 	// every observation carries). The stuck count uses a daily period: `status`

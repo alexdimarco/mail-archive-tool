@@ -276,9 +276,65 @@ func RecordRowWhy(kind string) string {
 	return "this version of mailarchive does not know why this record has a gap"
 }
 
+// CorruptBodyDetailPrefix starts the detail of a corrupt-part gap whose part is the message's
+// TEXT (a body cut short or damaged), as the walker words it: a body has no .partial file and
+// no attachments zip, so its row says the page holds the readable start (friction F6).
+const CorruptBodyDetailPrefix = "the text of part "
+
+// OriginalAt says where the original message bytes a row promises to keep are, as the writer of
+// the row can tell (friction F14): "the original is kept" alone reads, to an inheritor with only
+// the archive folder, as a file beside the page.
+type OriginalAt int
+
+const (
+	// OriginalUnstated is the writer not knowing: the row says only that the original is kept.
+	OriginalUnstated OriginalAt = iota
+	// OriginalInSource is an archive made without -raw: no .eml beside the page, the original
+	// is in the source.
+	OriginalInSource
+	// OriginalBesidePage is a page with its .eml.
+	OriginalBesidePage
+)
+
+// RecordRowWhyFor is RecordRowWhy for a row whose detail is known: the one kind whose words
+// depend on it is a corrupt part, which may be a cut body (no .partial file, no zip).
+func RecordRowWhyFor(kind, detail string) string {
+	if kind == GapKindCorruptPart && strings.HasPrefix(detail, CorruptBodyDetailPrefix) {
+		return "the message's text is cut short or damaged, so the page shows only what could be decoded of it"
+	}
+	return RecordRowWhy(kind)
+}
+
+// RecordRowRemedyFor is RecordRowRemedy for a row whose detail and original are known (the
+// report writer knows both). The parse-gap kinds say where the original is; the older kinds'
+// words are unchanged whatever o is (their wording is pinned by the report's own rows).
+func RecordRowRemedyFor(kind, class, detail string, o OriginalAt) string {
+	const kept = "the original is kept"
+	if _, parseGap := parseGapKinds[kind]; !parseGap {
+		return RecordRowRemedy(kind, class)
+	}
+	body := kind == GapKindCorruptPart && strings.HasPrefix(detail, CorruptBodyDetailPrefix)
+	r := recordRowRemedy(kind, class, body, o != OriginalUnstated)
+	where := kept
+	switch o {
+	case OriginalInSource:
+		where = kept + " in the source (no .eml copy was made: the archive has one only when it is made with -raw)"
+	case OriginalBesidePage:
+		where = kept + " as the .eml beside the page"
+	}
+	return strings.TrimSuffix(r, kept) + where
+}
+
 // RecordRowRemedy is what to do about a record row, by its kind and class (the
 // report's first and second columns): an honest "nothing to do" where there is none.
 func RecordRowRemedy(kind, class string) string {
+	return recordRowRemedy(kind, class, false, false)
+}
+
+// recordRowRemedy is the table behind both. body says a corrupt part is the message's text;
+// local says the writer is the report, so the fillable remedies also name the complete export of
+// a mailbox file (a damaged file read in full is cured by a new export, not by a download).
+func recordRowRemedy(kind, class string, body, local bool) string {
 	const kept = "the original is kept"
 	terminal := class == ClassTerminal
 	switch kind {
@@ -312,15 +368,19 @@ func RecordRowRemedy(kind, class string) string {
 	case GapKindUndecodedPart:
 		return "nothing to do: the part is in the attachments zip as received (its name ends .undecoded), and a program that knows the encoding can open it; " + kept
 	case GapKindCorruptPart:
-		if terminal {
-			return "nothing to do: the source cannot deliver a complete copy; the readable start is in the attachments zip (its name ends .partial); " + kept
+		start := "the readable start is in the attachments zip (its name ends .partial)"
+		if body {
+			start = "the page shows what could be decoded of the text (the text is not a separate file)"
 		}
-		return "download the complete message in your mail app, then run again; the readable start is in the attachments zip (its name ends .partial); " + kept
+		if terminal {
+			return "nothing to do: the source cannot deliver a complete copy; " + start + "; " + kept
+		}
+		return "download the complete message in your mail app, then run again" + completeExport(local, kind) + "; " + start + "; " + kept
 	case GapKindUnsplitMultipart:
 		if terminal {
 			return "nothing to do: the source cannot deliver a better copy; the text is on the page; " + kept
 		}
-		return "download the complete message in your mail app, then run again; the text is on the page; " + kept
+		return "download the complete message in your mail app, then run again" + completeExport(local, kind) + "; the text is on the page; " + kept
 	case GapKindStructureLimit:
 		return "nothing to do: the rest is in the attachments zip as received (a name ending .undecoded); " + kept
 	case GapKindFidelityFallback:
@@ -329,6 +389,22 @@ func RecordRowRemedy(kind, class string) string {
 		return "nothing to do: the page shows the message as this version reads it; " + kept
 	}
 	return "run again; if it is listed again, keep the original, because this version of mailarchive does not know the cause"
+}
+
+// completeExport is what a fillable cut or boundary-less message also needs when its source is
+// a mailbox file the run read in full: a download returns the same bytes, a new export does not
+// (friction F3). Only the report, which knows the row is a record's, says it.
+//
+// A boundary-less multipart is cured by a fresh export only if the original in the mail app is
+// fine: one that was malformed when it was sent is the same in every export, and stays listed.
+func completeExport(local bool, kind string) string {
+	switch {
+	case !local:
+		return ""
+	case kind == GapKindUnsplitMultipart:
+		return " (a message that is malformed in the mailbox file is not changed by a download: if the original in your mail app is fine, replace the mailbox file with a fresh export; a message that was malformed when it was sent stays listed)"
+	}
+	return " (a message cut short inside a mailbox file is not changed by a download: replace the mailbox file with a complete export from your mail app; a message that was damaged when it was sent stays listed)"
 }
 
 // GapOriginal says whether the original still exists, by reason and source kind

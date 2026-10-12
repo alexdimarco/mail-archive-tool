@@ -11,6 +11,7 @@ import (
 
 	"mail-archive-tool/internal/model"
 	"mail-archive-tool/internal/state"
+	"mail-archive-tool/internal/util"
 )
 
 // leafPart is one non-multipart part as the walker holds it: the headers' reading, the
@@ -103,7 +104,7 @@ func (w *walker) bodyText(plain bool, l leafPart) {
 		}
 		return
 	case transferCorrupt:
-		w.gap(state.GapKindCorruptPart, fmt.Sprintf("the text of part %d is cut short or damaged after %d bytes: only the readable start is shown", l.n, len(l.data)))
+		w.gap(state.GapKindCorruptPart, fmt.Sprintf(state.CorruptBodyDetailPrefix+"%d is cut short or damaged after %d bytes: only what could be decoded is shown", l.n, len(l.data)))
 	}
 	if (plain && w.plain.Len() != 0) || (!plain && w.msg.HTMLBody != "") {
 		return
@@ -159,8 +160,11 @@ func (w *walker) undecoded(name string, l leafPart) {
 }
 
 // partName is the name an unnamed part is given in a .partial or .undecoded entry.
+//
+// The sender's name loses its bidirectional controls: this version makes the .undecoded and
+// .partial suffix, and an override in the name would reverse it out of sight (friction F9).
 func partName(name string, n int) string {
-	if name != "" {
+	if name = util.StripBidi(name); name != "" {
 		return name
 	}
 	return fmt.Sprintf("part-%d", n)

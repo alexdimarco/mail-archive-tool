@@ -1588,8 +1588,25 @@ func printSummary(logger *log.Logger, r app.Result, indexed, keepRaw bool, out s
 		}
 		logger.Printf("%s", line)
 		if r.Fillable > 0 {
-			logger.Printf("  Missing content usually means it isn't cached locally (IMAP / a limited Outlook offline window).")
-			logger.Printf("  In your mail app, download for offline use, then simply re-run: incremental fills the gaps.")
+			// A message that is fillable only because a part of it is cut short, or its parts could
+			// not be told apart, in the file it was read from is not one the source has not delivered:
+			// a download returns the same bytes from a mailbox file. Say what cures it, and say once
+			// that these are also in the cannot-decode count (friction F3).
+			if r.FillableParseGap > 0 {
+				logger.Printf("  %d of them %s also counted as having parts this version cannot decode: the report says which.", r.FillableParseGap, plural(r.FillableParseGap, "is", "are"))
+			}
+			if r.FillableOnlyParseGap >= r.Fillable {
+				logger.Printf("  These messages are cut short, or have parts that could not be told apart, in the file they were read from; what could be read is kept (see the report).")
+				logger.Printf("  A download does not change a mailbox file: replace it with a complete export from your mail app, then simply re-run: incremental fills them. (For an IMAP cache, download the messages for offline use instead.) A message that was malformed when it was sent cannot be completed by either, and stays listed.")
+			} else {
+				logger.Printf("  Missing content usually means it isn't cached locally (IMAP / a limited Outlook offline window).")
+				logger.Printf("  In your mail app, download for offline use, then simply re-run: incremental fills the gaps.")
+				if r.FillableParseGap > 0 {
+					// A mix: the download is for the messages a source has not delivered; a cut one
+					// among them is not changed by it (friction F3, re-verification).
+					logger.Printf("  %d of them %s cut short, or %s parts that could not be told apart, in the mailbox file: a download does not change it; replace the file with a complete export from your mail app (the report says which).", r.FillableParseGap, plural(r.FillableParseGap, "is", "are"), plural(r.FillableParseGap, "has", "have"))
+				}
+			}
 		}
 		if r.Unknown > 0 {
 			logger.Printf("  %d entr%s predate completeness tracking and are re-examined by incremental runs until none remain.", r.Unknown, plural(r.Unknown, "y", "ies"))

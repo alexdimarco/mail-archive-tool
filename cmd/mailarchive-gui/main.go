@@ -1297,12 +1297,31 @@ func exportSummary(out string, keepRaw bool, r app.Result) string {
 		s.Filled, s.Exported, s.SkippedManifest, s.SkippedDate, s.Attachments)
 
 	notDone := r.Fillable + r.Unknown
-	if notDone > 0 {
+	// A message that is fillable only because a part is cut short, or its parts could not be told
+	// apart, in the mailbox file it was read from is not one the source has not delivered: a download
+	// returns the same bytes. Say what cures it, that one malformed when it was sent stays listed, and
+	// once that these are also in the kept-as-received count below (friction F3, GUI half).
+	onlyGaps := r.Fillable > 0 && r.FillableOnlyParseGap >= r.Fillable
+	switch {
+	case onlyGaps:
+		fmt.Fprintf(b, "\nCut short, or with parts that could not be told apart, in the mailbox file: %d — a download does not change a mailbox file: replace it with a complete export from your mail app, then run this again to add them (an IMAP cache: download the messages for offline use instead). A message that was malformed when it was sent cannot be completed by either, and stays listed\n", r.Fillable)
+		fmt.Fprintf(b, "%d of them %s also counted under \"Kept as received\" below\n", r.FillableParseGap, guiVerb(r.FillableParseGap, "is", "are"))
+		if r.Unknown > 0 {
+			fmt.Fprintf(b, "Not yet re-checked: %d (from an older archive; re-checked automatically each run)\n", r.Unknown)
+		}
+	case notDone > 0:
 		line := fmt.Sprintf("\nNot fully downloaded yet: %d — open these in your mail app so it downloads them, then run this again to add them", notDone)
 		if r.Unknown > 0 {
 			line += fmt.Sprintf(" (%d are from an older archive and get re-checked automatically each run)", r.Unknown)
 		}
 		b.WriteString(line + "\n")
+		if r.FillableParseGap > 0 {
+			// The download is for the messages a source has not delivered; the cut ones among them
+			// need the file replaced.
+			fmt.Fprintf(b, "%d of them %s cut short, or %s parts that could not be told apart, in the mailbox file: a download does not change it, so replace the file with a complete export from your mail app (the report says which)\n",
+				r.FillableParseGap, guiVerb(r.FillableParseGap, "is", "are"), guiVerb(r.FillableParseGap, "has", "have"))
+			fmt.Fprintf(b, "%d of them %s also counted under \"Kept as received\" below\n", r.FillableParseGap, guiVerb(r.FillableParseGap, "is", "are"))
+		}
 	}
 	if r.Terminal > 0 {
 		fmt.Fprintf(b, "Empty at the source (nothing to download): %d\n", r.Terminal)
@@ -1327,6 +1346,14 @@ func exportSummary(out string, keepRaw bool, r app.Result) string {
 	b.WriteString("\nYour data stays on this computer: the archive is read from your own mail files, nothing is uploaded anywhere, and the saved pages run no scripts and load nothing from the internet — safe to open offline.\n")
 	fmt.Fprintf(b, "\nOutput folder:\n%s\n\nOpen index.html there to browse — no extra software needed. Each folder page has a box to filter within that folder; to search the whole archive at once, use the command-line tool: mailarchive serve -out %q", out, out)
 	return b.String()
+}
+
+// guiVerb picks the singular or plural form of a verb for a count.
+func guiVerb(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }
 
 // openPathArgv is the detached command that opens a file or folder with the OS's
