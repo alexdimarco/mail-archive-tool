@@ -495,6 +495,8 @@ type cardOut struct {
 	SetNote      string    `json:"setNote,omitempty"`  // how much of its retry set is exported (F10)
 	Failures     []failOut `json:"failures,omitempty"` // "Which ones?": the messages not exported and why (F7)
 	FailuresMore int       `json:"failuresMore,omitempty"`
+	AttachLine   string    `json:"attachLine,omitempty"` // what Extract attachments made, and in which way (EW-E6 friction F3, F11)
+	AttachWarn   string    `json:"attachWarn,omitempty"` // messages exported without all of their attachments, and how to get them (EW-E6 friction F1)
 }
 
 type failOut struct {
@@ -553,7 +555,7 @@ func (d *dashboard) historyAction(w http.ResponseWriter, r *http.Request) {
 		c := cardOut{Run: h.Run, Started: h.Started.UTC().Format(time.RFC3339), Source: h.SourceKind, SourceLabel: h.SourceLabel, Mailbox: h.Mailbox, Dest: h.Dest, RootName: h.RootName,
 			Label: h.Label, Kind: h.Kind, Running: h.Running, Planned: h.Planned, Exported: h.Exported, Failed: h.Failed, NotAttempted: h.NotAttempted,
 			Fingerprint: h.Fingerprint, Actions: h.Actions, Remaining: h.Remaining, Part: h.Part, RetryOf: h.RetryOf, Receipt: h.Receipt, Next: h.Next, SetNote: h.SetNote,
-			FailuresMore: h.FailuresMore}
+			FailuresMore: h.FailuresMore, AttachLine: h.AttachLine, AttachWarn: h.AttachWarn}
 		for _, f := range h.Failures {
 			c.Failures = append(c.Failures, failOut{Subject: f.Subject, Folder: f.Folder, Reason: f.Reason})
 		}

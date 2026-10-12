@@ -516,6 +516,8 @@ function cardEl(c){
   box.appendChild(el('div',when+' · '+(c.sourceLabel||c.mailbox||c.source)+' · '+c.rootName,'card-sub'));
   if(c.running)box.appendChild(el('div','Writing now: see Running export above.'));
   else box.appendChild(el('div',fmt(c.exported)+' exported, '+fmt(c.failed)+' failed, '+fmt(c.notAttempted)+' not attempted of '+fmt(c.planned)));
+  if(c.attachLine)box.appendChild(el('div',c.attachLine,'card-sub'));
+  if(c.attachWarn)box.appendChild(el('div',c.attachWarn,'note warnbox'));
   if(c.setNote)box.appendChild(el('div',c.setNote,'card-sub'));
   if(c.stop)box.appendChild(el('div',c.stop,'note warnbox'));
   if(c.next)box.appendChild(el('div',c.next,'note'));

@@ -397,12 +397,58 @@ type ceRecSummary struct {
 	// RetryableFailed is how many messages failed with a reason a retry can change (class
 	// retryable), as the card decides whether to offer "Export failed messages again" (F3).
 	RetryableFailed int
+	// Attach is what Extract attachments made across the run's messages, from their att counts and notes
+	// (EW-E6 friction F1, F3): what the card says of them.
+	Attach          ceAttachTotals
 	Stopped         *ceStoppedLine
 	Sealed          *ceSealedLine
 	Gone            bool
 	Located         []ceLocatedLine
 	Realized        *cePostureLine
 	NewerMajor      bool // a header of a newer format_version
+}
+
+// ceAttachTotals is what a run's messages came to, attachment-wise: how many attachments the reader
+// found, how many are in a zip or a folder, how many zips, how many messages have something made, how many
+// have a note about an attachment, and how many were left without some that exporting the message again
+// would make.
+type ceAttachTotals struct {
+	Found, Made, Zips, Msgs, Noted, Again int
+}
+
+// attachOf is what one message line adds to a run's attachment totals.
+func attachOf(m *ceMsgLine) (t ceAttachTotals) {
+	if m.Att != nil {
+		t.Found, t.Made = m.Att.Found, m.Att.Made
+		if m.Att.Made > 0 {
+			t.Msgs = 1
+		}
+		if m.Att.Again {
+			t.Again = 1
+		}
+	}
+	for _, f := range m.Files {
+		if f.Role == roleDerivedAttachZip {
+			t.Zips++
+		}
+	}
+	for _, n := range m.Notes {
+		if strings.HasPrefix(n, attachNotePrefix) {
+			t.Noted = 1
+			break
+		}
+	}
+	return t
+}
+
+// plus adds o, sign times, to the totals: a message line in (1), or a line it replaced out (-1).
+func (t *ceAttachTotals) plus(o ceAttachTotals, sign int) {
+	t.Found += sign * o.Found
+	t.Made += sign * o.Made
+	t.Zips += sign * o.Zips
+	t.Msgs += sign * o.Msgs
+	t.Noted += sign * o.Noted
+	t.Again += sign * o.Again
 }
 
 // summaryScans counts the full passes readSummary has made over run records: a test's
@@ -418,7 +464,10 @@ var messageWalks atomic.Int64
 func readSummary(path string) (*ceRecSummary, error) {
 	summaryScans.Add(1)
 	s := &ceRecSummary{Statuses: map[string]int{}}
-	type seen struct{ status, class string }
+	type seen struct {
+		status, class string
+		att           *ceAttachTotals // what the line added to the attachment totals, when it added any
+	}
 	last := map[int]seen{}
 	err := scanLines(path, func(line []byte) error {
 		switch lineKind(line) { // a malformed line has no kind: skipped, never reinterpreted
@@ -441,10 +490,20 @@ func readSummary(path string) (*ceRecSummary, error) {
 				if prev.status == statusFailed && prev.class == classRetryable {
 					s.RetryableFailed--
 				}
+				if prev.att != nil {
+					s.Attach.plus(*prev.att, -1)
+				}
 			} else {
 				s.Progress++
 			}
-			last[m.N] = seen{m.Status, m.Class}
+			var att *ceAttachTotals
+			if m.Status != statusFailed && m.Status != statusNotAttempted { // a failed message's files are not in the export
+				if a := attachOf(&m); a != (ceAttachTotals{}) {
+					att = &a
+					s.Attach.plus(a, 1)
+				}
+			}
+			last[m.N] = seen{m.Status, m.Class, att}
 			s.Statuses[m.Status]++
 			if m.Status == statusFailed && m.Class == classRetryable {
 				s.RetryableFailed++

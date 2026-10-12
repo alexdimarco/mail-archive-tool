@@ -76,6 +76,8 @@ type CopyRunInfo struct {
 	SetNote      string        // for a part of a retry set: how much of the whole set is exported (F10)
 	Failures     []CopyFailure // the first few messages that were not exported, from the run record (F7)
 	FailuresMore int           // how many more there are
+	AttachLine   string        // Extract attachments: what was made, and in which way, for a finished run that had it on (EW-E6 friction F3, F11)
+	AttachWarn   string        // the messages exported without all of their attachments, and how to get them (EW-E6 friction F1)
 }
 
 // CopyFailure is one message that was not exported and why, as the card's "Which ones?" shows.
@@ -309,6 +311,10 @@ func (e *CopyExportEnv) historyOne(run string, jl []ceJournalLine, ledger []ceLe
 		info.Failures, info.FailuresMore = e.failuresCached(run)
 		info.FailuresMore = max(0, info.Failed-len(info.Failures))
 	}
+	if hasRec && sum.Sealed != nil && sum.Header.Options.Attachments {
+		info.AttachLine = attachCardLine(sum.Header.Options.AttachmentsAsZip, sum.Attach)
+		info.AttachWarn = attachCardWarn(sum.Attach.Again)
+	}
 
 	o, hasObs := obs[run]
 	if hasObs {
@@ -345,6 +351,51 @@ func (e *CopyExportEnv) historyOne(run string, jl []ceJournalLine, ledger []ceLe
 		info.Next = "MailArchive is looking for this export's folder; its buttons appear in a few seconds (up to 5 on a network drive)."
 	}
 	return info, true
+}
+
+// attachCardLine is the line of a finished export's card about Extract attachments: in which way the
+// attachments were made, how many were, how many the reader found when some are not in a zip or a folder, and
+// how many messages have a note about an attachment (EW-E6 friction F3, F11).
+func attachCardLine(asZip bool, t ceAttachTotals) string {
+	way, made := "loose files", ""
+	if asZip {
+		way = "one zip per message"
+	}
+	switch {
+	case t.Found == 0:
+		made = "none of these messages had an attachment"
+	case asZip && t.Made == 0:
+		made = fmt.Sprintf("none of the %s found are in a zip", commas(t.Found))
+	case asZip && t.Made == t.Found:
+		made = fmt.Sprintf("%s %s in %s %s", commas(t.Made), plural(t.Made, "attachment", "attachments"), commas(t.Zips), plural(t.Zips, "zip", "zips"))
+	case asZip:
+		made = fmt.Sprintf("%s of the %s found are in %s %s", commas(t.Made), commas(t.Found), commas(t.Zips), plural(t.Zips, "zip", "zips"))
+	case t.Made == 0:
+		made = fmt.Sprintf("none of the %s found were extracted", commas(t.Found))
+	case t.Made == t.Found:
+		made = fmt.Sprintf("%s %s from %s %s", commas(t.Made), plural(t.Made, "file", "files"), commas(t.Msgs), plural(t.Msgs, "message", "messages"))
+	default:
+		made = fmt.Sprintf("%s of the %s found were extracted, from %s %s", commas(t.Made), commas(t.Found), commas(t.Msgs), plural(t.Msgs, "message", "messages"))
+	}
+	line := "Attachments, " + way + ": " + made + "."
+	if t.Noted > 0 {
+		line += fmt.Sprintf(" %s %s a note about an attachment (README.txt lists them).", commas(t.Noted), plural(t.Noted, "message has", "messages have"))
+	}
+	return line
+}
+
+// attachCardWarn is the warning on the card of an export in which n messages were exported without
+// all of their attachments (a stop, a full disk or a failed write cut them): the messages' originals are
+// whole, and the way to the attachments is to select them again, because no button of the card takes a
+// message that was exported (EW-E6 friction F1).
+func attachCardWarn(n int) string {
+	switch {
+	case n <= 0:
+		return ""
+	case n == 1:
+		return "1 message was exported without all of its attachments, because the export was stopped, the disk was full or a file could not be written. Its .eml is complete. To get its attachments, select that message again in a new export; 'Export the remaining messages' does not include it, and its note in export-manifest.json says what is missing."
+	}
+	return fmt.Sprintf("%s messages were exported without all of their attachments, because the export was stopped, the disk was full or a file could not be written. Their .eml files are complete. To get their attachments, select those messages again in a new export; 'Export the remaining messages' does not include them, and each one's note in export-manifest.json says what is missing.", commas(n))
 }
 
 // archiveCardLabel names the archive an export activity card is of: "your archive, folder <name>" for the
