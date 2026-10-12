@@ -1092,6 +1092,21 @@ func TestReadmeSaysWhatTheAttachmentsZipHolds(t *testing.T) {
 		t.Errorf("sums: changed %v, missing %v, unlisted %v", bad, missing, extra)
 	}
 
+	// E6Z-AI2: an archive record with no original has the archive's own zip copied as it is, and no zip is
+	// made; the README counts it (it did say "0 messages with attachments", and described a name this
+	// export never made) and says it is the archive's file, not one made from an .eml.
+	ares, _, _ := e6zArchiveZip(t, newCEEnv(t), e6Zip(t, e6ZipEntry{name: "ok.pdf", data: []byte("%PDF fine")}), true)
+	ar := readText(t, ares.Root, copyReadmeName)
+	var aline string
+	for _, l := range strings.Split(ar, "\n") {
+		if strings.HasPrefix(l, "Extract attachments:") {
+			aline = l
+		}
+	}
+	if want := "Extract attachments: 1 message with an attachments zip the archive kept, copied as it is (a file ending -attachments.zip), beside its page."; aline != want {
+		t.Errorf("README of an archive-only zip run says %q, want %q", aline, want)
+	}
+
 	// loose mode says none of the zip text, and the option off says none of either
 	loose, _ := e6Run(t, newCEEnv(t), msgs, false, func(id string) []byte { return body[id] })
 	lr := readText(t, loose.Root, copyReadmeName)

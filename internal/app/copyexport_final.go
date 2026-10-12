@@ -484,7 +484,14 @@ func (f *ceFinish) readmeText(status CopyStatus, c CopyCounts, stop *CopyStop, f
 	if h.Options.Attachments {
 		a := f.attachFacts()
 		if h.Options.AttachmentsAsZip {
-			line("Extract attachments: %s %s with attachments, each with its attachments in one zip named like the message's file with .attachments.zip added, beside it. A message with a huge number of attachments is still one file.", commas(a.zips), plural(a.zips, "message", "messages"))
+			// A record with no original has no zip made for it: the archive's own is copied as it is, and
+			// is counted as what it is (E6Z-AI2).
+			if a.zips > 0 || a.archived == 0 {
+				line("Extract attachments: %s %s with attachments, each with its attachments in one zip named like the message's file with .attachments.zip added, beside it. A message with a huge number of attachments is still one file.", commas(a.zips), plural(a.zips, "message", "messages"))
+			}
+			if a.archived > 0 {
+				line("Extract attachments: %s %s with an attachments zip the archive kept, copied as it is (a file ending -attachments.zip), beside its page.", commas(a.archived), plural(a.archived, "message", "messages"))
+			}
 		} else {
 			line("Extract attachments: %s %s from %s %s, each in a folder named like the message's file with .attachments added, beside it.", commas(a.files), plural(a.files, "file", "files"), commas(a.msgs), plural(a.msgs, "message", "messages"))
 		}
@@ -602,6 +609,7 @@ const attachReadmeList = 10
 // attachment that was not extracted or only partly (the first few by subject and folder).
 type attachFacts struct {
 	files, zips, msgs, problems int // files are loose extracted files, zips the attachments zips (zip mode)
+	archived                    int // messages whose zip is the archive's own, copied as it is (no original to make one from)
 	listed                      []string
 }
 
@@ -611,17 +619,22 @@ func (f *ceFinish) attachFacts() attachFacts {
 		if m == nil || (m.Status != statusExported && m.Status != statusWithoutOrig && m.Status != statusOriginalOnly) {
 			return nil
 		}
-		n, z := 0, 0
+		n, z, arc := 0, 0, 0
 		for _, file := range m.Files {
 			switch file.Role {
 			case roleDerivedAttach:
 				n++
 			case roleDerivedAttachZip:
 				z++
+			case roleArchivedZip:
+				arc++
 			}
 		}
 		a.files += n
 		a.zips += z
+		if z == 0 && arc > 0 { // a message with an original has no archived zip in its files; this one has none to make a zip from
+			a.archived++
+		}
 		if n+z > 0 {
 			a.msgs++
 		}
