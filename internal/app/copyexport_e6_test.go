@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"mail-archive-tool/internal/assure"
+	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/model"
 	"mail-archive-tool/internal/source"
 	"mail-archive-tool/internal/util"
@@ -532,11 +533,79 @@ func TestArchiveZipEntriesAreExtractedWithinBounds(t *testing.T) {
 	t.Skip("MA-424: zip entry extraction is not built; lands in EW-E6")
 }
 
-// covers: MA-424, R29
+// e6Latin1CSV is a Latin-1 table that is not valid UTF-8.
+var e6Latin1CSV = []byte("name;city\r\ncaf\xe9;Z\xfcrich\r\n")
+
+// buildE6Archive is a real archive of two stores: "alice", captured with each message's original
+// kept, holds a message with two attachments (a PDF and a Latin-1 table) and a plain one; "bob",
+// captured without, holds a message with a PDF attachment (so it has a zip) and a plain one.
+func buildE6Archive(t *testing.T) *ceArchive {
+	t.Helper()
+	src := tmpDir(t)
+	alice, bob := filepath.Join(src, "alice"), filepath.Join(src, "bob")
+	writeMaildirMsg(t, alice, "a1.eml", e6Mime("A1", "alice attach",
+		e6Part{name: "report.pdf", ctype: "application/pdf", body: []byte("%PDF-1.4 alice\x00\x01")},
+		e6Part{name: "data.csv", ctype: "text/csv; charset=iso-8859-1", body: e6Latin1CSV}))
+	writeMaildirMsg(t, alice, "a2.eml", msg("plain original", "id2", "body two"))
+	writeMaildirMsg(t, bob, "b1.eml", attachMsg("zip only", "id4"))
+	writeMaildirMsg(t, bob, "b2.eml", msg("plain page", "id5", "body five"))
+	a := &ceArchive{t: t, dir: tmpDir(t), src: src}
+	a.capture(alice, true, export.Incremental)
+	a.capture(bob, false, export.Incremental)
+	return a
+}
+
+// covers: MA-424, MA-425, R29, R20, S52
 // An archive record that has an original extracts from its .eml read back from the destination,
-// as a Microsoft 365 message does.
+// as a Microsoft 365 message does: the files are under <stem>.attachments/ beside the copied
+// original, hold the parts' own bytes (the Latin-1 table byte-identical), and the archive is not
+// written by it.
 func TestAnArchiveRecordWithAnOriginalExtractsFromItsEml(t *testing.T) {
-	t.Skip("MA-424: attachment extraction is not built; lands in EW-E6")
+	a := buildE6Archive(t)
+	e := newCEEnv(t)
+	s := a.open()
+	before := treeDigest(t, a.dir, "search.db-wal", "search.db-shm")
+	keys := []string{a.key("alice-attach"), a.key("plain-original")}
+	p := a.plan(e, s, keys)
+	p.Options.Attachments = true
+	res := a.run(e, p, s)
+	if res.Status != CopyStatusComplete || res.Counts.Exported != 2 {
+		t.Fatalf("the run: %s, %+v", res.Label, res.Counts)
+	}
+	man := manifestOf(t, res.Root)
+	ent := entryOf(t, man, keys[0])
+	var derived []map[string]any
+	for _, f := range ent["files"].([]any) {
+		if m := f.(map[string]any); m["role"] == roleDerivedAttach {
+			derived = append(derived, m)
+		}
+	}
+	orig := fileOf(ent, roleOriginal)
+	if ent["status"] != "exported" || orig == nil || len(derived) != 2 {
+		t.Fatalf("the first record: %v", ent)
+	}
+	attachDir := strings.TrimSuffix(orig["path"].(string), ".eml") + ".attachments/"
+	want := map[string][]byte{"report.pdf": []byte("%PDF-1.4 alice\x00\x01"), "data.csv": e6Latin1CSV}
+	for _, d := range derived {
+		p := d["path"].(string)
+		name := strings.TrimPrefix(p, attachDir)
+		if w, ok := want[name]; !ok || !strings.HasPrefix(p, attachDir) || readText(t, res.Root, p) != string(w) {
+			t.Errorf("%s: %q is not one of the parts' own bytes under %s", p, readText(t, res.Root, p), attachDir)
+		}
+		delete(want, name)
+	}
+	if len(want) != 0 {
+		t.Errorf("not extracted: %v", want)
+	}
+	if plain := entryOf(t, man, keys[1]); len(plain["files"].([]any)) != 1 || plain["status"] != "exported" {
+		t.Errorf("the record with no attachment: %v", plain)
+	}
+	if bad, missing, extra := sumsCheck(t, res.Root); len(bad)+len(missing)+len(extra) != 0 {
+		t.Errorf("sums: changed %v, missing %v, unlisted %v", bad, missing, extra)
+	}
+	if got := treeDigest(t, a.dir, "search.db-wal", "search.db-shm"); got != before {
+		t.Error("the export changed the archive")
+	}
 }
 
 // covers: MA-424, R1
