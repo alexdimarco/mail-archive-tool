@@ -159,7 +159,11 @@ func (w *attachWriter) zipParts(dir, stem string, stamp time.Time, atts []model.
 		// The part is read whole before it is written, as the archive writer reads it, so an empty
 		// or failed part leaves no entry in the zip (an entry cannot be taken back).
 		var buf bytes.Buffer
-		room := budget - used - attachZipSlack
+		// The part is admitted if its own cost fits: its bytes, deflate's overhead on them (len/512, as
+		// used counts it) and its entry and record in the directory, on top of what is used and the
+		// end of the zip. Judged on its bytes alone, a part that passed could still overflow the
+		// zip's budget and cost every earlier entry (E6Z-AC1).
+		room := (budget - used - attachZipSlack - attachZipEntryOverhead) * 512 / 513
 		_, serr := guardStream(a.WriteTo)(&attachSpaceWriter{w: &buf, left: max(room, 0), stop: w.stopped, tick: r.watch.bump})
 		serr = classifyStream(serr)
 		if serr != nil && w.stopped() {

@@ -473,6 +473,53 @@ func TestZipModeChecksFreeSpaceAndObservesCancelAndAbandon(t *testing.T) {
 		}
 	})
 
+	// E6Z-AC1: the room a part is admitted against must count what the part costs in the zip (deflate's own
+	// overhead on noise, its entry and its record in the directory), not only its bytes: a part that is
+	// admitted and then does not fit cut the whole zip, small.bin which fitted with it. Whatever the
+	// free space is, to the byte around the size of the finished zip, small.bin is in a zip, and a big.bin
+	// that is not is a note of its own, never a zip that was not written.
+	t.Run("space edge", func(t *testing.T) {
+		small, big := e6zNoise(50000, 1), e6zNoise(18<<20, 2)
+		msgs := ceMsgs(1)
+		mime := e6Mime(msgs[0].SourceID, "two", e6Part{name: "small.bin", body: small}, e6Part{name: "big.bin", body: big})
+		run := func(extra int64) (*CopyResult, *ceMsgLine) {
+			e := newCEEnv(t)
+			src := newFakeSrc()
+			src.body = func(string) []byte { return mime }
+			p := cePlan(t, e, src, msgs)
+			p.Options.Attachments, p.Options.AttachmentsAsZip = true, true
+			if extra >= 0 {
+				e.freeDest = e6Disk(p.Dest, p.Reserve+int64(len(mime))+extra)
+			}
+			res := mustRun(t, e, p, src)
+			return res, assure.Reached(t, e5Files(t, e, res)[1], "the message's line")
+		}
+		_, line := run(-1)
+		whole, ok := e6zRec(line)
+		if !ok {
+			t.Fatalf("the unconstrained run made no zip: %+v %q", line.Files, line.Notes)
+		}
+		var deltas []int64
+		for d := int64(-2200); d <= 1200; d += 128 { // where the part passed the room check and the zip did not fit
+			deltas = append(deltas, d)
+		}
+		for d := int64(30000); d <= 46000; d += 1024 { // where the estimate admits the part
+			deltas = append(deltas, d)
+		}
+		for _, d := range deltas {
+			res, line := run(whole.Size + d)
+			zrec, ok := e6zRec(line)
+			if !ok {
+				t.Errorf("room for the finished zip %+d bytes: no zip, notes %.200q (small.bin fitted and is lost)", d, line.Notes)
+				continue
+			}
+			files, _ := e6zEntries(t, e6Read(t, res.Root, zrec.Path))
+			if len(files) == 0 || files[0].Name != "small.bin" || (len(files) == 1 && !e6advHasNote(line.Notes, `"big.bin"`, "no space was left")) {
+				t.Errorf("room %+d: the zip holds %d entries, notes %.200q", d, len(files), line.Notes)
+			}
+		}
+	})
+
 	for _, abandon := range []bool{false, true} {
 		name := "cancel"
 		if abandon {
