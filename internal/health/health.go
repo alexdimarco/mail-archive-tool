@@ -253,6 +253,14 @@ func onlyParseGap(in Input, n int) bool {
 	return n > 0 && in.FillableOnlyParseGap >= n
 }
 
+// mixedCutRemedy says what cures the n messages, among several still missing content, that are cut
+// short or have parts that could not be told apart in the mailbox file they were read from: the
+// download that cures the others does not change a file.
+func mixedCutRemedy(n int) string {
+	return fmt.Sprintf("%d of them %s cut short, or %s parts that could not be told apart, in the mailbox file: a download does not change it, so replace the file with a complete export from your mail app",
+		n, plural(n, "is", "are"), plural(n, "has", "have"))
+}
+
 // IntervalOf maps a cadence to its period.
 func IntervalOf(iv string) time.Duration {
 	switch schedule.Interval(iv) {
@@ -290,6 +298,10 @@ func Assess(in Input, now time.Time) Report {
 			// Every one is cut short, or has parts that could not be told apart, in the file it was
 			// read from: a download returns the same bytes from a mailbox file (friction F3).
 			msg = fmt.Sprintf("%d message(s) still missing content: cut short, or with parts that could not be told apart, in the file they were read from — replace the mailbox file with a complete export from your mail app (an IMAP cache: download the messages for offline use), then re-run; incremental fills them. A message that was malformed when it was sent cannot be completed by either, and stays listed", n)
+		} else if in.FillableParseGap > 0 {
+			// A mix: the download is for the messages a source has not delivered, and a cut one among
+			// them is not changed by it (friction F3, re-verification).
+			msg += "; " + mixedCutRemedy(in.FillableParseGap)
 		}
 		if in.ReportExists {
 			msg += fmt.Sprintf(" (see %s)", in.ReportPath)
@@ -1297,6 +1309,9 @@ func Summary(in Input, rep Report) []string {
 			}
 			if in.FillableParseGap > 0 {
 				lines = append(lines, fmt.Sprintf("            (%d of the messages still missing content %s also counted as having parts this version cannot decode)", in.FillableParseGap, plural(in.FillableParseGap, "is", "are")))
+			}
+			if in.FillableParseGap > 0 && !onlyParseGap(in, content) {
+				lines = append(lines, "            ("+mixedCutRemedy(in.FillableParseGap)+")")
 			}
 			if in.Undecodable > 0 {
 				lines = append(lines, "            (with parts this version cannot decode = kept as received in the attachments zip; the report says which part and why)")

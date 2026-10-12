@@ -1601,6 +1601,11 @@ func printSummary(logger *log.Logger, r app.Result, indexed, keepRaw bool, out s
 			} else {
 				logger.Printf("  Missing content usually means it isn't cached locally (IMAP / a limited Outlook offline window).")
 				logger.Printf("  In your mail app, download for offline use, then simply re-run: incremental fills the gaps.")
+				if r.FillableParseGap > 0 {
+					// A mix: the download is for the messages a source has not delivered; a cut one
+					// among them is not changed by it (friction F3, re-verification).
+					logger.Printf("  %d of them %s cut short, or %s parts that could not be told apart, in the mailbox file: a download does not change it; replace the file with a complete export from your mail app (the report says which).", r.FillableParseGap, plural(r.FillableParseGap, "is", "are"), plural(r.FillableParseGap, "has", "have"))
+				}
 			}
 		}
 		if r.Unknown > 0 {
