@@ -488,7 +488,11 @@ func (w *localWalk) mboxDir(sc *scope, rel string, prefix []string, top bool) er
 			}
 			if err := w.into(sc, erel, v, folderPath, func(s *scope, r string) error {
 				if !isMaildirIn(s, r) {
-					return nil
+					// A followed link to a directory that is no maildir: the folder of mbox files
+					// it usually is (a Thunderbird account directory), read as the directory of
+					// mailboxes it is, its mailboxes the subfolders of this one. Read as nothing,
+					// it lost the mail the opt-in's remedy promised to read (S2B-AC2).
+					return w.mboxDir(s, r, folderPath, false)
 				}
 				return w.maildir(s, r, folderPath)
 			}); err != nil {

@@ -222,6 +222,40 @@ func TestADirectoryLinkNeverTakesARealFoldersPlace(t *testing.T) {
 	}
 }
 
+// covers: MA-322, R25, R1, R10, S47
+// S2B-AC2: with the directory-link opt-in, a link to a folder that holds MBOX files (a
+// Thunderbird account directory, the usual target of a folder link) is read as that
+// directory of mailboxes. The followed target was read only if it was a maildir; any
+// other directory was read as nothing and recorded as nothing, while the gap the
+// refused link had left said the folder would be read once the opt-in was given: the
+// owner followed the remedy and lost the mail with a clean run. Without the opt-in the
+// link is still a terminal gap (the twin).
+func TestAFollowedLinkToADirectoryOfMailboxesIsRead(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("links need privileges on Windows")
+	}
+	parent := t.TempDir()
+	store := filepath.Join(parent, "Mail")
+	writeLocal(t, filepath.Join(store, "Inbox"), mboxText("m3"))
+	writeLocal(t, filepath.Join(parent, "other", "Archive"), mboxText("m1")+mboxText("m2"))
+	writeLocal(t, filepath.Join(parent, "other", "Archive.sbd", "Old"), mboxText("m0"))
+	if err := os.Symlink(filepath.Join(parent, "other"), filepath.Join(store, "Linked")); err != nil {
+		t.Fatal(err)
+	}
+
+	without := walkLocal(t, store, OpenOptions{})
+	if strings.Join(without.subjects, " ") != "Inbox: m3" || without.count("symlink-outside-store") != 1 {
+		t.Fatalf("without the opt-in: delivered %v, faults %+v; want the link refused and recorded", without.subjects, without.faults)
+	}
+	got := walkLocal(t, store, OpenOptions{FollowLinks: true})
+	if strings.Join(got.subjects, " ") != "Inbox: m3 Linked/Archive/Old: m0 Linked/Archive: m1 Linked/Archive: m2" {
+		t.Errorf("with the opt-in: delivered %v; want the mailboxes of the linked directory under Linked, and its .sbd", got.subjects)
+	}
+	if len(got.faults) != 0 {
+		t.Errorf("with the opt-in: faults %+v; want none", got.faults)
+	}
+}
+
 // covers: MA-322, R25, R10, S47
 // S2B-AO4 (and S2B-AC1): a pipe named like an Outlook data file is never opened. The PST
 // open was a plain os.Open, which waits for a writer on a pipe, so a FIFO named *.pst or
