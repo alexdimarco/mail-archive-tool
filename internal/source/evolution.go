@@ -173,7 +173,14 @@ func (r *evolutionReader) walkMaildirPP(w *localWalk, sc *scope) error {
 		}
 		v := w.judge(sc, name, e.Type(), posEither)
 		if v.kind != kindDir && v.kind != kindDirLink {
-			continue // the marker, or a sidecar file
+			// The marker or a sidecar file is no folder. A link whose target is out of the
+			// store, though, may be a folder that holds mail (a link is told from a folder
+			// only by touching its target, which R25 never does): it is recorded, never
+			// dropped, and so is a pipe or device standing where a folder would be.
+			if v.kind == kindOutside || v.kind == kindSpecial {
+				w.refuse(sc, name, nil, v)
+			}
+			continue
 		}
 		folderPath := decodeMaildirName(name)
 		if len(folderPath) == 0 {

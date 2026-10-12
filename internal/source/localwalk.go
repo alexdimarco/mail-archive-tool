@@ -172,11 +172,19 @@ func (w *localWalk) followInto(sc *scope, rel string, folder []string, read func
 // dropped (§4.5, "detected but linked").
 func isMaildirIn(sc *scope, rel string) bool {
 	for _, sub := range []string{"cur", "new"} {
-		if fi, err := sc.lstat(relJoin(rel, sub)); err == nil && (fi.IsDir() || fi.Mode()&fs.ModeSymlink != 0) {
+		if fi, err := sc.lstat(relJoin(rel, sub)); err == nil && maildirEntryMode(fi.Mode()) {
 			return true
 		}
 	}
 	return false
+}
+
+// maildirEntryMode says an lstat mode is one a maildir's cur or new may have and be
+// detected by: a directory, a symlink, or (Windows) a junction or mount point, which Go
+// reports as irregular. A linked one is judged and recorded when it is read; it must not
+// make its folder silently no maildir (§4.5).
+func maildirEntryMode(m fs.FileMode) bool {
+	return m.IsDir() || m&(fs.ModeSymlink|fs.ModeIrregular) != 0
 }
 
 // maildir reads every message file of a maildir folder's new/ and cur/ directories
@@ -254,7 +262,7 @@ func readFileIn(sc *scope, rel string) ([]byte, error) {
 		return nil, err
 	}
 	defer f.Close()
-	return io.ReadAll(f)
+	return io.ReadAll(wrapMaildirFile(sc.at(rel), f))
 }
 
 // maildirMessage reads and delivers one message file. A file that cannot be read costs
@@ -476,3 +484,27 @@ func looksLikeMboxIn(sc *scope, rel string) (bool, error) {
 // production: the seam a test fails a read through, mid-file, the way a dying disk does
 // (rel is the file's place in the store).
 var wrapMboxStream = func(rel string, r io.Reader) io.Reader { return r }
+
+// wrapMaildirFile is wrapMboxStream's twin for a maildir message file: the identity in
+// production, the seam a test fails a file's read through with an I/O error (MA-321's EIO
+// case: no file on a healthy disk fails its read that way).
+var wrapMaildirFile = func(rel string, r io.Reader) io.Reader { return r }
+
+// InjectMaildirReadFaults makes the read of every maildir message file whose place in
+// the store (a slash path, "Inbox/cur/b:2,S") fault returns an error, fail the read with
+// that error until restore is called. It is for tests; nothing in production calls it.
+func InjectMaildirReadFaults(fault func(rel string) error) (restore func()) {
+	old := wrapMaildirFile
+	wrapMaildirFile = func(rel string, r io.Reader) io.Reader {
+		if err := fault(rel); err != nil {
+			return &failingRead{err: err}
+		}
+		return r
+	}
+	return func() { wrapMaildirFile = old }
+}
+
+// failingRead is a stream whose first read fails.
+type failingRead struct{ err error }
+
+func (f *failingRead) Read([]byte) (int, error) { return 0, f.err }
