@@ -1475,6 +1475,29 @@ Identity does not change. Also open: the README.txt in an archive root does not 
 `.partial` for an inheritor (the design puts it with S7); MS1-AO1 and MS1-AO2 (§13.27) stay owner decisions,
 the replay cost now doubled by the walker; `internal/desktop/workspace.go` is one space off gofmt at the base.
 
+### 13.30 FI-S2b adversarial pass merged (2026-10-12), delegated-judgement
+
+Branch `wip/fi-s2b-adv` (report `docs/review-fault-isolation-s2b-adversarial.md`). Found 28, confirmed 18,
+refuted 1, duplicates 7, non-goals 2. Sixteen fixed, each with a tombstone test: the depth cap on the local walk
+(S2B-AO1), a healthy sibling no longer closes an unreadable file's gap (AO2), pipes named like data files are
+never opened (AO4), placeholder folders are folders (AO5), Thunderbird parents are no longer sniffed away
+(AO6), directory-link opt-in fixes (AO7, AO8, AO9, AI8, AC2), a mailbox whose first read fails is recorded
+(AI7), a message moved from `new/` to `cur/` mid-walk is no partial run (AI4), a planted manifest path deletes
+nothing outside the archive (AI9), the visited set and the vanished-file relist are no longer quadratic
+(AI10, AC5), two stubs of the same bytes are each settled by their own copy (AC7). The merge to the fix
+branch was clean; the full suite and `vet3` pass in the clean clone.
+
+**Open for the owner (batched, each has a skip encoder that goes red when un-skipped; nothing blocks):**
+- **ESC-S2B-1** (S2B-AI2): an older binary's save drops a stub's parser generation and raw digest, so a later
+  healthy read never supersedes it. Recommended: recover the digest from the `.eml` when one exists.
+- **ESC-S2B-2** (S2B-AC4): a last mbox message cut mid-append by a live client is archived as complete.
+  Recommended: a size/mtime stability check that leaves a fillable gap on the folder, not a partial run.
+- **ESC-S2B-3** (S2B-AO6 residual): a non-empty file named like a mailbox that sniffs as no mailbox.
+  Encoder `TestANonMboxFileNamedLikeAMailboxIsRecorded`.
+
+Known and unchanged: ESC-1 (K1), K2, MA-503 (now also needs placeholder-folder rows in the lab), the
+Windows tests are compiled and vetted, not run.
+
 ### 13.7 Escalations from LC-C1's adversarial pass (merged 2026-10-10)
 
 None blocks anything: each has a skip encoder or a safe interim in force.
