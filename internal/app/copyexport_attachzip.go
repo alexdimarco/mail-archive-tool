@@ -88,6 +88,11 @@ type attachZipFile struct {
 // zipParts writes the parsed message's attachments as the entries of one zip and returns the
 // record of the zip placed, or false when no zip was made (no attachment could be kept, the run
 // was stopped, or the zip could not be written: each is a note, never silent, R1).
+//
+// The number of entries is not bounded here, as loose mode's number of files is not: the parser
+// yields a part for every part of a flat multipart (its 10,000-part limit is the archive walker's),
+// so a message can give a zip of tens of thousands of entries, Zip64 above 65,535. Whether and
+// where to cut is the owner's to rule (ESC-E6Z-AO3, TestAZipHoldsNoMoreEntriesThanAPlainDirectoryCanCount).
 func (w *attachWriter) zipParts(dir, stem string, stamp time.Time, atts []model.Attachment) (ceFileRec, bool) {
 	r := w.r
 	rel := ceJoin(dir, stem+attachZipSuffix)

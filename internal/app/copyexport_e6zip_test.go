@@ -1174,3 +1174,58 @@ func TestReadmeSaysWhatTheAttachmentsZipHolds(t *testing.T) {
 		}
 	}
 }
+
+// covers: MA-533, R29
+// E6Z-AO3 (ESC-E6Z-AO3): nothing bounds the entries of one message's zip. The reader yields one attachment
+// for every part of a flat multipart well past its 10,000-part limit (that limit is for the archive's
+// walker, not for this parse): 70,000 one-byte parts are a 70,000-entry zip, with Zip64 end records
+// (above 65,535 entries a plain directory cannot say how many there are, and a tool without Zip64
+// cannot open the zip) and an extraction that drops that many files into the owner's folder (XC12's
+// scale). Loose mode has no bound either, so zip mode is no worse, and MA-533 says a message of 1,001
+// or more attachments is still one file; where the line is, and whether the rest is dropped with a
+// note, split into a second zip or refused, narrows or changes that and is the owner's to rule.
+func TestAZipHoldsNoMoreEntriesThanAPlainDirectoryCanCount(t *testing.T) {
+	t.Skip("MA-533, R29: the entries of one message's zip are not bounded (70,000 parts are a 70,000-entry Zip64 zip, no note), and the bound, and what happens past it, is the owner's to rule (ESC-E6Z-AO3, review-extraction-workspace-e6-zip-adversarial.md); loose mode has no bound either")
+	var parts []e6Part
+	for i := 0; i < 70000; i++ {
+		parts = append(parts, e6Part{name: fmt.Sprintf("f%05d.bin", i), body: []byte{byte(i)}})
+	}
+	msgs := ceMsgs(1)
+	mime := e6Mime(msgs[0].SourceID, "seventy thousand", parts...)
+	e := newCEEnv(t)
+	res, _ := e6zRun(t, e, msgs, false, func(string) []byte { return mime })
+	line := assure.Reached(t, e5Files(t, e, res)[1], "the record line")
+	zrec, ok := e6zRec(line)
+	if !ok {
+		t.Fatalf("no zip: %+v %q", line.Files, line.Notes)
+	}
+	files, _ := e6zEntries(t, e6Read(t, res.Root, zrec.Path))
+	if len(files) > 65535 || (len(files) < len(parts) && len(e6zAttachNotes(line.Notes)) == 0) {
+		t.Errorf("%d entries from %d parts, %d notes: past 65,535 entries the zip needs Zip64, and parts left out are never silent (R1)", len(files), len(parts), len(line.Notes))
+	}
+}
+
+// covers: MA-417, MA-424, R29
+// E6Z-AO4 (ESC-E6Z-AO4, the bidi half): the readable page lists a message's attachments by their label,
+// which is control-stripped but keeps a bidi override, so a sender's name "inv<RLO>gpj.exe" is listed
+// reversed ("invexe.jpg") in a page of a loose-mode export (and of the archive's own pages), where the
+// export-only pass of the name pass strips it from the file. In zip mode the page names the entry (E6Z-AI1),
+// so this half is closed there. The label is shared with the archive's pages (internal/export, outside the
+// extraction workspace's writer), and changing what an archive page says is the owner's to rule.
+func TestTheReadablePageOfALooseExportListsNoBidiOverrideOfASendersName(t *testing.T) {
+	t.Skip("F75, MA-417: a readable page's Attachments list keeps a sender's bidi override in a loose-mode (and archive) page, and the label is shared with the archive's pages, which the owner rules on (ESC-E6Z-AO4, review-extraction-workspace-e6-zip-adversarial.md); zip mode names the entry and is closed")
+	msgs := ceMsgs(1)
+	mime := e6Mime(msgs[0].SourceID, "rlo", e6Part{name: "inv‮gpj.exe", body: []byte("exe")})
+	e := newCEEnv(t)
+	res, _ := e6Run(t, e, msgs, true, func(string) []byte { return mime })
+	line := assure.Reached(t, e5Files(t, e, res)[1], "the record line")
+	for _, f := range line.Files {
+		if f.Role == roleDerivedHTML {
+			if page := string(e6Read(t, res.Root, f.Path)); strings.Contains(page, "‮") {
+				t.Errorf("the page lists a bidi override of the sender's name")
+			}
+			return
+		}
+	}
+	t.Fatalf("no readable page: %+v", line.Files)
+}
