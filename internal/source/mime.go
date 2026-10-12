@@ -75,6 +75,8 @@ type walker struct {
 	plain strings.Builder
 
 	cut bool // the part being read was cut short by the end of the data (partOf sets it)
+
+	v1Stopped bool // a nested multipart ended in an error, where v1 stopped reading (framing sets it)
 }
 
 // parseFidelity parses data with the fidelity walker.
@@ -183,8 +185,13 @@ func (w *walker) envelope(hdr textproto.Header) {
 	h := mail.Header{Header: message.Header{Header: hdr}}
 	subject, err := h.Subject()
 	if err != nil {
+		v1Subject := subject // what v1 showed: the value the strict reader returned with its error
 		var notes []model.ParseNote
 		subject, notes = decodeHeaderWords(h.Get("Subject"))
+		if subject != v1Subject && len(notes) == 0 {
+			// The walker reads an encoded word v1 left as stored, so this Subject is not v1's.
+			notes = append(notes, newNote(noteEncodedWordFallback, "the Subject has an encoded word the earlier parser showed as stored, and this version decodes it"))
+		}
 		w.addNotes(notes)
 	}
 	msg.Subject = subject
@@ -368,7 +375,7 @@ func (w *walker) container(p partInfo, raw []byte, depth int) {
 			return
 		}
 		if err != nil {
-			w.framing(err, base+read, cur, boundary, read)
+			w.framing(err, base+read, cur, boundary, read, depth)
 			return
 		}
 		read++
@@ -382,6 +389,10 @@ func (w *walker) container(p partInfo, raw []byte, depth int) {
 func (w *walker) partOf(part *textproto.Part, depth int, parent []byte, end int) {
 	w.parts++ // the root is not counted: maxParts bounds the parts of a message, not the message
 	w.site = fmt.Sprintf("part %d", w.parts)
+	if w.v1Stopped {
+		w.v1Stopped = false
+		w.note(noteContinuedAfterError, "a multipart before this part ended with an error that stopped the earlier parser, which lost this part and the parts after it")
+	}
 	body, rerr := io.ReadAll(part) // the raw, still transfer-encoded body; a read error ends it where it ended
 	raw := windowOf(parent, end, body)
 	if headerSize(part.Header) > maxHeaderBytes {
@@ -507,7 +518,13 @@ func scanParts(body []byte, boundary string) partScan {
 // end are there, so they are kept as received, as the depth and part limits keep theirs: a
 // delimiter line too long for the reader must not decide which attachments the archive
 // holds (MS2-AC4).
-func (w *walker) framing(err error, done int, raw []byte, boundary string, read int) {
+func (w *walker) framing(err error, done int, raw []byte, boundary string, read int, depth int) {
+	if depth > 1 {
+		// v1 stops at the first error of a nested multipart (an empty one, or one with no
+		// closing delimiter) and loses everything after it; the walker goes on, and says so
+		// when something follows (partOf).
+		w.v1Stopped = true
+	}
 	if done == 0 {
 		if len(bytes.TrimSpace(raw)) > 0 {
 			w.unsplit(raw, "the parts could not be separated at the boundary")

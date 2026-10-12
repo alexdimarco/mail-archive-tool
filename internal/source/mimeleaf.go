@@ -73,11 +73,19 @@ func (w *walker) leaf(h textproto.Header, p partInfo, raw []byte) {
 			name = "inline"
 		}
 		w.attach(name, l)
+		w.textAttachmentNote(l)
 	default:
 		w.attach(p.filename, l)
-		if l.hasCS && !isUTF8Label(l.charset) {
-			w.note(noteTextAttachmentBytes, "a text attachment is kept in the bytes it was sent in; this version no longer converts it to UTF-8")
-		}
+		w.textAttachmentNote(l)
+	}
+}
+
+// textAttachmentNote records that a text part kept as an attachment is in the bytes it was
+// sent in where v1 converted it to UTF-8, which is every declared charset but the two v1 read
+// as they came (MS2-AI3: an inline text/csv and an "ascii" charset were left out).
+func (w *walker) textAttachmentNote(l leafPart) {
+	if l.hasCS && v1Converts(l.charset) {
+		w.note(noteTextAttachmentBytes, "a text attachment is kept in the bytes it was sent in; this version no longer converts it to UTF-8")
 	}
 }
 
@@ -158,13 +166,15 @@ func partName(name string, n int) string {
 	return fmt.Sprintf("part-%d", n)
 }
 
-// isUTF8Label says v1 passed a charset's bytes through unconverted.
-func isUTF8Label(label string) bool {
-	switch normalizeCharset(label) {
-	case "", "utf-8", "us-ascii", "ascii":
-		return true
+// v1Converts says v1 converted a text part declared in this charset to UTF-8: it passed the
+// bytes through only for a label that is exactly "utf-8" or "us-ascii" once lower-cased (and
+// for none), and ran any other label, "ascii" and "utf-8 " included, through its table.
+func v1Converts(label string) bool {
+	switch strings.ToLower(label) {
+	case "", "utf-8", "us-ascii":
+		return false
 	}
-	return false
+	return true
 }
 
 // v1CTEUnknown says v1's transfer-encoding reader did not know the encoding: it lower-
