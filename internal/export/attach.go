@@ -128,15 +128,7 @@ func (c *byteCounter) Write(p []byte) (int, error) {
 }
 
 // attachmentLabel is a human-readable name for an attachment in reports.
-func attachmentLabel(a model.Attachment, index int) string {
-	if a.Filename != "" {
-		return a.Filename
-	}
-	if a.ContentID != "" {
-		return "cid:" + a.ContentID
-	}
-	return fmt.Sprintf("attachment-%d", index)
-}
+func attachmentLabel(a model.Attachment, index int) string { return a.Label(index) }
 
 // uniqueName disambiguates repeated file names within a single archive by
 // appending " (n)" before the extension.

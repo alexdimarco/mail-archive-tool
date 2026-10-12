@@ -199,7 +199,7 @@ func (w *mailboxWalk) stub(ref graph.MessageRef, m *model.Message, folderKey str
 	if n := w.manifest.AdoptLegacyGraphStubs(w.token, ref.PhysID, ref.Received, w.lr.runAt, legacyStubIdentity); n > 0 {
 		w.lr.logger.Printf("re-classed %d legacy placeholder(s); this version records each unreadable message separately", n)
 	}
-	m.InternetMessageID = ref.InternetMessageID
+	m.SetInternetMessageID(ref.InternetMessageID) // the stub's identity terms too, which ParseRFC822 sets
 	return false
 }
 

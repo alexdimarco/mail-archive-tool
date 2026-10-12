@@ -1,0 +1,1178 @@
+# recorded: 2026-10-11, by slice MF-S1 of docs/design-mime-fidelity.md, when the frozen v1 replay and its vendored dependencies were added
+# toolchain: go1.26.9 on darwin/arm64 (unicode.Version 15.0.0); the stdlib copies under internal/source/parsev1/_dep/ are that release's
+# dependencies: github.com/emersion/go-message v0.16.0, github.com/emersion/go-textwrapper 65d896831594, github.com/emersion/go-mbox v1.0.4, github.com/mooijtech/go-pst/v6 v6.0.2, golang.org/x/text v0.42.0, golang.org/x/net v0.60.0, as this branch's go.mod and go.sum pin them
+# frozen-source: parsev1.go is the v0.7.1 tag's parseMessage, fallbackParse, addressList and bytesWriterTo (internal/source/mbox.go at the tag, byte-identical to the base of this slice, 4148af1); the tag is commit 066f86dbae867f00f5d0340a2ce6a83cbed2e088
+# baseline: a baseline in the CLAUDE.md sense; regenerating it is an operator-accepted act under design section 5, never a fix
+437	len=138977 sha256=0afc695097fe04fecc4feb31e35f2bc3ce1b7feda2698e5c4c99dd3c9d490ccb
+850	len=126656 sha256=5e4b1819d0e9f4df51a9b9ea46844ce37f2725b79b546f772c08452044926b63
+851	error
+852	len=126271 sha256=1992e9a47a4fecb5d2b01597495b8ef4c7242302279af9eb6f640449c767e4fb
+855	len=126656 sha256=c4691bb1cca32ad7b42a9e575dfecafb7dfa281a94de34a60df9f22c48b2730d
+857	error
+860	len=138592 sha256=4349977adbdeffe85b76eda040e1724fc290499bf06041dd0ad4d50678586504
+861	error
+862	len=138977 sha256=93f47a8ecd12a1d30641f8ec9ea590966eef46e8de024ffc342ba3adb5966217
+863	len=138977 sha256=a6cf26be8d4a439fb3ea7a40d267f8ef500138c62acac4a4f334f3d50b22db6d
+865	len=138977 sha256=aff70cd983d16d65576f88c94375bad0325695f3b4b4ecb12b1649fc4abb0081
+866	len=135127 sha256=9b2bce70f95c346ed037a2bb24ec1d227f5c59eb146f26d84720191c68d37ab4
+869	error
+904	error
+\riso-8859-6-eiso_8859-6-e	error
+\riso-8859-6-iiso_8859-6-i	error
+\riso-8859-8-eiso_8859-8-e	error
+\riso-8859-8-iiso_8859-8-i	error
+\viso-8859-1iso_8859-1:1987	error
+\viso-8859-2iso_8859-2:1987	error
+\viso-8859-3iso_8859-3:1988	error
+\viso-8859-4iso_8859-4:1988	error
+\viso-8859-5iso_8859-5:1988	error
+\viso-8859-6iso_8859-6:1987	error
+\viso-8859-7iso_8859-7:1987	error
+\viso-8859-8iso_8859-8:1988	error
+\viso-8859-9iso_8859-9:1989	error
+\x07euc-jpextended_unix_code_packed_format_for_japanese	error
+adobe-standard-encoding	error
+adobe-symbol-encoding	error
+adobestandardencoding	error
+ami-1251	error
+ami1251	error
+amiga-1251	error
+amiga1251	error
+amiga1251\n(aliases	error
+ansi_x3.110-1983	len=115104 sha256=48ddae1dca66ea2842d9984b0b0dc0eb6e2d55eb91187050087bc40676da4ca2
+ansi_x3.4-1968	len=164392 sha256=769f7ac6a3a5b390f190b032e79d0ca31c036ce95acf517716b7312486fc4f26
+ansi_x3.4-1986	len=164392 sha256=769f7ac6a3a5b390f190b032e79d0ca31c036ce95acf517716b7312486fc4f26
+arabic	len=144755 sha256=709e488c2a713ff79b3f87c732c0a35b8b3721f85752698c2c6a5a8e52744a23
+arabic7	error
+ascii	len=164392 sha256=769f7ac6a3a5b390f190b032e79d0ca31c036ce95acf517716b7312486fc4f26
+asmo-708	len=144755 sha256=709e488c2a713ff79b3f87c732c0a35b8b3721f85752698c2c6a5a8e52744a23
+asmo_449	error
+big5	len=108535 sha256=b9fedbf7f20cb2036efa87882dffc115be301933cc98225158693a7075c95aa0
+big5-hkscs	len=108535 sha256=b9fedbf7f20cb2036efa87882dffc115be301933cc98225158693a7075c95aa0
+big5hk	len=108535 sha256=b9fedbf7f20cb2036efa87882dffc115be301933cc98225158693a7075c95aa0
+big5hkscs	error
+bocu-1	error
+brf	error
+bs_4730	error
+bs_viewdata	error
+ca	error
+ccsid00858	len=127041 sha256=2913cf6ac41e9f84767524d1779701b8b30720ec6a014d1a15319453aac419f0
+ccsid00924	error
+ccsid01140	len=97833 sha256=3a8c43727b0fa540cbe44870018009adb546517c3707d0588e248c7d15447859
+ccsid01141	error
+ccsid01142	error
+ccsid01143	error
+ccsid01144	error
+ccsid01145	error
+ccsid01146	error
+ccsid01147	error
+ccsid01148	error
+ccsid01149	error
+cesu-8	error
+chinese	len=107721 sha256=1e1573b45d7e204eea6dbd397c328953077dcb7c6f9e783dc3408341ffaf472d
+cn	error
+cn-big5	len=108535 sha256=b9fedbf7f20cb2036efa87882dffc115be301933cc98225158693a7075c95aa0
+cp-ar	error
+cp-gr	error
+cp-is	error
+cp00858	len=127041 sha256=2913cf6ac41e9f84767524d1779701b8b30720ec6a014d1a15319453aac419f0
+cp00924	error
+cp01140	len=97833 sha256=3a8c43727b0fa540cbe44870018009adb546517c3707d0588e248c7d15447859
+cp01141	error
+cp01142	error
+cp01143	error
+cp01144	error
+cp01145	error
+cp01146	error
+cp01147	error
+cp01148	error
+cp01149	error
+cp037	len=97448 sha256=6b7e8895f2580fff9c4c03412dee419d4e858a1eff64461ce2832aaac5dc318a
+cp038	error
+cp1026	error
+cp1250	len=123577 sha256=45616727057505d5f5211dac1213cbc8920c07a91c95dc28c5776580c452a9d7
+cp1251	len=122420 sha256=a8a7755a2212279a58c518aa4b2fe45490a510a6eebd1251116319207198628a
+cp1252	len=123577 sha256=61ce8252944777f2af76570dedf1e0bfadf50d374675c58c7b53920f81adfb1e
+cp1253	len=128583 sha256=a55cc8444c940435544fdde707280a344dec95c25728f6547e11c69cf4976541
+cp1254	len=124347 sha256=dcae85d034933931c272ca3db8d90c9ae074771b4f926ed16be365381346036e
+cp1255	len=131281 sha256=9e94b96b3b990d4b9908a36f96f4c8a8e0a43a03c651203cdd974aac371b4d7e
+cp1256	len=123191 sha256=91e310ad16301fb9efa3b02da95c5bb443a43c4f3cb2062bde5f6a346b961178
+cp1257	len=126272 sha256=b1bc8f73c0059a6c25976ede584ffb246ce045433708e8e57e5d275b1e8a9098
+cp1258	len=125503 sha256=18de32211030698955b40aa85a2c8e646392a3207598b376a3398a025201c98f
+cp154	error
+cp273	error
+cp274	error
+cp275	error
+cp278	error
+cp280	error
+cp281	error
+cp284	error
+cp285	error
+cp290	error
+cp297	error
+cp367	len=164392 sha256=769f7ac6a3a5b390f190b032e79d0ca31c036ce95acf517716b7312486fc4f26
+cp420	error
+cp423	error
+cp424	error
+cp437	len=138977 sha256=0afc695097fe04fecc4feb31e35f2bc3ce1b7feda2698e5c4c99dd3c9d490ccb
+cp500	error
+cp50220	error
+cp51932	error
+cp775	error
+cp819	len=115104 sha256=48ddae1dca66ea2842d9984b0b0dc0eb6e2d55eb91187050087bc40676da4ca2
+cp850	len=126656 sha256=5e4b1819d0e9f4df51a9b9ea46844ce37f2725b79b546f772c08452044926b63
+cp851	error
+cp852	len=126271 sha256=1992e9a47a4fecb5d2b01597495b8ef4c7242302279af9eb6f640449c767e4fb
+cp855	len=126656 sha256=c4691bb1cca32ad7b42a9e575dfecafb7dfa281a94de34a60df9f22c48b2730d
+cp857	error
+cp858	error
+cp860	len=138592 sha256=4349977adbdeffe85b76eda040e1724fc290499bf06041dd0ad4d50678586504
+cp861	error
+cp862	len=138977 sha256=93f47a8ecd12a1d30641f8ec9ea590966eef46e8de024ffc342ba3adb5966217
+cp863	len=138977 sha256=a6cf26be8d4a439fb3ea7a40d267f8ef500138c62acac4a4f334f3d50b22db6d
+cp864	error
+cp865	len=138977 sha256=aff70cd983d16d65576f88c94375bad0325695f3b4b4ecb12b1649fc4abb0081
+cp866	len=135127 sha256=9b2bce70f95c346ed037a2bb24ec1d227f5c59eb146f26d84720191c68d37ab4
+cp868	error
+cp869	error
+cp870	error
+cp871	error
+cp874	len=164007 sha256=d2db459ae8be0f3624ef5040c7f61af6d7fa0cd073c4763acdf261c29b57a214
+cp880	error
+cp891	error
+cp903	error
+cp904	error
+cp905	error
+cp918	error
+cp932	error
+cp936	len=107721 sha256=1e1573b45d7e204eea6dbd397c328953077dcb7c6f9e783dc3408341ffaf472d
+cp950	error
+csa7-1	error
+csa7-2	error
+csa71	error
+csa72	error
+csa_t500-1983	error
+csa_z243.4-1985-1	error
+csa_z243.4-1985-2	error
+csa_z243.4-1985-gr	error
+csadobestandardencoding	error
+csamiga1251\n(aliases	error
+csascii	len=164392 sha256=769f7ac6a3a5b390f190b032e79d0ca31c036ce95acf517716b7312486fc4f26
+csbig5	len=108535 sha256=b9fedbf7f20cb2036efa87882dffc115be301933cc98225158693a7075c95aa0
+csbig5hkscs	error
+csbocu-1	error
+csbocu1	error
+csbrf	error
+cscesu-8	error
+cscesu8	error
+cscp50220	error
+cscp51932	error
+csdecmcs	error
+csdkus	error
+csebcdicatdea	error
+csebcdiccafr	error
+csebcdicdkno	error
+csebcdicdknoa	error
+csebcdices	error
+csebcdicesa	error
+csebcdicess	error
+csebcdicfise	error
+csebcdicfisea	error
+csebcdicfr	error
+csebcdicit	error
+csebcdicpt	error
+csebcdicuk	error
+csebcdicus	error
+cseucfixwidjapanese	error
+cseuckr	len=111285 sha256=33769b056590edbaafbc1b47a8817a3f6d02b72ddde38f365bb6e0fabf360cee
+cseucpkdfmtjapanese	len=136492 sha256=959983040feb84f0ffa30012b46142220563cb24b6681c06def78d1aae885fd2
+csgb18030	len=105965 sha256=fb88922adf6def47277014559d5dfc36ef26f49b78a859231f000ed89a8d686f
+csgb2312	len=107721 sha256=1e1573b45d7e204eea6dbd397c328953077dcb7c6f9e783dc3408341ffaf472d
+csgbk	len=107721 sha256=1e1573b45d7e204eea6dbd397c328953077dcb7c6f9e783dc3408341ffaf472d
+cshalfwidthkatakana	error
+cshpdesktop	error
+cshplegal	error
+cshpmath8	error
+cshppifont	error
+cshppsmath	error
+cshproman8	error
+csibbm904	error
+csibm00858	len=127041 sha256=2913cf6ac41e9f84767524d1779701b8b30720ec6a014d1a15319453aac419f0
+csibm00924	error
+csibm01140	len=97833 sha256=3a8c43727b0fa540cbe44870018009adb546517c3707d0588e248c7d15447859
+csibm01141	error
+csibm01142	error
+csibm01143	error
+csibm01144	error
+csibm01145	error
+csibm01146	error
+csibm01147	error
+csibm01148	error
+csibm01149	error
+csibm037	len=97448 sha256=6b7e8895f2580fff9c4c03412dee419d4e858a1eff64461ce2832aaac5dc318a
+csibm038	error
+csibm1026	error
+csibm1047	len=97704 sha256=5d6bf373042b80495fee65024b560e22901bcc079788a1e175ac4c5d516a90e7
+csibm273	error
+csibm274	error
+csibm275	error
+csibm277	error
+csibm278	error
+csibm280	error
+csibm281	error
+csibm284	error
+csibm285	error
+csibm290	error
+csibm297	error
+csibm420	error
+csibm423	error
+csibm424	error
+csibm500	error
+csibm851	error
+csibm855	len=126656 sha256=c4691bb1cca32ad7b42a9e575dfecafb7dfa281a94de34a60df9f22c48b2730d
+csibm857	error
+csibm860	len=138592 sha256=4349977adbdeffe85b76eda040e1724fc290499bf06041dd0ad4d50678586504
+csibm861	error
+csibm863	len=138977 sha256=a6cf26be8d4a439fb3ea7a40d267f8ef500138c62acac4a4f334f3d50b22db6d
+csibm864	error
+csibm865	len=138977 sha256=aff70cd983d16d65576f88c94375bad0325695f3b4b4ecb12b1649fc4abb0081
+csibm866	len=135127 sha256=9b2bce70f95c346ed037a2bb24ec1d227f5c59eb146f26d84720191c68d37ab4
+csibm868	error
+csibm869	error
+csibm870	error
+csibm871	error
+csibm880	error
+csibm891	error
+csibm903	error
+csibm905	error
+csibm918	error
+csibmebcdicatde	error
+csibmsymbols	error
+csibmthai	error
+csinvariant	error
+csiso102t617bit	error
+csiso10367box	error
+csiso103t618bit	error
+csiso10646utf1	error
+csiso10swedish	error
+csiso111ecmacyrillic	error
+csiso115481	error
+csiso11swedishfornames	error
+csiso121canadian1	error
+csiso122canadian2	error
+csiso123csaz24341985gr	error
+csiso128t101g2	error
+csiso139csn369103	error
+csiso13jisc6220jp	error
+csiso141jusib1002	error
+csiso143iecp271	error
+csiso146serbian	error
+csiso147macedonian	error
+csiso14jisc6220ro	error
+csiso150	error
+csiso150greekccitt	error
+csiso151cuba	error
+csiso153gost1976874	error
+csiso158lap	error
+csiso159jisx02121990	error
+csiso15italian	error
+csiso16portuguese	error
+csiso17spanish	error
+csiso18greek7old	error
+csiso19latingreek	error
+csiso2022cn	error
+csiso2022cnext	error
+csiso2022jp	len=164645 sha256=bab32114531f295a2ae1a664d6c05e7f92bbe788eb96e27200443e18d9571caf
+csiso2022jp2	error
+csiso2022kr	len=3 sha256=83d544ccc223c057d2bf80d3f2a32982c32c3c0db8e2674820da5064783fb097
+csiso2033	error
+csiso21german	error
+csiso25french	error
+csiso27latingreek1	error
+csiso2intlrefversion	error
+csiso42jisc62261978	error
+csiso47bsviewdata	error
+csiso49inis	error
+csiso4unitedkingdom	error
+csiso50inis8	error
+csiso51iniscyrillic	error
+csiso54271981	error
+csiso5427cyrillic	error
+csiso5428greek	error
+csiso57gb1988	error
+csiso58gb231280	len=107721 sha256=1e1573b45d7e204eea6dbd397c328953077dcb7c6f9e783dc3408341ffaf472d
+csiso60danishnorwegian	error
+csiso60norwegian1	error
+csiso61norwegian2	error
+csiso646basic1983	error
+csiso646danish	error
+csiso6937add	error
+csiso69french	error
+csiso70videotexsupp1	error
+csiso84portuguese2	error
+csiso85spanish2	error
+csiso86hungarian	error
+csiso87jisx0208	error
+csiso885913	len=128968 sha256=c47fdd55985eb6d434cf2da819e049487cf2657954de8d833530434d6c379513
+csiso885914	len=135897 sha256=d51c155bfc9ec5ad7d7e8924de8255b8a6ffc111bbd9b649a826dee5b009da9a
+csiso885915	len=127813 sha256=1b95e6a59104c8a82e62b31d082ed47c2b81a90de93660495f097354049ef328
+csiso885916	len=128583 sha256=df2a78d46802d57ea061772cb89e1dc29ba9c5911931d8d8a06350b108e645e0
+csiso88596e	len=144755 sha256=709e488c2a713ff79b3f87c732c0a35b8b3721f85752698c2c6a5a8e52744a23
+csiso88596i	len=144755 sha256=709e488c2a713ff79b3f87c732c0a35b8b3721f85752698c2c6a5a8e52744a23
+csiso88598e	len=142446 sha256=24c032ced53ca0f27fb1814233cd5e05a8756534dd90be35e84986b44b57f8f6
+csiso88598i	len=142446 sha256=24c032ced53ca0f27fb1814233cd5e05a8756534dd90be35e84986b44b57f8f6
+csiso8859supp	error
+csiso88greek7	error
+csiso89asmo449	error
+csiso90	error
+csiso91jisc62291984a	error
+csiso92jisc62991984b	error
+csiso93jis62291984badd	error
+csiso94jis62291984hand	error
+csiso95jis62291984handadd	error
+csiso96jisc62291984kana	error
+csiso99naplps	error
+csisolatin1	len=115104 sha256=48ddae1dca66ea2842d9984b0b0dc0eb6e2d55eb91187050087bc40676da4ca2
+csisolatin2	len=127427 sha256=3ca3264eb1351f2290bc91ffb8b7c7e7ac36c91f2c9bb0e385c464b5ded86bda
+csisolatin3	len=130122 sha256=c428c09c2a3730eff1d1590812eae9841993348d050d0c17d9f2f2a22afb718b
+csisolatin4	len=127427 sha256=0f5e4a04873f1b8bba2b4c176f0317b7dd57fc662e3efab06ccaa70e958034da
+csisolatin5	len=115104 sha256=f241b2c89a46947bb90cd5d259123c94a750080e5b1587f66ad8892aa72b67b0
+csisolatin6	len=127812 sha256=53f6a76e2ad1df590375e5c2168cf9890e3e0ec937cba9b49e7af8a8dc3196fe
+csisolatin9	len=127813 sha256=1b95e6a59104c8a82e62b31d082ed47c2b81a90de93660495f097354049ef328
+csisolatinarabic	len=144755 sha256=709e488c2a713ff79b3f87c732c0a35b8b3721f85752698c2c6a5a8e52744a23
+csisolatincyrillic	len=127812 sha256=2cbc229571f6df5c8efd1ba853f4856521e611ee659bf66a32a24c9a22cf562f
+csisolatingreek	len=130509 sha256=469a0af3a7a08c8e0241fc10ba5e9780df16766756d22fada6a54ea121a7bb78
+csisolatinhebrew	len=142446 sha256=24c032ced53ca0f27fb1814233cd5e05a8756534dd90be35e84986b44b57f8f6
+csisotextcomm	error
+csjisencoding	error
+cskoi7switched	error
+cskoi8r	len=136668 sha256=86adfbe3b4480a1df5fa79265bc14f03cad6b14a34b0295571650c56bdf7afd2
+cskoi8u	len=132817 sha256=8c1f5d5974c0fb55e6a7d38ba992d07bc9f9d729d72c41a678dcac491867a464
+csksc56011987	len=111285 sha256=33769b056590edbaafbc1b47a8817a3f6d02b72ddde38f365bb6e0fabf360cee
+csksc5636	error
+cskz1048	error
+csmacintosh	len=127810 sha256=37c7f36f18caf1ef9ac7968b99f9c6d9f4a3ccc520f82a1470ebb2b779a6df03
+csmicrosoftpublishing	error
+csmnem	error
+csmnemonic	error
+csn_369103	error
+csnatsdano	error
+csnatsdanoadd	error
+csnatssefi	error
+csnatssefiadd	error
+csosdebcdicdf03irv	error
+csosdebcdicdf041	error
+csosdebcdicdf0415	error
+cspc775baltic	error
+cspc850multilingual	len=126656 sha256=5e4b1819d0e9f4df51a9b9ea46844ce37f2725b79b546f772c08452044926b63
+cspc862latinhebrew	len=138977 sha256=93f47a8ecd12a1d30641f8ec9ea590966eef46e8de024ffc342ba3adb5966217
+cspc8codepage437	len=138977 sha256=0afc695097fe04fecc4feb31e35f2bc3ce1b7feda2698e5c4c99dd3c9d490ccb
+cspc8danishnorwegian	error
+cspc8turkish	error
+cspcp852	len=126271 sha256=1992e9a47a4fecb5d2b01597495b8ef4c7242302279af9eb6f640449c767e4fb
+csptcp154	error
+csscsu	error
+csshiftjis	len=124803 sha256=64a7871c413764f184e240a0f262d28b482c9fa846a2f36087bf6a688900e8ef
+cstis620	error
+cstscii	error
+csucs4	error
+csunicode	len=97050 sha256=ad6183faf0616031e0f9417de8c9d8ac2346a9274afc3952ee43974a6cf526d5
+csunicode11	error
+csunicode11utf7	error
+csunicodeascii	error
+csunicodeibm1261	error
+csunicodeibm1264	error
+csunicodeibm1265	error
+csunicodeibm1268	error
+csunicodeibm1276	error
+csunicodejapanese	error
+csunicodelatin1	error
+csunknown8bit	error
+csusdk	error
+csutf16	len=97180 sha256=cf9a421f571787d0ecfebb6e540192b0e49ef27c3d9ca19694af3251f0a8d3a8
+csutf16be	len=97180 sha256=cf9a421f571787d0ecfebb6e540192b0e49ef27c3d9ca19694af3251f0a8d3a8
+csutf16le	len=97050 sha256=ad6183faf0616031e0f9417de8c9d8ac2346a9274afc3952ee43974a6cf526d5
+csutf32	error
+csutf32be	error
+csutf32le	error
+csutf7	error
+csutf7imap	error
+csutf8	len=141736 sha256=abe152fb84501195701e508c4813143dc50692982f8c88558e00ba622955a9b0
+csventurainternational	error
+csventuramath	error
+csventuraus	error
+csviqr	error
+csviscii	error
+cswindows1250	len=123577 sha256=45616727057505d5f5211dac1213cbc8920c07a91c95dc28c5776580c452a9d7
+cswindows1251	len=122420 sha256=a8a7755a2212279a58c518aa4b2fe45490a510a6eebd1251116319207198628a
+cswindows1252	len=123577 sha256=61ce8252944777f2af76570dedf1e0bfadf50d374675c58c7b53920f81adfb1e
+cswindows1253	len=128583 sha256=a55cc8444c940435544fdde707280a344dec95c25728f6547e11c69cf4976541
+cswindows1254	len=124347 sha256=dcae85d034933931c272ca3db8d90c9ae074771b4f926ed16be365381346036e
+cswindows1255	len=131281 sha256=9e94b96b3b990d4b9908a36f96f4c8a8e0a43a03c651203cdd974aac371b4d7e
+cswindows1256	len=123191 sha256=91e310ad16301fb9efa3b02da95c5bb443a43c4f3cb2062bde5f6a346b961178
+cswindows1257	len=126272 sha256=b1bc8f73c0059a6c25976ede584ffb246ce045433708e8e57e5d275b1e8a9098
+cswindows1258	len=125503 sha256=18de32211030698955b40aa85a2c8e646392a3207598b376a3398a025201c98f
+cswindows30latin1	error
+cswindows31j	error
+cswindows31latin1	error
+cswindows31latin2	error
+cswindows31latin5	error
+cswindows874	len=164007 sha256=d2db459ae8be0f3624ef5040c7f61af6d7fa0cd073c4763acdf261c29b57a214
+cuba	error
+cyrillic	len=127812 sha256=2cbc229571f6df5c8efd1ba853f4856521e611ee659bf66a32a24c9a22cf562f
+cyrillic-asian	error
+de	error
+dec	error
+dec-mcs	error
+decmcs	error
+din_66003	error
+dk	error
+dk-us	error
+dkus	error
+dos-874	len=164007 sha256=d2db459ae8be0f3624ef5040c7f61af6d7fa0cd073c4763acdf261c29b57a214
+ds2089	error
+ds_2089	error
+e13b	error
+ebcdic-at-de	error
+ebcdic-at-de-a	error
+ebcdic-be	error
+ebcdic-br	error
+ebcdic-ca-fr	error
+ebcdic-cp-ar1	error
+ebcdic-cp-ar2	error
+ebcdic-cp-be	error
+ebcdic-cp-ca	len=97448 sha256=6b7e8895f2580fff9c4c03412dee419d4e858a1eff64461ce2832aaac5dc318a
+ebcdic-cp-ch	error
+ebcdic-cp-dk	error
+ebcdic-cp-es	error
+ebcdic-cp-fi	error
+ebcdic-cp-fr	error
+ebcdic-cp-gb	error
+ebcdic-cp-gr	error
+ebcdic-cp-he	error
+ebcdic-cp-is	error
+ebcdic-cp-it	error
+ebcdic-cp-nl	len=97448 sha256=6b7e8895f2580fff9c4c03412dee419d4e858a1eff64461ce2832aaac5dc318a
+ebcdic-cp-no	error
+ebcdic-cp-roece	error
+ebcdic-cp-se	error
+ebcdic-cp-tr	error
+ebcdic-cp-us	len=97448 sha256=6b7e8895f2580fff9c4c03412dee419d4e858a1eff64461ce2832aaac5dc318a
+ebcdic-cp-wt	len=97448 sha256=6b7e8895f2580fff9c4c03412dee419d4e858a1eff64461ce2832aaac5dc318a
+ebcdic-cp-yu	error
+ebcdic-cyrillic	error
+ebcdic-de-273+euro	error
+ebcdic-dk-277+euro	error
+ebcdic-dk-no	error
+ebcdic-dk-no-a	error
+ebcdic-es	error
+ebcdic-es-284+euro	error
+ebcdic-es-a	error
+ebcdic-es-s	error
+ebcdic-fi-278+euro	error
+ebcdic-fi-se	error
+ebcdic-fi-se-a	error
+ebcdic-fr	error
+ebcdic-fr-297+euro	error
+ebcdic-gb-285+euro	error
+ebcdic-int	error
+ebcdic-international-500+euro	error
+ebcdic-is-871+euro	error
+ebcdic-it	error
+ebcdic-it-280+euro	error
+ebcdic-jp-e	error
+ebcdic-jp-kana	error
+ebcdic-latin9--euro	error
+ebcdic-no-277+euro	error
+ebcdic-pt	error
+ebcdic-se-278+euro	error
+ebcdic-uk	error
+ebcdic-us	error
+ebcdic-us-37+euro	len=97833 sha256=3a8c43727b0fa540cbe44870018009adb546517c3707d0588e248c7d15447859
+ebcdicatdea	error
+ebcdiccafr	error
+ebcdicdkno	error
+ebcdicdknoa	error
+ebcdices	error
+ebcdicesa	error
+ebcdicess	error
+ebcdicfise	error
+ebcdicfisea	error
+ebcdicfr	error
+ebcdicit	error
+ebcdicpt	error
+ebcdicuk	error
+ebcdicus	error
+ecma-114	len=144755 sha256=709e488c2a713ff79b3f87c732c0a35b8b3721f85752698c2c6a5a8e52744a23
+ecma-118	len=130509 sha256=469a0af3a7a08c8e0241fc10ba5e9780df16766756d22fada6a54ea121a7bb78
+ecma-cyrillic	error
+elot_928	len=130509 sha256=469a0af3a7a08c8e0241fc10ba5e9780df16766756d22fada6a54ea121a7bb78
+es	error
+es2	error
+euc-jp	len=136492 sha256=959983040feb84f0ffa30012b46142220563cb24b6681c06def78d1aae885fd2
+euc-kr	len=111285 sha256=33769b056590edbaafbc1b47a8817a3f6d02b72ddde38f365bb6e0fabf360cee
+eucfixwidjapanese	error
+euckr	len=111285 sha256=33769b056590edbaafbc1b47a8817a3f6d02b72ddde38f365bb6e0fabf360cee
+eucpkdfmtjapanese	len=136492 sha256=959983040feb84f0ffa30012b46142220563cb24b6681c06def78d1aae885fd2
+extended_unix_code_fixed_width_for_japanese	error
+extended_unix_code_packed_format_for_japanese	len=136492 sha256=959983040feb84f0ffa30012b46142220563cb24b6681c06def78d1aae885fd2
+fi	error
+fr	error
+gb	error
+gb18030	len=105965 sha256=fb88922adf6def47277014559d5dfc36ef26f49b78a859231f000ed89a8d686f
+gb2312	len=107721 sha256=1e1573b45d7e204eea6dbd397c328953077dcb7c6f9e783dc3408341ffaf472d
+gb_1988-80	error
+gb_2312	len=107721 sha256=1e1573b45d7e204eea6dbd397c328953077dcb7c6f9e783dc3408341ffaf472d
+gb_2312-80	len=107721 sha256=1e1573b45d7e204eea6dbd397c328953077dcb7c6f9e783dc3408341ffaf472d
+gbk	len=107721 sha256=1e1573b45d7e204eea6dbd397c328953077dcb7c6f9e783dc3408341ffaf472d
+gost_19768-74	error
+greek	len=130509 sha256=469a0af3a7a08c8e0241fc10ba5e9780df16766756d22fada6a54ea121a7bb78
+greek-ccitt	error
+greek7	error
+greek7-old	error
+greek8	len=130509 sha256=469a0af3a7a08c8e0241fc10ba5e9780df16766756d22fada6a54ea121a7bb78
+halfwidthkatakana	error
+hebrew	len=142446 sha256=24c032ced53ca0f27fb1814233cd5e05a8756534dd90be35e84986b44b57f8f6
+hp-desktop	error
+hp-legal	error
+hp-math8	error
+hp-pi-font	error
+hp-roman8	error
+hpdesktop	error
+hplegal	error
+hpmath8	error
+hppifont	error
+hppsmath	error
+hproman8	error
+hu	error
+hz-gb-2312	len=164265 sha256=1d737a4a8595c362a7a9bc8bdd438e05a29775b5f2d05909add37bc32d5c0011
+ibbm904	error
+ibm-1047	len=97704 sha256=5d6bf373042b80495fee65024b560e22901bcc079788a1e175ac4c5d516a90e7
+ibm-symbols	error
+ibm-thai	error
+ibm00858	len=127041 sha256=2913cf6ac41e9f84767524d1779701b8b30720ec6a014d1a15319453aac419f0
+ibm00924	error
+ibm01140	len=97833 sha256=3a8c43727b0fa540cbe44870018009adb546517c3707d0588e248c7d15447859
+ibm01141	error
+ibm01142	error
+ibm01143	error
+ibm01144	error
+ibm01145	error
+ibm01146	error
+ibm01147	error
+ibm01148	error
+ibm01149	error
+ibm037	len=97448 sha256=6b7e8895f2580fff9c4c03412dee419d4e858a1eff64461ce2832aaac5dc318a
+ibm038	error
+ibm1026	error
+ibm1047	len=97704 sha256=5d6bf373042b80495fee65024b560e22901bcc079788a1e175ac4c5d516a90e7
+ibm273	error
+ibm274	error
+ibm275	error
+ibm277	error
+ibm278	error
+ibm280	error
+ibm281	error
+ibm284	error
+ibm285	error
+ibm290	error
+ibm297	error
+ibm367	len=164392 sha256=769f7ac6a3a5b390f190b032e79d0ca31c036ce95acf517716b7312486fc4f26
+ibm420	error
+ibm423	error
+ibm424	error
+ibm437	len=138977 sha256=0afc695097fe04fecc4feb31e35f2bc3ce1b7feda2698e5c4c99dd3c9d490ccb
+ibm500	error
+ibm775	error
+ibm819	len=115104 sha256=48ddae1dca66ea2842d9984b0b0dc0eb6e2d55eb91187050087bc40676da4ca2
+ibm850	len=126656 sha256=5e4b1819d0e9f4df51a9b9ea46844ce37f2725b79b546f772c08452044926b63
+ibm851	error
+ibm852	len=126271 sha256=1992e9a47a4fecb5d2b01597495b8ef4c7242302279af9eb6f640449c767e4fb
+ibm855	len=126656 sha256=c4691bb1cca32ad7b42a9e575dfecafb7dfa281a94de34a60df9f22c48b2730d
+ibm857	error
+ibm860	len=138592 sha256=4349977adbdeffe85b76eda040e1724fc290499bf06041dd0ad4d50678586504
+ibm861	error
+ibm862	len=138977 sha256=93f47a8ecd12a1d30641f8ec9ea590966eef46e8de024ffc342ba3adb5966217
+ibm863	len=138977 sha256=a6cf26be8d4a439fb3ea7a40d267f8ef500138c62acac4a4f334f3d50b22db6d
+ibm864	error
+ibm865	len=138977 sha256=aff70cd983d16d65576f88c94375bad0325695f3b4b4ecb12b1649fc4abb0081
+ibm866	len=135127 sha256=9b2bce70f95c346ed037a2bb24ec1d227f5c59eb146f26d84720191c68d37ab4
+ibm868	error
+ibm869	error
+ibm870	error
+ibm871	error
+ibm880	error
+ibm891	error
+ibm903	error
+ibm904	error
+ibm905	error
+ibm918	error
+ibmebcdicatde	error
+ibmsymbols	error
+ibmthai	error
+iec_p27-1	error
+inis	error
+inis-8	error
+inis-cyrillic	error
+invariant	error
+irv	error
+iso-10646	error
+iso-10646-j-1	error
+iso-10646-ucs-2	len=97050 sha256=ad6183faf0616031e0f9417de8c9d8ac2346a9274afc3952ee43974a6cf526d5
+iso-10646-ucs-4	error
+iso-10646-ucs-basic	error
+iso-10646-unicode-latin1	error
+iso-10646-utf-1	error
+iso-11548-1	error
+iso-2022-cn	len=3 sha256=83d544ccc223c057d2bf80d3f2a32982c32c3c0db8e2674820da5064783fb097
+iso-2022-cn-ext	len=3 sha256=83d544ccc223c057d2bf80d3f2a32982c32c3c0db8e2674820da5064783fb097
+iso-2022-jp	len=164645 sha256=bab32114531f295a2ae1a664d6c05e7f92bbe788eb96e27200443e18d9571caf
+iso-2022-jp-2	error
+iso-2022-kr	len=3 sha256=83d544ccc223c057d2bf80d3f2a32982c32c3c0db8e2674820da5064783fb097
+iso-8859-1	len=115104 sha256=48ddae1dca66ea2842d9984b0b0dc0eb6e2d55eb91187050087bc40676da4ca2
+iso-8859-1-windows-3.0-latin-1	error
+iso-8859-1-windows-3.1-latin-1	error
+iso-8859-10	len=127812 sha256=53f6a76e2ad1df590375e5c2168cf9890e3e0ec937cba9b49e7af8a8dc3196fe
+iso-8859-11	len=164007 sha256=d2db459ae8be0f3624ef5040c7f61af6d7fa0cd073c4763acdf261c29b57a214
+iso-8859-13	len=128968 sha256=c47fdd55985eb6d434cf2da819e049487cf2657954de8d833530434d6c379513
+iso-8859-14	len=135897 sha256=d51c155bfc9ec5ad7d7e8924de8255b8a6ffc111bbd9b649a826dee5b009da9a
+iso-8859-15	len=127813 sha256=1b95e6a59104c8a82e62b31d082ed47c2b81a90de93660495f097354049ef328
+iso-8859-16	len=128583 sha256=df2a78d46802d57ea061772cb89e1dc29ba9c5911931d8d8a06350b108e645e0
+iso-8859-2	len=127427 sha256=3ca3264eb1351f2290bc91ffb8b7c7e7ac36c91f2c9bb0e385c464b5ded86bda
+iso-8859-2-windows-latin-2	error
+iso-8859-3	len=130122 sha256=c428c09c2a3730eff1d1590812eae9841993348d050d0c17d9f2f2a22afb718b
+iso-8859-4	len=127427 sha256=0f5e4a04873f1b8bba2b4c176f0317b7dd57fc662e3efab06ccaa70e958034da
+iso-8859-5	len=127812 sha256=2cbc229571f6df5c8efd1ba853f4856521e611ee659bf66a32a24c9a22cf562f
+iso-8859-6	len=144755 sha256=709e488c2a713ff79b3f87c732c0a35b8b3721f85752698c2c6a5a8e52744a23
+iso-8859-6-e	len=144755 sha256=709e488c2a713ff79b3f87c732c0a35b8b3721f85752698c2c6a5a8e52744a23
+iso-8859-6-i	len=144755 sha256=709e488c2a713ff79b3f87c732c0a35b8b3721f85752698c2c6a5a8e52744a23
+iso-8859-7	len=130509 sha256=469a0af3a7a08c8e0241fc10ba5e9780df16766756d22fada6a54ea121a7bb78
+iso-8859-8	len=142446 sha256=24c032ced53ca0f27fb1814233cd5e05a8756534dd90be35e84986b44b57f8f6
+iso-8859-8-e	len=142446 sha256=24c032ced53ca0f27fb1814233cd5e05a8756534dd90be35e84986b44b57f8f6
+iso-8859-8-i	len=142446 sha256=24c032ced53ca0f27fb1814233cd5e05a8756534dd90be35e84986b44b57f8f6
+iso-8859-9	len=115104 sha256=f241b2c89a46947bb90cd5d259123c94a750080e5b1587f66ad8892aa72b67b0
+iso-8859-9-windows-latin-5	error
+iso-celtic	len=135897 sha256=d51c155bfc9ec5ad7d7e8924de8255b8a6ffc111bbd9b649a826dee5b009da9a
+iso-ir-10	error
+iso-ir-100	len=115104 sha256=48ddae1dca66ea2842d9984b0b0dc0eb6e2d55eb91187050087bc40676da4ca2
+iso-ir-101	len=127427 sha256=3ca3264eb1351f2290bc91ffb8b7c7e7ac36c91f2c9bb0e385c464b5ded86bda
+iso-ir-102	error
+iso-ir-103	error
+iso-ir-109	len=130122 sha256=c428c09c2a3730eff1d1590812eae9841993348d050d0c17d9f2f2a22afb718b
+iso-ir-11	error
+iso-ir-110	len=127427 sha256=0f5e4a04873f1b8bba2b4c176f0317b7dd57fc662e3efab06ccaa70e958034da
+iso-ir-111	error
+iso-ir-121	error
+iso-ir-122	error
+iso-ir-123	error
+iso-ir-126	len=130509 sha256=469a0af3a7a08c8e0241fc10ba5e9780df16766756d22fada6a54ea121a7bb78
+iso-ir-127	len=144755 sha256=709e488c2a713ff79b3f87c732c0a35b8b3721f85752698c2c6a5a8e52744a23
+iso-ir-128	error
+iso-ir-13	error
+iso-ir-138	len=142446 sha256=24c032ced53ca0f27fb1814233cd5e05a8756534dd90be35e84986b44b57f8f6
+iso-ir-139	error
+iso-ir-14	error
+iso-ir-141	error
+iso-ir-142	error
+iso-ir-143	error
+iso-ir-144	len=127812 sha256=2cbc229571f6df5c8efd1ba853f4856521e611ee659bf66a32a24c9a22cf562f
+iso-ir-146	error
+iso-ir-147	error
+iso-ir-148	len=115104 sha256=f241b2c89a46947bb90cd5d259123c94a750080e5b1587f66ad8892aa72b67b0
+iso-ir-149	len=111285 sha256=33769b056590edbaafbc1b47a8817a3f6d02b72ddde38f365bb6e0fabf360cee
+iso-ir-15	error
+iso-ir-150	error
+iso-ir-151	error
+iso-ir-152	error
+iso-ir-153	error
+iso-ir-154	error
+iso-ir-155	error
+iso-ir-157	len=127812 sha256=53f6a76e2ad1df590375e5c2168cf9890e3e0ec937cba9b49e7af8a8dc3196fe
+iso-ir-158	error
+iso-ir-159	error
+iso-ir-16	error
+iso-ir-17	error
+iso-ir-18	error
+iso-ir-19	error
+iso-ir-199	len=135897 sha256=d51c155bfc9ec5ad7d7e8924de8255b8a6ffc111bbd9b649a826dee5b009da9a
+iso-ir-2	error
+iso-ir-21	error
+iso-ir-226	len=128583 sha256=df2a78d46802d57ea061772cb89e1dc29ba9c5911931d8d8a06350b108e645e0
+iso-ir-25	error
+iso-ir-27	error
+iso-ir-37	error
+iso-ir-4	error
+iso-ir-42	error
+iso-ir-47	error
+iso-ir-49	error
+iso-ir-50	error
+iso-ir-51	error
+iso-ir-54	error
+iso-ir-55	error
+iso-ir-57	error
+iso-ir-58	len=107721 sha256=1e1573b45d7e204eea6dbd397c328953077dcb7c6f9e783dc3408341ffaf472d
+iso-ir-6	len=164392 sha256=769f7ac6a3a5b390f190b032e79d0ca31c036ce95acf517716b7312486fc4f26
+iso-ir-60	error
+iso-ir-61	error
+iso-ir-69	error
+iso-ir-70	error
+iso-ir-8-1	error
+iso-ir-8-2	error
+iso-ir-84	error
+iso-ir-85	error
+iso-ir-86	error
+iso-ir-87	error
+iso-ir-88	error
+iso-ir-89	error
+iso-ir-9-1	error
+iso-ir-9-2	error
+iso-ir-90	error
+iso-ir-91	error
+iso-ir-92	error
+iso-ir-93	error
+iso-ir-94	error
+iso-ir-95	error
+iso-ir-96	error
+iso-ir-98	error
+iso-ir-99	error
+iso-unicode-ibm-1261	error
+iso-unicode-ibm-1264	error
+iso-unicode-ibm-1265	error
+iso-unicode-ibm-1268	error
+iso-unicode-ibm-1276	error
+iso102t617bit	error
+iso10367box	error
+iso103t618bit	error
+iso10646utf1	error
+iso10swedish	error
+iso111ecmacyrillic	error
+iso115481	error
+iso11swedishfornames	error
+iso121canadian1	error
+iso122canadian2	error
+iso123csaz24341985gr	error
+iso128t101g2	error
+iso139csn369103	error
+iso13jisc6220jp	error
+iso141jusib1002	error
+iso143iecp271	error
+iso146serbian	error
+iso147macedonian	error
+iso14jisc6220ro	error
+iso15	len=127813 sha256=1b95e6a59104c8a82e62b31d082ed47c2b81a90de93660495f097354049ef328
+iso150greekccitt	error
+iso151cuba	error
+iso153gost1976874	error
+iso158lap	error
+iso159jisx02121990	error
+iso15italian	error
+iso16portuguese	error
+iso17spanish	error
+iso18greek7old	error
+iso19latingreek	error
+iso2022cn	error
+iso2022cnext	error
+iso2022jp	len=164645 sha256=bab32114531f295a2ae1a664d6c05e7f92bbe788eb96e27200443e18d9571caf
+iso2022jp2	error
+iso2022kr	error
+iso2033	error
+iso21german	error
+iso25french	error
+iso27latingreek1	error
+iso2intlrefversion	error
+iso42jisc62261978	error
+iso47bsviewdata	error
+iso49inis	error
+iso4unitedkingdom	error
+iso50inis8	error
+iso51iniscyrillic	error
+iso54271981	error
+iso5427cyrillic	error
+iso5427cyrillic1981	error
+iso5428greek	error
+iso57gb1988	error
+iso58gb231280	error
+iso60norwegian1	error
+iso61norwegian2	error
+iso646-ca	error
+iso646-ca2	error
+iso646-cn	error
+iso646-cu	error
+iso646-de	error
+iso646-dk	error
+iso646-es	error
+iso646-es2	error
+iso646-fi	error
+iso646-fr	error
+iso646-fr1	error
+iso646-gb	error
+iso646-hu	error
+iso646-it	error
+iso646-jp	error
+iso646-jp-ocr-b	error
+iso646-kr	error
+iso646-no	error
+iso646-no2	error
+iso646-pt	error
+iso646-pt2	error
+iso646-se	error
+iso646-se2	error
+iso646-us	len=164392 sha256=769f7ac6a3a5b390f190b032e79d0ca31c036ce95acf517716b7312486fc4f26
+iso646-yu	error
+iso646basic1983	error
+iso646danish	error
+iso6937add	error
+iso69french	error
+iso70videotexsupp1	error
+iso84portuguese2	error
+iso85spanish2	error
+iso86hungarian	error
+iso87jisx0208	error
+iso8859-1	len=123577 sha256=61ce8252944777f2af76570dedf1e0bfadf50d374675c58c7b53920f81adfb1e
+iso8859-10	len=127812 sha256=53f6a76e2ad1df590375e5c2168cf9890e3e0ec937cba9b49e7af8a8dc3196fe
+iso8859-11	len=164007 sha256=d2db459ae8be0f3624ef5040c7f61af6d7fa0cd073c4763acdf261c29b57a214
+iso8859-13	len=128968 sha256=c47fdd55985eb6d434cf2da819e049487cf2657954de8d833530434d6c379513
+iso8859-14	len=135897 sha256=d51c155bfc9ec5ad7d7e8924de8255b8a6ffc111bbd9b649a826dee5b009da9a
+iso8859-15	len=127813 sha256=1b95e6a59104c8a82e62b31d082ed47c2b81a90de93660495f097354049ef328
+iso8859-2	len=127427 sha256=3ca3264eb1351f2290bc91ffb8b7c7e7ac36c91f2c9bb0e385c464b5ded86bda
+iso8859-3	len=130122 sha256=c428c09c2a3730eff1d1590812eae9841993348d050d0c17d9f2f2a22afb718b
+iso8859-4	len=127427 sha256=0f5e4a04873f1b8bba2b4c176f0317b7dd57fc662e3efab06ccaa70e958034da
+iso8859-5	len=127812 sha256=2cbc229571f6df5c8efd1ba853f4856521e611ee659bf66a32a24c9a22cf562f
+iso8859-6	len=144755 sha256=709e488c2a713ff79b3f87c732c0a35b8b3721f85752698c2c6a5a8e52744a23
+iso8859-7	len=130509 sha256=469a0af3a7a08c8e0241fc10ba5e9780df16766756d22fada6a54ea121a7bb78
+iso8859-8	len=142446 sha256=24c032ced53ca0f27fb1814233cd5e05a8756534dd90be35e84986b44b57f8f6
+iso8859-9	len=124347 sha256=dcae85d034933931c272ca3db8d90c9ae074771b4f926ed16be365381346036e
+iso88591	len=123577 sha256=61ce8252944777f2af76570dedf1e0bfadf50d374675c58c7b53920f81adfb1e
+iso885910	len=127812 sha256=53f6a76e2ad1df590375e5c2168cf9890e3e0ec937cba9b49e7af8a8dc3196fe
+iso885911	len=164007 sha256=d2db459ae8be0f3624ef5040c7f61af6d7fa0cd073c4763acdf261c29b57a214
+iso885913	len=128968 sha256=c47fdd55985eb6d434cf2da819e049487cf2657954de8d833530434d6c379513
+iso885914	len=135897 sha256=d51c155bfc9ec5ad7d7e8924de8255b8a6ffc111bbd9b649a826dee5b009da9a
+iso885915	len=127813 sha256=1b95e6a59104c8a82e62b31d082ed47c2b81a90de93660495f097354049ef328
+iso885916	len=128583 sha256=df2a78d46802d57ea061772cb89e1dc29ba9c5911931d8d8a06350b108e645e0
+iso88592	len=127427 sha256=3ca3264eb1351f2290bc91ffb8b7c7e7ac36c91f2c9bb0e385c464b5ded86bda
+iso88593	len=130122 sha256=c428c09c2a3730eff1d1590812eae9841993348d050d0c17d9f2f2a22afb718b
+iso88594	len=127427 sha256=0f5e4a04873f1b8bba2b4c176f0317b7dd57fc662e3efab06ccaa70e958034da
+iso88595	len=127812 sha256=2cbc229571f6df5c8efd1ba853f4856521e611ee659bf66a32a24c9a22cf562f
+iso88596	len=144755 sha256=709e488c2a713ff79b3f87c732c0a35b8b3721f85752698c2c6a5a8e52744a23
+iso88596e	len=144755 sha256=709e488c2a713ff79b3f87c732c0a35b8b3721f85752698c2c6a5a8e52744a23
+iso88596i	len=144755 sha256=709e488c2a713ff79b3f87c732c0a35b8b3721f85752698c2c6a5a8e52744a23
+iso88597	len=130509 sha256=469a0af3a7a08c8e0241fc10ba5e9780df16766756d22fada6a54ea121a7bb78
+iso88598	len=142446 sha256=24c032ced53ca0f27fb1814233cd5e05a8756534dd90be35e84986b44b57f8f6
+iso88598e	len=142446 sha256=24c032ced53ca0f27fb1814233cd5e05a8756534dd90be35e84986b44b57f8f6
+iso88598i	len=142446 sha256=24c032ced53ca0f27fb1814233cd5e05a8756534dd90be35e84986b44b57f8f6
+iso88599	len=124347 sha256=dcae85d034933931c272ca3db8d90c9ae074771b4f926ed16be365381346036e
+iso8859supp	error
+iso88greek7	error
+iso89asmo449	error
+iso90	error
+iso91jisc62291984a	error
+iso92jisc62991984b	error
+iso93jis62291984badd	error
+iso94jis62291984hand	error
+iso95jis62291984handadd	error
+iso96jisc62291984kana	error
+iso99naplps	error
+iso_1	len=123577 sha256=61ce8252944777f2af76570dedf1e0bfadf50d374675c58c7b53920f81adfb1e
+iso_10367-box	error
+iso_11548-1	error
+iso_2033-1983	error
+iso_5427	error
+iso_5427:1981	error
+iso_5428:1980	error
+iso_646.basic:1983	error
+iso_646.irv:1983	error
+iso_646.irv:1991	len=164392 sha256=769f7ac6a3a5b390f190b032e79d0ca31c036ce95acf517716b7312486fc4f26
+iso_6937-2-25	error
+iso_6937-2-add	error
+iso_8859-1	len=115104 sha256=48ddae1dca66ea2842d9984b0b0dc0eb6e2d55eb91187050087bc40676da4ca2
+iso_8859-10:1992	len=127812 sha256=53f6a76e2ad1df590375e5c2168cf9890e3e0ec937cba9b49e7af8a8dc3196fe
+iso_8859-14	len=135897 sha256=d51c155bfc9ec5ad7d7e8924de8255b8a6ffc111bbd9b649a826dee5b009da9a
+iso_8859-14:1998	len=135897 sha256=d51c155bfc9ec5ad7d7e8924de8255b8a6ffc111bbd9b649a826dee5b009da9a
+iso_8859-15	len=127813 sha256=1b95e6a59104c8a82e62b31d082ed47c2b81a90de93660495f097354049ef328
+iso_8859-16	len=128583 sha256=df2a78d46802d57ea061772cb89e1dc29ba9c5911931d8d8a06350b108e645e0
+iso_8859-16:2001	len=128583 sha256=df2a78d46802d57ea061772cb89e1dc29ba9c5911931d8d8a06350b108e645e0
+iso_8859-1:1987	len=115104 sha256=48ddae1dca66ea2842d9984b0b0dc0eb6e2d55eb91187050087bc40676da4ca2
+iso_8859-2	len=127427 sha256=3ca3264eb1351f2290bc91ffb8b7c7e7ac36c91f2c9bb0e385c464b5ded86bda
+iso_8859-2:1987	len=127427 sha256=3ca3264eb1351f2290bc91ffb8b7c7e7ac36c91f2c9bb0e385c464b5ded86bda
+iso_8859-3	len=130122 sha256=c428c09c2a3730eff1d1590812eae9841993348d050d0c17d9f2f2a22afb718b
+iso_8859-3:1988	len=130122 sha256=c428c09c2a3730eff1d1590812eae9841993348d050d0c17d9f2f2a22afb718b
+iso_8859-4	len=127427 sha256=0f5e4a04873f1b8bba2b4c176f0317b7dd57fc662e3efab06ccaa70e958034da
+iso_8859-4:1988	len=127427 sha256=0f5e4a04873f1b8bba2b4c176f0317b7dd57fc662e3efab06ccaa70e958034da
+iso_8859-5	len=127812 sha256=2cbc229571f6df5c8efd1ba853f4856521e611ee659bf66a32a24c9a22cf562f
+iso_8859-5:1988	len=127812 sha256=2cbc229571f6df5c8efd1ba853f4856521e611ee659bf66a32a24c9a22cf562f
+iso_8859-6	len=144755 sha256=709e488c2a713ff79b3f87c732c0a35b8b3721f85752698c2c6a5a8e52744a23
+iso_8859-6-e	len=144755 sha256=709e488c2a713ff79b3f87c732c0a35b8b3721f85752698c2c6a5a8e52744a23
+iso_8859-6-i	len=144755 sha256=709e488c2a713ff79b3f87c732c0a35b8b3721f85752698c2c6a5a8e52744a23
+iso_8859-6:1987	len=144755 sha256=709e488c2a713ff79b3f87c732c0a35b8b3721f85752698c2c6a5a8e52744a23
+iso_8859-7	len=130509 sha256=469a0af3a7a08c8e0241fc10ba5e9780df16766756d22fada6a54ea121a7bb78
+iso_8859-7:1987	len=130509 sha256=469a0af3a7a08c8e0241fc10ba5e9780df16766756d22fada6a54ea121a7bb78
+iso_8859-8	len=142446 sha256=24c032ced53ca0f27fb1814233cd5e05a8756534dd90be35e84986b44b57f8f6
+iso_8859-8-e	len=142446 sha256=24c032ced53ca0f27fb1814233cd5e05a8756534dd90be35e84986b44b57f8f6
+iso_8859-8-i	len=142446 sha256=24c032ced53ca0f27fb1814233cd5e05a8756534dd90be35e84986b44b57f8f6
+iso_8859-8:1988	len=142446 sha256=24c032ced53ca0f27fb1814233cd5e05a8756534dd90be35e84986b44b57f8f6
+iso_8859-9	len=115104 sha256=f241b2c89a46947bb90cd5d259123c94a750080e5b1587f66ad8892aa72b67b0
+iso_8859-9:1989	len=115104 sha256=f241b2c89a46947bb90cd5d259123c94a750080e5b1587f66ad8892aa72b67b0
+iso_8859-supp	error
+iso_9036	error
+iso_tr_11548-1	error
+isolatin1	len=115104 sha256=48ddae1dca66ea2842d9984b0b0dc0eb6e2d55eb91187050087bc40676da4ca2
+isolatin2	len=127427 sha256=3ca3264eb1351f2290bc91ffb8b7c7e7ac36c91f2c9bb0e385c464b5ded86bda
+isolatin3	len=130122 sha256=c428c09c2a3730eff1d1590812eae9841993348d050d0c17d9f2f2a22afb718b
+isolatin4	len=127427 sha256=0f5e4a04873f1b8bba2b4c176f0317b7dd57fc662e3efab06ccaa70e958034da
+isolatin5	len=115104 sha256=f241b2c89a46947bb90cd5d259123c94a750080e5b1587f66ad8892aa72b67b0
+isolatin6	len=127812 sha256=53f6a76e2ad1df590375e5c2168cf9890e3e0ec937cba9b49e7af8a8dc3196fe
+isolatinarabic	len=144755 sha256=709e488c2a713ff79b3f87c732c0a35b8b3721f85752698c2c6a5a8e52744a23
+isolatincyrillic	len=127812 sha256=2cbc229571f6df5c8efd1ba853f4856521e611ee659bf66a32a24c9a22cf562f
+isolatingreek	len=130509 sha256=469a0af3a7a08c8e0241fc10ba5e9780df16766756d22fada6a54ea121a7bb78
+isolatinhebrew	len=142446 sha256=24c032ced53ca0f27fb1814233cd5e05a8756534dd90be35e84986b44b57f8f6
+isotextcomm	error
+it	error
+jis_c6220-1969	error
+jis_c6220-1969-jp	error
+jis_c6220-1969-ro	error
+jis_c6226-1978	error
+jis_c6226-1983	error
+jis_c6229-1984-a	error
+jis_c6229-1984-b	error
+jis_c6229-1984-b-add	error
+jis_c6229-1984-hand	error
+jis_c6229-1984-hand-add	error
+jis_c6229-1984-kana	error
+jis_encoding	error
+jis_x0201	error
+jis_x0208-1983	error
+jis_x0212-1990	error
+jisencoding	error
+jp	error
+jp-ocr-a	error
+jp-ocr-b	error
+jp-ocr-b-add	error
+jp-ocr-hand	error
+jp-ocr-hand-add	error
+js	error
+jus_i.b1.002	error
+jus_i.b1.003-mac	error
+jus_i.b1.003-serb	error
+katakana	error
+koi	len=136668 sha256=86adfbe3b4480a1df5fa79265bc14f03cad6b14a34b0295571650c56bdf7afd2
+koi7-switched	error
+koi7switched	error
+koi8	len=136668 sha256=86adfbe3b4480a1df5fa79265bc14f03cad6b14a34b0295571650c56bdf7afd2
+koi8-e	error
+koi8-r	len=136668 sha256=86adfbe3b4480a1df5fa79265bc14f03cad6b14a34b0295571650c56bdf7afd2
+koi8-ru	len=132817 sha256=8c1f5d5974c0fb55e6a7d38ba992d07bc9f9d729d72c41a678dcac491867a464
+koi8-u	len=132817 sha256=8c1f5d5974c0fb55e6a7d38ba992d07bc9f9d729d72c41a678dcac491867a464
+koi8_r	len=136668 sha256=86adfbe3b4480a1df5fa79265bc14f03cad6b14a34b0295571650c56bdf7afd2
+koi8r	len=136668 sha256=86adfbe3b4480a1df5fa79265bc14f03cad6b14a34b0295571650c56bdf7afd2
+koi8u	len=132817 sha256=8c1f5d5974c0fb55e6a7d38ba992d07bc9f9d729d72c41a678dcac491867a464
+korean	len=111285 sha256=33769b056590edbaafbc1b47a8817a3f6d02b72ddde38f365bb6e0fabf360cee
+ks_c_5601-1987	len=111285 sha256=33769b056590edbaafbc1b47a8817a3f6d02b72ddde38f365bb6e0fabf360cee
+ks_c_5601-1989	len=111285 sha256=33769b056590edbaafbc1b47a8817a3f6d02b72ddde38f365bb6e0fabf360cee
+ksc5601	len=111285 sha256=33769b056590edbaafbc1b47a8817a3f6d02b72ddde38f365bb6e0fabf360cee
+ksc56011987	error
+ksc5636	error
+ksc_5601	len=111285 sha256=33769b056590edbaafbc1b47a8817a3f6d02b72ddde38f365bb6e0fabf360cee
+kz-1048	error
+kz1048	error
+l1	len=115104 sha256=48ddae1dca66ea2842d9984b0b0dc0eb6e2d55eb91187050087bc40676da4ca2
+l10	len=128583 sha256=df2a78d46802d57ea061772cb89e1dc29ba9c5911931d8d8a06350b108e645e0
+l2	len=127427 sha256=3ca3264eb1351f2290bc91ffb8b7c7e7ac36c91f2c9bb0e385c464b5ded86bda
+l3	len=130122 sha256=c428c09c2a3730eff1d1590812eae9841993348d050d0c17d9f2f2a22afb718b
+l4	len=127427 sha256=0f5e4a04873f1b8bba2b4c176f0317b7dd57fc662e3efab06ccaa70e958034da
+l5	len=115104 sha256=f241b2c89a46947bb90cd5d259123c94a750080e5b1587f66ad8892aa72b67b0
+l6	len=127812 sha256=53f6a76e2ad1df590375e5c2168cf9890e3e0ec937cba9b49e7af8a8dc3196fe
+l8	len=135897 sha256=d51c155bfc9ec5ad7d7e8924de8255b8a6ffc111bbd9b649a826dee5b009da9a
+l9	len=127813 sha256=1b95e6a59104c8a82e62b31d082ed47c2b81a90de93660495f097354049ef328
+lap	error
+latin-9	len=127813 sha256=1b95e6a59104c8a82e62b31d082ed47c2b81a90de93660495f097354049ef328
+latin-greek	error
+latin-greek-1	error
+latin-lap	error
+latin1	len=115104 sha256=48ddae1dca66ea2842d9984b0b0dc0eb6e2d55eb91187050087bc40676da4ca2
+latin1-2-5	error
+latin10	len=128583 sha256=df2a78d46802d57ea061772cb89e1dc29ba9c5911931d8d8a06350b108e645e0
+latin2	len=127427 sha256=3ca3264eb1351f2290bc91ffb8b7c7e7ac36c91f2c9bb0e385c464b5ded86bda
+latin3	len=130122 sha256=c428c09c2a3730eff1d1590812eae9841993348d050d0c17d9f2f2a22afb718b
+latin4	len=127427 sha256=0f5e4a04873f1b8bba2b4c176f0317b7dd57fc662e3efab06ccaa70e958034da
+latin5	len=115104 sha256=f241b2c89a46947bb90cd5d259123c94a750080e5b1587f66ad8892aa72b67b0
+latin6	len=127812 sha256=53f6a76e2ad1df590375e5c2168cf9890e3e0ec937cba9b49e7af8a8dc3196fe
+latin8	len=135897 sha256=d51c155bfc9ec5ad7d7e8924de8255b8a6ffc111bbd9b649a826dee5b009da9a
+logical	len=142446 sha256=24c032ced53ca0f27fb1814233cd5e05a8756534dd90be35e84986b44b57f8f6
+mac	len=127810 sha256=37c7f36f18caf1ef9ac7968b99f9c6d9f4a3ccc520f82a1470ebb2b779a6df03
+macedonian	error
+macintosh	len=127810 sha256=37c7f36f18caf1ef9ac7968b99f9c6d9f4a3ccc520f82a1470ebb2b779a6df03
+microsoft-publishing	error
+microsoftpublishing	error
+mnem	error
+mnemonic	error
+ms932	len=124803 sha256=64a7871c413764f184e240a0f262d28b482c9fa846a2f36087bf6a688900e8ef
+ms936	len=107721 sha256=1e1573b45d7e204eea6dbd397c328953077dcb7c6f9e783dc3408341ffaf472d
+ms_kanji	len=124803 sha256=64a7871c413764f184e240a0f262d28b482c9fa846a2f36087bf6a688900e8ef
+msz_7795.3	error
+naplps	error
+nats-dano	error
+nats-dano-add	error
+nats-sefi	error
+nats-sefi-add	error
+natsdano	error
+natsdanoadd	error
+natssefi	error
+natssefiadd	error
+nc_nc00-10:81	error
+nf_z_62-010	error
+nf_z_62-010_(1973)	error
+no	error
+no2	error
+ns_4551-1	error
+ns_4551-2	error
+osd_ebcdic_df03_irv	error
+osd_ebcdic_df04_1	error
+osd_ebcdic_df04_15	error
+osdebcdicdf03irv	error
+osdebcdicdf041	error
+osdebcdicdf0415	error
+pc-multilingual-850+euro	len=127041 sha256=2913cf6ac41e9f84767524d1779701b8b30720ec6a014d1a15319453aac419f0
+pc775baltic	error
+pc8-danish-norwegian	error
+pc8-turkish	error
+pc850multilingual	len=126656 sha256=5e4b1819d0e9f4df51a9b9ea46844ce37f2725b79b546f772c08452044926b63
+pc862latinhebrew	len=138977 sha256=93f47a8ecd12a1d30641f8ec9ea590966eef46e8de024ffc342ba3adb5966217
+pc8codepage437	len=138977 sha256=0afc695097fe04fecc4feb31e35f2bc3ce1b7feda2698e5c4c99dd3c9d490ccb
+pc8danishnorwegian	error
+pc8turkish	error
+pcp852	len=126271 sha256=1992e9a47a4fecb5d2b01597495b8ef4c7242302279af9eb6f640449c767e4fb
+pt	error
+pt154	error
+pt2	error
+ptcp154	error
+r8	error
+ref	error
+replacement	len=3 sha256=83d544ccc223c057d2bf80d3f2a32982c32c3c0db8e2674820da5064783fb097
+rk1048	error
+roman8	error
+scsu	error
+se	error
+se2	error
+sen_850200_b	error
+sen_850200_c	error
+serbian	error
+shift-jis	len=124803 sha256=64a7871c413764f184e240a0f262d28b482c9fa846a2f36087bf6a688900e8ef
+shift_jis	len=124803 sha256=64a7871c413764f184e240a0f262d28b482c9fa846a2f36087bf6a688900e8ef
+shiftjis	len=124803 sha256=64a7871c413764f184e240a0f262d28b482c9fa846a2f36087bf6a688900e8ef
+sjis	len=124803 sha256=64a7871c413764f184e240a0f262d28b482c9fa846a2f36087bf6a688900e8ef
+st_sev_358-88	error
+strk1048-2002	error
+sun_eu_greek	len=130509 sha256=469a0af3a7a08c8e0241fc10ba5e9780df16766756d22fada6a54ea121a7bb78
+t.101-g2	error
+t.61	error
+t.61-7bit	error
+t.61-8bit	error
+tis-620	len=164007 sha256=d2db459ae8be0f3624ef5040c7f61af6d7fa0cd073c4763acdf261c29b57a214
+tis620	error
+tscii	error
+ucs-2	len=97050 sha256=ad6183faf0616031e0f9417de8c9d8ac2346a9274afc3952ee43974a6cf526d5
+ucs4	error
+uk	error
+unicode	len=97050 sha256=ad6183faf0616031e0f9417de8c9d8ac2346a9274afc3952ee43974a6cf526d5
+unicode-1-1	error
+unicode-1-1-utf-7	error
+unicode-1-1-utf-8	len=141736 sha256=abe152fb84501195701e508c4813143dc50692982f8c88558e00ba622955a9b0
+unicode11	error
+unicode11utf7	error
+unicode11utf8	len=141736 sha256=abe152fb84501195701e508c4813143dc50692982f8c88558e00ba622955a9b0
+unicode20utf8	len=141736 sha256=abe152fb84501195701e508c4813143dc50692982f8c88558e00ba622955a9b0
+unicodeascii	error
+unicodefeff	len=97050 sha256=ad6183faf0616031e0f9417de8c9d8ac2346a9274afc3952ee43974a6cf526d5
+unicodefffe	len=97180 sha256=cf9a421f571787d0ecfebb6e540192b0e49ef27c3d9ca19694af3251f0a8d3a8
+unicodeibm1261	error
+unicodeibm1264	error
+unicodeibm1265	error
+unicodeibm1268	error
+unicodeibm1276	error
+unicodejapanese	error
+unicodelatin1	error
+unknown-8bit	error
+unknown8bit	error
+us	len=164392 sha256=769f7ac6a3a5b390f190b032e79d0ca31c036ce95acf517716b7312486fc4f26
+us-ascii	len=164392 sha256=769f7ac6a3a5b390f190b032e79d0ca31c036ce95acf517716b7312486fc4f26
+us-dk	error
+usdk	error
+utf-16	len=97180 sha256=cf9a421f571787d0ecfebb6e540192b0e49ef27c3d9ca19694af3251f0a8d3a8
+utf-16be	len=97180 sha256=cf9a421f571787d0ecfebb6e540192b0e49ef27c3d9ca19694af3251f0a8d3a8
+utf-16le	len=97050 sha256=ad6183faf0616031e0f9417de8c9d8ac2346a9274afc3952ee43974a6cf526d5
+utf-32	error
+utf-32be	error
+utf-32le	error
+utf-7	error
+utf-7-imap	error
+utf-8	len=141736 sha256=abe152fb84501195701e508c4813143dc50692982f8c88558e00ba622955a9b0
+utf16	len=97180 sha256=cf9a421f571787d0ecfebb6e540192b0e49ef27c3d9ca19694af3251f0a8d3a8
+utf16be	len=97180 sha256=cf9a421f571787d0ecfebb6e540192b0e49ef27c3d9ca19694af3251f0a8d3a8
+utf16le	len=97050 sha256=ad6183faf0616031e0f9417de8c9d8ac2346a9274afc3952ee43974a6cf526d5
+utf32	error
+utf32be	error
+utf32le	error
+utf7	error
+utf7imap	error
+utf8	len=141736 sha256=abe152fb84501195701e508c4813143dc50692982f8c88558e00ba622955a9b0
+ventura-international	error
+ventura-math	error
+ventura-us	error
+venturainternational	error
+venturamath	error
+venturaus	error
+videotex-suppl	error
+viqr	error
+viscii	error
+visual	len=142446 sha256=24c032ced53ca0f27fb1814233cd5e05a8756534dd90be35e84986b44b57f8f6
+windows-1250	len=123577 sha256=45616727057505d5f5211dac1213cbc8920c07a91c95dc28c5776580c452a9d7
+windows-1251	len=122420 sha256=a8a7755a2212279a58c518aa4b2fe45490a510a6eebd1251116319207198628a
+windows-1252	len=123577 sha256=61ce8252944777f2af76570dedf1e0bfadf50d374675c58c7b53920f81adfb1e
+windows-1253	len=128583 sha256=a55cc8444c940435544fdde707280a344dec95c25728f6547e11c69cf4976541
+windows-1254	len=124347 sha256=dcae85d034933931c272ca3db8d90c9ae074771b4f926ed16be365381346036e
+windows-1255	len=131281 sha256=9e94b96b3b990d4b9908a36f96f4c8a8e0a43a03c651203cdd974aac371b4d7e
+windows-1256	len=123191 sha256=91e310ad16301fb9efa3b02da95c5bb443a43c4f3cb2062bde5f6a346b961178
+windows-1257	len=126272 sha256=b1bc8f73c0059a6c25976ede584ffb246ce045433708e8e57e5d275b1e8a9098
+windows-1258	len=125503 sha256=18de32211030698955b40aa85a2c8e646392a3207598b376a3398a025201c98f
+windows-31j	len=124803 sha256=64a7871c413764f184e240a0f262d28b482c9fa846a2f36087bf6a688900e8ef
+windows-874	len=164007 sha256=d2db459ae8be0f3624ef5040c7f61af6d7fa0cd073c4763acdf261c29b57a214
+windows-936	len=107721 sha256=1e1573b45d7e204eea6dbd397c328953077dcb7c6f9e783dc3408341ffaf472d
+windows-949	len=111285 sha256=33769b056590edbaafbc1b47a8817a3f6d02b72ddde38f365bb6e0fabf360cee
+windows1250	len=123577 sha256=45616727057505d5f5211dac1213cbc8920c07a91c95dc28c5776580c452a9d7
+windows1251	len=122420 sha256=a8a7755a2212279a58c518aa4b2fe45490a510a6eebd1251116319207198628a
+windows1252	len=123577 sha256=61ce8252944777f2af76570dedf1e0bfadf50d374675c58c7b53920f81adfb1e
+windows1253	len=128583 sha256=a55cc8444c940435544fdde707280a344dec95c25728f6547e11c69cf4976541
+windows1254	len=124347 sha256=dcae85d034933931c272ca3db8d90c9ae074771b4f926ed16be365381346036e
+windows1255	len=131281 sha256=9e94b96b3b990d4b9908a36f96f4c8a8e0a43a03c651203cdd974aac371b4d7e
+windows1256	len=123191 sha256=91e310ad16301fb9efa3b02da95c5bb443a43c4f3cb2062bde5f6a346b961178
+windows1257	len=126272 sha256=b1bc8f73c0059a6c25976ede584ffb246ce045433708e8e57e5d275b1e8a9098
+windows1258	len=125503 sha256=18de32211030698955b40aa85a2c8e646392a3207598b376a3398a025201c98f
+windows30latin1	error
+windows31j	error
+windows31latin1	error
+windows31latin2	error
+windows31latin5	error
+windows874	len=164007 sha256=d2db459ae8be0f3624ef5040c7f61af6d7fa0cd073c4763acdf261c29b57a214
+x-cp1250	len=123577 sha256=45616727057505d5f5211dac1213cbc8920c07a91c95dc28c5776580c452a9d7
+x-cp1251	len=122420 sha256=a8a7755a2212279a58c518aa4b2fe45490a510a6eebd1251116319207198628a
+x-cp1252	len=123577 sha256=61ce8252944777f2af76570dedf1e0bfadf50d374675c58c7b53920f81adfb1e
+x-cp1253	len=128583 sha256=a55cc8444c940435544fdde707280a344dec95c25728f6547e11c69cf4976541
+x-cp1254	len=124347 sha256=dcae85d034933931c272ca3db8d90c9ae074771b4f926ed16be365381346036e
+x-cp1255	len=131281 sha256=9e94b96b3b990d4b9908a36f96f4c8a8e0a43a03c651203cdd974aac371b4d7e
+x-cp1256	len=123191 sha256=91e310ad16301fb9efa3b02da95c5bb443a43c4f3cb2062bde5f6a346b961178
+x-cp1257	len=126272 sha256=b1bc8f73c0059a6c25976ede584ffb246ce045433708e8e57e5d275b1e8a9098
+x-cp1258	len=125503 sha256=18de32211030698955b40aa85a2c8e646392a3207598b376a3398a025201c98f
+x-euc-jp	len=136492 sha256=959983040feb84f0ffa30012b46142220563cb24b6681c06def78d1aae885fd2
+x-gbk	len=107721 sha256=1e1573b45d7e204eea6dbd397c328953077dcb7c6f9e783dc3408341ffaf472d
+x-mac-cyrillic	len=122806 sha256=96145f21cb16695f717322b56a013eb15c7c19eb12f45da8d291143c7e2c4430
+x-mac-roman	len=127810 sha256=37c7f36f18caf1ef9ac7968b99f9c6d9f4a3ccc520f82a1470ebb2b779a6df03
+x-mac-ukrainian	len=122806 sha256=96145f21cb16695f717322b56a013eb15c7c19eb12f45da8d291143c7e2c4430
+x-sjis	len=124803 sha256=64a7871c413764f184e240a0f262d28b482c9fa846a2f36087bf6a688900e8ef
+x-unicode20utf8	len=141736 sha256=abe152fb84501195701e508c4813143dc50692982f8c88558e00ba622955a9b0
+x-user-defined	len=164392 sha256=63f7c2acb848546c886e163135db2c1f4916f4f6767481c2e69270c623786568
+x-x-big5	len=108535 sha256=b9fedbf7f20cb2036efa87882dffc115be301933cc98225158693a7075c95aa0
+x0201	error
+x0201-7	error
+x0208	error
+x0212	error
+yu	error

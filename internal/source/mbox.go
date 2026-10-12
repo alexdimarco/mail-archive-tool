@@ -195,20 +195,54 @@ func (r *mboxReader) walkFile(path string, folderPath []string, handler MessageH
 // uses it, since it fetches each message's raw MIME rather than reading a store.
 func ParseRFC822(data []byte) *model.Message { return safeParseMessage(data) }
 
-// safeParseMessage wraps parseMessage so a panic in the MIME/charset stack on a
-// single crafted message becomes a visible stub instead of aborting the whole
-// archive (R10 — robust parsing; the item is never silently dropped).
-func safeParseMessage(data []byte) (m *model.Message) {
+// parseContent is the parser whose result is the message a user sees and the index
+// holds. Slice S1 of design-mime-fidelity still has it be v1's parseMessage, so no
+// behaviour a user can see changes; slice S2 replaces it with the fidelity walker.
+// What it produces never reaches an identity: that is the v1 replay's, below (P1). It
+// is a variable only so a test can stand in a parser that changes every field.
+var parseContent = parseMessage
+
+// safeParseMessage parses one raw message. A panic in the MIME/charset stack on a
+// single crafted message becomes a visible stub instead of aborting the whole archive
+// (R10 — robust parsing; the item is never silently dropped).
+//
+// The message's identity is decided apart from its content (design-mime-fidelity
+// P1, R27). The frozen v1 parser is replayed under its own recover and its view of the
+// message becomes IdentityTerms, whatever the content parser then makes of it, so a
+// parser change cannot move a key, a fingerprint, a content hash or a file stem. When
+// v1 itself panics the message is the stub, with the stub's terms (stubIdentityTerms),
+// as it was before the replay existed.
+func safeParseMessage(data []byte) *model.Message {
+	v1, panicked := replayV1(data)
+	if panicked || v1 == nil {
+		m, terms := unreadableStub(), stubIdentityTerms(data)
+		m.IdentityTerms = &terms
+		return m
+	}
+	terms := identityTermsOf(v1)
+
+	m, fellBack := contentOf(data), false
+	if m == nil {
+		// The content parser panicked where v1 did not: v1's own content, which is
+		// never worse than what the archive held before (P13).
+		m, fellBack = v1, true
+	}
+	m.TransportHeaders = headerBlock(data)
+	m.V1Inventory = v1InventoryOf(v1)
+	m.FellBack = fellBack
+	m.IdentityTerms = &terms
+	return m
+}
+
+// contentOf runs the content parser under its own recover: nil when it panicked or
+// found no message.
+func contentOf(data []byte) (m *model.Message) {
 	defer func() {
-		if r := recover(); r != nil {
-			m = &model.Message{Subject: "(unreadable message)"}
+		if recover() != nil {
+			m = nil
 		}
 	}()
-	m = parseMessage(data)
-	if m != nil {
-		m.TransportHeaders = headerBlock(data)
-	}
-	return m
+	return parseContent(data)
 }
 
 // headerBlock returns a raw message's internet header section — the bytes

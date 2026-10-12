@@ -307,6 +307,9 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 				// it gone forever after (#5, adversarial 2026-09-12).
 				e.observeArchived(key, prev, folderKey, folderPath)
 			}
+			// This run re-read the record, so it is examined under this build's parser
+			// scheme: stamped in memory, no file written (MC12).
+			e.Manifest.StampParseScheme(key, state.ParseSchemeCurrent)
 			// A healthy read of an item that an earlier run only partly read, which
 			// already has its own record here: the partly-read record is settled.
 			e.supersedePartial(store, key, m)
@@ -317,6 +320,7 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		e.Stats.Retried++
 		if !probeImproves(m, prev.Missing) {
 			e.Stats.StillIncomplete++
+			e.Manifest.StampParseScheme(key, state.ParseSchemeCurrent) // re-read, as above (MC12)
 			// Still partly read: it counts as a partly-read record seen this run, and
 			// a Locator an older binary's save dropped is restored from the capture
 			// (§4.2).
@@ -363,10 +367,22 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		return false, &FolderError{Dir: dir, Err: err}
 	}
 
-	base, htmlPath, relSlash := e.stemFor(dir, date, m.Subject, key)
-	rawName := ""
-	if e.KeepRaw && len(m.Raw) > 0 {
+	// The stem is built from the identity view's subject, never the displayed one: a
+	// parser that decodes the subject differently cannot rename the files of a message
+	// already archived, and an older binary computes the same stem (MC8).
+	base, htmlPath, relSlash := e.stemFor(dir, date, m.IdentitySubject(), key)
+	rawName, writeRaw := "", e.KeepRaw && len(m.Raw) > 0
+	if writeRaw {
 		rawName = base + ".eml"
+	}
+	// A re-capture that preserves no original of its own keeps the one the record has:
+	// the page still links it and its fixity is carried on (MC8).
+	var carriedEML *state.FileDigest
+	if !writeRaw && seen {
+		var carried bool
+		if carriedEML, carried = carriedOriginal(dir, base, relSlash, prev); carried {
+			rawName = base + ".eml"
+		}
 	}
 	ctx := RenderContext{
 		RootRel:        strings.Repeat("../", 1+len(writeFolderPath)), // store dir + folders
@@ -395,13 +411,15 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	// as they are written so `verify` can later detect bit-rot or truncation
 	// (F3). A re-capture builds a fresh Fixity, replacing any earlier one.
 	var fx state.Fixity
-	if rawName != "" {
+	if writeRaw {
 		d, err := e.writeDigest(filepath.Join(dir, rawName), m.Raw)
 		if err != nil {
 			return false, &ItemError{Path: filepath.Join(dir, rawName), msg: "write " + rawName, Err: err}
 		}
 		fx.EML = &d
 		e.Stats.RawWritten++
+	} else if carriedEML != nil {
+		fx.EML = carriedEML
 	}
 
 	e.Stats.AttachmentsInline += len(inlineConsumed)
@@ -496,6 +514,11 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	}
 	rec.Fingerprint = fp
 	rec.FpScheme = state.FpSchemeCurrent // this build's fingerprint scheme (rev-4 §3)
+	rec.ParseScheme = state.ParseSchemeCurrent
+	// The body-inclusive content digest of the identity view (the v1 parse), on every
+	// write, local records included: a later repair proves the archived message is the
+	// one in the source by it (MC5). It is no identity input, so no key moves.
+	rec.ContentHash = m.ContentDigest()
 	rec.Fixity = &fx
 	// Folder-over-time timeline (the go-back record fields) on the live path:
 	// Present now, LastSeen now, and the set-once FirstFolder/FirstSeen preserved
@@ -513,11 +536,10 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		if rec.PhysID == "" && seen {
 			rec.PhysID = prev.PhysID
 		}
-		// The body-inclusive content hash is the closure's churn-vs-distinct arbiter
-		// (rev-6.1). Recorded on every live-path write so a later run can tell a
-		// distinct reuse of this Message-ID from the same message re-observed, without
-		// the original .eml. Reflects THIS capture's content (a fill updates it).
-		rec.ContentHash = m.ContentDigest()
+		// The body-inclusive content hash (set above for every write) is the closure's
+		// churn-vs-distinct arbiter (rev-6.1): it lets a later run tell a distinct
+		// reuse of this Message-ID from the same message re-observed, without the
+		// original .eml. It reflects THIS capture's content (a fill updates it).
 		if seen {
 			// Carry the content-equal immutable-id SET forward on an adopt (rev-6.2):
 			// a full-mode re-export or a fill REBUILDS the record, and without this the
@@ -568,7 +590,11 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		old := filepath.Join(e.OutDir, filepath.FromSlash(prev.Path))
 		os.Remove(old)
 		os.Remove(strings.TrimSuffix(old, ".html") + zipSuffix)
-		os.Remove(strings.TrimSuffix(old, ".html") + ".eml")
+		if writeRaw {
+			// The original goes only when this run wrote a new one beside the new
+			// page: otherwise it is the record's only copy of the message (R20, MC8).
+			os.Remove(strings.TrimSuffix(old, ".html") + ".eml")
+		}
 	}
 
 	switch {
@@ -588,6 +614,27 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	}
 	e.Stats.Exported++
 	return true, nil
+}
+
+// carriedOriginal says whether the preserved original (.eml) a seen record holds is on
+// disk at the stem a re-capture writes to, and returns the fixity to carry on with it
+// (nil for a record from before fixity). It carries only an original at the SAME stem:
+// when the stem changed (a naming rule, the path budget, a moved message date) the old
+// .eml stays where it is — the re-capture removes it only when it writes a new one —
+// and the page no longer links it; moving it with its record is the commit of
+// re-capture integrity (ruling J6), not this write.
+func carriedOriginal(dir, base, relSlash string, prev state.Record) (*state.FileDigest, bool) {
+	if prev.Path == "" || prev.Path != relSlash {
+		return nil, false
+	}
+	if fi, err := os.Lstat(filepath.Join(dir, base+".eml")); err != nil || !fi.Mode().IsRegular() {
+		return nil, false
+	}
+	if prev.Fixity != nil && prev.Fixity.EML != nil {
+		d := *prev.Fixity.EML
+		return &d, true
+	}
+	return nil, true
 }
 
 // writeDigest is writeFileAtomicDigest behind the BeforeWrite seam.

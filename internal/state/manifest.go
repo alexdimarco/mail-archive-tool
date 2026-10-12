@@ -172,7 +172,22 @@ type Record struct {
 	// one (§4.7.4): its unreadable:* labels became the info label "superseded" and
 	// nothing was written or deleted. Load drops one that names no existing key.
 	RecoveredBy string `json:"recovered_by,omitempty"`
+
+	// ParseScheme (additive; design-mime-fidelity §4.10, MC12) is the parser scheme
+	// the record was last written or re-examined under. 0 means a build from before
+	// the scheme existed wrote it and none has re-read it since; an older binary's
+	// save drops the field, so the next run by this build stamps it again in memory
+	// (StampParseScheme) at no cost to the files. Nothing acts on it before the repair
+	// slice: it is the migration's progress marker. The exporter stamps it on every
+	// write and, in memory, on every re-read (MA-329's golden carries it since the
+	// owner's decision of 2026-10-11).
+	ParseScheme int `json:"parse_scheme,omitempty"`
 }
+
+// ParseSchemeCurrent is the parser scheme this build writes and stamps. Slice S1 of
+// design-mime-fidelity bumps it to 1: it routes identity, stems and ContentHash but
+// registers no fidelity note, so no record is yet "damaged" by it.
+const ParseSchemeCurrent = 1
 
 // FileDigest is the recorded fixity of one exported file: the sha256 (hex) of
 // its bytes and its length as written. `verify` re-hashes the file, capped at
@@ -1201,6 +1216,22 @@ func (m *Manifest) MergeFields(key, folder string, seen time.Time, present bool)
 	r.Folder = folder
 	r.LastSeen = seen
 	r.Present = present
+	m.Entries[key] = r
+	return true
+}
+
+// StampParseScheme records, in memory, that this run re-read the record at key under
+// parser scheme: it raises ParseScheme to scheme and never lowers it, and touches
+// nothing else, so no file is written for it (MC12). It reports whether the record
+// changed; the existing checkpoint saves it.
+func (m *Manifest) StampParseScheme(key string, scheme int) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.Entries[key]
+	if !ok || r.ParseScheme >= scheme {
+		return false
+	}
+	r.ParseScheme = scheme
 	m.Entries[key] = r
 	return true
 }

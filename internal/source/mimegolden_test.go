@@ -53,11 +53,19 @@ var (
 	mimeRecordProvenance = flag.String("mime-record-provenance", "", "the provenance lines for the goldens' header")
 )
 
-// corpusV1Parse is the parser whose view the goldens pin. In S0 it is the build's
-// own parser, which is v1 (no fidelity change has landed). Slice S1 points it at
-// the frozen replay (replayV1), so the goldens keep pinning v1 after the content
-// parser moves; it never gets a different expectation.
-var corpusV1Parse = safeParseMessage
+// corpusV1Parse is the parser whose view the goldens pin: the frozen v1 replay
+// (replayV1, parsev1.go), so the goldens keep pinning v1 after the content parser
+// moves; it never gets a different expectation. It does what the v1 build's
+// safeParseMessage did around the parse: the transport headers on a message, the
+// constant stub when v1 panics.
+var corpusV1Parse = func(data []byte) *model.Message {
+	m, panicked := replayV1(data)
+	if panicked || m == nil {
+		return unreadableStub()
+	}
+	m.TransportHeaders = headerBlock(data)
+	return m
+}
 
 // gq renders a string losslessly and deterministically: Go-quoted, non-ASCII and
 // invalid bytes escaped.
@@ -152,20 +160,27 @@ func writeContentGolden(sb *strings.Builder, name string, m *model.Message, dige
 // the v1 parser and renders the two goldens' bodies.
 func renderMimeGoldens(t *testing.T, items []mimeCorpusItem) (identity, content string) {
 	t.Helper()
+	// What safeParseMessage's recover returned when v1 panicked in the build that wrote
+	// the goldens. No corpus input panics v1 (see TestMimeCorpusIsComplete), so the stub
+	// is built directly: its identity is the one stubIdentityTerms reproduces (MC7,
+	// ruling J5, MA-330).
+	return renderGoldens(t, items, corpusV1Parse, &model.Message{Subject: "(unreadable message)"})
+}
+
+// renderGoldens is renderMimeGoldens over any parser of a corpus item and any stub:
+// MA-330 renders the identity golden through the production routing with it.
+func renderGoldens(t *testing.T, items []mimeCorpusItem, parse func([]byte) *model.Message, stub *model.Message) (identity, content string) {
+	t.Helper()
 	var idb, cb strings.Builder
 	for _, it := range items {
-		m := corpusV1Parse(it.data)
+		m := parse(it.data)
 		if m == nil {
-			t.Fatalf("%s: the v1 parse returned no message", it.name)
+			t.Fatalf("%s: the parse returned no message", it.name)
 		}
 		writeIdentityGolden(&idb, it.name, m)
 		writeContentGolden(&cb, it.name, m, false)
 	}
 
-	// What safeParseMessage's recover returns when v1 panics (mbox.go:204). No corpus
-	// input panics v1 (see TestMimeCorpusIsComplete), so the stub is built directly:
-	// its identity is the one S1's stubIdentityTerms must reproduce (MC7, ruling J5).
-	stub := &model.Message{Subject: "(unreadable message)"}
 	writeIdentityGolden(&idb, mimeV1StubName, stub)
 	writeContentGolden(&cb, mimeV1StubName, stub, false)
 

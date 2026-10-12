@@ -21,16 +21,16 @@ const (
 	mimePSTFile   = "../../testdata/support.pst"
 )
 
-// corpusV1Panics reports whether the v1 parse of data panics, before any recover.
-// Slice S1 points it at the frozen copy of parseMessage (replayV1's), so the corpus
-// keeps being checked against v1 after the content parser moves.
+// corpusV1Panics reports whether the v1 parse of data panics, before any recover. It
+// runs the frozen copy of parseMessage (parsev1.go, replayV1's), so the corpus keeps
+// being checked against v1 after the content parser moves.
 var corpusV1Panics = func(data []byte) (panicked bool) {
 	defer func() {
 		if recover() != nil {
 			panicked = true
 		}
 	}()
-	parseMessage(data)
+	parseMessageV1(data)
 	return false
 }
 

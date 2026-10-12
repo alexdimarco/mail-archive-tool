@@ -8,21 +8,6 @@ import "testing"
 // that turns it into the real test; its covering marker stays on it until then.
 // MA-343 is tier L (pending, a lab story in the catalog) and has no encoder.
 
-// covers: MA-330, R3, R2, R27, S49
-// Identity, Fingerprint, ContentDigest and the local and live keys of every corpus
-// message equal the identity golden, for messages the fidelity parser changes and
-// for unchanged ones, including the v1-panicking item and one item per go-pst
-// nameMap label; the PST twin on support.pst.
-func TestFidelityParserKeepsTheIdentityGoldenOnTheCorpus(t *testing.T) {
-	t.Skip("MA-330: there is no fidelity parser, IdentityTerms or idv() to compare with the golden; encoder lands in MF-S0, turns green in MF-S1")
-}
-
-// covers: MA-331, R27, R3
-// The replay's charset table, source files and identity dependencies are pinned.
-func TestFrozenReplayPinsTheCharsetTableAndItsSources(t *testing.T) {
-	t.Skip("MA-331: parsev1 and its vendored dependencies do not exist, so there is nothing to hash, snapshot or list with go list -deps; encoder lands in MF-S0, turns green in MF-S1")
-}
-
 // covers: MA-332, R2, R7, R27
 // A corpus message with no fidelity note has the content golden's fields, renders
 // as the current renderer renders the v1 message, and carries IdentityTerms equal
@@ -116,22 +101,6 @@ func TestRepairUpgradesAnArchiveWrittenByV1(t *testing.T) {
 // (j) leaves old page, zip, record and fixity unchanged and names its reason.
 func TestRepairIsNeverToLessAndWithheldLegibly(t *testing.T) {
 	t.Skip("MA-345: the V1C check, RepairWithheld and the repair counters do not exist, and the 'never to less' clause is re-capture integrity's R28; encoder lands in MF-S0, turns green in MF-S7")
-}
-
-// covers: MA-346, R4, R20, R13, R5, R27
-// Repair and re-capture keep paths and originals: a -raw record keeps its .eml and
-// Fixity.EML, the stem is the identity view's (or its -vN successor), a tampered
-// Path is never written through.
-func TestRepairAndRecaptureKeepPathsAndOriginals(t *testing.T) {
-	t.Skip("MA-346: the identity-view stem (idv()) and the .eml carry-forward on every write are MF-S1's, and the repair containment guard is MF-S7's; encoder lands in MF-S0, turns green in MF-S1 (cases a, c) and MF-S7 (cases b, d)")
-}
-
-// covers: MA-347, R2, R3, R27
-// Mixed versions: a run by v1 semantics exports 0 new, splits no key and keeps the
-// stems (identity half); three alternations rewrite a record at most once (repair
-// half).
-func TestMixedVersionsKeepIdentityAndRewriteAtMostOnce(t *testing.T) {
-	t.Skip("MA-347: Record.ParseScheme and the manifest round trip that drops it do not exist, and neither does the repair; encoder lands in MF-S0, turns green in MF-S1 (identity half) and MF-S7 (repair half)")
 }
 
 // covers: MA-348, R1, R18, R7, X6, R26, R27

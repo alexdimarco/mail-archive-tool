@@ -60,6 +60,36 @@ func TestGraphParseStubTakesTheListingMessageID(t *testing.T) {
 	}
 }
 
+// covers: MA-318, R1, R3, R10, S46
+// The stub source.ParseRFC822 returns carries identity terms (the v1 replay's: the
+// constant stub's), which shadow the content fields in every identity input. The
+// listing's Message-ID must therefore reach those terms too, or the stub keeps the
+// content-hash identity the fast path never recognises and is downloaded every run.
+func TestGraphParseStubWithIdentityTermsTakesTheListingMessageID(t *testing.T) {
+	parseRFC822 = func([]byte) *model.Message {
+		terms := model.IdentityTerms{Subject: state.LegacyPlaceholderSubject}
+		return &model.Message{Subject: state.LegacyPlaceholderSubject, IdentityTerms: &terms}
+	}
+	t.Cleanup(func() { parseRFC822 = source.ParseRFC822 })
+	s := sweepServer(false, []string{"S"}, nil, nil)
+	defer s.Close()
+	out := tmpDir(t)
+	g := isoOptions(s)
+	if res, err := sweepRun(g, out, export.Incremental); err != nil || res.Stats.Exported != 1 {
+		t.Fatalf("run 1: exported %d, err %v; want 1, nil", res.Stats.Exported, err)
+	}
+	if _, rec := recordForID(t, out, "mid:s@x"); !rec.Present {
+		t.Errorf("S's stub record: %+v", rec)
+	}
+	s.ResetRequests()
+	if res, err := sweepRun(g, out, export.Incremental); err != nil || res.Stats.Exported != 0 {
+		t.Fatalf("run 2: exported %d, err %v; want 0, nil", res.Stats.Exported, err)
+	}
+	if n := s.Requests("/users/u1/messages/S/"); n != 0 {
+		t.Errorf("run 2 downloaded S %d times: the stub's identity terms lack the listing Message-ID", n)
+	}
+}
+
 // covers: MA-323, R1, R5, S46
 // FC27 through the walk: an older build's Graph stub (the placeholder subject,
 // Terminal ["body"], an identity that is a hash of its received time) for a message
