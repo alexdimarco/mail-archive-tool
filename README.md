@@ -689,10 +689,13 @@ unaffected and the version is not bumped.)
 - `unreadable` is how many messages could only be partly read (pages with what
   was readable); `unparsed` records are kept as raw text and appear as the
   `unparsed_messages` note only.
-- `undecodable` is how many messages have a part this version cannot decode or one
-  cut short, kept as received in the attachments zip (see the `undecoded-part`,
-  `corrupt-part`, `unsplit-multipart` and `structure-limit` report kinds), and
-  `fidelity_fallback` how many were written from an earlier parser's content because
+- `undecodable` is how many messages carry at least one parse gap. Three report
+  kinds name a part that is in the attachments zip: `undecoded-part` (kept as
+  received), `corrupt-part` (kept as far as it decoded) and `structure-limit` (the
+  unread rest of a message). An `unsplit-multipart` (no zip: the text is on the page
+  as one body) is counted too, and so are `fidelity-fallback` and `identity-stub`,
+  which have no part and no zip (the page is as an earlier version read the
+  message). `fidelity_fallback` is how many were written from an earlier parser's content because
   this version could not decode them in full. Both are counts of manifest **records**,
   neither is part of `terminal` (a part this version cannot decode is not empty at the
   source), and neither moves the posture: they are the notes `undecodable_messages` and
@@ -1017,14 +1020,18 @@ spreadsheet) in the output directory, regenerated from the manifest each run:
 | `unknown` | fillable | archived by an older version before completeness tracking; re-examined once |
 | `unresolved-inline-image` | info | the HTML references a `cid:` image that isn't in the message — common in replies/forwards and usually not recoverable |
 | `undecoded-part` | terminal | a part's transfer encoding is one this version does not decode (for example `x-uuencode`); the part is in the attachments zip as received, its name ending `.undecoded`; never retried |
-| `corrupt-part` | fillable, or terminal on Microsoft 365 | a part's data is cut short or damaged; what decoded is in the attachments zip under a name ending `.partial`, never under its real name. On a source that caches (Thunderbird, Evolution, an Outlook file) the next run fills it when the complete message is there |
+| `corrupt-part` | fillable, or terminal on Microsoft 365 | a part's data is cut short or damaged; what decoded is in the attachments zip under a name ending `.partial`, never under its real name (a cut message text has no `.partial` file: the page shows its readable start). On a source that caches (Thunderbird, Evolution, an Outlook file) the next run fills it when the complete message is there |
 | `unsplit-multipart` | fillable, or terminal on Microsoft 365 | the message's parts could not be told apart (its boundary is missing or wrong), so its whole text is the body |
 | `structure-limit` | terminal | the message has more parts, or nests them deeper, than this version reads; the rest is in the attachments zip as received (`remaining-parts.undecoded`). A record lists at most 32 such rows and one summary row |
 | `fidelity-fallback` | terminal | this version could not decode the message in full, so it is kept as an earlier version read it; nothing is lost |
 | `identity-stub` | terminal | an earlier version could not read the message at all and filed it under its placeholder; the page shows what this version reads |
 
 Every row's `detail` ends with a plain-words why and what to do (or "nothing to
-do: the original is kept"), so the report can be read without the tool.
+do: the original is kept"), so the report can be read without the tool. A parse-gap
+row (the kinds from `undecoded-part` down) says where the original is: "the original
+is kept in the source" when no `.eml` was made (the archive was made without `-raw`),
+"the original is kept as the .eml beside the page" when there is one. On a message
+page, a part kept as received or cut short carries a one-line note that points here.
 
 Each run prints a single `Verification:` line summarizing the manifest: how many
 messages are **still missing content**, how many are **source-empty** (the

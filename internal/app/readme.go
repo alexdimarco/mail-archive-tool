@@ -87,6 +87,20 @@ happened and what to do about it (or that there is nothing to do), and
 whether the original still exists. With the mailarchive program, run "mailarchive status -out ." in this folder for the
 same in plain words.
 
+The one exception to that last sentence: a row for a part the tool kept as
+received or cut short names a part that IS in this archive. A file ending
+.undecoded in a message's -attachments.zip was kept exactly as the message
+carried it, because the tool could not decode its encoding (the row names the
+encoding, for example x-uuencode; a program that knows it can open the file).
+remaining-parts.undecoded is the unread rest of a message that has more parts,
+or nests them deeper, than the tool reads. A file ending .partial holds the
+readable start of an attachment that was cut short or damaged. A row of kind
+unsplit-multipart means the message's parts could not be told apart, so its
+page shows the whole text as one body. A row of kind fidelity-fallback or
+identity-stub means the page shows the message as an earlier version of the
+tool read it; a later version may read more. A page that lists a .undecoded or
+.partial file says so.
+
 Housekeeping files (safe to leave alone):
   .mailarchive-manifest.json   which messages are archived (used for
                                incremental updates); do not edit
