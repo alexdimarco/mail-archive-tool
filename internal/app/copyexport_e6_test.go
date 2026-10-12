@@ -245,11 +245,18 @@ func e6Reserved(name string) bool {
 func TestExtractedAttachmentNamesAreSanitizedAndContained(t *testing.T) {
 	names := []string{
 		"../../escape.txt", `..\\..\\win.txt`, "/etc/passwd", "..", "CON", "COM1.txt", "NUL.txt", "CON .txt", "COM¹.txt",
-		"invoice‮gpj.exe", strings.Repeat("漢", 100) + ".pdf", "trailing. ", "report.pdf", "REPORT.PDF", "",
+		"invoice‮gpj.exe", strings.Repeat("漢", 100) + ".pdf", "trailing. ", "report.pdf", "REPORT.PDF", "", "", "", "",
 	}
+	// a nameless part is attachment-<its place><the extension of its MIME type>, as the design names it
+	types := map[int]string{15: "application/pdf", 16: "image/png; name=\"\"", 17: "text/plain; charset=utf-8"}
+	nameless := map[int]string{14: "attachment-14", 15: "attachment-15.pdf", 16: "attachment-16.png", 17: "attachment-17.txt"}
 	var parts []e6Part
 	for i, n := range names {
-		parts = append(parts, e6Part{name: n, ctype: "application/octet-stream", body: []byte(fmt.Sprintf("body of part %d", i))})
+		ct := types[i]
+		if ct == "" {
+			ct = "application/octet-stream"
+		}
+		parts = append(parts, e6Part{name: n, ctype: ct, disp: "attachment", body: []byte(fmt.Sprintf("body of part %d", i))})
 	}
 	msgs := ceMsgs(1)
 	mime := e6Mime(msgs[0].SourceID, "hostile names", parts...)
@@ -275,6 +282,9 @@ func TestExtractedAttachmentNamesAreSanitizedAndContained(t *testing.T) {
 			t.Errorf("file %d (%q) and %q fold to one name %q", i, names[i], other, base)
 		}
 		seen[key] = base
+		if want, ok := nameless[i]; ok && base != want {
+			t.Errorf("file %d has no name and became %q, want %q", i, base, want)
+		}
 		switch {
 		case base == "" || base == "." || base == "..", strings.ContainsAny(base, "/\\\x00"), len(base) > 255,
 			strings.HasSuffix(base, " "), strings.HasSuffix(base, "."), e6Reserved(base):

@@ -274,15 +274,41 @@ func (w *attachWriter) gapNote(name, kind string) {
 	}
 }
 
+// namelessExt maps the media types a nameless attachment is most often to the extension its
+// file takes (design §4.9). The table is fixed, so a name never depends on the computer's
+// own list of types, and it leaves out the types a browser would run (HTML, SVG).
+var namelessExt = map[string]string{
+	"application/pdf": ".pdf", "application/zip": ".zip", "application/gzip": ".gz", "application/json": ".json",
+	"application/xml": ".xml", "text/xml": ".xml", "application/rtf": ".rtf", "text/rtf": ".rtf",
+	"application/msword": ".doc", "application/vnd.ms-excel": ".xls", "application/vnd.ms-powerpoint": ".ppt",
+	"application/vnd.openxmlformats-officedocument.wordprocessingml.document":   ".docx",
+	"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":         ".xlsx",
+	"application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+	"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp", "image/bmp": ".bmp", "image/tiff": ".tif",
+	"text/plain": ".txt", "text/csv": ".csv", "text/calendar": ".ics", "text/vcard": ".vcf", "text/x-vcard": ".vcf",
+	"message/rfc822": ".eml", "audio/mpeg": ".mp3", "video/mp4": ".mp4",
+}
+
+// partFilename is the name a part is written under before sanitizing: its own, or, for a
+// nameless part, attachment-<its place><the extension of its media type>.
+func partFilename(a model.Attachment, index int) string {
+	if strings.TrimSpace(a.Filename) != "" {
+		return a.Filename
+	}
+	mt, _, _ := strings.Cut(strings.ToLower(a.MimeType), ";")
+	return fmt.Sprintf("attachment-%d%s", index, namelessExt[strings.TrimSpace(mt)])
+}
+
 // parts extracts the parsed message's attachments, inline images included, in order.
 func (w *attachWriter) parts(atts []model.Attachment) {
 	for i, a := range atts {
-		label := plainText(util.ExportFilename(a.Filename, i))
+		name := partFilename(a, i)
+		label := plainText(util.ExportFilename(name, i))
 		if a.WriteTo == nil {
 			w.notes.add(fmt.Sprintf("%q was not extracted: nothing of it could be kept; %s", label, w.holds))
 			continue
 		}
-		rec, err := w.put(a.Filename, i, guardStream(a.WriteTo))
+		rec, err := w.put(name, i, guardStream(a.WriteTo))
 		if err != nil {
 			w.problem(label, err)
 			continue
