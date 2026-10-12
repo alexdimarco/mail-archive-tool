@@ -40,6 +40,9 @@ func (w *walker) leaf(h textproto.Header, p partInfo, raw []byte) {
 	l.cteRaw = h.Get("Content-Transfer-Encoding")
 	norm, changed := normalizeCTE(l.cteRaw)
 	l.data, l.st = decodeTransfer(norm, raw)
+	if l.st == transferOK && w.cut {
+		l.st = transferCorrupt // the data ended inside this part: what arrived is kept as a cut part
+	}
 	if changed && l.st == transferOK {
 		w.note(noteLenientCTE, fmt.Sprintf("the transfer encoding %s was read as %q", quoteLabel(l.cteRaw), norm))
 	}

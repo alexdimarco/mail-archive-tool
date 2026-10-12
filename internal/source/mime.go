@@ -73,6 +73,8 @@ type walker struct {
 	// multiparts that could not be split, joined by a blank line. It becomes
 	// msg.PlainBody when the walk ends, so adding to it costs what is added (MS2-AO6).
 	plain strings.Builder
+
+	cut bool // the part being read was cut short by the end of the data (partOf sets it)
 }
 
 // parseFidelity parses data with the fidelity walker.
@@ -380,7 +382,7 @@ func (w *walker) container(p partInfo, raw []byte, depth int) {
 func (w *walker) partOf(part *textproto.Part, depth int, parent []byte, end int) {
 	w.parts++ // the root is not counted: maxParts bounds the parts of a message, not the message
 	w.site = fmt.Sprintf("part %d", w.parts)
-	body, _ := io.ReadAll(part) // the raw, still transfer-encoded body; a read error ends it where it ended
+	body, rerr := io.ReadAll(part) // the raw, still transfer-encoded body; a read error ends it where it ended
 	raw := windowOf(parent, end, body)
 	if headerSize(part.Header) > maxHeaderBytes {
 		w.leafN++
@@ -388,7 +390,12 @@ func (w *walker) partOf(part *textproto.Part, depth int, parent []byte, end int)
 			"the part's header is larger than 1 MiB, so the part is kept unread")
 		return
 	}
+	// A part the data ended in the middle of (no closing delimiter, or a message cut off) is
+	// cut short, whatever it decodes to: the multipart reader says so with an unexpected
+	// EOF, and a leaf under it is kept as a cut part, never as a whole one (MS2-AC3).
+	w.cut = errors.Is(rerr, io.ErrUnexpectedEOF)
 	w.entity(part.Header, raw, depth+1)
+	w.cut = false
 }
 
 // windowOf is body as a slice of parent ending at end, when parent holds exactly it there;
