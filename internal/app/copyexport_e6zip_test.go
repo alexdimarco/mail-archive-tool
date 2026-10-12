@@ -7,10 +7,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"os"
 	"path"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -252,6 +254,13 @@ func TestZipModeEntriesAreNamedLikeLooseFilesAndTheZipIsReproducible(t *testing.
 			if !f.Modified.Equal(files[0].Modified) || f.Method != zip.Deflate {
 				t.Errorf("entry %d: modified %v, method %d", i, f.Modified, f.Method)
 			}
+			// E6Z-AO1: an entry made on "MS-DOS" (host 0) has its non-ASCII name read as CP437 by macOS's
+			// own unzip, which then stops at the first such entry and never extracts the rest (exit 50,
+			// "write error (disk full?)"); a Unix host byte with a plain 0644 mode is read by name and
+			// extracts readable files, with no link or directory flag.
+			if f.CreatorVersion>>8 != 3 || !f.Mode().IsRegular() || f.Mode().Perm() != 0o644 || f.Mode()&(os.ModeSymlink|os.ModeDir|os.ModeSetuid|os.ModeSetgid) != 0 {
+				t.Errorf("entry %d (%q): host byte %d, mode %v (attrs %#x): want Unix host, a regular 0644 file", i, f.Name, f.CreatorVersion>>8, f.Mode(), f.ExternalAttrs)
+			}
 			if d := f.Modified.Sub(msgs[0].Received); d < -2*time.Second || d > 2*time.Second {
 				t.Errorf("entry %d is dated %v, not the message's %v", i, f.Modified, msgs[0].Received)
 			}
@@ -464,6 +473,85 @@ func TestZipModeChecksFreeSpaceAndObservesCancelAndAbandon(t *testing.T) {
 		}
 	})
 
+	// E6Z-AC1: the room a part is admitted against must count what the part costs in the zip (deflate's own
+	// overhead on noise, its entry and its record in the directory), not only its bytes: a part that is
+	// admitted and then does not fit cut the whole zip, small.bin which fitted with it. Whatever the
+	// free space is, to the byte around the size of the finished zip, small.bin is in a zip, and a big.bin
+	// that is not is a note of its own, never a zip that was not written.
+	t.Run("space edge", func(t *testing.T) {
+		small, big := e6zNoise(50000, 1), e6zNoise(18<<20, 2)
+		msgs := ceMsgs(1)
+		mime := e6Mime(msgs[0].SourceID, "two", e6Part{name: "small.bin", body: small}, e6Part{name: "big.bin", body: big})
+		run := func(extra int64) (*CopyResult, *ceMsgLine) {
+			e := newCEEnv(t)
+			// the test env's breaker windows are milliseconds; a 25 MB message under the race detector
+			// takes longer than that without a byte of progress to show, and a stalled message is stopped
+			e.window, e.idle, e.overall = time.Minute, time.Minute, time.Minute
+			src := newFakeSrc()
+			src.body = func(string) []byte { return mime }
+			p := cePlan(t, e, src, msgs)
+			p.Options.Attachments, p.Options.AttachmentsAsZip = true, true
+			if extra >= 0 {
+				e.freeDest = e6Disk(p.Dest, p.Reserve+int64(len(mime))+extra)
+			}
+			res := mustRun(t, e, p, src)
+			return res, assure.Reached(t, e5Files(t, e, res)[1], "the message's line")
+		}
+		_, line := run(-1)
+		whole, ok := e6zRec(line)
+		if !ok {
+			t.Fatalf("the unconstrained run made no zip: %+v %q", line.Files, line.Notes)
+		}
+		var deltas []int64
+		for d := int64(-2200); d <= 1200; d += 256 { // where the part passed the room check and the zip did not fit
+			deltas = append(deltas, d)
+		}
+		for d := int64(30000); d <= 46000; d += 4096 { // where the estimate admits the part
+			deltas = append(deltas, d)
+		}
+		for _, d := range deltas {
+			res, line := run(whole.Size + d)
+			zrec, ok := e6zRec(line)
+			if !ok {
+				t.Errorf("room for the finished zip %+d bytes: no zip, notes %.200q (small.bin fitted and is lost)", d, line.Notes)
+				continue
+			}
+			files, _ := e6zEntries(t, e6Read(t, res.Root, zrec.Path))
+			if len(files) == 0 || files[0].Name != "small.bin" || (len(files) == 1 && !e6advHasNote(line.Notes, `"big.bin"`, "no space was left")) {
+				t.Errorf("room %+d: the zip holds %d entries, notes %.200q", d, len(files), line.Notes)
+			}
+		}
+	})
+
+	// E6Z-AC1 (re-verification): the room is worked out from the free space the destination reports,
+	// and a mount that reports a nominal "unlimited" size (a network, FUSE or cloud mount) is
+	// above where the room's arithmetic could overflow: a negative room refused every part with "no
+	// space was left" and made no zip, where loose mode on the same mount extracts as usual.
+	t.Run("space reported huge", func(t *testing.T) {
+		for _, free := range []uint64{1 << 53, 1 << 54, 3 << 53, 1 << 56, 1 << 60, 1<<62 + 5, 1<<63 - 1} {
+			part := e6zNoise(3000, 7)
+			msgs := ceMsgs(1)
+			mime := e6Mime(msgs[0].SourceID, "one", e6Part{name: "a.bin", body: part})
+			e := newCEEnv(t)
+			src := newFakeSrc()
+			src.body = func(string) []byte { return mime }
+			p := cePlan(t, e, src, msgs)
+			p.Options.Attachments, p.Options.AttachmentsAsZip = true, true
+			e.freeDest = func(string) (uint64, error) { return free, nil }
+			res := mustRun(t, e, p, src)
+			line := assure.Reached(t, e5Files(t, e, res)[1], "the message's line")
+			zrec, ok := e6zRec(line)
+			if !ok {
+				t.Errorf("free space %d: no zip, notes %.200q", free, line.Notes)
+				continue
+			}
+			files, data := e6zEntries(t, e6Read(t, res.Root, zrec.Path))
+			if len(files) != 1 || !bytes.Equal(data["a.bin"], part) || len(line.Notes) != 0 {
+				t.Errorf("free space %d: the zip holds %v, notes %.200q", free, e6Sizes(data), line.Notes)
+			}
+		}
+	})
+
 	for _, abandon := range []bool{false, true} {
 		name := "cancel"
 		if abandon {
@@ -551,6 +639,218 @@ func TestZipModeChecksFreeSpaceAndObservesCancelAndAbandon(t *testing.T) {
 	}
 }
 
+// e6zFile is the zip's temp file with a fault: write and sync, when set, take the call over.
+type e6zFile struct {
+	ceFile
+	write func(p []byte) (int, error)
+	sync  func() error
+}
+
+func (f *e6zFile) Write(p []byte) (int, error) {
+	if f.write != nil {
+		return f.write(p)
+	}
+	return f.ceFile.Write(p)
+}
+
+func (f *e6zFile) Sync() error {
+	if f.sync != nil {
+		return f.sync()
+	}
+	return f.ceFile.Sync()
+}
+
+// e6zZipTemp wraps the second temp file made under messages/ (the first message's zip: the first is
+// its original) with wrap.
+type e6zZipTemp struct {
+	ceFS
+	n    int
+	wrap func(ceFile) ceFile
+}
+
+func (h *e6zZipTemp) CreateTemp(dir string) (ceFile, string, error) {
+	f, name, err := h.ceFS.CreateTemp(dir)
+	if err == nil && strings.HasPrefix(dir, "messages") {
+		if h.n++; h.n == 2 {
+			f = h.wrap(f)
+		}
+	}
+	return f, name, err
+}
+
+// e6zAttachNotes is a line's attachment notes.
+func e6zAttachNotes(notes []string) (out []string) {
+	for _, n := range notes {
+		if strings.HasPrefix(n, attachNotePrefix) {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// covers: MA-533, R29
+// E6Z-AO6: the entry time is the message's own UTC time when a zip can hold it, and the epoch when it
+// cannot. The range is tested on the UTC time, not the message's own zone (1980-01-01 00:30 +01:00 is
+// 1979 UTC: its DOS date was the garbage 0xff9f, year 2107 month 15), and a date past the 32-bit
+// extended timestamp (2106-02-07) is the epoch, not a time that wrapped to 1970.
+func TestZipEntryTimesAreInRangeForEveryDate(t *testing.T) {
+	zone := time.FixedZone("x", 3600)
+	for _, c := range []struct {
+		name string
+		in   time.Time
+		want time.Time
+	}{
+		{"an ordinary date", time.Date(2026, 3, 28, 9, 0, 0, 0, time.FixedZone("y", 7200)), time.Date(2026, 3, 28, 7, 0, 0, 0, time.UTC)},
+		{"1979 in UTC, 1980 in its own zone", time.Date(1980, 1, 1, 0, 30, 0, 0, zone), attachZipEpoch},
+		{"1980 in UTC, 1979 in its own zone", time.Date(1979, 12, 31, 23, 30, 0, 0, time.FixedZone("z", -3600)), time.Date(1980, 1, 1, 0, 30, 0, 0, time.UTC)},
+		{"the last day the extended timestamp holds", time.Date(2106, 2, 6, 12, 0, 0, 0, time.UTC), time.Date(2106, 2, 6, 12, 0, 0, 0, time.UTC)},
+		{"after 2106-02-07", time.Date(2106, 6, 1, 0, 0, 0, 0, time.UTC), attachZipEpoch},
+		{"year 2200", time.Date(2200, 1, 1, 0, 0, 0, 0, time.UTC), attachZipEpoch},
+		{"before 1980", time.Date(1969, 7, 20, 0, 0, 0, 0, time.UTC), attachZipEpoch},
+		{"none", time.Time{}, attachZipEpoch},
+	} {
+		var buf bytes.Buffer
+		zw := zip.NewWriter(&buf)
+		w, err := zw.CreateHeader(attachZipHeader("a.txt", attachZipStamp(c.in)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		w.Write([]byte("x"))
+		if err := zw.Close(); err != nil {
+			t.Fatal(err)
+		}
+		files, _ := e6zEntries(t, buf.Bytes())
+		f := files[0]
+		if !f.Modified.Equal(c.want) {
+			t.Errorf("%s: the entry reads back as %v, want %v", c.name, f.Modified.UTC(), c.want)
+		}
+		wy, wmo, wd := c.want.Date()
+		if y, mo, d := int(f.ModifiedDate>>9)+1980, time.Month(f.ModifiedDate>>5&0xf), int(f.ModifiedDate&0x1f); y != wy || mo != wmo || d != wd {
+			t.Errorf("%s: the DOS date is %#x (%d-%d-%d), want %d-%d-%d", c.name, f.ModifiedDate, y, mo, d, wy, wmo, wd)
+		}
+	}
+}
+
+// covers: MA-533, R1
+// E6Z-AO2 and E6Z-AC2: a zip is whole or it is not there, and the notes say so. When the run is stopped
+// late (part 25 of 40, with part 5 a part the walker kept as received) or the zip's last write fails,
+// no zip stays, and the one note says that NONE of the message's attachments was extracted (all 40,
+// not "the last 16"); the notes already made for parts that were headed for the zip (the kept part's
+// "exactly as received" note, an empty part's) are not left behind, for they name entries of a zip
+// that does not exist.
+func TestAZipThatIsNotWrittenLeavesNoNoteOfItsEntries(t *testing.T) {
+	kept := func(t *testing.T, line *ceMsgLine, wantNote string) {
+		t.Helper()
+		if _, ok := e6zRec(line); ok || len(line.Files) != 1 {
+			t.Errorf("a zip of a message that lost it stays: %+v", line.Files)
+		}
+		notes := e6zAttachNotes(line.Notes)
+		if len(notes) != 1 || !strings.Contains(notes[0], wantNote) || !strings.Contains(notes[0], ".eml beside it") {
+			t.Errorf("the notes are %q, want the one that says %q and nothing of an entry of the missing zip", notes, wantNote)
+		}
+		for _, n := range notes {
+			if strings.Contains(n, "exactly as received") || strings.Contains(n, "has no content") || strings.Contains(n, "last 16") {
+				t.Errorf("a stale or under-counted note: %q", n)
+			}
+		}
+	}
+	t.Run("stopped late", func(t *testing.T) {
+		msgs := ceMsgs(1)
+		var parts []e6Part
+		for i := 0; i < 40; i++ {
+			parts = append(parts, e6Part{name: fmt.Sprintf("f%02d.bin", i), body: []byte(fmt.Sprintf("part %d of the message", i))})
+		}
+		parts[2] = e6Part{name: "empty.txt", ctype: "text/plain"}
+		mime := e6Mime(msgs[0].SourceID, "forty files", parts...)
+		e := newCEEnv(t)
+		src := newFakeSrc()
+		src.body = func(string) []byte { return mime }
+		p := cePlan(t, e, src, msgs)
+		p.Options.Attachments, p.Options.AttachmentsAsZip = true, true
+		run := e.NewCopyRun(p, src)
+		real := originalParser
+		t.Cleanup(func() { originalParser = real })
+		originalParser = func(b []byte) *model.Message {
+			m := real(b)
+			m.Attachments[4].GapKind = state.GapKindUndecodedPart
+			for i := range m.Attachments {
+				inner := m.Attachments[i].WriteTo
+				m.Attachments[i].WriteTo = func(w io.Writer) (int64, error) {
+					if i == 24 {
+						run.Cancel()
+					}
+					return inner(w)
+				}
+			}
+			return m
+		}
+		res, err := run.Run(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		line := assure.Reached(t, e5Files(t, e, res)[1], "the message's line")
+		kept(t, line, "all 40 attachments were not extracted")
+		for p := range treeFiles(t, res.Root) {
+			if strings.HasSuffix(p, ".attachments.zip") {
+				t.Errorf("a zip of a stopped message stays: %s", p)
+			}
+		}
+		if r := tempResidue(t, res.Root); len(r) != 0 {
+			t.Errorf("temp files left: %v", r)
+		}
+	})
+	// E6Z-AC3: Abandon lands while the finished zip is being flushed (an fsync stuck on a hard mount that then
+	// returns): the zip is not renamed into the export folder the caller has let go of.
+	t.Run("abandoned during the flush", func(t *testing.T) {
+		msgs := ceMsgs(2)
+		mime := e6Mime(msgs[0].SourceID, "one file", e6Part{name: "a.pdf", ctype: "application/pdf", body: []byte("%PDF a")})
+		e := newCEEnv(t)
+		src := newFakeSrc()
+		src.body = func(string) []byte { return mime }
+		p := cePlan(t, e, src, msgs)
+		p.Options.Attachments, p.Options.AttachmentsAsZip = true, true
+		run := e.NewCopyRun(p, src)
+		e.fsWrap = func(f ceFS) ceFS {
+			return &e6zZipTemp{ceFS: f, wrap: func(f ceFile) ceFile {
+				return &e6zFile{ceFile: f, sync: func() error { run.Abandon(); return f.Sync() }}
+			}}
+		}
+		res, err := run.Run(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Label != "Stopped: the destination is not responding" {
+			t.Errorf("the abandoned run ended %q", res.Label)
+		}
+		for p := range treeFiles(t, res.Root) {
+			if strings.HasSuffix(p, ".attachments.zip") {
+				t.Errorf("a zip was placed after Abandon: %s", p)
+			}
+		}
+		if r := tempResidue(t, res.Root); len(r) != 0 {
+			t.Errorf("temp files left: %v", r)
+		}
+	})
+	t.Run("write fails", func(t *testing.T) {
+		msgs := ceMsgs(1)
+		mime := e6Corpus(t, "f24-cte-x-uuencode.eml") // note.txt.undecoded, which a note says is kept as received, and r.pdf
+		e := newCEEnv(t)
+		e.fsWrap = func(f ceFS) ceFS {
+			return &e6zZipTemp{ceFS: f, wrap: func(f ceFile) ceFile {
+				return &e6zFile{ceFile: f, write: func([]byte) (int, error) { return 0, syscall.ENOSPC }}
+			}}
+		}
+		res, _ := e6zRun(t, e, msgs, false, func(string) []byte { return mime })
+		if res.Counts.Exported != 1 {
+			t.Fatalf("%s, %+v", res.Label, res.Counts)
+		}
+		kept(t, assure.Reached(t, e5Files(t, e, res)[1], "the message's line"), "the attachments zip was not written")
+		if r := tempResidue(t, res.Root); len(r) != 0 {
+			t.Errorf("temp files left: %v", r)
+		}
+	})
+}
+
 // covers: MA-533, R7
 // With Readable HTML on, the page links the one zip as a download and does not link a directory or
 // say the attachments are inside the .eml; a message with no attachment links nothing.
@@ -574,6 +874,56 @@ func TestZipModeReadableCopyLinksTheZip(t *testing.T) {
 	second := assure.Reached(t, lines[2], "the second message's line")
 	if p := string(e6Read(t, res.Root, second.Files[1].Path)); strings.Contains(p, "download zip") || strings.Contains(p, "extracted files") {
 		t.Errorf("a message with no attachment links something:\n%s", p)
+	}
+
+	// E6Z-AI1, E6Z-AO4: the page names every attachment by the name its entry has in the zip (the friction F9
+	// promise, "the page's name is a name in the zip"): a part kept as received, whose entry is made
+	// from the export-only name pass and the unique-name pass, is not listed by the name the archive's pages
+	// give it (a leading "~" or "-" is prefixed, a case-fold twin is "(2)"), and a bidi override of a name,
+	// which the entry has stripped, is not on the page either.
+	msgs = ceMsgs(1)
+	names := []string{"~note.txt", "-rf.txt", "a.bin", "A.BIN", "CON", "dup.txt", "dup.txt"}
+	var parts []e6Part
+	for _, n := range names {
+		parts = append(parts, e6Part{name: n, body: []byte("body of " + n)})
+	}
+	parts = append(parts, e6Part{name: "ok.pdf", ctype: "application/pdf", body: []byte("%PDF fine")}, e6Part{name: "inv‮gpj.exe", body: []byte("exe")})
+	mime := e6Mime(msgs[0].SourceID, "kept parts", parts...)
+	real := originalParser
+	t.Cleanup(func() { originalParser = real })
+	originalParser = func(b []byte) *model.Message {
+		m := real(b)
+		for i := range names { // as the walker names a part it kept as received
+			m.Attachments[i].Filename += ".undecoded"
+			m.Attachments[i].GapKind = state.GapKindUndecodedPart
+		}
+		return m
+	}
+	e = newCEEnv(t)
+	res, _ = e6zRun(t, e, msgs, true, func(string) []byte { return mime })
+	line := assure.Reached(t, e5Files(t, e, res)[1], "the line of the message with kept parts")
+	zrec, ok := e6zRec(line)
+	if !ok || len(line.Files) != 3 {
+		t.Fatalf("the files: %+v %q", line.Files, line.Notes)
+	}
+	files, _ := e6zEntries(t, e6Read(t, res.Root, zrec.Path))
+	var entries []string
+	for _, f := range files {
+		entries = append(entries, f.Name)
+	}
+	page = string(e6Read(t, res.Root, line.Files[2].Path))
+	_, after, _ := strings.Cut(page, "<b>Attachments:</b> ")
+	list, _, _ := strings.Cut(after, " — <a href=")
+	if got, want := html.UnescapeString(list), strings.Join(entries, ", "); got != want {
+		t.Errorf("the page lists %q, the zip holds %q", got, want)
+	}
+	_, note, _ := strings.Cut(page, `mailarchive-partnote">`)
+	note, _, _ = strings.Cut(note, " kept exactly as received")
+	if got, want := html.UnescapeString(note), strings.Join(entries[:len(names)], ", "); got != want {
+		t.Errorf("the page says %q was kept as received, the zip's entries for them are %q", got, want)
+	}
+	if strings.Contains(page, "‮") {
+		t.Errorf("the page holds a bidi override the entry has stripped")
 	}
 }
 
@@ -821,6 +1171,21 @@ func TestReadmeSaysWhatTheAttachmentsZipHolds(t *testing.T) {
 		t.Errorf("sums: changed %v, missing %v, unlisted %v", bad, missing, extra)
 	}
 
+	// E6Z-AI2: an archive record with no original has the archive's own zip copied as it is, and no zip is
+	// made; the README counts it (it did say "0 messages with attachments", and described a name this
+	// export never made) and says it is the archive's file, not one made from an .eml.
+	ares, _, _ := e6zArchiveZip(t, newCEEnv(t), e6Zip(t, e6ZipEntry{name: "ok.pdf", data: []byte("%PDF fine")}), true)
+	ar := readText(t, ares.Root, copyReadmeName)
+	var aline string
+	for _, l := range strings.Split(ar, "\n") {
+		if strings.HasPrefix(l, "Extract attachments:") {
+			aline = l
+		}
+	}
+	if want := "Extract attachments: 1 message with an attachments zip the archive kept, copied as it is (a file ending -attachments.zip), beside its page."; aline != want {
+		t.Errorf("README of an archive-only zip run says %q, want %q", aline, want)
+	}
+
 	// loose mode says none of the zip text, and the option off says none of either
 	loose, _ := e6Run(t, newCEEnv(t), msgs, false, func(id string) []byte { return body[id] })
 	lr := readText(t, loose.Root, copyReadmeName)
@@ -840,4 +1205,59 @@ func TestReadmeSaysWhatTheAttachmentsZipHolds(t *testing.T) {
 			t.Errorf("README of a run without the option says %q", banned)
 		}
 	}
+}
+
+// covers: MA-533, R29
+// E6Z-AO3 (ESC-E6Z-AO3): nothing bounds the entries of one message's zip. The reader yields one attachment
+// for every part of a flat multipart well past its 10,000-part limit (that limit is for the archive's
+// walker, not for this parse): 70,000 one-byte parts are a 70,000-entry zip, with Zip64 end records
+// (above 65,535 entries a plain directory cannot say how many there are, and a tool without Zip64
+// cannot open the zip) and an extraction that drops that many files into the owner's folder (XC12's
+// scale). Loose mode has no bound either, so zip mode is no worse, and MA-533 says a message of 1,001
+// or more attachments is still one file; where the line is, and whether the rest is dropped with a
+// note, split into a second zip or refused, narrows or changes that and is the owner's to rule.
+func TestAZipHoldsNoMoreEntriesThanAPlainDirectoryCanCount(t *testing.T) {
+	t.Skip("MA-533, R29: the entries of one message's zip are not bounded (70,000 parts are a 70,000-entry Zip64 zip, no note), and the bound, and what happens past it, is the owner's to rule (ESC-E6Z-AO3, review-extraction-workspace-e6-zip-adversarial.md); loose mode has no bound either")
+	var parts []e6Part
+	for i := 0; i < 70000; i++ {
+		parts = append(parts, e6Part{name: fmt.Sprintf("f%05d.bin", i), body: []byte{byte(i)}})
+	}
+	msgs := ceMsgs(1)
+	mime := e6Mime(msgs[0].SourceID, "seventy thousand", parts...)
+	e := newCEEnv(t)
+	res, _ := e6zRun(t, e, msgs, false, func(string) []byte { return mime })
+	line := assure.Reached(t, e5Files(t, e, res)[1], "the record line")
+	zrec, ok := e6zRec(line)
+	if !ok {
+		t.Fatalf("no zip: %+v %q", line.Files, line.Notes)
+	}
+	files, _ := e6zEntries(t, e6Read(t, res.Root, zrec.Path))
+	if len(files) > 65535 || (len(files) < len(parts) && len(e6zAttachNotes(line.Notes)) == 0) {
+		t.Errorf("%d entries from %d parts, %d notes: past 65,535 entries the zip needs Zip64, and parts left out are never silent (R1)", len(files), len(parts), len(line.Notes))
+	}
+}
+
+// covers: MA-417, MA-424, R29
+// E6Z-AO4 (ESC-E6Z-AO4, the bidi half): the readable page lists a message's attachments by their label,
+// which is control-stripped but keeps a bidi override, so a sender's name "inv<RLO>gpj.exe" is listed
+// reversed ("invexe.jpg") in a page of a loose-mode export (and of the archive's own pages), where the
+// export-only pass of the name pass strips it from the file. In zip mode the page names the entry (E6Z-AI1),
+// so this half is closed there. The label is shared with the archive's pages (internal/export, outside the
+// extraction workspace's writer), and changing what an archive page says is the owner's to rule.
+func TestTheReadablePageOfALooseExportListsNoBidiOverrideOfASendersName(t *testing.T) {
+	t.Skip("F75, MA-417: a readable page's Attachments list keeps a sender's bidi override in a loose-mode (and archive) page, and the label is shared with the archive's pages, which the owner rules on (ESC-E6Z-AO4, review-extraction-workspace-e6-zip-adversarial.md); zip mode names the entry and is closed")
+	msgs := ceMsgs(1)
+	mime := e6Mime(msgs[0].SourceID, "rlo", e6Part{name: "inv‮gpj.exe", body: []byte("exe")})
+	e := newCEEnv(t)
+	res, _ := e6Run(t, e, msgs, true, func(string) []byte { return mime })
+	line := assure.Reached(t, e5Files(t, e, res)[1], "the record line")
+	for _, f := range line.Files {
+		if f.Role == roleDerivedHTML {
+			if page := string(e6Read(t, res.Root, f.Path)); strings.Contains(page, "‮") {
+				t.Errorf("the page lists a bidi override of the sender's name")
+			}
+			return
+		}
+	}
+	t.Fatalf("no readable page: %+v", line.Files)
 }

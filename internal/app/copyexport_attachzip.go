@@ -49,10 +49,30 @@ var attachZipEpoch = time.Date(1980, 1, 1, 0, 0, 0, 0, time.UTC)
 // attachZipStamp is the time every entry of one message's zip carries: the message's own date, or
 // the epoch when it has none a zip can hold, so the same message always gives the same zip.
 func attachZipStamp(received time.Time) time.Time {
-	if received.IsZero() || received.Year() < 1980 || received.Year() > 2106 {
+	// The range is the UTC time's, which is what the entry holds (a date in 1980 in the message's own
+	// zone can be 1979 in UTC, which has no DOS date), and ends where the extended timestamp's 32 bits
+	// do (2106-02-07), past which the time wraps to 1970 (E6Z-AO6).
+	t := received.UTC()
+	if received.IsZero() || t.Before(attachZipEpoch) || !t.Before(attachZipLast) {
 		return attachZipEpoch
 	}
-	return received.UTC().Truncate(2 * time.Second)
+	return t.Truncate(2 * time.Second)
+}
+
+// attachZipLast is the first day no entry time can be: the 32-bit extended timestamp ends on
+// 2106-02-07 06:28:15 UTC.
+var attachZipLast = time.Date(2106, 2, 7, 0, 0, 0, 0, time.UTC)
+
+// attachZipHeader is the header of one entry: deflated, dated, and made on a Unix host with a
+// plain 0644 file mode. Go's own default is host 0 (MS-DOS) and no mode, and macOS's unzip reads
+// the name of such an entry as CP437 whatever its UTF-8 flag says, makes it under a mangled name
+// and then stops at the first one ("write error (disk full?)", exit 50), so a sender's first
+// accented attachment would cost the owner every later one (E6Z-AO1). A zero mode would be
+// extracted unreadable, and the fixed mode keeps the zip the same bytes every time.
+func attachZipHeader(name string, stamp time.Time) *zip.FileHeader {
+	h := &zip.FileHeader{Name: name, Method: zip.Deflate, Modified: stamp}
+	h.SetMode(0o644)
+	return h
 }
 
 // attachZipFile is the zip while it is being made: a temp file made through the contained
@@ -68,16 +88,26 @@ type attachZipFile struct {
 // zipParts writes the parsed message's attachments as the entries of one zip and returns the
 // record of the zip placed, or false when no zip was made (no attachment could be kept, the run
 // was stopped, or the zip could not be written: each is a note, never silent, R1).
+//
+// The number of entries is not bounded here, as loose mode's number of files is not: the parser
+// yields a part for every part of a flat multipart (its 10,000-part limit is the archive walker's),
+// so a message can give a zip of tens of thousands of entries, Zip64 above 65,535. Whether and
+// where to cut is the owner's to rule (ESC-E6Z-AO3, TestAZipHoldsNoMoreEntriesThanAPlainDirectoryCanCount).
 func (w *attachWriter) zipParts(dir, stem string, stamp time.Time, atts []model.Attachment) (ceFileRec, bool) {
 	r := w.r
 	rel := ceJoin(dir, stem+attachZipSuffix)
 	var zf *attachZipFile
+	// A zip is whole or it is not there, so the notes made for its parts while it was being made
+	// (a kept part's "exactly as received", an empty part's) go with it when it is discarded: they
+	// would name entries of a file that does not exist (E6Z-AO2, E6Z-AC2).
+	noteMark, noteExtra := len(w.notes.list), w.notes.extra
 	abort := func() {
 		if zf != nil {
 			zf.f.Close()
 			r.fs.Remove(ceJoin(dir, zf.tmp))
 			zf = nil
 		}
+		w.notes.list, w.notes.extra = w.notes.list[:noteMark], noteExtra
 	}
 	// failed ends the zip: nothing of it stays, one note says why and where every part is.
 	failed := func(err error) (ceFileRec, bool) {
@@ -85,16 +115,17 @@ func (w *attachWriter) zipParts(dir, stem string, stamp time.Time, atts []model.
 		w.zipFailure(err)
 		return ceFileRec{}, false
 	}
-	stopped := func(rest string) (ceFileRec, bool) {
+	// stopped ends the zip too: a stop loses every attachment of the message, not the ones after it.
+	stopped := func() (ceFileRec, bool) {
 		abort()
-		w.stopNote(rest)
+		w.zipStopNote(len(atts))
 		return ceFileRec{}, false
 	}
 	if len(atts) == 0 {
 		return ceFileRec{}, false
 	}
 	if w.stopped() {
-		return stopped(fmt.Sprintf("the %s attachments", commas(len(atts))))
+		return stopped()
 	}
 	// The message's line in the run record lists the zip, at about 230 bytes: nothing is placed
 	// that the record could not then list (as for a loose file, E6-AO5).
@@ -122,7 +153,7 @@ func (w *attachWriter) zipParts(dir, stem string, stamp time.Time, atts []model.
 	var used int64
 	for i, a := range atts {
 		if w.stopped() {
-			return stopped(fmt.Sprintf("the last %s attachments", commas(len(atts)-i)))
+			return stopped()
 		}
 		name := partFilename(a, i)
 		label := plainText(util.ExportFilename(name, i))
@@ -133,14 +164,22 @@ func (w *attachWriter) zipParts(dir, stem string, stamp time.Time, atts []model.
 		// The part is read whole before it is written, as the archive writer reads it, so an empty
 		// or failed part leaves no entry in the zip (an entry cannot be taken back).
 		var buf bytes.Buffer
-		room := budget - used - attachZipSlack
-		_, serr := guardStream(a.WriteTo)(&attachSpaceWriter{w: &buf, left: max(room, 0), stop: w.stopped, tick: r.watch.bump})
+		// The part is admitted if its own cost fits: its bytes, deflate's overhead on them (len/512, as
+		// used counts it) and its entry and record in the directory, on top of what is used and the
+		// end of the zip. Judged on its bytes alone, a part that passed could still overflow the
+		// zip's budget and cost every earlier entry (E6Z-AC1).
+		// The share deflate may add (1/513 of it, rounded up) is taken off without a multiplication: a
+		// destination that reports a nominal 16 PiB or more free overflowed budget*512 and refused
+		// every part as "no space" (E6Z-AC1 re-verification).
+		room := max(budget-used-attachZipSlack-attachZipEntryOverhead, 0)
+		room -= (room + 512) / 513
+		_, serr := guardStream(a.WriteTo)(&attachSpaceWriter{w: &buf, left: room, stop: w.stopped, tick: r.watch.bump})
 		serr = classifyStream(serr)
 		if serr != nil && w.stopped() {
 			serr = errAttachStopped
 		}
 		if errors.Is(serr, errAttachStopped) {
-			return stopped(fmt.Sprintf("the last %s attachments", commas(len(atts)-i)))
+			return stopped()
 		}
 		if serr == nil && buf.Len() == 0 {
 			serr = errAttachEmpty
@@ -159,16 +198,17 @@ func (w *attachWriter) zipParts(dir, stem string, stamp time.Time, atts []model.
 			zf = &attachZipFile{f: f, tmp: tmp, hw: hw, zw: zip.NewWriter(left)}
 		}
 		entry := ceUniqueNameFrom(w.used, w.next, util.ExportFilename(name, i))
-		ew, cerr := zf.zw.CreateHeader(&zip.FileHeader{Name: entry, Method: zip.Deflate, Modified: stamp})
+		ew, cerr := zf.zw.CreateHeader(attachZipHeader(entry, stamp))
 		if cerr == nil {
 			_, cerr = ew.Write(buf.Bytes())
 		}
 		if cerr != nil {
 			if w.stopped() {
-				return stopped(fmt.Sprintf("the last %s attachments", commas(len(atts)-i)))
+				return stopped()
 			}
 			return failed(classifyZipWrite(cerr))
 		}
+		atts[i].ZipName = entry // the readable page names the part as the zip does (E6Z-AI1)
 		placedParts++
 		used += int64(buf.Len()) + int64(buf.Len())/512 + attachZipEntryOverhead
 		if a.GapKind != "" {
@@ -180,7 +220,7 @@ func (w *attachWriter) zipParts(dir, stem string, stamp time.Time, atts []model.
 	}
 	if cerr := zf.zw.Close(); cerr != nil {
 		if w.stopped() {
-			return stopped("the attachments")
+			return stopped()
 		}
 		return failed(classifyZipWrite(cerr))
 	}
@@ -191,6 +231,12 @@ func (w *attachWriter) zipParts(dir, stem string, stamp time.Time, atts []model.
 	if serr != nil {
 		r.fs.Remove(ceJoin(dir, zf.tmp))
 		return failed(&ceWriteError{serr})
+	}
+	// A flush that was stuck (a hard mount) and returned after Cancel or Abandon: the zip is whole
+	// but the caller has let go of the folder, and an abandoned run makes no further write (E6-AO3,
+	// E6Z-AC3). The check cannot close the rename's own window, only the one the flush opens.
+	if w.stopped() {
+		return stopped()
 	}
 	placed, perr := r.placeFinalAs(w.ctx, dir, zf.tmp, stem, attachZipSuffix)
 	if perr != nil {
@@ -214,6 +260,16 @@ func classifyZipWrite(err error) error {
 		return err
 	}
 	return &ceWriteError{err}
+}
+
+// zipStopNote is the note for a zip the run was stopped in the making of: it is discarded whole
+// (the temp is removed), so every one of the message's n attachments is not extracted.
+func (w *attachWriter) zipStopNote(n int) {
+	what := "its attachment was"
+	if n != 1 {
+		what = fmt.Sprintf("all %s attachments were", commas(n))
+	}
+	w.notes.add(fmt.Sprintf("the export was stopped while this message's attachments were being extracted, so no attachments zip was written and %s not extracted; %s; export this message again", what, w.holds))
 }
 
 // zipFailure is the note for a zip that could not be written at all: every attachment is still in

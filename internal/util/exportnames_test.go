@@ -173,6 +173,31 @@ func TestExportFilenameStripsEveryInvisibleFormatCharacter(t *testing.T) {
 	}
 }
 
+// covers: MA-417, R4, R29
+// E6Z-AO5: a name over 255 bytes has its extension cut to 32 bytes, and the cut can fall just after a
+// space of the extension (".ééé…é ab" cut at 32 bytes is ".ééé…é "); the name then ended in a space,
+// which Windows Explorer, 7-zip and Python on Windows strip on extraction, so the file's name was not
+// the one the notes, the sums and the manifest record. Every name the pass returns ends in neither a
+// space nor a dot, whatever the cut of its extension leaves.
+func TestExportFilenameNeverEndsInASpaceAfterCuttingItsExtension(t *testing.T) {
+	base := strings.Repeat("\U0001D538", 119)
+	for _, ext := range []string{
+		"." + strings.Repeat("é", 15) + " ab",
+		"." + strings.Repeat("é", 15) + "   ab",
+		"." + strings.Repeat("é", 14) + "ab" + strings.Repeat(" ", 6) + "c",
+		"." + strings.Repeat("a", 30) + " b",
+		"." + strings.Repeat("a", 31) + " b",
+		"." + strings.Repeat("a", 32) + " b",
+	} {
+		in := base + ext
+		got := ExportFilename(in, 3)
+		exportNameOK(t, in, got)
+		if !strings.Contains(got, "~"+ShortHash(in)) && len(in) > ExportSegmentMaxBytes {
+			t.Errorf("%q: the cut name %q lost its hash", ext, got)
+		}
+	}
+}
+
 // covers: MA-417, MA-441, R4, R29
 // F91: a name over 255 bytes is cut at a rune boundary, never inside a UTF-8
 // sequence, keeps a hash of the original so two long names never merge, and the

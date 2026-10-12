@@ -55,7 +55,9 @@ func ExportFilename(name string, index int) string {
 	}
 	base, ext := out, ""
 	if i := strings.LastIndexByte(out, '.'); i > 0 {
-		base, ext = out[:i], truncateBytes(out[i:], 32)
+		// A cut can leave a space (or a dot) at the end of the extension, which Windows strips from the
+		// name on extraction, so the file would not be the one the record names (E6Z-AO5).
+		base, ext = out[:i], strings.TrimRight(truncateBytes(out[i:], 32), " .")
 	}
 	suffix := "~" + ShortHash(name)
 	base = strings.TrimRight(truncateBytes(base, ExportSegmentMaxBytes-len(ext)-len(suffix)), " .")
