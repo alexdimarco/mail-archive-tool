@@ -910,7 +910,8 @@ func TestAMissingReadableCopyMakesARunPartialNotFailed(t *testing.T) {
 	damaged := e5Find(t, k.Root, ".html", "subj-M00002")
 	os.Remove(filepath.Join(k.Root, gone))
 	b, _ := os.ReadFile(filepath.Join(k.Root, damaged))
-	os.WriteFile(filepath.Join(k.Root, damaged), append(b, []byte("torn by a power loss")...), 0o600)
+	b[len(b)/2] ^= 0x01 // the same length: only the re-hash tells it from the page that was written
+	os.WriteFile(filepath.Join(k.Root, damaged), b, 0o600)
 	fin, err := e.FinishAsPartial(k.RunID)
 	if err != nil {
 		t.Fatalf("Finish as partial: %v", err)
