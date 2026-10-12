@@ -192,7 +192,7 @@ func TestMaildirFileEIOIsContained(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("maildir names carry a colon")
 	}
-	store :=filepath.Join(t.TempDir(), "store")
+	store := filepath.Join(t.TempDir(), "store")
 	for _, f := range []string{"Inbox/cur/a:2,S", "Inbox/cur/b:2,S", "Inbox/cur/c:2,S", "Work/cur/d:2,S"} {
 		writeLocal(t, filepath.Join(store, filepath.FromSlash(f)), localMail(strings.SplitN(filepath.Base(f), ":", 2)[0]))
 	}

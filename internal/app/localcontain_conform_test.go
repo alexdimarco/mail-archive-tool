@@ -24,7 +24,7 @@ func TestMaildirFileEIOIsTheSameGapWithTheDiskRemedy(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("maildir names carry a colon")
 	}
-	store :=filepath.Join(tmpDir(t), "mail")
+	store := filepath.Join(tmpDir(t), "mail")
 	maildirStore(t, store, "Inbox/cur/a:2,S", "Inbox/cur/b:2,S", "Inbox/cur/c:2,S", "Work/cur/d:2,S")
 	restore := source.InjectMaildirReadFaults(func(rel string) error {
 		if rel == "Inbox/cur/b:2,S" {
