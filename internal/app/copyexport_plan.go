@@ -153,7 +153,7 @@ func (e *CopyExportEnv) PlanCopyExport(in CopyPlanInput) (*CopyPlan, error) {
 		// The sentence Start would refuse with, raised while the owner can still choose
 		// another destination (friction F17).
 		if need := p.EstimateBytes + p.Reserve; int64(free) < need {
-			p.Warnings = append(p.Warnings, refusalG2(dest, free, need).Message)
+			p.Warnings = append(p.Warnings, refusalG2For(dest, free, need, p.AttachBytes).Message)
 		}
 	}
 	if why := destNotWritable(dest); why != "" {
@@ -211,6 +211,7 @@ func (e *CopyExportEnv) sizePlan(p *CopyPlan) {
 		}
 		if hasAttachSource(m, p.Options) && m.SizeHint >= 0 && m.SizeHint <= e.cap() {
 			p.EstimateBytes += m.SizeHint * 4 / 5 // the design's factor for extracted attachments: 0.8 of the message (§4.7 step 4)
+			p.AttachBytes += m.SizeHint * 4 / 5
 		}
 		pl := namer.place(m, copyFileCountFor(m, p.Options))
 		rel := pl.Dir + "/" + pl.Stem + copyFirstSuffix(m)

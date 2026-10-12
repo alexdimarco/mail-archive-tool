@@ -118,12 +118,23 @@ func refuse(id, msg string) *CopyRefusal { return &CopyRefusal{ID: id, Message: 
 // refusalG2 is Start's free-space refusal (R-g2, XC11): the estimate plus the
 // reserve does not fit.
 func refusalG2(dest string, free uint64, need int64) *CopyRefusal {
+	return refusalG2For(dest, free, need, 0)
+}
+
+// refusalG2For is refusalG2 for an export that has Extract attachments on: attach is the part of the
+// estimate the option adds, and the remedy names unticking it as a way out, with what that saves (EW-E6
+// friction F8). With attach 0 it is refusalG2's words.
+func refusalG2For(dest string, free uint64, need, attach int64) *CopyRefusal {
 	f, n := humanBytes(int64(free)), humanBytes(need)
 	if f == n { // both round to the same text: show the bytes, so the sentence does not contradict itself
 		f, n = commas(int(free))+" bytes", commas(int(need))+" bytes"
 	}
-	return refuse("R-g2", fmt.Sprintf("%s has %s free, but this export needs about %s plus room to finish (the manifest and checksums) — nothing was written. Free some space or choose another destination.",
-		dest, f, n))
+	fix := "Free some space or choose another destination."
+	if attach > 0 {
+		fix = fmt.Sprintf("Free some space or choose another destination, or untick Extract attachments (it accounts for about %s of that).", humanBytes(attach))
+	}
+	return refuse("R-g2", fmt.Sprintf("%s has %s free, but this export needs about %s plus room to finish (the manifest and checksums) — nothing was written. %s",
+		dest, f, n, fix))
 }
 
 // refusalT is the refusal of a destination in which every candidate root name is taken (R-t).

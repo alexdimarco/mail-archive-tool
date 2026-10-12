@@ -269,6 +269,7 @@ type CopyPlan struct {
 
 	// What the preview reports (design §4.7 step 3 and 4).
 	EstimateBytes int64
+	AttachBytes   int64 // the part of EstimateBytes that Extract attachments adds (EW-E6 friction F8)
 	UnknownSize   int
 	OverCap       int // messages above the per-message cap: listed as failed, not counted in the estimate (E4-AO3)
 	FreeBytes     uint64

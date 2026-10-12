@@ -24,6 +24,35 @@ func (e *wsEnv) withAttachment(folder string) {
 	})
 }
 
+// covers: MA-424, MA-535, R12
+// F8 (friction review of EW-E6): the preview says how much of its size is the attachments, in bytes and in the words
+// the page shows, only when Extract attachments is on, and the page's Extract attachments line says it is an
+// upper bound and what it is of the size above.
+func TestThePreviewSaysWhatExtractAttachmentsAddsToTheSize(t *testing.T) {
+	e := newWsEnv(t)
+	ids := e.folders()
+	e.withAttachment("F-SENT")
+	preview := func(attach bool) map[string]any {
+		t.Helper()
+		sel := e.selection(entry(ids["Sent Items"], false))
+		sel["options"] = map[string]any{"preserve": true, "html": false, "attachments": attach, "attachmentsAs": "zip"}
+		_, res := e.preview(sel)
+		return res
+	}
+	on, off := preview(true), preview(false)
+	if b, _ := on["attachBytes"].(float64); b <= 0 || on["attachEstimate"] == nil || on["attachEstimate"] == "" {
+		t.Errorf("the preview with Extract attachments on does not say what it adds: %v / %v", on["attachBytes"], on["attachEstimate"])
+	}
+	if b, _ := off["attachBytes"].(float64); b != 0 {
+		t.Errorf("the preview with it off says it adds %v bytes", off["attachBytes"])
+	}
+	for _, want := range []string{"about '+p.attachEstimate+' of it", "an upper bound"} {
+		if !strings.Contains(workspaceJS, want) {
+			t.Errorf("workspace.js's Extract attachments line lacks %q", want)
+		}
+	}
+}
+
 // covers: MA-424, MA-533, MA-430, R12
 // F3, F11, F1 (friction review of EW-E6): an export's card on Export activity says in a line what became of
 // the attachments and in which way they were made, so two exports of the same folder, one with a zip per

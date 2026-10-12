@@ -285,7 +285,7 @@ func (r *CopyRun) start() *CopyRefusal {
 		return destMissing(p.Dest)
 	}
 	if need := p.EstimateBytes + p.Reserve; int64(free) < need {
-		return refusalG2(p.Dest, free, need)
+		return refusalG2For(p.Dest, free, need, p.AttachBytes)
 	}
 	if now := e.destinationPosture(p.Dest, p.FSType); now.broaderThan(p.Posture) {
 		return refuse("R-w2", refusalText("R-w2", 0, 0, postureNames(now), p, ""))
