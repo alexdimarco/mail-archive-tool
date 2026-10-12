@@ -59,9 +59,9 @@ func (w *walker) leaf(h textproto.Header, p partInfo, raw []byte) {
 	inline := p.disp == "inline" || (p.disp != "attachment" && strings.HasPrefix(p.v1Type, "text/"))
 	switch {
 	case inline && strings.HasPrefix(p.v1Type, "text/html"):
-		w.bodyText(&w.msg.HTMLBody, l)
+		w.bodyText(false, l)
 	case inline && strings.HasPrefix(p.v1Type, "text/plain"):
-		w.bodyText(&w.msg.PlainBody, l)
+		w.bodyText(true, l)
 	case inline:
 		// An inline non-text part (an image a body refers to by cid) is named as v1
 		// names it: by its Content-ID, else "inline".
@@ -81,25 +81,29 @@ func (w *walker) leaf(h textproto.Header, p partInfo, raw []byte) {
 // bodyText decodes a body text part into the body field it fills: the first of each kind,
 // as v1 kept them (assembly of several is slice S3's). A part whose transfer encoding is
 // not known is also kept as received; one cut short is used as far as it goes.
-func (w *walker) bodyText(field *string, l leafPart) {
+func (w *walker) bodyText(plain bool, l leafPart) {
 	switch l.st {
 	case transferUnknown:
 		w.undecoded("", l)
-		if w.msg.PlainBody == "" {
+		if w.plain.Len() == 0 {
 			text, notes := decodeText(l.charset, l.raw)
 			w.addNotes(notes)
-			w.msg.PlainBody = text // the still-encoded text, shown as it came
+			w.plain.WriteString(text) // the still-encoded text, shown as it came
 		}
 		return
 	case transferCorrupt:
 		w.gap(state.GapKindCorruptPart, fmt.Sprintf("the text of part %d is cut short or damaged after %d bytes: only the readable start is shown", l.n, len(l.data)))
 	}
-	if *field != "" {
+	if (plain && w.plain.Len() != 0) || (!plain && w.msg.HTMLBody != "") {
 		return
 	}
 	text, notes := decodeText(l.charset, l.data)
 	w.addNotes(notes)
-	*field = text
+	if plain {
+		w.plain.WriteString(text)
+	} else {
+		w.msg.HTMLBody = text
+	}
 }
 
 // attach adds an attachment: its bytes are the transfer-decoded bytes whatever its type

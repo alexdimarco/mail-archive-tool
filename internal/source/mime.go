@@ -68,6 +68,11 @@ type walker struct {
 	parts     int    // parts read so far, leaves and containers (the maxParts bound)
 	leafN     int    // the 1-based ordinal of the last leaf: the N of "part-N" names
 	site      string // where the walker is, for the panic detail of a fallback
+
+	// plain is the plain body as it is built: the first plain part, or the texts of
+	// multiparts that could not be split, joined by a blank line. It becomes
+	// msg.PlainBody when the walk ends, so adding to it costs what is added (MS2-AO6).
+	plain strings.Builder
 }
 
 // parseFidelity parses data with the fidelity walker.
@@ -95,6 +100,9 @@ func (w *walker) run() (*model.Message, walkMeta) {
 	} else {
 		w.envelope(hdr)
 		w.entity(hdr, body, 1)
+		if w.plain.Len() != 0 {
+			w.msg.PlainBody = w.plain.String()
+		}
 	}
 	w.msg.ParseNotes, w.msg.ParseGaps = w.notes, w.gaps
 	return w.msg, w.meta
@@ -503,11 +511,10 @@ func (w *walker) framing(err error, read int, raw []byte) {
 func (w *walker) unsplit(raw []byte, why string) {
 	text, notes := decodeText("", raw)
 	w.addNotes(notes)
-	if w.msg.PlainBody == "" {
-		w.msg.PlainBody = text
-	} else {
-		w.msg.PlainBody += "\n\n" + text
+	if w.plain.Len() != 0 {
+		w.plain.WriteString("\n\n")
 	}
+	w.plain.WriteString(text)
 	w.gap(state.GapKindUnsplitMultipart, why+", so its text is shown as one body")
 }
 
