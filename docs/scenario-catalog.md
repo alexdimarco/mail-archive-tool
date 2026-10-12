@@ -901,6 +901,10 @@ stays open as a skip, and the identity golden pins the stub from a constructed
 message. The design's R2 clarification (§6) does
 not land here (ruling J7): it waits for ESC-2, as one joint paragraph with
 re-capture integrity's R2 amendment.
+Slice MF-S1 closes MA-347's identity half with every write recording `chash` (MC5)
+and `parse_scheme` (MC12); MA-329's baseline `internal/app/testdata/p14-golden.json`
+was regenerated with those two additive fields on the healthy records by the owner's
+decision of 2026-10-11, and nothing else in it moved.
 
 MA-350, MA-351, MA-352, MA-355, MA-356, MA-357, MA-358, MA-359 and MA-361 are
 re-capture integrity's slice S1, interim (`docs/design-recapture-integrity.md` §9
