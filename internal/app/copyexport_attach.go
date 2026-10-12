@@ -126,8 +126,11 @@ type attachWriter struct {
 	line   *ceMsgLine
 	notes  attachNotes
 	placed int
-	holds  string // what holds a part that was not extracted
-	from   string // where the parts are read from: "the message", or "the zip"
+	// written is every byte the writer has put into a temp file for this message, whether the part
+	// was kept or removed again after it failed: the per-message bound on a zip's entries counts it.
+	written int64
+	holds   string // what holds a part that was not extracted
+	from    string // where the parts are read from: "the message", or "the zip"
 }
 
 func newAttachWriter(r *CopyRun, ctx context.Context, dir, stem string, line *ceMsgLine, holds string) *attachWriter {
@@ -202,6 +205,7 @@ func (w *attachWriter) put(filename string, index int, stream func(io.Writer) (i
 	}
 	hw := &ceHashWriter{w: f, h: sha256.New(), watch: r.watch, total: &r.bytes}
 	_, serr := stream(&attachSpaceWriter{w: hw, left: budget})
+	w.written += hw.n // charged whether the part is kept or not: what was written is what the bound limits (E6-AO1)
 	serr = classifyStream(serr)
 	if serr == nil {
 		if serr = f.Sync(); serr != nil {
@@ -446,23 +450,19 @@ func (w *attachWriter) zipEntries(data []byte, bd attachBounds) {
 		w.notes.add(fmt.Sprintf("the zip holds %s entries and this version extracts the first %s: the others were not extracted; %s", commas(len(files)), commas(bd.entries), w.holds))
 		files = files[:bd.entries]
 	}
-	var total int64
 	for i, f := range files {
 		if f.FileInfo().IsDir() || strings.HasSuffix(f.Name, "/") {
 			continue
 		}
 		name := zipBase(f.Name)
 		label := plainText(util.ExportFilename(name, i))
-		if why := bd.breach(f, total); why != "" {
+		if why := bd.breach(f, w.written); why != "" {
 			w.notes.add(fmt.Sprintf("%q (an entry of the zip) was not extracted: %s; %s", label, why, w.holds))
 			continue
 		}
-		rec, err := w.put(name, i, guardStream(zipStream(f)))
-		if err != nil {
+		if _, err := w.put(name, i, guardStream(zipStream(f))); err != nil {
 			w.problem(label, err)
-			continue
 		}
-		total += rec.Size
 	}
 }
 
