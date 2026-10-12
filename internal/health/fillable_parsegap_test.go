@@ -50,7 +50,7 @@ func TestStatusRemedyFitsWhatIsMissing(t *testing.T) {
 	if strings.Contains(warn, "download for offline use in your mail app, then re-run") || strings.Contains(sum, "not downloaded yet") {
 		t.Errorf("a cut or boundary-less message read in full is told to download:\n%s\n%s", warn, sum)
 	}
-	for _, want := range []string{"2 message(s) still missing content", "cut short", "complete export", "IMAP cache", "re-run"} {
+	for _, want := range []string{"2 message(s) still missing content", "cut short", "complete export", "IMAP cache", "re-run", "malformed when it was sent cannot be completed by either, and stays listed"} {
 		if !strings.Contains(warn, want) {
 			t.Errorf("the WARN lacks %q: %s", want, warn)
 		}

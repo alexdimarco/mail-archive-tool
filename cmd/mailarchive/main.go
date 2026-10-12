@@ -1597,7 +1597,7 @@ func printSummary(logger *log.Logger, r app.Result, indexed, keepRaw bool, out s
 			}
 			if r.FillableOnlyParseGap >= r.Fillable {
 				logger.Printf("  These messages are cut short, or have parts that could not be told apart, in the file they were read from; what could be read is kept (see the report).")
-				logger.Printf("  A download does not change a mailbox file: replace it with a complete export from your mail app, then simply re-run: incremental fills them. (For an IMAP cache, download the messages for offline use instead.)")
+				logger.Printf("  A download does not change a mailbox file: replace it with a complete export from your mail app, then simply re-run: incremental fills them. (For an IMAP cache, download the messages for offline use instead.) A message that was malformed when it was sent cannot be completed by either, and stays listed.")
 			} else {
 				logger.Printf("  Missing content usually means it isn't cached locally (IMAP / a limited Outlook offline window).")
 				logger.Printf("  In your mail app, download for offline use, then simply re-run: incremental fills the gaps.")

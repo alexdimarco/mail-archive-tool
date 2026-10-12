@@ -36,7 +36,7 @@ func TestRunSummaryRemedyFitsWhatIsMissing(t *testing.T) {
 	if strings.Contains(out, download) || strings.Contains(out, "isn't cached locally") {
 		t.Errorf("a cut or boundary-less message read in full is told to download for offline use:\n%s", out)
 	}
-	for _, want := range []string{"cut short", "replace", "complete export", "2 of them are also counted"} {
+	for _, want := range []string{"cut short", "replace", "complete export", "2 of them are also counted", "malformed when it was sent cannot be completed by either, and stays listed"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the summary lacks %q:\n%s", want, out)
 		}

@@ -289,7 +289,7 @@ func Assess(in Input, now time.Time) Report {
 		if onlyParseGap(in, n) {
 			// Every one is cut short, or has parts that could not be told apart, in the file it was
 			// read from: a download returns the same bytes from a mailbox file (friction F3).
-			msg = fmt.Sprintf("%d message(s) still missing content: cut short, or with parts that could not be told apart, in the file they were read from — replace the mailbox file with a complete export from your mail app (an IMAP cache: download the messages for offline use), then re-run; incremental fills them", n)
+			msg = fmt.Sprintf("%d message(s) still missing content: cut short, or with parts that could not be told apart, in the file they were read from — replace the mailbox file with a complete export from your mail app (an IMAP cache: download the messages for offline use), then re-run; incremental fills them. A message that was malformed when it was sent cannot be completed by either, and stays listed", n)
 		}
 		if in.ReportExists {
 			msg += fmt.Sprintf(" (see %s)", in.ReportPath)

@@ -375,12 +375,12 @@ func recordRowRemedy(kind, class string, body, local bool) string {
 		if terminal {
 			return "nothing to do: the source cannot deliver a complete copy; " + start + "; " + kept
 		}
-		return "download the complete message in your mail app, then run again" + completeExport(local) + "; " + start + "; " + kept
+		return "download the complete message in your mail app, then run again" + completeExport(local, kind) + "; " + start + "; " + kept
 	case GapKindUnsplitMultipart:
 		if terminal {
 			return "nothing to do: the source cannot deliver a better copy; the text is on the page; " + kept
 		}
-		return "download the complete message in your mail app, then run again" + completeExport(local) + "; the text is on the page; " + kept
+		return "download the complete message in your mail app, then run again" + completeExport(local, kind) + "; the text is on the page; " + kept
 	case GapKindStructureLimit:
 		return "nothing to do: the rest is in the attachments zip as received (a name ending .undecoded); " + kept
 	case GapKindFidelityFallback:
@@ -394,9 +394,15 @@ func recordRowRemedy(kind, class string, body, local bool) string {
 // completeExport is what a fillable cut or boundary-less message also needs when its source is
 // a mailbox file the run read in full: a download returns the same bytes, a new export does not
 // (friction F3). Only the report, which knows the row is a record's, says it.
-func completeExport(local bool) string {
-	if !local {
+//
+// A boundary-less multipart is cured by a fresh export only if the original in the mail app is
+// fine: one that was malformed when it was sent is the same in every export, and stays listed.
+func completeExport(local bool, kind string) string {
+	switch {
+	case !local:
 		return ""
+	case kind == GapKindUnsplitMultipart:
+		return " (a message that is malformed in the mailbox file is not changed by a download: if the original in your mail app is fine, replace the mailbox file with a fresh export; a message that was malformed when it was sent stays listed)"
 	}
 	return " (a message cut short inside a mailbox file is not changed by a download: replace the mailbox file with a complete export from your mail app)"
 }

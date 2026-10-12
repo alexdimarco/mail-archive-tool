@@ -79,11 +79,19 @@ func TestAParseGapRowSaysWhereTheOriginalIs(t *testing.T) {
 func TestAFillableParseGapRowNamesTheCompleteExportToo(t *testing.T) {
 	for _, kind := range []string{GapKindCorruptPart, GapKindUnsplitMultipart} {
 		r := RecordRowRemedyFor(kind, ClassFillable, "", OriginalInSource)
-		if !strings.Contains(r, "download the complete message") || !strings.Contains(r, "mailbox file") || !strings.Contains(r, "complete export") {
-			t.Errorf("%s: the fillable remedy %q does not name a complete export for a damaged mailbox file", kind, r)
+		if !strings.Contains(r, "download the complete message") || !strings.Contains(r, "mailbox file") || !strings.Contains(r, "export") {
+			t.Errorf("%s: the fillable remedy %q does not name an export for a damaged mailbox file", kind, r)
 		}
-		if t2 := RecordRowRemedyFor(kind, ClassTerminal, "", OriginalInSource); strings.Contains(t2, "complete export") {
+		if t2 := RecordRowRemedyFor(kind, ClassTerminal, "", OriginalInSource); strings.Contains(t2, "export from your mail app") {
 			t.Errorf("%s: a terminal remedy %q promises an export that would not be read", kind, t2)
 		}
+	}
+	// A cut message is cured by a complete export; a boundary-less one only if the original is fine, and
+	// the row says what stays listed when it is not (the owner's decision F4 is about that row).
+	if r := RecordRowRemedyFor(GapKindCorruptPart, ClassFillable, "", OriginalInSource); !strings.Contains(r, "complete export") {
+		t.Errorf("a cut message's remedy %q does not name a complete export", r)
+	}
+	if r := RecordRowRemedyFor(GapKindUnsplitMultipart, ClassFillable, "", OriginalInSource); !strings.Contains(r, "malformed when it was sent stays listed") {
+		t.Errorf("a boundary-less message's remedy %q does not say that a message malformed as sent stays listed", r)
 	}
 }
