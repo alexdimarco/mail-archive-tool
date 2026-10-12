@@ -197,7 +197,10 @@ func (r *evolutionReader) walkMaildirPP(w *localWalk, sc *scope) error {
 		}
 		if err := w.into(sc, name, v, folderPath, func(s *scope, rel string) error {
 			if !isMaildirIn(s, rel) {
-				return nil
+				// Only a followed link gets here (a plain directory that is no maildir was
+				// dropped above, as Maildir++ says): the directory of mailboxes it usually is,
+				// read as the mbox reader reads it, not as nothing (the twin of S2B-AC2).
+				return w.mboxDir(s, rel, folderPath, false)
 			}
 			return w.maildir(s, rel, folderPath)
 		}); err != nil {

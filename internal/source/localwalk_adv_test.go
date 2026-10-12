@@ -259,6 +259,42 @@ func TestAFollowedLinkToADirectoryOfMailboxesIsRead(t *testing.T) {
 }
 
 // covers: MA-322, R25, R1, R10, S47
+// S2B-AC2's Evolution twin (found by the fresh-eyes check of the adversarial pass's fixes):
+// with the directory-link opt-in, a dot-folder link of a Maildir++ store to a directory of
+// MBOX files is read as that directory of mailboxes, as the mbox reader reads it. The
+// Maildir++ walker still read a followed link to a directory that is no maildir as
+// nothing and recorded nothing, while the gap the refused link left said the folder would
+// be read once the opt-in was given. Without the opt-in the link is still a terminal gap
+// (the twin).
+func TestAFollowedLinkOfAMaildirPPStoreToADirectoryOfMailboxesIsRead(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("links need privileges on Windows")
+	}
+	parent := t.TempDir()
+	store := filepath.Join(parent, "evo")
+	writeLocal(t, filepath.Join(store, maildirPlusPlusMarker), "")
+	writeLocal(t, filepath.Join(store, "cur", "i:2,S"), localMail("inbox"))
+	writeLocal(t, filepath.Join(store, ".Real", "cur", "r:2,S"), localMail("real"))
+	writeLocal(t, filepath.Join(parent, "other", "Archive"), mboxText("m1"))
+	writeLocal(t, filepath.Join(parent, "other", "Archive.sbd", "Old"), mboxText("m0"))
+	if err := os.Symlink(filepath.Join(parent, "other"), filepath.Join(store, ".Linked")); err != nil {
+		t.Fatal(err)
+	}
+
+	without := walkLocal(t, store, OpenOptions{})
+	if strings.Join(without.subjects, " ") != ": inbox Real: real" || without.count("symlink-outside-store") != 1 {
+		t.Fatalf("without the opt-in: delivered %v, faults %+v; want the link refused and recorded", without.subjects, without.faults)
+	}
+	got := walkLocal(t, store, OpenOptions{FollowLinks: true})
+	if strings.Join(got.subjects, " ") != ": inbox Linked/Archive/Old: m0 Linked/Archive: m1 Real: real" {
+		t.Errorf("with the opt-in: delivered %v; want the mailboxes of the linked directory under Linked, and its .sbd", got.subjects)
+	}
+	if len(got.faults) != 0 {
+		t.Errorf("with the opt-in: faults %+v; want none", got.faults)
+	}
+}
+
+// covers: MA-322, R25, R1, R10, S47
 // S2B-AO8: a link to a link is judged for what it is. With the opt-in, an in-store link
 // whose target is another link (to a folder out there) is followed like any directory
 // link, instead of a terminal "a link in the store points outside it" whose remedy is
