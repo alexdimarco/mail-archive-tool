@@ -181,18 +181,33 @@ func (n *ceNamer) stem(m *CopyMessage, dir, key string) string {
 // "report (3).pdf"; a name matching the 8.3 short-name alias pattern gets a "~" and a
 // hash first (XC13). It is the helper the attachment writer (slice E6) uses.
 func ceUniqueName(used map[string]struct{}, name string) string {
+	return ceUniqueNameFrom(used, map[string]int{}, name)
+}
+
+// ceUniqueNameFrom is ceUniqueName for a directory that is given many names, some of them the
+// same: next remembers, for a name's fold key, the number to try after the last one given, so
+// n parts of one name cost n tries and not n squared (a sender chooses the names; E6-AO6). The
+// numbers below it were taken when it was set and names are only ever added to used, so they
+// are still taken.
+func ceUniqueNameFrom(used map[string]struct{}, next map[string]int, name string) string {
 	if util.IsShortNameAlias(name) {
 		stem, ext := splitExt(name)
 		name = util.JoinSuffix(stem, "~"+util.HashHex(name, 8), util.ExportSegmentMaxBytes-len(ext)) + ext
 	}
-	cand := name
-	for i := 2; ; i++ {
-		if _, taken := used[util.FoldKey(cand)]; !taken {
-			used[util.FoldKey(cand)] = struct{}{}
+	key := util.FoldKey(name)
+	if _, taken := used[key]; !taken {
+		used[key] = struct{}{}
+		return name
+	}
+	stem, ext := splitExt(name)
+	for i := max(next[key], 2); ; i++ {
+		cand := util.JoinSuffix(stem, fmt.Sprintf(" (%d)", i), util.ExportSegmentMaxBytes-len(ext)) + ext
+		ck := util.FoldKey(cand)
+		if _, taken := used[ck]; !taken {
+			used[ck] = struct{}{}
+			next[key] = i + 1
 			return cand
 		}
-		stem, ext := splitExt(name)
-		cand = util.JoinSuffix(stem, fmt.Sprintf(" (%d)", i), util.ExportSegmentMaxBytes-len(ext)) + ext
 	}
 }
 

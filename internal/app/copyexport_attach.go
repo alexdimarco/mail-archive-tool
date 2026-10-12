@@ -124,6 +124,7 @@ type attachWriter struct {
 	ctx    context.Context
 	adir   string // the attachments directory, relative to the export root, forward slashes
 	used   map[string]struct{}
+	next   map[string]int // the number to try next for a name already used (ceUniqueNameFrom)
 	line   *ceMsgLine
 	notes  attachNotes
 	placed int
@@ -138,7 +139,7 @@ type attachWriter struct {
 }
 
 func newAttachWriter(r *CopyRun, ctx context.Context, dir, stem string, line *ceMsgLine, holds string) *attachWriter {
-	return &attachWriter{r: r, ctx: ctx, adir: ceJoin(dir, stem+attachDirSuffix), used: map[string]struct{}{}, line: line, holds: holds, from: "the message"}
+	return &attachWriter{r: r, ctx: ctx, adir: ceJoin(dir, stem+attachDirSuffix), used: map[string]struct{}{}, next: map[string]int{}, line: line, holds: holds, from: "the message"}
 }
 
 // errAttachStopped is an extraction cut short because the run was cancelled or abandoned.
@@ -252,7 +253,7 @@ func (w *attachWriter) put(filename string, index int, stream func(io.Writer) (i
 		r.fs.Remove(ceJoin(w.adir, tmp))
 		return ceFileRec{}, serr
 	}
-	name := ceUniqueName(w.used, util.ExportFilename(filename, index))
+	name := ceUniqueNameFrom(w.used, w.next, util.ExportFilename(filename, index))
 	base, ext := splitExt(name)
 	placed, perr := r.placeFinalAs(w.ctx, w.adir, tmp, base, ext)
 	if perr != nil {

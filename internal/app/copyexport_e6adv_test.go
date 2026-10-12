@@ -5,11 +5,14 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/state"
+	"mail-archive-tool/internal/util"
 )
 
 // The tombstones of the EW-E6 adversarial pass (docs/review-extraction-workspace-e6-adversarial.md):
@@ -216,6 +219,40 @@ func TestCancelIsSeenInsideAZipsExtraction(t *testing.T) {
 	}
 	if !e6advHasNote(first.Notes, "export was stopped", "the rest of its entries were not extracted", "the zip beside it") {
 		t.Errorf("no note says the rest of the entries were not extracted because the export was stopped: %q", first.Notes)
+	}
+}
+
+// covers: MA-424, R4
+// E6-AO6 (E6-AC7): n parts with the same name take about n work, not n squared. ceUniqueName retried
+// " (2)", " (3)" from 2 for every repeat and folded each candidate (NFC, case fold), so 8,000 parts
+// of one name cost 7 s and 10,000 about 11 s, and 155 s with 200-byte names, from a message of 1.4 MB;
+// the writer now remembers the next number to try for a name. The names are the same as before:
+// report.pdf, report (2).pdf, report (3).pdf ... with a name that is already taken skipped.
+func TestSameNamedPartsAreNamedInLinearTime(t *testing.T) {
+	const n = 6000
+	used, next := map[string]struct{}{}, map[string]int{}
+	used[util.FoldKey("report (5).pdf")] = struct{}{} // taken by a part of that very name: the counter must step over it
+	start := time.Now()
+	got := make([]string, n)
+	for i := range got {
+		got[i] = ceUniqueNameFrom(used, next, "report.pdf")
+	}
+	if took := time.Since(start); took > 1500*time.Millisecond {
+		t.Errorf("%d parts of one name took %v: the work is not linear", n, took)
+	}
+	want := []string{"report.pdf", "report (2).pdf", "report (3).pdf", "report (4).pdf", "report (6).pdf", "report (7).pdf"}
+	if !slices.Equal(got[:len(want)], want) {
+		t.Errorf("the first names are %q, want %q", got[:len(want)], want)
+	}
+	if last := got[n-1]; last != fmt.Sprintf("report (%d).pdf", n+1) {
+		t.Errorf("the last name is %q", last)
+	}
+	seen := map[string]bool{}
+	for _, g := range got {
+		if seen[g] {
+			t.Fatalf("%q was given twice", g)
+		}
+		seen[g] = true
 	}
 }
 
