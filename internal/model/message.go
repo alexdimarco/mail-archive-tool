@@ -11,6 +11,8 @@ import (
 	"io"
 	"strings"
 	"time"
+
+	"mail-archive-tool/internal/util"
 )
 
 // Attachment is a normalized message attachment. WriteTo streams the raw
@@ -46,12 +48,16 @@ type Attachment struct {
 // Label is the attachment's human-readable name in reports and gap lists: its
 // file name, else cid:<Content-ID>, else attachment-<index>. It is also what a
 // record's Missing list and the v1 inventory call the attachment.
+//
+// A name comes from the sender, so the label is control-stripped where it is made: a record
+// label that began with a NUL would pass for a parse-gap label (state.ParseGapLabel), and a
+// tab or line break would split a report row (MS2-AO4).
 func (a Attachment) Label(index int) string {
-	if a.Filename != "" {
-		return a.Filename
+	if name := util.StripControl(a.Filename); name != "" {
+		return name
 	}
-	if a.ContentID != "" {
-		return "cid:" + a.ContentID
+	if cid := util.StripControl(a.ContentID); cid != "" {
+		return "cid:" + cid
 	}
 	return fmt.Sprintf("attachment-%d", index)
 }

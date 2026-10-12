@@ -63,7 +63,7 @@ func writeReport(out string, manifest *state.Manifest, migrated bool, logger *lo
 		// The bare code, then why and what to do in the ledger rows' words (ESC-16).
 		detail += " · why: " + state.RecordRowWhy(kind) + " · what to do: " + state.RecordRowRemedy(kind, class)
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			kind, class, tsv(r.Folder), r.Date, tsv(r.Subject), tsv(detail), r.Path)
+			tsv(kind), class, tsv(r.Folder), r.Date, tsv(r.Subject), tsv(detail), r.Path)
 		rows++
 	}
 	for _, r := range issues {
