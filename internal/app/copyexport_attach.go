@@ -217,7 +217,7 @@ func (w *attachWriter) put(filename string, index int, stream func(io.Writer) (i
 	if w.stopped() {
 		return ceFileRec{}, errAttachStopped
 	}
-	budget, err := r.budget()
+	budget, err := r.derivedBudget()
 	if err != nil {
 		return ceFileRec{}, &ceWriteError{err}
 	}

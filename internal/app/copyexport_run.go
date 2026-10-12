@@ -114,6 +114,12 @@ type CopyRun struct {
 	// their count is not in the plan, so each one's manifest entry and sums line is added to
 	// the reserve as it is written (slice E6; budget).
 	derivedReserve int64
+
+	// hintsAfter[i] is the size hints of the messages after message i, and holdBack the one of the
+	// message in flight: what the originals still to be exported need, which derived files (the
+	// extracted attachments, the readable copies) leave alone (derivedBudget; E6-AI4).
+	hintsAfter []int64
+	holdBack   int64
 }
 
 // NewCopyRun prepares a run of plan against src.
@@ -483,6 +489,13 @@ func (r *CopyRun) loop(walk context.Context) (CopyStatus, *CopyStop) {
 		return CopyStatusFailed, r.postureStop
 	}
 	n := len(p.Messages)
+	r.hintsAfter = make([]int64, n+1) // [i] is the hints of messages i+1.., [n] is 0
+	for i := n - 1; i > 0; i-- {
+		r.hintsAfter[i-1] = r.hintsAfter[i]
+		if h := p.Messages[i].SizeHint; h >= 0 && h <= e.cap() { // an unknown size, or one above the cap (never exported), needs nothing held back
+			r.hintsAfter[i-1] += h
+		}
+	}
 	var removed []int // messages listed as removed from the archive, until the archive itself is seen to be gone
 	for i := 0; i < n; i++ {
 		m := &p.Messages[i]
@@ -516,6 +529,7 @@ func (r *CopyRun) loop(walk context.Context) (CopyStatus, *CopyStop) {
 		if stop := r.preMessage(i); stop != nil {
 			return CopyStatusFailed, stop
 		}
+		r.holdBack = r.hintsAfter[i]
 		line, stop, cancelled := r.exportOne(walk, i+1, m)
 		if r.abandoned.Load() {
 			return CopyStatusFailed, nil // released: no further writes, to the folder or the record
@@ -597,6 +611,18 @@ func (r *CopyRun) budget() (int64, error) {
 		return 0, nil
 	}
 	return b, nil
+}
+
+// derivedBudget is what a derived file may use: the budget less the size hints of the originals
+// after the message in flight, so a convenience never takes the space a later original was
+// planned to have (the plan counts an extracted file as 0.8 of its message, but a text part is the
+// message's own size and a zip expands more; E6-AI4).
+func (r *CopyRun) derivedBudget() (int64, error) {
+	b, err := r.budget()
+	if err != nil {
+		return 0, err
+	}
+	return max(b-r.holdBack, 0), nil
 }
 
 // complete fills a stop's message (design §7.6) from what is known when it is made.

@@ -243,7 +243,7 @@ func (r *CopyRun) addReadable(ctx context.Context, n int, m *CopyMessage, dir, e
 // destination first (derived files are checked against the budget, design §4.13), then a
 // temp file, fsync and a no-replace rename, hashed as written.
 func (r *CopyRun) writeReadable(ctx context.Context, dir, stem string, page []byte) (ceFileRec, error) {
-	budget, err := r.budget()
+	budget, err := r.derivedBudget() // a readable copy leaves the later originals their space too (E6-AI4)
 	if err != nil {
 		return ceFileRec{}, err
 	}

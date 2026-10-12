@@ -475,6 +475,55 @@ func TestHostileAttachmentNamesNeverReachTheSumsOrTheManifestRaw(t *testing.T) {
 	}
 }
 
+// covers: MA-424, MA-427, R29
+// E6-AI4 (E6-AC2): extracted attachments never take the space the originals still to be exported need.
+// The plan counts an extracted file as 0.8 of its message, but an 8-bit or plain-text part is about
+// the message's own size and a zip expands more, and each file was checked only against the free space
+// less the reserve, so the earlier messages' conveniences used what the later originals were to have:
+// on a destination with the estimate, the reserve and 2,000 bytes, six messages with 25 KB text
+// attachments stopped with "the destination is full" after five, the sixth original not exported
+// (R-g), where without the option all six fit. A derived file is now checked against what is left less
+// the size of every original after its own, so the originals all fit and the attachments that no
+// longer do are notes (no space left, export this message again).
+func TestExtractedAttachmentsNeverCrowdOutALaterOriginal(t *testing.T) {
+	msgs := ceMsgs(6)
+	body := map[string][]byte{}
+	for i := range msgs {
+		id := msgs[i].SourceID
+		text := strings.Repeat("a line of the text attachment of "+id+"\r\n", 25000/36)
+		body[id] = e6Mime(id, "text attachment", e6Part{name: "notes.txt", ctype: "text/plain; charset=utf-8", cte: "8bit", raw: text})
+		msgs[i].SizeHint = int64(len(body[id]))
+	}
+	e := newCEEnv(t)
+	src := newFakeSrc()
+	src.body = func(id string) []byte { return body[id] }
+	p := cePlan(t, e, src, msgs)
+	p.Options.Attachments = true
+	p.EstimateBytes, p.OverCap, p.UnknownSize, p.Over259, p.LongestPath, p.SamplePaths = 0, 0, 0, 0, 0, nil
+	e.sizePlan(p)
+	e.freeDest = e6Disk(p.Dest, p.EstimateBytes+p.Reserve+2000)
+	res := mustRun(t, e, p, src)
+	if res.Counts.Exported != 6 || res.Counts.NotAttempted != 0 || res.Stop != nil {
+		t.Fatalf("%s, %+v, stop %+v: an original was crowded out by extracted attachments", res.Label, res.Counts, res.Stop)
+	}
+	if got := len(treeFilesWith(t, res.Root, ".eml")); got != 6 {
+		t.Errorf("%d originals in the export, want 6", got)
+	}
+	lines := e5Files(t, e, res)
+	noSpace := 0
+	for n := 1; n <= 6; n++ {
+		if e6advHasNote(assure.Reached(t, lines[n], "a message's line").Notes, "no space was left", "export this message again") {
+			noSpace++
+		}
+	}
+	if noSpace == 0 {
+		t.Error("no attachment was left out for want of space, so the destination was not as tight as the test needs")
+	}
+	if bad, missing, extra := sumsCheck(t, res.Root); len(bad)+len(missing)+len(extra) != 0 {
+		t.Errorf("sums: changed %v, missing %v, unlisted %v", bad, missing, extra)
+	}
+}
+
 // covers: MA-424, R1
 // E6-AO7 (E6-AI5, E6-AC6): the zip's list of entries is bounded before it is read whole. Go's reader
 // allocates one record for every entry of the central directory (about 200 bytes each) before the
