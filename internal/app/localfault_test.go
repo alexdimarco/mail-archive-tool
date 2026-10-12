@@ -3,13 +3,17 @@ package app
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/export"
@@ -104,14 +108,68 @@ func TestLegacyPlaceholderIsReclassedByARunOnce(t *testing.T) {
 // test cites it, so an unbuilt half must not hide behind the built one.
 
 // covers: MA-316, R10, R6, R1, S46
+// The local readers' folder faults, end to end (FI-S2b): in one Thunderbird-style store a
+// maildir folder whose cur/ cannot be listed and an mbox file that cannot be opened each
+// cost that folder only, are fillable folder-unreadable gaps whose remedy is the
+// permission one, and make the run partial; every other folder is archived. After the
+// permissions are fixed the next run archives both and the gaps close. (The mbox
+// mid-stream error with its count, and the Evolution walkers, are the reader's own tests
+// in internal/source, which cite the same row.)
 func TestLocalFolderFaultsCostOneFolder(t *testing.T) {
-	t.Skip("MA-316: a maildir non-root ReadDir failure, an mbox open failure, an mbox mid-stream error (folder-partially-read with the count read) and the Evolution walkers' folder errors are FI-S2b's (the mbox, maildir and Evolution readers); closes when FI-S2b lands")
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs a unix permission check that root and Windows do not make")
+	}
+	store := mboxStore(t, tmpDir(t), "tb", []string{"A", "B", "C"}, 2)
+	maildirStore(t, store, "M/cur/x:2,S", "N/cur/y:2,S")
+	lockedMbox, lockedDir := filepath.Join(store, "B"), filepath.Join(store, "M", "cur")
+	for _, p := range []string{lockedMbox, lockedDir} {
+		if err := os.Chmod(p, 0); err != nil {
+			t.Fatal(err)
+		}
+		p := p
+		t.Cleanup(func() { os.Chmod(p, 0o755) })
+	}
+	out := tmpDir(t)
+	res, err := runLocal(t, out, store)
+	if !errors.Is(err, ErrPartial) || !res.Partial {
+		t.Fatalf("run 1 err = %v; want ErrPartial", err)
+	}
+	if n := recordCount(t, out); n != 5 {
+		t.Errorf("%d records; want A (2), C (2) and N (1): one folder's fault costs that folder only", n)
+	}
+	gaps := ledgerOf(t, out)
+	got := map[string]state.CaptureGap{}
+	for _, g := range gaps {
+		got[g.Locator] = g
+	}
+	for _, loc := range []string{"folder:B", "folder:M/cur"} {
+		g, ok := got[loc]
+		if !ok || g.Reason != "folder-unreadable" || g.Scope != state.GapScopeFolder || g.Class != state.ClassFillable {
+			t.Errorf("ledger %s; want a fillable folder-unreadable folder gap at %s", gapReasons(gaps), loc)
+		}
+	}
+	if len(gaps) != 2 || res.Gaps.FolderGaps != 2 {
+		t.Errorf("ledger %s, folder gaps %d; want exactly the two folders", gapReasons(gaps), res.Gaps.FolderGaps)
+	}
+	if lines := strings.Join(res.Gaps.Lines, "\n"); !strings.Contains(lines, "fix the permissions on the folder") {
+		t.Errorf("summary %q; want the permission remedy for a folder", lines)
+	}
+
+	for _, p := range []string{lockedMbox, lockedDir} {
+		if err := os.Chmod(p, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ageLedger(t, out, 48*time.Hour)
+	res, err = runLocal(t, out, store)
+	if err != nil || res.Partial || recordCount(t, out) != 8 || len(ledgerOf(t, out)) != 0 || res.Gaps.ClosedGone != 2 {
+		t.Errorf("run 2: err %v, partial %v, %d records, ledger %s, closed %d; want B and M archived and both gaps closed", err, res.Partial, recordCount(t, out), gapReasons(ledgerOf(t, out)), res.Gaps.ClosedGone)
+	}
 }
 
-// covers: MA-318, R1, R3, R7, R10, S46
-func TestRawStubsKeepTheirBytesAndTheirRecord(t *testing.T) {
-	t.Skip("MA-318: a MIME-panicking mbox, maildir or Graph message keeps Raw (the .eml under -raw), shows the headers plus the first 64 KiB on its page and in the index, and is an unparsed record with ParserGen and RawDigest (FC25); the raw-preserving stub is FI-S2b's, for Graph too: FI-S3 gave the Graph stub its listing Message-ID and holds it back from an archived record, but source.ParseRFC822 still returns the bare stub with no Raw to keep; closes when FI-S2b lands")
-}
+// TestRawStubsKeepTheirBytesAndTheirRecord, once a skip encoder here, is a real test in
+// rawstub_test.go (FI-S2b): the raw-preserving stub of a MIME-panicking maildir message,
+// and TestGraphStubKeepsItsBytes for the Graph half.
 
 // covers: MA-318, R1, R3, R7, R10, S46
 // KEEP twin on Graph (P15, FC5): a message archived complete (a page and a zip)

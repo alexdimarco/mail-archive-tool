@@ -692,6 +692,13 @@ func runGraphMailbox(ctx context.Context, lr *localRun, client *graph.Client, ma
 							skip = !comparable
 						}
 					}
+					// An unparsed stub is terminal for the parser generation that gave up
+					// on it: one a newer parser may read is downloaded again, once (FC25).
+					// The walk stamps the generation on the stub it still cannot parse,
+					// or the exporter heals it in place when this parse succeeds.
+					if r, ok := manifest.Get(matchKey); skip && ok && r.StaleUnparsed(state.ParserGenCurrent) {
+						skip = false
+					}
 					if skip {
 						rec, _ := manifest.Get(matchKey)
 						if rec.Unknown() && manifest.Resolve(matchKey) {

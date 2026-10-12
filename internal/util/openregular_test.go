@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"syscall"
 	"testing"
 	"time"
 
@@ -47,7 +46,7 @@ func TestOpenRegularFileRefusesWhatIsNotAFile(t *testing.T) {
 		return
 	}
 	pipe := filepath.Join(dir, "pipe")
-	if err := syscall.Mkfifo(pipe, 0o644); err != nil {
+	if err := mkfifo(pipe); err != nil {
 		t.Skip("no FIFOs here:", err)
 	}
 	done := make(chan error, 1)
@@ -137,7 +136,7 @@ func TestReadDirInListsInOrderAndRefusesAPipe(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := syscall.Mkfifo(filepath.Join(dir, "pipe"), 0o644); err != nil {
+	if err := mkfifo(filepath.Join(dir, "pipe")); err != nil {
 		t.Skip("no FIFOs here:", err)
 	}
 	r, err := os.OpenRoot(dir)
