@@ -204,12 +204,12 @@ func (w *localWalk) followInto(sc *scope, rel string, folder []string, read func
 	if err == nil {
 		fi, err = os.Stat(real)
 	}
-	if err != nil || !fi.IsDir() {
-		detail := "the link is not a folder"
-		if err != nil {
-			detail = "the link could not be followed: " + err.Error()
-		}
-		w.refuse(sc, rel, folder, verdict{kind: kindDirLink, detail: detail})
+	if err != nil {
+		w.refuse(sc, rel, folder, verdict{kind: kindUnreachable, detail: "the link's target could not be reached: " + err.Error()})
+		return nil
+	}
+	if !fi.IsDir() {
+		w.refuse(sc, rel, folder, verdict{kind: kindDirLink, detail: "the link is not a folder"})
 		return nil
 	}
 	if w.seen(fi) {
@@ -218,7 +218,7 @@ func (w *localWalk) followInto(sc *scope, rel string, folder []string, read func
 	}
 	root, err := os.OpenRoot(real)
 	if err != nil {
-		w.refuse(sc, rel, folder, verdict{kind: kindDirLink, detail: "the link could not be followed: " + err.Error()})
+		w.refuse(sc, rel, folder, verdict{kind: kindUnreachable, detail: "the link's target could not be opened: " + err.Error()})
 		return nil
 	}
 	sub := &scope{root: root, path: real, prefix: sc.at(rel)}

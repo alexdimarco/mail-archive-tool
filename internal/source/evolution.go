@@ -183,7 +183,7 @@ func (r *evolutionReader) walkMaildirPP(w *localWalk, sc *scope) error {
 			// store, though, may be a folder that holds mail (a link is told from a folder
 			// only by touching its target, which R25 never does): it is recorded, never
 			// dropped, and so is a pipe or device standing where a folder would be.
-			if v.kind == kindOutside || v.kind == kindSpecial {
+			if v.kind == kindOutside || v.kind == kindSpecial || v.kind == kindUnreachable {
 				w.refuse(sc, name, nil, v)
 			}
 			continue
@@ -253,7 +253,7 @@ func (r *evolutionReader) walkCacheChildren(w *localWalk, sc *scope, dir string,
 		erel := relJoin(dir, e.Name())
 		v := w.judge(sc, erel, e.Type(), posEither)
 		if v.kind != kindDir && v.kind != kindDirLink {
-			if v.kind == kindOutside || v.kind == kindSpecial {
+			if v.kind == kindOutside || v.kind == kindSpecial || v.kind == kindUnreachable {
 				if v.kind == kindOutside && e.Type()&fs.ModeSymlink == 0 {
 					continue // not a folder, and no link either
 				}

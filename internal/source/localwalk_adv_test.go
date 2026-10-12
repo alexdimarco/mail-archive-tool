@@ -256,6 +256,87 @@ func TestAFollowedLinkToADirectoryOfMailboxesIsRead(t *testing.T) {
 	}
 }
 
+// covers: MA-322, R25, R1, R10, S47
+// S2B-AO8: a link to a link is judged for what it is. With the opt-in, an in-store link
+// whose target is another link (to a folder out there) is followed like any directory
+// link, instead of a terminal "a link in the store points outside it" whose remedy is
+// the opt-in already in use; without it, a chain at a folder's place is the directory link
+// it is (symlinked-folder-skipped), not a link out of the store.
+func TestALinkToALinkIsJudgedForWhatItIs(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("links need privileges on Windows")
+	}
+	parent := t.TempDir()
+	store := filepath.Join(parent, "Mail")
+	writeLocal(t, filepath.Join(store, "Inbox", "cur", "i:2,S"), localMail("inbox"))
+	writeLocal(t, filepath.Join(parent, "outside", "cur", "o:2,S"), localMail("outside"))
+	if err := os.Symlink(filepath.Join(parent, "outside"), filepath.Join(store, "Real")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("Real", filepath.Join(store, "Chain")); err != nil {
+		t.Fatal(err)
+	}
+
+	got := walkLocal(t, store, OpenOptions{FollowLinks: true})
+	if strings.Join(got.subjects, " ") != "Chain: outside Inbox: inbox" {
+		t.Errorf("with the opt-in: delivered %v; want the linked folder read once, through the first link that reaches it", got.subjects)
+	}
+	for _, f := range got.faults {
+		if f.Class != state.ClassInfo {
+			t.Errorf("with the opt-in: fault %+v; want nothing but the info row for the second path to a folder read already", f)
+		}
+	}
+
+	// At a folder's place, with no opt-in: Other/cur -> cur2 -> outside.
+	writeLocal(t, filepath.Join(store, "Other", "new", "n:2,"), localMail("n"))
+	if err := os.Symlink(filepath.Join(parent, "outside", "cur"), filepath.Join(store, "Other", "cur2")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("cur2", filepath.Join(store, "Other", "cur")); err != nil {
+		t.Fatal(err)
+	}
+	plain := walkLocal(t, store, OpenOptions{})
+	var chain []Fault
+	for _, f := range plain.faults {
+		if f.Locator == "folder:Other/cur" {
+			chain = append(chain, f)
+		}
+	}
+	if len(chain) != 1 || chain[0].Reason != "symlinked-folder-skipped" || chain[0].Class != state.ClassTerminal {
+		t.Errorf("without the opt-in: faults at Other/cur %+v; want one terminal symlinked-folder-skipped (a link to a link at a folder's place), not a link out of the store", chain)
+	}
+}
+
+// covers: MA-322, R25, R1, R10, S47
+// S2B-AI8: with the opt-in on, a link whose target cannot be reached (a drive that is not
+// mounted, a folder that moved) is not told to use the opt-in. It was a terminal
+// symlink-outside-store gap whose remedy sent the owner to the opt-in the input already
+// had. It is a fillable folder-unreadable gap that says the target could not be reached,
+// and the remedy it gets does not name the opt-in.
+func TestAnUnreachableLinkIsNotToldToUseTheOptInItHas(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("links need privileges on Windows")
+	}
+	parent := t.TempDir()
+	store := filepath.Join(parent, "Mail")
+	writeLocal(t, filepath.Join(store, "Inbox", "cur", "i:2,S"), localMail("inbox"))
+	if err := os.Symlink(filepath.Join(parent, "unmounted", "Mail", "Old"), filepath.Join(store, "Old")); err != nil {
+		t.Fatal(err)
+	}
+	got := walkLocal(t, store, OpenOptions{FollowLinks: true})
+	if strings.Join(got.subjects, " ") != "Inbox: inbox" {
+		t.Fatalf("delivered %v; want the one message", got.subjects)
+	}
+	f, ok := got.fault("folder-unreadable")
+	if !ok || len(got.faults) != 1 || f.Class != state.ClassFillable || f.Scope != state.GapScopeFolder || f.Locator != "folder:Old" || !strings.Contains(f.Detail, "could not be reached") {
+		t.Fatalf("faults %+v; want ONE fillable folder-unreadable at folder:Old saying the link's target could not be reached", got.faults)
+	}
+	rem := state.GapRemedy(f.Reason, state.SourceLocal, state.GapErrnoClass(f.Detail))
+	if strings.Contains(rem, "follow-links") || strings.Contains(rem, "opt-in") {
+		t.Errorf("the remedy %q sends the owner to the opt-in the input already has", rem)
+	}
+}
+
 // covers: MA-322, R25, R10, S47
 // S2B-AO4 (and S2B-AC1): a pipe named like an Outlook data file is never opened. The PST
 // open was a plain os.Open, which waits for a writer on a pipe, so a FIFO named *.pst or
