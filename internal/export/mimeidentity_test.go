@@ -177,6 +177,32 @@ func TestRecaptureAtAnotherStemKeepsTheOriginalOnDisk(t *testing.T) {
 	if after.Fixity != nil && after.Fixity.EML != nil {
 		t.Errorf("the new record vouches for an original it does not hold at its stem: %+v", after.Fixity.EML)
 	}
+
+	// The date moves back: the re-capture lands at the first stem again, where the first
+	// capture's original still lies, an orphan of the record that now sits at the other
+	// stem (MS1-AC4 b). The record does not own it, so the page must not link it and the
+	// record must not vouch for it: the carry is tied to the record's own path.
+	third := fullExporter(out, manifest)
+	if _, err := third.Export("store", []string{"Inbox"}, msg(testDate)); err != nil {
+		t.Fatal(err)
+	}
+	back, _ := manifest.Get(key)
+	if back.Path != before.Path {
+		t.Fatalf("the re-capture landed at %q, want the first stem %q, so this test proves nothing", back.Path, before.Path)
+	}
+	if orphan, err := os.ReadFile(emlPath(out, before)); err != nil || !bytes.Equal(orphan, raw) {
+		t.Fatalf("fixture: the orphan original is not on disk at the first stem: %v", err)
+	}
+	if back.Fixity != nil && back.Fixity.EML != nil {
+		t.Errorf("the record vouches for an orphan original it did not carry from its own stem: %+v", back.Fixity.EML)
+	}
+	page, err := os.ReadFile(filepath.Join(out, filepath.FromSlash(back.Path)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(page), "Original message (.eml)") {
+		t.Error("the page links an original that is not the record's own (an orphan at the new stem)")
+	}
 }
 
 // covers: MA-346, R4, R20, R13, R5
@@ -322,6 +348,69 @@ func TestEveryWriteStampsTheParseScheme(t *testing.T) {
 		att.data = []byte("x")
 		step("fill", incExporter(out, manifest))
 		step("full run", fullExporter(out, manifest))
+	}
+}
+
+// covers: MA-347, R27
+// A seen record that this run re-read is stamped with the parse scheme in memory, on both
+// skip branches: a complete record, and a fillable one that is still incomplete (MS1-AC4
+// a). The stamp records an examination, so it is withheld from a record whose re-read
+// carries a fidelity note introduced after the scheme the record holds: the repair has
+// not looked at it, and stamping would hide it from the repair that the note calls for
+// (MS1-AI1). No note exists before S2, so this build's own re-reads are all stamped.
+func TestReReadStampsTheParseSchemeUnlessANoteIsUnexamined(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		fillable bool
+	}{{"complete record", false}, {"still-incomplete fillable record", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := t.TempDir()
+			path := filepath.Join(t.TempDir(), "m.json")
+			manifest, err := state.Load(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			att := &blob{} // never given bytes: the fillable record stays incomplete
+			msg := func(notes []model.ParseNote) *model.Message {
+				m := &model.Message{Subject: "S", Received: testDate, InternetMessageID: "<rr@x>", PlainBody: "b", ParseNotes: notes}
+				if tc.fillable {
+					m.Attachments = []model.Attachment{att.att("a.bin")}
+				}
+				return m
+			}
+			key := state.Key("store", "Inbox", msg(nil).Identity())
+			if _, err := incExporter(out, manifest).Export("store", []string{"Inbox"}, msg(nil)); err != nil {
+				t.Fatal(err)
+			}
+			if rec, ok := manifest.Get(key); !ok || rec.Fillable() != tc.fillable {
+				t.Fatalf("fixture: record %+v (present %t), want fillable=%t", rec, ok, tc.fillable)
+			}
+			if err := manifest.Save(); err != nil {
+				t.Fatal(err)
+			}
+			manifest = dropParseScheme(t, path) // an older binary's save: parse_scheme 0
+			reread := func(notes []model.ParseNote) state.Record {
+				t.Helper()
+				e := incExporter(out, manifest)
+				exported, err := e.Export("store", []string{"Inbox"}, msg(notes))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if exported || e.Stats.SkippedManifest+e.Stats.StillIncomplete != 1 {
+					t.Fatalf("the re-read exported %t (skipped %d, still incomplete %d), want one skip", exported, e.Stats.SkippedManifest, e.Stats.StillIncomplete)
+				}
+				rec, _ := manifest.Get(key)
+				return rec
+			}
+
+			note := []model.ParseNote{{Code: "future-note", Since: state.ParseSchemeCurrent}}
+			if rec := reread(note); rec.ParseScheme != 0 {
+				t.Errorf("ParseScheme = %d after a re-read that carries a note the record's scheme predates, want 0 (not examined)", rec.ParseScheme)
+			}
+			if rec := reread(nil); rec.ParseScheme != state.ParseSchemeCurrent {
+				t.Errorf("ParseScheme = %d after a re-read with no unexamined note, want %d", rec.ParseScheme, state.ParseSchemeCurrent)
+			}
+		})
 	}
 }
 

@@ -308,8 +308,11 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 				e.observeArchived(key, prev, folderKey, folderPath)
 			}
 			// This run re-read the record, so it is examined under this build's parser
-			// scheme: stamped in memory, no file written (MC12).
-			e.Manifest.StampParseScheme(key, state.ParseSchemeCurrent)
+			// scheme: stamped in memory, no file written (MC12), unless the re-read
+			// carries a note the record's scheme predates (examinedBy).
+			if examinedBy(m, prev) {
+				e.Manifest.StampParseScheme(key, state.ParseSchemeCurrent)
+			}
 			// A healthy read of an item that an earlier run only partly read, which
 			// already has its own record here: the partly-read record is settled.
 			e.supersedePartial(store, key, m)
@@ -320,7 +323,9 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		e.Stats.Retried++
 		if !probeImproves(m, prev.Missing) {
 			e.Stats.StillIncomplete++
-			e.Manifest.StampParseScheme(key, state.ParseSchemeCurrent) // re-read, as above (MC12)
+			if examinedBy(m, prev) { // re-read, as above (MC12)
+				e.Manifest.StampParseScheme(key, state.ParseSchemeCurrent)
+			}
 			// Still partly read: it counts as a partly-read record seen this run, and
 			// a Locator an older binary's save dropped is restored from the capture
 			// (§4.2).
@@ -614,6 +619,23 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	}
 	e.Stats.Exported++
 	return true, nil
+}
+
+// examinedBy reports whether a re-read of prev's record may stamp it with the current
+// parse scheme: no note this parse recorded was introduced after the scheme the record
+// holds. The stamp is the repair's progress marker (MC12): a record whose re-read still
+// shows a note newer than its scheme has been looked at but not repaired, and stamping it
+// would make the repair's rule (a note with Since above the record's scheme) skip it for
+// good. Nothing records a note before slice S2, so until then every re-read is stamped;
+// the gate keeps a slice that bumps the scheme ahead of the repair slice (S7) from
+// marking records it never repaired (MS1-AI1).
+func examinedBy(m *model.Message, prev state.Record) bool {
+	for _, n := range m.ParseNotes {
+		if n.Since > prev.ParseScheme {
+			return false
+		}
+	}
+	return true
 }
 
 // carriedOriginal says whether the preserved original (.eml) a seen record holds is on
