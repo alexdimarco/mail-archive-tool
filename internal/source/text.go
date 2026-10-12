@@ -8,6 +8,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/emersion/go-message/charset"
+	"golang.org/x/text/encoding"
+	"golang.org/x/text/encoding/htmlindex"
 
 	"mail-archive-tool/internal/model"
 	"mail-archive-tool/internal/state"
@@ -63,7 +65,7 @@ func decodeText(label string, b []byte) (string, []model.ParseNote) {
 			"the text is not valid UTF-8, so it is shown as Windows-1252")}
 	}
 	if r, err := charset.Reader(l, bytes.NewReader(b)); err == nil {
-		if out, rerr := io.ReadAll(r); rerr == nil && utf8.Valid(out) {
+		if out, rerr := io.ReadAll(r); rerr == nil && utf8.Valid(out) && !replacedWhole(l, b, out) {
 			return string(out), nil
 		}
 	}
@@ -79,6 +81,18 @@ func decodeText(label string, b []byte) (string, []model.ParseNote) {
 		detail = "the charset utf-7 is not decoded by this version: the text is shown as stored"
 	}
 	return util.DecodeLegacy(b), []model.ParseNote{newNote(noteCharsetFallback, detail)}
+}
+
+// replacedWhole says a charset reader gave nothing of its input but one U+FFFD: the label
+// is one the WHATWG table maps to the replacement encoding (iso-2022-kr, iso-2022-cn and
+// their aliases), whose decoder answers any input with a single replacement character. That
+// is not a decoding, so the label is read as one this version does not know (MS2-AO7).
+func replacedWhole(label string, in, out []byte) bool {
+	if len(in) == 0 || string(out) != "�" {
+		return false
+	}
+	enc, err := htmlindex.Get(label)
+	return err == nil && enc == encoding.Replacement
 }
 
 // quoteLabel makes a label safe to put in a note: it comes from the mail.

@@ -60,10 +60,7 @@ func writeReport(out string, manifest *state.Manifest, migrated bool, logger *lo
 	fmt.Fprintln(w, "kind\tclass\tfolder\tdate\tsubject\tdetail\tpath")
 	rows := 0
 	emit := func(kind, class string, r state.Record, detail string) {
-		// The bare code, then why and what to do in the ledger rows' words (ESC-16).
-		detail += " · why: " + state.RecordRowWhy(kind) + " · what to do: " + state.RecordRowRemedy(kind, class)
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			kind, class, tsv(r.Folder), r.Date, tsv(r.Subject), tsv(detail), r.Path)
+		w.WriteString(recordRow(kind, class, r, detail))
 		rows++
 	}
 	for _, r := range issues {
@@ -87,6 +84,16 @@ func writeReport(out string, manifest *state.Manifest, migrated bool, logger *lo
 		return "", rows
 	}
 	return path, rows
+}
+
+// recordRow is the report row of one record gap: seven tab-separated fields on one line.
+// The kind goes through tsv() like the rest: it comes from a fixed set today, and a row
+// must stay one line whatever a future kind holds (MS2-AO4).
+func recordRow(kind, class string, r state.Record, detail string) string {
+	// The bare code, then why and what to do in the ledger rows' words (ESC-16).
+	detail += " · why: " + state.RecordRowWhy(kind) + " · what to do: " + state.RecordRowRemedy(kind, class)
+	return fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		tsv(kind), class, tsv(r.Folder), r.Date, tsv(r.Subject), tsv(detail), r.Path)
 }
 
 func gapKind(item string) string {

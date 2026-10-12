@@ -40,6 +40,9 @@ func (w *walker) leaf(h textproto.Header, p partInfo, raw []byte) {
 	l.cteRaw = h.Get("Content-Transfer-Encoding")
 	norm, changed := normalizeCTE(l.cteRaw)
 	l.data, l.st = decodeTransfer(norm, raw)
+	if l.st == transferOK && w.cut {
+		l.st = transferCorrupt // the data ended inside this part: what arrived is kept as a cut part
+	}
 	if changed && l.st == transferOK {
 		w.note(noteLenientCTE, fmt.Sprintf("the transfer encoding %s was read as %q", quoteLabel(l.cteRaw), norm))
 	}
@@ -59,9 +62,9 @@ func (w *walker) leaf(h textproto.Header, p partInfo, raw []byte) {
 	inline := p.disp == "inline" || (p.disp != "attachment" && strings.HasPrefix(p.v1Type, "text/"))
 	switch {
 	case inline && strings.HasPrefix(p.v1Type, "text/html"):
-		w.bodyText(&w.msg.HTMLBody, l)
+		w.bodyText(false, l)
 	case inline && strings.HasPrefix(p.v1Type, "text/plain"):
-		w.bodyText(&w.msg.PlainBody, l)
+		w.bodyText(true, l)
 	case inline:
 		// An inline non-text part (an image a body refers to by cid) is named as v1
 		// names it: by its Content-ID, else "inline".
@@ -70,36 +73,48 @@ func (w *walker) leaf(h textproto.Header, p partInfo, raw []byte) {
 			name = "inline"
 		}
 		w.attach(name, l)
+		w.textAttachmentNote(l)
 	default:
 		w.attach(p.filename, l)
-		if l.hasCS && !isUTF8Label(l.charset) {
-			w.note(noteTextAttachmentBytes, "a text attachment is kept in the bytes it was sent in; this version no longer converts it to UTF-8")
-		}
+		w.textAttachmentNote(l)
+	}
+}
+
+// textAttachmentNote records that a text part kept as an attachment is in the bytes it was
+// sent in where v1 converted it to UTF-8, which is every declared charset but the two v1 read
+// as they came (MS2-AI3: an inline text/csv and an "ascii" charset were left out).
+func (w *walker) textAttachmentNote(l leafPart) {
+	if l.hasCS && v1Converts(l.charset) {
+		w.note(noteTextAttachmentBytes, "a text attachment is kept in the bytes it was sent in; this version no longer converts it to UTF-8")
 	}
 }
 
 // bodyText decodes a body text part into the body field it fills: the first of each kind,
 // as v1 kept them (assembly of several is slice S3's). A part whose transfer encoding is
 // not known is also kept as received; one cut short is used as far as it goes.
-func (w *walker) bodyText(field *string, l leafPart) {
+func (w *walker) bodyText(plain bool, l leafPart) {
 	switch l.st {
 	case transferUnknown:
 		w.undecoded("", l)
-		if w.msg.PlainBody == "" {
+		if w.plain.Len() == 0 {
 			text, notes := decodeText(l.charset, l.raw)
 			w.addNotes(notes)
-			w.msg.PlainBody = text // the still-encoded text, shown as it came
+			w.plain.WriteString(text) // the still-encoded text, shown as it came
 		}
 		return
 	case transferCorrupt:
 		w.gap(state.GapKindCorruptPart, fmt.Sprintf("the text of part %d is cut short or damaged after %d bytes: only the readable start is shown", l.n, len(l.data)))
 	}
-	if *field != "" {
+	if (plain && w.plain.Len() != 0) || (!plain && w.msg.HTMLBody != "") {
 		return
 	}
 	text, notes := decodeText(l.charset, l.data)
 	w.addNotes(notes)
-	*field = text
+	if plain {
+		w.plain.WriteString(text)
+	} else {
+		w.msg.HTMLBody = text
+	}
 }
 
 // attach adds an attachment: its bytes are the transfer-decoded bytes whatever its type
@@ -112,6 +127,11 @@ func (w *walker) attach(name string, l leafPart) {
 		return
 	case transferCorrupt:
 		detail := fmt.Sprintf("the data is cut short or damaged after %d bytes: only the readable start is kept", len(l.data))
+		if l.hasCS {
+			// What v1 converted from the declared charset, the check converts these bytes from
+			// too, or it cannot find them and discards the walker's reading (MS2-AO5).
+			w.meta.declared[len(w.msg.Attachments)] = l.charset
+		}
 		w.msg.Attachments = append(w.msg.Attachments, model.Attachment{
 			Filename: partName(name, l.n) + ".partial", MimeType: l.info.mt, ContentID: l.info.cid,
 			WriteTo: bytesWriterTo(l.data), GapKind: state.GapKindCorruptPart, GapDetail: detail,
@@ -146,13 +166,15 @@ func partName(name string, n int) string {
 	return fmt.Sprintf("part-%d", n)
 }
 
-// isUTF8Label says v1 passed a charset's bytes through unconverted.
-func isUTF8Label(label string) bool {
-	switch normalizeCharset(label) {
-	case "", "utf-8", "us-ascii", "ascii":
-		return true
+// v1Converts says v1 converted a text part declared in this charset to UTF-8: it passed the
+// bytes through only for a label that is exactly "utf-8" or "us-ascii" once lower-cased (and
+// for none), and ran any other label, "ascii" and "utf-8 " included, through its table.
+func v1Converts(label string) bool {
+	switch strings.ToLower(label) {
+	case "", "utf-8", "us-ascii":
+		return false
 	}
-	return false
+	return true
 }
 
 // v1CTEUnknown says v1's transfer-encoding reader did not know the encoding: it lower-

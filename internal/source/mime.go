@@ -68,6 +68,15 @@ type walker struct {
 	parts     int    // parts read so far, leaves and containers (the maxParts bound)
 	leafN     int    // the 1-based ordinal of the last leaf: the N of "part-N" names
 	site      string // where the walker is, for the panic detail of a fallback
+
+	// plain is the plain body as it is built: the first plain part, or the texts of
+	// multiparts that could not be split, joined by a blank line. It becomes
+	// msg.PlainBody when the walk ends, so adding to it costs what is added (MS2-AO6).
+	plain strings.Builder
+
+	cut bool // the part being read was cut short by the end of the data (partOf sets it)
+
+	v1Stopped bool // a nested multipart ended in an error, where v1 stopped reading (framing sets it)
 }
 
 // parseFidelity parses data with the fidelity walker.
@@ -95,6 +104,9 @@ func (w *walker) run() (*model.Message, walkMeta) {
 	} else {
 		w.envelope(hdr)
 		w.entity(hdr, body, 1)
+		if w.plain.Len() != 0 {
+			w.msg.PlainBody = w.plain.String()
+		}
 	}
 	w.msg.ParseNotes, w.msg.ParseGaps = w.notes, w.gaps
 	return w.msg, w.meta
@@ -173,8 +185,13 @@ func (w *walker) envelope(hdr textproto.Header) {
 	h := mail.Header{Header: message.Header{Header: hdr}}
 	subject, err := h.Subject()
 	if err != nil {
+		v1Subject := subject // what v1 showed: the value the strict reader returned with its error
 		var notes []model.ParseNote
 		subject, notes = decodeHeaderWords(h.Get("Subject"))
+		if subject != v1Subject && len(notes) == 0 {
+			// The walker reads an encoded word v1 left as stored, so this Subject is not v1's.
+			notes = append(notes, newNote(noteEncodedWordFallback, "the Subject has an encoded word the earlier parser showed as stored, and this version decodes it"))
+		}
 		w.addNotes(notes)
 	}
 	msg.Subject = subject
@@ -324,48 +341,241 @@ func (w *walker) container(p partInfo, raw []byte, depth int) {
 		w.unsplit(raw, "the multipart has no boundary parameter")
 		return
 	}
-	mr := textproto.NewMultipartReader(bytes.NewReader(raw), boundary)
-	read := 0
+	// The multipart reader parses a part's header with no cap of its own, so the parts whose
+	// header is over the cap are found first (MC22) and never handed to it: such a part is
+	// kept unread and the reader starts again at the next delimiter. cur is what the reader
+	// runs over, base the number of delimiters before it, read the parts it has given.
+	sc := scanParts(raw, boundary)
+	// The data ends inside this container's last part only when this container is the message's
+	// own or its own part was the one the data ended in: a nested multipart that merely lacks its
+	// closing delimiter, inside a message that goes on, is not a cut message (MS2-AC3, round 2).
+	dataEndsHere := depth <= 1 || w.cut
+	cur, base, read := raw, 0, 0
+	mr := textproto.NewMultipartReader(bytes.NewReader(cur), boundary)
 	for {
 		if w.parts >= maxParts {
-			if rest, ok := restFromPart(raw, boundary, read); ok {
+			if rest, ok := restFromPart(cur, boundary, read); ok {
 				w.limit(rest, fmt.Sprintf("the message has more than %d parts, so the rest is kept unread", maxParts))
 			}
 			return
+		}
+		if len(sc.over) > 0 && sc.over[0].idx == base+read {
+			s := sc.over[0]
+			sc.over = sc.over[1:]
+			w.parts++
+			w.site = fmt.Sprintf("part %d", w.parts)
+			w.leafN++
+			w.blob(fmt.Sprintf("part-%d", w.leafN), raw[s.bodyStart:s.bodyEnd:s.bodyEnd], state.GapKindStructureLimit,
+				"the part's header is larger than 1 MiB, so the part is kept unread")
+			if s.next >= len(raw) {
+				return
+			}
+			cur, base, read = raw[s.next:], s.idx+1, 0
+			mr = textproto.NewMultipartReader(bytes.NewReader(cur), boundary)
+			continue
 		}
 		part, err := mr.NextPart()
 		if err == io.EOF {
 			return
 		}
 		if err != nil {
-			w.framing(err, read, raw)
+			w.framing(err, base+read, cur, boundary, read, depth)
 			return
 		}
 		read++
-		w.partOf(part, depth)
+		w.partOf(part, depth, raw, sc.end(raw, base+read-1), dataEndsHere)
 	}
 }
 
-// partOf reads one part of a container.
-func (w *walker) partOf(part *textproto.Part, depth int) {
+// partOf reads one part of a container. parent is the container's body and end where this
+// part's body ends in it: the part's raw is kept as a window onto parent, not as a copy, so
+// nesting does not hold one copy of the message per level (MS2-AO2). dataEndsHere says that
+// parent runs to the end of the message's data, so a part the reader found unfinished is one
+// the data ended in.
+func (w *walker) partOf(part *textproto.Part, depth int, parent []byte, end int, dataEndsHere bool) {
 	w.parts++ // the root is not counted: maxParts bounds the parts of a message, not the message
 	w.site = fmt.Sprintf("part %d", w.parts)
-	raw, _ := io.ReadAll(part) // the raw, still transfer-encoded body; a read error ends it where it ended
+	if w.v1Stopped {
+		w.v1Stopped = false
+		w.note(noteContinuedAfterError, "a multipart before this part ended with an error that stopped the earlier parser, which lost this part and the parts after it")
+	}
+	body, rerr := io.ReadAll(part) // the raw, still transfer-encoded body; a read error ends it where it ended
+	raw := windowOf(parent, end, body)
 	if headerSize(part.Header) > maxHeaderBytes {
 		w.leafN++
 		w.blob(fmt.Sprintf("part-%d", w.leafN), raw, state.GapKindStructureLimit,
 			"the part's header is larger than 1 MiB, so the part is kept unread")
 		return
 	}
+	// A part the data ended in the middle of (no closing delimiter, or a message cut off) is
+	// cut short, whatever it decodes to: the multipart reader says so with an unexpected
+	// EOF, and a leaf under it is kept as a cut part, never as a whole one (MS2-AC3).
+	w.cut = dataEndsHere && errors.Is(rerr, io.ErrUnexpectedEOF)
 	w.entity(part.Header, raw, depth+1)
+	w.cut = false
+}
+
+// windowOf is body as a slice of parent ending at end, when parent holds exactly it there;
+// otherwise (the scan and the multipart reader disagree about where the part ends) the copy
+// is returned as it is, so a window is never anything but the bytes the reader gave.
+func windowOf(parent []byte, end int, body []byte) []byte {
+	n := len(body)
+	if n == 0 || end < n || end > len(parent) || !bytes.Equal(parent[end-n:end], body) {
+		return body
+	}
+	return parent[end-n : end : end]
+}
+
+// headSpan is a part whose header is over the cap: its delimiter's ordinal in the
+// container, the span of its body and where the next delimiter starts.
+type headSpan struct{ idx, bodyStart, bodyEnd, next int }
+
+// partScan is what one pass over a container's body learns before the multipart reader
+// reads it: where its delimiter lines start (the first few, one per part the walker can
+// read) and which parts have a header over the cap.
+type partScan struct {
+	starts []int
+	over   []headSpan
+	nl     string // the line break the reader takes before a delimiter: CRLF, or LF
+}
+
+// beforeBreak is e less the line break nl that ends body[from:e], when it ends in one.
+func beforeBreak(body []byte, from, e int, nl string) int {
+	if e-from >= len(nl) && string(body[e-len(nl):e]) == nl {
+		return e - len(nl)
+	}
+	return e
+}
+
+// end is the offset in body at which the part of ordinal j ends: just before the line
+// break that precedes the next delimiter line, or the end of the data for the last part.
+func (s partScan) end(body []byte, j int) int {
+	if j+1 >= len(s.starts) {
+		return len(body)
+	}
+	return beforeBreak(body, 0, s.starts[j+1], s.nl)
+}
+
+// nextDashLine is the first line start at or after i (itself a line start) that begins with
+// dash and where the multipart reader can take it for a delimiter. Outside a part's header
+// the reader finds a delimiter after the container's line break nlDash starts with, or at
+// the start of a part's empty body, and before the first delimiter on any line (first); a
+// "--boundary" line that follows a lone LF in a CRLF container is part of a body to it. The
+// search is for that break and boundary together, so a body of nothing but line breaks costs
+// what a search for a short string costs, not a step per line (MS2-AO3, second round).
+func nextDashLine(body []byte, i int, dash, nlDash []byte, first, emptyBody bool) int {
+	nl := nlDash[:len(nlDash)-len(dash)]
+	if bytes.HasPrefix(body[i:], dash) &&
+		(first || emptyBody || i >= len(nl) && string(body[i-len(nl):i]) == string(nl)) {
+		return i
+	}
+	sep := nlDash
+	if first {
+		sep = nlDash[len(nl)-1:] // "\n--boundary": before the first delimiter every line is read
+	}
+	k := bytes.Index(body[i:], sep)
+	if k < 0 {
+		return -1
+	}
+	return i + k + len(sep) - len(dash)
+}
+
+// scanParts reads a container's body once. Delimiter lines are the multipart reader's own:
+// "--boundary" and nothing but white space after it, after the break the reader takes (CRLF,
+// or LF when the first delimiter line ends in one), and the closing line "--boundary--". A
+// part's header runs from its delimiter line to the first blank line; the scan reads that
+// line by line, and a body not at all but for the next delimiter. The closing line ends it.
+func scanParts(body []byte, boundary string) partScan {
+	dash := []byte("--" + boundary)
+	nlDash := append([]byte("\r\n"), dash...)
+	sc := partScan{nl: "\r\n"}
+	idx := -1
+	var hdrBytes, bodyStart int
+	open := false // a part's header is being measured or its body skipped
+	finish := func(next int) {
+		if !open || hdrBytes <= maxHeaderBytes {
+			return
+		}
+		if bodyStart < 0 {
+			bodyStart = next // the header ran into the next delimiter: no body
+		}
+		end := beforeBreak(body, bodyStart, next, sc.nl)
+		sc.over = append(sc.over, headSpan{idx: idx, bodyStart: bodyStart, bodyEnd: max(end, bodyStart), next: next})
+	}
+	for i := 0; i < len(body); {
+		inHeader := open && bodyStart < 0 // else only a delimiter line matters
+		if !inHeader {
+			j := nextDashLine(body, i, dash, nlDash, idx < 0, open && i == bodyStart)
+			if j < 0 {
+				break
+			}
+			i = j
+		}
+		lineEnd := len(body)
+		if j := bytes.IndexByte(body[i:], '\n'); j >= 0 {
+			lineEnd = i + j + 1
+		}
+		line := body[i:lineEnd]
+		if bytes.HasPrefix(line, dash) {
+			// As the multipart reader reads a line: a delimiter is the dash boundary, white
+			// space, and the line ending (CRLF, or LF when the first delimiter ends in a bare
+			// LF); the closing line has "--" after the dash boundary.
+			rest := bytes.TrimLeft(line[len(dash):], " \t")
+			if idx < 0 && string(rest) == "\n" {
+				sc.nl, nlDash = "\n", nlDash[1:]
+			}
+			closing := false
+			if r, ok := bytes.CutPrefix(line[len(dash):], []byte("--")); ok {
+				r = bytes.TrimLeft(r, " \t")
+				closing = len(r) == 0 || string(r) == sc.nl
+			}
+			if delim := string(rest) == sc.nl; delim || closing {
+				finish(i)
+				if len(sc.starts) <= maxParts+1 {
+					sc.starts = append(sc.starts, i)
+				}
+				if closing {
+					open = false
+					break // the reader ends here: what follows is not part of any part
+				}
+				open = true
+				idx++
+				hdrBytes, bodyStart = 0, -1
+				i = lineEnd
+				continue
+			}
+		}
+		if inHeader {
+			if len(bytes.TrimRight(line, "\r\n")) == 0 {
+				bodyStart = lineEnd
+			} else {
+				hdrBytes += len(line)
+			}
+		}
+		i = lineEnd
+	}
+	finish(len(body))
+	return sc
 }
 
 // framing handles an error the multipart reader gave instead of the next part. With no
 // part read, the body could not be split at all (its boundary is not in it); a missing
 // closing boundary at the end of the data is the common benign case; anything else is a
 // multipart that ended early.
-func (w *walker) framing(err error, read int, raw []byte) {
-	if read == 0 {
+//
+// done is the number of parts the container gave, raw what the reader was reading, and
+// read how many of them it gave from raw. The bytes from the delimiter it failed on to the
+// end are there, so they are kept as received, as the depth and part limits keep theirs: a
+// delimiter line too long for the reader must not decide which attachments the archive
+// holds (MS2-AC4).
+func (w *walker) framing(err error, done int, raw []byte, boundary string, read int, depth int) {
+	if depth > 1 {
+		// v1 stops at the first error of a nested multipart (an empty one, or one with no
+		// closing delimiter) and loses everything after it; the walker goes on, and says so
+		// when something follows (partOf).
+		w.v1Stopped = true
+	}
+	if done == 0 {
 		if len(bytes.TrimSpace(raw)) > 0 {
 			w.unsplit(raw, "the parts could not be separated at the boundary")
 		}
@@ -374,18 +584,22 @@ func (w *walker) framing(err error, read int, raw []byte) {
 	if strings.HasSuffix(err.Error(), "EOF") {
 		return
 	}
-	w.gap(state.GapKindCorruptPart, fmt.Sprintf("the multipart ended early, after part %d: the rest of it could not be read", read))
+	why := fmt.Sprintf("the multipart ended early, after part %d: the rest of it could not be read", done)
+	if rest, ok := restFromPart(raw, boundary, read); ok {
+		w.blob("remaining-parts", rest, state.GapKindCorruptPart, why+", so it is kept as received")
+		return
+	}
+	w.gap(state.GapKindCorruptPart, why)
 }
 
 // unsplit keeps the body of a multipart whose parts cannot be separated as text.
 func (w *walker) unsplit(raw []byte, why string) {
 	text, notes := decodeText("", raw)
 	w.addNotes(notes)
-	if w.msg.PlainBody == "" {
-		w.msg.PlainBody = text
-	} else {
-		w.msg.PlainBody += "\n\n" + text
+	if w.plain.Len() != 0 {
+		w.plain.WriteString("\n\n")
 	}
+	w.plain.WriteString(text)
 	w.gap(state.GapKindUnsplitMultipart, why+", so its text is shown as one body")
 }
 
@@ -449,20 +663,24 @@ const (
 // case are dropped, and "7-bit" and "8-bit" are the encodings they mean. changed says it
 // was not a clean token already.
 func normalizeCTE(v string) (norm string, changed bool) {
-	s := v
-	for {
+	// One pass: each "(" runs to the next ")" and an unclosed one runs to the end. The
+	// comments are dropped as the string is built, so a header made of a million of them
+	// costs a million steps, not a million copies of the rest of the string (MS2-AO1).
+	var b strings.Builder
+	for s := v; ; {
 		open := strings.IndexByte(s, '(')
 		if open < 0 {
+			b.WriteString(s)
 			break
 		}
+		b.WriteString(s[:open])
 		closeAt := strings.IndexByte(s[open:], ')')
 		if closeAt < 0 {
-			s = s[:open]
 			break
 		}
-		s = s[:open] + s[open+closeAt+1:]
+		s = s[open+closeAt+1:]
 	}
-	norm = strings.ToLower(strings.Trim(strings.TrimSpace(s), `"'`))
+	norm = strings.ToLower(strings.Trim(strings.TrimSpace(b.String()), `"'`))
 	norm = strings.TrimSpace(norm)
 	switch norm {
 	case "7-bit":

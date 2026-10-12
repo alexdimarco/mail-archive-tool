@@ -523,6 +523,15 @@ func applyGraphState(m *model.Message, ref graph.MessageRef) {
 	// that omits it leaves the MIME Date header in place.
 	if !ref.Received.IsZero() {
 		m.Received = ref.Received
+		// A message neither parser could read has the stub's dateless identity terms
+		// (NoIdentityDate keeps the walker's display dates out of it). On Graph the stub's
+		// identity has always folded the received time, so two such messages are two
+		// records: the listing's time is the one date the identity reads (MS2-AI2).
+		if t := m.IdentityTerms; t != nil && t.NoIdentityDate {
+			dated := *t
+			dated.NoIdentityDate = false
+			m.IdentityTerms = &dated
+		}
 	}
 	// Categories ride on the same widened listing; Graph is authoritative for a
 	// mailbox item's classification. Copied so the message owns its slice.

@@ -1056,6 +1056,14 @@ func probeImproves(m *model.Message, oldMissing []string) bool {
 					return true
 				}
 			}
+			// The old label may be one an earlier build gave the part (v1's), where the walker
+			// reads the part's names more leniently and calls it something else: the labels of
+			// what v1 reads now count too (design MC34, MS2-AI4).
+			for _, it := range m.V1Inventory {
+				if it.Label == item && it.Size > 0 {
+					return true
+				}
+			}
 		}
 	}
 	return false

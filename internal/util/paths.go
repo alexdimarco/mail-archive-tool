@@ -25,6 +25,11 @@ var (
 // UTF-16 units, and deep trees need headroom under Windows' 260-char paths.
 const segmentMax = 120
 
+// extMax bounds the extension SanitizeFilename keeps (runes, the dot included): a longer
+// one is part of the base name and is cut with it, so no name reaches a zip entry (at most
+// 65,535 bytes) or a path longer than segmentMax plus extMax runes (MS2-AO9).
+const extMax = 24
+
 // reservedNames are Windows device names that cannot be used as a bare file or
 // directory name regardless of extension.
 var reservedNames = map[string]bool{
@@ -94,6 +99,9 @@ func SanitizeFilename(name string, index int) string {
 		return "attachment-" + itoa(index)
 	}
 	ext := filepath.Ext(name)
+	if len([]rune(ext)) > extMax {
+		ext = "" // not an extension: the whole name is a base, and a base is bounded
+	}
 	base := strings.TrimSuffix(name, ext)
 	base, _ = sanitizeSegment(base)
 	ext = illegalChars.ReplaceAllString(ext, "")

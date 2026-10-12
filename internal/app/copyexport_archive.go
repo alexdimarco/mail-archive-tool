@@ -953,7 +953,15 @@ func archiveGapNotes(rec state.Record) []string {
 		}
 	}
 	for _, label := range append(append([]string(nil), rec.Missing...), rec.Terminal...) {
-		label = plainText(archiveCut(label, archiveMaxLabelBytes))
+		label = archiveCut(label, archiveMaxLabelBytes)
+		// A parse gap (design-mime-fidelity §4.9) is read before its separators are stripped:
+		// it is a part kept as received, a multipart shown as text or a message kept as an
+		// earlier version read it, not an attachment that was never downloaded (MS2-AO8).
+		if kind, detail, ok := state.ParseGapParts(label); ok {
+			add("the archive records a gap in this message: " + state.RecordRowWhy(kind) + " (" + plainText(detail) + ")")
+			continue
+		}
+		label = plainText(label)
 		switch {
 		case label == state.UnknownSentinel:
 			add("completeness was not tracked by the version that captured this message")

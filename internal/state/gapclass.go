@@ -70,7 +70,8 @@ const maxParseGapDetail = 300
 const MaxParseGapLabels = 32
 
 // parseGapSep delimits a parse-gap label: "\x00kind\x00detail". A name a build writes is
-// control-stripped, so no other label begins with it.
+// control-stripped (model.Attachment.Label strips the names of attachments), so no other
+// label begins with it.
 const parseGapSep = "\x00"
 
 // ParseGapLabel is the record label of a parse gap: its kind and a detail that is
@@ -83,15 +84,24 @@ func ParseGapLabel(kind, detail string) string {
 	return parseGapSep + kind + parseGapSep + detail
 }
 
+// parseGapKinds are the kinds a parse-gap label can carry. A label is read from a manifest
+// anyone who can write the archive can edit, and a name a sender chose could once reach it,
+// so a label with any other kind is an ordinary label, never a parse gap with a kind and a
+// detail somebody picked (MS2-AO4).
+var parseGapKinds = map[string]bool{
+	GapKindUndecodedPart: true, GapKindStructureLimit: true, GapKindFidelityFallback: true,
+	GapKindIdentityStub: true, GapKindCorruptPart: true, GapKindUnsplitMultipart: true,
+}
+
 // ParseGapParts splits a parse-gap label into its kind and detail; ok is false for any
-// other label.
+// other label, one whose kind is not a known parse-gap kind included.
 func ParseGapParts(label string) (kind, detail string, ok bool) {
 	rest, found := strings.CutPrefix(label, parseGapSep)
 	if !found {
 		return "", "", false
 	}
 	kind, detail, found = strings.Cut(rest, parseGapSep)
-	if !found || kind == "" {
+	if !found || !parseGapKinds[kind] {
 		return "", "", false
 	}
 	return kind, detail, true
