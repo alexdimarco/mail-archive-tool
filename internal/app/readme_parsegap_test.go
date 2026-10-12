@@ -51,6 +51,7 @@ func TestProductReadmeSaysWhereKeptPartsAre(t *testing.T) {
 		"`fidelity-fallback` and `identity-stub`, which have no part and no zip",
 		"a cut message text has no `.partial` file",
 		"the original is kept in the source",
+		"`parse_gaps` gives the number of messages per parse-gap kind",
 		"the .eml beside the page",
 	} {
 		if !strings.Contains(readme, want) {

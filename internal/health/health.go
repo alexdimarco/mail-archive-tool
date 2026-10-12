@@ -191,6 +191,8 @@ type Input struct {
 	// is how many records were written from the earlier parser's content (MC19).
 	Undecodable      int
 	FidelityFallback int
+	// ParseGapKinds is the number of records per parse-gap kind, for status -json.
+	ParseGapKinds map[string]int
 }
 
 // Extractable is the extractability facet of an archive: WithEML of Total
@@ -1113,6 +1115,7 @@ func Gather(out, nameOverride string) Input {
 			in.Unreadable, in.UnreadableOnly, in.Unparsed = m.UnreadableCount(), m.UnreadableOnlyCount(), m.UnparsedCount()
 			in.UnparsedTerminal, in.PartlyRead = m.UnparsedTerminalCount(), m.PartlyReadPaths(20)
 			in.Undecodable, in.FidelityFallback = m.UndecodableCount(), m.FidelityFallbackCount()
+			in.ParseGapKinds = m.ParseGapKindCounts()
 			// The capture-gap ledger, with each store's source id and last run, so a
 			// gap can be told attempted from not attempted (FC14).
 			in.Gaps = m.CaptureGapsSorted()
@@ -1494,6 +1497,12 @@ type JSONReport struct {
 	// `terminal` (a parse gap is not empty at the source).
 	Undecodable      int `json:"undecodable"`
 	FidelityFallback int `json:"fidelity_fallback"`
+
+	// ParseGaps is the number of records per parse-gap kind (undecoded-part, corrupt-part,
+	// unsplit-multipart, structure-limit, fidelity-fallback, identity-stub), so a monitor can tell
+	// a fallback from a lost part without reading the report; omitted when there is none. An
+	// additive key at version 2 (friction F11).
+	ParseGaps map[string]int `json:"parse_gaps,omitempty"`
 }
 
 // JSONShownAsSource is the shown-as-source facet: the total and a count per
@@ -1555,6 +1564,12 @@ type JSONLastRun struct {
 	GapsTerminal  int `json:"gaps_terminal"`
 	GapsStuck     int `json:"gaps_stuck"`
 	Unreadable    int `json:"unreadable"`
+
+	// Undecodable and FidelityFallback are the parse-gap counts the run ended with, as the
+	// last-run record holds them, omitted when zero (friction F11: the README says last_run
+	// carries them). Additive; version stays 2.
+	Undecodable      int `json:"undecodable,omitempty"`
+	FidelityFallback int `json:"fidelity_fallback,omitempty"`
 }
 
 // JSONLastVerify is verify's integrity verdict, from its separate record; null
@@ -1663,6 +1678,9 @@ func JSON(in Input, rep Report) JSONReport {
 	}
 	doc.Unreadable = in.Unreadable
 	doc.Undecodable, doc.FidelityFallback = in.Undecodable, in.FidelityFallback
+	if len(in.ParseGapKinds) > 0 {
+		doc.ParseGaps = in.ParseGapKinds
+	}
 	if in.LastRunState == state.LastRunPresent {
 		lr := in.LastRun
 		jlr := &JSONLastRun{
@@ -1676,6 +1694,8 @@ func JSON(in Input, rep Report) JSONReport {
 			GapsObserved: lr.GapsObserved, GapsNew: lr.GapsNew, GapsRecovered: lr.GapsRecovered,
 			GapsFillable: lr.GapsFillable, GapsTerminal: lr.GapsTerminal, GapsStuck: lr.GapsStuck,
 			Unreadable: lr.Unreadable,
+
+			Undecodable: lr.Undecodable, FidelityFallback: lr.FidelityFallback,
 		}
 		// Finished stays null while a run is in progress (UJ-A5).
 		if lr.Status != state.RunRunning && !lr.Finished.IsZero() {

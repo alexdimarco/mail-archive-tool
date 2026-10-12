@@ -1310,6 +1310,28 @@ func (m *Manifest) UndecodableCount() int {
 	return n
 }
 
+// ParseGapKindCounts returns, per parse-gap kind, how many records carry at least one gap of it
+// (a record counts once for each kind it has), so status -json can tell a fallback from a lost
+// part (friction F11). Nil when there is none.
+func (m *Manifest) ParseGapKindCounts() map[string]int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out map[string]int
+	for _, r := range m.Entries {
+		seen := map[string]bool{}
+		for _, l := range append(append([]string(nil), r.Missing...), r.Terminal...) {
+			if kind, _, ok := ParseGapParts(l); ok && !seen[kind] {
+				seen[kind] = true
+				if out == nil {
+					out = map[string]int{}
+				}
+				out[kind]++
+			}
+		}
+	}
+	return out
+}
+
 // FidelityFallbackCount returns how many records were written from v1's content because
 // the fidelity parser failed or held less (MC19), from the additive fidelity_fallback
 // field. status -json reports it as fidelity_fallback.

@@ -700,7 +700,10 @@ unaffected and the version is not bumped.)
   neither is part of `terminal` (a part this version cannot decode is not empty at the
   source), and neither moves the posture: they are the notes `undecodable_messages` and
   `fidelity_fallback` in `reasons`. `last_run` carries the same two counts when they
-  are not zero.
+  are not zero, and `parse_gaps` gives the number of messages per parse-gap kind
+  (`undecoded-part`, `corrupt-part`, `unsplit-multipart`, `structure-limit`,
+  `fidelity-fallback`, `identity-stub`; a message with two kinds counts once in each),
+  absent when there is none, so a monitor can tell a fallback from a lost part.
 - `last_run` also carries `gaps_observed`, `gaps_new`, `gaps_recovered`,
   `gaps_fillable`, `gaps_terminal`, `gaps_stuck` and `unreadable`: what that run
   observed in the ledger (`gaps_new` is what a monitor alerts on, so a known,
