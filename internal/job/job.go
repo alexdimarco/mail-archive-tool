@@ -29,6 +29,11 @@ type Job struct {
 	Outlook         bool     `json:"outlook,omitempty"`
 	OutlookSyncWait string   `json:"outlook_sync_wait,omitempty"`
 	KeepRaw         bool     `json:"raw,omitempty"`
+	// FollowLinks names the inputs whose directory links (symlinks, on Windows
+	// junctions) the run reads: the per-input opt-in of owner ruling OR6, the wizard's
+	// "Follow folder links" answer (the CLI's -follow-links). Additive: a job written
+	// before it reads as no opt-in.
+	FollowLinks []string `json:"follow_links,omitempty"`
 }
 
 // Dir is the per-user directory job files live in.

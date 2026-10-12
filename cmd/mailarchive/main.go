@@ -156,6 +156,10 @@ func runExport(args []string) error {
 	// previews the discovered stores and stops. -outlook supplies its own inputs
 	// later, so an empty set is not yet a refusal in that case.
 	discovered, err := app.DiscoverInputs(inputs, *o.auto)
+	if err == nil {
+		// An opt-in that names no input would be read as no opt-in, so it is refused here.
+		err = app.FollowLinksRefusal(o.followLinks, discovered)
+	}
 	if err == nil && *o.list {
 		return listStores(discovered)
 	}
@@ -274,17 +278,18 @@ func runExport(args []string) error {
 // uses from the parsed flags and the final input list.
 func exportOptions(o *exportOpts, inputs []string, mode export.Mode, since time.Time) app.Options {
 	return app.Options{
-		Inputs:     inputs,
-		Auto:       *o.auto,
-		Out:        *o.out,
-		Mode:       mode,
-		Since:      since,
-		CopyFirst:  *o.copyFirst,
-		Manifest:   *o.manifest,
-		Index:      *o.index,
-		Pages:      *o.pages,
-		KeepRaw:    *o.keepRaw,
-		Unattended: *o.unattended,
+		Inputs:      inputs,
+		Auto:        *o.auto,
+		Out:         *o.out,
+		Mode:        mode,
+		Since:       since,
+		CopyFirst:   *o.copyFirst,
+		FollowLinks: o.followLinks,
+		Manifest:    *o.manifest,
+		Index:       *o.index,
+		Pages:       *o.pages,
+		KeepRaw:     *o.keepRaw,
+		Unattended:  *o.unattended,
 	}
 }
 
@@ -986,6 +991,9 @@ func flatJobArgs(o *exportOpts, positional []string) []string {
 	}
 	if *o.copyFirst {
 		a = append(a, "-copy-first")
+	}
+	for _, in := range o.followLinks {
+		a = append(a, "-follow-links", in)
 	}
 	if *o.outlook {
 		a = append(a, "-outlook", "-outlook-sync-wait", o.outlookSyncWait.String())
