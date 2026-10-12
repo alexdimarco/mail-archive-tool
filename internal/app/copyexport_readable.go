@@ -55,13 +55,25 @@ var errOriginalChanged = errors.New(reasonOriginalChanged)
 var readableRender = export.RenderWith
 
 // copyFileCountFor is how many files a message puts in its directory with opts on: the
-// archive's files (copyFileCount) and a readable copy beside an original.
+// archive's files (copyFileCount), a readable copy beside an original, and, with Extract
+// attachments on, the attachments directory, which is an entry of the month directory like a
+// file (the bound counts entries, and the preview cannot know which messages have one, so a
+// message that can have attachments counts it).
 func copyFileCountFor(m *CopyMessage, opts CopyOptions) int {
 	n := copyFileCount(m)
 	if opts.ReadableHTML && m.NoOrig == "" {
 		n++
 	}
+	if hasAttachSource(m, opts) {
+		n++
+	}
 	return n
+}
+
+// hasAttachSource reports whether Extract attachments, on in opts, can extract anything of m:
+// it has an original to parse or an attachments zip to open.
+func hasAttachSource(m *CopyMessage, opts CopyOptions) bool {
+	return opts.Attachments && (m.NoOrig == "" || m.Zip)
 }
 
 // readBack reads the .eml the run wrote, back from the destination into one buffer sized to

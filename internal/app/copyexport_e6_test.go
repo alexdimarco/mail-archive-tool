@@ -925,9 +925,52 @@ func TestReadmeNamesTheExtractedAttachmentsAndTheirCaveats(t *testing.T) {
 }
 
 // covers: MA-424, R29
-// The plan sizes the derived files: the estimate and the reserve grow with the option on.
+// The plan sizes the derived files: with the option on, the estimate grows by 0.8 of the size of
+// each message that has an original or a zip to extract from (the design's factor, §4.7), the
+// run record's bound grows, and the attachments directory counts as an entry of its month
+// directory, so 900 messages of one month are two directories (the bound is 1,000 entries), and
+// one directory with the option off. The plan is sized directly, not through PlanCopyExport,
+// which still refuses the option (TestThePlanAcceptsExtractAttachments).
 func TestThePlanSizesExtractedAttachments(t *testing.T) {
-	t.Skip("MA-424: the plan does not size extracted attachments; lands in EW-E6")
+	e := newCEEnv(t)
+	msgs := ceMsgs(40)
+	for i := range msgs {
+		msgs[i].SizeHint = int64(1000 * (i + 1))
+	}
+	msgs[38].NoOrig, msgs[38].Zip = noOrigNotKept, true  // an archive record with a zip: its entries are extracted
+	msgs[39].NoOrig, msgs[39].Zip = noOrigNotKept, false // one with no zip: nothing to extract
+	size := func(msgs []CopyMessage, attach bool) *CopyPlan {
+		p := &CopyPlan{Dest: t.TempDir(), ExportName: "MailExport-x", Messages: msgs, Options: CopyOptions{PreserveFolders: true, Attachments: attach}}
+		e.sizePlan(p)
+		return p
+	}
+	off, on := size(msgs, false), size(msgs, true)
+	var want int64
+	for _, m := range msgs[:39] {
+		want += m.SizeHint * 4 / 5
+	}
+	if on.EstimateBytes != off.EstimateBytes+want || want == 0 {
+		t.Errorf("the estimate is %d with the option and %d without, want %d more", on.EstimateBytes, off.EstimateBytes, want)
+	}
+	if on.RecordBound <= off.RecordBound {
+		t.Errorf("the record bound is %d with the option and %d without: the progress lines that hold the files are not counted", on.RecordBound, off.RecordBound)
+	}
+
+	month := ceMsgs(900)
+	for i := range month {
+		month[i].Received = month[0].Received
+	}
+	dirs := func(attach bool) int {
+		n := newCeNamer(false, "/root")
+		seen := map[string]bool{}
+		for i := range month {
+			seen[n.place(&month[i], copyFileCountFor(&month[i], CopyOptions{Attachments: attach})).Dir] = true
+		}
+		return len(seen)
+	}
+	if without, with := dirs(false), dirs(true); without != 1 || with != 2 {
+		t.Errorf("900 messages of one month are %d directories without the option and %d with it, want 1 and 2", without, with)
+	}
 }
 
 // covers: MA-424, R12
