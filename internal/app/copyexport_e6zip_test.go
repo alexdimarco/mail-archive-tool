@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"os"
 	"path"
@@ -794,6 +795,56 @@ func TestZipModeReadableCopyLinksTheZip(t *testing.T) {
 	second := assure.Reached(t, lines[2], "the second message's line")
 	if p := string(e6Read(t, res.Root, second.Files[1].Path)); strings.Contains(p, "download zip") || strings.Contains(p, "extracted files") {
 		t.Errorf("a message with no attachment links something:\n%s", p)
+	}
+
+	// E6Z-AI1, E6Z-AO4: the page names every attachment by the name its entry has in the zip (the friction F9
+	// promise, "the page's name is a name in the zip"): a part kept as received, whose entry is made
+	// from the export-only name pass and the unique-name pass, is not listed by the name the archive's pages
+	// give it (a leading "~" or "-" is prefixed, a case-fold twin is "(2)"), and a bidi override of a name,
+	// which the entry has stripped, is not on the page either.
+	msgs = ceMsgs(1)
+	names := []string{"~note.txt", "-rf.txt", "a.bin", "A.BIN", "CON", "dup.txt", "dup.txt"}
+	var parts []e6Part
+	for _, n := range names {
+		parts = append(parts, e6Part{name: n, body: []byte("body of " + n)})
+	}
+	parts = append(parts, e6Part{name: "ok.pdf", ctype: "application/pdf", body: []byte("%PDF fine")}, e6Part{name: "inv‮gpj.exe", body: []byte("exe")})
+	mime := e6Mime(msgs[0].SourceID, "kept parts", parts...)
+	real := originalParser
+	t.Cleanup(func() { originalParser = real })
+	originalParser = func(b []byte) *model.Message {
+		m := real(b)
+		for i := range names { // as the walker names a part it kept as received
+			m.Attachments[i].Filename += ".undecoded"
+			m.Attachments[i].GapKind = state.GapKindUndecodedPart
+		}
+		return m
+	}
+	e = newCEEnv(t)
+	res, _ = e6zRun(t, e, msgs, true, func(string) []byte { return mime })
+	line := assure.Reached(t, e5Files(t, e, res)[1], "the line of the message with kept parts")
+	zrec, ok := e6zRec(line)
+	if !ok || len(line.Files) != 3 {
+		t.Fatalf("the files: %+v %q", line.Files, line.Notes)
+	}
+	files, _ := e6zEntries(t, e6Read(t, res.Root, zrec.Path))
+	var entries []string
+	for _, f := range files {
+		entries = append(entries, f.Name)
+	}
+	page = string(e6Read(t, res.Root, line.Files[2].Path))
+	_, after, _ := strings.Cut(page, "<b>Attachments:</b> ")
+	list, _, _ := strings.Cut(after, " — <a href=")
+	if got, want := html.UnescapeString(list), strings.Join(entries, ", "); got != want {
+		t.Errorf("the page lists %q, the zip holds %q", got, want)
+	}
+	_, note, _ := strings.Cut(page, `mailarchive-partnote">`)
+	note, _, _ = strings.Cut(note, " kept exactly as received")
+	if got, want := html.UnescapeString(note), strings.Join(entries[:len(names)], ", "); got != want {
+		t.Errorf("the page says %q was kept as received, the zip's entries for them are %q", got, want)
+	}
+	if strings.Contains(page, "‮") {
+		t.Errorf("the page holds a bidi override the entry has stripped")
 	}
 }
 

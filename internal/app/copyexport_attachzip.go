@@ -195,6 +195,7 @@ func (w *attachWriter) zipParts(dir, stem string, stamp time.Time, atts []model.
 			}
 			return failed(classifyZipWrite(cerr))
 		}
+		atts[i].ZipName = entry // the readable page names the part as the zip does (E6Z-AI1)
 		placedParts++
 		used += int64(buf.Len()) + int64(buf.Len())/512 + attachZipEntryOverhead
 		if a.GapKind != "" {

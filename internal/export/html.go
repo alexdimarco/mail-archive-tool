@@ -2282,7 +2282,14 @@ func renderHeader(m *model.Message, ctx RenderContext, consumed map[int]bool) st
 			continue
 		}
 		name := attachmentLabel(a, i)
-		if a.GapKind != "" && ctx.ZipName != "" {
+		switch {
+		case ctx.ZipName != "" && a.ZipName != "":
+			// The writer of the zip has given the part its entry's name (Attachment.ZipName): the page
+			// names what the zip holds, whatever the writer's own naming made of the sender's name
+			// (the export's pass prefixes a leading "-" or "~", numbers a case-fold twin and strips a
+			// bidi override), so the page's name is a name in the zip (friction F9, E6Z-AI1).
+			name = a.ZipName
+		case a.GapKind != "" && ctx.ZipName != "":
 			// A part this version kept as received or cut short is listed by the name its zip
 			// member has, so the page's name is a name in the zip (friction F9).
 			name = util.SanitizeFilename(a.Filename, i)
