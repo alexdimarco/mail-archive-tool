@@ -13,6 +13,7 @@ import (
 
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/graph"
+	"mail-archive-tool/internal/model"
 	"mail-archive-tool/internal/source"
 )
 
@@ -95,21 +96,35 @@ func (r *CopyRun) readBack(orig ceFileRec) ([]byte, error) {
 	return buf[:n], nil
 }
 
-// buildReadable parses the original's bytes and renders its readable page. It returns
-// the page and, when the mail's HTML could not be shown as HTML, the renderer's reason
-// (the page then shows its source as text); or, when no copy can be made, the entry's note
-// and no page. A panic in the parse or the render is recovered (a panic only: out of memory
-// is fatal, and the render bound is what keeps a render from reaching it).
-func buildReadable(eml []byte, m *CopyMessage, emlName string) (page []byte, fallback, note string) {
+// parseOriginal parses the original's bytes, once, for both derived files (the readable copy
+// and the extracted attachments). It returns the message or, when none can be made, why. A
+// panic in the parse is recovered (a panic only: out of memory is fatal, and the size cap is
+// what bounds the bytes).
+func parseOriginal(eml []byte) (msg *model.Message, why string) {
+	defer func() {
+		if p := recover(); p != nil {
+			msg, why = nil, panicReason(p)
+		}
+	}()
+	msg = source.ParseRFC822(eml)
+	if msg == nil {
+		return nil, "the message could not be read"
+	}
+	return msg, ""
+}
+
+// buildReadable renders the parsed original's readable page. It returns the page and, when
+// the mail's HTML could not be shown as HTML, the renderer's reason (the page then shows its
+// source as text); or, when no copy can be made, the entry's note and no page. attachDir is
+// the name of the directory its attachments were extracted into, "" when there is none. A
+// panic in the render is recovered (a panic only: out of memory is fatal, and the render
+// bound is what keeps a render from reaching it).
+func buildReadable(msg *model.Message, m *CopyMessage, emlName, attachDir string) (page []byte, fallback, note string) {
 	defer func() {
 		if p := recover(); p != nil {
 			page, fallback, note = nil, "", noteReadableFailed+panicReason(p)
 		}
 	}()
-	msg := source.ParseRFC822(eml)
-	if msg == nil {
-		return nil, "", noteReadableFailed + "the message could not be read"
-	}
 	if st := m.State; st != nil { // Graph is authoritative for state, as for the archive's own pages
 		applyGraphState(msg, graph.MessageRef{Importance: st.Importance, IsRead: st.IsRead, Categories: st.Categories,
 			Sensitivity: st.Sensitivity, Received: m.Received})
@@ -117,7 +132,11 @@ func buildReadable(eml []byte, m *CopyMessage, emlName string) (page []byte, fal
 	if export.PredictedRenderSize(msg) > copyRenderBound {
 		return nil, "", noteReadableTooLarge
 	}
-	rr, err := readableRender(msg, export.RenderContext{RawName: url.PathEscape(emlName)})
+	ctx := export.RenderContext{RawName: url.PathEscape(emlName)}
+	if attachDir != "" {
+		ctx.AttachDirName = url.PathEscape(attachDir)
+	}
+	rr, err := readableRender(msg, ctx)
 	if err != nil {
 		return nil, "", noteReadableFailed + plainText(err.Error())
 	}
@@ -140,37 +159,66 @@ func originalOnly(line *ceMsgLine, note string) {
 	line.Notes = append(line.Notes, note)
 }
 
-// addReadable makes the readable copy of the message whose original was just placed as
-// dir/emlName (recorded as orig) and adds it to the message's progress line: its file with
-// the role derived-html, or a note and the status exported-original-only. It returns
-// errOriginalChanged only when the read-back finds the original is not what was written;
-// the caller then lists the message as failed and removes what it placed.
-func (r *CopyRun) addReadable(ctx context.Context, n int, m *CopyMessage, dir, emlName string, orig ceFileRec, line *ceMsgLine) error {
+// addDerived makes the derived files of the message whose original was just placed as
+// dir/emlName (recorded as orig) and adds them to the message's progress line: the extracted
+// attachments (role derived-attachment, slice E6) and the readable copy (role derived-html,
+// slice E5), or notes, and for a readable copy that could not be made the status
+// exported-original-only. The original is read back and parsed once for both, and the
+// attachments come first, so the page can link their directory. It returns errOriginalChanged
+// only when the read-back finds the original is not what was written; the caller then lists
+// the message as failed and removes what it placed (nothing else is placed by then).
+func (r *CopyRun) addDerived(ctx context.Context, n int, m *CopyMessage, dir, emlName string, orig ceFileRec, line *ceMsgLine) error {
+	opts := r.plan.Options
 	r.env.step(fmt.Sprintf("W5read:%d", n))
 	eml, err := r.readBack(orig)
 	if err != nil {
 		if errors.Is(err, errOriginalChanged) {
 			return err
 		}
-		originalOnly(line, noteReadableFailed+"the original could not be read back ("+leaveName(err)+")")
+		why := "the original could not be read back (" + leaveName(err) + ")"
+		if opts.Attachments {
+			line.Notes = append(line.Notes, attachNotePrefix+"the attachments were not extracted: "+why+"; "+attachAuthorityEML)
+		}
+		if opts.ReadableHTML {
+			originalOnly(line, noteReadableFailed+why)
+		}
 		return nil
 	}
-	page, fallback, note := buildReadable(eml, m, emlName)
+	msg, why := parseOriginal(eml)
+	stem := strings.TrimSuffix(emlName, ".eml")
+	attachDir := ""
+	if opts.Attachments {
+		attachDir = r.addAttachments(ctx, n, dir, stem, msg, why, line)
+	}
+	if opts.ReadableHTML {
+		r.addReadable(ctx, n, m, dir, emlName, msg, why, attachDir, line)
+	}
+	return nil
+}
+
+// addReadable makes the readable copy of the parsed original (why says it could not be
+// parsed) and adds it to the message's line: its file with the role derived-html, or a note
+// and the status exported-original-only.
+func (r *CopyRun) addReadable(ctx context.Context, n int, m *CopyMessage, dir, emlName string, msg *model.Message, why, attachDir string, line *ceMsgLine) {
+	if why != "" {
+		originalOnly(line, noteReadableFailed+why)
+		return
+	}
+	page, fallback, note := buildReadable(msg, m, emlName, attachDir)
 	if note != "" {
 		originalOnly(line, note)
-		return nil
+		return
 	}
 	rec, err := r.writeReadable(ctx, dir, strings.TrimSuffix(emlName, ".eml"), page)
 	if err != nil {
 		originalOnly(line, noteReadableFailed+"it could not be written ("+leaveName(err)+")")
-		return nil
+		return
 	}
 	line.Files = append(line.Files, rec)
 	if fallback != "" {
 		line.Notes = append(line.Notes, "the readable copy shows this message's HTML as text ("+fallback+")")
 	}
 	r.env.step(fmt.Sprintf("W5html:%d", n))
-	return nil
 }
 
 // writeReadable writes page as dir/<stem>.html: checked against what is left on the
