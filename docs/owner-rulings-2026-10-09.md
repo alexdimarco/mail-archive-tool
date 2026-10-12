@@ -1358,6 +1358,38 @@ unmatched immutable id is held back under an info gap that says nothing is lost,
 different message; the fix changes P15's hold-back and the §4.1 reason table. [Owner to rule; the
 conservative fix is an `#fp` split or a fillable gap with its own reason.]
 
+### 13.24 MF-S1 built and merged (2026-10-11), owner-direct baseline decision
+
+Identity routing: `safeParseMessage` routes identity through a frozen replay of the v0.7.1 parser
+(`internal/source/parsev1.go` with its vendored dependencies, licences and a pins file; MA-331 pins every
+vendored file, the charset table and `unicode.Version`), `stubIdentityTerms` reproduces today's constant
+stub, identity-view stems and the preserved original are carried forward on every write, and
+`ContentHash` and the `parse_scheme` stamp (=1) are written on every local write and restored on re-read.
+Content still comes from v1: nothing a user sees changes. MA-330, MA-331, MA-347 (identity half) and
+MA-346 (a, c) are real tests; MA-346 (b, d) and MA-347's repair half stay skips for MF-S7. **Owner
+decision (2026-10-11, "yes - apply the patch"):** the MA-329 baseline `internal/app/testdata/p14-golden.json`
+was regenerated with exactly the two additive fields `chash` and `parse_scheme` (46 records; `chash` added
+on 34, the other 12 already had one; nothing else moved; the MIME goldens are byte-unchanged). **Owed: the
+adversarial pass** (identity drift, mixed versions, stems). **Note:** `TestCopyExportScalesToSixtyThousandMessages`
+(a 40 MiB heap bound) measures 25 to 42 MiB and fails now and then under load, with or without S1; the two
+extra record fields use a little more memory. It is the owner's call whether to leave the bound, so it is
+left unchanged.
+
+### 13.25 EW-E5 built, merge held for an owner decision (2026-10-11)
+
+Readable HTML is built and tested at engine level on branch `wip/ew-e5`: rendering from the existing
+sanitizing renderer for both sources (`RenderContext.AttachDirName` and the guarded attachments sentence,
+the read-back hash check, MA-525's twelve archive-render goldens unchanged), the 32 MiB predicted-render
+bound with original-only fallback (MA-509), and the rule that a missing or damaged readable copy never
+makes an original look failed (MA-513: presence, Finish as partial, Check this export, retry). The page
+toggle, the default flip to ON, the plan accepting the option and the preview line are NOT built: they
+change what two existing tests assert (`TestExportSettingsRoundTrip`, MA-445, asserts OFF and hidden;
+`TestCopyExportPlanIsADryRun` asserts the plan refuses the option with a placeholder R-h), which is the
+owner's call (§0 rule 2). Both were staged for this flip (MA-445's row says OFF before E5, ON after; R-h
+means only an empty selection in design §7.6). The prepared change is the patch
+`scratchpad/ew-e5-gate-flip-v2.patch`. [Recommended: confirm.] Same question outstanding for the MA-540
+test edits in §13.22 and §13.23.
+
 ### 13.7 Escalations from LC-C1's adversarial pass (merged 2026-10-10)
 
 None blocks anything: each has a skip encoder or a safe interim in force.
