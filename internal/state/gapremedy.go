@@ -404,7 +404,7 @@ func completeExport(local bool, kind string) string {
 	case kind == GapKindUnsplitMultipart:
 		return " (a message that is malformed in the mailbox file is not changed by a download: if the original in your mail app is fine, replace the mailbox file with a fresh export; a message that was malformed when it was sent stays listed)"
 	}
-	return " (a message cut short inside a mailbox file is not changed by a download: replace the mailbox file with a complete export from your mail app)"
+	return " (a message cut short inside a mailbox file is not changed by a download: replace the mailbox file with a complete export from your mail app; a message that was damaged when it was sent stays listed)"
 }
 
 // GapOriginal says whether the original still exists, by reason and source kind
