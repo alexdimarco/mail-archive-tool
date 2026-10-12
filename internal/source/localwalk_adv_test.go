@@ -184,6 +184,45 @@ func TestAMailboxWhoseFirstReadFailsIsRecorded(t *testing.T) {
 }
 
 // covers: MA-322, R25, R10, S47
+// S2B-AO7: with the directory-link opt-in, a link never takes a real folder's place in
+// the walk. The visited set reads a directory once, under whichever path reaches it
+// first; the links were followed in name order, so an alias that sorted before the real
+// folder claimed it: the mail was filed under the alias's name and the real folder was
+// reported "read already". The walk reads every plain directory first and follows the
+// links after, so the real folder keeps its name wherever the alias sorts or sits.
+func TestADirectoryLinkNeverTakesARealFoldersPlace(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("links need privileges on Windows")
+	}
+	store := filepath.Join(t.TempDir(), "Mail")
+	writeLocal(t, filepath.Join(store, "Inbox", "cur", "m:2,S"), localMail("inbox"))
+	writeLocal(t, filepath.Join(store, "Real", "cur", "r:2,S"), localMail("real"))
+	writeLocal(t, filepath.Join(store, "Aaa"), mboxText("aaa"))
+	if err := os.Symlink("Inbox", filepath.Join(store, "Aaa-Evil")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(store, "Aaa.sbd"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../Real", filepath.Join(store, "Aaa.sbd", "Alias")); err != nil {
+		t.Fatal(err)
+	}
+
+	got := walkLocal(t, store, OpenOptions{FollowLinks: true})
+	if strings.Join(got.subjects, " ") != "Aaa: aaa Inbox: inbox Real: real" {
+		t.Errorf("delivered %v; want the real folders' own names (Inbox, Real), the alias taking neither", got.subjects)
+	}
+	if n := got.count("folder-cycle"); n != 2 {
+		t.Errorf("faults %+v; want one info folder-cycle for each alias, which is the folder that was read already", got.faults)
+	}
+	for _, f := range got.faults {
+		if f.Reason == "folder-cycle" && !(f.Locator == "folder:Aaa-Evil" || f.Locator == "folder:Aaa.sbd/Alias") {
+			t.Errorf("folder-cycle at %q; want it on the alias, never on the real folder", f.Locator)
+		}
+	}
+}
+
+// covers: MA-322, R25, R10, S47
 // S2B-AO4 (and S2B-AC1): a pipe named like an Outlook data file is never opened. The PST
 // open was a plain os.Open, which waits for a writer on a pipe, so a FIFO named *.pst or
 // *.ost in an input folder held the archive lock until someone opened it (FC2 says a pipe

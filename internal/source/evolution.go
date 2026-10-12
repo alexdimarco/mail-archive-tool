@@ -89,10 +89,16 @@ func (r *evolutionReader) walk(w *localWalk) error {
 			w.seen(fi)
 		}
 	}
+	var walkErr error
 	if r.kind == evoCache {
-		return r.walkCache(w, sc)
+		walkErr = r.walkCache(w, sc)
+	} else {
+		walkErr = r.walkMaildirPP(w, sc)
 	}
-	return r.walkMaildirPP(w, sc)
+	if walkErr != nil {
+		return walkErr
+	}
+	return w.drain()
 }
 
 // isEvolutionMaildirStore reports whether dir is an Evolution Maildir++ store:

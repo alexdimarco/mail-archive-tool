@@ -71,7 +71,11 @@ func (r *mboxReader) walk(w *localWalk) error {
 	}
 	// A directory that is itself a maildir folder is a single store.
 	if isMaildirIn(sc, ".") {
-		return w.maildir(sc, ".", nil)
+		if err := w.maildir(sc, ".", nil); err != nil {
+			return err
+		}
+	} else if err := w.mboxDir(sc, ".", nil, true); err != nil {
+		return err
 	}
-	return w.mboxDir(sc, ".", nil, true)
+	return w.drain()
 }

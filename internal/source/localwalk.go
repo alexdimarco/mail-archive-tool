@@ -29,6 +29,7 @@ type localWalk struct {
 	follow  bool          // the input's directory-link opt-in
 	visited []fs.FileInfo // under the opt-in: every directory the walk has entered
 	depth   int           // how many directories deep the walk is (every descent goes through into)
+	pending []pendingLink // under the opt-in: the directory links found, to be followed after the plain directories
 }
 
 func newLocalWalk(handler MessageHandler, opts WalkOptions, follow bool) *localWalk {
@@ -132,9 +133,38 @@ func (w *localWalk) into(sc *scope, rel string, v verdict, folder []string, read
 		if w.tooDeep(sc, rel, folder) {
 			return nil
 		}
-		return w.followInto(sc, rel, folder, read)
+		// A link is followed after every plain directory has been read (drain): the visited
+		// set reads a directory once, under whichever path reaches it first, and a link
+		// that sorted before the folder it names must not take its place (S2B-AO7).
+		w.pending = append(w.pending, pendingLink{depth: w.depth, follow: func() error { return w.followInto(sc, rel, folder, read) }})
+		return nil
 	}
 	w.refuse(sc, rel, folder, v)
+	return nil
+}
+
+// pendingLink is a directory link the opt-in will follow once the plain directories are
+// read, at the depth it was found.
+type pendingLink struct {
+	depth  int
+	follow func() error
+}
+
+// drain follows the links the walk set aside, in the order they were found; a followed
+// directory's own links are set aside in their turn.
+func (w *localWalk) drain() error {
+	defer func() { w.depth = 0 }()
+	for len(w.pending) > 0 {
+		p := w.pending[0]
+		w.pending = w.pending[1:]
+		if err := w.abort(); err != nil {
+			return err
+		}
+		w.depth = p.depth
+		if err := p.follow(); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -460,11 +490,11 @@ func (w *localWalk) mboxDir(sc *scope, rel string, prefix []string, top bool) er
 				if !isMaildirIn(s, r) {
 					return nil
 				}
-				if err := w.maildir(s, r, folderPath); err != nil {
-					return err
-				}
-				return sub(name, folderPath)
+				return w.maildir(s, r, folderPath)
 			}); err != nil {
+				return err
+			}
+			if err := sub(name, folderPath); err != nil {
 				return err
 			}
 		case kindFile, kindFileLink, kindPlaceholder:
