@@ -2,11 +2,13 @@ package source
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -407,6 +409,64 @@ func TestTheVisitedSetIsNotALinearScan(t *testing.T) {
 	}
 	if got.count("folder-cycle") != 1 {
 		t.Errorf("faults %+v; want the loop link read as a cycle, once", got.faults)
+	}
+}
+
+// covers: MA-321, R10, R1, S46
+// S2B-AC5: a mass move or delete under the run does not make the walk quadratic. Every
+// file that vanished between the listing and its read re-listed and re-sorted its whole
+// directory to look for its renamed twin, so a client emptying or re-flagging a big folder
+// cost (files gone) x (folder size): 8,000 files with half removed took 30 s, 16,000 140 s.
+// The listing is now an index kept per directory (a hit is read; a miss re-lists, at most
+// a bounded number of times per directory), so a bulk re-flag is found from one listing
+// and a bulk delete costs a bounded number of them, the rest being the vanished-during-read
+// gaps they are.
+func TestMassVanishedFilesDoNotRelistTheFolderEachTime(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("maildir names carry a colon")
+	}
+	const n = 300
+	for _, c := range []struct {
+		name         string
+		change       func(old, now string) error
+		wantFound    int
+		wantVanished int
+	}{
+		{"every file after the first re-flagged", func(old, now string) error { return os.Rename(old, now) }, n, 0},
+		{"every file after the first deleted", func(old, now string) error { return os.Remove(old) }, 1, n - 1},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			store := filepath.Join(t.TempDir(), "Inbox")
+			name := func(i int) string { return filepath.Join(store, "cur", fmt.Sprintf("f%03d:2,", i)) }
+			for i := 0; i < n; i++ {
+				writeLocal(t, name(i), localMail("m"+strconv.Itoa(i)))
+			}
+			fired := false
+			restore := InjectMaildirReadFaults(func(rel string) error {
+				if !fired {
+					fired = true
+					for i := 1; i < n; i++ {
+						if err := c.change(name(i), name(i)+"S"); err != nil {
+							t.Error(err)
+						}
+					}
+				}
+				return nil
+			})
+			defer restore()
+			listings := 0
+			old := relocateListing
+			relocateListing = func(sc *scope, dir string) ([]fs.DirEntry, error) { listings++; return old(sc, dir) }
+			defer func() { relocateListing = old }()
+
+			got := walkLocal(t, store, OpenOptions{})
+			if len(got.msgs) != c.wantFound || got.count("vanished-during-read") != c.wantVanished {
+				t.Errorf("delivered %d, vanished %d; want %d and %d", len(got.msgs), got.count("vanished-during-read"), c.wantFound, c.wantVanished)
+			}
+			if listings > 70 {
+				t.Errorf("%d re-listings of one folder for %d vanished files; want a bound (at most 64), not one per file", listings, n-1)
+			}
+		})
 	}
 }
 

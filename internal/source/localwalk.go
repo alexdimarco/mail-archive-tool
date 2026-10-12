@@ -26,8 +26,9 @@ type localWalk struct {
 	handler MessageHandler
 	opts    WalkOptions
 	sink    faultSink
-	follow  bool          // the input's directory-link opt-in
-	visited []fs.FileInfo // under the opt-in: every directory the walk has entered, where its identity is not readable from a FileInfo (Windows)
+	follow  bool                   // the input's directory-link opt-in
+	visited []fs.FileInfo          // under the opt-in: every directory the walk has entered, where its identity is not readable from a FileInfo (Windows)
+	reloc   map[string]*relocIndex // per directory (its place in the store): what relocate has listed
 	// visitedIDs is the same set keyed by (device, inode) where the file system gives them.
 	visitedIDs map[[2]uint64]bool
 	depth      int           // how many directories deep the walk is (every descent goes through into)
@@ -390,19 +391,61 @@ func (w *localWalk) maildirMessage(sc *scope, rel, name string, folder []string)
 	return w.handler(folder, m)
 }
 
-// relocate looks once in rel's directory for the file whose unique part is name's:
-// the same message under the flags a client has just given it.
+// relocateListing lists the directory relocate looks in; a var so a test can count the
+// listings.
+var relocateListing = func(sc *scope, dir string) ([]fs.DirEntry, error) { return sc.readDir(dir) }
+
+// maxRelocateListings bounds how many times one directory is listed to find the files
+// a client renamed under the run (S2B-AC5). Each vanished file used to list and sort
+// the whole directory, so a client emptying or re-flagging a big folder cost (files
+// gone) x (folder size). The listing is kept as an index, a hit needs no listing, and a
+// miss lists again until the bound: a bulk re-flag is found from one listing, a bulk
+// delete costs the bound and the rest are the vanished-during-read gaps they are.
+const maxRelocateListings = 64
+
+// relocIndex is what relocate knows of one directory: its regular files by unique part,
+// as of its last listing.
+type relocIndex struct {
+	names map[string]string // unique part -> the first file of that part, in name order
+	lists int               // how many times the directory has been listed
+}
+
+// relocate looks in rel's directory for the file whose unique part is name's: the same
+// message under the flags a client has just given it.
 func (w *localWalk) relocate(sc *scope, rel, name string) (nrel, nname string, ok bool) {
 	dir := path.Dir(rel)
-	entries, err := sc.readDir(dir)
+	want := maildirUnique(name)
+	key := sc.at(dir)
+	ix := w.reloc[key]
+	if ix == nil {
+		if w.reloc == nil {
+			w.reloc = map[string]*relocIndex{}
+		}
+		ix = &relocIndex{}
+		w.reloc[key] = ix
+	}
+	if cur, found := ix.names[want]; found && cur != name {
+		return relJoin(dir, cur), cur, true
+	}
+	if ix.lists >= maxRelocateListings {
+		return "", "", false
+	}
+	ix.lists++
+	entries, err := relocateListing(sc, dir)
 	if err != nil {
 		return "", "", false
 	}
-	want := maildirUnique(name)
+	ix.names = make(map[string]string, len(entries))
 	for _, e := range entries {
-		if e.Type().IsRegular() && maildirUnique(e.Name()) == want {
-			return relJoin(dir, e.Name()), e.Name(), true
+		if !e.Type().IsRegular() {
+			continue
 		}
+		if u := maildirUnique(e.Name()); ix.names[u] == "" {
+			ix.names[u] = e.Name()
+		}
+	}
+	if cur, found := ix.names[want]; found && cur != name {
+		return relJoin(dir, cur), cur, true
 	}
 	return "", "", false
 }
