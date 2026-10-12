@@ -17,6 +17,8 @@ import (
 	"io"
 	"strings"
 	"time"
+
+	"mail-archive-tool/internal/util"
 )
 
 // fromPrefix is the mbox message-boundary marker: a line beginning with
@@ -179,23 +181,11 @@ func firstHeader(raw []byte, name string) string {
 
 // headerAddress extracts a bare email address from a From header value
 // ("Name <a@b>" → "a@b"; "a@b" → "a@b"), control-stripped so the postmark line
-// stays a single clean line. Returns "" when no plausible address is present.
+// stays a single clean line. Returns "" when no plausible address is present. The
+// rule is util.LenientAddress's, which the page's sender shares, so the postmark and
+// the page always agree (design-mime-fidelity MC35): an address is the contents of
+// the last <…> or a whole "x@y" value, with no whitespace in it.
 func headerAddress(v string) string {
-	if lt := strings.LastIndexByte(v, '<'); lt >= 0 {
-		if gt := strings.IndexByte(v[lt+1:], '>'); gt >= 0 {
-			v = v[lt+1 : lt+1+gt]
-		}
-	}
-	v = strings.TrimSpace(v)
-	// A postmark address is a single token with no whitespace or controls; if
-	// what remains is not one, drop it rather than emit a broken boundary line.
-	if v == "" || strings.ContainsAny(v, " \t\r\n") {
-		return ""
-	}
-	for _, r := range v {
-		if r < 0x20 || r == 0x7f {
-			return ""
-		}
-	}
-	return v
+	_, email := util.LenientAddress(v)
+	return email
 }
