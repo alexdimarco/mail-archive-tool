@@ -907,7 +907,7 @@ func (e *CopyExportEnv) derivedPaths(run string) (readable, attachments map[stri
 					readable = map[string]bool{}
 				}
 				readable[sumsPath(f.Path)] = true
-			case roleDerivedAttach:
+			case roleDerivedAttach, roleDerivedAttachZip:
 				if attachments == nil {
 					attachments = map[string]bool{}
 				}

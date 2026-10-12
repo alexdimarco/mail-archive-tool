@@ -368,6 +368,7 @@ func (r *CopyRun) start() *CopyRefusal {
 
 	r.namer = newCeNamer(p.Options.PreserveFolders, filepath.ToSlash(r.rootAbs))
 	r.namer.readable = p.Options.ReadableHTML
+	r.namer.attachZip = p.Options.Attachments && p.Options.AttachmentsAsZip
 	r.made = map[string]bool{}
 	if err := r.writeMarker(false); err != nil {
 		// The record names the root and the marker is missing: it is reconciled as

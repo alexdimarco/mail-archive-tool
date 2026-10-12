@@ -47,19 +47,21 @@ type ceFileRec struct {
 
 // File roles (design §4.10).
 const (
-	roleOriginal        = "original"
-	roleArchivedPage    = "archived-page"
-	roleArchivedZip     = "archived-attachments-zip"
-	roleDerivedHTML     = "derived-html"
-	roleDerivedAttach   = "derived-attachment"
-	roleQuarantinedPage = "quarantined-archived-page"
-	statusExported      = "exported"
-	statusFailed        = "failed"
-	statusNotAttempted  = "not_attempted"
-	statusWithoutOrig   = "exported-without-original"
-	statusOriginalOnly  = "exported-original-only"
-	classRetryable      = "retryable"
-	classTerminal       = "terminal"
+	roleOriginal      = "original"
+	roleArchivedPage  = "archived-page"
+	roleArchivedZip   = "archived-attachments-zip"
+	roleDerivedHTML   = "derived-html"
+	roleDerivedAttach = "derived-attachment"
+	// roleDerivedAttachZip is the one zip of a message's attachments in zip mode (MA-533).
+	roleDerivedAttachZip = "derived-attachments-zip"
+	roleQuarantinedPage  = "quarantined-archived-page"
+	statusExported       = "exported"
+	statusFailed         = "failed"
+	statusNotAttempted   = "not_attempted"
+	statusWithoutOrig    = "exported-without-original"
+	statusOriginalOnly   = "exported-original-only"
+	classRetryable       = "retryable"
+	classTerminal        = "terminal"
 )
 
 // ceHeaderLine is the first line of a run record.

@@ -91,6 +91,9 @@ func copyLongestSuffix(m *CopyMessage) string {
 // copyLongestSuffixFor is copyLongestSuffix with a readable copy beside an original: its
 // .html is a byte longer than the .eml it sits by.
 func copyLongestSuffixFor(m *CopyMessage, opts CopyOptions) string {
+	if opts.Attachments && opts.AttachmentsAsZip && m.NoOrig == "" { // the attachments zip beside the original (MA-535)
+		return attachZipSuffix
+	}
 	if opts.ReadableHTML && m.NoOrig == "" {
 		return ".html"
 	}
@@ -239,7 +242,7 @@ func (r *CopyRun) writeFiles(ctx context.Context, n int, m *CopyMessage, files *
 			return nil, placed, err
 		}
 	}
-	if r.plan.Options.Attachments && m.NoOrig != "" { // the archive kept no original: the zip's entries are extracted (slice E6)
+	if r.plan.Options.Attachments && !r.plan.Options.AttachmentsAsZip && m.NoOrig != "" { // the archive kept no original: the zip's entries are extracted (slice E6); in zip mode the copied zip is the attachments zip (MA-534)
 		for _, rec := range recs {
 			if rec.Role == roleArchivedZip {
 				if err := r.addZipEntries(ctx, n, pl.Dir, pl.Stem, rec, line); err != nil {

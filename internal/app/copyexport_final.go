@@ -250,7 +250,7 @@ func (f *ceFinish) presence(rehash bool) error {
 		// product's quarantine takes the files a sender chose first) or damaged is dropped from the
 		// record and named in a note, and the message stays exported with its original and its other
 		// files, where a retry would only extract the same file to lose it again (E6-AO4).
-		isDerived := func(x ceFileRec) bool { return x.Role == roleDerivedHTML || x.Role == roleDerivedAttach }
+		isDerived := func(x ceFileRec) bool { return x.Role == roleDerivedHTML || isDerivedAttach(x.Role) }
 		if slices.ContainsFunc(m.Files, isDerived) {
 			kept := make([]ceFileRec, 0, len(m.Files))
 			var reason string
@@ -267,7 +267,7 @@ func (f *ceFinish) presence(rehash bool) error {
 				switch {
 				case why == "":
 					kept = append(kept, file)
-				case file.Role == roleDerivedAttach:
+				case isDerivedAttach(file.Role):
 					lost = append(lost, fmt.Sprintf("%s%q is not listed in this export: %s; %s", attachNotePrefix, plainText(path.Base(file.Path)), why, attachAuthorityEML))
 				case reason == "":
 					reason = why
@@ -283,7 +283,7 @@ func (f *ceFinish) presence(rehash bool) error {
 			}
 		}
 		for _, file := range m.Files {
-			if file.Role == roleDerivedHTML || file.Role == roleDerivedAttach {
+			if file.Role == roleDerivedHTML || isDerivedAttach(file.Role) {
 				continue
 			}
 			fi, err := f.fs.Lstat(file.Path)
@@ -483,7 +483,11 @@ func (f *ceFinish) readmeText(status CopyStatus, c CopyCounts, stop *CopyStop, f
 	}
 	if h.Options.Attachments {
 		a := f.attachFacts()
-		line("Extract attachments: %s %s from %s %s, each in a folder named like the message's file with .attachments added, beside it.", commas(a.files), plural(a.files, "file", "files"), commas(a.msgs), plural(a.msgs, "message", "messages"))
+		if h.Options.AttachmentsAsZip {
+			line("Extract attachments: %s %s with attachments, each with its attachments in one zip named like the message's file with .attachments.zip added, beside it. A message with a huge number of attachments is still one file.", commas(a.zips), plural(a.zips, "message", "messages"))
+		} else {
+			line("Extract attachments: %s %s from %s %s, each in a folder named like the message's file with .attachments added, beside it.", commas(a.files), plural(a.files, "file", "files"), commas(a.msgs), plural(a.msgs, "message", "messages"))
+		}
 		if a.problems > 0 {
 			line("Messages with an attachment that was not extracted, or only part of it: %s. Each has a note beginning \"attachments:\" in export-manifest.json, and the message's own file still holds the part.", commas(a.problems))
 			for _, s := range a.listed {
@@ -529,7 +533,9 @@ func (f *ceFinish) readmeText(status CopyStatus, c CopyCounts, stop *CopyStop, f
 	if h.Options.ReadableHTML {
 		line("- A readable copy (.html) is made by MailArchive from the .eml beside it, so that the message can be read in a browser: it carries MailArchive's own security policy (no scripts, nothing loaded from the internet) and is a convenience, not the message. It shows what MailArchive's reader could make of the message: an unusual message (an unknown character set or encoding, a part with no name) can be shown with a part missing or re-encoded, and its attachments are not in it, so when a page looks incomplete the .eml is the authoritative copy.")
 	}
-	if h.Options.Attachments {
+	if h.Options.Attachments && h.Options.AttachmentsAsZip {
+		line("- A .attachments.zip is made by MailArchive from the .eml beside it: every attachment of that message, each decoded to an entry of its own, in one zip however many attachments the message has. It is a convenience, not the message. A part this version could not decode is in it as received, with .undecoded added to its name, and one that was cut short is in it as far as it could be read, with .partial added: a note in export-manifest.json says so for each, and neither is the complete attachment. Where the archive kept no original, the archive's own -attachments.zip, described above, holds the attachments, copied as the archive kept it, and no second zip is made.")
+	} else if h.Options.Attachments {
 		line("- The files in a .attachments folder are made by MailArchive from the .eml beside them (or, where the archive kept no original, from the archived attachments zip): each attachment decoded to a file of its own. They are conveniences, not the message. A part this version could not decode is there as received, with .undecoded added to its name, and one that was cut short is there as far as it could be read, with .partial added: a note in export-manifest.json says so for each, and neither is the complete attachment.")
 	}
 	if h.Source.Kind != "archive" {
@@ -547,7 +553,11 @@ func (f *ceFinish) readmeText(status CopyStatus, c CopyCounts, stop *CopyStop, f
 	}
 	line("")
 	line("Caveats")
-	if h.Options.Attachments {
+	if h.Options.Attachments && h.Options.AttachmentsAsZip {
+		line("- The attachments in a .attachments.zip show what MailArchive's reader made of the message. A part the reader dropped is not in it, and a part it could not name has the name of its Content-ID, \"inline\" or \"attachment-\" and a number: the .eml (or the archived attachments zip) is the authoritative copy, and the complete message is in it.")
+		line("- An archived attachments zip, copied as it is, is as the archive kept it. A zip written before MailArchive kept a text attachment's own bytes can already hold it re-encoded as UTF-8, so a file in another character set (Latin-1, say) may read differently from the one that was sent. A message forwarded as an attachment inside an Outlook data file (.pst) is kept in that zip as a few-byte stand-in, with nothing recording that the archive lost it, so this export cannot tell you which ones those are.")
+		line("- A zip and the files taken out of it carry no download marker: Windows (Mark of the Web, which makes Office open a file in Protected View) and macOS (the quarantine attribute, which makes Gatekeeper ask first) do not warn when one is opened, as they do for a file saved from an email program. Treat each file you take out as an unopened email attachment: a macro document, a program or a script the sender chose is as dangerous here as it was in the email.")
+	} else if h.Options.Attachments {
 		line("- Extracted attachments show what MailArchive's reader made of the message. A part the reader dropped is not among them, and a part it could not name has the name of its Content-ID, \"inline\" or \"attachment-\" and a number: the .eml (or the archived attachments zip) is the authoritative copy, and the complete message is in it.")
 		line("- Attachments extracted from an archived attachments zip are as the archive kept them. A zip written before MailArchive kept a text attachment's own bytes can already hold it re-encoded as UTF-8, so a file in another character set (Latin-1, say) may read differently from the one that was sent. A message forwarded as an attachment inside an Outlook data file (.pst) is kept in that zip as a few-byte stand-in, with nothing recording that the archive lost it, so this export cannot tell you which ones those are.")
 		line("- Extracted files carry no download marker: Windows (Mark of the Web, which makes Office open a file in Protected View) and macOS (the quarantine attribute, which makes Gatekeeper ask first) do not warn when one is opened, as they do for a file saved from an email program. Treat each as an unopened email attachment: a macro document, a program or a script the sender chose is as dangerous here as it was in the email.")
@@ -591,8 +601,8 @@ const attachReadmeList = 10
 // were extracted from how many messages, and how many messages carry a note about an
 // attachment that was not extracted or only partly (the first few by subject and folder).
 type attachFacts struct {
-	files, msgs, problems int
-	listed                []string
+	files, zips, msgs, problems int // files are loose extracted files, zips the attachments zips (zip mode)
+	listed                      []string
 }
 
 func (f *ceFinish) attachFacts() attachFacts {
@@ -601,14 +611,18 @@ func (f *ceFinish) attachFacts() attachFacts {
 		if m == nil || (m.Status != statusExported && m.Status != statusWithoutOrig && m.Status != statusOriginalOnly) {
 			return nil
 		}
-		n := 0
+		n, z := 0, 0
 		for _, file := range m.Files {
-			if file.Role == roleDerivedAttach {
+			switch file.Role {
+			case roleDerivedAttach:
 				n++
+			case roleDerivedAttachZip:
+				z++
 			}
 		}
 		a.files += n
-		if n > 0 {
+		a.zips += z
+		if n+z > 0 {
 			a.msgs++
 		}
 		for _, note := range m.Notes {
