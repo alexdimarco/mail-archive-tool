@@ -785,6 +785,59 @@ func TestThePlanSizesAndPlacesAZipModeExport(t *testing.T) {
 }
 
 // covers: MA-535, R1
+// README, in zip mode, says what the zip holds (every attachment of a message, decoded, one zip a message
+// however many it has), how many messages have one, which messages had an attachment that was not
+// extracted, what a part kept as received or cut short is, and keeps the caveats: parts dropped or
+// unnamed (F24, F25), zips captured before the walker and PST forwarded-as-attachment stand-ins (F26),
+// and that the zip and what is taken out of it carry no download marker. It says nothing of a folder of
+// loose files or of a path longer than the preview shows, and loose mode and a run without the option
+// say nothing of the zip.
 func TestReadmeSaysWhatTheAttachmentsZipHolds(t *testing.T) {
-	t.Skip("MA-535: zip mode is not built yet")
+	phrases := []string{"Extract attachments: 1 message with attachments, each with its attachments in one zip named like the message's file with .attachments.zip added, beside it.",
+		"A message with a huge number of attachments is still one file.", "Messages with an attachment that was not extracted, or only part of it: 1",
+		`subject M00001 (Inbox): "empty.txt" has no content`, "- A .attachments.zip is made by MailArchive from the .eml beside it: every attachment of that message",
+		"in one zip however many attachments the message has", ".undecoded", ".partial", "neither is the complete attachment", "no second zip is made",
+		"A part the reader dropped is not in it", "Content-ID", "re-encoded as UTF-8", "forwarded as an attachment inside an Outlook data file", "cannot tell you which ones",
+		"carry no download marker", "Mark of the Web", "Protected View", "Gatekeeper", "unopened email attachment"}
+	msgs := ceMsgs(2)
+	body := map[string][]byte{
+		msgs[0].SourceID: e6Mime(msgs[0].SourceID, "with files", e6Part{name: "ok.pdf", ctype: "application/pdf", body: []byte("%PDF fine")}, e6Part{name: "empty.txt", ctype: "text/plain"}),
+		msgs[1].SourceID: e6Mime(msgs[1].SourceID, "plain"),
+	}
+	res, _ := e6zRun(t, newCEEnv(t), msgs, true, func(id string) []byte { return body[id] })
+	readme := readText(t, res.Root, copyReadmeName)
+	for _, want := range phrases {
+		if !strings.Contains(readme, want) {
+			t.Errorf("README lacks %q", want)
+		}
+	}
+	for _, banned := range []string{".attachments folder", "more than 1,000 attachments has all of them", "longer than the longest path the preview shows", "from the archived attachments zip",
+		"files from"} {
+		if strings.Contains(readme, banned) {
+			t.Errorf("README of a zip-mode run says %q", banned)
+		}
+	}
+	if bad, missing, extra := sumsCheck(t, res.Root); len(bad)+len(missing)+len(extra) != 0 {
+		t.Errorf("sums: changed %v, missing %v, unlisted %v", bad, missing, extra)
+	}
+
+	// loose mode says none of the zip text, and the option off says none of either
+	loose, _ := e6Run(t, newCEEnv(t), msgs, false, func(id string) []byte { return body[id] })
+	lr := readText(t, loose.Root, copyReadmeName)
+	for _, banned := range []string{".attachments.zip", "in one zip however many", "is still one file"} {
+		if strings.Contains(lr, banned) {
+			t.Errorf("README of a loose run says %q", banned)
+		}
+	}
+	if !strings.Contains(lr, "Extract attachments: 1 file from 1 message") {
+		t.Errorf("README of a loose run lost its own line")
+	}
+	e, src := newCEEnv(t), newFakeSrc()
+	src.body = func(id string) []byte { return body[id] }
+	off := readText(t, mustRun(t, e, cePlan(t, e, src, msgs), src).Root, copyReadmeName)
+	for _, banned := range []string{"Extract attachments", ".attachments.zip", "no download marker"} {
+		if strings.Contains(off, banned) {
+			t.Errorf("README of a run without the option says %q", banned)
+		}
+	}
 }
