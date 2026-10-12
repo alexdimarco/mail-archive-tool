@@ -708,8 +708,15 @@ func TestEveryGapKindFISlice2bRecordsHasItsOwnWords(t *testing.T) {
 			t.Errorf("the directory-link remedy %q does not name %q", r, want)
 		}
 	}
-	if r := GapRemedy("symlink-outside-store", SourceLocal, ""); strings.Contains(r, "-follow-links") || !strings.Contains(r, "copy the file into the store") {
-		t.Errorf("a file link out of the store is never followed, opt-in or not; its remedy %q must not offer the opt-in", r)
+	// A link out of the store is judged by its text alone, so the gap cannot tell a link to
+	// a file (never read, opt-in or not) from a link to a folder (read under the opt-in,
+	// OR6: an archive that captured through absolute folder links gets a remedy that names
+	// the opt-in). Its remedy says both, and still never offers the opt-in for a file.
+	r = GapRemedy("symlink-outside-store", SourceLocal, "")
+	for _, want := range []string{"never read", "copy the file into the store", "-follow-links", "keeps its archive"} {
+		if !strings.Contains(r, want) {
+			t.Errorf("the remedy of a link out of the store %q does not say %q", r, want)
+		}
 	}
 	if r := GapRemedy("folder-cycle", SourceLocal, ""); !strings.Contains(r, "nothing to do") || strings.Contains(r, "scanpst") {
 		t.Errorf("a looped local folder's remedy %q is the PST repair or no word at all", r)

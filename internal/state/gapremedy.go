@@ -188,7 +188,11 @@ func GapRemedy(reason, sourceKind, errnoClass string) string {
 		}
 		return PSTRepairRemedy
 	case "symlink-outside-store":
-		return "a link to a file outside the store is never read: copy the file into the store, then run again"
+		// A link whose target is out of the store is judged by its text alone and its target is
+		// never touched (R25), so it cannot be told here from a link to a FOLDER out there,
+		// which is how most folder links are made (an absolute path). The folder is read when
+		// the input has the opt-in (OR6); the file is never read.
+		return "a link to a file outside the store is never read: copy the file into the store, then run again. If the link leads to a folder, that folder is read only when this input is told to follow folder links: " + FollowLinksRemedy
 	case "symlinked-folder-skipped":
 		return "folder links are not followed unless this input is told to: " + FollowLinksRemedy
 	case "not-a-message-file":
