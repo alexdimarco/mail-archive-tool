@@ -82,6 +82,9 @@ func safeParseFidelity(data []byte) *model.Message {
 		panicked = "this version's parser failed while reading " + site
 	default:
 		regression = holdsV1(v1, inventory, m, meta)
+		if regression == "" {
+			keepV1Headers(m, v1)
+		}
 	}
 	if m == nil || regression != "" {
 		// Never worse than v1 (P13): v1's content, its display text valid UTF-8 (P7), and
@@ -137,6 +140,24 @@ func legacyBodies(m *model.Message) {
 	for _, f := range []*string{&m.HTMLBody, &m.PlainBody} {
 		if !utf8.ValidString(*f) {
 			*f = util.DecodeLegacy([]byte(*f))
+		}
+	}
+}
+
+// keepV1Headers makes a header field the walker read as empty the one v1 read: the walker
+// reads the envelope with the strict reader, and v1 read some messages (a Message-ID with
+// 8-bit bytes, through its header fallback) more leniently, so the walker alone would show
+// less than v1 and nothing in the check would see it (MS2-AC7). Where the walker read a
+// value it stands.
+func keepV1Headers(m, v1 *model.Message) {
+	for _, f := range []struct{ now, v1 *string }{
+		{&m.InternetMessageID, &v1.InternetMessageID}, {&m.Subject, &v1.Subject},
+		{&m.SenderName, &v1.SenderName}, {&m.SenderEmail, &v1.SenderEmail},
+		{&m.To, &v1.To}, {&m.Cc, &v1.Cc}, {&m.Bcc, &v1.Bcc}, {&m.ReplyTo, &v1.ReplyTo},
+		{&m.InReplyTo, &v1.InReplyTo}, {&m.References, &v1.References},
+	} {
+		if *f.now == "" && *f.v1 != "" {
+			*f.now = *f.v1
 		}
 	}
 }
