@@ -105,6 +105,51 @@ func TestAPlaceholderFolderIsAFolder(t *testing.T) {
 	}
 }
 
+// mboxText is a one-message mbox file, the message named id.
+func mboxText(id string) string {
+	return "From a@example.com Mon Mar  3 09:00:00 2025\n" + strings.ReplaceAll(localMail(id), "\r\n", "\n") + "\n"
+}
+
+// covers: MA-322, R25, R1, R10
+// S2B-AO6 (and S2B-AC3): the mailboxes of a Thunderbird store are not dropped by the
+// "From " sniff. A parent folder with no messages of its own is a 0-byte file beside its
+// "<name>.sbd" directory, and the subtree was reached only through a parent that sniffed
+// as a mailbox, so every subfolder below an empty parent (and below an orphan .sbd)
+// vanished with no trace and the run said it was complete. A mailbox that begins with a
+// UTF-8 byte order mark or a blank line is a mailbox. The twin: the plain store reads
+// the same way it did.
+func TestAThunderbirdStoreIsNotDroppedBySniffingItsParents(t *testing.T) {
+	store := filepath.Join(t.TempDir(), "Mail")
+	writeLocal(t, filepath.Join(store, "Inbox"), mboxText("inbox"))
+	writeLocal(t, filepath.Join(store, "Real"), mboxText("real"))
+	writeLocal(t, filepath.Join(store, "Real.sbd", "Sub"), mboxText("sub"))
+	twin := walkLocal(t, store, OpenOptions{})
+	if len(twin.subjects) != 3 || len(twin.faults) != 0 {
+		t.Fatalf("the plain store: %v, %+v; want 3 messages and no fault", twin.subjects, twin.faults)
+	}
+
+	writeLocal(t, filepath.Join(store, "Parent"), "")
+	writeLocal(t, filepath.Join(store, "Parent.sbd", "Child"), mboxText("child"))
+	writeLocal(t, filepath.Join(store, "Parent.sbd", "Deeper"), "")
+	writeLocal(t, filepath.Join(store, "Parent.sbd", "Deeper.sbd", "Leaf"), mboxText("leaf"))
+	writeLocal(t, filepath.Join(store, "Orphan.sbd", "Alone"), mboxText("alone"))
+	writeLocal(t, filepath.Join(store, "Bom"), "\xef\xbb\xbf"+mboxText("bom"))
+	writeLocal(t, filepath.Join(store, "Blank"), "\r\n\n"+mboxText("blank"))
+	got := walkLocal(t, store, OpenOptions{})
+	have := strings.Join(got.subjects, " ")
+	if len(got.subjects) != 8 {
+		t.Errorf("delivered %v; want the 8 messages of Inbox, Real, Real/Sub, Parent/Child, Parent/Deeper/Leaf, Orphan/Alone, Bom and Blank", got.subjects)
+	}
+	for _, id := range []string{"child", "leaf", "alone", "bom", "blank"} {
+		if !strings.Contains(have, ": "+id) {
+			t.Errorf("the message %q was dropped: delivered %v", id, got.subjects)
+		}
+	}
+	if len(got.faults) != 0 {
+		t.Errorf("faults %+v; want none: the empty parents and the .sbd containers are nothing refused", got.faults)
+	}
+}
+
 // covers: MA-322, R25, R10, S47
 // S2B-AO4 (and S2B-AC1): a pipe named like an Outlook data file is never opened. The PST
 // open was a plain os.Open, which waits for a writer on a pipe, so a FIFO named *.pst or

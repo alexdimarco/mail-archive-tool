@@ -1,6 +1,7 @@
 package source
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -377,7 +378,7 @@ func (w *localWalk) mboxFile(sc *scope, rel string, folder []string) error {
 	}
 	defer f.Close()
 
-	mr := gombox.NewReader(wrapMboxStream(sc.at(rel), f))
+	mr := gombox.NewReader(skipBOM(wrapMboxStream(sc.at(rel), f)))
 	n := 0
 	partial := func(err error) {
 		w.folderFault(sc, rel, folder, "folder-partially-read", err, fmt.Sprintf("%d message(s) were read before the stream failed: ", n))
@@ -421,6 +422,16 @@ func (w *localWalk) mboxDir(sc *scope, rel string, prefix []string, top bool) er
 		w.folderFault(sc, rel, prefix, "folder-unreadable", err, "the folder could not be listed: ")
 		return nil
 	}
+	// A folder's subfolders live in "<name>.sbd", whatever the folder's own entry turns
+	// out to be: a parent with no messages of its own is an EMPTY file (or no file at
+	// all) beside its container, and a mailbox the sniff does not take is no reason to
+	// drop the folders below it (S2B-AO6). sub reads the container once, and the entries
+	// whose container no entry reached are read after the loop.
+	sbdDone := map[string]bool{}
+	sub := func(name string, folderPath []string) error {
+		sbdDone[name+".sbd"] = true
+		return w.sbd(sc, rel, name, folderPath)
+	}
 	for _, e := range entries {
 		if err := w.abort(); err != nil {
 			return err
@@ -437,6 +448,9 @@ func (w *localWalk) mboxDir(sc *scope, rel string, prefix []string, top bool) er
 			// A folder of the store is a maildir. A directory link is recorded where a
 			// folder would have been; with the opt-in it is read as the folder it names.
 			if v.kind == kindDir && !isMaildirIn(sc, erel) {
+				if err := sub(name, folderPath); err != nil {
+					return err
+				}
 				continue // a plain directory that is no folder
 			}
 			if v.kind == kindDirLink && !isMailboxCandidate(name) {
@@ -449,7 +463,7 @@ func (w *localWalk) mboxDir(sc *scope, rel string, prefix []string, top bool) er
 				if err := w.maildir(s, r, folderPath); err != nil {
 					return err
 				}
-				return w.sbd(sc, rel, name, folderPath)
+				return sub(name, folderPath)
 			}); err != nil {
 				return err
 			}
@@ -459,20 +473,32 @@ func (w *localWalk) mboxDir(sc *scope, rel string, prefix []string, top bool) er
 			}
 			if ok, err := looksLikeMboxIn(sc, v.rel); err != nil {
 				w.folderFault(sc, erel, folderPath, "folder-unreadable", err, "the file could not be opened: ")
-				continue
-			} else if !ok {
-				continue
+			} else if ok {
+				if err := w.mboxFile(sc, v.rel, folderPath); err != nil {
+					return err
+				}
 			}
-			if err := w.mboxFile(sc, v.rel, folderPath); err != nil {
-				return err
-			}
-			if err := w.sbd(sc, rel, name, folderPath); err != nil {
+			if err := sub(name, folderPath); err != nil {
 				return err
 			}
 		default:
 			if isMailboxCandidate(name) {
 				w.refuse(sc, erel, prefix, v)
 			}
+		}
+	}
+	// A container whose folder has no entry of its own (or none that was a folder).
+	for _, e := range entries {
+		name := e.Name()
+		base := strings.TrimSuffix(name, ".sbd")
+		if base == "" || base == name || sbdDone[name] {
+			continue
+		}
+		if err := w.abort(); err != nil {
+			return err
+		}
+		if err := sub(base, withFolder(prefix, base)); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -508,9 +534,35 @@ func looksLikeMboxIn(sc *scope, rel string) (bool, error) {
 		return false, err
 	}
 	defer f.Close()
-	buf := make([]byte, 5)
-	n, _ := f.Read(buf)
-	return n == 5 && string(buf) == "From ", nil
+	return sniffMbox(f), nil
+}
+
+// utf8BOM is the byte order mark some editors and exporters put before a text file.
+const utf8BOM = "\xef\xbb\xbf"
+
+// sniffMbox reports whether r begins like an mbox: an optional UTF-8 byte order mark
+// and any blank lines, then the "From " separator. A mailbox with a mark or a leading
+// blank line is a mailbox (the reader skips the blank lines and mboxFile the mark).
+func sniffMbox(r io.Reader) bool {
+	buf := make([]byte, 4096)
+	n, _ := io.ReadFull(r, buf)
+	b := strings.TrimPrefix(string(buf[:n]), utf8BOM)
+	b = strings.TrimLeft(b, "\r\n")
+	return strings.HasPrefix(b, "From ")
+}
+
+// skipBOM is r without a leading UTF-8 byte order mark: the mbox reader takes the mark
+// for text before the first separator and refuses the file.
+func skipBOM(r io.Reader) io.Reader {
+	head := make([]byte, len(utf8BOM))
+	n, err := io.ReadFull(r, head)
+	if err == nil && string(head) == utf8BOM {
+		return r
+	}
+	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+		return io.MultiReader(bytes.NewReader(head[:n]), &failingRead{err: err})
+	}
+	return io.MultiReader(bytes.NewReader(head[:n]), r)
 }
 
 // wrapMboxStream wraps the stream an mbox file is read through. It is the identity in
