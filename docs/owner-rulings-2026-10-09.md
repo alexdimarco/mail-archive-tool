@@ -1447,6 +1447,34 @@ Delegated choices: maildir messages carry a new `ReadLocator` (the S2a test pins
 export panics); `ParserGenCurrent` follows `ParseSchemeCurrent`; a mailbox-shaped file in a Thunderbird folder
 that cannot be opened at the sniff is a fillable `folder-unreadable` gap (it used to be silently ignored).
 
+### 13.29 MF-S2 built and merged, switched OFF, awaiting an owner decision (2026-10-11)
+
+The fidelity walker is built, tested and merged **but not switched on** (`fidelityContent` is false;
+`ParseSchemeCurrent` stays 1), so a build still writes exactly what the build before S2 wrote. Built:
+the walker (later parts after an unknown charset kept and decoded; unknown transfer encodings kept as
+`.undecoded` with a terminal `undecoded-part` gap; lenient parameters; text attachments keep their source
+bytes; truncated base64 saved as `.partial` with a fillable `corrupt-part` gap; legacy 8-bit text becomes
+valid UTF-8), the bounds (depth 33, 10,001 leaves, 64+ parameters, `filename*N`, header size, encoded-word
+bomb, 32 parse-gap labels plus a summary), the "fidelity contains v1" check with the visible
+`fidelity-fallback` gap, the shared `internal/util` primitives (MC35), parse-gap classes and the "cannot
+decode" counts on the CLI, GUI, desktop and `status` surfaces, and `BenchmarkParseCorpus` (the replay alone
+about 770 MB/s, replay plus walker about 315 MB/s, peak about 7.7 times a 16 MiB message). Conform:
+GAPS_FIXED (the check's verbatim-body rule was untested). **Owed: the adversarial pass (hostile MIME) and the
+friction review with the X-series check.** MF-S1's merge conflict in `internal/state/manifest.go` (FI-S2b's
+`ParserGen` fields and S2's `FidelityFallback`) was resolved by keeping both.
+
+**Owner decision needed to switch it on** (recommended: yes): (1) narrow four assertions of MF-S1 tests that
+say "no content moves": `TestFidelityParserKeepsTheIdentityGoldenOnTheCorpus` (subtests "content from v1",
+"v1 panics: the stub and its identity", "the content parser panics: v1's content") and
+`TestMixedVersionsKeepIdentityAndStems` (a record whose message carries a note newer than its scheme is not
+stamped on re-read, per MS1-AI1); the identity goldens themselves do not change. (2) Bump
+`ParseSchemeCurrent` to 2, which regenerates `p14-golden.json` (`parse_scheme` 1 to 2 on 46 records, nothing
+else). **What switching on changes for you:** every capture path, including the proven `graph` path, then
+decodes bodies and attachments with the new walker (better text, kept attachments, new visible gaps).
+Identity does not change. Also open: the README.txt in an archive root does not yet explain `.undecoded` and
+`.partial` for an inheritor (the design puts it with S7); MS1-AO1 and MS1-AO2 (§13.27) stay owner decisions,
+the replay cost now doubled by the walker; `internal/desktop/workspace.go` is one space off gofmt at the base.
+
 ### 13.7 Escalations from LC-C1's adversarial pass (merged 2026-10-10)
 
 None blocks anything: each has a skip encoder or a safe interim in force.
