@@ -534,7 +534,7 @@ func looksLikeMboxIn(sc *scope, rel string) (bool, error) {
 		return false, err
 	}
 	defer f.Close()
-	return sniffMbox(f), nil
+	return sniffMbox(wrapMboxStream(sc.at(rel), f))
 }
 
 // utf8BOM is the byte order mark some editors and exporters put before a text file.
@@ -542,13 +542,23 @@ const utf8BOM = "\xef\xbb\xbf"
 
 // sniffMbox reports whether r begins like an mbox: an optional UTF-8 byte order mark
 // and any blank lines, then the "From " separator. A mailbox with a mark or a leading
-// blank line is a mailbox (the reader skips the blank lines and mboxFile the mark).
-func sniffMbox(r io.Reader) bool {
+// blank line is a mailbox (the reader skips the blank lines and mboxFile the mark). A
+// read that fails is no answer: it is returned, because a mailbox whose first read
+// fails (EIO, a share, a placeholder) must be recorded, never taken for no mailbox
+// (S2B-AI7), unless what was read already says what the file is (a failure further in
+// is the walk's own, a folder-partially-read). A short or empty file is an answer (no).
+func sniffMbox(r io.Reader) (bool, error) {
 	buf := make([]byte, 4096)
-	n, _ := io.ReadFull(r, buf)
+	n, err := io.ReadFull(r, buf)
 	b := strings.TrimPrefix(string(buf[:n]), utf8BOM)
 	b = strings.TrimLeft(b, "\r\n")
-	return strings.HasPrefix(b, "From ")
+	if strings.HasPrefix(b, "From ") {
+		return true, nil
+	}
+	if len(b) < len("From ") && err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+		return false, err // too little arrived to say, and the read failed
+	}
+	return false, nil
 }
 
 // skipBOM is r without a leading UTF-8 byte order mark: the mbox reader takes the mark

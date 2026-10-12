@@ -1,6 +1,8 @@
 package source
 
 import (
+	"errors"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -147,6 +149,37 @@ func TestAThunderbirdStoreIsNotDroppedBySniffingItsParents(t *testing.T) {
 	}
 	if len(got.faults) != 0 {
 		t.Errorf("faults %+v; want none: the empty parents and the .sbd containers are nothing refused", got.faults)
+	}
+}
+
+// covers: MA-322, MA-316, R1, R10
+// S2B-AI7: a mailbox whose first read fails is recorded, not read as "not a mailbox". The
+// sniff dropped the read error with the count (`n, _ := f.Read(buf)`), against its own
+// comment (a mailbox the run cannot open must be recorded), so a file whose open worked
+// and whose first read gave EIO (a dying disk, a share, a cloud placeholder) was skipped
+// with no row. The failure is the seam wrapMboxStream's (no regular file on a healthy
+// disk fails its first read): the folder is a fillable folder-unreadable gap carrying the
+// disk's error, the next folder is read, and its .sbd subtree is not lost with it.
+func TestAMailboxWhoseFirstReadFailsIsRecorded(t *testing.T) {
+	store := filepath.Join(t.TempDir(), "Mail")
+	writeLocal(t, filepath.Join(store, "Good"), mboxText("good"))
+	writeLocal(t, filepath.Join(store, "Bad"), mboxText("bad"))
+	writeLocal(t, filepath.Join(store, "Bad.sbd", "Child"), mboxText("child"))
+	old := wrapMboxStream
+	wrapMboxStream = func(rel string, r io.Reader) io.Reader {
+		if rel == "Bad" {
+			return &failingRead{err: errors.New("input/output error")}
+		}
+		return r
+	}
+	t.Cleanup(func() { wrapMboxStream = old })
+	got := walkLocal(t, store, OpenOptions{})
+	if strings.Join(got.subjects, " ") != "Bad/Child: child Good: good" {
+		t.Errorf("delivered %v; want Good and the subfolder below the unreadable mailbox", got.subjects)
+	}
+	f, ok := got.fault("folder-unreadable")
+	if !ok || got.count("folder-unreadable") != 1 || f.Class != state.ClassFillable || f.Scope != state.GapScopeFolder || f.Locator != "folder:Bad" || !strings.Contains(f.Detail, "input/output error") {
+		t.Errorf("faults %+v; want ONE fillable folder-unreadable at folder:Bad with the disk's error: the mailbox was skipped with no row", got.faults)
 	}
 }
 

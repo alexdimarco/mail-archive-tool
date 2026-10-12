@@ -141,7 +141,8 @@ func looksLikeMbox(path string) bool {
 		return false
 	}
 	defer f.Close()
-	return sniffMbox(f)
+	ok, err := sniffMbox(f)
+	return ok && err == nil
 }
 
 // isMailboxCandidate excludes obvious non-mailbox files (indexes, config).
