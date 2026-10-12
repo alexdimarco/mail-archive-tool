@@ -49,11 +49,19 @@ var attachZipEpoch = time.Date(1980, 1, 1, 0, 0, 0, 0, time.UTC)
 // attachZipStamp is the time every entry of one message's zip carries: the message's own date, or
 // the epoch when it has none a zip can hold, so the same message always gives the same zip.
 func attachZipStamp(received time.Time) time.Time {
-	if received.IsZero() || received.Year() < 1980 || received.Year() > 2106 {
+	// The range is the UTC time's, which is what the entry holds (a date in 1980 in the message's own
+	// zone can be 1979 in UTC, which has no DOS date), and ends where the extended timestamp's 32 bits
+	// do (2106-02-07), past which the time wraps to 1970 (E6Z-AO6).
+	t := received.UTC()
+	if received.IsZero() || t.Before(attachZipEpoch) || !t.Before(attachZipLast) {
 		return attachZipEpoch
 	}
-	return received.UTC().Truncate(2 * time.Second)
+	return t.Truncate(2 * time.Second)
 }
+
+// attachZipLast is the first day no entry time can be: the 32-bit extended timestamp ends on
+// 2106-02-07 06:28:15 UTC.
+var attachZipLast = time.Date(2106, 2, 7, 0, 0, 0, 0, time.UTC)
 
 // attachZipHeader is the header of one entry: deflated, dated, and made on a Unix host with a
 // plain 0644 file mode. Go's own default is host 0 (MS-DOS) and no mode, and macOS's unzip reads

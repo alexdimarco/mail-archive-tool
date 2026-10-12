@@ -608,6 +608,49 @@ func e6zAttachNotes(notes []string) (out []string) {
 	return out
 }
 
+// covers: MA-533, R29
+// E6Z-AO6: the entry time is the message's own UTC time when a zip can hold it, and the epoch when it
+// cannot. The range is tested on the UTC time, not the message's own zone (1980-01-01 00:30 +01:00 is
+// 1979 UTC: its DOS date was the garbage 0xff9f, year 2107 month 15), and a date past the 32-bit
+// extended timestamp (2106-02-07) is the epoch, not a time that wrapped to 1970.
+func TestZipEntryTimesAreInRangeForEveryDate(t *testing.T) {
+	zone := time.FixedZone("x", 3600)
+	for _, c := range []struct {
+		name string
+		in   time.Time
+		want time.Time
+	}{
+		{"an ordinary date", time.Date(2026, 3, 28, 9, 0, 0, 0, time.FixedZone("y", 7200)), time.Date(2026, 3, 28, 7, 0, 0, 0, time.UTC)},
+		{"1979 in UTC, 1980 in its own zone", time.Date(1980, 1, 1, 0, 30, 0, 0, zone), attachZipEpoch},
+		{"1980 in UTC, 1979 in its own zone", time.Date(1979, 12, 31, 23, 30, 0, 0, time.FixedZone("z", -3600)),time.Date(1980, 1, 1, 0, 30, 0, 0, time.UTC)},
+		{"the last day the extended timestamp holds", time.Date(2106, 2, 6, 12, 0, 0, 0, time.UTC), time.Date(2106, 2, 6, 12, 0, 0, 0, time.UTC)},
+		{"after 2106-02-07", time.Date(2106, 6, 1, 0, 0, 0, 0, time.UTC), attachZipEpoch},
+		{"year 2200", time.Date(2200, 1, 1, 0, 0, 0, 0, time.UTC), attachZipEpoch},
+		{"before 1980", time.Date(1969, 7, 20, 0, 0, 0, 0, time.UTC), attachZipEpoch},
+		{"none", time.Time{}, attachZipEpoch},
+	} {
+		var buf bytes.Buffer
+		zw := zip.NewWriter(&buf)
+		w, err := zw.CreateHeader(attachZipHeader("a.txt", attachZipStamp(c.in)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		w.Write([]byte("x"))
+		if err := zw.Close(); err != nil {
+			t.Fatal(err)
+		}
+		files, _ := e6zEntries(t, buf.Bytes())
+		f := files[0]
+		if !f.Modified.Equal(c.want) {
+			t.Errorf("%s: the entry reads back as %v, want %v", c.name, f.Modified.UTC(), c.want)
+		}
+		wy, wmo, wd := c.want.Date()
+		if y, mo, d := int(f.ModifiedDate>>9)+1980, time.Month(f.ModifiedDate>>5&0xf), int(f.ModifiedDate&0x1f); y != wy || mo != wmo || d != wd {
+			t.Errorf("%s: the DOS date is %#x (%d-%d-%d), want %d-%d-%d", c.name, f.ModifiedDate, y, mo, d, wy, wmo, wd)
+		}
+	}
+}
+
 // covers: MA-533, R1
 // E6Z-AO2 and E6Z-AC2: a zip is whole or it is not there, and the notes say so. When the run is stopped
 // late (part 25 of 40, with part 5 a part the walker kept as received) or the zip's last write fails,
