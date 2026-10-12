@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/source"
@@ -268,7 +269,48 @@ func TestThePlanAcceptsExtractAttachments(t *testing.T) {
 }
 
 // covers: MA-425, R1, R29
-// A Latin-1 text/csv attachment extracts byte-identical to the MIME part's transfer-decoded bytes.
+// A Latin-1 text/csv attachment extracts byte-identical to the MIME part's transfer-decoded bytes,
+// whichever transfer encoding carried it (base64, quoted-printable, 8-bit) and whether it is named
+// as an attachment or inline: C1-1 (the v1 reader re-encoded a declared charset's bytes as UTF-8)
+// is fixed by the walker, and this is the guard that keeps it so. The bytes are not valid UTF-8,
+// so a conversion cannot pass for the original.
 func TestALatin1CsvAttachmentExtractsByteIdentical(t *testing.T) {
-	t.Skip("MA-425: attachment extraction is not built; lands in EW-E6")
+	latin1 := []byte("name;city\r\ncaf\xe9;Z\xfcrich\r\nna\xefve;\xc5ngstr\xf6m\r\n")
+	single := []byte("caf\xe9;Z\xfcrich;na\xefve")
+	for _, b := range [][]byte{latin1, single} {
+		if utf8.Valid(b) {
+			t.Fatalf("the fixture %q is valid UTF-8: a conversion could not be told from the original", b)
+		}
+	}
+	csv := "text/csv; charset=iso-8859-1"
+	msgs := ceMsgs(1)
+	mime := e6Mime(msgs[0].SourceID, "latin-1 files",
+		e6Part{name: "base64.csv", ctype: csv, body: latin1},
+		e6Part{name: "qp.csv", ctype: csv, cte: "quoted-printable", raw: "caf=E9;Z=FCrich;na=EFve"},
+		e6Part{name: "eightbit.csv", ctype: csv, cte: "8bit", raw: string(single)},
+		e6Part{name: "inline.csv", ctype: csv, disp: "inline", body: latin1},
+		e6Part{name: "plain.txt", ctype: "text/plain; charset=windows-1252", body: single})
+	e := newCEEnv(t)
+	res, _ := e6Run(t, e, msgs, false, func(string) []byte { return mime })
+	if res.Counts.Exported != 1 || res.Outcome != CopyOutcomeComplete {
+		t.Fatalf("%s, %+v", res.Label, res.Counts)
+	}
+	line := assure.Reached(t, e5Files(t, e, res)[1], "the record line")
+	// an inline part keeps the name v1 gave it, its Content-ID or "inline" (F25, which README names)
+	want := map[string][]byte{"base64.csv": latin1, "qp.csv": single, "eightbit.csv": single, "inline": latin1, "plain.txt": single}
+	files := e6Derived(line)
+	if len(files) != len(want) {
+		t.Fatalf("%d files extracted, want %d: %+v", len(files), len(want), line.Files)
+	}
+	for _, f := range files {
+		name := path.Base(f.Path)
+		w, ok := want[name]
+		if !ok {
+			t.Errorf("an unexpected file %q", name)
+			continue
+		}
+		if got := e6Read(t, res.Root, f.Path); !bytes.Equal(got, w) {
+			t.Errorf("%s: the file holds %q, want the part's own bytes %q", name, got, w)
+		}
+	}
 }
