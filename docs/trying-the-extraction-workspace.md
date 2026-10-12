@@ -66,6 +66,11 @@ you can. The refusal texts should each say what happened, why and what to do; te
 
 ## Not built yet
 
-Readable HTML pages (a toggle is hidden), extracting attachments, a date range in the selection, and an
-installer option for the deployment switch. Archives with a damaged PST/OST are handled; the PST fault
+Extracting attachments, a date range in the selection, and an installer option for the deployment switch.
+
+New since the first version of this note: **Readable HTML** is built and ON by default. Each exported
+message gets a `.html` page beside its `.eml`, made by the same sanitizing renderer the archive uses.
+Try the "Readable HTML" checkbox on the workspace page (untick it to export originals only), open a few of
+the `.html` pages in a browser, and check they look right and carry no live content. A message too big for a
+readable copy (over 32 MiB rendered) is exported as the original only, and says so. Archives with a damaged PST/OST are handled; the PST fault
 fixes are tested on fixtures, not on your real PSTs.
