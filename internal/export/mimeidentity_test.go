@@ -261,13 +261,10 @@ func TestFillAndFullKeepTheStemAndOriginalOfALegacy8BitSubject(t *testing.T) {
 
 // covers: R27, R3
 // A live-path write records the v1-view content digest as ContentHash, the terms'
-// digest and not the displayed content's (MC5). The same on a local record is held back
-// (below).
+// digest and not the displayed content's (MC5), local records included (the owner
+// accepted the two additive fields on MA-329's golden on 2026-10-11).
 func TestEveryWriteRecordsTheV1ViewContentHash(t *testing.T) {
-	t.Run("local records", func(t *testing.T) {
-		t.Skip("MA-329/R27 (MC5): ContentHash on every local record adds a field to every healthy record, which MA-329's golden (internal/app/testdata/p14-golden.json) pins byte for byte; changing what that baseline asserts is the owner's call (rulings §0 rule 2), so the write stays live-path only until the owner rules; the change itself is ready (the MF-S1 report names where)")
-	})
-	for _, live := range []bool{true} {
+	for _, live := range []bool{false, true} {
 		out := t.TempDir()
 		manifest := mustManifest(t)
 		m := &model.Message{Subject: "Café", Received: testDate, InternetMessageID: "<ch@x>", PlainBody: "décodé"}
@@ -300,7 +297,6 @@ func TestEveryWriteRecordsTheV1ViewContentHash(t *testing.T) {
 // Every write stamps the current parse scheme, on a new capture, a fill and a full
 // run, local and live.
 func TestEveryWriteStampsTheParseScheme(t *testing.T) {
-	t.Skip("MA-329/MA-347 (MC12): the stamp adds parse_scheme to every healthy record, which MA-329's golden (internal/app/testdata/p14-golden.json) pins byte for byte; changing what that baseline asserts is the owner's call (rulings §0 rule 2); the change itself is ready (the MF-S1 report names where)")
 	for _, live := range []bool{false, true} {
 		out := t.TempDir()
 		manifest := mustManifest(t)
@@ -365,8 +361,8 @@ func dropParseScheme(t *testing.T, path string) *state.Manifest {
 // binary's save drops parse_scheme; this build then reads the same mail with its
 // content changed by a later parser, and the run exports nothing new, splits no key,
 // keeps every stem and rewrites no file; the v1 build then runs again over this build's
-// archive with the same result. Local and live paths. (The stamp on re-read is held back,
-// below, so the dropped field is not yet there to drop.)
+// archive with the same result. Local and live paths. (The v1 run's records carry
+// parse_scheme, so the older binary's save really drops a written field.)
 // (The repair half, three alternations rewriting a record at most once, is S7's.)
 func TestMixedVersionsKeepIdentityAndStems(t *testing.T) {
 	var corpus [][]byte
@@ -441,14 +437,29 @@ func TestMixedVersionsKeepIdentityAndStems(t *testing.T) {
 				fixity[k] = *r.Fixity.HTML
 			}
 
-			// An older binary saved it (dropping parse_scheme, once the exporter writes
-			// one); this build reads the mail with its content changed.
+			// An older binary saved it (dropping parse_scheme, which the v1 run wrote);
+			// this build reads the mail with its content changed.
+			for k, r := range manifest.All() {
+				if r.ParseScheme != state.ParseSchemeCurrent {
+					t.Fatalf("fixture: %q was written with ParseScheme %d, so the drop below would be nominal", k, r.ParseScheme)
+				}
+			}
 			manifest = dropParseScheme(t, path)
+			for k, r := range manifest.All() {
+				if r.ParseScheme != 0 {
+					t.Fatalf("the older binary's save kept ParseScheme %d on %q", r.ParseScheme, k)
+				}
+			}
 			e := run(manifest, fidelity)
 			if e.Stats.Exported != 0 {
 				t.Errorf("this build exported %d messages the archive already holds", e.Stats.Exported)
 			}
 			sameArchive("this build after the old binary", snapshot(manifest), want)
+			for k, r := range manifest.All() {
+				if r.ParseScheme != state.ParseSchemeCurrent {
+					t.Errorf("%q: re-read by this build, ParseScheme = %d, want %d", k, r.ParseScheme, state.ParseSchemeCurrent)
+				}
+			}
 			for k, r := range manifest.All() {
 				if r.Fixity == nil || r.Fixity.HTML == nil || *r.Fixity.HTML != fixity[k] {
 					t.Errorf("%q: the page's fixity changed, so it was rewritten with the moved content", k)
@@ -470,7 +481,41 @@ func TestMixedVersionsKeepIdentityAndStems(t *testing.T) {
 	}
 
 	t.Run("a re-read record is stamped with the parse scheme", func(t *testing.T) {
-		t.Skip("MA-329/MA-347 (MC12): the stamp adds parse_scheme to every healthy record, which MA-329's golden (internal/app/testdata/p14-golden.json) pins byte for byte; changing what that baseline asserts is the owner's call (rulings §0 rule 2); the change itself is ready (the MF-S1 report names where)")
+		out := t.TempDir()
+		path := filepath.Join(t.TempDir(), "m.json")
+		manifest, err := state.Load(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pass := func(manifest *state.Manifest) {
+			t.Helper()
+			e := incExporter(out, manifest)
+			e.RunAt = testDate
+			for _, data := range corpus {
+				if _, err := e.Export("store", []string{"Inbox"}, v1Message(t, data)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := manifest.Save(); err != nil {
+				t.Fatal(err)
+			}
+		}
+		pass(manifest)
+		manifest = dropParseScheme(t, path)
+		for k, r := range manifest.All() {
+			if r.ParseScheme != 0 {
+				t.Fatalf("the drop left ParseScheme %d on %q", r.ParseScheme, k)
+			}
+		}
+		pass(manifest)
+		if len(manifest.All()) == 0 {
+			t.Fatal("no records")
+		}
+		for k, r := range manifest.All() {
+			if r.ParseScheme != state.ParseSchemeCurrent {
+				t.Errorf("%q: re-read, ParseScheme = %d, want %d", k, r.ParseScheme, state.ParseSchemeCurrent)
+			}
+		}
 	})
 
 	t.Run("repair half: three alternations", func(t *testing.T) {

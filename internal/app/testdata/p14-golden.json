@@ -7,6 +7,7 @@
     "exported_at": "0001-01-01T00:00:00Z",
     "fp": "10f68ea9bb315608",
     "fp_scheme": 1,
+    "chash": "680c62bf261b99bc1fb7a61684358e93d9aa8abe1c26de097ecbd3ce3cc66c81",
     "fixity": {
      "html": {
       "sha256": "18c1651b2b2444ce9cf419f01383d2d4fc4c38591e05a52e74c5293b6c29ca90",
@@ -18,7 +19,8 @@
      }
     },
     "first_seen": "0001-01-01T00:00:00Z",
-    "last_seen": "0001-01-01T00:00:00Z"
+    "last_seen": "0001-01-01T00:00:00Z",
+    "parse_scheme": 1
    },
    "Evolution cacheacct\u0000INBOX\u0000mid:evo-new@ex": {
     "path": "Evolution cacheacct/INBOX/2025-03-03_0900_Cache-new_1d406398.html",
@@ -26,6 +28,7 @@
     "exported_at": "0001-01-01T00:00:00Z",
     "fp": "48e978b418f0f338",
     "fp_scheme": 1,
+    "chash": "01481e4156294b673f6ba770a13250119a7f2ae447a7ee8fbf0d958caeef8149",
     "fixity": {
      "html": {
       "sha256": "b8c5d4945130cba85642813f57dff2eeb71e90e84070322b169ff7fa057a3c10",
@@ -37,7 +40,8 @@
      }
     },
     "first_seen": "0001-01-01T00:00:00Z",
-    "last_seen": "0001-01-01T00:00:00Z"
+    "last_seen": "0001-01-01T00:00:00Z",
+    "parse_scheme": 1
    },
    "Evolution cacheacct\u0000INBOX\u0000mid:evo-shard@ex": {
     "path": "Evolution cacheacct/INBOX/2025-03-03_0900_Cache-sharded_3b41a55d.html",
@@ -45,6 +49,7 @@
     "exported_at": "0001-01-01T00:00:00Z",
     "fp": "b9e877caaa2d503e",
     "fp_scheme": 1,
+    "chash": "97ac0433e47fed618a6a924d06c99552d63097e7a7d3678402240f3802ca5bae",
     "fixity": {
      "html": {
       "sha256": "25b052db7f0cefa33fe1e5c69fec36b3ec5b004c35201875ef6bebc196669331",
@@ -56,7 +61,8 @@
      }
     },
     "first_seen": "0001-01-01T00:00:00Z",
-    "last_seen": "0001-01-01T00:00:00Z"
+    "last_seen": "0001-01-01T00:00:00Z",
+    "parse_scheme": 1
    }
   },
   "files": {
@@ -76,6 +82,7 @@
     "exported_at": "0001-01-01T00:00:00Z",
     "fp": "0750d9b13b6ec20f",
     "fp_scheme": 1,
+    "chash": "da33d88aabd32bd8044dbc8541056f68b9f8f5e36e5e9965db35314e0822f855",
     "fixity": {
      "html": {
       "sha256": "4d2652521a4d7882b541fa6d6de9c848787190a7e7fc3d2539fd6e94537a257c",
@@ -87,7 +94,8 @@
      }
     },
     "first_seen": "0001-01-01T00:00:00Z",
-    "last_seen": "0001-01-01T00:00:00Z"
+    "last_seen": "0001-01-01T00:00:00Z",
+    "parse_scheme": 1
    },
    "On This Computer\u0000Work\u0000mid:evo-work@ex": {
     "path": "On This Computer/Work/2025-03-03_0900_Work-item_c9be9d2f.html",
@@ -95,6 +103,7 @@
     "exported_at": "0001-01-01T00:00:00Z",
     "fp": "ec1a0cfe565120f6",
     "fp_scheme": 1,
+    "chash": "1f94442a322e3a9841fc2df5712cdda266e6bc2185f3e3dec9038ed9f7f13adb",
     "fixity": {
      "html": {
       "sha256": "8d4e0d90762ab3f51d7ce5b76d4b8b0a697c5636274569fb0a2ce87dd5f0e089",
@@ -106,7 +115,8 @@
      }
     },
     "first_seen": "0001-01-01T00:00:00Z",
-    "last_seen": "0001-01-01T00:00:00Z"
+    "last_seen": "0001-01-01T00:00:00Z",
+    "parse_scheme": 1
    },
    "On This Computer\u0000Work/Projects\u0000mid:evo-proj@ex": {
     "path": "On This Computer/Work/Projects/2025-03-03_0900_Project-item_cd798175.html",
@@ -114,6 +124,7 @@
     "exported_at": "0001-01-01T00:00:00Z",
     "fp": "32f8ed50bdcdf54e",
     "fp_scheme": 1,
+    "chash": "644aefaec0550712ec6f014cba4bfdf01884d2ca5d9b2a97bb25d7794f1c7729",
     "fixity": {
      "html": {
       "sha256": "b3b6a8eba1c19302ee4255d911a9556734cc8309c6113bb72709223cab61121f",
@@ -129,7 +140,8 @@
      }
     },
     "first_seen": "0001-01-01T00:00:00Z",
-    "last_seen": "0001-01-01T00:00:00Z"
+    "last_seen": "0001-01-01T00:00:00Z",
+    "parse_scheme": 1
    }
   },
   "files": {
@@ -164,7 +176,8 @@
     "first_folder": "Archive",
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "present": true
+    "present": true,
+    "parse_scheme": 1
    },
    "u1\u0000mid:u1in1@ex": {
     "path": "u1/Inbox/2025-03-01_0900_subj-U1IN1_a5e223d7.html",
@@ -190,7 +203,8 @@
     "first_folder": "Inbox",
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "present": true
+    "present": true,
+    "parse_scheme": 1
    },
    "u1\u0000mid:u1in2@x": {
     "path": "u1/Inbox/2025-03-01_0900_subj-U1IN2_9e164ffe.html",
@@ -212,7 +226,8 @@
     "first_folder": "Inbox",
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "present": true
+    "present": true,
+    "parse_scheme": 1
    },
    "u1\u0000mid:u1in3@x": {
     "path": "u1/Inbox/2025-03-01_0900_subj-U1IN3_d87e047d.html",
@@ -234,7 +249,8 @@
     "first_folder": "Inbox",
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "present": true
+    "present": true,
+    "parse_scheme": 1
    },
    "u1\u0000mid:u1se1@x": {
     "path": "u1/Sent/2025-03-01_0900_subj-U1SE1_1fdfe387.html",
@@ -256,7 +272,8 @@
     "first_folder": "Sent",
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "present": true
+    "present": true,
+    "parse_scheme": 1
    },
    "u1\u0000mid:u1se2@x": {
     "path": "u1/Sent/2025-03-01_0900_subj-U1SE2_1c92ec91.html",
@@ -278,7 +295,8 @@
     "first_folder": "Sent",
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "present": true
+    "present": true,
+    "parse_scheme": 1
    },
    "u2\u0000mid:u2ar1@x": {
     "path": "u2/Archive/2025-03-01_0900_subj-U2AR1_d552a4f2.html",
@@ -300,7 +318,8 @@
     "first_folder": "Archive",
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "present": true
+    "present": true,
+    "parse_scheme": 1
    },
    "u2\u0000mid:u2in1@x": {
     "path": "u2/Inbox/2025-03-01_0900_subj-U2IN1_b00e0bc2.html",
@@ -322,7 +341,8 @@
     "first_folder": "Inbox",
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "present": true
+    "present": true,
+    "parse_scheme": 1
    },
    "u2\u0000mid:u2in2@x": {
     "path": "u2/Inbox/2025-03-01_0900_subj-U2IN2_bcb98ac0.html",
@@ -344,7 +364,8 @@
     "first_folder": "Inbox",
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "present": true
+    "present": true,
+    "parse_scheme": 1
    },
    "u2\u0000mid:u2in3@x": {
     "path": "u2/Inbox/2025-03-01_0900_subj-U2IN3_d59d2894.html",
@@ -366,7 +387,8 @@
     "first_folder": "Inbox",
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "present": true
+    "present": true,
+    "parse_scheme": 1
    },
    "u2\u0000mid:u2se1@x": {
     "path": "u2/Sent/2025-03-01_0900_subj-U2SE1_2d42acb1.html",
@@ -388,7 +410,8 @@
     "first_folder": "Sent",
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "present": true
+    "present": true,
+    "parse_scheme": 1
    },
    "u2\u0000mid:u2se2@x": {
     "path": "u2/Sent/2025-03-01_0900_subj-U2SE2_2469c97d.html",
@@ -410,7 +433,8 @@
     "first_folder": "Sent",
     "first_seen": "0001-01-01T00:00:00Z",
     "last_seen": "0001-01-01T00:00:00Z",
-    "present": true
+    "present": true,
+    "parse_scheme": 1
    }
   },
   "files": {
@@ -449,6 +473,7 @@
     "exported_at": "0001-01-01T00:00:00Z",
     "fp": "262bb49c1610ed6c",
     "fp_scheme": 1,
+    "chash": "282b8a1a74a84fedd179f57ee4b061e6ea1f3ad9ac73c01cf6e398e63aad8e66",
     "fixity": {
      "html": {
       "sha256": "ac61413dce01ba0b325ab7fe7862ac233b7462a0834bab7b0301ce1147d86f9c",
@@ -460,7 +485,8 @@
      }
     },
     "first_seen": "0001-01-01T00:00:00Z",
-    "last_seen": "0001-01-01T00:00:00Z"
+    "last_seen": "0001-01-01T00:00:00Z",
+    "parse_scheme": 1
    },
    "maildirstore\u0000\u0000mid:md2@ex": {
     "path": "maildirstore/2025-03-03_0900_Maildir-two_2ca914ac.html",
@@ -468,6 +494,7 @@
     "exported_at": "0001-01-01T00:00:00Z",
     "fp": "92d149f198dddeac",
     "fp_scheme": 1,
+    "chash": "d90aa7c0d9ea3fdd33eb29a2545b6d4c2b4b1abc5724e0ea9ab44d05224a59b9",
     "fixity": {
      "html": {
       "sha256": "cd28a31975d27d81fd1d42163d0e490035946d2343c4c2305ab8a40a53ff533a",
@@ -483,7 +510,8 @@
      }
     },
     "first_seen": "0001-01-01T00:00:00Z",
-    "last_seen": "0001-01-01T00:00:00Z"
+    "last_seen": "0001-01-01T00:00:00Z",
+    "parse_scheme": 1
    },
    "maildirstore\u0000\u0000mid:md3@ex": {
     "path": "maildirstore/2025-03-03_0900_Maildir-three_0c0f3db3.html",
@@ -491,6 +519,7 @@
     "exported_at": "0001-01-01T00:00:00Z",
     "fp": "68915d7791df2687",
     "fp_scheme": 1,
+    "chash": "f59047985d3fcc8a3a605fe6da5c8899b8cbd0a992e4e5b1b5c5984121b03db0",
     "fixity": {
      "html": {
       "sha256": "bd086034c2ca3bb4f61ee2a37aaa581446fbc1f46708ec25239cf58909b424e4",
@@ -502,7 +531,8 @@
      }
     },
     "first_seen": "0001-01-01T00:00:00Z",
-    "last_seen": "0001-01-01T00:00:00Z"
+    "last_seen": "0001-01-01T00:00:00Z",
+    "parse_scheme": 1
    }
   },
   "files": {
@@ -523,6 +553,7 @@
     "exported_at": "0001-01-01T00:00:00Z",
     "fp": "e413923efe83fb11",
     "fp_scheme": 1,
+    "chash": "c0489b1adc369a2ca8e81cba8107869a09da6f1c8e3dfb57587ac6b3d946bd48",
     "fixity": {
      "html": {
       "sha256": "1ae47f3ad366d090b2849c8ef8eb2622f87bce95681c827960fa651839304a8f",
@@ -534,7 +565,8 @@
      }
     },
     "first_seen": "0001-01-01T00:00:00Z",
-    "last_seen": "0001-01-01T00:00:00Z"
+    "last_seen": "0001-01-01T00:00:00Z",
+    "parse_scheme": 1
    },
    "tbstore\u0000Archive/Old\u0000mid:first@ex": {
     "path": "tbstore/Archive/Old/2025-03-03_0900_First_d9f9ea36.html",
@@ -542,6 +574,7 @@
     "exported_at": "0001-01-01T00:00:00Z",
     "fp": "570018b72c5e8953",
     "fp_scheme": 1,
+    "chash": "ba1c092c92512df21fba77319d0124d0c116d7b2add97f142df538b5b7f89c4d",
     "fixity": {
      "html": {
       "sha256": "5772813937c281d2096b0529a86630f7fdd570d59d9af6b93a2dc57b648a24db",
@@ -553,7 +586,8 @@
      }
     },
     "first_seen": "0001-01-01T00:00:00Z",
-    "last_seen": "0001-01-01T00:00:00Z"
+    "last_seen": "0001-01-01T00:00:00Z",
+    "parse_scheme": 1
    },
    "tbstore\u0000Inbox\u0000mid:first@ex": {
     "path": "tbstore/Inbox/2025-03-03_0900_First_ddc2d662.html",
@@ -561,6 +595,7 @@
     "exported_at": "0001-01-01T00:00:00Z",
     "fp": "570018b72c5e8953",
     "fp_scheme": 1,
+    "chash": "ba1c092c92512df21fba77319d0124d0c116d7b2add97f142df538b5b7f89c4d",
     "fixity": {
      "html": {
       "sha256": "f1e9d7e5bc4897b51896e4beaf58f422025181918e7b375ca578264cef2b6760",
@@ -572,7 +607,8 @@
      }
     },
     "first_seen": "0001-01-01T00:00:00Z",
-    "last_seen": "0001-01-01T00:00:00Z"
+    "last_seen": "0001-01-01T00:00:00Z",
+    "parse_scheme": 1
    },
    "tbstore\u0000Inbox\u0000mid:reuse@ex": {
     "path": "tbstore/Inbox/2025-03-03_0900_Reuse-A_10600c0b.html",
@@ -580,6 +616,7 @@
     "exported_at": "0001-01-01T00:00:00Z",
     "fp": "59d38892913cb544",
     "fp_scheme": 1,
+    "chash": "f6da1f74db787ffa51071314f7a4b309da9809ebfc5d7db5eee452154c5f7b7b",
     "fixity": {
      "html": {
       "sha256": "e99e2ad8b422f791cb6a7af799cc10e46efd0948925189b90130797553224c60",
@@ -591,7 +628,8 @@
      }
     },
     "first_seen": "0001-01-01T00:00:00Z",
-    "last_seen": "0001-01-01T00:00:00Z"
+    "last_seen": "0001-01-01T00:00:00Z",
+    "parse_scheme": 1
    },
    "tbstore\u0000Inbox\u0000mid:reuse@ex\u00001224f50c751715df": {
     "path": "tbstore/Inbox/2025-03-03_0900_Reuse-B_26d87d34.html",
@@ -599,6 +637,7 @@
     "exported_at": "0001-01-01T00:00:00Z",
     "fp": "1224f50c751715df",
     "fp_scheme": 1,
+    "chash": "3751f57df9b39424730157ae3b31d77df6469665ff8b36a393d399c9d1fde396",
     "fixity": {
      "html": {
       "sha256": "8bf53b9505fdfd81d3f77972e8ff8af5350894eadf72a13290a571808a0d25db",
@@ -610,7 +649,8 @@
      }
     },
     "first_seen": "0001-01-01T00:00:00Z",
-    "last_seen": "0001-01-01T00:00:00Z"
+    "last_seen": "0001-01-01T00:00:00Z",
+    "parse_scheme": 1
    },
    "tbstore\u0000Inbox\u0000mid:second@ex": {
     "path": "tbstore/Inbox/2025-03-03_0900_Second_c6f26588.html",
@@ -618,6 +658,7 @@
     "exported_at": "0001-01-01T00:00:00Z",
     "fp": "c27b705b7ce4d5bf",
     "fp_scheme": 1,
+    "chash": "a28aa076e2e44006abddedba1e103444f412863ad9f9ab5b8f4cca43ecb73302",
     "fixity": {
      "html": {
       "sha256": "ac2051a8b4076b12c90e42a1d2f5124ffbd9af60baf4ce8e73d88e404ba36fad",
@@ -629,7 +670,8 @@
      }
     },
     "first_seen": "0001-01-01T00:00:00Z",
-    "last_seen": "0001-01-01T00:00:00Z"
+    "last_seen": "0001-01-01T00:00:00Z",
+    "parse_scheme": 1
    },
    "tbstore\u0000Inbox\u0000mid:third@ex": {
     "path": "tbstore/Inbox/2025-03-03_0900_Third_543c8e41.html",
@@ -637,6 +679,7 @@
     "exported_at": "0001-01-01T00:00:00Z",
     "fp": "dcc54de28b85dbc2",
     "fp_scheme": 1,
+    "chash": "bcbd12c7b31d22c644a10e9a501aaba235e9b00c295b076f852b9aca6d85d488",
     "fixity": {
      "html": {
       "sha256": "b33fcae0b1274513aedb3ac041bcc287236c5c989d4598bd887dedcb978ba0e1",
@@ -652,7 +695,8 @@
      }
     },
     "first_seen": "0001-01-01T00:00:00Z",
-    "last_seen": "0001-01-01T00:00:00Z"
+    "last_seen": "0001-01-01T00:00:00Z",
+    "parse_scheme": 1
    },
    "tbstore\u0000Inbox\u0000sha:b4a0ea8ad11a810397de545e366c11e7c1d9a7af5bf4306ef13e38e78232d3ac": {
     "path": "tbstore/Inbox/2025-03-03_0900_Nameless_f40d2894.html",
@@ -660,6 +704,7 @@
     "exported_at": "0001-01-01T00:00:00Z",
     "fp": "15d803187fd4a835",
     "fp_scheme": 1,
+    "chash": "2b51c43f544e7172b1e80ee61d46d0a54836fb30a7695855cf55a0e5dd1c09bb",
     "fixity": {
      "html": {
       "sha256": "ba24c431e311d3c32ae38749f628802c47a5ce0f50f18230d153055aec1abf6b",
@@ -671,7 +716,8 @@
      }
     },
     "first_seen": "0001-01-01T00:00:00Z",
-    "last_seen": "0001-01-01T00:00:00Z"
+    "last_seen": "0001-01-01T00:00:00Z",
+    "parse_scheme": 1
    }
   },
   "files": {
@@ -702,6 +748,7 @@
     "exported_at": "0001-01-01T00:00:00Z",
     "fp": "f55f42bd03e99238",
     "fp_scheme": 1,
+    "chash": "c61b37d129532114bf3ccc92d5f58e0ed2c577ad3b62d730fa637891eeeee202",
     "fixity": {
      "html": {
       "sha256": "ed57f91ba933cf5fcb15e9540bc0a3497ab2ff4b5d0f6d27c249352af7f30653",
@@ -709,7 +756,8 @@
      }
     },
     "first_seen": "0001-01-01T00:00:00Z",
-    "last_seen": "0001-01-01T00:00:00Z"
+    "last_seen": "0001-01-01T00:00:00Z",
+    "parse_scheme": 1
    },
    "support\u0000Drafts\u0000mid:\u003c391A5179-A81A-4CC5-8557-B1F8ECD874D3@hackingteam.com\u003e": {
     "path": "support/Drafts/2015-02-02_0849_untitled_e3aaac1c.html",
@@ -717,6 +765,7 @@
     "exported_at": "0001-01-01T00:00:00Z",
     "fp": "5420cd4b5c282e50",
     "fp_scheme": 1,
+    "chash": "270b77f17df5732f64f87114680e5e50a93b8db1e9723d4ec900d83839383afa",
     "fixity": {
      "html": {
       "sha256": "250a015650898cc7b67ec499319edff5570c2a4d95a94fbe27e35e66e2994b3c",
@@ -724,7 +773,8 @@
      }
     },
     "first_seen": "0001-01-01T00:00:00Z",
-    "last_seen": "0001-01-01T00:00:00Z"
+    "last_seen": "0001-01-01T00:00:00Z",
+    "parse_scheme": 1
    },
    "support\u0000Drafts\u0000mid:\u003c4C518F01-53EB-4B06-AC8F-75C80471EA14@hackingteam.com\u003e": {
     "path": "support/Drafts/2015-02-02_0850_untitled_2f195892.html",
@@ -732,6 +782,7 @@
     "exported_at": "0001-01-01T00:00:00Z",
     "fp": "11b513abf2e2499b",
     "fp_scheme": 1,
+    "chash": "5d09d7d9d40478b78999129b3bdd8a04d2602ea3eb59618405e92abe1b8245aa",
     "fixity": {
      "html": {
       "sha256": "1ddf042913eca44f094ec3f832b1bec74a83b4687f5d69930c37f5d4758e9999",
@@ -739,7 +790,8 @@
      }
     },
     "first_seen": "0001-01-01T00:00:00Z",
-    "last_seen": "0001-01-01T00:00:00Z"
+    "last_seen": "0001-01-01T00:00:00Z",
+    "parse_scheme": 1
    },
    "support\u0000Drafts\u0000mid:\u003c7B26FDE6-8BD5-46B0-9663-57B2DEE595A6@hackingteam.com\u003e": {
     "path": "support/Drafts/2015-02-02_1336_Release-9.5.2_838965b9.html",
@@ -747,6 +799,7 @@
     "exported_at": "0001-01-01T00:00:00Z",
     "fp": "bc6cd88721f48b4a",
     "fp_scheme": 1,
+    "chash": "8a850fe941c4534844d4f3070dd9ec9c4c1c48edbe671c58668480bfa1ce63e8",
     "fixity": {
      "html": {
       "sha256": "539599712f37968439d0cd65ae9f5f5557c638018dbc6289c8f112b0754c8938",
@@ -754,7 +807,8 @@
      }
     },
     "first_seen": "0001-01-01T00:00:00Z",
-    "last_seen": "0001-01-01T00:00:00Z"
+    "last_seen": "0001-01-01T00:00:00Z",
+    "parse_scheme": 1
    },
    "support\u0000Drafts\u0000mid:\u003c82588C59-C403-448D-93B5-2E6699A9AB6B@hackingteam.com\u003e": {
     "path": "support/Drafts/2015-03-06_1619_Desktop-exploits-suspension-notice_4452db0b.html",
@@ -762,6 +816,7 @@
     "exported_at": "0001-01-01T00:00:00Z",
     "fp": "3b969fd8b7a64064",
     "fp_scheme": 1,
+    "chash": "5216cc12ac23985dbe1982bde487355be6d4c5b50a49470362e7150cd8a584ab",
     "fixity": {
      "html": {
       "sha256": "d8fae31f11d806c612437d3190b691bb1112853037c659aee9a432b40d3f63b0",
@@ -769,7 +824,8 @@
      }
     },
     "first_seen": "0001-01-01T00:00:00Z",
-    "last_seen": "0001-01-01T00:00:00Z"
+    "last_seen": "0001-01-01T00:00:00Z",
+    "parse_scheme": 1
    },
    "support\u0000Drafts\u0000mid:\u003cB04DCC96-1028-4DD5-92D8-29FB418BECDA@hackingteam.com\u003e": {
     "path": "support/Drafts/2015-02-02_1335_TEST-Release-9.5.2_d7496071.html",
@@ -777,6 +833,7 @@
     "exported_at": "0001-01-01T00:00:00Z",
     "fp": "959c299a2fd358e9",
     "fp_scheme": 1,
+    "chash": "2228f8b44b072917284b34382aa7375ae25bebd6e683f8748788504e2f033ef9",
     "fixity": {
      "html": {
       "sha256": "2256255e4687beaeb7ce6a865d4c198e638fa879489a611e1eb00565b848f77c",
@@ -784,7 +841,8 @@
      }
     },
     "first_seen": "0001-01-01T00:00:00Z",
-    "last_seen": "0001-01-01T00:00:00Z"
+    "last_seen": "0001-01-01T00:00:00Z",
+    "parse_scheme": 1
    },
    "support\u0000Sent Messages\u0000mid:\u003c02D706F0-5492-42E6-B643-1198E4441D4F@hackingteam.com\u003e": {
     "path": "support/Sent Messages/2014-01-05_1751_Protect-your-identity_31dc5d49.html",
@@ -792,6 +850,7 @@
     "exported_at": "0001-01-01T00:00:00Z",
     "fp": "7a7ff3f3f4b4756e",
     "fp_scheme": 1,
+    "chash": "a0cd31422103991297dab0c0effb87ec83c14de2db10e4e60f6373431487d39f",
     "fixity": {
      "html": {
       "sha256": "ebc04d132d733eae89382e33010295a1cf2ea7a0df40684523810020e72daab4",
@@ -799,7 +858,8 @@
      }
     },
     "first_seen": "0001-01-01T00:00:00Z",
-    "last_seen": "0001-01-01T00:00:00Z"
+    "last_seen": "0001-01-01T00:00:00Z",
+    "parse_scheme": 1
    },
    "support\u0000Sent Messages\u0000mid:\u003c197C9196-31D6-44B0-96ED-E47BD44DCBA2@hackingteam.com\u003e": {
     "path": "support/Sent Messages/2015-02-02_1338_Release-9.5.2_3fa203df.html",
@@ -807,6 +867,7 @@
     "exported_at": "0001-01-01T00:00:00Z",
     "fp": "e1860ef7ab7d6d4c",
     "fp_scheme": 1,
+    "chash": "4029b4de33074646e1c6269944fe3eb24fcea8a61787608387899ef00e4c1a87",
     "fixity": {
      "html": {
       "sha256": "c08dc4745fafd5d20dfa38857cabbd17cf804af32b537c78dc48eaa24aa81b4d",
@@ -814,7 +875,8 @@
      }
     },
     "first_seen": "0001-01-01T00:00:00Z",
-    "last_seen": "0001-01-01T00:00:00Z"
+    "last_seen": "0001-01-01T00:00:00Z",
+    "parse_scheme": 1
    },
    "support\u0000Sent Messages\u0000mid:\u003c466A0AB5-FCFA-4201-8BDA-9F53E7100DD9@hackingteam.it\u003e": {
     "path": "support/Sent Messages/2014-03-14_0932_The-truth-about-latest-allegations_b249e044.html",
@@ -822,6 +884,7 @@
     "exported_at": "0001-01-01T00:00:00Z",
     "fp": "74164c4a406d715c",
     "fp_scheme": 1,
+    "chash": "05d06b25fbf7f30b302e6c1d57508a9db3e846bdffe34325a85cc732ff89277a",
     "fixity": {
      "html": {
       "sha256": "a078b4c888775f9d6e69a2679133e95c6a45619fa6da0bfde738918067a40029",
@@ -829,7 +892,8 @@
      }
     },
     "first_seen": "0001-01-01T00:00:00Z",
-    "last_seen": "0001-01-01T00:00:00Z"
+    "last_seen": "0001-01-01T00:00:00Z",
+    "parse_scheme": 1
    },
    "support\u0000Sent Messages\u0000mid:\u003c4FC6F4CB-F6DB-4FD4-958F-5F32179903D6@hackingteam.com\u003e": {
     "path": "support/Sent Messages/2013-12-17_1156_Release-9.1.4_e5d50327.html",
@@ -837,6 +901,7 @@
     "exported_at": "0001-01-01T00:00:00Z",
     "fp": "a222bc8bfa95b819",
     "fp_scheme": 1,
+    "chash": "2ba27618924807466d23bcd11539195bb15483305436f1394105c56a64743423",
     "fixity": {
      "html": {
       "sha256": "d46951da6f25e47f7fdaebaa7da37a1cdeff58c847a621adc15369d28cbdd532",
@@ -844,7 +909,8 @@
      }
     },
     "first_seen": "0001-01-01T00:00:00Z",
-    "last_seen": "0001-01-01T00:00:00Z"
+    "last_seen": "0001-01-01T00:00:00Z",
+    "parse_scheme": 1
    },
    "support\u0000Sent Messages\u0000mid:\u003c6E30F847-B792-4413-8525-21B816AC42E6@hackingteam.com\u003e": {
     "path": "support/Sent Messages/2015-02-02_1335_TEST-Release-9.5.2_7945b4fc.html",
@@ -852,6 +918,7 @@
     "exported_at": "0001-01-01T00:00:00Z",
     "fp": "f0b382cb818bbca6",
     "fp_scheme": 1,
+    "chash": "1ce97b379fd2afe9e67bd1e030fa0551fae7d03e8b30fc36105cde3a1b6f7341",
     "fixity": {
      "html": {
       "sha256": "dd6440ba292437a51b15e9548044240cdccbd55ff33c432e36002d5a7c7b8aab",
@@ -859,7 +926,8 @@
      }
     },
     "first_seen": "0001-01-01T00:00:00Z",
-    "last_seen": "0001-01-01T00:00:00Z"
+    "last_seen": "0001-01-01T00:00:00Z",
+    "parse_scheme": 1
    },
    "support\u0000Sent Messages\u0000mid:\u003c80611E75-16FD-4356-9C0E-603502650CA7@hackingteam.com\u003e": {
     "path": "support/Sent Messages/2013-12-09_1417_Release-9.1.3_48c34823.html",
@@ -867,6 +935,7 @@
     "exported_at": "0001-01-01T00:00:00Z",
     "fp": "adbd651a333f99ac",
     "fp_scheme": 1,
+    "chash": "1dfe012a8b4486870e37a149a0a551f7f4338a14156d90f71148909bb60643c1",
     "fixity": {
      "html": {
       "sha256": "aa05af76fa82bd0a6852f633da947b6ef155eb18391c64788f0ba76fff00ef89",
@@ -874,7 +943,8 @@
      }
     },
     "first_seen": "0001-01-01T00:00:00Z",
-    "last_seen": "0001-01-01T00:00:00Z"
+    "last_seen": "0001-01-01T00:00:00Z",
+    "parse_scheme": 1
    },
    "support\u0000Sent Messages\u0000mid:\u003c89F4257D-BB20-4B92-A900-8B6D703DC6E3@hackingteam.it\u003e": {
     "path": "support/Sent Messages/2014-04-02_0905_Release-9.2.1_3861de73.html",
@@ -882,6 +952,7 @@
     "exported_at": "0001-01-01T00:00:00Z",
     "fp": "5f99f714fcdc5512",
     "fp_scheme": 1,
+    "chash": "9324cce32d18f2dee0a45b6ac694352b7a86f1f8e4a2632bc69e9704788a7f5a",
     "fixity": {
      "html": {
       "sha256": "09b7af0399a93b36fc321847e941ebac6e13f2bae4b8f022cd046e8379eec2ed",
@@ -889,7 +960,8 @@
      }
     },
     "first_seen": "0001-01-01T00:00:00Z",
-    "last_seen": "0001-01-01T00:00:00Z"
+    "last_seen": "0001-01-01T00:00:00Z",
+    "parse_scheme": 1
    },
    "support\u0000Sent Messages\u0000mid:\u003c9300164F-BD56-4421-87E8-61035D726E39@hackingteam.com\u003e": {
     "path": "support/Sent Messages/2015-03-06_1621_Desktop-exploits-suspension-notice_71c4cec9.html",
@@ -897,6 +969,7 @@
     "exported_at": "0001-01-01T00:00:00Z",
     "fp": "177a72e44375c435",
     "fp_scheme": 1,
+    "chash": "d064eec180d1e44649dcb591251aa6f23e96513f4b99a1b2738307c990b9e363",
     "fixity": {
      "html": {
       "sha256": "06301b7aaac31a432ef0bcfac61a388ef8a4ed763252654f6c0bb5af0d0b8130",
@@ -904,7 +977,8 @@
      }
     },
     "first_seen": "0001-01-01T00:00:00Z",
-    "last_seen": "0001-01-01T00:00:00Z"
+    "last_seen": "0001-01-01T00:00:00Z",
+    "parse_scheme": 1
    },
    "support\u0000Sent Messages\u0000mid:\u003cA2E2D8FE-61EC-49CA-855D-925EFDA4A28F@hackingteam.com\u003e": {
     "path": "support/Sent Messages/2013-12-09_1406_test_81aa76a7.html",
@@ -912,6 +986,7 @@
     "exported_at": "0001-01-01T00:00:00Z",
     "fp": "91ba1f5dfc65fac3",
     "fp_scheme": 1,
+    "chash": "bfbb5e0131cfba68cd8119f0dc13fd3bb8a3b3896595961c08b066f1d0765c86",
     "fixity": {
      "html": {
       "sha256": "23ec9675ac2d0b064bc169297cfba6f08e0719044e987459ea11aa0f1f9afb73",
@@ -919,7 +994,8 @@
      }
     },
     "first_seen": "0001-01-01T00:00:00Z",
-    "last_seen": "0001-01-01T00:00:00Z"
+    "last_seen": "0001-01-01T00:00:00Z",
+    "parse_scheme": 1
    },
    "support\u0000Sent Messages\u0000mid:\u003cA5C4B426-9872-490D-805C-03C5899CEF9F@hackingteam.it\u003e": {
     "path": "support/Sent Messages/2014-03-12_1914_IMPORTANT-Support-portal-downtime-for-maintenance_a5223131.html",
@@ -927,6 +1003,7 @@
     "exported_at": "0001-01-01T00:00:00Z",
     "fp": "d238c691b4ecd836",
     "fp_scheme": 1,
+    "chash": "efbb8b347fde9e47096aa7ede89a449d0038885461ac8baeaf8d11cfebadf1c2",
     "fixity": {
      "html": {
       "sha256": "148ce3f8bd35eeeb6f8b6568c2e890888ab3af149e2d662648f7bbb705b75732",
@@ -938,7 +1015,8 @@
      }
     },
     "first_seen": "0001-01-01T00:00:00Z",
-    "last_seen": "0001-01-01T00:00:00Z"
+    "last_seen": "0001-01-01T00:00:00Z",
+    "parse_scheme": 1
    },
    "support\u0000Sent Messages\u0000mid:\u003cBEE94EB9-6EB8-45F9-A2C3-76CCDE73B2DE@hackingteam.com\u003e": {
     "path": "support/Sent Messages/2013-12-24_1223_Release-9.1.4-HOTFIX_420942e8.html",
@@ -946,6 +1024,7 @@
     "exported_at": "0001-01-01T00:00:00Z",
     "fp": "cfb883be6b00b27a",
     "fp_scheme": 1,
+    "chash": "e602c03bd0443c6727e572cb23004ec3ad684458e17fab2053c276a564584a3e",
     "fixity": {
      "html": {
       "sha256": "ed92396773aaf40341041ead4cb52a9d6c50cfca74cf218032d19cfd039edf38",
@@ -953,7 +1032,8 @@
      }
     },
     "first_seen": "0001-01-01T00:00:00Z",
-    "last_seen": "0001-01-01T00:00:00Z"
+    "last_seen": "0001-01-01T00:00:00Z",
+    "parse_scheme": 1
    }
   },
   "files": {

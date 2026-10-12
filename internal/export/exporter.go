@@ -307,6 +307,9 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 				// it gone forever after (#5, adversarial 2026-09-12).
 				e.observeArchived(key, prev, folderKey, folderPath)
 			}
+			// This run re-read the record, so it is examined under this build's parser
+			// scheme: stamped in memory, no file written (MC12).
+			e.Manifest.StampParseScheme(key, state.ParseSchemeCurrent)
 			// A healthy read of an item that an earlier run only partly read, which
 			// already has its own record here: the partly-read record is settled.
 			e.supersedePartial(store, key, m)
@@ -317,6 +320,7 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		e.Stats.Retried++
 		if !probeImproves(m, prev.Missing) {
 			e.Stats.StillIncomplete++
+			e.Manifest.StampParseScheme(key, state.ParseSchemeCurrent) // re-read, as above (MC12)
 			// Still partly read: it counts as a partly-read record seen this run, and
 			// a Locator an older binary's save dropped is restored from the capture
 			// (§4.2).
@@ -510,6 +514,11 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	}
 	rec.Fingerprint = fp
 	rec.FpScheme = state.FpSchemeCurrent // this build's fingerprint scheme (rev-4 §3)
+	rec.ParseScheme = state.ParseSchemeCurrent
+	// The body-inclusive content digest of the identity view (the v1 parse), on every
+	// write, local records included: a later repair proves the archived message is the
+	// one in the source by it (MC5). It is no identity input, so no key moves.
+	rec.ContentHash = m.ContentDigest()
 	rec.Fixity = &fx
 	// Folder-over-time timeline (the go-back record fields) on the live path:
 	// Present now, LastSeen now, and the set-once FirstFolder/FirstSeen preserved
@@ -527,11 +536,10 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		if rec.PhysID == "" && seen {
 			rec.PhysID = prev.PhysID
 		}
-		// The body-inclusive content hash is the closure's churn-vs-distinct arbiter
-		// (rev-6.1). Recorded on every live-path write so a later run can tell a
-		// distinct reuse of this Message-ID from the same message re-observed, without
-		// the original .eml. Reflects THIS capture's content (a fill updates it).
-		rec.ContentHash = m.ContentDigest()
+		// The body-inclusive content hash (set above for every write) is the closure's
+		// churn-vs-distinct arbiter (rev-6.1): it lets a later run tell a distinct
+		// reuse of this Message-ID from the same message re-observed, without the
+		// original .eml. It reflects THIS capture's content (a fill updates it).
 		if seen {
 			// Carry the content-equal immutable-id SET forward on an adopt (rev-6.2):
 			// a full-mode re-export or a fill REBUILDS the record, and without this the

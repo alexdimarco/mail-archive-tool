@@ -178,10 +178,9 @@ type Record struct {
 	// the scheme existed wrote it and none has re-read it since; an older binary's
 	// save drops the field, so the next run by this build stamps it again in memory
 	// (StampParseScheme) at no cost to the files. Nothing acts on it before the repair
-	// slice: it is the migration's progress marker. Nothing stamps it yet either: a
-	// stamp on every write and re-read adds a field to every healthy record, which
-	// MA-329's golden (internal/app/testdata/p14-golden.json) pins byte for byte, so
-	// the exporter's stamping waits for the owner's answer on that baseline.
+	// slice: it is the migration's progress marker. The exporter stamps it on every
+	// write and, in memory, on every re-read (MA-329's golden carries it since the
+	// owner's decision of 2026-10-11).
 	ParseScheme int `json:"parse_scheme,omitempty"`
 }
 
