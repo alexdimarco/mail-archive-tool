@@ -300,7 +300,7 @@ const (
 // depend on it is a corrupt part, which may be a cut body (no .partial file, no zip).
 func RecordRowWhyFor(kind, detail string) string {
 	if kind == GapKindCorruptPart && strings.HasPrefix(detail, CorruptBodyDetailPrefix) {
-		return "the message's text is cut short or damaged, so the page shows only its readable start"
+		return "the message's text is cut short or damaged, so the page shows only what could be decoded of it"
 	}
 	return RecordRowWhy(kind)
 }
@@ -370,7 +370,7 @@ func recordRowRemedy(kind, class string, body, local bool) string {
 	case GapKindCorruptPart:
 		start := "the readable start is in the attachments zip (its name ends .partial)"
 		if body {
-			start = "the page shows the readable start of the text (the text is not a separate file)"
+			start = "the page shows what could be decoded of the text (the text is not a separate file)"
 		}
 		if terminal {
 			return "nothing to do: the source cannot deliver a complete copy; " + start + "; " + kept

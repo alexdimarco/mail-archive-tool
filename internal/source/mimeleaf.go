@@ -104,7 +104,7 @@ func (w *walker) bodyText(plain bool, l leafPart) {
 		}
 		return
 	case transferCorrupt:
-		w.gap(state.GapKindCorruptPart, fmt.Sprintf(state.CorruptBodyDetailPrefix+"%d is cut short or damaged after %d bytes: only the readable start is shown", l.n, len(l.data)))
+		w.gap(state.GapKindCorruptPart, fmt.Sprintf(state.CorruptBodyDetailPrefix+"%d is cut short or damaged after %d bytes: only what could be decoded is shown", l.n, len(l.data)))
 	}
 	if (plain && w.plain.Len() != 0) || (!plain && w.msg.HTMLBody != "") {
 		return

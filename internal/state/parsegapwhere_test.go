@@ -13,7 +13,7 @@ import (
 // names the zip and the .partial file, as it did.
 func TestACutBodyRowDoesNotPointAtAPartialFileOrZip(t *testing.T) {
 	attachment := "contract.pdf.partial — the data is cut short or damaged after 519 bytes: only the readable start is kept"
-	body := CorruptBodyDetailPrefix + "1 is cut short or damaged after 24 bytes: only the readable start is shown"
+	body := CorruptBodyDetailPrefix + "1 is cut short or damaged after 24 bytes: only what could be decoded is shown"
 
 	for _, class := range []string{ClassFillable, ClassTerminal} {
 		why, remedy := RecordRowWhyFor(GapKindCorruptPart, attachment), RecordRowRemedyFor(GapKindCorruptPart, class, attachment, OriginalUnstated)
