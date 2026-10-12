@@ -958,7 +958,14 @@ func archiveGapNotes(rec state.Record) []string {
 		// it is a part kept as received, a multipart shown as text or a message kept as an
 		// earlier version read it, not an attachment that was never downloaded (MS2-AO8).
 		if kind, detail, ok := state.ParseGapParts(label); ok {
-			add("the archive records a gap in this message: " + state.RecordRowWhy(kind) + " (" + plainText(detail) + ")")
+			// The detail of a fallback or an identity stub is the walker's own account of what it
+			// compared with an earlier parser: the row's why says it for a person (friction F15).
+			why := state.RecordRowWhyFor(kind, detail)
+			if kind == state.GapKindFidelityFallback || kind == state.GapKindIdentityStub {
+				add("the archive records a gap in this message: " + why)
+			} else {
+				add("the archive records a gap in this message: " + why + " (" + plainText(detail) + ")")
+			}
 			continue
 		}
 		label = plainText(label)

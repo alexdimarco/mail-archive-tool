@@ -59,22 +59,26 @@ func writeReport(out string, manifest *state.Manifest, migrated bool, logger *lo
 	w := bufio.NewWriter(&buf)
 	fmt.Fprintln(w, "kind\tclass\tfolder\tdate\tsubject\tdetail\tpath")
 	rows := 0
-	emit := func(kind, class string, r state.Record, detail string) {
-		w.WriteString(recordRow(kind, class, r, detail))
+	emit := func(kind, class string, r state.Record, detail string, o state.OriginalAt) {
+		w.WriteString(recordRowAt(kind, class, r, detail, o))
 		rows++
 	}
 	for _, r := range issues {
+		o := state.OriginalUnstated
+		if hasParseGapLabel(r) {
+			o = originalAt(out, r)
+		}
 		for _, item := range r.Missing {
-			emit(gapKind(item), state.RecordGapClass(item, false), r, gapDetail(item))
+			emit(gapKind(item), state.RecordGapClass(item, false), r, gapDetail(item), o)
 		}
 		for _, item := range r.Terminal {
-			emit(gapKind(item), state.RecordGapClass(item, true), r, gapDetail(item))
+			emit(gapKind(item), state.RecordGapClass(item, true), r, gapDetail(item), o)
 		}
 		for _, cid := range r.Unresolved {
-			emit("unresolved-inline-image", "info", r, cid)
+			emit("unresolved-inline-image", "info", r, cid, o)
 		}
 		if r.BodyFallback != "" {
-			emit("html-shown-as-source", "info", r, r.BodyFallback)
+			emit("html-shown-as-source", "info", r, r.BodyFallback, o)
 		}
 	}
 	rows += writeGapRows(w, out, manifest, gaps)
@@ -90,10 +94,41 @@ func writeReport(out string, manifest *state.Manifest, migrated bool, logger *lo
 // The kind goes through tsv() like the rest: it comes from a fixed set today, and a row
 // must stay one line whatever a future kind holds (MS2-AO4).
 func recordRow(kind, class string, r state.Record, detail string) string {
+	return recordRowAt(kind, class, r, detail, state.OriginalUnstated)
+}
+
+// recordRowAt is recordRow when the writer knows where the original is (originalAt): the parse
+// gap kinds say it, so an inheritor does not read "the original is kept" as a file beside the
+// page when the archive was made without -raw (friction F14), and a cut body's row says what the
+// page shows, not that a .partial file is in a zip (F6).
+func recordRowAt(kind, class string, r state.Record, detail string, o state.OriginalAt) string {
 	// The bare code, then why and what to do in the ledger rows' words (ESC-16).
-	detail += " · why: " + state.RecordRowWhy(kind) + " · what to do: " + state.RecordRowRemedy(kind, class)
+	detail += " · why: " + state.RecordRowWhyFor(kind, detail) + " · what to do: " + state.RecordRowRemedyFor(kind, class, detail, o)
 	return fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 		tsv(kind), class, tsv(r.Folder), r.Date, tsv(r.Subject), tsv(detail), r.Path)
+}
+
+// hasParseGapLabel reports whether the record carries a parse-gap label in either list.
+func hasParseGapLabel(r state.Record) bool {
+	for _, l := range append(append([]string(nil), r.Missing...), r.Terminal...) {
+		if state.IsParseGapLabel(l) {
+			return true
+		}
+	}
+	return false
+}
+
+// originalAt says whether the original message is kept as an .eml beside the record's page.
+// The page's path is the manifest's, which someone else may have written: only a safe in-archive
+// path is looked at (S2B-AI9).
+func originalAt(out string, r state.Record) state.OriginalAt {
+	if _, safe := util.ValidRecordedPath(r.Path); safe {
+		eml := filepath.Join(out, filepath.FromSlash(strings.TrimSuffix(r.Path, ".html")+".eml"))
+		if fi, err := os.Lstat(eml); err == nil && fi.Mode().IsRegular() {
+			return state.OriginalBesidePage
+		}
+	}
+	return state.OriginalInSource
 }
 
 func gapKind(item string) string {
