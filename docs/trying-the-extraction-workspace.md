@@ -51,6 +51,52 @@ load folders, pick one small folder, preview, start. Compare the count with what
 - Pick a destination inside your archive folder. It should be refused, with the reason.
 - Another archive folder: pick a folder that is not an archive; it should say so.
 
+## 4b. An archive that came from Thunderbird (or any local mail files)
+
+MailArchive Desktop reads, searches, checks (**Maintenance → Check integrity**, **Rebuild search index**,
+**Status & health**) and exports an archive that `mailarchive-gui` or `mailarchive` made from Thunderbird.
+It does not read Thunderbird itself, so for such an archive **Archive now** and the **Weekly backup** are
+switched off, with a line that says why and what to do. The header says what the archive is ("made from local
+mail files (for example Thunderbird), not from Microsoft 365").
+
+To open it: if you set no location and started the app without `-out`, the Overview offers the archive the
+`mailarchive-gui` wizard used last ("Use this archive?"; nothing changes until you click it). Otherwise type
+the archive's folder (the one that holds `.mailarchive-manifest.json`) in **Settings → Archive location** and
+click **Save settings**.
+
+### Adding new mail to a Thunderbird archive
+
+New mail comes in through the same archive folder, with the wizard or the command. A run is incremental by
+default: it adds only messages that are not already archived.
+
+With `mailarchive-gui` (any OS; the wizard does not pre-fill the archive folder, so choose the same one):
+1. Open `mailarchive-gui`. At "What are you exporting?" choose **Thunderbird / mbox mail folder** (or
+   **Auto-detect my mailboxes**).
+2. Pick your Thunderbird mail folder at "Select the Thunderbird mail folder" (the `Mail/Local Folders` or
+   `ImapMail/<account>` folder of your profile; see below).
+3. At **Select the output folder** pick this archive's folder, the same one every time.
+4. Choose **Incremental** at "Export mode". The summary tells how many messages were added.
+
+With the `mailarchive` command (the same `-out` folder):
+
+macOS / Linux:
+```
+mailarchive -input "<your Thunderbird mail folder>" -out "<this archive folder>"
+mailarchive -auto -out "<this archive folder>"        # every Thunderbird store it finds
+```
+Thunderbird mail folder, macOS: `~/Library/Thunderbird/Profiles/<profile>/Mail/Local Folders`; Linux:
+`~/.thunderbird/<profile>/Mail/Local Folders` (IMAP accounts: `.../ImapMail/<account>`).
+
+Windows (Command Prompt or PowerShell):
+```
+mailarchive -input "<your Thunderbird mail folder>" -out "<this archive folder>"
+mailarchive -auto -out "<this archive folder>"
+```
+Thunderbird mail folder, Windows: `%APPDATA%\Thunderbird\Profiles\<profile>\Mail\Local Folders`.
+
+`mailarchive -auto -list -out "<folder>"` previews which stores `-auto` would take, without writing. A test
+runs this documented command through the command's own flag parser (MA-548), so it stays true.
+
 ## 5. The browser check the reviews are waiting for
 
 Please note anything odd on these, in this order:

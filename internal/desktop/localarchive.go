@@ -1,0 +1,186 @@
+package desktop
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+
+	"mail-archive-tool/internal/job"
+	"mail-archive-tool/internal/state"
+)
+
+// What the archive was made from, read from the manifest's store ids ("path:..." is a local mail
+// file or folder, "mailbox:..." a Microsoft 365 mailbox). The desktop reads, searches, checks and
+// exports any of them; only the Microsoft 365 ones can be topped up from here (MA-546, docs/trying-the-extraction-workspace.md).
+const (
+	kindNone  = ""      // no archive location, or no manifest to read
+	kindEmpty = "empty" // an archive with no source recorded yet
+	kindM365  = "m365"
+	kindLocal = "local"
+	kindMixed = "mixed"
+)
+
+// archiveKind says what the archive at out was made from. A manifest that cannot be read is
+// kindNone: nothing is hidden or disabled on a guess.
+func archiveKind(out string) string {
+	if strings.TrimSpace(out) == "" {
+		return kindNone
+	}
+	mpath := filepath.Join(out, manifestName)
+	if _, err := os.Stat(mpath); err != nil {
+		return kindNone
+	}
+	m, err := state.Load(mpath)
+	if err != nil {
+		return kindNone
+	}
+	var local, cloud bool
+	for id := range m.Stores {
+		if strings.HasPrefix(id, "mailbox:") {
+			cloud = true
+		} else {
+			local = true
+		}
+	}
+	switch {
+	case local && cloud:
+		return kindMixed
+	case local:
+		return kindLocal
+	case cloud:
+		return kindM365
+	}
+	return kindEmpty
+}
+
+const manifestName = ".mailarchive-manifest.json"
+
+// kindLine is the plain-words line that says what the archive is.
+func kindLine(kind string) string {
+	switch kind {
+	case kindLocal:
+		return "This archive was made from local mail files (for example Thunderbird), not from Microsoft 365."
+	case kindM365:
+		return "This archive was made from Microsoft 365."
+	case kindMixed:
+		return "This archive holds both Microsoft 365 mail and mail from local files (for example Thunderbird)."
+	case kindEmpty:
+		return "This archive has no mail in it yet."
+	}
+	return ""
+}
+
+// localOnly is whether Archive now and the weekly backup cannot apply: the archive has only local
+// mail and Microsoft 365 was never set up here. A Microsoft 365, mixed or empty archive, or one
+// with a Microsoft 365 setup, keeps them (the owner may be about to add a mailbox).
+func (cfg Config) localOnly() bool {
+	if archiveKind(cfg.effectiveOut()) != kindLocal {
+		return false
+	}
+	c := cfg.load()
+	return c == nil || strings.TrimSpace(c.Tenant) == ""
+}
+
+// AddMailArgv is the command line that adds new mail from a Thunderbird (or any mbox / maildir)
+// folder to the archive at out: an incremental run, which is the default mode, writes only what is
+// not archived yet. The dashboard shows exactly this, and a test parses it with the command's own
+// flag parser, so the text cannot drift from the flags.
+func AddMailArgv(folder, out string) []string {
+	return []string{"mailarchive", "-input", folder, "-out", out}
+}
+
+// AddMailAutoArgv is the same with every Thunderbird (and Evolution, and on Windows Outlook) store
+// the tool finds on this computer.
+func AddMailAutoArgv(out string) []string {
+	return []string{"mailarchive", "-auto", "-out", out}
+}
+
+// thunderbirdFolderExample is where a Thunderbird local folders directory is, per OS (the same
+// profile roots -auto looks in).
+func thunderbirdFolderExample(goos string) string {
+	switch goos {
+	case "windows":
+		return `%APPDATA%\Thunderbird\Profiles\<profile>\Mail\Local Folders`
+	case "darwin":
+		return "~/Library/Thunderbird/Profiles/<profile>/Mail/Local Folders"
+	}
+	return "~/.thunderbird/<profile>/Mail/Local Folders"
+}
+
+// shellJoin renders argv for a terminal of goos, quoting only what needs it.
+func shellJoin(argv []string, goos string) string {
+	parts := make([]string, len(argv))
+	for i, a := range argv {
+		parts[i] = shellQuote(a, goos)
+	}
+	return strings.Join(parts, " ")
+}
+
+func shellQuote(s, goos string) string {
+	if s != "" && !strings.ContainsAny(s, " \t\"'$`\\&|;<>()*?[]{}!#") {
+		return s
+	}
+	if goos == "windows" {
+		return `"` + strings.ReplaceAll(s, `"`, `\"`) + `"`
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// addMailHelp is the owner-facing steps for adding new mail to the local-origin archive at out
+// (what, why, what to do; docs/ux-contract.md X-series). The GUI and the command line both read
+// the same archive folder and add only what is new.
+func addMailHelp(goos, out string) string {
+	folder := thunderbirdFolderExample(goos)
+	cmd := shellJoin(AddMailArgv("<your Thunderbird mail folder>", out), goos) // the folder is the owner's to fill in
+	auto := shellJoin(AddMailAutoArgv(out), goos)
+	return "To add new mail to it, use mailarchive-gui or the mailarchive command with this same archive folder:\n" +
+		"  - mailarchive-gui: open it, choose \"Thunderbird / mbox mail folder\" (or \"Auto-detect my mailboxes\"), pick your Thunderbird mail folder (for example " + folder + "), then at \"Select the output folder\" pick this archive folder: " + out + ". Choose Incremental when it asks for the mode: only new messages are added.\n" +
+		"  - mailarchive (a terminal): " + cmd + "\n" +
+		"    or, to take every Thunderbird store it finds: " + auto + "\n" +
+		"    (an incremental run is the default; a message already archived is not copied again)."
+}
+
+// archiveNowOff is the line shown in place of the Archive now button for a local-origin archive.
+func archiveNowOff(goos, out string) string {
+	return "Archive now is off for this archive. What: it fetches new mail from Microsoft 365, and this archive was made from local mail files. Why: MailArchive Desktop reads, searches, checks and exports it, but does not re-read your mail program. " + addMailHelp(goos, out)
+}
+
+// newMailLine is the line of the Status & health view that says where new mail comes from.
+func newMailLine(goos, out string) string {
+	return "New mail: this archive was made from local mail files, so it does not update itself from Microsoft 365. " + addMailHelp(goos, out)
+}
+
+// OfferedArchive is the archive the GUI used last (the file its wizard writes), when it is a folder
+// that exists and holds an archive: what the dashboard offers when no archive location is set.
+// Read-only; nil-safe on every error. Config.LastArchive carries it; the binary supplies it.
+func OfferedArchive() string {
+	p, err := job.LastArchiveFile()
+	if err != nil {
+		return ""
+	}
+	return validArchiveFolder(job.ReadLastArchive(p))
+}
+
+// validArchiveFolder is dir when it is an existing folder that holds a MailArchive manifest, else "".
+func validArchiveFolder(dir string) string {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return ""
+	}
+	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+		return ""
+	}
+	if fi, err := os.Stat(filepath.Join(dir, manifestName)); err != nil || fi.IsDir() {
+		return ""
+	}
+	return dir
+}
+
+// offer is the archive to offer on the empty state, "" when an archive is already set or the GUI
+// remembered none.
+func (cfg Config) offer() string {
+	if cfg.effectiveOut() != "" || cfg.LastArchive == nil {
+		return ""
+	}
+	return validArchiveFolder(cfg.LastArchive())
+}

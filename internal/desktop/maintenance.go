@@ -61,6 +61,9 @@ func jobErrorText(err error) string {
 	return err.Error()
 }
 
+// noArchiveText is the refusal of a maintenance action with no archive location: what, and the steps.
+const noArchiveText = "There is no archive chosen yet, so there is nothing to check. Type the archive's folder in Settings → Archive location (the folder that holds the .mailarchive-manifest.json file) and click Save settings, then try again."
+
 func (d *dashboard) requireOut() (string, bool) {
 	out := d.cfg.effectiveOut()
 	return out, out != ""
@@ -75,7 +78,7 @@ func (d *dashboard) verifyAction(w http.ResponseWriter, r *http.Request) {
 	}
 	out, ok := d.requireOut()
 	if !ok {
-		writeJSON(w, map[string]any{"ok": false, "error": "choose an archive location first"})
+		writeJSON(w, map[string]any{"ok": false, "error": noArchiveText})
 		return
 	}
 	err := d.runJob(func(l *log.Logger) (string, error) {
@@ -101,7 +104,7 @@ func (d *dashboard) rebuildAction(w http.ResponseWriter, r *http.Request) {
 	}
 	out, ok := d.requireOut()
 	if !ok {
-		writeJSON(w, map[string]any{"ok": false, "error": "choose an archive location first"})
+		writeJSON(w, map[string]any{"ok": false, "error": noArchiveText})
 		return
 	}
 	err := d.runJob(func(l *log.Logger) (string, error) {
@@ -138,5 +141,9 @@ func (d *dashboard) healthAction(w http.ResponseWriter, r *http.Request) {
 	in := health.Gather(out, "")
 	in.Surface = "desktop" // name the Rebuild button, not a command line
 	rep := health.Assess(in, time.Now())
-	writeJSON(w, map[string]any{"posture": rep.Posture, "summary": health.Summary(in, rep)})
+	summary := health.Summary(in, rep)
+	if d.cfg.localOnly() {
+		summary = append(summary, newMailLine(d.cfg.goos(), out))
+	}
+	writeJSON(w, map[string]any{"posture": rep.Posture, "summary": summary})
 }

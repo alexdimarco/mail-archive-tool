@@ -692,13 +692,7 @@ func anyRegularFile(paths []string) bool {
 
 // ---- health view on launch (S8) --------------------------------------------
 
-func lastArchiveFile() (string, error) {
-	d, err := job.Dir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(d, "last-archive.txt"), nil
-}
+func lastArchiveFile() (string, error) { return job.LastArchiveFile() }
 
 func rememberArchive(out string) {
 	if p, err := lastArchiveFile(); err == nil {
