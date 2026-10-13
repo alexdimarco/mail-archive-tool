@@ -269,6 +269,7 @@ type CopyPlan struct {
 
 	// What the preview reports (design §4.7 step 3 and 4).
 	EstimateBytes int64
+	AttachBytes   int64 // the part of EstimateBytes that Extract attachments adds (EW-E6 friction F8)
 	UnknownSize   int
 	OverCap       int // messages above the per-message cap: listed as failed, not counted in the estimate (E4-AO3)
 	FreeBytes     uint64
@@ -281,6 +282,16 @@ type CopyPlan struct {
 	Posture       CopyPosture
 	FSType        string
 	Warnings      []string
+}
+
+// attachRemedyBytes is what R-g2's remedy may say unticking Extract attachments would save: the part of the estimate
+// the option adds, except in a retry. A retry keeps the choices of the export it continues, and the workspace page
+// locks the box, so a remedy that says to untick it could not be done there (re-verification of EW-E6 friction F8).
+func (p *CopyPlan) attachRemedyBytes() int64 {
+	if p.Chain.RetryOf != "" {
+		return 0
+	}
+	return p.AttachBytes
 }
 
 // CopyArchiveCounts are what an archive-source preview counts about the selection: how many

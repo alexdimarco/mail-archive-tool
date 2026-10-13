@@ -1142,6 +1142,7 @@ func planResult(p *app.CopyPlan, id string, folders any, reported, found int, wa
 	out := map[string]any{
 		"previewId": id, "count": found, "reported": reported, "folders": folders,
 		"estimateBytes": p.EstimateBytes, "estimate": humanSize(p.EstimateBytes), "unknownSize": p.UnknownSize,
+		"attachBytes": p.AttachBytes, "attachEstimate": humanSize(p.AttachBytes),
 		"freeBytes": p.FreeBytes, "free": humanSize(int64(p.FreeBytes)), "reserve": p.Reserve, "reserveText": humanSize(p.Reserve), "recordBound": p.RecordBound,
 		"exportName": p.ExportName, "exportDir": filepath.Join(p.Dest, p.ExportName), "dest": p.Dest,
 		"samplePaths": p.SamplePaths, "longestPath": p.LongestPath, "over259": p.Over259,

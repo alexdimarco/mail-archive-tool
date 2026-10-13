@@ -100,14 +100,14 @@ func (w *attachWriter) zipParts(dir, stem string, stamp time.Time, atts []model.
 	// A zip is whole or it is not there, so the notes made for its parts while it was being made
 	// (a kept part's "exactly as received", an empty part's) go with it when it is discarded: they
 	// would name entries of a file that does not exist (E6Z-AO2, E6Z-AC2).
-	noteMark, noteExtra := len(w.notes.list), w.notes.extra
+	noteMark, noteExtra, noteAgain := len(w.notes.list), w.notes.extra, w.notes.again
 	abort := func() {
 		if zf != nil {
 			zf.f.Close()
 			r.fs.Remove(ceJoin(dir, zf.tmp))
 			zf = nil
 		}
-		w.notes.list, w.notes.extra = w.notes.list[:noteMark], noteExtra
+		w.notes.list, w.notes.extra, w.notes.again = w.notes.list[:noteMark], noteExtra, noteAgain
 	}
 	// failed ends the zip: nothing of it stays, one note says why and where every part is.
 	failed := func(err error) (ceFileRec, bool) {
@@ -145,7 +145,7 @@ func (w *attachWriter) zipParts(dir, stem string, stamp time.Time, atts []model.
 	if err := r.ensureDir(dir); err != nil {
 		return failed(&ceWriteError{err})
 	}
-	placedParts := 0
+	placedParts, renamedParts := 0, 0
 	// used is the most the zip can hold so far: what a part would take stored, and what an entry and
 	// its record in the directory add. The space left is judged against it, never against what
 	// deflate happened to write so far, so a part is refused or kept as loose mode would, and the
@@ -210,6 +210,9 @@ func (w *attachWriter) zipParts(dir, stem string, stamp time.Time, atts []model.
 		}
 		atts[i].ZipName = entry // the readable page names the part as the zip does (E6Z-AI1)
 		placedParts++
+		if sentName(a, entry) {
+			renamedParts++
+		}
 		used += int64(buf.Len()) + int64(buf.Len())/512 + attachZipEntryOverhead
 		if a.GapKind != "" {
 			w.gapNote(plainText(entry), a.GapKind)
@@ -246,7 +249,7 @@ func (w *attachWriter) zipParts(dir, stem string, stamp time.Time, atts []model.
 	rec := ceFileRec{Path: ceJoin(dir, placed), Role: roleDerivedAttachZip, SHA256: hex.EncodeToString(zf.hw.h.Sum(nil)), Size: zf.hw.n}
 	w.line.Files = append(w.line.Files, rec)
 	w.lineBytes += attachRecordBytes(rec.Path)
-	w.placed = placedParts
+	w.placed, w.renamed = placedParts, renamedParts
 	r.derivedReserve += derivedFileReserve(rec.Path)
 	return rec, true
 }
@@ -296,8 +299,11 @@ func (r *CopyRun) addAttachmentsZip(ctx context.Context, n int, dir, stem string
 	name := ""
 	if why != "" {
 		w.notes.add(fmt.Sprintf("the message could not be read, so its attachments were not extracted (%s); %s", why, attachAuthorityEML))
-	} else if rec, ok := w.zipParts(dir, stem, attachZipStamp(m.Received), msg.Attachments); ok {
-		name = path.Base(rec.Path) // the stem's own name, or a variant of it when another file stood there
+	} else {
+		if rec, ok := w.zipParts(dir, stem, attachZipStamp(m.Received), msg.Attachments); ok {
+			name = path.Base(rec.Path) // the stem's own name, or a variant of it when another file stood there
+		}
+		line.Att = w.count(len(msg.Attachments))
 	}
 	line.Notes = append(line.Notes, w.notes.done()...)
 	r.env.step(fmt.Sprintf("W5att:%d", n))

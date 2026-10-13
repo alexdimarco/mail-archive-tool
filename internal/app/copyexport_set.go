@@ -22,6 +22,7 @@ type chainOffer struct {
 	dropFailed    map[string]bool          // runs whose "Export failed messages again" would only repeat
 	retryable     map[string]int           // each run's retryable failures
 	exported      int                      // distinct messages exported across the set's parts
+	attachAgain   int                      // messages of the set exported without all their attachments
 	failures      map[string][]CopyFailure // each sealed run's failures that no part of the set exported
 	failuresMore  map[string]int
 }
@@ -94,13 +95,16 @@ func (e *CopyExportEnv) setOffers(chain string, set *CopySetInfo) chainOffer {
 		f  CopyFailure
 	}
 	failedOf := map[string][]failedMsg{}
+	again := 0
 	for _, p := range set.Parts {
 		if p.Gone {
 			continue
 		}
-		if sum, err := readSummary(e.recordPath(p.Run)); err != nil || sum.Sealed == nil || sum.Gone {
+		sum, err := readSummary(e.recordPath(p.Run))
+		if err != nil || sum.Sealed == nil || sum.Gone {
 			continue
 		}
+		again += sum.Attach.Again // messages exported without all their attachments: no retry of the set takes them (EW-E6 friction F1)
 		failedOf[p.Run] = nil
 		_ = walkMessages(e.recordPath(p.Run), func(pl *cePlanLine, m *ceMsgLine) error {
 			if m == nil {
@@ -116,7 +120,7 @@ func (e *CopyExportEnv) setOffers(chain string, set *CopySetInfo) chainOffer {
 		})
 	}
 	off := chainOffer{sig: sig, dropRemaining: map[string]bool{}, dropFailed: map[string]bool{}, retryable: map[string]int{}, exported: len(covered),
-		failures: map[string][]CopyFailure{}, failuresMore: map[string]int{}}
+		failures: map[string][]CopyFailure{}, failuresMore: map[string]int{}, attachAgain: again}
 	// the failures a card lists are those no part of the set exported: one source of truth with the offers
 	for run, list := range failedOf {
 		var left []CopyFailure
@@ -198,6 +202,10 @@ func (e *CopyExportEnv) applySet(info *CopyRunInfo, planned int) {
 				}
 			}
 			info.SetNote = fmt.Sprintf("All %s messages are exported, across the %d parts of this set.", commas(planned), len(info.Set.Parts))
+			if off.attachAgain > 0 { // the set must not read as whole when a message is without some of its attachments
+				info.SetNote = fmt.Sprintf("All %s messages are exported, across the %d parts of this set; %s of them without all %s attachments (see the card of the part that made %s).",
+					commas(planned), len(info.Set.Parts), commas(off.attachAgain), plural(off.attachAgain, "its", "their"), plural(off.attachAgain, "it", "them"))
+			}
 		} else {
 			info.SetNote = fmt.Sprintf("%s of %s messages are exported so far, across the %d parts of this set.", commas(off.exported), commas(planned), len(info.Set.Parts))
 		}

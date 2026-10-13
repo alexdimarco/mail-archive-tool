@@ -104,9 +104,19 @@ func (e *attachPartError) Error() string { return e.why }
 type attachNotes struct {
 	list  []string
 	extra int
+	// again is set when a note says the message's attachments should be exported again: a stop, a
+	// full disk or a failed write left some out (a zero-byte part or an unreadable one is not that).
+	again bool
 }
 
+// attachAgainTail is the words of the notes that tell the owner a message's attachments were left out
+// by something a new export of the message would not meet.
+const attachAgainTail = "export this message again"
+
 func (n *attachNotes) add(s string) {
+	if strings.Contains(s, attachAgainTail) {
+		n.again = true
+	}
 	if len(n.list) < copyAttachNotesMax {
 		n.list = append(n.list, attachNotePrefix+s)
 		return
@@ -132,6 +142,8 @@ type attachWriter struct {
 	line   *ceMsgLine
 	notes  attachNotes
 	placed int
+	// renamed is how many of the placed parts have a name other than the one the sender gave.
+	renamed int
 	// expanded is the bytes a zip's entries expanded to when they were read through before being
 	// written (expand), kept or not: what the per-message bound counts, and, against the zip's own
 	// size, what the whole zip may expand to. What is written is never more than what was read
@@ -145,6 +157,21 @@ type attachWriter struct {
 
 func newAttachWriter(r *CopyRun, ctx context.Context, dir, stem string, line *ceMsgLine, holds string) *attachWriter {
 	return &attachWriter{r: r, ctx: ctx, adir: ceJoin(dir, stem+attachDirSuffix), used: map[string]struct{}{}, next: map[string]int{}, line: line, holds: holds, from: "the message"}
+}
+
+// count is what became of the message's found attachments, for its line in the run record; nil when it
+// had none.
+func (w *attachWriter) count(found int) *ceAttCount {
+	if found == 0 {
+		return nil
+	}
+	return &ceAttCount{Found: found, Made: w.placed, Renamed: w.renamed, Again: w.notes.again}
+}
+
+// sentName reports whether a part's name on disk or in its zip is not the one the sender gave it: a
+// part the sender gave no name has none to differ from.
+func sentName(a model.Attachment, made string) bool {
+	return strings.TrimSpace(a.Filename) != "" && made != a.Filename
 }
 
 // errAttachStopped is an extraction cut short because the run was cancelled or abandoned.
@@ -305,11 +332,11 @@ func (w *attachWriter) problem(label string, err error) {
 	case errors.Is(err, errAttachEmpty):
 		w.notes.add(fmt.Sprintf("%q has no content (0 bytes), so no file was written for it; %s", label, w.holds))
 	case errors.Is(err, errAttachNoSpace):
-		w.notes.add(fmt.Sprintf("%q was not extracted: no space was left for it on the destination; free some space there and export this message again", label))
+		w.notes.add(fmt.Sprintf("%q was not extracted: no space was left for it on the destination; free some space there and export this message again; %s", label, w.holds))
 	case errors.Is(err, errAttachNoState):
-		w.notes.add(fmt.Sprintf("%q was not extracted: there was no room left on this computer's disk for MailArchive's record of this export, which lists every file it makes; free some space there and export this message again", label))
+		w.notes.add(fmt.Sprintf("%q was not extracted: there was no room left on this computer's disk for MailArchive's record of this export, which lists every file it makes; free some space there and export this message again; %s", label, w.holds))
 	case errors.As(err, &we):
-		w.notes.add(fmt.Sprintf("%q was not extracted: it could not be written (%s); check the destination and export this message again", label, leaveName(we.err)))
+		w.notes.add(fmt.Sprintf("%q was not extracted: it could not be written (%s); check the destination and export this message again; %s", label, leaveName(we.err), w.holds))
 	case errors.As(err, &pe):
 		w.notes.add(fmt.Sprintf("%q was not extracted: it could not be read from %s (%s); %s", label, w.from, pe.why, w.holds))
 	default:
@@ -379,6 +406,9 @@ func (w *attachWriter) parts(atts []model.Attachment) {
 		if err != nil {
 			w.problem(label, err)
 			continue
+		}
+		if sentName(a, path.Base(rec.Path)) {
+			w.renamed++
 		}
 		if a.GapKind != "" {
 			w.gapNote(plainText(path.Base(rec.Path)), a.GapKind)
@@ -661,6 +691,7 @@ func (r *CopyRun) addAttachments(ctx context.Context, n int, dir, stem string, m
 		w.notes.add(fmt.Sprintf("the message could not be read, so its attachments were not extracted (%s); %s", why, attachAuthorityEML))
 	} else {
 		w.parts(msg.Attachments)
+		line.Att = w.count(len(msg.Attachments))
 	}
 	w.finish()
 	r.env.step(fmt.Sprintf("W5att:%d", n))
