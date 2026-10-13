@@ -790,7 +790,7 @@ func jsBalanced(src string) error {
 // F16: with no Microsoft 365 set up, the first screen of the workspace is not a dead end for someone who was
 // handed an archive: the page's script starts on the archive source (the owner's own archive when there is one,
 // Another archive folder when not), which needs no Microsoft 365, and its line says so instead of only sending
-// them to "mailarchive setup (a separate download)". A source the person already chose is not overridden. The
+// them to the command line. A source the person already chose is not overridden. The
 // scripts are not run (there is no browser or JavaScript engine here); their structure is checked and their
 // source read *(script)*: the owner's click-through of the page (E3's OW-19) is still owed and now covers this.
 func TestWorkspacePageStartsOnTheArchiveWhenMicrosoft365IsNotSetUp(t *testing.T) {

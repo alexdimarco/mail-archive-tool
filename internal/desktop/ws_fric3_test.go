@@ -15,8 +15,10 @@ import (
 // F21: R-k names the other window ("another window started a new preview") besides the age
 // and the change; the History card of a running export says it is writing, not "fingerprint
 // not recorded at export time" and "N not attempted". F18: after Start succeeds the page does
-// not ask "Leave site?". F16: R-a says the command-line tool is a separate download, R-a2
-// opens with a plain sentence for someone who does not manage the tenant. The positive twin
+// not ask "Leave site?". F16: R-a and the workspace's "not set up" line now point to the
+// in-app Microsoft 365 connection form (MA-549), with `mailarchive setup` only the CLI
+// alternative; R-a2 opens with a plain sentence for someone who does not manage the tenant.
+// The positive twin
 // first: Start of a live preview works.
 func TestFricSmallWordingAndTheLeaveSitePrompt(t *testing.T) {
 	e := newWsEnv(t)
@@ -53,12 +55,12 @@ func TestFricSmallWordingAndTheLeaveSitePrompt(t *testing.T) {
 
 	// F16
 	a := refusalA()
-	assure.Refused(t, a.Status, a.Text, assure.Code(statusRefused), assure.Names("isn't set up yet", "tenant and application ID", "mailarchive setup", "separate download"))
+	assure.Refused(t, a.Status, a.Text, assure.Code(statusRefused), assure.Names("isn't set up yet", "tenant and application ID", "Microsoft 365 connection", "mailarchive setup"))
 	a2 := refusalA2()
 	assure.Refused(t, a2.Status, a2.Text, assure.Code(statusRefused),
 		assure.Names("This installation can't sign in as you", "app-only access", "device sign-in", "Allow public client flows", "Delegated Mail.Read", "Whoever manages"))
-	if !strings.Contains(workspaceJS, "separate download") {
-		t.Error("the workspace's own 'not set up' line still sends the Desktop owner to a command they do not have")
+	if !strings.Contains(workspaceJS, "Microsoft 365 connection") || strings.Contains(workspaceJS, "separate download") {
+		t.Error("the workspace's 'not set up' line must point the Desktop owner to the in-app Microsoft 365 connection form, not a command-line download they do not have")
 	}
 }
 

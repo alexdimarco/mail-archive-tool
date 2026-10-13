@@ -26,7 +26,7 @@ import (
 func HeadlessCapture(cfg Config, logw io.Writer) error {
 	c := cfg.load()
 	if c == nil || strings.TrimSpace(c.Tenant) == "" || strings.TrimSpace(c.ClientID) == "" {
-		return errors.New("not configured — run `mailarchive setup` or open MailArchive Desktop and sign in first")
+		return errors.New("not configured — set up Microsoft 365 on MailArchive Desktop's Microsoft 365 connection card (or run `mailarchive setup`), then sign in")
 	}
 	out := cfg.effectiveOut()
 	if out == "" {

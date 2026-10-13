@@ -43,7 +43,7 @@ const statusRefused = http.StatusUnprocessableEntity
 func refusedWith(id, text string) refusal { return refusal{ID: id, Text: text, Status: statusRefused} }
 
 func refusalA() refusal {
-	return refusedWith("R-a", "Microsoft 365 isn't set up yet — the workspace needs your tenant and application ID to read your mailbox. They are saved by MailArchive's command-line tool, a separate download from MailArchive Desktop: run `mailarchive setup` there (or ask whoever installed MailArchive for you to), then come back.")
+	return refusedWith("R-a", "Microsoft 365 isn't set up yet — the workspace needs your tenant and application ID to read your mailbox. Set it up on the Overview's Microsoft 365 connection card (or run `mailarchive setup` from the command line), then come back.")
 }
 
 func refusalA2() refusal {

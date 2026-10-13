@@ -47,7 +47,7 @@ deployment) · operator inheriting the box cold. **Cells walked:** 15.
 | FR4 | II (FIXED, by design) | If configure were gated behind the Extraction-workspace deployment switch, an admin disabling *export* would also strand M365 setup that *capture* needs | Fixed: `/api/m365/configure` is core/always-on; `TestDeploymentSwitchHidesTheWorkspace` asserts it survives the switch while the 19 workspace routes 404. **Operator may veto** this scope call (then it becomes workspace-gated + the form hides when off). |
 | FR5 | I | Device mode still needs the one-time device-code sign-in at first capture | Documented in-flow: the Save note says "Click Archive now (or Sign in) to connect with a Microsoft device code". Config ≠ sign-in, same as the wizard (its FR3). |
 | FR6 | I | Save and Connect are two steps | Inherent (configure then authenticate); the Save note signposts the next step. |
-| FR7 | **III (BACKLOG — owner copy)** | The desktop's "not configured" refusals still point to the command line now that the form exists: `capture.go` capture refusal ("run `mailarchive setup`"), `refusals.go` **R-a** and `pages_scripts.go` source-picker ("saved by the command-line tool, a separate download … run `mailarchive setup`") | **Build before ship.** Proposed: point these at the Overview's Microsoft 365 connection form first, keeping the CLI as the secondary path, e.g. R-a → "Set up Microsoft 365 on the dashboard's **Microsoft 365 connection** card (or run `mailarchive setup` from the command line), then come back." Refusal copy is owner-authored (§7.6 / X2), so the exact wording is the owner's; these strings are test-covered, so the change ships prove-fail → prove-pass. |
+| FR7 | III (FIXED) | The desktop's "not configured" refusals still pointed to the command line after the form landed: `capture.go` capture refusal, `refusals.go` **R-a** and `pages_scripts.go` source-picker ("a separate download … run `mailarchive setup`") | Fixed (owner-approved wording): the three now point at the Overview's **Microsoft 365 connection** card first, with `mailarchive setup` only as the command-line alternative; F16 (`TestFricSmallWordingAndTheLeaveSitePrompt`) updated to the new invariant, prove-fail → prove-pass. |
 | FR8 | III (BACKLOG, low) | No immediate validity check from the form — a wrong tenant/client surfaces only at the next Sign in / Archive now (a Graph error) | Nicety: an inline "Save & connect" or a validity probe would shorten the config → error loop. Low priority. |
 | FR9 | I | On Linux/macOS the secret is a `0600` file (plaintext at rest), not an OS vault | Same posture as the CLI wizard (its FR5); the Windows deployment — the target — uses Credential Manager. |
 
@@ -59,12 +59,10 @@ point of entry (FR1–FR3), and the always-on scope call (FR4) keeps setup reach
 the export workspace is off. The refusals the feature does raise are legible and name
 their remedy (cells 6, 7, 15).
 
-Two items stand between this and **shippable without an asterisk**, neither a defect in
-the form itself:
+FR7 is now fixed (the "not configured" refusals point at the in-app form). **One item**
+remains before **shippable without an asterisk**, and it is not a defect in the feature:
 
-1. **FR7 (Type III, build before ship):** three "not configured" refusals still steer the
-   user to the command line the feature was meant to retire. They should be reworded to
-   point at the form; the copy is the owner's to author.
-2. **The live Windows walk is pending** (the MA-377 install-drill family): a clean-machine
-   configure → authenticate → first archive with no PowerShell. This review is a
-   code-walk and does not certify that drill — flagged, not implied.
+1. **The live Windows walk is pending** (the MA-377 install-drill family): a clean-machine
+   configure → authenticate → first archive with no PowerShell, plus the real MSI
+   install/shortcut check. This review is a code-walk and does not certify that drill —
+   flagged, not implied.
