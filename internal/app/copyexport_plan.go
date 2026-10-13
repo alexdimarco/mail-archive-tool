@@ -153,7 +153,7 @@ func (e *CopyExportEnv) PlanCopyExport(in CopyPlanInput) (*CopyPlan, error) {
 		// The sentence Start would refuse with, raised while the owner can still choose
 		// another destination (friction F17).
 		if need := p.EstimateBytes + p.Reserve; int64(free) < need {
-			p.Warnings = append(p.Warnings, refusalG2For(dest, free, need, p.AttachBytes).Message)
+			p.Warnings = append(p.Warnings, refusalG2For(dest, free, need, p.attachRemedyBytes()).Message)
 		}
 	}
 	if why := destNotWritable(dest); why != "" {
