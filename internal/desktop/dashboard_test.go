@@ -26,17 +26,25 @@ func getOverview(t *testing.T, cfg Config) string {
 // 365 connection (or the not-configured prompt), and an OS-aware Security & privacy
 // panel whose credential-vault line matches this OS.
 func TestOverviewContent(t *testing.T) {
-	// No config → the four cards, the setup prompt, the security panel.
+	// No config → the four cards, the in-app Microsoft 365 config form, the security panel.
 	body := getOverview(t, Config{ConfigPath: filepath.Join(t.TempDir(), "none.json")})
 	for _, want := range []string{
 		"Archive engine", "Ready", "Microsoft 365", "Capture", "Idle", "Weekly backup",
-		"Not configured", "mailarchive setup",
+		"Not configured", // the status card
+		// The Microsoft 365 connection offers an in-app config form (MA-549), not a pointer
+		// to the `mailarchive setup` command line (owner report 2026-10-13).
+		`id="m365Tenant"`, `id="m365ClientId"`, "Directory (tenant) ID", "Save configuration",
 		"Security &amp; privacy", "Read-only to your mailbox", "No third-party servers",
 		vaultPhrase(),
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("overview (no config) missing %q", want)
 		}
+	}
+	// The defect: a normal (non-local-origin) archive must not send the user to the
+	// command line — the in-app form replaces "run mailarchive setup".
+	if strings.Contains(body, "mailarchive setup") {
+		t.Errorf("no-config overview should offer the in-app form, not point to `mailarchive setup`")
 	}
 
 	// Device config, no saved token → "Sign-in needed" + the tenant/client id.

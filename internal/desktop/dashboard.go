@@ -262,6 +262,10 @@ func (d *dashboard) router() localweb.Router {
 		w.Write([]byte(dashboardJS))
 	})
 	mux.HandleFunc("/api/clear-signin", d.clearSignin)
+	// Microsoft 365 configuration is needed with or without the Extraction workspace, so it
+	// is registered here (not in registerWorkspace). d.api gives it POST-only + the CSRF /
+	// Origin / Host guard + body cap + recover, like the workspace endpoints.
+	mux.HandleFunc("/api/m365/configure", d.api(d.configureM365))
 	mux.HandleFunc("/api/capture", d.capture)
 	mux.HandleFunc("/api/activity", d.activity)
 	mux.HandleFunc("/api/settings", d.saveSettings)
@@ -560,32 +564,34 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 	upn, signedIn := cfg.signInState()
 	s := cfg.settings()
 	data := struct {
-		Export         bool // the Extraction workspace is on (not turned off by the deployment switch, MA-526)
-		Epoch          string
-		CSRF           string
-		Cards          []card
-		Configured     bool
-		SignedIn       bool
-		UPN            string
-		Tenant         string
-		ClientID       string
-		Auth           string
-		Vault          string
-		OutDir         string
-		ReaderURL      string
-		KeepRaw        bool
-		IncludeDeleted bool
-		IncludeJunk    bool
-		Interval       string
-		WeeklyTime     string
-		Account        string
-		SessionsLine   string
-		FormerNotice   string
-		ResidualOS     string // "macOS" or "Linux": where another account can read a just-opened link's argv
-		KindLine       string // what the archive was made from, in plain words ("" when unknown)
-		LocalOnly      bool   // local mail files only and no Microsoft 365 setup: Archive now and the weekly backup are off
-		ArchiveNowOff  string // why, and the steps that add new mail instead
-		Offer          string // the archive the GUI used last, offered when none is set
+		Export           bool // the Extraction workspace is on (not turned off by the deployment switch, MA-526)
+		Epoch            string
+		CSRF             string
+		Cards            []card
+		Configured       bool
+		SignedIn         bool
+		UPN              string
+		Tenant           string
+		ClientID         string
+		Auth             string
+		AuthRaw          string // raw "device"|"app" for the config form radios (Auth is the display label)
+		SecretConfigured bool   // an app-only client secret is already stored (the form says so, never its value)
+		Vault            string
+		OutDir           string
+		ReaderURL        string
+		KeepRaw          bool
+		IncludeDeleted   bool
+		IncludeJunk      bool
+		Interval         string
+		WeeklyTime       string
+		Account          string
+		SessionsLine     string
+		FormerNotice     string
+		ResidualOS       string // "macOS" or "Linux": where another account can read a just-opened link's argv
+		KindLine         string // what the archive was made from, in plain words ("" when unknown)
+		LocalOnly        bool   // local mail files only and no Microsoft 365 setup: Archive now and the weekly backup are off
+		ArchiveNowOff    string // why, and the steps that add new mail instead
+		Offer            string // the archive the GUI used last, offered when none is set
 	}{Export: !cfg.WorkspaceOff, Epoch: epoch, CSRF: csrf, Cards: cfg.cards(), Vault: vaultPhrase(), OutDir: cfg.effectiveOut(), ReaderURL: cfg.ReaderURL, SignedIn: signedIn, UPN: upn,
 		KeepRaw: s.KeepRaw, IncludeDeleted: s.IncludeDeleted, IncludeJunk: s.IncludeJunk,
 		Interval: orElse(s.Interval, "weekly"), WeeklyTime: orElse(s.WeeklyTime, "03:00"),
@@ -598,6 +604,17 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 	if c != nil {
 		data.Configured = strings.TrimSpace(c.Tenant) != ""
 		data.Tenant, data.ClientID, data.Auth = c.Tenant, c.ClientID, authLabel(c.Auth)
+		data.AuthRaw = strings.ToLower(strings.TrimSpace(c.Auth))
+		if data.AuthRaw != "app" {
+			data.AuthRaw = "device"
+		}
+		// Whether a secret is already stored — shown so an update need not retype it, never
+		// the value itself (W-C3). Mirrors the setup wizard's prefill (setup_page.go).
+		if cfg.Store != nil && data.AuthRaw == "app" && c.Tenant != "" && c.ClientID != "" {
+			if _, err := cfg.Store.Get(graphconfig.AccountKey(c.Tenant, c.ClientID)); err == nil {
+				data.SecretConfigured = true
+			}
+		}
 	}
 	var b strings.Builder
 	if err := overviewTmpl.Execute(&b, data); err != nil {
@@ -731,8 +748,32 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
           <div style="margin-top:8px"><button class="btn" id="signInKeep" type="button">Keep</button> <button class="btn secondary" id="signInOut" type="button">Sign out</button></div></div>
         <div class="card-sub" style="margin:10px 0 0" id="signInNotice"></div>
       </div><div class="note" id="banner" hidden></div>{{end}}
+      {{if not .LocalOnly}}<div style="margin-top:14px"><button class="btn secondary" id="editM365" type="button">Edit configuration</button></div>{{end}}
       {{else}}
+      {{if .LocalOnly}}
       <div class="row"><div class="k">Status</div><div class="v warn">Not configured — run <span class="mono">mailarchive setup</span> to add your tenant and application ID.</div></div>
+      {{else}}
+      <p class="card-sub">Connect your Microsoft 365 account — enter the values from your Entra app registration below, then <b>Save configuration</b>. Your data stays on this PC; any secret is kept in {{.Vault}} and never uploaded, and you never need the command line.</p>
+      {{end}}
+      {{end}}
+      {{if not .LocalOnly}}
+      <div id="m365Form"{{if .Configured}} hidden{{end}}>
+        <label for="m365Tenant">Directory (tenant) ID</label>
+        <input id="m365Tenant" value="{{.Tenant}}" placeholder="contoso.onmicrosoft.com or a GUID" autocomplete="off" spellcheck="false">
+        <label for="m365ClientId">Application (client) ID</label>
+        <input id="m365ClientId" value="{{.ClientID}}" placeholder="GUID" autocomplete="off" spellcheck="false">
+        <p class="card-sub" style="margin-top:4px">App registration &rarr; Overview &rarr; Application (client) ID. <b>Not an Object ID</b> — the Object IDs beside it are the wrong value.</p>
+        <label>Authentication</label>
+        <label class="checkline"><input type="radio" name="m365auth" value="device"{{if ne .AuthRaw "app"}} checked{{end}}> Device (per-user): sign in as yourself, no secret, your own mailbox</label>
+        <label class="checkline"><input type="radio" name="m365auth" value="app"{{if eq .AuthRaw "app"}} checked{{end}}> App-only (admin): a client secret, admin-consented mailboxes</label>
+        <div id="m365SecretRow"{{if ne .AuthRaw "app"}} hidden{{end}}>
+          <label for="m365Secret">Client secret</label>
+          <input id="m365Secret" type="password" placeholder="{{if .SecretConfigured}}stored — leave blank to keep{{else}}paste the secret value{{end}}" autocomplete="off">
+          <p class="card-sub" style="margin-top:4px">Stored in {{.Vault}}, never on the command line and never uploaded.{{if .SecretConfigured}} A secret is already stored.{{end}}</p>
+        </div>
+        <div style="margin-top:14px"><button class="btn" id="saveM365" type="button">Save configuration</button>{{if .Configured}} <button class="btn secondary" id="cancelM365" type="button">Cancel</button>{{end}}</div>
+        <div class="note" id="m365Note" hidden></div>
+      </div>
       {{end}}
       {{if .OutDir}}<div class="row"><div class="k">Archive location</div><div class="v mono">{{.OutDir}}</div></div>{{end}}
       <div class="note" id="note" hidden></div>
@@ -958,4 +999,23 @@ function job(path){const r=$('captureResult');if(r)r.hidden=true;
 const vb=$('verifyBtn'),rb=$('rebuildBtn');
 if(vb)vb.addEventListener('click',()=>job('api/verify'));
 if(rb)rb.addEventListener('click',()=>{if(confirm('Rebuild the search index from the archive files? This can take a while for a large archive.'))job('api/rebuild');});
+
+// Microsoft 365 configuration: the config form's auth toggle, Save, and Edit/Cancel.
+function m365AuthSel(){const a=document.querySelector('input[name=m365auth]:checked');const row=$('m365SecretRow');if(row)row.hidden=!(a&&a.value==='app');}
+for(const r of document.querySelectorAll('input[name=m365auth]'))r.addEventListener('change',m365AuthSel);
+m365AuthSel();
+const editM365=$('editM365'),cancelM365=$('cancelM365'),m365Form=$('m365Form');
+if(editM365)editM365.addEventListener('click',()=>{if(m365Form)m365Form.hidden=false;editM365.hidden=true;});
+if(cancelM365)cancelM365.addEventListener('click',()=>{if(m365Form)m365Form.hidden=true;if(editM365)editM365.hidden=false;const n=$('m365Note');if(n)n.hidden=true;});
+const saveM365=$('saveM365');
+if(saveM365)saveM365.addEventListener('click',async()=>{
+  const n=$('m365Note'),a=document.querySelector('input[name=m365auth]:checked');
+  const body={tenant:$('m365Tenant').value,clientId:$('m365ClientId').value,auth:a?a.value:'device',secret:$('m365Secret')?$('m365Secret').value:''};
+  saveM365.disabled=true;
+  try{const d=await(await fetch('api/m365/configure',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(body)})).json();
+    if(d.ok){if(n){n.hidden=false;n.textContent='Saved. '+(d.auth==='device'?'Click Archive now (or Sign in) to connect with a Microsoft device code.':(d.configured?'Secret stored.':'No secret stored.'));}
+      if($('m365Secret'))$('m365Secret').value='';setTimeout(()=>location.reload(),900);}
+    else{if(n){n.hidden=false;n.textContent=d.error||'Could not save.';}saveM365.disabled=false;}
+  }catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}saveM365.disabled=false;}
+});
 `

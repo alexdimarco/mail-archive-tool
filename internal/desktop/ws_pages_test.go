@@ -60,8 +60,10 @@ func TestWorkspaceRoutesAreGuardedPosts(t *testing.T) {
 	dialogs := 0
 	e.d.pick = func(ctx context.Context, title string) (string, error) { dialogs++; return e.dest, nil }
 	routes := workspaceRoutes(t, e.h)
-	if len(routes) != 19 {
-		t.Fatalf("the workspace registers %d routes, want 19: %v", len(routes), routes)
+	// 19 Extraction-workspace routes + the always-on /api/m365/configure (core M365 setup);
+	// every one is verified as a guarded POST below.
+	if len(routes) != 20 {
+		t.Fatalf("the workspace registers %d routes, want 20: %v", len(routes), routes)
 	}
 	body := `{"parent":"` + strings.ReplaceAll(e.dest, `\`, `\\`) + `","name":"made","runId":"x","folder":"F-INBOX","previewId":"x","action":"gone","path":"/"}`
 	do := func(method, route string, mut func(*http.Request), payload string) *httptest.ResponseRecorder {
@@ -372,12 +374,22 @@ func TestDeploymentSwitchHidesTheWorkspace(t *testing.T) {
 		t.Errorf("the switch left %d routes registered, want fewer than %d", len(rs), len(localweb.RoutesOf(on.h)))
 	}
 	for _, route := range routes {
+		// Microsoft 365 configuration is core (Archive now needs it), not part of the
+		// Extraction workspace, so it survives the switch — asserted separately below.
+		if route == "/api/m365/configure" {
+			continue
+		}
 		if rec := off.postRaw(route, "{}"); rec.Code != http.StatusNotFound {
 			t.Errorf("POST %s with the switch off: %d, want 404", route, rec.Code)
 		}
 		if rec := off.get(route); rec.Code != http.StatusNotFound {
 			t.Errorf("GET %s with the switch off: %d, want 404", route, rec.Code)
 		}
+	}
+	// M365 configuration stays registered with the switch off (GET is 405, a guarded POST),
+	// so a user can still set up Microsoft 365 for Archive now without the command line.
+	if rec := off.get("/api/m365/configure"); rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("M365 configure must stay available with the switch off (GET 405), got %d", rec.Code)
 	}
 	for _, p := range []string{"/workspace", "/exports", "/workspace.js", "/exports.js", "/signin.js"} {
 		if rec := off.get(p); rec.Code != http.StatusNotFound {

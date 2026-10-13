@@ -146,8 +146,9 @@ func TestSidebarNavEveryEntryWorks(t *testing.T) {
 }
 
 // optionalJSIDs are ids dashboard.js looks up only when present (it checks the
-// lookup before use): the clear-sign-in button appears only when signed in.
-var optionalJSIDs = map[string]bool{"clearSignin": true}
+// lookup before use): the clear-sign-in button appears only when signed in, and the
+// Microsoft 365 Edit/Cancel buttons only when a configuration already exists.
+var optionalJSIDs = map[string]bool{"clearSignin": true, "editM365": true, "cancelM365": true}
 
 // jsBoundIDs lists every $('id') lookup in dashboard.js.
 func jsBoundIDs() []string {
