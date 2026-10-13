@@ -69,9 +69,15 @@
           <Directory Id="DocsDir" Name="docs" />
         </Directory>
       </Directory>
-      <Directory Id="CommonDesktopFolder" />
-      <Directory Id="CommonStartupFolder" />
-      <Directory Id="CommonProgramsFolder">
+      <!-- All-users shortcut destinations. DesktopFolder, StartupFolder and
+           ProgramMenuFolder are standard Windows Installer system folders; a perMachine
+           install (ALLUSERS=1) resolves them to the all-users Desktop, Startup and Programs
+           locations. (Earlier builds used CommonDesktopFolder and similar shell CSIDL
+           names, which are not installer properties, so the shortcuts were written to the
+           target-volume root instead of where the user can see them.) -->
+      <Directory Id="DesktopFolder" Name="Desktop" />
+      <Directory Id="StartupFolder" Name="Startup" />
+      <Directory Id="ProgramMenuFolder" Name="Programs">
         <Directory Id="ApplicationProgramsFolder" Name="MailArchive Desktop" />
       </Directory>
     </Directory>
@@ -103,8 +109,9 @@
       <!-- Deployment metadata + payload manifest + AGPL source/notices, flat in the
            install dir. DEPLOYMENT.txt / SOURCE-NOTICE.txt / THIRD-PARTY-NOTICES.md /
            managed-install.marker are staged by Build-MSI.ps1; READ ME.txt ships in
-           the payload zip. -->
-      <Component Id="CmpDeploymentDocs" Guid="*" Win64="yes">
+           the payload zip. Explicit, stable GUID: a multi-file component with no versioned
+           keypath cannot use an auto GUID (WiX LGHT0367). -->
+      <Component Id="CmpDeploymentDocs" Guid="A02C9F1E-19B8-4E17-B6C1-8F6410E7A224" Win64="yes">
         <File Id="FilDeployment" Source="$(var.SourceDir)\DEPLOYMENT.txt" KeyPath="yes" />
         <File Id="FilReadme" Source="$(var.SourceDir)\READ ME.txt" />
         <File Id="FilPayloadHash" Source="$(var.SourceDir)\PAYLOAD-SHA256.txt" />
@@ -128,7 +135,7 @@
              reader on free ports (the app's own link opens them) + browser-open. -->
         <Shortcut
             Id="DesktopShortcut"
-            Directory="CommonDesktopFolder"
+            Directory="DesktopFolder"
             Name="MailArchive Desktop"
             Description="Open MailArchive Desktop"
             Target="[INSTALLFOLDER]mailarchive-desktop.exe"
@@ -143,7 +150,7 @@
              it has proved itself — and has it open the browser (MA-281, MA-376). -->
         <Shortcut
             Id="StartupShortcut"
-            Directory="CommonStartupFolder"
+            Directory="StartupFolder"
             Name="MailArchive Desktop"
             Description="Start MailArchive Desktop after Windows sign-in"
             Target="[INSTALLFOLDER]mailarchive-desktop.exe"
@@ -192,7 +199,9 @@
     </DirectoryRef>
 
     <DirectoryRef Id="DocsDir">
-      <Component Id="CmpUserDocs" Guid="*" Win64="yes">
+      <!-- Explicit, stable GUID (same LGHT0367 rule as CmpDeploymentDocs): this is a
+           multi-file component and the docs are unversioned. -->
+      <Component Id="CmpUserDocs" Guid="B8D11E63-6C74-4AF7-AE62-42D1079C803B" Win64="yes">
         <File Id="FilLicense" Source="$(var.SourceDir)\docs\LICENSE.txt" KeyPath="yes" />
         <File Id="FilReleaseNotes" Source="$(var.SourceDir)\docs\release-notes.md" />
         <File Id="FilGoback" Source="$(var.SourceDir)\docs\goback.md" />

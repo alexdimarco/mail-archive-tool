@@ -47,6 +47,11 @@ func TestPackagingFilesMatchTheNewLaunch(t *testing.T) {
 	}
 	var closeApp map[string]string
 	shortcuts := map[string]map[string]string{}
+	dirParent := map[string]string{} // Directory Id -> parent Directory Id ("" at the root)
+	compFiles := map[string]int{}    // Component Id -> number of <File> children
+	compGuid := map[string]string{}  // Component Id -> Guid attribute
+	var dirStack []string
+	curComp := ""
 	dec := xml.NewDecoder(strings.NewReader(wxs))
 	for {
 		tok, err := dec.Token()
@@ -54,23 +59,49 @@ func TestPackagingFilesMatchTheNewLaunch(t *testing.T) {
 			break
 		}
 		if err != nil {
+			// A malformed comment also fails here — Go's decoder rejects '--' inside a
+			// comment body, the same sequence candle (MSXML) rejects as CNDL0104
+			// (remediation report, Issue 2).
 			t.Fatalf("Product.wxs is not well-formed XML: %v", err)
 		}
-		se, ok := tok.(xml.StartElement)
-		if !ok {
-			continue
-		}
-		attrs := map[string]string{}
-		for _, a := range se.Attr {
-			attrs[a.Name.Local] = a.Value
-		}
-		switch se.Name.Local {
-		case "CloseApplication":
-			if se.Name.Space == "http://schemas.microsoft.com/wix/UtilExtension" {
-				closeApp = attrs
+		switch el := tok.(type) {
+		case xml.StartElement:
+			attrs := map[string]string{}
+			for _, a := range el.Attr {
+				attrs[a.Name.Local] = a.Value
 			}
-		case "Shortcut":
-			shortcuts[attrs["Id"]] = attrs
+			switch el.Name.Local {
+			case "CloseApplication":
+				if el.Name.Space == "http://schemas.microsoft.com/wix/UtilExtension" {
+					closeApp = attrs
+				}
+			case "Shortcut":
+				shortcuts[attrs["Id"]] = attrs
+			case "Directory":
+				parent := ""
+				if n := len(dirStack); n > 0 {
+					parent = dirStack[n-1]
+				}
+				dirParent[attrs["Id"]] = parent
+				dirStack = append(dirStack, attrs["Id"])
+			case "Component":
+				curComp = attrs["Id"]
+				compGuid[curComp] = attrs["Guid"]
+				compFiles[curComp] = 0
+			case "File":
+				if curComp != "" {
+					compFiles[curComp]++
+				}
+			}
+		case xml.EndElement:
+			switch el.Name.Local {
+			case "Directory":
+				if n := len(dirStack); n > 0 {
+					dirStack = dirStack[:n-1]
+				}
+			case "Component":
+				curComp = ""
+			}
 		}
 	}
 	if closeApp == nil || closeApp["Target"] != "mailarchive-desktop.exe" || closeApp["TerminateProcess"] == "" {
@@ -83,10 +114,54 @@ func TestPackagingFilesMatchTheNewLaunch(t *testing.T) {
 		t.Errorf("the Startup shortcut lost -no-browser: %v", shortcuts["StartupShortcut"])
 	}
 
+	// Shortcuts must live in real Windows Installer system folders. CommonDesktopFolder,
+	// CommonProgramsFolder and CommonStartupFolder are shell CSIDL names, NOT installer
+	// directory properties, so the installer leaves them empty and the shortcut is created
+	// at the target-volume root, invisible to the user. A perMachine install (ALLUSERS=1)
+	// resolves the standard ids to the all-users Desktop, Programs and Startup locations.
+	for _, bad := range []string{"CommonDesktopFolder", "CommonProgramsFolder", "CommonStartupFolder"} {
+		if _, ok := dirParent[bad]; ok {
+			t.Errorf("Product.wxs declares directory %q, not an MSI system-folder property; use DesktopFolder/ProgramMenuFolder/StartupFolder", bad)
+		}
+	}
+	sysFolder := map[string]bool{"DesktopFolder": true, "ProgramMenuFolder": true, "StartMenuFolder": true, "StartupFolder": true}
+	inSysFolder := func(dir string) bool {
+		for seen := map[string]bool{}; dir != "" && !seen[dir]; dir = dirParent[dir] {
+			if sysFolder[dir] {
+				return true
+			}
+			seen[dir] = true
+		}
+		return false
+	}
+	for id, s := range shortcuts {
+		if !inSysFolder(s["Directory"]) {
+			t.Errorf("shortcut %q is in directory %q, which does not resolve to an MSI system folder (DesktopFolder/ProgramMenuFolder/StartupFolder); it would be created at the target-volume root", id, s["Directory"])
+		}
+	}
+	// A component with more than one file cannot use an auto GUID ("*") unless a versioned
+	// file is its keypath (WiX LGHT0367); the docs components are unversioned and so need an
+	// explicit, stable GUID (remediation report, Issue 4).
+	for id, n := range compFiles {
+		if n > 1 && compGuid[id] == "*" {
+			t.Errorf("component %q has %d files with Guid=\"*\"; a multi-file unversioned component needs an explicit GUID (LGHT0367)", id, n)
+		}
+	}
+
 	// Build-MSI.ps1: both WiX tools get the Util extension (CloseApplication needs it).
 	build := packagingFile(t, "Build-MSI.ps1")
 	if strings.Count(build, "-ext WixUtilExtension") < 2 {
 		t.Errorf("Build-MSI.ps1 must pass -ext WixUtilExtension to candle and to light")
+	}
+	// Null-safe WiX discovery (remediation report, Issue 1): under Set-StrictMode -Version
+	// Latest, reading .Source off an absent Get-Command result throws before the fallback
+	// download, so the command must be null-checked first.
+	if strings.Contains(build, ").Source") {
+		t.Errorf("Build-MSI.ps1 reads .Source off a Get-Command result directly; under StrictMode that throws when WiX is absent")
+	}
+	// The product version reaches candle (remediation report, Issue 3).
+	if !strings.Contains(build, "-dProductVersion=$Version") {
+		t.Errorf("Build-MSI.ps1 must pass -dProductVersion=$Version to candle")
 	}
 
 	// The runbook and the shipped texts: no fixed address to open; verify by the shortcut.
