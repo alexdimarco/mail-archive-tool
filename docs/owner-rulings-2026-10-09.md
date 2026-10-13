@@ -1721,6 +1721,23 @@ The owner asked whether a schedule can start Thunderbird, let it sync and quit i
 building". Opt-in per schedule, default OFF. Design first (`wip/tb-presync-design`, `docs/design-thunderbird-presync.md`),
 then the pre-code design review, then slices with the usual gates; nothing is built yet.
 
+### 13.42 "Sync Thunderbird before archiving": design reviewed and merged (2026-10-13)
+
+`docs/design-thunderbird-presync.md` (revision 2) and `docs/review-thunderbird-presync-predesign.md` are merged.
+Verdict **APPROVED WITH CONDITIONS, macOS v1 only** (slices TP0..TP5): 24 findings (10 major, 14 minor), conditions
+PC1..PC22 folded; the reviewer ran finder, skeptic and rescue as three passes itself, so a second reader is
+recommended before TP3. The design is **not built and not lab-validated**. **Viability depends on a macOS fact only
+the owner's Mac can settle:** whether a scheduler-started program (a LaunchAgent) can ask Thunderbird to quit
+(lab items L-M8, L-M9; the macOS Automation permission is per program and a Terminal test does not cover the
+scheduled job). If there is no quit path, Q16: do not ship the scheduled form (manual run only, or drop it).
+Recommended next step: run the lab script (design §9.4, lab rows MA-573..MA-577) on the owner's Mac before building
+past TP0..TP2. **Open owner questions** (each with a recommended default in design §13): Q16 (above), Q2 (owner at
+the computer if idle under 2 minutes: do not start or quit), Q4 (leftover Thunderbird: announce only in v1), Q17
+(Thunderbird's on-quit actions, such as emptying Trash, run before the archive reads), plus the Q1, Q3, Q5..Q15
+defaults. Operator item OPEN-X1: three designs name the per-user state directory root differently; reconcile
+before TP6. MA ids were re-allocated to MA-549..MA-579 (next free is then MA-580; the catalog does not carry them
+until the slices land).
+
 ### 13.7 Escalations from LC-C1's adversarial pass (merged 2026-10-10)
 
 None blocks anything: each has a skip encoder or a safe interim in force.
