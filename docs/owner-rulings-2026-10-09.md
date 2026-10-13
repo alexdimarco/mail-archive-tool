@@ -1667,6 +1667,30 @@ test margin"). `docs/trying-the-extraction-workspace.md` now describes the optio
 E6: the friction review of the revealed option, a third look at the zip writer's whole-zip bound in loose mode
 (the loose-mode zip extraction), and the owner decisions ESC-E6-AO5, AO10, AO11, ESC-E6Z-AO3, ESC-E6Z-AO4.**
 
+### 13.39 EW-E6 friction review merged (2026-10-12), delegated-judgement
+
+Branch `wip/ew-e6-fric` (report `docs/review-extraction-workspace-e6-friction.md`). 22 cells walked: 15 yes,
+6 partial, 1 no at the walk; 3 high-friction. Eight groups of legibility fixes built with prove-fail: the export
+card says what became of the attachments and who lost some; activity cards say zipped or loose; the zip README
+counts each message's attachments and says names may change and how to open an archive's own zip on macOS; notes
+end the same way in both modes; the readable page points at the export's own files and marks what is not in
+the zip; the preview and the full-disk refusal say what the option adds and how to drop it; the radios say when
+they apply and are fixed on a retry. Clean clone: full suite green, vet3 clean.
+
+**Verdict stays HIGH_FRICTION_NOT_SHIPPABLE**, chiefly because the browser click-through (OW-19/OW-20) is still
+owed (the page script was read, not run), plus these owner decisions for the final batch:
+- **F1 (option a):** a message stopped during its attachments (Cancel, disk full) is counted exported with no
+  zip, and "Export the remaining messages" skips it. The wording now says so; making it retryable edits
+  `TestZipModeChecksFreeSpaceAndObservesCancelAndAbandon` and `TestCancelAndAbandonAreSeenInsideAMessagesExtraction`
+  (they assert the cut message counts exported). Recommended: yes, make it retryable.
+- **F2 root:** an archive's own zip (copied byte-exact, MA-534) is written with a DOS host byte, so macOS's unzip
+  stops on non-ASCII names (exit 50; ditto and Python read all entries). The README says how to open it.
+  Recommended: leave the byte-exact copy (it is the archive's own file) and keep the README words.
+- **F6 loose half = ESC-E6Z-AO4**, **F13/F4 remaining sentences** (exact README sentences pinned by two existing
+  assertions), **F7** per-name manifest list (would grow the run-record line past its reserved bound; recommended:
+  no), tighter size estimate (design 4.7's 0.8 factor). F14: an inline image `name=logo.png` is extracted as
+  `logo@x` without an extension in both modes: MIME-fidelity backlog.
+
 ### 13.7 Escalations from LC-C1's adversarial pass (merged 2026-10-10)
 
 None blocks anything: each has a skip encoder or a safe interim in force.
