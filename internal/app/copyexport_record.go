@@ -411,9 +411,10 @@ type ceRecSummary struct {
 // ceAttachTotals is what a run's messages came to, attachment-wise: how many attachments the reader
 // found, how many are in a zip or a folder, how many zips, how many messages have something made, how many
 // have a note about an attachment, and how many were left without some that exporting the message again
-// would make.
+// would make. Archived is how many archived attachments zips the archive's records had copied as they are
+// (zip mode, a record with no original: the archive's own zip is the message's attachments zip).
 type ceAttachTotals struct {
-	Found, Made, Zips, Msgs, Noted, Again int
+	Found, Made, Zips, Msgs, Noted, Again, Archived int
 }
 
 // attachOf is what one message line adds to a run's attachment totals.
@@ -427,10 +428,21 @@ func attachOf(m *ceMsgLine) (t ceAttachTotals) {
 			t.Again = 1
 		}
 	}
+	files := 0
 	for _, f := range m.Files {
-		if f.Role == roleDerivedAttachZip {
+		switch f.Role {
+		case roleDerivedAttachZip:
 			t.Zips++
+		case roleDerivedAttach:
+			files++
+		case roleArchivedZip:
+			t.Archived++
 		}
+	}
+	if m.Att == nil && files > 0 {
+		// a record copied from an archive's own zip has no count of what the reader found: in loose mode
+		// its entries were extracted from that zip, and those files are what there is to count (re-verification of F3)
+		t.Found, t.Made, t.Msgs = files, files, 1
 	}
 	for _, n := range m.Notes {
 		if strings.HasPrefix(n, attachNotePrefix) {
@@ -449,6 +461,7 @@ func (t *ceAttachTotals) plus(o ceAttachTotals, sign int) {
 	t.Msgs += sign * o.Msgs
 	t.Noted += sign * o.Noted
 	t.Again += sign * o.Again
+	t.Archived += sign * o.Archived
 }
 
 // summaryScans counts the full passes readSummary has made over run records: a test's

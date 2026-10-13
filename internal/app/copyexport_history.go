@@ -361,7 +361,17 @@ func attachCardLine(asZip bool, t ceAttachTotals) string {
 	if asZip {
 		way = "one zip per message"
 	}
+	// An archive record with no original has no zip made for it in zip mode: the archive's own zip is copied as
+	// it is, and is counted as what it is, so the card does not say there was nothing where the README names it
+	// (re-verification of F3).
+	archived := ""
+	if asZip && t.Archived > 0 {
+		archived = fmt.Sprintf("%s %s the archive kept, copied as %s", commas(t.Archived), plural(t.Archived, "zip", "zips"), plural(t.Archived, "it is", "they are"))
+	}
 	switch {
+	case t.Found == 0 && archived != "":
+		made = archived
+		archived = ""
 	case t.Found == 0:
 		made = "none of these messages had an attachment"
 	case asZip && t.Made == 0:
@@ -376,6 +386,9 @@ func attachCardLine(asZip bool, t ceAttachTotals) string {
 		made = fmt.Sprintf("%s %s from %s %s", commas(t.Made), plural(t.Made, "file", "files"), commas(t.Msgs), plural(t.Msgs, "message", "messages"))
 	default:
 		made = fmt.Sprintf("%s of the %s found were extracted, from %s %s", commas(t.Made), commas(t.Found), commas(t.Msgs), plural(t.Msgs, "message", "messages"))
+	}
+	if archived != "" {
+		made += ", and " + archived
 	}
 	line := "Attachments, " + way + ": " + made + "."
 	if t.Noted > 0 {
