@@ -486,7 +486,11 @@ func (f *ceFinish) readmeText(status CopyStatus, c CopyCounts, stop *CopyStop, f
 		if h.Options.AttachmentsAsZip {
 			// A record with no original has no zip made for it: the archive's own is copied as it is, and
 			// is counted as what it is (E6Z-AI2).
-			if a.zips > 0 || a.archived == 0 {
+			switch {
+			case a.zips == 0 && a.archived == 0 && a.found > 0:
+				// attachments were found and none could be put in a zip: not "0 messages with attachments" (re-verification of F12)
+				line("Extract attachments: no message has an attachments zip (a message's zip is named like its file with .attachments.zip added, beside it).")
+			case a.zips > 0 || a.archived == 0:
 				line("Extract attachments: %s %s with attachments, each with its attachments in one zip named like the message's file with .attachments.zip added, beside it. A message with a huge number of attachments is still one file.", commas(a.zips), plural(a.zips, "message", "messages"))
 			}
 			// how many attachments the zips hold against how many the reader found (friction F12)
@@ -571,7 +575,7 @@ func (f *ceFinish) readmeText(status CopyStatus, c CopyCounts, stop *CopyStop, f
 	} else {
 		// For a message the archive kept no original of, the page and the zip are the copy there is (friction F7).
 		if n := c.WithoutOriginal; n > 0 {
-			line("- %s of the exported messages %s no original: the archive kept none (it was captured without 'Keep each message's original .eml', or the message comes from an Outlook data file). For %s the archived page (.html) and the attachments zip (-attachments.zip) are the copy there is, not a convenience made from an original; their status in export-manifest.json is exported-without-original.",
+			line("- %s of the exported messages %s no original: the archive kept none (it was captured without 'Keep each message's original .eml', or the message comes from an Outlook data file). For %s the archived page (.html) and the attachments zip (-attachments.zip) are the copy there is, not a convenience made from an original; their status in export-manifest.json is exported-without-original. An archived page is copied as the archive wrote it, so it can send you to a file attachments-report.tsv in the archive's top folder: that file is the archive's and is not in this export.",
 				commas(n), plural(n, "has", "have"), plural(n, "it", "them"))
 		}
 		if asText > 0 {
@@ -579,7 +583,7 @@ func (f *ceFinish) readmeText(status CopyStatus, c CopyCounts, stop *CopyStop, f
 				commas(asText), plural(asText, "page did", "pages did"), plural(asText, "it was", "they were"), plural(asText, "it", "them"))
 		}
 		if archZips > 0 { // the archive's own zip is copied as it is, and the unzip command of macOS stops on its accented names (EW-E6 friction F2)
-			line("- A zip copied from the archive (a file ending -attachments.zip) is as the archive wrote it, and the unzip command of macOS does not read it when a name in it has accented or non-Latin letters: it garbles such a name and then stops with \"write error (disk full?)\" (exit 50). The zip is not damaged and the disk is not full. To open it, double-click it in Finder, or use 7-Zip, or, in a macOS terminal, ditto -x -k <zip> <folder>, or, with Python, python3 -m zipfile -e <zip> <folder>.")
+			line("- A zip copied from the archive (a file ending -attachments.zip) is as the archive wrote it, and the unzip command of macOS does not read it when a name in it has accented or non-Latin letters: it garbles such a name and then either skips that entry, with \"cannot create ... Illegal byte sequence\", or stops with \"write error (disk full?)\", depending on how it is run, so only some of the entries are made, and it ends with an error (exit 50). The zip is not damaged and the disk is not full. To open it, double-click it in Finder, or use 7-Zip, or, in a macOS terminal, ditto -x -k <zip> <folder>, or, with Python, python3 -m zipfile -e <zip> <folder>.")
 		}
 	}
 	line("")
