@@ -877,7 +877,7 @@ a gate, edits a baseline or narrows a catalog row's guarantee.
 | RR-6 (fault isolation, SG) | MA-540..MA-544 | **allocated:** MA-540 (SG's stops on the shipped capture path, through `RunGraph`) and MA-541 (the Graph folder hierarchy: visited set and depth cap), both in FI-SG. MA-542..MA-544 stay reserved to fault isolation |
 | g7-Q1 (§13.3) | MA-545 | **allocated:** an export or graph `run_in_progress` is judged by the lock holder's verb (G7) |
 
-The next free overflow id is **MA-546**. An unused id in a reserved block stays with that
+The next free overflow id is **MA-549** (MA-546 to MA-548 were allocated 2026-10-13 to the desktop's local-origin archive work, §13.40). An unused id in a reserved block stays with that
 block's owner. This is the record that the fault-isolation design's §9 and its §10 SG row wait
 for (J1), so SG's catalog-first PR may land MA-540 and MA-541.
 
@@ -1690,6 +1690,36 @@ owed (the page script was read, not run), plus these owner decisions for the fin
   assertions), **F7** per-name manifest list (would grow the run-record line past its reserved bound; recommended:
   no), tighter size estimate (design 4.7's 0.8 factor). F14: an inline image `name=logo.png` is extracted as
   `logo@x` without an extension in both modes: MIME-fidelity backlog.
+
+### 13.40 The desktop understands a local-origin (Thunderbird) archive (2026-10-13), OWNER REPORT AND RULING
+
+**Owner report from testing `mailarchive-desktop` on macOS:** an existing Thunderbird archive works in the GUI but the
+desktop does not find it unless pointed at it by hand, and "all the maintenance" and "Archive now" do not work for
+it; the whole thing "can be a bit confusing". **Owner ruling:** the desktop is read-only for such an archive (read,
+search, maintain, export) with **no re-import button, and the way to add new mail is documented** (the owner's
+words: "We need to then document that so the user knows how to reimport"). Reproduced against a real Thunderbird
+`Mail/Local Folders` fixture: Check integrity, Rebuild search index and Status & health all WORKED once the archive
+was pointed at (posture WARN only because no schedule was recorded); I could not reproduce them failing, and the
+owner's archive may differ from the fixture. What was wrong was the page and the flow: the lede said "Your personal
+Microsoft 365 archive", a "Microsoft 365: Not configured" card, an Archive now button that answered "not configured
+— open Microsoft 365 setup", a weekly-backup card, and no look at the GUI's remembered archive. Built and merged
+(`wip/desktop-local-archive`): the archive kind is read from the manifest and said in the header; a local-only
+archive with no Microsoft 365 setup loses the Microsoft 365 lede/card/Archive now/weekly-backup controls, each
+replaced by one explanation with the exact steps; with no archive chosen the dashboard offers the GUI's last
+archive ("Use this archive?", one click, never silent); Verify and Rebuild say what to do with no archive;
+Status & health ends with a "New mail:" line. **Documented steps** (dashboard, README "Adding new mail to a
+Thunderbird archive", tester guide §4b): `mailarchive-gui` wizard (Thunderbird / mbox folder, same output folder,
+Incremental), or `mailarchive -input "<Thunderbird mail folder>" -out "<archive folder>"` (or `-auto`), tested so
+the documented argv parses and adds only new mail. Rows MA-546 to MA-548 (next free overflow id now MA-549).
+Clean clone: full suite green, vet3 clean. **Owed: the adversarial pass and the friction review for the new
+desktop surface, and a browser click-through.** Note: the GUI wizard does not pre-fill the output folder (it
+remembers the last archive only for the start-up health view): a candidate friction item.
+
+### 13.41 "Sync Thunderbird before archiving" (2026-10-13), OWNER REQUEST
+
+The owner asked whether a schedule can start Thunderbird, let it sync and quit it, and ruled "I think it is worth
+building". Opt-in per schedule, default OFF. Design first (`wip/tb-presync-design`, `docs/design-thunderbird-presync.md`),
+then the pre-code design review, then slices with the usual gates; nothing is built yet.
 
 ### 13.7 Escalations from LC-C1's adversarial pass (merged 2026-10-10)
 
