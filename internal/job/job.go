@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Version of the job file format. Unknown fields are ignored on read (additive
@@ -43,6 +44,25 @@ func Dir() (string, error) {
 		return "", err
 	}
 	return filepath.Join(base, "mailarchive"), nil
+}
+
+// LastArchiveFile is the file the GUI wizard remembers the archive it last worked on in.
+func LastArchiveFile() (string, error) {
+	d, err := Dir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(d, "last-archive.txt"), nil
+}
+
+// ReadLastArchive is the archive folder the file at path names, or "" when it cannot be read.
+// It only reads: whether the folder is still an archive is the caller's check.
+func ReadLastArchive(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
 }
 
 // PathFor is the job file for a schedule name.

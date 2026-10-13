@@ -131,6 +131,9 @@ func (d *dashboard) activity(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *dashboard) startCapture() error {
+	if d.cfg.localOnly() { // the page shows no button; a direct request is told the same, with the steps
+		return errors.New(archiveNowOff(d.cfg.goos(), d.cfg.effectiveOut()))
+	}
 	cfg := d.cfg.load()
 	if cfg == nil || strings.TrimSpace(cfg.Tenant) == "" || strings.TrimSpace(cfg.ClientID) == "" {
 		return fmt.Errorf("not configured — open Microsoft 365 setup to add your tenant and application ID first")

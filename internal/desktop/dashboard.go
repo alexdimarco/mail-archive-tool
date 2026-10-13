@@ -76,6 +76,9 @@ type Config struct {
 	NewLink func() string
 	// GOOS overrides runtime.GOOS in the OS-aware copy (tests).
 	GOOS string
+	// LastArchive reports the archive the GUI wizard used last (OfferedArchive in the binary). When
+	// no archive location is set the dashboard offers it, never switching to it by itself. Nil: no offer.
+	LastArchive func() string
 
 	// Lifecycle is the process's own life (extraction design §4.3, XC6): its context is
 	// what the workspace's Graph session and every preview and run are built on, and its
@@ -494,6 +497,9 @@ func (cfg Config) cards() []card {
 			conn = card{"Microsoft 365", "Sign-in needed", "warn"}
 		}
 	}
+	if cfg.localOnly() {
+		conn = card{"Microsoft 365", "Not used by this archive", ""}
+	}
 	out = append(out, conn)
 
 	out = append(out, card{"Capture", "Idle", "good"})
@@ -576,10 +582,19 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		SessionsLine   string
 		FormerNotice   string
 		ResidualOS     string // "macOS" or "Linux": where another account can read a just-opened link's argv
+		KindLine       string // what the archive was made from, in plain words ("" when unknown)
+		LocalOnly      bool   // local mail files only and no Microsoft 365 setup: Archive now and the weekly backup are off
+		ArchiveNowOff  string // why, and the steps that add new mail instead
+		Offer          string // the archive the GUI used last, offered when none is set
 	}{Export: !cfg.WorkspaceOff, Epoch: epoch, CSRF: csrf, Cards: cfg.cards(), Vault: vaultPhrase(), OutDir: cfg.effectiveOut(), ReaderURL: cfg.ReaderURL, SignedIn: signedIn, UPN: upn,
 		KeepRaw: s.KeepRaw, IncludeDeleted: s.IncludeDeleted, IncludeJunk: s.IncludeJunk,
 		Interval: orElse(s.Interval, "weekly"), WeeklyTime: orElse(s.WeeklyTime, "03:00"),
 		Account: cfg.account(), SessionsLine: cfg.sessionsLine(), FormerNotice: instance.NoticeFor(cfg.Former), ResidualOS: residualOS(cfg.goos())}
+	data.KindLine = kindLine(archiveKind(data.OutDir))
+	if data.LocalOnly = cfg.localOnly(); data.LocalOnly {
+		data.ArchiveNowOff = archiveNowOff(cfg.goos(), data.OutDir)
+	}
+	data.Offer = cfg.offer()
 	if c != nil {
 		data.Configured = strings.TrimSpace(c.Tenant) != ""
 		data.Tenant, data.ClientID, data.Auth = c.Tenant, c.ClientID, authLabel(c.Auth)
@@ -639,6 +654,7 @@ h1{font-size:1.8rem;letter-spacing:-.02em;margin:0 0 4px}.lede{color:var(--muted
 .row{display:grid;grid-template-columns:180px minmax(0,1fr);gap:12px;padding:8px 0;border-bottom:1px solid var(--line)}
 .row:last-child{border-bottom:0}.row .k{color:var(--muted);font-size:.85rem}.row .v{font-weight:650;overflow-wrap:anywhere}
 .sec li{margin:8px 0;line-height:1.45}.sec b{color:var(--text)}
+.steps{white-space:pre-wrap;overflow-wrap:anywhere}
 .mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
 .btn-link{background:none;border:0;color:var(--accent);font:inherit;font-weight:700;cursor:pointer;padding:0;text-decoration:underline}
 .note{margin-top:12px;padding:10px 12px;border-radius:9px;font-size:.9rem;background:var(--accent-soft);border:1px solid color-mix(in srgb,var(--accent) 30%,var(--line))}
@@ -686,7 +702,14 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
     </div>
     {{if .FormerNotice}}<div class="note warnbox" id="formerNotice" role="alert">{{.FormerNotice}}</div>{{end}}
     <h1>Overview</h1>
-    <p class="lede">Your personal Microsoft 365 archive, running locally on this PC.</p>
+    <p class="lede">{{if .LocalOnly}}Your mail archive, running locally on this PC.{{else}}Your personal Microsoft 365 archive, running locally on this PC.{{end}}</p>
+    {{if .KindLine}}<p class="lede" id="archiveKind" style="margin-top:-14px">{{.KindLine}}</p>{{end}}
+    {{if not .OutDir}}<div class="card" id="noArchive">
+      <h2>No archive chosen yet</h2>
+      {{if .Offer}}<p>The MailArchive wizard (mailarchive-gui) last used <span class="mono">{{.Offer}}</span>. Use this archive?</p>{{end}}
+      <button class="btn" id="useOffer" type="button" data-path="{{.Offer}}"{{if not .Offer}} hidden{{end}}>Use this archive</button>{{if .Offer}} <span class="card-sub">Nothing changes until you click it.</span>{{end}}
+      <p class="steps">{{if .Offer}}To pick a different folder, type{{else}}MailArchive Desktop has no archive to read yet. To open one you already have (for example one made from Thunderbird), type{{end}} its folder in <b>Settings → Archive location</b> below (the folder that holds the .mailarchive-manifest.json file) and click <b>Save settings</b>.</p>
+    </div>{{end}}
 
     <div class="status-grid">
       {{range .Cards}}<div class="status-card"><div class="label">{{.Label}}</div><div class="value {{.Class}}">{{.Value}}</div></div>{{end}}
@@ -724,8 +747,8 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
 
     <div class="card" id="sec-archive">
       <h2>Archive now</h2>
-      <p class="card-sub">Fetch the latest mail into your archive. The first time, you sign in with a Microsoft device code shown here.</p>
-      <button class="btn" id="archiveBtn">Archive now</button>
+      {{if .LocalOnly}}<p class="card-sub steps" id="archiveNowOff">{{.ArchiveNowOff}}</p>{{else}}<p class="card-sub">Fetch the latest mail into your archive. The first time, you sign in with a Microsoft device code shown here.</p>
+      <button class="btn" id="archiveBtn">Archive now</button>{{end}}
       {{if .ReaderURL}}<a class="btn secondary" href="{{.ReaderURL}}" target="_blank" rel="noopener">Open archive</a> <a class="btn secondary" href="{{.ReaderURL}}goback" target="_blank" rel="noopener">Go back in time</a>{{end}}
       <button class="btn secondary" id="anotherBrowser" type="button">Use another browser…</button>
       <div class="note" id="linkNote" hidden></div>
@@ -758,6 +781,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
 
     <div class="card" id="sec-backup">
       <h2>Weekly backup</h2>
+      {{if .LocalOnly}}<p class="card-sub steps" id="backupOff">The weekly backup here fetches new mail from Microsoft 365, and this archive was made from local mail files, so it is off. To keep a local-files archive current on a schedule, answer "Keep this archive current?" at the end of the mailarchive-gui wizard, or run the mailarchive schedule command that Status &amp; health prints for this archive.</p>{{else}}
       <p class="card-sub">Run a capture automatically on a schedule. It runs even when this app is closed (as long as you stay signed in to Windows), using your saved Microsoft sign-in.</p>
       <div class="row2">
         <div><label for="schedInterval">How often</label>
@@ -765,7 +789,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
         <div><label for="schedTime">At (local time)</label><input id="schedTime" type="time" value="{{.WeeklyTime}}"></div>
       </div>
       <div style="margin-top:14px"><button class="btn" id="schedInstall">Install / update</button> <button class="btn secondary" id="schedRemove">Remove</button></div>
-      <div class="note" id="schedState" hidden></div>
+      <div class="note" id="schedState" hidden></div>{{end}}
     </div>
 
     <div class="card" id="sec-health">
@@ -839,12 +863,20 @@ async function doSave(backup){
     if(d.confirm){
       if(n)n.hidden=true;
       if(c){c.hidden=false;$('settingsConfirmText').textContent=d.error+' Choose what happens to the weekly backup, or Cancel to leave your settings as they are.';}
-      return;
+      return false;
     }
     if(c)c.hidden=true;
     if(n){n.hidden=false;n.textContent=d.ok?(backup==='remove'?'Settings saved, and the weekly backup removed. To run it again, click Install / update on the Weekly backup card.':'Settings saved.'):(d.error||'Could not save.');}
-  }catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}
+    return !!d.ok;
+  }catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}return false;}
 }
+// "Use this archive": the archive the GUI used last, offered on the empty state. It is the same save
+// as typing the folder and clicking Save settings (same checks), and nothing is saved until this click.
+const useOffer=$('useOffer');
+if(useOffer)useOffer.addEventListener('click',async()=>{
+  $('outDir').value=useOffer.dataset.path;
+  if(await doSave(''))setTimeout(()=>location.reload(),500);
+});
 if(save)save.addEventListener('click',()=>doSave(''));
 const keepB=$('settingsKeep'),removeB=$('settingsRemoveBackup'),cancelB=$('settingsCancel');
 if(keepB)keepB.addEventListener('click',()=>doSave('keep'));

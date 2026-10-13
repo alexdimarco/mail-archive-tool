@@ -143,7 +143,7 @@ func launch(ctx context.Context, args []string, env *launchEnv) error {
 	store, _ := graphconfig.DefaultSecretStore() // informational shell tolerates a nil store
 	settingsPath := filepath.Join(filepath.Dir(cfgPath), "desktop-settings.json")
 	exe, _ := os.Executable() // recorded in a scheduled task so the weekly backup runs this binary
-	dcfg := desktop.Config{Out: *out, ConfigPath: cfgPath, Store: store, SettingsPath: settingsPath, Exe: exe, Version: buildVersion()}
+	dcfg := desktop.Config{Out: *out, ConfigPath: cfgPath, Store: store, SettingsPath: settingsPath, Exe: exe, Version: buildVersion(), LastArchive: desktop.OfferedArchive}
 	dcfg.WorkspaceOff = *noWorkspace || (env.WorkspaceOff != nil && env.WorkspaceOff())
 	if env.ExportDir != nil {
 		dcfg.StateDir = env.ExportDir()

@@ -137,6 +137,23 @@ Build the no-console Windows GUI explicitly with:
 GOOS=windows GOARCH=amd64 go build -ldflags -H=windowsgui -o mailarchive-gui.exe ./cmd/mailarchive-gui
 ```
 
+### Adding new mail to a Thunderbird archive
+
+An archive made from Thunderbird (or any mbox / maildir folder) is topped up the same way it was made, into
+the **same archive folder**. A run is incremental by default, so only messages not yet archived are added.
+MailArchive Desktop opens such an archive to read, search, check and export it, but does not re-read
+Thunderbird: its **Archive now** is for Microsoft 365 and is switched off for it, with these steps shown.
+
+- **mailarchive-gui:** open it, choose **Thunderbird / mbox mail folder** (or **Auto-detect my mailboxes**),
+  pick your Thunderbird mail folder, then at **Select the output folder** pick the same archive folder as
+  before (the wizard does not pre-fill it), and choose **Incremental**.
+- **macOS / Linux:** `mailarchive -input "<Thunderbird mail folder>" -out "<archive folder>"`, for example
+  `~/Library/Thunderbird/Profiles/<profile>/Mail/Local Folders` (macOS) or
+  `~/.thunderbird/<profile>/Mail/Local Folders` (Linux). `mailarchive -auto -out "<archive folder>"` takes every
+  Thunderbird store it finds.
+- **Windows:** `mailarchive -input "<Thunderbird mail folder>" -out "<archive folder>"`, for example
+  `%APPDATA%\Thunderbird\Profiles\<profile>\Mail\Local Folders`; or `mailarchive -auto -out "<archive folder>"`.
+
 ## Output layout
 
 ```
