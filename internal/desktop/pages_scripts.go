@@ -425,13 +425,24 @@ $('rePreviewBtn').addEventListener('click',()=>{
   });
 });
 function line(k,v){const r=el('div',null,'row');r.appendChild(el('div',k,'k'));r.appendChild(el('div',v,'v'));return r;}
+// Back from a retry's preview gives the boxes back as the owner had them before the retry locked them, so a new
+// selection can be exported with a different choice (re-verification of friction F10 of EW-E6)
+function unlockChoices(){
+  ['optPreserve','optHTML','optAttach'].forEach(id=>{$(id).disabled=false;});
+  if(st.boxes){$('optPreserve').checked=st.boxes.preserve;$('optHTML').checked=st.boxes.html;$('optAttach').checked=st.boxes.attach;$(st.boxes.loose?'optAttachLoose':'optAttachZip').checked=true;}
+  syncAttachMode();$('retryChoicesNote').hidden=true;st.boxes=null;
+}
 function renderPreview(p){
   if(p.retryOf)retryDestination(p.retryOf,p.retryWhich,p.dest);
   if(p.retryOf){
     // a retry keeps the earlier export's choices whatever the boxes say: they show the plan's and are locked (friction F10 of EW-E6)
+    // the owner's own boxes are kept for Back, once, so a second retry preview does not keep the first one's plan as theirs
+    if(!st.boxes)st.boxes={preserve:$('optPreserve').checked,html:$('optHTML').checked,attach:$('optAttach').checked,loose:$('optAttachLoose').checked};
     $('optPreserve').checked=!!p.preserve;$('optHTML').checked=!!p.html;$('optAttach').checked=!!p.attachments;
     $(p.attachmentsZip?'optAttachZip':'optAttachLoose').checked=true;
+    if(!p.attachments)$('optAttachZip').checked=true; // the option was off: the greyed way is the first visit's, not "Loose files"
     ['optPreserve','optHTML','optAttach','optAttachZip','optAttachLoose'].forEach(id=>{$(id).disabled=true;});
+    $('retryChoicesNote').hidden=false;
   }
   const body=$('previewBody');clear(body);
   const arch=!!p.archive;
@@ -443,7 +454,7 @@ function renderPreview(p){
   body.appendChild(line('Size','about '+p.estimate+(p.unknownSize?' ('+fmt(p.unknownSize)+' of unknown size)':'')));
   if(p.html)body.appendChild(line('Readable HTML',arch?('a page (.html) beside each of the '+fmt(p.archive.withOriginal)+' original messages; the size above includes them'):'a page (.html) beside each original; the size above includes them'));
   // what the option adds to the size: said in bytes, and as the upper bound the estimate is (friction F8 of EW-E6)
-  const attInc=p.attachments?'; the size above includes them: about '+p.attachEstimate+' of it, an upper bound (the real size is usually smaller)':'';
+  const attInc=p.attachments?(p.attachBytes>0?'; the size above includes them: about '+p.attachEstimate+' of it, an upper bound (the real size is usually smaller)':'; the size above includes them, but their size is not known before the export'):'';
   if(p.attachments)body.appendChild(line('Extract attachments',p.attachmentsZip?(arch?'each message\'s attachments in one zip (.attachments.zip) beside its original, from the original where the archive kept one; a message the archive kept no original of has the archive\'s own attachments zip, copied as it is'+attInc:'each message\'s attachments in one zip (.attachments.zip) beside its original'+attInc):(arch?'each attachment as a file in a folder beside its message, from the original where the archive kept one and from its attachments zip where it did not (up to 1,000 files and 4 GB a message)'+attInc:'each attachment as a file in a folder beside its message'+attInc)));
   body.appendChild(line('Into',p.exportDir));
   body.appendChild(line('Free space',p.free+' free; about '+p.reserveText+' is kept back to finish'));
@@ -463,7 +474,7 @@ $('startBtn').addEventListener('click',()=>{
     location.href='exports';
   });
 });
-$('backBtn').addEventListener('click',()=>{$('previewCard').hidden=true;st.previewId='';});
+$('backBtn').addEventListener('click',()=>{$('previewCard').hidden=true;st.previewId='';unlockChoices();});
 window.addEventListener('beforeunload',e=>{
   if(st.leaving)return;
   if(st.entries.length||Object.keys(st.picks).length){e.preventDefault();e.returnValue='';}

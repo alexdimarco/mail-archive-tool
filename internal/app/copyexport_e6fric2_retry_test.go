@@ -9,6 +9,26 @@ import (
 	"mail-archive-tool/internal/assure"
 )
 
+// covers: MA-535, MA-424, R12
+// Re-verification of EW-E6's friction fix F8, the premise of the page's Extract attachments line (desktop
+// TestThePreviewLineGivesTheAttachmentsShareOnlyWhenThereIsOne): a selection whose sizes are all unknown has
+// Extract attachments on and adds no bytes to the estimate, so the plan's figure for the option is 0 and the
+// page must not print it as "about 0 B of it".
+func TestAPlanOfMessagesOfUnknownSizeAddsNoBytesForExtractAttachments(t *testing.T) {
+	msgs := ceMsgs(2)
+	for i := range msgs {
+		msgs[i].SizeHint = -1
+	}
+	e, src := newCEEnv(t), newFakeSrc()
+	p, err := e.PlanCopyExport(CopyPlanInput{Source: src.Describe(), Messages: msgs, Dest: t.TempDir(), Options: CopyOptions{Attachments: true, AttachmentsAsZip: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.UnknownSize != 2 || p.AttachBytes != 0 || !p.Options.Attachments {
+		t.Errorf("unknown sizes %d, the option adds %d bytes, attachments %v: want 2, 0, true", p.UnknownSize, p.AttachBytes, p.Options.Attachments)
+	}
+}
+
 // covers: MA-535, MA-412, MA-424, R12, R29
 // Re-verification of EW-E6's friction fix F8 (X2: a remedy with no way to do it): a destination with too little
 // room is told it can untick Extract attachments, but a retry keeps the choices of the export it continues and
