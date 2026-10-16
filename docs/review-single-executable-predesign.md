@@ -751,3 +751,23 @@ and the permission settings were not touched by the review or by revision 2.
 - **Relaunches.** Results were replayed from the run's own journal, only when the finding's title matched;
   failed attempts were re-run and never counted. The replay file and the scripts that built it are session
   scratch, not part of the repository.
+
+## SC53 re-run — filed 2026-10-16
+
+The re-run SC53 owes (lenses 3, 4, 6, 7, 8, 10 on revision 2's changed sections, plus a second reviewer on
+the critic's six items) ran as workflow `wf_986bfa49-0ba` (32 agents, 0 errors, Claude Opus 4.8). Full
+outcome, the findings table and the revision-3 fold plan: `docs/continuation/single-exe-review/sc53-rerun-2026-10-16.md`.
+
+**The verdict does not flip.** §14's NO_GO trigger ("if revision 2 cannot state SC1 and SC2 as one mechanism
+each") is not met: SC2 (§4.6.2) holds unanimously, and SC1 (§4.6.5) is a single decision mechanism on five of
+six lenses and the second reviewer — lens 4 disputes only the "same words on every surface" wording, not the
+mechanism. **GO WITH CONDITIONS, bounded, stands.**
+
+**But the composition opened new defects: 8 surviving majors (2 contested), 6 minors and 1 second-reviewer
+failure.** Two majors are security findings in the composed mechanism — the cross-kind guard trusts the
+forgeable descriptor-named kind (L6-1), and the start-failure breadcrumb trusts the forgeable descriptor name
+(L6-2) — and owe SE2's adversarial pass. The others are a corroboration/path-spelling hole in SC1 (L3-F1), the
+SC1 wording crack (L4-3, L10-1), a wizard/dashboard remedy dead-end (L4-2), the hand-typed MSI `ProductVersion`
+under every Windows coexistence claim (L8-F1), and the `ProgramForSchedule` signature (L7-F2). **SC53 is
+therefore discharged as run, but SE0 now waits on a revision 3 that folds these, not on this file alone.** The
+re-run did not re-open lenses 1, 2, 5 or 9 and did not disturb SC1/SC2 as the verdict's hinge.
