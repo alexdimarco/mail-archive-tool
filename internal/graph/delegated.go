@@ -52,17 +52,12 @@ func NewDelegated(ctx context.Context, cfg Config) (*Client, error) {
 		return nil, errors.New("internal: NewDelegated requires a token cache path or a token store")
 	}
 	be := tokenBackend{store: cfg.TokenStore, path: cfg.TokenCachePath}
-	reqTimeout, mimeTimeout := cfg.RequestTimeout, cfg.MIMETimeout
-	if reqTimeout <= 0 {
-		reqTimeout = defaultRequestTimeout
-	}
-	if mimeTimeout <= 0 {
-		mimeTimeout = defaultMIMETimeout
-	}
+	b := cfg.settings()
 	// One deadline-bounded transport for BOTH the device/token exchanges and the
 	// Graph API calls, so a stalled sign-in or a stalled listing fails within the
-	// deadline instead of hanging an unattended job (design D-C5, R17/MA-98).
-	transport := httpTransport(reqTimeout)
+	// deadline instead of hanging an unattended job (design D-C5, R17/MA-98). The
+	// $value download alone has its own (newClient, fault-isolation §4.8.6).
+	transport := httpTransport(b.req, b.wrap)
 	ctx = context.WithValue(ctx, oauth2.HTTPClient, transport)
 	conf := &oauth2.Config{
 		ClientID: cfg.ClientID,
@@ -86,7 +81,7 @@ func NewDelegated(ctx context.Context, cfg Config) (*Client, error) {
 		}
 		// Read the signer from Graph (not a self-asserted token) so the cache is
 		// bound to the right UPN, using the fresh token directly.
-		tmp := &Client{base: base, hc: oauth2.NewClient(ctx, oauth2.StaticTokenSource(tok)), reqTimeout: reqTimeout, mimeTimeout: mimeTimeout, meMode: true}
+		tmp := newClient(ctx, base, oauth2.StaticTokenSource(tok), b, true)
 		upn, err = tmp.Me(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("read the signed-in user: %w", err)
@@ -99,7 +94,7 @@ func NewDelegated(ctx context.Context, cfg Config) (*Client, error) {
 	}
 
 	src := newDeviceSource(ctx, conf, be, upn, tok)
-	return &Client{base: base, hc: oauth2.NewClient(ctx, src), reqTimeout: reqTimeout, mimeTimeout: mimeTimeout, meMode: true}, nil
+	return newClient(ctx, base, src, b, true), nil
 }
 
 // Me returns the signed-in user's userPrincipalName, read from GET /me (delegated
@@ -124,20 +119,34 @@ func (c *Client) Me(ctx context.Context) (string, error) {
 	return upn, nil
 }
 
-// CheckTokenCache validates a device-auth token cache the way `schedule` must at
-// install time: the file passes the secure-file discipline, parses, and carries a
-// refresh token (so a later unattended run can refresh without a prompt). A
-// missing/unusable cache is refused naming the sign-in remedy (design P7/D-C3).
-func CheckTokenCache(path string) error {
-	tc, err := loadTokenCache(path)
+// CheckSignIn validates a saved device sign-in the way `schedule` must at install
+// time: it passes the secure-file discipline (for a file), parses, and carries a
+// refresh token (so a later unattended run can refresh without a prompt); a
+// missing/unusable sign-in is refused naming the sign-in remedy (design
+// P7/D-C3). It reads through the backend an unattended NewDelegated with the
+// same cfg loads from: cfg.TokenStore (the OS vault — on Windows the CLI keeps
+// the sign-in there and never writes the TokenCachePath file) when set,
+// otherwise the file at cfg.TokenCachePath. So `schedule` accepts a device job
+// exactly when the scheduled run will find its sign-in. Every refusal names
+// where the check looked and the sign-in remedy, whatever stopped the read.
+func CheckSignIn(cfg Config) error {
+	where := "at " + cfg.TokenCachePath
+	if cfg.TokenStore != nil {
+		where = "in the OS credential store for tenant " + cfg.Tenant + " and client id " + cfg.ClientID
+	}
+	tc, err := tokenBackend{store: cfg.TokenStore, path: cfg.TokenCachePath}.load()
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("no saved sign-in at %s: run `mailarchive graph -auth device …` once interactively (as the account this schedule will run as) to sign in before scheduling", path)
+			return fmt.Errorf("no saved sign-in %s: run `mailarchive graph -auth device …` once interactively (as the account this schedule will run as) to sign in before scheduling", where)
 		}
-		return err
+		// Any other failure — a vault this session cannot open (Credential
+		// Manager outside an interactive logon), a file readable by others, a
+		// sign-in that does not parse — keeps its cause, with that cause's own
+		// remedy, inside the same where-and-how-to-sign-in refusal.
+		return fmt.Errorf("cannot read the saved sign-in %s (%w): resolve that, then sign in with `mailarchive graph -auth device …` once interactively (as the account this schedule will run as) before scheduling", where, err)
 	}
 	if tc.Token == nil || strings.TrimSpace(tc.Token.RefreshToken) == "" {
-		return fmt.Errorf("token cache %s carries no refresh token — sign in again with `mailarchive graph -auth device …` before scheduling", path)
+		return fmt.Errorf("the saved sign-in %s carries no refresh token — sign in again with `mailarchive graph -auth device …` before scheduling", where)
 	}
 	return nil
 }
@@ -208,11 +217,24 @@ func (s *deviceSource) Token() (*oauth2.Token, error) {
 	return t, nil
 }
 
+// forceRefresh makes the next Token() refresh from the refresh token even though
+// the cached access token has not expired (Client.ForceRefresh).
+func (s *deviceSource) forceRefresh() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.last != nil && s.last.RefreshToken != "" {
+		s.cur = s.conf.TokenSource(s.ctx, &oauth2.Token{RefreshToken: s.last.RefreshToken})
+	}
+}
+
 // reload re-reads the cache when a refresh failed, returning a token worth
-// retrying only if a concurrent run wrote a DIFFERENT refresh token than ours.
+// retrying only if a concurrent run wrote a DIFFERENT refresh token than ours,
+// and only for OUR account: another account's stored token is never adopted
+// (XC7, MA-515), so a sign-in made as someone else cannot be refreshed into this
+// source's session.
 func (s *deviceSource) reload() *oauth2.Token {
 	tc, err := s.be.load()
-	if err != nil || tc.Token == nil {
+	if err != nil || tc.Token == nil || !strings.EqualFold(tc.UPN, s.upn) {
 		return nil
 	}
 	if s.last != nil && tc.Token.RefreshToken == s.last.RefreshToken {
@@ -260,6 +282,17 @@ func (b tokenBackend) load() (*tokenCache, error) {
 // token (refresh token + type + expiry, no access token). The 0600 file keeps the full
 // token byte-for-byte, exactly as the shipped device tests exercise it (DC2).
 func (b tokenBackend) put(upn string, tok *oauth2.Token) error {
+	tokenWriteMu.Lock()
+	defer tokenWriteMu.Unlock()
+	return b.putLocked(upn, tok)
+}
+
+// tokenWriteMu serialises this process's token-store writes and putIfNewer's
+// load-compare-write, so a sign-in made inside that window is not overwritten by
+// a live source's write-back (EW-E1 AI1). It does not order two processes.
+var tokenWriteMu sync.Mutex
+
+func (b tokenBackend) putLocked(upn string, tok *oauth2.Token) error {
 	stored := tok
 	if b.store != nil {
 		stored = slimToken(tok)
@@ -289,18 +322,30 @@ func slimToken(tok *oauth2.Token) *oauth2.Token {
 	}
 }
 
-// putIfNewer persists only a token newer (later expiry) than what is stored, so a
-// concurrent run's freshly-rotated token is not clobbered (D-C2).
+// putIfNewer persists a rotated token only into an EXISTING entry of the same
+// account (upn) whose token is older (earlier expiry), so a concurrent run's
+// freshly-rotated token is not clobbered (D-C2) and a live source never decides
+// who is signed in (extraction design XC7, MA-515): a store that was cleared (a
+// vault entry or token file deleted, Clear sign-in) is not re-created, an entry
+// for another account is not overwritten, and an entry that cannot be read is
+// left for its owner. The write-back is best-effort, so each of these is a quiet
+// no-op; NewDelegated's first-sign-in put is unchanged.
 func (b tokenBackend) putIfNewer(upn string, tok *oauth2.Token) error {
-	if existing, err := b.load(); err == nil && existing.Token != nil {
-		if !tok.Expiry.IsZero() && !existing.Token.Expiry.IsZero() && !tok.Expiry.After(existing.Token.Expiry) {
-			return nil
-		}
+	tokenWriteMu.Lock()
+	defer tokenWriteMu.Unlock()
+	existing, err := b.load()
+	if err != nil || !strings.EqualFold(existing.UPN, upn) {
+		return nil
 	}
-	return b.put(upn, tok)
+	if existing.Token != nil && !tok.Expiry.IsZero() && !existing.Token.Expiry.IsZero() && !tok.Expiry.After(existing.Token.Expiry) {
+		return nil
+	}
+	return b.putLocked(upn, tok)
 }
 
 func (b tokenBackend) clear() error {
+	tokenWriteMu.Lock()
+	defer tokenWriteMu.Unlock()
 	if b.store != nil {
 		return b.store.ClearToken()
 	}
@@ -308,6 +353,21 @@ func (b tokenBackend) clear() error {
 		return err
 	}
 	return nil
+}
+
+// PersistSignIn saves a finished sign-in's token cache (the bytes a sign-in made against an
+// in-memory store holds) to the saved sign-in's location: the token store, or the 0600 file
+// cache. It takes the same lock as a live source's write-back, so a rotated token of the
+// account that was signed in before, which read the cache before this sign-in and is about to
+// write, cannot land after this save and put the previous account back (EW-AC4). It orders
+// writes within this process only, as putIfNewer does (ESC-15 is the cross-process half).
+func PersistSignIn(cfg Config, data []byte) error {
+	tokenWriteMu.Lock()
+	defer tokenWriteMu.Unlock()
+	if cfg.TokenStore != nil {
+		return cfg.TokenStore.StoreToken(data)
+	}
+	return util.WriteFileAtomic0600(cfg.TokenCachePath, data)
 }
 
 // File-path wrappers — the signatures the shipped tests use (store == nil).

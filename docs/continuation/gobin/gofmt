@@ -1,0 +1,5 @@
+#!/bin/sh
+# Go 1.26.9 from the session scratchpad, with its own GOPATH/GOCACHE and no toolchain switching.
+S=/private/tmp/claude-503/-Users-alex-dimarco-repositories/86c4cdf3-3c8e-4270-a184-12f76f0288e7/scratchpad
+export PATH="$S/gopath/bin:$S/go126/go/bin:$PATH" GOPATH="$S/gopath" GOMODCACHE="$S/gopath/pkg/mod" GOCACHE="$S/gocache126" GOTOOLCHAIN=local
+exec "$S/go126/go/bin/gofmt" "$@"

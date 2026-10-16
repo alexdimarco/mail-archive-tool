@@ -41,6 +41,8 @@ func TestArchiveCarriesReadme(t *testing.T) {
 		".mailarchive-lastrun.json", ".mailarchive-lastverify.json",
 		".mailarchive-schedule.json", "BACKUP-NEEDS-ATTENTION.txt",
 		"ARCHIVE-INTEGRITY-ATTENTION.txt",
+		// FB-4: a scheduled verify records its own descriptor at the root.
+		".mailarchive-verify-schedule.json",
 		// go-back (slice E, design T8): the timeline file is named, serve's
 		// point-in-time view is described, and the reindex redaction is spelled
 		// out (delete files + reindex removes a message across all dates).

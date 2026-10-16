@@ -1,0 +1,23 @@
+Message-ID: <c14-unquoted-start-type@corpus.example>
+Date: Mon, 02 Jan 2023 15:04:05 +0000
+From: Alice Example <alice@example.test>
+To: bob@example.test
+Subject: Unquoted start and type parameters
+MIME-Version: 1.0
+Content-Type: multipart/related; type=text/html; start=<body@corpus.example>; boundary=rel-bd
+
+--rel-bd
+Content-Type: text/html; charset=utf-8
+Content-ID: <body@corpus.example>
+
+<html><body><p>Related html</p><img src="cid:img1@corpus.example"></body></html>
+
+--rel-bd
+Content-Type: image/png
+Content-Transfer-Encoding: base64
+Content-ID: <img1@corpus.example>
+
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP8z8DwHwAFAAH/iZk9
+HQAAAABJRU5ErkJggg==
+
+--rel-bd--

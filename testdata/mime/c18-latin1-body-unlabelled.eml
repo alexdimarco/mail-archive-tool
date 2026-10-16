@@ -1,0 +1,8 @@
+Message-ID: <c18-latin1-body-unlabelled@corpus.example>
+Date: Mon, 02 Jan 2023 15:04:05 +0000
+From: Alice Example <alice@example.test>
+To: bob@example.test
+Subject: Unlabelled 8-bit body
+MIME-Version: 1.0
+
+Grüße aus Köln

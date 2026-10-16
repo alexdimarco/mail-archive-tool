@@ -1,0 +1,3280 @@
+# tag: v0.7.1 (the latest release tag; annotated tag object d280afe09ebaf406dd954a37ac7d1f4314d93d14)
+# commit: 066f86dbae867f00f5d0340a2ce6a83cbed2e088 (packaging: v0.7.1 release notes)
+# built: the unmodified tag, from `git archive v0.7.1` extracted into a scratch directory, with the tag's own go.mod and go.sum (go directive 1.23.0). Only two things were added to it: this recorder (internal/source/mimecorpus_test.go, TestRecordMimeGoldens) and testdata/mime. Run as `go test ./internal/source -run '^TestRecordMimeGoldens$' -args -mime-record-dir=<dir> -mime-record-provenance=<file>`. No other file of the tag was changed.
+# toolchain: go1.26.9 on darwin/arm64, the only toolchain available to the recording. The parts of the parser that the module shares with the toolchain (net/mail, mime, mime/quotedprintable, encoding/base64, the unicode tables) are therefore that toolchain's, not the release's: design OR4's residual, an open condition that S1's MA-331 closes by vendoring them.
+# dependencies: github.com/emersion/go-message v0.16.0, github.com/emersion/go-mbox v1.0.4, github.com/mooijtech/go-pst/v6 v6.0.2, golang.org/x/text v0.21.0, golang.org/x/net v0.10.0, as the tag's go.mod and go.sum pin them
+# recorded: 2026-10-11, by slice MF-S0 of docs/design-mime-fidelity.md, before any fidelity change
+# same-as-branch: internal/source/ at the tag is byte-identical to the branch this slice is built on (fix/review-2026-10 at a26ec8a); internal/model/message.go differs only by added fields and FingerprintNoAttachments, which Identity, Fingerprint and ContentDigest do not read; the branch builds with x/text v0.42.0 and x/net v0.60.0, and TestMimeGoldensHoldForTheBuild shows it reproduces this file byte for byte
+# body-fallback: BodyFallback (MC29) lands in internal/export after the tag; these goldens are parser-level, so it does not touch them
+# content-fields: the content golden leaves out Locator, ReadGaps and ReadError, which the tag's model does not have; support.pst is somebody else's real mail, so its items are pinned by length and SHA-256 and their text is not copied here
+# baseline: a baseline in the CLAUDE.md sense; regenerating it is an operator-accepted act under design section 5, never a fix
+== c11-8bit-attachment-lf.eml
+subject: "8bit LF-only text attachment"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "c11-8bit-attachment-lf@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <c11-8bit-attachment-lf@corpus.example>\nDate: Mon, 02 Jan 2023 15:04:05 +0000\nFrom: Alice Example <alice@example.test>\nTo: bob@example.test\nSubject: 8bit LF-only text attachment\nMIME-Version: 1.0\nContent-Type: multipart/mixed; boundary=\"lf-bd\""
+html_body: ""
+plain_body: "An 8bit LF-only attachment follows.\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=517 sha256=49e6842b94bc0d8097789d5e2f127e5225e7b5e8a56126fe09b7f580521f7fdf
+attachments: 1
+attachment 0: filename="lf.txt" mime_type="text/plain" content_id="" size=0 bytes=len=14 sha256=ca0a3352a0f8f1793a6e9e9a68c8a839a2962142bbe5a912e9006a41fa5da5ec
+== c11-text-attachments.eml
+subject: "Text attachments in legacy charsets"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "c11-text-attachments@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <c11-text-attachments@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: Text attachments in legacy charsets\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"tx-bd\""
+html_body: ""
+plain_body: "Text attachments follow.\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=1763 sha256=ce7578ef2a974d8911e908e89c96b333934a335567ec4ac93137d5de1d9b08dd
+attachments: 6
+attachment 0: filename="latin1.csv" mime_type="text/csv" content_id="" size=0 bytes=len=41 sha256=bee3a6b87a05e21cb3402a8fef5e6392630b3f537a01e8e4b72c75f643ced864
+attachment 1: filename="latin1.xml" mime_type="text/xml" content_id="" size=0 bytes=len=92 sha256=042e3245c93f80850852e5892a20ef3f85d99ff4f6cdfa265fe3dd03b5f23e15
+attachment 2: filename="utf16.txt" mime_type="text/plain" content_id="" size=0 bytes=len=19 sha256=c12c9d466430044d7b274aa6a369317441c143fb529530ce678f8712c9df30c9
+attachment 3: filename="sjis.txt" mime_type="text/plain" content_id="" size=0 bytes=len=20 sha256=ab01c9e92061b04e2b6429b04f45466850caafbedc79c22470a99405e2d05e2b
+attachment 4: filename="cp1252.ics" mime_type="text/calendar" content_id="" size=0 bytes=len=86 sha256=72229a8f061fa18f4e26a651920e642cbf042e6723a66f43a878907bf1604750
+attachment 5: filename="page.html" mime_type="text/html" content_id="" size=0 bytes=len=52 sha256=cba91c1a15785cb77ff935d624a1aba23fd8eec5767806a2d2eb2abc3a5ca9df
+== c11-utf8-attachment.eml
+subject: "UTF-8 text attachment"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "c11-utf8-attachment@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <c11-utf8-attachment@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: UTF-8 text attachment\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"u8-bd\""
+html_body: ""
+plain_body: "A UTF-8 attachment follows.\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=523 sha256=c9dad8f1d3a81e2f67ab4fa27e6719b4a0085435fd346da46793d56eae28c34c
+attachments: 1
+attachment 0: filename="utf8.txt" mime_type="text/plain" content_id="" size=0 bytes=len=9 sha256=fadad47a2f205c1a8dbba79490634ae2c99111580466db960031ef6db9e95210
+== c110-from-8bit-name.eml
+subject: "From header 8bit-name"
+sender_name: ""
+sender_email: ""
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "c110-from-8bit-name@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <c110-from-8bit-name@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: J\xfcrgen <juergen@example.test>\r\nTo: bob@example.test\r\nSubject: From header 8bit-name\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8"
+html_body: ""
+plain_body: "The From header is the trigger.\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=275 sha256=8089ce75a64aeb86f5026ca69790ea1c5da534e81938784d05bcbad59957753a
+attachments: 0
+== c110-from-addr-addr.eml
+subject: "From header addr-addr"
+sender_name: ""
+sender_email: ""
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "c110-from-addr-addr@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <c110-from-addr-addr@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: hans@example.de <hans@example.de>\r\nTo: bob@example.test\r\nSubject: From header addr-addr\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8"
+html_body: ""
+plain_body: "The From header is the trigger.\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=279 sha256=cedfa951164df0750bcaae64374954023718b7ffd57ed8458e38e57135795d86
+attachments: 0
+== c110-from-comma-name.eml
+subject: "From header comma-name"
+sender_name: ""
+sender_email: ""
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "c110-from-comma-name@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <c110-from-comma-name@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Mueller, Hans <hans@example.de>\r\nTo: bob@example.test\r\nSubject: From header comma-name\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8"
+html_body: ""
+plain_body: "The From header is the trigger.\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=279 sha256=aa04d014a6c1dcb9219231ef34ac33b29f4e7624f5084808c36ea07e8005aff2
+attachments: 0
+== c110-from-double-dot.eml
+subject: "From header double-dot"
+sender_name: ""
+sender_email: ""
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "c110-from-double-dot@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <c110-from-double-dot@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: <john..smith@docomo.ne.jp>\r\nTo: bob@example.test\r\nSubject: From header double-dot\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8"
+html_body: ""
+plain_body: "The From header is the trigger.\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=274 sha256=0c375776cf2beca27a69c1931fd128066e1607eb52ae50c5a1698d0c1df17182
+attachments: 0
+== c110-from-empty-angle.eml
+subject: "From header empty-angle"
+sender_name: ""
+sender_email: ""
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "c110-from-empty-angle@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <c110-from-empty-angle@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: <>\r\nTo: bob@example.test\r\nSubject: From header empty-angle\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8"
+html_body: ""
+plain_body: "The From header is the trigger.\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=252 sha256=adfbf5daa7e092ab8d9a11db83bc9d629e0fb9712103c21b9b63c5968ffa48c9
+attachments: 0
+== c110-from-leading-dot.eml
+subject: "From header leading-dot"
+sender_name: ""
+sender_email: ""
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "c110-from-leading-dot@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <c110-from-leading-dot@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: <.john@example.jp>\r\nTo: bob@example.test\r\nSubject: From header leading-dot\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8"
+html_body: ""
+plain_body: "The From header is the trigger.\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=268 sha256=68be330cae694c8ec732fcddbbb6d00c04a9c5492c60128ece65bdaa0b0889dd
+attachments: 0
+== c110-from-mailer-daemon.eml
+subject: "From header mailer-daemon"
+sender_name: ""
+sender_email: ""
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "c110-from-mailer-daemon@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <c110-from-mailer-daemon@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Mail Delivery System <MAILER-DAEMON>\r\nTo: bob@example.test\r\nSubject: From header mailer-daemon\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8"
+html_body: ""
+plain_body: "The From header is the trigger.\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=290 sha256=9790a79a915859ffeb1cffcd9883c66837ccb40a619ca6b848c564067128354e
+attachments: 0
+== c110-from-plain-valid.eml
+subject: "From header plain-valid"
+sender_name: "Hans Mueller"
+sender_email: "hans@example.de"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "c110-from-plain-valid@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <c110-from-plain-valid@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Hans Mueller <hans@example.de>\r\nTo: bob@example.test\r\nSubject: From header plain-valid\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8"
+html_body: ""
+plain_body: "The From header is the trigger.\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=280 sha256=dca2a1db9149e3602b59a7312f6a3085f7af787c86be91b618b795b1f7fbf582
+attachments: 0
+== c110-from-undisclosed.eml
+subject: "From header undisclosed"
+sender_name: ""
+sender_email: ""
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "c110-from-undisclosed@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <c110-from-undisclosed@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Undisclosed sender:;\r\nTo: bob@example.test\r\nSubject: From header undisclosed\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8"
+html_body: ""
+plain_body: "The From header is the trigger.\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=270 sha256=9cf9db5e32285321349291883dcc4335c4c7361c7d368b38b9b1a0871146f4a5
+attachments: 0
+== c14-charset-comment.eml
+subject: "Charset with a comment"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "c14-charset-comment@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <c14-charset-comment@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: Charset with a comment\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=us-ascii (Plain text)"
+html_body: ""
+plain_body: "The charset parameter carries a trailing comment.\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=315 sha256=c5d3e00f6157491e118f1fde985796aeaa6c31d022bdc9cc845ec8b429490cef
+attachments: 0
+== c14-no-boundary.eml
+subject: "Multipart with no recoverable boundary"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "c14-no-boundary@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <c14-no-boundary@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: Multipart with no recoverable boundary\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed"
+html_body: ""
+plain_body: ""
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=364 sha256=c7be5c58856d5609c9ff8a8751cadd851f3f641d96bd7b99cb19a9b5f9486bef
+attachments: 0
+== c14-strict-valid.eml
+subject: "Strict valid parameters"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "c14-strict-valid@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <c14-strict-valid@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: Strict valid parameters\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"sv-bd\""
+html_body: ""
+plain_body: "Everything here is strictly valid.\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=649 sha256=17043e6409d54af6790ac05fda544609063ce8421b9b43930abd70b2f8adf745
+attachments: 1
+attachment 0: filename="Invoice 2023.pdf" mime_type="application/pdf" content_id="" size=0 bytes=len=93 sha256=05bf406ec6a788048516394888c743abdc8ad48a63c1b505c946ad0c2fed7cc1
+== c14-unquoted-boundary-eq.eml
+subject: "Unquoted boundary with an equals sign"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "c14-unquoted-boundary-eq@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <c14-unquoted-boundary-eq@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: Unquoted boundary with an equals sign\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=----=_NextPart_000_0001_01D9"
+html_body: ""
+plain_body: ""
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=742 sha256=8fcafe10512a393a72b31fac696142dedeb18d4b9f380e1cb07420c62d72f449
+attachments: 0
+== c14-unquoted-filename.eml
+subject: "Unquoted filename with a space"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "c14-unquoted-filename@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <c14-unquoted-filename@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: Unquoted filename with a space\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"uf-bd\""
+html_body: ""
+plain_body: "An attachment with an unquoted filename follows.\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=671 sha256=5d6c435b6b362d58b9015f33d553f55d8bafbabefc91d47e2a5eb30bd3d1b583
+attachments: 1
+attachment 0: filename="" mime_type="application/pdf; name=Invoice 2023.pdf" content_id="" size=0 bytes=len=93 sha256=05bf406ec6a788048516394888c743abdc8ad48a63c1b505c946ad0c2fed7cc1
+== c14-unquoted-start-type.eml
+subject: "Unquoted start and type parameters"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "c14-unquoted-start-type@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <c14-unquoted-start-type@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: Unquoted start and type parameters\r\nMIME-Version: 1.0\r\nContent-Type: multipart/related; type=text/html; start=<body@corpus.example>; boundary=rel-bd"
+html_body: ""
+plain_body: ""
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=710 sha256=050cec8746b06bb085d8917e6171d2915acc515bb5e702ee434c7e5b5d4794f2
+attachments: 0
+== c15-cid-html-links.eml
+subject: "cid references in html"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "c15-cid-html-links@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <c15-cid-html-links@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: cid references in html\r\nMIME-Version: 1.0\r\nContent-Type: multipart/related; boundary=\"ch-bd\""
+html_body: "<html><head><style>.bg{background:url(cid:css@corpus.example)}</style></head><body><a href=\"cid:link@corpus.example\">link</a><img src=\"cid:img@corpus.example\"><img src=\"cid:abcdef@corpus.example\"><p>cid:abc</p></body></html>\r\n"
+plain_body: ""
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=1691 sha256=827b8e737dae6c4a8acffa6f2f576c2a84b38093d0aef603e78796ab571b1d97
+attachments: 5
+attachment 0: filename="" mime_type="image/png" content_id="img@corpus.example" size=0 bytes=len=70 sha256=8e64d2d16fa6252a880c4618c9bc581b69a305c2e8230e051b271d52f35cd783
+attachment 1: filename="" mime_type="image/png" content_id="css@corpus.example" size=0 bytes=len=70 sha256=8e64d2d16fa6252a880c4618c9bc581b69a305c2e8230e051b271d52f35cd783
+attachment 2: filename="link.pdf" mime_type="application/pdf" content_id="link@corpus.example" size=0 bytes=len=93 sha256=05bf406ec6a788048516394888c743abdc8ad48a63c1b505c946ad0c2fed7cc1
+attachment 3: filename="" mime_type="image/png" content_id="abc@corpus.example" size=0 bytes=len=70 sha256=8e64d2d16fa6252a880c4618c9bc581b69a305c2e8230e051b271d52f35cd783
+attachment 4: filename="" mime_type="image/png" content_id="abcdef@corpus.example" size=0 bytes=len=70 sha256=8e64d2d16fa6252a880c4618c9bc581b69a305c2e8230e051b271d52f35cd783
+== c15-cid-text-placeholder.eml
+subject: "Outlook cid text placeholder"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "c15-cid-text-placeholder@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <c15-cid-text-placeholder@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: Outlook cid text placeholder\r\nMIME-Version: 1.0\r\nContent-Type: multipart/related; boundary=\"cp-bd\""
+html_body: ""
+plain_body: "Quarterly chart:\r\n[cid:chart.png@01D9ABCD.12345678]\r\nRegards\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=681 sha256=6c82e3d01ca0f108a107ae32261aa436f3c61378f2e6012f684c19ee2a20837f
+attachments: 1
+attachment 0: filename="chart.png@01D9ABCD.12345678" mime_type="image/png" content_id="chart.png@01D9ABCD.12345678" size=0 bytes=len=70 sha256=8e64d2d16fa6252a880c4618c9bc581b69a305c2e8230e051b271d52f35cd783
+== c15-datauri-style-breakout.eml
+subject: "Attachment MimeType that breaks out of style"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "c15-datauri-style-breakout@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <c15-datauri-style-breakout@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: Attachment MimeType that breaks out of style\r\nMIME-Version: 1.0\r\nContent-Type: multipart/related; boundary=\"db-bd\""
+html_body: "<html><head><style>.x{background:url(cid:evil@corpus.example)}</style></head><body><p>Mail body</p></body></html>\r\n"
+plain_body: ""
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=726 sha256=2fbcc0f7f259d586fbdd1e50d8ed8f3396f0c07c41e5aec739312fdb68273790
+attachments: 1
+attachment 0: filename="" mime_type="image/png</style><div class=\"mailarchive-header\">forged</div>" content_id="evil@corpus.example" size=0 bytes=len=70 sha256=8e64d2d16fa6252a880c4618c9bc581b69a305c2e8230e051b271d52f35cd783
+== c18-latin1-body-unlabelled.eml
+subject: "Unlabelled 8-bit body"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "c18-latin1-body-unlabelled@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <c18-latin1-body-unlabelled@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: Unlabelled 8-bit body\r\nMIME-Version: 1.0"
+html_body: ""
+plain_body: "Gr\xfc\xdfe aus K\xf6ln\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=229 sha256=04922c64804d4e41eb9c97a0003a6e316e38610f64e52b07327211fead8d3f1d
+attachments: 0
+== c18-latin1-body-usascii.eml
+subject: "us-ascii labelled 8-bit body"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "c18-latin1-body-usascii@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <c18-latin1-body-usascii@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: us-ascii labelled 8-bit body\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=us-ascii\r\nContent-Transfer-Encoding: 8bit"
+html_body: ""
+plain_body: "Gr\xfc\xdfe aus K\xf6ln\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=310 sha256=d301816104fab8942ce4f053db8b078d446084b16ede3fd992d38e4bd3fe709a
+attachments: 0
+== c18-latin1-body-utf8-label.eml
+subject: "utf-8 labelled Latin-1 body"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "c18-latin1-body-utf8-label@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <c18-latin1-body-utf8-label@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: utf-8 labelled Latin-1 body\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: 8bit"
+html_body: ""
+plain_body: "Gr\xfc\xdfe aus K\xf6ln\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=309 sha256=210c4eb98317f7fd43641a139740fbfa9c4871ca766990679da336a2e4700407
+attachments: 0
+== c18-latin1-headers.eml
+subject: "Gr\xfc\xdfe aus K\xf6ln"
+sender_name: ""
+sender_email: ""
+to: "Fran\xe7ois <francois@example.test>"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "c18-latin1-headers@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <c18-latin1-headers@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: J\xfcrgen M\xfcller <juergen@example.test>\r\nTo: Fran\xe7ois <francois@example.test>\r\nSubject: Gr\xfc\xdfe aus K\xf6ln\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8"
+html_body: ""
+plain_body: "Ascii body; the headers are raw Latin-1.\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=299 sha256=a910dc90a83f629ecde1c87ff6cd28f96ceea4c52ff120a901850d3ba1fb861b
+attachments: 0
+== charset-big5.eml
+subject: "nameMap label big5"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "charset-big5@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <charset-big5@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: nameMap label big5\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=big5\r\nContent-Transfer-Encoding: 8bit"
+html_body: ""
+plain_body: "Gr\u6667e caf\ufffd \u4e2d\u6587 \U000225be\ufffd\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=290 sha256=c783f1b5a8f947001c57f89f87ce77d94453270e14d1e56552f4dad9c9779e52
+attachments: 0
+== charset-big5hk.eml
+subject: "nameMap label big5hk"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "charset-big5hk@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <charset-big5hk@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: nameMap label big5hk\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=big5hk\r\nContent-Transfer-Encoding: 8bit"
+html_body: ""
+plain_body: "Gr\u6667e caf\ufffd \u4e2d\u6587 \U000225be\ufffd\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=296 sha256=caea0422e0c28461b02fdb3d50616c733c18cfc66a32e6647304b06ce16680b4
+attachments: 0
+== charset-cp1250.eml
+subject: "nameMap label cp1250"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "charset-cp1250@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <charset-cp1250@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: nameMap label cp1250\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=cp1250\r\nContent-Transfer-Encoding: 8bit"
+html_body: ""
+plain_body: "Gr\u00fc\u00dfe caf\u00e9 \u00a4\u00a4\u00a4\u013a \u201cq\u201d\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=296 sha256=0af2ff7b8de0d120cd92eabdcfdd4c1063cd62d79825a4c6158282fb9835731e
+attachments: 0
+== charset-cp1251.eml
+subject: "nameMap label cp1251"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "charset-cp1251@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <charset-cp1251@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: nameMap label cp1251\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=cp1251\r\nContent-Transfer-Encoding: 8bit"
+html_body: ""
+plain_body: "Gr\u044c\u042fe caf\u0439 \u00a4\u00a4\u00a4\u0435 \u201cq\u201d\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=296 sha256=a019100d0372da7df0b67a427b431140af42e6f5fe0fdc25e3afbdd7139c70b6
+attachments: 0
+== charset-cp1252.eml
+subject: "nameMap label cp1252"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "charset-cp1252@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <charset-cp1252@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: nameMap label cp1252\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=cp1252\r\nContent-Transfer-Encoding: 8bit"
+html_body: ""
+plain_body: "Gr\u00fc\u00dfe caf\u00e9 \u00a4\u00a4\u00a4\u00e5 \u201cq\u201d\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=296 sha256=47976074ea8fc97c91905aa9b44ef7a413dbdeda1ac58b1bf2aa92121b4ad481
+attachments: 0
+== charset-cp1253.eml
+subject: "nameMap label cp1253"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "charset-cp1253@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <charset-cp1253@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: nameMap label cp1253\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=cp1253\r\nContent-Transfer-Encoding: 8bit"
+html_body: ""
+plain_body: "Gr\u03cc\u03afe caf\u03b9 \u00a4\u00a4\u00a4\u03b5 \u201cq\u201d\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=296 sha256=b151671a73753f5438801f76740e2de5fa0fab6bdf9c151360a6c11de2b238b0
+attachments: 0
+== charset-cp1254.eml
+subject: "nameMap label cp1254"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "charset-cp1254@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <charset-cp1254@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: nameMap label cp1254\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=cp1254\r\nContent-Transfer-Encoding: 8bit"
+html_body: ""
+plain_body: "Gr\u00fc\u00dfe caf\u00e9 \u00a4\u00a4\u00a4\u00e5 \u201cq\u201d\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=296 sha256=725cdaa07a03d0897311975ca591f42fc294f2f42473f267d38ca1dead404d7a
+attachments: 0
+== charset-cp1255.eml
+subject: "nameMap label cp1255"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "charset-cp1255@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <charset-cp1255@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: nameMap label cp1255\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=cp1255\r\nContent-Transfer-Encoding: 8bit"
+html_body: ""
+plain_body: "Gr\ufffd\ufffde caf\u05d9 \u20aa\u20aa\u20aa\u05d5 \u201cq\u201d\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=296 sha256=17c39e4024769b22bb57d8d86e9c48ebdd5e61aa54d766cd409d18ca472e799f
+attachments: 0
+== charset-cp1256.eml
+subject: "nameMap label cp1256"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "charset-cp1256@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <charset-cp1256@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: nameMap label cp1256\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=cp1256\r\nContent-Transfer-Encoding: 8bit"
+html_body: ""
+plain_body: "Gr\u00fc\u0643e caf\u00e9 \u00a4\u00a4\u00a4\u0647 \u201cq\u201d\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=296 sha256=35c3d29323ba23e95713bd3da6728c6da80497d3fc19aaa6d32041bcc1c863e3
+attachments: 0
+== charset-cp1257.eml
+subject: "nameMap label cp1257"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "charset-cp1257@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <charset-cp1257@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: nameMap label cp1257\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=cp1257\r\nContent-Transfer-Encoding: 8bit"
+html_body: ""
+plain_body: "Gr\u00fc\u00dfe caf\u00e9 \u00a4\u00a4\u00a4\u00e5 \u201cq\u201d\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=296 sha256=e90500ed883f6a64f04ae7a5cb2301b7e41dac638a2758bc736d9b2b84475949
+attachments: 0
+== charset-cp1258.eml
+subject: "nameMap label cp1258"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "charset-cp1258@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <charset-cp1258@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: nameMap label cp1258\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=cp1258\r\nContent-Transfer-Encoding: 8bit"
+html_body: ""
+plain_body: "Gr\u00fc\u00dfe caf\u00e9 \u00a4\u00a4\u00a4\u00e5 \u201cq\u201d\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=296 sha256=802aa00364228154f3b4e0e7e47ee5d9d3cf2398765aec4579d6cba01be3aeee
+attachments: 0
+== charset-cp437.eml
+subject: "nameMap label cp437"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "charset-cp437@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <charset-cp437@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: nameMap label cp437\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=cp437\r\nContent-Transfer-Encoding: 8bit"
+html_body: ""
+plain_body: "Gr\u207f\u2580e caf\u0398 \u00f1\u00f1\u00f1\u03c3 \u00f4q\u00f6\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=293 sha256=27cbda815f534dfbc0e4c9a13a18ee8e76dab8cb5de78cc817f7f00a52b033e5
+attachments: 0
+== charset-cp850.eml
+subject: "nameMap label cp850"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "charset-cp850@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <charset-cp850@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: nameMap label cp850\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=cp850\r\nContent-Transfer-Encoding: 8bit"
+html_body: ""
+plain_body: "Gr\u00b3\u2580e caf\u00da \u00f1\u00f1\u00f1\u00d5 \u00f4q\u00f6\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=293 sha256=0d5f28f309cab5d29da866da2f01b0c77cb2e542758924af0e3d672a6d56fd04
+attachments: 0
+== charset-cp852.eml
+subject: "nameMap label cp852"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "charset-cp852@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <charset-cp852@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: nameMap label cp852\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=cp852\r\nContent-Transfer-Encoding: 8bit"
+html_body: ""
+plain_body: "Gr\u0158\u2580e caf\u00da \u0104\u0104\u0104\u0148 \u00f4q\u00f6\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=293 sha256=b1a194db44ec31504fdf2fdbf0152a2e471f09a9e176397f8f9998155f8ed6c4
+attachments: 0
+== charset-cp855.eml
+subject: "nameMap label cp855"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "charset-cp855@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <charset-cp855@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: nameMap label cp855\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=cp855\r\nContent-Transfer-Encoding: 8bit"
+html_body: ""
+plain_body: "Gr\u0427\u2580e caf\u0436 \u0446\u0446\u0446\u0442 \u040aq\u045b\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=293 sha256=516f1999733ed9af5b4491cdc75816898d7d073168628271aa475c9d9403e6d1
+attachments: 0
+== charset-cp857.eml
+subject: "nameMap label cp857"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "charset-cp857@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <charset-cp857@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: nameMap label cp857\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=cp857\r\nContent-Transfer-Encoding: 8bit"
+html_body: ""
+plain_body: "Gr\xfc\xdfe caf\xe9 \xa4\xa4\xa4\xe5 \x93q\x94\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=293 sha256=f05eab36595bf0942dbf20a694ec53fda25dab625c67e80bb6659a679fe43b31
+attachments: 0
+== charset-cp858.eml
+subject: "nameMap label cp858"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "charset-cp858@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <charset-cp858@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: nameMap label cp858\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=cp858\r\nContent-Transfer-Encoding: 8bit"
+html_body: ""
+plain_body: "Gr\xfc\xdfe caf\xe9 \xa4\xa4\xa4\xe5 \x93q\x94\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=293 sha256=4757052735c68872a2d2abd9537c76072e29e6a521f1d48ba6eba9d2f6fe2f1d
+attachments: 0
+== charset-cp860.eml
+subject: "nameMap label cp860"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "charset-cp860@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <charset-cp860@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: nameMap label cp860\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=cp860\r\nContent-Transfer-Encoding: 8bit"
+html_body: ""
+plain_body: "Gr\u207f\u2580e caf\u0398 \u00f1\u00f1\u00f1\u03c3 \u00f4q\u00f5\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=293 sha256=2a90c021d734bdaadd5a3ffdc836d15a249ab55a3b4a1686e3ea8b587a6b0465
+attachments: 0
+== charset-cp864.eml
+subject: "nameMap label cp864"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "charset-cp864@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <charset-cp864@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: nameMap label cp864\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=cp864\r\nContent-Transfer-Encoding: 8bit"
+html_body: ""
+plain_body: "Gr\xfc\xdfe caf\xe9 \xa4\xa4\xa4\xe5 \x93q\x94\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=293 sha256=8875891a6e4b2f9afcddc95a5062f537b0b07ba8ff71245dac8d9b2b8b5055bf
+attachments: 0
+== charset-cp866.eml
+subject: "nameMap label cp866"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "charset-cp866@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <charset-cp866@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: nameMap label cp866\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=cp866\r\nContent-Transfer-Encoding: 8bit"
+html_body: ""
+plain_body: "Gr\u2116\u2580e caf\u0449 \u0434\u0434\u0434\u0445 \u0423q\u0424\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=293 sha256=cc65836c99ef51d6576d451736639a6902c9ce22736076e7daa3f3363f53d9ea
+attachments: 0
+== charset-cp869.eml
+subject: "nameMap label cp869"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "charset-cp869@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <charset-cp869@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: nameMap label cp869\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=cp869\r\nContent-Transfer-Encoding: 8bit"
+html_body: ""
+plain_body: "Gr\xfc\xdfe caf\xe9 \xa4\xa4\xa4\xe5 \x93q\x94\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=293 sha256=fe2b4b83f117a0e31b9a8a5dc2473ac7b41134251c6bcd04c4b7d3768fba1b06
+attachments: 0
+== charset-cp874.eml
+subject: "nameMap label cp874"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "charset-cp874@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <charset-cp874@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: nameMap label cp874\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=cp874\r\nContent-Transfer-Encoding: 8bit"
+html_body: ""
+plain_body: "Gr\ufffd\u0e3fe caf\u0e49 \u0e04\u0e04\u0e04\u0e45 \u201cq\u201d\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=293 sha256=e98582304c039ca092e3bf77a87918d9fbb370bc51e44c68408a16fdaf362705
+attachments: 0
+== charset-cp932.eml
+subject: "nameMap label cp932"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "charset-cp932@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <charset-cp932@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: nameMap label cp932\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=cp932\r\nContent-Transfer-Encoding: 8bit"
+html_body: ""
+plain_body: "Gr\xfc\xdfe caf\xe9 \xa4\xa4\xa4\xe5 \x93q\x94\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=293 sha256=6d3b44209ff6b67293a50a7715dc5e7c7d72ee8b4168b863b14d824b681bf74d
+attachments: 0
+== charset-cp936.eml
+subject: "nameMap label cp936"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "charset-cp936@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <charset-cp936@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: nameMap label cp936\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=cp936\r\nContent-Transfer-Encoding: 8bit"
+html_body: ""
+plain_body: "Gr\ufffde caf\ufffd \u3044\u3085 \u640e\ufffd\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=293 sha256=4e8fbd13175c83e39d6e39cf177ebf5cf24db6f10dede820a5c1f96796bbfdad
+attachments: 0
+== charset-cp950.eml
+subject: "nameMap label cp950"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "charset-cp950@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <charset-cp950@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: nameMap label cp950\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=cp950\r\nContent-Transfer-Encoding: 8bit"
+html_body: ""
+plain_body: "Gr\xfc\xdfe caf\xe9 \xa4\xa4\xa4\xe5 \x93q\x94\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=293 sha256=0d2a666d3d42ec200bc524d74ca77051150b037f81bddc8202bc54378adc1d16
+attachments: 0
+== charset-gb18030.eml
+subject: "nameMap label gb18030"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "charset-gb18030@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <charset-gb18030@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: nameMap label gb18030\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=gb18030\r\nContent-Transfer-Encoding: 8bit"
+html_body: ""
+plain_body: "Gr\ufffde caf\ufffd \u3044\u3085 \u640e\ufffd\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=299 sha256=65e7a97f28442b329f1d6ea92f9f3808a06b1a30685c70e849e69f0427d3fc4a
+attachments: 0
+== charset-greek8.eml
+subject: "nameMap label greek8"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "charset-greek8@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <charset-greek8@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: nameMap label greek8\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=greek8\r\nContent-Transfer-Encoding: 8bit"
+html_body: ""
+plain_body: "Gr\u03cc\u03afe caf\u03b9 \u20ac\u20ac\u20ac\u03b5 \ufffdq\ufffd\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=296 sha256=ecf49765439b16a5aa9f3c48758cbeeeda0371c50f6f2e8bf28e13a4adeccc30
+attachments: 0
+== charset-iso15.eml
+subject: "nameMap label iso15"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "charset-iso15@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <charset-iso15@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: nameMap label iso15\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=iso15\r\nContent-Transfer-Encoding: 8bit"
+html_body: ""
+plain_body: "Gr\u00fc\u00dfe caf\u00e9 \u20ac\u20ac\u20ac\u00e5 \ufffdq\ufffd\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=293 sha256=c3850ad04c0ea98299ee3e106685faa92872c36c00fab1440972579fc39c4ff1
+attachments: 0
+== charset-iso88592.eml
+subject: "nameMap label iso88592"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "charset-iso88592@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <charset-iso88592@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: nameMap label iso88592\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=iso88592\r\nContent-Transfer-Encoding: 8bit"
+html_body: ""
+plain_body: "Gr\u00fc\u00dfe caf\u00e9 \u00a4\u00a4\u00a4\u013a \ufffdq\ufffd\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=302 sha256=403fb9793ed158560f431f71a1cfaddce5a0e4a8c0868f0c3f192f4c08f2f33e
+attachments: 0
+== charset-iso88595.eml
+subject: "nameMap label iso88595"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "charset-iso88595@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <charset-iso88595@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: nameMap label iso88595\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=iso88595\r\nContent-Transfer-Encoding: 8bit"
+html_body: ""
+plain_body: "Gr\u045c\u043fe caf\u0449 \u0404\u0404\u0404\u0445 \ufffdq\ufffd\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=302 sha256=79217cbd831bbe76529219653e675dbc05eb44546ef843c746c24c1beb013ec5
+attachments: 0
+== charset-iso88596.eml
+subject: "nameMap label iso88596"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "charset-iso88596@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <charset-iso88596@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: nameMap label iso88596\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=iso88596\r\nContent-Transfer-Encoding: 8bit"
+html_body: ""
+plain_body: "Gr\ufffd\ufffde caf\u0649 \u00a4\u00a4\u00a4\u0645 \ufffdq\ufffd\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=302 sha256=5bb1bfd8a9691fcc0c4751091c41f6e0c644519c0182a294764fca460d3a12fa
+attachments: 0
+== charset-iso88597.eml
+subject: "nameMap label iso88597"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "charset-iso88597@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <charset-iso88597@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: nameMap label iso88597\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=iso88597\r\nContent-Transfer-Encoding: 8bit"
+html_body: ""
+plain_body: "Gr\u03cc\u03afe caf\u03b9 \u20ac\u20ac\u20ac\u03b5 \ufffdq\ufffd\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=302 sha256=3aae7562f4bfd6deb7448686ce2021c8ff79719d6570695307b93d7797c454b8
+attachments: 0
+== charset-iso88598.eml
+subject: "nameMap label iso88598"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "charset-iso88598@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <charset-iso88598@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: nameMap label iso88598\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=iso88598\r\nContent-Transfer-Encoding: 8bit"
+html_body: ""
+plain_body: "Gr\ufffd\u2017e caf\u05d9 \u00a4\u00a4\u00a4\u05d5 \ufffdq\ufffd\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=302 sha256=cee0da6459c2b13c0ffd162281508af3b8ee7c0c7f1ee12b124dcd514418e41d
+attachments: 0
+== charset-iso88599.eml
+subject: "nameMap label iso88599"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "charset-iso88599@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <charset-iso88599@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: nameMap label iso88599\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=iso88599\r\nContent-Transfer-Encoding: 8bit"
+html_body: ""
+plain_body: "Gr\u00fc\u00dfe caf\u00e9 \u00a4\u00a4\u00a4\u00e5 \u201cq\u201d\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=302 sha256=0136e4fab829c67413fcab446340c85e8a449288b0f497589976a973bc95220d
+attachments: 0
+== charset-iso_1.eml
+subject: "nameMap label iso_1"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "charset-iso_1@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <charset-iso_1@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: nameMap label iso_1\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=iso_1\r\nContent-Transfer-Encoding: 8bit"
+html_body: ""
+plain_body: "Gr\u00fc\u00dfe caf\u00e9 \u00a4\u00a4\u00a4\u00e5 \u201cq\u201d\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=293 sha256=e564cf7e4024fc0ab2457c62bf8bd9cb78770fe91845d64c213cb3a7f5273558
+attachments: 0
+== charset-koi8.eml
+subject: "nameMap label koi8"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "charset-koi8@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <charset-koi8@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: nameMap label koi8\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=koi8\r\nContent-Transfer-Encoding: 8bit"
+html_body: ""
+plain_body: "Gr\u042d\u044ae caf\u0418 \u2553\u2553\u2553\u0415 \u2320q\u25a0\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=290 sha256=57e30c6b2eb7d4643d2833e65ee847cfba51ade5fcdcd4ab40578afe93a77bdb
+attachments: 0
+== charset-roman8.eml
+subject: "nameMap label roman8"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "charset-roman8@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <charset-roman8@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: nameMap label roman8\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=roman8\r\nContent-Transfer-Encoding: 8bit"
+html_body: ""
+plain_body: "Gr\xfc\xdfe caf\xe9 \xa4\xa4\xa4\xe5 \x93q\x94\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=296 sha256=6a4915a80925b711cf22685ed96fe1d6b6bee6a50ab0f7605a9790e06e1fa38b
+attachments: 0
+== charset-sjis.eml
+subject: "nameMap label sjis"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "charset-sjis@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <charset-sjis@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: nameMap label sjis\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=sjis\r\nContent-Transfer-Encoding: 8bit"
+html_body: ""
+plain_body: "Gr\ufffde caf\ufffd \uff64\uff64\uff64\ufffd \u8ced\ufffd\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=290 sha256=209ac33a1666cedfdbf45d539873677d0873f6c66db2d822e014249be53b57cd
+attachments: 0
+== charset-tis-620.eml
+subject: "nameMap label tis-620"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "charset-tis-620@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <charset-tis-620@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: nameMap label tis-620\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=tis-620\r\nContent-Transfer-Encoding: 8bit"
+html_body: ""
+plain_body: "Gr\ufffd\u0e3fe caf\u0e49 \u0e04\u0e04\u0e04\u0e45 \u201cq\u201d\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=299 sha256=8ef5bf580998b44410abef5597898f1fb42fc83c3b403586bc5e6b5df6dc8b5e
+attachments: 0
+== charset-utf8.eml
+subject: "nameMap label utf8"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "charset-utf8@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <charset-utf8@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: nameMap label utf8\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf8\r\nContent-Transfer-Encoding: 8bit"
+html_body: ""
+plain_body: "Gr\ufffd\ufffde caf\ufffd \ufffd\ufffd\ufffd\ufffd \ufffdq\ufffd\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=290 sha256=cc95577d3b1c84ee3f0a8bd6e2f3b91d9832d7eb34853ac2781e85f5b1b26df5
+attachments: 0
+== ctl-attachment-base64.eml
+subject: "Report attached"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "ctl-attachment-base64@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <ctl-attachment-base64@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: Report attached\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"mx1\""
+html_body: ""
+plain_body: "See attached.\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=595 sha256=fa5a0b64b88aca2f9ca076ffba071a9632a93c4a8f3ab1738439c03ffe4d412e
+attachments: 1
+attachment 0: filename="r.pdf" mime_type="application/pdf" content_id="" size=0 bytes=len=93 sha256=05bf406ec6a788048516394888c743abdc8ad48a63c1b505c946ad0c2fed7cc1
+== ctl-date-offset.eml
+subject: "Date with an offset"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: "carol@example.test, Dave D <dave@example.test>"
+bcc: "erin@example.test"
+reply_to: "reply@example.test"
+in_reply_to: "parent@corpus.example"
+references: "<root@corpus.example> <parent@corpus.example>"
+internet_message_id: "ctl-date-offset@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <ctl-date-offset@corpus.example>\r\nDate: Tue, 03 Jan 2023 09:30:00 +0530\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: Date with an offset\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\nCc: carol@example.test, Dave D <dave@example.test>\r\nBcc: erin@example.test\r\nReply-To: reply@example.test\r\nIn-Reply-To: <parent@corpus.example>\r\nReferences: <root@corpus.example> <parent@corpus.example>"
+html_body: ""
+plain_body: "Date offsets and the recipient lists are part of identity.\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672718400000000000 offset=19800
+identity_date: unixnano=1672718400000000000 offset=19800
+raw: len=504 sha256=b173c9448f4da0d32352ff273c634e868730eed1d9f594721bc338282c403843
+attachments: 0
+== ctl-html-alternative.eml
+subject: "Alternative plain and html"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "ctl-html-alternative@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <ctl-html-alternative@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: Alternative plain and html\r\nMIME-Version: 1.0\r\nContent-Type: multipart/alternative; boundary=\"alt1\""
+html_body: "<html><body><p>HTML <b>version</b></p></body></html>\r\n"
+plain_body: "Plain version\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=450 sha256=60255192a2f6b7a9bd8a1dd8e883f32798d8c2fdc6a0babf20b638689c98e260
+attachments: 0
+== ctl-mid-reuse-a.eml
+subject: "Reused id, first message"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "ctl-mid-reuse@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <ctl-mid-reuse@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: Reused id, first message\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8"
+html_body: ""
+plain_body: "The first message that uses this Message-ID.\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=290 sha256=a0a9b853a91ed8149e334278ce56f7fa7a18122d8c7026eeb747d14d8ae44d33
+attachments: 0
+== ctl-mid-reuse-b.eml
+subject: "Reused id, second message"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "carol@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "ctl-mid-reuse@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <ctl-mid-reuse@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: carol@example.test\r\nSubject: Reused id, second message\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8"
+html_body: ""
+plain_body: "A different message that reuses the same Message-ID.\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=301 sha256=6390b01e8646957f3ef3fdffc9b1add1ce0962334e22e4a47ca20a2e2fdbbe76
+attachments: 0
+== ctl-no-message-id-no-date.eml
+subject: "No Message-ID, no Date"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: ""
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "From: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: No Message-ID, no Date\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8"
+html_body: ""
+plain_body: "No Message-ID and no Date: identity time is the zero time.\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: zero
+identity_date: zero
+raw: len=219 sha256=1e8f4d984827c019bec3d867553795527390c0ff0718c02e432bc8f2cace740b
+attachments: 0
+== ctl-no-message-id.eml
+subject: "No Message-ID"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: ""
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Date: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: No Message-ID\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8"
+html_body: ""
+plain_body: "No Message-ID, so identity is a content hash (sha:).\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=243 sha256=bc388abfe2746eaf44fe5f7eb7e0c554030b9d2935d5f9c4bd84c845dde0958e
+attachments: 0
+== ctl-plain-ascii.eml
+subject: "Plain ascii"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "ctl-plain-ascii@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <ctl-plain-ascii@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: Plain ascii\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=us-ascii"
+html_body: ""
+plain_body: "Hello Bob.\r\nA plain ascii message.\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=272 sha256=efebc0e6ba9f8605d32f063d0f2dfeafa8fa77a77ede19f5f6f4e4da51731ef6
+attachments: 0
+== ctl-state-headers.eml
+subject: "Message state headers"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "ctl-state-headers@corpus.example"
+importance: "high"
+sensitivity: "confidential"
+phys_id: ""
+transport_headers: "Message-ID: <ctl-state-headers@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: Message state headers\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\nImportance: high\r\nX-Priority: 1\r\nSensitivity: Company-Confidential\r\nX-Mozilla-Status: 0001\r\nX-Mozilla-Keys: $label1 \"Project X\""
+html_body: ""
+plain_body: "State and categories are a snapshot, outside identity.\r\n"
+rtf_body: ""
+unread: false
+categories: ["$label1", "\"Project", "X\""]
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=430 sha256=49d98216d473aa4bca3d16e5779ebaf2eed1e923c80c783996f8d073c44b304e
+attachments: 0
+== ctl-utf8-qp.eml
+subject: "Gr\u00fc\u00dfe"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "ctl-utf8-qp@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <ctl-utf8-qp@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: =?UTF-8?Q?Gr=C3=BC=C3=9Fe?=\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable"
+html_body: ""
+plain_body: "Gr\u00fc\u00dfe aus K\u00f6ln\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=321 sha256=ac07eb16184e580aa780dd8533c75aa02b8185e4fad937aefef2334652666ccd
+attachments: 0
+== f24-cp-850-after-body.eml
+subject: "Charset cp-850 after the body"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "f24-cp-850-after-body@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <f24-cp-850-after-body@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: Charset cp-850 after the body\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"mx\""
+html_body: ""
+plain_body: "The body, in UTF-8.\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=740 sha256=8f83a2bdac28f47a71a797ac0b510dae959614bed7efc667830ffd2806aafccb
+attachments: 0
+== f24-cp-850-first.eml
+subject: "Charset cp-850 first"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "f24-cp-850-first@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <f24-cp-850-first@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: Charset cp-850 first\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"mx\""
+html_body: ""
+plain_body: ""
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=654 sha256=e215cd27eab3599de808741652edb4d77e32dfb136f2bb11784b1eee85e7b57b
+attachments: 0
+== f24-cte-7bit.eml
+subject: "Transfer encoding 7bit"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "f24-cte-7bit@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <f24-cte-7bit@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: Transfer encoding 7bit\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"mx\""
+html_body: ""
+plain_body: "Body before the odd part.\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=760 sha256=5a2be09a60d8e9fd25b30bd81aaf3b05346525cad05cea04281881bc4266eed3
+attachments: 2
+attachment 0: filename="note.txt" mime_type="text/plain" content_id="" size=0 bytes=len=16 sha256=b6a8f739046ad9d5375cf7ec575da3e338a87da42022cf53b33545b949cfb942
+attachment 1: filename="r.pdf" mime_type="application/pdf" content_id="" size=0 bytes=len=93 sha256=05bf406ec6a788048516394888c743abdc8ad48a63c1b505c946ad0c2fed7cc1
+== f24-cte-8-bit.eml
+subject: "Transfer encoding 8-bit"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "f24-cte-8-bit@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <f24-cte-8-bit@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: Transfer encoding 8-bit\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"mx\""
+html_body: ""
+plain_body: "Body before the odd part.\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=769 sha256=b9d5ee1eeea1af712e0804ece77097adca2d86113f5a7a25d51ea9fb0a964d9a
+attachments: 0
+== f24-cte-base64-truncated.eml
+subject: "Truncated base64 attachment"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "f24-cte-base64-truncated@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <f24-cte-base64-truncated@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: Truncated base64 attachment\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"mx\""
+html_body: ""
+plain_body: "A truncated attachment follows.\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=593 sha256=de24e0ed3be5deb471d614f901f7922672027f364bb7313a77e2553dac9f50cb
+attachments: 1
+attachment 0: filename="cut.pdf" mime_type="application/pdf" content_id="" size=0 bytes=len=66 sha256=696cc6e321e8ccb9dbabf02b2f98ac37e0f4f28cf2b1adb60754b4a9fbeb5d88
+== f24-cte-base64.eml
+subject: "Transfer encoding base64"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "f24-cte-base64@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <f24-cte-base64@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: Transfer encoding base64\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"mx\""
+html_body: ""
+plain_body: "Body before the odd part.\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=780 sha256=e4937f962fa2e63dcf90126acca1f6c62314ae1796cb8a21cdd86ca2e32c0968
+attachments: 2
+attachment 0: filename="note.txt" mime_type="text/plain" content_id="" size=0 bytes=len=24 sha256=0fb06dbf21f686e42e5974753efd2a6c09e160a09980ad8b3a161eb31a384283
+attachment 1: filename="r.pdf" mime_type="application/pdf" content_id="" size=0 bytes=len=93 sha256=05bf406ec6a788048516394888c743abdc8ad48a63c1b505c946ad0c2fed7cc1
+== f24-cte-qp-encoded.eml
+subject: "Transfer encoding quoted-printable (encoded)"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "f24-cte-qp-encoded@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <f24-cte-qp-encoded@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: Transfer encoding quoted-printable (encoded)\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"mx\""
+html_body: ""
+plain_body: "Body before the odd part.\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=812 sha256=ec83d0bbcc2d87861fcc80792968958d6861a247472cfd549a95add4875b7e66
+attachments: 0
+== f24-cte-quoted-printable.eml
+subject: "Transfer encoding quoted-printable"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "f24-cte-quoted-printable@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <f24-cte-quoted-printable@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: Transfer encoding quoted-printable\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"mx\""
+html_body: ""
+plain_body: "Body before the odd part.\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=798 sha256=3d1bbf161d68ab11842075624e07931d7f36e3acbc229bda0c1727dea511c40a
+attachments: 2
+attachment 0: filename="note.txt" mime_type="text/plain" content_id="" size=0 bytes=len=15 sha256=b43e8283d5b909abeb4e496fb60f75c3e1f61b4c6c6cddadd9be94127c229b97
+attachment 1: filename="r.pdf" mime_type="application/pdf" content_id="" size=0 bytes=len=93 sha256=05bf406ec6a788048516394888c743abdc8ad48a63c1b505c946ad0c2fed7cc1
+== f24-cte-x-foo.eml
+subject: "Transfer encoding x-foo"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "f24-cte-x-foo@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <f24-cte-x-foo@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: Transfer encoding x-foo\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"mx\""
+html_body: ""
+plain_body: "Body before the odd part.\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=764 sha256=725364394245b0a8917f603f6e7c4c89025376f790c1ba9111b97a13500fca48
+attachments: 0
+== f24-cte-x-uuencode.eml
+subject: "Transfer encoding x-uuencode"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "f24-cte-x-uuencode@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <f24-cte-x-uuencode@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: Transfer encoding x-uuencode\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"mx\""
+html_body: ""
+plain_body: "Body before the odd part.\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=797 sha256=27c0ff2708b67c3840cc70469ffb220f1c89adc4f8ac2b64fbcb7b13ad7ae739
+attachments: 0
+== f24-default-after-body.eml
+subject: "Charset default after the body"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "f24-default-after-body@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <f24-default-after-body@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: Charset default after the body\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"mx\""
+html_body: ""
+plain_body: "The body, in UTF-8.\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=743 sha256=2d88b4e69020405adbf825ef501ea0bd99dc88ca1b1f32a08cd9a47f5cafb8f2
+attachments: 0
+== f24-default-first.eml
+subject: "Charset default first"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "f24-default-first@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <f24-default-first@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: Charset default first\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"mx\""
+html_body: ""
+plain_body: ""
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=657 sha256=f73722daec867c00302c887d5fc1f28087989732290a0370732266e0c4d34ba0
+attachments: 0
+== f24-empty-after-body.eml
+subject: "Charset  after the body"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "f24-empty-after-body@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <f24-empty-after-body@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: Charset  after the body\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"mx\""
+html_body: ""
+plain_body: "The body, in UTF-8.\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=727 sha256=885e3c7c06f306d8d54ca9a1e46bfbeae40e7a7d99515d3a3ee788a4e05514d7
+attachments: 0
+== f24-empty-first.eml
+subject: "Charset  first"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "f24-empty-first@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <f24-empty-first@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: Charset  first\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"mx\""
+html_body: ""
+plain_body: ""
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=641 sha256=672250053ed47e3a9cb23425351d9eb7469d046ce1c4ddb474306457ab693d78
+attachments: 0
+== f24-iso-8859-1-after-body.eml
+subject: "Charset iso-8859-1 after the body"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "f24-iso-8859-1-after-body@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <f24-iso-8859-1-after-body@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: Charset iso-8859-1 after the body\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"mx\""
+html_body: ""
+plain_body: "The body, in UTF-8.\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=752 sha256=576999fbd02c1c4069dad96904d2e2bce7f38e5076cca3ac4d0d180fd0744049
+attachments: 1
+attachment 0: filename="r.pdf" mime_type="application/pdf" content_id="" size=0 bytes=len=93 sha256=05bf406ec6a788048516394888c743abdc8ad48a63c1b505c946ad0c2fed7cc1
+== f24-iso-8859-1-first.eml
+subject: "Charset iso-8859-1 first"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "f24-iso-8859-1-first@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <f24-iso-8859-1-first@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: Charset iso-8859-1 first\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"mx\""
+html_body: ""
+plain_body: "Gr\u00fc\u00dfe aus K\u00f6ln, caf\u00e9\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=666 sha256=228f1a3a1b4a9591645fd7899087e7ab6056486f37371462bf168a2b795ed155
+attachments: 1
+attachment 0: filename="r.pdf" mime_type="application/pdf" content_id="" size=0 bytes=len=93 sha256=05bf406ec6a788048516394888c743abdc8ad48a63c1b505c946ad0c2fed7cc1
+== f24-unknown-8bit-after-body.eml
+subject: "Charset unknown-8bit after the body"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "f24-unknown-8bit-after-body@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <f24-unknown-8bit-after-body@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: Charset unknown-8bit after the body\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"mx\""
+html_body: ""
+plain_body: "The body, in UTF-8.\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=758 sha256=f29e771d905422d2e3ba2ac82b1db60ea3f3eebd0a737b7af7eca212c4834ebf
+attachments: 0
+== f24-unknown-8bit-first.eml
+subject: "Charset unknown-8bit first"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "f24-unknown-8bit-first@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <f24-unknown-8bit-first@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: Charset unknown-8bit first\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"mx\""
+html_body: ""
+plain_body: ""
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=672 sha256=e9f3b10fd1a89a28207c92e57ddfc311c3e988744472f7dcc4299148312b388d
+attachments: 0
+== f24-unknown-8bit-single.eml
+subject: "=?unknown-8bit?Q?Gr=FC=DFe_caf=E9?="
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "f24-unknown-8bit-single@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <f24-unknown-8bit-single@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: =?unknown-8bit?Q?Gr=FC=DFe_caf=E9?=\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=\"unknown-8bit\"\r\nContent-Transfer-Encoding: quoted-printable"
+html_body: ""
+plain_body: "Gr=FC=DFe aus K=F6ln, caf=E9\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=349 sha256=b40932dfea6c9a341781277613116c7a31489808a8c8c5bdd8469fbfc6acae9e
+attachments: 0
+== f24-utf-7-after-body.eml
+subject: "Charset utf-7 after the body"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "f24-utf-7-after-body@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <f24-utf-7-after-body@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: Charset utf-7 after the body\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"mx\""
+html_body: ""
+plain_body: "The body, in UTF-8.\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=737 sha256=a836b073069a86cd99e4c07e5b76cb985bb9ff308a095d068482369fbb7c6c0d
+attachments: 0
+== f24-utf-7-first.eml
+subject: "Charset utf-7 first"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "f24-utf-7-first@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <f24-utf-7-first@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: Charset utf-7 first\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"mx\""
+html_body: ""
+plain_body: ""
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=651 sha256=30070bc77a12eca837effa5beeb70f2b20794cec342dc5cdad9985d0fe1fc83b
+attachments: 0
+== f24-x-unknown-after-body.eml
+subject: "Charset x-unknown after the body"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "f24-x-unknown-after-body@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <f24-x-unknown-after-body@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: Charset x-unknown after the body\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"mx\""
+html_body: ""
+plain_body: "The body, in UTF-8.\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=749 sha256=b13cca878d47775ca457681f0a020a68449564bc9cba644417660c08b91cb5de
+attachments: 0
+== f24-x-unknown-first.eml
+subject: "Charset x-unknown first"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "f24-x-unknown-first@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <f24-x-unknown-first@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: Charset x-unknown first\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"mx\""
+html_body: ""
+plain_body: ""
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=663 sha256=cfa43c98973e83e2d141a2e77155c7734b49a5a578520722f01e2b5fd088a331
+attachments: 0
+== f25-apple-mail.eml
+subject: "Apple Mail split body"
+sender_name: "Alice Example"
+sender_email: "alice@icloud.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "f25-apple-mail@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <f25-apple-mail@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@icloud.test>\r\nTo: bob@example.test\r\nSubject: Apple Mail split body\r\nMIME-Version: 1.0\r\nContent-Type: multipart/alternative; boundary=\"Apple-Alt\""
+html_body: "<html><body><p>First html part.</p></body></html>\r\n"
+plain_body: "Plain alternative of the Apple Mail message.\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=1321 sha256=11aca93131cbc846aaf44c6da97a6f3fb6a4cb4975cf2163979137aa108bf830
+attachments: 1
+attachment 0: filename="inline" mime_type="application/pdf" content_id="" size=0 bytes=len=93 sha256=05bf406ec6a788048516394888c743abdc8ad48a63c1b505c946ad0c2fed7cc1
+== f25-duplicate-and-long-names.eml
+subject: "Duplicate and long attachment names"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "f25-duplicate-and-long-names@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <f25-duplicate-and-long-names@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: Duplicate and long attachment names\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"dn-bd\""
+html_body: ""
+plain_body: "Two attachments named a.pdf and one with a 130-character name.\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=1350 sha256=3e1d16ef3491536049ed6927f68dfbcd777443946d677ead9edcd9fb11c9c645
+attachments: 3
+attachment 0: filename="a.pdf" mime_type="application/pdf" content_id="" size=0 bytes=len=93 sha256=05bf406ec6a788048516394888c743abdc8ad48a63c1b505c946ad0c2fed7cc1
+attachment 1: filename="a.pdf" mime_type="application/pdf" content_id="" size=0 bytes=len=99 sha256=790baed0980d3034875fd97874170cd33dc69c27f91a38bc7d18ac36fee7dd2c
+attachment 2: filename="nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn.pdf" mime_type="application/pdf" content_id="" size=0 bytes=len=97 sha256=3b0a716b459266250681c21e9d52ae0c0922fa026606b18bb3f9cacdcde50ce6
+== f25-inline-names.eml
+subject: "Inline files and forwarded message"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "f25-inline-names@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <f25-inline-names@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: Inline files and forwarded message\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"in-bd\""
+html_body: ""
+plain_body: "Inline files of several kinds.\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=1597 sha256=64b02d3cc7614d2eee9343288885ffbae0627fb774e6587c245398ac26106656
+attachments: 5
+attachment 0: filename="inline" mime_type="application/pdf" content_id="" size=0 bytes=len=93 sha256=05bf406ec6a788048516394888c743abdc8ad48a63c1b505c946ad0c2fed7cc1
+attachment 1: filename="inline" mime_type="text/calendar" content_id="" size=0 bytes=len=88 sha256=c27dbc76a23ebfcbf2ea2886425fdd4a98ea6d1296e809183e670fdd28f13536
+attachment 2: filename="inline" mime_type="message/rfc822" content_id="" size=0 bytes=len=244 sha256=0ba40a83633c48cd3a48cc5326184cfc290e4b4bac4b3ca2f567727b33f94e4a
+attachment 3: filename="logo@corpus.example" mime_type="image/png" content_id="logo@corpus.example" size=0 bytes=len=70 sha256=8e64d2d16fa6252a880c4618c9bc581b69a305c2e8230e051b271d52f35cd783
+attachment 4: filename="inline" mime_type="image/png" content_id="" size=0 bytes=len=70 sha256=8e64d2d16fa6252a880c4618c9bc581b69a305c2e8230e051b271d52f35cd783
+== f25-mailman.eml
+subject: "[list] Mailman footer"
+sender_name: "Poster"
+sender_email: "poster@example.test"
+to: "list@lists.example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "f25-mailman@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <f25-mailman@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Poster <poster@example.test>\r\nTo: list@lists.example.test\r\nSubject: [list] Mailman footer\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"mm-bd\"\r\nList-Id: <list.lists.example.test>\r\nPrecedence: list"
+html_body: "<html><body><p>The list post, in HTML.</p></body></html>\r\n"
+plain_body: "_______________________________________________\r\nlist mailing list -- list@lists.example.test\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=634 sha256=7764ca71015b8962ff948da4dcbc277e6d4f832c5266dc1220ca09d2fd930f48
+attachments: 0
+== f25-mutt.eml
+subject: "mutt named text parts"
+sender_name: "Mutt User"
+sender_email: "mutt@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "f25-mutt@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <f25-mutt@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Mutt User <mutt@example.test>\r\nTo: bob@example.test\r\nSubject: mutt named text parts\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"mutt-bd\"\r\nUser-Agent: Mutt/2.2.9 (2022-11-12)"
+html_body: ""
+plain_body: "Build output attached below.\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=692 sha256=65b4429b144f1bfdf2fc7e2fac393082a8baebce37388e761b40cb13076d2118
+attachments: 1
+attachment 0: filename="notes.txt" mime_type="text/plain" content_id="" size=0 bytes=len=20 sha256=dfbe7a788d99a0353ba3f8ba6be403da6a970ce2006eb77b33cac20b135d6d67
+== f25-nested-long-subject.eml
+subject: "Forwarded message with a very long subject"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "f25-nested-long-subject@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <f25-nested-long-subject@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: Forwarded message with a very long subject\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"ns-bd\""
+html_body: ""
+plain_body: "A forwarded message follows.\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=1258 sha256=cc56929211dffcf9f3f6f900fb69ee979970d08a93e0fb796a1d35940a3965bb
+attachments: 1
+attachment 0: filename="forwarded.eml" mime_type="message/rfc822" content_id="" size=0 bytes=len=781 sha256=a03f9999f8d1c3089efaa2f3df7abb1f0db4d6d4536851acfbc0d801471f31c0
+== f25-reserved-names.eml
+subject: "Names that look like the tool's own"
+sender_name: "Alice Example"
+sender_email: "alice@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "f25-reserved-names@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <f25-reserved-names@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice Example <alice@example.test>\r\nTo: bob@example.test\r\nSubject: Names that look like the tool's own\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"rn-bd\""
+html_body: ""
+plain_body: "Sender files named like the tool's reserved suffixes.\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=695 sha256=027a9e3d80ae6b31816aa862576866572c5689e9a1e507e6f283f6a473a6ad46
+attachments: 2
+attachment 0: filename="Invoice (attached message).html" mime_type="text/html" content_id="" size=0 bytes=len=21 sha256=59c177ad1973eff3c95da98950b64c379c6c7c2464ca2dee02246550d42c2145
+attachment 1: filename="x.undecoded" mime_type="application/octet-stream" content_id="" size=0 bytes=len=17 sha256=92dae6401cc2c40908249b363591cbf94383559b6651fad425b4b8a1d4ab8ef6
+== fallback-empty.eml
+subject: ""
+sender_name: ""
+sender_email: ""
+to: ""
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: ""
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: ""
+html_body: ""
+plain_body: ""
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: zero
+identity_date: zero
+raw: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+attachments: 0
+== fallback-header-error.eml
+subject: "(unparseable message)"
+sender_name: ""
+sender_email: ""
+to: ""
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: ""
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <fallback-header-error@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice <alice@example.test>\r\nthis line has no colon\r\nSubject: After the bad line"
+html_body: ""
+plain_body: "Message-ID: <fallback-header-error@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Alice <alice@example.test>\r\nthis line has no colon\r\nSubject: After the bad line\r\n\r\nBody after a header block go-message rejects.\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: zero
+identity_date: zero
+raw: len=227 sha256=d562d8d5776375c0ea7c418632c4eccf52feca44c4d4e59b592921f33a2b7ebc
+attachments: 0
+== fallback-no-headers.eml
+subject: "(unparseable message)"
+sender_name: ""
+sender_email: ""
+to: ""
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: ""
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: ""
+html_body: ""
+plain_body: "just some text with no headers at all\r\nand no blank line\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: zero
+identity_date: zero
+raw: len=58 sha256=fd950ca2334bb9c8be26393527c0d369c48ec7fcc75cf649263e6a66fa61cb9e
+attachments: 0
+== shape-bounce-dsn.eml
+subject: "Undelivered Mail Returned to Sender"
+sender_name: "Mail Delivery System"
+sender_email: "MAILER-DAEMON@example.test"
+to: "alice@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "shape-bounce-dsn@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <shape-bounce-dsn@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Mail Delivery System <MAILER-DAEMON@example.test>\r\nTo: alice@example.test\r\nSubject: Undelivered Mail Returned to Sender\r\nReturn-Path: <>\r\nMIME-Version: 1.0\r\nContent-Type: multipart/report; report-type=delivery-status; boundary=\"dsn-bd\""
+html_body: ""
+plain_body: "This is the mail system. Delivery failed.\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=907 sha256=e4d992bb6756f1a59c1459d1eebfcc02ef52666fbd9a7863811f32243771b106
+attachments: 2
+attachment 0: filename="" mime_type="message/delivery-status" content_id="" size=0 bytes=len=115 sha256=ae7705bb63a4845da9ae94661fe844dc8215c5f4d4986a1d375201f1ab0d4477
+attachment 1: filename="" mime_type="message/rfc822" content_id="" size=0 bytes=len=251 sha256=ce0311edf8a38c3a796af4cef383f654ae3be60ab761a11b54f28e6ff456e6eb
+== shape-bounce-nullsender.eml
+subject: "Bounce with a null sender"
+sender_name: ""
+sender_email: ""
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "shape-bounce-nullsender@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <shape-bounce-nullsender@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: <>\r\nTo: bob@example.test\r\nSubject: Bounce with a null sender\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=us-ascii\r\nReturn-Path: <>"
+html_body: ""
+plain_body: "A bounce whose From is the null address.\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=285 sha256=2c9717dc1fdd60d6c16f7b073a2a9ea96f4cdb9111c501e5620a3e1221f82d1f
+attachments: 0
+== shape-outlook-related.eml
+subject: "Outlook HTML with embedded images"
+sender_name: "Outlook User"
+sender_email: "out@example.test"
+to: "bob@example.test"
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: "shape-outlook-related@corpus.example"
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: "Message-ID: <shape-outlook-related@corpus.example>\r\nDate: Mon, 02 Jan 2023 15:04:05 +0000\r\nFrom: Outlook User <out@example.test>\r\nTo: bob@example.test\r\nSubject: Outlook HTML with embedded images\r\nMIME-Version: 1.0\r\nContent-Type: multipart/related; type=\"multipart/alternative\"; boundary=\"ol-rel\"\r\nX-Mailer: Microsoft Outlook 16.0"
+html_body: "<html><body><p>Gr\u00fc\u00dfe</p><img src=\"cid:image001.png@01D9ABCD.12345678\"></body></html>\r\n"
+plain_body: "Gr\u00fc\u00dfe [cid:image001.png@01D9ABCD.12345678]\r\n"
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: unixnano=1672671845000000000 offset=0
+identity_date: unixnano=1672671845000000000 offset=0
+raw: len=1078 sha256=006238c8ccbeaf241f88746326ad37d90e8175332566b78ed6b3e66147d69498
+attachments: 1
+attachment 0: filename="image001.png@01D9ABCD.12345678" mime_type="image/png" content_id="image001.png@01D9ABCD.12345678" size=0 bytes=len=70 sha256=8e64d2d16fa6252a880c4618c9bc581b69a305c2e8230e051b271d52f35cd783
+== v1-stub (constructed: the message safeParseMessage's recover returns)
+subject: "(unreadable message)"
+sender_name: ""
+sender_email: ""
+to: ""
+cc: ""
+bcc: ""
+reply_to: ""
+in_reply_to: ""
+references: ""
+internet_message_id: ""
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: ""
+html_body: ""
+plain_body: ""
+rtf_body: ""
+unread: false
+categories: []
+sent: zero
+received: zero
+identity_date: zero
+raw: nil
+attachments: 0
+== support.pst#000 Drafts
+subject: len=34 sha256=13bcbc3cc771ed3e1a8f9537fa4fa7e04bd9806be080aa475334b1091dddb4f2
+sender_name: len=11 sha256=3facd9d492b80d227c859ce8c27d68c9fcb7f106e01ce99d828e1f71e9c79430
+sender_email: len=23 sha256=1f6b10380f6d0833f7f3975b1d499477a30d4fb3785033b7762b236d6457874d
+to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+cc: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+bcc: len=2014 sha256=4003a38a0663d82c0fa8a5d0550a01a7a90f2dc9268cae4df186472d40683ea0
+reply_to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+in_reply_to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+references: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+internet_message_id: len=54 sha256=97d39f52d821634f92855af41fc1727d4ede3f777935585d8254237906525284
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: len=3444 sha256=6c8c4c008bc6024d0887a19b0c72059a6e9eeb5fec13f9fea1dae9cca9fe606e
+html_body: len=2553 sha256=475858aa8d7357d055ef0c6c368b2d01fdf38ac91b0481cf2a8413aaa154e766
+plain_body: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+rtf_body: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+unread: false
+categories: []
+sent: unixnano=1425658753000000000 offset=0
+received: unixnano=1425658753000000000 offset=0
+identity_date: zero
+raw: nil
+attachments: 0
+== support.pst#001 Drafts
+subject: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+sender_name: len=11 sha256=3facd9d492b80d227c859ce8c27d68c9fcb7f106e01ce99d828e1f71e9c79430
+sender_email: len=23 sha256=1f6b10380f6d0833f7f3975b1d499477a30d4fb3785033b7762b236d6457874d
+to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+cc: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+bcc: len=2014 sha256=4003a38a0663d82c0fa8a5d0550a01a7a90f2dc9268cae4df186472d40683ea0
+reply_to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+in_reply_to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+references: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+internet_message_id: len=54 sha256=11b6eccf7cbe1e5b92dd29f87467a57a8036a2c3d089bb0c1eb97e68ba603783
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: len=3446 sha256=8cd15956e519757f0d484d58e83538f9d0281d5880bf6881bf0d917bb94552b6
+html_body: len=2216 sha256=d630d6ec7df54d365ea996e62b1219491cbfad16d54f70c3bfc675ee6415fe63
+plain_body: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+rtf_body: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+unread: false
+categories: []
+sent: unixnano=1425658724000000000 offset=0
+received: unixnano=1425658724000000000 offset=0
+identity_date: zero
+raw: nil
+attachments: 0
+== support.pst#002 Drafts
+subject: len=13 sha256=0e356594076347362486e7c6ccf640c3c4f518287c9304080a2849f6c7f4b402
+sender_name: len=11 sha256=3facd9d492b80d227c859ce8c27d68c9fcb7f106e01ce99d828e1f71e9c79430
+sender_email: len=23 sha256=1f6b10380f6d0833f7f3975b1d499477a30d4fb3785033b7762b236d6457874d
+to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+cc: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+bcc: len=2079 sha256=5c204be3a7bccf63b0eaa342ef7d857ad2ba8d7b7e3b428cf9f72a50544f25ce
+reply_to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+in_reply_to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+references: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+internet_message_id: len=54 sha256=bf5b00352c0ad70b8108f634c20b8deb2d5853e6e95b14d58fa5950011b23fb0
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: len=3585 sha256=8d48ad72bc2d4cdce60c0cc74f7c3b5ec820fe4e0d1ec6812a7fc943534915c4
+html_body: len=2697 sha256=c3e8de6b2f3fa604567e3030208adcac59aa4ec5cd614aceda8801d7eb059883
+plain_body: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+rtf_body: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+unread: false
+categories: []
+sent: unixnano=1422884205000000000 offset=0
+received: unixnano=1422884205000000000 offset=0
+identity_date: zero
+raw: nil
+attachments: 0
+== support.pst#003 Drafts
+subject: len=20 sha256=9e2f6854154be3e31965d2f504b5ca95ea0e674bf9ab95fd8c2dc4197acd0093
+sender_name: len=11 sha256=3facd9d492b80d227c859ce8c27d68c9fcb7f106e01ce99d828e1f71e9c79430
+sender_email: len=23 sha256=1f6b10380f6d0833f7f3975b1d499477a30d4fb3785033b7762b236d6457874d
+to: len=13 sha256=03c27338ea13c2633fa53fa1933b107aced6233526e73879be0e7bf14f0dbf80
+cc: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+bcc: len=7 sha256=a18603086e5bdf9df88ccc9f5a083fed093e819976e87456b74dafcbd7011114
+reply_to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+in_reply_to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+references: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+internet_message_id: len=54 sha256=469ad50ae60ffe40d6e7175d81de01c59254e66f1f7f78fabd2a8c2767630427
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: len=603 sha256=a7ff4aa597fb56a18f31c5b90047d3b1e0eea8334c9f5db5d83206bb1d0bfadf
+html_body: len=3085 sha256=83f2975a017e071664acf790a91581a5958678bdbe03818995f152565bb67ccd
+plain_body: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+rtf_body: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+unread: false
+categories: []
+sent: unixnano=1422884128000000000 offset=0
+received: unixnano=1422884128000000000 offset=0
+identity_date: zero
+raw: nil
+attachments: 0
+== support.pst#004 Drafts
+subject: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+sender_name: len=11 sha256=3facd9d492b80d227c859ce8c27d68c9fcb7f106e01ce99d828e1f71e9c79430
+sender_email: len=23 sha256=1f6b10380f6d0833f7f3975b1d499477a30d4fb3785033b7762b236d6457874d
+to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+cc: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+bcc: len=7 sha256=a18603086e5bdf9df88ccc9f5a083fed093e819976e87456b74dafcbd7011114
+reply_to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+in_reply_to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+references: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+internet_message_id: len=54 sha256=a32d29b029008c5d5c97943960a41300a4b4d73e3b8ed21b901b39303158b610
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: len=560 sha256=41c9f6a27f9d1ffd3ca24d7927b4d7c55179ddba08edf7ed3abceb947f6a2ae9
+html_body: len=3085 sha256=83f2975a017e071664acf790a91581a5958678bdbe03818995f152565bb67ccd
+plain_body: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+rtf_body: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+unread: false
+categories: []
+sent: unixnano=1422867023000000000 offset=0
+received: unixnano=1422867023000000000 offset=0
+identity_date: zero
+raw: nil
+attachments: 0
+== support.pst#005 Drafts
+subject: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+sender_name: len=11 sha256=3facd9d492b80d227c859ce8c27d68c9fcb7f106e01ce99d828e1f71e9c79430
+sender_email: len=23 sha256=1f6b10380f6d0833f7f3975b1d499477a30d4fb3785033b7762b236d6457874d
+to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+cc: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+bcc: len=7 sha256=a18603086e5bdf9df88ccc9f5a083fed093e819976e87456b74dafcbd7011114
+reply_to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+in_reply_to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+references: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+internet_message_id: len=54 sha256=3213c17ad23d8d336dba84e76c1c7f31ae49573051eef27d4fb8fa566cc81d7f
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: len=560 sha256=59f1d3b2414537fe11e2bee04cbb91273d14fb9349528970bb5016f7e8fb109a
+html_body: len=3092 sha256=6cc7b44412269a84a88d6952f56bff498041f27b28a288dfce5576f1f93fd3f3
+plain_body: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+rtf_body: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+unread: false
+categories: []
+sent: unixnano=1422866994000000000 offset=0
+received: unixnano=1422866994000000000 offset=0
+identity_date: zero
+raw: nil
+attachments: 0
+== support.pst#006 Sent Messages
+subject: len=34 sha256=13bcbc3cc771ed3e1a8f9537fa4fa7e04bd9806be080aa475334b1091dddb4f2
+sender_name: len=11 sha256=3facd9d492b80d227c859ce8c27d68c9fcb7f106e01ce99d828e1f71e9c79430
+sender_email: len=23 sha256=1f6b10380f6d0833f7f3975b1d499477a30d4fb3785033b7762b236d6457874d
+to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+cc: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+bcc: len=2014 sha256=4003a38a0663d82c0fa8a5d0550a01a7a90f2dc9268cae4df186472d40683ea0
+reply_to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+in_reply_to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+references: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+internet_message_id: len=54 sha256=a95db937d745fdd13fc82441b5a228d5b4c1fc432696fa57df020df6a6a074f4
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: len=3352 sha256=68eaa475532b8b6e6b82c1d2c6b1bc6c1b3edeaa60878726886f8681ef87c091
+html_body: len=2677 sha256=c57503e1fcd91c00b650528214e28f05143a189ae1fd8783beb3be032294286f
+plain_body: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+rtf_body: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+unread: false
+categories: []
+sent: unixnano=1425658902000000000 offset=0
+received: unixnano=1425658902000000000 offset=0
+identity_date: zero
+raw: nil
+attachments: 0
+== support.pst#007 Sent Messages
+subject: len=13 sha256=0e356594076347362486e7c6ccf640c3c4f518287c9304080a2849f6c7f4b402
+sender_name: len=11 sha256=3facd9d492b80d227c859ce8c27d68c9fcb7f106e01ce99d828e1f71e9c79430
+sender_email: len=23 sha256=1f6b10380f6d0833f7f3975b1d499477a30d4fb3785033b7762b236d6457874d
+to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+cc: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+bcc: len=2049 sha256=d95598b8b3e0607c0b9bb7bbeb10cbde98579959f45985bb24d5fcd503ffe7b6
+reply_to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+in_reply_to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+references: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+internet_message_id: len=54 sha256=aa7eab595dc8274138c922f1058d37eda79ea82d13d5f2e0877ee8244a11fb0b
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: len=3461 sha256=82246e77f55c53d164d7452af064c0d91138068fdca6fcb38a99657aedf81e25
+html_body: len=2820 sha256=5de50080ce51cfef40fd326e1eb4251a03a6869a75391fe512d30a5ad3f2d03c
+plain_body: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+rtf_body: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+unread: false
+categories: []
+sent: unixnano=1422884291000000000 offset=0
+received: unixnano=1422884291000000000 offset=0
+identity_date: zero
+raw: nil
+attachments: 0
+== support.pst#008 Sent Messages
+subject: len=20 sha256=9e2f6854154be3e31965d2f504b5ca95ea0e674bf9ab95fd8c2dc4197acd0093
+sender_name: len=11 sha256=3facd9d492b80d227c859ce8c27d68c9fcb7f106e01ce99d828e1f71e9c79430
+sender_email: len=23 sha256=1f6b10380f6d0833f7f3975b1d499477a30d4fb3785033b7762b236d6457874d
+to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+cc: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+bcc: len=13 sha256=03c27338ea13c2633fa53fa1933b107aced6233526e73879be0e7bf14f0dbf80
+reply_to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+in_reply_to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+references: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+internet_message_id: len=54 sha256=0b064fe9723ab0eff529de50b5746b5440344a520b05b28edf997b46179871cf
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: len=491 sha256=825dd21bf63a8480e6e046c8aae26b3a007685e61244b2b989000952c3dbb2e9
+html_body: len=3622 sha256=3c878c249eef120f1d1b34769e49a8b40e75c7a8dbd68f295b930adc6325fecc
+plain_body: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+rtf_body: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+unread: false
+categories: []
+sent: unixnano=1422884151000000000 offset=0
+received: unixnano=1422884151000000000 offset=0
+identity_date: zero
+raw: nil
+attachments: 0
+== support.pst#009 Sent Messages
+subject: len=13 sha256=3a5ebcc5ec6970eed95953c1eaf9aec4f939b4403708510be1a0204f03d8f722
+sender_name: len=11 sha256=3facd9d492b80d227c859ce8c27d68c9fcb7f106e01ce99d828e1f71e9c79430
+sender_email: len=22 sha256=5d851dd8beb452c0d4f056a52c858c614409e10abf0b03eef30c542b9108c7e3
+to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+cc: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+bcc: len=1087 sha256=3fb392ee65f040ea2b5876958d97ba577e71c22e3fa5fe2f1319d9d80187b6c9
+reply_to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+in_reply_to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+references: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+internet_message_id: len=53 sha256=ad8dd81c53ac54accde4e7ab4395192c0e8df8755dcc38093a6a198659857373
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: len=2214 sha256=315b4fd3bf7b129fccbcf14073854bdd98e9016f30c527aa57d6e756fca6157b
+html_body: len=2875 sha256=785dfbd01736e7fec815f022f40d94f9108f2a0b3409a2df908290200e2ff45f
+plain_body: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+rtf_body: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+unread: false
+categories: []
+sent: unixnano=1396429519000000000 offset=0
+received: unixnano=1396429519000000000 offset=0
+identity_date: zero
+raw: nil
+attachments: 0
+== support.pst#010 Sent Messages
+subject: len=34 sha256=fe0f47a9c38d1372b21fe0b5d0eb55a9b3e2f7100e9f76a9929a9eec7d7329d8
+sender_name: len=11 sha256=3facd9d492b80d227c859ce8c27d68c9fcb7f106e01ce99d828e1f71e9c79430
+sender_email: len=22 sha256=5d851dd8beb452c0d4f056a52c858c614409e10abf0b03eef30c542b9108c7e3
+to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+cc: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+bcc: len=2002 sha256=cca1723f7d41785967acf077561488012a547a477c462227e843741c7cef2dd3
+reply_to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+in_reply_to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+references: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+internet_message_id: len=53 sha256=a4ae7c2fa378ec8900fe5dec887e7e6cc4e3e8b1646579b5e8f470ad9b7eb408
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: len=3644 sha256=a31f57d3791a46513cfbf165fe515b602771a454b5137e73df94e8f52b3dd60a
+html_body: len=3477 sha256=95604821e21185b38e756b5c73f890459a9082db6a3a9163c9d4a83abea15bfc
+plain_body: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+rtf_body: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+unread: false
+categories: []
+sent: unixnano=1394789536000000000 offset=0
+received: unixnano=1394789536000000000 offset=0
+identity_date: zero
+raw: nil
+attachments: 0
+== support.pst#011 Sent Messages
+subject: len=50 sha256=1c6b2b3dbff01ecd3ff5cf612126317279c7130b25de144ebc1e61114ec37870
+sender_name: len=11 sha256=3facd9d492b80d227c859ce8c27d68c9fcb7f106e01ce99d828e1f71e9c79430
+sender_email: len=22 sha256=5d851dd8beb452c0d4f056a52c858c614409e10abf0b03eef30c542b9108c7e3
+to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+cc: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+bcc: len=1991 sha256=b3adcbe6e59a04f4770c557e677543056b6c781e92d1e4a116a1b8affea72358
+reply_to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+in_reply_to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+references: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+internet_message_id: len=53 sha256=01fa52aed9f415d50618dab9dc5890ace22ce371a56dfeec14d36d24d4542f81
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: len=3593 sha256=20680d3f9d38baf442543d32d88d9931ef8f883ed0ced4c35e0992958f99e241
+html_body: len=1732 sha256=b3c56e521340f824b5c083343bbb9d420bcf78863d163e0144e38392f05cd7f1
+plain_body: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+rtf_body: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+unread: false
+categories: []
+sent: unixnano=1394651676000000000 offset=0
+received: unixnano=1394651676000000000 offset=0
+identity_date: zero
+raw: nil
+attachments: 2
+attachment 0: filename=len=26 sha256=e3a112bc291d9f14319834c5056295e415f3582134f01f64313d999f68de2dcc mime_type="application/octet-stream" content_id=len=48 sha256=fb6efa73f225307db21286d74f943a680916fb435dd3b4af6cdfec8bac3e8431 size=0 bytes=len=3223 sha256=7a4833aacf7b8b9a0855851a0303145e15d24cda7bc4cfceb72235060e4b3ac6
+attachment 1: filename=len=12 sha256=cc2a50cc9188ee5ac6b59892c2c95e04390b8742b25ff0f22705619952cb13e8 mime_type="text/html" content_id=len=48 sha256=06e1662e75abfaf2ef546406426ffc8b275363037e94aad3b24259779b7d8ef9 size=0 bytes=len=253 sha256=076137c705bb339aae637ae892b4641e424c9741b442e19abc8297aeaceb51f3
+== support.pst#012 Sent Messages
+subject: len=21 sha256=d965a94d70064d4dfe95da1d4ce44928485f8a397667e9078bbfad65391d6f27
+sender_name: len=11 sha256=3facd9d492b80d227c859ce8c27d68c9fcb7f106e01ce99d828e1f71e9c79430
+sender_email: len=23 sha256=1f6b10380f6d0833f7f3975b1d499477a30d4fb3785033b7762b236d6457874d
+to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+cc: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+bcc: len=2432 sha256=1c858995035a5a204802e15d73048f21c6e0fb535e02662995d448e2b67ccea9
+reply_to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+in_reply_to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+references: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+internet_message_id: len=54 sha256=ad0fd0ba217f0cc5f472f026abf9e857726e80dd77ff6e2ca3ae343199c24cd1
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: len=3165 sha256=b0d48bd1c6fef9ee3c4e03afca8d10bcfd59d55ac54c891b3ec53d5c86833782
+html_body: len=2245 sha256=eb1b4a5a8a7ca306ace022a69614d738d8c44ff24ae38a9651cfec3963aa3f4e
+plain_body: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+rtf_body: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+unread: false
+categories: []
+sent: unixnano=1388944278000000000 offset=0
+received: unixnano=1388944278000000000 offset=0
+identity_date: zero
+raw: nil
+attachments: 0
+== support.pst#013 Sent Messages
+subject: len=20 sha256=262ef44aaa1f87ee6347616dd4fd0229909af73cfd42dd5c195ea62ec56291a2
+sender_name: len=11 sha256=3facd9d492b80d227c859ce8c27d68c9fcb7f106e01ce99d828e1f71e9c79430
+sender_email: len=23 sha256=1f6b10380f6d0833f7f3975b1d499477a30d4fb3785033b7762b236d6457874d
+to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+cc: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+bcc: len=2018 sha256=758c06b47379c8973b2d390709b4012f9fc397e39bbed65af4b8c981c1d29d26
+reply_to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+in_reply_to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+references: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+internet_message_id: len=54 sha256=40d1331ad333564557f08a92661e73d1c3d892b79db819617da8ba79bd221a92
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: len=2715 sha256=b8c5c011e52271b78f92b2ba97ec62b419dbfcbe7469d328830e031f529da359
+html_body: len=1967 sha256=9af054f60bda3915c1ffabb54ad30958f19726fdc14146b94fd91ba3ccffba8a
+plain_body: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+rtf_body: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+unread: false
+categories: []
+sent: unixnano=1387887822000000000 offset=0
+received: unixnano=1387887822000000000 offset=0
+identity_date: zero
+raw: nil
+attachments: 0
+== support.pst#014 Sent Messages
+subject: len=13 sha256=0e01aa0ba2d2453a133ce2b5256c7f4f7005b7364bf0372ab09800529bfaff4f
+sender_name: len=11 sha256=3facd9d492b80d227c859ce8c27d68c9fcb7f106e01ce99d828e1f71e9c79430
+sender_email: len=23 sha256=1f6b10380f6d0833f7f3975b1d499477a30d4fb3785033b7762b236d6457874d
+to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+cc: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+bcc: len=1765 sha256=90b88428f6318e4b41bff8e7d3f5355718b37a01ed46f3c63324c9cd39eaa541
+reply_to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+in_reply_to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+references: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+internet_message_id: len=54 sha256=5c9f11b17636027f4b6c4277164000336fba0067fe5a0447168c62b8623392f5
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: len=3323 sha256=123a978bcb8018855af350d3c76ce808d08ad8b2dbea535e4a3d64616fca014b
+html_body: len=1898 sha256=90e9fdca69821e109481f570053820b405b1a0a20061fc1795ebebdf218e3456
+plain_body: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+rtf_body: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+unread: false
+categories: []
+sent: unixnano=1387281377000000000 offset=0
+received: unixnano=1387281377000000000 offset=0
+identity_date: zero
+raw: nil
+attachments: 0
+== support.pst#015 Sent Messages
+subject: len=13 sha256=a773c948788dd0c0a5b748557431b71f15d2f4bcb6e91987e1c02a43dfa20c99
+sender_name: len=11 sha256=3facd9d492b80d227c859ce8c27d68c9fcb7f106e01ce99d828e1f71e9c79430
+sender_email: len=23 sha256=1f6b10380f6d0833f7f3975b1d499477a30d4fb3785033b7762b236d6457874d
+to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+cc: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+bcc: len=1798 sha256=e449fc3469d9462753e79af78ef178d44bf20635c89e1fbeb5d22d374ab89d92
+reply_to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+in_reply_to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+references: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+internet_message_id: len=54 sha256=d7ba087bab858add67e0990c5c57051bd515aeaccf06227859730aa3bef4421a
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: len=3270 sha256=4fa566817c08f7ca856f56264f96ef198aa59895b84c87b31c6598a30d7207bf
+html_body: len=1874 sha256=d52e623f57d9b5776246f79fb2f2b9bb2e21a16a951b69acbba12769d3b14ab0
+plain_body: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+rtf_body: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+unread: false
+categories: []
+sent: unixnano=1386598652000000000 offset=0
+received: unixnano=1386598652000000000 offset=0
+identity_date: zero
+raw: nil
+attachments: 0
+== support.pst#016 Sent Messages
+subject: len=4 sha256=9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+sender_name: len=2 sha256=712dd58e22b0bca040fc9250038f84827f85593ab978e596ed75b3ba48bd1b23
+sender_email: len=23 sha256=1f6b10380f6d0833f7f3975b1d499477a30d4fb3785033b7762b236d6457874d
+to: len=19 sha256=c174fda8788b302b2e9d1c33d2a17f2cd1bfddbdc52960880e8af4eafaea6be1
+cc: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+bcc: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+reply_to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+in_reply_to: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+references: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+internet_message_id: len=54 sha256=05657d868567749ddbd1394a2b93fdd95fcbb54d8ed08e2f62cd0c3b5ba0acd0
+importance: ""
+sensitivity: ""
+phys_id: ""
+transport_headers: len=424 sha256=28cd2ac6c673ad9772e88217fe839f84a75cb8dbd26c0993cdf16fcf2d451aed
+html_body: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+plain_body: len=6 sha256=837ccb607e312b170fac7383d7ccfd61fa5072793f19a25e75fbacb56539b86b
+rtf_body: len=0 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+unread: false
+categories: []
+sent: unixnano=1386598008000000000 offset=0
+received: unixnano=1386598008000000000 offset=0
+identity_date: zero
+raw: nil
+attachments: 0

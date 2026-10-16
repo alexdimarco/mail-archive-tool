@@ -1,0 +1,22 @@
+Message-ID: <c11-8bit-attachment-lf@corpus.example>
+Date: Mon, 02 Jan 2023 15:04:05 +0000
+From: Alice Example <alice@example.test>
+To: bob@example.test
+Subject: 8bit LF-only text attachment
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="lf-bd"
+
+--lf-bd
+Content-Type: text/plain; charset=utf-8
+
+An 8bit LF-only attachment follows.
+
+--lf-bd
+Content-Type: text/plain; charset=iso-8859-1; name="lf.txt"
+Content-Disposition: attachment; filename="lf.txt"
+Content-Transfer-Encoding: 8bit
+
+Grüße
+Köln
+
+--lf-bd--

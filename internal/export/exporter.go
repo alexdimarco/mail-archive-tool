@@ -4,6 +4,8 @@
 package export
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log"
@@ -38,6 +40,7 @@ type Stats struct {
 	AttachmentsEmpty    int // declared attachments that produced zero bytes (e.g. not downloaded)
 	AttachmentErrors    int // attachments whose stream failed mid-read (torn fetch); reported, not archived
 	UnresolvedInlineRef int // cid: references in the HTML with no matching image present
+	HTMLFallback        int // HTML bodies shown as escaped source, for any of the four Fallback* reasons (too deep / unparseable / unsafe after re-parse / too large)
 	NonHTMLBodies       int // messages exported from plain/RTF because no HTML body existed
 	NoBody              int // messages exported with no body content at all
 	RawWritten          int // original .eml files written (KeepRaw; 0 for sources with no original bytes, e.g. Outlook items)
@@ -48,6 +51,21 @@ type Stats struct {
 	Filled          int // retries that recovered content and were rewritten
 	StillIncomplete int // retries that recovered nothing (nothing rewritten)
 	Resolved        int // legacy "unknown" records resolved without recapture (complete-at-fetch sources)
+
+	// Fault isolation (§4.2). Unreadable counts partly-read records — one that
+	// carries an unreadable:* label — written or re-examined this run: it is what
+	// makes a run partial besides the ledger's gaps. Unparsed counts unparsed stubs
+	// written or seen. Kept counts the degraded captures the KEEP guard held back
+	// from an archived record (P15).
+	Unreadable int
+	Unparsed   int
+	Kept       int
+	// ExportPanics counts the messages whose export panicked (the run records each as
+	// an export-panic gap, never only in the log, F33); ExportFaults the messages
+	// and folders the archive could not be written for (export-failed and
+	// folder-unwritable gaps).
+	ExportPanics int
+	ExportFaults int
 }
 
 // Issue is one verification finding: something referenced but not fully
@@ -57,7 +75,7 @@ type Issue struct {
 	Subject string
 	RelPath string // exported HTML path relative to OutDir
 	Date    time.Time
-	Kind    string // "empty-attachment" | "attachment-error" | "unresolved-inline-image" | "id-reuse"
+	Kind    string // "empty-attachment" | "attachment-error" | "unresolved-inline-image" | "html-shown-as-source" | "id-reuse"
 	Detail  string // attachment name or cid token
 }
 
@@ -119,6 +137,12 @@ type Exporter struct {
 	// analogue of the pre-download fast-path's move recording.
 	OnManifestSkip func(key string, folderPath []string, moved bool)
 
+	// BeforeWrite, if set, is called with the path of each file the exporter is
+	// about to write (the page and the preserved original); a non-nil error is that
+	// write's failure. It is nil in production — the seam a test injects an errno
+	// through (a full disk, a read-only volume) without a real one (MA-320).
+	BeforeWrite func(path string) error
+
 	Stats  Stats
 	Issues []Issue // verification findings (attachments/inline images not fully exported)
 
@@ -126,6 +150,23 @@ type Exporter struct {
 	// identity with multiple distinct fingerprints is reported once per run, not
 	// once per folder-observation.
 	reuseLogged map[string]bool
+
+	// gapRunAt is the stamp ledger gaps the exporter records carry when the caller
+	// set no RunAt (a test, or a run that keeps no timeline): fixed on first use, so
+	// every observation of one Exporter belongs to one run.
+	gapRunAt time.Time
+}
+
+// runStamp is the run's timestamp for a ledger observation: RunAt when the
+// caller set it, else one stamp for the Exporter's life.
+func (e *Exporter) runStamp() time.Time {
+	if !e.RunAt.IsZero() {
+		return e.RunAt
+	}
+	if e.gapRunAt.IsZero() {
+		e.gapRunAt = time.Now().UTC()
+	}
+	return e.gapRunAt
 }
 
 // Export writes a single message. It returns true if the message was written
@@ -159,6 +200,14 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		key = state.LiveKey(store, m.Identity())
 	} else {
 		key = state.Key(store, folderKey, m.Identity())
+	}
+
+	// KEEP guard (P15, FC5): a capture that carries a read-gap label never replaces
+	// an archived record that does not already carry it. It runs on every source and
+	// in both modes, ahead of key placement and of any write, so a degraded read can
+	// neither overwrite a complete page and zip nor mint a #fp-split sibling.
+	if len(m.ReadGaps) > 0 && e.keepDegraded(store, folderKey, folderPath, m, key) {
+		return false, nil
 	}
 
 	// A DIFFERENT message reusing an already-archived Message-ID is a distinct
@@ -216,7 +265,16 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		}
 	}
 
-	for !physResolved && seen && prev.Fingerprint != "" && prev.Fingerprint != fp &&
+	// A capture that carries a read gap is never #fp-split (§4.7.2): its envelope is
+	// what the reader could read of an item that already has a record here, so a
+	// differing fingerprint is no evidence of a distinct message. And a partly-read
+	// record's fingerprint was computed over zero attachments, so a healthy read of
+	// the same item is compared in that form too (§4.7.4(1)).
+	// An unparsed stub's fingerprint is that of the constant stub, so a different
+	// fingerprint says nothing about a healthy read of the same key: it heals the stub in
+	// place (FC25), it is not a distinct message reusing the Message-ID.
+	for !physResolved && len(m.ReadGaps) == 0 && seen && prev.Fingerprint != "" && !sameFingerprint(prev, m, fp) &&
+		!prev.HasLabels([]string{state.LabelUnparsed}) &&
 		!(e.DedupMailboxWide && prev.FpScheme != state.FpSchemeCurrent && !identityMultiRecord) {
 		// A DIFFERENT message reused this key's Message-ID: file it under a
 		// fingerprint-qualified key. The separator is NUL (state.Qualify), never a
@@ -232,7 +290,14 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 
 	retry := false
 	if e.Mode == Incremental && seen {
-		if !prev.Fillable() {
+		// An unparsed stub is terminal for the parser generation that gave up on it: a
+		// newer parser re-examines it once (FC25). An older build's collapsed placeholder
+		// stands for no message, so the first stub this build mints at its key replaces it
+		// instead of being skipped as "already archived": the re-class (FC27) must never
+		// hide the loss of a stub this build mints (K2).
+		stale := prev.StaleUnparsed(state.ParserGenCurrent)
+		replacesLegacy := prev.IsLegacyPlaceholder() && hasReadGap(m, state.LabelUnparsed)
+		if !prev.Fillable() && !stale && !replacesLegacy {
 			// A mailbox-wide observation of an already-archived, complete message
 			// writes nothing, but this run still SAW the message: stamp its timeline
 			// (LastSeen=thisRun, Present) and, when its observed folder differs,
@@ -253,27 +318,49 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 				// `!prev.Present` twin a no-Message-ID message that went gone and
 				// reappeared in the SAME folder got no event, so the fold reported
 				// it gone forever after (#5, adversarial 2026-09-12).
-				assert := prev.Folder != folderKey || !prev.Present
-				seenAt := e.RunAt
-				if seenAt.IsZero() {
-					seenAt = time.Now().UTC()
-				}
-				e.Manifest.MergeFields(key, folderKey, seenAt, true)
-				if e.OnManifestSkip != nil {
-					e.OnManifestSkip(key, folderPath, assert)
-				}
+				e.observeArchived(key, prev, folderKey, folderPath)
 			}
+			// This run re-read the record, so it is examined under this build's parser
+			// scheme: stamped in memory, no file written (MC12), unless the re-read
+			// carries a note the record's scheme predates (examinedBy).
+			if examinedBy(m, prev) {
+				e.Manifest.StampParseScheme(key, state.ParseSchemeCurrent)
+			}
+			// A healthy read of an item that an earlier run only partly read, which
+			// already has its own record here: the partly-read record is settled.
+			e.supersedePartial(store, key, m)
+			e.countReadGaps(m)
 			e.Stats.SkippedManifest++
 			return false, nil
 		}
 		e.Stats.Retried++
-		if !probeImproves(m, prev.Missing) {
+		if !replacesLegacy && !probeImproves(m, retryLabels(prev, stale)) {
 			e.Stats.StillIncomplete++
+			if examinedBy(m, prev) { // re-read, as above (MC12)
+				e.Manifest.StampParseScheme(key, state.ParseSchemeCurrent)
+			}
+			// Still partly read: it counts as a partly-read record seen this run, and
+			// a Locator an older binary's save dropped is restored from the capture
+			// (§4.2). A stub the current parser also gave up on is stamped with this
+			// generation, so it is not re-examined again until the parser changes.
+			e.countReadGaps(m)
+			e.Manifest.SetLocator(key, m.Locator)
+			if stale {
+				e.Manifest.StampParserGen(key, state.ParserGenCurrent)
+			}
 			return false, nil
 		}
 		retry = true
 	}
 	if !retry && !e.Since.IsZero() && !date.IsZero() && date.Before(e.Since) {
+		// A message older than the window that the archive already holds (a Full run
+		// downloads it; an Incremental one never reaches here with a record) is still
+		// seen this run: it is stamped, and a move is followed, before the date skips
+		// it. Left unstamped, a sweep of the walked folder would mark it gone while it
+		// sits in the mailbox (S3-AI4).
+		if e.DedupMailboxWide && seen {
+			e.observeArchived(key, prev, folderKey, folderPath)
+		}
 		e.Stats.SkippedDate++
 		return false, nil
 	}
@@ -283,7 +370,7 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	// safe path segment, so a tampered manifest can never redirect a write outside
 	// the output root no matter what reached here (INS2-1/R4).
 	if !state.SafeToken(store) {
-		return false, fmt.Errorf("refusing to export: store token %q is not a single safe path segment; a write to %s could otherwise escape the archive (tampered manifest?)", store, e.OutDir)
+		return false, &unsafeTokenError{fmt.Sprintf("refusing to export: store token %q is not a single safe path segment; a write to %s could otherwise escape the archive (tampered manifest?)", store, e.OutDir)}
 	}
 	// store is used verbatim as the directory segment — the same string that
 	// scopes the key, so the on-disk tree and the manifest never disagree (F1).
@@ -299,33 +386,46 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	dirParts := append([]string{e.OutDir, store}, writeFolderPath...)
 	dir := filepath.Join(dirParts...)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return false, fmt.Errorf("create output dir %s: %w", dir, err)
+		return false, &FolderError{Dir: dir, Err: err}
 	}
 
-	base, htmlPath, relSlash := e.stemFor(dir, date, m.Subject, key)
-	rawName := ""
-	if e.KeepRaw && len(m.Raw) > 0 {
+	// The stem is built from the identity view's subject, never the displayed one: a
+	// parser that decodes the subject differently cannot rename the files of a message
+	// already archived, and an older binary computes the same stem (MC8).
+	base, htmlPath, relSlash := e.stemFor(dir, date, m.IdentitySubject(), key)
+	rawName, writeRaw := "", e.KeepRaw && len(m.Raw) > 0
+	if writeRaw {
 		rawName = base + ".eml"
+	}
+	// A re-capture that preserves no original of its own keeps the one the record has:
+	// the page still links it and its fixity is carried on (MC8).
+	var carriedEML *state.FileDigest
+	if !writeRaw && seen {
+		var carried bool
+		if carriedEML, carried = carriedOriginal(dir, base, relSlash, prev); carried {
+			rawName = base + ".eml"
+		}
 	}
 	ctx := RenderContext{
 		RootRel:        strings.Repeat("../", 1+len(writeFolderPath)), // store dir + folders
 		FolderIndexRel: "index.html",
 		RawName:        rawName,
+		Store:          store,
+		Folder:         folderKey,
 	}
-	if hasArchivable(m.Attachments, map[int]bool{}) { // refined below once inline embedding is known
+	// The zip's name can be offered before inline embedding is known: the page
+	// links it only beside the attachments it lists — those NOT embedded
+	// inline (renderHeader) — which is exactly when the zip below is written
+	// (hasArchivable over rr.Consumed). A message whose every attachment is
+	// inline shows no link, so the message is rendered ONCE (RV-8: it used to
+	// be rendered a second time only to drop a link that was never shown, and
+	// each render runs the sanitizer's parses).
+	if hasArchivable(m.Attachments, map[int]bool{}) {
 		ctx.ZipName = base + zipSuffix
 	}
-	rr, err := RenderWith(m, ctx)
+	rr, err := renderMessage(m, ctx)
 	if err != nil {
-		return false, fmt.Errorf("render %q: %w", m.Subject, err)
-	}
-	if ctx.ZipName != "" && !hasArchivable(m.Attachments, rr.Consumed) {
-		// Every attachment was embedded inline: no zip will exist, so re-render
-		// without the link (cheap: such messages are small).
-		ctx.ZipName = ""
-		if rr, err = RenderWith(m, ctx); err != nil {
-			return false, fmt.Errorf("render %q: %w", m.Subject, err)
-		}
+		return false, &ItemError{msg: fmt.Sprintf("render %q", m.Subject), Err: err}
 	}
 	htmlBytes, inlineConsumed := rr.HTML, rr.Consumed
 
@@ -333,13 +433,15 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	// as they are written so `verify` can later detect bit-rot or truncation
 	// (F3). A re-capture builds a fresh Fixity, replacing any earlier one.
 	var fx state.Fixity
-	if rawName != "" {
-		d, err := writeFileAtomicDigest(filepath.Join(dir, rawName), m.Raw)
+	if writeRaw {
+		d, err := e.writeDigest(filepath.Join(dir, rawName), m.Raw)
 		if err != nil {
-			return false, fmt.Errorf("write %s: %w", rawName, err)
+			return false, &ItemError{Path: filepath.Join(dir, rawName), msg: "write " + rawName, Err: err}
 		}
 		fx.EML = &d
 		e.Stats.RawWritten++
+	} else if carriedEML != nil {
+		fx.EML = carriedEML
 	}
 
 	e.Stats.AttachmentsInline += len(inlineConsumed)
@@ -347,7 +449,7 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	// Gaps: what this capture could not deliver. Fillable or terminal per the
 	// source (SourceComplete); never silent (R1).
 	var gaps []string
-	if !hasBody(m) {
+	if !hasBody(m) && !restKeptUnread(m) {
 		gaps = append(gaps, state.MissingBody)
 	}
 
@@ -369,6 +471,9 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		fx.Zip = zr.Digest // nil unless a zip was actually committed
 		for _, name := range zr.Empty {
 			e.Stats.AttachmentsEmpty++
+			if parseGapNamed(m, name) {
+				continue // its parse gap says it already: an empty .partial is a part cut short
+			}
 			e.addIssue(folderKey, m, relSlash, "empty-attachment", name)
 			gaps = append(gaps, name)
 		}
@@ -381,9 +486,9 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		os.Remove(zipPath) // a re-capture with nothing archivable must not keep a stale zip
 	}
 
-	hd, err := writeFileAtomicDigest(htmlPath, htmlBytes)
+	hd, err := e.writeDigest(htmlPath, htmlBytes)
 	if err != nil {
-		return false, fmt.Errorf("write %s: %w", htmlPath, err)
+		return false, &ItemError{Path: htmlPath, msg: "write " + htmlPath, Err: err}
 	}
 	fx.HTML = &hd
 
@@ -395,12 +500,46 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		e.addIssue(folderKey, m, relSlash, "unresolved-inline-image", cid)
 	}
 
+	if rr.BodyFallback != "" {
+		e.Stats.HTMLFallback++
+		e.addIssue(folderKey, m, relSlash, "html-shown-as-source", rr.BodyFallback)
+	}
+
 	now := time.Now().UTC()
-	rec := state.Record{Path: relSlash, Folder: folderKey, ExportedAt: now, Unresolved: unresolved}
+	rec := state.Record{Path: relSlash, Folder: folderKey, ExportedAt: now, Unresolved: unresolved, BodyFallback: rr.BodyFallback}
 	if e.SourceComplete {
 		rec.Terminal = gaps
 	} else {
 		rec.Missing = gaps
+	}
+	// What the reader could not read of this item (§4.7.3): each label goes in the
+	// list its class says (state.GapClass is the single owner). A label this build
+	// does not know is filed by what the source can deliver, like any other gap.
+	for _, l := range m.ReadGaps {
+		e.fileGap(&rec, l)
+	}
+	// What the parser could not decode of it (design-mime-fidelity §4.9): a part kept as
+	// received, one cut short, a multipart that could not be split. The same rule files
+	// them: the deterministic kinds are terminal on every source, the two a complete copy
+	// can cure follow SourceComplete (MC20). At most 32 labels and one summary.
+	for _, l := range parseGapLabels(m) {
+		e.fileGap(&rec, l)
+	}
+	if hasParseGapKind(m, state.GapKindFidelityFallback) {
+		rec.FidelityFallback = state.ParseSchemeCurrent // a later scheme parses it again
+	}
+	// Only a partly-read record carries its Locator (FC6(3)): no other record's
+	// bytes change, so a healthy input is what it was (P14).
+	if rec.Unreadable() {
+		rec.Locator = m.Locator
+	}
+	// An unparsed stub carries the parser generation that gave up on it and the digest
+	// of its bytes (FC25); no other record does (P14).
+	if hasReadGap(m, state.LabelUnparsed) {
+		rec.ParserGen = state.ParserGenCurrent
+		if len(m.Raw) > 0 {
+			rec.RawDigest = rawDigest(m.Raw)
+		}
 	}
 	if rec.HasIssues() {
 		rec.Subject = m.Subject
@@ -410,6 +549,11 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	}
 	rec.Fingerprint = fp
 	rec.FpScheme = state.FpSchemeCurrent // this build's fingerprint scheme (rev-4 §3)
+	rec.ParseScheme = state.ParseSchemeCurrent
+	// The body-inclusive content digest of the identity view (the v1 parse), on every
+	// write, local records included: a later repair proves the archived message is the
+	// one in the source by it (MC5). It is no identity input, so no key moves.
+	rec.ContentHash = m.ContentDigest()
 	rec.Fixity = &fx
 	// Folder-over-time timeline (the go-back record fields) on the live path:
 	// Present now, LastSeen now, and the set-once FirstFolder/FirstSeen preserved
@@ -427,11 +571,10 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		if rec.PhysID == "" && seen {
 			rec.PhysID = prev.PhysID
 		}
-		// The body-inclusive content hash is the closure's churn-vs-distinct arbiter
-		// (rev-6.1). Recorded on every live-path write so a later run can tell a
-		// distinct reuse of this Message-ID from the same message re-observed, without
-		// the original .eml. Reflects THIS capture's content (a fill updates it).
-		rec.ContentHash = m.ContentDigest()
+		// The body-inclusive content hash (set above for every write) is the closure's
+		// churn-vs-distinct arbiter (rev-6.1): it lets a later run tell a distinct
+		// reuse of this Message-ID from the same message re-observed, without the
+		// original .eml. It reflects THIS capture's content (a fill updates it).
 		if seen {
 			// Carry the content-equal immutable-id SET forward on an adopt (rev-6.2):
 			// a full-mode re-export or a fill REBUILDS the record, and without this the
@@ -462,6 +605,8 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		}
 	}
 	e.Manifest.Add(key, rec)
+	e.countReadGaps(m)
+	e.supersedePartial(store, key, m)
 	if e.OnExported != nil {
 		e.OnExported(store, folderPath, m, relSlash, key)
 	}
@@ -476,11 +621,17 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	// full resolution of the reuse-vs-same ambiguity is the deferred ImmutableId
 	// closure. (Adversarial re-check #1, 2026-09-12.)
 	adoptingLegacy := e.DedupMailboxWide && seen && prev.FpScheme != state.FpSchemeCurrent
-	if seen && prev.Path != "" && prev.Path != relSlash && !adoptingLegacy {
+	// The record's Path is the manifest's, which someone else may have written: only a safe
+	// in-archive path is deleted from, never one that walks out of it (S2B-AI9).
+	if _, safe := util.ValidRecordedPath(prev.Path); seen && safe && prev.Path != relSlash && !adoptingLegacy {
 		old := filepath.Join(e.OutDir, filepath.FromSlash(prev.Path))
 		os.Remove(old)
 		os.Remove(strings.TrimSuffix(old, ".html") + zipSuffix)
-		os.Remove(strings.TrimSuffix(old, ".html") + ".eml")
+		if writeRaw {
+			// The original goes only when this run wrote a new one beside the new
+			// page: otherwise it is the record's only copy of the message (R20, MC8).
+			os.Remove(strings.TrimSuffix(old, ".html") + ".eml")
+		}
 	}
 
 	switch {
@@ -500,6 +651,60 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	}
 	e.Stats.Exported++
 	return true, nil
+}
+
+// examinedBy reports whether a re-read of prev's record may stamp it with the current
+// parse scheme: no note this parse recorded was introduced after the scheme the record
+// holds. The stamp is the repair's progress marker (MC12): a record whose re-read still
+// shows a note newer than its scheme has been looked at but not repaired, and stamping it
+// would make the repair's rule (a note with Since above the record's scheme) skip it for
+// good. Nothing records a note before slice S2, so until then every re-read is stamped;
+// the gate keeps a slice that bumps the scheme ahead of the repair slice (S7) from
+// marking records it never repaired (MS1-AI1).
+//
+// It reads m.ParseNotes only, which is the whole predicate at scheme 1. The repair's rule
+// (design, "Predicate") is wider: notes from renderNotes(m) (cid-text-ref, introduced by
+// S4), prev.ParseScheme in RevokedSchemes, and 0 < prev.FidelityFallback < current. The
+// slice that adds each of those inputs (S4 for renderNotes, S7 for the other two) must extend this gate in the same
+// change, or its records are stamped as examined without having been (MS1-AI1 re-check).
+func examinedBy(m *model.Message, prev state.Record) bool {
+	for _, n := range m.ParseNotes {
+		if n.Since > prev.ParseScheme {
+			return false
+		}
+	}
+	return true
+}
+
+// carriedOriginal says whether the preserved original (.eml) a seen record holds is on
+// disk at the stem a re-capture writes to, and returns the fixity to carry on with it
+// (nil for a record from before fixity). It carries only an original at the SAME stem:
+// when the stem changed (a naming rule, the path budget, a moved message date) the old
+// .eml stays where it is — the re-capture removes it only when it writes a new one —
+// and the page no longer links it; moving it with its record is the commit of
+// re-capture integrity (ruling J6), not this write.
+func carriedOriginal(dir, base, relSlash string, prev state.Record) (*state.FileDigest, bool) {
+	if prev.Path == "" || prev.Path != relSlash {
+		return nil, false
+	}
+	if fi, err := os.Lstat(filepath.Join(dir, base+".eml")); err != nil || !fi.Mode().IsRegular() {
+		return nil, false
+	}
+	if prev.Fixity != nil && prev.Fixity.EML != nil {
+		d := *prev.Fixity.EML
+		return &d, true
+	}
+	return nil, true
+}
+
+// writeDigest is writeFileAtomicDigest behind the BeforeWrite seam.
+func (e *Exporter) writeDigest(dst string, data []byte) (state.FileDigest, error) {
+	if e.BeforeWrite != nil {
+		if err := e.BeforeWrite(dst); err != nil {
+			return state.FileDigest{}, err
+		}
+	}
+	return writeFileAtomicDigest(dst, data)
 }
 
 // stemFor picks the file stem for key inside dir. The 8-hex digest of the key is
@@ -552,9 +757,273 @@ func subjectSlug(subject string, n int) string {
 	return util.Slug(subject, n)
 }
 
+// restKeptUnread reports whether a structure bound left part of the message unread, kept as
+// received in the attachments (design-mime-fidelity P13, MC22): the message's text may be in
+// it, and no download changes a bound, so a message with no body of its own is not also
+// reported as one that never delivered it. Its terminal structure-limit row says where the
+// bytes are (friction F5).
+func restKeptUnread(m *model.Message) bool {
+	for _, a := range m.Attachments {
+		if a.GapKind == state.GapKindStructureLimit {
+			return true
+		}
+	}
+	return false
+}
+
 // hasBody reports whether any body source is present.
 func hasBody(m *model.Message) bool {
 	return strings.TrimSpace(m.HTMLBody) != "" || strings.TrimSpace(m.PlainBody) != "" || strings.TrimSpace(m.RTFBody) != ""
+}
+
+// sameFingerprint reports whether the capture is the item prev records. Besides
+// the plain fingerprint, a partly-read record whose whole attachment table
+// failed has a fingerprint computed over ZERO attachments, so a healthy read of
+// the same item is compared in that form too: it must land on the partly-read
+// record's key, not split from it as a "Message-ID reuse" (§4.7.4(1)).
+func sameFingerprint(prev state.Record, m *model.Message, fp string) bool {
+	if prev.Fingerprint == fp {
+		return true
+	}
+	return prev.HasLabels([]string{state.LabelUnreadableAttachments}) && prev.Fingerprint == m.FingerprintNoAttachments()
+}
+
+// fileGap files one gap label in the list its class says: fillable in Missing, the rest
+// in Terminal. state.GapClass is the single owner of the special labels' class; a label
+// with none (an ordinary content label, a parse gap a later copy can cure) is filed by
+// what the source can deliver.
+func (e *Exporter) fileGap(rec *state.Record, label string) {
+	class := state.GapClass(label)
+	if class == "" && e.SourceComplete {
+		class = state.ClassTerminal
+	}
+	if class == state.ClassFillable || class == "" {
+		rec.Missing = appendUnique(rec.Missing, label)
+	} else {
+		rec.Terminal = appendUnique(rec.Terminal, label)
+	}
+}
+
+// parseGapLabels are the record labels of m's parse gaps: its message-level gaps, then
+// each attachment's, in order. A record holds at most state.MaxParseGapLabels of them and
+// one summary label for the rest (MC21), so a hostile message cannot grow the manifest;
+// the parts themselves are all archived.
+func parseGapLabels(m *model.Message) []string {
+	var all []string
+	for _, g := range m.ParseGaps {
+		all = append(all, state.ParseGapLabel(g.Kind, g.Detail))
+	}
+	for i, a := range m.Attachments {
+		if a.GapKind != "" {
+			// The name the zip holds the part under, the one a reader can search it for
+			// (friction F9): the sender's spelling is not always creatable (CON, a control).
+			all = append(all, state.ParseGapLabel(a.GapKind, util.SanitizeFilename(a.Filename, i)+" — "+a.GapDetail))
+		}
+	}
+	if len(all) <= state.MaxParseGapLabels {
+		return all
+	}
+	more := len(all) - state.MaxParseGapLabels
+	return append(all[:state.MaxParseGapLabels:state.MaxParseGapLabels],
+		state.ParseGapLabel(state.GapKindStructureLimit, fmt.Sprintf("and %d more undecodable parts", more)))
+}
+
+// parseGapNamed reports whether an attachment called name carries a parse gap.
+func parseGapNamed(m *model.Message, name string) bool {
+	for i, a := range m.Attachments {
+		if a.GapKind != "" && attachmentLabel(a, i) == name {
+			return true
+		}
+	}
+	return false
+}
+
+// hasParseGapKind reports whether the capture carries a message-level parse gap of kind.
+func hasParseGapKind(m *model.Message, kind string) bool {
+	for _, g := range m.ParseGaps {
+		if g.Kind == kind {
+			return true
+		}
+	}
+	return false
+}
+
+// hasReadGap reports whether the capture carries the read-gap label.
+func hasReadGap(m *model.Message, label string) bool {
+	for _, l := range m.ReadGaps {
+		if l == label {
+			return true
+		}
+	}
+	return false
+}
+
+// appendUnique appends s unless the list already holds it.
+func appendUnique(list []string, s string) []string {
+	for _, x := range list {
+		if x == s {
+			return list
+		}
+	}
+	return append(list, s)
+}
+
+// countReadGaps counts the capture as a partly-read record and/or an unparsed
+// stub seen this run (Stats.Unreadable makes the run partial; Unparsed does not).
+func (e *Exporter) countReadGaps(m *model.Message) {
+	unreadable, unparsed := false, false
+	for _, l := range m.ReadGaps {
+		unreadable = unreadable || state.IsUnreadableLabel(l)
+		unparsed = unparsed || l == state.LabelUnparsed
+	}
+	if unreadable {
+		e.Stats.Unreadable++
+	}
+	if unparsed {
+		e.Stats.Unparsed++
+	}
+}
+
+// observeArchived is a mailbox-wide observation of an already-archived message that
+// writes nothing: the record's timeline follows it (LastSeen = this run, Present)
+// and, on a MOVE (folder changed) or a present-again (the record was gone and is
+// seen again), the live path's callback records the folder-assertion. Both are one
+// folder-assertion shape, and the fold reads an assertion after a gone event as
+// present-again (§3.3); without the !prev.Present twin a no-Message-ID message that
+// went gone and reappeared in the SAME folder got no event, so the fold reported it
+// gone forever after (#5, adversarial 2026-09-12). prev is the record's state before
+// this observation.
+func (e *Exporter) observeArchived(key string, prev state.Record, folderKey string, folderPath []string) {
+	assert := prev.Folder != folderKey || !prev.Present
+	seenAt := e.RunAt
+	if seenAt.IsZero() {
+		seenAt = time.Now().UTC()
+	}
+	e.Manifest.MergeFields(key, folderKey, seenAt, true)
+	if e.OnManifestSkip != nil {
+		e.OnManifestSkip(key, folderPath, assert)
+	}
+}
+
+// supersedePartial settles, after a healthy capture of an item (no read gap)
+// that carries a Locator, a same-token partly-read record of the same item that
+// sits under ANOTHER key: its unreadable:* labels become the info label
+// "superseded" and RecoveredBy names the new key (§4.7.4(3)). Metadata only — no
+// file is written, rendered or deleted, so no fixity can mismatch and no crash
+// window exists.
+func (e *Exporter) supersedePartial(store, key string, m *model.Message) {
+	if len(m.ReadGaps) != 0 {
+		return
+	}
+	if m.Locator != "" {
+		e.Manifest.SupersedePartial(store, m.Locator, key)
+	}
+	// A healthy capture of bytes an earlier run could not parse settles that stub the
+	// same way (§4.7.4(4)); the bytes are hashed only when the archive holds a stub.
+	if len(m.Raw) > 0 && e.Manifest.HasUnparsedStubs() {
+		e.Manifest.SupersedeUnparsed(store, rawDigest(m.Raw), key)
+	}
+}
+
+// rawDigest is the sha-256 (hex) of a message's raw bytes.
+func rawDigest(raw []byte) string {
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
+}
+
+// retryLabels are the labels a re-examination looks for improvement in: the record's
+// fillable gaps, and for an unparsed stub of an older parser generation that label
+// too (it improves when the new read no longer carries it).
+func retryLabels(prev state.Record, stale bool) []string {
+	if !stale {
+		return prev.Missing
+	}
+	return append(append([]string{}, prev.Missing...), state.LabelUnparsed)
+}
+
+// keepDegraded is the KEEP guard (P15, FC5). A capture that carries read-gap
+// labels is never written over an existing same-token record of the same
+// identity (on Graph, the same immutable id first) that does not already carry
+// those labels: nothing is written, renamed or removed, the record is stamped
+// seen (so the walk's sweep never calls it gone), the capture counts as Kept and
+// an info "refresh-failed" gap names the label. It reports whether it held the
+// capture back. A record that already carries the labels is the item's own
+// partly-read record: that capture goes on to heal or re-examine it.
+func (e *Exporter) keepDegraded(store, folderKey string, folderPath []string, m *model.Message, baseKey string) bool {
+	prevKey, prev, ok := e.archivedRecordFor(store, m, baseKey)
+	// A legacy placeholder is no archived copy of anything (it stands for no message in
+	// particular), so a stub is never held back for it (K2).
+	if !ok || prev.HasLabels(m.ReadGaps) || prev.IsLegacyPlaceholder() {
+		return false
+	}
+	seenAt := e.runStamp()
+	if e.DedupMailboxWide {
+		// The same stamp the incremental skip makes: the record's timeline follows the
+		// observation, and a move or a present-again is recorded by the live path.
+		exact := m.PhysID != "" && e.Manifest.HasPhysID(prevKey, m.PhysID)
+		assert := prev.Folder != folderKey || !prev.Present
+		e.Manifest.MergeFields(prevKey, folderKey, seenAt, true)
+		if !exact {
+			// A capture that is not matched to one immutable id cannot say WHICH
+			// #fp-qualified sibling it observed: stamp them all (R21).
+			prefix := store + "\x00"
+			for _, sib := range e.Manifest.KeysForIdentity(m.Identity()) {
+				if sib.Key != prevKey && strings.HasPrefix(sib.Key, prefix) {
+					e.Manifest.TouchSeen(sib.Key, seenAt)
+				}
+			}
+		}
+		if e.OnManifestSkip != nil {
+			e.OnManifestSkip(prevKey, folderPath, assert)
+		}
+	} else {
+		e.Manifest.TouchSeen(prevKey, seenAt)
+	}
+	e.Stats.Kept++
+	e.observeKept(store, folderKey, m)
+	return true
+}
+
+// archivedRecordFor finds the record a degraded capture would have replaced: on
+// the live path the same-token record that stores the capture's immutable id,
+// else the record at the key the capture would have been filed under.
+func (e *Exporter) archivedRecordFor(store string, m *model.Message, baseKey string) (string, state.Record, bool) {
+	if e.DedupMailboxWide && m.PhysID != "" {
+		prefix := store + "\x00"
+		for _, sib := range e.Manifest.KeysForIdentity(m.Identity()) {
+			if strings.HasPrefix(sib.Key, prefix) && e.Manifest.HasPhysID(sib.Key, m.PhysID) {
+				if r, ok := e.Manifest.Get(sib.Key); ok {
+					return sib.Key, r, true
+				}
+			}
+		}
+	}
+	r, ok := e.Manifest.Get(baseKey)
+	return baseKey, r, ok
+}
+
+// observeKept records the info gap a held-back capture leaves: reason
+// refresh-failed, locator graph:<immutable id> on the live path (else
+// ident:<identity>), naming the labels the capture carried. Info does not make a
+// run partial; it says that an item's newest read was worse than its archived
+// copy.
+func (e *Exporter) observeKept(store, folderKey string, m *model.Message) {
+	loc := "ident:" + m.Identity()
+	if e.DedupMailboxWide && m.PhysID != "" {
+		loc = state.BoundLocator("graph:" + m.PhysID) // the key the walk builds for the item (S3-AO9)
+	}
+	detail := "a newer read of this item was only partly readable (" + strings.Join(m.ReadGaps, ", ") + "); the archived copy was kept unchanged"
+	if m.ReadError != "" {
+		detail += ": " + m.ReadError
+	}
+	g := state.CaptureGap{
+		Token: store, Folder: folderKey, Scope: state.GapScopeItem, Locator: loc,
+		Reason: "refresh-failed", Class: state.ClassInfo, Subject: m.Subject, Detail: detail,
+	}
+	if d := m.Date(); !d.IsZero() {
+		g.Received = d.UTC().Format(time.RFC3339)
+	}
+	e.Manifest.ObserveGap(g, e.runStamp())
 }
 
 // probeImproves reports whether any item in oldMissing is now present in the
@@ -563,17 +1032,53 @@ func hasBody(m *model.Message) bool {
 // anything. The unknown sentinel always improves: a legacy record is re-captured
 // once so it can carry the truth.
 func probeImproves(m *model.Message, oldMissing []string) bool {
+	var parseGaps []string // this read's parse-gap labels, made when an old one asks
+	computed := false
 	for _, item := range oldMissing {
+		// A fillable parse gap (a part cut short, a multipart that could not be split)
+		// improves when a re-read no longer yields it: the complete message has arrived.
+		if state.IsParseGapLabel(item) {
+			if !computed {
+				parseGaps, computed = parseGapLabels(m), true
+			}
+			found := false
+			for _, l := range parseGaps {
+				found = found || l == item
+			}
+			if !found {
+				return true
+			}
+			continue
+		}
+		// A read-gap label improves when the new read no longer carries it
+		// (§4.7.4(2)); state.GapClass owns which labels those are. For
+		// unreadable:attachments that also covers a real, empty attachment set.
+		if state.IsUnreadableLabel(item) || item == state.LabelUnparsed {
+			if !hasReadGap(m, item) {
+				return true
+			}
+			continue
+		}
 		switch item {
 		case state.UnknownSentinel:
 			return true
 		case state.MissingBody:
-			if hasBody(m) {
+			// A body the message holds, or text kept as received past a structure bound,
+			// which closes the gap this build no longer records (friction F5).
+			if hasBody(m) || restKeptUnread(m) {
 				return true
 			}
 		default:
 			for i := range m.Attachments {
 				if attachmentLabel(m.Attachments[i], i) == item && attachmentBytes(m.Attachments[i]) > 0 {
+					return true
+				}
+			}
+			// The old label may be one an earlier build gave the part (v1's), where the walker
+			// reads the part's names more leniently and calls it something else: the labels of
+			// what v1 reads now count too (design MC34, MS2-AI4).
+			for _, it := range m.V1Inventory {
+				if it.Label == item && it.Size > 0 {
 					return true
 				}
 			}
@@ -749,6 +1254,12 @@ func baseName(date time.Time, subject, key string) string {
 	return baseNameN(date, util.Slug(subject, slugMax), key, 8)
 }
 
+// StemName is a message's file stem by the archive's own convention (baseNameN),
+// exported so the copy export names its files the same way and an inheritor sees
+// one scheme (extraction design §4.9, XC36). slug is the subject's util.Slug,
+// already bounded, or "" under the path budget.
+func StemName(date time.Time, slug, key string, n int) string { return baseNameN(date, slug, key, n) }
+
 // baseNameN is baseName with an n-hex digest and a pre-computed slug (which
 // may be empty under the path budget; see stemFor).
 func baseNameN(date time.Time, slug, key string, n int) string {
@@ -772,3 +1283,8 @@ func hasArchivable(atts []model.Attachment, inlineConsumed map[int]bool) bool {
 	}
 	return false
 }
+
+// renderMessage renders one message's page. It is a variable only so a test
+// can count the renders (the RV-8 cost guard: one per message); production
+// always uses RenderWith.
+var renderMessage = RenderWith

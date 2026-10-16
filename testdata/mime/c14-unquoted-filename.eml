@@ -1,0 +1,22 @@
+Message-ID: <c14-unquoted-filename@corpus.example>
+Date: Mon, 02 Jan 2023 15:04:05 +0000
+From: Alice Example <alice@example.test>
+To: bob@example.test
+Subject: Unquoted filename with a space
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="uf-bd"
+
+--uf-bd
+Content-Type: text/plain; charset=utf-8
+
+An attachment with an unquoted filename follows.
+
+--uf-bd
+Content-Type: application/pdf; name=Invoice 2023.pdf
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment; filename=Invoice 2023.pdf
+
+JVBERi0xLjQKJeLjz9MgbWltZS1jb3JwdXMgci5wZGYKMSAwIG9iajw8L1R5cGUvQ2F0YWxvZz4+
+ZW5kb2JqCnRyYWlsZXI8PC9Sb290IDEgMCBSPj4KJSVFT0YK
+
+--uf-bd--

@@ -18,6 +18,11 @@ var testBin string
 // exit codes and stderr (a refusal is a subprocess contract, not a function
 // return).
 func TestMain(m *testing.M) {
+	// The pty tests re-run this test binary as a session leader that starts the
+	// CLI they build (link_pty_test.go); that child has no need to build it again.
+	if os.Getenv("MAILARCHIVE_TEST_LEADER") == "1" {
+		os.Exit(m.Run())
+	}
 	dir, err := os.MkdirTemp("", "mailarchive-clitest")
 	if err != nil {
 		panic(err)

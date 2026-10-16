@@ -5,12 +5,9 @@ import (
 	"fmt"
 	"io"
 	netmail "net/mail"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
-	gombox "github.com/emersion/go-mbox"
 	_ "github.com/emersion/go-message/charset" // register charsets for MIME decoding
 	"github.com/emersion/go-message/mail"
 
@@ -18,197 +15,63 @@ import (
 	"mail-archive-tool/internal/util"
 )
 
-// mboxReader reads Thunderbird / mbox mail stores. It implements Source.
-type mboxReader struct {
-	root  string // a mail directory (store) or a single mbox file
-	isDir bool
-	store string
-}
-
-func openMboxDir(dir string) (*mboxReader, error) {
-	clean := strings.TrimRight(dir, string(os.PathSeparator))
-	return &mboxReader{root: dir, isDir: true, store: filepath.Base(clean)}, nil
-}
-
-func openMboxFile(path string) (*mboxReader, error) {
-	base := filepath.Base(path)
-	return &mboxReader{root: path, isDir: false, store: strings.TrimSuffix(base, filepath.Ext(base))}, nil
-}
-
-func (r *mboxReader) StoreName() string { return r.store }
-func (r *mboxReader) Close() error      { return nil }
-
-func (r *mboxReader) Walk(handler MessageHandler) error {
-	if !r.isDir {
-		// A single mbox file is its own store; messages go directly under it
-		// (no redundant <name>/<name> nesting).
-		return r.walkFile(r.root, nil, handler)
-	}
-	// A directory that is itself a maildir folder is a single store.
-	if isMaildir(r.root) {
-		return readMaildir(r.root, nil, handler)
-	}
-	return r.walkDir(r.root, nil, handler)
-}
-
-// walkDir recurses a mail directory. Each folder is either an mbox file or a
-// maildir directory; its subfolders live in a sibling "<name>.sbd" directory
-// (Thunderbird's layout).
-func (r *mboxReader) walkDir(dir string, prefix []string, handler MessageHandler) error {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return fmt.Errorf("read mail dir %s: %w", dir, err)
-	}
-	for _, e := range entries {
-		name := e.Name()
-		full := filepath.Join(dir, name)
-
-		if e.IsDir() {
-			if strings.HasSuffix(name, ".sbd") {
-				continue // subfolder container, reached via its parent folder
-			}
-			if isMaildir(full) {
-				folderPath := append(append([]string{}, prefix...), util.SanitizeSegment(name))
-				if err := readMaildir(full, folderPath, handler); err != nil {
-					return err
-				}
-				if err := r.walkSbd(dir, name, folderPath, handler); err != nil {
-					return err
-				}
-			}
-			continue
-		}
-
-		if !isMailboxCandidate(name) || !looksLikeMbox(full) {
-			continue
-		}
-		folderPath := append(append([]string{}, prefix...), util.SanitizeSegment(name))
-		if err := r.walkFile(full, folderPath, handler); err != nil {
-			return err
-		}
-		if err := r.walkSbd(dir, name, folderPath, handler); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// walkSbd recurses into a "<name>.sbd" subfolder container if it exists.
-func (r *mboxReader) walkSbd(dir, name string, folderPath []string, handler MessageHandler) error {
-	sbd := filepath.Join(dir, name+".sbd")
-	if fi, err := os.Stat(sbd); err == nil && fi.IsDir() {
-		return r.walkDir(sbd, folderPath, handler)
-	}
-	return nil
-}
-
-// isMaildir reports whether dir is a maildir folder (has a "cur" or "new" subdir).
-func isMaildir(dir string) bool {
-	for _, sub := range []string{"cur", "new"} {
-		if fi, err := os.Stat(filepath.Join(dir, sub)); err == nil && fi.IsDir() {
-			return true
-		}
-	}
-	return false
-}
-
-// readMaildir reads every message file in a maildir folder's new/ and cur/ dirs.
-// It is shared by the Thunderbird/mbox reader and the Evolution reader (both
-// store folders as maildirs).
-func readMaildir(dir string, folderPath []string, handler MessageHandler) error {
-	for _, sub := range []string{"new", "cur"} {
-		if err := readMaildirDir(filepath.Join(dir, sub), folderPath, handler); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// readMaildirDir reads every message file under a maildir new/ or cur/ directory.
-// Standard maildirs store messages as flat files; Evolution sub-buckets them into
-// two-hex-character shard directories (e.g. cur/04/<msg>), so we descend into
-// subdirectories rather than skipping them.
-func readMaildirDir(dir string, folderPath []string, handler MessageHandler) error {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil // absent new/ or cur/: nothing to read
-	}
-	for _, fe := range entries {
-		full := filepath.Join(dir, fe.Name())
-		if fe.IsDir() {
-			if err := readMaildirDir(full, folderPath, handler); err != nil {
-				return err
-			}
-			continue
-		}
-		data, err := os.ReadFile(full)
-		if err != nil {
-			return fmt.Errorf("read maildir message %s: %w", fe.Name(), err)
-		}
-		if m := safeParseMessage(data); m != nil {
-			// Read state for a maildir message is the "S" (Seen) info flag in its
-			// filename — UNLESS the message also carries an X-Mozilla-Status
-			// header (a Thunderbird artifact parseMessage already honoured, which
-			// wins per the design). Threaded here because only the maildir layout
-			// puts the read flag in the path.
-			if !headerBlockHas(data, "X-Mozilla-Status") {
-				m.Unread = !maildirSeen(fe.Name())
-			}
-			if err := handler(folderPath, m); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func (r *mboxReader) walkFile(path string, folderPath []string, handler MessageHandler) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return fmt.Errorf("open mbox %s: %w", path, err)
-	}
-	defer f.Close()
-
-	mr := gombox.NewReader(f)
-	for {
-		msgReader, err := mr.NextMessage()
-		if err == io.EOF {
-			return nil
-		}
-		if err != nil {
-			return fmt.Errorf("read mbox %s: %w", path, err)
-		}
-		data, err := io.ReadAll(msgReader)
-		if err != nil {
-			return fmt.Errorf("read message in %s: %w", path, err)
-		}
-		if m := safeParseMessage(data); m != nil {
-			if err := handler(folderPath, m); err != nil {
-				return err
-			}
-		}
-	}
-}
-
 // ParseRFC822 parses a raw RFC 5322 message into a normalized Message via the
 // same tolerant, panic-safe path the mbox/maildir readers use. The Graph source
 // uses it, since it fetches each message's raw MIME rather than reading a store.
-func ParseRFC822(data []byte) *model.Message { return safeParseMessage(data) }
+func ParseRFC822(data []byte) *model.Message { return parseRaw(data) }
 
-// safeParseMessage wraps parseMessage so a panic in the MIME/charset stack on a
-// single crafted message becomes a visible stub instead of aborting the whole
-// archive (R10 — robust parsing; the item is never silently dropped).
-func safeParseMessage(data []byte) (m *model.Message) {
+// parseContent, when set, stands in for the content parser: the parser whose result is
+// the message a user sees and the index holds. It is nil in production, where
+// contentParser picks the parser of the mode (v1's parseMessage, or the fidelity walker
+// once fidelityContent is on). What it produces never reaches an identity: that is the
+// v1 replay's, below (P1). It is a variable only so a test can stand in a parser that
+// changes every field, or panics.
+var parseContent func([]byte) *model.Message
+
+// safeParseMessage parses one raw message. A panic in the MIME/charset stack on a
+// single crafted message becomes a visible stub instead of aborting the whole archive
+// (R10 — robust parsing; the item is never silently dropped).
+//
+// The message's identity is decided apart from its content (design-mime-fidelity
+// P1, R27). The frozen v1 parser is replayed under its own recover and its view of the
+// message becomes IdentityTerms, whatever the content parser then makes of it, so a
+// parser change cannot move a key, a fingerprint, a content hash or a file stem. When
+// v1 itself panics the message is the stub, with the stub's terms (stubIdentityTerms),
+// as it was before the replay existed.
+func safeParseMessage(data []byte) *model.Message {
+	if fidelityContent {
+		return safeParseFidelity(data)
+	}
+	v1, panicked := replayV1(data)
+	if panicked || v1 == nil {
+		m, terms := unreadableStub(), stubIdentityTerms(data)
+		m.IdentityTerms = &terms
+		return m
+	}
+	terms := identityTermsOf(v1)
+
+	m, fellBack := contentOf(data), false
+	if m == nil {
+		// The content parser panicked where v1 did not: v1's own content, which is
+		// never worse than what the archive held before (P13).
+		m, fellBack = v1, true
+	}
+	m.TransportHeaders = headerBlock(data)
+	m.V1Inventory = v1InventoryOf(v1)
+	m.FellBack = fellBack
+	m.IdentityTerms = &terms
+	return m
+}
+
+// contentOf runs the content parser under its own recover: nil when it panicked or
+// found no message.
+func contentOf(data []byte) (m *model.Message) {
 	defer func() {
-		if r := recover(); r != nil {
-			m = &model.Message{Subject: "(unreadable message)"}
+		if recover() != nil {
+			m = nil
 		}
 	}()
-	m = parseMessage(data)
-	if m != nil {
-		m.TransportHeaders = headerBlock(data)
-	}
-	return m
+	return contentParser()(data)
 }
 
 // headerBlock returns a raw message's internet header section — the bytes

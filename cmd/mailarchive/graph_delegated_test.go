@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -39,34 +40,64 @@ func TestGraphDeviceCLIRefusals(t *testing.T) {
 // `schedule` validates a device-auth graph job's token cache at install time: a
 // primed cache previews with `-auth device -token-cache PATH` in the canonical
 // command; a missing -token-cache and a not-yet-signed-in cache are each refused
-// naming the sign-in remedy. The device job never carries a secret.
+// naming the sign-in remedy. The device job never carries a secret. On Windows
+// the run's sign-in backend is the vault, so there the primed file alone is
+// refused (MA-453 covers the vault-backed twin). The binary would read the
+// runner's REAL Credential Manager there, so on Windows each leg runs the same
+// check in-process — parseJob, which `schedule` calls — against an empty
+// stand-in vault in deviceTokenStore's place: the outcome never depends on what
+// the CI user's vault holds or how it answers.
 func TestScheduleDeviceTokenCache(t *testing.T) {
 	out := t.TempDir()
 	cache := filepath.Join(t.TempDir(), "graph-token.json")
 	if err := os.WriteFile(cache, []byte(`{"upn":"a@contoso.com","token":{"refresh_token":"RT1","access_token":"AT1"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	base := []string{"schedule", "--", "graph", "-auth", "device",
-		"-out", out, "-tenant", "contoso.com", "-client-id", "APPID"}
+	job := []string{"graph", "-auth", "device", "-out", out, "-tenant", "contoso.com", "-client-id", "APPID"}
+
+	// scheduleJob validates `schedule -- <job> extra…` and returns its exit code,
+	// stdout and stderr: through the real binary where the run's backend is the
+	// -token-cache file; in-process against the stand-in where it is a vault.
+	vaultBackend := runtime.GOOS == "windows"
+	if vaultBackend {
+		standInVault(t, "contoso.com", "APPID")
+	}
+	scheduleJob := func(extra ...string) (int, string, string) {
+		args := append(append([]string{}, job...), extra...)
+		if !vaultBackend {
+			return runCLIOut(t, append([]string{"schedule", "--"}, args...)...)
+		}
+		if _, err := parseJob(args); err != nil {
+			return 1, "", err.Error()
+		}
+		return 0, "", ""
+	}
 
 	// Primed cache → preview (not applied) carries the device auth + cache.
-	code, stdout, stderr := runCLIOut(t, append(append([]string{}, base...), "-token-cache", cache)...)
-	if code != 0 {
-		t.Fatalf("device schedule preview exited %d: %s", code, stderr)
-	}
-	if !strings.Contains(stdout, "-auth device") || !strings.Contains(stdout, "-token-cache") {
-		t.Errorf("preview does not carry -auth device -token-cache:\n%s", stdout)
-	}
-	if strings.Contains(stdout, "-client-secret-file") {
-		t.Errorf("a device job must not carry a secret file:\n%s", stdout)
+	// On Windows the run reads the sign-in from Credential Manager, not this
+	// file, so a primed file with no vault sign-in is refused there instead
+	// (the vault-backed positive twin is MA-453, through deviceTokenStore).
+	code, stdout, stderr := scheduleJob("-token-cache", cache)
+	if vaultBackend {
+		assure.Refused(t, code, stderr, assure.Code(1), assure.Names("sign in", "credential store"))
+	} else {
+		if code != 0 {
+			t.Fatalf("device schedule preview exited %d: %s", code, stderr)
+		}
+		if !strings.Contains(stdout, "-auth device") || !strings.Contains(stdout, "-token-cache") {
+			t.Errorf("preview does not carry -auth device -token-cache:\n%s", stdout)
+		}
+		if strings.Contains(stdout, "-client-secret-file") {
+			t.Errorf("a device job must not carry a secret file:\n%s", stdout)
+		}
 	}
 
 	// No -token-cache → refused with the sign-in remedy.
-	code, _, stderr = runCLIOut(t, base...)
+	code, _, stderr = scheduleJob()
 	assure.Refused(t, code, stderr, assure.Code(1), assure.Names("token-cache"))
 
 	// A not-yet-created cache → refused naming the sign-in remedy.
 	missing := filepath.Join(t.TempDir(), "nope.json")
-	code, _, stderr = runCLIOut(t, append(append([]string{}, base...), "-token-cache", missing)...)
+	code, _, stderr = scheduleJob("-token-cache", missing)
 	assure.Refused(t, code, stderr, assure.Code(1), assure.Names("sign in"))
 }

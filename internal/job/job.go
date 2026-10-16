@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Version of the job file format. Unknown fields are ignored on read (additive
@@ -29,6 +30,11 @@ type Job struct {
 	Outlook         bool     `json:"outlook,omitempty"`
 	OutlookSyncWait string   `json:"outlook_sync_wait,omitempty"`
 	KeepRaw         bool     `json:"raw,omitempty"`
+	// FollowLinks names the inputs whose directory links (symlinks, on Windows
+	// junctions) the run reads: the per-input opt-in of owner ruling OR6, the wizard's
+	// "Follow folder links" answer (the CLI's -follow-links). Additive: a job written
+	// before it reads as no opt-in.
+	FollowLinks []string `json:"follow_links,omitempty"`
 }
 
 // Dir is the per-user directory job files live in.
@@ -38,6 +44,25 @@ func Dir() (string, error) {
 		return "", err
 	}
 	return filepath.Join(base, "mailarchive"), nil
+}
+
+// LastArchiveFile is the file the GUI wizard remembers the archive it last worked on in.
+func LastArchiveFile() (string, error) {
+	d, err := Dir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(d, "last-archive.txt"), nil
+}
+
+// ReadLastArchive is the archive folder the file at path names, or "" when it cannot be read.
+// It only reads: whether the folder is still an archive is the caller's check.
+func ReadLastArchive(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
 }
 
 // PathFor is the job file for a schedule name.

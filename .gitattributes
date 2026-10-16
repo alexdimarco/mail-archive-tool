@@ -1,0 +1,9 @@
+# The MIME-fidelity corpus and its goldens are exact bytes: a checkout must never
+# rewrite a line ending (CRLF corpus items, LF-only items, and the goldens that
+# hash them).
+testdata/mime/** -text
+
+# The frozen v1 parser and its vendored dependencies are pinned by sha256 (MA-331):
+# a checkout must never rewrite a byte of them either.
+internal/source/parsev1.go -text
+internal/source/parsev1/** -text

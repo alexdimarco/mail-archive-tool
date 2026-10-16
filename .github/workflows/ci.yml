@@ -23,9 +23,14 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # The go directive in go.mod is a MINIMUM, not a build pin: with
+      # GOTOOLCHAIN=local, go-version-file would install exactly that patch
+      # release (missing every later security fix). Track the current patch of
+      # the supported line instead.
       - uses: actions/setup-go@v6
         with:
-          go-version-file: go.mod
+          go-version: '1.26.x'
+          check-latest: true
 
       - name: Build (all packages)
         run: go build ./...
@@ -35,3 +40,16 @@ jobs:
 
       - name: Test (incl. assurance gates)
         run: go test ./... -count=1
+
+      - name: Vulnerability scan (reachable code)
+        if: matrix.os == 'ubuntu-latest'
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+
+      # The desktop binary links the OS folder picker (zenity) and, on Windows, its in-process
+      # IFileOpenDialog: scan the Windows build of it as well (extraction design XC31, MA-529).
+      # The tool is installed for the runner, then pointed at the Windows build with GOOS.
+      - name: Vulnerability scan (the Windows desktop binary)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+          GOOS=windows "$(go env GOPATH)/bin/govulncheck" ./cmd/mailarchive-desktop

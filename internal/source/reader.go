@@ -4,24 +4,23 @@ package source
 
 import (
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 	"unicode/utf16"
-	"unicode/utf8"
 
 	charsets "github.com/emersion/go-message/charset"
 	pst "github.com/mooijtech/go-pst/v6/pkg"
 	"github.com/mooijtech/go-pst/v6/pkg/properties"
 	"golang.org/x/text/encoding"
-	"golang.org/x/text/encoding/charmap"
 
 	"mail-archive-tool/internal/model"
+	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/util"
 )
 
@@ -31,6 +30,7 @@ import (
 // must be read this way to avoid silently losing it.
 const (
 	pidTagDisplayName = 12289 // 0x3001, message-store display name
+	pidTagRecordKey   = 4089  // 0x0FF9, PidTagRecordKey: the message store's unique id (FC8)
 	pidTagBody        = 4096  // 0x1000, PidTagBody (plain text)
 	pidTagHtml        = 4115  // 0x1013, PidTagHtml
 	pidTagDisplayBcc  = 3586  // 0x0E02, PidTagDisplayBcc
@@ -73,11 +73,21 @@ var syntheticFolders = map[string]bool{
 	"IPM_SUBTREE":              true,
 }
 
-// Reader is an open Outlook data file. It implements Source.
+// Reader is an open Outlook data file. It implements Source and FaultWalker.
 type Reader struct {
 	file   *pst.File
 	closer io.Closer
 	store  string
+
+	// uid is the message store's PidTagRecordKey (0x0FF9) as hex, the identity a
+	// pst-nid: locator carries so a recovery never matches across two stores
+	// (FC8); "" when the store has none that can be read, which makes every
+	// zero-content failure a per-folder aggregate.
+	uid string
+
+	// ops is what the walk asks of go-pst: production wraps the file, a test
+	// substitutes the tables and nodes a byte patch cannot model precisely.
+	ops pstOps
 
 	// catPropID is the property id the store's name-to-id map assigns to the
 	// named "Keywords" property (PidNameKeywords in PS_PUBLIC_STRINGS — the
@@ -91,11 +101,29 @@ type Reader struct {
 func openPST(path string) (r *Reader, err error) {
 	registerCharsets()
 
-	f, err := os.Open(path)
+	// The operator's own spelling of the input may be a link (the file it names is what is
+	// read); the open itself neither follows one nor waits on a pipe, and the descriptor
+	// must be a regular file: a FIFO named like a data file used to hold the run, and the
+	// archive lock, until a writer appeared (FC2, S2B-AO4).
+	real := path
+	if p, err := filepath.EvalSymlinks(path); err == nil {
+		real = p
+	}
+	f, err := util.OpenRegularFile(real)
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", path, err)
 	}
+	r, err = openPSTReader(f, f, path)
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	return r, nil
+}
 
+// openPSTReader parses the data file read through ra; closer is closed when the
+// Reader is, and path is what the file is reported as.
+func openPSTReader(ra io.ReaderAt, closer io.Closer, path string) (r *Reader, err error) {
 	// go-pst indexes into decrypted/decompressed buffers without bounds checks in
 	// places, so a corrupt or truncated .pst/.ost can panic during parsing. Turn
 	// that into a clean error, so one bad file (e.g. an orphaned Outlook .ost stub
@@ -103,22 +131,22 @@ func openPST(path string) (r *Reader, err error) {
 	// or, in the no-console GUI, exiting silently (R10).
 	defer func() {
 		if rec := recover(); rec != nil {
-			f.Close()
 			r = nil
 			err = fmt.Errorf("parse %s: corrupt or unsupported Outlook data file (go-pst: %v)", path, rec)
 		}
 	}()
 
-	pstFile, err := pst.New(f)
+	pstFile, err := pst.New(ra)
 	if err != nil {
-		f.Close()
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
 
 	r = &Reader{
 		file:   pstFile,
-		closer: f,
+		closer: closer,
 		store:  pstStoreName(pstFile, path),
+		uid:    readStoreUID(pstFile),
+		ops:    fileOps(pstFile),
 	}
 	// Resolve the named "Keywords" property (message categories) once per file
 	// from go-pst's flat string→id map. StringToID is a flat map, so a (rare)
@@ -145,102 +173,87 @@ func (r *Reader) Close() error {
 
 // Walk traverses every folder depth-first, invoking handler for each mail item.
 // Non-mail items (appointments, contacts, tasks) are skipped in this version.
-func (r *Reader) Walk(handler MessageHandler) (err error) {
-	// Per-message conversion is already panic-guarded (safeConvertMessage); this
-	// contains a panic in the folder traversal itself (GetRootFolder /
-	// GetSubFolders / the iterators) so a corrupt store fails as an error the run
-	// can log and move past, never a crash (R10).
-	defer func() {
-		if rec := recover(); rec != nil {
-			err = fmt.Errorf("go-pst panicked reading store %q: %v", r.store, rec)
-		}
-	}()
-
-	root, err := r.file.GetRootFolder()
-	if err != nil {
-		return fmt.Errorf("get root folder: %w", err)
-	}
-	return r.walk(&root, nil, handler)
+// A caller that wants to know about the items and folders it could not read, as
+// they happen, uses WalkWithFaults; Walk collects them and returns a
+// *FaultsError, so a caller that ignores them still sees a non-nil error (FC29).
+func (r *Reader) Walk(handler MessageHandler) error {
+	return r.WalkWithFaults(handler, WalkOptions{})
 }
 
-func (r *Reader) walk(folder *pst.Folder, path []string, handler MessageHandler) error {
-	folderPath := path
-	if name := strings.TrimSpace(folder.Name); name != "" && !syntheticFolders[name] {
-		folderPath = append(append([]string{}, path...), util.SanitizeSegment(name))
-	}
-
-	if folder.MessageCount > 0 {
-		if err := r.walkMessages(folder, folderPath, handler); err != nil {
-			return err
-		}
-	}
-
-	subFolders, err := folder.GetSubFolders()
-	if err != nil {
-		return fmt.Errorf("get sub-folders of %q: %w", folder.Name, err)
-	}
-	for i := range subFolders {
-		if err := r.walk(&subFolders[i], folderPath, handler); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (r *Reader) walkMessages(folder *pst.Folder, folderPath []string, handler MessageHandler) error {
-	it, err := folder.GetMessageIterator()
-	if errors.Is(err, pst.ErrMessagesNotFound) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("message iterator for %q: %w", folder.Name, err)
-	}
-
-	for it.Next() {
-		msg, err := safeConvertMessage(it.Value(), r.catPropID, r.hasCatProp)
-		if err != nil {
-			return fmt.Errorf("convert message in %q: %w", folder.Name, err)
-		}
-		if msg == nil {
-			continue // not a mail item
-		}
-		if err := handler(folderPath, msg); err != nil {
-			return err
-		}
-	}
-	return it.Err()
-}
-
-// safeConvertMessage wraps convertMessage so a panic deep in the PST binary
-// parser on one crafted node becomes a visible stub instead of aborting the
-// whole archive (R10 — robust parsing).
-func safeConvertMessage(m *pst.Message, catID uint16, hasCat bool) (out *model.Message, err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			out, err = &model.Message{Subject: "(unreadable message)"}, nil
-		}
-	}()
-	return convertMessage(m, catID, hasCat)
+// WalkWithFaults is Walk that delivers each fault through opts.Faults as it
+// happens (the loops are in pstwalk.go).
+func (r *Reader) WalkWithFaults(handler MessageHandler, opts WalkOptions) error {
+	w := r.newWalk(handler, opts)
+	return w.run()
 }
 
 // convertMessage maps a go-pst message into a model.Message, or returns nil for
 // non-mail items. catID/hasCat carry the store's resolved "Keywords" property
-// id so per-message category reads need no re-resolution.
-func convertMessage(m *pst.Message, catID uint16, hasCat bool) (*model.Message, error) {
+// id so per-message category reads need no re-resolution; locator, when the store
+// has a stable identity, is the item's pst-nid: locator (set on every message,
+// never part of an identity, FC7).
+//
+// Each step runs under its own recover (§4.4), so the smallest thing is lost:
+//   - the ENVELOPE (subject, sender, recipients, ids, dates, state, categories) is
+//     what the item IS: a failure there returns an error, and the caller records a
+//     zero-content gap and yields no message — nothing reliable was read (FC7);
+//   - the BODY failing keeps the envelope and adds the unreadable:body label;
+//   - the ATTACHMENT TABLE failing (an error or a panic) keeps the envelope and
+//     body, sets no attachments and adds unreadable:attachments; it never fails the
+//     message.
+func convertMessage(m *pst.Message, catID uint16, hasCat bool, locator string) (*model.Message, error) {
 	mp, ok := m.Properties.(*properties.Message)
 	if !ok {
 		return nil, nil
 	}
-
-	// Read the HTML body straight from the property context: modern Outlook
-	// stores PidTagHtml as binary, which go-pst's GetBodyHtml() does not decode.
-	htmlBody := readTextProperty(m, pidTagHtml)
-	plainBody := mp.GetBody()
-	if strings.TrimSpace(plainBody) == "" {
-		plainBody = readTextProperty(m, pidTagBody)
+	msg, err := readEnvelope(m, mp, catID, hasCat)
+	if err != nil {
+		return nil, err
 	}
+	msg.Locator = locator
+	var why []string
+	if detail, failed := guard(func() { readBody(m, mp, msg) }); failed {
+		msg.ReadGaps = append(msg.ReadGaps, state.LabelUnreadableBody)
+		why = append(why, "body: "+detail)
+	}
+	if detail, failed := guard(func() { msg.Attachments = readAttachments(m) }); failed {
+		msg.Attachments = nil
+		msg.ReadGaps = append(msg.ReadGaps, state.LabelUnreadableAttachments)
+		why = append(why, "attachments: "+detail)
+	}
+	if len(why) > 0 {
+		msg.ReadError = boundDetail(strings.Join(why, "; "))
+	}
+	return msg, nil
+}
 
-	msg := &model.Message{
+// guard runs fn and reports a failure as text: a panic's value, or the error fn
+// recorded through failWith. It is how a step of convertMessage loses only itself.
+func guard(fn func()) (detail string, failed bool) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			detail, failed = fmt.Sprint(rec), true
+		}
+	}()
+	fn()
+	return "", false
+}
+
+// errStepFailed is what a step panics with when go-pst answers it with an error
+// instead of a panic, so guard sees one kind of failure.
+type errStepFailed struct{ err error }
+
+func (e errStepFailed) String() string { return e.err.Error() }
+
+// readEnvelope reads the fields that make the message itself (a variable only so a
+// test can make this step fail).
+var readEnvelope = func(m *pst.Message, mp *properties.Message, catID uint16, hasCat bool) (msg *model.Message, err error) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			msg, err = nil, fmt.Errorf("the message header could not be read (go-pst: %v)", rec)
+		}
+	}()
+	msg = &model.Message{
 		Subject:           mp.GetSubject(),
 		SenderName:        mp.GetSenderName(),
 		SenderEmail:       mp.GetSenderEmailAddress(),
@@ -252,8 +265,6 @@ func convertMessage(m *pst.Message, catID uint16, hasCat bool) (*model.Message, 
 		References:        strings.TrimSpace(readTextProperty(m, pidTagReferences)),
 		InternetMessageID: mp.GetInternetMessageId(),
 		TransportHeaders:  readTextProperty(m, pidTagTransportMessageHeaders),
-		HTMLBody:          htmlBody,
-		PlainBody:         plainBody,
 	}
 	if t := mp.GetMessageDeliveryTime(); t != 0 {
 		msg.Received = time.Unix(0, t).UTC()
@@ -281,21 +292,42 @@ func convertMessage(m *pst.Message, catID uint16, hasCat bool) (*model.Message, 
 	if hasCat {
 		msg.Categories = readCategories(m, catID)
 	}
+	return msg, nil
+}
 
+// readBody reads the body into msg: the HTML and plain text, and the RTF when
+// there is nothing better. A panic stops it where it is (what was read stays) and
+// guard turns it into unreadable:body; a go-pst ERROR for an absent RTF is no
+// failure, as it never was (a message with no body is the commonest thing).
+// A variable only so a test can make this step panic.
+var readBody = func(m *pst.Message, mp *properties.Message, msg *model.Message) {
+	// Read the HTML body straight from the property context: modern Outlook
+	// stores PidTagHtml as binary, which go-pst's GetBodyHtml() does not decode.
+	msg.HTMLBody = readTextProperty(m, pidTagHtml)
+	msg.PlainBody = mp.GetBody()
+	if strings.TrimSpace(msg.PlainBody) == "" {
+		msg.PlainBody = readTextProperty(m, pidTagBody)
+	}
 	// Only pay the cost of decompressing RTF when there is no better body.
 	if strings.TrimSpace(msg.HTMLBody) == "" && strings.TrimSpace(msg.PlainBody) == "" {
-		if rtf, err := m.GetBodyRTF(); err == nil {
+		if rtf, err := readRTF(m); err == nil {
 			msg.RTFBody = rtf
 		}
 	}
-
-	atts, err := collectAttachments(m)
-	if err != nil {
-		return nil, err
-	}
-	msg.Attachments = atts
-	return msg, nil
 }
+
+// readRTF and readAttachments are the two reads a test makes panic or fail
+// (variables for that reason only).
+var (
+	readRTF         = func(m *pst.Message) (string, error) { return m.GetBodyRTF() }
+	readAttachments = func(m *pst.Message) []model.Attachment {
+		atts, err := collectAttachments(m)
+		if err != nil {
+			panic(errStepFailed{err})
+		}
+		return atts
+	}
+)
 
 // readTextProperty reads a text-valued property directly from the message's
 // property context, handling both Unicode (PtypString, UTF-16LE) and binary
@@ -513,16 +545,9 @@ func cleanCategory(s string) string {
 
 // decodeBytes turns raw binary text bytes into a Go string. Modern Outlook
 // stores PidTagHtml as UTF-8 bytes; legacy messages use a single-byte codepage,
-// for which Windows-1252 is the safe western default.
-func decodeBytes(buf []byte) string {
-	if utf8.Valid(buf) {
-		return string(buf)
-	}
-	if s, err := charmap.Windows1252.NewDecoder().String(string(buf)); err == nil {
-		return s
-	}
-	return string(buf)
-}
+// for which Windows-1252 is the safe western default. The rule is util.DecodeLegacy's,
+// which the raw-MIME body decoder shares (design-mime-fidelity MC35).
+func decodeBytes(buf []byte) string { return util.DecodeLegacy(buf) }
 
 func collectAttachments(m *pst.Message) ([]model.Attachment, error) {
 	it, err := m.GetAttachmentIterator()
@@ -552,7 +577,18 @@ func collectAttachments(m *pst.Message) ([]model.Attachment, error) {
 			Filename:  name,
 			MimeType:  a.GetAttachMimeTag(),
 			ContentID: a.GetAttachContentId(),
-			WriteTo:   func(w io.Writer) (int64, error) { return a.WriteTo(w) },
+			WriteTo: func(w io.Writer) (n int64, err error) {
+				// The stream is lazy, so it runs long after convertMessage's guard has
+				// returned: a panic in it (a property that lies about its type leaves
+				// go-pst's reader nil, S2A-AC7) is this attachment's error, like a torn
+				// stream, never the message's.
+				defer func() {
+					if rec := recover(); rec != nil {
+						n, err = 0, fmt.Errorf("go-pst panicked reading the attachment: %v", rec)
+					}
+				}()
+				return a.WriteTo(w)
+			},
 		})
 		idx++
 	}
@@ -560,6 +596,48 @@ func collectAttachments(m *pst.Message) ([]model.Attachment, error) {
 		return nil, it.Err()
 	}
 	return out, nil
+}
+
+// readStoreUID reads the message store's PidTagRecordKey (0x0FF9) as hex: the
+// store's identity, which a pst-nid: locator carries so a recovery can never match
+// an item of another store (FC8). It is "" when the store has none that can be
+// read — absent, unreadable, over-long or all zero — and then every zero-content
+// failure is counted in one per-folder aggregate instead of by NID.
+func readStoreUID(f *pst.File) (uid string) {
+	defer func() {
+		if recover() != nil {
+			uid = ""
+		}
+	}()
+	pc, err := f.GetMessageStore()
+	if err != nil {
+		return ""
+	}
+	r, err := pc.GetPropertyReader(pidTagRecordKey, nil)
+	if err != nil {
+		return ""
+	}
+	size := r.Size()
+	if size <= 0 || size > 64 {
+		return ""
+	}
+	buf := make([]byte, size)
+	if n, err := r.ReadAt(buf, 0); err != nil || n != len(buf) {
+		return ""
+	}
+	if allZero(buf) {
+		return ""
+	}
+	return hex.EncodeToString(buf)
+}
+
+func allZero(b []byte) bool {
+	for _, c := range b {
+		if c != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // pstStoreName derives a human-readable label for the data file, preferring the

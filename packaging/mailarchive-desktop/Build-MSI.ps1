@@ -111,8 +111,14 @@ $hashLines = foreach ($name in $hashTargets) {
 $hashLines | Set-Content (Join-Path $Payload 'PAYLOAD-SHA256.txt') -Encoding ASCII
 
 # --- 5. Locate WiX 3 (installed, else fetch the portable tools privately). --------
-$candle = (Get-Command candle.exe -ErrorAction SilentlyContinue).Source
-$light  = (Get-Command light.exe  -ErrorAction SilentlyContinue).Source
+# Null-safe under Set-StrictMode -Version Latest: Get-Command returns nothing when WiX is
+# absent, and reading .Source off that result would throw before the fallback download.
+$candle = $null
+$light  = $null
+$candleCmd = Get-Command candle.exe -ErrorAction SilentlyContinue
+$lightCmd  = Get-Command light.exe  -ErrorAction SilentlyContinue
+if ($null -ne $candleCmd) { $candle = $candleCmd.Source }
+if ($null -ne $lightCmd)  { $light  = $lightCmd.Source }
 if (-not $candle -or -not $light) {
     $toolDir = Join-Path $Root '.tools\wix314'
     $candle = Join-Path $toolDir 'candle.exe'
@@ -138,10 +144,11 @@ $msiVersioned = Join-Path $OutputDirectory "MailArchiveDesktop-$Version-x64.msi"
 $msiStable    = Join-Path $OutputDirectory 'MailArchiveDesktop.msi'
 
 Write-Host "Building self-contained MailArchive Desktop MSI v$Version..."
-& $candle -nologo -arch x64 -dProductVersion=$Version "-dSourceDir=$Payload" -out $obj $ProductWxs
+# WixUtilExtension: Product.wxs ends running instances with util:CloseApplication.
+& $candle -nologo -arch x64 -ext WixUtilExtension -dProductVersion=$Version "-dSourceDir=$Payload" -out $obj $ProductWxs
 if ($LASTEXITCODE -ne 0) { throw "candle.exe failed with exit code $LASTEXITCODE" }
 
-& $light -nologo -sval -out $msiVersioned $obj
+& $light -nologo -sval -ext WixUtilExtension -out $msiVersioned $obj
 if ($LASTEXITCODE -ne 0) { throw "light.exe failed with exit code $LASTEXITCODE" }
 
 Copy-Item $msiVersioned $msiStable -Force

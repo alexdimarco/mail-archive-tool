@@ -1,0 +1,112 @@
+file	group	trigger	rows
+c11-8bit-attachment-lf.eml	C1-1	an 8bit, LF-only text attachment (bytes as go-mbox frames them)	MA-330 MA-337
+c11-text-attachments.eml	C1-1	Latin-1 csv, ISO-8859-1 xml, UTF-16 txt, Shift_JIS txt, cp1252 ics and an html attachment	MA-330 MA-337
+c11-utf8-attachment.eml	C1-1	a UTF-8 text attachment (the twin)	MA-330 MA-337
+c110-from-8bit-name.eml	C1-10	From: b'J\xfcrgen <juergen@example.test>'	MA-330 MA-341
+c110-from-addr-addr.eml	C1-10	From: hans@example.de <hans@example.de>	MA-330 MA-341
+c110-from-comma-name.eml	C1-10	From: Mueller, Hans <hans@example.de>	MA-330 MA-341
+c110-from-double-dot.eml	C1-10	From: <john..smith@docomo.ne.jp>	MA-330 MA-341
+c110-from-empty-angle.eml	C1-10	From: <>	MA-330 MA-341
+c110-from-leading-dot.eml	C1-10	From: <.john@example.jp>	MA-330 MA-341
+c110-from-mailer-daemon.eml	C1-10	From: Mail Delivery System <MAILER-DAEMON>	MA-330 MA-341
+c110-from-plain-valid.eml	C1-10	From: Hans Mueller <hans@example.de>	MA-330 MA-341
+c110-from-undisclosed.eml	C1-10	From: Undisclosed sender:;	MA-330 MA-341
+c14-charset-comment.eml	C1-4	charset=us-ascii (Plain text)	MA-330 MA-338
+c14-no-boundary.eml	C1-4	a multipart whose Content-Type names no boundary (unsplit-multipart)	MA-330 MA-338
+c14-strict-valid.eml	C1-4	strict-valid headers (the twin)	MA-330 MA-338
+c14-unquoted-boundary-eq.eml	C1-4	an unquoted boundary containing '=' (go-message loses the boundary)	MA-330 MA-338
+c14-unquoted-filename.eml	C1-4	unquoted filename=Invoice 2023.pdf (becomes attachment-N)	MA-330 MA-338
+c14-unquoted-start-type.eml	C1-4	unquoted start=<x@y> and type=text/html parameters	MA-330 MA-338
+c15-cid-html-links.eml	C1-5	an a href=cid link, img and CSS url(cid:) references, and the cid:abc / cid:abcdef prefix case	MA-330 MA-339
+c15-cid-text-placeholder.eml	C1-5	a plain body with [cid:chart.png@...] text placeholder and the image part	MA-330 MA-339
+c15-datauri-style-breakout.eml	C1-5	an attachment whose MimeType closes the mail's style element (data-URI allowlist, MC23)	MA-330 MA-339 MA-349
+c18-latin1-body-unlabelled.eml	C1-8	an 8-bit body with no Content-Type or charset	MA-330 MA-340
+c18-latin1-body-usascii.eml	C1-8	an 8-bit body labelled us-ascii	MA-330 MA-340
+c18-latin1-body-utf8-label.eml	C1-8	Latin-1 bytes labelled utf-8	MA-330 MA-340
+c18-latin1-headers.eml	C1-8	raw Latin-1 Subject, From display name and To	MA-330 MA-340
+charset-big5.eml	nameMap	text/plain with charset=big5, a label go-pst registers in go-message's table	MA-330 MA-331
+charset-big5hk.eml	nameMap	text/plain with charset=big5hk, a label go-pst registers in go-message's table	MA-330 MA-331
+charset-cp1250.eml	nameMap	text/plain with charset=cp1250, a label go-pst registers in go-message's table	MA-330 MA-331
+charset-cp1251.eml	nameMap	text/plain with charset=cp1251, a label go-pst registers in go-message's table	MA-330 MA-331
+charset-cp1252.eml	nameMap	text/plain with charset=cp1252, a label go-pst registers in go-message's table	MA-330 MA-331
+charset-cp1253.eml	nameMap	text/plain with charset=cp1253, a label go-pst registers in go-message's table	MA-330 MA-331
+charset-cp1254.eml	nameMap	text/plain with charset=cp1254, a label go-pst registers in go-message's table	MA-330 MA-331
+charset-cp1255.eml	nameMap	text/plain with charset=cp1255, a label go-pst registers in go-message's table	MA-330 MA-331
+charset-cp1256.eml	nameMap	text/plain with charset=cp1256, a label go-pst registers in go-message's table	MA-330 MA-331
+charset-cp1257.eml	nameMap	text/plain with charset=cp1257, a label go-pst registers in go-message's table	MA-330 MA-331
+charset-cp1258.eml	nameMap	text/plain with charset=cp1258, a label go-pst registers in go-message's table	MA-330 MA-331
+charset-cp437.eml	nameMap	text/plain with charset=cp437, a label go-pst registers in go-message's table	MA-330 MA-331
+charset-cp850.eml	nameMap	text/plain with charset=cp850, a label go-pst registers in go-message's table	MA-330 MA-331
+charset-cp852.eml	nameMap	text/plain with charset=cp852, a label go-pst registers in go-message's table	MA-330 MA-331
+charset-cp855.eml	nameMap	text/plain with charset=cp855, a label go-pst registers in go-message's table	MA-330 MA-331
+charset-cp857.eml	nameMap	text/plain with charset=cp857, a label go-pst registers in go-message's table	MA-330 MA-331
+charset-cp858.eml	nameMap	text/plain with charset=cp858, a label go-pst registers in go-message's table	MA-330 MA-331
+charset-cp860.eml	nameMap	text/plain with charset=cp860, a label go-pst registers in go-message's table	MA-330 MA-331
+charset-cp864.eml	nameMap	text/plain with charset=cp864, a label go-pst registers in go-message's table	MA-330 MA-331
+charset-cp866.eml	nameMap	text/plain with charset=cp866, a label go-pst registers in go-message's table	MA-330 MA-331
+charset-cp869.eml	nameMap	text/plain with charset=cp869, a label go-pst registers in go-message's table	MA-330 MA-331
+charset-cp874.eml	nameMap	text/plain with charset=cp874, a label go-pst registers in go-message's table	MA-330 MA-331
+charset-cp932.eml	nameMap	text/plain with charset=cp932, a label go-pst registers in go-message's table	MA-330 MA-331
+charset-cp936.eml	nameMap	text/plain with charset=cp936, a label go-pst registers in go-message's table	MA-330 MA-331
+charset-cp950.eml	nameMap	text/plain with charset=cp950, a label go-pst registers in go-message's table	MA-330 MA-331
+charset-gb18030.eml	nameMap	text/plain with charset=gb18030, a label go-pst registers in go-message's table	MA-330 MA-331
+charset-greek8.eml	nameMap	text/plain with charset=greek8, a label go-pst registers in go-message's table	MA-330 MA-331
+charset-iso15.eml	nameMap	text/plain with charset=iso15, a label go-pst registers in go-message's table	MA-330 MA-331
+charset-iso88592.eml	nameMap	text/plain with charset=iso88592, a label go-pst registers in go-message's table	MA-330 MA-331
+charset-iso88595.eml	nameMap	text/plain with charset=iso88595, a label go-pst registers in go-message's table	MA-330 MA-331
+charset-iso88596.eml	nameMap	text/plain with charset=iso88596, a label go-pst registers in go-message's table	MA-330 MA-331
+charset-iso88597.eml	nameMap	text/plain with charset=iso88597, a label go-pst registers in go-message's table	MA-330 MA-331
+charset-iso88598.eml	nameMap	text/plain with charset=iso88598, a label go-pst registers in go-message's table	MA-330 MA-331
+charset-iso88599.eml	nameMap	text/plain with charset=iso88599, a label go-pst registers in go-message's table	MA-330 MA-331
+charset-iso_1.eml	nameMap	text/plain with charset=iso_1, a label go-pst registers in go-message's table	MA-330 MA-331
+charset-koi8.eml	nameMap	text/plain with charset=koi8, a label go-pst registers in go-message's table	MA-330 MA-331
+charset-roman8.eml	nameMap	text/plain with charset=roman8, a label go-pst registers in go-message's table	MA-330 MA-331
+charset-sjis.eml	nameMap	text/plain with charset=sjis, a label go-pst registers in go-message's table	MA-330 MA-331
+charset-tis-620.eml	nameMap	text/plain with charset=tis-620, a label go-pst registers in go-message's table	MA-330 MA-331
+charset-utf8.eml	nameMap	text/plain with charset=utf8, a label go-pst registers in go-message's table	MA-330 MA-331
+ctl-attachment-base64.eml	control	7bit text with a base64 attachment (the 7bit/base64/qp twin)	MA-330 MA-332 MA-334
+ctl-date-offset.eml	control	an original UTC offset, Cc, Bcc, Reply-To and threading headers	MA-330 MA-332
+ctl-html-alternative.eml	control	alternative[plain, html] shows the HTML only	MA-330 MA-332 MA-335
+ctl-mid-reuse-a.eml	control	Message-ID reuse: the first of two distinct messages (the #fp split)	MA-330
+ctl-mid-reuse-b.eml	control	Message-ID reuse: the second, distinct message (the #fp split)	MA-330
+ctl-no-message-id-no-date.eml	control	no Message-ID and no Date	MA-330
+ctl-no-message-id.eml	control	no Message-ID: identity falls back to the content hash	MA-330
+ctl-plain-ascii.eml	control	a 7bit ascii text message, unchanged by any fix	MA-330 MA-332
+ctl-state-headers.eml	control	importance, sensitivity, read flag and Thunderbird keywords	MA-330 MA-332
+ctl-utf8-qp.eml	control	a valid UTF-8 quoted-printable message	MA-330 MA-332 MA-340
+f24-cp-850-after-body.eml	F24	text part labelled 'cp-850' after the body; later part r.pdf	MA-330 MA-333
+f24-cp-850-first.eml	F24	text part labelled 'cp-850' first; later part r.pdf	MA-330 MA-333
+f24-cte-7bit.eml	F24	Content-Transfer-Encoding 7bit (the twin)	MA-330 MA-334
+f24-cte-8-bit.eml	F24	Content-Transfer-Encoding: 8-bit (hyphenated) with 8-bit bytes	MA-330 MA-334
+f24-cte-base64-truncated.eml	F24	a base64 part cut short (corrupt-part, fillable on an on-demand source); also C1-1	MA-330 MA-334 MA-337
+f24-cte-base64.eml	F24	Content-Transfer-Encoding base64 (the twin)	MA-330 MA-334
+f24-cte-qp-encoded.eml	F24	Content-Transfer-Encoding: "quoted-printable (encoded)"	MA-330 MA-334
+f24-cte-quoted-printable.eml	F24	Content-Transfer-Encoding quoted-printable (the twin)	MA-330 MA-334
+f24-cte-x-foo.eml	F24	an unknown Content-Transfer-Encoding x-foo, later part r.pdf follows	MA-330 MA-334
+f24-cte-x-uuencode.eml	F24	Content-Transfer-Encoding: x-uuencode, later part r.pdf follows	MA-330 MA-334
+f24-default-after-body.eml	F24	text part labelled 'default' after the body; later part r.pdf	MA-330 MA-333
+f24-default-first.eml	F24	text part labelled 'default' first; later part r.pdf	MA-330 MA-333
+f24-empty-after-body.eml	F24	text part labelled '' after the body; later part r.pdf	MA-330 MA-333
+f24-empty-first.eml	F24	text part labelled '' first; later part r.pdf	MA-330 MA-333
+f24-iso-8859-1-after-body.eml	F24	text part labelled 'iso-8859-1' after the body; later part r.pdf (the iso-8859-1 control twin)	MA-330 MA-333
+f24-iso-8859-1-first.eml	F24	text part labelled 'iso-8859-1' first; later part r.pdf (the iso-8859-1 control twin)	MA-330 MA-333
+f24-unknown-8bit-after-body.eml	F24	text part labelled 'unknown-8bit' after the body; later part r.pdf	MA-330 MA-333
+f24-unknown-8bit-first.eml	F24	text part labelled 'unknown-8bit' first; later part r.pdf	MA-330 MA-333
+f24-unknown-8bit-single.eml	F24	a top-level unknown-8bit quoted-printable message (today: fallbackParse, raw encoded-word subject)	MA-330 MA-333
+f24-utf-7-after-body.eml	F24	text part labelled 'utf-7' after the body; later part r.pdf	MA-330 MA-333
+f24-utf-7-first.eml	F24	text part labelled 'utf-7' first; later part r.pdf	MA-330 MA-333
+f24-x-unknown-after-body.eml	F24	text part labelled 'x-unknown' after the body; later part r.pdf	MA-330 MA-333
+f24-x-unknown-first.eml	F24	text part labelled 'x-unknown' first; later part r.pdf	MA-330 MA-333
+f25-apple-mail.eml	F25	Apple Mail alternative[plain, mixed[html, inline pdf, html, inline notes.txt]]	MA-330 MA-335
+f25-duplicate-and-long-names.eml	F25	duplicate names a.pdf and a 130-rune name (zip entry names, MC33)	MA-330 MA-336
+f25-inline-names.eml	F25	inline pdf, inline text/calendar, a forwarded message/rfc822, a Content-ID image and an unnamed inline image	MA-330 MA-336
+f25-mailman.eml	F25	Mailman: HTML post with a plain-text footer part after it	MA-330 MA-335
+f25-mutt.eml	F25	mutt: a named inline text part build.log and a text part named notes.txt	MA-330 MA-335
+f25-nested-long-subject.eml	F25	a nested message/rfc822 with a 200-character subject and its own attachment	MA-330 MA-336
+f25-reserved-names.eml	F25	a sender file named 'Invoice (attached message).html' and one named x.undecoded	MA-330 MA-336
+fallback-empty.eml	fallback	a zero-length message	MA-330
+fallback-header-error.eml	fallback	a header block with a line that has no colon (go-message errors, fallbackParse)	MA-330
+fallback-no-headers.eml	fallback	no headers at all (the unparseable-message stub with the raw bytes as body)	MA-330
+shape-bounce-dsn.eml	shape	a multipart/report bounce: delivery-status and the returned original	MA-330 MA-341
+shape-bounce-nullsender.eml	shape	a bounce with From: <>	MA-330 MA-341
+shape-outlook-related.eml	shape	Outlook: related[alternative[plain, html], inline image] in iso-8859-1	MA-330 MA-339 MA-340

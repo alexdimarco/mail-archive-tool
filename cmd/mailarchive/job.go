@@ -11,7 +11,9 @@ import (
 	"strings"
 	"time"
 
+	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/graph"
+	"mail-archive-tool/internal/graphconfig"
 	"mail-archive-tool/internal/outlookcom"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/util"
@@ -28,6 +30,7 @@ type exportOpts struct {
 	since, manifest *string
 	log             *string
 	copyFirst, auto *bool
+	followLinks     stringSlice
 	outlook         *bool
 	outlookSyncWait *time.Duration
 	index, pages    *bool
@@ -47,6 +50,7 @@ func exportFlags(fs *flag.FlagSet) *exportOpts {
 	o.manifest = fs.String("manifest", "", "manifest path (default <out>/.mailarchive-manifest.json)")
 	o.log = fs.String("log", "", "write the run log to this file (size-capped, rotated) instead of stderr — what scheduled jobs use")
 	o.copyFirst = fs.Bool("copy-first", false, "copy each data file to a temp snapshot before reading (avoids locks when Outlook is open)")
+	fs.Var(&o.followLinks, "follow-links", "an -input whose folder links (symlinks; on Windows junctions) are read; repeatable, comma-separated. Without it a local store's folder links are recorded and not followed, each once, as a gap that names this flag. The input keeps its archive. A link to a file outside the store and a pipe or device are never read, with or without it")
 	o.auto = fs.Bool("auto", false, "auto-discover mail stores (Outlook on Windows; Thunderbird and Evolution on any OS)")
 	o.outlook = fs.Bool("outlook", false, "Windows + classic Outlook: have Outlook export each account to a .pst first, then archive that (use when a .ost can't be read directly)")
 	o.outlookSyncWait = fs.Duration("outlook-sync-wait", 5*time.Minute, "with -outlook: run Send/Receive and wait up to this long for downloads before creating the PST (0 to skip)")
@@ -221,10 +225,13 @@ func parseJob(args []string) (job, error) {
 				return job{}, err
 			}
 		}
-		for _, v := range append([]string{*o.out, *o.manifest, *o.log, *o.since}, o.inputs...) {
+		for _, v := range append(append([]string{*o.out, *o.manifest, *o.log, *o.since}, o.inputs...), o.followLinks...) {
 			if err := noControl("a job argument", v); err != nil {
 				return job{}, err
 			}
+		}
+		if err := app.FollowLinksRefusal(o.followLinks, o.inputs); err != nil {
+			return job{}, err
 		}
 		j := job{out: abspath(*o.out)}
 		j.args = []string{"-out", j.out, "-mode", strings.ToLower(strings.TrimSpace(*o.mode)), "-unattended"}
@@ -239,6 +246,9 @@ func parseJob(args []string) (job, error) {
 		}
 		if *o.copyFirst {
 			j.args = append(j.args, "-copy-first")
+		}
+		for _, in := range o.followLinks {
+			j.args = append(j.args, "-follow-links", abspath(in))
 		}
 		if *o.outlook {
 			j.args = append(j.args, "-outlook", "-outlook-sync-wait", o.outlookSyncWait.String())
@@ -293,7 +303,18 @@ func parseJob(args []string) (job, error) {
 			if strings.TrimSpace(*o.tokenCache) == "" {
 				return job{}, errors.New("a scheduled device job cannot prompt for a sign-in: pass -token-cache PATH to a cache you have already signed in to (run `mailarchive graph -auth device …` once, as the account this schedule runs as)")
 			}
-			if err := graph.CheckTokenCache(*o.tokenCache); err != nil {
+			// P10: refused at install time, while the operator is present.
+			if credentialInArchive(*o.tokenCache, *o.out) {
+				def, _ := defaultTokenCachePath(*o.tenant, *o.clientID, o.mailboxes)
+				return job{}, tokenCacheInArchive(*o.tokenCache, *o.out, def, false, true)
+			}
+			// Check the sign-in where the scheduled run will read it: the OS vault
+			// when the run uses one (Windows, which never writes the file), else
+			// the file — the same backend runGraph hands NewDelegated.
+			if err := graph.CheckSignIn(graph.Config{
+				Tenant: *o.tenant, ClientID: *o.clientID, TokenCachePath: *o.tokenCache,
+				TokenStore: deviceTokenStore(*o.tenant, *o.clientID),
+			}); err != nil {
 				return job{}, err
 			}
 			authArgs = []string{"-auth", "device", "-token-cache", abspath(*o.tokenCache)}
@@ -303,6 +324,9 @@ func parseJob(args []string) (job, error) {
 			}
 			if *o.secretFile == "" {
 				return job{}, errors.New("a scheduled graph job has no environment to carry the secret: pass -client-secret-file PATH (a file readable only by you)")
+			}
+			if credentialInArchive(*o.secretFile, *o.out) {
+				return job{}, secretFileInArchive(*o.secretFile, *o.out)
 			}
 			if _, err := readSecret(*o.secretFile); err != nil {
 				return job{}, err
@@ -396,6 +420,59 @@ func parseJob(args []string) (job, error) {
 		return j, nil
 	}
 	return job{}, fmt.Errorf("unknown job %q", verb)
+}
+
+// credentialInArchive reports whether the credential file at path lies inside
+// the archive out (design-local-confidentiality P10): a sign-in or secret kept
+// there travels with every copy, sync and browse of the archive. Both paths are
+// resolved to their deepest existing ancestor, so a file not created yet, or one
+// reached through a symlinked parent, is placed where it really is, by the
+// containment helper extract shares [CC16]. MailArchive's own OS config folder
+// is exempt when the archive contains it (an -out that is the home folder): its
+// default sign-in there is not "inside the archive", and the reader never serves
+// it (P9) [CC16].
+func credentialInArchive(path, out string) bool {
+	ro, rp := util.ResolveExisting(out), util.ResolveExisting(path)
+	if !util.Within(ro, rp) {
+		return false
+	}
+	if dir, err := graphconfig.DefaultConfigDir(); err == nil {
+		rd := util.ResolveExisting(dir)
+		if util.Within(rd, rp) && util.Within(ro, rd) && !util.Within(rd, ro) {
+			return false
+		}
+	}
+	return true
+}
+
+// credentialWhy is P10's reason, for the refusal and the unattended warning.
+const credentialWhy = "Why: the archive is meant to be copied, synced and browsed, so a %s kept there travels with it."
+
+// tokenCacheInArchive is P10's refusal for a token cache inside -out, as design
+// §7.6 words it. scheduled is for a job a scheduler runs, which must name its
+// cache; isDefault is for the default cache, which only an -out that is
+// MailArchive's config folder itself can hold.
+func tokenCacheInArchive(path, out, def string, isDefault, scheduled bool) error {
+	if def == "" {
+		def = "under your OS config folder"
+	}
+	do := "Do this: move it outside the archive — omit -token-cache to use the default " + def + "."
+	switch {
+	case isDefault:
+		do = "Do this: choose an archive folder (-out) outside " + filepath.Dir(path) + ", where MailArchive keeps its settings and sign-in."
+	case scheduled:
+		do = "Do this: move it outside the archive (for example to the default " + def + ") and pass its new path to -token-cache."
+	}
+	return fmt.Errorf("the token cache %s is inside the archive folder %s. "+credentialWhy+" %s", path, out, "sign-in", do)
+}
+
+// secretFileInArchive is P10's refusal for a client-secret file inside -out.
+func secretFileInArchive(path, out string) error {
+	where := ""
+	if dir, err := graphconfig.DefaultConfigDir(); err == nil {
+		where = " (for example to " + dir + ")"
+	}
+	return fmt.Errorf("the client secret file %s is inside the archive folder %s. "+credentialWhy+" Do this: move it outside the archive%s and pass its new path to -client-secret-file.", path, out, "secret", where)
 }
 
 // readSecret reads an app client secret from a file the way both `graph` (at

@@ -99,14 +99,15 @@ input{width:100%;padding:10px 11px;border:1px solid var(--line);border-radius:8p
     <button class="btn" id="save">Save configuration</button>
     <div class="note" id="note"></div>
     <p class="help" style="margin-top:16px;border-top:1px solid var(--line);padding-top:12px">
-      <b>Your data stays on this PC.</b> This page runs only on 127.0.0.1 (this computer).
+      <b>Your data stays on this PC.</b> This page runs only on 127.0.0.1 (this computer) and opens only through the private link
+      <code>mailarchive setup</code> made for this run, so other accounts on this computer and web pages cannot open it.
       Your secret is kept in your OS credential manager (or a file only you can read) and is
       never uploaded. The tool reads your mailbox <b>read-only</b> (Mail.Read) — it can never
       send, move, change, or delete anything.
     </p>
   </div>
 </div>
-<script src="/setup.js"></script>
+<script src="setup.js"></script>
 </body></html>`))
 
 // setupJS drives the mode toggle and POSTs the config via fetch with the CSRF
@@ -127,7 +128,7 @@ $('#save').addEventListener('click',async()=>{
     auth:document.querySelector('input[name=auth]:checked').value,secret:$('#secret')?$('#secret').value:''};
   $('#save').disabled=true;
   try{
-    const r=await fetch('/api/setup',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(body)});
+    const r=await fetch('api/setup',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(body)});
     const d=await r.json();
     if(d.ok){note.className='note ok';note.textContent='Saved. '+(d.auth==='device'?'Run a capture to sign in (device code).':(d.configured?'Secret stored.':'No secret stored.'));
       if($('#secret'))$('#secret').value='';}

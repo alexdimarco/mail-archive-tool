@@ -17,6 +17,7 @@ import (
 
 	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/state"
+	"mail-archive-tool/internal/util"
 )
 
 // The suffixes of the files a record owns. Kept in step with the exporter's own
@@ -66,6 +67,17 @@ type Report struct {
 	Unrecorded int `json:"unrecorded"`
 	Unexpected int `json:"unexpected"`
 	Recorded   int `json:"recorded,omitempty"` // files baselined this run (-record)
+
+	// What the capture-gap ledger says the source holds that this archive does not
+	// (fillable and terminal gaps: an item, an overflow entry for the items it
+	// absorbed, a folder). Informational: it never changes the verdict or the exit
+	// code (X1 for verify), because verify attests the files that ARE recorded.
+	GapItems   int `json:"gap_items,omitempty"`
+	GapFolders int `json:"gap_folders,omitempty"`
+	// Of those (items counted as gap_items counts them, a folder as one), how many a
+	// later run may capture (fillable) and how many need action (terminal); additive.
+	GapRetryable  int `json:"gap_retryable,omitempty"`
+	GapNeedAction int `json:"gap_need_action,omitempty"`
 
 	Problems  []Problem      `json:"problems"`            // bounded per category (see maxVerifyDetail)
 	Truncated map[string]int `json:"truncated,omitempty"` // kind → count omitted from Problems
@@ -142,20 +154,32 @@ func Verify(out string, opts VerifyOptions, logger *log.Logger, onProgress func(
 	// "running" now that the lock is held and the check is committed, finalized
 	// with the verdict on the way out. A refusal before this point (no manifest,
 	// unreadable manifest) writes no record — it is a refusal, not a verdict.
+	//
+	// The running record carries the last FINISHED verdict (F79): a verify that
+	// never reaches its finalizer — killed, crashed, power lost — must not erase
+	// a previous not-attested RED. finalized is set only on the two normal
+	// returns below, so a panic unwinding through here leaves the running
+	// record exactly as a kill does, for status to report as never finished.
 	started := time.Now().UTC()
-	_ = state.WriteLastVerify(out, state.LastVerify{Status: state.VerifyRunning, Started: started})
+	_ = state.WriteLastVerify(out, state.LastVerify{Status: state.VerifyRunning, Started: started, Previous: state.LastVerdict(out)})
+	finalized := false
 	defer func() {
+		if !finalized {
+			return
+		}
 		finished := time.Now().UTC()
 		lv := state.LastVerify{Status: state.VerifyDone, Started: started, Finished: &finished}
+		// The counts are the verdict this verify reached — kept on the error
+		// path too, so a modified file it found is never recorded as zero.
+		lv.Records, lv.WithFixity, lv.Checked = rep.Records, rep.WithFixity, rep.Checked
+		lv.OK, lv.Modified, lv.Missing = rep.OK, rep.Modified, rep.Missing
+		lv.Unrecorded, lv.Unexpected, lv.Recorded = rep.Unrecorded, rep.Unexpected, rep.Recorded
 		if err != nil {
 			// A produced-report error (e.g. a -record save failure): the caller
 			// maps it to exit 1; record it as not attested.
 			lv.ExitCode = 1
 		} else {
 			lv.Attested = rep.Attested()
-			lv.Records, lv.WithFixity, lv.Checked = rep.Records, rep.WithFixity, rep.Checked
-			lv.OK, lv.Modified, lv.Missing = rep.OK, rep.Modified, rep.Missing
-			lv.Unrecorded, lv.Unexpected, lv.Recorded = rep.Unrecorded, rep.Unexpected, rep.Recorded
 			lv.ExitCode = rep.ExitCode()
 		}
 		_ = state.WriteLastVerify(out, lv) // best effort: the archive is intact without it
@@ -176,6 +200,25 @@ func Verify(out string, opts VerifyOptions, logger *log.Logger, onProgress func(
 
 	records := manifest.All()
 	v.rep.Records = len(records)
+	for _, g := range manifest.CaptureGapsSorted() {
+		switch {
+		case g.Class != state.ClassFillable && g.Class != state.ClassTerminal:
+			continue
+		case g.Scope == state.GapScopeFolder:
+			v.rep.GapFolders++
+		default:
+			v.rep.GapItems += g.Weight()
+		}
+		w := g.Weight()
+		if g.Scope == state.GapScopeFolder {
+			w = 1
+		}
+		if g.Class == state.ClassFillable {
+			v.rep.GapRetryable += w
+		} else {
+			v.rep.GapNeedAction += w
+		}
+	}
 
 	keys := make([]string, 0, len(records))
 	for k := range records {
@@ -212,14 +255,14 @@ func Verify(out string, opts VerifyOptions, logger *log.Logger, onProgress func(
 
 	if opts.Record && v.rep.Recorded > 0 {
 		if serr := manifest.Save(); serr != nil {
-			rep = v.rep
+			rep, finalized = v.rep, true
 			return rep, fmt.Errorf("record fixity baseline: %w", serr)
 		}
 		// The "recorded fixity for N file(s)" line is printed once, by
 		// VerifySummary on stdout (friction #16); a -log run keeps the count in
 		// VerifyResultLine.
 	}
-	rep = v.rep
+	rep, finalized = v.rep, true
 	return rep, nil
 }
 
@@ -388,29 +431,7 @@ func (v *verifier) saveFixity(key string, rec *state.Record, fx *state.Fixity) {
 //
 // full is the resolved absolute path (for the ok case).
 func (v *verifier) inspect(segs []string) (kind string, size int64, full string) {
-	cur := v.out
-	for i, s := range segs {
-		cur = filepath.Join(cur, s)
-		fi, err := os.Lstat(cur)
-		if err != nil {
-			return "missing", 0, cur
-		}
-		if fi.Mode()&fs.ModeSymlink != 0 {
-			return "symlink", 0, cur
-		}
-		last := i == len(segs)-1
-		if last {
-			if !fi.Mode().IsRegular() {
-				return "irregular", 0, cur
-			}
-			return "ok", fi.Size(), cur
-		}
-		if !fi.IsDir() {
-			// An intermediate component is a file: the recorded path cannot exist.
-			return "missing", 0, cur
-		}
-	}
-	return "missing", 0, cur
+	return util.ArchiveFileGate(v.out, segs) // shared with extract (design-mime-fidelity MC35)
 }
 
 // compare hashes the file once, capped at the recorded size + 1 byte, and
@@ -506,24 +527,7 @@ func (v *verifier) add(kind, path, detail string) {
 // in-archive path whose first segment is a store token: no absolute path, no
 // backslash or drive colon, no empty/"."/".." segment, and a first segment that
 // is not a dotfile (FC6). It returns the split segments on success.
-func validRelPath(p string) ([]string, bool) {
-	if p == "" || strings.HasPrefix(p, "/") || filepath.IsAbs(p) {
-		return nil, false
-	}
-	if strings.ContainsAny(p, `\:`) {
-		return nil, false
-	}
-	parts := strings.Split(p, "/")
-	for i, s := range parts {
-		if s == "" || s == "." || s == ".." {
-			return nil, false
-		}
-		if i == 0 && strings.HasPrefix(s, ".") {
-			return nil, false
-		}
-	}
-	return parts, true
-}
+func validRelPath(p string) ([]string, bool) { return util.ValidRecordedPath(p) }
 
 // lastSegment returns the final forward-slash segment of a relative path.
 func lastSegment(p string) string {
@@ -611,6 +615,36 @@ func VerifySummary(r Report) []string {
 	// is deleted. Not an attestation failure; a heads-up about portability.
 	if r.Records > 0 && r.WithEML == 0 {
 		out = append(out, "note: no preserved original bytes (.eml) in this archive — `mailarchive extract` would produce nothing. A PST/OST archive never has originals; an mbox/maildir/Graph archive must be captured with -raw to be extractable.")
+	}
+	// What the source holds that was never captured (the capture-gap ledger): a
+	// heads-up for the custodian, not a verdict — verify attests the files that are
+	// recorded, and a gap has none.
+	if r.GapItems > 0 || r.GapFolders > 0 {
+		var what []string
+		if r.GapItems > 0 {
+			what = append(what, fmt.Sprintf("%d item(s)", r.GapItems))
+		}
+		if r.GapFolders > 0 {
+			what = append(what, fmt.Sprintf("%d folder(s)", r.GapFolders))
+		}
+		out = append(out, fmt.Sprintf("Not in this archive: %s from the source could not be captured (see attachments-report.tsv) — this does not affect attestation", strings.Join(what, ", ")))
+		// Which of them a later run may capture and which need action (friction F9),
+		// and what the verdict below does not say.
+		var split []string
+		if r.GapRetryable > 0 {
+			split = append(split, fmt.Sprintf("%d will be retried the next time the archive runs", r.GapRetryable))
+		}
+		if r.GapNeedAction > 0 {
+			split = append(split, fmt.Sprintf("%d need action", r.GapNeedAction))
+		}
+		if len(split) > 0 {
+			out = append(out, fmt.Sprintf("  Of these, %s — `mailarchive status -out %q` says what to do.", strings.Join(split, " and "), r.Out))
+		}
+		if r.Attested() {
+			out = append(out, "  \"attested\" below means the files this archive holds are intact, not that the archive is complete.")
+		} else {
+			out = append(out, "  The verdict below is about the files this archive holds, not that the archive is complete.")
+		}
 	}
 	if r.Attested() {
 		out = append(out, "attested: every recorded file was checked and intact")

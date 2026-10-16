@@ -51,7 +51,7 @@ func AcquireAs(path, verb string) (*Lock, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open lock %s: %w", path, err)
 	}
-	if err := tryLock(f); err != nil {
+	if err := tryLockFor(f, acquireGrace); err != nil {
 		f.Close()
 		holder := readHolder(path)
 		if holder != "" {
@@ -135,19 +135,80 @@ func (l *Lock) StillHeld() error {
 	return nil
 }
 
+// acquireGrace and probeGrace are how long a refused tryLock is retried before the lock
+// is called held. Held probes by taking the lock for an instant, so an Acquire (or
+// another probe) that lands in that instant would be refused for a lock nobody holds,
+// and a scheduled capture would be skipped (EW-AC9). A real holder holds for the length
+// of a run, so a refusal that lasts this long is real; the retry costs only the
+// refusal, and only by this much. Acquire still never gives the lock to two holders.
+const (
+	acquireGrace = 100 * time.Millisecond
+	probeGrace   = 20 * time.Millisecond
+)
+
+// tryLockFor is tryLock retried every couple of milliseconds until grace has passed.
+func tryLockFor(f *os.File, grace time.Duration) error {
+	err := tryLock(f)
+	for deadline := time.Now().Add(grace); err != nil && time.Now().Before(deadline); {
+		time.Sleep(2 * time.Millisecond)
+		err = tryLock(f)
+	}
+	return err
+}
+
+// Held reports whether another run holds the lock at path right now, WITHOUT creating
+// the file or writing to it: an existing file is opened (never through a symlink) and
+// locked non-blocking, then unlocked at once. A missing, unreadable or read-only lock file
+// reports false. It is how a reader that must never write the archive (the extraction
+// workspace's copy export, which backs off while a capture runs) can see a capture.
+// Holding the lock for that instant is a probe's cost, which is why Acquire retries
+// briefly before it refuses (see acquireGrace), and why a probe that meets another probe
+// retries too.
+func Held(path string) bool {
+	f, err := os.OpenFile(path, os.O_RDWR|noFollow, 0)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	if err := tryLockFor(f, probeGrace); err != nil {
+		return true
+	}
+	unlock(f)
+	return false
+}
+
 // Holder returns the pid/started/host line written by the current holder, or
 // "" when the file is absent or unreadable. The content is untrusted (any
 // writer of the archive directory can change it): control characters are
 // stripped so it can be echoed into a terminal.
 func Holder(path string) string { return readHolder(path) }
 
-func readHolder(path string) string {
+// HolderVerb returns the verb the current holder named through AcquireAs
+// ("export", "verify", …), read from its holder line, or "" when the line
+// names none (a plain Acquire, such as status's own probe) or cannot be read.
+// Like Holder it is untrusted content, sanitized the way AcquireAs sanitizes
+// the verb it writes. The verb comes last, after the host name, so the whole
+// line is read (Holder's 256-byte display cap could cut it off).
+func HolderVerb(path string) string {
+	for _, field := range strings.Fields(readHolderN(path, 1024)) {
+		if v, ok := strings.CutPrefix(field, "verb="); ok {
+			return sanitizeVerb(v)
+		}
+	}
+	return ""
+}
+
+func readHolder(path string) string { return readHolderN(path, 256) }
+
+// readHolderN reads up to max bytes of the holder line, control characters
+// stripped.
+func readHolderN(path string, max int) string {
 	f, err := os.Open(path)
 	if err != nil {
 		return ""
 	}
 	defer f.Close()
-	buf := make([]byte, 256)
+	buf := make([]byte, max)
 	n, _ := f.Read(buf)
 	return strings.TrimSpace(strings.Map(func(r rune) rune {
 		if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) {

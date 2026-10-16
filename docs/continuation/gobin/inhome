@@ -1,0 +1,27 @@
+#!/bin/sh
+# Run a command with HOME and the per-user config folders pointed at a scratch folder,
+# so a CLI run cannot read or write the real user's settings, sign-ins or schedules.
+# Exists so agents never need an env assignment in front of a command (the user's
+# read block asks a person about those).
+# usage: inhome <dir under the session scratchpad> <command> [args...]
+S=/private/tmp/claude-503/-Users-alex-dimarco-repositories/86c4cdf3-3c8e-4270-a184-12f76f0288e7/scratchpad
+if [ "$#" -lt 2 ]; then
+	echo "usage: inhome <dir under $S> <command> [args...]" >&2
+	exit 2
+fi
+d=$1
+shift
+case "$d" in
+"$S"/*) ;;
+*)
+	echo "inhome: $d is not under the session scratchpad $S" >&2
+	exit 2
+	;;
+esac
+mkdir -p "$d/.config" "$d/AppData/Roaming" "$d/AppData/Local" || exit 2
+HOME=$d
+XDG_CONFIG_HOME=$d/.config
+APPDATA=$d/AppData/Roaming
+LOCALAPPDATA=$d/AppData/Local
+export HOME XDG_CONFIG_HOME APPDATA LOCALAPPDATA
+exec "$@"

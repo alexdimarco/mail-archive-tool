@@ -37,7 +37,7 @@ func Query(name string) State {
 		_, err := os.Stat(launchdPlistPath(name))
 		return launchdState(err == nil)
 	case "windows":
-		_, err := exec.Command("schtasks", "/Query", "/TN", name).CombinedOutput()
+		_, err := schtasksRun(SchtasksQueryArgv(name)...)
 		return schtasksState(err)
 	default:
 		out, err := crontabList()

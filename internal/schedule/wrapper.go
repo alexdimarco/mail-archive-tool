@@ -46,29 +46,80 @@ func StderrLogPath(log string) string {
 // CmdWrapper returns the batch file that runs the job. Every token is quoted
 // unconditionally (inside cmd.exe quotes the separators & | < > ^ ( ) are
 // inert), every % is doubled so no environment reference is ever expanded,
-// and delayed expansion is never enabled, so ! is literal too.
+// and delayed expansion is never enabled, so ! is literal too. A program token
+// that ends in a backslash has that run doubled (batchArg), so the program's
+// own argv parser closes the token where cmd.exe does.
+//
+// The file is UTF-8 without a BOM (cmd would run a BOM as part of the first
+// command). cmd.exe decodes a batch file line by line in the console's OEM code
+// page and never detects UTF-8, so a non-ASCII path (a local profile
+// C:\Users\Jörg, an archive folder Eingänge) would reach the program garbled
+// and every run would fail. When the content holds any non-ASCII byte, the
+// second line therefore switches the console to UTF-8 (chcp 65001) before cmd
+// reads anything else; the lines up to and including that switch are ASCII,
+// since a schedule name is ASCII by its grammar. The switch is reliable on
+// Windows 10 and later, which is all a Go-built program supports (cmd on
+// Windows 7 parsed batch files unreliably after it). The code page is not
+// restored: a task's console is its own, and a restore after the run line would
+// replace the program's exit status. An all-ASCII wrapper (most installs) has
+// no chcp line, so it is unchanged and a hand-run from an open console does
+// not switch that console's code page.
 func CmdWrapper(s Spec) string {
-	var b strings.Builder
-	b.WriteString("@echo off\r\n")
-	b.WriteString("rem mailarchive scheduled backup \"" + strings.ReplaceAll(s.Name, "\"", "'") + "\" - managed by `mailarchive schedule`.\r\n")
-	b.WriteString("rem Re-run `mailarchive schedule ... -install` to update it, `-remove` to delete it.\r\n")
 	parts := make([]string, 0, 1+len(s.Args))
 	for _, tok := range s.program() {
-		parts = append(parts, batchQuote(tok))
+		parts = append(parts, batchArg(tok))
 	}
 	line := strings.Join(parts, " ")
 	if strings.TrimSpace(s.Log) != "" {
 		line += " 2>> " + batchQuote(StderrLogPath(s.Log))
 	}
+	header := "rem mailarchive scheduled backup \"" + strings.ReplaceAll(s.Name, "\"", "'") + "\" - managed by `mailarchive schedule`.\r\n" +
+		"rem Re-run `mailarchive schedule ... -install` to update it, `-remove` to delete it.\r\n"
+
+	var b strings.Builder
+	b.WriteString("@echo off\r\n")
+	if !isASCII(header + line) {
+		b.WriteString("chcp 65001 >nul\r\n")
+	}
+	b.WriteString(header)
 	b.WriteString(line + "\r\n")
 	return b.String()
 }
 
+// isASCII reports whether s holds only 7-bit bytes, which every OEM code page
+// decodes identically.
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			return false
+		}
+	}
+	return true
+}
+
 // batchQuote wraps a token in double quotes for a batch line. A double quote
 // cannot appear in a Windows file name and is not a legal flag value here, so
-// it is replaced rather than escaped; % is doubled.
+// it is replaced rather than escaped; % is doubled. The result is read by
+// cmd.exe alone — the redirect target, a path cmd opens itself.
 func batchQuote(tok string) string {
 	tok = strings.ReplaceAll(tok, `"`, `'`)
 	tok = strings.ReplaceAll(tok, "%", "%%")
 	return `"` + tok + `"`
+}
+
+// batchArg quotes a token that cmd.exe hands on to the program, which splits
+// its command line under the C-runtime rules (CommandLineToArgvW; Go's
+// os.Args): there a backslash run directly before a quote escapes it, so a
+// token ending in a separator — a drive root E:\ or a share root
+// \\nas\backup\ — written as "E:\" would leave the quote open and fold every
+// later argument into it. Doubling the trailing run (2n backslashes and the
+// closing quote read as n literal backslashes) closes the token exactly, and
+// cmd gives a backslash no meaning, so the doubling is invisible to it. With
+// every quote already replaced, the trailing run is the only backslash run that
+// can precede a quote.
+func batchArg(tok string) string {
+	q := batchQuote(tok)
+	body := q[1 : len(q)-1]
+	trail := len(body) - len(strings.TrimRight(body, `\`))
+	return `"` + body + strings.Repeat(`\`, trail) + `"`
 }

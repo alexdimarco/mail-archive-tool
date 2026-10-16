@@ -135,12 +135,14 @@ func runHeadless(path string) int {
 	defer stop()
 
 	inputs := j.Inputs
+	var outlookSkips []outlookcom.Skip
+	var outlookExported []string // the PSTs this run's export wrote: a fresh image of the mailbox (NF1)
 	if j.Outlook {
 		wait := 5 * time.Minute
 		if d, err := time.ParseDuration(j.OutlookSyncWait); err == nil {
 			wait = d
 		}
-		stores, cerr := outlookcom.CreatePSTs(filepath.Join(j.Out, "_outlook-pst"),
+		stores, skips, cerr := outlookcom.CreatePSTs(filepath.Join(j.Out, "_outlook-pst"),
 			outlookcom.Options{Sync: wait > 0, SyncWait: wait}, logger)
 		if cerr != nil {
 			logger.Printf("FAILED: %v", cerr)
@@ -151,7 +153,9 @@ func runHeadless(path string) int {
 		inputs = nil
 		for _, s := range stores {
 			inputs = append(inputs, s.Path)
+			outlookExported = append(outlookExported, s.Path)
 		}
+		outlookSkips = skips
 	}
 	mode := export.Incremental
 	if strings.EqualFold(j.Mode, "full") {
@@ -165,13 +169,29 @@ func runHeadless(path string) int {
 			logger.Printf("warning: ignoring invalid since %q: %v", j.Since, err)
 		}
 	}
+	// Unattended: a vanished input on this existing archive is recorded as a
+	// failed run, exactly as the CLI's -unattended does (N13, R18).
 	opts := app.Options{Inputs: inputs, Auto: j.Auto, Out: j.Out, Mode: mode, Since: since,
-		CopyFirst: j.CopyFirst, Index: true, Pages: true, KeepRaw: j.KeepRaw}
+		CopyFirst: j.CopyFirst, Index: true, Pages: true, KeepRaw: j.KeepRaw, Unattended: true, FollowLinks: j.FollowLinks,
+		OutlookSkips: outlookSkips, OutlookExported: outlookExported}
 	logger.Printf("Scheduled job %q: exporting to %s", j.Name, j.Out)
 	result, runErr := app.Run(ctx, opts, logger, nil)
-	logSummary(logger, result)
+	// "Done." only for a run that finished or was cancelled: a refused or failed
+	// run logs FAILED alone, never a Done above it (F11).
+	if runErr == nil || errors.Is(runErr, context.Canceled) {
+		logSummary(logger, result)
+	}
 	if runErr != nil && !errors.Is(runErr, context.Canceled) {
-		logger.Printf("FAILED: %v", runErr)
+		// An index refusal reads in the owner's words (this program has no
+		// command line to run a `reindex` from), with the technical text kept
+		// on the next line for whoever helps (F3).
+		var ie *app.IndexOpenError
+		if errors.As(runErr, &ie) {
+			logger.Printf("FAILED: %s", ie.ForOwner(`"`+rebuildChoice+`" in the window that opens with this program`))
+			logger.Printf("detail: %v", runErr)
+		} else {
+			logger.Printf("FAILED: %v", runErr)
+		}
 		fmt.Fprintln(os.Stderr, "mailarchive-gui: "+runErr.Error()) // cron mail / stderr.log
 		notifyFailure(j.Name, j.Out)
 		return 1
@@ -269,6 +289,9 @@ type wizardChoice struct {
 	copyFirst  bool
 	outlookCOM bool
 	keepRaw    bool // also keep each message's original .eml (raw-capable sources)
+	// followLinks are the inputs whose folder links the user asked to have read
+	// (owner ruling OR6: the per-input opt-in; a folder store only).
+	followLinks []string
 	// Deleted Items / Junk Email are excluded by default; set only for a
 	// live-path (Graph) source, which the GUI does not offer yet (T7, §3.6).
 	includeDeleted bool
@@ -454,6 +477,20 @@ func wizard() error {
 		choice.keepRaw = strings.HasPrefix(rawChoice, "Yes")
 	}
 
+	// 5b2. Read through the folder links of a mail folder? Not by default: a link in the
+	//      store is recorded and not followed, and its gap says to answer this question.
+	//      Asked only when a chosen input is a folder (a link lives in a folder store).
+	if followLinksWorthAsking(srcType, choice.inputs) {
+		linkChoice, err := zenity.List(
+			followLinksQuestion,
+			[]string{followLinksNo, followLinksYes},
+			zenity.Title(appTitle), zenity.DefaultItems(followLinksNo))
+		if err != nil {
+			return err
+		}
+		choice.followLinks = followLinksFor(linkChoice, choice.inputs)
+	}
+
 	// 5c. Include the Deleted Items / Junk Email folders? Excluded by default;
 	//     a click-through excludes them (T7). Only asked for a source whose walk
 	//     can honor the exclusion by resolved well-known-folder id — a live-path
@@ -543,6 +580,48 @@ func keepRawWorthAsking(srcType string, inputs []string) bool {
 	return !allOutlookFiles(inputs)
 }
 
+// The directory-link opt-in question (owner ruling OR6). The default is No, so a
+// click-through reads no link out of the store; only the explicit Yes opts the folder
+// inputs in. The wording of the Yes answer is what the capture gap's remedy names.
+const (
+	followLinksQuestion = "Does this mail folder contain shortcuts (links) to other folders that should be read too? By default a link is not followed; each one is listed as not captured, so nothing is lost silently. Following links reads the folders they lead to, and the archive keeps using the same folder."
+	followLinksNo       = "No — do not follow folder links"
+	followLinksYes      = "Follow folder links"
+)
+
+// followLinksWorthAsking reports whether the directory-link question is worth putting
+// to the user: a link lives in a FOLDER store (Thunderbird, Evolution, or what
+// auto-detect found), never in a .pst/.ost, a single mbox file or the Outlook-app path,
+// so it needs a chosen input that is a directory.
+func followLinksWorthAsking(srcType string, inputs []string) bool {
+	switch srcType {
+	case srcThunderbird, srcEvolution, srcAuto:
+	default:
+		return false
+	}
+	return len(folderInputs(inputs)) > 0
+}
+
+// folderInputs are the chosen inputs that are directories.
+func folderInputs(paths []string) []string {
+	var out []string
+	for _, p := range paths {
+		if fi, err := os.Stat(p); err == nil && fi.IsDir() {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// followLinksFor maps the wizard's answer to the inputs that opt in: every folder input
+// on the explicit Yes, none on anything else (the default answer, a cancel).
+func followLinksFor(answer string, inputs []string) []string {
+	if answer != followLinksYes {
+		return nil
+	}
+	return folderInputs(inputs)
+}
+
 // isOutlookFile reports whether p is an Outlook data file by extension.
 func isOutlookFile(p string) bool {
 	switch strings.ToLower(filepath.Ext(p)) {
@@ -613,13 +692,7 @@ func anyRegularFile(paths []string) bool {
 
 // ---- health view on launch (S8) --------------------------------------------
 
-func lastArchiveFile() (string, error) {
-	d, err := job.Dir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(d, "last-archive.txt"), nil
-}
+func lastArchiveFile() (string, error) { return job.LastArchiveFile() }
 
 func rememberArchive(out string) {
 	if p, err := lastArchiveFile(); err == nil {
@@ -660,6 +733,7 @@ func healthCheck() error {
 		return nil
 	}
 	in := health.Gather(out, "")
+	in.Surface = "gui" // name the rebuild choice below, not a command line
 	rep := health.Assess(in, time.Now())
 	lines := health.Summary(in, rep)
 	var lastRun time.Time
@@ -679,12 +753,21 @@ func healthCheck() error {
 	if repairable(in) {
 		choices = append(choices, repair)
 	}
+	if rebuildOffered(rep) {
+		choices = append(choices, rebuildChoice)
+	}
 	choices = append(choices, remove)
 	pick, err := zenity.List("Backup health — "+rep.Posture+"\n\n"+text, choices, zenity.Title(appTitle), zenity.DefaultItems(cont))
 	if err != nil {
 		return err
 	}
 	switch pick {
+	case rebuildChoice:
+		msg, rerr := rebuildSearchIndex(out)
+		if rerr != nil {
+			return zenity.Error(msg, zenity.Title(appTitle))
+		}
+		return zenity.Info(msg, zenity.Title(appTitle))
 	case repair:
 		return repairSchedule(out, in.Desc)
 	case remove:
@@ -692,6 +775,34 @@ func healthCheck() error {
 	default:
 		return nil
 	}
+}
+
+// rebuildChoice is the health view's choice that rebuilds a damaged, missing or
+// lagging search index from the archive's own files; the health lines and the
+// job log's refusals name it (F3).
+const rebuildChoice = "Rebuild the search index"
+
+// rebuildOffered reports whether the posture carries an index reason the
+// rebuild fixes (damaged, missing, or behind the manifest).
+func rebuildOffered(rep health.Report) bool {
+	for _, c := range rep.Codes {
+		switch c {
+		case "index_unreadable", "index_missing", "index_behind":
+			return true
+		}
+	}
+	return false
+}
+
+// rebuildSearchIndex rebuilds the archive's search index and folder pages from
+// its own files, the action behind rebuildChoice, and returns the text to show:
+// what was rebuilt, or the failure (err non-nil) with its cause.
+func rebuildSearchIndex(out string) (string, error) {
+	rr, err := app.Rebuild(out, nil)
+	if err != nil {
+		return "The search index could not be rebuilt:\n" + err.Error(), err
+	}
+	return fmt.Sprintf("The search index was rebuilt: %d message(s) indexed, %d pruned.", rr.Rebuilt, rr.Pruned), nil
 }
 
 // repairable reports whether the launch health view should offer to re-install
@@ -746,13 +857,24 @@ func repairSpec(out string, d schedule.Descriptor, exe string) (schedule.Spec, e
 	return spec, nil
 }
 
+// repairPlan is the Spec a repair installs, or why it must not: the entry name
+// the descriptor records is untrusted too (a folder handed over can name another
+// archive's entry), and an install replaces whatever entry has that name, so a
+// name that is not shown to be this archive's is refused (G8-AO1, AI1).
+func repairPlan(out string, d schedule.Descriptor, exe string) (schedule.Spec, error) {
+	if err := schedule.NameBound(out, d); err != nil {
+		return schedule.Spec{}, fmt.Errorf("not repairing: %v", err)
+	}
+	return repairSpec(out, d, exe)
+}
+
 // repairSchedule re-installs a recorded schedule from the current executable.
 func repairSchedule(out string, d schedule.Descriptor) error {
 	exe, err := os.Executable()
 	if err != nil {
 		return err
 	}
-	spec, err := repairSpec(out, d, exe)
+	spec, err := repairPlan(out, d, exe)
 	if err != nil {
 		return err
 	}
@@ -800,7 +922,13 @@ func removeSchedule(out string) error {
 	if err != nil {
 		return err
 	}
-	name, err := schedule.SanitizeName(d.Name)
+	// The descriptor is untrusted: its name drives the removal only when it is
+	// this archive's entry (a handed-over folder can record any entry's name).
+	recorded, err := schedule.RecordedBackupName(out)
+	if err != nil {
+		return err
+	}
+	name, err := schedule.SanitizeName(recorded)
 	if err != nil {
 		return err
 	}
@@ -814,10 +942,10 @@ func removeSchedule(out string) error {
 	if err := schedule.Remove(spec); err != nil {
 		return err
 	}
-	if jp, err := job.PathFor(d.Name); err == nil {
+	if jp, err := job.PathFor(name); err == nil {
 		_ = os.Remove(jp)
 	}
-	return zenity.Info(fmt.Sprintf("Removed the scheduled backup %q for\n%s", d.Name, out), zenity.Title(appTitle))
+	return zenity.Info(fmt.Sprintf("Removed the scheduled backup %q for\n%s", name, out), zenity.Title(appTitle))
 }
 
 // ---- IMAP prep ------------------------------------------------------------
@@ -1058,11 +1186,13 @@ func runExport(c wizardChoice) error {
 	}()
 
 	inputs := c.inputs
+	var outlookSkips []outlookcom.Skip
+	var outlookExported []string // the PSTs this run's export wrote: a fresh image of the mailbox (NF1)
 	// Outlook-automation path: have Outlook write a fresh PST per account, then
 	// archive those. Reliable for Exchange/IMAP .ost caches go-pst can't read.
 	if c.outlookCOM {
 		_ = dlg.Text("Running Send/Receive, then exporting each account to a PST…\nThis can take several minutes for large mailboxes.")
-		stores, cerr := outlookcom.CreatePSTs(filepath.Join(c.out, "_outlook-pst"),
+		stores, skips, cerr := outlookcom.CreatePSTs(filepath.Join(c.out, "_outlook-pst"),
 			outlookcom.Options{Sync: true, SyncWait: 5 * time.Minute}, logger)
 		if cerr != nil {
 			_ = dlg.Close()
@@ -1071,7 +1201,9 @@ func runExport(c wizardChoice) error {
 		inputs = nil
 		for _, s := range stores {
 			inputs = append(inputs, s.Path)
+			outlookExported = append(outlookExported, s.Path)
 		}
+		outlookSkips = skips
 	}
 
 	var since time.Time
@@ -1088,6 +1220,11 @@ func runExport(c wizardChoice) error {
 		Index:     true,
 		Pages:     true,
 		KeepRaw:   c.keepRaw,
+
+		FollowLinks: c.followLinks,
+
+		OutlookSkips:    outlookSkips,
+		OutlookExported: outlookExported,
 	}
 
 	var ticks int
@@ -1154,17 +1291,44 @@ func exportSummary(out string, keepRaw bool, r app.Result) string {
 		s.Filled, s.Exported, s.SkippedManifest, s.SkippedDate, s.Attachments)
 
 	notDone := r.Fillable + r.Unknown
-	if notDone > 0 {
+	// A message that is fillable only because a part is cut short, or its parts could not be told
+	// apart, in the mailbox file it was read from is not one the source has not delivered: a download
+	// returns the same bytes. Say what cures it, that one malformed when it was sent stays listed, and
+	// once that these are also in the kept-as-received count below (friction F3, GUI half).
+	onlyGaps := r.Fillable > 0 && r.FillableOnlyParseGap >= r.Fillable
+	switch {
+	case onlyGaps:
+		fmt.Fprintf(b, "\nCut short, or with parts that could not be told apart, in the mailbox file: %d — a download does not change a mailbox file: replace it with a complete export from your mail app, then run this again to add them (an IMAP cache: download the messages for offline use instead). A message that was malformed when it was sent cannot be completed by either, and stays listed\n", r.Fillable)
+		fmt.Fprintf(b, "%d of them %s also counted under \"Kept as received\" below\n", r.FillableParseGap, guiVerb(r.FillableParseGap, "is", "are"))
+		if r.Unknown > 0 {
+			fmt.Fprintf(b, "Not yet re-checked: %d (from an older archive; re-checked automatically each run)\n", r.Unknown)
+		}
+	case notDone > 0:
 		line := fmt.Sprintf("\nNot fully downloaded yet: %d — open these in your mail app so it downloads them, then run this again to add them", notDone)
 		if r.Unknown > 0 {
 			line += fmt.Sprintf(" (%d are from an older archive and get re-checked automatically each run)", r.Unknown)
 		}
 		b.WriteString(line + "\n")
+		if r.FillableParseGap > 0 {
+			// The download is for the messages a source has not delivered; the cut ones among them
+			// need the file replaced.
+			fmt.Fprintf(b, "%d of them %s cut short, or %s parts that could not be told apart, in the mailbox file: a download does not change it, so replace the file with a complete export from your mail app (the report says which)\n",
+				r.FillableParseGap, guiVerb(r.FillableParseGap, "is", "are"), guiVerb(r.FillableParseGap, "has", "have"))
+			fmt.Fprintf(b, "%d of them %s also counted under \"Kept as received\" below\n", r.FillableParseGap, guiVerb(r.FillableParseGap, "is", "are"))
+		}
 	}
 	if r.Terminal > 0 {
 		fmt.Fprintf(b, "Empty at the source (nothing to download): %d\n", r.Terminal)
 	}
-	if (notDone > 0 || r.Terminal > 0) && r.ReportPath != "" {
+	// A part this version cannot decode is kept as received: not empty at the source,
+	// and not a download to wait for (design-mime-fidelity §4.9).
+	if r.Undecodable > 0 {
+		fmt.Fprintf(b, "Kept as received, because this version cannot decode a part of them: %d (the files are in each message's attachments zip)\n", r.Undecodable)
+	}
+	if r.FidelityFallback > 0 {
+		fmt.Fprintf(b, "Kept as an earlier version read them, because this version could not decode them in full: %d (nothing is lost)\n", r.FidelityFallback)
+	}
+	if (notDone > 0 || r.Terminal > 0 || r.Undecodable > 0 || r.FidelityFallback > 0) && r.ReportPath != "" {
 		fmt.Fprintf(b, "Details: %s\n", r.ReportPath)
 	}
 	if r.IndexErrors > 0 {
@@ -1176,6 +1340,14 @@ func exportSummary(out string, keepRaw bool, r app.Result) string {
 	b.WriteString("\nYour data stays on this computer: the archive is read from your own mail files, nothing is uploaded anywhere, and the saved pages run no scripts and load nothing from the internet — safe to open offline.\n")
 	fmt.Fprintf(b, "\nOutput folder:\n%s\n\nOpen index.html there to browse — no extra software needed. Each folder page has a box to filter within that folder; to search the whole archive at once, use the command-line tool: mailarchive serve -out %q", out, out)
 	return b.String()
+}
+
+// guiVerb picks the singular or plural form of a verb for a count.
+func guiVerb(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }
 
 // openPathArgv is the detached command that opens a file or folder with the OS's
@@ -1288,7 +1460,7 @@ func jobFor(name string, c wizardChoice) job.Job {
 		Name: name, Inputs: c.inputs, Auto: c.auto, Out: c.out,
 		Mode:  "incremental",
 		Since: c.since, CopyFirst: c.copyFirst, Outlook: c.outlookCOM,
-		KeepRaw: c.keepRaw,
+		KeepRaw: c.keepRaw, FollowLinks: c.followLinks,
 	}
 	if c.outlookCOM {
 		j.Inputs = nil

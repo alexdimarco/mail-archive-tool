@@ -8,7 +8,6 @@ import (
 	"io"
 	"log"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -67,18 +66,21 @@ func Detect() (version string, available bool) {
 }
 
 // CreatePSTs drives Outlook to copy each non-PST mail account into a fresh .pst
-// under outDir, returning the files created. Accounts already stored as a .pst on
-// disk are skipped (they can be archived directly). If opts.Sync is set it runs a
+// under outDir, returning the files created and what it did NOT carry over: a
+// top-level folder whose CopyTo failed and an account it could not export are each
+// a Skip, and an account already stored as a .pst on disk (it can be archived
+// directly) is an informational one (FC28). If opts.Sync is set it runs a
 // Send/Receive first (bounded by opts.SyncWait) so cached accounts are current.
-func CreatePSTs(outDir string, opts Options, logger *log.Logger) ([]Store, error) {
+func CreatePSTs(outDir string, opts Options, logger *log.Logger) ([]Store, []Skip, error) {
 	if logger == nil {
 		logger = log.New(io.Discard, "", 0)
 	}
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	var stores []Store
+	var skips []Skip
 	err := withCOM(func() error {
 		unk, err := oleutil.CreateObject("Outlook.Application")
 		if err != nil {
@@ -120,19 +122,21 @@ func CreatePSTs(outDir string, opts Options, logger *log.Logger) ([]Store, error
 		logger.Printf("Outlook: %d mail store(s) found", count)
 
 		for i := 1; i <= count; i++ {
-			if s, ok := exportOneStore(ns, srcStores, i, outDir, logger); ok {
+			s, sk, ok := exportOneStore(ns, srcStores, i, outDir, logger)
+			skips = append(skips, sk...)
+			if ok {
 				stores = append(stores, s)
 			}
 		}
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if len(stores) == 0 {
-		return nil, errors.New("no Outlook accounts could be exported to a PST (an account already stored as a .pst can be archived directly)")
+		return nil, skips, errors.New("no Outlook accounts could be exported to a PST (an account already stored as a .pst can be archived directly)")
 	}
-	return stores, nil
+	return stores, skips, nil
 }
 
 // syncAndWait starts every Send/Receive group and waits a bounded time for the
@@ -191,17 +195,22 @@ func syncAndWait(ns *ole.IDispatch, wait time.Duration, logger *log.Logger) {
 
 // exportOneStore creates a PST for the i-th source store and copies its folders
 // into it. It returns false (with a logged reason) rather than aborting the run
-// if one account can't be exported.
-func exportOneStore(ns, srcStores *ole.IDispatch, i int, outDir string, logger *log.Logger) (Store, bool) {
+// if one account can't be exported; every folder or account it did not carry over
+// is also returned as a Skip, so the run can record it (FC28).
+func exportOneStore(ns, srcStores *ole.IDispatch, i int, outDir string, logger *log.Logger) (Store, []Skip, bool) {
+	name := fmt.Sprintf("account %d", i)
+	whole := func(reason string) []Skip {
+		return []Skip{{Account: name, Path: PSTPath(outDir, name), Reason: reason}}
+	}
+
 	itemV, err := oleutil.CallMethod(srcStores, "Item", i)
 	if err != nil {
 		logger.Printf("Outlook: store %d: %v", i, err)
-		return Store{}, false
+		return Store{}, whole(err.Error()), false
 	}
 	store := itemV.ToIDispatch()
 	defer store.Release()
 
-	name := "account"
 	if v, err := oleutil.GetProperty(store, "DisplayName"); err == nil {
 		if s := strings.TrimSpace(v.ToString()); s != "" {
 			name = s
@@ -210,24 +219,24 @@ func exportOneStore(ns, srcStores *ole.IDispatch, i int, outDir string, logger *
 
 	// An account already backed by a .pst on disk needs no conversion.
 	if v, err := oleutil.GetProperty(store, "FilePath"); err == nil {
-		if fp := strings.ToLower(strings.TrimSpace(v.ToString())); strings.HasSuffix(fp, ".pst") {
+		if fp := strings.TrimSpace(v.ToString()); strings.HasSuffix(strings.ToLower(fp), ".pst") {
 			logger.Printf("Outlook: %q is already a PST file; skipping (archive it directly)", name)
-			return Store{}, false
+			return Store{}, []Skip{{Account: name, Path: fp, AlreadyPST: true, Reason: "already a .pst file"}}, false
 		}
 	}
 
-	pstPath := filepath.Join(outDir, pstFileName(name))
+	pstPath := PSTPath(outDir, name)
 	_ = os.Remove(pstPath) // AddStoreEx wants a fresh, unmounted target
 
 	if _, err := oleutil.CallMethod(ns, "AddStoreEx", pstPath, olStoreUnicode); err != nil {
 		logger.Printf("Outlook: could not create PST for %q: %v", name, err)
-		return Store{}, false
+		return Store{}, whole("could not create the PST: " + err.Error()), false
 	}
 
 	pstRoot, ok := findCreatedStoreRoot(ns, pstPath)
 	if !ok {
 		logger.Printf("Outlook: created a PST for %q but could not open it", name)
-		return Store{}, false
+		return Store{}, whole("created the PST but could not open it"), false
 	}
 	defer func() {
 		// Detach the PST from the Outlook profile, leaving the file on disk.
@@ -240,39 +249,42 @@ func exportOneStore(ns, srcStores *ole.IDispatch, i int, outDir string, logger *
 	srcRootV, err := oleutil.CallMethod(store, "GetRootFolder")
 	if err != nil {
 		logger.Printf("Outlook: %q root folder: %v", name, err)
-		return Store{}, false
+		return Store{}, whole("could not read the account's root folder: " + err.Error()), false
 	}
 	srcRoot := srcRootV.ToIDispatch()
 	defer srcRoot.Release()
 
-	copied := copyChildFolders(srcRoot, pstRoot, name, logger)
+	copied, skipped := copyChildFolders(srcRoot, pstRoot, name, pstPath, logger)
 	if copied == 0 {
 		logger.Printf("Outlook: %q had no copyable folders", name)
-		return Store{}, false
+		return Store{}, append(whole("no folder of the account could be copied"), skipped...), false
 	}
 	logger.Printf("Outlook: exported %q (%d folder tree(s)) -> %s", name, copied, pstPath)
-	return Store{Name: name, Path: pstPath}, true
+	return Store{Name: name, Path: pstPath}, skipped, true
 }
 
 // copyChildFolders copies each top-level folder (with its subfolders and items)
-// from srcRoot into destRoot, returning how many were copied.
-func copyChildFolders(srcRoot, destRoot *ole.IDispatch, name string, logger *log.Logger) int {
+// from srcRoot into destRoot, returning how many were copied and a Skip for each
+// folder whose CopyTo failed (path is the PST they were meant for).
+func copyChildFolders(srcRoot, destRoot *ole.IDispatch, name, path string, logger *log.Logger) (int, []Skip) {
 	foldersV, err := oleutil.GetProperty(srcRoot, "Folders")
 	if err != nil {
-		return 0
+		return 0, nil
 	}
 	folders := foldersV.ToIDispatch()
 	defer folders.Release()
 	countV, err := oleutil.GetProperty(folders, "Count")
 	if err != nil {
-		return 0
+		return 0, nil
 	}
 	count := int(countV.Val)
 
 	copied := 0
+	var skipped []Skip
 	for i := 1; i <= count; i++ {
 		fV, err := oleutil.CallMethod(folders, "Item", i)
 		if err != nil {
+			skipped = append(skipped, Skip{Account: name, Folder: fmt.Sprintf("folder %d", i), Path: path, Reason: err.Error()})
 			continue
 		}
 		f := fV.ToIDispatch()
@@ -282,6 +294,7 @@ func copyChildFolders(srcRoot, destRoot *ole.IDispatch, name string, logger *log
 		}
 		if resV, err := oleutil.CallMethod(f, "CopyTo", destRoot); err != nil {
 			logger.Printf("Outlook: skipped folder %q of %q: %v", fname, name, err)
+			skipped = append(skipped, Skip{Account: name, Folder: fname, Path: path, Reason: err.Error()})
 		} else {
 			if d := resV.ToIDispatch(); d != nil {
 				d.Release() // CopyTo returns the new folder
@@ -290,7 +303,7 @@ func copyChildFolders(srcRoot, destRoot *ole.IDispatch, name string, logger *log
 		}
 		f.Release()
 	}
-	return copied
+	return copied, skipped
 }
 
 // findCreatedStoreRoot returns the root folder of the mounted store whose file

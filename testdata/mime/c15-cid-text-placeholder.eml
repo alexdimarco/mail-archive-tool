@@ -1,0 +1,25 @@
+Message-ID: <c15-cid-text-placeholder@corpus.example>
+Date: Mon, 02 Jan 2023 15:04:05 +0000
+From: Alice Example <alice@example.test>
+To: bob@example.test
+Subject: Outlook cid text placeholder
+MIME-Version: 1.0
+Content-Type: multipart/related; boundary="cp-bd"
+
+--cp-bd
+Content-Type: text/plain; charset=utf-8
+
+Quarterly chart:
+[cid:chart.png@01D9ABCD.12345678]
+Regards
+
+--cp-bd
+Content-Type: image/png; name="chart.png"
+Content-Transfer-Encoding: base64
+Content-ID: <chart.png@01D9ABCD.12345678>
+Content-Disposition: inline; filename="chart.png"
+
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP8z8DwHwAFAAH/iZk9
+HQAAAABJRU5ErkJggg==
+
+--cp-bd--
