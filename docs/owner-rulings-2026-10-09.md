@@ -1738,6 +1738,40 @@ defaults. Operator item OPEN-X1: three designs name the per-user state directory
 before TP6. MA ids were re-allocated to MA-549..MA-579 (next free is then MA-580; the catalog does not carry them
 until the slices land).
 
+### 13.43 Single-executable design reviewed; four delegated decisions (2026-10-16), OPERATOR + DELEGATED
+
+`docs/design-single-executable.md` (revision 2) and `docs/review-single-executable-predesign.md` are committed
+(not pushed) on `fix/review-2026-10`: commits 8ccd5e6 (revision 1, the reviewed text, sha256 `ee4b8fa4…`),
+13a3c3e (revision 2 + the review), b0578b0 (continuation note + rebuild scripts). Verdict **GO WITH CONDITIONS,
+bounded**; 88 findings judged, 83 confirmed (1 blocker, 50 major, 32 minor), 5 refuted; conditions SC1..SC53
+folded into revision 2. The blocker: a schedule carries no kind (SC1) on top of one identity predicate (SC2).
+SC53 (re-run lenses 3, 4, 6, 7, 8, 10 on the changed sections plus a second reviewer on the critic's six items)
+is RUNNING as workflow `wf_986bfa49-0ba` and must be filed with the review before SE0.
+
+Four decisions taken this session (dialogue, 2026-10-16):
+
+1. **OP-1..OP-3 (the OPERATOR accepts the three catalog rows) + a v0.7.2 patch.** The three defects are in the
+   shipped code and in released `v0.7.1`: OP-1 the wizard's kind-blind Repair (R14, R18), OP-2 a scheduled
+   capture that refuses before `app.RunGraph` and records no run (R18), OP-3 an absent archive folder read as a
+   new archive (R18). Decision: fix them as a **v0.7.2 patch from `main`**, with a **narrow OP-1 stopgap** — the
+   wizard offers Repair only when the recorded descriptor's kind (read from its `Job[0]`) is the wizard's own
+   `-job`/`run-job`, and otherwise names the surface that installed it — ahead of the full SC1 kind mechanism in
+   SE2. Catalog rows MA-645 (OP-1), MA-646 (OP-2), MA-647 (OP-3), reserved by the review; each lands
+   catalog-first with a `t.Skip`/xfail encoder citing its invariant, then the fix with prove-fail→prove-pass.
+2. **Q13 signing: ship unsigned, as today.** The Windows pair and the MSI are not Authenticode-signed for
+   release N; the single point of loss (an unchanged antivirus verdict re-quarantining what Repair restores) is
+   stated as a Type II residual and P4 / "upgrade day is never RED" stay conditional (SC25, §7.1).
+3. **SE0 operator calls OP-4, OP-5, OP-6: all yes.** OP-4 SE3 becomes its own design + pre-code review; OP-5 the
+   Windows release asset becomes one zip of install names; OP-6 allocate this design's block, the shifted
+   pre-sync block and every row, lab item and question the review adds in one pass at SE0 (except OP-1..OP-3's
+   ids, allocated now on this acceptance).
+4. **SE1+SE2 build on a dedicated branch off `main`.** The release rule (SC42) freezes any branch containing SE1
+   (no `v*` tag) until release N ships SE1 and SE2 together; a dedicated branch keeps SE0's catalog rows and the
+   v0.7.2 patch unblocked.
+
+Still OPEN for the owner (safe interims in the review; none holds a slice): Q1, Q2-mac/linux, Q3, Q4, Q9..Q21
+(most consequential Q10, Q18(a), Q9), and classifying each §10 edit under rule 2. Nothing pushed.
+
 ### 13.7 Escalations from LC-C1's adversarial pass (merged 2026-10-10)
 
 None blocks anything: each has a skip encoder or a safe interim in force.
