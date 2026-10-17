@@ -171,6 +171,15 @@ func Assess(in Input, now time.Time) Report {
 		r.red("manifest_unreadable", fmt.Sprintf("the archive's manifest cannot be read: %s", util.StripControl(in.ManifestLoadErr.Error())))
 	}
 
+	// The archive location itself is gone (an unplugged removable/network drive,
+	// or a deleted folder). Gather would otherwise read it as a brand-new empty
+	// archive and the no-schedule remedy below would invite a SECOND schedule
+	// install (OP-3, R18). Say the location is unreachable and that nothing is
+	// wrong with the archive, and suppress the no-schedule advice.
+	if in.OutAbsent {
+		r.warn("out_absent", fmt.Sprintf("the archive location %s is not reachable — if it is on a removable or network drive, connect it and check again; nothing is wrong with the archive itself", in.Out))
+	}
+
 	// Completeness.
 	if in.Fillable > 0 {
 		msg := fmt.Sprintf("%d message(s) still missing content — download for offline use in your mail app, then re-run; incremental fills them", in.Fillable)
@@ -270,7 +279,7 @@ func Assess(in Input, now time.Time) Report {
 	switch {
 	case in.DescErr != nil && !errors.Is(in.DescErr, os.ErrNotExist):
 		r.warn("descriptor_unreadable", in.DescErr.Error())
-	case !in.HasDescriptor:
+	case !in.HasDescriptor && !in.OutAbsent:
 		r.warn("no_schedule", fmt.Sprintf("no schedule is recorded for this archive — %s (or the GUI's \"Keep this archive current\"), or ignore this if a systemd timer, NAS task or other scheduler already keeps it current", scheduleRemedy(in)))
 	default:
 		if jo := jobOutOf(in.Desc.Job); jo != "" && filepath.IsAbs(jo) && filepath.IsAbs(in.Out) && !sameArchivePath(jo, in.Out, in.GOOS) {
@@ -489,6 +498,9 @@ func jobOutOf(job []string) string {
 func Gather(out, nameOverride string) Input {
 	in := Input{Out: out, GOOS: runtime.GOOS, PIDAlive: procs.Alive}
 	in.ThisHost, _ = os.Hostname()
+	if _, err := os.Stat(out); errors.Is(err, os.ErrNotExist) {
+		in.OutAbsent = true // the location is gone (an unplugged drive, a deleted folder): not a new archive (OP-3)
+	}
 	if svc, ok := util.UnderCloudSync(out); ok {
 		in.OutUnderSync = svc
 	}

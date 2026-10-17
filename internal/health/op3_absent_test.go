@@ -13,8 +13,6 @@ import (
 // sets OutAbsent and Assess raises out_absent and suppresses no_schedule. An
 // existing empty archive still reads no_schedule.
 func TestGatherAbsentArchiveLocationIsUnreachableNotNew(t *testing.T) {
-	t.Skip("xfail: OP-3 (R18) — out_absent is not wired until the fix commit removes this skip")
-
 	has := func(r Report, code string) bool {
 		for _, c := range r.Codes {
 			if c == code {
