@@ -1,4 +1,4 @@
-package main
+package wizard
 
 import (
 	"os"
@@ -44,7 +44,7 @@ func TestHeadlessMissingInputIsRecorded(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if code := runHeadless(jobPath); code != 0 {
+	if code := RunHeadless(jobPath); code != 0 {
 		t.Fatalf("healthy headless run exit = %d, want 0", code)
 	}
 	first, st, err := state.ReadLastRun(out)
@@ -55,7 +55,7 @@ func TestHeadlessMissingInputIsRecorded(t *testing.T) {
 	if err := os.Remove(mbox); err != nil {
 		t.Fatal(err)
 	}
-	if code := runHeadless(jobPath); code != 1 {
+	if code := RunHeadless(jobPath); code != 1 {
 		t.Fatalf("headless run with a vanished input exit = %d, want 1", code)
 	}
 	lr, st, err := state.ReadLastRun(out)
@@ -79,7 +79,7 @@ func TestHeadlessMissingInputIsRecorded(t *testing.T) {
 	if err := job.Write(freshJob, job.Job{Name: "mailarchive-fresh", Out: empty, Mode: "incremental", Inputs: []string{mbox}}); err != nil {
 		t.Fatal(err)
 	}
-	if code := runHeadless(freshJob); code != 1 {
+	if code := RunHeadless(freshJob); code != 1 {
 		t.Fatalf("headless first run with a missing input exit = %d, want 1", code)
 	}
 	for _, name := range []string{state.LastRunName, state.AttentionName, ".mailarchive-manifest.json"} {

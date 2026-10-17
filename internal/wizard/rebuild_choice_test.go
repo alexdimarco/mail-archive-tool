@@ -1,4 +1,4 @@
-package main
+package wizard
 
 import (
 	"bytes"
@@ -46,7 +46,7 @@ func TestGUIOffersAndNamesTheRebuild(t *testing.T) {
 	if err := job.Write(jobPath, job.Job{Name: "mailarchive-nightly", Out: out, Mode: "incremental", Inputs: []string{mbox}}); err != nil {
 		t.Fatal(err)
 	}
-	if code := runHeadless(jobPath); code != 0 {
+	if code := RunHeadless(jobPath); code != 0 {
 		t.Fatalf("healthy headless run exit = %d", code)
 	}
 	gather := func() (health.Input, health.Report) {
@@ -72,7 +72,7 @@ func TestGUIOffersAndNamesTheRebuild(t *testing.T) {
 	}
 
 	// The scheduled job meets the damaged index: plain words, detail below.
-	if code := runHeadless(jobPath); code != 1 {
+	if code := RunHeadless(jobPath); code != 1 {
 		t.Fatalf("headless run over a damaged index exit = %d, want 1", code)
 	}
 	logb, err := os.ReadFile(filepath.Join(out, "mailarchive.log"))

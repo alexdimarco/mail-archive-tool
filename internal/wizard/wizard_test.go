@@ -1,4 +1,4 @@
-package main
+package wizard
 
 import (
 	"bytes"
@@ -227,7 +227,7 @@ func TestNotifyFailureHeadless(t *testing.T) {
 	if err := job.Write(failJob, job.Job{Name: "mailarchive-fail", Out: filepath.Join(dir, "no-such-archive"), Mode: "incremental", Inputs: []string{"/does/not/matter"}}); err != nil {
 		t.Fatal(err)
 	}
-	if code := runHeadless(failJob); code != 1 {
+	if code := RunHeadless(failJob); code != 1 {
 		t.Fatalf("failing run exit = %d, want 1", code)
 	}
 	fired = assure.Reached(t, fired, "failure notifications")
@@ -260,7 +260,7 @@ func TestNotifyFailureHeadless(t *testing.T) {
 	if err := job.Write(okJob, job.Job{Name: "mailarchive-ok", Out: out, Mode: "full", Inputs: []string{mbox}}); err != nil {
 		t.Fatal(err)
 	}
-	if code := runHeadless(okJob); code != 0 {
+	if code := RunHeadless(okJob); code != 0 {
 		t.Fatalf("healthy run exit = %d, want 0", code)
 	}
 	if len(fired) != 0 {

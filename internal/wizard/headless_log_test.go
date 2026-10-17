@@ -1,4 +1,4 @@
-package main
+package wizard
 
 import (
 	"os"
@@ -49,7 +49,7 @@ func TestHeadlessLogsDoneOnlyForARunThatFinished(t *testing.T) {
 		return string(b)
 	}
 
-	if code := runHeadless(jobPath); code != 0 {
+	if code := RunHeadless(jobPath); code != 0 {
 		t.Fatalf("healthy headless run exit = %d, want 0", code)
 	}
 	if n := strings.Count(logOf(), "Done. exported="); n != 1 {
@@ -59,7 +59,7 @@ func TestHeadlessLogsDoneOnlyForARunThatFinished(t *testing.T) {
 	if err := os.Remove(mbox); err != nil {
 		t.Fatal(err)
 	}
-	if code := runHeadless(jobPath); code != 1 {
+	if code := RunHeadless(jobPath); code != 1 {
 		t.Fatalf("headless run with a vanished input exit = %d, want 1", code)
 	}
 	got := logOf()
