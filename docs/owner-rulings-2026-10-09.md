@@ -1772,6 +1772,74 @@ Four decisions taken this session (dialogue, 2026-10-16):
 Still OPEN for the owner (safe interims in the review; none holds a slice): Q1, Q2-mac/linux, Q3, Q4, Q9..Q21
 (most consequential Q10, Q18(a), Q9), and classifying each §10 edit under rule 2. Nothing pushed.
 
+### 13.44 Single-executable design: owner answers to Q1..Q21 (2026-10-17), OWNER RULINGS
+
+The owner answered all 21 open questions on `docs/design-single-executable.md` (revision 3). Recorded in
+substance below. Ten match the recommended default; the rest deviate or add constraints and are marked
+**CHANGE** with the design edit they require. These fold into the design (a revision 4) and SE0's
+catalog-first PR; the security-touching ones (Q10, Q20) still owe SE2's adversarial pass.
+
+- **Q1** — yes: `desktop`, `wizard`, `run-job`. (default)
+- **Q2-mac** — keep the wizard this release; reconsider the dashboard double-click after the macOS lab and a
+  usability review. (default)
+- **Q2-linux** — wizard initially; defer the dashboard switch to SE3. (default)
+- **Q3** — defer (no CLI job-file install this phase); explicitly decoupled from Q12 (repair is separate). (≈default)
+- **Q4** — yes, honour a no-argument Linux launch once the launch labs (L-L1) pass, **and** ship explicit
+  graphical launchers (a `.desktop` entry with an explicit verb as the predictable route). **CHANGE:** the
+  Linux row is honoured (not the verb-only interim), gated on the lab; add the `.desktop` launchers.
+- **Q9** — floor: at least two subsequent minor releases **and** six months, whichever is later; keep the
+  macOS link while legacy invocation is supported. This is the **earliest** removal date, **not** an automatic
+  deletion deadline — removal is **coupled to Q19's inventory**. **CHANGE:** SE4's trigger is floor *and*
+  inventory, not the floor alone.
+- **Q10** — yes on Windows after its lab and security review; Linux only after its specific lab (L-L3). Scope
+  strictly to the identified legacy, unauthenticated dashboard, same account and same directory. Accept that an
+  active operation may be interrupted (stated residual). **Never generalize to killing all old-version
+  processes.** (default + explicit scope/boundary.)
+- **Q11** — approve (b), **broadened: once per affected schedule for the whole compatibility period** (not
+  release N alone); no recurring login notification ((a) declined); delivery best-effort; successful backups
+  otherwise stay quiet. **CHANGE** from the "release N only" recommendation.
+- **Q12** — yes, and **land `schedule -repair -out DIR` before retiring the compatibility files (before
+  SE4)**. Require corroborated inputs, preserve supported schedule settings, and refuse without mutation when
+  reconstruction is uncertain. **CHANGE:** commits the timing (before SE4) and the refuse-without-mutation rule.
+- **Q13** — **sign only if code signing is available at no cost; if it requires any purchase (Microsoft /
+  Azure Trusted Signing, or a CA code-signing certificate), ship unsigned.** (Owner correction 2026-10-17,
+  superseding this entry's first form.) Signing is never presented as a guarantee against antivirus quarantine
+  or SmartScreen. Practically, Authenticode generally needs a paid certificate, so the likely outcome is
+  **unsigned** and the revision-3 interim stands (the single point of loss is a stated Type II residual, §7.1);
+  only if a genuinely free path exists (e.g. a foundation grant for an open-source project) is the pair + MSI
+  signed before production. **Not a design change** unless a free path is found.
+- **Q14** — yes to both CC20 amendments. (default)
+- **Q15** — no: the Windows lab round stays a release gate (SG3 holds). (default)
+- **Q16** — no this phase: keep the recorded `-job` spelling; expose `run-job` as the public command. (default)
+- **Q17** — yes: move the govulncheck target to `./cmd/mailarchive`, scan both Windows build configs at PR and
+  release, and drop the redundant exe kept only for the old path assertion. (default)
+- **Q18(a)** — yes: the P9 renames and shortcut-argument changes, preserving the behavioural guarantees.
+  (default; gates SE1's release.)
+- **Q18(b)** — **yes, narrowly — contrary to the default.** Render the existing schedule's kind, health,
+  Repair and Remove on the Weekly backup card for local-only archives too; do **not** enable Microsoft 365
+  install controls there. The owner repairs the archive they are viewing without CLI reconstruction.
+  **CHANGE:** edits MA-546 (the card *is* shown for local-only, Repair/Remove only) and §4.6.3's local-only
+  bullet (supersedes the L4-2 `status -out` interim), within SE2.
+- **Q18(c)** — defer the dashboard add-mail workflow to SE3's design. (default)
+- **Q19** — approve (a) a per-user inventory of archives a schedule was installed for, populated from existing
+  trusted records and exposed in health views; retain (c) keep the copies longer where migration cannot be
+  established; apply (b) gate SE4 on the inventory only where it can actually be checked. A new inventory
+  cannot prove every historical schedule or account has migrated. **CHANGE:** SE4 removal is coupled to this
+  inventory and Q9.
+- **Q20** — **no — contrary to the default "accept as a stated residual."** Require a reviewed permissions
+  policy for executable selection and scheduling; if the install location cannot be shown to meet it (e.g. it
+  is writable by another account), **refuse the affected operation with a relocation/reinstallation remedy**
+  rather than accept it. **CHANGE:** adds a refusal + remedy (not a residual); affects §4.6.0, §5.3, SC7 and
+  needs a permissions-policy definition. Still owes SE2's adversarial pass.
+- **Q21** — do not ship the macOS dashboard-default launch; keep the wizard temporarily. But Terminal-only
+  dashboard access is **not** the permanent answer: return with a reviewed graphical launch/reopen solution and
+  identify any architectural constraint that must change. (default + forward requirement.)
+
+**Net:** six require design/mechanism edits (Q4, Q9/Q19 coupling, Q11, Q12, Q18(b), Q20); the rest confirm the
+interims already folded in revision 3. Q13 stays unsigned (the 13.43 interim) unless a no-cost signing path is
+found, so it is not a change. Operator SE0 items (OP-4/OP-5/OP-6, §10 rule-2 classes) and the human SC53
+second-reviewer read remain before SE0.
+
 ### 13.7 Escalations from LC-C1's adversarial pass (merged 2026-10-10)
 
 None blocks anything: each has a skip encoder or a safe interim in force.
