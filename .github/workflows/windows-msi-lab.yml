@@ -73,6 +73,10 @@ jobs:
           Write-Host "Downloading $url"
           Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
           Expand-Archive -Path $zip -DestinationPath $tool -Force
+          # Strip the Mark-of-the-Web from the downloaded tools. Without this, .NET can
+          # refuse to load WixUtilExtension.dll from an Internet-zone file (HRESULT
+          # 0x80131515), failing candle/light even though every file is present.
+          Get-ChildItem -Path $tool -Recurse -File | Unblock-File
           if (-not (Test-Path (Join-Path $tool 'candle.exe')) -or -not (Test-Path (Join-Path $tool 'light.exe'))) {
             throw "WiX 3.14 download did not contain candle.exe/light.exe under $tool"
           }
@@ -81,7 +85,31 @@ jobs:
       - name: Build the MSI (WiX 3; Build-MSI.ps1 also fetches portable WiX if absent)
         working-directory: packaging/mailarchive-desktop
         shell: pwsh
-        run: .\Build-MSI.ps1 -Version 1.2.0
+        run: |
+          # Capture every stream so that if candle/light fail we surface the real WiX
+          # error as a GitHub ::error:: annotation (readable via the checks API without
+          # repo auth), not just the generic "Process completed with exit code 1".
+          $ErrorActionPreference = 'Continue'
+          $log = Join-Path $env:RUNNER_TEMP 'build-msi.log'
+          try {
+            .\Build-MSI.ps1 -Version 1.2.0 *>&1 | Tee-Object -FilePath $log
+          } catch {
+            ("EXCEPTION: " + $_.Exception.Message) | Tee-Object -FilePath $log -Append
+          }
+          if (Test-Path 'dist\MailArchiveDesktop.msi') {
+            Write-Host 'MSI built OK.'
+          } else {
+            Write-Host '--- MSI not produced; tail of Build-MSI output follows ---'
+            $lines = @(Get-Content $log -ErrorAction SilentlyContinue)
+            $lines | Select-Object -Last 80
+            foreach ($l in $lines) {
+              if ($l -match 'CNDL\d|LGHT\d|\berror\b|Exception|could not|Unable to|failed with exit') {
+                $m = ([string]$l).Replace('%','%25').Replace("`r",'').Replace("`n",' ')
+                Write-Host "::error::$m"
+              }
+            }
+            exit 1
+          }
       - name: Install the MSI (silent, per-machine)
         shell: pwsh
         run: |
