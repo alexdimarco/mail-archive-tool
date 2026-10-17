@@ -9,11 +9,13 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/graph"
 	"mail-archive-tool/internal/server"
+	"mail-archive-tool/internal/state"
 )
 
 // HeadlessCapture runs one incremental capture with NO dashboard and NO prompt —
@@ -23,11 +25,13 @@ import (
 // and refuses if there is no saved sign-in (Unattended=true never prompts). Logs to
 // logw; returns the run error.
 func HeadlessCapture(cfg Config, logw io.Writer) error {
+	out := cfg.effectiveOut()
 	c := cfg.load()
 	if c == nil || strings.TrimSpace(c.Tenant) == "" || strings.TrimSpace(c.ClientID) == "" {
-		return errors.New("not configured — run `mailarchive setup` or open MailArchive Desktop and sign in first")
+		err := errors.New("not configured — run `mailarchive setup` or open MailArchive Desktop and sign in first")
+		recordStartFailure(out, err) // OP-2: a scheduled capture that refuses must not stay GREEN (R18)
+		return err
 	}
-	out := cfg.effectiveOut()
 	if out == "" {
 		return errors.New("no archive location set — choose one in MailArchive Desktop first")
 	}
@@ -43,6 +47,22 @@ func HeadlessCapture(cfg Config, logw io.Writer) error {
 	opts := app.Options{Out: out, Mode: export.Incremental, Index: true, Pages: true, KeepRaw: s.KeepRaw}
 	_, err := app.RunGraph(context.Background(), g, opts, log.New(logw, "", log.LstdFlags))
 	return err
+}
+
+// recordStartFailure writes a FAILED last-run when a scheduled capture refuses
+// before app.RunGraph (not configured), so status/health read RED instead of
+// staying GREEN until the run is twice the period late (OP-2, R18). With no
+// archive location there is nowhere to record; the caller returns the error
+// alone. Best effort: a scheduled run must not fail on its own bookkeeping.
+func recordStartFailure(out string, cause error) {
+	if strings.TrimSpace(out) == "" {
+		return
+	}
+	_ = state.WriteLastRun(out, state.LastRun{
+		Status:  state.RunFailed,
+		Started: time.Now().UTC(),
+		Error:   cause.Error(),
+	})
 }
 
 // logRingMax bounds the in-memory activity log so a long run never grows without

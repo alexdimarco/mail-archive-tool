@@ -16,8 +16,6 @@ import (
 // RED instead of staying GREEN until the run is twice the period late (OP-2,
 // R18). With no archive location there is nowhere to record.
 func TestHeadlessCaptureRecordsARefusalAsAFailedRun(t *testing.T) {
-	t.Skip("xfail: OP-2 (R18) — the record-on-refuse is not wired until the fix commit removes this skip")
-
 	dir := t.TempDir()
 	out := filepath.Join(dir, "archive")
 	if err := os.MkdirAll(out, 0o755); err != nil {
