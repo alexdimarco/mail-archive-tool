@@ -55,9 +55,29 @@ jobs:
         with:
           name: msi-payload
           path: packaging/mailarchive-desktop
-      - name: Install WiX 3 (candle/light; the runner image no longer ships it)
+      # Stage WiX 3.14 (candle/light) and put it on PATH for the next step. We do NOT
+      # use `choco install wixtoolset`: choco edits the machine PATH, but a GitHub
+      # Actions runner snapshots the environment at job start, so a later step's
+      # `Get-Command candle.exe` still misses it (and choco's default package now
+      # tracks WiX 4/5, which drop candle/light entirely). Writing the portable tools'
+      # dir to $GITHUB_PATH is the one mechanism that DOES reach the next step.
+      - name: Install WiX 3.14 build tools (portable; the runner image no longer ships them)
         shell: pwsh
-        run: choco install wixtoolset --no-progress -y
+        run: |
+          $tool = Join-Path $env:RUNNER_TEMP 'wix314'
+          New-Item -ItemType Directory -Force -Path $tool | Out-Null
+          $zip = Join-Path $env:RUNNER_TEMP 'wix314-binaries.zip'
+          $url = 'https://github.com/wixtoolset/wix3/releases/download/wix314rtm/wix314-binaries.zip'
+          # Force TLS 1.2 so the GitHub download works regardless of the image default.
+          [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+          Write-Host "Downloading $url"
+          Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
+          Expand-Archive -Path $zip -DestinationPath $tool -Force
+          if (-not (Test-Path (Join-Path $tool 'candle.exe')) -or -not (Test-Path (Join-Path $tool 'light.exe'))) {
+            throw "WiX 3.14 download did not contain candle.exe/light.exe under $tool"
+          }
+          Add-Content -Path $env:GITHUB_PATH -Value $tool
+          Write-Host "WiX 3.14 staged at $tool and added to PATH for subsequent steps"
       - name: Build the MSI (WiX 3; Build-MSI.ps1 also fetches portable WiX if absent)
         working-directory: packaging/mailarchive-desktop
         shell: pwsh
