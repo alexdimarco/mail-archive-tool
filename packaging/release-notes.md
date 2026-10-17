@@ -30,6 +30,11 @@ local control panel (double-click to open; it opens the dashboard in your browse
 IT/RMM rollout, `mailarchive-desktop-windows-msi-payload.zip` builds a self-contained MSI
 (`packaging/mailarchive-desktop/`).
 
+### Fixed in 0.7.2
+- **The wizard's Repair no longer breaks a weekly backup set up in MailArchive Desktop.** When an archive's schedule had been created by MailArchive Desktop (a weekly Microsoft 365 capture), the launch wizard's health check could offer *Repair* and, on clicking it, convert that backup into a job-file schedule that failed every night while `status` stayed green. The wizard now recognises a MailArchive Desktop schedule, does not offer to repair it, and points you to MailArchive Desktop instead (R14, R18).
+- **A scheduled capture that can't start is no longer silently green.** A scheduled Microsoft 365 backup that refused at launch because it was not configured or signed in wrote no run record, so `status` and the health view stayed GREEN until the run was twice its period late. Such a refusal now records a failed run, so status reads RED with the reason straight away (R18).
+- **An unplugged drive no longer looks like a brand-new archive.** When an archive's folder was unreachable (a removable or network drive not connected, or a deleted folder), health read it as a new, empty archive and suggested installing a *second* schedule. It now says the location is unreachable and that nothing is wrong with the archive itself, and drops the misleading "no schedule" advice (R18).
+
 ### Fixed in 0.7.1
 - **Windows: rebuilding the search index no longer fails while the archive is open.** A leaked database handle kept `search.db` open, so `reindex -rebuild` (and the dashboard's *Rebuild index*) could fail with "Access is denied" on Windows while a viewer held the index. The handle is now released; rebuild and reindex work with the archive open.
 - **Windows: a lost or overwritten archive lock is now detected mid-run.** The lock-loss check relied on POSIX file identity, which Windows cannot provide, so in rare cases two runs on the same archive could overlap on Windows. The lock now carries a content marker re-checked during the run, so a run whose lock is taken over stops instead of racing (R5) — on every OS.
