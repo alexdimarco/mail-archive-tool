@@ -670,6 +670,9 @@ func healthCheck() error {
 	if showLastFailure(fail, haveFail, lastRun, reachable) {
 		lines = append([]string{lastFailureLine(fail), ""}, lines...)
 	}
+	if hint := captureRepairHint(in); hint != "" {
+		lines = append([]string{hint, ""}, lines...)
+	}
 	text := strings.Join(lines, "\n")
 
 	const cont = "Continue to the wizard"
@@ -705,6 +708,9 @@ func repairable(in health.Input) bool {
 	}
 	if in.ThisHost != "" && in.Desc.Host != "" && in.ThisHost != in.Desc.Host {
 		return false
+	}
+	if descriptorKindIsCapture(in.Desc.Job) {
+		return false // OP-1: the wizard's Repair rebuilds a -job schedule; never convert MailArchive Desktop's capture backup (R14, R18)
 	}
 	return in.SchedState == schedule.NotInstalled || !in.ExeExists || !in.ExeIsThis
 }

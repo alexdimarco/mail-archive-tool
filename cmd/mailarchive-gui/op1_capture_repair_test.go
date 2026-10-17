@@ -16,8 +16,6 @@ import (
 // descriptor stays repairable under the existing host/exe conditions, and the
 // health view names MailArchive Desktop as where to repair a capture schedule.
 func TestWizardDoesNotRepairACaptureSchedule(t *testing.T) {
-	t.Skip("xfail: OP-1 (R14, R18) — the capture-kind guard is not wired until the fix commit removes this skip")
-
 	base := health.Input{HasDescriptor: true, ExeExists: true, ExeIsThis: false} // the program moved: a wizard schedule would be repairable
 
 	capture := base
