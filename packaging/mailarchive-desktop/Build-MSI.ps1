@@ -145,7 +145,10 @@ $msiStable    = Join-Path $OutputDirectory 'MailArchiveDesktop.msi'
 
 Write-Host "Building self-contained MailArchive Desktop MSI v$Version..."
 # WixUtilExtension: Product.wxs ends running instances with util:CloseApplication.
-& $candle -nologo -arch x64 -ext WixUtilExtension -dProductVersion=$Version "-dSourceDir=$Payload" -out $obj $ProductWxs
+# Both -d defines are double-quoted so PowerShell expands $Version/$Payload into the
+# argument text; an unquoted -dProductVersion=$Version reaches candle as the literal
+# "$Version" (CNDL0108: not a valid version), which is what broke the clean-shell build.
+& $candle -nologo -arch x64 -ext WixUtilExtension "-dProductVersion=$Version" "-dSourceDir=$Payload" -out $obj $ProductWxs
 if ($LASTEXITCODE -ne 0) { throw "candle.exe failed with exit code $LASTEXITCODE" }
 
 & $light -nologo -sval -ext WixUtilExtension -out $msiVersioned $obj
