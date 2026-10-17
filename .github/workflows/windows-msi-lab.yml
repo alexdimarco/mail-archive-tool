@@ -55,7 +55,10 @@ jobs:
         with:
           name: msi-payload
           path: packaging/mailarchive-desktop
-      - name: Build the MSI (WiX 3; Build-MSI.ps1 fetches portable WiX if absent)
+      - name: Install WiX 3 (candle/light; the runner image no longer ships it)
+        shell: pwsh
+        run: choco install wixtoolset --no-progress -y
+      - name: Build the MSI (WiX 3; Build-MSI.ps1 also fetches portable WiX if absent)
         working-directory: packaging/mailarchive-desktop
         shell: pwsh
         run: .\Build-MSI.ps1 -Version 1.2.0
