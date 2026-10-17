@@ -1840,6 +1840,15 @@ interims already folded in revision 3. Q13 stays unsigned (the 13.43 interim) un
 found, so it is not a change. Operator SE0 items (OP-4/OP-5/OP-6, §10 rule-2 classes) and the human SC53
 second-reviewer read remain before SE0.
 
+### 13.45 SC53 human second-reviewer read — confirmed (2026-10-17), OWNER SIGN-OFF
+
+The owner performed the independent human read SC53 asks for — the six re-check items, checklist at
+`docs/continuation/single-exe-review/sc53-second-reviewer-checklist.md` — and confirmed **items 1–6
+confirmed**. With the stale lenses re-run and folded in revision 3, plus this human sign-off, **SC53 is
+discharged.** The gates before SE0 are now only: the **revision-4 fold** of the six Q1..Q21 deviations
+(13.44), the operator's **OP-6** id allocation + §10 rule-2 classification (and OP-4/OP-5, already yes). The
+security-touching items (Q10, Q20) still owe SE2's adversarial pass at their slice.
+
 ### 13.7 Escalations from LC-C1's adversarial pass (merged 2026-10-10)
 
 None blocks anything: each has a skip encoder or a safe interim in force.
