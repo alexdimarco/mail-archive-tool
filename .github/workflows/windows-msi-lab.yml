@@ -1,0 +1,90 @@
+name: windows-msi-lab
+
+# Automates the part of the Windows lab a hosted runner CAN do without the
+# hand-validation of README-RMM §D: build the release payload (§A, Linux), build
+# the MSI from it (§B, WiX 3 on Windows), and install/uninstall it silently on real
+# Windows (§C). ci.yml already builds+vets+tests the Go code on windows-latest; this
+# adds the OS-level MSI + msiexec coverage that was hand-only.
+#
+# Scope today: the CURRENT mailarchive-desktop MSI. The single-executable release-N
+# MSI (the pair, the N-1 to N upgrade, the new schedule kinds) is covered as SE1/SE2
+# land and this workflow grows. Still hand-only (§D), never claimed here: Defender /
+# SmartScreen behaviour, Restart Manager edge cases, and the schedule actually FIRING
+# overnight.
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [main, fix/review-2026-10]
+    paths:
+      - 'cmd/**'
+      - 'internal/**'
+      - 'packaging/**'
+      - '.github/workflows/windows-msi-lab.yml'
+
+jobs:
+  # §A — produce the MSI payload on Linux (no Windows needed), exactly as release.yml does.
+  payload:
+    runs-on: ubuntu-latest
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # tags + vcs.revision, so build-release.sh's stamp check passes
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.x'
+          check-latest: true
+      - name: Build the release payload
+        run: bash packaging/build-release.sh v0.0.0
+      - name: Upload the MSI payload
+        uses: actions/upload-artifact@v4
+        with:
+          name: msi-payload
+          path: dist/mailarchive-desktop-windows-msi-payload.zip
+          if-no-files-found: error
+
+  # §B/§C — build the MSI from that payload and install/uninstall it on real Windows.
+  msi:
+    needs: payload
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Fetch the payload beside Build-MSI.ps1
+        uses: actions/download-artifact@v4
+        with:
+          name: msi-payload
+          path: packaging/mailarchive-desktop
+      - name: Build the MSI (WiX 3; Build-MSI.ps1 fetches portable WiX if absent)
+        working-directory: packaging/mailarchive-desktop
+        shell: pwsh
+        run: .\Build-MSI.ps1 -Version 1.2.0
+      - name: Install the MSI (silent, per-machine)
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem packaging\mailarchive-desktop\dist\*.msi | Select-Object -First 1
+          if (-not $msi) { throw "no MSI was produced" }
+          "Installing $($msi.FullName)"
+          $p = Start-Process msiexec -ArgumentList "/i `"$($msi.FullName)`" /qn /norestart /l*v `"$env:RUNNER_TEMP\install.log`"" -Wait -PassThru
+          if (Test-Path "$env:RUNNER_TEMP\install.log") { Get-Content "$env:RUNNER_TEMP\install.log" -Tail 40 }
+          if ($p.ExitCode -ne 0) { throw "msiexec /i exited $($p.ExitCode)" }
+      - name: Detect the install (the repo's own Detect-RMM.ps1), informational
+        working-directory: packaging/mailarchive-desktop
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          .\Detect-RMM.ps1
+          "Detect-RMM.ps1 exit: $LASTEXITCODE"
+      - name: Uninstall the MSI (silent)
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem packaging\mailarchive-desktop\dist\*.msi | Select-Object -First 1
+          $p = Start-Process msiexec -ArgumentList "/x `"$($msi.FullName)`" /qn /norestart" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "msiexec /x exited $($p.ExitCode)" }
+      - name: Upload the install log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: msi-install-log
+          path: ${{ runner.temp }}/install.log
+          if-no-files-found: ignore
