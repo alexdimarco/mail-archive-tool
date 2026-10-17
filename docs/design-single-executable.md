@@ -1,6 +1,6 @@
 # Design — one program: `mailarchive` as the single executable behind the command line, the wizard and MailArchive Desktop
 
-**Revision:** 3 (2026-10-16): the conditions SC1..SC53 of the pre-code review folded (revision 2), and the SC53 re-run dispositions folded (revision 3, §15).
+**Revision:** 4 (2026-10-17): the owner's Q1..Q21 answers (rulings 13.44) and the SC53 human sign-off (13.45) folded. (Revision 3 (2026-10-16) folded the SC53 re-run dispositions; revision 2 folded the conditions SC1..SC53 of the pre-code review; §15.)
 **BUILD STATUS:** reviewed (GO WITH CONDITIONS, bounded), conditions folded. Approved scope: slices
 SE0, SE1, SE2 and SE4, once the stale lenses are re-run (§14, SC53). SE3 is not approved; this design is written for SE3 to get its own design and pre-code review, pending the operator's OP-4 (§4.8,
 SC39). The macOS flip slice is gated on its own
@@ -297,7 +297,7 @@ will prove it (§10).
   acceptance of the former name `mailarchive-desktop` in the running file's directory, run by the
   same token user, for a listener `probeFormer` classes as `FormerPreUpgrade`, on Windows and
   Linux; it is labelled an amendment of design-local-confidentiality §4.C4 step 2 [CC22], and
-  until Q10 is answered both OSes keep today's exact-path test (SC31). An older instance the
+  until the SE1 amendment lands (Q10 answered yes, 13.44, owing its adversarial pass) both OSes keep today's exact-path test (SC31). An older instance the
   program ends is named in the new dashboard's header and in `status`, through the instance
   file's optional `ended` field (SC32). The instance file also gains an optional `version`
   field, and a handoff to a holder of another version names that holder (§4.5.3) (SC33). A `desktop` started from `mailarchive.exe` and one from
@@ -316,8 +316,8 @@ will prove it (§10).
     (Q2-mac's interim), until the gated macOS flip slice (§11). The dashboard on macOS is
     `mailarchive desktop` from Terminal, which no release before SE1 carried there and which is
     not lab-run on macOS (SC19).
-  - Linux: no row until Q4 is answered "honour" and L-L1 passes in both directions; until then an
-    empty argument list gives today's usage refusal (Q4's interim). With the row, a launch with no
+  - Linux: the row ships once Q4's honour answer (13.44) and L-L1 in both directions are in; until L-L1 is
+    recorded an empty argument list gives today's usage refusal. With the row, a launch with no
     terminal on any stream, no controlling terminal and a display opens the wizard. The slice that
     would make the Linux verb `desktop`, owed with the SE3 design, asks "Open MailArchive
     Desktop?" first (SC16, SC18).
@@ -340,7 +340,7 @@ will prove it (§10).
   Open condition (Q14 (b), the owner's): on Linux with neither a dialog tool nor a browser opener,
   what `mailarchive desktop` shows is CC20 as written; whether it instead refuses on stderr naming
   what to install is Q14 (SC26).
-- **P8 — This design adds no per-user state location; existing files do not move (SC51).** SE1
+- **P8 — SE1 and SE2 add no per-user state location; existing files do not move; Q19's migration inventory is the one new per-user state item, arriving with SE4 (SC51).** SE1
   and SE2 write only where `job.Dir`, `instance.Dir` and `desktop.StateDir` already write (§1.5,
   §4.9) (SC39). Job files, instance files, descriptors and workspace records stay where they are,
   because schedules and running instances name them by absolute path. OPEN-X1 stays the
@@ -571,8 +571,8 @@ the wizard writes stderr first and then the dialog (§4.4) (SC26, SC44). From a 
 is a blocking duplicate of the stderr line that holds the shell until it is dismissed, and over a
 remote session with no GUI the dialog call fails or waits; this is a stated Type II residual.
 Showing stderr alone when the console build's stderr is a terminal amends CC20 and is the owner's
-question Q14 (a); until it is answered CC20 stands as written, and MA-642 is built only on a yes
-(**OPEN: Q14**) (SC26). **Lab item L-W5:** a `desktop` or `wizard` refusal from the console build
+question Q14 (a), answered yes (13.44): the terminal refusal reaches stderr without the extra modal
+dialog, and MA-642 is built (SC26). **Lab item L-W5:** a `desktop` or `wizard` refusal from the console build
 under Windows Terminal, PowerShell and a remote session; it decides Q14's urgency and this
 residual's wording (SC26).
 
@@ -600,15 +600,17 @@ noTerminal, hasDisplay)`, tested in table form (MA-620). Its inputs (SC16):
 | W3 | Windows | no console is attached, any of the program's own names (`mailarchivew`, a suffixed release name, a renamed copy) | `desktop` | SE1 on |
 | M1 | macOS | `inBundle` and `noTerminal` (Finder, Dock, `open`) | `wizard` (Q2-mac's interim); `desktop` only from the macOS flip slice, if its gates pass and Q2-mac says the dashboard | SE1 on |
 | M2 | macOS | otherwise (a terminal on any stream, including the bundle binary or a PATH symlink to it typed in Terminal, or a path outside a bundle) | today's usage refusal | SE1 on |
-| L1 | Linux | `noTerminal` and `hasDisplay`; the row exists only once Q4 is answered "honour" and L-L1 has passed in both directions | `wizard` in SE1/SE2; from the slice that makes the Linux verb `desktop`, if Q2-linux says the dashboard, the launch question first (below) | per Q4 and slice |
+| L1 | Linux | `noTerminal` and `hasDisplay`; Q4 is answered **honour** (13.44), so the row ships once L-L1 has passed in both directions | `wizard` in SE1/SE2; from the slice that makes the Linux verb `desktop`, if Q2-linux says the dashboard, the launch question first (below) | L-L1, then per slice |
 | L2 | Linux | otherwise (any terminal, no display, or Q4 unanswered or "require the verb") | today's usage refusal | SE1 on |
 
 On Windows no empty-argument launch without a console reaches a stderr-only refusal. The verbs of
 M1 and L1 are per-slice constants, changed only by the slice named. TERM is recorded by L-L1 and is
-not an input (SC16). Until Q4 is answered there is no L1 row: an empty argument list on Linux gives
-today's usage refusal, and the README names `mailarchive wizard`, `mailarchive desktop` and a
-`.desktop` entry (§7.3); a Linux owner who double-clicks a file still named `mailarchive-gui` gets
-the wizard through rule 6 whatever Q4's answer (**OPEN: Q2-mac, Q2-linux, Q4**) (SC16, SC20).
+not an input (SC16). **Q4 is answered honour (13.44):** the L1 row ships once L-L1 passes both ways, so a
+no-argument Linux launch opens the wizard; **and**, as the explicit, predictable route, the release provides a `.desktop` launcher template with an explicit verb (§7.3) the owner installs. Until L-L1 is recorded the L1 row is dormant and an
+empty argument list on Linux gives today's usage refusal; the README names `mailarchive wizard`, `mailarchive
+desktop`, the `.desktop` launcher and the honoured double-click (§7.3). A Linux owner who double-clicks a file
+still named `mailarchive-gui` gets the wizard through rule 6 either way; the dashboard switch stays deferred to
+SE3 (Q2-linux) (SC16, SC18, SC20).
 
 **Row W2, the console build double-clicked.** Before today's refusal line the program writes an
 X2 pointer to stderr: "This is the command-line program. To open MailArchive Desktop, double-click
@@ -649,7 +651,7 @@ after the SE3 design's slice (§11): it ships only when the reopen lab (L-M5), t
 lab (L-M6), a macOS walk and its friction review pass, Q2-mac says the dashboard, and another
 wizard click route ships with it (L-M7). If L-M5 shows a second open of a running `.app` only
 activates it, Q21 decides whether the flip ships at all. Until then the dashboard on macOS is
-`mailarchive desktop` from Terminal (**OPEN: Q2-mac, Q21**) (SC19, SC20).
+`mailarchive desktop` from Terminal (Q2-mac/Q21 answered 13.44: keep the wizard this release) (SC19, SC20).
 
 The inputs are read once, injected, and never consulted again (a test passes them). MA-620 pins
 each row; on Windows the suffixed (`mailarchivew-windows-amd64`), renamed (`MailArchive (1)`) and
@@ -922,12 +924,14 @@ If `SameBuild` or the owner read cannot be built for a platform, `ProgramForSche
 running file with its reason there, and §4.6.2's name rule is false there, so the identity falls to
 `exe_moved`: closed, and loud. (SC7)
 
-Open conditions, stated beside §5.1 boundary 2 and §5.3 and not accepted:
+Conditions stated beside §5.1 boundary 2 and §5.3 (the first is answered by Q20 (13.44): refused with a relocation/reinstallation remedy; the rest not accepted):
 - A sibling the owner owns but whose permissions let another account write it (for example, both
   files extracted into a folder that inherits Authenticated Users: Modify) passes the owner test.
-  Closing it needs a DACL comparison, a redesign. Whether it is accepted as a stated residual is the
-  owner's question Q20 (owner ruling 13.10 keeps co-account personas in scope, and rule 3 forbids
-  accepting a residual by delegation). (SC7, Q20)
+  **Q20 answered (13.44): not accepted as a residual.** Executable selection and scheduling require a
+  reviewed permissions policy; where the install location cannot be shown to meet it (e.g. it is writable by
+  another account), the affected operation is **refused** with a relocation/reinstallation remedy rather than
+  run. The permissions-policy definition and the refusal's detailed mechanism and adversarial pass are at SE2
+  (a DACL comparison the likely basis). (SC7, Q20)
 - A build with no VCS stamp compares on the other fields only. (SC7)
 - What owner a standard account, the MSI and a zip extract give a file, and what FAT and exFAT report,
   is **lab item L-W7**, which decides the owner bound. (SC7)
@@ -1180,15 +1184,13 @@ names it, and which program it records. (SC1, SC9)
   corroborated job file is found it falls back to `job.PathFor(schedule.DefaultNameFor(out))`, as the
   wizard's `removeSchedule` does. (SC1, SC3,
   SC9)
-- **The card on a local-only archive.** Rendering the card for a local-only archive's recorded
-  schedule narrows MA-546's "the Weekly backup controls are not rendered", which changes what
-  `TestLocalOriginArchiveInDesktop` asserts; that edit is the owner's, Q18(b), under the rulings
-  log's rule 2. Interim, and the design's current text: SE2 shows no card on a local-only archive, and
-  the dashboard shows the schedule's health line; because the wizard's health check assesses only the
-  archive in `last-archive.txt` (§4.6.2), the no-card run-job remedy does NOT name the wizard's Repair for
-  a local-only archive it cannot reach — it names `mailarchive status -out <out>` to view the schedule and
-  the command-line run-job no-display fallback above (the lossy remove-and-reschedule), keyed to that
-  archive. A one-step loss-free repair for a local-only run-job is the owner's Q18(b) or Q12 (§15).
+- **The card on a local-only archive (Q18(b): yes, narrowly).** The owner ruled (13.44) that the Weekly
+  backup card **is** rendered for a local-only archive's recorded schedule, showing the schedule's kind,
+  its health, and **Repair and Remove** — but **not** the Microsoft 365 install controls (no Install/update,
+  no capture install there). So the owner repairs the archive they are viewing, in place, without the
+  `status -out` + command-line detour the earlier interim required. This narrows MA-546's "the Weekly backup
+  controls are not rendered" and changes what `TestLocalOriginArchiveInDesktop` asserts — a rule-2 edit the
+  owner has now made (Q18(b) yes). The SE3 add-mail page stays Q18(c), deferred to the SE3 design.
   (SC1, SC3, Q18)
 - **A capture install**, explicit or a repair, refuses with `HeadlessCapture`'s not-configured text
   before `schedule.Install` when Microsoft 365 is not set up. (SC1)
@@ -1201,18 +1203,22 @@ names it, and which program it records. (SC1, SC9)
   same `Exe` rule and the same wrapper decision for the same inputs (MA-641). (SC8, SC42)
 - **The command line's `schedule -install` repairs the schedules the command line installs; a wizard
   or desktop schedule is repaired by its own surface (§4.7, Q3).** Q3 stays no. (SC3)
-- **Only on the owner's Q12 yes** (it touches locked schedule-v2 P2 and X4): a `schedule -repair -out
-  DIR` form re-installs the archive's recorded schedule from the archive's own name, §4.6.5's kind and
-  `ProgramForSchedule()`, never the descriptor's `Exe`, after `job.Read` validates the rebuilt job
-  file, with the X1 exit codes (MA-644); the bullet above then reads "`schedule -repair -out DIR` is the
-  command-line repair", and Q3 narrows to installing a new job-file schedule. **Only on the owner's Q11
-  yes**: the notification that answer allows, either (b) one per schedule from a successful release-N
-  run under a former name, through the existing best-effort notify (the recommendation), or (a) one
-  per login from the Startup launch if (b) is declined (MA-643; lab L-W13 for whichever is chosen). Until then, the
-  design's current text: the repair is per user and interactive (the card's or the wizard's Repair,
-  per the route), `status`'s `Program:` line is the detection, and on a headless Linux box the only
-  repair for a wizard schedule is the lossy remove-and-reschedule above, a stated residual (§7.3,
-  §12). (SC3, SC38, Q11, Q12)
+- **`schedule -repair -out DIR` (Q12: yes, before SE4).** The owner ruled (13.44) that `schedule` gains a
+  `-repair -out DIR` form (it touches locked schedule-v2 P2 and X4): it re-installs the archive's recorded
+  schedule from the archive's own name, §4.6.5's corroborated kind and `ProgramForSchedule()`, never the
+  descriptor's `Exe`, after `job.Read` validates the rebuilt job file, with the X1 exit codes (MA-644). It
+  preserves the schedule's supported settings and **refuses without mutation** when the corroborated inputs
+  are insufficient to reconstruct the schedule with confidence. It **lands before the compatibility files are
+  retired (before SE4)**, so headless boxes and fleet administration have a job-preserving repair. The bullet
+  above then reads "`schedule -repair -out DIR` is the command-line repair", and Q3 narrows to installing a
+  *new* job-file schedule. **Migration notification (Q11: yes (b), broadened).** A successful run under a
+  former name raises, through the existing best-effort notify, **one notification per affected schedule for
+  the whole compatibility period** (not release N alone), so an install that skipped release N is still
+  warned; there is no login notification ((a) is declined); successful backups otherwise stay quiet, and
+  delivery is best-effort (MA-643; lab L-W13). Detection otherwise is the per-kind interactive repair (the
+  card's or the wizard's Repair, per the route) and `status`'s `Program:` line; a headless Linux box without
+  the scripted repair had only the lossy remove-and-reschedule, now superseded by `schedule -repair -out`
+  (§7.3, §12). (SC3, SC38, Q11, Q12)
 - No repair runs unasked. A scheduled run never rewrites a schedule (P5).
 - **At SE4** the Repair trigger on a former-name `Exe` stays: it repairs the RED. (SC37)
 
@@ -1513,9 +1519,9 @@ The import direction is fixed now: `internal/wizard` never imports `internal/des
 
 ### 4.9 No new state location (SE1, SE2; OPEN-X1 stays the operator's)
 
-This design adds no per-user state location (P8). SE1 and SE2 write only where `job.Dir`, `instance.Dir` and `desktop.StateDir` already write (§1.5 states their values). The three helpers keep their paths and their comments. No `StateRoot` helper is added, and no comment names a root the helpers "will converge on". (SC51, SC39)
+SE1 and SE2 add no per-user state location (P8); the one exception is Q19's migration inventory, which arrives with SE4 (below). SE1 and SE2 write only where `job.Dir`, `instance.Dir` and `desktop.StateDir` already write (§1.5 states their values). The three helpers keep their paths and their comments. No `StateRoot` helper is added, and no comment names a root the helpers "will converge on". (SC51, SC39)
 
-OPEN-X1, the root for new per-user state, stays with the operator, as the pre-sync review assigned it (OP-7). This design neither answers it nor depends on the answer. (SC51)
+OPEN-X1, the root for new per-user state, stays with the operator, as the pre-sync review assigned it (OP-7). This design neither answers it nor depends on the answer in SE1 and SE2 — **with one exception the owner added in Q19 (13.44): the migration inventory** of archives a schedule was installed for (§7.1), the single new per-user state item this work introduces. It is a consumer of OPEN-X1 (OP-7) for its location; its format, rows and lens/adversarial review are designed at its slice (around SE4), not here. SC51's "no new state root" holds for SE1 and SE2; the inventory arrives with SE4's work. (SC51)
 
 MA-621 (S) pins this. The set of non-test files that compute a per-user state directory (those that call `os.UserConfigDir` or read `LOCALAPPDATA` or `XDG_STATE_HOME`) must equal the set at `b1a16bc`, and a fail-closed twin flags a planted new call site. At `b1a16bc` none of those files is in a package SE1 moves (`cmd/mailarchive-gui`, `cmd/mailarchive-desktop`), so the move leaves the set as it is. (SC51)
 
@@ -1618,7 +1624,7 @@ Each item below belongs to SE1 unless it names another slice. "Release N" and "t
    - The bound is the owner. A sibling counts only when it is a regular file (not a link), has the running file's owner (compared file to file, never with the process token), and is the same build (`SameBuild`). Its embedded build info is read, and the file is never executed.
    - A file that another account creates there is owned by that account (lab L-W7 states the Windows ownership facts), so it is refused. The schedule then records the running file, and the install says so (§4.6.1).
    - Where `SameBuild` or the owner read cannot be built for a platform, `ProgramForSchedule` returns the running file with its reason, and the name rule is false there. The result is `exe_moved`, which is loud.
-   - Two conditions stay open beside this claim. First, a sibling the owner owns whose permissions let another account write it (for example, both files extracted into a folder that inherits Authenticated Users: Modify). Only a DACL comparison would close it, and accepting it is the owner's question Q20. It is stated here, not accepted (rulings log rule 3). Second, a build with no VCS stamp, which is compared on the other fields only.
+   - One condition beside this claim is answered and one stays open. Answered (Q20, 13.44): a sibling the owner owns whose permissions let another account write it (for example, both files extracted into a folder that inherits Authenticated Users: Modify) — executable selection and scheduling require a reviewed permissions policy, and a location that fails it is **refused** with a relocation/reinstallation remedy rather than accepted (the policy and mechanism are at SE2, a DACL comparison the likely basis). Still open: a build with no VCS stamp, which is compared on the other fields only.
    (SC7)
    - Program Files is administrator-writable. A user-directory install (Downloads) gets the wizard's existing `inVolatileDir` warning, and every repair asks that question first, the dashboard's included (§4.6.3). (SC9)
    - A translocated launch (macOS, a downloaded app that was not moved) is refused by `ProgramForSchedule` (§4.6.1), not warned (D1). (SC8)
@@ -1652,8 +1658,8 @@ Each item below belongs to SE1 unless it names another slice. "Release N" and "t
 
 | Persona | Attack | Mitigation | Residual / label |
 |---|---|---|---|
-| **Another account on the same computer** | plant `mailarchivew.exe` beside the program so the next schedule install records it | the owner bound (§4.6.0, trust boundary 2): a sibling counts only as a regular file, not a link, with the running file's owner compared file to file, and of the same build. A file another account creates is owned by that account (L-W7) and is refused (`sibling_other_owner`), so the install records the running file and says so (§4.6.1). The program's directory is Program Files (administrators) or the owner's own folder (owner) (SC7) | Type I, as today for the program file. A sibling the owner owns but another account can write is the open condition in the next row (Q20) |
-| **An account that can write a sibling the owner owns** (both files extracted into a folder that inherits Authenticated Users: Modify) | rewrite `mailarchivew.exe` in place so that the owner's next schedule install, or the next scheduled run, runs it | `SameBuild` refuses another build only by its embedded build info, which a writer can copy. The owner bound does not apply, because the file stays the owner's (SC7) | **open condition, not accepted** (Q20; rulings log rule 3). Closing it needs a DACL comparison, which would be a redesign. It is stated beside §5.1 item 2 |
+| **Another account on the same computer** | plant `mailarchivew.exe` beside the program so the next schedule install records it | the owner bound (§4.6.0, trust boundary 2): a sibling counts only as a regular file, not a link, with the running file's owner compared file to file, and of the same build. A file another account creates is owned by that account (L-W7) and is refused (`sibling_other_owner`), so the install records the running file and says so (§4.6.1). The program's directory is Program Files (administrators) or the owner's own folder (owner) (SC7) | Type I, as today for the program file. A sibling the owner owns but another account can write is the refused case in the next row (Q20 answered 13.44: refused with a remedy) |
+| **An account that can write a sibling the owner owns** (both files extracted into a folder that inherits Authenticated Users: Modify) | rewrite `mailarchivew.exe` in place so that the owner's next schedule install, or the next scheduled run, runs it | `SameBuild` refuses another build only by its embedded build info, which a writer can copy. The owner bound does not apply, because the file stays the owner's (SC7) | **refused with a remedy** (Q20 answered, 13.44): executable selection and scheduling require a reviewed permissions policy; a location another account can write fails it, so the operation is refused with a relocation/reinstallation remedy. The policy, the mechanism and the adversarial pass are at SE2 (a DACL comparison the likely basis) |
 | **Another account that can write the config directory** (a group-writable `~/.config`, a shared `XDG_CONFIG_HOME`, a roaming share) | swap the job file for a link, a FIFO, or a job naming its own `out` | §4.7: `util.ReadSecureFile` refuses a link and a non-regular file without hanging (no-follow, non-blocking open). On Unix it also refuses a group- or other-accessible mode, and a file the owner cannot read fails to open. Every refusal goes through `jobFail` and exits 1, and the sink opens no-follow (SC45) | Unix: refused, and loud (`status` shows RED from the start-failure breadcrumb, §4.6.6). Windows: the per-user `%APPDATA%` ACL is the boundary, an open condition (rulings log rule 3), not accepted |
 | **Same-user malware** | edit the job file, the crontab, the descriptor | DC4: a same-user process has the user's rights | Type I |
 | **Archive writer** (a NAS, a synced folder) | a descriptor whose `Exe` names an attacker's file so a "repair" installs it; or a size/mtime that makes a planted file read as "this program" | the repair never takes the program from the descriptor (`repairSpec` rule, now shared). Under §4.6.2's predicate, a forged `Exe` is `exe_moved` at best through the name rule. The fallback can still say "unchanged since install", as today (stated), but it never makes a former name, or a program name in the program's directory, this program, and it is never grounds for a re-point offer (§4.6.3). A forged path under `/AppTranslocation/` is never this program. The `Lstat`, owner and build-info reads happen only inside the program's own directory (SC2, SC12) | Type I for the display; the fallback's answer is a stated residual under its true meaning (D4) |
@@ -1705,7 +1711,7 @@ What the owner reads changes in the program's name (P9), plus the new verbs, the
   - capture: Repair on the Weekly backup card.
   - export: the `mailarchive schedule … -install` line (`scheduleCommand`, used for this kind only).
   - no corroborated kind: the explicit installs (§4.6.3).
-  - No remedy for a run-job or capture descriptor contains `schedule … -install` (MA-633). Until Q18 (b) is answered, the dashboard shows no Weekly backup card on a local-only archive, and its health line for that archive's run-job schedule names `mailarchive status -out <out>` and the command-line run-job no-display fallback, not the wizard's Repair (the wizard assesses only its last archive, §4.6.2) (Q18 interim) (SC3, SC50).
+  - No remedy for a run-job or capture descriptor contains `schedule … -install` (MA-633). On a local-only archive the dashboard **does** render the Weekly backup card (Q18(b), 13.44), showing the schedule's kind, health, Repair and Remove — not the Microsoft 365 install controls — so the owner repairs it in place; the `status -out` + command-line detour the earlier interim named is no longer needed (SC3, SC50).
   - On Windows, `exe_missing` for a missing known-name file in the running program's own directory gains the install-folder branch: "the program file is missing from the install folder: restore it with the installer's Repair; if your antivirus removed it, restore and allow it first; the schedule then runs again unchanged". The exact Repair path and `msiexec /fa` form come from L-W9. MA-635 pins the branch with its positive twin (SC25).
   - `exe_missing` on a former name adds the hint of label 1 below (SC10).
 - The desktop's "The MailArchive wizard (mailarchive-gui) last used …" line names `mailarchive wizard`.
@@ -1739,7 +1745,7 @@ What the owner reads changes in the program's name (P9), plus the new verbs, the
   - the backup-window guidance and what a run in flight at upgrade becomes (§7.1) (SC34);
   - the stored RMM detection rule must be replaced before the release that removes the copies (SC35); pinned taskbar items, Start pins and owner-made shortcuts to `mailarchive-desktop.exe` (a former name) stop working when the copies go, and the owner pins the Start-menu shortcut again (SC38); the skip path (SC37).
 
-  The last release note before SE4 repeats the detection-rule, pin and skip-path lines as "before you upgrade" lines; SE4's row is held until release N's note and README-RMM have shipped them (SC35, SC38). SE4's note says that a schedule still on a former name is RED and does not run, that nothing pushes, and tells the owner to run `mailarchive status -out <archive>` for every archive that has a schedule (Q19 interim) (SC5, SC38, SC41). Until Q11 is answered no notification carries this; the release notes are the warning (Q11 interim). The payload README says the same in release N (SC38).
+  The last release note before SE4 repeats the detection-rule, pin and skip-path lines as "before you upgrade" lines; SE4's row is held until release N's note and README-RMM have shipped them (SC35, SC38). SE4's note says that a schedule still on a former name is RED and does not run, that nothing pushes, and tells the owner to run `mailarchive status -out <archive>` for every archive that has a schedule; SE4's removal is coupled to the Q19 migration inventory (13.44) (SC5, SC38, SC41). From Q11 (b) (13.44) a best-effort notification per affected schedule across the compatibility period carries the warning, with the release notes as the backstop; the payload README says the same in release N (SC38).
 - **The phrase rule** (SC47). Texts name `mailarchive`, `mailarchivew.exe` and `Mail Archive.app`, and each surface by its verb. A former name (`mailarchive-gui`, `mailarchive-desktop`, with or without `.exe` or a release-asset suffix) appears only on a line that also says "former name", and never as the thing to run, double-click, download or build. MA-622 sweeps the enumerated set of §9.2 (the texts above, the README, README-macOS, the Product.wxs shortcut names and descriptions, and the string literals of the owner surfaces); the `status` `Program:` value and the `exe_former_name` path are runtime values proven by MA-616, not swept. The release-N machine scripts sit outside the sweep, pinned by MA-376 and MA-614. The phrase rule is the only exemption for text; X17's two excluded non-program tokens (§9.2) are part of its proposed definition, which the operator accepts or rejects at SE0 (OP-6) (SC47, SC28).
 
 ## 7. Migration and coexistence
@@ -1753,11 +1759,11 @@ Release N (SE1+SE2, which ship as one release, §11) (SC42):
 1. The MSI installs `mailarchive.exe`, `mailarchivew.exe`, and `mailarchive-desktop.exe` and `mailarchive-gui.exe` as **copies** of `mailarchivew.exe` (two more plain components, each a `File` of its own payload source with the same bytes as `mailarchivew.exe`; D3). Shortcuts point at `mailarchivew.exe desktop …`, and the *MailArchive wizard* Start-menu shortcut runs `mailarchivew.exe wizard` (SC20). `util:CloseApplication` names `mailarchive-desktop.exe` only, as today: that is CC22's pre-upgrade instance, the one that may serve 127.0.0.1:8097 with no private link. Because its Target is the image name, it also ends an un-repaired former-name weekly-backup capture running as `mailarchive-desktop.exe -capture …` (item 2's legacy spelling), as the unfiltered `mailarchive-desktop` stop does; that run reads RED `run_never_finished` until the next completes from its checkpoint (R5, item 5), conditional on L-W3. A running `mailarchivew.exe` (a dashboard of release N or later, a `run-job`, a `desktop -capture`, a `wizard`) is left to Windows Installer's files-in-use handling, as a running `mailarchive.exe` is today (SC34). **Lab item L-W3:** the upgrade N-1 to N with a schedule of each kind, a field archive both surfaces scheduled, an instance running in two sessions (CC22's existing lab case), a run in flight through Install-RMM.ps1 and through plain `msiexec /qn`, the exit code and Restart Manager, the build of each file on disk until reboot, the installed file times of the copies, and what the size and mtime fallback reads.
 2. An installed weekly backup (`mailarchive-desktop.exe -capture …`) keeps running: the copy runs the legacy spelling (§4.1). An installed wizard schedule (`mailarchive-gui.exe -job …`) keeps running the same way. The health view of each schedule's own archive shows the `exe_former_name` **note** with the repair its kind offers: the dashboard assesses its configured archive, the wizard the archive in `last-archive.txt`, and `status -out` the archive named, so a schedule on an archive no view the owner opens assesses is shown only by `status -out` (§8.2) (SC5, SC3). On the MSI, nothing is RED for a schedule on upgrade day, conditional on L-W3, unless the upgrade ended a run (items 4 and 5) (SC12, SC32, SC34).
 3. The owner's click on the Repair the schedule's kind offers (§4.6.3), or a `schedule -install` for a command-line schedule, re-records the schedule's own kind under the new name: a wizard job-file schedule as `mailarchivew.exe -job …` (`run-job …` only on Q16's yes), the weekly backup as `mailarchivew.exe desktop -capture …`, a command-line schedule as `mailarchivew.exe` inside its wrapper (the console build instead, if L-W2 fails for a wrapper, §4.6.1) (SC1, SC5, SC22, SC42). A repair is offered only when the recorded kind is run-job or capture, is corroborated, and the other of the two is not (§4.6.5 (e)); on a field archive both surfaces scheduled, Repair is refused naming the surface that can install each kind, and the owner re-installs the recorded kind from its own surface (the card's Install/update for a capture, the wizard's schedule offer for a run-job); an install of the other kind is refused by §4.6.5's guard until the recorded one is removed. Every repair asks the volatile-directory question first, and Cancel installs nothing (SC9).
-4. A desktop instance of the old version still running at upgrade: ended by `CloseApplication` when it runs `mailarchive-desktop.exe` (as today). Only a pre-LC-C2 instance listens on 8097 and takes CC22's path: one in another session gets CC22's PreUpgrade notice (as today). §4.5.2's narrowed test lets the new program end it only on Q10's yes (the former name `mailarchive-desktop` in the running file's directory, same token user, reached only on `FormerPreUpgrade`); until Q10 is answered, today's exact-path test stands and the PreUpgrade notice is the outcome (SC31). An instance with the private link (LC-C2 or later, release N-1 included) never listens on 8097, so no kill test reaches it: one in another session is left, keeps the lock, and is named by the handoff notice of §4.5.3 (§7.5) (SC31, SC33). When an older instance is ended, any Archive now, verify or rebuild it was running ends with it: R5 keeps the archive at its last checkpoint, the interrupted run reads RED `run_never_finished` until the next run completes, and the new dashboard's header and `status` say that this launch ended an older MailArchive Desktop of this account (MA-638) (SC32).
+4. A desktop instance of the old version still running at upgrade: ended by `CloseApplication` when it runs `mailarchive-desktop.exe` (as today). Only a pre-LC-C2 instance listens on 8097 and takes CC22's path: one in another session gets CC22's PreUpgrade notice (as today). §4.5.2's narrowed test lets the new program end it only on Q10's yes (the former name `mailarchive-desktop` in the running file's directory, same token user, reached only on `FormerPreUpgrade`); until the SE1 amendment lands (Q10 answered yes, 13.44), today's exact-path test stands and the PreUpgrade notice is the outcome (SC31). An instance with the private link (LC-C2 or later, release N-1 included) never listens on 8097, so no kill test reaches it: one in another session is left, keeps the lock, and is named by the handoff notice of §4.5.3 (§7.5) (SC31, SC33). When an older instance is ended, any Archive now, verify or rebuild it was running ends with it: R5 keeps the archive at its last checkpoint, the interrupted run reads RED `run_never_finished` until the next run completes, and the new dashboard's header and `status` say that this launch ended an older MailArchive Desktop of this account (MA-638) (SC32).
 5. A run in flight at upgrade. A run the upgrade spares — a `run-job`, or a repaired `mailarchivew.exe desktop -capture` whose command line the Install-RMM.ps1 filter spares — is left to finish; an un-repaired former-name `mailarchive-desktop.exe -capture` is NOT spared (the unfiltered `mailarchive-desktop` stop and `util:CloseApplication` end it, and `status` then reads RED `run_never_finished` until the next run completes from its checkpoint). A dashboard's in-process capture (Archive now) ends with its dashboard. Restart Manager, or an RMM reboot after exit code 3010, can still end a spared run. In each case `status` reads RED `run_never_finished` until the next run completes from its checkpoint (L-W3). README-RMM and the release note say to schedule upgrades outside the 02:00 and Sunday 03:00 backup window and not to force a reboot on 3010 during it. Until reboot, files of the pair may be at different builds (the reboot-pending skew window); `exe_version_skew` reads that state and names the reinstall (§4.6.2) (SC34, SC2).
 6. **One file carries every Windows schedule and shortcut.** After SE2, `mailarchivew.exe` carries every schedule of every surface and all five of its shortcuts (Desktop, Startup, Start menu, Copy link and the wizard's). The two former-name files are byte-identical copies of it, lost with it to a hash-based antivirus quarantine or a deletion; `mailarchive.exe` is then the only entry point. What the owner sees: every shortcut fails with Windows' missing-target dialog; no scheduled run starts, so no last-run record is written; a wrapped task (the desktop's, the command line's) leaves cmd.exe's "not recognized" line in `<name>.stderr.log` inside the archive, and the wizard's unwrapped task leaves only Task Scheduler's Last Run Result; the dashboard and the wizard cannot be opened; RED `exe_missing` appears for every archive only when `status` runs from `mailarchive.exe`; nothing is pushed (unchanged); a double-click of `mailarchive.exe` gives the console build's pointer and usage refusal (§4.3). The remedy is the installer's Repair, after restoring and allowing the file when antivirus removed it (the install-folder branch of `exe_missing`, §6); after it no schedule needs re-installing. While the pair is unsigned (Q13 interim) Repair re-installs the same bytes, which an antivirus verdict that still stands may quarantine again. Type II, stated; §5.3 carries the persona; **lab item L-W9** (SC25).
 
-**The first minor tag past the floor (SE4).** The two copies go; the `.app` link follows §7.2 (SC37). A descriptor still naming a former name is RED `exe_missing` in every health view, with the hint that it was a former name removed by an upgrade and the repair its kind offers; the schedule does not run and nothing pushes (P5) (SC10, SC41). The owner learns of the break only by opening the health view of that schedule's own archive or by running `status`, on every OS, unless the owner rules for a notification (Q11); §12 labels "loud at N+1" conditional until Q19 is answered (SC5, SC38). For a fleet, `status -out DIR`'s `Program:` line is the scriptable detection; the repair is per user and interactive, by the dashboard's or the wizard's Repair for the schedule's kind; administrators hold the SE4 release until detection finds no former name. A scripted `schedule -repair -out DIR` exists only on Q12's yes (SC38). Release N's note and the last note before SE4 carry, on lines that say "former name" where they name one (SC47):
+**The first minor tag past the floor (SE4).** The two copies go; the `.app` link follows §7.2 (SC37). A descriptor still naming a former name is RED `exe_missing` in every health view, with the hint that it was a former name removed by an upgrade and the repair its kind offers; the schedule does not run and nothing pushes (P5) (SC10, SC41). The owner learns of the break by opening the health view of that schedule's own archive or by running `status`, on every OS, and — from Q11 (b) (13.44) — by one best-effort notification per affected schedule across the compatibility period from a successful run under a former name; §12 labels "loud at N+1" conditional (SC5, SC38). **Q19 answered (13.44):** SE4's removal of the copies is coupled to Q9's floor **and** a per-user inventory of the archives a schedule was installed for — SE4 removes a former name only where that inventory, populated from existing trusted records and walked by both health views, shows the archive migrated (option a); where migration cannot be established the copies stay longer (option c, Q9); the inventory gate (option b) applies only where it can actually be checked. The inventory is new per-user state (§4.9) whose mechanism, rows and review are designed at its slice (around SE4) and whose location needs OPEN-X1 (OP-7). For a fleet, `status -out DIR`'s `Program:` line is the scriptable detection; the repair is per user and interactive (the dashboard's or the wizard's Repair), or the scripted `schedule -repair -out DIR` (Q12, landing before SE4); administrators hold the SE4 release until detection finds no former name (SC38). Release N's note and the last note before SE4 carry, on lines that say "former name" where they name one (SC47):
 - pinned taskbar items, Start pins and owner-made shortcuts to `mailarchive-desktop.exe` stop working when the copies go, and the owner pins the Start-menu shortcut again (**lab item L-W12**) (SC38);
 - the stored RMM detection rule must be replaced before deploying the release that removes the copies: the older stored rule requires `mailarchive-desktop.exe` and, left in place, reports every endpoint as not installed and reinstalls on every cycle without passing. Release N's Detect-RMM.ps1 names no former name and passes unchanged at N and after SE4 (§8.6). The stored rule is outside every path that turns RED; the release note and README-RMM are its only mitigation (Type II for an administrator who reads neither text, §12). SE4 waits until that text has shipped (SC35);
 - the skip path below (SC37).
@@ -1785,9 +1791,9 @@ The README says, and a text assertion pins (SC41, SC44, SC3, SC47):
 > `mailarchive-gui-linux-amd64` and `mailarchive-gui-linux-arm64` are former names of `mailarchive`.
 > `mailarchive-desktop-linux-amd64` is a former name of `mailarchive`.
 
-`mailarchive schedule … -install` is no longer named as the repair: it repairs only the schedules the command line installs (§4.6.3) (SC3). On a box without `zenity` or a desktop session the wizard refuses on stderr and shows no dialog (§4.4, MA-639, L-L2) (SC44), so the only repair for a wizard schedule there is the lossy remove-and-reschedule of the command-line remedy (§6): remove the schedule by name, then schedule the export, with the job's settings read from the job file. That residual is stated here and in §12; a scripted `schedule -repair` waits for Q12 (SC3, SC38).
+`mailarchive schedule … -install` is no longer named as the repair: it repairs only the schedules the command line installs (§4.6.3) (SC3). On a box without `zenity` or a desktop session the wizard refuses on stderr and shows no dialog (§4.4, MA-639, L-L2) (SC44), so the only repair for a wizard schedule there is the lossy remove-and-reschedule of the command-line remedy (§6): remove the schedule by name, then schedule the export, with the job's settings read from the job file. From Q12 (13.44) a scripted `schedule -repair -out DIR` repairs a wizard schedule here too — landing before SE4 and preserving the job, refusing without mutation when it cannot; the lossy remove-and-reschedule is the pre-Q12 fallback (SC3, SC38).
 
-The click route to the wizard is a README `.desktop` entry (`Exec="<where you put it>/mailarchive" wizard`, `Terminal=false`), with the file manager's trust step, whatever Q4's answer is; L-L1 verifies it (SC20). The no-argument double-click is honoured only once Q4 is answered "honour" and L-L1 passes both ways; until then the README names the verbs (Q4 interim) (SC16). A no-argument launch that would open the dashboard asks first; that question is owed by the slice that makes the Linux no-argument verb `desktop`, with the SE3 design (§4.3) (SC18). arm64: `mailarchive-linux-arm64` gains the wizard and the desktop, compiled, not lab-run until L-L1 and L-L2 run there; the dashboard has never shipped on linux/arm64 (SC19).
+The click route to the wizard is a README `.desktop` entry (`Exec="<where you put it>/mailarchive" wizard`, `Terminal=false`), with the file manager's trust step, whatever Q4's answer is; L-L1 verifies it (SC20). The no-argument double-click is honoured once L-L1 passes both ways (Q4 answered honour, 13.44), and the release provides a `.desktop` launcher template with an explicit verb as the predictable route (SC16). A no-argument launch that would open the dashboard asks first; that question is owed by the slice that makes the Linux no-argument verb `desktop`, with the SE3 design (§4.3) (SC18). arm64: `mailarchive-linux-arm64` gains the wizard and the desktop, compiled, not lab-run until L-L1 and L-L2 run there; the dashboard has never shipped on linux/arm64 (SC19).
 
 No copies, no links: the owner placed the file; the program cannot know where.
 
@@ -1816,7 +1822,7 @@ A descriptor naming a former release asset (`mailarchive-gui-windows-amd64.exe` 
 ## 8. Operator walks
 
 1. **Windows owner, double-click.** Installs the MSI; double-clicks "MailArchive Desktop" (→ `mailarchivew.exe desktop`); the browser opens at the private link (as today). Steps: one double-click after the install. Turning on the Weekly backup records `mailarchivew.exe desktop -capture …` inside the desktop's always-on `.cmd` wrapper, so each Sunday run shows today's brief cmd.exe console (non-goal 7, D2). A wizard schedule whose run string fits `SchtasksRunLimit` runs `mailarchivew.exe` itself and shows no console (L-W2); a longer one gets the wizard's wrapper and its brief console, and the wizard's note says so (SC22). The *MailArchive wizard* Start-menu shortcut opens the wizard (→ `mailarchivew.exe wizard`) (SC20). The add-mail steps are the SE3 design's measured friction walk (SC39).
-2. **Windows owner, upgrading from release N-1 with a schedule on each of two archives** (SC5). A desktop capture on D:\M365 (the dashboard's configured archive) and a wizard schedule on D:\Thunderbird (the wizard's last archive, local-only). Runs the MSI; the running dashboard (`mailarchive-desktop.exe`) is closed by `CloseApplication` and replaced; clicks the Desktop shortcut. If an older dashboard of this account survived in another session, the launch names it through the version notice (§4.5.3) and the page that opens is that version's until it is quit or the owner signs out (SC33). The Status & health card of D:\M365 shows one note: "The schedule runs <path>, a former name of this program. … Do this: click Repair on the Weekly backup card. Nothing changes until you do." The owner clicks Repair (answering the volatile-directory question if it is asked, §4.6.3) and the capture kind is re-recorded as `mailarchivew.exe desktop -capture …` (SC1, SC9, SC10). Then the context switch, counted: the D:\Thunderbird schedule is shown only by a health view of that archive. The owner opens the *MailArchive wizard* shortcut (or runs `mailarchive.exe wizard`, or the `mailarchive-gui.exe` copy, a former name, until the floor); the wizard's health check of its last archive shows the note; the owner chooses "Repair the scheduled backup" and the run-job kind is re-recorded under `mailarchivew.exe` (SC1, SC20). Pointing the dashboard at D:\Thunderbird instead shows its health line naming the wizard's Repair, because SE2 shows no Weekly backup card on a local-only archive (Q18 interim) (SC3). Steps: two Repairs and one switch of surface. A wizard schedule on an archive the wizard did not use last is shown only by `status -out` (or by pointing the dashboard at it), and is RED `exe_missing` past the floor if it is not repaired. On a field archive both surfaces scheduled (both kinds corroborated, §4.6.5), Repair is refused naming the surfaces, and the owner re-installs the recorded kind from its own surface (the card's Install/update for a capture, the wizard's schedule offer for a run-job) (SC1). Or the owner ignores the notes: both schedules keep running until the floor (§7.1) (SC37). SE1's and SE2's friction reviews measure this walk as written, the refusal-then-Install step included; neither review is self-certified here (SC5).
+2. **Windows owner, upgrading from release N-1 with a schedule on each of two archives** (SC5). A desktop capture on D:\M365 (the dashboard's configured archive) and a wizard schedule on D:\Thunderbird (the wizard's last archive, local-only). Runs the MSI; the running dashboard (`mailarchive-desktop.exe`) is closed by `CloseApplication` and replaced; clicks the Desktop shortcut. If an older dashboard of this account survived in another session, the launch names it through the version notice (§4.5.3) and the page that opens is that version's until it is quit or the owner signs out (SC33). The Status & health card of D:\M365 shows one note: "The schedule runs <path>, a former name of this program. … Do this: click Repair on the Weekly backup card. Nothing changes until you do." The owner clicks Repair (answering the volatile-directory question if it is asked, §4.6.3) and the capture kind is re-recorded as `mailarchivew.exe desktop -capture …` (SC1, SC9, SC10). Then the context switch, counted: the D:\Thunderbird schedule is shown only by a health view of that archive. The owner opens the *MailArchive wizard* shortcut (or runs `mailarchive.exe wizard`, or the `mailarchive-gui.exe` copy, a former name, until the floor); the wizard's health check of its last archive shows the note; the owner chooses "Repair the scheduled backup" and the run-job kind is re-recorded under `mailarchivew.exe` (SC1, SC20). Pointing the dashboard at D:\Thunderbird instead now shows the Weekly backup card for that local-only archive — its kind, health, Repair and Remove (Q18(b), 13.44) — so the owner can repair the run-job schedule there too, without opening the wizard (the step count below is the pre-Q18(b) worst case and the friction review re-measures it) (SC3). Steps: two Repairs and one switch of surface. A wizard schedule on an archive the wizard did not use last is shown only by `status -out` (or by pointing the dashboard at it), and is RED `exe_missing` past the floor if it is not repaired. On a field archive both surfaces scheduled (both kinds corroborated, §4.6.5), Repair is refused naming the surfaces, and the owner re-installs the recorded kind from its own surface (the card's Install/update for a capture, the wizard's schedule offer for a run-job) (SC1). Or the owner ignores the notes: both schedules keep running until the floor (§7.1) (SC37). SE1's and SE2's friction reviews measure this walk as written, the refusal-then-Install step included; neither review is self-certified here (SC5).
 3. **macOS owner, Terminal.** `mailarchive status -out ~/Archive` (the `.app`'s program, through the link of §7.2) → `Program: … mailarchive-gui (a former name of this program)`, through `sameFile` and `ExeFormerName` (§4.6.2); `mailarchive wizard` → the health check of its last archive offers Repair (§4.6.3) → accepts → `Program: … mailarchive (this program)` (SC14, SC2, SC9). A `mailarchive` from the CLI tarball elsewhere on the same Mac is a second install, and reads that schedule as not this program (§7.2) (SC14).
 4. **Linux owner, no browser on the box, schedule from the shell.** `mailarchive schedule -install -- -input ~/.thunderbird/x/Mail/Local\ Folders -out /srv/archive` as today; `mailarchive desktop` is never needed; `mailarchive status` as today; no `zenity` on the machine and none needed (MA-624). `mailarchive wizard` on this box refuses on stderr with exit 1 and shows no dialog, naming the zenity package and the README's commands (§4.4, MA-639); a failing `run-job` under cron returns promptly (**lab item L-L2**) (SC44, SC46). A wizard schedule on such a box is repaired only by the remove-and-reschedule of §7.3 (SC3).
 5. **Inheritor, cold, reading `status`.** `mailarchive status -out X` prints what runs the schedule, its label in the fixed order of §6, and which surface installed it, each with the one remedy its kind offers (SC3, SC10); `mailarchive -h` lists every surface as a verb; there is one program; on Windows it has two files, and the console one, double-clicked, says which file to double-click (§4.3) (SC17).
@@ -1873,8 +1879,9 @@ later slice lands (owner rulings 2026-10-09 §3, FC33's reasoning). In this desi
 is MA-628 (its `SameBuild` call waits for SE2, §4.6.0); on a Q16 yes the recorded-spelling change
 lands in SE2 with MA-641's `Args` case, so MA-641 does not span. With SE3 moved to its own design, revision 1's spanning rows
 MA-591 and MA-593 no longer span: MA-621 is a structural pin that holds from SE1, and MA-623
-lands whole in SE2 (SC39, SC51, SC13). A row that depends on an owner's answer (MA-619,
-MA-642, MA-643, MA-644) is not landed until the answer is yes, so it needs no encoder (§10).
+lands whole in SE2 (SC39, SC51, SC13). The rows that depended on an owner's answer (MA-619,
+MA-642, MA-643, MA-644) now land: the owner answered yes to Q10 (Windows; the Linux half waits on L-L3),
+Q14 (a), Q11 and Q12 (ruling 13.44), so each is built in its slice's PR with its encoder (§10).
 `go test ./...` stays green on main from SE0 through SE2, and release.yml's green-gates step
 never blocks on this design's own rows (SC48).
 
@@ -1928,8 +1935,8 @@ row's Covers cell is in §10.
 | MA-640 | — | U | SE1 | `run-job` reads its job file securely: a link, a FIFO (bounded, no hang), a group- or other-accessible mode, an oversize file and a planted symlink sink (whose target stays unchanged) are each refused through `jobFail`, with no `<out>/mailarchive.log` written and `app.Run` never started, after a positive twin in which a `job.Write` file runs; the sink is opened no-follow and the notification still fires | SC45 |
 | MA-641 | — | U | SE2 | install and repair agree: for the same inputs, the pure `installSpec` and `repairSpec` produce the same `Args`, the same `Exe` rule and the same wrapper decision (`TaskRunLength` against `SchtasksRunLimit`) | SC42 |
 | MA-642 | — | U | only on a Q14 (a) yes | a terminal refusal from the console build invokes no dialog | SC26 |
-| MA-643 | — | U | only on a Q11 yes | the notification the owner's Q11 answer allows: one notification in each state it names, none for a healthy or unreachable archive (positive twin first), the descriptor byte-identical afterwards; its label is conditional on L-W13 | SC38 |
-| MA-644 | — | U | only on a Q12 yes | `schedule -repair -out DIR` re-installs the archive's recorded schedule from the archive's own name, the corroborated kind and `ProgramForSchedule()`, never the descriptor's `Exe`, after `job.Read` validates the rebuilt job file, with the X1 exit codes | SC38 |
+| MA-643 | — | U | Q11 yes (13.44): lands | the migration notification Q11 allows: **one per affected schedule across the whole compatibility period** from a successful run under a former name, none for a healthy or unreachable archive (positive twin first), no login notification, the descriptor byte-identical afterwards; best-effort delivery; its label is conditional on L-W13 | SC38 |
+| MA-644 | — | U | Q12 yes (13.44): lands before SE4 | `schedule -repair -out DIR` re-installs the archive's recorded schedule from the archive's own name, the corroborated kind and `ProgramForSchedule()`, never the descriptor's `Exe`, after `job.Read` validates the rebuilt job file; it preserves supported settings and **refuses without mutation** when the inputs are insufficient; with the X1 exit codes | SC38 |
 | MA-645 | — | U, xfail | now, on the operator's OP-1 | the wizard's kind-blind repair and offer, and `installOn`'s cross-kind install: `repairable` offers no repair that would rebuild `-job` over a desktop `-capture` descriptor or for a job file that does not exist, `offerSchedule` does not replace a `-capture` entry under the same name, and `installOn` refuses a cross-kind same-name install (R14, R18); skipped with the gap named until SE2 | SC6 |
 | MA-646 | — | U, xfail | now, on the operator's OP-2 | a scheduled capture that refuses at start (`HeadlessCapture`'s not-configured or no-location refusal) writes a run record, so `status` does not stay GREEN until `stale` (R18); skipped with the gap named until its own slice | SC6 |
 | MA-647 | — | U, xfail | now, on the operator's OP-3 | an absent archive folder (an unmounted drive) is not assessed as a new, empty archive: no `no_schedule` WARN inviting a second install and no "no manifest yet" (R18); skipped with the gap named until its own slice | SC6 |
@@ -2083,9 +2090,9 @@ or R18 (MA-646, MA-647) and not S59, because the gaps exist whatever this design
 operator names their scenario when accepting them (OP-1..OP-3) (SC6). If the operator accepts them
 (OP-1..OP-3), they land now, in a PR of their own, with xfail encoders (§9.1). SE0's catalog-first PR lands
 R33, S59, X17 and MA-610..MA-641 except MA-619, every U/S row with its skip encoder (§9.1)
-(SC48). MA-619, MA-642, MA-643 and MA-644 land only on the owner's yes to Q10, Q14 (a), Q11
-and Q12, in the PR of the slice that builds them; on a no they are not proposed. No
-catalog-first PR lands before the operator's one-pass allocation of the ids (OP-6, SC49).
+(SC48). MA-619, MA-642, MA-643 and MA-644 land on the owner's yes to Q10, Q14 (a), Q11 and Q12 — all now
+**yes** (ruling 13.44; MA-619's Linux half waits on L-L3 per Q10) — in the PR of the slice that builds them.
+No catalog-first PR lands before the operator's one-pass allocation of the ids (OP-6, SC49).
 
 **Catalog edits the slices make (SC50).** Each edit lands in the PR that makes its text true:
 SE0's catalog-first PR for a text that is true at SE0, and otherwise the slice PR whose change
@@ -2107,7 +2114,7 @@ catalog-first PR.
 | MA-376 | the refusal text it cites follows the P9 rename ("mailarchive desktop: -addr …"), and its packaging test's shortcut `Arguments` (`-copy-link`, `-no-browser`) gain the `desktop` verb (`desktop -copy-link`, `desktop -no-browser`) | SE1, with the rename and the packaging commit | owner (Q18 (a)), because its test pins the former name and the old arguments |
 | MA-377 | none: it names no file | — | — |
 | MA-546 | the "mailarchive-gui" step becomes "the MailArchive wizard (`mailarchive wizard`)" with its click routes, beside the P9 change to `addMailHelp` | SE1, with the text commit | owner (Q18 (a)); interim: SE1's text and packaging commits wait, and SE1 is not released until both land |
-| MA-546 | at SE2, the Weekly backup card shown for a local-only archive's recorded schedule | not in SE2 | owner (Q18 (b)); interim: MA-546's text and test stand, SE2 shows no card on a local-only archive, and the run-job remedy names the wizard's Repair (SC1, SC3) |
+| MA-546 | at SE2, the Weekly backup card shown for a local-only archive's recorded schedule | **yes (Q18(b), 13.44)** | the card renders the schedule's kind, health, Repair and Remove for a local-only archive, with no Microsoft 365 install controls; MA-546's text and `TestLocalOriginArchiveInDesktop` are edited to match (rule 2, owner-made) (SC1, SC3) |
 | MA-546 | at SE3, the add-mail page replaces the wizard step, and "adding mail is the GUI's and the command's job" | with the SE3 design | owner (Q18 (c)), asked with the SE3 design |
 | MA-529 | the govulncheck target `./cmd/mailarchive-desktop` becomes `./cmd/mailarchive`, in both ci.yml and release.yml; `TestBrowseIsDisabledDuringARunAndCIScansWindows` changes in the same commit to find each step by content and require exactly the token `./cmd/mailarchive` (SC27) | SE1, on the owner's yes | owner (Q17), because its test asserts `./cmd/mailarchive-desktop` literally; interim: `cmd/mailarchive-desktop` stays as a thin, unreleased main, CI and release.yml scan it and `./cmd/mailarchive`, and the test keeps its assertion and gains the `./cmd/mailarchive` step in both workflows (a strengthening) |
 | MA-79 (L) | its wrapper check extends to the GUI-subsystem child inside the wrapper: cmd.exe waits for it, its stderr reaches `.stderr.log`, its exit code becomes Last Run Result (SC22) | SE2, when a wrapped schedule records `mailarchivew.exe` | operator (an addition) |
@@ -2126,7 +2133,7 @@ catalog-first PR.
 | **Now** (independent of this design; **OPEN: operator**) | if the operator accepts the three rows of the gaps in the shipped code at `b1a16bc` (OP-1..OP-3), their xfail encoders land as real-primitive tests (§9.1); until then the gaps stand unrecorded (SC6) | the operator (OP-1..OP-3) | MA-645, MA-646, MA-647 | none |
 | **SE0** | the catalog-first PR for R33, S59, X17 and MA-610..MA-641 except MA-619, every U/S row with a `t.Skip` encoder naming its id and its slice (§9.1), the L rows pending (SC48); the operator allocates this design's block, the pre-sync design's shifted block, and every row, lab item and question the review adds, in one pass (except the ids of OP-1..OP-3, allocated on acceptance), with its log entry, and re-checks R33, S59, X17 and the MA, L- and Q ids (OP-6, SC49); the operator classifies each §10 edit under rule 2 (SC50) and decides whether to accept MA-616's louder WARN (SC2); OPEN-X1 stays the operator's and this design needs no answer (OP-7, SC51) | SG1 (the review, filed); the re-run of lenses 3, 4, 6, 7, 8 and 10 on the changed sections, and the second reviewer's reading of the critic's six re-check items, before this PR (SC53, §14) | the block's U/S rows as skip encoders; MA-625..MA-627 pending | the re-run of SC53 (§14) |
 | **SE1** | a pure move first, then one commit per named behaviour change with its row (below) (SC43); the dispatcher and the three verbs; §4.1 rule 6 (SC15); `internal/wizard` with no `Dialogs` interface (SC43); the launcher into `internal/desktop`; `run-job` with its secure read (SC45); the no-argument rule with the console build's pointer (SC16, SC17), the macOS and Linux verbs `wizard` and no Linux row until Q4 (SC16, SC19); the shown-refusal rule (SC26); the instance file's `version` and the handoff notice (SC33); the ended-instance line (SC32); the pair in the gated builders, the continuation scripts on `make build-windows` (SC23); packaging: the MSI with copies, `WizardShortcut` (SC20), the single `CloseApplication` target, the four RMM scripts (SC34, SC35), Build-MSI.ps1's two lists (SC23), the Windows zip of install names (SC11, OP-5), the `.app` with its link and build-app.sh's `-y`; the release.yml scan step and the ws_run_test.go edit in the same commit, under Q17's interim (SC27); README and texts (P9), the five administrator texts (SC28), `headlessRebuildAction` and `addMailHelp` per slice and OS (SC21); the dashboard on macOS and linux/arm64 as `mailarchive desktop`, labelled not lab-run (SC19). What the wizard and the dashboard record is unchanged: `os.Executable()` and `-job FILE` (SC42). `cmd/mailarchive-gui` is deleted last; `cmd/mailarchive-desktop` is deleted last only on a Q17 yes (SC43, SC27) | SE0 | MA-610..MA-614, MA-620..MA-622, MA-624, MA-628 (its `SameBuild` call a per-case skip until SE2), MA-636..MA-640; MA-619 only on a Q10 yes; MA-625..MA-627 in part | **friction review**: the §8 walks (the double-click, the per-archive upgrade walk, SC5, and the inheritor), the console-build double-click (SC17), the Start-menu wizard shortcut (SC20), the wizard's dialogs walked by hand against the recorded move diff (SC43, MA-95), and the record that macOS and Linux have no Quit action in the dashboard (SC33); **adversarial pass** on §4.1 rule 6, §4.3 (the `noTerminal` and `consoleIsOwn` inputs and the console build's stdin wait) and §4.5.2 (on a Q10 yes, the amended CC22 text; the record names whether this pass or LC-C2's still-owed pass reviews it, SC31) (SC15, SC16, SC17) |
-| **SE2** | §4.6.0's `SameBuild` and `SiblingQualifies` (SC7); `ProgramForSchedule(wrapped bool) (exe, reason, error)` and `ProgramNote` (SC8); the `Exe` switch at all four call sites (`runSchedule`, `offerSchedule`, `repairSpec`, `backupSpecFor`) in one commit, with `offerSchedule`'s spec extracted as the pure `installSpec` in that commit (SC42); `backupSpecFor`'s `Args` led by `desktop`; the schedule kind (§4.6.5): the taxonomy, `schedule.KindEvidence`, the guard in `refuseCollision`, `schedule.CheckKind` (SC1); `schedule.RepairRoute` and `repairHow` (SC3); the composed identity predicate and its texts, `status`'s `Program:` line (SC2, SC10); `Input.ExeRepoint` and the volatile-directory question on every repair (SC9); the Windows `exe_missing` install-folder branch (SC25); the dashboard's Repair; the breadcrumb reader moved into `health.Gather` as its own commit (SC4); MA-645's skip comes off, if the operator accepted it (SC6) | SE1 (shipped with it, below) | MA-628's `SameBuild` call, MA-615..MA-618, MA-623, MA-629..MA-635, MA-641; MA-645 | **adversarial pass** on §4.6: the identity rule against the archive-writer and planted-sibling personas, the kind flip, and Q20's open condition (the pass reports on it and cannot accept it; the condition stays open beside §5.1 and §5.3 until the owner answers, and SE2 is not held, §13); **friction review** of the rewritten per-archive upgrade walk (SC5) |
+| **SE2** | §4.6.0's `SameBuild` and `SiblingQualifies` (SC7); `ProgramForSchedule(wrapped bool) (exe, reason, error)` and `ProgramNote` (SC8); the `Exe` switch at all four call sites (`runSchedule`, `offerSchedule`, `repairSpec`, `backupSpecFor`) in one commit, with `offerSchedule`'s spec extracted as the pure `installSpec` in that commit (SC42); `backupSpecFor`'s `Args` led by `desktop`; the schedule kind (§4.6.5): the taxonomy, `schedule.KindEvidence`, the guard in `refuseCollision`, `schedule.CheckKind` (SC1); `schedule.RepairRoute` and `repairHow` (SC3); the composed identity predicate and its texts, `status`'s `Program:` line (SC2, SC10); `Input.ExeRepoint` and the volatile-directory question on every repair (SC9); the Windows `exe_missing` install-folder branch (SC25); the dashboard's Repair; the breadcrumb reader moved into `health.Gather` as its own commit (SC4); MA-645's skip comes off, if the operator accepted it (SC6) | SE1 (shipped with it, below) | MA-628's `SameBuild` call, MA-615..MA-618, MA-623, MA-629..MA-635, MA-641; MA-645 | **adversarial pass** on §4.6: the identity rule against the archive-writer and planted-sibling personas, the kind flip, and Q20's refusal (the owner answered Q20, 13.44: the operation is refused with a relocation/reinstallation remedy, not accepted; the pass reviews the refusal and the permissions policy, §13); **friction review** of the rewritten per-archive upgrade walk (SC5) |
 | **SE3** (own design) | needs SE1 and SE2 built; uses `schedule.CheckKind` (R1 of §4.8); owes SC18's Linux launch question if Q2-linux says the dashboard (SC39, SC40, SC18) | SE2 built | its own, proposed by that design | its own 10-lens pre-code review, then adversarial pass and friction review (SC39) |
 | **macOS flip** | the one-row change of the `.app`'s no-argument verb to `desktop`, plus the wizard's click route `Open MailArchive wizard.command` in `MailArchive-macos.zip` (SC19, SC20) | SE3; L-M5, L-M6 and L-M7 recorded; a macOS double-click walk (§8) and its friction review; Q2-mac answered "the dashboard"; if L-M5 fails, an owner ruling (Q21) and a design of its own | the flip case added to MA-620; MA-626's L-M5..L-M7 | **friction review** of the macOS double-click walk |
 | **SE4** (first minor tag past the floor) | retire the former-name copies and the `.app` link, with the retire-and-keep list below; the release note with the measured N+1 disk figure (SC24) | the copies' floor (§7.1, Q9) has passed, and the last tag before SE4 carried the SC35 and SC38 release-note lines; release N's note and README-RMM have shipped the detection-rule text (SC35, SC37) | SE4's edits to MA-614, MA-615, MA-616, MA-619, MA-620, MA-622 (§10) | the release-note preconditions; L-W11 and L-W12 recorded (SC37, SC38); **friction review** of the post-floor walk (the RED with the repair, the skip path); **adversarial pass** on the retirement of the former names from `knownName` in §4.6.2 (trust boundary 2) |
@@ -2165,9 +2172,9 @@ fallback the MSI's former-name copies, whose size and time differ from what the 
 recorded, read `exe_moved` WARN until SE2's name rule exists (§4.6.2). No `v*` tag is pushed
 from a main containing SE1 until README-RMM.md §D's round has recorded the Windows lab items
 (§9.3, SG3). Because release.yml publishes `dist/*` for every OS on any `v*` tag, this also
-holds that tag's macOS and Linux release. Whether SE1 may ship for Windows marked lab-pending
-is the owner's Q15; until it is answered, SG3 holds. SE1 is also not released until the P9
-text commit and the packaging commit that Q18 (a) holds have landed (Q18's interim).
+holds that tag's macOS and Linux release. Q15 (13.44) is answered no, so SG3 holds as the settled release gate until README-RMM §D's
+Windows round is recorded. SE1 is also not released until the P9 text commit and the packaging commit
+land (Q18 (a) answered yes, 13.44; the commits still land in SE1).
 
 **SE4: what it retires and what it keeps (SC37, SC10, SC15, SC34, SC35).** Retired on
 Windows: the two former names in §4.6.2's `knownName`, so a hand-made former-name copy reads
@@ -2199,7 +2206,7 @@ SE3 design schedules it; the four seams the SE3 design builds on (the job-file k
 (SE1) exist before any descriptor can name a former name that is missing, for installs that
 pass through the floor; an install that skips the floor meets the skip path of §7.1 (SC37).
 
-Slice order: the open-gap encoders now; SE0; SE1 then SE2, released together as release N;
+Slice order: the open-gap encoders now; SE0; SE1 then SE2 (which also lands `schedule -repair -out DIR`, MA-644, Q12, before SE4), released together as release N;
 the SE3 design's slices; the macOS flip slice after SE3; SE4 at the first minor tag past the
 floor (SC42, SC37, SC39).
 
@@ -2213,7 +2220,7 @@ still reads "will be proven by the row named once its slice is built".
 |---|---|---|
 | Every surface is a verb of one program | proven (MA-610, MA-613) | — |
 | The pair is one program | proven at build (MA-614: the two gated `go build` lines differ only in the `-o` name and `-ldflags -H=windowsgui`; MA-628: Subsystem 3 and 2, equal build info but `-ldflags`), and checked on the machine at every install and `status` (MA-615, MA-616, through `SameBuild`, §4.6.0) | conditional: that `-ldflags` appears in build info only without `-trimpath` is a toolchain fact, labelled conditional (§4.2); the release environment's `GOFLAGS` and `CGO_ENABLED` apply to both lines equally (residual, stated); a build with no VCS stamp is an open condition (§4.6.0); L-W1 is informational (SC7, SC12, SC23) |
-| A schedule records `mailarchivew.exe` (P4) | conditional (MA-615, MA-630) | only when it is beside the running program under that name, with the same owner and the same build (§4.6.0), and present; otherwise the schedule records the running file, the install says so, and `status` names it. An owner-owned sibling that another account can write is an open condition, not accepted, until Q20 is answered. While the pair is unsigned (Q13's interim), the claim also rests on no antivirus verdict against the file. For a schedule installed with a `.cmd` wrapper (the desktop's and the command line's, always), only if L-W2's three wrapper checks pass; otherwise the wrapper records the console build (§4.6.1) (SC7, SC8, SC12, SC22, SC25) |
+| A schedule records `mailarchivew.exe` (P4) | conditional (MA-615, MA-630) | only when it is beside the running program under that name, with the same owner and the same build (§4.6.0), and present; otherwise the schedule records the running file, the install says so, and `status` names it. An owner-owned sibling that another account can write is refused with a relocation/reinstallation remedy (Q20 answered, 13.44), not an accepted residual; the policy and mechanism are at SE2. While the pair is unsigned (Q13's interim), the claim also rests on no antivirus verdict against the file. For a schedule installed with a `.cmd` wrapper (the desktop's and the command line's, always), only if L-W2's three wrapper checks pass; otherwise the wrapper records the console build (§4.6.1) (SC7, SC8, SC12, SC22, SC25) |
 | `status` from a second copy | conditional | `status`, the dashboard's health view and the wizard's health check agree within one install directory; a second copy in another directory is another install (P4) (SC12) |
 | No console where none is shown today | conditional | for schedules without a wrapper only, with the pair installed together under its install names (L-W2): the GUI-subsystem build started directly by Task Scheduler shows no console, and the console build started directly shows one for the whole run. The desktop's and the command line's always-on `.cmd` wrappers still show today's brief console whatever the program inside (non-goal 7, D2). If L-W2 shows that a wrapper does not wait for the GUI-subsystem child, capture its stderr or pass its exit code, SE2 records the console build inside a wrapper (§4.6.1) (SC12, SC22) |
 | Refusals, exit codes, routes, guards, formats and the wizard's decision functions behave as at `b1a16bc`, except P2's listed exceptions | proven through the moved rows and MA-613 | the covers map is the guard that none is lost (SC43) |
@@ -2228,7 +2235,7 @@ still reads "will be proven by the row named once its slice is built".
 | The shipped gaps OP-1..OP-3 | open gaps, not accepted | on the operator's acceptance (OP-1..OP-3), each gets a row and an xfail encoder now (MA-645, MA-646, MA-647); until then the gaps stand unrecorded. OP-1's skip comes off with SC1 in SE2; OP-2 and OP-3 each close in their own slice (SC6) |
 | One file carries every Windows schedule and shortcut | lab item (L-W9); Type II | after SE2, `mailarchivew.exe` and its two byte-identical copies are lost together to a deletion or a hash-based quarantine, and `mailarchive.exe` is then the only entry point (§7.1). The remedy is the installer's Repair (MA-635); while the pair is unsigned (Q13's interim), Repair re-installs the same bytes and may be quarantined again while the antivirus verdict stands (SC25) |
 | A failed or stopped schedule is reported | conditional | pull-only on every OS: `status`, the health views, cron mail on Linux where delivered (lab, L-L4); no push channel (schedule-v2 non-goal). Under Q11's interim no notification is added and MA-124 is unchanged (SC38, SC41) |
-| After SE4, a schedule still on a former name is loud | conditional | "loud" means RED `exe_missing` in every health view and in `status`. Nothing is pushed, so the owner learns of it only by opening the health view of that schedule's own archive or by running `status -out` for it. "Loud at N+1" stays conditional on the owner opening that archive's health view until Q19 is answered; meanwhile SE4's release note tells the owner to run `mailarchive status -out <archive>` for every archive that has a schedule (SC5, SC38, SC41) |
+| After SE4, a schedule still on a former name is loud | conditional | "loud" means RED `exe_missing` in every health view and in `status`. The owner learns of it by opening that archive's health view or running `status -out`, and — from Q11 (b) (13.44) — by one best-effort notification per affected schedule across the compatibility period (MA-643); SE4's removal of the copies is coupled to the Q19 migration inventory (SC5, SC38, SC41) |
 | The RMM detection rule survives the copies' removal | aspirational | release N's Detect-RMM.ps1 tests the DC6 key and both files of the pair and names no former name, so it passes at N and after SE4 (MA-614); an older copy of the rule stored in the RMM is outside every loud path, and the release notes and README-RMM are its only mitigation (Type II for an administrator who reads neither) (SC35) |
 | The per-account instance rules (P6) | conditional | P8, CC21, CC23 and CC22's condition are unchanged; the one mechanism change is §4.5.2, an amendment of design-local-confidentiality §4.C4 step 2 [CC22] that waits on Q10. Under Q10's interim today's exact-path test stands on Windows and Linux, and MA-619 and L-W6 are not built (SC31). A healthy older holder keeps the lock until it is quit or the owner signs out, and the handoff names it (MA-637; Type II, stated) (SC33); an older instance the launcher ends is named in the header and in `status` (MA-638) (SC32) |
 | Rollback reads every file; on the MSI it is uninstall, then install | proven (MA-623) for the files; conditional on L-W10 for the installed product | the only format changes are the instance file's optional `version` and `ended` fields and its `former` kind `ended`, which older readers ignore (SC32, SC33). A pre-SE2 reader of a descriptor naming `mailarchivew.exe` reads "this program" and is silent while that file is present and unchanged (the schedule keeps running release N's file), reads RED `exe_missing` once it is removed, and reads WARN `exe_moved` only if it was rewritten in place. A repaired schedule is RED after a rollback that removes the new-name file (the MSI's uninstall), with the per-kind remedy that works at N-1 (§7.4) (SC13, SC36) |
@@ -2238,7 +2245,7 @@ still reads "will be proven by the row named once its slice is built".
 | A shown refusal reaches each channel once | proven (MA-636) | CC20 as written: from `mailarchive.exe` in a terminal, a `desktop` or `wizard` refusal also shows a modal dialog that holds the shell until it is dismissed, and over ssh with no GUI session the dialog call fails or waits (Type II, stated; L-W5). A terminal-only channel amends CC20 and is Q14 (SC26) |
 | The program never starts itself or a sibling | proven (MA-612) | it starts only the OS tools §5.4 item 1 names; a program path passed through a variable into an opener's argument is not traced, an open condition beside P1 and R33 (owner rulings rule 3) (SC52) |
 | One name in every text (X17) | proven (MA-622) over its enumerated swept set | a former name appears only on a line that also says "former name"; the release-N machine scripts are outside the sweep and pinned by MA-376 and MA-614; the `Program:` value and the `exe_former_name` path are runtime values proven by MA-616 (SC21, SC28, SC47) |
-| No new per-user state location | proven (MA-621) | — (SC51) |
+| No new per-user state location (SE1, SE2) | proven (MA-621) | SE1 and SE2 add none; Q19's migration inventory is the one new per-user state item, arriving at SE4 as a consumer of OPEN-X1 (OP-7), designed at that slice (§4.9) (SC51) |
 | The dashboard on macOS and linux/arm64 | lab item (not lab-run) | it has never shipped there, and SE1 is its first release on both; the README labels it "not lab-run on macOS". The macOS dashboard lab (L-M6, owed by the macOS flip slice) and L-L1/L-L2 on arm64 would retire the label (SC19) |
 | Disk and download cost | lab (L-C1) | release N installs four Windows files, about one file and 40 MB more than today's three; release N+1 installs the pair, about one file and 20 MB less; release N's payload zip and MSI carry the `mailarchivew.exe` bytes three times. The figures are estimates until L-C1 measures them; the copies are plain components (D3) (SC24) |
 
@@ -2252,12 +2259,55 @@ has recorded the Windows lab items (SG3) (SC29).
 
 ## 13. Owner questions
 
-Each has a recommended default and a safe interim; no slice is held by an unanswered question
-unless marked.
+Each question below was raised or re-asked by the review (except Q1 and Q3, unchanged from revision 1). The
+**OPEN** marker in each row's `#` column records that the question was open at review time; **all are now
+answered by the owner in ruling 13.44** (and SC53 by 13.45). The table keeps each question's recommended
+answer and interim as the record; the **owner's rulings** are listed immediately below, and the six that
+deviate from the recommendation (marked ⟐) are folded into the mechanism sections named. Q5, Q6 and Q7 move to
+the SE3 design, and revision 1's Q8 becomes the operator's OP-7 (SC39, SC51).
 
-Under the interims no slice of SE0..SE2 is held from being built; the Blocks column names what waits (SG2). One question holds a release: Q18 (a), whose interim holds SE1's text and packaging commits, and so release N. A question
-marked **OPEN** is the owner's and unanswered; each was raised or re-asked by the review except Q1 and Q3, which are unchanged from revision 1. Q5, Q6 and Q7 move to the SE3
-design, and revision 1's Q8 becomes the operator's OP-7 (SC39, SC51).
+**Owner's answers (ruling 13.44, 2026-10-17):**
+- **Q1** yes: `desktop`, `wizard`, `run-job`.
+- **Q2-mac** keep the wizard this release; reconsider the dashboard after the macOS lab and a usability review.
+- **Q2-linux** wizard in SE1/SE2; defer the dashboard switch to SE3.
+- **Q3** defer (no CLI job-file install this phase); decoupled from Q12.
+- ⟐ **Q4** yes — honour a no-argument Linux launch once L-L1 passes both ways, **and** ship explicit
+  `.desktop` launchers (an explicit verb as the predictable route); the launch opens the wizard (Q2-linux).
+  Folded in §4.3, §4.10, §7.3, §6.
+- **Q9** floor: two minor versions **and** six months, whichever is later; keep the macOS link while the
+  legacy spellings are supported. The floor is the **earliest** removal date, not automatic — removal is
+  coupled to Q19 (§7.1).
+- **Q10** yes on Windows after its lab and security review; Linux only after L-L3; scoped to the identified
+  legacy, unauthenticated dashboard, same account and directory; an active operation may be interrupted
+  (accepted); never generalized to killing all old-version processes. Still owes SE2's adversarial pass.
+- ⟐ **Q11** approve (b), broadened: once per **affected schedule for the whole compatibility period** (not
+  release N alone); no login notification ((a) declined); best-effort; successful backups stay quiet. Folded
+  in §4.6.3, §7.1, §6, §12.
+- ⟐ **Q12** yes — `schedule -repair -out DIR` lands **before** retiring the compatibility files (before SE4);
+  corroborated inputs, preserves supported settings, **refuses without mutation** when reconstruction is
+  uncertain. Folded in §4.6.3, §11.
+- **Q13** sign only if code signing is available at **no cost**; otherwise ship unsigned (the revision-3
+  interim stands; a free open-source-foundation path is worth checking). Not a change.
+- **Q14** yes to both CC20 amendments.
+- **Q15** no: the Windows lab round stays a release gate (SG3 holds).
+- **Q16** no this phase: keep the recorded `-job` spelling; `run-job` is the public command.
+- **Q17** yes: move the govulncheck target to `./cmd/mailarchive`; scan both Windows build configs.
+- **Q18(a)** yes: the P9 renames and shortcut-argument changes, preserving the guarantees.
+- ⟐ **Q18(b)** yes, narrowly: render the schedule's kind, health, **Repair and Remove** on the Weekly backup
+  card for local-only archives too; no Microsoft 365 install controls there. Folded in §4.6.3, §6, §9.2
+  (MA-546).
+- **Q18(c)** defer the dashboard add-mail workflow to the SE3 design.
+- ⟐ **Q19** (a) a per-user inventory of archives a schedule was installed for, populated from existing
+  trusted records and exposed in health views; (c) keep the copies longer where migration cannot be
+  established; (b) gate SE4 on the inventory only where it can be checked. SE4 removal is coupled to the
+  inventory **and** Q9's floor. The inventory is new per-user state (§4.9): its detailed mechanism and review
+  are at its slice (around SE4), and it needs OPEN-X1 (OP-7) for its location. Folded in §7.1, §4.9, §12.
+- ⟐ **Q20** no — do **not** accept it as a residual: require a reviewed permissions policy for executable
+  selection and scheduling; if the install location cannot be shown to meet it (e.g. writable by another
+  account), **refuse** the affected operation with a relocation/reinstallation remedy. The policy definition
+  and the refusal's detailed mechanism and adversarial pass are at SE2. Folded in §4.6.0/§4.6.1, §5.1/§5.3.
+- **Q21** no: keep the wizard as the macOS double-click; Terminal-only dashboard access is not the permanent
+  answer — return with a reviewed macOS graphical launch/reopen solution.
 
 | # | Question | Recommended | Safe interim | Blocks |
 |---|---|---|---|---|
@@ -2312,9 +2362,13 @@ changes the design's digest in §4.3, §4.6, §4.8 and §7, and wherever SC1..SC
 4, 6, 7, 8 and 10 are stale for those sections. They are re-run on the changed sections, and a second
 reviewer reads the critic's six re-check items, before SE0's catalog-first PR. Lenses 1, 2, 5 and 9 are not
 re-run: their findings are folded below and in §15. If revision 2 cannot state SC1 and SC2 as one mechanism
-each, the verdict becomes NO_GO on lenses 3, 4, 7 and 8. This revision does not self-certify the re-run;
-SE0 waits for it, and SC53 stays **OPEN** until it is filed with the review. The per-slice gates (the
-friction reviews and the adversarial passes of §11) are separate and are not discharged by it (SC53).
+each, the verdict becomes NO_GO on lenses 3, 4, 7 and 8. The re-run was performed and folded in revision 3
+(`docs/continuation/single-exe-review/sc53-rerun-2026-10-16.md`; SC1 and SC2 each held as one mechanism, so
+the NO_GO trigger did not fire), and the owner performed the human second-reviewer read of the critic's six
+items and confirmed them (ruling 13.45), so **SC53 is discharged.** SE0's remaining gate is the operator's
+OP-6 id allocation and this revision's folds. The per-slice gates (the friction reviews and the adversarial
+passes of §11) are separate and are not discharged by it; the security-touching Q10 and Q20 edits owe SE2's
+adversarial pass (SC53).
 
 **Revision 1's lens questions, as the review answered them.** The questions are revision 1's; each answer
 names the condition that carries it.
@@ -2425,7 +2479,7 @@ adversarial pass.
 | SC4 one reader for the start-failure breadcrumb | §4.4, §4.6.6, §9.2 (MA-634), §11 SE2, §12 | folded |
 | SC5 the upgrade walk per archive | P4, P5, §4.6.2, §7.1, §8.2, §12, §13 Q19 | folded |
 | SC6 encoders now for the shipped gaps | §9.2 (MA-645..MA-647), §11, §12, §13 OP-1..OP-3 | folded as rows; **OPEN: operator (OP-1..OP-3)** |
-| SC7 one test for a file beside the program | P4, §4.6.0, §5.1 boundary 2, §5.2, §5.3, §9.3 (L-W7), §12, §13 Q20 | folded; **OPEN: Q20** |
+| SC7 one test for a file beside the program | P4, §4.6.0, §5.1 boundary 2, §5.2, §5.3, §9.3 (L-W7), §12, §13 Q20 | folded; Q20 answered (13.44): refused with a relocation/reinstallation remedy, not accepted; permissions policy and its adversarial pass owed at SE2 |
 | SC8 `ProgramForSchedule(wrapped bool)` returns `(exe, reason, error)` | §4.6.1, §9.2 (MA-615, MA-630), §12, D1 | folded |
 | SC9 when the re-point repair is offered | §4.6.3, §9.2 (MA-618) | folded |
 | SC10 the identity texts | §4.6.2, §6, §8.5, §9.2 (MA-616, MA-629) | folded |
@@ -2434,33 +2488,33 @@ adversarial pass.
 | SC13 what a pre-SE2 reader sees | P10, §7.4, §9.2 (MA-623), §12 | folded |
 | SC14 macOS: the Terminal user runs the `.app`'s program; move the app first | §6, §7.2, §8.3, §9.3 (L-M2, L-M4), §12 | folded |
 | SC15 a former-name copy hands its whole argument list to its surface | §4.1 rules 1 and 6, §9.2 (MA-611), §9.4, §12 | folded |
-| SC16 one no-argument rule | P7, §4.3, §5.2, §9.2 (MA-620), §9.4, §12, §13 Q2-mac, Q2-linux, Q4 | folded; **OPEN: Q2-mac, Q2-linux, Q4** |
+| SC16 one no-argument rule | P7, §4.3, §5.2, §9.2 (MA-620), §9.4, §12, §13 Q2-mac, Q2-linux, Q4 | folded; Q2-mac/Q2-linux/Q4 answered (13.44): wizard double-click (dashboard deferred to SE3); Q4 honours the no-argument Linux launch after L-L1 and provides a `.desktop` launcher template |
 | SC17 the double-clicked console build says which file to double-click | §4.2, §4.3, §8.5, §9.2 (MA-620), §12 | folded |
 | SC18 a Linux launch that would open the dashboard asks first | §4.3, §11, §12, §13 Q2-linux | folded; owed by the slice that makes the Linux verb `desktop` |
-| SC19 Q2 split; the macOS flip slice gated | header (SG3), §1.2, §4.3, §4.10, §7.2, §9.3 (L-M5..L-M7), §11 (the macOS flip slice), §12, §13 Q2-mac, Q21 | folded; **OPEN: Q2-mac, Q21** |
+| SC19 Q2 split; the macOS flip slice gated | header (SG3), §1.2, §4.3, §4.10, §7.2, §9.3 (L-M5..L-M7), §11 (the macOS flip slice), §12, §13 Q2-mac, Q21 | folded; Q2-mac/Q21 answered (13.44): wizard is the macOS double-click this release; a reviewed macOS graphical launch returns later, not Terminal-only permanently |
 | SC20 the wizard has a click launch everywhere | §4.2, §4.10, §6, §7.3, §8 friction classification, §9.2 (MA-614) | folded |
 | SC21 no text depends on what a no-argument launch opens | P9, §4.4, §6, §9.2 (MA-622) | folded; MA-546's text changes wait on Q18 |
 | SC22 the console claim covers wrapper-less schedules only | §1.6, P3, non-goal 7, §4.2, §4.6.1, §8.1, §9.3 (L-W2), §12, §13 Q3, D2 | folded |
 | SC23 only gated builders make the Windows files; two rows check them | §4.2, §4.10, §9.2 (MA-614, MA-628), §9.3 (L-W1), §12 | folded |
 | SC24 the disk and download cost, stated and measured | §1.1, §6, §7.1, §9.3 (L-C1), §12, D3 | folded; the figures wait on L-C1 |
-| SC25 the single point of loss | §4.6.1, §4.6.2, §5.3, §7.1, §9.2 (MA-635), §9.3 (L-W9), §12, §13 Q13 | folded; **OPEN: Q13** |
-| SC26 a shown refusal reaches each channel once | §4.1 rule 4, §4.2, §9.2 (MA-636, MA-642), §9.3 (L-W5), §12, §13 Q14 | folded; **OPEN: Q14** |
-| SC27 the Windows scan runs at PR time and at tag time | §4.10, §13 Q17 | folded; **OPEN: Q17** |
+| SC25 the single point of loss | §4.6.1, §4.6.2, §5.3, §7.1, §9.2 (MA-635), §9.3 (L-W9), §12, §13 Q13 | folded; Q13 answered (13.44): unsigned unless a no-cost signing path exists |
+| SC26 a shown refusal reaches each channel once | §4.1 rule 4, §4.2, §9.2 (MA-636, MA-642), §9.3 (L-W5), §12, §13 Q14 | folded; Q14 answered (13.44): yes to both |
+| SC27 the Windows scan runs at PR time and at tag time | §4.10, §13 Q17 | folded; Q17 answered (13.44): yes — scan `./cmd/mailarchive` |
 | SC28 the administrators' texts renamed and swept | P9, §4.10, §6, §9.2 (MA-622) | folded |
-| SC29 the lab that discharges SG3 is named | header (SG3), §9.2 (MA-625), §9.3, §11, §12, §13 Q15 | folded; **OPEN: Q15** |
+| SC29 the lab that discharges SG3 is named | header (SG3), §9.2 (MA-625), §9.3, §11, §12, §13 Q15 | folded; Q15 answered (13.44): no — SG3 stays a release gate |
 | SC30 the console build's dashboard ends with its console | §4.2, §6, §8 friction classification, §9.3 (L-W4) | folded |
-| SC31 the kill test narrowed and decided by the owner | header (SG4), P2, P6, §4.5.2, §7.1, §9.2 (MA-619), §9.3 (L-W6, L-L3), §11, §12, §13 Q10, §15 | folded; **OPEN: Q10** |
+| SC31 the kill test narrowed and decided by the owner | header (SG4), P2, P6, §4.5.2, §7.1, §9.2 (MA-619), §9.3 (L-W6, L-L3), §11, §12, §13 Q10, §15 | folded; Q10 answered (13.44): yes on Windows after its lab + security review, Linux after L-L3, scoped; owes SE2's adversarial pass |
 | SC32 what ending an older instance interrupts is said | §4.5.2, §7.1, §9.2 (MA-638), §12 | folded |
 | SC33 the handoff names a holder of another version | P2 (g), P10, §4.5.3, §7.5, §9.2 (MA-637), §12 | folded |
 | SC34 upgrade and RMM stops end dashboards only | §4.10, §7.1, §8.6, §8 friction classification, §9.2 (MA-614), §9.3 (L-W3), §12 | folded |
 | SC35 the RMM detection rule survives the copies' removal | §4.10, §6, §7.1, §8.6, §9.2 (MA-614), §11 SE4, §12 | folded |
 | SC36 rollback on the MSI is a stated procedure | P10, §6, §7.4, §9.3 (L-W10), §12 | folded |
-| SC37 the copies' lifetime is a floor; SE4 lists every former-name site | header (vocabulary), non-goal 9, §4.10, §7.1, §7.2, §9.3 (L-W11), §11 SE4, §12, §13 Q9 | folded; **OPEN: Q9** |
-| SC38 the post-SE4 break described honestly | P5, §4.6.3, §6, §7.1, §8.6, §9.2 (MA-643, MA-644), §9.3 (L-W12, L-W13), §12, §13 Q11, Q12 | folded; **OPEN: Q11, Q12** |
+| SC37 the copies' lifetime is a floor; SE4 lists every former-name site | header (vocabulary), non-goal 9, §4.10, §7.1, §7.2, §9.3 (L-W11), §11 SE4, §12, §13 Q9 | folded; Q9 answered (13.44): floor = two minor versions and six months, earliest-removal, coupled to Q19 |
+| SC38 the post-SE4 break described honestly | P5, §4.6.3, §6, §7.1, §8.6, §9.2 (MA-643, MA-644), §9.3 (L-W12, L-W13), §12, §13 Q11, Q12 | folded; Q11/Q12 answered (13.44): one notification per affected schedule across the compatibility period; `schedule -repair -out` before SE4 |
 | SC39 §4.8 becomes an unapproved stub | header (scope, SG4), P11, non-goals 3, 10 and 11, §4.4, §4.8, §5, §9.2, §10 S59, §11, §12, §13 (Q5..Q7), §14 lens 2 | folded; **OPEN: operator (OP-4)** |
 | SC40 the SE3 design's requirements R1..R8 | §4.8, §13 (Q5, Q6 rationales) | folded as the stub's requirements |
 | SC41 the upgrade claims say pull-only where nothing can push | P5, §7.1, §7.3, §10 S59, §12, §14 lens 1 | folded |
-| SC42 which file each slice records; SE1 and SE2 ship as one release | §4.4, §4.6.4, §9.2 (MA-641), §11, §13 Q16 | folded; **OPEN: Q16** |
+| SC42 which file each slice records; SE1 and SE2 ship as one release | §4.4, §4.6.4, §9.2 (MA-641), §11, §13 Q16 | folded; Q16 answered (13.44): no — keep `-job`; `run-job` is the public verb |
 | SC43 SE1 is a pure move first | P2, §4.1, §4.4, §11 SE1, §12 | folded |
 | SC44 the wizard refuses visibly when it cannot show a dialog | P2 (b), §4.1 rule 4, §4.4, §6, §7.3, §8.4, §9.2 (MA-639), §9.3 (L-L2), §12 | folded |
 | SC45 `run-job` reads its job file securely | P2 (c), §4.7, §5.1 boundary 5, §5.2, §5.3, §9.2 (MA-640), §12 | folded |
@@ -2468,14 +2522,13 @@ adversarial pass.
 | SC47 X17 and MA-622 are one enumerated gate | P9, §6, §9.2 (MA-622), §10 X17, §12 | folded; the operator decides at SE0 whether to accept X17's definition (OP-6); **OPEN: operator** |
 | SC48 the covers map stays green between slices | §9.1, §11 SE0 | folded |
 | SC49 ids are allocated once | header, §9.2, §9.3, §10, §11 SE0, §13 OP-6 | folded; **OPEN: operator (OP-6)** |
-| SC50 the edit list names every stale catalog row, classified under rule 2 | §10, §13 Q17, Q18 | folded; **OPEN: Q17, Q18** |
+| SC50 the edit list names every stale catalog row, classified under rule 2 | §10, §13 Q17, Q18 | folded; Q17/Q18 answered (13.44): Q17 yes; Q18(a) yes, Q18(b) yes-narrowly, Q18(c) to SE3 |
 | SC51 no new state root | P8, §1.5, §4.9, §9.2 (MA-621), §12, §13 OP-7 | folded; OPEN-X1 stays the operator's (OP-7) |
 | SC52 MA-612 can see a self re-exec | header (SG4), P1, §5.4 item 1, §9.2 (MA-612), §9.4, §10 R33, §12 | folded |
-| SC53 re-run the stale lenses before SE0 | header (SG1), §11 SE0, §14 | re-run and a fresh-agent second-reviewer pass done and folded (revision 3), then checked; **OPEN** pending a human second reviewer (review residual-risk) and the operator's SE0 items |
+| SC53 re-run the stale lenses before SE0 | header (SG1), §11 SE0, §14 | re-run folded (revision 3), then checked, and the owner's human second-reviewer read confirmed items 1–6 (13.45): **discharged**; SE0's remaining gate is the operator's OP-6 and this revision's folds |
 
 **OPEN items.** None may be closed by weakening a gate, an invariant or a catalog row's guarantee.
-- **The owner's** (each has a safe interim, §13): Q1 and Q3 (unchanged from revision 1), Q2-mac, Q2-linux, Q4, Q9, Q10, Q11, Q12, Q13, Q14,
-  Q15, Q16, Q17, Q18, Q19, Q20 and Q21.
+- **The owner's:** all of Q1..Q21 are answered in ruling 13.44 (SC53 in 13.45); see §13's owner-answers block. The genuine owner-side residuals are the per-slice adversarial passes the Q10 and Q20 security edits owe (at SE2) and Q19's inventory, designed at its SE4 slice. The per-question `OPEN` markers in §13's table and in the condition rows above are the review-time snapshot, not live status.
 - **The operator's:** OP-1..OP-3 (the shipped gaps, now), OP-4 (SE3 leaves), OP-5 (the Windows zip), OP-6
   (ids and rule-2 classes at SE0), OP-7 (OPEN-X1).
 - **Defaults taken as marked** (delegated-recommended; the owner may overrule any): D1..D4.
@@ -2492,9 +2545,11 @@ adversarial pass.
      as today (§4.3, §12) (SC17).
   6. A healthy older holder keeps the lock until it is quit or the owner signs out, and macOS and
      Linux have no Quit action in the dashboard (§4.5.3, §7.5) (SC33).
-  7. An owner-owned sibling that another account can write (Q20), and a build with no VCS stamp,
-     which compares on the other fields only (§4.6.0, §5.1, §5.3) (SC7).
-  8. On a headless Linux box the only repair of a wizard schedule is remove-and-reschedule (Q12)
+  7. A build with no VCS stamp compares on the other fields only (§4.6.0, §5.1, §5.3). (An owner-owned
+     sibling another account can write is **no longer an accepted residual**: Q20 (13.44) refuses the
+     operation with a relocation/reinstallation remedy; policy, mechanism and adversarial pass at SE2.) (SC7).
+  8. On a headless Linux box, since Q12 (13.44) the job-preserving `schedule -repair -out DIR` repairs a
+     wizard schedule (it lands before SE4); the lossy remove-and-reschedule is the pre-Q12 fallback only
      (§4.6.3, §7.3) (SC3).
   9. An uncorroborated or unknown recorded kind does not refuse a cross-kind install (§4.6.5, §12)
      (SC1).
@@ -2512,8 +2567,9 @@ adversarial pass.
   18. A program path passed through a variable into an opener's argument is not traced by MA-612's
       walk (§5.4, §12) (SC52).
   19. MA-624's notification probe is Linux-only; macOS and Windows rest on L-C2 (§12) (SC46).
-  20. After the floor a schedule still on a former name is reported by pull only, on every OS, until
-      Q11 is answered (§7.1, §7.3, §12) (SC38, SC41).
+  20. After the floor a schedule still on a former name is reported by pull (the health view and
+      `status`) as the reliable channel, plus — from Q11 (b) (13.44) — one best-effort notification per
+      affected schedule across the compatibility period (§7.1, §7.3, §12) (SC38, SC41).
   21. A forged `export` kind in the descriptor refuses a cross-kind install on the descriptor alone
       (§4.6.5, §5.1, §5.3) (SC1).
   22. A second open of the `.app` while it runs starts nothing (P7, §12) (SC19).
@@ -2522,14 +2578,15 @@ adversarial pass.
   24. The schedule *entry* name a kind with no job file (capture) is installed under is still over the
       raw `out` spelling; canonicalizing it is a one-time pre-SE2 migration — the operator's, riding labs
       L-W8 and L-M2 (§4.6.5(f), §15) (SC1, L3-F1).
-  25. A one-step loss-free repair for a local-only archive's run-job schedule is the owner's Q18(b) or
-      Q12; the interim remedy is `status -out` plus the lossy command-line remove-and-reschedule
-      (§4.6.3, §6) (SC3, L4-2).
+  25. A local-only archive's run-job schedule is repaired in place by the Weekly backup card's Repair
+      (Q18(b), 13.44) and headless by `schedule -repair -out DIR` before SE4 (Q12); the earlier
+      `status -out` + remove-and-reschedule interim is retired (§4.6.3, §6) (SC3).
   26. With no archive location set the start-failure breadcrumb line shows unconditionally; whether to
       suppress it once a non-matching `out` is set is the owner's (§4.6.6) (SC4).
 - **The re-run** of lenses 3, 4, 6, 7, 8 and 10 and the critic's six re-check items (§14): done and folded
-  in revision 3 (`docs/continuation/single-exe-review/sc53-rerun-2026-10-16.md`), then checked; a human
-  second reviewer is still advised before SE0 (SC53).
+  in revision 3 (`docs/continuation/single-exe-review/sc53-rerun-2026-10-16.md`), then checked, and the
+  owner's human second-reviewer read confirmed items 1–6 (13.45). **SC53 is discharged;** SE0's remaining
+  gate is the operator's OP-6 and this revision's folds (SC53).
 - **Lab:** every item of §9.3; SG3's tag rule holds until README-RMM §D's round has recorded the Windows
   items (SC29).
 - **Found while folding, for the re-run** (the lens that should read each first):
@@ -2554,9 +2611,11 @@ with the owner's Q10 ruling, entered in that design's review record, which names
 reviews the amended text (SE1's §11 pass on §4.5.2, or LC-C2's still-owed pass). Until then this design's
 §4.5.2 states today's exact-path test, and no other design is edited (SC31).
 
-**Build status after this revision:** reviewed (GO WITH CONDITIONS, bounded), conditions folded; the SC53
-re-run folded in revision 3 (8 majors, 6 minors answered; two security fixes owe SE2's adversarial pass); approved
-scope SE0, SE1, SE2 and SE4 once the stale lenses are re-run (SC53); SE1 and SE2 ship as one release
-(SC42); SE3 is not approved, and this design is written for it to get its own design pending the
-operator's OP-4 (§4.8) (SC39). Nothing is built and nothing is
-lab-validated.
+**Build status after this revision:** reviewed (GO WITH CONDITIONS, bounded); conditions folded (rev 2); the
+SC53 re-run folded (rev 3) and **SC53 discharged** — re-run done, checked, and the owner's human
+second-reviewer read confirmed (13.45); the owner's Q1..Q21 answers folded (rev 4, ruling 13.44), of which the
+six deviations are folded into their mechanism sections and two (Q10, Q20) owe SE2's adversarial pass.
+Approved scope SE0, SE1, SE2 and SE4; **SE0's remaining gate is the operator's OP-6 id allocation and §10
+rule-2 classification.** SE1 and SE2 ship as one release (SC42); SE3 is not approved, and this design is
+written for it to get its own design pending the operator's OP-4 (§4.8) (SC39). Nothing is built and nothing
+is lab-validated.
