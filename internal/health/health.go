@@ -40,6 +40,12 @@ type Input struct {
 	HasManifestFile bool
 	ManifestLoadErr error
 
+	// OutAbsent is set by Gather when the archive location itself does not exist
+	// (an unplugged removable or network drive, or a deleted folder). Assess
+	// then reads it as unreachable instead of a brand-new empty archive whose
+	// no-schedule remedy would invite a second schedule install (OP-3, R18).
+	OutAbsent bool
+
 	HasManifest                 bool
 	Messages                    int
 	Fillable, Terminal, Unknown int

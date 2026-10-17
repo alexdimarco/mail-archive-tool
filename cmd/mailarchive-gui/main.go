@@ -709,6 +709,41 @@ func repairable(in health.Input) bool {
 	return in.SchedState == schedule.NotInstalled || !in.ExeExists || !in.ExeIsThis
 }
 
+// descriptorKindIsCapture reports whether a recorded schedule's args are
+// MailArchive Desktop's weekly-capture kind (a leading `-capture`, or the
+// `desktop -capture` verb form) rather than the wizard's job-file kind
+// (`-job` / `run-job`). The wizard's Repair rebuilds a `-job` schedule, so it
+// must never "repair" a capture descriptor — that would convert the desktop's
+// weekly backup into a job-file schedule that fails every run (OP-1, R14, R18).
+func descriptorKindIsCapture(job []string) bool {
+	if len(job) == 0 {
+		return false
+	}
+	if job[0] == "-capture" {
+		return true
+	}
+	if job[0] == "desktop" && len(job) > 1 && job[1] == "-capture" {
+		return true
+	}
+	return false
+}
+
+// captureRepairHint is the line the wizard's health view shows when the
+// archive's schedule was installed by MailArchive Desktop (a capture) and needs
+// attention: the wizard cannot repair it (repairable returns false for it), so
+// the owner is pointed at MailArchive Desktop rather than left with no route
+// (OP-1). It is empty for a healthy capture schedule and for the wizard's own
+// job-file schedules.
+func captureRepairHint(in health.Input) string {
+	if !in.HasDescriptor || !descriptorKindIsCapture(in.Desc.Job) {
+		return ""
+	}
+	if in.SchedState == schedule.NotInstalled || !in.ExeExists || !in.ExeIsThis {
+		return "This archive's scheduled backup was set up in MailArchive Desktop — repair it there (open MailArchive Desktop and use Status & health), not in this wizard."
+	}
+	return ""
+}
+
 // repairSpec rebuilds the install Spec for a recorded schedule using the CURRENT
 // executable, so re-installing points the scheduler back at this binary. The
 // descriptor lives in the archive directory and is untrusted (any writer of that
