@@ -61,11 +61,6 @@ func TestSE0_MA623_rollbackReadsEveryFile(t *testing.T) {
 	t.Skip("SE2 encoder: an older-shaped reader decodes the descriptor/job/instance files; pre-SE2 predicate outcomes")
 }
 
-// covers: MA-624, S59
-func TestSE0_MA624_noDialogFromCommandLineVerb(t *testing.T) {
-	t.Skip("SE1 encoder: a fake zenity is never invoked by a CLI verb; run-job's only exec is the failure notification")
-}
-
 // covers: MA-628, R33, S59
 func TestSE0_MA628_pairBuild(t *testing.T) {
 	t.Skip("SE1 encoder (SameBuild from SE2): the two GOOS=windows lines build; debug/pe Subsystem 3 vs 2; equal build info")
