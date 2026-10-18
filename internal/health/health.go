@@ -107,6 +107,14 @@ type Input struct {
 	LastRunState state.LastRunState
 	LastRunErr   error
 
+	// LastStartFailure is the headless run-job start-failure breadcrumb (§4.6.6),
+	// set by Gather only when its Name matches schedule.DefaultNameFor(Out): keyed
+	// on the owner-pointed out, never the archive-held Desc.Name, so a forged
+	// Desc.Name cannot hide a start failure and a deleted job file still raises it.
+	// HasStartFailure is false when there is no matching readable breadcrumb.
+	LastStartFailure startFailure
+	HasStartFailure  bool
+
 	// LastVerify is the separate record `verify` writes (its integrity verdict),
 	// distinct from the export LastRun so a scheduled verify's result is visible
 	// on status without disturbing the export record (UJ-A1).
@@ -302,6 +310,22 @@ func IntervalOf(iv string) time.Duration {
 // Assess applies the posture rules, failing closed on missing evidence.
 func Assess(in Input, now time.Time) Report {
 	r := Report{Posture: "GREEN", now: now}
+
+	// A headless run-job that could not even start leaves a breadcrumb but no
+	// archive-local last-run record (§4.6.6, MA-634). Raise it first, under
+	// MA-168's rule: when the archive is unreachable (its own last run cannot
+	// speak to the backup's health) or the failure is newer than the last
+	// recorded run (a later successful run supersedes an older breadcrumb).
+	if in.HasStartFailure {
+		reachable := in.HasManifest || in.LastRunState == state.LastRunPresent
+		var lastRun time.Time
+		if in.LastRunState == state.LastRunPresent {
+			lastRun = in.LastRun.Started
+		}
+		if !reachable || in.LastStartFailure.When.After(lastRun) {
+			r.red("start_failed", startFailureLine(in.LastStartFailure)+" — fix that (for a backup drive: connect it), and the next scheduled run records a run here")
+		}
+	}
 
 	// A manifest that exists on disk but cannot be loaded (a newer format, or a
 	// corrupt/truncated file) is a RED that names the file, the loader's own
@@ -1230,6 +1254,15 @@ func Gather(out, nameOverride string) Input {
 	// using this archive" beside its own failure.
 	in.LastRun, in.LastRunState, in.LastRunErr = state.ReadLastRun(out)
 	in.LastVerify, in.LastVerifyState, in.LastVerifyErr = state.ReadLastVerify(out)
+
+	// The headless start-failure breadcrumb (§4.6.6): health is its one reader from
+	// SE2. Keyed on the owner-pointed out (DefaultNameFor), never Desc.Name, so a
+	// forged descriptor name cannot hide a start failure.
+	if dir, e := failureDir(); e == nil {
+		if f, ok := readStartFailure(dir); ok && f.Name == schedule.DefaultNameFor(out) {
+			in.LastStartFailure, in.HasStartFailure = f, true
+		}
+	}
 
 	mpath := filepath.Join(out, ".mailarchive-manifest.json")
 	if _, serr := os.Stat(mpath); serr == nil {

@@ -36,10 +36,11 @@ func TestSE0_MA618_whenRepairIsOffered(t *testing.T) {
 // rendering of the route in each surface's words, with the four backup remedies
 // re-routed through it — by internal/health/ma633_repairhow_test.go.
 
-// covers: MA-634, R18, S59
-func TestSE0_MA634_startFailureBreadcrumb(t *testing.T) {
-	t.Skip("SE2 encoder: a real run-job failure writes the breadcrumb; RED start_failed on every health surface, keyed on out")
-}
+// MA-634 encoder removed: the start-failure breadcrumb reader moved into
+// health.Gather (keyed on out, not Desc.Name) and Assess raises RED start_failed
+// under MA-168's rule — proven by internal/health/ma634_startfailure_test.go.
+// The wizard's writer stays and is exercised through the run-job path (MA-124,
+// MA-640).
 
 // covers: MA-635, R18, S59
 func TestSE0_MA635_exeMissingInstallFolderBranch(t *testing.T) {

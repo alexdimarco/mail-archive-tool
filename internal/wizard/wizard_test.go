@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/ncruces/zenity"
 
@@ -458,77 +457,11 @@ func TestCleanupOutlookScratch(t *testing.T) {
 	}
 }
 
-// covers: MA-167, R18, S29
-// The headless start-failure breadcrumb round-trips through the config dir: a
-// written record reads back with its name, time and reason, and control
-// characters planted in the file (the config dir is writable by any process
-// running as the user, and the reason is echoed into a dialog) are stripped on
-// read before the strings can reach the dialog.
-func TestLastFailureRoundTrip(t *testing.T) {
-	dir := t.TempDir()
-	if _, ok := readLastFailure(dir); ok {
-		t.Fatal("readLastFailure reported a record before any was written")
-	}
-	when := time.Now().UTC().Truncate(time.Second)
-	f := lastFailure{Name: "mailarchive-1a2b3c4d", When: when, Reason: "archive directory /mnt/backup is not present — is the backup drive mounted?"}
-	if err := writeLastFailure(dir, f); err != nil {
-		t.Fatal(err)
-	}
-	got, ok := readLastFailure(dir)
-	if !ok {
-		t.Fatal("readLastFailure found no record after writing one")
-	}
-	if got.Name != f.Name || got.Reason != f.Reason || !got.When.Equal(when) {
-		t.Errorf("round-trip mismatch:\n got  %+v\n want %+v", got, f)
-	}
-
-	// Control characters planted in the file are stripped on read, but the
-	// surrounding content survives.
-	poison := lastFailure{Name: "job\x07", When: when, Reason: "line1\nline2\x00tail"}
-	if err := writeLastFailure(dir, poison); err != nil {
-		t.Fatal(err)
-	}
-	got, ok = readLastFailure(dir)
-	if !ok {
-		t.Fatal("readLastFailure found no record after writing the poisoned one")
-	}
-	for _, s := range []string{got.Name, got.Reason} {
-		for _, r := range s {
-			if r < 0x20 || r == 0x7f {
-				t.Errorf("control character survived read in %q", s)
-			}
-		}
-	}
-	if !strings.Contains(got.Reason, "line1") || !strings.Contains(got.Reason, "line2") || !strings.Contains(got.Reason, "tail") {
-		t.Errorf("stripping removed content, not just control chars: %q", got.Reason)
-	}
-}
-
-// covers: MA-168, R18, S29
-// showLastFailure surfaces a recorded headless start-failure only when there is
-// one, and either the archive is unreachable (its own last-run record cannot
-// speak) or the failure is newer than the archive's last recorded run — a later
-// successful run supersedes an older breadcrumb.
-func TestShowLastFailure(t *testing.T) {
-	when := time.Date(2026, 9, 2, 3, 0, 0, 0, time.UTC)
-	f := lastFailure{Name: "mailarchive-1a2b3c4d", When: when, Reason: "drive not mounted"}
-
-	if showLastFailure(f, false, time.Time{}, false) {
-		t.Error("no record (ok=false) must not surface")
-	}
-	if showLastFailure(lastFailure{}, true, time.Time{}, false) {
-		t.Error("a zero-time record must not surface")
-	}
-	if !showLastFailure(f, true, when.Add(time.Hour), false) {
-		t.Error("an unreachable archive must surface the failure even when it looks older than the (stale) last run")
-	}
-	if !showLastFailure(f, true, when.Add(-time.Hour), true) {
-		t.Error("a failure newer than the last run must surface")
-	}
-	if showLastFailure(f, true, when.Add(time.Hour), true) {
-		t.Error("a failure older than the last successful run must not surface (superseded)")
-	}
-}
+// MA-167 (breadcrumb round-trip + control-stripping on read) and MA-168 (the
+// show rule) moved to internal/health with the breadcrumb reader (§4.6.6,
+// MA-634): internal/health/ma634_startfailure_test.go. The writer stays here
+// (writeLastFailure/recordHeadlessFailure) and is exercised through the run-job
+// path (MA-124, MA-640).
 
 // covers: MA-169, R18, R16, S29, S19
 // After a successful Repair the wizard offers to continue (OK → run an export)

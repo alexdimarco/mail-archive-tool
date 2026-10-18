@@ -40,7 +40,6 @@ import (
 	"mail-archive-tool/internal/runlog"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/source"
-	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/thunderbird"
 	"mail-archive-tool/internal/util"
 )
@@ -757,36 +756,19 @@ func healthCheck() error {
 	}
 	out := strings.TrimSpace(string(data))
 
-	// A headless run whose -out was absent leaves no archive-local record — the
-	// config-dir breadcrumb is the only trace (friction #20). Read it up front so
-	// it can be shown even when the archive itself is now unreachable.
-	var fail lastFailure
-	var haveFail bool
-	if dir, e := failureDir(); e == nil {
-		fail, haveFail = readLastFailure(dir)
-	}
-
-	if _, err := schedule.ReadDescriptor(out); err != nil {
-		// No readable schedule at the last archive path (or the archive is
-		// unreachable, e.g. an unmounted drive). Nothing else to report, but a
-		// recent start-failure still deserves a warning.
-		if showLastFailure(fail, haveFail, time.Time{}, false) {
-			return zenity.Warning(lastFailureLine(fail), zenity.Title(appTitle))
-		}
-		return nil
-	}
+	// health.Gather is the one reader of the headless start-failure breadcrumb
+	// (§4.6.6, MA-634): it raises start_failed in the posture (keyed on out, not
+	// the archive-held Desc.Name), so the launch view no longer reads the file
+	// itself and shows the line that comes back like any other reason.
 	in := health.Gather(out, "")
 	in.Surface = "gui" // name the rebuild choice below, not a command line
 	rep := health.Assess(in, time.Now())
+	// No schedule recorded here and no start-failure to report: stay quiet, as
+	// before — the launch view does not nag an archive with no backup set up.
+	if !in.HasDescriptor && !in.HasStartFailure {
+		return nil
+	}
 	lines := health.Summary(in, rep)
-	var lastRun time.Time
-	reachable := in.HasManifest || in.LastRunState == state.LastRunPresent
-	if in.LastRunState == state.LastRunPresent {
-		lastRun = in.LastRun.Started
-	}
-	if showLastFailure(fail, haveFail, lastRun, reachable) {
-		lines = append([]string{lastFailureLine(fail), ""}, lines...)
-	}
 	text := strings.Join(lines, "\n")
 
 	const cont = "Continue to the wizard"
