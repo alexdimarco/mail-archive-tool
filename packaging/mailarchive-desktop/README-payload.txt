@@ -23,9 +23,8 @@ Contents of the payload
   docs/                     LICENSE.txt, release-notes.md, and the user docs the
                             dashboard links to (goback, graph-app-setup).
 
-The install names drop the -windows-amd64 suffix (mailarchive.exe, mailarchivew.exe,
-and the former names mailarchive-desktop.exe and mailarchive-gui.exe) — the same
-names the build-windows target produces and that shortcuts / schtasks reference.
+The install names drop the -windows-amd64 suffix. build-windows produces the pair
+mailarchive.exe and mailarchivew.exe; the former names mailarchive-desktop.exe and mailarchive-gui.exe are byte-identical copies of mailarchivew.exe added when the payload is assembled, and are the names shortcuts / schtasks reference.
 
 How the MSI launches it (no-console note)
 -----------------------------------------

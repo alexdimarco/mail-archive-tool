@@ -51,9 +51,10 @@ portable WiX 3.14 tools into a private `.tools\` folder (needs internet once).
    .\Build-MSI.ps1 -Version 1.2.0
    ```
 
-   `-Version` **must stay greater than 1.1.0** (the earlier build) so this MSI cleanly
-   upgrades it — see DC6 below. Bump it for each new build. `Build-MSI.ps1` sources the
-   version from the payload and refuses a `-Version` that differs from it (MA-614).
+   The version comes from the release tag, baked into the payload; `Build-MSI.ps1`
+   reads it from there, so you need not pass `-Version` at all. If you do pass it, it
+   must MATCH the payload or the build is refused (MA-614). It must be greater than
+   1.1.0 (the earlier build) so this MSI cleanly upgrades it — see DC6 below.
 
 Build-MSI.ps1 extracts the payload, stages `SOURCE-NOTICE.txt`, `DEPLOYMENT.txt`,
 `THIRD-PARTY-NOTICES.md`, `managed-install.marker`, and a regenerated

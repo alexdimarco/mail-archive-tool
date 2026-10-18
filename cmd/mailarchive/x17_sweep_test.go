@@ -2,9 +2,11 @@ package main
 
 import (
 	"encoding/xml"
+	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -28,6 +30,16 @@ import (
 // when every swept text is clean (SC47, SC28, SC21, SC39).
 
 var formerNameRe = regexp.MustCompile(`mailarchive-(gui|desktop)`)
+
+// acquisitionVerbRe matches an instruction to the owner to acquire or launch
+// something (download, double-click, unzip). A former name alongside one of these
+// is X17 clause 2 — a former name presented as the thing to do — and is a
+// violation even when the line also says "former name" (the exemption covers a
+// former name NAMED as such, never one handed to the owner as a step). "run" and
+// "build" are deliberately left out: they also read as plain description ("the
+// copy runs …", "build directory"), so clause 2 for those stays an authoring rule
+// carried by §12's scoping and the friction review, not this mechanical check.
+var acquisitionVerbRe = regexp.MustCompile(`(?i)\b(download|double-click|unzip)\b`)
 
 // X17's two excluded non-program tokens (§9.2), part of the definition the
 // operator accepted at SE0 (OP-6): the build directory path and the one asset
@@ -77,11 +89,18 @@ var sweptGo = []string{
 }
 
 // guardPkgs are the owner-facing packages the completeness guard scans for a
-// former-name string literal in a file the enumeration missed, so a new owner
-// surface cannot slip in unswept. These packages hold no former-name detection
-// literal (that lives only in cmd/mailarchive/dispatch.go), so every former-name
-// literal found here must be in sweptGo.
-var guardPkgs = []string{"internal/wizard", "internal/desktop", "internal/health"}
+// former-name (or surface-phrase) string literal in a file the enumeration missed,
+// so a new owner surface cannot slip in unswept. cmd/mailarchive is included so
+// the CLI package is guarded too; its one detection file (dispatch.go) is skipped
+// by name below. (internal/schedule joins this set at SE2, with schedule.ProgramNote
+// and the §4.6.1 translocation refusal.)
+var guardPkgs = []string{"internal/wizard", "internal/desktop", "internal/health", "cmd/mailarchive"}
+
+// guardSkipFiles hold a former-name string literal that is NOT owner text:
+// cmd/mailarchive/dispatch.go is the §4.1 rule-6 router whose case labels ARE the
+// former names (MA-611). It is skipped by name — not suppressed; the sweep's object
+// is owner surfaces, and this file is the matcher's own mechanism.
+var guardSkipFiles = map[string]bool{"cmd/mailarchive/dispatch.go": true}
 
 // x17StripExcluded removes X17's two excluded non-program tokens so their
 // embedded "mailarchive-desktop" is not read as a program token.
@@ -93,11 +112,20 @@ func x17StripExcluded(s string) string {
 
 // formerNameViolation reports a former-name program/asset token on a line that
 // the phrase rule does not exempt, after the two excluded tokens are removed.
+// Matching is case-insensitive (both the token and the "former name" exemption).
 func formerNameViolation(line string) bool {
-	if !formerNameRe.MatchString(x17StripExcluded(line)) {
+	low := strings.ToLower(line)
+	if !formerNameRe.MatchString(x17StripExcluded(low)) {
 		return false
 	}
-	return !strings.Contains(line, x17PhraseExempt)
+	// Clause 2: a former name presented as a thing to download/double-click/unzip
+	// is a violation even on a line that also says "former name".
+	if acquisitionVerbRe.MatchString(low) {
+		return true
+	}
+	// Clause 1: otherwise a former name is allowed only where the line also says
+	// "former name".
+	return !strings.Contains(low, x17PhraseExempt)
 }
 
 // surfacePhrases are the surface-dependent phrases no owner text may use (SC21),
@@ -233,7 +261,9 @@ func TestMA622_X17EnumeratedSweep(t *testing.T) {
 	}{
 		{"download of a former name", "Download mailarchive-gui-windows-amd64.exe and run it.", true},
 		{"double-click a former name", "Double-click mailarchive-desktop.exe to open the dashboard.", true},
+		{"download of a former name even on a former-name line (clause 2)", "Download mailarchive-gui-windows-amd64.exe (a former name) to roll back.", true},
 		{"former-name line with the exemption", "mailarchive-desktop is a former name kept as a copy this release.", false},
+		{"a former name described, not offered, with the exemption", "The former name mailarchive-desktop.exe is a copy kept this release.", false},
 		{"the excluded build directory", "The texts live in packaging/mailarchive-desktop/README-RMM.md.", false},
 		{"the excluded payload asset", "The MSI payload is mailarchive-desktop-windows-msi-payload.zip.", false},
 		{"a clean one-program line", "Run mailarchive wizard, or double-click mailarchivew.exe.", false},
@@ -242,12 +272,46 @@ func TestMA622_X17EnumeratedSweep(t *testing.T) {
 			t.Errorf("fail-closed twin %q: formerNameViolation=%v, want %v (line %q)", tw.name, got, tw.want, tw.line)
 		}
 	}
+
+	// Guard fail-closed twin: a planted former-name owner literal in a synthetic
+	// file is caught by the same predicate the completeness guard uses.
+	fset := token.NewFileSet()
+	planted, perr := parser.ParseFile(fset, "planted.go", "package p\nvar s = \"double-click mailarchive-desktop.exe\"\n", 0)
+	if perr != nil {
+		t.Fatalf("parse planted twin: %v", perr)
+	}
+	caught := false
+	ast.Inspect(planted, func(n ast.Node) bool {
+		if lit, ok := n.(*ast.BasicLit); ok && lit.Kind == token.STRING {
+			v, _ := strconv.Unquote(lit.Value)
+			for _, line := range strings.Split(v, "\n") {
+				if formerNameViolation(line) {
+					caught = true
+				}
+			}
+		}
+		return true
+	})
+	if !caught {
+		t.Error("guard fail-closed twin: a planted former-name owner literal was NOT caught")
+	}
 	if got := forbiddenPhrases("Re-open this program any time to check the backup."); len(got) == 0 {
 		t.Error("fail-closed twin: the surface-dependent phrase was not flagged")
 	}
 	if got := forbiddenPhrases("Unzip and open Mail Archive.app, then drag it to Applications."); len(got) != 0 {
 		t.Errorf("fail-closed twin: 'open Mail Archive.app' must not be flagged, got %v", got)
 	}
+}
+
+// covers: MA-622, S59, X17
+// SC11 (every file the README tells the owner to download or double-click is
+// emitted by build-release.sh or is a member of an archive it emits) is the one
+// clause of MA-622 this change does NOT yet enforce: it needs build-release.sh to
+// emit the one-program pair, which is MA-614 — still an SE0 skip on this branch.
+// Recorded as a confirmed-open gap rather than left silently absent; remove this
+// skip and add the README-download-to-emitter cross-check when MA-614 lands.
+func TestMA622_SC11_DownloadsAreEmitted(t *testing.T) {
+	t.Skip("blocked on MA-614: build-release.sh must emit the one-program pair before SC11 can be checked")
 }
 
 // sweepWxsShortcuts parses Product.wxs and applies the matcher to every Shortcut
@@ -260,10 +324,15 @@ func sweepWxsShortcuts(t *testing.T, path string) (findings []string) {
 		t.Fatalf("swept Product.wxs missing (enumeration is wrong): %v", err)
 	}
 	dec := xml.NewDecoder(strings.NewReader(string(b)))
+	attrsSwept := 0
 	for {
 		tok, err := dec.Token()
-		if err != nil {
+		if errors.Is(err, io.EOF) {
 			break
+		}
+		if err != nil {
+			// A malformed shortcut must FAIL the sweep, never pass by a silent break.
+			t.Fatalf("parsing %s: %v", sweptWxs, err)
 		}
 		se, ok := tok.(xml.StartElement)
 		if !ok || se.Name.Local != "Shortcut" {
@@ -273,11 +342,14 @@ func sweepWxsShortcuts(t *testing.T, path string) (findings []string) {
 			if a.Name.Local != "Name" && a.Name.Local != "Description" {
 				continue
 			}
+			attrsSwept++
 			if formerNameViolation(a.Value) {
 				findings = append(findings, sweptWxs+": Shortcut @"+a.Name.Local+" names a former name — "+a.Value)
 			}
 		}
 	}
+	// The sweep must have actually examined shortcut text, not passed vacuously.
+	assure.Reached(t, attrsSwept, "Product.wxs Shortcut Name/Description attributes swept")
 	return findings
 }
 
@@ -290,24 +362,37 @@ func guardStrayOwnerLiterals(t *testing.T, root string) (findings []string) {
 	for _, rel := range sweptGo {
 		enumerated[filepath.ToSlash(rel)] = true
 	}
+	visited := 0
 	for _, pkg := range guardPkgs {
-		_ = filepath.WalkDir(filepath.Join(root, pkg), func(path string, d os.DirEntry, err error) error {
-			if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+		werr := filepath.WalkDir(filepath.Join(root, pkg), func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				return err // a walk error must FAIL the guard, not pass silently
+			}
+			if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 				return nil
 			}
 			rel, _ := filepath.Rel(root, path)
 			rel = filepath.ToSlash(rel)
-			if enumerated[rel] {
+			if enumerated[rel] || guardSkipFiles[rel] {
 				return nil
 			}
+			visited++
 			for _, ll := range goLiteralLines(t, path, rel) {
 				if formerNameViolation(ll[1]) {
 					findings = append(findings, "unswept owner surface "+ll[0]+": "+strings.TrimSpace(ll[1])+" (add it to sweptGo or confirm it is mechanism, not a surface)")
 				}
+				for _, p := range forbiddenPhrases(ll[1]) {
+					findings = append(findings, "unswept owner surface "+ll[0]+": surface-dependent phrase "+strconv.Quote(p))
+				}
 			}
 			return nil
 		})
+		if werr != nil {
+			t.Fatalf("completeness guard could not walk %s: %v", pkg, werr)
+		}
 	}
+	// The guard must have actually scanned non-enumerated files, or it proves nothing.
+	assure.Reached(t, visited, "non-enumerated owner-package files the guard scanned")
 	return findings
 }
 

@@ -42,13 +42,14 @@ it in a text editor. Both are universal (Apple Silicon and Intel).
 
 **One program.** MailArchive is a single program with verbs (`wizard`, `desktop`,
 `run-job`, and the command-line exporter). On Windows it is a pair of files built
-from that one program: double-click **`mailarchivew.exe`** for the dashboard and
-the wizard (a no-console build), and use **`mailarchive.exe`** for the command
-line. Double-clicking `mailarchive.exe` only prints which file to double-click. A
+from that one program: double-click **`mailarchivew.exe`** for the dashboard (a
+no-console build), start the wizard from its Start-menu shortcut or with
+`mailarchivew.exe wizard`, and use **`mailarchive.exe`** for the command line.
+Double-clicking `mailarchive.exe` only prints which file to double-click. A
 terminal's `mailarchive.exe desktop` holds that terminal and ends when it closes;
 `mailarchivew.exe desktop` outlives it. On macOS the one file lives inside
 `Mail Archive.app`; on Linux it is the one `mailarchive` binary. The release notes
-give the download and disk figures.
+list the per-platform downloads.
 
 The wizard is the [wizard section](#the-wizard-mailarchive-wizard) below.
 

@@ -54,6 +54,11 @@ func TestMA620_DefaultVerbTable(t *testing.T) {
 // called — it would bind the console to the server, §4.3). The plain usage cases
 // (W1/M2/L2) write nothing and fall through (handled=false), so the pointer and
 // the wait happen in the W2 case only.
+//
+// This is not a refusal-message check (so assure.Refused does not apply): the W2
+// refusal IS today's usage refusal, text and exit code unchanged, reached through
+// the same path the plain usage cases take; what W2 adds and this test pins is the
+// pointer, the ordering, the single-line wait and the absence of any GUI launch.
 func TestMA620_ConsoleBuildPointerAndWait(t *testing.T) {
 	w2 := defaultVerb("windows", true, true, false, false, false)
 	if !w2.consoleWait || w2.verb != "usage" {
