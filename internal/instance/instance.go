@@ -93,6 +93,10 @@ type Info struct {
 	// listener (a program that is not MailArchive), "preupgrade" an older instance
 	// that could not be ended (the Former constants). `status` reads it from here.
 	Former string `json:"former,omitempty"`
+	// Version is this program's build version (buildVersion()), so a launcher that
+	// hands off can tell a holder of another or no version and name it, and still
+	// exit 0 (§4.5.3, MA-637). Optional: a pre-SE1 instance has none.
+	Version string `json:"version,omitempty"`
 }
 
 // What a desktop start found at MailArchive's former address 127.0.0.1:8097

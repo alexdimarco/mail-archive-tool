@@ -30,6 +30,7 @@ type recorder struct {
 	opened   []string
 	refusals []string
 	links    []string
+	notices  []string
 	openErr  error
 	arrive   bool // the "browser" redeems the link it is handed, as a real one would
 }
@@ -50,6 +51,13 @@ func (r *recorder) open(u string) error {
 
 func (r *recorder) refuse(s string) { r.mu.Lock(); r.refusals = append(r.refusals, s); r.mu.Unlock() }
 func (r *recorder) show(s string)   { r.mu.Lock(); r.links = append(r.links, s); r.mu.Unlock() }
+func (r *recorder) notice(s string) { r.mu.Lock(); r.notices = append(r.notices, s); r.mu.Unlock() }
+
+func (r *recorder) noticeList() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.notices...)
+}
 
 func (r *recorder) snapshot() (opened, refusals, links []string) {
 	r.mu.Lock()
@@ -75,6 +83,7 @@ type dRig struct {
 	endCalls   int
 	session    string
 	prefix     string // the session's path prefix, learned by cookieFromLink
+	version    string // the build version this launch stamps and compares (§4.5.3)
 
 	exportDir string // the Extraction workspace's state directory ("" = none: it writes nothing)
 	policyOff bool   // the machine policy that turns the workspace off
@@ -82,7 +91,7 @@ type dRig struct {
 
 func newDRig(t *testing.T) *dRig {
 	t.Helper()
-	g := &dRig{t: t, dir: filepath.Join(t.TempDir(), "state"), rec: &recorder{arrive: true}}
+	g := &dRig{t: t, dir: filepath.Join(t.TempDir(), "state"), rec: &recorder{arrive: true}, version: buildVersion()}
 	root := t.TempDir()
 	g.cfgPath = filepath.Join(root, "graph-config.json")
 	g.out = filepath.Join(root, "archive")
@@ -104,7 +113,8 @@ func (g *dRig) env(rec *recorder) *launchEnv {
 		Stdout: io.Discard, Stderr: io.Discard,
 		StateDir: func() (string, error) { return g.dir, nil },
 		Session:  g.session,
-		Open:     rec.open, ShowRefusal: rec.refuse, ShowLink: rec.show,
+		Open:     rec.open, ShowRefusal: rec.refuse, ShowLink: rec.show, ShowNotice: rec.notice,
+		Version:    g.version,
 		Probe:      func() string { g.probeCalls++; return g.probe },
 		EndOld:     func() bool { g.endCalls++; return g.endOld },
 		WatchEvery: 50 * time.Millisecond, Window: 2 * time.Second,

@@ -22,6 +22,13 @@ func showRefusal(text string) {
 	_ = zenity.Error(text, zenity.Title(dialogTitle))
 }
 
+// showNotice shows an informational notice (a handoff to another version) on
+// stderr and in a dialog; unlike a refusal, the launcher exits 0 (§4.5.3).
+func showNotice(text string) {
+	fmt.Fprintln(os.Stderr, text)
+	_ = zenity.Info(text, zenity.Title(dialogTitle))
+}
+
 // showLink shows a fresh one-time link in a dialog with a Copy button, for a
 // browser that did not open or a launch that asked for a link [CC20]. The link is
 // in the dialog and nowhere else: not on stderr, which may be a log.

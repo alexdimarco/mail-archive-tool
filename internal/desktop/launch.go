@@ -36,6 +36,13 @@ type launchEnv struct {
 	// ShowLink shows a fresh link in a dialog with a Copy button, for a browser that
 	// did not open [CC20].
 	ShowLink func(link string)
+	// ShowNotice shows an informational notice — stderr and a dialog — for a handoff
+	// to a holder of another version; unlike a refusal, the launcher exits 0
+	// (§4.5.3, MA-637).
+	ShowNotice func(text string)
+	// Version is this program's build version, stamped into the instance file and
+	// compared on handoff to tell a holder of another version (§4.5.3, MA-637).
+	Version string
 	// Probe says what answers at 127.0.0.1:8097 (instance.FormerProgram,
 	// instance.FormerPreUpgrade, or "" for nothing); EndOld ends an older instance of
 	// this account found there and reports whether it did [CC22, CC23].
@@ -60,7 +67,8 @@ type launchEnv struct {
 func osEnv() *launchEnv {
 	return &launchEnv{
 		Stdout: os.Stdout, Stderr: os.Stderr, StateDir: instance.Dir, Session: instance.LogonSession(),
-		Open: browser.Open, ShowRefusal: showRefusal, ShowLink: showLink,
+		Open: browser.Open, ShowRefusal: showRefusal, ShowLink: showLink, ShowNotice: showNotice,
+		Version:    buildVersion(),
 		Probe:      func() string { return probeFormer(instance.FormerAddress, 800*time.Millisecond) },
 		EndOld:     func() bool { return endPreUpgrade(instance.FormerAddress) },
 		WatchEvery: time.Minute, Window: instance.DefaultWait,
@@ -102,6 +110,37 @@ func wedgedText(pid int) string {
 
 func otherConfigText(path string) string {
 	return fmt.Sprintf("MailArchive Desktop is already running for your account with another archive or configuration (%s). Do this: use that window, or quit it first.", path)
+}
+
+// otherVersion reports whether a handoff should name the holder: its version is
+// absent (a pre-SE1 instance), or it differs from this program's and neither is a
+// 'dev' build (whose version is not comparable). Version, not base name, so a
+// renamed file and every in-place upgrade are caught (§4.5.3, MA-637).
+func otherVersion(holder, mine string) bool {
+	if holder == "" {
+		return true
+	}
+	if holder == mine || holder == "dev" || mine == "dev" {
+		return false
+	}
+	return true
+}
+
+// otherVersionText is the §4.5.3 notice naming the holder's program (control-
+// stripped) and pid; the launcher shows it and still exits 0.
+func otherVersionText(exe string, pid int) string {
+	return fmt.Sprintf("Another version of MailArchive Desktop is still running for this account (%s, process %d), so the dashboard that opened is that version's. Do this: quit it (on Windows, end process %d in Task Manager; elsewhere, `kill %d`), or sign out and back in, then open MailArchive Desktop again.", stripControl(exe), pid, pid, pid)
+}
+
+// stripControl removes control characters from a path before it is shown, so a
+// crafted executable path cannot inject terminal escapes or dialog markup.
+func stripControl(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, s)
 }
 
 func noStateDirText(err error) string {
@@ -262,11 +301,15 @@ func handoff(ctx context.Context, dir string, o *launchOpts, env *launchEnv, dea
 	}
 	switch {
 	case rep.Busy, rep.Opened:
-		return true, nil
 	case rep.Link != "" && (o.copyLink || !o.noBrowser):
 		// The instance could not open a browser, or was asked not to and the
 		// caller wants a link: show it where it can be copied [CC20].
 		env.ShowLink(rep.Link)
+	}
+	// After a verified handoff (Busy, Opened or a Link), name a holder of another
+	// or no version, and still exit 0 (§4.5.3, MA-637).
+	if (rep.Busy || rep.Opened || rep.Link != "") && otherVersion(info.Version, env.Version) {
+		env.ShowNotice(otherVersionText(info.Exe, info.PID))
 	}
 	return true, nil
 }
@@ -342,7 +385,7 @@ func serveInstance(ctx context.Context, h *instance.Holder, o *launchOpts, env *
 	exe, _ := os.Executable()
 	info := instance.Info{
 		PID: os.Getpid(), Exe: exe, Started: time.Now(), Config: o.cfgPath, Out: o.out, Session: env.Session,
-		Dashboard: ln.Addr().String(), Reader: readerLn.Addr().String(), Key: keyHex, Former: former,
+		Dashboard: ln.Addr().String(), Reader: readerLn.Addr().String(), Key: keyHex, Former: former, Version: env.Version,
 	}
 	if err := h.Publish(info); err != nil {
 		ln.Close()
