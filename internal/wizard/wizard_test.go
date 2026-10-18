@@ -177,6 +177,47 @@ func TestMA618_RepairOfferedWhen(t *testing.T) {
 	}
 }
 
+// covers: MA-641, S59
+// §4.4/§4.6.3: the wizard's install and repair agree. For the same archive, name
+// and program, offerSchedule's installSpec and repairSpec produce the same Args,
+// the same Exe and the same wrapper decision (TaskRunLength vs SchtasksRunLimit) —
+// both reconstruct a run-job from the name, out and chosen program, never from a
+// descriptor, so a repair runs exactly what a fresh install would.
+func TestMA641_InstallAndRepairAgree(t *testing.T) {
+	out := "/archives/current"
+	exe := "/usr/local/bin/mailarchive"
+	d := schedule.Descriptor{Name: "mailarchive-1a2b3c4d", Interval: "daily", At: "02:00"}
+
+	rep, err := repairSpec(out, d, exe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Args) != 2 || rep.Args[0] != "-job" {
+		t.Fatalf("repairSpec Args shape changed: %v", rep.Args)
+	}
+	// Build the install Spec from the same reconstructed inputs (the job path is
+	// repairSpec's Args[1], so the test needs no job.Dir of its own).
+	name, _ := schedule.SanitizeName(d.Name)
+	iv, _ := schedule.ParseInterval(d.Interval)
+	ins := installSpec(out, name, rep.Args[1], iv, d.At, exe)
+
+	if len(ins.Args) != len(rep.Args) || ins.Args[0] != rep.Args[0] || ins.Args[1] != rep.Args[1] {
+		t.Errorf("Args differ:\n install %v\n repair  %v", ins.Args, rep.Args)
+	}
+	if ins.Exe != rep.Exe {
+		t.Errorf("Exe differs: install %q, repair %q", ins.Exe, rep.Exe)
+	}
+	if ins.Wrapper != rep.Wrapper {
+		t.Errorf("wrapper decision differs: install %v, repair %v", ins.Wrapper, rep.Wrapper)
+	}
+	if ins.WrapperPath != rep.WrapperPath {
+		t.Errorf("WrapperPath differs: install %q, repair %q", ins.WrapperPath, rep.WrapperPath)
+	}
+	if ins.Log != rep.Log || ins.Out != rep.Out {
+		t.Errorf("Log/Out differ: install %q/%q, repair %q/%q", ins.Log, ins.Out, rep.Log, rep.Out)
+	}
+}
+
 // covers: MA-123, R18, S29
 // repairSpec rebuilds the install Spec with the CURRENT executable and a wrapper
 // path derived from the sanitized name (not taken from the descriptor), taking

@@ -857,6 +857,23 @@ func repairable(in health.Input) bool {
 	return in.SchedState == schedule.NotInstalled || !in.ExeExists || !in.ExeIsThis || in.ExeRepoint
 }
 
+// installSpec is the pure run-job install Spec the wizard writes, from the
+// archive, the sanitized name, the chosen program and the cadence — never from a
+// descriptor. offerSchedule (a fresh install) and repairSpec (a repair) both
+// build through it, so install and repair cannot drift (MA-641): same Args, same
+// Exe rule, same wrapper decision.
+func installSpec(out, name, jobPath string, iv schedule.Interval, at, exe string) schedule.Spec {
+	spec := schedule.Spec{
+		Name: name, Interval: iv, At: at, Exe: exe,
+		Args: []string{"-job", jobPath}, Log: filepath.Join(out, "mailarchive.log"), Out: out,
+		WrapperPath: schedule.DefaultWrapperPath(name),
+	}
+	// No console window when the direct run string fits; otherwise the wrapper
+	// (and its brief console) is the price of a working job (S12).
+	spec.Wrapper = runtime.GOOS == "windows" && spec.TaskRunLength() > schedule.SchtasksRunLimit
+	return spec
+}
+
 // repairSpec rebuilds the install Spec for a recorded schedule using the CURRENT
 // executable, so re-installing points the scheduler back at this binary. The
 // descriptor lives in the archive directory and is untrusted (any writer of that
@@ -880,14 +897,7 @@ func repairSpec(out string, d schedule.Descriptor, exe string) (schedule.Spec, e
 	if strings.ContainsRune(at, '?') || strings.TrimSpace(at) == "" {
 		at = "02:00" // ReadDescriptor parks an unreadable time as "??:??"
 	}
-	spec := schedule.Spec{
-		Name: name, Interval: iv, At: at, Exe: exe,
-		Args: []string{"-job", jobPath}, Log: filepath.Join(out, "mailarchive.log"), Out: out,
-		WrapperPath: schedule.DefaultWrapperPath(name),
-	}
-	// No console window when the direct run string fits; otherwise the wrapper
-	// is the price of a working job (S12) — mirrors offerSchedule.
-	spec.Wrapper = runtime.GOOS == "windows" && spec.TaskRunLength() > schedule.SchtasksRunLimit
+	spec := installSpec(out, name, jobPath, iv, at, exe)
 	if err := spec.Validate(); err != nil {
 		return schedule.Spec{}, err
 	}
@@ -1471,19 +1481,7 @@ func offerSchedule(c wizardChoice) error {
 		return err
 	}
 
-	spec := schedule.Spec{
-		Name:        name,
-		Interval:    iv,
-		At:          at,
-		Exe:         exe,
-		Args:        []string{"-job", jobPath},
-		Log:         filepath.Join(c.out, "mailarchive.log"),
-		Out:         c.out,
-		WrapperPath: schedule.DefaultWrapperPath(name),
-	}
-	// No console window when the direct run string fits; otherwise the
-	// wrapper (and its brief console) is the price of a working job (S12).
-	spec.Wrapper = runtime.GOOS == "windows" && spec.TaskRunLength() > schedule.SchtasksRunLimit
+	spec := installSpec(c.out, name, jobPath, iv, at, exe)
 	if err := schedule.Install(spec); err != nil {
 		return fmt.Errorf("could not install the schedule:\n%v", err)
 	}

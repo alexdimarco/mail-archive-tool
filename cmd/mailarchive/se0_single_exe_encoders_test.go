@@ -48,7 +48,7 @@ func TestSE0_MA617_repairKeepsScheduleKind(t *testing.T) {
 // installer's Repair, others keep the re-install) is proven by
 // internal/health/ma635_installfolder_test.go.
 
-// covers: MA-641, S59
-func TestSE0_MA641_installAndRepairAgree(t *testing.T) {
-	t.Skip("SE2 encoder: for the same inputs, installSpec and repairSpec produce the same Args/Exe/wrapper decision")
-}
+// MA-641 encoder removed: install==repair agreement is proven by
+// internal/wizard/wizard_test.go TestMA641_InstallAndRepairAgree — offerSchedule
+// and repairSpec both build through the pure installSpec, so Args/Exe/wrapper
+// cannot drift.
