@@ -16,10 +16,10 @@ package main
 
 import "testing"
 
-// covers: MA-616, R33, R18, S59
-func TestSE0_MA616_composedIdentityPredicate(t *testing.T) {
-	t.Skip("SE2 encoder: the §4.6.2 identity predicate over the composition trace; louder exe_moved WARN (operator SE0 accept)")
-}
+// MA-616 encoder removed: the §4.6.2 identity predicate is proven by
+// internal/health/ma616_identity_test.go (the composition trace) and its
+// note/WARN texts (exe_former_name, exe_console_build, exe_version_skew, the
+// exe_missing former-name hint) by internal/health/ma616_texts_test.go.
 
 // covers: MA-617, R14, R18, S59
 func TestSE0_MA617_repairKeepsScheduleKind(t *testing.T) {

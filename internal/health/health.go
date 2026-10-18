@@ -136,7 +136,10 @@ type Input struct {
 	ExeSkew         bool
 	ExeFormerName   bool
 	ExeConsoleBuild bool
-	ThisHost        string
+	// ExeSelf is the resolved running program, carried only for the
+	// exe_version_skew text ("a different build … than <self>"); "" otherwise.
+	ExeSelf  string
+	ThisHost string
 
 	// KindEv is the owner-side evidence of the recorded backup schedule's kind
 	// (§4.6.5b), gathered once by Gather from owner-side state, never from the
@@ -563,10 +566,26 @@ func Assess(in Input, now time.Time) Report {
 			case schedule.NotInstalled:
 				r.warn("not_installed", fmt.Sprintf("the schedule %q is recorded but not present in this host's scheduler — %s", in.Desc.Name, repairHow(in)))
 			}
-			if !in.ExeExists {
-				r.red("exe_missing", fmt.Sprintf("the scheduled program %s no longer exists — the job cannot run; %s", in.Desc.Exe, repairHow(in)))
-			} else if !in.ExeIsThis {
+			switch {
+			case !in.ExeExists:
+				hint := ""
+				if schedule.FormerName(filepath.Base(in.Desc.Exe), in.GOOS) {
+					hint = fmt.Sprintf(" (%s was a former name of this program and was removed by an upgrade)", filepath.Base(in.Desc.Exe))
+				}
+				r.red("exe_missing", fmt.Sprintf("the scheduled program %s no longer exists — the job cannot run%s; %s", in.Desc.Exe, hint, repairHow(in)))
+			case in.ExeSkew:
+				r.warn("exe_version_skew", fmt.Sprintf("the schedule runs %s, a different build of this program than %s: one file was replaced without the other. Do this: reinstall from the MSI (or copy both files from one release), then %s", in.Desc.Exe, in.ExeSelf, repairHow(in)))
+			case !in.ExeIsThis:
 				r.warn("exe_moved", fmt.Sprintf("the schedule runs %s, which is not this binary (after an upgrade or move) — %s", in.Desc.Exe, repairHow(in)))
+			}
+			// §4.6.2 notes: the schedule still runs, but the recorded name says
+			// something the owner should know. Shown even when it is this program
+			// (the Program: line names the state; these add the why and the repair).
+			if in.ExeIsThis && in.ExeFormerName {
+				r.note("exe_former_name", fmt.Sprintf("the schedule runs %s, a former name of this program. Why: this release keeps that name as a copy (or link); a later release removes it. Do this: %s. Nothing changes until you do.", in.Desc.Exe, repairHow(in)))
+			}
+			if in.ExeIsThis && in.ExeConsoleBuild {
+				r.note("exe_console_build", "the schedule runs the command-line build mailarchive.exe; a console window stays open while it runs. Do this: put mailarchivew.exe beside it and choose Repair.")
 			}
 		}
 	}
@@ -1291,6 +1310,7 @@ func Gather(out, nameOverride string) Input {
 		id := exeIdentity(d)
 		in.ExeExists, in.ExeIsThis = id.exists, id.isThis
 		in.ExeBasis, in.ExeSkew, in.ExeFormerName, in.ExeConsoleBuild = id.basis, id.skew, id.former, id.console
+		in.ExeSelf = id.self
 	} else if nameOverride != "" {
 		in.SchedState = schedule.Query(nameOverride)
 	}
@@ -1331,6 +1351,7 @@ type exeIdent struct {
 	skew    bool   // exe_version_skew: same dir + known name, owner matched, build differs
 	former  bool   // isThis && the recorded name is a former name of this program
 	console bool   // Windows, exists, recorded name is the console build mailarchive.exe
+	self    string // the resolved running program, for the exe_version_skew text (else "")
 }
 
 // exeIdentity resolves whether a recorded schedule's program still exists and is
@@ -1368,7 +1389,7 @@ func exeIdentity(d schedule.Descriptor) exeIdent {
 					return exeIdent{exists: true, isThis: true, basis: "program_name", former: schedule.FormerName(name, goos), console: console}
 				}
 				if reason == schedule.ReasonPairOutOfStep { // owner matched, build readable but differs
-					return exeIdent{exists: true, skew: true}
+					return exeIdent{exists: true, skew: true, self: self}
 				}
 				return exeIdent{exists: true} // exe_moved
 			}
