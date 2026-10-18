@@ -42,10 +42,10 @@ func TestSE0_MA618_whenRepairIsOffered(t *testing.T) {
 // The wizard's writer stays and is exercised through the run-job path (MA-124,
 // MA-640).
 
-// covers: MA-635, R18, S59
-func TestSE0_MA635_exeMissingInstallFolderBranch(t *testing.T) {
-	t.Skip("SE2 encoder: a missing known-name file in the program's own directory names installer Repair; others keep re-install")
-}
+// MA-635 encoder removed: the Windows install-folder branch for exe_missing (a
+// known-name file missing from the running program's own directory names the
+// installer's Repair, others keep the re-install) is proven by
+// internal/health/ma635_installfolder_test.go.
 
 // covers: MA-641, S59
 func TestSE0_MA641_installAndRepairAgree(t *testing.T) {

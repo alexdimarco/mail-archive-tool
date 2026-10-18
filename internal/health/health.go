@@ -146,8 +146,12 @@ type Input struct {
 	ExeConsoleBuild bool
 	// ExeSelf is the resolved running program, carried only for the
 	// exe_version_skew text ("a different build … than <self>"); "" otherwise.
-	ExeSelf  string
-	ThisHost string
+	ExeSelf string
+	// ExeMissingInInstallDir is the Windows install-folder branch (§4.6.2, MA-635):
+	// the scheduled program is missing but was a known name in the running
+	// program's own directory, so the installer's Repair restores it.
+	ExeMissingInInstallDir bool
+	ThisHost               string
 
 	// KindEv is the owner-side evidence of the recorded backup schedule's kind
 	// (§4.6.5b), gathered once by Gather from owner-side state, never from the
@@ -592,11 +596,19 @@ func Assess(in Input, now time.Time) Report {
 			}
 			switch {
 			case !in.ExeExists:
-				hint := ""
-				if schedule.FormerName(filepath.Base(in.Desc.Exe), in.GOOS) {
-					hint = fmt.Sprintf(" (%s was a former name of this program and was removed by an upgrade)", filepath.Base(in.Desc.Exe))
+				switch {
+				case in.ExeMissingInInstallDir:
+					// Windows install-folder branch (§4.6.2, MA-635): the file the
+					// installer ships is gone from the install folder; the installer's
+					// Repair restores it (and an antivirus removal must be allowed first).
+					r.red("exe_missing", fmt.Sprintf("the scheduled program %s is missing from the install folder — restore it with the installer's Repair; if your antivirus removed it, restore and allow it first; the schedule then runs again unchanged", in.Desc.Exe))
+				default:
+					hint := ""
+					if schedule.FormerName(filepath.Base(in.Desc.Exe), in.GOOS) {
+						hint = fmt.Sprintf(" (%s was a former name of this program and was removed by an upgrade)", filepath.Base(in.Desc.Exe))
+					}
+					r.red("exe_missing", fmt.Sprintf("the scheduled program %s no longer exists — the job cannot run%s; %s", in.Desc.Exe, hint, repairHow(in)))
 				}
-				r.red("exe_missing", fmt.Sprintf("the scheduled program %s no longer exists — the job cannot run%s; %s", in.Desc.Exe, hint, repairHow(in)))
 			case in.ExeSkew:
 				r.warn("exe_version_skew", fmt.Sprintf("the schedule runs %s, a different build of this program than %s: one file was replaced without the other. Do this: reinstall from the MSI (or copy both files from one release), then %s", in.Desc.Exe, in.ExeSelf, repairHow(in)))
 			case !in.ExeIsThis:
@@ -1344,6 +1356,7 @@ func Gather(out, nameOverride string) Input {
 		in.ExeExists, in.ExeIsThis = id.exists, id.isThis
 		in.ExeBasis, in.ExeSkew, in.ExeFormerName, in.ExeConsoleBuild = id.basis, id.skew, id.former, id.console
 		in.ExeSelf = id.self
+		in.ExeMissingInInstallDir = id.missingInInstallDir
 	} else if nameOverride != "" {
 		in.SchedState = schedule.Query(nameOverride)
 	}
@@ -1385,6 +1398,10 @@ type exeIdent struct {
 	former  bool   // isThis && the recorded name is a former name of this program
 	console bool   // Windows, exists, recorded name is the console build mailarchive.exe
 	self    string // the resolved running program, for the exe_version_skew text (else "")
+	// missingInInstallDir: Windows, the recorded program is MISSING but its name is
+	// one the installed release ships and it sat in the running program's own
+	// directory — the installer's Repair restores it (MA-635), not a re-install.
+	missingInInstallDir bool
 }
 
 // exeIdentity resolves whether a recorded schedule's program still exists and is
@@ -1398,7 +1415,16 @@ func exeIdentity(d schedule.Descriptor) exeIdent {
 	rec := d.Exe
 	fi, err := statProgram(rec) // rule 1 touch of rec
 	if err != nil {
-		return exeIdent{} // 1. missing
+		// 1. missing. On Windows, a known-name file missing from the running
+		// program's own directory is the install-folder branch (MA-635): the
+		// installer's Repair restores it, not a schedule re-install. dir(rec) is a
+		// path op (no stat); sameArchivePath tolerates the file being gone.
+		if runtime.GOOS == "windows" && schedule.KnownName(filepath.Base(rec), runtime.GOOS) {
+			if self, serr := schedule.SelfResolver(); serr == nil && sameArchivePath(filepath.Dir(self), filepath.Dir(rec), runtime.GOOS) {
+				return exeIdent{missingInInstallDir: true}
+			}
+		}
+		return exeIdent{}
 	}
 	goos := runtime.GOOS
 	if strings.Contains(strings.ToLower(filepath.ToSlash(rec)), "/apptranslocation/") {
