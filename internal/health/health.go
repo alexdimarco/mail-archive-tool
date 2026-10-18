@@ -128,6 +128,14 @@ type Input struct {
 	SchedState      schedule.State
 	ExeExists       bool
 	ExeIsThis       bool
+	// ExeBasis is why ExeIsThis holds (same_file | program_name |
+	// unchanged_since_install); ExeSkew, ExeFormerName and ExeConsoleBuild carry
+	// §4.6.2's notes — a different build of this program, a former name, and the
+	// console build mailarchive.exe.
+	ExeBasis        string
+	ExeSkew         bool
+	ExeFormerName   bool
+	ExeConsoleBuild bool
 	ThisHost        string
 
 	// The scheduled verify's own descriptor (.mailarchive-verify-schedule.json,
@@ -145,8 +153,12 @@ type Input struct {
 	VerifySchedState        schedule.State
 	// VerifyExeExists / VerifyExeIsThis are the backup's ExeExists / ExeIsThis
 	// for the program the verify descriptor records.
-	VerifyExeExists bool
-	VerifyExeIsThis bool
+	VerifyExeExists       bool
+	VerifyExeIsThis       bool
+	VerifyExeBasis        string
+	VerifyExeSkew         bool
+	VerifyExeFormerName   bool
+	VerifyExeConsoleBuild bool
 	// VerifyNameUnbound is DescNameUnbound for the verify descriptor's name.
 	VerifyNameUnbound bool
 
@@ -1216,7 +1228,9 @@ func Gather(out, nameOverride string) Input {
 			name = nameOverride
 		}
 		in.SchedState = schedule.Query(name)
-		in.ExeExists, in.ExeIsThis = exeIdentity(d)
+		id := exeIdentity(d)
+		in.ExeExists, in.ExeIsThis = id.exists, id.isThis
+		in.ExeBasis, in.ExeSkew, in.ExeFormerName, in.ExeConsoleBuild = id.basis, id.skew, id.former, id.console
 	} else if nameOverride != "" {
 		in.SchedState = schedule.Query(nameOverride)
 	}
@@ -1233,7 +1247,9 @@ func Gather(out, nameOverride string) Input {
 		in.VerifyDesc = vd
 		in.VerifyNameUnbound = schedule.NameBound(out, vd) != nil
 		in.VerifySchedState = schedule.Query(vd.Name)
-		in.VerifyExeExists, in.VerifyExeIsThis = exeIdentity(vd)
+		vid := exeIdentity(vd)
+		in.VerifyExeExists, in.VerifyExeIsThis = vid.exists, vid.isThis
+		in.VerifyExeBasis, in.VerifyExeSkew, in.VerifyExeFormerName, in.VerifyExeConsoleBuild = vid.basis, vid.skew, vid.former, vid.console
 	}
 	return in
 }
@@ -1242,16 +1258,105 @@ func Gather(out, nameOverride string) Input {
 // test can see which paths `status` touches (G8-AI4's encoder).
 var statProgram = os.Stat
 
-// exeIdentity reports whether a recorded schedule's program still exists, and
-// whether it is this binary: the same file, or the size and modification time
-// the install recorded for it.
-func exeIdentity(d schedule.Descriptor) (exists, isThis bool) {
-	fi, err := statProgram(d.Exe)
+// siblingQualifies is §4.6.0's sibling test (owner + SameBuild), a seam so a test
+// drives the predicate's rule 4 by the reason it wants; SiblingQualifies itself
+// is proven by MA-615.
+var siblingQualifies = schedule.SiblingQualifies
+
+// exeIdent is the composed identity of a recorded schedule's program (§4.6.2).
+type exeIdent struct {
+	exists  bool
+	isThis  bool
+	basis   string // same_file | program_name | unchanged_since_install | ""
+	skew    bool   // exe_version_skew: same dir + known name, owner matched, build differs
+	former  bool   // isThis && the recorded name is a former name of this program
+	console bool   // Windows, exists, recorded name is the console build mailarchive.exe
+}
+
+// exeIdentity resolves whether a recorded schedule's program still exists and is
+// this program, by §4.6.2's first-match-wins rule. Every touch of the recorded
+// path goes through statProgram; self is schedule.SelfResolver() (injectable, as
+// instance.OwnerReader is), and the owner and build reads (inside
+// schedule.SiblingQualifies) happen only after the same-directory bound holds
+// (trust boundary 2). Nothing but self, the recorded path and the sibling test
+// decides it.
+func exeIdentity(d schedule.Descriptor) exeIdent {
+	rec := d.Exe
+	fi, err := statProgram(rec) // rule 1 touch of rec
 	if err != nil {
-		return false, false
+		return exeIdent{} // 1. missing
 	}
-	self, _ := os.Executable()
-	return true, sameFile(self, d.Exe) || (d.ExeSize == fi.Size() && !d.ExeMTime.IsZero() && d.ExeMTime.Equal(fi.ModTime().UTC()))
+	goos := runtime.GOOS
+	if strings.Contains(strings.ToLower(filepath.ToSlash(rec)), "/apptranslocation/") {
+		return exeIdent{exists: true} // 2. a translocated copy: not this program (exe_moved, move remedy)
+	}
+	name := filepath.Base(rec)
+	console := goos == "windows" && nameEq(name, "mailarchive.exe", goos)
+
+	self, selfErr := schedule.SelfResolver()
+	if selfErr == nil {
+		if selfFi, serr := os.Stat(self); serr == nil && os.SameFile(selfFi, fi) {
+			return exeIdent{exists: true, isThis: true, basis: "same_file", former: formerName(name, goos), console: console} // 3.
+		}
+		if sameArchivePath(filepath.Dir(self), filepath.Dir(rec), goos) && knownName(name, goos) { // 4.
+			switch {
+			case !knownName(filepath.Base(self), goos):
+				return exeIdent{exists: true} // a renamed/suffixed running file never vouches for a sibling (exe_moved)
+			default:
+				ok, reason := siblingQualifies(self, rec)
+				if ok {
+					return exeIdent{exists: true, isThis: true, basis: "program_name", former: formerName(name, goos), console: console}
+				}
+				if reason == schedule.ReasonPairOutOfStep { // owner matched, build readable but differs
+					return exeIdent{exists: true, skew: true}
+				}
+				return exeIdent{exists: true} // exe_moved
+			}
+		}
+	}
+	if formerName(name, goos) {
+		return exeIdent{exists: true} // 5. the fallback never makes a former name this program (exe_moved)
+	}
+	if d.ExeSize == fi.Size() && !d.ExeMTime.IsZero() && d.ExeMTime.Equal(fi.ModTime().UTC()) {
+		return exeIdent{exists: true, isThis: true, basis: "unchanged_since_install", console: console} // 6.
+	}
+	return exeIdent{exists: true} // 7. otherwise (exe_moved)
+}
+
+// knownName reports whether base is one of the one program's install or former
+// names, matched per OS (EqualFold on Windows and macOS, exact on Linux), with no
+// trimming of trailing dots or spaces.
+func knownName(base, goos string) bool {
+	for _, n := range []string{"mailarchive", "mailarchivew", "mailarchive-desktop", "mailarchive-gui"} {
+		if nameEq(base, n, goos) || nameEq(base, n+".exe", goos) {
+			return true
+		}
+	}
+	return false
+}
+
+// formerName reports whether base begins with a former-name prefix
+// (mailarchive-desktop or mailarchive-gui), so a former release asset such as
+// mailarchive-gui-linux-amd64 is a former name too (§4.1 rule 6's test).
+func formerName(base, goos string) bool {
+	return hasNamePrefix(base, "mailarchive-desktop", goos) || hasNamePrefix(base, "mailarchive-gui", goos)
+}
+
+func nameEq(a, b, goos string) bool {
+	if goos == "linux" {
+		return a == b
+	}
+	return strings.EqualFold(a, b)
+}
+
+func hasNamePrefix(s, prefix, goos string) bool {
+	if len(s) < len(prefix) {
+		return false
+	}
+	if goos == "linux" {
+		return s[:len(prefix)] == prefix
+	}
+	return strings.EqualFold(s[:len(prefix)], prefix)
 }
 
 func sameFile(a, b string) bool {

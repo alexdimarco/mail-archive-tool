@@ -33,9 +33,9 @@ func TestStatusDoesNotStatAUNCProgramPath(t *testing.T) {
 	var touched []string
 	statProgram = func(p string) (os.FileInfo, error) { touched = append(touched, p); return nil, os.ErrNotExist }
 	for _, unc := range []string{`\\attacker-host\share\x.exe`, `//attacker-host/share/x.exe`} {
-		exists, isThis := exeIdentity(schedule.Descriptor{Exe: unc})
-		if exists || isThis {
-			t.Errorf("a UNC program path was resolved (exists=%v isThis=%v)", exists, isThis)
+		id := exeIdentity(schedule.Descriptor{Exe: unc})
+		if id.exists || id.isThis {
+			t.Errorf("a UNC program path was resolved (exists=%v isThis=%v)", id.exists, id.isThis)
 		}
 	}
 	if len(touched) != 0 {
