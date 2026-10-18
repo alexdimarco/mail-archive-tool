@@ -919,7 +919,9 @@ func repairPlan(out string, d schedule.Descriptor, exe string) (schedule.Spec, e
 
 // repairSchedule re-installs a recorded schedule from the current executable.
 func repairSchedule(out string, d schedule.Descriptor) error {
-	exe, err := os.Executable()
+	// §4.6.1 (MA-615): resolve the program through ProgramForSchedule, keeping the
+	// recorded wrapper decision; a translocated program is refused before install.
+	exe, _, err := schedule.ProgramForSchedule(d.Wrapper != "")
 	if err != nil {
 		return err
 	}
@@ -1447,7 +1449,10 @@ func offerSchedule(c wizardChoice) error {
 		iv, at = schedule.Weekly, "03:00"
 	}
 
-	exe, err := os.Executable()
+	// §4.6.1 (MA-615): the wizard's schedule runs ProgramForSchedule's program, not
+	// os.Executable(); wrapped is dormant while L-W2 holds, so the wrapper fit is
+	// decided from the chosen program below. A translocated program is refused.
+	exe, _, err := schedule.ProgramForSchedule(false)
 	if err != nil {
 		return err
 	}

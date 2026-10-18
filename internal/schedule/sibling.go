@@ -1,6 +1,53 @@
 package schedule
 
-import "runtime/debug"
+import (
+	"debug/buildinfo"
+	"os"
+	"runtime/debug"
+
+	"mail-archive-tool/internal/instance"
+)
+
+// Seams for SiblingQualifies, overridden in tests so the owner and build-info
+// reads can be injected without a real second binary on disk. The production
+// values read the real file; nothing here ever executes the sibling.
+var (
+	lstatFile         = os.Lstat
+	readFileBuildInfo = buildinfo.ReadFile
+	readSelfBuildInfo = debug.ReadBuildInfo
+)
+
+// SiblingQualifies reports whether p — a file the caller has already placed
+// beside the running program by a fixed string+stat bound (§4.6.1) — is a
+// sibling a schedule may run instead of self. All three hold, checked in order
+// (§4.6.0): p is a regular file (not a link); instance.OwnerReader reports the
+// same owner for p as for self, compared file against file (never CheckOwner,
+// which compares with the process token and would refuse an MSI file owned by
+// Administrators); and p is the SameBuild as this program. The first failure
+// names the reason. It reads p's owner and embedded build info and never runs it.
+func SiblingQualifies(self, p string) (bool, Reason) {
+	fi, err := lstatFile(p)
+	if err != nil {
+		return false, ReasonSiblingAbsent
+	}
+	if !fi.Mode().IsRegular() {
+		return false, ReasonSiblingNotRegular
+	}
+	selfOwner, _, selfErr := instance.OwnerReader(self)
+	pOwner, _, pErr := instance.OwnerReader(p)
+	if selfErr != nil || pErr != nil || selfOwner != pOwner {
+		return false, ReasonSiblingOtherOwner
+	}
+	var selfInfo *debug.BuildInfo
+	if bi, ok := readSelfBuildInfo(); ok {
+		selfInfo = bi
+	}
+	pInfo, _ := readFileBuildInfo(p) // a read error yields nil, a different build
+	if !SameBuild(selfInfo, pInfo) {
+		return false, ReasonPairOutOfStep
+	}
+	return true, ReasonSibling
+}
 
 // SameBuild reports whether two build infos are the same build of the one
 // program: Path (the main package), Main.Path, Main.Version, GoVersion, every

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"os"
 	"runtime"
 	"strings"
 
@@ -61,9 +60,13 @@ func (cfg Config) backupSpecFor(out string) (schedule.Spec, error) {
 	}
 	exe := cfg.Exe
 	if exe == "" {
-		if e, err := os.Executable(); err == nil {
-			exe = e
+		// §4.6.1 (MA-615): the weekly backup runs ProgramForSchedule's program (it
+		// always wraps on Windows); a translocated program is refused here.
+		e, _, err := schedule.ProgramForSchedule(true)
+		if err != nil {
+			return schedule.Spec{}, err
 		}
+		exe = e
 	}
 	if exe == "" {
 		return schedule.Spec{}, errors.New("cannot determine the program path to schedule")

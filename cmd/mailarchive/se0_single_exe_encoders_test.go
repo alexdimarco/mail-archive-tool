@@ -16,11 +16,6 @@ package main
 
 import "testing"
 
-// covers: MA-615, R33, R18, S59
-func TestSE0_MA615_programForScheduleWrapped(t *testing.T) {
-	t.Skip("SE2 encoder: ProgramForSchedule(wrapped) per OS/name/reason; sibling qualification; translocation")
-}
-
 // covers: MA-616, R33, R18, S59
 func TestSE0_MA616_composedIdentityPredicate(t *testing.T) {
 	t.Skip("SE2 encoder: the §4.6.2 identity predicate over the composition trace; louder exe_moved WARN (operator SE0 accept)")

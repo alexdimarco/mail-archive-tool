@@ -813,9 +813,13 @@ func runSchedule(args []string) error {
 		jobArgs = flatJobArgs(eo, fs.Args())
 	}
 
-	exe, err := os.Executable()
+	// §4.6.1 (MA-615): the program a schedule runs comes from ProgramForSchedule,
+	// not os.Executable(); the command line's schedule always wraps on Windows
+	// (non-goal 7, D2). A translocated program is refused here, before any job
+	// file or scheduler entry is written.
+	exe, _, err := schedule.ProgramForSchedule(true)
 	if err != nil {
-		return fmt.Errorf("could not determine my own executable path: %w", err)
+		return err
 	}
 
 	// Removal keys off the name, found via -name, the job's own entry name, or
