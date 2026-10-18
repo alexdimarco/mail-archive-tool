@@ -610,6 +610,22 @@ func installOn(s Spec, goos string) error {
 // archives sharing one explicit -name there are not detected here — an open
 // residual (owner ruling FB-4). goos selects the host scheduler.
 func refuseCollision(s Spec, goos string) error {
+	// The §4.6.5c kind guard first: a cross-kind install under the archive's one
+	// schedule name is refused on owner-side evidence, built HERE from the owner's
+	// config dir, crontab and the program-set CaptureCorroborator seam — never from
+	// the forgeable descriptor Job. Building it inside the guard (rather than
+	// threading it through every Install caller) means no install path can skip the
+	// guard or pass forged evidence. recordedKind is read only to ADD a refusal
+	// (trigger 2). A verify is exempt (CheckKind returns nil), so it still coexists
+	// under its own name below. REALIZATION NOTE for the §4.6.5 adversarial pass:
+	// the design wrote "ev passed to Install as an argument"; this builds it in the
+	// guard instead, which honors the intent (ev from owner-side state, not the
+	// Spec) and is strictly more uniform. Owner to ratify at the security sign-off.
+	if s.Out != "" {
+		if err := CheckKind(BuildKindEvidence(s.Out), KindOf(s.Args), recordedKind(s.Out), s.Out, s.Name); err != nil {
+			return err
+		}
+	}
 	if s.Out != "" {
 		if isVerifyJob(s) {
 			// An older release's descriptor may record a verify itself; that is this

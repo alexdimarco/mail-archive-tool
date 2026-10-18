@@ -29,18 +29,25 @@ func (e KindEvidence) Has(k Kind) bool { return e.Corroborated[k] }
 // Any reports whether owner-side state corroborates any kind.
 func (e KindEvidence) Any() bool { return len(e.Corroborated) > 0 }
 
+// CaptureCorroborator reports whether the desktop configuration corroborates a
+// capture for out. The program sets it once at startup (internal/desktop supplies
+// it, so internal/schedule never imports internal/desktop); nil means no capture
+// is corroborated — e.g. a command-line-only process that never set it. This is
+// how schedule "receives the capture predicate from desktop" (§4.6.5b) without an
+// import, and it is trusted program code, never the archive.
+var CaptureCorroborator func(out string) bool
+
 // BuildKindEvidence corroborates kinds for the archive out, reading only
 // owner-side state: the run-job job file (through internal/job's secure read),
-// the desktop configuration (captureOK, supplied by the program so
-// internal/schedule never imports internal/desktop), and the managed cron block
+// the desktop configuration (via CaptureCorroborator), and the managed cron block
 // on cron hosts. A descriptor's Job never enters (§4.6.5b).
-func BuildKindEvidence(out string, captureOK func(out string) bool) KindEvidence {
+func BuildKindEvidence(out string) KindEvidence {
 	ev := KindEvidence{Corroborated: map[Kind]bool{}}
 	if p, ok := corroboratedRunJob(out); ok {
 		ev.Corroborated[KindRunJob] = true
 		ev.JobPath = p
 	}
-	if captureOK != nil && captureOK(out) {
+	if CaptureCorroborator != nil && CaptureCorroborator(out) {
 		ev.Corroborated[KindCapture] = true
 	}
 	if k := cronBlockKindFor(out); k != "" {
@@ -77,10 +84,24 @@ func CheckKind(ev KindEvidence, install, recorded Kind, out, name string) error 
 			return fmt.Errorf("archive %s already has a %s schedule named %q: an archive has one schedule, and this install would replace it. Remove that schedule first, or archive into a separate folder.", out, ck, name)
 		}
 	}
-	if recorded == KindExport && !ev.Any() {
+	if recorded == KindExport && install != KindExport && !ev.Any() {
 		return fmt.Errorf("archive %s already has an export schedule named %q with no owner-side record to compare: this install would replace it. Remove it first (mailarchive schedule -out %s -remove), or archive into a separate folder.", out, name, out)
 	}
 	return nil
+}
+
+// recordedKind is the kind of the backup schedule descriptor already recorded for
+// archive out: KindNone when there is none, KindUnknown when one is present but
+// unreadable. Read only to ADD a refusal (CheckKind trigger 2), never to suppress
+// one (§4.6.5c).
+func recordedKind(out string) Kind {
+	if d, err := ReadDescriptor(out); err == nil {
+		return KindOf(d.Job)
+	}
+	if _, err := os.Stat(filepath.Join(out, DescriptorName)); err != nil {
+		return KindNone
+	}
+	return KindUnknown
 }
 
 // corroboratedRunJob finds a run-job whose job file this program can securely

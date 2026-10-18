@@ -43,7 +43,11 @@ func TestMA631_KindEvidenceCorroboration(t *testing.T) {
 	wantPath := writeJob(DefaultNameFor(out), out) // the run-job for our archive
 	writeJob("mailarchive-elsewhere", t.TempDir()) // a run-job for a DIFFERENT archive
 
-	ev := BuildKindEvidence(out, func(o string) bool { return SameArchivePath(o, out, runtime.GOOS) })
+	origCC := CaptureCorroborator
+	t.Cleanup(func() { CaptureCorroborator = origCC })
+	CaptureCorroborator = func(o string) bool { return SameArchivePath(o, out, runtime.GOOS) }
+
+	ev := BuildKindEvidence(out)
 	if !ev.Has(KindRunJob) || ev.JobPath != wantPath {
 		t.Errorf("run-job: Has=%v JobPath=%q, want true and %q", ev.Has(KindRunJob), ev.JobPath, wantPath)
 	}
@@ -51,8 +55,9 @@ func TestMA631_KindEvidenceCorroboration(t *testing.T) {
 		t.Error("capture should be corroborated when the desktop-config predicate holds")
 	}
 
-	// An archive with no job file and no capture predicate corroborates nothing.
-	if ev2 := BuildKindEvidence(t.TempDir(), nil); ev2.Any() {
+	// A different archive (the predicate matches only `out`) and no job file
+	// corroborates nothing.
+	if ev2 := BuildKindEvidence(t.TempDir()); ev2.Any() {
 		t.Errorf("no owner-side state should corroborate nothing, got %+v", ev2.Corroborated)
 	}
 }

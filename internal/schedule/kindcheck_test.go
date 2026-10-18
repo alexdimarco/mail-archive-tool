@@ -32,9 +32,10 @@ func TestMA631_CheckKindGuard(t *testing.T) {
 		{"run-job over a corroborated capture is refused", KindRunJob, KindCapture, evOf(KindCapture), true, "capture"},
 		{"capture over a corroborated run-job is refused", KindCapture, KindRunJob, evOf(KindRunJob), true, "run-job"},
 		{"verify is never guarded", KindVerify, KindCapture, evOf(KindCapture), false, ""},
-		{"export with no corroboration is refused (trigger 2)", KindExport, KindExport, evOf(), true, "export"},
+		{"same-kind export re-install passes (R14 idempotence)", KindExport, KindExport, evOf(), false, ""},
 		{"export over a corroborated export passes", KindExport, KindExport, evOf(KindExport), false, ""},
-		{"run-job over a recorded export, nothing corroborated, is refused", KindRunJob, KindExport, evOf(), true, "export"},
+		{"run-job over a recorded export, nothing corroborated, is refused (trigger 2)", KindRunJob, KindExport, evOf(), true, "export"},
+		{"capture over a recorded export, nothing corroborated, is refused (trigger 2)", KindCapture, KindExport, evOf(), true, "export"},
 	}
 	for _, c := range cases {
 		err := CheckKind(c.ev, c.install, c.recorded, out, name)
