@@ -56,11 +56,6 @@ func TestSE0_MA620_noArgumentRule(t *testing.T) {
 	t.Skip("SE1 encoder: defaultVerb() over every §4.3 row; Windows/macOS/Linux no-argument launch")
 }
 
-// covers: MA-621, S59
-func TestSE0_MA621_noNewPerUserStateLocation(t *testing.T) {
-	t.Skip("SE1 encoder: the per-user-state call sites equal the set pinned at b1a16bc; planted new site flagged")
-}
-
 // covers: MA-622, S59, X17
 func TestSE0_MA622_x17EnumeratedSweep(t *testing.T) {
 	t.Skip("SE1 encoder: X17's enumerated former-name sweep over the owner surfaces; phrase rule the only exemption")
