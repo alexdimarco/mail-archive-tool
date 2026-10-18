@@ -1,6 +1,6 @@
 //go:build !windows
 
-package main
+package desktop
 
 // workspacePolicyOff is the machine policy that turns the Extraction workspace off. Only
 // Windows has one (an administrator's registry value); elsewhere the -no-workspace flag

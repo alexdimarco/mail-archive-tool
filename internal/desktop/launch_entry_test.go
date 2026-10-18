@@ -1,4 +1,4 @@
-package main
+package desktop
 
 import (
 	"strings"
@@ -12,7 +12,7 @@ import (
 // surface (capture / sign-in / schedule) and must never be reachable from the
 // network. The refusal happens before the server binds.
 func TestDesktopRefusesNonLoopback(t *testing.T) {
-	err := run([]string{"-addr", "0.0.0.0:8097", "-out", t.TempDir()})
+	err := Launch([]string{"-addr", "0.0.0.0:8097", "-out", t.TempDir()})
 	msg := ""
 	if err != nil {
 		msg = err.Error()

@@ -1,6 +1,6 @@
 //go:build !linux && !windows
 
-package main
+package desktop
 
 // endPreUpgrade cannot end an older instance here: learning which process owns a
 // port has no pure-Go form on this system (macOS has no /proc and no

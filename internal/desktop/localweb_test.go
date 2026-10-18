@@ -1,4 +1,4 @@
-package main
+package desktop
 
 import (
 	"io"
@@ -8,13 +8,11 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	"mail-archive-tool/internal/assure"
-	"mail-archive-tool/internal/desktop"
 	"mail-archive-tool/internal/graphconfig"
 	"mail-archive-tool/internal/index"
 	"mail-archive-tool/internal/localweb"
@@ -25,7 +23,6 @@ import (
 
 func loopback(port int) net.Addr { return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: port} }
 
-var dashCSRFRe = regexp.MustCompile(`name="csrf" content="([0-9a-f]+)"`)
 
 // sessionCookie redeems a fresh one-time link of s on h and returns the cookie a
 // browser would then hold, so a fixture can read what only an admitted browser sees.
@@ -58,7 +55,7 @@ func dashboardFixture(t *testing.T) (http.Handler, string, string) {
 	}
 	settings := filepath.Join(dir, "desktop-settings.json")
 	sess := localweb.NewSession()
-	h := dashboardHandler(desktop.Config{ConfigPath: cfgPath, SettingsPath: settings, TokenCachePath: filepath.Join(dir, "tok.json")}, loopback(8097), sess, nil)
+	h := dashboardHandler(Config{ConfigPath: cfgPath, SettingsPath: settings, TokenCachePath: filepath.Join(dir, "tok.json")}, loopback(8097), sess, nil)
 	req := httptest.NewRequest(http.MethodGet, sess.Prefix(), nil)
 	req.Host = "127.0.0.1:8097"
 	req.AddCookie(sessionCookie(t, h, sess, req.Host))
@@ -87,7 +84,7 @@ func readerFixture(t *testing.T) (string, http.Handler) {
 	if err := ix.Close(); err != nil {
 		t.Fatal(err)
 	}
-	rm := desktop.ReaderHandler(desktop.Config{Out: out})
+	rm := ReaderHandler(Config{Out: out})
 	// Release the reader's index before the TempDir cleanup (Windows cannot
 	// delete an open file); this Cleanup runs before TempDir's.
 	t.Cleanup(func() { rm.(io.Closer).Close() })
@@ -144,7 +141,7 @@ func TestDashboardAndReaderRefuseWithoutSession(t *testing.T) {
 	if err := graphconfig.Save(cfgPath, &graphconfig.Config{Tenant: "contoso-tenant-0451", ClientID: "app-client-7788", Auth: "device"}); err != nil {
 		t.Fatal(err)
 	}
-	dash := dashboardHandler(desktop.Config{ConfigPath: cfgPath, SettingsPath: filepath.Join(dir, "desktop-settings.json"), TokenCachePath: filepath.Join(dir, "tok.json")}, loopback(8097), localweb.NewSession(), nil)
+	dash := dashboardHandler(Config{ConfigPath: cfgPath, SettingsPath: filepath.Join(dir, "desktop-settings.json"), TokenCachePath: filepath.Join(dir, "tok.json")}, loopback(8097), localweb.NewSession(), nil)
 	out, rm := readerFixture(t)
 
 	admitted := localwebtest.Probe{Surface: "dashboard", Forbid: []string{`name="csrf"`, "contoso-tenant-0451", "app-client-7788"}}.
@@ -172,7 +169,7 @@ func TestDashboardAndReaderServeOnlyThroughTheGuard(t *testing.T) {
 		served     http.Handler
 		registered []string
 	}{
-		{"dashboard", "8097", dash, localweb.RoutesOf(desktop.DashboardHandler(desktop.Config{}))},
+		{"dashboard", "8097", dash, localweb.RoutesOf(DashboardHandler(Config{}))},
 		{"reader", "8099", readerHandler(rm, loopback(8099), localweb.NewSession()), localweb.RoutesOf(server.New(out, nil))},
 	} {
 		probed := localwebtest.Probe{

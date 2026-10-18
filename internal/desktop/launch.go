@@ -1,4 +1,4 @@
-package main
+package desktop
 
 import (
 	"context"
@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"mail-archive-tool/internal/browser"
-	"mail-archive-tool/internal/desktop"
 	"mail-archive-tool/internal/graphconfig"
 	"mail-archive-tool/internal/instance"
 	"mail-archive-tool/internal/localweb"
@@ -49,7 +48,7 @@ type launchEnv struct {
 	// Ready, when set, is told once an instance is serving: how a test finds it.
 	Ready func(instance.Info)
 	// ExportDir is the per-user, local state directory the Extraction workspace keeps its
-	// run records and journal in (desktop.StateDir); nil or "" leaves the workspace able
+	// run records and journal in (StateDir); nil or "" leaves the workspace able
 	// to preview but not to export, and writes nothing — what a test that runs a launch
 	// in-process wants.
 	ExportDir func() string
@@ -65,7 +64,7 @@ func osEnv() *launchEnv {
 		Probe:      func() string { return probeFormer(instance.FormerAddress, 800*time.Millisecond) },
 		EndOld:     func() bool { return endPreUpgrade(instance.FormerAddress) },
 		WatchEvery: time.Minute, Window: instance.DefaultWait,
-		ExportDir: desktop.StateDir, WorkspaceOff: workspacePolicyOff,
+		ExportDir: StateDir, WorkspaceOff: workspacePolicyOff,
 	}
 }
 
@@ -73,6 +72,15 @@ func osEnv() *launchEnv {
 type refusedError struct{ text string }
 
 func (e *refusedError) Error() string { return e.text }
+
+// RefusalShown reports whether err is a refusal Launch has already shown the user
+// (via a dialog, and stderr). A caller that prints errors itself must not print
+// this one again: the windowsgui binary has no console to repeat it to, and the
+// one program's dispatcher keeps one refusal voice (X2).
+func RefusalShown(err error) bool {
+	var r *refusedError
+	return errors.As(err, &r)
+}
 
 func refuse(env *launchEnv, text string) error {
 	env.ShowRefusal(text)
@@ -107,7 +115,7 @@ type launchOpts struct {
 	out, cfgPath     string // absolute; out is "" when not given
 	noBrowser        bool
 	copyLink         bool
-	dcfg             desktop.Config
+	dcfg             Config
 }
 
 // launch is MailArchive Desktop (design §4.C4): a scheduled `-capture` runs one
@@ -143,7 +151,7 @@ func launch(ctx context.Context, args []string, env *launchEnv) error {
 	store, _ := graphconfig.DefaultSecretStore() // informational shell tolerates a nil store
 	settingsPath := filepath.Join(filepath.Dir(cfgPath), "desktop-settings.json")
 	exe, _ := os.Executable() // recorded in a scheduled task so the weekly backup runs this binary
-	dcfg := desktop.Config{Out: *out, ConfigPath: cfgPath, Store: store, SettingsPath: settingsPath, Exe: exe, Version: buildVersion(), LastArchive: desktop.OfferedArchive}
+	dcfg := Config{Out: *out, ConfigPath: cfgPath, Store: store, SettingsPath: settingsPath, Exe: exe, Version: buildVersion(), LastArchive: OfferedArchive}
 	dcfg.WorkspaceOff = *noWorkspace || (env.WorkspaceOff != nil && env.WorkspaceOff())
 	if env.ExportDir != nil {
 		dcfg.StateDir = env.ExportDir()
@@ -161,15 +169,15 @@ func launch(ctx context.Context, args []string, env *launchEnv) error {
 			defer f.Close()
 			w = io.MultiWriter(env.Stderr, f)
 		}
-		return desktop.HeadlessCapture(dcfg, w)
+		return HeadlessCapture(dcfg, w)
 	}
 
 	// Both surfaces are control/reader surfaces served only on this machine; never
 	// the network (design P2/DC7).
-	if !desktop.Loopback(*addr) {
+	if !Loopback(*addr) {
 		return fmt.Errorf("-addr %s is not a loopback address: the dashboard is served only on 127.0.0.1/localhost", *addr)
 	}
-	if !desktop.Loopback(*readerAddr) {
+	if !Loopback(*readerAddr) {
 		return fmt.Errorf("-reader-addr %s is not a loopback address: the archive reader is served only on 127.0.0.1/localhost", *readerAddr)
 	}
 
@@ -231,10 +239,10 @@ func handoff(ctx context.Context, dir string, o *launchOpts, env *launchEnv, dea
 	if pid := instance.HolderPID(dir, env.Session); pid != 0 && pid != info.PID {
 		return false, nil
 	}
-	if !samePath(info.Config, o.cfgPath) {
+	if !samePathLaunch(info.Config, o.cfgPath) {
 		return true, refuse(env, otherConfigText(info.Config))
 	}
-	if o.out != "" && info.Out != "" && !samePath(info.Out, o.out) {
+	if o.out != "" && info.Out != "" && !samePathLaunch(info.Out, o.out) {
 		return true, refuse(env, otherConfigText(info.Out))
 	}
 	key, kerr := info.KeyBytes()
@@ -263,7 +271,7 @@ func handoff(ctx context.Context, dir string, o *launchOpts, env *launchEnv, dea
 	return true, nil
 }
 
-func samePath(a, b string) bool {
+func samePathLaunch(a, b string) bool {
 	a, b = filepath.Clean(a), filepath.Clean(b)
 	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
 		return strings.EqualFold(a, b)
@@ -310,8 +318,8 @@ func serveInstance(ctx context.Context, h *instance.Holder, o *launchOpts, env *
 	// The workspace's Graph session and every preview and export run on this process's own
 	// life: cancelling ctx (Ctrl-C, a logoff) drains them, and the process waits for the
 	// running export to finalize (its manifest says cancelled, its marker CANCELLED) before it
-	// lets go of the account's lock, within desktop.DrainBudget (XC6, MA-514).
-	life := desktop.NewLifecycle(ctx)
+	// lets go of the account's lock, within DrainBudget (XC6, MA-514).
+	life := NewLifecycle(ctx)
 	dcfg.Lifecycle = life
 	dcfg.ReaderURL = "http://" + readerLn.Addr().String() + sess.Prefix()
 	dcfg.Sessions = sess.Opened
@@ -328,7 +336,7 @@ func serveInstance(ctx context.Context, h *instance.Holder, o *launchOpts, env *
 	}
 	// DisableGeneralOptionsHandler: net/http would answer OPTIONS * before the Host guard (AC8).
 	dash := &http.Server{Handler: dashboardHandler(dcfg, ln.Addr(), sess, handoffH), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute, DisableGeneralOptionsHandler: true}
-	rm := desktop.ReaderHandler(dcfg)
+	rm := ReaderHandler(dcfg)
 	reader := &http.Server{Handler: readerHandler(rm, readerLn.Addr(), sess), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute, DisableGeneralOptionsHandler: true}
 
 	exe, _ := os.Executable()
@@ -389,7 +397,7 @@ func serveInstance(ctx context.Context, h *instance.Holder, o *launchOpts, env *
 		// the running export finalizes before the process lets go (its own budget)
 		select {
 		case <-life.Drained():
-		case <-time.After(desktop.DrainBudget + 5*time.Second):
+		case <-time.After(DrainBudget + 5*time.Second):
 		}
 		return err
 	}
