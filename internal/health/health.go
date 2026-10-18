@@ -138,6 +138,14 @@ type Input struct {
 	ExeConsoleBuild bool
 	ThisHost        string
 
+	// KindEv is the owner-side evidence of the recorded backup schedule's kind
+	// (§4.6.5b), gathered once by Gather from owner-side state, never from the
+	// descriptor's Job. The repair route (§4.6.3) reads it so a run-job or capture
+	// schedule is never offered a `schedule … -install` the kind guard refuses.
+	// repairHow must stay pure (it is called from Assess), so this is set here and
+	// not recomputed inside Assess.
+	KindEv schedule.KindEvidence
+
 	// The scheduled verify's own descriptor (.mailarchive-verify-schedule.json,
 	// owner ruling FB-4), written when `schedule` installs a verify: it carries
 	// the verify's cadence, so verify_stale is judged against the verify itself.
@@ -531,16 +539,19 @@ func Assess(in Input, now time.Time) Report {
 		r.warn("no_schedule", fmt.Sprintf("no schedule is recorded for this archive — %s (or the GUI's \"Keep this archive current\"), or ignore this if a systemd timer, NAS task or other scheduler already keeps it current", scheduleRemedy(in)))
 	default:
 		if jo := jobOutOf(in.Desc.Job); jo != "" && filepath.IsAbs(jo) && filepath.IsAbs(in.Out) && !sameArchivePath(jo, in.Out, in.GOOS) {
-			// Substitute this archive's job into the re-install remedy (no "..."
-			// placeholder) so the operator can paste it (friction #14).
-			reinstall := scheduleCommand(jobWithOut(in.Desc.Job, in.Out), in.GOOS)
+			// The re-point is rendered through the route (§4.6.3): an export schedule
+			// gets the pasteable command with this archive's job substituted (no
+			// "..." placeholder, friction #14), while a run-job or capture schedule is
+			// pointed at its own Repair rather than a `schedule … -install` the kind
+			// guard refuses. The removal of the stale entry is unchanged (G8-AO1/AO2).
+			repair := repairHow(in)
 			if in.DescNameUnbound {
 				// The record is untrusted: an entry it names that is not shown to be
 				// this archive's may be another archive's live one, so no removal
 				// command is printed from it (G8-AO1).
-				r.warn("moved_archive", fmt.Sprintf("the installed schedule %q backs up %s, not this archive (%s) — re-run %s; this record is not shown to be this archive's own, so it names no entry to remove: if it was copied here, delete %s", in.Desc.Name, jo, in.Out, reinstall, filepath.Join(in.Out, schedule.DescriptorName)))
+				r.warn("moved_archive", fmt.Sprintf("the installed schedule %q backs up %s, not this archive (%s) — %s; this record is not shown to be this archive's own, so it names no entry to remove: if it was copied here, delete %s", in.Desc.Name, jo, in.Out, repair, filepath.Join(in.Out, schedule.DescriptorName)))
 			} else {
-				r.warn("moved_archive", fmt.Sprintf("the installed schedule %q backs up %s, not this archive (%s) — re-run %s, then remove the stale one with `mailarchive schedule -name %q -remove`", in.Desc.Name, jo, in.Out, reinstall, in.Desc.Name))
+				r.warn("moved_archive", fmt.Sprintf("the installed schedule %q backs up %s, not this archive (%s) — %s, then remove the stale one with `mailarchive schedule -name %q -remove`", in.Desc.Name, jo, in.Out, repair, in.Desc.Name))
 			}
 		}
 		if in.ThisHost != "" && in.Desc.Host != "" && in.ThisHost != in.Desc.Host {
@@ -550,12 +561,12 @@ func Assess(in Input, now time.Time) Report {
 			case schedule.SchedulerUnavailable:
 				r.warn("scheduler_unavailable", "this host's scheduler cannot be queried (no crontab/schtasks?) — the schedule may not run here")
 			case schedule.NotInstalled:
-				r.warn("not_installed", fmt.Sprintf("the schedule %q is recorded but not present in this host's scheduler — re-run `mailarchive schedule ... -install`", in.Desc.Name))
+				r.warn("not_installed", fmt.Sprintf("the schedule %q is recorded but not present in this host's scheduler — %s", in.Desc.Name, repairHow(in)))
 			}
 			if !in.ExeExists {
-				r.red("exe_missing", fmt.Sprintf("the scheduled program %s no longer exists — the job cannot run; re-run `mailarchive schedule ... -install` from the current binary", in.Desc.Exe))
+				r.red("exe_missing", fmt.Sprintf("the scheduled program %s no longer exists — the job cannot run; %s", in.Desc.Exe, repairHow(in)))
 			} else if !in.ExeIsThis {
-				r.warn("exe_moved", fmt.Sprintf("the schedule runs %s, which is not this binary — after an upgrade or move, re-run `mailarchive schedule ... -install`", in.Desc.Exe))
+				r.warn("exe_moved", fmt.Sprintf("the schedule runs %s, which is not this binary (after an upgrade or move) — %s", in.Desc.Exe, repairHow(in)))
 			}
 		}
 	}
@@ -652,6 +663,71 @@ func rebuildHow(in Input) string {
 		return "choose \"Rebuild the search index\" below to rebuild it from your archive"
 	}
 	return fmt.Sprintf("rebuild it from the archive with `mailarchive reindex -rebuild -out %q`", in.Out)
+}
+
+// repairHow renders how to repair a recorded backup schedule, in the words of
+// the surface reading it (§4.6.3), beside rebuildHow. It renders the route
+// schedule.RepairRoute decides from owner-side evidence (§4.6.5(e)): a
+// corroborated run-job repairs in the wizard or this archive's Weekly backup
+// card; a corroborated capture on the card; an export schedule on the command
+// line; anything else names both explicit installs. So no remedy ever points at
+// a button that is not on the reader's page, nor at a `schedule … -install` the
+// kind guard (MA-631) would refuse. The five backup remedies (exe_missing,
+// exe_moved, exe_former_name, not_installed, moved_archive) tail with it.
+func repairHow(in Input) string {
+	switch schedule.RepairRoute(in.Desc, in.Out, in.KindEv) {
+	case schedule.RouteWizard: // a corroborated run-job
+		switch in.Surface {
+		case "desktop":
+			return "click Repair on this archive's Weekly backup card"
+		case "gui":
+			return "choose Repair the scheduled backup in the health check"
+		}
+		return cliRunJobRepair(in)
+	case schedule.RouteCard: // a corroborated capture
+		if in.Surface == "desktop" {
+			return "click Repair on this archive's Weekly backup card"
+		}
+		return "open MailArchive Desktop and click Repair on this archive's Weekly backup card"
+	case schedule.RouteCommand: // an export schedule
+		return "re-run " + scheduleCommand(jobWithOut(in.Desc.Job, in.Out), in.GOOS)
+	default: // RouteNone — no single repair
+		return bothInstalls(in)
+	}
+}
+
+// cliRunJobRepair is the command line's no-display fallback for a run-job whose
+// repair is otherwise the wizard's or the card's (§4.6.3, The route): the one
+// sanctioned place a run-job remedy names `schedule … -install`, and only after
+// a `-remove` step and naming the job file. The scheduler entry name is
+// recovered from the corroborated job file's basename (as the wizard does),
+// never from the archive-held descriptor's Name (§5.2). Both dynamic values are
+// shell-quoted for the surface's OS (INS2-2).
+func cliRunJobRepair(in Input) string {
+	remove := "`mailarchive schedule -name " + shellQuoteToken(scheduleNameForRepair(in), in.GOOS) + " -remove`"
+	install := "`mailarchive schedule -out " + shellQuoteToken(in.Out, in.GOOS) + " -install`"
+	s := "repair it from the wizard or this archive's Weekly backup card in MailArchive Desktop; with no display, remove the schedule with " + remove + ", then re-install it with " + install
+	if in.KindEv.JobPath != "" {
+		s += " — the job's settings are in `" + in.KindEv.JobPath + "`"
+	}
+	return s
+}
+
+// scheduleNameForRepair recovers the scheduler entry name from the corroborated
+// run-job's job file basename (§4.6.5b), falling back to the archive's default
+// name; never the descriptor's own Name, which an archive writer controls.
+func scheduleNameForRepair(in Input) string {
+	if in.KindEv.JobPath != "" {
+		return strings.TrimSuffix(filepath.Base(in.KindEv.JobPath), ".json")
+	}
+	return schedule.DefaultNameFor(in.Out)
+}
+
+// bothInstalls names the two explicit installs for a schedule whose kind no
+// single route repairs (§4.6.3, The route: RouteNone): the interactive install
+// (the card's or the wizard's) and the command line's export install.
+func bothInstalls(in Input) string {
+	return "set the schedule up afresh — in MailArchive Desktop's Weekly backup card or the wizard, or on the command line with " + scheduleCommand([]string{"-out", in.Out}, in.GOOS)
 }
 
 // runErrorText is the last run's failure as the surface reading it should see
@@ -1204,6 +1280,9 @@ func Gather(out, nameOverride string) Input {
 		in.HasDescriptor = true
 		in.Desc = d
 		in.DescNameUnbound = schedule.NameBound(out, d) != nil
+		// Owner-side corroboration of the schedule's kind (§4.6.5b), for the repair
+		// route (§4.6.3). Read once here, never from the descriptor's Job.
+		in.KindEv = schedule.BuildKindEvidence(out)
 		name := d.Name
 		if nameOverride != "" {
 			name = nameOverride

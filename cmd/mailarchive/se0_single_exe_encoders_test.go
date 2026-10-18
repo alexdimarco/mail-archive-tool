@@ -31,10 +31,10 @@ func TestSE0_MA618_whenRepairIsOffered(t *testing.T) {
 	t.Skip("SE2 encoder: repair offered only for a corroborated run-job/capture; volatile-directory question first")
 }
 
-// covers: MA-633, R18, S59
-func TestSE0_MA633_perKindRemedies(t *testing.T) {
-	t.Skip("SE2 encoder: RepairRoute/repairHow per kind; no run-job/capture remedy offers schedule -install")
-}
+// MA-633 encoder removed: the per-kind remedies are built. schedule.RepairRoute
+// is proven by internal/schedule/repairroute_test.go, and health.repairHow — the
+// rendering of the route in each surface's words, with the four backup remedies
+// re-routed through it — by internal/health/ma633_repairhow_test.go.
 
 // covers: MA-634, R18, S59
 func TestSE0_MA634_startFailureBreadcrumb(t *testing.T) {
