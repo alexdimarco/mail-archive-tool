@@ -36,16 +36,6 @@ func TestSE0_MA629_statusProgramAndScheduledLine(t *testing.T) {
 	t.Skip("SE2 encoder: the Program: line's one label per state in order; the scheduled: <kind> line")
 }
 
-// covers: MA-631, R14, R18, S59
-func TestSE0_MA631_kindGuardAtInstallOn(t *testing.T) {
-	t.Skip("SE2 encoder: installOn refuses a cross-kind install under the archive's name; same-kind re-install is one entry")
-}
-
-// covers: MA-632, R14, R18, S59
-func TestSE0_MA632_flipConvertsNothing(t *testing.T) {
-	t.Skip("SE2 encoder: a flipped Job[0] leaves the scheduler entry and descriptor unchanged; no conversion")
-}
-
 // covers: MA-633, R18, S59
 func TestSE0_MA633_perKindRemedies(t *testing.T) {
 	t.Skip("SE2 encoder: RepairRoute/repairHow per kind; no run-job/capture remedy offers schedule -install")
