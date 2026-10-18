@@ -111,11 +111,6 @@ func TestSE0_MA638_endedOlderInstanceNamed(t *testing.T) {
 	t.Skip("SE1 encoder: after EndOld, the dashboard header and status name the pid; no line when nothing was ended")
 }
 
-// covers: MA-639, R12, S59
-func TestSE0_MA639_wizardRefusesWithoutADialog(t *testing.T) {
-	t.Skip("SE1 encoder: no zenity/qarma/matedialog -> exit 1 with the §4.4 text; a fake tool is never invoked")
-}
-
 // covers: MA-641, S59
 func TestSE0_MA641_installAndRepairAgree(t *testing.T) {
 	t.Skip("SE2 encoder: for the same inputs, installSpec and repairSpec produce the same Args/Exe/wrapper decision")

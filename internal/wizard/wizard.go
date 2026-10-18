@@ -83,21 +83,69 @@ var detectOutlook = func() bool { _, ok := outlookcom.Detect(); return ok }
 // itself (MA-612).
 func Run() (code int) {
 	// The GUI-subsystem build has no console, so an unhandled panic would exit
-	// silently. Surface it in a dialog instead — a visible error beats a vanish.
+	// silently. Surface it on stderr and then in a dialog — in that order, as the
+	// desktop's showRefusal does (§4.4, MA-639) — a visible error beats a vanish.
 	defer func() {
 		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "mailarchive wizard: %v\n", r)
 			_ = zenity.Error(fmt.Sprintf("Something went wrong:\n\n%v", r), zenity.Title(appTitle))
 			code = 1
 		}
 	}()
+
+	// The wizard is made of native dialogs; on Linux/BSD it cannot open them
+	// without a dialog tool and a desktop session, so it refuses on stderr rather
+	// than fail silently (§4.4, MA-639). It looks up a file and an environment
+	// variable, and executes nothing.
+	if refusal, ok := dialogPreflight(runtime.GOOS, dialogToolOnPath(), displayIsSet()); !ok {
+		fmt.Fprintln(os.Stderr, refusal)
+		return 1
+	}
 
 	switch err := wizard(); {
 	case err == nil, errors.Is(err, zenity.ErrCanceled):
 		// Clean finish, or the user dismissed a dialog: exit quietly.
 		return 0
 	default:
+		fmt.Fprintln(os.Stderr, "mailarchive wizard: "+err.Error())
 		_ = zenity.Error(err.Error(), zenity.Title(appTitle))
 		return 1
+	}
+}
+
+// dialogToolOnPath reports whether a zenity-compatible dialog tool is on PATH —
+// the names ncruces/zenity drives on Linux and the BSDs.
+func dialogToolOnPath() bool {
+	for _, name := range []string{"zenity", "qarma", "matedialog"} {
+		if _, err := exec.LookPath(name); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// displayIsSet reports whether a desktop session is advertised in the environment.
+func displayIsSet() bool {
+	return os.Getenv("DISPLAY") != "" || os.Getenv("WAYLAND_DISPLAY") != ""
+}
+
+// dialogPreflight decides whether the wizard can open its native dialogs. On
+// Linux and the BSDs those dialogs are zenity (or a compatible tool), which needs
+// the tool on PATH and a desktop session; when either is missing the wizard
+// cannot show a window and must refuse on stderr rather than fail silently (§4.4,
+// MA-639). macOS (osascript) and Windows (a native MessageBox) always have a
+// dialog, so they always proceed. The refusal names no repair it cannot deliver
+// (not MailArchive Desktop, which cannot repair a wizard-kind schedule). Pure, so
+// MA-639 tables every (OS, lookup, display) case.
+func dialogPreflight(goos string, dialogToolFound, displaySet bool) (refusal string, ok bool) {
+	switch goos {
+	case "linux", "freebsd", "openbsd", "netbsd", "dragonfly":
+		if dialogToolFound && displaySet {
+			return "", true
+		}
+		return "mailarchive wizard: the wizard cannot open its windows. Why: it is made of native dialogs, which need the zenity tool and a desktop session. Do this: install the zenity package and run mailarchive wizard again from your desktop, or use the commands in the README (mailarchive -h).", false
+	default:
+		return "", true
 	}
 }
 
