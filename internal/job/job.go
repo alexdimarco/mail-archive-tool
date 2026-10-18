@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +17,11 @@ import (
 // Version of the job file format. Unknown fields are ignored on read (additive
 // evolution, like the manifest); a file newer than this program is refused.
 const Version = 1
+
+// maxJobFileSize bounds the job file a headless run will read: it is owner-
+// written JSON of a few hundred bytes, so anything far larger is not a real job
+// file and is refused rather than slurped (the oversize refusal, MA-640).
+const maxJobFileSize = 64 * 1024
 
 // Job is one scheduled GUI export.
 type Job struct {
@@ -109,9 +115,9 @@ func Write(path string, j Job) error {
 // lacks the essentials (out, mode).
 func Read(path string) (Job, error) {
 	var j Job
-	data, err := os.ReadFile(path)
+	data, err := readSecure(path)
 	if err != nil {
-		return j, fmt.Errorf("job file %s: %w", path, err)
+		return j, err
 	}
 	if err := json.Unmarshal(data, &j); err != nil {
 		return j, fmt.Errorf("job file %s is unreadable (%v): re-create the schedule from the wizard", path, err)
@@ -126,4 +132,42 @@ func Read(path string) (Job, error) {
 		j.Mode = "incremental"
 	}
 	return j, nil
+}
+
+// readSecure reads a job file for a headless (unattended) run, which trusts its
+// contents, so a planted file in the owner's config dir is refused rather than
+// followed or slurped: a final-component symbolic link is refused and its target
+// left untouched; a non-regular file (a FIFO, device, directory or socket) is
+// refused — caught by the Lstat BEFORE any open, so a FIFO cannot hang the read;
+// a group- or world-accessible file is refused (a scheduled job is owner-only);
+// and the read is bounded by maxJobFileSize (R12, MA-640). Residual TOCTOU
+// between the stat and the open is the adversarial pass's concern.
+func readSecure(path string) ([]byte, error) {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return nil, fmt.Errorf("job file %s: %w", path, err)
+	}
+	switch {
+	case fi.Mode()&os.ModeSymlink != 0:
+		return nil, fmt.Errorf("job file %s is a symbolic link: refusing to follow it; re-create the schedule from the wizard", path)
+	case !fi.Mode().IsRegular():
+		return nil, fmt.Errorf("job file %s is not a regular file (%s): refusing to read it; re-create the schedule from the wizard", path, fi.Mode().Type())
+	case fi.Mode().Perm()&0o077 != 0:
+		return nil, fmt.Errorf("job file %s is group- or world-accessible (mode %#o): a scheduled job must be owner-only; re-create the schedule from the wizard", path, fi.Mode().Perm())
+	case fi.Size() > maxJobFileSize:
+		return nil, fmt.Errorf("job file %s is %d bytes, over the %d-byte limit: refusing to read it", path, fi.Size(), maxJobFileSize)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("job file %s: %w", path, err)
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, maxJobFileSize+1))
+	if err != nil {
+		return nil, fmt.Errorf("job file %s: %w", path, err)
+	}
+	if int64(len(data)) > maxJobFileSize {
+		return nil, fmt.Errorf("job file %s is over the %d-byte limit: refusing to read it", path, maxJobFileSize)
+	}
+	return data, nil
 }
