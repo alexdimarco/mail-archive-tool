@@ -50,6 +50,13 @@ import (
 
 func main() {
 	args := os.Args[1:]
+	// R33 — one program: a GUI surface (desktop/wizard/run-job), a legacy
+	// schedule argv, or a start under a former name routes in-process here and
+	// never falls to the export dispatch (MA-610/MA-611); anything else is a CLI
+	// verb or an export and falls through.
+	if code, handled := runResolvedVerb(invokedBase(), args); handled {
+		os.Exit(code)
+	}
 	var err error
 	switch {
 	case len(args) > 0 && args[0] == "serve":
@@ -1355,6 +1362,9 @@ Usage:
   mailarchive status   -out DIR                          completeness, last run, schedule posture
   mailarchive verify   -out DIR [-json] [-record]        check archived files against recorded fixity
   mailarchive extract  -out DIR -format mbox|eml -dest OUTDIR   migrate the archive out as standard mail
+  mailarchive desktop  [-capture]                        the dashboard & launcher (also opens on double-click)
+  mailarchive wizard                                     step-by-step setup with native dialogs
+  mailarchive run-job  FILE                              run a saved job headlessly (what a schedule runs)
 
 Examples:
   mailarchive -auto -out ./export

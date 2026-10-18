@@ -16,16 +16,6 @@ package main
 
 import "testing"
 
-// covers: MA-610, R33, S59
-func TestSE0_MA610_everySurfaceIsAVerb(t *testing.T) {
-	t.Skip("SE1 encoder: desktop/wizard/run-job dispatch in-process; legacy spellings; root usage lists the three verbs")
-}
-
-// covers: MA-611, R33, S59
-func TestSE0_MA611_legacySpellingsExactShapeOwnNamesOnly(t *testing.T) {
-	t.Skip("SE1 encoder: former-name rule 6 argv mapping; own-name lists unchanged; none reaches runExport")
-}
-
 // covers: MA-612, R33, S59
 func TestSE0_MA612_noSelfReExec(t *testing.T) {
 	t.Skip("SE1 encoder: AST walk of every process-start site + recording-fake twins; no self re-exec")
