@@ -28,7 +28,7 @@ foreach ($target in $targets) {
 # proves itself with — so nothing of a finished deployment is left to be believed
 # (design-local-confidentiality CC22). The next start makes new ones.
 $session = (Get-Process -Id $PID).SessionId
-Get-Process mailarchive-desktop -ErrorAction SilentlyContinue |
+Get-Process mailarchivew,mailarchive-desktop,mailarchive-gui -ErrorAction SilentlyContinue |
     Where-Object { $_.SessionId -eq $session } |
     Stop-Process -Force -ErrorAction SilentlyContinue
 $state = "$env:LOCALAPPDATA\MailArchiveDesktop"

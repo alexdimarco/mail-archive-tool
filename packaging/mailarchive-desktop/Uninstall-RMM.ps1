@@ -2,11 +2,13 @@
 param()
 $ErrorActionPreference = 'Stop'
 
-# ADAPTED from Steve's Uninstall-RMM.ps1: stop our mailarchive-desktop.exe (was
-# MailArchiveDesktop.exe). Normal MSI uninstall PRESERVES the user's mail archive,
-# %LOCALAPPDATA%\MailArchiveDesktop, and the Microsoft sign-in token in Credential
-# Manager (DC6). Use Cleanup-CurrentUser.ps1 for full per-user deprovisioning.
-Get-Process mailarchive-desktop,mailarchive,mailarchive-gui -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+# Stop every GUI-subsystem executable the MSI installs plus the former names: the
+# no-console build mailarchivew.exe and its two former-name copies
+# mailarchive-desktop.exe and mailarchive-gui.exe (MA-614, SC34). Normal MSI
+# uninstall PRESERVES the user's mail archive, %LOCALAPPDATA%\MailArchiveDesktop,
+# and the Microsoft sign-in token in Credential Manager (DC6). Use
+# Cleanup-CurrentUser.ps1 for full per-user deprovisioning.
+Get-Process mailarchivew,mailarchive-desktop,mailarchive-gui -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 
 $roots = @(
   'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',

@@ -2,6 +2,14 @@
 # Build the full cross-platform release matrix into dist/, plus SHA256SUMS.
 # Used by both `make dist` and the release GitHub Action. Pure cross-compile.
 #
+# One program: every platform ships the single `mailarchive` program (its GUI
+# surfaces are verbs, §4.1). On Windows that is a PAIR built from ./cmd/mailarchive
+# — the console build `mailarchive.exe` and the no-console build `mailarchivew.exe`
+# (-ldflags -H=windowsgui) — plus, from release N until the floor (§7.1), two
+# byte-identical copies of mailarchivew.exe under the former names
+# mailarchive-desktop.exe and mailarchive-gui.exe, so shortcuts and schedules
+# installed under the old names keep working (MA-614).
+#
 # Usage: packaging/build-release.sh [VERSION]
 set -euo pipefail
 
@@ -9,35 +17,31 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 VERSION="${1:-$(git describe --tags --always 2>/dev/null || echo 0.0.0-dev)}"
+PRODUCT_VERSION="${VERSION#v}"   # leading-v stripped; the MSI binds ProductVersion to this (MA-614)
 DIST="$ROOT/dist"
 rm -rf "$DIST"
 mkdir -p "$DIST"
 
-CLI=./cmd/mailarchive
-GUI=./cmd/mailarchive-gui
-DESKTOP=./cmd/mailarchive-desktop
+ONE=./cmd/mailarchive
 
-echo "==> CLI binaries (macOS ships as one universal tarball, below — not bare)"
-GOOS=linux   GOARCH=amd64 go build -o "$DIST/mailarchive-linux-amd64"       $CLI
-GOOS=linux   GOARCH=arm64 go build -o "$DIST/mailarchive-linux-arm64"       $CLI
-GOOS=windows GOARCH=amd64 go build -o "$DIST/mailarchive-windows-amd64.exe" $CLI
+echo "==> Linux binaries (the one program; run as 'mailarchive wizard' / 'mailarchive desktop')"
+GOOS=linux   GOARCH=amd64 go build -o "$DIST/mailarchive-linux-amd64" $ONE
+GOOS=linux   GOARCH=arm64 go build -o "$DIST/mailarchive-linux-arm64" $ONE
 
-echo "==> GUI binaries (Windows: no console; macOS ships as the .app, below)"
-GOOS=linux   GOARCH=amd64 go build -o "$DIST/mailarchive-gui-linux-amd64"   $GUI
-GOOS=windows GOARCH=amd64 go build -ldflags -H=windowsgui -o "$DIST/mailarchive-gui-windows-amd64.exe" $GUI
-
-echo "==> Desktop dashboard binaries (Windows: no console, same as GUI; Linux)"
-GOOS=linux   GOARCH=amd64 go build -o "$DIST/mailarchive-desktop-linux-amd64"   $DESKTOP
-GOOS=windows GOARCH=amd64 go build -ldflags -H=windowsgui -o "$DIST/mailarchive-desktop-windows-amd64.exe" $DESKTOP
+# The Windows pair — the SAME program built two ways. MA-614 and MA-628 pin that
+# these two GOOS=windows lines of ./cmd/mailarchive differ only in -o and in
+# -ldflags -H=windowsgui on the mailarchivew line.
+echo "==> Windows pair (console mailarchive.exe + no-console mailarchivew.exe)"
+GOOS=windows GOARCH=amd64 go build -o "$DIST/mailarchive.exe" $ONE
+GOOS=windows GOARCH=amd64 go build -ldflags -H=windowsgui -o "$DIST/mailarchivew.exe" $ONE
 
 echo "==> macOS .app bundle + universal CLI"
 OUT="$DIST" bash "$ROOT/packaging/macos/build-app.sh" "$VERSION"
 
 # Package the macOS CLI as a .tar.gz, never a bare binary: Finder opens a bare,
-# extension-less Mach-O in a text editor when double-clicked, and a download
-# loses its executable bit. A tarball unarchives to a clearly-named program
-# beside its instructions, with the exec bit preserved. Drop the bare universal
-# CLI so the release page shows exactly two macOS downloads (the app + this).
+# extension-less Mach-O in a text editor when double-clicked, and a download loses
+# the exec bit. A tarball unarchives to a clearly-named program beside its
+# instructions, exec bit preserved.
 echo "==> macOS CLI tarball"
 CLIDIR="$DIST/mailarchive-cli-macos"
 mkdir -p "$CLIDIR"
@@ -47,25 +51,55 @@ cp "$ROOT/packaging/macos/README-macOS.txt" "$CLIDIR/READ ME.txt"
 ( cd "$DIST" && tar -czf mailarchive-cli-macos.tar.gz mailarchive-cli-macos )
 rm -rf "$CLIDIR"
 
-# Windows MSI payload: the staging input for Steve's (out-of-repo) WiX build.
-# The three Windows binaries under their INSTALL names (no -windows-amd64 suffix,
-# matching `make build-windows` and the names shortcuts/schtasks reference),
-# plus branding art and the user docs the dashboard links to. Shipped as one
-# release asset; the WiX source consumes it unchanged.
+# Refuse, before packaging any Windows release file, a build that cannot be traced
+# to a commit: a missing vcs.revision or vcs.modified=true in `go version -m` means
+# the release bytes are not a clean checkout (SC7, SC11). MA-628 compares the pair's
+# build info; this is the release-side gate, so no other case of MA-614 needs a
+# clean working tree. (SC33 — that the main-module version is not "(devel)" — is a
+# stated OPEN condition: a plain `go build` reads "(devel)", so it is not a refusal
+# trigger here; it is noted, not enforced.)
+require_stamped() {
+  local f="$1" info
+  info="$(go version -m "$f" 2>/dev/null || true)"
+  grep -q 'vcs.revision=' <<<"$info"      || { echo "NOT STAMPED: $f has no vcs.revision (build from a committed checkout)"; exit 1; }
+  grep -q 'vcs.modified=false' <<<"$info" || { echo "NOT STAMPED: $f is vcs.modified=true (commit or stash changes before a release build)"; exit 1; }
+}
+require_stamped "$DIST/mailarchive.exe"
+require_stamped "$DIST/mailarchivew.exe"
+
+# The Windows release asset: one zip of the install names the owner double-clicks.
+# Flat members mailarchive.exe, mailarchivew.exe and READ ME.txt, byte-identical to
+# the MSI payload's files; no bare -windows-amd64.exe is published (§4.10, SC11).
+# OP-5: an operator who declines the zip ships the MSI alone and skips this block.
+echo "==> Windows zip (install names)"
+WINZIP="$DIST/mailarchive-windows"
+mkdir -p "$WINZIP"
+cp "$DIST/mailarchive.exe"  "$WINZIP/mailarchive.exe"
+cp "$DIST/mailarchivew.exe" "$WINZIP/mailarchivew.exe"
+cp "$ROOT/packaging/mailarchive-desktop/README-payload.txt" "$WINZIP/READ ME.txt"
+( cd "$WINZIP" && zip -q -y "$DIST/mailarchive-windows-amd64.zip" mailarchive.exe mailarchivew.exe "READ ME.txt" )
+rm -rf "$WINZIP"
+
+# Windows MSI payload: the staging input for the WiX build. The PAIR under their
+# install names, PLUS the two former-name copies of mailarchivew.exe (release N
+# until the floor, §7.1), branding, the payload README, PRODUCT-VERSION.txt (the
+# tag the MSI binds its ProductVersion to, MA-614) and the docs. One release asset.
 echo "==> Desktop MSI payload (Windows)"
 PAY="$DIST/mailarchive-desktop-windows-msi-payload"
 mkdir -p "$PAY/branding" "$PAY/docs"
-cp "$DIST/mailarchive-desktop-windows-amd64.exe" "$PAY/mailarchive-desktop.exe"
-cp "$DIST/mailarchive-gui-windows-amd64.exe"     "$PAY/mailarchive-gui.exe"
-cp "$DIST/mailarchive-windows-amd64.exe"         "$PAY/mailarchive.exe"
+cp "$DIST/mailarchive.exe"  "$PAY/mailarchive.exe"
+cp "$DIST/mailarchivew.exe" "$PAY/mailarchivew.exe"
+cp "$DIST/mailarchivew.exe" "$PAY/mailarchive-desktop.exe"   # former-name copy of mailarchivew.exe (§7.1)
+cp "$DIST/mailarchivew.exe" "$PAY/mailarchive-gui.exe"       # former-name copy of mailarchivew.exe (§7.1)
+printf '%s\n' "$PRODUCT_VERSION" > "$PAY/PRODUCT-VERSION.txt"
 cp "$ROOT/packaging/mailarchive-desktop/README-payload.txt" "$PAY/READ ME.txt"
-# Branding art is optional until a real .ico exists (branding/README.txt names
-# the expected files); copy whatever is present without failing the release.
+# Branding art is optional until a real .ico exists (branding/README.txt names the
+# expected files); copy whatever is present without failing the release.
 cp -a "$ROOT/packaging/mailarchive-desktop/branding/." "$PAY/branding/" 2>/dev/null || true
-cp "$ROOT/LICENSE"                   "$PAY/docs/LICENSE.txt"
+cp "$ROOT/LICENSE"                    "$PAY/docs/LICENSE.txt"
 cp "$ROOT/packaging/release-notes.md" "$PAY/docs/release-notes.md"
-cp "$ROOT/docs/goback.md"            "$PAY/docs/goback.md"
-cp "$ROOT/docs/graph-app-setup.md"   "$PAY/docs/graph-app-setup.md"
+cp "$ROOT/docs/goback.md"             "$PAY/docs/goback.md"
+cp "$ROOT/docs/graph-app-setup.md"    "$PAY/docs/graph-app-setup.md"
 ( cd "$DIST" && zip -q -r -y mailarchive-desktop-windows-msi-payload.zip mailarchive-desktop-windows-msi-payload )
 rm -rf "$PAY"
 
