@@ -77,13 +77,15 @@ type dRig struct {
 	cancel  context.CancelFunc
 	done    chan error
 
-	probe      string
-	probeCalls int
-	endOld     bool
-	endCalls   int
-	session    string
-	prefix     string // the session's path prefix, learned by cookieFromLink
-	version    string // the build version this launch stamps and compares (§4.5.3)
+	probe        string
+	probeCalls   int
+	endOld       bool
+	endedPID     int    // the pid EndOld reports ending, when endOld (§4.5.2)
+	endedProgram string // the program path EndOld reports ending
+	endCalls     int
+	session      string
+	prefix       string // the session's path prefix, learned by cookieFromLink
+	version      string // the build version this launch stamps and compares (§4.5.3)
 
 	exportDir string // the Extraction workspace's state directory ("" = none: it writes nothing)
 	policyOff bool   // the machine policy that turns the workspace off
@@ -114,9 +116,15 @@ func (g *dRig) env(rec *recorder) *launchEnv {
 		StateDir: func() (string, error) { return g.dir, nil },
 		Session:  g.session,
 		Open:     rec.open, ShowRefusal: rec.refuse, ShowLink: rec.show, ShowNotice: rec.notice,
-		Version:    g.version,
-		Probe:      func() string { g.probeCalls++; return g.probe },
-		EndOld:     func() bool { g.endCalls++; return g.endOld },
+		Version: g.version,
+		Probe:   func() string { g.probeCalls++; return g.probe },
+		EndOld: func() (int, string) {
+			g.endCalls++
+			if g.endOld {
+				return g.endedPID, g.endedProgram
+			}
+			return 0, ""
+		},
 		WatchEvery: 50 * time.Millisecond, Window: 2 * time.Second,
 		ExportDir: func() string { return g.exportDir }, WorkspaceOff: func() bool { return g.policyOff },
 	}
@@ -569,9 +577,9 @@ func TestDesktopNeverOpensASquatter(t *testing.T) {
 // port and the reader another; what answers at MailArchive's former address
 // 127.0.0.1:8097 is named, never silent: another program → the "former address"
 // notice in the dashboard's header and in `status`; an older instance with no
-// /_handoff → the pre-upgrade notice, unless it is this account's and was ended,
-// in which case nothing is said. An explicit -addr is not probed [CC22, CC23,
-// ruling OQ-9].
+// /_handoff that cannot be ended → the pre-upgrade notice. An explicit -addr is
+// not probed [CC22, CC23, ruling OQ-9]. (The ended case — this account's older
+// instance, successfully ended — is now named too, by MA-638.)
 func TestDesktopNamesWhatHoldsTheFormerAddress(t *testing.T) {
 	for _, c := range []struct {
 		name    string
@@ -582,7 +590,6 @@ func TestDesktopNamesWhatHoldsTheFormerAddress(t *testing.T) {
 	}{
 		{"another program", instance.FormerProgram, false, instance.FormerProgram, 0},
 		{"an older instance that cannot be ended", instance.FormerPreUpgrade, false, instance.FormerPreUpgrade, 1},
-		{"an older instance of this account, ended", instance.FormerPreUpgrade, true, "", 1},
 		{"nothing there", "", false, "", 0},
 	} {
 		g := newDRig(t)

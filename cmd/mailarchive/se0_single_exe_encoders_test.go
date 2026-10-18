@@ -101,11 +101,6 @@ func TestSE0_MA635_exeMissingInstallFolderBranch(t *testing.T) {
 	t.Skip("SE2 encoder: a missing known-name file in the program's own directory names installer Repair; others keep re-install")
 }
 
-// covers: MA-638, R5, S59
-func TestSE0_MA638_endedOlderInstanceNamed(t *testing.T) {
-	t.Skip("SE1 encoder: after EndOld, the dashboard header and status name the pid; no line when nothing was ended")
-}
-
 // covers: MA-641, S59
 func TestSE0_MA641_installAndRepairAgree(t *testing.T) {
 	t.Skip("SE2 encoder: for the same inputs, installSpec and repairSpec produce the same Args/Exe/wrapper decision")

@@ -71,6 +71,9 @@ type Config struct {
 	// (instance.FormerProgram or instance.FormerPreUpgrade): the header says so, so
 	// a typed address or a bookmark is never trusted silently [CC22, CC23].
 	Former string
+	// Ended, when set, is the older instance this launch ended (§4.5.2, MA-638); its
+	// pid and program name the header's "ended" notice.
+	Ended *instance.Ended
 	// NewLink makes a fresh one-time link to the dashboard, for "Use another
 	// browser…"; nil when this process cannot (the endpoint then says so).
 	NewLink func() string
@@ -125,6 +128,16 @@ func (cfg Config) goos() string {
 		return cfg.GOOS
 	}
 	return runtime.GOOS
+}
+
+// formerNotice is the header's notice about the former address: the static text
+// for a program/preupgrade listener, or the dynamic ended-instance line when this
+// launch ended an older instance (§4.5.2, MA-638).
+func (cfg Config) formerNotice() string {
+	if cfg.Former == instance.FormerEnded {
+		return instance.EndedNotice(cfg.Ended)
+	}
+	return instance.NoticeFor(cfg.Former)
 }
 
 // account is the OS account the page names.
@@ -595,7 +608,7 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 	}{Export: !cfg.WorkspaceOff, Epoch: epoch, CSRF: csrf, Cards: cfg.cards(), Vault: vaultPhrase(), OutDir: cfg.effectiveOut(), ReaderURL: cfg.ReaderURL, SignedIn: signedIn, UPN: upn,
 		KeepRaw: s.KeepRaw, IncludeDeleted: s.IncludeDeleted, IncludeJunk: s.IncludeJunk,
 		Interval: orElse(s.Interval, "weekly"), WeeklyTime: orElse(s.WeeklyTime, "03:00"),
-		Account: cfg.account(), SessionsLine: cfg.sessionsLine(), FormerNotice: instance.NoticeFor(cfg.Former), ResidualOS: residualOS(cfg.goos())}
+		Account: cfg.account(), SessionsLine: cfg.sessionsLine(), FormerNotice: cfg.formerNotice(), ResidualOS: residualOS(cfg.goos())}
 	data.KindLine = kindLine(archiveKind(data.OutDir))
 	if data.LocalOnly = cfg.localOnly(); data.LocalOnly {
 		data.ArchiveNowOff = archiveNowOff(cfg.goos(), data.OutDir)

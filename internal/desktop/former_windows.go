@@ -40,30 +40,32 @@ type mibTCPRowOwnerPID struct {
 // reports whether the address is free afterwards. Anything else is left alone:
 // the dashboard and `status` name it instead [CC22]. The owner of a listening
 // port comes from GetExtendedTcpTable.
-func endPreUpgrade(addr string) bool {
+func endPreUpgrade(addr string) (int, string) {
 	_, ps, err := net.SplitHostPort(addr)
 	port, perr := strconv.Atoi(ps)
 	if err != nil || perr != nil {
-		return false
+		return 0, ""
 	}
 	pid := listenerPID(port)
 	if pid == 0 || !isOurOwnProgram(pid) {
-		return false
+		return 0, ""
 	}
 	h, err := windows.OpenProcess(windows.PROCESS_TERMINATE, false, uint32(pid))
 	if err != nil {
-		return false
+		return 0, ""
 	}
 	defer windows.CloseHandle(h)
 	if err := windows.TerminateProcess(h, 1); err != nil {
-		return false
+		return 0, ""
 	}
+	// The ended instance is our own program (isOurOwnProgram), so its path is ours.
+	exe, _ := os.Executable()
 	for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
 		if probeFormer(addr, 200*time.Millisecond) == "" {
-			return true
+			return pid, exe
 		}
 	}
-	return false
+	return 0, ""
 }
 
 // listenerPID is the process listening on the IPv4 port, or 0.

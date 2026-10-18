@@ -16,11 +16,11 @@ import (
 // is this account's own — the same program file, started by the same user — and
 // reports whether the address is free afterwards. Anything else is left alone:
 // the dashboard and `status` name it instead [CC22].
-func endPreUpgrade(addr string) bool {
+func endPreUpgrade(addr string) (int, string) {
 	_, ps, err := net.SplitHostPort(addr)
 	port, perr := strconv.Atoi(ps)
 	if err != nil || perr != nil {
-		return false
+		return 0, ""
 	}
 	inode := ""
 	for _, f := range []string{"/proc/net/tcp", "/proc/net/tcp6"} {
@@ -31,21 +31,23 @@ func endPreUpgrade(addr string) bool {
 		}
 	}
 	if inode == "" {
-		return false
+		return 0, ""
 	}
 	pid := ownerOfSocket(inode)
 	if pid == 0 || !isOurOwnProgram(pid) {
-		return false
+		return 0, ""
 	}
 	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
-		return false
+		return 0, ""
 	}
+	// The ended instance is our own program (isOurOwnProgram), so its path is ours.
+	exe, _ := os.Executable()
 	for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
 		if probeFormer(addr, 200*time.Millisecond) == "" {
-			return true
+			return pid, exe
 		}
 	}
-	return false
+	return 0, ""
 }
 
 // ownerOfSocket is the process that holds the socket with this inode, or 0.

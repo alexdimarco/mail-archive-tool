@@ -47,6 +47,9 @@ type Input struct {
 	// squat-and-phish notice of design-local-confidentiality CC23 [ruling OQ-9] and
 	// the pre-upgrade instance of CC22.
 	DesktopFormer string
+	// DesktopEnded, when set, is the older instance the running MailArchive Desktop
+	// ended at start (§4.5.2, MA-638); its line names the pid and program.
+	DesktopEnded *instance.Ended
 
 	// HasManifestFile is true when a manifest file exists on disk (even if it
 	// cannot be loaded); HasManifest is true only when it loaded. A present-but-
@@ -371,6 +374,12 @@ func Assess(in Input, now time.Time) Report {
 			code = "desktop_preupgrade"
 		}
 		r.warn(code, txt)
+	}
+	// An older instance this launch ended: name it (§4.5.2, MA-638).
+	if in.DesktopFormer == instance.FormerEnded {
+		if txt := instance.EndedNotice(in.DesktopEnded); txt != "" {
+			r.warn("desktop_ended_older", txt)
+		}
 	}
 
 	// Last run.
@@ -1113,6 +1122,7 @@ func jobOutOf(job []string) string {
 func Gather(out, nameOverride string) Input {
 	in := Input{Out: out, GOOS: runtime.GOOS, PIDAlive: procs.Alive}
 	in.DesktopFormer = instance.Former()
+	in.DesktopEnded = instance.EndedRecord()
 	in.ThisHost, _ = os.Hostname()
 	if svc, ok := util.UnderCloudSync(out); ok {
 		in.OutUnderSync = svc

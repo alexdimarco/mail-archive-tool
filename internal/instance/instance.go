@@ -97,6 +97,8 @@ type Info struct {
 	// hands off can tell a holder of another or no version and name it, and still
 	// exit 0 (§4.5.3, MA-637). Optional: a pre-SE1 instance has none.
 	Version string `json:"version,omitempty"`
+	// Ended, when set, is the older instance this launch ended (§4.5.2, MA-638).
+	Ended *Ended `json:"ended,omitempty"`
 }
 
 // What a desktop start found at MailArchive's former address 127.0.0.1:8097
@@ -111,6 +113,10 @@ const (
 	// FormerPreUpgrade: an older MailArchive Desktop (one with no /_handoff) still
 	// runs and could not be ended.
 	FormerPreUpgrade = "preupgrade"
+	// FormerEnded: this launch ended an older MailArchive Desktop of this account;
+	// the pid and program travel in the Ended field and the notice is dynamic, so
+	// NoticeFor does not cover it (§4.5.2). An older reader ignores this kind.
+	FormerEnded = "ended"
 
 	// FormerProgramNotice and PreUpgradeNotice are the texts of the dashboard's
 	// header and of `status` (§7.6).
@@ -129,6 +135,22 @@ func NoticeFor(kind string) string {
 	return ""
 }
 
+// Ended records an older instance this launch ended (§4.5.2): its pid and the
+// program path (already control-stripped), so the dashboard header and status can
+// name it. Optional; an older reader ignores it.
+type Ended struct {
+	PID     int    `json:"pid"`
+	Program string `json:"program,omitempty"`
+}
+
+// EndedNotice is the §4.5.2 line naming the ended instance, "" for none.
+func EndedNotice(e *Ended) string {
+	if e == nil || e.PID == 0 {
+		return ""
+	}
+	return fmt.Sprintf("This launch ended an older MailArchive Desktop of this account (process %d, %s). A run it was doing reads RED until the next run finishes.", e.PID, e.Program)
+}
+
 // Former is what the running desktop instance of this account recorded at start
 // about the former address, for `status` and the dashboard's health view: "" when
 // no live instance recorded one. The file is read like any instance file, and a
@@ -144,10 +166,35 @@ func Former() string {
 // FormerIn is Former for the instance file of a session in dir.
 func FormerIn(dir, session string) string {
 	info, err := Read(FilePathIn(dir, session))
-	if err != nil || !procs.Alive(info.PID) || NoticeFor(info.Former) == "" {
+	if err != nil || !procs.Alive(info.PID) {
 		return ""
 	}
-	return info.Former
+	// FormerEnded carries a dynamic notice (the pid/program, via Ended), so it is
+	// kept although NoticeFor does not cover it; other kinds survive only with a
+	// notice. An unknown kind is dropped (§8.2).
+	if info.Former == FormerEnded || NoticeFor(info.Former) != "" {
+		return info.Former
+	}
+	return ""
+}
+
+// EndedRecord is what the running desktop instance of this account recorded
+// ending at start (§4.5.2), or nil when no live instance recorded one.
+func EndedRecord() *Ended {
+	dir, err := Dir()
+	if err != nil {
+		return nil
+	}
+	return EndedFor(dir, LogonSession())
+}
+
+// EndedFor is Ended for the instance file of a session in dir.
+func EndedFor(dir, session string) *Ended {
+	info, err := Read(FilePathIn(dir, session))
+	if err != nil || !procs.Alive(info.PID) || info.Former != FormerEnded {
+		return nil
+	}
+	return info.Ended
 }
 
 // NewKey returns a fresh key K and its hex form.

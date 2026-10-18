@@ -7,4 +7,4 @@ package desktop
 // GetExtendedTcpTable). The dashboard and `status` then say an older MailArchive
 // Desktop is still running and that signing out and back in finishes the upgrade
 // [CC22].
-func endPreUpgrade(addr string) bool { return false }
+func endPreUpgrade(addr string) (int, string) { return 0, "" }

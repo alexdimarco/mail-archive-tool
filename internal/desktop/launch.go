@@ -45,9 +45,10 @@ type launchEnv struct {
 	Version string
 	// Probe says what answers at 127.0.0.1:8097 (instance.FormerProgram,
 	// instance.FormerPreUpgrade, or "" for nothing); EndOld ends an older instance of
-	// this account found there and reports whether it did [CC22, CC23].
+	// this account found there and reports what it ended — the pid and program path,
+	// or (0, "") for nothing (§4.5.2, MA-638) [CC22, CC23].
 	Probe  func() string
-	EndOld func() bool
+	EndOld func() (pid int, program string)
 	// WatchEvery is how often the lock holder re-checks its lock and instance file
 	// (a minute); Window how long a launch keeps trying an instance that does not
 	// answer (15 s) [CC21].
@@ -70,7 +71,7 @@ func osEnv() *launchEnv {
 		Open: browser.Open, ShowRefusal: showRefusal, ShowLink: showLink, ShowNotice: showNotice,
 		Version:    buildVersion(),
 		Probe:      func() string { return probeFormer(instance.FormerAddress, 800*time.Millisecond) },
-		EndOld:     func() bool { return endPreUpgrade(instance.FormerAddress) },
+		EndOld:     func() (int, string) { return endPreUpgrade(instance.FormerAddress) },
 		WatchEvery: time.Minute, Window: instance.DefaultWait,
 		ExportDir: StateDir, WorkspaceOff: workspacePolicyOff,
 	}
@@ -343,10 +344,16 @@ func serveInstance(ctx context.Context, h *instance.Holder, o *launchOpts, env *
 	// left to us: an older instance there is ended if it is this account's, and
 	// whatever else holds it is named, never silently [CC22, CC23, ruling OQ-9].
 	former := ""
+	var ended *instance.Ended
 	if !o.addrSet {
 		former = env.Probe()
-		if former == instance.FormerPreUpgrade && env.EndOld() {
-			former = ""
+		if former == instance.FormerPreUpgrade {
+			if pid, program := env.EndOld(); pid != 0 {
+				former = instance.FormerEnded
+				ended = &instance.Ended{PID: pid, Program: stripControl(program)}
+			}
+			// Could not end it: keep FormerPreUpgrade, so the header and status show
+			// the pre-upgrade notice until the owner signs out (§4.5.2, CC22).
 		}
 	}
 	readerLn, err := net.Listen("tcp", o.readerAddr)
@@ -367,6 +374,7 @@ func serveInstance(ctx context.Context, h *instance.Holder, o *launchOpts, env *
 	dcfg.ReaderURL = "http://" + readerLn.Addr().String() + sess.Prefix()
 	dcfg.Sessions = sess.Opened
 	dcfg.Former = former
+	dcfg.Ended = ended
 	dcfg.NewLink = func() string { return sess.Link(origin, localweb.LinkTTL) }
 
 	keyHex, key := instance.NewKey()
@@ -385,7 +393,7 @@ func serveInstance(ctx context.Context, h *instance.Holder, o *launchOpts, env *
 	exe, _ := os.Executable()
 	info := instance.Info{
 		PID: os.Getpid(), Exe: exe, Started: time.Now(), Config: o.cfgPath, Out: o.out, Session: env.Session,
-		Dashboard: ln.Addr().String(), Reader: readerLn.Addr().String(), Key: keyHex, Former: former, Version: env.Version,
+		Dashboard: ln.Addr().String(), Reader: readerLn.Addr().String(), Key: keyHex, Former: former, Version: env.Version, Ended: ended,
 	}
 	if err := h.Publish(info); err != nil {
 		ln.Close()
