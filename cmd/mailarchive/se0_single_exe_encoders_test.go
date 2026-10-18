@@ -16,11 +16,6 @@ package main
 
 import "testing"
 
-// covers: MA-613, R33, S59
-func TestSE0_MA613_verbFlagAndExitCodeWalk(t *testing.T) {
-	t.Skip("SE1 encoder: each verb has its own -h; exit codes are a subset of the X1 map")
-}
-
 // covers: MA-615, R33, R18, S59
 func TestSE0_MA615_programForScheduleWrapped(t *testing.T) {
 	t.Skip("SE2 encoder: ProgramForSchedule(wrapped) per OS/name/reason; sibling qualification; translocation")

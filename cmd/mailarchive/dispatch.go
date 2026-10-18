@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -141,6 +142,11 @@ func runResolvedVerb(base string, args []string) (code int, handled bool) {
 		return 2, true
 	case r.verb == "desktop":
 		if err := launchDesktop(r.args); err != nil {
+			// `desktop -h`: the flagset printed its own usage; help is not an error
+			// (MA-613, X1 — exit 0, not a spurious 1 with a "help requested" line).
+			if errors.Is(err, flag.ErrHelp) {
+				return 0, true
+			}
 			// A refusal the desktop already showed (its dialog and stderr) is not
 			// reprinted here, so it reaches each channel once (§4.1 rule 4, MA-636).
 			if !desktop.RefusalShown(err) {
@@ -150,8 +156,16 @@ func runResolvedVerb(base string, args []string) (code int, handled bool) {
 		}
 		return 0, true
 	case r.verb == "wizard":
+		if isHelpRequest(r.args) {
+			fmt.Fprint(os.Stderr, wizardVerbHelp) // MA-613: the wizard verb's own -h
+			return 0, true
+		}
 		return runWizard(), true
 	case r.verb == "run-job":
+		if isHelpRequest(r.args) {
+			fmt.Fprint(os.Stderr, runJobVerbHelp) // MA-613: the run-job verb's own -h
+			return 0, true
+		}
 		if len(r.args) == 0 {
 			fmt.Fprintln(os.Stderr, "mailarchive: run-job needs a saved job file path")
 			return 2, true
@@ -161,3 +175,32 @@ func runResolvedVerb(base string, args []string) (code int, handled bool) {
 		return 0, false
 	}
 }
+
+// isHelpRequest reports whether a GUI verb's arguments ask for help. The wizard
+// and run-job take no flags of their own, so they recognise -h here rather than
+// through a flag.FlagSet (desktop has its own flagset); -help and --help are the
+// forms the Go flag package also treats as help (MA-613).
+func isHelpRequest(args []string) bool {
+	for _, a := range args {
+		if a == "-h" || a == "-help" || a == "--help" {
+			return true
+		}
+	}
+	return false
+}
+
+// wizardVerbHelp and runJobVerbHelp are the wizard and run-job verbs' own -h text
+// (MA-613). Each verb has its own help; neither takes a flag of its own.
+const wizardVerbHelp = `Usage: mailarchive wizard
+
+The step-by-step setup wizard, with native OS dialogs and no console window. It
+walks you through choosing a mailbox, an output folder and (optionally) a weekly
+backup schedule. It takes no flags of its own.
+`
+
+const runJobVerbHelp = `Usage: mailarchive run-job FILE
+
+Run a saved job file headlessly — no dialogs, no console — exactly as an installed
+schedule runs it. FILE is the job the wizard or MailArchive Desktop saved. It takes
+no other flags.
+`
