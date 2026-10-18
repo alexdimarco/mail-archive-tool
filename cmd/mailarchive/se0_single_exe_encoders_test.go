@@ -16,11 +16,6 @@ package main
 
 import "testing"
 
-// covers: MA-612, R33, S59
-func TestSE0_MA612_noSelfReExec(t *testing.T) {
-	t.Skip("SE1 encoder: AST walk of every process-start site + recording-fake twins; no self re-exec")
-}
-
 // covers: MA-613, R33, S59
 func TestSE0_MA613_verbFlagAndExitCodeWalk(t *testing.T) {
 	t.Skip("SE1 encoder: each verb has its own -h; exit codes are a subset of the X1 map")
