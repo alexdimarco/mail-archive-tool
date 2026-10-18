@@ -107,11 +107,15 @@ func TestPackagingFilesMatchTheNewLaunch(t *testing.T) {
 	if closeApp == nil || closeApp["Target"] != "mailarchive-desktop.exe" || closeApp["TerminateProcess"] == "" {
 		t.Errorf("Product.wxs lacks util:CloseApplication for mailarchive-desktop.exe with TerminateProcess: %v", closeApp)
 	}
-	if s := shortcuts["CopyLinkShortcut"]; s["Name"] != "Copy MailArchive link" || s["Arguments"] != "-copy-link" || s["Directory"] != "ApplicationProgramsFolder" {
+	// Since MA-614 the shortcuts run the no-console build mailarchivew.exe with an
+	// explicit verb (the pair model, §4.1/§7.1); the Copy-link and Startup forms gain
+	// the `desktop` verb. util:CloseApplication still targets the former name
+	// mailarchive-desktop.exe (checked above), the CC22 pre-upgrade instance.
+	if s := shortcuts["CopyLinkShortcut"]; s["Name"] != "Copy MailArchive link" || s["Arguments"] != "desktop -copy-link" || s["Directory"] != "ApplicationProgramsFolder" {
 		t.Errorf("the Start Menu shortcut \"Copy MailArchive link\" is missing or wrong: %v", s)
 	}
-	if shortcuts["StartupShortcut"]["Arguments"] != "-no-browser" {
-		t.Errorf("the Startup shortcut lost -no-browser: %v", shortcuts["StartupShortcut"])
+	if shortcuts["StartupShortcut"]["Arguments"] != "desktop -no-browser" {
+		t.Errorf("the Startup shortcut lost its quiet desktop start (desktop -no-browser): %v", shortcuts["StartupShortcut"])
 	}
 
 	// Shortcuts must live in real Windows Installer system folders. CommonDesktopFolder,
@@ -198,7 +202,9 @@ func TestPackagingFilesMatchTheNewLaunch(t *testing.T) {
 	// Cleanup-CurrentUser.ps1: it ends the user's instance and removes the state the
 	// code writes, under the names the code writes them.
 	cleanup := packagingFile(t, "Cleanup-CurrentUser.ps1")
-	if !strings.Contains(cleanup, "Get-Process mailarchive-desktop") || !strings.Contains(cleanup, "Stop-Process") {
+	// Since MA-614 the instance runs as the no-console build mailarchivew.exe (with
+	// the former-name copies also stopped); the stop must still precede the removal.
+	if !strings.Contains(cleanup, "Get-Process mailarchivew") || !strings.Contains(cleanup, "Stop-Process") {
 		t.Errorf("Cleanup-CurrentUser.ps1 does not end the user's running instance")
 	}
 	var patterns []string
