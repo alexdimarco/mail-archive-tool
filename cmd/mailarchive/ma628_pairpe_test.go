@@ -1,6 +1,7 @@
 package main
 
 import (
+	"debug/buildinfo"
 	"debug/pe"
 	"os"
 	"os/exec"
@@ -10,6 +11,7 @@ import (
 	"testing"
 
 	"mail-archive-tool/internal/assure"
+	"mail-archive-tool/internal/schedule"
 )
 
 // Windows PE image subsystem values (winnt.h IMAGE_SUBSYSTEM_*).
@@ -80,9 +82,17 @@ func TestMA628_PairBuildSubsystem(t *testing.T) {
 		t.Errorf("the two GOOS=windows build lines differ by more than -o name and -ldflags -H=windowsgui:\n  %q\n  %q", lines[0][1], lines[1][1])
 	}
 
-	t.Run("buildinfo equality (SameBuild)", func(t *testing.T) {
-		t.Skip("SE2 §4.6.0: SameBuild compares path/main module/deps/every setting except -ldflags; built with the SE2 slice (a per-case skip until then)")
-	})
+	// The pair is the same build of the one program — equal but for -ldflags (SC7,
+	// §4.6.0). SameBuild's false cases are proven by the unit table in
+	// internal/schedule; here it runs on the two real binaries just built.
+	ic, cerr := buildinfo.ReadFile(filepath.Join(tmp, "mailarchive.exe"))
+	ig, gerr := buildinfo.ReadFile(filepath.Join(tmp, "mailarchivew.exe"))
+	if cerr != nil || gerr != nil {
+		t.Fatalf("reading the pair's build info: console=%v gui=%v", cerr, gerr)
+	}
+	if !schedule.SameBuild(ic, ig) {
+		t.Error("the built pair is not the same build except -ldflags (SC7, MA-628)")
+	}
 }
 
 // normalizeBuildLine strips the -o target and -ldflags -H=windowsgui so the two
