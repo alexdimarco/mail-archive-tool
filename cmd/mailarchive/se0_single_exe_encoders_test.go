@@ -31,11 +31,6 @@ func TestSE0_MA618_whenRepairIsOffered(t *testing.T) {
 	t.Skip("SE2 encoder: repair offered only for a corroborated run-job/capture; volatile-directory question first")
 }
 
-// covers: MA-623, R18, S59
-func TestSE0_MA623_rollbackReadsEveryFile(t *testing.T) {
-	t.Skip("SE2 encoder: an older-shaped reader decodes the descriptor/job/instance files; pre-SE2 predicate outcomes")
-}
-
 // covers: MA-629, R18, S59
 func TestSE0_MA629_statusProgramAndScheduledLine(t *testing.T) {
 	t.Skip("SE2 encoder: the Program: line's one label per state in order; the scheduled: <kind> line")

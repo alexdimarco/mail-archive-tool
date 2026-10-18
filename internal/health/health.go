@@ -1291,21 +1291,21 @@ func exeIdentity(d schedule.Descriptor) exeIdent {
 		return exeIdent{exists: true} // 2. a translocated copy: not this program (exe_moved, move remedy)
 	}
 	name := filepath.Base(rec)
-	console := goos == "windows" && nameEq(name, "mailarchive.exe", goos)
+	console := goos == "windows" && strings.EqualFold(name, "mailarchive.exe")
 
 	self, selfErr := schedule.SelfResolver()
 	if selfErr == nil {
 		if selfFi, serr := os.Stat(self); serr == nil && os.SameFile(selfFi, fi) {
-			return exeIdent{exists: true, isThis: true, basis: "same_file", former: formerName(name, goos), console: console} // 3.
+			return exeIdent{exists: true, isThis: true, basis: "same_file", former: schedule.FormerName(name, goos), console: console} // 3.
 		}
-		if sameArchivePath(filepath.Dir(self), filepath.Dir(rec), goos) && knownName(name, goos) { // 4.
+		if sameArchivePath(filepath.Dir(self), filepath.Dir(rec), goos) && schedule.KnownName(name, goos) { // 4.
 			switch {
-			case !knownName(filepath.Base(self), goos):
+			case !schedule.KnownName(filepath.Base(self), goos):
 				return exeIdent{exists: true} // a renamed/suffixed running file never vouches for a sibling (exe_moved)
 			default:
 				ok, reason := siblingQualifies(self, rec)
 				if ok {
-					return exeIdent{exists: true, isThis: true, basis: "program_name", former: formerName(name, goos), console: console}
+					return exeIdent{exists: true, isThis: true, basis: "program_name", former: schedule.FormerName(name, goos), console: console}
 				}
 				if reason == schedule.ReasonPairOutOfStep { // owner matched, build readable but differs
 					return exeIdent{exists: true, skew: true}
@@ -1314,7 +1314,7 @@ func exeIdentity(d schedule.Descriptor) exeIdent {
 			}
 		}
 	}
-	if formerName(name, goos) {
+	if schedule.FormerName(name, goos) {
 		return exeIdent{exists: true} // 5. the fallback never makes a former name this program (exe_moved)
 	}
 	if d.ExeSize == fi.Size() && !d.ExeMTime.IsZero() && d.ExeMTime.Equal(fi.ModTime().UTC()) {
@@ -1323,41 +1323,9 @@ func exeIdentity(d schedule.Descriptor) exeIdent {
 	return exeIdent{exists: true} // 7. otherwise (exe_moved)
 }
 
-// knownName reports whether base is one of the one program's install or former
-// names, matched per OS (EqualFold on Windows and macOS, exact on Linux), with no
-// trimming of trailing dots or spaces.
-func knownName(base, goos string) bool {
-	for _, n := range []string{"mailarchive", "mailarchivew", "mailarchive-desktop", "mailarchive-gui"} {
-		if nameEq(base, n, goos) || nameEq(base, n+".exe", goos) {
-			return true
-		}
-	}
-	return false
-}
-
-// formerName reports whether base begins with a former-name prefix
-// (mailarchive-desktop or mailarchive-gui), so a former release asset such as
-// mailarchive-gui-linux-amd64 is a former name too (§4.1 rule 6's test).
-func formerName(base, goos string) bool {
-	return hasNamePrefix(base, "mailarchive-desktop", goos) || hasNamePrefix(base, "mailarchive-gui", goos)
-}
-
-func nameEq(a, b, goos string) bool {
-	if goos == "linux" {
-		return a == b
-	}
-	return strings.EqualFold(a, b)
-}
-
-func hasNamePrefix(s, prefix, goos string) bool {
-	if len(s) < len(prefix) {
-		return false
-	}
-	if goos == "linux" {
-		return s[:len(prefix)] == prefix
-	}
-	return strings.EqualFold(s[:len(prefix)], prefix)
-}
+// knownName and formerName (schedule.KnownName / schedule.FormerName) classify
+// the one program's install and former names; they live in internal/schedule so
+// the former-name tokens are kept in one place (§4.6.2).
 
 func sameFile(a, b string) bool {
 	fa, err := os.Stat(a)

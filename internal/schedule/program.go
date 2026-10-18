@@ -119,6 +119,43 @@ func ProgramNote(exe string, reason Reason) string {
 	return note
 }
 
+// KnownName reports whether base is one of the one program's install or former
+// names, matched per OS (EqualFold on Windows and macOS, exact on Linux), with no
+// trimming of trailing dots or spaces (§4.6.2). The former names stay in the set
+// until SE4.
+func KnownName(base, goos string) bool {
+	for _, n := range []string{"mailarchive", "mailarchivew", "mailarchive-desktop", "mailarchive-gui"} {
+		if nameEq(base, n, goos) || nameEq(base, n+".exe", goos) {
+			return true
+		}
+	}
+	return false
+}
+
+// FormerName reports whether base begins with a former-name prefix
+// (mailarchive-desktop or mailarchive-gui), so a former release asset such as
+// mailarchive-gui-linux-amd64 is a former name too (§4.1 rule 6's test).
+func FormerName(base, goos string) bool {
+	return hasNamePrefix(base, "mailarchive-desktop", goos) || hasNamePrefix(base, "mailarchive-gui", goos)
+}
+
+func nameEq(a, b, goos string) bool {
+	if goos == "linux" {
+		return a == b
+	}
+	return strings.EqualFold(a, b)
+}
+
+func hasNamePrefix(s, prefix, goos string) bool {
+	if len(s) < len(prefix) {
+		return false
+	}
+	if goos == "linux" {
+		return s[:len(prefix)] == prefix
+	}
+	return strings.EqualFold(s[:len(prefix)], prefix)
+}
+
 // programForSchedule is the pure core of ProgramForSchedule: it takes the OS,
 // the already-resolved absolute self, the wrapper decision and the sibling test,
 // so every OS, name and reason is table-testable from any host.

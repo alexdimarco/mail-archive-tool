@@ -142,6 +142,39 @@ func TestMA615_SiblingQualifies(t *testing.T) {
 	}
 }
 
+// covers: MA-616, R33, R18, S59
+// KnownName and FormerName classify the one program's names (§4.6.2): KnownName is
+// the exact install/former set (per OS, EqualFold on Windows/macOS, exact on Linux);
+// FormerName is a prefix test, so former release assets count too.
+func TestMA616_NameClassifiers(t *testing.T) {
+	for _, n := range []string{"mailarchive", "mailarchivew", "mailarchive-desktop", "mailarchive-gui", "mailarchive.exe", "mailarchivew.exe"} {
+		if !KnownName(n, "windows") || !KnownName(n, "darwin") {
+			t.Errorf("KnownName(%q) should hold on windows/darwin", n)
+		}
+	}
+	if !KnownName("MailArchive.EXE", "windows") {
+		t.Error("KnownName should be case-insensitive on Windows")
+	}
+	if KnownName("MAILARCHIVE", "linux") {
+		t.Error("KnownName should be exact on Linux")
+	}
+	for _, n := range []string{"weekly-backup-runner", "mailarchiver", ""} {
+		if KnownName(n, "linux") {
+			t.Errorf("KnownName(%q) should be false", n)
+		}
+	}
+	for _, n := range []string{"mailarchive-desktop", "mailarchive-gui", "mailarchive-gui-linux-amd64", "mailarchive-desktop-windows-amd64.exe"} {
+		if !FormerName(n, "linux") {
+			t.Errorf("FormerName(%q) should hold (prefix test, assets included)", n)
+		}
+	}
+	for _, n := range []string{"mailarchive", "mailarchivew", "mailarchive.exe"} {
+		if FormerName(n, "linux") {
+			t.Errorf("FormerName(%q) should be false (not a former name)", n)
+		}
+	}
+}
+
 // covers: MA-630, R18, S59
 // ProgramNote renders a ProgramForSchedule result for every surface: empty when
 // there is nothing to say (none, sibling, wrapped_console); otherwise the one
