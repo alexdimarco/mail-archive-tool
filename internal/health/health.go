@@ -1308,6 +1308,53 @@ func exeIdentity(d schedule.Descriptor) exeIdent {
 // the one program's install and former names; they live in internal/schedule so
 // the former-name tokens are kept in one place (§4.6.2).
 
+// programLabel is status's one-label-per-state identity of the recorded
+// schedule's program (§6, MA-629), checked in this fixed order: missing (with the
+// former-name hint); a translocated copy; a different build; not this program; a
+// former name; the command-line build; unchanged since install; this program.
+func programLabel(in Input) string {
+	switch {
+	case !in.ExeExists:
+		if schedule.FormerName(filepath.Base(in.Desc.Exe), in.GOOS) {
+			return "missing (" + filepath.Base(in.Desc.Exe) + " was a former name of this program, removed by an upgrade)"
+		}
+		return "missing"
+	case !in.ExeIsThis:
+		switch {
+		case strings.Contains(strings.ToLower(filepath.ToSlash(in.Desc.Exe)), "/apptranslocation/"):
+			return "not this program (a temporary copy macOS made of a downloaded app)"
+		case in.ExeSkew:
+			return "a different build of this program"
+		default:
+			return "not this program"
+		}
+	default:
+		switch {
+		case in.ExeFormerName:
+			return "a former name of this program"
+		case in.ExeConsoleBuild:
+			return "the command-line build of this program (a console shows while it runs)"
+		case in.ExeBasis == "unchanged_since_install":
+			return "unchanged since it was installed (not compared with this program)"
+		default:
+			return "this program"
+		}
+	}
+}
+
+// scheduledKind names the schedule's kind for status (§6, MA-629): the kind
+// owner-side state corroborates, else the recorded descriptor's own kind (an
+// uncorroborated export stands for itself). Only called for a readable descriptor.
+func scheduledKind(in Input) schedule.Kind {
+	ev := schedule.BuildKindEvidence(in.Out)
+	for _, k := range []schedule.Kind{schedule.KindRunJob, schedule.KindCapture, schedule.KindExport} {
+		if ev.Corroborated[k] {
+			return k
+		}
+	}
+	return schedule.KindOf(in.Desc.Job)
+}
+
 func sameFile(a, b string) bool {
 	fa, err := os.Stat(a)
 	if err != nil {
@@ -1515,8 +1562,11 @@ func Summary(in Input, rep Report) []string {
 	case in.HasDescriptor:
 		lines = append(lines, fmt.Sprintf("Schedule:   %q %s · %s at %s · runs %s · installed %s (UTC) on %s",
 			in.Desc.Name, in.SchedState, in.Desc.Interval, in.Desc.At, in.Desc.Exe, in.Desc.InstalledAt.UTC().Format("2006-01-02"), in.Desc.Host))
+		lines = append(lines, "Program:    "+programLabel(in))
+		lines = append(lines, "scheduled:  "+string(scheduledKind(in)))
 	case in.HasDescriptorFile:
 		lines = append(lines, "Schedule:   (descriptor present but unreadable — see the posture below)")
+		lines = append(lines, "scheduled (kind not readable)")
 	default:
 		lines = append(lines, "Schedule:   none recorded")
 	}

@@ -31,11 +31,6 @@ func TestSE0_MA618_whenRepairIsOffered(t *testing.T) {
 	t.Skip("SE2 encoder: repair offered only for a corroborated run-job/capture; volatile-directory question first")
 }
 
-// covers: MA-629, R18, S59
-func TestSE0_MA629_statusProgramAndScheduledLine(t *testing.T) {
-	t.Skip("SE2 encoder: the Program: line's one label per state in order; the scheduled: <kind> line")
-}
-
 // covers: MA-633, R18, S59
 func TestSE0_MA633_perKindRemedies(t *testing.T) {
 	t.Skip("SE2 encoder: RepairRoute/repairHow per kind; no run-job/capture remedy offers schedule -install")
