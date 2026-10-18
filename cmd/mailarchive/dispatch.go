@@ -63,6 +63,14 @@ func resolveInvocation(invokedBase string, args []string) verbRoute {
 		return resolveGUIFormerName(args)
 	}
 
+	// Under the program's own name (every name that is not a former name), an
+	// empty argument list is the no-argument rule of §4.3 (MA-620): defaultVerb
+	// reads the OS inputs at runtime and chooses desktop, wizard or the usage
+	// refusal. resolveInvocation stays pure, so the impure read lives in runNoArg.
+	if len(args) == 0 {
+		return verbRoute{verb: "no-arg"}
+	}
+
 	// An explicit GUI verb is a verb of the one program under our own name.
 	if len(args) > 0 {
 		switch args[0] {
@@ -120,6 +128,10 @@ func resolveGUIFormerName(args []string) verbRoute {
 func runResolvedVerb(base string, args []string) (code int, handled bool) {
 	r := resolveInvocation(base, args)
 	switch {
+	case r.verb == "no-arg":
+		// §4.3 / MA-620: the no-argument rule. runNoArg returns (0, false) for the
+		// plain usage cases, so main falls through to today's usage refusal.
+		return runNoArg()
 	case r.usage:
 		// mailarchive-gui former name, unknown flag: reproduce that binary's flag
 		// error + usage and exit 2 (MA-611, "today's usage refusal and exit code").
