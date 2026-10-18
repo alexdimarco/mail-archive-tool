@@ -1,32 +1,37 @@
 # MailArchive Desktop — in-repo MSI / RMM package
 
 This folder is the WiX/RMM layer that turns our release payload into a deployable
-`MailArchiveDesktop.msi`. The binaries come from **our** repo:
+`MailArchiveDesktop.msi`. MailArchive is **one program** with verbs; on Windows it
+ships as a pair of files built from `./cmd/mailarchive`, plus two former-name copies
+kept for this release. The binaries come from **our** repo:
 
-- `mailarchive-desktop.exe` — the dashboard + archive reader, served
-  **in-process**, each on a free loopback port of its own (there is no fixed
-  address to type or bookmark) and each opened only through a private one-time
-  link the app makes for its own Windows account. It does not shell out to a child
-  `mailarchive.exe` the way the earlier out-of-repo wrapper did.
-- `mailarchive.exe` — the headless engine / CLI (app-only & multi-mailbox scheduled
-  captures, plus every other verb).
-- `mailarchive-gui.exe` — the native desktop GUI wizard.
+- `mailarchive.exe` — the command-line build (console): the headless engine / CLI
+  (app-only & multi-mailbox scheduled captures, plus every other verb).
+- `mailarchivew.exe` — the no-console build of the same program. `mailarchivew.exe
+  desktop` is the dashboard + archive reader, served **in-process**, each on a free
+  loopback port of its own (there is no fixed address to type or bookmark) and each
+  opened only through a private one-time link the app makes for its own Windows
+  account; `mailarchivew.exe wizard` is the native-dialog wizard. It does not shell
+  out to a child the way the earlier out-of-repo wrapper did.
+- `mailarchive-desktop.exe` and `mailarchive-gui.exe` — **former names**, shipped as
+  byte-identical copies of `mailarchivew.exe` so schedules and shortcuts installed
+  under the old names keep running; a later release removes them (§7.1).
 
-The finished MSI embeds all three EXEs, branding, docs, and notices. **Endpoints
-receive only the MSI.**
+The finished MSI embeds the pair and the two former-name copies, branding, docs, and
+notices. **Endpoints receive only the MSI.**
 
 ---
 
 ## A. Produce the payload (Alex / CI — Linux, no Windows needed)
 
-`packaging/build-release.sh` already builds the three Windows x64 binaries (pure
-cross-compile) and assembles the release asset:
+`packaging/build-release.sh` builds the Windows x64 pair (pure cross-compile) and
+the two former-name copies of `mailarchivew.exe`, and assembles the release asset:
 
     dist/mailarchive-desktop-windows-msi-payload.zip
 
-Just run `make dist` (or `packaging/build-release.sh`). The zip contains the three
-EXEs under their install names, `branding/mailarchive.ico`, `READ ME.txt`, and
-`docs/` (LICENSE.txt, release-notes.md, goback.md, graph-app-setup.md).
+Just run `make dist` (or `packaging/build-release.sh`). The zip contains the pair and
+the former-name copies under their install names, `branding/mailarchive.ico`,
+`READ ME.txt`, and `docs/` (LICENSE.txt, release-notes.md, goback.md, graph-app-setup.md).
 
 Hand Steve: this `packaging/mailarchive-desktop/` folder **plus** that payload zip.
 
@@ -47,7 +52,8 @@ portable WiX 3.14 tools into a private `.tools\` folder (needs internet once).
    ```
 
    `-Version` **must stay greater than 1.1.0** (the earlier build) so this MSI cleanly
-   upgrades it — see DC6 below. Bump it for each new build.
+   upgrades it — see DC6 below. Bump it for each new build. `Build-MSI.ps1` sources the
+   version from the payload and refuses a `-Version` that differs from it (MA-614).
 
 Build-MSI.ps1 extracts the payload, stages `SOURCE-NOTICE.txt`, `DEPLOYMENT.txt`,
 `THIRD-PARTY-NOTICES.md`, `managed-install.marker`, and a regenerated
@@ -63,8 +69,8 @@ The script prints the MSI SHA256.
 
 ## C. Deploy via RMM
 
-Silent install (use the script: it ends running `mailarchive-desktop.exe`
-instances first, as the MSI's own CloseApplication does):
+Silent install (use the script: for an upgrade it ends older running dashboards
+first, as the MSI's own CloseApplication does):
 ```cmd
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Install-RMM.ps1
 ```
@@ -72,22 +78,28 @@ or `msiexec.exe /i MailArchiveDesktop.msi /qn /norestart` directly.
 
 **An upgrade takes effect at once, in every signed-in session.** Instances that were
 already running before the upgrade served their dashboard with no private link until
-their user signed out. `Install-RMM.ps1` stops every running `mailarchive-desktop.exe`
-before `msiexec`, and the MSI ends any that remain (`util:CloseApplication`); the
-new version's own instance, started from a shortcut, finds an older one still
-holding the former address `127.0.0.1:8097`, ends it when it is that account's, and
-otherwise names it in the dashboard header and in `status` ("An older MailArchive
-Desktop is still running … sign out and back in"). Typing the old
+their user signed out. `Install-RMM.ps1` stops every running `mailarchivew.exe`
+dashboard and, for an upgrade, every running copy of the former name `mailarchive-desktop.exe`
+(kept as a copy this release) before `msiexec`, and the MSI
+ends any that remain (`util:CloseApplication`); the new version's own instance, started from a shortcut,
+finds an older one still holding the former address `127.0.0.1:8097`, ends it when it
+is that account's, and otherwise names it in the dashboard header and in `status` ("An
+older MailArchive Desktop is still running … sign out and back in"). Typing the old
 dashboard address `127.0.0.1:8097` no longer reaches MailArchive at all.
 
 Detection: `powershell -NoProfile -ExecutionPolicy Bypass -File .\Detect-RMM.ps1` (exit 0 = installed).
+Detect-RMM.ps1 names no former name, so it passes unchanged at this release and after
+the copies are removed; **replace any older stored copy of the detection rule that
+requires the former name `mailarchive-desktop.exe` before deploying the release that
+removes the copies** (an older rule left in place reports every endpoint as not installed).
 Silent uninstall: `powershell -NoProfile -ExecutionPolicy Bypass -File .\Uninstall-RMM.ps1`.
 
 Install is per-machine to `C:\Program Files\MailArchive Desktop\` and creates: an
 all-users Desktop shortcut, an all-users Startup shortcut, Start Menu + Uninstall
-shortcuts, a Start Menu **Copy MailArchive link** shortcut (`-copy-link`: shows a
-fresh private link in a dialog with a Copy button, for a default browser that cannot
-be opened), the Apps & Features entry, and `HKLM\Software\MailArchive Desktop`.
+shortcuts, a Start Menu **MailArchive wizard** shortcut (`wizard`), a Start Menu
+**Copy MailArchive link** shortcut (`-copy-link`: shows a fresh private link in a
+dialog with a Copy button, for a default browser that cannot be opened), the Apps &
+Features entry, and `HKLM\Software\MailArchive Desktop`.
 
 Each Windows account runs its own instance, and each Terminal Services session of an
 account (an RDS host, fast user switching) its own: the lock and instance file live
@@ -126,7 +138,7 @@ integration below is **lab-pending** and is exactly what this round covers:
 
 2. **Desktop / Startup shortcuts and the install check.** After install, the Desktop
    and Start Menu shortcuts and the all-users **Startup** shortcut (`shell:common
-   startup`) all launch `mailarchive-desktop.exe`. The binary is windowsgui (no
+   startup`) all launch `mailarchivew.exe desktop`. The binary is windowsgui (no
    console) but opens the dashboard in the OS default browser itself once listening
    (MA-281), at a private one-time link, so a Desktop/Start-menu click should pop the
    dashboard straight away — **verify the install this way: open MailArchive Desktop
@@ -136,7 +148,7 @@ integration below is **lab-pending** and is exactly what this round covers:
    should reconnect to the running instance — after it proves itself — and open the
    browser to it (not error, and not start a second one). Then verify the lock: in a
    browser, type `http://127.0.0.1:<port>/` for a port the app is listening on (`netstat
-   -ano` shows it beside the pid of `mailarchive-desktop.exe` in Task Manager) — it
+   -ano` shows it beside the pid of `mailarchivew.exe` in Task Manager) — it
    must show the **locked page** ("This MailArchive Desktop page has to be opened from the app"), never the
    dashboard. Typing the old address `127.0.0.1:8097` shows nothing of MailArchive.
 
@@ -152,7 +164,7 @@ integration below is **lab-pending** and is exactly what this round covers:
 
 3. **Weekly scheduled headless capture** (DC1, slice S4 shipped — MA-279). The
    dashboard installs/updates/removes the weekly backup itself (the **Weekly backup**
-   control), writing a Task Scheduler entry that runs `mailarchive-desktop.exe
+   control), writing a Task Scheduler entry that runs `mailarchivew.exe desktop
    -capture` so the backup runs with the dashboard closed. The task name is derived
    per archive — `mailarchive-<hash>` (`schedule.DefaultNameFor`) — not a fixed
    string. Verify end-to-end from the UI:
@@ -164,46 +176,48 @@ integration below is **lab-pending** and is exactly what this round covers:
      saved sign-in with **no prompt** — see `%APPDATA%\mailarchive\desktop-capture.log`
      and that the archive grew.
 
-   A by-hand `schtasks /Create … /TR "\"…\mailarchive-desktop.exe\" -capture"` is only
+   A by-hand `schtasks /Create … /TR "\"…\mailarchivew.exe\" desktop -capture"` is only
    a fallback if the dashboard reports the scheduler unavailable. Either way the task
-   runs `mailarchive-desktop.exe -capture` (the product's real weekly backup), never a
-   `mailarchive.exe` task.
+   runs `mailarchivew.exe desktop -capture` (the product's real weekly backup), never a
+   bare command-line task.
 
 Also smoke-test the DC6 upgrade: install the old 1.1.0 MSI first, then this one — it
 should replace it with one Apps & Features entry and the archive/sign-in preserved.
 
 ---
 
-## E. Fastest verification — bare `mailarchive-desktop.exe`, no MSI
+## E. Fastest verification — the bare no-console build (`mailarchivew.exe`), no MSI
 
-To validate the dashboard without building or installing anything, run one binary.
-It is already produced by `build-release.sh` as
-`dist/mailarchive-desktop-windows-amd64.exe`, or build it directly:
+To validate the dashboard without building or installing anything, run one file. It is
+already produced by `build-release.sh` as `mailarchivew.exe` in the payload, or build
+it directly (`make build-windows`, or by hand):
 
 ```bash
-GOOS=windows GOARCH=amd64 go build -o mailarchive-desktop.exe ./cmd/mailarchive-desktop
+GOOS=windows GOARCH=amd64 go build -ldflags -H=windowsgui -o mailarchivew.exe ./cmd/mailarchive
 ```
 
-On Windows, **run it from a terminal** (PowerShell/cmd) so its startup lines are
-visible — it is a windowsgui binary, so a double-click starts it invisibly:
+On Windows, **run `mailarchive.exe desktop` from a terminal** (PowerShell/cmd) so its
+startup lines are visible — `mailarchivew.exe` is a windowsgui build, so a double-click
+starts it invisibly. A terminal's `mailarchive.exe desktop` holds that terminal and
+ends with it; `mailarchivew.exe desktop` outlives it.
 
 ```
 MailArchive Desktop is running: dashboard on 127.0.0.1:<port> and archive reader on 127.0.0.1:<port>, each opened only through a private link.
-If your browser does not open, run: mailarchive-desktop -copy-link
+If your browser does not open, run: mailarchive desktop -copy-link
 ```
 
 It opens your browser at a private one-time link; if that fails a dialog shows the
-link, and `mailarchive-desktop.exe -copy-link` shows a fresh one. Choose an archive
+link, and `mailarchivew.exe desktop -copy-link` shows a fresh one. Choose an archive
 folder, sign in with the device code, capture. This exercises the **real** dashboard, the in-process engine, the
 Credential Manager token path, and the reader — everything except the MSI's
 install/shortcut/schedule plumbing. It needs no WiX, no admin, no RMM. Headless
-capture can be tried the same way: `mailarchive-desktop.exe -capture`.
+capture can be tried the same way: `mailarchivew.exe desktop -capture`.
 
 ---
 
 ## Risks / open items
 
-- **R1 — no-console, no browser-open. RESOLVED (MA-281).** `mailarchive-desktop.exe`
+- **R1 — no-console, no browser-open. RESOLVED (MA-281).** `mailarchivew.exe`
   is built `-H=windowsgui` (build-release.sh) with no console, so its stdout URL is
   invisible. The binary now opens the OS default browser to the dashboard itself once
   the server is listening, and if an instance of this account is already running it
@@ -221,8 +235,8 @@ capture can be tried the same way: `mailarchive-desktop.exe -capture`.
 - **R3 — schedule install in the dashboard. RESOLVED (S4 / MA-279).** The dashboard's
   Weekly backup control installs/updates/removes the task in-process via
   `internal/schedule` (cross-platform schtasks/cron/launchd), running
-  `mailarchive-desktop.exe -capture`. The by-hand schtasks of section D.3 is now only
+  `mailarchivew.exe desktop -capture`. The by-hand schtasks of section D.3 is now only
   a scheduler-unavailable fallback.
 - **R4 — doc wording. RESOLVED (Part C).** `README-payload.txt` now states the
-  integrated weekly backup runs `mailarchive-desktop.exe -capture` in-process (DC1),
-  not a `mailarchive.exe` schtasks job.
+  integrated weekly backup runs `mailarchivew.exe desktop -capture` in-process (DC1),
+  not a bare command-line schtasks job.

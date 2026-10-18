@@ -409,7 +409,7 @@ func serveInstance(ctx context.Context, h *instance.Holder, o *launchOpts, env *
 
 	fmt.Fprintf(env.Stdout, "MailArchive Desktop is running: dashboard on %s and archive reader on %s, each opened only through a private link.\n", info.Dashboard, info.Reader)
 	fmt.Fprintf(env.Stdout, "Config: %s\n", o.cfgPath)
-	fmt.Fprintln(env.Stdout, "If your browser does not open, run: mailarchive-desktop -copy-link")
+	fmt.Fprintln(env.Stdout, "If your browser does not open, run: mailarchive desktop -copy-link")
 	fmt.Fprintln(env.Stdout, "Press Ctrl-C to stop.")
 
 	// Open the dashboard in the OS default browser at this process's own one-time

@@ -16,7 +16,7 @@ Token storage:    Windows Credential Manager (generic credential, current user's
                   target "mailarchive:graph-token:<hash>")
 Mailbox mode:     Microsoft Graph /me via device-code sign-in (read-only, Mail.Read)
 Persistent token file: none on Windows — the sign-in lives in Credential Manager
-Weekly backup:    mailarchive-desktop.exe -capture  (in-process headless capture, DC1)
+Weekly backup:    mailarchivew.exe desktop -capture  (in-process headless capture, DC1)
 
 Tenant ID:        0960dc39-0838-44ae-b2bb-1f9868566e00
 Application ID:   a22af286-b761-4cc9-96c0-d5693ea29b8a
@@ -29,8 +29,12 @@ Notes:
   configuration says so in a dialog.
 - "Copy MailArchive link" (Start Menu) shows a fresh private link in a dialog with a
   Copy button, for a default browser that cannot be opened.
-- Upgrading ends running mailarchive-desktop.exe instances (Install-RMM.ps1 and the
-  MSI do), so the new version takes effect in every session at once.
+- Upgrading ends running dashboards — mailarchivew.exe and, for an upgrade,
+  mailarchive-desktop.exe (a former name kept as a copy this release) — via
+  Install-RMM.ps1 and the MSI, so the new version takes effect in every session at once.
+- If a schedule still names a former name after the copies are removed, it reads RED
+  exe_missing with the repair its kind offers; the installer's Repair re-installs the
+  schedule, after restoring and allowing mailarchivew.exe when antivirus removed it.
 - The weekly backup runs the engine headless (never the dashboard UI), so it fires
   whether or not the dashboard is open. It reuses the saved device sign-in.
 - mailarchive.exe is also bundled for app-only / multi-mailbox scheduled graph

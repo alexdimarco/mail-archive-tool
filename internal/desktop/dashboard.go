@@ -736,7 +736,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
     {{if .KindLine}}<p class="lede" id="archiveKind" style="margin-top:-14px">{{.KindLine}}</p>{{end}}
     {{if not .OutDir}}<div class="card" id="noArchive">
       <h2>No archive chosen yet</h2>
-      {{if .Offer}}<p>The MailArchive wizard (mailarchive-gui) last used <span class="mono">{{.Offer}}</span>. Use this archive?</p>{{end}}
+      {{if .Offer}}<p>The MailArchive wizard (mailarchive wizard) last used <span class="mono">{{.Offer}}</span>. Use this archive?</p>{{end}}
       <button class="btn" id="useOffer" type="button" data-path="{{.Offer}}"{{if not .Offer}} hidden{{end}}>Use this archive</button>{{if .Offer}} <span class="card-sub">Nothing changes until you click it.</span>{{end}}
       <p class="steps">{{if .Offer}}To pick a different folder, type{{else}}MailArchive Desktop has no archive to read yet. To open one you already have (for example one made from Thunderbird), type{{end}} its folder in <b>Settings → Archive location</b> below (the folder that holds the .mailarchive-manifest.json file) and click <b>Save settings</b>.</p>
     </div>{{end}}
@@ -835,7 +835,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
 
     <div class="card" id="sec-backup">
       <h2>Weekly backup</h2>
-      {{if .LocalOnly}}<p class="card-sub steps" id="backupOff">The weekly backup here fetches new mail from Microsoft 365, and this archive was made from local mail files, so it is off. To keep a local-files archive current on a schedule, answer "Keep this archive current?" at the end of the mailarchive-gui wizard, or run the mailarchive schedule command that Status &amp; health prints for this archive.</p>{{else}}
+      {{if .LocalOnly}}<p class="card-sub steps" id="backupOff">The weekly backup here fetches new mail from Microsoft 365, and this archive was made from local mail files, so it is off. To keep a local-files archive current on a schedule, answer "Keep this archive current?" at the end of the MailArchive wizard (mailarchive wizard), or run the mailarchive schedule command that Status &amp; health prints for this archive.</p>{{else}}
       <p class="card-sub">Run a capture automatically on a schedule. It runs even when this app is closed (as long as you stay signed in to Windows), using your saved Microsoft sign-in.</p>
       <div class="row2">
         <div><label for="schedInterval">How often</label>

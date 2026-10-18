@@ -133,8 +133,8 @@ func addMailHelp(goos, out string) string {
 	folder := thunderbirdFolderExample(goos)
 	cmd := shellJoin(AddMailArgv("<your Thunderbird mail folder>", out), goos) // the folder is the owner's to fill in
 	auto := shellJoin(AddMailAutoArgv(out), goos)
-	return "To add new mail to it, use mailarchive-gui or the mailarchive command with this same archive folder:\n" +
-		"  - mailarchive-gui: open it, choose \"Thunderbird / mbox mail folder\" (or \"Auto-detect my mailboxes\"), pick your Thunderbird mail folder (for example " + folder + "), then at \"Select the output folder\" pick this archive folder: " + out + ". Choose Incremental when it asks for the mode: only new messages are added.\n" +
+	return "To add new mail to it, use the MailArchive wizard (mailarchive wizard) or the mailarchive command with this same archive folder:\n" +
+		"  - the MailArchive wizard (mailarchive wizard): open it, choose \"Thunderbird / mbox mail folder\" (or \"Auto-detect my mailboxes\"), pick your Thunderbird mail folder (for example " + folder + "), then at \"Select the output folder\" pick this archive folder: " + out + ". Choose Incremental when it asks for the mode: only new messages are added.\n" +
 		"  - mailarchive (a terminal): " + cmd + "\n" +
 		"    or, to take every Thunderbird store it finds: " + auto + "\n" +
 		"    (an incremental run is the default; a message already archived is not copied again)."

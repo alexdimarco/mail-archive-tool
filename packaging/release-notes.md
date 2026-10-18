@@ -17,17 +17,20 @@ status, and a native-dialog GUI. Pure Go, no cgo.
   are no bare per-arch macOS binaries to pick wrong.
 
 ### Linux / Windows
-| Platform | CLI | GUI |
+
+MailArchive is one program with verbs; there is no separate GUI download.
+
+| Platform | Download | Run |
 |---|---|---|
-| Linux x86-64 | `mailarchive-linux-amd64` | `mailarchive-gui-linux-amd64` (needs `zenity`) |
-| Linux arm64 | `mailarchive-linux-arm64` | — |
-| Windows x86-64 | `mailarchive-windows-amd64.exe` | `mailarchive-gui-windows-amd64.exe` |
+| Linux x86-64 | `mailarchive-linux-amd64` | `mailarchive wizard` or `mailarchive desktop` (the wizard needs `zenity` and a desktop session) |
+| Linux arm64 | `mailarchive-linux-arm64` | the same verbs (compiled, not lab-run) |
+| Windows x86-64 | `mailarchive-windows-amd64.zip` (or the MSI) | unzip, then double-click `mailarchivew.exe` |
 
-Windows GUI: SmartScreen → *More info → Run anyway*. Verify downloads against `SHA256SUMS`.
+Windows: SmartScreen → *More info → Run anyway*. Verify downloads against `SHA256SUMS`.
 
-**Windows — MailArchive Desktop (new):** `mailarchive-desktop-windows-amd64.exe` is the
-local control panel (double-click to open; it opens the dashboard in your browser). For an
-IT/RMM rollout, `mailarchive-desktop-windows-msi-payload.zip` builds a self-contained MSI
+**Windows — MailArchive Desktop:** the dashboard is `mailarchivew.exe desktop` — double-click
+`mailarchivew.exe` to open it (it opens the dashboard in your browser). For an IT/RMM rollout,
+`mailarchive-desktop-windows-msi-payload.zip` builds a self-contained MSI
 (`packaging/mailarchive-desktop/`).
 
 ### Opening the reader and the dashboard now needs a private link

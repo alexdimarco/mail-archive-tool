@@ -24,9 +24,10 @@ Checked in, consumed by packaging/build-release.sh (do not remove):
 
 Supplied at build time — produced by packaging/build-release.sh (NOT in the repo):
   dist/mailarchive-desktop-windows-msi-payload.zip
-      mailarchive-desktop.exe   in-process dashboard + reader (cmd/mailarchive-desktop)
-      mailarchive.exe           headless engine / CLI          (cmd/mailarchive)
-      mailarchive-gui.exe       native GUI                     (cmd/mailarchive-gui)
+      mailarchive.exe           command-line build                 (cmd/mailarchive)
+      mailarchivew.exe          no-console build: desktop + wizard (cmd/mailarchive)
+      mailarchive-desktop.exe   former name: a copy of mailarchivew.exe (kept this release)
+      mailarchive-gui.exe       former name: a copy of mailarchivew.exe (kept this release)
       branding/mailarchive.ico
       READ ME.txt
       docs/LICENSE.txt, release-notes.md, goback.md, graph-app-setup.md

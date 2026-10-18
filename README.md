@@ -23,16 +23,16 @@ mailbox offline.
 
 ## Just want to download and run it?
 
-No build, no command line. Grab the GUI for your machine from the
+No build, no command line. Grab it for your machine from the
 [**Releases page**](https://github.com/alexdimarco/mail-archive-tool/releases),
-double-click it, follow the wizard, then open `index.html` in the archive folder
+open the wizard (see the table), then open `index.html` in the archive folder
 it makes — that page needs no software to read.
 
 | Your machine | Download | First run |
 |---|---|---|
-| **Windows** | `mailarchive-gui-windows-amd64.exe` | double-click (SmartScreen → *More info → Run anyway*) |
-| **macOS** | `MailArchive-macos.zip` | unzip, then **right-click "Mail Archive.app" → Open → Open** once (it is unsigned) |
-| **Linux** | `mailarchive-gui-linux-amd64` | needs `zenity` installed; mark executable and double-click (or run it) |
+| **Windows** | `mailarchive-windows-amd64.zip` (or the MSI installer) | unzip, then double-click **`mailarchivew.exe`** (SmartScreen → *More info → Run anyway*) |
+| **macOS** | `MailArchive-macos.zip` | unzip to **`Mail Archive.app`**, drag it into Applications, then **right-click → Open → Open** once (it is unsigned) |
+| **Linux** | `mailarchive-linux-amd64` | needs `zenity` and a desktop session; run **`mailarchive wizard`** (or `mailarchive desktop`) |
 
 On macOS the double-click app is **`MailArchive-macos.zip`** (it unzips to
 `Mail Archive.app`). The command-line tool is a separate download,
@@ -40,7 +40,17 @@ On macOS the double-click app is **`MailArchive-macos.zip`** (it unzips to
 (`tar -xzf …`, then `./mailarchive -h`); do not double-click it, or macOS opens
 it in a text editor. Both are universal (Apple Silicon and Intel).
 
-The wizard is the [GUI section](#gui-native-dialog-wizard) below.
+**One program.** MailArchive is a single program with verbs (`wizard`, `desktop`,
+`run-job`, and the command-line exporter). On Windows it is a pair of files built
+from that one program: double-click **`mailarchivew.exe`** for the dashboard and
+the wizard (a no-console build), and use **`mailarchive.exe`** for the command
+line. Double-clicking `mailarchive.exe` only prints which file to double-click. A
+terminal's `mailarchive.exe desktop` holds that terminal and ends when it closes;
+`mailarchivew.exe desktop` outlives it. On macOS the one file lives inside
+`Mail Archive.app`; on Linux it is the one `mailarchive` binary. The release notes
+give the download and disk figures.
+
+The wizard is the [wizard section](#the-wizard-mailarchive-wizard) below.
 
 ## Start here: which path for my mail program?
 
@@ -85,11 +95,14 @@ Thunderbird and Evolution on any OS). To see that set before committing to it,
 run `-auto -list`: it prints the stores that would be archived, one per line
 with a rough size, and exits without exporting or creating the output directory.
 
-## GUI (native dialog wizard)
+## The wizard (`mailarchive wizard`)
 
-`mailarchive-gui` is a small wizard built on native OS dialogs (pure-Go
-[`zenity`](https://github.com/ncruces/zenity)) — no browser, and on Windows no
-console window. Double-click it and it walks you through:
+The **wizard** (`mailarchive wizard`) is a small wizard built on native OS dialogs
+(pure-Go [`zenity`](https://github.com/ncruces/zenity)) — no browser, and on
+Windows no console window. Open it from: the **MailArchive wizard** shortcut in the
+Start menu (Windows MSI); on a Windows zip without the MSI, make a shortcut to
+`mailarchivew.exe` and add ` wizard` to its Target; `Mail Archive.app` on macOS;
+the `.desktop` entry (or `mailarchive wizard`) on Linux. It walks you through:
 
 0. **Backup health** — if this wizard has scheduled an archive before, its
    health comes first (last run, completeness, whether the schedule still points
@@ -124,17 +137,17 @@ console window. Double-click it and it walks you through:
    index errors) with an *Open the archive* button that opens `index.html`.
 10. **Keep this archive current?** — *daily at 02:00* or *weekly, Sunday 03:00*
     installs a schedule that repeats exactly this export using this very
-    program (`mailarchive-gui -job FILE`, no dialogs, no console); the wizard
+    program (`mailarchive run-job FILE`, no dialogs, no console); the wizard
     warns first if the program runs from Downloads or a temp folder. A failed
     scheduled run raises a desktop notification so it never fails silently.
 
 A run log is written to `mailarchive.log` in the output folder (rotated at 8 MB).
 The GUI drives the exact same export engine as the CLI, so results are identical.
 
-Build the no-console Windows GUI explicitly with:
+Build the no-console Windows build (`mailarchivew.exe`) explicitly with:
 
 ```sh
-GOOS=windows GOARCH=amd64 go build -ldflags -H=windowsgui -o mailarchive-gui.exe ./cmd/mailarchive-gui
+GOOS=windows GOARCH=amd64 go build -ldflags -H=windowsgui -o mailarchivew.exe ./cmd/mailarchive
 ```
 
 ### Adding new mail to a Thunderbird archive
@@ -144,7 +157,7 @@ the **same archive folder**. A run is incremental by default, so only messages n
 MailArchive Desktop opens such an archive to read, search, check and export it, but does not re-read
 Thunderbird: its **Archive now** is for Microsoft 365 and is switched off for it, with these steps shown.
 
-- **mailarchive-gui:** open it, choose **Thunderbird / mbox mail folder** (or **Auto-detect my mailboxes**),
+- **the MailArchive wizard (`mailarchive wizard`):** open it, choose **Thunderbird / mbox mail folder** (or **Auto-detect my mailboxes**),
   pick your Thunderbird mail folder, then at **Select the output folder** pick the same archive folder as
   before (the wizard does not pre-fill it), and choose **Incremental**.
 - **macOS / Linux:** `mailarchive -input "<Thunderbird mail folder>" -out "<archive folder>"`, for example
@@ -222,12 +235,18 @@ exporter rather than to be read).
 ## Build
 
 ```sh
-make build            # CLI  -> bin/mailarchive
-make build-gui        # GUI  -> bin/mailarchive-gui
-make build-windows    # bin/mailarchive.exe (console) + bin/mailarchive-gui.exe (no console)
+make build            # the program -> bin/mailarchive
 ```
 
-Requires Go 1.26+. Both binaries are pure Go (no cgo); the Windows executables
+The Windows pair is the console build and the no-console build of the one program
+`./cmd/mailarchive`, cross-compiled from any OS:
+
+```sh
+GOOS=windows GOARCH=amd64 go build -o bin/mailarchive.exe ./cmd/mailarchive
+GOOS=windows GOARCH=amd64 go build -ldflags -H=windowsgui -o bin/mailarchivew.exe ./cmd/mailarchive
+```
+
+Requires Go 1.26+. The program is pure Go (no cgo); the Windows executables
 cross-compile from any OS.
 
 ## Usage

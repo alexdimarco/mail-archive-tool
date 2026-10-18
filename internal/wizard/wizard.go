@@ -189,7 +189,7 @@ func RunHeadless(path string) int {
 			outlookcom.Options{Sync: wait > 0, SyncWait: wait}, logger)
 		if cerr != nil {
 			logger.Printf("FAILED: %v", cerr)
-			fmt.Fprintln(os.Stderr, "mailarchive-gui: "+cerr.Error())
+			fmt.Fprintln(os.Stderr, "mailarchive run-job: "+cerr.Error())
 			notifyFailure(j.Name, j.Out)
 			return 1
 		}
@@ -230,12 +230,12 @@ func RunHeadless(path string) int {
 		// on the next line for whoever helps (F3).
 		var ie *app.IndexOpenError
 		if errors.As(runErr, &ie) {
-			logger.Printf("FAILED: %s", ie.ForOwner(`"`+rebuildChoice+`" in the window that opens with this program`))
+			logger.Printf("FAILED: %s", ie.ForOwner(headlessRebuildAction))
 			logger.Printf("detail: %v", runErr)
 		} else {
 			logger.Printf("FAILED: %v", runErr)
 		}
-		fmt.Fprintln(os.Stderr, "mailarchive-gui: "+runErr.Error()) // cron mail / stderr.log
+		fmt.Fprintln(os.Stderr, "mailarchive run-job: "+runErr.Error()) // cron mail / stderr.log
 		notifyFailure(j.Name, j.Out)
 		return 1
 	}
@@ -261,7 +261,7 @@ func jobFail(path string, err error) {
 		f.Close()
 	}
 	recordHeadlessFailure(name, err)
-	fmt.Fprintln(os.Stderr, "mailarchive-gui: "+err.Error())
+	fmt.Fprintln(os.Stderr, "mailarchive run-job: "+err.Error())
 	notifyFailure(name, "")
 }
 
@@ -272,7 +272,7 @@ func jobFail(path string, err error) {
 // callers but the message names the backup by its schedule name.
 func notifyFailure(name, out string) {
 	_ = out // reserved for a future per-archive message; the schedule name is the identifier today
-	_ = notify(fmt.Sprintf("Mail Archive backup failed for %s — open Mail Archive to see what went wrong.", name), zenity.Title(appTitle))
+	_ = notify(fmt.Sprintf("Mail Archive backup failed for %s. Open the MailArchive wizard (mailarchive wizard) to see what went wrong.", name), zenity.Title(appTitle))
 }
 
 // dirSize sums the sizes of the regular files under root (best-effort), to
@@ -825,6 +825,12 @@ func healthCheck() error {
 // job log's refusals name it (F3).
 const rebuildChoice = "Rebuild the search index"
 
+// headlessRebuildAction is the index-repair action RunHeadless shows an owner who
+// has no command line (the scheduled run's log and stderr): it names each surface
+// by its click route, not "the window that opens with this program" — no owner
+// text depends on which surface a no-argument launch opens (§6, SC21, MA-622).
+const headlessRebuildAction = `Maintenance → Rebuild search index in MailArchive Desktop (with that folder as its archive location), or "` + rebuildChoice + `" in the wizard (mailarchive wizard)`
+
 // rebuildOffered reports whether the posture carries an index reason the
 // rebuild fixes (damaged, missing, or behind the manifest).
 func rebuildOffered(rep health.Report) bool {
@@ -929,7 +935,7 @@ func repairSchedule(out string, d schedule.Descriptor) error {
 	// rather than forcing a re-launch — a returning user who repairs a schedule
 	// often wants to run one too (friction #24). "Close" exits quietly.
 	q := zenity.Question(
-		fmt.Sprintf("Repaired the scheduled backup %q for\n%s\n\nIt now runs this copy of the program. Re-open this program any time to check the backup's health.\n\nContinue to run an export now?", spec.Name, out),
+		fmt.Sprintf("Repaired the scheduled backup %q for\n%s\n\nIt now runs this copy of the program. Open the MailArchive wizard (mailarchive wizard) any time to check the backup's health.\n\nContinue to run an export now?", spec.Name, out),
 		zenity.Title(appTitle),
 		zenity.OKLabel("Continue to the wizard"),
 		zenity.CancelLabel("Close"),
@@ -1490,7 +1496,7 @@ func offerSchedule(c wizardChoice) error {
 			note += " A console window will appear briefly while it runs."
 		}
 	}
-	return zenity.Info(fmt.Sprintf("Scheduled: %s at %s.\n\nArchive: %s\nLog: %s\n\nRe-open this program any time to check the backup's health.%s",
+	return zenity.Info(fmt.Sprintf("Scheduled: %s at %s.\n\nArchive: %s\nLog: %s\n\nOpen the MailArchive wizard (mailarchive wizard) any time to check the backup's health.%s",
 		iv, at, c.out, spec.Log, note), zenity.Title(appTitle))
 }
 
