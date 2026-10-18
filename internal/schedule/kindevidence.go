@@ -1,6 +1,7 @@
 package schedule
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -46,6 +47,40 @@ func BuildKindEvidence(out string, captureOK func(out string) bool) KindEvidence
 		ev.Corroborated[k] = true
 	}
 	return ev
+}
+
+// CheckKind is the §4.6.5c cross-kind guard: it reports the refusal (or nil) for
+// installing kind `install` under archive `out`'s schedule named `name`, given
+// owner-side evidence ev and the kind `recorded` of the descriptor already at out
+// (KindNone when there is none). Neither trigger lets a forged descriptor Job
+// suppress a refusal:
+//
+//	(1) any kind owner-side state corroborates differs from `install` — a real
+//	    schedule of another kind is there, so this install would replace it. This
+//	    reads only ev (the owner's config dir and crontab), never the descriptor's
+//	    Job, so forging Job cannot suppress it.
+//	(2) `recorded` is export and nothing is corroborated — an off-cron export has
+//	    no owner-side record, so its descriptor stands for it. This reads the
+//	    recorded export only to ADD a refusal, never to suppress one.
+//
+// A verify is never guarded (it coexists under its own name). A same-kind
+// re-install passes, so R14 idempotence holds. CheckKind is exported so the
+// wizard's offerSchedule and the SE3 design's install call it before writing, and
+// installOn calls it too (§4.6.5c). The remover wording is refined per surface by
+// §4.6.3's RepairRoute.
+func CheckKind(ev KindEvidence, install, recorded Kind, out, name string) error {
+	if install == KindVerify {
+		return nil
+	}
+	for _, ck := range []Kind{KindRunJob, KindCapture, KindExport} { // stable order for a deterministic message
+		if ev.Corroborated[ck] && ck != install {
+			return fmt.Errorf("archive %s already has a %s schedule named %q: an archive has one schedule, and this install would replace it. Remove that schedule first, or archive into a separate folder.", out, ck, name)
+		}
+	}
+	if recorded == KindExport && !ev.Any() {
+		return fmt.Errorf("archive %s already has an export schedule named %q with no owner-side record to compare: this install would replace it. Remove it first (mailarchive schedule -out %s -remove), or archive into a separate folder.", out, name, out)
+	}
+	return nil
 }
 
 // corroboratedRunJob finds a run-job whose job file this program can securely
