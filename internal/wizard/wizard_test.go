@@ -59,13 +59,16 @@ func TestOpenPathArgv(t *testing.T) {
 // repairable offers a re-install exactly for the schedule states a re-install
 // from the current binary fixes — not present in the scheduler, its program
 // moved, or its program gone — and never for a healthy schedule, a schedule on
-// another host, or an archive with no descriptor.
+// another host, or an archive with no descriptor. (The route-gating that limits
+// the offer to a corroborated run-job is MA-618; here the fixture is such a
+// run-job, so these state checks hold within the wizard's route.)
 func TestScheduleRepairable(t *testing.T) {
 	base := func() health.Input {
 		return health.Input{
 			HasDescriptor: true,
 			ThisHost:      "host-a",
-			Desc:          schedule.Descriptor{Host: "host-a", Name: "mailarchive-1a2b3c4d", Interval: "daily", At: "02:00"},
+			Desc:          schedule.Descriptor{Host: "host-a", Name: "mailarchive-1a2b3c4d", Interval: "daily", At: "02:00", Job: []string{"run-job", "-job", "x"}},
+			KindEv:        schedule.KindEvidence{Corroborated: map[schedule.Kind]bool{schedule.KindRunJob: true}, JobPath: "/j/mailarchive-1a2b3c4d.json"},
 			SchedState:    schedule.Installed,
 			ExeExists:     true,
 			ExeIsThis:     true,
@@ -92,6 +95,85 @@ func TestScheduleRepairable(t *testing.T) {
 	}
 	if in := base(); func() bool { in.ExeIsThis = false; return !repairable(in) }() {
 		t.Error("a moved/replaced program should be repairable")
+	}
+}
+
+// covers: MA-618, R18, S59
+// §4.6.3 "when a repair is offered": the wizard offers Repair only when the route
+// is its own — a corroborated run-job — and the schedule is in a state a repair
+// fixes (not-installed, program moved/gone, or a re-point worth recording,
+// ExeRepoint). A capture is the card's and an export the command line's, so
+// neither is offered here; an uncorroborated run-job (no job file) is not
+// offered. Every repair asks the volatile-directory question first, and Cancel
+// installs nothing (the pure volatileDecision; mirrors repairFollowUp).
+func TestMA618_RepairOfferedWhen(t *testing.T) {
+	runjob := func() health.Input {
+		return health.Input{
+			HasDescriptor: true, ThisHost: "h",
+			Desc:       schedule.Descriptor{Host: "h", Name: "mailarchive-1a2b3c4d", Interval: "daily", At: "02:00", Job: []string{"run-job", "-job", "x"}},
+			KindEv:     schedule.KindEvidence{Corroborated: map[schedule.Kind]bool{schedule.KindRunJob: true}, JobPath: "/j/mailarchive-1a2b3c4d.json"},
+			SchedState: schedule.Installed, ExeExists: true, ExeIsThis: true,
+		}
+	}
+	offered := func(mut func(in *health.Input)) bool {
+		in := runjob()
+		mut(&in)
+		return repairable(in)
+	}
+	// A corroborated run-job that a repair fixes: offered.
+	if !offered(func(in *health.Input) { in.ExeIsThis = false }) {
+		t.Error("a corroborated run-job whose program moved must be repairable")
+	}
+	if !offered(func(in *health.Input) { in.ExeRepoint = true }) {
+		t.Error("a run-job with a worthwhile re-point (ExeRepoint) must be repairable")
+	}
+	// Healthy run-job, no re-point: not offered.
+	if offered(func(in *health.Input) {}) {
+		t.Error("a healthy run-job with no re-point must not be repairable")
+	}
+	// Not the wizard's route: a capture is the card's, an export the command line's,
+	// an uncorroborated run-job has no single route.
+	if offered(func(in *health.Input) {
+		in.Desc.Job = []string{"desktop", "-capture", "-out", "/a"}
+		in.KindEv = schedule.KindEvidence{Corroborated: map[schedule.Kind]bool{schedule.KindCapture: true}}
+		in.ExeIsThis = false
+	}) {
+		t.Error("a capture descriptor must not be repairable in the wizard")
+	}
+	if offered(func(in *health.Input) {
+		in.Desc.Job = []string{"-out", "/a", "-auto"}
+		in.KindEv = schedule.KindEvidence{}
+		in.ExeIsThis = false
+	}) {
+		t.Error("an export descriptor must not be repairable in the wizard")
+	}
+	if offered(func(in *health.Input) {
+		in.KindEv = schedule.KindEvidence{}
+		in.ExeIsThis = false
+	}) {
+		t.Error("an uncorroborated run-job (no job file) must not be repairable")
+	}
+
+	// The volatile-directory question fires on a place that gets cleaned up, not a
+	// permanent one, and Cancel installs nothing.
+	for _, v := range []string{"/Users/x/Downloads/mailarchive", "/Users/x/Desktop/mailarchive", "/tmp/mailarchive"} {
+		if !inVolatileDir(v) {
+			t.Errorf("inVolatileDir(%q) = false, want true", v)
+		}
+	}
+	for _, p := range []string{"/Applications/MailArchive.app/Contents/MacOS/mailarchive", "/usr/local/bin/mailarchive"} {
+		if inVolatileDir(p) {
+			t.Errorf("inVolatileDir(%q) = true, want false", p)
+		}
+	}
+	if proceed, err := volatileDirCheck("/usr/local/bin/mailarchive"); !proceed || err != nil {
+		t.Errorf("volatileDirCheck(permanent) = (%v,%v), want (true,nil)", proceed, err)
+	}
+	if proceed, _ := volatileDecision(zenity.ErrCanceled); proceed {
+		t.Error("Cancel on the volatile-directory question must install nothing (proceed=false)")
+	}
+	if proceed, err := volatileDecision(nil); !proceed || err != nil {
+		t.Errorf("OK on the volatile-directory question must proceed, got (%v,%v)", proceed, err)
 	}
 }
 

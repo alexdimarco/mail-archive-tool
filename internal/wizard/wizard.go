@@ -837,10 +837,13 @@ func rebuildSearchIndex(out string) (string, error) {
 }
 
 // repairable reports whether the launch health view should offer to re-install
-// the schedule: there is a descriptor, it was installed on THIS host, and the
-// schedule is in a state a re-install from the current binary fixes — not
-// present in the scheduler, or its program moved or gone. A schedule recorded
-// for another host cannot be repaired from here.
+// the schedule. There must be a descriptor installed on THIS host; the repair
+// route must be the WIZARD's (§4.6.3: a corroborated run-job — a capture is the
+// Weekly backup card's and an export the command line's, so for those the health
+// lines name the right surface and no Repair button is offered here, which also
+// keeps the wizard from rebuilding a kind it does not own); and the schedule must
+// be in a state a repair fixes — not present in the scheduler, its program moved
+// or gone, or a re-point worth recording (ExeRepoint, §4.6.3).
 func repairable(in health.Input) bool {
 	if !in.HasDescriptor {
 		return false
@@ -848,7 +851,10 @@ func repairable(in health.Input) bool {
 	if in.ThisHost != "" && in.Desc.Host != "" && in.ThisHost != in.Desc.Host {
 		return false
 	}
-	return in.SchedState == schedule.NotInstalled || !in.ExeExists || !in.ExeIsThis
+	if schedule.RepairRoute(in.Desc, in.Out, in.KindEv) != schedule.RouteWizard {
+		return false
+	}
+	return in.SchedState == schedule.NotInstalled || !in.ExeExists || !in.ExeIsThis || in.ExeRepoint
 }
 
 // repairSpec rebuilds the install Spec for a recorded schedule using the CURRENT
@@ -906,6 +912,13 @@ func repairSchedule(out string, d schedule.Descriptor) error {
 	exe, progReason, err := schedule.ProgramForSchedule(d.Wrapper != "")
 	if err != nil {
 		return err
+	}
+	// §4.6.3: every repair asks the volatile-directory question first, as every
+	// install does; Cancel installs nothing.
+	if proceed, qerr := volatileDirCheck(exe); qerr != nil {
+		return qerr
+	} else if !proceed {
+		return nil
 	}
 	spec, err := repairPlan(out, d, exe)
 	if err != nil {
@@ -1443,16 +1456,10 @@ func offerSchedule(c wizardChoice) error {
 	if err != nil {
 		return err
 	}
-	if inVolatileDir(exe) {
-		q := zenity.Question(
-			fmt.Sprintf("This program runs from\n%s\nwhich is a place that tends to get cleaned up or replaced. If it moves, the scheduled backup silently stops.\n\nMove it somewhere permanent first (e.g. your Applications or Program Files folder) and run the wizard again — or continue anyway.", filepath.Dir(exe)),
-			zenity.Title(appTitle), zenity.OKLabel("Continue anyway"), zenity.CancelLabel("Cancel"))
-		if errors.Is(q, zenity.ErrCanceled) {
-			return nil
-		}
-		if q != nil {
-			return q
-		}
+	if proceed, qerr := volatileDirCheck(exe); qerr != nil {
+		return qerr
+	} else if !proceed {
+		return nil
 	}
 
 	name := schedule.DefaultNameFor(c.out)
@@ -1511,6 +1518,34 @@ func jobFor(name string, c wizardChoice) job.Job {
 		j.OutlookSyncWait = "5m"
 	}
 	return j
+}
+
+// volatileDirCheck shows the volatile-directory confirmation when exe lives in a
+// place that gets cleaned up or replaced (§4.6.3: every repair asks first, as
+// every install does). proceed is false with a nil err when the owner cancels —
+// the caller installs nothing, quietly; a non-nil err is the dialog's.
+func volatileDirCheck(exe string) (proceed bool, err error) {
+	if !inVolatileDir(exe) {
+		return true, nil
+	}
+	return volatileDecision(zenity.Question(
+		fmt.Sprintf("This program runs from\n%s\nwhich is a place that tends to get cleaned up or replaced. If it moves, the scheduled backup silently stops.\n\nMove it somewhere permanent first (e.g. your Applications or Program Files folder) and run the wizard again — or continue anyway.", filepath.Dir(exe)),
+		zenity.Title(appTitle), zenity.OKLabel("Continue anyway"), zenity.CancelLabel("Cancel")))
+}
+
+// volatileDecision maps the owner's answer to the volatile-directory question:
+// OK (nil) proceeds; Cancel (ErrCanceled) stops WITHOUT installing; any other
+// error propagates. Pure, so "Cancel installs nothing" is testable without a
+// display (mirrors repairFollowUp).
+func volatileDecision(choice error) (proceed bool, err error) {
+	switch {
+	case choice == nil:
+		return true, nil
+	case errors.Is(choice, zenity.ErrCanceled):
+		return false, nil
+	default:
+		return false, choice
+	}
 }
 
 // inVolatileDir reports whether the executable lives somewhere that gets

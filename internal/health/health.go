@@ -151,7 +151,16 @@ type Input struct {
 	// the scheduled program is missing but was a known name in the running
 	// program's own directory, so the installer's Repair restores it.
 	ExeMissingInInstallDir bool
-	ThisHost               string
+	// ExeRepoint is the §4.6.3 re-point term: a repair would record a DIFFERENT
+	// program file than the one recorded, so it is worth offering even though the
+	// recorded program still is this one. Set only on a basis that identifies this
+	// program (same_file/program_name, never the size/mtime fallback), when
+	// ProgramForSchedule resolves, and its path differs from the recorded one as a
+	// path (never sameFile, which would hide the macOS .app link). Covers the
+	// former-name note, the console-build note once mailarchivew.exe is back, and
+	// the macOS link; not offered while the sibling is absent.
+	ExeRepoint bool
+	ThisHost   string
 
 	// KindEv is the owner-side evidence of the recorded backup schedule's kind
 	// (§4.6.5b), gathered once by Gather from owner-side state, never from the
@@ -1357,6 +1366,13 @@ func Gather(out, nameOverride string) Input {
 		in.ExeBasis, in.ExeSkew, in.ExeFormerName, in.ExeConsoleBuild = id.basis, id.skew, id.former, id.console
 		in.ExeSelf = id.self
 		in.ExeMissingInInstallDir = id.missingInInstallDir
+		// §4.6.3 re-point term: only on a basis that identifies this program, when
+		// ProgramForSchedule resolves and would record a different path than rec.
+		if id.basis == "same_file" || id.basis == "program_name" {
+			if exe, _, perr := schedule.ProgramForSchedule(d.Wrapper != ""); perr == nil {
+				in.ExeRepoint = repointDiffers(exe, d.Exe, runtime.GOOS)
+			}
+		}
 	} else if nameOverride != "" {
 		in.SchedState = schedule.Query(nameOverride)
 	}
@@ -1466,6 +1482,22 @@ func exeIdentity(d schedule.Descriptor) exeIdent {
 // knownName and formerName (schedule.KnownName / schedule.FormerName) classify
 // the one program's install and former names; they live in internal/schedule so
 // the former-name tokens are kept in one place (§4.6.2).
+
+// repointDiffers reports whether re-pointing a schedule at exe would record a
+// different program file than the recorded rec (§4.6.3's re-point term): a
+// different directory, or — same directory — a different basename (EqualFold on
+// windows and darwin, exact on linux). It compares paths, never os.SameFile,
+// so the macOS .app link (same file, different path) still counts as a re-point.
+func repointDiffers(exe, rec, goos string) bool {
+	if !schedule.SameArchivePath(filepath.Dir(exe), filepath.Dir(rec), goos) {
+		return true
+	}
+	a, b := filepath.Base(exe), filepath.Base(rec)
+	if goos == "linux" {
+		return a != b
+	}
+	return !strings.EqualFold(a, b)
+}
 
 // programLabel is status's one-label-per-state identity of the recorded
 // schedule's program (§6, MA-629), checked in this fixed order: missing (with the

@@ -26,10 +26,11 @@ func TestSE0_MA617_repairKeepsScheduleKind(t *testing.T) {
 	t.Skip("SE2 encoder: a repair rebuilds its own kind from trusted inputs, never from the descriptor, or refuses")
 }
 
-// covers: MA-618, R18, S59
-func TestSE0_MA618_whenRepairIsOffered(t *testing.T) {
-	t.Skip("SE2 encoder: repair offered only for a corroborated run-job/capture; volatile-directory question first")
-}
+// MA-618 encoder removed: "when a repair is offered" is proven by
+// internal/wizard/wizard_test.go TestMA618_RepairOfferedWhen (route-gating to a
+// corroborated run-job, ExeRepoint, the not-offered twins, the volatile-dir
+// question + Cancel-installs-nothing) and internal/health/ma618_repoint_test.go
+// (the re-point comparison).
 
 // MA-633 encoder removed: the per-kind remedies are built. schedule.RepairRoute
 // is proven by internal/schedule/repairroute_test.go, and health.repairHow — the
