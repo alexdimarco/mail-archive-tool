@@ -89,7 +89,7 @@ func refuse(env *launchEnv, text string) error {
 
 // The §7.6 refusal texts of the desktop (what / why / what to do).
 func portBusyText(addr string) string {
-	return fmt.Sprintf("mailarchive-desktop: -addr %s is in use by another program. Why: the dashboard needs its own port. Do this: leave -addr unset (any free port is used) or choose a free port.", addr)
+	return fmt.Sprintf("mailarchive desktop: -addr %s is in use by another program. Why: the dashboard needs its own port. Do this: leave -addr unset (any free port is used) or choose a free port.", addr)
 }
 
 func wedgedText(pid int) string {
@@ -124,7 +124,7 @@ type launchOpts struct {
 // launch hands off to that instance after it has proven itself with its key, so a
 // listener that is not it, whatever port it holds, is never opened.
 func launch(ctx context.Context, args []string, env *launchEnv) error {
-	fs := flag.NewFlagSet("mailarchive-desktop", flag.ContinueOnError)
+	fs := flag.NewFlagSet("mailarchive desktop", flag.ContinueOnError)
 	addr := fs.String("addr", "127.0.0.1:0", "loopback address for the dashboard (must be loopback; port 0 takes any free port)")
 	readerAddr := fs.String("reader-addr", "127.0.0.1:0", "loopback address for the archive reader (must be loopback; port 0 takes any free port)")
 	out := fs.String("out", "", "archive directory to manage")
@@ -349,7 +349,7 @@ func serveInstance(ctx context.Context, h *instance.Holder, o *launchOpts, env *
 		readerLn.Close()
 		return fmt.Errorf("could not record this instance: %w", err)
 	}
-	stopWatch := h.Watch(env.WatchEvery, func(s string) { fmt.Fprintln(env.Stderr, "mailarchive-desktop: "+s) })
+	stopWatch := h.Watch(env.WatchEvery, func(s string) { fmt.Fprintln(env.Stderr, "mailarchive desktop: "+s) })
 	defer stopWatch()
 
 	errc := make(chan error, 2)

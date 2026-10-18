@@ -674,7 +674,7 @@ func TestDesktopRefusesVisibly(t *testing.T) {
 	if !isRefused(err) {
 		t.Fatalf("an explicit -addr in use: %v, want a refusal", err)
 	}
-	want := "mailarchive-desktop: -addr " + addr + " is in use by another program. Why: the dashboard needs its own port. Do this: leave -addr unset (any free port is used) or choose a free port."
+	want := "mailarchive desktop: -addr " + addr + " is in use by another program. Why: the dashboard needs its own port. Do this: leave -addr unset (any free port is used) or choose a free port."
 	if _, r, _ := rec.snapshot(); len(r) != 1 || r[0] != want {
 		t.Errorf("refusal %q, want %q", r, want)
 	}

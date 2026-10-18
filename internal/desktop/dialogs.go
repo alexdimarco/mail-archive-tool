@@ -26,7 +26,7 @@ func showRefusal(text string) {
 // browser that did not open or a launch that asked for a link [CC20]. The link is
 // in the dialog and nowhere else: not on stderr, which may be a log.
 func showLink(link string) {
-	fmt.Fprintln(os.Stderr, "mailarchive-desktop: a dialog shows a link to open the dashboard in your browser")
+	fmt.Fprintln(os.Stderr, "mailarchive desktop: a dialog shows a link to open the dashboard in your browser")
 	_, err := zenity.Entry("Your browser did not open. Copy this link into your browser:",
 		zenity.Title(dialogTitle), zenity.EntryText(link), zenity.OKLabel("Copy"), zenity.CancelLabel("Close"))
 	if err == nil {

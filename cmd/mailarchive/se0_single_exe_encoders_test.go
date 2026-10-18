@@ -106,11 +106,6 @@ func TestSE0_MA635_exeMissingInstallFolderBranch(t *testing.T) {
 	t.Skip("SE2 encoder: a missing known-name file in the program's own directory names installer Repair; others keep re-install")
 }
 
-// covers: MA-636, R12, S59
-func TestSE0_MA636_shownRefusalReachesEachChannelOnce(t *testing.T) {
-	t.Skip("SE1 encoder: desktop -addr on a held port exits 1 with portBusyText once; the dialog seam gets it once")
-}
-
 // covers: MA-637, S59
 func TestSE0_MA637_handoffNamesAnotherVersionHolder(t *testing.T) {
 	t.Skip("SE1 encoder: a verified holder of another version gets the notice; a same-version holder does not; launcher exits 0")

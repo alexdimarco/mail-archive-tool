@@ -129,7 +129,11 @@ func runResolvedVerb(base string, args []string) (code int, handled bool) {
 		return 2, true
 	case r.verb == "desktop":
 		if err := launchDesktop(r.args); err != nil {
-			fmt.Fprintln(os.Stderr, "mailarchive: "+err.Error())
+			// A refusal the desktop already showed (its dialog and stderr) is not
+			// reprinted here, so it reaches each channel once (§4.1 rule 4, MA-636).
+			if !desktop.RefusalShown(err) {
+				fmt.Fprintln(os.Stderr, "mailarchive: "+err.Error())
+			}
 			return 1, true
 		}
 		return 0, true
