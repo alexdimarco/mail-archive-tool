@@ -119,6 +119,30 @@ func ProgramNote(exe string, reason Reason) string {
 	return note
 }
 
+// SameArchivePath reports whether two -out spellings name the same directory
+// (§4.6.2). It prefers os.SameFile when both paths stat (collapsing symlink,
+// 8.3/long and mapped-drive spellings); when a stat is unavailable it folds case
+// only on the case-insensitive volumes (darwin/windows), keeping an exact
+// byte-compare on linux so a genuinely different-cased directory there still
+// warns (UJ-A4). The kind corroboration (§4.6.5) and health share this one.
+func SameArchivePath(a, b, goos string) bool {
+	if filepath.Clean(a) == filepath.Clean(b) {
+		return true
+	}
+	if goos == "" {
+		goos = runtime.GOOS
+	}
+	fa, ea := os.Stat(a)
+	fb, eb := os.Stat(b)
+	if ea == nil && eb == nil {
+		return os.SameFile(fa, fb)
+	}
+	if goos == "darwin" || goos == "windows" {
+		return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
+	}
+	return false
+}
+
 // KnownName reports whether base is one of the one program's install or former
 // names, matched per OS (EqualFold on Windows and macOS, exact on Linux), with no
 // trimming of trailing dots or spaces (§4.6.2). The former names stay in the set

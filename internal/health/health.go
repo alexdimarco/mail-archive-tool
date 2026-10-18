@@ -905,28 +905,9 @@ func verifyStaleRemedy(in Input) string {
 	return fmt.Sprintf("%s: re-install it with %s (no -name, so it has this archive's own entry), or run `mailarchive verify -out %q`", why, reinstall, in.Out)
 }
 
-// sameArchivePath reports whether two -out spellings name the same directory.
-// It prefers os.SameFile when both paths stat (collapsing symlink, 8.3/long and
-// mapped-drive spellings); when a stat is unavailable it folds case only on the
-// case-insensitive volumes (darwin/windows), keeping an exact byte-compare on
-// linux so a genuinely different-cased directory there still warns (UJ-A4).
-func sameArchivePath(a, b, goos string) bool {
-	if filepath.Clean(a) == filepath.Clean(b) {
-		return true
-	}
-	if goos == "" {
-		goos = runtime.GOOS
-	}
-	fa, ea := os.Stat(a)
-	fb, eb := os.Stat(b)
-	if ea == nil && eb == nil {
-		return os.SameFile(fa, fb)
-	}
-	if goos == "darwin" || goos == "windows" {
-		return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
-	}
-	return false
-}
+// sameArchivePath moved to schedule.SameArchivePath (§4.6.2/§4.6.5) so the kind
+// corroboration shares one definition without an import cycle.
+func sameArchivePath(a, b, goos string) bool { return schedule.SameArchivePath(a, b, goos) }
 
 // isVerifyJob reports whether a scheduler job is a `verify` job (its verb, the
 // first argument, is "verify").
