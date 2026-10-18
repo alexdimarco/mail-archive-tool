@@ -23,7 +23,6 @@ import (
 
 func loopback(port int) net.Addr { return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: port} }
 
-
 // sessionCookie redeems a fresh one-time link of s on h and returns the cookie a
 // browser would then hold, so a fixture can read what only an admitted browser sees.
 func sessionCookie(t *testing.T, h http.Handler, s *localweb.Session, host string) *http.Cookie {

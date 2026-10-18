@@ -22,7 +22,6 @@ import (
 	"mail-archive-tool/internal/localweb"
 )
 
-
 // run is the binary's entry: it launches with the operating system's own
 // surroundings, until the process is interrupted.
 func Launch(args []string) error {
