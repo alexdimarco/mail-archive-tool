@@ -27,8 +27,9 @@ const (
 // ErrTranslocated is returned by ProgramForSchedule when the running program is
 // a macOS App Translocation copy (its resolved path lies under an
 // /AppTranslocation/ directory): a schedule recorded from it stops working the
-// moment the app quits, so every caller refuses (D1, §4.6.1). It carries no path.
-var ErrTranslocated = errors.New("the program is running from a temporary translocated copy")
+// moment the app quits, so every caller refuses (D1, §4.6.1). It carries no path,
+// and its message is the X2 refusal every caller shows.
+var ErrTranslocated = errors.New("Mail Archive is running from a temporary copy macOS made of a downloaded app; a schedule recorded from it stops working when the app quits. Do this: drag Mail Archive.app to your Applications folder, open it from there, and install the schedule (or choose Repair) again.")
 
 // l2WrapperGateHolds records whether lab item L-W2 has shown that a wrapped
 // schedule can run the no-console build mailarchivew.exe — that cmd.exe waits for
@@ -39,11 +40,20 @@ var ErrTranslocated = errors.New("the program is running from a temporary transl
 // schedule records the qualifying sibling exactly as an unwrapped one does.
 const l2WrapperGateHolds = true
 
-// Seams for self-resolution, overridden in tests so a chosen self can be injected.
-var (
-	osExecutable = os.Executable
-	evalSymlinks = filepath.EvalSymlinks
-)
+// SelfResolver returns the running program's path, resolved through EvalSymlinks
+// and cleaned. It is a var so a test — in any package — can inject a chosen self,
+// e.g. a translocated path to drive a caller's refusal, exactly as
+// instance.OwnerReader is injected (§4.6.1, MA-630).
+var SelfResolver = func() (string, error) {
+	self, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("could not determine my own executable path: %w", err)
+	}
+	if resolved, rerr := filepath.EvalSymlinks(self); rerr == nil {
+		self = resolved
+	}
+	return filepath.Clean(self), nil
+}
 
 // ProgramForSchedule returns the absolute path of the program a schedule should
 // run, and a Reason for any note the caller must show. It is the one place
@@ -62,18 +72,51 @@ var (
 // wrapped is the caller's wrapper decision (§4.6.1): the wrapped sibling is only
 // held back — as self, reason wrapped_console — once L-W2 is known not to hold.
 func ProgramForSchedule(wrapped bool) (exe string, reason Reason, err error) {
-	self, err := osExecutable()
+	self, err := SelfResolver()
 	if err != nil {
-		return "", ReasonNone, fmt.Errorf("could not determine my own executable path: %w", err)
+		return "", ReasonNone, err
 	}
-	if resolved, rerr := evalSymlinks(self); rerr == nil {
-		self = resolved
-	}
-	self = filepath.Clean(self)
 	if !filepath.IsAbs(self) {
 		return "", ReasonNone, fmt.Errorf("the running program path %q is not absolute", self)
 	}
 	return programForSchedule(runtime.GOOS, self, wrapped, SiblingQualifies)
+}
+
+// ProgramNote is the one rendering of a ProgramForSchedule result that any
+// surface shows (§4.6.1): the command line's schedule -install (stdout, after a
+// successful install), the wizard's offerSchedule and repair result dialogs, and
+// the Weekly backup card's Install/update and Repair results. A notice about a
+// missing or unusable mailarchivew.exe goes through here, never a separate write.
+// It is empty when there is nothing to say — the running program is the right one
+// (none), the qualifying sibling was taken (sibling), or the console build is kept
+// under a wrapper (wrapped_console). Otherwise it names the program the schedule
+// will run, why the sibling was not used, the console cost when the console build
+// is what runs, and the repair to do.
+func ProgramNote(exe string, reason Reason) string {
+	var why string
+	switch reason {
+	case ReasonSiblingAbsent:
+		why = "is missing"
+	case ReasonSiblingNotRegular:
+		why = "is not a plain file"
+	case ReasonSiblingOtherOwner:
+		why = "belongs to another account"
+	case ReasonPairOutOfStep:
+		why = "is from a different release"
+	default: // none, sibling, wrapped_console, or anything unknown: no note
+		return ""
+	}
+	base := filepath.Base(exe)
+	note := fmt.Sprintf("This schedule runs %s because mailarchivew.exe beside it %s.", base, why)
+	if base == "mailarchive.exe" {
+		note += " A console window will stay open while it runs."
+	}
+	if reason == ReasonSiblingAbsent {
+		note += " Do this: restore mailarchivew.exe with the installer's Repair (if your antivirus removed it, restore and allow it first), or copy both files from one release, then choose Repair."
+	} else {
+		note += " Do this: put mailarchivew.exe from the same release back beside it (reinstall from the MSI, or copy both files from one release) and choose Repair."
+	}
+	return note
 }
 
 // programForSchedule is the pure core of ProgramForSchedule: it takes the OS,

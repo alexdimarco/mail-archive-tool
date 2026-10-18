@@ -41,11 +41,6 @@ func TestSE0_MA629_statusProgramAndScheduledLine(t *testing.T) {
 	t.Skip("SE2 encoder: the Program: line's one label per state in order; the scheduled: <kind> line")
 }
 
-// covers: MA-630, R18, S59
-func TestSE0_MA630_programNoteRendering(t *testing.T) {
-	t.Skip("SE2 encoder: schedule.ProgramNote across every caller; a translocation refusal writes nothing")
-}
-
 // covers: MA-631, R14, R18, S59
 func TestSE0_MA631_kindGuardAtInstallOn(t *testing.T) {
 	t.Skip("SE2 encoder: installOn refuses a cross-kind install under the archive's name; same-kind re-install is one entry")

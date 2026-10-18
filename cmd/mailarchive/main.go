@@ -817,7 +817,7 @@ func runSchedule(args []string) error {
 	// not os.Executable(); the command line's schedule always wraps on Windows
 	// (non-goal 7, D2). A translocated program is refused here, before any job
 	// file or scheduler entry is written.
-	exe, _, err := schedule.ProgramForSchedule(true)
+	exe, progReason, err := schedule.ProgramForSchedule(true)
 	if err != nil {
 		return err
 	}
@@ -949,6 +949,9 @@ func runSchedule(args []string) error {
 		}
 		fmt.Printf("Installed scheduled %s %q (%s at %s).\n", kind, n, iv, *at)
 		fmt.Printf("It runs: %s %s\n", exe, strings.Join(spec.Args, " "))
+		if note := schedule.ProgramNote(exe, progReason); note != "" {
+			fmt.Println(note)
+		}
 		if note := graphDeletedJunkNote(j); note != "" {
 			fmt.Println(note)
 		}

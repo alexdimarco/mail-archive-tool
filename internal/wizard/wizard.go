@@ -921,7 +921,7 @@ func repairPlan(out string, d schedule.Descriptor, exe string) (schedule.Spec, e
 func repairSchedule(out string, d schedule.Descriptor) error {
 	// §4.6.1 (MA-615): resolve the program through ProgramForSchedule, keeping the
 	// recorded wrapper decision; a translocated program is refused before install.
-	exe, _, err := schedule.ProgramForSchedule(d.Wrapper != "")
+	exe, progReason, err := schedule.ProgramForSchedule(d.Wrapper != "")
 	if err != nil {
 		return err
 	}
@@ -936,8 +936,13 @@ func repairSchedule(out string, d schedule.Descriptor) error {
 	// The repair is done; offer to continue into the wizard (run an export now)
 	// rather than forcing a re-launch — a returning user who repairs a schedule
 	// often wants to run one too (friction #24). "Close" exits quietly.
+	msg := fmt.Sprintf("Repaired the scheduled backup %q for\n%s\n\nIt now runs this copy of the program.", spec.Name, out)
+	if pn := schedule.ProgramNote(exe, progReason); pn != "" {
+		msg += "\n\n" + pn
+	}
+	msg += "\n\nOpen the MailArchive wizard (mailarchive wizard) any time to check the backup's health.\n\nContinue to run an export now?"
 	q := zenity.Question(
-		fmt.Sprintf("Repaired the scheduled backup %q for\n%s\n\nIt now runs this copy of the program. Open the MailArchive wizard (mailarchive wizard) any time to check the backup's health.\n\nContinue to run an export now?", spec.Name, out),
+		msg,
 		zenity.Title(appTitle),
 		zenity.OKLabel("Continue to the wizard"),
 		zenity.CancelLabel("Close"),
@@ -1452,7 +1457,7 @@ func offerSchedule(c wizardChoice) error {
 	// §4.6.1 (MA-615): the wizard's schedule runs ProgramForSchedule's program, not
 	// os.Executable(); wrapped is dormant while L-W2 holds, so the wrapper fit is
 	// decided from the chosen program below. A translocated program is refused.
-	exe, _, err := schedule.ProgramForSchedule(false)
+	exe, progReason, err := schedule.ProgramForSchedule(false)
 	if err != nil {
 		return err
 	}
@@ -1500,6 +1505,9 @@ func offerSchedule(c wizardChoice) error {
 		if spec.Wrapper {
 			note += " A console window will appear briefly while it runs."
 		}
+	}
+	if pn := schedule.ProgramNote(exe, progReason); pn != "" {
+		note += "\n\n" + pn
 	}
 	return zenity.Info(fmt.Sprintf("Scheduled: %s at %s.\n\nArchive: %s\nLog: %s\n\nOpen the MailArchive wizard (mailarchive wizard) any time to check the backup's health.%s",
 		iv, at, c.out, spec.Log, note), zenity.Title(appTitle))

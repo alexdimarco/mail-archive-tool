@@ -140,7 +140,16 @@ func (d *dashboard) scheduleInstall(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	_ = UpdateSettings(d.cfg.SettingsPath, "backup", func(s *Settings) { s.BackupFor = "" })
-	writeJSON(w, map[string]any{"ok": true})
+	resp := map[string]any{"ok": true}
+	// §4.6.1 (MA-630): the card's Install/update result carries the one program
+	// note when the schedule did not run the preferred no-console sibling (Windows
+	// only; empty otherwise).
+	if _, reason, perr := schedule.ProgramForSchedule(true); perr == nil {
+		if note := schedule.ProgramNote(spec.Exe, reason); note != "" {
+			resp["note"] = note
+		}
+	}
+	writeJSON(w, resp)
 }
 
 // scheduleRemove removes the weekly backup (loopback-only, CSRF-guarded).

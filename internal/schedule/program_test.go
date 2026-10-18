@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"strings"
 	"testing"
 
 	"mail-archive-tool/internal/instance"
@@ -141,22 +142,69 @@ func TestMA615_SiblingQualifies(t *testing.T) {
 	}
 }
 
+// covers: MA-630, R18, S59
+// ProgramNote renders a ProgramForSchedule result for every surface: empty when
+// there is nothing to say (none, sibling, wrapped_console); otherwise the one
+// note naming the program, why the sibling was not used, the console cost only
+// when the console build mailarchive.exe is what runs, and the right "Do this"
+// (the installer's Repair first when the sibling is missing).
+func TestMA630_ProgramNote(t *testing.T) {
+	for _, r := range []Reason{ReasonNone, ReasonSibling, ReasonWrappedConsole} {
+		if got := ProgramNote("/opt/MailArchive/mailarchive.exe", r); got != "" {
+			t.Errorf("ProgramNote(%q) = %q, want empty", r, got)
+		}
+	}
+
+	con := "/opt/MailArchive/mailarchive.exe"  // the console build
+	noc := "/opt/MailArchive/mailarchivew.exe" // some other recorded name (no console sentence)
+	has := func(s, sub string) bool { return strings.Contains(s, sub) }
+
+	cases := []struct {
+		exe            string
+		reason         Reason
+		wantWhy        string
+		wantConsole    bool
+		installerFirst bool
+	}{
+		{con, ReasonSiblingAbsent, "is missing", true, true},
+		{noc, ReasonSiblingAbsent, "is missing", false, true},
+		{con, ReasonSiblingNotRegular, "is not a plain file", true, false},
+		{con, ReasonSiblingOtherOwner, "belongs to another account", true, false},
+		{con, ReasonPairOutOfStep, "is from a different release", true, false},
+		{noc, ReasonPairOutOfStep, "is from a different release", false, false},
+	}
+	for _, c := range cases {
+		got := ProgramNote(c.exe, c.reason)
+		if !has(got, "This schedule runs "+filepath.Base(c.exe)+" because mailarchivew.exe beside it "+c.wantWhy+".") {
+			t.Errorf("ProgramNote(%q,%q) = %q; missing the %q clause", c.exe, c.reason, got, c.wantWhy)
+		}
+		if gotConsole := has(got, "A console window will stay open while it runs."); gotConsole != c.wantConsole {
+			t.Errorf("ProgramNote(%q,%q): console sentence = %v, want %v", c.exe, c.reason, gotConsole, c.wantConsole)
+		}
+		if gotInstaller := has(got, "with the installer's Repair"); gotInstaller != c.installerFirst {
+			t.Errorf("ProgramNote(%q,%q): installer-first Do-this = %v, want %v", c.exe, c.reason, gotInstaller, c.installerFirst)
+		}
+		if !has(got, "choose Repair") {
+			t.Errorf("ProgramNote(%q,%q) = %q; missing the Repair instruction", c.exe, c.reason, got)
+		}
+	}
+}
+
 // covers: MA-615, R33, R18, S59
 // ProgramForSchedule resolves self through os.Executable()+EvalSymlinks+Clean
 // and refuses a non-absolute result; the pure core then decides the rest.
 func TestMA615_ProgramForScheduleResolvesSelf(t *testing.T) {
-	origExe, origEval := osExecutable, evalSymlinks
-	t.Cleanup(func() { osExecutable, evalSymlinks = origExe, origEval })
-	evalSymlinks = func(p string) (string, error) { return p, nil } // identity
+	orig := SelfResolver
+	t.Cleanup(func() { SelfResolver = orig })
 
 	// A non-absolute self is refused.
-	osExecutable = func() (string, error) { return "mailarchive", nil }
+	SelfResolver = func() (string, error) { return "mailarchive", nil }
 	if _, _, err := ProgramForSchedule(false); err == nil {
 		t.Error("a non-absolute self must be an error")
 	}
 
 	// An absolute self on this host returns a usable program path.
-	osExecutable = func() (string, error) { return filepath.Join(t.TempDir(), "mailarchive"), nil }
+	SelfResolver = func() (string, error) { return filepath.Join(t.TempDir(), "mailarchive"), nil }
 	exe, reason, err := ProgramForSchedule(false)
 	if err != nil || !filepath.IsAbs(exe) {
 		t.Fatalf("got (%q, %q, %v), want an absolute path and no error", exe, reason, err)
