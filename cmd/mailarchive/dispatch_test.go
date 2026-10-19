@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"mail-archive-tool/internal/wizard"
 )
 
 // eqArgs compares two argument slices, treating nil and empty as equal.
@@ -115,6 +117,31 @@ func TestMA610_EverySurfaceIsAVerb(t *testing.T) {
 		if !strings.Contains(usage, "mailarchive "+v) {
 			t.Errorf("root usage does not list the %q verb:\n%s", v, usage)
 		}
+	}
+}
+
+// covers: MA-651, MA-612, R33
+// The wizard's first step opens MailArchive Desktop through the cmd layer's wiring,
+// which routes to desktop.Launch IN THIS PROCESS (never a child — MA-612). Swapping
+// the launchDesktop seam proves the route with nothing served and nothing exec'd.
+func TestMA651_WizardOpensDesktopInProcess(t *testing.T) {
+	orig := launchDesktop
+	defer func() { launchDesktop = orig }()
+	var opened bool
+	var gotArgs []string
+	launchDesktop = func(a []string) error { opened = true; gotArgs = a; return nil }
+
+	if wizard.OpenDesktop == nil {
+		t.Fatal("the cmd layer did not wire wizard.OpenDesktop")
+	}
+	if err := wizard.OpenDesktop(); err != nil {
+		t.Fatalf("OpenDesktop: %v", err)
+	}
+	if !opened {
+		t.Error("wizard.OpenDesktop did not route to desktop.Launch in this process")
+	}
+	if len(gotArgs) != 0 {
+		t.Errorf("Desktop opened with args %v, want none (the default dashboard)", gotArgs)
 	}
 }
 

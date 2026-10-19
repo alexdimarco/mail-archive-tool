@@ -66,6 +66,28 @@ const (
 	deletedJunkIncludeItem = "Yes — also archive Deleted Items and Junk Email"
 )
 
+// The wizard's first step (MA-651) opens the various options: the quick local-file
+// importer below, or MailArchive Desktop — the dashboard that holds Microsoft 365
+// sign-in, folder-preserving export, browsing, scheduling and the maintenance tools.
+// The local item is the default, so a click-through stays on the quick path.
+const (
+	surfaceLocalItem   = "Archive a mail file on this computer (Outlook, Thunderbird, mbox)"
+	surfaceDesktopItem = "Microsoft 365, folder export, browsing & tools (open MailArchive Desktop)"
+)
+
+// surfaceChoices is the first step's list, local item first (and defaulted).
+var surfaceChoices = []string{surfaceLocalItem, surfaceDesktopItem}
+
+// OpenDesktop launches MailArchive Desktop in the SAME process (MA-612/R33 — never a
+// child). The cmd layer wires it: it may import internal/desktop, but the wizard may
+// not (internal/desktop imports internal/wizard — a cycle). nil on a build that wired
+// no desktop surface, and then openDesktopSurface names the command instead (MA-651).
+var OpenDesktop func() error
+
+// openDesktopUnwired is shown when no launcher was wired, so the choice still tells
+// the user how to reach MailArchive Desktop rather than failing.
+const openDesktopUnwired = "To open MailArchive Desktop, run this in a terminal:\n\n    mailarchive desktop\n\nIt opens a local control panel in your browser with Microsoft 365 sign-in, folder export, browsing and the maintenance tools."
+
 // notify is the desktop-notification sink, overridable in tests. A scheduled
 // (headless) run has no window, so a failure would otherwise be invisible until
 // the user next opens the GUI (P3).
@@ -340,14 +362,41 @@ type wizardChoice struct {
 	includeJunk    bool
 }
 
+// surfaceOpensDesktop reports whether the first step's pick opens MailArchive
+// Desktop (the Microsoft 365 / tools surface) rather than continuing into the
+// local-file wizard. Pure, so MA-651 tables it: only the Desktop item opens
+// Desktop; the local item, an empty pick and anything else stay local.
+func surfaceOpensDesktop(pick string) bool { return pick == surfaceDesktopItem }
+
+// openDesktopSurface hands off to MailArchive Desktop IN-PROCESS (MA-612/R33 — never
+// a child). If the cmd layer wired no launcher, it names the command instead of
+// failing, so the choice is never a dead end (MA-651).
+func openDesktopSurface() error {
+	if OpenDesktop == nil {
+		return zenity.Info(openDesktopUnwired, zenity.Title(appTitle))
+	}
+	return OpenDesktop()
+}
+
 func wizard() error {
-	// 0. Health of the last archive this wizard scheduled, if any (S8): the
+	// 1. First step (MA-651): open the various options. The Desktop item hands off
+	//    IN-PROCESS to MailArchive Desktop (Microsoft 365, folder export, browsing,
+	//    scheduling, the maintenance tools); the local item (the default) stays on
+	//    the quick path. zenity.List returns ErrCanceled on dismiss → quiet exit.
+	switch pick, err := zenity.List("What would you like to do?", surfaceChoices, zenity.Title(appTitle), zenity.DefaultItems(surfaceLocalItem)); {
+	case err != nil:
+		return err
+	case surfaceOpensDesktop(pick):
+		return openDesktopSurface()
+	}
+
+	// 2. Health of the last archive this wizard scheduled, if any (S8): the
 	//    double-click user has no other way to learn the backup stopped.
 	if err := healthCheck(); err != nil {
 		return err
 	}
 
-	// 1. Choose the source type, then pick the file/folder accordingly.
+	// 3. Choose the source type, then pick the file/folder accordingly.
 	choices := []string{srcAuto, srcOutlook}
 	if runtime.GOOS == "windows" {
 		choices = append(choices, srcOutlookCOM) // needs classic Outlook, Windows-only
@@ -981,6 +1030,21 @@ func repairFollowUp(choice error) (cont bool, err error) {
 	}
 }
 
+// removeConfirmed reads the answer to the "remove this backup?" confirm (MA-652):
+// OK (nil) proceeds with the removal, Cancel or a dismissed dialog (ErrCanceled)
+// keeps the backup, any other error propagates. Pure so the branch is tested
+// without a display, mirroring repairFollowUp.
+func removeConfirmed(choice error) (proceed bool, err error) {
+	switch {
+	case choice == nil:
+		return true, nil
+	case errors.Is(choice, zenity.ErrCanceled):
+		return false, nil
+	default:
+		return false, choice
+	}
+}
+
 func removeSchedule(out string) error {
 	d, err := schedule.ReadDescriptor(out)
 	if err != nil {
@@ -1002,6 +1066,23 @@ func removeSchedule(out string) error {
 	spec := schedule.Spec{Name: name, Interval: iv, At: "02:00", Exe: d.Exe, Out: out, WrapperPath: schedule.DefaultWrapperPath(name)}
 	if err := spec.Validate(); err != nil {
 		return err
+	}
+	// Confirm before the destructive removal (MA-652): the health view's "Remove the
+	// scheduled backup" pick lands here directly, so without this a mistaken pick
+	// would delete the backup with no way back. The confirm sits AFTER the MA-455
+	// name-binding above, so only a real, bound entry is ever offered; on Keep the
+	// scheduler, the descriptor and the job file are all left as they were, and the
+	// archive folder and its files are never touched on either answer.
+	switch proceed, cerr := removeConfirmed(zenity.Question(
+		fmt.Sprintf("Remove the scheduled backup %q for\n%s?\n\nThis only stops the automatic backups — your archive and everything in it is kept.", name, out),
+		zenity.Title(appTitle),
+		zenity.OKLabel("Remove the backup"),
+		zenity.CancelLabel("Keep it"),
+	)); {
+	case cerr != nil:
+		return cerr
+	case !proceed:
+		return nil
 	}
 	if err := schedule.Remove(spec); err != nil {
 		return err

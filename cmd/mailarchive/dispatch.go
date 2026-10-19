@@ -31,6 +31,11 @@ var (
 	runHeadlessJob = wizard.RunHeadless
 )
 
+// The wizard's first step can open MailArchive Desktop; wire that hand-off to the
+// in-process launchDesktop seam (MA-651/MA-612 — the same process, never a child).
+// A closure over the var, so MA-651's test can swap launchDesktop and see the route.
+func init() { wizard.OpenDesktop = func() error { return launchDesktop(nil) } }
+
 // verbRoute is where one invocation is routed.
 type verbRoute struct {
 	verb  string   // "desktop" | "wizard" | "run-job" | "" (a CLI verb or export)

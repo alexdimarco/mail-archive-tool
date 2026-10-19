@@ -15,10 +15,14 @@ import (
 	"flag"
 	"os"
 
+	"mail-archive-tool/internal/desktop"
 	"mail-archive-tool/internal/wizard"
 )
 
 func main() {
+	// The wizard's first step opens MailArchive Desktop in THIS process (MA-612/R33 —
+	// never a child); wire that hand-off before the wizard can offer it.
+	wizard.OpenDesktop = func() error { return desktop.Launch(nil) }
 	jobPath := flag.String("job", "", "run this saved job headlessly (no dialogs); what the installed schedule uses")
 	flag.Parse()
 	if *jobPath != "" {
