@@ -211,7 +211,7 @@ func TestMaildirFileReadFaultIsContained(t *testing.T) {
 // one deleted in that window is a vanished-during-read gap, fillable (F29a).
 func TestMaildirRenamedAndVanishedFilesAreFoundOrRecorded(t *testing.T) {
 	store := filepath.Join(t.TempDir(), "Inbox")
-	writeLocal(t, filepath.Join(store, "cur", "b:2,S"), localMail("b"))
+	writeLocal(t, filepath.Join(store, "cur", mdName("b:2,S")), localMail("b"))
 	sc, err := openScope(store)
 	if err != nil {
 		t.Fatal(err)
@@ -225,7 +225,7 @@ func TestMaildirRenamedAndVanishedFilesAreFoundOrRecorded(t *testing.T) {
 	}, WalkOptions{Faults: func(f Fault) { faults = append(faults, f) }}, false)
 
 	// The listing named "b:2," (not yet seen); the client has since flagged it.
-	if err := w.maildirMessage(sc, "cur/b:2,", "b:2,", []string{"Inbox"}); err != nil {
+	if err := w.maildirMessage(sc, mdName("cur/b:2,"), mdName("b:2,"), []string{"Inbox"}); err != nil {
 		t.Fatal(err)
 	}
 	if fmt.Sprint(got) != "[b|maildir:Inbox/b]" || len(faults) != 0 {
@@ -236,11 +236,11 @@ func TestMaildirRenamedAndVanishedFilesAreFoundOrRecorded(t *testing.T) {
 	}
 
 	// Deleted in the window: nothing to find.
-	if err := os.Remove(filepath.Join(store, "cur", "b:2,S")); err != nil {
+	if err := os.Remove(filepath.Join(store, "cur", mdName("b:2,S"))); err != nil {
 		t.Fatal(err)
 	}
 	got = nil
-	if err := w.maildirMessage(sc, "cur/b:2,S", "b:2,S", []string{"Inbox"}); err != nil {
+	if err := w.maildirMessage(sc, mdName("cur/b:2,S"), mdName("b:2,S"), []string{"Inbox"}); err != nil {
 		t.Fatal(err)
 	}
 	if len(got) != 0 || len(faults) != 1 || faults[0].Reason != "vanished-during-read" || faults[0].Class != state.ClassFillable || faults[0].Locator != "maildir:Inbox/b" {
@@ -254,7 +254,7 @@ func (w *localWalk) maildirMessageUnread(t *testing.T, sc *scope) bool {
 	t.Helper()
 	var unread bool
 	inner := newLocalWalk(func(folder []string, m *model.Message) error { unread = m.Unread; return nil }, WalkOptions{}, false)
-	if err := inner.maildirMessage(sc, "cur/b:2,", "b:2,", []string{"Inbox"}); err != nil {
+	if err := inner.maildirMessage(sc, mdName("cur/b:2,"), mdName("b:2,"), []string{"Inbox"}); err != nil {
 		t.Fatal(err)
 	}
 	return unread

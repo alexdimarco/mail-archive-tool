@@ -90,8 +90,8 @@ func TestRawStubsKeepTheirBytesAndTheirRecord(t *testing.T) {
 	store := filepath.Join(tmpDir(t), "Inbox")
 	poison := "From: a@example.com\r\nSubject: POISON subject\r\nMessage-ID: <poison@x>\r\nDate: Mon, 03 Mar 2025 09:00:00 +0000\r\n\r\n" +
 		"HEAD-TOKEN <b>not html</b>\r\n" + strings.Repeat("filler line of the message\r\n", 5000) + "TAIL-TOKEN-BEYOND-64KIB\r\n"
-	p14Write(t, filepath.Join(store, "cur", "p:2,S"), poison)
-	p14Write(t, filepath.Join(store, "cur", "ok:2,S"), p14Plain("healthy", "ok"))
+	p14Write(t, filepath.Join(store, "cur", mdName("p:2,S")), poison)
+	p14Write(t, filepath.Join(store, "cur", mdName("ok:2,S")), p14Plain("healthy", "ok"))
 
 	out := tmpDir(t)
 	res, err := Run(context.Background(), Options{Inputs: []string{store}, Out: out, Mode: export.Incremental, Index: true, Pages: true, KeepRaw: true}, discard(), nil)

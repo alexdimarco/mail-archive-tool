@@ -199,7 +199,7 @@ func TestCopyExportDiskFullStopsWithRG(t *testing.T) {
 	if res.Outcome != CopyOutcomeFailed || res.Stop == nil || res.Stop.RID != "R-g" || res.Status != CopyStatusFailed {
 		t.Fatalf("a full disk ended as %s (%+v)", res.Label, res.Stop)
 	}
-	assure.Refused(t, int(res.Outcome), res.Stop.Message, assure.Code(1), assure.Names("12 of 20 messages", "no space left", "Export the remaining messages"),
+	assure.Refused(t, int(res.Outcome), res.Stop.Message, assure.Code(1), assure.Names("12 of 20 messages", "Free some space", "Export the remaining messages"),
 		assure.NoSideEffect(func() bool { return len(tempResidue(t, res.Root)) == 0 }))
 	if !strings.Contains(readText(t, res.Root, copyMarkerName), "STOPPED") {
 		t.Errorf("the marker is %q: it must be rewritten STOPPED, never removed", readText(t, res.Root, copyMarkerName))
