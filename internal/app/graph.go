@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,7 +19,6 @@ import (
 	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/model"
 	"mail-archive-tool/internal/pages"
-	"mail-archive-tool/internal/source"
 	"mail-archive-tool/internal/state"
 )
 
@@ -57,6 +57,20 @@ type GraphOptions struct {
 	// well-known-folder id, so it is locale-independent (§3.6).
 	IncludeDeleted bool
 	IncludeJunk    bool
+
+	// Test overrides of the Graph client's bounds and its transport (zero or
+	// nil = the client's defaults, which are fixed by design, fault-isolation
+	// §4.8.5). The CLI, the GUI and the desktop leave them unset; tests scale
+	// the bounds and inject transport faults (MA-540).
+	RequestTimeout    time.Duration
+	MIMETimeout       time.Duration
+	MIMEIdleTimeout   time.Duration
+	MIMEHeaderTimeout time.Duration
+	RetryAfterMax     time.Duration // each Retry-After sleep (default 60 s)
+	RetryAfterBudget  time.Duration // all of one request's Retry-After sleeps (default 5 min)
+	BreakerTimeBound  time.Duration // the breaker's cumulative time in failed downloads, per mailbox (default 30 min)
+	PageCap           int
+	WrapTransport     func(http.RoundTripper) http.RoundTripper
 }
 
 // RunGraph archives the given mailboxes server-side via Microsoft Graph (app-only
@@ -75,7 +89,7 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	// told one. App mode returns the given mailboxes unchanged.
 	client, mailboxes, err := buildGraphClient(ctx, g, logger)
 	if err != nil {
-		return Result{}, err
+		return Result{}, cleanErr(asFailure(ctx, err))
 	}
 	g.Mailboxes = mailboxes
 	if len(g.Mailboxes) == 0 {
@@ -89,7 +103,8 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		return Result{}, err
 	}
 	defer lock.Release()
-	defer recordRun(opts, beginRun(opts), &result, &err)
+	begun := beginRun(opts)
+	defer recordRun(opts, begun, &result, &err, logger)
 
 	mpath := opts.Manifest
 	if mpath == "" {
@@ -99,6 +114,7 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	if err != nil {
 		return Result{}, err
 	}
+	manifestBefore := manifest.Len()
 
 	exp := &export.Exporter{
 		OutDir:   opts.Out,
@@ -117,11 +133,17 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		// keeps the folder-scoped key.
 		DedupMailboxWide: true,
 	}
+	if exporterSetup != nil {
+		exporterSetup(exp)
+	}
 
 	// The go-back timeline: an append-only history log records this run's changes
 	// (newly-seen / moved / gone), fsync'd before the manifest advances (§3.5).
 	// A log that cannot be opened degrades the timeline but must not fail the run.
-	runAt := time.Now().UTC()
+	// The run's timestamp is its last-run record's start: the stamp every LastSeen
+	// and every capture-gap observation carries, so `status` can tell a gap this
+	// run attempted from one it did not (FC14).
+	runAt := begun.Started
 	var hist *state.HistoryWriter
 	if hw, herr := state.OpenHistory(filepath.Join(opts.Out, state.HistoryName)); herr != nil {
 		logger.Printf("warning: %v (this run's go-back timeline will be incomplete)", herr)
@@ -151,7 +173,7 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		idxPath := filepath.Join(opts.Out, "search.db")
 		idx, err = index.Open(idxPath)
 		if err != nil {
-			return Result{}, fmt.Errorf("open search index: %w", err)
+			return Result{}, indexOpenError(idxPath, opts.Out, err)
 		}
 		defer idx.Close()
 		if _, rkErr := idx.RepairKeys(manifest.Rekeyed > 0, state.MigrateKey, logger); rkErr != nil {
@@ -221,11 +243,13 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	// folder-assertion under its CURRENT folder — the timeline event the fold and
 	// serve read (T2). The key is the exporter's own (possibly #fp-qualified) key,
 	// so the assertion and the index row agree with the manifest record.
+	warns := newIndexWarnings(logger)
+	defer warns.flush()
 	exp.OnExported = func(store string, folderPath []string, m *model.Message, relPath, key string) {
 		if idx != nil {
 			if addErr := idx.Add(store, folderPath, m, relPath, key); addErr != nil {
 				indexErrors++
-				logger.Printf("warning: index: %v", addErr)
+				warns.add(addErr)
 			}
 		}
 		if hist != nil {
@@ -256,6 +280,18 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	}
 	lastCheckpoint := 0
 	var lockLost error
+	// saveErr is the most recent manifest save's outcome; a run whose last save
+	// failed kept no progress and fails (F53), exactly as Run does.
+	var saveErr error
+	// The run's own state across its mailboxes: what it records of faults and what it
+	// closes of gaps. A fault counts as processed for the checkpoint gate below, so a
+	// stretch of nothing but faults still saves and still re-checks the lock (FC12).
+	lr := &localRun{exp: exp, out: opts.Out, runAt: runAt, logger: logger, lock: lock}
+	lr.onLockLost = func(err error) {
+		if lockLost == nil {
+			lockLost = err
+		}
+	}
 	checkpoint := func() {
 		// Gate on messages PROCESSED (written + skipped-as-already-archived), not
 		// just Exported: a migration or steady-state run is nearly all skips
@@ -263,7 +299,9 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		// interrupted large run would never persist its progress and never
 		// converge (EC11). Every skip stamps LastSeen / records a move, so skips
 		// are real work worth checkpointing.
-		processed := exp.Stats.Exported + exp.Stats.SkippedManifest
+		// A fault is processed work too (FC12): a run made mostly of faults still saves
+		// its progress and re-checks its lock.
+		processed := exp.Stats.Exported + exp.Stats.SkippedManifest + lr.faults
 		if processed-lastCheckpoint < effectiveEvery(floor, manifest.Len()) {
 			return
 		}
@@ -272,17 +310,22 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 			lockLost = err
 			return
 		}
-		commit(hist, idx, manifest, logger)
+		saveErr = commit(hist, idx, manifest, logger)
 	}
+
+	lr.onFault = checkpoint
 
 	// Deleted Items / Junk Email are excluded by default; the flags opt in (T7).
 	filter := graph.FolderFilter{IncludeDeleted: g.IncludeDeleted, IncludeJunk: g.IncludeJunk}
 
-	result = Result{Files: len(g.Mailboxes)}
+	result = Result{Files: len(g.Mailboxes), ManifestBefore: manifestBefore}
 	var failures int
 	var firstErr error
-	for _, mbx := range g.Mailboxes {
-		runErr := runGraphMailbox(ctx, client, exp, manifest, hist, idx, runAt, mbx, filter, logger, checkpoint, func() error { return lockLost })
+	unread := 0 // mailboxes a run-level stop left unread
+	var lastTrip *GraphBreakerError
+	var runBreaker *RunBreakerError
+	for i, mbx := range g.Mailboxes {
+		runErr := runGraphMailbox(ctx, lr, client, manifest, hist, idx, mbx, filter, g.BreakerTimeBound, checkpoint, func() error { return lockLost })
 		if lockLost != nil {
 			// Lock removed/replaced mid-run: another run may own this archive now.
 			// Write no shared state (manifest/index/README); the deferred recordRun
@@ -290,17 +333,59 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 			// message files already written (INT-CC-2/R5).
 			return result, lockLost
 		}
-		commit(hist, idx, manifest, logger)
-		if errors.Is(runErr, context.Canceled) {
+		saveErr = commit(hist, idx, manifest, logger)
+		// "Cancelled" is decided from RunGraph's own context, never from the
+		// error chain (fault-isolation §4.8.6, RR6-C1): a mailbox error can carry
+		// a context.Canceled no operator raised (a transport's own), and reading
+		// it as an interrupt would skip every later mailbox, record the run
+		// cancelled and let the CLI exit 0. It is about a walk the interrupt cut
+		// short: a mailbox that finished cleanly stays finished (an interrupt after
+		// the last one leaves a complete run), and the next mailbox's first request
+		// meets the cancel itself.
+		interrupted := ctx.Err() != nil
+		if interrupted && runErr != nil {
+			result.gapsRecovered, result.gapsClosedGone = lr.recovered, lr.closedGone
 			finish(opts.Out, &result, exp, manifest, idx, indexErrors, true, logger)
+			if saveErr != nil {
+				return result, manifestSaveFailure(mpath, saveErr)
+			}
 			return result, context.Canceled
+		}
+		// Two mailboxes in a row that tripped the breaker say the service or the network
+		// is down: the run stops, and an outage costs about two mailboxes' budget, not
+		// every mailbox's (§4.8.5, FC10).
+		var trip *GraphBreakerError
+		if !errors.As(runErr, &trip) {
+			lastTrip = nil
 		}
 		if runErr != nil {
 			failures++
 			if firstErr == nil {
+				// The context is live here, so a context.Canceled in the chain is a
+				// transport's own: it loses its chain now, not after a later cancel.
 				firstErr = runErr
+				if errors.Is(runErr, context.Canceled) {
+					firstErr = errors.New(runErr.Error())
+				}
 			}
 			logger.Printf("error: mailbox %s: %v", mbx, runErr)
+			var fatal *RunFatalError
+			if errors.As(runErr, &fatal) {
+				// The archive's location or volume can no longer be written: the next
+				// mailbox would fail the same way, so the run stops here, with what it
+				// kept (§4.6).
+				unread = len(g.Mailboxes) - i - 1
+				break
+			}
+			if trip != nil {
+				if lastTrip != nil {
+					runBreaker = &RunBreakerError{First: lastTrip, Second: trip}
+					logger.Printf("error: %v", runBreaker)
+					unread = len(g.Mailboxes) - i - 1
+					break
+				}
+				lastTrip = trip
+			}
 		}
 	}
 
@@ -310,33 +395,58 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	// record are still written (below / by recordRun) so `status` sees the
 	// failure. Otherwise apply the nas-02 guard: regenerate pages only when
 	// something was exported or index.html is missing.
-	allFailed := failures == len(g.Mailboxes)
-	// A footer marks a fully-clean run (every mailbox walked): the timeline is
-	// complete to here, so a later fold/gone-detection can trust it. A run with
-	// any mailbox failure leaves no footer. The footer is fsync'd before the
-	// manifest advances one last time (crash order, §3.5).
-	if failures == 0 && hist != nil {
+	allFailed := failures+unread == len(g.Mailboxes)
+	// A footer marks a fully-clean run (every mailbox walked, nothing it could not
+	// capture): the timeline is complete to here, so a later fold/gone-detection can
+	// trust it. A run with any mailbox failure or any gap leaves no footer (§4.8.3).
+	// The footer is fsync'd before the manifest advances one last time (crash
+	// order, §3.5).
+	if failures == 0 && hist != nil && !runPartial(manifest, exp, opts.Out, runAt) {
 		if werr := hist.WriteRunFooter(runAt.UnixNano(), time.Now().UTC()); werr != nil {
 			logger.Printf("warning: history run footer: %v", werr)
 		}
 	}
-	commit(hist, idx, manifest, logger)
-	if idx != nil && opts.Pages && !allFailed && pagesNeeded(opts.Out, exp.Stats.Exported) {
-		if pErr := pages.Generate(opts.Out, idx, logger); pErr != nil {
+	saveErr = commit(hist, idx, manifest, logger)
+	if gaps := gapBannerCount(manifest); idx != nil && opts.Pages && !allFailed && pagesNeeded(opts.Out, exp.Stats.Exported, gaps) {
+		if pErr := pages.Generate(opts.Out, idx, logger, gaps); pErr != nil {
 			logger.Printf("warning: folder pages: %v", pErr)
 		}
 	}
+	result.gapsRecovered, result.gapsClosedGone = lr.recovered, lr.closedGone
 	finish(opts.Out, &result, exp, manifest, idx, indexErrors, !allFailed, logger)
+	if saveErr != nil {
+		if failures > 0 && firstErr != nil {
+			return result, fmt.Errorf("%d mailbox(es) failed; first error: %w; and %w", failures, firstErr, manifestSaveFailure(mpath, saveErr))
+		}
+		return result, manifestSaveFailure(mpath, saveErr)
+	}
 	if failures > 0 {
 		// Carry the first per-mailbox error (including any AADSTS code) into the
 		// returned error so it lands in the last-run record and `status` can fire
 		// the expired-secret remedy (friction #6).
+		// A run whose first failure is the breaker's refusal is an outage and is
+		// recorded as one (asOutage), not left to the reader of its text (S3-AC5).
 		if firstErr != nil {
-			return result, fmt.Errorf("%d mailbox(es) failed; first error: %w", failures, firstErr)
+			if runBreaker != nil {
+				return result, asOutage(fmt.Errorf("%d mailbox(es) failed; first error: %w; %w", failures, asFailure(ctx, firstErr), runBreaker), firstErr)
+			}
+			return result, asOutage(fmt.Errorf("%d mailbox(es) failed; first error: %w", failures, asFailure(ctx, firstErr)), firstErr)
 		}
 		return result, fmt.Errorf("%d mailbox(es) failed", failures)
 	}
-	return result, nil
+	return result, partialOutcome(result)
+}
+
+// asFailure is RR6-C1's second guard on what RunGraph returns: while its
+// context is live it never returns an error that matches context.Canceled,
+// because recordRun and the CLI test the chain and would record the run
+// cancelled and exit 0. Such an error keeps its text and loses its chain; any
+// other error is returned as it is.
+func asFailure(ctx context.Context, err error) error {
+	if err != nil && ctx.Err() == nil && errors.Is(err, context.Canceled) {
+		return errors.New(err.Error())
+	}
+	return err
 }
 
 // buildGraphClient constructs the Graph client for the selected auth mode and
@@ -346,18 +456,27 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 // mailbox — refusing a -mailbox that names anyone else, so the operator can never
 // believe they are archiving a mailbox other than their own (design P3/D-C1).
 func buildGraphClient(ctx context.Context, g GraphOptions, logger *log.Logger) (*graph.Client, []string, error) {
+	cfg := graph.Config{
+		Tenant:            g.Tenant,
+		ClientID:          g.ClientID,
+		BaseURL:           g.BaseURL,
+		TokenURL:          g.TokenURL,
+		RequestTimeout:    g.RequestTimeout,
+		MIMETimeout:       g.MIMETimeout,
+		MIMEIdleTimeout:   g.MIMEIdleTimeout,
+		MIMEHeaderTimeout: g.MIMEHeaderTimeout,
+		RetryAfterMax:     g.RetryAfterMax,
+		RetryAfterBudget:  g.RetryAfterBudget,
+		PageCap:           g.PageCap,
+		WrapTransport:     g.WrapTransport,
+	}
 	if strings.EqualFold(g.Auth, "device") {
-		client, err := graph.NewDelegated(ctx, graph.Config{
-			Tenant:         g.Tenant,
-			ClientID:       g.ClientID,
-			BaseURL:        g.BaseURL,
-			TokenURL:       g.TokenURL,
-			DeviceAuthURL:  g.DeviceAuthURL,
-			TokenCachePath: g.TokenCachePath,
-			TokenStore:     g.TokenStore,
-			Unattended:     g.Unattended,
-			Prompt:         g.Prompt,
-		})
+		cfg.DeviceAuthURL = g.DeviceAuthURL
+		cfg.TokenCachePath = g.TokenCachePath
+		cfg.TokenStore = g.TokenStore
+		cfg.Unattended = g.Unattended
+		cfg.Prompt = g.Prompt
+		client, err := graph.NewDelegated(ctx, cfg)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -376,13 +495,8 @@ func buildGraphClient(ctx context.Context, g GraphOptions, logger *log.Logger) (
 		logger.Printf("Signed in as %s (device flow); archiving your own mailbox", upn)
 		return client, []string{upn}, nil
 	}
-	return graph.New(ctx, graph.Config{
-		Tenant:       g.Tenant,
-		ClientID:     g.ClientID,
-		ClientSecret: g.ClientSecret,
-		BaseURL:      g.BaseURL,
-		TokenURL:     g.TokenURL,
-	}), g.Mailboxes, nil
+	cfg.ClientSecret = g.ClientSecret
+	return graph.New(ctx, cfg), g.Mailboxes, nil
 }
 
 // applyGraphState overlays the message-state fields carried on the widened
@@ -409,6 +523,15 @@ func applyGraphState(m *model.Message, ref graph.MessageRef) {
 	// that omits it leaves the MIME Date header in place.
 	if !ref.Received.IsZero() {
 		m.Received = ref.Received
+		// A message neither parser could read has the stub's dateless identity terms
+		// (NoIdentityDate keeps the walker's display dates out of it). On Graph the stub's
+		// identity has always folded the received time, so two such messages are two
+		// records: the listing's time is the one date the identity reads (MS2-AI2).
+		if t := m.IdentityTerms; t != nil && t.NoIdentityDate {
+			dated := *t
+			dated.NoIdentityDate = false
+			m.IdentityTerms = &dated
+		}
 	}
 	// Categories ride on the same widened listing; Graph is authoritative for a
 	// mailbox item's classification. Copied so the message owns its slice.
@@ -456,7 +579,8 @@ func recordMove(hist *state.HistoryWriter, idx *index.Index, key, folder string,
 // and idx (either may be nil) receive the go-back timeline events and the
 // body-free index folder update the move fast-path issues; runAt is the run's
 // timestamp, stamped as LastSeen on every observation (§3.2/§3.4).
-func runGraphMailbox(ctx context.Context, client *graph.Client, exp *export.Exporter, manifest *state.Manifest, hist *state.HistoryWriter, idx *index.Index, runAt time.Time, mailbox string, filter graph.FolderFilter, logger *log.Logger, checkpoint func(), abort func() error) error {
+func runGraphMailbox(ctx context.Context, lr *localRun, client *graph.Client, manifest *state.Manifest, hist *state.HistoryWriter, idx *index.Index, mailbox string, filter graph.FolderFilter, breakerTime time.Duration, checkpoint func(), abort func() error) error {
+	exp, runAt, logger := lr.exp, lr.runAt, lr.logger
 	logger.Printf("Reading mailbox %s via Microsoft Graph", mailbox)
 	// The store token for a Graph source is seeded from the CANONICAL mailbox id
 	// (lower-cased/trimmed), so a re-run whose -mailbox differs only in case hits
@@ -470,10 +594,11 @@ func runGraphMailbox(ctx context.Context, client *graph.Client, exp *export.Expo
 	// unwalked folder — are never marked gone by the sweep below (§3.4/S38).
 	folders, err := client.Folders(ctx, mailbox, filter)
 	if err != nil {
-		return fmt.Errorf("list folders: %w", err)
+		return cleanErr(fmt.Errorf("list folders: %w", err))
 	}
 
 	walked := state.NewWalkedFolders()
+	w := newMailboxWalk(lr, client, manifest, mailbox, token, breakerTime)
 	for _, f := range folders {
 		select {
 		case <-ctx.Done():
@@ -481,17 +606,19 @@ func runGraphMailbox(ctx context.Context, client *graph.Client, exp *export.Expo
 		default:
 		}
 		folderKey := strings.Join(f.Path, "/")
+		w.folderID, w.mark = f.ID, time.Now()
 		err := client.Messages(ctx, mailbox, f.ID, func(ref graph.MessageRef) error {
+			defer func() { w.mark = time.Now() }()
 			select {
 			case <-ctx.Done():
-				return ctx.Err()
+				return &walkAbort{ctx.Err()}
 			default:
 			}
 			// Stop promptly once the run lost its lock — before any download —
 			// bounding continued writing to a contended archive (INT-CC-2/R5).
 			if abort != nil {
 				if e := abort(); e != nil {
-					return e
+					return &walkAbort{e}
 				}
 			}
 			// Live fast-path (incremental): a message already archived under its
@@ -574,6 +701,13 @@ func runGraphMailbox(ctx context.Context, client *graph.Client, exp *export.Expo
 							skip = !comparable
 						}
 					}
+					// An unparsed stub is terminal for the parser generation that gave up
+					// on it: one a newer parser may read is downloaded again, once (FC25).
+					// The walk stamps the generation on the stub it still cannot parse,
+					// or the exporter heals it in place when this parse succeeds.
+					if r, ok := manifest.Get(matchKey); skip && ok && r.StaleUnparsed(state.ParserGenCurrent) {
+						skip = false
+					}
 					if skip {
 						rec, _ := manifest.Get(matchKey)
 						if rec.Unknown() && manifest.Resolve(matchKey) {
@@ -611,40 +745,67 @@ func runGraphMailbox(ctx context.Context, client *graph.Client, exp *export.Expo
 						// the note remains an audit trail.
 						exp.NoteIDReuse(identity, len(sameToken))
 						exp.Stats.SkippedManifest++
+						// The message is archived: a gap an earlier run left for it is
+						// answered. Closing it is not a decision the gap takes (P5).
+						w.recovered(ref)
 						checkpoint() // a mostly-skip run must still persist progress (EC11)
 						return nil
 					}
 				}
 			}
-			data, fetchErr := client.MIME(ctx, mailbox, ref.ID)
-			if fetchErr != nil {
-				return fmt.Errorf("fetch message %s: %w", ref.ID, fetchErr)
-			}
-			m := source.ParseRFC822(data)
-			if m == nil {
+			// A folder whose directory could not be created earlier in this run: a
+			// message that would need a download is counted under that folder's gap
+			// and not downloaded (§4.8.2). One the archive already holds was skipped
+			// above and kept its stamp.
+			if w.s.unwritable[filepath.Join(append([]string{lr.out, token}, f.Path...)...)] {
+				w.folderUnwritable(folderKey, "", w.faultIdentity(ref, nil))
 				return nil
 			}
+			began := time.Now()
+			data, fetchErr := client.MIME(ctx, mailbox, ref.ID)
+			if fetchErr != nil {
+				return w.fetchFault(ctx, ref, folderKey, fetchErr, time.Since(began))
+			}
+			// A 200 that is not a message (an HTML page, an empty body: a captive portal
+			// or a proxy answering for the service) is a fault of this item's download,
+			// not a message the parser would accept headerless (S3-AO2). It is not a
+			// success, so it does not end the run of consecutive faults either.
+			if !looksLikeMessage(data) {
+				return w.fetchFault(ctx, ref, folderKey, errNotAMessage, time.Since(began))
+			}
+			w.br.attempt(attemptOK, 0) // a download that succeeded ends the run of consecutive faults
+			m := parseRFC822(data)
+			if m == nil {
+				// Unreachable today (parseMessage never returns nil), and silent if it
+				// were reached: it is an export-failed gap (§4.8 item 6).
+				w.observeItem(ref, nil, folderKey, "export-failed", state.ClassFillable, "the message could not be parsed")
+				return nil
+			}
+			stub := parseStub(m) // before applyGraphState gives the stub its received time
 			applyGraphState(m, ref)
+			if stub && w.stub(ref, m, folderKey) {
+				return nil
+			}
 			// A panic exporting one crafted message must not abort the mailbox (R10).
-			return func() (err error) {
-				defer func() {
-					if r := recover(); r != nil {
-						logger.Printf("warning: recovered on a message in %s (skipped): %v", folderKey, r)
-						err = nil
-					}
-				}()
-				_, exportErr := exp.Export(token, f.Path, m)
-				checkpoint()
-				return exportErr
-			}()
+			return w.exportOne(ref, f, folderKey, m, checkpoint)
 		})
 		if err != nil {
-			return err
+			var wa *walkAbort
+			if errors.As(err, &wa) {
+				return wa.err
+			}
+			// The listing itself failed. A fault that ends the mailbox does; any other
+			// costs this folder only, and the walk goes on with the next one (§4.8.4).
+			if lerr := w.listingFault(ctx, f, folderKey, err); lerr != nil {
+				return lerr
+			}
+			continue
 		}
 		// This folder was fully walked (its listing consumed with no error): a
 		// message recorded under it that we did NOT re-observe this run has left
 		// the live mailbox and is in-scope for the gone sweep below (§3.4).
 		walked.Mark(folderKey)
+		w.folderRead(f, folderKey)
 	}
 	// gone-detection by full reconciliation (§3.4). Control reaches here only
 	// after EVERY folder of the mailbox was fully walked (any folder error or ctx
@@ -657,7 +818,23 @@ func runGraphMailbox(ctx context.Context, client *graph.Client, exp *export.Expo
 			return e
 		}
 	}
-	gone := manifest.SweepGone(token, walked, runAt)
+	// A folder that could not be listed defers gone-detection for the whole mailbox: a
+	// message that moved into it would be swept from the folder it left (§4.8.3 rule 1,
+	// H2, FC4). A fault on one item defers it only for the records that fault could
+	// hide (faultIdentity). Deferred, never wrong: the next run that meets no such
+	// fault sweeps.
+	var gone []string
+	if !w.folderFault {
+		spare := w.spare
+		spare.LegacyPlaceholders = true
+		gone = manifest.SweepGoneSparing(token, walked, runAt, spare)
+	}
+	// A completed walk closes the gaps of the folders it read that it did not meet
+	// again: "no longer in the source" (§4.3 step 3). A folder that failed to list
+	// may hold an item that moved there, so then it closes nothing.
+	if !w.folderFault {
+		lr.closedGone += manifest.CloseUnobserved(token, w.covered, runAt, exp.Since)
+	}
 	for _, k := range gone {
 		if hist != nil {
 			// The {k,gone} event is appended (and fsync'd by the caller's commit)

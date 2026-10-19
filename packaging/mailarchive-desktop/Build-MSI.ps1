@@ -3,7 +3,8 @@
     Build the self-contained MailArchive Desktop MSI from the release payload that
     packaging/build-release.sh produces (mailarchive-desktop-windows-msi-payload.zip).
 
-    Go is NOT needed on the build PC — the three EXEs are already in the payload.
+    Go is NOT needed on the build PC — the pair and the two former-name copies are
+    already in the payload.
     WiX 3 is used if installed, else the portable WiX 3.14 tools are fetched once.
 
     Payload resolution order (first that exists wins), unless -PayloadDir is given:
@@ -18,8 +19,8 @@
       PAYLOAD-SHA256.txt                                         (generated here)
 #>
 param(
-    [ValidatePattern('^\d+\.\d+\.\d+$')]
-    [string]$Version = '1.2.0',           # MUST stay > 1.1.0 (Steve's build) for the DC6 upgrade
+    [ValidatePattern('^(\d+\.\d+\.\d+)?$')]
+    [string]$Version = '',                 # default: read from the payload's PRODUCT-VERSION.txt (the release tag, MA-614)
     [string]$PayloadDir = '',
     [string]$OutputDirectory = "$PSScriptRoot\dist",
     [string]$SourceCommit = ''
@@ -65,8 +66,23 @@ if ($PayloadDir -like '*.zip') { $PayloadDir = Expand-PayloadZip $PayloadDir }
 $Payload = (Resolve-Path $PayloadDir).Path
 Write-Host "Using payload: $Payload"
 
-# --- 2. Verify the three EXEs are present and real PE files. ----------------------
-$exes = @('mailarchive-desktop.exe','mailarchive.exe','mailarchive-gui.exe')
+# --- 1b. Version: bound to the release tag baked into the payload (MA-614). -------
+# build-release.sh writes the leading-v-stripped tag into PRODUCT-VERSION.txt. The
+# MSI's ProductVersion comes from there, not from the builder typing a number; a
+# -Version that differs is refused, so the floor and every release-N claim rest on
+# the tag (SC37). (It must be > 1.1.0 for the DC6 MajorUpgrade over Steve's build.)
+$verFile = Join-Path $Payload 'PRODUCT-VERSION.txt'
+if (-not (Test-Path $verFile)) { throw "Payload is missing PRODUCT-VERSION.txt (build-release.sh writes the release tag there)." }
+$payloadVersion = ((Get-Content $verFile -TotalCount 1) | Out-String).Trim()
+if ($payloadVersion -notmatch '^\d+\.\d+\.\d+$') { throw "PRODUCT-VERSION.txt is not a valid version: '$payloadVersion'." }
+if ($Version -and $Version -ne $payloadVersion) {
+    throw "-Version '$Version' differs from the payload's PRODUCT-VERSION.txt '$payloadVersion'. The MSI version is bound to the release tag; omit -Version or pass the matching one."
+}
+$Version = $payloadVersion
+Write-Host "ProductVersion (from payload): $Version"
+
+# --- 2. Verify the pair and the two former-name copies are present, real PE files. -
+$exes = @('mailarchive.exe','mailarchivew.exe','mailarchive-desktop.exe','mailarchive-gui.exe')
 foreach ($exeName in $exes) {
     $exePath = Join-Path $Payload $exeName
     if (-not (Test-Path $exePath)) { throw "Payload is missing $exeName" }
@@ -99,8 +115,8 @@ if ($SourceCommit) {
 
 # --- 4. Regenerate the payload hash manifest. -------------------------------------
 $hashTargets = @(
-    'mailarchive-desktop.exe','mailarchive.exe','mailarchive-gui.exe',
-    'branding\mailarchive.ico','READ ME.txt',
+    'mailarchive.exe','mailarchivew.exe','mailarchive-desktop.exe','mailarchive-gui.exe',
+    'PRODUCT-VERSION.txt','branding\mailarchive.ico','READ ME.txt',
     'docs\LICENSE.txt','docs\release-notes.md','docs\goback.md','docs\graph-app-setup.md',
     'DEPLOYMENT.txt','SOURCE-NOTICE.txt','THIRD-PARTY-NOTICES.md','managed-install.marker'
 )
@@ -111,8 +127,14 @@ $hashLines = foreach ($name in $hashTargets) {
 $hashLines | Set-Content (Join-Path $Payload 'PAYLOAD-SHA256.txt') -Encoding ASCII
 
 # --- 5. Locate WiX 3 (installed, else fetch the portable tools privately). --------
-$candle = (Get-Command candle.exe -ErrorAction SilentlyContinue).Source
-$light  = (Get-Command light.exe  -ErrorAction SilentlyContinue).Source
+# Null-safe under Set-StrictMode -Version Latest: Get-Command returns nothing when WiX is
+# absent, and reading .Source off that result would throw before the fallback download.
+$candle = $null
+$light  = $null
+$candleCmd = Get-Command candle.exe -ErrorAction SilentlyContinue
+$lightCmd  = Get-Command light.exe  -ErrorAction SilentlyContinue
+if ($null -ne $candleCmd) { $candle = $candleCmd.Source }
+if ($null -ne $lightCmd)  { $light  = $lightCmd.Source }
 if (-not $candle -or -not $light) {
     $toolDir = Join-Path $Root '.tools\wix314'
     $candle = Join-Path $toolDir 'candle.exe'
@@ -138,10 +160,14 @@ $msiVersioned = Join-Path $OutputDirectory "MailArchiveDesktop-$Version-x64.msi"
 $msiStable    = Join-Path $OutputDirectory 'MailArchiveDesktop.msi'
 
 Write-Host "Building self-contained MailArchive Desktop MSI v$Version..."
-& $candle -nologo -arch x64 -dProductVersion=$Version "-dSourceDir=$Payload" -out $obj $ProductWxs
+# WixUtilExtension: Product.wxs ends running instances with util:CloseApplication.
+# Both -d defines are double-quoted so PowerShell expands $Version/$Payload into the
+# argument text; an unquoted -dProductVersion=$Version reaches candle as the literal
+# "$Version" (CNDL0108: not a valid version), which is what broke the clean-shell build.
+& $candle -nologo -arch x64 -ext WixUtilExtension "-dProductVersion=$Version" "-dSourceDir=$Payload" -out $obj $ProductWxs
 if ($LASTEXITCODE -ne 0) { throw "candle.exe failed with exit code $LASTEXITCODE" }
 
-& $light -nologo -sval -out $msiVersioned $obj
+& $light -nologo -sval -ext WixUtilExtension -out $msiVersioned $obj
 if ($LASTEXITCODE -ne 0) { throw "light.exe failed with exit code $LASTEXITCODE" }
 
 Copy-Item $msiVersioned $msiStable -Force

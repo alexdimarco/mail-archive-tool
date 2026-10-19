@@ -1,0 +1,9 @@
+Message-ID: <c110-from-empty-angle@corpus.example>
+Date: Mon, 02 Jan 2023 15:04:05 +0000
+From: <>
+To: bob@example.test
+Subject: From header empty-angle
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+The From header is the trigger.

@@ -1,18 +1,40 @@
 MailArchive Desktop
-Dashboard:        http://127.0.0.1:8097/  (loopback only)
-Archive reader:   http://127.0.0.1:8099/  (loopback only)
+Dashboard:        127.0.0.1:<a free port, chosen at each start>  (loopback only)
+Archive reader:   127.0.0.1:<a free port, chosen at each start>  (loopback only)
+                  Neither address is fixed, and neither is opened by typing it: each
+                  opens only through a private one-time link the app makes for its own
+                  Windows account (the shortcut opens your browser at one). A page
+                  reached by typing or bookmarking an address shows "This MailArchive
+                  Desktop page has to be opened from the app" and nothing of your mail.
+                  Do not verify an install by browsing to an address: open MailArchive
+                  Desktop from its shortcut. 127.0.0.1:8097 is the FORMER dashboard
+                  address; nothing of this version listens there.
+Per-account state: %LOCALAPPDATA%\MailArchiveDesktop  (the account's lock and instance
+                  file: where this account's running instance listens and the key a
+                  later launch proves itself with; one pair per sign-in session)
 Token storage:    Windows Credential Manager (generic credential, current user's vault;
                   target "mailarchive:graph-token:<hash>")
 Mailbox mode:     Microsoft Graph /me via device-code sign-in (read-only, Mail.Read)
 Persistent token file: none on Windows — the sign-in lives in Credential Manager
-Weekly backup:    mailarchive-desktop.exe -capture  (in-process headless capture, DC1)
+Weekly backup:    mailarchivew.exe desktop -capture  (in-process headless capture, DC1)
 
 Tenant ID:        0960dc39-0838-44ae-b2bb-1f9868566e00
 Application ID:   a22af286-b761-4cc9-96c0-d5693ea29b8a
 
 Notes:
 - The dashboard and reader run under one process and bind loopback only; a
-  non-loopback bind is refused.
+  non-loopback bind is refused. Each Windows account (and each sign-in session of it)
+  runs its own instance; a second launch of the same account reconnects to it after
+  the instance proves itself, and a launch that finds a running instance with another
+  configuration says so in a dialog.
+- "Copy MailArchive link" (Start Menu) shows a fresh private link in a dialog with a
+  Copy button, for a default browser that cannot be opened.
+- Upgrading ends running dashboards — mailarchivew.exe and, for an upgrade,
+  mailarchive-desktop.exe (a former name kept as a copy this release) — via
+  Install-RMM.ps1 and the MSI, so the new version takes effect in every session at once.
+- If a schedule still names a former name after the copies are removed, it reads RED
+  exe_missing with the repair its kind offers; the installer's Repair re-installs the
+  schedule, after restoring and allowing mailarchivew.exe when antivirus removed it.
 - The weekly backup runs the engine headless (never the dashboard UI), so it fires
   whether or not the dashboard is open. It reuses the saved device sign-in.
 - mailarchive.exe is also bundled for app-only / multi-mailbox scheduled graph

@@ -1,42 +1,31 @@
 CLI := mailarchive
-GUI := mailarchive-gui
-DESKTOP := mailarchive-desktop
 CLI_PKG := ./cmd/mailarchive
-GUI_PKG := ./cmd/mailarchive-gui
-DESKTOP_PKG := ./cmd/mailarchive-desktop
 BUILD_DIR := bin
 
-# GUI and Desktop Windows builds have no console window.
+# The Windows no-console build of the one program (-H=windowsgui): mailarchivew.exe.
 GUI_WIN_LDFLAGS := -H=windowsgui
 
-.PHONY: all build build-gui build-desktop build-windows build-macos build-macos-app dist test vet fmt tidy run clean
+.PHONY: all build build-windows build-macos build-macos-app dist test vet fmt tidy run serve clean
 
-all: vet test build build-gui build-desktop
+all: vet test build
 
-## build: compile the CLI for the host platform
+## build: compile the one program for the host platform
 build:
 	go build -o $(BUILD_DIR)/$(CLI) $(CLI_PKG)
 
-## build-gui: compile the GUI wizard for the host platform
-build-gui:
-	go build -o $(BUILD_DIR)/$(GUI) $(GUI_PKG)
-
-## build-desktop: compile the desktop dashboard for the host platform
-build-desktop:
-	go build -o $(BUILD_DIR)/$(DESKTOP) $(DESKTOP_PKG)
-
-## build-windows: cross-compile the Windows executables (CLI console + GUI/Desktop no-console)
+## build-windows: cross-compile the Windows pair of the one program — the console
+## build (mailarchive.exe) and the no-console build (mailarchivew.exe) — plus the
+## two former-name copies of mailarchivew.exe kept this release (§7.1, MA-614).
 build-windows:
 	GOOS=windows GOARCH=amd64 go build -o $(BUILD_DIR)/$(CLI).exe $(CLI_PKG)
-	GOOS=windows GOARCH=amd64 go build -ldflags "$(GUI_WIN_LDFLAGS)" -o $(BUILD_DIR)/$(GUI).exe $(GUI_PKG)
-	GOOS=windows GOARCH=amd64 go build -ldflags "$(GUI_WIN_LDFLAGS)" -o $(BUILD_DIR)/$(DESKTOP).exe $(DESKTOP_PKG)
+	GOOS=windows GOARCH=amd64 go build -ldflags "$(GUI_WIN_LDFLAGS)" -o $(BUILD_DIR)/$(CLI)w.exe $(CLI_PKG)
+	cp $(BUILD_DIR)/$(CLI)w.exe $(BUILD_DIR)/$(CLI)-desktop.exe
+	cp $(BUILD_DIR)/$(CLI)w.exe $(BUILD_DIR)/$(CLI)-gui.exe
 
-## build-macos: cross-compile macOS binaries (Apple Silicon arm64 + Intel amd64)
+## build-macos: cross-compile the one program for macOS (Apple Silicon + Intel)
 build-macos:
 	GOOS=darwin GOARCH=arm64 go build -o $(BUILD_DIR)/$(CLI)-darwin-arm64 $(CLI_PKG)
 	GOOS=darwin GOARCH=amd64 go build -o $(BUILD_DIR)/$(CLI)-darwin-amd64 $(CLI_PKG)
-	GOOS=darwin GOARCH=arm64 go build -o $(BUILD_DIR)/$(GUI)-darwin-arm64 $(GUI_PKG)
-	GOOS=darwin GOARCH=amd64 go build -o $(BUILD_DIR)/$(GUI)-darwin-amd64 $(GUI_PKG)
 
 ## build-macos-app: package the GUI as a universal, double-clickable .app (bin/MailArchive-macos.zip)
 build-macos-app:

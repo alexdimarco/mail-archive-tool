@@ -1,0 +1,27 @@
+Message-ID: <f25-reserved-names@corpus.example>
+Date: Mon, 02 Jan 2023 15:04:05 +0000
+From: Alice Example <alice@example.test>
+To: bob@example.test
+Subject: Names that look like the tool's own
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="rn-bd"
+
+--rn-bd
+Content-Type: text/plain; charset=utf-8
+
+Sender files named like the tool's reserved suffixes.
+
+--rn-bd
+Content-Type: text/html
+Content-Disposition: attachment; filename="Invoice (attached message).html"
+
+<p>an html file</p>
+
+--rn-bd
+Content-Type: application/octet-stream
+Content-Disposition: attachment; filename="x.undecoded"
+Content-Transfer-Encoding: base64
+
+eCB1bmRlY29kZWQgYnl0ZXM=
+
+--rn-bd--

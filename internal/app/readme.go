@@ -70,6 +70,41 @@ re-exported or baselined with "mailarchive verify -record". This detects a
 changed, truncated or missing file; it is not a signature, so it proves the
 files have not changed, not who wrote them.
 
+Items that could not be captured: if the tool could not read or download
+something its source holds, it says so instead of hiding it. A page whose title
+is "(unreadable message)", or whose top says "This item could only be partly
+read from the source", holds what the tool could read of that message (the
+original bytes are in the .eml beside it when the archive was made with -raw).
+A message or folder the tool could not read at all has no page: it is a row in
+attachments-report.tsv, which names its source, folder, date and subject. Each
+row has a class:
+  fillable = a later run of the tool against the original source may capture it;
+  terminal = the source itself would not deliver it as it stands;
+  info = nothing missing (the tool only noticed something odd).
+If no one runs the tool against the source anymore, every fillable or terminal
+row is missing from this archive. The end of each row's detail says why it
+happened and what to do about it (or that there is nothing to do), and
+whether the original still exists. With the mailarchive program, run "mailarchive status -out ." in this folder for the
+same in plain words.
+
+The one exception to that last sentence: a row for a part the tool kept as
+received or cut short names a part that IS in this archive. A file ending
+.undecoded in a message's -attachments.zip was kept exactly as the message
+carried it, because the tool could not decode its encoding (the row names the
+encoding, for example x-uuencode; a program that knows it can open the file).
+remaining-parts.undecoded is the unread rest of a message that has more parts,
+or nests them deeper, than the tool reads. A file ending .partial holds the
+readable start of an attachment that was cut short or damaged. A row for a
+message's text that was cut short or damaged names no file: the page shows what
+could be decoded of the text. A row of kind unsplit-multipart means the
+message's parts could not be told apart, so its page shows the whole text as one
+body. A row of kind fidelity-fallback means the page shows the message as an
+earlier version of the tool read it; a later version may read more. A row of
+kind identity-stub means an earlier version of the tool could not read the
+message at all and filed it under a placeholder; the page shows the message as
+the tool that wrote it read it. A page that lists a .undecoded or .partial file
+says so.
+
 Housekeeping files (safe to leave alone):
   .mailarchive-manifest.json   which messages are archived (used for
                                incremental updates); do not edit
@@ -77,14 +112,17 @@ Housekeeping files (safe to leave alone):
   .mailarchive-lastverify.json record of the last verify (when it ran, whether
                                every file was intact)
   .mailarchive-schedule.json   the recurring-backup descriptor, if one was set
+  .mailarchive-verify-schedule.json the scheduled verify's descriptor, if one
+                               was set
   .mailarchive-history.jsonl   the go-back timeline: what changed each run (a
                                live capture writes it); appended each run and
                                rewritten only by reindex when redacting; read
                                by "mailarchive serve" for the point-in-time view
-  attachments-report.tsv       messages whose attachments or bodies could
-                               not be captured (opens in a spreadsheet);
+  attachments-report.tsv       messages, folders, attachments or bodies that
+                               could not be captured (opens in a spreadsheet);
                                absent when there is nothing to report
-  BACKUP-NEEDS-ATTENTION.txt   present only when the last backup run failed;
+  BACKUP-NEEDS-ATTENTION.txt   present only when the last backup run failed
+                               or finished with items it could not capture;
                                explains what to do; removed after the next
                                successful run
   ARCHIVE-INTEGRITY-ATTENTION.txt present only when a verify found modified or

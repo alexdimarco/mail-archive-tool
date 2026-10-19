@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -33,13 +34,35 @@ func (d *dashboard) runJob(fn func(*log.Logger) (string, error)) error {
 		}()
 		result, err := fn(log.New(c, "", 0))
 		if err != nil {
-			c.finish("", err.Error())
+			c.finish("", jobErrorText(err))
 			return
 		}
 		c.finish(result, "")
 	}()
 	return nil
 }
+
+// rebuildButton is the label of the Maintenance card's rebuild control, which
+// the owner-facing texts name instead of a command line.
+const rebuildButton = "Maintenance → Rebuild search index"
+
+// checkButton is the label of the Maintenance card's integrity check (the command-line tool calls it
+// verify), which the owner-facing texts name, as the engine's own words do (friction F17).
+const checkButton = "Maintenance → Check integrity"
+
+// jobErrorText is a failed job's text for the owner: an index refusal says what
+// is wrong and names the Rebuild button instead of `mailarchive reindex`
+// (g7 F3); any other failure keeps its own text.
+func jobErrorText(err error) string {
+	var ie *app.IndexOpenError
+	if errors.As(err, &ie) {
+		return ie.ForOwner(rebuildButton)
+	}
+	return err.Error()
+}
+
+// noArchiveText is the refusal of a maintenance action with no archive location: what, and the steps.
+const noArchiveText = "There is no archive chosen yet, so there is nothing to check. Type the archive's folder in Settings → Archive location (the folder that holds the .mailarchive-manifest.json file) and click Save settings, then try again."
 
 func (d *dashboard) requireOut() (string, bool) {
 	out := d.cfg.effectiveOut()
@@ -55,7 +78,7 @@ func (d *dashboard) verifyAction(w http.ResponseWriter, r *http.Request) {
 	}
 	out, ok := d.requireOut()
 	if !ok {
-		writeJSON(w, map[string]any{"ok": false, "error": "choose an archive location first"})
+		writeJSON(w, map[string]any{"ok": false, "error": noArchiveText})
 		return
 	}
 	err := d.runJob(func(l *log.Logger) (string, error) {
@@ -81,11 +104,20 @@ func (d *dashboard) rebuildAction(w http.ResponseWriter, r *http.Request) {
 	}
 	out, ok := d.requireOut()
 	if !ok {
-		writeJSON(w, map[string]any{"ok": false, "error": "choose an archive location first"})
+		writeJSON(w, map[string]any{"ok": false, "error": noArchiveText})
 		return
 	}
 	err := d.runJob(func(l *log.Logger) (string, error) {
-		rr, rerr := app.Rebuild(out, l)
+		// The workspace's list reads search.db for one request at a time. The rebuild waits out the
+		// request in flight, and holds the next ones off until it is done, so the index is never
+		// open inside its rename window (XC20).
+		d.beginRebuild()
+		defer d.endRebuild()
+		rebuild := d.rebuild
+		if rebuild == nil {
+			rebuild = app.Rebuild
+		}
+		rr, rerr := rebuild(out, l)
 		if rerr != nil {
 			return "", rerr
 		}
@@ -107,6 +139,11 @@ func (d *dashboard) healthAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in := health.Gather(out, "")
+	in.Surface = "desktop" // name the Rebuild button, not a command line
 	rep := health.Assess(in, time.Now())
-	writeJSON(w, map[string]any{"posture": rep.Posture, "summary": health.Summary(in, rep)})
+	summary := health.Summary(in, rep)
+	if d.cfg.localOnly() {
+		summary = append(summary, newMailLine(d.cfg.goos(), out))
+	}
+	writeJSON(w, map[string]any{"posture": rep.Posture, "summary": summary})
 }

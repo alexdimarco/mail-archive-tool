@@ -23,9 +23,9 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
-	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -42,14 +42,21 @@ import (
 	"mail-archive-tool/internal/outlookcom"
 	"mail-archive-tool/internal/runlog"
 	"mail-archive-tool/internal/schedule"
-	"mail-archive-tool/internal/server"
 	"mail-archive-tool/internal/source"
+	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/thunderbird"
 	"mail-archive-tool/internal/util"
 )
 
 func main() {
 	args := os.Args[1:]
+	// R33 — one program: a GUI surface (desktop/wizard/run-job), a legacy
+	// schedule argv, or a start under a former name routes in-process here and
+	// never falls to the export dispatch (MA-610/MA-611); anything else is a CLI
+	// verb or an export and falls through.
+	if code, handled := runResolvedVerb(invokedBase(), args); handled {
+		os.Exit(code)
+	}
 	var err error
 	switch {
 	case len(args) > 0 && args[0] == "serve":
@@ -78,11 +85,10 @@ func main() {
 		// already printed its report; it is not a refusal, so it gets no
 		// "mailarchive:" prefix. Everything else is a refusal/error (exit 1).
 		var ee *exitError
-		if errors.As(err, &ee) {
-			os.Exit(ee.code)
+		if !errors.As(err, &ee) {
+			fmt.Fprintln(os.Stderr, "mailarchive: "+err.Error())
 		}
-		fmt.Fprintln(os.Stderr, "mailarchive: "+err.Error())
-		os.Exit(1)
+		os.Exit(exitCode(err))
 	}
 }
 
@@ -93,6 +99,20 @@ func main() {
 type exitError struct{ code int }
 
 func (e *exitError) Error() string { return fmt.Sprintf("exit status %d", e.code) }
+
+// exitCode is the process exit status for a verb's result (docs/ux-contract.md
+// X1): 0 for success, an exitError's own code, and 1 for any other error, a
+// refusal or a failed run.
+func exitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	var ee *exitError
+	if errors.As(err, &ee) {
+		return ee.code
+	}
+	return 1
+}
 
 // stringSlice is a repeatable / comma-separated string flag.
 type stringSlice []string
@@ -143,14 +163,32 @@ func runExport(args []string) error {
 	// previews the discovered stores and stops. -outlook supplies its own inputs
 	// later, so an empty set is not yet a refusal in that case.
 	discovered, err := app.DiscoverInputs(inputs, *o.auto)
-	if err != nil {
-		return err
+	if err == nil {
+		// An opt-in that names no input would be read as no opt-in, so it is refused here.
+		err = app.FollowLinksRefusal(o.followLinks, discovered)
 	}
-	if *o.list {
+	if err == nil && *o.list {
 		return listStores(discovered)
 	}
-	if len(discovered) == 0 && !*o.outlook {
-		return errors.New("no input mail sources found: pass -input PATH (a .pst/.ost file, an mbox file, or a mail directory), or -auto to discover Outlook/Thunderbird/Evolution stores")
+	if err == nil && len(discovered) == 0 && !*o.outlook {
+		err = errors.New("no input mail sources found: pass -input PATH (a .pst/.ost file, an mbox file, or a mail directory), or -auto to discover Outlook/Thunderbird/Evolution stores")
+	}
+	if err != nil {
+		// A scheduled run's refusal is still a run (N13, R18): on an archive
+		// that already exists it is recorded failed (status, attention
+		// sidecar) and logged to its own -log, instead of leaving the previous
+		// success as the archive's last word. A first run still creates
+		// nothing (RecordRefusedRun writes only into an existing archive).
+		if *o.unattended && !*o.list {
+			app.RecordRefusedRun(exportOptions(o, inputs, mode, since), err)
+			if *o.log != "" {
+				if l, closeLog, lerr := newRunLogger(*o.log); lerr == nil {
+					l.Printf("FAILED: %v", err)
+					closeLog()
+				}
+			}
+		}
+		return err
 	}
 
 	logger, closeLog, err := newRunLogger(*o.log)
@@ -158,14 +196,10 @@ func runExport(args []string) error {
 		return err
 	}
 	defer closeLog()
-	defer func() { // a failed unattended run leaves its reason in its own log too
-		if err != nil {
-			logger.Printf("FAILED: %v", err)
-		}
-	}()
+	defer func() { logFailure(logger, err) }() // a failed unattended run leaves its reason in its own log too
 
-	outlook, outlookSyncWait, auto, copyFirst := o.outlook, o.outlookSyncWait, o.auto, o.copyFirst
-	manifestPath, doIndex, doPages, keepRaw := o.manifest, o.index, o.pages, o.keepRaw
+	outlook, outlookSyncWait, auto := o.outlook, o.outlookSyncWait, o.auto
+	doIndex, keepRaw := o.index, o.keepRaw
 	enableOffline, syncWait, modeStr := o.enableOffline, o.syncWait, o.mode
 	out := o.out
 
@@ -174,6 +208,8 @@ func runExport(args []string) error {
 	// go-pst can't read directly. Windows + classic Outlook only; elsewhere it
 	// refuses with a legible message.
 	pstDir := ""
+	var outlookSkips []outlookcom.Skip
+	var outlookExported []string // the PSTs this run's export wrote: a fresh image of the mailbox (NF1)
 	if *outlook {
 		// Refuse up front on a platform that can't run Outlook automation, before
 		// printing the completeness note or any "exporting…" progress — a guaranteed
@@ -184,30 +220,22 @@ func runExport(args []string) error {
 		logger.Printf("%s", outlookcom.CompletenessNote)
 		pstDir = filepath.Join(*out, "_outlook-pst")
 		logger.Printf("Outlook: exporting each account to a PST under %s ...", pstDir)
-		stores, cerr := outlookcom.CreatePSTs(pstDir,
+		stores, skips, cerr := outlookcom.CreatePSTs(pstDir,
 			outlookcom.Options{Sync: *outlookSyncWait > 0, SyncWait: *outlookSyncWait}, logger)
 		if cerr != nil {
 			return cerr
 		}
 		for _, s := range stores {
 			inputs = append(inputs, s.Path)
+			outlookExported = append(outlookExported, s.Path)
 		}
+		outlookSkips = skips
 		logger.Printf("Outlook: %d PST(s) ready; archiving them now.", len(stores))
 	}
 
-	opts := app.Options{
-		Inputs:    inputs,
-		Auto:      *auto,
-		Out:       *out,
-		Mode:      mode,
-		Since:     since,
-		CopyFirst: *copyFirst,
-		Manifest:  *manifestPath,
-		Index:     *doIndex,
-		Pages:     *doPages,
-		KeepRaw:   *keepRaw,
-	}
-	_ = modeStr
+	opts := exportOptions(o, inputs, mode, since)
+	opts.OutlookSkips = outlookSkips // what Outlook's export left out is recorded as a gap, never only logged (FC28)
+	opts.OutlookExported = outlookExported
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -227,11 +255,12 @@ func runExport(args []string) error {
 
 	result, runErr := app.Run(ctx, opts, logger, nil)
 	// The "Done. …" summary (and its -raw/verification lines) belongs to a run
-	// that reached completion — a clean finish or a saved interrupt. A run that
-	// FAILED (refused before the lock, or aborted mid-walk) prints only the
-	// "FAILED:" line, never a misleading "Done. exported=0 … manifest=0" first
-	// (friction #7b/#22).
-	if runErr == nil || errors.Is(runErr, context.Canceled) {
+	// that reached completion — a clean finish, a saved interrupt, or a partial
+	// run (its walk finished; the "Not captured" block says what it could not
+	// capture). A run that FAILED (refused before the lock, or aborted mid-walk)
+	// prints only the "FAILED:" line, never a misleading "Done. exported=0 …
+	// manifest=0" first (friction #7b/#22).
+	if printsSummary(runErr) {
 		printSummary(logger, result, *doIndex, *keepRaw, *out)
 	}
 
@@ -250,6 +279,25 @@ func runExport(args []string) error {
 	}
 	err = runErr
 	return err
+}
+
+// exportOptions builds the app.Options an export run (or its recorded refusal)
+// uses from the parsed flags and the final input list.
+func exportOptions(o *exportOpts, inputs []string, mode export.Mode, since time.Time) app.Options {
+	return app.Options{
+		Inputs:      inputs,
+		Auto:        *o.auto,
+		Out:         *o.out,
+		Mode:        mode,
+		Since:       since,
+		CopyFirst:   *o.copyFirst,
+		FollowLinks: o.followLinks,
+		Manifest:    *o.manifest,
+		Index:       *o.index,
+		Pages:       *o.pages,
+		KeepRaw:     *o.keepRaw,
+		Unattended:  *o.unattended,
+	}
 }
 
 // reclaimPSTDir removes the temporary per-account PST directory that -outlook's
@@ -333,79 +381,6 @@ func newRunLogger(path string) (*log.Logger, func(), error) {
 		return nil, nil, err
 	}
 	return log.New(f, "", log.LstdFlags), func() { f.Close() }, nil
-}
-
-func runServe(args []string) error {
-	fs := flag.NewFlagSet("mailarchive serve", flag.ContinueOnError)
-	out := fs.String("out", ".", "export directory to serve (contains search.db)")
-	addr := fs.String("addr", "127.0.0.1:8099", "address to listen on")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-
-	idxPath := filepath.Join(*out, "search.db")
-	ix, err := index.OpenReadonly(idxPath)
-	if err != nil {
-		return err
-	}
-	defer ix.Close()
-
-	count, _ := ix.Count()
-	handler := server.New(*out, ix)
-
-	if !server.IsLoopback(*addr) {
-		fmt.Fprintf(os.Stderr, "WARNING: serve has no authentication. Binding %s exposes every archived message to anyone who can reach this machine on that port; use 127.0.0.1 (the default) unless you mean it.\n", *addr)
-	}
-	fmt.Printf("Serving %d indexed messages from %s\n", count, *out)
-	fmt.Printf("Search UI:  http://%s/\n", *addr)
-	fmt.Println("Press Ctrl-C to stop.")
-	srv := &http.Server{
-		Addr:              *addr,
-		Handler:           handler,
-		ReadHeaderTimeout: 10 * time.Second, // a stalled client cannot hold a connection open forever
-		IdleTimeout:       2 * time.Minute,
-	}
-	return srv.ListenAndServe()
-}
-
-// runSetup launches the Microsoft 365 setup wizard: a loopback-only local web page
-// where an admin enters the Entra app-registration values (tenant, application id,
-// auth mode, and — app-only — a client secret stored in the OS credential manager).
-// It REFUSES a non-loopback bind: the surface writes credentials and must never be
-// reachable from the network (design-graph-setup-wizard P4/W-C1).
-func runSetup(args []string) error {
-	fs := flag.NewFlagSet("mailarchive setup", flag.ContinueOnError)
-	addr := fs.String("addr", "127.0.0.1:8097", "loopback address to serve the wizard on (must be loopback)")
-	cfg := fs.String("config", "", "config file to write (default: under your OS config dir)")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if !server.IsLoopback(*addr) {
-		return fmt.Errorf("-addr %s is not a loopback address: the setup wizard writes credentials and is served only on 127.0.0.1/localhost", *addr)
-	}
-	cfgPath := *cfg
-	if cfgPath == "" {
-		p, err := graphconfig.DefaultConfigPath()
-		if err != nil {
-			return err
-		}
-		cfgPath = p
-	}
-	store, err := graphconfig.DefaultSecretStore()
-	if err != nil {
-		return err
-	}
-	srv := &http.Server{
-		Addr:              *addr,
-		Handler:           server.SetupHandler(cfgPath, store),
-		ReadHeaderTimeout: 10 * time.Second,
-		IdleTimeout:       2 * time.Minute,
-	}
-	fmt.Printf("Microsoft 365 setup — open this page in a browser:\n  http://%s/\n", *addr)
-	fmt.Printf("Config:        %s\n", cfgPath)
-	fmt.Printf("Secret store:  %s\n", store.Name())
-	fmt.Println("Press Ctrl-C to stop.")
-	return srv.ListenAndServe()
 }
 
 var markTags = regexp.MustCompile(`</?mark>`)
@@ -627,6 +602,13 @@ func runVerify(args []string) error {
 	}
 	defer closeLog()
 
+	// Ctrl-C or a terminate says what happened (F10); the running record is
+	// left as a kill leaves it, so status reports the verify as never finished.
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+	stopWatch := watchVerifyInterrupt(sigs, os.Stderr, abspath(*o.out), os.Exit)
+	defer func() { signal.Stop(sigs); stopWatch() }()
+
 	rep, verr := app.Verify(abspath(*o.out), app.VerifyOptions{Record: *o.record}, logger, nil)
 	if verr != nil {
 		if *o.log != "" { // a scheduled run leaves its reason in its own log
@@ -652,6 +634,29 @@ func runVerify(args []string) error {
 		return &exitError{code: code}
 	}
 	return nil
+}
+
+// watchVerifyInterrupt waits for a signal on sigs and, when one arrives, prints
+// one line to w saying the verify did not finish and what still stands, then
+// calls exit with the shell's code for that signal (130 for Ctrl-C, 143 for
+// terminate). The returned func stops the watcher and waits for it, so a verify
+// that finished normally prints nothing.
+func watchVerifyInterrupt(sigs <-chan os.Signal, w io.Writer, out string, exit func(int)) (stop func()) {
+	quit, done := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(done)
+		select {
+		case s := <-sigs:
+			fmt.Fprintf(w, "mailarchive: verify interrupted: the archive was not fully checked and no new verdict was recorded; the last finished verdict still stands (see `mailarchive status`). Run `mailarchive verify -out %q` again to finish.\n", out)
+			if s == syscall.SIGTERM {
+				exit(143)
+			} else {
+				exit(130)
+			}
+		case <-quit:
+		}
+	}()
+	return func() { close(quit); <-done }
 }
 
 func verifyUsage(fs *flag.FlagSet) func() {
@@ -808,25 +813,46 @@ func runSchedule(args []string) error {
 		jobArgs = flatJobArgs(eo, fs.Args())
 	}
 
-	exe, err := os.Executable()
+	// §4.6.1 (MA-615): the program a schedule runs comes from ProgramForSchedule,
+	// not os.Executable(); the command line's schedule always wraps on Windows
+	// (non-goal 7, D2). A translocated program is refused here, before any job
+	// file or scheduler entry is written.
+	exe, progReason, err := schedule.ProgramForSchedule(true)
 	if err != nil {
-		return fmt.Errorf("could not determine my own executable path: %w", err)
+		return err
 	}
 
-	// Removal keys off the name, found via -name or the archive's descriptor.
+	// Removal keys off the name, found via -name, the job's own entry name, or
+	// the archive's descriptor.
 	if *remove {
 		out := abspath(*eo.out)
-		if out == "" && len(jobArgs) > 0 {
+		var rj job
+		if len(jobArgs) > 0 {
 			if j, jerr := parseJob(jobArgs); jerr == nil {
-				out = j.out
+				rj = j
+				if out == "" {
+					out = j.out
+				}
 			}
 		}
 		n := *name
 		if n == "" && out != "" {
-			if d, derr := schedule.ReadDescriptor(out); derr == nil {
-				n = d.Name
-			} else {
-				n = schedule.DefaultNameFor(out)
+			switch {
+			case rj.verb == "verify" && rj.out == out:
+				// A verify job's entry is the archive's distinct "-verify" name,
+				// exactly as -install derived it; the descriptor records the
+				// archive's BACKUP schedule and must not be what this removes.
+				n = defaultScheduleName(rj)
+			default:
+				if rn, rerr := schedule.RecordedBackupName(out); rerr == nil {
+					n = rn
+				} else if _, derr := schedule.ReadDescriptor(out); derr == nil {
+					// The descriptor reads, but the entry it names is not this
+					// archive's (a handed-over or copied folder): never act on it.
+					return fmt.Errorf("-remove will not act on the schedule name %s records: %w", filepath.Join(out, schedule.DescriptorName), rerr)
+				} else {
+					n = schedule.DefaultNameFor(out)
+				}
 			}
 		}
 		if n == "" {
@@ -839,19 +865,44 @@ func runSchedule(args []string) error {
 		if err := spec.Validate(); err != nil {
 			return err
 		}
+		// Which of the archive's entries this is: a verify job after --, or the
+		// name the archive's verify descriptor records (read before the removal
+		// deletes it).
+		kind := "backup"
+		if rj.verb == "verify" || schedule.VerifyRecorded(out, n) {
+			kind = "verify"
+		}
 		removed, err := schedule.RemoveIfInstalled(spec)
 		if err != nil {
 			return err
 		}
 		if !removed {
-			target := out
-			if target == "" {
-				target = n
+			if out == "" {
+				fmt.Printf("no schedule was installed for %s — nothing to remove\n", n)
+				return nil
 			}
-			fmt.Printf("no schedule was installed for %s — nothing to remove\n", target)
+			// The archive may well have another schedule (its backup, or a verify
+			// under another name): say which entry is absent, never that the
+			// archive has none.
+			fmt.Printf("no schedule %q was installed for %s — nothing to remove\n", n, out)
+			if rj.verb == "verify" && *name == "" {
+				fmt.Println(verifyRemoveHint(out))
+			}
 			return nil
 		}
-		fmt.Printf("Removed scheduled backup %q.\n", n)
+		fmt.Printf("Removed scheduled %s %q.\n", kind, n)
+		// A descriptor that cannot be read is never deleted, whatever the entry's
+		// name (nothing in it says whose it was; rulings §13.6, ESC-10), so a
+		// removal names the one of its own kind it left — the backup's for a
+		// backup, the verify's for a verify — with the remedy; `status` keeps
+		// reporting it until the operator acts.
+		left, remedy := schedule.UnreadableDescriptor(out), schedule.UnreadableDescriptorRemedy
+		if kind == "verify" {
+			left, remedy = schedule.UnreadableVerifyDescriptor(out), schedule.UnreadableVerifyDescriptorRemedy
+		}
+		if left != "" {
+			fmt.Printf("Left in place: %s cannot be read, so -remove cannot tell which schedule it records — %s.\n", left, remedy)
+		}
 		return nil
 	}
 
@@ -885,6 +936,10 @@ func runSchedule(args []string) error {
 	}
 
 	if *install {
+		// A verify installed under a new -name leaves the entry the archive's
+		// records name running (Install never removes it); read it before the
+		// install rewrites the verify descriptor, so it can be named below.
+		superseded := schedule.SupersededVerify(spec)
 		if err := schedule.Install(spec); err != nil {
 			return err
 		}
@@ -894,10 +949,20 @@ func runSchedule(args []string) error {
 		}
 		fmt.Printf("Installed scheduled %s %q (%s at %s).\n", kind, n, iv, *at)
 		fmt.Printf("It runs: %s %s\n", exe, strings.Join(spec.Args, " "))
+		if note := schedule.ProgramNote(exe, progReason); note != "" {
+			fmt.Println(note)
+		}
 		if note := graphDeletedJunkNote(j); note != "" {
 			fmt.Println(note)
 		}
-		fmt.Printf("Log: %s · descriptor: %s · check with: mailarchive status -out %q\n", logPath, filepath.Join(j.out, schedule.DescriptorName), j.out)
+		desc := filepath.Join(j.out, schedule.DescriptorName)
+		if j.verb == "verify" {
+			desc = filepath.Join(j.out, schedule.VerifyDescriptorName) // a verify records its own
+		}
+		fmt.Printf("Log: %s · descriptor: %s · check with: mailarchive status -out %q\n", logPath, desc, j.out)
+		if superseded != "" {
+			fmt.Printf("Note: this archive's verify was installed as %q, and that entry is still installed: it keeps running beside %q. If it is still this archive's verify, remove it with `mailarchive schedule -name %s -remove -- verify -out %q`.\n", superseded, n, superseded, j.out)
+		}
 		if note, _ := schedule.VerifyScheduleNote(spec); note != "" {
 			fmt.Println(note)
 		}
@@ -940,6 +1005,9 @@ func flatJobArgs(o *exportOpts, positional []string) []string {
 	}
 	if *o.copyFirst {
 		a = append(a, "-copy-first")
+	}
+	for _, in := range o.followLinks {
+		a = append(a, "-follow-links", in)
 	}
 	if *o.outlook {
 		a = append(a, "-outlook", "-outlook-sync-wait", o.outlookSyncWait.String())
@@ -988,6 +1056,7 @@ Usage:
   mailarchive schedule [-interval ...] -install -- graph -out DIR -tenant T -client-id ID \
       -mailbox u@dom -client-secret-file FILE                     apply a Graph job
   mailarchive schedule -out DIR -remove                            uninstall this archive's schedule
+  mailarchive schedule -remove -- verify -out DIR                  uninstall this archive's scheduled verify
   mailarchive schedule -name NAME -remove                          uninstall by name
 
 The job after -- may be an export (no verb), graph, reindex, or verify job; it
@@ -1000,6 +1069,12 @@ Flags:
 		fs.PrintDefaults()
 	}
 }
+
+// graphFake points runGraph at a fake Microsoft 365 — its Graph, token and
+// device-code endpoints — and keeps a sign-in out of the OS vault. Only tests
+// set it, to run `graph` in-process with no network; no flag or environment
+// variable reaches it. Empty, runGraph talks to Microsoft.
+var graphFake struct{ base, token, deviceAuth string }
 
 // runGraph archives mailboxes server-side via Microsoft Graph (app-only). The
 // app client secret comes from an environment variable, never the command line,
@@ -1051,6 +1126,20 @@ func runGraph(args []string) (err error) {
 	gopts := app.GraphOptions{
 		Tenant: *o.tenant, ClientID: *o.clientID, Mailboxes: mailboxes,
 		IncludeDeleted: *o.includeDeleted, IncludeJunk: *o.includeJunk, Unattended: *o.unattended,
+		BaseURL: graphFake.base, TokenURL: graphFake.token, DeviceAuthURL: graphFake.deviceAuth,
+	}
+	// A credential file inside -out travels with every copy and sync of the
+	// archive (design-local-confidentiality P10). Run by hand, graph refuses it
+	// before anything is created or fetched. Unattended — every scheduled job
+	// carries -unattended — it warns, records the warning for `status`, and
+	// captures: refusing at run time would silently stop an installed backup.
+	var setupWarnings []state.RunWarning
+	refuseOrWarn := func(problem error) error {
+		if !*o.unattended {
+			return problem
+		}
+		setupWarnings = append(setupWarnings, state.RunWarning{Code: "credential_in_archive", Message: problem.Error()})
+		return nil
 	}
 	switch authMode {
 	case "app":
@@ -1060,6 +1149,11 @@ func runGraph(args []string) (err error) {
 		var secret string
 		switch {
 		case *o.secretFile != "":
+			if credentialInArchive(*o.secretFile, *o.out) {
+				if err := refuseOrWarn(secretFileInArchive(*o.secretFile, *o.out)); err != nil {
+					return err
+				}
+			}
 			if secret, err = readSecret(*o.secretFile); err != nil {
 				return err
 			}
@@ -1088,16 +1182,26 @@ func runGraph(args []string) (err error) {
 			return errors.New("device auth signs in as ONE user and archives that mailbox — pass at most one -mailbox (your own address), or none")
 		}
 		cache := strings.TrimSpace(*o.tokenCache)
-		if cache == "" {
+		isDefault := cache == ""
+		if isDefault {
 			if cache, err = defaultTokenCachePath(*o.tenant, *o.clientID, mailboxes); err != nil {
+				return err
+			}
+		}
+		if credentialInArchive(cache, *o.out) {
+			def, _ := defaultTokenCachePath(*o.tenant, *o.clientID, mailboxes)
+			if err := refuseOrWarn(tokenCacheInArchive(cache, *o.out, def, isDefault, *o.unattended)); err != nil {
 				return err
 			}
 		}
 		gopts.Auth = "device"
 		gopts.TokenCachePath = cache
 		// On Windows the sign-in token lives in Credential Manager (vault); nil
-		// elsewhere → the 0600 file cache (design-mailarchive-desktop P4).
-		gopts.TokenStore = graphconfig.DefaultTokenStore(*o.tenant, *o.clientID)
+		// elsewhere → the 0600 file cache (design-mailarchive-desktop P4). A fake
+		// Microsoft 365 never gets the vault.
+		if graphFake.base == "" {
+			gopts.TokenStore = deviceTokenStore(*o.tenant, *o.clientID)
+		}
 	}
 
 	mode, err := parseMode(*o.mode)
@@ -1119,13 +1223,12 @@ func runGraph(args []string) (err error) {
 		return err
 	}
 	defer closeLog()
-	defer func() {
-		if err != nil {
-			logger.Printf("FAILED: %v", err)
-		}
-	}()
+	defer func() { logFailure(logger, err) }()
 
-	opts := app.Options{Out: *o.out, Mode: mode, Since: since, Index: *o.index, Pages: *o.pages, KeepRaw: *o.keepRaw}
+	for _, w := range setupWarnings {
+		logger.Printf("warning: %s", w.Message)
+	}
+	opts := app.Options{Out: *o.out, Mode: mode, Since: since, Index: *o.index, Pages: *o.pages, KeepRaw: *o.keepRaw, Warnings: setupWarnings}
 	if authMode == "device" {
 		logger.Printf("Signing in to tenant %s via Microsoft Graph device flow (mode=%s)", *o.tenant, *o.mode)
 	} else {
@@ -1137,12 +1240,41 @@ func runGraph(args []string) (err error) {
 
 	result, runErr := app.RunGraph(ctx, gopts, opts, logger)
 	printSummary(logger, result, *o.index, *o.keepRaw, *o.out)
+	err = graphOutcome(logger, runErr)
+	return err
+}
+
+// printsSummary says whether a run that returned runErr reached completion, so
+// the export verb prints its "Done. …" summary: a clean finish, a handled
+// interrupt, and a partial run (its walk finished and the summary's "Not
+// captured" block says what it could not capture). A failed run prints only its
+// "FAILED:" line.
+func printsSummary(runErr error) bool {
+	return runErr == nil || errors.Is(runErr, context.Canceled) || errors.Is(runErr, app.ErrPartial)
+}
+
+// logFailure writes the run log's "FAILED:" line for a run that returned err. A
+// partial run is not a failure of the run: its summary, "Not captured" block and
+// report already say what happened, so it logs no "FAILED:" line (S1a still maps
+// it to exit 1, like a failure, §4.9).
+func logFailure(logger *log.Logger, err error) {
+	if err != nil && !errors.Is(err, app.ErrPartial) {
+		logger.Printf("FAILED: %v", err)
+	}
+}
+
+// graphOutcome is the graph verb's result for RunGraph's error: a handled
+// interrupt (RunGraph returned context.Canceled, X1) is a success, logged as
+// one, and any other error is the verb's failure; main turns the result into
+// the exit code (exitCode). It is its own function so a test can pass
+// RunGraph's error through the verb's mapping (fault-isolation MA-540), which
+// the verb cannot reach a fake server to show.
+func graphOutcome(logger *log.Logger, runErr error) error {
 	if errors.Is(runErr, context.Canceled) {
 		logger.Printf("interrupted; progress saved to the manifest")
 		return nil
 	}
-	err = runErr
-	return err
+	return runErr
 }
 
 // flagWasSet reports whether a flag was explicitly passed (as opposed to left at
@@ -1157,6 +1289,34 @@ func flagWasSet(fs *flag.FlagSet, name string) bool {
 	})
 	return set
 }
+
+// verifyRemoveHint is printed when `-remove -- verify -out X` finds no entry
+// under the archive's derived "-verify" name: the verify may still be running
+// under the -name it was installed with (the README once passed a fixed one),
+// which only that name removes — the same command with -name added. The hint
+// names that entry when something records it: the archive's verify descriptor
+// (FB-4), or else a backup descriptor that records a verify itself (a release
+// from before a verify got its own entry name wrote it so). It is a hint, not
+// an automatic removal: on launchd and Task Scheduler a shared name may by now
+// hold another archive's verify.
+func verifyRemoveHint(out string) string {
+	// Only a recorded name that binds to this archive is offered (a descriptor
+	// handed over with the folder can record any entry's name).
+	if name, ok := schedule.RecordedVerifyName(out); ok {
+		if _, err := schedule.ReadVerifyDescriptor(out); err == nil {
+			return fmt.Sprintf("The archive's verify descriptor records a verify schedule named %q; if it is still this archive's verify, run this command again with -name %s before -- to remove it.", name, name)
+		}
+		return fmt.Sprintf("The archive's descriptor records a verify schedule named %q (written before a verify got its own entry name); if it is this archive's verify, run this command again with -name %s before -- to remove it.", name, name)
+	}
+	return "If this archive's verify was installed with -name NAME, run this command again with -name NAME before -- to remove it."
+}
+
+// deviceTokenStore is where a device sign-in lives besides the -token-cache file:
+// the OS vault on Windows (Credential Manager, keyed by tenant + client), nil
+// elsewhere (the file is the backend). A device run and `schedule`'s check of a
+// device job both resolve it here, so they read the same backend; it is a
+// variable only so a test can stand a real store in for the Windows vault.
+var deviceTokenStore = graphconfig.DefaultTokenStore
 
 // defaultTokenCachePath is where a device sign-in is cached when -token-cache is
 // not given: under the caller's OS config dir (%APPDATA% on Windows, ~/.config on
@@ -1209,6 +1369,9 @@ Usage:
   mailarchive status   -out DIR                          completeness, last run, schedule posture
   mailarchive verify   -out DIR [-json] [-record]        check archived files against recorded fixity
   mailarchive extract  -out DIR -format mbox|eml -dest OUTDIR   migrate the archive out as standard mail
+  mailarchive desktop  [-capture]                        the dashboard & launcher (also opens on double-click)
+  mailarchive wizard                                     step-by-step setup with native dialogs
+  mailarchive run-job  FILE                              run a saved job headlessly (what a schedule runs)
 
 Examples:
   mailarchive -auto -out ./export
@@ -1356,6 +1519,37 @@ func waitForSync(ctx context.Context, store string, logger *log.Logger) error {
 	}
 }
 
+// printNotCaptured prints the summary's account of what the run could not
+// capture (fault-isolation §4.10): when it observed any fillable or terminal gap,
+// how many items (and how many are new this run) and folders, how many will be
+// retried when the archive runs again and how many need action, the report that
+// lists them, and one line per gap (at most 20, then "+N more"), each led by the
+// store's source id. A partly-read record is its own line. The "Recovered" line
+// says how many earlier gaps this run closed by capturing the item.
+func printNotCaptured(logger *log.Logger, r app.Result) {
+	g := r.Gaps
+	if g.Observed > 0 {
+		head := fmt.Sprintf("Not captured: %d item(s) (%d new this run)", g.ItemGaps, g.New)
+		if g.FolderGaps > 0 {
+			head += fmt.Sprintf(", %d folder%s", g.FolderGaps, plural(g.FolderGaps, "", "s"))
+		}
+		head += fmt.Sprintf(" — %d will be retried when you run again, %d need action", g.Fillable, g.Terminal)
+		if r.ReportPath != "" {
+			head += fmt.Sprintf(" — details in %s", r.ReportPath)
+		}
+		logger.Printf("%s", head)
+		for _, l := range g.Lines {
+			logger.Printf("%s", l)
+		}
+	}
+	if r.Stats.Unreadable > 0 {
+		logger.Printf("Partly read: %d message(s) were saved with what could be read from them (their pages say what is missing)", r.Stats.Unreadable)
+	}
+	if g.Recovered > 0 {
+		logger.Printf("Recovered: %d item(s) that failed on an earlier run were captured this run.", g.Recovered)
+	}
+}
+
 func printSummary(logger *log.Logger, r app.Result, indexed, keepRaw bool, out string) {
 	s := r.Stats
 	msg := fmt.Sprintf("Done. exported=%d filled=%d skipped(seen)=%d skipped(date)=%d attachments=%d inline=%d non-html=%d no-body=%d manifest=%d",
@@ -1367,30 +1561,96 @@ func printSummary(logger *log.Logger, r app.Result, indexed, keepRaw bool, out s
 		msg += fmt.Sprintf(" INDEX-ERRORS=%d", r.IndexErrors)
 	}
 	logger.Printf("%s", msg)
+	// Exports that were not new messages: a key exported again replaces its
+	// earlier copy, so exported exceeds the growth in manifest and indexed.
+	// A fill is its own explanation ("filled="); anything beyond it gets one
+	// line saying so (F13).
+	newMsgs := r.ManifestSize - r.ManifestBefore
+	if replaced := s.Exported - newMsgs; newMsgs >= 0 && replaced > s.Filled {
+		logger.Printf("Note:   %d exports made %d new message(s); %d replaced an earlier copy of the same message, so exported is above the growth in manifest and indexed.", s.Exported, newMsgs, replaced-s.Filled)
+	}
+	printNotCaptured(logger, r)
+	// An index that holds fewer messages than the manifest (search.db lost or
+	// emptied and re-created by this run, or earlier runs skipped indexing)
+	// would otherwise end in a quiet exit 0 (F4). Rows the run itself could not
+	// index have their own warning below.
+	if indexed && r.IndexErrors == 0 && r.Indexed < r.ManifestSize {
+		logger.Printf("WARNING: the search index holds %d of the archive's %d messages (search.db was missing or emptied, or earlier runs skipped indexing); search will not find the rest. Rebuild it from the archive with `mailarchive reindex -rebuild -out %q`.", r.Indexed, r.ManifestSize, out)
+	}
 
 	// One coherent Verification line: what is still missing, what the source can
 	// never deliver, what has not been re-examined yet, how many fillable gaps
 	// this run re-examined (invisible otherwise), and the report path only when a
 	// report file exists. Printed whenever any of those is non-zero.
-	if r.Fillable > 0 || r.Terminal > 0 || r.Unknown > 0 || s.UnresolvedInlineRef > 0 || s.Retried > 0 {
+	if r.Fillable > 0 || r.Terminal > 0 || r.Unknown > 0 || r.Undecodable > 0 || s.UnresolvedInlineRef > 0 || s.HTMLFallback > 0 || s.Retried > 0 {
 		line := fmt.Sprintf("Verification: %d message(s) still missing content, %d source-empty (never fillable), %d not yet re-examined",
 			r.Fillable, r.Terminal, r.Unknown)
 		if s.Retried > 0 {
 			line += fmt.Sprintf(", re-examined=%d", s.Retried)
 		}
+		// A part this version cannot decode is kept as received, and is neither missing
+		// nor empty at the source: its own count, what it means and where to read more
+		// (design-mime-fidelity §4.9).
+		if r.Undecodable > 0 {
+			line += fmt.Sprintf(", %d message(s) with parts this version cannot decode (kept as received; see the report)", r.Undecodable)
+		}
 		if s.UnresolvedInlineRef > 0 {
 			line += fmt.Sprintf(", %d unresolved inline image(s) this run", s.UnresolvedInlineRef)
+		}
+		if s.HTMLFallback > 0 {
+			line += fmt.Sprintf(", %d HTML message(s) shown as source this run (could not be rendered safely: too deep, unparseable, unsafe after re-parse or too large; content kept)", s.HTMLFallback)
 		}
 		if r.ReportPath != "" {
 			line += fmt.Sprintf(" — details in %s", r.ReportPath)
 		}
 		logger.Printf("%s", line)
 		if r.Fillable > 0 {
-			logger.Printf("  Missing content usually means it isn't cached locally (IMAP / a limited Outlook offline window).")
-			logger.Printf("  In your mail app, download for offline use, then simply re-run: incremental fills the gaps.")
+			// A message that is fillable only because a part of it is cut short, or its parts could
+			// not be told apart, in the file it was read from is not one the source has not delivered:
+			// a download returns the same bytes from a mailbox file. Say what cures it, and say once
+			// that these are also in the cannot-decode count (friction F3).
+			if r.FillableParseGap > 0 {
+				logger.Printf("  %d of them %s also counted as having parts this version cannot decode: the report says which.", r.FillableParseGap, plural(r.FillableParseGap, "is", "are"))
+			}
+			if r.FillableOnlyParseGap >= r.Fillable {
+				logger.Printf("  These messages are cut short, or have parts that could not be told apart, in the file they were read from; what could be read is kept (see the report).")
+				logger.Printf("  A download does not change a mailbox file: replace it with a complete export from your mail app, then simply re-run: incremental fills them. (For an IMAP cache, download the messages for offline use instead.) A message that was malformed when it was sent cannot be completed by either, and stays listed.")
+			} else {
+				logger.Printf("  Missing content usually means it isn't cached locally (IMAP / a limited Outlook offline window).")
+				logger.Printf("  In your mail app, download for offline use, then simply re-run: incremental fills the gaps.")
+				if r.FillableParseGap > 0 {
+					// A mix: the download is for the messages a source has not delivered; a cut one
+					// among them is not changed by it (friction F3, re-verification).
+					logger.Printf("  %d of them %s cut short, or %s parts that could not be told apart, in the mailbox file: a download does not change it; replace the file with a complete export from your mail app (the report says which).", r.FillableParseGap, plural(r.FillableParseGap, "is", "are"), plural(r.FillableParseGap, "has", "have"))
+				}
+			}
 		}
 		if r.Unknown > 0 {
 			logger.Printf("  %d entr%s predate completeness tracking and are re-examined by incremental runs until none remain.", r.Unknown, plural(r.Unknown, "y", "ies"))
+		}
+	}
+	// A message this version could not decode in full is kept as the earlier version
+	// read it (MC19): nothing is lost, and the report lists it.
+	if r.FidelityFallback > 0 {
+		line := fmt.Sprintf("Verification: %d message(s) kept as an earlier version read them, because this version could not decode them in full (nothing is lost)", r.FidelityFallback)
+		if r.ReportPath != "" {
+			line += fmt.Sprintf(" — details in %s", r.ReportPath)
+		}
+		logger.Printf("%s", line)
+	}
+	// Partly-read and unparsed records are complete as far as the source went, so
+	// they are not "missing content to download": their own line, their own remedy.
+	if r.Unreadable > 0 || r.Unparsed > 0 {
+		line := fmt.Sprintf("Verification: %d message(s) read only in part, %d unparsed (kept as text)", r.Unreadable, r.Unparsed)
+		if r.ReportPath != "" {
+			line += fmt.Sprintf(" — details in %s", r.ReportPath)
+		}
+		logger.Printf("%s", line)
+		if r.Unreadable > 0 {
+			logger.Printf("  A damaged data file can usually be repaired in place (Outlook's scanpst.exe for a .pst, Windows), then run again.")
+		}
+		if r.Unparsed > 0 {
+			logger.Printf("  An unparsed message is kept as text, and its original bytes as .eml when the archive is made with -raw; after upgrading, the next run re-examines it once.")
 		}
 	}
 	// -raw is silently a no-op on sources that carry no original message bytes
@@ -1406,8 +1666,10 @@ func printSummary(logger *log.Logger, r app.Result, indexed, keepRaw bool, out s
 	if !keepRaw && s.RawAvailable > 0 {
 		logger.Printf("WARNING: these sources carry original message bytes, but -raw was not set — no .eml was preserved, so `mailarchive extract` will produce nothing from this archive. Re-run with -raw to keep the originals BEFORE deleting the source.")
 	}
+	// Plain `reindex` only prunes; the rebuild re-adds the missing rows from the
+	// archived files (F50).
 	if r.IndexErrors > 0 {
-		logger.Printf("WARNING: %d message(s) were exported but could not be indexed; run `mailarchive reindex -out %q` and re-check.", r.IndexErrors, out)
+		logger.Printf("WARNING: %d message(s) were exported but could not be indexed; rebuild the index from the archive with `mailarchive reindex -rebuild -out %q` and re-check.", r.IndexErrors, out)
 	}
 
 	if indexed && r.Indexed > 0 {

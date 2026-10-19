@@ -5,9 +5,11 @@
   SourceDir ($(var.SourceDir)) is the UNZIPPED payload that packaging/build-release.sh
   produces as the release asset `mailarchive-desktop-windows-msi-payload.zip`:
 
-      mailarchive-desktop.exe      in-process dashboard (:8097) + reader (:8099)
-      mailarchive.exe              headless engine / CLI
-      mailarchive-gui.exe          native GUI wizard
+      mailarchive.exe              the console build of the one program (CLI / headless engine)
+      mailarchivew.exe             the no-console build; `mailarchivew.exe desktop` is the dashboard + reader, `mailarchivew.exe wizard` the wizard
+      mailarchive-desktop.exe      a former name: a byte-identical copy of mailarchivew.exe, kept this release (§7.1)
+      mailarchive-gui.exe          a former name: a byte-identical copy of mailarchivew.exe, kept this release (§7.1)
+      PRODUCT-VERSION.txt          the release tag the MSI binds ProductVersion to (MA-614)
       READ ME.txt                  payload readme (packaging/.../README-payload.txt)
       branding\mailarchive.ico     app icon
       docs\LICENSE.txt             AGPL-3.0
@@ -22,7 +24,8 @@
   so any ProductVersion > 1.1.0 performs a MajorUpgrade that removes his build and
   installs this one in its place. DO NOT change the UpgradeCode.
 -->
-<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"
+     xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
   <Product
       Id="*"
       Name="MailArchive Desktop"
@@ -39,6 +42,21 @@
         DowngradeErrorMessage="A newer version of MailArchive Desktop is already installed." />
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
 
+    <!-- An instance that ran before this version keeps serving its old dashboard (no
+         private link, a fixed address) until its user signs out, in every session of
+         an RDS host or fast-user-switching machine. End it before the files are
+         replaced: ask it to close, and terminate it (exit code 1) if it does not —
+         the same end Uninstall-RMM.ps1 and Install-RMM.ps1 give it
+         (design-local-confidentiality CC22). Needs WixUtilExtension (Build-MSI.ps1
+         passes -ext). -->
+    <util:CloseApplication
+        Id="CloseMailArchiveDesktop"
+        Target="mailarchive-desktop.exe"
+        CloseMessage="no"
+        EndSessionMessage="no"
+        RebootPrompt="no"
+        TerminateProcess="1" />
+
     <Property Id="ARPNOMODIFY" Value="1" />
     <Property Id="ARPCONTACT" Value="IT Support" />
     <Property Id="ARPHELPLINK" Value="https://github.com/alexdimarco/mail-archive-tool" />
@@ -53,30 +71,45 @@
           <Directory Id="DocsDir" Name="docs" />
         </Directory>
       </Directory>
-      <Directory Id="CommonDesktopFolder" />
-      <Directory Id="CommonStartupFolder" />
-      <Directory Id="CommonProgramsFolder">
+      <!-- All-users shortcut destinations. DesktopFolder, StartupFolder and
+           ProgramMenuFolder are standard Windows Installer system folders; a perMachine
+           install (ALLUSERS=1) resolves them to the all-users Desktop, Startup and Programs
+           locations. (Earlier builds used CommonDesktopFolder and similar shell CSIDL
+           names, which are not installer properties, so the shortcuts were written to the
+           target-volume root instead of where the user can see them.) -->
+      <Directory Id="DesktopFolder" Name="Desktop" />
+      <Directory Id="StartupFolder" Name="Startup" />
+      <Directory Id="ProgramMenuFolder" Name="Programs">
         <Directory Id="ApplicationProgramsFolder" Name="MailArchive Desktop" />
       </Directory>
     </Directory>
 
     <DirectoryRef Id="INSTALLFOLDER">
-      <!-- The dashboard: serves :8097 (dashboard) + :8099 (reader) in-process; it
-           never shells out to a child mailarchive.exe (design P1). Built
-           -H=windowsgui (no console) by build-release.sh. -->
-      <Component Id="CmpDesktopExe" Guid="*" Win64="yes">
-        <File Id="FilDesktopExe" Source="$(var.SourceDir)\mailarchive-desktop.exe" KeyPath="yes" />
-      </Component>
-
-      <!-- The engine/CLI. Bundled for app-only / multi-mailbox scheduled captures and
-           headless CLI use; the Desktop's own weekly backup runs in-process
-           (mailarchive-desktop.exe -capture, design DC1). -->
+      <!-- The console build of the one program. Used for app-only / multi-mailbox
+           scheduled captures and headless CLI use; the dashboard's weekly backup runs
+           in-process as mailarchivew.exe desktop -capture (DC1), never a child. -->
       <Component Id="CmpEngineExe" Guid="*" Win64="yes">
         <File Id="FilEngineExe" Source="$(var.SourceDir)\mailarchive.exe" KeyPath="yes" />
       </Component>
 
-      <Component Id="CmpEngineGuiExe" Guid="*" Win64="yes">
-        <File Id="FilEngineGuiExe" Source="$(var.SourceDir)\mailarchive-gui.exe" KeyPath="yes" />
+      <!-- The no-console build of the one program (-H=windowsgui). `mailarchivew.exe
+           desktop` serves the dashboard and reader in-process, each on a free loopback
+           port behind a private one-time link (P1); `mailarchivew.exe wizard` is the
+           wizard. Carries every schedule and shortcut after SE2 (§7.1). -->
+      <Component Id="CmpGuiwExe" Guid="*" Win64="yes">
+        <File Id="FilGuiwExe" Source="$(var.SourceDir)\mailarchivew.exe" KeyPath="yes" />
+      </Component>
+
+      <!-- Two former-name copies of mailarchivew.exe (byte-identical), kept from
+           release N until the floor (§7.1) so shortcuts and schedules installed under
+           the old names keep running; a later release removes them. Each is a plain
+           single-file component with a versioned keypath (D3). -->
+      <Component Id="CmpDesktopCopyExe" Guid="*" Win64="yes">
+        <File Id="FilDesktopCopyExe" Source="$(var.SourceDir)\mailarchive-desktop.exe" KeyPath="yes" />
+      </Component>
+
+      <Component Id="CmpGuiCopyExe" Guid="*" Win64="yes">
+        <File Id="FilGuiCopyExe" Source="$(var.SourceDir)\mailarchive-gui.exe" KeyPath="yes" />
       </Component>
 
       <Component Id="CmpBrandAssets" Guid="*" Win64="yes">
@@ -86,8 +119,9 @@
       <!-- Deployment metadata + payload manifest + AGPL source/notices, flat in the
            install dir. DEPLOYMENT.txt / SOURCE-NOTICE.txt / THIRD-PARTY-NOTICES.md /
            managed-install.marker are staged by Build-MSI.ps1; READ ME.txt ships in
-           the payload zip. -->
-      <Component Id="CmpDeploymentDocs" Guid="*" Win64="yes">
+           the payload zip. Explicit, stable GUID: a multi-file component with no versioned
+           keypath cannot use an auto GUID (WiX LGHT0367). -->
+      <Component Id="CmpDeploymentDocs" Guid="A02C9F1E-19B8-4E17-B6C1-8F6410E7A224" Win64="yes">
         <File Id="FilDeployment" Source="$(var.SourceDir)\DEPLOYMENT.txt" KeyPath="yes" />
         <File Id="FilReadme" Source="$(var.SourceDir)\READ ME.txt" />
         <File Id="FilPayloadHash" Source="$(var.SourceDir)\PAYLOAD-SHA256.txt" />
@@ -104,33 +138,35 @@
           <RegistryValue Name="InstallDir" Type="string" Value="[INSTALLFOLDER]" />
         </RegistryKey>
 
-        <!-- Shortcuts target the dashboard exe. The exe is windowsgui (no console);
-             on a normal start it now opens the dashboard in the OS default browser
-             itself (MA-281, former risk R1), so a Desktop/Start-menu click shows the
-             page instead of a silent background server. No args => dashboard :8097 +
-             reader :8099 (defaults) + browser-open. -->
+        <!-- Shortcuts target the no-console build mailarchivew.exe with an explicit
+             `desktop` verb (the dashboard surface of the one program). It is
+             windowsgui (no console); on a normal start it opens the dashboard in the
+             OS default browser itself (MA-281), so a Desktop/Start-menu click shows
+             the page instead of a silent background server. The MailArchive wizard
+             shortcut runs `mailarchivew.exe wizard` (SC20). -->
         <Shortcut
             Id="DesktopShortcut"
-            Directory="CommonDesktopFolder"
+            Directory="DesktopFolder"
             Name="MailArchive Desktop"
             Description="Open MailArchive Desktop"
-            Target="[INSTALLFOLDER]mailarchive-desktop.exe"
+            Target="[INSTALLFOLDER]mailarchivew.exe"
+            Arguments="desktop"
             WorkingDirectory="INSTALLFOLDER"
             Icon="MailArchiveIcon"
             Advertise="no" />
 
-        <!-- ADAPTED: Steve's Startup shortcut passed Arguments="--startup" (our binary
-             had no such flag). It now passes -no-browser so the at-login launch starts
+        <!-- ADAPTED: Steve's Startup shortcut passed a startup flag (our binary had
+             no such flag; the two hyphens of it are left out here, an XML comment may not hold them). It now passes -no-browser so the at-login launch starts
              the always-on background server QUIETLY — no browser tab every sign-in. A
-             later Desktop/Start-menu click reconnects to this instance and opens the
-             browser to it (MA-281). -->
+             later Desktop/Start-menu click reconnects to this account's instance — once
+             it has proved itself — and has it open the browser (MA-281, MA-376). -->
         <Shortcut
             Id="StartupShortcut"
-            Directory="CommonStartupFolder"
+            Directory="StartupFolder"
             Name="MailArchive Desktop"
             Description="Start MailArchive Desktop after Windows sign-in"
-            Target="[INSTALLFOLDER]mailarchive-desktop.exe"
-            Arguments="-no-browser"
+            Target="[INSTALLFOLDER]mailarchivew.exe"
+            Arguments="desktop -no-browser"
             WorkingDirectory="INSTALLFOLDER"
             Icon="MailArchiveIcon"
             Advertise="no" />
@@ -140,7 +176,35 @@
             Directory="ApplicationProgramsFolder"
             Name="MailArchive Desktop"
             Description="Open MailArchive Desktop"
-            Target="[INSTALLFOLDER]mailarchive-desktop.exe"
+            Target="[INSTALLFOLDER]mailarchivew.exe"
+            Arguments="desktop"
+            WorkingDirectory="INSTALLFOLDER"
+            Icon="MailArchiveIcon"
+            Advertise="no" />
+
+        <!-- The wizard's Start-menu click route (SC20): mailarchivew.exe wizard. -->
+        <Shortcut
+            Id="WizardShortcut"
+            Directory="ApplicationProgramsFolder"
+            Name="MailArchive wizard"
+            Description="Open the MailArchive setup wizard"
+            Target="[INSTALLFOLDER]mailarchivew.exe"
+            Arguments="wizard"
+            WorkingDirectory="INSTALLFOLDER"
+            Icon="MailArchiveIcon"
+            Advertise="no" />
+
+        <!-- A way in that needs no OS browser opener: shows a fresh private link in a
+             dialog with a Copy button (a broken default-browser association, a
+             blocked opener). The locked page names it (design-local-confidentiality
+             CC20). -->
+        <Shortcut
+            Id="CopyLinkShortcut"
+            Directory="ApplicationProgramsFolder"
+            Name="Copy MailArchive link"
+            Description="Show a link that opens MailArchive Desktop in the browser of your choice"
+            Target="[INSTALLFOLDER]mailarchivew.exe"
+            Arguments="desktop -copy-link"
             WorkingDirectory="INSTALLFOLDER"
             Icon="MailArchiveIcon"
             Advertise="no" />
@@ -160,7 +224,9 @@
     </DirectoryRef>
 
     <DirectoryRef Id="DocsDir">
-      <Component Id="CmpUserDocs" Guid="*" Win64="yes">
+      <!-- Explicit, stable GUID (same LGHT0367 rule as CmpDeploymentDocs): this is a
+           multi-file component and the docs are unversioned. -->
+      <Component Id="CmpUserDocs" Guid="B8D11E63-6C74-4AF7-AE62-42D1079C803B" Win64="yes">
         <File Id="FilLicense" Source="$(var.SourceDir)\docs\LICENSE.txt" KeyPath="yes" />
         <File Id="FilReleaseNotes" Source="$(var.SourceDir)\docs\release-notes.md" />
         <File Id="FilGoback" Source="$(var.SourceDir)\docs\goback.md" />
@@ -170,9 +236,10 @@
     </DirectoryRef>
 
     <Feature Id="MainFeature" Title="MailArchive Desktop" Level="1">
-      <ComponentRef Id="CmpDesktopExe" />
       <ComponentRef Id="CmpEngineExe" />
-      <ComponentRef Id="CmpEngineGuiExe" />
+      <ComponentRef Id="CmpGuiwExe" />
+      <ComponentRef Id="CmpDesktopCopyExe" />
+      <ComponentRef Id="CmpGuiCopyExe" />
       <ComponentRef Id="CmpBrandAssets" />
       <ComponentRef Id="CmpDeploymentDocs" />
       <ComponentRef Id="CmpShortcutsAndDetection" />

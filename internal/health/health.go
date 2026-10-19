@@ -11,9 +11,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"mail-archive-tool/internal/index"
+	"mail-archive-tool/internal/instance"
 	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/procs"
 	"mail-archive-tool/internal/schedule"
@@ -25,6 +27,12 @@ import (
 type Input struct {
 	Out string
 
+	// Surface names who reads the report: "" for the CLI (commands and SQLite's
+	// words are fine), "desktop" for MailArchive Desktop's Status & health card,
+	// "gui" for mailarchive-gui's health view. The owner surfaces name their own
+	// rebuild action instead of a command line and leave SQLite's text out (F3).
+	Surface string
+
 	// GOOS shapes OS-specific wording (e.g. the staleness question: cron runs
 	// unattended, launchd/schtasks need a login). Empty defaults to the host.
 	GOOS string
@@ -32,6 +40,16 @@ type Input struct {
 	// OutUnderSync names the cloud-sync service (e.g. "OneDrive") when the
 	// archive sits inside a synced folder; "" when it does not.
 	OutUnderSync string
+
+	// DesktopFormer is what the running MailArchive Desktop recorded at start about
+	// MailArchive's former address 127.0.0.1:8097 (instance.FormerProgram or
+	// instance.FormerPreUpgrade), "" when it found nothing or none runs: the
+	// squat-and-phish notice of design-local-confidentiality CC23 [ruling OQ-9] and
+	// the pre-upgrade instance of CC22.
+	DesktopFormer string
+	// DesktopEnded, when set, is the older instance the running MailArchive Desktop
+	// ended at start (§4.5.2, MA-638); its line names the pid and program.
+	DesktopEnded *instance.Ended
 
 	// HasManifestFile is true when a manifest file exists on disk (even if it
 	// cannot be loaded); HasManifest is true only when it loaded. A present-but-
@@ -49,9 +67,12 @@ type Input struct {
 	HasManifest                 bool
 	Messages                    int
 	Fillable, Terminal, Unknown int
-	WithFixity                  int // records carrying at least one file digest (N of Messages)
-	ReportPath                  string
-	ReportExists                bool // the verification report exists on disk
+	// ShownAsSource counts records whose page is shown as plain text, per reason
+	// (RV-10), from the manifest's body_fallback; nil when none.
+	ShownAsSource map[string]int
+	WithFixity    int // records carrying at least one file digest (N of Messages)
+	ReportPath    string
+	ReportExists  bool // the verification report exists on disk
 
 	// Extractable is how many records have a preserved original (.eml) present
 	// on disk (WithEML) out of the total (Total) — extract's migration signal
@@ -62,8 +83,18 @@ type Input struct {
 	// it is display-only and never changes the posture.
 	Extractable Extractable
 
-	HasIndex bool
-	Indexed  int
+	// HasIndex is true when search.db opened; HasIndexFile when it exists on
+	// disk at all. A present index that cannot be opened (corrupt) carries the
+	// open error in IndexErr and is a RED, never "no search index" (F82).
+	//
+	// IndexBusy marks an open that failed only because another connection kept
+	// search.db locked past the busy timeout (index.Busy): the file is in use,
+	// not damaged, so it is never index_unreadable.
+	HasIndex     bool
+	Indexed      int
+	HasIndexFile bool
+	IndexErr     error
+	IndexBusy    bool
 
 	// History is the go-back timeline's coverage (design §3.4, X6): whether the
 	// log exists, how many runs and events it records, and whether it carries a
@@ -82,6 +113,14 @@ type Input struct {
 	LastRunState state.LastRunState
 	LastRunErr   error
 
+	// LastStartFailure is the headless run-job start-failure breadcrumb (§4.6.6),
+	// set by Gather only when its Name matches schedule.DefaultNameFor(Out): keyed
+	// on the owner-pointed out, never the archive-held Desc.Name, so a forged
+	// Desc.Name cannot hide a start failure and a deleted job file still raises it.
+	// HasStartFailure is false when there is no matching readable breadcrumb.
+	LastStartFailure startFailure
+	HasStartFailure  bool
+
 	// LastVerify is the separate record `verify` writes (its integrity verdict),
 	// distinct from the export LastRun so a scheduled verify's result is visible
 	// on status without disturbing the export record (UJ-A1).
@@ -89,20 +128,130 @@ type Input struct {
 	LastVerifyState state.LastVerifyState
 	LastVerifyErr   error
 
-	HasDescriptor bool
-	Desc          schedule.Descriptor
-	DescErr       error
-	SchedState    schedule.State
-	ExeExists     bool
-	ExeIsThis     bool
-	ThisHost      string
+	// HasDescriptorFile is true when the descriptor file exists (even if it
+	// cannot be read); HasDescriptor only when it loaded. `schedule -remove`
+	// never deletes an unreadable descriptor, so status must still report one.
+	HasDescriptorFile bool
+	HasDescriptor     bool
+	Desc              schedule.Descriptor
+	DescErr           error
+	// DescNameUnbound is true when the entry name the descriptor records cannot
+	// be shown to be THIS archive's (a copied or planted record, G8-AO1): a
+	// removal command is never printed from it. The zero value is a bound name.
+	DescNameUnbound bool
+	SchedState      schedule.State
+	ExeExists       bool
+	ExeIsThis       bool
+	// ExeBasis is why ExeIsThis holds (same_file | program_name |
+	// unchanged_since_install); ExeSkew, ExeFormerName and ExeConsoleBuild carry
+	// §4.6.2's notes — a different build of this program, a former name, and the
+	// console build mailarchive.exe.
+	ExeBasis        string
+	ExeSkew         bool
+	ExeFormerName   bool
+	ExeConsoleBuild bool
+	// ExeSelf is the resolved running program, carried only for the
+	// exe_version_skew text ("a different build … than <self>"); "" otherwise.
+	ExeSelf string
+	// ExeMissingInInstallDir is the Windows install-folder branch (§4.6.2, MA-635):
+	// the scheduled program is missing but was a known name in the running
+	// program's own directory, so the installer's Repair restores it.
+	ExeMissingInInstallDir bool
+	// ExeRepoint is the §4.6.3 re-point term: a repair would record a DIFFERENT
+	// program file than the one recorded, so it is worth offering even though the
+	// recorded program still is this one. Set only on a basis that identifies this
+	// program (same_file/program_name, never the size/mtime fallback), when
+	// ProgramForSchedule resolves, and its path differs from the recorded one as a
+	// path (never sameFile, which would hide the macOS .app link). Covers the
+	// former-name note, the console-build note once mailarchivew.exe is back, and
+	// the macOS link; not offered while the sibling is absent.
+	ExeRepoint bool
+	ThisHost   string
+
+	// KindEv is the owner-side evidence of the recorded backup schedule's kind
+	// (§4.6.5b), gathered once by Gather from owner-side state, never from the
+	// descriptor's Job. The repair route (§4.6.3) reads it so a run-job or capture
+	// schedule is never offered a `schedule … -install` the kind guard refuses.
+	// repairHow must stay pure (it is called from Assess), so this is set here and
+	// not recomputed inside Assess.
+	KindEv schedule.KindEvidence
+
+	// The scheduled verify's own descriptor (.mailarchive-verify-schedule.json,
+	// owner ruling FB-4), written when `schedule` installs a verify: it carries
+	// the verify's cadence, so verify_stale is judged against the verify itself.
+	// HasVerifyDescriptorFile is true when the file exists (even if it cannot be
+	// read), HasVerifyDescriptor only when it loaded; VerifySchedState is what the
+	// host scheduler says about the name it records. A verify installed by an
+	// earlier release has no such file (an even older one recorded the verify in
+	// Desc, in the backup's place).
+	HasVerifyDescriptorFile bool
+	HasVerifyDescriptor     bool
+	VerifyDesc              schedule.Descriptor
+	VerifyDescErr           error
+	VerifySchedState        schedule.State
+	// VerifyExeExists / VerifyExeIsThis are the backup's ExeExists / ExeIsThis
+	// for the program the verify descriptor records.
+	VerifyExeExists       bool
+	VerifyExeIsThis       bool
+	VerifyExeBasis        string
+	VerifyExeSkew         bool
+	VerifyExeFormerName   bool
+	VerifyExeConsoleBuild bool
+	// VerifyNameUnbound is DescNameUnbound for the verify descriptor's name.
+	VerifyNameUnbound bool
 
 	// LockHeld is the authoritative liveness signal: the archive lock dies
 	// with its process, so a "running" record whose lock is free belongs to a
 	// run that never finished (pid numbers are reused after a reboot).
+	//
+	// LockVerb is the verb the holder named in the lock's holder line
+	// (lockfile.HolderVerb: "export", "verify", …), "" when the lock is free
+	// or its holder names none (status's own probe). It says WHICH run holds
+	// the lock, so a running record is live only while its own kind of run
+	// holds it (runRunning, verifyRunning).
 	LockHeld bool
+	LockVerb string
 
 	PIDAlive func(int) bool
+
+	// WriteProbeErr is why a small file could not be written into the archive
+	// folder (read-only, full, a lost drive), nil when it could. A run that
+	// cannot write there cannot record its own failure, so status is where the
+	// custodian sees it (F2).
+	WriteProbeErr error
+
+	// The capture-gap ledger (fault-isolation §4.10): Gaps is the manifest's ledger
+	// in its stable order; GapLastRun maps each store token to its last run's start
+	// (a gap is ATTEMPTED when its LastRun equals it, FC14); GapSource maps a token
+	// to its store id (the mailbox address or input path, the reverse of the
+	// manifest's Stores). Unreadable counts partly-read records, UnreadableOnly the
+	// fillable records that are fillable only because they are partly read (status
+	// leaves them out of incomplete_content), Unparsed the unparsed stubs.
+	Gaps           []state.CaptureGap
+	GapLastRun     map[string]time.Time
+	GapSource      map[string]string
+	Unreadable     int
+	UnreadableOnly int
+	Unparsed       int
+	// UnparsedTerminal is how many of Terminal are unparsed stubs only (kept as raw
+	// text, so not "source-empty"); PartlyRead names up to 20 partly-read pages
+	// (friction F7).
+	UnparsedTerminal int
+	PartlyRead       []string
+	// Undecodable is how many records carry a part this version cannot decode or one cut
+	// short, kept as received (design-mime-fidelity §4.9): informational, like Terminal,
+	// and counted apart from it, so a parse gap is never "source-empty". FidelityFallback
+	// is how many records were written from the earlier parser's content (MC19).
+	Undecodable      int
+	FidelityFallback int
+	// ParseGapKinds is the number of records per parse-gap kind, for status -json.
+	ParseGapKinds map[string]int
+	// FillableParseGap is how many of the Fillable records are fillable because of a parse gap
+	// (a part cut short, a multipart with no boundary), also counted in Undecodable;
+	// FillableOnlyParseGap how many are fillable for nothing else, so the download remedy of a
+	// message a source has not delivered is not theirs (friction F3).
+	FillableParseGap     int
+	FillableOnlyParseGap int
 }
 
 // Extractable is the extractability facet of an archive: WithEML of Total
@@ -123,6 +272,10 @@ type Report struct {
 	Posture string // GREEN | WARN | RED
 	Reasons []string
 	Codes   []string
+
+	// now is the time the report was assessed at, so the JSON judges the capture
+	// gaps' stuck threshold at the same instant the reasons did.
+	now time.Time
 }
 
 func (r *Report) warn(code, msg string) {
@@ -146,6 +299,21 @@ func (r *Report) note(code, msg string) {
 	r.Codes = append(r.Codes, code)
 }
 
+// onlyParseGap says every one of the n messages still missing content is so only because a part is
+// cut short or its parts could not be told apart (a fillable parse gap), so the remedy of a
+// message the source has not delivered is not theirs.
+func onlyParseGap(in Input, n int) bool {
+	return n > 0 && in.FillableOnlyParseGap >= n
+}
+
+// mixedCutRemedy says what cures the n messages, among several still missing content, that are cut
+// short or have parts that could not be told apart in the mailbox file they were read from: the
+// download that cures the others does not change a file.
+func mixedCutRemedy(n int) string {
+	return fmt.Sprintf("%d of them %s cut short, or %s parts that could not be told apart, in the mailbox file: a download does not change it, so replace the file with a complete export from your mail app",
+		n, plural(n, "is", "are"), plural(n, "has", "have"))
+}
+
 // IntervalOf maps a cadence to its period.
 func IntervalOf(iv string) time.Duration {
 	switch schedule.Interval(iv) {
@@ -160,7 +328,23 @@ func IntervalOf(iv string) time.Duration {
 
 // Assess applies the posture rules, failing closed on missing evidence.
 func Assess(in Input, now time.Time) Report {
-	r := Report{Posture: "GREEN"}
+	r := Report{Posture: "GREEN", now: now}
+
+	// A headless run-job that could not even start leaves a breadcrumb but no
+	// archive-local last-run record (§4.6.6, MA-634). Raise it first, under
+	// MA-168's rule: when the archive is unreachable (its own last run cannot
+	// speak to the backup's health) or the failure is newer than the last
+	// recorded run (a later successful run supersedes an older breadcrumb).
+	if in.HasStartFailure {
+		reachable := in.HasManifest || in.LastRunState == state.LastRunPresent
+		var lastRun time.Time
+		if in.LastRunState == state.LastRunPresent {
+			lastRun = in.LastRun.Started
+		}
+		if !reachable || in.LastStartFailure.When.After(lastRun) {
+			r.red("start_failed", startFailureLine(in.LastStartFailure)+" — fix that (for a backup drive: connect it), and the next scheduled run records a run here")
+		}
+	}
 
 	// A manifest that exists on disk but cannot be loaded (a newer format, or a
 	// corrupt/truncated file) is a RED that names the file, the loader's own
@@ -171,34 +355,106 @@ func Assess(in Input, now time.Time) Report {
 		r.red("manifest_unreadable", fmt.Sprintf("the archive's manifest cannot be read: %s", util.StripControl(in.ManifestLoadErr.Error())))
 	}
 
-	// The archive location itself is gone (an unplugged removable/network drive,
-	// or a deleted folder). Gather would otherwise read it as a brand-new empty
-	// archive and the no-schedule remedy below would invite a SECOND schedule
-	// install (OP-3, R18). Say the location is unreachable and that nothing is
+	// OP-3 (R18): the archive location itself is gone (an unplugged removable/
+	// network drive, or a deleted folder). Gather would otherwise read it as a
+	// brand-new empty archive and the no-schedule remedy below would invite a
+	// SECOND schedule install. Say the location is unreachable and that nothing is
 	// wrong with the archive, and suppress the no-schedule advice.
 	if in.OutAbsent {
 		r.warn("out_absent", fmt.Sprintf("the archive location %s is not reachable — if it is on a removable or network drive, connect it and check again; nothing is wrong with the archive itself", in.Out))
 	}
 
-	// Completeness.
-	if in.Fillable > 0 {
-		msg := fmt.Sprintf("%d message(s) still missing content — download for offline use in your mail app, then re-run; incremental fills them", in.Fillable)
+	// Items and folders the source holds that the last runs could not capture (the
+	// capture-gap ledger): the stuck ones first of every WARN, never RED (FC18).
+	assessCaptureGaps(&r, in, now)
+
+	// Completeness. A partly-read record is fillable too, but it has its own
+	// reason and its own remedy below; it is left out of this count and text.
+	if n := in.Fillable - in.UnreadableOnly; n > 0 {
+		msg := fmt.Sprintf("%d message(s) still missing content — download for offline use in your mail app, then re-run; incremental fills them", n)
+		if onlyParseGap(in, n) {
+			// Every one is cut short, or has parts that could not be told apart, in the file it was
+			// read from: a download returns the same bytes from a mailbox file (friction F3).
+			msg = fmt.Sprintf("%d message(s) still missing content: cut short, or with parts that could not be told apart, in the file they were read from — replace the mailbox file with a complete export from your mail app (an IMAP cache: download the messages for offline use), then re-run; incremental fills them. A message that was malformed when it was sent cannot be completed by either, and stays listed", n)
+		} else if in.FillableParseGap > 0 {
+			// A mix: the download is for the messages a source has not delivered, and a cut one among
+			// them is not changed by it (friction F3, re-verification).
+			msg += "; " + mixedCutRemedy(in.FillableParseGap)
+		}
 		if in.ReportExists {
 			msg += fmt.Sprintf(" (see %s)", in.ReportPath)
 		}
 		r.warn("incomplete_content", msg)
 	}
+	assessPartlyRead(&r, in)
+	// Shown as source (RV-10): not wrong and nothing to fix, but an owner whose
+	// mail is shown as plain text should be able to learn it here. A note — it
+	// never moves the posture.
+	if txt := shownAsSourceText(in.ShownAsSource); txt != "" {
+		r.note("shown_as_source", txt)
+	}
 	if in.Unknown > 0 {
 		r.warn("unexamined_entries", fmt.Sprintf("%d entr%s predate completeness tracking and are re-examined by incremental runs until none remain", in.Unknown, plural(in.Unknown, "y", "ies")))
 	}
+	// Plain `reindex` only prunes rows whose file is gone — it can never add a
+	// missing row — so the remedy for an index that is short of the manifest is
+	// the rebuild from the archive's own files (F50).
 	if in.HasIndex && in.HasManifest && in.Indexed < in.Messages {
-		r.warn("index_behind", fmt.Sprintf("the search index holds %d of %d messages — run `mailarchive reindex -out %q`", in.Indexed, in.Messages, in.Out))
+		r.warn("index_behind", fmt.Sprintf("the search index holds %d of %d messages — %s", in.Indexed, in.Messages, rebuildHow(in)))
+	}
+	// A search index that is present but cannot be read is a RED (search, serve
+	// and the next run all fail on it); one that is gone from an archive that
+	// records messages is a WARN unless the last run deliberately skipped
+	// indexing (-index=false). Both name the rebuild from the archive's own
+	// files (F82). The open error is control-stripped like the manifest's.
+	idxPath := filepath.Join(in.Out, "search.db")
+	switch {
+	case in.HasIndexFile && !in.HasIndex && in.IndexErr != nil && in.IndexBusy:
+		// In use, not damaged: never the rebuild remedy. Under a run's archive
+		// lock that is expected and only a note; with the lock free something
+		// outside mailarchive held it and the counts are unknown, so a WARN.
+		msg := fmt.Sprintf("the search index %s was busy (kept locked by another connection) and could not be read just now, so its counts are not shown", idxPath)
+		if in.LockHeld {
+			r.note("index_busy", msg+" — a run is using this archive; run status again when it finishes")
+		} else {
+			r.warn("index_busy", msg+" — close any other program that has it open, then run status again")
+		}
+	case in.HasIndexFile && !in.HasIndex && in.IndexErr != nil:
+		// The rebuild needs the archive's manifest (it refuses without one), so
+		// with none here the remedy that works is moving the file aside (F6).
+		remedy := rebuildHow(in)
+		if !in.HasManifest && !in.HasManifestFile {
+			remedy = fmt.Sprintf("there is no manifest in %s to rebuild it from, so move search.db out of that folder; the next run builds a fresh index", in.Out)
+		}
+		cause := fmt.Sprintf(" (%s)", util.StripControl(indexOpenCause(in.IndexErr)))
+		if in.Surface != "" {
+			cause = "" // SQLite's words are for the log and -json, not the owner
+		}
+		r.red("index_unreadable", fmt.Sprintf("the search index %s cannot be read%s — search, serve and the folder pages need it; %s", idxPath, cause, remedy))
+	case !in.HasIndex && !in.HasIndexFile && in.HasManifest && in.Messages > 0 && !(in.LastRunState == state.LastRunPresent && in.LastRun.NoIndex):
+		r.warn("index_missing", fmt.Sprintf("the archive has no search index (%s) although the manifest records %d message(s) — search, serve and the folder pages need it; %s (or ignore this if the archive is deliberately kept without one, -index=false)", idxPath, in.Messages, rebuildHow(in)))
 	}
 
 	// The archive's own location. A cloud-sync folder re-uploads every change
 	// and can conflict with the sync (P3).
 	if in.OutUnderSync != "" {
 		r.warn("cloud_sync", fmt.Sprintf("the archive is inside %s's synced folder — a backup here re-uploads on every change and can corrupt during a sync; use a local, non-synced folder, or exclude it from sync / keep it always on this device", in.OutUnderSync))
+	}
+
+	// The desktop's former address: never silent when another program holds it, or
+	// an older MailArchive Desktop still runs there (CC22, CC23).
+	if txt := instance.NoticeFor(in.DesktopFormer); txt != "" {
+		code := "desktop_former_address"
+		if in.DesktopFormer == instance.FormerPreUpgrade {
+			code = "desktop_preupgrade"
+		}
+		r.warn(code, txt)
+	}
+	// An older instance this launch ended: name it (§4.5.2, MA-638).
+	if in.DesktopFormer == instance.FormerEnded {
+		if txt := instance.EndedNotice(in.DesktopEnded); txt != "" {
+			r.warn("desktop_ended_older", txt)
+		}
 	}
 
 	// Last run.
@@ -217,12 +473,14 @@ func Assess(in Input, now time.Time) Report {
 		lr := in.LastRun
 		switch lr.Status {
 		case state.RunFailed:
-			r.red("run_failed", fmt.Sprintf("the last run (%s) FAILED: %s", lr.Started.Local().Format("2006-01-02 15:04"), lr.Error))
-			if looksLikeAuthFailure(lr.Error) {
+			r.red("run_failed", fmt.Sprintf("the last run (%s) FAILED: %s", lr.Started.Local().Format("2006-01-02 15:04"), runErrorText(in, lr)))
+			// A breaker trip is recorded by kind as an outage; its text (the server's
+			// last words, the mailbox's name) is not read for needles (S3-AC5).
+			if lr.ErrorKind != state.ErrKindServiceUnavailable && looksLikeAuthFailure(lr.Error) {
 				r.note("auth_remedy", "  remedy: authentication failed — for an app-auth job the client secret may have expired (rotate it in Entra and rewrite the secret file); for a device-auth job the sign-in may have expired (re-run `mailarchive graph -auth device …` to sign in again)")
 			}
 		case state.RunRunning:
-			alive := in.LockHeld
+			alive := runRunning(in)
 			switch {
 			case alive && now.Sub(lr.Started) <= period:
 				r.note("run_in_progress", fmt.Sprintf("a run is in progress (pid %d, started %s)", lr.PID, lr.Started.Local().Format("2006-01-02 15:04")))
@@ -237,15 +495,51 @@ func Assess(in Input, now time.Time) Report {
 		if in.HasDescriptor && lr.Status != state.RunRunning && now.Sub(lr.Started) > 2*period {
 			r.warn("stale", fmt.Sprintf("the last run was %s ago, more than twice the %s schedule period — %s", HumanAge(now.Sub(lr.Started)), in.Desc.Interval, stalenessQuestion(in.GOOS, in.Desc.At)))
 		}
+		// Problems the last run found with its own setup and kept running past
+		// (design-local-confidentiality P10): a credential, or the desktop's
+		// settings and sign-in, inside the archive. The recorded text names the
+		// file, the archive and the remedy. Only the codes defined here are shown
+		// (the record is writable by anyone who can write the archive), and they
+		// come from the last run alone, so a run without the problem clears them.
+		for _, w := range lr.Warnings {
+			switch w.Code {
+			case "credential_in_archive", "config_in_archive":
+				r.warn(w.Code, w.Message)
+			}
+		}
 	}
 
 	// Last verify: the archive's integrity verdict, from verify's own record.
 	// modified/missing is real corruption (RED); unrecorded-only is a coverage
-	// gap (WARN); a verify older than twice its own schedule cadence is stale
-	// (WARN) — only when the recorded schedule IS a verify schedule, so its
-	// cadence is known (UJ-A1).
-	if in.LastVerifyState == state.LastVerifyPresent && in.LastVerify.Status == state.VerifyDone {
-		lv := in.LastVerify
+	// gap (WARN); a verify that has not run for more than twice its own
+	// schedule's cadence is stale (WARN, assessVerifySchedule).
+	//
+	// A "running" record is judged by the finished verdict it carries (F79): a
+	// verify in progress (the archive lock held by a verify, verifyRunning) is
+	// a note; otherwise that verify never finished (crash, kill, power loss)
+	// and is a WARN — and either way the previous verdict, a not-attested RED
+	// included, is still reported.
+	lv, judge := in.LastVerify, in.LastVerifyState == state.LastVerifyPresent
+	if judge && lv.Status == state.VerifyRunning {
+		started := lv.Started.UTC().Format("2006-01-02 15:04")
+		if verifyRunning(in) {
+			r.note("verify_in_progress", fmt.Sprintf("a verify is in progress (started %s UTC)", started))
+		} else {
+			// With a scheduled verify recorded, name its log and the run that
+			// replaces this record. assessVerifySchedule does not repeat this
+			// reason: this block is the single owner of verify_never_finished.
+			sched := ""
+			if in.HasVerifyDescriptor {
+				sched = fmt.Sprintf("; check its log %s (the verify started %s local time) — the next scheduled run of %q also replaces this record", verifyLogHint(in), lv.Started.Local().Format("2006-01-02 15:04"), in.VerifyDesc.Name)
+			}
+			r.warn("verify_never_finished", fmt.Sprintf("the verify started %s UTC never finished (Ctrl-C, crash, kill, or power loss) — run `mailarchive verify -out %q` again; the last finished verify's verdict is still reported%s", started, in.Out, sched))
+		}
+		judge = lv.Previous != nil
+		if judge {
+			lv = *lv.Previous
+		}
+	}
+	if judge && lv.Status == state.VerifyDone {
 		when := ""
 		if lv.Finished != nil {
 			when = lv.Finished.UTC().Format("2006-01-02 15:04")
@@ -256,10 +550,14 @@ func Assess(in Input, now time.Time) Report {
 		case lv.Unrecorded > 0:
 			r.warn("verify_unrecorded", fmt.Sprintf("the last verify (%s UTC) left %d file(s) with no recorded fixity — run `mailarchive verify -record -out %q` to baseline them", when, lv.Unrecorded, in.Out))
 		}
-		if isVerifyJob(in.Desc.Job) && lv.Finished != nil && now.Sub(*lv.Finished) > 2*IntervalOf(in.Desc.Interval) {
-			r.warn("verify_stale", fmt.Sprintf("the last verify was %s ago, more than twice the %s verify schedule period — schedule it, or run `mailarchive verify -out %q`", HumanAge(now.Sub(*lv.Finished)), in.Desc.Interval, in.Out))
+		// Exit 1 on a produced report is an error after the check (a -record
+		// baseline whose save failed): its counts stand, but it did not finish
+		// cleanly, so say so (F79).
+		if lv.ExitCode == 1 {
+			r.warn("verify_failed", fmt.Sprintf("the last verify (%s UTC) checked the archive but then failed with an error (see its log) — fix the cause and run `mailarchive verify -out %q` again", when, in.Out))
 		}
 	}
+	assessVerifySchedule(&r, in, now)
 
 	// Go-back timeline coverage (design §3.4, X6). An absent log is not a
 	// problem (a one-shot local import has none; a live archive writes it on its
@@ -275,6 +573,19 @@ func Assess(in Input, now time.Time) Report {
 		r.warn("history_corrupt", fmt.Sprintf("the go-back history log has %d unreadable line(s) — those events are skipped, so past-date views may be incomplete; run `mailarchive reindex -out %q` to compact the log", in.History.BadLines, in.Out))
 	}
 
+	// A scheduled backup that cannot write into its archive folder fails every
+	// run and cannot record the failure there (no last-run record, no attention
+	// file), so the previous ok would stand: say it here (F2). Only for a
+	// schedule recorded for this host — a read-only copy with no schedule, or
+	// another machine's job, is not a failing backup.
+	if in.WriteProbeErr != nil && in.HasDescriptor && (in.ThisHost == "" || in.Desc.Host == "" || in.ThisHost == in.Desc.Host) {
+		remedy := "make the folder writable (or remount the drive read-write)"
+		if diskFull(in.WriteProbeErr) {
+			remedy = "free space on the disk that holds it"
+		}
+		r.red("archive_unwritable", fmt.Sprintf("the archive folder %s cannot be written (%s, as the account running status; if the backup runs as another account, check that one) — a scheduled backup that cannot write there cannot save its manifest, its last-run record or this failure, so the last run shown above may be out of date; %s, then run the job again", in.Out, util.StripControl(probeCause(in.WriteProbeErr)), remedy))
+	}
+
 	// Schedule.
 	switch {
 	case in.DescErr != nil && !errors.Is(in.DescErr, os.ErrNotExist):
@@ -283,10 +594,20 @@ func Assess(in Input, now time.Time) Report {
 		r.warn("no_schedule", fmt.Sprintf("no schedule is recorded for this archive — %s (or the GUI's \"Keep this archive current\"), or ignore this if a systemd timer, NAS task or other scheduler already keeps it current", scheduleRemedy(in)))
 	default:
 		if jo := jobOutOf(in.Desc.Job); jo != "" && filepath.IsAbs(jo) && filepath.IsAbs(in.Out) && !sameArchivePath(jo, in.Out, in.GOOS) {
-			// Substitute this archive's job into the re-install remedy (no "..."
-			// placeholder) so the operator can paste it (friction #14).
-			reinstall := scheduleCommand(jobWithOut(in.Desc.Job, in.Out), in.GOOS)
-			r.warn("moved_archive", fmt.Sprintf("the installed schedule %q backs up %s, not this archive (%s) — re-run %s, then remove the stale one with `mailarchive schedule -name %q -remove`", in.Desc.Name, jo, in.Out, reinstall, in.Desc.Name))
+			// The re-point is rendered through the route (§4.6.3): an export schedule
+			// gets the pasteable command with this archive's job substituted (no
+			// "..." placeholder, friction #14), while a run-job or capture schedule is
+			// pointed at its own Repair rather than a `schedule … -install` the kind
+			// guard refuses. The removal of the stale entry is unchanged (G8-AO1/AO2).
+			repair := repairHow(in)
+			if in.DescNameUnbound {
+				// The record is untrusted: an entry it names that is not shown to be
+				// this archive's may be another archive's live one, so no removal
+				// command is printed from it (G8-AO1).
+				r.warn("moved_archive", fmt.Sprintf("the installed schedule %q backs up %s, not this archive (%s) — %s; this record is not shown to be this archive's own, so it names no entry to remove: if it was copied here, delete %s", in.Desc.Name, jo, in.Out, repair, filepath.Join(in.Out, schedule.DescriptorName)))
+			} else {
+				r.warn("moved_archive", fmt.Sprintf("the installed schedule %q backs up %s, not this archive (%s) — %s, then remove the stale one with `mailarchive schedule -name %q -remove`", in.Desc.Name, jo, in.Out, repair, in.Desc.Name))
+			}
 		}
 		if in.ThisHost != "" && in.Desc.Host != "" && in.ThisHost != in.Desc.Host {
 			r.warn("other_host", fmt.Sprintf("the schedule was installed on host %q, not this one (%q); its state cannot be checked from here", in.Desc.Host, in.ThisHost))
@@ -295,40 +616,453 @@ func Assess(in Input, now time.Time) Report {
 			case schedule.SchedulerUnavailable:
 				r.warn("scheduler_unavailable", "this host's scheduler cannot be queried (no crontab/schtasks?) — the schedule may not run here")
 			case schedule.NotInstalled:
-				r.warn("not_installed", fmt.Sprintf("the schedule %q is recorded but not present in this host's scheduler — re-run `mailarchive schedule ... -install`", in.Desc.Name))
+				r.warn("not_installed", fmt.Sprintf("the schedule %q is recorded but not present in this host's scheduler — %s", in.Desc.Name, repairHow(in)))
 			}
-			if !in.ExeExists {
-				r.red("exe_missing", fmt.Sprintf("the scheduled program %s no longer exists — the job cannot run; re-run `mailarchive schedule ... -install` from the current binary", in.Desc.Exe))
-			} else if !in.ExeIsThis {
-				r.warn("exe_moved", fmt.Sprintf("the schedule runs %s, which is not this binary — after an upgrade or move, re-run `mailarchive schedule ... -install`", in.Desc.Exe))
+			switch {
+			case !in.ExeExists:
+				switch {
+				case in.ExeMissingInInstallDir:
+					// Windows install-folder branch (§4.6.2, MA-635): the file the
+					// installer ships is gone from the install folder; the installer's
+					// Repair restores it (and an antivirus removal must be allowed first).
+					r.red("exe_missing", fmt.Sprintf("the scheduled program %s is missing from the install folder — restore it with the installer's Repair; if your antivirus removed it, restore and allow it first; the schedule then runs again unchanged", in.Desc.Exe))
+				default:
+					hint := ""
+					if schedule.FormerName(filepath.Base(in.Desc.Exe), in.GOOS) {
+						hint = fmt.Sprintf(" (%s was a former name of this program and was removed by an upgrade)", filepath.Base(in.Desc.Exe))
+					}
+					r.red("exe_missing", fmt.Sprintf("the scheduled program %s no longer exists — the job cannot run%s; %s", in.Desc.Exe, hint, repairHow(in)))
+				}
+			case in.ExeSkew:
+				r.warn("exe_version_skew", fmt.Sprintf("the schedule runs %s, a different build of this program than %s: one file was replaced without the other. Do this: reinstall from the MSI (or copy both files from one release), then %s", in.Desc.Exe, in.ExeSelf, repairHow(in)))
+			case !in.ExeIsThis:
+				r.warn("exe_moved", fmt.Sprintf("the schedule runs %s, which is not this binary (after an upgrade or move) — %s", in.Desc.Exe, repairHow(in)))
+			}
+			// §4.6.2 notes: the schedule still runs, but the recorded name says
+			// something the owner should know. Shown even when it is this program
+			// (the Program: line names the state; these add the why and the repair).
+			if in.ExeIsThis && in.ExeFormerName {
+				r.note("exe_former_name", fmt.Sprintf("the schedule runs %s, a former name of this program. Why: this release keeps that name as a copy (or link); a later release removes it. Do this: %s. Nothing changes until you do.", in.Desc.Exe, repairHow(in)))
+			}
+			if in.ExeIsThis && in.ExeConsoleBuild {
+				r.note("exe_console_build", "the schedule runs the command-line build mailarchive.exe; a console window stays open while it runs. Do this: put mailarchivew.exe beside it and choose Repair.")
 			}
 		}
 	}
+	assessVerifyEntry(&r, in)
+	r.worstFirst()
 	return r
 }
 
-// sameArchivePath reports whether two -out spellings name the same directory.
-// It prefers os.SameFile when both paths stat (collapsing symlink, 8.3/long and
-// mapped-drive spellings); when a stat is unavailable it folds case only on the
-// case-insensitive volumes (darwin/windows), keeping an exact byte-compare on
-// linux so a genuinely different-cased directory there still warns (UJ-A4).
-func sameArchivePath(a, b, goos string) bool {
-	if filepath.Clean(a) == filepath.Clean(b) {
+// worstFirst orders the reasons RED, then WARN, then notes (F20), keeping the
+// check order within each class and every indented remedy line ("  remedy: …")
+// directly under the reason it belongs to. Reasons and Codes stay parallel.
+func (r *Report) worstFirst() {
+	type group struct {
+		reasons, codes []string
+		rank           int
+	}
+	var groups []group
+	for i, reason := range r.Reasons {
+		if strings.HasPrefix(reason, "  ") && len(groups) > 0 {
+			g := &groups[len(groups)-1]
+			g.reasons, g.codes = append(g.reasons, reason), append(g.codes, r.Codes[i])
+			continue
+		}
+		rank := 2
+		switch {
+		case strings.HasPrefix(reason, "RED:"):
+			rank = 0
+		case strings.HasPrefix(reason, "WARN:"):
+			rank = 1
+		}
+		groups = append(groups, group{[]string{reason}, []string{r.Codes[i]}, rank})
+	}
+	var reasons, codes []string
+	for rank := 0; rank <= 2; rank++ {
+		for _, g := range groups {
+			if g.rank == rank {
+				reasons, codes = append(reasons, g.reasons...), append(codes, g.codes...)
+			}
+		}
+	}
+	r.Reasons, r.Codes = reasons, codes
+}
+
+// probeCause is the operating system's own words for a failed write probe,
+// without the probe file's name (the reason names the folder).
+func probeCause(err error) string {
+	var pe *os.PathError
+	if errors.As(err, &pe) {
+		return pe.Err.Error()
+	}
+	return err.Error()
+}
+
+// diskFull reports whether err is the operating system's "no space left".
+func diskFull(err error) bool {
+	if errors.Is(err, syscall.ENOSPC) {
 		return true
 	}
-	if goos == "" {
-		goos = runtime.GOOS
-	}
-	fa, ea := os.Stat(a)
-	fb, eb := os.Stat(b)
-	if ea == nil && eb == nil {
-		return os.SameFile(fa, fb)
-	}
-	if goos == "darwin" || goos == "windows" {
-		return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
+	var en syscall.Errno
+	if runtime.GOOS == "windows" && errors.As(err, &en) {
+		return en == 112 || en == 39 // ERROR_DISK_FULL, ERROR_HANDLE_DISK_FULL
 	}
 	return false
 }
+
+// probeWrite writes and removes a small file in dir, enough (64 KiB, synced)
+// that a full disk or a failing drive refuses it; nil when dir takes a write.
+func probeWrite(dir string) error {
+	f, err := os.CreateTemp(dir, ".mailarchive-status-probe-*.tmp")
+	if err != nil {
+		return err
+	}
+	name := f.Name()
+	defer os.Remove(name)
+	if _, err := f.Write(make([]byte, 64<<10)); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+// rebuildHow is the remedy sentence for a damaged, missing or lagging search
+// index, in the words of the surface reading it (F3): the CLI's command, the
+// desktop's Maintenance button, the mailarchive-gui health view's choice.
+func rebuildHow(in Input) string {
+	switch in.Surface {
+	case "desktop":
+		return "choose Maintenance → Rebuild search index to rebuild it from your archive"
+	case "gui":
+		return "choose \"Rebuild the search index\" below to rebuild it from your archive"
+	}
+	return fmt.Sprintf("rebuild it from the archive with `mailarchive reindex -rebuild -out %q`", in.Out)
+}
+
+// repairHow renders how to repair a recorded backup schedule, in the words of
+// the surface reading it (§4.6.3), beside rebuildHow. It renders the route
+// schedule.RepairRoute decides from owner-side evidence (§4.6.5(e)): a
+// corroborated run-job repairs in the wizard or this archive's Weekly backup
+// card; a corroborated capture on the card; an export schedule on the command
+// line; anything else names both explicit installs. So no remedy ever points at
+// a button that is not on the reader's page, nor at a `schedule … -install` the
+// kind guard (MA-631) would refuse. The five backup remedies (exe_missing,
+// exe_moved, exe_former_name, not_installed, moved_archive) tail with it.
+func repairHow(in Input) string {
+	switch schedule.RepairRoute(in.Desc, in.Out, in.KindEv) {
+	case schedule.RouteWizard: // a corroborated run-job
+		switch in.Surface {
+		case "desktop":
+			return "click Repair on this archive's Weekly backup card"
+		case "gui":
+			return "choose Repair the scheduled backup in the health check"
+		}
+		return cliRunJobRepair(in)
+	case schedule.RouteCard: // a corroborated capture
+		if in.Surface == "desktop" {
+			return "click Repair on this archive's Weekly backup card"
+		}
+		return "open MailArchive Desktop and click Repair on this archive's Weekly backup card"
+	case schedule.RouteCommand: // an export schedule
+		return "re-run " + scheduleCommand(jobWithOut(in.Desc.Job, in.Out), in.GOOS)
+	default: // RouteNone — no single repair
+		return bothInstalls(in)
+	}
+}
+
+// cliRunJobRepair is the command line's no-display fallback for a run-job whose
+// repair is otherwise the wizard's or the card's (§4.6.3, The route): the one
+// sanctioned place a run-job remedy names `schedule … -install`, and only after
+// a `-remove` step and naming the job file. The scheduler entry name is
+// recovered from the corroborated job file's basename (as the wizard does),
+// never from the archive-held descriptor's Name (§5.2). Both dynamic values are
+// shell-quoted for the surface's OS (INS2-2).
+func cliRunJobRepair(in Input) string {
+	remove := "`mailarchive schedule -name " + shellQuoteToken(scheduleNameForRepair(in), in.GOOS) + " -remove`"
+	install := "`mailarchive schedule -out " + shellQuoteToken(in.Out, in.GOOS) + " -install`"
+	s := "repair it from the wizard or this archive's Weekly backup card in MailArchive Desktop; with no display, remove the schedule with " + remove + ", then re-install it with " + install
+	if in.KindEv.JobPath != "" {
+		s += " — the job's settings are in `" + in.KindEv.JobPath + "`"
+	}
+	return s
+}
+
+// scheduleNameForRepair recovers the scheduler entry name from the corroborated
+// run-job's job file basename (§4.6.5b), falling back to the archive's default
+// name; never the descriptor's own Name, which an archive writer controls.
+func scheduleNameForRepair(in Input) string {
+	if in.KindEv.JobPath != "" {
+		return strings.TrimSuffix(filepath.Base(in.KindEv.JobPath), ".json")
+	}
+	return schedule.DefaultNameFor(in.Out)
+}
+
+// bothInstalls names the two explicit installs for a schedule whose kind no
+// single route repairs (§4.6.3, The route: RouteNone): the interactive install
+// (the card's or the wizard's) and the command line's export install.
+func bothInstalls(in Input) string {
+	return "set the schedule up afresh — in MailArchive Desktop's Weekly backup card or the wizard, or on the command line with " + scheduleCommand([]string{"-out", in.Out}, in.GOOS)
+}
+
+// runErrorText is the last run's failure as the surface reading it should see
+// it. The CLI and -json print what the run recorded (its command and SQLite's
+// words). An owner surface (desktop, gui) prints a search-index refusal, which
+// the record names by kind, in plain words with that surface's own rebuild
+// action, so the health view never tells an owner with no command line to run
+// one (g7 friction re-verification of F3). Any other failure is verbatim.
+func runErrorText(in Input, lr state.LastRun) string {
+	if in.Surface == "" {
+		return lr.Error
+	}
+	switch lr.ErrorKind {
+	case state.ErrKindIndexBusy:
+		return "the search index is in use by another program — close any other program that has it open, then try again"
+	case state.ErrKindIndexUnwritable:
+		return "the archive cannot be written to (a read-only folder or file, or a full or failing disk) — make it writable or free some space, then try again"
+	case state.ErrKindIndexDamaged:
+		return "the search index is damaged — " + rebuildHow(in) + ", then try again"
+	case state.ErrKindIndexDamagedNoManifest:
+		return fmt.Sprintf("the search index is damaged, and the archive has no manifest to rebuild it from — move search.db out of %s, then try again; a fresh index is built", in.Out)
+	}
+	return lr.Error
+}
+
+// verifyRunning reports whether a verify is running now: the archive lock is
+// held AND its holder is a verify. Every verify names itself in the holder
+// line (lockfile.AcquireAs "verify"), so a lock held by another verb (an
+// export, a reindex), by a holder that names none (status's own probe), or no
+// lock at all means a "running" verify record belongs to a verify that never
+// finished.
+func verifyRunning(in Input) bool {
+	return in.LockHeld && in.LockVerb == "verify"
+}
+
+// runRunning reports whether the "running" last-run record — which only an
+// export or a Graph run writes — can belong to a run in progress now: the
+// archive lock is held by an export or a graph run, or by a holder that names
+// no verb (status's own probe, or a binary older than c19f429, which wrote
+// none — counted as live so a mixed-version install shows no false RED). A
+// lock held by a verify, a reindex, an extract or any other verb cannot be
+// that run, so the record belongs to a run that never finished (R18: fail
+// closed), the same rule verifyRunning applies to a running verify record.
+func runRunning(in Input) bool {
+	if !in.LockHeld {
+		return false
+	}
+	switch in.LockVerb {
+	case "export", "graph", "":
+		return true
+	}
+	return false
+}
+
+// indexOpenCause is what the index_unreadable reason says about a failed
+// search.db open: SQLite's own root cause when OpenReadonly typed its refusal
+// (index.UnreadableError), because the reason names the file and the rebuild
+// itself and the full refusal would print both twice; the whole error
+// otherwise.
+func indexOpenCause(err error) string {
+	var ue *index.UnreadableError
+	if errors.As(err, &ue) && ue.Cause != nil {
+		return ue.Cause.Error()
+	}
+	return err.Error()
+}
+
+// assessVerifyEntry watches the scheduled verify's entry the way the Schedule
+// section above watches the backup's (MA-466): recorded on another host, its
+// state cannot be checked from here (verify_other_host); on this host a verify
+// the scheduler does not have is verify_not_installed, a scheduler that cannot
+// be queried is scheduler_unavailable (once, with the backup's), and a recorded
+// program that is gone or is not this binary is verify_exe_missing or
+// verify_exe_moved, each naming the re-install. A verify that cannot run is a
+// WARN, as a stale verify is: RED stays for a backup that cannot run and for
+// corruption a verify found.
+func assessVerifyEntry(r *Report, in Input) {
+	if !in.HasVerifyDescriptor {
+		return
+	}
+	vd := in.VerifyDesc
+	if in.ThisHost != "" && vd.Host != "" && in.ThisHost != vd.Host {
+		r.warn("verify_other_host", fmt.Sprintf("the verify schedule %q was installed on host %q, not this one (%q); its state cannot be checked from here", vd.Name, vd.Host, in.ThisHost))
+		return
+	}
+	reinstall := verifyReinstall(in)
+	switch in.VerifySchedState {
+	case schedule.NotInstalled:
+		clearCmd := "`mailarchive schedule " + strings.Join(quoteTokens([]string{"-name", vd.Name, "-remove", "--", "verify", "-out", in.Out}, in.GOOS), " ") + "`"
+		clearHow := "with"
+		if in.VerifyNameUnbound {
+			// Not shown to be this archive's entry (G8-AO1): no removal command
+			// from an untrusted record; the file is the operator's to delete.
+			clearHow, clearCmd = "by deleting", filepath.Join(in.Out, schedule.VerifyDescriptorName)
+		}
+		r.warn("verify_not_installed", fmt.Sprintf("the verify schedule %q is recorded but not present in this host's scheduler — re-install it with %s, or, if this archive should have no scheduled verify, clear the record %s %s", vd.Name, reinstall, clearHow, clearCmd))
+	case schedule.SchedulerUnavailable:
+		if !r.has("scheduler_unavailable") {
+			r.warn("scheduler_unavailable", "this host's scheduler cannot be queried (no crontab/schtasks?) — the scheduled verify may not run here")
+		}
+	}
+	if !in.VerifyExeExists {
+		r.warn("verify_exe_missing", fmt.Sprintf("the scheduled verify's program %s no longer exists — the verify cannot run; re-install it with %s from the current binary", vd.Exe, reinstall))
+	} else if !in.VerifyExeIsThis {
+		r.warn("verify_exe_moved", fmt.Sprintf("the scheduled verify runs %s, which is not this binary — after an upgrade or move, re-install it with %s", vd.Exe, reinstall))
+	}
+}
+
+// has reports whether the report already carries code.
+func (r *Report) has(code string) bool {
+	for _, c := range r.Codes {
+		if c == code {
+			return true
+		}
+	}
+	return false
+}
+
+// assessVerifySchedule judges the scheduled verify against the cadence recorded
+// for the verify itself (UJ-A1, owner ruling FB-4), never the backup's. The
+// verify's own descriptor decides when it loads: a verify whose last run
+// finished more than twice its period ago is stale, and so is one that has
+// recorded no run in twice its period since it was installed. A last verify
+// still recorded as running (verify writes "running" when it takes the lock and
+// finalizes the record on the way out) is judged from when it started: no
+// verify has finished since then, and none has started after it, so one started
+// more than twice the period ago is stale whether or not it still holds the
+// lock. With the lock free its process is gone (the lock dies with it), so it
+// never finished: a WARN at once, so a verify that dies on every run is never
+// GREEN. A verify schedule installed (or re-installed) after the last verify
+// ran has not stopped: within two of its periods of the install a stale last
+// verify still raises verify_stale (MA-466), but the WARN says the schedule has
+// not run yet, naming its next run and a verify now — never a re-install,
+// which would change nothing; later, no verify since the install is said so,
+// with the re-install remedy. A last-verify record that cannot be read gives no
+// verdict and no date to judge by, so it is a WARN too (failing closed, R18). A
+// verify descriptor
+// that exists but cannot be read is a WARN naming it and its remedy, and gives
+// no cadence. Without a readable one, a descriptor an older release wrote for
+// the verify in the backup's place still gives the cadence (MA-155); a verify
+// installed by an earlier release records none, so its staleness is not judged
+// — a guessed cadence would raise a false WARN.
+func assessVerifySchedule(r *Report, in Input, now time.Time) {
+	lv := in.LastVerify
+	done := in.LastVerifyState == state.LastVerifyPresent && lv.Status == state.VerifyDone && lv.Finished != nil
+	if in.HasVerifyDescriptor {
+		vd := in.VerifyDesc
+		period := IntervalOf(vd.Interval)
+		pending := in.LastVerifyState == state.LastVerifyPresent && !done
+		// When the last verify ran: its finish, or the start of one that has not
+		// finished. The verify schedule may have been installed (or re-installed)
+		// after it, and then it has not stopped: it has not run yet.
+		var last time.Time
+		lastWhat := ""
+		switch {
+		case done:
+			last, lastWhat = *lv.Finished, fmt.Sprintf("the last verify was %s ago", HumanAge(now.Sub(*lv.Finished)))
+		case pending:
+			last, lastWhat = lv.Started, fmt.Sprintf("the last verify started %s ago and has not finished", HumanAge(now.Sub(lv.Started)))
+		}
+		switch {
+		case !last.IsZero() && now.Sub(last) > 2*period && vd.InstalledAt.After(last) && now.Sub(vd.InstalledAt) <= 2*period:
+			// Re-installing would change nothing here; a verify run now clears it.
+			r.warn("verify_stale", fmt.Sprintf("%s, more than twice the %s verify schedule period of %q — that schedule was installed %s ago, after the last verify, and has not run since: wait for its next run (%s), or run `mailarchive verify -out %q` now", lastWhat, vd.Interval, vd.Name, HumanAge(now.Sub(vd.InstalledAt)), cadenceOf(vd), in.Out))
+		case !last.IsZero() && now.Sub(last) > 2*period && vd.InstalledAt.After(last):
+			r.warn("verify_stale", fmt.Sprintf("no verify has run in the %s since the %s verify schedule %q was installed, more than twice its period (%s, before the install) — %s", HumanAge(now.Sub(vd.InstalledAt)), vd.Interval, vd.Name, lastWhat, verifyStaleRemedy(in)))
+		case !last.IsZero() && now.Sub(last) > 2*period:
+			r.warn("verify_stale", fmt.Sprintf("%s, more than twice the %s verify schedule period of %q — %s", lastWhat, vd.Interval, vd.Name, verifyStaleRemedy(in)))
+		case in.LastVerifyState == state.LastVerifyAbsent && !vd.InstalledAt.IsZero() && now.Sub(vd.InstalledAt) > 2*period:
+			r.warn("verify_stale", fmt.Sprintf("no verify has run in the %s since the %s verify schedule %q was installed, more than twice its period — %s", HumanAge(now.Sub(vd.InstalledAt)), vd.Interval, vd.Name, verifyStaleRemedy(in)))
+		}
+		// A running record whose verify is gone (verify_never_finished) is
+		// reported once, by the last-verify block in Assess, which also knows
+		// which verb holds the lock; this function only judges its staleness.
+		if in.LastVerifyState == state.LastVerifyUnreadable {
+			cause := "corrupt or truncated"
+			if in.LastVerifyErr != nil {
+				cause = util.StripControl(in.LastVerifyErr.Error())
+			}
+			r.warn("lastverify_unreadable", fmt.Sprintf("the last-verify record %s is unreadable (%s), so the scheduled verify %q cannot be judged — the next verify rewrites it, or run `mailarchive verify -out %q` now", filepath.Join(in.Out, state.LastVerifyName), cause, vd.Name, in.Out))
+		}
+		return
+	}
+	if in.VerifyDescErr != nil && !errors.Is(in.VerifyDescErr, os.ErrNotExist) {
+		r.warn("verify_descriptor_unreadable", in.VerifyDescErr.Error())
+	}
+	if isVerifyJob(in.Desc.Job) && done && now.Sub(*lv.Finished) > 2*IntervalOf(in.Desc.Interval) {
+		r.warn("verify_stale", fmt.Sprintf("the last verify was %s ago, more than twice the %s verify schedule period — schedule it, or run `mailarchive verify -out %q`", HumanAge(now.Sub(*lv.Finished)), in.Desc.Interval, in.Out))
+	}
+}
+
+// cadenceOf renders a recorded schedule's cadence for a remedy, e.g. "weekly at
+// 05:00"; a time the descriptor could not parse ("??:??") is left out.
+func cadenceOf(d schedule.Descriptor) string {
+	if strings.Contains(d.At, "?") {
+		return d.Interval
+	}
+	return d.Interval + " at " + d.At
+}
+
+// verifyReinstall is the pasteable command that puts this archive's scheduled
+// verify back: its recorded cadence, time and verify flags, aimed at this
+// archive and without -name, so it gets this archive's own entry name (on
+// launchd and Task Scheduler a -name another archive's verify shares is not
+// detected and would be taken over again, FB-4's residual). Every token is
+// shell-quoted for the host's shell.
+func verifyReinstall(in Input) string {
+	vd := in.VerifyDesc
+	toks := []string{"-interval", vd.Interval}
+	if !strings.Contains(vd.At, "?") { // ReadDescriptor parks an unreadable time as "??:??"
+		toks = append(toks, "-at", vd.At)
+	}
+	toks = append(toks, "-install", "--", "verify", "-out", in.Out)
+	for _, a := range vd.Job {
+		if a == "-record" || a == "-json" {
+			toks = append(toks, a)
+		}
+	}
+	return "`mailarchive schedule " + strings.Join(quoteTokens(toks, in.GOOS), " ") + "`"
+}
+
+// verifyLogHint names where the scheduled verify's log is: the descriptor's, or
+// the run log's default place beside the archive.
+func verifyLogHint(in Input) string {
+	if in.VerifyDesc.Log != "" {
+		return in.VerifyDesc.Log
+	}
+	return filepath.Join(in.Out, in.VerifyDesc.Name+".log")
+}
+
+// verifyStaleRemedy is what to do about a stale scheduled verify: put it back
+// (verifyReinstall), or run a verify now.
+func verifyStaleRemedy(in Input) string {
+	// A last verify still recorded as running while a process holds the archive
+	// lock is running now (or hung): re-installing changes nothing, and another
+	// verify would collide with the lock (K3).
+	if in.LockHeld && in.LastVerifyState == state.LastVerifyPresent && in.LastVerify.Status == state.VerifyRunning {
+		return fmt.Sprintf("a verify holds the archive lock and is still running: let it finish (its log is %s), or, if it is hung, end its process and run `mailarchive verify -out %q`", verifyLogHint(in), in.Out)
+	}
+	reinstall := verifyReinstall(in)
+	why := "it has stopped running here"
+	goos := in.GOOS
+	if goos == "" {
+		goos = runtime.GOOS
+	}
+	switch goos {
+	case "linux", "freebsd", "openbsd", "netbsd":
+	default:
+		why = "it has stopped running, or another archive's verify installed under the same -name replaced it (on macOS and Windows a shared -name is not detected)"
+	}
+	return fmt.Sprintf("%s: re-install it with %s (no -name, so it has this archive's own entry), or run `mailarchive verify -out %q`", why, reinstall, in.Out)
+}
+
+// sameArchivePath moved to schedule.SameArchivePath (§4.6.2/§4.6.5) so the kind
+// corroboration shares one definition without an import cycle.
+func sameArchivePath(a, b, goos string) bool { return schedule.SameArchivePath(a, b, goos) }
 
 // isVerifyJob reports whether a scheduler job is a `verify` job (its verb, the
 // first argument, is "verify").
@@ -356,6 +1090,11 @@ func jobWithOut(job []string, out string) []string {
 	return append(cp, "-out", out)
 }
 
+// looksLikeAuthFailure reads a failed run's recorded text for what an authentication
+// failure says. It is never asked of a run whose failure the record names by kind as
+// an outage (state.ErrKindServiceUnavailable: the Graph breaker's refusal): that text
+// carries the server's last words and the mailbox's name, and the kind, not the text,
+// says what the failure was (S3-AC5).
 func looksLikeAuthFailure(msg string) bool {
 	m := strings.ToLower(msg)
 	for _, needle := range []string{"401", "unauthorized", "invalid_client", "invalid_grant", "aadsts", "authentication", "invalid client secret", "sign in", "sign-in", "token cache", "device sign"} {
@@ -447,16 +1186,49 @@ func quoteTokens(toks []string, goos string) []string {
 // $ or backticks (unlike Go's %q double-quoted form); Windows uses double
 // quotes with doubled embedded quotes.
 func shellQuoteToken(s, goos string) string {
-	if !needsShellQuoting(s) {
-		return s
-	}
 	if goos == "" {
 		goos = runtime.GOOS
+	}
+	if goos == "windows" && windowsExpands(s) {
+		// No quoting is inert in both cmd and PowerShell (the Windows terminal's
+		// default): the token is not pasted. `<` makes either shell refuse the
+		// line, so the operator fills the value in by hand (G8-AO2).
+		return unsafeTokenPlaceholder
+	}
+	if !needsShellQuoting(s) {
+		return s
 	}
 	if goos == "windows" {
 		return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
 	}
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// unsafeTokenPlaceholder stands in for a Windows token no quoting makes inert.
+const unsafeTokenPlaceholder = "<edit-this-value-by-hand>"
+
+// windowsExpands reports whether a Windows shell would expand something in s even
+// inside double quotes: cmd's %VAR% and ^ escape, PowerShell's backtick escape,
+// $(...), ${...} and $name / $env:name / $? variables. A `$` that ends the token
+// or is followed by a path separator (an administrative share, \\nas\backup$) is
+// literal in both.
+func windowsExpands(s string) bool {
+	// U+201C, U+201D and U+201E are double quotes to PowerShell: one inside the
+	// token closes the string the remedy wraps it in (G8-AO2).
+	if strings.ContainsAny(s, "%^`“”„") {
+		return true
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] != '$' || i+1 == len(s) {
+			continue
+		}
+		switch c := s[i+1]; {
+		case c == '\\', c == '/', c == ' ', c == '"', c == '.', c == '-':
+		default:
+			return true
+		}
+	}
+	return false
 }
 
 // needsShellQuoting reports whether s must be quoted to survive a shell as one
@@ -497,6 +1269,8 @@ func jobOutOf(job []string) string {
 // schedule name instead of the descriptor's.
 func Gather(out, nameOverride string) Input {
 	in := Input{Out: out, GOOS: runtime.GOOS, PIDAlive: procs.Alive}
+	in.DesktopFormer = instance.Former()
+	in.DesktopEnded = instance.EndedRecord()
 	in.ThisHost, _ = os.Hostname()
 	if _, err := os.Stat(out); errors.Is(err, os.ErrNotExist) {
 		in.OutAbsent = true // the location is gone (an unplugged drive, a deleted folder): not a new archive (OP-3)
@@ -504,11 +1278,29 @@ func Gather(out, nameOverride string) Input {
 	if svc, ok := util.UnderCloudSync(out); ok {
 		in.OutUnderSync = svc
 	}
-	// Probe the archive lock: held means a run is genuinely in progress.
-	if l, err := lockfile.Acquire(filepath.Join(out, lockfile.Name)); err == nil {
+	// Probe the archive lock: held means a run is genuinely in progress, and
+	// the holder line says which verb holds it.
+	lockPath := filepath.Join(out, lockfile.Name)
+	if l, err := lockfile.Acquire(lockPath); err == nil {
 		l.Release()
 	} else if errors.Is(err, lockfile.ErrHeld) {
 		in.LockHeld = true
+		in.LockVerb = lockfile.HolderVerb(lockPath)
+	}
+	// The run records are read with the lock probe, as one snapshot of the
+	// run (F14): reading them after the index open — which can wait seconds on
+	// a busy index — let a run that failed in the meantime print "a run is
+	// using this archive" beside its own failure.
+	in.LastRun, in.LastRunState, in.LastRunErr = state.ReadLastRun(out)
+	in.LastVerify, in.LastVerifyState, in.LastVerifyErr = state.ReadLastVerify(out)
+
+	// The headless start-failure breadcrumb (§4.6.6): health is its one reader from
+	// SE2. Keyed on the owner-pointed out (DefaultNameFor), never Desc.Name, so a
+	// forged descriptor name cannot hide a start failure.
+	if dir, e := failureDir(); e == nil {
+		if f, ok := readStartFailure(dir); ok && f.Name == schedule.DefaultNameFor(out) {
+			in.LastStartFailure, in.HasStartFailure = f, true
+		}
 	}
 
 	mpath := filepath.Join(out, ".mailarchive-manifest.json")
@@ -518,7 +1310,26 @@ func Gather(out, nameOverride string) Input {
 			in.HasManifest = true
 			in.Messages = m.Len()
 			in.Fillable, in.Terminal, in.Unknown = m.Counts()
+			in.ShownAsSource = m.FallbackCounts()
 			in.WithFixity, _ = m.FixityCounts()
+			in.Unreadable, in.UnreadableOnly, in.Unparsed = m.UnreadableCount(), m.UnreadableOnlyCount(), m.UnparsedCount()
+			in.UnparsedTerminal, in.PartlyRead = m.UnparsedTerminalCount(), m.PartlyReadPaths(20)
+			in.Undecodable, in.FidelityFallback = m.UndecodableCount(), m.FidelityFallbackCount()
+			in.ParseGapKinds = m.ParseGapKindCounts()
+			in.FillableParseGap, in.FillableOnlyParseGap = m.FillableParseGapCounts()
+			// The capture-gap ledger, with each store's source id and last run, so a
+			// gap can be told attempted from not attempted (FC14).
+			in.Gaps = m.CaptureGapsSorted()
+			in.GapSource = map[string]string{}
+			in.GapLastRun = map[string]time.Time{}
+			for _, g := range in.Gaps {
+				if _, ok := in.GapSource[g.Token]; !ok {
+					in.GapSource[g.Token] = m.GapSourceID(g.Token)
+					if in.LastRunState == state.LastRunPresent {
+						in.GapLastRun[g.Token] = in.LastRun.Started
+					}
+				}
+			}
 		} else {
 			// The file exists but does not load (newer format, corrupt). Keep the
 			// loader's error so Assess can RED it instead of saying "no archive".
@@ -529,37 +1340,228 @@ func Gather(out, nameOverride string) Input {
 	if _, err := os.Stat(in.ReportPath); err == nil {
 		in.ReportExists = true
 	}
-	if ix, err := index.OpenReadonly(filepath.Join(out, "search.db")); err == nil {
-		in.HasIndex = true
-		in.Indexed, _ = ix.Count()
-		if oldest, newest, ok := ix.Range(); ok {
-			in.HasRange, in.RangeOldest, in.RangeNewest = true, oldest, newest
+	// Tell an absent index from a present-but-unopenable one: keep the open
+	// error so Assess can RED a damaged index instead of reporting none (F82).
+	idxPath := filepath.Join(out, "search.db")
+	if _, serr := os.Stat(idxPath); serr == nil {
+		in.HasIndexFile = true
+		if ix, err := index.OpenReadonly(idxPath); err == nil {
+			in.HasIndex = true
+			in.Indexed, _ = ix.Count()
+			if oldest, newest, ok := ix.Range(); ok {
+				in.HasRange, in.RangeOldest, in.RangeNewest = true, oldest, newest
+			}
+			ix.Close()
+		} else {
+			in.IndexErr, in.IndexBusy = err, index.Busy(err)
 		}
-		ix.Close()
 	}
 	in.History, in.HistoryReadErr = state.HistoryStatus(filepath.Join(out, state.HistoryName))
-	in.LastRun, in.LastRunState, in.LastRunErr = state.ReadLastRun(out)
-	in.LastVerify, in.LastVerifyState, in.LastVerifyErr = state.ReadLastVerify(out)
 
+	if fi, err := os.Stat(out); err == nil && fi.IsDir() {
+		in.WriteProbeErr = probeWrite(out)
+	}
+
+	if _, err := os.Lstat(filepath.Join(out, schedule.DescriptorName)); err == nil {
+		in.HasDescriptorFile = true
+	}
 	d, derr := schedule.ReadDescriptor(out)
 	in.DescErr = derr
 	if derr == nil {
 		in.HasDescriptor = true
 		in.Desc = d
+		in.DescNameUnbound = schedule.NameBound(out, d) != nil
+		// Owner-side corroboration of the schedule's kind (§4.6.5b), for the repair
+		// route (§4.6.3). Read once here, never from the descriptor's Job.
+		in.KindEv = schedule.BuildKindEvidence(out)
 		name := d.Name
 		if nameOverride != "" {
 			name = nameOverride
 		}
 		in.SchedState = schedule.Query(name)
-		if fi, err := os.Stat(d.Exe); err == nil {
-			in.ExeExists = true
-			self, _ := os.Executable()
-			in.ExeIsThis = sameFile(self, d.Exe) || (d.ExeSize == fi.Size() && !d.ExeMTime.IsZero() && d.ExeMTime.Equal(fi.ModTime().UTC()))
+		id := exeIdentity(d)
+		in.ExeExists, in.ExeIsThis = id.exists, id.isThis
+		in.ExeBasis, in.ExeSkew, in.ExeFormerName, in.ExeConsoleBuild = id.basis, id.skew, id.former, id.console
+		in.ExeSelf = id.self
+		in.ExeMissingInInstallDir = id.missingInInstallDir
+		// §4.6.3 re-point term: only on a basis that identifies this program, when
+		// ProgramForSchedule resolves and would record a different path than rec.
+		if id.basis == "same_file" || id.basis == "program_name" {
+			if exe, _, perr := schedule.ProgramForSchedule(d.Wrapper != ""); perr == nil {
+				in.ExeRepoint = repointDiffers(exe, d.Exe, runtime.GOOS)
+			}
 		}
 	} else if nameOverride != "" {
 		in.SchedState = schedule.Query(nameOverride)
 	}
+
+	// The scheduled verify's own descriptor (FB-4): its cadence judges
+	// verify_stale, and the host scheduler is asked about the name it records.
+	if _, err := os.Lstat(filepath.Join(out, schedule.VerifyDescriptorName)); err == nil {
+		in.HasVerifyDescriptorFile = true
+	}
+	vd, vderr := schedule.ReadVerifyDescriptor(out)
+	in.VerifyDescErr = vderr
+	if vderr == nil {
+		in.HasVerifyDescriptor = true
+		in.VerifyDesc = vd
+		in.VerifyNameUnbound = schedule.NameBound(out, vd) != nil
+		in.VerifySchedState = schedule.Query(vd.Name)
+		vid := exeIdentity(vd)
+		in.VerifyExeExists, in.VerifyExeIsThis = vid.exists, vid.isThis
+		in.VerifyExeBasis, in.VerifyExeSkew, in.VerifyExeFormerName, in.VerifyExeConsoleBuild = vid.basis, vid.skew, vid.former, vid.console
+	}
 	return in
+}
+
+// statProgram is the stat of a descriptor-supplied program path: a seam so a
+// test can see which paths `status` touches (G8-AI4's encoder).
+var statProgram = os.Stat
+
+// siblingQualifies is §4.6.0's sibling test (owner + SameBuild), a seam so a test
+// drives the predicate's rule 4 by the reason it wants; SiblingQualifies itself
+// is proven by MA-615.
+var siblingQualifies = schedule.SiblingQualifies
+
+// exeIdent is the composed identity of a recorded schedule's program (§4.6.2).
+type exeIdent struct {
+	exists  bool
+	isThis  bool
+	basis   string // same_file | program_name | unchanged_since_install | ""
+	skew    bool   // exe_version_skew: same dir + known name, owner matched, build differs
+	former  bool   // isThis && the recorded name is a former name of this program
+	console bool   // Windows, exists, recorded name is the console build mailarchive.exe
+	self    string // the resolved running program, for the exe_version_skew text (else "")
+	// missingInInstallDir: Windows, the recorded program is MISSING but its name is
+	// one the installed release ships and it sat in the running program's own
+	// directory — the installer's Repair restores it (MA-635), not a re-install.
+	missingInInstallDir bool
+}
+
+// exeIdentity resolves whether a recorded schedule's program still exists and is
+// this program, by §4.6.2's first-match-wins rule. Every touch of the recorded
+// path goes through statProgram; self is schedule.SelfResolver() (injectable, as
+// instance.OwnerReader is), and the owner and build reads (inside
+// schedule.SiblingQualifies) happen only after the same-directory bound holds
+// (trust boundary 2). Nothing but self, the recorded path and the sibling test
+// decides it.
+func exeIdentity(d schedule.Descriptor) exeIdent {
+	rec := d.Exe
+	fi, err := statProgram(rec) // rule 1 touch of rec
+	if err != nil {
+		// 1. missing. On Windows, a known-name file missing from the running
+		// program's own directory is the install-folder branch (MA-635): the
+		// installer's Repair restores it, not a schedule re-install. dir(rec) is a
+		// path op (no stat); sameArchivePath tolerates the file being gone.
+		if runtime.GOOS == "windows" && schedule.KnownName(filepath.Base(rec), runtime.GOOS) {
+			if self, serr := schedule.SelfResolver(); serr == nil && sameArchivePath(filepath.Dir(self), filepath.Dir(rec), runtime.GOOS) {
+				return exeIdent{missingInInstallDir: true}
+			}
+		}
+		return exeIdent{}
+	}
+	goos := runtime.GOOS
+	if strings.Contains(strings.ToLower(filepath.ToSlash(rec)), "/apptranslocation/") {
+		return exeIdent{exists: true} // 2. a translocated copy: not this program (exe_moved, move remedy)
+	}
+	name := filepath.Base(rec)
+	console := goos == "windows" && strings.EqualFold(name, "mailarchive.exe")
+
+	self, selfErr := schedule.SelfResolver()
+	if selfErr == nil {
+		if selfFi, serr := os.Stat(self); serr == nil && os.SameFile(selfFi, fi) {
+			return exeIdent{exists: true, isThis: true, basis: "same_file", former: schedule.FormerName(name, goos), console: console} // 3.
+		}
+		if sameArchivePath(filepath.Dir(self), filepath.Dir(rec), goos) && schedule.KnownName(name, goos) { // 4.
+			switch {
+			case !schedule.KnownName(filepath.Base(self), goos):
+				return exeIdent{exists: true} // a renamed/suffixed running file never vouches for a sibling (exe_moved)
+			default:
+				ok, reason := siblingQualifies(self, rec)
+				if ok {
+					return exeIdent{exists: true, isThis: true, basis: "program_name", former: schedule.FormerName(name, goos), console: console}
+				}
+				if reason == schedule.ReasonPairOutOfStep { // owner matched, build readable but differs
+					return exeIdent{exists: true, skew: true, self: self}
+				}
+				return exeIdent{exists: true} // exe_moved
+			}
+		}
+	}
+	if schedule.FormerName(name, goos) {
+		return exeIdent{exists: true} // 5. the fallback never makes a former name this program (exe_moved)
+	}
+	if d.ExeSize == fi.Size() && !d.ExeMTime.IsZero() && d.ExeMTime.Equal(fi.ModTime().UTC()) {
+		return exeIdent{exists: true, isThis: true, basis: "unchanged_since_install", console: console} // 6.
+	}
+	return exeIdent{exists: true} // 7. otherwise (exe_moved)
+}
+
+// knownName and formerName (schedule.KnownName / schedule.FormerName) classify
+// the one program's install and former names; they live in internal/schedule so
+// the former-name tokens are kept in one place (§4.6.2).
+
+// repointDiffers reports whether re-pointing a schedule at exe would record a
+// different program file than the recorded rec (§4.6.3's re-point term): a
+// different directory, or — same directory — a different basename (EqualFold on
+// windows and darwin, exact on linux). It compares paths, never os.SameFile,
+// so the macOS .app link (same file, different path) still counts as a re-point.
+func repointDiffers(exe, rec, goos string) bool {
+	if !schedule.SameArchivePath(filepath.Dir(exe), filepath.Dir(rec), goos) {
+		return true
+	}
+	a, b := filepath.Base(exe), filepath.Base(rec)
+	if goos == "linux" {
+		return a != b
+	}
+	return !strings.EqualFold(a, b)
+}
+
+// programLabel is status's one-label-per-state identity of the recorded
+// schedule's program (§6, MA-629), checked in this fixed order: missing (with the
+// former-name hint); a translocated copy; a different build; not this program; a
+// former name; the command-line build; unchanged since install; this program.
+func programLabel(in Input) string {
+	switch {
+	case !in.ExeExists:
+		if schedule.FormerName(filepath.Base(in.Desc.Exe), in.GOOS) {
+			return "missing (" + filepath.Base(in.Desc.Exe) + " was a former name of this program, removed by an upgrade)"
+		}
+		return "missing"
+	case !in.ExeIsThis:
+		switch {
+		case strings.Contains(strings.ToLower(filepath.ToSlash(in.Desc.Exe)), "/apptranslocation/"):
+			return "not this program (a temporary copy macOS made of a downloaded app)"
+		case in.ExeSkew:
+			return "a different build of this program"
+		default:
+			return "not this program"
+		}
+	default:
+		switch {
+		case in.ExeFormerName:
+			return "a former name of this program"
+		case in.ExeConsoleBuild:
+			return "the command-line build of this program (a console shows while it runs)"
+		case in.ExeBasis == "unchanged_since_install":
+			return "unchanged since it was installed (not compared with this program)"
+		default:
+			return "this program"
+		}
+	}
+}
+
+// scheduledKind names the schedule's kind for status (§6, MA-629): the kind
+// owner-side state corroborates, else the recorded descriptor's own kind (an
+// uncorroborated export stands for itself). Only called for a readable descriptor.
+func scheduledKind(in Input) schedule.Kind {
+	ev := schedule.BuildKindEvidence(in.Out)
+	for _, k := range []schedule.Kind{schedule.KindRunJob, schedule.KindCapture, schedule.KindExport} {
+		if ev.Corroborated[k] {
+			return k
+		}
+	}
+	return schedule.KindOf(in.Desc.Job)
 }
 
 func sameFile(a, b string) bool {
@@ -574,28 +1576,109 @@ func sameFile(a, b string) bool {
 	return os.SameFile(fa, fb)
 }
 
+// maxPartlyReadNamed is how many partly-read pages Summary names (the rest is
+// "+N more").
+const maxPartlyReadNamed = 5
+
+// summaryNow is the instant a Summary judges stuck at: the Report's.
+func summaryNow(rep Report) time.Time {
+	if rep.now.IsZero() {
+		return time.Now()
+	}
+	return rep.now
+}
+
 // Summary renders the facts and the judgement as the lines `status` prints.
 func Summary(in Input, rep Report) []string {
 	var lines []string
 	lines = append(lines, fmt.Sprintf("Archive:    %s", in.Out))
 	if in.HasManifest {
 		idx := "no search index"
-		if in.HasIndex {
+		switch {
+		case in.HasIndex:
 			idx = fmt.Sprintf("%d indexed", in.Indexed)
+		case in.HasIndexFile && in.IndexBusy:
+			idx = "search index busy (see the posture below)"
+		case in.HasIndexFile:
+			idx = "search index unreadable (see the posture below)"
 		}
 		lines = append(lines, fmt.Sprintf("Messages:   %d in manifest · %s", in.Messages, idx))
 		if in.HasRange {
 			lines = append(lines, fmt.Sprintf("Archived range: %s – %s (UTC)", in.RangeOldest.Format("2006-01-02"), in.RangeNewest.Format("2006-01-02")))
 		}
-		if in.Fillable > 0 || in.Terminal > 0 || in.Unknown > 0 {
-			line := fmt.Sprintf("Incomplete: %d still missing content · %d source-empty (never fillable) · %d not yet re-examined", in.Fillable, in.Terminal, in.Unknown)
+		// A partly-read record is fillable too, but it has its own line and reason
+		// (below and in the posture): it is not "missing content" to download.
+		// An unparsed record is kept as raw text, not source-empty (it has its own
+		// line below), so it is left out of the terminal count here (F7).
+		sourceEmpty := in.Terminal - in.UnparsedTerminal
+		if content := in.Fillable - in.UnreadableOnly; content > 0 || sourceEmpty > 0 || in.Unknown > 0 || in.Undecodable > 0 {
+			// A record with a part this version cannot decode is its own count between the
+			// two: it is not empty at the source, its part is kept as received (§4.9).
+			line := fmt.Sprintf("Incomplete: %d still missing content · %d source-empty (never fillable) · %d not yet re-examined", content, sourceEmpty, in.Unknown)
+			if in.Undecodable > 0 {
+				line = fmt.Sprintf("Incomplete: %d still missing content · %d source-empty (never fillable) · %d with parts this version cannot decode · %d not yet re-examined", content, sourceEmpty, in.Undecodable, in.Unknown)
+			}
 			if in.ReportExists {
 				line += " — " + in.ReportPath
 			}
 			lines = append(lines, line)
-			lines = append(lines, "            (still missing content = not downloaded yet; fills on the next run)")
+			if onlyParseGap(in, content) {
+				lines = append(lines, "            (still missing content = cut short, or its parts could not be told apart, in the file it was read from; fills on the next run once a complete copy is there)")
+			} else {
+				lines = append(lines, "            (still missing content = not downloaded yet; fills on the next run)")
+			}
+			if in.FillableParseGap > 0 {
+				lines = append(lines, fmt.Sprintf("            (%d of the messages still missing content %s also counted as having parts this version cannot decode)", in.FillableParseGap, plural(in.FillableParseGap, "is", "are")))
+			}
+			if in.FillableParseGap > 0 && !onlyParseGap(in, content) {
+				lines = append(lines, "            ("+mixedCutRemedy(in.FillableParseGap)+")")
+			}
+			if in.Undecodable > 0 {
+				lines = append(lines, "            (with parts this version cannot decode = kept as received in the attachments zip; the report says which part and why)")
+			}
 		} else {
 			lines = append(lines, "Incomplete: none")
+		}
+		// What the source holds that the capture-gap ledger says is not in the archive:
+		// the records above are complete or not on their own terms; this line is the
+		// ledger's, so "Incomplete: none" is never the whole story (F6).
+		if l := notCapturedLine(in, summaryNow(rep)); l != "" {
+			lines = append(lines, l)
+		}
+		if in.Unreadable > 0 {
+			lines = append(lines, fmt.Sprintf("Partly read: %d message(s) could only be partly read from the source (see the posture below)", in.Unreadable))
+			shown := in.PartlyRead
+			if len(shown) > maxPartlyReadNamed {
+				shown = shown[:maxPartlyReadNamed]
+			}
+			for _, p := range shown {
+				lines = append(lines, "            "+p)
+			}
+			if more := in.Unreadable - len(shown); more > 0 && len(shown) > 0 {
+				line := fmt.Sprintf("            +%d more", more)
+				if in.ReportExists {
+					line += " — see " + in.ReportPath
+				}
+				lines = append(lines, line)
+			}
+		}
+		if in.Unparsed > 0 {
+			lines = append(lines, fmt.Sprintf("Raw text:   %d message(s) could not be parsed and are kept as raw text (see the posture below)", in.Unparsed))
+		}
+		if in.FidelityFallback > 0 {
+			line := fmt.Sprintf("Fallback:   %d message(s) are kept as an earlier version read them, because this version could not decode them in full; nothing is lost", in.FidelityFallback)
+			if in.ReportExists {
+				line += " — see " + in.ReportPath
+			}
+			lines = append(lines, line)
+		}
+		// RV-10: a page shown as plain text is complete, but the owner should
+		// be able to learn it here, not only from the run log.
+		if txt := shownAsSourceText(in.ShownAsSource); txt != "" {
+			if in.ReportExists {
+				txt += " Details: " + in.ReportPath
+			}
+			lines = append(lines, "Shown as source: "+txt)
 		}
 		// Fixity COVERAGE: how many records carry file digests, from manifest
 		// fields alone — this hashes nothing (that is `verify`), so it measures
@@ -646,11 +1729,19 @@ func Summary(in Input, rep Report) []string {
 	switch in.LastRunState {
 	case state.LastRunPresent:
 		lr := in.LastRun
-		line := fmt.Sprintf("Last run:   %s → %s", lr.Started.Local().Format("2006-01-02 15:04"), lr.Status)
+		// A "running" record reads as running only while it can belong to a
+		// run in progress (runRunning, the rule Assess judges it by); otherwise
+		// the run that wrote it never finished, as the RED below says.
+		how := lr.Status
+		if lr.Status == state.RunRunning && !runRunning(in) {
+			how = "never finished"
+		}
+		// Local time, with its zone named: the verify lines below are UTC (F9).
+		line := fmt.Sprintf("Last run:   %s → %s", lr.Started.Local().Format("2006-01-02 15:04 MST"), how)
 		if lr.Status == state.RunOK {
 			line += fmt.Sprintf(" · exported %d · filled %d · took %s", lr.Exported, lr.Filled, lr.Finished.Sub(lr.Started).Round(time.Second))
 		} else if lr.Error != "" {
-			line += ": " + lr.Error
+			line += ": " + runErrorText(in, lr)
 		}
 		lines = append(lines, line)
 	case state.LastRunAbsent:
@@ -660,27 +1751,68 @@ func Summary(in Input, rep Report) []string {
 	}
 	if in.LastVerifyState == state.LastVerifyPresent {
 		lv := in.LastVerify
-		switch {
-		case lv.Status == state.VerifyRunning || lv.Finished == nil:
-			lines = append(lines, fmt.Sprintf("Last verify: %s → running", lv.Started.UTC().Format("2006-01-02 15:04")))
-		case lv.Attested:
-			lines = append(lines, fmt.Sprintf("Last verify: %s → attested", lv.Finished.UTC().Format("2006-01-02 15:04")))
-		default:
-			lines = append(lines, fmt.Sprintf("Last verify: %s → NOT attested (modified %d, missing %d, unrecorded %d)",
-				lv.Finished.UTC().Format("2006-01-02 15:04"), lv.Modified, lv.Missing, lv.Unrecorded))
+		if lv.Status == state.VerifyRunning || lv.Finished == nil {
+			how := "running"
+			if !verifyRunning(in) {
+				how = "never finished"
+			}
+			lines = append(lines, fmt.Sprintf("Last verify: %s → %s", lv.Started.UTC().Format("2006-01-02 15:04"), how))
+			// The finished verdict a running record carries is still the
+			// archive's latest integrity evidence (F79).
+			if p := lv.Previous; p != nil && p.Finished != nil {
+				lines = append(lines, "Previous verify: "+verifyVerdict(*p))
+			}
+		} else {
+			lines = append(lines, "Last verify: "+verifyVerdict(lv))
 		}
+		lines = append(lines, "            (verify times are UTC)")
 	}
-	if in.HasDescriptor {
+	switch {
+	case in.HasDescriptor:
 		lines = append(lines, fmt.Sprintf("Schedule:   %q %s · %s at %s · runs %s · installed %s (UTC) on %s",
 			in.Desc.Name, in.SchedState, in.Desc.Interval, in.Desc.At, in.Desc.Exe, in.Desc.InstalledAt.UTC().Format("2006-01-02"), in.Desc.Host))
-	} else {
+		lines = append(lines, "Program:    "+programLabel(in))
+		lines = append(lines, "scheduled:  "+string(scheduledKind(in)))
+	case in.HasDescriptorFile:
+		lines = append(lines, "Schedule:   (descriptor present but unreadable — see the posture below)")
+		lines = append(lines, "scheduled (kind not readable)")
+	default:
 		lines = append(lines, "Schedule:   none recorded")
 	}
+	// The scheduled verify, from its own descriptor (FB-4); no line when none is
+	// recorded (a verify installed by an earlier release records none).
+	switch {
+	case in.HasVerifyDescriptor:
+		vd := in.VerifyDesc
+		lines = append(lines, fmt.Sprintf("Verify schedule: %q %s · %s at %s · runs %s · installed %s (UTC) on %s",
+			vd.Name, in.VerifySchedState, vd.Interval, vd.At, vd.Exe, vd.InstalledAt.UTC().Format("2006-01-02"), vd.Host))
+	case in.HasVerifyDescriptorFile:
+		lines = append(lines, "Verify schedule: (descriptor present but unreadable — see the posture below)")
+	}
 	lines = append(lines, fmt.Sprintf("Posture:    %s", rep.Posture))
-	for _, reason := range rep.Reasons {
+	for i, reason := range rep.Reasons {
+		// The "Shown as source" line above already says it in full (RV-10).
+		if i < len(rep.Codes) && rep.Codes[i] == "shown_as_source" && in.HasManifest {
+			continue
+		}
 		lines = append(lines, "  "+reason)
 	}
+	// What was not captured, at most 20 gaps with their source, folder, subject,
+	// date and remedy, then "+N more" (FC22).
+	if in.HasManifest {
+		lines = append(lines, gapLines(in, summaryNow(rep))...)
+	}
 	return lines
+}
+
+// verifyVerdict renders a finished verify record as "<when> → attested" or
+// "<when> → NOT attested (…)" for Summary.
+func verifyVerdict(lv state.LastVerify) string {
+	when := lv.Finished.UTC().Format("2006-01-02 15:04")
+	if lv.Attested {
+		return fmt.Sprintf("%s → attested", when)
+	}
+	return fmt.Sprintf("%s → NOT attested (modified %d, missing %d, unrecorded %d)", when, lv.Modified, lv.Missing, lv.Unrecorded)
 }
 
 // JSONReport is the typed, versioned document `status -json` prints (product
@@ -688,22 +1820,60 @@ func Summary(in Input, rep Report) []string {
 // is bumped when a field's meaning changes so a consumer can refuse a shape it
 // does not understand.
 type JSONReport struct {
-	Version     int              `json:"version"`
-	Posture     string           `json:"posture"`
-	Reasons     []string         `json:"reasons"`
-	ReasonCodes []string         `json:"reason_codes"` // parallel to Reasons; a stable code per WARN/RED
-	Out         string           `json:"out"`
-	Messages    int              `json:"messages"`
-	Indexed     int              `json:"indexed"`
-	Fillable    int              `json:"fillable"`
-	Terminal    int              `json:"terminal"`
-	Unknown     int              `json:"unknown"`
-	Fixity      *JSONFixity      `json:"fixity"`      // fixity COVERAGE; null when no manifest
-	Extractable *JSONExtractable `json:"extractable"` // records with a preserved .eml present on disk (file presence, design K4); null when no manifest
-	History     *JSONHistory     `json:"history"`     // go-back timeline coverage (design §3.4); always present (exists=false when no log)
-	LastRun     *JSONLastRun     `json:"last_run,omitempty"`
-	LastVerify  *JSONLastVerify  `json:"last_verify"` // verify's integrity verdict; null when none recorded
-	Schedule    *JSONSchedule    `json:"schedule,omitempty"`
+	Version     int      `json:"version"`
+	Posture     string   `json:"posture"`
+	Reasons     []string `json:"reasons"`
+	ReasonCodes []string `json:"reason_codes"` // parallel to Reasons; a stable code per WARN/RED
+	Out         string   `json:"out"`
+	Messages    int      `json:"messages"`
+	Indexed     int      `json:"indexed"`
+	// IndexedKnown is false when search.db exists but could not be read (busy
+	// or damaged), so Indexed's 0 is not a count (F8). Additive; version stays.
+	IndexedKnown bool             `json:"indexed_known"`
+	Fillable     int              `json:"fillable"`
+	Terminal     int              `json:"terminal"`
+	Unknown      int              `json:"unknown"`
+	Fixity       *JSONFixity      `json:"fixity"`      // fixity COVERAGE; null when no manifest
+	Extractable  *JSONExtractable `json:"extractable"` // records with a preserved .eml present on disk (file presence, design K4); null when no manifest
+	History      *JSONHistory     `json:"history"`     // go-back timeline coverage (design §3.4); always present (exists=false when no log)
+	LastRun      *JSONLastRun     `json:"last_run,omitempty"`
+	LastVerify   *JSONLastVerify  `json:"last_verify"` // verify's integrity verdict; null when none recorded
+	Schedule     *JSONSchedule    `json:"schedule,omitempty"`
+	// VerifySchedule is the scheduled verify from its own descriptor (FB-4), in
+	// the schedule facet's shape; omitted when none is recorded. A later,
+	// backward-compatible addition at version 2, like `extractable`.
+	VerifySchedule *JSONSchedule `json:"verify_schedule,omitempty"`
+	// ShownAsSource (RV-10) counts messages whose page is shown as plain text,
+	// by reason; omitted when none. A backward-compatible addition at version 2.
+	ShownAsSource *JSONShownAsSource `json:"shown_as_source,omitempty"`
+
+	// CaptureGaps is the capture-gap ledger's tally and up to 20 of its items
+	// (fault-isolation §4.10), and Unreadable the records read only in part: two
+	// backward-compatible additions at version 2 (owner ruling OR1: the version
+	// stays 2 and only additive keys are added). CaptureGaps is null when there is
+	// no manifest.
+	CaptureGaps *JSONCaptureGaps `json:"capture_gaps"`
+	Unreadable  int              `json:"unreadable"`
+
+	// Undecodable is how many records carry a part this version cannot decode, kept as
+	// received; FidelityFallback how many were written from the earlier parser's content
+	// (design-mime-fidelity §4.9, MC19): two more additions at version 2. Neither is in
+	// `terminal` (a parse gap is not empty at the source).
+	Undecodable      int `json:"undecodable"`
+	FidelityFallback int `json:"fidelity_fallback"`
+
+	// ParseGaps is the number of records per parse-gap kind (undecoded-part, corrupt-part,
+	// unsplit-multipart, structure-limit, fidelity-fallback, identity-stub), so a monitor can tell
+	// a fallback from a lost part without reading the report; omitted when there is none. An
+	// additive key at version 2 (friction F11).
+	ParseGaps map[string]int `json:"parse_gaps,omitempty"`
+}
+
+// JSONShownAsSource is the shown-as-source facet: the total and a count per
+// reason code (unsafe-after-reparse, unparseable, too-deeply-nested, too-large).
+type JSONShownAsSource struct {
+	Count   int            `json:"count"`
+	Reasons map[string]int `json:"reasons"`
 }
 
 // JSONFixity is the fixity-coverage facet: how many records carry a digest
@@ -744,6 +1914,26 @@ type JSONLastRun struct {
 	Error    string     `json:"error,omitempty"`
 	Exported int        `json:"exported"`
 	Filled   int        `json:"filled"`
+	// InProgress is true only while a run really holds the archive lock: a
+	// "running" status whose run is dead (RED run_never_finished) has
+	// in_progress false (F8). Additive; version stays.
+	InProgress bool `json:"in_progress"`
+	// The capture gaps this run observed (fault-isolation §4.10, FC23(2)):
+	// GapsNew is what a monitor keys on, so a known, unfixable gap does not drown
+	// a new loss. Additive; version stays 2.
+	GapsObserved  int `json:"gaps_observed"`
+	GapsNew       int `json:"gaps_new"`
+	GapsRecovered int `json:"gaps_recovered"`
+	GapsFillable  int `json:"gaps_fillable"`
+	GapsTerminal  int `json:"gaps_terminal"`
+	GapsStuck     int `json:"gaps_stuck"`
+	Unreadable    int `json:"unreadable"`
+
+	// Undecodable and FidelityFallback are the parse-gap counts the run ended with, as the
+	// last-run record holds them, omitted when zero (friction F11: the README says last_run
+	// carries them). Additive; version stays 2.
+	Undecodable      int `json:"undecodable,omitempty"`
+	FidelityFallback int `json:"fidelity_fallback,omitempty"`
 }
 
 // JSONLastVerify is verify's integrity verdict, from its separate record; null
@@ -763,6 +1953,27 @@ type JSONLastVerify struct {
 	Unexpected int        `json:"unexpected"`
 	Recorded   int        `json:"recorded"`
 	ExitCode   int        `json:"exit_code"`
+	// Previous is the last finished verdict a running record carries (F79): a
+	// new optional key, omitted otherwise, so JSONVersion is unchanged.
+	Previous *JSONLastVerify `json:"previous,omitempty"`
+}
+
+// jsonLastVerify maps a verify record (and the finished verdict a running one
+// carries) to its JSON facet.
+func jsonLastVerify(lv state.LastVerify) *JSONLastVerify {
+	j := &JSONLastVerify{
+		Status: lv.Status, Started: lv.Started, Finished: lv.Finished,
+		Attested: lv.Attested, Records: lv.Records, WithFixity: lv.WithFixity,
+		Checked: lv.Checked, OK: lv.OK, Modified: lv.Modified, Missing: lv.Missing,
+		Unrecorded: lv.Unrecorded, Unexpected: lv.Unexpected, Recorded: lv.Recorded,
+		ExitCode: lv.ExitCode,
+	}
+	if lv.Previous != nil {
+		p := *lv.Previous
+		p.Previous = nil
+		j.Previous = jsonLastVerify(p)
+	}
+	return j
 }
 
 // JSONSchedule is the schedule facet of JSONReport (omitted when no descriptor
@@ -778,8 +1989,8 @@ type JSONSchedule struct {
 
 // JSONVersion is the current JSONReport schema version. Bumped to 2 with the
 // addition of fixity, last_verify and reason_codes and the change of
-// last_run.finished to null-while-running. The `extractable` and `history`
-// objects are later, backward-compatible additions at version 2 — a new optional
+// last_run.finished to null-while-running. The `extractable`, `history` and
+// `verify_schedule` objects are later, backward-compatible additions at version 2 — a new optional
 // key changes no existing field's meaning, so a version-2 consumer that ignores
 // unknown keys is unaffected and the version is not bumped.
 const JSONVersion = 2
@@ -789,16 +2000,22 @@ const JSONVersion = 2
 // Summary it only reports (R18).
 func JSON(in Input, rep Report) JSONReport {
 	doc := JSONReport{
-		Version:     JSONVersion,
-		Posture:     rep.Posture,
-		Reasons:     rep.Reasons,
-		ReasonCodes: rep.Codes,
-		Out:         in.Out,
-		Messages:    in.Messages,
-		Indexed:     in.Indexed,
-		Fillable:    in.Fillable,
-		Terminal:    in.Terminal,
-		Unknown:     in.Unknown,
+		Version:      JSONVersion,
+		Posture:      rep.Posture,
+		Reasons:      rep.Reasons,
+		ReasonCodes:  rep.Codes,
+		Out:          in.Out,
+		Messages:     in.Messages,
+		Indexed:      in.Indexed,
+		IndexedKnown: !(in.HasIndexFile && !in.HasIndex),
+		Fillable:     in.Fillable,
+		Terminal:     in.Terminal,
+		Unknown:      in.Unknown,
+	}
+	// RV-10: messages shown as plain text, per reason. An additive optional key,
+	// omitted when none, so the version is not bumped.
+	if n := shownAsSourceTotal(in.ShownAsSource); n > 0 {
+		doc.ShownAsSource = &JSONShownAsSource{Count: n, Reasons: in.ShownAsSource}
 	}
 	if doc.Reasons == nil {
 		doc.Reasons = []string{}
@@ -821,15 +2038,28 @@ func JSON(in Input, rep Report) JSONReport {
 		// Extractability (design K4): the file-presence count `extract`/`verify`
 		// share, carried alongside fixity coverage. null when no manifest.
 		doc.Extractable = &JSONExtractable{Records: in.Extractable.Total, RecordsWithEML: in.Extractable.WithEML}
+		doc.CaptureGaps = jsonCaptureGaps(in, rep)
+	}
+	doc.Unreadable = in.Unreadable
+	doc.Undecodable, doc.FidelityFallback = in.Undecodable, in.FidelityFallback
+	if len(in.ParseGapKinds) > 0 {
+		doc.ParseGaps = in.ParseGapKinds
 	}
 	if in.LastRunState == state.LastRunPresent {
 		lr := in.LastRun
 		jlr := &JSONLastRun{
-			Status:   lr.Status,
-			Started:  lr.Started,
-			Error:    lr.Error,
-			Exported: lr.Exported,
-			Filled:   lr.Filled,
+			Status:     lr.Status,
+			Started:    lr.Started,
+			Error:      lr.Error,
+			Exported:   lr.Exported,
+			Filled:     lr.Filled,
+			InProgress: lr.Status == state.RunRunning && runRunning(in),
+
+			GapsObserved: lr.GapsObserved, GapsNew: lr.GapsNew, GapsRecovered: lr.GapsRecovered,
+			GapsFillable: lr.GapsFillable, GapsTerminal: lr.GapsTerminal, GapsStuck: lr.GapsStuck,
+			Unreadable: lr.Unreadable,
+
+			Undecodable: lr.Undecodable, FidelityFallback: lr.FidelityFallback,
 		}
 		// Finished stays null while a run is in progress (UJ-A5).
 		if lr.Status != state.RunRunning && !lr.Finished.IsZero() {
@@ -839,14 +2069,7 @@ func JSON(in Input, rep Report) JSONReport {
 		doc.LastRun = jlr
 	}
 	if in.LastVerifyState == state.LastVerifyPresent {
-		lv := in.LastVerify
-		doc.LastVerify = &JSONLastVerify{
-			Status: lv.Status, Started: lv.Started, Finished: lv.Finished,
-			Attested: lv.Attested, Records: lv.Records, WithFixity: lv.WithFixity,
-			Checked: lv.Checked, OK: lv.OK, Modified: lv.Modified, Missing: lv.Missing,
-			Unrecorded: lv.Unrecorded, Unexpected: lv.Unexpected, Recorded: lv.Recorded,
-			ExitCode: lv.ExitCode,
-		}
+		doc.LastVerify = jsonLastVerify(in.LastVerify)
 	}
 	if in.HasDescriptor {
 		doc.Schedule = &JSONSchedule{
@@ -856,6 +2079,16 @@ func JSON(in Input, rep Report) JSONReport {
 			At:       in.Desc.At,
 			Exe:      in.Desc.Exe,
 			Host:     in.Desc.Host,
+		}
+	}
+	if in.HasVerifyDescriptor {
+		doc.VerifySchedule = &JSONSchedule{
+			Name:     in.VerifyDesc.Name,
+			State:    in.VerifySchedState.String(),
+			Interval: in.VerifyDesc.Interval,
+			At:       in.VerifyDesc.At,
+			Exe:      in.VerifyDesc.Exe,
+			Host:     in.VerifyDesc.Host,
 		}
 	}
 	return doc

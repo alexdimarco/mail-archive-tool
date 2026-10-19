@@ -1,6 +1,6 @@
 module mail-archive-tool
 
-go 1.23.0
+go 1.26.0
 
 require (
 	github.com/emersion/go-mbox v1.0.4
@@ -8,10 +8,10 @@ require (
 	github.com/go-ole/go-ole v1.3.0
 	github.com/mooijtech/go-pst/v6 v6.0.2
 	github.com/ncruces/zenity v0.10.12
-	golang.org/x/net v0.10.0
-	golang.org/x/oauth2 v0.24.0
-	golang.org/x/sys v0.34.0
-	golang.org/x/text v0.21.0
+	golang.org/x/net v0.60.0
+	golang.org/x/oauth2 v0.37.0
+	golang.org/x/sys v0.48.0
+	golang.org/x/text v0.42.0
 	modernc.org/sqlite v1.38.2
 )
 
@@ -34,8 +34,8 @@ require (
 	github.com/tidwall/btree v1.6.0 // indirect
 	github.com/tinylib/msgp v1.1.8 // indirect
 	golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b // indirect
-	golang.org/x/image v0.15.0 // indirect
-	google.golang.org/protobuf v1.30.0 // indirect
+	golang.org/x/image v0.46.0 // indirect
+	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	modernc.org/libc v1.66.3 // indirect
 	modernc.org/mathutil v1.7.1 // indirect

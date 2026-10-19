@@ -1,9 +1,9 @@
 MailArchive Desktop — source and attribution
 =============================================
 
-mailarchive-desktop.exe, mailarchive.exe, and mailarchive-gui.exe are the official
-in-repo build of alexdimarco/mail-archive-tool (cmd/mailarchive-desktop,
-cmd/mailarchive, cmd/mailarchive-gui), cross-compiled for Windows x64.
+mailarchive.exe and mailarchivew.exe are the official in-repo build of
+alexdimarco/mail-archive-tool (both from cmd/mailarchive — the console build and the
+no-console build), cross-compiled for Windows x64. The former names mailarchive-desktop.exe and mailarchive-gui.exe are byte-identical copies of mailarchivew.exe this release, removed by a later one.
 
 Upstream source: https://github.com/alexdimarco/mail-archive-tool
 License:         GNU Affero General Public License v3.0 (AGPL-3.0) — see docs\LICENSE.txt

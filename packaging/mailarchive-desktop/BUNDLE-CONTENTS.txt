@@ -5,12 +5,14 @@ Checked into the repo — the WiX/RMM layer (hand to Steve with the payload zip)
   Product.wxs               WiX installer definition (DC6 UpgradeCode preserved)
   Build-MSI.ps1             MSI builder — consumes the payload zip, stages notices, runs WiX
   BUILD-MSI.cmd             double-click wrapper for Build-MSI.ps1
-  Install-RMM.ps1           optional RMM install helper
+  Install-RMM.ps1           RMM install helper (ends running instances first, CC22)
   Detect-RMM.ps1            RMM detection helper (exit 0 = installed)
   Uninstall-RMM.ps1         RMM silent uninstaller
-  Cleanup-CurrentUser.ps1   optional per-user credential/state cleanup
+  Cleanup-CurrentUser.ps1   optional per-user credential/state cleanup (also stops the
+                            user's instances and removes the lock + instance files)
   SOURCE-NOTICE.txt         AGPL source pointer + attribution (staged into payload)
-  DEPLOYMENT.txt            deployment metadata: ports, token store, schedule (staged)
+  DEPLOYMENT.txt            deployment metadata: ports (free ones, per start), per-account
+                            state, token store, schedule (staged)
   THIRD-PARTY-NOTICES.md    bundled Go module notices (staged)
   README-RMM.md             build + deploy + verify instructions (read this)
   BUNDLE-CONTENTS.txt       this file
@@ -22,9 +24,10 @@ Checked in, consumed by packaging/build-release.sh (do not remove):
 
 Supplied at build time — produced by packaging/build-release.sh (NOT in the repo):
   dist/mailarchive-desktop-windows-msi-payload.zip
-      mailarchive-desktop.exe   in-process dashboard + reader (cmd/mailarchive-desktop)
-      mailarchive.exe           headless engine / CLI          (cmd/mailarchive)
-      mailarchive-gui.exe       native GUI                     (cmd/mailarchive-gui)
+      mailarchive.exe           command-line build                 (cmd/mailarchive)
+      mailarchivew.exe          no-console build: desktop + wizard (cmd/mailarchive)
+      mailarchive-desktop.exe   former name: a copy of mailarchivew.exe (kept this release)
+      mailarchive-gui.exe       former name: a copy of mailarchivew.exe (kept this release)
       branding/mailarchive.ico
       READ ME.txt
       docs/LICENSE.txt, release-notes.md, goback.md, graph-app-setup.md

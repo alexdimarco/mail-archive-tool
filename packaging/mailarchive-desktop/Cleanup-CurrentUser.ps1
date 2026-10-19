@@ -22,6 +22,20 @@ foreach ($target in $targets) {
     if ($target) { cmdkey.exe /delete:$target | Out-Null }
 }
 
+# This user's running MailArchive Desktop (this sign-in session only) holds the
+# per-account lock in %LOCALAPPDATA%\MailArchiveDesktop; end it, then remove the lock
+# and the instance files — where the instance listens and the key a later launch
+# proves itself with — so nothing of a finished deployment is left to be believed
+# (design-local-confidentiality CC22). The next start makes new ones.
+$session = (Get-Process -Id $PID).SessionId
+Get-Process mailarchivew,mailarchive-desktop,mailarchive-gui -ErrorAction SilentlyContinue |
+    Where-Object { $_.SessionId -eq $session } |
+    Stop-Process -Force -ErrorAction SilentlyContinue
+$state = "$env:LOCALAPPDATA\MailArchiveDesktop"
+foreach ($pattern in 'desktop*.lock', 'desktop-instance*.json', 'serve-*.json') {
+    Remove-Item (Join-Path $state $pattern) -Force -ErrorAction SilentlyContinue
+}
+
 if ($RemoveLocalAppState) {
     Remove-Item "$env:LOCALAPPDATA\MailArchiveDesktop" -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item "$env:APPDATA\mailarchive" -Recurse -Force -ErrorAction SilentlyContinue

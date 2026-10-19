@@ -11,6 +11,8 @@ import (
 	"io"
 	"strings"
 	"time"
+
+	"mail-archive-tool/internal/util"
 )
 
 // Attachment is a normalized message attachment. WriteTo streams the raw
@@ -25,6 +27,88 @@ type Attachment struct {
 	// WriteTo streams the attachment bytes to w. It may be called at most once
 	// per intended output; callers that need the bytes twice should buffer.
 	WriteTo func(w io.Writer) (int64, error)
+
+	// Embedded is a PST attached item (method 5) opened as a message, which
+	// WriteZip renders as an entry of its own (design-mime-fidelity §4.8). Nothing
+	// sets it before slice S6.
+	Embedded *Message
+
+	// GapKind names a parse gap for this part (design-mime-fidelity §4.9) and
+	// GapDetail says what is not as the sender sent it. With GapKind set, a nil
+	// WriteTo means nothing was archived and a non-nil one yields the bytes as
+	// received. Nothing sets them before slice S2.
+	GapKind, GapDetail string
+
+	// ZipName is the final zip entry name, computed once before rendering so the
+	// page, the placeholders and the gaps block name what the zip holds
+	// (design-mime-fidelity §4.5, MC33). Empty until slice S3 computes it.
+	ZipName string
+}
+
+// Label is the attachment's human-readable name in reports and gap lists: its
+// file name, else cid:<Content-ID>, else attachment-<index>. It is also what a
+// record's Missing list and the v1 inventory call the attachment.
+//
+// A name comes from the sender, so the label is control-stripped where it is made: a record
+// label that began with a NUL would pass for a parse-gap label (state.ParseGapLabel), and a
+// tab or line break would split a report row (MS2-AO4).
+func (a Attachment) Label(index int) string {
+	if name := util.StripControl(a.Filename); name != "" {
+		return name
+	}
+	if cid := util.StripControl(a.ContentID); cid != "" {
+		return "cid:" + cid
+	}
+	return fmt.Sprintf("attachment-%d", index)
+}
+
+// IdentityAttachment is one attachment as the identity view holds it: the name
+// and size Fingerprint and ContentDigest read.
+type IdentityAttachment struct {
+	Filename string
+	Size     int64
+}
+
+// IdentityTerms are the v1 parser's values of every input to Identity(),
+// Fingerprint(), ContentDigest() and contentHash(). A raw-MIME message carries
+// them whatever parser produced its displayed content, so no parser change moves
+// an archived message's key, fingerprint or content hash (design-mime-fidelity
+// P1, R27). The attachments are in v1 order.
+type IdentityTerms struct {
+	InternetMessageID, Subject, SenderEmail, To, Cc, Bcc string
+	IdentityDate                                         time.Time
+	HTMLBody, PlainBody, RTFBody                         string
+	Attachments                                          []IdentityAttachment
+	// NoIdentityDate says the identity has no date, so identityTime does not fall back
+	// to the message's own Date(). The stub identity of a message the v1 parse panicked
+	// on is dateless, and the message shown under it (the walker's) carries display dates.
+	NoIdentityDate bool
+}
+
+// ParseNote is one fidelity event a parse recorded: a way the message differs
+// from what the v1 parser produced (design-mime-fidelity §4.10). Since is the
+// parse scheme that introduced Code. Nothing records one before slice S2.
+type ParseNote struct {
+	Code   string
+	Since  int
+	Detail string
+}
+
+// ParseGap is a message-level parse gap (design-mime-fidelity §4.9): a part or the
+// whole message could not be decoded as the sender sent it, and Detail says what is not,
+// in words a person reads on the page and in the report. Kind is one of state's
+// GapKind* constants; a gap of one attachment sits on the attachment (GapKind) instead.
+type ParseGap struct {
+	Kind, Detail string
+}
+
+// V1Item is one attachment of the v1 replay: what a repair's precondition
+// compares an archived zip entry with (design-mime-fidelity §4.10 V1C).
+type V1Item struct {
+	Index  int
+	Label  string
+	Size   int64
+	SHA256 [32]byte
 }
 
 // Message is a normalized mail item.
@@ -109,7 +193,101 @@ type Message struct {
 	// pre-download skip hint and a distinctness tie-breaker (closure rev-6).
 	PhysID string
 
+	// Locator names where a LOCAL reader found the message in its store, stable for
+	// the life of that item: pst-nid:<store-uid>/<nid> for a PST item,
+	// a maildir file's is ReadLocator, below; Graph sets none (fault-isolation §4.2). It is the key a recovery or a healing matches on (a healthy read of an
+	// item that was read only in part finds the partial record by it) and the
+	// locator of its ledger gap. Like PhysID it is a capture-time value that is
+	// NEVER part of Identity(), Fingerprint() or contentHash(): no identity anywhere
+	// folds a locator (FC7), so a healthy input's keys are exactly what they were
+	// (P14).
+	Locator string
+
+	// ReadLocator is where a LOCAL raw-bytes reader (maildir) found the message in its
+	// store: maildir:<folder>/<unique>, the locator a file-unreadable or
+	// vanished-during-read gap of that file is recorded at, so the message's capture
+	// closes that gap as recovered (§4.3 step 2). It is NOT Locator: the export step's
+	// own faults for such a message keep their ident: locator (the post-parse rule of
+	// §4.6), and the record never carries it. Like Locator it is a capture-time value
+	// that is never part of Identity(), Fingerprint() or contentHash().
+	ReadLocator string
+
+	// ReadGaps are the labels of what the reader could not read of an item it
+	// could partly read (state.LabelUnreadableBody, state.LabelUnreadableAttachments,
+	// state.LabelUnparsed): the exporter records each in the record's gap lists, the
+	// KEEP guard never lets such a capture replace an archived record, and the page
+	// carries a notice (§4.7). It is empty for every healthy message and for an item
+	// with nothing readable, which is a ledger gap and has no Message at all (FC7).
+	ReadGaps []string
+
+	// ReadError is the bounded detail of why the item was only partly read, shown in
+	// the record notice. Untrusted: the exporter strips and bounds it.
+	ReadError string
+
+	// IdentityTerms are the v1 parser's values of every identity input. Non-nil, they
+	// are what Identity(), Fingerprint(), ContentDigest() and the file stem read;
+	// nil, the content fields above are the identity inputs, as for a PST item or a
+	// hand-built message (idv). The raw-MIME parse always sets it.
+	IdentityTerms *IdentityTerms
+
+	// ParseNotes are the fidelity events of the parse that produced the content
+	// fields (design-mime-fidelity §4.10). Empty while the content is v1's.
+	ParseNotes []ParseNote
+
+	// ParseGaps are the message-level parse gaps of the parse that produced the content
+	// fields: an unsplit multipart, a structure limit, a fallback to v1's content, a
+	// stub identity. A gap of one attachment is that attachment's GapKind. It is not
+	// ReadGaps: a parse gap is deterministic and is no degraded read, so the KEEP guard
+	// never holds a capture back for one (design-mime-fidelity §4.9, rulings J5).
+	ParseGaps []ParseGap
+
+	// V1Inventory is each attachment the v1 replay produced: its index, label, size
+	// and SHA-256, the baseline a repair's "never to less" check compares an
+	// archived zip with (V1C). Set by the raw-MIME parse; nil for a PST item.
+	V1Inventory []V1Item
+
+	// FellBack says this parse used v1's content because the content parser
+	// panicked (design-mime-fidelity P13).
+	FellBack bool
+
 	Attachments []Attachment
+}
+
+// idv is the identity view: the one place the identity inputs are read from. It is
+// IdentityTerms when set and the content fields otherwise, so a message nothing
+// has set terms on behaves exactly as it always did.
+func (m *Message) idv() IdentityTerms {
+	if m.IdentityTerms != nil {
+		return *m.IdentityTerms
+	}
+	t := IdentityTerms{
+		InternetMessageID: m.InternetMessageID, Subject: m.Subject, SenderEmail: m.SenderEmail,
+		To: m.To, Cc: m.Cc, Bcc: m.Bcc, IdentityDate: m.IdentityDate,
+		HTMLBody: m.HTMLBody, PlainBody: m.PlainBody, RTFBody: m.RTFBody,
+	}
+	if len(m.Attachments) > 0 {
+		t.Attachments = make([]IdentityAttachment, len(m.Attachments))
+		for i, a := range m.Attachments {
+			t.Attachments[i] = IdentityAttachment{Filename: a.Filename, Size: a.Size}
+		}
+	}
+	return t
+}
+
+// IdentitySubject is the subject as the identity view holds it. A file stem is
+// built from it, never from the displayed Subject, so a parser that decodes the
+// subject differently cannot rename an archived message's files
+// (design-mime-fidelity MC8).
+func (m *Message) IdentitySubject() string { return m.idv().Subject }
+
+// SetInternetMessageID sets a Message-ID a source learned out of band (the Graph
+// listing's, for a message whose MIME could not be parsed). It feeds the identity
+// as well as the content, which the identity view would otherwise shadow.
+func (m *Message) SetInternetMessageID(id string) {
+	m.InternetMessageID = id
+	if m.IdentityTerms != nil {
+		m.IdentityTerms.InternetMessageID = id
+	}
 }
 
 // Date returns the most meaningful timestamp for the message: delivery time if
@@ -125,9 +303,14 @@ func (m *Message) Date() time.Time {
 // fingerprint: the immutable MIME Date (IdentityDate) when known, else Date().
 // It must never reflect a source's mutable delivery time (the Graph
 // receivedDateTime override), or a no-Message-ID identity would drift on upgrade.
-func (m *Message) identityTime() time.Time {
-	if !m.IdentityDate.IsZero() {
-		return m.IdentityDate
+// t is the identity view's terms: its IdentityDate is read, and Date() is still the
+// message's own, so a Received override feeds a Date-less identity as it always did.
+func (m *Message) identityTime(t IdentityTerms) time.Time {
+	if !t.IdentityDate.IsZero() {
+		return t.IdentityDate
+	}
+	if t.NoIdentityDate {
+		return time.Time{}
 	}
 	return m.Date()
 }
@@ -137,10 +320,21 @@ func (m *Message) identityTime() time.Time {
 // absent (drafts, calendar-adjacent items, some generated mail) it falls back
 // to a content hash so re-runs still recognize the same item.
 func (m *Message) Identity() string {
-	if id := strings.TrimSpace(m.InternetMessageID); id != "" {
+	if id := strings.TrimSpace(m.idv().InternetMessageID); id != "" {
 		return "mid:" + id
 	}
 	return "sha:" + m.contentHash()
+}
+
+// LegacyStubIdentity is the identity an older build gave EVERY local item it could
+// not read: its stub was `&Message{Subject: "(unreadable message)"}`, an empty
+// message whose identity is the content hash of its empty fields, the same for
+// every stub, which is why they collapsed into one record per folder (F33). A run
+// re-classes those records (state.Manifest.ReclassLegacyPlaceholders, FC27). The
+// PST reader no longer mints a stub (FC7); the mbox and maildir readers still do
+// until FI-S2b, and a run re-classes their record again on its next pass.
+func LegacyStubIdentity() string {
+	return (&Message{Subject: "(unreadable message)"}).Identity()
 }
 
 // Fingerprint is a short (16 hex) digest of the message's STABLE envelope —
@@ -152,12 +346,31 @@ func (m *Message) Identity() string {
 // like a different message. Two messages that reuse one Message-ID with an
 // identical envelope and differ only in body are treated as one (a resend).
 func (m *Message) Fingerprint() string {
+	t := m.idv()
 	h := sha256.New()
-	fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s\x00%d\x00", m.Subject, m.SenderEmail, m.To, m.Cc, m.identityTime().UnixNano())
-	for i, a := range m.Attachments {
+	fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s\x00%d\x00", t.Subject, t.SenderEmail, t.To, t.Cc, m.identityTime(t).UnixNano())
+	for i, a := range t.Attachments {
 		fmt.Fprintf(h, "%d:%s\x00", i, a.Filename)
 	}
 	return hex.EncodeToString(h.Sum(nil))[:16]
+}
+
+// FingerprintNoAttachments is Fingerprint() as it would be computed over zero
+// attachments: exactly what a record's fingerprint is when the capture lost its
+// whole attachment table (unreadable:attachments set no attachments). A later
+// healthy read of the same item compares THIS with that record's fingerprint, so
+// it lands on the partly-read record's key instead of minting a distinct
+// "Message-ID reuse" (§4.7.4(1), FC6).
+func (m *Message) FingerprintNoAttachments() string {
+	bare := *m
+	bare.Attachments = nil
+	if m.IdentityTerms != nil {
+		// The terms hold their own attachments, which Fingerprint reads instead.
+		terms := *m.IdentityTerms
+		terms.Attachments = nil
+		bare.IdentityTerms = &terms
+	}
+	return bare.Fingerprint()
 }
 
 // ContentDigest is the live-path PhysID closure's churn-vs-distinct arbiter (design
@@ -177,17 +390,18 @@ func (m *Message) Fingerprint() string {
 // does not make one message look like another. It is NOT contentHash() and is NOT
 // part of Identity()/Fingerprint() — changing it never shifts a message's key.
 func (m *Message) ContentDigest() string {
+	t := m.idv()
 	h := sha256.New()
 	fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s\x00%s\x00%d\x00",
-		m.Subject, m.SenderEmail, m.To, m.Cc, m.Bcc, m.identityTime().UnixNano())
-	for i, a := range m.Attachments {
+		t.Subject, t.SenderEmail, t.To, t.Cc, t.Bcc, m.identityTime(t).UnixNano())
+	for i, a := range t.Attachments {
 		fmt.Fprintf(h, "%d:%s:%d\x00", i, a.Filename, a.Size)
 	}
-	h.Write([]byte(m.HTMLBody))
+	h.Write([]byte(t.HTMLBody))
 	h.Write([]byte{0})
-	h.Write([]byte(m.PlainBody))
+	h.Write([]byte(t.PlainBody))
 	h.Write([]byte{0})
-	h.Write([]byte(m.RTFBody))
+	h.Write([]byte(t.RTFBody))
 	return hex.EncodeToString(h.Sum(nil))
 }
 
@@ -200,13 +414,14 @@ func (m *Message) ContentDigest() string {
 // hashing them would make a re-read that only saw a changed read/priority flag
 // look like a different message.
 func (m *Message) contentHash() string {
+	t := m.idv()
 	h := sha256.New()
 	fmt.Fprintf(h, "%s\x00%s\x00%s\x00%d\x00%d\x00",
-		m.Subject, m.SenderEmail, m.To, m.identityTime().UnixNano(), len(m.Attachments))
-	h.Write([]byte(m.HTMLBody))
+		t.Subject, t.SenderEmail, t.To, m.identityTime(t).UnixNano(), len(t.Attachments))
+	h.Write([]byte(t.HTMLBody))
 	h.Write([]byte{0})
-	h.Write([]byte(m.PlainBody))
+	h.Write([]byte(t.PlainBody))
 	h.Write([]byte{0})
-	h.Write([]byte(m.RTFBody))
+	h.Write([]byte(t.RTFBody))
 	return hex.EncodeToString(h.Sum(nil))
 }

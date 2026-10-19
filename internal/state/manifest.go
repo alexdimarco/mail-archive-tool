@@ -81,8 +81,12 @@ type Record struct {
 	Missing    []string `json:"missing,omitempty"`
 	Terminal   []string `json:"terminal,omitempty"`
 	Unresolved []string `json:"unresolved,omitempty"`
-	Subject    string   `json:"subject,omitempty"`
-	Date       string   `json:"date,omitempty"` // RFC 3339 UTC
+	// BodyFallback (informational, additive) names why the page shows the
+	// mail's HTML as escaped source instead of rendering it (export.Fallback*):
+	// the content is all there, as text, and every inline image is in the zip.
+	BodyFallback string `json:"body_fallback,omitempty"`
+	Subject      string `json:"subject,omitempty"`
+	Date         string `json:"date,omitempty"` // RFC 3339 UTC
 
 	// Fingerprint (16 hex) of the message content, so a different message
 	// reusing this record's Message-ID is recognized (R3). Empty on legacy
@@ -155,7 +159,91 @@ type Record struct {
 	FirstSeen   time.Time `json:"first_seen,omitempty"`
 	LastSeen    time.Time `json:"last_seen,omitempty"`
 	Present     bool      `json:"present,omitempty"`
+
+	// Locator (additive; fault-isolation §4.2, FC6(3)) names where a partly-read
+	// item sat in its store (pst-nid:<store-uid>/<nid>, maildir:<folder>/<unique>),
+	// so a later healthy read of the same item — which may land on another key —
+	// finds and supersedes it, and a recovery never matches across stores. It is
+	// set ONLY on a record that carries an unreadable:* label, so a healthy
+	// input's records are byte-identical to before (P14). Load drops it from any
+	// other record, and a re-examine restores one an older binary's save lost.
+	Locator string `json:"loc,omitempty"`
+	// RecoveredBy (additive) is the key of the record that replaced this partly-read
+	// one (§4.7.4): its unreadable:* labels became the info label "superseded" and
+	// nothing was written or deleted. Load drops one that names no existing key.
+	RecoveredBy string `json:"recovered_by,omitempty"`
+
+	// ParseScheme (additive; design-mime-fidelity §4.10, MC12) is the parser scheme
+	// the record was last written or re-examined under. 0 means a build from before
+	// the scheme existed wrote it and none has re-read it since; an older binary's
+	// save drops the field, so the next run by this build stamps it again in memory
+	// (StampParseScheme) at no cost to the files. Nothing acts on it before the repair
+	// slice: it is the migration's progress marker. The exporter stamps it on every
+	// write and, in memory, on every re-read (MA-329's golden carries it since the
+	// owner's decision of 2026-10-11).
+	ParseScheme int `json:"parse_scheme,omitempty"`
+
+	// ParserGen and RawDigest (additive; fault-isolation §4.2, FC25) stamp an unparsed
+	// stub, the record of a message whose MIME parse gave up: ParserGen is the parser
+	// generation that failed on it (unparsed is terminal FOR THAT GENERATION: same
+	// bytes, same parser, same result, so a newer parser re-examines it once), and
+	// RawDigest the sha-256 (hex) of its raw bytes, which a later healthy record of the
+	// same bytes finds the stub by (it is superseded, metadata only). Only an unparsed
+	// record carries them: a healthy input's records are byte-identical to before
+	// (P14), Load drops them from any other, and an older binary's save drops them
+	// from a stub, which the next run reads as generation 0 and re-examines once.
+	ParserGen int    `json:"parser_gen,omitempty"`
+	RawDigest string `json:"raw_sha256,omitempty"`
+
+	// FidelityFallback (additive; design-mime-fidelity MC19) is the parse scheme under
+	// which this record was written from v1's content because the fidelity parser
+	// panicked or held less than v1 did. A later scheme may parse the message, so the
+	// repair slice re-examines it; the count of such records is what status shows.
+	FidelityFallback int `json:"fidelity_fallback,omitempty"`
 }
+
+// ParserGenCurrent is the parser generation this build writes on an unparsed stub. It
+// is the parse scheme: a build that changes how a message is parsed bumps the scheme,
+// and so re-examines every stub the older parser gave up on, once (FC25).
+const ParserGenCurrent = ParseSchemeCurrent
+
+// validDigest says s is a lower-case hex sha-256.
+func validDigest(s string) bool {
+	if len(s) != 64 {
+		return false
+	}
+	for _, c := range s {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// StaleUnparsed reports whether the record is an unparsed stub that an older parser
+// generation than gen gave up on: a run re-examines it once (FC25). A stub no binary
+// stamped (an older binary's save dropped the field) is generation 0.
+func (r Record) StaleUnparsed(gen int) bool {
+	return r.hasLabel(LabelUnparsed) && r.ParserGen < gen
+}
+
+// IsLegacyPlaceholder reports whether the record is an older build's collapsed
+// "(unreadable message)" record, re-classed to the info label legacy-placeholder
+// (FC27): it stands for no message in particular.
+func (r Record) IsLegacyPlaceholder() bool { return r.hasLabel(LabelLegacyPlaceholder) }
+
+// ParseSchemeCurrent is the parser scheme this build writes and stamps. Slice S1 of
+// design-mime-fidelity bumps it to 1: it routes identity, stems and ContentHash but
+// registers no fidelity note, so no record is yet "damaged" by it.
+//
+// Slice S2 introduces the first fidelity notes, under ParseSchemeFidelity, and moves
+// this to 2 (owner-approved 2026-10-12, rulings §13.29): MA-329's golden
+// (internal/app/testdata/p14-golden.json) holds parse_scheme 2 on its 46 records.
+const ParseSchemeCurrent = 2
+
+// ParseSchemeFidelity is the parse scheme that introduced slice S2's fidelity notes
+// (design-mime-fidelity §4.10): every note it registers carries it as Since.
+const ParseSchemeFidelity = 2
 
 // FileDigest is the recorded fixity of one exported file: the sha256 (hex) of
 // its bytes and its length as written. `verify` re-hashes the file, capped at
@@ -189,7 +277,7 @@ func (r Record) Complete() bool { return len(r.Missing) == 0 && len(r.Terminal) 
 
 // HasIssues reports whether the record has anything to show in the report.
 func (r Record) HasIssues() bool {
-	return len(r.Missing) > 0 || len(r.Terminal) > 0 || len(r.Unresolved) > 0
+	return len(r.Missing) > 0 || len(r.Terminal) > 0 || len(r.Unresolved) > 0 || r.BodyFallback != ""
 }
 
 // Unknown reports whether the record carries the legacy sentinel.
@@ -214,6 +302,14 @@ type Manifest struct {
 	// assigned first-come on the next run, reproducing the plain segment the
 	// files already use.
 	Stores map[string]string `json:"stores,omitempty"`
+
+	// CaptureGaps is the capture-gap ledger: the items and folders a source holds
+	// that no record represents (gaps.go). INERT: never consulted by any skip,
+	// fetch or export decision (P5); not part of Entries, byIdent or byPath, so its
+	// keys can never collide with a record key. Additive and omitted when empty, so
+	// the manifest version stays 6 (J2): an older binary ignores it and drops it on
+	// its next save, which loses diagnostics only (§6).
+	CaptureGaps map[string]CaptureGap `json:"capture_gaps,omitempty"`
 
 	// CollapsedTokens records, per store token, that the one-time v3→v5
 	// identity-collapse (CollapseByIdentity) has run for that mailbox — set after
@@ -252,6 +348,15 @@ type Manifest struct {
 	// byPath is a lazily built reverse index (export path → key) used to
 	// detect a file-stem collision between two different keys (R4).
 	byPath map[string]string
+
+	// byLocator is a lazily built reverse index (token\x00locator → key) over
+	// exactly the records that carry an unreadable:* label and a Locator — a
+	// handful, so a lookup per exported message costs nothing on a healthy input.
+	byLocator map[string]string
+	// byRawDigest is the same for unparsed stubs: token\x00raw digest → the keys, built
+	// lazily over the records that carry both the label and a digest (FC25). The same
+	// bytes in two folders are two stubs with one digest.
+	byRawDigest map[string][]string
 
 	// byIdent is the mailbox-wide identity index (message identity → every
 	// manifest key carrying it, with that key's fingerprint), built at load and
@@ -391,6 +496,26 @@ func migrateStoreID(old string) string {
 	return PathSourceID(old)
 }
 
+// snapshotStoreID is migrateStoreID for a manifest read as a snapshot (LoadFrom): the id is the
+// lexical form and the file system is never asked about it. A manifest handed over in another
+// archive folder is data, and a store id in it is text its writer chose: resolved with
+// filepath.EvalSymlinks it would make this machine Lstat that path (on Windows a UNC id opens an
+// SMB connection and offers the owner's credentials) and follow a link out of the folder
+// (E4-AO1). The snapshot's only uses of an id are its prefix and its ".pst"/".ost" suffix.
+func snapshotStoreID(old string) string {
+	if strings.HasPrefix(old, "path:") || strings.HasPrefix(old, "mailbox:") {
+		return old
+	}
+	if strings.Contains(old, "@") && !filepath.IsAbs(old) {
+		return MailboxSourceID(old)
+	}
+	p := filepath.Clean(old)
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		p = strings.ToLower(p)
+	}
+	return "path:" + p
+}
+
 // preferPlainToken picks which store token to keep when two source spellings
 // collapse to one id: the plain (hashless) segment if exactly one is plain, else
 // the lexicographically smaller — a stable, order-independent choice. The stale
@@ -433,7 +558,7 @@ func (m *Manifest) Token(sourceID, store string) string {
 	// rather than trusted, so a write can never be redirected outside the output
 	// root (INS2-1/R4). Re-derivation keeps a corrupted archive usable while
 	// guaranteeing containment.
-	seg := util.SanitizeSegment(store)
+	seg := tokenSegment(store)
 	if !m.segmentOwnedLocked(seg) {
 		m.Stores[sourceID] = seg
 		return seg
@@ -455,6 +580,25 @@ func (m *Manifest) Token(sourceID, store string) string {
 			return tok
 		}
 	}
+}
+
+// tokenSegment is the store token's first choice for a store's display name: its
+// sanitized segment, which must also pass SafeToken, because the exporter refuses
+// (run-fatal) a store whose token does not. util.SanitizeSegment keeps DEL
+// (U+007F), which SafeToken refuses, and the name of a store comes from the data
+// file itself, so a name with one DEL byte would otherwise end every run at that
+// input (S2A-AO1). Such a name loses its control bytes and gets a hash of the
+// original name, so it never merges with a plain name that spells the same.
+func tokenSegment(store string) string {
+	seg := util.SanitizeSegment(store)
+	if SafeToken(seg) {
+		return seg
+	}
+	stripped := util.SanitizeSegment(util.StripControl(store))
+	if SafeToken(stripped) {
+		return stripped + "~" + util.ShortHash(store)
+	}
+	return "store~" + util.ShortHash(store)
 }
 
 // segmentOwnedLocked reports whether some source already holds token tok. The
@@ -505,20 +649,49 @@ func firstSegment(path string) string {
 // Load reads the manifest at path. A missing file yields an empty manifest
 // bound to that path (so a later Save creates it).
 func Load(path string) (*Manifest, error) {
-	m := &Manifest{path: path, Version: manifestVersion, LoadedVersion: manifestVersion, Entries: map[string]Record{}, byIdent: map[string][]IdentRef{}}
-
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		return m, nil
+		return newManifest(path), nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("read manifest: %w", err)
 	}
+	return parseManifest(path, path, data)
+}
+
+// LoadFrom parses the bytes of the manifest called name, which the caller read itself
+// (through an os.Root on the archive, under a size cap, so that a concurrent writer's
+// rename cannot fail the read on Windows and a hostile folder cannot make it read
+// without bound). The result is a snapshot: it is bound to no path, so Save refuses,
+// and every migration Load makes stays in memory (the extraction workspace's second
+// archive source writes nothing in the folder it reads, design §4.3).
+func LoadFrom(name string, data []byte) (*Manifest, error) {
+	return parseManifest("", name, data)
+}
+
+func newManifest(path string) *Manifest {
+	return &Manifest{path: path, Version: manifestVersion, LoadedVersion: manifestVersion, Entries: map[string]Record{}, byIdent: map[string][]IdentRef{}}
+}
+
+// NewerFormatError is the refusal of a manifest a newer mailarchive wrote.
+type NewerFormatError struct {
+	Name       string // the manifest as the caller named it
+	Version    int    // the format version it holds
+	Understood int    // the version this build understands
+}
+
+func (e *NewerFormatError) Error() string {
+	return fmt.Sprintf("manifest %s was written by a newer mailarchive (format version %d; this build understands %d): upgrade this copy of mailarchive, or point -out at an archive this version wrote", e.Name, e.Version, e.Understood)
+}
+
+// parseManifest is Load's work on the bytes data of the manifest called name, bound to path.
+func parseManifest(path, name string, data []byte) (*Manifest, error) {
+	m := newManifest(path)
 	if len(data) == 0 {
 		return m, nil
 	}
 	if err := json.Unmarshal(data, m); err != nil {
-		return nil, fmt.Errorf("manifest %s is corrupt or truncated (%v): restore it from a backup, or delete it to re-export everything (the archived files are untouched; incremental runs will rewrite them in place)", path, err)
+		return nil, fmt.Errorf("manifest %s is corrupt or truncated (%v): restore it from a backup, or delete it to re-export everything (the archived files are untouched; incremental runs will rewrite them in place)", name, err)
 	}
 	if m.Entries == nil {
 		m.Entries = map[string]Record{}
@@ -529,7 +702,7 @@ func Load(path string) (*Manifest, error) {
 	// later from still-newer binaries; a shared/synced -out must be written only
 	// by upgraded binaries (README rule). (FC1.)
 	if m.Version > manifestVersion {
-		return nil, fmt.Errorf("manifest %s was written by a newer mailarchive (format version %d; this build understands %d): upgrade this copy of mailarchive, or point -out at an archive this version wrote", path, m.Version, manifestVersion)
+		return nil, &NewerFormatError{Name: name, Version: m.Version, Understood: manifestVersion}
 	}
 	// Remember the on-disk version before any upgrade rewrites it: the live path
 	// consults LoadedVersion to know whether the v3→v4 collapse still owes a run.
@@ -631,7 +804,12 @@ func Load(path string) (*Manifest, error) {
 				m.StoresMigrated++ // dropped; Token re-derives a fresh one on next use
 				continue
 			}
-			id := migrateStoreID(old)
+			var id string
+			if path == "" { // a snapshot (LoadFrom): nothing in the manifest is looked up on disk
+				id = snapshotStoreID(old)
+			} else {
+				id = migrateStoreID(old)
+			}
 			changed := id != old
 			if existing, ok := migrated[id]; ok {
 				migrated[id] = preferPlainToken(existing, tok)
@@ -644,6 +822,33 @@ func Load(path string) (*Manifest, error) {
 			}
 		}
 		m.Stores = migrated
+	}
+	// The ledger and the partly-read records' fields are untrusted on read, like
+	// the last-run record (MA-157): the ledger is bounded, stripped and checked
+	// against Stores; a Locator that no unreadable:* label owns and a RecoveredBy
+	// that names no record are dropped (§4.2).
+	m.sanitizeGaps(time.Now().UTC())
+	for key, r := range m.Entries {
+		changed := false
+		if r.Locator != "" && !r.hasUnreadable() {
+			r.Locator, changed = "", true
+		}
+		if r.RecoveredBy != "" {
+			if _, ok := m.Entries[r.RecoveredBy]; !ok {
+				r.RecoveredBy, changed = "", true
+			}
+		}
+		// The parser stamp and the raw digest belong to an unparsed stub only (FC25):
+		// elsewhere they are stray, and a digest that is no sha-256 is not one.
+		if !r.hasLabel(LabelUnparsed) && (r.ParserGen != 0 || r.RawDigest != "") {
+			r.ParserGen, r.RawDigest, changed = 0, "", true
+		}
+		if r.RawDigest != "" && !validDigest(r.RawDigest) {
+			r.RawDigest, changed = "", true
+		}
+		if changed {
+			m.Entries[key] = r
+		}
 	}
 	if m.Version < manifestVersion {
 		m.Version = manifestVersion
@@ -658,6 +863,21 @@ func (m *Manifest) Has(key string) bool {
 	defer m.mu.Unlock()
 	_, ok := m.Entries[key]
 	return ok
+}
+
+// HasToken reports whether any record is filed under the store token: an archive
+// that holds its tree on disk. The local run asks it when it probes whether the
+// archive location is still there (FC12).
+func (m *Manifest) HasToken(token string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	prefix := token + keySeparator
+	for k := range m.Entries {
+		if strings.HasPrefix(k, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // Get returns the record for key.
@@ -681,7 +901,233 @@ func (m *Manifest) Add(key string, r Record) {
 		}
 	}
 	m.identUpsertLocked(key, r.Fingerprint, r.PhysID)
+	if m.byLocator != nil {
+		if old, ok := m.Entries[key]; ok {
+			m.locatorDropLocked(key, old)
+		}
+		m.locatorAddLocked(key, r)
+	}
+	if m.byRawDigest != nil {
+		if old, ok := m.Entries[key]; ok {
+			m.digestDropLocked(key, old)
+		}
+		m.digestAddLocked(key, r)
+	}
 	m.Entries[key] = r
+}
+
+// digestAddLocked indexes r when it is an unparsed stub with a raw digest. The caller
+// holds m.mu and m.byRawDigest is built.
+func (m *Manifest) digestAddLocked(key string, r Record) {
+	if r.RawDigest == "" || !r.hasLabel(LabelUnparsed) {
+		return
+	}
+	dk := locatorIndexKey(key, r.RawDigest)
+	for _, k := range m.byRawDigest[dk] {
+		if k == key {
+			return
+		}
+	}
+	// One entry per stub: the same bytes in two folders are two stubs with one digest.
+	m.byRawDigest[dk] = append(m.byRawDigest[dk], key)
+}
+
+// digestDropLocked removes key from old's index entry.
+func (m *Manifest) digestDropLocked(key string, old Record) {
+	if old.RawDigest == "" {
+		return
+	}
+	dk := locatorIndexKey(key, old.RawDigest)
+	keys := m.byRawDigest[dk]
+	for i, k := range keys {
+		if k == key {
+			keys = append(keys[:i:i], keys[i+1:]...)
+			break
+		}
+	}
+	if len(keys) == 0 {
+		delete(m.byRawDigest, dk)
+		return
+	}
+	m.byRawDigest[dk] = keys
+}
+
+// buildDigestIndexLocked builds byRawDigest on first use. The caller holds m.mu.
+func (m *Manifest) buildDigestIndexLocked() {
+	if m.byRawDigest != nil {
+		return
+	}
+	m.byRawDigest = map[string][]string{}
+	for k, r := range m.Entries {
+		m.digestAddLocked(k, r)
+	}
+}
+
+// HasUnparsedStubs reports whether the manifest holds any unparsed stub with a raw
+// digest, so a caller does not hash the bytes of every healthy message of an archive
+// that has none (the index is built once; this is a map length).
+func (m *Manifest) HasUnparsedStubs() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.buildDigestIndexLocked()
+	return len(m.byRawDigest) > 0
+}
+
+// SupersedeUnparsed settles an unparsed stub whose bytes a later capture parsed whole
+// (§4.7.4(4), FC25): the same-token stub with this RawDigest has its unparsed label
+// re-classed to the info label "superseded" and RecoveredBy set to newKey, in one
+// record update. Like SupersedePartial it is METADATA ONLY: no file is written,
+// rendered or deleted. It never touches the record at newKey itself, and reports
+// whether a stub was superseded.
+func (m *Manifest) SupersedeUnparsed(token, digest, newKey string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.buildDigestIndexLocked()
+	// The same bytes in two folders are two stubs with one digest: the stub of the
+	// capture's own folder is the one it settles, else (the message moved) the first in
+	// key order. Each other stub is settled by the healthy capture of its own copy
+	// (S2B-AC7).
+	var cands []string
+	for _, k := range m.byRawDigest[token+keySeparator+digest] {
+		if cand, ok := m.Entries[k]; ok && k != newKey && cand.hasLabel(LabelUnparsed) {
+			cands = append(cands, k)
+		}
+	}
+	if len(cands) == 0 {
+		return false
+	}
+	sort.Strings(cands)
+	key := cands[0]
+	for _, k := range cands {
+		if m.Entries[k].Folder == m.Entries[newKey].Folder {
+			key = k
+			break
+		}
+	}
+	r := m.Entries[key]
+	m.digestDropLocked(key, r)
+	r.Missing = nil
+	r.Terminal = []string{LabelSuperseded}
+	r.RecoveredBy, r.ParserGen, r.RawDigest = newKey, 0, ""
+	m.Entries[key] = r
+	return true
+}
+
+// StampParserGen records that this run re-examined the unparsed stub at key under
+// parser generation gen and it still could not be parsed: the generation is raised to
+// gen (never lowered), so the stub is not re-examined again until the parser changes
+// (FC25). It reports whether the record changed.
+func (m *Manifest) StampParserGen(key string, gen int) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.Entries[key]
+	if !ok || !r.hasLabel(LabelUnparsed) || r.ParserGen >= gen {
+		return false
+	}
+	r.ParserGen = gen
+	m.Entries[key] = r
+	return true
+}
+
+// locatorIndexKey is the byLocator key of a record under key: the store token
+// (the key's first component) and the record's locator.
+func locatorIndexKey(key, locator string) string {
+	tok := key
+	if i := strings.IndexByte(key, keySeparator[0]); i >= 0 {
+		tok = key[:i]
+	}
+	return tok + keySeparator + locator
+}
+
+// locatorAddLocked indexes r when it is a partly-read record with a Locator. The
+// caller holds m.mu and m.byLocator is built.
+func (m *Manifest) locatorAddLocked(key string, r Record) {
+	if r.Locator != "" && r.hasUnreadable() {
+		m.byLocator[locatorIndexKey(key, r.Locator)] = key
+	}
+}
+
+// locatorDropLocked removes old's index entry when it points at key. The caller
+// holds m.mu and m.byLocator is built.
+func (m *Manifest) locatorDropLocked(key string, old Record) {
+	if old.Locator == "" {
+		return
+	}
+	lk := locatorIndexKey(key, old.Locator)
+	if m.byLocator[lk] == key {
+		delete(m.byLocator, lk)
+	}
+}
+
+// KeyForLocator returns the key of the same-token partly-read record (one that
+// carries an unreadable:* label) whose Locator is locator, if any (§4.7.4). The
+// reverse index is built on first use and covers exactly those records, so a
+// lookup per exported message is a map hit. A locator never matches across
+// tokens, and a PST locator carries its store's uid, so it never matches across
+// two stores either (FC8).
+func (m *Manifest) KeyForLocator(token, locator string) (string, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if locator == "" {
+		return "", false
+	}
+	if m.byLocator == nil {
+		m.byLocator = map[string]string{}
+		for k, r := range m.Entries {
+			m.locatorAddLocked(k, r)
+		}
+	}
+	k, ok := m.byLocator[token+keySeparator+locator]
+	return k, ok
+}
+
+// SupersedePartial settles a partly-read record whose item a later capture
+// stored under another key (§4.7.4(3)): the same-token record with this Locator
+// that carries an unreadable:* label has its gaps re-classed to the info
+// label "superseded" and RecoveredBy set to newKey, in one record update. It is
+// METADATA ONLY: no file is written, rendered or deleted, so nothing can mismatch
+// Fixity and there is no crash window; the Locator is cleared because the record
+// no longer carries an unreadable label. It reports whether a record was
+// superseded (never the record at newKey itself — that one is healed in place).
+func (m *Manifest) SupersedePartial(token, locator, newKey string) bool {
+	key, ok := m.KeyForLocator(token, locator)
+	if !ok || key == newKey {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.Entries[key]
+	if !ok || !r.hasUnreadable() {
+		return false
+	}
+	m.locatorDropLocked(key, r)
+	// The record is settled as a whole: every gap it carried (the unreadable:*
+	// labels and the "body" gap a body that could not be read leaves beside them)
+	// is moot once the item sits whole under newKey, so its one label is
+	// "superseded", of class info. The page stays; it is no longer "missing".
+	r.Missing = nil
+	r.Terminal = []string{LabelSuperseded}
+	r.RecoveredBy, r.Locator = newKey, ""
+	m.Entries[key] = r
+	return true
+}
+
+// SetLocator restores the Locator an older binary's save dropped from a partly-
+// read record (§4.2: any re-examine restores it from the capture); it is a no-op
+// on a record that does not carry an unreadable:* label or already has one.
+func (m *Manifest) SetLocator(key, locator string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.Entries[key]
+	if !ok || locator == "" || r.Locator != "" || !r.hasUnreadable() {
+		return false
+	}
+	r.Locator = locator
+	m.Entries[key] = r
+	if m.byLocator != nil {
+		m.locatorAddLocked(key, r)
+	}
+	return true
 }
 
 // KeyForPath returns the key whose record owns the export path, if any. The
@@ -744,7 +1190,12 @@ func (m *Manifest) Issues() []Record {
 }
 
 // Counts returns how many records are fillable (excluding sentinels), terminal,
-// and unknown (legacy sentinels).
+// and unknown (legacy sentinels). A partly-read record (an unreadable:* label) is
+// fillable, as it is in the record's Missing list; a Terminal label of class info
+// (superseded) is nothing missing and counts as neither. The classes come from
+// GapClass, the single owner of record gap labels (J5, FC26): MIME fidelity's and
+// re-capture's labels join it as new cases, never as a second rewrite of this
+// function.
 func (m *Manifest) Counts() (fillable, terminal, unknown int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -754,11 +1205,213 @@ func (m *Manifest) Counts() (fillable, terminal, unknown int) {
 			unknown++
 		case r.Fillable():
 			fillable++
-		case len(r.Terminal) > 0:
+		case r.terminalGap():
 			terminal++
 		}
 	}
 	return
+}
+
+// UnreadableCount returns how many records are partly read: they carry an
+// unreadable:* label (§4.10). They are fillable records, but status reports them
+// under their own reason with their own remedy, never as "missing content".
+func (m *Manifest) UnreadableCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, r := range m.Entries {
+		if r.hasUnreadable() {
+			n++
+		}
+	}
+	return n
+}
+
+// UnreadableOnlyCount returns how many records are fillable only because they
+// are partly read: every fillable label they carry is an unreadable:* one. These
+// are the records status leaves out of its incomplete_content count and the
+// run summary out of "still missing content".
+func (m *Manifest) UnreadableOnlyCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, r := range m.Entries {
+		if !r.Fillable() || r.Unknown() {
+			continue
+		}
+		only := true
+		for _, l := range r.Missing {
+			if !IsUnreadableLabel(l) {
+				only = false
+				break
+			}
+		}
+		if only {
+			n++
+		}
+	}
+	return n
+}
+
+// UnparsedCount returns how many records are unparsed stubs (§4.1): their MIME
+// parse panicked or fell back, and the bytes are kept as text.
+func (m *Manifest) UnparsedCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, r := range m.Entries {
+		if r.hasLabel(LabelUnparsed) {
+			n++
+		}
+	}
+	return n
+}
+
+// UnparsedTerminalCount returns how many records Counts() puts in its terminal
+// tally only because they are unparsed stubs: not fillable, not legacy, and no
+// other terminal label of class terminal. An unparsed message is kept as raw text,
+// so status leaves these out of "source-empty (never fillable)" (friction F7).
+func (m *Manifest) UnparsedTerminalCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, r := range m.Entries {
+		if r.Unknown() || r.Fillable() || !r.hasLabel(LabelUnparsed) || !r.terminalGap() {
+			continue
+		}
+		only := true
+		for _, l := range r.Terminal {
+			if l != LabelUnparsed && !IsParseGapLabel(l) && RecordGapClass(l, true) == ClassTerminal {
+				only = false
+				break
+			}
+		}
+		if only {
+			n++
+		}
+	}
+	return n
+}
+
+// UndecodableCount returns how many records carry at least one parse gap (§4.9): a part
+// this version could not decode, or one cut short, kept as received. It is informational
+// like the terminal count: it never makes a run partial. Counts() leaves such a record
+// out of terminal when every terminal label it has is a parse gap, so status can say
+// "cannot decode" instead of "source-empty".
+func (m *Manifest) UndecodableCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, r := range m.Entries {
+		if r.hasParseGap() {
+			n++
+		}
+	}
+	return n
+}
+
+// ParseGapKindCounts returns, per parse-gap kind, how many records carry at least one gap of it
+// (a record counts once for each kind it has), so status -json can tell a fallback from a lost
+// part (friction F11). Nil when there is none.
+func (m *Manifest) ParseGapKindCounts() map[string]int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out map[string]int
+	for _, r := range m.Entries {
+		seen := map[string]bool{}
+		for _, l := range append(append([]string(nil), r.Missing...), r.Terminal...) {
+			if kind, _, ok := ParseGapParts(l); ok && !seen[kind] {
+				seen[kind] = true
+				if out == nil {
+					out = map[string]int{}
+				}
+				out[kind]++
+			}
+		}
+	}
+	return out
+}
+
+// FillableParseGapCounts returns how many fillable records (the ones Counts() puts in fillable,
+// a legacy sentinel and a partly-read record apart) also carry a fillable parse gap, and how many
+// of them are fillable ONLY for that: every label of their Missing list is a parse gap. These
+// records are not "missing" in the sense of a source that has not delivered them, so the run
+// summary and status say what cures them (friction F3).
+func (m *Manifest) FillableParseGapCounts() (also, only int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, r := range m.Entries {
+		if !r.Fillable() || r.Unknown() {
+			continue
+		}
+		parseGaps := 0
+		for _, l := range r.Missing {
+			if IsParseGapLabel(l) {
+				parseGaps++
+			}
+		}
+		if parseGaps == 0 {
+			continue
+		}
+		also++
+		if parseGaps == len(r.Missing) {
+			only++
+		}
+	}
+	return also, only
+}
+
+// FidelityFallbackCount returns how many records were written from v1's content because
+// the fidelity parser failed or held less (MC19), from the additive fidelity_fallback
+// field. status -json reports it as fidelity_fallback.
+func (m *Manifest) FidelityFallbackCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, r := range m.Entries {
+		if r.FidelityFallback > 0 {
+			n++
+		}
+	}
+	return n
+}
+
+// PartlyReadPaths returns the page paths (relative to the archive, control-
+// stripped, sorted) of up to limit partly-read records, so status can name them
+// (friction F7).
+func (m *Manifest) PartlyReadPaths(limit int) []string {
+	m.mu.Lock()
+	var out []string
+	for _, r := range m.Entries {
+		if r.hasUnreadable() {
+			out = append(out, util.StripControl(r.Path))
+		}
+	}
+	m.mu.Unlock()
+	sort.Strings(out)
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out
+}
+
+// FallbackCounts returns, per reason, how many records show their page as
+// source (RV-10), from the additive body_fallback field. Records without one
+// (rendered as HTML, or written before the field) count nothing; nil when none.
+func (m *Manifest) FallbackCounts() map[string]int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out map[string]int
+	for _, r := range m.Entries {
+		if r.BodyFallback == "" {
+			continue
+		}
+		if out == nil {
+			out = map[string]int{}
+		}
+		out[r.BodyFallback]++
+	}
+	return out
 }
 
 // FixityCounts returns how many records carry at least one recorded file
@@ -799,6 +1452,16 @@ func (m *Manifest) Delete(key string) {
 			delete(m.byPath, old.Path)
 		}
 	}
+	if m.byLocator != nil {
+		if old, ok := m.Entries[key]; ok {
+			m.locatorDropLocked(key, old)
+		}
+	}
+	if m.byRawDigest != nil {
+		if old, ok := m.Entries[key]; ok {
+			m.digestDropLocked(key, old)
+		}
+	}
 	m.identRemoveLocked(key)
 	delete(m.Entries, key)
 }
@@ -828,6 +1491,22 @@ func (m *Manifest) MergeFields(key, folder string, seen time.Time, present bool)
 	r.Folder = folder
 	r.LastSeen = seen
 	r.Present = present
+	m.Entries[key] = r
+	return true
+}
+
+// StampParseScheme records, in memory, that this run re-read the record at key under
+// parser scheme: it raises ParseScheme to scheme and never lowers it, and touches
+// nothing else, so no file is written for it (MC12). It reports whether the record
+// changed; the existing checkpoint saves it.
+func (m *Manifest) StampParseScheme(key string, scheme int) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.Entries[key]
+	if !ok || r.ParseScheme >= scheme {
+		return false
+	}
+	r.ParseScheme = scheme
 	m.Entries[key] = r
 	return true
 }
@@ -950,29 +1629,7 @@ func (w *WalkedFolders) Len() int {
 // did not complete (a folder error, a ctx cancel, or a lost lock), so a
 // partial/aborted run marks nothing gone.
 func (m *Manifest) SweepGone(token string, walked *WalkedFolders, thisRun time.Time) []string {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	prefix := token + keySeparator
-	var gone []string
-	for key, r := range m.Entries {
-		if !strings.HasPrefix(key, prefix) {
-			continue // another mailbox's record — out of this sweep's scope
-		}
-		if !r.Present || !r.LastSeen.Before(thisRun) {
-			continue // already gone, or observed this run
-		}
-		if !walked.Has(r.Folder) {
-			continue // excluded/unwalked folder — retain its last state
-		}
-		gone = append(gone, key)
-	}
-	sort.Strings(gone)
-	for _, key := range gone {
-		r := m.Entries[key]
-		r.Present = false // keep the last known Folder/LastSeen; the file stays (R13)
-		m.Entries[key] = r
-	}
-	return gone
+	return m.SweepGoneSparing(token, walked, thisRun, SweepSpare{})
 }
 
 // KeysForIdentity returns every (key, fingerprint) sharing the message identity
@@ -1297,6 +1954,8 @@ func (m *Manifest) CollapseByIdentity(sameContent func(relA, relB string) bool, 
 
 	m.Entries = newEntries
 	m.byPath = nil // export paths unchanged, but the reverse map is rebuilt lazily
+	m.byLocator = nil
+	m.byRawDigest = nil
 	m.buildIdentIndexLocked()
 	m.Collapsed = len(losses)
 	return losses, remap
@@ -1375,10 +2034,14 @@ func (m *Manifest) identRemoveLocked(key string) {
 }
 
 // Save writes the manifest atomically (temp file + rename) so a crash mid-write
-// cannot corrupt an existing manifest.
+// cannot corrupt an existing manifest. The rename waits out a moment of Windows
+// file sharing (replaceFile) before it reports failure.
 func (m *Manifest) Save() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.path == "" {
+		return errors.New("this manifest is a read-only snapshot (LoadFrom) and has no file to save to")
+	}
 
 	m.Version = manifestVersion
 	// Compact, not pretty-printed: the manifest is machine state (one record per
@@ -1415,7 +2078,7 @@ func (m *Manifest) Save() error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close temp manifest: %w", err)
 	}
-	if err := os.Rename(tmpName, m.path); err != nil {
+	if err := replaceFile(tmpName, m.path); err != nil {
 		return fmt.Errorf("replace manifest: %w", err)
 	}
 	if d, err := os.Open(dir); err == nil {

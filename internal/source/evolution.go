@@ -1,7 +1,9 @@
 package source
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -40,19 +42,20 @@ const (
 
 // evolutionReader reads an Evolution mail store. It implements Source.
 type evolutionReader struct {
-	root  string
-	store string
-	kind  evoKind
+	root   string
+	store  string
+	kind   evoKind
+	follow bool // the input's directory-link opt-in (OpenOptions.FollowLinks)
 }
 
 // openEvolution returns a reader if dir is an Evolution store, else (nil, false)
 // so Open can fall through to the generic mbox/maildir reader.
-func openEvolution(dir string) (*evolutionReader, bool) {
+func openEvolution(dir string, opts OpenOptions) (*evolutionReader, bool) {
 	switch {
 	case isEvolutionCacheStore(dir):
-		return &evolutionReader{root: dir, kind: evoCache, store: evolutionStoreName(dir, evoCache)}, true
+		return &evolutionReader{root: dir, kind: evoCache, store: evolutionStoreName(dir, evoCache), follow: opts.FollowLinks}, true
 	case isEvolutionMaildirStore(dir):
-		return &evolutionReader{root: dir, kind: evoMaildirPP, store: evolutionStoreName(dir, evoMaildirPP)}, true
+		return &evolutionReader{root: dir, kind: evoMaildirPP, store: evolutionStoreName(dir, evoMaildirPP), follow: opts.FollowLinks}, true
 	default:
 		return nil, false
 	}
@@ -61,11 +64,41 @@ func openEvolution(dir string) (*evolutionReader, bool) {
 func (r *evolutionReader) StoreName() string { return r.store }
 func (r *evolutionReader) Close() error      { return nil }
 
+// Walk visits every message; the items and folders it could not read come back as a
+// *FaultsError (WalkWithFaults delivers them as they happen).
 func (r *evolutionReader) Walk(handler MessageHandler) error {
-	if r.kind == evoCache {
-		return r.walkCache(handler)
+	return r.WalkWithFaults(handler, WalkOptions{})
+}
+
+// WalkWithFaults is Walk that delivers each fault through opts.Faults as it happens.
+// The store is read under R25 (localstore.go): its root resolved and opened once, every
+// entry judged before it is opened.
+func (r *evolutionReader) WalkWithFaults(handler MessageHandler, opts WalkOptions) error {
+	w := newLocalWalk(handler, opts, r.follow)
+	return w.sink.result(r.walk(w))
+}
+
+func (r *evolutionReader) walk(w *localWalk) error {
+	sc, err := openScope(r.root)
+	if err != nil {
+		return fmt.Errorf("read Evolution store %s: %w", r.root, err)
 	}
-	return r.walkMaildirPP(handler)
+	defer sc.close()
+	if w.follow {
+		if fi, err := os.Stat(sc.path); err == nil {
+			w.seen(fi)
+		}
+	}
+	var walkErr error
+	if r.kind == evoCache {
+		walkErr = r.walkCache(w, sc)
+	} else {
+		walkErr = r.walkMaildirPP(w, sc)
+	}
+	if walkErr != nil {
+		return walkErr
+	}
+	return w.drain()
 }
 
 // isEvolutionMaildirStore reports whether dir is an Evolution Maildir++ store:
@@ -125,31 +158,52 @@ func evolutionFolderHasMail(dir string) bool {
 
 // walkMaildirPP reads the root INBOX and every dot-encoded subfolder of a
 // Maildir++ store.
-func (r *evolutionReader) walkMaildirPP(handler MessageHandler) error {
+func (r *evolutionReader) walkMaildirPP(w *localWalk, sc *scope) error {
 	// The root maildir is the store's INBOX; its messages sit at the top level
 	// (folderPath nil ⇒ no redundant nesting, mirroring a single maildir store).
-	if err := readMaildir(r.root, nil, handler); err != nil {
+	if err := w.maildir(sc, ".", nil); err != nil {
 		return err
 	}
 
-	entries, err := os.ReadDir(r.root)
+	entries, err := sc.readDir(".")
 	if err != nil {
 		return fmt.Errorf("read Evolution store %s: %w", r.root, err)
 	}
 	for _, e := range entries {
+		if err := w.abort(); err != nil {
+			return err
+		}
 		name := e.Name()
-		if !e.IsDir() || !strings.HasPrefix(name, ".") {
+		if !strings.HasPrefix(name, ".") {
 			continue // internals (cur/new/tmp), sidecar files, or the marker
 		}
-		full := filepath.Join(r.root, name)
-		if !isMaildir(full) {
+		v := w.judge(sc, name, e.Type(), posEither)
+		if v.kind != kindDir && v.kind != kindDirLink {
+			// The marker or a sidecar file is no folder. A link whose target is out of the
+			// store, though, may be a folder that holds mail (a link is told from a folder
+			// only by touching its target, which R25 never does): it is recorded, never
+			// dropped, and so is a pipe or device standing where a folder would be.
+			if v.kind == kindOutside || v.kind == kindSpecial || v.kind == kindUnreachable {
+				w.refuse(sc, name, nil, v)
+			}
 			continue
 		}
 		folderPath := decodeMaildirName(name)
 		if len(folderPath) == 0 {
 			continue // undecodable name; its mail is already covered by the root read
 		}
-		if err := readMaildir(full, folderPath, handler); err != nil {
+		if v.kind == kindDir && !isMaildirIn(sc, name) {
+			continue
+		}
+		if err := w.into(sc, name, v, folderPath, func(s *scope, rel string) error {
+			if !isMaildirIn(s, rel) {
+				// Only a followed link gets here (a plain directory that is no maildir was
+				// dropped above, as Maildir++ says): the directory of mailboxes it usually is,
+				// read as the mbox reader reads it, not as nothing (the twin of S2B-AC2).
+				return w.mboxDir(s, rel, folderPath, false)
+			}
+			return w.maildir(s, rel, folderPath)
+		}); err != nil {
 			return err
 		}
 	}
@@ -158,28 +212,60 @@ func (r *evolutionReader) walkMaildirPP(handler MessageHandler) error {
 
 // walkCache walks a Camel disk cache: each entry under "folders" is a top-level
 // folder.
-func (r *evolutionReader) walkCache(handler MessageHandler) error {
-	return r.walkCacheChildren(filepath.Join(r.root, "folders"), nil, handler)
+func (r *evolutionReader) walkCache(w *localWalk, sc *scope) error {
+	return w.cacheInto(sc, "folders", nil, r.walkCacheChildren)
+}
+
+// cacheInto reads the container directory at rel (the "folders" directory, a "subfolders"
+// container) with read, if its place allows it: a link there is a directory link,
+// recorded and not followed; an absent container holds nothing.
+func (w *localWalk) cacheInto(sc *scope, rel string, prefix []string, read func(*localWalk, *scope, string, []string) error) error {
+	fi, err := sc.lstat(rel)
+	if err != nil {
+		if !errors.Is(err, fs.ErrNotExist) {
+			w.folderFault(sc, rel, prefix, "folder-unreadable", err, "the folder container could not be read: ")
+		}
+		return nil
+	}
+	v := w.judge(sc, rel, fi.Mode(), posDir)
+	if v.kind != kindDir && v.kind != kindDirLink {
+		return nil // not a container
+	}
+	return w.into(sc, rel, v, prefix, func(s *scope, r string) error { return read(w, s, r, prefix) })
 }
 
 // walkCacheChildren treats each subdirectory of dir as a folder that extends
 // prefix, reading its mail and recursing into its subfolders. Maildir internals
 // and the "subfolders" container are not themselves folders.
-func (r *evolutionReader) walkCacheChildren(dir string, prefix []string, handler MessageHandler) error {
-	entries, err := os.ReadDir(dir)
+func (r *evolutionReader) walkCacheChildren(w *localWalk, sc *scope, dir string, prefix []string) error {
+	entries, err := sc.readDir(dir)
 	if err != nil {
-		return nil // absent/unreadable container: nothing to read
+		if !errors.Is(err, fs.ErrNotExist) {
+			w.folderFault(sc, dir, prefix, "folder-unreadable", err, "the folder container could not be listed: ")
+		}
+		return nil // absent container: nothing to read
 	}
 	for _, e := range entries {
-		if !e.IsDir() {
-			continue
+		if err := w.abort(); err != nil {
+			return err
 		}
 		switch e.Name() {
 		case "cur", "new", "tmp", "subfolders":
 			continue
 		}
+		erel := relJoin(dir, e.Name())
+		v := w.judge(sc, erel, e.Type(), posEither)
+		if v.kind != kindDir && v.kind != kindDirLink {
+			if v.kind == kindOutside || v.kind == kindSpecial || v.kind == kindUnreachable {
+				if v.kind == kindOutside && e.Type()&fs.ModeSymlink == 0 {
+					continue // not a folder, and no link either
+				}
+				w.refuse(sc, erel, prefix, v)
+			}
+			continue
+		}
 		child := appendSeg(prefix, util.SanitizeSegment(e.Name()))
-		if err := r.walkCacheFolder(filepath.Join(dir, e.Name()), child, handler); err != nil {
+		if err := w.into(sc, erel, v, child, func(s *scope, rel string) error { return r.walkCacheFolder(w, s, rel, child) }); err != nil {
 			return err
 		}
 	}
@@ -188,20 +274,16 @@ func (r *evolutionReader) walkCacheChildren(dir string, prefix []string, handler
 
 // walkCacheFolder reads one cache folder's messages, then descends into its
 // subfolders — nested directly under it and/or under a "subfolders" container.
-func (r *evolutionReader) walkCacheFolder(dir string, folderPath []string, handler MessageHandler) error {
-	if err := readMaildir(dir, folderPath, handler); err != nil {
+func (r *evolutionReader) walkCacheFolder(w *localWalk, sc *scope, dir string, folderPath []string) error {
+	if err := w.maildir(sc, dir, folderPath); err != nil {
 		return err
 	}
-	if err := r.walkCacheChildren(dir, folderPath, handler); err != nil {
+	if err := r.walkCacheChildren(w, sc, dir, folderPath); err != nil {
 		return err
 	}
-	sub := filepath.Join(dir, "subfolders")
-	if fi, err := os.Stat(sub); err == nil && fi.IsDir() {
-		if err := r.walkCacheChildren(sub, folderPath, handler); err != nil {
-			return err
-		}
-	}
-	return nil
+	return w.cacheInto(sc, relJoin(dir, "subfolders"), folderPath, func(w *localWalk, s *scope, rel string, prefix []string) error {
+		return r.walkCacheChildren(w, s, rel, prefix)
+	})
 }
 
 // decodeMaildirName turns a Maildir++ subfolder directory name into a sanitized

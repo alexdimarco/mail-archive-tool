@@ -1,0 +1,19 @@
+#!/bin/sh
+# Run the session's Go wrapper for another target OS, e.g. to compile a Windows test binary.
+# usage: gofor <darwin|linux|windows> <go arguments...>
+S=/private/tmp/claude-503/-Users-alex-dimarco-repositories/86c4cdf3-3c8e-4270-a184-12f76f0288e7/scratchpad
+if [ "$#" -lt 2 ]; then
+	echo "usage: gofor <darwin|linux|windows> <go arguments...>" >&2
+	exit 2
+fi
+case "$1" in
+darwin | linux | windows) ;;
+*)
+	echo "gofor: unknown OS $1 (want darwin, linux or windows)" >&2
+	exit 2
+	;;
+esac
+GOOS=$1
+export GOOS
+shift
+exec "$S/gobin/go" "$@"

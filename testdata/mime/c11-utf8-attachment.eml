@@ -1,0 +1,21 @@
+Message-ID: <c11-utf8-attachment@corpus.example>
+Date: Mon, 02 Jan 2023 15:04:05 +0000
+From: Alice Example <alice@example.test>
+To: bob@example.test
+Subject: UTF-8 text attachment
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="u8-bd"
+
+--u8-bd
+Content-Type: text/plain; charset=utf-8
+
+A UTF-8 attachment follows.
+
+--u8-bd
+Content-Type: text/plain; charset=utf-8; name="utf8.txt"
+Content-Disposition: attachment; filename="utf8.txt"
+Content-Transfer-Encoding: base64
+
+R3LDvMOfZQ0K
+
+--u8-bd--

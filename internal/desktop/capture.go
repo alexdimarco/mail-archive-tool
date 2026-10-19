@@ -18,6 +18,22 @@ import (
 	"mail-archive-tool/internal/state"
 )
 
+// notConfiguredMsg is the refusal text shown when Microsoft 365 is not set up —
+// shared by HeadlessCapture (a scheduled capture's refusal) and the dashboard's
+// capture install/repair (§4.6.3, MA-617), so both name the same remedy.
+const notConfiguredMsg = "not configured — set up Microsoft 365 on MailArchive Desktop's Microsoft 365 connection card (or run `mailarchive setup`), then sign in"
+
+// m365Ready reports nil when Microsoft 365 is set up (a config with a tenant and
+// a client id), else the notConfiguredMsg refusal: the check a capture install or
+// repair makes before schedule.Install (§4.6.3), the same one HeadlessCapture makes.
+func (cfg Config) m365Ready() error {
+	c := cfg.load()
+	if c == nil || strings.TrimSpace(c.Tenant) == "" || strings.TrimSpace(c.ClientID) == "" {
+		return errors.New(notConfiguredMsg)
+	}
+	return nil
+}
+
 // HeadlessCapture runs one incremental capture with NO dashboard and NO prompt —
 // the command a SCHEDULED weekly backup runs (design DC1: a scheduled capture must
 // succeed whether or not the dashboard app is open). It reads the saved config +
@@ -26,12 +42,15 @@ import (
 // logw; returns the run error.
 func HeadlessCapture(cfg Config, logw io.Writer) error {
 	out := cfg.effectiveOut()
-	c := cfg.load()
-	if c == nil || strings.TrimSpace(c.Tenant) == "" || strings.TrimSpace(c.ClientID) == "" {
-		err := errors.New("not configured — run `mailarchive setup` or open MailArchive Desktop and sign in first")
-		recordStartFailure(out, err) // OP-2: a scheduled capture that refuses must not stay GREEN (R18)
+	// §4.6.3/MA-617 + OP-2/MA-646: refuse when Microsoft 365 is not set up, via the
+	// shared m365Ready check (the dashboard's capture install/repair uses it too),
+	// AND record a FAILED last-run so a scheduled capture that refuses at start does
+	// not stay silently GREEN until it is twice its period late (R18).
+	if err := cfg.m365Ready(); err != nil {
+		recordStartFailure(out, err)
 		return err
 	}
+	c := cfg.load()
 	if out == "" {
 		return errors.New("no archive location set — choose one in MailArchive Desktop first")
 	}
@@ -44,8 +63,18 @@ func HeadlessCapture(cfg Config, logw io.Writer) error {
 		Unattended:     true, // a scheduled run never prompts; it uses the saved sign-in
 		IncludeDeleted: s.IncludeDeleted, IncludeJunk: s.IncludeJunk,
 	}
+	logger := log.New(logw, "", log.LstdFlags)
 	opts := app.Options{Out: out, Mode: export.Incremental, Index: true, Pages: true, KeepRaw: s.KeepRaw}
-	_, err := app.RunGraph(context.Background(), g, opts, log.New(logw, "", log.LstdFlags))
+	// An archive location that holds the desktop's settings and sign-in copies
+	// them with the archive (design-local-confidentiality P10). The scheduled
+	// capture does not refuse — that would silently stop an installed backup —
+	// it warns, records the warning for `status`, and captures [CC16].
+	if dir := cfg.settingsInArchive(out); dir != "" {
+		msg := fmt.Sprintf("Your MailArchive settings and sign-in are stored inside the archive folder %s. Why: the archive is meant to be copied and synced. Do this: choose an archive location that does not contain %s (Settings).", out, dir)
+		logger.Printf("warning: %s", msg)
+		opts.Warnings = []state.RunWarning{{Code: "config_in_archive", Message: msg}}
+	}
+	_, err := app.RunGraph(context.Background(), g, opts, logger)
 	return err
 }
 
@@ -140,6 +169,9 @@ func (d *dashboard) activity(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *dashboard) startCapture() error {
+	if d.cfg.localOnly() { // the page shows no button; a direct request is told the same, with the steps
+		return errors.New(archiveNowOff(d.cfg.goos(), d.cfg.effectiveOut()))
+	}
 	cfg := d.cfg.load()
 	if cfg == nil || strings.TrimSpace(cfg.Tenant) == "" || strings.TrimSpace(cfg.ClientID) == "" {
 		return fmt.Errorf("not configured — open Microsoft 365 setup to add your tenant and application ID first")
@@ -150,7 +182,20 @@ func (d *dashboard) startCapture() error {
 	}
 	s := d.cfg.settings()
 	tcfg := d.cfg.tokenCfg(cfg)
-	return d.runJob(func(logger *log.Logger) (string, error) {
+	// A capture that has to sign in holds the process-wide sign-in mutex for its whole run,
+	// so two device flows never run at once: the workspace's sign-in is refused meanwhile,
+	// and this one is refused while the workspace signs in (XC8).
+	needsFlow := false
+	if _, signed := d.cfg.signInState(); !signed {
+		if !d.flow.hold("capture") {
+			return fmt.Errorf("a Microsoft sign-in is already in progress (started from the Extraction workspace) — finish it first")
+		}
+		needsFlow = true
+	}
+	err := d.runJob(func(logger *log.Logger) (string, error) {
+		if needsFlow {
+			defer d.flow.release("capture")
+		}
 		g := app.GraphOptions{
 			Auth: "device", Tenant: cfg.Tenant, ClientID: cfg.ClientID,
 			TokenStore: tcfg.TokenStore, TokenCachePath: tcfg.TokenCachePath,
@@ -163,6 +208,29 @@ func (d *dashboard) startCapture() error {
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("Archived — %d message(s) exported, %d indexed.", res.Stats.Exported, res.Indexed), nil
+		return archivedLine(res), nil
 	})
+	if err != nil && needsFlow {
+		d.flow.release("capture")
+	}
+	return err
+}
+
+// archivedLine is the result text of a finished capture. When more messages
+// were exported than the archive grew by — a key exported again replaces its
+// earlier copy — it says so, so "4 exported, 3 indexed" is not a puzzle (F13).
+func archivedLine(res app.Result) string {
+	line := fmt.Sprintf("Archived — %d message(s) exported, %d indexed.", res.Stats.Exported, res.Indexed)
+	if added := res.ManifestSize - res.ManifestBefore; added >= 0 {
+		if replaced := res.Stats.Exported - added - res.Stats.Filled; replaced > 0 {
+			line += fmt.Sprintf(" (%d of the exports replaced an earlier copy of the same message, so the archive holds %d new.)", replaced, added)
+		}
+	}
+	// The messages with a parse gap, as the CLI and mailarchive-gui count them (res.Undecodable is
+	// every record with one): in words true of each kind, since a fallback or an unsplit message
+	// has no part in a zip. The report says which part and why (friction F12).
+	if res.Undecodable > 0 {
+		line += fmt.Sprintf(" %d message(s) carry a gap in how they were read (a part kept as received or cut short, or a text read by an earlier version); attachments-report.tsv in the archive folder says which.", res.Undecodable)
+	}
+	return line
 }

@@ -21,17 +21,20 @@ mkdir -p "$OUT"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-echo "==> macOS universal GUI .app + CLI (v$VERSION)"
-GOOS=darwin GOARCH=arm64 go build -o "$WORK/gui-arm64" ./cmd/mailarchive-gui
-GOOS=darwin GOARCH=amd64 go build -o "$WORK/gui-amd64" ./cmd/mailarchive-gui
-GOOS=darwin GOARCH=arm64 go build -o "$WORK/cli-arm64" ./cmd/mailarchive
-GOOS=darwin GOARCH=amd64 go build -o "$WORK/cli-amd64" ./cmd/mailarchive
+echo "==> macOS universal .app + CLI (one program, v$VERSION)"
+GOOS=darwin GOARCH=arm64 go build -o "$WORK/mailarchive-arm64" ./cmd/mailarchive
+GOOS=darwin GOARCH=amd64 go build -o "$WORK/mailarchive-amd64" ./cmd/mailarchive
 
 app="$WORK/Mail Archive.app"
 mkdir -p "$app/Contents/MacOS"
-go run github.com/randall77/makefat "$app/Contents/MacOS/mailarchive-gui" "$WORK/gui-arm64" "$WORK/gui-amd64"
-chmod +x "$app/Contents/MacOS/mailarchive-gui"
-go run github.com/randall77/makefat "$OUT/mailarchive-macos-universal" "$WORK/cli-arm64" "$WORK/cli-amd64"
+# The one program is the bundle's executable. Contents/MacOS/mailarchive-gui is a
+# SYMLINK to it, and the bundle's CFBundleExecutable is that former name, so a
+# Finder double-click comes in under mailarchive-gui and §4.1 rule 6 opens the
+# wizard (§4.3, §7.2); MA-614 pins the symlink (SC11).
+go run github.com/randall77/makefat "$app/Contents/MacOS/mailarchive" "$WORK/mailarchive-arm64" "$WORK/mailarchive-amd64"
+chmod +x "$app/Contents/MacOS/mailarchive"
+ln -sf mailarchive "$app/Contents/MacOS/mailarchive-gui"
+go run github.com/randall77/makefat "$OUT/mailarchive-macos-universal" "$WORK/mailarchive-arm64" "$WORK/mailarchive-amd64"
 chmod +x "$OUT/mailarchive-macos-universal"
 
 sed "s/@VERSION@/$VERSION/g" "$ROOT/packaging/macos/Info.plist.in" > "$app/Contents/Info.plist"

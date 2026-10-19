@@ -25,6 +25,11 @@ var (
 // UTF-16 units, and deep trees need headroom under Windows' 260-char paths.
 const segmentMax = 120
 
+// extMax bounds the extension SanitizeFilename keeps (runes, the dot included): a longer
+// one is part of the base name and is cut with it, so no name reaches a zip entry (at most
+// 65,535 bytes) or a path longer than segmentMax plus extMax runes (MS2-AO9).
+const extMax = 24
+
 // reservedNames are Windows device names that cannot be used as a bare file or
 // directory name regardless of extension.
 var reservedNames = map[string]bool{
@@ -94,6 +99,9 @@ func SanitizeFilename(name string, index int) string {
 		return "attachment-" + itoa(index)
 	}
 	ext := filepath.Ext(name)
+	if len([]rune(ext)) > extMax {
+		ext = "" // not an extension: the whole name is a base, and a base is bounded
+	}
 	base := strings.TrimSuffix(name, ext)
 	base, _ = sanitizeSegment(base)
 	ext = illegalChars.ReplaceAllString(ext, "")
@@ -153,6 +161,21 @@ func HashHex(s string, n int) string {
 func StripControl(s string) string {
 	return strings.Map(func(r rune) rune {
 		if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) {
+			return -1
+		}
+		return r
+	}, s)
+}
+
+// StripBidi removes the Unicode bidirectional formatting controls (U+202A to
+// U+202E, the embeddings and overrides, and U+2066 to U+2069, the isolates): a
+// right-to-left override in an untrusted field reverses what follows it in a
+// spreadsheet or a page, so "invoice.pdf" can read as "fdp.eciovni". StripControl
+// leaves them because they are printable text; fields that are echoed from mail
+// into a report or a status line strip them too (friction F16).
+func StripBidi(s string) string {
+	return strings.Map(func(r rune) rune {
+		if (r >= 0x202a && r <= 0x202e) || (r >= 0x2066 && r <= 0x2069) {
 			return -1
 		}
 		return r
@@ -225,6 +248,31 @@ func truncateRunes(s string, max int) string {
 		return s
 	}
 	return string(r[:max])
+}
+
+// ValidRecordedPath validates a path a manifest records as a clean, relative,
+// forward-slashed in-archive path whose first segment is a store token: no absolute
+// path, no backslash or drive colon, no empty, "." or ".." segment, and a first segment
+// that is not a dotfile (FC6). It returns the split segments on success. The manifest is
+// untrusted (someone else may have written it), so anything that acts on a recorded path
+// (verify, the rebuild, the exporter's removal of a record's previous files) asks first.
+func ValidRecordedPath(p string) ([]string, bool) {
+	if p == "" || strings.HasPrefix(p, "/") || filepath.IsAbs(p) {
+		return nil, false
+	}
+	if strings.ContainsAny(p, `\:`) {
+		return nil, false
+	}
+	parts := strings.Split(p, "/")
+	for i, s := range parts {
+		if s == "" || s == "." || s == ".." {
+			return nil, false
+		}
+		if i == 0 && strings.HasPrefix(s, ".") {
+			return nil, false
+		}
+	}
+	return parts, true
 }
 
 func itoa(i int) string {

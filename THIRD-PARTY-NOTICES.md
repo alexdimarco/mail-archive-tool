@@ -36,3 +36,11 @@ cache / vendor tree.
 
 SQLite itself (embedded via modernc.org/sqlite, a pure-Go transpilation) is
 public domain. The Go standard library is BSD-3-Clause (The Go Authors).
+
+Copies in the source tree. internal/source/parsev1/_dep/ holds copies of
+github.com/emersion/go-message v0.16.0 and github.com/emersion/go-textwrapper
+(MIT, as above) and of the Go 1.26.9 standard library's net/mail, mime,
+mime/quotedprintable, encoding/base64 and internal/byteorder (BSD-3-Clause, The
+Go Authors). They are the frozen parser that decides a message's identity
+(docs/design-mime-fidelity.md, MC27); their licence texts are the LICENSE-*
+files in internal/source/parsev1/.

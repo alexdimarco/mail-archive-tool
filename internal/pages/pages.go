@@ -39,8 +39,51 @@ type folderInfo struct {
 	Shown int
 }
 
-// Generate writes the folder and root index pages from the search index.
-func Generate(outDir string, ix *index.Index, logger *log.Logger) error {
+// GapBanner is the line the root page shows when the archive may not hold
+// everything its source held (fault-isolation §4.10, FC23(7)): fixed text, never
+// the text of a gap (a gap's subject and detail are untrusted), and no script.
+// An inheritor with no tool reads it and opens the report.
+const GapBanner = "Some items from the original mail source may not be in this archive — see attachments-report.tsv"
+
+// gapStampAttr is the attribute the root page carries its gap count in, so a
+// later run can tell whether the page it wrote says what the manifest now says.
+const gapStampAttr = `data-gaps="`
+
+// StampedGaps returns the gap count the root index.html was last generated with,
+// and whether the page exists. A page written before the stamp existed reads as
+// 0, so an upgrade rewrites nothing by itself.
+func StampedGaps(outDir string) (int, bool) {
+	f, err := os.Open(filepath.Join(outDir, "index.html"))
+	if err != nil {
+		return 0, false
+	}
+	defer f.Close()
+	head := make([]byte, 16<<10)
+	n, _ := f.Read(head)
+	s := string(head[:n])
+	i := strings.Index(s, gapStampAttr)
+	if i < 0 {
+		return 0, true
+	}
+	rest := s[i+len(gapStampAttr):]
+	end := strings.IndexByte(rest, '"')
+	if end < 0 {
+		return 0, true
+	}
+	count := 0
+	if _, err := fmt.Sscanf(rest[:end], "%d", &count); err != nil {
+		return 0, true
+	}
+	return count, true
+}
+
+// Generate writes the folder and root index pages from the search index. gaps is
+// the manifest-derived count of what the source held that this archive may not
+// (ledger gaps, partly-read and unparsed records; app.gapBannerCount): when
+// it is not zero the root page shows GapBanner, and the count is stamped in the
+// page so a later run knows when to regenerate it (FC24). EVERY caller passes it
+// — a run, a Graph run, reindex and rebuild — so none can drop the banner.
+func Generate(outDir string, ix *index.Index, logger *log.Logger, gaps int) error {
 	var (
 		folders []folderInfo
 		curDir  string
@@ -90,7 +133,7 @@ func Generate(outDir string, ix *index.Index, logger *log.Logger) error {
 	}
 
 	sort.Slice(folders, func(i, j int) bool { return folders[i].Dir < folders[j].Dir })
-	if err := writeRootPage(outDir, folders); err != nil {
+	if err := writeRootPage(outDir, folders, gaps); err != nil {
 		return err
 	}
 	if logger != nil {
@@ -157,10 +200,14 @@ func writeFolderPage(outDir, dir string, rows []row, total int) error {
 	return nil
 }
 
-func writeRootPage(outDir string, folders []folderInfo) error {
+func writeRootPage(outDir string, folders []folderInfo, gaps int) error {
+	if gaps < 0 {
+		gaps = 0
+	}
 	return renderFile(filepath.Join(outDir, "index.html"), rootTemplate, rootPageData{
 		Folders:   folders,
 		Generated: time.Now().UTC().Format("2006-01-02 15:04 MST"),
+		Gaps:      gaps,
 	})
 }
 
@@ -189,6 +236,7 @@ type folderPageData struct {
 type rootPageData struct {
 	Folders   []folderInfo
 	Generated string
+	Gaps      int
 }
 
 // RootRelPrefix returns "../" repeated depth times, to link from a folder page

@@ -23,16 +23,16 @@ mailbox offline.
 
 ## Just want to download and run it?
 
-No build, no command line. Grab the GUI for your machine from the
+No build, no command line. Grab it for your machine from the
 [**Releases page**](https://github.com/alexdimarco/mail-archive-tool/releases),
-double-click it, follow the wizard, then open `index.html` in the archive folder
+open the wizard (see the table), then open `index.html` in the archive folder
 it makes — that page needs no software to read.
 
 | Your machine | Download | First run |
 |---|---|---|
-| **Windows** | `mailarchive-gui-windows-amd64.exe` | double-click (SmartScreen → *More info → Run anyway*) |
-| **macOS** | `MailArchive-macos.zip` | unzip, then **right-click "Mail Archive.app" → Open → Open** once (it is unsigned) |
-| **Linux** | `mailarchive-gui-linux-amd64` | needs `zenity` installed; mark executable and double-click (or run it) |
+| **Windows** | `mailarchive-windows-amd64.zip` (or the MSI installer) | unzip, then double-click **`mailarchivew.exe`** (SmartScreen → *More info → Run anyway*) |
+| **macOS** | `MailArchive-macos.zip` | unzip to **`Mail Archive.app`**, drag it into Applications, then **right-click → Open → Open** once (it is unsigned) |
+| **Linux** | `mailarchive-linux-amd64` | needs `zenity` and a desktop session; run **`mailarchive wizard`** (or `mailarchive desktop`) |
 
 On macOS the double-click app is **`MailArchive-macos.zip`** (it unzips to
 `Mail Archive.app`). The command-line tool is a separate download,
@@ -40,7 +40,18 @@ On macOS the double-click app is **`MailArchive-macos.zip`** (it unzips to
 (`tar -xzf …`, then `./mailarchive -h`); do not double-click it, or macOS opens
 it in a text editor. Both are universal (Apple Silicon and Intel).
 
-The wizard is the [GUI section](#gui-native-dialog-wizard) below.
+**One program.** MailArchive is a single program with verbs (`wizard`, `desktop`,
+`run-job`, and the command-line exporter). On Windows it is a pair of files built
+from that one program: double-click **`mailarchivew.exe`** for the dashboard (a
+no-console build), start the wizard from its Start-menu shortcut or with
+`mailarchivew.exe wizard`, and use **`mailarchive.exe`** for the command line.
+Double-clicking `mailarchive.exe` only prints which file to double-click. A
+terminal's `mailarchive.exe desktop` holds that terminal and ends when it closes;
+`mailarchivew.exe desktop` outlives it. On macOS the one file lives inside
+`Mail Archive.app`; on Linux it is the one `mailarchive` binary. The release notes
+list the per-platform downloads.
+
+The wizard is the [wizard section](#the-wizard-mailarchive-wizard) below.
 
 ## Start here: which path for my mail program?
 
@@ -77,7 +88,7 @@ mailarchive -auto -out ./archive                       # first archive (incremen
 mailarchive status -out ./archive                      # is it complete? did the last run work?
 mailarchive schedule -out ./archive -auto              # print the nightly entry (nothing applied)
 mailarchive schedule -out ./archive -auto -install     # keep it current, every night at 02:00
-mailarchive serve -out ./archive                       # search + read at http://127.0.0.1:8099/
+mailarchive serve -out ./archive                       # search + read: opens your browser at a private link
 ```
 
 `-auto` archives **every** mail store it discovers (Outlook on Windows;
@@ -85,11 +96,14 @@ Thunderbird and Evolution on any OS). To see that set before committing to it,
 run `-auto -list`: it prints the stores that would be archived, one per line
 with a rough size, and exits without exporting or creating the output directory.
 
-## GUI (native dialog wizard)
+## The wizard (`mailarchive wizard`)
 
-`mailarchive-gui` is a small wizard built on native OS dialogs (pure-Go
-[`zenity`](https://github.com/ncruces/zenity)) — no browser, and on Windows no
-console window. Double-click it and it walks you through:
+The **wizard** (`mailarchive wizard`) is a small wizard built on native OS dialogs
+(pure-Go [`zenity`](https://github.com/ncruces/zenity)) — no browser, and on
+Windows no console window. Open it from: the **MailArchive wizard** shortcut in the
+Start menu (Windows MSI); on a Windows zip without the MSI, make a shortcut to
+`mailarchivew.exe` and add ` wizard` to its Target; `Mail Archive.app` on macOS;
+the `.desktop` entry (or `mailarchive wizard`) on Linux. It walks you through:
 
 0. **Backup health** — if this wizard has scheduled an archive before, its
    health comes first (last run, completeness, whether the schedule still points
@@ -124,18 +138,35 @@ console window. Double-click it and it walks you through:
    index errors) with an *Open the archive* button that opens `index.html`.
 10. **Keep this archive current?** — *daily at 02:00* or *weekly, Sunday 03:00*
     installs a schedule that repeats exactly this export using this very
-    program (`mailarchive-gui -job FILE`, no dialogs, no console); the wizard
+    program (`mailarchive run-job FILE`, no dialogs, no console); the wizard
     warns first if the program runs from Downloads or a temp folder. A failed
     scheduled run raises a desktop notification so it never fails silently.
 
 A run log is written to `mailarchive.log` in the output folder (rotated at 8 MB).
 The GUI drives the exact same export engine as the CLI, so results are identical.
 
-Build the no-console Windows GUI explicitly with:
+Build the no-console Windows build (`mailarchivew.exe`) explicitly with:
 
 ```sh
-GOOS=windows GOARCH=amd64 go build -ldflags -H=windowsgui -o mailarchive-gui.exe ./cmd/mailarchive-gui
+GOOS=windows GOARCH=amd64 go build -ldflags -H=windowsgui -o mailarchivew.exe ./cmd/mailarchive
 ```
+
+### Adding new mail to a Thunderbird archive
+
+An archive made from Thunderbird (or any mbox / maildir folder) is topped up the same way it was made, into
+the **same archive folder**. A run is incremental by default, so only messages not yet archived are added.
+MailArchive Desktop opens such an archive to read, search, check and export it, but does not re-read
+Thunderbird: its **Archive now** is for Microsoft 365 and is switched off for it, with these steps shown.
+
+- **the MailArchive wizard (`mailarchive wizard`):** open it, choose **Thunderbird / mbox mail folder** (or **Auto-detect my mailboxes**),
+  pick your Thunderbird mail folder, then at **Select the output folder** pick the same archive folder as
+  before (the wizard does not pre-fill it), and choose **Incremental**.
+- **macOS / Linux:** `mailarchive -input "<Thunderbird mail folder>" -out "<archive folder>"`, for example
+  `~/Library/Thunderbird/Profiles/<profile>/Mail/Local Folders` (macOS) or
+  `~/.thunderbird/<profile>/Mail/Local Folders` (Linux). `mailarchive -auto -out "<archive folder>"` takes every
+  Thunderbird store it finds.
+- **Windows:** `mailarchive -input "<Thunderbird mail folder>" -out "<archive folder>"`, for example
+  `%APPDATA%\Thunderbird\Profiles\<profile>\Mail\Local Folders`; or `mailarchive -auto -out "<archive folder>"`.
 
 ## Output layout
 
@@ -186,15 +217,37 @@ remote images, fonts or stylesheets), cannot submit forms or rewrite links with
 content is preserved verbatim; the policy is the control. Browsers enforce the
 meta form on `file://`, which is what makes tool-free browsing safe.
 
+When a message's HTML cannot be shown as HTML, its page shows the HTML as
+escaped source instead: the words stay readable and searchable, and its inline
+images go into the zip. This is never silent: `status` (and the apps' health
+views) say how many messages are shown this way and why, in plain words, with
+nothing to do about it; the run counts it and
+`attachments-report.tsv` lists it as `html-shown-as-source` with one of these
+reasons: `unsafe-after-reparse` (re-reading the cleaned page as a browser would
+still found something live that must not be), `unparseable`,
+`too-deeply-nested` (still deeper than the HTML parser accepts after
+flattening, which drops the tags of markup nested past 480 levels but keeps its
+text, with words that a paragraph, table cell or other block kept apart still
+apart), or
+`too-large` (cleaning it would make it more than 16 times its own size, and at
+least 1 MiB: markup that a browser's parser blows up, built to exhaust the
+exporter rather than to be read).
+
 ## Build
 
 ```sh
-make build            # CLI  -> bin/mailarchive
-make build-gui        # GUI  -> bin/mailarchive-gui
-make build-windows    # bin/mailarchive.exe (console) + bin/mailarchive-gui.exe (no console)
+make build            # the program -> bin/mailarchive
 ```
 
-Requires Go 1.23+. Both binaries are pure Go (no cgo); the Windows executables
+The Windows pair is the console build and the no-console build of the one program
+`./cmd/mailarchive`, cross-compiled from any OS:
+
+```sh
+GOOS=windows GOARCH=amd64 go build -o bin/mailarchive.exe ./cmd/mailarchive
+GOOS=windows GOARCH=amd64 go build -ldflags -H=windowsgui -o bin/mailarchivew.exe ./cmd/mailarchive
+```
+
+Requires Go 1.26+. The program is pure Go (no cgo); the Windows executables
 cross-compile from any OS.
 
 ## Usage
@@ -247,6 +300,7 @@ does this automatically across every mailbox it finds.
 | `-log` | Write the run log to this file (size-capped, rotated) instead of stderr — what scheduled jobs use. |
 | `-manifest` | Manifest path (default `<out>/.mailarchive-manifest.json`). |
 | `-copy-first` | Copy each data **file** to a temp snapshot before reading (avoids a lock when the mail app is open; ignored for directories). |
+| `-follow-links` | An `-input` (a mail folder: Thunderbird, Evolution, a maildir) whose **folder links** are read too (repeatable, comma-separated; the wizard's "Follow folder links" answer; `follow_links` in a job file). Without it a link to another folder (a symlink, or on Windows a junction) is **not followed**: it is listed once as "not captured" with a remedy that names this flag, so nothing is dropped silently. With it the input keeps its archive (no second tree, nothing archived twice) and a link that loops or repeats a folder reads it once. A link to a **file** outside the store, and a pipe or device, are never read, with or without it. |
 | `-outlook` | **Windows + classic Outlook only.** Have Outlook export each account to a fresh `.pst` under `<out>/_outlook-pst`, then archive those. Use when a live Exchange/`.ost` cache can't be read directly (see below). Refuses with a message elsewhere. |
 | `-outlook-sync-wait` | With `-outlook`: run a Send/Receive and wait up to this long (default `5m`) for downloads before creating the PST; `0` skips the sync. Only mail Outlook has downloaded locally is captured — set "Mail to keep offline" to **All** first for a complete archive. |
 | `-auto` | Auto-discover mail stores: Outlook files on Windows (`%LOCALAPPDATA%\Microsoft\Outlook\*.ost`, `%USERPROFILE%\Documents\Outlook Files\*.pst`), Thunderbird profiles on any OS (`~/.thunderbird/*/{ImapMail,Mail}/*`, incl. Snap and macOS/Windows), **and** Evolution stores (`~/.local/share/evolution/mail/local` and each `~/.cache/evolution/mail/*` IMAP cache, incl. Flatpak). Orphaned or corrupt Outlook `.ost` stubs (left by removed accounts) are skipped; a file merely locked by a running Outlook is kept. |
@@ -311,7 +365,7 @@ also writes **browsable folder pages**. Both update incrementally.
 **Local search + reader UI** (scales to millions of messages):
 
 ```sh
-mailarchive serve -out ./export          # then open http://127.0.0.1:8099/
+mailarchive serve -out ./export          # opens your browser at its own private link
 ```
 
 Ranked full-text over subject, body, people and attachment names, with filters
@@ -319,10 +373,30 @@ for folder, year and has-attachment. Click a result to read the email; grab its
 attachments as a zip. The box also understands inline tokens —
 `from:bob folder:Inbox after:2025-01 before:2025-07 has:attach invoice` — where a
 date can be a whole year (`2025`), a month (`2025-01`) or a day (`2025-01-15`).
-`serve` has **no authentication**: it binds to localhost by default and warns
-loudly if you bind it elsewhere. Archived pages are served under the same strict
-policy they carry, symlinks cannot lead outside the archive, and search snippets
-are escaped.
+**Who can open it.** `serve` binds to localhost by default and is opened only
+through a **private link** it makes each time it starts: it opens your browser at
+one (a one-time link that works for about a minute) and, on a terminal, prints a
+second (ten minutes) in case your browser did not open — press Enter in that
+terminal for another, for a second browser or device. Other accounts on this
+computer, and web pages, cannot open your archive; a program running as you can,
+since it already has your files. Nothing is printed to a log: with no terminal
+(`nohup`, `launchd`, `systemd`, a detached `tmux`) `serve` tells you to run
+**`mailarchive serve -link -out ./export`** from any terminal of your account for
+a fresh link; `-no-browser` prints a link instead of opening one, and none is
+opened without a display (a headless ssh session). A tunnel such as
+`ssh -L 9000:127.0.0.1:8099` works: open the link through the forwarded port. A
+page opened without its link shows a short "needs its private link" page, never
+your mail. Scripts that called the HTTP API with `curl` have no session: use
+`mailarchive search` (the same query grammar, `-json` for machine output). On
+Linux and macOS another account that can list running programs could read a link
+in the instant a browser is opened with it and use it first (macOS hands the link
+to the browser by a path that keeps it out of the program list); a link works
+once, and a page that says a link was "already used" when you did not use it
+means: stop `serve` and start it again, which ends every session. Binding `serve`
+to another address warns loudly — the archive and the session cookie then cross
+the network in clear text — and each browser still needs its own link.
+Archived pages are served under the same strict policy they carry, symlinks cannot
+lead outside the archive, and search snippets are escaped.
 
 **Terminal search** (no browser):
 
@@ -548,8 +622,9 @@ Incomplete: 12 still missing content · 0 source-empty (never fillable) · 0 not
             (still missing content = not downloaded yet; fills on the next run)
 Fixity coverage: 1843 of 1843 records recorded (run `mailarchive verify -out "/home/alex/export"` to check the bytes)
 Extractable: 1843 of 1843 records have a preserved original (.eml) on disk
-Last run:   2026-09-02 02:00 → ok · exported 5 · filled 2 · took 41s
+Last run:   2026-09-02 02:00 EDT → ok · exported 5 · filled 2 · took 41s
 Last verify: 2026-09-01 02:05 → attested
+            (verify times are UTC)
 Schedule:   "mailarchive-3fa2b1c0" installed · daily at 02:00 · runs /usr/local/bin/mailarchive · installed 2026-09-01 (UTC) on laptop
 Posture:    WARN
   WARN: 12 message(s) still missing content — download for offline use in your mail app, then re-run; incremental fills them (see …)
@@ -574,9 +649,10 @@ itself to migrate. It is informational and never changes the posture.
 The posture fails closed: a schedule with no run ever recorded, a run that never
 finished (crash, kill, power loss), a scheduled program that no longer exists or
 is not this binary, a last run older than twice the schedule period, a last
-verify that was not attested, a manifest that exists but cannot be read (a newer
-format, or corrupt), or a scheduler that cannot be queried all show up, each with
-its remedy. It exits 0 whenever it reports; the posture is the answer. For a
+verify that was not attested, a scheduled verify that has not run for twice its
+own period, a schedule descriptor that cannot be read, a manifest that exists
+but cannot be read (a newer format, or corrupt), or a scheduler that cannot be
+queried all show up, each with its remedy. It exits 0 whenever it reports; the posture is the answer. For a
 machine-readable form see [Machine-readable output](#machine-readable-output).
 
 ### Machine-readable output
@@ -586,34 +662,123 @@ carries any operator conversation) so a monitor or CI gate keys on fields, not
 prose.
 
 **`status -json` (version 2).** Top-level keys: `version`, `posture`, `reasons`,
-`reason_codes`, `out`, `messages`, `indexed`, `fillable`, `terminal`, `unknown`,
-`fixity`, `extractable`, `last_run`, `last_verify`, `schedule`. (`extractable` is
-a backward-compatible addition at version 2 — a new optional key, so a consumer
-that ignores unknown keys is unaffected and the version is not bumped.)
+`reason_codes`, `out`, `messages`, `indexed`, `indexed_known`, `fillable`,
+`terminal`, `unknown`, `fixity`, `extractable`, `last_run`, `last_verify`,
+`schedule`, `verify_schedule`, `shown_as_source`, `capture_gaps`, `unreadable`.
+(`extractable`, `indexed_known`, `verify_schedule`, `shown_as_source`,
+`capture_gaps`, `unreadable` and `last_run.in_progress` are backward-compatible additions
+at version 2 — new optional keys, so a consumer that ignores unknown keys is
+unaffected and the version is not bumped.)
+
+- `indexed` is how many messages the search index holds, **only when
+  `indexed_known` is `true`**: while `search.db` is busy (another program has it
+  locked) or unreadable, `indexed_known` is `false` and `indexed`'s `0` is not a
+  count — read `reason_codes` (`index_busy`, `index_unreadable`).
 
 - `posture` is one of `GREEN` · `WARN` · `RED`.
 - `reasons` is the human WARN/RED lines; `reason_codes` is a **parallel** array
   (same length, same order) of stable snake_case codes, so a gate matches a code
   instead of wording that can change. The codes: `manifest_unreadable`,
-  `incomplete_content`, `unexamined_entries`, `index_behind`, `cloud_sync`,
+  `incomplete_content`, `unexamined_entries`, `shown_as_source` (a note, not a
+  WARN: messages shown as plain text; the posture is unchanged), `index_behind`,
+  `index_unreadable`, `index_missing`, `index_busy`, `cloud_sync`,
   `lastrun_unreadable`, `never_ran`, `run_failed`, `auth_remedy`,
   `run_in_progress`, `run_stuck`, `run_never_finished`, `run_cancelled`,
   `stale`, `not_attested`, `verify_unrecorded`, `verify_stale`,
+  `verify_in_progress`, `verify_never_finished`, `verify_failed`,
+  `lastverify_unreadable`, `verify_descriptor_unreadable`,
   `descriptor_unreadable`, `no_schedule`, `moved_archive`, `other_host`,
-  `scheduler_unavailable`, `not_installed`, `exe_missing`, `exe_moved`.
+  `scheduler_unavailable`, `not_installed`, `exe_missing`, `exe_moved`,
+  `verify_other_host`, `verify_not_installed`, `verify_exe_missing`,
+  `verify_exe_moved`, `archive_unwritable` (a scheduled backup whose archive folder takes no write:
+  read-only, full or lost drive — a run there cannot record its own failure, so
+  this is where it shows; the probe is a write by the account running `status`,
+  so a read-only monitoring account on the backup's host sees it for a healthy
+  backup: run `status` as the account the job runs as), and the capture-gap
+  codes `capture_gaps_stuck` (WARN, listed first of the gap codes, never RED),
+  `capture_gaps_fillable` (WARN), `capture_gaps_terminal` (WARN),
+  `capture_gaps_not_attempted` (a note: the last run did not walk that source or
+  folder, or no run record exists to say), `unreadable_messages` (WARN) and
+  `unparsed_messages` (a note); see the next items.
+- `capture_gaps` is what the source holds that this archive does not (the
+  capture-gap ledger), or `null` with no manifest: `{fillable, terminal, info,
+  stuck, not_attempted, oldest_first_run, deadline?, items}`. The four counts
+  are **items** (a folder counts as one, an overflow entry as the items it
+  stands for) from the **ledger**: `fillable` and `terminal` are the gaps the
+  last run observed, `stuck` is the part of `fillable` that has failed on three
+  or more runs over at least 72 hours (two schedule periods if longer),
+  `not_attempted` the fillable and terminal gaps whose source or folder the last
+  run did not walk, `info` anomalies where nothing is missing. They are **not**
+  the top-level `fillable` and `terminal`, which count manifest **records**
+  (messages with content or attachments still missing, or empty at the source);
+  a monitor of lost mail reads `capture_gaps`, a monitor of incomplete pages
+  reads both. `oldest_first_run` is the earliest first sighting among the
+  missing items, or `null`. `items` is at most 20, most severe first (stuck,
+  terminal, fillable, not attempted); each has `source` (the mailbox or input
+  path), `folder`, `subject` and `date` (omitted when unknown), `scope`
+  (`item`, `folder` or `overflow`), `reason` (a code such as `fetch-failed`),
+  `class` (`fillable`, `terminal` or `info`; an unknown class from a newer build
+  reads as `terminal`), `remedy` (the sentence `status` prints), `original`
+  (whether the original still exists; omitted when nothing true can be said),
+  `runs`, `attempted` (the last run walked it) and `stuck`. `deadline` is the
+  sentence for a user about to lose a Microsoft 365 mailbox, present while a
+  fillable Microsoft 365 gap is being retried.
+- `unreadable` is how many messages could only be partly read (pages with what
+  was readable); `unparsed` records are kept as raw text and appear as the
+  `unparsed_messages` note only.
+- `undecodable` is how many messages carry at least one parse gap. Three report
+  kinds name a part that is in the attachments zip: `undecoded-part` (kept as
+  received), `corrupt-part` (kept as far as it decoded) and `structure-limit` (the
+  unread rest of a message). An `unsplit-multipart` (no zip: the text is on the page
+  as one body) is counted too, and so are `fidelity-fallback` and `identity-stub`,
+  which have no part and no zip (the page is as an earlier version read the
+  message). `fidelity_fallback` is how many were written from an earlier parser's content because
+  this version could not decode them in full. Both are counts of manifest **records**,
+  neither is part of `terminal` (a part this version cannot decode is not empty at the
+  source), and neither moves the posture: they are the notes `undecodable_messages` and
+  `fidelity_fallback` in `reasons`. `last_run` carries the same two counts when they
+  are not zero, and `parse_gaps` gives the number of messages per parse-gap kind
+  (`undecoded-part`, `corrupt-part`, `unsplit-multipart`, `structure-limit`,
+  `fidelity-fallback`, `identity-stub`; a message with two kinds counts once in each),
+  absent when there is none, so a monitor can tell a fallback from a lost part.
+- `last_run` also carries `gaps_observed`, `gaps_new`, `gaps_recovered`,
+  `gaps_fillable`, `gaps_terminal`, `gaps_stuck` and `unreadable`: what that run
+  observed in the ledger (`gaps_new` is what a monitor alerts on, so a known,
+  unfixable gap does not hide a new loss). They are `0` in a record an older
+  build wrote. A run that finished but could not capture something is recorded
+  `failed` (exit 1) for now, with `error` starting `partial:`.
+- **Older builds** know none of this: their `status` and `verify` show no gap
+  line for an archive that has a ledger, so a mixed-version fleet should key on
+  the presence of `capture_gaps`, not on its absence meaning "no gaps".
+- `shown_as_source` is `{count, reasons}` — how many messages are shown as plain
+  text instead of a formatted page, and a count per reason (`unsafe-after-reparse`,
+  `unparseable`, `too-deeply-nested`, `too-large`; see the report kinds above);
+  absent when there are none. The same fact is a note, never a WARN, in
+  `reasons` with the code `shown_as_source`, and as a "Shown as source:" line in
+  `status` and in the apps' health views: nothing is lost (the original is kept
+  and searchable), so there is nothing to do.
 - `fixity` is `{records, with_fixity}` (coverage, not integrity), or `null` when
   there is no manifest.
 - `extractable` is `{records, records_with_eml}` — how many records have a
   preserved original (`.eml`) present on disk (file presence, the same signal
   `extract` and `verify` use), or `null` when there is no manifest.
-- `last_run` is `{status, started, finished, error?, exported, filled}`, where
-  `status` is one of `ok` · `failed` · `cancelled` · `running` and `finished` is
-  `null` while a run is in progress.
+- `last_run` is `{status, started, finished, error?, exported, filled,
+  in_progress}`, where `status` is one of `ok` · `failed` · `cancelled` ·
+  `running` and `finished` is `null` while a run is in progress **or** when the
+  run died without finishing. `status: running` alone does not say a run is
+  alive: `in_progress` is `true` only while a run really holds the archive lock,
+  and a `running` record with `in_progress: false` is the run that never
+  finished (`run_never_finished` in `reason_codes`).
 - `last_verify` is `verify`'s own verdict — `{status, started, finished,
   attested, records, with_fixity, checked, ok, modified, missing, unrecorded,
-  unexpected, recorded, exit_code}` — or `null` when no verify has run.
+  unexpected, recorded, exit_code}` — or `null` when no verify has run. While
+  a verify is running (or after one that never finished) `status` is
+  `running` and an optional `previous` object carries the last finished
+  verdict, which the posture still judges.
 - `schedule` is `{name, state, interval, at, exe, host}` (present only when a
   schedule is recorded).
+- `verify_schedule` is the scheduled verify in the same shape, from its own
+  descriptor (present only when a verify schedule is recorded).
 
 `status` always exits 0: the posture is the answer, so read `posture` /
 `reason_codes` rather than the exit code.
@@ -622,7 +787,10 @@ that ignores unknown keys is unaffected and the version is not bumped.)
 bool), `out`, `records`, `with_fixity`, `checked`, `ok`, `modified`, `missing`,
 `unrecorded`, `unexpected`, `recorded`, `problems` (`[{path, kind, detail}]`,
 `kind` ∈ `modified` · `missing` · `unrecorded` · `unexpected`), and `truncated`
-when a per-category list was capped. The **exit code** is the verdict too: `0`
+when a per-category list was capped, and, only when the ledger holds missing
+items or folders, `gap_items`, `gap_folders`, `gap_retryable` and
+`gap_need_action` (omitted when zero; informational, they never change
+`attested` or the exit code). The **exit code** is the verdict too: `0`
 attested · `2` not attested · `1` refusal.
 
 **`search -json`** is a bare JSON array of results, while the running server's
@@ -643,6 +811,10 @@ is deleted.
 mailarchive reindex -out ./export
 # reindexed: kept=1843 pruned=12
 ```
+
+Plain `reindex` only removes; it never adds a missing row. When the index holds
+fewer messages than the manifest (status `index_behind`, or a run that reported
+`INDEX-ERRORS`), rebuild it instead — see below.
 
 ### Rebuilding the search index
 
@@ -674,7 +846,19 @@ copy that skips dotfiles dropped it, restore it from a backup.
 
 For a byte-faithful index rather than re-derived text, archive with `-raw` (so
 the `.eml` originals are on disk to parse), or re-export from the original
-source. Plain `reindex` on an archive whose index is gone points you here.
+source. Plain `reindex` on an archive whose index is gone points you here, as do
+`status`'s `index_behind` warning, its `index_unreadable` (damaged `search.db`)
+and `index_missing` (no `search.db`) postures, a run that refuses a damaged
+`search.db` before it exports anything, and a run summary's `INDEX-ERRORS` and
+"index holds N of M messages" warnings.
+
+The rebuild fixes a damaged or missing index, nothing else. When a run says
+`search.db` or the archive folder is **read-only**, or the **disk is full**, the
+rebuild would fail the same way: make the folder writable (or free space), then
+run again. A busy `search.db` (another program has it open) is not damage either:
+close that program and retry. With no manifest in the folder there is nothing to
+rebuild from; move a damaged `search.db` out of the folder and the next run
+builds a fresh index.
 
 ### Migrating the archive out (mbox/eml)
 
@@ -802,6 +986,8 @@ mailarchive schedule -interval weekly -install -- reindex -out ./export
 # Remove it later (by the archive, or by name):
 mailarchive schedule -out ./export -remove
 mailarchive schedule -name weekly-mail -remove
+# A scheduled verify is its own entry: swap -install for -remove to take out just it.
+mailarchive schedule -remove -- verify -out ./export
 ```
 
 | Flag | Description |
@@ -809,7 +995,7 @@ mailarchive schedule -name weekly-mail -remove
 | `-interval` | `daily` (default), `weekly`, or `hourly`. |
 | `-at` | Time of day `HH:MM` (default `02:00`; `hourly` uses only the minute). |
 | `-name` | Scheduler entry name (default `mailarchive-<hash of the archive path>`: one schedule per archive). Letters, digits, `.`, `_`, `-`; at most 40 characters. |
-| `-install` / `-remove` | Apply / uninstall (default: just print the entry). `-remove` finds the entry from `-out` or `-name`. |
+| `-install` / `-remove` | Apply / uninstall (default: just print the entry). `-remove` finds the entry from `-name`, from a `verify` job after `--` (its own `-verify` entry), or from `-out` (the archive's backup schedule), and removes only that entry — the archive's descriptor goes only with the schedule it records, and a scheduled verify's own descriptor only with the verify's entry. A descriptor that cannot be read (a hand edit, a damaged file) is never deleted by any removal, whatever the entry's name — the archive's default-named backup (`-out X -remove`), a backup under its own `-name`, a verify, and the dashboard's Remove alike — since nothing in such a file says whose it is: the removal names the file it leaves and the remedy, and `status` reports it until you delete it (once no such schedule for the archive is installed) or re-install to rewrite it. |
 | job flags | Either the export flags (`-out`, `-input`, `-auto`, `-mode`, `-copy-first`, `-since`, `-outlook`, `-raw`, …) on the schedule command, **or** the whole job after `--`. Not both. |
 
 What is checked *when you schedule*, not at 02:00: the job's flags parse
@@ -820,8 +1006,10 @@ refused off Windows; a `graph` job must name a `-client-secret-file` that passes
 the same checks the job applies.
 
 What it leaves behind: the scheduler entry; `<out>/.mailarchive-schedule.json`
-naming the schedule, its cadence, the program it runs and the host; and, after
-each run, `<out>/<name>.log` (rotated at 8 MB) plus `.mailarchive-lastrun.json`.
+naming the schedule, its cadence, the program it runs and the host (for a
+scheduled `verify`, its own `<out>/.mailarchive-verify-schedule.json` instead,
+so the backup's record is never overwritten); and, after each run,
+`<out>/<name>.log` (rotated at 8 MB) plus `.mailarchive-lastrun.json`.
 `status` reads all of it.
 
 Per OS:
@@ -844,7 +1032,14 @@ Per OS:
   start** when the PC next wakes and **runs on battery**, so a night the machine
   merely slept is not lost — but it **cannot power on an off machine** (a night
   the PC is off is still skipped; `status` shows it). `-remove` deletes the task,
-  the wrapper and the XML.
+  the wrapper and the XML. Antivirus real-time scanning (and Windows Search
+  indexing) can hold a freshly written file open for a moment: the tool waits up
+  to about 2 seconds for each record it renames (manifest, last-run record, logs)
+  and then refuses naming the file. If that persists, exclude the archive folder
+  from real-time scanning; to find which program holds a file, open **Resource
+  Monitor → CPU → Associated Handles** and search for the file's name. A run whose
+  last-run record could not be written logs "could not record this run", and
+  `status` may then show it as "never finished" although the log says it ended.
 
 Upgrading or moving the binary: the entry keeps pointing at the old path. Re-run
 `schedule … -install` from the new one (`status` warns "not this binary" until
@@ -864,6 +1059,19 @@ spreadsheet) in the output directory, regenerated from the manifest each run:
 | `missing-body` / `empty-attachment` | terminal | the source can never deliver it (a Microsoft 365 message that truly has no body); reported, never retried |
 | `unknown` | fillable | archived by an older version before completeness tracking; re-examined once |
 | `unresolved-inline-image` | info | the HTML references a `cid:` image that isn't in the message — common in replies/forwards and usually not recoverable |
+| `undecoded-part` | terminal | a part's transfer encoding is one this version does not decode (for example `x-uuencode`); the part is in the attachments zip as received, its name ending `.undecoded`; never retried |
+| `corrupt-part` | fillable, or terminal on Microsoft 365 | a part's data is cut short or damaged; what decoded is in the attachments zip under a name ending `.partial`, never under its real name (a cut message text has no `.partial` file: the page shows what could be decoded of it). On a source that caches (Thunderbird, Evolution, an Outlook file) the next run fills it when the complete message is there |
+| `unsplit-multipart` | fillable, or terminal on Microsoft 365 | the message's parts could not be told apart (its boundary is missing or wrong), so its whole text is the body |
+| `structure-limit` | terminal | the message has more parts, or nests them deeper, than this version reads; the rest is in the attachments zip as received (`remaining-parts.undecoded`). A record lists at most 32 such rows and one summary row |
+| `fidelity-fallback` | terminal | this version could not decode the message in full, so it is kept as an earlier version read it; nothing is lost |
+| `identity-stub` | terminal | an earlier version could not read the message at all and filed it under its placeholder; the page shows what this version reads |
+
+Every row's `detail` ends with a plain-words why and what to do (or "nothing to
+do: the original is kept"), so the report can be read without the tool. A parse-gap
+row (the kinds from `undecoded-part` down) says where the original is: "the original
+is kept in the source" when no `.eml` was made (the archive was made without `-raw`),
+"the original is kept as the .eml beside the page" when there is one. On a message
+page, a part kept as received or cut short carries a one-line note that points here.
 
 Each run prints a single `Verification:` line summarizing the manifest: how many
 messages are **still missing content**, how many are **source-empty** (the
@@ -919,17 +1127,94 @@ a headless nightly check leaves a plain-language notice on disk.
 `verify` reads every byte of every archived file and holds the archive's
 exclusive lock for its whole run, so a scheduled backup that fires meanwhile
 refuses and records nothing. **Run it outside the backup window** — or schedule
-it in its own slot, away from the backup, with an explicit `-name` so it does
-not collide with the backup schedule (both derive their name from `-out`):
+it in its own slot, away from the backup:
 
 ```sh
-mailarchive schedule -interval weekly -at 05:00 -name mailarchive-verify -install -- verify -out ./archive
+mailarchive schedule -interval weekly -at 05:00 -install -- verify -out ./archive
 ```
 
 A scheduled verify automatically gets its own entry name (`mailarchive-<hash of
--out>-verify`), distinct from the backup's, so the two coexist and neither
-overwrites the other — you don't need to pass `-name`. If you point the verify at
-the **same cadence and time** the archive's backup already uses, `schedule`
+-out>-verify`), distinct from the backup's and from every other archive's
+verify, so the two coexist and neither overwrites the other — don't pass a fixed
+`-name`: one shared name across archives would make a second archive's verify
+take over the first's entry. Only with cron (Linux/BSD) can `schedule` see that
+and refuse it; on macOS and Windows the existing entry is not read back, so the
+second install silently replaces the first archive's verify. What `schedule`
+does check on every OS is the archive's own two descriptors: a verify under the
+name of the archive's backup (or a backup under the name of its verify) is
+refused, because it would replace that entry.
+
+`status` watches a scheduled verify the way it watches the backup. The verify
+records its own descriptor, `<out>/.mailarchive-verify-schedule.json`, and
+`status` shows it on a `Verify schedule` line (`verify_schedule` in `-json`)
+beside each archive's `Last verify` line. It WARNs (`verify_stale`) when the
+last verify finished more than twice the verify's own period ago, when the last
+verify started that long ago and has not finished, or when no verify has run in
+twice that period since the verify was installed. The cadence is always the
+verify's, never the backup's. If you install (or re-install) the verify
+schedule after the archive's last verify, the WARN stays until the schedule's
+first run and says so: wait for that run, or run `mailarchive verify -out X`
+now (re-installing again changes nothing). A last verify that is still recorded as running
+while nothing holds the archive lock died mid-run (a crash, a kill, a power
+loss): `status` WARNs at once (`verify_never_finished`), so a verify that dies
+on every run never looks current. A last-verify record that cannot be read is a
+WARN too (`lastverify_unreadable`): the next verify rewrites it. As for the
+backup, the verify's entry is checked as well: a verify recorded but missing
+from this host's scheduler (`verify_not_installed`), or whose program is gone or
+is not this binary (`verify_exe_missing`, `verify_exe_moved`), is a WARN naming
+the re-install, and one installed on another host is `verify_other_host`, since
+its state cannot be checked from here.
+
+**What is not detected:** on launchd (macOS) and Task Scheduler (Windows)
+hosts, two archives that share one explicit `-name` are not detected at
+install: the second archive's verify silently replaces the first's entry,
+because `schedule` does not read those entries back. The archive that lost its
+verify then shows `verify_stale` once its last verify is older than twice its
+period. So leave `-name` out for a verify; each archive then has its own.
+
+Changing a verify's `-name` (for example from the old README's
+`-name mailarchive-verify` to none) installs a second entry and leaves the first
+one running: `schedule` never removes it, since on macOS and Windows it cannot
+tell whether that name is still this archive's. When the archive's records name
+the earlier entry (its verify descriptor, or a backup descriptor an older
+release wrote for the verify) and the scheduler still has it, the install prints
+the command that removes it,
+`mailarchive schedule -name OLD -remove -- verify -out X`. A verify an earlier
+release installed records nothing, so nothing can name it: remove it with the
+`-name` it was installed with (the old README's was `mailarchive-verify`).
+
+A verify installed by an earlier release has no verify descriptor, so `status`
+cannot tell its cadence. It does not guess one, and so raises no `verify_stale`
+for it: re-run that verify's `-install` once so `status` can watch it. (An even
+older release recorded the verify in `.mailarchive-schedule.json` itself;
+`status` still judges that verify against the cadence recorded there.)
+
+The verify descriptor is trusted only as a verify of this archive under a name
+of its own. A file that records some other job, a verify of another folder (an
+archive copied together with its records), or the name of the archive's backup
+is reported as unreadable, with its remedy: it is never deleted by `-remove`,
+and it never makes `-out X -remove` treat the backup as a verify. (A verify
+recorded for a folder that no longer exists is the renamed archive's own: it is
+still shown, and the install names its entry.)
+
+Every descriptor is handed over with the folder, so the entry name it records
+drives `-out X -remove` (and the GUI's Remove and Repair, and the removal
+command `status` prints) only when that entry is this archive's: its own derived
+name, or a custom name whose job backs up this folder and — on cron — whose
+block does, or — on Windows — whose wrapper (the file this tool wrote for the
+task) runs this folder. A name that is another archive's, or a task this tool
+never installed, is refused with the descriptor named; `-name NAME` removes an
+entry by name regardless. (launchd entries are not read back, so a custom name
+another archive's launchd entry holds cannot be told apart there; and a folder
+that is merely absent, an unplugged drive, reads as a folder that was moved, so
+a descriptor that records its path and its entry name still binds.)
+
+Remove a scheduled verify with the same command, `-install` swapped for
+`-remove`; its descriptor goes with it. A verify installed under a `-name` of its own
+(an earlier version of this README passed `-name mailarchive-verify`) is removed
+the same way with that `-name` added before `--`; without it, `-remove` says
+which entry it did not find and points at that. If you point the verify at the
+**same cadence and time** the archive's backup already uses, `schedule`
 refuses (the two would hold the lock against each other on every overlap); pick a
 different `-at` or `-interval`, as above.
 

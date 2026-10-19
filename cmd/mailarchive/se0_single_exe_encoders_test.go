@@ -1,0 +1,56 @@
+package main
+
+// SE0 single-executable slice — catalog-first skip encoders.
+//
+// Each test below encodes one catalog row of the single-executable design
+// (docs/scenario-catalog.md MA-610..MA-641, invariants R33/S59, UX clause X17)
+// with a `// covers:` marker and a t.Skip naming the slice that turns it green.
+// They are placeholders: they keep `go test ./...` green and the covers-map
+// meta-test satisfied while the rows exist but the behaviour is unbuilt. When a
+// slice builds a row, it REPLACES that row's encoder here with the real covering
+// test, so the skip becomes a permanent guard (CLAUDE.md testing discipline).
+//
+// Out of scope for SE0 (land in their build-slice's PR, per design §10/§11):
+// MA-619 (Q10), MA-642 (Q14), MA-643 (Q11), MA-644 (Q12). The lab rows
+// MA-625/626/627 are tier L (pending) and carry no encoder.
+
+// MA-616 encoder removed: the §4.6.2 identity predicate is proven by
+// internal/health/ma616_identity_test.go (the composition trace) and its
+// note/WARN texts (exe_former_name, exe_console_build, exe_version_skew, the
+// exe_missing former-name hint) by internal/health/ma616_texts_test.go.
+
+// MA-617 encoder removed (the LAST SE2 encoder): a repair rebuilds its own kind
+// from trusted inputs, never the descriptor, or refuses — proven by
+// internal/desktop/ma617_repair_test.go (the card's run-job repair keeps the
+// kind, the capture-no-Microsoft-365 refusal before schedule.Install, and
+// Remove deleting the job file) and internal/wizard's RepairSpec; the
+// command-line schedule -install kind guard is MA-631. Every SE2 row
+// MA-615..641 is now a real covering test; this file remains only as the ledger
+// of where each one landed.
+
+// MA-618 encoder removed: "when a repair is offered" is proven by
+// internal/wizard/wizard_test.go TestMA618_RepairOfferedWhen (route-gating to a
+// corroborated run-job, ExeRepoint, the not-offered twins, the volatile-dir
+// question + Cancel-installs-nothing) and internal/health/ma618_repoint_test.go
+// (the re-point comparison).
+
+// MA-633 encoder removed: the per-kind remedies are built. schedule.RepairRoute
+// is proven by internal/schedule/repairroute_test.go, and health.repairHow — the
+// rendering of the route in each surface's words, with the four backup remedies
+// re-routed through it — by internal/health/ma633_repairhow_test.go.
+
+// MA-634 encoder removed: the start-failure breadcrumb reader moved into
+// health.Gather (keyed on out, not Desc.Name) and Assess raises RED start_failed
+// under MA-168's rule — proven by internal/health/ma634_startfailure_test.go.
+// The wizard's writer stays and is exercised through the run-job path (MA-124,
+// MA-640).
+
+// MA-635 encoder removed: the Windows install-folder branch for exe_missing (a
+// known-name file missing from the running program's own directory names the
+// installer's Repair, others keep the re-install) is proven by
+// internal/health/ma635_installfolder_test.go.
+
+// MA-641 encoder removed: install==repair agreement is proven by
+// internal/wizard/wizard_test.go TestMA641_InstallAndRepairAgree — offerSchedule
+// and repairSpec both build through the pure installSpec, so Args/Exe/wrapper
+// cannot drift.

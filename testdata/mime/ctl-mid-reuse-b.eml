@@ -1,0 +1,9 @@
+Message-ID: <ctl-mid-reuse@corpus.example>
+Date: Mon, 02 Jan 2023 15:04:05 +0000
+From: Alice Example <alice@example.test>
+To: carol@example.test
+Subject: Reused id, second message
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+A different message that reuses the same Message-ID.

@@ -1,0 +1,24 @@
+Message-ID: <f25-mailman@corpus.example>
+Date: Mon, 02 Jan 2023 15:04:05 +0000
+From: Poster <poster@example.test>
+To: list@lists.example.test
+Subject: [list] Mailman footer
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="mm-bd"
+List-Id: <list.lists.example.test>
+Precedence: list
+
+--mm-bd
+Content-Type: text/html; charset=utf-8
+
+<html><body><p>The list post, in HTML.</p></body></html>
+
+--mm-bd
+Content-Type: text/plain; charset=us-ascii
+Content-Description: footer
+Content-Disposition: inline
+
+_______________________________________________
+list mailing list -- list@lists.example.test
+
+--mm-bd--

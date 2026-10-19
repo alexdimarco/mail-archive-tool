@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"mail-archive-tool/internal/graphconfig"
+	"mail-archive-tool/internal/localweb"
 )
 
 // setupCSP governs the wizard: its own same-origin script + fetch, inline styles,
@@ -24,7 +25,7 @@ const setupCSP = "default-src 'none'; script-src 'self'; connect-src 'self'; sty
 // (design-graph-setup-wizard W-C1, R19 unchanged).
 func SetupHandler(cfgPath string, store graphconfig.SecretStore) http.Handler {
 	csrf := randomToken()
-	mux := http.NewServeMux()
+	mux := localweb.NewMux()
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" && r.URL.Path != "/setup" {
@@ -49,68 +50,98 @@ func SetupHandler(cfgPath string, store graphconfig.SecretStore) http.Handler {
 			http.Error(w, "refused: this setup endpoint accepts only a same-origin, tokened request from the local machine", http.StatusForbidden)
 			return
 		}
-		var in struct {
-			Tenant, ClientID, Auth, Secret string
-		}
+		var in SetupInput
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&in); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		in.Tenant, in.ClientID = strings.TrimSpace(in.Tenant), strings.TrimSpace(in.ClientID)
-		in.Auth = strings.ToLower(strings.TrimSpace(in.Auth))
-		switch {
-		case in.Tenant == "":
-			httpJSONError(w, "Directory (tenant) ID is required")
-			return
-		case in.ClientID == "":
-			httpJSONError(w, "Application (client) ID is required")
-			return
-		case in.Auth != "device" && in.Auth != "app":
-			httpJSONError(w, "choose an auth mode: device or app")
-			return
-		}
-
-		// Delete a superseded registration's secret (W-C... MA-270) if the account
-		// key changed.
-		if prev, err := graphconfig.Load(cfgPath); err == nil && prev.Tenant != "" && prev.ClientID != "" {
-			prevAcct := graphconfig.AccountKey(prev.Tenant, prev.ClientID)
-			if prevAcct != graphconfig.AccountKey(in.Tenant, in.ClientID) {
-				_ = store.Delete(prevAcct)
-			}
-		}
-
-		acct := graphconfig.AccountKey(in.Tenant, in.ClientID)
-		configured := false
-		if in.Auth == "app" {
-			if s := strings.TrimSpace(in.Secret); s != "" {
-				if err := store.Set(acct, s); err != nil {
-					httpJSONError(w, "could not store the secret: "+err.Error())
-					return
-				}
-				configured = true
-			} else if _, err := store.Get(acct); err == nil {
-				configured = true // keep the already-stored secret (blank = unchanged)
-			} else {
-				httpJSONError(w, "a client secret is required for app-only auth (or switch to device)")
-				return
-			}
-		} else {
-			// Device mode needs no secret; drop any stored one for this account.
-			_ = store.Delete(acct)
-			configured = true
-		}
-		in.Secret = "" // drop the plaintext secret as soon as it is stored
-
-		cfg := &graphconfig.Config{Tenant: in.Tenant, ClientID: in.ClientID, Auth: in.Auth}
-		if err := graphconfig.Save(cfgPath, cfg); err != nil {
-			httpJSONError(w, "could not save the configuration: "+err.Error())
+		res, err := SaveSetup(cfgPath, store, in)
+		if err != nil {
+			httpJSONError(w, err.Error())
 			return
 		}
 		// Never echo the secret — only whether one is configured.
-		writeJSON(w, map[string]any{"ok": true, "auth": in.Auth, "configured": configured})
+		writeJSON(w, map[string]any{"ok": true, "auth": res.Auth, "configured": res.Configured})
 	})
 
-	return setupHeaders(mux)
+	return localweb.Routed(setupHeaders(mux), mux)
+}
+
+// SetupInput is the Microsoft 365 Graph configuration a loopback control surface
+// collects: the setup wizard (`mailarchive setup`) and the desktop dashboard share it.
+// The JSON keys match the wizard's POST body.
+type SetupInput struct {
+	Tenant   string `json:"tenant"`
+	ClientID string `json:"clientId"`
+	Auth     string `json:"auth"`
+	Secret   string `json:"secret"`
+}
+
+// SetupResult reports a successful SaveSetup: the stored auth mode ("device"|"app") and
+// whether a client secret is configured (app-only).
+type SetupResult struct {
+	Auth       string
+	Configured bool
+}
+
+// SetupError is a validation or storage failure whose message is safe to show the user:
+// it never contains the secret or a stack trace. Both control surfaces render it verbatim.
+type SetupError struct{ Msg string }
+
+func (e *SetupError) Error() string { return e.Msg }
+
+// SaveSetup validates in and writes the non-secret config to cfgPath and, for app-only,
+// the client secret to store. The secret is write-only — never logged, never returned —
+// and a superseded registration's secret is deleted (MA-270). This is the one place the
+// setup wizard and the desktop dashboard write the Graph configuration, so the credential
+// handling is reviewed once (design-graph-setup-wizard W-C1..W-C3, DC4/DC5). A blank
+// secret on app-only keeps the already-stored one, so updating a configuration need not
+// retype it. Every failure is a *SetupError carrying a user-safe message.
+func SaveSetup(cfgPath string, store graphconfig.SecretStore, in SetupInput) (SetupResult, error) {
+	in.Tenant, in.ClientID = strings.TrimSpace(in.Tenant), strings.TrimSpace(in.ClientID)
+	in.Auth = strings.ToLower(strings.TrimSpace(in.Auth))
+	switch {
+	case in.Tenant == "":
+		return SetupResult{}, &SetupError{"Directory (tenant) ID is required"}
+	case in.ClientID == "":
+		return SetupResult{}, &SetupError{"Application (client) ID is required"}
+	case in.Auth != "device" && in.Auth != "app":
+		return SetupResult{}, &SetupError{"choose an auth mode: device or app"}
+	}
+
+	// Delete a superseded registration's secret (MA-270) if the account key changed.
+	if prev, err := graphconfig.Load(cfgPath); err == nil && prev.Tenant != "" && prev.ClientID != "" {
+		prevAcct := graphconfig.AccountKey(prev.Tenant, prev.ClientID)
+		if prevAcct != graphconfig.AccountKey(in.Tenant, in.ClientID) {
+			_ = store.Delete(prevAcct)
+		}
+	}
+
+	acct := graphconfig.AccountKey(in.Tenant, in.ClientID)
+	configured := false
+	if in.Auth == "app" {
+		if s := strings.TrimSpace(in.Secret); s != "" {
+			if err := store.Set(acct, s); err != nil {
+				return SetupResult{}, &SetupError{"could not store the secret: " + err.Error()}
+			}
+			configured = true
+		} else if _, err := store.Get(acct); err == nil {
+			configured = true // keep the already-stored secret (blank = unchanged)
+		} else {
+			return SetupResult{}, &SetupError{"a client secret is required for app-only auth (or switch to device)"}
+		}
+	} else {
+		// Device mode needs no secret; drop any stored one for this account.
+		_ = store.Delete(acct)
+		configured = true
+	}
+	in.Secret = "" // drop the plaintext secret as soon as it is stored
+
+	cfg := &graphconfig.Config{Tenant: in.Tenant, ClientID: in.ClientID, Auth: in.Auth}
+	if err := graphconfig.Save(cfgPath, cfg); err != nil {
+		return SetupResult{}, &SetupError{"could not save the configuration: " + err.Error()}
+	}
+	return SetupResult{Auth: in.Auth, Configured: configured}, nil
 }
 
 func setupHeaders(next http.Handler) http.Handler {

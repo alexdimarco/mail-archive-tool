@@ -1,0 +1,55 @@
+Message-ID: <c15-cid-html-links@corpus.example>
+Date: Mon, 02 Jan 2023 15:04:05 +0000
+From: Alice Example <alice@example.test>
+To: bob@example.test
+Subject: cid references in html
+MIME-Version: 1.0
+Content-Type: multipart/related; boundary="ch-bd"
+
+--ch-bd
+Content-Type: text/html; charset=utf-8
+
+<html><head><style>.bg{background:url(cid:css@corpus.example)}</style></head><body><a href="cid:link@corpus.example">link</a><img src="cid:img@corpus.example"><img src="cid:abcdef@corpus.example"><p>cid:abc</p></body></html>
+
+--ch-bd
+Content-Type: image/png
+Content-Transfer-Encoding: base64
+Content-ID: <img@corpus.example>
+
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP8z8DwHwAFAAH/iZk9
+HQAAAABJRU5ErkJggg==
+
+--ch-bd
+Content-Type: image/png
+Content-Transfer-Encoding: base64
+Content-ID: <css@corpus.example>
+
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP8z8DwHwAFAAH/iZk9
+HQAAAABJRU5ErkJggg==
+
+--ch-bd
+Content-Type: application/pdf; name="link.pdf"
+Content-Transfer-Encoding: base64
+Content-ID: <link@corpus.example>
+Content-Disposition: attachment; filename="link.pdf"
+
+JVBERi0xLjQKJeLjz9MgbWltZS1jb3JwdXMgci5wZGYKMSAwIG9iajw8L1R5cGUvQ2F0YWxvZz4+
+ZW5kb2JqCnRyYWlsZXI8PC9Sb290IDEgMCBSPj4KJSVFT0YK
+
+--ch-bd
+Content-Type: image/png
+Content-Transfer-Encoding: base64
+Content-ID: <abc@corpus.example>
+
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP8z8DwHwAFAAH/iZk9
+HQAAAABJRU5ErkJggg==
+
+--ch-bd
+Content-Type: image/png
+Content-Transfer-Encoding: base64
+Content-ID: <abcdef@corpus.example>
+
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP8z8DwHwAFAAH/iZk9
+HQAAAABJRU5ErkJggg==
+
+--ch-bd--

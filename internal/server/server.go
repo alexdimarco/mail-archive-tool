@@ -5,25 +5,23 @@ package server
 
 import (
 	"encoding/json"
-	"io/fs"
 	"net"
 	"net/http"
-	"os"
-	"path"
-	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
 
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/index"
+	"mail-archive-tool/internal/localweb"
 )
 
 // New returns an http.Handler serving the UI, JSON API, and exported files
-// rooted at outDir, querying ix.
+// rooted at outDir, querying ix. Its routes are registered on a localweb.Mux, so
+// the binaries' guard and route probe name them (design-local-confidentiality
+// CC15); `serve` and the desktop reader serve it behind localweb.Wrap.
 func New(outDir string, ix *index.Index) http.Handler {
-	mux := http.NewServeMux()
+	mux := localweb.NewMux()
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
@@ -72,13 +70,14 @@ func New(outDir string, ix *index.Index) http.Handler {
 		writeJSON(w, map[string]any{"folders": folders, "years": years, "total": count})
 	})
 
-	// Serve the exported HTML files and attachment zips from a file system that
-	// never resolves outside the archive root (R4/R19); the policy headers are
-	// applied by secureHeaders below.
-	files := http.StripPrefix("/files/", http.FileServer(newContainedDir(outDir)))
+	// Serve the exported pages, .eml files and attachment zips — and nothing else
+	// the archive holds — through an os.Root that never resolves outside the
+	// archive root and never follows a link (R4/R19, design-local-confidentiality
+	// P9); the policy headers are applied by secureHeaders below.
+	files := http.StripPrefix("/files/", pinFileTypes(http.FileServer(allowedFiles{dir: outDir})))
 	mux.Handle("/files/", files)
 
-	return secureHeaders(mux)
+	return localweb.Routed(secureHeaders(mux), mux)
 }
 
 const (
@@ -118,65 +117,11 @@ func secureHeaders(next http.Handler) http.Handler {
 	})
 }
 
-// containedDir is an http.FileSystem rooted at a directory that refuses any
-// path whose resolved location (symlinks followed) lies outside that root, and
-// that never lists a directory: a directory is reachable only through its own
-// index.html (the archive's pages are the navigation). http.Dir alone blocks
-// ".." in the URL but happily follows an on-disk symlink out of the root.
-type containedDir struct {
-	root string // as given
-	real string // symlink-resolved, absolute
-}
-
-func newContainedDir(root string) containedDir {
-	real := root
-	if r, err := filepath.EvalSymlinks(root); err == nil {
-		real = r
-	}
-	if a, err := filepath.Abs(real); err == nil {
-		real = a
-	}
-	return containedDir{root: root, real: filepath.Clean(real)}
-}
-
-func (c containedDir) Open(name string) (http.File, error) {
-	rel := filepath.FromSlash(path.Clean("/" + name))
-	resolved, err := filepath.EvalSymlinks(filepath.Join(c.root, rel))
-	if err != nil {
-		return nil, err // a missing file surfaces as fs.ErrNotExist → 404
-	}
-	if a, err := filepath.Abs(resolved); err == nil {
-		resolved = a
-	}
-	if !within(c.real, resolved) {
-		return nil, fs.ErrNotExist
-	}
-	f, err := os.Open(resolved)
-	if err != nil {
-		return nil, err
-	}
-	if st, err := f.Stat(); err == nil && st.IsDir() {
-		if _, err := os.Stat(filepath.Join(resolved, "index.html")); err != nil {
-			f.Close()
-			return nil, fs.ErrNotExist
-		}
-	}
-	return f, nil
-}
-
-// within reports whether p is root or lies beneath it (case-insensitively on
-// Windows, whose file systems are).
-func within(root, p string) bool {
-	if runtime.GOOS == "windows" {
-		root, p = strings.ToLower(root), strings.ToLower(p)
-	}
-	return p == root || strings.HasPrefix(p, root+string(filepath.Separator))
-}
-
 // IsLoopback reports whether addr (host:port) binds only to this machine —
 // "localhost" or a loopback IP. An empty host (":8099") binds every interface,
-// so it is NOT loopback: `serve` has no authentication, and anything else
-// exposes the whole archive to the network.
+// so it is NOT loopback: a `serve` there sends the archive and its session cookie
+// across the network in clear text (its private link is no defence against anyone
+// who can read that traffic).
 func IsLoopback(addr string) bool {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {

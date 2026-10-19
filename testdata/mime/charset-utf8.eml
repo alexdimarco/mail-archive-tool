@@ -1,0 +1,10 @@
+Message-ID: <charset-utf8@corpus.example>
+Date: Mon, 02 Jan 2023 15:04:05 +0000
+From: Alice Example <alice@example.test>
+To: bob@example.test
+Subject: nameMap label utf8
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf8
+Content-Transfer-Encoding: 8bit
+
+Grüße café ¤¤¤å “q”

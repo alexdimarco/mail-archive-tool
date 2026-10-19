@@ -51,10 +51,11 @@ so the file grows with change, not with mailbox size. It is safe to leave alone;
 ## Using it in `serve`
 
 ```sh
-mailarchive serve -out ./archive     # then open http://127.0.0.1:8099/
+mailarchive serve -out ./archive     # opens your browser at its private link
 ```
 
-The search-and-read home page carries a **Go back in time →** link to `/goback`.
+The search-and-read home page carries a **Go back in time →** link to `goback` (the
+page's own address, under the private prefix the link gave: `…/s/<secret>/goback`).
 There are two projections, both rendered entirely on the server:
 
 - **Current** — `/goback`. Every message under the folder it lives in **now**;
