@@ -129,6 +129,24 @@ func (s Spec) TaskRunLength() int { return len(taskRun(s)) }
 // GUI uses it as the short-vs-long threshold for whether to add a wrapper.
 const SchtasksRunLimit = 261
 
+// WrapperNeeded reports whether a Windows install must fall back to a cmd.exe
+// batch wrapper instead of pointing Task Scheduler straight at the program. The
+// direct form runs the no-console build with NO console window; the wrapper runs
+// through cmd.exe, which DOES show a console window while the task runs (tester
+// friction, §D), so it is used only when the direct run string would exceed
+// SchtasksRunLimit. The XML install itself (SchtasksXML) has no length limit, so
+// this is purely a short-vs-long heuristic. It is the ONE definition every
+// install caller shares — the CLI's runSchedule, the wizard's installSpec and
+// the desktop card's backupSpecFor — so they cannot diverge on whether a task
+// flashes a window (MA-641).
+func WrapperNeeded(s Spec) bool { return wrapperNeededOn(s, runtime.GOOS) }
+
+// wrapperNeededOn is the pure core, so the decision is table-testable for any OS
+// from a non-Windows host.
+func wrapperNeededOn(s Spec, goos string) bool {
+	return goos == "windows" && s.TaskRunLength() > SchtasksRunLimit
+}
+
 // ---- cron (Linux) ---------------------------------------------------------
 
 // CronMarker tags our managed crontab block so a repeated install replaces it

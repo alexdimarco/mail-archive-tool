@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"os"
-	"runtime"
 	"strings"
 
 	"mail-archive-tool/internal/schedule"
@@ -87,12 +86,16 @@ func (cfg Config) backupSpecFor(out string) (schedule.Spec, error) {
 	}
 	name := schedule.DefaultNameFor(out)
 	logPath := schedule.DefaultLogPath(out, name)
-	return schedule.Spec{
+	spec := schedule.Spec{
 		Name: name, Interval: iv, At: at, Exe: exe,
 		Args: []string{"-capture", "-config", cfg.ConfigPath, "-out", out, "-log", logPath},
 		Log:  logPath, Out: out,
-		Wrapper: runtime.GOOS == "windows", WrapperPath: schedule.DefaultWrapperPath(name),
-	}, nil
+		WrapperPath: schedule.DefaultWrapperPath(name),
+	}
+	// A wrapper (and its cmd.exe window) only for an over-long run string; the
+	// common case runs direct with no console window (MA-641).
+	spec.Wrapper = schedule.WrapperNeeded(spec)
+	return spec, nil
 }
 
 // saveScheduleChoice remembers the interval and time chosen for the weekly backup, the

@@ -927,10 +927,12 @@ func runSchedule(args []string) error {
 		Exe:         exe,
 		Args:        append(j.command(), "-log", logPath),
 		Log:         logPath,
-		Wrapper:     runtime.GOOS == "windows",
 		WrapperPath: schedule.DefaultWrapperPath(n),
 		Out:         j.out,
 	}
+	// A wrapper (and its cmd.exe window) only when the direct run string is too
+	// long; the common case runs direct with no console window (MA-641).
+	spec.Wrapper = schedule.WrapperNeeded(spec)
 	if err := spec.Validate(); err != nil {
 		return err
 	}

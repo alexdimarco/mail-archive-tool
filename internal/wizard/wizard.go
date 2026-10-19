@@ -869,8 +869,9 @@ func installSpec(out, name, jobPath string, iv schedule.Interval, at, exe string
 		WrapperPath: schedule.DefaultWrapperPath(name),
 	}
 	// No console window when the direct run string fits; otherwise the wrapper
-	// (and its brief console) is the price of a working job (S12).
-	spec.Wrapper = runtime.GOOS == "windows" && spec.TaskRunLength() > schedule.SchtasksRunLimit
+	// (and its brief cmd.exe console) is the price of a working job (S12). The one
+	// shared decision, so every install caller agrees (MA-641).
+	spec.Wrapper = schedule.WrapperNeeded(spec)
 	return spec
 }
 

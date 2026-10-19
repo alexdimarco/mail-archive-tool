@@ -23,11 +23,11 @@ func refusal(err error) (int, string) {
 // remove) takes the recorded name only when it binds to THIS archive. The
 // positive twins first: an archive's own entry reads under its default name and
 // under a custom -name, on cron (the block's -out is the archive), and on
-// Windows (the archive's own wrapper exists). Then, sandboxed scheduler (temp
+// Windows (the archive's own task side-file exists). Then, sandboxed scheduler (temp
 // HOME, fake launchctl, crontab seams): X's descriptor copied into Y, a
 // descriptor for Y recording X's derived entry name, a custom name that another
 // archive's cron block holds, and a name that is no entry of ours on Windows (a
-// root-folder task such as GoogleUpdateTaskMachineCore: no wrapper of ours)
+// root-folder task such as GoogleUpdateTaskMachineCore: no side-file of ours)
 // are each refused with the descriptor, the name and the remedy named, and X's
 // entry stays installed. A verify descriptor planted with X's backup entry name
 // (recorded on "another host", which skips the folder check) neither reads nor
@@ -103,7 +103,9 @@ func TestSchedulerEntryNameIsBoundToItsArchive(t *testing.T) {
 		own := t.TempDir()
 		d := DescribeSpec(backupSpecFor(own, foreign))
 		code, msg := refusal(nameBoundOn(own, d, "windows"))
-		assure.Refused(t, code, msg, assure.Code(1), assure.Names(foreign, "wrapper"))
+		// No side-file (neither XML nor wrapper) for a foreign task, so it is not
+		// one this tool installed; the refusal names it and the -name remedy (MA-650).
+		assure.Refused(t, code, msg, assure.Code(1), assure.Names(foreign, "-name"))
 		// Positive twin: the archive's own custom-named task has its wrapper.
 		ownSpec := backupSpecFor(own, "nightly-win-g8a")
 		ownSpec.Wrapper, ownSpec.WrapperPath = true, DefaultWrapperPath(ownSpec.Name)

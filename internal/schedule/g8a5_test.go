@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"mail-archive-tool/internal/assure"
 )
@@ -59,6 +60,45 @@ func TestWindowsCustomTaskOfAnotherArchiveIsRefused(t *testing.T) {
 	code, msg := refusal(nameBoundOn(y, planted, "windows"))
 	assure.Refused(t, code, msg, assure.Code(1), assure.Names("nightly-x-g8a5", x, "-name"),
 		assure.NoSideEffect(func() bool { _, err := os.Stat(xSpec.WrapperPath); return err == nil }))
+}
+
+// covers: MA-455, MA-650
+// G8-AO1 for the direct (no-wrapper) install, the common Windows case after
+// MA-650: the task leaves only its XML definition beside the wrapper path, never
+// a .cmd. Its own custom name must still bind by that XML (so `-out X -remove`
+// and the GUI's Remove find it), and a name with NEITHER a wrapper nor an XML is
+// still refused as not this tool's, with the -name remedy. The owner-only
+// LOCALAPPDATA directory is the same the wrapper proof always used.
+func TestWindowsDirectInstallBindsByItsXML(t *testing.T) {
+	t.Setenv("LOCALAPPDATA", t.TempDir())
+	y := t.TempDir()
+
+	// Write only the XML side-file, the way installSchtasks does for a
+	// normal-length command (no wrapper, no console window).
+	own := backupSpecFor(y, "nightly-direct-g8a5")
+	own.WrapperPath = DefaultWrapperPath(own.Name)
+	xmlPath := SchtasksXMLPath(own.WrapperPath)
+	if err := os.MkdirAll(filepath.Dir(xmlPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	doc, err := SchtasksXML(own, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFileAtomic(xmlPath, doc); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(DefaultWrapperPath(own.Name)); err == nil {
+		t.Fatal("a direct install must not leave a .cmd wrapper")
+	}
+	if err := nameBoundOn(y, DescribeSpec(own), "windows"); err != nil {
+		t.Fatalf("a direct install's own custom-named task does not bind by its XML: %v", err)
+	}
+
+	// A name with no side-file at all (neither wrapper nor XML) is not this
+	// tool's entry, and is refused with the -name remedy.
+	code, msg := refusal(nameBoundOn(y, DescribeSpec(backupSpecFor(y, "never-installed-g8a5")), "windows"))
+	assure.Refused(t, code, msg, assure.Code(1), assure.Names("never-installed-g8a5", "-name"))
 }
 
 // covers: MA-455, R14
