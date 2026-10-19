@@ -92,7 +92,10 @@ jobs:
           $ErrorActionPreference = 'Continue'
           $log = Join-Path $env:RUNNER_TEMP 'build-msi.log'
           try {
-            .\Build-MSI.ps1 -Version 1.2.0 *>&1 | Tee-Object -FilePath $log
+            # No -Version: the MSI version comes from the payload's PRODUCT-VERSION.txt
+            # (0.0.0 on a non-tag lab build). MA-614 makes Build-MSI.ps1 refuse a -Version
+            # that differs from it, so a hardcoded value fails every non-release run.
+            .\Build-MSI.ps1 *>&1 | Tee-Object -FilePath $log
           } catch {
             ("EXCEPTION: " + $_.Exception.Message) | Tee-Object -FilePath $log -Append
           }
