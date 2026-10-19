@@ -207,6 +207,14 @@ func TestCopyExportRefusesAnUnwritableDestination(t *testing.T) {
 		t.Skip("MA-519: this filesystem keeps no read-only directories")
 	}
 	defer os.Chmod(ro, 0o755)
+	// Windows Chmod only toggles the read-only attribute, which does not stop a
+	// directory from accepting new files; if the directory is still writable the OS
+	// cannot stage this fault, so skip (the unwritable-destination refusal is
+	// lab-verified on Windows, MA-519/README-RMM §D).
+	if probe := filepath.Join(ro, ".probe"); os.WriteFile(probe, nil, 0o600) == nil {
+		os.Remove(probe)
+		t.Skip("MA-519: this OS does not make a directory unwritable via chmod (Windows); the refusal is lab-verified")
+	}
 	records, _ := os.ReadDir(e.recordsDir())
 	_, err := ceRunPlan(t, e, p, src)
 	var ref *CopyRefusal
