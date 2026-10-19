@@ -93,8 +93,13 @@ func TestNestedMultipartsDoNotCopyTheMessageAtEveryLevel(t *testing.T) {
 	}
 	t.Logf("message %d KiB: flat peak %d KiB (x%.1f), nested 31 deep peak %d KiB (x%.1f)",
 		len(nested)>>10, flatPeak>>10, float64(flatPeak)/float64(len(flat)), nestedPeak>>10, float64(nestedPeak)/float64(len(nested)))
-	if limit := 8 * uint64(len(nested)); nestedPeak > limit {
-		t.Errorf("nested 31 deep: peak heap %d KiB is %.1f times the %d KiB message; want at most 8 times (a flat message peaks at %.1f)",
+	// 16x the message, not 8x: peakHeapOf measures the transient peak DURING the
+	// parse, which an amd64 CI runner reaches at ~11.7x (arm64 is lower) -- an
+	// allocator difference, not copy-at-every-level (which would be ~31x, the depth).
+	// 16x clears the transient with headroom while still catching an O(depth) copy
+	// (operator-accepted bump, owner ruling 2026-10-19).
+	if limit := 16 * uint64(len(nested)); nestedPeak > limit {
+		t.Errorf("nested 31 deep: peak heap %d KiB is %.1f times the %d KiB message; want at most 16 times (a flat message peaks at %.1f)",
 			nestedPeak>>10, float64(nestedPeak)/float64(len(nested)), len(nested)>>10, float64(flatPeak)/float64(len(flat)))
 	}
 }

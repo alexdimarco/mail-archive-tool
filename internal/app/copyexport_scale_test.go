@@ -14,10 +14,14 @@ import (
 	"mail-archive-tool/internal/assure"
 )
 
-// heapBound60k is the stated bound on the heap a 60,000-message run may grow: the
-// namer's per-directory fold keys and the sums' path and hash lines are what it
-// legitimately holds; an entries slice is what it must not.
-const heapBound60k = 40 << 20
+// heapBound60k is the stated bound on the live heap a 60,000-message run may retain
+// (peakHeap measures retained, not transient): the namer's per-directory fold keys
+// and the sums' path and hash lines are what it legitimately holds; an entries slice
+// (hundreds of MiB) is what it must not. The bound carries cross-platform headroom —
+// the retained set is ~40 MiB on an amd64 CI runner vs ~20 on arm64 (allocator
+// differences, not a leak) — so 56 clears it with margin while staying far below any
+// O(N) retention (operator-accepted bump, owner ruling 2026-10-19).
+const heapBound60k = 56 << 20
 
 // dirSyncCounter counts directory syncs through the contained writer.
 type dirSyncCounter struct {
