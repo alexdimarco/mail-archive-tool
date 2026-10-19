@@ -38,37 +38,50 @@ func bigBody(n int) http.HandlerFunc {
 	}
 }
 
-// peakHeap samples the heap while fn runs and returns its highest in-use size less
-// what was in use before.
+// peakHeap runs fn and returns the peak LIVE heap it held, less the live heap in use
+// before it started. It is a retention measure, not an allocation one: before every
+// sample it forces a garbage collection and reads HeapAlloc, so only reachable memory
+// is counted. Memory the run holds that scales with the work — an entries slice — is
+// reachable, survives the collection, and is seen; the per-message buffers it allocates
+// and drops are not. The peak of these collected samples therefore does not depend on
+// when the collector happened to run relative to the sampler, so it is stable across
+// machines — unlike a raw HeapInuse peak, which counts whatever uncollected garbage
+// existed at the sampling instant and so read tens of MiB higher on one runner than
+// another for the very same streaming run.
 func peakHeap(fn func()) uint64 {
-	// A low GC target keeps the sampled heap close to what the run holds live, not what
-	// it has made garbage since the last collection.
+	// Keep a low GC target so the forced collections below are cheap and the run's own
+	// churn stays bounded between samples.
 	defer debug.SetGCPercent(debug.SetGCPercent(20))
+	var peak atomic.Uint64
+	sample := func() {
+		runtime.GC()
+		var m runtime.MemStats
+		runtime.ReadMemStats(&m)
+		if m.HeapAlloc > peak.Load() {
+			peak.Store(m.HeapAlloc)
+		}
+	}
 	runtime.GC()
 	var base runtime.MemStats
 	runtime.ReadMemStats(&base)
-	var peak atomic.Uint64
 	stop, done := make(chan struct{}), make(chan struct{})
 	go func() {
 		defer close(done)
-		var m runtime.MemStats
 		for {
-			runtime.ReadMemStats(&m)
-			if m.HeapInuse > peak.Load() {
-				peak.Store(m.HeapInuse)
-			}
+			sample() // the live set at this instant; the plateau of a streaming run
 			select {
 			case <-stop:
 				return
-			case <-time.After(5 * time.Millisecond):
+			case <-time.After(50 * time.Millisecond):
 			}
 		}
 	}()
 	fn()
 	close(stop)
 	<-done
-	if p := peak.Load(); p > base.HeapInuse {
-		return p - base.HeapInuse
+	sample() // a final reading, in case the high-water mark was at the very end
+	if p := peak.Load(); p > base.HeapAlloc {
+		return p - base.HeapAlloc
 	}
 	return 0
 }
