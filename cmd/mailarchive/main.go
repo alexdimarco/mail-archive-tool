@@ -37,6 +37,7 @@ import (
 
 	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/export"
+	"mail-archive-tool/internal/graph"
 	"mail-archive-tool/internal/graphconfig"
 	"mail-archive-tool/internal/index"
 	"mail-archive-tool/internal/outlookcom"
@@ -1196,11 +1197,12 @@ func runGraph(args []string) (err error) {
 		}
 		gopts.Auth = "device"
 		gopts.TokenCachePath = cache
-		// On Windows the sign-in token lives in Credential Manager (vault); nil
-		// elsewhere → the 0600 file cache (design-mailarchive-desktop P4). A fake
-		// Microsoft 365 never gets the vault.
+		// With no -token-cache the sign-in token lives in the OS vault on Windows
+		// (Credential Manager) and the 0600 file cache elsewhere; an explicit
+		// -token-cache FILE uses that file on every platform (deviceStoreFor, owner
+		// ruling 2026-10-19). A fake Microsoft 365 never gets the vault.
 		if graphFake.base == "" {
-			gopts.TokenStore = deviceTokenStore(*o.tenant, *o.clientID)
+			gopts.TokenStore = deviceStoreFor(*o.tokenCache, *o.tenant, *o.clientID)
 		}
 	}
 
@@ -1317,6 +1319,18 @@ func verifyRemoveHint(out string) string {
 // device job both resolve it here, so they read the same backend; it is a
 // variable only so a test can stand a real store in for the Windows vault.
 var deviceTokenStore = graphconfig.DefaultTokenStore
+
+// deviceStoreFor is the token store for a device-auth run. An explicit -token-cache
+// FILE overrides the OS vault (owner ruling 2026-10-19): a run told to use a file
+// uses it on every platform, so the one-time sign-in, the scheduled run and the
+// install preflight all read and write the same place. With no file, the OS vault
+// is used where there is one (Windows) and the default 0600 file cache elsewhere.
+func deviceStoreFor(tokenCache, tenant, clientID string) graph.TokenStore {
+	if strings.TrimSpace(tokenCache) != "" {
+		return nil
+	}
+	return deviceTokenStore(tenant, clientID)
+}
 
 // defaultTokenCachePath is where a device sign-in is cached when -token-cache is
 // not given: under the caller's OS config dir (%APPDATA% on Windows, ~/.config on

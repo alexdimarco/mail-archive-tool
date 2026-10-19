@@ -313,7 +313,7 @@ func parseJob(args []string) (job, error) {
 			// the file — the same backend runGraph hands NewDelegated.
 			if err := graph.CheckSignIn(graph.Config{
 				Tenant: *o.tenant, ClientID: *o.clientID, TokenCachePath: *o.tokenCache,
-				TokenStore: deviceTokenStore(*o.tenant, *o.clientID),
+				TokenStore: deviceStoreFor(*o.tokenCache, *o.tenant, *o.clientID),
 			}); err != nil {
 				return job{}, err
 			}
