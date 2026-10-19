@@ -50,3 +50,26 @@ invariants (R-series) and test-specs (MA-series) that must always hold.
   X-series) enforced structurally. When your change owes one of these reviews,
   SAY WHICH ONE and stop at the gate; do not self-certify or skip.
 <!-- /assurance-kit-block -->
+
+## Running unattended: avoiding permission prompts in bypass mode
+
+Even with bypass-permissions on, the `blockReadsOutsideWorkingDirectories` guard
+(a user-scope setting) still prompts for any command the shell parser cannot
+statically analyse, and for reads outside the working directory. For an autonomous
+run to stay prompt-free:
+
+- Use the dedicated file tools (Read, Write, Edit, Grep, Glob) for file work, not
+  shell `cat`/`sed`/`awk`.
+- Never run code on stdin: no here-documents, no `python3 - <<EOF …`, no
+  `bash -c '<blob>'`. The parser cannot analyse these, so they ALWAYS prompt.
+  Write the script to a file in the repo and run it by path (`python3
+  scripts/x.py`).
+- Keep each Bash command one simple, analysable invocation; avoid long
+  `&&`/`;`/pipe chains and `cd … &&` prefixes (use absolute paths instead).
+- Pin the toolchain once with `go env -w GOTOOLCHAIN=go1.26.0` so a plain
+  `go test ./...` uses the CI toolchain without a `GOTOOLCHAIN=…` env prefix.
+- Keep temporary files inside a gitignored path in the repo, not /tmp or an
+  out-of-tree scratch dir, so reads stay inside the working directory.
+- Subagents/workflows inherit the session mode but multiply any prompt that does
+  slip through; prefer the main loop with clean single commands for work in this
+  repo.
