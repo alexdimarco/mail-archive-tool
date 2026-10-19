@@ -148,13 +148,16 @@ func TestCopyExportASuspendRestartsTheWindow(t *testing.T) {
 		f := newMeFake(t)
 		t0 := time.Now()
 		bad := func(w http.ResponseWriter, r *http.Request) { dropConn(w, r) }
-		f.value("A1", until(t0, 330*time.Millisecond, bad, okBody("A1")))
-		f.meFn = until(t0, 330*time.Millisecond, bad, func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, `{"id":"x"}`) })
+		f.value("A1", until(t0, 3300*time.Millisecond, bad, okBody("A1")))
+		f.meFn = until(t0, 3300*time.Millisecond, bad, func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, `{"id":"x"}`) })
 		e := newCEEnv(t)
+		// 10x the default scaled durations so every margin sits well above a Windows
+		// timer's granularity (~15 ms) and scheduler jitter; the ratios are unchanged.
+		e.tick, e.window, e.suspendGap = 10*time.Millisecond, 3*time.Second, 300*time.Millisecond
 		clk := newJumpClock()
 		e.boot = clk.now
 		if jump {
-			time.AfterFunc(180*time.Millisecond, func() { clk.jump(time.Hour) })
+			time.AfterFunc(1800*time.Millisecond, func() { clk.jump(time.Hour) })
 		}
 		src := f.source(t)
 		return runWith(t, e, planFor(t, e, src, idMsgs("A1", "A2")), src)
