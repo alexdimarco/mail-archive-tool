@@ -88,7 +88,7 @@ func TestIndexUnreadableRemedyNeedsAManifest(t *testing.T) {
 	in.HasManifest, in.HasManifestFile, in.Messages = false, false, 0
 	rep = Assess(in, now)
 	got := assure.Reached(t, reasonOf(rep, "index_unreadable"), "the index_unreadable reason with no manifest")
-	if strings.Contains(got, "reindex -rebuild") || !strings.Contains(got, "no manifest") || !strings.Contains(got, "move") || !strings.Contains(got, "/a/search.db") {
+	if strings.Contains(got, "reindex -rebuild") || !strings.Contains(got, "no manifest") || !strings.Contains(got, "move") || !strings.Contains(filepath.ToSlash(got), "/a/search.db") {
 		t.Fatalf("no manifest to rebuild from: the remedy must be moving search.db aside, got %q", got)
 	}
 }

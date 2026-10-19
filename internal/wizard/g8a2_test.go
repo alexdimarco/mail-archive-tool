@@ -3,6 +3,7 @@ package wizard
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"mail-archive-tool/internal/assure"
@@ -29,6 +30,18 @@ func TestRepairInstallsOnlyAnEntryThatIsThisArchives(t *testing.T) {
 	}
 
 	own := mk(y, "nightly-y-g8a2gui")
+	// On Windows a custom schedule name binds only when its wrapper .cmd exists (the
+	// desktop writes one at install, g8); plant it so the own record binds and repairs.
+	if runtime.GOOS == "windows" {
+		ws := schedule.Spec{Name: "nightly-y-g8a2gui", Interval: schedule.Daily, At: "02:00", Exe: "/usr/local/bin/mailarchive", Args: []string{"-out", y, "-auto"}, Out: y}
+		ws.Wrapper, ws.WrapperPath = true, schedule.DefaultWrapperPath(ws.Name)
+		if err := os.MkdirAll(filepath.Dir(ws.WrapperPath), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(ws.WrapperPath, []byte(schedule.CmdWrapper(ws)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if spec, err := RepairSpec(y, own, "/usr/local/bin/mailarchive"); err != nil || spec.Name != "nightly-y-g8a2gui" {
 		t.Fatalf("an archive's own record does not repair under its name: %+v, %v", spec, err)
 	}

@@ -1,7 +1,9 @@
 package health
 
 import (
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -57,6 +59,7 @@ func TestMovedArchiveRemedyNeverPastesATypographicQuote(t *testing.T) {
 func TestStatusNeverPrintsARemovalForAnEntryThatIsNotThisArchives(t *testing.T) {
 	now := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
 	x, y := t.TempDir(), t.TempDir()
+	t.Setenv("LOCALAPPDATA", t.TempDir()) // isolate the Windows wrapper directory
 	xName := "nightly-x-g8a2"
 	xSpec := schedule.Spec{Name: xName, Interval: schedule.Daily, At: "02:00", Exe: "/usr/local/bin/mailarchive",
 		Args: []string{"-out", x, "-auto"}, Out: x}
@@ -69,6 +72,20 @@ func TestStatusNeverPrintsARemovalForAnEntryThatIsNotThisArchives(t *testing.T) 
 	}
 	if err := schedule.WriteVerifyDescriptor(x, schedule.DescribeSpec(xVerify)); err != nil {
 		t.Fatal(err)
+	}
+	// On Windows a custom schedule name binds only when its wrapper .cmd exists; plant
+	// X's wrappers (whose run line points at X) so X's own records bind, while Y's
+	// copies stay unbound because the wrapper points at X, not Y.
+	if runtime.GOOS == "windows" {
+		for _, s := range []schedule.Spec{xSpec, xVerify} {
+			s.Wrapper, s.WrapperPath = true, schedule.DefaultWrapperPath(s.Name)
+			if err := os.MkdirAll(filepath.Dir(s.WrapperPath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(s.WrapperPath, []byte(schedule.CmdWrapper(s)), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
 	if in := Gather(x, ""); !in.HasDescriptor || in.DescNameUnbound || !in.HasVerifyDescriptor || in.VerifyNameUnbound {
 		t.Fatalf("an archive's own records are judged not to be its own: %+v", in)
