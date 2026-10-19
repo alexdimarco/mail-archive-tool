@@ -79,7 +79,17 @@ func ProgramForSchedule(wrapped bool) (exe string, reason Reason, err error) {
 	if !filepath.IsAbs(self) {
 		return "", ReasonNone, fmt.Errorf("the running program path %q is not absolute", self)
 	}
-	return programForSchedule(runtime.GOOS, self, wrapped, SiblingQualifies)
+	exe, reason, err = programForSchedule(runtime.GOOS, self, wrapped, SiblingQualifies)
+	if err != nil {
+		return exe, reason, err
+	}
+	// §5.3/Q20 (MA-648): refuse a program an account other than the owner could
+	// replace in place, so a scheduled run can never be made to execute someone
+	// else's code as the owner. One chokepoint for every scheduling caller.
+	if lerr := guardLocation(exe); lerr != nil {
+		return "", ReasonNone, lerr
+	}
+	return exe, reason, nil
 }
 
 // ProgramNote is the one rendering of a ProgramForSchedule result that any
