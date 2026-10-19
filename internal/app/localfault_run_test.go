@@ -142,9 +142,9 @@ func TestRunFatalVolumeErrorsStopTheRun(t *testing.T) {
 		errno syscall.Errno
 		names []string
 	}{
-		{syscall.ENOSPC, []string{"the archive drive is full", "free space", "Messages written before this point are kept"}},
-		{syscall.EDQUOT, []string{"the archive drive is full", "free space"}},
-		{syscall.EROFS, []string{"is read-only", "make it writable"}},
+		{errFull, []string{"the archive drive is full", "free space", "Messages written before this point are kept"}},
+		{errQuota, []string{"the archive drive is full", "free space"}},
+		{errReadOnly, []string{"is read-only", "make it writable"}},
 	} {
 		t.Run(tc.errno.Error(), func(t *testing.T) {
 			out := tmpDir(t)

@@ -135,7 +135,7 @@ func (w *faultFile) Write(p []byte) (int, error) {
 	}
 	w.fs.mu.Unlock()
 	if full {
-		return 0, syscall.ENOSPC
+		return 0, errFull
 	}
 	return w.ceFile.Write(p)
 }

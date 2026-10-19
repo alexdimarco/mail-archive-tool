@@ -576,7 +576,7 @@ func TestGraphWriteFaultsCostOneMessageOrTheRun(t *testing.T) {
 		s.Fixture()
 		failWrites(t, func(n int, path string) error {
 			if n == 2 {
-				return pathErr(path, syscall.ENOSPC)
+				return pathErr(path, errFull)
 			}
 			return nil
 		})

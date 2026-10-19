@@ -445,9 +445,9 @@ func TestSnapshotOnAFullDriveIsRunFatal(t *testing.T) {
 	snapshotCopy = func(dst io.Writer, src io.Reader) (int64, error) {
 		copies++
 		if f, ok := dst.(*os.File); ok {
-			return 0, &fs.PathError{Op: "write", Path: f.Name(), Err: syscall.ENOSPC}
+			return 0, &fs.PathError{Op: "write", Path: f.Name(), Err: errFull}
 		}
-		return 0, syscall.ENOSPC
+		return 0, errFull
 	}
 	out := tmpDir(t)
 	_, err := Run(context.Background(), Options{Inputs: []string{first, second}, Out: out, CopyFirst: true}, discard(), nil)
@@ -489,7 +489,7 @@ func TestFatalTextCarriesNoControlBytesFromAFolderName(t *testing.T) {
 		errno syscall.Errno
 		want  string
 	}{
-		{"full drive", syscall.ENOSPC, "the archive drive is full"},
+		{"full drive", errFull, "the archive drive is full"},
 		{"breaker", syscall.EACCES, "after 50 writes in a row failed"},
 	} {
 		t.Run(c.name, func(t *testing.T) {

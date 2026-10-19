@@ -83,8 +83,8 @@ func TestExportErrorsAreTyped(t *testing.T) {
 // classification is proven on every OS: 112, 39, 19, 21, 53, 55, 64, 1167 and 1295,
 // and 3 (path not found) only when it is the archive root's own.
 func TestIsRunFatalClassifiesTheVolumeErrors(t *testing.T) {
-	fatal := []syscall.Errno{syscall.ENOSPC, syscall.EDQUOT, syscall.EROFS, syscall.EIO, syscall.ENXIO, syscall.ENODEV, syscall.ENOTCONN, syscall.ESTALE, syscall.EHOSTDOWN}
-	notFatal := []syscall.Errno{syscall.EACCES, syscall.EPERM, syscall.ENAMETOOLONG, syscall.ENOENT, syscall.EEXIST, syscall.EINVAL}
+	fatal := runFatalErrnos
+	notFatal := notRunFatalErrnos
 	for _, en := range fatal {
 		for _, wrap := range []func(error) error{
 			func(e error) error { return e },
