@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -293,9 +294,23 @@ func TestScheduleRefusesCredentialInsideArchive(t *testing.T) {
 	out := t.TempDir()
 	device := []string{"graph", "-auth", "device", "-out", out, "-tenant", "contoso.com", "-client-id", "APPID"}
 	outside := filepath.Join(t.TempDir(), "graph-token.json")
-	primeCache(t, outside)
-	if code, _, stderr := runCLIOut(t, append(append([]string{"schedule", "--"}, device...), "-token-cache", outside)...); code != 0 {
-		t.Fatalf("positive twin (token cache outside -out): exit %d %s", code, stderr)
+	if runtime.GOOS == "windows" {
+		// On Windows the device sign-in lives in the OS vault (Credential Manager), not
+		// the -token-cache file, and a subprocess reads the real vault. Stand one in
+		// (standInVault overrides the in-process deviceTokenStore the check resolves) and
+		// validate in-process, as TestScheduleDeviceJobChecksTheVault does.
+		vault := standInVault(t, "contoso.com", "APPID")
+		if err := vault.StoreToken([]byte(`{"upn":"a@contoso.com","token":{"refresh_token":"RT1"}}`)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := parseJob(append(append([]string{}, device...), "-token-cache", outside)); err != nil {
+			t.Fatalf("positive twin (token cache outside -out) was refused: %v", err)
+		}
+	} else {
+		primeCache(t, outside)
+		if code, _, stderr := runCLIOut(t, append(append([]string{"schedule", "--"}, device...), "-token-cache", outside)...); code != 0 {
+			t.Fatalf("positive twin (token cache outside -out): exit %d %s", code, stderr)
+		}
 	}
 
 	noDescriptor := func() bool { return absent(filepath.Join(out, ".mailarchive-schedule.json")) }
