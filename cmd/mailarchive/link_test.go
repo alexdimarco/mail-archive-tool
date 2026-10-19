@@ -298,7 +298,7 @@ func TestServeNeverPrintsATokenToANonTerminal(t *testing.T) {
 	if strings.Contains(stdout, "_open") || strings.Contains(g.stderr.String(), "_open") || strings.Contains(stdout, "t=") {
 		t.Errorf("a token reached a non-terminal's output: %q", stdout)
 	}
-	for _, want := range []string{"Search UI:  " + g.origin + "/", "get a link with: mailarchive serve -link -out " + out} {
+	for _, want := range []string{"Search UI:  " + g.origin + "/", "get a link with: mailarchive serve -link -out " + quoteForHint(out)} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("stdout lacks %q:\n%s", want, stdout)
 		}

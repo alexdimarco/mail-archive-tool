@@ -104,6 +104,13 @@ func TestOutlookFlagUnsupportedRefusal(t *testing.T) {
 // graph refuses each missing required input (-out, -tenant, -client-id, -mailbox,
 // and an unset client secret) with a typed non-zero exit naming the problem.
 func TestGraphRefusals(t *testing.T) {
+	// Isolate config/credential locations so no ambient tenant or client id (from a
+	// saved setup on the host) satisfies a required flag under test. runCLI inherits
+	// the process environment, so t.Setenv reaches the child.
+	dir := t.TempDir()
+	for _, k := range []string{"HOME", "XDG_CONFIG_HOME", "APPDATA", "LOCALAPPDATA"} {
+		t.Setenv(k, dir)
+	}
 	code, stderr := runCLI("graph")
 	assure.Refused(t, code, stderr, assure.Code(1), assure.Names("-out"))
 

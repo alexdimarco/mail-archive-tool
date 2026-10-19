@@ -2,6 +2,7 @@ package app
 
 import (
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -67,7 +68,7 @@ func TestReindexOpenRefusalNamesTheCause(t *testing.T) {
 	_, _, rerr = Reindex(out, discard())
 	code, msg = refusalOf(rerr)
 	assure.Refused(t, code, msg, assure.Code(1),
-		assure.Names(idxPath, "reindex -rebuild -out \""+out+"\""),
+		assure.Names(idxPath, fmt.Sprintf("reindex -rebuild -out %q", out)),
 		assure.NoSideEffect(unchanged))
 }
 
