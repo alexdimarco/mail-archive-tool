@@ -29,12 +29,12 @@ func TestRepairInstallsOnlyAnEntryThatIsThisArchives(t *testing.T) {
 	}
 
 	own := mk(y, "nightly-y-g8a2gui")
-	if spec, err := repairPlan(y, own, "/usr/local/bin/mailarchive"); err != nil || spec.Name != "nightly-y-g8a2gui" {
+	if spec, err := RepairSpec(y, own, "/usr/local/bin/mailarchive"); err != nil || spec.Name != "nightly-y-g8a2gui" {
 		t.Fatalf("an archive's own record does not repair under its name: %+v, %v", spec, err)
 	}
 
 	planted := mk(x, schedule.DefaultNameFor(x))
-	_, err := repairPlan(y, planted, "/usr/local/bin/mailarchive")
+	_, err := RepairSpec(y, planted, "/usr/local/bin/mailarchive")
 	code := 0
 	msg := ""
 	if err != nil {

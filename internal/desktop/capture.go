@@ -17,6 +17,22 @@ import (
 	"mail-archive-tool/internal/state"
 )
 
+// notConfiguredMsg is the refusal text shown when Microsoft 365 is not set up —
+// shared by HeadlessCapture (a scheduled capture's refusal) and the dashboard's
+// capture install/repair (§4.6.3, MA-617), so both name the same remedy.
+const notConfiguredMsg = "not configured — set up Microsoft 365 on MailArchive Desktop's Microsoft 365 connection card (or run `mailarchive setup`), then sign in"
+
+// m365Ready reports nil when Microsoft 365 is set up (a config with a tenant and
+// a client id), else the notConfiguredMsg refusal: the check a capture install or
+// repair makes before schedule.Install (§4.6.3), the same one HeadlessCapture makes.
+func (cfg Config) m365Ready() error {
+	c := cfg.load()
+	if c == nil || strings.TrimSpace(c.Tenant) == "" || strings.TrimSpace(c.ClientID) == "" {
+		return errors.New(notConfiguredMsg)
+	}
+	return nil
+}
+
 // HeadlessCapture runs one incremental capture with NO dashboard and NO prompt —
 // the command a SCHEDULED weekly backup runs (design DC1: a scheduled capture must
 // succeed whether or not the dashboard app is open). It reads the saved config +
@@ -24,10 +40,10 @@ import (
 // and refuses if there is no saved sign-in (Unattended=true never prompts). Logs to
 // logw; returns the run error.
 func HeadlessCapture(cfg Config, logw io.Writer) error {
-	c := cfg.load()
-	if c == nil || strings.TrimSpace(c.Tenant) == "" || strings.TrimSpace(c.ClientID) == "" {
-		return errors.New("not configured — set up Microsoft 365 on MailArchive Desktop's Microsoft 365 connection card (or run `mailarchive setup`), then sign in")
+	if err := cfg.m365Ready(); err != nil {
+		return err
 	}
+	c := cfg.load()
 	out := cfg.effectiveOut()
 	if out == "" {
 		return errors.New("no archive location set — choose one in MailArchive Desktop first")

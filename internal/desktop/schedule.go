@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
 	"runtime"
 	"strings"
 
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/server"
+	"mail-archive-tool/internal/wizard"
 )
 
 // taskState is what the scheduler says about the weekly-backup task named for the archive location out
@@ -112,9 +114,25 @@ func (d *dashboard) scheduleInstall(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "refused", http.StatusForbidden)
 		return
 	}
+	out := d.cfg.effectiveOut()
+	// §4.6.3/MA-617: the card's Install/Repair takes the spec from the CORROBORATED
+	// kind, never the request. A corroborated run-job is REPAIRED through the
+	// wizard's pure RepairSpec (from the sanitized name, -out and ProgramForSchedule,
+	// never the archive-held descriptor's Job/Exe); everything else installs or
+	// repairs the desktop's own capture backup below.
+	if ev := schedule.BuildKindEvidence(out); ev.Has(schedule.KindRunJob) && !ev.Has(schedule.KindCapture) {
+		d.repairRunJob(w, out)
+		return
+	}
 	var in struct{ Interval, Time string }
 	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&in)
 	if err := saveScheduleChoice(d.cfg.SettingsPath, in.Interval, in.Time); err != nil {
+		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	// §4.6.3/MA-617: a capture install (or repair) refuses BEFORE schedule.Install
+	// when Microsoft 365 is not set up, with the same text a scheduled capture does.
+	if err := d.cfg.m365Ready(); err != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
@@ -152,6 +170,38 @@ func (d *dashboard) scheduleInstall(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, resp)
 }
 
+// repairRunJob rebuilds a corroborated run-job schedule for out through the
+// wizard's pure RepairSpec — from the sanitized name, -out and ProgramForSchedule,
+// never the archive-held descriptor's Job/Exe (§4.6.3, MA-617) — or refuses with
+// the scheduler entry unchanged. This is the card's Repair for a run-job: it keeps
+// the schedule's kind rather than converting it to a capture.
+func (d *dashboard) repairRunJob(w http.ResponseWriter, out string) {
+	dsc, err := schedule.ReadDescriptor(out)
+	if err != nil {
+		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	exe, _, err := schedule.ProgramForSchedule(dsc.Wrapper != "")
+	if err != nil {
+		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	spec, err := wizard.RepairSpec(out, dsc, exe)
+	if err != nil {
+		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	install := schedule.Install
+	if d.cfg.InstallBackup != nil {
+		install = d.cfg.InstallBackup
+	}
+	if err := install(spec); err != nil {
+		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
+}
+
 // scheduleRemove removes the weekly backup (loopback-only, CSRF-guarded).
 func (d *dashboard) scheduleRemove(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost || !server.GuardLocalPOST(r, d.csrf) {
@@ -162,10 +212,21 @@ func (d *dashboard) scheduleRemove(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
+	// §4.6.3/MA-617: a run-job's Remove also deletes the archive's job file, so the
+	// schedule is not left a dead record pointing at a job that no longer runs. Read
+	// the corroborated job path before the entry goes (the job file is owner-side,
+	// untouched by removing the scheduler entry).
+	runJobFile := ""
+	if ev := schedule.BuildKindEvidence(d.cfg.effectiveOut()); ev.Has(schedule.KindRunJob) {
+		runJobFile = ev.JobPath
+	}
 	removed, err := d.removeTasks()
 	if err != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
+	}
+	if runJobFile != "" {
+		_ = os.Remove(runJobFile)
 	}
 	resp := map[string]any{"ok": true, "removed": len(removed) > 0}
 	// A descriptor the tool cannot read is never deleted (rulings §13.6, ESC-10):

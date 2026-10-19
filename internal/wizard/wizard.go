@@ -904,11 +904,13 @@ func repairSpec(out string, d schedule.Descriptor, exe string) (schedule.Spec, e
 	return spec, nil
 }
 
-// repairPlan is the Spec a repair installs, or why it must not: the entry name
-// the descriptor records is untrusted too (a folder handed over can name another
-// archive's entry), and an install replaces whatever entry has that name, so a
-// name that is not shown to be this archive's is refused (G8-AO1, AI1).
-func repairPlan(out string, d schedule.Descriptor, exe string) (schedule.Spec, error) {
+// RepairSpec is the run-job repair Spec a repair installs, or why it must not: a
+// rebuild from the sanitized name, -out and the chosen program (never the
+// descriptor's Job/Log/Exe), refused when the recorded entry name is not shown to
+// be this archive's (G8-AO1, AI1). Exported so the dashboard's Weekly backup card
+// rebuilds a corroborated run-job through the SAME pure path the wizard uses
+// (§4.6.3, MA-617) — one home, so a repair cannot diverge by surface.
+func RepairSpec(out string, d schedule.Descriptor, exe string) (schedule.Spec, error) {
 	if err := schedule.NameBound(out, d); err != nil {
 		return schedule.Spec{}, fmt.Errorf("not repairing: %v", err)
 	}
@@ -930,7 +932,7 @@ func repairSchedule(out string, d schedule.Descriptor) error {
 	} else if !proceed {
 		return nil
 	}
-	spec, err := repairPlan(out, d, exe)
+	spec, err := RepairSpec(out, d, exe)
 	if err != nil {
 		return err
 	}

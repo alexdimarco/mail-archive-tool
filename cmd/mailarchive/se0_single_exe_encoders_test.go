@@ -14,17 +14,19 @@ package main
 // MA-619 (Q10), MA-642 (Q14), MA-643 (Q11), MA-644 (Q12). The lab rows
 // MA-625/626/627 are tier L (pending) and carry no encoder.
 
-import "testing"
-
 // MA-616 encoder removed: the §4.6.2 identity predicate is proven by
 // internal/health/ma616_identity_test.go (the composition trace) and its
 // note/WARN texts (exe_former_name, exe_console_build, exe_version_skew, the
 // exe_missing former-name hint) by internal/health/ma616_texts_test.go.
 
-// covers: MA-617, R14, R18, S59
-func TestSE0_MA617_repairKeepsScheduleKind(t *testing.T) {
-	t.Skip("SE2 encoder: a repair rebuilds its own kind from trusted inputs, never from the descriptor, or refuses")
-}
+// MA-617 encoder removed (the LAST SE2 encoder): a repair rebuilds its own kind
+// from trusted inputs, never the descriptor, or refuses — proven by
+// internal/desktop/ma617_repair_test.go (the card's run-job repair keeps the
+// kind, the capture-no-Microsoft-365 refusal before schedule.Install, and
+// Remove deleting the job file) and internal/wizard's RepairSpec; the
+// command-line schedule -install kind guard is MA-631. Every SE2 row
+// MA-615..641 is now a real covering test; this file remains only as the ledger
+// of where each one landed.
 
 // MA-618 encoder removed: "when a repair is offered" is proven by
 // internal/wizard/wizard_test.go TestMA618_RepairOfferedWhen (route-gating to a

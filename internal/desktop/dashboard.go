@@ -605,6 +605,18 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		LocalOnly        bool   // local mail files only and no Microsoft 365 setup: Archive now and the weekly backup are off
 		ArchiveNowOff    string // why, and the steps that add new mail instead
 		Offer            string // the archive the GUI used last, offered when none is set
+		// §4.6.3/MA-617 + Q18(b): the Weekly backup card's state. HasSchedule when a
+		// descriptor is recorded; ScheduleKind names it in words; the Show* flags
+		// pick the controls — Install/update only for a capture or none and never a
+		// local-only archive, Repair for a corroborated run-job (keeps the kind,
+		// no capture conversion), Remove whenever there is a schedule or a capture to
+		// install; ShowBackupOff is the local-only, no-schedule message.
+		HasSchedule   bool
+		ScheduleKind  string
+		ShowInstall   bool
+		ShowRepair    bool
+		ShowRemove    bool
+		ShowBackupOff bool
 	}{Export: !cfg.WorkspaceOff, Epoch: epoch, CSRF: csrf, Cards: cfg.cards(), Vault: vaultPhrase(), OutDir: cfg.effectiveOut(), ReaderURL: cfg.ReaderURL, SignedIn: signedIn, UPN: upn,
 		KeepRaw: s.KeepRaw, IncludeDeleted: s.IncludeDeleted, IncludeJunk: s.IncludeJunk,
 		Interval: orElse(s.Interval, "weekly"), WeeklyTime: orElse(s.WeeklyTime, "03:00"),
@@ -614,6 +626,28 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		data.ArchiveNowOff = archiveNowOff(cfg.goos(), data.OutDir)
 	}
 	data.Offer = cfg.offer()
+	// Weekly backup card state (§4.6.3/MA-617, Q18(b)): render the card for a
+	// recorded schedule — including a local-only archive's — and pick the controls
+	// by the corroborated kind, so the card repairs a run-job (keeps its kind)
+	// rather than converting it, and never offers a Microsoft 365 install where
+	// there is no Microsoft 365.
+	if out := data.OutDir; out != "" {
+		if _, derr := schedule.ReadDescriptor(out); derr == nil {
+			data.HasSchedule = true
+			ev := schedule.BuildKindEvidence(out)
+			switch {
+			case ev.Has(schedule.KindRunJob) && !ev.Has(schedule.KindCapture):
+				data.ShowRepair, data.ScheduleKind = true, "a run-job backup (keeps this archive current)"
+			case ev.Has(schedule.KindCapture):
+				data.ScheduleKind = "a scheduled Microsoft 365 capture"
+			default:
+				data.ScheduleKind = "an export backup — repair it from the command line (see Status & health)"
+			}
+		}
+	}
+	data.ShowInstall = !data.LocalOnly && !data.ShowRepair
+	data.ShowRemove = data.HasSchedule || !data.LocalOnly
+	data.ShowBackupOff = data.LocalOnly && !data.HasSchedule
 	if c != nil {
 		data.Configured = strings.TrimSpace(c.Tenant) != ""
 		data.Tenant, data.ClientID, data.Auth = c.Tenant, c.ClientID, authLabel(c.Auth)
@@ -835,14 +869,15 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
 
     <div class="card" id="sec-backup">
       <h2>Weekly backup</h2>
-      {{if .LocalOnly}}<p class="card-sub steps" id="backupOff">The weekly backup here fetches new mail from Microsoft 365, and this archive was made from local mail files, so it is off. To keep a local-files archive current on a schedule, answer "Keep this archive current?" at the end of the MailArchive wizard (mailarchive wizard), or run the mailarchive schedule command that Status &amp; health prints for this archive.</p>{{else}}
-      <p class="card-sub">Run a capture automatically on a schedule. It runs even when this app is closed (as long as you stay signed in to Windows), using your saved Microsoft sign-in.</p>
+      {{if .ShowBackupOff}}<p class="card-sub steps" id="backupOff">The weekly backup here fetches new mail from Microsoft 365, and this archive was made from local mail files, so it is off. To keep a local-files archive current on a schedule, answer "Keep this archive current?" at the end of the MailArchive wizard (mailarchive wizard), or run the mailarchive schedule command that Status &amp; health prints for this archive.</p>{{else}}
+      {{if .HasSchedule}}<p class="card-sub" id="schedKind">This archive's scheduled backup: {{.ScheduleKind}}.</p>{{end}}
+      {{if .ShowInstall}}<p class="card-sub">Run a capture automatically on a schedule. It runs even when this app is closed (as long as you stay signed in to Windows), using your saved Microsoft sign-in.</p>
       <div class="row2">
         <div><label for="schedInterval">How often</label>
           <select id="schedInterval"><option value="weekly"{{if eq .Interval "weekly"}} selected{{end}}>Weekly (Sunday)</option><option value="daily"{{if eq .Interval "daily"}} selected{{end}}>Daily</option></select></div>
         <div><label for="schedTime">At (local time)</label><input id="schedTime" type="time" value="{{.WeeklyTime}}"></div>
-      </div>
-      <div style="margin-top:14px"><button class="btn" id="schedInstall">Install / update</button> <button class="btn secondary" id="schedRemove">Remove</button></div>
+      </div>{{end}}
+      <div style="margin-top:14px">{{if .ShowInstall}}<button class="btn" id="schedInstall">Install / update</button> {{end}}{{if .ShowRepair}}<button class="btn" id="schedRepair">Repair</button> {{end}}{{if .ShowRemove}}<button class="btn secondary" id="schedRemove">Remove</button>{{end}}</div>
       <div class="note" id="schedState" hidden></div>{{end}}
     </div>
 
@@ -994,8 +1029,9 @@ function schedPost(path){
     .then(r=>r.json()).then(d=>{if(n){n.hidden=false;n.textContent=d.ok?'Saved.':(d.error||'Failed.');}
       return schedState().then(()=>{if(n&&d.left){n.hidden=false;n.textContent='Removed. Left in place: '+d.left+' cannot be read, so removal cannot tell which schedule it records - '+d.remedy+'.';}});});
 }
-const si=$('schedInstall'),sr=$('schedRemove');
+const si=$('schedInstall'),sr=$('schedRemove'),srp=$('schedRepair');
 if(si)si.addEventListener('click',()=>schedPost('api/schedule-install'));
+if(srp)srp.addEventListener('click',()=>schedPost('api/schedule-install'));
 if(sr)sr.addEventListener('click',()=>schedPost('api/schedule-remove'));
 schedState();
 
