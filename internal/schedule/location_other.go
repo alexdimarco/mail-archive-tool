@@ -17,14 +17,16 @@ import (
 // so it does not expose an existing program to another account; it is not flagged
 // (and this is why a t.TempDir under a /tmp sticky root is correctly safe).
 //
-// Group-writable is a STATED RESIDUAL, not refused: telling reliably whether a
-// group has members other than the owner needs group enumeration Go cannot do
-// portably (primary-group members and directory-service groups do not appear in
-// /etc/group), and refusing every group-writable prefix would wrongly reject
-// common single-user installs such as Homebrew's group-writable /usr/local. The
-// adversarial pass and the owner decide whether to tighten this; the world-
-// writable case — the design's primary example, a folder inheriting broad write
-// (Authenticated Users / Everyone / world) — is refused.
+// Group-writable is NOT refused (owner ruling 2026-10-18: installing as an
+// authenticated local user following the usual local-program rules is fine). A
+// normal install lands in a group-writable prefix like Homebrew's /usr/local or
+// /Applications, which the usual rules treat as normal; refusing those would
+// reject legitimate installs, and reliably telling whether such a group has
+// members other than the owner is not portable in Go anyway (primary-group and
+// directory-service members do not appear in /etc/group). Q20 refuses only a
+// genuine other-account write — a world-writable (non-sticky) location here, or
+// a non-owner/non-admin write ACE on Windows — the design's primary example
+// being a folder inheriting broad write (Authenticated Users / Everyone / world).
 func locationWritableByOthersOS(dir string) bool {
 	p := filepath.Clean(dir)
 	for {
