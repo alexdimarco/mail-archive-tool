@@ -96,7 +96,9 @@ func TestCaptureInProcess(t *testing.T) {
 	}
 
 	var act map[string]any
-	for i := 0; i < 60; i++ {
+	// Poll up to 30s for the capture to finish: the device flow and export run
+	// slower on a loaded Windows CI runner, where 6s was intermittently too short.
+	for i := 0; i < 300; i++ {
 		req := httptest.NewRequest("GET", "/api/activity", nil)
 		req.Host = "127.0.0.1:8097"
 		rec := httptest.NewRecorder()

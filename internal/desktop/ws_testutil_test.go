@@ -549,7 +549,9 @@ func (e *wsEnv) waitPreview(id string) map[string]any {
 // waitRun waits until no export is running.
 func (e *wsEnv) waitRun() map[string]any {
 	e.t.Helper()
-	for i := 0; i < 600; i++ {
+	// Up to 30s: an export runs slower on a loaded Windows CI runner, where 12s was
+	// intermittently too short (the wait is state-based, so a fast export returns early).
+	for i := 0; i < 1500; i++ {
 		_, out := e.post("/api/exports/progress", nil)
 		if out["running"] == false {
 			return out
