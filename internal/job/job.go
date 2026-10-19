@@ -139,9 +139,11 @@ func Read(path string) (Job, error) {
 // followed or slurped: a final-component symbolic link is refused and its target
 // left untouched; a non-regular file (a FIFO, device, directory or socket) is
 // refused — caught by the Lstat BEFORE any open, so a FIFO cannot hang the read;
-// a group- or world-accessible file is refused (a scheduled job is owner-only);
-// and the read is bounded by maxJobFileSize (R12, MA-640). Residual TOCTOU
-// between the stat and the open is the adversarial pass's concern.
+// a file another account can change is refused (a scheduled job is owner-only:
+// the POSIX mode bits on unix, the security descriptor via internal/winsec on
+// Windows, since Go reports mode 0666 for every writable file there); and the read
+// is bounded by maxJobFileSize (R12, MA-640). Residual TOCTOU between the stat and
+// the open is the adversarial pass's concern.
 func readSecure(path string) ([]byte, error) {
 	fi, err := os.Lstat(path)
 	if err != nil {
@@ -152,10 +154,11 @@ func readSecure(path string) ([]byte, error) {
 		return nil, fmt.Errorf("job file %s is a symbolic link: refusing to follow it; re-create the schedule from the wizard", path)
 	case !fi.Mode().IsRegular():
 		return nil, fmt.Errorf("job file %s is not a regular file (%s): refusing to read it; re-create the schedule from the wizard", path, fi.Mode().Type())
-	case fi.Mode().Perm()&0o077 != 0:
-		return nil, fmt.Errorf("job file %s is group- or world-accessible (mode %#o): a scheduled job must be owner-only; re-create the schedule from the wizard", path, fi.Mode().Perm())
 	case fi.Size() > maxJobFileSize:
 		return nil, fmt.Errorf("job file %s is %d bytes, over the %d-byte limit: refusing to read it", path, fi.Size(), maxJobFileSize)
+	}
+	if err := ownerOnly(fi, path); err != nil {
+		return nil, err
 	}
 	f, err := os.Open(path)
 	if err != nil {

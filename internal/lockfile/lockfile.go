@@ -165,6 +165,11 @@ func tryLockFor(f *os.File, grace time.Duration) error {
 // briefly before it refuses (see acquireGrace), and why a probe that meets another probe
 // retries too.
 func Held(path string) bool {
+	// Never follow a symlink or junction: a planted link is not a held lock, and on
+	// Windows noFollow is 0, so this Lstat is the only guard (mirrors AcquireAs).
+	if fi, err := os.Lstat(path); err == nil && !fi.Mode().IsRegular() {
+		return false
+	}
 	f, err := os.OpenFile(path, os.O_RDWR|noFollow, 0)
 	if err != nil {
 		return false

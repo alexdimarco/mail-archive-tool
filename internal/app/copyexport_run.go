@@ -262,6 +262,15 @@ func (r *CopyRun) recovered(p any) (*CopyResult, error) {
 		_ = r.rec.append(ceStoppedLine{T: "stopped", RID: stop.RID, Class: stop.Class, Reason: stopReason("internal"), At: r.env.nowTime()})
 		_ = r.env.journalAppend(ceJournalLine{Run: r.runID, Event: "stopped", Reason: "internal, " + stopClassInternal})
 	}
+	// Close the handles before returning, as the kill branch does: on Windows an
+	// open file handle keeps the archive locked, so a caller cannot clean up (the
+	// only run-termination path that was missing this).
+	if r.fs != nil {
+		r.fs.Close()
+	}
+	if r.rec != nil {
+		r.rec.Close()
+	}
 	return &CopyResult{RunID: r.runID, Root: r.rootAbs, RootName: r.rootName, Status: CopyStatusFailed,
 		Outcome: CopyOutcomeFailed, Stop: stop, Label: "Stopped: " + stopReason("internal")}, nil
 }

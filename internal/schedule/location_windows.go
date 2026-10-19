@@ -2,25 +2,14 @@
 
 package schedule
 
-import "golang.org/x/sys/windows"
+import "mail-archive-tool/internal/winsec"
 
 // locationWritableByOthersOS (Windows) is Q20's mechanism for this OS (MA-649): it
-// reads dir's owner and DACL through GetNamedSecurityInfo and asks the pure
-// sddlDACLWritableByOthers whether the DACL grants a write-class right to any
-// principal other than the owner, SYSTEM, Administrators or CREATOR OWNER — e.g.
-// a folder inheriting Authenticated Users: Modify. Fail-closed: a descriptor it
-// cannot read counts as writable (refuse rather than wave through). The decision
-// logic is unit-tested on any OS (location_sddl_test.go); this read is verified
-// on a real Windows box, lab item L-W15 (README-RMM.md §D).
+// reports whether dir's owner and DACL let an account other than the owner,
+// SYSTEM, Administrators or CREATOR OWNER replace the scheduled program, via the
+// shared winsec.PathWritableByOthers (GetNamedSecurityInfo + the pure DACL
+// predicate). Fail-closed. Verified on a real Windows box, lab item L-W15
+// (README-RMM.md §D).
 func locationWritableByOthersOS(dir string) bool {
-	sd, err := windows.GetNamedSecurityInfo(dir, windows.SE_FILE_OBJECT,
-		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
-	if err != nil {
-		return true
-	}
-	owner := ""
-	if o, _, e := sd.Owner(); e == nil && o != nil {
-		owner = o.String()
-	}
-	return sddlDACLWritableByOthers(sd.String(), owner)
+	return winsec.PathWritableByOthers(dir)
 }
