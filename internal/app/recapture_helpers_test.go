@@ -172,6 +172,12 @@ func rcSnapshot(t *testing.T, out string) string {
 		if d.Name() == lockfile.Name {
 			return os.WriteFile(filepath.Join(snap, rel), []byte(lockfile.Holder(p)+"\n"), 0o600)
 		}
+		if strings.HasSuffix(d.Name(), "-shm") {
+			// SQLite's WAL shared-memory index is rebuilt from -wal and carries a
+			// mandatory byte-range lock on Windows; it is not part of the state a
+			// kill leaves, so a byte copy of it both fails and proves nothing.
+			return nil
+		}
 		b, rerr := os.ReadFile(p)
 		if rerr != nil {
 			return rerr

@@ -34,7 +34,7 @@ func TestMA630_BackupRefusesTranslocatedProgram(t *testing.T) {
 
 	// Translocated program: refused with the X2 message, and no spec is produced.
 	schedule.SelfResolver = func() (string, error) {
-		return "/private/var/folders/aa/bb/C/AppTranslocation/DEAD-BEEF/d/Mail Archive.app/Contents/MacOS/mailarchive", nil
+		return filepath.Join(t.TempDir(), "AppTranslocation", "DEAD-BEEF", "d", "Mail Archive.app", "Contents", "MacOS", "mailarchive"), nil
 	}
 	spec, err := cfg.backupSpec()
 	if !errors.Is(err, schedule.ErrTranslocated) {

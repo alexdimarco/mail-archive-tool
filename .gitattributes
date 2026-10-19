@@ -7,3 +7,8 @@ testdata/mime/** -text
 # a checkout must never rewrite a byte of them either.
 internal/source/parsev1.go -text
 internal/source/parsev1/** -text
+
+# The P14 golden holds the exact per-message bytes a healthy export produces
+# (MA-329); a Windows checkout must not rewrite its line endings or it will not
+# match the LF output the product generates.
+internal/app/testdata/p14-golden.json -text

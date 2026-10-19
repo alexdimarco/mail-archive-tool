@@ -375,11 +375,15 @@ func TestMIMEToBounds(t *testing.T) {
 	})
 
 	t.Run("the overall cap", func(t *testing.T) {
+		// A wide idle window so the 50 ms ENDLESS trickle's jitter under load cannot
+		// trip the idle stop before the overall cap (the bound under test); still well
+		// under overall, so the overall cap is what fires.
+		capIdle := 2 * time.Second
 		for _, id := range []string{"ENDLESS", "THROTTLE"} {
 			t.Run(id, func(t *testing.T) {
 				t.Parallel()
 				start := time.Now()
-				_, err := c.MIMETo(ctx, "u", id, io.Discard, sizeCap, idle, overall)
+				_, err := c.MIMETo(ctx, "u", id, io.Discard, sizeCap, capIdle, overall)
 				var te *TimeoutError
 				if !errors.As(err, &te) || te.Kind != TimeoutOverall || te.Limit != overall || te.MessageID != id {
 					t.Fatalf("%s past the %v overall cap is not a typed overall stop: %v", id, overall, err)
