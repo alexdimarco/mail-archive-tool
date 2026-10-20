@@ -361,6 +361,47 @@ schedules from `known-archives.json` + the live scheduler or only the configured
 dry-run/confirm that lists exactly what will be removed AND names the archives it keeps;
 behaviour for a shared/admin install vs a per-user one (cf. the scan install-type gate).
 
+### 5.8.1 Pre-code pass resolution (ratified 2026-10-20; conditions U-C1..U-C8)
+The uninstall adversarial pass (25 findings; two CRITICAL R36 holes verified in code)
+resolved the mechanism. A naive uninstall deletes mail: `RemoveAll`(config dir) eats an
+archive overlapping it (the CLI create path has no overlap guard), and a `*.json` sweep
+matches `.mailarchive-manifest.json` / `.mailarchive-paused.json` (Go's `*` matches a
+leading dot — confirmed by running Go). Resolved:
+- **U-C1 — fixed allow-list, never recurse, refuse on overlap.** Uninstall deletes only
+  an explicit set of config-dir basenames (each a regular file), NEVER `RemoveAll`s or
+  walks the dir, NEVER globs `*.json`, and REFUSES the whole cleanup if the config dir
+  holds a `.mailarchive-manifest.json` or is within/contains any known `-out`
+  (`util.Within`/`ResolveExisting`, not string-prefix). Same for the binary — remove only
+  the exact exe path, never the enclosing dir / `.app`.
+- **U-C2 — skip archive markers.** Deletion skips every `.mailarchive-*` name and every
+  non-regular file; job files come from the known config/job set, never a raw glob.
+- **U-C3 — sweep schedules by OUR namespace (ratified: sweep, not index-only).** Remove
+  every mailarchive-owned entry found by our own namespaces — the launchd label glob
+  `com.dimarcotech.mailarchive.*`, the `# mailarchive-backup` cron marker, the Windows
+  side-files in `%LOCALAPPDATA%/mailarchive/` — NOT only the archives in
+  known-archives.json (which omits CLI-created ones, SD-6). Remove BOTH the backup AND
+  the separately-named verify LIVE entry (`RemoveVerifyDescriptor` is file-only), each
+  proven "ours" via `bound.go` / `RecordedBackupName`/`RecordedVerifyName`, never a raw name.
+- **U-C4 — clear BOTH credentials, keys first, fail-closed.** Clear the device sign-in
+  token AND the Graph client secret (a separate credential the first draft missed): read
+  tenant+clientID from graph-config.json FIRST, clear both, THEN delete graph-config.json;
+  a non-"not-found" clear error is fail-closed (do not report success; name what remains
+  and the by-hand remedy).
+- **U-C5 — strict order, re-runnable.** Remove ALL schedules first (confirm gone), then
+  the credentials, then the config-dir allow-list (the enumeration sources last), then the
+  binary; idempotent on a crash.
+- **U-C6 — binary: clean state + instruct, no self-delete (ratified).** Uninstall reliably
+  clears schedules/config/sign-in, then hands off / instructs for the program itself
+  (Windows: Add/Remove Programs / the MSI; macOS: drag the app to Trash; a plain binary it
+  can remove), never deleting a running executable.
+- **U-C7 — confirm + dry-run** listing what will be removed AND naming the archives it
+  KEEPS, before any destructive step; clearly distinct from the manager's Disconnect/Remove.
+- **U-C8 — per-user vs shared/admin scope + surface.** A per-user uninstall removes only its
+  own per-user files/schedules, never machine-wide or another user's; surface is a
+  `mailarchive uninstall` CLI verb (with `--dry-run`) and a Desktop action, the confirm
+  working headless.
+Full findings: uninstall pre-code pass output.
+
 ## 6. Security & the "ours" binding (lens 6)
 
 Every Remove/Repair/Continue flows through `schedule.RemoveIfInstalled` /
