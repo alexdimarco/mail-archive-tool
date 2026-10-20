@@ -364,6 +364,20 @@ func Assess(in Input, now time.Time) Report {
 		r.warn("out_absent", fmt.Sprintf("the archive location %s is not reachable — if it is on a removable or network drive, connect it and check again; nothing is wrong with the archive itself", in.Out))
 	}
 
+	// Source-loss (§5.7, S3-C6): when this archive's SOURCE (its mailbox, or a local mail
+	// folder) has been unreachable for too many scheduled runs, say so here too — not only on
+	// the Desktop banner — so a headless operator reading `status` sees it. Best-effort read of
+	// the archive-local streak the scheduled run maintains (state.SourceStreak).
+	if in.Out != "" {
+		if s, serr := state.ReadSourceStreak(in.Out); serr == nil && s.SurfaceLoudly() {
+			since := "recently"
+			if !s.FirstUnreachable.IsZero() {
+				since = s.FirstUnreachable.Format("Jan 2, 2006")
+			}
+			r.warn("source_lost", fmt.Sprintf("this archive's source has not been reachable since %s — reconnect the source (its mailbox or mail folder) to resume backups", since))
+		}
+	}
+
 	// Items and folders the source holds that the last runs could not capture (the
 	// capture-gap ledger): the stuck ones first of every WARN, never RED (FC18).
 	assessCaptureGaps(&r, in, now)
