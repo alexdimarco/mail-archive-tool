@@ -5,6 +5,7 @@ import (
 
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/seal"
+	"mail-archive-tool/internal/state"
 )
 
 // covers: MA-675
@@ -100,5 +101,53 @@ func TestMA680_PauseBindsScheduleNameBeforeRemoving(t *testing.T) {
 	}
 	if !seal.IsSealed(victim) {
 		t.Fatal("handed-over archive must still seal even though no entry was removed")
+	}
+}
+
+// covers: MA-690
+// Auto-pause after a long source-loss streak (archive-manager Slice 3c, S3-C5): when the
+// source has been unreachable for state.AutoPauseAfterRuns consecutive scheduled runs,
+// AutoPauseIfDue stops the live backup schedule — ONLY the bound live entry (never the raw
+// descriptor name, MA-680), KEEPING the descriptor so it is reversible — and NEVER seals.
+// Below the threshold it does nothing.
+func TestMA690_AutoPauseRemovesScheduleWhenDue(t *testing.T) {
+	var removed []string
+	orig := removeLiveEntry
+	removeLiveEntry = func(s schedule.Spec) error { removed = append(removed, s.Name); return nil }
+	defer func() { removeLiveEntry = orig }()
+
+	out := t.TempDir()
+	if err := schedule.WriteDescriptor(out, schedule.Descriptor{
+		Name: schedule.DefaultNameFor(out), Interval: "daily", At: "02:00",
+		Job: []string{"mailarchive", "-out", out},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Below the threshold: no auto-pause, nothing removed.
+	if err := state.WriteSourceStreak(out, state.SourceStreak{ConsecutiveFails: state.AutoPauseAfterRuns - 1}); err != nil {
+		t.Fatal(err)
+	}
+	if paused, err := AutoPauseIfDue(out); err != nil || paused || len(removed) != 0 {
+		t.Fatalf("must not auto-pause below the threshold: paused=%v err=%v removed=%v", paused, err, removed)
+	}
+
+	// At the threshold: auto-pause removes this archive's bound entry, keeps the descriptor,
+	// and does NOT seal.
+	if err := state.WriteSourceStreak(out, state.SourceStreak{ConsecutiveFails: state.AutoPauseAfterRuns}); err != nil {
+		t.Fatal(err)
+	}
+	paused, err := AutoPauseIfDue(out)
+	if err != nil || !paused {
+		t.Fatalf("must auto-pause at the threshold: paused=%v err=%v", paused, err)
+	}
+	if len(removed) != 1 || removed[0] != schedule.DefaultNameFor(out) {
+		t.Fatalf("must remove this archive's bound entry, got %v", removed)
+	}
+	if seal.IsSealed(out) {
+		t.Fatal("auto-pause must NOT seal the archive (S3-C5)")
+	}
+	if _, derr := schedule.ReadDescriptor(out); derr != nil {
+		t.Fatal("auto-pause must KEEP the descriptor so the schedule can be reinstalled (reversible)")
 	}
 }

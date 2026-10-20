@@ -17,6 +17,7 @@ import (
 	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/server"
 	"mail-archive-tool/internal/state"
+	"mail-archive-tool/internal/wizard"
 )
 
 // notConfiguredMsg is the refusal text shown when Microsoft 365 is not set up —
@@ -85,6 +86,12 @@ func HeadlessCapture(cfg Config, logw io.Writer) error {
 		opts.Warnings = []state.RunWarning{{Code: "config_in_archive", Message: msg}}
 	}
 	_, err := app.RunGraph(context.Background(), g, opts, logger)
+	// After a scheduled run, auto-pause the backup if the source has been unreachable for too
+	// many runs (§5.7, S3-C5): stop the nightly schedule only — reversible, never seals. Best
+	// effort; it never fails the run.
+	if paused, perr := wizard.AutoPauseIfDue(out); perr == nil && paused {
+		logger.Printf("auto-paused the scheduled backup: the source has been unreachable for too long; the schedule was stopped (reversible — reconnect the source and re-enable it)")
+	}
 	return err
 }
 
