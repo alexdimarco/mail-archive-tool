@@ -16,6 +16,7 @@ package seal
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -29,6 +30,25 @@ const Name = ".mailarchive-paused.json"
 
 // maxReasonBytes caps the human-readable reason the sentinel may carry.
 const maxReasonBytes = 16 * 1024
+
+// ErrSealed wraps every write refused because the archive is paused, so a caller or a
+// test can detect the cause with errors.Is.
+var ErrSealed = errors.New("this archive is paused (read-only)")
+
+// RefuseWrite returns a Resume-routing error wrapping ErrSealed when out is sealed,
+// and nil otherwise. A content-mutating operation (capture/export, graph, reindex
+// redaction, verify -record) calls it at its entry so a paused archive is never
+// written; a read (a plain verify, extract, the health probe) does not (S2-C1/C2).
+func RefuseWrite(out string) error {
+	if !IsSealed(out) {
+		return nil
+	}
+	detail := "resume it from MailArchive Desktop (Archives) to make changes"
+	if r := Reason(out); r != "" {
+		detail = "paused: " + r + "; " + detail
+	}
+	return fmt.Errorf("%w — %s", ErrSealed, detail)
+}
 
 // IsSealed reports whether the archive at out is paused (hard read-only). Presence of
 // the sentinel is the signal, read FAIL-CLOSED: only a confirmed "not there" means

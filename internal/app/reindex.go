@@ -18,6 +18,7 @@ import (
 	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/model"
 	"mail-archive-tool/internal/pages"
+	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/source"
 	"mail-archive-tool/internal/state"
 )
@@ -34,6 +35,13 @@ import (
 func Reindex(out string, logger *log.Logger) (kept, pruned int, err error) {
 	if logger == nil {
 		logger = log.New(io.Discard, "", 0)
+	}
+
+	// Reindex redacts (deletes a removed message's orphaned files, prunes the manifest
+	// and history), so a paused archive refuses it; index Rebuild, which only
+	// regenerates derived data, is allowed (archive-manager S2-C1).
+	if err := seal.RefuseWrite(out); err != nil {
+		return 0, 0, err
 	}
 
 	// One run per archive at a time (R5): reindex sweeps and rewrites, so it

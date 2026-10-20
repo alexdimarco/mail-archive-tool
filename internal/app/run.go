@@ -22,6 +22,7 @@ import (
 	"mail-archive-tool/internal/model"
 	"mail-archive-tool/internal/outlookcom"
 	"mail-archive-tool/internal/pages"
+	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/source"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/util"
@@ -352,6 +353,12 @@ type ProgressFunc func(stats export.Stats)
 func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress ProgressFunc) (result Result, err error) {
 	if logger == nil {
 		logger = log.New(io.Discard, "", 0)
+	}
+
+	// A paused archive is hard read-only: refuse every content-mutating run before
+	// any write, lock, or last-run record (archive-manager S2-C1/C2).
+	if err := seal.RefuseWrite(opts.Out); err != nil {
+		return Result{}, err
 	}
 
 	// Validate the inputs BEFORE creating anything (friction #2). A missing
