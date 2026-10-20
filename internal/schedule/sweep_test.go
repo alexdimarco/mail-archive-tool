@@ -50,7 +50,8 @@ func TestMA673_SweepFindsOurEntriesByNamespace(t *testing.T) {
 
 	// launchd: our plists under $HOME/Library/LaunchAgents are found; a foreign one is not.
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	t.Setenv("HOME", home)        // os.UserHomeDir on darwin/linux
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir on Windows (the CI leg calls ourLaunchd directly)
 	la := filepath.Join(home, "Library", "LaunchAgents")
 	if err := os.MkdirAll(la, 0o755); err != nil {
 		t.Fatal(err)
