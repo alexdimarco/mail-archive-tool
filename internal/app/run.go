@@ -1169,7 +1169,7 @@ func DiscoverInputs(inputs []string, auto bool) ([]string, error) {
 		info, err := os.Stat(in)
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
-				return nil, fmt.Errorf("input %s does not exist (check the path, or that the drive holding it is mounted)", in)
+				return nil, &sourceUnreachableError{path: in}
 			}
 			return nil, fmt.Errorf("input %s: %w", in, err)
 		}

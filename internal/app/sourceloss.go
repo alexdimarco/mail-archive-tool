@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"path/filepath"
 	"time"
@@ -24,14 +25,27 @@ const (
 	sourceUnreachable
 )
 
+// sourceUnreachableError marks a run failure caused by the archive's SOURCE being unreachable
+// at input discovery — a local mail-store folder that is gone or on an unmounted drive. The
+// message stays the operator-facing one; the type lets classifySourceReach recognise it
+// (S3-C2) so the streak climbs, and the streak's run count then sorts a transient absence (a
+// drive briefly unplugged) from a permanent loss (S3-C3).
+type sourceUnreachableError struct{ path string }
+
+func (e *sourceUnreachableError) Error() string {
+	return fmt.Sprintf("input %s does not exist (check the path, or that the drive holding it is mounted)", e.path)
+}
+
 // classifySourceReach decides, from a finished run's error, whether the run reached the
 // archive's SOURCE. A clean run reached it (even an empty mailbox is a reach, so a healthy
 // quiet source never reads as source-loss). An M365 breaker outage is unreachable. A
 // cancellation, a search-index refusal, or any other failure is inconclusive about the source.
 //
-// NOTE (S3-C2, Slice 3b-ii): a LOST LOCAL source — a Thunderbird/mbox folder that is gone —
-// is NOT yet distinguished here and currently reads as inconclusive. Adding that signal is the
-// next increment; MA-688 is its skipped encoder until then.
+// A gone LOCAL source (a Thunderbird/mbox folder that is missing or on an unmounted drive) is
+// unreachable too, via the typed sourceUnreachableError that DiscoverInputs returns (S3-C2);
+// the streak's run count then sorts a transient absence from a permanent loss (S3-C3). A
+// present-but-unreadable source (a lock or permission error) is NOT "gone", so it stays
+// inconclusive and never false-positives as a lost source.
 func classifySourceReach(err error) (sourceReach, string) {
 	switch {
 	case err == nil:
@@ -42,6 +56,10 @@ func classifySourceReach(err error) (sourceReach, string) {
 		var outage *outageError
 		if errors.As(err, &outage) {
 			return sourceUnreachable, "m365-unreachable"
+		}
+		var sue *sourceUnreachableError
+		if errors.As(err, &sue) {
+			return sourceUnreachable, "local-source-unreachable"
 		}
 		return sourceInconclusive, ""
 	}

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 
 	"mail-archive-tool/internal/state"
@@ -79,6 +80,18 @@ func TestMA687_SourceReachClassifyAndStreakWiring(t *testing.T) {
 // has no local signal, so a gone local folder currently reads as inconclusive. Skipped encoder
 // until the local-source-unreachable signal lands — then REMOVE the skip and assert it.
 func TestMA688_LostLocalSourceClassifiesUnreachable(t *testing.T) {
-	// no-assert: skipped open-gap encoder for S3-C2; un-skip and assert when Slice 3b-ii lands.
-	t.Skip("Slice 3b-ii: the local-source-unreachable signal (S3-C2) is not built yet")
+	// A gone local source: DiscoverInputs on a missing path returns a typed source-unreachable
+	// error, which the classifier reads as unreachable so the streak climbs (the run count then
+	// sorts transient from permanent, S3-C3).
+	if _, err := DiscoverInputs([]string{filepath.Join(t.TempDir(), "gone-thunderbird")}, false); err == nil {
+		t.Fatal("a missing local input must error")
+	} else if r, k := classifySourceReach(err); r != sourceUnreachable || k != "local-source-unreachable" {
+		t.Fatalf("a gone local source must classify as unreachable/local, got %v %q", r, k)
+	}
+
+	// A present-but-unreadable source (a lock or permission error) is NOT "gone" — it stays
+	// inconclusive, so a transient read blip never false-positives as a lost source.
+	if r, _ := classifySourceReach(errors.New("input /x: permission denied")); r != sourceInconclusive {
+		t.Fatal("a non-not-exist input error must be inconclusive, not source-loss")
+	}
 }
