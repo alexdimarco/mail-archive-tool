@@ -13,6 +13,7 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"os"
 	"os/user"
 	"path/filepath"
 	"runtime"
@@ -22,6 +23,7 @@ import (
 	"time"
 
 	"mail-archive-tool/internal/app"
+	"mail-archive-tool/internal/archindex"
 	"mail-archive-tool/internal/graph"
 	"mail-archive-tool/internal/graphconfig"
 	"mail-archive-tool/internal/instance"
@@ -29,6 +31,7 @@ import (
 	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/server"
+	"mail-archive-tool/internal/uninstall"
 	"mail-archive-tool/internal/wizard"
 )
 
@@ -292,6 +295,7 @@ func (d *dashboard) router() localweb.Router {
 	mux.HandleFunc("/api/settings", d.saveSettings)
 	mux.HandleFunc("/api/pause-archive", d.pauseArchive)
 	mux.HandleFunc("/api/resume-archive", d.resumeArchive)
+	mux.HandleFunc("/api/uninstall", d.uninstallAction)
 	mux.HandleFunc("/api/schedule-install", d.scheduleInstall)
 	mux.HandleFunc("/api/schedule-remove", d.scheduleRemove)
 	mux.HandleFunc("/api/schedule-state", d.scheduleState)
@@ -628,6 +632,72 @@ func (d *dashboard) archiveActionPath(w http.ResponseWriter, r *http.Request) (s
 		return "", false
 	}
 	return path, true
+}
+
+// uninstallRun is a seam so a test drives the uninstall handler without touching the real
+// config directory, scheduler, or credential store.
+var uninstallRun = uninstall.Uninstall
+
+// uninstallAction computes (confirm=false, a dry run) or performs (confirm=true) a full
+// uninstall of MailArchive — its schedules, settings and sign-in — and NEVER an archive
+// (R36). Loopback-only and CSRF-guarded, like every action here. The reply lists what is (or
+// would be) removed and the archives it KEEPS, plus how to remove the program itself (U-C6);
+// this is the Desktop surface of U-C8.
+func (d *dashboard) uninstallAction(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	if !server.GuardLocalPOST(r, d.csrf) {
+		http.Error(w, "refused: same-origin, tokened, local requests only", http.StatusForbidden)
+		return
+	}
+	var in struct{ Confirm bool }
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&in); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	cfgPath := strings.TrimSpace(d.cfg.ConfigPath)
+	if cfgPath == "" {
+		writeJSON(w, map[string]any{"ok": false, "error": "MailArchive is not set up on this machine, so there is nothing to uninstall"})
+		return
+	}
+	exe, _ := os.Executable()
+	rep, err := uninstallRun(filepath.Dir(cfgPath), d.knownArchivePaths(), exe, !in.Confirm)
+	if err != nil {
+		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, map[string]any{
+		"ok":            true,
+		"done":          in.Confirm,
+		"schedules":     rep.Schedules,
+		"configFiles":   rep.ConfigFiles,
+		"clearedSignIn": rep.ClearedSignIn,
+		"keptArchives":  rep.KeptArchives,
+		"binaryNote":    rep.BinaryNote,
+	})
+}
+
+// knownArchivePaths lists the archive folders recorded in the Desktop's index, so a full
+// uninstall can name what it KEEPS (R36) and refuse a config dir that overlaps one. It only
+// READS the index (never reconciles/writes during an uninstall); an absent or unreadable
+// index yields none, and ConfigTargets still self-guards on the config dir.
+func (d *dashboard) knownArchivePaths() []string {
+	if strings.TrimSpace(d.cfg.IndexPath) == "" {
+		return nil
+	}
+	idx, err := archindex.ReadFile(d.cfg.IndexPath)
+	if err != nil {
+		return nil
+	}
+	var paths []string
+	for _, e := range idx.Entries {
+		if p := strings.TrimSpace(e.Path); p != "" {
+			paths = append(paths, p)
+		}
+	}
+	return paths
 }
 
 func (cfg Config) overview(csrf string) string { return cfg.overviewFor(csrf, "") }
@@ -1003,6 +1073,17 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
         <li><b>Reversible.</b> You can revoke access any time, and uninstalling keeps your archive — your saved mail is never deleted.</li>
       </ul>
     </div>
+
+    <div class="card sec" id="sec-uninstall">
+      <h2>Uninstall MailArchive</h2>
+      <p class="card-sub">Remove MailArchive's scheduled backups, settings and Microsoft sign-in from this computer. <b>Your archives are kept</b> — your saved mail is never deleted. Removing the program itself is a last step your system shows you.</p>
+      <button class="btn secondary" id="uninstallBtn" type="button">Uninstall MailArchive…</button>
+      <div class="device-box" id="uninstallPanel" hidden>
+        <pre class="mono" id="uninstallPlan"></pre>
+        <div style="margin-top:10px"><button class="btn" id="uninstallGo" type="button">Remove</button> <button class="btn secondary" id="uninstallCancel" type="button">Cancel</button></div>
+      </div>
+      <div class="note" id="uninstallNote" hidden></div>
+    </div>
   </div></main>
 </div>
 <script src="dashboard.js"></script>
@@ -1077,6 +1158,42 @@ const archAction=(sel,path)=>document.querySelectorAll(sel).forEach(b=>b.addEven
 }));
 archAction('[data-pause-archive]','api/pause-archive');
 archAction('[data-resume-archive]','api/resume-archive');
+
+// Uninstall (Danger zone): "Uninstall…" fetches the plan (a dry run that changes nothing)
+// and shows it; "Remove" performs it; "Cancel" closes. Archives are never touched.
+async function uninstallReq(confirm){
+  return (await fetch('api/uninstall',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({confirm:confirm})})).json();
+}
+function uninstallPlanText(d){
+  const kept=d.keptArchives||[];
+  const lines=['This will remove:',
+    '- scheduled backups: '+((d.schedules||[]).length),
+    '- settings and log files: '+((d.configFiles||[]).length)];
+  if(d.clearedSignIn)lines.push('- the saved Microsoft sign-in');
+  lines.push('');
+  lines.push('It will KEEP your '+kept.length+' archive(s) — your mail is never deleted:');
+  (kept.length?kept:['(none recorded)']).forEach(a=>lines.push('   '+a));
+  return lines.join('\n');
+}
+const unBtn=$('uninstallBtn');
+if(unBtn)unBtn.addEventListener('click',async()=>{
+  const p=$('uninstallPanel'),pl=$('uninstallPlan'),n=$('uninstallNote');
+  if(n)n.hidden=true;
+  try{const d=await uninstallReq(false);
+    if(!d.ok){if(n){n.hidden=false;n.textContent=d.error||'Could not prepare the uninstall.';}return;}
+    if(pl)pl.textContent=uninstallPlanText(d);
+    if(p)p.hidden=false;
+  }catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}
+});
+const unGo=$('uninstallGo'),unCancel=$('uninstallCancel');
+if(unGo)unGo.addEventListener('click',async()=>{
+  const p=$('uninstallPanel'),n=$('uninstallNote');
+  try{const d=await uninstallReq(true);
+    if(p)p.hidden=true;
+    if(n){n.hidden=false;n.textContent=d.ok?('Removed MailArchive backups, settings and sign-in; your archives are untouched. '+(d.binaryNote||'')):(d.error||'Could not uninstall.');}
+  }catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}
+});
+if(unCancel)unCancel.addEventListener('click',()=>{const p=$('uninstallPanel'),n=$('uninstallNote');if(p)p.hidden=true;if(n){n.hidden=false;n.textContent='Nothing was removed.';}});
 if(save)save.addEventListener('click',()=>doSave(''));
 const keepB=$('settingsKeep'),removeB=$('settingsRemoveBackup'),cancelB=$('settingsCancel');
 if(keepB)keepB.addEventListener('click',()=>doSave('keep'));
