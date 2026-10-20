@@ -85,3 +85,43 @@ func TestMA678_UninstallOrchestrator(t *testing.T) {
 		t.Fatal("a refused uninstall must delete nothing")
 	}
 }
+
+// covers: MA-681
+// Uninstall fails CLOSED when graph-config.json is present but unreadable/corrupt (a
+// non-not-found error): it stops before removing anything and names the remedy, so the saved
+// Microsoft sign-in (client secret / device token) is never stranded by deleting the only
+// record of its keys while the clear is silently skipped (U-C4). A legitimately ABSENT config
+// is not an error (nothing to clear). Encodes the 2026-10-20 security-pass finding.
+func TestMA681_UninstallFailsClosedOnUnreadableGraphConfig(t *testing.T) {
+	origList, origRemove, origClear := listSchedules, removeSchedule, clearSignIn
+	defer func() { listSchedules, removeSchedule, clearSignIn = origList, origRemove, origClear }()
+	var cleared bool
+	listSchedules = func() []schedule.InstalledEntry { return nil }
+	removeSchedule = func(s schedule.Spec) error { return nil }
+	clearSignIn = func(tenant, clientID string) error { cleared = true; return nil }
+
+	// A corrupt (truncated) graph-config.json present alongside a normal config file.
+	cfg := t.TempDir()
+	writeFile(t, filepath.Join(cfg, "graph-config.json"), `{"tenant":"contoso",`)
+	writeFile(t, filepath.Join(cfg, "desktop-settings.json"), "x")
+
+	if _, err := Uninstall(cfg, nil, "/x/mailarchive", false); err == nil {
+		t.Fatal("uninstall must FAIL CLOSED when the sign-in config is present but unreadable (U-C4)")
+	}
+	if _, err := os.Stat(filepath.Join(cfg, "graph-config.json")); err != nil {
+		t.Fatal("a fail-closed uninstall must NOT delete graph-config.json (it records the keys needed to clear the secret)")
+	}
+	if _, err := os.Stat(filepath.Join(cfg, "desktop-settings.json")); err != nil {
+		t.Fatal("a fail-closed uninstall must delete nothing")
+	}
+	if cleared {
+		t.Fatal("the clear must not run when the keys could not be read")
+	}
+
+	// Positive twin: a legitimately ABSENT config is not an error — the run proceeds.
+	cfg2 := t.TempDir()
+	writeFile(t, filepath.Join(cfg2, "desktop-settings.json"), "x")
+	if _, err := Uninstall(cfg2, nil, "/x/mailarchive", false); err != nil {
+		t.Fatalf("an absent graph-config.json must not be an error: %v", err)
+	}
+}

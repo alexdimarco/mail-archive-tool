@@ -48,7 +48,10 @@ func Uninstall(configDir string, knownArchives []string, exe string, dryRun bool
 		return nil, err // ErrOverlap or a read error — nothing is touched
 	}
 	entries := listSchedules()
-	tenant, clientID := graphKeys(configDir)
+	tenant, clientID, gerr := graphKeys(configDir)
+	if gerr != nil {
+		return nil, fmt.Errorf("could not read the Microsoft sign-in settings at %s, so uninstall stopped before removing anything: clear the sign-in by hand (open MailArchive and sign out, or delete that file together with the saved token and app secret) and re-run — otherwise the saved sign-in would be left behind while its settings file is deleted (U-C4): %w", filepath.Join(configDir, "graph-config.json"), gerr)
+	}
 
 	rep := &Report{
 		KeptArchives:  append([]string(nil), knownArchives...),
@@ -87,14 +90,23 @@ func Uninstall(configDir string, knownArchives []string, exe string, dryRun bool
 }
 
 // graphKeys reads the Graph registration's tenant+clientID from graph-config.json in
-// configDir ("" when absent) — BEFORE that file is deleted, so the derived credential
-// keys survive the clear (U-C4).
-func graphKeys(configDir string) (tenant, clientID string) {
-	c, err := graphconfig.Load(filepath.Join(configDir, "graph-config.json"))
-	if err != nil || c == nil {
-		return "", ""
+// configDir — BEFORE that file is deleted, so the derived credential keys survive the
+// clear (U-C4). A legitimately ABSENT config yields empty keys with no error (nothing to
+// clear). A config that is PRESENT but cannot be read or parsed is a non-not-found error:
+// the caller MUST fail closed on it (U-C4), never silently skip the clear and then delete
+// the only record of the keys — that would strand the client secret while reporting success.
+func graphKeys(configDir string) (tenant, clientID string, err error) {
+	c, lerr := graphconfig.Load(filepath.Join(configDir, "graph-config.json"))
+	if lerr != nil {
+		if errors.Is(lerr, os.ErrNotExist) {
+			return "", "", nil // no config yet: nothing to clear
+		}
+		return "", "", lerr
 	}
-	return c.Tenant, c.ClientID
+	if c == nil {
+		return "", "", nil
+	}
+	return c.Tenant, c.ClientID, nil
 }
 
 // binaryNote tells the owner how to remove the program itself; uninstall never deletes a
