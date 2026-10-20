@@ -7,6 +7,7 @@ import (
 
 	"mail-archive-tool/internal/archindex"
 	"mail-archive-tool/internal/seal"
+	"mail-archive-tool/internal/state"
 )
 
 // This file wires the folder-only archive index (internal/archindex, the
@@ -28,6 +29,10 @@ type ArchiveRow struct {
 	Available bool   // reachable right now and still a readable archive
 	Sealed    bool   // paused (hard read-only) — show Resume, not Switch/Pause
 	Kind      string // local | m365 | mixed | empty; "" when unavailable
+	// SourceLostSince is a "since DATE" string when this archive's SOURCE (its mailbox or
+	// local mail folder) has been unreachable past the surface threshold (§5.7, S3-C6); ""
+	// when the source is reachable or the streak has not crossed the threshold.
+	SourceLostSince string
 }
 
 // KindLabel is the short, plain-words form of Kind for the archive list ("" when
@@ -109,14 +114,30 @@ func (cfg Config) archiveRows(idx archindex.Index) []ArchiveRow {
 			kind = archindex.Kind(e.Path)
 		}
 		rows = append(rows, ArchiveRow{
-			Path:      e.Path,
-			Current:   current != "" && cleanPath(e.Path) == current,
-			Available: avail,
-			Sealed:    seal.IsSealed(e.Path),
-			Kind:      kind,
+			Path:            e.Path,
+			Current:         current != "" && cleanPath(e.Path) == current,
+			Available:       avail,
+			Sealed:          seal.IsSealed(e.Path),
+			Kind:            kind,
+			SourceLostSince: sourceLostSince(e.Path),
 		})
 	}
 	return rows
+}
+
+// sourceLostSince returns a "since DATE" string when the archive's SOURCE has been unreachable
+// past the surface threshold (§5.7, S3-C6), for the Desktop banner; "" when the source is
+// reachable or the streak has not yet crossed the threshold. It reads the archive-local streak
+// the scheduled run maintains (state.SourceStreak), best-effort.
+func sourceLostSince(out string) string {
+	s, err := state.ReadSourceStreak(out)
+	if err != nil || !s.SurfaceLoudly() {
+		return ""
+	}
+	if s.FirstUnreachable.IsZero() {
+		return "recently"
+	}
+	return s.FirstUnreachable.Format("Jan 2, 2006")
 }
 
 // cleanPath normalizes a folder path for identity comparison, matching archindex's
