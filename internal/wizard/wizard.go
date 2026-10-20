@@ -792,18 +792,53 @@ func rememberArchive(out string) {
 	}
 }
 
-// healthCheck shows the health of the last archive this wizard worked on when
-// a schedule is recorded there, beside a "remove the scheduled backup" choice.
-func healthCheck() error {
+// currentArchive is the archive the wizard's health view reports on: the Desktop's
+// authoritative active archive (desktop-settings "out") when one is set, else the
+// wizard's own last-touched breadcrumb (last-archive.txt). Reading the same pointer the
+// Desktop writes means an archive switched in the Desktop shows here too, instead of
+// each surface tracking a different file (design-archive-manager §13 UX-2). When the
+// Desktop's pointer is set, the breadcrumb is reconciled to it so the two never drift.
+func currentArchive() string {
+	if sp, err := job.DesktopSettingsFile(); err == nil {
+		if out := job.ReadDesktopOut(sp); out != "" {
+			reconcileBreadcrumb(out)
+			return out
+		}
+	}
 	p, err := lastArchiveFile()
 	if err != nil {
-		return nil
+		return ""
 	}
 	data, err := os.ReadFile(p)
 	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// reconcileBreadcrumb points the wizard's last-touched breadcrumb (last-archive.txt) at
+// out when it differs, so it tracks the Desktop's active archive rather than drifting
+// from it (design-archive-manager §13 UX-2). Best-effort: the health view still works
+// from out if the breadcrumb cannot be written.
+func reconcileBreadcrumb(out string) {
+	p, err := lastArchiveFile()
+	if err != nil {
+		return
+	}
+	if data, rerr := os.ReadFile(p); rerr == nil && strings.TrimSpace(string(data)) == out {
+		return
+	}
+	_ = os.MkdirAll(filepath.Dir(p), 0o700)
+	_ = os.WriteFile(p, []byte(out+"\n"), 0o600)
+}
+
+// healthCheck shows the health of the last archive this wizard worked on when
+// a schedule is recorded there, beside a "remove the scheduled backup" choice.
+func healthCheck() error {
+	out := currentArchive()
+	if out == "" {
 		return nil
 	}
-	out := strings.TrimSpace(string(data))
 
 	// health.Gather is the one reader of the headless start-failure breadcrumb
 	// (§4.6.6, MA-634): it raises start_failed in the posture (keyed on out, not
