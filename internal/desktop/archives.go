@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"mail-archive-tool/internal/archindex"
+	"mail-archive-tool/internal/seal"
 )
 
 // This file wires the folder-only archive index (internal/archindex, the
@@ -25,6 +26,7 @@ type ArchiveRow struct {
 	Path      string
 	Current   bool   // this folder is the archive in use (effectiveOut)
 	Available bool   // reachable right now and still a readable archive
+	Sealed    bool   // paused (hard read-only) — show Resume, not Switch/Pause
 	Kind      string // local | m365 | mixed | empty; "" when unavailable
 }
 
@@ -110,6 +112,7 @@ func (cfg Config) archiveRows(idx archindex.Index) []ArchiveRow {
 			Path:      e.Path,
 			Current:   current != "" && cleanPath(e.Path) == current,
 			Available: avail,
+			Sealed:    seal.IsSealed(e.Path),
 			Kind:      kind,
 		})
 	}

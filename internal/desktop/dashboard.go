@@ -29,6 +29,7 @@ import (
 	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/server"
+	"mail-archive-tool/internal/wizard"
 )
 
 // Config wires the dashboard to one archive and the Graph config/credentials.
@@ -289,6 +290,8 @@ func (d *dashboard) router() localweb.Router {
 	mux.HandleFunc("/api/capture", d.capture)
 	mux.HandleFunc("/api/activity", d.activity)
 	mux.HandleFunc("/api/settings", d.saveSettings)
+	mux.HandleFunc("/api/pause-archive", d.pauseArchive)
+	mux.HandleFunc("/api/resume-archive", d.resumeArchive)
 	mux.HandleFunc("/api/schedule-install", d.scheduleInstall)
 	mux.HandleFunc("/api/schedule-remove", d.scheduleRemove)
 	mux.HandleFunc("/api/schedule-state", d.scheduleState)
@@ -575,6 +578,58 @@ func vaultPhrase() string {
 	return "a file only you can read"
 }
 
+// pauseArchive makes the named archive read-only (loopback-only, CSRF-guarded): it stops
+// the archive's schedule and seals it, via wizard.PauseArchive. The archive's mail is
+// never touched; Resume reverses it.
+func (d *dashboard) pauseArchive(w http.ResponseWriter, r *http.Request) {
+	path, ok := d.archiveActionPath(w, r)
+	if !ok {
+		return
+	}
+	if err := wizard.PauseArchive(path, "paused from MailArchive Desktop"); err != nil {
+		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
+}
+
+// resumeArchive makes the named archive writable again and restores its backup schedule.
+func (d *dashboard) resumeArchive(w http.ResponseWriter, r *http.Request) {
+	path, ok := d.archiveActionPath(w, r)
+	if !ok {
+		return
+	}
+	if err := wizard.ResumeArchive(path); err != nil {
+		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
+}
+
+// archiveActionPath guards a loopback-only, CSRF-tokened POST carrying {"path":...} and
+// returns the trimmed path; on refusal/bad input it writes the response and returns false.
+func (d *dashboard) archiveActionPath(w http.ResponseWriter, r *http.Request) (string, bool) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return "", false
+	}
+	if !server.GuardLocalPOST(r, d.csrf) {
+		http.Error(w, "refused: same-origin, tokened, local requests only", http.StatusForbidden)
+		return "", false
+	}
+	var in struct{ Path string }
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&in); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return "", false
+	}
+	path := strings.TrimSpace(in.Path)
+	if path == "" {
+		writeJSON(w, map[string]any{"ok": false, "error": "no archive chosen"})
+		return "", false
+	}
+	return path, true
+}
+
 func (cfg Config) overview(csrf string) string { return cfg.overviewFor(csrf, "") }
 
 // overviewFor is the Overview page for a process whose epoch is epoch (the workspace's
@@ -809,7 +864,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
         {{range .Archives}}<li class="archive-row{{if not .Available}} unavailable{{end}}">
           <span class="mono archive-path">{{.Path}}</span>
           {{if .KindLabel}}<span class="archive-kind">{{.KindLabel}}</span>{{end}}
-          {{if .Current}}<span class="archive-tag current">Current archive</span>{{else if .Available}}<button class="btn secondary" type="button" data-switch-archive data-path="{{.Path}}">Switch to this archive</button>{{else}}<span class="archive-tag">Not reachable right now — reconnect the drive or folder and it comes back. Nothing was removed.</span>{{end}}
+          {{if not .Available}}<span class="archive-tag">Not reachable right now — reconnect the drive or folder and it comes back. Nothing was removed.</span>{{else if .Sealed}}<span class="archive-tag">Paused (read-only) — Resume it to make changes.</span> <button class="btn secondary" type="button" data-resume-archive data-path="{{.Path}}">Resume</button>{{else}}{{if .Current}}<span class="archive-tag current">Current archive</span>{{else}}<button class="btn secondary" type="button" data-switch-archive data-path="{{.Path}}">Switch to this archive</button>{{end}} <button class="btn secondary" type="button" data-pause-archive data-path="{{.Path}}">Pause (make read-only)</button>{{end}}
         </li>{{end}}
       </ul>
     </div>{{end}}
@@ -1012,6 +1067,16 @@ document.querySelectorAll('[data-switch-archive]').forEach(b=>b.addEventListener
   $('outDir').value=b.dataset.path;
   if(await doSave(''))setTimeout(()=>location.reload(),500);
 }));
+// Pause (make read-only) / Resume, per archive row. Errors surface in the Settings note.
+const archAction=(sel,path)=>document.querySelectorAll(sel).forEach(b=>b.addEventListener('click',async()=>{
+  const n=$('settingsNote');
+  try{const r=await(await fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({path:b.dataset.path})})).json();
+    if(r.ok){location.reload();return;}
+    if(n){n.hidden=false;n.textContent=r.error||'Could not do that.';}
+  }catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}
+}));
+archAction('[data-pause-archive]','api/pause-archive');
+archAction('[data-resume-archive]','api/resume-archive');
 if(save)save.addEventListener('click',()=>doSave(''));
 const keepB=$('settingsKeep'),removeB=$('settingsRemoveBackup'),cancelB=$('settingsCancel');
 if(keepB)keepB.addEventListener('click',()=>doSave('keep'));

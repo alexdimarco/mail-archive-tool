@@ -3,6 +3,7 @@ package desktop
 import (
 	"bytes"
 	"encoding/json"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"mail-archive-tool/internal/archindex"
 	"mail-archive-tool/internal/assure"
+	"mail-archive-tool/internal/seal"
 )
 
 var (
@@ -170,6 +172,67 @@ func TestMA665_ArchiveRowsDeriveLive(t *testing.T) {
 	rb2, _ := rowByPath(rows2, b)
 	if ra2.Current || !rb2.Current {
 		t.Fatalf("after switching out to B, Current must move to B: A.current=%v B.current=%v", ra2.Current, rb2.Current)
+	}
+}
+
+// covers: MA-677
+// The Desktop Pause/Resume UI (Slice 2e, UX-3): the Your-archives card shows "Pause (make
+// read-only)" on an available archive and "Paused (read-only)" + a Resume button on a sealed
+// one; the loopback-only, CSRF-guarded /api/pause-archive and /api/resume-archive handlers
+// seal and unseal the named archive via the lifecycle.
+func TestMA677_DesktopPauseResumeUI(t *testing.T) {
+	dir := t.TempDir()
+	idxPath := filepath.Join(dir, archindex.Name)
+	settings := filepath.Join(dir, "s.json")
+	a := archiveAt(t, dir, "A", map[string]string{"path:/mail/a.mbox": "a"})
+	b := archiveAt(t, dir, "B", map[string]string{"mailbox:u@contoso.com": "b"})
+	if err := seal.Seal(b, "parked"); err != nil {
+		t.Fatal(err)
+	}
+	if err := archindex.WriteFile(idxPath, archindex.Index{Entries: []archindex.Entry{
+		{Path: a, AddedAt: at0, LastSeenAt: at0}, {Path: b, AddedAt: at0, LastSeenAt: at0},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveSettings(settings, Settings{Out: a}); err != nil {
+		t.Fatal(err)
+	}
+	h := DashboardHandler(Config{SettingsPath: settings, IndexPath: idxPath, GOOS: "darwin"})
+	page, csrf := getPage(t, h)
+
+	card := page[strings.Index(page, `id="sec-archives"`):]
+	card = card[:strings.Index(card, "</div>")]
+	for _, want := range []string{
+		`data-pause-archive data-path="` + a + `"`,  // A (available) can be paused
+		"Paused (read-only)",                        // B is paused
+		`data-resume-archive data-path="` + b + `"`, // B can be resumed
+	} {
+		if !strings.Contains(card, want) {
+			t.Errorf("the Your-archives card lacks %q\ncard: %s", want, card)
+		}
+	}
+
+	post := func(path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("POST", path, strings.NewReader(body))
+		req.Host = "127.0.0.1:8097"
+		req.Header.Set("Origin", "http://127.0.0.1:8097")
+		req.Header.Set("X-CSRF-Token", csrf)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	if r := post("/api/pause-archive", `{"path":`+jsonQuote(a)+`}`); !strings.Contains(r.Body.String(), `"ok":true`) {
+		t.Fatalf("pause A = %s", r.Body.String())
+	}
+	if !seal.IsSealed(a) {
+		t.Fatal("A must be sealed after /api/pause-archive")
+	}
+	if r := post("/api/resume-archive", `{"path":`+jsonQuote(b)+`}`); !strings.Contains(r.Body.String(), `"ok":true`) {
+		t.Fatalf("resume B = %s", r.Body.String())
+	}
+	if seal.IsSealed(b) {
+		t.Fatal("B must be writable after /api/resume-archive")
 	}
 }
 
