@@ -111,7 +111,11 @@ func Reason(out string) string {
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(data))
+	// Sanitize at the read boundary: the reason is written by whoever can write the archive
+	// folder and is echoed into terminals, logs and dialogs (via RefuseWrite), so strip ANSI
+	// escapes / embedded newlines (StripControl) and bidi overrides (StripBidi) before any
+	// consumer sees it — the same treatment the other archive-directory records get.
+	return strings.TrimSpace(util.StripBidi(util.StripControl(string(data))))
 }
 
 // fsyncDir flushes a directory entry so the atomic write/remove is durable across a

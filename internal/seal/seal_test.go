@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"mail-archive-tool/internal/assure"
@@ -85,5 +86,34 @@ func TestMA668_SealSentinelFailClosed(t *testing.T) {
 	}
 	if err := Seal("", "x"); err == nil {
 		t.Fatal("Seal on an empty out must error")
+	}
+}
+
+// covers: MA-683
+// The pause reason is sanitized at the read boundary (security pass 2026-10-20): the
+// sentinel is writable by whoever can write the archive folder and its reason is echoed into
+// terminals, logs and dialogs via RefuseWrite, so Reason strips ANSI escapes / embedded
+// newlines (StripControl) and bidi overrides (StripBidi) before any consumer sees it — a
+// crafted reason cannot forge an output line or reverse text.
+func TestMA683_PauseReasonIsSanitized(t *testing.T) {
+	dir := t.TempDir()
+	// A hostile/damaged reason: an ANSI colour escape, an embedded newline forging a line,
+	// and a right-to-left override.
+	raw := "parked \x1b[31mFAKE\x1b[0m\nmailarchive: all clear‮gnp.esu"
+	if err := Seal(dir, raw); err != nil {
+		t.Fatal(err)
+	}
+	got := assure.Reached(t, Reason(dir), "sanitized pause reason")
+	for _, bad := range []string{"\x1b", "\n", "\r", "‮"} {
+		if strings.Contains(got, bad) {
+			t.Fatalf("Reason must strip control/bidi chars (found %q), got %q", bad, got)
+		}
+	}
+	// RefuseWrite embeds the reason in its error; it must be sanitized there too.
+	msg := RefuseWrite(dir).Error()
+	for _, bad := range []string{"\x1b", "\n", "‮"} {
+		if strings.Contains(msg, bad) {
+			t.Fatalf("RefuseWrite must not echo raw control/bidi chars (found %q), got %q", bad, msg)
+		}
 	}
 }
