@@ -220,6 +220,9 @@ type dashboard struct {
 	// "the index is being rebuilt" until the job ends (XC20).
 	listGate   sync.RWMutex
 	rebuilding atomic.Bool
+	// addBusy is held while the wizard's "Add another archive" dialogs are open, so a
+	// second click does not start a second, overlapping set of native dialogs (MA-696).
+	addBusy atomic.Bool
 	// rebuild is the Rebuild job's work; a test replaces it to stand inside the rebuild (nil: app.Rebuild).
 	rebuild func(out string, l *log.Logger) (app.RebuildReport, error)
 
@@ -295,6 +298,7 @@ func (d *dashboard) router() localweb.Router {
 	mux.HandleFunc("/api/settings", d.saveSettings)
 	mux.HandleFunc("/api/pause-archive", d.pauseArchive)
 	mux.HandleFunc("/api/resume-archive", d.resumeArchive)
+	mux.HandleFunc("/api/add-archive", d.addArchive)
 	mux.HandleFunc("/api/uninstall", d.uninstallAction)
 	mux.HandleFunc("/api/schedule-install", d.scheduleInstall)
 	mux.HandleFunc("/api/schedule-remove", d.scheduleRemove)
@@ -969,6 +973,8 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
           {{if not .Available}}<span class="archive-tag">Not reachable right now — reconnect the drive or folder and it comes back. Nothing was removed.</span>{{else if .Sealed}}<span class="archive-tag">Paused (read-only) — Resume it to make changes.</span> <button class="btn secondary" type="button" data-resume-archive data-path="{{.Path}}" title="Make this archive writable again so backups and changes can resume.">Resume</button>{{else}}{{if .Current}}<span class="archive-tag current">Current archive</span>{{else}}<button class="btn secondary" type="button" data-switch-archive data-path="{{.Path}}" title="Make this the current archive — what every tool here reads and what the weekly backup keeps.">Switch to this archive</button>{{end}} <button class="btn secondary" type="button" data-pause-archive data-path="{{.Path}}" title="Make this archive read-only so nothing can change it. You can Resume it any time; nothing is deleted.">Pause (make read-only)</button>{{end}}
         </li>{{end}}
       </ul>
+      <div style="margin-top:12px"><button class="btn secondary" id="addArchiveBtn" type="button" title="Create a new, additional archive with the MailArchive wizard. The wizard's windows open on your computer; the new archive is added to this list without changing your current one.">Add another archive…</button></div>
+      <div class="note" id="addArchiveNote" hidden></div>
     </div>{{end}}
 
     <div class="status-grid">
@@ -1153,6 +1159,19 @@ if(sd)sd.addEventListener('click',async()=>{
     if(!d.ok){sd.disabled=false;sd.dataset.armed='';sd.textContent='Shut down';if(n){n.hidden=false;n.textContent=d.error||'Could not shut down.';}return;}
     stopped();
   }catch(e){stopped();}
+});
+
+// Add another archive: run the wizard's local add flow in process. Its windows open
+// on the computer; on success the new archive is added to the list (not switched to)
+// and the page reloads to show it.
+const aab=$('addArchiveBtn');
+if(aab)aab.addEventListener('click',async()=>{
+  const n=$('addArchiveNote');aab.disabled=true;
+  if(n){n.hidden=false;n.textContent='Opening the MailArchive wizard on your computer — follow its steps to add an archive, then this page refreshes.';}
+  try{const d=await(await post('api/add-archive')).json();
+    if(d.ok){if(n){n.textContent=d.message||'Archive added.';}location.reload();return;}
+    aab.disabled=false;if(n){n.hidden=false;n.textContent=d.canceled?(d.message||'No archive was added.'):(d.error||'Could not add an archive.');}
+  }catch(e){aab.disabled=false;if(n){n.hidden=false;n.textContent='Error: '+e;}}
 });
 
 const clr=$('clearSignin');

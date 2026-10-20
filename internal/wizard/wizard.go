@@ -406,6 +406,37 @@ func wizard() error {
 		return err
 	}
 
+	// 3. The local add-an-archive flow, shared with the Desktop's "Add another
+	//    archive" button (AddArchive calls it directly).
+	return localArchiveFlow(nil)
+}
+
+// AddArchive runs the wizard's local add-an-archive flow directly — source choice
+// through export — WITHOUT the first-step surface or the scheduled-archive health
+// check. The Desktop's "Add another archive" button calls it IN PROCESS (desktop
+// imports wizard; MA-612 — never a child), so a running Desktop can create a new
+// local archive through the same native-dialog flow the double-click wizard uses.
+// It returns the new archive's output folder, or "" when the user backed out of a
+// dialog (zenity.ErrCanceled) — a cancel is "nothing added", not an error.
+func AddArchive() (string, error) {
+	if refusal, ok := dialogPreflight(runtime.GOOS, dialogToolOnPath(), displayIsSet()); !ok {
+		return "", errors.New(refusal)
+	}
+	var out string
+	err := localArchiveFlow(func(o string) { out = o })
+	if errors.Is(err, zenity.ErrCanceled) {
+		return "", nil
+	}
+	return out, err
+}
+
+// localArchiveFlow is the wizard's local path: choose the source, pick the files,
+// prepare IMAP, choose the output folder and options, then export. Shared by the
+// double-click wizard (after its first step and health check) and by AddArchive.
+// chosen, when set, is called with the output folder just before the export runs,
+// so a caller (AddArchive) can register the new archive even if the export is later
+// cancelled.
+func localArchiveFlow(chosen func(out string)) error {
 	// 3. Choose the source type, then pick the file/folder accordingly.
 	choices := []string{srcAuto, srcOutlook}
 	if runtime.GOOS == "windows" {
@@ -605,7 +636,12 @@ func wizard() error {
 		}
 	}
 
-	// 6. Run with a progress dialog, then offer to keep it current.
+	// 6. Run with a progress dialog, then offer to keep it current. Tell the caller
+	//    the chosen output folder first, so AddArchive can register the new archive
+	//    (a cancel during the export still leaves it registered, nothing half-hidden).
+	if chosen != nil {
+		chosen(choice.out)
+	}
 	return runExport(choice)
 }
 
