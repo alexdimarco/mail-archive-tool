@@ -46,6 +46,13 @@ type Config struct {
 	// Deleted/Junk, schedule); default under the OS config dir.
 	SettingsPath string
 
+	// IndexPath is the folder-only known-archives index (internal/archindex) the
+	// Desktop maintains as a cache of where a person's archives live; default
+	// archindex.Path() under the OS config dir, set by tests. Empty disables the
+	// archive list: the informational shell reconciles nothing and writes no index
+	// (SD-6 — the Desktop is the sole maintainer; the headless/CLI path never writes it).
+	IndexPath string
+
 	// BaseURL/TokenURL/DeviceAuthURL are test overrides for the in-process capture
 	// (empty = the Microsoft production endpoints).
 	BaseURL, TokenURL, DeviceAuthURL string
