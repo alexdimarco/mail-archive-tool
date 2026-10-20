@@ -322,3 +322,38 @@ headless upsert is added (SD-6). All reflected in rev 2 §4.
 model + invariants into §4/§8/§9; SD-1..SD-10 are tracked must-fix items for the
 index slice and the scan's own slice. Outstanding gate: the UX/friction review of
 the multi-archive surface.
+
+---
+
+# UX / friction review — the multi-archive surface (2026-10-20)
+
+Walked each actor (the wizard-only macOS `.app` user, the Desktop user, the
+headless operator) through the multi-archive flows — list / switch / disconnect /
+repair / greyed-offline / source-loss banner / recovery-scan — against the X-series
+UX contract (`docs/ux-contract.md`), with a 3-refuter adversarial verify per
+finding. **97 agents, 0 errors; 31 findings → 7 confirmed, all Type II.**
+
+**Verdict:** the multi-archive UI is **buildable with these conditions**; they land
+with the Desktop wiring and Slice 2, and **none touches the Slice-1 index leaf**
+already built. The 7 conditions are recorded in
+`design-archive-manager.md` §13 (UX-1..UX-6):
+
+- UX-1 (X6) the list IS the switcher — a Desktop Overview archive list, each row a
+  "Switch to this archive"; the free-text box demoted to "Add a folder" (resolves
+  OQ4).
+- **UX-2 (X10) [OPERATOR RULING]** the wizard reads `last-archive.txt`, the Desktop
+  `out` → a switch is invisible to the wizard (the §1 drift between surfaces).
+  Recommended: the wizard adopts `out`; `last-archive.txt` becomes a reconciled
+  breadcrumb.
+- UX-3 (X6/X12) greyed/sealed rows state their state and remedy; the switch-click
+  never silently pins `out` to an unreadable archive.
+- **UX-4 (X11) [OPERATOR RULING]** a distinct verb for the deliberate seal (bare
+  "disconnected"/"Reconnect" is already spent 3 ways). Recommended: "Pause (make
+  read-only)" / "Resume".
+- UX-5 (X14 / MA-652) Disconnect confirms, naming its three effects; the dashboard's
+  plain Remove is brought to the same confirm bar.
+- UX-6 (X6/X11) the seal refusal routes to where Resume lives, never a dead-end the
+  wizard cannot act on.
+
+Two operator rulings (UX-2, UX-4) are surfaced for the morning; the rest are design
+conditions applied with Slice 2 / the Desktop wiring.

@@ -13,8 +13,9 @@ revised design and the two conceded items — **both ratified by the operator
 one-release-back limitation); the index is a **Desktop-maintained cache**, so the
 headless/CLI create path writes no index entry (SD-6) — and (b) each must-fix
 condition (SD-1..SD-11) is applied here as a tracked edit and re-verified.
-The recovery scan is its **own slice** with its own §4.6 adversarial pass. A
-still-outstanding gate: the **UX / friction review** of the multi-archive surface.
+The recovery scan is its **own slice** with its own §4.6 adversarial pass. The
+**UX / friction review** of the multi-archive surface is filed (§13: 7 Type-II
+conditions, two of them operator rulings — UX-2, UX-4).
 A material change to this doc re-runs the affected lenses. **Author:** Claude
 (Opus 4.8) with Alex DiMarco.
 
@@ -399,7 +400,9 @@ disconnect→delete-by-hand; **S62** source drive lost→banner→reconnect;
 3. Source-loss threshold values (N runs / T days) and whether auto-pause ships in
    v1 or is deferred.
 4. Where the archive list lives in the Desktop UI and how it reconciles with the
-   wizard first-step menu (MA-651) — an X-series UX-contract touch.
+   wizard first-step menu (MA-651) — **resolved by the UX review (§13 UX-1): the
+   list lives on the Desktop Overview, each row a "Switch to this archive"; the
+   wizard only hands off to it.**
 
 ## 12. Status
 
@@ -436,5 +439,51 @@ home-containment predicate not `guardLocation` (SD-crux), import pre-populates b
 never suppresses the recovery offer (SD-9, it would otherwise silently miss
 archives on macOS/Windows), and two conceded items (rollback un-seals — SD-10; the
 headless-create-path index writer — SD-6). The recovery scan is its **own slice**
-with its own §4.6 adversarial pass. Still outstanding: the **UX / friction review**
-of the multi-archive surface (next gate).
+with its own §4.6 adversarial pass. The **UX / friction review** of the
+multi-archive surface is now filed (`review-archive-manager-predesign.md` §"UX
+review"; §13 below): 7 Type-II conditions, two of them operator rulings (UX-2 the
+current-archive reconciliation, UX-4 the seal verb).
+
+## 13. UX / friction conditions (the multi-archive surface, 2026-10-20)
+
+The UX/friction review walked each actor (the wizard-only macOS `.app` user, the
+Desktop user, the headless operator) through the multi-archive flows against the
+X-series UX contract and returned 7 conditions, all Type II (design-choices,
+cheapest fixed in the spec now). They land with the Desktop wiring and Slice 2 —
+none touches the Slice-1 index leaf already built.
+
+- **UX-1 (X6) — the list IS the switcher.** The Desktop Overview gains an
+  archive-list surface reading the index; each row carries an action-first "Switch
+  to this archive". The free-text folder box is demoted to "Add an archive folder".
+  Resolves OQ4: the list lives on the Desktop Overview; the wizard first-step menu
+  only hands off to it, never rendering the list in a native dialog.
+- **UX-2 (X10) — one current-archive truth across surfaces. [OPERATOR RULING]** The
+  wizard health view reads `last-archive.txt` while the Desktop's active archive is
+  `out`, so after a Desktop switch the wizard still shows the old archive — the §1
+  drift surviving *between* surfaces. Recommended: the wizard reads the same
+  authoritative active pointer (`out`); `last-archive.txt` becomes only the
+  wizard's "last touched" breadcrumb, reconciled to `out` on launch. Operator to
+  ratify.
+- **UX-3 (X6/X12) — greyed/sealed rows state their state AND remedy.** A row
+  pre-states "this location isn't reachable right now — reconnect the drive and it
+  comes back" or "read-only — Resume it to make changes"; the switch-click on a
+  greyed/sealed row blocks with the reason or switches read-only, never silently
+  pins `out` to an unreadable archive.
+- **UX-4 (X11) — a distinct verb for the deliberate seal. [OPERATOR RULING]** The
+  bare word "disconnected"/"Reconnect" is already spent on drive-gone (R-l2/R-o2)
+  and source-loss ("Reconnect source"). The deliberate read-only seal needs its own
+  action-first pair, chosen before code so the sentinel, the write-refusal text, the
+  state label and the button all land on one word. Recommended: **"Pause (make
+  read-only)" / "Resume"**. Operator to pick.
+- **UX-5 (X14 / MA-652 symmetry) — Disconnect confirms, naming its three effects.**
+  Disconnect (remove the schedule + seal read-only + stash the cadence) is more
+  consequential than the plain Remove, so §5.3 gains an explicit confirm naming the
+  three effects and the reverse verb, mirroring MA-652; the dashboard's plain Remove
+  (which fires with no confirm today) is brought to the same bar at the same time.
+- **UX-6 (X6/X11) — the seal refusal points at a reachable action.** A sealed
+  archive's write-refusal routes to where Resume lives — "This archive is paused
+  (read-only). Open MailArchive Desktop → Archives to resume it." — never naming an
+  action the wizard (the only macOS double-click surface) cannot offer.
+
+UX-2 and UX-4 are operator rulings; the rest apply with Slice 2 / the Desktop
+wiring. None blocks the Slice-1 leaf already built.
