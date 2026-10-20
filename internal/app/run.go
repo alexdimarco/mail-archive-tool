@@ -371,6 +371,13 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		return Result{}, err
 	}
 
+	// PM4: a SCHEDULED run whose archive -out is gone (an unmounted backup drive) must refuse,
+	// never recreate the archive on the local disk and silently back up into a decoy.
+	if opts.Unattended {
+		if err := RequireExistingOut(opts.Out); err != nil {
+			return Result{}, err
+		}
+	}
 	if err := os.MkdirAll(opts.Out, 0o755); err != nil {
 		return Result{}, fmt.Errorf("create output dir: %w", err)
 	}
@@ -894,6 +901,17 @@ func errorKindOf(err error) string {
 		return state.ErrKindIndexDamagedNoManifest
 	}
 	return state.ErrKindIndexDamaged
+}
+
+// RequireExistingOut is the unattended-run guard (PM4): a SCHEDULED run whose archive -out is
+// not present (the backup drive is not mounted, the share is down) must not quietly create a
+// new archive on the local disk and report success. app.Run and app.RunGraph call it before
+// any MkdirAll when opts.Unattended; the CLI verbs guard with the same check before the engine.
+func RequireExistingOut(out string) error {
+	if fi, err := os.Stat(out); err != nil || !fi.IsDir() {
+		return fmt.Errorf("archive directory %s is not present — is the backup drive mounted? refusing to create a new archive elsewhere (unattended run)", out)
+	}
+	return nil
 }
 
 func plural(n int, one, many string) string {

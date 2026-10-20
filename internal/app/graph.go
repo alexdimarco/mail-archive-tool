@@ -95,6 +95,13 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	if len(g.Mailboxes) == 0 {
 		return Result{}, errors.New("no mailboxes specified (-mailbox is required)")
 	}
+	// PM4: a SCHEDULED M365 capture whose archive -out is gone (an unmounted backup drive) must
+	// refuse, never recreate the archive on the local disk and back up into a decoy.
+	if opts.Unattended {
+		if err := RequireExistingOut(opts.Out); err != nil {
+			return Result{}, err
+		}
+	}
 	if err := os.MkdirAll(opts.Out, 0o755); err != nil {
 		return Result{}, fmt.Errorf("create output dir: %w", err)
 	}

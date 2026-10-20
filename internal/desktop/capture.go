@@ -64,7 +64,10 @@ func HeadlessCapture(cfg Config, logw io.Writer) error {
 		IncludeDeleted: s.IncludeDeleted, IncludeJunk: s.IncludeJunk,
 	}
 	logger := log.New(logw, "", log.LstdFlags)
-	opts := app.Options{Out: out, Mode: export.Incremental, Index: true, Pages: true, KeepRaw: s.KeepRaw}
+	// Unattended marks this as the SCHEDULED backup: it activates the PM4 out-exists guard
+	// (never recreate the archive on the boot disk when the backup drive is gone) and the
+	// source-loss streak (§5.7). The interactive dashboard capture leaves it unset.
+	opts := app.Options{Out: out, Mode: export.Incremental, Index: true, Pages: true, KeepRaw: s.KeepRaw, Unattended: true}
 	// An archive location that holds the desktop's settings and sign-in copies
 	// them with the archive (design-local-confidentiality P10). The scheduled
 	// capture does not refuse — that would silently stop an installed backup —
