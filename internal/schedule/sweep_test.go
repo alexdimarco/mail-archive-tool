@@ -85,3 +85,34 @@ func TestMA673_SweepFindsOurEntriesByNamespace(t *testing.T) {
 		t.Fatalf("want 2 deduped schtasks side-file names, got %d: %+v", len(sgot), sgot)
 	}
 }
+
+// covers: MA-674
+// RemoveLiveEntry removes the live scheduler entry but leaves the archive-side schedule
+// descriptor (it lives inside the archive -out, which a full uninstall must never delete,
+// R36); the full Remove, by contrast, deletes the descriptor.
+func TestMA674_RemoveLiveEntryKeepsTheArchiveDescriptor(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // removeLaunchd targets a tmp LaunchAgents (no plist -> no-op)
+	out := t.TempDir()
+	if err := WriteDescriptor(out, Descriptor{Name: DefaultName, Interval: "weekly", At: "03:00", Exe: "/x/mailarchive", Job: []string{"mailarchive", "-out", out}, Host: "h"}); err != nil {
+		t.Fatal(err)
+	}
+	desc := filepath.Join(out, DescriptorName)
+	if _, err := ReadDescriptor(out); err != nil {
+		t.Fatalf("precondition: the descriptor must be readable: %v", err)
+	}
+	spec := Spec{Name: DefaultName, Out: out}
+
+	if err := removeLiveEntryOn(spec, "darwin"); err != nil {
+		t.Fatalf("removeLiveEntry: %v", err)
+	}
+	if _, err := os.Stat(desc); err != nil {
+		t.Fatal("RemoveLiveEntry must NOT delete the archive-side descriptor (R36)")
+	}
+
+	if err := removeOn(spec, "darwin"); err != nil {
+		t.Fatalf("removeOn: %v", err)
+	}
+	if _, err := os.Stat(desc); !os.IsNotExist(err) {
+		t.Fatal("the full Remove should delete the backup descriptor (contrast proving RemoveLiveEntry is descriptor-safe)")
+	}
+}

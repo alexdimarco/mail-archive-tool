@@ -36,6 +36,27 @@ func OurInstalled() []InstalledEntry {
 	}
 }
 
+// RemoveLiveEntry removes the host scheduler entry for s (and, on Windows, its
+// config-side side-files) WITHOUT touching the archive's schedule descriptor — the
+// descriptor lives inside the archive -out, which a full uninstall must never delete
+// (R36). It is the entry half of Remove, used to sweep schedules during uninstall; an
+// entry already gone from the host scheduler is no error.
+func RemoveLiveEntry(s Spec) error { return removeLiveEntryOn(s, runtime.GOOS) }
+
+func removeLiveEntryOn(s Spec, goos string) error {
+	switch goos {
+	case "windows":
+		if err := removeSchtasks(s); err != nil {
+			return err
+		}
+		return removeSchtasksSideFiles(s)
+	case "darwin":
+		return removeLaunchd(s)
+	default:
+		return removeCron(s)
+	}
+}
+
 // ourLaunchd lists our LaunchAgents plists (com.dimarcotech.mailarchive.<name>.plist).
 func ourLaunchd() []InstalledEntry {
 	home, err := os.UserHomeDir()
