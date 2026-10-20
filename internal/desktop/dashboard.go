@@ -1024,7 +1024,10 @@ async function schedState(){
 }
 function schedPost(path){
   const n=$('schedState');
-  const body={interval:$('schedInterval').value,time:$('schedTime').value};
+  // Repair/Remove cards render no interval/time inputs (only the Install card does), so read
+  // them defensively — a missing input must not throw and silently kill the click.
+  const iv=$('schedInterval'),tm=$('schedTime');
+  const body={interval:iv?iv.value:'',time:tm?tm.value:''};
   return fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(body)})
     .then(r=>r.json()).then(d=>{if(n){n.hidden=false;n.textContent=d.ok?'Saved.':(d.error||'Failed.');}
       return schedState().then(()=>{if(n&&d.left){n.hidden=false;n.textContent='Removed. Left in place: '+d.left+' cannot be read, so removal cannot tell which schedule it records - '+d.remedy+'.';}});});
