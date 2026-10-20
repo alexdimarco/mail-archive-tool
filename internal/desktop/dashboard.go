@@ -299,6 +299,7 @@ func (d *dashboard) router() localweb.Router {
 	mux.HandleFunc("/api/schedule-install", d.scheduleInstall)
 	mux.HandleFunc("/api/schedule-remove", d.scheduleRemove)
 	mux.HandleFunc("/api/schedule-state", d.scheduleState)
+	mux.HandleFunc("/api/run-backup", d.runBackup)
 	mux.HandleFunc("/api/verify", d.verifyAction)
 	mux.HandleFunc("/api/rebuild", d.rebuildAction)
 	mux.HandleFunc("/api/health", d.healthAction)
@@ -1042,7 +1043,8 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
           <select id="schedInterval"><option value="weekly"{{if eq .Interval "weekly"}} selected{{end}}>Weekly (Sunday)</option><option value="daily"{{if eq .Interval "daily"}} selected{{end}}>Daily</option></select></div>
         <div><label for="schedTime">At (local time)</label><input id="schedTime" type="time" value="{{.WeeklyTime}}"></div>
       </div>{{end}}
-      <div style="margin-top:14px">{{if .ShowInstall}}<button class="btn" id="schedInstall">Install / update</button> {{end}}{{if .ShowRepair}}<button class="btn" id="schedRepair">Repair</button> {{end}}{{if .ShowRemove}}<button class="btn secondary" id="schedRemove">Remove</button>{{end}}</div>
+      <div style="margin-top:14px">{{if .ShowInstall}}<button class="btn" id="schedInstall">Install / update</button> {{end}}{{if .ShowRepair}}<button class="btn" id="schedRepair">Repair</button> <button class="btn" id="runBackupBtn" type="button">Run now</button> {{end}}{{if .ShowRemove}}<button class="btn secondary" id="schedRemove">Remove</button>{{end}}</div>
+      <div class="note" id="runBackupNote" hidden></div>
       <div class="note" id="schedState" hidden></div>{{end}}
     </div>
 
@@ -1265,6 +1267,26 @@ const si=$('schedInstall'),sr=$('schedRemove'),srp=$('schedRepair');
 if(si)si.addEventListener('click',()=>schedPost('api/schedule-install'));
 if(srp)srp.addEventListener('click',()=>schedPost('api/schedule-install'));
 if(sr)sr.addEventListener('click',()=>schedPost('api/schedule-remove'));
+// "Run now" runs this archive's recorded run-job backup immediately (local archives have no
+// "Archive now"), streaming progress through the shared activity state.
+const rbBtn=$('runBackupBtn');
+if(rbBtn)rbBtn.addEventListener('click',async()=>{
+  const n=$('runBackupNote');rbBtn.disabled=true;
+  if(n){n.hidden=false;n.textContent='Running the backup now…';}
+  try{const d=await(await post('api/run-backup')).json();
+    if(!d.ok){rbBtn.disabled=false;if(n){n.hidden=false;n.textContent=d.error||'Could not start the backup.';}return;}
+    pollBackup();
+  }catch(e){rbBtn.disabled=false;if(n){n.hidden=false;n.textContent='Error: '+e;}}
+});
+async function pollBackup(){
+  const n=$('runBackupNote'),b=$('runBackupBtn');
+  try{const d=await(await fetch('api/activity')).json();
+    if(n&&d.log&&d.log.length)n.textContent=d.log[d.log.length-1];
+    if(d.running){setTimeout(pollBackup,1500);return;}
+    if(n){n.hidden=false;n.textContent=d.error?('Backup failed: '+d.error):(d.result||'Backup finished.');}
+  }catch(e){}
+  if(b)b.disabled=false;
+}
 schedState();
 
 async function health(){
