@@ -52,7 +52,7 @@ func paths(idx Index) []string {
 
 func has(idx Index, p string) bool {
 	for _, e := range idx.Entries {
-		if e.Path == clean(p) {
+		if clean(e.Path) == clean(p) {
 			return true
 		}
 	}
