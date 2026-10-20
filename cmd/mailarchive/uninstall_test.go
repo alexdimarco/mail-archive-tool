@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"strings"
 	"testing"
+
+	"mail-archive-tool/internal/uninstall"
 )
 
 // isolatedConfigEnv points every per-user-config env var at a fresh empty dir, so the
@@ -39,5 +42,32 @@ func TestMA679_UninstallCLIPreviewAndGate(t *testing.T) {
 	ng.Env = env
 	if out, err := ng.CombinedOutput(); err == nil {
 		t.Fatalf("`uninstall` without -yes must refuse, but it exited 0:\n%s", out)
+	}
+}
+
+// covers: MA-684
+// The uninstall preview lists each item it will remove BY NAME/PATH — every scheduled task,
+// every settings/log file (by path, not merely a count), and the archives it keeps — so the
+// owner sees exactly what goes and what stays before confirming (U-C7, security pass
+// 2026-10-20). Rendered from a populated Report.
+func TestMA684_UninstallPreviewListsItemsByName(t *testing.T) {
+	rep := &uninstall.Report{
+		Schedules:     []string{"mailarchive-abcd1234"},
+		ConfigFiles:   []string{"/cfg/desktop-settings.json", "/cfg/graph-config.json"},
+		ClearedSignIn: true,
+		KeptArchives:  []string{"/archives/mine"},
+	}
+	var buf bytes.Buffer
+	printUninstallPlan(&buf, rep)
+	out := buf.String()
+	for _, want := range []string{
+		"mailarchive-abcd1234",                                 // the scheduled task, by name
+		"/cfg/desktop-settings.json", "/cfg/graph-config.json", // every settings file, BY PATH (not just a count)
+		"/archives/mine", // the kept archive
+		"KEEP your",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("the uninstall preview must list %q, got:\n%s", want, out)
+		}
 	}
 }

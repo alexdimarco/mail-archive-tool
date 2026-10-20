@@ -4,6 +4,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 
 	"mail-archive-tool/internal/archindex"
@@ -38,7 +39,7 @@ func runUninstall(args []string) error {
 	if err != nil {
 		return err
 	}
-	printUninstallPlan(rep)
+	printUninstallPlan(os.Stdout, rep)
 	if *dry {
 		return nil
 	}
@@ -53,18 +54,23 @@ func runUninstall(args []string) error {
 	return nil
 }
 
-func printUninstallPlan(rep *uninstall.Report) {
-	fmt.Println("MailArchive uninstall will REMOVE:")
-	fmt.Printf("  - scheduled tasks: %d\n", len(rep.Schedules))
+func printUninstallPlan(w io.Writer, rep *uninstall.Report) {
+	fmt.Fprintln(w, "MailArchive uninstall will REMOVE:")
+	fmt.Fprintf(w, "  - scheduled tasks: %d\n", len(rep.Schedules))
 	for _, s := range rep.Schedules {
-		fmt.Printf("      %s\n", s)
+		fmt.Fprintf(w, "      %s\n", s)
 	}
-	fmt.Printf("  - settings/log files: %d\n", len(rep.ConfigFiles))
+	// List every settings/log file BY PATH (not just a count), so the owner sees exactly
+	// what will be deleted before confirming (U-C7) — and any unexpected file is visible.
+	fmt.Fprintf(w, "  - settings/log files: %d\n", len(rep.ConfigFiles))
+	for _, f := range rep.ConfigFiles {
+		fmt.Fprintf(w, "      %s\n", f)
+	}
 	if rep.ClearedSignIn {
-		fmt.Println("  - the saved Microsoft sign-in (token and app secret)")
+		fmt.Fprintln(w, "  - the saved Microsoft sign-in (token and app secret)")
 	}
-	fmt.Printf("It will KEEP your %d archive(s) — your mail is never deleted:\n", len(rep.KeptArchives))
+	fmt.Fprintf(w, "It will KEEP your %d archive(s) — your mail is never deleted:\n", len(rep.KeptArchives))
 	for _, a := range rep.KeptArchives {
-		fmt.Printf("      %s\n", a)
+		fmt.Fprintf(w, "      %s\n", a)
 	}
 }
