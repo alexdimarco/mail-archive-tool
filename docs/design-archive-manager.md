@@ -15,7 +15,7 @@ headless/CLI create path writes no index entry (SD-6) — and (b) each must-fix
 condition (SD-1..SD-11) is applied here as a tracked edit and re-verified.
 The recovery scan is its **own slice** with its own §4.6 adversarial pass. The
 **UX / friction review** of the multi-archive surface is filed (§13: 7 Type-II
-conditions, two of them operator rulings — UX-2, UX-4).
+conditions, two of them operator rulings — UX-2, UX-4, both ruled 2026-10-20).
 A material change to this doc re-runs the affected lenses. **Author:** Claude
 (Opus 4.8) with Alex DiMarco.
 
@@ -460,10 +460,9 @@ none touches the Slice-1 index leaf already built.
 - **UX-2 (X10) — one current-archive truth across surfaces. [OPERATOR RULING]** The
   wizard health view reads `last-archive.txt` while the Desktop's active archive is
   `out`, so after a Desktop switch the wizard still shows the old archive — the §1
-  drift surviving *between* surfaces. Recommended: the wizard reads the same
+  drift surviving *between* surfaces. **RULED (operator, 2026-10-20):** the wizard reads the same
   authoritative active pointer (`out`); `last-archive.txt` becomes only the
-  wizard's "last touched" breadcrumb, reconciled to `out` on launch. Operator to
-  ratify.
+  wizard's "last touched" breadcrumb, reconciled to `out` on launch.
 - **UX-3 (X6/X12) — greyed/sealed rows state their state AND remedy.** A row
   pre-states "this location isn't reachable right now — reconnect the drive and it
   comes back" or "read-only — Resume it to make changes"; the switch-click on a
@@ -473,8 +472,7 @@ none touches the Slice-1 index leaf already built.
   bare word "disconnected"/"Reconnect" is already spent on drive-gone (R-l2/R-o2)
   and source-loss ("Reconnect source"). The deliberate read-only seal needs its own
   action-first pair, chosen before code so the sentinel, the write-refusal text, the
-  state label and the button all land on one word. Recommended: **"Pause (make
-  read-only)" / "Resume"**. Operator to pick.
+  state label and the button all land on one word. **RULED (operator, 2026-10-20): "Pause (make read-only)" / "Resume".**
 - **UX-5 (X14 / MA-652 symmetry) — Disconnect confirms, naming its three effects.**
   Disconnect (remove the schedule + seal read-only + stash the cadence) is more
   consequential than the plain Remove, so §5.3 gains an explicit confirm naming the
@@ -485,5 +483,6 @@ none touches the Slice-1 index leaf already built.
   (read-only). Open MailArchive Desktop → Archives to resume it." — never naming an
   action the wizard (the only macOS double-click surface) cannot offer.
 
-UX-2 and UX-4 are operator rulings; the rest apply with Slice 2 / the Desktop
-wiring. None blocks the Slice-1 leaf already built.
+UX-2 and UX-4 are **ruled (operator, 2026-10-20)** — the wizard adopts `out`, and
+the seal verb is "Pause (make read-only)" / "Resume"; the rest apply with Slice 2 /
+the Desktop wiring. None blocks the Slice-1 leaf already built.

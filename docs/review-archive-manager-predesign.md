@@ -355,5 +355,7 @@ already built. The 7 conditions are recorded in
 - UX-6 (X6/X11) the seal refusal routes to where Resume lives, never a dead-end the
   wizard cannot act on.
 
-Two operator rulings (UX-2, UX-4) are surfaced for the morning; the rest are design
-conditions applied with Slice 2 / the Desktop wiring.
+Two operator rulings (UX-2, UX-4) were surfaced for the morning and **both ruled by
+the operator 2026-10-20** — UX-2: the wizard adopts `out`; UX-4: "Pause (make
+read-only)" / "Resume" — the rest are design conditions applied with Slice 2 / the
+Desktop wiring.
