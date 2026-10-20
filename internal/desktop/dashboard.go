@@ -300,6 +300,7 @@ func (d *dashboard) router() localweb.Router {
 	mux.HandleFunc("/api/schedule-remove", d.scheduleRemove)
 	mux.HandleFunc("/api/schedule-state", d.scheduleState)
 	mux.HandleFunc("/api/run-backup", d.runBackup)
+	mux.HandleFunc("/api/shutdown", d.shutdown)
 	mux.HandleFunc("/api/verify", d.verifyAction)
 	mux.HandleFunc("/api/rebuild", d.rebuildAction)
 	mux.HandleFunc("/api/health", d.healthAction)
@@ -365,6 +366,33 @@ func (d *dashboard) browserLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true, "link": d.cfg.NewLink()})
+}
+
+// shutdown stops MailArchive Desktop from the dashboard (the Shutdown button,
+// MA-695): a guarded POST that cancels the process lifecycle, which drains the
+// running export within DrainBudget, stops the dashboard and reader servers, and
+// releases the account lock — so the next launch starts cleanly with no port
+// conflict and nothing to kill by hand. It never touches an archive (R36). The
+// reply is written and flushed before the stop begins, so the page can show its
+// goodbye; the process then exits on its own.
+func (d *dashboard) shutdown(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	if !server.GuardLocalPOST(r, d.csrf) {
+		http.Error(w, "refused: same-origin, tokened, local requests only", http.StatusForbidden)
+		return
+	}
+	if d.life == nil {
+		writeJSON(w, map[string]any{"ok": false, "error": "This window cannot stop MailArchive Desktop itself. Quit it where you started it (close its Terminal, or press Ctrl-C there)."})
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "message": "MailArchive Desktop is stopping. You can close this tab; your archives and schedules are untouched."})
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+	d.life.Stop()
 }
 
 // saveSettings persists the dashboard preferences (loopback-only, CSRF-guarded).
@@ -916,7 +944,9 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
     <div class="whoami" id="whoami" role="status">
       <span>MailArchive Desktop is running as <b>{{.Account}}</b> on this computer.</span>
       <span id="sessionsLine">{{.SessionsLine}}</span>
+      <button class="btn secondary whoami-shutdown" id="shutdownBtn" type="button" title="Stop MailArchive Desktop and free its port so the next launch starts cleanly. Your saved mail, archives and schedules are untouched — reopen it any time from the app.">Shut down</button>
     </div>
+    <div class="note" id="shutdownNote" hidden></div>
     {{if .FormerNotice}}<div class="note warnbox" id="formerNotice" role="alert">{{.FormerNotice}}</div>{{end}}
     <h1>Overview</h1>
     <p class="lede">{{if .LocalOnly}}Your mail archive, running locally on this PC.{{else}}Your personal Microsoft 365 archive, running locally on this PC.{{end}}</p>
@@ -924,7 +954,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
     {{if not .OutDir}}<div class="card" id="noArchive">
       <h2>No archive chosen yet</h2>
       {{if .Offer}}<p>The MailArchive wizard (mailarchive wizard) last used <span class="mono">{{.Offer}}</span>. Use this archive?</p>{{end}}
-      <button class="btn" id="useOffer" type="button" data-path="{{.Offer}}"{{if not .Offer}} hidden{{end}}>Use this archive</button>{{if .Offer}} <span class="card-sub">Nothing changes until you click it.</span>{{end}}
+      <button class="btn" id="useOffer" type="button" data-path="{{.Offer}}"{{if not .Offer}} hidden{{end}} title="Open this archive in MailArchive Desktop — read it, check its health, and keep it backed up.">Use this archive</button>{{if .Offer}} <span class="card-sub">Nothing changes until you click it.</span>{{end}}
       <p class="steps">{{if .Offer}}To pick a different folder, type{{else}}MailArchive Desktop has no archive to read yet. To open one you already have (for example one made from Thunderbird), type{{end}} its folder in <b>Settings → Archive location</b> below (the folder that holds the .mailarchive-manifest.json file) and click <b>Save settings</b>.</p>
     </div>{{end}}
 
@@ -936,7 +966,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
           <span class="mono archive-path">{{.Path}}</span>
           {{if .KindLabel}}<span class="archive-kind">{{.KindLabel}}</span>{{end}}
           {{if .SourceLostSince}}<span class="archive-tag">This archive's source hasn't been reachable since {{.SourceLostSince}} — reconnect the source (its mailbox or mail folder) to resume backups.</span>{{end}}
-          {{if not .Available}}<span class="archive-tag">Not reachable right now — reconnect the drive or folder and it comes back. Nothing was removed.</span>{{else if .Sealed}}<span class="archive-tag">Paused (read-only) — Resume it to make changes.</span> <button class="btn secondary" type="button" data-resume-archive data-path="{{.Path}}">Resume</button>{{else}}{{if .Current}}<span class="archive-tag current">Current archive</span>{{else}}<button class="btn secondary" type="button" data-switch-archive data-path="{{.Path}}">Switch to this archive</button>{{end}} <button class="btn secondary" type="button" data-pause-archive data-path="{{.Path}}">Pause (make read-only)</button>{{end}}
+          {{if not .Available}}<span class="archive-tag">Not reachable right now — reconnect the drive or folder and it comes back. Nothing was removed.</span>{{else if .Sealed}}<span class="archive-tag">Paused (read-only) — Resume it to make changes.</span> <button class="btn secondary" type="button" data-resume-archive data-path="{{.Path}}" title="Make this archive writable again so backups and changes can resume.">Resume</button>{{else}}{{if .Current}}<span class="archive-tag current">Current archive</span>{{else}}<button class="btn secondary" type="button" data-switch-archive data-path="{{.Path}}" title="Make this the current archive — what every tool here reads and what the weekly backup keeps.">Switch to this archive</button>{{end}} <button class="btn secondary" type="button" data-pause-archive data-path="{{.Path}}" title="Make this archive read-only so nothing can change it. You can Resume it any time; nothing is deleted.">Pause (make read-only)</button>{{end}}
         </li>{{end}}
       </ul>
     </div>{{end}}
@@ -1043,7 +1073,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
           <select id="schedInterval"><option value="weekly"{{if eq .Interval "weekly"}} selected{{end}}>Weekly (Sunday)</option><option value="daily"{{if eq .Interval "daily"}} selected{{end}}>Daily</option></select></div>
         <div><label for="schedTime">At (local time)</label><input id="schedTime" type="time" value="{{.WeeklyTime}}"></div>
       </div>{{end}}
-      <div style="margin-top:14px">{{if .ShowInstall}}<button class="btn" id="schedInstall">Install / update</button> {{end}}{{if .ShowRepair}}<button class="btn" id="schedRepair">Repair</button> <button class="btn" id="runBackupBtn" type="button">Run now</button> {{end}}{{if .ShowRemove}}<button class="btn secondary" id="schedRemove">Remove</button>{{end}}</div>
+      <div style="margin-top:14px">{{if .ShowInstall}}<button class="btn" id="schedInstall" title="Create or update the scheduled weekly backup for this archive, using the current settings.">Install / update</button> {{end}}{{if .ShowRepair}}<button class="btn" id="schedRepair" title="Re-point the weekly backup at this archive and fix a broken or stale schedule entry. Nothing in the archive changes.">Repair</button> <button class="btn" id="runBackupBtn" type="button" title="Run this archive's weekly backup right now, instead of waiting for its schedule.">Run now</button> {{end}}{{if .ShowRemove}}<button class="btn secondary" id="schedRemove" title="Delete the scheduled weekly backup. Your archive and everything in it are kept.">Remove</button>{{end}}</div>
       <div class="note" id="runBackupNote" hidden></div>
       <div class="note" id="schedState" hidden></div>{{end}}
     </div>
@@ -1080,7 +1110,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
     <div class="card sec" id="sec-uninstall">
       <h2>Uninstall MailArchive</h2>
       <p class="card-sub">Remove MailArchive's scheduled backups, settings and Microsoft sign-in from this computer. <b>Your archives are kept</b> — your saved mail is never deleted. Removing the program itself is a last step your system shows you.</p>
-      <button class="btn secondary" id="uninstallBtn" type="button">Uninstall MailArchive…</button>
+      <button class="btn secondary" id="uninstallBtn" type="button" title="Remove MailArchive's program, schedules, settings and sign-in from this computer. Your saved mail archives are never deleted.">Uninstall MailArchive…</button>
       <div class="device-box" id="uninstallPanel" hidden>
         <pre class="mono" id="uninstallPlan"></pre>
         <div style="margin-top:10px"><button class="btn" id="uninstallGo" type="button">Remove</button> <button class="btn secondary" id="uninstallCancel" type="button">Cancel</button></div>
@@ -1108,6 +1138,21 @@ if(ab)ab.addEventListener('click',async()=>{
   try{const d=await(await post('api/browser-link')).json();
     if(n){n.hidden=false;n.textContent=d.ok?('Copy this link into the other browser — it works once, for ten minutes: '+d.link):(d.error||'Could not make a link.');}
   }catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}
+});
+
+// Shut down: stop the server from the page so the next launch starts clean and no
+// process has to be found and killed. Two clicks (arm, then confirm) guard against
+// an accidental stop; a stop never touches an archive.
+const sd=$('shutdownBtn');
+if(sd)sd.addEventListener('click',async()=>{
+  const n=$('shutdownNote');
+  if(sd.dataset.armed!=='1'){sd.dataset.armed='1';sd.textContent='Confirm shut down';if(n){n.hidden=false;n.textContent='Click again to stop MailArchive Desktop. You can reopen it any time; your archives and schedules are untouched.';}return;}
+  sd.disabled=true;sd.textContent='Shutting down…';
+  const stopped=()=>{document.body.innerHTML='<div style="max-width:40rem;margin:4rem auto;text-align:center"><h1>MailArchive Desktop has stopped.</h1><p>You can close this tab. Your archives and schedules are untouched — reopen MailArchive any time.</p></div>';};
+  try{const d=await(await post('api/shutdown')).json();
+    if(!d.ok){sd.disabled=false;sd.dataset.armed='';sd.textContent='Shut down';if(n){n.hidden=false;n.textContent=d.error||'Could not shut down.';}return;}
+    stopped();
+  }catch(e){stopped();}
 });
 
 const clr=$('clearSignin');

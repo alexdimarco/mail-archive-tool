@@ -18,7 +18,8 @@ const DrainBudget = 15 * time.Second
 // lifecycle drains by itself: it cancels the running export and waits for it to finalize
 // (its manifest says cancelled, its marker CANCELLED), within DrainBudget.
 type Lifecycle struct {
-	ctx context.Context
+	ctx    context.Context
+	cancel context.CancelFunc
 
 	mu      sync.Mutex
 	drains  []func(context.Context) error
@@ -27,19 +28,32 @@ type Lifecycle struct {
 	err     error
 }
 
-// NewLifecycle is the lifecycle of a process whose root context is ctx. When ctx is
-// cancelled it drains, within DrainBudget.
+// NewLifecycle is the lifecycle of a process whose root context is ctx. Its own
+// context is a cancellable child of ctx, so the process stops either when ctx is
+// cancelled (Ctrl-C, a logoff) or when Stop is called from within (the dashboard's
+// Shutdown button). Either way it drains, within DrainBudget.
 func NewLifecycle(ctx context.Context) *Lifecycle {
-	l := &Lifecycle{ctx: ctx, drained: make(chan struct{})}
-	if ctx.Done() != nil {
-		go func() {
-			<-ctx.Done()
-			dctx, cancel := context.WithTimeout(context.Background(), DrainBudget)
-			defer cancel()
-			l.Drain(dctx)
-		}()
-	}
+	cctx, cancel := context.WithCancel(ctx)
+	l := &Lifecycle{ctx: cctx, cancel: cancel, drained: make(chan struct{})}
+	go func() {
+		<-cctx.Done()
+		dctx, dcancel := context.WithTimeout(context.Background(), DrainBudget)
+		defer dcancel()
+		l.Drain(dctx)
+	}()
 	return l
+}
+
+// Stop begins a graceful shutdown from within the process (the dashboard's Shutdown
+// button, MA-695): it cancels the lifecycle context, which drains the running export
+// within DrainBudget and, in serveInstance, stops the dashboard and reader servers
+// and releases the account lock — so the next launch starts cleanly with no port
+// conflict. Safe to call more than once, and on a nil or already-stopped Lifecycle.
+func (l *Lifecycle) Stop() {
+	if l == nil || l.cancel == nil {
+		return
+	}
+	l.cancel()
 }
 
 // Context is the process-lifetime context. A nil Lifecycle (a test, the informational

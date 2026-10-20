@@ -439,7 +439,7 @@ func serveInstance(ctx context.Context, h *instance.Holder, o *launchOpts, env *
 			return err
 		}
 		return nil
-	case <-ctx.Done():
+	case <-life.Context().Done():
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = reader.Shutdown(shutCtx)
