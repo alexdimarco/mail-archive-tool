@@ -872,6 +872,12 @@ func recordRun(opts Options, lr state.LastRun, result *Result, err *error, logge
 		}
 		logger.Printf("warning: could not record this run in %s (%v): `mailarchive status` may show this run as \"never finished\" or still show the previous result, whatever this log says about how it ended — run again once the file can be written%s", filepath.Join(opts.Out, state.LastRunName), werr, hint)
 	}
+	// Track how long this archive's SOURCE has been reachable (Slice 3, §5.7): only SCHEDULED
+	// (unattended) runs move the streak, and only a definitive reach or unreachable verdict
+	// moves it — a non-source failure leaves it. Best effort, like the last-run write above.
+	if opts.Unattended {
+		updateSourceStreak(opts.Out, *err, lr.Finished, logger)
+	}
 }
 
 // recordCounts puts a run's parse-fidelity counts in its last-run record, the numbers
