@@ -334,6 +334,33 @@ Thunderbird/mbox folder) becomes unreachable:
   whether it already distinguishes source-unreachable from other failures, and
   the health model's current threshold — pin both before coding (lens 3/10).
 
+### 5.8 Uninstall (program + process only — archives remain)
+A **full uninstall** removes MailArchive the program and everything it runs or stores
+to run itself, and **never touches an archive** (owner ruling 2026-10-20; the product
+already promises "uninstalling keeps your archive — your saved mail is never deleted",
+the Security & privacy card). Scope to remove:
+- **Processes / schedules** — every scheduler entry this install owns, for EVERY known
+  archive: the backup AND the verify entry (S2-C3), across launchd / cron / Task
+  Scheduler, each via the existing `schedule.RemoveIfInstalled` + `bound.go` "ours"
+  rules (PM2 — never remove an entry this install does not own).
+- **Config + sign-in** — the per-user config-dir contents: `desktop-settings.json`,
+  `graph-config.json`, `last-archive.txt`, `known-archives.json`, the job files, the
+  capture / `.jobfail` logs, and the device sign-in (the OS vault entry on Windows, the
+  file token cache elsewhere) — the credential removal is the security-sensitive part.
+- **The program** — the binary / app bundle / installed files, per platform (the OS
+  uninstaller does this on Windows via the MSI; the command can clear the app-managed
+  state + schedules + sign-in and then hand off to the OS uninstaller for the binary).
+**Hard invariant R36 (NEW, proposed):** uninstall deletes NO archive and nothing inside
+one — not the manifest, the mail, the search index, or the pause sentinel — even when an
+archive sits under or beside the config dir (the P10 overlap case); it removes only the
+enumerated program/config/schedule paths, never an `-out` / known-archive folder.
+**Owes its own pre-code adversarial pass** before any code (data-loss on R36, the
+credential deletion, the cross-platform scheduler removal), like Slice 2. Open questions
+for the pass: remove the binary itself or hand off to the OS uninstaller; enumerate
+schedules from `known-archives.json` + the live scheduler or only the configured one; a
+dry-run/confirm that lists exactly what will be removed AND names the archives it keeps;
+behaviour for a shared/admin install vs a per-user one (cf. the scan install-type gate).
+
 ## 6. Security & the "ours" binding (lens 6)
 
 Every Remove/Repair/Continue flows through `schedule.RemoveIfInstalled` /
