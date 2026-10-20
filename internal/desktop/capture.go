@@ -14,6 +14,7 @@ import (
 	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/graph"
+	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/server"
 	"mail-archive-tool/internal/state"
 )
@@ -42,6 +43,12 @@ func (cfg Config) m365Ready() error {
 // logw; returns the run error.
 func HeadlessCapture(cfg Config, logw io.Writer) error {
 	out := cfg.effectiveOut()
+	// A paused archive is hard read-only: refuse before recordStartFailure or any
+	// write (S2-C2). The caller logs this to the capture log (config dir), never into
+	// the archive.
+	if err := seal.RefuseWrite(out); err != nil {
+		return err
+	}
 	// §4.6.3/MA-617 + OP-2/MA-646: refuse when Microsoft 365 is not set up, via the
 	// shared m365Ready check (the dashboard's capture install/repair uses it too),
 	// AND record a FAILED last-run so a scheduled capture that refuses at start does

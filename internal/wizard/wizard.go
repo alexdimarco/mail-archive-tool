@@ -39,6 +39,7 @@ import (
 	"mail-archive-tool/internal/outlookcom"
 	"mail-archive-tool/internal/runlog"
 	"mail-archive-tool/internal/schedule"
+	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/source"
 	"mail-archive-tool/internal/thunderbird"
 	"mail-archive-tool/internal/util"
@@ -185,6 +186,15 @@ func RunHeadless(path string) int {
 	// not become a fresh archive on the local disk that then reports "ok".
 	if fi, err := os.Stat(j.Out); err != nil || !fi.IsDir() {
 		jobFail(path, fmt.Errorf("archive directory %s is not present — is the backup drive mounted? refusing to create a new archive elsewhere", j.Out))
+		return 1
+	}
+	// A paused archive is hard read-only: refuse before the run-log open and any PST
+	// recreate, which write into the archive before the engine lock (S2-C2). This is
+	// not a failure, so no jobFail record or notification — just stderr and a non-zero
+	// exit; the lingering per-run scheduler stderr breadcrumb is the conceded residual
+	// (Pause removes the schedule, §5.3.1 S2-C3).
+	if err := seal.RefuseWrite(j.Out); err != nil {
+		fmt.Fprintln(os.Stderr, "mailarchive run-job: "+err.Error())
 		return 1
 	}
 	logf, err := runlog.Open(filepath.Join(j.Out, "mailarchive.log"))
