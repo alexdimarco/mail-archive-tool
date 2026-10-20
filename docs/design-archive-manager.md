@@ -486,3 +486,20 @@ none touches the Slice-1 index leaf already built.
 UX-2 and UX-4 are **ruled (operator, 2026-10-20)** — the wizard adopts `out`, and
 the seal verb is "Pause (make read-only)" / "Resume"; the rest apply with Slice 2 /
 the Desktop wiring. None blocks the Slice-1 leaf already built.
+
+**Implementation status (2026-10-20, branch `archive-manager`):** UX-1 (the
+Your-archives list + per-row switch), UX-3 (greyed unavailable rows stating state +
+remedy; the switch reuses the guarded settings-save) and UX-2 (the wizard reads the
+Desktop's `out`, breadcrumb reconciled) are **built** — catalog MA-664/665/666/667,
+over the `internal/archindex` leaf (MA-653/657/660..663); full `go test ./...` +
+covers-map green. UX-5/UX-6 land with **Slice 2** (the "Pause (make read-only)" /
+"Resume" seal), which — with the recovery **scan** and **Slice 3** source-loss — is
+still gated on its own §4.6 adversarial pass. Residuals filed for the implementation
+friction review: the switch reuses `/api/settings`, which does not re-check
+archive-ness, so a folder that goes unreadable between render and click could still be
+set as `out` (TOCTOU; pre-existing, low severity — the dashboard then shows the
+"isn't an archive" state); a refused or hostile index hides the card silently
+(fail-closed, no "couldn't read your archive list" line yet); there is no sidebar nav
+entry for the card yet (deferred to keep the MA-408 sidebar-resolve invariant
+untouched); and the wizard shows the Desktop's `out` even when it last archived
+elsewhere (per the UX-2 ruling that `out` is the one truth).
