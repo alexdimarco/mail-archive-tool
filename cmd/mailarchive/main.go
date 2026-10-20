@@ -77,6 +77,10 @@ func main() {
 		err = runVerify(args[1:])
 	case len(args) > 0 && args[0] == "extract":
 		err = runExtract(args[1:])
+	case len(args) > 0 && args[0] == "pause":
+		err = runPause(args[1:])
+	case len(args) > 0 && args[0] == "resume":
+		err = runResume(args[1:])
 	default:
 		err = runExport(args)
 	}
@@ -138,7 +142,7 @@ func runExport(args []string) error {
 	inputs := append(o.inputs, fs.Args()...)
 
 	if *o.out == "" {
-		return errors.New("-out is required (or use a subcommand: serve, search, reindex, schedule, graph, status, verify, extract)")
+		return errors.New("-out is required (or use a subcommand: serve, search, reindex, schedule, graph, status, verify, extract, pause, resume)")
 	}
 	if *o.unattended {
 		if err := requireExistingOut(*o.out); err != nil {
