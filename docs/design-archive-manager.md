@@ -65,11 +65,12 @@ The design asserts these properties (status labelled per lens 10):
   is a convenience index, never an authority over the OS scheduler. *(conditional
   on reusing `bound.go` unchanged — §6.)*
 - **PM3 — disconnect is hard read-only and reversible.** A disconnected archive
-  runs no schedule and refuses every MailArchive write until reconnected, enforced
-  by an **archive-local sentinel checked at the write-lock chokepoint**
-  (`lockfile.AcquireAs`) — not the per-open `Other` flag, which gates none of the
-  write paths. *(conditional — Slice 2; the sentinel + the sealed verb set, review
-  S2-C1.)*
+  runs no schedule and refuses every content-mutating MailArchive operation until
+  reconnected, enforced by an **archive-local sentinel** and an **intent-aware
+  write-gate** on the mutating operations plus the two pre-lock entry points — NOT a
+  blanket check inside `lockfile.AcquireAs` (that lock is taken by reads too), and
+  not the per-open `Other` flag (which gates no write path). *(resolved by the
+  Slice-2 pre-code pass — §5.3.1, conditions S2-C1..C7, ratified 2026-10-20.)*
 - **PM4 — fail closed on a missing archive or a missing source.** Neither a lost
   archive folder nor a lost source is ever "fixed" by writing elsewhere; it is
   recorded and surfaced, never silently worked around. Extends the engine's
@@ -247,6 +248,44 @@ Flip the entry to `disconnected`:
 `-out`, rebuild, extraction-workspace writes) and confirm the disconnected check
 sits ahead of each, not only the immutable index open. This is a lens-6/lens-7
 condition for the review.
+
+### 5.3.1 Pre-code pass resolution (ratified 2026-10-20; S2-C1..C7)
+The Slice-2 adversarial pass (workflow, 19 findings; two spot-verified in code) found
+PM3's "one sentinel checked inside `lockfile.AcquireAs`" both **leaky** (writes reach
+the archive without that lock) and **over-broad** (reads take that lock too). Resolved:
+- **S2-C1 — intent-aware gate, not a blanket `AcquireAs` check.** The seal refuses only
+  the content-mutating operations (capture/export, graph, incremental `-out`, `reindex`
+  **redaction**, `verify -record`) and allows reads — plain `verify`, `extract` (writes
+  only to `-dest`), and the empty-verb health probe. `reindex` **rebuild** of a lost
+  index is **allowed** (operator ruling 2026-10-20: it regenerates derived data, not
+  mail; cf. Repair §5.4). Each write caller declares write-intent; the seal does not key
+  on the ambiguous `AcquireAs` verb string alone (one "verify" = read & `-record`; one
+  "reindex" = destructive redaction & derived-index rebuild).
+- **S2-C2 — entry-point checks.** `HeadlessCapture` and `RunHeadless` check the seal at
+  ENTRY (before `recordStartFailure`/`WriteLastRun`, the run-log open, and the
+  `_outlook-pst` recreate — all of which precede the engine lock), not only inside the
+  engine.
+- **S2-C3 — remove *both* schedules.** Disconnect removes the backup **and** the separate
+  scheduled verify (`.mailarchive-verify-schedule.json`, FB-4), stashing both cadences, or
+  a live schedule survives a "paused" archive (R35).
+- **S2-C4 — un-seal is lock-free and headless-capable.** Connect/Resume clears the sentinel
+  WITHOUT passing through the gated write path; a new `mailarchive` CLI un-seal verb (by
+  `-out`) ships in Slice 2 (operator ruling 2026-10-20), because the seal bites on the
+  CLI/scheduled path while Connect is Desktop/wizard-only (a NAS/traveled archive would
+  otherwise lock out).
+- **S2-C5 — Connect crash-ordering mirrors Disconnect.** Connect clears the sentinel
+  **first**, then restores the schedule, so a crash leaves connected+unscheduled
+  (writable, retryable), never scheduled+sealed. Connect twin of MA-659.
+- **S2-C6 — sentinel discipline.** Sealed ⇔ a regular file present at the sentinel path
+  (**fail-closed**: a FIFO/symlink/unreadable sentinel reads as sealed, never followed or
+  opened-to-hang); presence checked by `os.Lstat` (no follow, no open), written/removed
+  atomically (`util.WriteFileAtomic0600`). The `ArchiveOptions{Other:true}` flag named in
+  §5.3 step 2 is **dropped** — it gates no write path.
+- **S2-C7 — detectability + durable stash.** `status` and the Desktop reconcile the
+  archive-local descriptor against the sentinel and flag "paused but still scheduled" (a
+  refused run writes no last-run, so health would otherwise read stale-green); the stashed
+  cadence has a durable, §4-consistent home capturing the fields a run-job needs.
+Full findings: Slice-2 pre-code pass output.
 
 ### 5.4 Repair
 Reuse the existing repair routes (`health` `rebuildHow`/`repairHow`,
