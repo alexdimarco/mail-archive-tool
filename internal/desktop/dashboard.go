@@ -624,6 +624,9 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		ShowRepair    bool
 		ShowRemove    bool
 		ShowBackupOff bool
+		// The Your-archives list (UX-1): the known archives and whether to show the card.
+		Archives     []ArchiveRow
+		ShowArchives bool
 	}{Export: !cfg.WorkspaceOff, Epoch: epoch, CSRF: csrf, Cards: cfg.cards(), Vault: vaultPhrase(), OutDir: cfg.effectiveOut(), ReaderURL: cfg.ReaderURL, SignedIn: signedIn, UPN: upn,
 		KeepRaw: s.KeepRaw, IncludeDeleted: s.IncludeDeleted, IncludeJunk: s.IncludeJunk,
 		Interval: orElse(s.Interval, "weekly"), WeeklyTime: orElse(s.WeeklyTime, "03:00"),
@@ -633,6 +636,16 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		data.ArchiveNowOff = archiveNowOff(cfg.goos(), data.OutDir)
 	}
 	data.Offer = cfg.offer()
+	// The Your-archives list (UX-1): reconcile the known-archives index (the Desktop
+	// is its maintainer, SD-6) and derive the rows live. Shown only when it tells the
+	// owner something beyond the current archive — more than one known archive, or a
+	// lone one that is not the current archive. The informational shell (no IndexPath)
+	// reconciles nothing, so the card never appears there; a refused index fails closed
+	// to no card.
+	if idx, rerr := cfg.reconcileArchives(time.Now()); rerr == nil {
+		data.Archives = cfg.archiveRows(idx)
+		data.ShowArchives = len(data.Archives) >= 2 || (len(data.Archives) == 1 && !data.Archives[0].Current)
+	}
 	// Weekly backup card state (§4.6.3/MA-617, Q18(b)): render the card for a
 	// recorded schedule — including a local-only archive's — and pick the controls
 	// by the corroborated kind, so the card repairs a run-job (keeps its kind)
@@ -741,6 +754,13 @@ select{width:100%;padding:10px 11px;border:1px solid var(--line);border-radius:8
 .device-box{margin-top:14px;padding:14px;border:2px dashed var(--accent);border-radius:10px;background:var(--accent-soft)}
 .device-code{font:800 1.7rem/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.1em;margin-top:6px}
 pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:12px;max-height:280px;overflow:auto;margin-top:14px;font-size:.84rem}
+.archive-list{list-style:none;padding:0;margin:10px 0 0}
+.archive-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 0;border-top:1px solid var(--line)}
+.archive-row .archive-path{flex:1;min-width:0;overflow-wrap:anywhere}
+.archive-row.unavailable{opacity:.6}
+.archive-tag{font-size:.84rem;opacity:.75}
+.archive-tag.current{opacity:1;color:var(--accent);font-weight:700}
+.archive-kind{font-size:.78rem;opacity:.75;border:1px solid var(--line);border-radius:6px;padding:1px 7px}
 @media(max-width:900px){.app-shell{grid-template-columns:1fr}.status-grid{grid-template-columns:1fr 1fr}.sidebar-foot{display:none}}
 </style></head>
 <body>
@@ -780,6 +800,18 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       {{if .Offer}}<p>The MailArchive wizard (mailarchive wizard) last used <span class="mono">{{.Offer}}</span>. Use this archive?</p>{{end}}
       <button class="btn" id="useOffer" type="button" data-path="{{.Offer}}"{{if not .Offer}} hidden{{end}}>Use this archive</button>{{if .Offer}} <span class="card-sub">Nothing changes until you click it.</span>{{end}}
       <p class="steps">{{if .Offer}}To pick a different folder, type{{else}}MailArchive Desktop has no archive to read yet. To open one you already have (for example one made from Thunderbird), type{{end}} its folder in <b>Settings → Archive location</b> below (the folder that holds the .mailarchive-manifest.json file) and click <b>Save settings</b>.</p>
+    </div>{{end}}
+
+    {{if .ShowArchives}}<div class="card" id="sec-archives">
+      <h2>Your archives</h2>
+      <p class="card-sub">The mail archives MailArchive Desktop knows about on this computer. The one marked current is what every tool here reads and what the weekly backup keeps; switch to work on a different one.</p>
+      <ul class="archive-list">
+        {{range .Archives}}<li class="archive-row{{if not .Available}} unavailable{{end}}">
+          <span class="mono archive-path">{{.Path}}</span>
+          {{if .KindLabel}}<span class="archive-kind">{{.KindLabel}}</span>{{end}}
+          {{if .Current}}<span class="archive-tag current">Current archive</span>{{else if .Available}}<button class="btn secondary" type="button" data-switch-archive data-path="{{.Path}}">Switch to this archive</button>{{else}}<span class="archive-tag">Not reachable right now — reconnect the drive or folder and it comes back. Nothing was removed.</span>{{end}}
+        </li>{{end}}
+      </ul>
     </div>{{end}}
 
     <div class="status-grid">
@@ -973,6 +1005,13 @@ if(useOffer)useOffer.addEventListener('click',async()=>{
   $('outDir').value=useOffer.dataset.path;
   if(await doSave(''))setTimeout(()=>location.reload(),500);
 });
+// "Switch to this archive": the per-row button on the Your-archives list. Same save
+// as typing the folder and clicking Save settings (same checks, same weekly-backup
+// question), so switching can never skip them; nothing changes until the click.
+document.querySelectorAll('[data-switch-archive]').forEach(b=>b.addEventListener('click',async()=>{
+  $('outDir').value=b.dataset.path;
+  if(await doSave(''))setTimeout(()=>location.reload(),500);
+}));
 if(save)save.addEventListener('click',()=>doSave(''));
 const keepB=$('settingsKeep'),removeB=$('settingsRemoveBackup'),cancelB=$('settingsCancel');
 if(keepB)keepB.addEventListener('click',()=>doSave('keep'));

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"mail-archive-tool/internal/archindex"
 	"mail-archive-tool/internal/browser"
 	"mail-archive-tool/internal/graphconfig"
 	"mail-archive-tool/internal/instance"
@@ -192,6 +193,7 @@ func launch(ctx context.Context, args []string, env *launchEnv) error {
 	settingsPath := filepath.Join(filepath.Dir(cfgPath), "desktop-settings.json")
 	exe, _ := os.Executable() // recorded in a scheduled task so the weekly backup runs this binary
 	dcfg := Config{Out: *out, ConfigPath: cfgPath, Store: store, SettingsPath: settingsPath, Exe: exe, Version: buildVersion(), LastArchive: OfferedArchive}
+	dcfg.IndexPath = filepath.Join(filepath.Dir(cfgPath), archindex.Name) // the Desktop maintains the known-archives index beside desktop-settings.json (SD-6)
 	dcfg.WorkspaceOff = *noWorkspace || (env.WorkspaceOff != nil && env.WorkspaceOff())
 	if env.ExportDir != nil {
 		dcfg.StateDir = env.ExportDir()

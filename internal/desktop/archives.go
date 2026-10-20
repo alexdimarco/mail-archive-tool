@@ -28,6 +28,22 @@ type ArchiveRow struct {
 	Kind      string // local | m365 | mixed | empty; "" when unavailable
 }
 
+// KindLabel is the short, plain-words form of Kind for the archive list ("" when
+// the archive's kind is unknown, e.g. the folder is unavailable).
+func (r ArchiveRow) KindLabel() string {
+	switch r.Kind {
+	case kindLocal:
+		return "local mail files"
+	case kindM365:
+		return "Microsoft 365"
+	case kindMixed:
+		return "Microsoft 365 + local files"
+	case kindEmpty:
+		return "empty"
+	}
+	return ""
+}
+
 // archivePointers are the archive folders the Desktop already knows about from its
 // own config, gathered for a reconcile: the archive in use (effectiveOut), the
 // wizard's last-touched breadcrumb (Config.LastArchive) and the folder a weekly

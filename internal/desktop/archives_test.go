@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -187,4 +188,66 @@ func entryPaths(idx archindex.Index) []string {
 		ps = append(ps, e.Path)
 	}
 	return ps
+}
+
+// covers: MA-666
+// The Overview's "Your archives" card (UX-1) lists the known archives and IS the switcher: the
+// current archive is marked with no switch control, another reachable archive carries a "Switch to
+// this archive" button that drives the SAME /api/settings save (so a switch keeps that path's
+// weekly-backup safety question), and an unreachable archive is greyed with its state and remedy
+// and no switch (UX-3). The card is hidden when the only known archive is the current one.
+func TestMA666_YourArchivesCard(t *testing.T) {
+	dir := t.TempDir()
+	idxPath := filepath.Join(dir, archindex.Name)
+	settings := filepath.Join(dir, "s.json")
+	a := archiveAt(t, dir, "A", map[string]string{"path:/mail/a.mbox": "a"})
+	b := archiveAt(t, dir, "B", map[string]string{"mailbox:u@contoso.com": "b"})
+	gone := filepath.Join(dir, "gone") // listed but never on disk
+	if err := archindex.WriteFile(idxPath, archindex.Index{Entries: []archindex.Entry{
+		{Path: a, AddedAt: at0, LastSeenAt: at0},
+		{Path: b, AddedAt: at0, LastSeenAt: at0},
+		{Path: gone, AddedAt: at0, LastSeenAt: at0},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveSettings(settings, Settings{Out: a}); err != nil {
+		t.Fatal(err)
+	}
+	page, _ := getPage(t, DashboardHandler(Config{SettingsPath: settings, IndexPath: idxPath, GOOS: "darwin"}))
+	assure.Reached(t, page, "overview page")
+	if !strings.Contains(page, `id="sec-archives"`) {
+		t.Fatal("the Your-archives card is missing")
+	}
+	card := page[strings.Index(page, `id="sec-archives"`):]
+	card = card[:strings.Index(card, "</div>")]
+	for _, want := range []string{
+		a, b, // both folders are listed
+		"Current archive", // A is marked current
+		`data-switch-archive data-path="` + b + `"`, // B is switchable via the shared save
+		"local mail files",                          // A's kind label
+		"Microsoft 365",                             // B's kind label
+		"Not reachable right now",                   // the gone archive's state + remedy (UX-3)
+		`class="archive-row unavailable"`,           // the gone archive is greyed
+	} {
+		if !strings.Contains(card, want) {
+			t.Errorf("the Your-archives card lacks %q\ncard: %s", want, card)
+		}
+	}
+	// The current archive and an unreachable one carry no switch button.
+	if strings.Contains(card, `data-switch-archive data-path="`+a+`"`) {
+		t.Error("the current archive must not carry a switch button")
+	}
+	if strings.Contains(card, `data-switch-archive data-path="`+gone+`"`) {
+		t.Error("an unreachable archive must not carry a switch button (UX-3)")
+	}
+
+	// Hidden when the only known archive is the current one: nothing new to say.
+	lonePath := filepath.Join(dir, "lone.json")
+	if err := archindex.WriteFile(lonePath, archindex.Index{Entries: []archindex.Entry{{Path: a, AddedAt: at0, LastSeenAt: at0}}}); err != nil {
+		t.Fatal(err)
+	}
+	lonePage, _ := getPage(t, DashboardHandler(Config{SettingsPath: settings, IndexPath: lonePath, GOOS: "darwin"}))
+	if strings.Contains(lonePage, `id="sec-archives"`) {
+		t.Error("the card must be hidden when the only known archive is the current one")
+	}
 }
