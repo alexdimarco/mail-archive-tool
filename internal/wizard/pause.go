@@ -17,16 +17,26 @@ import (
 // Fail-closed: if a live entry cannot be removed, it is NOT sealed — the archive stays as
 // it was rather than being marked read-only while a schedule might still run (MA-659).
 // reason is recorded in the sentinel for the owner.
+// removeLiveEntry is a seam so a test can assert which (bound) names a pause acts on
+// without touching the real host scheduler.
+var removeLiveEntry = schedule.RemoveLiveEntry
+
 func PauseArchive(out, reason string) error {
-	if d, err := schedule.ReadDescriptor(out); err == nil {
-		spec := schedule.Spec{Name: d.Name, Out: out, WrapperPath: schedule.DefaultWrapperPath(d.Name)}
-		if rerr := schedule.RemoveLiveEntry(spec); rerr != nil {
+	// Remove the live entries this archive OWNS, each proven "ours" through bound.go
+	// (RecordedBackupName/RecordedVerifyName) exactly as `-out X -remove` and the GUI remove
+	// do — NEVER the raw descriptor name, which a handed-over folder can set to a foreign OS
+	// task (Windows) or another archive's derived entry. A name that does not bind is skipped
+	// (no live entry of ours lives under it); a bound entry that cannot be removed fails
+	// closed (we do NOT seal, per the contract above).
+	if name, err := schedule.RecordedBackupName(out); err == nil {
+		spec := schedule.Spec{Name: name, Out: out, WrapperPath: schedule.DefaultWrapperPath(name)}
+		if rerr := removeLiveEntry(spec); rerr != nil {
 			return fmt.Errorf("could not remove the backup schedule before pausing (it may still run): %w", rerr)
 		}
 	}
-	if dv, err := schedule.ReadVerifyDescriptor(out); err == nil {
-		spec := schedule.Spec{Name: dv.Name, Out: out, WrapperPath: schedule.DefaultWrapperPath(dv.Name)}
-		if rerr := schedule.RemoveLiveEntry(spec); rerr != nil {
+	if name, ok := schedule.RecordedVerifyName(out); ok {
+		spec := schedule.Spec{Name: name, Out: out, WrapperPath: schedule.DefaultWrapperPath(name)}
+		if rerr := removeLiveEntry(spec); rerr != nil {
 			return fmt.Errorf("could not remove the verify schedule before pausing (it may still run): %w", rerr)
 		}
 	}
