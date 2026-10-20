@@ -42,6 +42,7 @@ import (
 	"mail-archive-tool/internal/outlookcom"
 	"mail-archive-tool/internal/runlog"
 	"mail-archive-tool/internal/schedule"
+	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/source"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/thunderbird"
@@ -195,6 +196,15 @@ func runExport(args []string) error {
 			}
 		}
 		return err
+	}
+
+	// A paused (sealed) archive is hard read-only: refuse at entry — BEFORE the run log is
+	// opened and BEFORE the -outlook COM export recreates <out>/_outlook-pst inside the
+	// archive, both of which precede the engine's own seal check in app.Run (too late for
+	// these pre-lock writes). Mirrors the scheduled path (wizard.RunHeadless) and
+	// HeadlessCapture (S2-C1/C2).
+	if serr := seal.RefuseWrite(*o.out); serr != nil {
+		return serr
 	}
 
 	logger, closeLog, err := newRunLogger(*o.log)
