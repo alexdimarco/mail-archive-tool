@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"mail-archive-tool/internal/alert"
+	"mail-archive-tool/internal/backupalert"
 )
 
 // memStore is an in-memory SecretStore (the vault) for tests.
@@ -44,20 +45,19 @@ func TestMA698_AlertWiring(t *testing.T) {
 	if err := cfg.setAlertPassword("app-pw"); err != nil {
 		t.Fatal(err)
 	}
-	if got := cfg.alertPassword(); got != "app-pw" {
+	if got := backupalert.Password(store); got != "app-pw" {
 		t.Fatalf("vault password round-trip: got %q", got)
 	}
 
 	var sentCfg alert.Config
 	var sentPw string
 	var sent []alert.Event
-	old := sendAlert
-	defer func() { sendAlert = old }()
-	sendAlert = func(c alert.Config, pw string, ev alert.Event) error {
+	restore := backupalert.SetSenderForTest(func(c alert.Config, pw string, ev alert.Event) error {
 		sentCfg, sentPw = c, pw
 		sent = append(sent, ev)
 		return nil
-	}
+	})
+	defer restore()
 
 	// Disabled (default) -> nothing is sent, whatever the result.
 	cfg.fireAlert(alert.ResultFailed, "/arch", errors.New("boom"), 0, nil)
@@ -88,8 +88,8 @@ func TestMA698_AlertWiring(t *testing.T) {
 	if !strings.Contains(string(raw), "smtp.office365.com") {
 		t.Fatalf("the Office 365 preset host should be saved:\n%s", raw)
 	}
-	if store.m[alertSecretAccount] != "vault-pw" {
-		t.Fatalf("the password should be in the vault, got %q", store.m[alertSecretAccount])
+	if store.m[backupalert.SecretAccount] != "vault-pw" {
+		t.Fatalf("the password should be in the vault, got %q", store.m[backupalert.SecretAccount])
 	}
 
 	// A failure now fires, with the vault password and the preset-filled host.
@@ -122,7 +122,7 @@ func TestMA698_AlertWiring(t *testing.T) {
 func TestMA699_AlertsCardRenders(t *testing.T) {
 	settingsPath := filepath.Join(t.TempDir(), "s.json")
 	store := newMemStore()
-	_ = store.Set(alertSecretAccount, "secret-pw")
+	_ = store.Set(backupalert.SecretAccount, "secret-pw")
 	if err := SaveSettings(settingsPath, Settings{
 		AlertEnabled: true, AlertOnFailure: true, AlertProvider: "office365",
 		AlertHost: "smtp.office365.com", AlertPort: 587, AlertSecurity: "starttls",

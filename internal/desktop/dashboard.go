@@ -24,6 +24,7 @@ import (
 
 	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/archindex"
+	"mail-archive-tool/internal/backupalert"
 	"mail-archive-tool/internal/graph"
 	"mail-archive-tool/internal/graphconfig"
 	"mail-archive-tool/internal/instance"
@@ -821,7 +822,7 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		data.AlertPort = 587
 	}
 	if cfg.Store != nil {
-		if _, err := cfg.Store.Get(alertSecretAccount); err == nil {
+		if _, err := cfg.Store.Get(backupalert.SecretAccount); err == nil {
 			data.AlertHasPassword = true
 		}
 	}

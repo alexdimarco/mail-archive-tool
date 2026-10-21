@@ -33,6 +33,7 @@ import (
 	"github.com/ncruces/zenity"
 
 	"mail-archive-tool/internal/app"
+	"mail-archive-tool/internal/backupalert"
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/health"
 	"mail-archive-tool/internal/job"
@@ -185,7 +186,9 @@ func RunHeadless(path string) int {
 	// Unattended guard: an absent -out (the backup drive is not mounted) must
 	// not become a fresh archive on the local disk that then reports "ok".
 	if fi, err := os.Stat(j.Out); err != nil || !fi.IsDir() {
-		jobFail(path, fmt.Errorf("archive directory %s is not present — is the backup drive mounted? refusing to create a new archive elsewhere", j.Out))
+		e := fmt.Errorf("archive directory %s is not present — is the backup drive mounted? refusing to create a new archive elsewhere", j.Out)
+		jobFail(path, e)
+		fireBackupAlert(j.Out, backupalert.ResultFailed, e, 0, nil)
 		return 1
 	}
 	// A paused archive is hard read-only: refuse before the run-log open and any PST
@@ -222,6 +225,7 @@ func RunHeadless(path string) int {
 			logger.Printf("FAILED: %v", cerr)
 			fmt.Fprintln(os.Stderr, "mailarchive run-job: "+cerr.Error())
 			notifyFailure(j.Name, j.Out)
+			fireBackupAlert(j.Out, backupalert.ResultFailed, cerr, 0, logger)
 			return 1
 		}
 		inputs = nil
@@ -268,12 +272,17 @@ func RunHeadless(path string) int {
 		}
 		fmt.Fprintln(os.Stderr, "mailarchive run-job: "+runErr.Error()) // cron mail / stderr.log
 		notifyFailure(j.Name, j.Out)
+		fireBackupAlert(j.Out, backupalert.ResultFailed, runErr, 0, logger)
 		return 1
 	}
 	// The Outlook-app path wrote scratch PSTs under <out>/_outlook-pst; once the
 	// export that read them succeeded, reclaim that space (kept on failure).
 	if j.Outlook && runErr == nil {
 		cleanupOutlookScratch(j.Out, true, logger)
+	}
+	// A completed (not cancelled) local backup emails its success too, if alerts want it.
+	if runErr == nil {
+		fireBackupAlert(j.Out, backupalert.ResultOK, nil, result.Stats.Exported, logger)
 	}
 	return 0
 }
@@ -304,6 +313,15 @@ func jobFail(path string, err error) {
 func notifyFailure(name, out string) {
 	_ = out // reserved for a future per-archive message; the schedule name is the identifier today
 	_ = notify(fmt.Sprintf("Mail Archive backup failed for %s. Open the MailArchive wizard (mailarchive wizard) to see what went wrong.", name), zenity.Title(appTitle))
+}
+
+// fireBackupAlert sends the configured backup-result email for this scheduled LOCAL job,
+// via the shared backupalert layer — the same one the Desktop's Microsoft 365 capture uses
+// — so a local backup alerts from the one configuration the dashboard saves. It is the
+// email twin of the local notifyFailure toast (both fire; the toast is on this machine, the
+// email reaches whoever is configured). Best-effort: a mail problem never fails the backup.
+func fireBackupAlert(out, result string, runErr error, messages int, logger *log.Logger) {
+	backupalert.FireForRunDefault(out, result, runErr, messages, logger)
 }
 
 // dirSize sums the sizes of the regular files under root (best-effort), to
