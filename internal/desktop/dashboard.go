@@ -801,6 +801,8 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		AlertTo          string
 		AlertUsername    string
 		AlertHasPassword bool
+		// Recent backups card (MA-701): the archive's rolling run history, newest first.
+		RecentRuns []runRow
 	}{Export: !cfg.WorkspaceOff, Epoch: epoch, CSRF: csrf, Cards: cfg.cards(), Vault: vaultPhrase(), OutDir: cfg.effectiveOut(), ReaderURL: cfg.ReaderURL, SignedIn: signedIn, UPN: upn,
 		KeepRaw: s.KeepRaw, IncludeDeleted: s.IncludeDeleted, IncludeJunk: s.IncludeJunk,
 		Interval: orElse(s.Interval, "weekly"), WeeklyTime: orElse(s.WeeklyTime, "03:00"),
@@ -823,6 +825,7 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 			data.AlertHasPassword = true
 		}
 	}
+	data.RecentRuns = recentRunRows(data.OutDir)
 	// The Your-archives list (UX-1): reconcile the known-archives index (the Desktop
 	// is its maintainer, SD-6) and derive the rows live. Shown only when it tells the
 	// owner something beyond the current archive — more than one known archive, or a
@@ -967,6 +970,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <div class="nav-title">Diagnostics</div>
       <a href="#sec-health">Status &amp; health</a>
       <a href="#sec-activity">Activity log</a>
+      <a href="#sec-history">Recent backups</a>
       <div class="nav-title">Setup</div>
       <a href="#sec-m365">Microsoft 365 connection</a>
       <a href="#sec-backup">Weekly backup</a>
@@ -1141,6 +1145,14 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
         <p><b>Gmail:</b> turn on 2-step verification, create an App Password, and paste it here. Server smtp.gmail.com, port 587, STARTTLS.</p>
         <p><b>Other (standard SMTP):</b> your own mail server — fill in its address, port and security. Leave the username blank if it accepts mail from this computer without a sign-in.</p>
       </details>
+    </div>
+
+    <div class="card" id="sec-history">
+      <h2>Recent backups</h2>
+      {{if .RecentRuns}}<p class="card-sub">The last few backup runs for this archive, newest first.</p>
+      <ul class="run-history">
+        {{range .RecentRuns}}<li>{{.When}} — {{if .Failed}}<span class="warn">{{.Status}}</span>{{else}}<span class="good">{{.Status}}</span>{{end}}{{if .Detail}} — {{.Detail}}{{end}}</li>{{end}}
+      </ul>{{else}}<p class="card-sub">No backups have run yet. When a scheduled backup or Run now finishes, its result appears here.</p>{{end}}
     </div>
 
     <div class="card" id="sec-health">

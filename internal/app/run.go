@@ -803,6 +803,8 @@ func RecordRefusedRun(opts Options, cause error) {
 	lr := newRunRecord(opts)
 	lr.Status, lr.Finished, lr.Error = state.RunFailed, lr.Started, cause.Error()
 	_ = state.WriteLastRun(opts.Out, lr)
+	// A refused scheduled run is a failure the history should show too (MA-701), best effort.
+	_ = appendRunHistory(opts.Out, state.RunHistoryEntryFrom(lr))
 }
 
 // canonicalJob reconstructs the run's export flags in the same shape the
@@ -846,6 +848,10 @@ func absOrSame(p string) string {
 // writeLastRun is the finalizing record write; a var so a test can refuse it.
 var writeLastRun = state.WriteLastRun
 
+// appendRunHistory adds a finalized run to the archive's rolling history (MA-701); a var
+// so a test can observe or refuse it. Best effort — a lost history never fails a run.
+var appendRunHistory = state.AppendRunHistory
+
 func recordRun(opts Options, lr state.LastRun, result *Result, err *error, logger *log.Logger) {
 	lr.Finished = time.Now().UTC()
 	switch {
@@ -878,6 +884,12 @@ func recordRun(opts Options, lr state.LastRun, result *Result, err *error, logge
 			hint = " (a sharing violation: exclude the archive folder from antivirus real-time scanning)"
 		}
 		logger.Printf("warning: could not record this run in %s (%v): `mailarchive status` may show this run as \"never finished\" or still show the previous result, whatever this log says about how it ended — run again once the file can be written%s", filepath.Join(opts.Out, state.LastRunName), werr, hint)
+	}
+	// Add this run to the archive's rolling history (MA-701), best effort like the
+	// last-run write above: the dashboard and `status` read it to show recent runs, not
+	// just the latest. A lost history never fails the run.
+	if herr := appendRunHistory(opts.Out, state.RunHistoryEntryFrom(lr)); herr != nil && logger != nil {
+		logger.Printf("warning: could not add this run to the backup history in %s (%v)", filepath.Join(opts.Out, state.RunHistoryName), herr)
 	}
 	// Track how long this archive's SOURCE has been reachable (Slice 3, §5.7): only SCHEDULED
 	// (unattended) runs move the streak, and only a definitive reach or unreachable verdict
