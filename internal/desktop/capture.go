@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"mail-archive-tool/internal/alert"
 	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/graph"
@@ -86,11 +87,19 @@ func HeadlessCapture(cfg Config, logw io.Writer) error {
 		opts.Warnings = []state.RunWarning{{Code: "config_in_archive", Message: msg}}
 	}
 	_, err := app.RunGraph(context.Background(), g, opts, logger)
+	// Built-in email alert for this scheduled run's result (MA-698), best-effort: a mail
+	// failure never fails the backup. On failure the reason travels in the body.
+	result := alert.ResultOK
+	if err != nil {
+		result = alert.ResultFailed
+	}
+	cfg.fireAlert(result, out, err, 0, logger)
 	// After a scheduled run, auto-pause the backup if the source has been unreachable for too
 	// many runs (§5.7, S3-C5): stop the nightly schedule only — reversible, never seals. Best
 	// effort; it never fails the run.
 	if paused, perr := wizard.AutoPauseIfDue(out); perr == nil && paused {
 		logger.Printf("auto-paused the scheduled backup: the source has been unreachable for too long; the schedule was stopped (reversible — reconnect the source and re-enable it)")
+		cfg.fireAlert(alert.ResultPaused, out, errors.New("the mailbox or mail folder has been unreachable for too many runs, so the scheduled backup was paused. Reconnect the source and re-enable it."), 0, logger)
 	}
 	return err
 }

@@ -299,6 +299,8 @@ func (d *dashboard) router() localweb.Router {
 	mux.HandleFunc("/api/pause-archive", d.pauseArchive)
 	mux.HandleFunc("/api/resume-archive", d.resumeArchive)
 	mux.HandleFunc("/api/add-archive", d.addArchive)
+	mux.HandleFunc("/api/alert-settings", d.saveAlertSettings)
+	mux.HandleFunc("/api/alert-test", d.alertTest)
 	mux.HandleFunc("/api/uninstall", d.uninstallAction)
 	mux.HandleFunc("/api/schedule-install", d.scheduleInstall)
 	mux.HandleFunc("/api/schedule-remove", d.scheduleRemove)

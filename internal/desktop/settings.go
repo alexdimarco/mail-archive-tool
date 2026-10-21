@@ -44,6 +44,21 @@ type Settings struct {
 	// default when never set) or "loose" (a folder of files beside the message). It is remembered
 	// only by a start that extracted attachments.
 	ExportAttachmentsAs string `json:"exportAttachmentsAs,omitempty"`
+
+	// Backup alerts: MailArchive's built-in email on a scheduled run's result (internal/alert,
+	// MA-697/698). The SMTP password is NOT stored here — it lives in the OS secret store under
+	// alertSecretAccount, so this 0600 settings file never holds it.
+	AlertEnabled   bool   `json:"alertEnabled,omitempty"`
+	AlertOnFailure bool   `json:"alertOnFailure,omitempty"`
+	AlertOnSuccess bool   `json:"alertOnSuccess,omitempty"`
+	AlertOnPause   bool   `json:"alertOnPause,omitempty"`
+	AlertProvider  string `json:"alertProvider,omitempty"` // office365 | gmail | smtp
+	AlertHost      string `json:"alertHost,omitempty"`
+	AlertPort      int    `json:"alertPort,omitempty"`
+	AlertSecurity  string `json:"alertSecurity,omitempty"` // starttls | tls | none
+	AlertFrom      string `json:"alertFrom,omitempty"`
+	AlertTo        string `json:"alertTo,omitempty"` // the alert recipient(s), e.g. the ticket-system address
+	AlertUsername  string `json:"alertUsername,omitempty"`
 }
 
 // AttachmentsAs is the remembered way attachments are saved: "zip" unless "loose" was chosen.
