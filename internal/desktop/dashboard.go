@@ -787,15 +787,42 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		// The Your-archives list (UX-1): the known archives and whether to show the card.
 		Archives     []ArchiveRow
 		ShowArchives bool
+		// Backup alerts card (MA-699): the saved email-alert config, prefilled. The password
+		// is never sent to the page — only whether one is stored.
+		AlertEnabled     bool
+		AlertOnFailure   bool
+		AlertOnSuccess   bool
+		AlertOnPause     bool
+		AlertProvider    string
+		AlertHost        string
+		AlertPort        int
+		AlertSecurity    string
+		AlertFrom        string
+		AlertTo          string
+		AlertUsername    string
+		AlertHasPassword bool
 	}{Export: !cfg.WorkspaceOff, Epoch: epoch, CSRF: csrf, Cards: cfg.cards(), Vault: vaultPhrase(), OutDir: cfg.effectiveOut(), ReaderURL: cfg.ReaderURL, SignedIn: signedIn, UPN: upn,
 		KeepRaw: s.KeepRaw, IncludeDeleted: s.IncludeDeleted, IncludeJunk: s.IncludeJunk,
 		Interval: orElse(s.Interval, "weekly"), WeeklyTime: orElse(s.WeeklyTime, "03:00"),
-		Account: cfg.account(), SessionsLine: cfg.sessionsLine(), FormerNotice: cfg.formerNotice(), ResidualOS: residualOS(cfg.goos())}
+		Account: cfg.account(), SessionsLine: cfg.sessionsLine(), FormerNotice: cfg.formerNotice(), ResidualOS: residualOS(cfg.goos()),
+		AlertEnabled: s.AlertEnabled, AlertOnFailure: s.AlertOnFailure, AlertOnSuccess: s.AlertOnSuccess, AlertOnPause: s.AlertOnPause,
+		AlertProvider: orElse(s.AlertProvider, "office365"), AlertHost: s.AlertHost, AlertPort: s.AlertPort,
+		AlertSecurity: orElse(s.AlertSecurity, "starttls"), AlertFrom: s.AlertFrom, AlertTo: s.AlertTo, AlertUsername: s.AlertUsername}
 	data.KindLine = kindLine(archiveKind(data.OutDir))
 	if data.LocalOnly = cfg.localOnly(); data.LocalOnly {
 		data.ArchiveNowOff = archiveNowOff(cfg.goos(), data.OutDir)
 	}
 	data.Offer = cfg.offer()
+	// Backup alerts (MA-699): default the display port, and tell the form whether a
+	// password is already stored (so it can say "leave blank to keep") — never its value.
+	if data.AlertPort == 0 {
+		data.AlertPort = 587
+	}
+	if cfg.Store != nil {
+		if _, err := cfg.Store.Get(alertSecretAccount); err == nil {
+			data.AlertHasPassword = true
+		}
+	}
 	// The Your-archives list (UX-1): reconcile the known-archives index (the Desktop
 	// is its maintainer, SD-6) and derive the rows live. Shown only when it tells the
 	// owner something beyond the current archive — more than one known archive, or a
@@ -943,6 +970,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <div class="nav-title">Setup</div>
       <a href="#sec-m365">Microsoft 365 connection</a>
       <a href="#sec-backup">Weekly backup</a>
+      <a href="#sec-alerts">Backup alerts</a>
     </nav>
     <div class="sidebar-foot">Local control panel<br>127.0.0.1</div>
   </aside>
@@ -1086,6 +1114,35 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <div class="note" id="schedState" hidden></div>{{end}}
     </div>
 
+    <div class="card" id="sec-alerts">
+      <h2>Backup alerts</h2>
+      <p class="card-sub">Email someone when a scheduled backup fails, so a broken backup never goes unnoticed. MailArchive sends the mail itself over SMTP — there is no script to install.</p>
+      <div><label><input type="checkbox" id="alertEnabled"{{if .AlertEnabled}} checked{{end}}> <b>Send backup alerts by email</b></label></div>
+      <div class="row"><div class="k">Send alerts on</div><div class="v">
+        <div><label><input type="checkbox" id="alertOnFailure"{{if .AlertOnFailure}} checked{{end}}> a failed backup (recommended)</label></div>
+        <div><label><input type="checkbox" id="alertOnPause"{{if .AlertOnPause}} checked{{end}}> auto-pause after repeated failures</label></div>
+        <div><label><input type="checkbox" id="alertOnSuccess"{{if .AlertOnSuccess}} checked{{end}}> every successful backup</label></div>
+      </div></div>
+      <div class="row"><div class="k">Mail provider</div><div class="v">
+        <div><label><input type="radio" name="alertProvider" value="office365"{{if eq .AlertProvider "office365"}} checked{{end}}> Office 365</label></div>
+        <div><label><input type="radio" name="alertProvider" value="gmail"{{if eq .AlertProvider "gmail"}} checked{{end}}> Gmail</label></div>
+        <div><label><input type="radio" name="alertProvider" value="smtp"{{if eq .AlertProvider "smtp"}} checked{{end}}> Other (standard SMTP)</label></div>
+      </div></div>
+      <div class="row"><div class="k">Mail server</div><div class="v"><input id="alertHost" value="{{.AlertHost}}" placeholder="smtp.office365.com"> &nbsp;Port <input id="alertPort" value="{{.AlertPort}}" style="width:5em">
+        <select id="alertSecurity"><option value="starttls"{{if eq .AlertSecurity "starttls"}} selected{{end}}>STARTTLS</option><option value="tls"{{if eq .AlertSecurity "tls"}} selected{{end}}>TLS</option><option value="none"{{if eq .AlertSecurity "none"}} selected{{end}}>None</option></select></div></div>
+      <div class="row"><div class="k">From</div><div class="v"><input id="alertFrom" value="{{.AlertFrom}}" placeholder="backups@yourschool.org"></div></div>
+      <div class="row"><div class="k">Send to</div><div class="v"><input id="alertTo" value="{{.AlertTo}}" placeholder="helpdesk@yourschool.org"></div></div>
+      <div class="row"><div class="k">Username</div><div class="v"><input id="alertUsername" value="{{.AlertUsername}}" placeholder="mailbox sign-in (blank for a relay that needs no sign-in)"></div></div>
+      <div class="row"><div class="k">Password</div><div class="v"><input id="alertPassword" type="password" autocomplete="new-password" placeholder="{{if .AlertHasPassword}}stored — leave blank to keep it{{else}}app password{{end}}">{{if .AlertHasPassword}} <label><input type="checkbox" id="alertClearPassword"> clear the stored password</label>{{end}}</div></div>
+      <div style="margin-top:14px"><button class="btn" id="alertSave" type="button" title="Save these alert settings. The password is kept in this computer's secure vault, never in a file.">Save alert settings</button> <button class="btn secondary" id="alertTest" type="button" title="Save, then send one test email to the Send-to address so you can confirm it arrives.">Send test email</button></div>
+      <div class="note" id="alertNote" hidden></div>
+      <details class="steps"><summary>How to set this up</summary>
+        <p><b>Office 365:</b> the username is the mailbox address and the password is an app password (or the password of a mailbox that has SMTP AUTH enabled). Server smtp.office365.com, port 587, STARTTLS. If your Microsoft 365 tenant blocks SMTP sign-in, use your own relay (Other) or Gmail instead.</p>
+        <p><b>Gmail:</b> turn on 2-step verification, create an App Password, and paste it here. Server smtp.gmail.com, port 587, STARTTLS.</p>
+        <p><b>Other (standard SMTP):</b> your own mail server — fill in its address, port and security. Leave the username blank if it accepts mail from this computer without a sign-in.</p>
+      </details>
+    </div>
+
     <div class="card" id="sec-health">
       <h2>Status &amp; health</h2>
       <div id="healthPosture" class="small"></div>
@@ -1175,6 +1232,18 @@ if(aab)aab.addEventListener('click',async()=>{
     aab.disabled=false;if(n){n.hidden=false;n.textContent=d.canceled?(d.message||'No archive was added.'):(d.error||'Could not add an archive.');}
   }catch(e){aab.disabled=false;if(n){n.hidden=false;n.textContent='Error: '+e;}}
 });
+
+// Backup alerts: a provider choice prefills the server/port/security; Save persists the
+// config (the password goes to the vault); Send test saves then sends one test email.
+function alProvider(){const r=document.querySelector('input[name=alertProvider]:checked');return r?r.value:'smtp';}
+function alPreset(){const m={office365:['smtp.office365.com',587,'starttls'],gmail:['smtp.gmail.com',587,'starttls']}[alProvider()];if(m){$('alertHost').value=m[0];$('alertPort').value=m[1];$('alertSecurity').value=m[2];}}
+document.querySelectorAll('input[name=alertProvider]').forEach(r=>r.addEventListener('change',alPreset));
+function alBody(){const cp=$('alertClearPassword');return {enabled:$('alertEnabled').checked,onFailure:$('alertOnFailure').checked,onSuccess:$('alertOnSuccess').checked,onPause:$('alertOnPause').checked,provider:alProvider(),host:$('alertHost').value,port:parseInt($('alertPort').value,10)||0,security:$('alertSecurity').value,from:$('alertFrom').value,to:$('alertTo').value,username:$('alertUsername').value,password:$('alertPassword').value,clearPassword:cp?cp.checked:false};}
+function alPost(path,body){return fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(body)}).then(r=>r.json());}
+const alSave=$('alertSave');
+if(alSave)alSave.addEventListener('click',async()=>{const n=$('alertNote');alSave.disabled=true;try{const d=await alPost('api/alert-settings',alBody());if(n){n.hidden=false;n.textContent=d.ok?'Alert settings saved.':(d.error||'Could not save the alert settings.');}if(d.ok)$('alertPassword').value='';}catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}alSave.disabled=false;});
+const alTest=$('alertTest');
+if(alTest)alTest.addEventListener('click',async()=>{const n=$('alertNote');alTest.disabled=true;if(n){n.hidden=false;n.textContent='Saving and sending a test email…';}try{const s=await alPost('api/alert-settings',alBody());if(!s.ok){if(n)n.textContent=s.error||'Could not save the alert settings.';alTest.disabled=false;return;}$('alertPassword').value='';const d=await alPost('api/alert-test',{});if(n){n.hidden=false;n.textContent=d.ok?(d.message||'Test email sent.'):(d.error||'Could not send a test email.');}}catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}alTest.disabled=false;});
 
 const clr=$('clearSignin');
 if(clr)clr.addEventListener('click',async()=>{

@@ -152,7 +152,9 @@ func TestSidebarNavEveryEntryWorks(t *testing.T) {
 // (§4.6.3/MA-617/MA-694, Q18(b)), and the "Your archives" card's "Add another
 // archive" button and its note only when that card shows (MA-696, gated on
 // ShowArchives). Each is bound behind an `if($('…'))` null-check in dashboard.js.
-var optionalJSIDs = map[string]bool{"clearSignin": true, "editM365": true, "cancelM365": true, "schedRepair": true, "runBackupBtn": true, "addArchiveBtn": true, "addArchiveNote": true}
+var optionalJSIDs = map[string]bool{"clearSignin": true, "editM365": true, "cancelM365": true, "schedRepair": true, "runBackupBtn": true, "addArchiveBtn": true, "addArchiveNote": true,
+	// the Backup-alerts card's "clear the stored password" checkbox shows only when a password is already stored (MA-699); the JS null-checks it
+	"alertClearPassword": true}
 
 // jsBoundIDs lists every $('id') lookup in dashboard.js.
 func jsBoundIDs() []string {

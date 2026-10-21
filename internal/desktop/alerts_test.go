@@ -28,7 +28,7 @@ func (s *memStore) Get(account string) (string, error) {
 	return v, nil
 }
 func (s *memStore) Delete(account string) error { delete(s.m, account); return nil }
-func (s *memStore) Name() string                 { return "test vault" }
+func (s *memStore) Name() string                { return "test vault" }
 
 // covers: MA-698
 // The alert wiring: the SMTP password lives in the vault (never the settings file);
@@ -113,5 +113,32 @@ func TestMA698_AlertWiring(t *testing.T) {
 	rec = post(d.alertTest, `{}`)
 	if !strings.Contains(rec.Body.String(), `"ok":true`) || len(sent) != 1 {
 		t.Fatalf("alert test: %s (sent=%d)", rec.Body.String(), len(sent))
+	}
+}
+
+// covers: MA-699
+// The Backup-alerts dashboard card renders with the saved config prefilled, offers the
+// Setup nav entry, and NEVER puts the stored SMTP password in the page.
+func TestMA699_AlertsCardRenders(t *testing.T) {
+	settingsPath := filepath.Join(t.TempDir(), "s.json")
+	store := newMemStore()
+	_ = store.Set(alertSecretAccount, "secret-pw")
+	if err := SaveSettings(settingsPath, Settings{
+		AlertEnabled: true, AlertOnFailure: true, AlertProvider: "office365",
+		AlertHost: "smtp.office365.com", AlertPort: 587, AlertSecurity: "starttls",
+		AlertFrom: "backup@sa.org", AlertTo: "tickets@sa.org", AlertUsername: "backup@sa.org",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := Config{SettingsPath: settingsPath, Store: store, ConfigPath: filepath.Join(t.TempDir(), "none.json")}
+	page := cfg.overview("csrf-token")
+
+	for _, want := range []string{`id="sec-alerts"`, `href="#sec-alerts"`, `id="alertEnabled"`, `id="alertTest"`, "backup@sa.org", "tickets@sa.org", "smtp.office365.com", "leave blank to keep"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("the Backup-alerts card is missing %q", want)
+		}
+	}
+	if strings.Contains(page, "secret-pw") {
+		t.Fatal("the stored SMTP password must NEVER appear in the page")
 	}
 }
