@@ -19,6 +19,7 @@ import (
 	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/model"
 	"mail-archive-tool/internal/pages"
+	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/state"
 )
 
@@ -82,6 +83,11 @@ type GraphOptions struct {
 func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Logger) (result Result, err error) {
 	if logger == nil {
 		logger = log.New(io.Discard, "", 0)
+	}
+	// A paused archive is hard read-only: refuse the capture before the (interactive)
+	// sign-in and any write (archive-manager S2-C1/C2).
+	if err := seal.RefuseWrite(opts.Out); err != nil {
+		return Result{}, err
 	}
 	// Build the Graph client and resolve the mailbox set BEFORE taking the archive
 	// lock: a device sign-in is interactive and must not hold the lock, and device

@@ -42,6 +42,7 @@ import (
 	"mail-archive-tool/internal/outlookcom"
 	"mail-archive-tool/internal/runlog"
 	"mail-archive-tool/internal/schedule"
+	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/source"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/thunderbird"
@@ -77,6 +78,12 @@ func main() {
 		err = runVerify(args[1:])
 	case len(args) > 0 && args[0] == "extract":
 		err = runExtract(args[1:])
+	case len(args) > 0 && args[0] == "pause":
+		err = runPause(args[1:])
+	case len(args) > 0 && args[0] == "resume":
+		err = runResume(args[1:])
+	case len(args) > 0 && args[0] == "uninstall":
+		err = runUninstall(args[1:])
 	default:
 		err = runExport(args)
 	}
@@ -138,7 +145,7 @@ func runExport(args []string) error {
 	inputs := append(o.inputs, fs.Args()...)
 
 	if *o.out == "" {
-		return errors.New("-out is required (or use a subcommand: serve, search, reindex, schedule, graph, status, verify, extract)")
+		return errors.New("-out is required (or use a subcommand: serve, search, reindex, schedule, graph, status, verify, extract, pause, resume, uninstall)")
 	}
 	if *o.unattended {
 		if err := requireExistingOut(*o.out); err != nil {
@@ -189,6 +196,15 @@ func runExport(args []string) error {
 			}
 		}
 		return err
+	}
+
+	// A paused (sealed) archive is hard read-only: refuse at entry — BEFORE the run log is
+	// opened and BEFORE the -outlook COM export recreates <out>/_outlook-pst inside the
+	// archive, both of which precede the engine's own seal check in app.Run (too late for
+	// these pre-lock writes). Mirrors the scheduled path (wizard.RunHeadless) and
+	// HeadlessCapture (S2-C1/C2).
+	if serr := seal.RefuseWrite(*o.out); serr != nil {
+		return serr
 	}
 
 	logger, closeLog, err := newRunLogger(*o.log)

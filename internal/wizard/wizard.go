@@ -39,6 +39,7 @@ import (
 	"mail-archive-tool/internal/outlookcom"
 	"mail-archive-tool/internal/runlog"
 	"mail-archive-tool/internal/schedule"
+	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/source"
 	"mail-archive-tool/internal/thunderbird"
 	"mail-archive-tool/internal/util"
@@ -185,6 +186,15 @@ func RunHeadless(path string) int {
 	// not become a fresh archive on the local disk that then reports "ok".
 	if fi, err := os.Stat(j.Out); err != nil || !fi.IsDir() {
 		jobFail(path, fmt.Errorf("archive directory %s is not present — is the backup drive mounted? refusing to create a new archive elsewhere", j.Out))
+		return 1
+	}
+	// A paused archive is hard read-only: refuse before the run-log open and any PST
+	// recreate, which write into the archive before the engine lock (S2-C2). This is
+	// not a failure, so no jobFail record or notification — just stderr and a non-zero
+	// exit; the lingering per-run scheduler stderr breadcrumb is the conceded residual
+	// (Pause removes the schedule, §5.3.1 S2-C3).
+	if err := seal.RefuseWrite(j.Out); err != nil {
+		fmt.Fprintln(os.Stderr, "mailarchive run-job: "+err.Error())
 		return 1
 	}
 	logf, err := runlog.Open(filepath.Join(j.Out, "mailarchive.log"))
@@ -396,6 +406,37 @@ func wizard() error {
 		return err
 	}
 
+	// 3. The local add-an-archive flow, shared with the Desktop's "Add another
+	//    archive" button (AddArchive calls it directly).
+	return localArchiveFlow(nil)
+}
+
+// AddArchive runs the wizard's local add-an-archive flow directly — source choice
+// through export — WITHOUT the first-step surface or the scheduled-archive health
+// check. The Desktop's "Add another archive" button calls it IN PROCESS (desktop
+// imports wizard; MA-612 — never a child), so a running Desktop can create a new
+// local archive through the same native-dialog flow the double-click wizard uses.
+// It returns the new archive's output folder, or "" when the user backed out of a
+// dialog (zenity.ErrCanceled) — a cancel is "nothing added", not an error.
+func AddArchive() (string, error) {
+	if refusal, ok := dialogPreflight(runtime.GOOS, dialogToolOnPath(), displayIsSet()); !ok {
+		return "", errors.New(refusal)
+	}
+	var out string
+	err := localArchiveFlow(func(o string) { out = o })
+	if errors.Is(err, zenity.ErrCanceled) {
+		return "", nil
+	}
+	return out, err
+}
+
+// localArchiveFlow is the wizard's local path: choose the source, pick the files,
+// prepare IMAP, choose the output folder and options, then export. Shared by the
+// double-click wizard (after its first step and health check) and by AddArchive.
+// chosen, when set, is called with the output folder just before the export runs,
+// so a caller (AddArchive) can register the new archive even if the export is later
+// cancelled.
+func localArchiveFlow(chosen func(out string)) error {
 	// 3. Choose the source type, then pick the file/folder accordingly.
 	choices := []string{srcAuto, srcOutlook}
 	if runtime.GOOS == "windows" {
@@ -595,7 +636,12 @@ func wizard() error {
 		}
 	}
 
-	// 6. Run with a progress dialog, then offer to keep it current.
+	// 6. Run with a progress dialog, then offer to keep it current. Tell the caller
+	//    the chosen output folder first, so AddArchive can register the new archive
+	//    (a cancel during the export still leaves it registered, nothing half-hidden).
+	if chosen != nil {
+		chosen(choice.out)
+	}
 	return runExport(choice)
 }
 
@@ -792,18 +838,53 @@ func rememberArchive(out string) {
 	}
 }
 
-// healthCheck shows the health of the last archive this wizard worked on when
-// a schedule is recorded there, beside a "remove the scheduled backup" choice.
-func healthCheck() error {
+// currentArchive is the archive the wizard's health view reports on: the Desktop's
+// authoritative active archive (desktop-settings "out") when one is set, else the
+// wizard's own last-touched breadcrumb (last-archive.txt). Reading the same pointer the
+// Desktop writes means an archive switched in the Desktop shows here too, instead of
+// each surface tracking a different file (design-archive-manager §13 UX-2). When the
+// Desktop's pointer is set, the breadcrumb is reconciled to it so the two never drift.
+func currentArchive() string {
+	if sp, err := job.DesktopSettingsFile(); err == nil {
+		if out := job.ReadDesktopOut(sp); out != "" {
+			reconcileBreadcrumb(out)
+			return out
+		}
+	}
 	p, err := lastArchiveFile()
 	if err != nil {
-		return nil
+		return ""
 	}
 	data, err := os.ReadFile(p)
 	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// reconcileBreadcrumb points the wizard's last-touched breadcrumb (last-archive.txt) at
+// out when it differs, so it tracks the Desktop's active archive rather than drifting
+// from it (design-archive-manager §13 UX-2). Best-effort: the health view still works
+// from out if the breadcrumb cannot be written.
+func reconcileBreadcrumb(out string) {
+	p, err := lastArchiveFile()
+	if err != nil {
+		return
+	}
+	if data, rerr := os.ReadFile(p); rerr == nil && strings.TrimSpace(string(data)) == out {
+		return
+	}
+	_ = os.MkdirAll(filepath.Dir(p), 0o700)
+	_ = os.WriteFile(p, []byte(out+"\n"), 0o600)
+}
+
+// healthCheck shows the health of the last archive this wizard worked on when
+// a schedule is recorded there, beside a "remove the scheduled backup" choice.
+func healthCheck() error {
+	out := currentArchive()
+	if out == "" {
 		return nil
 	}
-	out := strings.TrimSpace(string(data))
 
 	// health.Gather is the one reader of the headless start-failure breadcrumb
 	// (§4.6.6, MA-634): it raises start_failed in the posture (keyed on out, not

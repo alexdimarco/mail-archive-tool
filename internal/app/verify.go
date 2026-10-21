@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"mail-archive-tool/internal/lockfile"
+	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/util"
 )
@@ -133,6 +134,13 @@ func (r Report) ExitCode() int {
 func Verify(out string, opts VerifyOptions, logger *log.Logger, onProgress func(Report)) (rep Report, err error) {
 	if logger == nil {
 		logger = log.New(io.Discard, "", 0)
+	}
+	// A paused archive allows a read-only verify but refuses -record, which writes
+	// fixity into the manifest (archive-manager S2-C1).
+	if opts.Record {
+		if err := seal.RefuseWrite(out); err != nil {
+			return Report{}, err
+		}
 	}
 	lock, lerr := lockfile.AcquireAs(filepath.Join(out, lockfile.Name), "verify")
 	if lerr != nil {

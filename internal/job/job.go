@@ -71,6 +71,36 @@ func ReadLastArchive(path string) string {
 	return strings.TrimSpace(string(data))
 }
 
+// DesktopSettingsFile is MailArchive Desktop's preferences file, beside the job files
+// and last-archive.txt under the per-user config dir. The wizard reads one field of it —
+// the active archive — so the two surfaces agree on which archive is current
+// (design-archive-manager §13 UX-2).
+func DesktopSettingsFile() (string, error) {
+	d, err := Dir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(d, "desktop-settings.json"), nil
+}
+
+// ReadDesktopOut is the Desktop's active archive location — the "out" field of its
+// settings file — or "" when the file is missing, unreadable, or sets none. It reads
+// only that one field, so it does not depend on the rest of the Desktop's schema and
+// cannot drift as that schema grows (a newer build's extra keys are ignored).
+func ReadDesktopOut(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var s struct {
+		Out string `json:"out"`
+	}
+	if json.Unmarshal(data, &s) != nil {
+		return ""
+	}
+	return strings.TrimSpace(s.Out)
+}
+
 // PathFor is the job file for a schedule name.
 func PathFor(name string) (string, error) {
 	d, err := Dir()

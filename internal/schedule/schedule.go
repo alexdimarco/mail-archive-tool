@@ -761,19 +761,10 @@ func Remove(s Spec) error { return removeOn(s, runtime.GOOS) }
 // removeOn is Remove for the host scheduler goos selects; the Windows branch
 // runs against the schtasksRun seam, so a test can drive it on any OS.
 func removeOn(s Spec, goos string) error {
-	var err error
-	switch goos {
-	case "darwin":
-		err = removeLaunchd(s)
-	case "windows":
-		err = removeSchtasks(s)
-		if err == nil {
-			err = removeSchtasksSideFiles(s)
-		}
-	default:
-		err = removeCron(s)
-	}
-	if err != nil {
+	// The host entry (and its Windows side-files) first; the archive-side descriptors
+	// after. Uninstall reuses only the entry half (RemoveLiveEntry) to avoid deleting a
+	// descriptor inside a kept archive (R36).
+	if err := removeLiveEntryOn(s, goos); err != nil {
 		return err
 	}
 	// Both decisions are taken before either file goes: whether the verify

@@ -13,6 +13,7 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"os"
 	"os/user"
 	"path/filepath"
 	"runtime"
@@ -22,6 +23,7 @@ import (
 	"time"
 
 	"mail-archive-tool/internal/app"
+	"mail-archive-tool/internal/archindex"
 	"mail-archive-tool/internal/graph"
 	"mail-archive-tool/internal/graphconfig"
 	"mail-archive-tool/internal/instance"
@@ -29,6 +31,8 @@ import (
 	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/server"
+	"mail-archive-tool/internal/uninstall"
+	"mail-archive-tool/internal/wizard"
 )
 
 // Config wires the dashboard to one archive and the Graph config/credentials.
@@ -45,6 +49,13 @@ type Config struct {
 	// SettingsPath is the dashboard preferences file (archive location, raw,
 	// Deleted/Junk, schedule); default under the OS config dir.
 	SettingsPath string
+
+	// IndexPath is the folder-only known-archives index (internal/archindex) the
+	// Desktop maintains as a cache of where a person's archives live; default
+	// archindex.Path() under the OS config dir, set by tests. Empty disables the
+	// archive list: the informational shell reconciles nothing and writes no index
+	// (SD-6 — the Desktop is the sole maintainer; the headless/CLI path never writes it).
+	IndexPath string
 
 	// BaseURL/TokenURL/DeviceAuthURL are test overrides for the in-process capture
 	// (empty = the Microsoft production endpoints).
@@ -209,6 +220,9 @@ type dashboard struct {
 	// "the index is being rebuilt" until the job ends (XC20).
 	listGate   sync.RWMutex
 	rebuilding atomic.Bool
+	// addBusy is held while the wizard's "Add another archive" dialogs are open, so a
+	// second click does not start a second, overlapping set of native dialogs (MA-696).
+	addBusy atomic.Bool
 	// rebuild is the Rebuild job's work; a test replaces it to stand inside the rebuild (nil: app.Rebuild).
 	rebuild func(out string, l *log.Logger) (app.RebuildReport, error)
 
@@ -282,9 +296,15 @@ func (d *dashboard) router() localweb.Router {
 	mux.HandleFunc("/api/capture", d.capture)
 	mux.HandleFunc("/api/activity", d.activity)
 	mux.HandleFunc("/api/settings", d.saveSettings)
+	mux.HandleFunc("/api/pause-archive", d.pauseArchive)
+	mux.HandleFunc("/api/resume-archive", d.resumeArchive)
+	mux.HandleFunc("/api/add-archive", d.addArchive)
+	mux.HandleFunc("/api/uninstall", d.uninstallAction)
 	mux.HandleFunc("/api/schedule-install", d.scheduleInstall)
 	mux.HandleFunc("/api/schedule-remove", d.scheduleRemove)
 	mux.HandleFunc("/api/schedule-state", d.scheduleState)
+	mux.HandleFunc("/api/run-backup", d.runBackup)
+	mux.HandleFunc("/api/shutdown", d.shutdown)
 	mux.HandleFunc("/api/verify", d.verifyAction)
 	mux.HandleFunc("/api/rebuild", d.rebuildAction)
 	mux.HandleFunc("/api/health", d.healthAction)
@@ -350,6 +370,33 @@ func (d *dashboard) browserLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true, "link": d.cfg.NewLink()})
+}
+
+// shutdown stops MailArchive Desktop from the dashboard (the Shutdown button,
+// MA-695): a guarded POST that cancels the process lifecycle, which drains the
+// running export within DrainBudget, stops the dashboard and reader servers, and
+// releases the account lock — so the next launch starts cleanly with no port
+// conflict and nothing to kill by hand. It never touches an archive (R36). The
+// reply is written and flushed before the stop begins, so the page can show its
+// goodbye; the process then exits on its own.
+func (d *dashboard) shutdown(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	if !server.GuardLocalPOST(r, d.csrf) {
+		http.Error(w, "refused: same-origin, tokened, local requests only", http.StatusForbidden)
+		return
+	}
+	if d.life == nil {
+		writeJSON(w, map[string]any{"ok": false, "error": "This window cannot stop MailArchive Desktop itself. Quit it where you started it (close its Terminal, or press Ctrl-C there)."})
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "message": "MailArchive Desktop is stopping. You can close this tab; your archives and schedules are untouched."})
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+	d.life.Stop()
 }
 
 // saveSettings persists the dashboard preferences (loopback-only, CSRF-guarded).
@@ -568,6 +615,124 @@ func vaultPhrase() string {
 	return "a file only you can read"
 }
 
+// pauseArchive makes the named archive read-only (loopback-only, CSRF-guarded): it stops
+// the archive's schedule and seals it, via wizard.PauseArchive. The archive's mail is
+// never touched; Resume reverses it.
+func (d *dashboard) pauseArchive(w http.ResponseWriter, r *http.Request) {
+	path, ok := d.archiveActionPath(w, r)
+	if !ok {
+		return
+	}
+	if err := wizard.PauseArchive(path, "paused from MailArchive Desktop"); err != nil {
+		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
+}
+
+// resumeArchive makes the named archive writable again and restores its backup schedule.
+func (d *dashboard) resumeArchive(w http.ResponseWriter, r *http.Request) {
+	path, ok := d.archiveActionPath(w, r)
+	if !ok {
+		return
+	}
+	if err := wizard.ResumeArchive(path); err != nil {
+		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
+}
+
+// archiveActionPath guards a loopback-only, CSRF-tokened POST carrying {"path":...} and
+// returns the trimmed path; on refusal/bad input it writes the response and returns false.
+func (d *dashboard) archiveActionPath(w http.ResponseWriter, r *http.Request) (string, bool) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return "", false
+	}
+	if !server.GuardLocalPOST(r, d.csrf) {
+		http.Error(w, "refused: same-origin, tokened, local requests only", http.StatusForbidden)
+		return "", false
+	}
+	var in struct{ Path string }
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&in); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return "", false
+	}
+	path := strings.TrimSpace(in.Path)
+	if path == "" {
+		writeJSON(w, map[string]any{"ok": false, "error": "no archive chosen"})
+		return "", false
+	}
+	return path, true
+}
+
+// uninstallRun is a seam so a test drives the uninstall handler without touching the real
+// config directory, scheduler, or credential store.
+var uninstallRun = uninstall.Uninstall
+
+// uninstallAction computes (confirm=false, a dry run) or performs (confirm=true) a full
+// uninstall of MailArchive — its schedules, settings and sign-in — and NEVER an archive
+// (R36). Loopback-only and CSRF-guarded, like every action here. The reply lists what is (or
+// would be) removed and the archives it KEEPS, plus how to remove the program itself (U-C6);
+// this is the Desktop surface of U-C8.
+func (d *dashboard) uninstallAction(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	if !server.GuardLocalPOST(r, d.csrf) {
+		http.Error(w, "refused: same-origin, tokened, local requests only", http.StatusForbidden)
+		return
+	}
+	var in struct{ Confirm bool }
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&in); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	cfgPath := strings.TrimSpace(d.cfg.ConfigPath)
+	if cfgPath == "" {
+		writeJSON(w, map[string]any{"ok": false, "error": "MailArchive is not set up on this machine, so there is nothing to uninstall"})
+		return
+	}
+	exe, _ := os.Executable()
+	rep, err := uninstallRun(filepath.Dir(cfgPath), d.knownArchivePaths(), exe, !in.Confirm)
+	if err != nil {
+		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, map[string]any{
+		"ok":            true,
+		"done":          in.Confirm,
+		"schedules":     rep.Schedules,
+		"configFiles":   rep.ConfigFiles,
+		"clearedSignIn": rep.ClearedSignIn,
+		"keptArchives":  rep.KeptArchives,
+		"binaryNote":    rep.BinaryNote,
+	})
+}
+
+// knownArchivePaths lists the archive folders recorded in the Desktop's index, so a full
+// uninstall can name what it KEEPS (R36) and refuse a config dir that overlaps one. It only
+// READS the index (never reconciles/writes during an uninstall); an absent or unreadable
+// index yields none, and ConfigTargets still self-guards on the config dir.
+func (d *dashboard) knownArchivePaths() []string {
+	if strings.TrimSpace(d.cfg.IndexPath) == "" {
+		return nil
+	}
+	idx, err := archindex.ReadFile(d.cfg.IndexPath)
+	if err != nil {
+		return nil
+	}
+	var paths []string
+	for _, e := range idx.Entries {
+		if p := strings.TrimSpace(e.Path); p != "" {
+			paths = append(paths, p)
+		}
+	}
+	return paths
+}
+
 func (cfg Config) overview(csrf string) string { return cfg.overviewFor(csrf, "") }
 
 // overviewFor is the Overview page for a process whose epoch is epoch (the workspace's
@@ -617,6 +782,9 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		ShowRepair    bool
 		ShowRemove    bool
 		ShowBackupOff bool
+		// The Your-archives list (UX-1): the known archives and whether to show the card.
+		Archives     []ArchiveRow
+		ShowArchives bool
 	}{Export: !cfg.WorkspaceOff, Epoch: epoch, CSRF: csrf, Cards: cfg.cards(), Vault: vaultPhrase(), OutDir: cfg.effectiveOut(), ReaderURL: cfg.ReaderURL, SignedIn: signedIn, UPN: upn,
 		KeepRaw: s.KeepRaw, IncludeDeleted: s.IncludeDeleted, IncludeJunk: s.IncludeJunk,
 		Interval: orElse(s.Interval, "weekly"), WeeklyTime: orElse(s.WeeklyTime, "03:00"),
@@ -626,6 +794,16 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		data.ArchiveNowOff = archiveNowOff(cfg.goos(), data.OutDir)
 	}
 	data.Offer = cfg.offer()
+	// The Your-archives list (UX-1): reconcile the known-archives index (the Desktop
+	// is its maintainer, SD-6) and derive the rows live. Shown only when it tells the
+	// owner something beyond the current archive — more than one known archive, or a
+	// lone one that is not the current archive. The informational shell (no IndexPath)
+	// reconciles nothing, so the card never appears there; a refused index fails closed
+	// to no card.
+	if idx, rerr := cfg.reconcileArchives(time.Now()); rerr == nil {
+		data.Archives = cfg.archiveRows(idx)
+		data.ShowArchives = len(data.Archives) >= 2 || (len(data.Archives) == 1 && !data.Archives[0].Current)
+	}
 	// Weekly backup card state (§4.6.3/MA-617, Q18(b)): render the card for a
 	// recorded schedule — including a local-only archive's — and pick the controls
 	// by the corroborated kind, so the card repairs a run-job (keeps its kind)
@@ -734,6 +912,13 @@ select{width:100%;padding:10px 11px;border:1px solid var(--line);border-radius:8
 .device-box{margin-top:14px;padding:14px;border:2px dashed var(--accent);border-radius:10px;background:var(--accent-soft)}
 .device-code{font:800 1.7rem/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.1em;margin-top:6px}
 pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:12px;max-height:280px;overflow:auto;margin-top:14px;font-size:.84rem}
+.archive-list{list-style:none;padding:0;margin:10px 0 0}
+.archive-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 0;border-top:1px solid var(--line)}
+.archive-row .archive-path{flex:1;min-width:0;overflow-wrap:anywhere}
+.archive-row.unavailable{opacity:.6}
+.archive-tag{font-size:.84rem;opacity:.75}
+.archive-tag.current{opacity:1;color:var(--accent);font-weight:700}
+.archive-kind{font-size:.78rem;opacity:.75;border:1px solid var(--line);border-radius:6px;padding:1px 7px}
 @media(max-width:900px){.app-shell{grid-template-columns:1fr}.status-grid{grid-template-columns:1fr 1fr}.sidebar-foot{display:none}}
 </style></head>
 <body>
@@ -763,7 +948,9 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
     <div class="whoami" id="whoami" role="status">
       <span>MailArchive Desktop is running as <b>{{.Account}}</b> on this computer.</span>
       <span id="sessionsLine">{{.SessionsLine}}</span>
+      <button class="btn secondary whoami-shutdown" id="shutdownBtn" type="button" title="Stop MailArchive Desktop and free its port so the next launch starts cleanly. Your saved mail, archives and schedules are untouched — reopen it any time from the app.">Shut down</button>
     </div>
+    <div class="note" id="shutdownNote" hidden></div>
     {{if .FormerNotice}}<div class="note warnbox" id="formerNotice" role="alert">{{.FormerNotice}}</div>{{end}}
     <h1>Overview</h1>
     <p class="lede">{{if .LocalOnly}}Your mail archive, running locally on this PC.{{else}}Your personal Microsoft 365 archive, running locally on this PC.{{end}}</p>
@@ -771,8 +958,23 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
     {{if not .OutDir}}<div class="card" id="noArchive">
       <h2>No archive chosen yet</h2>
       {{if .Offer}}<p>The MailArchive wizard (mailarchive wizard) last used <span class="mono">{{.Offer}}</span>. Use this archive?</p>{{end}}
-      <button class="btn" id="useOffer" type="button" data-path="{{.Offer}}"{{if not .Offer}} hidden{{end}}>Use this archive</button>{{if .Offer}} <span class="card-sub">Nothing changes until you click it.</span>{{end}}
+      <button class="btn" id="useOffer" type="button" data-path="{{.Offer}}"{{if not .Offer}} hidden{{end}} title="Open this archive in MailArchive Desktop — read it, check its health, and keep it backed up.">Use this archive</button>{{if .Offer}} <span class="card-sub">Nothing changes until you click it.</span>{{end}}
       <p class="steps">{{if .Offer}}To pick a different folder, type{{else}}MailArchive Desktop has no archive to read yet. To open one you already have (for example one made from Thunderbird), type{{end}} its folder in <b>Settings → Archive location</b> below (the folder that holds the .mailarchive-manifest.json file) and click <b>Save settings</b>.</p>
+    </div>{{end}}
+
+    {{if .ShowArchives}}<div class="card" id="sec-archives">
+      <h2>Your archives</h2>
+      <p class="card-sub">The mail archives MailArchive Desktop knows about on this computer. The one marked current is what every tool here reads and what the weekly backup keeps; switch to work on a different one.</p>
+      <ul class="archive-list">
+        {{range .Archives}}<li class="archive-row{{if not .Available}} unavailable{{end}}">
+          <span class="mono archive-path">{{.Path}}</span>
+          {{if .KindLabel}}<span class="archive-kind">{{.KindLabel}}</span>{{end}}
+          {{if .SourceLostSince}}<span class="archive-tag">This archive's source hasn't been reachable since {{.SourceLostSince}} — reconnect the source (its mailbox or mail folder) to resume backups.</span>{{end}}
+          {{if not .Available}}<span class="archive-tag">Not reachable right now — reconnect the drive or folder and it comes back. Nothing was removed.</span>{{else if .Sealed}}<span class="archive-tag">Paused (read-only) — Resume it to make changes.</span> <button class="btn secondary" type="button" data-resume-archive data-path="{{.Path}}" title="Make this archive writable again so backups and changes can resume.">Resume</button>{{else}}{{if .Current}}<span class="archive-tag current">Current archive</span>{{else}}<button class="btn secondary" type="button" data-switch-archive data-path="{{.Path}}" title="Make this the current archive — what every tool here reads and what the weekly backup keeps.">Switch to this archive</button>{{end}} <button class="btn secondary" type="button" data-pause-archive data-path="{{.Path}}" title="Make this archive read-only so nothing can change it. You can Resume it any time; nothing is deleted.">Pause (make read-only)</button>{{end}}
+        </li>{{end}}
+      </ul>
+      <div style="margin-top:12px"><button class="btn secondary" id="addArchiveBtn" type="button" title="Create a new, additional archive with the MailArchive wizard. The wizard's windows open on your computer; the new archive is added to this list without changing your current one.">Add another archive…</button></div>
+      <div class="note" id="addArchiveNote" hidden></div>
     </div>{{end}}
 
     <div class="status-grid">
@@ -877,7 +1079,8 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
           <select id="schedInterval"><option value="weekly"{{if eq .Interval "weekly"}} selected{{end}}>Weekly (Sunday)</option><option value="daily"{{if eq .Interval "daily"}} selected{{end}}>Daily</option></select></div>
         <div><label for="schedTime">At (local time)</label><input id="schedTime" type="time" value="{{.WeeklyTime}}"></div>
       </div>{{end}}
-      <div style="margin-top:14px">{{if .ShowInstall}}<button class="btn" id="schedInstall">Install / update</button> {{end}}{{if .ShowRepair}}<button class="btn" id="schedRepair">Repair</button> {{end}}{{if .ShowRemove}}<button class="btn secondary" id="schedRemove">Remove</button>{{end}}</div>
+      <div style="margin-top:14px">{{if .ShowInstall}}<button class="btn" id="schedInstall" title="Create or update the scheduled weekly backup for this archive, using the current settings.">Install / update</button> {{end}}{{if .ShowRepair}}<button class="btn" id="schedRepair" title="Re-point the weekly backup at this archive and fix a broken or stale schedule entry. Nothing in the archive changes.">Repair</button> <button class="btn" id="runBackupBtn" type="button" title="Run this archive's weekly backup right now, instead of waiting for its schedule.">Run now</button> {{end}}{{if .ShowRemove}}<button class="btn secondary" id="schedRemove" title="Delete the scheduled weekly backup. Your archive and everything in it are kept.">Remove</button>{{end}}</div>
+      <div class="note" id="runBackupNote" hidden></div>
       <div class="note" id="schedState" hidden></div>{{end}}
     </div>
 
@@ -909,6 +1112,17 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
         <li><b>Reversible.</b> You can revoke access any time, and uninstalling keeps your archive — your saved mail is never deleted.</li>
       </ul>
     </div>
+
+    <div class="card sec" id="sec-uninstall">
+      <h2>Uninstall MailArchive</h2>
+      <p class="card-sub">Remove MailArchive's scheduled backups, settings and Microsoft sign-in from this computer. <b>Your archives are kept</b> — your saved mail is never deleted. Removing the program itself is a last step your system shows you.</p>
+      <button class="btn secondary" id="uninstallBtn" type="button" title="Remove MailArchive's program, schedules, settings and sign-in from this computer. Your saved mail archives are never deleted.">Uninstall MailArchive…</button>
+      <div class="device-box" id="uninstallPanel" hidden>
+        <pre class="mono" id="uninstallPlan"></pre>
+        <div style="margin-top:10px"><button class="btn" id="uninstallGo" type="button">Remove</button> <button class="btn secondary" id="uninstallCancel" type="button">Cancel</button></div>
+      </div>
+      <div class="note" id="uninstallNote" hidden></div>
+    </div>
   </div></main>
 </div>
 <script src="dashboard.js"></script>
@@ -930,6 +1144,34 @@ if(ab)ab.addEventListener('click',async()=>{
   try{const d=await(await post('api/browser-link')).json();
     if(n){n.hidden=false;n.textContent=d.ok?('Copy this link into the other browser — it works once, for ten minutes: '+d.link):(d.error||'Could not make a link.');}
   }catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}
+});
+
+// Shut down: stop the server from the page so the next launch starts clean and no
+// process has to be found and killed. Two clicks (arm, then confirm) guard against
+// an accidental stop; a stop never touches an archive.
+const sd=$('shutdownBtn');
+if(sd)sd.addEventListener('click',async()=>{
+  const n=$('shutdownNote');
+  if(sd.dataset.armed!=='1'){sd.dataset.armed='1';sd.textContent='Confirm shut down';if(n){n.hidden=false;n.textContent='Click again to stop MailArchive Desktop. You can reopen it any time; your archives and schedules are untouched.';}return;}
+  sd.disabled=true;sd.textContent='Shutting down…';
+  const stopped=()=>{document.body.innerHTML='<div style="max-width:40rem;margin:4rem auto;text-align:center"><h1>MailArchive Desktop has stopped.</h1><p>You can close this tab. Your archives and schedules are untouched — reopen MailArchive any time.</p></div>';};
+  try{const d=await(await post('api/shutdown')).json();
+    if(!d.ok){sd.disabled=false;sd.dataset.armed='';sd.textContent='Shut down';if(n){n.hidden=false;n.textContent=d.error||'Could not shut down.';}return;}
+    stopped();
+  }catch(e){stopped();}
+});
+
+// Add another archive: run the wizard's local add flow in process. Its windows open
+// on the computer; on success the new archive is added to the list (not switched to)
+// and the page reloads to show it.
+const aab=$('addArchiveBtn');
+if(aab)aab.addEventListener('click',async()=>{
+  const n=$('addArchiveNote');aab.disabled=true;
+  if(n){n.hidden=false;n.textContent='Opening the MailArchive wizard on your computer — follow its steps to add an archive, then this page refreshes.';}
+  try{const d=await(await post('api/add-archive')).json();
+    if(d.ok){if(n){n.textContent=d.message||'Archive added.';}location.reload();return;}
+    aab.disabled=false;if(n){n.hidden=false;n.textContent=d.canceled?(d.message||'No archive was added.'):(d.error||'Could not add an archive.');}
+  }catch(e){aab.disabled=false;if(n){n.hidden=false;n.textContent='Error: '+e;}}
 });
 
 const clr=$('clearSignin');
@@ -966,6 +1208,59 @@ if(useOffer)useOffer.addEventListener('click',async()=>{
   $('outDir').value=useOffer.dataset.path;
   if(await doSave(''))setTimeout(()=>location.reload(),500);
 });
+// "Switch to this archive": the per-row button on the Your-archives list. Same save
+// as typing the folder and clicking Save settings (same checks, same weekly-backup
+// question), so switching can never skip them; nothing changes until the click.
+document.querySelectorAll('[data-switch-archive]').forEach(b=>b.addEventListener('click',async()=>{
+  $('outDir').value=b.dataset.path;
+  if(await doSave(''))setTimeout(()=>location.reload(),500);
+}));
+// Pause (make read-only) / Resume, per archive row. Errors surface in the Settings note.
+const archAction=(sel,path)=>document.querySelectorAll(sel).forEach(b=>b.addEventListener('click',async()=>{
+  const n=$('settingsNote');
+  try{const r=await(await fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({path:b.dataset.path})})).json();
+    if(r.ok){location.reload();return;}
+    if(n){n.hidden=false;n.textContent=r.error||'Could not do that.';}
+  }catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}
+}));
+archAction('[data-pause-archive]','api/pause-archive');
+archAction('[data-resume-archive]','api/resume-archive');
+
+// Uninstall (Danger zone): "Uninstall…" fetches the plan (a dry run that changes nothing)
+// and shows it; "Remove" performs it; "Cancel" closes. Archives are never touched.
+async function uninstallReq(confirm){
+  return (await fetch('api/uninstall',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({confirm:confirm})})).json();
+}
+function uninstallPlanText(d){
+  const kept=d.keptArchives||[];
+  const lines=['This will remove:',
+    '- scheduled backups: '+((d.schedules||[]).length),
+    '- settings and log files: '+((d.configFiles||[]).length)];
+  if(d.clearedSignIn)lines.push('- the saved Microsoft sign-in');
+  lines.push('');
+  lines.push('It will KEEP your '+kept.length+' archive(s) — your mail is never deleted:');
+  (kept.length?kept:['(none recorded)']).forEach(a=>lines.push('   '+a));
+  return lines.join('\n');
+}
+const unBtn=$('uninstallBtn');
+if(unBtn)unBtn.addEventListener('click',async()=>{
+  const p=$('uninstallPanel'),pl=$('uninstallPlan'),n=$('uninstallNote');
+  if(n)n.hidden=true;
+  try{const d=await uninstallReq(false);
+    if(!d.ok){if(n){n.hidden=false;n.textContent=d.error||'Could not prepare the uninstall.';}return;}
+    if(pl)pl.textContent=uninstallPlanText(d);
+    if(p)p.hidden=false;
+  }catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}
+});
+const unGo=$('uninstallGo'),unCancel=$('uninstallCancel');
+if(unGo)unGo.addEventListener('click',async()=>{
+  const p=$('uninstallPanel'),n=$('uninstallNote');
+  try{const d=await uninstallReq(true);
+    if(p)p.hidden=true;
+    if(n){n.hidden=false;n.textContent=d.ok?('Removed MailArchive backups, settings and sign-in; your archives are untouched. '+(d.binaryNote||'')):(d.error||'Could not uninstall.');}
+  }catch(e){if(n){n.hidden=false;n.textContent='Error: '+e;}}
+});
+if(unCancel)unCancel.addEventListener('click',()=>{const p=$('uninstallPanel'),n=$('uninstallNote');if(p)p.hidden=true;if(n){n.hidden=false;n.textContent='Nothing was removed.';}});
 if(save)save.addEventListener('click',()=>doSave(''));
 const keepB=$('settingsKeep'),removeB=$('settingsRemoveBackup'),cancelB=$('settingsCancel');
 if(keepB)keepB.addEventListener('click',()=>doSave('keep'));
@@ -1036,6 +1331,26 @@ const si=$('schedInstall'),sr=$('schedRemove'),srp=$('schedRepair');
 if(si)si.addEventListener('click',()=>schedPost('api/schedule-install'));
 if(srp)srp.addEventListener('click',()=>schedPost('api/schedule-install'));
 if(sr)sr.addEventListener('click',()=>schedPost('api/schedule-remove'));
+// "Run now" runs this archive's recorded run-job backup immediately (local archives have no
+// "Archive now"), streaming progress through the shared activity state.
+const rbBtn=$('runBackupBtn');
+if(rbBtn)rbBtn.addEventListener('click',async()=>{
+  const n=$('runBackupNote');rbBtn.disabled=true;
+  if(n){n.hidden=false;n.textContent='Running the backup now…';}
+  try{const d=await(await post('api/run-backup')).json();
+    if(!d.ok){rbBtn.disabled=false;if(n){n.hidden=false;n.textContent=d.error||'Could not start the backup.';}return;}
+    pollBackup();
+  }catch(e){rbBtn.disabled=false;if(n){n.hidden=false;n.textContent='Error: '+e;}}
+});
+async function pollBackup(){
+  const n=$('runBackupNote'),b=$('runBackupBtn');
+  try{const d=await(await fetch('api/activity')).json();
+    if(n&&d.log&&d.log.length)n.textContent=d.log[d.log.length-1];
+    if(d.running){setTimeout(pollBackup,1500);return;}
+    if(n){n.hidden=false;n.textContent=d.error?('Backup failed: '+d.error):(d.result||'Backup finished.');}
+  }catch(e){}
+  if(b)b.disabled=false;
+}
 schedState();
 
 async function health(){

@@ -14,8 +14,10 @@ import (
 	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/graph"
+	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/server"
 	"mail-archive-tool/internal/state"
+	"mail-archive-tool/internal/wizard"
 )
 
 // notConfiguredMsg is the refusal text shown when Microsoft 365 is not set up —
@@ -42,6 +44,12 @@ func (cfg Config) m365Ready() error {
 // logw; returns the run error.
 func HeadlessCapture(cfg Config, logw io.Writer) error {
 	out := cfg.effectiveOut()
+	// A paused archive is hard read-only: refuse before recordStartFailure or any
+	// write (S2-C2). The caller logs this to the capture log (config dir), never into
+	// the archive.
+	if err := seal.RefuseWrite(out); err != nil {
+		return err
+	}
 	// §4.6.3/MA-617 + OP-2/MA-646: refuse when Microsoft 365 is not set up, via the
 	// shared m365Ready check (the dashboard's capture install/repair uses it too),
 	// AND record a FAILED last-run so a scheduled capture that refuses at start does
@@ -78,6 +86,12 @@ func HeadlessCapture(cfg Config, logw io.Writer) error {
 		opts.Warnings = []state.RunWarning{{Code: "config_in_archive", Message: msg}}
 	}
 	_, err := app.RunGraph(context.Background(), g, opts, logger)
+	// After a scheduled run, auto-pause the backup if the source has been unreachable for too
+	// many runs (§5.7, S3-C5): stop the nightly schedule only — reversible, never seals. Best
+	// effort; it never fails the run.
+	if paused, perr := wizard.AutoPauseIfDue(out); perr == nil && paused {
+		logger.Printf("auto-paused the scheduled backup: the source has been unreachable for too long; the schedule was stopped (reversible — reconnect the source and re-enable it)")
+	}
 	return err
 }
 

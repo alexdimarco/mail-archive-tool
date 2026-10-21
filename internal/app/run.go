@@ -22,6 +22,7 @@ import (
 	"mail-archive-tool/internal/model"
 	"mail-archive-tool/internal/outlookcom"
 	"mail-archive-tool/internal/pages"
+	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/source"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/util"
@@ -352,6 +353,12 @@ type ProgressFunc func(stats export.Stats)
 func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress ProgressFunc) (result Result, err error) {
 	if logger == nil {
 		logger = log.New(io.Discard, "", 0)
+	}
+
+	// A paused archive is hard read-only: refuse every content-mutating run before
+	// any write, lock, or last-run record (archive-manager S2-C1/C2).
+	if err := seal.RefuseWrite(opts.Out); err != nil {
+		return Result{}, err
 	}
 
 	// Validate the inputs BEFORE creating anything (friction #2). A missing
@@ -872,6 +879,12 @@ func recordRun(opts Options, lr state.LastRun, result *Result, err *error, logge
 		}
 		logger.Printf("warning: could not record this run in %s (%v): `mailarchive status` may show this run as \"never finished\" or still show the previous result, whatever this log says about how it ended — run again once the file can be written%s", filepath.Join(opts.Out, state.LastRunName), werr, hint)
 	}
+	// Track how long this archive's SOURCE has been reachable (Slice 3, §5.7): only SCHEDULED
+	// (unattended) runs move the streak, and only a definitive reach or unreachable verdict
+	// moves it — a non-source failure leaves it. Best effort, like the last-run write above.
+	if opts.Unattended {
+		updateSourceStreak(opts.Out, *err, lr.Finished, logger)
+	}
 }
 
 // recordCounts puts a run's parse-fidelity counts in its last-run record, the numbers
@@ -1174,7 +1187,7 @@ func DiscoverInputs(inputs []string, auto bool) ([]string, error) {
 		info, err := os.Stat(in)
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
-				return nil, fmt.Errorf("input %s does not exist (check the path, or that the drive holding it is mounted)", in)
+				return nil, &sourceUnreachableError{path: in}
 			}
 			return nil, fmt.Errorf("input %s: %w", in, err)
 		}

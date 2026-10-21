@@ -3,6 +3,7 @@ package desktop
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -294,6 +295,34 @@ func (d *dashboard) removeTaskAt(p string) (bool, error) {
 		return false, err
 	}
 	return schedule.RemoveIfInstalled(spec)
+}
+
+// runBackup runs this archive's recorded run-job backup NOW, in-process (the manual twin of
+// the scheduled run), streaming progress through the shared activity state (/api/activity).
+// Loopback-only, CSRF-guarded. Only a corroborated run-job backup runs here — a Microsoft 365
+// archive uses "Archive now".
+func (d *dashboard) runBackup(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	if !server.GuardLocalPOST(r, d.csrf) {
+		http.Error(w, "refused: same-origin, tokened, local requests only", http.StatusForbidden)
+		return
+	}
+	ev := schedule.BuildKindEvidence(d.cfg.effectiveOut())
+	if !ev.Has(schedule.KindRunJob) || ev.JobPath == "" {
+		writeJSON(w, map[string]any{"ok": false, "error": "this archive has no run-job backup to run here"})
+		return
+	}
+	jobPath := ev.JobPath
+	if err := d.runJob(func(logger *log.Logger) (string, error) {
+		return wizard.RunJobInProcess(jobPath, logger)
+	}); err != nil {
+		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
 }
 
 // scheduleState reports the weekly-backup posture for the UI (GET; no side effect).
