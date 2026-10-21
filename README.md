@@ -53,6 +53,10 @@ list the per-platform downloads.
 
 The wizard is the [wizard section](#the-wizard-mailarchive-wizard) below.
 
+**Already installed and want the latest?** See [Upgrading to a newer
+version](#upgrading-to-a-newer-version) — stop the app, replace the files, done;
+your archives are never touched.
+
 ## Start here: which path for my mail program?
 
 Every mail program keeps mail a little differently, so the path from "archive
@@ -167,6 +171,51 @@ Thunderbird: its **Archive now** is for Microsoft 365 and is switched off for it
   Thunderbird store it finds.
 - **Windows:** `mailarchive -input "<Thunderbird mail folder>" -out "<archive folder>"`, for example
   `%APPDATA%\Thunderbird\Profiles\<profile>\Mail\Local Folders`; or `mailarchive -auto -out "<archive folder>"`.
+
+## MailArchive Desktop (the dashboard)
+
+**MailArchive Desktop** (`mailarchive desktop`; on Windows double-click
+**`mailarchivew.exe`**, on macOS open **`Mail Archive.app`**) is a private control
+panel in your browser. It binds to `127.0.0.1` on this computer only and opens
+through the same one-time private link as `serve` (see [Search &
+discovery](#search--discovery)), so other accounts and web pages cannot reach it.
+It drives the very same engine as the command line — so anything here is also
+doable from the CLI — but puts the whole backup on one page for a non-technical
+operator. Every button carries a hover tooltip saying what it does and what it
+will not touch.
+
+What it gives you, beyond reading and searching the archive:
+
+- **Your archives** — manage more than one archive on this computer: mark one
+  **current** (what every tool here reads and what the weekly backup keeps),
+  **Switch** between them, and **Pause (make read-only)** / **Resume** an archive
+  (nothing is deleted either way). **Add another archive** sets up a new one with
+  the wizard without disturbing the current. *(You can also add one any time by
+  running `mailarchive wizard` again and choosing a new output folder — it joins
+  the list.)*
+- **Run now** — run the scheduled backup immediately instead of waiting for it. (A
+  Microsoft 365 archive labels this **Archive now**; a local scheduled job labels
+  it **Run now**.)
+- **Backup alerts** — have a scheduled backup email you when it **fails** (or is
+  auto-paused, or — if you turn it on — succeeds). Built in, with no script to
+  install: pick **Office 365**, **Gmail**, or a **standard SMTP** server, set the
+  from/to addresses and the sign-in, and the password is kept in your OS
+  credential vault (never in a file or a log). **Send test email** proves it
+  before you rely on it. The same settings cover both Microsoft 365 and local
+  scheduled backups.
+- **Recent backups** — the last several runs at a glance (when, result, messages
+  exported and filled), a companion to the single "last run" line.
+- **Weekly backup** — install, repair, or remove the schedule (the same one
+  [`schedule`](#schedule--recurring-backups) writes).
+- **Status & health** — the same GREEN / WARN / RED posture as `status`,
+  including a warning (shown as a banner on the archive) when an archive's
+  **source** — its mailbox or mail folder — has stopped being reachable.
+- **Shut down** — stop the dashboard cleanly and free its port; your mail,
+  archives and schedules are untouched. Do this before
+  [upgrading](#upgrading-to-a-newer-version).
+- **Danger zone → Uninstall** — remove MailArchive's program and its schedules
+  from this computer. It shows a plan first and **keeps every archive** — your
+  mail is never deleted.
 
 ## Output layout
 
@@ -690,7 +739,9 @@ unaffected and the version is not bumped.)
   `descriptor_unreadable`, `no_schedule`, `moved_archive`, `other_host`,
   `scheduler_unavailable`, `not_installed`, `exe_missing`, `exe_moved`,
   `verify_other_host`, `verify_not_installed`, `verify_exe_missing`,
-  `verify_exe_moved`, `archive_unwritable` (a scheduled backup whose archive folder takes no write:
+  `verify_exe_moved`, `source_lost` (WARN: the archive's mail source — its mailbox
+  or mail folder — has not been reachable across too many scheduled runs; reconnect
+  it to resume backups), `archive_unwritable` (a scheduled backup whose archive folder takes no write:
   read-only, full or lost drive — a run there cannot record its own failure, so
   this is where it shows; the probe is a write by the account running `status`,
   so a read-only monitoring account on the backup's host sees it for a healthy
@@ -1044,7 +1095,59 @@ Per OS:
 Upgrading or moving the binary: the entry keeps pointing at the old path. Re-run
 `schedule … -install` from the new one (`status` warns "not this binary" until
 you do). To roll back to an older release, `schedule … -remove` first: entries
-written by this version carry flags older releases do not know.
+written by this version carry flags older releases do not know. For the full
+stop → replace → restart flow (and the in-app **Repair** option that re-points a
+moved schedule for you), see [Upgrading to a newer
+version](#upgrading-to-a-newer-version).
+
+## Upgrading to a newer version
+
+This is about updating **the program** to a newer release. (What happens to an
+existing archive's on-disk *format* when a newer program first opens it is covered
+by [Upgrading an existing archive](#upgrading-an-existing-archive) — that part is
+automatic.)
+
+There is no auto-update, and there does not need to be: an upgrade **never touches
+your archives**. It replaces the program only — every archive folder, its mail,
+search index and installed schedule stay exactly as they are. So the whole upgrade
+is three steps: stop the old program, drop in the new files, start it again.
+
+**1. Stop the running program first.** A running program holds files open (on
+Windows you cannot overwrite a running `.exe`) and the dashboard server holds a
+lock on the archive. If the dashboard is open in your browser, click **Shut down**
+at the top of the page; otherwise quit **Mail Archive** (macOS) or close the
+terminal that is running `desktop`.
+
+**2. Replace the files for your machine**, from the
+[Releases page](https://github.com/alexdimarco/mail-archive-tool/releases):
+
+| Your machine | Do this |
+|---|---|
+| **Windows** | Download the new `mailarchive-windows-amd64.zip` (or run the new MSI) and replace the old **`mailarchive.exe`** and **`mailarchivew.exe`** with the new pair — keep them together in the same folder. |
+| **macOS** | Download the new `MailArchive-macos.zip`, unzip it, and drag the new **`Mail Archive.app`** into `/Applications`, replacing the old one (right-click → **Open** the first time — it is unsigned). The command-line tool upgrades the same way from `mailarchive-cli-macos.tar.gz`. |
+| **Linux** | Download the new `mailarchive-linux-amd64` and replace the old binary on your `PATH`. |
+
+**3. Start it again.** That is the upgrade.
+
+**Your scheduled backup.** If you replaced the files **in place** — same folder on
+Windows/Linux, same `/Applications` path on macOS — the schedule still points at
+them and there is nothing more to do. If the program's path **changed**, `status`
+warns *"not this binary"* (and the next scheduled run would not find it) — fix it
+once, whichever way suits you:
+
+- **In the app** — open the wizard or the dashboard; its backup-health check
+  offers **Repair the scheduled backup**, which re-installs it from the new copy.
+- **Command line** — re-run `mailarchive schedule … -install` from the new binary.
+
+**Rolling back** to an older release is not the supported direction: run
+`mailarchive schedule … -remove` first (schedule entries this version writes carry
+flags older releases don't understand), and note that once an archive has been
+written by a newer version an **older** program will refuse to open it — it names
+the format version and the remedy on the spot. Upgrading, not downgrading, is the
+path everything is built for.
+
+What changed between releases is in the notes on the
+[Releases page](https://github.com/alexdimarco/mail-archive-tool/releases).
 
 ## Verifying completeness
 

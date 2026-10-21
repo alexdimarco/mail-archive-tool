@@ -3,7 +3,11 @@
 A source-agnostic mail archiver (Outlook `.pst`/`.ost`, Thunderbird mbox/maildir,
 Evolution Maildir++/IMAP cache, and Microsoft 365 via Graph) that exports to
 self-contained HTML + attachment zips with a full-text search index. Pure Go, no
-cgo. See `README.md` for the product and `docs/scenario-catalog.md` for the
+cgo. It ships a CLI, a native-dialog wizard, and **MailArchive Desktop** — a local
+browser dashboard with an archive manager (multiple named archives, pause/resume),
+scheduling with built-in email alerts (Office 365 / Gmail / standard SMTP), a
+backup run-history, source-loss surfacing, and program uninstall (archives are
+always kept). See `README.md` for the product and `docs/scenario-catalog.md` for the
 invariants (R-series) and test-specs (MA-series) that must always hold.
 
 <!-- assurance-kit-block v3 -->

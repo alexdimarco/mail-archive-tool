@@ -786,8 +786,9 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		ShowRemove    bool
 		ShowBackupOff bool
 		// The Your-archives list (UX-1): the known archives and whether to show the card.
-		Archives     []ArchiveRow
-		ShowArchives bool
+		Archives      []ArchiveRow
+		ShowArchives  bool
+		CanAddArchive bool
 		// Backup alerts card (MA-699): the saved email-alert config, prefilled. The password
 		// is never sent to the page — only whether one is stored.
 		AlertEnabled     bool
@@ -832,10 +833,13 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 	// owner something beyond the current archive — more than one known archive, or a
 	// lone one that is not the current archive. The informational shell (no IndexPath)
 	// reconciles nothing, so the card never appears there; a refused index fails closed
-	// to no card.
+	// to no card. CanAddArchive is set whenever at least one archive is known, so the
+	// separate "Add another archive" card (#sec-add-archive) stays reachable even when
+	// the list is hidden for a lone current archive (MA-696).
 	if idx, rerr := cfg.reconcileArchives(time.Now()); rerr == nil {
 		data.Archives = cfg.archiveRows(idx)
 		data.ShowArchives = len(data.Archives) >= 2 || (len(data.Archives) == 1 && !data.Archives[0].Current)
+		data.CanAddArchive = len(data.Archives) >= 1
 	}
 	// Weekly backup card state (§4.6.3/MA-617, Q18(b)): render the card for a
 	// recorded schedule — including a local-only archive's — and pick the controls
@@ -965,6 +969,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       {{if .ReaderURL}}<a href="{{.ReaderURL}}" target="_blank" rel="noopener">Open archive</a>
       <a href="{{.ReaderURL}}goback" target="_blank" rel="noopener">Go back in time</a>{{else}}<span class="nav-disabled" title="The archive reader is not running">Open archive</span>
       <span class="nav-disabled" title="The archive reader is not running">Go back in time</span>{{end}}
+      {{if .CanAddArchive}}<a href="#sec-add-archive" id="navAddArchive">Add another archive</a>{{end}}
       {{if .Export}}<div class="nav-title">Export</div>
       <a href="#sec-export">Extraction workspace</a>
       <a href="#sec-export-activity">Export activity</a>{{end}}
@@ -1008,7 +1013,12 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
           {{if not .Available}}<span class="archive-tag">Not reachable right now — reconnect the drive or folder and it comes back. Nothing was removed.</span>{{else if .Sealed}}<span class="archive-tag">Paused (read-only) — Resume it to make changes.</span> <button class="btn secondary" type="button" data-resume-archive data-path="{{.Path}}" title="Make this archive writable again so backups and changes can resume.">Resume</button>{{else}}{{if .Current}}<span class="archive-tag current">Current archive</span>{{else}}<button class="btn secondary" type="button" data-switch-archive data-path="{{.Path}}" title="Make this the current archive — what every tool here reads and what the weekly backup keeps.">Switch to this archive</button>{{end}} <button class="btn secondary" type="button" data-pause-archive data-path="{{.Path}}" title="Make this archive read-only so nothing can change it. You can Resume it any time; nothing is deleted.">Pause (make read-only)</button>{{end}}
         </li>{{end}}
       </ul>
-      <div style="margin-top:12px"><button class="btn secondary" id="addArchiveBtn" type="button" title="Create a new, additional archive with the MailArchive wizard. The wizard's windows open on your computer; the new archive is added to this list without changing your current one.">Add another archive…</button></div>
+    </div>{{end}}
+
+    {{if .CanAddArchive}}<div class="card" id="sec-add-archive">
+      <h2>Add another archive</h2>
+      <p class="card-sub">Keep a second mailbox or mail source as its own archive on this computer. The wizard's windows open here; the new archive joins <b>Your archives</b> without changing your current one.</p>
+      <button class="btn secondary" id="addArchiveBtn" type="button" title="Create a new, additional archive with the MailArchive wizard. The wizard's windows open on your computer; the new archive is added without changing your current one.">Add another archive…</button>
       <div class="note" id="addArchiveNote" hidden></div>
     </div>{{end}}
 
@@ -1108,7 +1118,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <h2>Weekly backup</h2>
       {{if .ShowBackupOff}}<p class="card-sub steps" id="backupOff">The weekly backup here fetches new mail from Microsoft 365, and this archive was made from local mail files, so it is off. To keep a local-files archive current on a schedule, answer "Keep this archive current?" at the end of the MailArchive wizard (mailarchive wizard), or run the mailarchive schedule command that Status &amp; health prints for this archive.</p>{{else}}
       {{if .HasSchedule}}<p class="card-sub" id="schedKind">This archive's scheduled backup: {{.ScheduleKind}}.</p>{{end}}
-      {{if .ShowInstall}}<p class="card-sub">Run a capture automatically on a schedule. It runs even when this app is closed (as long as you stay signed in to Windows), using your saved Microsoft sign-in.</p>
+      {{if .ShowInstall}}<p class="card-sub">Run a capture automatically on a schedule. It runs even when this app is closed (as long as you stay signed in to your computer), using your saved Microsoft sign-in.</p>
       <div class="row2">
         <div><label for="schedInterval">How often</label>
           <select id="schedInterval"><option value="weekly"{{if eq .Interval "weekly"}} selected{{end}}>Weekly (Sunday)</option><option value="daily"{{if eq .Interval "daily"}} selected{{end}}>Daily</option></select></div>
@@ -1125,7 +1135,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <div><label><input type="checkbox" id="alertEnabled"{{if .AlertEnabled}} checked{{end}}> <b>Send backup alerts by email</b></label></div>
       <div class="row"><div class="k">Send alerts on</div><div class="v">
         <div><label><input type="checkbox" id="alertOnFailure"{{if .AlertOnFailure}} checked{{end}}> a failed backup (recommended)</label></div>
-        <div><label><input type="checkbox" id="alertOnPause"{{if .AlertOnPause}} checked{{end}}> auto-pause after repeated failures</label></div>
+        <div><label><input type="checkbox" id="alertOnPause"{{if .AlertOnPause}} checked{{end}}> the backup is auto-paused (source unreachable too long)</label></div>
         <div><label><input type="checkbox" id="alertOnSuccess"{{if .AlertOnSuccess}} checked{{end}}> every successful backup</label></div>
       </div></div>
       <div class="row"><div class="k">Mail provider</div><div class="v">
@@ -1138,7 +1148,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <div class="row"><div class="k">From</div><div class="v"><input id="alertFrom" value="{{.AlertFrom}}" placeholder="backups@yourschool.org"></div></div>
       <div class="row"><div class="k">Send to</div><div class="v"><input id="alertTo" value="{{.AlertTo}}" placeholder="helpdesk@yourschool.org"></div></div>
       <div class="row"><div class="k">Username</div><div class="v"><input id="alertUsername" value="{{.AlertUsername}}" placeholder="mailbox sign-in (blank for a relay that needs no sign-in)"></div></div>
-      <div class="row"><div class="k">Password</div><div class="v"><input id="alertPassword" type="password" autocomplete="new-password" placeholder="{{if .AlertHasPassword}}stored — leave blank to keep it{{else}}app password{{end}}">{{if .AlertHasPassword}} <label><input type="checkbox" id="alertClearPassword"> clear the stored password</label>{{end}}</div></div>
+      <div class="row"><div class="k">Password</div><div class="v"><input id="alertPassword" type="password" autocomplete="new-password" placeholder="{{if .AlertHasPassword}}stored — leave blank to keep it{{else}}app password or mailbox password{{end}}">{{if .AlertHasPassword}} <label><input type="checkbox" id="alertClearPassword"> clear the stored password</label>{{end}}</div></div>
       <div style="margin-top:14px"><button class="btn" id="alertSave" type="button" title="Save these alert settings. The password is kept in this computer's secure vault, never in a file.">Save alert settings</button> <button class="btn secondary" id="alertTest" type="button" title="Save, then send one test email to the Send-to address so you can confirm it arrives.">Send test email</button></div>
       <div class="note" id="alertNote" hidden></div>
       <details class="steps"><summary>How to set this up</summary>

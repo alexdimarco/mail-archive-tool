@@ -33,6 +33,15 @@ Windows: SmartScreen → *More info → Run anyway*. Verify downloads against `S
 `mailarchive-desktop-windows-msi-payload.zip` builds a self-contained MSI
 (`packaging/mailarchive-desktop/`).
 
+### New in 1.1–1.3
+- **Archive manager.** MailArchive Desktop now manages more than one archive: a **Your archives** card lists every archive this computer knows about, marks one **current**, and switches between them. **Pause (make read-only)** an archive so nothing can change it, and **Resume** it later — nothing is deleted either way.
+- **Built-in email alerts.** Have a scheduled backup email you when it **fails** (or is auto-paused, or — if you want — succeeds). Built-in SMTP, no script to install: **Office 365**, **Gmail**, or a **standard SMTP** server; the password is kept in your OS credential vault, and **Send test email** confirms it before you rely on it. Works for both Microsoft 365 and local scheduled backups.
+- **Backup run history.** A **Recent backups** card (and an archive-local history record) shows the last several runs — when, result, how many messages — not just the latest.
+- **Run now / Shut down / Add another archive.** Run the backup immediately instead of waiting for the schedule; shut the dashboard down cleanly to free its port (do this before an upgrade); and set up an additional archive with the wizard without disturbing the current one.
+- **Source-loss surfacing.** When an archive's **source** (its mailbox or mail folder) stops being reachable across scheduled runs, the dashboard shows a banner and `status` reports a WARN (`source_lost`), so a stalled backup is never silent.
+- **Uninstall keeps your archives.** A **Danger zone → Uninstall** removes MailArchive's program and schedules from this computer, shows a plan first, and **never deletes an archive**.
+- **Upgrading to a newer version.** Stop the program (**Shut down**), replace the files, relaunch — your archives are untouched; if the program's path changed, the app's **Repair** re-points the schedule. See "Upgrading to a newer version" in the README.
+
 ### Fixed in 0.7.2
 - **The wizard's Repair no longer breaks a weekly backup set up in MailArchive Desktop.** When an archive's schedule had been created by MailArchive Desktop (a weekly Microsoft 365 capture), the launch wizard's health check could offer *Repair* and, on clicking it, convert that backup into a job-file schedule that failed every night while `status` stayed green. The wizard now recognises a MailArchive Desktop schedule, does not offer to repair it, and points you to MailArchive Desktop instead (R14, R18).
 - **A scheduled capture that can't start is no longer silently green.** A scheduled Microsoft 365 backup that refused at launch because it was not configured or signed in wrote no run record, so `status` and the health view stayed GREEN until the run was twice its period late. Such a refusal now records a failed run, so status reads RED with the reason straight away (R18).

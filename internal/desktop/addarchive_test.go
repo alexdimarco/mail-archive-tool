@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"mail-archive-tool/internal/archindex"
+	"mail-archive-tool/internal/assure"
 )
 
 // covers: MA-696
@@ -99,5 +100,40 @@ func TestMA696_AddAnotherArchive(t *testing.T) {
 	}
 	if got, _ := archindex.ReadFile(idx5); len(got.Entries) != 1 {
 		t.Fatalf("re-registering the same archive must not duplicate it, got %+v", got.Entries)
+	}
+}
+
+// covers: MA-696
+// Regression (discoverability): "Add another archive" must be reachable in the common
+// case of a single, CURRENT archive — exactly when the "Your archives" list card is
+// deliberately hidden (MA-666, "nothing new to say"). The add action therefore lives in
+// its own always-present card (#sec-add-archive), not nested inside the list card, so a
+// one-archive user can still set up a second. Before the fix the button rendered only
+// inside the hidden list card, so a lone-current user could not reach it at all.
+func TestMA696_AddArchiveReachableWithLoneCurrent(t *testing.T) {
+	dir := t.TempDir()
+	idxPath := filepath.Join(dir, archindex.Name)
+	settings := filepath.Join(dir, "s.json")
+	a := archiveAt(t, dir, "A", map[string]string{"path:/mail/a.mbox": "a"})
+	if err := archindex.WriteFile(idxPath, archindex.Index{Entries: []archindex.Entry{
+		{Path: a, AddedAt: at0, LastSeenAt: at0},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveSettings(settings, Settings{Out: a}); err != nil {
+		t.Fatal(err)
+	}
+	page, _ := getPage(t, DashboardHandler(Config{SettingsPath: settings, IndexPath: idxPath, GOOS: "darwin"}))
+	assure.Reached(t, page, "overview page")
+	// The list card stays hidden for a lone current archive (MA-666 holds) ...
+	if strings.Contains(page, `id="sec-archives"`) {
+		t.Error("the Your-archives list card must stay hidden when the only archive is the current one")
+	}
+	// ... but the Add-another-archive action must still be present and reachable.
+	if !strings.Contains(page, `id="sec-add-archive"`) {
+		t.Error("the Add-another-archive card must be present for a lone current archive")
+	}
+	if !strings.Contains(page, `id="addArchiveBtn"`) {
+		t.Error("the Add-another-archive button must be reachable for a lone current archive")
 	}
 }
