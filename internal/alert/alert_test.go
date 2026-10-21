@@ -1,11 +1,49 @@
 package alert
 
 import (
+	"net"
 	"net/smtp"
 	"strings"
 	"testing"
 	"time"
 )
+
+// covers: MA-700
+// A stalling mail server (accepts the connection, then never speaks) must not hang the
+// caller: the SMTP conversation runs under a connection deadline, so it returns an
+// error instead of blocking the scheduled backup or the test handler forever.
+func TestMA700_SMTPTimeout(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		c, aerr := ln.Accept()
+		if aerr != nil {
+			return
+		}
+		time.Sleep(3 * time.Second) // hold the connection open, silent (no 220 greeting)
+		c.Close()
+	}()
+
+	oldDial, oldSend := smtpDialTimeout, smtpSendTimeout
+	smtpDialTimeout, smtpSendTimeout = 250*time.Millisecond, 250*time.Millisecond
+	defer func() { smtpDialTimeout, smtpSendTimeout = oldDial, oldSend }()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- smtpTransport(ln.Addr().String(), "127.0.0.1", SecurityStartTLS, nil, "f@x.org", []string{"t@x.org"}, []byte("test"))
+	}()
+	select {
+	case e := <-done:
+		if e == nil {
+			t.Fatal("a stalling mail server should produce a timeout error, not success")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("smtpTransport hung past its deadline — the SMTP timeout is not enforced")
+	}
+}
 
 // covers: MA-697
 // The built-in email alert engine: provider presets, the event gate (enabled + which

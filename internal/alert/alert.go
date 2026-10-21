@@ -206,29 +206,52 @@ func Send(c Config, password string, ev Event) error {
 	return transport(addr, c.Host, c.Security, auth, c.From, c.Recipients(), c.Message(ev))
 }
 
-// smtpTransport delivers msg. For starttls/none it uses smtp.SendMail, which upgrades
-// to STARTTLS when the server offers it and authenticates only over an encrypted link
-// (net/smtp refuses PlainAuth on a cleartext connection — a built-in safeguard). For
-// implicit TLS it dials TLS first, then runs the SMTP conversation inside it.
-func smtpTransport(addr, host, security string, auth smtp.Auth, from string, to []string, msg []byte) error {
-	if security == SecurityTLS {
-		return sendImplicitTLS(addr, host, auth, from, to, msg)
-	}
-	return smtp.SendMail(addr, auth, from, to, msg)
-}
+// SMTP time bounds (MA-700): a stalling or malicious mail server must never hang the
+// caller — the scheduled backup (fireAlert runs AFTER the backup is written to disk) or
+// the dashboard's test handler. net/smtp and tls.Dial impose NO timeout of their own,
+// so these are enforced here. They are vars so a test can shrink them: the dial bounds
+// the connect/handshake, the deadline bounds the whole conversation after connecting.
+var (
+	smtpDialTimeout = 20 * time.Second
+	smtpSendTimeout = 60 * time.Second
+)
 
-// sendImplicitTLS runs the SMTP conversation inside a TLS connection opened from the
-// first byte (port 465).
-func sendImplicitTLS(addr, host string, auth smtp.Auth, from string, to []string, msg []byte) error {
-	conn, err := tls.Dial("tcp", addr, &tls.Config{ServerName: host})
-	if err != nil {
-		return fmt.Errorf("could not open a secure connection to %s: %w", addr, err)
+// smtpTransport delivers msg over a time-bounded SMTP conversation. For implicit TLS
+// the link is encrypted from the first byte (:465); otherwise it upgrades to STARTTLS
+// when the server offers it. Either way net/smtp refuses PlainAuth on a cleartext link,
+// so the password never goes out unencrypted. Every step runs under a connection
+// deadline, so a server that connects then stalls cannot hang us indefinitely.
+func smtpTransport(addr, host, security string, auth smtp.Auth, from string, to []string, msg []byte) error {
+	var conn net.Conn
+	var err error
+	if security == SecurityTLS {
+		conn, err = tls.DialWithDialer(&net.Dialer{Timeout: smtpDialTimeout}, "tcp", addr, &tls.Config{ServerName: host})
+	} else {
+		conn, err = net.DialTimeout("tcp", addr, smtpDialTimeout)
 	}
+	if err != nil {
+		return fmt.Errorf("could not connect to the mail server %s: %w", addr, err)
+	}
+	defer conn.Close()
+	// Bound the whole SMTP conversation (reading the 220 greeting and every later reply),
+	// so a tarpit, a dead relay or a blackholing firewall cannot hang the caller.
+	_ = conn.SetDeadline(time.Now().Add(smtpSendTimeout))
+
 	client, err := smtp.NewClient(conn, host)
 	if err != nil {
 		return err
 	}
 	defer client.Close()
+	if security != SecurityTLS {
+		// Upgrade to STARTTLS when the server offers it (Office 365, Gmail, most relays on
+		// :587). When it does not, net/smtp's PlainAuth refuses to send over cleartext, so
+		// an authenticated send fails rather than leaking the password.
+		if ok, _ := client.Extension("STARTTLS"); ok {
+			if err := client.StartTLS(&tls.Config{ServerName: host}); err != nil {
+				return err
+			}
+		}
+	}
 	if auth != nil {
 		if err := client.Auth(auth); err != nil {
 			return err
