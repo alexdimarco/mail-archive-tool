@@ -79,6 +79,22 @@ type Options struct {
 	// remedy names this option. An input listed here keeps its token and its archive.
 	// A file link out of the store and a special file stay refused for it too (R25).
 	FollowLinks []string
+
+	// BeforeRead, when non-nil, runs once after the archive lock is held and the
+	// run has begun, and before any source is read: the opt-in Thunderbird
+	// pre-sync (start Thunderbird out of sight, wait for its mail files to go
+	// quiet, ask it to quit, then return). It NEVER fails the run — it recovers
+	// its own panics — and only ctx cancellation stops the run. Its warnings are
+	// recorded; it is nil in every path but the opt-in one (design
+	// docs/design-thunderbird-presync.md §4.1).
+	BeforeRead func(ctx context.Context, files []string) BeforeReadResult
+}
+
+// BeforeReadResult is what the pre-sync hook returns: warnings for the run to
+// record. The session summary stored in the last-run record is added by a later
+// slice (it is additive).
+type BeforeReadResult struct {
+	Warnings []state.RunWarning
 }
 
 // followsLinks says whether path is one of the inputs that opted in to following
@@ -402,6 +418,13 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// it was attempted by this run, and `status` tells attempted from not attempted
 	// by comparing with the last-run record's start (FC14).
 	begun := beginRun(opts)
+	// The opt-in Thunderbird pre-sync runs here, after the lock and the run's
+	// start and before any source is read; nil unless a caller opts in, and it
+	// never fails the run (design thunderbird-presync §4.1). Its warnings join
+	// this run's record before the deferred finalizer captures it.
+	if opts.BeforeRead != nil {
+		begun.Warnings = append(begun.Warnings, opts.BeforeRead(ctx, files).Warnings...)
+	}
 	defer recordRun(opts, begun, &result, &err, logger)
 	runAt := begun.Started
 
