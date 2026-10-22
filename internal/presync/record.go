@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"os"
 
 	"mail-archive-tool/internal/util"
 )
@@ -79,14 +78,17 @@ func storeRecord(path string, r record) error {
 // version is errUnreadable (treated as absent, warned once). Unknown fields are
 // tolerated, so a newer minor writer's extra fields never strand an older reader.
 func loadRecord(path string) (record, bool, error) {
-	b, err := os.ReadFile(path)
+	// ReadSecureFile Lstats first and opens O_NOFOLLOW|O_NONBLOCK, capping the
+	// read with an io.LimitReader: a planted FIFO/symlink/device or an oversized
+	// file is refused WITHOUT blocking or over-allocating (R32), the way the
+	// sibling lockfile already hardens its read.
+	b, err := util.ReadSecureFile(path, "pre-sync state record", recordMaxBytes)
 	if errors.Is(err, fs.ErrNotExist) {
-		return record{}, false, nil
+		return record{}, false, nil // the normal no-prior-session case
 	}
 	if err != nil {
-		return record{}, false, err
-	}
-	if len(b) > recordMaxBytes {
+		// Non-regular, over-long, over-permissive, or otherwise unreadable: treat
+		// as absent and warn once.
 		return record{}, false, errUnreadable
 	}
 	var r record
