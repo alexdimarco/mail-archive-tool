@@ -41,6 +41,15 @@ type Job struct {
 	// "Follow folder links" answer (the CLI's -follow-links). Additive: a job written
 	// before it reads as no opt-in.
 	FollowLinks []string `json:"follow_links,omitempty"`
+	// ThunderbirdSync, when present, means this scheduled GUI job syncs
+	// Thunderbird before archiving (design §4.2.5). Presence means ON. Additive:
+	// a job written before it reads as off.
+	ThunderbirdSync *ThunderbirdSync `json:"thunderbird_sync,omitempty"`
+}
+
+// ThunderbirdSync is the GUI job's Thunderbird pre-sync setting (design §4.2.5).
+type ThunderbirdSync struct {
+	Profile string `json:"profile,omitempty"`
 }
 
 // Dir is the per-user directory job files live in.

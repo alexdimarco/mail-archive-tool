@@ -43,6 +43,17 @@ type Descriptor struct {
 	Log         string    `json:"log,omitempty"`
 	InstalledAt time.Time `json:"installed_at"`
 	Host        string    `json:"host"`
+	// Presync records that this schedule syncs Thunderbird before archiving, for
+	// status display and judgement only — the run never reads its settings from
+	// here (P6). Additive: absent on schedules without the feature.
+	Presync *PresyncDesc `json:"presync,omitempty"`
+}
+
+// PresyncDesc is a schedule's Thunderbird pre-sync descriptor (design §4.2.3):
+// what the schedule says it does, so status can show and judge it.
+type PresyncDesc struct {
+	Kind    string `json:"kind"` // "thunderbird"
+	Profile string `json:"profile,omitempty"`
 }
 
 // DescribeSpec builds the descriptor for a spec, recording the executable's
