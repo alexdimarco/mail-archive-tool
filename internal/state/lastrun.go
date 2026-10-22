@@ -108,6 +108,26 @@ type LastRun struct {
 	// parser's content. Informational: neither makes the run partial.
 	Undecodable      int `json:"undecodable,omitempty"`
 	FidelityFallback int `json:"fidelity_fallback,omitempty"`
+
+	// Presync is the Thunderbird pre-sync's trace in this run (design §4.9.2):
+	// the in-flight "syncing" state while the session runs, then the final
+	// outcome code and the streak counters. Additive: nil when the feature is off
+	// or on an older record, so `status` reads a record without it as "not
+	// configured" and an older binary ignores it.
+	Presync *PresyncRecord `json:"presync,omitempty"`
+}
+
+// PresyncRecord is the Thunderbird pre-sync's record in one run (design §4.9.2).
+// A session in flight carries State "syncing" and ExpectedUntil; a finished one
+// carries the outcome Code. It is display and judgement only — never read to
+// drive behaviour.
+type PresyncRecord struct {
+	State         string    `json:"state,omitempty"`          // "syncing" in flight; "" at the final outcome
+	Code          string    `json:"code,omitempty"`           // the outcome code (presync_*); "" for a clean ok
+	Since         time.Time `json:"since,omitempty"`          // when the session started
+	ExpectedUntil time.Time `json:"expected_until,omitempty"` // when it should be done
+	WarnStreak    int       `json:"warn_streak,omitempty"`
+	NoteStreak    int       `json:"note_streak,omitempty"`
 }
 
 // RunWarning is one problem a run found with its own setup that does not stop
