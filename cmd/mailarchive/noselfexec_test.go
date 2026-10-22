@@ -20,6 +20,17 @@ var osTools = map[string]bool{
 	"open": true, "xdg-open": true, "rundll32": true, "explorer.exe": true,
 	"osascript": true, "zenity": true, "qarma": true, "matedialog": true,
 	"pbcopy": true, "xclip": true, "xsel": true, "wl-copy": true, "clip": true,
+
+	// The Thunderbird pre-sync macOS adapter (design §4.7.1, pinned by MA-557)
+	// starts these system tools by ABSOLUTE path — §5.4 rule 7 forbids a PATH
+	// lookup, so each literal is the full path, which keeps this set STRICTER
+	// than a bare name (a planted `open` earlier on PATH would not match). The
+	// quit request is osascript; the rest only observe (pgrep/ps/sysctl/ioreg/
+	// plutil) or hold a wake lock (caffeinate). None signals or kills anything.
+	"/usr/bin/open": true, "/usr/bin/osascript": true,
+	"/usr/bin/pgrep": true, "/bin/ps": true,
+	"/usr/sbin/sysctl": true, "/usr/sbin/ioreg": true,
+	"/usr/bin/plutil": true, "/usr/bin/caffeinate": true,
 }
 
 // argvBuilders are the pinned functions that return an (OS-tool name, args)
