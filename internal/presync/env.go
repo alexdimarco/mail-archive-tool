@@ -29,6 +29,11 @@ type proc struct {
 	exe   string
 	start time.Time
 	args  string
+	// argv is the command line already split into arguments, when the adapter can
+	// supply a faithful split (Windows, where the raw command line is quoted and a
+	// user folder may contain spaces). It is nil on macOS, where ownership splits
+	// args on whitespace — see profileMatches.
+	argv []string
 }
 
 // env is the injected OS seam. TP1 drives the pure core with a fake; the real

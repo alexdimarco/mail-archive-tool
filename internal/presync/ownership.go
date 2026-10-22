@@ -27,7 +27,7 @@ func candidateIsOurs(c proc, lc launchCtx) bool {
 	if c.exe != lc.app {
 		return false
 	}
-	if !argsHaveProfile(c.args, lc.profile) {
+	if !profileMatches(c, lc.profile) {
 		return false
 	}
 	if lc.snapshot[c.pid] {
@@ -56,9 +56,30 @@ func findOurs(cands []proc, lc launchCtx) (proc, bool) {
 	return proc{}, false
 }
 
-// argsHaveProfile reports whether a command line carries `-profile <profile>` as
-// adjacent arguments (design 4.4.3 criterion 2, PC6). A Thunderbird on another
-// profile, or one the owner opened plainly, never matches.
+// profileMatches reports whether a candidate carries `-profile <profile>` as
+// adjacent arguments (design 4.4.3 criterion 2, PC6/PC-W1). When the adapter has
+// parsed a faithful argv (Windows, where the raw command line is quoted and a
+// user folder commonly contains spaces, e.g. C:\Users\First Last\...), the match
+// is on exact argv elements. Otherwise the args string is split on whitespace —
+// the macOS path, unchanged: proc.argv is nil there, so this calls argsHaveProfile
+// exactly as before.
+func profileMatches(c proc, profile string) bool {
+	if c.argv != nil {
+		for i := 0; i+1 < len(c.argv); i++ {
+			if c.argv[i] == "-profile" && c.argv[i+1] == profile {
+				return true
+			}
+		}
+		return false
+	}
+	return argsHaveProfile(c.args, profile)
+}
+
+// argsHaveProfile reports whether a whitespace-joined command line carries
+// `-profile <profile>` as adjacent fields (design 4.4.3 criterion 2, PC6). A
+// Thunderbird on another profile, or one the owner opened plainly, never matches.
+// This is the macOS path (ps -o args= is already space-joined and unquoted); the
+// Windows path parses a real argv first (profileMatches).
 func argsHaveProfile(args, profile string) bool {
 	f := strings.Fields(args)
 	for i := 0; i+1 < len(f); i++ {

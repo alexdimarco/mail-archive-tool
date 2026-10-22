@@ -230,7 +230,7 @@ func matchRecord(e env, rec record) matchKind {
 	}
 	for _, p := range procs {
 		if rec.ChildPID != 0 && p.pid == rec.ChildPID && p.exe == rec.App &&
-			abs64(p.start.Unix()-rec.ChildStart) <= 1 && argsHaveProfile(p.args, rec.Profile) {
+			abs64(p.start.Unix()-rec.ChildStart) <= 1 && profileMatches(p, rec.Profile) {
 			return matchExact
 		}
 	}
