@@ -4,6 +4,7 @@ package presync
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -311,5 +312,39 @@ func TestRealRunCapturesAndIsBounded(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > 3*time.Second {
 		t.Errorf("realRun did not honour the deadline: took %v", elapsed)
+	}
+}
+
+// covers: MA-571
+// startHidden opens the resolved .app BUNDLE hidden (open -g -j), not the inner
+// executable; a launch failure becomes errNoDesktopSession and open is called
+// exactly once (no retry loop).
+func TestMacStartHidden(t *testing.T) {
+	e := newMacEnv("/Applications/Thunderbird.app")
+	const innerExe = "/Applications/Thunderbird.app/Contents/MacOS/thunderbird"
+
+	calls := 0
+	e.run = func(cmd *exec.Cmd) (string, string, error) {
+		if cmd.Path != "/usr/bin/open" {
+			return "", "", fmt.Errorf("unexpected cmd %v", cmd.Args)
+		}
+		calls++
+		return "", "", fmt.Errorf("LSOpenURLsWithRole() failed: the window server is unreachable")
+	}
+	if err := e.startHidden(innerExe, "/Users/x/P"); !errors.Is(err, errNoDesktopSession) {
+		t.Errorf("startHidden on a launch failure = %v, want errNoDesktopSession", err)
+	}
+	if calls != 1 {
+		t.Errorf("open called %d times, want exactly 1 (no retry loop)", calls)
+	}
+
+	var gotArgs []string
+	e.run = func(cmd *exec.Cmd) (string, string, error) { gotArgs = cmd.Args; return "", "", nil }
+	if err := e.startHidden(innerExe, "/Users/x/P"); err != nil {
+		t.Errorf("startHidden on a working open = %v, want nil", err)
+	}
+	want := []string{"/usr/bin/open", "-g", "-j", "/Applications/Thunderbird.app", "--args", "-profile", "/Users/x/P"}
+	if !reflect.DeepEqual(gotArgs, want) {
+		t.Errorf("startHidden ran %v, want %v (the .app bundle, hidden)", gotArgs, want)
 	}
 }

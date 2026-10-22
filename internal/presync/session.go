@@ -1,6 +1,7 @@
 package presync
 
 import (
+	"errors"
 	"os"
 	"time"
 )
@@ -92,8 +93,12 @@ func runSession(d deps) sessionResult {
 	cur.LaunchAt = launchAt.Unix()
 	store(stateLaunching)
 	if err := e.startHidden(d.app, d.profile); err != nil {
-		clear()
-		res.outcome = OutcomeCannotStart
+		clear() // write-ahead record removed; no launch to announce, no retry
+		if errors.Is(err, errNoDesktopSession) {
+			res.outcome = OutcomeNoDesktopSession
+		} else {
+			res.outcome = OutcomeCannotStart
+		}
 		return res
 	}
 

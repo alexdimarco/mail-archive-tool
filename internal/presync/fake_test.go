@@ -24,6 +24,7 @@ type fakeEnv struct {
 	idleOK    bool
 	lockOK    bool
 	started   bool
+	startErr  error // when set, startHidden returns it and records no launch
 	startedAt time.Time
 	quitted   bool
 	quitAt    time.Time
@@ -88,6 +89,9 @@ func (f *fakeEnv) bootTime() int64                { return f.boot }
 func (f *fakeEnv) idleSeconds() (float64, bool)   { return f.idle, f.idleOK }
 
 func (f *fakeEnv) startHidden(app, profile string) error {
+	if f.startErr != nil {
+		return f.startErr
+	}
 	f.started, f.startedAt = true, f.nowT
 	return nil
 }

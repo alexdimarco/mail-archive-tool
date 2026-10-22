@@ -1,6 +1,17 @@
 package presync
 
-import "time"
+import (
+	"errors"
+	"time"
+)
+
+// errNoDesktopSession is returned by startHidden when the launcher reports no
+// usable GUI session (design §4.7.1 / MA-571: the window server is unreachable,
+// e.g. at the login window). The state machine maps it to
+// OutcomeNoDesktopSession rather than the generic cannot-start, and does not
+// retry. It is declared here, platform-neutral, so the machine can classify it
+// without a build tag.
+var errNoDesktopSession = errors.New("no desktop session")
 
 // proc is a snapshot of one Thunderbird-relevant process (design sections 4.4.1,
 // 4.4.3): its pid, resolved executable path, start time (UTC) and command line

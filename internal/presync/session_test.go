@@ -107,6 +107,40 @@ func TestPresyncStateMachineGatesStopBeforeLaunch(t *testing.T) {
 	})
 }
 
+// covers: MA-571
+// When the launcher reports no GUI session (startHidden -> errNoDesktopSession),
+// S5 ends the session presync_no_desktop_session, removes the write-ahead record
+// and reports no launch — and the archive, as ever, still runs afterwards.
+func TestPresyncNoDesktopSession(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "s.json")
+	f := newFakeEnv()
+	f.sm = true
+	f.boot = 1000
+	f.idle, f.idleOK = 300, true // owner away
+	f.lockOK = true
+	f.startErr = errNoDesktopSession
+	f.nowT = time.Date(2026, 10, 22, 2, 0, 0, 0, time.UTC)
+
+	d := deps{
+		env: f, app: "/a/thunderbird", profile: "/p", watch: []string{"/w"},
+		statePath: statePath, lockPath: "/l",
+		base:      record{Version: recordVersion},
+		cfg:       quietConfig{settle: time.Second, quiet: time.Second, maxWait: time.Minute},
+		awaitPoll: time.Second, awaitUp: time.Minute, pollEvery: time.Second, quitGrace: time.Minute, idleAway: 120 * time.Second,
+	}
+
+	res := runSession(d)
+	if res.outcome != OutcomeNoDesktopSession {
+		t.Errorf("outcome = %q, want no-desktop-session", res.outcome.Name)
+	}
+	if f.started {
+		t.Errorf("startHidden reported a launch despite the no-session failure")
+	}
+	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
+		t.Errorf("the write-ahead record was not removed: %v", err)
+	}
+}
+
 func eqStrings(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

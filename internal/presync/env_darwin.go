@@ -106,8 +106,13 @@ func caffeinateCmd(ctx context.Context, pid int) *exec.Cmd {
 
 // probeTimeout bounds every read-only helper (pgrep/ps/sysctl/ioreg), so a stuck
 // system tool can never hang the pre-sync (which itself can never gate the
-// archive). Quit and launch set their own, longer deadlines when they land.
-const probeTimeout = 5 * time.Second
+// archive). launchTimeout bounds `open`, which only asks LaunchServices to start
+// the app and returns at once; the long wait for the window to appear is the
+// state machine's S6, not this call.
+const (
+	probeTimeout  = 5 * time.Second
+	launchTimeout = 15 * time.Second
+)
 
 // runCmd runs a built command to completion and returns its stdout and stderr.
 // It is the exec seam: production uses realRun; a test replaces it with a fake
@@ -377,4 +382,20 @@ func (e *macEnv) releaseLock(string) {
 		_ = e.lock.Release()
 		e.lock = nil
 	}
+}
+
+// startHidden launches Thunderbird out of sight on the profile (design §4.7.1,
+// S5): `open -g -j` starts the resolved .app bundle behind every other window
+// and does not bring it forward. The `app` argument is the matched inner
+// executable the caller uses for identity (§4.4.3); the launcher opens the
+// bundle resolved at setup (e.bundle). A launch failure is reported as
+// errNoDesktopSession — for a bundle already validated at resolution, `open`
+// failing means there is no usable GUI session — and the machine does not retry.
+func (e *macEnv) startHidden(app, profile string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), launchTimeout)
+	defer cancel()
+	if _, _, err := e.run(openCmd(ctx, e.bundle, profile)); err != nil {
+		return errNoDesktopSession
+	}
+	return nil
 }
