@@ -20,6 +20,15 @@ var forbiddenHygieneTokens = []string{
 	".Kill(", ".Signal(",
 	"taskkill",
 	"/bin/sh", "/bin/bash", "/bin/zsh", "/bin/dash",
+	// Windows kill primitives (PC-W7): the Windows adapter asks Thunderbird to
+	// quit with PostMessageW(WM_CLOSE) and must NEVER force-terminate it or a
+	// window. "PROCESS_TERMINATE" catches an OpenProcess opened for a kill without
+	// flagging benign OpenProcess(QUERY_LIMITED/SYNCHRONIZE); the window messages
+	// are the forceful alternatives to WM_CLOSE.
+	"TerminateProcess", "PROCESS_TERMINATE",
+	"WM_QUIT", "WM_DESTROY", "WM_ENDSESSION",
+	"EndTask", "ExitWindowsEx", "PostQuitMessage",
+	"HWND_BROADCAST", "PostThreadMessage",
 }
 
 func scanForbidden(src string, forbidden []string) []string {
@@ -71,10 +80,11 @@ func TestPresyncExecSignalHygiene(t *testing.T) {
 		t.Errorf("forbidden exec/signal token(s) in internal/presync (R31/§5.4): %v", hits)
 	}
 
-	// Fail-closed twin: a planted LookPath, Kill, Signal and shell path are caught.
-	twin := `exec.LookPath("x"); p.Kill(); p.Signal(os.Interrupt); exec.Command("/bin/sh", "-c", s)`
+	// Fail-closed twin: planted Unix AND Windows kill primitives are caught.
+	twin := `exec.LookPath("x"); p.Kill(); p.Signal(os.Interrupt); exec.Command("/bin/sh", "-c", s); ` +
+		`windows.TerminateProcess(h, 1); windows.OpenProcess(PROCESS_TERMINATE, ...); PostMessageW(hwnd, WM_QUIT, 0, 0)`
 	caught := scanForbidden(twin, forbiddenHygieneTokens)
-	for _, want := range []string{"LookPath", ".Kill(", ".Signal(", "/bin/sh"} {
+	for _, want := range []string{"LookPath", ".Kill(", ".Signal(", "/bin/sh", "TerminateProcess", "PROCESS_TERMINATE", "WM_QUIT"} {
 		if !containsStrHyg(caught, want) {
 			t.Errorf("twin: forbidden token %q was not caught (caught %v)", want, caught)
 		}
