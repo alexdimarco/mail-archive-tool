@@ -3,11 +3,30 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/presync"
 )
+
+// covers: MA-550, MA-567
+// A scheduled sync's install note carries the §6 sync notice and the macOS
+// first-approval command (launchctl kickstart gui/<uid>/<label>), so the owner
+// learns how to grant the Automation permission the scheduled quit needs — a
+// grant that must come from a scheduler-started run, not Terminal (PC4).
+func TestPresyncInstallNote(t *testing.T) {
+	note := presyncInstallNote("mailarchive-abc")
+	if !strings.Contains(note, presync.SyncNotice) {
+		t.Error("install note is missing the §6 sync notice")
+	}
+	if !strings.Contains(note, "launchctl kickstart gui/") {
+		t.Errorf("install note is missing the first-approval command: %q", note)
+	}
+	if !strings.Contains(note, "com.dimarcotech.mailarchive.mailarchive-abc") {
+		t.Errorf("install note is missing the launchd label: %q", note)
+	}
+}
 
 // covers: MA-568
 // The -thunderbird-sync flag installs the pre-sync as app.Run's BeforeRead hook

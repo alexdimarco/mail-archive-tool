@@ -78,6 +78,13 @@ var warnText = map[string]string{
 	OutcomeInternalError.Code:       "The Thunderbird pre-sync failed unexpectedly and was recovered; the archive ran anyway.",
 }
 
+// SyncNotice is the single source of the §6 owner-facing paragraph (MA-567):
+// what the Thunderbird sync does and its two caveats (exit actions, one profile).
+// The schedule preview, the install message, the -h text and the README all draw
+// from this one constant so they can never drift. Draft wording; the friction
+// review settles the final text.
+const SyncNotice = "The Thunderbird sync starts Thunderbird in the background before the backup, waits for its mail to finish downloading, and asks it to quit, so the archive includes mail that had only reached the server. Two things to know: quitting Thunderbird runs whatever your accounts do on exit (for example emptying Trash), so mail you deleted since the last backup may be removed before it is archived; and only one Thunderbird profile is synced per schedule."
+
 // startLine is the narration printed to Config.Log just before the session runs,
 // so the owner of a manual run knows the (possibly minutes-long) wait is working
 // and not a hang (§8 step 1). Draft wording; the friction review / MA-567 settle

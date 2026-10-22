@@ -4,14 +4,27 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 
 	"mail-archive-tool/internal/app"
 	jobfile "mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/presync"
+	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/state"
 )
+
+// presyncInstallNote is printed when a scheduled sync is installed or previewed
+// (design §8 step 2): the §6 notice of what the sync does, then the macOS
+// first-approval command (PC4) — the owner runs the installed job ONCE now, so
+// macOS attributes the Automation grant to the scheduled program (a Terminal
+// run's grant does not count). Empty off macOS (the schedule-time refusal means
+// a non-macOS schedule can never carry the sync).
+func presyncInstallNote(name string) string {
+	return fmt.Sprintf("%s\n\nTo let the scheduled run control Thunderbird, start it once now while you are at the computer and answer the macOS prompt:\n  launchctl kickstart gui/%d/%s\nThunderbird will open and close; if macOS asks whether Mail Archive may control Thunderbird, choose Allow. Until a scheduler-started run has closed Thunderbird, `status` shows presync_quit_not_permitted.",
+		presync.SyncNotice, os.Getuid(), schedule.LaunchdLabel(name))
+}
 
 // setPresyncHook installs the Thunderbird pre-sync as app.Run's BeforeRead hook
 // (design §4.1, Q9 manual run): it resolves and runs one session on the

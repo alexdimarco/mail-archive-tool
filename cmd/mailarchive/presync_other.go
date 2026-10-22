@@ -13,3 +13,7 @@ import (
 func setPresyncHook(_ *app.Options, _ string) error {
 	return errors.New("-thunderbird-sync is only available on macOS in this version")
 }
+
+// presyncInstallNote is empty off macOS: a non-macOS schedule can never carry
+// the sync (refused at schedule time), so there is nothing to say.
+func presyncInstallNote(string) string { return "" }
