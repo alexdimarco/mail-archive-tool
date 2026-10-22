@@ -423,7 +423,18 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// never fails the run (design thunderbird-presync §4.1). Its warnings join
 	// this run's record before the deferred finalizer captures it.
 	if opts.BeforeRead != nil {
-		begun.Warnings = append(begun.Warnings, opts.BeforeRead(ctx, files).Warnings...)
+		// A panic in the pre-sync session is recovered here, so it can never fail
+		// the archive (R32, design §4.9.1): the run records presync_internal_error
+		// and reads the sources anyway.
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					begun.Warnings = append(begun.Warnings, state.RunWarning{Code: "presync_internal_error", Message: "the Thunderbird pre-sync failed unexpectedly; the archive ran anyway"})
+					logger.Printf("warning: the Thunderbird pre-sync panicked and was recovered (%v); the archive ran anyway", r)
+				}
+			}()
+			begun.Warnings = append(begun.Warnings, opts.BeforeRead(ctx, files).Warnings...)
+		}()
 	}
 	defer recordRun(opts, begun, &result, &err, logger)
 	runAt := begun.Started
