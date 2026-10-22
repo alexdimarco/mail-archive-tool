@@ -13,13 +13,24 @@ import (
 // fakeWin32 scripts the Win32 seam so the winEnv logic is tested without real
 // Win32 or a GUI (the equivalent of macEnv's fake exec runner).
 type fakeWin32 struct {
-	procs     []winProc
-	aliveSet  map[uint32]bool
-	exeOf     map[uint32]string
-	boot      int64
-	idle      float64
-	idleOK    bool
-	isElev    bool
+	procs    []winProc
+	aliveSet map[uint32]bool
+	exeOf    map[uint32]string
+	boot     int64
+	idle     float64
+	idleOK   bool
+	isElev   bool
+
+	// quit seam (the R31 crux). mainOf maps pid→hwnd (0 = no single main window);
+	// winPIDof maps hwnd→pid for the pre-post re-check; posted (if non-nil)
+	// records every hwnd postClose was asked to close, so a test can assert that
+	// nothing was posted on the "cannot safely close" paths.
+	handleOK   bool
+	handleLive bool
+	mainOf     map[uint32]uintptr
+	winPIDof   map[uintptr]uint32
+	posted     *[]uintptr
+	postErr    error
 }
 
 func (f fakeWin32) thunderbirdProcs() []winProc       { return f.procs }
@@ -28,6 +39,21 @@ func (f fakeWin32) exePath(pid uint32) (string, bool) { e, ok := f.exeOf[pid]; r
 func (f fakeWin32) bootUnix() int64                   { return f.boot }
 func (f fakeWin32) idleSeconds() (float64, bool)      { return f.idle, f.idleOK }
 func (f fakeWin32) elevated() bool                    { return f.isElev }
+
+func (f fakeWin32) holdHandle(uint32) (uintptr, bool) { return 1, f.handleOK }
+func (f fakeWin32) handleAlive(uintptr) bool          { return f.handleLive }
+func (f fakeWin32) releaseHandle(uintptr)             {}
+func (f fakeWin32) windowPID(hwnd uintptr) uint32     { return f.winPIDof[hwnd] }
+func (f fakeWin32) mainWindow(pid uint32) (uintptr, bool) {
+	w := f.mainOf[pid]
+	return w, w != 0
+}
+func (f fakeWin32) postClose(hwnd uintptr) error {
+	if f.posted != nil {
+		*f.posted = append(*f.posted, hwnd)
+	}
+	return f.postErr
+}
 
 // covers: MA-553, MA-554
 // The Windows realization of running-detection and the §4.4.3 identity fields:

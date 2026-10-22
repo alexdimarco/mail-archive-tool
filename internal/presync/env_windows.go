@@ -45,6 +45,15 @@ type win32 interface {
 	bootUnix() int64                   // NtQuerySystemInformation boot time (absolute)
 	idleSeconds() (float64, bool)      // GetLastInputInfo
 	elevated() bool                    // OpenProcessToken + TokenElevation
+	// The quit (the R31 crux, quit_windows.go): hold a handle across the quit so the
+	// pid cannot be recycled, find the proven pid's single MAIN window, re-verify,
+	// and post the window's OWN close request — never a kill.
+	holdHandle(pid uint32) (uintptr, bool) // OpenProcess(SYNCHRONIZE), held across the quit
+	handleAlive(h uintptr) bool            // WaitForSingleObject(h,0)==WAIT_TIMEOUT
+	releaseHandle(h uintptr)               // CloseHandle
+	mainWindow(pid uint32) (uintptr, bool) // the pid's single MAIN top-level window
+	windowPID(hwnd uintptr) uint32         // GetWindowThreadProcessId → pid (pre-post re-check)
+	postClose(hwnd uintptr) error          // PostMessageW(hwnd, WM_CLOSE, 0, 0)
 }
 
 // winEnv is the real Windows env (design §2). The uid-equivalent is implicit (the
@@ -170,10 +179,13 @@ func (e *winEnv) recheckProfile(canonical string) bool {
 // --- the real Win32, adapted from the proven viability spike ---
 
 var (
-	ntdll    = syscall.NewLazyDLL("ntdll.dll")
-	kernel32 = syscall.NewLazyDLL("kernel32.dll")
-	advapi32 = syscall.NewLazyDLL("advapi32.dll")
-	user32   = syscall.NewLazyDLL("user32.dll")
+	// NewLazySystemDLL forces the System32 directory, so a planted ntdll.dll /
+	// user32.dll in the application or current directory can never be loaded
+	// instead (PC-W8b) — unlike a bare NewLazyDLL("user32.dll").
+	ntdll    = windows.NewLazySystemDLL("ntdll.dll")
+	kernel32 = windows.NewLazySystemDLL("kernel32.dll")
+	advapi32 = windows.NewLazySystemDLL("advapi32.dll")
+	user32   = windows.NewLazySystemDLL("user32.dll")
 
 	procNtQueryInformationProcess = ntdll.NewProc("NtQueryInformationProcess")
 	procNtQuerySystemInformation  = ntdll.NewProc("NtQuerySystemInformation")
