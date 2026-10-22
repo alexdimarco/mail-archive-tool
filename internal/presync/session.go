@@ -129,16 +129,25 @@ func runSession(ctx context.Context, d deps) sessionResult {
 	// S7 wait quiet — poll the digest; quiet needs a first change (rev-3, L-M5).
 	enter("S7")
 	qt := newQuietTracker(up, d.cfg)
+	watchTruncated := false
 	for {
 		if ctx.Err() != nil {
 			store(stateLeftRunning) // our Thunderbird is up; leave it, announce it
 			res.outcome = OutcomeCancelled
 			return res
 		}
-		sum, _ := e.digest(d.watch)
+		sum, trunc := e.digest(d.watch)
+		if trunc {
+			watchTruncated = true
+		}
 		now := e.now()
 		qt.observe(sum, now)
 		if o, done := qt.verdict(now); done {
+			if watchTruncated && (o == OutcomeOK || o == OutcomeNoActivity) {
+				// the sync happened, but the watch set exceeded its cap: a note,
+				// quiet judged on the part walked (§4.4.2).
+				o = OutcomeWatchTruncated
+			}
 			res.outcome = o
 			break
 		}

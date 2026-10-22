@@ -332,6 +332,53 @@ func TestPresyncCancelledInS7(t *testing.T) {
 	}
 }
 
+// covers: MA-561
+// A clean session whose watch walk was truncated ends with the
+// presync_watch_truncated note instead of a bare ok, so the owner learns the
+// watch set exceeded its cap — and the sync still completed (Thunderbird quit).
+func TestPresyncWatchTruncatedSurfaces(t *testing.T) {
+	base := time.Date(2026, 10, 22, 2, 0, 0, 0, time.UTC)
+	const app = "/Applications/Thunderbird.app/Contents/MacOS/thunderbird"
+	const profile = "/Users/x/profile.default"
+	statePath := filepath.Join(t.TempDir(), "s.json")
+
+	f := newFakeEnv()
+	f.sm = true
+	f.boot = 1000
+	f.idle, f.idleOK = 300, true
+	f.lockOK = true
+	f.appearIn, f.exitIn = 4*time.Second, 2*time.Second
+	f.changeAt = base.Add(24 * time.Second)
+	f.dgBase, f.dgChanged = 1, 2
+	f.digestTruncated = true // the watch walk hit its cap
+	f.nowT = base
+	f.child = proc{pid: 200, exe: app, start: base.Add(1 * time.Second), args: "thunderbird -profile " + profile}
+
+	d := deps{
+		env:       f,
+		cfg:       quietConfig{settle: 10 * time.Second, quiet: 30 * time.Second, maxWait: 600 * time.Second},
+		app:       app,
+		profile:   profile,
+		watch:     []string{"/w"},
+		statePath: statePath,
+		lockPath:  "/l",
+		base:      record{Version: recordVersion, Profile: profile, App: app, ToolPID: 1, ToolStart: 1},
+		awaitPoll: 2 * time.Second,
+		awaitUp:   90 * time.Second,
+		pollEvery: 10 * time.Second,
+		quitGrace: 120 * time.Second,
+		idleAway:  120 * time.Second,
+	}
+
+	res := runSession(context.Background(), d)
+	if res.outcome != OutcomeWatchTruncated {
+		t.Errorf("outcome = %q, want watch-truncated", res.outcome.Name)
+	}
+	if !f.quitted {
+		t.Error("the sync should still have completed (Thunderbird quit)")
+	}
+}
+
 func eqStrings(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

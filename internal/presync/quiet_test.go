@@ -116,3 +116,21 @@ func writeFile(t *testing.T, path, content string) {
 		t.Fatalf("write %s: %v", path, err)
 	}
 }
+
+// covers: MA-555
+// The walk's entry cap counts every visited node, so a directory-heavy tree
+// (nested directories, no regular files) still trips the cap and reports
+// truncation — not only a file-heavy tree (adversarial-pass F1).
+func TestDigestWatchCapCountsDirectories(t *testing.T) {
+	orig := watchMaxEntries
+	defer func() { watchMaxEntries = orig }()
+	watchMaxEntries = 3
+
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "a", "b", "c", "d", "e"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, truncated := digestWatch([]string{root}); !truncated {
+		t.Error("a directory-heavy tree did not trip the entry cap (directories must count)")
+	}
+}

@@ -14,10 +14,12 @@ const suspendGap = 30 * time.Second
 
 // Watch-set caps (design sections 4.4.2 / 4.11): the walk stops past these and
 // reports truncation, and quiet is then judged on the part walked.
-const (
-	watchMaxEntries = 200_000
-	watchMaxDepth   = 16
-)
+// watchMaxEntries bounds the WHOLE walk — every visited node (directories and
+// specials too, not only regular files) counts toward it, so a directory-heavy
+// tree cannot walk past the bound. A var so a test can shrink it.
+var watchMaxEntries = 200_000
+
+const watchMaxDepth = 16
 
 // quietConfig holds the durations the tracker needs. They are injected so tests
 // drive the tracker on a fake clock without real waits.
@@ -107,6 +109,7 @@ func digestWatch(roots []string) (sum uint64, truncated bool) {
 				truncated = true
 				return filepath.SkipAll
 			}
+			entries++ // every visited node counts toward the cap (dirs/specials/files)
 			rel, rerr := filepath.Rel(root, path)
 			if rerr != nil {
 				rel = path
@@ -128,7 +131,6 @@ func digestWatch(roots []string) (sum uint64, truncated bool) {
 			if !info.Mode().IsRegular() { // symlinks and specials are not followed or recorded
 				return nil
 			}
-			entries++
 			writeStr(rel)
 			writeU64(uint64(info.Size()))
 			writeU64(uint64(info.ModTime().UnixNano()))
