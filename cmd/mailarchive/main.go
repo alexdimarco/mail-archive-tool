@@ -936,6 +936,9 @@ func runSchedule(args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := refusePresyncHourly(iv, j); err != nil {
+		return err
+	}
 	n := *name
 	if n == "" {
 		// A verify job derives a distinct "-verify" name so it coexists with the
@@ -1057,6 +1060,12 @@ func flatJobArgs(o *exportOpts, positional []string) []string {
 	}
 	if *o.syncWait {
 		a = append(a, "-sync-wait")
+	}
+	if *o.tbSync {
+		a = append(a, "-thunderbird-sync")
+		if *o.tbProfile != "" {
+			a = append(a, "-thunderbird-profile", *o.tbProfile)
+		}
 	}
 	return a
 }

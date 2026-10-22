@@ -170,9 +170,20 @@ func noControl(what, v string) error {
 
 // job is a validated, canonical backup job for the scheduler.
 type job struct {
-	verb string   // "" (export), "graph", or "reindex"
-	args []string // the job's canonical flags, paths absolute
-	out  string   // the archive directory
+	verb    string   // "" (export), "graph", or "reindex"
+	args    []string // the job's canonical flags, paths absolute
+	out     string   // the archive directory
+	presync bool     // carries -thunderbird-sync (macOS pre-sync); refused hourly (Q11)
+}
+
+// refusePresyncHourly refuses an hourly schedule that carries the Thunderbird
+// pre-sync: a sync can take several minutes, so it is meant for a daily or weekly
+// backup (Q11, §4.2.4). Fail at schedule time, not at the top of every hour.
+func refusePresyncHourly(iv schedule.Interval, j job) error {
+	if iv == schedule.Hourly && j.presync {
+		return errors.New("an hourly schedule cannot use -thunderbird-sync: a Thunderbird sync can take several minutes, so it is for a daily or weekly backup — install it daily or weekly, or without the sync")
+	}
+	return nil
 }
 
 // command is the full argument vector the scheduled program receives.
@@ -229,13 +240,22 @@ func parseJob(args []string) (job, error) {
 				return job{}, err
 			}
 		}
-		for _, v := range append(append([]string{*o.out, *o.manifest, *o.log, *o.since}, o.inputs...), o.followLinks...) {
+		for _, v := range append(append([]string{*o.out, *o.manifest, *o.log, *o.since, *o.tbProfile}, o.inputs...), o.followLinks...) {
 			if err := noControl("a job argument", v); err != nil {
 				return job{}, err
 			}
 		}
 		if err := app.FollowLinksRefusal(o.followLinks, o.inputs); err != nil {
 			return job{}, err
+		}
+		// The Thunderbird pre-sync (macOS v1): -thunderbird-profile means nothing
+		// without -thunderbird-sync, and the feature is macOS-only this version —
+		// refuse at schedule time (fail now, not at 02:00, §4.2.4).
+		if *o.tbProfile != "" && !*o.tbSync {
+			return job{}, errors.New("-thunderbird-profile is only meaningful with -thunderbird-sync")
+		}
+		if *o.tbSync && runtime.GOOS != "darwin" {
+			return job{}, errors.New("-thunderbird-sync is only available on macOS in this version")
 		}
 		j := job{out: abspath(*o.out)}
 		j.args = []string{"-out", j.out, "-mode", strings.ToLower(strings.TrimSpace(*o.mode)), "-unattended"}
@@ -271,6 +291,13 @@ func parseJob(args []string) (job, error) {
 		}
 		if *o.log != "" {
 			j.args = append(j.args, "-log", abspath(*o.log))
+		}
+		if *o.tbSync {
+			j.presync = true
+			j.args = append(j.args, "-thunderbird-sync")
+			if *o.tbProfile != "" {
+				j.args = append(j.args, "-thunderbird-profile", abspath(*o.tbProfile))
+			}
 		}
 		return j, nil
 
