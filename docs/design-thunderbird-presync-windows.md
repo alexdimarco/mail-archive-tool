@@ -202,6 +202,30 @@ Thunderbird cleanly, no tray survivor. L-W5 owner idle + keep-awake. **L-W6
 (viability)** `CREATE_BREAKAWAY_FROM_JOB` holds; the child survives a task
 End/logoff/shutdown. If L-W3, L-W4 or L-W6 fail, the scheduled form does not ship.
 
+### 10a. Spike results (2026-10-22, as SYSTEM via `prlctl exec`, no signed-in TB)
+
+A stdlib-only Go probe (`scratchpad/wintest`, cross-compiled windows/amd64) ran
+in the Parallels Windows 11 VM as `nt authority\system` and CONFIRMED the
+headless, API-level bets on real Windows:
+
+- **PC-W1 CONFIRMED** — `NtQueryInformationProcess(ProcessCommandLineInformation)`
+  with only `PROCESS_QUERY_LIMITED_INFORMATION` read a child's full command line
+  (`ping.exe -n 30 127.0.0.1`). The `-profile` read the design depends on works
+  the light way; the core's `argsHaveProfile` is viable on Windows.
+- **L-W2 CONFIRMED (API)** — `QueryFullProcessImageNameW` (exe path),
+  `GetProcessTimes` (creation time), and `pidAlive` via a handle wait all work.
+- **PC-W4 CONFIRMED** — `NtQuerySystemInformation(SystemTimeOfDayInformation)`
+  boot time is readable and identical across two reads.
+- The `OpenProcessToken`+`TokenElevation` check works.
+
+STILL PENDING (need an INTERACTIVE logged-in session + a signed-in Thunderbird,
+which `prlctl exec` as SYSTEM in session 0 cannot provide): L-W3 (a real hidden
+launch; whether `thunderbird.exe` re-execs to a new pid), L-W4 (whether `WM_CLOSE`
+to its main window closes a hidden Thunderbird cleanly with no tray survivor),
+L-W6 (job-breakaway under a real scheduled task), and the `GetLastInputInfo`
+owner-idle semantics in a user session. These are the viability gates that still
+decide whether the scheduled form ships.
+
 ## 11. Open questions for the owner (sign-off gates)
 
 - **Q-W1:** accept `WM_CLOSE` to the proven child's single main window as the
