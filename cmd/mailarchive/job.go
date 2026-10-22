@@ -39,6 +39,8 @@ type exportOpts struct {
 	syncWait        *bool
 	unattended      *bool
 	list            *bool
+	tbSync          *bool
+	tbProfile       *string
 }
 
 func exportFlags(fs *flag.FlagSet) *exportOpts {
@@ -61,6 +63,8 @@ func exportFlags(fs *flag.FlagSet) *exportOpts {
 	o.syncWait = fs.Bool("sync-wait", false, "Thunderbird IMAP: pause and wait for Download/Sync to finish before exporting")
 	o.unattended = fs.Bool("unattended", false, "scheduled run: refuse to create a new archive when -out does not exist (an unmounted drive), never wait for input")
 	o.list = fs.Bool("list", false, "list the mail stores that would be archived (with a rough size) and exit, without exporting or creating the output directory")
+	o.tbSync = fs.Bool("thunderbird-sync", false, "before archiving, start Thunderbird hidden, wait until its mail files stop changing, then ask it to quit, so the archive reads fresh mail (macOS only in this version; opt-in, and it never gates the archive — a sync problem is a warning, the backup still runs)")
+	o.tbProfile = fs.String("thunderbird-profile", "", "with -thunderbird-sync: the Thunderbird profile directory to sync; if omitted it is derived from the inputs and must be one Thunderbird itself lists")
 	return o
 }
 

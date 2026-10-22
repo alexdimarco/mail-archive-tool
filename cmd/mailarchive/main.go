@@ -253,6 +253,16 @@ func runExport(args []string) error {
 	opts.OutlookSkips = outlookSkips // what Outlook's export left out is recorded as a gap, never only logged (FC28)
 	opts.OutlookExported = outlookExported
 
+	// Optional Thunderbird pre-sync (macOS v1): start Thunderbird hidden, wait for
+	// its mail files to go quiet, ask it to quit, THEN read. It runs as app.Run's
+	// BeforeRead hook (after the lock + running record, before any source is read)
+	// and never gates the archive. Off every other platform it refuses here.
+	if *o.tbSync {
+		if err := setPresyncHook(&opts, *o.tbProfile); err != nil {
+			return err
+		}
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
