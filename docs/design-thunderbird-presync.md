@@ -1,5 +1,22 @@
 # Design — Thunderbird pre-sync: start Thunderbird, let it fetch, ask it to quit, then archive (opt-in, per schedule)
 
+**Revision:** 3 (2026-10-21), amending revision 2 (below) from the macOS pre-sync lab run of
+2026-10-21. Changes: **(a) the quiet clock (§4.4.2)** — lab item L-M5 is now answered on a real
+Mac, and the answer forces a correction. Thunderbird's startup login refreshes the message list but
+defers the offline body/attachment download to its next periodic IMAP check (`check_time`, default
+~10 min), so the watched mail files can stay silent for about ten minutes after launch **even when
+mail is already waiting on the server** (measured: first INBOX growth at +628 s with the mail
+pre-delivered). Revision 2's `settle`(60 s)+`quiet`(3 min) floor would therefore declare quiet at
+~4 min, quit before the download, and record `ok-noactivity` every run — a silent miss, the worst
+outcome for a backup. The fix: **quiet is not declared until at least one real change has been
+observed since `up`**, and `max` is sized above the worst-case first poll plus `quiet`. **(b) id
+reassignment** — `MA-549` was taken by the Microsoft-365-setup work after revision 2, so the
+pre-sync's `MA-549` row moves to **MA-580**; `MA-550..MA-579`, `R30..R32`, `S53..S58` and `X16` are
+re-checked free and unchanged (PC19). **(c)** change (a) is a **material change to a reviewed
+section and owes its affected-lens re-review** (correctness + the false-quiet failure lens) before
+TP3 ships — it is written up here, not self-certified. The owner chose this wait-for-quiet path
+("Option A") over shortening Thunderbird's check interval, accepting the ~10-min wait for an
+unattended run.
 **Revision:** 2 (2026-10-13), with the conditions PC1..PC22 of the pre-code review folded.
 **BUILD STATUS:** reviewed, conditions folded (macOS v1 scope only: slices TP0..TP5). Not built,
 not lab-validated. The 10-lens pre-code review is filed as
@@ -455,10 +472,23 @@ marked truncated, and the session records the note `presync_watch_truncated` (qu
 judged on the part walked). Renames, new files and deletions change the digest, as do mtime-only
 changes.
 
-The quiet clock: `lastChange` starts at `up + settle` (`up` is the moment Thunderbird was proven
-running), so quiet can never be declared earlier than `settle + quiet` after it started, which
-stops a Thunderbird that has not yet connected from being called quiet. The session is quiet
-when `now - lastChange >= quiet`.
+The quiet clock (**amended, revision 3 — L-M5**): `lastChange` starts at `up + settle` (`up` is the
+moment Thunderbird was proven running). Quiet requires **two** conditions, not one: at least one
+real change must have been observed in the watched mail folders since `up`, **and**
+`now - lastChange >= quiet`. The first condition is the revision-3 correction: the macOS lab
+(2026-10-21) measured that with mail already waiting on the server before launch, the offline
+download did not reach the mail files until +628 s (~10.5 min), because Thunderbird's startup login
+refreshes the list but defers the body/attachment write to its next periodic IMAP check
+(`check_time`, default ~10 min). A one-condition clock (`settle + quiet` with no observed change)
+would declare quiet at ~4 min, during that opening silence, and quit before anything arrived. So a
+session in which nothing has yet changed keeps waiting to `max`; it never concludes `ok` or
+`ok-noactivity` at `settle + quiet`, and `ok-noactivity` is reached only at `max` with no change
+seen. Equivalently `settle` is a floor that must not by itself end the session; requiring a first
+observed change is the form used, because it also serves the fast case (a prompt download ends the
+session as soon as it settles). `max` must clear the worst-case first poll plus `quiet`; revision
+2's fixed 20 min is tight against a ~10 min poll + 3 min quiet, so revision 3 raises the `max`
+ceiling (the exact value folded into §4.2.1/§4.11 when TP3 is built and the lab fixes the real
+worst case on a large, multi-message, attachment-heavy mailbox).
 
 Suspend: if the wall-clock gap between two polls exceeds 30 s (the machine slept, or a
 laptop's lid closed), `lastChange` is reset to `now` and a counter is kept. The clock used is the
@@ -467,12 +497,17 @@ macOS does not advance during sleep (lab item L-C3).
 
 | Error | Cause | Consequence |
 |---|---|---|
-| False "quiet" | Thunderbird was waiting on a network, a server or a modal dialog (Primary Password, an OAuth sign-in, "Thunderbird crashed", "a newer version created this profile", "set as default") so nothing changed; or one very large message streams slowly with no write for longer than `quiet` | the session ends early and the archive runs on what is there. If no file ever changed, the outcome is `ok-noactivity` (§4.9.3), a note, which becomes a warning after 7 in a row (Q10): "Thunderbird started but nothing changed in <quiet>: nothing new, or it could not reach the server" |
+| False "quiet" | Thunderbird was waiting on a network, a server or a modal dialog (Primary Password, an OAuth sign-in, "Thunderbird crashed", "a newer version created this profile", "set as default") so nothing changed; or one very large message streams slowly with no write for longer than `quiet` | **Revision 3 (L-M5):** the opening silence no longer ends the session early — quiet needs an observed change first, and the ~10-min first-poll latency is exactly that silence, so a session with no change waits to `max` and only then records `ok-noactivity` (§4.9.3, a note; the escalation to a warning after 7 in a row is deferred, not v1): "Thunderbird started but nothing changed before the max wait: nothing new, or it could not reach the server". A mid-fetch stall longer than `quiet` *after* real activity still ends with what has arrived. |
 | False "not quiet" | Thunderbird touches a watched file periodically for its own reasons (a summary-file rewrite on a timer), or a first sync of a very large mailbox that takes hours | the session stops at max wait with `presync_not_quiet` (a warning that says the archive used what had arrived and that the rest continues next run) |
 
 Whether file silence tracks the end of an IMAP fetch (do offline stores grow as messages
-arrive, are `.msf` files updated per folder) is **lab item L-M5**. If it does not, `quiet` is
-only a time-based heuristic and §12 says so.
+arrive, are `.msf` files updated per folder) was **lab item L-M5**, now **answered on macOS
+(2026-10-21)**: the offline store (the INBOX mbox) does grow as bodies arrive and the `.msf`
+summary is rewritten, so file growth is a sound "it is fetching" signal — but the *start* of the
+fetch lags launch by Thunderbird's periodic-check interval (~10 min at the default), so silence
+early in a session does **not** mean "done". `quiet` is therefore a time-based heuristic, guarded by
+the revision-3 "an observed change is required" rule above; §12 carries the residual (the Windows
+and Linux lab items L-W*/L-L* remain, to confirm the same file-growth behaviour on those platforms).
 
 #### 4.4.3 Is a running Thunderbird "ours"
 
