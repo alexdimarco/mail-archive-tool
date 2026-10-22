@@ -29,4 +29,26 @@ type env interface {
 	// procExe resolves a live pid's executable path, to tell a stale lock whose
 	// pid was reused by a non-Thunderbird process.
 	procExe(pid int) (exe string, ok bool)
+
+	// sleep waits for d. The real seam blocks; the fake advances its clock, so
+	// the state machine's polling loops are deterministic in tests.
+	sleep(d time.Duration)
+	// bootTime is the machine's boot time in unix seconds (a reboot clears the
+	// record, design 4.6). procExe/thunderbirdProcs and this never read mail.
+	bootTime() int64
+	// idleSeconds is how long the owner has been away from keyboard and mouse,
+	// and whether it could be read (design 4.4.3 S4; unreadable counts as active).
+	idleSeconds() (seconds float64, ok bool)
+	// startHidden launches the application out of sight on the profile (S5). The
+	// real seam execs the platform launcher; it never blocks on the GUI.
+	startHidden(app, profile string) error
+	// quit asks the running Thunderbird to quit through its own quit request (S8).
+	// It never signals or kills.
+	quit() error
+	// digest folds the watch set into one value without opening a file (S7); the
+	// real seam calls digestWatch.
+	digest(roots []string) (sum uint64, truncated bool)
+	// acquireLock takes the per-profile session lock (S2); released at END.
+	acquireLock(path string) (ok bool, err error)
+	releaseLock(path string)
 }
