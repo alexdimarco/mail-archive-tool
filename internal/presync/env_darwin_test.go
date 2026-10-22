@@ -387,3 +387,28 @@ func TestMacQuitClassify(t *testing.T) {
 		t.Errorf("osascript called %d times, want exactly 1", calls)
 	}
 }
+
+// covers: MA-579
+// idleSeconds reads HIDIdleTime (nanoseconds) from ioreg into seconds; output
+// without it, and an ioreg error, are both unreadable (ok=false, which S4/S8
+// count as the owner being active).
+func TestMacIdleSeconds(t *testing.T) {
+	e := newMacEnv("/Applications/Thunderbird.app")
+
+	e.run = func(cmd *exec.Cmd) (string, string, error) {
+		return "+-o IOHIDSystem  <class IOHIDSystem>\n    {\n      \"HIDIdleTime\" = 5000000000\n      \"HIDPointerAccelerationType\" = 0\n    }\n", "", nil
+	}
+	if s, ok := e.idleSeconds(); !ok || s != 5.0 {
+		t.Errorf("idleSeconds = (%v, %v), want (5, true)", s, ok)
+	}
+
+	e.run = func(cmd *exec.Cmd) (string, string, error) { return "no idle field here\n", "", nil }
+	if s, ok := e.idleSeconds(); ok {
+		t.Errorf("idleSeconds without HIDIdleTime = (%v, %v), want ok=false", s, ok)
+	}
+
+	e.run = func(cmd *exec.Cmd) (string, string, error) { return "", "", fmt.Errorf("ioreg failed") }
+	if _, ok := e.idleSeconds(); ok {
+		t.Error("idleSeconds on an ioreg error returned ok=true")
+	}
+}

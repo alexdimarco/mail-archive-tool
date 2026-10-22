@@ -139,10 +139,22 @@ func runSession(d deps) sessionResult {
 		e.sleep(d.pollEvery)
 	}
 
-	// S8 quit — re-verify ownership immediately before the request; one request.
+	// S8 quit — BOTH re-checks immediately before the request (owner ruling Q2):
+	// (1) re-verify ownership, so we never quit a process not provably ours; and
+	// (2) re-check owner activity, because a Thunderbird we started hidden is
+	// still reachable from the Dock, so if the owner has since opened it, it is
+	// theirs now. Then one quit request.
 	enter("S8")
 	if m, ok := findOurs(e.thunderbirdProcs(), lc); !ok || m.pid != child.pid {
 		res.outcome = OutcomeIdentityUnavailable // nothing provably ours now
+		return res
+	}
+	if s, ok := e.idleSeconds(); !ok || s < d.idleAway.Seconds() {
+		// The owner is back at the computer (or the reading is unreadable, which
+		// counts as active): leave the Thunderbird we started, announce it, and
+		// never quit it on them.
+		store(stateLeftRunning)
+		res.outcome = OutcomeOwnerActive
 		return res
 	}
 	store(stateQuitting)

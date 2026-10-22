@@ -17,25 +17,27 @@ type fakeEnv struct {
 	exeOf  map[int]string
 
 	// session config + timeline (state-machine test)
-	sm         bool
-	realDigest bool // when set, digest() does a real digestWatch over the roots
-	boot       int64
-	idle      float64
-	idleOK    bool
-	lockOK    bool
-	started   bool
-	startErr  error // when set, startHidden returns it and records no launch
-	startedAt time.Time
-	quitted   bool
-	quitErr   error // when set, quit() returns it (the request was made but did not take)
-	quitAt    time.Time
-	child     proc
-	appearIn  time.Duration // child appears this long after startHidden
-	exitIn    time.Duration // child exits this long after quit
-	changeAt  time.Time     // the watch digest changes at/after this time
-	dgBase    uint64
-	dgChanged uint64
-	sleeps    int
+	sm            bool
+	realDigest    bool // when set, digest() does a real digestWatch over the roots
+	boot          int64
+	idle          float64
+	idleOK        bool
+	idleReturnsAt time.Time // when set, idle drops to idleReturned at/after this time
+	idleReturned  float64
+	lockOK        bool
+	started       bool
+	startErr      error // when set, startHidden returns it and records no launch
+	startedAt     time.Time
+	quitted       bool
+	quitErr       error // when set, quit() returns it (the request was made but did not take)
+	quitAt        time.Time
+	child         proc
+	appearIn      time.Duration // child appears this long after startHidden
+	exitIn        time.Duration // child exits this long after quit
+	changeAt      time.Time     // the watch digest changes at/after this time
+	dgBase        uint64
+	dgChanged     uint64
+	sleeps        int
 }
 
 var _ env = (*fakeEnv)(nil)
@@ -87,7 +89,13 @@ func (f *fakeEnv) pidAlive(pid int) bool {
 
 func (f *fakeEnv) procExe(pid int) (string, bool) { e, ok := f.exeOf[pid]; return e, ok }
 func (f *fakeEnv) bootTime() int64                { return f.boot }
-func (f *fakeEnv) idleSeconds() (float64, bool)   { return f.idle, f.idleOK }
+
+func (f *fakeEnv) idleSeconds() (float64, bool) {
+	if !f.idleReturnsAt.IsZero() && !f.nowT.Before(f.idleReturnsAt) {
+		return f.idleReturned, f.idleOK // the owner came back
+	}
+	return f.idle, f.idleOK
+}
 
 func (f *fakeEnv) startHidden(app, profile string) error {
 	if f.startErr != nil {

@@ -202,6 +202,92 @@ func TestPresyncQuitNotPermitted(t *testing.T) {
 	}
 }
 
+// covers: MA-579
+// The S8 owner-activity re-check (owner ruling Q2): a Thunderbird we started
+// hidden that the owner has since opened (idle drops below the threshold by the
+// time S8 runs) is theirs now — it is left open, the record is stored
+// left-running with identity, the outcome is presync_owner_active, and NO quit
+// is requested.
+func TestPresyncOwnerActiveAtS8(t *testing.T) {
+	base := time.Date(2026, 10, 22, 2, 0, 0, 0, time.UTC)
+	const app = "/Applications/Thunderbird.app/Contents/MacOS/thunderbird"
+	const profile = "/Users/x/profile.default"
+	statePath := filepath.Join(t.TempDir(), "s.json")
+
+	f := newFakeEnv()
+	f.sm = true
+	f.boot = 1000
+	f.idle, f.idleOK = 300, true              // owner away at S4
+	f.idleReturnsAt = base.Add(40 * time.Second) // owner back before S8 (~base+54s)
+	f.idleReturned = 10                       // active
+	f.lockOK = true
+	f.appearIn, f.exitIn = 4*time.Second, 2*time.Second
+	f.changeAt = base.Add(24 * time.Second)
+	f.dgBase, f.dgChanged = 1, 2
+	f.nowT = base
+	f.child = proc{pid: 200, exe: app, start: base.Add(1 * time.Second), args: "thunderbird -profile " + profile}
+
+	d := deps{
+		env:       f,
+		cfg:       quietConfig{settle: 10 * time.Second, quiet: 30 * time.Second, maxWait: 600 * time.Second},
+		app:       app,
+		profile:   profile,
+		watch:     []string{"/w"},
+		statePath: statePath,
+		lockPath:  "/l",
+		base:      record{Version: recordVersion, Profile: profile, App: app, ToolPID: 1, ToolStart: 1},
+		awaitPoll: 2 * time.Second,
+		awaitUp:   90 * time.Second,
+		pollEvery: 10 * time.Second,
+		quitGrace: 120 * time.Second,
+		idleAway:  120 * time.Second,
+	}
+
+	res := runSession(d)
+	if res.outcome != OutcomeOwnerActive {
+		t.Errorf("outcome = %q, want owner-active", res.outcome.Name)
+	}
+	if f.quitted {
+		t.Error("a quit was requested even though the owner was active at S8")
+	}
+	rec, present, err := loadRecord(statePath)
+	if err != nil || !present {
+		t.Fatalf("record missing after owner-active: present=%v err=%v", present, err)
+	}
+	if rec.State != stateLeftRunning || rec.ChildPID != 200 {
+		t.Errorf("record = {state:%q childpid:%d}, want {left-running, 200}", rec.State, rec.ChildPID)
+	}
+}
+
+// covers: MA-579
+// An unreadable idle reading at S4 counts as the owner being active: the session
+// ends owner-active-skipped and nothing is started — an unparseable reading must
+// never be treated as idle.
+func TestPresyncUnreadableIdleSkips(t *testing.T) {
+	f := newFakeEnv()
+	f.sm = true
+	f.boot = 1000
+	f.lockOK = true
+	f.idle, f.idleOK = 999, false // unreadable: value ignored, ok=false
+	f.nowT = time.Date(2026, 10, 22, 2, 0, 0, 0, time.UTC)
+
+	d := deps{
+		env: f, app: "/a/thunderbird", profile: "/p", watch: []string{"/w"},
+		statePath: filepath.Join(t.TempDir(), "s.json"), lockPath: "/l",
+		base:      record{Version: recordVersion},
+		cfg:       quietConfig{settle: time.Second, quiet: time.Second, maxWait: time.Minute},
+		awaitPoll: time.Second, awaitUp: time.Minute, pollEvery: time.Second, quitGrace: time.Minute, idleAway: 120 * time.Second,
+	}
+
+	res := runSession(d)
+	if res.outcome != OutcomeOwnerActiveSkipped {
+		t.Errorf("outcome = %q, want owner-active-skipped", res.outcome.Name)
+	}
+	if f.started {
+		t.Error("Thunderbird was started despite an unreadable idle reading")
+	}
+}
+
 func eqStrings(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

@@ -148,6 +148,23 @@ func parseBootTimeSec(out string) (int64, bool) {
 	return v, true
 }
 
+// idleNanosRe extracts the HIDIdleTime (nanoseconds since the last keyboard or
+// mouse input) from `ioreg -c IOHIDSystem -d 4`; the first entry is the system
+// idle time. An output without it is unparseable, which S4/S8 count as active.
+var idleNanosRe = regexp.MustCompile(`"HIDIdleTime"\s*=\s*(\d+)`)
+
+func parseIdleSeconds(out string) (float64, bool) {
+	m := idleNanosRe.FindStringSubmatch(out)
+	if m == nil {
+		return 0, false
+	}
+	ns, err := strconv.ParseInt(m[1], 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return float64(ns) / 1e9, true
+}
+
 // parsePgrepPIDs reads the newline-separated pids pgrep prints.
 func parsePgrepPIDs(out string) []int {
 	var pids []int
@@ -259,6 +276,9 @@ type macEnv struct {
 func newMacEnv(bundle string) *macEnv {
 	return &macEnv{uid: os.Getuid(), bundle: bundle, run: realRun, clock: time.Now}
 }
+
+// macEnv is the real macOS realization of the env seam.
+var _ env = (*macEnv)(nil)
 
 func (e *macEnv) now() time.Time        { return e.clock() }
 func (e *macEnv) sleep(d time.Duration) { time.Sleep(d) }
@@ -411,6 +431,20 @@ func classifyQuitErr(err error, stderr string) error {
 		return nil
 	}
 	return errQuitNotPermitted
+}
+
+// idleSeconds is how long the owner has been away from keyboard and mouse, and
+// whether it could be read (design §4.4.3 / §4.7.1). An unreadable reading
+// (ioreg failed, or no HIDIdleTime in the output) is (0, false); S4 and S8 count
+// that as the owner being active, so an unreadable idle never starts or quits.
+func (e *macEnv) idleSeconds() (float64, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
+	defer cancel()
+	out, _, err := e.run(ioregIdleCmd(ctx))
+	if err != nil {
+		return 0, false
+	}
+	return parseIdleSeconds(out)
 }
 
 // startHidden launches Thunderbird out of sight on the profile (design §4.7.1,
