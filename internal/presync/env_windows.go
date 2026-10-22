@@ -47,17 +47,27 @@ type win32 interface {
 	elevated() bool                    // OpenProcessToken + TokenElevation
 }
 
-// winEnv is the real Windows env (design §2). It holds the current uid-equivalent
-// is implicit (the session's user); the win32 seam, the clock, and the per-profile
-// session lock are its state.
+// winEnv is the real Windows env (design §2). The uid-equivalent is implicit (the
+// session's user); the win32 seam, the clock, the per-profile session lock, and
+// two resolution seams (the candidate thunderbird.exe paths and the %APPDATA%
+// base for profiles.ini) are its state. The resolution seams exist so S1 is
+// unit-testable without a real install or real known folders (the analogue of
+// macEnv's homeDir seam).
 type winEnv struct {
-	w     win32
-	clock func() time.Time
-	lock  *lockfile.Lock
+	w        win32
+	clock    func() time.Time
+	lock     *lockfile.Lock
+	appCands func() []string       // candidate thunderbird.exe paths; real = known folders
+	roaming  func() (string, bool) // %APPDATA% base for profiles.ini; real = FOLDERID_RoamingAppData
 }
 
 func newWinEnv() *winEnv {
-	return &winEnv{w: realWin32{}, clock: time.Now}
+	return &winEnv{
+		w:        realWin32{},
+		clock:    time.Now,
+		appCands: realAppCandidates,
+		roaming:  realRoamingAppData,
+	}
 }
 
 func (e *winEnv) now() time.Time                       { return e.clock() }

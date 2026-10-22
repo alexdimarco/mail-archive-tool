@@ -16,11 +16,9 @@ import (
 // to RECORD without starting a session and without running Thunderbird — the
 // archive, as ever, still runs. It takes no setting or path from the archive.
 
-const (
-	thunderbirdBundleID = "org.mozilla.thunderbird"
-	// profilesINIMaxBytes bounds the untrusted profiles.ini read (design §4.3).
-	profilesINIMaxBytes = 256 * 1024
-)
+// thunderbirdBundleID is the CFBundleIdentifier the macOS app resolution
+// requires (parseProfilesINI and its cap live in the shared resolve.go).
+const thunderbirdBundleID = "org.mozilla.thunderbird"
 
 // macPlan is what S1 resolution produced: the validated .app bundle (for the
 // launcher), its inner executable (matched against `ps -o comm=`), and the
@@ -154,81 +152,6 @@ func (e *macEnv) listedProfiles() []string {
 		return nil
 	}
 	return parseProfilesINI(data, appSupport)
-}
-
-// parseProfilesINI returns the canonical profile paths Thunderbird lists: each
-// section's Path= (resolved against appSupport when IsRelative=1) and each
-// Install* section's Default= (always relative). It is read capped and as
-// untrusted text — values are control-stripped and used only to compare with a
-// derived profile, never as a path to open or execute (PC3).
-func parseProfilesINI(data []byte, appSupport string) []string {
-	if len(data) > profilesINIMaxBytes {
-		data = data[:profilesINIMaxBytes]
-	}
-	var profiles []string
-	add := func(p string, rel bool) {
-		if p == "" {
-			return
-		}
-		if rel {
-			p = filepath.Join(appSupport, filepath.FromSlash(p))
-		}
-		if cp, err := filepath.EvalSymlinks(p); err == nil {
-			profiles = append(profiles, cp)
-		} else {
-			profiles = append(profiles, filepath.Clean(p))
-		}
-	}
-
-	var curPath string
-	var curRel, inSection bool
-	flush := func() {
-		if inSection {
-			add(curPath, curRel)
-		}
-		curPath, curRel = "", false
-	}
-	for _, raw := range strings.Split(string(data), "\n") {
-		line := strings.TrimSpace(stripControl(raw))
-		if strings.HasPrefix(line, "[") {
-			flush()
-			inSection = true
-			continue
-		}
-		if !inSection {
-			continue
-		}
-		k, v, ok := strings.Cut(line, "=")
-		if !ok {
-			continue
-		}
-		k, v = strings.TrimSpace(k), strings.TrimSpace(v)
-		switch k {
-		case "Path":
-			curPath = v
-		case "IsRelative":
-			curRel = v == "1"
-		case "Default":
-			// An Install* section's Default is a relative path to a profile; a
-			// Profile section's Default=0/1 is a flag, not a path.
-			if v != "" && v != "0" && v != "1" {
-				add(v, true)
-			}
-		}
-	}
-	flush()
-	return profiles
-}
-
-// stripControl removes ASCII and C1 control characters, so untrusted
-// profiles.ini bytes cannot forge a path or a log line.
-func stripControl(s string) string {
-	return strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) {
-			return -1
-		}
-		return r
-	}, s)
 }
 
 // statUIDDarwin reads a file's owning uid from the Unix stat.
