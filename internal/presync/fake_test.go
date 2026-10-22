@@ -17,8 +17,9 @@ type fakeEnv struct {
 	exeOf  map[int]string
 
 	// session config + timeline (state-machine test)
-	sm        bool
-	boot      int64
+	sm         bool
+	realDigest bool // when set, digest() does a real digestWatch over the roots
+	boot       int64
 	idle      float64
 	idleOK    bool
 	lockOK    bool
@@ -97,6 +98,9 @@ func (f *fakeEnv) quit() error {
 }
 
 func (f *fakeEnv) digest(roots []string) (uint64, bool) {
+	if f.realDigest {
+		return digestWatch(roots)
+	}
 	if !f.sm {
 		return 0, false
 	}
