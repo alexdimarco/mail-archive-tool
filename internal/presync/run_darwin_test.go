@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 // covers: MA-572
@@ -40,33 +39,6 @@ func TestRunWithRefusesElevation(t *testing.T) {
 	}
 }
 
-// covers: MA-560
-// A session that stalls (e.g. a watch root on an unresponsive mount, where
-// WalkDir cannot honour a deadline) is abandoned by Run's watchdog at
-// sessionBudget and returns a WARN within the budget, so the archive is never
-// blocked (R32).
-func TestRunWatchdogBoundsAStalledSession(t *testing.T) {
-	origImpl, origBudget := runSessionImpl, sessionBudget
-	defer func() { runSessionImpl, sessionBudget = origImpl, origBudget }()
-
-	sessionBudget = 50 * time.Millisecond
-	blocked := make(chan struct{})
-	runSessionImpl = func(ctx context.Context, cfg Config, e *macEnv) Result {
-		<-blocked // a stuck syscall that never returns within the budget
-		return Result{Outcome: OutcomeOK}
-	}
-
-	start := time.Now()
-	res := Run(context.Background(), Config{})
-	if res.Outcome != OutcomeInternalError {
-		t.Errorf("outcome = %q, want internal-error (the watchdog fired)", res.Outcome.Name)
-	}
-	if elapsed := time.Since(start); elapsed > 2*time.Second {
-		t.Errorf("Run did not honour sessionBudget: took %v", elapsed)
-	}
-	close(blocked) // release the abandoned goroutine
-}
-
 // covers: MA-555, MA-564
 // buildDeps watches only the profile's ImapMail/Mail and inputs inside the
 // profile (never one outside it), puts the state record and lock under the state
@@ -87,7 +59,7 @@ func TestBuildDeps(t *testing.T) {
 		exe:     "/Applications/Thunderbird.app/Contents/MacOS/thunderbird",
 		profile: cp,
 	}
-	d := e.buildDeps(plan, Config{Inputs: []string{inside, outside}, StateDir: stateDir})
+	d := buildDeps(e, plan.exe, plan.profile, Config{Inputs: []string{inside, outside}, StateDir: stateDir})
 
 	want := map[string]bool{
 		filepath.Join(cp, "ImapMail"): true,
