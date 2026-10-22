@@ -1,6 +1,7 @@
 package presync
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -46,7 +47,7 @@ func TestPresyncStateMachineHappyPath(t *testing.T) {
 		idleAway:  120 * time.Second,
 	}
 
-	res := runSession(d)
+	res := runSession(context.Background(), d)
 
 	if want := []string{"S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9"}; !eqStrings(res.states, want) {
 		t.Errorf("state sequence = %v, want %v", res.states, want)
@@ -84,7 +85,7 @@ func TestPresyncStateMachineGatesStopBeforeLaunch(t *testing.T) {
 		f := newFakeEnv()
 		f.lockOK = true
 		f.idle, f.idleOK = 30, true // under the 2-minute threshold
-		if res := runSession(mk(f)); res.outcome != OutcomeOwnerActiveSkipped || f.started {
+		if res := runSession(context.Background(), mk(f)); res.outcome != OutcomeOwnerActiveSkipped || f.started {
 			t.Errorf("want owner-active-skipped and no launch; got %q started=%v", res.outcome.Name, f.started)
 		}
 	})
@@ -94,14 +95,14 @@ func TestPresyncStateMachineGatesStopBeforeLaunch(t *testing.T) {
 		f.lockOK = true
 		f.idle, f.idleOK = 300, true
 		f.procs = []proc{{pid: 9, exe: "/x/thunderbird"}}
-		if res := runSession(mk(f)); res.outcome != OutcomeAlreadyRunning || f.started || f.quitted {
+		if res := runSession(context.Background(), mk(f)); res.outcome != OutcomeAlreadyRunning || f.started || f.quitted {
 			t.Errorf("want already-running, no launch/quit; got %q started=%v quitted=%v", res.outcome.Name, f.started, f.quitted)
 		}
 	})
 
 	t.Run("profile lock busy -> profile-busy", func(t *testing.T) {
 		f := newFakeEnv() // lockOK defaults false
-		if res := runSession(mk(f)); res.outcome != OutcomeProfileBusy || f.started {
+		if res := runSession(context.Background(), mk(f)); res.outcome != OutcomeProfileBusy || f.started {
 			t.Errorf("want profile-busy and no launch; got %q", res.outcome.Name)
 		}
 	})
@@ -129,7 +130,7 @@ func TestPresyncNoDesktopSession(t *testing.T) {
 		awaitPoll: time.Second, awaitUp: time.Minute, pollEvery: time.Second, quitGrace: time.Minute, idleAway: 120 * time.Second,
 	}
 
-	res := runSession(d)
+	res := runSession(context.Background(), d)
 	if res.outcome != OutcomeNoDesktopSession {
 		t.Errorf("outcome = %q, want no-desktop-session", res.outcome.Name)
 	}
@@ -180,7 +181,7 @@ func TestPresyncQuitNotPermitted(t *testing.T) {
 		idleAway:  120 * time.Second,
 	}
 
-	res := runSession(d)
+	res := runSession(context.Background(), d)
 	if res.outcome != OutcomeQuitNotPermitted {
 		t.Errorf("outcome = %q, want quit-not-permitted", res.outcome.Name)
 	}
@@ -217,9 +218,9 @@ func TestPresyncOwnerActiveAtS8(t *testing.T) {
 	f := newFakeEnv()
 	f.sm = true
 	f.boot = 1000
-	f.idle, f.idleOK = 300, true              // owner away at S4
+	f.idle, f.idleOK = 300, true                 // owner away at S4
 	f.idleReturnsAt = base.Add(40 * time.Second) // owner back before S8 (~base+54s)
-	f.idleReturned = 10                       // active
+	f.idleReturned = 10                          // active
 	f.lockOK = true
 	f.appearIn, f.exitIn = 4*time.Second, 2*time.Second
 	f.changeAt = base.Add(24 * time.Second)
@@ -243,7 +244,7 @@ func TestPresyncOwnerActiveAtS8(t *testing.T) {
 		idleAway:  120 * time.Second,
 	}
 
-	res := runSession(d)
+	res := runSession(context.Background(), d)
 	if res.outcome != OutcomeOwnerActive {
 		t.Errorf("outcome = %q, want owner-active", res.outcome.Name)
 	}
@@ -279,12 +280,55 @@ func TestPresyncUnreadableIdleSkips(t *testing.T) {
 		awaitPoll: time.Second, awaitUp: time.Minute, pollEvery: time.Second, quitGrace: time.Minute, idleAway: 120 * time.Second,
 	}
 
-	res := runSession(d)
+	res := runSession(context.Background(), d)
 	if res.outcome != OutcomeOwnerActiveSkipped {
 		t.Errorf("outcome = %q, want owner-active-skipped", res.outcome.Name)
 	}
 	if f.started {
 		t.Error("Thunderbird was started despite an unreadable idle reading")
+	}
+}
+
+// covers: MA-560
+// A cancelled run context ends the session promptly and never hangs the archive:
+// cancelled while our Thunderbird is up (in S7), the session stores left-running
+// with identity (announced next run) and ends cancelled, forcing no quit.
+func TestPresyncCancelledInS7(t *testing.T) {
+	base := time.Date(2026, 10, 22, 2, 0, 0, 0, time.UTC)
+	const app = "/Applications/Thunderbird.app/Contents/MacOS/thunderbird"
+	const profile = "/Users/x/profile.default"
+	statePath := filepath.Join(t.TempDir(), "s.json")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	f := newFakeEnv()
+	f.sm = true
+	f.boot = 1000
+	f.idle, f.idleOK = 300, true
+	f.lockOK = true
+	f.appearIn, f.exitIn = 0, 2*time.Second // our child is present immediately
+	f.changeAt = base.Add(1 * time.Hour)    // never goes quiet on its own
+	f.dgBase, f.dgChanged = 1, 2
+	f.nowT = base
+	f.child = proc{pid: 200, exe: app, start: base.Add(1 * time.Second), args: "thunderbird -profile " + profile}
+	f.digestHook = cancel // the first S7 digest cancels the run
+
+	d := deps{
+		env: f, cfg: quietConfig{settle: 10 * time.Second, quiet: 30 * time.Second, maxWait: 600 * time.Second},
+		app: app, profile: profile, watch: []string{"/w"}, statePath: statePath, lockPath: "/l",
+		base:      record{Version: recordVersion, Profile: profile, App: app, ToolPID: 1, ToolStart: 1},
+		awaitPoll: 2 * time.Second, awaitUp: 90 * time.Second, pollEvery: 10 * time.Second, quitGrace: 120 * time.Second, idleAway: 120 * time.Second,
+	}
+
+	res := runSession(ctx, d)
+	if res.outcome != OutcomeCancelled {
+		t.Errorf("outcome = %q, want cancelled", res.outcome.Name)
+	}
+	if f.quitted {
+		t.Error("a quit was forced on a cancelled session")
+	}
+	rec, present, err := loadRecord(statePath)
+	if err != nil || !present || rec.State != stateLeftRunning || rec.ChildPID != 200 {
+		t.Errorf("record = {present:%v state:%q pid:%d err:%v}, want left-running w/ pid 200", present, rec.State, rec.ChildPID, err)
 	}
 }
 

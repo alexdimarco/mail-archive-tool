@@ -1,6 +1,7 @@
 package presync
 
 import (
+	"context"
 	"fmt"
 	"hash/fnv"
 	"io/fs"
@@ -56,7 +57,7 @@ func TestPresyncNoWritesToThunderbird(t *testing.T) {
 		idleAway:  120 * time.Second,
 	}
 
-	runSession(d) // the outcome is beside the point; this asserts the tree is untouched
+	runSession(context.Background(), d) // the outcome is beside the point; this asserts the tree is untouched
 
 	if after := treeHash(t, profDir); after != before {
 		t.Errorf("the Thunderbird profile tree changed during a pre-sync session (R31: never edit a Thunderbird file)")

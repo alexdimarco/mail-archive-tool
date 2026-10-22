@@ -1,6 +1,7 @@
 package presync
 
 import (
+	"context"
 	"errors"
 	"os"
 	"time"
@@ -38,7 +39,7 @@ type sessionResult struct {
 // archive: every path ends in an Outcome the caller records, and the archive
 // reads afterwards. In v1 it never quits a process that is not provably ours,
 // and never signals or kills.
-func runSession(d deps) sessionResult {
+func runSession(ctx context.Context, d deps) sessionResult {
 	res := sessionResult{}
 	e := d.env
 	enter := func(s string) { res.states = append(res.states, s) }
@@ -107,6 +108,10 @@ func runSession(d deps) sessionResult {
 	lc := launchCtx{app: d.app, profile: d.profile, launchAt: launchAt, snapshot: snapshot}
 	var child proc
 	for {
+		if ctx.Err() != nil {
+			res.outcome = OutcomeCancelled // the launching record stays for recovery
+			return res
+		}
 		if m, ok := findOurs(e.thunderbirdProcs(), lc); ok {
 			child = m
 			break
@@ -125,6 +130,11 @@ func runSession(d deps) sessionResult {
 	enter("S7")
 	qt := newQuietTracker(up, d.cfg)
 	for {
+		if ctx.Err() != nil {
+			store(stateLeftRunning) // our Thunderbird is up; leave it, announce it
+			res.outcome = OutcomeCancelled
+			return res
+		}
 		sum, _ := e.digest(d.watch)
 		now := e.now()
 		qt.observe(sum, now)
@@ -168,6 +178,11 @@ func runSession(d deps) sessionResult {
 	}
 	quitAt := e.now()
 	for e.pidAlive(child.pid) {
+		if ctx.Err() != nil {
+			store(stateLeftRunning) // cancelled after the request; it may still close
+			res.outcome = OutcomeCancelled
+			return res
+		}
 		if e.now().Sub(quitAt) >= d.quitGrace {
 			store(stateLeftRunning) // left running with identity, announced next run
 			res.outcome = OutcomeQuitTimeout

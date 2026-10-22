@@ -3,11 +3,13 @@
 package presync
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // covers: MA-572
@@ -20,7 +22,7 @@ func TestRunWithRefusesElevation(t *testing.T) {
 	ran := false
 	e.run = func(*exec.Cmd) (string, string, error) { ran = true; return "", "", nil }
 
-	res := runWith(Config{Profile: "/p", ProfileNamed: true, StateDir: stateDir}, e)
+	res := runWith(context.Background(), Config{Profile: "/p", ProfileNamed: true, StateDir: stateDir}, e)
 	if res.Outcome != OutcomeRefusedElevated {
 		t.Errorf("outcome = %q, want refused-elevated", res.Outcome.Name)
 	}
@@ -30,6 +32,33 @@ func TestRunWithRefusesElevation(t *testing.T) {
 	if _, err := os.Stat(stateDir); !os.IsNotExist(err) {
 		t.Errorf("the state directory was created on a refusal: %v", err)
 	}
+}
+
+// covers: MA-560
+// A session that stalls (e.g. a watch root on an unresponsive mount, where
+// WalkDir cannot honour a deadline) is abandoned by Run's watchdog at
+// sessionBudget and returns a WARN within the budget, so the archive is never
+// blocked (R32).
+func TestRunWatchdogBoundsAStalledSession(t *testing.T) {
+	origImpl, origBudget := runSessionImpl, sessionBudget
+	defer func() { runSessionImpl, sessionBudget = origImpl, origBudget }()
+
+	sessionBudget = 50 * time.Millisecond
+	blocked := make(chan struct{})
+	runSessionImpl = func(ctx context.Context, cfg Config, e *macEnv) Result {
+		<-blocked // a stuck syscall that never returns within the budget
+		return Result{Outcome: OutcomeOK}
+	}
+
+	start := time.Now()
+	res := Run(context.Background(), Config{})
+	if res.Outcome != OutcomeInternalError {
+		t.Errorf("outcome = %q, want internal-error (the watchdog fired)", res.Outcome.Name)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Errorf("Run did not honour sessionBudget: took %v", elapsed)
+	}
+	close(blocked) // release the abandoned goroutine
 }
 
 // covers: MA-555, MA-564

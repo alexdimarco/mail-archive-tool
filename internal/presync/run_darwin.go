@@ -15,21 +15,45 @@ import (
 // newEnv builds the production macOS env; a test overrides it to inject fakes.
 var newEnv = func() *macEnv { return newMacEnv("") }
 
+// sessionBudget bounds the WHOLE pre-sync, a little beyond the §4.11 worst case
+// (await-up + max-wait + quit-grace + slack). filepath.WalkDir / os.ReadDir /
+// DirEntry.Info cannot honour a context, so a watch root on an unresponsive
+// mount would otherwise block forever; the watchdog in Run abandons such a
+// session at this bound so the archive still runs (R32). A var so a test shrinks it.
+var sessionBudget = defAwaitUp + defMaxWait + defQuitGrace + 30*time.Second
+
+// runSessionImpl is the session body the watchdog wraps; a test overrides it to
+// drive the watchdog without a real session.
+var runSessionImpl = runWith
+
 // Run performs one pre-sync on macOS (design §4): resolve and validate at S1,
-// then run the S1..S9 session. It NEVER fails the archive — every path ends in a
-// Result the caller records, and the archive reads afterwards (R32). ctx is part
-// of the stable signature; the session's own bounded deadlines govern v1.
+// then run the S1..S9 session, under a whole-session watchdog. It NEVER fails
+// and NEVER unboundedly blocks the archive — every path ends in a Result within
+// sessionBudget, and the archive reads afterwards (R32).
 func Run(ctx context.Context, cfg Config) Result {
-	return runWith(cfg, newEnv())
+	e := newEnv()
+	ch := make(chan Result, 1) // buffered: an abandoned goroutine can still send
+	go func() { ch <- runSessionImpl(ctx, cfg, e) }()
+	select {
+	case r := <-ch:
+		return r
+	case <-time.After(sessionBudget):
+		// A read-only syscall on an unresponsive watch root stalled past the whole
+		// session bound. Abandon the goroutine — it only reads and asks, so R31
+		// holds — and warn; the archive reads anyway (R32). The goroutine ends with
+		// the process (a one-shot CLI); a long-lived scheduler owes a stall-notice
+		// (TP4).
+		return Result{Outcome: OutcomeInternalError}
+	}
 }
 
-func runWith(cfg Config, e *macEnv) Result {
+func runWith(ctx context.Context, cfg Config, e *macEnv) Result {
 	plan, outcome, ok := e.resolve(cfg.Profile, cfg.ProfileNamed)
 	if !ok {
 		return Result{Outcome: outcome} // a refusal: nothing started, no record written
 	}
 	e.bundle = plan.bundle
-	return Result{Outcome: runSession(e.buildDeps(plan, cfg)).outcome}
+	return Result{Outcome: runSession(ctx, e.buildDeps(plan, cfg)).outcome}
 }
 
 // buildDeps assembles the session inputs from the plan and the config: the fixed

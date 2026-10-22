@@ -37,6 +37,7 @@ type fakeEnv struct {
 	changeAt      time.Time     // the watch digest changes at/after this time
 	dgBase        uint64
 	dgChanged     uint64
+	digestHook    func() // called at the start of each digest() (lets a test cancel mid-S7)
 	sleeps        int
 }
 
@@ -111,6 +112,9 @@ func (f *fakeEnv) quit() error {
 }
 
 func (f *fakeEnv) digest(roots []string) (uint64, bool) {
+	if f.digestHook != nil {
+		f.digestHook()
+	}
 	if f.realDigest {
 		return digestWatch(roots)
 	}
