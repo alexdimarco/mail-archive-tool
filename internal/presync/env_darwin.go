@@ -266,15 +266,26 @@ func parseMozLockPID(target string) int {
 // the clock; the per-profile session lock is held between acquireLock and
 // releaseLock. It never reads a setting, path or pid from the archive directory.
 type macEnv struct {
-	uid    int
-	bundle string // the resolved /Applications/Thunderbird.app, for startHidden
-	run    runCmd
-	clock  func() time.Time
-	lock   *lockfile.Lock
+	uid     int
+	bundle  string // the resolved /Applications/Thunderbird.app, for startHidden
+	run     runCmd
+	clock   func() time.Time
+	geteuid func() int                       // S1 elevation refusal (seam)
+	homeDir func() (string, error)           // app/profiles.ini locations (seam)
+	statUID func(os.FileInfo) (uint32, bool) // profile ownership check (seam)
+	lock    *lockfile.Lock
 }
 
 func newMacEnv(bundle string) *macEnv {
-	return &macEnv{uid: os.Getuid(), bundle: bundle, run: realRun, clock: time.Now}
+	return &macEnv{
+		uid:     os.Getuid(),
+		bundle:  bundle,
+		run:     realRun,
+		clock:   time.Now,
+		geteuid: os.Geteuid,
+		homeDir: os.UserHomeDir,
+		statUID: statUIDDarwin,
+	}
 }
 
 // macEnv is the real macOS realization of the env seam.
