@@ -90,6 +90,13 @@ func runSession(ctx context.Context, d deps) sessionResult {
 
 	// S5 launch — the write-ahead record is written BEFORE the start.
 	enter("S5")
+	if !e.recheckProfile(d.profile) {
+		// §5.2 TOCTOU guard: the profile's canonical path changed (or vanished)
+		// since S1 — refuse rather than launch on a swapped target. No record has
+		// been written yet, so there is nothing to clear.
+		res.outcome = OutcomeProfileUnusable
+		return res
+	}
 	launchAt := e.now()
 	cur.LaunchAt = launchAt.Unix()
 	store(stateLaunching)

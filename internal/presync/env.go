@@ -58,6 +58,11 @@ type env interface {
 	// idleSeconds is how long the owner has been away from keyboard and mouse,
 	// and whether it could be read (design 4.4.3 S4; unreadable counts as active).
 	idleSeconds() (seconds float64, ok bool)
+	// recheckProfile re-resolves the profile's canonical path immediately before
+	// the S5 launch (the §5.2 TOCTOU guard): false when it errors or no longer
+	// equals the canonical path validated at S1, so a profile swapped under us
+	// between resolution and launch is refused rather than started.
+	recheckProfile(canonical string) bool
 	// startHidden launches the application out of sight on the profile (S5). The
 	// real seam execs the platform launcher; it never blocks on the GUI.
 	startHidden(app, profile string) error

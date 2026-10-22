@@ -458,6 +458,17 @@ func (e *macEnv) idleSeconds() (float64, bool) {
 	return parseIdleSeconds(out)
 }
 
+// recheckProfile re-resolves the profile's canonical path immediately before the
+// launch (§5.2): a profile whose canonical form changed since S1 (a symlink
+// swapped to point elsewhere) is refused. The residual same-path real-directory
+// swap — a different real directory moved to the same path, canonical form
+// unchanged — cannot be closed with path-based launching and is accepted at this
+// severity; macOS `open` takes a path, not a descriptor.
+func (e *macEnv) recheckProfile(canonical string) bool {
+	c, err := filepath.EvalSymlinks(canonical)
+	return err == nil && c == canonical
+}
+
 // startHidden launches Thunderbird out of sight on the profile (design §4.7.1,
 // S5): `open -g -j` starts the resolved .app bundle behind every other window
 // and does not bring it forward. The `app` argument is the matched inner

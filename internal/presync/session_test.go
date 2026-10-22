@@ -379,6 +379,36 @@ func TestPresyncWatchTruncatedSurfaces(t *testing.T) {
 	}
 }
 
+// covers: MA-562
+// The S5 TOCTOU guard (§5.2): if the profile's canonical path changed between S1
+// and the launch, S5 refuses with profile-unusable and starts nothing — no
+// launch on a swapped target.
+func TestPresyncProfileRecheckAtS5(t *testing.T) {
+	f := newFakeEnv()
+	f.sm = true
+	f.boot = 1000
+	f.idle, f.idleOK = 300, true // owner away
+	f.lockOK = true
+	f.recheckFail = true // the profile's canonical path changed since S1
+	f.nowT = time.Date(2026, 10, 22, 2, 0, 0, 0, time.UTC)
+
+	d := deps{
+		env: f, app: "/a/thunderbird", profile: "/p", watch: []string{"/w"},
+		statePath: filepath.Join(t.TempDir(), "s.json"), lockPath: "/l",
+		base:      record{Version: recordVersion},
+		cfg:       quietConfig{settle: time.Second, quiet: time.Second, maxWait: time.Minute},
+		awaitPoll: time.Second, awaitUp: time.Minute, pollEvery: time.Second, quitGrace: time.Minute, idleAway: 120 * time.Second,
+	}
+
+	res := runSession(context.Background(), d)
+	if res.outcome != OutcomeProfileUnusable {
+		t.Errorf("outcome = %q, want profile-unusable", res.outcome.Name)
+	}
+	if f.started {
+		t.Error("Thunderbird was started despite the S5 profile re-check failing")
+	}
+}
+
 func eqStrings(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

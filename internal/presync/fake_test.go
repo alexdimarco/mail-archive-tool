@@ -26,6 +26,7 @@ type fakeEnv struct {
 	idleReturned    float64
 	lockOK          bool
 	started         bool
+	recheckFail     bool  // when set, recheckProfile returns false (S5 TOCTOU refusal)
 	startErr        error // when set, startHidden returns it and records no launch
 	startedAt       time.Time
 	quitted         bool
@@ -98,6 +99,8 @@ func (f *fakeEnv) idleSeconds() (float64, bool) {
 	}
 	return f.idle, f.idleOK
 }
+
+func (f *fakeEnv) recheckProfile(canonical string) bool { return !f.recheckFail }
 
 func (f *fakeEnv) startHidden(app, profile string) error {
 	if f.startErr != nil {
