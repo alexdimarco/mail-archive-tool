@@ -8,7 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"mail-archive-tool/internal/alert"
 	"mail-archive-tool/internal/assure"
+	"mail-archive-tool/internal/backupalert"
 	"mail-archive-tool/internal/lockfile"
 )
 
@@ -18,6 +20,10 @@ var testBin string
 // exit codes and stderr (a refusal is a subprocess contract, not a function
 // return).
 func TestMain(m *testing.M) {
+	// Never let an in-process test send a real backup-alert email through the
+	// machine's alert config: the scheduled-run paths (RunHeadless ->
+	// FireForRunDefault) go through this seam.
+	backupalert.SetSenderForTest(func(alert.Config, string, alert.Event) error { return nil })
 	// The pty tests re-run this test binary as a session leader that starts the
 	// CLI they build (link_pty_test.go); that child has no need to build it again.
 	if os.Getenv("MAILARCHIVE_TEST_LEADER") == "1" {
