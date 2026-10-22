@@ -34,3 +34,18 @@ func TestDescriptorPresyncRoundTrip(t *testing.T) {
 		t.Errorf("an older descriptor must carry no presync, got %+v", old.Presync)
 	}
 }
+
+// covers: MA-569
+// DescribeSpec derives the Presync descriptor from the baked job argv, so an
+// installed schedule's descriptor records that it syncs Thunderbird (for status
+// display and judgement only, P6); a schedule without the flag records none.
+func TestDescribeSpecDerivesPresync(t *testing.T) {
+	on := DescribeSpec(Spec{Name: "x", Args: []string{"-out", "/a", "-thunderbird-sync", "-thunderbird-profile", "/p"}})
+	if on.Presync == nil || on.Presync.Kind != "thunderbird" || on.Presync.Profile != "/p" {
+		t.Errorf("DescribeSpec did not derive the presync descriptor: %+v", on.Presync)
+	}
+	off := DescribeSpec(Spec{Name: "x", Args: []string{"-out", "/a"}})
+	if off.Presync != nil {
+		t.Errorf("a schedule without -thunderbird-sync must record no presync, got %+v", off.Presync)
+	}
+}

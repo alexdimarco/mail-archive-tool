@@ -70,7 +70,30 @@ func DescribeSpec(s Spec) Descriptor {
 		d.ExeSize, d.ExeMTime = fi.Size(), fi.ModTime().UTC()
 	}
 	d.Host, _ = os.Hostname()
+	d.Presync = presyncFromArgs(s.Args)
 	return d
+}
+
+// presyncFromArgs reads a schedule's Thunderbird pre-sync setting from the baked
+// job argv (design §4.2.3): -thunderbird-sync enables it and -thunderbird-profile
+// names the profile. It is for status display and judgement only — the run never
+// reads its setting from the descriptor (P6). Returns nil when the sync is off.
+func presyncFromArgs(args []string) *PresyncDesc {
+	on, profile := false, ""
+	for i, a := range args {
+		switch a {
+		case "-thunderbird-sync", "--thunderbird-sync":
+			on = true
+		case "-thunderbird-profile", "--thunderbird-profile":
+			if i+1 < len(args) {
+				profile = args[i+1]
+			}
+		}
+	}
+	if !on {
+		return nil
+	}
+	return &PresyncDesc{Kind: "thunderbird", Profile: profile}
 }
 
 // WriteDescriptor writes the descriptor into the archive directory atomically.
