@@ -112,6 +112,7 @@ func caffeinateCmd(ctx context.Context, pid int) *exec.Cmd {
 const (
 	probeTimeout  = 5 * time.Second
 	launchTimeout = 15 * time.Second
+	quitTimeout   = 20 * time.Second
 )
 
 // runCmd runs a built command to completion and returns its stdout and stderr.
@@ -382,6 +383,34 @@ func (e *macEnv) releaseLock(string) {
 		_ = e.lock.Release()
 		e.lock = nil
 	}
+}
+
+// quit asks Thunderbird to quit through its own quit request (design §4.7.1,
+// S8): one osascript call of the constant script, bounded by quitTimeout. It
+// never signals or kills Thunderbird — osascript delivers the app's own quit
+// request. The result is classified so the machine can tell consent-denied from
+// success.
+func (e *macEnv) quit() error {
+	ctx, cancel := context.WithTimeout(context.Background(), quitTimeout)
+	defer cancel()
+	_, stderr, err := e.run(quitCmd(ctx))
+	return classifyQuitErr(err, stderr)
+}
+
+// classifyQuitErr maps the osascript outcome (design §4.7.1): no error is
+// success (including the `is running` guard no-op); error code -600 means
+// Thunderbird was already gone (success); -1743 (not authorized), -1712 (Apple
+// event timed out) and our own deadline all mean the quit did not take, reported
+// as errQuitNotPermitted so the owner is pointed at the Automation grant and
+// Thunderbird is left running.
+func classifyQuitErr(err error, stderr string) error {
+	if err == nil {
+		return nil
+	}
+	if strings.Contains(stderr, "-600") {
+		return nil
+	}
+	return errQuitNotPermitted
 }
 
 // startHidden launches Thunderbird out of sight on the profile (design §4.7.1,

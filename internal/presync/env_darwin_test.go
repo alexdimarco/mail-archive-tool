@@ -348,3 +348,42 @@ func TestMacStartHidden(t *testing.T) {
 		t.Errorf("startHidden ran %v, want %v (the .app bundle, hidden)", gotArgs, want)
 	}
 }
+
+// covers: MA-570
+// The osascript quit result is classified correctly — success and -600 (already
+// gone) are nil; -1743, -1712 and our own deadline are errQuitNotPermitted — and
+// quit() makes exactly ONE osascript request.
+func TestMacQuitClassify(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		stderr string
+		err    error
+		want   error
+	}{
+		{"success", "", nil, nil},
+		{"gone -600", "execution error: ... (-600)", fmt.Errorf("exit status 1"), nil},
+		{"not-authorized -1743", "execution error: Not authorized to send Apple events (-1743)", fmt.Errorf("exit status 1"), errQuitNotPermitted},
+		{"apple-event-timeout -1712", "execution error: AppleEvent timed out (-1712)", fmt.Errorf("exit status 1"), errQuitNotPermitted},
+		{"our deadline", "", fmt.Errorf("signal: killed"), errQuitNotPermitted},
+	} {
+		if got := classifyQuitErr(c.err, c.stderr); !errors.Is(got, c.want) {
+			t.Errorf("%s: classifyQuitErr = %v, want %v", c.name, got, c.want)
+		}
+	}
+
+	calls := 0
+	e := newMacEnv("/Applications/Thunderbird.app")
+	e.run = func(cmd *exec.Cmd) (string, string, error) {
+		if cmd.Path != "/usr/bin/osascript" {
+			return "", "", fmt.Errorf("unexpected cmd %v", cmd.Args)
+		}
+		calls++
+		return "", "execution error: Not authorized to send Apple events (-1743)", fmt.Errorf("exit status 1")
+	}
+	if err := e.quit(); !errors.Is(err, errQuitNotPermitted) {
+		t.Errorf("quit() = %v, want errQuitNotPermitted", err)
+	}
+	if calls != 1 {
+		t.Errorf("osascript called %d times, want exactly 1", calls)
+	}
+}

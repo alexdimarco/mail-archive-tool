@@ -146,11 +146,19 @@ func runSession(d deps) sessionResult {
 		return res
 	}
 	store(stateQuitting)
-	_ = e.quit()
+	if err := e.quit(); errors.Is(err, errQuitNotPermitted) {
+		// Consent denied or the first-approval prompt unanswered: leave
+		// Thunderbird, record the leftover so every later run announces it
+		// (MA-558), never force it.
+		store(stateLeftRunning)
+		res.outcome = OutcomeQuitNotPermitted
+		return res
+	}
 	quitAt := e.now()
 	for e.pidAlive(child.pid) {
 		if e.now().Sub(quitAt) >= d.quitGrace {
-			res.outcome = OutcomeQuitTimeout // left running, announced next run
+			store(stateLeftRunning) // left running with identity, announced next run
+			res.outcome = OutcomeQuitTimeout
 			return res
 		}
 		e.sleep(d.awaitPoll)

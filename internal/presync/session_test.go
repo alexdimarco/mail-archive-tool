@@ -141,6 +141,67 @@ func TestPresyncNoDesktopSession(t *testing.T) {
 	}
 }
 
+// covers: MA-570
+// When Thunderbird will not quit (Automation consent denied -> quit returns
+// errQuitNotPermitted), S8 ends presync_quit_not_permitted: exactly one quit is
+// requested, Thunderbird is left running, and the record is stored left-running
+// WITH the child identity so every later run announces the leftover (MA-558).
+func TestPresyncQuitNotPermitted(t *testing.T) {
+	base := time.Date(2026, 10, 22, 2, 0, 0, 0, time.UTC)
+	const app = "/Applications/Thunderbird.app/Contents/MacOS/thunderbird"
+	const profile = "/Users/x/profile.default"
+	statePath := filepath.Join(t.TempDir(), "s.json")
+
+	f := newFakeEnv()
+	f.sm = true
+	f.boot = 1000
+	f.idle, f.idleOK = 300, true
+	f.lockOK = true
+	f.appearIn, f.exitIn = 4*time.Second, 2*time.Second
+	f.changeAt = base.Add(24 * time.Second)
+	f.dgBase, f.dgChanged = 1, 2
+	f.nowT = base
+	f.child = proc{pid: 200, exe: app, start: base.Add(1 * time.Second), args: "thunderbird -profile " + profile}
+	f.quitErr = errQuitNotPermitted
+
+	d := deps{
+		env:       f,
+		cfg:       quietConfig{settle: 10 * time.Second, quiet: 30 * time.Second, maxWait: 600 * time.Second},
+		app:       app,
+		profile:   profile,
+		watch:     []string{"/w"},
+		statePath: statePath,
+		lockPath:  "/l",
+		base:      record{Version: recordVersion, Profile: profile, App: app, ToolPID: 1, ToolStart: 1},
+		awaitPoll: 2 * time.Second,
+		awaitUp:   90 * time.Second,
+		pollEvery: 10 * time.Second,
+		quitGrace: 120 * time.Second,
+		idleAway:  120 * time.Second,
+	}
+
+	res := runSession(d)
+	if res.outcome != OutcomeQuitNotPermitted {
+		t.Errorf("outcome = %q, want quit-not-permitted", res.outcome.Name)
+	}
+	if !f.quitted {
+		t.Errorf("quit was never requested")
+	}
+	rec, present, err := loadRecord(statePath)
+	if err != nil || !present {
+		t.Fatalf("record missing after quit-not-permitted: present=%v err=%v", present, err)
+	}
+	if rec.State != stateLeftRunning {
+		t.Errorf("record state = %q, want left-running", rec.State)
+	}
+	if rec.ChildPID != 200 {
+		t.Errorf("record child pid = %d, want 200 (identity kept for announcement)", rec.ChildPID)
+	}
+	if n := len(res.records); n == 0 || res.records[n-1] != stateLeftRunning {
+		t.Errorf("record states = %v, want to end left-running", res.records)
+	}
+}
+
 func eqStrings(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

@@ -27,6 +27,7 @@ type fakeEnv struct {
 	startErr  error // when set, startHidden returns it and records no launch
 	startedAt time.Time
 	quitted   bool
+	quitErr   error // when set, quit() returns it (the request was made but did not take)
 	quitAt    time.Time
 	child     proc
 	appearIn  time.Duration // child appears this long after startHidden
@@ -98,7 +99,7 @@ func (f *fakeEnv) startHidden(app, profile string) error {
 
 func (f *fakeEnv) quit() error {
 	f.quitted, f.quitAt = true, f.nowT
-	return nil
+	return f.quitErr
 }
 
 func (f *fakeEnv) digest(roots []string) (uint64, bool) {

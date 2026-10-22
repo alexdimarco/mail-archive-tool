@@ -13,6 +13,14 @@ import (
 // without a build tag.
 var errNoDesktopSession = errors.New("no desktop session")
 
+// errQuitNotPermitted is returned by quit when the quit request did not take —
+// macOS Automation consent denied (osascript -1743), the Apple event timing out
+// (-1712) or our own deadline firing (design §4.7.1 / MA-570). The likely cause
+// is an unanswered first-approval prompt; the machine leaves Thunderbird running
+// and records a leftover rather than forcing it. Platform-neutral so the machine
+// classifies it without a build tag.
+var errQuitNotPermitted = errors.New("quit not permitted")
+
 // proc is a snapshot of one Thunderbird-relevant process (design sections 4.4.1,
 // 4.4.3): its pid, resolved executable path, start time (UTC) and command line
 // (which carries the -profile argument).
