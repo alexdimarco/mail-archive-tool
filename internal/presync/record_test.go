@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -36,7 +37,10 @@ func TestPresyncStateRecord(t *testing.T) {
 		if err != nil {
 			t.Fatalf("stat: %v", err)
 		}
-		if fi.Mode().Perm() != 0o600 {
+		// The 0600 bits are the Unix owner-only mechanism. Windows does not model
+		// them (it reports 0666); there owner-only is the %LOCALAPPDATA% directory
+		// ACL instead (PC-W5), so assert the bits only where they carry meaning.
+		if runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
 			t.Errorf("mode = %v, want 0600", fi.Mode().Perm())
 		}
 		out, ok, err := loadRecord(path)
