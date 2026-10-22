@@ -3,11 +3,13 @@
 package presync
 
 import (
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"syscall"
 	"testing"
 	"time"
+	"unsafe"
 )
 
 // fakeWin32 scripts the Win32 seam so the winEnv logic is tested without real
@@ -31,6 +33,7 @@ type fakeWin32 struct {
 	winPIDof   map[uintptr]uint32
 	posted     *[]uintptr
 	postErr    error
+	creation   int64 // what creationNs returns (the quit's identity re-proof, F1)
 }
 
 func (f fakeWin32) thunderbirdProcs() []winProc       { return f.procs }
@@ -54,6 +57,7 @@ func (f fakeWin32) postClose(hwnd uintptr) error {
 	}
 	return f.postErr
 }
+func (f fakeWin32) creationNs(uint32) int64 { return f.creation }
 
 // covers: MA-553, MA-554
 // The Windows realization of running-detection and the §4.4.3 identity fields:
@@ -163,4 +167,71 @@ func openDenyWrite(path string) (*os.File, error) {
 		return nil, err
 	}
 	return os.NewFile(uintptr(h), path), nil
+}
+
+// covers: MA-572
+// decideElevated fails CLOSED (adversarial finding F3): an unreadable token or
+// elevation is treated as elevated, so resolve refuses rather than launching from
+// a possibly-elevated token; only a readable, non-elevated token is "not elevated".
+func TestDecideElevated(t *testing.T) {
+	for _, c := range []struct {
+		openOK, infoOK bool
+		elevation      uint32
+		want           bool
+	}{
+		{false, false, 0, true}, // token unreadable -> refuse
+		{false, true, 0, true},
+		{true, false, 0, true}, // elevation unreadable -> refuse
+		{true, true, 0, false}, // readable, not elevated
+		{true, true, 1, true},  // readable, elevated
+	} {
+		if got := decideElevated(c.openOK, c.infoOK, c.elevation); got != c.want {
+			t.Errorf("decideElevated(%v,%v,%d) = %v, want %v", c.openOK, c.infoOK, c.elevation, got, c.want)
+		}
+	}
+}
+
+// covers: MA-554
+// parseCmdlineBuffer refuses a buffer too small for the UNICODE_STRING header, so
+// the struct cast can never over-read the backing array (adversarial finding F6),
+// and extracts the string from a well-formed, self-referential buffer.
+func TestParseCmdlineBuffer(t *testing.T) {
+	hdr := int(unsafe.Sizeof(wUnicodeString{}))
+	for _, b := range [][]byte{nil, make([]byte, 1), make([]byte, hdr-1)} {
+		if got := parseCmdlineBuffer(b); got != "" {
+			t.Errorf("a %d-byte buffer -> %q, want \"\" (no over-read)", len(b), got)
+		}
+	}
+	// A header present but with a zero inner string -> "".
+	if got := parseCmdlineBuffer(make([]byte, hdr)); got != "" {
+		t.Errorf("empty UNICODE_STRING -> %q, want \"\"", got)
+	}
+	// A well-formed, self-referential buffer -> the string.
+	const s = `"C:\x\thunderbird.exe" -profile "C:\p"`
+	u16, _ := syscall.UTF16FromString(s) // includes a trailing NUL
+	buf := make([]byte, hdr+len(u16)*2)
+	for i, c := range u16 {
+		binary.LittleEndian.PutUint16(buf[hdr+i*2:], c)
+	}
+	us := (*wUnicodeString)(unsafe.Pointer(&buf[0]))
+	us.Length = uint16((len(u16) - 1) * 2) // bytes, excluding the NUL
+	us.MaximumLength = us.Length
+	us.Buffer = uintptr(unsafe.Pointer(&buf[hdr]))
+	if got := parseCmdlineBuffer(buf); got != s {
+		t.Errorf("parseCmdlineBuffer -> %q, want %q", got, s)
+	}
+}
+
+// covers: MA-554
+// decodeArgv yields a NON-nil empty argv on an unreadable command line, so the
+// Windows identity always uses the exact-argv path and an unreadable command line
+// is never matched as ours (adversarial finding F7).
+func TestDecodeArgvNonNil(t *testing.T) {
+	if argv := decodeArgv(""); argv == nil || len(argv) != 0 {
+		t.Errorf("decodeArgv(\"\") = %v (nil=%v), want non-nil empty", argv, argv == nil)
+	}
+	p := proc{args: "", argv: decodeArgv("")}
+	if profileMatches(p, `C:\p`) {
+		t.Error("an unreadable command line matched -profile (F7)")
+	}
 }

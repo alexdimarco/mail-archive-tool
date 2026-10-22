@@ -29,6 +29,10 @@ var forbiddenHygieneTokens = []string{
 	"WM_QUIT", "WM_DESTROY", "WM_ENDSESSION",
 	"EndTask", "ExitWindowsEx", "PostQuitMessage",
 	"HWND_BROADCAST", "PostThreadMessage",
+	// DLL-origin (PC-W8b, adversarial finding F5): system DLLs must be loaded from
+	// System32 (windows.NewLazySystemDLL), never by a bare name that could resolve a
+	// planted DLL in the application or current directory. These catch a regression.
+	"NewLazyDLL", "LoadLibrary", "LoadDLL",
 }
 
 func scanForbidden(src string, forbidden []string) []string {
@@ -82,9 +86,10 @@ func TestPresyncExecSignalHygiene(t *testing.T) {
 
 	// Fail-closed twin: planted Unix AND Windows kill primitives are caught.
 	twin := `exec.LookPath("x"); p.Kill(); p.Signal(os.Interrupt); exec.Command("/bin/sh", "-c", s); ` +
-		`windows.TerminateProcess(h, 1); windows.OpenProcess(PROCESS_TERMINATE, ...); PostMessageW(hwnd, WM_QUIT, 0, 0)`
+		`windows.TerminateProcess(h, 1); windows.OpenProcess(PROCESS_TERMINATE, ...); PostMessageW(hwnd, WM_QUIT, 0, 0); ` +
+		`syscall.NewLazyDLL("user32.dll"); windows.LoadLibrary("x"); d.LoadDLL()`
 	caught := scanForbidden(twin, forbiddenHygieneTokens)
-	for _, want := range []string{"LookPath", ".Kill(", ".Signal(", "/bin/sh", "TerminateProcess", "PROCESS_TERMINATE", "WM_QUIT"} {
+	for _, want := range []string{"LookPath", ".Kill(", ".Signal(", "/bin/sh", "TerminateProcess", "PROCESS_TERMINATE", "WM_QUIT", "NewLazyDLL", "LoadLibrary", "LoadDLL"} {
 		if !containsStrHyg(caught, want) {
 			t.Errorf("twin: forbidden token %q was not caught (caught %v)", want, caught)
 		}

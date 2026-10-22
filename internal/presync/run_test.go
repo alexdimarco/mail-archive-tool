@@ -1,29 +1,19 @@
 package presync
 
-import (
-	"testing"
-	"time"
-)
+import "testing"
 
 // covers: MA-560
-// The shared whole-session watchdog bounds a stalled pre-sync: a session that
-// never returns (a watch root on an unresponsive mount, where WalkDir cannot
-// honour a deadline) is abandoned at sessionBudget and yields a WARN within the
-// budget, so the archive is never blocked (R32). Shared by every OS adapter
-// (run.go), so the guard is written and reviewed once, not copied per platform.
-func TestRunWatchdogBoundsAStalledSession(t *testing.T) {
-	orig := sessionBudget
-	defer func() { sessionBudget = orig }()
-	sessionBudget = 50 * time.Millisecond
-
-	blocked := make(chan struct{})
-	start := time.Now()
-	res := runWatchdog(func() Result { <-blocked; return Result{Outcome: OutcomeOK} })
-	if res.Outcome != OutcomeInternalError {
-		t.Errorf("outcome = %q, want internal-error (the watchdog fired)", res.Outcome.Name)
+// The whole-session watchdog never lets the pre-sync gate the archive (R32): a
+// panic inside the session (resolve, launch, quit, an unsafe syscall read) is
+// recovered to presync_internal_error rather than crashing the process — it
+// happens in the watchdog's own goroutine, where the caller's recover (app.Run's
+// hook guard) cannot reach it (adversarial finding F4). A normal session returns
+// its own outcome unchanged.
+func TestRunWatchdogRecoversPanic(t *testing.T) {
+	if res := runWatchdog(func() Result { panic("boom") }); res.Outcome != OutcomeInternalError {
+		t.Errorf("a panicking session = %v, want presync_internal_error (R32)", res.Outcome)
 	}
-	if elapsed := time.Since(start); elapsed > 2*time.Second {
-		t.Errorf("watchdog did not honour sessionBudget: took %v", elapsed)
+	if res := runWatchdog(func() Result { return Result{Outcome: OutcomeOK} }); res.Outcome != OutcomeOK {
+		t.Errorf("a normal session = %v, want OK", res.Outcome)
 	}
-	close(blocked) // release the abandoned goroutine
 }

@@ -28,7 +28,19 @@ var sessionBudget = defAwaitUp + defMaxWait + defQuitGrace + 30*time.Second
 // the archive reads anyway (R32). The abandoned goroutine ends with the process.
 func runWatchdog(fn func() Result) Result {
 	ch := make(chan Result, 1) // buffered: an abandoned goroutine can still send
-	go func() { ch <- fn() }()
+	go func() {
+		// A panic in fn (resolve, launch, quit, an unsafe syscall read) is in THIS
+		// goroutine; the caller's recover (app.Run's hook guard, MA-560) cannot catch
+		// a panic in another goroutine, so without this the process would crash and
+		// the archive would NOT run — an R32 breach (adversarial finding F4). Recover
+		// to a warning instead, so the pre-sync still never gates the archive.
+		defer func() {
+			if r := recover(); r != nil {
+				ch <- Result{Outcome: OutcomeInternalError}
+			}
+		}()
+		ch <- fn()
+	}()
 	select {
 	case r := <-ch:
 		return r

@@ -97,6 +97,16 @@ func (e *winEnv) quit(target proc) error {
 	}
 	defer e.w.releaseHandle(h)
 
+	// Re-prove identity THROUGH the held handle (adversarial finding F1, PC-W3). The
+	// handle now pins the pid so Windows cannot recycle it — but a pid freed and
+	// reused in the gap since S8's findOurs (no handle was held across the record
+	// write) could already have been pinned. Confirm the pinned process is the SAME
+	// instance we adopted, by exact creation time (per-instance and immutable; a
+	// reused pid has a different one). 0 / unreadable ⇒ mismatch ⇒ do not quit.
+	if e.w.creationNs(pid) != target.start.UnixNano() {
+		return nil
+	}
+
 	hwnd, ok := e.w.mainWindow(pid)
 	if !ok {
 		return nil // no single main window (a hidden modal, or ambiguity) → leave it
@@ -105,6 +115,11 @@ func (e *winEnv) quit(target proc) error {
 	if !e.w.handleAlive(h) || e.w.windowPID(hwnd) != pid {
 		return nil // the process died, or the HWND no longer belongs to our pid
 	}
+	// Residual (adversarial finding F2, the Windows analogue of macOS PC1): the held
+	// handle pins the pid, not the HWND; an HWND destroyed and its value recycled to
+	// another process's window in the microseconds between this check and the post
+	// is irreducible — Win32 has no atomic "post to this pid's window". If the window
+	// is merely destroyed, PostMessageW returns 0 and nothing is posted (fail-safe).
 	return e.w.postClose(hwnd)
 }
 

@@ -5,6 +5,7 @@ package presync
 import (
 	"syscall"
 	"testing"
+	"time"
 
 	"golang.org/x/sys/windows"
 )
@@ -60,7 +61,9 @@ func TestSelectMainWindow(t *testing.T) {
 func TestWinQuitOrchestration(t *testing.T) {
 	const pid = 4242
 	const hwnd = uintptr(0x100)
-	child := proc{pid: pid}
+	start := time.Date(2026, 10, 22, 2, 0, 0, 0, time.UTC)
+	child := proc{pid: pid, start: start}
+	ours := start.UnixNano() // the creation time that proves the pinned pid is ours
 
 	run := func(f fakeWin32) []uintptr {
 		var posted []uintptr
@@ -72,9 +75,10 @@ func TestWinQuitOrchestration(t *testing.T) {
 		return posted
 	}
 
-	// Happy path: handle held, one main window, alive, pid still matches → posted.
+	// Happy path: handle held, identity re-proved (creation matches), one main
+	// window, alive, pid still matches → posted.
 	posted := run(fakeWin32{
-		handleOK: true, handleLive: true,
+		handleOK: true, handleLive: true, creation: ours,
 		mainOf:   map[uint32]uintptr{pid: hwnd},
 		winPIDof: map[uintptr]uint32{hwnd: pid},
 	})
@@ -82,14 +86,19 @@ func TestWinQuitOrchestration(t *testing.T) {
 		t.Errorf("happy path posted %v, want [%#x]", posted, hwnd)
 	}
 
+	// Every "cannot safely close" path posts nothing. Each sets creation=ours so it
+	// reaches the specific guard under test — except the reuse case, which is the
+	// creation-time mismatch itself (F1).
 	cannot := map[string]fakeWin32{
-		"no handle held": {handleOK: false, handleLive: true,
+		"no handle held": {handleOK: false, handleLive: true, creation: ours,
 			mainOf: map[uint32]uintptr{pid: hwnd}, winPIDof: map[uintptr]uint32{hwnd: pid}},
-		"no single main window": {handleOK: true, handleLive: true,
+		"pid reused before the hold (creation mismatch)": {handleOK: true, handleLive: true, creation: ours + 1,
+			mainOf: map[uint32]uintptr{pid: hwnd}, winPIDof: map[uintptr]uint32{hwnd: pid}},
+		"no single main window": {handleOK: true, handleLive: true, creation: ours,
 			mainOf: map[uint32]uintptr{pid: 0}, winPIDof: map[uintptr]uint32{hwnd: pid}},
-		"process died at re-check": {handleOK: true, handleLive: false,
+		"process died at re-check": {handleOK: true, handleLive: false, creation: ours,
 			mainOf: map[uint32]uintptr{pid: hwnd}, winPIDof: map[uintptr]uint32{hwnd: pid}},
-		"window reassigned to another pid": {handleOK: true, handleLive: true,
+		"window reassigned to another pid": {handleOK: true, handleLive: true, creation: ours,
 			mainOf: map[uint32]uintptr{pid: hwnd}, winPIDof: map[uintptr]uint32{hwnd: 9999}},
 	}
 	for name, f := range cannot {

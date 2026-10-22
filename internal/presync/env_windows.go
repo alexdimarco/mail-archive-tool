@@ -54,6 +54,7 @@ type win32 interface {
 	mainWindow(pid uint32) (uintptr, bool) // the pid's single MAIN top-level window
 	windowPID(hwnd uintptr) uint32         // GetWindowThreadProcessId → pid (pre-post re-check)
 	postClose(hwnd uintptr) error          // PostMessageW(hwnd, WM_CLOSE, 0, 0)
+	creationNs(pid uint32) int64           // creation time, unix ns — the quit's identity re-proof (F1)
 }
 
 // winEnv is the real Windows env (design §2). The uid-equivalent is implicit (the
@@ -116,15 +117,18 @@ func (e *winEnv) thunderbirdProcs() []proc {
 // (CommandLineToArgvW, via x/sys), so a quoted path — the usual shape, since a
 // user folder like C:\Users\First Last\... contains a space — yields the unquoted
 // -profile value as one element and profileMatches matches it (PC-W1). An empty or
-// malformed (NUL-bearing) command line yields nil, and a proc with a nil argv is
-// never matched as ours — nothing is then quit, which is the safe default.
+// malformed (NUL-bearing) command line yields a NON-nil EMPTY argv (adversarial
+// finding F7): the Windows adapter always sets a non-nil argv, so profileMatches
+// always compares exact argv elements and NEVER falls back to the macOS whitespace
+// split — an unreadable command line then carries no -profile and the process is
+// never matched as ours, made explicit rather than resting on args being "" too.
 func decodeArgv(cmdline string) []string {
 	if cmdline == "" {
-		return nil
+		return []string{}
 	}
 	argv, err := windows.DecomposeCommandLine(cmdline)
 	if err != nil {
-		return nil
+		return []string{}
 	}
 	return argv
 }
@@ -181,7 +185,8 @@ func (e *winEnv) recheckProfile(canonical string) bool {
 var (
 	// NewLazySystemDLL forces the System32 directory, so a planted ntdll.dll /
 	// user32.dll in the application or current directory can never be loaded
-	// instead (PC-W8b) — unlike a bare NewLazyDLL("user32.dll").
+	// instead (PC-W8b) — unlike loading a system DLL by bare name, which the MA-557
+	// hygiene walk now forbids (adversarial finding F5).
 	ntdll    = windows.NewLazySystemDLL("ntdll.dll")
 	kernel32 = windows.NewLazySystemDLL("kernel32.dll")
 	advapi32 = windows.NewLazySystemDLL("advapi32.dll")
@@ -319,18 +324,35 @@ func (realWin32) idleSeconds() (float64, bool) {
 	return float64(idleMs) / 1000, true
 }
 
+// decideElevated is fail-CLOSED (adversarial finding F3): when the token or its
+// elevation cannot be read, the elevation state is UNKNOWN and we treat it as
+// elevated, so resolve refuses (MA-572). A false refusal only skips the pre-sync —
+// the archive still runs (R32) — whereas a false "not elevated" would launch
+// Thunderbird from an elevated token and leave profile files the owner cannot
+// open. macOS geteuid()==0 cannot fail; only this Windows path needs the guard.
+func decideElevated(openOK, infoOK bool, elevation uint32) bool {
+	if !openOK || !infoOK {
+		return true
+	}
+	return elevation != 0
+}
+
 func (realWin32) elevated() bool {
 	cur, _, _ := procGetCurrentProcess.Call()
 	var tok syscall.Handle
 	r, _, _ := procOpenProcessToken.Call(cur, wTokenQuery, uintptr(unsafe.Pointer(&tok)))
 	if r == 0 {
-		return false
+		return decideElevated(false, false, 0)
 	}
 	defer procCloseHandle.Call(uintptr(tok))
 	var el, ret uint32
 	r, _, _ = procGetTokenInformation.Call(uintptr(tok), wTokenElevation, uintptr(unsafe.Pointer(&el)), 4, uintptr(unsafe.Pointer(&ret)))
-	return r != 0 && el != 0
+	return decideElevated(true, r != 0, el)
 }
+
+// creationNs returns a process's creation time in unix nanoseconds (0 if
+// unreadable), for the quit's identity re-proof through the held handle (F1).
+func (realWin32) creationNs(pid uint32) int64 { return creationUnixNs(pid) }
 
 func creationUnixNs(pid uint32) int64 {
 	h, _, _ := procOpenProcess.Call(wProcessQueryLimitedInformation, 0, uintptr(pid))
@@ -346,9 +368,17 @@ func creationUnixNs(pid uint32) int64 {
 	return c.Nanoseconds()
 }
 
+// wCommandLineMax caps the command-line buffer we will allocate (adversarial
+// finding F9): a real ProcessCommandLineInformation return is a UNICODE_STRING
+// header plus a command line whose length is a uint16, so ~64 KiB + 16 is the
+// structural ceiling; a larger retLen is anomalous and refused, never allocated.
+const wCommandLineMax = 128 * 1024
+
 // commandLine reads a process's command line with only
 // PROCESS_QUERY_LIMITED_INFORMATION (PC-W1, spike-confirmed). "" on any failure;
-// an unreadable command line means the process is never matched as ours.
+// an unreadable command line means the process is never matched as ours. The
+// NTSTATUS is masked to its low 32 bits consistently (F8) so a dirty high word can
+// never make a success look like a failure (or vice versa).
 func commandLine(pid uint32) string {
 	h, _, _ := procOpenProcess.Call(wProcessQueryLimitedInformation, 0, uintptr(pid))
 	if h == 0 {
@@ -357,16 +387,29 @@ func commandLine(pid uint32) string {
 	defer procCloseHandle.Call(h)
 	var retLen uint32
 	st, _, _ := procNtQueryInformationProcess.Call(h, wProcessCommandLineInformation, 0, 0, uintptr(unsafe.Pointer(&retLen)))
-	if uint32(st) != wStatusInfoLengthMismatch && st != 0 {
+	if uint32(st) != wStatusInfoLengthMismatch && uint32(st) != 0 {
 		return ""
 	}
-	if retLen == 0 {
+	if retLen == 0 || retLen > wCommandLineMax {
 		return ""
 	}
 	buf := make([]byte, retLen)
 	st, _, _ = procNtQueryInformationProcess.Call(h, wProcessCommandLineInformation,
 		uintptr(unsafe.Pointer(&buf[0])), uintptr(retLen), uintptr(unsafe.Pointer(&retLen)))
-	if st != 0 {
+	if uint32(st) != 0 {
+		return ""
+	}
+	return parseCmdlineBuffer(buf)
+}
+
+// parseCmdlineBuffer extracts the command-line string from a raw
+// ProcessCommandLineInformation buffer. It refuses a buffer too small to hold even
+// the UNICODE_STRING header (adversarial finding F6), so the struct cast can never
+// over-read the backing array, and an absent or empty inner string yields "". Any
+// violation ⇒ "" ⇒ the process is never matched as ours. Pure, so the bounds are
+// unit-tested without a Windows kernel.
+func parseCmdlineBuffer(buf []byte) string {
+	if len(buf) < int(unsafe.Sizeof(wUnicodeString{})) {
 		return ""
 	}
 	us := (*wUnicodeString)(unsafe.Pointer(&buf[0]))
