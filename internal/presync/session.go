@@ -184,7 +184,7 @@ func runSession(ctx context.Context, d deps) sessionResult {
 		return res
 	}
 	store(stateQuitting)
-	if err := e.quit(); errors.Is(err, errQuitNotPermitted) {
+	if err := e.quit(child); errors.Is(err, errQuitNotPermitted) {
 		// Consent denied or the first-approval prompt unanswered: leave
 		// Thunderbird, record the leftover so every later run announces it
 		// (MA-558), never force it.

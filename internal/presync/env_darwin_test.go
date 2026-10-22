@@ -380,7 +380,7 @@ func TestMacQuitClassify(t *testing.T) {
 		calls++
 		return "", "execution error: Not authorized to send Apple events (-1743)", fmt.Errorf("exit status 1")
 	}
-	if err := e.quit(); !errors.Is(err, errQuitNotPermitted) {
+	if err := e.quit(proc{pid: 4242}); !errors.Is(err, errQuitNotPermitted) {
 		t.Errorf("quit() = %v, want errQuitNotPermitted", err)
 	}
 	if calls != 1 {

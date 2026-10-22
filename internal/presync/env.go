@@ -66,9 +66,11 @@ type env interface {
 	// startHidden launches the application out of sight on the profile (S5). The
 	// real seam execs the platform launcher; it never blocks on the GUI.
 	startHidden(app, profile string) error
-	// quit asks the running Thunderbird to quit through its own quit request (S8).
-	// It never signals or kills.
-	quit() error
+	// quit asks the proven child Thunderbird to quit through its own quit request
+	// (S8). It never signals or kills. The target is the proven child: macOS
+	// ignores it and quits by bundle id, but Windows needs its pid to post
+	// WM_CLOSE to that process's own window (PC-W2), so the session hands it over.
+	quit(target proc) error
 	// digest folds the watch set into one value without opening a file (S7); the
 	// real seam calls digestWatch.
 	digest(roots []string) (sum uint64, truncated bool)

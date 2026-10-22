@@ -61,6 +61,9 @@ func TestPresyncStateMachineHappyPath(t *testing.T) {
 	if !f.quitted {
 		t.Errorf("Thunderbird was never asked to quit")
 	}
+	if f.quitTarget.pid != 200 {
+		t.Errorf("quit target pid = %d, want the proven child 200 (PC-W2: the seam carries the target)", f.quitTarget.pid)
+	}
 	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
 		t.Errorf("the state record was not cleared at the end: %v", err)
 	}

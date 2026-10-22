@@ -421,7 +421,11 @@ func (e *macEnv) releaseLock(string) {
 // never signals or kills Thunderbird — osascript delivers the app's own quit
 // request. The result is classified so the machine can tell consent-denied from
 // success.
-func (e *macEnv) quit() error {
+// quit ignores the target on macOS: the osascript request addresses Thunderbird
+// by bundle id (the identity re-check at S8 having just proven the target is
+// ours). Windows uses target.pid instead (PC-W2).
+func (e *macEnv) quit(target proc) error {
+	_ = target
 	ctx, cancel := context.WithTimeout(context.Background(), quitTimeout)
 	defer cancel()
 	_, stderr, err := e.run(quitCmd(ctx))

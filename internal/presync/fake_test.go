@@ -31,6 +31,7 @@ type fakeEnv struct {
 	startedAt       time.Time
 	quitted         bool
 	quitErr         error // when set, quit() returns it (the request was made but did not take)
+	quitTarget      proc  // the proven child the session handed to quit (PC-W2)
 	quitAt          time.Time
 	child           proc
 	appearIn        time.Duration // child appears this long after startHidden
@@ -110,8 +111,8 @@ func (f *fakeEnv) startHidden(app, profile string) error {
 	return nil
 }
 
-func (f *fakeEnv) quit() error {
-	f.quitted, f.quitAt = true, f.nowT
+func (f *fakeEnv) quit(target proc) error {
+	f.quitted, f.quitAt, f.quitTarget = true, f.nowT, target
 	return f.quitErr
 }
 
