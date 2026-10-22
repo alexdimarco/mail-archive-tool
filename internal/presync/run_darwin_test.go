@@ -3,6 +3,7 @@
 package presync
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"os/exec"
@@ -22,7 +23,8 @@ func TestRunWithRefusesElevation(t *testing.T) {
 	ran := false
 	e.run = func(*exec.Cmd) (string, string, error) { ran = true; return "", "", nil }
 
-	res := runWith(context.Background(), Config{Profile: "/p", ProfileNamed: true, StateDir: stateDir}, e)
+	var log bytes.Buffer
+	res := runWith(context.Background(), Config{Profile: "/p", ProfileNamed: true, StateDir: stateDir, Log: &log}, e)
 	if res.Outcome != OutcomeRefusedElevated {
 		t.Errorf("outcome = %q, want refused-elevated", res.Outcome.Name)
 	}
@@ -31,6 +33,10 @@ func TestRunWithRefusesElevation(t *testing.T) {
 	}
 	if _, err := os.Stat(stateDir); !os.IsNotExist(err) {
 		t.Errorf("the state directory was created on a refusal: %v", err)
+	}
+	// The owner is told why the manual run skipped the sync (the refusal is narrated).
+	if !strings.Contains(log.String(), "root or an administrator") {
+		t.Errorf("refusal was not narrated to the log: %q", log.String())
 	}
 }
 

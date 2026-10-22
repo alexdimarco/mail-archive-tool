@@ -50,10 +50,14 @@ func Run(ctx context.Context, cfg Config) Result {
 func runWith(ctx context.Context, cfg Config, e *macEnv) Result {
 	plan, outcome, ok := e.resolve(cfg.Profile, cfg.ProfileNamed)
 	if !ok {
-		return Result{Outcome: outcome} // a refusal: nothing started, no record written
+		narrate(cfg.Log, SummaryLine(outcome)) // the refusal reason; nothing started
+		return Result{Outcome: outcome}
 	}
 	e.bundle = plan.bundle
-	return Result{Outcome: runSession(ctx, e.buildDeps(plan, cfg)).outcome}
+	narrate(cfg.Log, startLine) // the wait can be minutes — say so before it begins
+	res := runSession(ctx, e.buildDeps(plan, cfg))
+	narrate(cfg.Log, SummaryLine(res.outcome))
+	return Result{Outcome: res.outcome}
 }
 
 // buildDeps assembles the session inputs from the plan and the config: the fixed

@@ -29,3 +29,21 @@ func TestWarnText(t *testing.T) {
 		t.Errorf("quit-not-permitted message should name the Automation remedy: %q", msg)
 	}
 }
+
+// covers: MA-561
+// SummaryLine gives a one-line owner-facing result for Config.Log: a clean
+// finish, a note's reason, or the warning text; nothing for a cancelled run.
+func TestSummaryLine(t *testing.T) {
+	if s := SummaryLine(OutcomeOK); !strings.Contains(s, "done") {
+		t.Errorf("ok summary = %q, want a 'done' line", s)
+	}
+	if s := SummaryLine(OutcomeAlreadyRunning); !strings.Contains(s, "already open") {
+		t.Errorf("already-running summary = %q", s)
+	}
+	if s := SummaryLine(OutcomeQuitNotPermitted); !strings.Contains(s, "Automation") {
+		t.Errorf("warn summary = %q, want the warning text", s)
+	}
+	if s := SummaryLine(OutcomeCancelled); s != "" {
+		t.Errorf("cancelled summary = %q, want empty (the run is aborting)", s)
+	}
+}

@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 
 	"mail-archive-tool/internal/app"
@@ -28,6 +29,7 @@ func setPresyncHook(opts *app.Options, profile string) error {
 			Profile:      profile,
 			ProfileNamed: named,
 			StateDir:     stateDir,
+			Log:          os.Stderr, // the owner watches a manual run; narrate it
 		})
 		return app.BeforeReadResult{Warnings: presyncWarnings(res)}
 	}

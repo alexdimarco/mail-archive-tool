@@ -1,18 +1,25 @@
 package presync
 
-import "time"
+import (
+	"io"
+	"time"
+)
 
 // Config is what a caller (the -thunderbird-sync CLI flag in v1, a scheduled job
 // later) gives one pre-sync before an archive run. Inputs are the archive's
 // discovered sources, used to derive the profile and the watch set when Profile
 // is empty; Profile/ProfileNamed carry an explicit -thunderbird-profile (which
 // bypasses the profiles.ini membership test, PC3). StateDir holds the
-// write-ahead record and the session lock — never the archive directory.
+// write-ahead record and the session lock — never the archive directory. Log,
+// when non-nil, receives the owner-facing narration (a line when the sync
+// begins, since the wait can be minutes, and a line for the result); the manual
+// run passes os.Stderr, so the owner is not left watching nothing (§8 step 1).
 type Config struct {
 	Inputs       []string
 	Profile      string
 	ProfileNamed bool
 	StateDir     string
+	Log          io.Writer
 }
 
 // Result is one pre-sync's outcome, for the caller to surface as a warning.
@@ -69,4 +76,50 @@ var warnText = map[string]string{
 	OutcomeRefusedElevated.Code:     "The Thunderbird sync was skipped because Mail Archive is running as root or an administrator — it would create profile files you could not then open. Do this: run it as your normal user. The archive ran anyway.",
 	OutcomeStateUnreadable.Code:     "The pre-sync's own state record could not be read, so its recovery information was reset. The archive ran anyway.",
 	OutcomeInternalError.Code:       "The Thunderbird pre-sync failed unexpectedly and was recovered; the archive ran anyway.",
+}
+
+// startLine is the narration printed to Config.Log just before the session runs,
+// so the owner of a manual run knows the (possibly minutes-long) wait is working
+// and not a hang (§8 step 1). Draft wording; the friction review / MA-567 settle
+// the final text.
+const startLine = "Thunderbird sync: syncing Thunderbird before the archive — this can take several minutes…"
+
+// SummaryLine is the one-line owner-facing result of a session for Config.Log: a
+// clean finish, the reason a note session did nothing, or the warning text. It
+// returns "" for a cancelled run (the whole run is aborting) so nothing is said.
+func SummaryLine(o Outcome) string {
+	switch o.Class {
+	case ClassWarn:
+		if msg, ok := WarnText(o); ok {
+			return "Thunderbird sync: " + msg
+		}
+	case ClassNote:
+		if msg, ok := noteText[o.Code]; ok {
+			return msg
+		}
+		return "Thunderbird sync: " + o.Name + "."
+	default: // ClassNone: ok or cancelled
+		if o == OutcomeOK {
+			return "Thunderbird sync: done — Thunderbird was started, its mail settled, and it was closed. Archiving now."
+		}
+	}
+	return ""
+}
+
+// noteText holds the owner-facing line for each note outcome (the F-row wording,
+// §8); draft, refined by the friction review / MA-567.
+var noteText = map[string]string{
+	OutcomeNoActivity.Code:          "Thunderbird sync: done — Thunderbird was started and closed; nothing new had arrived.",
+	OutcomeAlreadyRunning.Code:      "Thunderbird sync: Thunderbird was already open, so it was not started or closed. Archiving what is on disk.",
+	OutcomeOtherProfileRunning.Code: "Thunderbird sync: Thunderbird is open with a different profile, so this profile was not synced. Archiving what is on disk.",
+	OutcomeProfileBusy.Code:         "Thunderbird sync: another backup is syncing this Thunderbird profile, so this run skipped it. Archiving what is on disk.",
+	OutcomeOwnerActiveSkipped.Code:  "Thunderbird sync: you were using the computer, so Thunderbird was not started. Archiving what is on disk.",
+	OutcomeWatchTruncated.Code:      "Thunderbird sync: done (the mail-folder set was very large, so only part of it was watched for quiet). Archiving now.",
+}
+
+// narrate writes one owner-facing line to w when both are non-empty.
+func narrate(w io.Writer, line string) {
+	if w != nil && line != "" {
+		_, _ = io.WriteString(w, line+"\n")
+	}
 }
