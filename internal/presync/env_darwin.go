@@ -98,12 +98,6 @@ func plutilBundleIDCmd(ctx context.Context, app string) *exec.Cmd {
 	return c
 }
 
-func caffeinateCmd(ctx context.Context, pid int) *exec.Cmd {
-	c := exec.CommandContext(ctx, "/usr/bin/caffeinate", "-i", "-w", strconv.Itoa(pid))
-	c.Env = allowlistEnv()
-	return c
-}
-
 // probeTimeout bounds every read-only helper (pgrep/ps/sysctl/ioreg), so a stuck
 // system tool can never hang the pre-sync (which itself can never gate the
 // archive). launchTimeout bounds `open`, which only asks LaunchServices to start

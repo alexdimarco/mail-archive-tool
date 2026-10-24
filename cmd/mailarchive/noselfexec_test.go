@@ -26,11 +26,11 @@ var osTools = map[string]bool{
 	// lookup, so each literal is the full path, which keeps this set STRICTER
 	// than a bare name (a planted `open` earlier on PATH would not match). The
 	// quit request is osascript; the rest only observe (pgrep/ps/sysctl/ioreg/
-	// plutil) or hold a wake lock (caffeinate). None signals or kills anything.
+	// plutil). None signals or kills anything.
 	"/usr/bin/open": true, "/usr/bin/osascript": true,
 	"/usr/bin/pgrep": true, "/bin/ps": true,
 	"/usr/sbin/sysctl": true, "/usr/sbin/ioreg": true,
-	"/usr/bin/plutil": true, "/usr/bin/caffeinate": true,
+	"/usr/bin/plutil": true,
 }
 
 // argvBuilders are the pinned functions that return an (OS-tool name, args)

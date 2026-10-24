@@ -118,6 +118,13 @@ func (e *macEnv) validateProfile(profile string, named bool) (string, bool) {
 	if err != nil {
 		return "", false
 	}
+	if strings.ContainsAny(cpath, " \t\n\r") {
+		// C4: the macOS owner match (argsHaveProfile) splits ps's args on whitespace,
+		// so a profile path containing whitespace could never be identified as ours —
+		// the Thunderbird we start would be left running every run. Refuse up front
+		// (presync_profile_unusable) rather than start one we can never close.
+		return "", false
+	}
 	fi, err := os.Stat(cpath)
 	if err != nil || !fi.IsDir() {
 		return "", false

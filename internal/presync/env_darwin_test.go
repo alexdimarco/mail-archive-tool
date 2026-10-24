@@ -36,7 +36,6 @@ func TestMacCommandArgvGolden(t *testing.T) {
 		{"sysctl", sysctlBoottimeCmd(ctx), []string{"/usr/sbin/sysctl", "-n", "kern.boottime"}},
 		{"ioreg", ioregIdleCmd(ctx), []string{"/usr/sbin/ioreg", "-c", "IOHIDSystem", "-d", "4"}},
 		{"plutil", plutilBundleIDCmd(ctx, "/A.app"), []string{"/usr/bin/plutil", "-extract", "CFBundleIdentifier", "raw", "-o", "-", "/A.app/Contents/Info.plist"}},
-		{"caffeinate", caffeinateCmd(ctx, 9), []string{"/usr/bin/caffeinate", "-i", "-w", "9"}},
 	} {
 		if !strings.HasPrefix(c.cmd.Path, "/") {
 			t.Errorf("%s: path %q is not absolute (a non-absolute name triggers a PATH lookup)", c.name, c.cmd.Path)
@@ -74,7 +73,7 @@ func TestMacCommandEnvAllowlist(t *testing.T) {
 	allowed := map[string]bool{"HOME": true, "USER": true, "TMPDIR": true, "LANG": true, "LC_ALL": true}
 	for _, cmd := range []*exec.Cmd{
 		openCmd(ctx, "/A.app", "/p"), quitCmd(ctx), pgrepCmd(ctx, 1), psArgsCmd(ctx, 1), psEtimeCommCmd(ctx, 1),
-		sysctlBoottimeCmd(ctx), ioregIdleCmd(ctx), plutilBundleIDCmd(ctx, "/A.app"), caffeinateCmd(ctx, 1),
+		sysctlBoottimeCmd(ctx), ioregIdleCmd(ctx), plutilBundleIDCmd(ctx, "/A.app"),
 	} {
 		for _, kv := range cmd.Env {
 			k := kv[:strings.IndexByte(kv, '=')]
