@@ -47,3 +47,35 @@ func TestSummaryLine(t *testing.T) {
 		t.Errorf("cancelled summary = %q, want empty (the run is aborting)", s)
 	}
 }
+
+// covers: MA-567
+// SyncNotice carries every X16 disclosure (docs/ux-contract.md X16) so the single
+// shared paragraph the wizard, the Desktop card, the CLI note and the README all
+// draw from can never omit one. It names the start-side effects (accounts, Outbox,
+// filters, notifications) and the quit-side on-exit actions (emptying Trash), says
+// an already-open or in-use Thunderbird is left alone, limits itself to one
+// profile, and never claims the sync means a complete download.
+func TestSyncNoticeDisclosures(t *testing.T) {
+	for _, want := range []string{
+		"Outbox",        // starting Thunderbird may send queued mail
+		"filters",       // it runs message filters
+		"notifications", // it may show notifications
+		"on-exit",       // quitting runs the accounts' on-exit actions...
+		"Trash",         // ...for example emptying Trash
+		"left alone",    // an already-open / in-use Thunderbird is never touched
+		"profile",       // only one profile is synced per schedule
+		"stop arriving", // the non-over-promising wording for the wait
+	} {
+		if !strings.Contains(SyncNotice, want) {
+			t.Errorf("SyncNotice must disclose %q (X16); not found in: %q", want, SyncNotice)
+		}
+	}
+	for _, forbid := range []string{
+		"finish downloading", // over-promises a complete download
+		"complete download",
+	} {
+		if strings.Contains(SyncNotice, forbid) {
+			t.Errorf("SyncNotice must not claim %q (X16: a sync is never a complete download)", forbid)
+		}
+	}
+}

@@ -184,7 +184,7 @@ func TestLocalScheduleCardUI(t *testing.T) {
 	out := tbProfileArchive(t)
 	h := DashboardHandler(Config{Out: out, GOOS: "darwin", SettingsPath: filepath.Join(t.TempDir(), "s.json")})
 	page, _ := getPage(t, h)
-	for _, want := range []string{`id="schedInterval"`, `id="schedPresync"`, "Sync Thunderbird before each backup", "waits for its mail to finish downloading"} {
+	for _, want := range []string{`id="schedInterval"`, `id="schedPresync"`, "Sync Thunderbird before each backup", "waits for its mail to stop arriving"} {
 		if !strings.Contains(page, want) {
 			t.Errorf("local-schedule card is missing %q", want)
 		}

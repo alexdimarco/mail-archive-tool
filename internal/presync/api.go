@@ -88,12 +88,16 @@ var warnText = map[string]string{
 	OutcomeInternalError.Code:       "The Thunderbird pre-sync failed unexpectedly and was recovered; the archive ran anyway.",
 }
 
-// SyncNotice is the single source of the §6 owner-facing paragraph (MA-567):
-// what the Thunderbird sync does and its two caveats (exit actions, one profile).
-// The schedule preview, the install message, the -h text and the README all draw
-// from this one constant so they can never drift. Draft wording; the friction
-// review settles the final text.
-const SyncNotice = "The Thunderbird sync starts Thunderbird in the background before the backup, waits for its mail to finish downloading, and asks it to quit, so the archive includes mail that had only reached the server. Two things to know: quitting Thunderbird runs whatever your accounts do on exit (for example emptying Trash), so mail you deleted since the last backup may be removed before it is archived; and only one Thunderbird profile is synced per schedule."
+// SyncNotice is the single source of the §6 owner-facing paragraph (MA-567) and
+// carries every disclosure the UX contract's X16 requires: the start-side effects
+// (Thunderbird checks all accounts, may send the Outbox, run filters, show
+// notifications), the quit-side on-exit actions (e.g. emptying Trash), that an
+// already-open or in-use Thunderbird is left alone, and the one-profile limit —
+// without ever claiming the sync means a complete download. The schedule preview,
+// the install message, the -h text, the GUI card and the README all draw from this
+// one constant so they can never drift, and so none of them has to bolt a missing
+// disclosure on afterward. Settled by the friction review (2026-10-24).
+const SyncNotice = "The Thunderbird sync starts Thunderbird in the background before the backup and waits for its mail to stop arriving, so the archive includes mail that had only reached the server. Because it drives your real Thunderbird, starting it does what opening Thunderbird always does: it checks all your accounts, sends anything waiting in your Outbox, runs your message filters, and may show notifications. When it then asks Thunderbird to quit, your accounts' on-exit actions run too (for example emptying Trash), so mail you deleted since the last backup may be removed before it is archived. A Thunderbird you already have open, or one you are using, is left alone — never started or closed. If you use more than one Thunderbird profile, only the one holding this mailbox is synced."
 
 // startLine is the narration printed to Config.Log just before the session runs,
 // so the owner of a manual run knows the (possibly minutes-long) wait is working

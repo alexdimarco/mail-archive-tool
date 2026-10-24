@@ -12,10 +12,10 @@ import (
 // presyncInstallNote is printed when a scheduled sync is installed or previewed.
 // Windows needs no first-approval grant (unlike the macOS Automation prompt): the
 // pre-sync asks Thunderbird to close with its own WM_CLOSE, which needs no special
-// permission. So the note is just the §6 description of what the sync does, plus a
-// word on the visible-then-minimized launch and the running-Thunderbird defer.
+// permission. SyncNotice already carries the running-Thunderbird defer, so the note
+// adds only the Windows-specific word on the visible-then-minimized launch.
 func presyncInstallNote(string) string {
-	return presync.SyncNotice + "\n\nAt each scheduled run Thunderbird opens (then minimizes to the taskbar), syncs, and is asked to close; if Thunderbird is already open it is left alone, never started or closed."
+	return presync.SyncNotice + "\n\nOn Windows, each scheduled run briefly shows the Thunderbird window, then minimizes it to the taskbar while it syncs."
 }
 
 // presyncStateDir is the "presync" subdirectory of the per-user, NON-ROAMING state

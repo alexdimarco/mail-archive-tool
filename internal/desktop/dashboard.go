@@ -880,7 +880,7 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 			data.ShowLocalCreate = true
 			data.LocalPresyncOfferable = localArchiveThunderbirdSourced(data.OutDir)
 			data.LocalPresyncOn = currentJobSyncsThunderbird(data.OutDir)
-			data.PresyncNoticeText = presync.SyncNotice + " If Thunderbird is already open, it is left alone — never started or closed."
+			data.PresyncNoticeText = presync.SyncNotice
 		}
 	}
 	data.ShowRemove = data.HasSchedule || !data.LocalOnly

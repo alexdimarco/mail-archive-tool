@@ -1651,11 +1651,11 @@ func presyncOfferable(inputs []string) bool {
 
 // presyncQuestionText is the §4.2.6 schedule-step question, built from the single
 // source notice (presync.SyncNotice, MA-567) so the GUI wording cannot drift from
-// the §6 paragraph, plus the running-Thunderbird defer (R31). The macOS
-// Automation-permission note is appended on macOS only.
+// the §6 paragraph. SyncNotice already carries the running-Thunderbird defer (R31,
+// "left alone"), so nothing is appended here. The macOS Automation-permission note
+// is added on macOS only.
 func presyncQuestionText() string {
-	q := "Sync Thunderbird before each scheduled backup?\n\n" + presync.SyncNotice +
-		"\n\nIf Thunderbird is already open, or you are using the computer, when the backup starts, Thunderbird is left alone — never started or closed."
+	q := "Sync Thunderbird before each scheduled backup?\n\n" + presync.SyncNotice
 	if runtime.GOOS == "darwin" {
 		q += "\n\nOn a Mac, macOS asks your permission once to let Mail Archive control Thunderbird; grant it the first time the scheduled backup runs."
 	}
