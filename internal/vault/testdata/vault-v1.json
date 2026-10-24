@@ -1,0 +1,26 @@
+{
+  "format": 1,
+  "archive_id": "000102030405060708090a0b0c0d0e0f",
+  "generation": 1,
+  "entries": [
+    {
+      "kind": "password",
+      "kdf": "argon2id",
+      "salt": "QEFCQ0RFRkdISUpLTE1OTw==",
+      "memory_kib": 64,
+      "time": 2,
+      "threads": 1,
+      "wrapped": "UFFSU1RVVldYWVpbXF1eX2BhYmNkZWZnAeLv7IXgut5BfXUjx9if4s9VAqHAVSBUynxGCajGf2+lu0XIH1BRyk27eIZ4o+dq"
+    },
+    {
+      "kind": "recovery",
+      "kdf": "argon2id",
+      "salt": "aGlqa2xtbm9wcXJzdHV2dw==",
+      "memory_kib": 64,
+      "time": 2,
+      "threads": 1,
+      "wrapped": "eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PgPi+m8rZTQTZziF5rlbN3xsekJ/H32t3lD7Hut80Itdyf89JOvMZXPWFig9WJkvY"
+    }
+  ],
+  "mac": "874bb16b2d2b927e2ebd7751ff43e4c2f4ef344eb4fb4a9e0b244f12c6648c5c"
+}

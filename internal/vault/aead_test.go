@@ -179,6 +179,29 @@ func TestSealedBytesCannotMove(t *testing.T) {
 }
 
 // covers: MA-704, R37
+func TestAChunkOpensAtTheGenerationItWasSealedAt(t *testing.T) {
+	// A11 re-seals only changed chunks, so a container at generation 2 holds
+	// chunks sealed at 1 and at 2. The chunk AAD binds the generation the chunk
+	// was SEALED at, which the authenticated pointer records per chunk (A2).
+	k := testKey(t, fixedID(), 0x42)
+	c0, _ := k.SealChunk(ContainerManifest, 1, 0, []byte("unchanged since gen 1"))
+	c1v1, _ := k.SealChunk(ContainerManifest, 1, 1, []byte("first version"))
+	c1v2, _ := k.SealChunk(ContainerManifest, 2, 1, []byte("changed at gen 2"))
+	if got, err := k.OpenChunk(ContainerManifest, 1, 0, c0); err != nil || string(got) != "unchanged since gen 1" {
+		t.Fatalf("a carried-over chunk opens at its recorded seal generation: %q %v", got, err)
+	}
+	if got, err := k.OpenChunk(ContainerManifest, 2, 1, c1v2); err != nil || string(got) != "changed at gen 2" {
+		t.Fatalf("a re-sealed chunk opens at its new generation: %q %v", got, err)
+	}
+	if _, err := k.OpenChunk(ContainerManifest, 2, 0, c0); !errors.Is(err, ErrAuth) {
+		t.Fatal("a chunk must not open at a generation it was not sealed at — the pointer must record each chunk's own")
+	}
+	if _, err := k.OpenChunk(ContainerManifest, 2, 1, c1v1); !errors.Is(err, ErrAuth) {
+		t.Fatal("the superseded version of a chunk must not open as the current one")
+	}
+}
+
+// covers: MA-704, R37
 func TestUnitIDMustFitItsLengthPrefix(t *testing.T) {
 	k := testKey(t, fixedID(), 0x42)
 	if _, err := k.SealUnit(UnitMessage, strings.Repeat("a", maxUnitIDLen), []byte("x")); err != nil {

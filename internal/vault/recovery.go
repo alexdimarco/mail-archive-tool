@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"unicode"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 // RecoveryKey is the second way into an archive (G4, C9): 128 bits from the
@@ -51,28 +54,30 @@ func (k RecoveryKey) String() string {
 	return b.String()
 }
 
-// ParseRecoveryKey reads a recovery key as typed or pasted: case, dashes and
-// spaces are ignored; anything else must be the 27 characters exactly, the body
-// must be canonical, and the check character must match.
+// ParseRecoveryKey reads a recovery key as typed or pasted: case, and any
+// spacing or dash a document or password manager may have put in (Unicode
+// spaces, dash punctuation, soft hyphens, zero-width characters), are ignored,
+// and compatibility forms (full-width letters) read as plain ones; what is left
+// must be the 27 characters exactly, the body must be canonical, and the check
+// character must match.
 func ParseRecoveryKey(s string) (RecoveryKey, error) {
 	var k RecoveryKey
-	var b strings.Builder
-	for _, r := range strings.ToUpper(s) {
-		switch r {
-		case '-', ' ', '\t', '\n', '\r':
+	var kept []rune
+	for _, r := range strings.ToUpper(norm.NFKC.String(s)) {
+		if unicode.IsSpace(r) || unicode.Is(unicode.Pd, r) || unicode.Is(unicode.Cf, r) || r == '\u2212' {
 			continue
 		}
-		b.WriteRune(r)
+		kept = append(kept, r)
 	}
-	t := b.String()
-	if len(t) != recoveryLen {
-		return k, fmt.Errorf("%w: it has %d characters (ignoring dashes and spaces), want %d", ErrRecoveryFormat, len(t), recoveryLen)
+	if len(kept) != recoveryLen {
+		return k, fmt.Errorf("%w: it has %d characters (ignoring dashes and spaces), want %d", ErrRecoveryFormat, len(kept), recoveryLen)
 	}
-	for i := 0; i < len(t); i++ {
-		if strings.IndexByte(recoveryAlphabet, t[i]) < 0 {
-			return k, fmt.Errorf("%w: %q is not a recovery-key character (A–Z, 2–7)", ErrRecoveryFormat, t[i])
+	for i, r := range kept {
+		if r > unicode.MaxASCII || strings.IndexByte(recoveryAlphabet, byte(r)) < 0 {
+			return k, fmt.Errorf("%w: character %d, %q, is not a recovery-key character (A–Z, 2–7)", ErrRecoveryFormat, i+1, r)
 		}
 	}
+	t := string(kept)
 	if !luhn32Valid(t) {
 		return k, fmt.Errorf("%w: check it character by character against your saved copy", ErrRecoveryCheck)
 	}

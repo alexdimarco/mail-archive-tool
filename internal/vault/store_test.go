@@ -225,6 +225,113 @@ func TestNoVaultAndUnreadableVaults(t *testing.T) {
 	}
 }
 
+// covers: MA-708, MA-709, R37
+func TestAForgottenPasswordIsResetWithTheRecoveryKey(t *testing.T) {
+	lowCost(t)
+	out, _, rk := newArchive(t)
+	if _, err := Open(out, RecoverySecret(rk.String())); err != nil {
+		t.Fatalf("the recovery key shown at create must open the archive: %v", err)
+	}
+	const newPassword = "remembered this time, honestly"
+	if err := ChangePasswordAt(out, RecoverySecret(rk.String()), newPassword); err != nil {
+		t.Fatalf("a reset with the recovery key: %v", err)
+	}
+	if _, err := Open(out, PasswordSecret(newPassword)); err != nil {
+		t.Fatalf("the reset password must open: %v", err)
+	}
+	if _, err := Open(out, PasswordSecret(testPassword)); !errors.Is(err, ErrWrongSecret) {
+		t.Fatalf("the forgotten password must be refused, got %v", err)
+	}
+	if _, err := Open(out, RecoverySecret(rk.String())); err != nil {
+		t.Fatalf("a password reset leaves the recovery key working: %v", err)
+	}
+	if s := snapshot(out); !bytes.Equal(s[0], s[1]) {
+		t.Fatal("the reset must rewrite both copies identically")
+	}
+}
+
+// covers: MA-709, R37
+func TestHealOnAHealthyArchiveWritesNothing(t *testing.T) {
+	lowCost(t)
+	out, _, _ := newArchive(t)
+	before := snapshot(out)
+	fi, err := os.Stat(filepath.Join(out, FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := fi.ModTime().Add(-time.Hour)
+	for _, name := range []string{FileName, BackupName} {
+		if err := os.Chtimes(filepath.Join(out, name), old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w := hookWrites(t, "")
+	if err := Heal(out, PasswordSecret(testPassword)); err != nil {
+		t.Fatal(err)
+	}
+	if len(w.names) != 0 {
+		t.Fatalf("Heal on two good copies wrote %v", w.names)
+	}
+	for _, name := range []string{FileName, BackupName} {
+		fi, err := os.Stat(filepath.Join(out, name))
+		if err != nil || !fi.ModTime().Equal(old) {
+			t.Fatalf("%s was touched by a no-op heal", name)
+		}
+	}
+	if s := snapshot(out); !bytes.Equal(s[0], before[0]) || !bytes.Equal(s[1], before[1]) {
+		t.Fatal("a no-op heal changed the vault")
+	}
+}
+
+// covers: MA-710, R37
+func TestALockLostMidChangeWritesNothing(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows refuses to remove a lock file another handle holds open; the lost-lock case cannot arise there")
+	}
+	lowCost(t)
+	out, _, _ := newArchive(t)
+	before := snapshot(out)
+	lockPath := filepath.Join(out, lockfile.Name)
+	var intruder *lockfile.Lock
+	orig := argon2Key
+	argon2Key = func(pw, salt []byte, tm, mem uint32, th uint8, n uint32) []byte {
+		if intruder == nil { // mid-change: a sync client deletes the lock, another run takes a fresh one
+			os.Remove(lockPath)
+			l, err := lockfile.AcquireAs(lockPath, "export")
+			if err != nil {
+				t.Errorf("fixture: the intruder could not take the fresh lock: %v", err)
+			}
+			intruder = l
+		}
+		return orig(pw, salt, tm, mem, th, n)
+	}
+	t.Cleanup(func() {
+		argon2Key = orig
+		intruder.Release()
+	})
+
+	err := ChangePasswordAt(out, PasswordSecret(testPassword), "a fresh long passphrase")
+	rc, msg := refusal(err)
+	assure.Refused(t, rc, msg, assure.Code(1), assure.Names("nothing was written", lockPath), assure.NoSideEffect(func() bool {
+		s := snapshot(out)
+		return bytes.Equal(s[0], before[0]) && bytes.Equal(s[1], before[1])
+	}))
+}
+
+// covers: MA-709, R37
+func TestAMissingPrimaryBesideADamagedMirrorNamesTheMirror(t *testing.T) {
+	lowCost(t)
+	out, _, _ := newArchive(t)
+	os.Remove(filepath.Join(out, FileName))
+	writeFile(t, out, BackupName, []byte("{not a vault"))
+	_, _, err := Detect(out)
+	if !errors.Is(err, ErrCorrupt) {
+		t.Fatalf("want ErrCorrupt, got %v", err)
+	}
+	rc, msg := refusal(err)
+	assure.Refused(t, rc, msg, assure.Code(1), assure.Names(BackupName, "damaged"))
+}
+
 // covers: MA-710, R37
 func TestVaultRewritesWaitForTheArchiveLock(t *testing.T) {
 	lowCost(t)

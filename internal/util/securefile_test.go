@@ -1,11 +1,13 @@
 package util
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"mail-archive-tool/internal/assure"
 )
@@ -57,6 +59,53 @@ func TestWriteFileAtomic0600SyncsTheDirectoryAfterTheRename(t *testing.T) {
 		if _, err := os.Stat(tmp); !os.IsNotExist(err) {
 			t.Fatalf("temp %s survived a successful write (stat err %v)", tmp, err)
 		}
+	}
+}
+
+// covers: MA-713
+func TestWriteFileAtomic0600WaitsOutAWindowsSharingViolation(t *testing.T) {
+	dst := filepath.Join(t.TempDir(), ".mailarchive-vault.bak.json")
+	attempts, waits := 0, []time.Duration{}
+	origRename, origSleep, origInUse := renameFile, renameSleep, renameInUse
+	t.Cleanup(func() { renameFile, renameSleep, renameInUse = origRename, origSleep, origInUse })
+	renameInUse = WindowsRenameInUse // Windows' rule, applied on every OS
+	renameSleep = func(d time.Duration) { waits = append(waits, d) }
+	failFirst := 3
+	renameFile = func(oldpath, newpath string) error {
+		attempts++
+		if attempts > 100 {
+			t.Fatalf("the rename was attempted %d times: the retry is unbounded", attempts)
+		}
+		if failFirst < 0 || attempts <= failFirst {
+			return &os.LinkError{Op: "rename", Old: oldpath, New: newpath, Err: ErrorSharingViolation}
+		}
+		return os.Rename(oldpath, newpath)
+	}
+
+	if err := WriteFileAtomic0600Temp(dst, []byte("v2"), ".mailarchive-*.tmp"); err != nil {
+		t.Fatalf("a rename refused 3 times while a reader held the file must still land: %v", err)
+	}
+	if attempts != 4 || len(assure.Reached(t, waits, "waits")) != 3 {
+		t.Fatalf("want 4 attempts and 3 waits, got %d and %d", attempts, len(waits))
+	}
+	if got, _ := os.ReadFile(dst); string(got) != "v2" {
+		t.Fatalf("dst holds %q, want v2", got)
+	}
+
+	attempts, waits, failFirst = 0, nil, -1 // never released: the budget ends it
+	err := WriteFileAtomic0600Temp(dst, []byte("v3"), ".mailarchive-*.tmp")
+	if !errors.Is(err, ErrorSharingViolation) {
+		t.Fatalf("a rename refused for the whole budget must fail with the refusal, got %v", err)
+	}
+	var total time.Duration
+	for _, d := range waits {
+		total += d
+	}
+	if total > RenameRetryBudget {
+		t.Fatalf("waited %v, over the %v budget", total, RenameRetryBudget)
+	}
+	if got, _ := os.ReadFile(dst); string(got) != "v2" {
+		t.Fatalf("a failed write must leave the old bytes, got %q", got)
 	}
 }
 

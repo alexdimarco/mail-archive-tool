@@ -55,7 +55,7 @@ func WriteFileAtomic0600Temp(path string, data []byte, pattern string) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(tmpName, path); err != nil {
+	if err := ReplaceRetrying(tmpName, path, renameFile, renameInUse, renameSleep); err != nil {
 		return fmt.Errorf("rename into place %s: %w", path, err)
 	}
 	syncDirFn(dir)

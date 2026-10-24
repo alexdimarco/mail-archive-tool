@@ -109,8 +109,89 @@ func TestHeaderMACRefusesAnAlteredVaultEvenWithTheRightPassword(t *testing.T) {
 	// A swapped archive id cannot even unwrap: the wrap's associated data names it.
 	swapped := *v
 	swapped.ArchiveID[0] ^= 1
-	if _, err := swapped.Unlock(testPassword); !errors.Is(err, ErrWrongSecret) && !errors.Is(err, ErrTampered) {
-		t.Fatalf("swapped archive id: want a refusal, got %v", err)
+	if _, err := swapped.Unlock(testPassword); !errors.Is(err, ErrWrongSecret) {
+		t.Fatalf("swapped archive id: the wrap AAD must refuse it at unwrap (ErrWrongSecret), got %v", err)
+	}
+
+	// Every field of either entry is under the MAC: alter the entry NOT used to
+	// unlock, then unlock with the other secret.
+	v2, _, rk2, err := Create(testPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherEntry := map[string]struct {
+		change func(*Vault)
+		unlock func(*Vault) (*Key, error)
+	}{
+		"password salt (unlock by recovery)":    {func(x *Vault) { x.Password.Salt[0] ^= 1 }, func(x *Vault) (*Key, error) { return x.UnlockRecovery(rk2.String()) }},
+		"password wrapped (unlock by recovery)": {func(x *Vault) { x.Password.Wrapped = flip(x.Password.Wrapped) }, func(x *Vault) (*Key, error) { return x.UnlockRecovery(rk2.String()) }},
+		"password memory (unlock by recovery)":  {func(x *Vault) { x.Password.Params.MemoryKiB *= 2 }, func(x *Vault) (*Key, error) { return x.UnlockRecovery(rk2.String()) }},
+		"password threads (unlock by recovery)": {func(x *Vault) { x.Password.Params.Threads++ }, func(x *Vault) (*Key, error) { return x.UnlockRecovery(rk2.String()) }},
+		"recovery memory (unlock by password)":  {func(x *Vault) { x.Recovery.Params.MemoryKiB *= 2 }, func(x *Vault) (*Key, error) { return x.Unlock(testPassword) }},
+		"recovery threads (unlock by password)": {func(x *Vault) { x.Recovery.Params.Threads++ }, func(x *Vault) (*Key, error) { return x.Unlock(testPassword) }},
+		"recovery salt (unlock by password)":    {func(x *Vault) { x.Recovery.Salt[0] ^= 1 }, func(x *Vault) (*Key, error) { return x.Unlock(testPassword) }},
+	}
+	for label, c := range otherEntry {
+		bad := *v2
+		bad.Password.Wrapped = bytes.Clone(v2.Password.Wrapped)
+		c.change(&bad)
+		if k, err := c.unlock(&bad); !errors.Is(err, ErrTampered) || k != nil {
+			t.Fatalf("%s: want ErrTampered, got %v", label, err)
+		}
+	}
+}
+
+func flip(b []byte) []byte {
+	c := bytes.Clone(b)
+	c[len(c)-1] ^= 1
+	return c
+}
+
+// covers: MA-703, MA-704, R37
+func TestKeyWrapsDrawFreshNoncesAndBindTheirPlace(t *testing.T) {
+	lowCost(t)
+	rec := recordDraws(t)
+	v, _, rk, err := Create(testPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	drew := func(b []byte) bool {
+		for _, d := range rec.draws {
+			if len(d) == nonceSize && bytes.Equal(d, b) {
+				return true
+			}
+		}
+		return false
+	}
+	if !drew(v.Password.Wrapped[:nonceSize]) || !drew(v.Recovery.Wrapped[:nonceSize]) {
+		t.Fatal("each wrap's nonce must be its own 24-byte draw from the random source")
+	}
+	if bytes.Equal(v.Password.Wrapped[:nonceSize], v.Recovery.Wrapped[:nonceSize]) {
+		t.Fatal("the two wraps share a nonce")
+	}
+
+	kek, err := deriveKEK(passwordBytes(testPassword), v.Password.Salt[:], v.Password.Params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := open(kek, wrapAAD(v.ArchiveID, entryPassword), v.Password.Wrapped); err != nil {
+		t.Fatalf("the password wrap must open under the exact MAW1 associated data: %v", err)
+	}
+	for label, aad := range map[string][]byte{
+		"recovery kind": wrapAAD(v.ArchiveID, entryRecovery),
+		"no AAD":        nil,
+		"other archive": wrapAAD(ID{1}, entryPassword),
+	} {
+		if _, err := open(kek, aad, v.Password.Wrapped); !errors.Is(err, ErrAuth) {
+			t.Fatalf("the password wrap opened under %s associated data", label)
+		}
+	}
+	rkek, err := deriveKEK(rk[:], v.Recovery.Salt[:], v.Recovery.Params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := open(rkek, wrapAAD(v.ArchiveID, entryRecovery), v.Recovery.Wrapped); err != nil {
+		t.Fatalf("the recovery wrap must open under its MAW1 associated data: %v", err)
 	}
 }
 
@@ -154,8 +235,15 @@ func TestParseIsStrict(t *testing.T) {
 		"unknown kdf":       edit(func(m map[string]any) { entries(m)[0].(map[string]any)["kdf"] = "pbkdf2" }),
 		"zero generation":   edit(func(m map[string]any) { m["generation"] = 0 }),
 		"bad archive id":    edit(func(m map[string]any) { m["archive_id"] = "xyz" }),
-		"trailing data":     append(bytes.Clone(good), []byte(`{"format":1}`)...),
-		"not json":          []byte("not a vault"),
+		"format zero":       edit(func(m map[string]any) { m["format"] = 0 }),
+		"format missing":    edit(func(m map[string]any) { delete(m, "format") }),
+		"MAC not hex":       edit(func(m map[string]any) { m["mac"] = "zz" }),
+		"MAC short":         edit(func(m map[string]any) { m["mac"] = "abcd" }),
+		"unknown entry kind": edit(func(m map[string]any) {
+			entries(m)[1].(map[string]any)["kind"] = "escrow"
+		}),
+		"trailing data": append(bytes.Clone(good), []byte(`{"format":1}`)...),
+		"not json":      []byte("not a vault"),
 	}
 	for label, b := range corrupt {
 		_, err := Parse(b)
@@ -163,13 +251,17 @@ func TestParseIsStrict(t *testing.T) {
 			t.Fatalf("%s: want ErrCorrupt, got %v", label, err)
 		}
 	}
-	newerFmt := edit(func(m map[string]any) { m["format"] = VaultFormat + 1; m["future"] = true })
-	_, err = Parse(newerFmt)
-	if !errors.Is(err, ErrNewerVault) {
-		t.Fatalf("newer format: want ErrNewerVault, got %v", err)
+	for label, newerFmt := range map[string][]byte{
+		"with a new field":    edit(func(m map[string]any) { m["format"] = VaultFormat + 1; m["future"] = true }),
+		"with the same shape": edit(func(m map[string]any) { m["format"] = VaultFormat + 1 }),
+	} {
+		_, err = Parse(newerFmt)
+		if !errors.Is(err, ErrNewerVault) {
+			t.Fatalf("newer format %s: want ErrNewerVault, got %v", label, err)
+		}
+		rc, msg := refusal(err)
+		assure.Refused(t, rc, msg, assure.Code(1), assure.Names("upgrade"))
 	}
-	rc, msg := refusal(err)
-	assure.Refused(t, rc, msg, assure.Code(1), assure.Names("upgrade"))
 }
 
 // covers: MA-708, R37

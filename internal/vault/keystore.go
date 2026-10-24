@@ -49,35 +49,44 @@ func rememberedUnlock(master []byte) unlockFunc {
 }
 
 // RequireRetrievableKey is the unattended run's gate (C7; the twin of
-// app.RequireExistingOut, MA-689): it returns the archive's key only when the
-// remembered key authenticates the archive's vault, and otherwise refuses —
-// naming the archive and the fix — before the caller writes anything. It writes
+// app.RequireExistingOut, MA-689). want is the archive id THIS MACHINE recorded
+// when the archive was encrypted (A15) — never one read from the folder, which
+// an attacker who can write the folder controls. It returns the key only when
+// the key remembered under want authenticates a vault in out that names want,
+// and otherwise refuses — naming the archive and the fix — before the caller
+// writes anything: a vault deleted, damaged, swapped for another archive's, or
+// from a newer MailArchive is a refusal, never "not encrypted". It writes
 // nothing itself (no heal: healing needs the archive lock).
-func RequireRetrievableKey(out string, s Store) (*Key, error) {
+func RequireRetrievableKey(out string, want ID, s Store) (*Key, error) {
+	refuse := func(why string, cause error) error {
+		return fmt.Errorf("%w: archive %s (id %s): %s — open the archive once in MailArchive with its password or recovery key to remember its key again (%w)",
+			ErrKeyNotRetrievable, out, want, why, cause)
+	}
+	if want == (ID{}) {
+		return nil, fmt.Errorf("%w: archive %s: no archive id was recorded for it on this machine", ErrKeyNotRetrievable, out)
+	}
 	info, ok, err := Detect(out)
+	switch {
+	case err != nil:
+		return nil, refuse("its key file is unusable", err)
+	case !ok:
+		return nil, refuse("its key file is missing, so it will not be written to — it was encrypted, and writing without the key would store mail unencrypted", ErrNoVault)
+	case info.ArchiveID != want:
+		return nil, refuse("its key file belongs to archive "+info.ArchiveID.String()+", not this one", ErrTampered)
+	}
+	stored, err := s.Get(Account(want))
 	if err != nil {
-		return nil, err
-	}
-	if !ok {
-		return nil, fmt.Errorf("%w: %s", ErrNoVault, out)
-	}
-	refuse := func(why string) error {
-		return fmt.Errorf("%w: archive %s (id %s): %s — open the archive once in MailArchive with its password or recovery key to remember its key again",
-			ErrKeyNotRetrievable, out, info.ArchiveID, why)
-	}
-	stored, err := s.Get(Account(info.ArchiveID))
-	if err != nil {
-		return nil, refuse("no key is stored for it (" + err.Error() + ")")
+		return nil, refuse("no key is stored for it", err)
 	}
 	master, err := base64.StdEncoding.DecodeString(stored)
 	if err != nil || len(master) != keySize {
 		clear(master)
-		return nil, refuse("the stored key is damaged")
+		return nil, refuse("the stored key is damaged", ErrCorrupt)
 	}
 	defer clear(master)
 	o, err := openVault(out, rememberedUnlock(master))
 	if err != nil {
-		return nil, refuse("the stored key does not open it (" + err.Error() + ")")
+		return nil, refuse("the stored key does not open it", err)
 	}
 	return o.Key, nil
 }

@@ -83,6 +83,77 @@ func TestEverySingleCharacterTypoInARecoveryKeyIsRefused(t *testing.T) {
 }
 
 // covers: MA-706, R37
+func TestANonCanonicalLastCharacterIsRefused(t *testing.T) {
+	rk, err := newRecoveryKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	flat := strings.ReplaceAll(rk.String(), "-", "")
+	body := []byte(flat[:recoveryBodyLen])
+	// 128 bits fill 25 characters and 3 bits of the 26th; its low 2 bits are
+	// padding, zero in the canonical spelling. Set one, and give the result a
+	// correct check character so only the canonical check can catch it.
+	last := strings.IndexByte(recoveryAlphabet, body[recoveryBodyLen-1])
+	body[recoveryBodyLen-1] = recoveryAlphabet[last|1]
+	if last|1 == last {
+		t.Fatal("fixture: the canonical last character must have zero padding bits")
+	}
+	alias := string(body) + string(recoveryAlphabet[luhn32Check(string(body))])
+	if !luhn32Valid(alias) {
+		t.Fatal("fixture: the alias must pass the check character")
+	}
+	_, err = ParseRecoveryKey(alias)
+	if !errors.Is(err, ErrRecoveryFormat) {
+		t.Fatalf("a second spelling of the same key must be refused: want ErrRecoveryFormat, got %v", err)
+	}
+	rc, msg := refusal(err)
+	assure.Refused(t, rc, msg, assure.Code(1), assure.Names("last data character"))
+}
+
+// covers: MA-706, R37
+func TestARecoveryKeyPastedFromADocumentStillParses(t *testing.T) {
+	rk, err := newRecoveryKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := rk.String()
+	fullwidth := func(s string) string {
+		var b strings.Builder
+		for _, r := range s {
+			if r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' {
+				r += 0xFEE0 // the full-width form
+			}
+			b.WriteRune(r)
+		}
+		return b.String()
+	}
+	for label, pasted := range map[string]string{
+		"no-break spaces":    strings.ReplaceAll(s, "-", "\u00a0"),
+		"en dashes":          strings.ReplaceAll(s, "-", "\u2013"),
+		"zero-width spaces":  strings.ReplaceAll(s, "-", "\u200b"),
+		"soft hyphens":       strings.ReplaceAll(s, "-", "\u00ad"),
+		"minus signs":        strings.ReplaceAll(s, "-", "\u2212"),
+		"full-width letters": fullwidth(s),
+		"a byte-order mark":  "\ufeff" + s,
+	} {
+		got, err := ParseRecoveryKey(pasted)
+		if err != nil {
+			t.Fatalf("%s: %v", label, err)
+		}
+		if got != rk {
+			t.Fatalf("%s: parsed to a different key", label)
+		}
+	}
+
+	_, err = ParseRecoveryKey(strings.ReplaceAll(s, "-", "\u00a0") + "ÉÉ")
+	if !errors.Is(err, ErrRecoveryFormat) {
+		t.Fatalf("want ErrRecoveryFormat, got %v", err)
+	}
+	rc, msg := refusal(err)
+	assure.Refused(t, rc, msg, assure.Code(1), assure.Names("29 characters"))
+}
+
+// covers: MA-706, R37
 func TestMalformedRecoveryKeysAreRefused(t *testing.T) {
 	rk, _ := newRecoveryKey()
 	flat := strings.ReplaceAll(rk.String(), "-", "")

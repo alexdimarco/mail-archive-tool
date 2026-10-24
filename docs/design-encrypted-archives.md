@@ -2,7 +2,8 @@
 
 Status: **schema FROZEN 2026-10-24 — 10-lens review (GO_WITH_CONDITIONS) folded in as the
 "Post-review resolution"; the focused re-review of the amended schema folded in as the
-"Re-review amendments" (A1–A14), which govern.** Not built. All owner rulings settled (D1
+"Re-review amendments" (A1–A14); the Phase-1 adversarial pass refined A2/A3/A7 and added A15
+("Phase-1 adversarial pass — amendments"), which govern.** Phase 1 (`internal/vault`) built. All owner rulings settled (D1
 remember-key default, D2 keep search, D5 full-build-before-ship, C2 encrypt names +
 structure). Next: Phase 1, then the adversarial + friction gates per slice before any ship. This draft records what is settled, the
 hard problems the codebase imposes, a recommended approach for each, and the handful of
@@ -458,3 +459,61 @@ fail and leave the schedule live.
 **Re-review closure.** These amendments are the re-review's own recommended fixes, not new
 design. They are frozen as Phase-1 code + tests; Phase 1's own adversarial pass re-checks the
 schema as built. No further pre-code review round.
+
+---
+
+## Phase-1 adversarial pass — amendments (2026-10-24)
+
+The Phase-1 adversarial pass (five security lenses, three skeptics per finding, a 44-mutation
+prove-fail sweep and a completeness critic; record in `docs/review-encrypted-archives-predesign.md`
+§"Phase-1 adversarial pass") confirmed findings that refine A2, A3 and A7 and add A15. These
+govern where they conflict with A1–A14.
+
+**A2 (refined) — a chunk's generation is its own.** A11 re-seals only changed chunks, so a
+container at generation G holds chunks sealed at earlier generations. The chunk AAD's
+`generation` is the generation at which THAT chunk was sealed; the authenticated pointer
+records it per chunk (name, seal generation, ciphertext SHA-256), and a reader opens each
+chunk at its recorded generation. A superseded version of a chunk never opens as the current
+one.
+
+**A3 (refined) — the ceiling is headroom, and the cheapest copy is tried first.** The cost
+ceiling is memory 1 GiB, time 16, threads 4 (this build writes only the floor; the ceiling
+bounds what a hostile vault can make an unlock spend). An unlock tries the copy with the
+lowest cost first and never derives twice for byte-identical copies, so a planted
+expensive copy costs a derivation only if the real one fails, and a typo costs one
+derivation. When no copy unlocks, "wrong password" is reported if any copy said so — a
+planted copy cannot mask it.
+
+**A7 (refined) — the two copies, a commit point, and two-step key events.**
+- The copies must name the same archive: copies of two archives are refused (`ErrTampered`,
+  naming both ids) and never healed across. A copy from a newer MailArchive is never fallen
+  back past or healed over (`ErrNewerVault` for the whole open). Symlinks and special files
+  at a vault name are refused on every OS (judged before opening).
+- On a generation tie, the copy the secret opened wins. Two different authentic copies at the
+  newest generation (two machines changed the vault at once) are a **fork**: Heal refuses to
+  choose (`ErrConflict`); the next deliberate change from one side settles it.
+- The primary is the **commit point**: if the primary was written and the mirror was not,
+  the change is in effect and the result says so (`ErrPartiallySaved`, with a new recovery
+  key returned alongside it, never dropped).
+- **A recovery key nobody has seen is never committed** (the seavault rule): creating a vault
+  and replacing the recovery key are two steps — prepare in memory, show the key, the person
+  confirms, then commit (`PrepareCreate`/`Commit`, `PrepareNewRecovery`/`Commit`). A failed
+  create removes what it wrote so a retry starts clean; a commit over a vault that changed
+  since it was prepared is refused (`ErrConflict`).
+- Every rewrite re-proves the archive lock immediately before writing (the export's R5
+  `StillHeld` rule) and writes nothing if it was lost.
+- The vault write waits out a Windows sharing violation with the same bounded retry the
+  manifest uses (`util.ReplaceRetrying`, shared with `internal/state`).
+
+**A15 — an archive recorded as encrypted never reads as plaintext.** The vault, its mirror
+and the manifest envelope live in the archive folder, which the threat model lets an attacker
+rewrite — deleting all three would otherwise make an encrypted archive look like a fresh
+plaintext one, and the next backup would export the mailbox unencrypted into it. So this
+machine records, when an archive is encrypted, its archive id OUTSIDE the archive (the
+schedule/job descriptor and the archindex entry in the config directory; wired in Phases 3–4),
+and every path that writes to it is handed that id. `RequireRetrievableKey(out, want, store)`
+takes the recorded id — never one read from the folder — and refuses (`ErrKeyNotRetrievable`)
+when the vault is missing, damaged, from a newer MailArchive, or names another archive; a
+missing vault is never "not encrypted". `Detect`'s "no vault" is documented as unauthenticated
+absence, not proof of plaintext. Phase 2+ write paths that hold a recorded id must refuse the
+same way and never fall back to a plaintext export.

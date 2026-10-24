@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"encoding/base64"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/graphconfig"
+	"mail-archive-tool/internal/lockfile"
 )
 
 // covers: MA-711, R37
@@ -30,7 +33,7 @@ func TestARememberedKeyOpensTheArchiveUnattended(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := RequireRetrievableKey(out, store)
+	got, err := RequireRetrievableKey(out, k.ArchiveID(), store)
 	if err != nil {
 		t.Fatalf("the remembered key must open the archive: %v", err)
 	}
@@ -41,7 +44,7 @@ func TestARememberedKeyOpensTheArchiveUnattended(t *testing.T) {
 	if err := ChangePasswordAt(out, PasswordSecret(testPassword), "the replacement passphrase"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := RequireRetrievableKey(out, store); err != nil {
+	if _, err := RequireRetrievableKey(out, k.ArchiveID(), store); err != nil {
 		t.Fatalf("a password change must leave the remembered key working (A10): %v", err)
 	}
 }
@@ -58,7 +61,7 @@ func TestRequireRetrievableKeyFailsClosed(t *testing.T) {
 	if err := Remember(healthy, k); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := RequireRetrievableKey(out, healthy); err != nil {
+	if _, err := RequireRetrievableKey(out, k.ArchiveID(), healthy); err != nil {
 		t.Fatalf("positive twin: a correct remembered key passes the gate: %v", err)
 	}
 
@@ -72,7 +75,7 @@ func TestRequireRetrievableKeyFailsClosed(t *testing.T) {
 	} {
 		store := graphconfig.NewFileSecretStore(t.TempDir())
 		prepare(store)
-		key, err := RequireRetrievableKey(out, store)
+		key, err := RequireRetrievableKey(out, k.ArchiveID(), store)
 		if !errors.Is(err, ErrKeyNotRetrievable) {
 			t.Fatalf("%s: want ErrKeyNotRetrievable, got %v", label, err)
 		}
@@ -85,8 +88,88 @@ func TestRequireRetrievableKeyFailsClosed(t *testing.T) {
 			assure.NoSideEffect(unchanged))
 	}
 
-	_, err := RequireRetrievableKey(t.TempDir(), healthy)
-	if !errors.Is(err, ErrNoVault) {
-		t.Fatalf("a plain folder: want ErrNoVault, got %v", err)
+	if _, err := RequireRetrievableKey(out, ID{}, healthy); !errors.Is(err, ErrKeyNotRetrievable) {
+		t.Fatalf("no recorded id: want ErrKeyNotRetrievable, got %v", err)
+	}
+}
+
+// covers: MA-717, R37
+func TestAnArchiveRecordedAsEncryptedNeverReadsAsPlaintext(t *testing.T) {
+	lowCost(t)
+	foreignDir, foreign, _ := newArchive(t) // its key is remembered too, so only the id check can refuse it
+	for label, attack := range map[string]func(out string){
+		"both vault files deleted": func(out string) {
+			os.Remove(filepath.Join(out, FileName))
+			os.Remove(filepath.Join(out, BackupName))
+		},
+		"both copies replaced by another archive's vault": func(out string) {
+			writeFile(t, out, FileName, readFile(t, foreignDir, FileName))
+			writeFile(t, out, BackupName, readFile(t, foreignDir, BackupName))
+		},
+		"both copies damaged": func(out string) {
+			writeFile(t, out, FileName, []byte("x"))
+			writeFile(t, out, BackupName, []byte("y"))
+		},
+	} {
+		out, k, _ := newArchive(t)
+		store := graphconfig.NewFileSecretStore(t.TempDir())
+		if err := Remember(store, k); err != nil {
+			t.Fatal(err)
+		}
+		if err := Remember(store, foreign); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := RequireRetrievableKey(out, k.ArchiveID(), store); err != nil {
+			t.Fatalf("%s: positive twin: the intact archive passes: %v", label, err)
+		}
+		attack(out)
+		after := snapshot(out)
+		key, err := RequireRetrievableKey(out, k.ArchiveID(), store)
+		if !errors.Is(err, ErrKeyNotRetrievable) {
+			t.Fatalf("%s: want ErrKeyNotRetrievable (never 'not encrypted'), got %v", label, err)
+		}
+		if key != nil {
+			t.Fatalf("%s: the gate returned a key", label)
+		}
+		rc, msg := refusal(err)
+		assure.Refused(t, rc, msg, assure.Code(1), assure.Names(out, k.ArchiveID().String()), assure.NoSideEffect(func() bool {
+			s := snapshot(out)
+			return bytes.Equal(s[0], after[0]) && bytes.Equal(s[1], after[1])
+		}))
+	}
+}
+
+// covers: MA-709, MA-711, R37
+func TestReadersNeitherLockNorWrite(t *testing.T) {
+	lowCost(t)
+	out, k, _ := newArchive(t)
+	store := graphconfig.NewFileSecretStore(t.TempDir())
+	if err := Remember(store, k); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, out, FileName, []byte("damaged")) // so Open reports NeedsHeal
+	before := snapshot(out)
+	held, err := lockfile.AcquireAs(filepath.Join(out, lockfile.Name), "export")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Release()
+
+	o, err := Open(out, PasswordSecret(testPassword))
+	if err != nil {
+		t.Fatalf("Open must not need the archive lock: %v", err)
+	}
+	if !o.NeedsHeal {
+		t.Fatal("fixture: Open must report NeedsHeal for the damaged primary")
+	}
+	if _, err := RequireRetrievableKey(out, k.ArchiveID(), store); err != nil {
+		t.Fatalf("the gate must not need the archive lock: %v", err)
+	}
+	if _, _, err := Detect(out); err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	s := snapshot(out)
+	if !bytes.Equal(s[0], before[0]) || !bytes.Equal(s[1], before[1]) {
+		t.Fatal("a reader wrote to the vault: Open, Detect and the gate must write nothing, even when a heal is needed")
 	}
 }

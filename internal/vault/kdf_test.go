@@ -15,7 +15,7 @@ func TestShippedKDFFloor(t *testing.T) {
 	if want := (Params{MemoryKiB: 256 * 1024, Time: 3, Threads: 1}); floor != want {
 		t.Fatalf("the shipped Argon2id floor is %+v, want %+v (A3) — lowering it is an operator decision, not a code change", floor, want)
 	}
-	if want := (Params{MemoryKiB: 4 * 1024 * 1024, Time: 64, Threads: 16}); ceiling != want {
+	if want := (Params{MemoryKiB: 1024 * 1024, Time: 16, Threads: 4}); ceiling != want {
 		t.Fatalf("the shipped Argon2id ceiling is %+v, want %+v", ceiling, want)
 	}
 	if MinPasswordRunes != 12 {
@@ -61,13 +61,16 @@ func TestUnlockRefusesACostOutsideTheBoundsBeforeDeriving(t *testing.T) {
 	}{
 		"time below floor":      {Params{floor.MemoryKiB, floor.Time - 1, floor.Threads}, "below the minimum"},
 		"memory below floor":    {Params{floor.MemoryKiB - 1, floor.Time, floor.Threads}, "below the minimum"},
+		"threads below floor":   {Params{floor.MemoryKiB, floor.Time, 0}, "below the minimum"},
 		"memory above ceiling":  {Params{ceiling.MemoryKiB + 1, floor.Time, floor.Threads}, "above the maximum"},
 		"time above ceiling":    {Params{floor.MemoryKiB, ceiling.Time + 1, floor.Threads}, "above the maximum"},
 		"threads above ceiling": {Params{floor.MemoryKiB, floor.Time, ceiling.Threads + 1}, "above the maximum"},
 	}
+	runs := countDerivations(t)
 	for label, c := range cases {
 		bad := *v
 		bad.Password.Params = c.p
+		*runs = nil
 		k, err := bad.Unlock(testPassword)
 		if !errors.Is(err, ErrParams) {
 			t.Fatalf("%s: want ErrParams, got %v", label, err)
@@ -76,6 +79,9 @@ func TestUnlockRefusesACostOutsideTheBoundsBeforeDeriving(t *testing.T) {
 		assure.Refused(t, rc, msg, assure.Code(1), assure.Names(c.name))
 		if k != nil {
 			t.Fatalf("%s: a refused unlock returned a key", label)
+		}
+		if len(*runs) != 0 {
+			t.Fatalf("%s: %d derivations ran before the refusal; the cost must be refused BEFORE any is spent", label, len(*runs))
 		}
 	}
 }
@@ -87,9 +93,10 @@ func TestNewPasswordFloor(t *testing.T) {
 		t.Fatalf("positive twin: a %d-character password is accepted: %v", MinPasswordRunes, err)
 	}
 	for label, pw := range map[string]string{
-		"11 characters":                     strings.Repeat("x", MinPasswordRunes-1),
-		"11 two-byte characters (22 bytes)": strings.Repeat("é", MinPasswordRunes-1),
-		"empty":                             "",
+		"11 characters":                                       strings.Repeat("x", MinPasswordRunes-1),
+		"11 two-byte characters (22 bytes)":                   strings.Repeat("\u00e9", MinPasswordRunes-1),
+		"6 decomposed accents (12 code points, 6 characters)": strings.Repeat("e\u0301", 6),
+		"empty": "",
 	} {
 		v, k, _, err := Create(pw)
 		if !errors.Is(err, ErrWeakPassword) {

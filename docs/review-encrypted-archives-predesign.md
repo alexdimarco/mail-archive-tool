@@ -215,3 +215,57 @@ decrypt).
 **Closure:** A1–A14 are the checks' own recommended fixes, not new design; they are frozen
 as Phase-1 code + tests, and Phase 1's own adversarial pass re-checks the schema as built.
 No further pre-code round.
+
+## Phase-1 adversarial pass (2026-10-24)
+
+**Reviewed:** `internal/vault` and the `util.WriteFileAtomic0600` change at commit `ebeb8a3`.
+**Run:** workflow `vault-phase1-assurance` (`wf_62c576e2-5e8`): 44 single-mutation prove-fail
+runs (one worktree each), five security lenses (crypto, format/hostile input, durability,
+fail-closed, conformance/test honesty) with three skeptics per finding (kept on 2 of 3), and a
+completeness critic. 164 agents.
+
+**Mutation record.** 41 of 42 mutations that ran were killed by a named failing test.
+M19 (drop the recovery key's canonical-body check) survived — a real gap, now covered by
+`TestANonCanonicalLastCharacterIsRefused`. M06 (drop the chunk index from the AAD) and M44
+(write the mirror before the primary) did not run in the sweep (their worktrees started on
+`main`); M06 was run by hand and killed by `TestAADLayoutsAreTheFrozenBytes` +
+`TestSealedBytesCannotMove`; M44 is now caught by
+`TestSaveWritesThePrimaryThenTheMirrorWithSweepableTemps`. M12 (drop the ceiling check) was
+reported killed by inference, not execution; the refusal-before-derivation is now observed
+directly through the Argon2id seam (`TestUnlockRefusesACostOutsideTheBoundsBeforeDeriving`).
+
+**Confirmed findings and resolution** (severities are the skeptics' consensus):
+
+| Finding | Severity | Resolution |
+|---|---|---|
+| Deleting the vault files makes an encrypted archive read as plaintext; nothing outside the folder records otherwise | medium (design gap) | **A15** — the gate takes the machine-recorded archive id; missing/swapped/damaged vault refuses (MA-717) |
+| A failed mirror write after the primary landed drops a new recovery key that is already in force (old one then refused) | medium | **A7** commit point + two-step create/regenerate; `ErrPartiallySaved` returns the key (MA-714) |
+| A failed or interrupted create leaves an unshown-recovery-key vault that blocks every retry | low | two-step create; a failed create removes what it wrote (MA-714) |
+| Copies of two different archives are never compared; Heal can adopt or spread a foreign vault | low–medium | refused with `ErrTampered` naming both ids, never healed (MA-715) |
+| A newer-format copy is skipped and then healed over by an older build | low–medium | any newer copy refuses the whole open (MA-715) |
+| Same-generation fork: the winner may not be the copy the secret opened, and Heal spreads it | low | tie → the opened copy; Heal refuses a fork; a deliberate change settles it (MA-715) |
+| A planted copy forces a ceiling-cost (4 GiB) derivation before the real copy | low | ceiling lowered to 1 GiB/16/4; cheapest copy tried first; identical copies derived once (MA-715, MA-705) |
+| Chunk AAD binds the container generation, conflicting with O(delta) re-seal | medium (design) | **A2 refined** — a chunk's own seal generation, recorded per chunk in the pointer (MA-704) |
+| No known-answer tests for HKDF sub-keys, MAC header, Argon2id, recovery rendering | low–medium | MA-716 (HKDF + base32 cross-checked against Python) + a checked-in vault fixture |
+| Vault rename has no Windows sharing-violation retry | low | `util.ReplaceRetrying`, shared with `internal/state` (MA-713) |
+| Windows readCopy follows a symlink (no Lstat) | low | Lstat before open on every OS (MA-709) |
+| Rewrites don't re-check the lock before writing | low | `StillHeld` before every save (MA-710) |
+| Recovery keys pasted with Unicode spaces/dashes are refused; error counts bytes | low | NFKC + Unicode separators skipped; rune counts (MA-706) |
+| When every copy fails, a planted copy's error can mask "wrong password" | low | wrong-password is reported if any copy said so (MA-715) |
+| Wrap nonce/MAW1 AAD, "before any derivation", threads 0, NFC count, more MAC fields, save order/temp name untested | low (test gaps) | added to MA-703/704/705/707/714 |
+
+**Refuted** (majority of skeptics): Destroy leaving copies (struct copies are bounded and
+documented); header MAC/AAD binding build constants (both copies share the format; a newer
+format is refused); envelope having no reader yet (Phase 2 scope); CreateAt check-then-rename
+race (serialised by the archive lock); typed errors flattened by the gate (they now wrap);
+a planted different-id copy blocking the gate (now a named refusal per A15).
+
+**Also checked:** `go test -race` on the touched packages, `go vet` for Windows and Linux
+from macOS, and `govulncheck` (v1.1.4): `golang.org/x/crypto` v0.57.0 has one advisory
+(GO-2026-5932, the unmaintained `openpgp` package) that this module does not import. The
+standard-library advisories it lists are for the LOCAL go1.26.0 toolchain; CI and release
+build with the newest 1.26.x patch (`go-version: '1.26.x'`), so they are an operator
+question about the pinned local toolchain, not a Phase-1 finding.
+
+**Verdict:** Phase 1 passes its adversarial gate with the fixes above. No friction review is
+owed for Phase 1 (no user-facing surface); the UX gates fall on Phase 3.
