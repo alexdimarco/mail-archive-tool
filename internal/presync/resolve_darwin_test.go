@@ -36,7 +36,7 @@ func TestMacResolveRefusesElevation(t *testing.T) {
 	ran := false
 	e.run = func(*exec.Cmd) (string, string, error) { ran = true; return "", "", nil }
 
-	_, outcome, ok := e.resolve("/some/profile", false)
+	_, outcome, ok := e.resolve("/some/profile", false, nil)
 	if ok || outcome != OutcomeRefusedElevated {
 		t.Errorf("resolve under euid 0 = (%v, %q), want (false, refused-elevated)", ok, outcome.Name)
 	}
@@ -211,7 +211,7 @@ func TestMacResolveHappy(t *testing.T) {
 		return "org.mozilla.firefox\n", "", nil // a real /Applications/Thunderbird.app, if present, is skipped
 	}
 
-	plan, outcome, ok := e.resolve(prof, false)
+	plan, outcome, ok := e.resolve(prof, false, nil)
 	if !ok || outcome != OutcomeOK {
 		t.Fatalf("resolve = (%v, %q), want ok", ok, outcome.Name)
 	}

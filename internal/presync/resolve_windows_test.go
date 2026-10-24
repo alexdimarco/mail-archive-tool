@@ -68,7 +68,7 @@ func TestWinResolveRefusesElevated(t *testing.T) {
 		w:        fakeWin32{isElev: true},
 		appCands: func() []string { appCalled = true; return nil },
 	}
-	plan, out, ok := e.resolve(`C:\whatever`, false)
+	plan, out, ok := e.resolve(`C:\whatever`, false, nil)
 	if ok || out != OutcomeRefusedElevated {
 		t.Errorf("elevated resolve = (%+v, %v, %v), want refused-elevated", plan, out, ok)
 	}
@@ -153,7 +153,7 @@ func TestWinResolveHappyPath(t *testing.T) {
 		appCands: func() []string { return []string{exe} },
 		roaming:  func() (string, bool) { return "", false },
 	}
-	plan, out, ok := e.resolve(prof, true)
+	plan, out, ok := e.resolve(prof, true, nil)
 	if !ok || out != OutcomeOK {
 		t.Fatalf("resolve = (%+v, %v, %v), want OK", plan, out, ok)
 	}

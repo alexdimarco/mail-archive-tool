@@ -37,7 +37,7 @@ type winPlan struct {
 // profile with -thunderbird-profile, which — and only which — bypasses the
 // profiles.ini membership test (PC3). It returns the plan, or an Outcome to
 // record WITHOUT running any helper.
-func (e *winEnv) resolve(profile string, named bool) (winPlan, Outcome, bool) {
+func (e *winEnv) resolve(profile string, named bool, inputs []string) (winPlan, Outcome, bool) {
 	// §5 / MA-572: never run from an elevated token — a Thunderbird started
 	// elevated would create profile files the owner could not then open. Refuse
 	// before anything else runs.
@@ -47,6 +47,14 @@ func (e *winEnv) resolve(profile string, named bool) (winPlan, Outcome, bool) {
 	exe, ok := resolveWinApp(e.appCands())
 	if !ok {
 		return winPlan{}, OutcomeAppNotFound, false
+	}
+	if profile == "" && !named {
+		// No -thunderbird-profile given: derive the one profiles.ini-listed profile
+		// that contains the archive's inputs (§4.3). A derived profile is already
+		// listed, so it is treated as named (membership need not be re-checked).
+		if d, dok := deriveProfile(inputs, e.listedProfiles()); dok {
+			profile, named = d, true
+		}
 	}
 	cprofile, ok := e.validateProfile(profile, named)
 	if !ok {

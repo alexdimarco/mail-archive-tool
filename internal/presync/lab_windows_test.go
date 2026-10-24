@@ -97,7 +97,7 @@ func TestLabHiddenLaunchAndClose(t *testing.T) {
 	}
 
 	e := newWinEnv()
-	plan, outcome, ok := e.resolve(profile, true) // named=true: the operator chose this profile
+	plan, outcome, ok := e.resolve(profile, true, nil) // named=true: the operator chose this profile
 	if !ok {
 		t.Fatalf("resolve failed (%v): is Thunderbird installed and is %q a valid profile with prefs.js?", outcome, profile)
 	}

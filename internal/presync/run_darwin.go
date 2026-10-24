@@ -15,7 +15,7 @@ func Run(ctx context.Context, cfg Config) Result {
 }
 
 func runWith(ctx context.Context, cfg Config, e *macEnv) Result {
-	plan, outcome, ok := e.resolve(cfg.Profile, cfg.ProfileNamed)
+	plan, outcome, ok := e.resolve(cfg.Profile, cfg.ProfileNamed, cfg.Inputs)
 	if !ok {
 		narrate(cfg.Log, SummaryLine(outcome)) // the refusal reason; nothing started
 		return Result{Outcome: outcome}
