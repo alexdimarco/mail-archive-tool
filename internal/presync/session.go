@@ -12,19 +12,20 @@ import (
 // profile/app resolution, mode checks) is the macOS adapter's job (TP3); here
 // the session orchestrates S1..S9 over them (design 4.5).
 type deps struct {
-	env       env
-	cfg       quietConfig   // settle/quiet/maxWait for the watch (S7)
-	app       string        // the resolved executable to launch and to match against
-	profile   string        // the canonical profile path
-	watch     []string      // the watch set (S7)
-	statePath string        // the state record file
-	lockPath  string        // the per-profile session lock
-	base      record        // the record template (profile/app/tool identity)
-	awaitPoll time.Duration // S6/S8 process poll
-	awaitUp   time.Duration // S6 give-up
-	pollEvery time.Duration // S7 watch poll
-	quitGrace time.Duration // S8 give-up
-	idleAway  time.Duration // owner-away threshold
+	env          env
+	cfg          quietConfig   // settle/quiet/maxWait for the watch (S7)
+	app          string        // the resolved executable to launch and to match against
+	profile      string        // the canonical profile path
+	watch        []string      // the watch set (S7)
+	statePath    string        // the state record file
+	lockPath     string        // the per-profile session lock
+	base         record        // the record template (profile/app/tool identity)
+	awaitPoll    time.Duration // S6/S8 process poll
+	awaitUp      time.Duration // S6 give-up
+	pollEvery    time.Duration // S7 watch poll
+	quitGrace    time.Duration // S8 give-up
+	idleAway     time.Duration // owner-away threshold for the S4 start gate
+	quitIdleAway time.Duration // owner-away threshold for the S8 QUIT gate — higher, so a reading pause never triggers a quit (C1)
 }
 
 // sessionResult is what one pre-sync session produced: the final outcome, the
@@ -94,7 +95,6 @@ func runSession(ctx context.Context, d deps) sessionResult {
 		res.outcome = OutcomeAlreadyRunning // not started, not quit
 		return res
 	}
-	snapshot := pidSet(e.thunderbirdProcs())
 
 	// S5 launch — the write-ahead record is written BEFORE the start.
 	enter("S5")
@@ -105,6 +105,15 @@ func runSession(ctx context.Context, d deps) sessionResult {
 		res.outcome = OutcomeProfileUnusable
 		return res
 	}
+	// C5: re-check for a running Thunderbird immediately before the launch — the owner
+	// may have opened one in the gap since S4 (recheckProfile does filesystem work), so
+	// never start a second instance beside theirs — and take the pre-launch snapshot as
+	// LATE as possible, so any Thunderbird that appears after it is provably ours.
+	if sig := detectRunning(e, d.profile); sig.running {
+		res.outcome = OutcomeAlreadyRunning
+		return res
+	}
+	snapshot := pidSet(e.thunderbirdProcs())
 	launchAt := e.now()
 	cur.LaunchAt = launchAt.Unix()
 	store(stateLaunching)
@@ -191,10 +200,12 @@ func runSession(ctx context.Context, d deps) sessionResult {
 		res.outcome = OutcomeIdentityUnavailable // nothing provably ours now
 		return res
 	}
-	if s, ok := e.idleSeconds(); !ok || s < d.idleAway.Seconds() {
-		// The owner is back at the computer (or the reading is unreadable, which
-		// counts as active): leave the Thunderbird we started, announce it, and
-		// never quit it on them.
+	if s, ok := e.idleSeconds(); !ok || s < d.quitIdleAway.Seconds() {
+		// The owner is back at the computer, or only briefly paused while reading (C1:
+		// a HIGHER idle bar for the quit than for the start, so a normal reading pause
+		// never quits a Thunderbird the owner may have adopted), or the reading is
+		// unreadable (counts as active): leave the Thunderbird we started, announce it,
+		// and never quit it on them.
 		store(stateLeftRunning)
 		res.outcome = OutcomeOwnerActive
 		return res

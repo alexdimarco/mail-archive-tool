@@ -72,11 +72,12 @@ func buildDeps(e env, exe, profile string, cfg Config) deps {
 			ToolPID:   os.Getpid(),
 			ToolStart: time.Now().Unix(),
 		},
-		awaitPoll: defAwaitPoll,
-		awaitUp:   defAwaitUp,
-		pollEvery: defPollEvery,
-		quitGrace: defQuitGrace,
-		idleAway:  defIdleAway,
+		awaitPoll:    defAwaitPoll,
+		awaitUp:      defAwaitUp,
+		pollEvery:    defPollEvery,
+		quitGrace:    defQuitGrace,
+		idleAway:     defIdleAway,
+		quitIdleAway: defQuitIdleAway,
 	}
 }
 

@@ -221,9 +221,9 @@ func TestPresyncOwnerActiveAtS8(t *testing.T) {
 	f := newFakeEnv()
 	f.sm = true
 	f.boot = 1000
-	f.idle, f.idleOK = 300, true                 // owner away at S4
+	f.idle, f.idleOK = 300, true                 // owner away at S4 (300s > idleAway 120s)
 	f.idleReturnsAt = base.Add(40 * time.Second) // owner back before S8 (~base+54s)
-	f.idleReturned = 10                          // active
+	f.idleReturned = 300                         // a 5-min reading pause: past idleAway (S4) but under quitIdleAway, so the S8 quit gate treats the owner as still present (C1)
 	f.lockOK = true
 	f.appearIn, f.exitIn = 4*time.Second, 2*time.Second
 	f.changeAt = base.Add(24 * time.Second)
@@ -232,19 +232,20 @@ func TestPresyncOwnerActiveAtS8(t *testing.T) {
 	f.child = proc{pid: 200, exe: app, start: base.Add(1 * time.Second), args: "thunderbird -profile " + profile}
 
 	d := deps{
-		env:       f,
-		cfg:       quietConfig{settle: 10 * time.Second, quiet: 30 * time.Second, maxWait: 600 * time.Second},
-		app:       app,
-		profile:   profile,
-		watch:     []string{"/w"},
-		statePath: statePath,
-		lockPath:  "/l",
-		base:      record{Version: recordVersion, Profile: profile, App: app, ToolPID: 1, ToolStart: 1},
-		awaitPoll: 2 * time.Second,
-		awaitUp:   90 * time.Second,
-		pollEvery: 10 * time.Second,
-		quitGrace: 120 * time.Second,
-		idleAway:  120 * time.Second,
+		env:          f,
+		cfg:          quietConfig{settle: 10 * time.Second, quiet: 30 * time.Second, maxWait: 600 * time.Second},
+		app:          app,
+		profile:      profile,
+		watch:        []string{"/w"},
+		statePath:    statePath,
+		lockPath:     "/l",
+		base:         record{Version: recordVersion, Profile: profile, App: app, ToolPID: 1, ToolStart: 1},
+		awaitPoll:    2 * time.Second,
+		awaitUp:      90 * time.Second,
+		pollEvery:    10 * time.Second,
+		quitGrace:    120 * time.Second,
+		idleAway:     120 * time.Second,
+		quitIdleAway: 600 * time.Second,
 	}
 
 	res := runSession(context.Background(), d)
@@ -252,7 +253,7 @@ func TestPresyncOwnerActiveAtS8(t *testing.T) {
 		t.Errorf("outcome = %q, want owner-active", res.outcome.Name)
 	}
 	if f.quitted {
-		t.Error("a quit was requested even though the owner was active at S8")
+		t.Error("C1: a quit was requested on a 5-min reading pause (idle past the S4 start gate but under the S8 quit gate)")
 	}
 	rec, present, err := loadRecord(statePath)
 	if err != nil || !present {

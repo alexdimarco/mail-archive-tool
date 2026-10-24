@@ -32,14 +32,18 @@ type Result struct {
 // opening ~10-minute silence of Thunderbird's first offline poll never ends a
 // session early.
 const (
-	defSettle    = 30 * time.Second
-	defQuiet     = 3 * time.Minute
-	defMaxWait   = 20 * time.Minute
-	defIdleAway  = 2 * time.Minute
-	defAwaitPoll = 2 * time.Second
-	defAwaitUp   = 90 * time.Second
-	defPollEvery = 10 * time.Second
-	defQuitGrace = 2 * time.Minute
+	defSettle   = 30 * time.Second
+	defQuiet    = 3 * time.Minute
+	defMaxWait  = 20 * time.Minute
+	defIdleAway = 2 * time.Minute
+	// A higher bar to QUIT than to start (adversarial finding C1): starting Thunderbird
+	// hidden after a 2-minute idle is unobtrusive, but quitting one must not fire during
+	// a normal reading pause, so S8 treats the owner as present until ~10 minutes idle.
+	defQuitIdleAway = 10 * time.Minute
+	defAwaitPoll    = 2 * time.Second
+	defAwaitUp      = 90 * time.Second
+	defPollEvery    = 10 * time.Second
+	defQuitGrace    = 2 * time.Minute
 )
 
 // WarnText returns the what / why / do-this message for a warn-class outcome

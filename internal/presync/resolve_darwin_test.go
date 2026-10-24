@@ -143,6 +143,13 @@ func TestMacValidateProfileMembership(t *testing.T) {
 		t.Error("a profile without prefs.js was accepted")
 	}
 
+	withspace := filepath.Join(home, "has space.default")
+	mustMkdir(t, withspace)
+	writeFile(t, filepath.Join(withspace, "prefs.js"), "x")
+	if _, ok := e.validateProfile(withspace, true); ok {
+		t.Error("C4: a profile path containing whitespace was accepted — the macOS ps -profile match splits on whitespace, so the started Thunderbird could never be identified and would be left running")
+	}
+
 	e.statUID = func(os.FileInfo) (uint32, bool) { return uint32(e.uid + 1), true }
 	if _, ok := e.validateProfile(listed, true); ok {
 		t.Error("a profile owned by another user was accepted")
