@@ -481,7 +481,7 @@ func Assess(in Input, now time.Time) Report {
 	// design §4.9.2): read from the descriptor's argv for a flat export schedule
 	// (-thunderbird-sync) or from the run-job's job file for a GUI/Desktop run-job.
 	if in.HasDescriptor && schedulePresyncConfigured(in) {
-		r.note("presync_syncs", "this archive's scheduled backup syncs Thunderbird before it runs: it starts Thunderbird, waits for its mail to settle, then asks it to quit, so the backup includes mail that had only reached the server; if Thunderbird is already open it is left alone")
+		r.note("presync_syncs", "this archive's scheduled backup syncs Thunderbird before it runs: it starts Thunderbird, waits for its mail to stop arriving, then asks it to quit, so the backup includes mail that had only reached the server; if Thunderbird is already open it is left alone")
 	}
 	switch in.LastRunState {
 	case state.LastRunUnreadable:

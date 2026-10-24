@@ -14,7 +14,7 @@ import (
 // pre-sync asks Thunderbird to close with its own WM_CLOSE, which needs no special
 // permission. SyncNotice already carries the running-Thunderbird defer, so the note
 // adds only the Windows-specific word on the visible-then-minimized launch.
-func presyncInstallNote(string) string {
+func presyncInstallNote(string, bool) string {
 	return presync.SyncNotice + "\n\nOn Windows, each scheduled run briefly shows the Thunderbird window, then minimizes it to the taskbar while it syncs."
 }
 

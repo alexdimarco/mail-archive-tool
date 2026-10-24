@@ -994,7 +994,7 @@ func runSchedule(args []string) error {
 		}
 		fmt.Printf("Log: %s · descriptor: %s · check with: mailarchive status -out %q\n", logPath, desc, j.out)
 		if j.presync {
-			fmt.Println(presyncInstallNote(n))
+			fmt.Println(presyncInstallNote(n, false))
 		}
 		if superseded != "" {
 			fmt.Printf("Note: this archive's verify was installed as %q, and that entry is still installed: it keeps running beside %q. If it is still this archive's verify, remove it with `mailarchive schedule -name %s -remove -- verify -out %q`.\n", superseded, n, superseded, j.out)
@@ -1016,7 +1016,7 @@ func runSchedule(args []string) error {
 	}
 	fmt.Print(text)
 	if j.presync {
-		fmt.Println(presyncInstallNote(n))
+		fmt.Println(presyncInstallNote(n, true))
 	}
 	if note := graphDeletedJunkNote(j); note != "" {
 		fmt.Println(note)

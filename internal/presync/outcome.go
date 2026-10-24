@@ -1,5 +1,5 @@
 // Package presync starts Thunderbird out of sight before an archive run, waits
-// until its mail files stop changing, asks it to quit, then lets the archive
+// for its mail to stop arriving, asks it to quit, then lets the archive
 // read. It is opt-in and per-schedule, and it never gates the archive (design
 // docs/design-thunderbird-presync.md; invariants R30 opt-in/inert, R31 only
 // quits what we started, R32 never gates the archive).

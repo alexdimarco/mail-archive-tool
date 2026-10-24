@@ -48,6 +48,28 @@ func TestSummaryLine(t *testing.T) {
 	}
 }
 
+// covers: MA-561
+// Platform-neutral, actionable warnings (friction review, 2026-10-24): the
+// not-found and leftover messages name no OS-specific location (each is shown
+// verbatim on every platform), and the three "could not finish" warnings each
+// carry a do-this next step; NotQuiet names the 20-minute maximum wait.
+func TestWarnTextActionable(t *testing.T) {
+	if msg, _ := WarnText(OutcomeAppNotFound); strings.Contains(msg, "/Applications") {
+		t.Errorf("AppNotFound names a macOS-only path, shown on Windows too: %q", msg)
+	}
+	if msg, _ := WarnText(OutcomeLeftoverFound); strings.Contains(msg, "Dock") {
+		t.Errorf("LeftoverFound names the macOS Dock, shown on Windows too: %q", msg)
+	}
+	for _, o := range []Outcome{OutcomeNotQuiet, OutcomeExitedEarly, OutcomeIdentityUnavailable} {
+		if msg, _ := WarnText(o); !strings.Contains(msg, "Do this:") {
+			t.Errorf("%s has no do-this next step: %q", o.Name, msg)
+		}
+	}
+	if msg, _ := WarnText(OutcomeNotQuiet); !strings.Contains(msg, "20 minutes") {
+		t.Errorf("NotQuiet should name the 20-minute maximum wait: %q", msg)
+	}
+}
+
 // covers: MA-567
 // SyncNotice carries every X16 disclosure (docs/ux-contract.md X16) so the single
 // shared paragraph the wizard, the Desktop card, the CLI note and the README all
