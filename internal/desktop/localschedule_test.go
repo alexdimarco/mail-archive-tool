@@ -194,6 +194,69 @@ func TestScheduleRepairLocalPreservesCadenceAndPresync(t *testing.T) {
 	}
 }
 
+// covers: MA-583
+// A local Thunderbird archive WITH a corroborated run-job schedule shows the SAME
+// cadence/time/pre-sync form as the create case, PREFILLED from the installed schedule
+// (ShowLocalEdit) — so the owner can change the cadence, the time, or the Thunderbird-sync
+// toggle in place, not only by removing and re-creating the schedule (friction MED-5 + the
+// "editable after setup" ruling). The empty-posting Repair is replaced by the form's
+// Install/update button. (The non-editable DOM shape for a card the Desktop can NOT
+// reconstruct is still pinned by TestMA691...; that card shows no inputs.)
+func TestLocalScheduleCardEditableAfterInstall(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	jobsDir, err := job.Dir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(jobsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	out := tbProfileArchive(t) // reconstructable + Thunderbird-sourced
+	name := schedule.DefaultNameFor(out)
+	jp, err := job.PathFor(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Plant the corroborating job file (syncs Thunderbird) + a Daily 05:00 run-job descriptor.
+	jj, ok := reconstructLocalJob(out)
+	if !ok {
+		t.Fatal("fixture: expected a reconstructable archive")
+	}
+	jj.Name = name
+	jj.ThunderbirdSync = &job.ThunderbirdSync{}
+	if err := job.Write(jp, jj); err != nil {
+		t.Fatal(err)
+	}
+	rjSpec := schedule.Spec{Name: name, Interval: schedule.Daily, At: "05:00",
+		Exe: "/usr/local/bin/mailarchive", Args: []string{"-job", jp}, Out: out}
+	if err := schedule.WriteDescriptor(out, schedule.DescribeSpec(rjSpec)); err != nil {
+		t.Fatal(err)
+	}
+
+	page, _ := getPage(t, DashboardHandler(Config{Out: out, GOOS: "darwin", SettingsPath: filepath.Join(home, "s.json")}))
+
+	for _, want := range []string{`id="schedInterval"`, `id="schedTime"`, `id="schedInstall"`, `id="schedPresync"`, `id="schedRemove"`} {
+		if !strings.Contains(page, want) {
+			t.Errorf("the editable scheduled card is missing %q", want)
+		}
+	}
+	if !strings.Contains(page, `value="daily" selected`) {
+		t.Error("the cadence select is not prefilled to the installed Daily")
+	}
+	if !strings.Contains(page, `value="05:00"`) {
+		t.Error("the time input is not prefilled to the installed 05:00")
+	}
+	if !strings.Contains(page, `id="schedPresync" checked`) {
+		t.Error("the pre-sync checkbox is not checked for a schedule that syncs Thunderbird")
+	}
+	if strings.Contains(page, `id="schedRepair"`) {
+		t.Error("the editable card must not show the empty-posting Repair button (Install/update replaces it)")
+	}
+}
+
 // covers: MA-581
 // A2: a tampered last-run record cannot aim the scheduled backup at a store that is not
 // one of the archive's own recorded sources — an outside -input, or a symlink -input, is
