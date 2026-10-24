@@ -7,6 +7,7 @@ import (
 
 	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/state"
+	"mail-archive-tool/internal/thunderbird"
 )
 
 // What the archive was made from, read from the manifest's store ids ("path:..." is a local mail
@@ -183,4 +184,31 @@ func (cfg Config) offer() string {
 		return ""
 	}
 	return validArchiveFolder(cfg.LastArchive())
+}
+
+// localArchiveThunderbirdSourced reports whether the archive at out was made from a
+// Thunderbird store — read from the MANIFEST's local store ids ("path:<dir>"), NOT
+// from LastRun.Job (which records no -input for an -auto run, so keying on it would
+// hide the toggle for the common auto-discovered case — design TP-D correction 4). A
+// store path under a Thunderbird profile (thunderbird.FindProfileDir ascends to a
+// prefs.js) means the pre-sync toggle is worth offering for this archive. A manifest
+// that cannot be read, or a store whose profile is not present on this machine, is
+// simply not Thunderbird-sourced here (the toggle stays hidden — safe default).
+func localArchiveThunderbirdSourced(out string) bool {
+	if strings.TrimSpace(out) == "" {
+		return false
+	}
+	m, err := state.Load(filepath.Join(out, manifestName))
+	if err != nil {
+		return false
+	}
+	for id := range m.Stores {
+		if !strings.HasPrefix(id, "path:") {
+			continue // a Microsoft 365 "mailbox:" id, never Thunderbird
+		}
+		if _, ok := thunderbird.FindProfileDir(strings.TrimPrefix(id, "path:")); ok {
+			return true
+		}
+	}
+	return false
 }
