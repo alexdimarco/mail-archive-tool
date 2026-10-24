@@ -183,33 +183,49 @@ func Read(path string) (Job, error) {
 // Windows, since Go reports mode 0666 for every writable file there); and the read
 // is bounded by maxJobFileSize (R12, MA-640). Residual TOCTOU between the stat and
 // the open is the adversarial pass's concern.
-func readSecure(path string) ([]byte, error) {
+// ReadSecure reads path for an unattended / install-time use that TRUSTS its
+// contents, so a planted file in a shared directory is refused rather than followed
+// or slurped: a final-component symbolic link is refused and its target left
+// untouched; a non-regular file (FIFO, device, directory, socket) is refused — caught
+// by the Lstat BEFORE any open, so a FIFO cannot hang the read; a file another account
+// can change OR own is refused (ownerOnly — the POSIX mode bits on unix, the winsec
+// security descriptor on Windows); and the read is bounded by max. kind names the file
+// in the messages (e.g. "job file", "last-run record"). Residual TOCTOU between the
+// stat and the open is the adversarial pass's concern. Shared so every untrusted
+// install-path read gets the SAME owner check on every OS (R12).
+func ReadSecure(path, kind string, max int64) ([]byte, error) {
 	fi, err := os.Lstat(path)
 	if err != nil {
-		return nil, fmt.Errorf("job file %s: %w", path, err)
+		return nil, fmt.Errorf("%s %s: %w", kind, path, err)
 	}
 	switch {
 	case fi.Mode()&os.ModeSymlink != 0:
-		return nil, fmt.Errorf("job file %s is a symbolic link: refusing to follow it; re-create the schedule from the wizard", path)
+		return nil, fmt.Errorf("%s %s is a symbolic link: refusing to follow it", kind, path)
 	case !fi.Mode().IsRegular():
-		return nil, fmt.Errorf("job file %s is not a regular file (%s): refusing to read it; re-create the schedule from the wizard", path, fi.Mode().Type())
-	case fi.Size() > maxJobFileSize:
-		return nil, fmt.Errorf("job file %s is %d bytes, over the %d-byte limit: refusing to read it", path, fi.Size(), maxJobFileSize)
+		return nil, fmt.Errorf("%s %s is not a regular file (%s): refusing to read it", kind, path, fi.Mode().Type())
+	case fi.Size() > max:
+		return nil, fmt.Errorf("%s %s is %d bytes, over the %d-byte limit: refusing to read it", kind, path, fi.Size(), max)
 	}
 	if err := ownerOnly(fi, path); err != nil {
 		return nil, err
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("job file %s: %w", path, err)
+		return nil, fmt.Errorf("%s %s: %w", kind, path, err)
 	}
 	defer f.Close()
-	data, err := io.ReadAll(io.LimitReader(f, maxJobFileSize+1))
+	data, err := io.ReadAll(io.LimitReader(f, max+1))
 	if err != nil {
-		return nil, fmt.Errorf("job file %s: %w", path, err)
+		return nil, fmt.Errorf("%s %s: %w", kind, path, err)
 	}
-	if int64(len(data)) > maxJobFileSize {
-		return nil, fmt.Errorf("job file %s is over the %d-byte limit: refusing to read it", path, maxJobFileSize)
+	if int64(len(data)) > max {
+		return nil, fmt.Errorf("%s %s is over the %d-byte limit: refusing to read it", kind, path, max)
 	}
 	return data, nil
+}
+
+// readSecure is the job-file read — the same owner-only, symlink-refusing, bounded
+// guard the Desktop reuses for the untrusted last-run record via ReadSecure.
+func readSecure(path string) ([]byte, error) {
+	return ReadSecure(path, "job file", maxJobFileSize)
 }

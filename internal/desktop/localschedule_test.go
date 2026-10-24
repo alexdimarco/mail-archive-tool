@@ -1,6 +1,8 @@
 package desktop
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -123,6 +125,55 @@ func TestScheduleInstallLocal(t *testing.T) {
 	assure.Refused(t, rc, rbody,
 		assure.Names("tell how this archive was built", "wizard"),
 		assure.NoSideEffect(func() bool { return !refusedInstall }))
+
+	// A3: a REAL install failure (not the nil seam) leaves NO job file, because the
+	// install runs BEFORE the write — so a refusal can never strand a decoy job file.
+	failOut := tbProfileArchive(t)
+	failCfg := Config{Out: failOut, GOOS: "darwin", Exe: "/opt/mailarchive", SettingsPath: filepath.Join(t.TempDir(), "f.json"),
+		InstallBackup: func(s schedule.Spec) error { return errors.New("scheduler refused") }}
+	hf := DashboardHandler(failCfg)
+	_, csrfF := getPage(t, hf)
+	if b := postJSON(hf, "/api/schedule-install", csrfF, `{"interval":"weekly","time":"03:00"}`).Body.String(); !strings.Contains(b, `"ok":false`) {
+		t.Fatalf("a failed install should report ok:false: %s", b)
+	}
+	jp, _ := job.PathFor(schedule.DefaultNameFor(failOut))
+	if _, err := os.Stat(jp); err == nil {
+		t.Error("A3: a failed install must leave NO job file (install runs before the write)")
+	}
+}
+
+// covers: MA-581
+// A2: a tampered last-run record cannot aim the scheduled backup at a store that is not
+// one of the archive's own recorded sources — an outside -input, or a symlink -input, is
+// refused (reconstructLocalJob returns ok=false, so no schedule is offered or installed).
+func TestReconstructLocalJobRefusesTamperedInput(t *testing.T) {
+	out := tbProfileArchive(t)
+	real, ok := reconstructLocalJob(out)
+	if !ok || len(real.Inputs) == 0 {
+		t.Fatal("fixture: expected a reconstructable input")
+	}
+	tamper := func(jobJSON string) {
+		rec := `{"version":1,"status":"ok","job":` + jobJSON + `}`
+		if err := os.WriteFile(filepath.Join(out, state.LastRunName), []byte(rec), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// An -input NOT among the archive's manifest sources is refused (the exfiltration attack).
+	tamper(fmt.Sprintf(`["-out",%q,"-mode","incremental","-input",%q]`, out, t.TempDir()))
+	if _, ok := reconstructLocalJob(out); ok {
+		t.Error("A2: an -input outside the archive's recorded sources must be refused")
+	}
+
+	// A symlink -input is refused even when it points at the real store (no following).
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real.Inputs[0], link); err != nil {
+		t.Skipf("symlink unsupported here: %v", err)
+	}
+	tamper(fmt.Sprintf(`["-out",%q,"-mode","incremental","-input",%q]`, out, link))
+	if _, ok := reconstructLocalJob(out); ok {
+		t.Error("A2: a symlink -input must be refused even pointing at the real store")
+	}
 }
 
 // covers: MA-583
