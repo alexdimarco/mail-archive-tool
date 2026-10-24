@@ -95,6 +95,11 @@ type Options struct {
 // slice (it is additive).
 type BeforeReadResult struct {
 	Warnings []state.RunWarning
+	// Release, when non-nil, is called by Run AFTER the sources are read (always, via
+	// defer — even on error or panic): the Thunderbird pre-sync holds a per-profile
+	// lock across the pre-sync AND the read, so a second scheduled run cannot pre-sync
+	// and compact that profile while this run reads it (adversarial finding C2).
+	Release func()
 }
 
 // followsLinks says whether path is one of the inputs that opted in to following
@@ -422,6 +427,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// start and before any source is read; nil unless a caller opts in, and it
 	// never fails the run (design thunderbird-presync §4.1). Its warnings join
 	// this run's record before the deferred finalizer captures it.
+	var presyncRelease func()
 	if opts.BeforeRead != nil {
 		// A panic in the pre-sync session is recovered here, so it can never fail
 		// the archive (R32, design §4.9.1): the run records presync_internal_error
@@ -433,8 +439,17 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 					logger.Printf("warning: the Thunderbird pre-sync panicked and was recovered (%v); the archive ran anyway", r)
 				}
 			}()
-			begun.Warnings = append(begun.Warnings, opts.BeforeRead(ctx, files).Warnings...)
+			br := opts.BeforeRead(ctx, files)
+			begun.Warnings = append(begun.Warnings, br.Warnings...)
+			presyncRelease = br.Release
 		}()
+	}
+	// C2: release the pre-sync's per-profile lock AFTER the sources are read. The defer
+	// runs at Run's return (after the read, index and pages), always — even on error or
+	// panic — so a second scheduled run cannot pre-sync and compact this profile while
+	// this run reads it, and the lock can never leak the run.
+	if presyncRelease != nil {
+		defer presyncRelease()
 	}
 	defer recordRun(opts, begun, &result, &err, logger)
 	runAt := begun.Started

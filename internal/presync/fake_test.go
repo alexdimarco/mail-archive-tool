@@ -25,6 +25,7 @@ type fakeEnv struct {
 	idleReturnsAt   time.Time // when set, idle drops to idleReturned at/after this time
 	idleReturned    float64
 	lockOK          bool
+	releaseN        int // C2: how many times releaseLock was called
 	started         bool
 	recheckFail     bool  // when set, recheckProfile returns false (S5 TOCTOU refusal)
 	startErr        error // when set, startHidden returns it and records no launch
@@ -137,4 +138,4 @@ func (f *fakeEnv) digest(roots []string) (uint64, bool) {
 }
 
 func (f *fakeEnv) acquireLock(path string) (bool, error) { return f.lockOK, nil }
-func (f *fakeEnv) releaseLock(path string)               {}
+func (f *fakeEnv) releaseLock(path string)               { f.releaseN++ }

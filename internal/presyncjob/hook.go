@@ -38,7 +38,7 @@ func SetHook(opts *app.Options, profile string, logw io.Writer) error {
 			StateDir:     stateDir,
 			Log:          logw,
 		})
-		return app.BeforeReadResult{Warnings: warnings(res)}
+		return app.BeforeReadResult{Warnings: warnings(res), Release: res.Release}
 	}
 	return nil
 }

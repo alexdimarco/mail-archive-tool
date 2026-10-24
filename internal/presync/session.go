@@ -34,6 +34,10 @@ type sessionResult struct {
 	outcome Outcome
 	states  []string
 	records []recordState
+	// release, when non-nil, releases the per-profile lock. runSession hands it to
+	// the caller (via Result.Release → app.Run) so the lock is held across the pre-sync
+	// AND the archive read, then released after the read (C2).
+	release func()
 }
 
 // windowMinimizer is the optional capability of an adapter that can only launch
@@ -71,7 +75,26 @@ func runSession(ctx context.Context, d deps) sessionResult {
 		res.outcome = OutcomeProfileBusy
 		return res
 	}
-	defer e.releaseLock(d.lockPath)
+	// C2: hold the per-profile lock through the ARCHIVE READ, not just the pre-sync
+	// session — so a second scheduled run cannot pre-sync (and compact) this profile
+	// while this run reads it. runSession does NOT release the lock itself on return;
+	// it hands the release to the caller (res.release → Result.Release → app.Run, which
+	// defers it until after the read). A panic here still releases it, so the lock never
+	// leaks within the process.
+	released := false
+	releaseLock := func() {
+		if !released {
+			released = true
+			e.releaseLock(d.lockPath)
+		}
+	}
+	res.release = releaseLock
+	defer func() {
+		if r := recover(); r != nil {
+			releaseLock()
+			panic(r)
+		}
+	}()
 
 	// S3 recover — announce-only in v1.
 	enter("S3")

@@ -25,5 +25,5 @@ func runWith(ctx context.Context, cfg Config, e *winEnv) Result {
 	narrate(cfg.Log, startLine) // the wait can be minutes — say so before it begins
 	res := runSession(ctx, buildDeps(e, plan.exe, plan.profile, cfg))
 	narrate(cfg.Log, SummaryLine(res.outcome))
-	return Result{Outcome: res.outcome}
+	return Result{Outcome: res.outcome, Release: res.release}
 }

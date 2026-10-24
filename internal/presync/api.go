@@ -25,6 +25,11 @@ type Config struct {
 // Result is one pre-sync's outcome, for the caller to surface as a warning.
 type Result struct {
 	Outcome Outcome
+	// Release, when non-nil, MUST be called by the caller AFTER the archive read: it
+	// releases the per-profile lock that the pre-sync holds across the pre-sync and the
+	// read, so a second scheduled run cannot pre-sync (and compact) this profile while
+	// this run reads it (adversarial finding C2). app.Run defers it.
+	Release func()
 }
 
 // Default timings (design §4.4.2, §4.5, §4.9.4 "quiet 3 min, up to 20 min"). The

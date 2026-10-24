@@ -264,6 +264,54 @@ func TestPresyncOwnerActiveAtS8(t *testing.T) {
 	}
 }
 
+// covers: MA-552
+// C2: a session that acquired the per-profile lock does NOT release it on return — it
+// hands the release back (res.release / Result.Release) so app.Run can hold the lock
+// across the pre-sync AND the archive read, then release it (once) after the read. This
+// serialises a second scheduled run on the same profile.
+func TestPresyncHoldsLockThroughRead(t *testing.T) {
+	f := newFakeEnv()
+	f.sm = true
+	f.boot = 1000
+	f.lockOK = true
+	f.idle, f.idleOK = 10, true // owner active: S4 returns right after the S2 lock acquire
+	f.nowT = time.Date(2026, 10, 24, 2, 0, 0, 0, time.UTC)
+
+	d := deps{
+		env:          f,
+		cfg:          quietConfig{settle: 10 * time.Second, quiet: 30 * time.Second, maxWait: 600 * time.Second},
+		profile:      "/Users/x/p.default",
+		statePath:    filepath.Join(t.TempDir(), "s.json"),
+		lockPath:     "/l",
+		base:         record{Version: recordVersion, Profile: "/Users/x/p.default", ToolPID: 1, ToolStart: 1},
+		awaitPoll:    2 * time.Second,
+		awaitUp:      90 * time.Second,
+		pollEvery:    10 * time.Second,
+		quitGrace:    120 * time.Second,
+		idleAway:     120 * time.Second,
+		quitIdleAway: 600 * time.Second,
+	}
+
+	res := runSession(context.Background(), d)
+	if res.outcome != OutcomeOwnerActiveSkipped {
+		t.Fatalf("setup: want owner-active-skipped (lock acquired at S2), got %q", res.outcome.Name)
+	}
+	if res.release == nil {
+		t.Fatal("C2: a session that acquired the lock must hand back a release for app.Run to call after the read")
+	}
+	if f.releaseN != 0 {
+		t.Errorf("C2: the session must NOT release the lock itself (held through the read), releaseN=%d", f.releaseN)
+	}
+	res.release()
+	if f.releaseN != 1 {
+		t.Errorf("C2: calling the handed-back release must release the lock, releaseN=%d", f.releaseN)
+	}
+	res.release() // idempotent — app.Run's defer plus any safety path must not double-release
+	if f.releaseN != 1 {
+		t.Errorf("C2: release must be idempotent, releaseN=%d", f.releaseN)
+	}
+}
+
 // covers: MA-570
 // C3: when quit is bundle-wide (macOS) and a SECOND Thunderbird is running at S8, the
 // session leaves ours open rather than close the owner's too — no quit is requested,
