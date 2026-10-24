@@ -6,6 +6,8 @@ LOW — none HIGH, none remotely exploitable (the MEDIUM confidentiality ones ne
 shared-login computer where another account can write the archive directory). Grouped
 by owner/scope below; each is a traced finding, not a hunch.
 
+**RESOLUTION (2026-10-24): all 13 fixed on `thunderbird-presync`** (owner ruling: fix everything before v1.4.0), each test-first with prove-fail→prove-pass and full `go test ./...` green: A1–A4 the create-path hardening (`job.ReadSecure` owner check on every OS, manifest-source `-input` constraint + symlink/special-file refusal, install-before-write so a refusal leaves no decoy, interval validation + deferred persist) — MA-581; A5 the CLI `-thunderbird-sync` setup error now swallowed (R32); B1 the Windows idle 32-bit-domain fix; B2 the design-doc hourly + §4.2.6 reversal notes; C1 a separate higher S8 quit threshold (`quitIdleAway`); C2 the per-profile lock held across the archive read; C3 skip the macOS bundle-wide quit when a second Thunderbird is running (`OutcomeQuitSkippedOthers`); C4 reject a whitespace macOS profile; C5 re-`detectRunning` + a late snapshot before launch; C6 removed the dead `caffeinate`.
+
 ## Group A — the NEW Desktop/CLI create path (introduced this release; fix before ship)
 
 - **A1 (MED) Untrusted last-run record read with no owner check on Windows.**
