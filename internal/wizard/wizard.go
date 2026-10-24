@@ -38,6 +38,7 @@ import (
 	"mail-archive-tool/internal/health"
 	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/outlookcom"
+	"mail-archive-tool/internal/presync"
 	"mail-archive-tool/internal/runlog"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/seal"
@@ -374,6 +375,11 @@ type wizardChoice struct {
 	// followLinks are the inputs whose folder links the user asked to have read
 	// (owner ruling OR6: the per-input opt-in; a folder store only).
 	followLinks []string
+	// tbSync is the owner's "sync Thunderbird before each scheduled run" answer
+	// (§4.2.6): it records job.ThunderbirdSync, so the scheduled/Run-now backup
+	// pre-syncs. The profile is derived from the inputs and membership-checked at
+	// RUN time (PC3), so none is recorded here. macOS and Windows only.
+	tbSync bool
 	// Deleted Items / Junk Email are excluded by default; set only for a
 	// live-path (Graph) source, which the GUI does not offer yet (T7, §3.6).
 	includeDeleted bool
@@ -1611,6 +1617,42 @@ func openPath(p string) {
 
 // ---- keep it current (P7) --------------------------------------------------
 
+const (
+	presyncNo  = "No — archive what is already on disk"
+	presyncYes = "Yes — sync Thunderbird first"
+)
+
+// presyncOfferable reports whether the wizard should offer the Thunderbird pre-
+// sync for these inputs (§4.2.6): this platform has a pre-sync adapter (macOS or
+// Windows) AND at least one input lies in a Thunderbird profile
+// (thunderbird.FindProfileDir ascends to a prefs.js). Whether that profile is one
+// Thunderbird lists (profiles.ini membership, PC3) is checked at run time, not
+// here — matching the CLI, which defers profile validation to the run.
+func presyncOfferable(inputs []string) bool {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
+		return false
+	}
+	for _, in := range inputs {
+		if _, ok := thunderbird.FindProfileDir(in); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// presyncQuestionText is the §4.2.6 schedule-step question, built from the single
+// source notice (presync.SyncNotice, MA-567) so the GUI wording cannot drift from
+// the §6 paragraph, plus the running-Thunderbird defer (R31). The macOS
+// Automation-permission note is appended on macOS only.
+func presyncQuestionText() string {
+	q := "Sync Thunderbird before each scheduled backup?\n\n" + presync.SyncNotice +
+		"\n\nIf Thunderbird is already open, or you are using the computer, when the backup starts, Thunderbird is left alone — never started or closed."
+	if runtime.GOOS == "darwin" {
+		q += "\n\nOn a Mac, macOS asks your permission once to let Mail Archive control Thunderbird; grant it the first time the scheduled backup runs."
+	}
+	return q
+}
+
 func offerSchedule(c wizardChoice) error {
 	const no = "No — just this once"
 	const daily = "Yes — every day at 02:00"
@@ -1630,6 +1672,20 @@ func offerSchedule(c wizardChoice) error {
 	iv, at := schedule.Daily, "02:00"
 	if pick == weekly {
 		iv, at = schedule.Weekly, "03:00"
+	}
+
+	// §4.2.6: when a Thunderbird store is among the inputs (and this platform has
+	// a pre-sync adapter), offer to sync Thunderbird before each scheduled run.
+	// Default No. A Yes records job.ThunderbirdSync (profile derived + membership-
+	// checked at run time, §4.3/PC3); No or cancel installs the schedule without
+	// the sync. The running-Thunderbird defer leaves an in-use Thunderbird alone.
+	if !c.outlookCOM && presyncOfferable(c.inputs) {
+		syncPick, serr := zenity.List(presyncQuestionText(), []string{presyncNo, presyncYes},
+			zenity.Title(appTitle), zenity.DefaultItems(presyncNo))
+		if serr != nil && !errors.Is(serr, zenity.ErrCanceled) {
+			return serr
+		}
+		c.tbSync = serr == nil && syncPick == presyncYes
 	}
 
 	// §4.6.1 (MA-615): the wizard's schedule runs ProgramForSchedule's program, not
@@ -1669,8 +1725,12 @@ func offerSchedule(c wizardChoice) error {
 	if pn := schedule.ProgramNote(exe, progReason); pn != "" {
 		note += "\n\n" + pn
 	}
-	return zenity.Info(fmt.Sprintf("Scheduled: %s at %s.\n\nArchive: %s\nLog: %s\n\nOpen the MailArchive wizard (mailarchive wizard) any time to check the backup's health.%s",
-		iv, at, c.out, spec.Log, note), zenity.Title(appTitle))
+	syncLine := ""
+	if c.tbSync {
+		syncLine = "\nThunderbird: synced before each run (if Thunderbird is already open, it is left alone)."
+	}
+	return zenity.Info(fmt.Sprintf("Scheduled: %s at %s.\n\nArchive: %s\nLog: %s%s\n\nOpen the MailArchive wizard (mailarchive wizard) any time to check the backup's health.%s",
+		iv, at, c.out, spec.Log, syncLine, note), zenity.Title(appTitle))
 }
 
 // jobFor builds the scheduled-job file from the wizard's answers. A repeat is
@@ -1687,6 +1747,11 @@ func jobFor(name string, c wizardChoice) job.Job {
 	if c.outlookCOM {
 		j.Inputs = nil
 		j.OutlookSyncWait = "5m"
+	}
+	if c.tbSync {
+		// Presence means ON; an empty profile means "derive from the inputs and
+		// require profiles.ini membership at run time" (§4.2.5/§4.3, PC3).
+		j.ThunderbirdSync = &job.ThunderbirdSync{}
 	}
 	return j
 }
