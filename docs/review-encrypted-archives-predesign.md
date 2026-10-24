@@ -269,3 +269,51 @@ question about the pinned local toolchain, not a Phase-1 finding.
 
 **Verdict:** Phase 1 passes its adversarial gate with the fixes above. No friction review is
 owed for Phase 1 (no user-facing surface); the UX gates fall on Phase 3.
+
+## Fix-verification round (2026-10-24)
+
+**Reviewed:** commit `cc61a23` (the fixes above). **Run:** workflow
+`vault-phase1-fix-verification` (`wf_4b0cec13-c64`, 113 agents): 26 mutations aimed at the
+fixes, one adversarial verifier per fix, two fresh-eyes lenses (new-code correctness;
+hazards for the Phase 2–4 callers) with three skeptics per finding, a critic.
+
+**Mutations:** 24 of 26 killed by named tests. N14 (drop the pre-open Lstat) survived as
+equivalent on macOS (O_NOFOLLOW refuses a link there) — the Windows-only judgment is now a
+pure rule pinned for both OSes (`TestTheVaultFileTypeRuleOnEveryOS`). N17 (drop the empty-id
+refusal) survived — now asserted by name (`TestTheGateNamesTheFixForEachCause`), and a vault
+claiming the all-zero id no longer parses.
+
+**Confirmed, and fixed** (consensus severities):
+
+| Finding | Severity | Resolution |
+|---|---|---|
+| A `Discard` after a successful `Commit` destroyed the returned key, and a destroyed/zero key still sealed under an all-zero key | medium | keys carry a lifetime (`ErrKeyDestroyed` on every use); `Commit` hands the key over (MA-718) |
+| A new-recovery-key `Commit` destroyed its key on every failure: a retry reported a false "altered" | medium | key destroyed only when the change is spent; retryable after a no-write failure; `ErrPendingUsed` after use (MA-714) |
+| A foreign copy beside a missing or damaged own copy was opened and healed over | medium | the recorded id on every keyed call; a damaged copy's claimed id compared (MA-715) |
+| A newer-format copy with trailing data read as damaged and was healed over | low–medium | the format is read first, from the first object (MA-707, MA-715) |
+| A fork could never be settled by a new recovery key from the mirror side | low | `Commit` accepts the base on either side of a fork (MA-715) |
+| The fork test compared bytes: a re-spaced copy was a "fork" | low | a fork is decided by generation + MAC (MA-715) |
+| A cheaper older copy tried first could make a current secret "superseded" (latent) | low | the newest authentic copy wins if the secret still opens it (MA-715) |
+| The gate's refusal for a deleted vault matched `ErrNoVault` | low | `ErrVaultMissing`, never `ErrNoVault` (MA-717) |
+| The gate gave one fix for every cause, and checked no folder first | low | per-cause fix; folder checked first (MA-711) |
+| The unattended path could neither see nor heal a damaged copy | low | the gate returns `*Opened`; `Heal(…, KeySecret(key))` (MA-711) |
+| Keys, secrets and pending changes printed their secret bytes | low | redacting `Format` (MA-718) |
+| Tampering found by the right password was reported as "wrong password" | low | tampering after a successful unwrap ranks first (MA-715) |
+| Two error paths dropped the typed cause | low | `%w` on both (create cleanup, `ErrPartiallySaved`) |
+| An interrupted create made the retry show a key that never opens | low | `PrepareCreate` refuses an existing vault before any key is shown (MA-714) |
+| Lost-lock re-check proven for one of four writers; create cleanup unguarded | low (test gap) | all four writers proven through the lock seam; cleanup re-proves the lock (MA-710) |
+| Production writer, Windows-only retry rule, U+2028/U+0085, NFC as a format, recovery-path cost bounds, archive id under the MAC untested | low (test gaps) | MA-713, MA-714, MA-706, MA-716, MA-705, MA-707 |
+
+**Refuted** (majority): `ErrPartiallySaved` as an error on a succeeded path (documented,
+and the key is returned with it); the writers taking their own lock (a caller holding the
+lock is a Phase-2 design point, not a defect); the A15 id having no API to hang on (it does,
+now on every keyed call); `Detect` "no vault" outside the lock (no write path uses it as
+plaintext); `PendingCreate.Commit` over a plaintext archive (encrypt-existing is the C4
+cutover, Phase 3); exporting the one-step helpers (now test-only regardless).
+
+**Open by design (carried to later phases):** the A15 record and every write path that must
+refuse are Phase 3–4 wiring — R37 now says so; a fork is settled silently by the next change
+(the Phase-3 UX must name both sides first); A2's per-chunk generation exists in the AAD and
+the design, and its container reader/writer is Phase 2b work with its own rows.
+
+**Verdict:** the fixes hold; Phase 1's API is frozen for Phases 2–4.

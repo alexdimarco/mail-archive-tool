@@ -2,11 +2,15 @@ package vault
 
 import (
 	"bytes"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -34,7 +38,7 @@ var (
 	// (RequireRetrievableKey, A15).
 	ErrNoVault = errors.New("vault: no vault found in this folder")
 	// ErrExists refuses to create a vault where one (or a fragment of one) exists.
-	ErrExists = errors.New("vault: this archive already has a vault")
+	ErrExists = errors.New("vault: this archive already has a key file")
 	// ErrConflict refuses to settle two different vaults at the same generation
 	// (two machines changed the vault at once), or to commit a prepared change
 	// over a vault that changed since it was prepared.
@@ -42,11 +46,18 @@ var (
 	// ErrPartiallySaved reports a change that IS in effect — the primary holds it
 	// — whose mirror could not be written; the next change or heal repairs it.
 	ErrPartiallySaved = errors.New("vault: the change is saved, but its backup copy could not be written")
+	// ErrPendingUsed refuses a prepared change that was already committed or
+	// discarded.
+	ErrPendingUsed = errors.New("vault: this prepared change was already committed or discarded")
 )
 
-// writeCopy writes one vault copy atomically and durably (A8); a var so a test
-// can observe the writes or fail one.
-var writeCopy = util.WriteFileAtomic0600Temp
+// Seams: writeCopy writes one vault copy atomically and durably (A8), and
+// lockedHook runs right after a writer takes the archive lock — so a test can
+// observe or fail a write, or take the lock away mid-operation.
+var (
+	writeCopy  = util.WriteFileAtomic0600Temp
+	lockedHook = func() {}
+)
 
 // copyOnDisk is one of the two vault files as read.
 type copyOnDisk struct {
@@ -56,18 +67,28 @@ type copyOnDisk struct {
 	err  error // os.ErrNotExist when absent
 }
 
+// judgeVaultFile is the file-type rule for a vault copy, judged on the path
+// BEFORE it is opened (on Windows the open itself follows a link): a regular
+// file anywhere, and on Windows also a cloud placeholder (ModeIrregular) — the
+// rule util.DescriptorReadable applies to every untrusted file. A link, a
+// directory, a pipe or a device is refused.
+func judgeVaultFile(goos string, mode fs.FileMode) error {
+	if mode&fs.ModeSymlink != 0 || !util.DescriptorReadable(goos, mode) {
+		return fmt.Errorf("%w: it is %s, not a regular file (a link or special file was put there)", ErrCorrupt, util.ModeKind(mode))
+	}
+	return nil
+}
+
 func readCopy(out, name string) copyOnDisk {
 	c := copyOnDisk{name: name}
 	path := filepath.Join(out, name)
-	// Judge the path before opening it: on Windows the open itself follows a
-	// link (util.OpenRegularFile), so this is what refuses one there.
 	fi, err := os.Lstat(path)
 	if err != nil {
 		c.err = err
 		return c
 	}
-	if !fi.Mode().IsRegular() {
-		c.err = fmt.Errorf("%w: %s is not a regular file (a link or special file was put there)", ErrCorrupt, name)
+	if err := judgeVaultFile(runtime.GOOS, fi.Mode()); err != nil {
+		c.err = fmt.Errorf("%s: %w", name, err)
 		return c
 	}
 	f, err := util.OpenRegularFile(path)
@@ -88,6 +109,25 @@ func readCopy(out, name string) copyOnDisk {
 	return c
 }
 
+// claimedID is the archive id a copy that does not parse still claims, if its
+// "archive_id" reads as one — so a damaged copy of ANOTHER archive is told
+// apart from a damaged copy of this one.
+func claimedID(raw []byte) (ID, bool) {
+	var probe struct {
+		ArchiveID string `json:"archive_id"`
+	}
+	if json.NewDecoder(bytes.NewReader(raw)).Decode(&probe) != nil {
+		return ID{}, false
+	}
+	b, err := hex.DecodeString(probe.ArchiveID)
+	if err != nil || len(b) != len(ID{}) {
+		return ID{}, false
+	}
+	var id ID
+	copy(id[:], b)
+	return id, id != ID{}
+}
+
 // copies is both vault files as read (primary first), and those that parse,
 // highest generation first (the primary first on a tie).
 type copies struct {
@@ -97,24 +137,42 @@ type copies struct {
 
 // readCopies reads both copies. Before anything trusts either, it refuses when
 // a copy was written by a newer MailArchive (never fall back past it, never
-// heal over it) or when the two copies name different archives (never adopt or
-// heal across archives), and when neither copy parses.
-func readCopies(out string) (copies, error) {
+// heal over it), when the copies — parsed or merely claiming an id — name two
+// archives, when they name an archive other than want (the id this machine
+// recorded; zero when none is recorded, A15), and when neither copy parses.
+func readCopies(out string, want ID) (copies, error) {
 	cs := copies{all: []copyOnDisk{readCopy(out, FileName), readCopy(out, BackupName)}}
+	ids := map[ID][]string{}
 	for _, c := range cs.all {
 		if errors.Is(c.err, ErrNewerVault) {
 			return cs, fmt.Errorf("%s in %s: %w", c.name, out, c.err)
 		}
 		if c.v != nil {
 			cs.parsed = append(cs.parsed, c)
+			ids[c.v.ArchiveID] = append(ids[c.v.ArchiveID], c.name)
+		} else if id, ok := claimedID(c.raw); ok {
+			ids[id] = append(ids[id], c.name)
+		}
+	}
+	if len(ids) > 1 {
+		var names []string
+		for id, files := range ids {
+			names = append(names, strings.Join(files, " and ")+" belongs to archive "+id.String())
+		}
+		sort.Strings(names)
+		return cs, fmt.Errorf("%w: in %s the key files belong to different archives (%s) — restore this archive's own key file",
+			ErrTampered, out, strings.Join(names, "; "))
+	}
+	if want != (ID{}) {
+		for id, files := range ids {
+			if id != want {
+				return cs, fmt.Errorf("%w: in %s, %s belongs to archive %s, not to archive %s that this computer recorded there — restore this archive's own key file",
+					ErrTampered, out, strings.Join(files, " and "), id, want)
+			}
 		}
 	}
 	if len(cs.parsed) == 0 {
 		return cs, noUsableCopy(out, cs.all)
-	}
-	if len(cs.parsed) == 2 && cs.all[0].v.ArchiveID != cs.all[1].v.ArchiveID {
-		return cs, fmt.Errorf("%w: in %s, %s and %s belong to different archives (%s and %s) — restore this archive's own key file",
-			ErrTampered, out, FileName, BackupName, cs.all[0].v.ArchiveID, cs.all[1].v.ArchiveID)
 	}
 	sort.SliceStable(cs.parsed, func(i, j int) bool { return cs.parsed[i].v.Generation > cs.parsed[j].v.Generation })
 	return cs, nil
@@ -144,10 +202,10 @@ type Info struct {
 
 // Detect recognises an encrypted archive without the key, from either copy
 // (archindex, C10). ok is false when neither vault file exists — which does NOT
-// prove the folder is plaintext (ErrNoVault); an error means a vault is present
-// but unusable: damaged, from a newer MailArchive, or two archives' copies.
+// prove the folder is plaintext (ErrNoVault, A15); an error means a vault is
+// present but unusable: damaged, from a newer MailArchive, or two archives'.
 func Detect(out string) (info Info, ok bool, err error) {
-	cs, err := readCopies(out)
+	cs, err := readCopies(out, ID{})
 	if errors.Is(err, ErrNoVault) {
 		return info, false, nil
 	}
@@ -158,26 +216,68 @@ func Detect(out string) (info Info, ok bool, err error) {
 	return Info{ArchiveID: v.ArchiveID, Generation: v.Generation}, true, nil
 }
 
-// unlockFunc turns one parsed copy into a proven key, or refuses.
-type unlockFunc func(*Vault) (*Key, error)
-
-// Secret is what a person unlocks with: the password or the recovery key.
+// Secret is what unlocks an archive: the password, the recovery key, or an
+// already-unlocked key (a remembered one, for an unattended heal). It prints
+// redacted.
 type Secret struct {
-	text       string
-	isRecovery bool
+	text string
+	kind entryKind // entryPassword, entryRecovery, or 0 for a key
+	key  *Key
 }
 
-// PasswordSecret and RecoverySecret name the secret a person supplied.
-func PasswordSecret(pw string) Secret   { return Secret{text: pw} }
-func RecoverySecret(code string) Secret { return Secret{text: code, isRecovery: true} }
+// PasswordSecret, RecoverySecret and KeySecret name the secret supplied.
+func PasswordSecret(pw string) Secret   { return Secret{text: pw, kind: entryPassword} }
+func RecoverySecret(code string) Secret { return Secret{text: code, kind: entryRecovery} }
+func KeySecret(k *Key) Secret           { return Secret{key: k} }
 
-func (s Secret) unlock() unlockFunc {
-	return func(v *Vault) (*Key, error) {
-		if s.isRecovery {
-			return v.UnlockRecovery(s.text)
-		}
+// Format prints a secret without its text, whatever the verb.
+func (s Secret) Format(f fmt.State, _ rune) {
+	fmt.Fprintf(f, "vault.Secret{%s, redacted}", map[entryKind]string{0: "key", entryPassword: "password", entryRecovery: "recovery key"}[s.kind])
+}
+
+// open turns one parsed copy into a proven key, or refuses.
+func (s Secret) open(v *Vault) (*Key, error) {
+	switch s.kind {
+	case entryPassword:
 		return v.Unlock(s.text)
+	case entryRecovery:
+		return v.UnlockRecovery(s.text)
 	}
+	if err := s.key.usable(); err != nil {
+		return nil, err
+	}
+	k, err := newKey(v.ArchiveID, s.key.master[:])
+	if err != nil {
+		return nil, err
+	}
+	if err := v.Verify(k); err != nil {
+		// A key either is this archive's or is not: a mismatch says the key is
+		// wrong (another archive's), the same way a wrong password does.
+		k.Destroy()
+		return nil, fmt.Errorf("%w: the key does not belong to this archive (%v)", ErrWrongSecret, err)
+	}
+	return k, nil
+}
+
+// entry is the wrap entry this secret unlocks in v (the zero Entry for a key).
+func (s Secret) entry(v *Vault) Entry {
+	switch s.kind {
+	case entryPassword:
+		return v.Password
+	case entryRecovery:
+		return v.Recovery
+	}
+	return Entry{}
+}
+
+// cost is the Argon2id work unlocking v with this secret takes (none for a key).
+func (s Secret) cost(v *Vault) uint64 {
+	p := s.entry(v).Params
+	return uint64(p.MemoryKiB) * uint64(p.Time)
+}
+
+func sameEntry(a, b Entry) bool {
+	return a.Salt == b.Salt && a.Params == b.Params && bytes.Equal(a.Wrapped, b.Wrapped)
 }
 
 // Opened is an archive's vault proven with a key.
@@ -185,39 +285,33 @@ type Opened struct {
 	Vault *Vault
 	Key   *Key
 	// NeedsHeal reports that the two copies are not both the winning vault
-	// byte-for-byte (one missing, damaged, stale or altered). Only a writer
-	// holding the archive lock heals.
+	// byte-for-byte (one missing, damaged, stale, altered or reformatted). Only
+	// a writer holding the archive lock heals.
 	NeedsHeal bool
-	// Forked reports two DIFFERENT authentic vaults at the newest generation:
-	// two machines changed the vault at once. Heal will not choose between them;
-	// the next deliberate change (from the copy this secret opened) settles it.
+	// Forked reports a DIFFERENT authentic vault at the winning generation: two
+	// machines changed the vault at once. Heal will not choose between them; the
+	// next deliberate change from this side settles it — and the other side's
+	// new password or recovery key then stops working, which a caller must say.
 	Forked bool
 }
 
-// cost orders copies for unlocking: the Argon2id work its two entries ask for.
-func (v *Vault) cost() uint64 {
-	c := uint64(0)
-	for _, e := range []Entry{v.Password, v.Recovery} {
-		c += uint64(e.Params.MemoryKiB) * uint64(e.Params.Time)
-	}
-	return c
-}
-
-// openVault unlocks the archive at out and chooses the vault to trust (A7).
-// The cheapest copy is tried first and a byte-identical copy is not tried twice,
-// so a planted expensive copy costs a derivation only when the real one fails.
-// The winner is the HIGHEST generation whose header MAC verifies under the
-// resulting key — the master key is the same in every generation, so it proves
-// newer copies too — and on a tie, the copy the secret itself opened. A secret
-// that opens only an older generation (the password before a change, after a
-// crash left a stale copy) is refused as superseded, never used to roll back.
-func openVault(out string, unlock unlockFunc) (*Opened, error) {
-	cs, err := readCopies(out)
+// openVault unlocks the archive at out with s and chooses the vault to trust
+// (A7). The copy that is cheapest for s is tried first and a byte-identical
+// copy is not tried twice, so a planted expensive copy costs a derivation only
+// when the real one fails. The winner is the HIGHEST generation that
+// authenticates under the resulting key — the master key is the same in every
+// generation — provided s still opens it: a remembered key always does; a
+// password or recovery key whose entry is unchanged there does without another
+// derivation; otherwise it is tried once more. A secret that opens only an
+// older generation (the password before a change, after a crash left a stale
+// copy) is refused as superseded, never used to roll back.
+func openVault(out string, want ID, s Secret) (*Opened, error) {
+	cs, err := readCopies(out, want)
 	if err != nil {
 		return nil, err
 	}
 	tries := slices.Clone(cs.parsed)
-	sort.SliceStable(tries, func(i, j int) bool { return tries[i].v.cost() < tries[j].v.cost() })
+	sort.SliceStable(tries, func(i, j int) bool { return s.cost(tries[i].v) < s.cost(tries[j].v) })
 	var key *Key
 	var opened copyOnDisk
 	var errs []error
@@ -225,7 +319,7 @@ func openVault(out string, unlock unlockFunc) (*Opened, error) {
 		if slices.ContainsFunc(tries[:i], func(t copyOnDisk) bool { return bytes.Equal(t.raw, c.raw) }) {
 			continue
 		}
-		k, err := unlock(c.v)
+		k, err := s.open(c.v)
 		if err == nil {
 			key, opened = k, c
 			break
@@ -241,44 +335,59 @@ func openVault(out string, unlock unlockFunc) (*Opened, error) {
 			authentic = append(authentic, c)
 		}
 	}
-	if top := authentic[0].v.Generation; top > opened.v.Generation {
-		key.Destroy()
-		return nil, fmt.Errorf("%w: it was replaced by a newer one — use the current password or recovery key", ErrWrongSecret)
+	winner := opened
+	if top := authentic[0]; top.v.Generation > opened.v.Generation {
+		current := s.kind == 0 || sameEntry(s.entry(top.v), s.entry(opened.v))
+		if !current {
+			if k, err := s.open(top.v); err == nil {
+				k.Destroy()
+				current = true
+			}
+		}
+		if !current {
+			key.Destroy()
+			return nil, fmt.Errorf("%w: it was replaced by a newer one — use the current password or recovery key", ErrWrongSecret)
+		}
+		winner = top
 	}
-	o := &Opened{Vault: opened.v, Key: key}
+	o := &Opened{Vault: winner.v, Key: key}
 	for _, c := range authentic {
-		if c.v.Generation == opened.v.Generation && !bytes.Equal(c.raw, opened.raw) {
+		if c.v.Generation == winner.v.Generation && c.v.mac != winner.v.mac {
 			o.Forked = true
 		}
 	}
-	want, err := opened.v.Marshal()
+	want2, err := winner.v.Marshal()
 	if err != nil {
 		key.Destroy()
 		return nil, err
 	}
 	for _, c := range cs.all {
-		if !bytes.Equal(c.raw, want) {
+		if !bytes.Equal(c.raw, want2) {
 			o.NeedsHeal = true
 		}
 	}
 	return o, nil
 }
 
-// mostTelling picks the refusal to show when no copy unlocked: a wrong secret
-// if any copy said so (the likeliest truth, and not one a planted copy can
-// mask), else the first copy's reason.
+// mostTelling picks the refusal to show when no copy unlocked. Tampering found
+// AFTER the secret unwrapped a key is the strongest evidence (the secret is
+// right and a header was altered), then a wrong secret (not one a planted copy
+// can mask), then the first copy's reason.
 func mostTelling(errs []error) error {
-	for _, e := range errs {
-		if errors.Is(e, ErrWrongSecret) {
-			return e
+	for _, want := range []error{ErrTampered, ErrWrongSecret} {
+		for _, e := range errs {
+			if errors.Is(e, want) {
+				return e
+			}
 		}
 	}
 	return errs[0]
 }
 
 // Open unlocks the encrypted archive at out with s, read-only: it takes no lock
-// and writes nothing (the reader's path).
-func Open(out string, s Secret) (*Opened, error) { return openVault(out, s.unlock()) }
+// and writes nothing (the reader's path). want is the archive id this machine
+// recorded for out, or the zero ID when none is recorded (a handed-over copy).
+func Open(out string, want ID, s Secret) (*Opened, error) { return openVault(out, want, s) }
 
 // save writes v to the primary, then the mirror (A7) — each atomically, 0600,
 // with a sweepable temp name and a durable rename (A8). The primary is the
@@ -293,7 +402,7 @@ func save(out string, v *Vault) error {
 		return fmt.Errorf("write %s: %w", FileName, err)
 	}
 	if err := writeCopy(filepath.Join(out, BackupName), b, tempPattern); err != nil {
-		return fmt.Errorf("%w: %s in %s holds the change, but %s could not be written (%v); it is repaired on the next change or heal",
+		return fmt.Errorf("%w: %s in %s holds the change, but %s could not be written (it is repaired on the next change or heal): %w",
 			ErrPartiallySaved, FileName, out, BackupName, err)
 	}
 	return nil
@@ -303,7 +412,11 @@ func save(out string, v *Vault) error {
 // capture and reindex of this archive takes, so a vault rewrite can never
 // interleave with a backup run.
 func lockArchive(out, verb string) (*lockfile.Lock, error) {
-	return lockfile.AcquireAs(filepath.Join(out, lockfile.Name), verb)
+	l, err := lockfile.AcquireAs(filepath.Join(out, lockfile.Name), verb)
+	if err == nil {
+		lockedHook()
+	}
+	return l, err
 }
 
 // stillHeld re-proves the lock immediately before a write (R5): a lock file
@@ -319,7 +432,7 @@ func stillHeld(l *lockfile.Lock) error {
 func requireDir(out string) error {
 	fi, err := os.Stat(out)
 	if err != nil {
-		return fmt.Errorf("archive folder %s is not present: %w", out, err)
+		return fmt.Errorf("archive folder %s is not present (is its drive connected?): %w", out, err)
 	}
 	if !fi.IsDir() {
 		return fmt.Errorf("archive folder %s is not a folder", out)
@@ -327,23 +440,44 @@ func requireDir(out string) error {
 	return nil
 }
 
+// refuseExisting refuses a folder that already holds either vault file.
+func refuseExisting(out string) error {
+	for _, name := range []string{FileName, BackupName} {
+		if _, err := os.Lstat(filepath.Join(out, name)); !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("%w: %s is present in %s — if an earlier attempt to encrypt this archive finished, the password and recovery key you saved then open it", ErrExists, name, out)
+		}
+	}
+	return nil
+}
+
 // PendingCreate is a new vault made in memory and not yet written: a recovery
 // key nobody has seen is never committed (the seavault rule). The caller shows
 // RecoveryKey, the person confirms they saved it, and only then Commit writes
-// the vault; a crash before Commit leaves the folder untouched.
+// the vault; a crash before Commit leaves the folder untouched. It prints
+// redacted.
 type PendingCreate struct {
-	v  *Vault
-	k  *Key
-	rk RecoveryKey
+	out  string
+	v    *Vault
+	k    *Key
+	rk   RecoveryKey
+	done bool
 }
 
-// PrepareCreate makes the vault for a newly encrypted archive, in memory.
-func PrepareCreate(password string) (*PendingCreate, error) {
+// PrepareCreate makes the vault for the archive folder out, in memory. It
+// refuses — before any recovery key is made or shown — a folder that is absent
+// or already holds a vault.
+func PrepareCreate(out, password string) (*PendingCreate, error) {
+	if err := requireDir(out); err != nil {
+		return nil, err
+	}
+	if err := refuseExisting(out); err != nil {
+		return nil, err
+	}
 	v, k, rk, err := Create(password)
 	if err != nil {
 		return nil, err
 	}
-	return &PendingCreate{v: v, k: k, rk: rk}, nil
+	return &PendingCreate{out: out, v: v, k: k, rk: rk}, nil
 }
 
 // RecoveryKey is the key to show once, before Commit.
@@ -352,68 +486,70 @@ func (p *PendingCreate) RecoveryKey() RecoveryKey { return p.rk }
 // ArchiveID is the new archive's id, to record outside the archive (A15).
 func (p *PendingCreate) ArchiveID() ID { return p.v.ArchiveID }
 
-// Discard forgets an uncommitted vault.
-func (p *PendingCreate) Discard() { p.k.Destroy() }
+// Format prints a pending create without its keys.
+func (p *PendingCreate) Format(f fmt.State, _ rune) {
+	fmt.Fprintf(f, "vault.PendingCreate{archive %s, redacted}", p.v.ArchiveID)
+}
 
-// Commit writes the prepared vault into the archive folder out under the
-// archive lock and returns the unlocked key. It refuses if either vault file
-// already exists — re-keying an encrypted archive would orphan everything
+// Discard forgets an uncommitted vault. After a successful Commit it does
+// nothing: the key belongs to Commit's caller.
+func (p *PendingCreate) Discard() {
+	if !p.done {
+		p.k.Destroy()
+	}
+	p.done = true
+}
+
+// Commit writes the prepared vault under the archive lock and hands over the
+// unlocked key (the pending create keeps no claim on it). It refuses if either
+// vault file exists — re-keying an encrypted archive would orphan everything
 // sealed under the old key. If the write fails part-way it removes what it
-// wrote, so the folder is as it was and a retry can proceed.
-func (p *PendingCreate) Commit(out string) (*Key, error) {
-	if err := requireDir(out); err != nil {
+// wrote (while still holding the lock), so the folder is as it was and the
+// same pending create can be committed again.
+func (p *PendingCreate) Commit() (*Key, error) {
+	if p.done {
+		return nil, ErrPendingUsed
+	}
+	if err := requireDir(p.out); err != nil {
 		return nil, err
 	}
-	l, err := lockArchive(out, "encrypt")
+	l, err := lockArchive(p.out, "encrypt")
 	if err != nil {
 		return nil, err
 	}
 	defer l.Release()
-	names := []string{FileName, BackupName}
-	for _, name := range names {
-		if _, err := os.Lstat(filepath.Join(out, name)); !errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("%w: %s is present in %s", ErrExists, name, out)
-		}
+	if err := refuseExisting(p.out); err != nil {
+		return nil, err
 	}
 	if err := stillHeld(l); err != nil {
 		return nil, err
 	}
-	if err := save(out, p.v); err != nil {
+	if err := save(p.out, p.v); err != nil {
+		if held := stillHeld(l); held != nil {
+			return nil, fmt.Errorf("vault: the new key file could not be written (%w), and the archive lock was lost, so nothing was cleaned up — check %s before trying again: %w", err, p.out, held)
+		}
 		var left []string
-		for _, name := range names {
-			if rm := os.Remove(filepath.Join(out, name)); rm != nil && !errors.Is(rm, os.ErrNotExist) {
+		for _, name := range []string{FileName, BackupName} {
+			if rm := os.Remove(filepath.Join(p.out, name)); rm != nil && !errors.Is(rm, os.ErrNotExist) {
 				left = append(left, name)
 			}
 		}
+		util.SyncDir(p.out)
 		if len(left) > 0 {
-			return nil, fmt.Errorf("vault: the new vault could not be written (%v), and %s could not be removed — delete it before trying again", err, strings.Join(left, ", "))
+			return nil, fmt.Errorf("vault: the new key file could not be written, and %s could not be removed — delete it before trying again: %w", strings.Join(left, ", "), err)
 		}
-		return nil, fmt.Errorf("vault: the new vault could not be written, so none was kept — try again: %v", err)
+		return nil, fmt.Errorf("vault: the new key file could not be written, so none was kept — try again: %w", err)
 	}
-	return p.k, nil
-}
-
-// CreateAt prepares and commits a vault in one step, returning the key and the
-// recovery key. An interactive caller uses PrepareCreate/Commit instead, so the
-// recovery key is shown and confirmed before anything is written.
-func CreateAt(out, password string) (*Key, RecoveryKey, error) {
-	p, err := PrepareCreate(password)
-	if err != nil {
-		return nil, RecoveryKey{}, err
-	}
-	k, err := p.Commit(out)
-	if err != nil {
-		p.Discard()
-		return nil, RecoveryKey{}, err
-	}
-	return k, p.rk, nil
+	k := p.k
+	p.k, p.done = nil, true
+	return k, nil
 }
 
 // mutate opens the vault at out under the archive lock with current, applies
 // change, and saves the result (both copies, which also heals them). Building
 // on the copy the secret opened, at a generation above every copy, also
 // settles a fork.
-func mutate(out, verb string, current Secret, change func(*Opened) (*Vault, error)) error {
+func mutate(out string, want ID, verb string, current Secret, change func(*Opened) (*Vault, error)) error {
 	if err := requireDir(out); err != nil {
 		return err
 	}
@@ -422,7 +558,7 @@ func mutate(out, verb string, current Secret, change func(*Opened) (*Vault, erro
 		return err
 	}
 	defer l.Release()
-	o, err := openVault(out, current.unlock())
+	o, err := openVault(out, want, current)
 	if err != nil {
 		return err
 	}
@@ -445,27 +581,30 @@ func mutate(out, verb string, current Secret, change func(*Opened) (*Vault, erro
 // one (C9). Only the vault is rewritten; the remembered key and every sealed
 // byte stay as they are (A10). ErrPartiallySaved means the new password IS in
 // effect.
-func ChangePasswordAt(out string, current Secret, newPassword string) error {
-	return mutate(out, "change-password", current, func(o *Opened) (*Vault, error) {
+func ChangePasswordAt(out string, want ID, current Secret, newPassword string) error {
+	return mutate(out, want, "change-password", current, func(o *Opened) (*Vault, error) {
 		return o.Vault.WithPassword(o.Key, newPassword)
 	})
 }
 
 // PendingRecovery is a new recovery key made in memory and not yet written: the
 // caller shows RecoveryKey, the person confirms they saved it, and only then
-// Commit replaces the old one, which keeps working until then.
+// Commit replaces the old one, which keeps working until then. It prints
+// redacted.
 type PendingRecovery struct {
 	out  string
+	want ID
 	key  *Key
 	base *Vault
 	next *Vault
 	rk   RecoveryKey
+	done bool
 }
 
 // PrepareNewRecovery unlocks the archive at out with current and builds the
 // vault with a new recovery key, writing nothing.
-func PrepareNewRecovery(out string, current Secret) (*PendingRecovery, error) {
-	o, err := Open(out, current)
+func PrepareNewRecovery(out string, want ID, current Secret) (*PendingRecovery, error) {
+	o, err := Open(out, want, current)
 	if err != nil {
 		return nil, err
 	}
@@ -474,21 +613,42 @@ func PrepareNewRecovery(out string, current Secret) (*PendingRecovery, error) {
 		o.Key.Destroy()
 		return nil, err
 	}
-	return &PendingRecovery{out: out, key: o.Key, base: o.Vault, next: next, rk: rk}, nil
+	return &PendingRecovery{out: out, want: want, key: o.Key, base: o.Vault, next: next, rk: rk}, nil
 }
 
 // RecoveryKey is the new key to show once, before Commit.
 func (p *PendingRecovery) RecoveryKey() RecoveryKey { return p.rk }
 
-// Discard forgets an uncommitted recovery key; the old one stays in force.
-func (p *PendingRecovery) Discard() { p.key.Destroy() }
+// Format prints a pending recovery key without its keys.
+func (p *PendingRecovery) Format(f fmt.State, _ rune) {
+	fmt.Fprintf(f, "vault.PendingRecovery{archive %s, redacted}", p.base.ArchiveID)
+}
 
-// Commit replaces the recovery key under the archive lock — only if the vault
-// is still the one the change was prepared from (ErrConflict otherwise:
-// something else changed it; prepare again). ErrPartiallySaved means the new
+// Discard forgets an uncommitted recovery key; the old one stays in force.
+func (p *PendingRecovery) Discard() {
+	if !p.done {
+		p.key.Destroy()
+	}
+	p.done = true
+}
+
+// finish ends a pending recovery for good.
+func (p *PendingRecovery) finish() {
+	p.key.Destroy()
+	p.done = true
+}
+
+// Commit replaces the recovery key under the archive lock — only while the
+// vault it was prepared from is still the newest authentic one (on either side
+// of a fork); otherwise ErrConflict, and the change is spent: prepare again.
+// A failure that changed nothing (the lock busy, the folder absent, the lock
+// lost, the primary write failed) leaves it committable: try again, the key
+// shown stays the one that will be committed. ErrPartiallySaved means the new
 // key IS in effect.
 func (p *PendingRecovery) Commit() error {
-	defer p.key.Destroy()
+	if p.done {
+		return ErrPendingUsed
+	}
 	if err := requireDir(p.out); err != nil {
 		return err
 	}
@@ -497,42 +657,46 @@ func (p *PendingRecovery) Commit() error {
 		return err
 	}
 	defer l.Release()
-	o, err := openVault(p.out, rememberedUnlock(p.key.master[:]))
+	cs, err := readCopies(p.out, p.want)
 	if err != nil {
 		return err
 	}
-	defer o.Key.Destroy()
-	if o.Vault.Generation != p.base.Generation || o.Vault.mac != p.base.mac {
+	found := false
+	for _, c := range cs.parsed {
+		if c.v.Verify(p.key) != nil {
+			continue
+		}
+		if c.v.Generation > p.base.Generation {
+			found = false
+			break
+		}
+		if c.v.Generation == p.base.Generation && c.v.mac == p.base.mac {
+			found = true
+		}
+	}
+	if !found {
+		p.finish()
 		return fmt.Errorf("%w: the key file in %s changed since the new recovery key was made; make it again", ErrConflict, p.out)
 	}
 	if err := stillHeld(l); err != nil {
 		return err
 	}
-	return save(p.out, p.next)
-}
-
-// RegenerateRecoveryAt prepares and commits a new recovery key in one step and
-// returns it — also alongside ErrPartiallySaved, when it is already in effect.
-// An interactive caller uses PrepareNewRecovery/Commit instead.
-func RegenerateRecoveryAt(out string, current Secret) (RecoveryKey, error) {
-	p, err := PrepareNewRecovery(out, current)
-	if err != nil {
-		return RecoveryKey{}, err
-	}
-	if err := p.Commit(); err != nil {
+	if err := save(p.out, p.next); err != nil {
 		if errors.Is(err, ErrPartiallySaved) {
-			return p.rk, err
+			p.finish()
 		}
-		return RecoveryKey{}, err
+		return err
 	}
-	return p.rk, nil
+	p.finish()
+	return nil
 }
 
 // Heal rewrites both vault copies from the trusted winner, under the archive
 // lock, when Open reported NeedsHeal. The generation is unchanged: healing
 // restores a copy, it does not make a new vault. It refuses a fork (ErrConflict)
-// rather than choose which of two people's changes to keep.
-func Heal(out string, current Secret) error {
+// rather than choose which of two people's changes to keep. An unattended run
+// heals with KeySecret of the key RequireRetrievableKey returned.
+func Heal(out string, want ID, current Secret) error {
 	if err := requireDir(out); err != nil {
 		return err
 	}
@@ -541,13 +705,13 @@ func Heal(out string, current Secret) error {
 		return err
 	}
 	defer l.Release()
-	o, err := openVault(out, current.unlock())
+	o, err := openVault(out, want, current)
 	if err != nil {
 		return err
 	}
 	defer o.Key.Destroy()
 	if o.Forked {
-		return fmt.Errorf("%w: %s and %s in %s are two different key files at generation %d (changed on two machines at once); change the password or make a new recovery key to settle which is kept",
+		return fmt.Errorf("%w: %s and %s in %s are two different key files at generation %d (changed on two machines at once); change the password, or make a new recovery key, from the side to keep",
 			ErrConflict, FileName, BackupName, out, o.Vault.Generation)
 	}
 	if !o.NeedsHeal {

@@ -62,6 +62,10 @@ func WriteFileAtomic0600Temp(path string, data []byte, pattern string) error {
 	return nil
 }
 
+// SyncDir fsyncs a directory (best effort) so a completed rename or removal in
+// it survives power loss: syncDir for callers outside this package.
+func SyncDir(dir string) { syncDir(dir) }
+
 // syncDir fsyncs a directory so a completed rename survives power loss on
 // filesystems that honour it. Errors are ignored: some filesystems (and
 // Windows) do not support fsync on a directory handle, and the namespace

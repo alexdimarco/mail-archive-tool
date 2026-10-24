@@ -87,6 +87,27 @@ func TestUnlockRefusesACostOutsideTheBoundsBeforeDeriving(t *testing.T) {
 }
 
 // covers: MA-705, R37
+func TestARecoveryUnlockRefusesACostOutsideTheBoundsToo(t *testing.T) {
+	lowCost(t)
+	v, _, rk, err := Create(testPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runs := countDerivations(t)
+	for label, p := range map[string]Params{
+		"below floor":   {floor.MemoryKiB, floor.Time - 1, floor.Threads},
+		"above ceiling": {ceiling.MemoryKiB + 1, floor.Time, floor.Threads},
+	} {
+		bad := *v
+		bad.Recovery.Params = p
+		*runs = nil
+		if _, err := bad.UnlockRecovery(rk.String()); !errors.Is(err, ErrParams) || len(*runs) != 0 {
+			t.Fatalf("%s: want ErrParams with no derivation, got %v after %d", label, err, len(*runs))
+		}
+	}
+}
+
+// covers: MA-705, R37
 func TestNewPasswordFloor(t *testing.T) {
 	lowCost(t)
 	if _, _, _, err := Create(strings.Repeat("x", MinPasswordRunes)); err != nil {

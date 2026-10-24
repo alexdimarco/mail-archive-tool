@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -106,6 +107,29 @@ func TestWriteFileAtomic0600WaitsOutAWindowsSharingViolation(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(dst); string(got) != "v2" {
 		t.Fatalf("a failed write must leave the old bytes, got %q", got)
+	}
+}
+
+// covers: MA-713
+func TestTheAtomicWriterWaitsOutRenamesOnlyOnWindows(t *testing.T) {
+	link := func(e error) error { return &os.LinkError{Op: "rename", Old: "a", New: "b", Err: e} }
+	inUse := []error{link(ErrorAccessDenied), link(ErrorSharingViolation)}
+	other := []error{link(syscall.Errno(2)), link(syscall.EACCES), errors.New("disk full")}
+	for _, e := range inUse {
+		if !WindowsRenameInUse(e) {
+			t.Errorf("Windows' rule does not wait out %v", e)
+		}
+	}
+	for _, e := range other {
+		if WindowsRenameInUse(e) {
+			t.Errorf("Windows' rule waits out %v, which waiting cannot clear", e)
+		}
+	}
+	for _, e := range append(inUse, other...) {
+		want := runtime.GOOS == "windows" && WindowsRenameInUse(e)
+		if renameInUse(e) != want {
+			t.Errorf("on %s the shipped writer waits out %v = %v, want %v", runtime.GOOS, e, renameInUse(e), want)
+		}
 	}
 }
 

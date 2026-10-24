@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -79,39 +80,39 @@ func TestCrashMidPasswordChangeNeverRollsBack(t *testing.T) {
 	out, _, _ := newArchive(t)
 	gen1 := readFile(t, out, BackupName)
 	const newPassword = "the replacement passphrase"
-	if err := ChangePasswordAt(out, PasswordSecret(testPassword), newPassword); err != nil {
+	if err := ChangePasswordAt(out, ID{}, PasswordSecret(testPassword), newPassword); err != nil {
 		t.Fatal(err)
 	}
 	writeFile(t, out, BackupName, gen1) // the crash: primary at gen 2, mirror still gen 1
 
-	o, err := Open(out, PasswordSecret(newPassword))
+	o, err := Open(out, ID{}, PasswordSecret(newPassword))
 	if err != nil {
 		t.Fatalf("the new password must open after the crash: %v", err)
 	}
 	if o.Vault.Generation != 2 || !o.NeedsHeal {
 		t.Fatalf("want generation 2 with NeedsHeal, got %d / %v", o.Vault.Generation, o.NeedsHeal)
 	}
-	_, err = Open(out, PasswordSecret(testPassword))
+	_, err = Open(out, ID{}, PasswordSecret(testPassword))
 	if !errors.Is(err, ErrWrongSecret) {
 		t.Fatalf("the superseded password must be refused, got %v", err)
 	}
 	rc, msg := refusal(err)
 	assure.Refused(t, rc, msg, assure.Code(1), assure.Names("replaced by a newer one"))
-	if err := Heal(out, PasswordSecret(testPassword)); !errors.Is(err, ErrWrongSecret) {
+	if err := Heal(out, ID{}, PasswordSecret(testPassword)); !errors.Is(err, ErrWrongSecret) {
 		t.Fatalf("the superseded password must not be able to heal (roll back), got %v", err)
 	}
 	if !bytes.Equal(readFile(t, out, BackupName), gen1) {
 		t.Fatal("a refused heal must write nothing")
 	}
 
-	if err := Heal(out, PasswordSecret(newPassword)); err != nil {
+	if err := Heal(out, ID{}, PasswordSecret(newPassword)); err != nil {
 		t.Fatal(err)
 	}
 	s := snapshot(out)
 	if !bytes.Equal(s[0], s[1]) {
 		t.Fatal("after Heal both copies must be identical")
 	}
-	if o, err := Open(out, PasswordSecret(newPassword)); err != nil || o.NeedsHeal || o.Vault.Generation != 2 {
+	if o, err := Open(out, ID{}, PasswordSecret(newPassword)); err != nil || o.NeedsHeal || o.Vault.Generation != 2 {
 		t.Fatalf("after Heal: want generation 2 and no heal needed, got %v", err)
 	}
 }
@@ -131,14 +132,14 @@ func TestDamagedOrMissingPrimaryFallsBackToTheMirror(t *testing.T) {
 		if err != nil || !ok || info.ArchiveID != k.ArchiveID() {
 			t.Fatalf("%s: Detect must still recognise the archive from the mirror: %v %v", label, ok, err)
 		}
-		o, err := Open(out, PasswordSecret(testPassword))
+		o, err := Open(out, ID{}, PasswordSecret(testPassword))
 		if err != nil {
 			t.Fatalf("%s: must open from the mirror: %v", label, err)
 		}
 		if !o.NeedsHeal {
 			t.Fatalf("%s: must report NeedsHeal", label)
 		}
-		if err := Heal(out, PasswordSecret(testPassword)); err != nil {
+		if err := Heal(out, ID{}, PasswordSecret(testPassword)); err != nil {
 			t.Fatal(err)
 		}
 		if !bytes.Equal(readFile(t, out, FileName), good) {
@@ -166,14 +167,14 @@ func TestAHandRaisedGenerationIsNotTrusted(t *testing.T) {
 	if info.Generation != 99 {
 		t.Fatalf("Detect reports what is on disk without authenticating (got %d) — the point is it trusts nothing", info.Generation)
 	}
-	o, err := Open(out, PasswordSecret(testPassword))
+	o, err := Open(out, ID{}, PasswordSecret(testPassword))
 	if err != nil {
 		t.Fatalf("the authentic primary must still open: %v", err)
 	}
 	if o.Vault.Generation != 1 || !o.NeedsHeal {
 		t.Fatalf("want the authentic generation 1 with NeedsHeal, got %d / %v", o.Vault.Generation, o.NeedsHeal)
 	}
-	if err := Heal(out, PasswordSecret(testPassword)); err != nil {
+	if err := Heal(out, ID{}, PasswordSecret(testPassword)); err != nil {
 		t.Fatal(err)
 	}
 	if v, err := Parse(readFile(t, out, BackupName)); err != nil || v.Generation != 1 {
@@ -188,7 +189,7 @@ func TestNoVaultAndUnreadableVaults(t *testing.T) {
 	if _, ok, err := Detect(empty); ok || err != nil {
 		t.Fatalf("a plain folder: want not-encrypted and no error, got %v %v", ok, err)
 	}
-	_, err := Open(empty, PasswordSecret(testPassword))
+	_, err := Open(empty, ID{}, PasswordSecret(testPassword))
 	if !errors.Is(err, ErrNoVault) {
 		t.Fatalf("Open of a plain folder: want ErrNoVault, got %v", err)
 	}
@@ -229,20 +230,20 @@ func TestNoVaultAndUnreadableVaults(t *testing.T) {
 func TestAForgottenPasswordIsResetWithTheRecoveryKey(t *testing.T) {
 	lowCost(t)
 	out, _, rk := newArchive(t)
-	if _, err := Open(out, RecoverySecret(rk.String())); err != nil {
+	if _, err := Open(out, ID{}, RecoverySecret(rk.String())); err != nil {
 		t.Fatalf("the recovery key shown at create must open the archive: %v", err)
 	}
 	const newPassword = "remembered this time, honestly"
-	if err := ChangePasswordAt(out, RecoverySecret(rk.String()), newPassword); err != nil {
+	if err := ChangePasswordAt(out, ID{}, RecoverySecret(rk.String()), newPassword); err != nil {
 		t.Fatalf("a reset with the recovery key: %v", err)
 	}
-	if _, err := Open(out, PasswordSecret(newPassword)); err != nil {
+	if _, err := Open(out, ID{}, PasswordSecret(newPassword)); err != nil {
 		t.Fatalf("the reset password must open: %v", err)
 	}
-	if _, err := Open(out, PasswordSecret(testPassword)); !errors.Is(err, ErrWrongSecret) {
+	if _, err := Open(out, ID{}, PasswordSecret(testPassword)); !errors.Is(err, ErrWrongSecret) {
 		t.Fatalf("the forgotten password must be refused, got %v", err)
 	}
-	if _, err := Open(out, RecoverySecret(rk.String())); err != nil {
+	if _, err := Open(out, ID{}, RecoverySecret(rk.String())); err != nil {
 		t.Fatalf("a password reset leaves the recovery key working: %v", err)
 	}
 	if s := snapshot(out); !bytes.Equal(s[0], s[1]) {
@@ -266,7 +267,7 @@ func TestHealOnAHealthyArchiveWritesNothing(t *testing.T) {
 		}
 	}
 	w := hookWrites(t, "")
-	if err := Heal(out, PasswordSecret(testPassword)); err != nil {
+	if err := Heal(out, ID{}, PasswordSecret(testPassword)); err != nil {
 		t.Fatal(err)
 	}
 	if len(w.names) != 0 {
@@ -289,13 +290,12 @@ func TestALockLostMidChangeWritesNothing(t *testing.T) {
 		t.Skip("Windows refuses to remove a lock file another handle holds open; the lost-lock case cannot arise there")
 	}
 	lowCost(t)
-	out, _, _ := newArchive(t)
-	before := snapshot(out)
-	lockPath := filepath.Join(out, lockfile.Name)
-	var intruder *lockfile.Lock
-	orig := argon2Key
-	argon2Key = func(pw, salt []byte, tm, mem uint32, th uint8, n uint32) []byte {
-		if intruder == nil { // mid-change: a sync client deletes the lock, another run takes a fresh one
+	// Each writer, right after taking the lock: a sync client deletes the lock
+	// file and another run takes a fresh one.
+	steal := func(t *testing.T, out string) {
+		lockPath := filepath.Join(out, lockfile.Name)
+		var intruder *lockfile.Lock
+		lockedHook = func() {
 			os.Remove(lockPath)
 			l, err := lockfile.AcquireAs(lockPath, "export")
 			if err != nil {
@@ -303,19 +303,79 @@ func TestALockLostMidChangeWritesNothing(t *testing.T) {
 			}
 			intruder = l
 		}
-		return orig(pw, salt, tm, mem, th, n)
+		t.Cleanup(func() {
+			lockedHook = func() {}
+			intruder.Release()
+		})
 	}
-	t.Cleanup(func() {
-		argon2Key = orig
-		intruder.Release()
-	})
+	for label, setup := range map[string]func(t *testing.T) (string, func() error){
+		"change password": func(t *testing.T) (string, func() error) {
+			out, k, _ := newArchive(t)
+			return out, func() error {
+				return ChangePasswordAt(out, k.ArchiveID(), PasswordSecret(testPassword), "a fresh long passphrase")
+			}
+		},
+		"new recovery key": func(t *testing.T) (string, func() error) {
+			out, k, _ := newArchive(t)
+			p, err := PrepareNewRecovery(out, k.ArchiveID(), PasswordSecret(testPassword))
+			if err != nil {
+				t.Fatal(err)
+			}
+			return out, p.Commit
+		},
+		"heal": func(t *testing.T) (string, func() error) {
+			out, k, _ := newArchive(t)
+			removeFile(t, out, BackupName)
+			return out, func() error { return Heal(out, k.ArchiveID(), PasswordSecret(testPassword)) }
+		},
+		"create": func(t *testing.T) (string, func() error) {
+			out := t.TempDir()
+			p, err := PrepareCreate(out, testPassword)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return out, func() error { _, err := p.Commit(); return err }
+		},
+	} {
+		t.Run(label, func(t *testing.T) {
+			out, run := setup(t)
+			before := snapshot(out)
+			steal(t, out)
+			err := run()
+			rc, msg := refusal(err)
+			assure.Refused(t, rc, msg, assure.Code(1), assure.Names("nothing was written", lockfile.Name), assure.NoSideEffect(func() bool {
+				s := snapshot(out)
+				return bytes.Equal(s[0], before[0]) && bytes.Equal(s[1], before[1])
+			}))
+		})
+	}
+}
 
-	err := ChangePasswordAt(out, PasswordSecret(testPassword), "a fresh long passphrase")
-	rc, msg := refusal(err)
-	assure.Refused(t, rc, msg, assure.Code(1), assure.Names("nothing was written", lockPath), assure.NoSideEffect(func() bool {
-		s := snapshot(out)
-		return bytes.Equal(s[0], before[0]) && bytes.Equal(s[1], before[1])
-	}))
+// covers: MA-709, R37
+func TestTheVaultFileTypeRuleOnEveryOS(t *testing.T) {
+	for _, c := range []struct {
+		goos string
+		mode fs.FileMode
+		ok   bool
+	}{
+		{"linux", 0, true},
+		{"windows", 0, true},
+		{"linux", fs.ModeSymlink, false},
+		{"windows", fs.ModeSymlink, false},  // the case only the Lstat judgment catches on Windows
+		{"windows", fs.ModeIrregular, true}, // a OneDrive/iCloud placeholder of a synced archive
+		{"linux", fs.ModeIrregular, false},
+		{"windows", fs.ModeDir, false},
+		{"linux", fs.ModeNamedPipe, false},
+		{"windows", fs.ModeDevice, false},
+	} {
+		err := judgeVaultFile(c.goos, c.mode)
+		if (err == nil) != c.ok {
+			t.Errorf("%s %v: accepted=%v, want %v (%v)", c.goos, c.mode, err == nil, c.ok, err)
+		}
+		if err != nil && !errors.Is(err, ErrCorrupt) {
+			t.Errorf("%s %v: a refused file type must be ErrCorrupt, got %v", c.goos, c.mode, err)
+		}
+	}
 }
 
 // covers: MA-709, R37
@@ -345,9 +405,11 @@ func TestVaultRewritesWaitForTheArchiveLock(t *testing.T) {
 	unchanged := func() bool { s := snapshot(out); return bytes.Equal(s[0], before[0]) && bytes.Equal(s[1], before[1]) }
 
 	for label, run := range map[string]func() error{
-		"change password":  func() error { return ChangePasswordAt(out, PasswordSecret(testPassword), "a fresh long passphrase") },
-		"new recovery key": func() error { _, err := RegenerateRecoveryAt(out, PasswordSecret(testPassword)); return err },
-		"heal":             func() error { return Heal(out, PasswordSecret(testPassword)) },
+		"change password": func() error {
+			return ChangePasswordAt(out, ID{}, PasswordSecret(testPassword), "a fresh long passphrase")
+		},
+		"new recovery key": func() error { _, err := regenerateRecoveryAt(out, ID{}, PasswordSecret(testPassword)); return err },
+		"heal":             func() error { return Heal(out, ID{}, PasswordSecret(testPassword)) },
 	} {
 		err := run()
 		if !errors.Is(err, lockfile.ErrHeld) {
@@ -362,7 +424,7 @@ func TestVaultRewritesWaitForTheArchiveLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = CreateAt(fresh, testPassword)
+	_, _, err = createAt(fresh, testPassword)
 	rc, msg := refusal(err)
 	assure.Refused(t, rc, msg, assure.Code(1), assure.Names(lockfile.Name), assure.NoSideEffect(func() bool {
 		s := snapshot(fresh)
@@ -371,7 +433,7 @@ func TestVaultRewritesWaitForTheArchiveLock(t *testing.T) {
 	heldFresh.Release()
 
 	held.Release()
-	if err := ChangePasswordAt(out, PasswordSecret(testPassword), "a fresh long passphrase"); err != nil {
+	if err := ChangePasswordAt(out, ID{}, PasswordSecret(testPassword), "a fresh long passphrase"); err != nil {
 		t.Fatalf("positive twin: once the lock is free the change goes through: %v", err)
 	}
 }
@@ -381,7 +443,7 @@ func TestCreateAtRefusesAnExistingVaultOrAbsentFolder(t *testing.T) {
 	lowCost(t)
 	out, _, _ := newArchive(t)
 	before := snapshot(out)
-	_, _, err := CreateAt(out, testPassword)
+	_, _, err := createAt(out, testPassword)
 	if !errors.Is(err, ErrExists) {
 		t.Fatalf("want ErrExists, got %v", err)
 	}
@@ -393,12 +455,12 @@ func TestCreateAtRefusesAnExistingVaultOrAbsentFolder(t *testing.T) {
 
 	onlyMirror := t.TempDir()
 	writeFile(t, onlyMirror, BackupName, before[1])
-	if _, _, err := CreateAt(onlyMirror, testPassword); !errors.Is(err, ErrExists) {
+	if _, _, err := createAt(onlyMirror, testPassword); !errors.Is(err, ErrExists) {
 		t.Fatalf("a lone mirror is a vault fragment: want ErrExists, got %v", err)
 	}
 
 	absent := filepath.Join(t.TempDir(), "unmounted-drive")
-	_, _, err = CreateAt(absent, testPassword)
+	_, _, err = createAt(absent, testPassword)
 	rc, msg = refusal(err)
 	assure.Refused(t, rc, msg, assure.Code(1), assure.Names(absent, "not present"), assure.NoSideEffect(func() bool {
 		_, statErr := os.Stat(absent)

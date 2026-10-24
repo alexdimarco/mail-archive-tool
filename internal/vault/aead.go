@@ -161,11 +161,36 @@ func open(key, aad, sealed []byte) ([]byte, error) {
 // the archive it belongs to. Archive data is sealed under the data sub-key, the
 // vault header is authenticated under the MAC sub-key (HKDF-SHA256 domain
 // separation), and the master key itself is only ever wrapped or remembered.
+// Only a key this package made is live; a zero Key or a destroyed one refuses
+// every use (ErrKeyDestroyed) rather than sealing under an all-zero key. It
+// prints redacted.
 type Key struct {
 	id     ID
 	master [keySize]byte
 	data   [keySize]byte
 	mac    [keySize]byte
+	live   bool
+}
+
+// ErrKeyDestroyed refuses a key that was destroyed, or never made by this
+// package (a zero Key).
+var ErrKeyDestroyed = errors.New("vault: this key was destroyed or never unlocked")
+
+// usable refuses a nil, zero or destroyed key.
+func (k *Key) usable() error {
+	if k == nil || !k.live {
+		return ErrKeyDestroyed
+	}
+	return nil
+}
+
+// Format prints a key without its secret bytes, whatever the verb.
+func (k *Key) Format(f fmt.State, _ rune) {
+	if k == nil {
+		fmt.Fprint(f, "vault.Key(nil)")
+		return
+	}
+	fmt.Fprintf(f, "vault.Key{archive %s, redacted}", k.id)
 }
 
 // HKDF info strings: the sub-key domains.
@@ -178,7 +203,7 @@ func newKey(id ID, master []byte) (*Key, error) {
 	if len(master) != keySize {
 		return nil, fmt.Errorf("vault: master key is %d bytes, want %d", len(master), keySize)
 	}
-	k := &Key{id: id}
+	k := &Key{id: id, live: true}
 	copy(k.master[:], master)
 	for _, sub := range []struct {
 		info string
@@ -196,16 +221,24 @@ func newKey(id ID, master []byte) (*Key, error) {
 // ArchiveID is the archive this key unlocks.
 func (k *Key) ArchiveID() ID { return k.id }
 
-// Destroy overwrites the key material held in memory.
+// Destroy overwrites the key material held in memory; the key then refuses
+// every use. Destroying a nil or already-destroyed key does nothing.
 func (k *Key) Destroy() {
+	if k == nil {
+		return
+	}
 	clear(k.master[:])
 	clear(k.data[:])
 	clear(k.mac[:])
+	k.live = false
 }
 
 // SealUnit seals one message body or attachment set for the unit named unitID
 // (its stable manifest identity).
 func (k *Key) SealUnit(kind UnitKind, unitID string, plaintext []byte) ([]byte, error) {
+	if err := k.usable(); err != nil {
+		return nil, err
+	}
 	aad, err := unitAAD(k.id, kind, unitID)
 	if err != nil {
 		return nil, err
@@ -215,6 +248,9 @@ func (k *Key) SealUnit(kind UnitKind, unitID string, plaintext []byte) ([]byte, 
 
 // OpenUnit opens what SealUnit sealed for the same kind and unitID.
 func (k *Key) OpenUnit(kind UnitKind, unitID string, sealed []byte) ([]byte, error) {
+	if err := k.usable(); err != nil {
+		return nil, err
+	}
 	aad, err := unitAAD(k.id, kind, unitID)
 	if err != nil {
 		return nil, err
@@ -222,23 +258,38 @@ func (k *Key) OpenUnit(kind UnitKind, unitID string, sealed []byte) ([]byte, err
 	return open(k.data[:], aad, sealed)
 }
 
-// SealChunk seals chunk index of a container at generation gen. Every call
-// draws a fresh nonce, so re-sealing a changed chunk never reuses one (A1).
+// SealChunk seals chunk index of a container; gen is the generation at which
+// THIS chunk is sealed, which the container's pointer records per chunk (A2).
+// Every call draws a fresh nonce, so re-sealing a changed chunk never reuses one
+// (A1).
 func (k *Key) SealChunk(kind ContainerKind, gen uint64, index uint32, plaintext []byte) ([]byte, error) {
+	if err := k.usable(); err != nil {
+		return nil, err
+	}
 	return seal(k.data[:], chunkAAD(k.id, kind, gen, index), plaintext)
 }
 
-// OpenChunk opens what SealChunk sealed for the same kind, gen and index.
+// OpenChunk opens what SealChunk sealed for the same kind, seal generation and
+// index.
 func (k *Key) OpenChunk(kind ContainerKind, gen uint64, index uint32, sealed []byte) ([]byte, error) {
+	if err := k.usable(); err != nil {
+		return nil, err
+	}
 	return open(k.data[:], chunkAAD(k.id, kind, gen, index), sealed)
 }
 
 // SealPointer seals a container's pointer (its ordered chunk list) at gen.
 func (k *Key) SealPointer(kind ContainerKind, gen uint64, plaintext []byte) ([]byte, error) {
+	if err := k.usable(); err != nil {
+		return nil, err
+	}
 	return seal(k.data[:], pointerAAD(k.id, kind, gen), plaintext)
 }
 
 // OpenPointer opens what SealPointer sealed for the same kind and gen.
 func (k *Key) OpenPointer(kind ContainerKind, gen uint64, sealed []byte) ([]byte, error) {
+	if err := k.usable(); err != nil {
+		return nil, err
+	}
 	return open(k.data[:], pointerAAD(k.id, kind, gen), sealed)
 }

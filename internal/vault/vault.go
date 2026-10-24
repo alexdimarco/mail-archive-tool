@@ -147,6 +147,9 @@ func (v *Vault) UnlockRecovery(code string) (*Key, error) {
 // Verify proves the vault's header MAC under k: the key belongs to this vault
 // and no public field has been changed since a key-holder last wrote it.
 func (v *Vault) Verify(k *Key) error {
+	if err := k.usable(); err != nil {
+		return err
+	}
 	if k.id != v.ArchiveID {
 		return fmt.Errorf("%w: the key belongs to archive %s, not %s", ErrTampered, k.id, v.ArchiveID)
 	}
@@ -284,25 +287,28 @@ func (v *Vault) Marshal() ([]byte, error) {
 // it. Authenticity is proven by Unlock/UnlockRecovery/Verify with a key; a
 // keyless reader may use the archive id and generation only to recognise and
 // order copies.
+//
+// The forward-compatibility contract (A7): every vault format is one JSON object
+// whose "format" is a whole number. The format is read FIRST, from the first
+// object alone, so a newer vault is recognised as newer — never as damaged, and
+// so never healed over — whatever else it carries.
 func Parse(data []byte) (*Vault, error) {
+	var probe struct {
+		Format int `json:"format"`
+	}
+	if json.NewDecoder(bytes.NewReader(data)).Decode(&probe) == nil && probe.Format > VaultFormat {
+		return nil, fmt.Errorf("%w (vault format %d; this build understands %d): upgrade MailArchive", ErrNewerVault, probe.Format, VaultFormat)
+	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	var f vaultFile
 	if err := dec.Decode(&f); err != nil {
-		var probe struct {
-			Format int `json:"format"`
-		}
-		if json.Unmarshal(data, &probe) == nil && probe.Format > VaultFormat {
-			return nil, fmt.Errorf("%w (vault format %d; this build understands %d): upgrade MailArchive", ErrNewerVault, probe.Format, VaultFormat)
-		}
 		return nil, fmt.Errorf("%w: %v", ErrCorrupt, err)
 	}
 	if dec.More() {
 		return nil, fmt.Errorf("%w: trailing data after the vault", ErrCorrupt)
 	}
 	switch {
-	case f.Format > VaultFormat:
-		return nil, fmt.Errorf("%w (vault format %d; this build understands %d): upgrade MailArchive", ErrNewerVault, f.Format, VaultFormat)
 	case f.Format < 1:
 		return nil, fmt.Errorf("%w: missing or invalid format", ErrCorrupt)
 	case f.Generation == 0:
@@ -314,6 +320,9 @@ func Parse(data []byte) (*Vault, error) {
 	var err error
 	if v.ArchiveID, err = parseID(f.ArchiveID); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrCorrupt, err)
+	}
+	if v.ArchiveID == (ID{}) {
+		return nil, fmt.Errorf("%w: the archive id is all zeros, which no vault is ever given", ErrCorrupt)
 	}
 	mac, err := hex.DecodeString(f.MAC)
 	if err != nil || len(mac) != len(v.mac) {

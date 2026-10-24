@@ -37,11 +37,14 @@ func TestARememberedKeyOpensTheArchiveUnattended(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the remembered key must open the archive: %v", err)
 	}
-	if pt, err := got.OpenUnit(UnitMessage, "msg-1", sealed); err != nil || string(pt) != "archived" {
+	if got.NeedsHeal || got.Forked {
+		t.Fatalf("a healthy archive opened by the gate must need no heal, got heal=%v fork=%v", got.NeedsHeal, got.Forked)
+	}
+	if pt, err := got.Key.OpenUnit(UnitMessage, "msg-1", sealed); err != nil || string(pt) != "archived" {
 		t.Fatalf("the retrieved key must open the archive's units: %q %v", pt, err)
 	}
 
-	if err := ChangePasswordAt(out, PasswordSecret(testPassword), "the replacement passphrase"); err != nil {
+	if err := ChangePasswordAt(out, ID{}, PasswordSecret(testPassword), "the replacement passphrase"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := RequireRetrievableKey(out, k.ArchiveID(), store); err != nil {
@@ -128,6 +131,9 @@ func TestAnArchiveRecordedAsEncryptedNeverReadsAsPlaintext(t *testing.T) {
 		if !errors.Is(err, ErrKeyNotRetrievable) {
 			t.Fatalf("%s: want ErrKeyNotRetrievable (never 'not encrypted'), got %v", label, err)
 		}
+		if errors.Is(err, ErrNoVault) {
+			t.Fatalf("%s: the gate's refusal must never match ErrNoVault, the 'maybe plaintext' signal (A15)", label)
+		}
 		if key != nil {
 			t.Fatalf("%s: the gate returned a key", label)
 		}
@@ -136,6 +142,92 @@ func TestAnArchiveRecordedAsEncryptedNeverReadsAsPlaintext(t *testing.T) {
 			s := snapshot(out)
 			return bytes.Equal(s[0], after[0]) && bytes.Equal(s[1], after[1])
 		}))
+	}
+}
+
+// covers: MA-711, MA-717, R37
+func TestTheGateNamesTheFixForEachCause(t *testing.T) {
+	lowCost(t)
+	out, k, _ := newArchive(t)
+	store := graphconfig.NewFileSecretStore(t.TempDir())
+	if err := Remember(store, k); err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string]struct {
+		prepare func(t *testing.T) string // returns the folder to gate
+		want    ID
+		cause   error
+		fix     string
+	}{
+		"drive unplugged": {func(t *testing.T) string { return filepath.Join(t.TempDir(), "unmounted") }, k.ArchiveID(), os.ErrNotExist, "connect the drive"},
+		"vault deleted": {func(t *testing.T) string {
+			o, _, _ := newArchive(t)
+			removeFile(t, o, FileName)
+			removeFile(t, o, BackupName)
+			return o
+		}, k.ArchiveID(), ErrVaultMissing, "restore the archive's key files"},
+		"newer MailArchive": {func(t *testing.T) string {
+			o, kk, _ := newArchive(t)
+			Remember(store, kk)
+			editVault(t, o, FileName, func(m map[string]any) { m["format"] = VaultFormat + 1 })
+			return o
+		}, ID{}, ErrNewerVault, "upgrade MailArchive"},
+		"no key stored": {func(t *testing.T) string {
+			o, _, _ := newArchive(t)
+			return o
+		}, ID{}, os.ErrNotExist, "remember its key again"},
+		"no recorded id": {func(t *testing.T) string { return out }, ID{}, nil, "no archive id was recorded"},
+	}
+	for label, c := range cases {
+		t.Run(label, func(t *testing.T) {
+			dir := c.prepare(t)
+			want := c.want
+			if want == (ID{}) && label != "no recorded id" {
+				info, ok, _ := Detect(dir)
+				if !ok {
+					// a newer vault reads as an error in Detect; take the id from the other copy
+					v, err := Parse(readFile(t, dir, BackupName))
+					if err != nil {
+						t.Fatal(err)
+					}
+					info.ArchiveID = v.ArchiveID
+				}
+				want = info.ArchiveID
+			}
+			_, err := RequireRetrievableKey(dir, want, store)
+			if !errors.Is(err, ErrKeyNotRetrievable) {
+				t.Fatalf("want ErrKeyNotRetrievable, got %v", err)
+			}
+			if c.cause != nil && !errors.Is(err, c.cause) {
+				t.Fatalf("the refusal must carry its cause %v: %v", c.cause, err)
+			}
+			rc, msg := refusal(err)
+			assure.Refused(t, rc, msg, assure.Code(1), assure.Names(c.fix))
+		})
+	}
+}
+
+// covers: MA-711, R37
+func TestAnUnattendedRunSeesAndHealsADamagedCopy(t *testing.T) {
+	lowCost(t)
+	out, k, _ := newArchive(t)
+	store := graphconfig.NewFileSecretStore(t.TempDir())
+	if err := Remember(store, k); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, out, BackupName, []byte("damaged by a sync conflict"))
+	o, err := RequireRetrievableKey(out, k.ArchiveID(), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !o.NeedsHeal {
+		t.Fatal("the gate must report the damaged copy so an unattended run can heal it")
+	}
+	if err := Heal(out, k.ArchiveID(), KeySecret(o.Key)); err != nil {
+		t.Fatalf("an unattended run heals with the remembered key: %v", err)
+	}
+	if s := snapshot(out); !bytes.Equal(s[0], s[1]) {
+		t.Fatal("after the heal both copies must be identical")
 	}
 }
 
@@ -155,7 +247,7 @@ func TestReadersNeitherLockNorWrite(t *testing.T) {
 	}
 	defer held.Release()
 
-	o, err := Open(out, PasswordSecret(testPassword))
+	o, err := Open(out, ID{}, PasswordSecret(testPassword))
 	if err != nil {
 		t.Fatalf("Open must not need the archive lock: %v", err)
 	}

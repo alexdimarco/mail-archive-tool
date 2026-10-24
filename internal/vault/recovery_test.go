@@ -135,6 +135,8 @@ func TestARecoveryKeyPastedFromADocumentStillParses(t *testing.T) {
 		"minus signs":        strings.ReplaceAll(s, "-", "\u2212"),
 		"full-width letters": fullwidth(s),
 		"a byte-order mark":  "\ufeff" + s,
+		"line separators":    strings.ReplaceAll(s, "-", "\u2028"),
+		"next-line marks":    strings.ReplaceAll(s, "-", "\u0085"),
 	} {
 		got, err := ParseRecoveryKey(pasted)
 		if err != nil {

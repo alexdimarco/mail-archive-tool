@@ -39,6 +39,16 @@ func TestKeyEncryptionKeyIsTheFrozenArgon2idOutput(t *testing.T) {
 }
 
 // covers: MA-716, R37
+func TestPasswordNormalisationIsFrozenAsNFC(t *testing.T) {
+	// A ligature (NFKC would split it), a decomposed accent (NFC composes it):
+	// only NFC turns this into exactly U+FB01 U+00E9.
+	got := passwordBytes("ﬁé")
+	if want := []byte("ﬁé"); string(got) != string(want) {
+		t.Fatalf("password bytes %x, want NFC %x — the password normalisation is part of the format", got, want)
+	}
+}
+
+// covers: MA-716, R37
 func TestRecoveryKeyRenderingIsFrozen(t *testing.T) {
 	var rk RecoveryKey
 	for i := range rk {

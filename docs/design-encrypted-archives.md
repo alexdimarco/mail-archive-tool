@@ -517,3 +517,41 @@ when the vault is missing, damaged, from a newer MailArchive, or names another a
 missing vault is never "not encrypted". `Detect`'s "no vault" is documented as unauthenticated
 absence, not proof of plaintext. Phase 2+ write paths that hold a recorded id must refuse the
 same way and never fall back to a plaintext export.
+
+**Fix-verification round (2026-10-24) — the API frozen for Phases 2–4.** A second
+assurance round (26 mutations on the fixes, a verifier per fix, two fresh-eyes reviewers,
+three skeptics per finding; record in the review doc) refined the API before any caller
+exists:
+- **Every keyed entry point takes the recorded id**: `Open(out, want, s)`,
+  `ChangePasswordAt(out, want, …)`, `PrepareNewRecovery(out, want, …)`, `Heal(out, want, …)`;
+  the zero ID means "no record" (a handed-over copy). A copy naming another archive than
+  `want` is refused (`ErrTampered`), and a DAMAGED copy that still names another archive is
+  refused even without a record.
+- **The gate returns the opened vault** (`*Opened`: key, `NeedsHeal`, `Forked`), and an
+  unattended run heals under its own lock with `Heal(out, want, KeySecret(key))`. The gate
+  checks the folder is present first and names the fix for each cause (connect the drive /
+  restore the key files / upgrade / open once with the password); a deleted vault is
+  `ErrVaultMissing`, which never matches `ErrNoVault`.
+- **Keys have a lifetime**: a destroyed, zero or nil `Key` refuses every use
+  (`ErrKeyDestroyed`) instead of sealing under an all-zero key; `PendingCreate.Commit`
+  hands its key over (a later `Discard` is a no-op); a prepared change is single-use
+  (`ErrPendingUsed`); a new-recovery-key `Commit` that failed without writing (lock busy,
+  folder absent, lock lost, primary write failed) can be retried with the same key. Keys,
+  secrets and pending changes print redacted.
+- **Two-step only**: the one-step create and regenerate helpers are test-only; `PrepareCreate`
+  refuses an existing vault before any key is made or shown.
+- **The winner rule**: after a secret proves the master key, the newest authentic generation
+  wins if the secret still opens it (unchanged entry, or one more derivation) — a cheaper
+  older copy tried first never makes a current secret "superseded"; a fork is decided by
+  content (generation + header MAC), so a re-spaced copy is a heal, not a fork; a new
+  recovery key commits from either side of a fork; tampering found after a successful unwrap
+  outranks "wrong password" in the refusal shown.
+- **Forward-compat contract**: every vault format is one JSON object whose `format` is a whole
+  number, read first from the first object alone, so a newer vault is recognised as newer
+  whatever it appends.
+- **The vault file-type rule** is `util.DescriptorReadable` judged on the path before opening:
+  a Windows cloud placeholder of a synced archive is accepted; a link anywhere is refused.
+
+**A2 note for Phase 2b.** Fixed-size POSITIONAL chunks would re-seal every chunk after an
+insertion; chunk boundaries must stay stable across runs (e.g. records bucketed by a hash of
+their identity), or O(delta) is lost.

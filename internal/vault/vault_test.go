@@ -141,6 +141,33 @@ func TestHeaderMACRefusesAnAlteredVaultEvenWithTheRightPassword(t *testing.T) {
 	}
 }
 
+// covers: MA-707, R37
+func TestTheArchiveIDIsUnderTheHeaderMAC(t *testing.T) {
+	lowCost(t)
+	v, k, _, err := Create(testPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	moved := *v
+	moved.ArchiveID[15] ^= 1
+	if v.computeMAC(k) == moved.computeMAC(k) {
+		t.Fatal("changing only the archive id must change the header MAC")
+	}
+	zero := bytes.ReplaceAll(mustMarshal(t, v), []byte(v.ArchiveID.String()), []byte(strings.Repeat("0", 32)))
+	if _, err := Parse(zero); !errors.Is(err, ErrCorrupt) {
+		t.Fatalf("an all-zero archive id: want ErrCorrupt, got %v", err)
+	}
+}
+
+func mustMarshal(t *testing.T, v *Vault) []byte {
+	t.Helper()
+	b, err := v.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
 func flip(b []byte) []byte {
 	c := bytes.Clone(b)
 	c[len(c)-1] ^= 1

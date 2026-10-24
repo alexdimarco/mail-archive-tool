@@ -36,7 +36,7 @@ func TestSaveWritesThePrimaryThenTheMirrorWithSweepableTemps(t *testing.T) {
 	lowCost(t)
 	out, _, _ := newArchive(t)
 	w := hookWrites(t, "")
-	if err := ChangePasswordAt(out, PasswordSecret(testPassword), "the replacement passphrase"); err != nil {
+	if err := ChangePasswordAt(out, ID{}, PasswordSecret(testPassword), "the replacement passphrase"); err != nil {
 		t.Fatal(err)
 	}
 	names := assure.Reached(t, w.names, "vault writes")
@@ -54,7 +54,7 @@ func TestSaveWritesThePrimaryThenTheMirrorWithSweepableTemps(t *testing.T) {
 func TestCreateIsPreparedThenCommitted(t *testing.T) {
 	lowCost(t)
 	out := t.TempDir()
-	p, err := PrepareCreate(testPassword)
+	p, err := PrepareCreate(out, testPassword)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,15 +70,15 @@ func TestCreateIsPreparedThenCommitted(t *testing.T) {
 		t.Fatal("a discarded create must leave the folder untouched")
 	}
 
-	p, err = PrepareCreate(testPassword)
+	p, err = PrepareCreate(out, testPassword)
 	if err != nil {
 		t.Fatal(err)
 	}
-	k, err := p.Commit(out)
+	k, err := p.Commit()
 	if err != nil {
 		t.Fatal(err)
 	}
-	o, err := Open(out, RecoverySecret(p.RecoveryKey().String()))
+	o, err := Open(out, ID{}, RecoverySecret(p.RecoveryKey().String()))
 	if err != nil {
 		t.Fatalf("the recovery key shown before Commit must open the committed vault: %v", err)
 	}
@@ -93,14 +93,14 @@ func TestAFailedCreateLeavesNothingSoARetryWorks(t *testing.T) {
 	for _, failing := range []string{FileName, BackupName} {
 		out := t.TempDir()
 		hookWrites(t, failing)
-		_, _, err := CreateAt(out, testPassword)
+		_, _, err := createAt(out, testPassword)
 		rc, msg := refusal(err)
 		assure.Refused(t, rc, msg, assure.Code(1), assure.Names("none was kept"), assure.NoSideEffect(func() bool {
 			s := snapshot(out)
 			return s[0] == nil && s[1] == nil
 		}))
 		hookWrites(t, "")
-		if _, _, err := CreateAt(out, testPassword); err != nil {
+		if _, _, err := createAt(out, testPassword); err != nil {
 			t.Fatalf("with %s failing once, a retry must succeed on the clean folder: %v", failing, err)
 		}
 	}
@@ -110,12 +110,12 @@ func TestAFailedCreateLeavesNothingSoARetryWorks(t *testing.T) {
 func TestANewRecoveryKeyIsPreparedThenCommitted(t *testing.T) {
 	lowCost(t)
 	out, _, oldRK := newArchive(t)
-	p, err := PrepareNewRecovery(out, PasswordSecret(testPassword))
+	p, err := PrepareNewRecovery(out, ID{}, PasswordSecret(testPassword))
 	if err != nil {
 		t.Fatal(err)
 	}
 	before := snapshot(out)
-	if _, err := Open(out, RecoverySecret(oldRK.String())); err != nil {
+	if _, err := Open(out, ID{}, RecoverySecret(oldRK.String())); err != nil {
 		t.Fatalf("until Commit the old recovery key must keep working: %v", err)
 	}
 	if err := p.Commit(); err != nil {
@@ -124,18 +124,18 @@ func TestANewRecoveryKeyIsPreparedThenCommitted(t *testing.T) {
 	if s := snapshot(out); bytes.Equal(s[0], before[0]) || !bytes.Equal(s[0], s[1]) {
 		t.Fatal("Commit must rewrite both copies identically")
 	}
-	if _, err := Open(out, RecoverySecret(p.RecoveryKey().String())); err != nil {
+	if _, err := Open(out, ID{}, RecoverySecret(p.RecoveryKey().String())); err != nil {
 		t.Fatalf("the new recovery key must open: %v", err)
 	}
-	if _, err := Open(out, RecoverySecret(oldRK.String())); !errors.Is(err, ErrWrongSecret) {
+	if _, err := Open(out, ID{}, RecoverySecret(oldRK.String())); !errors.Is(err, ErrWrongSecret) {
 		t.Fatalf("the old recovery key must be refused after Commit, got %v", err)
 	}
 
-	stale, err := PrepareNewRecovery(out, PasswordSecret(testPassword))
+	stale, err := PrepareNewRecovery(out, ID{}, PasswordSecret(testPassword))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ChangePasswordAt(out, PasswordSecret(testPassword), "changed meanwhile, elsewhere"); err != nil {
+	if err := ChangePasswordAt(out, ID{}, PasswordSecret(testPassword), "changed meanwhile, elsewhere"); err != nil {
 		t.Fatal(err)
 	}
 	changed := snapshot(out)
@@ -156,7 +156,7 @@ func TestAHalfSavedChangeSaysItIsInEffect(t *testing.T) {
 
 	out, _, oldRK := newArchive(t)
 	hookWrites(t, BackupName)
-	rk, err := RegenerateRecoveryAt(out, PasswordSecret(testPassword))
+	rk, err := regenerateRecoveryAt(out, ID{}, PasswordSecret(testPassword))
 	if !errors.Is(err, ErrPartiallySaved) {
 		t.Fatalf("mirror write failed: want ErrPartiallySaved, got %v", err)
 	}
@@ -164,13 +164,13 @@ func TestAHalfSavedChangeSaysItIsInEffect(t *testing.T) {
 		t.Fatal("a recovery key already in effect must be returned with the error, never dropped")
 	}
 	hookWrites(t, "")
-	if _, err := Open(out, RecoverySecret(rk.String())); err != nil {
+	if _, err := Open(out, ID{}, RecoverySecret(rk.String())); err != nil {
 		t.Fatalf("the returned recovery key must open: %v", err)
 	}
-	if _, err := Open(out, RecoverySecret(oldRK.String())); !errors.Is(err, ErrWrongSecret) {
+	if _, err := Open(out, ID{}, RecoverySecret(oldRK.String())); !errors.Is(err, ErrWrongSecret) {
 		t.Fatalf("the replaced key must be refused, got %v", err)
 	}
-	if err := Heal(out, RecoverySecret(rk.String())); err != nil {
+	if err := Heal(out, ID{}, RecoverySecret(rk.String())); err != nil {
 		t.Fatal(err)
 	}
 	if s := snapshot(out); !bytes.Equal(s[0], s[1]) {
@@ -180,21 +180,21 @@ func TestAHalfSavedChangeSaysItIsInEffect(t *testing.T) {
 	out2, _, _ := newArchive(t)
 	hookWrites(t, BackupName)
 	const newPassword = "the replacement passphrase"
-	err = ChangePasswordAt(out2, PasswordSecret(testPassword), newPassword)
+	err = ChangePasswordAt(out2, ID{}, PasswordSecret(testPassword), newPassword)
 	if !errors.Is(err, ErrPartiallySaved) {
 		t.Fatalf("mirror write failed: want ErrPartiallySaved, got %v", err)
 	}
 	rc, msg := refusal(err)
 	assure.Refused(t, rc, msg, assure.Code(1), assure.Names(FileName, "holds the change", BackupName))
 	hookWrites(t, "")
-	if _, err := Open(out2, PasswordSecret(newPassword)); err != nil {
+	if _, err := Open(out2, ID{}, PasswordSecret(newPassword)); err != nil {
 		t.Fatalf("ErrPartiallySaved means the new password is in effect: %v", err)
 	}
 
 	out3, _, _ := newArchive(t)
 	before := snapshot(out3)
 	hookWrites(t, FileName)
-	err = ChangePasswordAt(out3, PasswordSecret(testPassword), newPassword)
+	err = ChangePasswordAt(out3, ID{}, PasswordSecret(testPassword), newPassword)
 	if err == nil || errors.Is(err, ErrPartiallySaved) {
 		t.Fatalf("a failed primary write is a plain failure, nothing in effect, got %v", err)
 	}

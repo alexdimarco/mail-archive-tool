@@ -78,14 +78,47 @@ func testKey(t *testing.T, id ID, masterByte byte) *Key {
 	return k
 }
 
+// createAt prepares and commits a vault in one step. Test-only on purpose: a
+// product caller must show the recovery key and have it confirmed between
+// PrepareCreate and Commit.
+func createAt(out, password string) (*Key, RecoveryKey, error) {
+	p, err := PrepareCreate(out, password)
+	if err != nil {
+		return nil, RecoveryKey{}, err
+	}
+	k, err := p.Commit()
+	if err != nil {
+		p.Discard()
+		return nil, RecoveryKey{}, err
+	}
+	return k, p.RecoveryKey(), nil
+}
+
+// regenerateRecoveryAt prepares and commits a new recovery key in one step,
+// returning it also alongside ErrPartiallySaved. Test-only, like createAt.
+func regenerateRecoveryAt(out string, want ID, current Secret) (RecoveryKey, error) {
+	p, err := PrepareNewRecovery(out, want, current)
+	if err != nil {
+		return RecoveryKey{}, err
+	}
+	if err := p.Commit(); err != nil {
+		if errors.Is(err, ErrPartiallySaved) {
+			return p.RecoveryKey(), err
+		}
+		p.Discard()
+		return RecoveryKey{}, err
+	}
+	return p.RecoveryKey(), nil
+}
+
 // newArchive creates an encrypted archive folder (a vault only) at the low
 // test cost and returns the folder, the key and the recovery key.
 func newArchive(t *testing.T) (string, *Key, RecoveryKey) {
 	t.Helper()
 	out := t.TempDir()
-	k, rk, err := CreateAt(out, testPassword)
+	k, rk, err := createAt(out, testPassword)
 	if err != nil {
-		t.Fatalf("CreateAt: %v", err)
+		t.Fatalf("createAt: %v", err)
 	}
 	return out, k, rk
 }
@@ -105,6 +138,14 @@ func writeFile(t *testing.T, out, name string, b []byte) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(out, name), b, 0o600); err != nil {
 		t.Fatalf("write %s: %v", name, err)
+	}
+}
+
+// removeFile removes name in out, failing the test if it cannot.
+func removeFile(t *testing.T, out, name string) {
+	t.Helper()
+	if err := os.Remove(filepath.Join(out, name)); err != nil {
+		t.Fatalf("remove %s: %v", name, err)
 	}
 }
 
