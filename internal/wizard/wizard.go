@@ -1657,17 +1657,17 @@ func presyncOfferable(inputs []string) bool {
 func presyncQuestionText() string {
 	q := "Sync Thunderbird before each scheduled backup?\n\n" + presync.SyncNotice
 	if runtime.GOOS == "darwin" {
-		q += "\n\nOn a Mac, macOS asks your permission once to let Mail Archive control Thunderbird; grant it the first time the scheduled backup runs."
+		q += "\n\nOn a Mac, the first time a scheduled backup closes Thunderbird, macOS asks once whether Mail Archive may control it. A scheduled backup runs on its own, often overnight, so you would not be there to answer — and until you do, each run leaves Thunderbird open instead of closing it. To answer while you are at the Mac, run one backup yourself first (the Run-now button on the Mail Archive dashboard) and choose Allow when macOS asks, before you rely on the schedule."
 	}
 	return q
 }
 
 func offerSchedule(c wizardChoice) error {
 	const no = "No — just this once"
-	const daily = "Yes — every day at 02:00"
-	const weekly = "Yes — every week, Sunday 03:00"
+	const daily = "Yes — every day at 2:00 AM"
+	const weekly = "Yes — every week, Sunday at 3:00 AM"
 	pick, err := zenity.List(
-		"Keep this archive current automatically?\n\nA scheduled run repeats exactly this export (incremental: only new mail and any content that was still missing) while you are logged in.",
+		"Keep this archive current automatically?\n\nA scheduled run repeats exactly this export (incremental: only new mail and any content that was still missing). It runs only while you are signed in; a time the computer is off or asleep is skipped.",
 		[]string{no, daily, weekly}, zenity.Title(appTitle), zenity.DefaultItems(no))
 	if err != nil {
 		if errors.Is(err, zenity.ErrCanceled) {
@@ -1730,13 +1730,15 @@ func offerSchedule(c wizardChoice) error {
 		if spec.Wrapper {
 			note += " A console window will appear briefly while it runs."
 		}
+	} else if runtime.GOOS == "darwin" {
+		note = "\n\nThe backup runs only while you are signed in to this Mac; a night it is off or asleep is skipped."
 	}
 	if pn := schedule.ProgramNote(exe, progReason); pn != "" {
 		note += "\n\n" + pn
 	}
 	syncLine := ""
 	if c.tbSync {
-		syncLine = "\nThunderbird: synced before each run (if Thunderbird is already open, it is left alone)."
+		syncLine = "\nThunderbird: synced before each run. If Thunderbird is already open, that run is left alone — it saves only the mail already on this computer, and the newest server-only mail is picked up on a run when Thunderbird is closed."
 	}
 	return zenity.Info(fmt.Sprintf("Scheduled: %s at %s.\n\nArchive: %s\nLog: %s%s\n\nOpen the MailArchive wizard (mailarchive wizard) any time to check the backup's health.%s",
 		iv, at, c.out, spec.Log, syncLine, note), zenity.Title(appTitle))
