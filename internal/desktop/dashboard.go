@@ -1147,8 +1147,8 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
           <select id="schedInterval"><option value="weekly"{{if eq .Interval "weekly"}} selected{{end}}>Weekly (Sunday)</option><option value="daily"{{if eq .Interval "daily"}} selected{{end}}>Daily</option></select></div>
         <div><label for="schedTime">At (local time)</label><input id="schedTime" type="time" value="{{.WeeklyTime}}"></div>
       </div>
-      {{if .LocalPresyncOfferable}}<div style="margin-top:12px"><label><input type="checkbox" id="schedPresync"{{if .LocalPresyncOn}} checked{{end}}> Sync Thunderbird before each backup</label>
-        <p class="card-sub steps" id="schedPresyncNote">{{.PresyncNoticeText}}</p></div>{{end}}{{end}}
+      {{if .LocalPresyncOfferable}}<label class="checkline"><input type="checkbox" id="schedPresync"{{if .LocalPresyncOn}} checked{{end}}> Sync Thunderbird before each backup</label>
+      <p class="note" id="schedPresyncNote">{{.PresyncNoticeText}}</p>{{end}}{{end}}
       <div style="margin-top:14px">{{if or .ShowInstall .ShowLocalCreate}}<button class="btn" id="schedInstall" title="Create or update the scheduled backup for this archive, using the current settings.">Install / update</button> {{end}}{{if .ShowRepair}}<button class="btn" id="schedRepair" title="Re-point the weekly backup at this archive and fix a broken or stale schedule entry. Nothing in the archive changes.">Repair</button> <button class="btn" id="runBackupBtn" type="button" title="Run this archive's weekly backup right now, instead of waiting for its schedule.">Run now</button> {{end}}{{if .ShowRemove}}<button class="btn secondary" id="schedRemove" title="Delete the scheduled weekly backup. Your archive and everything in it are kept.">Remove</button>{{end}}</div>
       <div class="note" id="runBackupNote" hidden></div>
       <div class="note" id="schedState" hidden></div>{{end}}
