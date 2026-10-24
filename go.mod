@@ -8,6 +8,7 @@ require (
 	github.com/go-ole/go-ole v1.3.0
 	github.com/mooijtech/go-pst/v6 v6.0.2
 	github.com/ncruces/zenity v0.10.12
+	golang.org/x/crypto v0.57.0
 	golang.org/x/net v0.60.0
 	golang.org/x/oauth2 v0.37.0
 	golang.org/x/sys v0.48.0

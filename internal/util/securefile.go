@@ -9,18 +9,32 @@ import (
 	"runtime"
 )
 
+// createTemp and syncDirFn are the temp-create and directory-sync steps of the
+// atomic writer, vars so a test can observe the temp name and the sync.
+var (
+	createTemp = os.CreateTemp
+	syncDirFn  = syncDir
+)
+
 // WriteFileAtomic0600 writes data to path atomically and 0600: it creates the
 // parent dir (0700), writes a temp file in the same dir, fsyncs it, chmods it
-// 0600, and renames it over path. A crash never leaves a torn file — the rename
-// is atomic, so path is either the old bytes or the whole new bytes. Used for
-// secret-bearing and config files (the token cache has its own copy for the
-// {upn,token} shape).
+// 0600, renames it over path, and fsyncs the dir so the rename itself survives
+// power loss. A crash never leaves a torn file — the rename is atomic, so path
+// is either the old bytes or the whole new bytes. Used for secret-bearing and
+// config files (the token cache has its own copy for the {upn,token} shape).
 func WriteFileAtomic0600(path string, data []byte) error {
+	return WriteFileAtomic0600Temp(path, data, ".tmp-*")
+}
+
+// WriteFileAtomic0600Temp is WriteFileAtomic0600 with the temp file named by
+// pattern (os.CreateTemp syntax), so a writer inside an archive can use the
+// `.mailarchive-*.tmp` name that export.SweepOrphans reaps after a crash.
+func WriteFileAtomic0600Temp(path string, data []byte, pattern string) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create dir %s: %w", dir, err)
 	}
-	tmp, err := os.CreateTemp(dir, ".tmp-*")
+	tmp, err := createTemp(dir, pattern)
 	if err != nil {
 		return fmt.Errorf("temp file in %s: %w", dir, err)
 	}
@@ -44,7 +58,21 @@ func WriteFileAtomic0600(path string, data []byte) error {
 	if err := os.Rename(tmpName, path); err != nil {
 		return fmt.Errorf("rename into place %s: %w", path, err)
 	}
+	syncDirFn(dir)
 	return nil
+}
+
+// syncDir fsyncs a directory so a completed rename survives power loss on
+// filesystems that honour it. Errors are ignored: some filesystems (and
+// Windows) do not support fsync on a directory handle, and the namespace
+// guarantee does not depend on it (mirrors export's syncDir).
+func syncDir(dir string) {
+	d, err := os.Open(dir)
+	if err != nil {
+		return
+	}
+	_ = d.Sync()
+	d.Close()
 }
 
 // ReadSecureFile reads a small secret-bearing file with the hardened discipline a
