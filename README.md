@@ -177,8 +177,12 @@ Thunderbird: its **Archive now** is for Microsoft 365 and is switched off for it
 A scheduled backup normally archives whatever Thunderbird has already written to disk.
 On **macOS and Windows** you can also have each scheduled run **sync Thunderbird first**:
 before archiving, Mail Archive starts Thunderbird (hidden on macOS; briefly visible, then
-minimised, on Windows), waits until its mail files stop changing, asks it to quit, then
-archives — so the backup includes mail that had only reached the server. It is **opt-in and
+minimised, on Windows), waits for its mail to stop arriving, asks it to quit, then
+archives — so the backup includes mail that had only reached the server. Because it drives your
+real Thunderbird, starting it does what opening Thunderbird always does — it checks all your
+accounts, may send your Outbox, run your message filters and show notifications — and quitting it
+runs your accounts' on-exit actions (for example emptying Trash), so mail you deleted since the
+last backup may be removed before it is archived. It is **opt-in and
 off by default**, allowed on **any schedule** (including hourly), and it **never gates the
 backup**: if the sync has a problem the run records a warning and still archives what is on
 disk. If Thunderbird is already open, or you are using the computer, it is **left alone** —
@@ -193,8 +197,10 @@ Turn it on wherever you set the schedule up:
 - **The command line:** add **`-thunderbird-sync`** to `mailarchive schedule …` (the profile is
   derived from the inputs, or name it with `-thunderbird-profile`).
 
-On a Mac, macOS asks your permission once to let Mail Archive control Thunderbird; grant it the
-first time the scheduled backup runs.
+On a Mac, the first time a scheduled backup closes Thunderbird, macOS asks once whether Mail
+Archive may control it. Because a scheduled backup runs on its own (often overnight), approve it
+while you are at the Mac: run one backup yourself first — the **Run now** button on the dashboard
+— and choose **Allow** when macOS asks, before you rely on the schedule.
 
 ## MailArchive Desktop (the dashboard)
 
