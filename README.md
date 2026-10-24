@@ -172,6 +172,30 @@ Thunderbird: its **Archive now** is for Microsoft 365 and is switched off for it
 - **Windows:** `mailarchive -input "<Thunderbird mail folder>" -out "<archive folder>"`, for example
   `%APPDATA%\Thunderbird\Profiles\<profile>\Mail\Local Folders`; or `mailarchive -auto -out "<archive folder>"`.
 
+### Keeping a Thunderbird archive fresh on a schedule (the pre-sync)
+
+A scheduled backup normally archives whatever Thunderbird has already written to disk.
+On **macOS and Windows** you can also have each scheduled run **sync Thunderbird first**:
+before archiving, Mail Archive starts Thunderbird (hidden on macOS; briefly visible, then
+minimised, on Windows), waits until its mail files stop changing, asks it to quit, then
+archives — so the backup includes mail that had only reached the server. It is **opt-in and
+off by default**, allowed on **any schedule** (including hourly), and it **never gates the
+backup**: if the sync has a problem the run records a warning and still archives what is on
+disk. If Thunderbird is already open, or you are using the computer, it is **left alone** —
+never started or closed.
+
+Turn it on wherever you set the schedule up:
+
+- **The setup wizard (`mailarchive wizard`):** when you answer *Keep this archive current?*,
+  a follow-up asks *Sync Thunderbird before archiving?* for a Thunderbird source.
+- **MailArchive Desktop:** the **Weekly backup** card for a local Thunderbird archive offers
+  **Sync Thunderbird before each backup** beside the schedule.
+- **The command line:** add **`-thunderbird-sync`** to `mailarchive schedule …` (the profile is
+  derived from the inputs, or name it with `-thunderbird-profile`).
+
+On a Mac, macOS asks your permission once to let Mail Archive control Thunderbird; grant it the
+first time the scheduled backup runs.
+
 ## MailArchive Desktop (the dashboard)
 
 **MailArchive Desktop** (`mailarchive desktop`; on Windows double-click

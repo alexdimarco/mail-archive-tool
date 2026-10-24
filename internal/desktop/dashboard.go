@@ -1138,7 +1138,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
 
     <div class="card" id="sec-backup">
       <h2>Weekly backup</h2>
-      {{if .ShowBackupOff}}<p class="card-sub steps" id="backupOff">The weekly backup here fetches new mail from Microsoft 365, and this archive was made from local mail files, so it is off. To keep a local-files archive current on a schedule, answer "Keep this archive current?" at the end of the MailArchive wizard (mailarchive wizard), or run the mailarchive schedule command that Status &amp; health prints for this archive.</p>{{else}}
+      {{if .ShowBackupOff}}<p class="card-sub steps" id="backupOff">A scheduled backup isn't set up here for this archive. To keep this local-files archive current on a schedule, set one up in the MailArchive wizard (mailarchive wizard) — answer "Keep this archive current?" at the end — or run the mailarchive schedule command that Status &amp; health prints for this archive.</p>{{else}}
       {{if .HasSchedule}}<p class="card-sub" id="schedKind">This archive's scheduled backup: {{.ScheduleKind}}.</p>{{end}}
       {{if .ShowInstall}}<p class="card-sub">Run a capture automatically on a schedule. It runs even when this app is closed (as long as you stay signed in to your computer), using your saved Microsoft sign-in.</p>{{end}}
       {{if .ShowLocalCreate}}<p class="card-sub">Back up this archive automatically on a schedule: it re-reads your mail files and adds any new mail. It runs while you are logged in.</p>{{end}}
