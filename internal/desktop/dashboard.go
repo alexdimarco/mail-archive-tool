@@ -965,6 +965,7 @@ h1{font-size:1.8rem;letter-spacing:-.02em;margin:0 0 4px}.lede{color:var(--muted
 .btn:disabled{opacity:.5;cursor:not-allowed}
 label{display:block;font-weight:700;margin:14px 0 5px}
 input{width:100%;padding:10px 11px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text)}
+input[type=checkbox],input[type=radio]{width:auto;padding:0;margin:0;vertical-align:middle}
 .checkline{display:flex;align-items:center;gap:8px;font-weight:600;margin-top:10px}.checkline input{width:auto}
 .row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 select{width:100%;padding:10px 11px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text)}

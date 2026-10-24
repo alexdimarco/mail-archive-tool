@@ -143,7 +143,7 @@ func addMailHelp(goos, out string) string {
 
 // archiveNowOff is the line shown in place of the Archive now button for a local-origin archive.
 func archiveNowOff(goos, out string) string {
-	return "Archive now is off for this archive. What: it fetches new mail from Microsoft 365, and this archive was made from local mail files. Why: MailArchive Desktop reads, searches, checks and exports it, but does not re-read your mail program. " + addMailHelp(goos, out)
+	return "Archive now is off for this archive. What: it fetches new mail from Microsoft 365, and this archive was made from local Thunderbird mail files. The main way to add new mail is a scheduled backup (see the backup section below), which re-reads your Thunderbird files and adds anything new. You can also do it by hand. " + addMailHelp(goos, out)
 }
 
 // newMailLine is the line of the Status & health view that says where new mail comes from.
