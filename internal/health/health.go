@@ -528,7 +528,7 @@ func Assess(in Input, now time.Time) Report {
 				r.warn(w.Code, w.Message)
 			case "presync_cannot_start", "presync_no_desktop_session", "presync_did_not_start",
 				"presync_identity_unavailable", "presync_not_quiet", "presync_exited_early",
-				"presync_quit_not_permitted", "presync_quit_timeout", "presync_owner_active",
+				"presync_quit_not_permitted", "presync_quit_timeout", "presync_quit_skipped_others", "presync_owner_active",
 				"presync_successor_found", "presync_leftover_found", "presync_profile_unusable",
 				"presync_app_not_found", "presync_refused_elevated", "presync_state_unreadable",
 				"presync_internal_error", "presync_stuck", "presync_not_recorded":

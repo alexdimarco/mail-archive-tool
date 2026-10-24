@@ -210,6 +210,15 @@ func runSession(ctx context.Context, d deps) sessionResult {
 		res.outcome = OutcomeOwnerActive
 		return res
 	}
+	if e.quitAffectsAllInstances() && len(e.thunderbirdProcs()) > 1 {
+		// C3: on this system the quit request is bundle-wide (it closes EVERY
+		// Thunderbird), but only ONE pid is proven ours — so with a second Thunderbird
+		// running, leave ours open rather than close the owner's too; announce it next
+		// run (MA-558). The archive still runs (R32).
+		store(stateLeftRunning)
+		res.outcome = OutcomeQuitSkippedOthers
+		return res
+	}
 	store(stateQuitting)
 	if err := e.quit(child); errors.Is(err, errQuitNotPermitted) {
 		// Consent denied or the first-approval prompt unanswered: leave

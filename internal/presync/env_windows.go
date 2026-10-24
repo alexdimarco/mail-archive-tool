@@ -88,6 +88,10 @@ func (e *winEnv) bootTime() int64                      { return e.w.bootUnix() }
 func (e *winEnv) pidAlive(pid int) bool                { return pid > 0 && e.w.alive(uint32(pid)) }
 func (e *winEnv) idleSeconds() (float64, bool)         { return e.w.idleSeconds() }
 
+// quitAffectsAllInstances is false on Windows: quit posts WM_CLOSE to the proven pid's
+// own window, so it never touches another Thunderbird (C3).
+func (e *winEnv) quitAffectsAllInstances() bool { return false }
+
 func (e *winEnv) procExe(pid int) (string, bool) {
 	if pid <= 0 {
 		return "", false

@@ -264,6 +264,59 @@ func TestPresyncOwnerActiveAtS8(t *testing.T) {
 	}
 }
 
+// covers: MA-570
+// C3: when quit is bundle-wide (macOS) and a SECOND Thunderbird is running at S8, the
+// session leaves ours open rather than close the owner's too — no quit is requested,
+// the outcome is quit-skipped-others, and the record is left-running (announced next
+// run, MA-558). The archive still runs.
+func TestPresyncQuitSkippedWhenOthersRunning(t *testing.T) {
+	base := time.Date(2026, 10, 24, 2, 0, 0, 0, time.UTC)
+	const app = "/Applications/Thunderbird.app/Contents/MacOS/thunderbird"
+	const profile = "/Users/x/profile.default"
+	statePath := filepath.Join(t.TempDir(), "s.json")
+
+	f := newFakeEnv()
+	f.sm = true
+	f.boot = 1000
+	f.idle, f.idleOK = 1200, true // owner away throughout (> quitIdleAway)
+	f.lockOK = true
+	f.appearIn, f.exitIn = 4*time.Second, 2*time.Second
+	f.changeAt = base.Add(24 * time.Second)
+	f.dgBase, f.dgChanged = 1, 2
+	f.nowT = base
+	f.child = proc{pid: 200, exe: app, start: base.Add(1 * time.Second), args: "thunderbird -profile " + profile}
+	f.quitAll = true // macOS-like bundle-wide quit
+	f.extraProcs = []proc{{pid: 201, exe: app, start: base.Add(2 * time.Second), args: "thunderbird -profile /Users/x/other.default"}}
+
+	d := deps{
+		env:          f,
+		cfg:          quietConfig{settle: 10 * time.Second, quiet: 30 * time.Second, maxWait: 600 * time.Second},
+		app:          app,
+		profile:      profile,
+		watch:        []string{"/w"},
+		statePath:    statePath,
+		lockPath:     "/l",
+		base:         record{Version: recordVersion, Profile: profile, App: app, ToolPID: 1, ToolStart: 1},
+		awaitPoll:    2 * time.Second,
+		awaitUp:      90 * time.Second,
+		pollEvery:    10 * time.Second,
+		quitGrace:    120 * time.Second,
+		idleAway:     120 * time.Second,
+		quitIdleAway: 600 * time.Second,
+	}
+
+	res := runSession(context.Background(), d)
+	if res.outcome != OutcomeQuitSkippedOthers {
+		t.Errorf("outcome = %q, want quit-skipped-others", res.outcome.Name)
+	}
+	if f.quitted {
+		t.Error("C3: a bundle-wide quit was requested while a second Thunderbird was running")
+	}
+	if rec, present, _ := loadRecord(statePath); !present || rec.State != stateLeftRunning {
+		t.Errorf("want a left-running record, got present=%v state=%q", present, rec.State)
+	}
+}
+
 // covers: MA-579
 // An unreadable idle reading at S4 counts as the owner being active: the session
 // ends owner-active-skipped and nothing is started — an unparseable reading must

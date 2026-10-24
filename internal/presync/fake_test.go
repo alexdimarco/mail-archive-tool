@@ -33,6 +33,8 @@ type fakeEnv struct {
 	quitErr         error // when set, quit() returns it (the request was made but did not take)
 	quitTarget      proc  // the proven child the session handed to quit (PC-W2)
 	quitAt          time.Time
+	quitAll         bool   // C3: quit closes all Thunderbird instances (macOS-like)
+	extraProcs      []proc // C3: additional Thunderbird procs present after launch (a second instance)
 	child           proc
 	appearIn        time.Duration // child appears this long after startHidden
 	exitIn          time.Duration // child exits this long after quit
@@ -66,7 +68,7 @@ func (f *fakeEnv) thunderbirdProcs() []proc {
 		return nil // exited after the quit
 	}
 	if f.started && !f.nowT.Before(f.startedAt.Add(f.appearIn)) {
-		return []proc{f.child}
+		return append([]proc{f.child}, f.extraProcs...)
 	}
 	return nil
 }
@@ -115,6 +117,8 @@ func (f *fakeEnv) quit(target proc) error {
 	f.quitted, f.quitAt, f.quitTarget = true, f.nowT, target
 	return f.quitErr
 }
+
+func (f *fakeEnv) quitAffectsAllInstances() bool { return f.quitAll }
 
 func (f *fakeEnv) digest(roots []string) (uint64, bool) {
 	if f.digestHook != nil {

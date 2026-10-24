@@ -76,6 +76,11 @@ type env interface {
 	// ignores it and quits by bundle id, but Windows needs its pid to post
 	// WM_CLOSE to that process's own window (PC-W2), so the session hands it over.
 	quit(target proc) error
+	// quitAffectsAllInstances reports whether quit closes EVERY Thunderbird of the
+	// bundle (macOS: the request goes to the app by bundle id) rather than the one
+	// proven pid (Windows: WM_CLOSE to that pid's window). When true, S8 skips the quit
+	// if more than one Thunderbird is running, so the owner's is never closed too (C3).
+	quitAffectsAllInstances() bool
 	// digest folds the watch set into one value without opening a file (S7); the
 	// real seam calls digestWatch.
 	digest(roots []string) (sum uint64, truncated bool)

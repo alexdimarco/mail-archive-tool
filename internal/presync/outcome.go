@@ -59,6 +59,7 @@ var (
 	OutcomeExitedEarly         = Outcome{"exited-early", "presync_exited_early", ClassWarn}
 	OutcomeQuitNotPermitted    = Outcome{"quit-not-permitted", "presync_quit_not_permitted", ClassWarn}
 	OutcomeQuitTimeout         = Outcome{"quit-timeout", "presync_quit_timeout", ClassWarn}
+	OutcomeQuitSkippedOthers   = Outcome{"quit-skipped-others", "presync_quit_skipped_others", ClassWarn}
 	OutcomeOwnerActiveSkipped  = Outcome{"owner-active-skipped", "presync_owner_active_skipped", ClassNote}
 	OutcomeOwnerActive         = Outcome{"owner-active", "presync_owner_active", ClassWarn}
 	OutcomeSuccessorFound      = Outcome{"successor-found", "presync_successor_found", ClassWarn}
@@ -78,7 +79,7 @@ var allOutcomes = []Outcome{
 	OutcomeOK, OutcomeNoActivity, OutcomeAlreadyRunning, OutcomeOtherProfileRunning,
 	OutcomeProfileBusy, OutcomeCannotStart, OutcomeNoDesktopSession, OutcomeDidNotStart,
 	OutcomeIdentityUnavailable, OutcomeNotQuiet, OutcomeExitedEarly, OutcomeQuitNotPermitted,
-	OutcomeQuitTimeout, OutcomeOwnerActiveSkipped, OutcomeOwnerActive, OutcomeSuccessorFound,
+	OutcomeQuitTimeout, OutcomeQuitSkippedOthers, OutcomeOwnerActiveSkipped, OutcomeOwnerActive, OutcomeSuccessorFound,
 	OutcomeLeftoverFound, OutcomeProfileUnusable, OutcomeAppNotFound, OutcomeRefusedElevated,
 	OutcomeStateUnreadable, OutcomeWatchTruncated, OutcomeInternalError, OutcomeCancelled,
 }

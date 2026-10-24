@@ -285,6 +285,11 @@ func newMacEnv(bundle string) *macEnv {
 // macEnv is the real macOS realization of the env seam.
 var _ env = (*macEnv)(nil)
 
+// quitAffectsAllInstances is true on macOS: the AppleScript quit goes to the app by
+// bundle id and closes every Thunderbird, so S8 leaves ours open when more than one is
+// running rather than close the owner's too (adversarial finding C3).
+func (e *macEnv) quitAffectsAllInstances() bool { return true }
+
 func (e *macEnv) now() time.Time        { return e.clock() }
 func (e *macEnv) sleep(d time.Duration) { time.Sleep(d) }
 
