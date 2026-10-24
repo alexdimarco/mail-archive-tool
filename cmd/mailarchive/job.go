@@ -173,17 +173,7 @@ type job struct {
 	verb    string   // "" (export), "graph", or "reindex"
 	args    []string // the job's canonical flags, paths absolute
 	out     string   // the archive directory
-	presync bool     // carries -thunderbird-sync (macOS pre-sync); refused hourly (Q11)
-}
-
-// refusePresyncHourly refuses an hourly schedule that carries the Thunderbird
-// pre-sync: a sync can take several minutes, so it is meant for a daily or weekly
-// backup (Q11, §4.2.4). Fail at schedule time, not at the top of every hour.
-func refusePresyncHourly(iv schedule.Interval, j job) error {
-	if iv == schedule.Hourly && j.presync {
-		return errors.New("an hourly schedule cannot use -thunderbird-sync: a Thunderbird sync can take several minutes, so it is for a daily or weekly backup — install it daily or weekly, or without the sync")
-	}
-	return nil
+	presync bool     // carries -thunderbird-sync (the Thunderbird pre-sync); allowed on any cadence (the runtime detectRunning defer protects an in-use Thunderbird)
 }
 
 // command is the full argument vector the scheduled program receives.

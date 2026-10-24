@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"mail-archive-tool/internal/assure"
-	"mail-archive-tool/internal/schedule"
 )
 
 // covers: MA-569
@@ -40,22 +39,15 @@ func TestScheduledJobCarriesThunderbirdSync(t *testing.T) {
 
 // covers: MA-550
 // Schedule-time refusals (§4.2.4): -thunderbird-profile without -thunderbird-sync
-// is refused, and an hourly schedule with the sync is refused (Q11) while daily
-// or a sync-less hourly is allowed.
+// is refused. The pre-sync is NO LONGER refused on an hourly schedule (owner ruling
+// 2026-10-23: many run Thunderbird only for archiving) — it is allowed on any
+// cadence, and the runtime detectRunning defer (session_test.go, OutcomeAlreadyRunning)
+// never starts or quits a Thunderbird the owner is actively using, which is what
+// makes a frequent pre-sync safe.
 func TestScheduledThunderbirdSyncRefusals(t *testing.T) {
 	out := t.TempDir()
 	store := t.TempDir()
 
 	code, msg := parseJobRefusal([]string{"-out", out, "-input", store, "-thunderbird-profile", store})
 	assure.Refused(t, code, msg, assure.Code(1), assure.Names("-thunderbird-profile", "-thunderbird-sync"))
-
-	if err := refusePresyncHourly(schedule.Hourly, job{presync: true}); err == nil {
-		t.Error("hourly + -thunderbird-sync should be refused (Q11)")
-	}
-	if err := refusePresyncHourly(schedule.Daily, job{presync: true}); err != nil {
-		t.Errorf("daily + -thunderbird-sync should be allowed: %v", err)
-	}
-	if err := refusePresyncHourly(schedule.Hourly, job{presync: false}); err != nil {
-		t.Errorf("hourly without the sync should be allowed: %v", err)
-	}
 }

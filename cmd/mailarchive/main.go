@@ -936,9 +936,6 @@ func runSchedule(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := refusePresyncHourly(iv, j); err != nil {
-		return err
-	}
 	n := *name
 	if n == "" {
 		// A verify job derives a distinct "-verify" name so it coexists with the
