@@ -328,7 +328,7 @@ fields (`readDescriptorFile`).
 | `-thunderbird-sync` with `-enable-offline` or `-sync-wait` | "`-thunderbird-sync` and `-enable-offline` cannot be combined: the one-time prep needs Thunderbird closed and you present. Do the prep by hand once, then schedule with `-thunderbird-sync`." |
 | with `-outlook` | "`-thunderbird-sync` is for Thunderbird mail; `-outlook` archives Outlook." |
 | platform not supported yet (§13 Q5) | "Sync Thunderbird before archiving is available on macOS in this version. On <OS> run Thunderbird yourself before the scheduled time." |
-| `interval hourly` | "an hourly schedule is too frequent to start and quit a mail program each time (a sync can take up to <max> minutes); use daily or weekly." |
+| ~~`interval hourly`~~ **(REVERSED 2026-10-23)** | **No longer refused** (owner ruling): the pre-sync is allowed on ANY cadence including hourly — the runtime `detectRunning` defer never starts or quits a Thunderbird the owner is using (`OutcomeAlreadyRunning`), so a frequent sync is safe (shipped in code; MA-550). Original text was: "an hourly schedule is too frequent to start and quit a mail program each time…; use daily or weekly." |
 | no Thunderbird store among the inputs (including after `-auto` discovery now) | "none of the inputs is a Thunderbird mail folder, so there is nothing to sync." |
 | inputs span more than one profile and `-thunderbird-profile` not given | lists the profiles; "one scheduled sync syncs one profile; name it with `-thunderbird-profile`, or schedule each profile separately." |
 | Snap or Flatpak profile path | "Thunderbird installed as a Snap or Flatpak cannot be started and closed from here yet." |
@@ -398,7 +398,7 @@ the job itself is checked by L-M8. The health view (§4.9.4) shows the setting a
 *Remove the scheduled backup*, and a *Turn off Thunderbird sync* action rewrites the job file
 without the field and the descriptor without `presync`.
 
-The desktop dashboard has no Thunderbird surface (non-goal).
+The desktop dashboard has no Thunderbird surface (non-goal). **REVERSED 2026-10-24 (owner ruling):** the Desktop now creates/shows/edits a local Thunderbird schedule with the pre-sync toggle — see `docs/design-thunderbird-presync-desktop.md` (reviewed, GO-WITH-CHANGES).
 
 ### 4.3 The profile choice
 
@@ -1321,7 +1321,7 @@ must never weaken R31 or R32). A question marked *blocks* holds only the slice n
 | **Q8** | If Thunderbird will not quit (or is still writing) when the archive is due, read anyway or skip the night? | **Read anyway** (a read of a live Thunderbird is today's behaviour; a skipped night loses mail) | read anyway | nothing; reconsidered if L-C1 shows a bad truncated-message result |
 | **Q9** | Allow `-thunderbird-sync` on a manual run, not only `schedule`? | **Yes**: it is the test of the start, the wait and the profile. It is **not** where the scheduled run's macOS permission is given (PC4): that comes from a scheduler-started run | yes | TP3 |
 | **Q10** | A session in which no file changed at all: note or warning? | a **note** ("nothing new, or Thunderbird could not reach the server"); the escalation to a warning after 7 nights is deferred, not v1 (PC22) | note only | nothing |
-| **Q11** | Refuse an `hourly` schedule with sync? | **Yes** | yes | TP4 |
+| **Q11** | Refuse an `hourly` schedule with sync? | ~~**Yes**~~ → **No (REVERSED 2026-10-23, owner ruling)**: allowed on any cadence; the `detectRunning` defer makes a frequent sync safe | no | TP4 (reversed) |
 | **Q12** | Pin the macOS Thunderbird signature (Mozilla's code-signing Team ID) as well as the bundle id? | **Not in v1**; record as residual | bundle id only | nothing |
 | **Q13** | One profile per schedule, or sync several? | **One profile per schedule**; a second profile gets its own schedule | one | nothing |
 | **Q14** | Accept that while the sync runs (up to about 25 minutes) the archive is "in use": a manual run or `verify` refuses, with a message that says it is syncing Thunderbird and until when (PC8)? | **Yes** (D1a) | yes | TP2 |
@@ -1347,7 +1347,7 @@ The 10 lenses of `assurance-kit/process/design-review.md`, as this design asks t
 4. **Usability / operator friction.** Walk the owner (CLI and GUI), the owner at 02:00 with the
    screen lit, an inheritor who finds the schedule cold, an admin with several profiles; classify
    friction Type I or II: the macOS permission prompt, the visible Dock icon, a nightly warning
-   for a Primary Password prompt, the 25-minute archive lock, the refused hourly schedule.
+   for a Primary Password prompt, the 25-minute archive lock, the hourly schedule (now allowed, 2026-10-23).
 5. **Integration / seams.** Is `BeforeRead` the right seam and does it collide with
    fault-isolation's `recordRun`/`Result` changes and the extraction workspace's run record
    (neither is built)? Does the flag family follow X4/X5? Is the build order producer-before-sink

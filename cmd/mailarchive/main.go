@@ -259,8 +259,12 @@ func runExport(args []string) error {
 	// lock + running record, before any source is read) and never gates the archive.
 	// On a platform without an adapter it refuses here (setPresyncHook).
 	if *o.tbSync {
+		// R32 (adversarial finding A5): a pre-sync SETUP problem never gates the
+		// archive — log it and run without the sync, the same swallow the GUI's
+		// optsForJob does, so R32 cannot drift between the CLI and GUI surfaces. The
+		// unsupported-platform refusal is enforced earlier, at flag-parse time (job.go).
 		if err := setPresyncHook(&opts, *o.tbProfile); err != nil {
-			return err
+			fmt.Fprintf(os.Stderr, "warning: Thunderbird pre-sync not set up (%v); archiving without it\n", err)
 		}
 	}
 

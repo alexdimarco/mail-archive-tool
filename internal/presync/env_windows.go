@@ -321,8 +321,7 @@ func (realWin32) idleSeconds() (float64, bool) {
 		return 0, false
 	}
 	tick, _, _ := procGetTickCount64.Call()
-	idleMs := uint64(tick) - uint64(li.time)
-	return float64(idleMs) / 1000, true
+	return float64(idleMillis32(uint64(tick), li.time)) / 1000, true
 }
 
 // decideElevated is fail-CLOSED (adversarial finding F3): when the token or its
