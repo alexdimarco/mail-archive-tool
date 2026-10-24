@@ -883,6 +883,13 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 			data.PresyncNoticeText = presync.SyncNotice
 		}
 	}
+	// With a schedule already installed for a local archive, the Run-now button needs to
+	// know whether the installed job syncs Thunderbird, so it can warn that running now
+	// opens and then closes Thunderbird first (friction MED). currentJobSyncsThunderbird
+	// reads the installed job file; the create branch above covers the no-schedule case.
+	if data.HasSchedule && data.LocalOnly && (cfg.goos() == "darwin" || cfg.goos() == "windows") {
+		data.LocalPresyncOn = currentJobSyncsThunderbird(data.OutDir)
+	}
 	data.ShowRemove = data.HasSchedule || !data.LocalOnly
 	data.ShowBackupOff = data.LocalOnly && !data.HasSchedule && !data.ShowLocalCreate
 	if c != nil {
@@ -1142,7 +1149,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       {{if .ShowBackupOff}}<p class="card-sub steps" id="backupOff">A scheduled backup isn't set up here for this archive. To keep this local-files archive current on a schedule, set one up in the MailArchive wizard (mailarchive wizard) — answer "Keep this archive current?" at the end — or run the mailarchive schedule command that Status &amp; health prints for this archive.</p>{{else}}
       {{if .HasSchedule}}<p class="card-sub" id="schedKind">This archive's scheduled backup: {{.ScheduleKind}}.</p>{{end}}
       {{if .ShowInstall}}<p class="card-sub">Run a capture automatically on a schedule. It runs even when this app is closed (as long as you stay signed in to your computer), using your saved Microsoft sign-in.</p>{{end}}
-      {{if .ShowLocalCreate}}<p class="card-sub">Back up this archive automatically on a schedule: it re-reads your mail files and adds any new mail. It runs while you are logged in.</p>{{end}}
+      {{if .ShowLocalCreate}}<p class="card-sub">Keep this archive up to date automatically on a schedule: it re-reads your Thunderbird mail files and adds anything new. It runs while you are logged in.</p>{{end}}
       {{if or .ShowInstall .ShowLocalCreate}}<div class="row2">
         <div><label for="schedInterval">How often</label>
           <select id="schedInterval"><option value="weekly"{{if eq .Interval "weekly"}} selected{{end}}>Weekly (Sunday)</option><option value="daily"{{if eq .Interval "daily"}} selected{{end}}>Daily</option></select></div>
@@ -1150,7 +1157,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       </div>
       {{if .LocalPresyncOfferable}}<label class="checkline"><input type="checkbox" id="schedPresync"{{if .LocalPresyncOn}} checked{{end}}> Sync Thunderbird before each backup</label>
       <p class="note" id="schedPresyncNote">{{.PresyncNoticeText}}</p>{{end}}{{end}}
-      <div style="margin-top:14px">{{if or .ShowInstall .ShowLocalCreate}}<button class="btn" id="schedInstall" title="Create or update the scheduled backup for this archive, using the current settings.">Install / update</button> {{end}}{{if .ShowRepair}}<button class="btn" id="schedRepair" title="Re-point the weekly backup at this archive and fix a broken or stale schedule entry. Nothing in the archive changes.">Repair</button> <button class="btn" id="runBackupBtn" type="button" title="Run this archive's weekly backup right now, instead of waiting for its schedule.">Run now</button> {{end}}{{if .ShowRemove}}<button class="btn secondary" id="schedRemove" title="Delete the scheduled weekly backup. Your archive and everything in it are kept.">Remove</button>{{end}}</div>
+      <div style="margin-top:14px">{{if or .ShowInstall .ShowLocalCreate}}<button class="btn" id="schedInstall" title="Create or update the scheduled backup for this archive, using the current settings.">Install / update</button> {{end}}{{if .ShowRepair}}<button class="btn" id="schedRepair" title="Re-point the weekly backup at this archive and fix a broken or stale schedule entry. Your cadence and any Thunderbird-sync setting are kept; nothing in the archive changes.">Repair</button> <button class="btn" id="runBackupBtn" type="button" title="{{if .LocalPresyncOn}}Run this archive's backup now, instead of waiting for its schedule. Because Thunderbird sync is on, it first opens Thunderbird, waits for its mail, then closes it (which can run Thunderbird's on-exit actions, for example emptying Trash) before archiving.{{else}}Run this archive's weekly backup right now, instead of waiting for its schedule.{{end}}">Run now</button> {{end}}{{if .ShowRemove}}<button class="btn secondary" id="schedRemove" title="Delete the scheduled weekly backup. Your archive and everything in it are kept.">Remove</button>{{end}}</div>
       <div class="note" id="runBackupNote" hidden></div>
       <div class="note" id="schedState" hidden></div>{{end}}
     </div>
