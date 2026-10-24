@@ -244,8 +244,8 @@ func parseJob(args []string) (job, error) {
 		if *o.tbProfile != "" && !*o.tbSync {
 			return job{}, errors.New("-thunderbird-profile is only meaningful with -thunderbird-sync")
 		}
-		if *o.tbSync && runtime.GOOS != "darwin" {
-			return job{}, errors.New("-thunderbird-sync is only available on macOS in this version")
+		if *o.tbSync && runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
+			return job{}, errors.New("-thunderbird-sync is only available on macOS and Windows in this version")
 		}
 		j := job{out: abspath(*o.out)}
 		j.args = []string{"-out", j.out, "-mode", strings.ToLower(strings.TrimSpace(*o.mode)), "-unattended"}

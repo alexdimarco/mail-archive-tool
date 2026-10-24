@@ -1,4 +1,4 @@
-//go:build !darwin
+//go:build !darwin && !windows
 
 package main
 
@@ -8,12 +8,12 @@ import (
 	"mail-archive-tool/internal/app"
 )
 
-// setPresyncHook refuses on every platform but macOS in this version (design
-// §4.2.4, Q5: macOS first; Windows is TP6, Linux TP7, each after its own lab).
+// setPresyncHook refuses on platforms without an adapter (Linux, TP7, after its
+// own lab). macOS and Windows have real adapters (presync_hook.go).
 func setPresyncHook(_ *app.Options, _ string) error {
-	return errors.New("-thunderbird-sync is only available on macOS in this version")
+	return errors.New("-thunderbird-sync is only available on macOS and Windows in this version")
 }
 
-// presyncInstallNote is empty off macOS: a non-macOS schedule can never carry
-// the sync (refused at schedule time), so there is nothing to say.
+// presyncInstallNote is empty where the sync is unavailable: such a schedule can
+// never carry the sync (refused at schedule time), so there is nothing to say.
 func presyncInstallNote(string) string { return "" }
