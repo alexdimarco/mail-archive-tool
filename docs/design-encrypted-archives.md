@@ -1,12 +1,10 @@
 # Encrypted archives — design (DRAFT)
 
-Status: **draft — 10-lens design review FILED 2026-10-24
-(`docs/review-encrypted-archives-predesign.md`), verdict GO_WITH_CONDITIONS.** Not built.
-The review's 12 conditions (C1–C12) and the owner rulings (D1 remember-key default, D2
-keep search, D5 full-build-before-ship) owe a fold-in revision of this doc; C1/C2/C5/C6
-are material schema changes whose amended §2/§4 are re-verified before code, and **C2
-(encrypt filenames + folder structure vs. scope the claim to contents-only and warn) is a
-pending OWNER RULING.** Then the adversarial + friction gates per slice before any ship. This draft records what is settled, the
+Status: **schema FROZEN 2026-10-24 — 10-lens review (GO_WITH_CONDITIONS) folded in as the
+"Post-review resolution"; the focused re-review of the amended schema folded in as the
+"Re-review amendments" (A1–A14), which govern.** Not built. All owner rulings settled (D1
+remember-key default, D2 keep search, D5 full-build-before-ship, C2 encrypt names +
+structure). Next: Phase 1, then the adversarial + friction gates per slice before any ship. This draft records what is settled, the
 hard problems the codebase imposes, a recommended approach for each, and the handful of
 decisions that are the OWNER's to make. It is grounded in three read-only code-mappings
 of this repo (reader/search, write engine/scheduling, wizard/config/keychain) done
@@ -321,4 +319,142 @@ adversarial + friction passes; nothing ships until all are built (D5).
 **Re-verification.** This resolution materially changes the data model (§2/§4). The amended
 schema (the keyless facade, the chunked containers, the AAD/manifest-inventory scheme) owes a
 **focused re-review before code** — the affected lenses re-run against this section, not a
-fresh 10-lens from scratch.
+fresh 10-lens from scratch. (Done 2026-10-24 — see the amendments below.)
+
+---
+
+## Re-review amendments — AUTHORITATIVE, FROZEN SCHEMA (2026-10-24)
+
+The focused re-review (three adversarial checks: crypto construction, keyless-facade model,
+durability/crash-safety; record in `docs/review-encrypted-archives-predesign.md` §"Focused
+re-review") found the post-review resolution sound in shape but NOT yet freezable: it named
+mechanisms without pinning the bytes. The points below are the frozen Phase-1 schema. Where
+they conflict with anything above, these govern. Amendment ids A1–A14 are cited by Phase-1
+tests.
+
+**A1 — Cipher and nonce discipline.** All sealing (message/attachment units, container
+chunks, container pointers, key wraps) uses **XChaCha20-Poly1305** (`golang.org/x/crypto/
+chacha20poly1305`, 192-bit nonce) instead of AES-256-GCM. Every seal AND every re-seal draws
+a **fresh random 192-bit nonce** from `crypto/rand`; nothing derives a nonce from a chunk
+index, a counter, or content. Why: a re-sealed mutable chunk that reused its nonce would be a
+total break, and 96-bit random GCM nonces cap a single key at ~2^32 seals (NIST SP 800-38D)
+— within budget today but resting on an unbounded lifetime re-seal count. 192-bit random
+nonces remove the budget question. Same dependency (`x/crypto`) the design already adds; no
+cgo.
+
+**A2 — AAD layout (exact bytes).** Every AAD starts with a 4-byte domain tag, then fixed
+fields, length-prefixed where variable, so no two kinds of sealed object can be confused:
+
+- unit (message body, attachment): `"MAU1" ‖ format_version u16 ‖ archive_id [16]byte ‖
+  unit_kind u8 ‖ len u16 ‖ unit_id` — `unit_id` is the unit's stable manifest identity.
+- container chunk: `"MAC1" ‖ format_version u16 ‖ archive_id ‖ container_kind u8 ‖
+  generation u64 ‖ chunk_index u32`.
+- container pointer: `"MAP1" ‖ format_version u16 ‖ archive_id ‖ container_kind u8 ‖
+  generation u64`; the pointer's plaintext lists, in order, each chunk's file name and
+  ciphertext SHA-256, and the chunk count.
+- key wrap: `"MAW1" ‖ format_version u16 ‖ archive_id ‖ entry_kind u8` (password | recovery).
+
+The stable `archive_id` is in **every** AAD. **Rollback scope, stated:** the authenticated
+manifest records each unit's ciphertext SHA-256, so swapping in an older blob for one message
+(per-unit rollback — possible from a cloud backup, which shares the master key) is
+**detected**. Rolling the WHOLE archive back to an older consistent state stays the conceded
+non-goal.
+
+**A3 — Argon2id as a floor.** Password wrap: Argon2id, memory ≥ 256 MiB, time ≥ 3,
+parallelism 1, 16-byte random salt. These are MINIMUMS: a slow host never lowers them; a fast
+host may raise time. The recovery key is **128 bits from `crypto/rand`**, shown as
+26 base32 characters plus 1 check character, in dash-separated groups, and gets its own
+independent salt. Both wraps record their own params; unwrap accepts only params at or above the floor
+(a downgraded params block is refused, not tried).
+
+**A4 — Cleartext manifest envelope (fixes the refuse-newer path).** For an encrypted
+archive, `.mailarchive-manifest.json` is a small cleartext JSON envelope:
+`{"version": <encrypted-format>, "encrypted": true, "archive_id": "…", "pointer": "…"}`.
+The real manifest lives in the chunked container that `pointer` names. An older binary
+unmarshals the envelope successfully (unknown fields are ignored), reaches the existing
+`m.Version > manifestVersion` check (`internal/state/manifest.go:704`), and fails CLOSED
+with "written by a newer MailArchive — upgrade". Without the envelope it would fail at the
+parse step (`manifest.go:693-694`) with "delete it to re-export everything", inviting a
+plaintext re-export into an encrypted archive. Disclosed limit: the shipped v2 binary has
+no refuse-newer guard at all (`manifest.go:701`) and is not protected by any format choice.
+
+**A5 — Every keyless consumer, ruled.**
+
+| Consumer | Without the key it reads… | Needs the key for… |
+|---|---|---|
+| archindex `inspect()` | vault marker → `IsArchive=true, kind="encrypted"` (C10) | nothing |
+| scheduler / `status` / health / Desktop banner | the minimised status file (A6) | schedule "Repair" (rebuilds the job line — interactive) |
+| `SweepOrphans` temp reaping | `.mailarchive-*.tmp` names (unchanged) | the orphan-zip half — replaced in Phase 2a by "file not in the decrypted inventory", run only in keyed runs |
+| `verify` | tier 1: each inventory file exists + its ciphertext SHA-256 matches (catches bitrot, loss, truncation — NOT deliberate substitution) | tier 2: full decrypt + manifest cross-check (catches tampering) |
+| `reindex` / `Rebuild` | — | always handed the key |
+
+**A6 — Leak budget, enforced on the status files.** Today `.mailarchive-lastrun.json`
+records the job's full flags including `-input <source path>` (`internal/state/lastrun.go:71`)
+and per-run counts, and `.mailarchive-sourcestreak.json` records the source kind. For an
+encrypted archive those cleartext files carry ONLY: last-run time, ok/failed, consecutive
+source-missing count + since-date, auto-paused flag. The job flags, source path, source kind
+and per-run counts move into the encrypted manifest. Disclosed residual (unchanged from the
+resolution): file sizes, file count, timestamps, and the minimised status above.
+
+**A7 — Vault split + generation + header MAC.** The vault (`.mailarchive-vault.json` +
+`.mailarchive-vault.bak.json`) holds only: format version, archive_id, a monotonic
+`generation u64`, the two wrap entries (each with its own salt + params), and a
+**header MAC** = HMAC-SHA256 under `HKDF-SHA256(master, info="mailarchive vault header v1")`
+over a canonical encoding of every other field. The fixity/inventory anchor does NOT live in
+the vault — it lives in the manifest envelope/container — so routine backups never rewrite
+the vault; it changes only on create, password change, recovery regeneration. Heal on keyed
+open: both copies must pass the header MAC; the highest generation that does wins and the
+other is rewritten. Keyless readers (archindex) only need *a* parseable copy and trust nothing
+in it. Write order on change: primary (gen+1) then `.bak`. A stripped recovery entry, a
+swapped archive_id or a changed marker fails the MAC → refuse + surface.
+
+**A8 — Durable rename.** Every vault, pointer and chunk write fsyncs the file, renames, then
+fsyncs the parent directory (the pattern `manifest.Save` and `export.commitTemp` already use).
+`util.WriteFileAtomic0600` today skips the directory fsync (`internal/util/securefile.go:37-47`);
+Phase 1 adds it (strictly more durable for its existing callers too). Vault/pointer temps are
+named `.mailarchive-*.tmp` so `SweepOrphans` reaps crash leftovers; those writes happen under
+the archive lock (A9), so a sweep cannot race them.
+
+**A9 — The right lock.** Change-password, recovery regeneration, encrypt-existing and
+decrypt-in-place all take the **archive-folder lock** `out/.mailarchive.lock`
+(`lockfile.AcquireAs`, the lock the export already takes at `internal/app/run.go:414, 847`).
+The resolution's "per-profile lock" was wrong: that lock (`internal/presync/session.go:21`)
+guards the Thunderbird profile during pre-sync only.
+
+**A10 — What "remember the key" stores.** The remembered secret is the **master key itself**,
+held by the OS secret store under `archive:<archive_id>` — Windows Credential Manager (DPAPI)
+on Windows; a `0600` file on macOS/Linux, exactly like today's M365 secret. It is not wrapped
+by the password (that would need the password, defeating unattended backups). So a password
+change touches only the vault, never the secret store — one store, one atomic write. This
+replaces the draft's "store the master key wrapped" wording, which overstated the protection
+on macOS/Linux; R-E2 (device compromise not protected) already covers it honestly.
+
+**A11 — Container persist order (the manifest has no rebuild).** Chunks are immutable: a
+changed chunk is written to a NEW unique file (never rewritten in place), fsynced, dir-synced.
+Only after every new chunk is durable is the pointer (one file, inside the A4 envelope)
+replaced by one atomic rename + dir fsync. Superseded chunks are deleted only after the new
+pointer is durable, and only by a keyed run holding the archive lock. A crash at any point
+leaves the old pointer naming old, intact, authenticated chunks.
+
+**A12 — Encrypt-existing / decrypt-in-place, staged.** Runs under the archive lock for its
+whole duration. A marker `.mailarchive-convert.json` (deliberately NOT the sweep pattern)
+records a stage: `copying → verified → swapping → swapped → cleaning`. The swap is two
+renames (original → `<name>.mailarchive-old`, new → `<name>`), so the marker's stage says
+exactly which state a crash left; on next start the run resumes forward from `verified` or
+later and rolls back (deletes the workspace) before it. Reader and scheduler refuse an archive
+with a marker present.
+
+**A13 — Reader temps off the archive.** If the decrypted search index doesn't fit in memory,
+the reader's temp goes in the per-account instance directory (`internal/instance`), not
+under `out`: a long-held reader temp under `out` could be reaped by a concurrent export's
+`SweepOrphans` on Unix. This reverses C6's "temps under `out`" for the reader only; writer
+temps stay under `out`.
+
+**A14 — Phase gate by reading, not by a one-shot write.** Until Phase 4 ships, the scheduled
+job reads the keyless encrypted marker at start and refuses (surfaced: banner, health WARN,
+`BACKUP-NEEDS-ATTENTION.txt`) — instead of relying on a schedule-disable write that could
+fail and leave the schedule live.
+
+**Re-review closure.** These amendments are the re-review's own recommended fixes, not new
+design. They are frozen as Phase-1 code + tests; Phase 1's own adversarial pass re-checks the
+schema as built. No further pre-code review round.

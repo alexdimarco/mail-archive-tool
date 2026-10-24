@@ -169,3 +169,49 @@ This review is **filed**. The design doc owes a revision folding C1–C12 + the 
 rulings; because C1/C2/C5/C6 are material schema changes, the amended data-model sections
 (§2, §4) are re-verified before code (a focused re-review of the changed sections, not a
 fresh 10-lens). C2 blocks on the owner.
+
+(Correction, 2026-10-24, Claude: C2 was since ruled by the owner — encrypt names +
+structure — and the fold-in is done; see the design doc's "Post-review resolution". The
+paragraph above is kept as written.)
+
+## Focused re-review (2026-10-24)
+
+**Reviewed:** the "Post-review resolution" section of `docs/design-encrypted-archives.md`.
+**Digest after amendments (sha256):** `2153192cd568494cfc35cc761fa6ff700f2dda129498112c3ed1100615f0bfde`
+**Repository SHA:** `2e7827c`
+**Reviewers:** three independent read-only adversarial checks, one per changed surface —
+(1) crypto construction, (2) keyless-facade data model + leak budget, (3) durability /
+crash-safety / concurrency. Load-bearing code claims were re-confirmed by the main session
+before folding in (`manifest.go:693-704`, `lastrun.go:71`, `securefile.go:18-48`,
+`presync/session.go:21` vs `app/run.go:414,847`).
+
+**Verdict: GO, with the schema frozen as amendments A1–A14** (in the design doc). The shape
+held; it was not yet freezable because it named mechanisms without pinning bytes.
+
+| Finding | Check | Severity | Resolution |
+|---|---|---|---|
+| Re-sealed chunk could reuse a nonce; random 96-bit GCM budget unbounded over archive life | crypto | blocker | A1 — XChaCha20-Poly1305, fresh random nonce every seal |
+| AAD "binds to manifest identity" not byte-specified; archive-id not in unit AAD; per-unit replay undecided | crypto | blocker | A2 — exact AAD layouts; per-unit rollback detected via manifest hashes |
+| Argon2id "calibrated" could fall on a weak host; recovery-key entropy unpinned | crypto | major | A3 — params are floors; 128-bit recovery key, own salt |
+| Refuse-newer unreachable: parse fails at `manifest.go:693` before the version check at 704, with a "delete it to re-export" message | facade | blocker | A4 — cleartext manifest envelope |
+| Scheduler/freshness consumer had no ruling; facade field list dropped it | facade | blocker | A5 — per-consumer table |
+| `lastrun.json` (source path, counts) and `sourcestreak.json` (source kind) leak past the budget | facade | blocker | A6 — minimised cleartext status; rest moves into the encrypted manifest |
+| Facade's keyless fields unauthenticated (recovery entry strippable, id swappable) | facade | major | A7 — header MAC under an HKDF sub-key |
+| No generation counter → heal has no winner | durability | high | A7 — monotonic generation; vault rewritten only on key events |
+| `WriteFileAtomic0600` skips the directory fsync | durability | med | A8 |
+| Change-password named the Thunderbird pre-sync lock, not the archive lock | durability | high | A9 |
+| Two key stores with no joint atomicity on password change | durability | high | A10 — secret store holds the master key; password change touches the vault only |
+| Manifest chunk persist could leave a mixed old/new state (manifest is not rebuildable) | durability | high | A11 — immutable chunks, single-rename pointer, ordered |
+| Directory swap is two renames; conversion could race a scheduled run | durability | med-high | A12 — staged marker under the archive lock |
+| `SweepOrphans` can reap a long-held reader temp under `out` (Unix) | durability | med | A13 — reader temps in the instance dir |
+| Keyless `verify` can't catch deliberate substitution | durability | med | A5 — two-tier verify, claim scoped |
+| Schedule-disable write could fail and leave the schedule live | durability | low | A14 — job reads the marker and refuses |
+
+**Refuted:** the envelope/key hierarchy itself (sound); KDF-param/salt downgrade (unwrap
+fails closed); fixity anchor leaking count (count is already a disclosed residual);
+plaintext-layer golden leaving an authenticated-determinism gap (AEAD catches corruption on
+decrypt).
+
+**Closure:** A1–A14 are the checks' own recommended fixes, not new design; they are frozen
+as Phase-1 code + tests, and Phase 1's own adversarial pass re-checks the schema as built.
+No further pre-code round.
