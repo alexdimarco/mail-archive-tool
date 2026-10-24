@@ -16,6 +16,7 @@ import (
 
 	"mail-archive-tool/internal/index"
 	"mail-archive-tool/internal/instance"
+	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/procs"
 	"mail-archive-tool/internal/schedule"
@@ -476,6 +477,12 @@ func Assess(in Input, now time.Time) Report {
 	if in.HasDescriptor {
 		period = IntervalOf(in.Desc.Interval)
 	}
+	// A schedule set to pre-sync Thunderbird before it runs says so (the CLI surface,
+	// design §4.9.2): read from the descriptor's argv for a flat export schedule
+	// (-thunderbird-sync) or from the run-job's job file for a GUI/Desktop run-job.
+	if in.HasDescriptor && schedulePresyncConfigured(in) {
+		r.note("presync_syncs", "this archive's scheduled backup syncs Thunderbird before it runs: it starts Thunderbird, waits for its mail to settle, then asks it to quit, so the backup includes mail that had only reached the server; if Thunderbird is already open it is left alone")
+	}
 	switch in.LastRunState {
 	case state.LastRunUnreadable:
 		r.warn("lastrun_unreadable", fmt.Sprintf("the last-run record %s is unreadable (corrupt or truncated); the next run rewrites it", filepath.Join(in.Out, state.LastRunName)))
@@ -799,6 +806,23 @@ func repairHow(in Input) string {
 	default: // RouteNone — no single repair
 		return bothInstalls(in)
 	}
+}
+
+// schedulePresyncConfigured reports whether the installed schedule is set to pre-sync
+// Thunderbird before it runs — read from the descriptor's argv for a flat export
+// schedule (Desc.Presync, from -thunderbird-sync) or from the run-job's job file
+// (ThunderbirdSync) for a GUI/Desktop run-job. Read-only; a missing/unreadable job is
+// false, so the note only ever appears when the sync is really configured.
+func schedulePresyncConfigured(in Input) bool {
+	if in.Desc.Presync != nil {
+		return true
+	}
+	if in.KindEv.JobPath != "" {
+		if j, err := job.Read(in.KindEv.JobPath); err == nil && j.ThunderbirdSync != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // cliRunJobRepair is the command line's no-display fallback for a run-job whose

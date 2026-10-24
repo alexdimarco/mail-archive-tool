@@ -63,7 +63,7 @@ func exportFlags(fs *flag.FlagSet) *exportOpts {
 	o.syncWait = fs.Bool("sync-wait", false, "Thunderbird IMAP: pause and wait for Download/Sync to finish before exporting")
 	o.unattended = fs.Bool("unattended", false, "scheduled run: refuse to create a new archive when -out does not exist (an unmounted drive), never wait for input")
 	o.list = fs.Bool("list", false, "list the mail stores that would be archived (with a rough size) and exit, without exporting or creating the output directory")
-	o.tbSync = fs.Bool("thunderbird-sync", false, "before archiving, start Thunderbird hidden, wait until its mail files stop changing, then ask it to quit, so the archive reads fresh mail (macOS only in this version; opt-in, and it never gates the archive — a sync problem is a warning, the backup still runs)")
+	o.tbSync = fs.Bool("thunderbird-sync", false, "before archiving, start Thunderbird (hidden on macOS; briefly visible then minimized on Windows), wait until its mail files stop changing, then ask it to quit, so the archive reads fresh mail that had only reached the server (macOS and Windows; opt-in; allowed on any schedule; if Thunderbird is already open it is left alone, never started or quit; it never gates the archive — a sync problem is a warning, the backup still runs)")
 	o.tbProfile = fs.String("thunderbird-profile", "", "with -thunderbird-sync: the Thunderbird profile directory to sync; if omitted it is derived from the inputs and must be one Thunderbird itself lists")
 	return o
 }
@@ -238,9 +238,10 @@ func parseJob(args []string) (job, error) {
 		if err := app.FollowLinksRefusal(o.followLinks, o.inputs); err != nil {
 			return job{}, err
 		}
-		// The Thunderbird pre-sync (macOS v1): -thunderbird-profile means nothing
-		// without -thunderbird-sync, and the feature is macOS-only this version —
-		// refuse at schedule time (fail now, not at 02:00, §4.2.4).
+		// The Thunderbird pre-sync: -thunderbird-profile means nothing without
+		// -thunderbird-sync, and the feature needs a platform adapter (macOS and
+		// Windows) — refuse at schedule time on a platform without one (fail now, not
+		// at the scheduled run, §4.2.4).
 		if *o.tbProfile != "" && !*o.tbSync {
 			return job{}, errors.New("-thunderbird-profile is only meaningful with -thunderbird-sync")
 		}
