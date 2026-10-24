@@ -51,12 +51,15 @@ var (
 	ErrPendingUsed = errors.New("vault: this prepared change was already committed or discarded")
 )
 
-// Seams: writeCopy writes one vault copy atomically and durably (A8), and
-// lockedHook runs right after a writer takes the archive lock — so a test can
-// observe or fail a write, or take the lock away mid-operation.
+// Seams: writeCopy writes one vault copy atomically and durably (A8),
+// lockedHook runs right after a writer takes the archive lock, and lstat judges
+// a vault path before it is opened — so a test can observe or fail a write,
+// take the lock away mid-operation, or present a path as Windows would (a link
+// the open itself would follow there).
 var (
 	writeCopy  = util.WriteFileAtomic0600Temp
 	lockedHook = func() {}
+	lstat      = os.Lstat
 )
 
 // copyOnDisk is one of the two vault files as read.
@@ -82,7 +85,7 @@ func judgeVaultFile(goos string, mode fs.FileMode) error {
 func readCopy(out, name string) copyOnDisk {
 	c := copyOnDisk{name: name}
 	path := filepath.Join(out, name)
-	fi, err := os.Lstat(path)
+	fi, err := lstat(path)
 	if err != nil {
 		c.err = err
 		return c

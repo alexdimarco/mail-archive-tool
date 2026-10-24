@@ -279,7 +279,12 @@ hazards for the Phase 2–4 callers) with three skeptics per finding, a critic.
 
 **Mutations:** 24 of 26 killed by named tests. N14 (drop the pre-open Lstat) survived as
 equivalent on macOS (O_NOFOLLOW refuses a link there) — the Windows-only judgment is now a
-pure rule pinned for both OSes (`TestTheVaultFileTypeRuleOnEveryOS`). N17 (drop the empty-id
+pure rule pinned for both OSes (`TestTheVaultFileTypeRuleOnEveryOS`), and its USE in
+`readCopy` is proven on every OS through an `lstat` seam that presents a readable vault as a
+link (`TestAVaultPathJudgedALinkIsNeverOpened`; N14 re-planted by hand: killed).
+(Correction, 2026-10-24, Claude: commit `4f6bb11`'s message credited the rule test alone with
+catching N14; re-planting N14 showed it did not — the rule test pins the rule, not its use —
+so the seam test was added in the next commit.) N17 (drop the empty-id
 refusal) survived — now asserted by name (`TestTheGateNamesTheFixForEachCause`), and a vault
 claiming the all-zero id no longer parses.
 

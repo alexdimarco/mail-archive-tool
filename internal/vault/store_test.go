@@ -378,6 +378,42 @@ func TestTheVaultFileTypeRuleOnEveryOS(t *testing.T) {
 	}
 }
 
+// linkFileInfo presents a real file as a link, the way Lstat reports one.
+type linkFileInfo struct{ fs.FileInfo }
+
+func (l linkFileInfo) Mode() fs.FileMode { return l.FileInfo.Mode()&^fs.ModeType | fs.ModeSymlink }
+
+// covers: MA-709, R37
+func TestAVaultPathJudgedALinkIsNeverOpened(t *testing.T) {
+	// On Windows the open follows a link, so only the judgment made BEFORE the
+	// open refuses one. Present the primary as a link (what Lstat reports for one
+	// there) while it is really a readable vault: it must not be read.
+	lowCost(t)
+	out, k, _ := newArchive(t)
+	lstat = func(path string) (fs.FileInfo, error) {
+		fi, err := os.Lstat(path)
+		if err == nil && filepath.Base(path) == FileName {
+			return linkFileInfo{fi}, nil
+		}
+		return fi, err
+	}
+	t.Cleanup(func() { lstat = os.Lstat })
+	o, err := Open(out, k.ArchiveID(), PasswordSecret(testPassword))
+	if err != nil {
+		t.Fatalf("the mirror must still open: %v", err)
+	}
+	if !o.NeedsHeal {
+		t.Fatal("a primary judged a link must not be read or trusted (the open would have followed it on Windows)")
+	}
+	removeFile(t, out, BackupName)
+	_, _, err = Detect(out)
+	if !errors.Is(err, ErrCorrupt) {
+		t.Fatalf("with only the link left: want ErrCorrupt, got %v", err)
+	}
+	rc, msg := refusal(err)
+	assure.Refused(t, rc, msg, assure.Code(1), assure.Names(FileName, "a link"))
+}
+
 // covers: MA-709, R37
 func TestAMissingPrimaryBesideADamagedMirrorNamesTheMirror(t *testing.T) {
 	lowCost(t)
