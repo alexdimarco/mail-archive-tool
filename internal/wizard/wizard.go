@@ -1019,6 +1019,15 @@ func installSpec(out, name, jobPath string, iv schedule.Interval, at, exe string
 	return spec
 }
 
+// RunJobSpec is the exported run-job install Spec, so MailArchive Desktop's local-
+// schedule card builds the SAME spec (and the same MA-641 wrapper decision) as the
+// wizard's keep-current step — one install-path, not a fork. The caller writes the
+// job file (internal/job.Write) and installs the returned Spec through its own
+// installer (the Desktop's injectable seam, or schedule.Install).
+func RunJobSpec(out, name, jobPath string, iv schedule.Interval, at, exe string) schedule.Spec {
+	return installSpec(out, name, jobPath, iv, at, exe)
+}
+
 // repairSpec rebuilds the install Spec for a recorded schedule using the CURRENT
 // executable, so re-installing points the scheduler back at this binary. The
 // descriptor lives in the archive directory and is untrusted (any writer of that
