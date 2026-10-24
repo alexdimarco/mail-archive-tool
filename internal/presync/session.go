@@ -35,6 +35,14 @@ type sessionResult struct {
 	records []recordState
 }
 
+// windowMinimizer is the optional capability of an adapter that can only launch
+// Thunderbird VISIBLY (Windows, where SW_HIDE is ignored) and wants the shown
+// window minimized once the process is adopted. A truly-hidden adapter (macOS)
+// does not implement it, so the S6 hook is a no-op there.
+type windowMinimizer interface {
+	minimizeMain(ctx context.Context, pid int)
+}
+
 // runSession runs one pre-sync session, S1..S9 (design 4.5). It never fails the
 // archive: every path ends in an Outcome the caller records, and the archive
 // reads afterwards. In v1 it never quits a process that is not provably ours,
@@ -132,6 +140,14 @@ func runSession(ctx context.Context, d deps) sessionResult {
 	up := e.now()
 	cur.ChildPID, cur.ChildStart, cur.ChildArgs = child.pid, child.start.Unix(), child.args
 	store(stateSyncing)
+
+	// An adapter that can only launch VISIBLY (Windows, where SW_HIDE is ignored)
+	// minimizes the window it showed, so the pre-sync is a taskbar blip rather than
+	// a focus-stealing popup (owner ruling 2026-10-23). Best-effort and bounded; a
+	// truly-hidden adapter (macOS) does not implement this, so it is a no-op there.
+	if m, ok := e.(windowMinimizer); ok {
+		m.minimizeMain(ctx, child.pid)
+	}
 
 	// S7 wait quiet — poll the digest; quiet needs a first change (rev-3, L-M5).
 	enter("S7")

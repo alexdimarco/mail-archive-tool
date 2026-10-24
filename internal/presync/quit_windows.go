@@ -3,8 +3,10 @@
 package presync
 
 import (
+	"context"
 	"os/exec"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -30,6 +32,9 @@ const (
 	// constant fits an (unsigned) uintptr; GetWindowLongPtrW reads the low 32 bits.
 	wGwlStyle   = 0xFFFFFFF0
 	wGwlExStyle = 0xFFFFFFEC
+	// SW_MINIMIZE minimizes the window AND activates the next top-level window — so
+	// Thunderbird does not keep focus — a benign window-state change, not a close.
+	wSwMinimize = 6
 )
 
 var (
@@ -39,6 +44,7 @@ var (
 	procIsWindowVisible          = user32.NewProc("IsWindowVisible")
 	procGetWindowLongPtr         = user32.NewProc("GetWindowLongPtrW")
 	procGetWindow                = user32.NewProc("GetWindow")
+	procShowWindow               = user32.NewProc("ShowWindow")
 )
 
 // winWindowInfo is one top-level window's identity, as selectMainWindow judges it.
@@ -51,33 +57,64 @@ type winWindowInfo struct {
 	owner   uintptr
 }
 
-// buildHiddenCmd builds the hidden Thunderbird launch (design §2, §6): behind
-// every window (HideWindow + CREATE_NO_WINDOW) and OUT of the Task-Scheduler
-// task's job object (CREATE_BREAKAWAY_FROM_JOB) so a job-object teardown on task
-// End/logoff/shutdown cannot hard-kill Thunderbird mid-write — an R31 breach our
-// own code never causes but Windows would (PC-W6). Breakaway forfeits the direct
-// child handle, which is consistent with the scan+`-profile` identity (§3). It is
-// a pure builder so the launch flags are golden-tested without a launch.
-func buildHiddenCmd(exe, profile string) *exec.Cmd {
+// minimizeWait bounds how long minimizeMain waits for Thunderbird's window to
+// appear before giving up (a var so a test can shrink it).
+var minimizeWait = 15 * time.Second
+
+// buildLaunchCmd builds the Thunderbird launch (design §2, §6). It launches OUT of
+// the Task-Scheduler task's job object (CREATE_BREAKAWAY_FROM_JOB) so a job-object
+// teardown on task End/logoff/shutdown cannot hard-kill Thunderbird mid-write — an
+// R31 breach our own code never causes but Windows would (PC-W6). Breakaway
+// forfeits the direct child handle, which is consistent with the scan+`-profile`
+// identity (§3).
+//
+// It does NOT try to launch hidden: the L-W4 lab (2026-10-23) showed Thunderbird
+// ignores SW_HIDE and shows its window regardless, so the ineffective HideWindow /
+// CREATE_NO_WINDOW flags are dropped as misleading. Per the owner's 2026-10-23
+// ruling a visible launch is acceptable (scheduled off-hours); the window is then
+// minimized right after it appears (minimizeMain) so it is a taskbar blip, not a
+// focus-stealing popup. A pure builder, so the flags are golden-tested.
+func buildLaunchCmd(exe, profile string) *exec.Cmd {
 	cmd := exec.Command(exe, "-profile", profile)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		HideWindow:    true,
-		CreationFlags: windows.CREATE_NO_WINDOW | windows.CREATE_BREAKAWAY_FROM_JOB,
+		CreationFlags: windows.CREATE_BREAKAWAY_FROM_JOB,
 	}
 	return cmd
 }
 
-// startHidden launches Thunderbird hidden and detached, then releases our
-// reference without ever waiting on or signalling it (the real process is
-// re-found by the scan+`-profile` match, §3). A launch failure is returned for S5
-// to map to presync_cannot_start; the write-ahead record is already in place.
+// startHidden launches Thunderbird detached, then releases our reference without
+// ever waiting on or signalling it (the real process is re-found by the
+// scan+`-profile` match, §3). The name is the cross-platform seam's: on macOS the
+// launch is truly hidden; on Windows it shows a window that minimizeMain then
+// minimizes. A launch failure is returned for S5 to map to presync_cannot_start.
 func (e *winEnv) startHidden(exe, profile string) error {
-	cmd := buildHiddenCmd(exe, profile)
+	cmd := buildLaunchCmd(exe, profile)
 	if err := cmd.Start(); err != nil {
 		return err
 	}
 	_ = cmd.Process.Release()
 	return nil
+}
+
+// minimizeMain best-effort minimizes the pre-sync's Thunderbird window so a visible
+// launch is a taskbar blip, not a focus-stealing popup (owner ruling 2026-10-23).
+// The session calls it once it has adopted our process (after S6): it waits briefly
+// for the single main window to appear, then minimizes it with
+// ShowWindow(SW_MINIMIZE) — a benign window-state change, never a close or kill. If
+// no single main window appears in time it does nothing (the launch stays visible —
+// the accepted fallback). macOS launches truly hidden and does not implement this.
+func (e *winEnv) minimizeMain(ctx context.Context, pid int) {
+	deadline := e.now().Add(minimizeWait)
+	for e.now().Before(deadline) {
+		if ctx.Err() != nil {
+			return
+		}
+		if hwnd, ok := e.w.mainWindow(uint32(pid)); ok {
+			e.w.minimizeWindow(hwnd)
+			return
+		}
+		e.sleep(500 * time.Millisecond)
+	}
 }
 
 // quit asks the proven child to close (design §4, S8). It holds an OpenProcess
@@ -177,6 +214,8 @@ func (realWin32) handleAlive(h uintptr) bool {
 }
 
 func (realWin32) releaseHandle(h uintptr) { procCloseHandle.Call(h) }
+
+func (realWin32) minimizeWindow(hwnd uintptr) { procShowWindow.Call(hwnd, wSwMinimize) }
 
 func (realWin32) windowPID(hwnd uintptr) uint32 {
 	var pid uint32

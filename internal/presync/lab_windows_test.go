@@ -3,6 +3,7 @@
 package presync
 
 import (
+	"context"
 	"os"
 	"syscall"
 	"testing"
@@ -10,14 +11,18 @@ import (
 	"unsafe"
 )
 
-var procGetWindowText = user32.NewProc("GetWindowTextW")
+var (
+	procGetWindowText = user32.NewProc("GetWindowTextW")
+	procIsIconic      = user32.NewProc("IsIconic")
+)
 
-// labWin is one top-level window of a pid, with its title and whether
-// isMainWindow accepts it — the diagnostic the L-W4 lab logs.
+// labWin is one top-level window of a pid, with its title, whether isMainWindow
+// accepts it, and whether it is minimized (iconic) — the diagnostic the lab logs.
 type labWin struct {
-	info  winWindowInfo
-	title string
-	main  bool
+	info   winWindowInfo
+	title  string
+	main   bool
+	iconic bool
 }
 
 // labListWindows enumerates EVERY top-level window of pid (visible AND hidden),
@@ -39,7 +44,8 @@ func labListWindows(pid uint32) []labWin {
 			}
 			buf := make([]uint16, 256)
 			procGetWindowText.Call(hwnd, uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)))
-			out = append(out, labWin{info: w, title: syscall.UTF16ToString(buf), main: isMainWindow(w)})
+			ic, _, _ := procIsIconic.Call(hwnd)
+			out = append(out, labWin{info: w, title: syscall.UTF16ToString(buf), main: isMainWindow(w), iconic: ic != 0})
 		}
 		return 1
 	})
@@ -57,8 +63,8 @@ func labLogWindows(t *testing.T, when string, pid uint32) (mainCount, visibleCou
 		if w.info.visible {
 			visibleCount++
 		}
-		t.Logf("  hwnd=%#x visible=%v caption=%v child=%v tool=%v owned=%v isMain=%v title=%q",
-			w.info.hwnd, w.info.visible,
+		t.Logf("  hwnd=%#x visible=%v iconic=%v caption=%v child=%v tool=%v owned=%v isMain=%v title=%q",
+			w.info.hwnd, w.info.visible, w.iconic,
 			w.info.style&wWsCaption == wWsCaption,
 			w.info.style&wWsChild != 0,
 			w.info.exStyle&wWsExToolWindow != 0,
@@ -122,15 +128,22 @@ func TestLabHiddenLaunchAndClose(t *testing.T) {
 	}
 
 	labLogWindows(t, "right after launch", uint32(child.pid))
-	e.sleep(5 * time.Second) // a real run waits for the mail files to go quiet; here, a fixed settle
-	mainCount, visibleCount := labLogWindows(t, "at quit time (after settle)", uint32(child.pid))
 
-	// L-W3: did the "hidden" launch actually stay hidden?
-	if visibleCount > 0 {
-		t.Logf("L-W3 FINDING: %d VISIBLE top-level window(s) for our pid — Thunderbird did NOT stay hidden; the R30/UX 'no flash' goal is not met via HideWindow on Windows (a product question, separate from the close).", visibleCount)
-	} else {
-		t.Log("L-W3: no visible top-level windows — the launch stayed hidden.")
+	// Minimize the window once it appears — exactly what the session's S6 hook does
+	// (owner ruling 2026-10-23: a visible launch is acceptable; minimize it to a
+	// taskbar blip). minimizeMain waits for the window, so it doubles as the settle.
+	e.minimizeMain(context.Background(), child.pid)
+	mainCount, visibleCount := labLogWindows(t, "after minimize", uint32(child.pid))
+
+	iconic := 0
+	for _, w := range labListWindows(uint32(child.pid)) {
+		if w.iconic {
+			iconic++
+		}
 	}
+	t.Logf("L-W3: %d visible / %d minimized(iconic) window(s) for our pid — expect the main window minimized (a visible launch is acceptable; truly-hidden is a nice-to-have).", visibleCount, iconic)
+
+	e.sleep(5 * time.Second) // let it "sync" a moment before the quit
 
 	aliveBeforeQuit := e.pidAlive(child.pid)
 	t.Logf("alive right before quit: %v", aliveBeforeQuit)

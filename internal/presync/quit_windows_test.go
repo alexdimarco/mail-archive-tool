@@ -3,6 +3,7 @@
 package presync
 
 import (
+	"context"
 	"syscall"
 	"testing"
 	"time"
@@ -109,29 +110,59 @@ func TestWinQuitOrchestration(t *testing.T) {
 }
 
 // covers: MA-571
-// The hidden launch (design §2, §6): behind every window and OUT of the task's
-// job object, so a Task-Scheduler teardown cannot hard-kill Thunderbird mid-write
-// (PC-W6). A pure builder, so the flags are pinned without a launch.
-func TestBuildHiddenCmdFlags(t *testing.T) {
+// The launch (design §2, §6): OUT of the task's job object
+// (CREATE_BREAKAWAY_FROM_JOB) so a Task-Scheduler teardown cannot hard-kill
+// Thunderbird mid-write (PC-W6). It does NOT set HideWindow / CREATE_NO_WINDOW:
+// the L-W4 lab showed Thunderbird ignores SW_HIDE, so those were dropped as
+// ineffective (the window is minimized after it appears instead). A pure builder,
+// so the flags are pinned without a launch.
+func TestBuildLaunchCmdFlags(t *testing.T) {
 	const exe = `C:\Program Files\Mozilla Thunderbird\thunderbird.exe`
 	const prof = `C:\Users\First Last\AppData\Roaming\Thunderbird\Profiles\abc.default`
-	cmd := buildHiddenCmd(exe, prof)
+	cmd := buildLaunchCmd(exe, prof)
 
 	if len(cmd.Args) != 3 || cmd.Args[1] != "-profile" || cmd.Args[2] != prof {
 		t.Errorf("args = %v, want [%q -profile %q]", cmd.Args, exe, prof)
 	}
 	spa := cmd.SysProcAttr
-	if spa == nil || !spa.HideWindow {
-		t.Fatalf("SysProcAttr = %+v, want HideWindow", spa)
+	if spa == nil {
+		t.Fatal("SysProcAttr is nil")
 	}
 	if spa.CreationFlags&windows.CREATE_BREAKAWAY_FROM_JOB == 0 {
 		t.Error("launch lacks CREATE_BREAKAWAY_FROM_JOB — a task teardown could hard-kill Thunderbird (PC-W6)")
 	}
-	if spa.CreationFlags&windows.CREATE_NO_WINDOW == 0 {
-		t.Error("launch lacks CREATE_NO_WINDOW")
+	if spa.HideWindow {
+		t.Error("launch sets HideWindow — dropped as ineffective (Thunderbird ignores SW_HIDE)")
 	}
-	// The builder is a *syscall.SysProcAttr (the compile would fail otherwise).
+	if spa.CreationFlags&windows.CREATE_NO_WINDOW != 0 {
+		t.Error("launch sets CREATE_NO_WINDOW — dropped as ineffective")
+	}
 	var _ *syscall.SysProcAttr = spa
+}
+
+// covers: MA-571
+// minimizeMain minimizes the visible-launch window once it appears (owner ruling
+// 2026-10-23): when a single main window is found it is minimized via
+// ShowWindow(SW_MINIMIZE) — a benign state change, never a close. It is a no-op on
+// a truly-hidden adapter (macOS does not implement windowMinimizer).
+func TestWinMinimizeMain(t *testing.T) {
+	const pid = 4242
+	const hwnd = uintptr(0x100)
+	var minimized []uintptr
+	e := &winEnv{
+		clock: time.Now,
+		w: fakeWin32{
+			mainOf:    map[uint32]uintptr{pid: hwnd},
+			minimized: &minimized,
+		},
+	}
+	e.minimizeMain(context.Background(), pid)
+	if len(minimized) != 1 || minimized[0] != hwnd {
+		t.Errorf("minimizeMain minimized %v, want [%#x]", minimized, hwnd)
+	}
+
+	// winEnv satisfies the session's optional windowMinimizer capability.
+	var _ windowMinimizer = e
 }
 
 // covers: MA-557
