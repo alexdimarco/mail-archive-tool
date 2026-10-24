@@ -119,6 +119,15 @@ func (d *dashboard) scheduleInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := d.cfg.effectiveOut()
+	// A LOCAL Thunderbird/mbox archive (local stores, no Microsoft 365) schedules a
+	// RUN-JOB that re-archives it — the Desktop's local-schedule card — reconstructed
+	// from the archive's OWN record and carrying the optional pre-sync, never a
+	// Microsoft 365 capture. Create and edit both come here (an idempotent rewrite);
+	// repairRunJob below stays for a non-local archive's broken run-job entry.
+	if d.cfg.localOnly() {
+		d.scheduleInstallLocal(w, r, out)
+		return
+	}
 	// §4.6.3/MA-617: the card's Install/Repair takes the spec from the CORROBORATED
 	// kind, never the request. A corroborated run-job is REPAIRED through the
 	// wizard's pure RepairSpec (from the sanitized name, -out and ProgramForSchedule,

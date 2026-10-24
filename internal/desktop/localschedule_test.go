@@ -3,7 +3,13 @@ package desktop
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"mail-archive-tool/internal/assure"
+	"mail-archive-tool/internal/job"
+	"mail-archive-tool/internal/schedule"
+	"mail-archive-tool/internal/state"
 )
 
 // covers: MA-581
@@ -54,4 +60,67 @@ func TestUnderPath(t *testing.T) {
 	if underPath(scratch, filepath.Join("/a", "_outlook-pst-sibling")) {
 		t.Error("a name-prefixed sibling must not be caught")
 	}
+}
+
+// covers: MA-581
+// The Desktop local-schedule install creates (and idempotently edits) a RUN-JOB for
+// a local Thunderbird archive — never a capture — carrying the pre-sync toggle, and
+// refuses (installing nothing) when the archive's record is undeterminable. Positive
+// twin first (assure discipline).
+func TestScheduleInstallLocal(t *testing.T) {
+	out := tbProfileArchive(t) // local TB archive with a reconstructable last-run record
+	var installed schedule.Spec
+	var wasInstalled bool
+	cfg := Config{Out: out, GOOS: "darwin", Exe: "/opt/mailarchive", SettingsPath: filepath.Join(t.TempDir(), "s.json"),
+		InstallBackup: func(s schedule.Spec) error { installed, wasInstalled = s, true; return nil }}
+	h := DashboardHandler(cfg)
+	_, csrf := getPage(t, h)
+
+	// Positive twin: presync on -> a run-job (Args -job <path>), never a capture.
+	body := assure.Reached(t, postJSON(h, "/api/schedule-install", csrf, `{"interval":"weekly","time":"03:00","presync":true}`).Body.String(), "local install response")
+	if !strings.Contains(body, `"ok":true`) {
+		t.Fatalf("local install did not succeed: %s", body)
+	}
+	if !wasInstalled || len(installed.Args) < 2 || installed.Args[0] != "-job" {
+		t.Fatalf("expected a run-job install (Args -job <path>), got %v", installed.Args)
+	}
+	if strings.Contains(strings.Join(installed.Args, " "), "-capture") {
+		t.Errorf("a local archive must not install a capture: %v", installed.Args)
+	}
+	j, err := job.Read(installed.Args[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if j.ThunderbirdSync == nil {
+		t.Error("presync:true must write job.ThunderbirdSync")
+	}
+	if j.Out != out {
+		t.Errorf("the scheduled job's -out must be this archive (%q), got %q", out, j.Out)
+	}
+
+	// Edit: presync off rewrites the job without the toggle (idempotent re-create).
+	if b := postJSON(h, "/api/schedule-install", csrf, `{"interval":"daily","time":"02:00","presync":false}`).Body.String(); !strings.Contains(b, `"ok":true`) {
+		t.Fatalf("local edit did not succeed: %s", b)
+	}
+	if j2, _ := job.Read(installed.Args[1]); j2.ThunderbirdSync != nil {
+		t.Error("presync:false must rewrite the job without the toggle")
+	}
+
+	// Refusal twin: an undeterminable record (no last-run) -> named refusal, nothing installed.
+	if err := os.Remove(filepath.Join(out, state.LastRunName)); err != nil {
+		t.Fatal(err)
+	}
+	var refusedInstall bool
+	rcfg := Config{Out: out, GOOS: "darwin", Exe: "/opt/mailarchive", SettingsPath: filepath.Join(t.TempDir(), "r.json"),
+		InstallBackup: func(s schedule.Spec) error { refusedInstall = true; return nil }}
+	hr := DashboardHandler(rcfg)
+	_, csrf2 := getPage(t, hr)
+	rbody := postJSON(hr, "/api/schedule-install", csrf2, `{"interval":"weekly","time":"03:00"}`).Body.String()
+	rc := 0
+	if strings.Contains(rbody, `"ok":false`) {
+		rc = 2
+	}
+	assure.Refused(t, rc, rbody,
+		assure.Names("tell how this archive was built", "wizard"),
+		assure.NoSideEffect(func() bool { return !refusedInstall }))
 }

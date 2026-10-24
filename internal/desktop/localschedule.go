@@ -2,13 +2,16 @@ package desktop
 
 import (
 	"encoding/json"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"mail-archive-tool/internal/job"
+	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/util"
+	"mail-archive-tool/internal/wizard"
 )
 
 // lastRunJobArgs securely reads the archive's last-run canonical job flags for the
@@ -66,4 +69,73 @@ func reconstructLocalJob(out string) (job.Job, bool) {
 func underPath(dir, p string) bool {
 	dir, p = filepath.Clean(dir), filepath.Clean(p)
 	return p == dir || strings.HasPrefix(p, dir+string(os.PathSeparator))
+}
+
+// scheduleInstallLocal installs (or rewrites) a LOCAL archive's run-job backup from
+// the archive's own record plus the card's cadence and pre-sync toggle. It is the
+// Desktop's local-schedule CREATE and EDIT (an idempotent rewrite) — never a
+// Microsoft 365 capture. Loopback-only + CSRF are already checked by the caller
+// (scheduleInstall), and an M365/mixed archive never reaches here (the caller gates
+// on localOnly). The run-job spec is the shared wizard.RunJobSpec (the MA-641 single
+// install-path decision), and the kind-collision guard runs inside schedule.Install
+// (it CheckKinds before installing). Nothing is written or installed on a refusal.
+func (d *dashboard) scheduleInstallLocal(w http.ResponseWriter, r *http.Request, out string) {
+	var in struct {
+		Interval string `json:"interval"`
+		Time     string `json:"time"`
+		Presync  bool   `json:"presync"`
+	}
+	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&in)
+
+	j, ok := reconstructLocalJob(out)
+	if !ok {
+		writeJSON(w, map[string]any{"ok": false, "error": "MailArchive Desktop can’t tell how this archive was built, so it can’t schedule a backup for it from here. Open the MailArchive wizard (mailarchive wizard) to set one up."})
+		return
+	}
+	j.Name = schedule.DefaultNameFor(out)
+	// The pre-sync is offered only on an adapter platform for a Thunderbird-sourced
+	// archive (MA-582); honour the toggle only then (default off, R30).
+	if goos := d.cfg.goos(); in.Presync && (goos == "darwin" || goos == "windows") && localArchiveThunderbirdSourced(out) {
+		j.ThunderbirdSync = &job.ThunderbirdSync{}
+	}
+	if err := saveScheduleChoice(d.cfg.SettingsPath, in.Interval, in.Time); err != nil {
+		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	exe := d.cfg.Exe
+	if exe == "" {
+		e, _, perr := schedule.ProgramForSchedule(false)
+		if perr != nil {
+			writeJSON(w, map[string]any{"ok": false, "error": perr.Error()})
+			return
+		}
+		exe = e
+	}
+	iv, err := schedule.ParseInterval(in.Interval)
+	if err != nil || strings.TrimSpace(in.Interval) == "" {
+		iv = schedule.Weekly
+	}
+	at := strings.TrimSpace(in.Time)
+	if at == "" {
+		at = "03:00"
+	}
+	jobPath, err := job.PathFor(j.Name)
+	if err != nil {
+		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	if err := job.Write(jobPath, j); err != nil {
+		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	spec := wizard.RunJobSpec(j.Out, j.Name, jobPath, iv, at, exe)
+	install := schedule.Install
+	if d.cfg.InstallBackup != nil {
+		install = d.cfg.InstallBackup
+	}
+	if err := install(spec); err != nil {
+		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
 }
