@@ -139,3 +139,19 @@ func (d *dashboard) scheduleInstallLocal(w http.ResponseWriter, r *http.Request,
 	}
 	writeJSON(w, map[string]any{"ok": true})
 }
+
+// currentJobSyncsThunderbird reports whether the archive's installed run-job already
+// carries the pre-sync, so the Desktop's toggle shows CHECKED on load (edit prefill).
+// It reads the job file through internal/job (the secure read); a missing/unreadable
+// job is false.
+func currentJobSyncsThunderbird(out string) bool {
+	p, err := job.PathFor(schedule.DefaultNameFor(out))
+	if err != nil {
+		return false
+	}
+	j, err := job.Read(p)
+	if err != nil {
+		return false
+	}
+	return j.ThunderbirdSync != nil
+}

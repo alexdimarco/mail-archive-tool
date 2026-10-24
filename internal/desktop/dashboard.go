@@ -30,6 +30,7 @@ import (
 	"mail-archive-tool/internal/instance"
 	"mail-archive-tool/internal/localweb"
 	"mail-archive-tool/internal/lockfile"
+	"mail-archive-tool/internal/presync"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/server"
 	"mail-archive-tool/internal/uninstall"
@@ -785,6 +786,16 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		ShowRepair    bool
 		ShowRemove    bool
 		ShowBackupOff bool
+		// Local-archive scheduling (design-thunderbird-presync-desktop): a localOnly
+		// archive the Desktop can reconstruct + schedule from its OWN record (on an
+		// adapter platform) shows a create/edit form (ShowLocalCreate) in place of the
+		// "backup off" note; the pre-sync checkbox shows for a Thunderbird-sourced
+		// archive (LocalPresyncOfferable), checked when the installed job already syncs
+		// (LocalPresyncOn); PresyncNoticeText is the VISIBLE (not hover-only) notice.
+		ShowLocalCreate       bool
+		LocalPresyncOfferable bool
+		LocalPresyncOn        bool
+		PresyncNoticeText     string
 		// The Your-archives list (UX-1): the known archives and whether to show the card.
 		Archives      []ArchiveRow
 		ShowArchives  bool
@@ -861,8 +872,19 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		}
 	}
 	data.ShowInstall = !data.LocalOnly && !data.ShowRepair
+	// A local archive the Desktop can reconstruct + schedule from its own record (on
+	// an adapter platform) shows the create/edit form in place of the "backup off"
+	// note (design-thunderbird-presync-desktop corrections 4, 8).
+	if data.LocalOnly && !data.HasSchedule && (cfg.goos() == "darwin" || cfg.goos() == "windows") {
+		if _, ok := reconstructLocalJob(data.OutDir); ok {
+			data.ShowLocalCreate = true
+			data.LocalPresyncOfferable = localArchiveThunderbirdSourced(data.OutDir)
+			data.LocalPresyncOn = currentJobSyncsThunderbird(data.OutDir)
+			data.PresyncNoticeText = presync.SyncNotice + " If Thunderbird is already open, it is left alone — never started or closed."
+		}
+	}
 	data.ShowRemove = data.HasSchedule || !data.LocalOnly
-	data.ShowBackupOff = data.LocalOnly && !data.HasSchedule
+	data.ShowBackupOff = data.LocalOnly && !data.HasSchedule && !data.ShowLocalCreate
 	if c != nil {
 		data.Configured = strings.TrimSpace(c.Tenant) != ""
 		data.Tenant, data.ClientID, data.Auth = c.Tenant, c.ClientID, authLabel(c.Auth)
@@ -1118,13 +1140,16 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <h2>Weekly backup</h2>
       {{if .ShowBackupOff}}<p class="card-sub steps" id="backupOff">The weekly backup here fetches new mail from Microsoft 365, and this archive was made from local mail files, so it is off. To keep a local-files archive current on a schedule, answer "Keep this archive current?" at the end of the MailArchive wizard (mailarchive wizard), or run the mailarchive schedule command that Status &amp; health prints for this archive.</p>{{else}}
       {{if .HasSchedule}}<p class="card-sub" id="schedKind">This archive's scheduled backup: {{.ScheduleKind}}.</p>{{end}}
-      {{if .ShowInstall}}<p class="card-sub">Run a capture automatically on a schedule. It runs even when this app is closed (as long as you stay signed in to your computer), using your saved Microsoft sign-in.</p>
-      <div class="row2">
+      {{if .ShowInstall}}<p class="card-sub">Run a capture automatically on a schedule. It runs even when this app is closed (as long as you stay signed in to your computer), using your saved Microsoft sign-in.</p>{{end}}
+      {{if .ShowLocalCreate}}<p class="card-sub">Back up this archive automatically on a schedule: it re-reads your mail files and adds any new mail. It runs while you are logged in.</p>{{end}}
+      {{if or .ShowInstall .ShowLocalCreate}}<div class="row2">
         <div><label for="schedInterval">How often</label>
           <select id="schedInterval"><option value="weekly"{{if eq .Interval "weekly"}} selected{{end}}>Weekly (Sunday)</option><option value="daily"{{if eq .Interval "daily"}} selected{{end}}>Daily</option></select></div>
         <div><label for="schedTime">At (local time)</label><input id="schedTime" type="time" value="{{.WeeklyTime}}"></div>
-      </div>{{end}}
-      <div style="margin-top:14px">{{if .ShowInstall}}<button class="btn" id="schedInstall" title="Create or update the scheduled weekly backup for this archive, using the current settings.">Install / update</button> {{end}}{{if .ShowRepair}}<button class="btn" id="schedRepair" title="Re-point the weekly backup at this archive and fix a broken or stale schedule entry. Nothing in the archive changes.">Repair</button> <button class="btn" id="runBackupBtn" type="button" title="Run this archive's weekly backup right now, instead of waiting for its schedule.">Run now</button> {{end}}{{if .ShowRemove}}<button class="btn secondary" id="schedRemove" title="Delete the scheduled weekly backup. Your archive and everything in it are kept.">Remove</button>{{end}}</div>
+      </div>
+      {{if .LocalPresyncOfferable}}<div style="margin-top:12px"><label><input type="checkbox" id="schedPresync"{{if .LocalPresyncOn}} checked{{end}}> Sync Thunderbird before each backup</label>
+        <p class="card-sub steps" id="schedPresyncNote">{{.PresyncNoticeText}}</p></div>{{end}}{{end}}
+      <div style="margin-top:14px">{{if or .ShowInstall .ShowLocalCreate}}<button class="btn" id="schedInstall" title="Create or update the scheduled backup for this archive, using the current settings.">Install / update</button> {{end}}{{if .ShowRepair}}<button class="btn" id="schedRepair" title="Re-point the weekly backup at this archive and fix a broken or stale schedule entry. Nothing in the archive changes.">Repair</button> <button class="btn" id="runBackupBtn" type="button" title="Run this archive's weekly backup right now, instead of waiting for its schedule.">Run now</button> {{end}}{{if .ShowRemove}}<button class="btn secondary" id="schedRemove" title="Delete the scheduled weekly backup. Your archive and everything in it are kept.">Remove</button>{{end}}</div>
       <div class="note" id="runBackupNote" hidden></div>
       <div class="note" id="schedState" hidden></div>{{end}}
     </div>
@@ -1415,8 +1440,8 @@ function schedPost(path){
   const n=$('schedState');
   // Repair/Remove cards render no interval/time inputs (only the Install card does), so read
   // them defensively — a missing input must not throw and silently kill the click.
-  const iv=$('schedInterval'),tm=$('schedTime');
-  const body={interval:iv?iv.value:'',time:tm?tm.value:''};
+  const iv=$('schedInterval'),tm=$('schedTime'),ps=$('schedPresync');
+  const body={interval:iv?iv.value:'',time:tm?tm.value:'',presync:ps?ps.checked:false};
   return fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(body)})
     .then(r=>r.json()).then(d=>{if(n){n.hidden=false;n.textContent=d.ok?'Saved.':(d.error||'Failed.');}
       return schedState().then(()=>{if(n&&d.left){n.hidden=false;n.textContent='Removed. Left in place: '+d.left+' cannot be read, so removal cannot tell which schedule it records - '+d.remedy+'.';}});});

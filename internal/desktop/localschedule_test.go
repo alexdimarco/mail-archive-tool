@@ -124,3 +124,21 @@ func TestScheduleInstallLocal(t *testing.T) {
 		assure.Names("tell how this archive was built", "wizard"),
 		assure.NoSideEffect(func() bool { return !refusedInstall }))
 }
+
+// covers: MA-583
+// The Desktop local-schedule card shows the create/edit form, the pre-sync checkbox
+// and a VISIBLE notice (not hover-only, X16) for a local Thunderbird archive the
+// Desktop can reconstruct — and NOT the "backup off" message.
+func TestLocalScheduleCardUI(t *testing.T) {
+	out := tbProfileArchive(t)
+	h := DashboardHandler(Config{Out: out, GOOS: "darwin", SettingsPath: filepath.Join(t.TempDir(), "s.json")})
+	page, _ := getPage(t, h)
+	for _, want := range []string{`id="schedInterval"`, `id="schedPresync"`, "Sync Thunderbird before each backup", "waits for its mail to finish downloading"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("local-schedule card is missing %q", want)
+		}
+	}
+	if strings.Contains(page, `id="backupOff"`) {
+		t.Error("a reconstructable local archive must not show the backup-off message")
+	}
+}

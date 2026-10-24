@@ -99,13 +99,17 @@ func TestLocalOriginArchiveInDesktop(t *testing.T) {
 		"Choose Incremental",
 		out,
 		"Not used by this archive",
-		`id="backupOff"`,
 	} {
 		if !strings.Contains(page, want) {
 			t.Errorf("the page for a local-origin archive lacks %q", want)
 		}
 	}
-	for _, bad := range []string{`id="archiveBtn"`, "Your personal Microsoft 365 archive", `id="schedInstall"`, "Not configured</div>"} {
+	// NB: this archive is reconstructable (a last-run record with existing inputs), so the
+	// Weekly-backup card now shows the local-schedule create form (schedInstall) in place of
+	// the backupOff note — the Desktop can schedule a local archive (TP-D). That card shape is
+	// pinned by TestLocalScheduleCardUI (create form) and TestMA691... (a SCHEDULED local card
+	// has no interval inputs); here we only pin the local-origin read-only messaging below.
+	for _, bad := range []string{`id="archiveBtn"`, "Your personal Microsoft 365 archive", "Not configured</div>"} {
 		if strings.Contains(page, bad) {
 			t.Errorf("the page for a local-origin archive still shows %q", bad)
 		}

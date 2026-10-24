@@ -154,7 +154,9 @@ func TestSidebarNavEveryEntryWorks(t *testing.T) {
 // CanAddArchive, i.e. at least one known archive), so they are absent only in the shell. Each is bound behind an `if($('…'))` null-check in dashboard.js.
 var optionalJSIDs = map[string]bool{"clearSignin": true, "editM365": true, "cancelM365": true, "schedRepair": true, "runBackupBtn": true, "addArchiveBtn": true, "addArchiveNote": true,
 	// the Backup-alerts card's "clear the stored password" checkbox shows only when a password is already stored (MA-699); the JS null-checks it
-	"alertClearPassword": true}
+	"alertClearPassword": true,
+	// the local-schedule card's pre-sync checkbox shows only for a Thunderbird-sourced local archive on an adapter platform (MA-582/MA-583); schedPost null-checks it (ps?ps.checked)
+	"schedPresync": true}
 
 // jsBoundIDs lists every $('id') lookup in dashboard.js.
 func jsBoundIDs() []string {
