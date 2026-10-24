@@ -143,6 +143,58 @@ func TestScheduleInstallLocal(t *testing.T) {
 }
 
 // covers: MA-581
+// A Repair (the button posts an empty body: no interval/time/presync, because those
+// inputs are not on a scheduled local card — MA-691) must PRESERVE the installed cadence
+// and pre-sync, not silently reset them to Weekly/03:00/off (friction HIGH-3). The server
+// reads the current descriptor's cadence and the current job's pre-sync and keeps them, so
+// the "Nothing in the archive changes" Repair really changes nothing.
+func TestScheduleRepairLocalPreservesCadenceAndPresync(t *testing.T) {
+	out := tbProfileArchive(t)
+	name := schedule.DefaultNameFor(out)
+	jp, err := job.PathFor(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Simulate an installed Daily 05:00 run-job that syncs Thunderbird.
+	jj, ok := reconstructLocalJob(out)
+	if !ok {
+		t.Fatal("fixture: expected a reconstructable archive")
+	}
+	jj.Name = name
+	jj.ThunderbirdSync = &job.ThunderbirdSync{}
+	if err := job.Write(jp, jj); err != nil {
+		t.Fatal(err)
+	}
+	if err := schedule.WriteDescriptor(out, schedule.Descriptor{
+		Name: name, Interval: "daily", At: "05:00", Job: []string{"run-job", jp},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var installed schedule.Spec
+	cfg := Config{Out: out, GOOS: "darwin", Exe: "/opt/mailarchive", SettingsPath: filepath.Join(t.TempDir(), "s.json"),
+		InstallBackup: func(s schedule.Spec) error { installed = s; return nil }}
+	h := DashboardHandler(cfg)
+	_, csrf := getPage(t, h)
+
+	// Repair: the button posts an empty body.
+	body := assure.Reached(t, postJSON(h, "/api/schedule-install", csrf, `{}`).Body.String(), "local repair response")
+	if !strings.Contains(body, `"ok":true`) {
+		t.Fatalf("local repair did not succeed: %s", body)
+	}
+	if installed.Interval != schedule.Daily || installed.At != "05:00" {
+		t.Errorf("repair reset the cadence: got %q at %q, want daily at 05:00", installed.Interval, installed.At)
+	}
+	j2, err := job.Read(jp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if j2.ThunderbirdSync == nil {
+		t.Error("repair dropped the pre-sync: the re-written job must keep ThunderbirdSync")
+	}
+}
+
+// covers: MA-581
 // A2: a tampered last-run record cannot aim the scheduled backup at a store that is not
 // one of the archive's own recorded sources — an outside -input, or a symlink -input, is
 // refused (reconstructLocalJob returns ok=false, so no schedule is offered or installed).

@@ -128,6 +128,20 @@ func (d *dashboard) scheduleInstallLocal(w http.ResponseWriter, r *http.Request,
 	}
 	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&in)
 
+	// A Repair posts an empty body (the Repair button sends no interval/time/presync,
+	// because those inputs are not rendered on a scheduled local card — MA-691). That must
+	// re-point/fix the schedule WITHOUT changing its settings (friction HIGH-3): so when no
+	// interval is posted, preserve the installed cadence (from the current descriptor) and
+	// the installed pre-sync (from the current job file), rather than falling back to the
+	// Weekly/03:00/off defaults that an explicit create uses. An explicit create/edit always
+	// posts a non-empty interval, so it is unaffected.
+	if strings.TrimSpace(in.Interval) == "" {
+		if desc, derr := schedule.ReadDescriptor(out); derr == nil {
+			in.Interval, in.Time = desc.Interval, desc.At
+		}
+		in.Presync = currentJobSyncsThunderbird(out)
+	}
+
 	j, ok := reconstructLocalJob(out)
 	if !ok {
 		writeJSON(w, map[string]any{"ok": false, "error": "MailArchive Desktop can’t tell how this archive was built, so it can’t schedule a backup for it from here. Open the MailArchive wizard (mailarchive wizard) to set one up."})
