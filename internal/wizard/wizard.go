@@ -235,23 +235,13 @@ func RunHeadless(path string) int {
 		}
 		outlookSkips = skips
 	}
-	mode := export.Incremental
-	if strings.EqualFold(j.Mode, "full") {
-		mode = export.Full
-	}
-	var since time.Time
-	if j.Since != "" {
-		if t, err := util.ParseSince(j.Since, time.Now()); err == nil {
-			since = t
-		} else {
-			logger.Printf("warning: ignoring invalid since %q: %v", j.Since, err)
-		}
-	}
 	// Unattended: a vanished input on this existing archive is recorded as a
-	// failed run, exactly as the CLI's -unattended does (N13, R18).
-	opts := app.Options{Inputs: inputs, Auto: j.Auto, Out: j.Out, Mode: mode, Since: since,
-		CopyFirst: j.CopyFirst, Index: true, Pages: true, KeepRaw: j.KeepRaw, Unattended: true, FollowLinks: j.FollowLinks,
-		OutlookSkips: outlookSkips, OutlookExported: outlookExported}
+	// failed run, exactly as the CLI's -unattended does (N13, R18). optsForJob
+	// also installs the Thunderbird pre-sync when the job carries it (§4.2.5),
+	// shared with the Run-now path so a scheduled run and a manual one behave alike.
+	opts := optsForJob(j, inputs, logger.Writer())
+	opts.OutlookSkips = outlookSkips
+	opts.OutlookExported = outlookExported
 	logger.Printf("Scheduled job %q: exporting to %s", j.Name, j.Out)
 	result, runErr := app.Run(ctx, opts, logger, nil)
 	// "Done." only for a run that finished or was cancelled: a refused or failed
