@@ -26,7 +26,7 @@ func (s *imageSource) get() (IndexCapture, bool, error) {
 		return IndexCapture{}, false, nil
 	}
 	s.captured = true
-	return IndexCapture{Image: s.img, Version: s.version, Rows: s.rows}, true, nil
+	return IndexCapture{Image: bytes.NewReader(s.img), Size: int64(len(s.img)), Version: s.version, Rows: s.rows}, true, nil
 }
 
 func setOf(paths []string) map[string]bool {
@@ -111,7 +111,7 @@ func TestAnIndexCaptureIsSealedOnlyWhenItsCommitLands(t *testing.T) {
 	m, s := open(t, out, o)
 	sealedCalls := 0
 	s.SetIndex(func() (IndexCapture, bool, error) {
-		return IndexCapture{Image: pattern(indexChunkSize, 9), Version: 3, Rows: 5, Sealed: func() { sealedCalls++ }}, true, nil
+		return IndexCapture{Image: bytes.NewReader(pattern(indexChunkSize, 9)), Size: indexChunkSize, Version: 3, Rows: 5, Sealed: func() { sealedCalls++ }}, true, nil
 	})
 	if err := m.Save(); !errors.Is(err, ErrLockLost) {
 		t.Fatalf("want the lock-lost refusal, got %v", err)
@@ -131,6 +131,45 @@ func TestAnIndexCaptureIsSealedOnlyWhenItsCommitLands(t *testing.T) {
 	}
 	if v, n := s.IndexMeta(); v != 3 || n != 5 {
 		t.Fatalf("the record says version %d with %d rows, want 3 and 5", v, n)
+	}
+}
+
+// failingReader is an index image whose reads fail from off on.
+type failingReader struct {
+	img []byte
+	off int64
+}
+
+func (r failingReader) ReadAt(p []byte, off int64) (int, error) {
+	if off >= r.off {
+		return 0, errors.New("the scratch file could not be read")
+	}
+	return bytes.NewReader(r.img).ReadAt(p, off)
+}
+
+// covers: MA-759, R37
+// An index captured a chunk at a time from its scratch file that cannot be read
+// part-way is not sealed: the commit keeps the sealed chunks and the row count, and
+// marks the index behind.
+func TestAnIndexThatCannotBeReadIsNotSealed(t *testing.T) {
+	out := fresh(t)
+	m, s := open(t, out, opts(1))
+	s.SetIndex((&imageSource{img: pattern(2*indexChunkSize, 4), version: 3, rows: 7}).get)
+	m.Save()
+	m, s = open(t, out, opts(2))
+	sealed := s.Chunks(vault.ContainerIndex)
+	img := pattern(3*indexChunkSize, 6)
+	s.SetIndex(func() (IndexCapture, bool, error) {
+		return IndexCapture{Image: failingReader{img: img, off: indexChunkSize}, Size: int64(len(img)), Version: 3, Rows: 9}, true, nil
+	})
+	if err := m.Save(); err != nil {
+		t.Fatalf("an unreadable index failed the record's save: %v", err)
+	}
+	if got := s.Chunks(vault.ContainerIndex); len(got) != len(sealed) || got[0] != sealed[0] || !s.IndexBehind() {
+		t.Fatalf("an unreadable capture must keep the sealed chunks and mark the index behind: %v %v %v", got, sealed, s.IndexBehind())
+	}
+	if _, n := s.IndexMeta(); n != 7 {
+		t.Fatalf("an unreadable capture recorded %d rows, want the sealed 7", n)
 	}
 }
 

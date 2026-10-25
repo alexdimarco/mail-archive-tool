@@ -41,7 +41,7 @@ func (si *sealedIndex) register(store *container.Store) {
 		if n == si.sealed {
 			return container.IndexCapture{}, false, nil
 		}
-		img, err := si.idx.Image()
+		img, size, err := si.idx.Capture()
 		if err != nil {
 			return container.IndexCapture{}, false, err
 		}
@@ -49,7 +49,7 @@ func (si *sealedIndex) register(store *container.Store) {
 		if err != nil {
 			return container.IndexCapture{}, false, err
 		}
-		return container.IndexCapture{Image: img, Version: si.idx.Version(), Rows: rows, Sealed: func() { si.sealed = n }}, true, nil
+		return container.IndexCapture{Image: img, Size: size, Version: si.idx.Version(), Rows: rows, Sealed: func() { si.sealed = n }}, true, nil
 	})
 }
 
@@ -91,6 +91,19 @@ func guardLateIndexWrite(si *sealedIndex, store *container.Store, manifest *stat
 	logger.Printf("warning: the search index changed after its last save; it is marked to be caught up")
 	store.MarkIndexBehind()
 	return manifest.Save()
+}
+
+// indexAdd adds one exported message to the run's index; a var so a test can fail it.
+var indexAdd = (*index.Index).Add
+
+// markSealedIndexBehind marks a sealed index behind when a message the run exported
+// could not be added to it: only a catch-up adds it later, and only an index marked
+// behind is caught up (P2b-C16). A plaintext archive (sealed nil) counts the failure
+// in its result, as before.
+func markSealedIndexBehind(sealed *container.Store) {
+	if sealed != nil {
+		sealed.MarkIndexBehind()
+	}
 }
 
 // IndexCatchUp is what a catch-up or keyed rebuild did.
@@ -213,15 +226,19 @@ func RebuildEncrypted(ctx context.Context, opts Options, logger *log.Logger) (In
 	if err != nil {
 		return IndexCatchUp{}, err
 	}
-	idx, err := index.OpenMemory(nil)
+	si, err := openSealedIndex(store, out, manifest.Len(), true, logger)
 	if err != nil {
 		return IndexCatchUp{}, err
 	}
-	defer idx.Close()
-	si := &sealedIndex{idx: idx, sealed: -1}
-	si.register(store)
+	if si == nil {
+		if err := manifest.Save(); err != nil { // the index marked behind
+			return IndexCatchUp{}, manifestSaveFailure(out, err)
+		}
+		return IndexCatchUp{}, withKind(state.FailScratch, fmt.Errorf("%w: the search index cannot be rebuilt without room to work on it", ErrScratchSpace))
+	}
+	defer si.idx.Close()
 	store.MarkIndexBehind()
-	rep, err := catchUpIndex(idx, manifest, units, store, logger)
+	rep, err := catchUpIndex(si.idx, manifest, units, store, logger)
 	if err != nil {
 		return rep, withKind(state.FailIndex, err)
 	}

@@ -381,6 +381,20 @@ behind and committed once more. Found while building it: a capture was counted a
 commit landed, so a commit that failed after the capture let the next one skip the index; a capture now
 counts only once its pointer is written. (2) The scratch file moves to its own slice, **2b-3c**.
 
+*As built (2b-3c, MA-759).* The scratch file is `<scratch folder>/<archive id>/index/search.db` (the
+archive's existing scratch folder, one per archive location, so no second naming scheme), chosen when
+the recorded image or an estimate for the archive's records (6 KiB a message, from the spike) is over
+256 MiB. It is loaded lazily by streaming the image a chunk at a time and captured a chunk at a time from
+the file, so memory stays at one chunk; a write-ahead-log image is refused there (SQLite would create
+companion files). Every indexed run first removes a file a crashed run left. The free-space precheck
+does not refuse the backup: with no room the run goes on without its index, marked behind and said in
+the log (C3, backups never stop for the index); a keyed rebuild without room is refused
+(`scratch` kind). Found while building it: a message a run could not add to the sealed index was
+counted but never marked behind, so no later run added it; it is now marked. Not separately provable:
+a failed load removes its own scratch file, but the replacement load that always follows removes it
+too, so only a run whose replacement also fails depends on it (kept as defence; the next run's
+removal is the backstop).
+
 **Keyed Rebuild** is built in 2b at engine level — the remedy behind the catch-up, and for a damaged
 section — reading content through `Units.Read`, building in memory or the scratch file, never under
 `out`, committing through `container.Commit` at gen+1. Unreachable by users (MA-726). Keyed Reindex

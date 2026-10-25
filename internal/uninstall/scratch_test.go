@@ -34,12 +34,12 @@ func scratchFixture(t *testing.T) (root string, files []string) {
 	}
 	t.Cleanup(func() { os.RemoveAll(root) })
 	arch := filepath.Join(root, "0123456789abcdef0123456789abcdef")
-	for _, d := range []string{"snap", "_outlook-pst"} {
+	for _, d := range []string{"snap", "_outlook-pst", "index"} {
 		if err := os.MkdirAll(filepath.Join(arch, d), 0o700); err != nil {
 			t.Fatal(err)
 		}
 	}
-	files = []string{filepath.Join(arch, "snap", snapshotPrefix+"123.ost"), filepath.Join(arch, "_outlook-pst", "Mailbox.PST")}
+	files = []string{filepath.Join(arch, "snap", snapshotPrefix+"123.ost"), filepath.Join(arch, "_outlook-pst", "Mailbox.PST"), filepath.Join(arch, "index", "search.db")}
 	for _, f := range files {
 		if err := os.WriteFile(f, []byte("plaintext mail"), 0o600); err != nil {
 			t.Fatal(err)
@@ -60,9 +60,10 @@ func listTree(root string) []string {
 	return all
 }
 
-// covers: MA-739, R36, R37
+// covers: MA-739, MA-759, R36, R37
 // Uninstall removes MailArchive's scratch folder — an encrypted archive's leftover
-// working copies — and ONLY what it owns there: exactly the snapshots and PSTs of the
+// working copies — and ONLY what it owns there: exactly the snapshots, PSTs and
+// search index of the
 // shape a run writes, then each folder only when empty, the root last; a dry run lists
 // them and removes nothing; the settings files are still removed. Anything else — a
 // stray file, a file of another name, a folder of another name, a symlink — or a
@@ -85,12 +86,12 @@ func TestUninstallRemovesOnlyTheScratchItOwns(t *testing.T) {
 	}
 	rep, err := Uninstall(cfg, nil, "", true)
 	listedFiles := []string{}
-	if err == nil && len(rep.Scratch) == 6 {
-		listedFiles = append(listedFiles, rep.Scratch[:2]...)
+	if err == nil && len(rep.Scratch) == 8 {
+		listedFiles = append(listedFiles, rep.Scratch[:3]...)
 		sort.Strings(listedFiles)
 		sort.Strings(files)
 	}
-	if err != nil || len(rep.Scratch) != 6 || !reflect.DeepEqual(listedFiles, files) || rep.Scratch[5] != root {
+	if err != nil || len(rep.Scratch) != 8 || !reflect.DeepEqual(listedFiles, files) || rep.Scratch[7] != root {
 		t.Fatalf("the dry run must list the owned files, then their folders, then the root: %+v (%v)", rep, err)
 	}
 	if _, err := os.Stat(files[0]); err != nil {
@@ -112,6 +113,9 @@ func TestUninstallRemovesOnlyTheScratchItOwns(t *testing.T) {
 		},
 		"a file of another name in snap": func(t *testing.T, root string) {
 			os.WriteFile(filepath.Join(root, "0123456789abcdef0123456789abcdef", "snap", "thesis.docx"), nil, 0o600)
+		},
+		"a file of another name in index": func(t *testing.T, root string) {
+			os.WriteFile(filepath.Join(root, "0123456789abcdef0123456789abcdef", "index", "search.db-journal"), nil, 0o600)
 		},
 		"a folder of another name": func(t *testing.T, root string) {
 			os.Mkdir(filepath.Join(root, "0123456789abcdef0123456789abcdef", "photos"), 0o700)

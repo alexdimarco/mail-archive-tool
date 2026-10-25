@@ -258,7 +258,7 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	if opts.Index {
 		idxPath := filepath.Join(opts.Out, "search.db")
 		if sealed != nil {
-			if si, err = openSealedIndex(sealed, logger); err == nil {
+			if si, err = openSealedIndex(sealed, opts.Out, manifest.Len(), false, logger); err == nil && si != nil {
 				idx = si.idx
 			}
 		} else {
@@ -267,6 +267,8 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		if err != nil {
 			return Result{}, withKind(state.FailIndex, indexOpenError(idxPath, opts.Out, err))
 		}
+	}
+	if idx != nil { // nil for a sealed index with no room to work on it: marked behind
 		defer idx.Close()
 		if _, rkErr := idx.RepairKeys(manifest.Rekeyed > 0, state.MigrateKey, logger); rkErr != nil {
 			return Result{}, withKind(state.FailIndex, fmt.Errorf("migrate search index keys: %w", rkErr))
@@ -354,9 +356,10 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	defer warns.flush()
 	exp.OnExported = func(store string, folderPath []string, m *model.Message, relPath, key string) {
 		if idx != nil {
-			if addErr := idx.Add(store, folderPath, m, relPath, key); addErr != nil {
+			if addErr := indexAdd(idx, store, folderPath, m, relPath, key); addErr != nil {
 				indexErrors++
 				warns.add(addErr)
+				markSealedIndexBehind(sealed)
 			}
 		}
 		if hist != nil {

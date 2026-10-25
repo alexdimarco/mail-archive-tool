@@ -84,9 +84,10 @@ type Index struct {
 
 	// lazy, for an index opened with OpenLazy, loads it on first use; until then
 	// only what its sealed record already says is answered (lazy.go).
-	lazy   *lazyLoad
-	loaded bool
-	base   int64 // total_changes() right after the load: Changes counts from here
+	lazy    *lazyLoad
+	loaded  bool
+	base    int64    // total_changes() right after the load: Changes counts from here
+	scratch *os.File // the scratch file an index above the memory budget is worked on in, open to read
 }
 
 // Open opens (creating if needed) a writable index at path and begins a batch.
@@ -546,10 +547,10 @@ func (ix *Index) Close() error {
 		return nil
 	}
 	if err := ix.commitPending(); err != nil {
-		ix.db.Close()
+		ix.close()
 		return err
 	}
-	return ix.db.Close()
+	return ix.close()
 }
 
 func joinNonEmpty(sep string, parts ...string) string {

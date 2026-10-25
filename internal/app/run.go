@@ -642,7 +642,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	if opts.Index {
 		idxPath := filepath.Join(opts.Out, "search.db")
 		if sealed != nil {
-			if si, err = openSealedIndex(sealed, logger); err == nil {
+			if si, err = openSealedIndex(sealed, opts.Out, manifest.Len(), false, logger); err == nil && si != nil {
 				idx = si.idx
 			}
 		} else {
@@ -651,6 +651,8 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		if err != nil {
 			return Result{}, withKind(state.FailIndex, indexOpenError(idxPath, opts.Out, err))
 		}
+	}
+	if idx != nil { // nil for a sealed index with no room to work on it: marked behind
 		defer idx.Close()
 		// Repair legacy index keys to match the re-scoped manifest, driven by
 		// the manifest's own re-key signal (force) — the only trigger that
@@ -667,9 +669,10 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		warns := newIndexWarnings(logger)
 		defer warns.flush()
 		exp.OnExported = func(store string, folderPath []string, m *model.Message, relPath, key string) {
-			if addErr := idx.Add(store, folderPath, m, relPath, key); addErr != nil {
+			if addErr := indexAdd(idx, store, folderPath, m, relPath, key); addErr != nil {
 				indexErrors++
 				warns.add(addErr)
+				markSealedIndexBehind(sealed)
 			}
 		}
 	}

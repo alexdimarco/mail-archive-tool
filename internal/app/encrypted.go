@@ -4,7 +4,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
+	"os"
+	"path/filepath"
 	"time"
 
 	"mail-archive-tool/internal/container"
@@ -66,35 +69,86 @@ func prepareEncrypted(opts Options, manifest *state.Manifest, store *container.S
 	return nil
 }
 
-// openSealedIndex opens an encrypted archive's search index from its sealed record,
-// in memory (phase2b §6), and registers it with the store, whose commits seal its
-// image when it changed. The sealed index is loaded only on first use, so a run with
-// nothing new never decrypts it (P2b-C15). An index that cannot be loaded is replaced
-// by an empty one and marked behind — a backup never stops for its index (P2b-C16);
-// one a newer MailArchive wrote is refused, as Open refuses a newer search.db.
-func openSealedIndex(store *container.Store, logger *log.Logger) (*sealedIndex, error) {
-	if !store.HasIndex() {
-		idx, err := index.OpenMemory(nil)
-		if err != nil {
-			return nil, err
-		}
-		si := &sealedIndex{idx: idx, sealed: -1} // a new index is captured at the first commit
-		si.register(store)
-		return si, nil
-	}
-	si := &sealedIndex{}
-	version, rows := store.IndexMeta()
-	idx, err := index.OpenLazy(store.IndexImage, rows, version, func(err error) {
-		logger.Printf("warning: %v", err)
-		store.MarkIndexBehind()
-		si.damaged = true
-	})
+// openSealedIndex opens an encrypted archive's search index from its sealed record
+// (phase2b §6) — or, fresh, a new empty one in its place — and registers it with the
+// store, whose commits seal its image when it changed. The sealed index is loaded
+// only on first use, so a run with nothing new never decrypts it (P2b-C15): into
+// memory, or above the memory budget into a scratch file (indexScratch). An index
+// that cannot be loaded is replaced by an empty one and marked behind — a backup never
+// stops for its index (P2b-C16); one a newer MailArchive wrote is refused, as Open
+// refuses a newer search.db. nil, with the index marked behind, when the scratch
+// file's drive has no room for it: the run goes on without its index.
+func openSealedIndex(store *container.Store, out string, records int, fresh bool, logger *log.Logger) (*sealedIndex, error) {
+	path, err := indexScratchPath(out)
 	if err != nil {
 		return nil, err
 	}
-	si.idx = idx
+	// A scratch index a crashed run left is removed first, whichever way this run
+	// works: the plaintext it holds ends here.
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		logger.Printf("warning: MailArchive's working copy of the search index could not be removed: %v", err)
+	}
+	fresh = fresh || !store.HasIndex()
+	version, rows := store.IndexMeta()
+	load, write := store.IndexImage, store.WriteIndexImage
+	image := store.IndexSize()
+	si := &sealedIndex{}
+	if fresh {
+		load, write, version, rows, image, si.sealed = func() ([]byte, error) { return nil, nil }, nil, 0, 0, 0, -1 // captured at the first commit
+	}
+	onBad := func(err error) {
+		logger.Printf("warning: %v", err)
+		store.MarkIndexBehind()
+		si.damaged = true
+	}
+	if need := indexScratchNeed(image, records); need == 0 {
+		si.idx, err = index.OpenLazy(load, rows, version, onBad)
+	} else {
+		if free, short := scratchSpaceShort(filepath.Dir(path), need); short {
+			logger.Printf("warning: the search index is not updated this run: working on it needs about %d MB on the drive that holds %s, which has %d MB free — free space on that drive; the next run with room catches it up", need>>20, filepath.Dir(path), free>>20)
+			store.MarkIndexBehind()
+			return nil, nil
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			return nil, fmt.Errorf("create MailArchive's working folder %s: %w", filepath.Dir(path), err)
+		}
+		si.idx, err = index.OpenScratch(path, write, rows, version, onBad)
+	}
+	if err != nil {
+		return nil, err
+	}
 	si.register(store)
 	return si, nil
+}
+
+// indexMemoryBudget is the largest index image worked on in memory: about 3× the
+// image is held while it is captured, within a 768 MiB budget (phase2b §6, P2b-C15).
+// indexBytesPerRecord estimates an index's growth per message (the spike's 120 MB per
+// 20,000 messages, rounded up). Vars so a test can lower them.
+var (
+	indexMemoryBudget   int64 = 256 << 20
+	indexBytesPerRecord int64 = 6 << 10
+)
+
+// indexScratchNeed is the scratch space an encrypted archive's index needs — 0 when
+// it is worked on in memory: an image, or an estimate for the archive's records, over
+// the memory budget.
+func indexScratchNeed(image int64, records int) int64 {
+	est := max(image, int64(records)*indexBytesPerRecord)
+	if est <= indexMemoryBudget {
+		return 0
+	}
+	return est + scratchMargin
+}
+
+// indexScratchPath is where the index of the archive at out is worked on above the
+// memory budget: its scratch folder's index/search.db, outside the archive.
+func indexScratchPath(out string) (string, error) {
+	d, err := archiveScratch(out)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(d, "index", "search.db"), nil
 }
 
 // unitFiles lists the unit files records name, for the sealed record's inventory.

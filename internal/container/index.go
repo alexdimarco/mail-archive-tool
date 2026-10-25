@@ -1,9 +1,11 @@
 package container
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io"
 
 	"mail-archive-tool/internal/vault"
 )
@@ -26,38 +28,56 @@ func (s *Store) IndexImage() ([]byte, error) {
 	if len(s.ptr.Index) == 0 {
 		return nil, nil
 	}
-	img := make([]byte, 0, s.ptr.IndexImage)
+	img := bytes.NewBuffer(make([]byte, 0, s.ptr.IndexImage))
+	if err := s.WriteIndexImage(img); err != nil {
+		return nil, err
+	}
+	return img.Bytes(), nil
+}
+
+// WriteIndexImage is IndexImage streamed to w a chunk at a time, for an index worked
+// on in a scratch file: memory stays bounded by one chunk. A damaged image is
+// ErrIndexImage, possibly after part of it was written.
+func (s *Store) WriteIndexImage(w io.Writer) error {
 	digests := make([][32]byte, 0, len(s.ptr.Index))
+	var n int64
 	for i, e := range s.ptr.Index {
 		if e.I != uint32(i) {
-			return nil, fmt.Errorf("%w: chunk %d is listed at position %d", ErrIndexImage, i, e.I)
+			return fmt.Errorf("%w: chunk %d is listed at position %d", ErrIndexImage, i, e.I)
 		}
 		sealed, _, err := readChunk(s.out, e)
 		if err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrIndexImage, err)
+			return fmt.Errorf("%w: %v", ErrIndexImage, err)
 		}
 		plain, err := s.opts.Key.OpenChunk(vault.ContainerIndex, e.Gen, e.I, sealed)
 		if err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrIndexImage, err)
+			return fmt.Errorf("%w: %v", ErrIndexImage, err)
 		}
 		if i < len(s.ptr.Index)-1 && len(plain) != int(s.ptr.IndexChunk) {
-			return nil, fmt.Errorf("%w: chunk %d is %d bytes, not the chunk size", ErrIndexImage, i, len(plain))
+			return fmt.Errorf("%w: chunk %d is %d bytes, not the chunk size", ErrIndexImage, i, len(plain))
 		}
-		img = append(img, plain...)
+		n += int64(len(plain))
+		if _, err := w.Write(plain); err != nil {
+			return err
+		}
 		digests = append(digests, sha256.Sum256(plain))
 	}
-	if int64(len(img)) != s.ptr.IndexImage {
-		return nil, fmt.Errorf("%w: %d bytes, the pointer says %d", ErrIndexImage, len(img), s.ptr.IndexImage)
+	if n != s.ptr.IndexImage {
+		return fmt.Errorf("%w: %d bytes, the pointer says %d", ErrIndexImage, n, s.ptr.IndexImage)
 	}
 	s.indexDigests = digests
-	return img, nil
+	return nil
 }
 
-// IndexCapture is a capture of the run's index: its image, and the key-format
-// version and row count the record keeps beside it, so a run need not load the
-// index to know them (P2b-C15).
+// IndexSize is the sealed index image's length, as the pointer records it.
+func (s *Store) IndexSize() int64 { return s.ptr.IndexImage }
+
+// IndexCapture is a capture of the run's index: its image to read and its size, and
+// the key-format version and row count the record keeps beside it, so a run need not
+// load the index to know them (P2b-C15).
 type IndexCapture struct {
-	Image   []byte
+	Image   io.ReaderAt
+	Size    int64
 	Version int
 	Rows    int
 	// Sealed is called once the commit that seals this capture has landed; until
@@ -129,12 +149,15 @@ func (s *Store) stageIndex(gen uint64) stagedIndex {
 	if !changed {
 		return keep
 	}
-	img := c.Image
 	var table []Entry
 	var digests [][32]byte
-	for off, i := 0, 0; off < len(img); off, i = off+indexChunkSize, i+1 {
-		end := min(off+indexChunkSize, len(img))
-		plain := img[off:end]
+	buf := make([]byte, indexChunkSize) // one chunk at a time: memory bounded for a scratch file
+	for off, i := int64(0), 0; off < c.Size; off, i = off+indexChunkSize, i+1 {
+		plain := buf[:min(indexChunkSize, c.Size-off)]
+		if _, err := c.Image.ReadAt(plain, off); err != nil && !(errors.Is(err, io.EOF) && off+int64(len(plain)) == c.Size) {
+			s.MarkIndexBehind()
+			return keep
+		}
 		d := sha256.Sum256(plain)
 		digests = append(digests, d)
 		if i < len(s.indexDigests) && i < len(s.ptr.Index) && s.indexDigests[i] == d {
@@ -149,5 +172,5 @@ func (s *Store) stageIndex(gen uint64) stagedIndex {
 		table = append(table, e)
 	}
 	s.hdr.IndexRows = c.Rows // sealed in this commit's header, beside the chunks
-	return stagedIndex{table: table, length: int64(len(img)), digests: digests, version: c.Version, sealed: c.Sealed, captured: true}
+	return stagedIndex{table: table, length: c.Size, digests: digests, version: c.Version, sealed: c.Sealed, captured: true}
 }

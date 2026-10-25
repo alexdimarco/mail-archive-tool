@@ -2,7 +2,10 @@ package index
 
 import (
 	"errors"
+	"io"
 	"log"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -75,6 +78,102 @@ func TestALazyIndexLoadsOnlyOnFirstUse(t *testing.T) {
 	}
 	if n, _ := ix.Count(); n != 2 || *calls != 1 {
 		t.Fatalf("a loaded index counts %d rows after %d load(s), want 2 after 1", n, *calls)
+	}
+}
+
+// covers: MA-759, R37
+// An index above the memory budget is worked on in a scratch file (design phase2b
+// §6, P2b-C15): loaded on first use by streaming the image into it, readable only by
+// its owner, searchable and writable there with nothing beside it (no journal file);
+// its capture is the file itself and loads back with every row; a file already at
+// the path is replaced; and closing the index removes it.
+func TestAScratchIndexIsWorkedOnInAFileAndRemovedOnClose(t *testing.T) {
+	img, _, _ := lazyImage(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "search.db")
+	if err := os.WriteFile(path, []byte("left by a crashed run"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	writes := 0
+	ix, err := OpenScratch(path, func(w io.Writer) error { writes++; _, err := w.Write(img); return err }, 2, indexVersion, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := ix.Count(); n != 2 || writes != 0 {
+		t.Fatalf("an unloaded scratch index counts %d after %d write(s), want 2 after none", n, writes)
+	}
+	res, total, err := ix.Search(Query{Text: "acme invoice"})
+	if err != nil || total != 1 || res[0].Subject != "Acme invoice #4471" {
+		t.Fatalf("search in the scratch file: %d %+v %v", total, res, err)
+	}
+	fi, err := os.Stat(path)
+	if err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("the scratch file must exist, readable only by its owner: %v %v", fi, err)
+	}
+	jul := time.Date(2025, 7, 3, 9, 0, 0, 0, time.UTC)
+	if err := ix.Add("s", []string{"Inbox"}, mkMsg("Third", "dan", "me", "a third", jul), "Inbox/z.html", "s\x00c"); err != nil {
+		t.Fatal(err)
+	}
+	r, size, err := ix.Capture()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make([]byte, size)
+	if _, err := r.ReadAt(got, 0); err != nil && err != io.EOF {
+		t.Fatal(err)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 1 {
+		t.Fatalf("the scratch folder holds %d files, want only the index", len(entries))
+	}
+	again, err := OpenMemory(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := again.Count(); n != 3 {
+		t.Fatalf("the captured scratch index holds %d rows, want 3", n)
+	}
+	again.Close()
+	if err := ix.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("closing the index must remove its scratch file (%v)", err)
+	}
+}
+
+// covers: MA-759, R37
+// A scratch image that cannot be loaded — its stream fails part-way, or it is a
+// write-ahead-log database, which would make SQLite create companion files — is
+// reported and replaced by an empty index in a fresh file; a new scratch index (no
+// image) starts empty without a report.
+func TestAScratchIndexThatCannotLoadIsReplacedByAnEmptyOne(t *testing.T) {
+	img, _, _ := lazyImage(t)
+	wal := append([]byte(nil), img...)
+	wal[18], wal[19] = 2, 2
+	for name, write := range map[string]func(io.Writer) error{
+		"stream fails": func(w io.Writer) error { w.Write(img[:4096]); return errors.New("a damaged chunk") },
+		"wal image":    func(w io.Writer) error { _, err := w.Write(wal); return err },
+		"new index":    nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "search.db")
+			var bad []error
+			ix, err := OpenScratch(path, write, 2, indexVersion, func(err error) { bad = append(bad, err) })
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer ix.Close()
+			if n, err := ix.Folders(); err != nil || len(n) != 0 {
+				t.Fatalf("the replacement index has folders %v (%v), want none", n, err)
+			}
+			if want := map[bool]int{true: 0, false: 1}[write == nil]; len(bad) != want {
+				t.Fatalf("the load was reported %d time(s), want %d", len(bad), want)
+			}
+			if entries, _ := os.ReadDir(dir); len(entries) != 1 {
+				t.Fatalf("the scratch folder holds %d files, want only the index", len(entries))
+			}
+		})
 	}
 }
 

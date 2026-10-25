@@ -27,7 +27,8 @@ var ErrScratchUnexpected = errors.New("MailArchive's working folder holds someth
 
 // ScratchTargets is what uninstall removes of the scratch folder at root, deepest
 // first: the files an encrypted archive's run leaves — -copy-first snapshots in
-// <archive id>/snap/ and the Outlook app's PSTs in <archive id>/_outlook-pst/ — and
+// <archive id>/snap/, the Outlook app's PSTs in <archive id>/_outlook-pst/ and the
+// search index a crashed run left in <archive id>/index/search.db — and
 // then those folders and root itself. It deletes nothing, and never recurses beyond
 // that shape: a symlink, a folder or file of any other name or kind, or a root that
 // overlaps a known archive refuses (ErrScratchUnexpected, ErrOverlap), and the folders
@@ -77,6 +78,8 @@ func ScratchTargets(root string, knownArchives []string) ([]string, error) {
 				owned = func(n string) bool { return strings.HasPrefix(n, snapshotPrefix) }
 			case k.Type().IsDir() && k.Name() == "_outlook-pst":
 				owned = func(n string) bool { return strings.EqualFold(filepath.Ext(n), ".pst") }
+			case k.Type().IsDir() && k.Name() == "index":
+				owned = func(n string) bool { return n == "search.db" }
 			default:
 				return nil, unexpected(sub)
 			}

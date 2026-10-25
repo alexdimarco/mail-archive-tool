@@ -100,6 +100,19 @@ func checkScratchSpace(dir string, inputs []string) error {
 		return nil
 	}
 	need += scratchMargin
+	free, short := scratchSpaceShort(dir, need)
+	if !short {
+		return nil
+	}
+	return withKind(state.FailScratch, fmt.Errorf("%w: a -copy-first copy needs about %d MB on the drive that holds %s, which has %d MB free — free space on that drive, or run without -copy-first",
+		ErrScratchSpace, need>>20, dir, free>>20))
+}
+
+// scratchSpaceShort reports whether the drive that will hold dir has less than need
+// bytes free, and how much it has. It measures the nearest existing folder above dir:
+// creating dir would be a write. Not short when nothing can be measured — the write
+// itself then reports the drive.
+func scratchSpaceShort(dir string, need int64) (free uint64, short bool) {
 	probe := dir
 	for {
 		if fi, err := os.Stat(probe); err == nil && fi.IsDir() {
@@ -107,16 +120,15 @@ func checkScratchSpace(dir string, inputs []string) error {
 		}
 		parent := filepath.Dir(probe)
 		if parent == probe {
-			return nil // no folder to measure: the snapshot's own write reports the drive
+			return 0, false
 		}
 		probe = parent
 	}
 	free, err := scratchFree(probe)
 	if err != nil || free >= uint64(need) {
-		return nil
+		return free, false
 	}
-	return withKind(state.FailScratch, fmt.Errorf("%w: a -copy-first copy needs about %d MB on the drive that holds %s, which has %d MB free — free space on that drive, or run without -copy-first",
-		ErrScratchSpace, need>>20, dir, free>>20))
+	return free, true
 }
 
 // scratchFatalFor words a run-fatal failure of the scratch folder's drive (full,

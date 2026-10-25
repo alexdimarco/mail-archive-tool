@@ -36,22 +36,23 @@ var ErrImage = errors.New("index: the sealed search index image is not a databas
 // or nil for a new one — in memory, and begins as Open does: the schema made if
 // absent, the version resolved, a newer one refused (ErrNewerFormat).
 func OpenMemory(image []byte) (*Index, error) {
-	db, err := sql.Open("sqlite", ":memory:")
+	db, err := openOne(":memory:")
 	if err != nil {
-		return nil, fmt.Errorf("open index: %w", err)
+		return nil, err
 	}
-	// One connection, never recycled: each new :memory: connection is a new, empty
-	// database.
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	db.SetConnMaxLifetime(0)
-	db.SetConnMaxIdleTime(0)
 	if len(image) > 0 {
 		if err := restore(db, image); err != nil {
 			db.Close()
 			return nil, err
 		}
 	}
+	return begin(db)
+}
+
+// begin readies an encrypted archive's index on db's one connection — in memory or
+// in its scratch file: the pragmas, the schema made if absent, the version resolved,
+// a newer one refused (ErrNewerFormat). db is closed on failure.
+func begin(db *sql.DB) (*Index, error) {
 	if _, err := db.Exec(memoryPragmas); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("index pragmas: %w", err)
@@ -77,6 +78,20 @@ func OpenMemory(image []byte) (*Index, error) {
 		return nil, fmt.Errorf("the sealed search index was %w (format version %d; this build understands %d): upgrade this copy of mailarchive", ErrNewerFormat, version, indexVersion)
 	}
 	return &Index{db: db, version: version, memory: true}, nil
+}
+
+// openOne opens dsn on one connection, never recycled: each new :memory: connection
+// is a new, empty database, and a scratch file has one writer.
+func openOne(dsn string) (*sql.DB, error) {
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open index: %w", err)
+	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxLifetime(0)
+	db.SetConnMaxIdleTime(0)
+	return db, nil
 }
 
 // restore loads image into db's one connection through a read-only VFS that serves

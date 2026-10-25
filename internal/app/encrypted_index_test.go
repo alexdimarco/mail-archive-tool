@@ -1,16 +1,20 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"mail-archive-tool/internal/container"
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/index"
+	"mail-archive-tool/internal/model"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/vault"
 )
@@ -232,7 +236,7 @@ func TestAFailedCommitLeavesTheIndexUnsealed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	si, err := openSealedIndex(s, discard())
+	si, err := openSealedIndex(s, out, m.Len(), false, discard())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,11 +263,11 @@ func TestADamagedIndexFoundAtLoadIsMarkedBehind(t *testing.T) {
 		t.Fatal(err)
 	}
 	damageIndexChunk(t, out, key)
-	_, s, err := container.LoadManifest(out, container.LoadOptions{Key: key, RunStart: time.Now().UTC(), Units: unitFiles(&export.Units{Root: out, Key: key})})
+	m, s, err := container.LoadManifest(out, container.LoadOptions{Key: key, RunStart: time.Now().UTC(), Units: unitFiles(&export.Units{Root: out, Key: key})})
 	if err != nil {
 		t.Fatal(err)
 	}
-	si, err := openSealedIndex(s, discard())
+	si, err := openSealedIndex(s, out, m.Len(), false, discard())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,6 +282,182 @@ func TestADamagedIndexFoundAtLoadIsMarkedBehind(t *testing.T) {
 	if !s.IndexBehind() || !si.damaged {
 		t.Fatalf("a damaged index found at load must be marked behind (%v) and owed a heal (%v)", s.IndexBehind(), si.damaged)
 	}
+}
+
+// forceScratchIndex makes every encrypted archive's index be worked on in a scratch
+// file, by lowering the memory budget below nothing (so even a new, empty index is
+// over it), for the test's length.
+func forceScratchIndex(t *testing.T) {
+	t.Helper()
+	budget := indexMemoryBudget
+	indexMemoryBudget = -1
+	t.Cleanup(func() { indexMemoryBudget = budget })
+}
+
+// covers: MA-759, R37
+// An index above the memory budget is worked on in a scratch file in MailArchive's
+// per-user cache folder, never in the archive (phase2b §6, P2b-C15): while the run
+// adds to it the file exists there, readable only by its owner; the run's commits
+// seal it whole; the archive holds no search.db; and the file is gone when the run
+// ends.
+func TestALargeIndexIsWorkedOnInTheScratchFolder(t *testing.T) {
+	forceScratchIndex(t)
+	store := filepath.Join(tmpDir(t), "store")
+	mbox := filepath.Join(store, "Inbox")
+	p14Write(t, mbox, indexMbox("first", "one"))
+	out, key := encryptedOut(t)
+	path, err := indexScratchPath(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var during []os.FileInfo
+	add := indexAdd
+	indexAdd = func(ix *index.Index, s string, f []string, m *model.Message, rel, k string) error {
+		err := add(ix, s, f, m, rel, k) // the first add of a run may be what loads the index
+		fi, _ := os.Stat(path)
+		during = append(during, fi)
+		return err
+	}
+	t.Cleanup(func() { indexAdd = add })
+	opts := Options{Inputs: []string{store}, Out: out, Key: key, Index: true}
+	for _, mail := range []string{indexMbox("first", "one"), indexMbox("first", "one") + indexMbox("second", "two")} {
+		p14Write(t, mbox, mail)
+		if _, err := Run(context.Background(), opts, discard(), nil); err != nil {
+			t.Fatal(err)
+		}
+		requireWholeIndex(t, out, key)
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("the scratch index outlived the run (%v)", err)
+		}
+	}
+	if len(during) != 2 {
+		t.Fatalf("%d messages added, want 2", len(during))
+	}
+	for _, fi := range during {
+		if fi == nil || fi.Mode().Perm() != 0o600 {
+			t.Fatalf("while the run adds to it, the index must be a scratch file readable only by its owner: %v", fi)
+		}
+	}
+	for _, p := range treeOf(t, out) {
+		if strings.Contains(p, "search.db") {
+			t.Fatalf("the archive holds %s", p)
+		}
+	}
+}
+
+// covers: MA-759, R37
+// An index is worked on in memory while its image, and an estimate for the archive's
+// records, both fit the budget; either one over it moves it to a scratch file sized
+// for the larger, with the margin.
+func TestTheIndexScratchChoice(t *testing.T) {
+	under := int(indexMemoryBudget/indexBytesPerRecord) - 1
+	over := under + 2
+	for _, c := range []struct {
+		image   int64
+		records int
+		want    int64
+	}{
+		{0, 0, 0},
+		{indexMemoryBudget, under, 0},
+		{indexMemoryBudget + 1, 0, indexMemoryBudget + 1 + scratchMargin},
+		{0, over, int64(over)*indexBytesPerRecord + scratchMargin},
+		{indexMemoryBudget * 2, over, indexMemoryBudget*2 + scratchMargin},
+	} {
+		if got := indexScratchNeed(c.image, c.records); got != c.want {
+			t.Errorf("image %d, %d records: scratch need %d, want %d", c.image, c.records, got, c.want)
+		}
+	}
+}
+
+// covers: MA-759, R37
+// A scratch index a crashed run left — plaintext of the archive's index on local
+// disk — is removed by the archive's next run, even one that works in memory and
+// never loads the index.
+func TestAScratchIndexACrashLeftIsRemovedByTheNextRun(t *testing.T) {
+	src := encryptedSourcePST(t)
+	out, key := encryptedOut(t)
+	opts := Options{Inputs: []string{src}, Out: out, Key: key, Index: true}
+	if _, err := Run(context.Background(), opts, discard(), nil); err != nil {
+		t.Fatal(err)
+	}
+	path, _ := indexScratchPath(out)
+	p14Write(t, path, "the plaintext index a crashed run left")
+	if _, err := Run(context.Background(), opts, discard(), nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("the next run must remove a crashed run's scratch index (%v)", err)
+	}
+}
+
+// covers: MA-759, R37
+// With no room for the scratch index on its drive the backup still runs, without
+// its index: the run says why, the index is marked behind, nothing is left in the
+// scratch folder; the next run with room catches the index up whole. A keyed rebuild
+// without room is refused with the scratch-space kind.
+func TestNoRoomForTheScratchIndexStillBacksUp(t *testing.T) {
+	forceScratchIndex(t)
+	src := encryptedSourcePST(t)
+	out, key := encryptedOut(t)
+	free := scratchFree
+	scratchFree = func(string) (uint64, error) { return 1 << 20, nil }
+	t.Cleanup(func() { scratchFree = free })
+	var said bytes.Buffer
+	if _, err := Run(context.Background(), Options{Inputs: []string{src}, Out: out, Key: key, Index: true}, log.New(&said, "", 0), nil); err != nil {
+		t.Fatalf("no room for the index stopped the backup: %v", err)
+	}
+	if !strings.Contains(said.String(), "the search index is not updated this run") {
+		t.Fatalf("the run must say why its index was not updated:\n%s", said.String())
+	}
+	m := loadSealed(t, out, key)
+	if m.Len() == 0 {
+		t.Fatal("fixture: nothing was backed up")
+	}
+	if _, s, err := container.LoadManifest(out, container.LoadOptions{Key: key, RunStart: time.Now().UTC(), Units: unitFiles(&export.Units{Root: out, Key: key})}); err != nil || !s.IndexBehind() {
+		t.Fatalf("the index must be marked behind (%v)", err)
+	}
+	path, _ := indexScratchPath(out)
+	if _, err := os.Stat(filepath.Dir(path)); !os.IsNotExist(err) {
+		t.Fatalf("a run with no room left something in the scratch folder (%v)", err)
+	}
+	if _, err := RebuildEncrypted(context.Background(), Options{Out: out, Key: key}, discard()); !errors.Is(err, ErrScratchSpace) || FailureKind(err) != state.FailScratch {
+		t.Fatalf("a rebuild without room: want the scratch-space refusal, got %v (%s)", err, FailureKind(err))
+	}
+	scratchFree = free
+	if _, err := Run(context.Background(), Options{Inputs: []string{src}, Out: out, Key: key, Index: true}, discard(), nil); err != nil {
+		t.Fatal(err)
+	}
+	requireWholeIndex(t, out, key)
+}
+
+// covers: MA-759, R37
+// A message a run exported but could not add to the sealed index marks the index
+// behind, so the next indexed run adds it (P2b-C16) — not left out of search for good.
+func TestAMessageTheIndexMissedIsCaughtUpLater(t *testing.T) {
+	src := encryptedSourcePST(t)
+	out, key := encryptedOut(t)
+	add := indexAdd
+	failed := 0
+	indexAdd = func(ix *index.Index, s string, f []string, m *model.Message, rel, k string) error {
+		if failed == 0 {
+			failed++
+			return errors.New("the index could not take this message")
+		}
+		return add(ix, s, f, m, rel, k)
+	}
+	t.Cleanup(func() { indexAdd = add })
+	res, err := Run(context.Background(), Options{Inputs: []string{src}, Out: out, Key: key, Index: true}, discard(), nil)
+	if err != nil || failed != 1 || res.IndexErrors != 1 {
+		t.Fatalf("fixture: one failed add, got %d (%d index errors, %v)", failed, res.IndexErrors, err)
+	}
+	if _, s, _ := sealedIndexOf(t, out, key); !s.IndexBehind() {
+		t.Fatal("a message the index missed must mark it behind")
+	}
+	indexAdd = add
+	if _, err := Run(context.Background(), Options{Inputs: []string{src}, Out: out, Key: key, Index: true}, discard(), nil); err != nil {
+		t.Fatal(err)
+	}
+	requireWholeIndex(t, out, key)
 }
 
 func firstKey(m *state.Manifest) string {
