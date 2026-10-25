@@ -40,6 +40,9 @@ const probeEvery = 50
 type RunFatalError struct {
 	Msg string
 	Err error
+	// scratch says the failing drive is MailArchive's working folder (an encrypted
+	// archive's -copy-first snapshot), not the archive's.
+	scratch bool
 }
 
 func (e *RunFatalError) Error() string { return e.Msg }
@@ -109,11 +112,12 @@ func writtenPath(err error) string {
 
 // localRun is what one Run keeps across its local sources.
 type localRun struct {
-	exp    *export.Exporter
-	out    string
-	runAt  time.Time
-	logger *log.Logger
-	lock   *lockfile.Lock // the archive lock the probe asks "still held?"; nil in a test
+	exp     *export.Exporter
+	out     string
+	snapDir string // where -copy-first snapshots go: out, or an encrypted archive's scratch folder
+	runAt   time.Time
+	logger  *log.Logger
+	lock    *lockfile.Lock // the archive lock the probe asks "still held?"; nil in a test
 
 	outlookFresh map[string]bool // source ids (state.PathSourceID) of the PSTs this run's Outlook export wrote
 

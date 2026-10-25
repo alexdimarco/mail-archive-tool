@@ -116,7 +116,7 @@ func TestAnEncryptedArchivesRunRecordsHoldOnlyTheAllowList(t *testing.T) {
 // generic failure — never as the kind string or any other text.
 func TestEveryFailureKindHasFixedWords(t *testing.T) {
 	kinds := []string{FailEncryptedNeedsKey, FailEncryptedRefused, FailNoSources, FailSourceUnreachable,
-		FailSourceUnreadable, FailArchiveUnwritable, FailArchiveBusy, FailLockLost, FailManifestUnreadable,
+		FailSourceUnreadable, FailArchiveUnwritable, FailScratch, FailArchiveBusy, FailLockLost, FailManifestUnreadable,
 		FailManifestSave, FailIndex, ErrKindIndexBusy, ErrKindIndexUnwritable, ErrKindIndexDamaged,
 		ErrKindIndexDamagedNoManifest, ErrKindServiceUnavailable, FailSignIn, FailMailboxFailed, FailPartial, FailRunFailed}
 	if len(kinds) != len(failureText) {

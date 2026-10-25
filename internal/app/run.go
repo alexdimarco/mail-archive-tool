@@ -455,6 +455,19 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 			return Result{}, err
 		}
 	}
+	// Where -copy-first snapshots go (an encrypted archive's are outside it, P2a-C12),
+	// and — for an encrypted archive — whether its largest one fits, before anything
+	// is written.
+	snapDir, err := snapshotDir(opts)
+	if err == nil && snapDir != opts.Out {
+		err = checkScratchSpace(snapDir, files)
+	}
+	if err != nil {
+		if opts.Unattended {
+			RecordRefusedRun(opts, err)
+		}
+		return Result{}, err
+	}
 	if err := os.MkdirAll(opts.Out, 0o755); err != nil {
 		return Result{}, withKind(state.FailArchiveUnwritable, fmt.Errorf("create output dir: %w", err))
 	}
@@ -541,6 +554,20 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// orphan zips. Only files older than this run's start are touched.
 	if n := export.SweepOrphans(opts.Out, time.Now(), logger); n > 0 {
 		logger.Printf("swept %d orphaned temp/zip file(s) from an interrupted run", n)
+	}
+	// An encrypted archive's snapshots live in its scratch folder: a crashed run's are
+	// reaped there, and the folder is removed (when empty) on every exit.
+	if snapDir != opts.Out {
+		if err := os.MkdirAll(snapDir, 0o700); err != nil {
+			return Result{}, scratchFatalFor(snapDir, err)
+		}
+		defer func() { // each only when empty: an Outlook export may share the archive's folder
+			_ = os.Remove(snapDir)
+			_ = os.Remove(filepath.Dir(snapDir))
+		}()
+		if n := export.SweepTemps(snapDir, time.Now(), logger); n > 0 {
+			logger.Printf("swept %d leftover working cop(ies) from an interrupted run", n)
+		}
 	}
 
 	if manifest == nil {
@@ -635,7 +662,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// The local run's own state: what it records of faults and closes of gaps. A
 	// fault counts as processed for the checkpoint gate below, so a stretch of
 	// nothing but faults still saves and still re-checks the lock (FC12).
-	lr := &localRun{exp: exp, out: opts.Out, runAt: runAt, logger: logger, lock: lock}
+	lr := &localRun{exp: exp, out: opts.Out, snapDir: snapDir, runAt: runAt, logger: logger, lock: lock}
 	for _, p := range opts.OutlookExported {
 		if lr.outlookFresh == nil {
 			lr.outlookFresh = map[string]bool{}
@@ -1245,14 +1272,22 @@ func runFile(ctx context.Context, lr *localRun, path string, copyFirst, followLi
 		// Snapshotting only applies to single files (e.g. a locked .ost);
 		// mail-store directories are read in place.
 		if fi, err := os.Stat(path); err == nil && !fi.IsDir() {
-			snap, cleanup, err := snapshot(path, out)
+			dir := lr.snapDir
+			if dir == "" {
+				dir = out
+			}
+			snap, cleanup, err := snapshot(path, dir)
 			if err != nil {
 				// A failure of the ARCHIVE's volume (full, read-only, gone) is the run's, as
 				// when an export write meets it; one reading the source file is the file's
-				// own (S2A-AC9).
+				// own (S2A-AC9). An encrypted archive's snapshot is on MailArchive's working
+				// folder's drive, and is worded as that drive's.
 				var pe *fs.PathError
 				toArchive := errors.As(err, &pe) && strings.HasPrefix(filepath.Base(pe.Path), snapshotPrefix)
-				if kind := export.FatalKindAt(err, out); kind != export.FatalNone && toArchive {
+				if kind := export.FatalKindAt(err, dir); kind != export.FatalNone && toArchive {
+					if dir != out {
+						return scratchFatalFor(dir, err)
+					}
 					return runFatalFor(out, kind, err)
 				}
 				return err
@@ -1316,10 +1351,11 @@ const snapshotPrefix = export.SnapshotPrefix
 // the way a full drive does.
 var snapshotCopy = io.Copy
 
-// snapshot copies src to a temporary file ON THE ARCHIVE'S VOLUME (the drive
-// the operator chose and sized — a multi-gigabyte .ost must not land in a
-// small system temp directory at 02:00), returning its path and a cleanup func.
-func snapshot(src, out string) (string, func(), error) {
+// snapshot copies src to a temporary file in dir — the archive itself, ON THE
+// ARCHIVE'S VOLUME (the drive the operator chose and sized — a multi-gigabyte
+// .ost must not land in a small system temp directory at 02:00), or an encrypted
+// archive's scratch folder (snapshotDir) — returning its path and a cleanup func.
+func snapshot(src, dir string) (string, func(), error) {
 	// The operator's own spelling may be a link (the file it names is copied); the open
 	// neither follows one nor waits on a pipe: a FIFO given as the input held the run, and
 	// the archive lock, until a writer appeared (FC2, S2B-AO4).
@@ -1333,7 +1369,7 @@ func snapshot(src, out string) (string, func(), error) {
 	}
 	defer in.Close()
 
-	tmp, err := os.CreateTemp(out, snapshotPrefix+"*"+filepath.Ext(src))
+	tmp, err := os.CreateTemp(dir, snapshotPrefix+"*"+filepath.Ext(src))
 	if err != nil {
 		return "", nil, fmt.Errorf("create snapshot: %w", err)
 	}

@@ -18,8 +18,12 @@ type Report struct {
 	Schedules     []string // scheduler entry names removed
 	ClearedSignIn bool     // a device sign-in / client secret was present and cleared
 	ConfigFiles   []string // config-dir files removed (absolute paths)
-	KeptArchives  []string // archives left untouched, named for the owner
-	BinaryNote    string   // how to remove the program itself (no self-delete, U-C6)
+	// Scratch is what of MailArchive's working folder (job.ScratchDir) is removed: an
+	// encrypted archive's leftover working copies and their folders. Empty — and so not
+	// shown — when there is none.
+	Scratch      []string
+	KeptArchives []string // archives left untouched, named for the owner
+	BinaryNote   string   // how to remove the program itself (no self-delete, U-C6)
 }
 
 // Seams (overridable in tests, so a test touches no real scheduler or credential store):
@@ -47,6 +51,12 @@ func Uninstall(configDir string, knownArchives []string, exe string, dryRun bool
 	if err != nil {
 		return nil, err // ErrOverlap or a read error — nothing is touched
 	}
+	var scratch []string
+	if root, rerr := scratchRoot(); rerr == nil {
+		if scratch, err = ScratchTargets(root, knownArchives); err != nil {
+			return nil, err // ErrOverlap, ErrScratchUnexpected or a read error — nothing is touched
+		}
+	}
 	entries := listSchedules()
 	tenant, clientID, gerr := graphKeys(configDir)
 	if gerr != nil {
@@ -58,6 +68,7 @@ func Uninstall(configDir string, knownArchives []string, exe string, dryRun bool
 		BinaryNote:    binaryNote(exe),
 		ClearedSignIn: tenant != "" || clientID != "",
 		ConfigFiles:   append([]string(nil), cfgTargets...),
+		Scratch:       scratch,
 	}
 	for _, e := range entries {
 		rep.Schedules = append(rep.Schedules, e.Name)
@@ -80,7 +91,14 @@ func Uninstall(configDir string, knownArchives []string, exe string, dryRun bool
 			return rep, cerr
 		}
 	}
-	// 3) The config files (the enumeration sources, deleted last).
+	// 3) MailArchive's working folder: an encrypted archive's leftover working copies,
+	// deepest first, each folder only when empty (os.Remove, never RemoveAll).
+	for _, p := range scratch {
+		if derr := os.Remove(p); derr != nil && !errors.Is(derr, fs.ErrNotExist) {
+			return rep, fmt.Errorf("could not remove %s from MailArchive's working folder (stopping; the settings were not removed): %w", p, derr)
+		}
+	}
+	// 4) The config files (the enumeration sources, deleted last).
 	for _, f := range cfgTargets {
 		if derr := os.Remove(f); derr != nil && !errors.Is(derr, fs.ErrNotExist) {
 			return rep, fmt.Errorf("could not remove %s: %w", f, derr)

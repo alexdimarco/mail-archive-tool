@@ -705,7 +705,7 @@ func (d *dashboard) uninstallAction(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
-	writeJSON(w, map[string]any{
+	plan := map[string]any{
 		"ok":            true,
 		"done":          in.Confirm,
 		"schedules":     rep.Schedules,
@@ -713,7 +713,11 @@ func (d *dashboard) uninstallAction(w http.ResponseWriter, r *http.Request) {
 		"clearedSignIn": rep.ClearedSignIn,
 		"keptArchives":  rep.KeptArchives,
 		"binaryNote":    rep.BinaryNote,
-	})
+	}
+	if len(rep.Scratch) > 0 { // only when there is any: an encrypted archive's leftover working copies
+		plan["scratchFiles"] = rep.Scratch
+	}
+	writeJSON(w, plan)
 }
 
 // knownArchivePaths lists the archive folders recorded in the Desktop's index, so a full

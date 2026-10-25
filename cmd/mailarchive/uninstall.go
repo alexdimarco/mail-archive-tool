@@ -66,6 +66,13 @@ func printUninstallPlan(w io.Writer, rep *uninstall.Report) {
 	for _, f := range rep.ConfigFiles {
 		fmt.Fprintf(w, "      %s\n", f)
 	}
+	// Only when there is any: an encrypted archive's leftover working copies (P2a-C12).
+	if len(rep.Scratch) > 0 {
+		fmt.Fprintf(w, "  - leftover working copies in MailArchive's working folder: %d\n", len(rep.Scratch))
+		for _, f := range rep.Scratch {
+			fmt.Fprintf(w, "      %s\n", f)
+		}
+	}
 	if rep.ClearedSignIn {
 		fmt.Fprintln(w, "  - the saved Microsoft sign-in (token and app secret)")
 	}

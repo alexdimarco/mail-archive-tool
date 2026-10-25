@@ -48,6 +48,8 @@ func FailureKind(err error) string {
 		return state.FailEncryptedRefused
 	case errors.As(err, &unreachable):
 		return state.FailSourceUnreachable
+	case errors.As(err, &fatal) && fatal.scratch:
+		return state.FailScratch
 	case errors.As(err, &fatal):
 		return state.FailArchiveUnwritable
 	case errors.As(err, &outage):

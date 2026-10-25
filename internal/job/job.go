@@ -61,6 +61,20 @@ func Dir() (string, error) {
 	return filepath.Join(base, "mailarchive"), nil
 }
 
+// ScratchDir is MailArchive's per-user scratch folder: where an encrypted archive's
+// run keeps its plaintext working copies (a -copy-first snapshot, the Outlook app's
+// PSTs) outside the archive (design-encrypted-archives-phase2a §4, P2a-C12). It is
+// in the per-user CACHE folder, not Dir: on Windows Dir is the roaming profile, which
+// would upload multi-gigabyte mailbox copies; the cache folder is local (Windows
+// %LocalAppData%, macOS ~/Library/Caches, Linux $XDG_CACHE_HOME). Uninstall removes it.
+func ScratchDir() (string, error) {
+	base, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, "mailarchive", "scratch"), nil
+}
+
 // LastArchiveFile is the file the GUI wizard remembers the archive it last worked on in.
 func LastArchiveFile() (string, error) {
 	d, err := Dir()
