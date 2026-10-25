@@ -166,6 +166,7 @@ type Result struct {
 	ManifestBefore int
 	Indexed        int    // messages in the search index (0 if indexing disabled)
 	IndexErrors    int    // messages the index refused (R8 parity broken; surfaced, not swallowed)
+	IndexBehind    bool   // an encrypted archive's indexed run ended with its sealed index still missing messages
 	Issues         int    // rows in the regenerated verification report
 	ReportPath     string // path to the verification report ("" when nothing to report)
 	Fillable       int    // manifest records still missing content an on-demand source may deliver (a record that is only partly read is counted in Unreadable instead)
@@ -653,13 +654,19 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		}
 	}
 	if idx != nil { // nil for a sealed index with no room to work on it: marked behind
-		defer idx.Close()
+		defer closeRunIndex(idx, si != nil, logger)
 		// Repair legacy index keys to match the re-scoped manifest, driven by
 		// the manifest's own re-key signal (force) — the only trigger that
 		// survives an old-binary excursion — or the index's own version (F2).
 		if _, rkErr := idx.RepairKeys(manifest.Rekeyed > 0, state.MigrateKey, logger); rkErr != nil {
-			return Result{}, withKind(state.FailIndex, fmt.Errorf("migrate search index keys: %w", rkErr))
+			if si == nil {
+				return Result{}, withKind(state.FailIndex, fmt.Errorf("migrate search index keys: %w", rkErr))
+			}
+			si.drop(sealed, rkErr, logger) // a sealed index never stops the backup
+			idx, si = nil, nil
 		}
+	}
+	if idx != nil {
 		// A sealed index marked behind — or none at all beside records (indexing turned
 		// on for an archive that never had it) — is caught up from the sealed units
 		// before the walk; the run's commits seal it (phase2b §6, P2b-C16).
@@ -669,10 +676,9 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		warns := newIndexWarnings(logger)
 		defer warns.flush()
 		exp.OnExported = func(store string, folderPath []string, m *model.Message, relPath, key string) {
-			if addErr := indexAdd(idx, store, folderPath, m, relPath, key); addErr != nil {
+			if addErr := indexExported(idx, si, sealed, logger, store, folderPath, m, relPath, key); addErr != nil {
 				indexErrors++
 				warns.add(addErr)
-				markSealedIndexBehind(sealed)
 			}
 		}
 	}
@@ -810,6 +816,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		if gErr := guardLateIndexWrite(si, sealed, manifest, logger); gErr != nil && saveErr == nil {
 			saveErr = gErr
 		}
+		result.IndexBehind = opts.Index && sealed.IndexBehind()
 	}
 	// What ended the run or its sources, most serious first: the archive's own fault, a
 	// source the breaker stopped (with the files that failed to open, if any), the
@@ -1121,6 +1128,12 @@ func recordRun(opts Options, lr state.LastRun, result *Result, err *error, logge
 	switch {
 	case *err == nil:
 		lr.Status = state.RunOK
+		if lr.Encrypted && result.IndexBehind {
+			// The backup finished, but its search index misses messages until a later
+			// run catches it up: recorded by kind, so status warns (owner ruling
+			// 2026-10-25, "keep and warn").
+			lr.ErrorKind = state.NoteIndexBehind
+		}
 	case errors.Is(*err, context.Canceled):
 		lr.Status = state.RunCancelled
 	default:

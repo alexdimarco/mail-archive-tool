@@ -152,10 +152,9 @@ func (s *Store) apply(h stagedHistory) {
 	if h.clearBad {
 		s.histTailBad = false
 	}
-	if s.histGapStaging && s.hdr.HistoryGap != nil {
-		// The events a failed staging held back have landed: nothing was lost.
-		s.hdr.HistoryGap, s.histGapStaging = nil, false
-	}
+	// The events a failed staging held back have landed, with a header that already
+	// left their hold out (Commit).
+	s.histGapStaging = false
 }
 
 // stageHistory seals the timeline's buffered events at gen into the history
@@ -194,9 +193,16 @@ func (s *Store) stageHistory(gen uint64) (stagedHistory, error) {
 	}
 	badTail := s.histTailBad
 	if badTail {
-		// The last chunk stays named as it is; its range is a gap, and a new chunk
-		// starts after it (§5, the review's L7-8.8).
-		s.markHistoryGap(gen)
+		// The last chunk stays named as it is; every event it held is lost, and a new
+		// chunk starts after it (§5, the review's L7-8.8). Its events reach back to the
+		// generation after the chunk before it was last sealed: an open chunk is
+		// re-sealed at every commit, so its own generation says only when it was last
+		// written (the adversarial pass's OUT-01, CRIT-2).
+		from := uint64(1)
+		if n := len(table); n > 1 {
+			from = table[n-2].Gen + 1
+		}
+		s.markHistoryLoss(from, gen)
 		table = append(table, Entry{I: uint32(len(table))}) // placeholder for the new last
 	} else if len(table) == 0 {
 		table = append(table, Entry{I: 0})
@@ -232,14 +238,34 @@ var writeHistoryChunk = func(s *Store, gen uint64, pos uint32, plain []byte) (En
 	return s.writeChunk(vault.ContainerHistory, gen, pos, plain)
 }
 
-// markHistoryGap records in the sealed header that the timeline lost events from
-// gen on: one widening interval (a superset is the safe direction).
-func (s *Store) markHistoryGap(gen uint64) {
-	if s.hdr.HistoryGap == nil {
-		s.hdr.HistoryGap = &Gap{From: gen}
-	}
-	s.hdr.HistoryGap.To = gen
+// The sealed header's history_gap says two things in one widening interval (a
+// superset is the safe direction): history that is lost for good, and events a failed
+// staging holds back for the next commit. Only the hold is cleared, when its events
+// land; a loss stays (the adversarial pass's OUT-02). After a reload every gap is a
+// loss: held events do not outlive their run.
+
+// markHistoryLoss records that the events sealed at generations from..to are lost.
+func (s *Store) markHistoryLoss(from, to uint64) {
+	s.histLoss = widenGap(s.histLoss, from, to)
+	s.hdr.HistoryGap = widenGap(s.hdr.HistoryGap, from, to)
 	s.notice("part of the archive's go-back history could not be kept")
+}
+
+// holdHistory records that a failed staging holds the events of the commit at gen
+// back to the next one.
+func (s *Store) holdHistory(gen uint64) {
+	s.histGapStaging = true
+	s.hdr.HistoryGap = widenGap(s.hdr.HistoryGap, gen, gen)
+	s.notice("part of the archive's go-back history could not be kept")
+}
+
+// widenGap is g widened to cover from..to, as a new value: a gap is never changed in
+// place, so the header and the loss can share one.
+func widenGap(g *Gap, from, to uint64) *Gap {
+	if g == nil {
+		return &Gap{From: from, To: to}
+	}
+	return &Gap{From: min(g.From, from), To: max(g.To, to)}
 }
 
 // Chunks is the archive-relative paths of the chunks the committed pointer names in

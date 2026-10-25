@@ -103,9 +103,10 @@ type Store struct {
 
 	// The sealed timeline (§5): the run's buffered events, the open last chunk's
 	// plaintext once read, the run header a new chunk copies, whether the last chunk
-	// could not be read, and whether a gap in the header came from a failed staging.
+	// could not be read, whether a failed staging holds events back, and the part of
+	// the header's gap that is lost for good (markHistoryLoss).
 	indexSource  func() (IndexCapture, bool, error) // the run's in-memory index (SetIndex)
-	indexDigests [][32]byte                   // plaintext digest per sealed index chunk, once loaded or committed
+	indexDigests [][32]byte                         // plaintext digest per sealed index chunk, once loaded or committed
 
 	timeline       *sealedTimeline
 	histTail       []byte
@@ -113,6 +114,7 @@ type Store struct {
 	histTailLoaded bool
 	histTailBad    bool
 	histGapStaging bool
+	histLoss       *Gap
 	Notices        []string // what the load healed or accepted, for the run log
 }
 
@@ -170,7 +172,7 @@ func LoadManifest(out string, o LoadOptions) (*state.Manifest, *Store, error) {
 	if err != nil {
 		return nil, nil, s.refuse(ErrRecord, "%v", err)
 	}
-	s.hdr = h
+	s.hdr, s.histLoss = h, h.HistoryGap
 	if err := s.checkF12(v); err != nil {
 		return nil, nil, err
 	}
@@ -800,13 +802,25 @@ func (s *Store) Commit(v state.View) error {
 		s.hdr.SeenAt[token] = at
 	}
 	gen := s.attempted + 1
+	// A commit that does not land leaves the header as it found it where its staging
+	// changed it ahead of the pointer: the index's row count (the adversarial pass's
+	// CON-06) and a history hold cleared below.
+	gap, rows, landed := s.hdr.HistoryGap, s.hdr.IndexRows, false
+	defer func() {
+		if !landed {
+			s.hdr.HistoryGap, s.hdr.IndexRows = gap, rows
+		}
+	}()
 	// The timeline first: a history that cannot be staged keeps its events buffered
-	// for the next commit and records the gap in THIS commit's header (§1, P2b-C14).
+	// for the next commit and records the gap in THIS commit's header (§1, P2b-C14);
+	// the commit that lands them seals the header without that hold (FID-02).
 	hist, herr := s.stageHistory(gen)
-	if herr != nil {
-		s.histGapStaging = true
-		s.markHistoryGap(gen)
+	switch {
+	case herr != nil:
+		s.holdHistory(gen)
 		hist = stagedHistory{table: s.ptr.History}
+	case hist.n > 0 && s.histGapStaging:
+		s.hdr.HistoryGap = s.histLoss
 	}
 	// Then the index, also before the manifest's sections: a commit that cannot seal
 	// it records index_behind in its own header (§1, P2b-C16).
@@ -862,6 +876,7 @@ func (s *Store) Commit(v state.View) error {
 		return err
 	}
 	// [COMMIT]: the primary pointer names the new record.
+	landed = true
 	prevLive := s.prevLive
 	s.ptr, s.sections, s.reseal, s.commits, s.fixedTime = p, digests, map[uint32]bool{}, s.commits+1, mt
 	s.walkDone = map[string]time.Time{}

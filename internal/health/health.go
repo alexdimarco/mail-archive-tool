@@ -393,6 +393,12 @@ func Assess(in Input, now time.Time) Report {
 	// record, an archive that cannot be written (F16).
 	if in.Encrypted {
 		r.note("encrypted", "this archive is encrypted ("+in.EncryptedWhy+"): its message counts, search index and history are sealed — open it in MailArchive with its password to see them")
+		// Its last backup finished with the sealed index still missing messages: the
+		// one thing about the index status can say without the key (owner ruling
+		// 2026-10-25, "keep and warn").
+		if lr := in.LastRun; in.LastRunState == state.LastRunPresent && lr.Encrypted && lr.Status == state.RunOK && lr.ErrorKind == state.NoteIndexBehind {
+			r.warn("index_behind", state.FailureText(state.NoteIndexBehind))
+		}
 	} else {
 		assessContents(&r, in, now)
 	}

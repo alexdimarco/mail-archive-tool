@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"path/filepath"
 	"sort"
 	"time"
@@ -25,8 +26,14 @@ import (
 // the index, and whether it changed since the record last sealed it.
 type sealedIndex struct {
 	idx     *index.Index
-	sealed  int64 // the change count at the last capture; -1: never captured
-	damaged bool  // the sealed index proved damaged when loaded, and was replaced by an empty one
+	sealed  int64  // the change count at the last capture; -1: never captured
+	damaged bool   // the sealed index proved damaged when loaded, and was replaced by an empty one
+	path    string // its scratch file, worked on there above the memory budget
+	inFile  bool   // worked on in its scratch file
+	full    bool   // it takes no more messages this run: outgrown memory with no room for its scratch file, or unsound
+	unsound bool   // a batch was lost when written: it is not sealed again this run (noteLost)
+	adds    int    // messages added this run (keepInBudget)
+	lost    int    // rows lost with a batch, as last seen (noteLost)
 }
 
 // register hands the store a capture of si's index that runs only when the change
@@ -34,6 +41,9 @@ type sealedIndex struct {
 // a commit that fails after the capture leaves it for the next one.
 func (si *sealedIndex) register(store *container.Store) {
 	store.SetIndex(func() (container.IndexCapture, bool, error) {
+		if si.noteLost(store) {
+			return container.IndexCapture{}, false, nil // the record keeps the last sound image
+		}
 		n, err := si.idx.Changes()
 		if err != nil {
 			return container.IndexCapture{}, false, err
@@ -45,12 +55,101 @@ func (si *sealedIndex) register(store *container.Store) {
 		if err != nil {
 			return container.IndexCapture{}, false, err
 		}
+		if si.noteLost(store) { // a batch the capture's own commit lost
+			return container.IndexCapture{}, false, nil
+		}
 		rows, err := si.idx.Count()
 		if err != nil {
 			return container.IndexCapture{}, false, err
 		}
 		return container.IndexCapture{Image: img, Size: size, Version: si.idx.Version(), Rows: rows, Sealed: func() { si.sealed = n }}, true, nil
 	})
+}
+
+// noteLost reports whether the index is unsound: SQLite abandoned a batch since the
+// run opened it — rows whose Add succeeded but whose batch commit failed (a full
+// scratch drive, say). Those rows are in no image, and a commit that failed part-way
+// through writing may leave the database itself inconsistent, so the index is marked
+// behind, takes no more messages and is not sealed again this run: the record keeps
+// the last sound image, and the next run catches it up (the adversarial pass's
+// CON-01). Called from the capture, so the same commit records the mark.
+func (si *sealedIndex) noteLost(store *container.Store) bool {
+	if l := si.idx.Lost(); l > si.lost {
+		si.lost, si.unsound, si.full = l, true, true
+		store.MarkIndexBehind()
+	}
+	return si.unsound
+}
+
+// budgetCheckEvery is how many messages a run adds between checks that its in-memory
+// index still fits the memory budget; a var so a test can check at every one.
+var budgetCheckEvery = 256
+
+// keepInBudget keeps a run's in-memory index within the memory budget as messages are
+// added (the adversarial pass's CRIT-1): the choice made at open sees only what the
+// record held, so a first backup always starts in memory. One that outgrows the budget
+// moves to its scratch file; with no room for it, the index takes no more messages
+// this run and is marked behind — the backup goes on, and the next run with room
+// catches it up. It reports whether the index takes the next message.
+func (si *sealedIndex) keepInBudget(store *container.Store, logger *log.Logger) bool {
+	if si.full {
+		return false
+	}
+	if si.adds++; si.inFile || si.adds%budgetCheckEvery != 0 {
+		return true
+	}
+	size, err := si.idx.MemorySize()
+	if err != nil || size <= indexMemoryBudget {
+		return true
+	}
+	dir := filepath.Dir(si.path)
+	need := size + scratchMargin
+	if free, short := scratchSpaceShort(dir, need); short {
+		err = fmt.Errorf("working on it needs about %d MB on the drive that holds %s, which has %d MB free — free space on that drive", need>>20, dir, free>>20)
+	} else if err = os.MkdirAll(dir, 0o700); err == nil {
+		err = si.idx.MoveToScratch(si.path)
+	}
+	if err != nil {
+		logger.Printf("warning: the search index is not updated for the rest of this run: it outgrew memory, and %v; the next run with room catches it up", err)
+		store.MarkIndexBehind()
+		si.full = true
+		return false
+	}
+	si.inFile = true
+	return true
+}
+
+// indexExported adds one exported message to the run's index: Run's and RunGraph's
+// OnExported step. A sealed index is kept within the memory budget first
+// (keepInBudget); a message it does not take, or whose add fails, leaves it marked
+// behind (P2b-C16), so the next run adds it.
+func indexExported(idx *index.Index, si *sealedIndex, sealed *container.Store, logger *log.Logger, store string, folderPath []string, m *model.Message, relPath, key string) error {
+	if si != nil && !si.keepInBudget(sealed, logger) {
+		return nil
+	}
+	err := indexAdd(idx, store, folderPath, m, relPath, key)
+	if err != nil {
+		markSealedIndexBehind(sealed)
+	}
+	return err
+}
+
+// drop takes a sealed index that cannot be loaded or repaired out of the run: the
+// backup goes on without it and the index is marked behind, as it is with no room to
+// work on it (P2b-C16; the adversarial pass's CRIT-3).
+func (si *sealedIndex) drop(store *container.Store, err error, logger *log.Logger) {
+	logger.Printf("warning: the search index is not updated this run: %v; the next run catches it up", err)
+	store.MarkIndexBehind()
+	store.SetIndex(nil)
+}
+
+// closeRunIndex closes a run's index at its end. A sealed index that does not close
+// cleanly is said (the adversarial pass's LEAK-03): its scratch file, if one is left,
+// holds the index in plaintext until the archive's next keyed run removes it.
+func closeRunIndex(idx *index.Index, sealed bool, logger *log.Logger) {
+	if err := idx.Close(); err != nil && sealed {
+		logger.Printf("warning: the search index did not close cleanly (%v); a working copy of it left in MailArchive's working folder is removed by the archive's next backup", err)
+	}
 }
 
 // catchUp catches si's index up to manifest (catchUpIndex), and with it any damage
@@ -85,7 +184,7 @@ func (si *sealedIndex) unsealed() bool {
 // every index write: one that did not is marked behind and committed once more, so
 // the mark is durable and the next keyed run catches the index up (§6).
 func guardLateIndexWrite(si *sealedIndex, store *container.Store, manifest *state.Manifest, logger *log.Logger) error {
-	if si == nil || !si.unsealed() {
+	if si == nil || si.unsound || !si.unsealed() { // an unsound index is already marked, and never sealed
 		return nil
 	}
 	logger.Printf("warning: the search index changed after its last save; it is marked to be caught up")
@@ -93,7 +192,8 @@ func guardLateIndexWrite(si *sealedIndex, store *container.Store, manifest *stat
 	return manifest.Save()
 }
 
-// indexAdd adds one exported message to the run's index; a var so a test can fail it.
+// indexAdd adds one message to the run's index (exported, or caught up); a var so a
+// test can fail it.
 var indexAdd = (*index.Index).Add
 
 // markSealedIndexBehind marks a sealed index behind when a message the run exported
@@ -110,6 +210,7 @@ func markSealedIndexBehind(sealed *container.Store) {
 type IndexCatchUp struct {
 	Added      int // records added to the index
 	Unreadable int // records whose sealed units could not be read (left out, logged)
+	Failed     int // records read, that the index could not take (it stays marked behind)
 }
 
 // catchUpIndex adds to idx every record of manifest it does not hold, deriving each
@@ -117,9 +218,17 @@ type IndexCatchUp struct {
 // page, with attachment names from the zip) — the encrypted archive's rebuild (§6,
 // P2b-C16). A record that cannot be read is logged and left out, never removed from
 // the record. When every record is either indexed or unreadable the index is no
-// longer behind; the run's next commit seals it.
-func catchUpIndex(idx *index.Index, manifest *state.Manifest, units *export.Units, store *container.Store, logger *log.Logger) (IndexCatchUp, error) {
-	var rep IndexCatchUp
+// longer behind; the run's next commit seals it. A record the index could not take —
+// its scratch drive full, say — keeps it behind, so a later run adds it (the
+// adversarial pass's LOC-02, FID-03).
+func catchUpIndex(idx *index.Index, manifest *state.Manifest, units *export.Units, store *container.Store, logger *log.Logger) (rep IndexCatchUp, err error) {
+	defer func() {
+		if err != nil {
+			// What it could not add waits for a later run — also for an index that was
+			// not marked behind, only absent beside records.
+			store.MarkIndexBehind()
+		}
+	}()
 	have := map[string]bool{}
 	if err := idx.EachRow(func(_ int64, key, _ string) error {
 		have[key] = true
@@ -145,9 +254,9 @@ func catchUpIndex(idx *index.Index, manifest *state.Manifest, units *export.Unit
 			rep.Unreadable++
 			continue
 		}
-		if err := idx.Add(segs[0], append([]string{}, segs[1:len(segs)-1]...), m, rec.Path, key); err != nil {
+		if err := indexAdd(idx, segs[0], append([]string{}, segs[1:len(segs)-1]...), m, rec.Path, key); err != nil {
 			logger.Printf("index catch-up: a message could not be indexed: %v", err)
-			rep.Unreadable++
+			rep.Failed++
 			continue
 		}
 		rep.Added++
@@ -157,6 +266,9 @@ func catchUpIndex(idx *index.Index, manifest *state.Manifest, units *export.Unit
 	}
 	if idx.Lost() > lostBefore {
 		return rep, fmt.Errorf("index catch-up: %d message(s) were lost when SQLite abandoned a batch; the index stays marked behind", idx.Lost()-lostBefore)
+	}
+	if rep.Failed > 0 {
+		return rep, fmt.Errorf("index catch-up: %d message(s) could not be added; the index stays marked behind", rep.Failed)
 	}
 	store.ClearIndexBehind()
 	if rep.Added+rep.Unreadable > 0 {

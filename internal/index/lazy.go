@@ -20,11 +20,11 @@ import (
 
 // lazyLoad is how a lazily opened index loads, and what is known before it does.
 type lazyLoad struct {
-	load  func() ([]byte, error)    // the decrypted image, into memory
-	write func(w io.Writer) error   // or: the decrypted image, streamed (nil: a new index)
-	path  string                    // the scratch file, when the index is worked on in one
-	onBad func(error)               // told when the image cannot be loaded; an empty index is used instead
-	rows  int                       // the row count the record holds for the index
+	load  func() ([]byte, error)  // the decrypted image, into memory
+	write func(w io.Writer) error // or: the decrypted image, streamed (nil: a new index)
+	path  string                  // the scratch file, when the index is worked on in one
+	onBad func(error)             // told when the image cannot be loaded; an empty index is used instead
+	rows  int                     // the row count the record holds for the index
 }
 
 // OpenLazy is an in-memory index that loads its image with load on first use; rows
@@ -123,7 +123,14 @@ func (ix *Index) openScratchImage(withImage bool) (m *Index, err error) {
 	if err != nil {
 		return nil, err
 	}
-	db, err := openOne(path)
+	// Through the escaped file: URI, as Open: a '?' in the cache folder's path is part
+	// of the file name, never a parameter that cuts it short (the adversarial pass's
+	// LOC-01).
+	dsn, err := fileURI(path, "mode=rwc", writerBusyTimeout)
+	if err != nil {
+		return nil, fmt.Errorf("index scratch: %w", err)
+	}
+	db, err := openOne(dsn)
 	if err != nil {
 		return nil, err
 	}
@@ -168,6 +175,65 @@ func (ix *Index) close() error {
 		}
 	}
 	return err
+}
+
+// MemorySize is how many bytes a loaded in-memory index's database takes now, its
+// pending batch included; 0 for one not loaded or worked on in a scratch file.
+func (ix *Index) MemorySize() (int64, error) {
+	if !ix.memory || ix.idle() || ix.scratch != nil {
+		return 0, nil
+	}
+	q := ix.db.QueryRow
+	if ix.tx != nil {
+		q = ix.tx.QueryRow // the one connection is the batch's
+	}
+	var pages, size int64
+	if err := q(`PRAGMA page_count`).Scan(&pages); err != nil {
+		return 0, err
+	}
+	if err := q(`PRAGMA page_size`).Scan(&size); err != nil {
+		return 0, err
+	}
+	return pages * size, nil
+}
+
+// MoveToScratch moves a loaded in-memory index into a scratch file at path, worked
+// on there from now on and removed when the index is closed (OpenScratch): for an
+// index that outgrew the memory budget during a run (the adversarial pass's CRIT-1).
+// Its change count carries on, so a capture still sees what changed since the last
+// seal. On failure the index stays in memory, unchanged.
+func (ix *Index) MoveToScratch(path string) error {
+	if !ix.memory || ix.lazy == nil || ix.scratch != nil {
+		return errors.New("index: only an encrypted archive's in-memory index moves to a scratch file")
+	}
+	if err := ix.ensure(); err != nil {
+		return err
+	}
+	img, err := ix.Image()
+	if err != nil {
+		return err
+	}
+	changes, err := ix.Changes()
+	if err != nil {
+		return err
+	}
+	ix.lazy.path = path
+	ix.lazy.write = func(w io.Writer) error { _, err := w.Write(img); return err }
+	m, err := ix.openScratchImage(true)
+	if err != nil {
+		ix.lazy.path, ix.lazy.write = "", nil
+		return err
+	}
+	var total int64
+	if err := m.db.QueryRow(`SELECT total_changes()`).Scan(&total); err != nil {
+		m.close()
+		ix.lazy.path, ix.lazy.write = "", nil
+		return err
+	}
+	ix.db.Close()
+	ix.db, ix.scratch, ix.base = m.db, m.scratch, total-changes
+	ix.lazy.write = nil // the image is in the file now
+	return nil
 }
 
 // Capture commits any pending batch and returns the index's whole database to read

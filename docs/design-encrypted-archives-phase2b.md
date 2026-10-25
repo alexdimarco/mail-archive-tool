@@ -329,7 +329,10 @@ above it the working index is a scratch file in the per-user cache folder (`job.
 at a time with bounded memory, guarded by 2a's free-space precheck, swept at run start, removed on
 every exit, in `secretDirs` and uninstall's `ScratchTargets`. Residual under R-E2: that file is
 plaintext on local disk while a run is going and, after a crash, until the next run of that archive or
-uninstall.
+uninstall. *Narrowed by the 2b-2 + 2b-3 pass (§12):* "the next run" is the archive's next keyed run at
+the same location that reaches its lock — whatever its `-index` — so a run refused before the lock
+(the archive paused, its source or drive missing) leaves the file until a later one or uninstall; a
+file left by a run at another path of the same archive (a remounted drive) waits for uninstall.
 
 **Lazy (P2b-C15).** The sealed index is opened only on the run's first index write (Add, UpdateFolder,
 or a RepairKeys that has work — the index meta version is in the pointer's head so RepairKeys can be
@@ -565,3 +568,52 @@ before its fix.
 - **Residual, stated:** the remedy date for a damaged chunk comes from its mtime, which a folder writer
   can set (it only steers the advice). The critic's CRIT-3b sync-conflict step (a sync tool keeping the
   local pointer) was assumed, not run against a real sync tool.
+
+## 12. The 2b-2 + 2b-3 adversarial pass — amendments (2026-10-25)
+
+The pass (`docs/review-encrypted-archives-phase2b23-adversarial.md`, workflow `wf_363505d8-6a0` at
+`3571519`: five finders, three skeptics, a critic) confirmed 17 of 21 findings, which merge to 12
+defects, and the critic proved 3 more. These govern where they conflict with §1–§11. Each fix has a
+regression test (MA-760..MA-762) shown to fail before it. The owner's "keep and warn" ruling is built
+with them (MA-763).
+
+- **What the history lost (OUT-01, CRIT-2; OUT-02, CON-04, FID-01; FID-02).** An unreadable open last
+  chunk's gap reaches back to the generation after the chunk before it was last sealed. The open chunk
+  is re-sealed at every commit, so its own generation says only when it was last written. The header's
+  `history_gap` keeps two facts apart in memory: a loss, kept for good, and a failed staging's hold. The
+  commit that lands held events seals the header with only the loss. After a reload every gap is a loss,
+  because held events do not outlive their run.
+- **A commit that does not land changes no header field ahead of its pointer (CON-06).** The index row
+  count and a cleared hold go back to what they were.
+- **An index is "whole" only when it is (LOC-02, FID-03, CON-01).** A catch-up that cannot add a message
+  it read keeps the index marked behind, and marks it when it was only absent. A record whose units
+  cannot be read is still left out without holding the mark (§6). Rows lost with a batch at its commit
+  mark the index behind in the same commit. An index that lost a batch is unsound: a commit that failed
+  part-way may leave the database inconsistent, as the pass's own test showed. It takes no more messages
+  and is not sealed again that run; the record keeps the last sound image, and the next run catches up.
+- **A sealed index never stops a backup, fresh or not (CRIT-3).** A new index that cannot be opened (its
+  scratch folder unwritable) is dropped for the run and marked behind, as one with no room is.
+- **The memory budget holds during a run (CRIT-1).** The choice at open sees only the record, so a first
+  backup always starts in memory. Every 256 messages the run checks the in-memory index's size; past the
+  budget it moves to its scratch file (`index.MoveToScratch`; its change count carries on). With no room
+  for the file, the index takes no more messages that run and is marked behind. Peak memory at the move
+  is about twice the budget, once.
+- **The scratch file (LOC-01, LEAK-01/LOC-03, LEAK-03, LOC-04).** It is opened through the escaped
+  `file:` URI. Every keyed run removes a crash-left one once it holds the lock, whatever its `-index`
+  (`openEncrypted`). A close that fails is said in the log. The scratch folder's name hashes the archive's
+  location AND its archive id, so two archives never share one, even when their folders differ only in
+  case. The folder still cannot be computed without the key, which every caller now holds.
+- **Keep and warn (owner ruling 2026-10-25).** An encrypted archive's indexed backup that finishes with
+  the index still behind records a successful run with the kind `index_behind`. This is the only kind a
+  success carries, it is in the closed list, and the A6 allow-list is unchanged. `status` WARNs it
+  without the key, and the Recent-backups card says some messages are not searchable yet. This replaces
+  §6's departure ("a run still behind does not yet end with the typed `index` kind"). A run with indexing
+  off records no kind: there, a behind index is the run's own choice.
+- **Refuted, kept as design (CON-02, CON-03, FID-04, LEAK-02).** The catch-up compares keys only: a
+  message rewritten or moved while the index was behind keeps its old body or folder in search, and a
+  unit that fails to read once is not retried. Both stay as §6 states them, and are noted for Phase 3.
+  A scratch file at an old path of the same archive waits for uninstall (above).
+- **Residuals, stated.** Three things are not separately provable: the late-write guard's RunGraph
+  line; a failed scratch load's own cleanup; and the behind mark a dropped index sets itself. On every
+  path a test reaches, the failed load has already marked the index. The index's re-seal bytes per run and its peak memory (§6, "2b-3
+  measures") are still estimates: no measurement was made.

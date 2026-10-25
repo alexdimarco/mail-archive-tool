@@ -33,6 +33,8 @@ func recentRunRows(out string) []runRow {
 		case state.RunOK:
 			r.Status = "OK"
 			switch {
+			case e.Encrypted && e.ErrorKind == state.NoteIndexBehind:
+				r.Detail = "backup completed; some messages are not searchable yet — the next backup adds them"
 			case e.Encrypted: // its counts are sealed with the archive (F15)
 				r.Detail = "backup completed (its counts are sealed)"
 			case e.Exported > 0 && e.Filled > 0:

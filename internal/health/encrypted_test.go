@@ -54,6 +54,35 @@ func TestStatusOnAnEncryptedArchiveReadsOnlyWhatIsKeyless(t *testing.T) {
 	}
 }
 
+// covers: MA-763, R37
+// Status WARNs an encrypted archive whose last backup finished with its search index
+// still missing messages, from the run record alone — the posture WARN, the reason the
+// kind's fixed sentence — and says nothing of the index after a backup that left it
+// whole (the positive twin) or after a failed one (its own RED).
+func TestStatusWarnsAnEncryptedArchiveWhoseIndexIsBehind(t *testing.T) {
+	sealed := t.TempDir()
+	sealFolder(t, sealed)
+	ok := time.Now().Add(-time.Hour).UTC()
+	write := func(r state.LastRun) Report {
+		t.Helper()
+		r.Started, r.Finished, r.Encrypted = ok, ok.Add(time.Minute), true
+		if err := state.WriteLastRun(sealed, r); err != nil {
+			t.Fatal(err)
+		}
+		return Assess(Gather(sealed, ""), time.Now())
+	}
+	if r := write(state.LastRun{Status: state.RunOK}); slices.Contains(r.Codes, "index_behind") {
+		t.Fatalf("the positive twin: a whole index is no fault, got %v", r.Codes)
+	}
+	r := write(state.LastRun{Status: state.RunOK, ErrorKind: state.NoteIndexBehind})
+	if r.Posture != "WARN" || !slices.Contains(r.Codes, "index_behind") || !strings.Contains(strings.Join(r.Reasons, "\n"), state.FailureText(state.NoteIndexBehind)) {
+		t.Fatalf("a backup that left its index behind must WARN in the kind's words, got %s %v %v", r.Posture, r.Codes, r.Reasons)
+	}
+	if r := write(state.LastRun{Status: state.RunFailed, ErrorKind: state.NoteIndexBehind}); slices.Contains(r.Codes, "index_behind") || r.Posture != "RED" {
+		t.Fatalf("a failed run is its own RED, not an index WARN: %s %v", r.Posture, r.Codes)
+	}
+}
+
 // sealFolder commits a vault into dir: an encrypted archive.
 func sealFolder(t *testing.T, dir string) {
 	t.Helper()

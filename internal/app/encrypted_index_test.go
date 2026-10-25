@@ -306,7 +306,7 @@ func TestALargeIndexIsWorkedOnInTheScratchFolder(t *testing.T) {
 	mbox := filepath.Join(store, "Inbox")
 	p14Write(t, mbox, indexMbox("first", "one"))
 	out, key := encryptedOut(t)
-	path, err := indexScratchPath(out)
+	path, err := indexScratchPath(out, key.ArchiveID())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -380,7 +380,7 @@ func TestAScratchIndexACrashLeftIsRemovedByTheNextRun(t *testing.T) {
 	if _, err := Run(context.Background(), opts, discard(), nil); err != nil {
 		t.Fatal(err)
 	}
-	path, _ := indexScratchPath(out)
+	path, _ := indexScratchPath(out, key.ArchiveID())
 	p14Write(t, path, "the plaintext index a crashed run left")
 	if _, err := Run(context.Background(), opts, discard(), nil); err != nil {
 		t.Fatal(err)
@@ -416,7 +416,7 @@ func TestNoRoomForTheScratchIndexStillBacksUp(t *testing.T) {
 	if _, s, err := container.LoadManifest(out, container.LoadOptions{Key: key, RunStart: time.Now().UTC(), Units: unitFiles(&export.Units{Root: out, Key: key})}); err != nil || !s.IndexBehind() {
 		t.Fatalf("the index must be marked behind (%v)", err)
 	}
-	path, _ := indexScratchPath(out)
+	path, _ := indexScratchPath(out, key.ArchiveID())
 	if _, err := os.Stat(filepath.Dir(path)); !os.IsNotExist(err) {
 		t.Fatalf("a run with no room left something in the scratch folder (%v)", err)
 	}

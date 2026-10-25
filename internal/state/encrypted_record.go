@@ -32,6 +32,11 @@ const (
 	FailMailboxFailed      = "mailbox_failed"       // a mailbox could not be read
 	FailPartial            = "partial"              // the run kept going but some messages are incomplete
 	FailRunFailed          = "run_failed"           // any failure not named above
+
+	// NoteIndexBehind is the one kind a run that SUCCEEDED records: its search index
+	// still misses messages a later run adds (P2b-C16; owner ruling 2026-10-25, "keep
+	// and warn"), so status warns.
+	NoteIndexBehind = "index_behind"
 )
 
 // failureText is each kind's one fixed sentence: the only words an encrypted
@@ -62,6 +67,7 @@ var failureText = map[string]string{
 	FailMailboxFailed:             "a mailbox could not be read",
 	FailPartial:                   "some messages could not be backed up completely",
 	FailRunFailed:                 "the backup failed",
+	NoteIndexBehind:               "the backup finished, but some of the archive's messages are not in its search index yet, so search does not find them — the next backup adds them; if the drive that holds MailArchive's working folder is full, free some space on it",
 }
 
 // FailureText is kind's fixed sentence; an unknown kind reads as FailRunFailed.

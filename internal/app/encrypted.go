@@ -77,22 +77,18 @@ func prepareEncrypted(opts Options, manifest *state.Manifest, store *container.S
 // that cannot be loaded is replaced by an empty one and marked behind — a backup never
 // stops for its index (P2b-C16); one a newer MailArchive wrote is refused, as Open
 // refuses a newer search.db. nil, with the index marked behind, when the scratch
-// file's drive has no room for it: the run goes on without its index.
+// file's drive has no room for it: the run goes on without its index. A scratch file
+// a crashed run left was removed by openEncrypted.
 func openSealedIndex(store *container.Store, out string, records int, fresh bool, logger *log.Logger) (*sealedIndex, error) {
-	path, err := indexScratchPath(out)
+	path, err := indexScratchPath(out, store.ArchiveID())
 	if err != nil {
 		return nil, err
-	}
-	// A scratch index a crashed run left is removed first, whichever way this run
-	// works: the plaintext it holds ends here.
-	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		logger.Printf("warning: MailArchive's working copy of the search index could not be removed: %v", err)
 	}
 	fresh = fresh || !store.HasIndex()
 	version, rows := store.IndexMeta()
 	load, write := store.IndexImage, store.WriteIndexImage
 	image := store.IndexSize()
-	si := &sealedIndex{}
+	si := &sealedIndex{path: path}
 	if fresh {
 		load, write, version, rows, image, si.sealed = func() ([]byte, error) { return nil, nil }, nil, 0, 0, 0, -1 // captured at the first commit
 	}
@@ -112,6 +108,7 @@ func openSealedIndex(store *container.Store, out string, records int, fresh bool
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			return nil, fmt.Errorf("create MailArchive's working folder %s: %w", filepath.Dir(path), err)
 		}
+		si.inFile = true
 		si.idx, err = index.OpenScratch(path, write, rows, version, onBad)
 	}
 	if err != nil {
@@ -141,14 +138,29 @@ func indexScratchNeed(image int64, records int) int64 {
 	return est + scratchMargin
 }
 
-// indexScratchPath is where the index of the archive at out is worked on above the
+// indexScratchPath is where the index of the archive id at out is worked on above the
 // memory budget: its scratch folder's index/search.db, outside the archive.
-func indexScratchPath(out string) (string, error) {
-	d, err := archiveScratch(out)
+func indexScratchPath(out string, id vault.ID) (string, error) {
+	d, err := archiveScratch(out, id)
 	if err != nil {
 		return "", err
 	}
 	return filepath.Join(d, "index", "search.db"), nil
+}
+
+// removeScratchIndex removes the scratch index a crashed run of the archive id at out
+// left: every keyed run does, under the archive lock and whatever its -index, so the
+// plaintext it holds ends with the next run (the adversarial pass's LEAK-01).
+func removeScratchIndex(out string, id vault.ID, logger *log.Logger) {
+	path, err := indexScratchPath(out, id)
+	if err == nil {
+		if err = os.Remove(path); errors.Is(err, fs.ErrNotExist) {
+			err = nil
+		}
+	}
+	if err != nil {
+		logger.Printf("warning: MailArchive's working copy of the search index could not be removed: %v", err)
+	}
 }
 
 // unitFiles lists the unit files records name, for the sealed record's inventory.
@@ -263,6 +275,7 @@ func openEncrypted(opts Options, stillHeld func() error, runStart time.Time, log
 	if err := vault.VerifyKey(opts.Out, opts.Key.ArchiveID(), opts.Key); err != nil {
 		return nil, nil, nil, encRefusal(opts.Out, "the key does not open this archive's key file", err)
 	}
+	removeScratchIndex(opts.Out, opts.Key.ArchiveID(), logger)
 	units := &export.Units{Root: opts.Out, Key: opts.Key, RunStart: runStart}
 	manifest, store, err := container.LoadManifest(opts.Out, container.LoadOptions{
 		Key: opts.Key, RecordedGen: opts.RecordedGen, RunStart: runStart, StillHeld: stillHeld, Units: unitFiles(units),

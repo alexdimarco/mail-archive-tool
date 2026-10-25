@@ -23,16 +23,19 @@ import (
 // scratchRoot is MailArchive's scratch folder; a var so a test points it elsewhere.
 var scratchRoot = job.ScratchDir
 
-// archiveScratch is the scratch folder of the archive at out: the first 128 bits, in
-// hex, of SHA-256 over its canonical source id. Stable across runs (an Outlook PST's
-// path is its store's identity), one per archive location (two copies of one archive
-// never share one), computable before the lock and without the key, and naming no path.
-func archiveScratch(out string) (string, error) {
+// archiveScratch is the scratch folder of the archive id at out: the first 128 bits,
+// in hex, of SHA-256 over its canonical source id and the archive's id. Stable across
+// runs (an Outlook PST's path is its store's identity), one per archive location (two
+// copies of one archive never share one), never shared by two archives — the source
+// id folds case, so two folders differing only in case on a case-sensitive drive
+// would otherwise share one (the adversarial pass's LOC-04) — computable before the
+// lock, and naming no path.
+func archiveScratch(out string, id vault.ID) (string, error) {
 	root, err := scratchRoot()
 	if err != nil {
 		return "", fmt.Errorf("MailArchive's working folder: %w", err)
 	}
-	sum := sha256.Sum256([]byte(state.PathSourceID(out)))
+	sum := sha256.Sum256(append([]byte(state.PathSourceID(out)+"\x00"), id[:]...))
 	return filepath.Join(root, hex.EncodeToString(sum[:16])), nil
 }
 
@@ -43,7 +46,7 @@ func snapshotDir(opts Options) (string, error) {
 	if opts.Key == nil || !opts.CopyFirst {
 		return opts.Out, nil
 	}
-	d, err := archiveScratch(opts.Out)
+	d, err := archiveScratch(opts.Out, opts.Key.ArchiveID())
 	if err != nil {
 		return "", err
 	}
@@ -60,7 +63,7 @@ func OutlookPSTDir(out string, key *vault.Key) (dir string, cleanup func(), err 
 	if key == nil {
 		return filepath.Join(out, "_outlook-pst"), nil, nil
 	}
-	d, err := archiveScratch(out)
+	d, err := archiveScratch(out, key.ArchiveID())
 	if err != nil {
 		return "", nil, err
 	}

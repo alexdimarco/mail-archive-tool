@@ -173,6 +173,34 @@ func TestAnIndexThatCannotBeReadIsNotSealed(t *testing.T) {
 	}
 }
 
+// covers: MA-760, R37
+// The row count a commit's capture brings is sealed only beside its own image: when
+// that commit fails before its pointer, and the next one cannot capture the index,
+// the record keeps the last sealed image's row count.
+func TestTheRowCountOfAFailedCommitIsNeverSealedBesideTheOldImage(t *testing.T) {
+	out := fresh(t)
+	m, s := open(t, out, opts(1))
+	s.SetIndex((&imageSource{img: pattern(indexChunkSize, 4), version: 3, rows: 7}).get)
+	m.Save()
+	m, s = open(t, out, opts(2))
+	s.opts.StillHeld = func() error { return errors.New("the lock was taken") }
+	s.SetIndex((&imageSource{img: pattern(2*indexChunkSize, 5), version: 3, rows: 9}).get)
+	if err := m.Save(); !errors.Is(err, ErrLockLost) {
+		t.Fatalf("fixture: want the lock-lost refusal, got %v", err)
+	}
+	s.opts.StillHeld = nil
+	s.SetIndex((&imageSource{fail: errors.New("the index could not be captured")}).get)
+	if err := m.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if _, s = open(t, out, opts(3)); !s.IndexBehind() {
+		t.Fatal("fixture: the failed capture must mark the index behind")
+	}
+	if _, n := s.IndexMeta(); n != 7 {
+		t.Fatalf("the record says %d rows beside the image sealed with 7", n)
+	}
+}
+
 // covers: MA-757, R37
 // The index reassembles only as its pointer describes it: an authenticated pointer
 // whose image length disagrees with its chunks is ErrIndexImage, never a short or

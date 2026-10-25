@@ -269,10 +269,16 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		}
 	}
 	if idx != nil { // nil for a sealed index with no room to work on it: marked behind
-		defer idx.Close()
+		defer closeRunIndex(idx, si != nil, logger)
 		if _, rkErr := idx.RepairKeys(manifest.Rekeyed > 0, state.MigrateKey, logger); rkErr != nil {
-			return Result{}, withKind(state.FailIndex, fmt.Errorf("migrate search index keys: %w", rkErr))
+			if si == nil {
+				return Result{}, withKind(state.FailIndex, fmt.Errorf("migrate search index keys: %w", rkErr))
+			}
+			si.drop(sealed, rkErr, logger) // a sealed index never stops the backup
+			idx, si = nil, nil
 		}
+	}
+	if idx != nil {
 		// A sealed index marked behind — or none at all beside records — is caught up
 		// before the walk (phase2b §6).
 		if sealed != nil && (sealed.IndexBehind() || (!sealed.HasIndex() && manifest.Len() > 0)) {
@@ -356,10 +362,9 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	defer warns.flush()
 	exp.OnExported = func(store string, folderPath []string, m *model.Message, relPath, key string) {
 		if idx != nil {
-			if addErr := indexAdd(idx, store, folderPath, m, relPath, key); addErr != nil {
+			if addErr := indexExported(idx, si, sealed, logger, store, folderPath, m, relPath, key); addErr != nil {
 				indexErrors++
 				warns.add(addErr)
-				markSealedIndexBehind(sealed)
 			}
 		}
 		if hist != nil {
@@ -541,6 +546,7 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		if gErr := guardLateIndexWrite(si, sealed, manifest, logger); gErr != nil && saveErr == nil {
 			saveErr = gErr
 		}
+		result.IndexBehind = opts.Index && sealed.IndexBehind()
 	}
 	if saveErr != nil {
 		if failures > 0 && firstErr != nil {

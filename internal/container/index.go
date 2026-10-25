@@ -93,6 +93,9 @@ func (s *Store) SetIndex(capture func() (c IndexCapture, changed bool, err error
 	s.indexSource = capture
 }
 
+// ArchiveID is the id of the archive whose record s is.
+func (s *Store) ArchiveID() vault.ID { return s.opts.Key.ArchiveID() }
+
 // HasIndex reports whether the record holds a sealed search index.
 func (s *Store) HasIndex() bool { return len(s.ptr.Index) > 0 }
 

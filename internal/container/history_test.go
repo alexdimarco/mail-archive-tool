@@ -229,3 +229,139 @@ func TestHistoryDamageAndFailureAreRecordedNotFatal(t *testing.T) {
 		t.Fatalf("%d events landed, want the 3 held back", got)
 	}
 }
+
+// damageLastHistoryChunk flips the last byte of the last history chunk s names.
+func damageLastHistoryChunk(t *testing.T, out string, s *Store) {
+	t.Helper()
+	last := s.ptr.History[len(s.ptr.History)-1]
+	p := filepath.Join(out, filepath.FromSlash(last.Name.Path()))
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b[len(b)-1] ^= 1
+	if err := os.WriteFile(p, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// covers: MA-760, R37
+// The gap recorded for an open last chunk that cannot be read covers every
+// generation whose events it held — the open chunk is re-sealed at every commit, so
+// its events reach back to the commit after the chunk before it was last sealed —
+// and survives a reload; a chunk after a full one is covered from the full one on.
+func TestAnUnreadableLastHistoryChunksGapCoversTheGenerationsItHeld(t *testing.T) {
+	out := fresh(t)
+	var gens []uint64
+	for run := 1; run <= 3; run++ {
+		m, s := open(t, out, opts(run))
+		runEvents(t, s.Timeline(), run, runAt(run), 2)
+		if err := m.Save(); err != nil {
+			t.Fatal(err)
+		}
+		gens = append(gens, s.ptr.Gen)
+		if len(s.ptr.History) != 1 {
+			t.Fatalf("fixture: %d chunks, want the one open chunk", len(s.ptr.History))
+		}
+		if run == 3 {
+			damageLastHistoryChunk(t, out, s)
+		}
+	}
+	m, s := open(t, out, opts(4))
+	runEvents(t, s.Timeline(), 4, runAt(4), 1)
+	if err := m.Save(); err != nil {
+		t.Fatal(err)
+	}
+	_, s = open(t, out, opts(5))
+	if g := s.hdr.HistoryGap; g == nil || g.From > gens[0] || g.To < s.ptr.Gen {
+		t.Fatalf("the lost chunk held the events of generations %v, sealed gap %+v", gens, g)
+	}
+
+	// A chunk started after a full one: its events begin after the full one's seal.
+	out = fresh(t)
+	m, s = open(t, out, opts(1))
+	for batch := 0; batch < 2; batch++ { // two batches of about 60% of a chunk each
+		for i := 0; i < 1500; i++ {
+			s.Timeline().WriteFolder(fmt.Sprintf("s\x00big-%d-%d", batch, i), "Inbox/"+strings.Repeat("x", 80))
+		}
+		m.Save()
+	}
+	if len(s.ptr.History) != 2 {
+		t.Fatalf("fixture: %d chunks, want a full one and an open one", len(s.ptr.History))
+	}
+	started := s.ptr.Gen // the open chunk's first events were sealed here
+	s.Timeline().WriteFolder("s\x00later", "Inbox")
+	m.Save()
+	damageLastHistoryChunk(t, out, s)
+	m, s = open(t, out, opts(2))
+	runEvents(t, s.Timeline(), 2, runAt(2), 1)
+	m.Save()
+	if g := s.hdr.HistoryGap; g == nil || g.From > started || g.To < s.ptr.Gen {
+		t.Fatalf("the lost chunk held events from generation %d on, sealed gap %+v", started, g)
+	}
+}
+
+// covers: MA-760, R37
+// A history loss stays recorded when a later failed history step's events land: only
+// the hold that step made is cleared, never the record of history lost for good —
+// within one run and across runs.
+func TestAHeldHistoryLandingKeepsARealLossGap(t *testing.T) {
+	failOnce := func(m *state.Manifest) {
+		t.Helper()
+		orig := writeHistoryChunk
+		writeHistoryChunk = func(*Store, uint64, uint32, []byte) (Entry, error) { return Entry{}, errors.New("the disk refused") }
+		err := m.Save()
+		writeHistoryChunk = orig
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, sameRun := range []bool{false, true} {
+		out := fresh(t)
+		m, s := open(t, out, opts(1))
+		runEvents(t, s.Timeline(), 1, runAt(1), 2)
+		m.Save()
+		damageLastHistoryChunk(t, out, s)
+		m, s = open(t, out, opts(2))
+		runEvents(t, s.Timeline(), 2, runAt(2), 1)
+		if !sameRun {
+			m.Save() // the loss is sealed by this run ...
+			m, s = open(t, out, opts(3))
+			runEvents(t, s.Timeline(), 3, runAt(3), 1)
+		}
+		failOnce(m) // ... and a later step fails (in the run that found the loss, or a later one)
+		if err := m.Save(); err != nil {
+			t.Fatal(err)
+		}
+		m.Save()
+		_, s = open(t, out, opts(4))
+		if s.hdr.HistoryGap == nil || s.hdr.HistoryGap.From > 1 {
+			t.Fatalf("same run %v: the record of the lost chunk was erased: gap %+v", sameRun, s.hdr.HistoryGap)
+		}
+		if ev := s.History(); len(ev) == 0 || !ev[0].Barrier {
+			t.Fatalf("same run %v: fixture: the lost chunk must still read as a barrier", sameRun)
+		}
+	}
+}
+
+// covers: MA-760, R37
+// A failed history step's hold is cleared in the record the commit that lands its
+// events seals — the run's last commit included — not only in memory after it.
+func TestAHeldHistoryGapIsClearedOnDiskWhenItLands(t *testing.T) {
+	out := fresh(t)
+	m, s := open(t, out, opts(1))
+	runEvents(t, s.Timeline(), 1, runAt(1), 2)
+	orig := writeHistoryChunk
+	writeHistoryChunk = func(*Store, uint64, uint32, []byte) (Entry, error) { return Entry{}, errors.New("the disk refused") }
+	m.Save()
+	writeHistoryChunk = orig
+	if s.hdr.HistoryGap == nil {
+		t.Fatal("fixture: the failed step recorded no hold")
+	}
+	if err := m.Save(); err != nil { // the run's last commit lands the held events
+		t.Fatal(err)
+	}
+	if _, s = open(t, out, opts(2)); s.hdr.HistoryGap != nil || len(s.History()) != 3 {
+		t.Fatalf("the landed hold is still sealed: gap %+v, %d events", s.hdr.HistoryGap, len(s.History()))
+	}
+}

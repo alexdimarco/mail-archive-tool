@@ -144,6 +144,27 @@ func TestTheDesktopSaysAnEncryptedArchivesFailuresByKind(t *testing.T) {
 	}
 }
 
+// covers: MA-763, R37
+// The Recent-backups card says an encrypted archive's backup that left its search
+// index behind completed with some messages not yet searchable — a success, never a
+// failure — and an ordinary success still says its counts are sealed.
+func TestTheDesktopSaysABackupLeftTheIndexBehind(t *testing.T) {
+	sealed := vaultedArchive(t)
+	if err := state.AppendRunHistory(sealed, state.RunHistoryEntry{Status: state.RunOK, Encrypted: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.AppendRunHistory(sealed, state.RunHistoryEntry{Status: state.RunOK, ErrorKind: state.NoteIndexBehind, Encrypted: true}); err != nil {
+		t.Fatal(err)
+	}
+	rows := recentRunRows(sealed)
+	if len(rows) != 2 || rows[0].Failed || rows[0].Status != "OK" || !strings.Contains(rows[0].Detail, "not searchable yet") {
+		t.Fatalf("a backup that left its index behind must read as a success that says so: %+v", rows)
+	}
+	if !strings.Contains(rows[1].Detail, "sealed") {
+		t.Fatalf("the positive twin: an ordinary success says its counts are sealed: %+v", rows[1])
+	}
+}
+
 // covers: MA-731, R37
 // Without its key the Desktop neither serves an encrypted archive in the reader
 // (503, saying it is encrypted, before any index is opened) nor captures into it:

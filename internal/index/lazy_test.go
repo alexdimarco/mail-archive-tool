@@ -141,6 +141,122 @@ func TestAScratchIndexIsWorkedOnInAFileAndRemovedOnClose(t *testing.T) {
 	}
 }
 
+// covers: MA-762, R37
+// A scratch index whose folder's path holds a '?' is worked on in its own file: the
+// path is never cut at the '?' into a file outside the scratch folder.
+func TestAScratchIndexUnderAPathWithAQuestionMarkStaysInItsFolder(t *testing.T) {
+	img, _, _ := lazyImage(t)
+	root := t.TempDir()
+	dir := filepath.Join(root, "we?ird")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "search.db")
+	ix, err := OpenScratch(path, func(w io.Writer) error { _, err := w.Write(img); return err }, 2, indexVersion, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jul := time.Date(2025, 7, 3, 9, 0, 0, 0, time.UTC)
+	if err := ix.Add("s", []string{"Inbox"}, mkMsg("Third", "dan", "me", "a third", jul), "Inbox/z.html", "s\x00c"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ix.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if entries, _ := os.ReadDir(root); len(entries) != 1 || entries[0].Name() != "we?ird" {
+		t.Fatalf("the index was worked on outside its folder: %v", entries)
+	}
+	r, size, err := ix.Capture()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make([]byte, size)
+	if _, err := r.ReadAt(got, 0); err != nil && err != io.EOF {
+		t.Fatal(err)
+	}
+	again, err := OpenMemory(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer again.Close()
+	if n, _ := again.Count(); n != 3 {
+		t.Fatalf("the captured scratch file holds %d rows, want the 3 written", n)
+	}
+	if err := ix.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// covers: MA-761, R37
+// An in-memory index that outgrew the memory budget during a run moves to a scratch
+// file: its rows, its search and its change count carry on there, the file is
+// readable only by its owner, its capture is the file, and closing removes it. An
+// index loaded in neither way cannot move.
+func TestAnInMemoryIndexMovesToAScratchFile(t *testing.T) {
+	_, load, _ := lazyImage(t)
+	ix, err := OpenLazy(load, 2, indexVersion, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := ix.MemorySize(); n != 0 {
+		t.Fatalf("an unloaded index takes %d bytes, want 0", n)
+	}
+	if err := ix.UpdateFolder("s\x00a", "Archive"); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := ix.MemorySize(); err != nil || n <= 0 {
+		t.Fatalf("a loaded in-memory index takes %d bytes (%v)", n, err)
+	}
+	path := filepath.Join(t.TempDir(), "search.db")
+	if err := ix.MoveToScratch(path); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Stat(path); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("the moved index must be a scratch file readable only by its owner: %v %v", fi, err)
+	}
+	if n, _ := ix.Changes(); n != 1 {
+		t.Fatalf("the move changed the change count to %d, want the 1 written before it", n)
+	}
+	if n, _ := ix.MemorySize(); n != 0 {
+		t.Fatalf("a moved index still takes %d bytes of memory", n)
+	}
+	jul := time.Date(2025, 7, 3, 9, 0, 0, 0, time.UTC)
+	if err := ix.Add("s", []string{"Inbox"}, mkMsg("Third", "dan", "me", "a third", jul), "Inbox/z.html", "s\x00c"); err != nil {
+		t.Fatal(err)
+	}
+	if res, total, err := ix.Search(Query{Text: "acme invoice"}); err != nil || total != 1 || res[0].Folder != "Archive" {
+		t.Fatalf("search after the move: %d %+v %v", total, res, err)
+	}
+	r, size, err := ix.Capture()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f, ok := r.(*os.File); !ok || f.Name() != path {
+		t.Fatalf("the moved index's capture must be its scratch file, got %T", r)
+	}
+	got := make([]byte, size)
+	if _, err := r.ReadAt(got, 0); err != nil && err != io.EOF {
+		t.Fatal(err)
+	}
+	again, err := OpenMemory(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := again.Count(); n != 3 {
+		t.Fatalf("the moved index's capture holds %d rows, want 3", n)
+	}
+	again.Close()
+	if err := ix.MoveToScratch(path + "2"); err == nil {
+		t.Fatal("an index already in a scratch file moved again")
+	}
+	if err := ix.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("closing the moved index must remove its scratch file (%v)", err)
+	}
+}
+
 // covers: MA-759, R37
 // A scratch image that cannot be loaded — its stream fails part-way, or it is a
 // write-ahead-log database, which would make SQLite create companion files — is
