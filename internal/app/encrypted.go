@@ -7,7 +7,9 @@ import (
 	"time"
 
 	"mail-archive-tool/internal/export"
+	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/state"
+	"mail-archive-tool/internal/util"
 	"mail-archive-tool/internal/vault"
 )
 
@@ -65,12 +67,24 @@ func encRefusal(out, why string, cause error) error {
 // encrypted archive (P2a-C8, whose parent walk the keyless guard does not run for
 // a keyed run) and a key that does not open the vault in out. prepareEncrypted
 // checks the key again under the lock (a conversion's swap, P2a-C9).
-func preflightEncrypted(opts Options) error {
+func preflightEncrypted(opts Options, credentials ...string) error {
 	if opts.Manifest != "" {
 		return encRefusal(opts.Out, "its manifest cannot be moved out of the archive folder (-manifest)", nil)
 	}
 	if insideEncrypted(opts.Out) {
 		return encRefusal(opts.Out, "it is inside another encrypted archive, and an archive cannot be kept inside one", nil)
+	}
+	// MailArchive's settings, secrets, sign-in and working copies are plaintext: none
+	// may be kept in the encrypted archive (P2a-C14). No exemption for an archive that
+	// holds the settings folder (unlike a plaintext archive's warning, P10).
+	paths := append(secretDirs(), opts.CredentialPaths...)
+	for _, p := range append(paths, credentials...) {
+		if p == "" {
+			continue
+		}
+		if util.Within(util.ResolveExisting(opts.Out), util.ResolveExisting(p)) {
+			return encRefusal(opts.Out, "it holds "+p+", which keeps MailArchive's settings, sign-in or working copies in plaintext — move the archive, or the settings, so neither is inside the other", nil)
+		}
 	}
 	if err := vault.VerifyKey(opts.Out, opts.Key.ArchiveID(), opts.Key); err != nil {
 		return encRefusal(opts.Out, "the key does not open this archive's key file", err)
@@ -94,6 +108,20 @@ func refuseOwedCollapse(opts Options, manifest *state.Manifest, mailboxes []stri
 		}
 	}
 	return nil
+}
+
+// secretDirs are MailArchive's own folders that hold plaintext: its settings folder
+// (job files, settings, the file secret store, sign-in caches) and its working
+// folder (scratch copies); a var so a test can place them.
+var secretDirs = func() []string {
+	var dirs []string
+	if d, err := job.Dir(); err == nil {
+		dirs = append(dirs, d)
+	}
+	if d, err := scratchRoot(); err == nil {
+		dirs = append(dirs, d)
+	}
+	return dirs
 }
 
 // openEncrypted is a keyed run's setup under the lock and BEFORE its "running"

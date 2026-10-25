@@ -14,9 +14,38 @@ import (
 	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/job"
+	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/vault"
 )
+
+// covers: MA-741, R37
+// Pausing an encrypted archive seals it with an empty marker: the owner's note is not
+// written beside the archive in plaintext. The positive twin: a plaintext archive's
+// pause keeps the note.
+func TestPausingAnEncryptedArchiveKeepsNoNoteInIt(t *testing.T) {
+	plain := t.TempDir()
+	if err := PauseArchive(plain, "parked by the owner"); err != nil || seal.Reason(plain) != "parked by the owner" {
+		t.Fatalf("the positive twin: a plaintext pause keeps its note (%v)", err)
+	}
+	sealed := t.TempDir()
+	p, err := vault.PrepareCreate(sealed, "pause test passphrase")
+	if err != nil {
+		t.Fatal(err)
+	}
+	k, err := p.Commit()
+	if err != nil {
+		t.Fatal(err)
+	}
+	k.Destroy()
+	if err := PauseArchive(sealed, "SECRET note about the mail"); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(sealed, seal.Name))
+	if err != nil || len(raw) != 0 || !seal.IsSealed(sealed) {
+		t.Fatalf("an encrypted archive's pause file must be an empty marker that still seals it: %q (%v)", raw, err)
+	}
+}
 
 // covers: MA-732, R37
 // The scheduled run-job (RunHeadless) and Run now (RunJobInProcess) refuse a keyless

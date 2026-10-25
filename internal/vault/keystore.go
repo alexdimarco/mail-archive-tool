@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"path/filepath"
 )
 
 // Store is the OS secret store as the vault needs it; graphconfig.SecretStore
@@ -18,15 +19,46 @@ type Store interface {
 // archive id, which travels with the archive, never its folder path.
 func Account(id ID) string { return "archive:" + id.String() }
 
+// Located is a Store that keeps its secrets in a folder (the 0600 file store on
+// macOS/Linux); the Credential Manager has no folder and does not implement it.
+type Located interface{ Location() string }
+
+// ErrStoreInsideArchive refuses to remember a key in a store whose folder is inside
+// an encrypted archive: the key would travel with the archive it opens (P2a-C14).
+var ErrStoreInsideArchive = errors.New("vault: the secret store is inside an encrypted archive")
+
 // Remember files k's master key in s so unattended backups can open the archive
 // (D1's default, A10). It is the master key itself, protected only by the store
 // — the Credential Manager on Windows, a 0600 file on macOS/Linux (R-E2: this
-// protects a copy of the archive that leaves the machine, not the machine).
+// protects a copy of the archive that leaves the machine, not the machine). A
+// store whose folder is inside ANY encrypted archive is refused before the write.
 func Remember(s Store, k *Key) error {
 	if err := k.usable(); err != nil {
 		return err
 	}
+	if l, ok := s.(Located); ok {
+		if where, why := encryptedAbove(l.Location()); where != "" {
+			return fmt.Errorf("%w: %s is inside the encrypted archive %s (%s) — keep MailArchive's settings outside the archive", ErrStoreInsideArchive, l.Location(), where, why)
+		}
+	}
 	return s.Set(Account(k.id), base64.StdEncoding.EncodeToString(k.master[:]))
+}
+
+// encryptedAbove is the first of dir and its parents that is an encrypted archive,
+// and why; "" when none is. A folder that cannot be read is not called encrypted.
+func encryptedAbove(dir string) (string, string) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", ""
+	}
+	for d := abs; ; d = filepath.Dir(d) {
+		if enc, why, _ := EncryptedMarker(d); enc {
+			return d, why
+		}
+		if filepath.Dir(d) == d {
+			return "", ""
+		}
+	}
 }
 
 // Forget removes an archive's remembered key ("ask me each time").

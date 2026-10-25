@@ -102,7 +102,9 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	// A keyed capture proves its key and target before the sign-in, any folder, lock
 	// or record: a refused manual capture writes nothing (P2a-C10).
 	if opts.Key != nil {
-		if err := preflightEncrypted(opts); err != nil {
+		// The sign-in below writes its token cache before the lock: one inside the
+		// archive is refused here, first (P2a-C14).
+		if err := preflightEncrypted(opts, g.TokenCachePath); err != nil {
 			if opts.Unattended {
 				RecordRefusedRun(opts, err)
 			}

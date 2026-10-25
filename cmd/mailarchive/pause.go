@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 
+	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/wizard"
 )
 
@@ -27,6 +28,9 @@ func runPause(args []string) error {
 		return err
 	}
 	fmt.Printf("Paused %s — it is now read-only and its scheduled backup is stopped. Run `mailarchive resume -out %s` to undo. Your mail is untouched.\n", *out, *out)
+	if *reason != "" && app.ArchiveEncrypted(*out) {
+		fmt.Println("The note was not stored: an encrypted archive keeps no note beside it in plain text.")
+	}
 	return nil
 }
 

@@ -87,6 +87,11 @@ type Options struct {
 	// archive. Reaching it from production code is gated by assureblock's
 	// reachability test until Phase 3.
 	Key *vault.Key
+	// CredentialPaths are the files and folders an encrypted run's caller keeps
+	// credentials or settings in (a -config folder, a client-secret file): a keyed
+	// run refuses when any of them, or MailArchive's own settings or working folder,
+	// is at or under Out (P2a-C14). Unused by a plaintext run.
+	CredentialPaths []string
 
 	// BeforeRead, when non-nil, runs once after the archive lock is held and the
 	// run has begun, and before any source is read: the opt-in Thunderbird

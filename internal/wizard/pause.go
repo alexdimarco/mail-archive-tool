@@ -3,6 +3,7 @@ package wizard
 import (
 	"fmt"
 
+	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/state"
@@ -40,6 +41,12 @@ func PauseArchive(out, reason string) error {
 		if rerr := removeLiveEntry(spec); rerr != nil {
 			return fmt.Errorf("could not remove the verify schedule before pausing (it may still run): %w", rerr)
 		}
+	}
+	// An encrypted archive's pause file is a fixed, empty marker: the owner's note
+	// would sit beside the archive in plaintext (phase2a §4). Where the note goes
+	// instead is an open operator question (the archive index is folder-only, MA-662).
+	if app.ArchiveEncrypted(out) {
+		reason = ""
 	}
 	return seal.Seal(out, reason)
 }

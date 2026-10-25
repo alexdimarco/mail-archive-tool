@@ -144,6 +144,51 @@ func TestAnEncryptedCopyFirstRunChecksTheScratchDrive(t *testing.T) {
 	}
 }
 
+// covers: MA-741, R37
+// A keyed run refuses an encrypted archive that holds MailArchive's settings folder
+// or working folder, a credential path its caller names, or (a capture) its sign-in
+// token cache — before discovery, any sign-in, folder, lock or record, every file of
+// the archive unchanged (P2a-C14): those keep secrets and mail copies in plaintext.
+// There is no exemption for an archive holding the settings folder (a plaintext
+// archive only warns, P10). The positive twin: the same run with them outside
+// archives the mail (MA-725).
+func TestAKeyedRunRefusesAnArchiveHoldingItsSecrets(t *testing.T) {
+	src := encryptedSourcePST(t)
+	for label, setup := range map[string]func(out string) (Options, GraphOptions){
+		"the settings folder": func(out string) (Options, GraphOptions) {
+			orig := secretDirs
+			t.Cleanup(func() { secretDirs = orig })
+			secretDirs = func() []string { return []string{filepath.Join(out, "Library", "mailarchive")} }
+			return Options{}, GraphOptions{}
+		},
+		"a credential path": func(out string) (Options, GraphOptions) {
+			return Options{CredentialPaths: []string{filepath.Join(out, "client-secret.txt")}}, GraphOptions{}
+		},
+		"the token cache": func(out string) (Options, GraphOptions) {
+			return Options{}, GraphOptions{TokenCachePath: filepath.Join(out, "graph-token.json")}
+		},
+	} {
+		t.Run(label, func(t *testing.T) {
+			out, k := encryptedOut(t)
+			opts, g := setup(out)
+			opts.Out, opts.Key = out, k
+			before := snapshotTree(t, out)
+			var err error
+			if g.TokenCachePath != "" {
+				_, err = RunGraph(context.Background(), g, opts, discard())
+			} else {
+				opts.Inputs = []string{src}
+				_, err = Run(context.Background(), opts, discard(), nil)
+			}
+			if !errors.Is(err, ErrEncryptedArchive) {
+				t.Fatalf("want ErrEncryptedArchive, got %v", err)
+			}
+			assure.Refused(t, 1, err.Error(), assure.Code(1), assure.Names(out, "plaintext"),
+				assure.NoSideEffect(func() bool { return sameTree(before, snapshotTree(t, out)) }))
+		})
+	}
+}
+
 // covers: MA-738, R37
 // OutlookPSTDir: a plaintext archive's Outlook PSTs are exported where they always
 // were (<out>/_outlook-pst, kept on failure by the caller); an encrypted archive's go to

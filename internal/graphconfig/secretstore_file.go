@@ -23,6 +23,10 @@ func NewFileSecretStore(dir string) SecretStore { return fileStore{dir: dir} }
 
 func (s fileStore) Name() string { return "file (" + s.dir + ")" }
 
+// Location is the folder the secrets are kept in, so a caller (vault.Remember) can
+// refuse one inside an encrypted archive.
+func (s fileStore) Location() string { return s.dir }
+
 // path maps an account key to a safe filename (the key is already non-sensitive:
 // graph:<hash8>-<hash8>); any stray separator/control is replaced defensively.
 func (s fileStore) path(account string) string {
