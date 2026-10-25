@@ -288,6 +288,10 @@ chunks are never re-sealed.
 - An open last chunk the writer cannot read is never dropped from the pointer: it stays named, its range
   goes into `history_gap` (one widening interval — a superset, the safe direction), and a new last
   chunk starts.
+- *As built (2b-2, MA-756):* the copy and the barrier are two `HistoryEvent` fields (`copy`, `barrier`,
+  omitted when false, so plaintext logs are byte-identical); `FoldEvents` treats a barrier as a header
+  that does not parse, and `HistoryStatus` counts a copied header's run once. The history step runs
+  first in each commit, so a failed one records its gap in that commit's header.
 - Keyed reindex redaction (Phase 3) re-seals the affected chunks in the same commit as the manifest,
   closing the plaintext redaction window (reindex.go:202-209) for encrypted archives. The A12 conversion
   (Phase 3) parses the plaintext `.jsonl` into chunks and counts dropped bad lines into the header.
@@ -347,6 +351,17 @@ index. **No index write after the last seal:** `RepairKeys` (run.go:641; graph.g
 is sealed by the first commit; `finish`'s `indexCount` must not commit a batch on the encrypted path;
 `Close` never seals. A test-build check fails a run that reached its final commit while
 `total_changes()` differs from the last sealed value.
+
+*As built (2b-3a, MA-757) and what moves to 2b-3b.* 2b-3a seals the index image in memory as
+described, captures it only when its change count moved since the last capture (so an unchanged run
+neither serializes nor re-seals it), and marks the index behind wherever §6 says. Four pieces of P2b-C15/
+C16 are a separate slice, **2b-3b**, built before Phase 3 and before 2b's closing adversarial pass:
+(1) lazy open — 2b-3a decrypts and restores the index at the start of every indexed run; (2) the
+cache-folder scratch file above the memory budget — 2b-3a always works in memory, so a very large
+index costs about 3× its size in memory at a commit; (3) the resumable catch-up and keyed Rebuild that
+clear `index_behind` — until then the mark persists and every keyed run with it set reports nothing
+more than the note; (4) the test-build check that no index write follows the run's last seal. None
+of these is reachable by users (MA-726).
 
 **Keyed Rebuild** is built in 2b at engine level — the remedy behind the catch-up, and for a damaged
 section — reading content through `Units.Read`, building in memory or the scratch file, never under

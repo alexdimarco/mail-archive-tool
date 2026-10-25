@@ -25,10 +25,9 @@ import (
 // exemption the leak and tree tests allow. It is strict both ways: a leak outside it
 // fails, and an entry that no longer leaks fails too (it outlived 2b), and every
 // entry is listed in the MA-744 catalog row (TestTheCleartext2bListNeverGrows).
-var cleartext2b = map[string]string{
-	"search.db":                  "the search index, with its -wal/-shm/-journal companions: 2b seals it",
-	".mailarchive-history.jsonl": "the go-back history (Microsoft 365 captures only): 2b seals it",
-}
+// Phase 2b has sealed every entry (the manifest in 2b-1, the history in 2b-2, the
+// search index in 2b-3): the list is empty, and stays a guard that it stays so.
+var cleartext2b = map[string]string{}
 
 // cleartext2bOf names the cleartext2b entry a scanned path falls under, or "".
 func cleartext2bOf(where string) string {
@@ -251,6 +250,14 @@ func TestTheCleartext2bListNeverGrows(t *testing.T) {
 	listed := strings.SplitN(row, "2b list:", 2)
 	if len(listed) != 2 {
 		t.Fatalf("the MA-744 row does not name its 2b list (\"2b list: `name`, ...;\"): %s", row)
+	}
+	// Phase 2b's end state: the row says the list is empty and the code's list is
+	// empty — a file sealed for good can never return to it unseen.
+	if strings.HasPrefix(strings.TrimSpace(listed[1]), "none") {
+		if len(cleartext2b) != 0 {
+			t.Fatalf("the MA-744 row says the 2b list is empty, but cleartext2b holds %v", cleartext2b)
+		}
+		return
 	}
 	names := map[string]bool{}
 	for _, part := range strings.Split(strings.SplitN(listed[1], ";", 2)[0], "`") {

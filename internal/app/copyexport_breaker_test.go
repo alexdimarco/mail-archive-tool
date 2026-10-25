@@ -210,14 +210,20 @@ func TestCopyExportASlowHealthyDownloadAndACapturePauseAreNotAnOutage(t *testing
 	f = newMeFake(t)
 	f.meFn = dropConn
 	e = newCEEnv(t)
-	t0 := time.Now()
-	e.captureBusy = func() bool { return time.Since(t0) < 360*time.Millisecond }
+	// The pause starts at the run's first look, not at a time taken before the run's
+	// setup, which a loaded machine could spend most of (as fromFirst does).
+	var once sync.Once
+	var t0 time.Time
+	e.captureBusy = func() bool {
+		once.Do(func() { t0 = time.Now() })
+		return time.Since(t0) < 360*time.Millisecond
+	}
 	src = f.source(t)
 	res = runWith(t, e, planFor(t, e, src, idMsgs("A1", "A2")), src)
 	if res.Outcome != CopyOutcomeComplete || res.Stop != nil {
 		t.Fatalf("a 6-minute capture pause ended as %s (%+v), want it not counted", res.Label, res.Stop)
 	}
-	if time.Since(t0) < 360*time.Millisecond {
+	if t0.IsZero() || time.Since(t0) < 360*time.Millisecond {
 		t.Error("the run did not wait out the capture")
 	}
 }

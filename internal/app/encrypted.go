@@ -9,6 +9,7 @@ import (
 
 	"mail-archive-tool/internal/container"
 	"mail-archive-tool/internal/export"
+	"mail-archive-tool/internal/index"
 	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/util"
@@ -63,6 +64,55 @@ func prepareEncrypted(opts Options, manifest *state.Manifest, store *container.S
 		logger.Printf("swept %d unit and %d record file(s) nothing names: superseded during the last run, or left by an interrupted one", n, c)
 	}
 	return nil
+}
+
+// openSealedIndex opens an encrypted archive's search index from its sealed record,
+// in memory (phase2b §6), and registers it with the store, whose commits seal its
+// image when it changed. An index that cannot be loaded is replaced by an empty one
+// and marked behind — a backup never stops for its index (P2b-C16); one a newer
+// MailArchive wrote is refused, as Open refuses a newer search.db.
+func openSealedIndex(store *container.Store, logger *log.Logger) (*index.Index, error) {
+	img, err := store.IndexImage()
+	if err != nil {
+		logger.Printf("warning: %v", err)
+		store.MarkIndexBehind()
+		img = nil
+	}
+	idx, err := index.OpenMemory(img)
+	if errors.Is(err, index.ErrNewerFormat) {
+		return nil, err
+	}
+	if err != nil {
+		logger.Printf("warning: %v", err)
+		store.MarkIndexBehind()
+		if idx, err = index.OpenMemory(nil); err != nil {
+			return nil, err
+		}
+		img = nil
+	}
+	sealed := int64(-1) // a new index is captured at the first commit
+	if img != nil {
+		if sealed, err = idx.Changes(); err != nil {
+			idx.Close()
+			return nil, err
+		}
+	}
+	store.SetIndex(func() ([]byte, bool, error) {
+		n, err := idx.Changes()
+		if err != nil {
+			return nil, false, err
+		}
+		if n == sealed {
+			return nil, false, nil
+		}
+		img, err := idx.Image()
+		if err != nil {
+			return nil, false, err
+		}
+		sealed = n
+		return img, true, nil
+	})
+	return idx, nil
 }
 
 // unitFiles lists the unit files records name, for the sealed record's inventory.

@@ -4,12 +4,15 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"mail-archive-tool/internal/container"
 	"mail-archive-tool/internal/export"
+	"mail-archive-tool/internal/index"
+	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/vault"
 )
 
@@ -93,6 +96,92 @@ func TestAnEncryptedRunDeletesNothingUntilTheNextRunsSweep(t *testing.T) {
 	}
 }
 
+// covers: MA-757, R37
+// A keyed run keeps its search index sealed in the record (Phase 2b-3): no search.db
+// or companion is ever written; the sealed index holds a row for every archived
+// message; an unchanged re-run re-seals no index chunk; and a run with indexing off
+// marks the sealed index behind, since the records it commits are not in it.
+func TestAnEncryptedRunSealsItsSearchIndex(t *testing.T) {
+	src := encryptedSourcePST(t)
+	out, key := encryptedOut(t)
+	if _, err := Run(context.Background(), Options{Inputs: []string{src}, Out: out, Key: key, Index: true}, discard(), nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"search.db", "search.db-wal", "search.db-shm", "search.db-journal"} {
+		if _, err := os.Stat(filepath.Join(out, name)); !os.IsNotExist(err) {
+			t.Fatalf("an encrypted run wrote %s (%v)", name, err)
+		}
+	}
+	load := func() (*state.Manifest, *container.Store) {
+		m, s, err := container.LoadManifest(out, container.LoadOptions{Key: key, RunStart: time.Now().UTC(), Units: unitFiles(&export.Units{Root: out, Key: key})})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m, s
+	}
+	m, s := load()
+	img, err := s.IndexImage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx, err := index.OpenMemory(img)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, _ := idx.Count()
+	idx.Close()
+	if n == 0 || n != m.Len() {
+		t.Fatalf("the sealed index holds %d rows for %d records", n, m.Len())
+	}
+	before := s.Chunks(vault.ContainerIndex)
+	if _, err := Run(context.Background(), Options{Inputs: []string{src}, Out: out, Key: key, Index: true}, discard(), nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, s = load(); !reflect.DeepEqual(s.Chunks(vault.ContainerIndex), before) || s.IndexBehind() {
+		t.Fatal("an unchanged re-run must re-seal no index chunk and leave the index whole")
+	}
+	if _, err := Run(context.Background(), Options{Inputs: []string{src}, Out: out, Key: key}, discard(), nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, s = load(); !s.IndexBehind() {
+		t.Fatal("a run with indexing off must mark the sealed index behind")
+	}
+}
+
+// covers: MA-756, R37
+// A keyed Microsoft 365 capture keeps its go-back timeline sealed in the record
+// (Phase 2b-2): no history file is written, and the sealed history holds the run's
+// header, an event for every captured message and the clean-run footer.
+func TestAnEncryptedCaptureSealsItsHistory(t *testing.T) {
+	s := sweepServer(false, []string{"A1", "A2"}, []string{"B1"}, nil)
+	defer s.Close()
+	out, key := encryptedOut(t)
+	if _, err := RunGraph(context.Background(), isoOptions(s), Options{Out: out, Key: key}, discard()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(out, state.HistoryName)); !os.IsNotExist(err) {
+		t.Fatalf("an encrypted capture wrote a plaintext history file (%v)", err)
+	}
+	_, store, err := container.LoadManifest(out, container.LoadOptions{Key: key, RunStart: time.Now().UTC(), Units: unitFiles(&export.Units{Root: out, Key: key})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var headers, folders, footers int
+	for _, ev := range store.History() {
+		switch {
+		case ev.Run > 0 && ev.At != "":
+			headers++
+		case ev.Run > 0 && ev.Completed != "":
+			footers++
+		case ev.K != "":
+			folders++
+		}
+	}
+	if headers != 1 || folders != 3 || footers != 1 {
+		t.Fatalf("the sealed history holds %d headers, %d message events, %d footers; want 1, 3, 1", headers, folders, footers)
+	}
+}
+
 // covers: MA-754, R37
 // A scheduled Microsoft 365 capture that finds nothing new restamps every record it
 // observes, yet re-seals only the sealed header — its pair of copies — and no bucket
@@ -116,13 +205,19 @@ func TestAnUnchangedCaptureResealsOnlyTheHeader(t *testing.T) {
 	if _, err := RunGraph(context.Background(), g, Options{Out: out, Key: key, CheckpointEvery: 1}, discard()); err != nil {
 		t.Fatal(err)
 	}
+	// The manifest's own chunks (the history's grow by design, one per commit with
+	// events: the run's header and footer).
+	_, store, err := container.LoadManifest(out, container.LoadOptions{Key: key, RunStart: time.Now().UTC(), Units: unitFiles(&export.Units{Root: out, Key: key})})
+	if err != nil {
+		t.Fatal(err)
+	}
 	fresh := 0
-	for p := range chunkSet(t, out) {
-		if !before[p] {
+	for _, p := range store.Chunks(vault.ContainerManifest) {
+		if !before[strings.TrimPrefix(p, container.ChunksDir+"/")] {
 			fresh++
 		}
 	}
 	if fresh != 2 {
-		t.Fatalf("an unchanged capture wrote %d record chunks, want the header's two copies", fresh)
+		t.Fatalf("an unchanged capture re-sealed %d record chunks, want the header's two copies", fresh)
 	}
 }

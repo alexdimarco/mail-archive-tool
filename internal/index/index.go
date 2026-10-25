@@ -78,8 +78,9 @@ type Index struct {
 	db      *sql.DB
 	tx      *sql.Tx
 	pending int
-	lost    int // rows whose Add succeeded but whose batch was later lost (see Lost)
-	version int // key-format version read at Open (see indexVersion)
+	lost    int  // rows whose Add succeeded but whose batch was later lost (see Lost)
+	version int  // key-format version read at Open (see indexVersion)
+	memory  bool // an encrypted archive's in-memory index (OpenMemory): it has an Image
 }
 
 // Open opens (creating if needed) a writable index at path and begins a batch.

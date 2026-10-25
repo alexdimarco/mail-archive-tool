@@ -510,8 +510,9 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// minimal failed run (A14).
 	var manifest *state.Manifest
 	var units *export.Units
+	var sealed *container.Store
 	if opts.Key != nil {
-		if manifest, units, _, err = openEncrypted(opts, lock.StillHeld, time.Now().UTC(), logger, nil); err != nil {
+		if manifest, units, sealed, err = openEncrypted(opts, lock.StillHeld, time.Now().UTC(), logger, nil); err != nil {
 			if opts.Unattended {
 				writeRefusedRun(opts, err)
 			}
@@ -633,9 +634,17 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// Optional search index, fed as each message is written.
 	var idx *index.Index
 	var indexErrors int
+	if !opts.Index && sealed != nil && sealed.HasIndex() {
+		// Records this run commits are not added to the sealed index (P2b-C16).
+		sealed.MarkIndexBehind()
+	}
 	if opts.Index {
 		idxPath := filepath.Join(opts.Out, "search.db")
-		idx, err = index.Open(idxPath)
+		if sealed != nil {
+			idx, err = openSealedIndex(sealed, logger)
+		} else {
+			idx, err = index.Open(idxPath)
+		}
 		if err != nil {
 			return Result{}, withKind(state.FailIndex, indexOpenError(idxPath, opts.Out, err))
 		}
@@ -902,7 +911,7 @@ func ostAdvisory(goos string, paths []string, classicOutlook bool) string {
 // away; idx.Add replaces by key). A move is therefore never lost. hist and idx
 // may be nil (a one-shot local run writes no timeline; indexing may be off). It
 // returns the manifest save's error, so a run whose final save failed fails.
-func commit(hist *state.HistoryWriter, idx *index.Index, manifest *state.Manifest, logger *log.Logger) error {
+func commit(hist state.Timeline, idx *index.Index, manifest *state.Manifest, logger *log.Logger) error {
 	var syncHistory, flushIndex, saveManifest func() error
 	if hist != nil {
 		syncHistory = hist.Sync

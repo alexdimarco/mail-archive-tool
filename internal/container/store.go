@@ -100,7 +100,20 @@ type Store struct {
 	// invTolerated: a shard was damaged under a current top file; this run sweeps
 	// nothing and rewrites every shard.
 	invTolerated bool
-	Notices      []string // what the load healed or accepted, for the run log
+
+	// The sealed timeline (§5): the run's buffered events, the open last chunk's
+	// plaintext once read, the run header a new chunk copies, whether the last chunk
+	// could not be read, and whether a gap in the header came from a failed staging.
+	indexSource  func() ([]byte, bool, error) // the run's in-memory index (SetIndex)
+	indexDigests [][32]byte                   // plaintext digest per sealed index chunk, once loaded or committed
+
+	timeline       *sealedTimeline
+	histTail       []byte
+	histHeader     *state.HistoryEvent
+	histTailLoaded bool
+	histTailBad    bool
+	histGapStaging bool
+	Notices        []string // what the load healed or accepted, for the run log
 }
 
 func (s *Store) refuse(base error, format string, args ...any) error {
@@ -786,11 +799,22 @@ func (s *Store) Commit(v state.View) error {
 		}
 		s.hdr.SeenAt[token] = at
 	}
+	gen := s.attempted + 1
+	// The timeline first: a history that cannot be staged keeps its events buffered
+	// for the next commit and records the gap in THIS commit's header (§1, P2b-C14).
+	hist, herr := s.stageHistory(gen)
+	if herr != nil {
+		s.histGapStaging = true
+		s.markHistoryGap(gen)
+		hist = stagedHistory{table: s.ptr.History}
+	}
+	// Then the index, also before the manifest's sections: a commit that cannot seal
+	// it records index_behind in its own header (§1, P2b-C16).
+	idx := s.stageIndex(gen)
 	sections, n, err := encodeSections(s.opts.Key, v, s.hdr, s.ptr.Buckets, s.runStamp)
 	if err != nil {
 		return err
 	}
-	gen := s.attempted + 1
 	old := map[uint32][]Entry{}
 	for _, e := range s.ptr.Manifest {
 		old[e.I] = append(old[e.I], e)
@@ -818,8 +842,12 @@ func (s *Store) Commit(v state.View) error {
 			return fmt.Errorf("%w: %v", ErrLockLost, err)
 		}
 	}
-	p := Pointer{Head: s.ptr.Head, Manifest: table, History: s.ptr.History, Index: s.ptr.Index}
+	p := Pointer{Head: s.ptr.Head, Manifest: table, History: hist.table, Index: idx.table}
 	p.Format, p.Gen, p.Buckets = vault.FormatVersion, gen, n
+	p.IndexImage, p.IndexChunk = idx.length, 0
+	if len(idx.table) > 0 {
+		p.IndexChunk = indexChunkSize
+	}
 	p.RunStart = s.opts.RunStart.Unix()
 	if s.inv != nil {
 		p.Inv = s.inv.Gen
@@ -837,6 +865,10 @@ func (s *Store) Commit(v state.View) error {
 	prevLive := s.prevLive
 	s.ptr, s.sections, s.reseal, s.commits, s.fixedTime = p, digests, map[uint32]bool{}, s.commits+1, mt
 	s.walkDone = map[string]time.Time{}
+	s.apply(hist)
+	if idx.captured {
+		s.indexDigests = idx.digests
+	}
 	mirror := &Digest{SHA256: sha256.Sum256(raw), Size: int64(len(raw))}
 	if err := writeFile(s.out, MirrorName, raw, mt); err != nil {
 		mirror = nil

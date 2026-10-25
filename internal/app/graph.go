@@ -219,11 +219,17 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	if sealed != nil {
 		sealed.SetRunStamp(runAt)
 	}
-	var hist *state.HistoryWriter
-	if hw, herr := state.OpenHistory(filepath.Join(opts.Out, state.HistoryName)); herr != nil {
+	// An encrypted archive's timeline is sealed in its record (phase2b §5): no
+	// plaintext log is opened.
+	var hist state.Timeline
+	if sealed != nil {
+		hist = sealed.Timeline()
+	} else if hw, herr := state.OpenHistory(filepath.Join(opts.Out, state.HistoryName)); herr != nil {
 		logger.Printf("warning: %v (this run's go-back timeline will be incomplete)", herr)
 	} else {
 		hist = hw
+	}
+	if hist != nil {
 		defer hist.Close()
 		if werr := hist.WriteRunHeader(runAt.UnixNano(), runAt, g.Mailboxes); werr != nil {
 			logger.Printf("warning: history run header: %v", werr)
@@ -244,9 +250,17 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 
 	var idx *index.Index
 	var indexErrors int
+	if !opts.Index && sealed != nil && sealed.HasIndex() {
+		// Records this capture commits are not added to the sealed index (P2b-C16).
+		sealed.MarkIndexBehind()
+	}
 	if opts.Index {
 		idxPath := filepath.Join(opts.Out, "search.db")
-		idx, err = index.Open(idxPath)
+		if sealed != nil {
+			idx, err = openSealedIndex(sealed, logger)
+		} else {
+			idx, err = index.Open(idxPath)
+		}
 		if err != nil {
 			return Result{}, withKind(state.FailIndex, indexOpenError(idxPath, opts.Out, err))
 		}
@@ -656,7 +670,7 @@ func graphImportance(s string) string {
 // field merge (Folder/LastSeen/Present) is the caller's; this is only the two
 // stores the exporter cannot reach. Either store may be nil (idx off, or the
 // history log could not be opened); a failure of one is logged, not fatal (§3.2).
-func recordMove(hist *state.HistoryWriter, idx *index.Index, key, folder string, logger *log.Logger) {
+func recordMove(hist state.Timeline, idx *index.Index, key, folder string, logger *log.Logger) {
 	if hist != nil {
 		if herr := hist.WriteFolder(key, folder); herr != nil {
 			logger.Printf("warning: history event: %v", herr)
@@ -673,7 +687,7 @@ func recordMove(hist *state.HistoryWriter, idx *index.Index, key, folder string,
 // and idx (either may be nil) receive the go-back timeline events and the
 // body-free index folder update the move fast-path issues; runAt is the run's
 // timestamp, stamped as LastSeen on every observation (§3.2/§3.4).
-func runGraphMailbox(ctx context.Context, lr *localRun, client *graph.Client, manifest *state.Manifest, hist *state.HistoryWriter, idx *index.Index, mailbox string, filter graph.FolderFilter, breakerTime time.Duration, checkpoint func(), abort func() error) error {
+func runGraphMailbox(ctx context.Context, lr *localRun, client *graph.Client, manifest *state.Manifest, hist state.Timeline, idx *index.Index, mailbox string, filter graph.FolderFilter, breakerTime time.Duration, checkpoint func(), abort func() error) error {
 	exp, runAt, logger := lr.exp, lr.runAt, lr.logger
 	logger.Printf("Reading mailbox %s via Microsoft Graph", mailbox)
 	// The store token for a Graph source is seeded from the CANONICAL mailbox id

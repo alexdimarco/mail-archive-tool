@@ -60,6 +60,27 @@ type HistoryEvent struct {
 	// line, so a folder rename is not a mass of per-message moves (GB-5).
 	From string `json:"from,omitempty"`
 	To   string `json:"to,omitempty"`
+
+	// An encrypted archive's sealed timeline only (Phase 2b, design phase2b §5):
+	// Copy marks a run header repeated at the start of a history chunk so the chunk
+	// reads on its own — a run is counted once; Barrier stands where a chunk could not
+	// be read — the events after it have no run time until the next header, so none is
+	// dated by an earlier run's.
+	Copy    bool `json:"copy,omitempty"`
+	Barrier bool `json:"barrier,omitempty"`
+}
+
+// Timeline is where a run appends its go-back events: the plaintext log
+// (*HistoryWriter) or an encrypted archive's sealed timeline, which buffers them
+// for the record's next commit.
+type Timeline interface {
+	WriteRunHeader(run int64, at time.Time, mailboxes []string) error
+	WriteFolder(key, folder string) error
+	WriteGone(key string) error
+	WriteRename(from, to string) error
+	WriteRunFooter(run int64, at time.Time) error
+	Sync() error
+	Close() error
 }
 
 // HistoryWriter appends events to the log. It is safe for concurrent use.
@@ -267,6 +288,10 @@ func FoldEvents(events []HistoryEvent, upTo time.Time) map[string]FoldState {
 	haveAt := false
 	for _, ev := range events {
 		switch {
+		case ev.Barrier:
+			// A sealed chunk that could not be read: what follows has no run time
+			// until the next header (the wrong-date rule, #3, as for a bad header).
+			haveAt = false
 		case ev.Run > 0 && ev.At != "":
 			if t, perr := time.Parse(time.RFC3339, ev.At); perr == nil {
 				curAt, haveAt = t, true
@@ -397,8 +422,10 @@ func HistoryStatus(path string) (HistoryStat, error) {
 			continue
 		}
 		switch {
-		case ev.Run > 0 && ev.At != "":
+		case ev.Run > 0 && ev.At != "" && !ev.Copy:
 			st.Runs++
+		case ev.Run > 0 && ev.At != "":
+			// a run header repeated at a sealed chunk's start: the run is counted once
 		case ev.Run > 0 && ev.Completed != "":
 			// a clean-run footer, not a timeline event
 		case ev.K != "" || (ev.From != "" && ev.To != ""):
