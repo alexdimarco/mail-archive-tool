@@ -119,6 +119,13 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	begun := beginRun(opts)
 	defer recordRun(opts, begun, &result, &err, logger)
 
+	// What a crashed earlier capture may have left behind (R5): stale temps — a
+	// half-written page, zip or manifest. Only temps, never zips: a capture's
+	// zip-without-page is not the local runs' crash signature (2a-P).
+	if n := export.SweepTemps(opts.Out, time.Now(), logger); n > 0 {
+		logger.Printf("swept %d orphaned temp file(s) from an interrupted run", n)
+	}
+
 	mpath := opts.Manifest
 	if mpath == "" {
 		mpath = filepath.Join(opts.Out, ".mailarchive-manifest.json")

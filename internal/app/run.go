@@ -1186,8 +1186,9 @@ func runFile(ctx context.Context, lr *localRun, path string, copyFirst, followLi
 }
 
 // snapshotPrefix starts the name of a -copy-first snapshot's temp file, which is how a
-// failure of its WRITE (the archive's volume) is told from one reading the source.
-const snapshotPrefix = ".mailarchive-snapshot-"
+// failure of its WRITE (the archive's volume) is told from one reading the source, and
+// how the sweep finds one a crash left behind.
+const snapshotPrefix = export.SnapshotPrefix
 
 // snapshotCopy is the copy a -copy-first snapshot makes; a var so a test can fail it
 // the way a full drive does.

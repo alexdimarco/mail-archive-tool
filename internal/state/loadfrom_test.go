@@ -46,8 +46,8 @@ func TestLoadFromIsASnapshotThatNeverSaves(t *testing.T) {
 		t.Errorf("a snapshot's Save wrote into the folder: %d entries before, %d after", len(before), len(after))
 	}
 	if cwd, _ := os.Getwd(); cwd != "" {
-		if _, err := os.Lstat(filepath.Join(cwd, ".manifest-0.tmp")); err == nil {
-			t.Errorf("a snapshot's Save left a temp file in the working directory")
+		if left, _ := filepath.Glob(filepath.Join(cwd, manifestTempPattern)); len(left) != 0 {
+			t.Errorf("a snapshot's Save left a temp file in the working directory: %v", left)
 		}
 	}
 

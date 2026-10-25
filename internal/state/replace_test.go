@@ -101,9 +101,36 @@ func savedManifest(t *testing.T) (*Manifest, string, []byte) {
 	return m, path, before
 }
 
+// covers: MA-721, MA-399, R5
+func TestTheManifestTempHasTheSweepableName(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".mailarchive-manifest.json")
+	m, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var renamed []string
+	orig := renameFile
+	t.Cleanup(func() { renameFile = orig })
+	renameFile = func(oldpath, newpath string) error {
+		renamed = append(renamed, filepath.Base(oldpath))
+		return os.Rename(oldpath, newpath)
+	}
+	if err := m.Save(); err != nil {
+		t.Fatal(err)
+	}
+	name := assure.Reached(t, renamed, "manifest temp renames")[0]
+	if !strings.HasPrefix(name, ".mailarchive-") || !strings.HasSuffix(name, ".tmp") {
+		t.Fatalf("the manifest temp %q is not the .mailarchive-*.tmp shape export.SweepTemps reaps: a crash would leave a full manifest copy forever", name)
+	}
+	if m, _ := filepath.Match(manifestTempPattern, name); !m {
+		t.Fatalf("the manifest temp %q does not match manifestTempPattern %q, which the leftover checks glob", name, manifestTempPattern)
+	}
+}
+
 // leftoverTemps lists the manifest temp files left beside path.
 func leftoverTemps(path string) []string {
-	matches, _ := filepath.Glob(filepath.Join(filepath.Dir(path), ".manifest-*.tmp"))
+	matches, _ := filepath.Glob(filepath.Join(filepath.Dir(path), manifestTempPattern))
 	return matches
 }
 

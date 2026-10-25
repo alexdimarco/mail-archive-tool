@@ -97,31 +97,52 @@ func syncDir(dir string) {
 // completed-rename-survives-power-loss discipline the exporter uses.
 func SyncDir(dir string) { syncDir(dir) }
 
-// SweepOrphans removes what a crashed run can leave behind under out: temp files
-// (tempPrefix…tmp) whose modification time is before `before` (the current run's
-// start, so an overlapping run's live temps are never touched), and attachment
-// zips whose sibling .html does not exist (a crash between the zip rename and
-// the html rename, or a message re-exported under a new name). It returns the
-// number of files removed. Nothing else is ever deleted.
+// SnapshotPrefix starts the name of a -copy-first snapshot. The snapshot keeps
+// its source's extension — the reader is chosen by it — so it does not end in
+// .tmp, and the sweep knows it by this prefix instead.
+const SnapshotPrefix = ".mailarchive-snapshot-"
+
+// SweepOrphans removes what a crashed run can leave behind under out (R5): the
+// in-flight files SweepTemps removes, and the orphan attachment zips
+// SweepOrphanZips removes. It returns the number of files removed. A local
+// run and reindex sweep both; a Microsoft 365 capture sweeps temps only.
 func SweepOrphans(out string, before time.Time, logger *log.Logger) int {
+	return SweepTemps(out, before, logger) + SweepOrphanZips(out, logger)
+}
+
+// SweepTemps removes in-flight files a crashed run left under out — temp files
+// (tempPrefix…tmp: content, pages, the manifest, the vault) and -copy-first
+// snapshots (SnapshotPrefix…, a whole copy of the source mailbox) — whose
+// modification time is before `before` (the current run's start, so a file this
+// run is still writing is never touched). Nothing else is ever deleted.
+func SweepTemps(out string, before time.Time, logger *log.Logger) int {
+	return sweep(out, logger, func(path, name string, d fs.DirEntry) bool {
+		if !(strings.HasPrefix(name, tempPrefix) && strings.HasSuffix(name, ".tmp")) && !strings.HasPrefix(name, SnapshotPrefix) {
+			return false
+		}
+		info, err := d.Info()
+		return err == nil && info.ModTime().Before(before)
+	})
+}
+
+// SweepOrphanZips removes attachment zips whose sibling .html does not exist (a
+// crash between the zip rename and the html rename, or a message re-exported
+// under a new name). Nothing else is ever deleted.
+func SweepOrphanZips(out string, logger *log.Logger) int {
+	return sweep(out, logger, func(path, name string, _ fs.DirEntry) bool {
+		if !strings.HasSuffix(name, zipSuffix) {
+			return false
+		}
+		_, err := os.Stat(strings.TrimSuffix(path, zipSuffix) + ".html")
+		return err != nil
+	})
+}
+
+// sweep removes every regular file under out that orphan accepts.
+func sweep(out string, logger *log.Logger, orphan func(path, name string, d fs.DirEntry) bool) int {
 	removed := 0
 	filepath.WalkDir(out, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return nil
-		}
-		name := d.Name()
-		switch {
-		case strings.HasPrefix(name, tempPrefix) && strings.HasSuffix(name, ".tmp"):
-			info, statErr := d.Info()
-			if statErr != nil || !info.ModTime().Before(before) {
-				return nil
-			}
-		case strings.HasSuffix(name, zipSuffix):
-			html := strings.TrimSuffix(path, zipSuffix) + ".html"
-			if _, statErr := os.Stat(html); statErr == nil {
-				return nil
-			}
-		default:
+		if err != nil || d.IsDir() || !orphan(path, d.Name(), d) {
 			return nil
 		}
 		if rmErr := os.Remove(path); rmErr == nil {

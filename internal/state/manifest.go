@@ -684,6 +684,11 @@ func (e *NewerFormatError) Error() string {
 	return fmt.Sprintf("manifest %s was written by a newer mailarchive (format version %d; this build understands %d): upgrade this copy of mailarchive, or point -out at an archive this version wrote", e.Name, e.Version, e.Understood)
 }
 
+// manifestTempPattern names an in-flight manifest save. It has the
+// `.mailarchive-*.tmp` shape export.SweepTemps reaps, so a crash between the
+// write and the rename never leaves a full manifest copy behind for good.
+const manifestTempPattern = ".mailarchive-manifest-*.tmp"
+
 // parseManifest is Load's work on the bytes data of the manifest called name, bound to path.
 func parseManifest(path, name string, data []byte) (*Manifest, error) {
 	m := newManifest(path)
@@ -2057,7 +2062,7 @@ func (m *Manifest) Save() error {
 		return fmt.Errorf("create manifest dir: %w", err)
 	}
 
-	tmp, err := os.CreateTemp(dir, ".manifest-*.tmp")
+	tmp, err := os.CreateTemp(dir, manifestTempPattern)
 	if err != nil {
 		return fmt.Errorf("create temp manifest: %w", err)
 	}
