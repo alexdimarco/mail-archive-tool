@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"mail-archive-tool/internal/assure"
+	"mail-archive-tool/internal/container"
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/state"
@@ -32,6 +33,19 @@ func encryptedOut(t *testing.T) (string, *vault.Key) {
 		t.Fatal(err)
 	}
 	return out, k
+}
+
+// loadSealed opens out's sealed record with key (Phase 2b-1): the manifest an
+// encrypted archive keeps, read the way a keyed run reads it. The load writes
+// nothing; a Save through it commits like a run's.
+func loadSealed(t *testing.T, out string, key *vault.Key) *state.Manifest {
+	t.Helper()
+	units := &export.Units{Root: out, Key: key}
+	m, _, err := container.LoadManifest(out, container.LoadOptions{Key: key, RunStart: time.Now().UTC(), Units: unitFiles(units)})
+	if err != nil {
+		t.Fatalf("load the sealed record: %v", err)
+	}
+	return m
 }
 
 // encryptedSourcePST writes the PST fixture into a fresh source folder.
@@ -121,7 +135,7 @@ func TestAnEncryptedLocalRunWritesOnlyUnitsAndIsIncremental(t *testing.T) {
 	if err != nil {
 		t.Fatalf("an encrypted run over a healthy PST: %v", err)
 	}
-	m := loadArchive(t, out)
+	m := loadSealed(t, out, key)
 	recs := assure.Reached(t, m.All(), "archived records")
 	for k, r := range recs {
 		if !state.ValidUnitID(r.Unit) || r.Sealed == nil || r.Sealed.HTML == nil {
@@ -130,7 +144,7 @@ func TestAnEncryptedLocalRunWritesOnlyUnitsAndIsIncremental(t *testing.T) {
 	}
 	for _, p := range treeOf(t, out) {
 		top := strings.SplitN(p, "/", 2)[0]
-		if strings.Contains(p, "/") && top != export.UnitsDir {
+		if strings.Contains(p, "/") && top != export.UnitsDir && top != container.ChunksDir && top != container.InventoryDir {
 			t.Fatalf("%s: an encrypted run created the folder %q — no mailbox tree may reach disk", p, top)
 		}
 	}
@@ -163,7 +177,7 @@ func TestAnEncryptedRunRefusesWhatItCannotWriteSafely(t *testing.T) {
 	// (P2a-C10: a manual refusal writes nothing). Cases checked before the lock leave
 	// even the lock file alone; those only the manifest can show are checked under the
 	// lock, and rewrite only the lock file's holder line (A18).
-	underLock := map[string]bool{"an existing plaintext archive": true, "a missing manifest beside sealed units": true}
+	underLock := map[string]bool{"an existing plaintext archive": true, "a missing record beside sealed units": true}
 	cases := map[string]func(t *testing.T) (string, Options){
 		"another archive's key": func(t *testing.T) (string, Options) {
 			out, _ := encryptedOut(t)
@@ -209,13 +223,17 @@ func TestAnEncryptedRunRefusesWhatItCannotWriteSafely(t *testing.T) {
 			}
 			return out, Options{Inputs: []string{src}, Out: out, Key: k}
 		},
-		"a missing manifest beside sealed units": func(t *testing.T) (string, Options) {
+		// The record is its pointer pair (Phase 2b-1): an envelope alone missing is
+		// healed, but sealed units and chunks with no pointer are refused.
+		"a missing record beside sealed units": func(t *testing.T) (string, Options) {
 			out, k := encryptedOut(t)
 			if _, err := Run(context.Background(), Options{Inputs: []string{src}, Out: out, Key: k}, discard(), nil); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.Remove(filepath.Join(out, ".mailarchive-manifest.json")); err != nil {
-				t.Fatal(err)
+			for _, name := range []string{container.PointerName, container.MirrorName} {
+				if err := os.Remove(filepath.Join(out, name)); err != nil {
+					t.Fatal(err)
+				}
 			}
 			return out, Options{Inputs: []string{src}, Out: out, Key: k}
 		},
@@ -288,7 +306,7 @@ func TestAnEncryptedCaptureSealsUnitsAndNeverCollapsesRecords(t *testing.T) {
 	if _, err := RunGraph(context.Background(), g, Options{Out: out, Key: key}, discard()); err != nil {
 		t.Fatalf("an encrypted capture: %v", err)
 	}
-	m := loadArchive(t, out)
+	m := loadSealed(t, out, key)
 	for k, r := range assure.Reached(t, m.All(), "captured records") {
 		if !state.ValidUnitID(r.Unit) || r.Sealed == nil || r.Sealed.HTML == nil {
 			t.Fatalf("captured record %q is not sealed", k)

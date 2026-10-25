@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"mail-archive-tool/internal/container"
 	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/state"
@@ -65,7 +66,7 @@ func vaultCreate(dir string) (*vault.Key, error) {
 	return p.Commit()
 }
 
-// covers: MA-735, R37
+// covers: MA-735, MA-754, R37
 // FailureKind maps every run error onto the closed list, never onto its text: each
 // typed failure has its kind, a tag names what types cannot, a run that failed two
 // ways is named by its most serious typed cause, and anything else is run_failed.
@@ -85,6 +86,15 @@ func TestFailureKindIsAClosedListNeverText(t *testing.T) {
 		{&PartialError{}, state.FailPartial},
 		{withKind(state.FailLockLost, errors.New(secret)), state.FailLockLost},
 		{manifestSaveFailure(secret, errors.New("disk full")), state.FailManifestSave},
+		// The sealed record's (Phase 2b-1, MA-754): named by what the record is, not
+		// by the refusal around it; a commit whose file list alone failed is not a
+		// failed save.
+		{recordRefusal(secret, fmt.Errorf("%w: %s", container.ErrRestoredOlder, secret)), state.FailRecordOlder},
+		{recordRefusal(secret, fmt.Errorf("%w: %s", container.ErrUnfinishedSave, secret)), state.FailRecordOlder},
+		{recordRefusal(secret, fmt.Errorf("%w: %s", container.ErrInventoryDamaged, secret)), state.FailRecordOlder},
+		{recordRefusal(secret, fmt.Errorf("%w: %s", container.ErrRecord, secret)), state.FailManifestUnreadable},
+		{recordRefusal(secret, fmt.Errorf("%w: %s", container.ErrNotSealed, secret)), state.FailEncryptedRefused},
+		{manifestSaveFailure(secret, fmt.Errorf("%w: %s", container.ErrInventoryWrite, secret)), state.FailInventory},
 		{fileFailureError(1, secret, errors.New("permission denied")), state.FailSourceUnreadable},
 		{fmt.Errorf("archive is in use: %w", lockfile.ErrHeld), state.FailArchiveBusy},
 		// As the run paths return them (F17, F18): tagged, yet named by what they are.

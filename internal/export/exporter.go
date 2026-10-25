@@ -981,6 +981,13 @@ func (e *Exporter) queueDelete(unit string, kind vault.UnitKind, rev uint32) {
 // names them is durable. A failure leaves an orphan the next keyed run's
 // inventory sweep removes.
 func (e *Exporter) flushDeletes() {
+	// A sealed record deletes nothing during a run (phase2b P2b-C9): its inventory
+	// lists the superseded revisions as retained, and the next run's start sweep
+	// removes them, so a copy of the archive taken between runs stays loadable.
+	if e.Manifest.Sealed() {
+		e.pendingDeletes = nil
+		return
+	}
 	// A second guard (F05/F10): a revision the saved manifest still names is never
 	// deleted, whatever queued it.
 	named := map[unitRev]bool{}

@@ -24,6 +24,8 @@ const (
 	FailLockLost           = "lock_lost"            // the archive lock was taken away mid-run
 	FailManifestUnreadable = "manifest_unreadable"  // the archive's record of its messages cannot be read
 	FailManifestSave       = "manifest_save_failed" // the run's progress could not be saved
+	FailInventory          = "inventory_failed"     // the record was saved, but its file list was not (the next save retries)
+	FailRecordOlder        = "record_older"         // the record is older than the archive around it (a restored older copy, F12)
 	FailIndex              = "index_failed"         // the search index refused (its own kinds say which)
 	FailSignIn             = "signin_failed"        // the Microsoft 365 sign-in or settings refused
 	FailMailboxFailed      = "mailbox_failed"       // a mailbox could not be read
@@ -46,6 +48,8 @@ var failureText = map[string]string{
 	FailLockLost:                  "another program took over the archive during the backup",
 	FailManifestUnreadable:        "the archive's record of its messages could not be read",
 	FailManifestSave:              "the backup's progress could not be saved",
+	FailInventory:                 "this backup's file list could not be saved; the next backup retries",
+	FailRecordOlder:               "the archive's record is older than the archive — an older copy may have been restored; nothing was changed",
 	FailIndex:                     "the archive's search index could not be used",
 	ErrKindIndexBusy:              "another program was using the archive's search index",
 	ErrKindIndexUnwritable:        "the archive's search index could not be written",

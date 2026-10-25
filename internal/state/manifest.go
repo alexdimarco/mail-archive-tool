@@ -34,6 +34,10 @@ import (
 // stored version above manifestVersion.
 const manifestVersion = 6
 
+// ManifestVersion is the manifest format this build writes: a sealed record's
+// inner version too (Phase 2b).
+const ManifestVersion = manifestVersion
+
 // Fingerprint scheme tags (version 5). A record's FpScheme says which algorithm
 // produced its Fingerprint. fpSchemeLegacy (0, the zero value, so every pre-v5
 // or empty-fp record is legacy on load) is NOT comparable to a current
@@ -347,6 +351,10 @@ type Manifest struct {
 	// Add), and afterSave runs after each successful Save (OnSaved).
 	unitSet   map[string]bool
 	afterSave func()
+
+	// persist commits a sealed manifest (an encrypted archive's, Phase 2b); nil
+	// for a manifest file.
+	persist Persister
 
 	// LoadedVersion is the format version integer read from disk, BEFORE Load
 	// upgrades Version to the current constant. The live path reads it to decide
@@ -712,6 +720,53 @@ func parseManifest(path, name string, data []byte) (*Manifest, error) {
 	if err := json.Unmarshal(data, m); err != nil {
 		return nil, fmt.Errorf("manifest %s is corrupt or truncated (%v): restore it from a backup, or delete it to re-export everything (the archived files are untouched; incremental runs will rewrite them in place)", name, err)
 	}
+	if err := finish(m, path, name); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+// Persister commits an encrypted archive's manifest in place of the manifest
+// file (Phase 2b, P2b-C1): the sealed record behind its root pointer. Commit is
+// called with the manifest's lock held and must not call back into it.
+type Persister interface {
+	Commit(View) error
+}
+
+// View is a manifest's content as a sealed persister commits it and as a sealed
+// record is decoded into. Its maps are the manifest's own, valid for the call.
+type View struct {
+	Version         int
+	Entries         map[string]Record
+	Stores          map[string]string
+	CaptureGaps     map[string]CaptureGap
+	CollapsedTokens map[string]bool
+}
+
+// FromSealed is the manifest decoded from an encrypted archive's sealed record,
+// bound to path (the archive's envelope) and committed through p. It gets every
+// check, migration and sanitising Load gives a manifest file.
+func FromSealed(path string, v View, p Persister) (*Manifest, error) {
+	m := newManifest(path)
+	m.Version = v.Version
+	if v.Entries != nil {
+		m.Entries = v.Entries
+	}
+	m.Stores, m.CaptureGaps, m.CollapsedTokens = v.Stores, v.CaptureGaps, v.CollapsedTokens
+	m.persist = p
+	if err := finish(m, path, path); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+// Sealed reports whether the manifest is an encrypted archive's sealed record.
+func (m *Manifest) Sealed() bool { return m.persist != nil }
+
+// finish is everything a decoded manifest goes through before use: the
+// refuse-newer guard, the version-gated migrations, the store-id
+// canonicalisation, the sanitising of untrusted fields and the unit checks.
+func finish(m *Manifest, path, name string) error {
 	if m.Entries == nil {
 		m.Entries = map[string]Record{}
 	}
@@ -721,7 +776,7 @@ func parseManifest(path, name string, data []byte) (*Manifest, error) {
 	// later from still-newer binaries; a shared/synced -out must be written only
 	// by upgraded binaries (README rule). (FC1.)
 	if m.Version > manifestVersion {
-		return nil, &NewerFormatError{Name: name, Version: m.Version, Understood: manifestVersion}
+		return &NewerFormatError{Name: name, Version: m.Version, Understood: manifestVersion}
 	}
 	// Remember the on-disk version before any upgrade rewrites it: the live path
 	// consults LoadedVersion to know whether the v3→v4 collapse still owes a run.
@@ -873,10 +928,10 @@ func parseManifest(path, name string, data []byte) (*Manifest, error) {
 		m.Version = manifestVersion
 	}
 	if err := checkUnits(name, m); err != nil {
-		return nil, err
+		return err
 	}
 	m.buildIdentIndexLocked()
-	return m, nil
+	return nil
 }
 
 // Has reports whether key has already been exported.
@@ -2092,6 +2147,9 @@ func (m *Manifest) save() error {
 	}
 
 	m.Version = manifestVersion
+	if m.persist != nil {
+		return m.persist.Commit(View{Version: m.Version, Entries: m.Entries, Stores: m.Stores, CaptureGaps: m.CaptureGaps, CollapsedTokens: m.CollapsedTokens})
+	}
 	// Compact, not pretty-printed: the manifest is machine state (one record per
 	// exported message), never hand-read, and indentation roughly doubles its
 	// size on a large archive (nas-03). Load still reads older pretty files.

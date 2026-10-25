@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"mail-archive-tool/internal/container"
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/index"
 	"mail-archive-tool/internal/lockfile"
@@ -92,6 +93,10 @@ type Options struct {
 	// run refuses when any of them, or MailArchive's own settings or working folder,
 	// is at or under Out (P2a-C14). Unused by a plaintext run.
 	CredentialPaths []string
+	// RecordedGen is the highest generation of the encrypted archive's sealed record
+	// this machine committed, recorded outside the archive (A25; Phases 3-4 persist
+	// it). Zero: none recorded.
+	RecordedGen uint64
 
 	// BeforeRead, when non-nil, runs once after the archive lock is held and the
 	// run has begun, and before any source is read: the opt-in Thunderbird
@@ -506,7 +511,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	var manifest *state.Manifest
 	var units *export.Units
 	if opts.Key != nil {
-		if manifest, units, err = openEncrypted(opts, mpath, time.Now().UTC(), logger); err != nil {
+		if manifest, units, _, err = openEncrypted(opts, lock.StillHeld, time.Now().UTC(), logger, nil); err != nil {
 			if opts.Unattended {
 				writeRefusedRun(opts, err)
 			}
@@ -806,6 +811,10 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 // the remedy; recordRun finalizes the last-run record failed with it, so
 // `status` reports RED instead of a green "ok".
 func manifestSaveFailure(mpath string, err error) error {
+	if errors.Is(err, container.ErrInventoryWrite) {
+		// The record itself was saved: only its file list was not (P2b-C7).
+		return withKind(state.FailInventory, fmt.Errorf("%w: %s", err, mpath))
+	}
 	return withKind(state.FailManifestSave, fmt.Errorf("could not save the manifest %s (%w): this run's progress was not recorded and the next run will repeat it — make sure the manifest file and its folder are writable (on Windows, that no other program holds the manifest open), then run again", mpath, err))
 }
 

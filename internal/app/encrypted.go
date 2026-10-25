@@ -1,11 +1,13 @@
 package app
 
 import (
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
 	"time"
 
+	"mail-archive-tool/internal/container"
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/state"
@@ -20,38 +22,70 @@ import (
 var ErrEncryptedArchive = errors.New("this encrypted archive cannot be written")
 
 // prepareEncrypted is an encrypted run's setup, under the archive lock, after
-// the manifest load and before the first write. It proves the key belongs to
-// the archive in out (an unlock of its vault with the key, P2a-C9c), refuses a
-// relocated manifest, an existing plaintext archive (records with no unit — only
-// the A12 conversion encrypts one) and a missing or empty manifest beside sealed
-// units, then runs the keyed inventory sweep (P2a-C4). It returns the run's unit
-// store.
-func prepareEncrypted(opts Options, manifest *state.Manifest, runStart time.Time, logger *log.Logger) (*export.Units, error) {
+// the sealed record's load and before the first write. It refuses an existing
+// plaintext archive's records (records with no unit — only the A12 conversion
+// encrypts one), makes a fresh archive's first commit (P2b-C3), and runs the
+// start sweep of units and container files (P2a-C4, P2b-C9), which the store
+// allows only beside a whole inventory.
+func prepareEncrypted(opts Options, manifest *state.Manifest, store *container.Store, units *export.Units, runStart time.Time, logger *log.Logger) error {
 	refuse := func(why string, cause error) error { return encRefusal(opts.Out, why, cause) }
-	if opts.Manifest != "" {
-		return nil, refuse("its manifest cannot be moved out of the archive folder (-manifest)", nil)
-	}
-	if err := vault.VerifyKey(opts.Out, opts.Key.ArchiveID(), opts.Key); err != nil {
-		return nil, refuse("the key does not open this archive's key file", err)
-	}
-	units := &export.Units{Root: opts.Out, Key: opts.Key, RunStart: runStart}
-	if manifest.Len() == 0 {
-		if units.HasUnitFiles() {
-			return nil, refuse("its manifest is missing or empty but sealed units are present — restore the manifest; nothing was written", nil)
-		}
-		return units, nil
-	}
 	for _, r := range manifest.All() {
 		if r.Unit == "" {
-			return nil, refuse("it holds records that are not encrypted (an existing plaintext archive is encrypted only by converting it)", nil)
+			return refuse("it holds records that are not encrypted (an existing plaintext archive is encrypted only by converting it)", nil)
 		}
 	}
-	if n, err := units.SweepUnits(manifest, runStart); err != nil {
-		return nil, refuse("its unit store is damaged", err)
-	} else if n > 0 {
-		logger.Printf("swept %d unit file(s) no record names, from an interrupted run", n)
+	for _, n := range store.Notices {
+		logger.Printf("note: %s", n)
 	}
-	return units, nil
+	if store.Fresh() {
+		if err := store.Init(manifest); err != nil {
+			return withKind(state.FailManifestSave, fmt.Errorf("%s: the encrypted archive's first record could not be saved: %w", opts.Out, err))
+		}
+		return nil
+	}
+	if !store.SweepAllowed() {
+		return nil
+	}
+	n, err := units.SweepUnits(manifest, runStart, store.KeepUnits())
+	if err != nil {
+		return refuse("its unit store is damaged", err)
+	}
+	c, err := store.SweepContainers(runStart)
+	if err != nil {
+		return refuse("its record's files are damaged", err)
+	}
+	if n+c > 0 {
+		logger.Printf("swept %d unit and %d record file(s) nothing names: superseded during the last run, or left by an interrupted one", n, c)
+	}
+	return nil
+}
+
+// unitFiles lists the unit files records name, for the sealed record's inventory.
+func unitFiles(units *export.Units) container.UnitFiles {
+	return func(entries map[string]state.Record) (map[string]container.Digest, error) {
+		out := map[string]container.Digest{}
+		for _, r := range entries {
+			if r.Sealed == nil {
+				continue
+			}
+			for kind, s := range map[vault.UnitKind]*state.SealedUnit{vault.UnitMessage: r.Sealed.HTML, vault.UnitAttachment: r.Sealed.Zip, vault.UnitOriginal: r.Sealed.EML} {
+				if s == nil {
+					continue
+				}
+				rel, err := units.Path(r.Unit, kind, s.Rev)
+				if err != nil {
+					return nil, err
+				}
+				var d container.Digest
+				if _, err := hex.Decode(d.SHA256[:], []byte(s.SHA256)); err != nil {
+					return nil, fmt.Errorf("%w: a record's sealed digest is malformed", export.ErrUnitStore)
+				}
+				d.Size = s.Size
+				out[rel] = d
+			}
+		}
+		return out, nil
+	}
 }
 
 // encRefusal is an ErrEncryptedArchive refusal naming out, why, and its cause.
@@ -125,16 +159,46 @@ var secretDirs = func() []string {
 }
 
 // openEncrypted is a keyed run's setup under the lock and BEFORE its "running"
-// record: the manifest load and prepareEncrypted, so a refusal leaves no record of
-// a manual run (P2a-C10). It returns the loaded manifest and the unit store.
-func openEncrypted(opts Options, mpath string, runStart time.Time, logger *log.Logger) (*state.Manifest, *export.Units, error) {
-	manifest, err := state.Load(mpath)
-	if err != nil {
-		return nil, nil, withKind(state.FailManifestUnreadable, err)
+// record: the key proven against the vault (P2a-C9c), the sealed record's strict
+// load with the F12 checks (phase2b §2, §3), and prepareEncrypted — so a refusal
+// leaves no record of a manual run (P2a-C10). check, when given, is the caller's own
+// refusal on the loaded manifest, run before prepareEncrypted's first commit or
+// sweep, so every refusal writes and deletes nothing. It returns the loaded
+// manifest, the unit store and the sealed record's store.
+func openEncrypted(opts Options, stillHeld func() error, runStart time.Time, logger *log.Logger, check func(*state.Manifest) error) (*state.Manifest, *export.Units, *container.Store, error) {
+	if opts.Manifest != "" {
+		return nil, nil, nil, encRefusal(opts.Out, "its manifest cannot be moved out of the archive folder (-manifest)", nil)
 	}
-	units, err := prepareEncrypted(opts, manifest, runStart, logger)
-	if err != nil {
-		return nil, nil, err
+	if err := vault.VerifyKey(opts.Out, opts.Key.ArchiveID(), opts.Key); err != nil {
+		return nil, nil, nil, encRefusal(opts.Out, "the key does not open this archive's key file", err)
 	}
-	return manifest, units, nil
+	units := &export.Units{Root: opts.Out, Key: opts.Key, RunStart: runStart}
+	manifest, store, err := container.LoadManifest(opts.Out, container.LoadOptions{
+		Key: opts.Key, RecordedGen: opts.RecordedGen, RunStart: runStart, StillHeld: stillHeld, Units: unitFiles(units),
+	})
+	if err != nil {
+		return nil, nil, nil, recordRefusal(opts.Out, err)
+	}
+	if check != nil {
+		if err := check(manifest); err != nil {
+			return nil, nil, nil, err
+		}
+	}
+	if err := prepareEncrypted(opts, manifest, store, units, runStart, logger); err != nil {
+		return nil, nil, nil, err
+	}
+	return manifest, units, store, nil
+}
+
+// recordRefusal is a sealed record's load refusal as the run's refusal, worded by
+// what the record is; its failure kind follows from the container error it wraps
+// (FailureKind: record_older, manifest_unreadable).
+func recordRefusal(out string, err error) error {
+	switch {
+	case errors.Is(err, container.ErrRestoredOlder), errors.Is(err, container.ErrUnfinishedSave), errors.Is(err, container.ErrInventoryDamaged):
+		return encRefusal(out, "its record is older than the archive around it", err)
+	case errors.Is(err, container.ErrNotSealed):
+		return encRefusal(out, "it holds records that are not encrypted (an existing plaintext archive is encrypted only by converting it)", err)
+	}
+	return encRefusal(out, "its record cannot be read", err)
 }

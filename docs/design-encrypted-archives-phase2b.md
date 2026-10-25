@@ -138,9 +138,11 @@ gaps; `2..N+1` record buckets.
   would change every bucket every run. The header keeps, per mailbox (the scope one walk covers),
   `seen_at`: the run stamp of that mailbox's last FINISHED walk, moved forward only by the commit that
   ends the walk (graph.go:418). A record stores `latest` when its LastSeen equals its mailbox's
-  `seen_at` or this run's stamp (mid-walk both decode to `seen_at`), `captured` when LastSeen equals
-  its ExportedAt, and otherwise its time. A steady scheduled run then changes only the header and,
-  once each, the buckets of records that newly went unseen or were newly captured. Losing a mid-walk
+  `seen_at` or this run's stamp (mid-walk both decode to `seen_at`), and otherwise its time (a
+  capture time or an older walk's — a time that changes only when the record does; *as built, 2b-1:
+  the `captured` marker the fold verifier proposed is not needed for this and was dropped*). A steady
+  scheduled run then changes only the header and, once each, the buckets of records that newly went
+  unseen or were newly restamped after their capture. Losing a mid-walk
   advance on a crash decodes those records as last seen at the previous finished walk — the state a run
   that never saw them would leave; the slice proves gone detection is unchanged by it. Local records
   carry no LastSeen (omitempty), so they cost nothing here.

@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"mail-archive-tool/internal/util"
 )
@@ -21,6 +22,13 @@ const (
 	manifestName  = ".mailarchive-manifest.json"
 	unitsDirName  = "units"
 	convertMarker = ".mailarchive-convert.json"
+	// The sealed record's own files (Phase 2b, internal/container): its root
+	// pointer and mirror, its inventory, and its chunk and shard folders.
+	pointerName      = ".mailarchive-manifest.ptr"
+	mirrorName       = ".mailarchive-manifest.ptr.bak"
+	inventoryName    = ".mailarchive-inventory"
+	chunksDirName    = "chunks"
+	inventoryDirName = "inventory"
 )
 
 // EncryptedMarker is THE recognition predicate (phase2a §5, P2a-C8): every
@@ -37,20 +45,26 @@ const (
 // that is not about the vault (a folder it cannot read at all) is returned as
 // err.
 func EncryptedMarker(out string) (encrypted bool, why string, err error) {
-	for _, name := range []string{FileName, BackupName, convertMarker} {
+	for _, name := range []string{FileName, BackupName, convertMarker, pointerName, mirrorName, inventoryName} {
 		fi, lerr := os.Lstat(filepath.Join(out, name))
 		switch {
 		case lerr == nil && !fi.IsDir():
-			if name == convertMarker {
-				return true, "it holds " + name + ", which only an encrypted archive has", nil
+			if name == FileName || name == BackupName {
+				return true, "it holds an encrypted archive's key file (" + name + ")", nil
 			}
-			return true, "it holds an encrypted archive's key file (" + name + ")", nil
+			return true, "it holds " + name + ", which only an encrypted archive has", nil
 		case lerr != nil && !errors.Is(lerr, fs.ErrNotExist):
 			return false, "", lerr
 		}
 	}
 	if isUnitStore(filepath.Join(out, unitsDirName)) {
 		return true, "it holds " + unitsDirName + "/, an encrypted archive's unit store", nil
+	}
+	if isUnitStore(filepath.Join(out, chunksDirName)) {
+		return true, "it holds " + chunksDirName + "/, an encrypted archive's sealed record", nil
+	}
+	if isShardDir(filepath.Join(out, inventoryDirName)) {
+		return true, "it holds " + inventoryDirName + "/, an encrypted archive's file list", nil
 	}
 	enc, why, merr := manifestSaysEncrypted(filepath.Join(out, manifestName))
 	if merr != nil {
@@ -167,6 +181,26 @@ func isUnitStore(dir string) bool {
 				return true
 			}
 		}
+	}
+	return false
+}
+
+// isShardDir reports whether dir is a real directory holding a file shaped like an
+// inventory shard: 2 to 4 lowercase hex, a dot, a generation.
+func isShardDir(dir string) bool {
+	if fi, err := os.Lstat(dir); err != nil || !fi.IsDir() {
+		return false
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		prefix, gen, ok := strings.Cut(e.Name(), ".")
+		if !ok || e.IsDir() || len(prefix) < 2 || len(prefix) > 4 || !isLowerHex(prefix, len(prefix)) || gen == "" || strings.Trim(gen, "0123456789") != "" {
+			continue
+		}
+		return true
 	}
 	return false
 }

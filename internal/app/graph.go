@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"mail-archive-tool/internal/container"
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/graph"
 	"mail-archive-tool/internal/index"
@@ -159,11 +160,10 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	// its minimal failed run (A14).
 	var manifest *state.Manifest
 	var units *export.Units
+	var sealed *container.Store
 	if opts.Key != nil {
-		if manifest, units, err = openEncrypted(opts, mpath, time.Now().UTC(), logger); err == nil {
-			err = refuseOwedCollapse(opts, manifest, g.Mailboxes)
-		}
-		if err != nil {
+		owed := func(m *state.Manifest) error { return refuseOwedCollapse(opts, m, g.Mailboxes) }
+		if manifest, units, sealed, err = openEncrypted(opts, lock.StillHeld, time.Now().UTC(), logger, owed); err != nil {
 			if opts.Unattended {
 				writeRefusedRun(opts, err)
 			}
@@ -216,6 +216,9 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	// and every capture-gap observation carries, so `status` can tell a gap this
 	// run attempted from one it did not (FC14).
 	runAt := begun.Started
+	if sealed != nil {
+		sealed.SetRunStamp(runAt)
+	}
 	var hist *state.HistoryWriter
 	if hw, herr := state.OpenHistory(filepath.Join(opts.Out, state.HistoryName)); herr != nil {
 		logger.Printf("warning: %v (this run's go-back timeline will be incomplete)", herr)
@@ -414,6 +417,11 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 			// marks the run failed and the next incremental run reconciles the
 			// message files already written (INT-CC-2/R5).
 			return result, withKind(state.FailLockLost, lockLost)
+		}
+		if sealed != nil && runErr == nil {
+			// The mailbox's walk finished: its records' LastSeen is sealed relative to
+			// this run's stamp from here on (P2b-C12).
+			sealed.WalkDone(manifest.Token(state.MailboxSourceID(mbx), mbx), runAt)
 		}
 		saveErr = commit(hist, idx, manifest, logger)
 		// "Cancelled" is decided from RunGraph's own context, never from the

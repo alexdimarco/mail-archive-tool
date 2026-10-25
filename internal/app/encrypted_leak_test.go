@@ -26,7 +26,6 @@ import (
 // fails, and an entry that no longer leaks fails too (it outlived 2b), and every
 // entry is listed in the MA-744 catalog row (TestTheCleartext2bListNeverGrows).
 var cleartext2b = map[string]string{
-	".mailarchive-manifest.json": "the manifest: 2b seals it behind an envelope and a chunked container",
 	"search.db":                  "the search index, with its -wal/-shm/-journal companions: 2b seals it",
 	".mailarchive-history.jsonl": "the go-back history (Microsoft 365 captures only): 2b seals it",
 }

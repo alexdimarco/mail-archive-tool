@@ -9,39 +9,48 @@ import (
 	"time"
 
 	"mail-archive-tool/internal/assure"
+	"mail-archive-tool/internal/container"
 	"mail-archive-tool/internal/export"
+	"mail-archive-tool/internal/state"
 )
 
 // recordFiles are the archive's record files a restore from an older backup puts
-// back: today the manifest alone. Phase 2b-1 makes them the envelope, the root
-// pointer AND its mirror (.ptr.bak — else the load takes the newer mirror and the
-// test fails for the wrong reason) and chunks/ — never the inventory, which a
-// restore of the record leaves as it was (design-encrypted-archives-phase2b §3).
-var recordFiles = []string{".mailarchive-manifest.json"}
+// back: the envelope, the root pointer AND its mirror (else the load takes the newer
+// mirror and the test passes for the wrong reason) and every chunk — never the
+// inventory, which a restore of the record leaves as it was
+// (design-encrypted-archives-phase2b §3).
+func recordFiles(t *testing.T, out string) map[string][]byte {
+	t.Helper()
+	files := map[string][]byte{}
+	for _, name := range []string{container.EnvelopeName, container.PointerName, container.MirrorName} {
+		b, err := os.ReadFile(filepath.Join(out, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		files[name] = b
+	}
+	for p, b := range snapshotTree(t, filepath.Join(out, container.ChunksDir)) {
+		if b != nil {
+			files[container.ChunksDir+"/"+p] = b
+		}
+	}
+	return files
+}
 
 // covers: MA-747, R37
-// F12, the Phase-2a adversarial pass's deferred gap: a record restored from an older
-// backup names fewer units than the archive holds, and the keyed sweep must not take
-// that as leave to delete the mail archived after the backup. The next keyed run
-// refuses, typed and naming the archive, and every unit stays as it was. Open until
-// Phase 2b-1's inventory (design-encrypted-archives-phase2b §3, the F12 rule); remove
-// the skip when it lands.
+// F12, the Phase-2a adversarial pass's deferred gap, closed by Phase 2b-1's inventory
+// (design-encrypted-archives-phase2b §3, the F12 rule): a record restored from an
+// older backup names fewer units than the archive holds, and the keyed sweep must not
+// take that as leave to delete the mail archived after the backup. The next keyed
+// run refuses, typed and naming the archive, and every unit stays as it was.
 func TestARestoredOlderRecordNeverSweepsNewerMail(t *testing.T) {
-	t.Skip("MA-747 (F12, R37): a restored older manifest makes the keyed sweep delete every unit archived after it; encoder lands with the Phase-2b design, turns green in 2b-1")
 	out, key := encryptedOut(t)
 	parent := tmpDir(t)
 	first := mboxStore(t, parent, "first", []string{"Inbox"}, 2)
 	if _, err := Run(context.Background(), Options{Inputs: []string{first}, Out: out, Key: key}, discard(), nil); err != nil {
 		t.Fatal(err)
 	}
-	older := map[string][]byte{}
-	for _, name := range recordFiles {
-		b, err := os.ReadFile(filepath.Join(out, name))
-		if err != nil {
-			t.Fatal(err)
-		}
-		older[name] = b
-	}
+	older := recordFiles(t, out)
 	unitsBefore := snapshotTree(t, filepath.Join(out, export.UnitsDir))
 
 	second := mboxStore(t, parent, "second", []string{"Sent"}, 2)
@@ -60,7 +69,11 @@ func TestARestoredOlderRecordNeverSweepsNewerMail(t *testing.T) {
 	}
 
 	for name, b := range older {
-		if err := os.WriteFile(filepath.Join(out, name), b, 0o600); err != nil {
+		p := filepath.Join(out, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, b, 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -81,7 +94,10 @@ func TestARestoredOlderRecordNeverSweepsNewerMail(t *testing.T) {
 	if !errors.Is(err, ErrEncryptedArchive) {
 		t.Errorf("a run over a restored older record: want ErrEncryptedArchive, got %v", err)
 	}
-	assure.Refused(t, 1, msg, assure.Code(1), assure.Names(out), assure.NoSideEffect(func() bool {
+	if k := FailureKind(err); k != state.FailRecordOlder {
+		t.Errorf("the refusal's kind is %q, want %q", k, state.FailRecordOlder)
+	}
+	assure.Refused(t, 1, msg, assure.Code(1), assure.Names(out, "record is older than the archive", "nothing was changed"), assure.NoSideEffect(func() bool {
 		return sameTree(units, snapshotTree(t, filepath.Join(out, export.UnitsDir)))
 	}))
 }

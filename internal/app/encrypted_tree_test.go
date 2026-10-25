@@ -13,6 +13,7 @@ import (
 
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/assure/leak"
+	"mail-archive-tool/internal/container"
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/state"
@@ -164,6 +165,12 @@ func TestTheTreeGrammarRefusesWhatItMust(t *testing.T) {
 		p14Write(t, filepath.Join(out, export.UnitsDir, "ab", unit), "sealed")
 		p14Write(t, filepath.Join(out, state.LastRunName), "{}")
 		p14Write(t, filepath.Join(out, ".mailarchive-manifest.json"), "{}")
+		// The sealed record's files (Phase 2b-1, MA-754).
+		p14Write(t, filepath.Join(out, container.PointerName), "p")
+		p14Write(t, filepath.Join(out, container.MirrorName), "p")
+		p14Write(t, filepath.Join(out, container.InventoryName), "i")
+		p14Write(t, filepath.Join(out, container.ChunksDir, "cd", "cd"+strings.Repeat("1", 30)), "c")
+		p14Write(t, filepath.Join(out, container.InventoryDir, "ab.7"), "s")
 		return out
 	}
 	if vs := leak.CheckTree(good(t), leak.AtRest, cleartext2bNames()); len(vs) != 0 {
@@ -177,6 +184,14 @@ func TestTheTreeGrammarRefusesWhatItMust(t *testing.T) {
 		"a unit of the wrong name":  func(out string) { p14Write(t, filepath.Join(out, export.UnitsDir, "ab", "ab-not-a-unit"), "x") },
 		"a file directly in units":  func(out string) { p14Write(t, filepath.Join(out, export.UnitsDir, unit), "x") },
 		"a temp at rest":            func(out string) { p14Write(t, filepath.Join(out, ".mailarchive-123.tmp"), "x") },
+		"a chunk in the wrong shard": func(out string) {
+			p14Write(t, filepath.Join(out, container.ChunksDir, "ab", "cd"+strings.Repeat("2", 30)), "x")
+		},
+		"a page in chunks":            func(out string) { p14Write(t, filepath.Join(out, container.ChunksDir, "ab", "x.html"), "x") },
+		"a stray file in inventory":   func(out string) { p14Write(t, filepath.Join(out, container.InventoryDir, "notes.txt"), "x") },
+		"a folder in inventory":       func(out string) { p14Write(t, filepath.Join(out, container.InventoryDir, "ab", "x"), "x") },
+		"a shard of generation 0":     func(out string) { p14Write(t, filepath.Join(out, container.InventoryDir, "ab.0"), "x") },
+		"a temp in inventory at rest": func(out string) { p14Write(t, filepath.Join(out, container.InventoryDir, ".mailarchive-9.tmp"), "x") },
 		"a link": func(out string) {
 			if err := os.Symlink(tmpDir(t), filepath.Join(out, "README.txt")); err != nil {
 				t.Skip("no symlinks here:", err)

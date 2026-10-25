@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 
+	"mail-archive-tool/internal/container"
 	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/vault"
@@ -46,6 +47,12 @@ func FailureKind(err error) string {
 		return ""
 	case errors.Is(err, ErrEncryptedNeedsKey):
 		return state.FailEncryptedNeedsKey
+	// The sealed record's own refusals (phase2b §2, §3), ahead of the refusal they
+	// arrive wrapped in: what the record is says more than that it refused.
+	case errors.Is(err, container.ErrRestoredOlder), errors.Is(err, container.ErrUnfinishedSave), errors.Is(err, container.ErrInventoryDamaged):
+		return state.FailRecordOlder
+	case errors.Is(err, container.ErrRecord):
+		return state.FailManifestUnreadable
 	case errors.Is(err, ErrEncryptedArchive):
 		return state.FailEncryptedRefused
 	case errors.As(err, &unreachable):

@@ -39,6 +39,18 @@ func until(t0 time.Time, d time.Duration, bad, good http.HandlerFunc) http.Handl
 	}
 }
 
+// fromFirst is until with its window starting at the first request, not at a time
+// taken before the run's setup: a short outage then always meets the first request,
+// however long a loaded machine takes to reach it.
+func fromFirst(d time.Duration, bad, good http.HandlerFunc) http.HandlerFunc {
+	var once sync.Once
+	var t0 time.Time
+	return func(w http.ResponseWriter, r *http.Request) {
+		once.Do(func() { t0 = time.Now() })
+		until(t0, d, bad, good)(w, r)
+	}
+}
+
 func okBody(id string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) { w.Write(ceBody(id)) }
 }
@@ -74,8 +86,7 @@ func seqIDs(prefix string, n int) []string {
 func TestCopyExportTransportOutageAndTheBreaker(t *testing.T) {
 	// Recovery inside the window: no failure.
 	f := newMeFake(t)
-	t0 := time.Now()
-	f.value("A1", until(t0, 30*time.Millisecond, dropConn, okBody("A1")))
+	f.value("A1", fromFirst(30*time.Millisecond, dropConn, okBody("A1")))
 	e := newCEEnv(t)
 	src := f.source(t)
 	res := runWith(t, e, planFor(t, e, src, idMsgs("A1", "A2")), src)

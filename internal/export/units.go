@@ -29,6 +29,10 @@ const UnitsDir = "units"
 // not the ones its record names (a swapped-in older revision, truncation).
 var ErrUnitStore = errors.New("the encrypted archive's unit store is damaged")
 
+// ErrUnitExists refuses a unit write whose new revision's name is already taken
+// (phase2b P2b-C7): the record is older than the units beside it.
+var ErrUnitExists = errors.New("the encrypted archive's record is older than its units")
+
 // Units writes and reads an encrypted archive's sealed units. A nil *Units on
 // the Exporter means a plaintext archive, whose every path is left as it was.
 type Units struct {
@@ -115,6 +119,13 @@ func (u *Units) Write(unit string, kind vault.UnitKind, rev uint32, plaintext []
 		return state.SealedUnit{}, err
 	}
 	dst := filepath.Join(u.Root, rel)
+	// Every write is a new revision, so its name is never already taken — unless the
+	// record was restored from an older copy and a later run's revision is still here:
+	// keyed evidence of that, and overwriting it would lose that later message's bytes
+	// (phase2b §3, P2b-C7). The start sweep has already removed a crashed run's.
+	if _, err := os.Lstat(dst); err == nil {
+		return state.SealedUnit{}, fmt.Errorf("%w: %s already exists — the archive's record looks older than its units (a restored older copy?); nothing was overwritten", ErrUnitExists, rel)
+	}
 	tmp, err := createTemp(shard)
 	if err != nil {
 		return state.SealedUnit{}, err
@@ -242,11 +253,12 @@ func (u *Units) Remove(unit string, kind vault.UnitKind, rev uint32) error {
 
 // SweepUnits is the keyed inventory sweep (A5, P2a-C4): run under the archive
 // lock after a successful manifest load and before the first write, it removes
-// the files under units/ that no record of m names — a crashed run's new
-// revisions, or superseded ones whose deletion never ran — when they are older
-// than before (this run's start). It returns how many it removed. units/ or a
-// shard that is not a real directory is refused, never walked.
-func (u *Units) SweepUnits(m *state.Manifest, before time.Time) (int, error) {
+// the files under units/ that no record of m names and keep does not hold (the
+// paths the sealed record's inventory lists as live, phase2b §3) — a crashed
+// run's new revisions, or ones superseded during the last run — when they are
+// older than before (this run's start). It returns how many it removed. units/ or
+// a shard that is not a real directory is refused, never walked.
+func (u *Units) SweepUnits(m *state.Manifest, before time.Time, keep map[string]bool) (int, error) {
 	root := filepath.Join(u.Root, UnitsDir)
 	if exists, err := realDir(root); err != nil || !exists {
 		return 0, err
@@ -291,7 +303,7 @@ func (u *Units) SweepUnits(m *state.Manifest, before time.Time) (int, error) {
 		for _, f := range files {
 			rel := UnitsDir + "/" + sh.Name() + "/" + f.Name()
 			info, err := f.Info()
-			if named[rel] || err != nil || !info.ModTime().Before(before) || !info.Mode().IsRegular() {
+			if named[rel] || keep[rel] || err != nil || !info.ModTime().Before(before) || !info.Mode().IsRegular() {
 				continue
 			}
 			if os.Remove(filepath.Join(dir, f.Name())) == nil {
@@ -319,6 +331,16 @@ func (u *Units) HasUnitFiles() bool {
 		return nil
 	})
 	return found
+}
+
+// Path is the archive-relative, slash-separated path of the unit of kind at
+// revision rev: what the sealed record's inventory lists (phase2b §3).
+func (u *Units) Path(unit string, kind vault.UnitKind, rev uint32) (string, error) {
+	rel, err := u.rel(unit, kind, rev)
+	if err != nil {
+		return "", err
+	}
+	return filepath.ToSlash(rel), nil
 }
 
 // Name is the archive-relative path of the unit of kind at revision rev — what

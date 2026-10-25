@@ -11,17 +11,24 @@ import (
 	"testing"
 	"time"
 
+	"mail-archive-tool/internal/container"
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/state"
+	"mail-archive-tool/internal/vault"
 )
 
 // seedLedgerGap records one item gap in out's manifest, so the next run has a
 // report row and a gap banner to write.
-func seedLedgerGap(t *testing.T, out string) {
+func seedLedgerGap(t *testing.T, out string, key *vault.Key) {
 	t.Helper()
-	m, err := state.Load(filepath.Join(out, ".mailarchive-manifest.json"))
-	if err != nil {
-		t.Fatal(err)
+	var m *state.Manifest
+	if key != nil {
+		m = loadSealed(t, out, key)
+	} else {
+		var err error
+		if m, err = state.Load(filepath.Join(out, ".mailarchive-manifest.json")); err != nil {
+			t.Fatal(err)
+		}
 	}
 	var tok string
 	for _, tk := range m.Stores {
@@ -35,8 +42,8 @@ func seedLedgerGap(t *testing.T, out string) {
 }
 
 // requireNoCleartextScaffold fails if out holds a folder page, a root index.html,
-// the attachments report, any folder but units/, or a README other than the
-// encrypted one.
+// the attachments report, any folder but units/ and the sealed record's chunks/
+// and inventory/, or a README other than the encrypted one.
 func requireNoCleartextScaffold(t *testing.T, out string) {
 	t.Helper()
 	filepath.WalkDir(out, func(p string, d fs.DirEntry, err error) error {
@@ -45,7 +52,7 @@ func requireNoCleartextScaffold(t *testing.T, out string) {
 		}
 		rel, _ := filepath.Rel(out, p)
 		rel = filepath.ToSlash(rel)
-		if d.IsDir() && strings.SplitN(rel, "/", 2)[0] != export.UnitsDir {
+		if top := strings.SplitN(rel, "/", 2)[0]; d.IsDir() && top != export.UnitsDir && top != container.ChunksDir && top != container.InventoryDir {
 			t.Errorf("an encrypted archive holds the folder %s", rel)
 		}
 		if strings.HasSuffix(rel, ".html") || rel == "attachments-report.tsv" {
@@ -74,7 +81,7 @@ func TestAnEncryptedRunWritesNoPagesReportOrLayoutReadme(t *testing.T) {
 	if _, err := Run(context.Background(), opts, discard(), nil); err != nil {
 		t.Fatal(err)
 	}
-	seedLedgerGap(t, plain)
+	seedLedgerGap(t, plain, nil)
 	if _, err := Run(context.Background(), opts, discard(), nil); err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +96,7 @@ func TestAnEncryptedRunWritesNoPagesReportOrLayoutReadme(t *testing.T) {
 	if _, err := Run(context.Background(), opts, discard(), nil); err != nil {
 		t.Fatal(err)
 	}
-	seedLedgerGap(t, out)
+	seedLedgerGap(t, out, key)
 	if _, err := Run(context.Background(), opts, discard(), nil); err != nil {
 		t.Fatal(err)
 	}

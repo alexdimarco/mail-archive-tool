@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/vault"
 )
@@ -92,6 +93,74 @@ func TestAFailedExportChangesNothingItsRecordNames(t *testing.T) {
 	}
 	if fx.Units.HasUnitFiles() || fx.Manifest.Len() != 0 {
 		t.Fatalf("a fresh archive's failed export left units behind (%d records)", fx.Manifest.Len())
+	}
+}
+
+// covers: MA-754, R37
+// A unit write never lands on a name already taken (phase2b P2b-C7): every write is a
+// new revision, so a taken name means the record is older than the units beside it
+// (a restored older copy), and the later revision's bytes are kept — the write is
+// refused with the typed ErrUnitExists naming the file, nothing overwritten.
+func TestAUnitWriteNeverOverwritesATakenName(t *testing.T) {
+	out := t.TempDir()
+	u := &Units{Root: out, Key: testUnitsKey(t)}
+	const unit = "0123456789abcdef0123456789abcdef"
+	if _, err := u.Write(unit, vault.UnitMessage, 1, []byte("the later revision")); err != nil {
+		t.Fatal(err)
+	}
+	rel, _ := u.Path(unit, vault.UnitMessage, 1)
+	before, _ := os.ReadFile(filepath.Join(out, filepath.FromSlash(rel)))
+	_, err := u.Write(unit, vault.UnitMessage, 1, []byte("an older record's rewrite"))
+	if !errors.Is(err, ErrUnitExists) {
+		t.Fatalf("want ErrUnitExists, got %v", err)
+	}
+	rc, msg := 1, err.Error()
+	assure.Refused(t, rc, msg, assure.Code(1), assure.Names(rel, "nothing was overwritten"), assure.NoSideEffect(func() bool {
+		after, _ := os.ReadFile(filepath.Join(out, filepath.FromSlash(rel)))
+		return string(after) == string(before)
+	}))
+	if _, err := u.Write(unit, vault.UnitMessage, 2, []byte("the next revision")); err != nil {
+		t.Fatalf("positive twin: a new revision's free name is written: %v", err)
+	}
+}
+
+// nopPersister commits a sealed manifest nowhere: an exporter test needs only that
+// the manifest is sealed.
+type nopPersister struct{}
+
+func (nopPersister) Commit(state.View) error { return nil }
+
+// covers: MA-754, R37
+// With a sealed record, nothing is deleted during a run (phase2b P2b-C9): a re-export
+// that supersedes a message's units leaves the old revisions on disk after the save —
+// the record's inventory lists them retained and the next run's start sweep removes
+// them. The positive twin: with a manifest file, the save deletes them (MA-723).
+func TestASealedRecordDefersEveryDeleteToTheNextRun(t *testing.T) {
+	out := t.TempDir()
+	exp := sealedExporter(t, out)
+	m, err := state.FromSealed(filepath.Join(out, ".mailarchive-manifest.json"), state.View{Version: state.ManifestVersion}, nopPersister{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	exp.Manifest = m
+	exp.Manifest.OnSaved(exp.flushDeletes)
+	if _, err := exp.Export("store", []string{"Inbox"}, fullMessage("v1")); err != nil {
+		t.Fatal(err)
+	}
+	if err := exp.Manifest.Save(); err != nil {
+		t.Fatal(err)
+	}
+	exp.Mode = Full
+	if _, err := exp.Export("store", []string{"Inbox"}, fullMessage("v2")); err != nil {
+		t.Fatal(err)
+	}
+	if err := exp.Manifest.Save(); err != nil {
+		t.Fatal(err)
+	}
+	// v2 changes the page and the original but not the attachment (kept, not
+	// rewritten): the first revision's 3 units and the 2 new ones.
+	if n := unitFiles(t, out); n != 5 {
+		t.Fatalf("after a sealed record's save %d unit files remain, want the superseded ones kept too (5)", n)
 	}
 }
 
@@ -201,15 +270,30 @@ func TestTheSweepFailsClosedAndIgnoresAStrayFile(t *testing.T) {
 	}
 	dead.Destroy()
 	later := time.Now().Add(time.Hour)
-	if n, err := (&Units{Root: out, Key: dead}).SweepUnits(exp.Manifest, later); err == nil || n != 0 || unitFiles(t, out) != 3 {
+	if n, err := (&Units{Root: out, Key: dead}).SweepUnits(exp.Manifest, later, nil); err == nil || n != 0 || unitFiles(t, out) != 3 {
 		t.Fatalf("a sweep that cannot derive names must refuse and remove nothing: removed %d, err %v, %d units left", n, err, unitFiles(t, out))
+	}
+
+	// A unit no record names but the sealed record's file list lists live (phase2b
+	// §3: the sweep keeps anything either names) is kept.
+	listed := filepath.Join(out, UnitsDir, "ef", "ef"+strings.Repeat("4", 30))
+	os.MkdirAll(filepath.Dir(listed), 0o755)
+	os.WriteFile(listed, []byte("listed"), 0o600)
+	old := time.Now().Add(-time.Hour)
+	os.Chtimes(listed, old, old)
+	keep := map[string]bool{UnitsDir + "/ef/ef" + strings.Repeat("4", 30): true}
+	if n, err := exp.Units.SweepUnits(exp.Manifest, later, keep); err != nil || n != 0 {
+		t.Fatalf("a unit the file list lists live was swept: removed %d, %v", n, err)
+	}
+	if n, err := exp.Units.SweepUnits(exp.Manifest, later, nil); err != nil || n != 1 {
+		t.Fatalf("positive twin: unlisted, the same unit is swept: removed %d, %v", n, err)
 	}
 
 	stray := filepath.Join(out, UnitsDir, ".DS_Store")
 	if err := os.WriteFile(stray, []byte("finder"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := exp.Units.SweepUnits(exp.Manifest, later); err != nil || n != 0 {
+	if n, err := exp.Units.SweepUnits(exp.Manifest, later, nil); err != nil || n != 0 {
 		t.Fatalf("a stray file beside the shards must not refuse the sweep: removed %d, err %v", n, err)
 	}
 	if _, err := os.Stat(stray); err != nil {

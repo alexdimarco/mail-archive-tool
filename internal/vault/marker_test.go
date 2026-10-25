@@ -55,6 +55,18 @@ func TestEncryptedMarkerSeesEachSignalAlone(t *testing.T) {
 				os.Mkdir(filepath.Join(dir, n), 0o755)
 			}
 		},
+		// Store folders named like the sealed record's folders, holding mail pages, are
+		// not its shape (Phase 2b-1).
+		"plaintext stores named chunks and inventory": func(dir string) {
+			for _, n := range []string{chunksDirName, inventoryDirName} {
+				if err := os.MkdirAll(filepath.Join(dir, n, "ab"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				writeIn(t, filepath.Join(dir, n), "2025-03-03_0900_Hello_ab12cd34.html", []byte("<p>mail</p>"))
+				writeIn(t, filepath.Join(dir, n), "cafe.txt", []byte("a hex-looking name that is no shard"))
+				writeIn(t, filepath.Join(dir, n, "ab"), "2025-03-03_0900_Hi_ab12cd34.html", []byte("<p>mail</p>"))
+			}
+		},
 		"a manifest that is a link to an encrypted one": func(dir string) {
 			other := t.TempDir()
 			writeIn(t, other, manifestName, []byte(`{"version":100}`))
@@ -87,6 +99,24 @@ func TestEncryptedMarkerSeesEachSignalAlone(t *testing.T) {
 			writeIn(t, shard, "ab"+strings.Repeat("0", 30), []byte("sealed"))
 		}, unitsDirName},
 		"a conversion marker": {func(t *testing.T, dir string) { writeIn(t, dir, convertMarker, []byte("{}")) }, convertMarker},
+		// The sealed record's own files (Phase 2b-1, MA-754): each alone, with the vault
+		// and the envelope deleted, still marks the archive (A15).
+		"only the record pointer": {func(t *testing.T, dir string) { writeIn(t, dir, pointerName, []byte("x")) }, pointerName},
+		"only its mirror pointer": {func(t *testing.T, dir string) { writeIn(t, dir, mirrorName, nil) }, mirrorName},
+		"only the inventory":      {func(t *testing.T, dir string) { writeIn(t, dir, inventoryName, nil) }, inventoryName},
+		"chunks/ with the vault deleted": {func(t *testing.T, dir string) {
+			shard := filepath.Join(dir, chunksDirName, "cd")
+			if err := os.MkdirAll(shard, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			writeIn(t, shard, "cd"+strings.Repeat("0", 30), []byte("sealed"))
+		}, chunksDirName},
+		"inventory/ with the vault deleted": {func(t *testing.T, dir string) {
+			if err := os.MkdirAll(filepath.Join(dir, inventoryDirName), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			writeIn(t, filepath.Join(dir, inventoryDirName), "ab.7", []byte("x"))
+		}, inventoryDirName},
 		"the encrypted manifest format": {func(t *testing.T, dir string) {
 			writeIn(t, dir, manifestName, []byte(`{"version":100,"entries":{}}`))
 		}, "format 100"},

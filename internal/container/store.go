@@ -1,0 +1,792 @@
+package container
+
+import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+
+	"mail-archive-tool/internal/state"
+	"mail-archive-tool/internal/vault"
+)
+
+// EnvelopeName is the cleartext A4 envelope at the manifest's name.
+const EnvelopeName = ".mailarchive-manifest.json"
+
+// maxEnvelopeSize bounds the envelope read: it is four short fields.
+const maxEnvelopeSize = 4096
+
+// The typed refusals of a keyed load (design-encrypted-archives-phase2b §2, §3).
+// Each names the archive and its remedy where it is raised; a refusal writes
+// nothing and deletes nothing.
+var (
+	// ErrRecord: the sealed record is missing, damaged or not this archive's.
+	ErrRecord = errors.New("container: the encrypted archive's record is missing or damaged")
+	// ErrNotSealed: the record file holds something other than a sealed record's
+	// envelope — a plaintext manifest (an archive that is not encrypted, or one a
+	// pre-release build wrote) or a planted downgrade. Never migrated.
+	ErrNotSealed = errors.New("container: the archive's record is not a sealed record")
+	// ErrRestoredOlder: the record is older than the archive around it (F12).
+	ErrRestoredOlder = errors.New("container: the archive's record is older than its file list")
+	// ErrUnfinishedSave: the last save's pointer rename was lost, or an older
+	// copy of the record was restored (I = P + 1).
+	ErrUnfinishedSave = errors.New("container: the archive's last save did not finish, or an older copy of its record was restored")
+	// ErrInventoryDamaged: the inventory that existed is missing or damaged.
+	ErrInventoryDamaged = errors.New("container: the archive's file list is missing or damaged")
+	// ErrInventoryWrite: a commit landed but its inventory could not be saved;
+	// the next commit retries (P2b-C7). Not a failed save of the record.
+	ErrInventoryWrite = errors.New("container: this backup's file list could not be saved; the next backup retries")
+	// ErrLockLost: the archive lock was lost before the commit point; nothing was
+	// renamed.
+	ErrLockLost = errors.New("container: the archive lock was lost before the record was saved")
+)
+
+// UnitFiles lists the unit files a manifest's records name: archive-relative
+// path → ciphertext digest. The unit store provides it (it derives the names).
+type UnitFiles func(entries map[string]state.Record) (map[string]Digest, error)
+
+// LoadOptions are a keyed load's inputs. (Not named Options: the MA-726
+// reachability scan reads an Options literal that sets Key as app.Options's.)
+type LoadOptions struct {
+	Key *vault.Key
+	// RecordedGen is the highest generation this machine committed, recorded
+	// outside the archive (A25; persisted in Phases 3-4). Zero: none recorded.
+	RecordedGen uint64
+	// RunStart is the run's start: the sweep's age bound and the mtime base.
+	RunStart time.Time
+	// StillHeld re-proves the archive lock right before the commit point.
+	StillHeld func() error
+	// Units lists the unit files the records name.
+	Units UnitFiles
+}
+
+// Store is an encrypted archive's sealed record as a run holds it: the state.Persister
+// its manifest commits through, the last committed pointer, and the inventory.
+type Store struct {
+	out  string
+	opts LoadOptions
+
+	ptr       Pointer             // the last committed pointer (Gen 0: none yet)
+	attempted uint64              // the highest generation a rename was attempted at
+	sections  map[uint32][32]byte // plaintext digest per manifest section position
+	reseal    map[uint32]bool     // positions loaded from their second copy
+	hdr       header
+
+	inv      *Top              // the last durable inventory (nil: none)
+	shards   map[string][]byte // its shard bytes by prefix, as written
+	sweepOK  bool              // whether the start sweep may run
+	invLive  map[string]bool   // paths the inventory lists as live
+	retained map[string]Digest // files superseded during this run
+	prevLive map[string]Digest // the live files of the last commit
+
+	commits   int       // commits this run
+	fixedTime time.Time // the last mtime given to the pointer pair and top file
+	runStamp  time.Time // this run's LastSeen stamp
+	walkDone  map[string]time.Time
+	fresh     bool
+	envHeal   bool // the envelope was missing or unreadable: the next commit rewrites it
+	// invTolerated: a shard was damaged under a current top file; this run sweeps
+	// nothing and rewrites every shard.
+	invTolerated bool
+	Notices      []string // what the load healed or accepted, for the run log
+}
+
+func (s *Store) refuse(base error, format string, args ...any) error {
+	return fmt.Errorf("%w: %s: %s", base, s.out, fmt.Sprintf(format, args...))
+}
+
+// LoadManifest opens the sealed record of the encrypted archive in out with
+// o.Key, under the archive lock: it reads the envelope, the pointer pair, the
+// inventory and the manifest chunks, applies every row of the strict-load table
+// and the F12 rule, and returns the manifest bound to the Store it commits
+// through. It writes nothing; a fresh archive's first commit is Init.
+func LoadManifest(out string, o LoadOptions) (*state.Manifest, *Store, error) {
+	s := &Store{out: out, opts: o, sections: map[uint32][32]byte{}, reseal: map[uint32]bool{}, retained: map[string]Digest{}, walkDone: map[string]time.Time{}}
+	envState, err := s.readEnvelope()
+	if err != nil {
+		return nil, nil, err
+	}
+	ptr, ptrFound, err := s.readPointers()
+	if err != nil {
+		return nil, nil, err
+	}
+	folders, err := s.foldersHoldFiles()
+	if err != nil {
+		return nil, nil, err
+	}
+	if !ptrFound {
+		switch {
+		case !folders && envState != envBad:
+			s.fresh = true
+			m, err := state.FromSealed(filepath.Join(out, EnvelopeName), state.View{Version: state.ManifestVersion}, s)
+			return m, s, err
+		case envState == envPresent:
+			return nil, nil, s.refuse(ErrRecord, "the record's pointer is missing — restore %s and %s from your newest backup; nothing was changed", PointerName, MirrorName)
+		default:
+			return nil, nil, s.refuse(ErrRecord, "sealed files are present but the record is missing — restore the archive's record files from your newest backup; nothing was changed")
+		}
+	}
+	s.ptr, s.attempted = ptr, ptr.Gen
+	if err := s.readInventory(); err != nil {
+		return nil, nil, err
+	}
+	sections, err := s.readSections()
+	if err != nil {
+		return nil, nil, err
+	}
+	v, h, err := decodeSections(s.opts.Key, sections, s.ptr.Buckets)
+	if err != nil {
+		return nil, nil, s.refuse(ErrRecord, "%v", err)
+	}
+	s.hdr = h
+	if err := s.checkF12(v); err != nil {
+		return nil, nil, err
+	}
+	if envState != envPresent {
+		s.Notices = append(s.Notices, "the record's envelope was missing or unreadable; the next save rewrites it")
+	}
+	s.envHeal = envState != envPresent
+	m, err := state.FromSealed(filepath.Join(out, EnvelopeName), v, s)
+	if err != nil {
+		return nil, nil, s.refuse(ErrRecord, "%v", err)
+	}
+	live, err := s.liveFiles(v)
+	if err != nil {
+		return nil, nil, err
+	}
+	s.prevLive = live
+	return m, s, nil
+}
+
+type envelopeState int
+
+const (
+	envAbsent envelopeState = iota
+	envPresent
+	envUnreadable // bytes that are not JSON at all: healable once the pointer authenticates
+	envBad        // never used as a return; marks "refused" in the table
+)
+
+// readEnvelope judges the envelope: version first (a newer one asks for an
+// upgrade), then the strict fields. Plain JSON that is not an envelope is refused.
+func (s *Store) readEnvelope() (envelopeState, error) {
+	raw, _, err := readFile(s.out, EnvelopeName, maxEnvelopeSize)
+	if errors.Is(err, fs.ErrNotExist) {
+		return envAbsent, nil
+	}
+	if errors.Is(err, errTooLarge) {
+		// An envelope is four short fields: anything larger at its name is a manifest
+		// file — an archive that is not encrypted — never a damaged envelope.
+		return envAbsent, s.refuse(ErrNotSealed, "it holds a manifest that is not a sealed record — an archive that is not encrypted is encrypted only by converting it; nothing was changed")
+	}
+	if err != nil {
+		if errors.Is(err, ErrStore) {
+			return envAbsent, s.refuse(ErrRecord, "%v", err)
+		}
+		return envUnreadable, nil
+	}
+	var probe struct {
+		Version int `json:"version"`
+	}
+	if json.Unmarshal(raw, &probe) != nil {
+		return envUnreadable, nil
+	}
+	if probe.Version > vault.EncryptedManifestVersion {
+		return envAbsent, s.refuse(ErrNewerFormat, "its record (envelope version %d) was written by a newer MailArchive — upgrade MailArchive", probe.Version)
+	}
+	var e vault.ManifestEnvelope
+	if strictJSON(raw, &e) != nil || e.Version != vault.EncryptedManifestVersion || !e.Encrypted {
+		return envAbsent, s.refuse(ErrNotSealed, "it holds a manifest that is not a sealed record — an archive that is not encrypted is encrypted only by converting it; nothing was changed")
+	}
+	if e.ArchiveID != s.opts.Key.ArchiveID().String() {
+		return envAbsent, s.refuse(ErrRecord, "its record names another archive (%s); nothing was changed", e.ArchiveID)
+	}
+	if e.Pointer != PointerName {
+		return envAbsent, s.refuse(ErrRecord, "its record names a pointer other than %s; nothing was changed", PointerName)
+	}
+	return envPresent, nil
+}
+
+// readPointers opens both pointer copies; the highest generation that
+// authenticates wins. A newer format in either asks for an upgrade.
+func (s *Store) readPointers() (Pointer, bool, error) {
+	var best Pointer
+	found, failed := false, 0
+	for _, name := range []string{PointerName, MirrorName} {
+		raw, fi, err := readFile(s.out, name, MaxPointerSize)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err == nil {
+			if _, _, perr := Peek(raw); errors.Is(perr, ErrNewerFormat) {
+				return Pointer{}, false, s.refuse(ErrNewerFormat, "its record pointer %s was written by a newer MailArchive — upgrade MailArchive", name)
+			}
+			var p Pointer
+			if p, err = Open(s.opts.Key, raw); err == nil {
+				if fi.ModTime().After(s.fixedTime) {
+					s.fixedTime = fi.ModTime()
+				}
+				if !found || p.Gen > best.Gen {
+					best, found = p, true
+				}
+				continue
+			}
+		}
+		failed++
+	}
+	if !found && failed > 0 {
+		return Pointer{}, false, s.refuse(ErrRecord, "both copies of its record pointer (%s, %s) are damaged — restore them from your newest backup; nothing was changed", PointerName, MirrorName)
+	}
+	return best, found, nil
+}
+
+// foldersHoldFiles reports whether units/, chunks/ or inventory/ hold anything.
+func (s *Store) foldersHoldFiles() (bool, error) {
+	for _, d := range []string{"units", ChunksDir, InventoryDir} {
+		dir := filepath.Join(s.out, d)
+		ok, err := realDir(dir)
+		if err != nil {
+			return false, s.refuse(ErrRecord, "%v", err)
+		}
+		if !ok {
+			continue
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return false, err
+		}
+		if len(entries) > 0 {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// readInventory reads the top file and its shards. A newer version asks for an
+// upgrade; a damaged shard under an otherwise current top file is tolerated (no
+// sweep, every shard rewritten); anything else unreadable is "no inventory".
+func (s *Store) readInventory() error {
+	raw, _, err := readFile(s.out, InventoryName, int64(maxShards+5)*256)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return nil
+	}
+	top, err := ParseTop(raw)
+	if errors.Is(err, ErrNewerFormat) {
+		return s.refuse(ErrNewerFormat, "its file list was written by a newer MailArchive — upgrade MailArchive")
+	}
+	if err != nil {
+		return nil
+	}
+	shards := map[string][]byte{}
+	live := map[string]bool{}
+	intact := true
+	for _, ref := range top.Shards {
+		b, _, err := readFile(s.out, ref.Name, int64(maxShardLines)*256)
+		if err != nil || sha256.Sum256(b) != ref.SHA256 {
+			intact = false
+			continue
+		}
+		sh, err := ParseShard(ref.Prefix, b)
+		if err != nil || len(sh.Files) != ref.Entries {
+			intact = false
+			continue
+		}
+		shards[ref.Prefix] = b
+		for _, f := range sh.Files {
+			if f.State == Live {
+				live[f.Path] = true
+			}
+		}
+	}
+	if !intact {
+		if top.Gen == s.ptr.Gen && s.pointerMatches(top.Pointer) {
+			s.inv, s.shards, s.invLive, s.sweepOK = &top, nil, nil, false
+			s.Notices = append(s.Notices, "a damaged part of the archive's file list is rewritten by this backup; nothing is swept this run")
+			s.invTolerated = true
+		}
+		return nil
+	}
+	s.inv, s.shards, s.invLive, s.sweepOK = &top, shards, live, true
+	return nil
+}
+
+// pointerMatches reports whether d is the digest of either pointer copy on disk.
+func (s *Store) pointerMatches(d Digest) bool {
+	for _, name := range []string{PointerName, MirrorName} {
+		raw, _, err := readFile(s.out, name, MaxPointerSize)
+		if err == nil && int64(len(raw)) == d.Size && sha256.Sum256(raw) == d.SHA256 {
+			return true
+		}
+	}
+	return false
+}
+
+// readSections opens every manifest section from whichever of its two copies
+// authenticates. Both copies failing refuses, naming the file and its date.
+func (s *Store) readSections() ([][]byte, error) {
+	byPos := map[uint32][]Entry{}
+	for _, e := range s.ptr.Manifest {
+		byPos[e.I] = append(byPos[e.I], e)
+	}
+	n := posFirst + int(s.ptr.Buckets)
+	if len(s.ptr.Manifest) == 0 {
+		n = 0
+	}
+	if len(byPos) != n {
+		return nil, s.refuse(ErrRecord, "its record pointer lists %d sections, want %d", len(byPos), n)
+	}
+	out := make([][]byte, n)
+	for pos := 0; pos < n; pos++ {
+		copies := byPos[uint32(pos)]
+		if len(copies) != 2 {
+			return nil, s.refuse(ErrRecord, "its record pointer lists %d copies of section %d, want 2", len(copies), pos)
+		}
+		var date time.Time
+		for j, e := range copies {
+			sealed, fi, err := readChunk(s.out, e)
+			if fi != nil && date.IsZero() {
+				date = fi.ModTime()
+			}
+			if err == nil {
+				plain, oerr := s.opts.Key.OpenChunk(vault.ContainerManifest, e.Gen, e.I, sealed)
+				if oerr == nil {
+					out[pos] = plain
+					s.sections[uint32(pos)] = sha256.Sum256(plain)
+					if j > 0 {
+						s.reseal[uint32(pos)] = true
+					}
+					break
+				}
+			}
+		}
+		if out[pos] == nil {
+			if date.IsZero() {
+				return nil, s.refuse(ErrRecord, "both copies of a record chunk (%s) are missing — restore it from your newest backup; nothing was changed", copies[0].Name.Path())
+			}
+			return nil, s.refuse(ErrRecord, "both copies of a record chunk (%s) are damaged — restore this one file from any backup made after %s; nothing was changed", copies[0].Name.Path(), date.UTC().Format("2006-01-02"))
+		}
+	}
+	return out, nil
+}
+
+// checkF12 applies the F12 rule (§3) and the RecordedGen rule (A25).
+func (s *Store) checkF12(v state.View) error {
+	P := s.ptr.Gen
+	switch {
+	case s.inv == nil && s.ptr.Inv >= 1:
+		return s.refuse(ErrInventoryDamaged, "its file list is missing or damaged — restore the whole archive folder from your newest backup; nothing was changed")
+	case s.inv == nil:
+		// No file list that ever landed: proceed, and sweep nothing (sweepOK is set
+		// only beside a whole inventory).
+	case s.inv.Gen == P+1:
+		return s.refuse(ErrUnfinishedSave, "nothing was changed")
+	case s.inv.Gen > P:
+		return s.refuse(ErrRestoredOlder, "an older copy of the record may have been restored (record at save %d, file list at %d) — restore the newest copy of the whole archive folder; nothing was changed", P, s.inv.Gen)
+	case s.inv.Gen < s.ptr.Inv:
+		return s.refuse(ErrRestoredOlder, "an older copy of its file list was restored (file list at save %d, the record saw %d) — restore the newest copy of the whole archive folder; nothing was changed", s.inv.Gen, s.ptr.Inv)
+	}
+	if s.opts.RecordedGen > P {
+		merged, err := s.unnamedFiles(v)
+		if err != nil {
+			return err
+		}
+		if merged {
+			return s.refuse(ErrRestoredOlder, "this archive is older than the last backup this computer made (save %d, archive at %d), and holds files its record does not name; nothing was changed", s.opts.RecordedGen, P)
+		}
+		s.Notices = append(s.Notices, fmt.Sprintf("this archive was restored to an older copy (save %d; this computer had made %d)", P, s.opts.RecordedGen))
+	}
+	return nil
+}
+
+// unnamedFiles reports whether units/ or chunks/ holds a file that neither the
+// pointer and its records nor the inventory names: a merge-restore's signature.
+func (s *Store) unnamedFiles(v state.View) (bool, error) {
+	named, err := s.liveFiles(v)
+	if err != nil {
+		return false, err
+	}
+	listed := s.listedFiles()
+	found := false
+	err = s.walkFiles(func(rel string, _ os.FileInfo) {
+		if _, ok := named[rel]; !ok && !listed[rel] {
+			found = true
+		}
+	})
+	return found, err
+}
+
+// listedFiles is every path the inventory lists, in any state.
+func (s *Store) listedFiles() map[string]bool {
+	out := map[string]bool{}
+	for prefix, b := range s.shards {
+		if sh, err := ParseShard(prefix, b); err == nil {
+			for _, f := range sh.Files {
+				out[f.Path] = true
+			}
+		}
+	}
+	return out
+}
+
+// walkFiles calls fn for every unit- or chunk-shaped file under units/ and chunks/.
+func (s *Store) walkFiles(fn func(rel string, fi os.FileInfo)) error {
+	for _, top := range []string{"units", ChunksDir} {
+		root := filepath.Join(s.out, top)
+		if ok, err := realDir(root); err != nil || !ok {
+			if err != nil {
+				return s.refuse(ErrRecord, "%v", err)
+			}
+			continue
+		}
+		shards, err := os.ReadDir(root)
+		if err != nil {
+			return err
+		}
+		for _, sh := range shards {
+			if sh.Type().IsRegular() {
+				continue
+			}
+			dir := filepath.Join(root, sh.Name())
+			if _, err := realDir(dir); err != nil {
+				return s.refuse(ErrRecord, "%v", err)
+			}
+			files, err := os.ReadDir(dir)
+			if err != nil {
+				return err
+			}
+			for _, f := range files {
+				rel := top + "/" + sh.Name() + "/" + f.Name()
+				if !filePath.MatchString(rel) {
+					continue
+				}
+				fi, err := f.Info()
+				if err != nil {
+					continue
+				}
+				fn(rel, fi)
+			}
+		}
+	}
+	return nil
+}
+
+// liveFiles is every file the records and the pointer name, with its digest.
+func (s *Store) liveFiles(v state.View) (map[string]Digest, error) {
+	files := map[string]Digest{}
+	if s.opts.Units != nil {
+		u, err := s.opts.Units(v.Entries)
+		if err != nil {
+			return nil, err
+		}
+		for p, d := range u {
+			files[p] = d
+		}
+	}
+	for _, sec := range [][]Entry{s.ptr.Manifest, s.ptr.History, s.ptr.Index} {
+		for _, e := range sec {
+			files[e.Name.Path()] = Digest{SHA256: e.SHA256, Size: int64(e.Size)}
+		}
+	}
+	return files, nil
+}
+
+// Fresh reports whether the archive has no record yet: its first commit is owed.
+func (s *Store) Fresh() bool { return s.fresh }
+
+// Generation is the last committed generation.
+func (s *Store) Generation() uint64 { return s.ptr.Gen }
+
+// SweepAllowed reports whether the start sweep may run (§3): never with no
+// inventory, nor with a damaged one.
+func (s *Store) SweepAllowed() bool { return s.sweepOK }
+
+// KeepUnits is the set of unit paths the inventory lists as live: the start
+// sweep keeps them as well as what the records name.
+func (s *Store) KeepUnits() map[string]bool { return s.invLive }
+
+// SetRunStamp is this run's LastSeen stamp (graph runAt).
+func (s *Store) SetRunStamp(t time.Time) { s.runStamp = t }
+
+// WalkDone records that the walk of the mailbox token finished at the run stamp
+// at: the next commit moves that mailbox's seen_at forward (P2b-C12).
+func (s *Store) WalkDone(token string, at time.Time) { s.walkDone[token] = at }
+
+// SweepContainers removes, under the lock and before the first write, chunk files
+// the pointer does not name and the inventory does not list as live, and
+// inventory files the top file does not name, when older than before. It returns
+// how many it removed. With the sweep not allowed it removes nothing.
+func (s *Store) SweepContainers(before time.Time) (int, error) {
+	if !s.sweepOK {
+		return 0, nil
+	}
+	named := map[string]bool{}
+	for _, sec := range [][]Entry{s.ptr.Manifest, s.ptr.History, s.ptr.Index} {
+		for _, e := range sec {
+			named[e.Name.Path()] = true
+		}
+	}
+	removed := 0
+	err := s.walkFiles(func(rel string, fi os.FileInfo) {
+		if !strings.HasPrefix(rel, ChunksDir+"/") || named[rel] || s.invLive[rel] || !fi.Mode().IsRegular() || !fi.ModTime().Before(before) {
+			return
+		}
+		if os.Remove(filepath.Join(s.out, filepath.FromSlash(rel))) == nil {
+			removed++
+		}
+	})
+	if err != nil {
+		return removed, err
+	}
+	keep := map[string]bool{}
+	if s.inv != nil {
+		for _, ref := range s.inv.Shards {
+			keep[ref.Name] = true
+		}
+	}
+	dir := filepath.Join(s.out, InventoryDir)
+	if ok, err := realDir(dir); err != nil {
+		return removed, s.refuse(ErrRecord, "%v", err)
+	} else if ok {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return removed, err
+		}
+		for _, e := range entries {
+			rel := InventoryDir + "/" + e.Name()
+			fi, err := e.Info()
+			if err != nil || keep[rel] || !fi.Mode().IsRegular() || !fi.ModTime().Before(before) {
+				continue
+			}
+			if os.Remove(filepath.Join(dir, e.Name())) == nil {
+				removed++
+			}
+		}
+	}
+	return removed, nil
+}
+
+// nextFixedTime is the mtime of the next commit's pointer pair and top file:
+// run start + 2 s × the commit's number, never at or before the last one (P2b-C10).
+func (s *Store) nextFixedTime() time.Time {
+	t := s.opts.RunStart.Add(time.Duration(2*(s.commits+1)) * time.Second)
+	if !s.fixedTime.IsZero() && !t.After(s.fixedTime.Add(time.Second)) {
+		t = s.fixedTime.Add(2 * time.Second)
+	}
+	return t.Truncate(time.Second)
+}
+
+// Init is a fresh archive's first commit (P2b-C3): the envelope first, then an
+// empty generation-1 pointer, its mirror and inventory 1, before any unit is
+// written.
+func (s *Store) Init(m *state.Manifest) error {
+	if !s.fresh {
+		return nil
+	}
+	if err := s.writeEnvelope(); err != nil {
+		return err
+	}
+	if err := m.Save(); err != nil {
+		return err
+	}
+	s.fresh = false
+	return nil
+}
+
+func (s *Store) writeEnvelope() error {
+	b, err := vault.NewManifestEnvelope(s.opts.Key.ArchiveID(), PointerName).Marshal()
+	if err != nil {
+		return err
+	}
+	return writeFile(s.out, EnvelopeName, b, time.Time{})
+}
+
+// Commit is the sealed save (state.Persister): changed sections sealed twice
+// under fresh names, the lock re-proved, the pointer renamed into place [COMMIT],
+// the mirror, then the inventory. Nothing is deleted (P2b-C9).
+func (s *Store) Commit(v state.View) error {
+	for token, at := range s.walkDone {
+		if s.hdr.SeenAt == nil {
+			s.hdr.SeenAt = map[string]time.Time{}
+		}
+		s.hdr.SeenAt[token] = at
+	}
+	sections, n, err := encodeSections(s.opts.Key, v, s.hdr, s.ptr.Buckets, s.runStamp)
+	if err != nil {
+		return err
+	}
+	gen := s.attempted + 1
+	old := map[uint32][]Entry{}
+	for _, e := range s.ptr.Manifest {
+		old[e.I] = append(old[e.I], e)
+	}
+	var table []Entry
+	digests := map[uint32][32]byte{}
+	for i, plain := range sections {
+		pos := uint32(i)
+		d := sha256.Sum256(plain)
+		digests[pos] = d
+		if prev, ok := s.sections[pos]; ok && prev == d && !s.reseal[pos] && n == s.ptr.Buckets && len(old[pos]) == 2 {
+			table = append(table, old[pos]...)
+			continue
+		}
+		for c := 0; c < 2; c++ {
+			e, err := s.writeChunk(vault.ContainerManifest, gen, pos, plain)
+			if err != nil {
+				return err
+			}
+			table = append(table, e)
+		}
+	}
+	if s.opts.StillHeld != nil {
+		if err := s.opts.StillHeld(); err != nil {
+			return fmt.Errorf("%w: %v", ErrLockLost, err)
+		}
+	}
+	p := Pointer{Head: s.ptr.Head, Manifest: table, History: s.ptr.History, Index: s.ptr.Index}
+	p.Format, p.Gen, p.Buckets = vault.FormatVersion, gen, n
+	p.RunStart = s.opts.RunStart.Unix()
+	if s.inv != nil {
+		p.Inv = s.inv.Gen
+	}
+	raw, err := Seal(s.opts.Key, p)
+	if err != nil {
+		return err
+	}
+	mt := s.nextFixedTime()
+	s.attempted = gen
+	if err := writeFile(s.out, PointerName, raw, mt); err != nil {
+		return err
+	}
+	// [COMMIT]: the primary pointer names the new record.
+	prevLive := s.prevLive
+	s.ptr, s.sections, s.reseal, s.commits, s.fixedTime = p, digests, map[uint32]bool{}, s.commits+1, mt
+	s.walkDone = map[string]time.Time{}
+	mirror := &Digest{SHA256: sha256.Sum256(raw), Size: int64(len(raw))}
+	if err := writeFile(s.out, MirrorName, raw, mt); err != nil {
+		mirror = nil
+		s.Notices = append(s.Notices, "the record pointer's mirror could not be written; the next save rewrites it")
+	}
+	if s.envHeal {
+		if err := s.writeEnvelope(); err == nil {
+			s.envHeal = false
+		}
+	}
+	live, err := s.liveFiles(v)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrInventoryWrite, err)
+	}
+	for path, d := range prevLive {
+		if _, still := live[path]; !still {
+			s.retained[path] = d
+		}
+	}
+	for path := range live {
+		delete(s.retained, path)
+	}
+	s.prevLive = live
+	if err := s.writeInventory(gen, Digest{SHA256: sha256.Sum256(raw), Size: int64(len(raw))}, mirror, live, mt); err != nil {
+		return fmt.Errorf("%w: %v", ErrInventoryWrite, err)
+	}
+	return nil
+}
+
+// writeChunk seals plain as chunk pos of kind at gen under a fresh name and
+// writes it durably, with the run's start as its mtime.
+func (s *Store) writeChunk(kind vault.ContainerKind, gen uint64, pos uint32, plain []byte) (Entry, error) {
+	sealed, err := s.opts.Key.SealChunk(kind, gen, pos, plain)
+	if err != nil {
+		return Entry{}, err
+	}
+	if len(sealed) > MaxChunkSize {
+		return Entry{}, fmt.Errorf("%w: a record chunk is %d bytes, over the %d-byte bound", ErrPointer, len(sealed), MaxChunkSize)
+	}
+	name, err := NewName()
+	if err != nil {
+		return Entry{}, err
+	}
+	if err := writeFile(s.out, name.Path(), sealed, s.opts.RunStart); err != nil {
+		return Entry{}, err
+	}
+	return Entry{I: pos, Name: name, Gen: gen, SHA256: sha256.Sum256(sealed), Size: uint32(len(sealed))}, nil
+}
+
+// writeInventory writes the shards whose content changed, under new generation
+// names, then the top file — its commit point.
+func (s *Store) writeInventory(gen uint64, ptr Digest, mirror *Digest, live map[string]Digest, mt time.Time) error {
+	all := map[string]File{}
+	for p, d := range live {
+		all[p] = File{Path: p, Digest: d, State: Live}
+	}
+	for p, d := range s.retained {
+		all[p] = File{Path: p, Digest: d, State: Retained}
+	}
+	fanout := MinFanout
+	if s.inv != nil {
+		fanout = s.inv.Fanout
+	}
+	for fanout < MaxFanout && len(all) > 512*(1<<(4*fanout)) {
+		fanout++
+	}
+	byPrefix := map[string][]File{}
+	for _, f := range all {
+		prefix, err := PrefixOf(f.Path, fanout)
+		if err != nil {
+			return err
+		}
+		byPrefix[prefix] = append(byPrefix[prefix], f)
+	}
+	prefixes := make([]string, 0, len(byPrefix))
+	for p := range byPrefix {
+		prefixes = append(prefixes, p)
+	}
+	sort.Strings(prefixes)
+	oldRef := map[string]ShardRef{}
+	if s.inv != nil && s.inv.Fanout == fanout && s.shards != nil {
+		for _, r := range s.inv.Shards {
+			oldRef[r.Prefix] = r
+		}
+	}
+	top := Top{Gen: gen, Pointer: ptr, Mirror: mirror, Fanout: fanout}
+	shards := map[string][]byte{}
+	for _, prefix := range prefixes {
+		files := byPrefix[prefix]
+		sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
+		b, err := Shard{Prefix: prefix, Files: files}.Marshal()
+		if err != nil {
+			return err
+		}
+		shards[prefix] = b
+		if r, ok := oldRef[prefix]; ok && bytes.Equal(s.shards[prefix], b) {
+			top.Shards = append(top.Shards, r)
+			continue
+		}
+		name := ShardName(prefix, gen)
+		if err := writeFile(s.out, name, b, s.opts.RunStart); err != nil {
+			return err
+		}
+		top.Shards = append(top.Shards, ShardRef{Prefix: prefix, Name: name, SHA256: sha256.Sum256(b), Entries: len(files)})
+	}
+	b, err := top.Marshal()
+	if err != nil {
+		return err
+	}
+	if err := writeFile(s.out, InventoryName, b, mt); err != nil {
+		return err
+	}
+	live2 := map[string]bool{}
+	for p := range live {
+		live2[p] = true
+	}
+	s.inv, s.shards, s.invLive = &top, shards, live2
+	return nil
+}

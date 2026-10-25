@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"mail-archive-tool/internal/container"
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/seal"
@@ -28,30 +29,38 @@ type Violation struct{ Path, Why string }
 
 // rootFiles are the files an encrypted archive may hold at its root: the vault and
 // its mirror, the lock, the minimised run records and notices (A6), the empty pause
-// marker, and the encrypted README.
+// marker, the encrypted README, and the sealed record's envelope, root pointer and
+// mirror, and inventory top file (phase2b §7).
 var rootFiles = map[string]bool{
 	vault.FileName: true, vault.BackupName: true, lockfile.Name: true,
 	state.LastRunName: true, state.RunHistoryName: true, state.SourceStreakName: true,
 	state.LastVerifyName: true, state.AttentionName: true, state.IntegrityAttentionName: true,
 	seal.Name: true, "README.txt": true,
+	container.EnvelopeName: true, container.PointerName: true, container.MirrorName: true, container.InventoryName: true,
 }
+
+// shardedDirs are the folders laid out as two-hex shards of 32-hex files: the unit
+// store and the sealed record's chunks.
+var shardedDirs = map[string]bool{export.UnitsDir: true, container.ChunksDir: true}
 
 var (
 	shardRe    = regexp.MustCompile(`^[0-9a-f]{2}$`)
 	unitRe     = regexp.MustCompile(`^[0-9a-f]{32}$`)
+	invShardRe = regexp.MustCompile(`^[0-9a-f]{2,4}\.[1-9][0-9]*$`)
 	rootTempRe = regexp.MustCompile(`^\.mailarchive-[a-z-]*[0-9]+\.tmp$`)
 	unitTempRe = regexp.MustCompile(`^\.mailarchive-[0-9]+\.tmp$`)
 )
 
 // CheckTree is every path under root an encrypted archive may not hold, in mode:
-// only the root files above, the units/ folder and its two-hex-character shard
-// folders, and units/<hh>/<32 hex> unit files whose name starts with their shard —
-// in flight also the sweepable temps (.mailarchive-*.tmp at the root and in a
-// shard). Never a symlink or special file, never a snapshot, a log, a page, a
-// report or a plain temp. exempt names the root files that are still cleartext
-// until Phase 2b seals them (matched by name, or by name + "-" for SQLite's
-// companions): the caller's list is the only exemption. It walks with Lstat and
-// reports an unreadable entry rather than skipping it.
+// only the root files above; the units/ and chunks/ folders, their two-hex-character
+// shard folders, and <hh>/<32 hex> files whose name starts with their shard; the
+// inventory/ folder and its <2-4 hex>.<generation> shard files — in flight also the
+// sweepable temps (.mailarchive-*.tmp at the root, in a shard and in inventory/).
+// Never a symlink or special file, never a snapshot, a log, a page, a report or a
+// plain temp. exempt names the root files that are still cleartext until Phase 2b
+// seals them (matched by name, or by name + "-" for SQLite's companions): the
+// caller's list is the only exemption. It walks with Lstat and reports an
+// unreadable entry rather than skipping it.
 func CheckTree(root string, mode Mode, exempt map[string]bool) []Violation {
 	var vs []Violation
 	add := func(p, why string) { vs = append(vs, Violation{p, why}) }
@@ -74,8 +83,8 @@ func CheckTree(root string, mode Mode, exempt map[string]bool) []Violation {
 		}
 		switch {
 		case len(parts) == 1 && t.IsDir():
-			if name != export.UnitsDir {
-				add(rel, "a folder other than units/")
+			if !shardedDirs[name] && name != container.InventoryDir {
+				add(rel, "a folder other than units/, chunks/ or inventory/")
 				return filepath.SkipDir
 			}
 		case len(parts) == 1:
@@ -83,13 +92,21 @@ func CheckTree(root string, mode Mode, exempt map[string]bool) []Violation {
 				return nil
 			}
 			add(rel, "a file an encrypted archive does not hold")
+		case parts[0] == container.InventoryDir:
+			if len(parts) == 2 && t.IsRegular() && (invShardRe.MatchString(name) || (mode == InFlight && unitTempRe.MatchString(name))) {
+				return nil
+			}
+			add(rel, "not an inventory shard file")
+			if t.IsDir() {
+				return filepath.SkipDir
+			}
 		case len(parts) == 2 && t.IsDir():
 			if !shardRe.MatchString(name) {
-				add(rel, "a folder in units/ that is not a shard")
+				add(rel, "a folder in "+parts[0]+"/ that is not a shard")
 				return filepath.SkipDir
 			}
 		case len(parts) == 2:
-			add(rel, "a file directly in units/")
+			add(rel, "a file directly in "+parts[0]+"/")
 		case len(parts) == 3 && t.IsRegular():
 			if unitRe.MatchString(name) && strings.HasPrefix(name, parts[1]) {
 				return nil
