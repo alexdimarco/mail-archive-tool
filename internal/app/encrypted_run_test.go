@@ -7,12 +7,14 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/export"
+	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/vault"
 )
@@ -52,14 +54,26 @@ func treeOf(t *testing.T, out string) []string {
 	return paths
 }
 
-// snapshotTree is every file under out with its bytes.
+// snapshotTree is every file under out with its bytes, and every folder below out as
+// "<path>/" with nil bytes, so a created or removed folder — even an empty one — is a
+// change sameTree sees.
 func snapshotTree(t *testing.T, out string) map[string][]byte {
 	t.Helper()
 	snap := map[string][]byte{}
-	for _, p := range treeOf(t, out) {
-		b, _ := os.ReadFile(filepath.Join(out, filepath.FromSlash(p)))
-		snap[p] = b
-	}
+	filepath.WalkDir(out, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || p == out {
+			return nil
+		}
+		rel, _ := filepath.Rel(out, p)
+		rel = filepath.ToSlash(rel)
+		if d.IsDir() {
+			snap[rel+"/"] = nil
+			return nil
+		}
+		b, _ := os.ReadFile(p)
+		snap[rel] = b
+		return nil
+	})
 	return snap
 }
 
@@ -73,6 +87,30 @@ func sameTree(a, b map[string][]byte) bool {
 		}
 	}
 	return true
+}
+
+// holderOnly is the lock file's holder line with no verb= field: an encrypted
+// archive's lock names no source kind (A18, MA-735).
+var holderOnly = regexp.MustCompile(`^pid=[0-9]+ started=\S+ host=\S* nonce=[0-9a-f]{32}\n$`)
+
+// requireHolderLineOnly fails unless out's lock file, if present, is a bare holder
+// line: an under-lock refusal may rewrite only that line, never add a verb.
+func requireHolderLineOnly(t *testing.T, out string) {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(out, lockfile.Name))
+	if errors.Is(err, fs.ErrNotExist) {
+		return
+	}
+	if err != nil || !holderOnly.Match(b) {
+		t.Fatalf("the lock file after the refusal is not a bare holder line (%v): %q", err, b)
+	}
+}
+
+// withoutLock is snap less the lock file, whose holder line an under-lock refusal
+// rewrites (checked by requireHolderLineOnly instead).
+func withoutLock(snap map[string][]byte) map[string][]byte {
+	delete(snap, lockfile.Name)
+	return snap
 }
 
 // covers: MA-725, R37
@@ -191,7 +229,7 @@ func TestAnEncryptedRunRefusesWhatItCannotWriteSafely(t *testing.T) {
 			root, opts := setup(t)
 			before := snapshotTree(t, root)
 			if underLock[label] {
-				delete(before, ".mailarchive.lock")
+				before = withoutLock(before)
 			}
 			_, err := Run(context.Background(), opts, discard(), nil)
 			if !errors.Is(err, ErrEncryptedArchive) {
@@ -201,7 +239,8 @@ func TestAnEncryptedRunRefusesWhatItCannotWriteSafely(t *testing.T) {
 			assure.Refused(t, rc, msg, assure.Code(1), assure.Names(opts.Out), assure.NoSideEffect(func() bool {
 				after := snapshotTree(t, root)
 				if underLock[label] {
-					delete(after, ".mailarchive.lock")
+					requireHolderLineOnly(t, root)
+					after = withoutLock(after)
 				}
 				return sameTree(before, after)
 			}))
@@ -216,11 +255,13 @@ func TestAnEncryptedRunSweepsUnitsNoRecordNames(t *testing.T) {
 	if _, err := Run(context.Background(), Options{Inputs: []string{src}, Out: out, Key: key}, discard(), nil); err != nil {
 		t.Fatal(err)
 	}
-	named := snapshotTree(t, filepath.Join(out, export.UnitsDir))
 	orphan := filepath.Join(out, export.UnitsDir, "ab", "ab0123456789abcdef0123456789abcd")
 	if err := os.MkdirAll(filepath.Dir(orphan), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// Taken after the orphan's shard folder exists: the sweep removes unit files, and
+	// leaves shard folders as they are.
+	named := snapshotTree(t, filepath.Join(out, export.UnitsDir))
 	if err := os.WriteFile(orphan, []byte("a crashed run's revision"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -265,15 +306,13 @@ func TestAnEncryptedCaptureSealsUnitsAndNeverCollapsesRecords(t *testing.T) {
 	}
 	// Refused before the run's record (P2a-C10): every file but the lock's holder
 	// line is as it was — no unit, no "running" or failed last-run record.
-	before := snapshotTree(t, out)
-	delete(before, ".mailarchive.lock")
+	before := withoutLock(snapshotTree(t, out))
 	_, err := RunGraph(context.Background(), g, Options{Out: out, Key: key}, discard())
 	if !errors.Is(err, ErrEncryptedArchive) || !strings.Contains(err.Error(), "identity collapse") {
 		t.Fatalf("an owed collapse on an encrypted archive: want ErrEncryptedArchive naming the collapse, got %v", err)
 	}
-	after := snapshotTree(t, out)
-	delete(after, ".mailarchive.lock")
-	if !sameTree(before, after) {
+	requireHolderLineOnly(t, out)
+	if !sameTree(before, withoutLock(snapshotTree(t, out))) {
 		t.Fatal("the refusal must change nothing in the archive")
 	}
 }

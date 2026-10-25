@@ -1,6 +1,7 @@
 package schedule
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -45,7 +46,9 @@ func TestNoScheduleIsInstalledForAnEncryptedArchive(t *testing.T) {
 	if err := installOn(spec, "linux"); err != nil || !wrote {
 		t.Fatalf("the positive twin: a plaintext archive's schedule installs (%v, wrote %v)", err, wrote)
 	}
-	if _, err := os.Stat(filepath.Join(plain, descriptorFileFor(spec))); err != nil {
+	plainDesc := filepath.Join(plain, descriptorFileFor(spec))
+	before, err := os.ReadFile(plainDesc)
+	if err != nil {
 		t.Fatalf("the positive twin writes its descriptor: %v", err)
 	}
 
@@ -59,11 +62,23 @@ func TestNoScheduleIsInstalledForAnEncryptedArchive(t *testing.T) {
 	if err := os.Symlink(inner, link); err != nil {
 		link = inner
 	}
+	// A refused install writes no descriptor: none appears in an archive that had
+	// none, and the plain archive's (written by the twin above) stays byte-identical.
+	descriptorUntouched := func(s Spec) bool {
+		got, derr := os.ReadFile(filepath.Join(s.Out, descriptorFileFor(s)))
+		if s.Out == plain {
+			return derr == nil && bytes.Equal(got, before)
+		}
+		return os.IsNotExist(derr)
+	}
 	for label, s := range map[string]Spec{
-		"a link into an encrypted archive": {Name: "mailarchive-link", Interval: Daily, At: "02:00", Exe: "/bin/x", Out: link},
+		"a link into an encrypted archive":     {Name: "mailarchive-link", Interval: Daily, At: "02:00", Exe: "/bin/x", Out: link},
 		"an encrypted archive":                 {Name: "mailarchive-enc", Interval: Daily, At: "02:00", Exe: "/bin/x", Out: sealed, Log: filepath.Join(sealed, "x.log")},
 		"a folder inside an encrypted archive": {Name: "mailarchive-in", Interval: Daily, At: "02:00", Exe: "/bin/x", Out: inner},
-		"a log inside an encrypted archive":    {Name: "mailarchive-log", Interval: Daily, At: "02:00", Exe: "/bin/x", Out: plain, Log: filepath.Join(sealed, "x.log")},
+		// The plain archive's own schedule, re-installed with its log moved into an
+		// encrypted archive: under its own name no collision guard stands in for the
+		// refusal, so only the refusal keeps its descriptor from being rewritten.
+		"a log inside an encrypted archive": {Name: spec.Name, Interval: Daily, At: "02:00", Exe: "/bin/x", Out: plain, Log: filepath.Join(sealed, "x.log")},
 	} {
 		t.Run(label, func(t *testing.T) {
 			wrote = false
@@ -73,9 +88,8 @@ func TestNoScheduleIsInstalledForAnEncryptedArchive(t *testing.T) {
 			}
 			assure.Refused(t, 1, err.Error(), assure.Code(1), assure.Names(sealed, "encrypted archive", "nothing was installed"),
 				assure.NoSideEffect(func() bool {
-					_, derr := os.Stat(filepath.Join(s.Out, descriptorFileFor(s)))
 					_, lerr := os.Stat(s.Log)
-					return !wrote && (s.Out == plain || os.IsNotExist(derr)) && (s.Log == "" || os.IsNotExist(lerr))
+					return !wrote && descriptorUntouched(s) && (s.Log == "" || os.IsNotExist(lerr))
 				}))
 		})
 	}

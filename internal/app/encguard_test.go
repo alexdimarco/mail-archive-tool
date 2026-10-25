@@ -135,9 +135,12 @@ func TestAKeylessScheduledRunIntoAnEncryptedArchiveIsRecordedAsFailed(t *testing
 func requireMinimalRefusalRecord(t *testing.T, out string, before map[string][]byte, kind string, secrets ...string) {
 	t.Helper()
 	after := snapshotTree(t, out)
+	// The lock file may change only as a bare holder line (no verb=, MA-735).
+	requireHolderLineOnly(t, out)
 	allowed := map[string]bool{state.LastRunName: true, state.RunHistoryName: true, state.AttentionName: true, ".mailarchive.lock": true}
 	for p, b := range after {
-		if !allowed[p] && !bytes.Equal(before[p], b) {
+		// A new entry counts even when its bytes are nil: a created folder, an empty file.
+		if was, ok := before[p]; !allowed[p] && (!ok || !bytes.Equal(was, b)) {
 			t.Fatalf("the refusal changed %s, outside the last-run record, history and notice", p)
 		}
 	}

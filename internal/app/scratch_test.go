@@ -13,6 +13,7 @@ import (
 
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/export"
+	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/vault"
 )
@@ -150,27 +151,35 @@ func TestAnEncryptedCopyFirstRunChecksTheScratchDrive(t *testing.T) {
 // token cache — before discovery, any sign-in, folder, lock or record, every file of
 // the archive unchanged (P2a-C14): those keep secrets and mail copies in plaintext.
 // There is no exemption for an archive holding the settings folder (a plaintext
-// archive only warns, P10). The positive twin: the same run with them outside
-// archives the mail (MA-725).
+// archive only warns, P10). The working-folder case runs the real secretDirs, its
+// scratch folder moved inside the archive. The positive twin: the same run with them
+// outside archives the mail (MA-725).
 func TestAKeyedRunRefusesAnArchiveHoldingItsSecrets(t *testing.T) {
 	src := encryptedSourcePST(t)
-	for label, setup := range map[string]func(out string) (Options, GraphOptions){
-		"the settings folder": func(out string) (Options, GraphOptions) {
+	for label, setup := range map[string]func(t *testing.T, out string) (Options, GraphOptions){
+		"the settings folder": func(t *testing.T, out string) (Options, GraphOptions) {
 			orig := secretDirs
 			t.Cleanup(func() { secretDirs = orig })
 			secretDirs = func() []string { return []string{filepath.Join(out, "Library", "mailarchive")} }
 			return Options{}, GraphOptions{}
 		},
-		"a credential path": func(out string) (Options, GraphOptions) {
+		// The real secretDirs, its working-folder entry inside the archive.
+		"the working folder": func(t *testing.T, out string) (Options, GraphOptions) {
+			orig := scratchRoot
+			t.Cleanup(func() { scratchRoot = orig })
+			scratchRoot = func() (string, error) { return filepath.Join(out, "Caches", "mailarchive", "scratch"), nil }
+			return Options{}, GraphOptions{}
+		},
+		"a credential path": func(t *testing.T, out string) (Options, GraphOptions) {
 			return Options{CredentialPaths: []string{filepath.Join(out, "client-secret.txt")}}, GraphOptions{}
 		},
-		"the token cache": func(out string) (Options, GraphOptions) {
+		"the token cache": func(t *testing.T, out string) (Options, GraphOptions) {
 			return Options{}, GraphOptions{TokenCachePath: filepath.Join(out, "graph-token.json")}
 		},
 	} {
 		t.Run(label, func(t *testing.T) {
 			out, k := encryptedOut(t)
-			opts, g := setup(out)
+			opts, g := setup(t, out) // the subtest's t: a replaced var is restored before the next case
 			opts.Out, opts.Key = out, k
 			before := snapshotTree(t, out)
 			var err error
@@ -186,6 +195,22 @@ func TestAKeyedRunRefusesAnArchiveHoldingItsSecrets(t *testing.T) {
 			assure.Refused(t, 1, err.Error(), assure.Code(1), assure.Names(out, "plaintext"),
 				assure.NoSideEffect(func() bool { return sameTree(before, snapshotTree(t, out)) }))
 		})
+	}
+}
+
+// covers: MA-741, R37
+// secretDirs, unreplaced, is exactly MailArchive's settings folder and its current
+// working folder — the two places the keyed-run refusal above guards — and follows a
+// moved working folder, so the refusal is never tested only against a stub.
+func TestSecretDirsAreTheSettingsAndWorkingFolders(t *testing.T) {
+	settings, err := job.Dir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := useScratchRoot(t)
+	got := secretDirs()
+	if len(got) != 2 || got[0] != settings || got[1] != root {
+		t.Fatalf("secretDirs() = %q, want exactly [%q %q]", got, settings, root)
 	}
 }
 

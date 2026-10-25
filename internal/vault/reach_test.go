@@ -17,17 +17,26 @@ import (
 // Phase 2a's encrypted write path protects nothing on its own (the manifest,
 // index and history are still cleartext), so it must be unreachable
 // (design-encrypted-archives-phase2a §0, P2a-C20).
+// Parse is one: it yields the *Vault that Unlock and UnlockRecovery turn into a
+// key. PendingCreate.Commit is reached only through PrepareCreate.
 var keyProducers = map[string]bool{
-	"Create": true, "PrepareCreate": true, "Open": true,
+	"Create": true, "PrepareCreate": true, "Open": true, "Parse": true,
 	"PrepareNewRecovery": true, "RequireRetrievableKey": true,
 }
+
+// keyMethods are the *Vault methods that return a usable *Key. Without type
+// information the scan matches them by name in any file importing the vault.
+var keyMethods = map[string]bool{"Unlock": true, "UnlockRecovery": true}
 
 // encryptionReachAllowed lists the production files allowed to reach the
 // encrypted path. It starts EMPTY; Phases 3–4 add the UX and unattended entry
 // points here, and each addition is an operator-visible gate change.
 var encryptionReachAllowed = map[string]bool{}
 
-const vaultImport = "mail-archive-tool/internal/vault"
+const (
+	vaultImport = "mail-archive-tool/internal/vault"
+	appImport   = "mail-archive-tool/internal/app"
+)
 
 // moduleRoot is the repository root: the nearest directory above this package
 // holding go.mod.
@@ -96,22 +105,46 @@ func TestNoProductionCodeCanReachTheEncryptedPathYet(t *testing.T) {
 	}
 }
 
-// reachesIn lists, for one parsed file, every call of a vault key producer and
-// every Options literal that sets Key.
+// reachesIn lists, for one parsed file, every call of a vault key producer or
+// key method, every Options literal that sets Key, and — in package app or a
+// file importing it — every assignment to a .Key field (o.Key = k).
 func reachesIn(rel string, f *ast.File) []string {
 	alias := ""
+	seesApp := f.Name.Name == "app"
 	for _, imp := range f.Imports {
-		if p, _ := strconv.Unquote(imp.Path.Value); p == vaultImport {
+		p, _ := strconv.Unquote(imp.Path.Value)
+		switch p {
+		case vaultImport:
 			alias = "vault"
 			if imp.Name != nil {
 				alias = imp.Name.Name
 			}
+		case appImport:
+			seesApp = true
 		}
 	}
+	// A zero-argument Unlock is a mutex, not Vault.Unlock(password).
+	mutexUnlock := map[*ast.SelectorExpr]bool{}
 	var out []string
 	ast.Inspect(f, func(n ast.Node) bool {
 		switch x := n.(type) {
+		case *ast.CallExpr:
+			if sel, ok := x.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Unlock" && len(x.Args) == 0 {
+				mutexUnlock[sel] = true
+			}
+		case *ast.AssignStmt:
+			if !seesApp {
+				break
+			}
+			for _, lhs := range x.Lhs {
+				if sel, ok := lhs.(*ast.SelectorExpr); ok && sel.Sel.Name == "Key" {
+					out = append(out, rel+": assigns .Key (sets Options.Key)")
+				}
+			}
 		case *ast.SelectorExpr:
+			if alias != "" && keyMethods[x.Sel.Name] && !mutexUnlock[x] {
+				out = append(out, rel+": calls Vault."+x.Sel.Name)
+			}
 			if id, ok := x.X.(*ast.Ident); ok && alias != "" && id.Name == alias {
 				if keyProducers[x.Sel.Name] {
 					out = append(out, rel+": calls vault."+x.Sel.Name)
@@ -162,13 +195,38 @@ func TestTheReachScanFindsWhatItLooksFor(t *testing.T) {
 		"\t_ = v.KeySecret(nil)\n" +
 		"\t_, _ = v.EncryptedMarker(\"out\")\n" +
 		"\t_, _, _ = v.Detect(\"out\")\n" +
+		"\tvv, _ := v.Parse(nil)\n" +
+		"\tk, _ := vv.Unlock(\"pw\")\n" +
+		"\t_, _ = vv.UnlockRecovery(\"code\")\n" +
+		"\tvar mu sync.Mutex\n" +
+		"\tmu.Unlock()\n" +
+		"\tvar o app.Options\n" +
+		"\to.Out, o.Key = \"o\", k\n" +
 		"}\n"
-	f, err := parser.ParseFile(token.NewFileSet(), "x.go", src, 0)
-	if err != nil {
-		t.Fatal(err)
+	// Package app sets Key without importing itself; an html attribute's Key in a
+	// file that cannot see app.Options is not a reach.
+	inApp := "package app\nvar _ = func(o Options) { o.Key = nil }\n"
+	attr := "package y\ntype a struct{ Key string }\nvar _ = func(x a) { x.Key = \"href\" }\n"
+	var got []string
+	for name, s := range map[string]string{"x.go": src, "app.go": inApp, "attr.go": attr} {
+		f, err := parser.ParseFile(token.NewFileSet(), name, s, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, reachesIn(name, f)...)
 	}
-	got := strings.Join(reachesIn("x.go", f), "\n")
-	if n := strings.Count(got, "\n") + 1; n != 3 || !strings.Contains(got, "vault.PrepareCreate") || !strings.Contains(got, "Options.Key") || !strings.Contains(got, "vault.Detect") {
-		t.Fatalf("the scan must find an aliased producer call, an Options.Key literal and a Detect call (and not KeySecret or EncryptedMarker): %v", got)
+	sort.Strings(got)
+	want := []string{
+		"app.go: assigns .Key (sets Options.Key)",
+		"x.go: assigns .Key (sets Options.Key)",
+		"x.go: calls Vault.Unlock",
+		"x.go: calls Vault.UnlockRecovery",
+		"x.go: calls vault.Detect (recognise an encrypted archive with vault.EncryptedMarker)",
+		"x.go: calls vault.Parse",
+		"x.go: calls vault.PrepareCreate",
+		"x.go: sets Options.Key",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("the scan must find exactly the aliased producer calls (PrepareCreate, Parse), the key methods (Unlock, UnlockRecovery), Detect, the Options.Key literal and both .Key assignments — and not KeySecret, EncryptedMarker, a mutex Unlock or attr.Key outside app:\n got: %q\nwant: %q", got, want)
 	}
 }

@@ -34,16 +34,32 @@ func cliArchive(t *testing.T, sealed bool) string {
 	return out
 }
 
-func filesUnder(t *testing.T, dir string) []string {
+// filesUnder maps every path under dir to its bytes (a directory to a fixed marker),
+// so "nothing written" catches a file rewritten in place, not only one added or removed.
+func filesUnder(t *testing.T, dir string) map[string]string {
 	t.Helper()
-	var names []string
+	tree := map[string]string{}
 	filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
-		if err == nil && p != dir {
-			names = append(names, p)
+		if err != nil {
+			tree[p] = "<unreadable: " + err.Error() + ">"
+			return nil
 		}
+		if p == dir {
+			return nil
+		}
+		if d.IsDir() {
+			tree[p] = "<dir>"
+			return nil
+		}
+		b, rerr := os.ReadFile(p)
+		if rerr != nil {
+			tree[p] = "<unreadable: " + rerr.Error() + ">"
+			return nil
+		}
+		tree[p] = string(b)
 		return nil
 	})
-	return names
+	return tree
 }
 
 // covers: MA-733, R37
@@ -95,7 +111,7 @@ func TestEveryKeylessCommandRefusesAnEncryptedArchive(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			out := cliArchive(t, true)
-			before := filesUnder(t, out)
+			before := assure.Reached(t, filesUnder(t, out), "the sealed archive's files")
 			msg, err := run(args(out)...)
 			rc := 0
 			if err != nil {

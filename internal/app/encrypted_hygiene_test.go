@@ -2,10 +2,12 @@ package app
 
 import (
 	"context"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -107,5 +109,46 @@ func TestAnEncryptedRunWritesNoPagesReportOrLayoutReadme(t *testing.T) {
 	}
 	if p := (&PartialError{Summary: GapSummary{ItemGaps: 1}}); !strings.Contains(p.Error(), "attachments-report.tsv") {
 		t.Fatalf("the positive twin: a plaintext partial run names its report: %q", p.Error())
+	}
+}
+
+// covers: MA-737, R37
+// A REAL partial encrypted run — a Full re-run whose every message write is refused
+// (EACCES), so its items fail — returns ErrPartial whose text points at MailArchive,
+// never at attachments-report.tsv, which an encrypted archive has none of. The
+// positive twin: the same partial run on a plaintext archive names its report.
+func TestARealPartialEncryptedRunPointsAtMailArchive(t *testing.T) {
+	src := encryptedSourcePST(t)
+	orig := exporterSetup
+	t.Cleanup(func() { exporterSetup = orig })
+	partialRerun := func(opts Options, fault func(path string) error) error {
+		t.Helper()
+		if _, err := Run(context.Background(), opts, discard(), nil); err != nil {
+			t.Fatal(err)
+		}
+		exporterSetup = func(e *export.Exporter) { e.BeforeWrite = fault }
+		defer func() { exporterSetup = orig }()
+		opts.Mode = export.Full // re-writes every archived message
+		_, err := Run(context.Background(), opts, discard(), nil)
+		if !errors.Is(err, ErrPartial) {
+			t.Fatalf("want a partial run, got %v", err)
+		}
+		return err
+	}
+
+	plain := tmpDir(t)
+	err := partialRerun(Options{Inputs: []string{src}, Out: plain}, func(path string) error {
+		return &fs.PathError{Op: "write", Path: path, Err: syscall.EACCES}
+	})
+	if !strings.Contains(err.Error(), "attachments-report.tsv") {
+		t.Fatalf("the positive twin: a plaintext partial run names its report: %q", err)
+	}
+
+	out, key := encryptedOut(t)
+	err = partialRerun(Options{Inputs: []string{src}, Out: out, Key: key}, func(string) error {
+		return sealedWriteErr(out, syscall.EACCES)
+	})
+	if strings.Contains(err.Error(), "attachments-report.tsv") || !strings.Contains(err.Error(), "MailArchive") {
+		t.Fatalf("a real partial encrypted run's text points at a report it has none of: %q", err)
 	}
 }
