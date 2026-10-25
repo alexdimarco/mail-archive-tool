@@ -326,6 +326,12 @@ func archiveNewer(what string, version int) *CopyRefusal {
 
 // load reads the manifest and builds the tree.
 func (a *ArchiveSource) load() error {
+	// An encrypted archive's messages are sealed units the tree cannot read by
+	// path: refuse it as a source, saying it is encrypted — never "written by a
+	// newer MailArchive" (phase2a §5).
+	if kerr := RefuseKeyless("export from it", a.dir); kerr != nil {
+		return refuse("R-enc", kerr.Error())
+	}
 	data, stamp, err := a.readManifest()
 	if err != nil {
 		return err

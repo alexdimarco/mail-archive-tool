@@ -318,6 +318,11 @@ func (e *CopyExportEnv) CheckDestinationOther(dest string, archives []string, ot
 	if err := checkDestPath(dest); err != nil {
 		return nil, err
 	}
+	// A destination inside an encrypted archive (any archive, listed or not) would
+	// put plaintext copies of mail into it (phase2a §5, P2a-C8).
+	if kerr := RefuseKeyless("export into it", dest); kerr != nil {
+		return nil, refuse("R-enc", kerr.Error())
+	}
 	out := &CopyOutside{other: strings.TrimSpace(other)}
 	for _, a := range archives {
 		a = strings.TrimSpace(a)

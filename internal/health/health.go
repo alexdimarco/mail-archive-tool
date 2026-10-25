@@ -22,11 +22,18 @@ import (
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/util"
+	"mail-archive-tool/internal/vault"
 )
 
 // Input is everything known about an archive before judging it.
 type Input struct {
 	Out string
+
+	// Encrypted says the archive is an encrypted one (vault.EncryptedMarker), and
+	// EncryptedWhy what showed it: its manifest, index and history are not read
+	// without the key, and Assess judges only what is keyless (phase2a §5).
+	Encrypted    bool
+	EncryptedWhy string
 
 	// Surface names who reads the report: "" for the CLI (commands and SQLite's
 	// words are fine), "desktop" for MailArchive Desktop's Status & health card,
@@ -377,6 +384,18 @@ func Assess(in Input, now time.Time) Report {
 			}
 			r.warn("source_lost", fmt.Sprintf("this archive's source has not been reachable since %s — reconnect the source (its mailbox or mail folder) to resume backups", since))
 		}
+	}
+
+	// An encrypted archive: what can be judged without its key is above (a start
+	// failure, the location, the source); the last run's outcome is judged here, and
+	// everything that reads the manifest, index or history is sealed. Status says so
+	// instead of reading their absence as damage (phase2a §5).
+	if in.Encrypted {
+		if in.LastRunState == state.LastRunPresent && in.LastRun.Status == state.RunFailed {
+			r.red("last_run_failed", "the last backup run failed — open the archive in MailArchive for the details")
+		}
+		r.note("encrypted", "this archive is encrypted ("+in.EncryptedWhy+"): its message counts, search index and history are sealed — open it in MailArchive with its password to see them")
+		return r
 	}
 
 	// Items and folders the source holds that the last runs could not capture (the
@@ -1353,8 +1372,15 @@ func Gather(out, nameOverride string) Input {
 		}
 	}
 
+	// An encrypted archive's manifest, index and history are sealed (or, before
+	// Phase 2b, must not be trusted as a plaintext archive's): status reads only what
+	// is keyless — the run records, the lock, the schedule — and says it is
+	// encrypted (phase2a §5).
+	if enc, why, _ := vault.EncryptedMarker(out); enc {
+		in.Encrypted, in.EncryptedWhy = true, why
+	}
 	mpath := filepath.Join(out, ".mailarchive-manifest.json")
-	if _, serr := os.Stat(mpath); serr == nil {
+	if _, serr := os.Stat(mpath); serr == nil && !in.Encrypted {
 		in.HasManifestFile = true
 		if m, err := state.Load(mpath); err == nil {
 			in.HasManifest = true
@@ -1387,13 +1413,13 @@ func Gather(out, nameOverride string) Input {
 		}
 	}
 	in.ReportPath = filepath.Join(out, "attachments-report.tsv")
-	if _, err := os.Stat(in.ReportPath); err == nil {
+	if _, err := os.Stat(in.ReportPath); err == nil && !in.Encrypted {
 		in.ReportExists = true
 	}
 	// Tell an absent index from a present-but-unopenable one: keep the open
 	// error so Assess can RED a damaged index instead of reporting none (F82).
 	idxPath := filepath.Join(out, "search.db")
-	if _, serr := os.Stat(idxPath); serr == nil {
+	if _, serr := os.Stat(idxPath); serr == nil && !in.Encrypted {
 		in.HasIndexFile = true
 		if ix, err := index.OpenReadonly(idxPath); err == nil {
 			in.HasIndex = true
@@ -1406,7 +1432,9 @@ func Gather(out, nameOverride string) Input {
 			in.IndexErr, in.IndexBusy = err, index.Busy(err)
 		}
 	}
-	in.History, in.HistoryReadErr = state.HistoryStatus(filepath.Join(out, state.HistoryName))
+	if !in.Encrypted {
+		in.History, in.HistoryReadErr = state.HistoryStatus(filepath.Join(out, state.HistoryName))
+	}
 
 	if fi, err := os.Stat(out); err == nil && fi.IsDir() {
 		in.WriteProbeErr = probeWrite(out)

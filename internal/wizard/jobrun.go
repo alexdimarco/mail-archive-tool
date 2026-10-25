@@ -34,6 +34,9 @@ func RunJobInProcess(jobPath string, logger *log.Logger) (string, error) {
 	if err := seal.RefuseWrite(j.Out); err != nil {
 		return "", err
 	}
+	if err := app.RefuseKeyless("archive into it", j.Out); err != nil {
+		return "", err
+	}
 	if j.Outlook {
 		return "", fmt.Errorf("this is an Outlook backup; it runs on its schedule — Run now is not available for it here yet")
 	}

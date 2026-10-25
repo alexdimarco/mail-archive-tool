@@ -43,6 +43,12 @@ func Reindex(out string, logger *log.Logger) (kept, pruned int, err error) {
 	if err := seal.RefuseWrite(out); err != nil {
 		return 0, 0, err
 	}
+	// Reindex stats each record's files by its logical path: on an encrypted
+	// archive every one would read as gone, and it would prune the whole manifest,
+	// index and history. It refuses before anything (phase2a §5).
+	if err := RefuseKeyless("prune its search index", out); err != nil {
+		return 0, 0, err
+	}
 
 	// One run per archive at a time (R5): reindex sweeps and rewrites, so it
 	// must never overlap an export.
@@ -51,6 +57,9 @@ func Reindex(out string, logger *log.Logger) (kept, pruned int, err error) {
 		return 0, 0, err
 	}
 	defer lock.Release()
+	if err := RefuseKeyless("prune its search index", out); err != nil {
+		return 0, 0, err
+	}
 
 	idxPath := filepath.Join(out, "search.db")
 	mpath := filepath.Join(out, ".mailarchive-manifest.json")
@@ -266,12 +275,21 @@ func Rebuild(out string, logger *log.Logger) (RebuildReport, error) {
 	}
 	var rep RebuildReport
 
+	// Rebuild reads each record's files by its logical path: on an encrypted
+	// archive every one reads as missing and the rebuilt index would be empty. It
+	// refuses before anything (phase2a §5).
+	if err := RefuseKeyless("rebuild its search index", out); err != nil {
+		return rep, err
+	}
 	// One run per archive at a time (R5): rebuild rewrites the index and pages.
 	lock, err := lockfile.AcquireAs(filepath.Join(out, lockfile.Name), "reindex")
 	if err != nil {
 		return rep, err
 	}
 	defer lock.Release()
+	if err := RefuseKeyless("rebuild its search index", out); err != nil {
+		return rep, err
+	}
 
 	mpath := filepath.Join(out, ".mailarchive-manifest.json")
 	if _, statErr := os.Stat(mpath); errors.Is(statErr, fs.ErrNotExist) {

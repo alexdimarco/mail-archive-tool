@@ -25,7 +25,12 @@ import (
 	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/util"
+	"mail-archive-tool/internal/vault"
 )
+
+// KindEncrypted is the kind of an encrypted archive: known without its key from
+// its vault marker (C10); what it was made from is sealed.
+const KindEncrypted = "encrypted"
 
 const (
 	// Name of the index file, beside last-archive.txt and the job files.
@@ -173,6 +178,11 @@ func inspect(folder string) (kind string, ok bool) {
 	folder = strings.TrimSpace(folder)
 	if folder == "" {
 		return "", false
+	}
+	// An encrypted archive is an archive: listed, labelled, never greyed out as
+	// broken because its manifest is not a plaintext one (C10, phase2a §5).
+	if enc, _, _ := vault.EncryptedMarker(folder); enc {
+		return KindEncrypted, true
 	}
 	root, err := os.OpenRoot(folder)
 	if err != nil {

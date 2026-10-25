@@ -201,6 +201,15 @@ func RunHeadless(path string) int {
 		fmt.Fprintln(os.Stderr, "mailarchive run-job: "+err.Error())
 		return 1
 	}
+	// An encrypted archive refuses a keyless scheduled run before the run log and
+	// the Outlook PST recreate write into it in plaintext (phase2a §5, P2a-C9); the
+	// refusal is recorded and alerted like any failed scheduled run (A14).
+	if err := app.RefuseKeyless("archive into it", j.Out); err != nil {
+		app.RecordRefusedRun(app.Options{Out: j.Out, Unattended: true}, err)
+		jobFail(path, err)
+		fireBackupAlert(j.Out, backupalert.ResultFailed, err, 0, nil)
+		return 1
+	}
 	logf, err := runlog.Open(filepath.Join(j.Out, "mailarchive.log"))
 	if err != nil {
 		jobFail(path, err)
@@ -1402,6 +1411,11 @@ func autoInputLabel(p string) string {
 // ---- the run and the summary ------------------------------------------------
 
 func runExport(c wizardChoice) error {
+	// Before the run log opens inside the archive and any Outlook PST export: an
+	// encrypted archive is written only with its key (phase2a §5).
+	if err := app.RefuseKeyless("archive into it", c.out); err != nil {
+		return err
+	}
 	logger := newLogger(c.out)
 
 	// For the Outlook-automation path, show the completeness caveat and confirm

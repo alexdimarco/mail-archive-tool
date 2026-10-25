@@ -389,6 +389,17 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	if err := seal.RefuseWrite(opts.Out); err != nil {
 		return Result{}, err
 	}
+	// An encrypted archive is written only with its key: without one, refuse
+	// before discovery, any write, lock or record (phase2a §5). A scheduled run's
+	// refusal is still recorded (A14, N13).
+	if opts.Key == nil {
+		if err := RefuseKeyless("archive into it", opts.Out, manifestDir(opts.Manifest)); err != nil {
+			if opts.Unattended {
+				RecordRefusedRun(opts, err)
+			}
+			return Result{}, err
+		}
+	}
 
 	// Validate the inputs BEFORE creating anything (friction #2). A missing
 	// -input path, or no sources at all, must refuse naming the problem while
@@ -424,6 +435,13 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		return Result{}, err
 	}
 	defer lock.Release()
+	// Again under the lock: an encryption that finished while this run waited
+	// (a conversion's swap) is not a plaintext archive either (P2a-C9).
+	if opts.Key == nil {
+		if err := RefuseKeyless("archive into it", opts.Out, manifestDir(opts.Manifest)); err != nil {
+			return Result{}, err
+		}
+	}
 	// Every run that begins is recorded (R18): "running" now, before any early
 	// return, finalized on the way out — so a run that never finishes is
 	// visible as such to `status`. The record's start is the run's own timestamp,

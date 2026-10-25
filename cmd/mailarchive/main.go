@@ -164,6 +164,20 @@ func runExport(args []string) error {
 		}
 	}
 
+	// An encrypted archive refuses a keyless run first — before discovery, whose own
+	// refusal writes the -log and a last run naming the sources, and before the run
+	// log and the -outlook PST export write into it in plaintext (phase2a §5,
+	// P2a-C9). A scheduled run's refusal is still recorded (A14). -list only reads
+	// the sources.
+	if !*o.list {
+		if kerr := app.RefuseKeyless("archive into it", *o.out, manifestFolder(*o.manifest)); kerr != nil {
+			if *o.unattended {
+				app.RecordRefusedRun(app.Options{Out: *o.out, Unattended: true}, kerr)
+			}
+			return kerr
+		}
+	}
+
 	// Discover the inputs up front (friction #2), BEFORE any output dir, run log,
 	// lock or last-run record exists: a missing -input path (or no sources at
 	// all) refuses here, naming the problem, having created nothing. -list
@@ -401,6 +415,15 @@ func storeLabel(path string) string {
 	return s.StoreName()
 }
 
+// manifestFolder is the folder of a -manifest override, or "" for none: a
+// relocated manifest's folder must not be an encrypted archive either.
+func manifestFolder(manifest string) string {
+	if manifest == "" {
+		return ""
+	}
+	return filepath.Dir(manifest)
+}
+
 // newRunLogger returns the operator logger: stderr by default, or the
 // size-capped run log at path when -log was given (what scheduled jobs use).
 func newRunLogger(path string) (*log.Logger, func(), error) {
@@ -469,6 +492,11 @@ func runSearch(args []string) error {
 	// there, and overrides the matching flag.
 	q := index.ParseQuery(strings.Join(fs.Args(), " "), base)
 
+	// -paths would print archive paths that do not exist on an encrypted archive's
+	// disk, and its index is not readable keyless: refuse (phase2a §5).
+	if kerr := app.RefuseKeyless("search it", *out); kerr != nil {
+		return kerr
+	}
 	ix, err := index.OpenReadonly(filepath.Join(*out, "search.db"))
 	if err != nil {
 		return err
@@ -580,6 +608,11 @@ func runReindex(args []string) (err error) {
 	if *o.out == "" {
 		return errors.New("-out is required (the export directory to reconcile)")
 	}
+	// Before the run log opens: on an encrypted archive reindex would prune every
+	// record (phase2a §5).
+	if kerr := app.RefuseKeyless("reindex it", *o.out); kerr != nil {
+		return kerr
+	}
 
 	logger, closeLog, err := newRunLogger(*o.log)
 	if err != nil {
@@ -626,6 +659,9 @@ func runVerify(args []string) error {
 		if err := requireExistingOut(*o.out); err != nil {
 			return err
 		}
+	}
+	if kerr := app.RefuseKeyless("verify it", *o.out); kerr != nil {
+		return kerr
 	}
 	logger, closeLog, err := newRunLogger(*o.log)
 	if err != nil {
@@ -736,6 +772,9 @@ func runExtract(args []string) error {
 	}
 	if *o.dest == "" {
 		return errors.New("-dest is required (an empty directory to write the extracted mail into; it must not overlap -out)")
+	}
+	if kerr := app.RefuseKeyless("extract from it", *o.out, *o.dest); kerr != nil {
+		return kerr
 	}
 
 	logger, closeLog, err := newRunLogger(*o.log)
@@ -1166,6 +1205,14 @@ func runGraph(args []string) (err error) {
 		if err := requireExistingOut(*o.out); err != nil {
 			return err
 		}
+	}
+	// Before any sign-in, log or write: an encrypted archive is captured into only
+	// with its key (phase2a §5); a scheduled capture's refusal is recorded (A14).
+	if kerr := app.RefuseKeyless("capture into it", *o.out); kerr != nil {
+		if *o.unattended {
+			app.RecordRefusedRun(app.Options{Out: *o.out, Unattended: true}, kerr)
+		}
+		return kerr
 	}
 
 	gopts := app.GraphOptions{

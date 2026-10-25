@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/index"
 	"mail-archive-tool/internal/localweb"
 	"mail-archive-tool/internal/server"
@@ -40,6 +41,13 @@ func (rm *readerMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			rm.ix, rm.h = nil, nil
 		}
 		rm.curOut = out
+		// The reader's unlock arrives in Phase 3; until then an encrypted archive is
+		// refused here, never served as missing files (phase2a §5).
+		if kerr := app.RefuseKeyless("open it in the reader", out); kerr != nil {
+			rm.mu.Unlock()
+			http.Error(w, kerr.Error(), http.StatusServiceUnavailable)
+			return
+		}
 		ix, err := index.OpenReadonly(filepath.Join(out, "search.db"))
 		if err != nil {
 			rm.mu.Unlock()

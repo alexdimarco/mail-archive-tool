@@ -142,11 +142,19 @@ func Verify(out string, opts VerifyOptions, logger *log.Logger, onProgress func(
 			return Report{}, err
 		}
 	}
+	// Verify finds files by their logical names: an encrypted archive would read
+	// as entirely missing. It refuses (tier 1 lands in 2b, tier 2 in Phase 3).
+	if err := RefuseKeyless("verify it", out); err != nil {
+		return Report{}, err
+	}
 	lock, lerr := lockfile.AcquireAs(filepath.Join(out, lockfile.Name), "verify")
 	if lerr != nil {
 		return Report{}, lerr
 	}
 	defer lock.Release()
+	if err := RefuseKeyless("verify it", out); err != nil {
+		return Report{}, err
+	}
 
 	mpath := filepath.Join(out, ".mailarchive-manifest.json")
 	if _, statErr := os.Stat(mpath); errors.Is(statErr, fs.ErrNotExist) {

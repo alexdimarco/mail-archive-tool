@@ -117,6 +117,12 @@ func Extract(out string, format ExtractFormat, dest string, overwrite bool, logg
 	if fi, statErr := os.Stat(out); statErr != nil || !fi.IsDir() {
 		return ExtractReport{}, fmt.Errorf("no archive at %s: not a directory — check the path", out)
 	}
+	// An encrypted archive's originals are sealed units it would read as missing,
+	// and a destination inside an encrypted archive would receive plaintext: both
+	// refuse before anything (phase2a §5).
+	if err := RefuseKeyless("extract from it", out, dest); err != nil {
+		return ExtractReport{}, err
+	}
 
 	// Hold the exclusive archive lock for the whole run (PC14): extract is a
 	// cold, whole-archive read, so it belongs OUTSIDE the backup window — a
@@ -126,6 +132,9 @@ func Extract(out string, format ExtractFormat, dest string, overwrite bool, logg
 		return ExtractReport{}, lerr
 	}
 	defer lock.Release()
+	if err := RefuseKeyless("extract from it", out, dest); err != nil {
+		return ExtractReport{}, err
+	}
 
 	mpath := filepath.Join(out, ".mailarchive-manifest.json")
 	if _, statErr := os.Stat(mpath); errors.Is(statErr, fs.ErrNotExist) {

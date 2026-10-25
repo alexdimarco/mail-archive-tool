@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/graphconfig"
 	"mail-archive-tool/internal/index"
 	"mail-archive-tool/internal/instance"
@@ -67,6 +68,11 @@ func serveMain(ctx context.Context, args []string, env *linkEnv) error {
 		return err
 	}
 
+	// An encrypted archive's pages are sealed units its logical paths do not name:
+	// served keyless it would show nothing true (phase2a §5).
+	if kerr := app.RefuseKeyless("serve it", *out); kerr != nil {
+		return kerr
+	}
 	idxPath := filepath.Join(*out, "search.db")
 	ix, err := index.OpenReadonly(idxPath)
 	if err != nil {

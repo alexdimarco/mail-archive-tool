@@ -49,7 +49,7 @@ func moduleRoot(t *testing.T) string {
 	}
 }
 
-// covers: MA-726, R37
+// covers: MA-726, MA-727, R37
 func TestNoProductionCodeCanReachTheEncryptedPathYet(t *testing.T) {
 	root := moduleRoot(t)
 	var reaches []string
@@ -112,8 +112,15 @@ func reachesIn(rel string, f *ast.File) []string {
 	ast.Inspect(f, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.SelectorExpr:
-			if id, ok := x.X.(*ast.Ident); ok && alias != "" && id.Name == alias && keyProducers[x.Sel.Name] {
-				out = append(out, rel+": calls vault."+x.Sel.Name)
+			if id, ok := x.X.(*ast.Ident); ok && alias != "" && id.Name == alias {
+				if keyProducers[x.Sel.Name] {
+					out = append(out, rel+": calls vault."+x.Sel.Name)
+				}
+				// Detect sees only a readable vault: an archive is recognised as
+				// encrypted by EncryptedMarker alone (phase2a §5, P2a-C8).
+				if x.Sel.Name == "Detect" {
+					out = append(out, rel+": calls vault.Detect (recognise an encrypted archive with vault.EncryptedMarker)")
+				}
 			}
 		case *ast.CompositeLit:
 			if isOptionsType(x.Type) {
@@ -141,7 +148,7 @@ func isOptionsType(e ast.Expr) bool {
 	return false
 }
 
-// covers: MA-726, R37
+// covers: MA-726, MA-727, R37
 func TestTheReachScanFindsWhatItLooksFor(t *testing.T) {
 	// One string, so no line of it starts with "func " (the vacuous-test scan reads
 	// that as the next test).
@@ -153,13 +160,15 @@ func TestTheReachScanFindsWhatItLooksFor(t *testing.T) {
 		"\t_ = p\n" +
 		"\t_ = app.Options{Out: \"o\", Key: nil}\n" +
 		"\t_ = v.KeySecret(nil)\n" +
+		"\t_, _ = v.EncryptedMarker(\"out\")\n" +
+		"\t_, _, _ = v.Detect(\"out\")\n" +
 		"}\n"
 	f, err := parser.ParseFile(token.NewFileSet(), "x.go", src, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := reachesIn("x.go", f)
-	if len(got) != 2 || !strings.Contains(got[0]+got[1], "vault.PrepareCreate") || !strings.Contains(got[0]+got[1], "Options.Key") {
-		t.Fatalf("the scan must find an aliased producer call and an Options.Key literal (and not KeySecret): %v", got)
+	got := strings.Join(reachesIn("x.go", f), "\n")
+	if n := strings.Count(got, "\n") + 1; n != 3 || !strings.Contains(got, "vault.PrepareCreate") || !strings.Contains(got, "Options.Key") || !strings.Contains(got, "vault.Detect") {
+		t.Fatalf("the scan must find an aliased producer call, an Options.Key literal and a Detect call (and not KeySecret or EncryptedMarker): %v", got)
 	}
 }

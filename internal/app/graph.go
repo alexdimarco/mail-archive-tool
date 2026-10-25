@@ -89,6 +89,16 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	if err := seal.RefuseWrite(opts.Out); err != nil {
 		return Result{}, err
 	}
+	// An encrypted archive is captured into only with its key: refuse before the
+	// sign-in and any write (phase2a §5); a scheduled capture's refusal is recorded.
+	if opts.Key == nil {
+		if err := RefuseKeyless("capture into it", opts.Out, manifestDir(opts.Manifest)); err != nil {
+			if opts.Unattended {
+				RecordRefusedRun(opts, err)
+			}
+			return Result{}, err
+		}
+	}
 	// Build the Graph client and resolve the mailbox set BEFORE taking the archive
 	// lock: a device sign-in is interactive and must not hold the lock, and device
 	// mode derives its single mailbox (the signer, read from /me) rather than being
@@ -116,6 +126,11 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		return Result{}, err
 	}
 	defer lock.Release()
+	if opts.Key == nil {
+		if err := RefuseKeyless("capture into it", opts.Out, manifestDir(opts.Manifest)); err != nil {
+			return Result{}, err
+		}
+	}
 	begun := beginRun(opts)
 	defer recordRun(opts, begun, &result, &err, logger)
 

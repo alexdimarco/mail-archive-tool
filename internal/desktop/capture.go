@@ -51,6 +51,12 @@ func HeadlessCapture(cfg Config, logw io.Writer) error {
 	if err := seal.RefuseWrite(out); err != nil {
 		return err
 	}
+	// An encrypted archive is captured into only with its key (phase2a §5); the
+	// scheduled capture's refusal is recorded so status and the banner show it (A14).
+	if err := app.RefuseKeyless("capture into it", out); err != nil {
+		recordStartFailure(out, err)
+		return err
+	}
 	// §4.6.3/MA-617 + OP-2/MA-646: refuse when Microsoft 365 is not set up, via the
 	// shared m365Ready check (the dashboard's capture install/repair uses it too),
 	// AND record a FAILED last-run so a scheduled capture that refuses at start does
@@ -205,6 +211,9 @@ func (d *dashboard) startCapture() error {
 	out, ok := d.requireOut()
 	if !ok {
 		return fmt.Errorf("choose an archive location first")
+	}
+	if err := app.RefuseKeyless("capture into it", out); err != nil {
+		return err
 	}
 	s := d.cfg.settings()
 	tcfg := d.cfg.tokenCfg(cfg)

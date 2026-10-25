@@ -8,6 +8,7 @@ import (
 	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/thunderbird"
+	"mail-archive-tool/internal/vault"
 )
 
 // What the archive was made from, read from the manifest's store ids ("path:..." is a local mail
@@ -19,6 +20,8 @@ const (
 	kindM365  = "m365"
 	kindLocal = "local"
 	kindMixed = "mixed"
+	// kindEncrypted is an encrypted archive: what it was made from is sealed.
+	kindEncrypted = "encrypted"
 )
 
 // archiveKind says what the archive at out was made from. A manifest that cannot be read is
@@ -26,6 +29,11 @@ const (
 func archiveKind(out string) string {
 	if strings.TrimSpace(out) == "" {
 		return kindNone
+	}
+	// An encrypted archive's sources are sealed: it is labelled, and the features a
+	// source kind enables (pre-sync, local schedule rebuild) stay off (phase2a §5).
+	if enc, _, _ := vault.EncryptedMarker(out); enc {
+		return kindEncrypted
 	}
 	mpath := filepath.Join(out, manifestName)
 	if _, err := os.Stat(mpath); err != nil {
