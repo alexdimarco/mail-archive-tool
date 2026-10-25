@@ -3,6 +3,7 @@ package app
 import (
 	"errors"
 	"fmt"
+	"net/url"
 
 	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/state"
@@ -39,6 +40,7 @@ func FailureKind(err error) string {
 	var partial *PartialError
 	var outage *outageError
 	var ioe *IndexOpenError
+	var transport *url.Error // a request that never reached the service: DNS, dial, TLS
 	switch {
 	case err == nil:
 		return ""
@@ -60,12 +62,16 @@ func FailureKind(err error) string {
 		return state.FailSourceUnreadable
 	case errors.As(err, &partial):
 		return state.FailPartial
+	// A held lock and an unreachable network are named by what they are, ahead of a
+	// tag a run path put around them (F17, F18).
+	case errors.Is(err, lockfile.ErrHeld):
+		return state.FailArchiveBusy
+	case errors.As(err, &transport):
+		return state.ErrKindServiceUnavailable
 	// A tag names what the typed errors above cannot (a lost lock, a failed save, a
 	// mailbox); a run that failed two ways is named by its most serious typed cause.
 	case errors.As(err, &tagged):
 		return tagged.kind
-	case errors.Is(err, lockfile.ErrHeld):
-		return state.FailArchiveBusy
 	}
 	return state.FailRunFailed
 }

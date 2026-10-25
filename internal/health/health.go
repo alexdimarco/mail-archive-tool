@@ -386,21 +386,27 @@ func Assess(in Input, now time.Time) Report {
 		}
 	}
 
-	// An encrypted archive: what can be judged without its key is above (a start
-	// failure, the location, the source); the last run's outcome is judged here, and
-	// everything that reads the manifest, index or history is sealed. Status says so
-	// instead of reading their absence as damage (phase2a §5).
+	// An encrypted archive: everything that reads the manifest, index or history is
+	// sealed, and status says so instead of reading their absence as damage (phase2a
+	// §5). What needs no key is still judged below like any archive's — the last
+	// run's outcome, a run that never finished or is stuck, staleness, an unreadable
+	// record, an archive that cannot be written (F16).
 	if in.Encrypted {
-		if in.LastRunState == state.LastRunPresent && in.LastRun.Status == state.RunFailed {
-			r.red("last_run_failed", "the last backup run failed — open the archive in MailArchive for the details")
-		}
 		r.note("encrypted", "this archive is encrypted ("+in.EncryptedWhy+"): its message counts, search index and history are sealed — open it in MailArchive with its password to see them")
-		return r
+	} else {
+		assessContents(&r, in, now)
 	}
+	assessKeyless(&r, in, now)
+	return r
+}
 
+// assessContents judges what reads an archive's manifest and search index: the
+// capture gaps, completeness, partly-read and unexamined records, the index. An
+// encrypted archive's are sealed and it is not called.
+func assessContents(r *Report, in Input, now time.Time) {
 	// Items and folders the source holds that the last runs could not capture (the
 	// capture-gap ledger): the stuck ones first of every WARN, never RED (FC18).
-	assessCaptureGaps(&r, in, now)
+	assessCaptureGaps(r, in, now)
 
 	// Completeness. A partly-read record is fillable too, but it has its own
 	// reason and its own remedy below; it is left out of this count and text.
@@ -420,7 +426,7 @@ func Assess(in Input, now time.Time) Report {
 		}
 		r.warn("incomplete_content", msg)
 	}
-	assessPartlyRead(&r, in)
+	assessPartlyRead(r, in)
 	// Shown as source (RV-10): not wrong and nothing to fix, but an owner whose
 	// mail is shown as plain text should be able to learn it here. A note — it
 	// never moves the posture.
@@ -468,7 +474,11 @@ func Assess(in Input, now time.Time) Report {
 	case !in.HasIndex && !in.HasIndexFile && in.HasManifest && in.Messages > 0 && !(in.LastRunState == state.LastRunPresent && in.LastRun.NoIndex):
 		r.warn("index_missing", fmt.Sprintf("the archive has no search index (%s) although the manifest records %d message(s) — search, serve and the folder pages need it; %s (or ignore this if the archive is deliberately kept without one, -index=false)", idxPath, in.Messages, rebuildHow(in)))
 	}
+}
 
+// assessKeyless judges what every archive is judged by, encrypted ones too: the
+// location, the last run, verify, the schedule and the program.
+func assessKeyless(r *Report, in Input, now time.Time) {
 	// The archive's own location. A cloud-sync folder re-uploads every change
 	// and can conflict with the sync (P3).
 	if in.OutUnderSync != "" {
@@ -609,7 +619,7 @@ func Assess(in Input, now time.Time) Report {
 			r.warn("verify_failed", fmt.Sprintf("the last verify (%s UTC) checked the archive but then failed with an error (see its log) — fix the cause and run `mailarchive verify -out %q` again", when, in.Out))
 		}
 	}
-	assessVerifySchedule(&r, in, now)
+	assessVerifySchedule(r, in, now)
 
 	// Go-back timeline coverage (design §3.4, X6). An absent log is not a
 	// problem (a one-shot local import has none; a live archive writes it on its
@@ -642,6 +652,8 @@ func Assess(in Input, now time.Time) Report {
 	switch {
 	case in.DescErr != nil && !errors.Is(in.DescErr, os.ErrNotExist):
 		r.warn("descriptor_unreadable", in.DescErr.Error())
+	case !in.HasDescriptor && in.Encrypted:
+		// An encrypted archive cannot be scheduled yet (Phase 4): no schedule is no fault.
 	case !in.HasDescriptor && !in.OutAbsent:
 		r.warn("no_schedule", fmt.Sprintf("no schedule is recorded for this archive — %s (or the GUI's \"Keep this archive current\"), or ignore this if a systemd timer, NAS task or other scheduler already keeps it current", scheduleRemedy(in)))
 	default:
@@ -701,9 +713,8 @@ func Assess(in Input, now time.Time) Report {
 			}
 		}
 	}
-	assessVerifyEntry(&r, in)
+	assessVerifyEntry(r, in)
 	r.worstFirst()
-	return r
 }
 
 // worstFirst orders the reasons RED, then WARN, then notes (F20), keeping the
@@ -885,6 +896,10 @@ func bothInstalls(in Input) string {
 // action, so the health view never tells an owner with no command line to run
 // one (g7 friction re-verification of F3). Any other failure is verbatim.
 func runErrorText(in Input, lr state.LastRun) string {
+	// An encrypted archive's record carries the failure kind, never error text.
+	if lr.Encrypted {
+		return state.FailureText(lr.ErrorKind) + " — open the archive in MailArchive for the details"
+	}
 	if in.Surface == "" {
 		return lr.Error
 	}
@@ -1784,6 +1799,9 @@ func Summary(in Input, rep Report) []string {
 				lines = append(lines, fmt.Sprintf("            the remaining %d have no preserved original — an mbox/maildir/Microsoft 365 source keeps one only when archived with -raw; Outlook .pst/.ost items never carry one, so keep the .pst itself to migrate", in.Extractable.Total-in.Extractable.WithEML))
 			}
 		}
+	} else if in.Encrypted {
+		// Sealed, not absent: the counts and the timeline are inside the archive (F15).
+		lines = append(lines, "Messages:   sealed — this archive is encrypted; open it in MailArchive with its password to see its messages")
 	} else if in.HasManifestFile {
 		lines = append(lines, "Messages:   (manifest present but unreadable — see the posture below)")
 	} else {
@@ -1793,6 +1811,8 @@ func Summary(in Input, rep Report) []string {
 	// whether a past-date view is fully available. Absent is normal for a
 	// one-shot local import.
 	switch {
+	case in.Encrypted:
+		lines = append(lines, "History:    sealed — this archive is encrypted")
 	case !in.History.Exists:
 		lines = append(lines, "History:    none recorded — no go-back timeline (a live capture writes it; a one-shot local import has none)")
 	case in.HistoryReadErr != nil:
@@ -1816,9 +1836,12 @@ func Summary(in Input, rep Report) []string {
 		}
 		// Local time, with its zone named: the verify lines below are UTC (F9).
 		line := fmt.Sprintf("Last run:   %s → %s", lr.Started.Local().Format("2006-01-02 15:04 MST"), how)
-		if lr.Status == state.RunOK {
+		if lr.Status == state.RunOK && lr.Encrypted {
+			// The counts are sealed with the archive: never shown as 0 (F15).
+			line += fmt.Sprintf(" · took %s · its counts are sealed", lr.Finished.Sub(lr.Started).Round(time.Second))
+		} else if lr.Status == state.RunOK {
 			line += fmt.Sprintf(" · exported %d · filled %d · took %s", lr.Exported, lr.Filled, lr.Finished.Sub(lr.Started).Round(time.Second))
-		} else if lr.Error != "" {
+		} else if lr.Error != "" || lr.Encrypted {
 			line += ": " + runErrorText(in, lr)
 		}
 		lines = append(lines, line)

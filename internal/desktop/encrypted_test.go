@@ -105,7 +105,7 @@ func TestTheScheduledCaptureNeverOpensALogInsideAnEncryptedArchive(t *testing.T)
 	}))
 }
 
-// covers: MA-736, R37
+// covers: MA-736, MA-748, R37
 // The Desktop says an encrypted archive's failures in the kind's fixed words: the
 // Recent-backups card shows a history entry's kind, and a failed task's message
 // names the archive and its kind, never the error's text. The positive twins: a
@@ -129,6 +129,14 @@ func TestTheDesktopSaysAnEncryptedArchivesFailuresByKind(t *testing.T) {
 	}
 	if rows := recentRunRows(sealed); len(rows) != 1 || rows[0].Detail != state.FailureText(state.FailMailboxFailed) {
 		t.Fatalf("an encrypted archive's failure must show its kind's words: %+v", rows)
+	}
+	// covers MA-748 too (F15): an encrypted archive's ok run is not "no new mail" —
+	// its counts are sealed.
+	if err := state.AppendRunHistory(sealed, state.RunHistoryEntry{Status: state.RunOK, Encrypted: true}); err != nil {
+		t.Fatal(err)
+	}
+	if rows := recentRunRows(sealed); len(rows) != 2 || strings.Contains(rows[0].Detail+rows[1].Detail, "no new mail") {
+		t.Fatalf("an encrypted archive's ok run must not read as no new mail: %+v", rows)
 	}
 	got := jobErrorText(sealed, secret)
 	if !strings.Contains(got, sealed) || strings.Contains(got, "SECRET") || strings.Contains(got, "someone@") {

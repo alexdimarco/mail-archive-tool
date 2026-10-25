@@ -39,6 +39,13 @@ type RunHistoryEntry struct {
 	// ErrorKind is an encrypted archive's failure kind (FailureText says it), in
 	// place of Error; absent on a plaintext entry.
 	ErrorKind string `json:"errorKind,omitempty"`
+	// Encrypted marks an encrypted archive's entry; absent on a plaintext one.
+	Encrypted bool `json:"encrypted,omitempty"`
+}
+
+// minimal is e as an encrypted archive keeps it: when, the outcome and the kind.
+func (e RunHistoryEntry) minimal() RunHistoryEntry {
+	return RunHistoryEntry{When: e.When, Status: e.Status, ErrorKind: e.ErrorKind, Encrypted: true}
 }
 
 // ReadRunHistory returns the recorded runs oldest-first, or nil for an archive with no
@@ -66,6 +73,13 @@ func ReadRunHistory(out string) ([]RunHistoryEntry, error) {
 // writer to race the read-modify-write.
 func AppendRunHistory(out string, e RunHistoryEntry) error {
 	h, _ := ReadRunHistory(out) // best effort: a damaged or older-format file is replaced, not an error
+	if e.Encrypted {
+		// An encrypted archive keeps no older entry's text, counts or mode either (an
+		// entry written before it was encrypted, F19).
+		for i := range h {
+			h[i] = h[i].minimal()
+		}
+	}
 	h = append(h, e)
 	if len(h) > RunHistoryMax {
 		h = h[len(h)-RunHistoryMax:]
@@ -83,7 +97,7 @@ func RunHistoryEntryFrom(lr LastRun) RunHistoryEntry {
 	// An encrypted archive's entry is its allow-list: when, the outcome and the
 	// failure kind — no counts, duration, mode or error text (P2a-C16).
 	if lr.Encrypted {
-		return RunHistoryEntry{When: lr.Finished, Status: lr.Status, ErrorKind: lr.ErrorKind}
+		return RunHistoryEntry{When: lr.Finished, Status: lr.Status, ErrorKind: lr.ErrorKind}.minimal()
 	}
 	e := RunHistoryEntry{When: lr.Finished, Status: lr.Status, Exported: lr.Exported, Filled: lr.Filled, Mode: lr.Mode, Error: lr.Error}
 	if !lr.Started.IsZero() && !lr.Finished.IsZero() && lr.Finished.After(lr.Started) {

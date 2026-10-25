@@ -65,7 +65,7 @@ func TestARealEncryptedFailuresAlertNamesNoMail(t *testing.T) {
 	}
 }
 
-// covers: MA-736, R37
+// covers: MA-736, MA-748, R37
 // The alert email for an encrypted archive says which archive and the failure kind's
 // fixed words — never the run error's text (a source path, a mailbox address, server
 // text) nor how many messages the run archived (P2a-C16). The positive twin: the same
@@ -110,5 +110,18 @@ func TestAnEncryptedArchivesAlertSaysOnlyTheKind(t *testing.T) {
 		if strings.Contains(ev.Error, "SECRET") || strings.Contains(ev.Error, "someone") {
 			t.Fatalf("the alert carries the error's text: %+v", ev)
 		}
+	}
+
+	// covers MA-748 too (F20): a pause keeps its own fixed explanation — the owner's
+	// only remedy, which names no mail — instead of "the backup failed".
+	pauseSettings := filepath.Join(t.TempDir(), "p.json")
+	if err := os.WriteFile(pauseSettings, []byte(`{"alertEnabled":true,"alertOnPause":true,"alertHost":"smtp.example.org","alertPort":587,"alertFrom":"b@example.org","alertTo":"t@example.org","alertUsername":"b@example.org"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sent = nil
+	why := "the mailbox or mail folder has been unreachable for too many runs, so the scheduled backup was paused. Reconnect the source and re-enable it."
+	FireForRun(pauseSettings, nil, sealed, ResultPaused, errors.New(why), 0, nil)
+	if len(sent) != 1 || sent[0].Error != why {
+		t.Fatalf("an encrypted archive's pause alert must keep its explanation: %+v", sent)
 	}
 }

@@ -33,6 +33,8 @@ func recentRunRows(out string) []runRow {
 		case state.RunOK:
 			r.Status = "OK"
 			switch {
+			case e.Encrypted: // its counts are sealed with the archive (F15)
+				r.Detail = "backup completed (its counts are sealed)"
 			case e.Exported > 0 && e.Filled > 0:
 				r.Detail = fmt.Sprintf("%d messages, %d filled", e.Exported, e.Filled)
 			case e.Exported > 0:

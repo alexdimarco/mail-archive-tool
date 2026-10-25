@@ -4,15 +4,57 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"mail-archive-tool/internal/lockfile"
+	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/vault"
 )
+
+// covers: MA-748, R37
+// The records of an encrypted archive's harder cases (the Phase-2a adversarial pass,
+// F17-F21 and the critic's unplugged drive): a scheduled keyed run whose archive's
+// drive is not there is recorded as no record at all and refused with the drive's own
+// words and kind, not "the key did not work"; an earlier plaintext run-history entry in
+// a folder that becomes encrypted loses its text, counts and mode at the first
+// encrypted entry; and a refused scheduled run writes no record into a PAUSED archive.
+// The positive twin: a refused scheduled run into an archive that is not paused is
+// recorded (MA-728).
+func TestAnEncryptedArchivesRecordsInItsHarderCases(t *testing.T) {
+	src := encryptedSourcePST(t)
+	out, k := encryptedOut(t)
+
+	gone := filepath.Join(tmpDir(t), "unplugged")
+	_, err := Run(context.Background(), Options{Inputs: []string{src}, Out: gone, Key: k, Unattended: true}, discard(), nil)
+	if FailureKind(err) != state.FailArchiveAbsent || !strings.Contains(err.Error(), "not present") {
+		t.Fatalf("a keyed scheduled run with its drive gone: want the absent-drive refusal, got %v (kind %q)", err, FailureKind(err))
+	}
+
+	if err := state.AppendRunHistory(out, state.RunHistoryEntry{Status: state.RunFailed, Error: "input /Users/someone/Mail/SECRET-STORE.mbox does not exist", Mode: "incremental", Exported: 3}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Run(context.Background(), Options{Inputs: []string{src}, Out: out, Key: k}, discard(), nil); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(filepath.Join(out, state.RunHistoryName))
+	if strings.Contains(string(raw), "SECRET-STORE") || strings.Contains(string(raw), "incremental") {
+		t.Fatalf("an earlier entry's text or mode survived the first encrypted entry:\n%s", raw)
+	}
+
+	if err := seal.Seal(out, ""); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotTree(t, out)
+	RecordRefusedRun(Options{Out: out, Unattended: true}, fmt.Errorf("%w: refused", ErrEncryptedNeedsKey))
+	if !sameTree(before, snapshotTree(t, out)) {
+		t.Fatal("a refused run was recorded into a paused archive")
+	}
+}
 
 // vaultCreate commits a vault into dir and returns its key.
 func vaultCreate(dir string) (*vault.Key, error) {
@@ -45,6 +87,11 @@ func TestFailureKindIsAClosedListNeverText(t *testing.T) {
 		{manifestSaveFailure(secret, errors.New("disk full")), state.FailManifestSave},
 		{fileFailureError(1, secret, errors.New("permission denied")), state.FailSourceUnreadable},
 		{fmt.Errorf("archive is in use: %w", lockfile.ErrHeld), state.FailArchiveBusy},
+		// As the run paths return them (F17, F18): tagged, yet named by what they are.
+		{withKind(state.FailArchiveUnwritable, fmt.Errorf("archive is in use: %w", lockfile.ErrHeld)), state.FailArchiveBusy},
+		{withKind(state.FailSignIn, &url.Error{Op: "Get", URL: "https://graph.example/me", Err: errors.New("dial tcp: no such host")}), state.ErrKindServiceUnavailable},
+		{withKind(state.FailSignIn, errors.New("AADSTS7000222: the client secret expired")), state.FailSignIn},
+		{RequireExistingOut(filepath.Join(os.TempDir(), "no-such-archive-"+secret[len(secret)-6:])), state.FailArchiveAbsent},
 		// Two ways at once: the archive's own fault outranks the failed save.
 		{fmt.Errorf("%w; %w", &RunFatalError{Msg: secret}, manifestSaveFailure(secret, errors.New("x"))), state.FailArchiveUnwritable},
 		// A tag around a typed cause: the type names it.
@@ -119,7 +166,7 @@ func TestAnEncryptedArchivesRunRecordsAfterRealRuns(t *testing.T) {
 		t.Fatalf("a keyed run's record carries more than the allow-list: %+v (%v)", lr, err)
 	}
 	h, _ := state.ReadRunHistory(out)
-	if len(h) != 1 || h[0] != (state.RunHistoryEntry{When: lr.Finished, Status: state.RunOK}) {
+	if len(h) != 1 || h[0] != (state.RunHistoryEntry{When: lr.Finished, Status: state.RunOK, Encrypted: true}) {
 		t.Fatalf("a keyed run's history entry is more than when and outcome: %+v", h)
 	}
 	if lock, _ := os.ReadFile(filepath.Join(out, lockfile.Name)); strings.Contains(string(lock), "verb=") {

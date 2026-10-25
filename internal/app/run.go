@@ -424,8 +424,14 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		}
 	}
 	// A keyed run proves its key and target before discovery, any folder, lock or
-	// record: a refused manual run writes nothing (P2a-C10).
+	// record: a refused manual run writes nothing (P2a-C10). A scheduled one whose
+	// archive's drive is not there is told so first, not that its key failed.
 	if opts.Key != nil {
+		if opts.Unattended {
+			if err := RequireExistingOut(opts.Out); err != nil {
+				return Result{}, err
+			}
+		}
 		if err := preflightEncrypted(opts); err != nil {
 			if opts.Unattended {
 				RecordRefusedRun(opts, err)
@@ -956,8 +962,9 @@ func RecordRefusedRun(opts Options, cause error) {
 		return
 	}
 	// An out inside an encrypted archive is never written: its record would break
-	// the outer archive's allow-listed tree (P2a-C8).
-	if insideEncrypted(opts.Out) {
+	// the outer archive's allow-listed tree (P2a-C8). Nor is a paused one: a paused
+	// archive takes no write, no lock and no record (S2-C1, F21).
+	if insideEncrypted(opts.Out) || seal.IsSealed(opts.Out) {
 		return
 	}
 	lock, err := lockfile.AcquireAs(filepath.Join(opts.Out, lockfile.Name), lockVerb(opts, "export"))
@@ -1140,7 +1147,7 @@ func errorKindOf(err error) string {
 // any MkdirAll when opts.Unattended; the CLI verbs guard with the same check before the engine.
 func RequireExistingOut(out string) error {
 	if fi, err := os.Stat(out); err != nil || !fi.IsDir() {
-		return fmt.Errorf("archive directory %s is not present — is the backup drive mounted? refusing to create a new archive elsewhere (unattended run)", out)
+		return withKind(state.FailArchiveAbsent, fmt.Errorf("archive directory %s is not present — is the backup drive mounted? refusing to create a new archive elsewhere (unattended run)", out))
 	}
 	return nil
 }

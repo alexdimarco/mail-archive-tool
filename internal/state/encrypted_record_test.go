@@ -82,7 +82,7 @@ func TestAnEncryptedArchivesRunRecordsHoldOnlyTheAllowList(t *testing.T) {
 		t.Fatalf("the encrypted notice must say the kind's fixed words: %q", notice)
 	}
 	e := RunHistoryEntryFrom(r)
-	if e != (RunHistoryEntry{When: r.Finished, Status: RunFailed, ErrorKind: FailSourceUnreadable}) {
+	if e != (RunHistoryEntry{When: r.Finished, Status: RunFailed, ErrorKind: FailSourceUnreadable, Encrypted: true}) {
 		t.Fatalf("an encrypted history entry is more than when, outcome and kind: %+v", e)
 	}
 	if err := AppendRunHistory(sealed, e); err != nil {
@@ -116,7 +116,7 @@ func TestAnEncryptedArchivesRunRecordsHoldOnlyTheAllowList(t *testing.T) {
 // generic failure — never as the kind string or any other text.
 func TestEveryFailureKindHasFixedWords(t *testing.T) {
 	kinds := []string{FailEncryptedNeedsKey, FailEncryptedRefused, FailNoSources, FailSourceUnreachable,
-		FailSourceUnreadable, FailArchiveUnwritable, FailScratch, FailArchiveBusy, FailLockLost, FailManifestUnreadable,
+		FailSourceUnreadable, FailArchiveUnwritable, FailArchiveAbsent, FailScratch, FailArchiveBusy, FailLockLost, FailManifestUnreadable,
 		FailManifestSave, FailIndex, ErrKindIndexBusy, ErrKindIndexUnwritable, ErrKindIndexDamaged,
 		ErrKindIndexDamagedNoManifest, ErrKindServiceUnavailable, FailSignIn, FailMailboxFailed, FailPartial, FailRunFailed}
 	if len(kinds) != len(failureText) {

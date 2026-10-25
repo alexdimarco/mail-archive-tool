@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,14 +14,14 @@ import (
 
 // covers: MA-730, R37
 // Status on an encrypted archive reads only what is keyless: its manifest, report,
-// index and history are not read (here each is garbage that would RED a plaintext
-// archive), the report says it is encrypted, and a failed last run is still RED.
-// The positive twin: the same garbage without a vault is read and RED.
+// index and history are not read (here each is garbage that would RED or WARN a
+// plaintext archive), the report says it is encrypted, and a failed last run is
+// still RED. The positive twin: the same garbage without a vault is read and RED.
 func TestStatusOnAnEncryptedArchiveReadsOnlyWhatIsKeyless(t *testing.T) {
 	garbage := func(t *testing.T) string {
 		out := t.TempDir()
-		for _, name := range []string{".mailarchive-manifest.json", "search.db"} {
-			if err := os.WriteFile(filepath.Join(out, name), []byte("not what it claims"), 0o600); err != nil {
+		for _, name := range []string{".mailarchive-manifest.json", "search.db", "attachments-report.tsv", state.HistoryName} {
+			if err := os.WriteFile(filepath.Join(out, name), []byte("not what it claims\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -31,22 +32,15 @@ func TestStatusOnAnEncryptedArchiveReadsOnlyWhatIsKeyless(t *testing.T) {
 		return out
 	}
 	plain := garbage(t)
-	if r := Assess(Gather(plain, ""), time.Now()); r.Posture != "RED" || !slices.Contains(r.Codes, "manifest_unreadable") {
-		t.Fatalf("the positive twin: a garbage manifest must RED a plaintext archive, got %s %v", r.Posture, r.Codes)
+	pin := Gather(plain, "")
+	if r := Assess(pin, time.Now()); r.Posture != "RED" || !slices.Contains(r.Codes, "manifest_unreadable") || !pin.ReportExists || !pin.History.Exists {
+		t.Fatalf("the positive twin: a plaintext archive's garbage files are read (manifest RED, report and history seen), got %s %v", r.Posture, r.Codes)
 	}
 
 	sealed := garbage(t)
-	p, err := vault.PrepareCreate(sealed, "status test passphrase")
-	if err != nil {
-		t.Fatal(err)
-	}
-	k, err := p.Commit()
-	if err != nil {
-		t.Fatal(err)
-	}
-	k.Destroy()
+	sealFolder(t, sealed)
 	in := Gather(sealed, "")
-	if !in.Encrypted || in.EncryptedWhy == "" || in.HasManifestFile || in.HasIndexFile || in.ReportExists {
+	if !in.Encrypted || in.EncryptedWhy == "" || in.HasManifestFile || in.HasIndexFile || in.ReportExists || in.History.Exists || in.HistoryReadErr != nil {
 		t.Fatalf("status read a sealed archive's files: %+v", in)
 	}
 	r := Assess(in, time.Now())
@@ -55,7 +49,77 @@ func TestStatusOnAnEncryptedArchiveReadsOnlyWhatIsKeyless(t *testing.T) {
 	}
 
 	in.LastRun.Status = state.RunFailed
-	if r := Assess(in, time.Now()); r.Posture != "RED" || !slices.Contains(r.Codes, "last_run_failed") {
+	if r := Assess(in, time.Now()); r.Posture != "RED" || !slices.Contains(r.Codes, "run_failed") {
 		t.Fatalf("a failed last run of an encrypted archive must still RED, got %s %v", r.Posture, r.Codes)
+	}
+}
+
+// sealFolder commits a vault into dir: an encrypted archive.
+func sealFolder(t *testing.T, dir string) {
+	t.Helper()
+	p, err := vault.PrepareCreate(dir, "status test passphrase")
+	if err != nil {
+		t.Fatal(err)
+	}
+	k, err := p.Commit()
+	if err != nil {
+		t.Fatal(err)
+	}
+	k.Destroy()
+}
+
+// covers: MA-748, R37
+// Status still judges what needs no key on an encrypted archive (the Phase-2a
+// adversarial pass, F15/F16): a run that never finished is RED, an unreadable run
+// record is a WARN, a failed run says its kind's words; no missing schedule is a
+// fault (an encrypted archive cannot be scheduled yet); and the summary says the
+// counts and history are sealed instead of "no run has completed" or "exported 0".
+// The positive twin: a plaintext archive's never-finished run is RED too.
+func TestStatusJudgesAnEncryptedArchiveByWhatNeedsNoKey(t *testing.T) {
+	old := time.Now().Add(-72 * time.Hour).UTC()
+	plain := t.TempDir()
+	if err := state.WriteLastRun(plain, state.LastRun{Status: state.RunRunning, Started: old}); err != nil {
+		t.Fatal(err)
+	}
+	if r := Assess(Gather(plain, ""), time.Now()); !slices.Contains(r.Codes, "run_never_finished") {
+		t.Fatalf("the positive twin: a plaintext never-finished run is RED, got %v", r.Codes)
+	}
+
+	sealed := t.TempDir()
+	sealFolder(t, sealed)
+	if err := state.WriteLastRun(sealed, state.LastRun{Status: state.RunRunning, Started: old, Encrypted: true}); err != nil {
+		t.Fatal(err)
+	}
+	if r := Assess(Gather(sealed, ""), time.Now()); r.Posture != "RED" || !slices.Contains(r.Codes, "run_never_finished") {
+		t.Fatalf("an encrypted archive's never-finished run must be RED, got %s %v", r.Posture, r.Codes)
+	}
+	if err := os.WriteFile(filepath.Join(sealed, state.LastRunName), []byte("{torn"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if r := Assess(Gather(sealed, ""), time.Now()); !slices.Contains(r.Codes, "lastrun_unreadable") || slices.Contains(r.Codes, "no_schedule") {
+		t.Fatalf("an encrypted archive's unreadable record must WARN, and no schedule is no fault: %v", r.Codes)
+	}
+
+	if err := state.WriteLastRun(sealed, state.LastRun{Status: state.RunFailed, Started: old, Finished: old, ErrorKind: state.FailArchiveBusy, Encrypted: true}); err != nil {
+		t.Fatal(err)
+	}
+	in := Gather(sealed, "")
+	r := Assess(in, time.Now())
+	if !strings.Contains(strings.Join(r.Reasons, "\n"), state.FailureText(state.FailArchiveBusy)) {
+		t.Fatalf("a failed encrypted run must say its kind's words: %v", r.Reasons)
+	}
+	ok := time.Now().Add(-time.Hour).UTC()
+	if err := state.WriteLastRun(sealed, state.LastRun{Status: state.RunOK, Started: ok, Finished: ok.Add(time.Minute), Encrypted: true}); err != nil {
+		t.Fatal(err)
+	}
+	in = Gather(sealed, "")
+	summary := strings.Join(Summary(in, Assess(in, time.Now())), "\n")
+	for _, wrong := range []string{"no run has completed", "exported 0", "none recorded — no go-back"} {
+		if strings.Contains(summary, wrong) {
+			t.Fatalf("the summary of an encrypted archive says %q:\n%s", wrong, summary)
+		}
+	}
+	if !strings.Contains(summary, "sealed") {
+		t.Fatalf("the summary of an encrypted archive must say its counts are sealed:\n%s", summary)
 	}
 }

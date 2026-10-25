@@ -124,7 +124,9 @@ func FireForRun(settingsPath string, store graphconfig.SecretStore, out, result 
 	// use; it is in the disclosed leak budget.
 	if app.ArchiveEncrypted(out) {
 		ev.Messages = 0
-		if runErr != nil {
+		// A failure says its kind; a pause keeps its own fixed explanation, which names
+		// no mail and is the owner's only remedy (F20).
+		if runErr != nil && result == ResultFailed {
 			ev.Error = state.FailureText(app.FailureKind(runErr))
 		}
 	}

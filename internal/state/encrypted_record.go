@@ -18,6 +18,7 @@ const (
 	FailSourceUnreachable  = "source_unreachable"   // an -input is gone (an unplugged drive, a moved folder)
 	FailSourceUnreadable   = "source_unreadable"    // an -input or one of its files cannot be read
 	FailArchiveUnwritable  = "archive_unwritable"   // the archive's folder or volume cannot be written
+	FailArchiveAbsent      = "archive_absent"       // the archive's folder or drive is not there (an unplugged drive)
 	FailScratch            = "scratch_unwritable"   // MailArchive's working folder (for -copy-first copies) is full or cannot be written
 	FailArchiveBusy        = "archive_busy"         // another run holds the archive
 	FailLockLost           = "lock_lost"            // the archive lock was taken away mid-run
@@ -39,6 +40,7 @@ var failureText = map[string]string{
 	FailSourceUnreachable:         "the mail being backed up could not be found (a disconnected drive or a moved folder)",
 	FailSourceUnreadable:          "the mail being backed up could not be read",
 	FailArchiveUnwritable:         "the archive's folder or drive could not be written",
+	FailArchiveAbsent:             "the archive's drive or folder is not there — connect it",
 	FailScratch:                   "MailArchive's working folder for copies of the mail is full or could not be written",
 	FailArchiveBusy:               "another backup of this archive was running",
 	FailLockLost:                  "another program took over the archive during the backup",
