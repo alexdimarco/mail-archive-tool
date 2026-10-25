@@ -17,6 +17,11 @@ import (
 // (MA-701). It lives beside the archive, 0600, and travels with it.
 const RunHistoryName = ".mailarchive-runhistory.json"
 
+// archiveTempPattern names the temp file of a record written inside an archive: the
+// name the crash sweep (export.SweepTemps) reaps, so an interrupted write never
+// leaves a copy behind for good (MA-743).
+const archiveTempPattern = ".mailarchive-*.tmp"
+
 // RunHistoryMax is how many recent runs the history keeps; older entries are dropped, so
 // the file stays small and bounded.
 const RunHistoryMax = 50
@@ -69,7 +74,7 @@ func AppendRunHistory(out string, e RunHistoryEntry) error {
 	if err != nil {
 		return err
 	}
-	return util.WriteFileAtomic0600(filepath.Join(out, RunHistoryName), data)
+	return util.WriteFileAtomic0600Temp(filepath.Join(out, RunHistoryName), data, archiveTempPattern)
 }
 
 // RunHistoryEntryFrom builds a history entry from a finalized last-run record, so the

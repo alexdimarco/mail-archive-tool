@@ -108,5 +108,5 @@ func WriteSourceStreak(out string, s SourceStreak) error {
 	if err != nil {
 		return err
 	}
-	return util.WriteFileAtomic0600(filepath.Join(out, SourceStreakName), data)
+	return util.WriteFileAtomic0600Temp(filepath.Join(out, SourceStreakName), data, archiveTempPattern)
 }

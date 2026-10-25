@@ -1,7 +1,10 @@
 package backupalert
 
 import (
+	"context"
 	"errors"
+	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,9 +12,58 @@ import (
 
 	"mail-archive-tool/internal/alert"
 	"mail-archive-tool/internal/app"
+	"mail-archive-tool/internal/assure/leak"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/vault"
 )
+
+// covers: MA-745, R37
+// The alert sink of a real failed encrypted run: a backup whose source file — at a
+// path carrying markers — cannot be read fails, and the alert email built for that
+// failure (the whole message the sender would transmit) names neither the source path
+// nor anything else the run's error text holds. The positive twin: the same failure's
+// own error text does name the path.
+func TestARealEncryptedFailuresAlertNamesNoMail(t *testing.T) {
+	settingsPath := filepath.Join(t.TempDir(), "s.json")
+	if err := os.WriteFile(settingsPath, []byte(`{"alertEnabled":true,"alertOnFailure":true,"alertHost":"smtp.example.org","alertPort":587,"alertFrom":"b@example.org","alertTo":"t@example.org","alertUsername":"b@example.org"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var bodies []string
+	restore := SetSenderForTest(func(c alert.Config, _ string, ev alert.Event) error {
+		bodies = append(bodies, string(c.Message(ev)))
+		return nil
+	})
+	defer restore()
+
+	ms := leak.New()
+	bad := filepath.Join(t.TempDir(), ms[leak.SourcePath], ms[leak.Store]+".pst")
+	if err := os.MkdirAll(filepath.Dir(bad), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bad, []byte("not a pst file at all"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out := t.TempDir()
+	p, err := vault.PrepareCreate(out, "alert sink test passphrase")
+	if err != nil {
+		t.Fatal(err)
+	}
+	k, err := p.Commit()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, runErr := app.Run(context.Background(), app.Options{Inputs: []string{bad}, Out: out, Key: k}, log.New(io.Discard, "", 0), nil)
+	if runErr == nil || len(leak.ScanBytes("error", []byte(runErr.Error()), ms)) == 0 {
+		t.Fatalf("the positive twin: the failed run's own error text names the source path: %v", runErr)
+	}
+	FireForRun(settingsPath, nil, out, ResultFailed, runErr, 0, nil)
+	if len(bodies) != 1 {
+		t.Fatalf("the failure must send one alert, sent %d", len(bodies))
+	}
+	for _, h := range leak.ScanBytes("alert", []byte(bodies[0]), ms) {
+		t.Errorf("the alert email names the mail: %s\n%s", h, bodies[0])
+	}
+}
 
 // covers: MA-736, R37
 // The alert email for an encrypted archive says which archive and the failure kind's

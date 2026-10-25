@@ -77,7 +77,8 @@ func Seal(out, reason string) error {
 	if len(reason) > maxReasonBytes {
 		reason = reason[:maxReasonBytes]
 	}
-	if err := util.WriteFileAtomic0600(filepath.Join(out, Name), []byte(reason)); err != nil {
+	// The temp is named for the crash sweep (.mailarchive-*.tmp), never left for good.
+	if err := util.WriteFileAtomic0600Temp(filepath.Join(out, Name), []byte(reason), ".mailarchive-*.tmp"); err != nil {
 		return err
 	}
 	fsyncDir(out)
