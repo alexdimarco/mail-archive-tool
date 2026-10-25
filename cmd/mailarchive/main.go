@@ -425,10 +425,15 @@ func manifestFolder(manifest string) string {
 }
 
 // newRunLogger returns the operator logger: stderr by default, or the
-// size-capped run log at path when -log was given (what scheduled jobs use).
+// size-capped run log at path when -log was given (what scheduled jobs use). A
+// -log inside an encrypted archive — any, not only the run's own — is refused before
+// it is opened: a run log names stores, folders and source paths (phase2a §4).
 func newRunLogger(path string) (*log.Logger, func(), error) {
 	if path == "" {
 		return log.New(os.Stderr, "", 0), func() {}, nil
+	}
+	if err := app.RefuseLogInside(path); err != nil {
+		return nil, nil, err
 	}
 	f, err := runlog.Open(path)
 	if err != nil {

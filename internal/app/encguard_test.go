@@ -177,6 +177,27 @@ func requireMinimalRefusalRecord(t *testing.T, out string, before map[string][]b
 	}
 }
 
+// covers: MA-740, R37
+// RefuseLogInside refuses a run log at or anywhere inside an encrypted archive — the
+// run's own or any other — naming the archive and the remedy; no -log, and a log in a
+// plaintext archive or an ordinary folder, pass (the positive twins).
+func TestRefuseLogInsideRefusesALogInAnyEncryptedArchive(t *testing.T) {
+	plain := plainArchive(t)
+	for _, ok := range []string{"", filepath.Join(plain, "run.log"), filepath.Join(tmpDir(t), "logs", "run.log")} {
+		if err := RefuseLogInside(ok); err != nil {
+			t.Fatalf("RefuseLogInside(%q): %v", ok, err)
+		}
+	}
+	sealed, _ := encryptedOut(t)
+	for _, bad := range []string{filepath.Join(sealed, "run.log"), filepath.Join(sealed, "deep", "er", "run.log")} {
+		err := RefuseLogInside(bad)
+		if !errors.Is(err, ErrLogInEncryptedArchive) {
+			t.Fatalf("RefuseLogInside(%q): want ErrLogInEncryptedArchive, got %v", bad, err)
+		}
+		assure.Refused(t, 1, err.Error(), assure.Code(1), assure.Names(sealed, "-log"))
+	}
+}
+
 // covers: MA-728, R37
 func TestRefuseKeylessLooksAtEveryFolderTheOperationTouches(t *testing.T) {
 	plain, sealed := plainArchive(t), sealedArchive(t)

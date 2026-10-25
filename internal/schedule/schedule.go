@@ -560,6 +560,9 @@ func installOn(s Spec, goos string) error {
 	if err := s.Validate(); err != nil {
 		return err
 	}
+	if err := refuseEncrypted(s); err != nil {
+		return err
+	}
 	// A scheduled verify at the backup's own time is refused; at any other time it
 	// is a distinct entry that coexists with the archive's backup schedule, so it
 	// bypasses the one-schedule-per-archive descriptor guard and never overwrites

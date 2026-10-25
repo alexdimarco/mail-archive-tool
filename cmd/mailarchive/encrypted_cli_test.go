@@ -106,6 +106,25 @@ func TestEveryKeylessCommandRefusesAnEncryptedArchive(t *testing.T) {
 		})
 	}
 
+	t.Run("a -log inside another encrypted archive", func(t *testing.T) {
+		// covers the -log of every verb (they share one opener): a plaintext archive's
+		// run whose -log is inside an encrypted archive refuses before the log opens.
+		sealed := cliArchive(t, true)
+		for _, verb := range []string{"reindex", "verify"} {
+			plain := cliArchive(t, false)
+			logPath := filepath.Join(sealed, "run.log")
+			msg, err := run(verb, "-out", plain, "-log", logPath)
+			rc := 0
+			if err != nil {
+				rc = 1
+			}
+			assure.Refused(t, rc, msg, assure.Code(1), assure.Names(sealed, "-log"), assure.NoSideEffect(func() bool {
+				_, serr := os.Stat(logPath)
+				return os.IsNotExist(serr)
+			}))
+		}
+	})
+
 	t.Run("unattended export", func(t *testing.T) {
 		out := cliArchive(t, true)
 		msg, err := run("-unattended", "-input", input, "-out", out)

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/archindex"
 	"mail-archive-tool/internal/browser"
 	"mail-archive-tool/internal/graphconfig"
@@ -205,6 +206,18 @@ func launch(ctx context.Context, args []string, env *launchEnv) error {
 		lp := *logPath
 		if lp == "" {
 			lp = filepath.Join(filepath.Dir(cfgPath), "desktop-capture.log")
+		}
+		// A log inside an encrypted archive is never opened (phase2a §4) — a schedule the
+		// Desktop installed points its log into the archive. The capture is refused and
+		// recorded like any scheduled refusal: as one without the key when the archive
+		// itself is encrypted.
+		if lerr := app.RefuseLogInside(lp); lerr != nil {
+			out := dcfg.effectiveOut()
+			if kerr := app.RefuseKeyless("capture into it", out); kerr != nil {
+				lerr = kerr
+			}
+			app.RecordRefusedRun(app.Options{Out: out, Unattended: true}, lerr)
+			return lerr
 		}
 		var w io.Writer = env.Stderr
 		if f, ferr := os.OpenFile(lp, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); ferr == nil {

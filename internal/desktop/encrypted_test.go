@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -57,6 +58,51 @@ func TestAnEncryptedArchiveIsListedAndLabelledAsEncrypted(t *testing.T) {
 	if !archindex.IsArchive(sealed) || archindex.Kind(sealed) != archindex.KindEncrypted {
 		t.Fatalf("the archive list reads an encrypted archive as %q (archive: %v)", archindex.Kind(sealed), archindex.IsArchive(sealed))
 	}
+}
+
+// covers: MA-740, R37
+// The scheduled Desktop capture never opens a log inside an encrypted archive (a
+// schedule the Desktop installed points its log into the archive): for an encrypted
+// archive the capture is refused as one without its key and recorded as the minimal
+// failed run, with no log file created; a plaintext archive's capture whose log would
+// be inside some encrypted archive is refused before the log opens. The positive twin:
+// a plaintext archive's capture opens its log where it is told.
+func TestTheScheduledCaptureNeverOpensALogInsideAnEncryptedArchive(t *testing.T) {
+	env := &launchEnv{Stderr: io.Discard}
+	cfgPath := filepath.Join(t.TempDir(), "graph-config.json")
+	plain := t.TempDir()
+	if err := os.WriteFile(filepath.Join(plain, manifestName), []byte(`{"version":6,"entries":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ok := filepath.Join(t.TempDir(), "capture.log")
+	_ = launch(context.Background(), []string{"-capture", "-config", cfgPath, "-out", plain, "-log", ok}, env)
+	if _, err := os.Stat(ok); err != nil {
+		t.Fatalf("the positive twin: a plaintext archive's capture opens its log: %v", err)
+	}
+
+	sealed := vaultedArchive(t)
+	inside := filepath.Join(sealed, "mailarchive-backup.log")
+	err := launch(context.Background(), []string{"-capture", "-config", cfgPath, "-out", sealed, "-log", inside}, env)
+	if !errors.Is(err, app.ErrEncryptedNeedsKey) {
+		t.Fatalf("an encrypted archive's capture: want ErrEncryptedNeedsKey, got %v", err)
+	}
+	if lr, _, _ := state.ReadLastRun(sealed); lr.ErrorKind != state.FailEncryptedNeedsKey || lr.Error != "" {
+		t.Fatalf("the refused capture is not the minimal record: %+v", lr)
+	}
+	assure.Refused(t, 1, err.Error(), assure.Code(1), assure.Names(sealed), assure.NoSideEffect(func() bool {
+		_, serr := os.Stat(inside)
+		return os.IsNotExist(serr)
+	}))
+
+	elsewhere := filepath.Join(sealed, "other.log")
+	err = launch(context.Background(), []string{"-capture", "-config", cfgPath, "-out", plain, "-log", elsewhere}, env)
+	if !errors.Is(err, app.ErrLogInEncryptedArchive) {
+		t.Fatalf("a log inside another encrypted archive: want ErrLogInEncryptedArchive, got %v", err)
+	}
+	assure.Refused(t, 1, err.Error(), assure.Code(1), assure.Names(sealed, "-log"), assure.NoSideEffect(func() bool {
+		_, serr := os.Stat(elsewhere)
+		return os.IsNotExist(serr)
+	}))
 }
 
 // covers: MA-736, R37
