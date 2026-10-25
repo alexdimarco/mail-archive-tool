@@ -42,6 +42,7 @@ type header struct {
 	CollapsedTokens map[string]bool      `json:"collapsed_tokens,omitempty"`
 	SeenAt          map[string]time.Time `json:"seen_at,omitempty"`
 	IndexBehind     *Behind              `json:"index_behind,omitempty"`
+	IndexRows       int                  `json:"index_rows,omitempty"` // the sealed index's row count (P2b-C15)
 	HistoryGap      *Gap                 `json:"history_gap,omitempty"`
 	RunDetails      json.RawMessage      `json:"run_details,omitempty"`
 	PauseNote       string               `json:"pause_note,omitempty"`

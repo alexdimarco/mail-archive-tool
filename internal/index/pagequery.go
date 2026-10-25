@@ -17,6 +17,9 @@ type PageRow struct {
 // the date). It streams rather than materializing, so it scales to large
 // archives.
 func (ix *Index) EachDoc(fn func(PageRow) error) error {
+	if err := ix.ensure(); err != nil {
+		return err
+	}
 	if err := ix.commitPending(); err != nil {
 		return err
 	}

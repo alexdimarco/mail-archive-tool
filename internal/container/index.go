@@ -53,13 +53,32 @@ func (s *Store) IndexImage() ([]byte, error) {
 	return img, nil
 }
 
-// SetIndex registers the run's index: each commit asks it for its image — changed
-// false when nothing was written since the last capture, so an unchanged index is
+// IndexCapture is a capture of the run's index: its image, and the key-format
+// version and row count the record keeps beside it, so a run need not load the
+// index to know them (P2b-C15).
+type IndexCapture struct {
+	Image   []byte
+	Version int
+	Rows    int
+	// Sealed is called once the commit that seals this capture has landed; until
+	// then the index has changed since its last seal, and a later commit captures it
+	// again.
+	Sealed func()
+}
+
+// SetIndex registers the run's index: each commit asks it for a capture — changed
+// false when nothing was written since the last one, so an unchanged index is
 // neither captured nor re-sealed — and seals the chunks that differ.
-func (s *Store) SetIndex(image func() (img []byte, changed bool, err error)) { s.indexSource = image }
+func (s *Store) SetIndex(capture func() (c IndexCapture, changed bool, err error)) {
+	s.indexSource = capture
+}
 
 // HasIndex reports whether the record holds a sealed search index.
 func (s *Store) HasIndex() bool { return len(s.ptr.Index) > 0 }
+
+// IndexMeta is what the record says of its sealed index without loading it: the
+// key-format version and the row count (P2b-C15).
+func (s *Store) IndexMeta() (version, rows int) { return s.ptr.IndexMeta, s.hdr.IndexRows }
 
 // IndexBehind reports whether the sealed index is known to miss records (P2b-C16).
 func (s *Store) IndexBehind() bool { return s.hdr.IndexBehind != nil }
@@ -74,11 +93,22 @@ func (s *Store) MarkIndexBehind() {
 	}
 }
 
+// ClearIndexBehind records that the index holds every record again (a catch-up or a
+// keyed rebuild finished): the next commit seals the cleared mark (§6, P2b-C16).
+func (s *Store) ClearIndexBehind() {
+	if s.hdr.IndexBehind != nil {
+		s.hdr.IndexBehind = nil
+		s.notice("the archive's search index holds every message again")
+	}
+}
+
 // stagedIndex is a commit's index step, applied once its pointer has landed.
 type stagedIndex struct {
 	table    []Entry
 	length   int64
 	digests  [][32]byte
+	version  int
+	sealed   func()
 	captured bool
 }
 
@@ -87,11 +117,11 @@ type stagedIndex struct {
 // keep their entries. Without a registered index the table is unchanged. A capture
 // or sealing failure keeps the old table and marks the index behind.
 func (s *Store) stageIndex(gen uint64) stagedIndex {
-	keep := stagedIndex{table: s.ptr.Index, length: s.ptr.IndexImage, digests: s.indexDigests}
+	keep := stagedIndex{table: s.ptr.Index, length: s.ptr.IndexImage, digests: s.indexDigests, version: s.ptr.IndexMeta}
 	if s.indexSource == nil {
 		return keep
 	}
-	img, changed, err := s.indexSource()
+	c, changed, err := s.indexSource()
 	if err != nil {
 		s.MarkIndexBehind()
 		return keep
@@ -99,6 +129,7 @@ func (s *Store) stageIndex(gen uint64) stagedIndex {
 	if !changed {
 		return keep
 	}
+	img := c.Image
 	var table []Entry
 	var digests [][32]byte
 	for off, i := 0, 0; off < len(img); off, i = off+indexChunkSize, i+1 {
@@ -117,5 +148,6 @@ func (s *Store) stageIndex(gen uint64) stagedIndex {
 		}
 		table = append(table, e)
 	}
-	return stagedIndex{table: table, length: int64(len(img)), digests: digests, captured: true}
+	s.hdr.IndexRows = c.Rows // sealed in this commit's header, beside the chunks
+	return stagedIndex{table: table, length: int64(len(img)), digests: digests, version: c.Version, sealed: c.Sealed, captured: true}
 }

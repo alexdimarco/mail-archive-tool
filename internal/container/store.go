@@ -104,7 +104,7 @@ type Store struct {
 	// The sealed timeline (§5): the run's buffered events, the open last chunk's
 	// plaintext once read, the run header a new chunk copies, whether the last chunk
 	// could not be read, and whether a gap in the header came from a failed staging.
-	indexSource  func() ([]byte, bool, error) // the run's in-memory index (SetIndex)
+	indexSource  func() (IndexCapture, bool, error) // the run's in-memory index (SetIndex)
 	indexDigests [][32]byte                   // plaintext digest per sealed index chunk, once loaded or committed
 
 	timeline       *sealedTimeline
@@ -844,7 +844,7 @@ func (s *Store) Commit(v state.View) error {
 	}
 	p := Pointer{Head: s.ptr.Head, Manifest: table, History: hist.table, Index: idx.table}
 	p.Format, p.Gen, p.Buckets = vault.FormatVersion, gen, n
-	p.IndexImage, p.IndexChunk = idx.length, 0
+	p.IndexImage, p.IndexChunk, p.IndexMeta = idx.length, 0, idx.version
 	if len(idx.table) > 0 {
 		p.IndexChunk = indexChunkSize
 	}
@@ -868,6 +868,9 @@ func (s *Store) Commit(v state.View) error {
 	s.apply(hist)
 	if idx.captured {
 		s.indexDigests = idx.digests
+		if idx.sealed != nil {
+			idx.sealed()
+		}
 	}
 	mirror := &Digest{SHA256: sha256.Sum256(raw), Size: int64(len(raw))}
 	if err := writeFile(s.out, MirrorName, raw, mt); err != nil {

@@ -121,6 +121,9 @@ func (ix *Index) Image() ([]byte, error) {
 	if !ix.memory {
 		return nil, errors.New("index: only an in-memory index has an image")
 	}
+	if err := ix.ensure(); err != nil {
+		return nil, err
+	}
 	if err := ix.commitPending(); err != nil {
 		return nil, err
 	}
@@ -139,8 +142,12 @@ func (ix *Index) Image() ([]byte, error) {
 
 // Changes is SQLite's count of rows this connection has written since it opened
 // (total_changes()), pending batch included: a caller that captured the image at
-// one count need not capture it again until the count moves.
+// one count need not capture it again until the count moves. A lazy index counts
+// from its load, and has written nothing before it.
 func (ix *Index) Changes() (int64, error) {
+	if ix.idle() {
+		return 0, nil
+	}
 	var n int64
 	var err error
 	if ix.tx != nil {
@@ -148,7 +155,7 @@ func (ix *Index) Changes() (int64, error) {
 	} else {
 		err = ix.db.QueryRow(`SELECT total_changes()`).Scan(&n)
 	}
-	return n, err
+	return n - ix.base, err
 }
 
 // withConn hands fn the driver connection of db's one connection.

@@ -81,6 +81,12 @@ type Index struct {
 	lost    int  // rows whose Add succeeded but whose batch was later lost (see Lost)
 	version int  // key-format version read at Open (see indexVersion)
 	memory  bool // an encrypted archive's in-memory index (OpenMemory): it has an Image
+
+	// lazy, for an index opened with OpenLazy, loads it on first use; until then
+	// only what its sealed record already says is answered (lazy.go).
+	lazy   *lazyLoad
+	loaded bool
+	base   int64 // total_changes() right after the load: Changes counts from here
 }
 
 // Open opens (creating if needed) a writable index at path and begins a batch.
@@ -403,6 +409,9 @@ func DiskError(err error) bool {
 // or a disk-full/I-O error it may answer that way), the earlier rows went with
 // it: the error says so and they are counted in Lost.
 func (ix *Index) Add(store string, folderPath []string, m *model.Message, relPath, key string) error {
+	if err := ix.ensure(); err != nil {
+		return err
+	}
 	if ix.tx == nil {
 		tx, err := ix.db.Begin()
 		if err != nil {
@@ -530,8 +539,12 @@ func (ix *Index) Flush() error {
 	return ix.commitPending()
 }
 
-// Close commits any pending batch and closes the index.
+// Close commits any pending batch and closes the index (a lazy index never loaded
+// has nothing to close).
 func (ix *Index) Close() error {
+	if ix.idle() {
+		return nil
+	}
 	if err := ix.commitPending(); err != nil {
 		ix.db.Close()
 		return err
@@ -603,6 +616,9 @@ func deleteByIDTx(tx *sql.Tx, id int64) error {
 // held by the row cursor for the duration of the walk, so collect the rows you
 // want to mutate and delete them after EachRow returns.
 func (ix *Index) EachRow(fn func(id int64, key, path string) error) error {
+	if err := ix.ensure(); err != nil {
+		return err
+	}
 	if err := ix.commitPending(); err != nil {
 		return err
 	}
@@ -630,6 +646,9 @@ func (ix *Index) EachRow(fn func(id int64, key, path string) error) error {
 // the FTS index. Any pending batch is committed first, so it is safe to call
 // between EachRow walks.
 func (ix *Index) DeleteByID(id int64) error {
+	if err := ix.ensure(); err != nil {
+		return err
+	}
 	if err := ix.commitPending(); err != nil {
 		return err
 	}
@@ -655,6 +674,9 @@ func (ix *Index) DeleteByID(id int64) error {
 // is safe to call between Add calls during a walk. A no-op when no row has the
 // key.
 func (ix *Index) UpdateFolder(key, folder string) error {
+	if err := ix.ensure(); err != nil {
+		return err
+	}
 	if err := ix.commitPending(); err != nil {
 		return err
 	}
@@ -664,6 +686,9 @@ func (ix *Index) UpdateFolder(key, folder string) error {
 
 // DeleteByKey removes the document with the given dedup key (a no-op if absent).
 func (ix *Index) DeleteByKey(key string) error {
+	if err := ix.ensure(); err != nil {
+		return err
+	}
 	if err := ix.commitPending(); err != nil {
 		return err
 	}
@@ -693,6 +718,9 @@ func (ix *Index) Rekey(remap map[string]string, drop []string) error {
 	}
 	if len(remap) == 0 && len(drop) == 0 {
 		return nil
+	}
+	if err := ix.ensure(); err != nil {
+		return err
 	}
 	tx, err := ix.db.Begin()
 	if err != nil {
@@ -754,7 +782,10 @@ func (ix *Index) RepairKeys(force bool, fn func(key, path string) (string, bool)
 		return 0, err
 	}
 	if !force && ix.version >= indexVersion {
-		return 0, nil
+		return 0, nil // a lazy index is not loaded for this: its record holds the version
+	}
+	if err := ix.ensure(); err != nil {
+		return 0, err
 	}
 	// Collect first: the single connection is held by the row cursor for the
 	// walk, so rows cannot be mutated until it is closed.

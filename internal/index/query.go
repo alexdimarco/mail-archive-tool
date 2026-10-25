@@ -56,6 +56,9 @@ type FolderCount struct {
 // Search runs the query and returns the page of results plus the total match
 // count (ignoring limit/offset).
 func (ix *Index) Search(q Query) ([]Result, int, error) {
+	if err := ix.ensure(); err != nil {
+		return nil, 0, err
+	}
 	if err := ix.commitPending(); err != nil {
 		return nil, 0, err
 	}
@@ -282,8 +285,12 @@ func ftsMatch(text string) string {
 	return strings.Join(terms, " ")
 }
 
-// Count returns the number of indexed messages.
+// Count returns the number of indexed messages; a lazy index not yet loaded answers
+// with the count its record holds.
 func (ix *Index) Count() (int, error) {
+	if ix.idle() {
+		return ix.lazy.rows, nil
+	}
 	if err := ix.commitPending(); err != nil {
 		return 0, err
 	}
@@ -294,6 +301,9 @@ func (ix *Index) Count() (int, error) {
 
 // Folders returns the distinct folders with message counts, ordered by folder.
 func (ix *Index) Folders() ([]FolderCount, error) {
+	if err := ix.ensure(); err != nil {
+		return nil, err
+	}
 	if err := ix.commitPending(); err != nil {
 		return nil, err
 	}
@@ -315,6 +325,9 @@ func (ix *Index) Folders() ([]FolderCount, error) {
 
 // Years returns the distinct years present (descending), skipping unknown dates.
 func (ix *Index) Years() ([]int, error) {
+	if err := ix.ensure(); err != nil {
+		return nil, err
+	}
 	if err := ix.commitPending(); err != nil {
 		return nil, err
 	}
@@ -339,6 +352,9 @@ func (ix *Index) Years() ([]int, error) {
 // with a known date (date > 0); ok is false when the index holds no dated
 // messages. `status` prints it as the archive's coverage (product P6-windows).
 func (ix *Index) Range() (oldest, newest time.Time, ok bool) {
+	if err := ix.ensure(); err != nil {
+		return time.Time{}, time.Time{}, false
+	}
 	if err := ix.commitPending(); err != nil {
 		return time.Time{}, time.Time{}, false
 	}

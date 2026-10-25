@@ -12,20 +12,29 @@ import (
 
 // imageSource is a registered index of fixed bytes: changed until captured once.
 type imageSource struct {
-	img      []byte
-	captured bool
-	fail     error
+	img           []byte
+	version, rows int
+	captured      bool
+	fail          error
 }
 
-func (s *imageSource) get() ([]byte, bool, error) {
+func (s *imageSource) get() (IndexCapture, bool, error) {
 	if s.fail != nil {
-		return nil, false, s.fail
+		return IndexCapture{}, false, s.fail
 	}
 	if s.captured {
-		return nil, false, nil
+		return IndexCapture{}, false, nil
 	}
 	s.captured = true
-	return s.img, true, nil
+	return IndexCapture{Image: s.img, Version: s.version, Rows: s.rows}, true, nil
+}
+
+func setOf(paths []string) map[string]bool {
+	set := map[string]bool{}
+	for _, p := range paths {
+		set[p] = true
+	}
+	return set
 }
 
 func pattern(n int, seed byte) []byte {
@@ -45,7 +54,7 @@ func TestTheSearchIndexIsSealedAsPositionalChunks(t *testing.T) {
 	out := fresh(t)
 	m, s := open(t, out, opts(1))
 	img := pattern(3*indexChunkSize+1000, 7) // four chunks, the last short
-	src := &imageSource{img: img}
+	src := &imageSource{img: img, version: 3, rows: 41}
 	s.SetIndex(src.get)
 	if err := m.Save(); err != nil {
 		t.Fatal(err)
@@ -55,18 +64,21 @@ func TestTheSearchIndexIsSealedAsPositionalChunks(t *testing.T) {
 	if err != nil || !bytes.Equal(got, img) {
 		t.Fatalf("the sealed index loads back %d bytes (%v), want the %d sealed", len(got), err, len(img))
 	}
+	if v, n := s.IndexMeta(); v != 3 || n != 41 {
+		t.Fatalf("the record says the index is version %d with %d rows, want 3 and 41", v, n)
+	}
 	if !s.HasIndex() || len(s.Chunks(vault.ContainerIndex)) != 4 {
 		t.Fatalf("%d index chunks, want 4", len(s.Chunks(vault.ContainerIndex)))
 	}
 
-	before := chunkFiles(t, out)
+	before := setOf(s.Chunks(vault.ContainerIndex))
 	changed := append([]byte(nil), img...)
 	changed[indexChunkSize+5] ^= 0xff // one byte in the second chunk
-	s.SetIndex((&imageSource{img: changed}).get)
+	s.SetIndex((&imageSource{img: changed, version: 3, rows: 42}).get)
 	if err := m.Save(); err != nil {
 		t.Fatal(err)
 	}
-	if n := newIn(chunkFiles(t, out), before); n != 1 {
+	if n := newIn(setOf(s.Chunks(vault.ContainerIndex)), before); n != 1 {
 		t.Fatalf("one changed chunk re-sealed %d index chunks", n)
 	}
 	before = chunkFiles(t, out)
@@ -80,6 +92,45 @@ func TestTheSearchIndexIsSealedAsPositionalChunks(t *testing.T) {
 	_, s = open(t, out, opts(3))
 	if got, _ := s.IndexImage(); !bytes.Equal(got, changed) {
 		t.Fatal("after an unchanged commit the index must still load as last sealed")
+	}
+	if v, n := s.IndexMeta(); v != 3 || n != 42 {
+		t.Fatalf("an unchanged commit must keep the last capture's version and rows (3, 42), got %d, %d", v, n)
+	}
+}
+
+// covers: MA-758, R37
+// An index capture counts as sealed only once its commit has landed: a commit that
+// fails after capturing it (here, the archive lock lost before the pointer is
+// written) never tells the run its index was sealed, so the next commit captures and
+// seals it, with its row count.
+func TestAnIndexCaptureIsSealedOnlyWhenItsCommitLands(t *testing.T) {
+	out := fresh(t)
+	lost := errors.New("the lock was taken")
+	o := opts(1)
+	o.StillHeld = func() error { return lost }
+	m, s := open(t, out, o)
+	sealedCalls := 0
+	s.SetIndex(func() (IndexCapture, bool, error) {
+		return IndexCapture{Image: pattern(indexChunkSize, 9), Version: 3, Rows: 5, Sealed: func() { sealedCalls++ }}, true, nil
+	})
+	if err := m.Save(); !errors.Is(err, ErrLockLost) {
+		t.Fatalf("want the lock-lost refusal, got %v", err)
+	}
+	if sealedCalls != 0 {
+		t.Fatal("a capture whose commit failed was reported sealed")
+	}
+	s.opts.StillHeld = nil
+	if err := m.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if sealedCalls != 1 {
+		t.Fatalf("the landed commit reported its capture sealed %d time(s), want once", sealedCalls)
+	}
+	if _, s = open(t, out, opts(2)); !s.HasIndex() {
+		t.Fatal("the next commit did not seal the index")
+	}
+	if v, n := s.IndexMeta(); v != 3 || n != 5 {
+		t.Fatalf("the record says version %d with %d rows, want 3 and 5", v, n)
 	}
 }
 
@@ -141,7 +192,7 @@ func TestADamagedOrFailedIndexIsMarkedBehind(t *testing.T) {
 
 	out2 := fresh(t)
 	m, s = open(t, out2, opts(1))
-	s.SetIndex((&imageSource{img: pattern(indexChunkSize, 1)}).get)
+	s.SetIndex((&imageSource{img: pattern(indexChunkSize, 1), version: 3, rows: 9}).get)
 	m.Save()
 	m, s = open(t, out2, opts(2))
 	sealed := s.Chunks(vault.ContainerIndex)
@@ -151,5 +202,8 @@ func TestADamagedOrFailedIndexIsMarkedBehind(t *testing.T) {
 	}
 	if got := s.Chunks(vault.ContainerIndex); len(got) != len(sealed) || got[0] != sealed[0] || !s.IndexBehind() {
 		t.Fatalf("a failed capture must keep the sealed chunks and mark the index behind: %v %v %v", got, sealed, s.IndexBehind())
+	}
+	if v, n := s.IndexMeta(); v != 3 || n != 9 {
+		t.Fatalf("a failed capture must keep the sealed version and rows (3, 9), got %d, %d", v, n)
 	}
 }

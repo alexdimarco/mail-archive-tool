@@ -363,6 +363,24 @@ clear `index_behind` — until then the mark persists and every keyed run with i
 more than the note; (4) the test-build check that no index write follows the run's last seal. None
 of these is reachable by users (MA-726).
 
+*As built (2b-3b, MA-758).* (1) Lazy open: `index.OpenLazy` loads the image on the first use that
+touches the database; until then it answers `Count` from the record and `Changes` as zero, skips
+`RepairKeys` when the pointer's `index_meta` is current, and refuses a newer one at open. The row count
+lives in the sealed header as `index_rows` (the pointer's frozen layout is unchanged). A run with nothing
+new decrypts nothing of the index — damage in it goes unseen until a run needs it. (3) Catch-up and
+keyed Rebuild: `catchUpIndex` adds every record the index lacks, derived from its sealed units (the
+original when kept, else the page, with attachment names from the zip); a record that cannot be read is
+logged and left out, never removed. It runs before the walk when the index is behind or absent beside
+records, and again at the end when the index was first loaded during the walk and found damaged, so the
+run heals it either way. It is not resumable within a run — it adds everything, then the next commit
+seals it; a crash part-way loses only that work, which the next run redoes. `RebuildEncrypted` builds a
+whole new index under the lock. Departure: a run still behind does not yet end with the typed `index`
+kind (status shows the mark only through the record) — Phase 3, with the status work. (4) The late-write
+check is built as an always-on guard, not a test-build check: a write after the last seal is marked
+behind and committed once more. Found while building it: a capture was counted as sealed before its
+commit landed, so a commit that failed after the capture let the next one skip the index; a capture now
+counts only once its pointer is written. (2) The scratch file moves to its own slice, **2b-3c**.
+
 **Keyed Rebuild** is built in 2b at engine level — the remedy behind the catch-up, and for a damaged
 section — reading content through `Units.Read`, building in memory or the scratch file, never under
 `out`, committing through `container.Commit` at gen+1. Unreachable by users (MA-726). Keyed Reindex

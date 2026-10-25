@@ -249,6 +249,7 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	}
 
 	var idx *index.Index
+	var si *sealedIndex
 	var indexErrors int
 	if !opts.Index && sealed != nil && sealed.HasIndex() {
 		// Records this capture commits are not added to the sealed index (P2b-C16).
@@ -257,7 +258,9 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	if opts.Index {
 		idxPath := filepath.Join(opts.Out, "search.db")
 		if sealed != nil {
-			idx, err = openSealedIndex(sealed, logger)
+			if si, err = openSealedIndex(sealed, logger); err == nil {
+				idx = si.idx
+			}
 		} else {
 			idx, err = index.Open(idxPath)
 		}
@@ -267,6 +270,11 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		defer idx.Close()
 		if _, rkErr := idx.RepairKeys(manifest.Rekeyed > 0, state.MigrateKey, logger); rkErr != nil {
 			return Result{}, withKind(state.FailIndex, fmt.Errorf("migrate search index keys: %w", rkErr))
+		}
+		// A sealed index marked behind — or none at all beside records — is caught up
+		// before the walk (phase2b §6).
+		if sealed != nil && (sealed.IndexBehind() || (!sealed.HasIndex() && manifest.Len() > 0)) {
+			si.catchUp(manifest, units, sealed, logger)
 		}
 	}
 	// One-time v3→v5 identity-collapse (option D, design rev-4 §4), BEFORE the walk
@@ -513,6 +521,9 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		}
 	}
 	saveErr = commit(hist, idx, manifest, logger)
+	if hErr := healLateDamage(si, sealed, manifest, units, logger); hErr != nil && saveErr == nil {
+		saveErr = hErr
+	}
 	// An encrypted archive has no folder pages: they are its folder tree, subjects and
 	// senders in cleartext (phase2a §3); MailArchive's reader renders them (Phase 3).
 	if gaps := gapBannerCount(manifest); exp.Units == nil && idx != nil && opts.Pages && !allFailed && pagesNeeded(opts.Out, exp.Stats.Exported, gaps) {
@@ -522,6 +533,12 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	}
 	result.gapsRecovered, result.gapsClosedGone = lr.recovered, lr.closedGone
 	finish(opts.Out, &result, exp, manifest, idx, indexErrors, !allFailed, logger)
+	if sealed != nil {
+		// No index write may follow the run's last seal (phase2b §6).
+		if gErr := guardLateIndexWrite(si, sealed, manifest, logger); gErr != nil && saveErr == nil {
+			saveErr = gErr
+		}
+	}
 	if saveErr != nil {
 		if failures > 0 && firstErr != nil {
 			return result, fmt.Errorf("%d mailbox(es) failed; first error: %w; and %w", failures, firstErr, manifestSaveFailure(mpath, saveErr))
