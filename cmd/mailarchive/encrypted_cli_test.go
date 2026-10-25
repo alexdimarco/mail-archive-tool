@@ -62,14 +62,17 @@ func filesUnder(t *testing.T, dir string) map[string]string {
 	return tree
 }
 
-// covers: MA-733, R37
+// covers: MA-733, MA-764, R37
 // Every keyless command refuses an encrypted archive end-to-end through the built
-// binary — export, -unattended export, graph, reindex, verify, extract, search and
-// serve — exiting non-zero with a message that names the folder and says it is
-// encrypted, BEFORE its run log opens inside the archive (no -log file appears) and
-// with nothing else written; a scheduled (-unattended) export's refusal is recorded
-// as the failed last run. The positive twin: reindex on the same folder without a
-// vault opens its -log there and says nothing of encryption.
+// binary — export, -unattended export, graph, reindex, extract, search and serve —
+// exiting non-zero with a message that names the folder and says it is encrypted,
+// BEFORE its run log opens inside the archive (no -log file appears) and with
+// nothing else written; a scheduled (-unattended) export's refusal is recorded as
+// the failed last run. The positive twin: reindex on the same folder without a
+// vault opens its -log there and says nothing of encryption. verify instead checks
+// an encrypted archive without its key (tier 1, phase2b §4): it still refuses a
+// -log inside the archive and -record, writing nothing, and otherwise reports the
+// keyless outcome with its exit code.
 func TestEveryKeylessCommandRefusesAnEncryptedArchive(t *testing.T) {
 	env := append(os.Environ(), "HOME="+t.TempDir(), "XDG_CONFIG_HOME="+t.TempDir(), "AppData="+t.TempDir(), "LOCALAPPDATA="+t.TempDir())
 	run := func(args ...string) (string, error) {
@@ -97,9 +100,6 @@ func TestEveryKeylessCommandRefusesAnEncryptedArchive(t *testing.T) {
 		},
 		"reindex": func(out string) []string {
 			return []string{"reindex", "-out", out, "-log", filepath.Join(out, "run.log")}
-		},
-		"verify": func(out string) []string {
-			return []string{"verify", "-out", out, "-log", filepath.Join(out, "run.log")}
 		},
 		"extract": func(out string) []string {
 			return []string{"extract", "-out", out, "-format", "eml", "-dest", filepath.Join(t.TempDir(), "x"), "-log", filepath.Join(out, "run.log")}
@@ -138,6 +138,36 @@ func TestEveryKeylessCommandRefusesAnEncryptedArchive(t *testing.T) {
 				_, serr := os.Stat(logPath)
 				return os.IsNotExist(serr)
 			}))
+		}
+	})
+
+	t.Run("verify checks it without the key", func(t *testing.T) {
+		out := cliArchive(t, true)
+		before := assure.Reached(t, filesUnder(t, out), "the sealed archive's files")
+		code := func(err error) int {
+			if ee, ok := err.(*exec.ExitError); ok {
+				return ee.ExitCode()
+			}
+			return 0
+		}
+		for _, refused := range []struct {
+			args  []string
+			names []string
+		}{
+			{[]string{"verify", "-out", out, "-log", filepath.Join(out, "run.log")}, []string{out, "-log"}},
+			{[]string{"verify", "-record", "-out", out}, []string{out, "without -record"}},
+		} {
+			msg, err := run(refused.args...)
+			assure.Refused(t, min(code(err), 1), msg, assure.Code(1), assure.Names(refused.names...),
+				assure.NoSideEffect(func() bool { return reflect.DeepEqual(filesUnder(t, out), before) }))
+		}
+		// This folder's record file is a plaintext manifest beside a vault: damage.
+		msg, err := run("verify", "-out", out)
+		if code(err) != 2 || !strings.Contains(msg, "Keyless check of the encrypted archive "+out) || !strings.Contains(msg, "NOT intact: its record file holds a manifest that is not a sealed record") {
+			t.Fatalf("keyless verify: exit %d\n%s", code(err), msg)
+		}
+		if lv, st, rerr := state.ReadLastVerify(out); rerr != nil || st != state.LastVerifyPresent || lv.Outcome != state.OutcomeDamaged || !lv.Encrypted {
+			t.Fatalf("the check's record: %+v %v %v", lv, st, rerr)
 		}
 	})
 

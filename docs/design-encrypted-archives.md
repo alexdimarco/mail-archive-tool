@@ -37,6 +37,19 @@ with MailArchive; there is no second in-browser decryptor.
   normal unencrypted archive from an encrypted one (with the password). From there it
   is the usual double-click-in-any-browser. This gives the openness without a second
   crypto implementation.
+- **Break glass in the archive (owner ruling 2026-10-25, Phase 3).** An encrypted archive
+  found on its own — a USB or external drive, years later — must say how to open it.
+  Owner: "a long term archive break glass that provides assurance". (1) A short plaintext
+  note at the archive's root, always: what the folder is, that MailArchive and the password
+  or recovery key open it, and that Decrypt-a-plaintext-copy gives a normal archive. (2) A
+  copy of the MailArchive program itself, for each supported platform, kept in the archive
+  and refreshed when the program's version changes — offered at encryption setup, ticked
+  by default. It is the same program, so R-E1's "one solution" holds. Owed to Phase 3's
+  design and review: the tree grammar (A16) admits exactly these files; the note says to
+  prefer an official download, because whoever can write the drive can swap the bundled
+  program for one that steals the password (disclosed in the leak budget beside A4); the
+  disk cost per archive is measured and stated; the note's wording owes the friction
+  review.
 
 **Why this is the SAFER choice, not only the simpler one.** The alternative (a
 browser/WebCrypto decryptor) is a *second, independent crypto implementation* that must
@@ -217,7 +230,8 @@ to be confirmed in the 10-lens review.)
 - **Phase 2 — encrypt-on-write in Engine A** (the FS seam, §4.2) **+ the SQLite story
   (§4.1)** + the reproducibility test move (§4.3). The heaviest slice.
 - **Phase 3 — the UX:** wizard step, Desktop `sec-encryption` card, CLI flags, the reader
-  unlock, and the Decrypt-a-plaintext-copy escape hatch.
+  unlock, and the Decrypt-a-plaintext-copy escape hatch, and the break glass in the
+  archive (§1: the plaintext note, and the bundled program copy).
 - **Phase 4 — unattended scheduled backups** against an encrypted archive (stored wrapped
   key), with the health/status surfacing ("this archive is encrypted").
 

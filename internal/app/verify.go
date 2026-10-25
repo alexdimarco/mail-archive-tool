@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"mail-archive-tool/internal/container"
 	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/state"
@@ -82,6 +83,17 @@ type Report struct {
 
 	Problems  []Problem      `json:"problems"`            // bounded per category (see maxVerifyDetail)
 	Truncated map[string]int `json:"truncated,omitempty"` // kind → count omitted from Problems
+
+	// An encrypted archive's keyless check (tier 1, design-encrypted-archives-phase2b
+	// §4): its outcome, one of the closed list (state.Outcome*), the rule that decided
+	// it, the files nothing lists (the next backup removes them) and the parts of its
+	// file list that could not be read. Checked, OK, Missing and Modified count the
+	// files its file list names; records, fixity and unrecorded do not apply.
+	Encrypted   bool   `json:"encrypted,omitempty"`
+	Outcome     string `json:"outcome,omitempty"`
+	Reason      string `json:"reason,omitempty"`
+	Leftovers   int    `json:"leftovers,omitempty"`
+	PartsUnread int    `json:"parts_unread,omitempty"`
 }
 
 // verifyJSONVersion is the schema version of the `verify -json` document, so a
@@ -104,8 +116,12 @@ func (r Report) MarshalJSON() ([]byte, error) {
 
 // Attested reports whether every recorded file was checked and intact and no
 // record lacks fixity: nothing modified, missing, or unrecorded (FC4).
-// `unexpected` is reported but does not un-attest the recorded set.
+// `unexpected` is reported but does not un-attest the recorded set. An encrypted
+// archive is attested only by the outcome intact.
 func (r Report) Attested() bool {
+	if r.Encrypted {
+		return r.Outcome == state.OutcomeIntact
+	}
 	return r.Modified == 0 && r.Missing == 0 && r.Unrecorded == 0
 }
 
@@ -143,9 +159,13 @@ func Verify(out string, opts VerifyOptions, logger *log.Logger, onProgress func(
 		}
 	}
 	// Verify finds files by their logical names: an encrypted archive would read
-	// as entirely missing. It refuses (tier 1 lands in 2b, tier 2 in Phase 3).
-	if err := RefuseKeyless("verify it", out); err != nil {
+	// as entirely missing. It gets the keyless tier 1 instead (phase2b §4; tier 2,
+	// with the key, is Phase 3); a folder inside one is refused.
+	if err := RefuseVerify(out, opts.Record); err != nil {
 		return Report{}, err
+	}
+	if encryptedArchiveAt(out) {
+		return verifyKeyless(out, onProgress)
 	}
 	lock, lerr := lockfile.AcquireAs(filepath.Join(out, lockfile.Name), "verify")
 	if lerr != nil {
@@ -280,6 +300,51 @@ func Verify(out string, opts VerifyOptions, logger *log.Logger, onProgress func(
 	}
 	rep, finalized = v.rep, true
 	return rep, nil
+}
+
+// verifyKeyless is verify's tier 1 for an encrypted archive (phase2b §4): under the
+// archive lock it checks the files against the archive's file list without the key
+// (container.CheckKeyless) and records the outcome alone, in the last-verify
+// record's allow-listed shape (A18). It writes nothing else but that record and the
+// integrity notice.
+func verifyKeyless(out string, onProgress func(Report)) (Report, error) {
+	lock, lerr := lockfile.AcquireAs(filepath.Join(out, lockfile.Name), "verify")
+	if lerr != nil {
+		return Report{}, lerr
+	}
+	defer lock.Release()
+	// As for a plaintext archive (F79): "running" now, carrying the last finished
+	// verdict, so a check that never finishes cannot erase it.
+	started := time.Now().UTC()
+	_ = state.WriteLastVerify(out, state.LastVerify{Status: state.VerifyRunning, Started: started, Encrypted: true, Previous: state.LastVerdict(out)})
+	// RecordedGen (A25) is 0 until Phases 3–4 persist it.
+	rep := keylessReport(out, container.CheckKeyless(out, 0))
+	if onProgress != nil {
+		onProgress(rep)
+	}
+	finished := time.Now().UTC()
+	_ = state.WriteLastVerify(out, state.LastVerify{Status: state.VerifyDone, Started: started, Finished: &finished, Encrypted: true, Outcome: rep.Outcome})
+	return rep, nil
+}
+
+// keylessReport is a keyless check's verdict as verify reports it.
+func keylessReport(out string, c container.Check) Report {
+	r := Report{Out: out, Encrypted: true, Outcome: c.Outcome, Reason: c.Reason, Leftovers: c.Leftovers, PartsUnread: c.PartsUnread,
+		Checked: c.Checked, OK: c.Checked - c.Missing - c.Modified, Missing: c.Missing, Modified: c.Modified}
+	shown := map[string]int{}
+	for _, p := range c.Problems {
+		r.Problems = append(r.Problems, Problem{Path: p.Path, Kind: p.Kind, Detail: p.Detail})
+		shown[p.Kind]++
+	}
+	for kind, n := range map[string]int{"missing": c.Missing, "modified": c.Modified} {
+		if n > shown[kind] {
+			if r.Truncated == nil {
+				r.Truncated = map[string]int{}
+			}
+			r.Truncated[kind] = n - shown[kind]
+		}
+	}
+	return r
 }
 
 // verifier carries the per-run state Verify accumulates.
@@ -594,6 +659,9 @@ func hashFile(full string, limit int64) (string, int64, error) {
 // sample of the problems, the `verify -record` remedy when anything is
 // unrecorded, a WARN when nothing was checkable, and the final verdict.
 func VerifySummary(r Report) []string {
+	if r.Encrypted {
+		return keylessSummary(r)
+	}
 	var out []string
 	out = append(out, fmt.Sprintf("Fixity check of %s", r.Out))
 	// Gloss the two units so the counts do not read as a discrepancy: records
@@ -670,11 +738,54 @@ func VerifySummary(r Report) []string {
 	return out
 }
 
+// keylessSummary renders an encrypted archive's keyless check: what it looked at,
+// the counts, a bounded sample of the files not as listed, the leftovers, and the
+// outcome with the rule that decided it and the outcome's fixed remedy.
+func keylessSummary(r Report) []string {
+	out := []string{
+		fmt.Sprintf("Keyless check of the encrypted archive %s", r.Out),
+		"its files only — reading its messages needs its password or recovery key",
+		fmt.Sprintf("files checked=%d · ok=%d · missing=%d · modified=%d", r.Checked, r.OK, r.Missing, r.Modified),
+	}
+	for _, p := range r.Problems {
+		line := "  " + p.Kind + ": " + rawPath(p.Path)
+		if p.Detail != "" {
+			line += " (" + rawPath(p.Detail) + ")"
+		}
+		out = append(out, line)
+	}
+	for _, kind := range []string{"modified", "missing"} {
+		if n := r.Truncated[kind]; n > 0 {
+			out = append(out, fmt.Sprintf("  … %d more %s (list truncated)", n, kind))
+		}
+	}
+	if r.Leftovers > 0 {
+		out = append(out, fmt.Sprintf("note: %d file(s) in the archive are not in its file list — leftovers the next backup removes; nothing to do", r.Leftovers))
+	}
+	if r.PartsUnread > 0 {
+		out = append(out, fmt.Sprintf("note: %d part(s) of the archive's file list could not be read; the next backup rewrites them", r.PartsUnread))
+	}
+	switch {
+	case r.Attested():
+		out = append(out, "intact: "+r.Reason)
+	case r.Outcome == state.OutcomeNotAttested:
+		out = append(out, "NOT attested: "+r.Reason, "  "+state.OutcomeText(r.Outcome))
+	case r.Outcome == state.OutcomeNewerFormat:
+		out = append(out, "NOT checked: "+r.Reason, "  "+state.OutcomeText(r.Outcome))
+	default:
+		out = append(out, "NOT intact: "+r.Reason, "  "+state.OutcomeText(r.Outcome))
+	}
+	return out
+}
+
 // VerifyResultLine is the one-line result for a run log.
 func VerifyResultLine(r Report) string {
 	verdict := "attested"
 	if !r.Attested() {
 		verdict = "NOT-ATTESTED"
+	}
+	if r.Encrypted {
+		return fmt.Sprintf("%s outcome=%s checked=%d ok=%d missing=%d modified=%d leftovers=%d", verdict, r.Outcome, r.Checked, r.OK, r.Missing, r.Modified, r.Leftovers)
 	}
 	return fmt.Sprintf("%s records=%d with-fixity=%d checked=%d ok=%d modified=%d missing=%d unrecorded=%d unexpected=%d recorded=%d",
 		verdict, r.Records, r.WithFixity, r.Checked, r.OK, r.Modified, r.Missing, r.Unrecorded, r.Unexpected, r.Recorded)

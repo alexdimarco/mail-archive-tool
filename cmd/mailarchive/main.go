@@ -665,7 +665,7 @@ func runVerify(args []string) error {
 			return err
 		}
 	}
-	if kerr := app.RefuseKeyless("verify it", *o.out); kerr != nil {
+	if kerr := app.RefuseVerify(*o.out, *o.record); kerr != nil {
 		return kerr
 	}
 	logger, closeLog, err := newRunLogger(*o.log)

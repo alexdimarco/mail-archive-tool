@@ -152,3 +152,42 @@ func TestStatusJudgesAnEncryptedArchiveByWhatNeedsNoKey(t *testing.T) {
 		t.Fatalf("the summary of an encrypted archive must say its counts are sealed:\n%s", summary)
 	}
 }
+
+// covers: MA-765, R37
+// Status judges an encrypted archive's last keyless check from its outcome alone
+// (phase2b §4), without the key: intact is no fault; not_attested and newer_format
+// WARN; damaged, restored_older and unfinished_save are RED — each in the outcome's
+// fixed words, under the code verify_<outcome>. A running check that never finished
+// is still judged by the verdict it carries (F79).
+func TestStatusJudgesAKeylessCheckByItsOutcome(t *testing.T) {
+	sealed := t.TempDir()
+	sealFolder(t, sealed)
+	at := time.Now().Add(-time.Hour).UTC()
+	done := func(outcome string) state.LastVerify {
+		f := at.Add(time.Minute)
+		return state.LastVerify{Status: state.VerifyDone, Started: at, Finished: &f, Encrypted: true, Outcome: outcome}
+	}
+	for outcome, want := range map[string]string{
+		state.OutcomeIntact: "", state.OutcomeNotAttested: "WARN", state.OutcomeNewerFormat: "WARN",
+		state.OutcomeDamaged: "RED", state.OutcomeRestoredOlder: "RED", state.OutcomeUnfinishedSave: "RED",
+	} {
+		if err := state.WriteLastVerify(sealed, done(outcome)); err != nil {
+			t.Fatal(err)
+		}
+		r := Assess(Gather(sealed, ""), time.Now())
+		code := "verify_" + outcome
+		switch {
+		case want == "" && slices.ContainsFunc(r.Codes, func(c string) bool { return strings.HasPrefix(c, "verify_") }):
+			t.Fatalf("%s: an intact check is no fault, got %v", outcome, r.Codes)
+		case want != "" && (r.Posture != want || !slices.Contains(r.Codes, code) || !strings.Contains(strings.Join(r.Reasons, "\n"), state.OutcomeText(outcome))):
+			t.Fatalf("%s: want %s %s in the outcome's words, got %s %v %v", outcome, want, code, r.Posture, r.Codes, r.Reasons)
+		}
+	}
+	prev := done(state.OutcomeDamaged)
+	if err := state.WriteLastVerify(sealed, state.LastVerify{Status: state.VerifyRunning, Started: at.Add(time.Minute), Encrypted: true, Previous: &prev}); err != nil {
+		t.Fatal(err)
+	}
+	if r := Assess(Gather(sealed, ""), time.Now()); r.Posture != "RED" || !slices.Contains(r.Codes, "verify_damaged") || !slices.Contains(r.Codes, "verify_never_finished") {
+		t.Fatalf("a check that never finished keeps the damaged verdict: %s %v", r.Posture, r.Codes)
+	}
+}

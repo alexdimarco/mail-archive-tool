@@ -301,6 +301,11 @@ type LastVerify struct {
 	Unexpected int        `json:"unexpected"`
 	Recorded   int        `json:"recorded"`
 	ExitCode   int        `json:"exit_code"`
+	// Outcome is an encrypted archive's keyless verdict, one of the closed list
+	// (Outcome*); Encrypted says the record is one, written in its allow-listed
+	// shape only (A18, encrypted_verify.go). Both absent from a plaintext record.
+	Outcome   string `json:"outcome,omitempty"`
+	Encrypted bool   `json:"encrypted,omitempty"`
 	// Previous carries the last FINISHED verdict inside a "running" record, so
 	// a verify that never finishes (crash, kill, power loss) cannot erase it:
 	// status keeps judging it until a new verdict is final (F79). Absent on a
@@ -341,7 +346,7 @@ func WriteLastVerify(out string, v LastVerify) error {
 		p.Status, p.Previous = util.StripControl(p.Status), nil
 		v.Previous = &p
 	}
-	data, err := json.MarshalIndent(v, "", "  ")
+	data, err := marshalLastVerify(v)
 	if err != nil {
 		return err
 	}
@@ -381,6 +386,12 @@ func WriteLastVerify(out string, v LastVerify) error {
 func updateIntegritySidecar(out string, v LastVerify) {
 	path := filepath.Join(out, IntegrityAttentionName)
 	switch {
+	case v.Encrypted && OutcomeIsRed(v.Outcome):
+		_ = writeSidecarAtomic(path, []byte(encryptedIntegrityAttention(v)))
+	case v.Encrypted && v.Outcome == OutcomeIntact:
+		_ = os.Remove(path)
+	case v.Encrypted:
+		// not_attested or newer_format: no new finding, so an earlier notice stays.
 	case v.Modified+v.Missing > 0:
 		when := ""
 		if v.Finished != nil {
@@ -431,6 +442,13 @@ func ReadLastVerify(out string) (LastVerify, LastVerifyState, error) {
 	v.Status = util.StripControl(v.Status)
 	if v.Previous != nil {
 		v.Previous.Status, v.Previous.Previous = util.StripControl(v.Previous.Status), nil
+	}
+	// An encrypted record's verdict is one of the closed list, or it is not one
+	// status can judge: the record is writable by anyone who can write the folder.
+	for _, o := range []*LastVerify{&v, v.Previous} {
+		if o != nil && o.Encrypted && o.Outcome != "" && !KnownOutcome(o.Outcome) {
+			return v, LastVerifyUnreadable, fmt.Errorf("the verify outcome %q is not one MailArchive writes", util.StripControl(o.Outcome))
+		}
 	}
 	return v, LastVerifyPresent, nil
 }

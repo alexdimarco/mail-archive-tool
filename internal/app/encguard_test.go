@@ -39,7 +39,9 @@ func plainArchive(t *testing.T) string {
 }
 
 // keylessOps is every app entry point that reads an archive's files by their
-// logical names, or writes into it, run without a key.
+// logical names, or writes into it, run without a key. Verify is not one: it checks
+// an encrypted archive's files without the key (tier 1, phase2b §4, MA-764), and
+// refuses only -record and a folder inside one (TestKeylessVerifyRefusesRecordAndANestedFolder).
 func keylessOps(src string) map[string]func(out string) error {
 	return map[string]func(out string) error{
 		"Run": func(out string) error {
@@ -48,7 +50,6 @@ func keylessOps(src string) map[string]func(out string) error {
 		},
 		"Reindex": func(out string) error { _, _, err := Reindex(out, discard()); return err },
 		"Rebuild": func(out string) error { _, err := Rebuild(out, discard()); return err },
-		"Verify":  func(out string) error { _, err := Verify(out, VerifyOptions{}, discard(), nil); return err },
 		"Extract": func(out string) error {
 			_, err := Extract(out, FormatEML, filepath.Join(filepath.Dir(out), filepath.Base(out)+"-extract"), false, discard(), nil)
 			return err

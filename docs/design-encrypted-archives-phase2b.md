@@ -617,3 +617,33 @@ with them (MA-763).
   line; a failed scratch load's own cleanup; and the behind mark a dropped index sets itself. On every
   path a test reaches, the failed load has already marked the index. The index's re-seal bytes per run and its peak memory (§6, "2b-3
   measures") are still estimates: no measurement was made.
+
+## 13. Slice 2b-4 as built — the keyless check (2026-10-25)
+
+Built as §4 states (`container.CheckKeyless`, `app.Verify`, MA-764/MA-765), with these departures and
+precisions. They govern where they conflict with §4; each owes the slice's adversarial pass.
+
+- **A sixth outcome, `unfinished_save` (RED).** §4 reports I = P + 1 "with §3's two-cause wording",
+  but the record keeps the outcome alone (A18), so status could not say it. The two-cause case is its
+  own value of the closed list; so is RecordedGen = P + 1 (CON-6).
+- **A top file present but unreadable is `damaged`, not "no inventory".** A writer only ever renames
+  the top file whole, so a torn or garbled one is damage or tampering, never a crash; and the keyed run
+  refuses it whenever a file list had landed. A top line that reads as newer beside a current pointer
+  is the same (§11 CRIT-2). An absent top file stays `not_attested`, as §4 says. Residual: an archive
+  whose file list was deleted reads amber here while its next keyed run refuses it RED (`inv` is
+  sealed, so the check cannot tell a list that never landed from one that was lost).
+- **What needs the key is not checked.** "I < inv" (an older file list restored under a pointer that
+  saw a newer one) needs the authenticated `inv`; the keyed run refuses it. RecordedGen applies only at
+  I = P, where the file list names exactly what the pointer names; it is 0 until Phases 3–4 persist it.
+- **A pointer copy missing at I = P is `damaged`** (its digest cannot match), as is one present but
+  unreadable; one in a newer format outranked by a current copy is damage too (§11 CRIT-2).
+- **No pointer at all** is `not_attested` ("no backup has saved this archive's record yet") only when
+  the keyed load would make a first commit (its `checkFresh`, without the key); otherwise `damaged`.
+- **Leftovers are normal.** After every run, the shard files that run superseded stay until the next
+  run's start sweep, and are reported as leftovers.
+- **The file rule** is the keyed load's: every folder real, no link, a regular file or a Windows cloud
+  placeholder (`util.DescriptorReadable`), then size, then SHA-256 over at most size + 1 bytes.
+- **The record and status.** The last-verify record's allow-list is version, status, started,
+  finished, outcome, encrypted and the carried previous verdict in the same shape. Status codes are
+  `verify_<outcome>`. The integrity notice is written for the three RED outcomes, removed by `intact`,
+  and left standing by the two amber ones.

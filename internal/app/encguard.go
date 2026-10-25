@@ -100,3 +100,33 @@ func RefuseKeyless(op, out string, extra ...string) error {
 	}
 	return nil
 }
+
+// ErrVerifyRecordEncrypted refuses `verify -record` on an encrypted archive: every
+// backup records its files' digests in the archive's file list itself
+// (design-encrypted-archives-phase2b §4).
+var ErrVerifyRecordEncrypted = errors.New("verify -record does not apply to an encrypted archive")
+
+// encryptedArchiveAt reports whether out is itself an encrypted archive, as
+// RefuseKeyless recognises one — not a folder inside one, nor one reached through a
+// link to it.
+func encryptedArchiveAt(out string) bool {
+	abs, err := filepath.Abs(out)
+	if err != nil {
+		abs = filepath.Clean(out)
+	}
+	dir, _, _ := vault.EncryptedAtOrAbove(abs)
+	return dir == abs
+}
+
+// RefuseVerify is verify's guard. An encrypted archive itself is checked without
+// its key (tier 1, phase2b §4), but never with -record; a folder inside one, or one
+// that cannot be checked, is refused as RefuseKeyless refuses it.
+func RefuseVerify(out string, record bool) error {
+	if !encryptedArchiveAt(out) {
+		return RefuseKeyless("verify it", out)
+	}
+	if record {
+		return fmt.Errorf("%w: %s is an encrypted archive — every backup records its files' checksums itself; run verify without -record", ErrVerifyRecordEncrypted, out)
+	}
+	return nil
+}

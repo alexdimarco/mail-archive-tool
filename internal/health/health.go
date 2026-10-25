@@ -607,7 +607,22 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 			lv = *lv.Previous
 		}
 	}
-	if judge && lv.Status == state.VerifyDone {
+	if judge && lv.Status == state.VerifyDone && lv.Encrypted {
+		// An encrypted archive's keyless check records its outcome alone (A18): RED
+		// for damage or a record the next backup refuses, WARN for what a backup or
+		// an upgrade settles, nothing for intact (phase2b §4).
+		when := ""
+		if lv.Finished != nil {
+			when = lv.Finished.UTC().Format("2006-01-02 15:04")
+		}
+		reason := fmt.Sprintf("the last check of this encrypted archive (%s UTC): %s", when, state.OutcomeText(lv.Outcome))
+		switch {
+		case state.OutcomeIsRed(lv.Outcome):
+			r.red("verify_"+lv.Outcome, reason)
+		case lv.Outcome == state.OutcomeNotAttested, lv.Outcome == state.OutcomeNewerFormat:
+			r.warn("verify_"+lv.Outcome, reason)
+		}
+	} else if judge && lv.Status == state.VerifyDone {
 		when := ""
 		if lv.Finished != nil {
 			when = lv.Finished.UTC().Format("2006-01-02 15:04")
@@ -1916,6 +1931,9 @@ func Summary(in Input, rep Report) []string {
 // "<when> → NOT attested (…)" for Summary.
 func verifyVerdict(lv state.LastVerify) string {
 	when := lv.Finished.UTC().Format("2006-01-02 15:04")
+	if lv.Encrypted {
+		return fmt.Sprintf("%s → %s (a keyless check of its files)", when, strings.ReplaceAll(lv.Outcome, "_", " "))
+	}
 	if lv.Attested {
 		return fmt.Sprintf("%s → attested", when)
 	}
@@ -2060,6 +2078,10 @@ type JSONLastVerify struct {
 	Unexpected int        `json:"unexpected"`
 	Recorded   int        `json:"recorded"`
 	ExitCode   int        `json:"exit_code"`
+	// Outcome is an encrypted archive's keyless verdict (phase2b §4), and
+	// Encrypted says the record is one: new optional keys, omitted otherwise.
+	Outcome   string `json:"outcome,omitempty"`
+	Encrypted bool   `json:"encrypted,omitempty"`
 	// Previous is the last finished verdict a running record carries (F79): a
 	// new optional key, omitted otherwise, so JSONVersion is unchanged.
 	Previous *JSONLastVerify `json:"previous,omitempty"`
@@ -2073,7 +2095,10 @@ func jsonLastVerify(lv state.LastVerify) *JSONLastVerify {
 		Attested: lv.Attested, Records: lv.Records, WithFixity: lv.WithFixity,
 		Checked: lv.Checked, OK: lv.OK, Modified: lv.Modified, Missing: lv.Missing,
 		Unrecorded: lv.Unrecorded, Unexpected: lv.Unexpected, Recorded: lv.Recorded,
-		ExitCode: lv.ExitCode,
+		ExitCode: lv.ExitCode, Outcome: lv.Outcome, Encrypted: lv.Encrypted,
+	}
+	if lv.Encrypted {
+		j.Attested = lv.Outcome == state.OutcomeIntact
 	}
 	if lv.Previous != nil {
 		p := *lv.Previous
@@ -2133,12 +2158,15 @@ func JSON(in Input, rep Report) JSONReport {
 	// Go-back timeline coverage (design §3.4): a new optional key, always
 	// present, that changes no existing field's meaning — so, like `extractable`,
 	// it is a backward-compatible addition and does not bump JSONVersion.
-	doc.History = &JSONHistory{
-		Exists:   in.History.Exists,
-		Runs:     in.History.Runs,
-		Events:   in.History.Events,
-		BadLines: in.History.BadLines,
-		TornTail: in.History.TornTail,
+	// An encrypted archive's history is sealed: null, not "no log" (phase2b §4).
+	if !in.Encrypted {
+		doc.History = &JSONHistory{
+			Exists:   in.History.Exists,
+			Runs:     in.History.Runs,
+			Events:   in.History.Events,
+			BadLines: in.History.BadLines,
+			TornTail: in.History.TornTail,
+		}
 	}
 	if in.HasManifest {
 		doc.Fixity = &JSONFixity{Records: in.Messages, WithFixity: in.WithFixity}
