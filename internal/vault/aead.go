@@ -18,6 +18,7 @@ package vault
 
 import (
 	"crypto/hkdf"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
@@ -72,7 +73,20 @@ type UnitKind uint8
 const (
 	UnitMessage    UnitKind = 1 // a message body page
 	UnitAttachment UnitKind = 2 // a message's attachments
+	UnitOriginal   UnitKind = 3 // a message's preserved original (.eml)
 )
+
+// ErrUnitKind refuses a unit kind this format does not define, so a sealed
+// unit can never be read back as some other role.
+var ErrUnitKind = errors.New("vault: unknown unit kind")
+
+func (kind UnitKind) check() error {
+	switch kind {
+	case UnitMessage, UnitAttachment, UnitOriginal:
+		return nil
+	}
+	return fmt.Errorf("%w %d", ErrUnitKind, kind)
+}
 
 // ContainerKind names a chunked container (C6, A11).
 type ContainerKind uint8
@@ -101,6 +115,9 @@ func aadPrefix(tag string, id ID) []byte {
 
 // unitAAD is `"MAU1" ‖ format u16 ‖ archive_id ‖ unit_kind u8 ‖ len u16 ‖ unit_id`.
 func unitAAD(id ID, kind UnitKind, unitID string) ([]byte, error) {
+	if err := kind.check(); err != nil {
+		return nil, err
+	}
 	if len(unitID) == 0 || len(unitID) > maxUnitIDLen {
 		return nil, fmt.Errorf("vault: unit id must be 1..%d bytes, got %d", maxUnitIDLen, len(unitID))
 	}
@@ -169,6 +186,7 @@ type Key struct {
 	master [keySize]byte
 	data   [keySize]byte
 	mac    [keySize]byte
+	names  [keySize]byte
 	live   bool
 }
 
@@ -195,8 +213,9 @@ func (k *Key) Format(f fmt.State, _ rune) {
 
 // HKDF info strings: the sub-key domains.
 const (
-	infoData = "mailarchive data v1"
-	infoMAC  = "mailarchive vault header v1"
+	infoData  = "mailarchive data v1"
+	infoMAC   = "mailarchive vault header v1"
+	infoNames = "mailarchive unit names v1"
 )
 
 func newKey(id ID, master []byte) (*Key, error) {
@@ -208,7 +227,7 @@ func newKey(id ID, master []byte) (*Key, error) {
 	for _, sub := range []struct {
 		info string
 		dst  *[keySize]byte
-	}{{infoData, &k.data}, {infoMAC, &k.mac}} {
+	}{{infoData, &k.data}, {infoMAC, &k.mac}, {infoNames, &k.names}} {
 		b, err := hkdf.Key(sha256.New, master, nil, sub.info, keySize)
 		if err != nil {
 			return nil, fmt.Errorf("vault: derive %s: %w", sub.info, err)
@@ -230,7 +249,33 @@ func (k *Key) Destroy() {
 	clear(k.master[:])
 	clear(k.data[:])
 	clear(k.mac[:])
+	clear(k.names[:])
 	k.live = false
+}
+
+// unitNameLen is the length of a unit's opaque on-disk name (128 bits, hex).
+const unitNameLen = 32
+
+// UnitName is the opaque on-disk name of the unit of kind sealed under ref
+// (Phase 2a: ref is "<unit id>.<revision>"): the first 128 bits, as lowercase
+// hex, of HMAC-SHA256 under the names sub-key over ref ‖ kind. Without the key
+// a name reveals nothing — not the message, not the role, not which names
+// belong together — and with it every reader that holds the decrypted manifest
+// can find a unit. ref is the same string the unit's AAD binds.
+func (k *Key) UnitName(kind UnitKind, ref string) (string, error) {
+	if err := k.usable(); err != nil {
+		return "", err
+	}
+	if err := kind.check(); err != nil {
+		return "", err
+	}
+	if len(ref) == 0 || len(ref) > maxUnitIDLen {
+		return "", fmt.Errorf("vault: unit reference must be 1..%d bytes, got %d", maxUnitIDLen, len(ref))
+	}
+	m := hmac.New(sha256.New, k.names[:])
+	m.Write([]byte(ref))
+	m.Write([]byte{byte(kind)})
+	return hex.EncodeToString(m.Sum(nil))[:unitNameLen], nil
 }
 
 // SealUnit seals one message body or attachment set for the unit named unitID

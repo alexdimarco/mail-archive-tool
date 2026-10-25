@@ -55,6 +55,7 @@ func TestCommitHandsTheKeyOverAndADeadKeyRefusesEveryUse(t *testing.T) {
 		_, uses["OpenChunk"] = k.OpenChunk(ContainerIndex, 1, 0, sealed)
 		_, uses["SealPointer"] = k.SealPointer(ContainerIndex, 1, []byte("x"))
 		_, uses["OpenPointer"] = k.OpenPointer(ContainerIndex, 1, sealed)
+		_, uses["UnitName"] = k.UnitName(UnitMessage, "0123456789abcdef0123456789abcdef.1")
 		uses["Remember"] = Remember(store, k)
 		uses["Verify"] = o.Vault.Verify(k)
 		for use, err := range uses {
@@ -146,7 +147,7 @@ func TestKeysSecretsAndPendingChangesPrintRedacted(t *testing.T) {
 	}
 	defer pr.Discard()
 	secrets := []string{
-		hex.EncodeToString(k.master[:]), hex.EncodeToString(k.data[:]), pw,
+		hex.EncodeToString(k.master[:]), hex.EncodeToString(k.data[:]), hex.EncodeToString(k.names[:]), pw,
 		pc.RecoveryKey().String(), pr.RecoveryKey().String(),
 		strings.ReplaceAll(pc.RecoveryKey().String(), "-", ""),
 	}
