@@ -480,7 +480,9 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		}
 	}
 	saveErr = commit(hist, idx, manifest, logger)
-	if gaps := gapBannerCount(manifest); idx != nil && opts.Pages && !allFailed && pagesNeeded(opts.Out, exp.Stats.Exported, gaps) {
+	// An encrypted archive has no folder pages: they are its folder tree, subjects and
+	// senders in cleartext (phase2a §3); MailArchive's reader renders them (Phase 3).
+	if gaps := gapBannerCount(manifest); exp.Units == nil && idx != nil && opts.Pages && !allFailed && pagesNeeded(opts.Out, exp.Stats.Exported, gaps) {
 		if pErr := pages.Generate(opts.Out, idx, logger, gaps); pErr != nil {
 			logger.Printf("warning: folder pages: %v", pErr)
 		}

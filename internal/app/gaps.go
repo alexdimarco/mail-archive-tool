@@ -233,6 +233,9 @@ type PartialError struct {
 	Summary    GapSummary
 	ReportPath string
 	Unreadable int // partly-read records the run wrote or re-examined
+	// Encrypted says the archive is an encrypted one, which keeps no report: the
+	// text points at MailArchive instead of attachments-report.tsv.
+	Encrypted bool
 }
 
 func (e *PartialError) Error() string {
@@ -253,6 +256,9 @@ func (e *PartialError) Error() string {
 		}
 		text += fmt.Sprintf(" %d message(s) only partly read", e.Unreadable)
 	}
+	if e.Encrypted {
+		return text + " — open the archive in MailArchive to see which"
+	}
 	return text + " — see attachments-report.tsv"
 }
 
@@ -267,5 +273,5 @@ func partialOutcome(r Result) error {
 	if !r.Partial {
 		return nil
 	}
-	return &PartialError{Summary: r.Gaps, ReportPath: r.ReportPath, Unreadable: r.Stats.Unreadable}
+	return &PartialError{Summary: r.Gaps, ReportPath: r.ReportPath, Unreadable: r.Stats.Unreadable, Encrypted: r.encrypted}
 }

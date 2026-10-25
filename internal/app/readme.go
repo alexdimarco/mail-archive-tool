@@ -133,10 +133,33 @@ Housekeeping files (safe to leave alone):
                                OS flock released when the run ends)
 `
 
+// encryptedArchiveReadme is an encrypted archive's README.txt: it says what the
+// folder is and how to open it, and describes no layout, file or table — the
+// plaintext README would tell a reader of the folder what its units hide
+// (phase2a §4). Its wording owes the Phase-3 friction review.
+const encryptedArchiveReadme = `This folder is an encrypted email archive written by MailArchive.
+
+The messages in it are encrypted. To read them, open this folder in MailArchive
+with its password or its recovery key. Without one of them the messages cannot
+be read by anyone.
+
+Do not rename, edit or delete the files in this folder: MailArchive needs every
+one of them to open the archive. To keep a copy, copy the whole folder.
+`
+
 // writeArchiveReadme writes README.txt atomically; failures are logged, never
 // fatal (the archive is complete without it).
 func writeArchiveReadme(out string, logger *log.Logger) {
-	if err := export.WriteFileAtomic(filepath.Join(out, "README.txt"), []byte(archiveReadme)); err != nil && logger != nil {
+	writeReadme(out, archiveReadme, logger)
+}
+
+// writeEncryptedArchiveReadme writes an encrypted archive's README.txt.
+func writeEncryptedArchiveReadme(out string, logger *log.Logger) {
+	writeReadme(out, encryptedArchiveReadme, logger)
+}
+
+func writeReadme(out, text string, logger *log.Logger) {
+	if err := export.WriteFileAtomic(filepath.Join(out, "README.txt"), []byte(text)); err != nil && logger != nil {
 		logger.Printf("warning: could not write README.txt: %v", err)
 	}
 }

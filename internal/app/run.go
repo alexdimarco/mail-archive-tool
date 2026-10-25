@@ -190,6 +190,9 @@ type Result struct {
 	// completed walk of their folder no longer found them. The producers count them;
 	// finish puts them in Gaps.
 	gapsRecovered, gapsClosedGone int
+	// encrypted is set by finish for a run that wrote an encrypted archive, which
+	// has no attachments-report.tsv for a partial run's text to point at.
+	encrypted bool
 }
 
 // finish fills the manifest-derived fields of a Result and regenerates the
@@ -200,8 +203,17 @@ type Result struct {
 // printed by the caller's summary (cmd/mailarchive printSummary), not here, so
 // the run log carries it exactly once.
 func finish(out string, r *Result, exp *export.Exporter, manifest *state.Manifest, idx *index.Index, indexErrors int, scaffold bool, logger *log.Logger) {
+	// An encrypted archive (a keyed run, which prepareEncrypted proved against the
+	// archive's vault) gets no layout README and no report: both describe, in
+	// cleartext, what the units hide (phase2a §4).
+	enc := exp.Units != nil
+	r.encrypted = enc
 	if scaffold {
-		writeArchiveReadme(out, logger)
+		if enc {
+			writeEncryptedArchiveReadme(out, logger)
+		} else {
+			writeArchiveReadme(out, logger)
+		}
 	}
 	r.Stats = exp.Stats
 	r.ManifestSize = manifest.Len()
@@ -228,7 +240,13 @@ func finish(out string, r *Result, exp *export.Exporter, manifest *state.Manifes
 	r.Unreadable, r.Unparsed = manifest.UnreadableCount(), manifest.UnparsedCount()
 	r.Undecodable, r.FidelityFallback = manifest.UndecodableCount(), manifest.FidelityFallbackCount()
 	r.FillableParseGap, r.FillableOnlyParseGap = manifest.FillableParseGapCounts()
-	r.ReportPath, r.Issues = writeReport(out, manifest, manifest.Migrated > 0, logger)
+	if enc {
+		// The report lists folders, subjects, attachment names and source ids; an
+		// encrypted archive's gaps are shown by MailArchive from its manifest.
+		r.ReportPath, r.Issues = "", 0
+	} else {
+		r.ReportPath, r.Issues = writeReport(out, manifest, manifest.Migrated > 0, logger)
+	}
 	// What this run observed in the capture-gap ledger (its own runAt is the stamp
 	// every observation carries). The stuck count uses a daily period: `status`
 	// judges it against the installed schedule's.
@@ -708,7 +726,9 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// Browsable folder index pages, built from the finished index. Regenerate
 	// them only when this run exported something or the root index.html is not
 	// yet there (nas-02): a zero-change re-run must not rewrite every page.
-	if gaps := gapBannerCount(manifest); idx != nil && opts.Pages && pagesNeeded(opts.Out, exp.Stats.Exported, gaps) {
+	// An encrypted archive has no folder pages: they are its folder tree, subjects and
+	// senders in cleartext (phase2a §3); MailArchive's reader renders them (Phase 3).
+	if gaps := gapBannerCount(manifest); exp.Units == nil && idx != nil && opts.Pages && pagesNeeded(opts.Out, exp.Stats.Exported, gaps) {
 		if pErr := pages.Generate(opts.Out, idx, logger, gaps); pErr != nil {
 			logger.Printf("warning: folder pages: %v", pErr)
 		}
