@@ -49,6 +49,8 @@ func FailureKind(err error) string {
 		return state.FailEncryptedNeedsKey
 	// The sealed record's own refusals (phase2b §2, §3), ahead of the refusal they
 	// arrive wrapped in: what the record is says more than that it refused.
+	case errors.Is(err, container.ErrNewerFormat):
+		return state.FailRecordNewer
 	case errors.Is(err, container.ErrRestoredOlder), errors.Is(err, container.ErrUnfinishedSave), errors.Is(err, container.ErrInventoryDamaged):
 		return state.FailRecordOlder
 	case errors.Is(err, container.ErrRecord):
@@ -106,6 +108,8 @@ func ArchiveEncrypted(out string) bool { return encryptedAt(out) }
 // recognition predicate; a folder it cannot read is not called encrypted here (the
 // run's own handling meets that error).
 func encryptedAt(out string) bool {
-	enc, _, _ := vault.EncryptedMarker(out)
-	return enc
+	// A check that cannot tell counts as encrypted: the minimised record is safe for
+	// either kind of archive, the full one only for a plaintext one (FC-4).
+	enc, _, err := vault.EncryptedMarker(out)
+	return enc || err != nil
 }

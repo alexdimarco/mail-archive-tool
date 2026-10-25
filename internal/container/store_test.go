@@ -1,6 +1,8 @@
 package container
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -21,8 +23,9 @@ var base = time.Date(2026, 10, 25, 9, 0, 0, 0, time.UTC)
 
 func runAt(n int) time.Time { return base.Add(time.Duration(n) * time.Hour) }
 
-// unitLister names each record's page unit at units/<hh>/<unit>, with its recorded
-// digest: the shape the unit store's lister gives, without deriving keyed names.
+// unitLister names each record's page unit by its revision's digest,
+// units/<hh>/<first 32 hex of its sha256>, so every revision has its own name: the
+// shape the unit store's lister gives, without deriving keyed names.
 func unitLister(entries map[string]state.Record) (map[string]Digest, error) {
 	out := map[string]Digest{}
 	for _, r := range entries {
@@ -34,7 +37,8 @@ func unitLister(entries map[string]state.Record) (map[string]Digest, error) {
 			return nil, err
 		}
 		d.Size = r.Sealed.HTML.Size
-		out["units/"+r.Unit[:2]+"/"+r.Unit] = d
+		name := r.Sealed.HTML.SHA256[:32]
+		out["units/"+name[:2]+"/"+name] = d
 	}
 	return out, nil
 }
@@ -71,7 +75,8 @@ func unitOf(i int) string { return fmt.Sprintf("%02x%030x", i%256, i) }
 
 func rec(i int) state.Record {
 	at := base.Add(time.Duration(i) * time.Minute)
-	sum := fmt.Sprintf("%064x", i+1)
+	h := sha256.Sum256([]byte(fmt.Sprintf("unit %d rev 1", i)))
+	sum := hex.EncodeToString(h[:])
 	return state.Record{Path: fmt.Sprintf("s/Inbox/m%d.html", i), Folder: "Inbox", ExportedAt: at, FirstSeen: at, FirstFolder: "Inbox", Present: true,
 		Unit: unitOf(i), Sealed: &state.SealedSet{HTML: &state.SealedUnit{Rev: 1, SHA256: sum, Size: int64(800 + i)}}}
 }
@@ -127,7 +132,14 @@ func TestASealedRecordRoundTrips(t *testing.T) {
 	}
 	m.Stores = map[string]string{"mailbox:a@example.com": "s"}
 	m.CollapsedTokens = map[string]bool{"s": true}
-	m.CaptureGaps = map[string]state.CaptureGap{"g1": {Token: "s", Folder: "Inbox", Scope: "item", Locator: "graph:x", Reason: "fetch_failed", Class: "fillable"}}
+	gap := state.CaptureGap{Token: "s", Folder: "Inbox", Scope: state.GapScopeItem, Locator: "graph:x", Reason: "fetch_failed", Class: state.ClassFillable, Subject: "a subject", Detail: "a detail", Runs: 1}
+	m.CaptureGaps = map[string]state.CaptureGap{state.GapKey("s", state.GapScopeItem, "graph:x"): gap}
+	// One record carrying the fields a bare one leaves empty (the adversarial pass, FID-6).
+	rich := rec(77)
+	rich.Missing, rich.Terminal, rich.Unresolved = []string{"body"}, []string{"attachment 2"}, []string{"cid:x"}
+	rich.PhysID, rich.AltPhysIDs, rich.LastSeen = "phys-77", []string{"phys-alt"}, base.Add(-72*time.Hour)
+	rich.Fixity = &state.Fixity{}
+	m.Add(key(77), rich)
 	if err := m.Save(); err != nil {
 		t.Fatal(err)
 	}
@@ -138,8 +150,8 @@ func TestASealedRecordRoundTrips(t *testing.T) {
 	if !reflect.DeepEqual(m2.All(), m.All()) {
 		t.Fatal("the records did not round-trip")
 	}
-	if !reflect.DeepEqual(m2.Stores, m.Stores) || !reflect.DeepEqual(m2.CollapsedTokens, m.CollapsedTokens) || len(m2.CaptureGaps) != 1 {
-		t.Fatalf("stores, collapsed tokens or gaps did not round-trip: %v %v %v", m2.Stores, m2.CollapsedTokens, m2.CaptureGaps)
+	if !reflect.DeepEqual(m2.Stores, m.Stores) || !reflect.DeepEqual(m2.CollapsedTokens, m.CollapsedTokens) || !reflect.DeepEqual(m2.CaptureGaps, m.CaptureGaps) {
+		t.Fatalf("stores, collapsed tokens or gaps did not round-trip:\n %v %v\n %+v\nwant\n %+v", m2.Stores, m2.CollapsedTokens, m2.CaptureGaps, m.CaptureGaps)
 	}
 }
 
@@ -553,17 +565,43 @@ func TestTheKeyedLoadIsStrict(t *testing.T) {
 		os.WriteFile(filepath.Join(out, EnvelopeName), []byte(big), 0o600)
 		refused(t, out, opts(1), ErrNotSealed)
 	})
-	t.Run("another archive's envelope", func(t *testing.T) {
-		out := fresh(t)
+	// The envelope decides only where no pointer authenticates: beside an authentic
+	// pointer, an envelope naming another archive, or reading as newer, is damage the
+	// pointer outranks — healed, never a refusal (the adversarial pass, CRIT-1).
+	t.Run("another archive's envelope and no record", func(t *testing.T) {
+		out := t.TempDir()
 		b, _ := vault.NewManifestEnvelope(keys[1].ArchiveID(), PointerName).Marshal()
 		os.WriteFile(filepath.Join(out, EnvelopeName), b, 0o600)
 		refused(t, out, opts(1), ErrRecord)
 	})
-	t.Run("a newer envelope", func(t *testing.T) {
-		out := fresh(t)
+	t.Run("a newer envelope and no record", func(t *testing.T) {
+		out := t.TempDir()
 		os.WriteFile(filepath.Join(out, EnvelopeName), []byte(`{"version":101,"encrypted":true}`), 0o600)
 		refused(t, out, opts(1), ErrNewerFormat)
 	})
+	for label, body := range map[string][]byte{
+		"another archive's envelope beside an authentic pointer": func() []byte {
+			b, _ := vault.NewManifestEnvelope(keys[1].ArchiveID(), PointerName).Marshal()
+			return b
+		}(),
+		"a newer envelope beside an authentic pointer": []byte(`{"version":101,"encrypted":true}`),
+	} {
+		t.Run(label, func(t *testing.T) {
+			out := fresh(t)
+			os.WriteFile(filepath.Join(out, EnvelopeName), body, 0o600)
+			m, s := open(t, out, opts(1))
+			if len(s.Notices) == 0 {
+				t.Fatal("the heal must be noted")
+			}
+			if err := m.Save(); err != nil {
+				t.Fatal(err)
+			}
+			b, _ := os.ReadFile(filepath.Join(out, EnvelopeName))
+			if !strings.Contains(string(b), keys[0].ArchiveID().String()) || !strings.Contains(string(b), `"version": 100`) {
+				t.Fatalf("the envelope was not rewritten as this archive's: %s", b)
+			}
+		})
+	}
 	t.Run("another archive's key", func(t *testing.T) {
 		out := fresh(t)
 		b, _ := vault.NewManifestEnvelope(keys[1].ArchiveID(), PointerName).Marshal()
@@ -602,18 +640,43 @@ func TestTheKeyedLoadIsStrict(t *testing.T) {
 			t.Fatal("an envelope with no pointer and empty folders is a first commit to resume")
 		}
 	})
-	t.Run("a newer pointer", func(t *testing.T) {
-		out := fresh(t)
-		p := filepath.Join(out, PointerName)
+	// A newer-format pointer decides only when nothing outranks it (CRIT-2): both
+	// copies newer, or a newer copy at a later generation than the authentic one, ask
+	// for an upgrade; one copy reading as newer at the authentic copy's generation is
+	// damage the other copy covers for.
+	newerCopy := func(t *testing.T, out, name string, gen uint64) {
+		t.Helper()
+		p := filepath.Join(out, name)
 		b, _ := os.ReadFile(p)
 		b[5] = 2
+		binary.BigEndian.PutUint64(b[6:14], gen)
 		os.WriteFile(p, b, 0o600)
+	}
+	t.Run("both pointers newer", func(t *testing.T) {
+		out := fresh(t)
+		newerCopy(t, out, PointerName, 1)
+		newerCopy(t, out, MirrorName, 1)
 		refused(t, out, opts(1), ErrNewerFormat)
 	})
-	t.Run("a newer file list", func(t *testing.T) {
+	t.Run("a newer pointer at a later generation", func(t *testing.T) {
 		out := fresh(t)
-		os.WriteFile(filepath.Join(out, InventoryName), []byte("mailarchive-inventory 2\n"), 0o600)
+		newerCopy(t, out, PointerName, 2)
 		refused(t, out, opts(1), ErrNewerFormat)
+	})
+	t.Run("one pointer copy reading as newer is damage", func(t *testing.T) {
+		out := fresh(t)
+		newerCopy(t, out, MirrorName, 1)
+		if _, s := open(t, out, opts(1)); s.Generation() != 1 || len(s.Notices) == 0 {
+			t.Fatalf("the authentic primary must load, noted: gen %d, %v", s.Generation(), s.Notices)
+		}
+	})
+	// An inventory format change comes with a pointer format change; a top line that
+	// alone reads as newer is a damaged file list (refused once one has landed).
+	t.Run("a file list reading as newer", func(t *testing.T) {
+		out := fresh(t)
+		saveN(t, out, 1, 0, 2)
+		os.WriteFile(filepath.Join(out, InventoryName), []byte("mailarchive-inventory 2\n"), 0o600)
+		refused(t, out, opts(2), ErrInventoryDamaged)
 	})
 }
 
@@ -756,7 +819,13 @@ func TestTheFileListIsWhatThePointerAndRecordsName(t *testing.T) {
 	for _, e := range s.ptr.Manifest {
 		prevChunks[e.Name.Path()] = true
 	}
+	oldUnits, _ := unitLister(map[string]state.Record{key(0): rec(0)})
 	m.Add(key(8), rec(8))
+	// Re-export record 0: its page's next revision supersedes the first (FID-8).
+	r0 := rec(0)
+	h := sha256.Sum256([]byte("unit 0 rev 2"))
+	r0.Sealed = &state.SealedSet{HTML: &state.SealedUnit{Rev: 2, SHA256: hex.EncodeToString(h[:]), Size: 900}}
+	m.Add(key(0), r0)
 	m.Save()
 	live, _ := s.liveFiles(state.View{Entries: m.All()})
 	listed := map[string]FileState{}
@@ -790,6 +859,11 @@ func TestTheFileListIsWhatThePointerAndRecordsName(t *testing.T) {
 	}
 	if retained == 0 {
 		t.Fatal("fixture: the second save superseded no chunk")
+	}
+	for p := range oldUnits {
+		if listed[p] != Retained {
+			t.Fatalf("the superseded unit revision %s is listed %v, want retained", p, listed[p])
+		}
 	}
 
 	var shardName string

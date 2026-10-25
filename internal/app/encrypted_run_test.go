@@ -280,11 +280,20 @@ func TestAnEncryptedRunSweepsUnitsNoRecordNames(t *testing.T) {
 	// Taken after the orphan's shard folder exists: the sweep removes unit files, and
 	// leaves shard folders as they are.
 	named := snapshotTree(t, filepath.Join(out, export.UnitsDir))
+	// A crashed run started after the record's last commit: its orphan carries that
+	// later start (P2a-C19), so it is the sweep's to remove. A stray older than the last
+	// commit came from somewhere else and is kept (phase2b §11, CRIT-3b).
 	if err := os.WriteFile(orphan, []byte("a crashed run's revision"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	crashed := time.Now()
+	os.Chtimes(orphan, crashed, crashed)
+	stray := filepath.Join(out, export.UnitsDir, "ab", "ab9999999999999999999999999999aa")
+	if err := os.WriteFile(stray, []byte("a file from somewhere else"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	old := time.Now().Add(-time.Hour)
-	os.Chtimes(orphan, old, old)
+	os.Chtimes(stray, old, old)
 
 	if _, err := Run(context.Background(), Options{Inputs: []string{src}, Out: out, Key: key}, discard(), nil); err != nil {
 		t.Fatal(err)
@@ -292,6 +301,10 @@ func TestAnEncryptedRunSweepsUnitsNoRecordNames(t *testing.T) {
 	if _, err := os.Stat(orphan); !os.IsNotExist(err) {
 		t.Fatal("a unit no record names, left by an interrupted run, must be swept")
 	}
+	if _, err := os.Stat(stray); err != nil {
+		t.Fatal("a unit older than the record's last commit, which no run since wrote, must be kept")
+	}
+	os.Remove(stray)
 	if !sameTree(named, snapshotTree(t, filepath.Join(out, export.UnitsDir))) {
 		t.Fatal("the sweep must leave every unit a record names exactly as it was")
 	}

@@ -34,19 +34,24 @@ func prepareEncrypted(opts Options, manifest *state.Manifest, store *container.S
 			return refuse("it holds records that are not encrypted (an existing plaintext archive is encrypted only by converting it)", nil)
 		}
 	}
-	for _, n := range store.Notices {
-		logger.Printf("note: %s", n)
-	}
 	if store.Fresh() {
-		if err := store.Init(manifest); err != nil {
-			return withKind(state.FailManifestSave, fmt.Errorf("%s: the encrypted archive's first record could not be saved: %w", opts.Out, err))
+		err := store.Init(manifest)
+		if errors.Is(err, container.ErrInventoryWrite) && !store.Fresh() {
+			// The first record landed; only its file list did not, and the next commit
+			// retries it (P2b-C7, the adversarial pass's CON-2).
+			logger.Printf("warning: %v", err)
+			return nil
+		}
+		if err != nil {
+			return manifestSaveFailure(opts.Out, err)
 		}
 		return nil
 	}
+	units.OrphanAfter = store.SweepAfter()
 	if !store.SweepAllowed() {
 		return nil
 	}
-	n, err := units.SweepUnits(manifest, runStart, store.KeepUnits())
+	n, err := units.SweepUnits(manifest, runStart, store.MayRemove)
 	if err != nil {
 		return refuse("its unit store is damaged", err)
 	}
@@ -175,6 +180,7 @@ func openEncrypted(opts Options, stillHeld func() error, runStart time.Time, log
 	units := &export.Units{Root: opts.Out, Key: opts.Key, RunStart: runStart}
 	manifest, store, err := container.LoadManifest(opts.Out, container.LoadOptions{
 		Key: opts.Key, RecordedGen: opts.RecordedGen, RunStart: runStart, StillHeld: stillHeld, Units: unitFiles(units),
+		Logf: logger.Printf,
 	})
 	if err != nil {
 		return nil, nil, nil, recordRefusal(opts.Out, err)
@@ -195,6 +201,8 @@ func openEncrypted(opts Options, stillHeld func() error, runStart time.Time, log
 // (FailureKind: record_older, manifest_unreadable).
 func recordRefusal(out string, err error) error {
 	switch {
+	case errors.Is(err, container.ErrNewerFormat):
+		return encRefusal(out, "it was written by a newer MailArchive — upgrade MailArchive", err)
 	case errors.Is(err, container.ErrRestoredOlder), errors.Is(err, container.ErrUnfinishedSave), errors.Is(err, container.ErrInventoryDamaged):
 		return encRefusal(out, "its record is older than the archive around it", err)
 	case errors.Is(err, container.ErrNotSealed):

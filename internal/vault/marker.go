@@ -45,18 +45,35 @@ const (
 // that is not about the vault (a folder it cannot read at all) is returned as
 // err.
 func EncryptedMarker(out string) (encrypted bool, why string, err error) {
+	// An I/O error on one name does not end the search: a later signal still answers
+	// encrypted, and the error is returned only when none does (the Phase-2b-1
+	// adversarial pass, FC-4).
+	var firstErr error
 	for _, name := range []string{FileName, BackupName, convertMarker, pointerName, mirrorName, inventoryName} {
-		fi, lerr := os.Lstat(filepath.Join(out, name))
+		fi, lerr := markerLstat(filepath.Join(out, name))
 		switch {
 		case lerr == nil && !fi.IsDir():
 			if name == FileName || name == BackupName {
 				return true, "it holds an encrypted archive's key file (" + name + ")", nil
 			}
 			return true, "it holds " + name + ", which only an encrypted archive has", nil
-		case lerr != nil && !errors.Is(lerr, fs.ErrNotExist):
-			return false, "", lerr
+		case lerr != nil && !errors.Is(lerr, fs.ErrNotExist) && firstErr == nil:
+			firstErr = lerr
 		}
 	}
+	enc, why, err := laterSignals(out)
+	if enc || err != nil {
+		return enc, why, err
+	}
+	return false, "", firstErr
+}
+
+// markerLstat is the reserved names' Lstat, a var so a test can fail one name.
+var markerLstat = os.Lstat
+
+// laterSignals are EncryptedMarker's signals after the reserved file names: the unit
+// store, the sealed record's folders, and the manifest's own word.
+func laterSignals(out string) (bool, string, error) {
 	if isUnitStore(filepath.Join(out, unitsDirName)) {
 		return true, "it holds " + unitsDirName + "/, an encrypted archive's unit store", nil
 	}

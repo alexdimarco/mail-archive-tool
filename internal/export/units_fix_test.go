@@ -122,6 +122,19 @@ func TestAUnitWriteNeverOverwritesATakenName(t *testing.T) {
 	if _, err := u.Write(unit, vault.UnitMessage, 2, []byte("the next revision")); err != nil {
 		t.Fatalf("positive twin: a new revision's free name is written: %v", err)
 	}
+
+	// A taken name whose file a run since the record's last commit wrote is that run's
+	// crash orphan, replaced — not a "restored older copy" (CON-4).
+	u.OrphanAfter = time.Now().Add(-time.Minute)
+	if _, err := u.Write(unit, vault.UnitMessage, 2, []byte("rewritten after a crash")); err != nil {
+		t.Fatalf("a crash orphan at the new revision's name must be replaced: %v", err)
+	}
+	old := u.OrphanAfter.Add(-time.Hour)
+	rel2, _ := u.Path(unit, vault.UnitMessage, 2)
+	os.Chtimes(filepath.Join(out, filepath.FromSlash(rel2)), old, old)
+	if _, err := u.Write(unit, vault.UnitMessage, 2, []byte("again")); !errors.Is(err, ErrUnitExists) {
+		t.Fatalf("a taken name older than the record's last commit must still be refused, got %v", err)
+	}
 }
 
 // nopPersister commits a sealed manifest nowhere: an exporter test needs only that
@@ -282,7 +295,8 @@ func TestTheSweepFailsClosedAndIgnoresAStrayFile(t *testing.T) {
 	old := time.Now().Add(-time.Hour)
 	os.Chtimes(listed, old, old)
 	keep := map[string]bool{UnitsDir + "/ef/ef" + strings.Repeat("4", 30): true}
-	if n, err := exp.Units.SweepUnits(exp.Manifest, later, keep); err != nil || n != 0 {
+	may := func(rel string, _ time.Time) bool { return !keep[rel] }
+	if n, err := exp.Units.SweepUnits(exp.Manifest, later, may); err != nil || n != 0 {
 		t.Fatalf("a unit the file list lists live was swept: removed %d, %v", n, err)
 	}
 	if n, err := exp.Units.SweepUnits(exp.Manifest, later, nil); err != nil || n != 1 {

@@ -44,11 +44,17 @@ func PauseArchive(out, reason string) error {
 		}
 	}
 	// An encrypted archive's pause file is a fixed, empty marker: the owner's note
-	// would sit beside the archive in plaintext (phase2a §4). Where the note goes
-	// instead is an open operator question (the archive index is folder-only, MA-662).
+	// would sit beside the archive in plaintext (phase2a §4). The note returns in
+	// Phase 3 inside the sealed record (owner ruling 2026-10-25; MA-662 unchanged).
 	// A folder INSIDE an encrypted archive is not paused at all: its pause file (and
-	// the folder, if it is missing) would be written into the encrypted archive.
-	if dir, _, _ := vault.EncryptedAtOrAbove(out); dir != "" {
+	// the folder, if it is missing) would be written into the encrypted archive. When
+	// the check cannot tell, the archive is treated as encrypted: the marker is empty
+	// (the Phase-2b-1 adversarial pass, FC-4).
+	dir, _, derr := vault.EncryptedAtOrAbove(out)
+	if derr != nil {
+		reason = ""
+	}
+	if dir != "" {
 		if !app.ArchiveEncrypted(out) {
 			return fmt.Errorf("%w: %s is inside the encrypted archive %s — pause the archive itself", app.ErrEncryptedNeedsKey, out, dir)
 		}

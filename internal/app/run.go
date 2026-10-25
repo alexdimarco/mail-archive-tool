@@ -701,6 +701,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		// A one-shot local import keeps no go-back timeline (its dedup is
 		// folder-scoped, §3.6), so there is no history writer to sync here.
 		saveErr = commit(nil, idx, manifest, logger)
+		stopOnLostLock(saveErr, &lockLost)
 	}
 
 	lr.onFault = func() { checkpoint(exp.Stats) }
@@ -732,6 +733,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 			return result, withKind(state.FailLockLost, lockLost)
 		}
 		saveErr = commit(nil, idx, manifest, logger)
+		stopOnLostLock(saveErr, &lockLost)
 
 		if errors.Is(runErr, context.Canceled) {
 			result.gapsRecovered, result.gapsClosedGone = lr.recovered, lr.closedGone
@@ -810,10 +812,24 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 // this run did is recorded and the next run repeats it. It names the file and
 // the remedy; recordRun finalizes the last-run record failed with it, so
 // `status` reports RED instead of a green "ok".
+// stopOnLostLock ends the run as a lost lock when a sealed save found the lock gone
+// at its commit point (container.ErrLockLost), as a checkpoint's own check does —
+// so no more is written into an archive another program may now own (CON-3).
+func stopOnLostLock(saveErr error, lockLost *error) {
+	if errors.Is(saveErr, container.ErrLockLost) && *lockLost == nil {
+		*lockLost = saveErr
+	}
+}
+
 func manifestSaveFailure(mpath string, err error) error {
 	if errors.Is(err, container.ErrInventoryWrite) {
 		// The record itself was saved: only its file list was not (P2b-C7).
 		return withKind(state.FailInventory, fmt.Errorf("%w: %s", err, mpath))
+	}
+	if errors.Is(err, container.ErrLockLost) {
+		// The sealed save re-proves the lock right before its commit point: another
+		// program took the archive, not an unwritable record (CON-3).
+		return withKind(state.FailLockLost, fmt.Errorf("%w: %s", err, mpath))
 	}
 	return withKind(state.FailManifestSave, fmt.Errorf("could not save the manifest %s (%w): this run's progress was not recorded and the next run will repeat it — make sure the manifest file and its folder are writable (on Windows, that no other program holds the manifest open), then run again", mpath, err))
 }

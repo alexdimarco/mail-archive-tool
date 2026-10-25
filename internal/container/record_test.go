@@ -55,8 +55,17 @@ func TestTheBucketCountGrowsWithTheRecord(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n <= 16 {
-		t.Fatalf("about 6 MB of records stayed in %d buckets", n)
+	// About 7 MB: over 16 buckets' target (4 MiB), under 32's (8 MiB) — one doubling
+	// exactly, not a larger step (the adversarial pass, FID-7).
+	if n != 32 {
+		t.Fatalf("about 7 MB of records sit in %d buckets, want exactly one doubling (32)", n)
+	}
+	small := state.View{Version: state.ManifestVersion, Entries: map[string]state.Record{}}
+	for i := 0; i < 2000; i++ {
+		small.Entries[key(i)] = v.Entries[key(i)]
+	}
+	if _, n16, _ := encodeSections(keys[0], small, header{}, 16, base); n16 != 16 {
+		t.Fatalf("positive twin: about 2.5 MB of records sit in %d buckets, want 16", n16)
 	}
 	total := 0
 	for _, s := range sections[posFirst:] {
@@ -68,5 +77,27 @@ func TestTheBucketCountGrowsWithTheRecord(t *testing.T) {
 	got, _, err := decodeSections(keys[0], sections, n)
 	if err != nil || len(got.Entries) != 6000 {
 		t.Fatalf("decoded %d records, %v", len(got.Entries), err)
+	}
+
+	// Through a commit: the pointer records the new count, every record loads back,
+	// and a save with no change afterwards seals nothing.
+	out := fresh(t)
+	m, _ := open(t, out, opts(1))
+	for k, r := range v.Entries {
+		m.Add(k, r)
+	}
+	if err := m.Save(); err != nil {
+		t.Fatal(err)
+	}
+	m, s := open(t, out, opts(2))
+	if s.ptr.Buckets != 32 || m.Len() != 6000 {
+		t.Fatalf("after the commit: %d buckets, %d records", s.ptr.Buckets, m.Len())
+	}
+	before := chunkFiles(t, out)
+	if err := m.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if n := newIn(chunkFiles(t, out), before); n != 0 {
+		t.Fatalf("a save with no change after the doubling wrote %d chunks", n)
 	}
 }

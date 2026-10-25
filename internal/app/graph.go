@@ -396,6 +396,7 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 			return
 		}
 		saveErr = commit(hist, idx, manifest, logger)
+		stopOnLostLock(saveErr, &lockLost)
 	}
 
 	lr.onFault = checkpoint
@@ -424,6 +425,7 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 			sealed.WalkDone(manifest.Token(state.MailboxSourceID(mbx), mbx), runAt)
 		}
 		saveErr = commit(hist, idx, manifest, logger)
+		stopOnLostLock(saveErr, &lockLost)
 		// "Cancelled" is decided from RunGraph's own context, never from the
 		// error chain (fault-isolation §4.8.6, RR6-C1): a mailbox error can carry
 		// a context.Canceled no operator raised (a transport's own), and reading

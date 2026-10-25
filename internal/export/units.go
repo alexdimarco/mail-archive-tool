@@ -39,6 +39,11 @@ type Units struct {
 	Root     string     // the archive root (-out)
 	Key      *vault.Key // the archive's unlocked key
 	RunStart time.Time  // every unit written this run carries this mtime (P2a-C19)
+	// OrphanAfter is the start of the run that made the sealed record's last commit:
+	// a taken unit name whose file a run since then wrote is that run's crash orphan,
+	// replaced; an older one is evidence the record is older than its units, refused
+	// (phase2b, the adversarial pass's CON-4).
+	OrphanAfter time.Time
 }
 
 // newUnitID draws a record's unit id: 128 random bits, lowercase hex.
@@ -119,12 +124,20 @@ func (u *Units) Write(unit string, kind vault.UnitKind, rev uint32, plaintext []
 		return state.SealedUnit{}, err
 	}
 	dst := filepath.Join(u.Root, rel)
-	// Every write is a new revision, so its name is never already taken — unless the
+	// Every write is a new revision, so its name is never already taken — unless a run
+	// since the record's last commit crashed after writing it (its orphan, which the
+	// start sweep may not have removed: no sweep ran, or a clock moved back), or the
 	// record was restored from an older copy and a later run's revision is still here:
 	// keyed evidence of that, and overwriting it would lose that later message's bytes
-	// (phase2b §3, P2b-C7). The start sweep has already removed a crashed run's.
-	if _, err := os.Lstat(dst); err == nil {
-		return state.SealedUnit{}, fmt.Errorf("%w: %s already exists — the archive's record looks older than its units (a restored older copy?); nothing was overwritten", ErrUnitExists, rel)
+	// (phase2b §3, P2b-C7).
+	if fi, err := os.Lstat(dst); err == nil {
+		if fi.Mode().IsRegular() && !u.OrphanAfter.IsZero() && !fi.ModTime().Before(u.OrphanAfter) {
+			if err := os.Remove(dst); err != nil {
+				return state.SealedUnit{}, err
+			}
+		} else {
+			return state.SealedUnit{}, fmt.Errorf("%w: %s already exists — the archive's record looks older than its units (a restored older copy?); nothing was overwritten", ErrUnitExists, rel)
+		}
 	}
 	tmp, err := createTemp(shard)
 	if err != nil {
@@ -253,12 +266,14 @@ func (u *Units) Remove(unit string, kind vault.UnitKind, rev uint32) error {
 
 // SweepUnits is the keyed inventory sweep (A5, P2a-C4): run under the archive
 // lock after a successful manifest load and before the first write, it removes
-// the files under units/ that no record of m names and keep does not hold (the
-// paths the sealed record's inventory lists as live, phase2b §3) — a crashed
+// the files under units/ that no record of m names and that may allows (the sealed
+// record's rule, phase2b §3: never one its inventory lists live; one it lists
+// retained; otherwise only one a run since its last commit wrote) — a crashed
 // run's new revisions, or ones superseded during the last run — when they are
-// older than before (this run's start). It returns how many it removed. units/ or
-// a shard that is not a real directory is refused, never walked.
-func (u *Units) SweepUnits(m *state.Manifest, before time.Time, keep map[string]bool) (int, error) {
+// older than before (this run's start). A nil may allows every unnamed file. It
+// returns how many it removed. units/ or a shard that is not a real directory is
+// refused, never walked.
+func (u *Units) SweepUnits(m *state.Manifest, before time.Time, may func(rel string, mtime time.Time) bool) (int, error) {
 	root := filepath.Join(u.Root, UnitsDir)
 	if exists, err := realDir(root); err != nil || !exists {
 		return 0, err
@@ -303,7 +318,7 @@ func (u *Units) SweepUnits(m *state.Manifest, before time.Time, keep map[string]
 		for _, f := range files {
 			rel := UnitsDir + "/" + sh.Name() + "/" + f.Name()
 			info, err := f.Info()
-			if named[rel] || keep[rel] || err != nil || !info.ModTime().Before(before) || !info.Mode().IsRegular() {
+			if named[rel] || err != nil || !info.ModTime().Before(before) || !info.Mode().IsRegular() || (may != nil && !may(rel, info.ModTime())) {
 				continue
 			}
 			if os.Remove(filepath.Join(dir, f.Name())) == nil {

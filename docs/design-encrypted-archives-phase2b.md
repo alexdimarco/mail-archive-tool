@@ -69,7 +69,8 @@ mirror → the inventory (§3). **Nothing is deleted during a run** (P2b-C9). Th
 today's (P2b-C2): a failed temp write, file fsync or rename fails the save; a folder fsync is best
 effort, and "not supported" (Windows folder handles, EINVAL/ENOTSUP) is not a failure; once the rename
 has returned, the save is recorded, and the generation moves forward after every rename attempt and is
-never reused. A staging failure before the rename leaves the old pointer naming old, intact chunks;
+never reused *within a run* (*amended, §11 CON-7: across runs a lost attempt's generation can recur; the
+§11 OUT-2 check refuses a file list that does not name the pointer on disk*). A staging failure before the rename leaves the old pointer naming old, intact chunks;
 the new files are orphans for the next run's sweep. Lost lock before the rename: nothing is renamed.
 
 **When a section cannot be staged.** *Index*: the pointer commits with the OLD index section, the
@@ -143,8 +144,10 @@ gaps; `2..N+1` record buckets.
   the `captured` marker the fold verifier proposed is not needed for this and was dropped*). A steady
   scheduled run then changes only the header and, once each, the buckets of records that newly went
   unseen or were newly restamped after their capture. Losing a mid-walk
-  advance on a crash decodes those records as last seen at the previous finished walk — the state a run
-  that never saw them would leave; the slice proves gone detection is unchanged by it. Local records
+  advance on a crash decodes those records as last seen at the previous finished walk, or at their first
+  sighting when that is later (*amended, §11 FID-4*) — never later than the truth and never before they
+  were first seen, which is all gone detection reads (`LastSeen.Before(thisRun)`, sweep.go:71); proven at
+  the record level (MA-755), not by an end-to-end gone run. Local records
   carry no LastSeen (omitempty), so they cost nothing here.
 - **The bytes model, stated:** k changed records touch about N(1 − e^(−k/N)) buckets, so one commit
   re-seals about 2 × 128 KiB per changed record while k ≪ N, saturating toward twice the manifest as k
@@ -214,8 +217,10 @@ not offered: `sealKind` uses `prevSealed.Rev+1` (exporter.go:908-911).
 **The sweep (P2a-C4, extended; P2b-C9).** After a successful load and the F12 checks, under the lock,
 before the first write: a file under `units/` or `chunks/` is removed only when the loaded pointer
 does not name it, the inventory does not list it as `live`, and its mtime is older than the run's
-start (units.go:294's rule; skew errs toward keeping); a file under `inventory/` is removed only when
-the top file does not name it and its mtime is older than the run's start. `retained` files, superseded
+start (units.go:294's rule; skew errs toward keeping) — *and (amended, §11 CRIT-3b) only when the
+inventory lists it `retained` or a run since the record's last commit wrote it (mtime at or after that
+commit's run start): an older unnamed file came from elsewhere and is kept*; a file under `inventory/` is
+removed only when the top file does not name it and its mtime is older than the run's start. `retained` files, superseded
 shard files and orphans of a crashed commit go here, so a file-by-file copy taken between runs always
 holds a pointer whose chunks all exist. Disclosed: a copy taken DURING a run is guaranteed loadable
 only from a file-system snapshot; disk cost is one run's superseded files.
@@ -466,3 +471,50 @@ Each slice owes its adversarial pass; the refusal and verify wording owes Phase 
   3–4), written after the pointer rename; it refuses only a merge-restore; persisting it waits on the
   Phase-3 "continue from this older copy" action.
 - Housekeeping: A4's line references are now manifest.go:723 (refuse-newer) and :712-713 (parse).
+
+## 11. The 2b-0 + 2b-1 adversarial pass — amendments (2026-10-25)
+
+The pass (`docs/review-encrypted-archives-phase2b1-adversarial.md`, workflow `wf_4492cc54-4a7` at
+`050b670`: five finders, three skeptics, a critic) confirmed 23 findings and the critic proved 3 more.
+These govern where they conflict with §1–§10; each is fixed with a regression test (MA-755) shown to fail
+before its fix.
+
+- **The sweep window (CRIT-3b, OUT-6).** The start sweep removes a file nothing names only when the
+  inventory lists it `retained`, or a run since the record's last commit wrote it (its mtime is at or
+  after that commit's `run_start`). An older unnamed file — from a half-synced copy, another device or a
+  merge — is kept. The unit store's taken-name check uses the same bound: a taken name a run since then
+  wrote is that run's crash orphan and is replaced; an older one is refused (a per-message gap, the file
+  kept — no longer deleted by the next sweep).
+- **A new archive only when nothing says otherwise (CRIT-3, CON-1).** No pointer is a first commit to
+  make (or resume) only when units/ and inventory/ are empty, chunks/ holds only an interrupted first
+  commit's leftovers (removed under the lock before it), there is no search index or go-back history, and
+  this machine recorded no generation; anything else is a missing record, refused.
+- **The envelope and the pointer copies (CRIT-1, CRIT-2).** The envelope is judged after the pointers: a
+  damaged, foreign or newer-looking envelope beside an authentic pointer is healed, never trusted over
+  it; a plaintext manifest at its name is refused either way. A pointer copy in a newer format decides
+  only when no authentic copy outranks it (a later generation); otherwise it is damage. A file list
+  whose top line reads as newer is a damaged file list (an inventory format change comes with a pointer
+  format change).
+- **A file list must belong to this record (OUT-2).** At I = P the top file must name the pointer on
+  disk (primary or mirror digest); otherwise it is another copy's — no inventory, refused once one has
+  landed (`ErrInventoryDamaged`).
+- **Both copies are checked (OUT-1).** A section's second copy is checked at load (size and digest); a
+  missing or damaged one is noted and both are re-sealed by the next commit.
+- **Bounded file-list reads (OUT-3).** Each shard is judged by size against its line count before it is
+  read, and the first bad shard ends the reading.
+- **Newer formats ask for an upgrade (OUT-5, FID-1).** The sealed header's version is read before the
+  strict decode; a newer record is `ErrNewerFormat`, run kind `record_newer` ("upgrade MailArchive").
+- **The record's fields are pinned to its version (FID-2).** A test pins `state.Record`'s JSON fields at
+  each manifest version: adding one requires bumping the version, so an older build asks for an upgrade.
+- **Kinds and run behaviour (CON-2, CON-3).** A first commit whose file list fails continues the run
+  (`inventory_failed`); a lock found lost at the commit point is `lock_lost` and ends the run.
+- **One lost last save is not a merge (CON-6).** RecordedGen = P + 1 is "the last save did not finish".
+- **Times (CON-5).** The pointer pair and top file move at least 2 whole seconds past their last time.
+- **What reaches a message or the log (LEAK-2, LEAK-3).** A refusal never echoes the envelope's text;
+  every notice — including those raised during a commit — is logged when raised (`LoadOptions.Logf`).
+- **The recognition predicate (FC-4).** An I/O error on one reserved name no longer ends the search; and
+  the pause note and a refused run's record treat "cannot tell" as encrypted.
+- **Generations (CON-7).** Never reused *within a run*; across runs the OUT-2 check covers the case.
+- **Residual, stated:** the remedy date for a damaged chunk comes from its mtime, which a folder writer
+  can set (it only steers the advice). The critic's CRIT-3b sync-conflict step (a sync tool keeping the
+  local pointer) was assumed, not run against a real sync tool.

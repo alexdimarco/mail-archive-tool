@@ -76,10 +76,18 @@ func TestASealedSaveCommitsThroughItsPersisterOnly(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".mailarchive-manifest.json")
 	p := &recordingPersister{}
+	gap := CaptureGap{Token: "s", Folder: "Inbox", Scope: GapScopeItem, Locator: "graph:x", Reason: "fetch_failed", Class: ClassFillable}
+	// view is handed to FromSealed; want is an independent copy of the same content, so
+	// the comparison below is not a map compared with itself (the adversarial pass, FID-5).
 	view := View{Version: manifestVersion,
 		Entries:         map[string]Record{"s\x00a": sealedRecord("0123456789abcdef0123456789abcdef")},
 		Stores:          map[string]string{"mailbox:a@example.com": "s"},
-		CaptureGaps:     map[string]CaptureGap{},
+		CaptureGaps:     map[string]CaptureGap{GapKey("s", GapScopeItem, "graph:x"): gap},
+		CollapsedTokens: map[string]bool{"s": true}}
+	want := View{Version: manifestVersion,
+		Entries:         map[string]Record{"s\x00a": sealedRecord("0123456789abcdef0123456789abcdef")},
+		Stores:          map[string]string{"mailbox:a@example.com": "s"},
+		CaptureGaps:     map[string]CaptureGap{GapKey("s", GapScopeItem, "graph:x"): gap},
 		CollapsedTokens: map[string]bool{"s": true}}
 	m, err := FromSealed(path, view, p)
 	if err != nil {
@@ -94,8 +102,16 @@ func TestASealedSaveCommitsThroughItsPersisterOnly(t *testing.T) {
 		t.Fatalf("one save: %d commits, %d hooks", len(p.views), saved)
 	}
 	got := p.views[0]
-	if got.Version != manifestVersion || !reflect.DeepEqual(got.Entries, view.Entries) || !reflect.DeepEqual(got.Stores, view.Stores) || !reflect.DeepEqual(got.CollapsedTokens, view.CollapsedTokens) {
-		t.Fatalf("the persister was handed\n %+v\nwant the manifest's content\n %+v", got, view)
+	if got.Version != manifestVersion || !reflect.DeepEqual(got.Entries, want.Entries) || !reflect.DeepEqual(got.Stores, want.Stores) || !reflect.DeepEqual(got.CollapsedTokens, want.CollapsedTokens) {
+		t.Fatalf("the persister was handed\n %+v\nwant the manifest's content\n %+v", got, want)
+	}
+	if len(got.CaptureGaps) != 1 {
+		t.Fatalf("the persister was handed %d gaps, want the manifest's 1", len(got.CaptureGaps))
+	}
+	for _, g := range got.CaptureGaps {
+		if g.Token != gap.Token || g.Locator != gap.Locator || g.Reason != gap.Reason || g.Class != gap.Class {
+			t.Fatalf("the persister was handed the gap %+v, want %+v", g, gap)
+		}
 	}
 	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
 		t.Fatalf("a sealed save wrote %d files beside the record; it must write none itself", len(entries))

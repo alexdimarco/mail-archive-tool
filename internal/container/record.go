@@ -88,7 +88,13 @@ func openSeen(key string, s sealedRecord, seenAt map[string]time.Time) (state.Re
 		if !ok || at.IsZero() {
 			return r, fmt.Errorf("%w: record marked seen at its mailbox's last walk, but the mailbox has none", ErrRecord)
 		}
+		// Never before the record was first seen: a record captured during the last
+		// finished walk and restamped by an interrupted one decodes to its capture,
+		// the state a run that never saw it again would leave (FID-4).
 		r.LastSeen = at
+		if r.FirstSeen.After(at) {
+			r.LastSeen = r.FirstSeen
+		}
 	default:
 		return r, fmt.Errorf("%w: unknown seen marker %q", ErrRecord, s.Seen)
 	}
@@ -150,6 +156,14 @@ func decodeSections(k *vault.Key, sections [][]byte, n uint32) (state.View, head
 	var h header
 	if len(sections) != posFirst+int(n) {
 		return state.View{}, h, fmt.Errorf("%w: %d sections for %d buckets", ErrRecord, len(sections), n)
+	}
+	// The version first, leniently: a record a newer MailArchive sealed may add fields
+	// the strict decode below would refuse as damage (the adversarial pass, FID-1).
+	var probe struct {
+		Version int `json:"version"`
+	}
+	if json.Unmarshal(sections[posHeader], &probe) == nil && probe.Version > state.ManifestVersion {
+		return state.View{}, h, fmt.Errorf("%w: the record's format is %d, this MailArchive reads %d", ErrNewerFormat, probe.Version, state.ManifestVersion)
 	}
 	if err := strictJSON(sections[posHeader], &h); err != nil {
 		return state.View{}, h, fmt.Errorf("%w: header: %v", ErrRecord, err)
