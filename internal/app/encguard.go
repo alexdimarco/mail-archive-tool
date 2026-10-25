@@ -107,8 +107,9 @@ func RefuseKeyless(op, out string, extra ...string) error {
 var ErrVerifyRecordEncrypted = errors.New("verify -record does not apply to an encrypted archive")
 
 // encryptedArchiveAt reports whether out is itself an encrypted archive, as
-// RefuseKeyless recognises one — not a folder inside one, nor one reached through a
-// link to it.
+// RefuseKeyless recognises one — not a folder inside one. A link naming the archive
+// itself counts as the archive, as a linked -out does for a plaintext verify; links
+// inside the archive are still refused (the adversarial pass, CRIT-2).
 func encryptedArchiveAt(out string) bool {
 	abs, err := filepath.Abs(out)
 	if err != nil {

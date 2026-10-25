@@ -200,3 +200,35 @@ func TestDescriptorReadableTable(t *testing.T) {
 		}
 	}
 }
+
+// covers: MA-767, R37
+// ReadRegularFile never reads a file whole past its bound: a 256 MiB sparse file
+// read with a 64 KiB bound is refused having allocated well under a megabyte (the
+// fix re-verification, FV-R-04). The positive twin: a file within the bound reads.
+func TestReadRegularFileStopsAtItsBound(t *testing.T) {
+	dir := t.TempDir()
+	small := filepath.Join(dir, "small")
+	os.WriteFile(small, []byte("a record"), 0o600)
+	if b, err := ReadRegularFile(small, 64<<10); err != nil || string(b) != "a record" {
+		t.Fatalf("a file within its bound: %q %v", b, err)
+	}
+	big := filepath.Join(dir, "big")
+	f, err := os.Create(big)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(256 << 20); err != nil {
+		t.Skip("no sparse files here:", err)
+	}
+	f.Close()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	_, err = ReadRegularFile(big, 64<<10)
+	runtime.ReadMemStats(&after)
+	if err == nil {
+		t.Fatal("a file over its bound was read")
+	}
+	if grew := after.TotalAlloc - before.TotalAlloc; grew > 4<<20 {
+		t.Fatalf("reading a file over its bound allocated %d bytes", grew)
+	}
+}

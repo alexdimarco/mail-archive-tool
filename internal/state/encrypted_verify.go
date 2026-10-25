@@ -58,9 +58,13 @@ type encryptedLastVerify struct {
 	Previous  *encryptedLastVerify `json:"previous,omitempty"`
 }
 
+// minimisedVerify is v in the allow-listed shape. A carried verdict with no outcome
+// of the closed list — a plaintext-shaped record found in the folder — is not
+// carried: it would read as a finished check that found nothing (the adversarial
+// pass, LEAK-03).
 func minimisedVerify(v LastVerify) *encryptedLastVerify {
 	e := &encryptedLastVerify{Version: v.Version, Status: v.Status, Started: v.Started, Finished: v.Finished, Outcome: v.Outcome, Encrypted: true}
-	if v.Previous != nil {
+	if v.Previous != nil && KnownOutcome(v.Previous.Outcome) {
 		p := *v.Previous
 		p.Version, p.Previous = v.Version, nil
 		e.Previous = minimisedVerify(p)
@@ -69,18 +73,21 @@ func minimisedVerify(v LastVerify) *encryptedLastVerify {
 }
 
 // marshalLastVerify is the bytes WriteLastVerify writes: v as it is, or — for an
-// encrypted archive — only its allow-listed fields, refusing an outcome outside the
-// closed list.
+// encrypted archive — only its allow-listed fields, refusing what ReadLastVerify
+// would not read back (checkVerdicts).
 func marshalLastVerify(v LastVerify) ([]byte, error) {
 	if !v.Encrypted {
 		return json.MarshalIndent(v, "", "  ")
 	}
-	for _, o := range []*LastVerify{&v, v.Previous} {
-		if o != nil && o.Outcome != "" && !KnownOutcome(o.Outcome) {
-			return nil, fmt.Errorf("state: verify outcome %q is not in the closed list", o.Outcome)
-		}
+	e := minimisedVerify(v)
+	back := LastVerify{Status: e.Status, Outcome: e.Outcome, Encrypted: true}
+	if e.Previous != nil {
+		back.Previous = &LastVerify{Status: e.Previous.Status, Outcome: e.Previous.Outcome, Encrypted: true}
 	}
-	return json.MarshalIndent(minimisedVerify(v), "", "  ")
+	if err := checkVerdicts(back); err != nil {
+		return nil, fmt.Errorf("state: an encrypted archive's verify record: %w", err)
+	}
+	return json.MarshalIndent(e, "", "  ")
 }
 
 // encryptedIntegrityAttention is the integrity notice beside an encrypted archive:

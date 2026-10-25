@@ -427,28 +427,59 @@ const (
 
 // ReadLastVerify reads the verify record, distinguishing absent from unreadable
 // so a status surface can fail closed on each.
+//
+// The record is writable by anyone who can write the folder, so it is read as one
+// would read a planted file: a link or a pipe at its name is unreadable, never
+// followed or waited on, and the read is bounded (the adversarial pass, OUT-08).
+// Its status is one of the two a verify writes — a carried verdict is a finished
+// one — and an encrypted record's finished verdict is one of the closed list;
+// anything else is not a record status can judge, and no text of it is echoed
+// (LEAK-02, LEAK-03).
 func ReadLastVerify(out string) (LastVerify, LastVerifyState, error) {
 	var v LastVerify
-	data, err := os.ReadFile(filepath.Join(out, LastVerifyName))
+	data, err := util.ReadRegularFile(filepath.Join(out, LastVerifyName), maxLastVerifySize)
 	if errors.Is(err, fs.ErrNotExist) {
 		return v, LastVerifyAbsent, nil
 	}
 	if err != nil {
 		return v, LastVerifyUnreadable, err
 	}
-	if err := json.Unmarshal(data, &v); err != nil {
+	if json.Unmarshal(data, &v) != nil {
+		// Never the decoder's own words: they quote the record's text, a time field's
+		// included (the fix re-verification, FV-R-01).
+		return v, LastVerifyUnreadable, errors.New("it is not a record MailArchive writes")
+	}
+	if v.Previous != nil {
+		v.Previous.Previous = nil
+	}
+	if err := checkVerdicts(v); err != nil {
 		return v, LastVerifyUnreadable, err
 	}
-	v.Status = util.StripControl(v.Status)
-	if v.Previous != nil {
-		v.Previous.Status, v.Previous.Previous = util.StripControl(v.Previous.Status), nil
+	return v, LastVerifyPresent, nil
+}
+
+// maxLastVerifySize bounds the last-verify record: a plaintext one carrying a
+// previous verdict is under 2 KiB.
+const maxLastVerifySize = 64 << 10
+
+// checkVerdicts refuses a record a verify does not write: a status other than
+// running or done, a carried verdict that is not a finished one, and on an
+// encrypted record a finished verdict whose outcome is not in the closed list. A
+// running record has no outcome yet.
+func checkVerdicts(v LastVerify) error {
+	if v.Status != VerifyRunning && v.Status != VerifyDone {
+		return errors.New("its status is not one MailArchive writes")
 	}
-	// An encrypted record's verdict is one of the closed list, or it is not one
-	// status can judge: the record is writable by anyone who can write the folder.
+	if v.Previous != nil && v.Previous.Status != VerifyDone {
+		return errors.New("the verdict it carries is not a finished one")
+	}
 	for _, o := range []*LastVerify{&v, v.Previous} {
-		if o != nil && o.Encrypted && o.Outcome != "" && !KnownOutcome(o.Outcome) {
-			return v, LastVerifyUnreadable, fmt.Errorf("the verify outcome %q is not one MailArchive writes", util.StripControl(o.Outcome))
+		if o == nil || !o.Encrypted {
+			continue
+		}
+		if (o.Status == VerifyDone && !KnownOutcome(o.Outcome)) || (o.Status == VerifyRunning && o.Outcome != "") {
+			return errors.New("its verify outcome is not one MailArchive writes")
 		}
 	}
-	return v, LastVerifyPresent, nil
+	return nil
 }

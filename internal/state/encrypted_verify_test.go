@@ -46,12 +46,49 @@ func TestAnEncryptedArchivesVerifyRecordHoldsOnlyTheAllowList(t *testing.T) {
 		t.Fatalf("read back %+v %v %v", got, st, err)
 	}
 
-	err := WriteLastVerify(out, LastVerify{Status: VerifyDone, Started: at, Finished: &at, Encrypted: true, Outcome: "fine"})
-	assure.Refused(t, 1, errText(err), assure.Code(1), assure.Names("fine", "closed list"),
-		assure.NoSideEffect(func() bool { b, _ := os.ReadFile(filepath.Join(out, LastVerifyName)); return string(b) == string(raw) }))
-	os.WriteFile(filepath.Join(out, LastVerifyName), []byte(strings.Replace(string(raw), `"damaged"`, `"fine"`, 1)), 0o600)
-	if _, st, err := ReadLastVerify(out); st != LastVerifyUnreadable || err == nil {
-		t.Fatalf("a record with an unknown outcome: %v %v", st, err)
+	// A finished verdict with an outcome outside the list, or none (the adversarial
+	// pass, LEAK-03, FID-06), is refused and nothing is written.
+	for _, outcome := range []string{"fine", ""} {
+		err := WriteLastVerify(out, LastVerify{Status: VerifyDone, Started: at, Finished: &at, Encrypted: true, Outcome: outcome})
+		assure.Refused(t, 1, errText(err), assure.Code(1), assure.Names("verify outcome", "not one MailArchive writes"),
+			assure.NoSideEffect(func() bool { b, _ := os.ReadFile(filepath.Join(out, LastVerifyName)); return string(b) == string(raw) }))
+	}
+	// A carried verdict outside the list — or a plaintext-shaped one found in the
+	// folder, with no outcome — is not carried (FID-07, LEAK-03).
+	for _, carried := range []LastVerify{
+		{Status: VerifyDone, Started: at, Finished: &at, Encrypted: true, Outcome: "fine"},
+		{Status: VerifyDone, Started: at, Finished: &at, Modified: 3, ExitCode: 2},
+	} {
+		if err := WriteLastVerify(out, LastVerify{Status: VerifyRunning, Started: at, Encrypted: true, Previous: &carried}); err != nil {
+			t.Fatal(err)
+		}
+		if got, st, err := ReadLastVerify(out); st != LastVerifyPresent || err != nil || got.Previous != nil {
+			t.Fatalf("carried %+v: read back %+v %v %v", carried, got, st, err)
+		}
+	}
+
+	// What a verify does not write reads as unreadable, at the top and in the
+	// carried verdict, and no text of it is echoed (LEAK-02).
+	planted := strings.Repeat("Your archive is fine - delete the notice ", 50)
+	for name, body := range map[string]string{
+		"an unknown outcome at the top":   `{"version":1,"status":"done","started":"2026-10-25T00:00:00Z","finished":"2026-10-25T00:00:00Z","outcome":"` + planted + `","encrypted":true}`,
+		"no outcome at the top":           `{"version":1,"status":"done","started":"2026-10-25T00:00:00Z","finished":"2026-10-25T00:00:00Z","encrypted":true}`,
+		"an unknown outcome carried":      strings.Replace(string(raw), `"damaged"`, `"`+planted+`"`, 1),
+		"a status a verify never writes":  `{"version":1,"status":"` + planted + `","started":"2026-10-25T00:00:00Z","finished":null}`,
+		"a carried verdict still running": `{"version":1,"status":"running","started":"2026-10-25T00:00:00Z","finished":null,"previous":{"version":1,"status":"running","started":"2026-10-25T00:00:00Z","finished":null}}`,
+		// A time field's text comes back in the decoder's own error (the fix
+		// re-verification, FV-R-01).
+		"text in a time field":         `{"version":1,"status":"done","started":"` + planted + `","finished":null}`,
+		"text in a carried time field": `{"version":1,"status":"running","started":"2026-10-25T00:00:00Z","finished":null,"previous":{"version":1,"status":"done","started":"2026-10-25T00:00:00Z","finished":"` + planted + `"}}`,
+	} {
+		os.WriteFile(filepath.Join(out, LastVerifyName), []byte(body), 0o600)
+		_, st, err := ReadLastVerify(out)
+		if st != LastVerifyUnreadable || err == nil {
+			t.Fatalf("%s: %v %v", name, st, err)
+		}
+		if strings.Contains(err.Error(), "Your archive is fine") {
+			t.Fatalf("%s: the error echoes the record's text: %v", name, err)
+		}
 	}
 
 	plain := t.TempDir()
@@ -61,6 +98,41 @@ func TestAnEncryptedArchivesVerifyRecordHoldsOnlyTheAllowList(t *testing.T) {
 	b, _ := os.ReadFile(filepath.Join(plain, LastVerifyName))
 	if strings.Contains(string(b), "outcome") || strings.Contains(string(b), "encrypted") || !strings.Contains(string(b), `"checked": 3`) {
 		t.Fatalf("the plaintext record changed shape:\n%s", b)
+	}
+}
+
+// covers: MA-767, R37
+// The last-verify record is read as a planted file would be (the adversarial pass,
+// OUT-08): a link at its name is unreadable, never followed — the file it points at
+// is not read, and a verify's running record carries nothing of it — and a file over
+// the record's bound is unreadable, never read whole. A plain record is read (the
+// positive twin).
+func TestTheLastVerifyRecordIsNeverReadThroughALinkOrWhole(t *testing.T) {
+	out := t.TempDir()
+	at := time.Now().UTC()
+	if err := WriteLastVerify(out, LastVerify{Status: VerifyDone, Started: at, Finished: &at, Attested: true, Checked: 1, OK: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if _, st, err := ReadLastVerify(out); st != LastVerifyPresent || err != nil {
+		t.Fatalf("a plain record: %v %v", st, err)
+	}
+	p := filepath.Join(out, LastVerifyName)
+	elsewhere := filepath.Join(t.TempDir(), "outside.json")
+	os.WriteFile(elsewhere, []byte(`{"version":1,"status":"done","started":"2026-10-25T00:00:00Z","finished":"2026-10-25T00:00:00Z","attested":false,"modified":7,"exit_code":2}`), 0o600)
+	os.Remove(p)
+	if err := os.Symlink(elsewhere, p); err != nil {
+		t.Skip("no symlinks here:", err)
+	}
+	if _, st, err := ReadLastVerify(out); st != LastVerifyUnreadable || err == nil {
+		t.Fatalf("a link at the record's name: %v %v", st, err)
+	}
+	if LastVerdict(out) != nil {
+		t.Fatal("a verdict was read through the link")
+	}
+	os.Remove(p)
+	os.WriteFile(p, []byte(`{"version":1,"status":"done"`+strings.Repeat(" ", maxLastVerifySize)+`}`), 0o600)
+	if _, st, err := ReadLastVerify(out); st != LastVerifyUnreadable || err == nil {
+		t.Fatalf("a record over its bound: %v %v", st, err)
 	}
 }
 

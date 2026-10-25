@@ -647,3 +647,68 @@ precisions. They govern where they conflict with §4; each owes the slice's adve
   finished, outcome, encrypted and the carried previous verdict in the same shape. Status codes are
   `verify_<outcome>`. The integrity notice is written for the three RED outcomes, removed by `intact`,
   and left standing by the two amber ones.
+
+## 14. The 2b-4 adversarial pass — amendments (2026-10-25)
+
+The pass (`docs/review-encrypted-archives-phase2b4-adversarial.md`) amends §4 and §13 as follows; each
+is built and tested (MA-766, MA-767, with test gaps closed under MA-764 and MA-765).
+
+- **The rule behind `damaged` is §13's own: the keyed run refuses the state.** Applied where the first
+  build did not: a folder, link or special file at the envelope's name is `damaged` (the keyed load
+  refuses it before anything else), while a missing one stays healable; a plaintext manifest is
+  `damaged` whatever version it claims, before any newer format; a newer envelope asks for an upgrade
+  only where no pointer copy stands; a part of the file list that cannot be read is `damaged` when
+  I ≠ P (the keyed load tolerates one only at I = P); with no pointer, the folder is a new archive only
+  under `checkFresh`'s exact rules (two-character shard folders, regular files), each other state with
+  its own reason; a generation no writer reaches (2^64 − 1) is damage, so P + 1 never wraps.
+- **A file missing or changed only under `chunks/` is `not_attested`, not `damaged`** (CRIT-1). Every
+  record chunk has a second copy: the keyed load reads the good one and the next save rewrites both,
+  and it refuses, naming the file, only when both are lost. The search index is rebuildable. Without
+  the key the check cannot pair the copies, so it cannot attest "both lost"; and "restore the whole
+  archive folder from your newest backup copy" — `damaged`'s fixed remedy — would roll back every run
+  newer than that copy for a fault the next backup heals. Damage under `units/` stays `damaged`, and so
+  does every listed chunk missing or changed (both copies of every section are then gone, which the
+  check can tell). This applies §13's rule rather than adding one. The owner accepted it on 2026-10-25,
+  with this rule's own next step in place of `not_attested`'s fixed sentence: "What to do: run a backup
+  now. It rewrites the damaged copy from the good one. Then check the archive again. If the backup
+  stops and names a file, both copies are lost: restore the whole archive folder from your newest
+  backup copy." (`Check.Advice`, shown by `verify` and carried in `verify -json`; status keeps the
+  outcome's sentence, since the record holds no reason). Residual: a damaged search-index or history chunk is not healed by a
+  backup that does not load it, so the check stays amber until one does, or until Phase 3's keyed check
+  names the file.
+- **A link or a file where a folder belongs is `damaged`** wherever the backup refuses it: at
+  `inventory/` (the file-list write cannot pass it; the shards are never read or stat'd through it),
+  at `units/` or `chunks/`, and a link or special file where one of their shard folders belongs (the
+  start sweep refuses it once the file list is whole). A regular file there the sweep leaves alone.
+- **What nothing names is said plainly.** Files under `units/` and `chunks/` the file list does not
+  name are reported as unnamed, with nothing said of their removal: a backup removes only those a run
+  wrote since the record's last commit, which the check cannot tell without the key. The superseded
+  parts of the file list (and an interrupted first commit's files) are leftovers the next backup
+  removes — except where the file list is missing, behind (I < P) or partly unread, when the next
+  backup sweeps nothing and they are said to stay.
+- **The file opened must be the one judged** (`os.SameFile` between the per-segment judgement and the
+  opened descriptor), so a folder swapped for a link mid-check is never read as matching. An
+  `os.Root`-contained open was tried and set aside: on Windows it refuses reparse points, which may
+  include the cloud placeholders the keyed load reads, and would turn every OneDrive-kept archive RED.
+- **The last-verify record is read as a planted file**: no link, no pipe, at most 64 KiB; its status
+  is `running` or `done`, a carried verdict is a finished one, and an encrypted finished verdict has an
+  outcome of the closed list — anything else is unreadable, and no text of it (a decoder's error
+  quoting a time field included) is echoed. An unreadable record is a WARN even with no verify
+  schedule. A carried verdict with no outcome of the list is not carried. `status -json` gives an
+  encrypted check — at the top and carried — verify's own exit for its outcome, and never counts.
+
+Residuals, stated:
+- A listed file's size has no upper bound (OUT-01): a folder writer can list a huge sparse file and
+  keep the check hashing for days under the lock. Deliberate substitution is outside tier 1 (A5); a
+  unit has no size ceiling a bound could use (a preserved original is sealed whole); Ctrl-C ends the
+  check and releases the lock. A cancellable check is left for Phase 3's Desktop work.
+- The keyed side of CON-01: a backup that heals a damaged part of the file list and is killed after
+  its pointer lands, before its file list, leaves a state the keyed load refuses for good ("restore the
+  whole archive folder"). The check now says `damaged`, matching it. Making the keyed load accept that
+  state touches the F12 rollback guard and is left for its own review.
+- The plaintext last-run record (`.mailarchive-lastrun.json`) is still read with a plain read; the same
+  guarded reader should replace it (status would hang on a pipe there too).
+- A record shaped as a plaintext one inside an encrypted archive is judged by the plaintext rules
+  (LEAK-01, refuted: a folder writer can forge any verdict in either shape, and nothing of the mail
+  leaks). Phase 3's conversion should remove a plaintext archive's old record.
+- Windows was not exercised: the same-file check and a cloud placeholder at a listed path or folder.

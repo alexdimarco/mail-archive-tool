@@ -1054,6 +1054,14 @@ func (r *Report) has(code string) bool {
 // the verify in the backup's place still gives the cadence (MA-155); a verify
 // installed by an earlier release records none, so its staleness is not judged
 // — a guessed cadence would raise a false WARN.
+// lastVerifyCause is why the last-verify record could not be read, for a WARN.
+func lastVerifyCause(in Input) string {
+	if in.LastVerifyErr == nil {
+		return "corrupt or truncated"
+	}
+	return util.StripControl(in.LastVerifyErr.Error())
+}
+
 func assessVerifySchedule(r *Report, in Input, now time.Time) {
 	lv := in.LastVerify
 	done := in.LastVerifyState == state.LastVerifyPresent && lv.Status == state.VerifyDone && lv.Finished != nil
@@ -1087,13 +1095,15 @@ func assessVerifySchedule(r *Report, in Input, now time.Time) {
 		// reported once, by the last-verify block in Assess, which also knows
 		// which verb holds the lock; this function only judges its staleness.
 		if in.LastVerifyState == state.LastVerifyUnreadable {
-			cause := "corrupt or truncated"
-			if in.LastVerifyErr != nil {
-				cause = util.StripControl(in.LastVerifyErr.Error())
-			}
-			r.warn("lastverify_unreadable", fmt.Sprintf("the last-verify record %s is unreadable (%s), so the scheduled verify %q cannot be judged — the next verify rewrites it, or run `mailarchive verify -out %q` now", filepath.Join(in.Out, state.LastVerifyName), cause, vd.Name, in.Out))
+			r.warn("lastverify_unreadable", fmt.Sprintf("the last-verify record %s is unreadable (%s), so the scheduled verify %q cannot be judged — the next verify rewrites it, or run `mailarchive verify -out %q` now", filepath.Join(in.Out, state.LastVerifyName), lastVerifyCause(in), vd.Name, in.Out))
 		}
 		return
+	}
+	if in.LastVerifyState == state.LastVerifyUnreadable {
+		// With no verify schedule there is nothing to judge staleness by, but the
+		// record may have held an earlier RED: it is never silent (F79; the fix
+		// re-verification, FV-R-03).
+		r.warn("lastverify_unreadable", fmt.Sprintf("the last-verify record %s is unreadable (%s), so its last verdict cannot be judged — run `mailarchive verify -out %q` to check the archive again", filepath.Join(in.Out, state.LastVerifyName), lastVerifyCause(in), in.Out))
 	}
 	if in.VerifyDescErr != nil && !errors.Is(in.VerifyDescErr, os.ErrNotExist) {
 		r.warn("verify_descriptor_unreadable", in.VerifyDescErr.Error())
@@ -2098,7 +2108,16 @@ func jsonLastVerify(lv state.LastVerify) *JSONLastVerify {
 		ExitCode: lv.ExitCode, Outcome: lv.Outcome, Encrypted: lv.Encrypted,
 	}
 	if lv.Encrypted {
+		// The record keeps no counts and no exit code (A18): the verdict and verify's
+		// exit for it come from the outcome alone, so a damaged archive never reads as
+		// exit 0 (the adversarial pass, FID-05), and counts a planted record carries
+		// are never shown (the fix re-verification, FV-R-02).
 		j.Attested = lv.Outcome == state.OutcomeIntact
+		j.Records, j.WithFixity, j.Checked, j.OK, j.Modified, j.Missing = 0, 0, 0, 0, 0, 0
+		j.Unrecorded, j.Unexpected, j.Recorded, j.ExitCode = 0, 0, 0, 0
+		if lv.Status == state.VerifyDone && !j.Attested {
+			j.ExitCode = 2
+		}
 	}
 	if lv.Previous != nil {
 		p := *lv.Previous

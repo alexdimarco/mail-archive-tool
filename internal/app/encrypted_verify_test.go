@@ -193,6 +193,129 @@ func TestAKeylessCheckFindsDamageAndStatusSaysSo(t *testing.T) {
 }
 
 // covers: MA-764, R37
+// The keyless check runs under the archive lock (phase2b §4): while another run holds
+// it, verify is refused as busy, naming it, and writes nothing — no last-verify
+// record, nothing changed (the adversarial pass, FID-02). The positive twin: with the
+// lock released the same archive checks intact.
+func TestKeylessVerifyTakesTheArchiveLock(t *testing.T) {
+	out := sealedArchive(t)
+	held, err := lockfile.AcquireAs(filepath.Join(out, lockfile.Name), "export")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotTree(t, out)
+	_, verr := Verify(out, VerifyOptions{}, discard(), nil)
+	assure.Refused(t, 1, errText(verr), assure.Code(1), assure.Names("in use"),
+		assure.NoSideEffect(func() bool {
+			_, statErr := os.Stat(filepath.Join(out, state.LastVerifyName))
+			return errors.Is(statErr, fs.ErrNotExist) && sameTree(before, snapshotTree(t, out))
+		}))
+	held.Release()
+	if rep, err := Verify(out, VerifyOptions{}, discard(), nil); err != nil || rep.Outcome != state.OutcomeIntact {
+		t.Fatalf("with the lock released: %+v %v", rep, err)
+	}
+}
+
+func errText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+// covers: MA-767, R37
+// A link at the last-verify record's name is never read (the adversarial pass,
+// OUT-08): the check's running record carries no verdict from the file it points at,
+// that file is left as it was, and the record the check writes is its own file in the
+// archive. Likewise a link naming the archive itself is checked as the archive (as a
+// linked -out is for a plaintext verify), while links inside it stay refused (CRIT-2).
+func TestKeylessVerifyFollowsNoLinkToItsRecord(t *testing.T) {
+	out := sealedArchive(t)
+	outside := filepath.Join(t.TempDir(), "outside.json")
+	body := `{"version":1,"status":"done","started":"2026-10-25T00:00:00Z","finished":"2026-10-25T00:00:00Z","outcome":"damaged","encrypted":true}`
+	os.WriteFile(outside, []byte(body), 0o600)
+	if err := os.Symlink(outside, filepath.Join(out, state.LastVerifyName)); err != nil {
+		t.Skip("no symlinks here:", err)
+	}
+	var mid map[string]any
+	rep, err := Verify(out, VerifyOptions{}, discard(), func(Report) { mid = requireMinimisedVerify(t, out, state.VerifyRunning, "") })
+	if err != nil || rep.Outcome != state.OutcomeIntact {
+		t.Fatalf("%+v %v", rep, err)
+	}
+	if mid["previous"] != nil {
+		t.Fatalf("the running record carried a verdict read through the link: %v", mid)
+	}
+	if b, _ := os.ReadFile(outside); string(b) != body {
+		t.Fatal("the file outside the archive changed")
+	}
+	if fi, err := os.Lstat(filepath.Join(out, state.LastVerifyName)); err != nil || !fi.Mode().IsRegular() {
+		t.Fatalf("the record is not the archive's own file: %v", err)
+	}
+
+	link := filepath.Join(t.TempDir(), "archive")
+	if err := os.Symlink(out, link); err != nil {
+		t.Skip("no symlinks here:", err)
+	}
+	if rep, err := Verify(link, VerifyOptions{}, discard(), nil); err != nil || rep.Outcome != state.OutcomeIntact {
+		t.Fatalf("a link naming the archive: %+v %v", rep, err)
+	}
+}
+
+// covers: MA-764, R37
+// Every outcome renders in verify's words (FID-10): the headline — "intact:", "NOT
+// attested:", "NOT checked:" or "NOT intact:" — with the rule's reason and, when not
+// intact, the outcome's fixed sentence; the counts, OK net of the problems, a bounded
+// sample with the rest counted as truncated; leftovers said to be removed only when
+// the next backup removes them; parts of the file list unread; and the run-log line
+// with the outcome and its verdict.
+func TestAKeylessReportSaysEachOutcome(t *testing.T) {
+	headline := map[string]string{
+		state.OutcomeIntact: "intact: ", state.OutcomeNotAttested: "NOT attested: ", state.OutcomeNewerFormat: "NOT checked: ",
+		state.OutcomeDamaged: "NOT intact: ", state.OutcomeRestoredOlder: "NOT intact: ", state.OutcomeUnfinishedSave: "NOT intact: ",
+	}
+	for outcome, head := range headline {
+		c := container.Check{Outcome: outcome, Reason: "the rule's reason", Checked: 10, Missing: 3, Modified: 1, Unnamed: 5, Leftovers: 4, PartsUnread: 2,
+			Problems: []container.FileProblem{{Path: "units/ab/ab01", Kind: "missing"}}}
+		r := keylessReport("/a", c)
+		if r.OK != 6 || r.Truncated["missing"] != 2 || r.Truncated["modified"] != 1 {
+			t.Fatalf("%s: ok %d, truncated %v", outcome, r.OK, r.Truncated)
+		}
+		text := strings.Join(VerifySummary(r), "\n")
+		for _, want := range []string{head + "the rule's reason", "files checked=10 · ok=6 · missing=3 · modified=1", "missing: units/ab/ab01",
+			"… 2 more missing", "… 1 more modified", "5 file(s) in the archive are not in its file list — they do not change the outcome",
+			"4 superseded file(s) of its file list remain — the next backup removes them", "2 part(s) of the archive's file list could not be read"} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s: the summary does not say %q:\n%s", outcome, want, text)
+			}
+		}
+		if (outcome != state.OutcomeIntact) != strings.Contains(text, state.OutcomeText(outcome)) {
+			t.Fatalf("%s: the outcome's sentence is shown only when not intact:\n%s", outcome, text)
+		}
+		line := VerifyResultLine(r)
+		verdict := map[bool]string{true: "attested ", false: "NOT-ATTESTED "}[outcome == state.OutcomeIntact]
+		if !strings.HasPrefix(line, verdict) || !strings.Contains(line, "outcome="+outcome) || !strings.Contains(line, "unnamed=5 leftovers=4") {
+			t.Fatalf("%s: run-log line %q", outcome, line)
+		}
+		c.LeftoversStay = true
+		text = strings.Join(VerifySummary(keylessReport("/a", c)), "\n")
+		if strings.Contains(text, "the next backup removes") || !strings.Contains(text, "9 file(s) in the archive are not in the part of its file list that could be read") {
+			t.Fatalf("%s: leftovers that stay:\n%s", outcome, text)
+		}
+	}
+	// A rule's own next step replaces the outcome's fixed sentence (the owner's
+	// wording for a damaged record copy, 2026-10-25).
+	c := container.Check{Outcome: state.OutcomeNotAttested, Reason: "the rule's reason", Advice: "What to do: the rule's own step."}
+	r := keylessReport("/a", c)
+	text := strings.Join(VerifySummary(r), "\n")
+	if !strings.Contains(text, "NOT attested: the rule's reason\n  What to do: the rule's own step.") || strings.Contains(text, state.OutcomeText(c.Outcome)) {
+		t.Fatalf("the rule's own step is not shown in place of the outcome's sentence:\n%s", text)
+	}
+	if b, err := json.Marshal(r); err != nil || !strings.Contains(string(b), `"advice":"What to do: the rule's own step."`) {
+		t.Fatalf("verify -json does not carry the step: %s %v", b, err)
+	}
+}
+
+// covers: MA-764, R37
 // What keyless verify still refuses: -record (every backup records its files'
 // checksums itself), naming the archive and the remedy, with nothing written; and a
 // folder inside an encrypted archive, as every keyless operation refuses one. The

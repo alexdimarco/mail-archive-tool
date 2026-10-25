@@ -153,12 +153,49 @@ func TestStatusJudgesAnEncryptedArchiveByWhatNeedsNoKey(t *testing.T) {
 	}
 }
 
-// covers: MA-765, R37
+// covers: MA-767, R37
+// status -json of an encrypted archive's check comes from the outcome alone (the fix
+// re-verification): counts and an exit code a planted record carries are never shown
+// (FV-R-02), and the verdict a running record carries gives verify's exit for its
+// outcome too (FV-T-04). A last-verify record that cannot be read is a WARN naming it
+// and its remedy even with no verify schedule — an earlier RED behind it is never
+// silent (FV-R-03).
+func TestStatusJSONOfAKeylessCheckIsItsOutcome(t *testing.T) {
+	sealed := t.TempDir()
+	sealFolder(t, sealed)
+	p := filepath.Join(sealed, state.LastVerifyName)
+	os.WriteFile(p, []byte(`{"version":1,"status":"done","started":"2026-10-25T00:00:00Z","finished":"2026-10-25T00:01:00Z","outcome":"intact","encrypted":true,"exit_code":1,"modified":5,"missing":2,"checked":9}`), 0o600)
+	in := Gather(sealed, "")
+	j := JSON(in, Assess(in, time.Now())).LastVerify
+	if j == nil || !j.Attested || j.ExitCode != 0 || j.Modified+j.Missing+j.Checked != 0 {
+		t.Fatalf("a planted record's counts shown: %+v", j)
+	}
+	at := time.Now().Add(-time.Hour).UTC()
+	f := at.Add(time.Minute)
+	prev := state.LastVerify{Status: state.VerifyDone, Started: at, Finished: &f, Encrypted: true, Outcome: state.OutcomeDamaged}
+	if err := state.WriteLastVerify(sealed, state.LastVerify{Status: state.VerifyRunning, Started: f, Encrypted: true, Previous: &prev}); err != nil {
+		t.Fatal(err)
+	}
+	in = Gather(sealed, "")
+	if j := JSON(in, Assess(in, time.Now())).LastVerify; j == nil || j.Previous == nil || j.Previous.ExitCode != 2 || j.ExitCode != 0 {
+		t.Fatalf("the carried verdict's exit: %+v", j)
+	}
+
+	os.WriteFile(p, []byte(`{"status":`), 0o600)
+	in = Gather(sealed, "")
+	r := Assess(in, time.Now())
+	if in.HasVerifyDescriptor || !slices.Contains(r.Codes, "lastverify_unreadable") || !strings.Contains(strings.Join(r.Reasons, "\n"), "mailarchive verify -out") {
+		t.Fatalf("an unreadable record with no verify schedule: %s %v %v", r.Posture, r.Codes, r.Reasons)
+	}
+}
+
+// covers: MA-765, MA-767, R37
 // Status judges an encrypted archive's last keyless check from its outcome alone
 // (phase2b §4), without the key: intact is no fault; not_attested and newer_format
 // WARN; damaged, restored_older and unfinished_save are RED — each in the outcome's
-// fixed words, under the code verify_<outcome>. A running check that never finished
-// is still judged by the verdict it carries (F79).
+// fixed words, under the code verify_<outcome>; status -json gives verify's exit for
+// the outcome, 0 only for intact. A running check that never finished is still
+// judged by the verdict it carries (F79).
 func TestStatusJudgesAKeylessCheckByItsOutcome(t *testing.T) {
 	sealed := t.TempDir()
 	sealFolder(t, sealed)
@@ -174,7 +211,15 @@ func TestStatusJudgesAKeylessCheckByItsOutcome(t *testing.T) {
 		if err := state.WriteLastVerify(sealed, done(outcome)); err != nil {
 			t.Fatal(err)
 		}
-		r := Assess(Gather(sealed, ""), time.Now())
+		in := Gather(sealed, "")
+		r := Assess(in, time.Now())
+		// status -json: verify's exit for the outcome, never 0 for one that is not
+		// intact, the counts the record does not keep left 0 (the adversarial pass,
+		// FID-05).
+		if j := JSON(in, r).LastVerify; j == nil || j.Outcome != outcome || j.Attested != (outcome == state.OutcomeIntact) ||
+			j.ExitCode != map[bool]int{true: 0, false: 2}[outcome == state.OutcomeIntact] || j.Missing+j.Modified != 0 {
+			t.Fatalf("%s: status -json last_verify %+v", outcome, j)
+		}
 		code := "verify_" + outcome
 		switch {
 		case want == "" && slices.ContainsFunc(r.Codes, func(c string) bool { return strings.HasPrefix(c, "verify_") }):

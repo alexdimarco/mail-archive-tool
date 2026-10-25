@@ -855,7 +855,11 @@ unaffected and the version is not bumped.)
   unexpected, recorded, exit_code}` — or `null` when no verify has run. While
   a verify is running (or after one that never finished) `status` is
   `running` and an optional `previous` object carries the last finished
-  verdict, which the posture still judges.
+  verdict, which the posture still judges. For an encrypted archive the record
+  also carries `encrypted: true` and `outcome` (one of `intact`, `not_attested`,
+  `damaged`, `restored_older`, `unfinished_save`, `newer_format`); it keeps no
+  counts, so the counts read `0`, `attested` is `true` only for `intact`, and a
+  finished check's `exit_code` is `0` for `intact` and `2` otherwise.
 - `schedule` is `{name, state, interval, at, exe, host}` (present only when a
   schedule is recorded).
 - `verify_schedule` is the scheduled verify in the same shape, from its own

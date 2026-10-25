@@ -157,8 +157,10 @@ func TestEveryKeylessCommandRefusesAnEncryptedArchive(t *testing.T) {
 			{[]string{"verify", "-out", out, "-log", filepath.Join(out, "run.log")}, []string{out, "-log"}},
 			{[]string{"verify", "-record", "-out", out}, []string{out, "without -record"}},
 		} {
+			// The exit as it is: a refusal is 1, never verify's not-attested 2 (X1; the
+			// adversarial pass, FID-08).
 			msg, err := run(refused.args...)
-			assure.Refused(t, min(code(err), 1), msg, assure.Code(1), assure.Names(refused.names...),
+			assure.Refused(t, code(err), msg, assure.Code(1), assure.Names(refused.names...),
 				assure.NoSideEffect(func() bool { return reflect.DeepEqual(filesUnder(t, out), before) }))
 		}
 		// This folder's record file is a plaintext manifest beside a vault: damage.

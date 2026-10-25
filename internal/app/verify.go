@@ -86,14 +86,20 @@ type Report struct {
 
 	// An encrypted archive's keyless check (tier 1, design-encrypted-archives-phase2b
 	// §4): its outcome, one of the closed list (state.Outcome*), the rule that decided
-	// it, the files nothing lists (the next backup removes them) and the parts of its
-	// file list that could not be read. Checked, OK, Missing and Modified count the
-	// files its file list names; records, fixity and unrecorded do not apply.
-	Encrypted   bool   `json:"encrypted,omitempty"`
-	Outcome     string `json:"outcome,omitempty"`
-	Reason      string `json:"reason,omitempty"`
-	Leftovers   int    `json:"leftovers,omitempty"`
-	PartsUnread int    `json:"parts_unread,omitempty"`
+	// it and the rule's own next step when it has one (Advice), the files under
+	// units/ and chunks/ its file list does not name, the
+	// superseded parts of its file list (the next backup removes them, unless
+	// LeftoversStay: its file list is missing, behind or partly unread) and the parts
+	// of its file list that could not be read. Checked, OK, Missing and Modified count
+	// the files its file list names; records, fixity and unrecorded do not apply.
+	Encrypted     bool   `json:"encrypted,omitempty"`
+	Outcome       string `json:"outcome,omitempty"`
+	Reason        string `json:"reason,omitempty"`
+	Advice        string `json:"advice,omitempty"`
+	Unnamed       int    `json:"unnamed,omitempty"`
+	Leftovers     int    `json:"leftovers,omitempty"`
+	LeftoversStay bool   `json:"leftovers_stay,omitempty"`
+	PartsUnread   int    `json:"parts_unread,omitempty"`
 }
 
 // verifyJSONVersion is the schema version of the `verify -json` document, so a
@@ -329,8 +335,8 @@ func verifyKeyless(out string, onProgress func(Report)) (Report, error) {
 
 // keylessReport is a keyless check's verdict as verify reports it.
 func keylessReport(out string, c container.Check) Report {
-	r := Report{Out: out, Encrypted: true, Outcome: c.Outcome, Reason: c.Reason, Leftovers: c.Leftovers, PartsUnread: c.PartsUnread,
-		Checked: c.Checked, OK: c.Checked - c.Missing - c.Modified, Missing: c.Missing, Modified: c.Modified}
+	r := Report{Out: out, Encrypted: true, Outcome: c.Outcome, Reason: c.Reason, Advice: c.Advice, Unnamed: c.Unnamed, Leftovers: c.Leftovers, LeftoversStay: c.LeftoversStay,
+		PartsUnread: c.PartsUnread, Checked: c.Checked, OK: c.Checked - c.Missing - c.Modified, Missing: c.Missing, Modified: c.Modified}
 	shown := map[string]int{}
 	for _, p := range c.Problems {
 		r.Problems = append(r.Problems, Problem{Path: p.Path, Kind: p.Kind, Detail: p.Detail})
@@ -740,7 +746,8 @@ func VerifySummary(r Report) []string {
 
 // keylessSummary renders an encrypted archive's keyless check: what it looked at,
 // the counts, a bounded sample of the files not as listed, the leftovers, and the
-// outcome with the rule that decided it and the outcome's fixed remedy.
+// outcome with the rule that decided it and its remedy: the rule's own next step
+// when it has one, else the outcome's fixed sentence.
 func keylessSummary(r Report) []string {
 	out := []string{
 		fmt.Sprintf("Keyless check of the encrypted archive %s", r.Out),
@@ -759,21 +766,33 @@ func keylessSummary(r Report) []string {
 			out = append(out, fmt.Sprintf("  … %d more %s (list truncated)", n, kind))
 		}
 	}
-	if r.Leftovers > 0 {
-		out = append(out, fmt.Sprintf("note: %d file(s) in the archive are not in its file list — leftovers the next backup removes; nothing to do", r.Leftovers))
+	switch {
+	case r.LeftoversStay && r.Unnamed+r.Leftovers > 0:
+		out = append(out, fmt.Sprintf("note: %d file(s) in the archive are not in the part of its file list that could be read", r.Unnamed+r.Leftovers))
+	default:
+		if r.Unnamed > 0 {
+			out = append(out, fmt.Sprintf("note: %d file(s) in the archive are not in its file list — they do not change the outcome", r.Unnamed))
+		}
+		if r.Leftovers > 0 {
+			out = append(out, fmt.Sprintf("note: %d superseded file(s) of its file list remain — the next backup removes them; nothing to do", r.Leftovers))
+		}
 	}
 	if r.PartsUnread > 0 {
 		out = append(out, fmt.Sprintf("note: %d part(s) of the archive's file list could not be read; the next backup rewrites them", r.PartsUnread))
+	}
+	remedy := state.OutcomeText(r.Outcome)
+	if r.Advice != "" {
+		remedy = r.Advice
 	}
 	switch {
 	case r.Attested():
 		out = append(out, "intact: "+r.Reason)
 	case r.Outcome == state.OutcomeNotAttested:
-		out = append(out, "NOT attested: "+r.Reason, "  "+state.OutcomeText(r.Outcome))
+		out = append(out, "NOT attested: "+r.Reason, "  "+remedy)
 	case r.Outcome == state.OutcomeNewerFormat:
-		out = append(out, "NOT checked: "+r.Reason, "  "+state.OutcomeText(r.Outcome))
+		out = append(out, "NOT checked: "+r.Reason, "  "+remedy)
 	default:
-		out = append(out, "NOT intact: "+r.Reason, "  "+state.OutcomeText(r.Outcome))
+		out = append(out, "NOT intact: "+r.Reason, "  "+remedy)
 	}
 	return out
 }
@@ -785,7 +804,7 @@ func VerifyResultLine(r Report) string {
 		verdict = "NOT-ATTESTED"
 	}
 	if r.Encrypted {
-		return fmt.Sprintf("%s outcome=%s checked=%d ok=%d missing=%d modified=%d leftovers=%d", verdict, r.Outcome, r.Checked, r.OK, r.Missing, r.Modified, r.Leftovers)
+		return fmt.Sprintf("%s outcome=%s checked=%d ok=%d missing=%d modified=%d unnamed=%d leftovers=%d", verdict, r.Outcome, r.Checked, r.OK, r.Missing, r.Modified, r.Unnamed, r.Leftovers)
 	}
 	return fmt.Sprintf("%s records=%d with-fixity=%d checked=%d ok=%d modified=%d missing=%d unrecorded=%d unexpected=%d recorded=%d",
 		verdict, r.Records, r.WithFixity, r.Checked, r.OK, r.Modified, r.Missing, r.Unrecorded, r.Unexpected, r.Recorded)

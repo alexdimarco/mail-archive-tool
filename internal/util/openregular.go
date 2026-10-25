@@ -3,6 +3,7 @@ package util
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"runtime"
@@ -56,6 +57,34 @@ func OpenRegularFile(path string) (*os.File, error) {
 		return nil, err
 	}
 	return checkRegular(f, path)
+}
+
+// ReadRegularFile reads at most max bytes of path, a record file a folder writer may
+// have planted something at: a link is refused, not followed, and so is anything
+// whose descriptor is not readable (a pipe is neither waited on nor read); a file
+// over max is refused, never read whole. A missing file's error wraps
+// fs.ErrNotExist.
+func ReadRegularFile(path string, max int64) ([]byte, error) {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if fi.Mode()&fs.ModeSymlink != 0 || !DescriptorReadable(runtime.GOOS, fi.Mode()) {
+		return nil, &NotRegularError{Path: path, Mode: fi.Mode()}
+	}
+	f, err := OpenRegularFile(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, max+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > max {
+		return nil, fmt.Errorf("%s is over its %d-byte bound", path, max)
+	}
+	return data, nil
 }
 
 // OpenRegularFileIn is OpenRegularFile for the file name inside root, an os.Root

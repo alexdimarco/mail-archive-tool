@@ -231,7 +231,11 @@ to be confirmed in the 10-lens review.)
   (§4.1)** + the reproducibility test move (§4.3). The heaviest slice.
 - **Phase 3 — the UX:** wizard step, Desktop `sec-encryption` card, CLI flags, the reader
   unlock, and the Decrypt-a-plaintext-copy escape hatch, and the break glass in the
-  archive (§1: the plaintext note, and the bundled program copy).
+  archive (§1: the plaintext note, and the bundled program copy). Owner ruling 2026-10-25:
+  the friction review and the UX-contract (X1–X17) consistency check of encrypted archives
+  are deferred to here, as one walk of the whole lifecycle — setup, unlock, the keyless
+  check's and status's wording, the refusals, the break glass, a lost key, a copy on a USB
+  drive — since until Phase 3 nothing lets a user make or open an encrypted archive.
 - **Phase 4 — unattended scheduled backups** against an encrypted archive (stored wrapped
   key), with the health/status surfacing ("this archive is encrypted").
 
