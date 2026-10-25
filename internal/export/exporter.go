@@ -158,6 +158,12 @@ type Exporter struct {
 	// (P2a-C1). hooked records that the hook is registered.
 	pendingDeletes []unitRev
 	hooked         bool
+	// stage holds what the export of one message did to the unit store until its
+	// record is added: the revisions it wrote and the ones it would supersede. A
+	// message whose export fails before its record is added removes what it wrote
+	// (nothing names it) and supersedes nothing (the durable record still names the
+	// old revisions) — Phase-2a adversarial pass F05/F10.
+	stage *unitStage
 
 	Stats  Stats
 	Issues []Issue // verification findings (attachments/inline images not fully exported)
@@ -408,6 +414,9 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	var unit string
 	var prevSealed state.SealedSet
 	if e.Units != nil {
+		st := &unitStage{}
+		e.stage = st
+		defer e.endStage(st)
 		if seen {
 			if prev.Unit == "" {
 				return false, &ItemError{msg: "write an encrypted unit", Err: errUnitlessRecord}
@@ -442,7 +451,14 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		if e.Units != nil {
 			// Encrypted: the original is carried BY UNIT, whatever the logical stem now
 			// is — the record's unit is its only copy (R20, MC8, P2a-C2).
-			if prevSealed.EML != nil && e.Units.Present(unit, vault.UnitOriginal, *prevSealed.EML) {
+			// An original that cannot be looked at just now (a sharing violation, an I/O
+			// error) is kept and carried, never read as gone: only one confirmed gone is
+			// dropped (F11).
+			present, cerr := false, error(nil)
+			if prevSealed.EML != nil {
+				present, cerr = e.Units.Check(unit, vault.UnitOriginal, *prevSealed.EML)
+			}
+			if present || cerr != nil {
 				rawName = base + ".eml"
 				sealed.EML = prevSealed.EML
 				if prev.Fixity != nil && prev.Fixity.EML != nil {
@@ -508,7 +524,7 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	if e.Units != nil && sealed.EML == nil && prevSealed.EML != nil {
 		// The record held an original this capture neither wrote nor could carry
 		// (its unit is gone from disk): it is not linked, and its stale revision goes.
-		e.queueDelete(unit, vault.UnitOriginal, prevSealed.EML.Rev)
+		e.stageDelete(unit, vault.UnitOriginal, prevSealed.EML.Rev)
 	}
 
 	e.Stats.AttachmentsInline += len(inlineConsumed)
@@ -534,6 +550,10 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 			data, zr, zerr = BuildZip(m.Attachments, inlineConsumed)
 		}
 		switch {
+		case errors.Is(zerr, ErrZipTooLarge) && prevSealed.Zip != nil:
+			// A re-capture whose attachments now exceed the ceiling would throw away the
+			// ones the record already holds: the record is kept as it was (F07).
+			return false, &ItemError{msg: "re-capture attachments", Err: fmt.Errorf("%w: the message's attachments now exceed the encrypted archive's limit, so the attachments already archived are kept and the record is left as it was", ErrZipTooLarge)}
 		case errors.Is(zerr, ErrZipTooLarge):
 			for i := range m.Attachments {
 				if !inlineConsumed[i] {
@@ -560,7 +580,7 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 			fx.Zip, sealed.Zip = &d, s
 		}
 		if sealed.Zip == nil && prevSealed.Zip != nil {
-			e.queueDelete(unit, vault.UnitAttachment, prevSealed.Zip.Rev)
+			e.stageDelete(unit, vault.UnitAttachment, prevSealed.Zip.Rev)
 		}
 		e.Stats.Attachments += zr.Written
 		for _, name := range zr.Empty {
@@ -745,6 +765,7 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		}
 	}
 	e.Manifest.Add(key, rec)
+	e.commitStage()
 	e.countReadGaps(m)
 	e.supersedePartial(store, key, m)
 	if e.OnExported != nil {
@@ -878,7 +899,9 @@ func (e *Exporter) sealKind(unit string, kind vault.UnitKind, logical string, da
 	}
 	sum := sha256.Sum256(data)
 	plain := state.FileDigest{SHA256: hex.EncodeToString(sum[:]), Size: int64(len(data))}
-	if prevSealed != nil && prevPlain != nil && *prevPlain == plain && e.Units.Present(unit, kind, *prevSealed) {
+	// Kept only when the unit on disk is exactly the one recorded: a damaged one is
+	// rewritten as a new revision, as a plaintext re-export rewrites its file (F09).
+	if prevSealed != nil && prevPlain != nil && *prevPlain == plain && e.Units.Intact(unit, kind, *prevSealed) {
 		kept := *prevSealed
 		return plain, &kept, nil
 	}
@@ -890,10 +913,59 @@ func (e *Exporter) sealKind(unit string, kind vault.UnitKind, logical string, da
 	if err != nil {
 		return state.FileDigest{}, nil, err
 	}
+	if e.stage != nil {
+		e.stage.written = append(e.stage.written, unitRev{unit, kind, rev})
+	}
 	if prevSealed != nil {
-		e.queueDelete(unit, kind, prevSealed.Rev)
+		e.stageDelete(unit, kind, prevSealed.Rev)
 	}
 	return plain, &s, nil
+}
+
+// unitStage is one message's export's effect on the unit store, held until its
+// record is added (Exporter.stage).
+type unitStage struct {
+	written, deletes []unitRev
+	committed        bool
+}
+
+// stageDelete holds a supersession until the message's record is added; outside
+// a staged export it is queued at once.
+func (e *Exporter) stageDelete(unit string, kind vault.UnitKind, rev uint32) {
+	if e.stage != nil {
+		e.stage.deletes = append(e.stage.deletes, unitRev{unit, kind, rev})
+		return
+	}
+	e.queueDelete(unit, kind, rev)
+}
+
+// commitStage is called right after the message's record is added: what it
+// superseded is queued for deletion after the next manifest save.
+func (e *Exporter) commitStage() {
+	if e.stage == nil {
+		return
+	}
+	e.stage.committed = true
+	for _, d := range e.stage.deletes {
+		e.queueDelete(d.unit, d.kind, d.rev)
+	}
+}
+
+// endStage closes a message's stage: when its record was never added — an error or
+// a panic before it — the revisions it wrote are removed (no record names them)
+// and the ones it would have superseded stay (the durable record still names them).
+func (e *Exporter) endStage(st *unitStage) {
+	if e.stage == st {
+		e.stage = nil
+	}
+	if st.committed {
+		return
+	}
+	for _, w := range st.written {
+		if err := e.Units.Remove(w.unit, w.kind, w.rev); err != nil && e.Log != nil {
+			e.Log.Printf("warning: could not remove %s, written by a message whose export failed: %v", e.Units.Name(w.unit, w.kind, w.rev), err)
+		}
+	}
 }
 
 // queueDelete schedules a unit revision for deletion after the next save.
@@ -909,7 +981,23 @@ func (e *Exporter) queueDelete(unit string, kind vault.UnitKind, rev uint32) {
 // names them is durable. A failure leaves an orphan the next keyed run's
 // inventory sweep removes.
 func (e *Exporter) flushDeletes() {
+	// A second guard (F05/F10): a revision the saved manifest still names is never
+	// deleted, whatever queued it.
+	named := map[unitRev]bool{}
+	for _, r := range e.Manifest.All() {
+		if r.Sealed == nil {
+			continue
+		}
+		for kind, s := range map[vault.UnitKind]*state.SealedUnit{vault.UnitMessage: r.Sealed.HTML, vault.UnitAttachment: r.Sealed.Zip, vault.UnitOriginal: r.Sealed.EML} {
+			if s != nil {
+				named[unitRev{r.Unit, kind, s.Rev}] = true
+			}
+		}
+	}
 	for _, d := range e.pendingDeletes {
+		if named[d] {
+			continue
+		}
 		if err := e.Units.Remove(d.unit, d.kind, d.rev); err != nil && e.Log != nil {
 			e.Log.Printf("warning: could not remove superseded unit %s: %v", e.Units.Name(d.unit, d.kind, d.rev), err)
 		}

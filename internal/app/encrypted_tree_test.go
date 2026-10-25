@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -123,6 +124,30 @@ func TestAnEncryptedRunsMessagesNameNoMail(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// covers: MA-747, R37
+// A write fault on a message of an encrypted archive that has written before is that
+// message's own — a gap, the run partial — never "the archive is unavailable": the
+// probe looks for units/, the folder an encrypted archive has, not a store folder it
+// never makes (F25). The positive twin: a plaintext archive's same fault is partial
+// too (MA-320).
+func TestAnEncryptedRunsWriteFaultIsTheItemsNotTheArchives(t *testing.T) {
+	src := encryptedSourcePST(t)
+	out, k := encryptedOut(t)
+	if _, err := Run(context.Background(), Options{Inputs: []string{src}, Out: out, Key: k}, discard(), nil); err != nil {
+		t.Fatal(err)
+	}
+	orig := exporterSetup
+	t.Cleanup(func() { exporterSetup = orig })
+	exporterSetup = func(e *export.Exporter) {
+		e.BeforeWrite = func(string) error { return sealedWriteErr(out, syscall.EACCES) }
+	}
+	_, err := Run(context.Background(), Options{Inputs: []string{src}, Out: out, Key: k, Mode: export.Full}, discard(), nil)
+	var fatal *RunFatalError
+	if errors.As(err, &fatal) || !errors.Is(err, ErrPartial) {
+		t.Fatalf("a write fault on an encrypted archive's messages: want a partial run, got %v", err)
 	}
 }
 

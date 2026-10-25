@@ -157,7 +157,12 @@ func (lr *localRun) probe(s *sourceRun) error {
 	// The store's directory is expected only where this store has written before: a
 	// first write that failed to create it says nothing about the archive.
 	if s.wrote || lr.exp.Manifest.HasToken(s.token) {
-		if _, err := os.Lstat(filepath.Join(lr.out, s.token)); err != nil {
+		// An encrypted archive has no store folder: its writes land in units/ (§3).
+		where := filepath.Join(lr.out, s.token)
+		if lr.exp.Units != nil {
+			where = filepath.Join(lr.out, export.UnitsDir)
+		}
+		if _, err := os.Lstat(where); err != nil {
 			return unavailable(lr.out, err)
 		}
 	}

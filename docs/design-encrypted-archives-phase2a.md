@@ -119,6 +119,12 @@ Sealed entries nor the pending-deletes list name, and that are older than the ru
 removed. It never runs mid-run. Before any write, a keyed run refuses (typed) when the archive is
 encrypted, `units/` is non-empty, and the manifest is missing, empty or has no records — the sweep
 never runs against such a manifest. 2b carries the same rule for the pointer.
+*Known gap, found by the Phase-2a adversarial pass (F12), deferred to 2b: a RESTORED older
+manifest (the corrupt-manifest remedy says "restore it from a backup") has records, so the sweep
+runs and removes the units of every message archived after that backup — on a plaintext archive
+those files would survive. The fix needs what 2b adds: its unit inventory (A17) records every unit
+written, so a unit the restored manifest does not name but the inventory does is kept (or the run
+refuses) instead of swept. Until then no keyed run is reachable by users (P2a-C20).*
 
 **Search rows ahead of the manifest (P2a-C22).** The index is flushed before the manifest; in an
 encrypted archive the reader drops hits with no manifest record as "not yet committed".

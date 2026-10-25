@@ -162,6 +162,16 @@ func (u *Units) open(rel string) (*os.File, fs.FileInfo, error) {
 // decrypts, so a planted, truncated or older revision is refused (A2) — then the
 // AEAD tag proves the rest.
 func (u *Units) Read(unit string, kind vault.UnitKind, s state.SealedUnit) ([]byte, error) {
+	sealed, err := u.readSealed(unit, kind, s)
+	if err != nil {
+		return nil, err
+	}
+	return u.Key.OpenUnit(kind, ref(unit, s.Rev), sealed)
+}
+
+// readSealed is the unit's ciphertext, read at most s.Size bytes and checked
+// against s's size and digest.
+func (u *Units) readSealed(unit string, kind vault.UnitKind, s state.SealedUnit) ([]byte, error) {
 	rel, err := u.rel(unit, kind, s.Rev)
 	if err != nil {
 		return nil, err
@@ -179,22 +189,42 @@ func (u *Units) Read(unit string, kind vault.UnitKind, s state.SealedUnit) ([]by
 	if int64(len(sealed)) != s.Size || hex.EncodeToString(sum[:]) != s.SHA256 {
 		return nil, fmt.Errorf("%w: %s is not the unit its record names (size or digest differs)", ErrUnitStore, rel)
 	}
-	return u.Key.OpenUnit(kind, ref(unit, s.Rev), sealed)
+	return sealed, nil
 }
 
 // Present reports whether the unit s records is on disk as a regular file of its
-// recorded size (a cheap check; Read proves the bytes).
+// recorded size (a cheap check; Read proves the bytes). A unit that cannot be
+// looked at reads as not present: callers that would DELETE on "not present" use
+// Check, which tells "gone" from "cannot tell".
 func (u *Units) Present(unit string, kind vault.UnitKind, s state.SealedUnit) bool {
+	present, err := u.Check(unit, kind, s)
+	return present && err == nil
+}
+
+// Check tells a unit that is on disk at its recorded size (true, nil) from one that
+// is confirmed gone (false, nil) and one that cannot be looked at — a sharing
+// violation, a permission, an I/O error (false, err): only the second is gone.
+func (u *Units) Check(unit string, kind vault.UnitKind, s state.SealedUnit) (bool, error) {
 	rel, err := u.rel(unit, kind, s.Rev)
 	if err != nil {
-		return false
+		return false, err
 	}
 	f, fi, err := u.open(rel)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
 	if err != nil {
-		return false
+		return false, err
 	}
 	f.Close()
-	return fi.Size() == s.Size
+	return fi.Size() == s.Size, nil
+}
+
+// Intact reports whether the unit s records is on disk with exactly its recorded
+// size and ciphertext digest: what a re-export may keep instead of rewriting.
+func (u *Units) Intact(unit string, kind vault.UnitKind, s state.SealedUnit) bool {
+	_, err := u.readSealed(unit, kind, s)
+	return err == nil
 }
 
 // Remove deletes the unit of kind at revision rev. A unit already gone is not
@@ -221,15 +251,22 @@ func (u *Units) SweepUnits(m *state.Manifest, before time.Time) (int, error) {
 	if exists, err := realDir(root); err != nil || !exists {
 		return 0, err
 	}
+	// Every name the manifest's records name, or no sweep at all: a name that cannot
+	// be derived (an unusable key) must never make every unit look unnamed.
 	named := map[string]bool{}
 	for _, r := range m.All() {
 		if r.Sealed == nil {
 			continue
 		}
 		for kind, s := range map[vault.UnitKind]*state.SealedUnit{vault.UnitMessage: r.Sealed.HTML, vault.UnitAttachment: r.Sealed.Zip, vault.UnitOriginal: r.Sealed.EML} {
-			if s != nil {
-				named[u.Name(r.Unit, kind, s.Rev)] = true
+			if s == nil {
+				continue
 			}
+			rel, err := u.rel(r.Unit, kind, s.Rev)
+			if err != nil {
+				return 0, fmt.Errorf("%w: a record's unit name cannot be derived, so nothing is swept: %w", ErrUnitStore, err)
+			}
+			named[filepath.ToSlash(rel)] = true
 		}
 	}
 	shards, err := os.ReadDir(root)
@@ -238,12 +275,14 @@ func (u *Units) SweepUnits(m *state.Manifest, before time.Time) (int, error) {
 	}
 	removed := 0
 	for _, sh := range shards {
+		// A plain file beside the shards (a .DS_Store, a desktop.ini) cannot redirect
+		// anything: it is left alone. A link or a special file is refused.
+		if sh.Type().IsRegular() {
+			continue
+		}
 		dir := filepath.Join(root, sh.Name())
 		if _, err := realDir(dir); err != nil {
 			return removed, err
-		}
-		if !sh.IsDir() {
-			continue
 		}
 		files, err := os.ReadDir(dir)
 		if err != nil {
@@ -263,12 +302,17 @@ func (u *Units) SweepUnits(m *state.Manifest, before time.Time) (int, error) {
 	return removed, nil
 }
 
-// HasUnitFiles reports whether units/ holds any file: an encrypted archive's
-// content is there even when its manifest is missing.
+// HasUnitFiles reports whether units/ holds any unit file (a 32-hex name in a shard
+// named by its first two): an encrypted archive's content is there even when its
+// manifest is missing. A stray file (a .DS_Store) is not a unit.
 func (u *Units) HasUnitFiles() bool {
 	found := false
-	filepath.WalkDir(filepath.Join(u.Root, UnitsDir), func(_ string, d fs.DirEntry, err error) error {
-		if err == nil && !d.IsDir() {
+	root := filepath.Join(u.Root, UnitsDir)
+	filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if name := d.Name(); len(name) == 32 && filepath.Base(filepath.Dir(p)) == name[:2] && filepath.Dir(filepath.Dir(p)) == root {
 			found = true
 			return filepath.SkipAll
 		}
