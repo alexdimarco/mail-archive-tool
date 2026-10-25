@@ -153,6 +153,11 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		// keeps the folder-scoped key.
 		DedupMailboxWide: true,
 	}
+	if opts.Key != nil {
+		if exp.Units, err = prepareEncrypted(opts, manifest, begun.Started, logger); err != nil {
+			return Result{}, err
+		}
+	}
 	if exporterSetup != nil {
 		exporterSetup(exp)
 	}
@@ -224,6 +229,18 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 			logger.Printf("deferring the one-time v3→v5 identity-collapse: a search index exists but is not open this run — re-run with -index so the manifest and index are re-keyed together")
 			collapseTokens = nil
 		}
+	}
+	// An encrypted archive never runs the identity collapse: its content check reads
+	// .eml files by logical path, which an encrypted archive has none of, so it
+	// would merge distinct messages (P2a-C7). A fresh encrypted archive has nothing
+	// to collapse and is simply marked; one that still owes a real collapse was
+	// encrypted wrongly (only the A12 conversion, which collapses first, encrypts).
+	if len(collapseTokens) > 0 && opts.Key != nil {
+		if manifest.Len() > 0 {
+			return Result{}, fmt.Errorf("%w: %s: it still owes the one-time identity collapse, which cannot run on an encrypted archive", ErrEncryptedArchive, opts.Out)
+		}
+		manifest.MarkCollapsed(collapseTokens...)
+		collapseTokens = nil
 	}
 	if len(collapseTokens) > 0 {
 		// Decide whether two same-(token,identity) records are one move-duplicate

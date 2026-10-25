@@ -26,6 +26,7 @@ import (
 	"mail-archive-tool/internal/source"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/util"
+	"mail-archive-tool/internal/vault"
 )
 
 // Options describes a single export run.
@@ -79,6 +80,13 @@ type Options struct {
 	// remedy names this option. An input listed here keeps its token and its archive.
 	// A file link out of the store and a special file stay refused for it too (R25).
 	FollowLinks []string
+
+	// Key, when non-nil, makes this an ENCRYPTED archive's run: content is sealed
+	// into units under the archive's key, which must open the vault in Out
+	// (design-encrypted-archives-phase2a). Nil — every run today — is a plaintext
+	// archive. Reaching it from production code is gated by assureblock's
+	// reachability test until Phase 3.
+	Key *vault.Key
 
 	// BeforeRead, when non-nil, runs once after the archive lock is held and the
 	// run has begun, and before any source is read: the opt-in Thunderbird
@@ -488,6 +496,11 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		Log:      logger,
 		KeepRaw:  opts.KeepRaw,
 		RunAt:    runAt,
+	}
+	if opts.Key != nil {
+		if exp.Units, err = prepareEncrypted(opts, manifest, runAt, logger); err != nil {
+			return Result{}, err
+		}
 	}
 
 	if exporterSetup != nil {

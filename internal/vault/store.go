@@ -24,9 +24,9 @@ const (
 	FileName   = ".mailarchive-vault.json"
 	BackupName = ".mailarchive-vault.bak.json"
 
-	// tempPattern names in-flight vault writes so export.SweepOrphans reaps a
+	// TempPattern names in-flight vault writes so export.SweepTemps reaps a
 	// crash's leftover (A8).
-	tempPattern = ".mailarchive-*.tmp"
+	TempPattern = ".mailarchive-*.tmp"
 
 	maxVaultBytes = 64 << 10
 )
@@ -392,6 +392,19 @@ func mostTelling(errs []error) error {
 // recorded for out, or the zero ID when none is recorded (a handed-over copy).
 func Open(out string, want ID, s Secret) (*Opened, error) { return openVault(out, want, s) }
 
+// VerifyKey proves that k opens the encrypted archive at out (whose id must be
+// want, when one is recorded) and hands out nothing: a writer that already holds
+// a key checks it belongs to the folder it is about to write (phase2a P2a-C9c).
+// Read-only, like Open.
+func VerifyKey(out string, want ID, k *Key) error {
+	o, err := openVault(out, want, KeySecret(k))
+	if err != nil {
+		return err
+	}
+	o.Key.Destroy()
+	return nil
+}
+
 // save writes v to the primary, then the mirror (A7) — each atomically, 0600,
 // with a sweepable temp name and a durable rename (A8). The primary is the
 // commit point: if it was written and the mirror was not, the change IS in
@@ -401,10 +414,10 @@ func save(out string, v *Vault) error {
 	if err != nil {
 		return err
 	}
-	if err := writeCopy(filepath.Join(out, FileName), b, tempPattern); err != nil {
+	if err := writeCopy(filepath.Join(out, FileName), b, TempPattern); err != nil {
 		return fmt.Errorf("write %s: %w", FileName, err)
 	}
-	if err := writeCopy(filepath.Join(out, BackupName), b, tempPattern); err != nil {
+	if err := writeCopy(filepath.Join(out, BackupName), b, TempPattern); err != nil {
 		return fmt.Errorf("%w: %s in %s holds the change, but %s could not be written (it is repaired on the next change or heal): %w",
 			ErrPartiallySaved, FileName, out, BackupName, err)
 	}

@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"mail-archive-tool/internal/assure"
-	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/lockfile"
 )
 
@@ -51,26 +50,6 @@ func TestCreateAtWritesTwoIdenticalPrivateCopies(t *testing.T) {
 		if strings.HasSuffix(e.Name(), ".tmp") {
 			t.Fatalf("a temp file survived: %s", e.Name())
 		}
-	}
-}
-
-// covers: MA-709, R37
-func TestVaultTempNameIsOneTheExporterSweeps(t *testing.T) {
-	out := t.TempDir()
-	f, err := os.CreateTemp(out, tempPattern)
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.Close()
-	old := time.Now().Add(-time.Hour)
-	if err := os.Chtimes(f.Name(), old, old); err != nil {
-		t.Fatal(err)
-	}
-	if n := export.SweepOrphans(out, time.Now(), nil); n != 1 {
-		t.Fatalf("SweepOrphans removed %d files, want the 1 crash-leftover vault temp", n)
-	}
-	if _, err := os.Stat(f.Name()); !os.IsNotExist(err) {
-		t.Fatalf("the leftover vault temp %s was not reaped", f.Name())
 	}
 }
 

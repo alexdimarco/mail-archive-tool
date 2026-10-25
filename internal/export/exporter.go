@@ -6,6 +6,7 @@ package export
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -18,6 +19,7 @@ import (
 	"mail-archive-tool/internal/model"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/util"
+	"mail-archive-tool/internal/vault"
 )
 
 // Mode selects how the manifest is consulted.
@@ -142,6 +144,20 @@ type Exporter struct {
 	// write's failure. It is nil in production — the seam a test injects an errno
 	// through (a full disk, a read-only volume) without a real one (MA-320).
 	BeforeWrite func(path string) error
+
+	// Units, when set, makes this an ENCRYPTED archive's export (design-encrypted-
+	// archives-phase2a): each message's page, attachments and original are sealed
+	// units under opaque names in units/, no folder tree is made, and the record's
+	// logical Path is unchanged. Nil — a plaintext archive — leaves every path of
+	// this file exactly as it was.
+	Units *Units
+
+	// pendingDeletes are superseded or dropped units, deleted only after a manifest
+	// that no longer names them is saved (flushDeletes, via Manifest.OnSaved): a
+	// crash before then leaves the old units the durable manifest still names
+	// (P2a-C1). hooked records that the hook is registered.
+	pendingDeletes []unitRev
+	hooked         bool
 
 	Stats  Stats
 	Issues []Issue // verification findings (attachments/inline images not fully exported)
@@ -385,9 +401,31 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	}
 	dirParts := append([]string{e.OutDir, store}, writeFolderPath...)
 	dir := filepath.Join(dirParts...)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	// An encrypted archive has no folder tree on disk: dir stays the LOGICAL folder
+	// the record's Path is computed in, and the message's units go to units/
+	// (phase2a §3). Its unit is the record's own when the final key already has one,
+	// else a new draw — whatever the source or path (P2a-C3).
+	var unit string
+	var prevSealed state.SealedSet
+	if e.Units != nil {
+		if seen {
+			if prev.Unit == "" {
+				return false, &ItemError{msg: "write an encrypted unit", Err: errUnitlessRecord}
+			}
+			unit = prev.Unit
+			if prev.Sealed != nil {
+				prevSealed = *prev.Sealed
+			}
+		} else {
+			var err error
+			if unit, err = e.drawUnit(); err != nil {
+				return false, &ItemError{msg: "draw a unit", Err: err}
+			}
+		}
+	} else if err := os.MkdirAll(dir, 0o755); err != nil {
 		return false, &FolderError{Dir: dir, Err: err}
 	}
+	var sealed state.SealedSet
 
 	// The stem is built from the identity view's subject, never the displayed one: a
 	// parser that decodes the subject differently cannot rename the files of a message
@@ -401,9 +439,22 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	// the page still links it and its fixity is carried on (MC8).
 	var carriedEML *state.FileDigest
 	if !writeRaw && seen {
-		var carried bool
-		if carriedEML, carried = carriedOriginal(dir, base, relSlash, prev); carried {
-			rawName = base + ".eml"
+		if e.Units != nil {
+			// Encrypted: the original is carried BY UNIT, whatever the logical stem now
+			// is — the record's unit is its only copy (R20, MC8, P2a-C2).
+			if prevSealed.EML != nil && e.Units.Present(unit, vault.UnitOriginal, *prevSealed.EML) {
+				rawName = base + ".eml"
+				sealed.EML = prevSealed.EML
+				if prev.Fixity != nil && prev.Fixity.EML != nil {
+					d := *prev.Fixity.EML
+					carriedEML = &d
+				}
+			}
+		} else {
+			var carried bool
+			if carriedEML, carried = carriedOriginal(dir, base, relSlash, prev); carried {
+				rawName = base + ".eml"
+			}
 		}
 	}
 	ctx := RenderContext{
@@ -433,7 +484,18 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	// as they are written so `verify` can later detect bit-rot or truncation
 	// (F3). A re-capture builds a fresh Fixity, replacing any earlier one.
 	var fx state.Fixity
-	if writeRaw {
+	if writeRaw && e.Units != nil {
+		var prevPlain *state.FileDigest
+		if prev.Fixity != nil {
+			prevPlain = prev.Fixity.EML
+		}
+		d, s, err := e.sealKind(unit, vault.UnitOriginal, filepath.Join(dir, rawName), m.Raw, prevPlain, prevSealed.EML)
+		if err != nil {
+			return false, &ItemError{msg: "write an encrypted original", Err: err}
+		}
+		fx.EML, sealed.EML = &d, s
+		e.Stats.RawWritten++
+	} else if writeRaw {
 		d, err := e.writeDigest(filepath.Join(dir, rawName), m.Raw)
 		if err != nil {
 			return false, &ItemError{Path: filepath.Join(dir, rawName), msg: "write " + rawName, Err: err}
@@ -442,6 +504,11 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		e.Stats.RawWritten++
 	} else if carriedEML != nil {
 		fx.EML = carriedEML
+	}
+	if e.Units != nil && sealed.EML == nil && prevSealed.EML != nil {
+		// The record held an original this capture neither wrote nor could carry
+		// (its unit is gone from disk): it is not linked, and its stale revision goes.
+		e.queueDelete(unit, vault.UnitOriginal, prevSealed.EML.Rev)
 	}
 
 	e.Stats.AttachmentsInline += len(inlineConsumed)
@@ -455,7 +522,61 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 
 	// Attachments first (zip, then html): a visible html always has its zip.
 	zipPath := filepath.Join(dir, base+zipSuffix)
-	if hasArchivable(m.Attachments, inlineConsumed) {
+	var tooLarge []string
+	if e.Units != nil {
+		// Encrypted: the zip is built in memory and sealed whole (2a-D5). Over the
+		// ceiling, the message is archived without its attachments and each is a
+		// terminal gap (owner ruling). Nothing archivable drops the record's zip unit.
+		var data []byte
+		var zr ZipResult
+		var zerr error
+		if hasArchivable(m.Attachments, inlineConsumed) {
+			data, zr, zerr = BuildZip(m.Attachments, inlineConsumed)
+		}
+		switch {
+		case errors.Is(zerr, ErrZipTooLarge):
+			for i := range m.Attachments {
+				if !inlineConsumed[i] {
+					label := attachmentLabel(m.Attachments[i], i)
+					tooLarge = append(tooLarge, label)
+					e.addIssue(folderKey, m, relSlash, "attachments-too-large", label)
+				}
+			}
+		case zerr != nil:
+			for i := range m.Attachments {
+				if !inlineConsumed[i] {
+					zr.Failed = append(zr.Failed, attachmentLabel(m.Attachments[i], i))
+				}
+			}
+		case len(data) > 0:
+			var prevPlain *state.FileDigest
+			if prev.Fixity != nil {
+				prevPlain = prev.Fixity.Zip
+			}
+			d, s, err := e.sealKind(unit, vault.UnitAttachment, zipPath, data, prevPlain, prevSealed.Zip)
+			if err != nil {
+				return false, &ItemError{msg: "write encrypted attachments", Err: err}
+			}
+			fx.Zip, sealed.Zip = &d, s
+		}
+		if sealed.Zip == nil && prevSealed.Zip != nil {
+			e.queueDelete(unit, vault.UnitAttachment, prevSealed.Zip.Rev)
+		}
+		e.Stats.Attachments += zr.Written
+		for _, name := range zr.Empty {
+			e.Stats.AttachmentsEmpty++
+			if parseGapNamed(m, name) {
+				continue
+			}
+			e.addIssue(folderKey, m, relSlash, "empty-attachment", name)
+			gaps = append(gaps, name)
+		}
+		for _, name := range zr.Failed {
+			e.Stats.AttachmentErrors++
+			e.addIssue(folderKey, m, relSlash, "attachment-error", name)
+			gaps = append(gaps, name)
+		}
+	} else if hasArchivable(m.Attachments, inlineConsumed) {
 		zr, zerr := WriteZip(zipPath, m.Attachments, inlineConsumed)
 		if zerr != nil {
 			// A failed archive should not abort the whole export, but it is
@@ -486,11 +607,23 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		os.Remove(zipPath) // a re-capture with nothing archivable must not keep a stale zip
 	}
 
-	hd, err := e.writeDigest(htmlPath, htmlBytes)
-	if err != nil {
-		return false, &ItemError{Path: htmlPath, msg: "write " + htmlPath, Err: err}
+	if e.Units != nil {
+		var prevPlain *state.FileDigest
+		if prev.Fixity != nil {
+			prevPlain = prev.Fixity.HTML
+		}
+		hd, s, err := e.sealKind(unit, vault.UnitMessage, htmlPath, htmlBytes, prevPlain, prevSealed.HTML)
+		if err != nil {
+			return false, &ItemError{msg: "write an encrypted page", Err: err}
+		}
+		fx.HTML, sealed.HTML = &hd, s
+	} else {
+		hd, err := e.writeDigest(htmlPath, htmlBytes)
+		if err != nil {
+			return false, &ItemError{Path: htmlPath, msg: "write " + htmlPath, Err: err}
+		}
+		fx.HTML = &hd
 	}
-	fx.HTML = &hd
 
 	// Inline images referenced by cid: that we could not embed (missing from the
 	// message, e.g. dangling references in a reply/forward chain).
@@ -511,6 +644,13 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 		rec.Terminal = gaps
 	} else {
 		rec.Missing = gaps
+	}
+	// Attachments too large for an encrypted unit are terminal on every source: no
+	// re-read makes them smaller (owner ruling, 2a-D5).
+	rec.Terminal = append(rec.Terminal, tooLarge...)
+	if e.Units != nil {
+		rec.Unit = unit
+		rec.Sealed = &sealed
 	}
 	// What the reader could not read of this item (§4.7.3): each label goes in the
 	// list its class says (state.GapClass is the single owner). A label this build
@@ -623,7 +763,9 @@ func (e *Exporter) Export(store string, folderPath []string, m *model.Message) (
 	adoptingLegacy := e.DedupMailboxWide && seen && prev.FpScheme != state.FpSchemeCurrent
 	// The record's Path is the manifest's, which someone else may have written: only a safe
 	// in-archive path is deleted from, never one that walks out of it (S2B-AI9).
-	if _, safe := util.ValidRecordedPath(prev.Path); seen && safe && prev.Path != relSlash && !adoptingLegacy {
+	// An encrypted archive's superseded units were queued by sealKind instead: its
+	// logical Path names no file (P2a-C2).
+	if _, safe := util.ValidRecordedPath(prev.Path); e.Units == nil && seen && safe && prev.Path != relSlash && !adoptingLegacy {
 		old := filepath.Join(e.OutDir, filepath.FromSlash(prev.Path))
 		os.Remove(old)
 		os.Remove(strings.TrimSuffix(old, ".html") + zipSuffix)
@@ -695,6 +837,84 @@ func carriedOriginal(dir, base, relSlash string, prev state.Record) (*state.File
 		return &d, true
 	}
 	return nil, true
+}
+
+// unitRev names one revision of one unit of a record.
+type unitRev struct {
+	unit string
+	kind vault.UnitKind
+	rev  uint32
+}
+
+// errUnitlessRecord refuses to write over a record of an encrypted archive that
+// has no unit: a plaintext record inside an encrypted archive is corruption,
+// never a reason to draw a fresh unit silently (P2a-C3).
+var errUnitlessRecord = errors.New("an archived record of this encrypted archive has no unit (the manifest is damaged)")
+
+// drawUnit draws a unit id no record holds.
+func (e *Exporter) drawUnit() (string, error) {
+	for {
+		u, err := newUnitID()
+		if err != nil {
+			return "", err
+		}
+		if !e.Manifest.UnitInUse(u) {
+			return u, nil
+		}
+	}
+}
+
+// sealKind writes data as the unit of kind for unit, replacing prev: when the
+// plaintext is the one prev already holds (and its unit is on disk), nothing is
+// written and prev is kept; otherwise a NEW revision is written under its own
+// name and prev's revision is queued for deletion after the next manifest save —
+// a unit is never rewritten in place (P2a-C1). logical is the page-relative path
+// the BeforeWrite seam and the fault tests see.
+func (e *Exporter) sealKind(unit string, kind vault.UnitKind, logical string, data []byte, prevPlain *state.FileDigest, prevSealed *state.SealedUnit) (state.FileDigest, *state.SealedUnit, error) {
+	if e.BeforeWrite != nil {
+		if err := e.BeforeWrite(logical); err != nil {
+			return state.FileDigest{}, nil, err
+		}
+	}
+	sum := sha256.Sum256(data)
+	plain := state.FileDigest{SHA256: hex.EncodeToString(sum[:]), Size: int64(len(data))}
+	if prevSealed != nil && prevPlain != nil && *prevPlain == plain && e.Units.Present(unit, kind, *prevSealed) {
+		kept := *prevSealed
+		return plain, &kept, nil
+	}
+	rev := uint32(1)
+	if prevSealed != nil {
+		rev = prevSealed.Rev + 1
+	}
+	s, err := e.Units.Write(unit, kind, rev, data)
+	if err != nil {
+		return state.FileDigest{}, nil, err
+	}
+	if prevSealed != nil {
+		e.queueDelete(unit, kind, prevSealed.Rev)
+	}
+	return plain, &s, nil
+}
+
+// queueDelete schedules a unit revision for deletion after the next save.
+func (e *Exporter) queueDelete(unit string, kind vault.UnitKind, rev uint32) {
+	if !e.hooked {
+		e.Manifest.OnSaved(e.flushDeletes)
+		e.hooked = true
+	}
+	e.pendingDeletes = append(e.pendingDeletes, unitRev{unit, kind, rev})
+}
+
+// flushDeletes removes the queued units now that a manifest that no longer
+// names them is durable. A failure leaves an orphan the next keyed run's
+// inventory sweep removes.
+func (e *Exporter) flushDeletes() {
+	for _, d := range e.pendingDeletes {
+		if err := e.Units.Remove(d.unit, d.kind, d.rev); err != nil && e.Log != nil {
+			e.Log.Printf("warning: could not remove superseded unit %s: %v", e.Units.Name(d.unit, d.kind, d.rev), err)
+		}
+	}
+	e.pendingDeletes = nil
 }
 
 // writeDigest is writeFileAtomicDigest behind the BeforeWrite seam.

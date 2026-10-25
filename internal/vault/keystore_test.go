@@ -231,6 +231,42 @@ func TestAnUnattendedRunSeesAndHealsADamagedCopy(t *testing.T) {
 	}
 }
 
+// covers: MA-725, R37
+func TestVerifyKeyProvesAKeyBelongsToTheFolderAndHandsOutNothing(t *testing.T) {
+	lowCost(t)
+	out, k, _ := newArchive(t)
+	_, foreign, _ := newArchive(t)
+	before := snapshot(out)
+	if err := VerifyKey(out, k.ArchiveID(), k); err != nil {
+		t.Fatalf("positive twin: the archive's own key verifies: %v", err)
+	}
+	for label, c := range map[string]struct {
+		dir  string
+		want ID
+		key  *Key
+		err  error
+	}{
+		"another archive's key":  {out, k.ArchiveID(), foreign, ErrTampered},
+		"a recorded id mismatch": {out, foreign.ArchiveID(), k, ErrTampered},
+		"a folder with no vault": {t.TempDir(), k.ArchiveID(), k, ErrNoVault},
+		"a destroyed key":        {out, k.ArchiveID(), func() *Key { d := testKey(t, k.ArchiveID(), 1); d.Destroy(); return d }(), ErrKeyDestroyed},
+	} {
+		err := VerifyKey(c.dir, c.want, c.key)
+		if err == nil {
+			t.Fatalf("%s: VerifyKey must refuse", label)
+		}
+		if label != "another archive's key" && !errors.Is(err, c.err) {
+			t.Fatalf("%s: want %v, got %v", label, c.err, err)
+		}
+		if label == "another archive's key" && !errors.Is(err, ErrWrongSecret) && !errors.Is(err, ErrTampered) {
+			t.Fatalf("%s: want a wrong-key refusal, got %v", label, err)
+		}
+	}
+	if s := snapshot(out); !bytes.Equal(s[0], before[0]) || !bytes.Equal(s[1], before[1]) {
+		t.Fatal("VerifyKey must write nothing")
+	}
+}
+
 // covers: MA-709, MA-711, R37
 func TestReadersNeitherLockNorWrite(t *testing.T) {
 	lowCost(t)

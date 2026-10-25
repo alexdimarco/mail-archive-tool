@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"mail-archive-tool/internal/assure"
+	"mail-archive-tool/internal/vault"
 )
 
 // sweepFixture is an archive holding one of each kind of leftover a crash can
@@ -69,6 +70,26 @@ func TestSweepTempsReapsStaleTempsAndSnapshotsButNoZips(t *testing.T) {
 		if !exists(p) {
 			t.Errorf("SweepTemps removed a file it must keep: %s", p)
 		}
+	}
+}
+
+// covers: MA-709, R37
+func TestVaultTempNameIsOneTheExporterSweeps(t *testing.T) {
+	out := t.TempDir()
+	f, err := os.CreateTemp(out, vault.TempPattern)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(f.Name(), old, old); err != nil {
+		t.Fatal(err)
+	}
+	if n := SweepTemps(out, time.Now(), nil); n != 1 {
+		t.Fatalf("SweepTemps removed %d files, want the 1 crash-leftover vault temp", n)
+	}
+	if _, err := os.Stat(f.Name()); !os.IsNotExist(err) {
+		t.Fatalf("the leftover vault temp %s was not reaped", f.Name())
 	}
 }
 

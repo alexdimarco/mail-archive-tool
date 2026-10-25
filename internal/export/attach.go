@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -67,8 +68,28 @@ func WriteZip(zipPath string, atts []model.Attachment, skip map[int]bool) (ZipRe
 	h := sha256.New()
 	counter := &byteCounter{}
 	zw := zip.NewWriter(io.MultiWriter(tmp, h, counter))
-	usedNames := map[string]int{}
+	if err := fillZip(zw, atts, skip, &res); err != nil {
+		return abort(err)
+	}
+	if res.Written == 0 {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		os.Remove(zipPath) // a stale archive from an earlier capture must not outlive it
+		return res, nil
+	}
+	if err := commitTemp(tmp, zipPath); err != nil {
+		return res, fmt.Errorf("commit zip: %w", err)
+	}
+	res.Digest = &state.FileDigest{SHA256: hex.EncodeToString(h.Sum(nil)), Size: counter.n}
+	return res, nil
+}
 
+// fillZip writes every attachment not in skip into zw and closes it, recording
+// in res what was written, empty or failed. It is the zip content both writers
+// share: the plaintext WriteZip streams it to a temp file, BuildZip holds it in
+// memory for sealing.
+func fillZip(zw *zip.Writer, atts []model.Attachment, skip map[int]bool, res *ZipResult) error {
+	usedNames := map[string]int{}
 	for i := range atts {
 		if skip[i] {
 			continue
@@ -93,29 +114,59 @@ func WriteZip(zipPath string, atts []model.Attachment, skip map[int]bool) (ZipRe
 		w, cerr := zw.Create(name)
 		if cerr != nil {
 			zw.Close()
-			return abort(fmt.Errorf("create zip entry %q: %w", name, cerr))
+			return fmt.Errorf("create zip entry %q: %w", name, cerr)
 		}
 		if _, werr := w.Write(buf.Bytes()); werr != nil {
 			zw.Close()
-			return abort(fmt.Errorf("write zip entry %q: %w", name, werr))
+			return fmt.Errorf("write zip entry %q: %w", name, werr)
 		}
 		res.Written++
 	}
-
 	if err := zw.Close(); err != nil {
-		return abort(fmt.Errorf("finalize zip: %w", err))
+		return fmt.Errorf("finalize zip: %w", err)
+	}
+	return nil
+}
+
+// ErrZipTooLarge refuses to hold a message's attachments in memory beyond the
+// encrypted-unit ceiling: the message is archived without them, and each is a
+// terminal gap (owner ruling, phase2a 2a-D5).
+var ErrZipTooLarge = errors.New("attachments too large for an encrypted archive")
+
+// encryptedZipCeiling bounds the in-memory zip of one message's attachments in
+// an encrypted archive (owner ruling 2026-10-24: 1 GiB). A var so a test can
+// reach it without a gigabyte.
+var encryptedZipCeiling int64 = 1 << 30
+
+// cappedBuffer is a bytes.Buffer that refuses to grow past max.
+type cappedBuffer struct {
+	bytes.Buffer
+	max int64
+}
+
+func (c *cappedBuffer) Write(p []byte) (int, error) {
+	if int64(c.Len())+int64(len(p)) > c.max {
+		return 0, ErrZipTooLarge
+	}
+	return c.Buffer.Write(p)
+}
+
+// BuildZip is WriteZip held in memory, for an encrypted archive: the zip is
+// sealed whole before any byte reaches disk, so no cleartext temp exists even
+// for an instant (phase2a 2a-D5). Nil bytes when nothing was archivable.
+func BuildZip(atts []model.Attachment, skip map[int]bool) ([]byte, ZipResult, error) {
+	var res ZipResult
+	buf := &cappedBuffer{max: encryptedZipCeiling}
+	if err := fillZip(zip.NewWriter(buf), atts, skip, &res); err != nil {
+		if errors.Is(err, ErrZipTooLarge) {
+			return nil, res, ErrZipTooLarge
+		}
+		return nil, res, err
 	}
 	if res.Written == 0 {
-		tmp.Close()
-		os.Remove(tmp.Name())
-		os.Remove(zipPath) // a stale archive from an earlier capture must not outlive it
-		return res, nil
+		return nil, res, nil
 	}
-	if err := commitTemp(tmp, zipPath); err != nil {
-		return res, fmt.Errorf("commit zip: %w", err)
-	}
-	res.Digest = &state.FileDigest{SHA256: hex.EncodeToString(h.Sum(nil)), Size: counter.n}
-	return res, nil
+	return buf.Bytes(), res, nil
 }
 
 // byteCounter counts the bytes written through it (the committed zip's length,

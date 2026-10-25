@@ -200,6 +200,15 @@ type Record struct {
 	// panicked or held less than v1 did. A later scheme may parse the message, so the
 	// repair slice re-examines it; the count of such records is what status shows.
 	FidelityFallback int `json:"fidelity_fallback,omitempty"`
+
+	// Unit and Sealed (additive; encrypted archives, design-encrypted-archives-phase2a
+	// §1) place an ENCRYPTED archive's record on disk: Unit is the record's set-once
+	// random id (32 lowercase hex) and Sealed the sealed unit of each kind it holds
+	// (revision, ciphertext digest and size). Path stays the record's logical path.
+	// Only an encrypted archive's records carry them, so a plaintext manifest is
+	// byte-identical to before (MA-329).
+	Unit   string     `json:"unit,omitempty"`
+	Sealed *SealedSet `json:"sealed,omitempty"`
 }
 
 // ParserGenCurrent is the parser generation this build writes on an unparsed stub. It
@@ -333,6 +342,11 @@ type Manifest struct {
 	// the raw input spelling, or a defensive drop of a tampered token. Zero when
 	// the map was already canonical.
 	StoresMigrated int `json:"-"`
+
+	// unitSet holds the unit ids records carry (lazily built by UnitInUse, kept by
+	// Add), and afterSave runs after each successful Save (OnSaved).
+	unitSet   map[string]bool
+	afterSave func()
 
 	// LoadedVersion is the format version integer read from disk, BEFORE Load
 	// upgrades Version to the current constant. The live path reads it to decide
@@ -858,6 +872,9 @@ func parseManifest(path, name string, data []byte) (*Manifest, error) {
 	if m.Version < manifestVersion {
 		m.Version = manifestVersion
 	}
+	if err := checkUnits(name, m); err != nil {
+		return nil, err
+	}
 	m.buildIdentIndexLocked()
 	return m, nil
 }
@@ -897,6 +914,9 @@ func (m *Manifest) Get(key string) (Record, bool) {
 func (m *Manifest) Add(key string, r Record) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.unitSet != nil && r.Unit != "" {
+		m.unitSet[r.Unit] = true
+	}
 	if m.byPath != nil {
 		if old, ok := m.Entries[key]; ok && old.Path != r.Path {
 			delete(m.byPath, old.Path)
@@ -2040,8 +2060,31 @@ func (m *Manifest) identRemoveLocked(key string) {
 
 // Save writes the manifest atomically (temp file + rename) so a crash mid-write
 // cannot corrupt an existing manifest. The rename waits out a moment of Windows
-// file sharing (replaceFile) before it reports failure.
+// file sharing (replaceFile) before it reports failure. After a successful save
+// it runs the OnSaved hook, if any.
 func (m *Manifest) Save() error {
+	if err := m.save(); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	fn := m.afterSave
+	m.mu.Unlock()
+	if fn != nil {
+		fn()
+	}
+	return nil
+}
+
+// OnSaved registers fn to run after every successful Save, outside the
+// manifest's lock: an encrypted archive's superseded units are deleted only once
+// the manifest that no longer names them is durable (phase2a P2a-C1).
+func (m *Manifest) OnSaved(fn func()) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.afterSave = fn
+}
+
+func (m *Manifest) save() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.path == "" {
