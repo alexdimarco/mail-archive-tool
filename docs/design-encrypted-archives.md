@@ -555,3 +555,32 @@ exists:
 **A2 note for Phase 2b.** Fixed-size POSITIONAL chunks would re-seal every chunk after an
 insertion; chunk boundaries must stay stable across runs (e.g. records bucketed by a hash of
 their identity), or O(delta) is lost.
+
+---
+
+## Phase-2a review — parent amendments (2026-10-24)
+
+The Phase-2a pre-code review (`docs/review-encrypted-archives-phase2a.md`, GO_WITH_CONDITIONS)
+forces these changes to this design; `docs/design-encrypted-archives-phase2a.md` holds the detail.
+
+- **A16 — three seams, not one.** The single Engine-A FS seam (§4.2, revised phasing) is replaced by
+  the unit store (`export.Units`, content), the containers (2b: manifest, index, history) and
+  minimisation inside the state/seal/schedule writers. The replacement guarantee is a structural test:
+  after every encrypted run, refusal and failure, every path under `out` matches an allow-list
+  grammar.
+- **A17 — the keyless tier-1 inventory (A5).** `Record.Sealed` lives in the sealed manifest and is
+  the KEYED rollback check. Keyless tier-1 `verify` reads a cleartext inventory 2b writes beside the
+  pointer: `(opaque name, ciphertext SHA-256, size)` sorted by name, no unit id, kind or grouping;
+  its leak budget equals a directory listing.
+- **A18 — A6 as explicit allow-lists.** Each cleartext sidecar (lastrun, runhistory, sourcestreak,
+  lastverify, both attention files, both schedule descriptors, the pause file) gets a field
+  allow-list no wider than A6; reasons come from a closed list of run-failure kinds, never from error
+  text; the lock's `host=` and the descriptor Host are disclosed in the leak budget.
+- **A19 — A13 extends to writers.** A decrypted or working search index (including Rebuild and
+  reindex output) is never written under `out`: in memory, or a config-dir scratch file with
+  in-memory journal and temp store, swept.
+- **A20 — uninstall keeps the remembered key (owner ruling).** Archives are always kept, so is the
+  key that opens them unattended; removing it is a separate, explicitly confirmed choice.
+- **Owner rulings recorded with them:** an encrypted archive's `-copy-first` snapshot and Outlook
+  scratch go to an app-owned config-dir folder with a free-space check; attachments over 1 GiB per
+  message are skipped and reported as a gap (owner: a higher limit than 256 MiB).
