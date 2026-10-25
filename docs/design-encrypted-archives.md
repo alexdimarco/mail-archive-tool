@@ -584,3 +584,30 @@ forces these changes to this design; `docs/design-encrypted-archives-phase2a.md`
 - **Owner rulings recorded with them:** an encrypted archive's `-copy-first` snapshot and Outlook
   scratch go to an app-owned config-dir folder with a free-space check; attachments over 1 GiB per
   message are skipped and reported as a gap (owner: a higher limit than 256 MiB).
+
+---
+
+## Phase-2b review — parent amendments (2026-10-25)
+
+The Phase-2b pre-code review (`docs/review-encrypted-archives-phase2b.md`, GO_WITH_CONDITIONS) forces
+these changes; `docs/design-encrypted-archives-phase2b.md` §10 holds the detail. They govern where they
+conflict with A1–A20.
+
+- **A21 — one root pointer.** `.mailarchive-manifest.ptr` (mirrored as `.ptr.bak`) commits the
+  manifest, the history (new `ContainerHistory = 3`) and the index by one rename. Its plaintext lists
+  each section's chunks as `{i, name, gen, sha256, size}` and carries `inv`, the last durable inventory
+  generation (refines A2). Manifest chunks are written twice. A11's "one file, inside the A4 envelope"
+  reads "one file the A4 envelope names". Nothing superseded is deleted until the next keyed run's start.
+- **A22 — the inventory is the F12 anchor.** A top file plus immutable generation-named shards, written
+  every commit after the pointer. A7's "fixity/inventory anchor … in the manifest envelope/container"
+  reads "in the inventory beside the pointer".
+- **A23 — A19 / P2a-C13 amended.** The index loads by restore from a read-only in-memory VFS and is
+  captured with `Serialize` on the pinned SQLite (spike-proven; `Deserialize` is unsafe at v1.38.2);
+  `journal_mode=MEMORY` only (`OFF` corrupts FTS5 on `ROLLBACK TO`); the writer scratch is the cache
+  folder, used above a stated memory budget.
+- **A24 — A6's moved fields** (job flags, source kind, per-run counts) live in the sealed header's
+  `run_details`, as of each run's final commit.
+- **A25 — the highest committed generation** is recorded outside the archive beside the A15 id (Phases
+  3–4), written after the pointer rename; it refuses only a merge-restore; persisting it waits on a
+  Phase-3 "continue from this older copy" action.
+- Housekeeping: A4's line references are now manifest.go:723 (refuse-newer) and :712-713 (parse).

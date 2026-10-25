@@ -88,13 +88,26 @@ func (kind UnitKind) check() error {
 	return fmt.Errorf("%w %d", ErrUnitKind, kind)
 }
 
-// ContainerKind names a chunked container (C6, A11).
+// ContainerKind names a chunked container (C6, A11, A21).
 type ContainerKind uint8
 
 const (
 	ContainerManifest ContainerKind = 1
 	ContainerIndex    ContainerKind = 2
+	ContainerHistory  ContainerKind = 3
 )
+
+// ErrContainerKind refuses a container kind the format does not define, so no
+// chunk or pointer is ever sealed or read under an undefined role.
+var ErrContainerKind = errors.New("vault: unknown container kind")
+
+func (kind ContainerKind) check() error {
+	switch kind {
+	case ContainerManifest, ContainerIndex, ContainerHistory:
+		return nil
+	}
+	return fmt.Errorf("%w %d", ErrContainerKind, kind)
+}
 
 // entryKind names a key-wrap entry in the vault.
 type entryKind uint8
@@ -182,12 +195,13 @@ func open(key, aad, sealed []byte) ([]byte, error) {
 // every use (ErrKeyDestroyed) rather than sealing under an all-zero key. It
 // prints redacted.
 type Key struct {
-	id     ID
-	master [keySize]byte
-	data   [keySize]byte
-	mac    [keySize]byte
-	names  [keySize]byte
-	live   bool
+	id      ID
+	master  [keySize]byte
+	data    [keySize]byte
+	mac     [keySize]byte
+	names   [keySize]byte
+	buckets [keySize]byte
+	live    bool
 }
 
 // ErrKeyDestroyed refuses a key that was destroyed, or never made by this
@@ -213,9 +227,10 @@ func (k *Key) Format(f fmt.State, _ rune) {
 
 // HKDF info strings: the sub-key domains.
 const (
-	infoData  = "mailarchive data v1"
-	infoMAC   = "mailarchive vault header v1"
-	infoNames = "mailarchive unit names v1"
+	infoData    = "mailarchive data v1"
+	infoMAC     = "mailarchive vault header v1"
+	infoNames   = "mailarchive unit names v1"
+	infoBuckets = "mailarchive manifest buckets v1"
 )
 
 func newKey(id ID, master []byte) (*Key, error) {
@@ -227,7 +242,7 @@ func newKey(id ID, master []byte) (*Key, error) {
 	for _, sub := range []struct {
 		info string
 		dst  *[keySize]byte
-	}{{infoData, &k.data}, {infoMAC, &k.mac}, {infoNames, &k.names}} {
+	}{{infoData, &k.data}, {infoMAC, &k.mac}, {infoNames, &k.names}, {infoBuckets, &k.buckets}} {
 		b, err := hkdf.Key(sha256.New, master, nil, sub.info, keySize)
 		if err != nil {
 			return nil, fmt.Errorf("vault: derive %s: %w", sub.info, err)
@@ -250,6 +265,7 @@ func (k *Key) Destroy() {
 	clear(k.data[:])
 	clear(k.mac[:])
 	clear(k.names[:])
+	clear(k.buckets[:])
 	k.live = false
 }
 
@@ -308,7 +324,7 @@ func (k *Key) OpenUnit(kind UnitKind, unitID string, sealed []byte) ([]byte, err
 // Every call draws a fresh nonce, so re-sealing a changed chunk never reuses one
 // (A1).
 func (k *Key) SealChunk(kind ContainerKind, gen uint64, index uint32, plaintext []byte) ([]byte, error) {
-	if err := k.usable(); err != nil {
+	if err := k.containerUse(kind); err != nil {
 		return nil, err
 	}
 	return seal(k.data[:], chunkAAD(k.id, kind, gen, index), plaintext)
@@ -317,7 +333,7 @@ func (k *Key) SealChunk(kind ContainerKind, gen uint64, index uint32, plaintext 
 // OpenChunk opens what SealChunk sealed for the same kind, seal generation and
 // index.
 func (k *Key) OpenChunk(kind ContainerKind, gen uint64, index uint32, sealed []byte) ([]byte, error) {
-	if err := k.usable(); err != nil {
+	if err := k.containerUse(kind); err != nil {
 		return nil, err
 	}
 	return open(k.data[:], chunkAAD(k.id, kind, gen, index), sealed)
@@ -325,7 +341,7 @@ func (k *Key) OpenChunk(kind ContainerKind, gen uint64, index uint32, sealed []b
 
 // SealPointer seals a container's pointer (its ordered chunk list) at gen.
 func (k *Key) SealPointer(kind ContainerKind, gen uint64, plaintext []byte) ([]byte, error) {
-	if err := k.usable(); err != nil {
+	if err := k.containerUse(kind); err != nil {
 		return nil, err
 	}
 	return seal(k.data[:], pointerAAD(k.id, kind, gen), plaintext)
@@ -333,8 +349,44 @@ func (k *Key) SealPointer(kind ContainerKind, gen uint64, plaintext []byte) ([]b
 
 // OpenPointer opens what SealPointer sealed for the same kind and gen.
 func (k *Key) OpenPointer(kind ContainerKind, gen uint64, sealed []byte) ([]byte, error) {
-	if err := k.usable(); err != nil {
+	if err := k.containerUse(kind); err != nil {
 		return nil, err
 	}
 	return open(k.data[:], pointerAAD(k.id, kind, gen), sealed)
+}
+
+// containerUse refuses an unusable key or an undefined container kind.
+func (k *Key) containerUse(kind ContainerKind) error {
+	if err := k.usable(); err != nil {
+		return err
+	}
+	return kind.check()
+}
+
+// Bucket counts a manifest may use (Phase 2b §2): a power of two in this range.
+const (
+	MinBuckets = 16
+	MaxBuckets = 1 << 24
+)
+
+// ErrBucket refuses a bucket count outside the format, or an empty record key.
+var ErrBucket = errors.New("vault: invalid manifest bucket")
+
+// Bucket is the manifest bucket, of n, that holds the record named recordKey: the
+// big-endian first 8 bytes of HMAC-SHA256 under the buckets sub-key over the
+// record key, mod n. Keyed, so someone who knows a message's key cannot tell
+// which chunk holds its record or watch that chunk change.
+func (k *Key) Bucket(recordKey string, n uint32) (uint32, error) {
+	if err := k.usable(); err != nil {
+		return 0, err
+	}
+	if n < MinBuckets || n > MaxBuckets || n&(n-1) != 0 {
+		return 0, fmt.Errorf("%w count %d: want a power of two from %d to %d", ErrBucket, n, MinBuckets, MaxBuckets)
+	}
+	if recordKey == "" {
+		return 0, fmt.Errorf("%w: empty record key", ErrBucket)
+	}
+	m := hmac.New(sha256.New, k.buckets[:])
+	m.Write([]byte(recordKey))
+	return uint32(binary.BigEndian.Uint64(m.Sum(nil)[:8]) % uint64(n)), nil
 }

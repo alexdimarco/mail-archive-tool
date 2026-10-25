@@ -14,8 +14,9 @@ import (
 
 // recordFiles are the archive's record files a restore from an older backup puts
 // back: today the manifest alone. Phase 2b-1 makes them the envelope, the root
-// pointer and chunks/ — never the inventory, which a restore of the record leaves
-// as it was (design-encrypted-archives-phase2b §3).
+// pointer AND its mirror (.ptr.bak — else the load takes the newer mirror and the
+// test fails for the wrong reason) and chunks/ — never the inventory, which a
+// restore of the record leaves as it was (design-encrypted-archives-phase2b §3).
 var recordFiles = []string{".mailarchive-manifest.json"}
 
 // covers: MA-747, R37
