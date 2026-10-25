@@ -22,32 +22,18 @@ var ErrEncryptedArchive = errors.New("an encrypted archive cannot be scheduled y
 // goes through Install, so this one check covers them all.
 func refuseEncrypted(s Spec) error {
 	if s.Out != "" {
-		if dir, why := encryptedAtOrAbove(s.Out); dir != "" {
+		dir, why, err := vault.EncryptedAtOrAbove(s.Out)
+		if dir != "" {
 			return fmt.Errorf("%w: %s is an encrypted archive (%s) — scheduled backups of an encrypted archive are not available yet; nothing was installed", ErrEncryptedArchive, dir, why)
+		}
+		if err != nil {
+			return fmt.Errorf("%w: %v; nothing was installed", ErrEncryptedArchive, err)
 		}
 	}
 	if s.Log != "" {
-		if dir, why := encryptedAtOrAbove(filepath.Dir(s.Log)); dir != "" {
+		if dir, why, _ := vault.EncryptedAtOrAbove(filepath.Dir(s.Log)); dir != "" {
 			return fmt.Errorf("%w: the schedule's log %s would be inside the encrypted archive %s (%s) — choose a log folder outside it; nothing was installed", ErrEncryptedArchive, s.Log, dir, why)
 		}
 	}
 	return nil
-}
-
-// encryptedAtOrAbove is the first of dir and its parents that is an encrypted
-// archive (vault.EncryptedMarker), and why; "" when none is. A folder it cannot read
-// is not called encrypted here.
-func encryptedAtOrAbove(dir string) (string, string) {
-	abs, err := filepath.Abs(dir)
-	if err != nil {
-		return "", ""
-	}
-	for d := abs; ; d = filepath.Dir(d) {
-		if enc, why, _ := vault.EncryptedMarker(d); enc {
-			return d, why
-		}
-		if filepath.Dir(d) == d {
-			return "", ""
-		}
-	}
 }

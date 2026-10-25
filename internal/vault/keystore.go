@@ -4,7 +4,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"path/filepath"
 )
 
 // Store is the OS secret store as the vault needs it; graphconfig.SecretStore
@@ -37,28 +36,11 @@ func Remember(s Store, k *Key) error {
 		return err
 	}
 	if l, ok := s.(Located); ok {
-		if where, why := encryptedAbove(l.Location()); where != "" {
+		if where, why, _ := EncryptedAtOrAbove(l.Location()); where != "" {
 			return fmt.Errorf("%w: %s is inside the encrypted archive %s (%s) — keep MailArchive's settings outside the archive", ErrStoreInsideArchive, l.Location(), where, why)
 		}
 	}
 	return s.Set(Account(k.id), base64.StdEncoding.EncodeToString(k.master[:]))
-}
-
-// encryptedAbove is the first of dir and its parents that is an encrypted archive,
-// and why; "" when none is. A folder that cannot be read is not called encrypted.
-func encryptedAbove(dir string) (string, string) {
-	abs, err := filepath.Abs(dir)
-	if err != nil {
-		return "", ""
-	}
-	for d := abs; ; d = filepath.Dir(d) {
-		if enc, why, _ := EncryptedMarker(d); enc {
-			return d, why
-		}
-		if filepath.Dir(d) == d {
-			return "", ""
-		}
-	}
 }
 
 // Forget removes an archive's remembered key ("ask me each time").

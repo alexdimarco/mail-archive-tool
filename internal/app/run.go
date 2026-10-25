@@ -992,15 +992,18 @@ func lockVerb(opts Options, verb string) string {
 	return verb
 }
 
-// insideEncrypted reports whether a folder ABOVE out is an encrypted archive.
+// insideEncrypted reports whether a folder ABOVE out is an encrypted archive — out
+// as given, or out with its links resolved (a link into an encrypted archive).
 func insideEncrypted(out string) bool {
 	abs, err := filepath.Abs(out)
 	if err != nil {
-		return false
+		abs = filepath.Clean(out)
 	}
-	for dir := filepath.Dir(abs); dir != abs; abs, dir = dir, filepath.Dir(dir) {
-		if encryptedAt(dir) {
-			return true
+	for _, p := range []string{abs, util.ResolveExisting(abs)} {
+		if parent := filepath.Dir(p); parent != p {
+			if dir, _, _ := vault.EncryptedAtOrAbove(parent); dir != "" {
+				return true
+			}
 		}
 	}
 	return false
@@ -1318,6 +1321,9 @@ func runFile(ctx context.Context, lr *localRun, path string, copyFirst, followLi
 	// get distinct, sticky trees (F1). The source is still READ through the
 	// original path.
 	token := exp.Manifest.Token(state.PathSourceID(path), store)
+	if err := refuseStoreIntoEncrypted(exp, token); err != nil {
+		return err
+	}
 	logger.Printf("Reading %s (store: %s)", path, store)
 
 	src := &sourceRun{lr: lr, token: token, path: path, freshOutlook: lr.outlookFresh[state.PathSourceID(path)]}

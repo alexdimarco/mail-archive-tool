@@ -19,7 +19,7 @@ import (
 	"mail-archive-tool/internal/vault"
 )
 
-// covers: MA-741, R37
+// covers: MA-741, MA-746, R37
 // Pausing an encrypted archive seals it with an empty marker: the owner's note is not
 // written beside the archive in plaintext. The positive twin: a plaintext archive's
 // pause keeps the note.
@@ -38,6 +38,15 @@ func TestPausingAnEncryptedArchiveKeepsNoNoteInIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	k.Destroy()
+	// A folder inside the encrypted archive is not paused at all (MA-746): its pause
+	// file, and the folder itself, would be written into the archive.
+	inside := filepath.Join(sealed, "sub")
+	if err := PauseArchive(inside, "SECRET note"); !errors.Is(err, app.ErrEncryptedNeedsKey) {
+		t.Fatalf("pausing a folder inside an encrypted archive: want ErrEncryptedNeedsKey, got %v", err)
+	}
+	if _, err := os.Stat(inside); !os.IsNotExist(err) {
+		t.Fatal("a refused pause created the folder inside the encrypted archive")
+	}
 	if err := PauseArchive(sealed, "SECRET note about the mail"); err != nil {
 		t.Fatal(err)
 	}

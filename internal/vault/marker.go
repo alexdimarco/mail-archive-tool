@@ -10,6 +10,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+
+	"mail-archive-tool/internal/util"
 )
 
 // The other files whose presence marks an encrypted archive (A4, A12, A2): the
@@ -26,25 +28,29 @@ const (
 // Detect (which sees only a readable vault). It reports encrypted when ANY signal is present —
 // either vault file in any form (judged by Lstat, never parsed, so a damaged,
 // newer, foreign or linked vault counts the same), a manifest envelope that says
-// encrypted or carries the encrypted format version, a units/ directory, a
-// manifest record that carries a unit, or a conversion marker — and why. Only
-// the absence of every signal means plaintext: a deleted vault is never "not
-// encrypted" (A15). An I/O error that is not about the vault (a folder it cannot
-// read at all) is returned as err, for today's handling.
+// encrypted or carries the encrypted format version, a units/ directory of the
+// unit store's shape, a manifest record that carries a unit, or a conversion
+// marker — and why. Only the absence of every signal means plaintext: a deleted
+// vault is never "not encrypted" (A15). A FOLDER of one of those names is not a
+// signal — a plaintext archive's store folder can carry any name, "Units" among
+// them (and a case-insensitive file system matches it as "units"). An I/O error
+// that is not about the vault (a folder it cannot read at all) is returned as
+// err.
 func EncryptedMarker(out string) (encrypted bool, why string, err error) {
-	for _, name := range []string{FileName, BackupName} {
-		if _, lerr := os.Lstat(filepath.Join(out, name)); lerr == nil {
+	for _, name := range []string{FileName, BackupName, convertMarker} {
+		fi, lerr := os.Lstat(filepath.Join(out, name))
+		switch {
+		case lerr == nil && !fi.IsDir():
+			if name == convertMarker {
+				return true, "it holds " + name + ", which only an encrypted archive has", nil
+			}
 			return true, "it holds an encrypted archive's key file (" + name + ")", nil
-		} else if !errors.Is(lerr, fs.ErrNotExist) {
+		case lerr != nil && !errors.Is(lerr, fs.ErrNotExist):
 			return false, "", lerr
 		}
 	}
-	for _, name := range []string{unitsDirName, convertMarker} {
-		if _, lerr := os.Lstat(filepath.Join(out, name)); lerr == nil {
-			return true, "it holds " + name + ", which only an encrypted archive has", nil
-		} else if !errors.Is(lerr, fs.ErrNotExist) {
-			return false, "", lerr
-		}
+	if isUnitStore(filepath.Join(out, unitsDirName)) {
+		return true, "it holds " + unitsDirName + "/, an encrypted archive's unit store", nil
 	}
 	enc, why, merr := manifestSaysEncrypted(filepath.Join(out, manifestName))
 	if merr != nil {
@@ -58,11 +64,19 @@ func EncryptedMarker(out string) (encrypted bool, why string, err error) {
 // unit is the object key `"unit":"`: inside a JSON string a quote is escaped, so
 // those bytes never occur in a subject or folder name.
 func manifestSaysEncrypted(path string) (bool, string, error) {
-	f, err := os.Open(path)
-	if errors.Is(err, fs.ErrNotExist) {
+	// Only a regular file is read, never through a link and never a pipe (the
+	// archive index's safe read, MA-660): a manifest of another kind is not a signal.
+	if fi, err := os.Lstat(path); errors.Is(err, fs.ErrNotExist) || (err == nil && !fi.Mode().IsRegular()) {
 		return false, "", nil
+	} else if err != nil {
+		return false, "", err
 	}
+	f, err := util.OpenRegularFile(path)
 	if err != nil {
+		var nr *util.NotRegularError
+		if errors.Is(err, fs.ErrNotExist) || errors.As(err, &nr) {
+			return false, "", nil
+		}
 		return false, "", err
 	}
 	defer f.Close()
@@ -125,3 +139,74 @@ func manifestSaysEncrypted(path string) (bool, string, error) {
 
 // markerScanBytes bounds how much of a manifest EncryptedMarker reads.
 const markerScanBytes = 1 << 20
+
+// isUnitStore reports whether dir is an encrypted archive's unit store: a real
+// folder (not a link) holding a two-hex-character shard folder that holds a unit
+// named by 32 hex characters starting with the shard's. A plaintext store folder
+// named "units" holds folders of mail and pages, never that shape. An empty units/
+// (an encrypted archive's before its first unit) is not a signal on its own; the
+// vault beside it is.
+func isUnitStore(dir string) bool {
+	if fi, err := os.Lstat(dir); err != nil || !fi.IsDir() {
+		return false
+	}
+	shards, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, sh := range shards {
+		if !sh.IsDir() || !isLowerHex(sh.Name(), 2) {
+			continue
+		}
+		units, err := os.ReadDir(filepath.Join(dir, sh.Name()))
+		if err != nil {
+			continue
+		}
+		for _, u := range units {
+			if n := u.Name(); isLowerHex(n, 32) && n[:2] == sh.Name() {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isLowerHex(s string, n int) bool {
+	if len(s) != n {
+		return false
+	}
+	for _, r := range s {
+		if !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// EncryptedAtOrAbove is the first folder, of path and every folder above it, that
+// is an encrypted archive, and why — walking both the path as given and the path
+// with its links resolved, so a link into an encrypted archive is seen through. ""
+// when none is. err is set when it cannot tell for path itself (the folder an
+// operation would write into): the caller refuses rather than read that as "not
+// encrypted". A folder above it that cannot be read is not called encrypted.
+func EncryptedAtOrAbove(path string) (dir, why string, err error) {
+	abs, aerr := filepath.Abs(path)
+	if aerr != nil {
+		abs = filepath.Clean(path)
+	}
+	for i, start := range []string{abs, util.ResolveExisting(abs)} {
+		for d := start; ; d = filepath.Dir(d) {
+			enc, w, merr := EncryptedMarker(d)
+			if enc {
+				return d, w, nil
+			}
+			if merr != nil && d == start && i == 0 {
+				err = fmt.Errorf("cannot tell whether %s is an encrypted archive: %w", d, merr)
+			}
+			if filepath.Dir(d) == d {
+				break
+			}
+		}
+	}
+	return "", "", err
+}

@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"mail-archive-tool/internal/assure"
+	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/vault"
 )
@@ -175,6 +176,112 @@ func requireMinimalRefusalRecord(t *testing.T, out string, before map[string][]b
 			}
 		}
 	}
+}
+
+// covers: MA-746, R37
+// The recognition predicate is neither too eager nor blind (the Phase-2a adversarial
+// pass, F03/F14, F01/F22, F02, F23): a PLAINTEXT archive whose store is named Units —
+// or one under a folder that holds a Units folder — is archived again and is not
+// refused, its record not marked encrypted; a link into an encrypted archive is seen
+// through, so a keyless run, a -log and an out below the link are all refused with
+// nothing written into the encrypted archive; a target that cannot be checked is
+// refused rather than read as plaintext; and a plaintext run whose store folder is an
+// encrypted archive placed inside it refuses that source and writes nothing into it.
+func TestTheEncryptionCheckIsNeitherTooEagerNorBlind(t *testing.T) {
+	t.Run("a plaintext store named Units", func(t *testing.T) {
+		parent := tmpDir(t)
+		if err := os.MkdirAll(filepath.Join(parent, "Units", "Inbox"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		src := filepath.Join(tmpDir(t), "Units")
+		p14Write(t, filepath.Join(src, "Inbox"), "From a@example.com Mon Mar  3 09:00:00 2025\n"+strings.ReplaceAll(p14Plain("Hello", "units-store"), "\r\n", "\n")+"\n")
+		out := filepath.Join(parent, "archive")
+		if err := os.Mkdir(out, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < 2; i++ {
+			if _, err := Run(context.Background(), Options{Inputs: []string{src}, Out: out, Unattended: true}, discard(), nil); err != nil {
+				t.Fatalf("run %d of a plaintext archive with a store named Units: %v", i+1, err)
+			}
+		}
+		if lr, _, _ := state.ReadLastRun(out); lr.Encrypted || lr.Status != state.RunOK {
+			t.Fatalf("a plaintext archive's record is marked encrypted or failed: %+v", lr)
+		}
+		if err := RefuseKeyless("search it", out); err != nil {
+			t.Fatalf("a plaintext archive with a Units store is refused: %v", err)
+		}
+	})
+
+	t.Run("a link into an encrypted archive", func(t *testing.T) {
+		sealed := sealedArchive(t)
+		link := filepath.Join(tmpDir(t), "myarchive")
+		if err := os.Symlink(filepath.Join(sealed, "units"), link); err != nil {
+			t.Skip("no symlinks here:", err)
+		}
+		before := snapshotTree(t, sealed)
+		_, err := Run(context.Background(), Options{Inputs: []string{encryptedSourcePST(t)}, Out: filepath.Join(link, "plain"), Index: true, Pages: true}, discard(), nil)
+		if !errors.Is(err, ErrEncryptedNeedsKey) {
+			t.Fatalf("a run through a link into an encrypted archive: want ErrEncryptedNeedsKey, got %v", err)
+		}
+		if lerr := RefuseLogInside(filepath.Join(link, "run.log")); !errors.Is(lerr, ErrLogInEncryptedArchive) {
+			t.Fatalf("a -log through a link into an encrypted archive: want ErrLogInEncryptedArchive, got %v", lerr)
+		}
+		if !insideEncrypted(filepath.Join(link, "nested")) {
+			t.Fatal("an out below a link into an encrypted archive is not seen as inside it")
+		}
+		// An out that IS the link: only resolving the out itself finds the archive above.
+		direct := filepath.Join(tmpDir(t), "direct")
+		if err := os.Symlink(filepath.Join(sealed, "units"), direct); err != nil {
+			t.Fatal(err)
+		}
+		if !insideEncrypted(direct) {
+			t.Fatal("an out that is a link to a folder inside an encrypted archive is not seen as inside it")
+		}
+		assure.Refused(t, 1, err.Error(), assure.Code(1), assure.Names(sealed), assure.NoSideEffect(func() bool {
+			return sameTree(before, snapshotTree(t, sealed))
+		}))
+	})
+
+	t.Run("a target that cannot be checked", func(t *testing.T) {
+		file := filepath.Join(tmpDir(t), "a-file")
+		p14Write(t, file, "x")
+		err := RefuseKeyless("archive into it", filepath.Join(file, "archive"))
+		if !errors.Is(err, ErrEncryptionUnknown) {
+			t.Fatalf("an unreadable target: want ErrEncryptionUnknown, got %v", err)
+		}
+		assure.Refused(t, 1, err.Error(), assure.Code(1), assure.Names("archive into it"))
+	})
+
+	t.Run("an encrypted archive as a plaintext run's store folder", func(t *testing.T) {
+		src := encryptedSourcePST(t)
+		out := tmpDir(t)
+		if _, err := Run(context.Background(), Options{Inputs: []string{src}, Out: out}, discard(), nil); err != nil {
+			t.Fatal(err)
+		}
+		m := loadArchive(t, out)
+		var token string
+		for _, tok := range m.Stores {
+			token = tok
+		}
+		storeDir := filepath.Join(out, token)
+		if err := os.RemoveAll(storeDir); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(storeDir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := vaultCreate(storeDir); err != nil {
+			t.Fatal(err)
+		}
+		before := snapshotTree(t, storeDir)
+		_, err := Run(context.Background(), Options{Inputs: []string{src}, Out: out, Mode: export.Full}, discard(), nil)
+		if err == nil || !strings.Contains(err.Error(), "encrypted archive") {
+			t.Fatalf("a plaintext run into an encrypted store folder: want a refusal of that source, got %v", err)
+		}
+		if !sameTree(before, snapshotTree(t, storeDir)) {
+			t.Fatal("a plaintext run wrote into the encrypted archive at its store folder")
+		}
+	})
 }
 
 // covers: MA-740, R37

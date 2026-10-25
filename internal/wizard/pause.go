@@ -7,6 +7,7 @@ import (
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/state"
+	"mail-archive-tool/internal/vault"
 )
 
 // PauseArchive makes the archive at out hard read-only ("Pause (make read-only)", the
@@ -45,7 +46,12 @@ func PauseArchive(out, reason string) error {
 	// An encrypted archive's pause file is a fixed, empty marker: the owner's note
 	// would sit beside the archive in plaintext (phase2a §4). Where the note goes
 	// instead is an open operator question (the archive index is folder-only, MA-662).
-	if app.ArchiveEncrypted(out) {
+	// A folder INSIDE an encrypted archive is not paused at all: its pause file (and
+	// the folder, if it is missing) would be written into the encrypted archive.
+	if dir, _, _ := vault.EncryptedAtOrAbove(out); dir != "" {
+		if !app.ArchiveEncrypted(out) {
+			return fmt.Errorf("%w: %s is inside the encrypted archive %s — pause the archive itself", app.ErrEncryptedNeedsKey, out, dir)
+		}
 		reason = ""
 	}
 	return seal.Seal(out, reason)

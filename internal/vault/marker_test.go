@@ -39,6 +39,27 @@ func TestEncryptedMarkerSeesEachSignalAlone(t *testing.T) {
 	for label, setup := range map[string]func(dir string){
 		"an empty folder": func(string) {},
 		"a plaintext archive spelling every signal": func(dir string) { writeIn(t, dir, manifestName, plaintextManifest(t)) },
+		// A plaintext archive's store folder can carry any name: one called Units (which
+		// a case-insensitive file system also finds as "units"), an empty units/, and
+		// folders named like the vault or the conversion marker are not signals; nor is
+		// a manifest that is a link (it is never followed).
+		"a plaintext store named Units": func(dir string) {
+			if err := os.MkdirAll(filepath.Join(dir, "Units", "Inbox"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			writeIn(t, filepath.Join(dir, "Units", "Inbox"), "2025-03-03_0900_Hello_ab12cd34.html", []byte("<p>mail</p>"))
+		},
+		"an empty units folder": func(dir string) { os.Mkdir(filepath.Join(dir, unitsDirName), 0o755) },
+		"folders named like the vault and the marker": func(dir string) {
+			for _, n := range []string{FileName, BackupName, convertMarker} {
+				os.Mkdir(filepath.Join(dir, n), 0o755)
+			}
+		},
+		"a manifest that is a link to an encrypted one": func(dir string) {
+			other := t.TempDir()
+			writeIn(t, other, manifestName, []byte(`{"version":100}`))
+			os.Symlink(filepath.Join(other, manifestName), filepath.Join(dir, manifestName))
+		},
 	} {
 		dir := t.TempDir()
 		setup(dir)
@@ -59,9 +80,11 @@ func TestEncryptedMarkerSeesEachSignalAlone(t *testing.T) {
 			}
 		}, FileName},
 		"units/ with the vault deleted": {func(t *testing.T, dir string) {
-			if err := os.Mkdir(filepath.Join(dir, unitsDirName), 0o700); err != nil {
+			shard := filepath.Join(dir, unitsDirName, "ab")
+			if err := os.MkdirAll(shard, 0o700); err != nil {
 				t.Fatal(err)
 			}
+			writeIn(t, shard, "ab"+strings.Repeat("0", 30), []byte("sealed"))
 		}, unitsDirName},
 		"a conversion marker": {func(t *testing.T, dir string) { writeIn(t, dir, convertMarker, []byte("{}")) }, convertMarker},
 		"the encrypted manifest format": {func(t *testing.T, dir string) {

@@ -665,6 +665,9 @@ func runGraphMailbox(ctx context.Context, lr *localRun, client *graph.Client, ma
 	// still agree and no body is re-downloaded (INT-CC-1/R17). Mailbox addresses
 	// are injective, so this is almost always the plain sanitized segment.
 	token := manifest.Token(state.MailboxSourceID(mailbox), mailbox)
+	if err := refuseStoreIntoEncrypted(exp, token); err != nil {
+		return err
+	}
 	// Deleted Items and Junk Email are dropped from the walk by default (T7): the
 	// filter resolves each to its concrete well-known-folder id and skips it and
 	// its subtree, so a folder there is never listed and its records — being in an

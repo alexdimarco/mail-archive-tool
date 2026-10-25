@@ -26,7 +26,7 @@ func sealedFolder(t *testing.T) string {
 	return dir
 }
 
-// covers: MA-740, R37
+// covers: MA-740, MA-746, R37
 // No schedule is installed for an encrypted archive yet (phase2a §5; its unattended
 // key arrives in Phase 4): an install whose archive is encrypted, or sits inside one,
 // or whose log would be inside one, is refused (ErrEncryptedArchive, naming the
@@ -54,7 +54,13 @@ func TestNoScheduleIsInstalledForAnEncryptedArchive(t *testing.T) {
 	if err := os.Mkdir(inner, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	// covers MA-746 too: a link into the encrypted archive is seen through.
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(inner, link); err != nil {
+		link = inner
+	}
 	for label, s := range map[string]Spec{
+		"a link into an encrypted archive": {Name: "mailarchive-link", Interval: Daily, At: "02:00", Exe: "/bin/x", Out: link},
 		"an encrypted archive":                 {Name: "mailarchive-enc", Interval: Daily, At: "02:00", Exe: "/bin/x", Out: sealed, Log: filepath.Join(sealed, "x.log")},
 		"a folder inside an encrypted archive": {Name: "mailarchive-in", Interval: Daily, At: "02:00", Exe: "/bin/x", Out: inner},
 		"a log inside an encrypted archive":    {Name: "mailarchive-log", Interval: Daily, At: "02:00", Exe: "/bin/x", Out: plain, Log: filepath.Join(sealed, "x.log")},

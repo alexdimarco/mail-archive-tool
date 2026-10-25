@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/vault"
 )
 
@@ -26,33 +27,55 @@ func manifestDir(manifest string) string {
 // run log names stores, folders and source paths in plaintext (phase2a §4).
 var ErrLogInEncryptedArchive = errors.New("a run log cannot be written inside an encrypted archive")
 
+// ErrEncryptionUnknown refuses an operation whose target folder cannot be checked
+// for encryption: it is not read as plaintext on a guess (phase2a §5).
+var ErrEncryptionUnknown = errors.New("cannot tell whether the folder is an encrypted archive")
+
 // RefuseLogInside refuses a -log path whose folder is, or sits inside, an encrypted
-// archive — any encrypted archive, not only the run's own — before the log is
-// opened. An empty path (no -log) is nothing to refuse.
+// archive — any encrypted archive, not only the run's own, also through a link —
+// before the log is opened. An empty path (no -log) is nothing to refuse.
 func RefuseLogInside(logPath string) error {
 	if logPath == "" {
 		return nil
 	}
 	abs, err := filepath.Abs(logPath)
 	if err != nil {
+		abs = filepath.Clean(logPath)
+	}
+	dir, why, uerr := vault.EncryptedAtOrAbove(filepath.Dir(abs))
+	if dir != "" {
+		return fmt.Errorf("%w: %s would be inside the encrypted archive %s (%s) — leave out -log, or choose a folder outside the archive",
+			ErrLogInEncryptedArchive, abs, dir, why)
+	}
+	if uerr != nil {
+		return fmt.Errorf("%w: %v — leave out -log, or choose another folder", ErrEncryptionUnknown, uerr)
+	}
+	return nil
+}
+
+// refuseStoreIntoEncrypted refuses a PLAINTEXT run's source whose store folder in
+// the archive (out/<token>) is an encrypted archive someone placed inside this one:
+// its pages and originals would be written into the encrypted archive in plaintext.
+// An encrypted run writes no store folder.
+func refuseStoreIntoEncrypted(exp *export.Exporter, token string) error {
+	if exp.Units != nil {
 		return nil
 	}
-	for dir := filepath.Dir(abs); ; dir = filepath.Dir(dir) {
-		if enc, why, _ := vault.EncryptedMarker(dir); enc {
-			return fmt.Errorf("%w: %s would be inside the encrypted archive %s (%s) — leave out -log, or choose a folder outside the archive",
-				ErrLogInEncryptedArchive, abs, dir, why)
-		}
-		if filepath.Dir(dir) == dir {
-			return nil
-		}
+	dir := filepath.Join(exp.OutDir, token)
+	if enc, why, _ := vault.EncryptedMarker(dir); enc {
+		return fmt.Errorf("%w: the store folder %s is an encrypted archive (%s); refusing to write this source's messages into it — move that archive out of %s",
+			ErrEncryptedNeedsKey, dir, why, exp.OutDir)
 	}
+	return nil
 }
 
 // RefuseKeyless refuses op on out — before any lock, log, read or write — when
 // out is an encrypted archive, or sits inside one, or any of extra (a -manifest
 // folder, an extract destination) is or sits inside one, as vault.EncryptedMarker
-// recognises it. An I/O error reading a folder is left to the operation's own
-// handling. op names the operation in the refusal ("archive into it").
+// recognises it, the path as given and through its links (EncryptedAtOrAbove). A
+// target that cannot be checked at all is refused too (ErrEncryptionUnknown): the
+// operation might reach it by another spelling. op names the operation in the
+// refusal ("archive into it").
 func RefuseKeyless(op, out string, extra ...string) error {
 	for _, target := range append([]string{out}, extra...) {
 		if target == "" {
@@ -60,20 +83,19 @@ func RefuseKeyless(op, out string, extra ...string) error {
 		}
 		abs, err := filepath.Abs(target)
 		if err != nil {
-			continue
+			abs = filepath.Clean(target)
 		}
-		for dir := abs; ; dir = filepath.Dir(dir) {
-			if enc, why, _ := vault.EncryptedMarker(dir); enc {
-				where := dir
-				if dir != abs {
-					where = dir + " (which holds " + abs + ")"
-				}
-				return fmt.Errorf("%w: %s is an encrypted archive — %s; refusing to %s without its key: open it in MailArchive with its password or recovery key",
-					ErrEncryptedNeedsKey, where, why, op)
+		dir, why, uerr := vault.EncryptedAtOrAbove(abs)
+		if dir != "" {
+			where := dir
+			if dir != abs {
+				where = dir + " (which holds " + abs + ")"
 			}
-			if parent := filepath.Dir(dir); parent == dir {
-				break
-			}
+			return fmt.Errorf("%w: %s is an encrypted archive — %s; refusing to %s without its key: open it in MailArchive with its password or recovery key",
+				ErrEncryptedNeedsKey, where, why, op)
+		}
+		if uerr != nil {
+			return fmt.Errorf("%w: %v; refusing to %s", ErrEncryptionUnknown, uerr, op)
 		}
 	}
 	return nil
