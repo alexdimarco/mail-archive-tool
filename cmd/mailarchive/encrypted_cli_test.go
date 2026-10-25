@@ -114,8 +114,13 @@ func TestEveryKeylessCommandRefusesAnEncryptedArchive(t *testing.T) {
 			rc = 1
 		}
 		lr, st, rerr := state.ReadLastRun(out)
-		if rerr != nil || st != state.LastRunPresent || lr.Status != state.RunFailed || !strings.Contains(lr.Error, "encrypted") {
-			t.Fatalf("a scheduled export's refusal is not the recorded last run: %+v (%v)\n%s", lr, rerr, msg)
+		if rerr != nil || st != state.LastRunPresent || lr.Status != state.RunFailed || lr.ErrorKind != state.FailEncryptedNeedsKey || lr.Error != "" {
+			t.Fatalf("a scheduled export's refusal is not the minimal recorded last run: %+v (%v)\n%s", lr, rerr, msg)
+		}
+		for _, name := range []string{state.LastRunName, state.RunHistoryName, state.AttentionName} {
+			if raw, _ := os.ReadFile(filepath.Join(out, name)); strings.Contains(string(raw), out) || strings.Contains(string(raw), input) {
+				t.Fatalf("%s names the archive or the source: %s", name, raw)
+			}
 		}
 		assure.Refused(t, rc, msg, assure.Code(1), assure.Names(out, "encrypted archive"))
 	})

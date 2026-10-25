@@ -400,6 +400,16 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 			return Result{}, err
 		}
 	}
+	// A keyed run proves its key and target before discovery, any folder, lock or
+	// record: a refused manual run writes nothing (P2a-C10).
+	if opts.Key != nil {
+		if err := preflightEncrypted(opts); err != nil {
+			if opts.Unattended {
+				RecordRefusedRun(opts, err)
+			}
+			return Result{}, err
+		}
+	}
 
 	// Validate the inputs BEFORE creating anything (friction #2). A missing
 	// -input path, or no sources at all, must refuse naming the problem while
@@ -409,7 +419,9 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	// archive already exists, so it never leaves the previous success standing.
 	files, err := DiscoverInputs(opts.Inputs, opts.Auto)
 	if err == nil && len(files) == 0 {
-		err = errors.New("no input mail sources found (a .pst/.ost file, an mbox file, or a mail directory; or enable auto-discovery)")
+		err = withKind(state.FailNoSources, errors.New("no input mail sources found (a .pst/.ost file, an mbox file, or a mail directory; or enable auto-discovery)"))
+	} else if err != nil {
+		err = withKind(state.FailSourceUnreadable, err) // a gone -input is named by its own type first
 	}
 	if err != nil {
 		if opts.Unattended {
@@ -426,19 +438,36 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		}
 	}
 	if err := os.MkdirAll(opts.Out, 0o755); err != nil {
-		return Result{}, fmt.Errorf("create output dir: %w", err)
+		return Result{}, withKind(state.FailArchiveUnwritable, fmt.Errorf("create output dir: %w", err))
 	}
 	// One run per archive at a time (R5): a scheduled run overlapping a manual
 	// one would otherwise interleave manifest/index/file writes.
-	lock, err := lockfile.AcquireAs(filepath.Join(opts.Out, lockfile.Name), "export")
+	lock, err := lockfile.AcquireAs(filepath.Join(opts.Out, lockfile.Name), lockVerb(opts, "export"))
 	if err != nil {
-		return Result{}, err
+		return Result{}, withKind(state.FailArchiveUnwritable, err) // a held lock is named by ErrHeld first
 	}
 	defer lock.Release()
 	// Again under the lock: an encryption that finished while this run waited
 	// (a conversion's swap) is not a plaintext archive either (P2a-C9).
 	if opts.Key == nil {
 		if err := RefuseKeyless("archive into it", opts.Out, manifestDir(opts.Manifest)); err != nil {
+			return Result{}, err
+		}
+	}
+	mpath := opts.Manifest
+	if mpath == "" {
+		mpath = filepath.Join(opts.Out, ".mailarchive-manifest.json")
+	}
+	// A keyed run's manifest and unit checks run here, before its "running" record:
+	// a refused manual run writes nothing (P2a-C10), a scheduled one only its
+	// minimal failed run (A14).
+	var manifest *state.Manifest
+	var units *export.Units
+	if opts.Key != nil {
+		if manifest, units, err = openEncrypted(opts, mpath, time.Now().UTC(), logger); err != nil {
+			if opts.Unattended {
+				writeRefusedRun(opts, err)
+			}
 			return Result{}, err
 		}
 	}
@@ -496,13 +525,10 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		logger.Printf("swept %d orphaned temp/zip file(s) from an interrupted run", n)
 	}
 
-	mpath := opts.Manifest
-	if mpath == "" {
-		mpath = filepath.Join(opts.Out, ".mailarchive-manifest.json")
-	}
-	manifest, err := state.Load(mpath)
-	if err != nil {
-		return Result{}, err
+	if manifest == nil {
+		if manifest, err = state.Load(mpath); err != nil {
+			return Result{}, withKind(state.FailManifestUnreadable, err)
+		}
 	}
 	manifestBefore := manifest.Len()
 
@@ -514,11 +540,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		Log:      logger,
 		KeepRaw:  opts.KeepRaw,
 		RunAt:    runAt,
-	}
-	if opts.Key != nil {
-		if exp.Units, err = prepareEncrypted(opts, manifest, runAt, logger); err != nil {
-			return Result{}, err
-		}
+		Units:    units,
 	}
 
 	if exporterSetup != nil {
@@ -554,14 +576,14 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		idxPath := filepath.Join(opts.Out, "search.db")
 		idx, err = index.Open(idxPath)
 		if err != nil {
-			return Result{}, indexOpenError(idxPath, opts.Out, err)
+			return Result{}, withKind(state.FailIndex, indexOpenError(idxPath, opts.Out, err))
 		}
 		defer idx.Close()
 		// Repair legacy index keys to match the re-scoped manifest, driven by
 		// the manifest's own re-key signal (force) — the only trigger that
 		// survives an old-binary excursion — or the index's own version (F2).
 		if _, rkErr := idx.RepairKeys(manifest.Rekeyed > 0, state.MigrateKey, logger); rkErr != nil {
-			return Result{}, fmt.Errorf("migrate search index keys: %w", rkErr)
+			return Result{}, withKind(state.FailIndex, fmt.Errorf("migrate search index keys: %w", rkErr))
 		}
 		warns := newIndexWarnings(logger)
 		defer warns.flush()
@@ -646,7 +668,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 			// files already written are reconciled by the next incremental run
 			// (index-before-manifest ordering leaves no orphaned manifest rows).
 			// (INT-CC-2/R5.)
-			return result, lockLost
+			return result, withKind(state.FailLockLost, lockLost)
 		}
 		saveErr = commit(nil, idx, manifest, logger)
 
@@ -726,7 +748,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 // the remedy; recordRun finalizes the last-run record failed with it, so
 // `status` reports RED instead of a green "ok".
 func manifestSaveFailure(mpath string, err error) error {
-	return fmt.Errorf("could not save the manifest %s (%w): this run's progress was not recorded and the next run will repeat it — make sure the manifest file and its folder are writable (on Windows, that no other program holds the manifest open), then run again", mpath, err)
+	return withKind(state.FailManifestSave, fmt.Errorf("could not save the manifest %s (%w): this run's progress was not recorded and the next run will repeat it — make sure the manifest file and its folder are writable (on Windows, that no other program holds the manifest open), then run again", mpath, err))
 }
 
 // defaultCheckpointEvery aligns with the index's own batch size.
@@ -846,8 +868,14 @@ func beginRun(opts Options) state.LastRun {
 	return lr
 }
 
-// newRunRecord is the "running" last-run record for a run of opts, starting now.
+// newRunRecord is the "running" last-run record for a run of opts, starting now. The
+// record of an encrypted archive — a keyed run, or any run whose out is one — is
+// marked Encrypted and carries nothing beyond its allow-list (P2a-C16): no program
+// path, job, mode or warnings.
 func newRunRecord(opts Options) state.LastRun {
+	if opts.Key != nil || encryptedAt(opts.Out) {
+		return state.LastRun{Status: state.RunRunning, Started: time.Now().UTC(), Encrypted: true}
+	}
 	exe, _ := os.Executable()
 	mode := "incremental"
 	if opts.Mode == export.Full {
@@ -875,16 +903,55 @@ func RecordRefusedRun(opts Options, cause error) {
 	if mErr != nil && lrErr != nil {
 		return
 	}
-	lock, err := lockfile.AcquireAs(filepath.Join(opts.Out, lockfile.Name), "export")
+	// An out inside an encrypted archive is never written: its record would break
+	// the outer archive's allow-listed tree (P2a-C8).
+	if insideEncrypted(opts.Out) {
+		return
+	}
+	lock, err := lockfile.AcquireAs(filepath.Join(opts.Out, lockfile.Name), lockVerb(opts, "export"))
 	if err != nil {
 		return
 	}
 	defer lock.Release()
+	writeRefusedRun(opts, cause)
+}
+
+// writeRefusedRun writes RecordRefusedRun's failed record and history entry; the
+// caller holds the archive lock. An encrypted archive's record carries the failure
+// kind, never the error text (P2a-C16).
+func writeRefusedRun(opts Options, cause error) {
 	lr := newRunRecord(opts)
 	lr.Status, lr.Finished, lr.Error = state.RunFailed, lr.Started, cause.Error()
+	if lr.Encrypted {
+		lr.Error, lr.ErrorKind = "", FailureKind(cause)
+	}
 	_ = state.WriteLastRun(opts.Out, lr)
 	// A refused scheduled run is a failure the history should show too (MA-701), best effort.
 	_ = appendRunHistory(opts.Out, state.RunHistoryEntryFrom(lr))
+}
+
+// lockVerb is the verb the archive lock records for a run of opts: none for an
+// encrypted archive, whose lock must not say what kind of source it is backed up
+// from (only host= is disclosed, A18).
+func lockVerb(opts Options, verb string) string {
+	if opts.Key != nil || encryptedAt(opts.Out) {
+		return ""
+	}
+	return verb
+}
+
+// insideEncrypted reports whether a folder ABOVE out is an encrypted archive.
+func insideEncrypted(out string) bool {
+	abs, err := filepath.Abs(out)
+	if err != nil {
+		return false
+	}
+	for dir := filepath.Dir(abs); dir != abs; abs, dir = dir, filepath.Dir(dir) {
+		if encryptedAt(dir) {
+			return true
+		}
+	}
+	return false
 }
 
 // canonicalJob reconstructs the run's export flags in the same shape the
@@ -943,6 +1010,10 @@ func recordRun(opts Options, lr state.LastRun, result *Result, err *error, logge
 		lr.Status = state.RunFailed
 		lr.Error = (*err).Error()
 		lr.ErrorKind = errorKindOf(*err)
+		if lr.Encrypted {
+			// An encrypted archive records the failure kind, never its text (P2a-C16).
+			lr.Error, lr.ErrorKind = "", FailureKind(*err)
+		}
 	}
 	lr.Exported, lr.Filled = result.Stats.Exported, result.Stats.Filled
 	lr.Fillable, lr.Terminal, lr.Unknown, lr.IndexErrors = result.Fillable, result.Terminal, result.Unknown, result.IndexErrors
@@ -975,7 +1046,7 @@ func recordRun(opts Options, lr state.LastRun, result *Result, err *error, logge
 	// (unattended) runs move the streak, and only a definitive reach or unreachable verdict
 	// moves it — a non-source failure leaves it. Best effort, like the last-run write above.
 	if opts.Unattended {
-		updateSourceStreak(opts.Out, *err, lr.Finished, logger)
+		updateSourceStreak(opts.Out, *err, lr.Finished, lr.Encrypted, logger)
 	}
 }
 
@@ -1140,7 +1211,7 @@ func fileFailureError(failures int, firstPath string, firstErr error) error {
 	if failures > 1 {
 		msg += fmt.Sprintf(" (the run log names the other %d)", failures-1)
 	}
-	return errors.New(msg)
+	return withKind(state.FailSourceUnreadable, errors.New(msg))
 }
 
 // runFile opens one data file (optionally via a temp snapshot) and exports every

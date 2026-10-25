@@ -31,6 +31,9 @@ type RunHistoryEntry struct {
 	DurationMs int64     `json:"durationMs,omitempty"`
 	Mode       string    `json:"mode,omitempty"`
 	Error      string    `json:"error,omitempty"`
+	// ErrorKind is an encrypted archive's failure kind (FailureText says it), in
+	// place of Error; absent on a plaintext entry.
+	ErrorKind string `json:"errorKind,omitempty"`
 }
 
 // ReadRunHistory returns the recorded runs oldest-first, or nil for an archive with no
@@ -72,6 +75,11 @@ func AppendRunHistory(out string, e RunHistoryEntry) error {
 // RunHistoryEntryFrom builds a history entry from a finalized last-run record, so the
 // history and the last-run slot always agree on how a run ended.
 func RunHistoryEntryFrom(lr LastRun) RunHistoryEntry {
+	// An encrypted archive's entry is its allow-list: when, the outcome and the
+	// failure kind — no counts, duration, mode or error text (P2a-C16).
+	if lr.Encrypted {
+		return RunHistoryEntry{When: lr.Finished, Status: lr.Status, ErrorKind: lr.ErrorKind}
+	}
 	e := RunHistoryEntry{When: lr.Finished, Status: lr.Status, Exported: lr.Exported, Filled: lr.Filled, Mode: lr.Mode, Error: lr.Error}
 	if !lr.Started.IsZero() && !lr.Finished.IsZero() && lr.Finished.After(lr.Started) {
 		e.DurationMs = lr.Finished.Sub(lr.Started).Milliseconds()

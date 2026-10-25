@@ -34,7 +34,7 @@ func (d *dashboard) runJob(fn func(*log.Logger) (string, error)) error {
 		}()
 		result, err := fn(log.New(c, "", 0))
 		if err != nil {
-			c.finish("", jobErrorText(err))
+			c.finish("", jobErrorText(d.cfg.effectiveOut(), err))
 			return
 		}
 		c.finish(result, "")
@@ -52,8 +52,12 @@ const checkButton = "Maintenance → Check integrity"
 
 // jobErrorText is a failed job's text for the owner: an index refusal says what
 // is wrong and names the Rebuild button instead of `mailarchive reindex`
-// (g7 F3); any other failure keeps its own text.
-func jobErrorText(err error) string {
+// (g7 F3); any other failure keeps its own text. A job on an encrypted archive
+// says its failure kind's fixed words, never the error's text (P2a-C16).
+func jobErrorText(out string, err error) string {
+	if app.ArchiveEncrypted(out) {
+		return app.ErrorTextFor(out, err)
+	}
 	var ie *app.IndexOpenError
 	if errors.As(err, &ie) {
 		return ie.ForOwner(rebuildButton)

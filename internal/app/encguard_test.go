@@ -1,11 +1,14 @@
 package app
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"mail-archive-tool/internal/assure"
@@ -111,19 +114,66 @@ func TestAKeylessScheduledRunIntoAnEncryptedArchiveIsRecordedAsFailed(t *testing
 	} {
 		t.Run(name, func(t *testing.T) {
 			out := sealedArchive(t)
-			units := filepath.Join(out, "units")
-			before := snapshotTree(t, units)
+			before := snapshotTree(t, out)
 			err := run(out)
 			if !errors.Is(err, ErrEncryptedNeedsKey) {
 				t.Fatalf("want ErrEncryptedNeedsKey, got %v", err)
 			}
-			lr, st, rerr := state.ReadLastRun(out)
-			if rerr != nil || st != state.LastRunPresent || lr.Status != state.RunFailed || lr.Error != err.Error() {
-				t.Fatalf("the refusal is not the recorded last run: %+v (%v, %v)", lr, st, rerr)
-			}
-			assure.Refused(t, 1, lr.Error, assure.Code(1), assure.Names(out),
-				assure.NoSideEffect(func() bool { return sameTree(before, snapshotTree(t, units)) }))
+			assure.Refused(t, 1, err.Error(), assure.Code(1), assure.Names(out))
+			requireMinimalRefusalRecord(t, out, before, state.FailEncryptedNeedsKey, src)
 		})
+	}
+}
+
+// requireMinimalRefusalRecord asserts what a recorded refusal of an encrypted
+// archive changes, exactly (P2a-C10): the last-run record — failed, carrying kind
+// and nothing beyond the A6 allow-list —, one run-history entry with the kind, the
+// attention notice, and the lock file the record was written under; every other
+// file is byte-identical, and none of the three names the archive or any of
+// secrets (source paths, mailbox addresses).
+func requireMinimalRefusalRecord(t *testing.T, out string, before map[string][]byte, kind string, secrets ...string) {
+	t.Helper()
+	after := snapshotTree(t, out)
+	allowed := map[string]bool{state.LastRunName: true, state.RunHistoryName: true, state.AttentionName: true, ".mailarchive.lock": true}
+	for p, b := range after {
+		if !allowed[p] && !bytes.Equal(before[p], b) {
+			t.Fatalf("the refusal changed %s, outside the last-run record, history and notice", p)
+		}
+	}
+	for p := range before {
+		if _, ok := after[p]; !ok {
+			t.Fatalf("the refusal removed %s", p)
+		}
+	}
+	lr, st, err := state.ReadLastRun(out)
+	if err != nil || st != state.LastRunPresent || lr.Status != state.RunFailed || !lr.Encrypted || lr.ErrorKind != kind || lr.Error != "" {
+		t.Fatalf("the last-run record is not the minimal failed one with kind %s: %+v (%v)", kind, lr, err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(after[state.LastRunName], &raw); err != nil {
+		t.Fatal(err)
+	}
+	for k := range raw {
+		switch k {
+		case "version", "status", "started", "finished", "error_kind", "encrypted":
+		default:
+			t.Fatalf("the last-run record carries %q, outside the A6 allow-list: %s", k, after[state.LastRunName])
+		}
+	}
+	h, err := state.ReadRunHistory(out)
+	if err != nil || len(h) == 0 || h[len(h)-1].ErrorKind != kind || h[len(h)-1].Error != "" {
+		t.Fatalf("the history does not end with the minimal refusal entry: %+v (%v)", h, err)
+	}
+	notice := string(after[state.AttentionName])
+	if !strings.Contains(notice, state.FailureText(kind)) {
+		t.Fatalf("the attention notice does not say the kind's fixed words: %q", notice)
+	}
+	for _, name := range []string{state.LastRunName, state.RunHistoryName, state.AttentionName} {
+		for _, s := range append([]string{out, filepath.Base(out)}, secrets...) {
+			if s != "" && bytes.Contains(after[name], []byte(s)) {
+				t.Fatalf("%s names %q", name, s)
+			}
+		}
 	}
 }
 

@@ -115,6 +115,13 @@ type LastRun struct {
 	// or on an older record, so `status` reads a record without it as "not
 	// configured" and an older binary ignores it.
 	Presync *PresyncRecord `json:"presync,omitempty"`
+
+	// Encrypted marks the record of an encrypted archive: WriteLastRun then writes
+	// only the allow-listed fields (encryptedLastRun) and the attention notice says
+	// the failure kind in fixed words (P2a-C16). The caller sets it — state does not
+	// recognise an encrypted archive itself. Absent (false) on a plaintext record,
+	// whose bytes it leaves unchanged.
+	Encrypted bool `json:"encrypted,omitempty"`
 }
 
 // PresyncRecord is the Thunderbird pre-sync's record in one run (design §4.9.2).
@@ -155,7 +162,7 @@ const (
 // it best effort: a refusal that persists is returned, never fails a run.
 func WriteLastRun(out string, r LastRun) error {
 	r.Version = 1
-	data, err := json.MarshalIndent(r, "", "  ")
+	data, err := marshalLastRun(r)
 	if err != nil {
 		return err
 	}
@@ -193,6 +200,10 @@ func updateAttentionSidecar(out string, r LastRun) {
 	path := filepath.Join(out, AttentionName)
 	switch r.Status {
 	case RunFailed:
+		if r.Encrypted {
+			_ = writeSidecarAtomic(path, []byte(encryptedAttention(r)))
+			return
+		}
 		reason := r.Error
 		if reason == "" {
 			reason = "the run failed (no error text was recorded)"

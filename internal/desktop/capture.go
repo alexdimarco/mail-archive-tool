@@ -54,7 +54,9 @@ func HeadlessCapture(cfg Config, logw io.Writer) error {
 	// An encrypted archive is captured into only with its key (phase2a §5); the
 	// scheduled capture's refusal is recorded so status and the banner show it (A14).
 	if err := app.RefuseKeyless("capture into it", out); err != nil {
-		recordStartFailure(out, err)
+		// Recorded like every scheduled refusal: the minimal failed run and one
+		// history entry, the failure kind and never its text (A14, P2a-C16).
+		app.RecordRefusedRun(app.Options{Out: out, Unattended: true}, err)
 		return err
 	}
 	// §4.6.3/MA-617 + OP-2/MA-646: refuse when Microsoft 365 is not set up, via the

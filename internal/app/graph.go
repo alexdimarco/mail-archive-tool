@@ -99,13 +99,23 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 			return Result{}, err
 		}
 	}
+	// A keyed capture proves its key and target before the sign-in, any folder, lock
+	// or record: a refused manual capture writes nothing (P2a-C10).
+	if opts.Key != nil {
+		if err := preflightEncrypted(opts); err != nil {
+			if opts.Unattended {
+				RecordRefusedRun(opts, err)
+			}
+			return Result{}, err
+		}
+	}
 	// Build the Graph client and resolve the mailbox set BEFORE taking the archive
 	// lock: a device sign-in is interactive and must not hold the lock, and device
 	// mode derives its single mailbox (the signer, read from /me) rather than being
 	// told one. App mode returns the given mailboxes unchanged.
 	client, mailboxes, err := buildGraphClient(ctx, g, logger)
 	if err != nil {
-		return Result{}, cleanErr(asFailure(ctx, err))
+		return Result{}, withKind(state.FailSignIn, cleanErr(asFailure(ctx, err)))
 	}
 	g.Mailboxes = mailboxes
 	if len(g.Mailboxes) == 0 {
@@ -119,15 +129,35 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		}
 	}
 	if err := os.MkdirAll(opts.Out, 0o755); err != nil {
-		return Result{}, fmt.Errorf("create output dir: %w", err)
+		return Result{}, withKind(state.FailArchiveUnwritable, fmt.Errorf("create output dir: %w", err))
 	}
-	lock, err := lockfile.AcquireAs(filepath.Join(opts.Out, lockfile.Name), "graph")
+	lock, err := lockfile.AcquireAs(filepath.Join(opts.Out, lockfile.Name), lockVerb(opts, "graph"))
 	if err != nil {
-		return Result{}, err
+		return Result{}, withKind(state.FailArchiveUnwritable, err) // a held lock is named by ErrHeld first
 	}
 	defer lock.Release()
 	if opts.Key == nil {
 		if err := RefuseKeyless("capture into it", opts.Out, manifestDir(opts.Manifest)); err != nil {
+			return Result{}, err
+		}
+	}
+	mpath := opts.Manifest
+	if mpath == "" {
+		mpath = filepath.Join(opts.Out, ".mailarchive-manifest.json")
+	}
+	// A keyed capture's manifest and unit checks run here, before its "running"
+	// record: a refused manual capture writes nothing (P2a-C10), a scheduled one only
+	// its minimal failed run (A14).
+	var manifest *state.Manifest
+	var units *export.Units
+	if opts.Key != nil {
+		if manifest, units, err = openEncrypted(opts, mpath, time.Now().UTC(), logger); err == nil {
+			err = refuseOwedCollapse(opts, manifest, g.Mailboxes)
+		}
+		if err != nil {
+			if opts.Unattended {
+				writeRefusedRun(opts, err)
+			}
 			return Result{}, err
 		}
 	}
@@ -141,13 +171,10 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		logger.Printf("swept %d orphaned temp file(s) from an interrupted run", n)
 	}
 
-	mpath := opts.Manifest
-	if mpath == "" {
-		mpath = filepath.Join(opts.Out, ".mailarchive-manifest.json")
-	}
-	manifest, err := state.Load(mpath)
-	if err != nil {
-		return Result{}, err
+	if manifest == nil {
+		if manifest, err = state.Load(mpath); err != nil {
+			return Result{}, withKind(state.FailManifestUnreadable, err)
+		}
 	}
 	manifestBefore := manifest.Len()
 
@@ -167,11 +194,7 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		// copy (R3 reworded, §3.1/§3.6). Set ONLY here — a one-shot local import
 		// keeps the folder-scoped key.
 		DedupMailboxWide: true,
-	}
-	if opts.Key != nil {
-		if exp.Units, err = prepareEncrypted(opts, manifest, begun.Started, logger); err != nil {
-			return Result{}, err
-		}
+		Units:            units,
 	}
 	if exporterSetup != nil {
 		exporterSetup(exp)
@@ -213,11 +236,11 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		idxPath := filepath.Join(opts.Out, "search.db")
 		idx, err = index.Open(idxPath)
 		if err != nil {
-			return Result{}, indexOpenError(idxPath, opts.Out, err)
+			return Result{}, withKind(state.FailIndex, indexOpenError(idxPath, opts.Out, err))
 		}
 		defer idx.Close()
 		if _, rkErr := idx.RepairKeys(manifest.Rekeyed > 0, state.MigrateKey, logger); rkErr != nil {
-			return Result{}, fmt.Errorf("migrate search index keys: %w", rkErr)
+			return Result{}, withKind(state.FailIndex, fmt.Errorf("migrate search index keys: %w", rkErr))
 		}
 	}
 	// One-time v3→v5 identity-collapse (option D, design rev-4 §4), BEFORE the walk
@@ -250,10 +273,8 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	// would merge distinct messages (P2a-C7). A fresh encrypted archive has nothing
 	// to collapse and is simply marked; one that still owes a real collapse was
 	// encrypted wrongly (only the A12 conversion, which collapses first, encrypts).
+	// (refuseOwedCollapse refused the other case before the run began.)
 	if len(collapseTokens) > 0 && opts.Key != nil {
-		if manifest.Len() > 0 {
-			return Result{}, fmt.Errorf("%w: %s: it still owes the one-time identity collapse, which cannot run on an encrypted archive", ErrEncryptedArchive, opts.Out)
-		}
 		manifest.MarkCollapsed(collapseTokens...)
 		collapseTokens = nil
 	}
@@ -277,7 +298,7 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 					drop[i] = l.LoserKey
 				}
 				if rkErr := idx.Rekey(remap, drop); rkErr != nil {
-					return Result{}, fmt.Errorf("re-key search index for identity collapse: %w", rkErr)
+					return Result{}, withKind(state.FailIndex, fmt.Errorf("re-key search index for identity collapse: %w", rkErr))
 				}
 			}
 			logger.Printf("collapsed %d move-duplicate(s) and re-keyed %d record(s) to the mailbox-wide identity (one-time v3→v5 upgrade)", len(losses), len(remap))
@@ -287,7 +308,7 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		// crash before the walk's end-of-run save leaves a consistent collapsed
 		// archive (the manifest never lagging the index).
 		if err := manifest.Save(); err != nil {
-			return Result{}, fmt.Errorf("save manifest after identity collapse: %w", err)
+			return Result{}, withKind(state.FailManifestSave, fmt.Errorf("save manifest after identity collapse: %w", err))
 		}
 	}
 	// Every successful export is a newly-seen (or, in full mode, re-observed)
@@ -383,7 +404,7 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 			// Write no shared state (manifest/index/README); the deferred recordRun
 			// marks the run failed and the next incremental run reconciles the
 			// message files already written (INT-CC-2/R5).
-			return result, lockLost
+			return result, withKind(state.FailLockLost, lockLost)
 		}
 		saveErr = commit(hist, idx, manifest, logger)
 		// "Cancelled" is decided from RunGraph's own context, never from the
@@ -480,11 +501,11 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		// recorded as one (asOutage), not left to the reader of its text (S3-AC5).
 		if firstErr != nil {
 			if runBreaker != nil {
-				return result, asOutage(fmt.Errorf("%d mailbox(es) failed; first error: %w; %w", failures, asFailure(ctx, firstErr), runBreaker), firstErr)
+				return result, withKind(state.FailMailboxFailed, asOutage(fmt.Errorf("%d mailbox(es) failed; first error: %w; %w", failures, asFailure(ctx, firstErr), runBreaker), firstErr))
 			}
-			return result, asOutage(fmt.Errorf("%d mailbox(es) failed; first error: %w", failures, asFailure(ctx, firstErr)), firstErr)
+			return result, withKind(state.FailMailboxFailed, asOutage(fmt.Errorf("%d mailbox(es) failed; first error: %w", failures, asFailure(ctx, firstErr)), firstErr))
 		}
-		return result, fmt.Errorf("%d mailbox(es) failed", failures)
+		return result, withKind(state.FailMailboxFailed, fmt.Errorf("%d mailbox(es) failed", failures))
 	}
 	return result, partialOutcome(result)
 }

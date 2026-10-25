@@ -25,12 +25,7 @@ var ErrEncryptedArchive = errors.New("this encrypted archive cannot be written")
 // units, then runs the keyed inventory sweep (P2a-C4). It returns the run's unit
 // store.
 func prepareEncrypted(opts Options, manifest *state.Manifest, runStart time.Time, logger *log.Logger) (*export.Units, error) {
-	refuse := func(why string, cause error) error {
-		if cause != nil {
-			return fmt.Errorf("%w: %s: %s: %w", ErrEncryptedArchive, opts.Out, why, cause)
-		}
-		return fmt.Errorf("%w: %s: %s", ErrEncryptedArchive, opts.Out, why)
-	}
+	refuse := func(why string, cause error) error { return encRefusal(opts.Out, why, cause) }
 	if opts.Manifest != "" {
 		return nil, refuse("its manifest cannot be moved out of the archive folder (-manifest)", nil)
 	}
@@ -55,4 +50,63 @@ func prepareEncrypted(opts Options, manifest *state.Manifest, runStart time.Time
 		logger.Printf("swept %d unit file(s) no record names, from an interrupted run", n)
 	}
 	return units, nil
+}
+
+// encRefusal is an ErrEncryptedArchive refusal naming out, why, and its cause.
+func encRefusal(out, why string, cause error) error {
+	if cause != nil {
+		return fmt.Errorf("%w: %s: %s: %w", ErrEncryptedArchive, out, why, cause)
+	}
+	return fmt.Errorf("%w: %s: %s", ErrEncryptedArchive, out, why)
+}
+
+// preflightEncrypted is a keyed run's check before discovery, any folder, lock or
+// record (P2a-C10): it refuses a relocated manifest, an out inside another
+// encrypted archive (P2a-C8, whose parent walk the keyless guard does not run for
+// a keyed run) and a key that does not open the vault in out. prepareEncrypted
+// checks the key again under the lock (a conversion's swap, P2a-C9).
+func preflightEncrypted(opts Options) error {
+	if opts.Manifest != "" {
+		return encRefusal(opts.Out, "its manifest cannot be moved out of the archive folder (-manifest)", nil)
+	}
+	if insideEncrypted(opts.Out) {
+		return encRefusal(opts.Out, "it is inside another encrypted archive, and an archive cannot be kept inside one", nil)
+	}
+	if err := vault.VerifyKey(opts.Out, opts.Key.ArchiveID(), opts.Key); err != nil {
+		return encRefusal(opts.Out, "the key does not open this archive's key file", err)
+	}
+	return nil
+}
+
+// refuseOwedCollapse refuses a keyed capture into an archive that still owes the
+// one-time identity collapse for one of its mailboxes: the collapse reads .eml files
+// by logical path, which an encrypted archive has none of, so it would merge distinct
+// messages (P2a-C7). A fresh encrypted archive (no records) owes nothing real and is
+// simply marked collapsed by the run; one with records was encrypted wrongly — only
+// the A12 conversion, which collapses first, encrypts an existing archive.
+func refuseOwedCollapse(opts Options, manifest *state.Manifest, mailboxes []string) error {
+	if manifest.Len() == 0 {
+		return nil
+	}
+	for _, mbx := range mailboxes {
+		if manifest.OwesCollapse(manifest.Token(state.MailboxSourceID(mbx), mbx)) {
+			return encRefusal(opts.Out, "it still owes the one-time identity collapse, which cannot run on an encrypted archive", nil)
+		}
+	}
+	return nil
+}
+
+// openEncrypted is a keyed run's setup under the lock and BEFORE its "running"
+// record: the manifest load and prepareEncrypted, so a refusal leaves no record of
+// a manual run (P2a-C10). It returns the loaded manifest and the unit store.
+func openEncrypted(opts Options, mpath string, runStart time.Time, logger *log.Logger) (*state.Manifest, *export.Units, error) {
+	manifest, err := state.Load(mpath)
+	if err != nil {
+		return nil, nil, withKind(state.FailManifestUnreadable, err)
+	}
+	units, err := prepareEncrypted(opts, manifest, runStart, logger)
+	if err != nil {
+		return nil, nil, err
+	}
+	return manifest, units, nil
 }

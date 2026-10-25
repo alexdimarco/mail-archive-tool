@@ -233,7 +233,7 @@ func RunHeadless(path string) int {
 			outlookcom.Options{Sync: wait > 0, SyncWait: wait}, logger)
 		if cerr != nil {
 			logger.Printf("FAILED: %v", cerr)
-			fmt.Fprintln(os.Stderr, "mailarchive run-job: "+cerr.Error())
+			fmt.Fprintln(os.Stderr, "mailarchive run-job: "+app.ErrorTextFor(j.Out, cerr))
 			notifyFailure(j.Name, j.Out)
 			fireBackupAlert(j.Out, backupalert.ResultFailed, cerr, 0, logger)
 			return 1
@@ -270,7 +270,7 @@ func RunHeadless(path string) int {
 		} else {
 			logger.Printf("FAILED: %v", runErr)
 		}
-		fmt.Fprintln(os.Stderr, "mailarchive run-job: "+runErr.Error()) // cron mail / stderr.log
+		fmt.Fprintln(os.Stderr, "mailarchive run-job: "+app.ErrorTextFor(j.Out, runErr)) // cron mail / stderr.log
 		notifyFailure(j.Name, j.Out)
 		fireBackupAlert(j.Out, backupalert.ResultFailed, runErr, 0, logger)
 		return 1

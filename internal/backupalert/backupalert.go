@@ -15,7 +15,9 @@ import (
 	"time"
 
 	"mail-archive-tool/internal/alert"
+	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/graphconfig"
+	"mail-archive-tool/internal/state"
 )
 
 // SecretAccount is the OS-secret-store account key the alert SMTP password is kept under
@@ -115,6 +117,16 @@ func FireForRun(settingsPath string, store graphconfig.SecretStore, out, result 
 	ev := alert.Event{Result: result, Archive: out, Messages: messages, Host: host, When: time.Now()}
 	if runErr != nil {
 		ev.Error = runErr.Error()
+	}
+	// An encrypted archive's alert says which archive and the failure kind's fixed
+	// words: never the error's text, nor how many messages a run archived (P2a-C16).
+	// The archive's location stays — an alert that does not say which archive is no
+	// use; it is in the disclosed leak budget.
+	if app.ArchiveEncrypted(out) {
+		ev.Messages = 0
+		if runErr != nil {
+			ev.Error = state.FailureText(app.FailureKind(runErr))
+		}
 	}
 	if err := sendFn(cfg, Password(store), ev); err != nil {
 		if logger != nil {

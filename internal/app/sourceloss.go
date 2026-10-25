@@ -75,10 +75,13 @@ var (
 // streak (§5.7, Slice 3b): a definitive reach resets it, an unreachable verdict extends it, an
 // inconclusive outcome leaves it. Best effort — a read or write problem never fails the run
 // and never falsely moves the streak.
-func updateSourceStreak(out string, runErr error, now time.Time, logger *log.Logger) {
+func updateSourceStreak(out string, runErr error, now time.Time, encrypted bool, logger *log.Logger) {
 	reach, kind := classifySourceReach(runErr)
 	if reach == sourceInconclusive {
 		return
+	}
+	if encrypted {
+		kind = "" // an encrypted archive's streak does not say what kind of source it has (A6)
 	}
 	prev, err := readSourceStreak(out)
 	if err != nil {

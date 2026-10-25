@@ -69,11 +69,11 @@ func TestDesktopNamesItsOwnRebuildButton(t *testing.T) {
 	if err == nil {
 		t.Fatal("fixture: a run over a damaged search.db succeeded")
 	}
-	msg := jobErrorText(err)
+	msg := jobErrorText(out, err)
 	if !strings.Contains(msg, "damaged") || !strings.Contains(msg, "Maintenance → Rebuild search index") || strings.Contains(msg, "mailarchive reindex") {
 		t.Fatalf("the job's failure is not in the owner's words: %q", msg)
 	}
-	if got := jobErrorText(os.ErrPermission); got != os.ErrPermission.Error() {
+	if got := jobErrorText(out, os.ErrPermission); got != os.ErrPermission.Error() {
 		t.Fatalf("an unrelated failure was rewritten: %q", got)
 	}
 }

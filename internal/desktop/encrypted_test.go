@@ -59,6 +59,37 @@ func TestAnEncryptedArchiveIsListedAndLabelledAsEncrypted(t *testing.T) {
 	}
 }
 
+// covers: MA-736, R37
+// The Desktop says an encrypted archive's failures in the kind's fixed words: the
+// Recent-backups card shows a history entry's kind, and a failed task's message
+// names the archive and its kind, never the error's text. The positive twins: a
+// plaintext entry and task keep their own text.
+func TestTheDesktopSaysAnEncryptedArchivesFailuresByKind(t *testing.T) {
+	plain := t.TempDir()
+	if err := state.AppendRunHistory(plain, state.RunHistoryEntry{Status: state.RunFailed, Error: "the backup drive was not mounted"}); err != nil {
+		t.Fatal(err)
+	}
+	if rows := recentRunRows(plain); len(rows) != 1 || rows[0].Detail != "the backup drive was not mounted" {
+		t.Fatalf("the positive twin: a plaintext failure keeps its text: %+v", rows)
+	}
+	secret := errors.New("mailbox someone@example.org: SECRET server text")
+	if got := jobErrorText(plain, secret); got != secret.Error() {
+		t.Fatalf("the positive twin: a plaintext task keeps its text: %q", got)
+	}
+
+	sealed := vaultedArchive(t)
+	if err := state.AppendRunHistory(sealed, state.RunHistoryEntry{Status: state.RunFailed, ErrorKind: state.FailMailboxFailed}); err != nil {
+		t.Fatal(err)
+	}
+	if rows := recentRunRows(sealed); len(rows) != 1 || rows[0].Detail != state.FailureText(state.FailMailboxFailed) {
+		t.Fatalf("an encrypted archive's failure must show its kind's words: %+v", rows)
+	}
+	got := jobErrorText(sealed, secret)
+	if !strings.Contains(got, sealed) || strings.Contains(got, "SECRET") || strings.Contains(got, "someone@") {
+		t.Fatalf("an encrypted archive's task message carries the error's text: %q", got)
+	}
+}
+
 // covers: MA-731, R37
 // Without its key the Desktop neither serves an encrypted archive in the reader
 // (503, saying it is encrypted, before any index is opened) nor captures into it:
@@ -83,8 +114,14 @@ func TestTheDesktopRefusesAnEncryptedArchiveWithoutItsKey(t *testing.T) {
 		t.Fatalf("want ErrEncryptedNeedsKey before the setup check, got %v", err)
 	}
 	lr, st, rerr := state.ReadLastRun(sealed)
-	if rerr != nil || st != state.LastRunPresent || lr.Status != state.RunFailed || !strings.Contains(lr.Error, "encrypted") {
-		t.Fatalf("the refused capture is not recorded as a failed run: %+v (%v)", lr, rerr)
+	if rerr != nil || st != state.LastRunPresent || lr.Status != state.RunFailed || lr.ErrorKind != state.FailEncryptedNeedsKey || lr.Error != "" {
+		t.Fatalf("the refused capture is not recorded as the minimal failed run: %+v (%v)", lr, rerr)
+	}
+	if h, herr := state.ReadRunHistory(sealed); herr != nil || len(h) != 1 || h[0].ErrorKind != state.FailEncryptedNeedsKey {
+		t.Fatalf("the refused capture is not one history entry with its kind: %+v (%v)", h, herr)
+	}
+	if raw, _ := os.ReadFile(filepath.Join(sealed, state.LastRunName)); strings.Contains(string(raw), sealed) {
+		t.Fatalf("the last-run record names the archive: %s", raw)
 	}
 	assure.Refused(t, 1, err.Error(), assure.Code(1), assure.Names(sealed), assure.NoSideEffect(func() bool {
 		after, _ := os.ReadFile(filepath.Join(sealed, manifestName))

@@ -42,6 +42,9 @@ func recentRunRows(out string) []runRow {
 			}
 		case state.RunFailed:
 			r.Status, r.Detail = "Failed", e.Error
+			if e.ErrorKind != "" { // an encrypted archive's entry: the kind's fixed words
+				r.Detail = state.FailureText(e.ErrorKind)
+			}
 		case state.RunCancelled:
 			r.Status, r.Detail = "Cancelled", "stopped before it finished"
 		default:

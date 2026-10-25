@@ -121,6 +121,11 @@ func TestAnEncryptedRunRefusesWhatItCannotWriteSafely(t *testing.T) {
 	src := encryptedSourcePST(t)
 	_, otherKey := encryptedOut(t)
 
+	// Each case returns the folder whose every byte the refusal must leave as it was
+	// (P2a-C10: a manual refusal writes nothing). Cases checked before the lock leave
+	// even the lock file alone; those only the manifest can show are checked under the
+	// lock, and rewrite only the lock file's holder line (A18).
+	underLock := map[string]bool{"an existing plaintext archive": true, "a missing manifest beside sealed units": true}
 	cases := map[string]func(t *testing.T) (string, Options){
 		"another archive's key": func(t *testing.T) (string, Options) {
 			out, _ := encryptedOut(t)
@@ -129,6 +134,27 @@ func TestAnEncryptedRunRefusesWhatItCannotWriteSafely(t *testing.T) {
 		"a folder with no vault": func(t *testing.T) (string, Options) {
 			out := tmpDir(t)
 			return out, Options{Inputs: []string{src}, Out: out, Key: otherKey}
+		},
+		"an out inside another encrypted archive": func(t *testing.T) (string, Options) {
+			// The inner folder is an encrypted archive of its own, whose key opens it:
+			// only the walk above out refuses it.
+			outer, k := encryptedOut(t)
+			if _, err := Run(context.Background(), Options{Inputs: []string{src}, Out: outer, Key: k}, discard(), nil); err != nil {
+				t.Fatal(err)
+			}
+			inner := filepath.Join(outer, "inner")
+			if err := os.Mkdir(inner, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			p, err := vault.PrepareCreate(inner, "encrypted run test passphrase")
+			if err != nil {
+				t.Fatal(err)
+			}
+			innerKey, err := p.Commit()
+			if err != nil {
+				t.Fatal(err)
+			}
+			return outer, Options{Inputs: []string{src}, Out: inner, Key: innerKey}
 		},
 		"an existing plaintext archive": func(t *testing.T) (string, Options) {
 			out := tmpDir(t)
@@ -162,16 +188,22 @@ func TestAnEncryptedRunRefusesWhatItCannotWriteSafely(t *testing.T) {
 	}
 	for label, setup := range cases {
 		t.Run(label, func(t *testing.T) {
-			out, opts := setup(t)
-			units := filepath.Join(out, export.UnitsDir)
-			before := snapshotTree(t, units)
+			root, opts := setup(t)
+			before := snapshotTree(t, root)
+			if underLock[label] {
+				delete(before, ".mailarchive.lock")
+			}
 			_, err := Run(context.Background(), opts, discard(), nil)
 			if !errors.Is(err, ErrEncryptedArchive) {
 				t.Fatalf("want ErrEncryptedArchive, got %v", err)
 			}
 			rc, msg := 1, err.Error()
-			assure.Refused(t, rc, msg, assure.Code(1), assure.Names(out), assure.NoSideEffect(func() bool {
-				return sameTree(before, snapshotTree(t, units))
+			assure.Refused(t, rc, msg, assure.Code(1), assure.Names(opts.Out), assure.NoSideEffect(func() bool {
+				after := snapshotTree(t, root)
+				if underLock[label] {
+					delete(after, ".mailarchive.lock")
+				}
+				return sameTree(before, after)
 			}))
 		})
 	}
@@ -231,13 +263,17 @@ func TestAnEncryptedCaptureSealsUnitsAndNeverCollapsesRecords(t *testing.T) {
 	if err := m.Save(); err != nil {
 		t.Fatal(err)
 	}
-	units := filepath.Join(out, export.UnitsDir)
-	before := snapshotTree(t, units)
+	// Refused before the run's record (P2a-C10): every file but the lock's holder
+	// line is as it was — no unit, no "running" or failed last-run record.
+	before := snapshotTree(t, out)
+	delete(before, ".mailarchive.lock")
 	_, err := RunGraph(context.Background(), g, Options{Out: out, Key: key}, discard())
 	if !errors.Is(err, ErrEncryptedArchive) || !strings.Contains(err.Error(), "identity collapse") {
 		t.Fatalf("an owed collapse on an encrypted archive: want ErrEncryptedArchive naming the collapse, got %v", err)
 	}
-	if !sameTree(before, snapshotTree(t, units)) {
-		t.Fatal("the refusal must change no unit")
+	after := snapshotTree(t, out)
+	delete(after, ".mailarchive.lock")
+	if !sameTree(before, after) {
+		t.Fatal("the refusal must change nothing in the archive")
 	}
 }
