@@ -8,12 +8,15 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"time"
 
 	"mail-archive-tool/internal/container"
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/index"
 	"mail-archive-tool/internal/job"
+	"mail-archive-tool/internal/procs"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/util"
 	"mail-archive-tool/internal/vault"
@@ -146,6 +149,48 @@ func indexScratchPath(out string, id vault.ID) (string, error) {
 		return "", err
 	}
 	return filepath.Join(d, "index", "search.db"), nil
+}
+
+// ReaderScratchName matches a reader's scratch index: reader-<pid>-<n>.db.
+var ReaderScratchName = regexp.MustCompile(`^reader-([0-9]+)-[0-9]+\.db$`)
+
+// ReaderScratch is where an encrypted archive's reader works on an index above the
+// memory budget (design-encrypted-archives-phase3 §7.4, A33): a file of its own in
+// the archive's scratch folder, named by the process that holds it and the load n,
+// so neither a backup's index/search.db, nor another reader's, nor this reader's
+// previous load's is touched. Its folder is made, owner-only. A file whose process
+// is gone is a crash's leftover, removed by SweepReaderScratch.
+func ReaderScratch(out string, id vault.ID, n uint64) (string, error) {
+	d, err := archiveScratch(out, id)
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(d, "index")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, fmt.Sprintf("reader-%d-%d.db", os.Getpid(), n)), nil
+}
+
+// SweepReaderScratch removes the scratch indexes readers of the archive id at out
+// left when their process ended without closing them: plaintext, they end with the
+// next keyed open (§7.4). A live reader's is kept.
+func SweepReaderScratch(out string, id vault.ID) {
+	d, err := archiveScratch(out, id)
+	if err != nil {
+		return
+	}
+	entries, _ := os.ReadDir(filepath.Join(d, "index"))
+	for _, e := range entries {
+		m := ReaderScratchName.FindStringSubmatch(e.Name())
+		if m == nil || !e.Type().IsRegular() {
+			continue
+		}
+		pid, err := strconv.Atoi(m[1])
+		if err == nil && pid != os.Getpid() && !procs.Alive(pid) {
+			os.Remove(filepath.Join(d, "index", e.Name()))
+		}
+	}
 }
 
 // removeScratchIndex removes the scratch index a crashed run of the archive id at out
@@ -286,6 +331,7 @@ func openEncrypted(opts Options, stillHeld func() error, runStart time.Time, log
 		return nil, nil, nil, encRefusal(opts.Out, "the key does not open this archive's key file", err)
 	}
 	removeScratchIndex(opts.Out, opts.Key.ArchiveID(), logger)
+	SweepReaderScratch(opts.Out, opts.Key.ArchiveID())
 	units := &export.Units{Root: opts.Out, Key: opts.Key, RunStart: runStart}
 	manifest, store, err := container.LoadManifest(opts.Out, container.LoadOptions{
 		Key: opts.Key, RecordedGen: opts.RecordedGen, RunStart: runStart, StillHeld: stillHeld, Units: unitFiles(units),

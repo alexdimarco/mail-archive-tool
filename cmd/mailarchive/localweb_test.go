@@ -99,7 +99,7 @@ func loopbackHosts(p string) []string {
 // literals and its -allow-host names, and still refuses every other name.
 func TestServeAndSetupRefuseForeignHost(t *testing.T) {
 	out, ix := readerFixture(t)
-	serve := serveHandler(out, ix, loopback(8099), nil, localweb.NewSession(), nil)
+	serve := serveHandler(server.Folder(out, ix), loopback(8099), nil, localweb.NewSession(), nil)
 	probed := localwebtest.Probe{
 		Surface: "serve",
 		Refused: hostileHosts("8099"),
@@ -126,7 +126,7 @@ func TestServeAndSetupRefuseForeignHost(t *testing.T) {
 	} else {
 		t.Log("this machine has no non-loopback IPv4 interface; the interface-literal case is not shown")
 	}
-	lan := serveHandler(out, ix, &net.TCPAddr{IP: net.IPv4zero, Port: 8099}, []string{"nas.example"}, localweb.NewSession(), nil)
+	lan := serveHandler(server.Folder(out, ix), &net.TCPAddr{IP: net.IPv4zero, Port: 8099}, []string{"nas.example"}, localweb.NewSession(), nil)
 	localwebtest.Probe{
 		Surface: "serve",
 		Refused: []string{"attacker.example:8099", "nas.example.:8099", "192.0.2.1:8099"},
@@ -135,7 +135,7 @@ func TestServeAndSetupRefuseForeignHost(t *testing.T) {
 	}.Run(t, lan)
 
 	// On a loopback bind the -allow-host names widen nothing.
-	loop := serveHandler(out, ix, loopback(8099), []string{"nas.example"}, localweb.NewSession(), nil)
+	loop := serveHandler(server.Folder(out, ix), loopback(8099), []string{"nas.example"}, localweb.NewSession(), nil)
 	localwebtest.Probe{Surface: "serve", Refused: []string{"nas.example:8099"}, Forbid: []string{"Acme invoice"}}.Run(t, loop)
 }
 
@@ -188,7 +188,7 @@ func TestServeAndSetupServeOnlyThroughTheGuard(t *testing.T) {
 		served     http.Handler
 		registered []string
 	}{
-		{"serve", "8099", serveHandler(out, ix, loopback(8099), nil, localweb.NewSession(), nil), localweb.RoutesOf(server.New(out, ix))},
+		{"serve", "8099", serveHandler(server.Folder(out, ix), loopback(8099), nil, localweb.NewSession(), nil), localweb.RoutesOf(server.New(out, ix))},
 		{"setup", "8097", setupHandler(cfgPath, store, loopback(8097), localweb.NewSession()), localweb.RoutesOf(server.SetupHandler(cfgPath, store))},
 	} {
 		probed := localwebtest.Probe{
@@ -267,7 +267,7 @@ func TestEveryRouteRefusesWithoutSession(t *testing.T) {
 	setup := setupHandler(cfgPath, graphconfig.NewFileSecretStore(filepath.Join(dir, "secrets")), loopback(8097), localweb.NewSession())
 
 	admitted := localwebtest.Probe{Surface: "serve", Forbid: []string{"Acme invoice", "store/Inbox", out}}.
-		Admitted(t, serveHandler(out, ix, loopback(8099), nil, localweb.NewSession(), nil), "127.0.0.1:8099")
+		Admitted(t, serveHandler(server.Folder(out, ix), loopback(8099), nil, localweb.NewSession(), nil), "127.0.0.1:8099")
 	admitted = append(admitted, localwebtest.Probe{Surface: "setup", Forbid: []string{`name="csrf"`, cfgPath}}.
 		Admitted(t, setup, "127.0.0.1:8097")...)
 	if len(admitted) != 0 {

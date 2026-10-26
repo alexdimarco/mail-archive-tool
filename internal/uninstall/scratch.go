@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"mail-archive-tool/internal/job"
@@ -19,6 +20,10 @@ var scratchRoot = job.ScratchDir
 // snapshotPrefix starts a -copy-first snapshot's name (export.SnapshotPrefix; the
 // scratch test pins that the two agree).
 const snapshotPrefix = ".mailarchive-snapshot-"
+
+// readerScratch is an encrypted archive's reader's scratch index (app.ReaderScratch;
+// the scratch test pins that the two agree).
+var readerScratch = regexp.MustCompile(`^reader-([0-9]+)-[0-9]+\.db$`)
 
 // ErrScratchUnexpected refuses the whole uninstall because MailArchive's scratch
 // folder holds something it never writes: removing what it does not know could
@@ -79,7 +84,9 @@ func ScratchTargets(root string, knownArchives []string) ([]string, error) {
 			case k.Type().IsDir() && k.Name() == "_outlook-pst":
 				owned = func(n string) bool { return strings.EqualFold(filepath.Ext(n), ".pst") }
 			case k.Type().IsDir() && k.Name() == "index":
-				owned = func(n string) bool { return n == "search.db" }
+				// A backup's search.db, and the scratch index a reader works on above
+				// the memory budget (phase3 §7.4).
+				owned = func(n string) bool { return n == "search.db" || readerScratch.MatchString(n) }
 			default:
 				return nil, unexpected(sub)
 			}

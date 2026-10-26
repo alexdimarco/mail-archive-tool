@@ -16,6 +16,7 @@ package server
 // is not a message present on disk surfaces nothing.
 
 import (
+	"errors"
 	"html/template"
 	"net/http"
 	"net/url"
@@ -30,11 +31,10 @@ import (
 	"mail-archive-tool/internal/state"
 )
 
-// gobackServer renders the go-back view over the archive at outDir, using the
+// gobackServer renders the go-back view over the source's archive, using the
 // search index only to label a message by its subject.
 type gobackServer struct {
-	outDir string
-	ix     *index.Index
+	src Source
 }
 
 // gobackPage is the rendered model. Every field is either a tool-controlled
@@ -51,6 +51,7 @@ type gobackPage struct {
 	Folders      []gobackFolder
 	Total        int
 	ManifestErr  bool // the manifest could not be read — the current set is unknown
+	Encrypted    bool // an encrypted archive's: its notes name no file
 }
 
 type gobackFolder struct {
@@ -70,14 +71,29 @@ func (g *gobackServer) serveGoback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hpath := filepath.Join(g.outDir, state.HistoryName)
-	stat, statErr := state.HistoryStatus(hpath)
+	// Read the archive ONCE per request; the fold (at-view) and the date track both
+	// reuse its events instead of re-reading them (#12, adversarial 2026-09-12).
+	data, err := g.src.GoBack()
+	if errors.Is(err, ErrLocked) {
+		serveLocked(w, g.src.LockedNote())
+		return
+	}
+	if err != nil {
+		http.Error(w, "the archive could not be read: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	var page gobackPage
 	switch {
-	case !stat.Exists:
+	case data.Timeline == TimelineUnavailable && data.Encrypted:
+		page.Availability = "unavailable"
+		page.AvailNote = "Go-back is unavailable: this archive has no history timeline yet. Showing the current mailbox only. A live capture (graph) writes the timeline; a one-shot local import has none."
+	case data.Timeline == TimelineUnavailable:
 		page.Availability = "unavailable"
 		page.AvailNote = "Go-back is unavailable: this archive has no history timeline (.mailarchive-history.jsonl). Showing the current mailbox only. A live capture (graph) writes the timeline; a one-shot local import has none."
-	case statErr != nil || !stat.Clean():
+	case data.Timeline == TimelinePartial && data.Encrypted:
+		page.Availability = "partial"
+		page.AvailNote = "Go-back is partial: part of the history timeline is damaged or was lost. Past dates may be incomplete."
+	case data.Timeline == TimelinePartial:
 		page.Availability = "partial"
 		page.AvailNote = "Go-back is partial: the history timeline is damaged (a torn tail or an unreadable line). Past dates may be incomplete. The next scheduled run repairs a torn tail; `reindex` compacts the log."
 	default:
@@ -88,12 +104,6 @@ func (g *gobackServer) serveGoback(w http.ResponseWriter, r *http.Request) {
 	// Decide the view. An at request is honored only when the timeline is not
 	// unavailable; a bad date falls back to the current view, announced (never
 	// silently current-only, and never echoing the raw value — R19/§3.4).
-	// Read the timeline ONCE per request; the fold (at-view) and the date track
-	// both reuse this slice instead of re-reading the file (#12, adversarial
-	// 2026-09-12). A read error yields no events — the availability banner set
-	// above already tells the reader the timeline is partial or unavailable.
-	events, _ := state.ReadHistory(hpath)
-
 	atStr := r.URL.Query().Get("at")
 	page.Current = true
 	if atStr != "" {
@@ -102,30 +112,31 @@ func (g *gobackServer) serveGoback(w http.ResponseWriter, r *http.Request) {
 		} else if page.Availability != "unavailable" {
 			page.Current = false
 			page.AtDate = d.Format("2006-01-02")
-			page.buildAtView(g, events, endOfDay(d))
+			page.buildAtView(data, endOfDay(d))
 		}
 	}
 
 	subjects := g.subjectsByPath()
 	if page.Current {
-		page.buildCurrentView(g, subjects)
+		page.buildCurrentView(data, subjects)
 	} else {
 		page.labelMessages(subjects)
 	}
 
-	// The date track is the observed run cadence, drawn from the already-read log
-	// even when a bad date pushed us back to the current view.
-	page.DateTrack = state.RunDates(events)
+	// The date track is the observed run cadence, drawn from the already-read
+	// events even when a bad date pushed us back to the current view.
+	page.DateTrack = state.RunDates(data.Events)
+	page.Encrypted = data.Encrypted
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = gobackTmpl.Execute(w, page)
 }
 
 // buildCurrentView groups every present-now record under its current folder,
-// intersected with the files on disk (T3/T5).
-func (p *gobackPage) buildCurrentView(g *gobackServer, subjects map[string]string) {
-	m, err := state.Load(filepath.Join(g.outDir, ".mailarchive-manifest.json"))
-	if err != nil {
+// intersected with what the archive holds (T3/T5).
+func (p *gobackPage) buildCurrentView(data GoBack, subjects map[string]string) {
+	m := data.Records
+	if m == nil {
 		p.ManifestErr = true
 		return
 	}
@@ -134,8 +145,8 @@ func (p *gobackPage) buildCurrentView(g *gobackServer, subjects map[string]strin
 		if !presentNow(rec) {
 			continue // a live record swept gone is hidden in the current view
 		}
-		if !onDisk(g.outDir, rec.Path) {
-			continue // file removed from the archive — absent at every view (R21)
+		if !data.Present(rec) {
+			continue // removed from the archive — absent at every view (R21)
 		}
 		byFolder[folderLabel(rec.Folder)] = append(byFolder[folderLabel(rec.Folder)],
 			gobackMsg{Label: label(subjects, rec.Path), URL: fileURL(rec.Path)})
@@ -147,10 +158,10 @@ func (p *gobackPage) buildCurrentView(g *gobackServer, subjects map[string]strin
 // under its THEN-folder, intersected with the manifest (a redacted key is gone)
 // and the files on disk (T4/T5/R21). It records the raw path so labelMessages
 // can attach subjects after the shared subject map is built.
-func (p *gobackPage) buildAtView(g *gobackServer, events []state.HistoryEvent, upTo time.Time) {
-	fold := state.FoldEvents(events, upTo)
-	m, merr := state.Load(filepath.Join(g.outDir, ".mailarchive-manifest.json"))
-	if merr != nil {
+func (p *gobackPage) buildAtView(data GoBack, upTo time.Time) {
+	fold := state.FoldEvents(data.Events, upTo)
+	m := data.Records
+	if m == nil {
 		p.ManifestErr = true
 		return
 	}
@@ -163,8 +174,8 @@ func (p *gobackPage) buildAtView(g *gobackServer, events []state.HistoryEvent, u
 		if !ok {
 			continue // redacted: the manifest row was pruned — no off-disk surfacing
 		}
-		if !onDisk(g.outDir, rec.Path) {
-			continue // file removed from the archive — absent at every date (R21)
+		if !data.Present(rec) {
+			continue // removed from the archive — absent at every date (R21)
 		}
 		byFolder[folderLabel(fs.Folder)] = append(byFolder[folderLabel(fs.Folder)],
 			gobackMsg{Label: rec.Path, URL: fileURL(rec.Path)}) // Label filled below
@@ -207,12 +218,14 @@ func assembleFolders(byFolder map[string][]gobackMsg) ([]gobackFolder, int) {
 // empty map (labels fall back), never a failed page.
 func (g *gobackServer) subjectsByPath() map[string]string {
 	subjects := map[string]string{}
-	if g.ix == nil {
-		return subjects
-	}
-	_ = g.ix.EachDoc(func(row index.PageRow) error {
-		subjects[row.Path] = row.Subject
-		return nil
+	_ = g.src.UseIndex(func(ix *index.Index) error {
+		if ix == nil {
+			return nil
+		}
+		return ix.EachDoc(func(row index.PageRow) error {
+			subjects[row.Path] = row.Subject
+			return nil
+		})
 	})
 	return subjects
 }
@@ -324,7 +337,7 @@ h1{font-size:16px;margin:18px 0 6px}
 <main class="main">
 <div class="avail avail-{{.Availability}}">{{.AvailNote}}</div>
 {{if .BadDate}}<div class="note">That date could not be read — use the YYYY-MM-DD form, or pick one from the date track below.</div>{{end}}
-{{if .ManifestErr}}<div class="note">The archive manifest could not be read, so the message set is unknown here. Run <code>mailarchive status</code> for the posture.</div>{{end}}
+{{if .ManifestErr}}<div class="note">The archive {{if .Encrypted}}record{{else}}manifest{{end}} could not be read, so the message set is unknown here. Run <code>mailarchive status</code> for the posture.</div>{{end}}
 {{if .DateTrack}}<nav class="track" aria-label="observed run dates"><span class="track-label">Jump to:</span><a class="chip{{if .Current}} sel{{end}}" href="goback">now</a>{{range .DateTrack}}<a class="chip{{if eq $.AtDate .}} sel{{end}}" href="goback?at={{.}}">{{.}}</a>{{end}}</nav>{{end}}
 <h1>{{if .Current}}The mailbox now{{else}}As of {{.AtDate}}{{end}} · {{.Total}} message{{if ne .Total 1}}s{{end}}</h1>
 {{if not .Folders}}<div class="empty">No messages{{if not .Current}} were archived as of {{.AtDate}}{{end}}.</div>{{end}}

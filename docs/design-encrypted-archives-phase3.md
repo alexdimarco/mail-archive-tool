@@ -817,6 +817,36 @@ A read-only open is not an adoption (§3.3). The note spells out these clicks.
 - `search -paths` stays refused.
 - `extract -dest` inside an encrypted archive stays refused.
 
+*Built in P3-2a (2026-10-26; MA-794..797).* What the build decided, beyond the text above:
+- **The source.** `server.Serve(src)` takes a `server.Source` (`UseIndex`, `Files`, `GoBack`,
+  `LockedNote`); `server.New(dir, ix)` is the plaintext folder's, unchanged. The sealed source is
+  `keyring.Reader`, so no key leaves keyring; `server.SealedFiles` keeps the HTTP rules (the name
+  rules, type pins, `ServeContent`, the write deadline) and asks keyring only for a path's bytes.
+- **GET-only** is a wrapper that answers any other method with 405, for every reader, plaintext
+  included.
+- **The reader's key.** It reads through the `Unlocked` it is given, taking a counted reference
+  only to load, to name a unit and to open it; the ciphertext is read without it
+  (`Units.Locate`, `export.ReadSealedAt`, `Units.Open`). Desktop's lease and its own lock flag
+  come with P3-3.
+- **Freshness.** A peek of the primary pointer (`container.PeekFile`) at most every two seconds; a
+  unit or chunk missed loads the record again once, then a unit still gone is 404, never damage.
+- **Present** for go-back is a record with a page unit: an encrypted archive's messages are never
+  removed by deleting a file (the owner's ruling on E7).
+- **Pages** are `pages.Render`, rendered once per loaded generation; the root names no README and
+  no report, and the gap banner says to run `status`. `README.txt` is 404 until the note (P3-5).
+- **The memory guard** is `internal/memguard`: the keyring's derivation turn and the unit reads'
+  2.25 GiB budget; a unit read reserves twice its sealed size.
+- **The index** loads eagerly; above 256 MiB into the reader's own scratch file,
+  `index/reader-<pid>-<n>.db`, one per load, removed when its view closes, a gone reader's swept by
+  the next keyed open; uninstall owns the shape (MA-759 amended). An index behind is a note on the
+  search page and on `search`'s stderr; none, or damaged, is "search is unavailable" naming
+  `reindex -rebuild`.
+- **The CLI's read unlock** (`unlockForRead`) takes a secret file, the remembered key, or the
+  prompt; with none and no terminal it refuses before anything else is judged. `extract` keeps the
+  archive's `extract` lock. Keyed `reindex` is `-rebuild` only, at a terminal (a write).
+- **Not built here:** the Desktop's unlock (P3-3); read-only media without the archive lock for
+  extract (it takes the lock, as a plaintext extract does).
+
 ## 8. Checking with the key
 
 **`verify -full`** (tier 2, through `keyring.VerifyFull`) is read-only. It runs under the archive

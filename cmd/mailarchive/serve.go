@@ -18,6 +18,7 @@ import (
 	"mail-archive-tool/internal/graphconfig"
 	"mail-archive-tool/internal/index"
 	"mail-archive-tool/internal/instance"
+	"mail-archive-tool/internal/keyring"
 	"mail-archive-tool/internal/localweb"
 	"mail-archive-tool/internal/procs"
 	"mail-archive-tool/internal/server"
@@ -57,6 +58,7 @@ func serveMain(ctx context.Context, args []string, env *linkEnv) error {
 	link := fs.Bool("link", false, "print a fresh one-time link from the serve already running on -out, and exit (for a serve with no terminal, or another browser or device)")
 	var allow stringSlice
 	fs.Var(&allow, "allow-host", "with a non-loopback -addr: also accept requests addressed to this host name (repeatable); this machine's own IP addresses are accepted already")
+	k := readKeyFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -68,19 +70,45 @@ func serveMain(ctx context.Context, args []string, env *linkEnv) error {
 		return err
 	}
 
-	// An encrypted archive's pages are sealed units its logical paths do not name:
-	// served keyless it would show nothing true (phase2a §5).
+	// An encrypted archive is served from its sealed record, unlocked first, and only
+	// on this computer (phase3 §7.5); a folder inside one stays refused.
+	var src server.Source
+	count := 0
 	if kerr := app.RefuseKeyless("serve it", *out); kerr != nil {
-		return kerr
+		dir := abspath(*out)
+		if !app.UnlockableAt(dir) {
+			return kerr
+		}
+		if !server.IsLoopback(*addr) {
+			return fmt.Errorf("%s is an encrypted archive: it is served only on this computer, and -addr %s is not a loopback address — leave -addr out, or use 127.0.0.1", dir, *addr)
+		}
+		u, err := unlockForRead(stdAsker(), dir, "serving it", k)
+		if err != nil {
+			return interrupted(err, os.Stderr)
+		}
+		defer u.Destroy()
+		r, err := keyring.ReaderSource(u, keyring.ReaderOptions{LockedNote: "mailarchive serve has stopped, so this archive is locked: start it again to read it."})
+		if err != nil {
+			return err
+		}
+		defer r.Lock()
+		src = r
+		_ = r.UseIndex(func(ix *index.Index) error {
+			count, _ = ix.Count()
+			return nil
+		})
+	} else {
+		if err := refuseReadKeyFlags(fs); err != nil {
+			return err
+		}
+		ix, err := index.OpenReadonly(filepath.Join(*out, "search.db"))
+		if err != nil {
+			return err
+		}
+		defer ix.Close()
+		count, _ = ix.Count()
+		src = server.Folder(*out, ix)
 	}
-	idxPath := filepath.Join(*out, "search.db")
-	ix, err := index.OpenReadonly(idxPath)
-	if err != nil {
-		return err
-	}
-	defer ix.Close()
-
-	count, _ := ix.Count()
 
 	if !server.IsLoopback(*addr) {
 		fmt.Fprintln(env.Stderr, lanWarning(*addr, *out))
@@ -100,7 +128,7 @@ func serveMain(ctx context.Context, args []string, env *linkEnv) error {
 	h := &instance.Handoff{Key: key, Mint: l.mint, Open: l.handoffOpen(), Redeemed: sess.WaitRedeemed}
 
 	srv := &http.Server{
-		Handler:           serveHandler(*out, ix, ln.Addr(), allowHosts, sess, h),
+		Handler:           serveHandler(src, ln.Addr(), allowHosts, sess, h),
 		ReadHeaderTimeout: 10 * time.Second, // a stalled client cannot hold a connection open forever
 		IdleTimeout:       2 * time.Minute,
 		// OPTIONS * would be answered by net/http before the Host guard (AC8).

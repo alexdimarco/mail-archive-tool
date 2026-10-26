@@ -74,6 +74,7 @@ function esc(s){return (s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':
 async function search(){
   const p=new URLSearchParams(state());
   const r=await fetch('api/search?'+p);const d=await r.json();
+  if(d.error){$('#results').innerHTML='<div class="empty">'+esc(d.error)+'</div>';$('#meta').textContent='';return;}
   lastTotal=d.total;render(d);
 }
 function render(d){
@@ -97,7 +98,8 @@ function render(d){
 }
 async function facets(){
   const d=await(await fetch('api/facets')).json();
-  $('#count').textContent=(d.total||0).toLocaleString()+' messages indexed';
+  if(d.error){$('#count').textContent=d.error;return;}
+  $('#count').textContent=(d.total||0).toLocaleString()+' messages indexed'+(d.notice?' — '+d.notice:'');
   for(const f of (d.folders||[])){const o=document.createElement('option');o.value=f.folder;o.textContent=f.folder+' ('+f.count+')';$('#folder').appendChild(o);}
   for(const y of (d.years||[])){const o=document.createElement('option');o.value=y;o.textContent=y;$('#year').appendChild(o);}
 }

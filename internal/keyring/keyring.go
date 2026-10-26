@@ -174,6 +174,13 @@ func newUnlocked(out string, o *vault.Opened, how How, write bool) *Unlocked {
 	return u
 }
 
+// isLocked reports whether u was locked.
+func (u *Unlocked) isLocked() bool {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.locked
+}
+
 // acquire takes a reference on u's key for one use, or refuses a locked u.
 func (u *Unlocked) acquire() (*vault.Key, uint64, error) {
 	u.mu.Lock()

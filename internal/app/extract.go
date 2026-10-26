@@ -101,6 +101,32 @@ func (r ExtractReport) ExitCode() int {
 // non-empty `-dest` without overwrite, an ENOSPC mid-write) returns an error (the
 // caller maps it to exit 1); otherwise the report's ExitCode is the verdict.
 func Extract(out string, format ExtractFormat, dest string, overwrite bool, logger *log.Logger, onProgress func(ExtractReport)) (rep ExtractReport, err error) {
+	return extract(out, format, dest, overwrite, logger, onProgress, nil)
+}
+
+// ErrNoOriginal is a record with no preserved original to extract.
+var ErrNoOriginal = errors.New("no preserved original")
+
+// SealedOriginals is an encrypted archive's side of extract (design-encrypted-
+// archives-phase3 §7.5), which internal/keyring provides so no key leaves it:
+// the record, loaded read-only under extract's lock, and each record's preserved
+// original, decrypted — ErrNoOriginal when the record kept none.
+type SealedOriginals interface {
+	Load() (*state.Manifest, error)
+	Original(rec state.Record) ([]byte, error)
+}
+
+// ExtractSealed is Extract for an encrypted archive: the same formats, refusals,
+// lock and -dest rules, its originals read through src. A -dest inside any
+// encrypted archive is still refused: it would receive plaintext.
+func ExtractSealed(out string, format ExtractFormat, dest string, overwrite bool, logger *log.Logger, onProgress func(ExtractReport), src SealedOriginals) (ExtractReport, error) {
+	if src == nil {
+		return ExtractReport{}, errors.New("app: ExtractSealed needs the archive's originals")
+	}
+	return extract(out, format, dest, overwrite, logger, onProgress, src)
+}
+
+func extract(out string, format ExtractFormat, dest string, overwrite bool, logger *log.Logger, onProgress func(ExtractReport), sealed SealedOriginals) (rep ExtractReport, err error) {
 	if logger == nil {
 		logger = log.New(io.Discard, "", 0)
 	}
@@ -119,8 +145,13 @@ func Extract(out string, format ExtractFormat, dest string, overwrite bool, logg
 	}
 	// An encrypted archive's originals are sealed units it would read as missing,
 	// and a destination inside an encrypted archive would receive plaintext: both
-	// refuse before anything (phase2a §5).
-	if err := RefuseKeyless("extract from it", out, dest); err != nil {
+	// refuse before anything (phase2a §5). The sealed extract reads them with the
+	// key; its destination is judged the same way.
+	keyless := out
+	if sealed != nil {
+		keyless = ""
+	}
+	if err := RefuseKeyless("extract from it", keyless, dest); err != nil {
 		return ExtractReport{}, err
 	}
 
@@ -132,17 +163,24 @@ func Extract(out string, format ExtractFormat, dest string, overwrite bool, logg
 		return ExtractReport{}, lerr
 	}
 	defer lock.Release()
-	if err := RefuseKeyless("extract from it", out, dest); err != nil {
+	if err := RefuseKeyless("extract from it", keyless, dest); err != nil {
 		return ExtractReport{}, err
 	}
 
-	mpath := filepath.Join(out, ".mailarchive-manifest.json")
-	if _, statErr := os.Stat(mpath); errors.Is(statErr, fs.ErrNotExist) {
-		return ExtractReport{}, fmt.Errorf("no archive to extract at %s: no manifest (%s) — run an export into it first, or check the path", out, mpath)
-	}
-	manifest, mErr := state.Load(mpath)
-	if mErr != nil {
-		return ExtractReport{}, mErr
+	var manifest *state.Manifest
+	if sealed != nil {
+		if manifest, err = sealed.Load(); err != nil {
+			return ExtractReport{}, err
+		}
+	} else {
+		mpath := filepath.Join(out, ".mailarchive-manifest.json")
+		if _, statErr := os.Stat(mpath); errors.Is(statErr, fs.ErrNotExist) {
+			return ExtractReport{}, fmt.Errorf("no archive to extract at %s: no manifest (%s) — run an export into it first, or check the path", out, mpath)
+		}
+		var mErr error
+		if manifest, mErr = state.Load(mpath); mErr != nil {
+			return ExtractReport{}, mErr
+		}
 	}
 
 	// -dest may not equal, sit inside, or contain -out (symlink-resolved,
@@ -173,6 +211,7 @@ func Extract(out string, format ExtractFormat, dest string, overwrite bool, logg
 		dest:   dabs,
 		format: format,
 		logger: logger,
+		sealed: sealed,
 		rep:    ExtractReport{Archive: out, Format: format, Dest: dabs},
 	}
 
@@ -246,6 +285,7 @@ type extractor struct {
 	format    ExtractFormat
 	logger    *log.Logger
 	rep       ExtractReport
+	sealed    SealedOriginals // an encrypted archive's originals; nil: the .eml files
 
 	// mbox folder writer, open across the records of one folder.
 	curKey   string
@@ -282,6 +322,9 @@ func (x *extractor) processRecord(it walkItem) error {
 	if !it.valid {
 		x.skip(rawPath(it.rec.Path), "recorded path is not a safe in-archive .html path", &x.rep.SkippedGate)
 		return nil
+	}
+	if x.sealed != nil {
+		return x.processSealed(it)
 	}
 	// The `.eml` sibling shares the record's stem.
 	emlRel := strings.TrimSuffix(it.rec.Path, verifyHTMLSuffix) + verifyEMLSuffix
@@ -341,6 +384,48 @@ func (x *extractor) processRecord(it walkItem) error {
 	if err := x.emit(it, data); err != nil {
 		if errors.Is(err, errDestUnsafe) {
 			return nil // already counted+reported as a skip; keep extracting
+		}
+		return err
+	}
+	x.rep.Emitted++
+	return nil
+}
+
+// processSealed emits a record of an encrypted archive: its sealed original,
+// decrypted — its ciphertext checked against the record's digest and sealed with
+// the archive's key, so a planted or swapped unit never reads — then checked
+// against its recorded fixity when there is one (PC13). A record with no original,
+// one over the size cap, and one whose unit cannot be read are counted and
+// skipped, as their plaintext twins are; a locked key ends the run.
+func (x *extractor) processSealed(it walkItem) error {
+	emlRel := strings.TrimSuffix(it.rec.Path, verifyHTMLSuffix) + verifyEMLSuffix
+	if it.rec.Sealed != nil && it.rec.Sealed.EML != nil && it.rec.Sealed.EML.Size > maxExtractEMLBytes {
+		x.skip(emlRel, fmt.Sprintf("the original is %d bytes sealed, larger than the %d-byte extract cap", it.rec.Sealed.EML.Size, maxExtractEMLBytes), &x.rep.SkippedGate)
+		return nil
+	}
+	data, err := x.sealed.Original(it.rec)
+	switch {
+	case errors.Is(err, ErrNoOriginal):
+		x.skip(emlRel, "no preserved original — this record has no bytes to extract", &x.rep.SkippedNoEML)
+		return nil
+	case errors.Is(err, ErrEncryptedNeedsKey):
+		return err
+	case err != nil:
+		x.skip(emlRel, "the original could not be read from the archive (missing or damaged) — run `mailarchive verify`", &x.rep.SkippedFixity)
+		return nil
+	}
+	if it.rec.Fixity != nil && it.rec.Fixity.EML != nil {
+		sum := sha256.Sum256(data)
+		if int64(len(data)) != it.rec.Fixity.EML.Size || hex.EncodeToString(sum[:]) != it.rec.Fixity.EML.SHA256 {
+			x.skip(emlRel, "the original does not match its recorded fixity — run `mailarchive verify` first", &x.rep.SkippedFixity)
+			return nil
+		}
+	} else {
+		x.rep.EmittedNoFixity++
+	}
+	if err := x.emit(it, data); err != nil {
+		if errors.Is(err, errDestUnsafe) {
+			return nil
 		}
 		return err
 	}

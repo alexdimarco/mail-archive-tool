@@ -17,6 +17,7 @@ import (
 	"mail-archive-tool/internal/index"
 	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/model"
+	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/source"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/vault"
@@ -326,6 +327,14 @@ func RebuildEncrypted(ctx context.Context, opts Options, logger *log.Logger) (In
 		return IndexCatchUp{}, ErrEncryptedNeedsKey
 	}
 	out := opts.Out
+	if err := ctx.Err(); err != nil {
+		return IndexCatchUp{}, err
+	}
+	// A paused archive is not written, a rebuild included, as a plaintext reindex
+	// refuses one (phase3 §6, E7).
+	if err := seal.RefuseWrite(out); err != nil {
+		return IndexCatchUp{}, err
+	}
 	if err := preflightEncrypted(opts); err != nil {
 		return IndexCatchUp{}, err
 	}
@@ -353,6 +362,10 @@ func RebuildEncrypted(ctx context.Context, opts Options, logger *log.Logger) (In
 	rep, err := catchUpIndex(si.idx, manifest, units, store, logger)
 	if err != nil {
 		return rep, withKind(state.FailIndex, err)
+	}
+	// Stopped before the save, nothing is saved: the record keeps its old index.
+	if err := ctx.Err(); err != nil {
+		return rep, err
 	}
 	if err := manifest.Save(); err != nil {
 		return rep, manifestSaveFailure(out, err)

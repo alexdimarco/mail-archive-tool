@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"mail-archive-tool/internal/graphconfig"
-	"mail-archive-tool/internal/index"
 	"mail-archive-tool/internal/localweb"
 	"mail-archive-tool/internal/server"
 )
@@ -26,9 +25,9 @@ import (
 // Every request, whatever its route, needs the session s: the cookie a one-time
 // link gives, under /s/<P>/ (P7). handoff answers `serve -link`'s POST /_handoff
 // (design §4.C3).
-func serveHandler(out string, ix *index.Index, at net.Addr, allowHosts []string, s *localweb.Session, handoff http.Handler) http.Handler {
+func serveHandler(src server.Source, at net.Addr, allowHosts []string, s *localweb.Session, handoff http.Handler) http.Handler {
 	surf := localweb.Surface{Name: "serve", Listener: at, ExtraHosts: serveExtraHosts(at, allowHosts), Session: s, Handoff: handoff}
-	return localweb.Wrap(surf, server.New(out, ix))
+	return localweb.Wrap(surf, server.Serve(src))
 }
 
 // setupHandler is the Microsoft 365 setup wizard as `setup` serves it, on the

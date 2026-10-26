@@ -45,6 +45,10 @@ type folderInfo struct {
 // An inheritor with no tool reads it and opens the report.
 const GapBanner = "Some items from the original mail source may not be in this archive — see attachments-report.tsv"
 
+// GapBannerEncrypted is GapBanner for an encrypted archive, which holds no report
+// file: `mailarchive status` lists the items (U16).
+const GapBannerEncrypted = "Some items from the original mail source may not be in this archive — run mailarchive status on this archive's folder for the list"
+
 // gapStampAttr is the attribute the root page carries its gap count in, so a
 // later run can tell whether the page it wrote says what the manifest now says.
 const gapStampAttr = `data-gaps="`
@@ -84,18 +88,51 @@ func StampedGaps(outDir string) (int, bool) {
 // page so a later run knows when to regenerate it (FC24). EVERY caller passes it
 // — a run, a Graph run, reindex and rebuild — so none can drop the banner.
 func Generate(outDir string, ix *index.Index, logger *log.Logger, gaps int) error {
+	n, err := build(ix, gaps, false, func(rel string, page []byte) error {
+		full := filepath.Join(outDir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			return err
+		}
+		return export.WriteFileAtomic(full, page)
+	})
+	if err != nil {
+		return err
+	}
+	if logger != nil {
+		logger.Printf("Wrote %d folder index pages + root index.html", n)
+	}
+	return nil
+}
+
+// Render is Generate in memory, for an encrypted archive's reader
+// (design-encrypted-archives-phase3 §7.2): every folder page and the root page,
+// keyed by their archive-relative path ("index.html", "Inbox/index-2.html"), worded
+// for an encrypted archive — no README, no report file, no plaintext on disk.
+func Render(ix *index.Index, gaps int) (map[string][]byte, error) {
+	out := map[string][]byte{}
+	_, err := build(ix, gaps, true, func(rel string, page []byte) error {
+		out[rel] = page
+		return nil
+	})
+	return out, err
+}
+
+// build renders every folder page and the root page from the search index, handing
+// each to emit by its archive-relative path, and returns how many folders it found.
+func build(ix *index.Index, gaps int, encrypted bool, emit func(rel string, page []byte) error) (int, error) {
 	var (
 		folders []folderInfo
 		curDir  string
 		curRows []row
 		total   int
 	)
+	now := time.Now().UTC().Format("2006-01-02 15:04 MST")
 
 	flush := func() error {
 		if curDir == "" {
 			return nil
 		}
-		if err := writeFolderPage(outDir, curDir, curRows, total); err != nil {
+		if err := buildFolderPages(curDir, curRows, total, now, emit); err != nil {
 			return err
 		}
 		folders = append(folders, folderInfo{Dir: curDir, Total: total, Shown: len(curRows)})
@@ -126,20 +163,24 @@ func Generate(outDir string, ix *index.Index, logger *log.Logger, gaps int) erro
 		return nil
 	})
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if err := flush(); err != nil {
-		return err
+		return 0, err
 	}
 
 	sort.Slice(folders, func(i, j int) bool { return folders[i].Dir < folders[j].Dir })
-	if err := writeRootPage(outDir, folders, gaps); err != nil {
-		return err
+	if gaps < 0 {
+		gaps = 0
 	}
-	if logger != nil {
-		logger.Printf("Wrote %d folder index pages + root index.html", len(folders))
+	page, err := render(rootTemplate, rootPageData{Folders: folders, Generated: now, Gaps: gaps, Encrypted: encrypted})
+	if err != nil {
+		return 0, err
 	}
-	return nil
+	if err := emit("index.html", page); err != nil {
+		return 0, err
+	}
+	return len(folders), nil
 }
 
 func formatFrom(name, email string) string {
@@ -163,11 +204,7 @@ func pageName(n int) string {
 	return fmt.Sprintf("index-%d.html", n)
 }
 
-func writeFolderPage(outDir, dir string, rows []row, total int) error {
-	full := filepath.Join(outDir, filepath.FromSlash(dir))
-	if err := os.MkdirAll(full, 0o755); err != nil {
-		return err
-	}
+func buildFolderPages(dir string, rows []row, total int, generated string, emit func(rel string, page []byte) error) error {
 	pages := (len(rows) + pageSize - 1) / pageSize
 	if pages == 0 {
 		pages = 1
@@ -185,7 +222,7 @@ func writeFolderPage(outDir, dir string, rows []row, total int) error {
 			Page:      p,
 			Pages:     pages,
 			Depth:     strings.Count(dir, "/") + 1, // path back to root
-			Generated: time.Now().UTC().Format("2006-01-02 15:04 MST"),
+			Generated: generated,
 		}
 		if p > 1 {
 			data.PrevHref = pageName(p - 1)
@@ -193,32 +230,25 @@ func writeFolderPage(outDir, dir string, rows []row, total int) error {
 		if p < pages {
 			data.NextHref = pageName(p + 1)
 		}
-		if err := renderFile(filepath.Join(full, pageName(p)), folderTemplate, data); err != nil {
+		page, err := render(folderTemplate, data)
+		if err != nil {
+			return err
+		}
+		if err := emit(path.Join(dir, pageName(p)), page); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func writeRootPage(outDir string, folders []folderInfo, gaps int) error {
-	if gaps < 0 {
-		gaps = 0
-	}
-	return renderFile(filepath.Join(outDir, "index.html"), rootTemplate, rootPageData{
-		Folders:   folders,
-		Generated: time.Now().UTC().Format("2006-01-02 15:04 MST"),
-		Gaps:      gaps,
-	})
-}
-
-// renderFile writes a page atomically (temp + rename), so a crash never leaves
-// a half-written index page.
-func renderFile(path string, tmpl *template.Template, data any) error {
+// render executes a page template into bytes; Generate writes them atomically
+// (temp + rename), so a crash never leaves a half-written index page.
+func render(tmpl *template.Template, data any) ([]byte, error) {
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, data); err != nil {
-		return err
+		return nil, err
 	}
-	return export.WriteFileAtomic(path, buf.Bytes())
+	return buf.Bytes(), nil
 }
 
 type folderPageData struct {
@@ -237,6 +267,9 @@ type rootPageData struct {
 	Folders   []folderInfo
 	Generated string
 	Gaps      int
+	// Encrypted: the page is an encrypted archive's, rendered by its reader — it
+	// names no README or report file, which such an archive does not hold (U16).
+	Encrypted bool
 }
 
 // RootRelPrefix returns "../" repeated depth times, to link from a folder page

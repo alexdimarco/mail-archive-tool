@@ -5,6 +5,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"strconv"
@@ -20,12 +21,22 @@ import (
 // rooted at outDir, querying ix. Its routes are registered on a localweb.Mux, so
 // the binaries' guard and route probe name them (design-local-confidentiality
 // CC15); `serve` and the desktop reader serve it behind localweb.Wrap.
-func New(outDir string, ix *index.Index) http.Handler {
+func New(outDir string, ix *index.Index) http.Handler { return Serve(Folder(outDir, ix)) }
+
+// Serve is New over any Source (design-encrypted-archives-phase3 §7.2): a plaintext
+// folder, or an encrypted archive's sealed record. The reader stays GET-only — it
+// serves untrusted mail, so no request may change anything (§7.1): any other
+// method is refused with 405.
+func Serve(src Source) http.Handler {
 	mux := localweb.NewMux()
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
+			return
+		}
+		if note := src.LockedNote(); note != "" {
+			serveLocked(w, note)
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -41,43 +52,83 @@ func New(outDir string, ix *index.Index) http.Handler {
 	// The go-back (point-in-time) view: current mailbox and any ?at=<date>,
 	// rendered server-side over the manifest + folded history, intersected with
 	// the files on disk (design §3.4). It carries no script (see gobackCSP).
-	gb := &gobackServer{outDir: outDir, ix: ix}
+	gb := &gobackServer{src: src}
 	mux.HandleFunc("/goback", gb.serveGoback)
 
 	mux.HandleFunc("/api/search", func(w http.ResponseWriter, r *http.Request) {
 		q := parseQuery(r)
-		results, total, err := ix.Search(q)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		writeJSON(w, map[string]any{
-			"total":   total,
-			"results": results,
-			"limit":   q.Limit,
-			"offset":  q.Offset,
+		err := src.UseIndex(func(ix *index.Index) error {
+			results, total, err := ix.Search(q)
+			if err != nil {
+				return err
+			}
+			writeJSON(w, map[string]any{
+				"total":   total,
+				"results": results,
+				"limit":   q.Limit,
+				"offset":  q.Offset,
+			})
+			return nil
 		})
+		apiError(w, src, err)
 	})
 
 	mux.HandleFunc("/api/facets", func(w http.ResponseWriter, r *http.Request) {
-		folders, err := ix.Folders()
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		years, _ := ix.Years()
-		count, _ := ix.Count()
-		writeJSON(w, map[string]any{"folders": folders, "years": years, "total": count})
+		err := src.UseIndex(func(ix *index.Index) error {
+			folders, err := ix.Folders()
+			if err != nil {
+				return err
+			}
+			years, _ := ix.Years()
+			count, _ := ix.Count()
+			facets := map[string]any{"folders": folders, "years": years, "total": count}
+			if n, ok := src.(interface{ IndexNotice() string }); ok && n.IndexNotice() != "" {
+				facets["notice"] = n.IndexNotice() // §7.4: an index behind the archive
+			}
+			writeJSON(w, facets)
+			return nil
+		})
+		apiError(w, src, err)
 	})
 
 	// Serve the exported pages, .eml files and attachment zips — and nothing else
-	// the archive holds — through an os.Root that never resolves outside the
-	// archive root and never follows a link (R4/R19, design-local-confidentiality
-	// P9); the policy headers are applied by secureHeaders below.
-	files := http.StripPrefix("/files/", pinFileTypes(http.FileServer(allowedFiles{dir: outDir})))
-	mux.Handle("/files/", files)
+	// the archive holds. A plaintext folder's go through an os.Root that never
+	// resolves outside the archive root and never follows a link (R4/R19,
+	// design-local-confidentiality P9); the policy headers are applied by
+	// secureHeaders below.
+	mux.Handle("/files/", http.StripPrefix("/files/", src.Files()))
 
-	return localweb.Routed(secureHeaders(mux), mux)
+	return localweb.Routed(secureHeaders(getOnly(mux)), mux)
+}
+
+// apiError answers an API request that failed, in JSON the page shows: a locked
+// archive is 503 with its note, anything else 500 with the error.
+func apiError(w http.ResponseWriter, src Source, err error) {
+	if err == nil {
+		return
+	}
+	body := map[string]any{"error": err.Error()}
+	code := http.StatusInternalServerError
+	if errors.Is(err, ErrLocked) {
+		body = map[string]any{"locked": true, "error": src.LockedNote()}
+		code = http.StatusServiceUnavailable
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(code)
+	json.NewEncoder(w).Encode(body)
+}
+
+// getOnly refuses every method but GET and HEAD: the reader serves untrusted mail,
+// so it has no route that changes anything (§7.1, CC15).
+func getOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("Allow", "GET, HEAD")
+			http.Error(w, "the archive reader only reads", http.StatusMethodNotAllowed)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 const (

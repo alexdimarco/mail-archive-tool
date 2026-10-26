@@ -83,7 +83,13 @@ li .c{color:#888;font-variant-numeric:tabular-nums}
 </style></head><body data-gaps="{{.Gaps}}">
 <div class="bar"><h1>Email archive</h1><div class="muted">Generated {{.Generated}}</div></div>
 <div class="wrap">
-{{if .Gaps}}<div class="note gaps">` + GapBanner + `<br>
+{{if .Encrypted}}{{if .Gaps}}<div class="note gaps">` + GapBannerEncrypted + ` ({{.Gaps}} item(s)).</div>
+{{end}}<div class="note">
+  <b>An encrypted archive:</b> it opens only through MailArchive, which is showing it to you now. Browse the folders
+  below; every message opens with its attachments. Dates in tables are UTC. Use <a href="../">search</a> for ranked
+  search across every message and attachment name.<br>
+  <b>Check the files are intact:</b> run <code>mailarchive verify</code> on this archive's folder.
+</div>{{else}}{{if .Gaps}}<div class="note gaps">` + GapBanner + `<br>
   <a href="attachments-report.tsv">Open the report</a> ({{.Gaps}} item(s); each row says why it is missing and what to do about it).
   With the mailarchive program, run <code>mailarchive status -out .</code> in this folder for the same in plain words.</div>
 {{end}}<div class="note">
@@ -93,7 +99,7 @@ li .c{color:#888;font-variant-numeric:tabular-nums}
   <code>http://localhost:…</code> URL for ranked search across every message and attachment name.
   Or from a terminal: <code>rg -i "your text" .</code> (ripgrep), or add this folder to Windows Search.<br>
   <b>Check the files are intact:</b> run <code>mailarchive verify -out .</code> in this folder — exit 0 means every recorded file still matches its checksum and none is unrecorded (an archive from an older version shows files as "unrecorded" until re-exported).
-</div>
+</div>{{end}}
 <h1 style="font-size:15px;margin:16px 0 6px">Folders</h1>
 <ul>
 {{range .Folders}}<li><a href="{{urlpath .Dir}}/index.html">{{.Dir}}</a><span class="c">{{.Total}}</span></li>{{end}}

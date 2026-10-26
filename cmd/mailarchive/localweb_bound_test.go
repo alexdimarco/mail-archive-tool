@@ -8,6 +8,7 @@ import (
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/localweb"
 	"mail-archive-tool/internal/localweb/localwebtest"
+	"mail-archive-tool/internal/server"
 )
 
 // covers: MA-371, R23, S43
@@ -23,7 +24,7 @@ func TestLoopbackServeAcceptsTheAddressItPrints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := serveHandler(out, ix, at, []string{"nas.example"}, localweb.NewSession(), nil)
+	h := serveHandler(server.Folder(out, ix), at, []string{"nas.example"}, localweb.NewSession(), nil)
 	probed := localwebtest.Probe{
 		Surface: "serve",
 		Refused: []string{"127.0.0.3:8099", "nas.example:8099", "attacker.example:8099"},
@@ -45,7 +46,7 @@ func TestLoopbackBindOtherThan127_0_0_1KeepsTheDesignsExactSet(t *testing.T) {
 	t.Skip("open decision: design P6/S43/MA-371 say exactly 127.0.0.1, localhost and [::1] on a loopback serve; AO5's fix also accepts the bound literal (escalated)")
 	out, ix := readerFixture(t)
 	at := &net.TCPAddr{IP: net.IPv4(127, 0, 0, 2), Port: 8099}
-	h := serveHandler(out, ix, at, nil, localweb.NewSession(), nil)
+	h := serveHandler(server.Folder(out, ix), at, nil, localweb.NewSession(), nil)
 	probed := localwebtest.Probe{
 		Surface: "serve",
 		Refused: []string{"127.0.0.2:8099", "127.0.0.3:8099", "attacker.example:8099"},

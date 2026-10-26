@@ -549,6 +549,7 @@ func runSearch(args []string) error {
 	asJSON := fs.Bool("json", false, "print matches as a JSON array on stdout (the N-match line goes to stderr; snippets carry no <mark>)")
 	asPaths := fs.Bool("paths", false, "print one archive-relative path per match on stdout (the N-match line goes to stderr)")
 	nul := fs.Bool("0", false, "with -paths, separate paths with NUL instead of newline (for xargs -0)")
+	k := readKeyFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -573,18 +574,51 @@ func runSearch(args []string) error {
 	// there, and overrides the matching flag.
 	q := index.ParseQuery(strings.Join(fs.Args(), " "), base)
 
-	// -paths would print archive paths that do not exist on an encrypted archive's
-	// disk, and its index is not readable keyless: refuse (phase2a §5).
+	// An encrypted archive is searched with its key, through its reader (phase3
+	// §7.5); -paths stays refused there, before anything is asked: it would print
+	// file paths an encrypted archive's disk does not hold.
+	var useIndex func(func(*index.Index) error) error
 	if kerr := app.RefuseKeyless("search it", *out); kerr != nil {
-		return kerr
+		dir := abspath(*out)
+		if !app.UnlockableAt(dir) {
+			return kerr
+		}
+		if *asPaths {
+			return fmt.Errorf("%s is an encrypted archive: -paths prints file paths, and its messages are not files on disk — use -json, or read them with mailarchive serve", dir)
+		}
+		u, err := unlockForRead(stdAsker(), dir, "searching it", k)
+		if err != nil {
+			return interrupted(err, os.Stderr)
+		}
+		defer u.Destroy()
+		r, err := keyring.ReaderSource(u, keyring.ReaderOptions{})
+		if err != nil {
+			return err
+		}
+		defer r.Lock()
+		if n := r.IndexNotice(); n != "" {
+			fmt.Fprintln(os.Stderr, "note: "+n)
+		}
+		useIndex = r.UseIndex
+	} else {
+		if err := refuseReadKeyFlags(fs); err != nil {
+			return err
+		}
+		ix, err := index.OpenReadonly(filepath.Join(*out, "search.db"))
+		if err != nil {
+			return err
+		}
+		defer ix.Close()
+		useIndex = func(f func(*index.Index) error) error { return f(ix) }
 	}
-	ix, err := index.OpenReadonly(filepath.Join(*out, "search.db"))
-	if err != nil {
-		return err
-	}
-	defer ix.Close()
 
-	results, total, err := ix.Search(q)
+	var results []index.Result
+	var total int
+	err := useIndex(func(ix *index.Index) error {
+		var err error
+		results, total, err = ix.Search(q)
+		return err
+	})
 	if err != nil {
 		return err
 	}
@@ -683,16 +717,25 @@ func moreNote(total, shown int) string {
 func runReindex(args []string) (err error) {
 	fs := flag.NewFlagSet("mailarchive reindex", flag.ContinueOnError)
 	o := reindexFlags(fs)
+	k := readKeyFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *o.out == "" {
 		return errors.New("-out is required (the export directory to reconcile)")
 	}
-	// Before the run log opens: on an encrypted archive reindex would prune every
-	// record (phase2a §5).
+	// Before the run log opens: keyless, reindex would prune every record of an
+	// encrypted archive (phase2a §5). With the key it only rebuilds the search
+	// index, never removing a message (phase3 E7, the owner's ruling 2026-10-26).
 	if kerr := app.RefuseKeyless("reindex it", *o.out); kerr != nil {
-		return kerr
+		dir := abspath(*o.out)
+		if !app.UnlockableAt(dir) {
+			return kerr
+		}
+		return reindexEncrypted(dir, o, k)
+	}
+	if err := refuseReadKeyFlags(fs); err != nil {
+		return err
 	}
 
 	logger, closeLog, err := newRunLogger(*o.log)
@@ -716,6 +759,39 @@ func runReindex(args []string) (err error) {
 		return err
 	}
 	logger.Printf("reindexed: kept=%d pruned=%d", kept, pruned)
+	return nil
+}
+
+// reindexEncrypted is reindex on an encrypted archive: -rebuild only, at a
+// terminal (it is a write), the search index rebuilt from the sealed units.
+func reindexEncrypted(dir string, o *reindexOpts, k *keyFlags) error {
+	if !*o.rebuild {
+		return fmt.Errorf("%s is an encrypted archive: reindex only rebuilds its search index there, and never removes a message — run mailarchive reindex -rebuild -out %s at a terminal, with its password or recovery key", dir, quoteForHint(dir))
+	}
+	if *o.unattended {
+		return errNeedsTerminal(dir, "rebuilding its search index")
+	}
+	if err := app.RefuseLogInside(*o.log); err != nil {
+		return err
+	}
+	u, err := unlockForWrite(stdAsker(), dir, "rebuilding its search index", k)
+	if err != nil {
+		return interrupted(err, os.Stderr)
+	}
+	defer u.Destroy()
+	logger, closeLog, err := newRunLogger(*o.log)
+	if err != nil {
+		return err
+	}
+	defer closeLog()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	rep, err := keyring.Reindex(ctx, u, logger)
+	if err != nil {
+		logger.Printf("FAILED: %v", err)
+		return err
+	}
+	logger.Printf("rebuilt the search index: added=%d unreadable=%d failed=%d", rep.Added, rep.Unreadable, rep.Failed)
 	return nil
 }
 
@@ -898,6 +974,7 @@ func runExtract(args []string) error {
 	fs := flag.NewFlagSet("mailarchive extract", flag.ContinueOnError)
 	fs.Usage = extractUsage(fs)
 	o := extractFlags(fs)
+	k := readKeyFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -911,8 +988,29 @@ func runExtract(args []string) error {
 	if *o.dest == "" {
 		return errors.New("-dest is required (an empty directory to write the extracted mail into; it must not overlap -out)")
 	}
+	// An encrypted archive is extracted from with its key (phase3 §7.5); a -dest
+	// inside any encrypted archive stays refused, key or not: it would receive
+	// plaintext, and so would a -log there.
+	var keyed *keyring.Unlocked
 	if kerr := app.RefuseKeyless("extract from it", *o.out, *o.dest); kerr != nil {
-		return kerr
+		dir := abspath(*o.out)
+		if derr := app.RefuseKeyless("extract into it", "", *o.dest); derr != nil || !app.UnlockableAt(dir) {
+			return kerr
+		}
+		if err := readKeyAvailable(stdAsker(), dir, "extracting from it", k); err != nil {
+			return err
+		}
+		if err := app.RefuseLogInside(*o.log); err != nil {
+			return err
+		}
+		u, err := unlockForRead(stdAsker(), dir, "extracting from it", k)
+		if err != nil {
+			return interrupted(err, os.Stderr)
+		}
+		defer u.Destroy()
+		keyed = u
+	} else if err := refuseReadKeyFlags(fs); err != nil {
+		return err
 	}
 
 	logger, closeLog, err := newRunLogger(*o.log)
@@ -921,7 +1019,13 @@ func runExtract(args []string) error {
 	}
 	defer closeLog()
 
-	rep, xerr := app.Extract(abspath(*o.out), format, *o.dest, *o.overwrite, logger, nil)
+	var rep app.ExtractReport
+	var xerr error
+	if keyed != nil {
+		rep, xerr = keyring.Extract(keyed, format, *o.dest, *o.overwrite, logger, nil)
+	} else {
+		rep, xerr = app.Extract(abspath(*o.out), format, *o.dest, *o.overwrite, logger, nil)
+	}
 	if xerr != nil {
 		if *o.log != "" { // a piped run leaves its reason in its own log
 			logger.Printf("FAILED: %v", xerr)

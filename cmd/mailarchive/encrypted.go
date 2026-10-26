@@ -568,6 +568,34 @@ func unlockForWrite(a asker, out, what string, k *keyFlags) (*keyring.Unlocked, 
 			return askYes(a, "You told MailArchive to forget this encrypted archive. Record it again on this computer?", false)
 		},
 	}
+	u, err := openBySecret(a, out, k, store, o)
+	if err != nil {
+		return nil, err
+	}
+	for _, w := range u.Warnings() {
+		a.say("warning: %s", w)
+	}
+	// Setting up finished, or an archive handed over, is offered Remember again,
+	// on by default (§5.1 step 7; the P3-1a pass, CON-07).
+	if u.Adopted() && !k.rememberGiven && !keyring.HasRemembered(out, store) && store != nil {
+		yes, err := askYes(a, "Remember the key on this computer? Backups you start and opening the archive here will not ask for the password. Anyone using this computer's account can open it.", true)
+		if err != nil {
+			u.Destroy()
+			return nil, err
+		}
+		if yes {
+			if err := keyring.Remember(u, store); err != nil {
+				a.say("warning: the key could not be remembered (%v); every backup and opening will ask for the password", err)
+			}
+		}
+	}
+	return u, nil
+}
+
+// openBySecret opens out in the order of §3.4: a password or recovery-key file,
+// then the key this computer remembers, then the password typed (a recovery key
+// typed is taken as one), three tries.
+func openBySecret(a asker, out string, k *keyFlags, store vault.Store, o keyring.OpenOptions) (*keyring.Unlocked, error) {
 	open := func(s keyring.Secret, err error) (*keyring.Unlocked, error) {
 		if err != nil {
 			return nil, err
@@ -603,25 +631,86 @@ func unlockForWrite(a asker, out, what string, k *keyFlags) (*keyring.Unlocked, 
 			a.say("That does not open this archive.")
 		}
 	}
+	return u, err
+}
+
+// unlockForRead opens the encrypted archive at out to read it — serve, search,
+// extract (§3.4, §7.5): a password or recovery-key file first, then the key this
+// computer remembers, then the password typed at a terminal. It heals nothing and
+// records nothing — unless -remember asks it to remember the key, which records
+// the folder (§3.3). Without a terminal it asks nothing: with no file and no
+// remembered key it is refused, naming the files that would do.
+func unlockForRead(a asker, out, what string, k *keyFlags) (*keyring.Unlocked, error) {
+	store, serr := secretStore()
+	if serr != nil {
+		store = nil
+	}
+	remember := k.remember != nil && *k.remember
+	if remember && store == nil {
+		return nil, fmt.Errorf("the key cannot be remembered: %w", serr)
+	}
+	o := keyring.OpenOptions{Store: store, Remember: remember}
+	attended := a.attended()
+	if attended {
+		o.ConfirmCost = func(p vault.Params) (bool, error) {
+			return askYes(a, fmt.Sprintf("This archive's key file asks for %s to open, more than MailArchive's own (%s), and this computer has not recorded it. Open it anyway?", p, vault.CostFloor()), false)
+		}
+		o.ConfirmReRecord = func(string) (bool, error) {
+			return askYes(a, "You told MailArchive to forget this encrypted archive. Record it again on this computer?", false)
+		}
+	}
+	if err := readKeyAvailable(a, out, what, k); err != nil {
+		return nil, err
+	}
+	u, err := openBySecret(a, out, k, store, o)
 	if err != nil {
 		return nil, err
 	}
 	for _, w := range u.Warnings() {
 		a.say("warning: %s", w)
 	}
-	// Setting up finished, or an archive handed over, is offered Remember again,
-	// on by default (§5.1 step 7; the P3-1a pass, CON-07).
-	if u.Adopted() && !k.rememberGiven && !keyring.HasRemembered(out, store) && store != nil {
-		yes, err := askYes(a, "Remember the key on this computer? Backups you start and opening the archive here will not ask for the password. Anyone using this computer's account can open it.", true)
-		if err != nil {
-			u.Destroy()
-			return nil, err
-		}
-		if yes {
-			if err := keyring.Remember(u, store); err != nil {
-				a.say("warning: the key could not be remembered (%v); every backup and opening will ask for the password", err)
-			}
+	return u, nil
+}
+
+// readKeyAvailable refuses a keyed read with no way to unlock the archive: no
+// terminal to ask at, no secret file and no remembered key (§3.4) — before anything
+// else is judged or asked.
+func readKeyAvailable(a asker, out, what string, k *keyFlags) error {
+	if a.attended() || (k.passwordFile != nil && *k.passwordFile != "") || (k.recoveryKeyFile != nil && *k.recoveryKeyFile != "") {
+		return nil
+	}
+	store, err := secretStore()
+	if err == nil && keyring.HasRemembered(out, store) {
+		return nil
+	}
+	return errNeedsKeyToRead(out, what)
+}
+
+// errNeedsKeyToRead refuses a keyed read with no secret to open it by and no
+// terminal to ask at (§3.4).
+func errNeedsKeyToRead(out, what string) error {
+	return fmt.Errorf("%s is an encrypted archive: %s needs its password or recovery key — run it at a terminal, or give -password-file or -recovery-key-file (a file readable only by you)", out, what)
+}
+
+// readKeyFlags adds a read verb's key flags: the two secret files and -remember.
+func readKeyFlags(fs *flag.FlagSet) *keyFlags {
+	k := &keyFlags{}
+	addSecretFileFlags(fs, k)
+	k.remember = fs.Bool("remember", false, "for an encrypted archive: also remember its key on this computer, so opening it here does not ask for the password (anyone using this computer's account can then open it)")
+	return k
+}
+
+// refuseReadKeyFlags refuses a read verb's key flags on an archive that is not
+// encrypted, naming those given (R12).
+func refuseReadKeyFlags(fs *flag.FlagSet) error {
+	var given []string
+	for _, n := range []string{"password-file", "recovery-key-file", "remember"} {
+		if flagWasSet(fs, n) {
+			given = append(given, "-"+n)
 		}
 	}
-	return u, nil
+	if len(given) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%s: for an encrypted archive only, and this archive is not encrypted", strings.Join(given, ", "))
 }
