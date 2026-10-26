@@ -731,6 +731,12 @@ P3-0 ships the cases with that interim wording.
     `.unreadable` copy and this computer's record itself. Packages `encmark` cannot be imported
     into get an init-installed hook.
   - **E7:** keyed `reindex` prunes, re-sealing the history chunks a redaction touches.
+    *Owner ruling, 2026-10-26 ("Rebuild only"):* on an encrypted archive `reindex` only rebuilds
+    the search index; it never removes a message. A sealed unit that is missing is damage, never
+    a deletion: an encrypted archive has no per-message file a person deletes to redact, so
+    pruning on a missing unit would turn a disk or sync fault into a silent, permanent deletion.
+    Removing a message for good gets its own explicit command and its own design, later; the
+    history re-sealing E7 describes moves there.
   - **E8:** the plaintext last-run record is read with `util.ReadRegularFile`.
   - **U16:** encrypted variants of owner-facing text that names files an encrypted archive lacks.
 - **R37 rows.** Each new write path owes an engine-level test: recorded as encrypted, key files
@@ -1329,7 +1335,7 @@ Each slice is built test-first, with prove-fail and prove-pass, and owes its own
 | **P3-0** groundwork | the record (§4); `encmark` and its tests; `lockfile.AcquireWait`; the cleanup script; E5, E8; tier-1 cancellation, `stopped`, exit codes 130/143. (E3 and U16 moved to P3-3 when it was built: both change only what the wizard and Desktop show for an encrypted archive, which no one can reach before P3-3.) |
 | **P3-1a** keyring + CLI | `internal/keyring` (leases, hand-offs, heal ordering); `tty.ReadSecret`; secret sources and the Windows read check; the no-secret-flag test; the linux-arm64 measurement; `-encrypt` create; keyed `export`/`graph`; `change-password`, `new-recovery-key`, `forget-key`, `forget-archive`, `repair-record`; E2. **Operator gate: the MA-726 allow-list entry.** |
 | **P3-1b** recovery | §9.4 and §9.5, `vault.PrepareRestore`/`Commit`; its own adversarial pass |
-| **P3-2a** reader | §7; CLI `serve`/`search`/`extract`; keyed `reindex` with E7 |
+| **P3-2a** reader | §7; CLI `serve`/`search`/`extract`; keyed `reindex` with E7 (*rebuild only*, owner ruling 2026-10-26, §6) |
 | **P3-2b** keyed check | `verify -full` (§8) |
 | **P3-3** Desktop + wizard | the card, unlock and lock, Open an archive folder, create with the hook, Run now, the heal, the keyed pause, the key verbs, Put back the key file, forget, the uninstall plan's scratch rendering (MA-739), the wizard step; E3 (the wizard's log for an encrypted archive in the settings folder) and U16 (encrypted wording where text names `index.html`, the report or `search.db`: `capture.go:259`, `wizard.go:1517`, `refusals.go:142-144`, `health.go:1389`) |
 | **P3-4** plaintext copy | §10, `UnderCloudSync`, the Phase 2c closure |
@@ -1337,6 +1343,38 @@ Each slice is built test-first, with prove-fail and prove-pass, and owes its own
 | **P3-6** encrypt existing | its design and review first (§11) |
 | **P3-7** generations | its design and review first (§12) |
 | **P3-8** gates | the friction review and X1–X17 walk; Windows lab (reader, hidden prompt, `-recovery-key-out` access list, secret-file read check, the P3-5/P3-6 items) |
+
+*Planned for P3-2a (2026-10-26), from a map of the code it touches.* It is built in four parts,
+each test-first; the adversarial pass covers the whole slice:
+- **P3-2a-1, the read path's groundwork.** A read-only store handle (`LoadOptions.ReadOnly`: Commit,
+  Init and the sweep refuse); a pointer peek that reads the file; `History` that reports a missing
+  chunk or a locked key instead of folding them into barriers, and the history gap; index errors
+  that keep "missing" and "locked" (`%w`); one memory guard (a leaf package) holding the
+  derivation turn and the 2.25 GiB unit-read budget; unit reads split so the key is held only
+  while a unit is named and opened.
+- **P3-2a-2, the reader.** `server.New(src Source, ix)`, the plaintext source wrapping today's code
+  unchanged; the sealed source, built inside `keyring` behind the interface so no key leaves it
+  (`keyring.ReaderSource`); `pages.RenderFolder`/`RenderRoot` to a buffer, cached per generation;
+  go-back from the decrypted manifest and history; the locked page; GET and HEAD only; a write
+  deadline per response; peek, load, peek again.
+- **P3-2a-3, the command line.** A read unlock (`-password-file`, `-recovery-key-file`, the
+  remembered key, then the prompt; no adoption, no heal; refused without any of them, naming
+  `-password-file`); keyed `serve` (a non-loopback `-addr` refused), `search` (`-paths` refused
+  before any unlock), `extract`; the scratch index one per holder under an OS lock, with
+  uninstall's allow-list amended.
+- **P3-2a-4, keyed `reindex`.** A write unlock, then `RebuildEncrypted` with the pause check and
+  cancellation; no prune (the owner's ruling above).
+
+Implementer's calls, vetoable:
+- **Desktop stays locked in P3-2a.** The dashboard unlock is P3-3, so the Desktop reader keeps
+  MA-731's 503 and gains only the source split.
+- **`README.txt` is 404 on an encrypted archive** until the note exists (P3-5); the sealed root
+  page does not link it.
+- **The CLI `serve` has no idle lock;** it locks when it exits, and its locked page says to start
+  `serve` again.
+- **`search` prints logical paths** (`-json` and the human form): they name the message in the
+  reader, not a file on disk; `-paths` stays refused.
+- **Keyed `extract` takes the archive's `extract` lock,** as a plaintext extract does.
 
 *Amended in P3-1a — what the slice built, and what stays pending:*
 - Built: `internal/keyring` (open by password, recovery key or remembered key; the recorded id
