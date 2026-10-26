@@ -438,16 +438,26 @@ func HasRemembered(out string, s vault.Store) bool {
 }
 
 // explain adds the recorded folder's case to a vault refusal at a recorded path:
-// "no key file" there is case 3 or 4, never "not encrypted" (§4.5).
+// "no key file" there is case 3 or 4, never "not encrypted" (§4.5). Key files that
+// are damaged — none parses, or one parses and does not authenticate — are case 3
+// too, and are told how to put them back (the P3-1b pass, FID-05).
 func explain(out string, r recorded, err error) error {
-	if !r.ok || !errors.Is(err, vault.ErrNoVault) {
+	if !r.ok {
 		return err
 	}
-	res, aerr := encmark.At(out)
-	if aerr == nil && res.Recorded && res.Why != "" {
-		return fmt.Errorf("%w: %s", vault.ErrVaultMissing, res.Why)
+	switch {
+	case errors.Is(err, vault.ErrNoVault):
+		res, aerr := encmark.At(out)
+		if aerr == nil && res.Recorded && res.Why != "" {
+			return fmt.Errorf("%w: %s", vault.ErrVaultMissing, res.Why)
+		}
+		return fmt.Errorf("%w: %s is an encrypted archive this computer recorded, and its key file is missing", vault.ErrVaultMissing, out)
+	case errors.Is(err, vault.ErrCorrupt), errors.Is(err, vault.ErrTampered):
+		if res, aerr := encmark.At(out); aerr == nil && res.Recorded && (res.Case == encmark.KeysMissing || res.Case == encmark.None) {
+			return fmt.Errorf("%w — %s", err, encmark.Wording(encmark.KeysMissing, out))
+		}
 	}
-	return fmt.Errorf("%w: %s is an encrypted archive this computer recorded, and its key file is missing", vault.ErrVaultMissing, out)
+	return err
 }
 
 // finishOpen does what follows a successful open: the record (adoption, or the

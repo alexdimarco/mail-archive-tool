@@ -264,8 +264,10 @@ func TestTheCLIKeyVerbs(t *testing.T) {
 		u.Destroy()
 	}
 
-	// new-recovery-key: shown, entered again, in effect.
-	a = &scripted{isAttended: true, answers: []string{next, keyAnswer}}
+	// new-recovery-key: shown, entered again, in effect; its recovery file saved
+	// where the person answered (the P3-1b pass, CRIT-01).
+	saveAs := filepath.Join(t.TempDir(), "new-recovery-file.json")
+	a = &scripted{isAttended: true, answers: []string{next, saveAs, keyAnswer}}
 	if err := newRecoveryKey(a, out, noKeyFlags()); err != nil {
 		t.Fatalf("new-recovery-key: %v\n%s", err, a.transcript())
 	}
@@ -274,7 +276,8 @@ func TestTheCLIKeyVerbs(t *testing.T) {
 	} else {
 		u.Destroy()
 	}
-	assure.Reached(t, strings.Contains(a.transcript(), "destroy recovery files saved with your earlier recovery key"), "the earlier key's warning")
+	assure.Reached(t, strings.Contains(a.transcript(), "destroy recovery files saved with your earlier recovery key") && exists(saveAs),
+		"the recovery file saved and the earlier key's warning")
 
 	// Authorised by the remembered key, a change asks first (K13); no leaves it.
 	yes := true

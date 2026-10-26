@@ -49,7 +49,7 @@ func TestARecoveryKeyFileIsKeptOnlyForAKeyInEffect(t *testing.T) {
 	// is on screen.
 	out = makeArchive(t)
 	var held *lockfile.Lock
-	a = &scripted{isAttended: true, answers: []string{flowPassword, keyAnswer}, onShow: func() {
+	a = &scripted{isAttended: true, answers: []string{flowPassword, "", keyAnswer}, onShow: func() {
 		held, _ = lockfile.AcquireAs(filepath.Join(out, lockfile.Name), "export")
 	}}
 	k = noKeyFlags()
@@ -199,7 +199,7 @@ func TestTheCLIKeepsItsWord(t *testing.T) {
 	assure.Refused(t, code, stderr, assure.Code(1), assure.Names("already an encrypted archive", "without -encrypt"))
 
 	// A recovery key typed at the unlock prompt opens as one.
-	a := &scripted{isAttended: true, answers: []string{flowPassword, keyAnswer}}
+	a := &scripted{isAttended: true, answers: []string{flowPassword, "", keyAnswer}}
 	if err := newRecoveryKey(a, out, noKeyFlags()); err != nil {
 		t.Fatal(err)
 	}

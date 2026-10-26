@@ -873,6 +873,9 @@ The CLI's key verbs need a foreground terminal; Desktop's card is attended by na
 - On `ErrPartiallySaved` the key is still shown.
 - From P3-1b, a new recovery file is offered with it, with: "destroy recovery files saved with
   your earlier recovery key — together with that key they still open this archive" (§9.4).
+  *Amended after the P3-1b pass (CRIT-01):* that sentence is said only when the new recovery file
+  was saved. Otherwise the person is told to keep the earlier pair, which is then the only way to
+  put back lost key files.
 
 ### 9.3 Remember or forget
 
@@ -940,6 +943,51 @@ copies and both record pointers with what was prepared. The CLI is `restore-key-
 -from FILE | -remembered`, with `-recovery-file-out` on it, on `-encrypt` and on
 `new-recovery-key`; Desktop's "Put back the key file" stays with P3-3. P3-1b owes its adversarial
 pass.
+
+*Amended after the P3-1b adversarial pass (2026-10-26; MA-793,
+review-encrypted-archives-phase3-p31b-adversarial):*
+- **A damaged pointer blocks.** When a pointer file is present but neither copy opens with the
+  key, the restore is refused, at a recorded path too: the code cannot tell damage from another
+  archive's record. The refusal names both, and says to restore the record files from a backup of
+  the folder first (CRY-06). "No authentic pointer" above means no pointer file at all.
+- **A folder with no pointer needs its key files to vouch.** There the only evidence is the key
+  file: a copy naming the archive that does not authenticate under the key is accepted only when
+  its recovery entry is the recovery file's own, byte for byte (merely damaged); otherwise the
+  restore is refused and told to move that copy aside (CRY-02, CRIT-03). The remembered key is
+  this computer's own and vouches for any copy.
+- **The generation keeps headroom.** A copy claiming a generation within 2^32 of the cap is refused
+  by its name ("move it aside"), and so is a clock that far ahead; every restore leaves 2^32
+  rewrites below the cap (CRY-03, OUT-03). A claim far ahead of the clock but nowhere near the cap
+  is still outranked: it is the only floor after a restore on a fast clock (CRIT-02).
+- **The outranking claim has an open gap (owner's decision).** With no copy of the key file left on
+  disk, the generation is the clock alone. A second restore on a clock behind the first's is then
+  outranked if the first's key file comes back, and the password it withdrew opens again (FID-01,
+  CRY-04). The sentence "a key file put back from an old backup therefore never outranks the
+  restored one" holds while a copy claiming the earlier generation survives or the clocks were
+  right. A skipped test encodes the gap. Closing it needs a floor that survives losing every copy.
+- **Commit, step 3:** it refuses a folder that is no longer the directory prepared (renamed and
+  replaced, or a link put there) before taking the lock and again before writing (OUT-02). It
+  reads back only the primary it wrote, so a mirror planted afterwards cannot turn an effective
+  restore into "not in effect". Once the primary is written every error says the restore is in
+  effect: `ErrPartiallySaved`, `vault.ErrUnconfirmed` (it did not read back as written), or
+  `keyring.ErrRestoredNotRecorded`. The CLI then keeps the saved copies of the new recovery key
+  (OUT-01, OUT-04, CON-02).
+- **K14 reaches recovery files.** At a folder this computer has not recorded, a recovery file whose
+  entry asks more than MailArchive's own cost is asked about before it is derived
+  (`RecoveryEntrySource.Limit`, `RestoreOptions.ConfirmCost`; CRY-05). `OpenWithin` judges every
+  copy before any derivation, the re-derivation on a newer copy included (CRY-01).
+- **The keyring's Commit** re-reads the record (an archive forgotten meanwhile is asked about
+  again) and judges the folder's case again (CON-01, CRIT-05).
+- **The CLI** checks the recovery file and the recovery key's typing before the new password. It
+  asks again for a key that does not open the file, keeping the password (CRIT-06). Without
+  `-recovery-file-out` it offers to save the new recovery file at the terminal (§5.1 step 5,
+  §9.2). Without one saved, it does not say to destroy the earlier recovery files. It says the
+  earlier recovery file, with the earlier recovery key, is now the only way to put back lost key
+  files (CRIT-01).
+- **Not done (design gap, FID-05 b):** a recorded folder whose first backup never ran and whose key
+  files are gone is §4.5 case 4, offered only forget-archive, though the vault would accept a
+  restore there. Damaged key files beside sealed data (case 3) are now offered the restore at
+  every open.
 
 **What it does and does not withdraw.**
 - Every restore sets a new password, so a withdrawn password never comes back through it.

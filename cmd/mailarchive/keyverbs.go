@@ -127,6 +127,9 @@ func newRecoveryKey(a asker, out string, k *keyFlags) error {
 	if err := confirmByRemembered(a, u, "a new recovery key can be made"); err != nil {
 		return err
 	}
+	if err := askRecoveryFileOut(a, k, out); err != nil {
+		return err
+	}
 	p, err := keyring.NewRecoveryKey(u)
 	if err != nil {
 		return err
@@ -153,16 +156,54 @@ func newRecoveryKey(a asker, out string, k *keyFlags) error {
 	default:
 		a.say("The new recovery key is in effect.")
 	}
-	a.say(earlierKeyWarning)
-	if k.recoveryFileOut != nil && *k.recoveryFileOut != "" {
-		a.say("%s", recoveryFileNote)
-	}
+	sayWithdrawal(a, k)
 	return nil
 }
 
 // earlierKeyWarning is what a new recovery key does not withdraw (§9.2, §9.4): the
 // master key is never re-keyed.
 const earlierKeyWarning = "The earlier recovery key no longer opens this archive's key file. But together with a recovery file, a key file or a copy of the archive saved with it, it still opens the archive — destroy recovery files saved with your earlier recovery key, and those copies."
+
+// noRecoveryFileWarning replaces it when no recovery file was saved for the new key:
+// the earlier pair is then the only way to put back lost key files (the P3-1b pass,
+// CRIT-01).
+const noRecoveryFileWarning = "The earlier recovery key no longer opens this archive's key file. No recovery file was saved for the new recovery key, so it cannot put back lost key files — your earlier recovery file still can, with your earlier recovery key: keep that pair together and safe. If it was exposed, destroy it, and save a new recovery file now with `mailarchive new-recovery-key -out DIR -recovery-file-out FILE`. A copy of the archive or a key file saved with the earlier recovery key still opens with it."
+
+// sayWithdrawal says what a new recovery key does and does not withdraw, by whether
+// its recovery file was saved.
+func sayWithdrawal(a asker, k *keyFlags) {
+	if k.recoveryFileOut == nil || *k.recoveryFileOut == "" {
+		a.say("%s", noRecoveryFileWarning)
+		return
+	}
+	a.say("%s", earlierKeyWarning)
+	a.say("%s", recoveryFileNote)
+}
+
+// askRecoveryFileOut offers to save the new recovery key's recovery file when
+// -recovery-file-out was not given (§5.1 step 5, §9.2; the P3-1b pass, CRIT-01): a
+// new file outside the archive, judged as the flag is. Enter alone skips.
+func askRecoveryFileOut(a asker, k *keyFlags, out string) error {
+	if k.recoveryFileOut != nil && *k.recoveryFileOut != "" {
+		return nil
+	}
+	for tries := 0; tries < 3; tries++ {
+		ans, err := a.line("Save the new recovery key's recovery file as (a new file outside the archive; with the recovery key it puts back lost key files — Enter alone skips): ")
+		if err != nil {
+			return err
+		}
+		if ans = strings.TrimSpace(ans); ans == "" {
+			return nil
+		}
+		if _, err := checkNewFileOut("The recovery file", "the recovery file", ans, out); err != nil {
+			a.say("%v", err)
+			continue
+		}
+		k.recoveryFileOut = &ans
+		return nil
+	}
+	return errors.New("no place to save the recovery file was chosen; nothing was changed")
+}
 
 func runRestoreKeyFile(args []string) error {
 	var from *string
@@ -198,14 +239,28 @@ func restoreKeyFile(a asker, out, from string, k *keyFlags) error {
 	if err := checkKeyCopies(k, out); err != nil {
 		return err
 	}
-	o := keyring.RestoreOptions{ConfirmReRecord: func(string) (bool, error) {
-		return askYes(a, "You told MailArchive to forget this encrypted archive. Record it again on this computer?", false)
-	}}
+	o := keyring.RestoreOptions{
+		ConfirmReRecord: func(string) (bool, error) {
+			return askYes(a, "You told MailArchive to forget this encrypted archive. Record it again on this computer?", false)
+		},
+		ConfirmCost: func(p vault.Params) (bool, error) {
+			return askYes(a, fmt.Sprintf("This recovery file asks for %s to open, more than MailArchive's own (%s), and this computer has not recorded this archive. Use it anyway?", p, vault.CostFloor()), false)
+		},
+	}
 	var prepare func(newPassword string) (*keyring.PendingRestore, error)
+	// askKey asks for the recovery key again after one that does not open the
+	// recovery file; nil when it came from a file.
+	var askKey func() error
 	if from != "" {
+		// The recovery file and the recovery key's typing are checked before the new
+		// password is asked, and a mistyped key is asked again (the P3-1b pass,
+		// CRIT-06).
 		file, err := util.ReadRegularFile(abspath(from), 4<<10)
 		if err != nil {
 			return fmt.Errorf("the recovery file %s cannot be read: %w", abspath(from), err)
+		}
+		if _, err := vault.ParseRecoveryFile(file); err != nil {
+			return fmt.Errorf("%s: %w", abspath(from), err)
 		}
 		var rk keyring.Secret
 		if k.recoveryKeyFile != nil && *k.recoveryKeyFile != "" {
@@ -213,11 +268,24 @@ func restoreKeyFile(a asker, out, from string, k *keyFlags) error {
 				return err
 			}
 		} else {
-			typed, err := a.secret("The recovery key saved with this recovery file: ")
-			if err != nil {
+			askKey = func() error {
+				for tries := 0; tries < 3; tries++ {
+					typed, err := a.secret("The recovery key saved with this recovery file: ")
+					if err != nil {
+						return err
+					}
+					if _, err := vault.ParseRecoveryKey(typed); err != nil {
+						a.say("That is not a recovery key (%v).", err)
+						continue
+					}
+					rk = keyring.RecoveryKey(typed)
+					return nil
+				}
+				return errors.New("no recovery key was entered; nothing was changed")
+			}
+			if err := askKey(); err != nil {
 				return err
 			}
-			rk = keyring.RecoveryKey(typed)
 		}
 		prepare = func(pw string) (*keyring.PendingRestore, error) { return keyring.RestoreFromFile(out, file, rk, pw, o) }
 	} else {
@@ -236,15 +304,29 @@ func restoreKeyFile(a asker, out, from string, k *keyFlags) error {
 			return keyring.RestoreFromRemembered(out, store, pw, o)
 		}
 	}
+	if err := askRecoveryFileOut(a, k, out); err != nil {
+		return err
+	}
 	a.say("The archive gets a new password and a new recovery key.")
 	pw, err := askNewPassword(a)
 	if err != nil {
 		return err
 	}
-	a.say("Proving the key against the archive (this takes a few seconds)...")
-	p, err := prepare(pw)
-	if err != nil {
-		return err
+	var p *keyring.PendingRestore
+	for tries := 0; ; tries++ {
+		a.say("Proving the key against the archive (this takes a few seconds)...")
+		if p, err = prepare(pw); err == nil {
+			break
+		}
+		// A recovery key that does not open the recovery file is asked again,
+		// keeping the new password (CRIT-06).
+		if !errors.Is(err, vault.ErrWrongSecret) || askKey == nil || tries >= 2 {
+			return err
+		}
+		a.say("That recovery key does not open this recovery file.")
+		if err := askKey(); err != nil {
+			return err
+		}
 	}
 	defer p.Discard()
 	if err := confirmRecoveryKey(a, p.RecoveryKey()); err != nil {
@@ -256,20 +338,27 @@ func restoreKeyFile(a asker, out, from string, k *keyFlags) error {
 	}
 	err = p.Commit()
 	switch {
-	case errors.Is(err, vault.ErrPartiallySaved):
+	case err == nil:
+		a.say("The key file of %s is back, with your new password and new recovery key.", out)
+	case errors.Is(err, vault.ErrPartiallySaved) && !errors.Is(err, vault.ErrUnconfirmed) && !errors.Is(err, keyring.ErrRestoredNotRecorded):
 		a.say("The key file is back and in effect; its second copy is rewritten at the next opening.")
-	case err != nil:
+		err = nil
+	case keyring.InEffect(err):
+		// Written, and only what followed failed: the new password and recovery key
+		// are the ones that count, so their saved copies stay (the P3-1b pass, OUT-01,
+		// CON-02, FID-02).
+		a.say("The key file of %s was put back: your new password and new recovery key are the ones that count now.", out)
+		for _, f := range saved {
+			a.say("The new recovery key is in force; %s is kept.", f)
+		}
+	default:
 		voidFiles(a, saved)
 		a.say("The key file was NOT put back; the recovery key just shown is not in effect.")
 		return err
-	default:
-		a.say("The key file of %s is back, with your new password and new recovery key.", out)
 	}
-	a.say("A password used before no longer opens it. " + earlierKeyWarning)
-	if k.recoveryFileOut != nil && *k.recoveryFileOut != "" {
-		a.say("%s", recoveryFileNote)
-	}
-	return nil
+	a.say("A password used before no longer opens it.")
+	sayWithdrawal(a, k)
+	return err
 }
 
 func runForgetKey(args []string) error {

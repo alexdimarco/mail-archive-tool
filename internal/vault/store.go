@@ -313,6 +313,25 @@ func openVault(out string, want ID, s Secret, limit *Params) (*Opened, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Every copy's cost is judged against the limit before ANY derivation, on the
+	// bytes it would derive from — the first try and the re-derivation on a newer
+	// copy alike — and the refusal names the most each setting asks, so one
+	// question covers both copies (OpenWithin; K14; the P3-1b pass, CRY-01, REG-02,
+	// REG-03).
+	if limit != nil && s.kind != 0 {
+		var over *Params
+		for _, c := range cs.parsed {
+			if p := s.entry(c.v).Params; p.above(*limit) {
+				if over != nil {
+					p = p.join(*over)
+				}
+				over = &p
+			}
+		}
+		if over != nil {
+			return nil, &CostError{Params: *over}
+		}
+	}
 	tries := slices.Clone(cs.parsed)
 	sort.SliceStable(tries, func(i, j int) bool { return s.cost(tries[i].v) < s.cost(tries[j].v) })
 	var key *Key
@@ -321,11 +340,6 @@ func openVault(out string, want ID, s Secret, limit *Params) (*Opened, error) {
 	for i, c := range tries {
 		if slices.ContainsFunc(tries[:i], func(t copyOnDisk) bool { return bytes.Equal(t.raw, c.raw) }) {
 			continue
-		}
-		// A copy asking more than the limit is refused before deriving, on the bytes
-		// it would derive from (OpenWithin; K14).
-		if limit != nil && s.kind != 0 && s.entry(c.v).Params.above(*limit) {
-			return nil, &CostError{Params: s.entry(c.v).Params}
 		}
 		k, err := s.open(c.v)
 		if err == nil {

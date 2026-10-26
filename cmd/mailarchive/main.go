@@ -162,7 +162,7 @@ func runExport(args []string) error {
 	inputs := append(o.inputs, fs.Args()...)
 
 	if *o.out == "" {
-		return errors.New("-out is required (or use a subcommand: serve, search, reindex, schedule, graph, status, verify, extract, pause, resume, uninstall, change-password, new-recovery-key, forget-key, forget-archive, repair-record)")
+		return errors.New("-out is required (or use a subcommand: serve, search, reindex, schedule, graph, status, verify, extract, pause, resume, uninstall, change-password, new-recovery-key, restore-key-file, forget-key, forget-archive, repair-record, encrypt)")
 	}
 	if err := refuseEncryptWith(*kf.encrypt, *o.unattended, *o.manifest != "", *o.list); err != nil {
 		return err

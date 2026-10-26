@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -31,6 +32,12 @@ const maxRecoveryFile = 4 << 10
 // time-based generation, and every rewrite, refuse to pass it.
 const maxGeneration = 1 << 62
 
+// generationHeadroom is the room a restore keeps below the cap for later
+// rewrites: a copy claiming a generation within it — far past any real clock — is
+// damaged or was put there, and is refused by name rather than used up silently
+// (the P3-1b pass, CRY-03, OUT-03).
+const generationHeadroom = 1 << 32
+
 // releaseFloor is this build's date: a restore refuses a clock that reads earlier,
 // since its generation is the time (§9.4).
 var releaseFloor = time.Date(2026, 10, 26, 0, 0, 0, 0, time.UTC)
@@ -53,6 +60,11 @@ var (
 	// ErrKeyFileUnreadable refuses a restore when a copy of the key file cannot be
 	// read: that is not damage, and nothing is put over it.
 	ErrKeyFileUnreadable = errors.New("vault: the key file could not be read — check the drive")
+	// ErrUnconfirmed reports a restore that WAS written — the new password and
+	// recovery key are the ones that count now — but whose key file did not read
+	// back as written (the P3-1b pass, OUT-01): keep the new recovery key, and open
+	// the archive with the new password to check it.
+	ErrUnconfirmed = errors.New("vault: the key file was written, but it did not read back as written — the new password and recovery key are the ones that count now; open the archive with the new password to check it")
 )
 
 // RecoveryFile is the recovery entry of a vault, as text (O6, K12, A28): the
@@ -119,18 +131,38 @@ func ParseRecoveryFile(data []byte) (RecoveryEntry, error) {
 // recovery key (§9.4), or the key this computer remembers (§9.5).
 type RestoreSource interface {
 	restoreKey() (*Key, error)
+	// vouches reports whether a copy of the key file that names the archive but
+	// does not authenticate under the key is still the source's own, damaged — the
+	// only evidence at a folder with no sealed record (the P3-1b pass, CRY-02).
+	vouches(v *Vault) bool
 }
 
 // RecoveryEntrySource unwraps a recovery file's entry with its recovery key.
+// Limit, when set, refuses with *CostError before deriving an entry asking more
+// (K14 at a folder this computer has not recorded; the P3-1b pass, CRY-05). It
+// prints redacted.
 type RecoveryEntrySource struct {
 	Entry       RecoveryEntry
 	RecoveryKey string
+	Limit       *Params
 }
+
+// Format prints the source without its recovery key (the P3-1b pass, CRIT-04).
+func (s RecoveryEntrySource) Format(f fmt.State, _ rune) {
+	fmt.Fprintf(f, "vault.RecoveryEntrySource{archive %s, redacted}", s.Entry.ArchiveID)
+}
+
+// vouches for a damaged copy whose recovery entry is the file's own, byte for
+// byte: a forged recovery file's entry would differ (the P3-1b pass, CRIT-03).
+func (s RecoveryEntrySource) vouches(v *Vault) bool { return sameEntry(v.Recovery, s.Entry.entry) }
 
 func (s RecoveryEntrySource) restoreKey() (*Key, error) {
 	rk, err := ParseRecoveryKey(s.RecoveryKey)
 	if err != nil {
 		return nil, err
+	}
+	if s.Limit != nil && s.Entry.entry.Params.above(*s.Limit) {
+		return nil, &CostError{Params: s.Entry.entry.Params}
 	}
 	kek, err := deriveKEK(rk[:], s.Entry.entry.Salt[:], s.Entry.entry.Params)
 	if err != nil {
@@ -151,6 +183,9 @@ type RememberedSource struct {
 	Store   Store
 	Claimed ID
 }
+
+// vouches for any damaged copy: the remembered key is this computer's own (K15).
+func (s RememberedSource) vouches(*Vault) bool { return true }
 
 func (s RememberedSource) restoreKey() (*Key, error) {
 	stored, err := s.Store.Get(Account(s.Claimed))
@@ -196,11 +231,13 @@ const (
 
 // judgeRestore reads the folder and refuses what a restore must not go over
 // (§9.4): a copy from a newer MailArchive, a copy naming another archive, a copy
-// that cannot be read, a copy that still opens under k, and a key the sealed
-// record does not prove — unless no record exists and want, the id this computer
-// recorded for a proven path, is k's.
-func judgeRestore(out string, want ID, k *Key) (restoreState, error) {
+// that cannot be read, a copy that still opens under k, a copy claiming a
+// generation within the cap's headroom, and a key the sealed record does not
+// prove — unless no record exists, want, the id this computer recorded for a
+// proven path, is k's, and src vouches for every copy of it that does not open.
+func judgeRestore(out string, want ID, k *Key, src RestoreSource) (restoreState, error) {
 	var st restoreState
+	unvouched := ""
 	for i, name := range []string{FileName, BackupName} {
 		c := readCopy(out, name)
 		st.copies[i] = c.raw
@@ -223,8 +260,15 @@ func judgeRestore(out string, want ID, k *Key) (restoreState, error) {
 			if c.v.Verify(k) == nil {
 				return st, fmt.Errorf("%w (%s in %s) — open the archive with its password or recovery key instead", ErrKeyFileOpens, name, out)
 			}
+			if unvouched == "" && !src.vouches(c.v) {
+				unvouched = name
+			}
 		}
-		st.highest = max(st.highest, claimedGeneration(c.raw))
+		g := claimedGeneration(c.raw)
+		if g >= maxGeneration-generationHeadroom {
+			return st, fmt.Errorf("%w: %s in %s claims generation %d, far past any real one — it is damaged or was put there; move it aside, then try again", ErrCorrupt, name, out, g)
+		}
+		st.highest = max(st.highest, g)
 	}
 	present, proven := false, false
 	for i, name := range pointerNames {
@@ -251,9 +295,11 @@ func judgeRestore(out string, want ID, k *Key) (restoreState, error) {
 	switch {
 	case proven:
 	case present:
-		return st, fmt.Errorf("%w: %s's record does not open with this key — it is another archive's, or the record was altered", ErrNotProven, out)
+		return st, fmt.Errorf("%w: %s's record does not open with this key — it is another archive's, it was altered, or both copies of it are damaged (then restore them from a backup of the folder first)", ErrNotProven, out)
 	case want == (ID{}) || want != k.id:
 		return st, fmt.Errorf("%w: %s holds no sealed record to prove the key against, and this computer did not record it as this archive's folder", ErrNotProven, out)
+	case unvouched != "":
+		return st, fmt.Errorf("%w: %s holds no sealed record to prove the key against, and %s there names this archive but is not the recovery file's — the recovery file may not be this archive's; if you are sure it is, move %s aside, then try again", ErrNotProven, out, unvouched, unvouched)
 	}
 	return st, nil
 }
@@ -275,7 +321,9 @@ func claimedGeneration(raw []byte) uint64 {
 // entered again before Commit. It prints redacted.
 type PendingRestore struct {
 	out   string
+	dir   fs.FileInfo
 	want  ID
+	src   RestoreSource
 	key   *Key
 	next  *Vault
 	rk    RecoveryKey
@@ -295,6 +343,10 @@ func PrepareRestore(out string, want ID, src RestoreSource, newPassword string) 
 	if err := requireDir(out); err != nil {
 		return nil, err
 	}
+	dir, err := os.Stat(out)
+	if err != nil {
+		return nil, err
+	}
 	now := clock()
 	if now.Before(releaseFloor) {
 		return nil, fmt.Errorf("%w: it reads %s, before this MailArchive was made (%s) — set the clock, then try again", ErrClock, now.UTC().Format(time.DateOnly), releaseFloor.Format(time.DateOnly))
@@ -307,16 +359,18 @@ func PrepareRestore(out string, want ID, src RestoreSource, newPassword string) 
 		k.Destroy()
 		return nil, fmt.Errorf("%w: the key is archive %s's, and this computer recorded %s here", ErrTampered, k.id, want)
 	}
-	st, err := judgeRestore(out, want, k)
+	st, err := judgeRestore(out, want, k, src)
 	if err != nil {
 		k.Destroy()
 		return nil, err
 	}
-	gen := max(uint64(now.Unix()), st.highest+1)
-	if gen >= maxGeneration {
+	// highest is below the headroom (judgeRestore), so the sum cannot wrap, and a
+	// clock within it is refused: every restore leaves the headroom for rewrites.
+	if uint64(now.Unix()) >= maxGeneration-generationHeadroom {
 		k.Destroy()
-		return nil, fmt.Errorf("%w: a copy of the key file claims generation %d, past the limit", ErrCorrupt, st.highest)
+		return nil, fmt.Errorf("%w: it reads %s, far in the future — set the clock, then try again", ErrClock, now.UTC().Format(time.DateOnly))
 	}
+	gen := max(uint64(now.Unix()), st.highest+1)
 	rk, err := newRecoveryKey()
 	if err != nil {
 		k.Destroy()
@@ -331,7 +385,7 @@ func PrepareRestore(out string, want ID, src RestoreSource, newPassword string) 
 		return nil, err
 	}
 	n.mac = n.computeMAC(k)
-	return &PendingRestore{out: out, want: want, key: k, next: n, rk: rk, state: st}, nil
+	return &PendingRestore{out: out, dir: dir, want: want, src: src, key: k, next: n, rk: rk, state: st}, nil
 }
 
 // RecoveryKey is the new recovery key to show once, before Commit.
@@ -356,15 +410,17 @@ func (p *PendingRestore) Discard() {
 	p.done = true
 }
 
-// Commit writes the key file under the archive lock, only if the folder — both
-// key-file copies and both record pointers — is byte for byte as it was prepared;
-// otherwise ErrConflict and the restore is spent. It then reads back what it
-// wrote and proves it opens. ErrPartiallySaved means the restore IS in effect.
+// Commit writes the key file under the archive lock, only if the folder is still
+// the directory prepared and — both key-file copies and both record pointers — is
+// byte for byte as it was; otherwise ErrConflict and the restore is spent. It then
+// reads back the primary it wrote. Once the primary is written the restore IS in
+// effect, and every error says so: ErrPartiallySaved (the mirror failed) or
+// ErrUnconfirmed (the read-back failed).
 func (p *PendingRestore) Commit() error {
 	if p.done {
 		return ErrPendingUsed
 	}
-	if err := requireDir(p.out); err != nil {
+	if err := p.sameFolder(); err != nil {
 		return err
 	}
 	l, err := lockArchive(p.out, "restore-key-file")
@@ -372,7 +428,7 @@ func (p *PendingRestore) Commit() error {
 		return err
 	}
 	defer l.Release()
-	now, err := judgeRestore(p.out, p.want, p.key)
+	now, err := judgeRestore(p.out, p.want, p.key, p.src)
 	if err != nil || !now.same(p.state) {
 		p.Discard()
 		if err != nil {
@@ -383,20 +439,52 @@ func (p *PendingRestore) Commit() error {
 	if err := stillHeld(l); err != nil {
 		return err
 	}
-	if err := save(p.out, p.next); err != nil {
-		if errors.Is(err, ErrPartiallySaved) {
-			p.Discard()
-		}
+	if err := p.sameFolder(); err != nil {
 		return err
 	}
-	defer p.Discard()
-	o, err := openVault(p.out, p.key.id, KeySecret(p.key), nil)
-	if err != nil {
-		return fmt.Errorf("vault: the key file was written but does not read back: %w", err)
+	serr := save(p.out, p.next)
+	if serr != nil && !errors.Is(serr, ErrPartiallySaved) {
+		return serr
 	}
-	defer o.Key.Destroy()
-	if o.Vault.Generation != p.next.Generation {
-		return fmt.Errorf("vault: the key file was written but reads back at generation %d, not %d", o.Vault.Generation, p.next.Generation)
+	defer p.Discard()
+	if err := p.readBack(); err != nil {
+		if serr != nil {
+			return fmt.Errorf("%w: %w (%w)", ErrUnconfirmed, err, serr)
+		}
+		return fmt.Errorf("%w: %w", ErrUnconfirmed, err)
+	}
+	return serr
+}
+
+// sameFolder refuses, spending the restore, a Commit whose folder is no longer the
+// directory prepared — one renamed away and replaced, or a link put at its path —
+// so nothing is written into another folder (the P3-1b pass, OUT-02). A folder
+// that is not there at all is refused without spending it.
+func (p *PendingRestore) sameFolder() error {
+	if err := requireDir(p.out); err != nil {
+		return err
+	}
+	if fi, err := os.Stat(p.out); err != nil || !os.SameFile(fi, p.dir) {
+		p.Discard()
+		return fmt.Errorf("%w: %s is no longer the folder the key file was prepared for; nothing was written — prepare it again", ErrConflict, p.out)
+	}
+	return nil
+}
+
+// readBack reads the primary Commit wrote — only it, so a planted mirror cannot
+// fail a restore that took effect — and proves it is the key file prepared (§9.4
+// step 3; the P3-1b pass, OUT-01, OUT-04).
+func (p *PendingRestore) readBack() error {
+	want, err := p.next.Marshal()
+	if err != nil {
+		return err
+	}
+	c := readCopy(p.out, FileName)
+	switch {
+	case c.err != nil:
+		return fmt.Errorf("%s in %s: %w", FileName, p.out, c.err)
+	case !bytes.Equal(c.raw, want) || c.v.Verify(p.key) != nil:
+		return fmt.Errorf("%s in %s does not hold what was written", FileName, p.out)
 	}
 	return nil
 }
@@ -419,4 +507,9 @@ func OpenWithin(out string, want ID, s Secret, limit Params) (*Opened, error) {
 // above reports whether p exceeds limit in any dimension.
 func (p Params) above(limit Params) bool {
 	return p.MemoryKiB > limit.MemoryKiB || p.Time > limit.Time || p.Threads > limit.Threads
+}
+
+// join is the most of p and q in each setting.
+func (p Params) join(q Params) Params {
+	return Params{MemoryKiB: max(p.MemoryKiB, q.MemoryKiB), Time: max(p.Time, q.Time), Threads: max(p.Threads, q.Threads)}
 }

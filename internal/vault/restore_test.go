@@ -143,6 +143,15 @@ func TestARestoreRefusesWhatItMustNotGoOver(t *testing.T) {
 			writePointer(t, out, otherKey, pointerNames[0], 3)
 			return ID{}
 		}, want: ErrNotProven},
+		"a record from a newer MailArchive": {setup: func(t *testing.T, out string, k *Key) ID {
+			pointerAt(t, out, pointerNames[1], FormatVersion+1)
+			return ID{}
+		}, want: ErrNewerVault},
+		"a record that is not one, even at the recorded path": {setup: func(t *testing.T, out string, k *Key) ID {
+			removeFile(t, out, pointerNames[0])
+			writeFile(t, out, pointerNames[1], []byte("not a record"))
+			return k.ArchiveID()
+		}, want: ErrNotProven},
 		"another archive's record, even at the recorded path": {setup: func(t *testing.T, out string, k *Key) ID {
 			writePointer(t, out, otherKey, pointerNames[0], 3)
 			return k.ArchiveID()
@@ -194,18 +203,27 @@ func TestARestoreRefusesWhatItMustNotGoOver(t *testing.T) {
 		})
 	}
 
-	// The clock before this build.
+	// The clock before this build, and, its positive twin, exactly at it.
 	out, _, rk, file := sealedArchive(t)
 	dropKeyFiles(t, out)
 	orig := clock
-	clock = func() time.Time { return releaseFloor.Add(-time.Hour) }
+	defer func() { clock = orig }()
+	clock = func() time.Time { return releaseFloor.Add(-time.Second) }
 	_, err := PrepareRestore(out, ID{}, fromFile(t, file, rk), restoredPassword)
-	clock = orig
 	code, msg := refusal(err)
-	assure.Refused(t, code, msg, assure.Code(1), assure.Names("clock"))
+	assure.Refused(t, code, msg, assure.Code(1), assure.Names("clock"), assure.NoSideEffect(func() bool {
+		s := snapshot(out)
+		return s[0] == nil && s[1] == nil
+	}))
 	if !errors.Is(err, ErrClock) {
 		t.Fatalf("want ErrClock, got %v", err)
 	}
+	clock = func() time.Time { return releaseFloor }
+	p, err := PrepareRestore(out, ID{}, fromFile(t, file, rk), restoredPassword)
+	if err != nil {
+		t.Fatalf("the clock at this build's date: %v", err)
+	}
+	p.Discard()
 }
 
 // covers: MA-791, R37
@@ -290,24 +308,42 @@ func TestAnOldKeyFilePutBackIsOutranked(t *testing.T) {
 	}
 }
 
-// covers: MA-791, R37
+// covers: MA-791, MA-793, R37
 // Anything a restore judged that changes between Prepare and Commit makes Commit
-// refuse with ErrConflict, writing nothing, and spends the restore.
+// refuse with ErrConflict, writing nothing, and spends the restore — each state
+// Prepare refuses, appearing after it, among them (the P3-1b pass, FID-03).
 func TestARestoreRefusesAFolderThatChangedSinceItWasPrepared(t *testing.T) {
 	lowCost(t)
-	changes := map[string]func(t *testing.T, out string, k *Key){
-		"a copy put back":  func(t *testing.T, out string, k *Key) { writeFile(t, out, BackupName, []byte("{}")) },
-		"the record moved": func(t *testing.T, out string, k *Key) { writePointer(t, out, k, pointerNames[1], 4) },
+	other, _, _ := newArchive(t)
+	changes := map[string]func(t *testing.T, out string, k *Key, orig []byte){
+		"a copy put back":  func(t *testing.T, out string, k *Key, orig []byte) { writeFile(t, out, BackupName, []byte("{}")) },
+		"the record moved": func(t *testing.T, out string, k *Key, orig []byte) { writePointer(t, out, k, pointerNames[1], 4) },
+		"a newer copy": func(t *testing.T, out string, k *Key, orig []byte) {
+			writeFile(t, out, BackupName, []byte(`{"format": 99}`))
+		},
+		"another archive's copy": func(t *testing.T, out string, k *Key, orig []byte) {
+			writeFile(t, out, BackupName, readFile(t, other, FileName))
+		},
+		"a copy that opens": func(t *testing.T, out string, k *Key, orig []byte) { writeFile(t, out, BackupName, orig) },
+		"the record removed": func(t *testing.T, out string, k *Key, orig []byte) {
+			removeFile(t, out, pointerNames[0])
+		},
+		"the record's mirror unreadable": func(t *testing.T, out string, k *Key, orig []byte) {
+			if err := os.Mkdir(filepath.Join(out, pointerNames[1]), 0o700); err != nil {
+				t.Fatal(err)
+			}
+		},
 	}
 	for name, change := range changes {
 		t.Run(name, func(t *testing.T) {
 			out, k, rk, file := sealedArchive(t)
+			orig := readFile(t, out, FileName)
 			dropKeyFiles(t, out)
 			p, err := PrepareRestore(out, ID{}, fromFile(t, file, rk), restoredPassword)
 			if err != nil {
 				t.Fatal(err)
 			}
-			change(t, out, k)
+			change(t, out, k, orig)
 			err = p.Commit()
 			code, msg := refusal(err)
 			assure.Refused(t, code, msg, assure.Code(1), assure.Names("changed"),

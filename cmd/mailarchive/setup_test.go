@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -27,8 +29,9 @@ func TestGraphFillsFromSetupConfig(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("overriding the OS config dir via XDG_CONFIG_HOME is Linux-specific")
 	}
-	cfgDir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", cfgDir)
+	// The config is saved where runCLI's child looks: its sandboxed home's config
+	// folder (runCLI sets XDG_CONFIG_HOME there, since the P3-0 pass's FID-13).
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(cliHome, ".config"))
 	p, err := graphconfig.DefaultConfigPath()
 	if err != nil {
 		t.Fatal(err)
@@ -36,6 +39,7 @@ func TestGraphFillsFromSetupConfig(t *testing.T) {
 	if err := graphconfig.Save(p, &graphconfig.Config{Tenant: "contoso", ClientID: "APPID", Auth: "app"}); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { os.Remove(p) })
 
 	code, stderr := runCLI("graph", "-out", t.TempDir(), "-mailbox", "a@contoso.com")
 	assure.Refused(t, code, stderr, assure.Code(1), assure.Names("setup"))

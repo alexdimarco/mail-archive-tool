@@ -94,7 +94,14 @@ func refuseEncryptWith(encrypt, unattended, manifest, list bool) error {
 func refuseStrayKeyFlags(fs *flag.FlagSet, k *keyFlags, keyed, creating bool) error {
 	switch {
 	case !keyed && !creating && k.usedAny(fs):
-		return errors.New("-remember, -password-file, -recovery-key-file and -recovery-key-out are for an encrypted archive: make one with -encrypt, or give -out an encrypted archive")
+		// The refusal names the flags given (R12; the P3-1b pass, REG-04).
+		var given []string
+		for _, n := range keyFlagNames {
+			if flagWasSet(fs, n) {
+				given = append(given, "-"+n)
+			}
+		}
+		return fmt.Errorf("%s: for an encrypted archive only — make one with -encrypt, or give -out an encrypted archive", strings.Join(given, ", "))
 	case keyed && (*k.recoveryKeyOut != "" || *k.recoveryFileOut != ""):
 		return errors.New("-recovery-key-out and -recovery-file-out save the recovery key of a NEW encrypted archive (-encrypt); for a new recovery key run `mailarchive new-recovery-key`")
 	case creating && (*k.passwordFile != "" || *k.recoveryKeyFile != ""):

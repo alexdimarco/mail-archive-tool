@@ -63,7 +63,7 @@ func TestTheCLIPutsBackALostKeyFileFromItsRecoveryFile(t *testing.T) {
 	}
 }
 
-// covers: MA-792, R37
+// covers: MA-792, MA-793, R37
 // restore-key-file -remembered asks the K13 question with the R-E2 disclosure;
 // "no" changes nothing, "yes" rebuilds the key files. Without a terminal it is
 // refused before anything is read; and -from and -remembered are exactly one.
@@ -87,9 +87,14 @@ func TestTheCLIRebuildsKeyFilesFromTheRememberedKey(t *testing.T) {
 	if !strings.Contains(a.transcript(), "not this computer") {
 		t.Fatalf("the K13 question lacks the R-E2 disclosure:\n%s", a.transcript())
 	}
-	a = &scripted{isAttended: true, answers: []string{"y", "a rebuilt cli passphrase", "a rebuilt cli passphrase", keyAnswer}}
+	a = &scripted{isAttended: true, answers: []string{"y", "", "a rebuilt cli passphrase", "a rebuilt cli passphrase", keyAnswer}}
 	if err := restoreKeyFile(a, out, "", noKeyFlags()); err != nil {
 		t.Fatalf("%v\n%s", err, a.transcript())
+	}
+	// No recovery file saved: the earlier pair is kept, not destroyed (the P3-1b
+	// pass, CRIT-01).
+	if tr := a.transcript(); !strings.Contains(tr, "cannot put back lost key files") || strings.Contains(tr, "destroy recovery files saved") {
+		t.Fatalf("without a new recovery file the person must keep the earlier pair:\n%s", tr)
 	}
 
 	a = &scripted{isAttended: false}
