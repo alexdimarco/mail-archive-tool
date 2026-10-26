@@ -53,7 +53,7 @@ func PlanForget(out string, s vault.Store) (ForgetPlan, error) {
 	}
 	// An unproven path (§4.5 case 0) is proven by opening it — unless its key files
 	// are gone, when nothing can prove it: then it may be forgotten, with the strong
-	// confirmation (implementer's call on the P3-1a pass, CRIT-02; vetoable).
+	// confirmation (the P3-1a pass, CRIT-02; kept by the owner, 2026-10-26).
 	unprovenGone := m.Path.Unproven && !vault.Claims(out).Present
 	if m.Path.Unproven && !unprovenGone {
 		return ForgetPlan{}, fmt.Errorf("%s was rebuilt by a repair of this computer's record and is not proven yet; open it with its password first", out)

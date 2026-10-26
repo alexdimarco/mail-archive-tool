@@ -29,8 +29,9 @@ jobs:
           go-version: '1.26.x'
           check-latest: true
 
+      # 20 minutes per package, as in ci.yml (internal/app's time under load).
       - name: Test (assurance gates must be green before shipping)
-        run: go test ./...
+        run: go test ./... -timeout 20m
 
       - name: Vulnerability scan (a reachable known vulnerability blocks the release)
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...

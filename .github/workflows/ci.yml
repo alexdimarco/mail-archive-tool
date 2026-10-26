@@ -38,8 +38,11 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      # 20 minutes per package, not go test's default 10: internal/app alone takes
+      # about 6-7 minutes and came within 13 seconds of 10 under a full parallel run
+      # (owner, 2026-10-26).
       - name: Test (incl. assurance gates)
-        run: go test ./... -count=1
+        run: go test ./... -count=1 -timeout 20m
 
       # The unlock package's leases and locks decide when a master key is zeroed;
       # their tests are owed under the race detector (phase3 §3.2, MA-778; the P3-1a

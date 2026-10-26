@@ -14,9 +14,11 @@ import (
 )
 
 // x1Codes is the declared X1 exit-code map (docs/ux-contract.md X1): 0 ok, 1
-// error/refusal, 2 verify's not-attested, 3 extract's partial. Every literal exit
-// code the program can emit must be one of these (MA-613).
-var x1Codes = map[int]bool{0: true, 1: true, 2: true, 3: true}
+// error/refusal, 2 verify's not-attested, 3 extract's partial, and — added by the
+// owner on 2026-10-26 — 130/143, a stop by Ctrl-C/SIGTERM with nothing saved by it
+// (signalExit). Every literal exit code the program can emit must be one of these
+// (MA-613).
+var x1Codes = map[int]bool{0: true, 1: true, 2: true, 3: true, 130: true, 143: true}
 
 // exitCodeFuncs are the functions whose integer return values are process exit
 // codes (the dispatcher and the GUI verbs' entry points). Their return literals
@@ -32,7 +34,7 @@ var exitCodeFuncs = map[string]bool{
 // its own -h (MA-39's walk covered the command-line verbs), and -h is a clean X1
 // exit, not a spurious error. And the exit-code set: every literal exit code the
 // dispatcher, the no-argument rule and the GUI verbs emit is a subset of the X1
-// map {0,1,2,3}. Fail-closed twin: a planted os.Exit(5) is flagged.
+// map {0,1,2,3,130,143}. Fail-closed twin: a planted os.Exit(5) is flagged.
 func TestMA613_VerbWalkAndExitCodes(t *testing.T) {
 	// --- the three GUI verbs each answer -h with their own usage, exit 0 --------
 	cases := []struct {
@@ -66,7 +68,7 @@ func TestMA613_VerbWalkAndExitCodes(t *testing.T) {
 	}
 	for code, where := range assure.Reached(t, codes, "exit-code literals") {
 		if !x1Codes[code] {
-			t.Errorf("exit code %d is outside the X1 map {0,1,2,3} (MA-613): %s", code, where)
+			t.Errorf("exit code %d is outside the X1 map {0,1,2,3,130,143} (MA-613): %s", code, where)
 		}
 	}
 

@@ -619,7 +619,7 @@ P3-0 ships the cases with that interim wording.
 - **Order:** under the locks the folder's case and the record are re-read; only then is a
   remembered key forgotten, then the record written (CON-05, FID-01). A folder whose archive lock
   another run holds is refused, "try again when it is free" (FID-02).
-- **An unproven path whose key files are gone** (CRIT-02; implementer's call, vetoable) can be
+- **An unproven path whose key files are gone** (CRIT-02; kept by the owner, 2026-10-26) can be
   forgotten, with the strong confirmation: nothing could ever prove it, and §4.5's case 0 now says
   how to forget it instead of "open it with its password".
 - A removed archive typed through a linked parent folder is its own folder (CRIT-06).
@@ -1328,5 +1328,7 @@ Each slice is built test-first, with prove-fail and prove-pass, and owes its own
 ## 18. Open questions
 
 None blocks the last check. The note's wording goes to the friction review. The X-series rows
-for encryption are the operator's call — including, from P3-1a, whether X1's map gains 130 and
-143 (a run or prompt stopped by Ctrl-C or SIGTERM, as §8 already uses for `verify`).
+for encryption are the operator's call. *Settled 2026-10-26:* X1's map gains 130 and 143 (a run
+or prompt stopped by Ctrl-C or SIGTERM with nothing saved by it), and CI runs the tests with a
+20-minute limit per package; the owner also kept the P3-1a pass's CRIT-02 fix (an unproven path
+whose key files are gone can be forgotten).

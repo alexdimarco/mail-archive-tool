@@ -87,7 +87,7 @@ after the P3-1a adversarial pass*.
 | FID-12 | low | cases L and 2 called an altered key file; the busy refusal repeated itself | `keyring.ErrNotTheArchive`; told once |
 | FID-13 | low | coverage gaps (repair race, ForgetKey unrecorded, locked key changes, a marker) | tested; marker added |
 | CRIT-01 | medium | the leases' race tests never ran under the race detector | a CI step on Ubuntu runs `go test -race` on keyring, vault and tty |
-| CRIT-02 | medium | an unproven path whose archive is gone could never be cleared | **implementer's call, vetoable**: forgettable with the strong confirmation when its key files are gone, and its refusal says so |
+| CRIT-02 | medium | an unproven path whose archive is gone could never be cleared | **kept by the owner, 2026-10-26**: forgettable with the strong confirmation when its key files are gone, and its refusal says so |
 | CRIT-05 | low | "finish setting up" status not built | a WARN for an archive with no backup yet, and for a key-file-only copy |
 | CRIT-06 | low | a removed archive typed through a linked parent was "inside itself" | judged by the recorded spelling too |
 | CRIT-07 | low | a fork also called damage | a fork is not healed |
@@ -110,7 +110,7 @@ after the P3-1a adversarial pass*.
 
 - **CRIT-02** is a design gap: §4.5 offers no forget for an unproven path. The fix lets one be
   forgotten, with the strong confirmation, only when its key files are gone, since nothing could
-  ever prove it. It can be reverted on the owner's word.
+  ever prove it. **Kept by the owner, 2026-10-26** ("1: keep it").
 
 ## Prove-fail
 
