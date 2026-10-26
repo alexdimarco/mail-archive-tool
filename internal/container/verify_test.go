@@ -97,6 +97,31 @@ func TestAKeylessCheckStopsBetweenFiles(t *testing.T) {
 	}
 }
 
+// covers: MA-775, MA-773, R37
+// A stopped check walks no folder after the stop (the P3-0 adversarial pass,
+// CON-06): its verdict is thrown away, so a walk of a large archive would only keep
+// Ctrl-C waiting. The positive twin: left to run, the check walks units/, chunks/
+// and inventory/.
+func TestAStoppedCheckWalksNoFolder(t *testing.T) {
+	out := wholeArchive(t)
+	walked := map[string]int{}
+	beforeWalk = func(d string) { walked[d]++ }
+	defer func() { beforeWalk, beforeOpen = nil, nil }()
+	if c, err := CheckKeylessContext(context.Background(), out, 0); err != nil || c.Outcome != state.OutcomeIntact ||
+		walked["units"] == 0 || walked[ChunksDir] == 0 || walked[InventoryDir] == 0 {
+		t.Fatalf("the positive twin: %+v %v, walked %v", c, err, walked)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	clear(walked)
+	beforeOpen = func(string) { cancel() }
+	if _, err := CheckKeylessContext(ctx, out, 0); !errors.Is(err, context.Canceled) {
+		t.Fatalf("a stopped check: %v", err)
+	}
+	if len(walked) != 0 {
+		t.Fatalf("a check stopped at its first file still walked %v", walked)
+	}
+}
+
 // listed is every file the archive's file list names, by state.
 func listed(t *testing.T, out string) (live, retained []string) {
 	t.Helper()

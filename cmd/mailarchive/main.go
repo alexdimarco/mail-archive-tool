@@ -684,17 +684,27 @@ func runVerify(args []string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var stopCode atomic.Int32
-	var stopWatch func()
-	if app.ArchiveEncrypted(abspath(*o.out)) {
-		stopWatch = watchVerifyStop(sigs, cancel, &stopCode, os.Exit)
-	} else {
-		stopWatch = watchVerifyInterrupt(sigs, os.Stderr, abspath(*o.out), os.Exit)
-	}
+	stopWatch := verifyStopWatch(abspath(*o.out), sigs, cancel, &stopCode, os.Exit)
 	defer func() { signal.Stop(sigs); stopWatch() }()
+	return checkArchive(ctx, o, logger, &stopCode, os.Stderr)
+}
 
+// verifyStopWatch arms what a signal does to this verify: an encrypted archive's
+// check is cancelled and stops between files (watchVerifyStop); any other check is
+// killed with a line saying so (watchVerifyInterrupt).
+func verifyStopWatch(out string, sigs <-chan os.Signal, cancel func(), code *atomic.Int32, exit func(int)) (stop func()) {
+	if app.ArchiveEncrypted(out) {
+		return watchVerifyStop(sigs, cancel, code, exit)
+	}
+	return watchVerifyInterrupt(sigs, os.Stderr, out, exit)
+}
+
+// checkArchive checks the archive until ctx is cancelled and reports the result. A
+// check a signal stopped says so on stderr and exits with that signal's code.
+func checkArchive(ctx context.Context, o *verifyOpts, logger *log.Logger, stopCode *atomic.Int32, stderr io.Writer) error {
 	rep, verr := app.Verify(abspath(*o.out), app.VerifyOptions{Record: *o.record, Ctx: ctx}, logger, nil)
 	if errors.Is(verr, app.ErrVerifyStopped) {
-		fmt.Fprintf(os.Stderr, "mailarchive: verify stopped: the archive was not fully checked and no new verdict was recorded; the last finished verdict still stands (see `mailarchive status`). Run `mailarchive verify -out %q` again to finish.\n", abspath(*o.out))
+		fmt.Fprintf(stderr, "mailarchive: verify stopped: the archive was not fully checked and no new verdict was recorded; the last finished verdict still stands (see `mailarchive status`). Run `mailarchive verify -out %q` again to finish.\n", abspath(*o.out))
 		return &exitError{code: int(stopCode.Load())}
 	}
 	if verr != nil {

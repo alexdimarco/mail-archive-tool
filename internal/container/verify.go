@@ -185,6 +185,11 @@ func (k *keylessCheck) decide(recordedGen uint64) (string, string) {
 		return state.OutcomeRestoredOlder, reasonRecordOlder
 	}
 	k.judgeListed(top)
+	if k.ctx.Err() != nil {
+		// Stopped: no whole-tree walk for a verdict that is thrown away (the P3-0
+		// adversarial pass, CON-06).
+		return "", ""
+	}
 	unnamed, sealedLeft := k.unlisted()
 	k.c.Unnamed, k.c.Leftovers = unnamed, k.unnamedShards(top)
 	k.c.LeftoversStay = I < P || k.c.PartsUnread > 0
@@ -447,6 +452,17 @@ func judgeFile(root, rel string, d Digest) (kind, detail string) {
 // fault injection only, so a test can swap a folder in that window (OUT-02).
 var beforeOpen func(rel string)
 
+// beforeWalk, when set, runs as a walk of a whole folder starts: a test hook only,
+// so a test can count the walks a stopped check makes (the P3-0 adversarial pass,
+// CON-06).
+var beforeWalk func(d string)
+
+func walking(d string) {
+	if beforeWalk != nil {
+		beforeWalk(d)
+	}
+}
+
 // firstCommitOwed is the keyed load's checkFresh (and walkLeftovers) without the
 // key: with no pointer, the folder is a new archive only when units/ and inventory/
 // are empty, chunks/ holds at most an interrupted first commit's leftovers — real
@@ -509,6 +525,7 @@ func (k *keylessCheck) firstCommitOwed() string {
 // walkFiles and the unit sweep refuse each (a regular file there they leave alone).
 func (k *keylessCheck) strayFolder() bool {
 	for _, d := range []string{"units", ChunksDir} {
+		walking(d)
 		root := filepath.Join(k.out, d)
 		ok, err := realDir(root)
 		if err != nil {
@@ -553,6 +570,7 @@ func (k *keylessCheck) unnamedShards(top Top) int {
 		named[ref.Name] = true
 	}
 	n := 0
+	walking(InventoryDir)
 	dir := filepath.Join(k.out, InventoryDir)
 	if ok, err := realDir(dir); err != nil || !ok {
 		return 0
@@ -569,6 +587,7 @@ func (k *keylessCheck) unnamedShards(top Top) int {
 // walk calls fn with every entry two levels under the folder d (units/<hh>/<name>),
 // only through real folders; an entry where a shard folder belongs is reported too.
 func (k *keylessCheck) walk(d string, fn func(rel string)) {
+	walking(d)
 	root := filepath.Join(k.out, d)
 	if ok, err := realDir(root); err != nil || !ok {
 		return

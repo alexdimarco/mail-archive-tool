@@ -59,10 +59,19 @@ type record struct {
 // version this binary does not understand.
 var errUnreadable = errors.New("presync: state record unreadable")
 
+// RefuseSettingsWrite refuses the pre-sync state inside an encrypted archive
+// (design encrypted-archives-phase3 §6 E5): it names a Thunderbird profile. encmark
+// installs its check here (this package sits beneath it); until then it refuses
+// nothing.
+var RefuseSettingsWrite = func(path, kind string) error { return nil }
+
 // storeRecord writes r atomically at mode 0600 (temp + fsync + rename, so a
 // crash leaves the old record or the new one, never a torn one). It refuses a
 // record that would exceed the size bound rather than truncating it.
 func storeRecord(path string, r record) error {
+	if err := RefuseSettingsWrite(path, "the Thunderbird pre-sync state"); err != nil {
+		return err
+	}
 	b, err := json.Marshal(r)
 	if err != nil {
 		return err

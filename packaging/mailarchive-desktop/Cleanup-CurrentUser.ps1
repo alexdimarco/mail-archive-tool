@@ -49,7 +49,12 @@ if ($ForgetEncryptedArchives) {
         ForEach-Object { $_.Matches.Groups[1].Value } |
         Select-Object -Unique
     foreach ($key in $keys) {
-        if ($key) { cmdkey.exe /delete:$key | Out-Null }
+        if ($key) {
+            cmdkey.exe /delete:$key | Out-Null
+            # cmdkey is a native program: a failed delete does not stop the script by
+            # itself, and the record must outlive every key it names.
+            if ($LASTEXITCODE -ne 0) { throw "could not delete the remembered key $key; the record of encrypted archives was kept" }
+        }
     }
     Remove-Item (Join-Path $state 'encrypted-archives.*') -Force -ErrorAction SilentlyContinue
 }
@@ -58,6 +63,10 @@ if ($RemoveLocalAppState) {
     Get-ChildItem $state -Force -ErrorAction SilentlyContinue |
         Where-Object { $ForgetEncryptedArchives -or $_.Name -notlike 'encrypted-archives.*' } |
         Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    # The folder itself goes once nothing is kept in it.
+    if (-not (Get-ChildItem $state -Force -ErrorAction SilentlyContinue)) {
+        Remove-Item $state -Force -ErrorAction SilentlyContinue
+    }
     Remove-Item "$env:APPDATA\mailarchive" -Recurse -Force -ErrorAction SilentlyContinue
 }
 Write-Output 'Current-user MailArchive authorization cleanup completed. Archive data was not deleted.'

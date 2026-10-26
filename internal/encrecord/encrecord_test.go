@@ -3,6 +3,7 @@ package encrecord
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -153,7 +154,27 @@ func TestARecordThatCannotBeUsedIsNeverRewritten(t *testing.T) {
 		{"damaged", func(t *testing.T, p string) {
 			os.WriteFile(p, []byte("not a record\n"), 0o600)
 			os.WriteFile(p+".bak", []byte("not one either\n"), 0o600)
-		}, CaseDamaged, []string{"damaged", "repair"}},
+		}, CaseDamaged, []string{FileName, "damaged", "repair"}},
+		{"newer with a longer header beside a valid older copy", func(t *testing.T, p string) {
+			// A future format may add header fields or lengthen the line: still newer,
+			// never damaged, and the valid format-1 mirror is not used past it (CRIT-01).
+			body := []byte("MAILARCHIVE-RECORD 2 seq=9 gen=4 " + strings.Repeat("x", 300) + "\n{}\n")
+			os.WriteFile(p, body, 0o600)
+		}, CaseNewer, []string{FileName, "newer MailArchive"}},
+		{"owned by another account", func(t *testing.T, p string) {
+			was := instance.OwnerReader
+			instance.OwnerReader = func(string) (string, []string, error) { return "4242", []string{"501"}, nil }
+			t.Cleanup(func() { instance.OwnerReader = was })
+		}, CasePermissions, []string{FileName, "not yours"}},
+		{"a planted link", func(t *testing.T, p string) {
+			outside := filepath.Join(t.TempDir(), "elsewhere")
+			os.WriteFile(outside, []byte("x"), 0o600)
+			os.Remove(p)
+			os.Remove(p + ".bak")
+			if err := os.Symlink(outside, p); err != nil {
+				t.Skip("no symlinks here:", err)
+			}
+		}, CaseDamaged, []string{FileName, "damaged"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := sandbox(t)
@@ -170,6 +191,105 @@ func TestARecordThatCannotBeUsedIsNeverRewritten(t *testing.T) {
 			assure.Refused(t, code(err), err.Error(), assure.Code(1), assure.Names(tc.names...),
 				assure.NoSideEffect(func() bool { after, _ := os.ReadFile(p); return bytes.Equal(before, after) }))
 		})
+	}
+}
+
+// covers: MA-775, R37
+// A record whose folder cannot be found or searched is its own case — not damage:
+// no settings folder at all (no home folder), or a folder MailArchive may not read.
+// It names the cause; repair is not offered. A change is refused, writing nothing,
+// and a folder that cannot be written is not reported as "busy" (REG-03, CON-05).
+func TestARecordThatCannotBeLookedForIsItsOwnCase(t *testing.T) {
+	was := dirFn
+	dirFn = func() (string, error) { return "", errors.New("no home folder") }
+	_, err := Load()
+	var ue *UnusableError
+	if !errors.As(err, &ue) || ue.Case != CaseUnreadable || !strings.Contains(err.Error(), "no home folder") {
+		t.Fatalf("no settings folder: %v", err)
+	}
+	dirFn = was
+	if runtime.GOOS == "windows" || os.Getuid() == 0 {
+		t.Skip("mode bits do not stop this user here")
+	}
+	dir := sandbox(t)
+	add(t, idA, t.TempDir())
+	os.Chmod(dir, 0o000)
+	t.Cleanup(func() { os.Chmod(dir, 0o700) })
+	_, err = Load()
+	if !errors.As(err, &ue) || ue.Case != CaseUnreadable || strings.Contains(err.Error(), "repair") {
+		t.Fatalf("a folder that cannot be searched: %v", err)
+	}
+	// A copy MailArchive may not read, in a folder it may: the same case, not damage
+	// (the mutation sweep showed no test reached it).
+	os.Chmod(dir, 0o700)
+	p := filepath.Join(dir, FileName)
+	os.Chmod(p, 0o000)
+	_, err = Load()
+	if !errors.As(err, &ue) || ue.Case != CaseUnreadable || strings.Contains(err.Error(), "repair") {
+		t.Fatalf("a copy that cannot be read: %v", err)
+	}
+	os.Chmod(p, 0o600)
+	// No lock file yet, in a folder that cannot be written: the lock cannot be taken,
+	// and that is not "busy" — it names the folder (CON-05).
+	os.Remove(filepath.Join(dir, LockName))
+	os.Chmod(dir, 0o500)
+	_, err = Update("test", func(r *Record) error { return nil })
+	assure.Refused(t, code(err), err.Error(), assure.Code(1), assure.Names("cannot lock", dir),
+		assure.NoSideEffect(func() bool { return !strings.Contains(err.Error(), "busy") }))
+}
+
+// covers: MA-775, R37
+// A refused change leaves a damaged copy where it was: the copy is moved aside, and
+// the lost-change notice given, only by the change that writes (CON-03). No notice
+// is given when the damaged copy held the older change; and the new sequence steps
+// past a damaged copy's higher one.
+func TestADamagedCopyIsSetAsideOnlyByAWrite(t *testing.T) {
+	dir := sandbox(t)
+	add(t, idA, t.TempDir())
+	stale, _ := os.ReadFile(filepath.Join(dir, MirrorName))
+	add(t, idB, t.TempDir())
+	os.WriteFile(filepath.Join(dir, MirrorName), stale, 0o600) // the mirror lags one change
+	p := filepath.Join(dir, FileName)
+	raw, _ := os.ReadFile(p)
+	raw[len(raw)-5] ^= 1
+	os.WriteFile(p, raw, 0o600)
+	if _, err := Update("test", func(*Record) error { return errors.New("not this time") }); err == nil {
+		t.Fatal("a failing change succeeded")
+	}
+	if aside, _ := filepath.Glob(p + ".damaged-*"); len(aside) != 0 {
+		t.Fatalf("a refused change moved the damaged copy aside: %v", aside)
+	}
+	notice, err := Update("test", func(*Record) error { return nil })
+	if err != nil || !strings.Contains(notice, "may have been lost") {
+		t.Fatalf("the change that writes: %q %v", notice, err)
+	}
+	if rec, _ := Load(); rec.Seq() <= 2 {
+		t.Fatalf("the new sequence %d did not step past the damaged copy's 2", rec.Seq())
+	}
+
+	// The mirror damaged while holding the OLDER change: no notice.
+	add(t, idA, t.TempDir())
+	m := filepath.Join(dir, MirrorName)
+	mraw, _ := os.ReadFile(m)
+	os.WriteFile(m, []byte(strings.Replace(string(mraw), "seq=", "seq=0", 1)[:20]+"\n"), 0o600)
+	if notice, err := Update("test", func(*Record) error { return nil }); err != nil || notice != "" {
+		t.Fatalf("an older damaged copy: %q %v", notice, err)
+	}
+}
+
+// covers: MA-775, R37
+// A record entry whose key is not an archive id makes the copy damaged.
+func TestARecordWithAForeignKeyIsDamaged(t *testing.T) {
+	dir := sandbox(t)
+	add(t, idA, t.TempDir())
+	rec, _ := Load()
+	rec.Archives["NOT-AN-ID"] = &Entry{}
+	data, _ := encode(rec, 5)
+	os.WriteFile(filepath.Join(dir, FileName), data, 0o600)
+	os.WriteFile(filepath.Join(dir, MirrorName), data, 0o600)
+	var ue *UnusableError
+	if _, err := Load(); !errors.As(err, &ue) || ue.Case != CaseDamaged {
+		t.Fatalf("a foreign key: %v", err)
 	}
 }
 
@@ -282,6 +402,16 @@ func TestTheRecordMatchesEverySpellingOfARecordedFolder(t *testing.T) {
 			t.Fatalf("a linked folder was recorded as %s, want its target %s", got, Spelling(target))
 		}
 	}
+	// A link into a subfolder of the recorded archive is seen through (OUT-01).
+	into := filepath.Join(t.TempDir(), "into")
+	os.MkdirAll(filepath.Join(real, "sub"), 0o700)
+	if err := os.Symlink(filepath.Join(real, "sub"), into); err == nil {
+		for _, q := range []string{into, filepath.Join(into, "new")} {
+			if _, ok := rec.Lookup(q); !ok {
+				t.Fatalf("%s, a link into the recorded archive, was not matched", q)
+			}
+		}
+	}
 	other := filepath.Join(base, "real")
 	_, ok := rec.Lookup(other)
 	switch runtime.GOOS {
@@ -294,4 +424,60 @@ func TestTheRecordMatchesEverySpellingOfARecordedFolder(t *testing.T) {
 			t.Fatal("another letter case matched on a case-sensitive system")
 		}
 	}
+}
+
+// covers: MA-775, R37
+// On macOS one folder has more spellings than letter case: a composed and a
+// decomposed accent, σ and ς, and the firmlink spelling under /System/Volumes/Data.
+// Each reaches the recorded folder (OUT-02, SEC-01).
+func TestTheRecordMatchesEveryMacSpellingOfOneFolder(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS file-system spellings")
+	}
+	sandbox(t)
+	base := t.TempDir()
+	for _, tc := range []struct{ recorded, other string }{
+		{"Café", "Café"},
+		{"Café", "Café"},
+		{"Archσ", "Archς"},
+	} {
+		dir := filepath.Join(base, tc.recorded)
+		os.Mkdir(dir, 0o700)
+		a, _ := os.Stat(dir)
+		b, err := os.Stat(filepath.Join(base, tc.other))
+		if err != nil || !os.SameFile(a, b) {
+			t.Skipf("this volume does not treat %q and %q as one folder", tc.recorded, tc.other)
+		}
+		id := fmt.Sprintf("%032x", len(tc.recorded)+len(tc.other)*7)
+		Update("test", func(r *Record) error { return r.Add(id, dir, false, time.Now()) })
+		rec, _ := Load()
+		if m, ok := rec.Lookup(filepath.Join(base, tc.other, "sub")); !ok || m.ID != id {
+			t.Fatalf("%q recorded, %q not matched: %+v", tc.recorded, tc.other, m)
+		}
+		// Gone, so no folder on disk can vouch for it: the spelling alone must match —
+		// composed with decomposed, and σ with ς by full case folding (the mutation
+		// sweep showed the folder's own identity hid a weaker fold).
+		os.Remove(dir)
+		if m, ok := rec.Lookup(filepath.Join(base, tc.other)); !ok || m.ID != id {
+			t.Fatalf("%q recorded and gone, %q not matched by its spelling: %+v", tc.recorded, tc.other, m)
+		}
+	}
+	os.Mkdir(filepath.Join(base, "Café"), 0o700) // the firmlink match is by the folder itself
+	firm := filepath.Join("/System/Volumes/Data", mustResolve(t, base))
+	if _, err := os.Stat(firm); err != nil {
+		t.Skip("no firmlink spelling here:", err)
+	}
+	rec, _ := Load()
+	if _, ok := rec.Lookup(filepath.Join(firm, "Café")); !ok {
+		t.Fatal("the firmlink spelling of a recorded folder was not matched")
+	}
+}
+
+func mustResolve(t *testing.T, p string) string {
+	t.Helper()
+	r, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
 }

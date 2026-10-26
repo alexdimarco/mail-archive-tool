@@ -1093,12 +1093,21 @@ func lastVerifyCause(in Input) string {
 }
 
 func assessVerifySchedule(r *Report, in Input, now time.Time) {
-	lv := in.LastVerify
-	done := in.LastVerifyState == state.LastVerifyPresent && lv.Status == state.VerifyDone && lv.Finished != nil
+	lv, st := in.LastVerify, in.LastVerifyState
+	// A check stopped on purpose checked nothing: staleness runs from the finished
+	// check it carries, or from none (the P3-0 adversarial pass, CON-02).
+	if st == state.LastVerifyPresent && lv.Status == state.VerifyStopped {
+		if lv.Previous != nil {
+			lv = *lv.Previous
+		} else {
+			st = state.LastVerifyAbsent
+		}
+	}
+	done := st == state.LastVerifyPresent && lv.Status == state.VerifyDone && lv.Finished != nil
 	if in.HasVerifyDescriptor {
 		vd := in.VerifyDesc
 		period := IntervalOf(vd.Interval)
-		pending := in.LastVerifyState == state.LastVerifyPresent && !done
+		pending := st == state.LastVerifyPresent && !done
 		// When the last verify ran: its finish, or the start of one that has not
 		// finished. The verify schedule may have been installed (or re-installed)
 		// after it, and then it has not stopped: it has not run yet.
@@ -1118,7 +1127,7 @@ func assessVerifySchedule(r *Report, in Input, now time.Time) {
 			r.warn("verify_stale", fmt.Sprintf("no verify has run in the %s since the %s verify schedule %q was installed, more than twice its period (%s, before the install) — %s", HumanAge(now.Sub(vd.InstalledAt)), vd.Interval, vd.Name, lastWhat, verifyStaleRemedy(in)))
 		case !last.IsZero() && now.Sub(last) > 2*period:
 			r.warn("verify_stale", fmt.Sprintf("%s, more than twice the %s verify schedule period of %q — %s", lastWhat, vd.Interval, vd.Name, verifyStaleRemedy(in)))
-		case in.LastVerifyState == state.LastVerifyAbsent && !vd.InstalledAt.IsZero() && now.Sub(vd.InstalledAt) > 2*period:
+		case st == state.LastVerifyAbsent && !vd.InstalledAt.IsZero() && now.Sub(vd.InstalledAt) > 2*period:
 			r.warn("verify_stale", fmt.Sprintf("no verify has run in the %s since the %s verify schedule %q was installed, more than twice its period — %s", HumanAge(now.Sub(vd.InstalledAt)), vd.Interval, vd.Name, verifyStaleRemedy(in)))
 		}
 		// A running record whose verify is gone (verify_never_finished) is
@@ -1918,9 +1927,12 @@ func Summary(in Input, rep Report) []string {
 	}
 	if in.LastVerifyState == state.LastVerifyPresent {
 		lv := in.LastVerify
-		if lv.Status == state.VerifyRunning || lv.Finished == nil {
+		if lv.Status == state.VerifyRunning || lv.Status == state.VerifyStopped || lv.Finished == nil {
 			how := "running"
-			if !verifyRunning(in) {
+			switch {
+			case lv.Status == state.VerifyStopped:
+				how = "stopped" // CON-04
+			case !verifyRunning(in):
 				how = "never finished"
 			}
 			lines = append(lines, fmt.Sprintf("Last verify: %s → %s", lv.Started.UTC().Format("2006-01-02 15:04"), how))

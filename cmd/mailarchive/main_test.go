@@ -11,6 +11,7 @@ import (
 	"mail-archive-tool/internal/alert"
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/backupalert"
+	"mail-archive-tool/internal/encrecord"
 	"mail-archive-tool/internal/lockfile"
 )
 
@@ -24,10 +25,23 @@ func TestMain(m *testing.M) {
 	// machine's alert config: the scheduled-run paths (RunHeadless ->
 	// FireForRunDefault) go through this seam.
 	backupalert.SetSenderForTest(func(alert.Config, string, alert.Event) error { return nil })
+	// Never let an in-process test read or write the developer's real record of
+	// encrypted archives (the P3-0 adversarial pass, FID-13).
+	recordDir, err := os.MkdirTemp("", "mailarchive-clitest-record")
+	if err != nil {
+		panic(err)
+	}
+	encrecord.SetDirForTest(recordDir)
+	cliHome = filepath.Join(recordDir, "home")
+	if err := os.MkdirAll(cliHome, 0o700); err != nil {
+		panic(err)
+	}
 	// The pty tests re-run this test binary as a session leader that starts the
 	// CLI they build (link_pty_test.go); that child has no need to build it again.
 	if os.Getenv("MAILARCHIVE_TEST_LEADER") == "1" {
-		os.Exit(m.Run())
+		code := m.Run()
+		os.RemoveAll(recordDir)
+		os.Exit(code)
 	}
 	dir, err := os.MkdirTemp("", "mailarchive-clitest")
 	if err != nil {
@@ -45,11 +59,21 @@ func TestMain(m *testing.M) {
 	}
 	code := m.Run()
 	os.RemoveAll(dir)
+	os.RemoveAll(recordDir)
 	os.Exit(code)
 }
 
+// cliHome is the home folder runCLI's children see, so a CLI test never reads or
+// writes the developer's real settings or record of encrypted archives (the P3-0
+// adversarial pass, FID-13).
+var cliHome string
+
 func runCLI(args ...string) (int, string) {
 	cmd := exec.Command(testBin, args...)
+	cmd.Env = append(os.Environ(), "HOME="+cliHome,
+		"XDG_CONFIG_HOME="+filepath.Join(cliHome, ".config"),
+		"APPDATA="+filepath.Join(cliHome, "AppData", "Roaming"),
+		"LOCALAPPDATA="+filepath.Join(cliHome, "AppData", "Local"))
 	var errb strings.Builder
 	cmd.Stderr = &errb
 	err := cmd.Run()

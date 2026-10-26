@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"mail-archive-tool/internal/assure"
+	"mail-archive-tool/internal/encmark"
+	"mail-archive-tool/internal/encrecord"
 	"mail-archive-tool/internal/vault"
 )
 
@@ -93,4 +95,49 @@ func TestNoScheduleIsInstalledForAnEncryptedArchive(t *testing.T) {
 				}))
 		})
 	}
+}
+
+// covers: MA-775, R37
+// While this computer's record of encrypted archives cannot be used, an install
+// for a folder holding MailArchive files is refused with the record's own problem
+// (encmark.ErrRecordUnusable) — not called an encrypted archive — and nothing is
+// installed (the P3-0 adversarial pass, REG-02). The positive twin: the same install
+// with the record usable goes ahead.
+func TestNoScheduleIsInstalledWhileTheRecordCannotBeUsed(t *testing.T) {
+	origList, origInstall := crontabList, crontabInstall
+	t.Cleanup(func() { crontabList, crontabInstall = origList, origInstall })
+	wrote := false
+	crontabList = func() (string, error) { return "", nil }
+	crontabInstall = func(string) error { wrote = true; return nil }
+
+	plain := t.TempDir()
+	if err := os.WriteFile(filepath.Join(plain, ".mailarchive-manifest.json"), []byte(`{"version":6,"entries":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	spec := Spec{Name: "mailarchive-unusable", Interval: Daily, At: "02:00", Exe: "/bin/x", Out: plain}
+	if err := installOn(spec, "linux"); err != nil || !wrote {
+		t.Fatalf("the positive twin: with the record usable it installs (%v, wrote %v)", err, wrote)
+	}
+	if err := os.Remove(filepath.Join(plain, descriptorFileFor(spec))); err != nil {
+		t.Fatal(err)
+	}
+
+	damaged := t.TempDir()
+	for _, name := range []string{encrecord.FileName, encrecord.MirrorName} {
+		if err := os.WriteFile(filepath.Join(damaged, name), []byte("not a record\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(encrecord.SetDirForTest(damaged))
+	wrote = false
+	err := installOn(spec, "linux")
+	if !errors.Is(err, encmark.ErrRecordUnusable) || errors.Is(err, ErrEncryptedArchive) {
+		t.Fatalf("want ErrRecordUnusable and not ErrEncryptedArchive, got %v", err)
+	}
+	assure.Refused(t, 1, err.Error(), assure.Code(1),
+		assure.Names("record of encrypted archives", encrecord.FileName, "nothing was installed", "mailarchive status"),
+		assure.NoSideEffect(func() bool {
+			_, derr := os.Stat(filepath.Join(plain, descriptorFileFor(spec)))
+			return !wrote && os.IsNotExist(derr)
+		}))
 }

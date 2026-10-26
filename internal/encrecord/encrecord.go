@@ -28,6 +28,9 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/text/cases"
+	"golang.org/x/text/unicode/norm"
+
 	"mail-archive-tool/internal/instance"
 	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/state"
@@ -74,6 +77,11 @@ func defaultDir() (string, error) {
 // Dir is the folder the record lives in.
 func Dir() (string, error) { return dirFn() }
 
+// RefuseSettingsWrite refuses the record inside an encrypted archive (phase3 §6
+// E5). encmark installs its check here (it imports this package); until then it
+// refuses nothing.
+var RefuseSettingsWrite = func(path, kind string) error { return nil }
+
 // SetDirForTest points the record at dir until the returned func is called, so a
 // test never reads or writes the developer's real record. Test-only.
 func SetDirForTest(dir string) (restore func()) {
@@ -117,12 +125,17 @@ func (r *Record) Seq() uint64 { return r.seq }
 type Case int
 
 const (
-	// CasePermissions: a copy is readable by other users (or not owned right).
+	// CasePermissions: a copy is readable by other users, or not owned by this
+	// account.
 	CasePermissions Case = iota + 1
 	// CaseNewer: a copy was written by a newer MailArchive.
 	CaseNewer
 	// CaseDamaged: neither copy reads whole.
 	CaseDamaged
+	// CaseUnreadable: the record's folder cannot be found or searched (no home
+	// folder, a folder MailArchive may not read), so whether a record exists is
+	// unknown (the P3-0 adversarial pass, REG-03).
+	CaseUnreadable
 )
 
 // UnusableError is the refusal when the record cannot be used. Its message names
@@ -140,9 +153,11 @@ func (e *UnusableError) Error() string {
 		if runtime.GOOS == "windows" {
 			fix = `icacls "` + e.Path + `" /inheritance:r /grant:r "%USERNAME%:F"`
 		}
-		return fmt.Sprintf("this computer's record of encrypted archives (%s) can be read by other users — run `%s`", e.Path, fix)
+		return fmt.Sprintf("this computer's record of encrypted archives (%s) can be read by other users or is not yours — run `%s`", e.Path, fix)
 	case CaseNewer:
 		return fmt.Sprintf("this computer's record of encrypted archives (%s) was written by a newer MailArchive — upgrade MailArchive", e.Path)
+	case CaseUnreadable:
+		return fmt.Sprintf("this computer's record of encrypted archives cannot be looked for (%s: %v) — MailArchive needs its own settings folder, readable by you", e.Path, e.Err)
 	default:
 		return fmt.Sprintf("this computer's record of encrypted archives (%s) is damaged and needs repair", e.Path)
 	}
@@ -162,6 +177,7 @@ const (
 	copyNewer
 	copyPermissions
 	copyDamaged
+	copyUnreadable
 )
 
 type copyRead struct {
@@ -181,19 +197,32 @@ func paths() (dir, primary, mirror string, err error) {
 	return dir, filepath.Join(dir, FileName), filepath.Join(dir, MirrorName), nil
 }
 
-// readHeader reads the first line of path without any size limit applying, so a
-// newer record is recognised as newer whatever its size (§4.2).
+// readHeader reads the start of path's first line without any size limit
+// applying. A newer format is recognised from the magic word and the format number
+// alone, whatever follows them and however long the line is, so a future header
+// with more fields still reads as newer, never as damaged (§4.2; the P3-0
+// adversarial pass, CRIT-01). seq is read only from a header of this format's
+// shape.
 func readHeader(path string) (format int, seq uint64, ok bool) {
 	f, err := util.OpenRegularFile(path)
 	if err != nil {
 		return 0, 0, false
 	}
 	defer f.Close()
-	line, err := bufio.NewReaderSize(io.LimitReader(f, maxHeader), maxHeader).ReadString('\n')
-	if err != nil {
+	head, _ := bufio.NewReaderSize(io.LimitReader(f, maxHeader), maxHeader).Peek(maxHeader)
+	line, _, _ := strings.Cut(string(head), "\n")
+	fields := strings.Fields(line)
+	if len(fields) < 2 || fields[0] != magic {
 		return 0, 0, false
 	}
-	return parseHeader(strings.TrimSuffix(line, "\n"))
+	format, err = strconv.Atoi(fields[1])
+	if err != nil || format < 1 {
+		return 0, 0, false
+	}
+	if format > Format {
+		return format, 0, true
+	}
+	return parseHeader(line)
 }
 
 // parseHeader reads "MAILARCHIVE-RECORD <format> seq=<n>".
@@ -221,7 +250,9 @@ func readOne(path string) copyRead {
 		return c
 	}
 	if err != nil {
-		c.state, c.err = copyDamaged, err
+		// The folder cannot be searched (permission, a file where a folder belongs):
+		// whether a record exists is unknown, which is not damage (REG-03).
+		c.state, c.err = copyUnreadable, err
 		return c
 	}
 	if !fi.Mode().IsRegular() {
@@ -238,12 +269,21 @@ func readOne(path string) copyRead {
 	}
 	data, err := util.ReadSecureFile(path, "record of encrypted archives", MaxBytes)
 	if err != nil {
-		if errors.Is(err, util.ErrReadableByOthers) {
+		switch {
+		case errors.Is(err, util.ErrReadableByOthers):
 			c.state = copyPermissions
-		} else {
+		case errors.Is(err, fs.ErrPermission):
+			c.state = copyUnreadable
+		default:
 			c.state = copyDamaged
 		}
 		c.err = err
+		return c
+	}
+	// The record is this account's: one written by another account is not trusted,
+	// as the instance files beside it are not (the P3-0 adversarial pass, SEC-03).
+	if err := instance.CheckOwner(path, instance.OwnerReader); err != nil {
+		c.state, c.err = copyPermissions, err
 		return c
 	}
 	rec, err := decode(data)
@@ -336,6 +376,13 @@ func judge(primary, mirror copyRead) (*Record, error) {
 			return nil, &UnusableError{Case: CasePermissions, Path: c.path, Err: c.err}
 		}
 	}
+	// A copy that cannot be looked at may hold the newer change: never fall back
+	// past it.
+	for _, c := range []copyRead{primary, mirror} {
+		if c.state == copyUnreadable {
+			return nil, &UnusableError{Case: CaseUnreadable, Path: c.path, Err: c.err}
+		}
+	}
 	var best *Record
 	for _, c := range []copyRead{primary, mirror} {
 		if c.state == copyValid && (best == nil || c.rec.seq > best.seq) {
@@ -360,7 +407,7 @@ func judge(primary, mirror copyRead) (*Record, error) {
 func Load() (*Record, error) {
 	_, p, m, err := paths()
 	if err != nil {
-		return nil, err
+		return nil, &UnusableError{Case: CaseUnreadable, Path: "MailArchive's settings folder", Err: err}
 	}
 	return judge(readOne(p), readOne(m))
 }
@@ -373,6 +420,10 @@ func Load() (*Record, error) {
 func Update(verb string, fn func(*Record) error) (notice string, err error) {
 	dir, p, m, err := paths()
 	if err != nil {
+		return "", &UnusableError{Case: CaseUnreadable, Path: "MailArchive's settings folder", Err: err}
+	}
+	// The record never lands inside an encrypted archive (phase3 §6 E5).
+	if err := RefuseSettingsWrite(p, "this computer's record of encrypted archives"); err != nil {
 		return "", err
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -380,24 +431,18 @@ func Update(verb string, fn func(*Record) error) (notice string, err error) {
 	}
 	lock, err := lockfile.AcquireWait(filepath.Join(dir, LockName), verb, lockWait)
 	if err != nil {
-		return "", fmt.Errorf("MailArchive is busy updating its record of encrypted archives: %w", err)
+		if errors.Is(err, lockfile.ErrHeld) {
+			return "", fmt.Errorf("MailArchive is busy updating its record of encrypted archives: %w", err)
+		}
+		// Not a holder: a folder MailArchive may not write, or a planted lock file
+		// (the P3-0 adversarial pass, CON-05).
+		return "", fmt.Errorf("MailArchive cannot lock its record of encrypted archives in %s: %w", dir, err)
 	}
 	defer lock.Release()
 	pc, mc := readOne(p), readOne(m)
 	rec, err := judge(pc, mc)
 	if err != nil {
 		return "", err
-	}
-	for _, c := range []copyRead{pc, mc} {
-		if c.state != copyDamaged {
-			continue
-		}
-		if c.seq > rec.seq {
-			notice = "a recent change to this computer's record of encrypted archives may have been lost"
-		}
-		if err := moveAside(c.path); err != nil {
-			return "", fmt.Errorf("move the damaged copy %s aside: %w", c.path, err)
-		}
 	}
 	if err := fn(rec); err != nil {
 		return "", err
@@ -418,6 +463,19 @@ func Update(verb string, fn func(*Record) error) (notice string, err error) {
 	}
 	if err := lock.StillHeld(); err != nil {
 		return "", err
+	}
+	// Only now, with the write certain to be attempted, is a damaged copy moved
+	// aside: a refused change leaves the folder as it was, notice and all (CON-03).
+	for _, c := range []copyRead{pc, mc} {
+		if c.state != copyDamaged {
+			continue
+		}
+		if c.seq > rec.seq {
+			notice = "a recent change to this computer's record of encrypted archives may have been lost"
+		}
+		if err := moveAside(c.path); err != nil {
+			return "", fmt.Errorf("move the damaged copy %s aside: %w", c.path, err)
+		}
 	}
 	if err := util.WriteFileAtomic0600(p, data); err != nil {
 		return "", err
@@ -442,19 +500,29 @@ func moveAside(path string) error {
 	return errors.New("too many damaged copies already set aside")
 }
 
-// Spelling is how a path is stored and compared: absolute and cleaned, folded to
-// one letter case only where state.PathSourceID folds.
+// Spelling is how a path is stored and compared: absolute and cleaned, and — where
+// the file system treats more than one spelling as one folder (Windows, macOS) —
+// Unicode-normalised (NFC) and case-folded in full, so a composed and a decomposed
+// accent, or σ and ς, are one spelling (the P3-0 adversarial pass, OUT-02). Folding
+// may join two distinct folders (ß and ss): that only refuses more, never less.
 func Spelling(path string) string {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		abs = path
 	}
-	abs = filepath.Clean(abs)
-	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
-		abs = strings.ToLower(abs)
-	}
-	return abs
+	return fold(filepath.Clean(abs))
 }
+
+// fold is Spelling's comparison form of an absolute path.
+func fold(s string) string {
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		return cases.Fold().String(norm.NFC.String(s))
+	}
+	return s
+}
+
+// sourceKey is a state.PathSourceID in Spelling's comparison form.
+func sourceKey(src string) string { return fold(strings.TrimPrefix(src, "path:")) }
 
 // recordedForm is the spelling a folder is recorded under: its link target when the
 // folder itself is a link (§4.2), so a recorded path is never legitimately a link.
@@ -516,16 +584,30 @@ func (r *Record) ForgetID(id string) {
 }
 
 // Match is the recorded path that path is, or lies inside: the archive id, the
-// entry, and the folder on disk that matched (path itself or a folder above it).
+// entry, and the folder that matched — path itself or a folder above it, as given
+// or with its links resolved. BySpelling says the folder was reached by the
+// recorded spelling itself; otherwise by another way to the same folder (a link,
+// its resolved source, the same folder on disk), and the recorded spelling is the
+// folder to judge (the P3-0 adversarial pass, FID-01).
 type Match struct {
-	ID     string
-	Path   PathEntry
-	Folder string
+	ID         string
+	Path       PathEntry
+	Folder     string
+	BySpelling bool
 }
 
-// Lookup finds the recorded folder that path is or lies inside, comparing both the
-// spelling as given and the resolved source id, for path and every folder above
-// it, against both stored forms (§4.5). The nearest match wins.
+type recordedPath struct {
+	id string
+	pe PathEntry
+}
+
+// Lookup finds the recorded folder that path is or lies inside (§4.5). It walks
+// path and every folder above it, as given and with its links resolved (so a link
+// into a recorded archive is seen through, OUT-01), comparing each folder's
+// spelling and resolved source against both stored forms. When no name matches it
+// compares the folders themselves: a recorded folder that exists, reached by a
+// spelling no name comparison can know (a firmlink, a junction or subst drive, a
+// bind mount), is the same folder (os.SameFile; SEC-01). The nearest match wins.
 func (r *Record) Lookup(path string) (Match, bool) {
 	if r == nil || len(r.Archives) == 0 {
 		return Match{}, false
@@ -534,17 +616,56 @@ func (r *Record) Lookup(path string) (Match, bool) {
 	if err != nil {
 		abs = filepath.Clean(path)
 	}
-	for d := abs; ; d = filepath.Dir(d) {
-		sp, src := Spelling(d), state.PathSourceID(d)
-		ids := make([]string, 0, len(r.Archives))
-		for id := range r.Archives {
-			ids = append(ids, id)
+	var all []recordedPath
+	ids := make([]string, 0, len(r.Archives))
+	for id := range r.Archives {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		for _, pe := range r.Archives[id].Paths {
+			all = append(all, recordedPath{id, pe})
 		}
-		sort.Strings(ids)
-		for _, id := range ids {
-			for _, pe := range r.Archives[id].Paths {
-				if pe.Spelling == sp || pe.Source == src || "path:"+pe.Spelling == src || pe.Source == "path:"+sp {
-					return Match{ID: id, Path: pe, Folder: d}, true
+	}
+	if len(all) == 0 {
+		return Match{}, false
+	}
+	chains := []string{abs}
+	if res := util.ResolveExisting(abs); res != abs {
+		chains = append(chains, res)
+	}
+	for ci, start := range chains {
+		for d := start; ; d = filepath.Dir(d) {
+			sp, src := Spelling(d), sourceKey(state.PathSourceID(d))
+			for _, rp := range all {
+				stored, storedSrc := rp.pe.Spelling, sourceKey(rp.pe.Source)
+				if stored == sp || stored == src || storedSrc == sp || storedSrc == src {
+					return Match{ID: rp.id, Path: rp.pe, Folder: d, BySpelling: ci == 0 && stored == sp}, true
+				}
+			}
+			if filepath.Dir(d) == d {
+				break
+			}
+		}
+	}
+	type statted struct {
+		rp recordedPath
+		fi os.FileInfo
+	}
+	var present []statted
+	for _, rp := range all {
+		if fi, err := os.Stat(rp.pe.Spelling); err == nil {
+			present = append(present, statted{rp, fi})
+		}
+	}
+	if len(present) == 0 {
+		return Match{}, false
+	}
+	for d := abs; ; d = filepath.Dir(d) {
+		if dfi, err := os.Stat(d); err == nil {
+			for _, s := range present {
+				if os.SameFile(s.fi, dfi) {
+					return Match{ID: s.rp.id, Path: s.rp.pe, Folder: d}, true
 				}
 			}
 		}

@@ -14,9 +14,12 @@ import (
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/assure/leak"
 	"mail-archive-tool/internal/container"
+	"mail-archive-tool/internal/encmark"
+	"mail-archive-tool/internal/encrecord"
 	"mail-archive-tool/internal/health"
 	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/state"
+	"mail-archive-tool/internal/vault"
 )
 
 // verifyAllowed is every key the last-verify record of an encrypted archive may
@@ -244,6 +247,104 @@ func TestAStoppedKeylessCheckKeepsTheLastVerdict(t *testing.T) {
 	}
 	if rep, err := Verify(out, VerifyOptions{}, discard(), nil); err != nil || rep.Outcome != state.OutcomeIntact {
 		t.Fatalf("checked again after the stop: %+v %v", rep, err)
+	}
+}
+
+// unusableRecord points this computer's record at a folder holding two damaged
+// copies for the rest of the test.
+func unusableRecord(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, n := range []string{encrecord.FileName, encrecord.MirrorName} {
+		os.WriteFile(filepath.Join(dir, n), []byte("not a record\n"), 0o600)
+	}
+	t.Cleanup(encrecord.SetDirForTest(dir))
+	return dir
+}
+
+// covers: MA-775, R37
+// While this computer's record cannot be used, verify on a plaintext archive is
+// refused before it takes the lock or writes — it never runs an encrypted archive's
+// check there, so no false "damaged" verdict and no integrity notice replace the
+// archive's real one (the P3-0 adversarial pass, CON-01). The positive twin: with a
+// usable record the same archive verifies attested.
+func TestVerifyRefusesWhileTheRecordCannotBeUsed(t *testing.T) {
+	out := plainArchive(t)
+	if rep, err := Verify(out, VerifyOptions{Record: true}, discard(), nil); err != nil || rep.Encrypted || !rep.Attested() {
+		t.Fatalf("the positive twin: %+v %v", rep, err)
+	}
+	before := snapshotTree(t, out)
+	unusableRecord(t)
+	_, err := Verify(out, VerifyOptions{}, discard(), nil)
+	if !errors.Is(err, encmark.ErrRecordUnusable) {
+		t.Fatalf("want ErrRecordUnusable, got %v", err)
+	}
+	assure.Refused(t, 1, err.Error(), assure.Code(1), assure.Names(encrecord.FileName, "needs repair", "mailarchive status"),
+		assure.NoSideEffect(func() bool {
+			_, aerr := os.Stat(filepath.Join(out, state.IntegrityAttentionName))
+			return errors.Is(aerr, fs.ErrNotExist) && sameTree(before, snapshotTree(t, out))
+		}))
+}
+
+// covers: MA-775, R37
+// A run refused while the record cannot be used records its own failure kind, and
+// its record stays minimised — no job flags, source paths or error text beside a
+// folder that may be an encrypted archive (REG-02; CRIT-03's trap kept shut).
+func TestARefusedRunKeepsItsRecordMinimisedWhileTheRecordCannotBeUsed(t *testing.T) {
+	src := encryptedSourcePST(t)
+	out := plainArchive(t)
+	unusableRecord(t)
+	_, err := Run(context.Background(), Options{Inputs: []string{src}, Out: out, Unattended: true}, discard(), nil)
+	if !errors.Is(err, encmark.ErrRecordUnusable) {
+		t.Fatalf("want ErrRecordUnusable, got %v", err)
+	}
+	lr, st, rerr := state.ReadLastRun(out)
+	if st != state.LastRunPresent || rerr != nil || !lr.Encrypted || lr.ErrorKind != state.FailRecordUnusable || lr.Error != "" || len(lr.Job) != 0 {
+		t.Fatalf("the refused run's record: %+v %v %v", lr, st, rerr)
+	}
+}
+
+// covers: MA-775, R37
+// verify on a folder this computer recorded as encrypted that no longer holds its
+// archive says what status says — the case's words — and writes nothing: no lock,
+// no verify record, nothing through a link (the P3-0 adversarial pass, CRIT-02).
+func TestVerifyOfATamperedRecordedFolderRefuses(t *testing.T) {
+	t.Cleanup(encrecord.SetDirForTest(t.TempDir()))
+	for _, tc := range []struct {
+		name  string
+		plant func(t *testing.T, out string)
+		says  string
+	}{
+		{"emptied", func(t *testing.T, out string) {
+			entries, _ := os.ReadDir(out)
+			for _, e := range entries {
+				os.RemoveAll(filepath.Join(out, e.Name()))
+			}
+		}, "used to hold an encrypted archive"},
+		{"replanted", func(t *testing.T, out string) {
+			os.Remove(filepath.Join(out, vault.FileName))
+			os.Remove(filepath.Join(out, vault.BackupName))
+			os.WriteFile(filepath.Join(out, "index.html"), []byte("<html>"), 0o600)
+		}, "tampered"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := sealedArchive(t)
+			claims := vault.Claims(out)
+			encrecord.Update("test", func(r *encrecord.Record) error {
+				return r.Add(claims.IDs[0].String(), out, false, time.Now())
+			})
+			if rep, err := Verify(out, VerifyOptions{}, discard(), nil); err != nil || rep.Outcome != state.OutcomeIntact {
+				t.Fatalf("the positive twin, whole: %+v %v", rep, err)
+			}
+			tc.plant(t, out)
+			before := snapshotTree(t, out)
+			_, err := Verify(out, VerifyOptions{}, discard(), nil)
+			if !errors.Is(err, ErrEncryptedNeedsKey) {
+				t.Fatalf("want a refusal, got %v", err)
+			}
+			assure.Refused(t, 1, err.Error(), assure.Code(1), assure.Names(out, tc.says),
+				assure.NoSideEffect(func() bool { return sameTree(before, snapshotTree(t, out)) }))
+		})
 	}
 }
 

@@ -218,8 +218,16 @@ func (i Info) KeyBytes() ([]byte, error) {
 // It is treated as absent, never repaired and never believed (§8.2).
 var ErrUnusable = errors.New("instance file unusable")
 
+// RefuseSettingsWrite refuses an instance file inside an encrypted archive (design
+// encrypted-archives-phase3 §6 E5): it holds the instance's key. encmark installs
+// its check here (this package sits beneath it); until then it refuses nothing.
+var RefuseSettingsWrite = func(path, kind string) error { return nil }
+
 // Write records info at path atomically, 0600, in a directory made 0700.
 func Write(path string, info Info) error {
+	if err := RefuseSettingsWrite(path, "the Desktop instance file"); err != nil {
+		return err
+	}
 	info.V = infoVersion
 	b, err := json.Marshal(info)
 	if err != nil {

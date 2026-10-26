@@ -34,6 +34,7 @@ import (
 
 	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/backupalert"
+	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/health"
 	"mail-archive-tool/internal/job"
@@ -855,7 +856,7 @@ func anyRegularFile(paths []string) bool {
 func lastArchiveFile() (string, error) { return job.LastArchiveFile() }
 
 func rememberArchive(out string) {
-	if p, err := lastArchiveFile(); err == nil {
+	if p, err := lastArchiveFile(); err == nil && encmark.RefuseSettingsWrite(p, "the wizard's last-archive note") == nil {
 		_ = os.MkdirAll(filepath.Dir(p), 0o700)
 		_ = os.WriteFile(p, []byte(out+"\n"), 0o600)
 	}
@@ -895,6 +896,9 @@ func reconcileBreadcrumb(out string) {
 		return
 	}
 	if data, rerr := os.ReadFile(p); rerr == nil && strings.TrimSpace(string(data)) == out {
+		return
+	}
+	if encmark.RefuseSettingsWrite(p, "the wizard's last-archive note") != nil {
 		return
 	}
 	_ = os.MkdirAll(filepath.Dir(p), 0o700)

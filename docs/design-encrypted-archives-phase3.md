@@ -34,6 +34,11 @@ Each came with an exact fix, and revision 5 applies those fixes as written (the 
 addendum maps them). They are rule additions, not a redesign, so no fifth pre-code cycle is run.
 The adversarial passes owed by P3-0 and P3-1 check the built code against them.
 
+**P3-0's adversarial pass** (workflow run `wf_8b561d60-f39`, 2026-10-25/26) confirmed 31 of 33
+findings and the critic added 5. The rules it changed are marked in place as *Amended after the
+P3-0 adversarial pass*, in §4.3, §4.5, §6 (E5) and §8; the findings and what was done with each
+are in `docs/review-encrypted-archives-phase3-p30-adversarial.md`.
+
 **Gates.**
 - **Before code:** none left for P3-0 and P3-1. The three split-out designs are each reviewed
   before their slices.
@@ -380,6 +385,20 @@ split-out designs (§11, §12) are bound by this rule.
   Disclosed beside K8: plaintext backups on this computer stop until the record is usable. That
   includes running a MailArchive older than the record's format, for example after a downgrade
   across the generations design's format change.
+
+  *Amended after the P3-0 adversarial pass:*
+  - **A fourth case, unreadable** (REG-03): the settings folder cannot be found, or the record
+    cannot be looked for (permission denied on the folder, a file where a folder belongs). It
+    names the folder and the system's error, never "damaged". It refuses like the other three.
+  - **Permissions includes the owner** (SEC-03): a copy not owned by this account is case 1, on
+    every system, using the instance files' owner check.
+  - **"Newer" is read from the magic word and the format number alone** (CRIT-01), whatever
+    follows on the header line and however long it is, so a later format can grow its header.
+  - **A damaged copy is moved aside only by a write that succeeds** (CON-03): the change, the
+    size cap and the lock are checked first, so a failed write leaves the copy, and the "may have
+    been lost" notice, for the next write.
+  - **"Busy" only when another holder has the lock** (CON-05); any other lock failure names the
+    folder and the error.
 - **Repair.**
   - It scans first, without the record lock.
   - Under the lock, it re-checks that the record is still unusable and unchanged since the scan,
@@ -452,6 +471,12 @@ own markers (`vault.EncryptedMarker`, `EncryptedAtOrAbove`), **or** a recorded o
   - Windows: `Thumbs.db`, `desktop.ini`, `$RECYCLE.BIN`, `System Volume Information`;
   - Linux: `lost+found`.
 
+  *Amended after the P3-0 adversarial pass (CRIT-04):* the list above missed names systems drop
+  at drive roots, so a healthy archive there read as tampered. Added, matched without regard to
+  letter case: macOS `.DocumentRevisions-V100`, `.VolumeIcon.icns`, `.apdisk`, `.localized`,
+  `Icon\r`, `.com.apple.timemachine.donotpresent`, `.PKInstallSandboxManager*`; Linux
+  `.Trash-*`; Windows `found.NNN` (three digits).
+
 **The refusal: six cases, decided in this order.**
 - **L — the recorded path is now a link or mount point:** "this folder was an encrypted archive
   this computer made, and is now a link to somewhere else — it may have been tampered with". Its
@@ -482,6 +507,33 @@ own markers (`vault.EncryptedMarker`, `EncryptedAtOrAbove`), **or** a recorded o
 
 Before P3-1a ships `forget-archive`, every forget offer reads "MailArchive cannot write here".
 P3-0 ships the cases with that interim wording.
+
+*Amended after the P3-0 adversarial pass:*
+- **Matching is by every spelling of the folder** (OUT-01, OUT-02, SEC-01). Lookup walks the
+  parents of the path as given and of its resolved form. Where `PathSourceID` folds, the spelling
+  is put in Unicode composed form (NFC) and fully case-folded, not only lower-cased. A recorded
+  path that still exists also matches by file identity (`os.SameFile`).
+- **Case L judges the recorded spelling, not the query** (FID-01). A folder reached by its
+  recorded target or source id is not "now a link", so an archive made through a linked output
+  folder stays usable.
+- **A plaintext manifest at a recorded path is case 2** (OUT-06), even though its name is
+  reserved. **Newer key files naming the recorded id are not case 3** (FID-02): a newer vault is
+  newer, never damaged (A7).
+- **Verify refuses a recorded folder in any case but intact** (CRIT-02), in that case's words,
+  before any lock or write.
+- **The label, the minimising and the refusal are three questions** (CON-01, REG-02, CRIT-03).
+  While the record cannot be used: a keyless write or check into a folder holding MailArchive
+  files is refused with the record's problem and remedy (`encmark.ErrRecordUnusable`, failure
+  kind `encrypted_record_unusable`), never run as an encrypted check; the user-facing label
+  (status, Desktop, the archive list) answers from the folder's own markers only; and whether a
+  refused run's record is minimised stays fail-closed (`encmark.MustMinimise`), so no source path
+  is written into a folder that may be an encrypted archive.
+- **Deferred to P3-1a, when recording starts** (nothing records a path in P3-0): a Windows
+  junction or folder-mounted volume must be recorded by its final path, so an intact archive there
+  is not case L (SEC-04); a link recorded under its own spelling and re-pointed later, and a
+  recorded path whose parent is swapped for a link, must read case L, not plaintext or case 4
+  (OUT-04, OUT-05). The second needs §4.2's "a recorded path is never itself a link" revisited.
+  The Windows rows are pending in MA-775, to run on the Windows lab VM.
 
 **Owed tests:**
 - A recorded path stripped of its key files, `units/`, `chunks/` and `inventory/`, then replanted
@@ -614,7 +666,12 @@ P3-0 ships the cases with that interim wording.
 - **Ridden in:**
   - **E2:** the Outlook-export callers use `app.OutlookPSTDir` with the key.
   - **E3:** a keyed run's log goes to the settings folder.
-  - **E5:** every settings write checks `encmark`.
+  - **E5:** every settings write checks `encmark`. *Amended after the P3-0 adversarial pass
+    (OUT-03, SEC-02):* "every" names, beside Desktop settings, the Microsoft 365 settings, stored
+    secrets, the sign-in cache and the archive list, also: the job files, the Desktop instance
+    file, the wizard's last-archive breadcrumb, the pre-sync record, the Desktop settings
+    `.unreadable` copy and this computer's record itself. Packages `encmark` cannot be imported
+    into get an init-installed hook.
   - **E7:** keyed `reindex` prunes, re-sealing the history chunks a redaction touches.
   - **E8:** the plaintext last-run record is read with `util.ReadRegularFile`.
   - **U16:** encrypted variants of owner-facing text that names files an encrypted archive lacks.
@@ -723,6 +780,11 @@ record.
 - the check is recorded as `stopped` (a closed status value, added in P3-0), carrying the previous
   verdict;
 - it exits 130 (SIGINT) or 143 (SIGTERM).
+
+*Amended after the P3-0 adversarial pass:* a stopped check walks no folder after the stop
+(CON-06). For staleness, status judges a stopped check by the last finished verdict it carries, or
+as no check at all when it carries none, never by when the stop started (CON-02). Status's summary
+shows it as stopped, with that verdict beside it (CON-04).
 
 **Exit codes (X1):**
 - 0: intact;

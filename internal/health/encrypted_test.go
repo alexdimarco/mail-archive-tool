@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/encrecord"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/vault"
@@ -101,6 +102,63 @@ func TestStatusJudgesAStoppedCheckByTheVerdictItCarries(t *testing.T) {
 	bad := state.LastVerify{Status: state.VerifyStopped, Encrypted: true, Outcome: state.OutcomeIntact}
 	if err := state.WriteLastVerify(t.TempDir(), bad); err == nil {
 		t.Fatal("a stopped record claiming its own outcome was written")
+	}
+}
+
+// covers: MA-775, R37
+// The status edges of P3-0 found by its adversarial pass: a stopped check over an
+// intact verdict is a note only (FID-10); it does not reset a scheduled verify's
+// staleness, which runs from the finished check it carries (CON-02); the summary
+// says it was stopped and shows that verdict (CON-04); an unproven recorded path is
+// a WARN (FID-09); and while the record cannot be used a plaintext archive is not
+// called encrypted — its counts are read, beside the WARN (CON-01, REG-02).
+func TestStatusAtTheEdgesOfP30(t *testing.T) {
+	now := time.Now().UTC()
+	old := now.Add(-30 * 24 * time.Hour)
+	stopped := state.LastVerify{Status: state.VerifyStopped, Started: now.Add(-time.Hour), Finished: &now, Encrypted: true,
+		Previous: &state.LastVerify{Status: state.VerifyDone, Finished: &old, Encrypted: true, Outcome: state.OutcomeIntact}}
+	in := Input{Out: t.TempDir(), LastVerifyState: state.LastVerifyPresent, LastVerify: stopped}
+	r := Assess(in, now)
+	if r.Posture == "RED" || !slices.Contains(r.Codes, "verify_stopped") {
+		t.Fatalf("a stopped check over an intact verdict: %s %v", r.Posture, r.Codes)
+	}
+	for _, c := range r.Codes {
+		if strings.HasPrefix(c, "verify_") && c != "verify_stopped" {
+			t.Fatalf("a stopped check over an intact verdict raised %s: %v", c, r.Codes)
+		}
+	}
+	in.HasVerifyDescriptor = true
+	in.VerifyDesc.Interval, in.VerifyDesc.Name, in.VerifyDesc.InstalledAt = "daily", "nightly-verify", old.Add(-time.Hour)
+	if r := Assess(in, now); !slices.Contains(r.Codes, "verify_stale") {
+		t.Fatalf("a stopped check hid a 30-day-old verify: %s %v", r.Posture, r.Codes)
+	}
+	// A stopped check carrying no finished verdict is no check at all: a schedule
+	// installed long ago still has none (the mutation sweep showed it unpinned).
+	bare := in
+	bare.LastVerify.Previous = nil
+	if r := Assess(bare, now); !slices.Contains(r.Codes, "verify_stale") || !strings.Contains(strings.Join(r.Reasons, "\n"), "no verify has run") {
+		t.Fatalf("a stopped check with no verdict before it hid a never-run verify: %s %v %v", r.Posture, r.Codes, r.Reasons)
+	}
+	summary := strings.Join(Summary(in, Assess(in, now)), "\n")
+	if !strings.Contains(summary, "→ stopped") || !strings.Contains(summary, "Previous verify:") {
+		t.Fatalf("the summary of a stopped check:\n%s", summary)
+	}
+
+	if r := Assess(Input{Out: t.TempDir(), EncryptedCase: encmark.Unproven, EncryptedWhy: "repaired"}, now); r.Posture != "WARN" || !slices.Contains(r.Codes, "encrypted_record_unproven") {
+		t.Fatalf("an unproven recorded path: %s %v", r.Posture, r.Codes)
+	}
+
+	plain := t.TempDir()
+	os.WriteFile(filepath.Join(plain, ".mailarchive-manifest.json"), []byte(`{"version":6,"entries":{}}`), 0o600)
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, encrecord.FileName), []byte("not a record\n"), 0o600)
+	t.Cleanup(encrecord.SetDirForTest(dir))
+	g := Gather(plain, "")
+	if g.Encrypted || !g.HasManifestFile || g.RecordProblem == "" {
+		t.Fatalf("a plaintext archive while the record cannot be used: %+v", g)
+	}
+	if r := Assess(g, now); !slices.Contains(r.Codes, "encrypted_record_unusable") || slices.Contains(r.Codes, "encrypted") {
+		t.Fatalf("its status: %s %v", r.Posture, r.Codes)
 	}
 }
 

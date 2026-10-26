@@ -110,6 +110,9 @@ func UpdateSettings(path, who string, fn func(*Settings)) error {
 	case rerr == nil:
 		if json.Unmarshal(data, &s) != nil {
 			s = Settings{}
+			if err := encmark.RefuseSettingsWrite(path, "the Desktop settings file"); err != nil {
+				return err
+			}
 			if err := util.WriteFileAtomic0600(path+".unreadable", data); err != nil {
 				return fmt.Errorf("the settings file can't be read and a copy of it could not be kept, so it was left as it is: %w", err)
 			}

@@ -118,7 +118,7 @@ func TestEveryFailureKindHasFixedWords(t *testing.T) {
 	kinds := []string{FailEncryptedNeedsKey, FailEncryptedRefused, FailNoSources, FailSourceUnreachable,
 		FailSourceUnreadable, FailArchiveUnwritable, FailArchiveAbsent, FailScratch, FailArchiveBusy, FailLockLost, FailManifestUnreadable,
 		FailManifestSave, FailInventory, FailRecordOlder, FailRecordNewer, FailIndex, ErrKindIndexBusy, ErrKindIndexUnwritable, ErrKindIndexDamaged,
-		ErrKindIndexDamagedNoManifest, ErrKindServiceUnavailable, FailSignIn, FailMailboxFailed, FailPartial, FailRunFailed, NoteIndexBehind}
+		ErrKindIndexDamagedNoManifest, ErrKindServiceUnavailable, FailSignIn, FailMailboxFailed, FailPartial, FailRunFailed, NoteIndexBehind, FailRecordUnusable}
 	if len(kinds) != len(failureText) {
 		t.Fatalf("the kind list (%d) and the text table (%d) disagree", len(kinds), len(failureText))
 	}

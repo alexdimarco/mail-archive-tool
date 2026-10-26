@@ -22,7 +22,14 @@ var ErrEncryptedArchive = errors.New("an encrypted archive cannot be scheduled y
 // goes through Install, so this one check covers them all.
 func refuseEncrypted(s Spec) error {
 	if s.Out != "" {
-		dir, why, err := encmark.AtOrAbove(s.Out)
+		res, err := encmark.At(s.Out)
+		if res.ByRecordErr {
+			return fmt.Errorf("%w: %v — nothing was installed; `mailarchive status` names the fix", encmark.ErrRecordUnusable, res.RecordErr)
+		}
+		dir, why := "", ""
+		if res.Encrypted {
+			dir, why = res.Folder, res.Why
+		}
 		if dir != "" {
 			return fmt.Errorf("%w: %s is an encrypted archive (%s) — scheduled backups of an encrypted archive are not available yet; nothing was installed", ErrEncryptedArchive, dir, why)
 		}

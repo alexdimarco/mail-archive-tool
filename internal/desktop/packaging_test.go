@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -241,10 +242,20 @@ func TestPackagingFilesMatchTheNewLaunch(t *testing.T) {
 func TestTheCleanupScriptKeepsTheRecordOfEncryptedArchives(t *testing.T) {
 	cleanup := packagingFile(t, "Cleanup-CurrentUser.ps1")
 	record := []string{encrecord.FileName, encrecord.MirrorName, encrecord.LockName}
-	for _, p := range []string{"desktop*.lock", "desktop-instance*.json", "serve-*.json"} {
+	// The always-removed patterns as the script lists them, not a copy of them here
+	// (the P3-0 adversarial pass, FID-04).
+	m := regexp.MustCompile(`foreach \(\$pattern in ([^)]*)\)`).FindStringSubmatch(cleanup)
+	if m == nil {
+		t.Fatal("the script's always-removed pattern list was not found")
+	}
+	patterns := regexp.MustCompile(`'([^']*)'`).FindAllStringSubmatch(m[1], -1)
+	if len(patterns) == 0 {
+		t.Fatal("the script's always-removed pattern list is empty")
+	}
+	for _, p := range patterns {
 		for _, name := range record {
-			if ok, _ := filepath.Match(p, name); ok {
-				t.Errorf("the always-removed pattern %s matches the record file %s", p, name)
+			if ok, _ := filepath.Match(p[1], name); ok {
+				t.Errorf("the always-removed pattern %s matches the record file %s", p[1], name)
 			}
 		}
 	}
@@ -257,8 +268,23 @@ func TestTheCleanupScriptKeepsTheRecordOfEncryptedArchives(t *testing.T) {
 		!strings.Contains(cleanup, "$ForgetEncryptedArchives -or $_.Name -notlike 'encrypted-archives.*'") {
 		t.Error("-RemoveLocalAppState does not spare the record unless -ForgetEncryptedArchives is given")
 	}
-	keys, rec := strings.Index(cleanup, "mailarchive:archive:"), strings.Index(cleanup, "Remove-Item (Join-Path $state 'encrypted-archives.*')")
-	if keys < 0 || rec < 0 || keys > rec {
-		t.Errorf("-ForgetEncryptedArchives must delete the remembered keys before the record (keys at %d, record at %d)", keys, rec)
+	// Inside the -ForgetEncryptedArchives block, never a comment: every key deleted,
+	// and a failed delete stopping the script, before the record is removed (FID-04,
+	// CRIT-05).
+	block := strings.Index(cleanup, "if ($ForgetEncryptedArchives) {")
+	if block < 0 {
+		t.Fatal("the -ForgetEncryptedArchives block was not found")
+	}
+	body := cleanup[block:]
+	del := strings.Index(body, "cmdkey.exe /delete:$key")
+	check := strings.Index(body, "if ($LASTEXITCODE -ne 0) { throw")
+	rec := strings.Index(body, "Remove-Item (Join-Path $state 'encrypted-archives.*')")
+	if del < 0 || check < 0 || rec < 0 || !(del < check && check < rec) {
+		t.Errorf("-ForgetEncryptedArchives must delete each key, stop on a failed delete, then remove the record (delete %d, check %d, record %d)", del, check, rec)
+	}
+	// -RemoveLocalAppState still removes the per-account folder once nothing is kept
+	// in it (REG-04).
+	if !strings.Contains(cleanup, "Remove-Item $state -Force") {
+		t.Error("-RemoveLocalAppState no longer removes the emptied per-account folder")
 	}
 }

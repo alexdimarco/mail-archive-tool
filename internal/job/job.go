@@ -133,8 +133,16 @@ func PathFor(name string) (string, error) {
 	return filepath.Join(d, name+".json"), nil
 }
 
+// RefuseSettingsWrite refuses a job file inside an encrypted archive (design
+// encrypted-archives-phase3 §6 E5): it holds source paths. encmark installs its
+// check here (this package sits beneath it); until then it refuses nothing.
+var RefuseSettingsWrite = func(path, kind string) error { return nil }
+
 // Write persists j atomically, readable by the owner only.
 func Write(path string, j Job) error {
+	if err := RefuseSettingsWrite(path, "a scheduled backup's settings file"); err != nil {
+		return err
+	}
 	j.Version = Version
 	data, err := json.MarshalIndent(j, "", "  ")
 	if err != nil {

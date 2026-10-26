@@ -25,6 +25,9 @@ import (
 	"mail-archive-tool/internal/encrecord"
 	"mail-archive-tool/internal/graph"
 	"mail-archive-tool/internal/graphconfig"
+	"mail-archive-tool/internal/instance"
+	"mail-archive-tool/internal/job"
+	"mail-archive-tool/internal/presync"
 	"mail-archive-tool/internal/util"
 	"mail-archive-tool/internal/vault"
 )
@@ -63,7 +66,17 @@ type Result struct {
 	Case     Case
 	// RecordErr is set when this computer's record could not be used.
 	RecordErr error
+	// ByRecordErr: Encrypted only because the record cannot be used and the folder
+	// holds MailArchive files — a refusal, not a sign the folder is encrypted (the
+	// P3-0 adversarial pass, CON-01). A writer refuses with ErrRecordUnusable; the
+	// keyless check never runs on such a folder; labels do not change.
+	ByRecordErr bool
 }
+
+// ErrRecordUnusable refuses a write into a folder holding MailArchive files while
+// this computer's record of encrypted archives cannot be used: the folder may be a
+// recorded archive the record can no longer show (§4.3).
+var ErrRecordUnusable = errors.New("this computer's record of encrypted archives cannot be used")
 
 // reserved are the names an encrypted archive itself writes at its root (the
 // tree grammar, MA-743; a test pins the two together), plus the conversion marker
@@ -87,17 +100,40 @@ var sealedData = map[string]bool{
 
 var tempRe = regexp.MustCompile(`^\.mailarchive-[a-z-]*[0-9]+\.tmp$`)
 
-// litter are the names operating systems drop into folders, per OS (§4.5); every
-// case ignores them. Matched case-insensitively.
+// litter are the names operating systems drop into folders and drive roots, per OS
+// (§4.5, extended by the P3-0 adversarial pass, CRIT-04); every case ignores them.
+// Matched case-insensitively.
 var litter = map[string]bool{
+	// macOS
 	".ds_store": true, ".spotlight-v100": true, ".fseventsd": true, ".trashes": true, ".temporaryitems": true,
+	".documentrevisions-v100": true, ".volumeicon.icns": true, ".apdisk": true, ".localized": true, "icon\r": true,
+	".com.apple.timemachine.donotpresent": true,
+	// Windows
 	"thumbs.db": true, "desktop.ini": true, "$recycle.bin": true, "system volume information": true,
+	// Linux
 	"lost+found": true,
 }
 
-// isLitter reports an operating system's own file, AppleDouble "._*" files included.
+// litterPrefixes are litter names that carry a suffix: AppleDouble "._*", the Linux
+// desktop trash ".Trash-<uid>", macOS installer sandboxes; and Windows chkdsk's
+// "found.NNN".
+var (
+	litterPrefixes = []string{"._", ".trash-", ".pkinstallsandboxmanager"}
+	foundRe        = regexp.MustCompile(`^found\.[0-9]{3}$`)
+)
+
+// isLitter reports an operating system's own file.
 func isLitter(name string) bool {
-	return litter[strings.ToLower(name)] || strings.HasPrefix(name, "._")
+	low := strings.ToLower(name)
+	if litter[low] || foundRe.MatchString(low) {
+		return true
+	}
+	for _, p := range litterPrefixes {
+		if strings.HasPrefix(low, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // isReserved reports a name an encrypted archive itself writes at its root.
@@ -115,7 +151,7 @@ func At(path string) (Result, error) {
 		// While the record cannot be used, a folder holding MailArchive's own files
 		// is refused: it may be a recorded archive the record no longer shows (§4.3).
 		if !res.Encrypted && holdsArchiveFiles(path) {
-			res.Encrypted, res.Folder, res.Why = true, path, rerr.Error()
+			res.Encrypted, res.Folder, res.Why, res.ByRecordErr = true, path, rerr.Error(), true
 		}
 		if res.Encrypted {
 			return res, nil
@@ -151,15 +187,23 @@ func holdsArchiveFiles(path string) bool {
 	return false
 }
 
-// classify decides a recorded folder's case, in the order of §4.5.
+// classify decides a recorded folder's case, in the order of §4.5. The folder
+// judged is the recorded one: the folder as reached when it was reached by its
+// recorded spelling, otherwise the recorded spelling itself — so an archive
+// reached through the link it was created with is judged where it is, not as "now
+// a link" (the P3-0 adversarial pass, FID-01).
 func classify(m encrecord.Match) Case {
-	if link, _ := util.IsLinkLike(m.Folder); link {
+	target := m.Folder
+	if !m.BySpelling {
+		target = m.Path.Spelling
+	}
+	if link, _ := util.IsLinkLike(target); link {
 		return Link
 	}
 	if m.Path.Unproven {
 		return Unproven
 	}
-	entries, err := os.ReadDir(m.Folder)
+	entries, err := os.ReadDir(target)
 	if errors.Is(err, os.ErrNotExist) {
 		return Gone
 	}
@@ -168,19 +212,25 @@ func classify(m encrecord.Match) Case {
 		n := e.Name()
 		switch {
 		case isLitter(n):
+		case n == ".mailarchive-manifest.json" && vault.ManifestIsPlaintext(filepath.Join(target, n)):
+			// A plaintext MailArchive manifest is another archive's files under a
+			// reserved name (OUT-06).
+			return Other
 		case isReserved(n):
 			data = data || sealedData[n]
 		default:
 			return Other
 		}
 	}
-	claims := vault.Claims(m.Folder)
+	claims := vault.Claims(target)
 	for _, id := range claims.IDs {
 		if id.String() != m.ID {
 			return Foreign
 		}
 	}
-	if claims.Parses {
+	// Key files of this archive from a newer MailArchive are newer, never damaged:
+	// a keyed open asks for the upgrade (A7; FID-02).
+	if claims.Parses || claims.Newer {
 		return None
 	}
 	if data || claims.Present {
@@ -237,6 +287,10 @@ func RefuseSettingsWrite(path, kind string) error {
 func init() {
 	graphconfig.RefuseSettingsWrite = RefuseSettingsWrite
 	graph.RefuseSettingsWrite = RefuseSettingsWrite
+	job.RefuseSettingsWrite = RefuseSettingsWrite
+	instance.RefuseSettingsWrite = RefuseSettingsWrite
+	presync.RefuseSettingsWrite = RefuseSettingsWrite
+	encrecord.RefuseSettingsWrite = RefuseSettingsWrite
 }
 
 // AtOrAbove is At in the shape of vault.EncryptedAtOrAbove — the folder judged
@@ -251,7 +305,10 @@ func AtOrAbove(path string) (dir, why string, err error) {
 
 // Here answers for the folder out itself only, in the shape of
 // vault.EncryptedMarker: whether out is an encrypted archive — by its own markers
-// or by this computer's record of exactly out — and why.
+// or by this computer's record of exactly out — and why. It is a LABEL (status,
+// Desktop, the archive list): while the record cannot be used it answers from the
+// markers alone, so a plaintext archive is never called encrypted for it (the
+// P3-0 adversarial pass, CON-01, REG-02). What must be minimised asks MustMinimise.
 func Here(out string) (bool, string, error) {
 	enc, why, merr := vault.EncryptedMarker(out)
 	if enc {
@@ -259,9 +316,6 @@ func Here(out string) (bool, string, error) {
 	}
 	rec, rerr := load()
 	if rerr != nil {
-		if holdsArchiveFiles(out) {
-			return true, rerr.Error(), nil
-		}
 		return false, "", merr
 	}
 	if m, ok := rec.Lookup(out); ok && encrecord.Spelling(m.Folder) == encrecord.Spelling(out) {
@@ -272,4 +326,20 @@ func Here(out string) (bool, string, error) {
 		return true, Wording(c, m.Folder), nil
 	}
 	return false, "", merr
+}
+
+// MustMinimise reports whether a record written beside out must take an encrypted
+// archive's minimised shape: out is an encrypted archive (Here), or whether it is
+// cannot be told — its markers cannot be read, or this computer's record cannot be
+// used while out holds MailArchive files. It fails closed, unlike Here: a refused
+// run's record then never carries source paths or error text into a folder that
+// may be an encrypted archive (FC-4; the P3-0 adversarial pass, CRIT-03).
+func MustMinimise(out string) bool {
+	if enc, _, err := Here(out); enc || err != nil {
+		return true
+	}
+	if _, rerr := load(); rerr != nil && holdsArchiveFiles(out) {
+		return true
+	}
+	return false
 }

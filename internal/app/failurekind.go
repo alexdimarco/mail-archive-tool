@@ -47,6 +47,8 @@ func FailureKind(err error) string {
 		return ""
 	case errors.Is(err, ErrEncryptedNeedsKey):
 		return state.FailEncryptedNeedsKey
+	case errors.Is(err, encmark.ErrRecordUnusable):
+		return state.FailRecordUnusable
 	// The sealed record's own refusals (phase2b §2, §3), ahead of the refusal they
 	// arrive wrapped in: what the record is says more than that it refused.
 	case errors.Is(err, container.ErrNewerFormat):
@@ -110,6 +112,5 @@ func ArchiveEncrypted(out string) bool { return encryptedAt(out) }
 func encryptedAt(out string) bool {
 	// A check that cannot tell counts as encrypted: the minimised record is safe for
 	// either kind of archive, the full one only for a plaintext one (FC-4).
-	enc, _, err := encmark.Here(out)
-	return enc || err != nil
+	return encmark.MustMinimise(out)
 }

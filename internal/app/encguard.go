@@ -86,7 +86,16 @@ func RefuseKeyless(op, out string, extra ...string) error {
 		if err != nil {
 			abs = filepath.Clean(target)
 		}
-		dir, why, uerr := encmark.AtOrAbove(abs)
+		res, uerr := encmark.At(abs)
+		if res.ByRecordErr {
+			// Not known to be encrypted: this computer's record cannot be used, and the
+			// folder holds MailArchive files (§4.3; the P3-0 adversarial pass, REG-02).
+			return fmt.Errorf("%w: %v; refusing to %s %s until it is fixed — `mailarchive status` names the fix", encmark.ErrRecordUnusable, res.RecordErr, op, abs)
+		}
+		dir, why := "", ""
+		if res.Encrypted {
+			dir, why = res.Folder, res.Why
+		}
 		if dir != "" {
 			where := dir
 			if dir != abs {
@@ -116,8 +125,12 @@ func encryptedArchiveAt(out string) bool {
 	if err != nil {
 		abs = filepath.Clean(out)
 	}
-	dir, _, _ := encmark.AtOrAbove(abs)
-	return dir == abs
+	// Only an archive known to be encrypted and holding itself gets the keyless
+	// check: never a folder judged so only because the record cannot be used
+	// (CON-01), and never a recorded folder in a refusal case — verify then says
+	// what status says, writing nothing (CRIT-02).
+	res, _ := encmark.At(abs)
+	return res.Encrypted && !res.ByRecordErr && res.Case == encmark.None && res.Folder == abs
 }
 
 // RefuseVerify is verify's guard. An encrypted archive itself is checked without
