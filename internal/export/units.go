@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"mail-archive-tool/internal/state"
@@ -193,6 +194,33 @@ func (u *Units) Read(unit string, kind vault.UnitKind, s state.SealedUnit) ([]by
 	return u.Key.OpenUnit(kind, ref(unit, s.Rev), sealed)
 }
 
+// The reader's split read (design-encrypted-archives-phase3 §3.2): the key is held
+// only to name a unit (Locate) and to open it (Open), never while its ciphertext is
+// read from disk (ReadSealedAt), so a slow drive never keeps a locked key alive.
+
+// Locate is the archive-relative path of the unit of kind that s records.
+func (u *Units) Locate(unit string, kind vault.UnitKind, s state.SealedUnit) (string, error) {
+	return u.rel(unit, kind, s.Rev)
+}
+
+// ReadSealedAt is the ciphertext of the unit at rel — as Locate returned it — under
+// root, read at most s.Size bytes and checked against s's size and digest: no key
+// needed. A unit that is gone keeps fs.ErrNotExist; a rel outside the unit store is
+// refused.
+func ReadSealedAt(root, rel string, s state.SealedUnit) ([]byte, error) {
+	clean := filepath.Clean(rel)
+	if !filepath.IsLocal(clean) || !strings.HasPrefix(filepath.ToSlash(clean), UnitsDir+"/") {
+		return nil, fmt.Errorf("%w: %s is not a unit path", ErrUnitStore, rel)
+	}
+	return (&Units{Root: root}).readSealedAt(clean, s)
+}
+
+// Open decrypts the ciphertext of the unit of kind that s records, read by
+// ReadSealedAt.
+func (u *Units) Open(unit string, kind vault.UnitKind, s state.SealedUnit, sealed []byte) ([]byte, error) {
+	return u.Key.OpenUnit(kind, ref(unit, s.Rev), sealed)
+}
+
 // readSealed is the unit's ciphertext, read at most s.Size bytes and checked
 // against s's size and digest.
 func (u *Units) readSealed(unit string, kind vault.UnitKind, s state.SealedUnit) ([]byte, error) {
@@ -200,6 +228,10 @@ func (u *Units) readSealed(unit string, kind vault.UnitKind, s state.SealedUnit)
 	if err != nil {
 		return nil, err
 	}
+	return u.readSealedAt(rel, s)
+}
+
+func (u *Units) readSealedAt(rel string, s state.SealedUnit) ([]byte, error) {
 	f, _, err := u.open(rel)
 	if err != nil {
 		return nil, err

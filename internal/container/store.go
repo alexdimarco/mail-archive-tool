@@ -47,6 +47,9 @@ var (
 	// ErrLockLost: the archive lock was lost before the commit point; nothing was
 	// renamed.
 	ErrLockLost = errors.New("container: the archive lock was lost before the record was saved")
+	// ErrReadOnly: a record a reader loaded (LoadOptions.ReadOnly) is never saved,
+	// initialised or swept.
+	ErrReadOnly = errors.New("container: this record was opened to read; nothing was written")
 )
 
 // UnitFiles lists the unit files a manifest's records name: archive-relative
@@ -69,6 +72,11 @@ type LoadOptions struct {
 	// Logf, when given, logs each notice as it is raised — at load and at every
 	// commit (a mirror that could not be written, an envelope healed).
 	Logf func(format string, args ...any)
+	// ReadOnly is a reader's load (design-encrypted-archives-phase3 §7.3), taken
+	// without the archive lock: Commit, Init and SweepContainers refuse with
+	// ErrReadOnly, and reading the index records nothing in the Store, so two reads
+	// may share it.
+	ReadOnly bool
 }
 
 // Store is an encrypted archive's sealed record as a run holds it: the state.Persister
@@ -646,6 +654,30 @@ func (s *Store) liveFiles(v state.View) (map[string]Digest, error) {
 	return files, nil
 }
 
+// Peeked is what PeekFile saw of the record pointer.
+type Peeked struct {
+	Gen    uint64   // the generation it claims (0: none, or not a pointer)
+	SHA256 [32]byte // the digest of its bytes (zero: no pointer)
+}
+
+// PeekFile reads out's record pointer without the key, for a reader that loads
+// without the archive lock (design-encrypted-archives-phase3 §7.3): what it returns
+// before and after a load differs when a backup committed in between. The primary
+// pointer is the commit point — renamed first — so its bytes tell every commit; the
+// claimed generation is compared, never trusted. No pointer yet is the zero Peeked;
+// only an error reading it is an error.
+func PeekFile(out string) (Peeked, error) {
+	raw, _, err := readFile(out, PointerName, MaxPointerSize)
+	if errors.Is(err, fs.ErrNotExist) {
+		return Peeked{}, nil
+	}
+	if err != nil {
+		return Peeked{}, err
+	}
+	_, gen, _ := Peek(raw)
+	return Peeked{Gen: gen, SHA256: sha256.Sum256(raw)}, nil
+}
+
 // Fresh reports whether the archive has no record yet: its first commit is owed.
 func (s *Store) Fresh() bool { return s.fresh }
 
@@ -695,6 +727,9 @@ func (s *Store) WalkDone(token string, at time.Time) { s.walkDone[token] = at }
 // inventory files the top file does not name, when older than before. It returns
 // how many it removed. With the sweep not allowed it removes nothing.
 func (s *Store) SweepContainers(before time.Time) (int, error) {
+	if s.opts.ReadOnly {
+		return 0, s.refuse(ErrReadOnly, "the sweep did not run")
+	}
 	if !s.sweepOK {
 		return 0, nil
 	}
@@ -758,6 +793,9 @@ func (s *Store) nextFixedTime() time.Time {
 // empty generation-1 pointer, its mirror and inventory 1, before any unit is
 // written.
 func (s *Store) Init(m *state.Manifest) error {
+	if s.opts.ReadOnly {
+		return s.refuse(ErrReadOnly, "its first save did not run")
+	}
 	if !s.fresh {
 		return nil
 	}
@@ -795,6 +833,9 @@ func (s *Store) writeEnvelope() error {
 // under fresh names, the lock re-proved, the pointer renamed into place [COMMIT],
 // the mirror, then the inventory. Nothing is deleted (P2b-C9).
 func (s *Store) Commit(v state.View) error {
+	if s.opts.ReadOnly {
+		return s.refuse(ErrReadOnly, "the record was not saved")
+	}
 	for token, at := range s.walkDone {
 		if s.hdr.SeenAt == nil {
 			s.hdr.SeenAt = map[string]time.Time{}

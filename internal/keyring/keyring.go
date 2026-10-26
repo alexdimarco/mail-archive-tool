@@ -22,6 +22,7 @@ import (
 	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/encrecord"
 	"mail-archive-tool/internal/lockfile"
+	"mail-archive-tool/internal/memguard"
 	"mail-archive-tool/internal/vault"
 )
 
@@ -82,9 +83,10 @@ var (
 	ErrPasswordLooksLikeKey = errors.New("that password reads as a recovery key; choose another")
 )
 
-// deriving lets one key derivation run at a time in this process (§3.7): each
-// can take up to the cost ceiling's memory.
-var deriving sync.Mutex
+// deriving lets one key derivation run at a time in this process, and none while
+// the reader's unit reads hold memory (§3.7): each can take up to the cost
+// ceiling's memory. It is the process memory guard's derivation turn.
+var deriving = memguard.Process.Derivations()
 
 // Seams for tests: the vault's open and create, so a test can prove a refused open
 // or create never reaches a derivation; and the clock.

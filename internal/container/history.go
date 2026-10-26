@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io/fs"
 	"sync"
 	"time"
 
@@ -283,6 +285,17 @@ func (s *Store) Chunks(kind vault.ContainerKind) []string {
 // as a Barrier event, so no event after it is dated by an earlier run (§5); it is
 // never an error — damaged history only weakens the timeline.
 func (s *Store) History() []state.HistoryEvent {
+	out, _ := s.history(false)
+	return out
+}
+
+// HistoryChecked is History for a reader (design-encrypted-archives-phase3 §7.3,
+// §3.2): a chunk that is gone, or a key locked meanwhile, is an error — the reader
+// reloads, or shows the locked page — never folded into a barrier; a chunk whose
+// bytes are damaged still stands as a Barrier event.
+func (s *Store) HistoryChecked() ([]state.HistoryEvent, error) { return s.history(true) }
+
+func (s *Store) history(checked bool) ([]state.HistoryEvent, error) {
 	var out []state.HistoryEvent
 	for _, e := range s.ptr.History {
 		sealed, _, err := readChunk(s.out, e)
@@ -290,11 +303,23 @@ func (s *Store) History() []state.HistoryEvent {
 		if err == nil {
 			plain, err = s.opts.Key.OpenChunk(vault.ContainerHistory, e.Gen, e.I, sealed)
 		}
-		if err != nil {
+		switch {
+		case err == nil:
+			out = append(out, decodeEvents(plain)...)
+		case checked && (errors.Is(err, fs.ErrNotExist) || errors.Is(err, vault.ErrKeyDestroyed)):
+			return nil, fmt.Errorf("container: the history chunk %s: %w", e.Name.Path(), err)
+		default:
 			out = append(out, state.HistoryEvent{Barrier: true})
-			continue
 		}
-		out = append(out, decodeEvents(plain)...)
 	}
-	return out
+	return out, nil
+}
+
+// HistoryGap is the part of the timeline the record says is lost — from, and to
+// (zero: up to now) — when there is one: a reader says go-back is partial (§7.2).
+func (s *Store) HistoryGap() (from, to uint64, ok bool) {
+	if g := s.hdr.HistoryGap; g != nil {
+		return g.From, g.To, true
+	}
+	return 0, 0, false
 }

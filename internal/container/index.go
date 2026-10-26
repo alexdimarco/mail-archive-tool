@@ -45,13 +45,15 @@ func (s *Store) WriteIndexImage(w io.Writer) error {
 		if e.I != uint32(i) {
 			return fmt.Errorf("%w: chunk %d is listed at position %d", ErrIndexImage, i, e.I)
 		}
+		// The cause is kept (%w): a chunk gone or a locked key is told from damage, so
+		// a reader reloads or shows the locked page rather than a damaged index (§7.3).
 		sealed, _, err := readChunk(s.out, e)
 		if err != nil {
-			return fmt.Errorf("%w: %v", ErrIndexImage, err)
+			return fmt.Errorf("%w: %w", ErrIndexImage, err)
 		}
 		plain, err := s.opts.Key.OpenChunk(vault.ContainerIndex, e.Gen, e.I, sealed)
 		if err != nil {
-			return fmt.Errorf("%w: %v", ErrIndexImage, err)
+			return fmt.Errorf("%w: %w", ErrIndexImage, err)
 		}
 		if i < len(s.ptr.Index)-1 && len(plain) != int(s.ptr.IndexChunk) {
 			return fmt.Errorf("%w: chunk %d is %d bytes, not the chunk size", ErrIndexImage, i, len(plain))
@@ -65,7 +67,9 @@ func (s *Store) WriteIndexImage(w io.Writer) error {
 	if n != s.ptr.IndexImage {
 		return fmt.Errorf("%w: %d bytes, the pointer says %d", ErrIndexImage, n, s.ptr.IndexImage)
 	}
-	s.indexDigests = digests
+	if !s.opts.ReadOnly {
+		s.indexDigests = digests
+	}
 	return nil
 }
 

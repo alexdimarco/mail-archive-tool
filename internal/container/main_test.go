@@ -12,6 +12,10 @@ import (
 // and removes.
 var keys [2]*vault.Key
 
+// keyDirs are the folders holding their key files, so a test can open a copy of a
+// key it may destroy (vault.KeySecret).
+var keyDirs [2]string
+
 func TestMain(m *testing.M) {
 	vault.UseTestCost()
 	dir, err := os.MkdirTemp("", "containertest")
@@ -23,6 +27,7 @@ func TestMain(m *testing.M) {
 		if err != nil {
 			panic(err)
 		}
+		keyDirs[i] = out
 		p, err := vault.PrepareCreate(out, "container test passphrase")
 		if err != nil {
 			panic(err)
