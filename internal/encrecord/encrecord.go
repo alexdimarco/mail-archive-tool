@@ -487,6 +487,108 @@ func Update(verb string, fn func(*Record) error) (notice string, err error) {
 	return notice, nil
 }
 
+// LostName lists the archive ids a keyed open found missing from the record while
+// this computer remembers their keys (a lost record, §4.3): one id per line,
+// owner-only. Status warns of each until the id is recorded again.
+const LostName = "encrypted-archives.lost"
+
+// maxLostBytes bounds the lost list (an id and a newline each).
+const maxLostBytes = 64 << 10
+
+// MarkLost adds id to the lost list.
+func MarkLost(id string) error { return changeLost(id, true) }
+
+// ClearLost removes id from the lost list, if it is there.
+func ClearLost(id string) error { return changeLost(id, false) }
+
+// Lost reads the lost list. None written is an empty list.
+func Lost() ([]string, error) {
+	dir, err := Dir()
+	if err != nil {
+		return nil, err
+	}
+	return readLost(filepath.Join(dir, LostName))
+}
+
+func readLost(path string) ([]string, error) {
+	data, err := util.ReadSecureFile(path, "list of encrypted archives missing from the record", maxLostBytes)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for _, line := range strings.Split(string(data), "\n") {
+		if line = strings.TrimSpace(line); line == "" {
+			continue
+		}
+		if !validID(line) {
+			return nil, fmt.Errorf("%s holds %q, which is not an archive id", path, line)
+		}
+		ids = append(ids, line)
+	}
+	return ids, nil
+}
+
+// changeLost adds or removes id under the record's lock.
+func changeLost(id string, add bool) error {
+	if !validID(id) {
+		return fmt.Errorf("%q is not an archive id", id)
+	}
+	dir, err := Dir()
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(dir, LostName)
+	if _, err := os.Lstat(path); !add && errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err := RefuseSettingsWrite(path, "list of encrypted archives missing from the record"); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	lock, err := lockfile.AcquireWait(filepath.Join(dir, LockName), "lost", lockWait)
+	if err != nil {
+		return fmt.Errorf("MailArchive cannot lock its record of encrypted archives in %s: %w", dir, err)
+	}
+	defer lock.Release()
+	ids, err := readLost(path)
+	if err != nil {
+		return err
+	}
+	kept := ids[:0:0]
+	found := false
+	for _, have := range ids {
+		if have == id {
+			found = true
+			if !add {
+				continue
+			}
+		}
+		kept = append(kept, have)
+	}
+	switch {
+	case add && found, !add && !found:
+		return nil
+	case add:
+		kept = append(kept, id)
+	}
+	if err := lock.StillHeld(); err != nil {
+		return err
+	}
+	if len(kept) == 0 {
+		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		return nil
+	}
+	sort.Strings(kept)
+	return util.WriteFileAtomic0600(path, []byte(strings.Join(kept, "\n")+"\n"))
+}
+
 // moveAside renames a damaged copy to <name>.damaged-<date>-<n>, never over an
 // existing file.
 func moveAside(path string) error {
@@ -524,15 +626,21 @@ func fold(s string) string {
 // sourceKey is a state.PathSourceID in Spelling's comparison form.
 func sourceKey(src string) string { return fold(strings.TrimPrefix(src, "path:")) }
 
-// recordedForm is the spelling a folder is recorded under: its link target when the
-// folder itself is a link (§4.2), so a recorded path is never legitimately a link.
-func recordedForm(path string) string {
-	if link, _ := util.IsLinkLike(path); link {
-		if resolved, err := filepath.EvalSymlinks(path); err == nil {
-			return Spelling(resolved)
-		}
-	}
-	return Spelling(path)
+// recordedForm is the spelling a folder is recorded under: the folder with every
+// link on the way to it resolved — its own, and any parent's (§4.2, amended in
+// P3-1a: OUT-04, OUT-05, SEC-04) — so no recorded path is legitimately a link or
+// reached through one, and a recorded path that later resolves elsewhere has had a
+// link put on its way (case L, encmark).
+func recordedForm(path string) string { return Spelling(util.ResolveExisting(path)) }
+
+// ResolvesElsewhere reports whether a recorded spelling now resolves to another
+// folder: a link was put where the folder, or a folder above it, was.
+func ResolvesElsewhere(spelling string) bool { return recordedForm(spelling) != spelling }
+
+// Names reports whether path, as a person typed it, names the recorded spelling:
+// in its comparison form, or once resolved as it would be recorded.
+func Names(path, spelling string) bool {
+	return Spelling(path) == spelling || recordedForm(path) == spelling
 }
 
 // Add records path for id (an archive id's hex), proven or not, and clears the

@@ -7,14 +7,16 @@ import (
 	"testing"
 
 	"mail-archive-tool/internal/encrecord"
+	"mail-archive-tool/internal/vault"
 )
 
 // TestMain points MailArchive's scratch folder at a throwaway folder for the whole
 // package, so a keyed -copy-first run never writes into the developer's real cache
 // folder (job.ScratchDir). useScratchRoot still overrides it per test. It does the
 // same for this computer's record of encrypted archives, which every keyless
-// writer reads.
+// writer reads. Its tests make keys at the cheap test cost (MA-776).
 func TestMain(m *testing.M) {
+	vault.UseTestCost()
 	root, err := os.MkdirTemp("", "mailarchive-app-scratch-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "TestMain: create the scratch folder:", err)

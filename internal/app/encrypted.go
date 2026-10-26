@@ -223,10 +223,20 @@ func preflightEncrypted(opts Options, credentials ...string) error {
 			return encRefusal(opts.Out, "it holds "+p+", which keeps MailArchive's settings, sign-in or working copies in plaintext — move the archive, or the settings, so neither is inside the other", nil)
 		}
 	}
-	if err := vault.VerifyKey(opts.Out, opts.Key.ArchiveID(), opts.Key); err != nil {
+	if err := vault.VerifyKey(opts.Out, recordedID(opts), opts.Key); err != nil {
 		return encRefusal(opts.Out, "the key does not open this archive's key file", err)
 	}
 	return nil
+}
+
+// recordedID is the id a keyed run's key file must name: the one this computer
+// recorded for the folder, or — only in a test that built the key directly — the
+// key's own.
+func recordedID(opts Options) vault.ID {
+	if opts.RecordedID != (vault.ID{}) {
+		return opts.RecordedID
+	}
+	return opts.Key.ArchiveID()
 }
 
 // refuseOwedCollapse refuses a keyed capture into an archive that still owes the
@@ -272,7 +282,7 @@ func openEncrypted(opts Options, stillHeld func() error, runStart time.Time, log
 	if opts.Manifest != "" {
 		return nil, nil, nil, encRefusal(opts.Out, "its manifest cannot be moved out of the archive folder (-manifest)", nil)
 	}
-	if err := vault.VerifyKey(opts.Out, opts.Key.ArchiveID(), opts.Key); err != nil {
+	if err := vault.VerifyKey(opts.Out, recordedID(opts), opts.Key); err != nil {
 		return nil, nil, nil, encRefusal(opts.Out, "the key does not open this archive's key file", err)
 	}
 	removeScratchIndex(opts.Out, opts.Key.ArchiveID(), logger)

@@ -40,6 +40,7 @@ import (
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/graphconfig"
 	"mail-archive-tool/internal/index"
+	"mail-archive-tool/internal/keyring"
 	"mail-archive-tool/internal/outlookcom"
 	"mail-archive-tool/internal/runlog"
 	"mail-archive-tool/internal/schedule"
@@ -85,6 +86,18 @@ func main() {
 		err = runResume(args[1:])
 	case len(args) > 0 && args[0] == "uninstall":
 		err = runUninstall(args[1:])
+	case len(args) > 0 && args[0] == "change-password":
+		err = runChangePassword(args[1:])
+	case len(args) > 0 && args[0] == "new-recovery-key":
+		err = runNewRecoveryKey(args[1:])
+	case len(args) > 0 && args[0] == "forget-key":
+		err = runForgetKey(args[1:])
+	case len(args) > 0 && args[0] == "forget-archive":
+		err = runForgetArchive(args[1:])
+	case len(args) > 0 && args[0] == "repair-record":
+		err = runRepairRecord(args[1:])
+	case len(args) > 0 && args[0] == "encrypt":
+		err = runEncrypt(args[1:])
 	default:
 		err = runExport(args)
 	}
@@ -140,13 +153,17 @@ func runExport(args []string) error {
 	fs := flag.NewFlagSet("mailarchive", flag.ContinueOnError)
 	fs.Usage = exportUsage(fs)
 	o := exportFlags(fs)
+	kf := addKeyFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	inputs := append(o.inputs, fs.Args()...)
 
 	if *o.out == "" {
-		return errors.New("-out is required (or use a subcommand: serve, search, reindex, schedule, graph, status, verify, extract, pause, resume, uninstall)")
+		return errors.New("-out is required (or use a subcommand: serve, search, reindex, schedule, graph, status, verify, extract, pause, resume, uninstall, change-password, new-recovery-key, forget-key, forget-archive, repair-record)")
+	}
+	if err := refuseEncryptWith(*kf.encrypt, *o.unattended, *o.manifest != "", *o.list); err != nil {
+		return err
 	}
 	if *o.unattended {
 		if err := requireExistingOut(*o.out); err != nil {
@@ -169,14 +186,32 @@ func runExport(args []string) error {
 	// refusal writes the -log and a last run naming the sources, and before the run
 	// log and the -outlook PST export write into it in plaintext (phase2a §5,
 	// P2a-C9). A scheduled run's refusal is still recorded (A14). -list only reads
-	// the sources.
+	// the sources. At a terminal an encrypted archive is unlocked instead (phase3 §6),
+	// and -encrypt makes a new one (§5.2) — both after discovery, so a mistyped
+	// -input asks for no password.
+	keyed, creating := false, false
 	if !*o.list {
-		if kerr := app.RefuseKeyless("archive into it", *o.out, manifestFolder(*o.manifest)); kerr != nil {
+		kerr := app.RefuseKeyless("archive into it", *o.out, manifestFolder(*o.manifest))
+		switch {
+		case kerr == nil:
+			creating = *kf.encrypt
+		case !*o.unattended && *o.manifest == "" && app.EncryptedArchiveAt(*o.out):
+			if *kf.encrypt {
+				return fmt.Errorf("%s is already an encrypted archive; run the backup without -encrypt", abspath(*o.out))
+			}
+			keyed = true
+		default:
 			if *o.unattended {
 				app.RecordRefusedRun(app.Options{Out: *o.out, Unattended: true}, kerr)
 			}
 			return kerr
 		}
+	}
+	if err := refuseStrayKeyFlags(fs, kf, keyed, creating); err != nil {
+		return err
+	}
+	if err := requireAttended(*o.out, keyed, creating); err != nil {
+		return err
 	}
 
 	// Discover the inputs up front (friction #2), BEFORE any output dir, run log,
@@ -222,6 +257,14 @@ func runExport(args []string) error {
 		return serr
 	}
 
+	unlocked, err := openForBackup(fs, kf, *o.out, keyed, creating)
+	if err != nil {
+		return err
+	}
+	if unlocked != nil {
+		defer unlocked.Destroy()
+	}
+
 	logger, closeLog, err := newRunLogger(*o.log)
 	if err != nil {
 		return err
@@ -250,6 +293,16 @@ func runExport(args []string) error {
 		}
 		logger.Printf("%s", outlookcom.CompletenessNote)
 		pstDir = filepath.Join(*out, "_outlook-pst")
+		if unlocked != nil {
+			// An encrypted archive's PSTs go to MailArchive's working folder, never
+			// into the archive in plaintext (phase3 §6, E2).
+			d, cleanup, perr := keyring.OutlookPSTDir(unlocked)
+			if perr != nil {
+				return perr
+			}
+			defer cleanup()
+			pstDir = d
+		}
 		logger.Printf("Outlook: exporting each account to a PST under %s ...", pstDir)
 		stores, skips, cerr := outlookcom.CreatePSTs(pstDir,
 			outlookcom.Options{Sync: *outlookSyncWait > 0, SyncWait: *outlookSyncWait}, logger)
@@ -267,6 +320,14 @@ func runExport(args []string) error {
 	opts := exportOptions(o, inputs, mode, since)
 	opts.OutlookSkips = outlookSkips // what Outlook's export left out is recorded as a gap, never only logged (FC28)
 	opts.OutlookExported = outlookExported
+	if unlocked != nil {
+		done, aerr := keyring.Apply(&opts, unlocked)
+		if aerr != nil {
+			return aerr
+		}
+		defer done()
+		opts.CredentialPaths = append(opts.CredentialPaths, kf.secretPaths()...)
+	}
 
 	// Optional Thunderbird pre-sync (macOS and Windows): start Thunderbird (hidden on
 	// macOS; briefly visible then minimized on Windows), wait for its mail files to go
@@ -313,7 +374,7 @@ func runExport(args []string) error {
 	// The -outlook COM path builds a full, mailbox-sized PST copy under
 	// <out>/_outlook-pst purely to feed the pipeline. On a clean run reclaim it
 	// (it rebuilds next run); on a failure leave it for inspection/retry (P2).
-	if pstDir != "" {
+	if pstDir != "" && unlocked == nil {
 		if n, ok := reclaimPSTDir(pstDir, runErr); ok {
 			logger.Printf("Reclaimed %s by removing the temporary Outlook PST copy (%s).", thunderbird.HumanBytes(n), pstDir)
 		}
@@ -738,17 +799,21 @@ func checkArchive(ctx context.Context, o *verifyOpts, logger *log.Logger, stopCo
 // calls exit with the shell's code for that signal (130 for Ctrl-C, 143 for
 // terminate). The returned func stops the watcher and waits for it, so a verify
 // that finished normally prints nothing.
+// signalExit is the exit code of a run a signal stopped (phase3 §8): 130 for an
+// interrupt, 143 for a terminate.
+func signalExit(s os.Signal) int {
+	if s == syscall.SIGTERM {
+		return 143
+	}
+	return 130
+}
+
 // watchVerifyStop is an encrypted archive's Ctrl-C: the first signal records its
 // exit code (130 for an interrupt, 143 for a terminate) and cancels the check, which
 // stops between files and records itself as stopped; a second signal exits at once.
 func watchVerifyStop(sigs <-chan os.Signal, cancel func(), code *atomic.Int32, exit func(int)) (stop func()) {
 	quit, done := make(chan struct{}), make(chan struct{})
-	codeOf := func(s os.Signal) int32 {
-		if s == syscall.SIGTERM {
-			return 143
-		}
-		return 130
-	}
+	codeOf := func(s os.Signal) int32 { return int32(signalExit(s)) }
 	go func() {
 		defer close(done)
 		select {
@@ -1226,7 +1291,11 @@ func runGraph(args []string) (err error) {
 	fs := flag.NewFlagSet("mailarchive graph", flag.ContinueOnError)
 	fs.Usage = graphUsage(fs)
 	o := graphFlags(fs)
+	kf := addKeyFlags(fs)
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := refuseEncryptWith(*kf.encrypt, *o.unattended, false, false); err != nil {
 		return err
 	}
 	mailboxes := append(o.mailboxes, fs.Args()...)
@@ -1266,12 +1335,29 @@ func runGraph(args []string) (err error) {
 		}
 	}
 	// Before any sign-in, log or write: an encrypted archive is captured into only
-	// with its key (phase2a §5); a scheduled capture's refusal is recorded (A14).
-	if kerr := app.RefuseKeyless("capture into it", *o.out); kerr != nil {
+	// with its key (phase2a §5); a scheduled capture's refusal is recorded (A14). At a
+	// terminal it is unlocked instead, and -encrypt makes a new one (phase3 §5.2, §6).
+	keyed, creating := false, false
+	kerr := app.RefuseKeyless("capture into it", *o.out)
+	switch {
+	case kerr == nil:
+		creating = *kf.encrypt
+	case !*o.unattended && app.EncryptedArchiveAt(*o.out):
+		if *kf.encrypt {
+			return fmt.Errorf("%s is already an encrypted archive; run the capture without -encrypt", abspath(*o.out))
+		}
+		keyed = true
+	default:
 		if *o.unattended {
 			app.RecordRefusedRun(app.Options{Out: *o.out, Unattended: true}, kerr)
 		}
 		return kerr
+	}
+	if err := refuseStrayKeyFlags(fs, kf, keyed, creating); err != nil {
+		return err
+	}
+	if err := requireAttended(*o.out, keyed, creating); err != nil {
+		return err
 	}
 
 	gopts := app.GraphOptions{
@@ -1367,6 +1453,14 @@ func runGraph(args []string) (err error) {
 		}
 	}
 
+	unlocked, err := openForBackup(fs, kf, *o.out, keyed, creating)
+	if err != nil {
+		return err
+	}
+	if unlocked != nil {
+		defer unlocked.Destroy()
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	logger, closeLog, err := newRunLogger(*o.log)
@@ -1380,6 +1474,20 @@ func runGraph(args []string) (err error) {
 		logger.Printf("warning: %s", w.Message)
 	}
 	opts := app.Options{Out: *o.out, Mode: mode, Since: since, Index: *o.index, Pages: *o.pages, KeepRaw: *o.keepRaw, Warnings: setupWarnings}
+	if unlocked != nil {
+		done, aerr := keyring.Apply(&opts, unlocked)
+		if aerr != nil {
+			return aerr
+		}
+		defer done()
+		opts.CredentialPaths = append(opts.CredentialPaths, kf.secretPaths()...)
+		if gopts.TokenCachePath != "" {
+			opts.CredentialPaths = append(opts.CredentialPaths, gopts.TokenCachePath)
+		}
+		if *o.secretFile != "" {
+			opts.CredentialPaths = append(opts.CredentialPaths, abspath(*o.secretFile))
+		}
+	}
 	if authMode == "device" {
 		logger.Printf("Signing in to tenant %s via Microsoft Graph device flow (mode=%s)", *o.tenant, *o.mode)
 	} else {
@@ -1520,6 +1628,11 @@ Usage:
   mailarchive status   -out DIR                          completeness, last run, schedule posture
   mailarchive verify   -out DIR [-json] [-record]        check archived files against recorded fixity
   mailarchive extract  -out DIR -format mbox|eml -dest OUTDIR   migrate the archive out as standard mail
+  mailarchive -encrypt -out NEWDIR [-input ...]          make a new ENCRYPTED archive, at a terminal
+  mailarchive change-password  -out DIR                  an encrypted archive's keys: change-password,
+  mailarchive new-recovery-key -out DIR                    new-recovery-key, forget-key
+  mailarchive forget-archive   -out DIR                  stop treating a folder as one of this computer's encrypted archives
+  mailarchive repair-record                              rebuild this computer's damaged record of encrypted archives
   mailarchive desktop  [-capture]                        the dashboard & launcher (also opens on double-click)
   mailarchive wizard                                     step-by-step setup with native dialogs
   mailarchive run-job  FILE                              run a saved job headlessly (what a schedule runs)

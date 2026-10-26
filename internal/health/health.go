@@ -41,6 +41,9 @@ type Input struct {
 	// archives cannot be used, a WARN.
 	EncryptedCase encmark.Case
 	RecordProblem string
+	// RecordLost: this computer remembers the archive's key, but its record of
+	// encrypted archives lost the archive (phase3 §4.3), a WARN.
+	RecordLost bool
 
 	// Surface names who reads the report: "" for the CLI (commands and SQLite's
 	// words are fine), "desktop" for MailArchive Desktop's Status & health card,
@@ -411,6 +414,9 @@ func Assess(in Input, now time.Time) Report {
 	}
 	if in.RecordProblem != "" {
 		r.warn("encrypted_record_unusable", in.RecordProblem)
+	}
+	if in.RecordLost {
+		r.warn("encrypted_record_lost", "this computer remembers this archive's key, but its record of encrypted archives no longer lists the archive, so the record does not keep unencrypted backups out of it — run a backup into it, or open it and remember its key, to record it again")
 	}
 	if in.Encrypted {
 		r.note("encrypted", "this archive is encrypted ("+in.EncryptedWhy+"): its message counts, search index and history are sealed — open it in MailArchive with its password to see them")
@@ -1469,6 +1475,7 @@ func Gather(out, nameOverride string) Input {
 	} else if res.Recorded && res.Case != encmark.None {
 		in.Encrypted, in.EncryptedWhy, in.EncryptedCase = true, res.Why, res.Case
 	}
+	in.RecordLost = encmark.LostHere(out)
 	mpath := filepath.Join(out, ".mailarchive-manifest.json")
 	if _, serr := os.Stat(mpath); serr == nil && !in.Encrypted {
 		in.HasManifestFile = true

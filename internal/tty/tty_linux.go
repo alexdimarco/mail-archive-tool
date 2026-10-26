@@ -8,6 +8,12 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// The ioctls that read and set a terminal's settings.
+const (
+	ioctlGetTermios = unix.TCGETS
+	ioctlSetTermios = unix.TCSETS
+)
+
 // IsTerminal reports whether f is a terminal (a tty/pty), not a pipe, a file or
 // /dev/null.
 func IsTerminal(f *os.File) bool {

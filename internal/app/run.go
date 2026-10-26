@@ -94,6 +94,11 @@ type Options struct {
 	// run refuses when any of them, or MailArchive's own settings or working folder,
 	// is at or under Out (P2a-C14). Unused by a plaintext run.
 	CredentialPaths []string
+	// RecordedID is the archive id this computer recorded for Out (A15), set with
+	// Key by internal/keyring: the keyed preflight refuses a key whose id is not it
+	// (phase3 §6). Zero only in tests that build a key directly, which then check
+	// the key against its own id.
+	RecordedID vault.ID
 	// RecordedGen is the highest generation of the encrypted archive's sealed record
 	// this machine committed, recorded outside the archive (A25; Phases 3-4 persist
 	// it). Zero: none recorded.

@@ -191,6 +191,36 @@ func TestStatusWarnsAnEncryptedArchiveWhoseIndexIsBehind(t *testing.T) {
 	}
 }
 
+// covers: MA-777, R37
+// An archive a keyed open found missing from this computer's record, while its key
+// is remembered here, is a WARN naming how to record it again, until it is cleared;
+// another archive's note does not touch it.
+func TestStatusWarnsAnArchiveLostFromTheRecord(t *testing.T) {
+	t.Cleanup(encrecord.SetDirForTest(t.TempDir()))
+	sealed := t.TempDir()
+	sealFolder(t, sealed)
+	id := vault.Claims(sealed).IDs[0].String()
+	if err := encrecord.MarkLost(strings.Repeat("ef", 16)); err != nil {
+		t.Fatal(err)
+	}
+	if r := Assess(Gather(sealed, ""), time.Now()); slices.Contains(r.Codes, "encrypted_record_lost") {
+		t.Fatalf("the positive twin: another archive's note warned here: %v", r.Codes)
+	}
+	if err := encrecord.MarkLost(id); err != nil {
+		t.Fatal(err)
+	}
+	r := Assess(Gather(sealed, ""), time.Now())
+	if r.Posture != "WARN" || !slices.Contains(r.Codes, "encrypted_record_lost") || !strings.Contains(strings.Join(r.Reasons, "\n"), "record it again") {
+		t.Fatalf("a lost record: %s %v %v", r.Posture, r.Codes, r.Reasons)
+	}
+	if err := encrecord.ClearLost(id); err != nil {
+		t.Fatal(err)
+	}
+	if r := Assess(Gather(sealed, ""), time.Now()); slices.Contains(r.Codes, "encrypted_record_lost") {
+		t.Fatalf("a cleared note still warned: %v", r.Codes)
+	}
+}
+
 // sealFolder commits a vault into dir: an encrypted archive.
 func sealFolder(t *testing.T, dir string) {
 	t.Helper()

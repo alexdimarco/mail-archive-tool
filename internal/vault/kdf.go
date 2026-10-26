@@ -32,6 +32,11 @@ var (
 	ceiling = Params{MemoryKiB: 1024 * 1024, Time: 16, Threads: 4}
 )
 
+// CostFloor is the Argon2id cost every key file this build writes uses (A3). A
+// caller asks before spending more than this on a key file it has not seen
+// before (design-encrypted-archives-phase3 K14).
+func CostFloor() Params { return floor }
+
 // argon2Key is Argon2id itself, a var so a test can count derivations and
 // prove a refused cost never reaches one.
 var argon2Key = argon2.IDKey

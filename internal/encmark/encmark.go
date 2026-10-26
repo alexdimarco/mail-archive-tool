@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"mail-archive-tool/internal/encrecord"
@@ -122,6 +123,10 @@ var (
 	foundRe        = regexp.MustCompile(`^found\.[0-9]{3}$`)
 )
 
+// IsLitter reports an operating system's own file: a folder holding only these is
+// empty to a person.
+func IsLitter(name string) bool { return isLitter(name) }
+
 // isLitter reports an operating system's own file.
 func isLitter(name string) bool {
 	low := strings.ToLower(name)
@@ -197,7 +202,10 @@ func classify(m encrecord.Match) Case {
 	if !m.BySpelling {
 		target = m.Path.Spelling
 	}
-	if link, _ := util.IsLinkLike(target); link {
+	// The folder, or one above it, is now a link: it was recorded by its resolved
+	// location, so a recorded spelling resolving elsewhere had a link put on its way
+	// (OUT-05).
+	if link, _ := util.IsLinkLike(target); link || encrecord.ResolvesElsewhere(m.Path.Spelling) {
 		return Link
 	}
 	if m.Path.Unproven {
@@ -239,25 +247,27 @@ func classify(m encrecord.Match) Case {
 	return Gone
 }
 
-// forgetOffer is how a refusal points at forgetting (P3-1a ships the verb; until
-// then it says MailArchive cannot write here).
-const forgetOffer = "MailArchive cannot write here"
+// forgetOffer is how a refusal points at forgetting the folder (§4.6): the verb
+// P3-1a ships, which asks its own confirmations.
+func forgetOffer(why, folder string) string {
+	return fmt.Sprintf("if %s, run `mailarchive forget-archive -out %q`", why, folder)
+}
 
 // Wording is a case's refusal for folder (§4.5).
 func Wording(c Case, folder string) string {
 	switch c {
 	case Link:
-		return fmt.Sprintf("%s was an encrypted archive this computer made, and is now a link to somewhere else — it may have been tampered with; %s", folder, forgetOffer)
+		return fmt.Sprintf("%s was an encrypted archive this computer made, and is now a link to somewhere else — it may have been tampered with; %s", folder, forgetOffer("you made this change on purpose", folder))
 	case Unproven:
 		return fmt.Sprintf("this computer once recorded an encrypted archive at %s, and its record was repaired; open it with its password to confirm", folder)
 	case Other:
-		return fmt.Sprintf("%s was an encrypted archive this computer made, and now holds other files — it may have been tampered with, or another drive may now use this path; restore the whole archive folder from a backup copy", folder)
+		return fmt.Sprintf("%s was an encrypted archive this computer made, and now holds other files — it may have been tampered with, or another drive may now use this path; restore the whole archive folder from a backup copy, or, %s", folder, forgetOffer("you replaced it on purpose", folder))
 	case Foreign:
-		return fmt.Sprintf("%s holds files naming a different encrypted archive than the one this computer recorded there — it may have been tampered with; %s", folder, forgetOffer)
+		return fmt.Sprintf("%s holds files naming a different encrypted archive than the one this computer recorded there — it may have been tampered with; %s", folder, forgetOffer("you put that archive there on purpose", folder))
 	case KeysMissing:
 		return fmt.Sprintf("%s holds an encrypted archive this computer made, but its key files are missing or damaged — restore the whole archive folder from a backup copy", folder)
 	case Gone:
-		return fmt.Sprintf("%s used to hold an encrypted archive this computer made; %s", folder, forgetOffer)
+		return fmt.Sprintf("%s used to hold an encrypted archive this computer made; %s", folder, forgetOffer("you removed it on purpose", folder))
 	}
 	return ""
 }
@@ -326,6 +336,22 @@ func Here(out string) (bool, string, error) {
 		return true, Wording(c, m.Folder), nil
 	}
 	return false, "", merr
+}
+
+// LostHere reports whether out's key files claim an archive a keyed open found
+// missing from this computer's record while its key is remembered here (a lost
+// record, §4.3): status warns until a backup or a remember records it again.
+func LostHere(out string) bool {
+	lost, err := encrecord.Lost()
+	if err != nil || len(lost) == 0 {
+		return false
+	}
+	for _, id := range vault.Claims(out).IDs {
+		if slices.Contains(lost, id.String()) {
+			return true
+		}
+	}
+	return false
 }
 
 // MustMinimise reports whether a record written beside out must take an encrypted

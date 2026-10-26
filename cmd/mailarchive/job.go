@@ -184,7 +184,26 @@ func (j job) command() []string {
 	return append([]string{j.verb}, j.args...)
 }
 
-var knownVerbs = map[string]bool{"serve": true, "search": true, "reindex": true, "schedule": true, "graph": true, "status": true, "verify": true, "extract": true}
+var knownVerbs = map[string]bool{"serve": true, "search": true, "reindex": true, "schedule": true, "graph": true, "status": true, "verify": true, "extract": true,
+	"change-password": true, "new-recovery-key": true, "forget-key": true, "forget-archive": true, "repair-record": true, "encrypt": true}
+
+// refuseKeyFlagsInJob refuses an encryption flag in a scheduled job: a backup into an
+// encrypted archive needs a person at the terminal in this version (phase3 O5).
+func refuseKeyFlagsInJob(args []string) error {
+	for _, a := range args {
+		name := strings.TrimLeft(a, "-")
+		name, _, _ = strings.Cut(name, "=")
+		if !strings.HasPrefix(a, "-") {
+			continue
+		}
+		for _, k := range keyFlagNames {
+			if name == k {
+				return fmt.Errorf("-%s cannot be scheduled: a backup into an encrypted archive needs you at a terminal to unlock it in this version — run it by hand, or from MailArchive Desktop", k)
+			}
+		}
+	}
+	return nil
+}
 
 // parseJob validates a job (the arguments after `--`, or the flat form
 // re-assembled by schedule) through the real flag definitions and returns it in
@@ -202,6 +221,11 @@ func parseJob(args []string) (job, error) {
 		return job{}, fmt.Errorf("%s is a query, not a backup job, and cannot be scheduled; schedule an export, graph, reindex or verify job", verb)
 	case "extract":
 		return job{}, errors.New("extract is an operator-driven migration, not a backup job, and cannot be scheduled; run it by hand outside the backup window; schedule an export, graph, reindex or verify job")
+	case "change-password", "new-recovery-key", "forget-key", "forget-archive", "repair-record", "encrypt":
+		return job{}, fmt.Errorf("%s changes an encrypted archive's keys or this computer's record of them, at a terminal; it is not a backup job and cannot be scheduled", verb)
+	}
+	if err := refuseKeyFlagsInJob(rest); err != nil {
+		return job{}, err
 	}
 
 	fs := flag.NewFlagSet("job", flag.ContinueOnError)

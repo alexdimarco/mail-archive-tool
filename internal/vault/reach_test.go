@@ -33,6 +33,12 @@ var keyMethods = map[string]bool{"Unlock": true, "UnlockRecovery": true}
 // points here, and each addition is an operator-visible gate change.
 var encryptionReachAllowed = map[string]bool{}
 
+// encryptionReachAllowedPackages lists the production packages allowed to reach
+// it, every file in them. Phase 3 adds the one unlock package, internal/keyring
+// (phase3 §3.1, A32), accepted by the operator on 2026-10-26: every other path to
+// a key goes through it.
+var encryptionReachAllowedPackages = map[string]bool{"internal/keyring": true}
+
 const (
 	vaultImport = "mail-archive-tool/internal/vault"
 	appImport   = "mail-archive-tool/internal/app"
@@ -82,7 +88,7 @@ func TestNoProductionCodeCanReachTheEncryptedPathYet(t *testing.T) {
 			return nil
 		}
 		scanned++
-		if encryptionReachAllowed[filepath.ToSlash(rel)] {
+		if encryptionReachAllowed[filepath.ToSlash(rel)] || encryptionReachAllowedPackages[filepath.ToSlash(filepath.Dir(rel))] {
 			return nil
 		}
 		f, perr := parser.ParseFile(token.NewFileSet(), path, nil, 0)

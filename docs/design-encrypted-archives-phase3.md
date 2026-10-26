@@ -39,6 +39,13 @@ findings and the critic added 5. The rules it changed are marked in place as *Am
 P3-0 adversarial pass*, in §4.3, §4.5, §6 (E5) and §8; the findings and what was done with each
 are in `docs/review-encrypted-archives-phase3-p30-adversarial.md`.
 
+**P3-1a is built** (2026-10-26; MA-776..MA-789). The operator accepted `internal/keyring` as the
+MA-726 allow-list's one package-wide entry, and ruled for a cheap key cost in tests only
+(`vault.UseTestCost`, MA-776). Two read-only additions to Phase 1's frozen vault API came with it:
+`vault.CostFloor` (K14 asks before deriving above it) and `UseTestCost`, which panics outside a
+test binary. What P3-1a decided in building is marked *Amended in P3-1a* in place (§3.7, §4.2,
+§16). Its adversarial pass is owed before P3-1b.
+
 **Gates.**
 - **Before code:** none left for P3-0 and P3-1. The three split-out designs are each reviewed
   before their slices.
@@ -296,7 +303,10 @@ an explicit allow-list: `-password-file`, `-recovery-key-file`, `-recovery-key-o
   - The process peak is therefore the larger of the two plus the index budget: about 2.5 GiB
     (§7.4).
   - The Desktop unlock is single-flight.
-- **The linux-arm64 unlock time** is measured and stated in P3-1a.
+- **The linux-arm64 unlock time** is measured and stated in P3-1a. *Measured in P3-1a
+  (2026-10-26):* in Docker's `golang:1.26` linux/arm64 on an Apple-silicon Mac, a new key file
+  and one unlock at the shipped floor (256 MiB, time 3) took 1.33 s for three derivations, about
+  0.44 s each. A small ARM board is slower; this is a fast linux-arm64, not a floor.
 - **Key lifetime.** `Destroy` zeroes the key (MA-718). Decrypted text in Go's heap is not zeroed
   (R-E2).
 
@@ -331,6 +341,14 @@ an explicit allow-list: `-password-file`, `-recovery-key-file`, `-recovery-key-o
     **A recorded path is never itself a link.** At create and adoption, an output folder that is
     a symbolic link, junction or mount point is recorded by its resolved target. A later
     refusal for "now a link" (§4.5) therefore always means a change.
+
+    *Amended in P3-1a (the P3-0 pass's OUT-04, OUT-05, SEC-04):* every link on the way to the
+    folder is resolved when it is recorded — a parent's as well as its own (`util.ResolveExisting`)
+    — so no recorded path is reached through a link. A recorded spelling that later resolves
+    elsewhere had a link put on its way, the folder's or a parent's, and is case L. An archive
+    made through a linked output folder is recorded where it really is, so re-pointing the link
+    takes no protection away. Windows junctions and folder-mounted volumes resolve the same way;
+    that they read intact stays a Windows-lab item (MA-788).
   - **forgotten:** a tombstone, set when the person forgets the whole id (§4.6).
     - It only stops "lost record" warnings for that id's remembered key.
     - It never blocks adoption. A deliberate write or remember on a tombstoned id asks once ("you
@@ -1221,6 +1239,23 @@ Each slice is built test-first, with prove-fail and prove-pass, and owes its own
 | **P3-7** generations | its design and review first (§12) |
 | **P3-8** gates | the friction review and X1–X17 walk; Windows lab (reader, hidden prompt, `-recovery-key-out` access list, secret-file read check, the P3-5/P3-6 items) |
 
+*Amended in P3-1a — what the slice built, and what stays pending:*
+- Built: `internal/keyring` (open by password, recovery key or remembered key; the recorded id
+  as `want`; adoption only for a write or a remember, a tombstone asked about; unproven paths
+  proven or replaced; K14; the lost-record note and its status WARN; heal; leases and locks;
+  create; the key verbs' cores; forget and forget-key; `Apply` with `app.Options.RecordedID`; E2's
+  PST folder); `tty.ReadSecret` and `tty.ReadLine`; secret files with the Unix owner and mode
+  check and the Windows SDDL predicate; `encrecord.Repair` and the lost list; `-encrypt`, keyed
+  `export` and `graph`, and the five verbs at the CLI; the no-secret-flag scan; the
+  linux-arm64 measurement (§3.7); recording by the resolved location (§4.2).
+- A keyed backup or `-encrypt` without a terminal is refused before discovery, as a keyless one
+  is (MA-733's order).
+- A prompt ended by Ctrl-C or SIGTERM exits 130 or 143, as a stopped `verify` does. The UX
+  contract's X1 map (`docs/ux-contract.md`) lists 0–3 only; adding 130 and 143 there is the
+  operator's call (§18).
+- Pending, for the Windows lab (P3-8): the console prompt, the secret file's handle check,
+  `-recovery-key-out`'s access list, junctions and folder-mounted volumes (SEC-04), and OneDrive.
+
 **X1 exit codes per new verb:**
 - `change-password`, `new-recovery-key`, `forget-key`, `forget-archive`, `repair-record`,
   `restore-key-file`: 0 done, 1 refused or failed.
@@ -1253,4 +1288,5 @@ Each slice is built test-first, with prove-fail and prove-pass, and owes its own
 ## 18. Open questions
 
 None blocks the last check. The note's wording goes to the friction review. The X-series rows
-for encryption are the operator's call.
+for encryption are the operator's call — including, from P3-1a, whether X1's map gains 130 and
+143 (a run or prompt stopped by Ctrl-C or SIGTERM, as §8 already uses for `verify`).

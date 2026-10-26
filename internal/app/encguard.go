@@ -133,6 +133,12 @@ func encryptedArchiveAt(out string) bool {
 	return res.Encrypted && !res.ByRecordErr && res.Case == encmark.None && res.Folder == abs
 }
 
+// EncryptedArchiveAt reports whether out is itself an encrypted archive holding its
+// own archive — not a folder inside one, not a recorded folder in a refusal case, not
+// a folder judged encrypted only because this computer's record cannot be used — so a
+// caller at a terminal may unlock it instead of refusing (phase3 §6).
+func EncryptedArchiveAt(out string) bool { return encryptedArchiveAt(out) }
+
 // RefuseVerify is verify's guard. An encrypted archive itself is checked without
 // its key (tier 1, phase2b §4), but never with -record; a folder inside one, or one
 // that cannot be checked, is refused as RefuseKeyless refuses it.

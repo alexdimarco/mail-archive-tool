@@ -8,10 +8,12 @@ import (
 )
 
 // keys are two real archives' keys, made once (each costs one Argon2id
-// derivation) in folders this test binary owns and removes.
+// derivation, at the cheap test cost, MA-776) in folders this test binary owns
+// and removes.
 var keys [2]*vault.Key
 
 func TestMain(m *testing.M) {
+	vault.UseTestCost()
 	dir, err := os.MkdirTemp("", "containertest")
 	if err != nil {
 		panic(err)

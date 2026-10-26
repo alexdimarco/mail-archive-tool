@@ -344,7 +344,7 @@ func TestForgettingKeepsTheIdAndATombstoneClears(t *testing.T) {
 	forget := func(p string) {
 		t.Helper()
 		if _, err := Update("test", func(r *Record) error {
-			if !r.ForgetPath(idA, Spelling(p)) {
+			if !r.ForgetPath(idA, recordedForm(p)) {
 				t.Error("the exact stored spelling was not forgotten")
 			}
 			return nil
@@ -354,7 +354,7 @@ func TestForgettingKeepsTheIdAndATombstoneClears(t *testing.T) {
 	}
 	forget(second)
 	rec, _ := Load()
-	if e := rec.Archives[idA]; e == nil || len(e.Paths) != 1 || e.Paths[0].Spelling != Spelling(folder) {
+	if e := rec.Archives[idA]; e == nil || len(e.Paths) != 1 || e.Paths[0].Spelling != recordedForm(folder) {
 		t.Fatalf("forgetting one path took the other with it: %+v", e)
 	}
 	forget(folder)

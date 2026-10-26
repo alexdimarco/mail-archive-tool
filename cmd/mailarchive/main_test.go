@@ -183,7 +183,12 @@ func TestHelpTotality(t *testing.T) {
 		args []string
 		want []string
 	}{
-		{[]string{"-h"}, []string{"-out", "-input", "-enable-offline"}},
+		{[]string{"-h"}, []string{"-out", "-input", "-enable-offline", "-encrypt", "-password-file", "change-password", "forget-archive", "repair-record"}},
+		{[]string{"change-password", "-h"}, []string{"-out", "-password-file", "-recovery-key-file"}},
+		{[]string{"new-recovery-key", "-h"}, []string{"-out", "-recovery-key-out"}},
+		{[]string{"forget-key", "-h"}, []string{"-out"}},
+		{[]string{"forget-archive", "-h"}, []string{"-out"}},
+		{[]string{"repair-record", "-h"}, []string{"repair-record", "damaged"}},
 		{[]string{"serve", "-h"}, []string{"-out", "-addr"}},
 		{[]string{"search", "-h"}, []string{"-out", "-folder"}},
 		{[]string{"reindex", "-h"}, []string{"-out"}},

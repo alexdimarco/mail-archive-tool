@@ -18,7 +18,7 @@ const testPassword = "correct horse battery"
 func lowCost(t *testing.T) {
 	t.Helper()
 	orig := floor
-	floor = Params{MemoryKiB: 64, Time: 2, Threads: 1}
+	floor = testFloor
 	t.Cleanup(func() { floor = orig })
 }
 
