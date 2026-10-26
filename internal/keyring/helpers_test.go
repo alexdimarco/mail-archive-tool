@@ -2,6 +2,7 @@ package keyring
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -98,15 +99,20 @@ func refusal(err error) (int, string) {
 	return 1, err.Error()
 }
 
-// countOpens counts the vault opens (derivations, for a password or recovery key)
-// for the test's duration.
+// countOpens counts the vault opens that went on to derive (for a password or
+// recovery key) for the test's duration: an open the vault refused over its cost
+// limit, before deriving (vault.CostError), does not count.
 func countOpens(t *testing.T) *int {
 	t.Helper()
 	n := 0
 	orig := openVault
-	openVault = func(out string, want vault.ID, s vault.Secret) (*vault.Opened, error) {
-		n++
-		return orig(out, want, s)
+	openVault = func(out string, want vault.ID, s vault.Secret, limit *vault.Params) (*vault.Opened, error) {
+		o, err := orig(out, want, s, limit)
+		var ce *vault.CostError
+		if !errors.As(err, &ce) {
+			n++
+		}
+		return o, err
 	}
 	t.Cleanup(func() { openVault = orig })
 	return &n

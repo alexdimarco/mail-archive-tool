@@ -184,9 +184,9 @@ func TestAForgetDuringAnOpenIsNotOverriddenSilently(t *testing.T) {
 	second := copyArchive(t, out)
 	id := a.ArchiveID().String()
 	orig := openVault
-	openVault = func(o string, want vault.ID, s vault.Secret) (*vault.Opened, error) {
+	openVault = func(o string, want vault.ID, s vault.Secret, limit *vault.Params) (*vault.Opened, error) {
 		change(t, func(r *encrecord.Record) error { r.ForgetID(id); return nil })
-		return orig(o, want, s)
+		return orig(o, want, s, limit)
 	}
 	defer func() { openVault = orig }()
 	asked := 0

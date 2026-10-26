@@ -1,64 +1,43 @@
 package keyring
 
 import (
+	"errors"
 	"fmt"
-	"path/filepath"
 
-	"mail-archive-tool/internal/util"
 	"mail-archive-tool/internal/vault"
 )
 
-// maxKeyFileBytes bounds a key file read to judge its cost (the vault's own cap).
-const maxKeyFileBytes = 64 << 10
-
-// highestCost is the most Argon2id work any copy of out's key file asks of s — the
-// vault may try every copy — and whether any copy asks more than the floor. A copy
-// that does not parse asks nothing: the vault refuses it before deriving.
-func highestCost(out string, s Secret) (vault.Params, bool) {
-	floor := vault.CostFloor()
-	var top vault.Params
-	above := false
-	for _, name := range []string{vault.FileName, vault.BackupName} {
-		raw, err := util.ReadRegularFile(filepath.Join(out, name), maxKeyFileBytes)
-		if err != nil {
-			continue
+// openAsking opens out with s under the derivation lock. At a folder this computer
+// has not recorded (want zero) the open is limited to MailArchive's own cost
+// (K14): a key file asking more is refused by the vault before deriving, on the
+// very bytes it would derive from (vault.OpenWithin; the P3-1a pass, OUT-04), and
+// the person is asked; a yes raises the limit to that cost and opens again. Without
+// someone to ask, it is refused, naming the cost.
+func openAsking(out string, want vault.ID, s Secret, confirm func(vault.Params) (bool, error)) (*vault.Opened, error) {
+	var limit *vault.Params
+	if want == (vault.ID{}) {
+		floor := vault.CostFloor()
+		limit = &floor
+	}
+	for asked := 0; ; asked++ {
+		deriving.Lock()
+		opened, err := openVault(out, want, s.vault(), limit)
+		deriving.Unlock()
+		var ce *vault.CostError
+		if !errors.As(err, &ce) || asked >= 2 {
+			return opened, err
 		}
-		v, err := vault.Parse(raw)
-		if err != nil {
-			continue
-		}
-		p := v.Password.Params
-		if s.how == ByRecoveryKey {
-			p = v.Recovery.Params
-		}
-		if p.MemoryKiB > floor.MemoryKiB || p.Time > floor.Time || p.Threads > floor.Threads {
-			above = true
-			if uint64(p.MemoryKiB)*uint64(p.Time) > uint64(top.MemoryKiB)*uint64(top.Time) || top == (vault.Params{}) {
-				top = p
+		ok := false
+		if confirm != nil {
+			if ok, err = confirm(ce.Params); err != nil {
+				return nil, err
 			}
 		}
-	}
-	return top, above
-}
-
-// confirmCost asks before a derivation above MailArchive's own cost, on a folder
-// this computer has not recorded (K14): a key file there may come from anyone, and
-// one can ask for up to the ceiling's memory and time. Without someone to ask it
-// refuses, naming the cost.
-func confirmCost(out string, s Secret, confirm func(vault.Params) (bool, error)) error {
-	p, above := highestCost(out, s)
-	if !above {
-		return nil
-	}
-	if confirm != nil {
-		ok, err := confirm(p)
-		if err != nil {
-			return err
+		if !ok {
+			return nil, fmt.Errorf("%w: opening %s would use %s (MailArchive's own key files use %s), and this computer has not recorded this archive — open it at a terminal to confirm",
+				ErrCostRefused, out, ce.Params, vault.CostFloor())
 		}
-		if ok {
-			return nil
-		}
+		p := ce.Params
+		limit = &p
 	}
-	return fmt.Errorf("%w: opening %s would use %s (MailArchive's own key files use %s), and this computer has not recorded this archive — open it at a terminal to confirm",
-		ErrCostRefused, out, p, vault.CostFloor())
 }

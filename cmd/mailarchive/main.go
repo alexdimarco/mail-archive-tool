@@ -96,6 +96,8 @@ func main() {
 		err = runForgetArchive(args[1:])
 	case len(args) > 0 && args[0] == "repair-record":
 		err = runRepairRecord(args[1:])
+	case len(args) > 0 && args[0] == "restore-key-file":
+		err = runRestoreKeyFile(args[1:])
 	case len(args) > 0 && args[0] == "encrypt":
 		err = runEncrypt(args[1:])
 	default:
@@ -1643,6 +1645,7 @@ Usage:
   mailarchive -encrypt -out NEWDIR [-input ...]          make a new ENCRYPTED archive, at a terminal
   mailarchive change-password  -out DIR                  an encrypted archive's keys: change-password,
   mailarchive new-recovery-key -out DIR                    new-recovery-key, forget-key
+  mailarchive restore-key-file -out DIR -from FILE       put back an encrypted archive's lost key files (or -remembered)
   mailarchive forget-archive   -out DIR                  stop treating a folder as one of this computer's encrypted archives
   mailarchive repair-record                              rebuild this computer's damaged record of encrypted archives
   mailarchive desktop  [-capture]                        the dashboard & launcher (also opens on double-click)

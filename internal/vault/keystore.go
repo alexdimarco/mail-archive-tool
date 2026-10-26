@@ -117,7 +117,7 @@ func RequireRetrievableKey(out string, want ID, s Store) (*Opened, error) {
 		return nil, refuse("the stored key is damaged", fixRemember, err)
 	}
 	defer k.Destroy()
-	o, err := openVault(out, want, KeySecret(k))
+	o, err := openVault(out, want, KeySecret(k), nil)
 	if err != nil {
 		return nil, refuse("the stored key does not open it", fixFor(err), err)
 	}

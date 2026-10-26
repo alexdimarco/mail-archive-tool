@@ -281,7 +281,7 @@ func Wording(c Case, folder string) string {
 	case Foreign:
 		return fmt.Sprintf("%s holds files naming a different encrypted archive than the one this computer recorded there — it may have been tampered with; %s", folder, forgetOffer("you put that archive there on purpose", folder))
 	case KeysMissing:
-		return fmt.Sprintf("%s holds an encrypted archive this computer made, but its key files are missing or damaged — restore the whole archive folder from a backup copy", folder)
+		return fmt.Sprintf("%s holds an encrypted archive this computer made, but its key files are missing or damaged — restore the whole archive folder from a backup copy, or put the key files back with its recovery file and recovery key: `mailarchive restore-key-file -out %q -from FILE` (or `-remembered`, when this computer remembers its key)", folder, folder)
 	case Gone:
 		return fmt.Sprintf("%s used to hold an encrypted archive this computer made; %s", folder, forgetOffer("you removed it on purpose", folder))
 	}

@@ -308,7 +308,7 @@ type Opened struct {
 // derivation; otherwise it is tried once more. A secret that opens only an
 // older generation (the password before a change, after a crash left a stale
 // copy) is refused as superseded, never used to roll back.
-func openVault(out string, want ID, s Secret) (*Opened, error) {
+func openVault(out string, want ID, s Secret, limit *Params) (*Opened, error) {
 	cs, err := readCopies(out, want)
 	if err != nil {
 		return nil, err
@@ -321,6 +321,11 @@ func openVault(out string, want ID, s Secret) (*Opened, error) {
 	for i, c := range tries {
 		if slices.ContainsFunc(tries[:i], func(t copyOnDisk) bool { return bytes.Equal(t.raw, c.raw) }) {
 			continue
+		}
+		// A copy asking more than the limit is refused before deriving, on the bytes
+		// it would derive from (OpenWithin; K14).
+		if limit != nil && s.kind != 0 && s.entry(c.v).Params.above(*limit) {
+			return nil, &CostError{Params: s.entry(c.v).Params}
 		}
 		k, err := s.open(c.v)
 		if err == nil {
@@ -390,14 +395,14 @@ func mostTelling(errs []error) error {
 // Open unlocks the encrypted archive at out with s, read-only: it takes no lock
 // and writes nothing (the reader's path). want is the archive id this machine
 // recorded for out, or the zero ID when none is recorded (a handed-over copy).
-func Open(out string, want ID, s Secret) (*Opened, error) { return openVault(out, want, s) }
+func Open(out string, want ID, s Secret) (*Opened, error) { return openVault(out, want, s, nil) }
 
 // VerifyKey proves that k opens the encrypted archive at out (whose id must be
 // want, when one is recorded) and hands out nothing: a writer that already holds
 // a key checks it belongs to the folder it is about to write (phase2a P2a-C9c).
 // Read-only, like Open.
 func VerifyKey(out string, want ID, k *Key) error {
-	o, err := openVault(out, want, KeySecret(k))
+	o, err := openVault(out, want, KeySecret(k), nil)
 	if err != nil {
 		return err
 	}
@@ -502,6 +507,10 @@ func (p *PendingCreate) RecoveryKey() RecoveryKey { return p.rk }
 // ArchiveID is the new archive's id, to record outside the archive (A15).
 func (p *PendingCreate) ArchiveID() ID { return p.v.ArchiveID }
 
+// RecoveryFile is the new archive's recovery file, offered with its recovery key
+// (phase3 §5.1 step 5, §9.4).
+func (p *PendingCreate) RecoveryFile() ([]byte, error) { return p.v.RecoveryFile() }
+
 // Format prints a pending create without its keys.
 func (p *PendingCreate) Format(f fmt.State, _ rune) {
 	fmt.Fprintf(f, "vault.PendingCreate{archive %s, redacted}", p.v.ArchiveID)
@@ -574,7 +583,7 @@ func mutate(out string, want ID, verb string, current Secret, change func(*Opene
 		return err
 	}
 	defer l.Release()
-	o, err := openVault(out, want, current)
+	o, err := openVault(out, want, current, nil)
 	if err != nil {
 		return err
 	}
@@ -634,6 +643,9 @@ func PrepareNewRecovery(out string, want ID, current Secret) (*PendingRecovery, 
 
 // RecoveryKey is the new key to show once, before Commit.
 func (p *PendingRecovery) RecoveryKey() RecoveryKey { return p.rk }
+
+// RecoveryFile is the recovery file for the new recovery key (phase3 §9.2).
+func (p *PendingRecovery) RecoveryFile() ([]byte, error) { return p.next.RecoveryFile() }
 
 // Format prints a pending recovery key without its keys.
 func (p *PendingRecovery) Format(f fmt.State, _ rune) {
@@ -721,7 +733,7 @@ func Heal(out string, want ID, current Secret) error {
 		return err
 	}
 	defer l.Release()
-	o, err := openVault(out, want, current)
+	o, err := openVault(out, want, current, nil)
 	if err != nil {
 		return err
 	}

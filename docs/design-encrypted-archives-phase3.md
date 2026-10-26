@@ -930,6 +930,17 @@ It runs in two steps, like creation.
 
 **This pair, with its two sources, is the only change to Phase 1's frozen API.**
 
+*Built in P3-1b (2026-10-26; MA-791, MA-792):* the pair, `vault.ParseRecoveryFile` and
+`Vault.RecoveryFile`, and — with the owner's go-ahead — `vault.OpenWithin`, which closes the P3-1a
+pass's OUT-04: K14's cost limit is applied by the vault to the bytes it derives from. The vault reads
+the record pointer's frozen header itself; a container test pins it against `container.Seal`.
+The build date the clock is checked against is a constant set when the code was written
+(2026-10-26). Commit's "re-run the preconditions" is a byte-for-byte comparison of both key-file
+copies and both record pointers with what was prepared. The CLI is `restore-key-file -out DIR
+-from FILE | -remembered`, with `-recovery-file-out` on it, on `-encrypt` and on
+`new-recovery-key`; Desktop's "Put back the key file" stays with P3-3. P3-1b owes its adversarial
+pass.
+
 **What it does and does not withdraw.**
 - Every restore sets a new password, so a withdrawn password never comes back through it.
 - The master key is never re-keyed (§0). So an earlier recovery key, together with a recovery file

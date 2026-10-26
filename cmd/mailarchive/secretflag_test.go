@@ -19,7 +19,7 @@ import (
 // file or an environment variable holding it, never the secret itself
 // (design-encrypted-archives-phase3 §3.4, A26).
 var secretFlagsAllowed = map[string]bool{
-	"password-file": true, "recovery-key-file": true, "recovery-key-out": true,
+	"password-file": true, "recovery-key-file": true, "recovery-key-out": true, "recovery-file-out": true,
 	"client-secret-file": true, "client-secret-env": true, "token-cache": true,
 }
 

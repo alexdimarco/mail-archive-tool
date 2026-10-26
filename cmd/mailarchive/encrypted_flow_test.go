@@ -81,7 +81,8 @@ func flowRecord(t *testing.T) vault.Store {
 
 func noKeyFlags() *keyFlags {
 	f, empty := false, ""
-	return &keyFlags{encrypt: &f, remember: &f, passwordFile: &empty, recoveryKeyFile: &empty, recoveryKeyOut: &empty}
+	e2, e3 := "", ""
+	return &keyFlags{encrypt: &f, remember: &f, passwordFile: &empty, recoveryKeyFile: &e2, recoveryKeyOut: &e3, recoveryFileOut: new(string)}
 }
 
 func recordedAt(t *testing.T, out string) string {
@@ -273,7 +274,7 @@ func TestTheCLIKeyVerbs(t *testing.T) {
 	} else {
 		u.Destroy()
 	}
-	assure.Reached(t, strings.Contains(a.transcript(), "destroy those"), "the earlier key's warning")
+	assure.Reached(t, strings.Contains(a.transcript(), "destroy recovery files saved with your earlier recovery key"), "the earlier key's warning")
 
 	// Authorised by the remembered key, a change asks first (K13); no leaves it.
 	yes := true

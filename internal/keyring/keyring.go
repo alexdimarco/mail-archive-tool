@@ -89,7 +89,12 @@ var deriving sync.Mutex
 // Seams for tests: the vault's open and create, so a test can prove a refused open
 // or create never reaches a derivation; and the clock.
 var (
-	openVault     = vault.Open
+	openVault = func(out string, want vault.ID, s vault.Secret, limit *vault.Params) (*vault.Opened, error) {
+		if limit != nil {
+			return vault.OpenWithin(out, want, s, *limit)
+		}
+		return vault.Open(out, want, s)
+	}
 	prepareCreate = vault.PrepareCreate
 	now           = time.Now
 )
@@ -202,7 +207,7 @@ func (u *Unlocked) Lease() (*Unlocked, error) {
 	if err != nil {
 		return nil, err
 	}
-	o, err := openVault(u.out, u.id, vault.KeySecret(k))
+	o, err := openVault(u.out, u.id, vault.KeySecret(k), nil)
 	leaseHook()
 	u.mu.Lock()
 	stale := u.locked || u.epoch != epoch
@@ -354,14 +359,7 @@ func Open(out string, s Secret, o OpenOptions) (*Unlocked, error) {
 			return nil, err
 		}
 	}
-	if r.want == (vault.ID{}) {
-		if err := confirmCost(out, s, o.ConfirmCost); err != nil {
-			return nil, err
-		}
-	}
-	deriving.Lock()
-	opened, err := openVault(out, r.want, s.vault())
-	deriving.Unlock()
+	opened, err := openAsking(out, r.want, s, o.ConfirmCost)
 	if err != nil {
 		return nil, explain(out, r, err)
 	}

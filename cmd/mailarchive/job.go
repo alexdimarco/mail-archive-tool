@@ -185,7 +185,8 @@ func (j job) command() []string {
 }
 
 var knownVerbs = map[string]bool{"serve": true, "search": true, "reindex": true, "schedule": true, "graph": true, "status": true, "verify": true, "extract": true,
-	"change-password": true, "new-recovery-key": true, "forget-key": true, "forget-archive": true, "repair-record": true, "encrypt": true}
+	"change-password": true, "new-recovery-key": true, "forget-key": true, "forget-archive": true, "repair-record": true, "encrypt": true,
+	"restore-key-file": true}
 
 // refuseKeyFlagsInJob refuses an encryption flag in a scheduled job: a backup into an
 // encrypted archive needs a person at the terminal in this version (phase3 O5). It
@@ -216,7 +217,7 @@ func parseJob(args []string) (job, error) {
 		return job{}, fmt.Errorf("%s is a query, not a backup job, and cannot be scheduled; schedule an export, graph, reindex or verify job", verb)
 	case "extract":
 		return job{}, errors.New("extract is an operator-driven migration, not a backup job, and cannot be scheduled; run it by hand outside the backup window; schedule an export, graph, reindex or verify job")
-	case "change-password", "new-recovery-key", "forget-key", "forget-archive", "repair-record", "encrypt":
+	case "change-password", "new-recovery-key", "forget-key", "forget-archive", "repair-record", "encrypt", "restore-key-file":
 		return job{}, fmt.Errorf("%s changes an encrypted archive's keys or this computer's record of them, at a terminal; it is not a backup job and cannot be scheduled", verb)
 	}
 

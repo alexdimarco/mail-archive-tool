@@ -9,6 +9,7 @@ import (
 
 	"mail-archive-tool/internal/encrecord"
 	"mail-archive-tool/internal/keyring"
+	"mail-archive-tool/internal/util"
 	"mail-archive-tool/internal/vault"
 )
 
@@ -95,28 +96,28 @@ func changePassword(a asker, out string, k *keyFlags) error {
 	return nil
 }
 
+// newKeyCopyFlags adds the two places a new recovery key may also be saved.
+func newKeyCopyFlags(k *keyFlags) func(*flag.FlagSet) {
+	return func(fs *flag.FlagSet) {
+		k.recoveryKeyOut = fs.String("recovery-key-out", "", "also save the new recovery key to this NEW file, readable only by you, outside the archive")
+		addRecoveryFileFlag(fs, k)
+	}
+}
+
 func runNewRecoveryKey(args []string) error {
-	var keyOut *string
-	out, k, err := keyVerbFlags("new-recovery-key", "Make a new recovery key for an encrypted archive; the old one stops opening its key file. It asks for the current password (or recovery key) unless this computer remembers the key.", args, true, func(fs *flag.FlagSet) {
-		keyOut = fs.String("recovery-key-out", "", "also save the new recovery key to this NEW file, readable only by you, outside the archive")
-	})
+	copies := &keyFlags{}
+	out, k, err := keyVerbFlags("new-recovery-key", "Make a new recovery key for an encrypted archive; the old one stops opening its key file. It asks for the current password (or recovery key) unless this computer remembers the key.", args, true, newKeyCopyFlags(copies))
 	if err != nil {
 		return err
 	}
-	k.recoveryKeyOut = keyOut
+	k.recoveryKeyOut, k.recoveryFileOut = copies.recoveryKeyOut, copies.recoveryFileOut
 	return interrupted(newRecoveryKey(stdAsker(), out, k), os.Stderr)
 }
 
 func newRecoveryKey(a asker, out string, k *keyFlags) error {
-	keyOut := ""
-	if k.recoveryKeyOut != nil {
-		keyOut = *k.recoveryKeyOut
-	}
 	// Where the key is to be saved is judged before anything is asked.
-	if keyOut != "" {
-		if _, err := checkRecoveryKeyOut(keyOut, out); err != nil {
-			return err
-		}
+	if err := checkKeyCopies(k, out); err != nil {
+		return err
 	}
 	u, err := unlockForWrite(a, out, "making a new recovery key", k)
 	if err != nil {
@@ -136,11 +137,9 @@ func newRecoveryKey(a asker, out string, k *keyFlags) error {
 	if err := confirmRecoveryKey(a, p.RecoveryKey()); err != nil {
 		return err
 	}
-	keyFile := ""
-	if keyOut != "" {
-		if keyFile, err = writeRecoveryKeyFile(keyOut, out, u.ArchiveID(), p.RecoveryKey()); err != nil {
-			return err
-		}
+	saved, err := saveKeyCopies(a, k, out, u.ArchiveID(), p.RecoveryKey(), p.RecoveryFile)
+	if err != nil {
+		return err
 	}
 	err = p.Commit()
 	switch {
@@ -148,13 +147,128 @@ func newRecoveryKey(a asker, out string, k *keyFlags) error {
 		a.say("The new recovery key is in effect; the second copy of the key file is rewritten at the next opening.")
 	case err != nil:
 		// Not in effect: the person must not keep the key just shown (CON-03).
-		voidRecoveryKeyFile(a, keyFile)
+		voidFiles(a, saved)
 		a.say("The recovery key just shown is NOT in effect; your earlier recovery key still opens the archive.")
 		return err
 	default:
 		a.say("The new recovery key is in effect.")
 	}
-	a.say("The earlier recovery key no longer opens this archive's key file. A copy of the archive, or of its key file, saved with the earlier key still opens with it — destroy those.")
+	a.say(earlierKeyWarning)
+	if k.recoveryFileOut != nil && *k.recoveryFileOut != "" {
+		a.say("%s", recoveryFileNote)
+	}
+	return nil
+}
+
+// earlierKeyWarning is what a new recovery key does not withdraw (§9.2, §9.4): the
+// master key is never re-keyed.
+const earlierKeyWarning = "The earlier recovery key no longer opens this archive's key file. But together with a recovery file, a key file or a copy of the archive saved with it, it still opens the archive — destroy recovery files saved with your earlier recovery key, and those copies."
+
+func runRestoreKeyFile(args []string) error {
+	var from *string
+	var fromRemembered *bool
+	copies := &keyFlags{}
+	out, k, err := keyVerbFlags("restore-key-file", "Put back an encrypted archive's lost or damaged key files: from its recovery file (-from FILE) and its recovery key, or from the key this computer remembers (-remembered). It sets a new password and a new recovery key.", args, false, func(fs *flag.FlagSet) {
+		from = fs.String("from", "", "the archive's recovery file (saved with -recovery-file-out)")
+		fromRemembered = fs.Bool("remembered", false, "rebuild from the key this computer remembers for the archive, instead of a recovery file")
+		copies.recoveryKeyFile = fs.String("recovery-key-file", "", "the recovery key for -from, read from this file (readable only by you), instead of typed")
+		newKeyCopyFlags(copies)(fs)
+	})
+	if err != nil {
+		return err
+	}
+	k.recoveryKeyFile, k.recoveryKeyOut, k.recoveryFileOut = copies.recoveryKeyFile, copies.recoveryKeyOut, copies.recoveryFileOut
+	switch {
+	case (*from == "") == !*fromRemembered:
+		return errors.New("give either -from FILE (the recovery file) or -remembered")
+	case *fromRemembered && *k.recoveryKeyFile != "":
+		return errors.New("-recovery-key-file goes with -from; -remembered needs no recovery key")
+	}
+	return interrupted(restoreKeyFile(stdAsker(), out, *from, k), os.Stderr)
+}
+
+// restoreKeyFile puts back out's key files (§9.4, §9.5): the source judged and
+// proven, a new password, the new recovery key shown, taken away and entered
+// again, its copies saved, then the commit — saying what it does and does not
+// withdraw. from is the recovery file; "" rebuilds from the remembered key (K15).
+func restoreKeyFile(a asker, out, from string, k *keyFlags) error {
+	if !a.attended() {
+		return errNeedsTerminal(out, "putting its key file back")
+	}
+	if err := checkKeyCopies(k, out); err != nil {
+		return err
+	}
+	o := keyring.RestoreOptions{ConfirmReRecord: func(string) (bool, error) {
+		return askYes(a, "You told MailArchive to forget this encrypted archive. Record it again on this computer?", false)
+	}}
+	var prepare func(newPassword string) (*keyring.PendingRestore, error)
+	if from != "" {
+		file, err := util.ReadRegularFile(abspath(from), 4<<10)
+		if err != nil {
+			return fmt.Errorf("the recovery file %s cannot be read: %w", abspath(from), err)
+		}
+		var rk keyring.Secret
+		if k.recoveryKeyFile != nil && *k.recoveryKeyFile != "" {
+			if rk, err = keyring.RecoveryKeyFile(*k.recoveryKeyFile); err != nil {
+				return err
+			}
+		} else {
+			typed, err := a.secret("The recovery key saved with this recovery file: ")
+			if err != nil {
+				return err
+			}
+			rk = keyring.RecoveryKey(typed)
+		}
+		prepare = func(pw string) (*keyring.PendingRestore, error) { return keyring.RestoreFromFile(out, file, rk, pw, o) }
+	} else {
+		store, err := secretStore()
+		if err != nil {
+			return err
+		}
+		ok, err := askYes(a, "This computer remembers the archive's key, so its key files can be rebuilt without the password or recovery key. Anyone using this computer's account could do the same: encryption protects a copy of the archive that leaves this computer, not this computer. Go ahead?", false)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return errors.New("nothing was changed")
+		}
+		prepare = func(pw string) (*keyring.PendingRestore, error) {
+			return keyring.RestoreFromRemembered(out, store, pw, o)
+		}
+	}
+	a.say("The archive gets a new password and a new recovery key.")
+	pw, err := askNewPassword(a)
+	if err != nil {
+		return err
+	}
+	a.say("Proving the key against the archive (this takes a few seconds)...")
+	p, err := prepare(pw)
+	if err != nil {
+		return err
+	}
+	defer p.Discard()
+	if err := confirmRecoveryKey(a, p.RecoveryKey()); err != nil {
+		return err
+	}
+	saved, err := saveKeyCopies(a, k, out, p.ArchiveID(), p.RecoveryKey(), p.RecoveryFile)
+	if err != nil {
+		return err
+	}
+	err = p.Commit()
+	switch {
+	case errors.Is(err, vault.ErrPartiallySaved):
+		a.say("The key file is back and in effect; its second copy is rewritten at the next opening.")
+	case err != nil:
+		voidFiles(a, saved)
+		a.say("The key file was NOT put back; the recovery key just shown is not in effect.")
+		return err
+	default:
+		a.say("The key file of %s is back, with your new password and new recovery key.", out)
+	}
+	a.say("A password used before no longer opens it. " + earlierKeyWarning)
+	if k.recoveryFileOut != nil && *k.recoveryFileOut != "" {
+		a.say("%s", recoveryFileNote)
+	}
 	return nil
 }
 

@@ -22,6 +22,7 @@ import (
 var keyProducers = map[string]bool{
 	"Create": true, "PrepareCreate": true, "Open": true, "Parse": true,
 	"PrepareNewRecovery": true, "RequireRetrievableKey": true,
+	"OpenWithin": true, "PrepareRestore": true, // Phase 3, P3-1b
 }
 
 // keyUsers are the vault functions that change an archive's key file or remembered
@@ -214,6 +215,8 @@ func TestTheReachScanFindsWhatItLooksFor(t *testing.T) {
 		"\t_ = v.ChangePasswordAt(\"o\", v.ID{}, v.Secret{}, \"pw\")\n" +
 		"\t_ = v.Remember(nil, nil)\n" +
 		"\t_ = v.VerifyKey(\"o\", v.ID{}, nil)\n" +
+		"\t_, _ = v.OpenWithin(\"o\", v.ID{}, v.Secret{}, v.Params{})\n" +
+		"\t_, _ = v.PrepareRestore(\"o\", v.ID{}, nil, \"pw\")\n" +
 		"\t_, _ = v.EncryptedMarker(\"out\")\n" +
 		"\t_, _, _ = v.Detect(\"out\")\n" +
 		"\tvv, _ := v.Parse(nil)\n" +
@@ -245,8 +248,10 @@ func TestTheReachScanFindsWhatItLooksFor(t *testing.T) {
 		"x.go: calls vault.ChangePasswordAt",
 		"x.go: calls vault.Detect (recognise an encrypted archive with vault.EncryptedMarker)",
 		"x.go: calls vault.KeySecret",
+		"x.go: calls vault.OpenWithin",
 		"x.go: calls vault.Parse",
 		"x.go: calls vault.PrepareCreate",
+		"x.go: calls vault.PrepareRestore",
 		"x.go: calls vault.Remember",
 		"x.go: calls vault.VerifyKey",
 		"x.go: sets Options.Key",

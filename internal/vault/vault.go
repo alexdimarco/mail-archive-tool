@@ -172,6 +172,9 @@ func (v *Vault) WithPassword(k *Key, newPassword string) (*Vault, error) {
 	if err := v.Verify(k); err != nil {
 		return nil, err
 	}
+	if v.Generation+1 >= maxGeneration {
+		return nil, fmt.Errorf("%w: generation %d is at its limit", ErrCorrupt, v.Generation)
+	}
 	n := *v
 	n.Generation++
 	var err error
@@ -189,6 +192,9 @@ func (v *Vault) WithNewRecovery(k *Key) (*Vault, RecoveryKey, error) {
 	var none RecoveryKey
 	if err := v.Verify(k); err != nil {
 		return nil, none, err
+	}
+	if v.Generation+1 >= maxGeneration {
+		return nil, none, fmt.Errorf("%w: generation %d is at its limit", ErrCorrupt, v.Generation)
 	}
 	rk, err := newRecoveryKey()
 	if err != nil {

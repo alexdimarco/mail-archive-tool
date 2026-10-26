@@ -30,13 +30,14 @@ type keyFlags struct {
 	passwordFile    *string
 	recoveryKeyFile *string
 	recoveryKeyOut  *string
+	recoveryFileOut *string
 	// rememberGiven: -remember was on the command line, either way, so the
 	// question is not asked.
 	rememberGiven bool
 }
 
 // keyFlagNames are the flags parseJob refuses in a scheduled job.
-var keyFlagNames = []string{"encrypt", "remember", "password-file", "recovery-key-file", "recovery-key-out"}
+var keyFlagNames = []string{"encrypt", "remember", "password-file", "recovery-key-file", "recovery-key-out", "recovery-file-out"}
 
 func addKeyFlags(fs *flag.FlagSet) *keyFlags {
 	k := &keyFlags{}
@@ -44,7 +45,14 @@ func addKeyFlags(fs *flag.FlagSet) *keyFlags {
 	k.remember = fs.Bool("remember", false, "remember an encrypted archive's key on this computer, so backups you start here and opening it do not ask for the password (anyone using this computer's account can then open it); -encrypt asks when this is not given")
 	addSecretFileFlags(fs, k)
 	k.recoveryKeyOut = fs.String("recovery-key-out", "", "with -encrypt: also save the new recovery key to this NEW file, readable only by you, outside the archive")
+	addRecoveryFileFlag(fs, k)
 	return k
+}
+
+// addRecoveryFileFlag adds -recovery-file-out (§9.4): where a new recovery key's
+// recovery file is saved.
+func addRecoveryFileFlag(fs *flag.FlagSet, k *keyFlags) {
+	k.recoveryFileOut = fs.String("recovery-file-out", "", "save the new recovery key's recovery file to this NEW file, outside the archive: with the recovery key it puts back the archive's key files if they are lost")
 }
 
 // addSecretFileFlags adds the two ways to give an encrypted archive's secret without
@@ -87,8 +95,8 @@ func refuseStrayKeyFlags(fs *flag.FlagSet, k *keyFlags, keyed, creating bool) er
 	switch {
 	case !keyed && !creating && k.usedAny(fs):
 		return errors.New("-remember, -password-file, -recovery-key-file and -recovery-key-out are for an encrypted archive: make one with -encrypt, or give -out an encrypted archive")
-	case keyed && *k.recoveryKeyOut != "":
-		return errors.New("-recovery-key-out saves the recovery key of a NEW encrypted archive (-encrypt); for a new recovery key run `mailarchive new-recovery-key`")
+	case keyed && (*k.recoveryKeyOut != "" || *k.recoveryFileOut != ""):
+		return errors.New("-recovery-key-out and -recovery-file-out save the recovery key of a NEW encrypted archive (-encrypt); for a new recovery key run `mailarchive new-recovery-key`")
 	case creating && (*k.passwordFile != "" || *k.recoveryKeyFile != ""):
 		return errors.New("-encrypt asks for the new archive's password at the terminal; -password-file and -recovery-key-file open an existing one")
 	}
@@ -119,7 +127,7 @@ func openForBackup(fs *flag.FlagSet, k *keyFlags, out string, keyed, creating bo
 // inside the archive (P2a-C14).
 func (k *keyFlags) secretPaths() []string {
 	var ps []string
-	for _, p := range []*string{k.passwordFile, k.recoveryKeyFile, k.recoveryKeyOut} {
+	for _, p := range []*string{k.passwordFile, k.recoveryKeyFile, k.recoveryKeyOut, k.recoveryFileOut} {
 		if p != nil && *p != "" {
 			ps = append(ps, abspath(*p))
 		}
@@ -304,43 +312,60 @@ func confirmRecoveryKey(a asker, key string) error {
 // checkRecoveryKeyOut refuses a -recovery-key-out inside the archive folder or any
 // encrypted archive, or over a file that exists, before anything is asked.
 func checkRecoveryKeyOut(path, out string) (string, error) {
+	return checkNewFileOut("-recovery-key-out", "the recovery key", path, out)
+}
+
+// checkNewFileOut refuses a new file (flag names it, what says what it holds)
+// inside the archive folder or any encrypted archive, or over a file that exists.
+func checkNewFileOut(flag, what, path, out string) (string, error) {
 	abs := abspath(path)
 	if util.Within(util.ResolveExisting(out), util.ResolveExisting(abs)) {
-		return "", fmt.Errorf("-recovery-key-out %s is inside the archive folder %s; save the recovery key outside it", abs, out)
+		return "", fmt.Errorf("%s %s is inside the archive folder %s; save %s outside it", flag, abs, out, what)
 	}
 	if dir, why, _ := encmark.AtOrAbove(filepath.Dir(abs)); dir != "" {
-		return "", fmt.Errorf("-recovery-key-out %s is inside the encrypted archive %s (%s); save the recovery key outside every archive", abs, dir, why)
+		return "", fmt.Errorf("%s %s is inside the encrypted archive %s (%s); save %s outside every archive", flag, abs, dir, why, what)
 	}
 	if _, err := os.Lstat(abs); err == nil {
-		return "", fmt.Errorf("-recovery-key-out %s already exists; choose a new file", abs)
+		return "", fmt.Errorf("%s %s already exists; choose a new file", flag, abs)
 	}
 	return abs, nil
 }
 
 // writeRecoveryKeyFile saves the recovery key to a NEW file outside the archive and
 // every encrypted archive (§5.2), once the key was entered again and just before it
-// is committed (the P3-1a pass, SEC-01). The file is made empty, restricted to this
-// user (Windows: its access list; elsewhere 0600), and only then written, flushed
-// and its folder synced (SEC-09). If it cannot be restricted, it is removed and the
-// create refused: a recovery key is never left where others may read it.
+// is committed (the P3-1a pass, SEC-01).
 func writeRecoveryKeyFile(path, out string, id vault.ID, key string) (string, error) {
-	abs, err := checkRecoveryKeyOut(path, out)
+	return writeNewFile("-recovery-key-out", "the recovery key", path, out, []byte(keyring.RecoveryKeyFileText(id, key)))
+}
+
+// writeRecoveryFileOut saves the recovery file (§9.4) to a NEW file, the same way:
+// it opens nothing without the recovery key, but is kept as carefully.
+func writeRecoveryFileOut(path, out string, data []byte) (string, error) {
+	return writeNewFile("-recovery-file-out", "the recovery file", path, out, data)
+}
+
+// writeNewFile makes a NEW file owner-only and only then writes data, flushed and
+// its folder synced (the P3-1a pass, SEC-09). If it cannot be restricted, it is
+// removed and the run refused: a recovery key or file is never left where others
+// may read it.
+func writeNewFile(flag, what, path, out string, data []byte) (string, error) {
+	abs, err := checkNewFileOut(flag, what, path, out)
 	if err != nil {
 		return "", err
 	}
 	f, err := os.OpenFile(abs, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		if errors.Is(err, os.ErrExist) {
-			return "", fmt.Errorf("-recovery-key-out %s already exists; choose a new file", abs)
+			return "", fmt.Errorf("%s %s already exists; choose a new file", flag, abs)
 		}
-		return "", fmt.Errorf("-recovery-key-out %s: %w", abs, err)
+		return "", fmt.Errorf("%s %s: %w", flag, abs, err)
 	}
 	if err := winsec.RestrictToOwner(abs); err != nil {
 		f.Close()
 		os.Remove(abs)
-		return "", fmt.Errorf("-recovery-key-out %s could not be made readable only by you (%v); nothing was saved — choose a folder of your own, or leave out -recovery-key-out", abs, err)
+		return "", fmt.Errorf("%s %s could not be made readable only by you (%v); nothing was saved — choose a folder of your own, or leave out %s", flag, abs, err, flag)
 	}
-	_, werr := f.WriteString(keyring.RecoveryKeyFileText(id, key))
+	_, werr := f.Write(data)
 	if werr == nil {
 		werr = f.Sync()
 	}
@@ -349,11 +374,64 @@ func writeRecoveryKeyFile(path, out string, id vault.ID, key string) (string, er
 	}
 	if werr != nil {
 		os.Remove(abs)
-		return "", fmt.Errorf("-recovery-key-out %s could not be written: %w", abs, werr)
+		return "", fmt.Errorf("%s %s could not be written: %w", flag, abs, werr)
 	}
 	util.SyncDir(filepath.Dir(abs))
 	return abs, nil
 }
+
+// saveKeyCopies writes the -recovery-key-out and -recovery-file-out copies of a new
+// recovery key, after it was entered again and before its commit; on a failure
+// the first one written is voided. It returns the files written.
+func saveKeyCopies(a asker, k *keyFlags, out string, id vault.ID, key string, file func() ([]byte, error)) ([]string, error) {
+	var written []string
+	if k.recoveryKeyOut != nil && *k.recoveryKeyOut != "" {
+		p, err := writeRecoveryKeyFile(*k.recoveryKeyOut, out, id, key)
+		if err != nil {
+			return nil, err
+		}
+		written = append(written, p)
+	}
+	if k.recoveryFileOut != nil && *k.recoveryFileOut != "" {
+		data, err := file()
+		if err == nil {
+			var p string
+			if p, err = writeRecoveryFileOut(*k.recoveryFileOut, out, data); err == nil {
+				written = append(written, p)
+			}
+		}
+		if err != nil {
+			voidFiles(a, written)
+			return nil, err
+		}
+	}
+	return written, nil
+}
+
+// checkKeyCopies refuses either copy's path before anything is asked.
+func checkKeyCopies(k *keyFlags, out string) error {
+	if k.recoveryKeyOut != nil && *k.recoveryKeyOut != "" {
+		if _, err := checkRecoveryKeyOut(*k.recoveryKeyOut, out); err != nil {
+			return err
+		}
+	}
+	if k.recoveryFileOut != nil && *k.recoveryFileOut != "" {
+		if _, err := checkNewFileOut("-recovery-file-out", "the recovery file", *k.recoveryFileOut, out); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// voidFiles voids each saved copy of a recovery key that did not take effect.
+func voidFiles(a asker, paths []string) {
+	for _, p := range paths {
+		voidRecoveryKeyFile(a, p)
+	}
+}
+
+// recoveryFileNote is said when a recovery file is saved.
+const recoveryFileNote = "The recovery file opens nothing on its own: with the recovery key it puts back the archive's key files if they are lost (`mailarchive restore-key-file`). Keep it with your backups, and the recovery key apart from it."
 
 // voidRecoveryKeyFile overwrites and removes a -recovery-key-out file whose key never
 // took effect, so it is not later mistaken for the archive's recovery key, and says
@@ -398,10 +476,8 @@ func createEncrypted(a asker, out string, k *keyFlags, rememberSet bool, credent
 	if _, err := keyring.CheckCreateFolder(out, credentials); err != nil {
 		return nil, err
 	}
-	if *k.recoveryKeyOut != "" {
-		if _, err := checkRecoveryKeyOut(*k.recoveryKeyOut, out); err != nil {
-			return nil, err
-		}
+	if err := checkKeyCopies(k, out); err != nil {
+		return nil, err
 	}
 	pw, err := askNewPassword(a)
 	if err != nil {
@@ -431,24 +507,25 @@ func createEncrypted(a asker, out string, k *keyFlags, rememberSet bool, credent
 	if err := confirmRecoveryKey(a, p.RecoveryKey()); err != nil {
 		return nil, err
 	}
-	keyFile := ""
-	if *k.recoveryKeyOut != "" {
-		if keyFile, err = writeRecoveryKeyFile(*k.recoveryKeyOut, out, p.ArchiveID(), p.RecoveryKey()); err != nil {
-			return nil, err
-		}
+	saved, err := saveKeyCopies(a, k, out, p.ArchiveID(), p.RecoveryKey(), p.RecoveryFile)
+	if err != nil {
+		return nil, err
 	}
 	u, err := p.Commit()
 	if err != nil {
 		// The key file may have been written though the record was not: the archive
-		// exists and its recovery key is in force, so its saved copy stays (CRIT-04).
+		// exists and its recovery key is in force, so its saved copies stay (CRIT-04).
 		if errors.Is(err, keyring.ErrCreatedNotRecorded) {
-			if keyFile != "" {
-				a.say("The recovery key is in force and saved in %s.", keyFile)
+			for _, f := range saved {
+				a.say("The recovery key is in force; %s is kept.", f)
 			}
 			return nil, err
 		}
-		voidRecoveryKeyFile(a, keyFile)
+		voidFiles(a, saved)
 		return nil, err
+	}
+	if k.recoveryFileOut != nil && *k.recoveryFileOut != "" {
+		a.say("%s", recoveryFileNote)
 	}
 	for _, w := range u.Warnings() {
 		a.say("warning: %s", w)

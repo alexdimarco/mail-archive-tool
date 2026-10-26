@@ -52,8 +52,8 @@ func TestALockDuringALeaseInFlightWins(t *testing.T) {
 
 	var leased *vault.Opened
 	orig := openVault
-	openVault = func(out string, want vault.ID, s vault.Secret) (*vault.Opened, error) {
-		o, err := orig(out, want, s)
+	openVault = func(out string, want vault.ID, s vault.Secret, limit *vault.Params) (*vault.Opened, error) {
+		o, err := orig(out, want, s, limit)
 		leased = o
 		return o, err
 	}

@@ -7,7 +7,7 @@ import (
 	"mail-archive-tool/internal/assure"
 )
 
-// covers: MA-784, MA-788
+// covers: MA-784, MA-788, MA-792
 // Cases L, 1, 2 and 4 offer forgetting the folder by the verb that does it, naming
 // the folder (§4.6); an unproven path and missing key files do not (0: not until it
 // is proven; 3: restore the folder instead).
@@ -28,4 +28,8 @@ func TestTheCasesThatOfferForgettingNameTheVerb(t *testing.T) {
 		}
 	}
 	assure.Reached(t, offers == 4, "four cases offering forget-archive")
+	// Missing key files offer putting them back (P3-1b, §4.5 case 3).
+	if w := Wording(KeysMissing, folder); !strings.Contains(w, "mailarchive restore-key-file -out \""+folder+"\" -from FILE") || !strings.Contains(w, "-remembered") {
+		t.Errorf("case 3 does not offer restore-key-file: %s", w)
+	}
 }
