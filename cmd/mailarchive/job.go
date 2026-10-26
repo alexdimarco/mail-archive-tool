@@ -188,18 +188,13 @@ var knownVerbs = map[string]bool{"serve": true, "search": true, "reindex": true,
 	"change-password": true, "new-recovery-key": true, "forget-key": true, "forget-archive": true, "repair-record": true, "encrypt": true}
 
 // refuseKeyFlagsInJob refuses an encryption flag in a scheduled job: a backup into an
-// encrypted archive needs a person at the terminal in this version (phase3 O5).
-func refuseKeyFlagsInJob(args []string) error {
-	for _, a := range args {
-		name := strings.TrimLeft(a, "-")
-		name, _, _ = strings.Cut(name, "=")
-		if !strings.HasPrefix(a, "-") {
-			continue
-		}
-		for _, k := range keyFlagNames {
-			if name == k {
-				return fmt.Errorf("-%s cannot be scheduled: a backup into an encrypted archive needs you at a terminal to unlock it in this version — run it by hand, or from MailArchive Desktop", k)
-			}
+// encrypted archive needs a person at the terminal in this version (phase3 O5). It
+// judges the flags as parsed, so a flag's value that happens to look like one (an
+// -input folder named "-encrypt") is not taken for it (the P3-1a pass, REG-01).
+func refuseKeyFlagsInJob(fs *flag.FlagSet) error {
+	for _, k := range keyFlagNames {
+		if flagWasSet(fs, k) {
+			return fmt.Errorf("-%s cannot be scheduled: a backup into an encrypted archive needs you at a terminal to unlock it in this version — run it by hand, or from MailArchive Desktop", k)
 		}
 	}
 	return nil
@@ -224,17 +219,18 @@ func parseJob(args []string) (job, error) {
 	case "change-password", "new-recovery-key", "forget-key", "forget-archive", "repair-record", "encrypt":
 		return job{}, fmt.Errorf("%s changes an encrypted archive's keys or this computer's record of them, at a terminal; it is not a backup job and cannot be scheduled", verb)
 	}
-	if err := refuseKeyFlagsInJob(rest); err != nil {
-		return job{}, err
-	}
 
 	fs := flag.NewFlagSet("job", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	switch verb {
 	case "":
 		o := exportFlags(fs)
+		addKeyFlags(fs)
 		if err := fs.Parse(rest); err != nil {
 			return job{}, fmt.Errorf("job: %v (a scheduled job runs exactly these flags; fix them now)", err)
+		}
+		if err := refuseKeyFlagsInJob(fs); err != nil {
+			return job{}, err
 		}
 		o.inputs = append(o.inputs, fs.Args()...)
 		if *o.enableOffline || *o.syncWait {
@@ -318,8 +314,12 @@ func parseJob(args []string) (job, error) {
 
 	case "graph":
 		o := graphFlags(fs)
+		addKeyFlags(fs)
 		if err := fs.Parse(rest); err != nil {
 			return job{}, fmt.Errorf("graph job: %v (a scheduled job runs exactly these flags; fix them now)", err)
+		}
+		if err := refuseKeyFlagsInJob(fs); err != nil {
+			return job{}, err
 		}
 		o.mailboxes = append(o.mailboxes, fs.Args()...)
 		authMode := strings.ToLower(strings.TrimSpace(*o.auth))

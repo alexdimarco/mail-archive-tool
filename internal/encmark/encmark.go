@@ -165,7 +165,7 @@ func At(path string) (Result, error) {
 	}
 	if m, ok := rec.Lookup(path); ok {
 		c := classify(m)
-		res := Result{Encrypted: true, Folder: m.Folder, Recorded: true, ID: m.ID, Case: c, Why: Wording(c, m.Folder)}
+		res := Result{Encrypted: true, Folder: m.Folder, Recorded: true, ID: m.ID, Case: c, Why: caseWording(c, m)}
 		if c == None {
 			res.Why = why
 			if res.Why == "" {
@@ -192,16 +192,32 @@ func holdsArchiveFiles(path string) bool {
 	return false
 }
 
+// judged is the folder a match is judged at: the folder as reached when it was
+// reached by its recorded spelling, otherwise the recorded spelling itself.
+func judged(m encrecord.Match) string {
+	if m.BySpelling {
+		return m.Folder
+	}
+	return m.Path.Spelling
+}
+
+// caseWording is a recorded folder's refusal in its case's words. An unproven
+// path whose key files are gone cannot be proven by opening it, so it is told how
+// to forget it instead (the P3-1a pass, CRIT-02).
+func caseWording(c Case, m encrecord.Match) string {
+	if c == Unproven && !vault.Claims(judged(m)).Present {
+		return fmt.Sprintf("this computer once recorded an encrypted archive at %s, and its record was repaired, but the archive's key files are not there; %s", m.Folder, forgetOffer("you removed it on purpose", m.Folder))
+	}
+	return Wording(c, m.Folder)
+}
+
 // classify decides a recorded folder's case, in the order of §4.5. The folder
 // judged is the recorded one: the folder as reached when it was reached by its
 // recorded spelling, otherwise the recorded spelling itself — so an archive
 // reached through the link it was created with is judged where it is, not as "now
 // a link" (the P3-0 adversarial pass, FID-01).
 func classify(m encrecord.Match) Case {
-	target := m.Folder
-	if !m.BySpelling {
-		target = m.Path.Spelling
-	}
+	target := judged(m)
 	// The folder, or one above it, is now a link: it was recorded by its resolved
 	// location, so a recorded spelling resolving elsewhere had a link put on its way
 	// (OUT-05).
@@ -333,7 +349,7 @@ func Here(out string) (bool, string, error) {
 		if c == None {
 			return true, "it is an encrypted archive this computer made", nil
 		}
-		return true, Wording(c, m.Folder), nil
+		return true, caseWording(c, m), nil
 	}
 	return false, "", merr
 }
@@ -346,12 +362,47 @@ func LostHere(out string) bool {
 	if err != nil || len(lost) == 0 {
 		return false
 	}
+	rec, rerr := load()
 	for _, id := range vault.Claims(out).IDs {
+		// A stale mark for an id the record now lists is no warning (CON-06).
+		if rerr == nil && rec.Archives[id.String()] != nil {
+			continue
+		}
 		if slices.Contains(lost, id.String()) {
 			return true
 		}
 	}
 	return false
+}
+
+// NotSetUp says what is unfinished about an encrypted archive at out that has a key
+// file and no backup yet (§5.1 step 7; the P3-1a pass, CRIT-05), or "" when it has
+// a backup or is no such archive: a folder holding only a copy of the key file of
+// an archive this computer recorded elsewhere, or an archive created but never
+// backed up.
+func NotSetUp(out string) string {
+	c := vault.Claims(out)
+	if !c.Parses {
+		return ""
+	}
+	for _, name := range []string{".mailarchive-manifest.ptr", ".mailarchive-manifest.ptr.bak"} {
+		if _, err := os.Lstat(filepath.Join(out, name)); err == nil {
+			return ""
+		}
+	}
+	if rec, err := load(); err == nil {
+		here, ok := rec.Lookup(out)
+		for _, id := range c.IDs {
+			e := rec.Archives[id.String()]
+			if e == nil || len(e.Paths) == 0 {
+				continue
+			}
+			if !ok || here.ID != id.String() {
+				return "this folder holds only a copy of the archive's key file; the archive itself is in a folder this computer recorded elsewhere"
+			}
+		}
+	}
+	return "this encrypted archive was created but has no backup yet — finish setting up: run a backup into it"
 }
 
 // MustMinimise reports whether a record written beside out must take an encrypted

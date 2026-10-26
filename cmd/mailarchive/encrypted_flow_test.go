@@ -14,6 +14,7 @@ import (
 	"mail-archive-tool/internal/encrecord"
 	"mail-archive-tool/internal/graphconfig"
 	"mail-archive-tool/internal/keyring"
+	"mail-archive-tool/internal/tty"
 	"mail-archive-tool/internal/vault"
 )
 
@@ -28,12 +29,17 @@ type scripted struct {
 	prompts    []string
 	said       []string
 	shown      []string
+	onShow     func() // runs each time a key is shown
+	interrupt  string // a prompt containing this is interrupted (Ctrl-C)
 }
 
 func (s *scripted) attended() bool { return s.isAttended }
 
 func (s *scripted) next(prompt string) (string, error) {
 	s.prompts = append(s.prompts, prompt)
+	if s.interrupt != "" && strings.Contains(prompt, s.interrupt) {
+		return "", &tty.ErrInterrupted{Signal: os.Interrupt}
+	}
 	if len(s.answers) == 0 {
 		return "", fmt.Errorf("the script ran out at %q", prompt)
 	}
@@ -48,7 +54,13 @@ func (s *scripted) next(prompt string) (string, error) {
 func (s *scripted) secret(prompt string) (string, error) { return s.next(prompt) }
 func (s *scripted) line(prompt string) (string, error)   { return s.next(prompt) }
 func (s *scripted) say(format string, a ...any)          { s.said = append(s.said, fmt.Sprintf(format, a...)) }
-func (s *scripted) showKey(key string) error             { s.shown = append(s.shown, key); return nil }
+func (s *scripted) showKey(key string) error {
+	s.shown = append(s.shown, key)
+	if s.onShow != nil {
+		s.onShow()
+	}
+	return nil
+}
 
 func (s *scripted) transcript() string {
 	return strings.Join(append(append([]string{}, s.prompts...), s.said...), "\n")
@@ -378,12 +390,26 @@ func TestEncryptionFlagsAreRefusedWhereTheyCannotWork(t *testing.T) {
 	code, stderr := runCLI("-out", t.TempDir(), "-input", "../../testdata/support.pst", "-password-file", "x")
 	assure.Refused(t, code, stderr, assure.Code(1), assure.Names("-password-file", "encrypted archive"))
 	for _, flag := range keyFlagNames {
-		_, err := parseJob([]string{"-out", t.TempDir(), "-input", t.TempDir(), "-" + flag})
-		code, msg := 0, ""
-		if err != nil {
-			code, msg = 1, err.Error()
+		arg := []string{"-" + flag}
+		if flag != "encrypt" && flag != "remember" {
+			arg = append(arg, filepath.Join(t.TempDir(), "x"))
 		}
-		assure.Refused(t, code, msg, assure.Code(1), assure.Names("-"+flag, "cannot be scheduled"))
+		for _, verb := range [][]string{nil, {"graph", "-tenant", "t", "-client-id", "c", "-mailbox", "a@example.org", "-client-secret-file", filepath.Join(t.TempDir(), "s")}} {
+			_, err := parseJob(append(append(verb, "-out", t.TempDir(), "-input", t.TempDir()), arg...))
+			if verb != nil {
+				_, err = parseJob(append(append(verb, "-out", t.TempDir()), arg...))
+			}
+			code, msg := 0, ""
+			if err != nil {
+				code, msg = 1, err.Error()
+			}
+			assure.Refused(t, code, msg, assure.Code(1), assure.Names("-"+flag, "cannot be scheduled"))
+		}
+	}
+	// A flag's value that only looks like a key flag is not one (the P3-1a pass,
+	// REG-01): an -input folder named "-encrypt" is scheduled.
+	if _, err := parseJob([]string{"-out", t.TempDir(), "-input", "-encrypt"}); err != nil {
+		t.Fatalf("an -input folder named -encrypt was refused: %v", err)
 	}
 	for _, verb := range []string{"change-password", "new-recovery-key", "forget-key", "forget-archive", "repair-record", "encrypt"} {
 		if _, err := parseJob([]string{verb, "-out", t.TempDir()}); err == nil || !strings.Contains(err.Error(), "cannot be scheduled") {

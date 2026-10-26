@@ -41,6 +41,13 @@ jobs:
       - name: Test (incl. assurance gates)
         run: go test ./... -count=1
 
+      # The unlock package's leases and locks decide when a master key is zeroed;
+      # their tests are owed under the race detector (phase3 §3.2, MA-778; the P3-1a
+      # adversarial pass, CRIT-01).
+      - name: Race detector (encrypted archives' keys)
+        if: matrix.os == 'ubuntu-latest'
+        run: go test -race -count=1 ./internal/keyring/ ./internal/vault/ ./internal/tty/
+
       - name: Vulnerability scan (reachable code)
         if: matrix.os == 'ubuntu-latest'
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...

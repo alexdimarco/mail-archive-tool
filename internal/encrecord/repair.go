@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"time"
 
 	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/util"
@@ -20,6 +21,14 @@ var ErrNotDamaged = errors.New("this computer's record of encrypted archives is 
 // ErrRepairRaced refuses a repair whose record changed between its scan and its
 // lock.
 var ErrRepairRaced = errors.New("this computer's record of encrypted archives changed while it was being repaired; run the repair again")
+
+// Seams for fault injection: afterRepairScan runs between the scan and the lock,
+// beforeRepairWrite once the damaged copies are kept aside and before the rebuilt
+// record is written.
+var (
+	afterRepairScan   = func() {}
+	beforeRepairWrite = func() {}
+)
 
 // RepairReport says what a repair did.
 type RepairReport struct {
@@ -46,6 +55,7 @@ func Repair() (RepairReport, error) {
 		return rep, err
 	}
 	scanned := [2][]byte{readRaw(p), readRaw(m)}
+	afterRepairScan()
 	if err := RefuseSettingsWrite(p, "this computer's record of encrypted archives"); err != nil {
 		return rep, err
 	}
@@ -64,19 +74,34 @@ func Repair() (RepairReport, error) {
 		return rep, ErrRepairRaced
 	}
 
-	rebuilt := &Record{Archives: map[string]*Entry{}}
+	// Copies are salvaged oldest first, so a later copy's tombstone decides an id's
+	// (the P3-1a pass, CRIT-08).
+	type found struct {
+		path string
+		raw  []byte
+		seq  uint64
+	}
+	var copies []found
 	var seq uint64
 	for _, path := range []string{p, m} {
 		raw := readRaw(path)
 		if raw == nil {
 			continue
 		}
-		if _, s, ok := readHeader(path); ok && s > seq {
-			seq = s
-		}
-		salvage(rebuilt, raw, filepath.Base(path), &rep)
+		_, s, _ := readHeader(path)
+		copies = append(copies, found{path, raw, s})
+		seq = max(seq, s)
+	}
+	sort.SliceStable(copies, func(i, j int) bool { return copies[i].seq < copies[j].seq })
+	rebuilt := &Record{Archives: map[string]*Entry{}}
+	for _, c := range copies {
+		salvage(rebuilt, c.raw, filepath.Base(c.path), &rep)
 	}
 	for _, e := range rebuilt.Archives {
+		// A folder recorded again is not forgotten.
+		if len(e.Paths) > 0 {
+			e.Forgotten = false
+		}
 		rep.Paths += len(e.Paths)
 		if e.Forgotten {
 			rep.Tombstones++
@@ -92,15 +117,17 @@ func Repair() (RepairReport, error) {
 	if err := lock.StillHeld(); err != nil {
 		return rep, err
 	}
-	for _, path := range []string{p, m} {
-		if _, err := os.Lstat(path); err != nil {
-			continue
+	// Each damaged copy is COPIED aside, then replaced in one rename: the record
+	// never passes through having no copy, which would read as an empty, usable
+	// record that no longer needs repair (the P3-1a pass, CON-02).
+	for _, c := range copies {
+		aside, err := copyAside(c.path, c.raw)
+		if err != nil {
+			return rep, fmt.Errorf("keep %s aside: %w", c.path, err)
 		}
-		if err := moveAside(path); err != nil {
-			return rep, fmt.Errorf("move %s aside: %w", path, err)
-		}
-		rep.MovedAside = append(rep.MovedAside, path)
+		rep.MovedAside = append(rep.MovedAside, aside)
 	}
+	beforeRepairWrite()
 	if err := util.WriteFileAtomic0600(p, data); err != nil {
 		return rep, err
 	}
@@ -108,6 +135,36 @@ func Repair() (RepairReport, error) {
 		return rep, fmt.Errorf("the record of encrypted archives was rebuilt, but its mirror was not written: %w", err)
 	}
 	return rep, nil
+}
+
+// copyAside writes raw to a new <path>.damaged-<date>-<n>, never over an existing
+// file, owner-only and synced, and returns its name.
+func copyAside(path string, raw []byte) (string, error) {
+	date := time.Now().UTC().Format("20060102")
+	for n := 1; n < 1000; n++ {
+		dst := fmt.Sprintf("%s.damaged-%s-%d", path, date, n)
+		f, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if errors.Is(err, os.ErrExist) {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		_, werr := f.Write(raw)
+		if werr == nil {
+			werr = f.Sync()
+		}
+		if cerr := f.Close(); werr == nil {
+			werr = cerr
+		}
+		if werr != nil {
+			os.Remove(dst)
+			return "", werr
+		}
+		util.SyncDir(filepath.Dir(dst))
+		return dst, nil
+	}
+	return "", errors.New("too many damaged copies already set aside")
 }
 
 // checkRepairable refuses a record that is not damaged.
@@ -163,7 +220,7 @@ func salvage(rec *Record, raw []byte, name string, rep *RepairReport) {
 			have = &Entry{}
 			rec.Archives[id] = have
 		}
-		have.Forgotten = have.Forgotten || e.Forgotten
+		have.Forgotten = e.Forgotten // the later copy decides
 		for _, pe := range e.Paths {
 			if pe.Spelling == "" || !filepath.IsAbs(pe.Spelling) {
 				rep.NotRebuilt = append(rep.NotRebuilt, fmt.Sprintf("%s: a path of %s that is not a folder (%q)", name, id, pe.Spelling))

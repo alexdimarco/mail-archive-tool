@@ -113,7 +113,7 @@ func TestAForgottenArchiveIsRecordedAgainOnlyWhenConfirmed(t *testing.T) {
 	before := loadRecord(t).Seq()
 
 	asked := ""
-	_, err := Open(out, Password(testPassword), OpenOptions{Write: true, ConfirmReRecord: func(got string) bool { asked = got; return false }})
+	_, err := Open(out, Password(testPassword), OpenOptions{Write: true, ConfirmReRecord: func(got string) (bool, error) { asked = got; return false, nil }})
 	code, msg := refusal(err)
 	assure.Refused(t, code, msg, assure.Code(1), assure.Names("forget", id),
 		assure.NoSideEffect(func() bool { return loadRecord(t).Seq() == before && recordedID(t, out) == "" }))
@@ -121,7 +121,7 @@ func TestAForgottenArchiveIsRecordedAgainOnlyWhenConfirmed(t *testing.T) {
 		t.Fatalf("the question named %q, want %s", asked, id)
 	}
 
-	u, err := Open(out, Password(testPassword), OpenOptions{Write: true, ConfirmReRecord: func(string) bool { return true }})
+	u, err := Open(out, Password(testPassword), OpenOptions{Write: true, ConfirmReRecord: func(string) (bool, error) { return true, nil }})
 	if err != nil {
 		t.Fatalf("confirmed: %v", err)
 	}
@@ -195,7 +195,7 @@ func TestAnUnrecordedKeyFileAskingForMoreWorkIsConfirmedFirst(t *testing.T) {
 	opens := countOpens(t)
 
 	// Positive twin: MailArchive's own cost is not asked about.
-	u, err := Open(out, Password(testPassword), OpenOptions{ConfirmCost: func(vault.Params) bool { t.Fatal("asked about the floor cost"); return false }})
+	u, err := Open(out, Password(testPassword), OpenOptions{ConfirmCost: func(vault.Params) (bool, error) { t.Fatal("asked about the floor cost"); return false, nil }})
 	if err != nil {
 		t.Fatalf("positive twin: %v", err)
 	}
@@ -211,7 +211,7 @@ func TestAnUnrecordedKeyFileAskingForMoreWorkIsConfirmedFirst(t *testing.T) {
 		t.Fatalf("want ErrCostRefused, got %v", err)
 	}
 	var asked vault.Params
-	_, err = Open(out, Password(testPassword), OpenOptions{ConfirmCost: func(p vault.Params) bool { asked = p; return true }})
+	_, err = Open(out, Password(testPassword), OpenOptions{ConfirmCost: func(p vault.Params) (bool, error) { asked = p; return true, nil }})
 	assure.Reached(t, *opens, "a derivation once confirmed")
 	if asked.MemoryKiB != 2*vault.CostFloor().MemoryKiB {
 		t.Fatalf("the question named %s", asked)

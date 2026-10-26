@@ -559,6 +559,16 @@ func changeLost(id string, add bool) error {
 	if err != nil {
 		return err
 	}
+	// A mark decided on an older look at the record is not made once the record
+	// lists the id (the P3-1a pass, CON-06).
+	if add {
+		_, p, m, perr := paths()
+		if perr == nil {
+			if rec, jerr := judge(readOne(p), readOne(m)); jerr == nil && rec.Archives[id] != nil {
+				return nil
+			}
+		}
+	}
 	kept := ids[:0:0]
 	found := false
 	for _, have := range ids {
@@ -745,6 +755,18 @@ func (r *Record) Lookup(path string) (Match, bool) {
 	for ci, start := range chains {
 		for d := start; ; d = filepath.Dir(d) {
 			sp, src := Spelling(d), sourceKey(state.PathSourceID(d))
+			// A folder's own recorded spelling — as given, or with only its parents
+			// resolved — wins over any other entry the folder reaches through a link
+			// at its own name: a recorded folder replaced by a link to another
+			// recorded archive is itself, and reads case L (the P3-1a pass, OUT-01).
+			if ci == 0 {
+				leaf := Spelling(filepath.Join(util.ResolveExisting(filepath.Dir(d)), filepath.Base(d)))
+				for _, rp := range all {
+					if rp.pe.Spelling == sp || rp.pe.Spelling == leaf {
+						return Match{ID: rp.id, Path: rp.pe, Folder: d, BySpelling: true}, true
+					}
+				}
+			}
 			for _, rp := range all {
 				stored, storedSrc := rp.pe.Spelling, sourceKey(rp.pe.Source)
 				if stored == sp || stored == src || storedSrc == sp || storedSrc == src {

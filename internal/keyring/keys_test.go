@@ -123,6 +123,11 @@ func TestTheRecoveryKeyEnteredAgainIsCheckedByItsValue(t *testing.T) {
 	if err := CheckRecoveryKey(rk, string(typo)); err == nil {
 		t.Fatal("a typing mistake matched")
 	}
+	// A password pasted there is refused without quoting any of it: not a character,
+	// its place or its length (the P3-1a pass, SEC-07).
+	err = CheckRecoveryKey(rk, "hunter2 is+my secret")
+	code, msg = refusal(err)
+	assure.Refused(t, code, msg, assure.Code(1), assure.Names("not a recovery key"), assure.Forbid("+", "character", "hunter2"))
 }
 
 // covers: MA-784, R37
@@ -200,15 +205,28 @@ func TestAFolderThatMayHaveBeenTamperedWithAsksTheStrongConfirmation(t *testing.
 	}
 	assure.Reached(t, p.Strong && p.Case == encmark.Other, "case 2's strong confirmation")
 
-	// An unproven path, an unrecorded folder, and an unusable record are refused.
+	// An unproven path still holding its key files (open it to prove it), and an
+	// unrecorded folder, are refused; an unproven path whose key files are gone
+	// can be forgotten, with the strong confirmation (the P3-1a pass, CRIT-02).
 	freshRecord(t)
-	unproven := filepath.Join(t.TempDir(), "rebuilt")
-	change(t, func(r *encrecord.Record) error { return r.Add(strings.Repeat("ab", 16), unproven, true, now()) })
-	for name, path := range map[string]string{"unproven": unproven, "unrecorded": t.TempDir()} {
+	change(t, func(r *encrecord.Record) error { return r.Add(strings.Repeat("ab", 16), out, true, now()) })
+	for name, path := range map[string]string{"unproven with its key files": out, "unrecorded": t.TempDir()} {
 		_, err := PlanForget(path, nil)
 		code, msg := refusal(err)
 		assure.Refused(t, code, msg, assure.Code(1), assure.Names(path))
 		_ = name
+	}
+	gone := filepath.Join(t.TempDir(), "rebuilt")
+	change(t, func(r *encrecord.Record) error { return r.Add(strings.Repeat("cd", 16), gone, true, now()) })
+	pg, err := PlanForget(gone, nil)
+	if err != nil || !pg.Strong {
+		t.Fatalf("an unproven path whose archive is gone: %+v %v", pg, err)
+	}
+	if res, _ := encmark.At(gone); !strings.Contains(res.Why, "forget-archive") {
+		t.Fatalf("an unproven path whose archive is gone is told how to forget it: %s", res.Why)
+	}
+	if err := Forget(pg, ForgetOptions{Whole: pg.Last}); err != nil || recordedID(t, gone) != "" {
+		t.Fatalf("forgetting it: %v, still recorded %q", err, recordedID(t, gone))
 	}
 	dir := freshRecord(t)
 	damageRecord(t, dir)

@@ -12,6 +12,7 @@ import (
 	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/encrecord"
 	"mail-archive-tool/internal/job"
+	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/vault"
 )
 
@@ -163,7 +164,12 @@ func TestCreateRefusesItsFoldersBeforeAnyDerivation(t *testing.T) {
 	}
 }
 
-// covers: MA-779, R37
+// covers: MA-779, MA-790, R37
+// The record busy at Commit (another MailArchive holds its lock): the key file is
+// written and stays — every keyless writer refuses the folder by it — and the error
+// is ErrCreatedNotRecorded, telling once, in the record's own words, to finish
+// setting up when it is free (the P3-1a pass, FID-12, CRIT-04). The record unusable
+// by Commit refuses before anything is written (OUT-03's re-check).
 func TestACreateWhoseRecordCannotBeWrittenKeepsItsKeyFileAndSaysToFinish(t *testing.T) {
 	recDir := freshRecord(t)
 	out := filepath.Join(t.TempDir(), "archive")
@@ -171,14 +177,32 @@ func TestACreateWhoseRecordCannotBeWrittenKeepsItsKeyFileAndSaysToFinish(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The record becomes unusable between the prepare and the commit.
-	damageRecord(t, recDir)
+	held, err := lockfile.AcquireAs(filepath.Join(recDir, encrecord.LockName), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
 	_, err = p.Commit()
+	held.Release()
 	code, msg := refusal(err)
-	assure.Refused(t, code, msg, assure.Code(1), assure.Names(out, "finish setting it up"))
+	assure.Refused(t, code, msg, assure.Code(1), assure.Names(out, "busy updating its record", "finish setting up"),
+		assure.Forbid("archive is in use"))
+	if !errors.Is(err, ErrCreatedNotRecorded) || strings.Count(msg, "busy updating") != 1 {
+		t.Fatalf("want ErrCreatedNotRecorded told once, got %v", err)
+	}
 	if !exists(filepath.Join(out, vault.FileName)) {
 		t.Fatal("the key file must stay: every keyless writer refuses the folder by it")
 	}
 	res, _ := encmark.At(out)
 	assure.Reached(t, res.Encrypted, "the folder refused to keyless writers by its own key file")
+
+	out2 := filepath.Join(t.TempDir(), "archive")
+	p, err = Create(out2, testPassword, CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	damageRecord(t, recDir)
+	_, err = p.Commit()
+	code, msg = refusal(err)
+	assure.Refused(t, code, msg, assure.Code(1), assure.Names(out2, "record of encrypted archives"),
+		assure.NoSideEffect(func() bool { return !exists(filepath.Join(out2, vault.FileName)) }))
 }

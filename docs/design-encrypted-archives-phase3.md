@@ -44,7 +44,13 @@ MA-726 allow-list's one package-wide entry, and ruled for a cheap key cost in te
 (`vault.UseTestCost`, MA-776). Two read-only additions to Phase 1's frozen vault API came with it:
 `vault.CostFloor` (K14 asks before deriving above it) and `UseTestCost`, which panics outside a
 test binary. What P3-1a decided in building is marked *Amended in P3-1a* in place (§3.7, §4.2,
-§16). Its adversarial pass is owed before P3-1b.
+§16).
+
+**P3-1a's adversarial pass** (workflow run `wf_4c9f8705-682`, 2026-10-26) confirmed 36 of 40
+findings and the critic added 10; every one is fixed but three stated residuals, under MA-790.
+The findings and what was done are in `docs/review-encrypted-archives-phase3-p31a-adversarial.md`.
+The rules it changed are marked *Amended after the P3-1a adversarial pass* in §3.4, §4.6 and
+§5.2.
 
 **Gates.**
 - **Before code:** none left for P3-0 and P3-1. The three split-out designs are each reviewed
@@ -267,6 +273,18 @@ Refusals without a terminal:
 - A write is refused naming Phase 4 (O5).
 
 `-remember` is taken by `export -encrypt`, `graph -encrypt`, and any keyed open.
+
+*Amended after the P3-1a adversarial pass:*
+- A new password that reads as a recovery key is refused when it is set; at the prompt, what fails
+  as a recovery key is tried as a password through a whole open, its own K14 question included
+  (SEC-03, CRIT-10).
+- A secret file with a UTF-8 byte-order mark reads; a UTF-16 one is refused with the remedy
+  (CRIT-09). On Linux an access list beyond the mode is refused (SEC-06); on macOS it is a residual.
+- `-recovery-key-file` reads the one line that is not blank and not a `#` comment, so the file
+  `-recovery-key-out` writes reads back (SEC-02), and refuses other text without quoting it
+  (SEC-07).
+- A question asked inside an open (K14, "record it again") passes Ctrl-C on as an interruption
+  (CON-08). Finishing an unrecorded archive offers Remember again, on by default (CON-07).
 
 There is no secret-valued flag and no environment variable. A test walks every `FlagSet` against
 an explicit allow-list: `-password-file`, `-recovery-key-file`, `-recovery-key-out`,
@@ -597,6 +615,19 @@ P3-0 ships the cases with that interim wording.
   the record. Credential Manager can list entries; the cross-platform store cannot.
 - **A new archive at a recorded path** is refused until that path is forgotten.
 
+*Amended after the P3-1a adversarial pass:*
+- **Order:** under the locks the folder's case and the record are re-read; only then is a
+  remembered key forgotten, then the record written (CON-05, FID-01). A folder whose archive lock
+  another run holds is refused, "try again when it is free" (FID-02).
+- **An unproven path whose key files are gone** (CRIT-02; implementer's call, vetoable) can be
+  forgotten, with the strong confirmation: nothing could ever prove it, and §4.5's case 0 now says
+  how to forget it instead of "open it with its password".
+- A removed archive typed through a linked parent folder is its own folder (CRIT-06).
+- A recorded folder replaced by a link to another recorded archive matches as itself, in case L
+  (OUT-01).
+- **A backup at a terminal may unlock an unproven path whose archive is whole**, which proves it
+  (§4.3); `verify` still refuses it (REG-02, CRIT-03).
+
 ## 5. Making an encrypted archive
 
 ### 5.1 The flow
@@ -656,6 +687,15 @@ P3-0 ships the cases with that interim wording.
     - is flushed, with its folder synced, before `Commit`;
     - is refused at or inside any encrypted archive or the target folder;
     - warns when the access list cannot be set.
+
+    *Amended after the P3-1a adversarial pass (SEC-01, SEC-09, CON-03, CRIT-04):* it is judged
+    before anything is asked, and written only after the key was entered again, just before
+    `Commit`: made empty, restricted to the user, then filled. If it cannot be restricted it is
+    removed and the run refused, not warned: a recovery key is never left where others may read
+    it. When the key does not take effect, it is overwritten and removed, and the person is told
+    the key is NOT in effect and the earlier one still opens. When the archive was created but
+    not recorded (`keyring.ErrCreatedNotRecorded`), it is kept and named.
+  - `-encrypt` judges the folder before asking for a password (REG-03).
 - **Desktop.**
   - The Encryption card (`sec-encryption`), and "Add another archive" through an encryption hook
     in `localArchiveFlow`, on every OS.

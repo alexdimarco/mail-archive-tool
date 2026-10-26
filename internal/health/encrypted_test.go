@@ -219,6 +219,39 @@ func TestStatusWarnsAnArchiveLostFromTheRecord(t *testing.T) {
 	if r := Assess(Gather(sealed, ""), time.Now()); slices.Contains(r.Codes, "encrypted_record_lost") {
 		t.Fatalf("a cleared note still warned: %v", r.Codes)
 	}
+	// A stale note for an archive the record lists again is no warning (the P3-1a
+	// pass, CON-06): the note left by a read open that raced an adoption.
+	encrecord.Update("test", func(r *encrecord.Record) error { return r.Add(id, sealed, false, time.Now()) })
+	dir, _ := encrecord.Dir()
+	os.WriteFile(filepath.Join(dir, encrecord.LostName), []byte(id+"\n"), 0o600)
+	if r := Assess(Gather(sealed, ""), time.Now()); slices.Contains(r.Codes, "encrypted_record_lost") {
+		t.Fatalf("a stale note for a recorded archive warned: %v", r.Codes)
+	}
+}
+
+// covers: MA-790, R37
+// An encrypted archive created but never backed up is a WARN saying to finish
+// setting up; a folder holding only a copy of the key file of an archive this
+// computer recorded elsewhere says so instead; once it has a backup neither shows
+// (§5.1 step 7; the P3-1a pass, CRIT-05).
+func TestStatusWarnsAnEncryptedArchiveNotYetSetUp(t *testing.T) {
+	t.Cleanup(encrecord.SetDirForTest(t.TempDir()))
+	out := t.TempDir()
+	sealFolder(t, out)
+	r := Assess(Gather(out, ""), time.Now())
+	if r.Posture != "WARN" || !slices.Contains(r.Codes, "encrypted_not_set_up") || !strings.Contains(strings.Join(r.Reasons, "\n"), "finish setting up") {
+		t.Fatalf("an archive with no backup yet: %s %v %v", r.Posture, r.Codes, r.Reasons)
+	}
+	id := vault.Claims(out).IDs[0].String()
+	encrecord.Update("test", func(r *encrecord.Record) error { return r.Add(id, t.TempDir(), false, time.Now()) })
+	r = Assess(Gather(out, ""), time.Now())
+	if !strings.Contains(strings.Join(r.Reasons, "\n"), "only a copy of the archive's key file") {
+		t.Fatalf("a key-file-only copy: %v", r.Reasons)
+	}
+	os.WriteFile(filepath.Join(out, ".mailarchive-manifest.ptr"), []byte("x"), 0o600)
+	if r := Assess(Gather(out, ""), time.Now()); slices.Contains(r.Codes, "encrypted_not_set_up") {
+		t.Fatalf("an archive with a backup still warned: %v", r.Codes)
+	}
 }
 
 // sealFolder commits a vault into dir: an encrypted archive.

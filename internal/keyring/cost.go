@@ -45,13 +45,19 @@ func highestCost(out string, s Secret) (vault.Params, bool) {
 // this computer has not recorded (K14): a key file there may come from anyone, and
 // one can ask for up to the ceiling's memory and time. Without someone to ask it
 // refuses, naming the cost.
-func confirmCost(out string, s Secret, confirm func(vault.Params) bool) error {
+func confirmCost(out string, s Secret, confirm func(vault.Params) (bool, error)) error {
 	p, above := highestCost(out, s)
 	if !above {
 		return nil
 	}
-	if confirm != nil && confirm(p) {
-		return nil
+	if confirm != nil {
+		ok, err := confirm(p)
+		if err != nil {
+			return err
+		}
+		if ok {
+			return nil
+		}
 	}
 	return fmt.Errorf("%w: opening %s would use %s (MailArchive's own key files use %s), and this computer has not recorded this archive — open it at a terminal to confirm",
 		ErrCostRefused, out, p, vault.CostFloor())

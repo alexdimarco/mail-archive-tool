@@ -19,6 +19,9 @@ func ChangePassword(u *Unlocked, newPassword string) error {
 	if !u.write {
 		return errReadOnly
 	}
+	if err := CheckNewPassword(newPassword); err != nil {
+		return err
+	}
 	k, _, err := u.acquire()
 	if err != nil {
 		return err
@@ -72,8 +75,8 @@ func NewRecoveryKey(u *Unlocked) (*PendingRecovery, error) {
 	return &PendingRecovery{p: p}, nil
 }
 
-// Remember files u's key in s (O3, §9.3) and records the folder, as an open with
-// Remember does.
+// Remember files u's key in s (O3, §9.3). Only an archive opened for a write may:
+// its folder is already recorded by that open.
 func Remember(u *Unlocked, s vault.Store) error {
 	if !u.write {
 		return errReadOnly
@@ -91,10 +94,21 @@ func CheckRecoveryKey(shown, typed string) error {
 	}
 	got, err := vault.ParseRecoveryKey(typed)
 	if err != nil {
-		return err
+		return recoveryKeyRefusal(err)
 	}
 	if got != want {
 		return errors.New("that is not the recovery key shown")
 	}
 	return nil
+}
+
+// recoveryKeyRefusal says what is wrong with text that does not read as a recovery
+// key without quoting any of it: the parse's own detail names a character and its
+// place, or the length — part of a secret, if a password was given there (the P3-1a
+// pass, SEC-07). A typing mistake says only that.
+func recoveryKeyRefusal(err error) error {
+	if errors.Is(err, vault.ErrRecoveryCheck) {
+		return vault.ErrRecoveryCheck
+	}
+	return vault.ErrRecoveryFormat
 }

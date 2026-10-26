@@ -304,10 +304,13 @@ func TestARefusedRunKeepsItsRecordMinimisedWhileTheRecordCannotBeUsed(t *testing
 	}
 }
 
-// covers: MA-775, R37
+// covers: MA-775, MA-790, R37
 // verify on a folder this computer recorded as encrypted that no longer holds its
 // archive says what status says — the case's words — and writes nothing: no lock,
 // no verify record, nothing through a link (the P3-0 adversarial pass, CRIT-02).
+// A path a repair left unproven, its archive still whole, is refused by verify too,
+// though a backup at a terminal may unlock (and so prove) it (the P3-1a pass,
+// REG-02, CRIT-03).
 func TestVerifyOfATamperedRecordedFolderRefuses(t *testing.T) {
 	t.Cleanup(encrecord.SetDirForTest(t.TempDir()))
 	for _, tc := range []struct {
@@ -326,6 +329,16 @@ func TestVerifyOfATamperedRecordedFolderRefuses(t *testing.T) {
 			os.Remove(filepath.Join(out, vault.BackupName))
 			os.WriteFile(filepath.Join(out, "index.html"), []byte("<html>"), 0o600)
 		}, "tampered"},
+		{"unproven, still whole", func(t *testing.T, out string) {
+			id := vault.Claims(out).IDs[0].String()
+			encrecord.Update("test", func(r *encrecord.Record) error {
+				r.ForgetID(id)
+				return r.Add(id, out, true, time.Now())
+			})
+			if !UnlockableAt(out) {
+				t.Fatal("a whole archive at an unproven path must be unlockable at a terminal, to prove it")
+			}
+		}, "record was repaired"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out := sealedArchive(t)

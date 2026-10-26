@@ -16,12 +16,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
 	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/encrecord"
+	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/vault"
 )
 
@@ -51,6 +51,9 @@ func (s Secret) Format(f fmt.State, _ rune) {
 	fmt.Fprintf(f, "keyring.Secret{%s, redacted}", map[How]string{ByPassword: "password", ByRecoveryKey: "recovery key"}[s.how])
 }
 
+// IsRecoveryKey reports whether s is a recovery key.
+func (s Secret) IsRecoveryKey() bool { return s.how == ByRecoveryKey }
+
 func (s Secret) vault() vault.Secret {
 	if s.how == ByRecoveryKey {
 		return vault.RecoverySecret(s.text)
@@ -71,6 +74,12 @@ var (
 	// ErrReRecordRefused refuses recording an archive the person told MailArchive to forget,
 	// when they did not confirm recording it again (§4.2).
 	ErrReRecordRefused = errors.New("you told MailArchive to forget this encrypted archive")
+	// ErrNotTheArchive refuses a write at a recorded folder that is now a link, or
+	// holds other files (§4.5 cases L and 2).
+	ErrNotTheArchive = errors.New("this folder no longer holds the encrypted archive this computer recorded")
+	// ErrPasswordLooksLikeKey refuses a new password that reads as a recovery key:
+	// typed at a prompt it would be taken for one (the P3-1a pass, SEC-03).
+	ErrPasswordLooksLikeKey = errors.New("that password reads as a recovery key; choose another")
 )
 
 // deriving lets one key derivation run at a time in this process (§3.7): each
@@ -101,7 +110,16 @@ type Unlocked struct {
 
 	needsHeal bool
 	forked    bool
+	adopted   bool // this open recorded a folder that was not recorded
 	warnings  []string
+}
+
+// Adopted reports that this open recorded its folder, which was not recorded: an
+// archive handed over, or one whose setting up was not finished (§3.3, §5.1 step 7).
+func (u *Unlocked) Adopted() bool {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.adopted
 }
 
 // ArchiveID is the opened archive's id.
@@ -233,11 +251,12 @@ type OpenOptions struct {
 	// open (§3.6). A failed heal is a warning, never a refusal.
 	MayHeal bool
 	// ConfirmCost is asked before a derivation above MailArchive's own cost on a
-	// folder this computer has not recorded (K14). Nil refuses.
-	ConfirmCost func(vault.Params) bool
+	// folder this computer has not recorded (K14). Nil refuses. An error (the
+	// question interrupted) ends the open with that error.
+	ConfirmCost func(vault.Params) (bool, error)
 	// ConfirmReRecord is asked when the person once told MailArchive to forget this
-	// archive (§4.2). Nil refuses.
-	ConfirmReRecord func(id string) bool
+	// archive (§4.2). Nil refuses. An error ends the open with that error.
+	ConfirmReRecord func(id string) (bool, error)
 }
 
 // recorded is what this computer's record says of out.
@@ -262,7 +281,7 @@ func lookup(out string) (recorded, error) {
 	if !ok {
 		return r, nil
 	}
-	if encrecord.Spelling(m.Folder) != encrecord.Spelling(out) {
+	if !atRecordedFolder(out, m) {
 		return r, fmt.Errorf("%s is inside the encrypted archive %s; open the archive at its own folder", out, m.Folder)
 	}
 	r.match, r.ok, r.unproven = m, true, m.Path.Unproven
@@ -274,6 +293,14 @@ func lookup(out string) (recorded, error) {
 		r.want = id
 	}
 	return r, nil
+}
+
+// atRecordedFolder reports whether out is the recorded folder m matched, not a
+// folder inside it. The record's lookup matches a folder by its own spelling with
+// its parents resolved, so a removed archive typed through a linked parent (/tmp,
+// /var on macOS) is matched at out itself (the P3-1a pass, CRIT-06, OUT-01).
+func atRecordedFolder(out string, m encrecord.Match) bool {
+	return encrecord.Spelling(m.Folder) == encrecord.Spelling(out)
 }
 
 // parseID turns a recorded id's hex into a vault.ID.
@@ -294,15 +321,20 @@ func refuseUnusableRecord(out string, err error) error {
 }
 
 // refuseCase refuses a write at a recorded folder that is not intact, in its
-// case's words (§4.5). Intact and a missing key file are the vault's to judge.
+// case's words (§4.5): key files naming another archive are tampering with the key
+// file (vault.ErrTampered); a link or other files are a folder that no longer holds
+// the archive (ErrNotTheArchive) — its key file was not altered (the P3-1a pass,
+// FID-12). Intact and a missing key file are the vault's to judge.
 func refuseCase(out string) error {
 	res, err := encmark.At(out)
 	if err != nil || !res.Recorded {
 		return nil
 	}
 	switch res.Case {
-	case encmark.Link, encmark.Other, encmark.Foreign:
+	case encmark.Foreign:
 		return fmt.Errorf("%w: %s", vault.ErrTampered, res.Why)
+	case encmark.Link, encmark.Other:
+		return fmt.Errorf("%w: %s", ErrNotTheArchive, res.Why)
 	}
 	return nil
 }
@@ -438,7 +470,9 @@ func finishOpen(u *Unlocked, r recorded, o OpenOptions) error {
 			return err
 		}
 	}
-	if o.MayHeal && u.NeedsHeal() {
+	// A fork is not healed — vault.Heal refuses to choose between two people's
+	// changes — and is not called damage (the P3-1a pass, CRIT-07).
+	if o.MayHeal && u.NeedsHeal() && !u.forked {
 		if err := Heal(u); err != nil {
 			u.warn("one copy of this archive's key file is damaged and could not be rewritten: " + err.Error())
 		}
@@ -449,18 +483,29 @@ func finishOpen(u *Unlocked, r recorded, o OpenOptions) error {
 // adopt records u's folder under its id (§3.3, §4.4), asking first when the id
 // was forgotten. An unproven path for the same id becomes proven; an unproven
 // path for another id is replaced by the opened one.
-func adopt(u *Unlocked, r recorded, confirm func(string) bool) error {
+func adopt(u *Unlocked, r recorded, confirm func(string) (bool, error)) error {
 	id := u.id.String()
-	if e := r.rec.Archives[id]; e != nil && e.Forgotten && !(confirm != nil && confirm(id)) {
-		return fmt.Errorf("%w (archive %s); it was not recorded again", ErrReRecordRefused, id)
+	confirmed := false
+	if e := r.rec.Archives[id]; e != nil && e.Forgotten {
+		if confirm != nil {
+			ok, err := confirm(id)
+			if err != nil {
+				return err
+			}
+			confirmed = ok
+		}
+		if !confirmed {
+			return fmt.Errorf("%w (archive %s); it was not recorded again", ErrReRecordRefused, id)
+		}
 	}
 	if r.ok && !r.unproven && r.match.ID == id {
 		clearLost(u, id)
 		return nil
 	}
 	_, err := update("record "+id, func(rec *encrecord.Record) error {
-		if e := rec.Archives[id]; e != nil && e.Forgotten && r.rec.Archives[id] == nil {
-			// Forgotten since the question was asked (or not asked): ask again.
+		// Forgotten since the question was asked, or without it being asked: the
+		// person never said to record it again (the P3-1a pass, CON-04).
+		if e := rec.Archives[id]; e != nil && e.Forgotten && !confirmed {
 			return fmt.Errorf("%w (archive %s); it was not recorded again", ErrReRecordRefused, id)
 		}
 		if m, ok := rec.Lookup(u.out); ok && m.Path.Unproven && m.ID != id {
@@ -471,15 +516,19 @@ func adopt(u *Unlocked, r recorded, confirm func(string) bool) error {
 	if err != nil {
 		return err
 	}
+	u.mu.Lock()
+	u.adopted = true
+	u.mu.Unlock()
 	clearLost(u, id)
 	return nil
 }
 
-// update is encrecord.Update with the busy wording of §4.3.
+// update is encrecord.Update with the busy wording of §4.3: told once, without
+// the lock's own words, which speak of an archive (the P3-1a pass, FID-12).
 func update(verb string, fn func(*encrecord.Record) error) (string, error) {
 	notice, err := encrecord.Update(verb, fn)
-	if err != nil && strings.Contains(err.Error(), "busy updating") {
-		return notice, fmt.Errorf("%w — try again when it is free: %w", ErrRecordBusy, err)
+	if errors.Is(err, lockfile.ErrHeld) {
+		return notice, fmt.Errorf("%w", ErrRecordBusy)
 	}
 	return notice, err
 }

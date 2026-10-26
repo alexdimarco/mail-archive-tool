@@ -1,6 +1,7 @@
 package keyring
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -33,10 +34,34 @@ func PasswordFile(path string) (Secret, error) {
 	return Secret{how: ByPassword, text: text}, err
 }
 
-// RecoveryKeyFile reads the recovery key from path (-recovery-key-file).
+// RecoveryKeyFile reads the recovery key from path (-recovery-key-file): the one
+// line that is not blank and not a "#" comment, so the file -recovery-key-out
+// writes reads back (the P3-1a pass, SEC-02). Text that is not a recovery key is
+// refused without quoting any of it (SEC-07).
 func RecoveryKeyFile(path string) (Secret, error) {
 	text, err := readSecretFile(path, "recovery-key file")
-	return Secret{how: ByRecoveryKey, text: text}, err
+	if err != nil {
+		return Secret{}, err
+	}
+	var lines []string
+	for _, l := range strings.Split(text, "\n") {
+		if l = strings.TrimSpace(l); l != "" && !strings.HasPrefix(l, "#") {
+			lines = append(lines, l)
+		}
+	}
+	if len(lines) != 1 {
+		return Secret{}, fmt.Errorf("%w: recovery-key file %s must hold one recovery key on a line of its own (it holds %d lines of text)", ErrSecretFile, path, len(lines))
+	}
+	if _, err := vault.ParseRecoveryKey(lines[0]); err != nil {
+		return Secret{}, fmt.Errorf("%w: recovery-key file %s: %w", ErrSecretFile, path, recoveryKeyRefusal(err))
+	}
+	return Secret{how: ByRecoveryKey, text: lines[0]}, nil
+}
+
+// RecoveryKeyFileText is the text -recovery-key-out saves: a comment naming the
+// archive, then the key, which RecoveryKeyFile reads back.
+func RecoveryKeyFileText(id vault.ID, key string) string {
+	return fmt.Sprintf("# MailArchive recovery key for the encrypted archive %s\n%s\n", id, key)
 }
 
 // readSecretFile reads a secret file with one descriptor-judged open (§3.4): a
@@ -68,7 +93,13 @@ func readSecretFile(path, kind string) (string, error) {
 	if len(data) > maxSecretFile {
 		return "", refuse(fmt.Sprintf("is larger than %d bytes — is this the right file?", maxSecretFile))
 	}
-	text := string(data)
+	// A UTF-16 file (Windows PowerShell 5's default) or any NUL byte would read as
+	// another secret and be told as a wrong password; a UTF-8 byte-order mark
+	// (Notepad's "UTF-8 with BOM") is dropped (the P3-1a pass, CRIT-09).
+	if bytes.HasPrefix(data, []byte{0xFF, 0xFE}) || bytes.HasPrefix(data, []byte{0xFE, 0xFF}) || bytes.IndexByte(data, 0) >= 0 {
+		return "", refuse("is not plain text (it looks like UTF-16) — save it as plain UTF-8 text")
+	}
+	text := string(bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF}))
 	if strings.HasSuffix(text, "\r\n") {
 		text = text[:len(text)-2]
 	} else if strings.HasSuffix(text, "\n") {

@@ -25,23 +25,20 @@ func DACLReadableByOthers(sddl, userSid string) bool {
 	if strings.Contains(dacl, "NO_ACCESS_CONTROL") {
 		return true
 	}
-	for {
-		open := strings.IndexByte(dacl, '(')
-		if open < 0 {
-			return false
-		}
-		closeRel := strings.IndexByte(dacl[open:], ')')
-		if closeRel < 0 {
-			return true // a torn entry: cannot show it is safe
-		}
-		ace := dacl[open+1 : open+closeRel]
-		dacl = dacl[open+closeRel+1:]
+	aces, torn := splitACEs(dacl)
+	if torn {
+		return true // a torn entry: cannot show it is safe
+	}
+	for _, ace := range aces {
 		f := strings.Split(ace, ";")
 		if len(f) < 6 {
 			return true
 		}
 		aceType, flags, rights, sid := f[0], f[1], f[2], f[5]
-		if aceType != "A" && aceType != "OA" {
+		// Every entry type but a deny or an audit may grant: an allow, an object or
+		// callback (conditional) allow, and a type this code does not know (the
+		// P3-1a pass, SEC-04).
+		if notAGrant[aceType] {
 			continue
 		}
 		if strings.Contains(flags, "IO") { // inherit-only: not this file's access
@@ -59,6 +56,35 @@ func DACLReadableByOthers(sddl, userSid string) bool {
 		}
 		return true
 	}
+	return false
+}
+
+// notAGrant are the entry types that never grant access: denies and audits.
+var notAGrant = map[string]bool{"D": true, "OD": true, "XD": true, "AU": true, "AL": true, "OU": true, "OL": true, "XU": true}
+
+// splitACEs splits a DACL's entries at their top-level parentheses, so a callback
+// entry's condition, which has parentheses of its own, stays one entry. torn
+// reports parentheses that do not balance.
+func splitACEs(dacl string) (aces []string, torn bool) {
+	depth, start := 0, -1
+	for i, r := range dacl {
+		switch r {
+		case '(':
+			if depth == 0 {
+				start = i + 1
+			}
+			depth++
+		case ')':
+			depth--
+			switch {
+			case depth < 0:
+				return nil, true
+			case depth == 0:
+				aces = append(aces, dacl[start:i])
+			}
+		}
+	}
+	return aces, depth != 0
 }
 
 // readMask is the access-mask bits that read a file's contents, or let the holder

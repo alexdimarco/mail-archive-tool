@@ -222,6 +222,34 @@ func stopped(pid int) bool {
 }
 
 // covers: MA-781
+// Ctrl-Z at a prompt that no shell could continue (the terminal's first program, as
+// after exec or ssh -t) is ignored, as the system ignores it there: the prompt does
+// not stop for good, typing stays hidden, and the secret is still read.
+func TestCtrlZIsIgnoredWhenNothingCouldContinueThePrompt(t *testing.T) {
+	s := startSession(t, "prompt")
+	s.prompts(1)
+	pid, err := strconv.Atoi(s.value("pid"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.waitFor("typing hidden", func() bool { return !echoOn(s.slave) })
+	s.typeIn("\x1a")
+	time.Sleep(300 * time.Millisecond)
+	if stopped(pid) {
+		syscall.Kill(pid, syscall.SIGCONT)
+		t.Fatal("Ctrl-Z stopped a prompt nothing could continue")
+	}
+	if echoOn(s.slave) {
+		t.Fatal("Ctrl-Z showed typing at a prompt it could not stop")
+	}
+	s.typeIn(typedSecret + "\n")
+	assure.Reached(t, s.value("match") == "true", "the secret read after an ignored Ctrl-Z")
+	if strings.Contains(s.printed(), typedSecret) {
+		t.Fatalf("the secret was shown on the terminal: %q", s.printed())
+	}
+}
+
+// covers: MA-781
 func TestAHiddenPromptNeedsATerminal(t *testing.T) {
 	r, w, err := os.Pipe()
 	if err != nil {

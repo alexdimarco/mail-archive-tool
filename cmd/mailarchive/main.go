@@ -195,7 +195,7 @@ func runExport(args []string) error {
 		switch {
 		case kerr == nil:
 			creating = *kf.encrypt
-		case !*o.unattended && *o.manifest == "" && app.EncryptedArchiveAt(*o.out):
+		case !*o.unattended && *o.manifest == "" && app.UnlockableAt(*o.out):
 			if *kf.encrypt {
 				return fmt.Errorf("%s is already an encrypted archive; run the backup without -encrypt", abspath(*o.out))
 			}
@@ -210,7 +210,7 @@ func runExport(args []string) error {
 	if err := refuseStrayKeyFlags(fs, kf, keyed, creating); err != nil {
 		return err
 	}
-	if err := requireAttended(*o.out, keyed, creating); err != nil {
+	if err := requireAttended(*o.out, keyed, creating, kf.secretPaths()); err != nil {
 		return err
 	}
 
@@ -303,11 +303,23 @@ func runExport(args []string) error {
 			defer cleanup()
 			pstDir = d
 		}
+		// For an encrypted archive Ctrl-C must not end the process before the deferred
+		// cleanup removes the plaintext PSTs: it is held until the export returns, then
+		// the run stops (the P3-1a pass, CON-10).
+		var pstCtx context.Context
+		if unlocked != nil {
+			var pstStop context.CancelFunc
+			pstCtx, pstStop = signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer pstStop()
+		}
 		logger.Printf("Outlook: exporting each account to a PST under %s ...", pstDir)
 		stores, skips, cerr := outlookcom.CreatePSTs(pstDir,
 			outlookcom.Options{Sync: *outlookSyncWait > 0, SyncWait: *outlookSyncWait}, logger)
 		if cerr != nil {
 			return cerr
+		}
+		if pstCtx != nil && pstCtx.Err() != nil {
+			return errors.New("interrupted during the Outlook export; its working copies were removed and nothing was archived")
 		}
 		for _, s := range stores {
 			inputs = append(inputs, s.Path)
@@ -1342,7 +1354,7 @@ func runGraph(args []string) (err error) {
 	switch {
 	case kerr == nil:
 		creating = *kf.encrypt
-	case !*o.unattended && app.EncryptedArchiveAt(*o.out):
+	case !*o.unattended && app.UnlockableAt(*o.out):
 		if *kf.encrypt {
 			return fmt.Errorf("%s is already an encrypted archive; run the capture without -encrypt", abspath(*o.out))
 		}
@@ -1356,7 +1368,7 @@ func runGraph(args []string) (err error) {
 	if err := refuseStrayKeyFlags(fs, kf, keyed, creating); err != nil {
 		return err
 	}
-	if err := requireAttended(*o.out, keyed, creating); err != nil {
+	if err := requireAttended(*o.out, keyed, creating, kf.secretPaths()); err != nil {
 		return err
 	}
 

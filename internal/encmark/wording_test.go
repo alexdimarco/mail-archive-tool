@@ -7,7 +7,7 @@ import (
 	"mail-archive-tool/internal/assure"
 )
 
-// covers: MA-784
+// covers: MA-784, MA-788
 // Cases L, 1, 2 and 4 offer forgetting the folder by the verb that does it, naming
 // the folder (§4.6); an unproven path and missing key files do not (0: not until it
 // is proven; 3: restore the folder instead).

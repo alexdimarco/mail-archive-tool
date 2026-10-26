@@ -21,6 +21,8 @@ func TestAPasswordFileMayBeReadableOnlyByItsUser(t *testing.T) {
 		"an inherit-only grant to Users":    "D:(A;;FA;;;" + user + ")(A;OICIIO;GR;;;BU)",
 		"a deny entry for Everyone":         "D:(D;;FA;;;WD)(A;;FA;;;" + user + ")",
 		"Everyone may read the access list": "D:(A;;FA;;;" + user + ")(A;;RC;;;WD)",
+		"a callback deny for Users":         "D:(XD;;FR;;;BU;(Member_of {SID(BU)}))(A;;FA;;;" + user + ")",
+		"an audit entry":                    "D:(A;;FA;;;" + user + ")(AU;SA;FR;;;WD)",
 	}
 	for name, sddl := range safe {
 		if DACLReadableByOthers(sddl, user) {
@@ -40,6 +42,10 @@ func TestAPasswordFileMayBeReadableOnlyByItsUser(t *testing.T) {
 		"NULL DACL":                           "D:NO_ACCESS_CONTROL",
 		"an unknown right":                    "D:(A;;ZZ;;;BU)",
 		"a torn entry":                        "D:(A;;FA;;;" + user,
+		"a callback allow for Everyone":       "D:(A;;FA;;;" + user + ")(XA;;FR;;;WD;(Member_of {SID(WD)}))",
+		"a callback allow, condition with ()": "D:(XA;;FR;;;BU;(WIN://SYSAPPID != \"x\"))(A;;FA;;;" + user + ")",
+		"a resource-attribute-style allow":    "D:(ZA;;FR;;;AU)",
+		"an entry type unknown here":          "D:(QQ;;FR;;;BU)",
 		"no user given: the user's own grant": "D:(A;;FA;;;" + user + ")",
 	}
 	for name, sddl := range unsafe {

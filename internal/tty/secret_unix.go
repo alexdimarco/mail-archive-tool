@@ -11,6 +11,17 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// resumable reports whether a stopped process could be continued by a shell: its
+// parent is in the same session, in another process group (job control). Otherwise
+// its process group is orphaned and a stop would last for good.
+func resumable() bool {
+	ppid := unix.Getppid()
+	sid, err1 := unix.Getsid(0)
+	psid, err2 := unix.Getsid(ppid)
+	ppgrp, err3 := unix.Getpgid(ppid)
+	return err1 == nil && err2 == nil && err3 == nil && sid == psid && ppgrp != unix.Getpgrp()
+}
+
 // awaitContinue waits, after a stop, for SIGCONT; an interrupt that comes first
 // ends the prompt (ok false, naming it).
 func awaitContinue(sigs <-chan os.Signal) (os.Signal, bool) {
@@ -70,6 +81,13 @@ func ReadSecret(in *os.File, out io.Writer, prompt string) ([]byte, error) {
 		case s := <-sigs:
 			switch s {
 			case unix.SIGTSTP:
+				// With no shell to continue it (the first program on its terminal,
+				// after exec or ssh -t), the system would ignore Ctrl-Z; so does the
+				// prompt, keeping typing hidden, rather than stop for good (the P3-1a
+				// pass, CON-01).
+				if !resumable() {
+					continue
+				}
 				// Show typing again, then stop as Ctrl-Z would have. SIGSTOP, not a
 				// SIGTSTP re-raised at ourselves: that would come back to this very
 				// channel and loop, flipping the echo while the person types.

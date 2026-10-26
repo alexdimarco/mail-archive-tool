@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/tty/ptytest"
+	"mail-archive-tool/internal/vault"
 )
 
 // rawPty is everything a pty's master end shows, prompts without a newline
@@ -105,14 +107,23 @@ func exitOf(t *testing.T, done chan error, d time.Duration) int {
 // Ctrl-C at the new password's prompt ends -encrypt as an interrupt (exit 130),
 // saying nothing was changed, with typing shown again and no key file made.
 func TestCtrlCAtThePasswordPromptMakesNothing(t *testing.T) {
-	out := filepath.Join(t.TempDir(), "archive")
-	p, done := runOnPty(t, isolatedEnv(t), "-encrypt", "-out", out, "-input", "../../testdata/support.pst", "-remember=false")
-	p.await("Choose a password: ", 1, 30*time.Second)
-	p.typeIn("\x03")
-	code := exitOf(t, done, 30*time.Second)
-	_, err := os.Stat(filepath.Join(out, ".mailarchive-vault.json"))
-	assure.Refused(t, code, p.shown(), assure.Code(130), assure.Names("interrupted", "nothing was changed"),
-		assure.NoSideEffect(func() bool { return os.IsNotExist(err) }))
+	// At the hidden password prompt, and at the shown remember question.
+	for _, at := range []string{"Choose a password: ", "Remember the key on this computer?"} {
+		out := filepath.Join(t.TempDir(), "archive")
+		p, done := runOnPty(t, isolatedEnv(t), "-encrypt", "-out", out, "-input", "../../testdata/support.pst")
+		p.await("Choose a password: ", 1, 30*time.Second)
+		if at != "Choose a password: " {
+			p.typeIn("pty test passphrase\n")
+			p.await("Type it again: ", 1, 10*time.Second)
+			p.typeIn("pty test passphrase\n")
+			p.await(at, 1, 10*time.Second)
+		}
+		p.typeIn("\x03")
+		code := exitOf(t, done, 30*time.Second)
+		_, err := os.Stat(filepath.Join(out, ".mailarchive-vault.json"))
+		assure.Refused(t, code, p.shown(), assure.Code(130), assure.Names("interrupted", "nothing was changed"),
+			assure.NoSideEffect(func() bool { return os.IsNotExist(err) }))
+	}
 }
 
 var reRecoveryKey = regexp.MustCompile(`[A-Z2-7]{4}(?:-[A-Z2-7]{4}){5}-[A-Z2-7]{3}`)
@@ -128,11 +139,14 @@ func TestTheCLIMakesAndBacksUpAnEncryptedArchiveAtARealTerminal(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "archive")
 	const pw = "pty test passphrase"
 
-	p, done := runOnPty(t, env, "-encrypt", "-out", out, "-input", "../../testdata/support.pst", "-remember=false")
+	p, done := runOnPty(t, env, "-encrypt", "-out", out, "-input", "../../testdata/support.pst")
 	p.await("Choose a password: ", 1, 30*time.Second)
 	p.typeIn(pw + "\n")
 	p.await("Type it again: ", 1, 10*time.Second)
 	p.typeIn(pw + "\n")
+	// The remember question, answered on the terminal (typing shown): no.
+	p.await("Remember the key on this computer?", 1, 10*time.Second)
+	p.typeIn("n\n")
 	p.await("Press Enter once you have saved it.", 1, 60*time.Second)
 	key := reRecoveryKey.FindString(p.shown())
 	assure.Reached(t, key, "the recovery key shown")
@@ -156,8 +170,8 @@ func TestTheCLIMakesAndBacksUpAnEncryptedArchiveAtARealTerminal(t *testing.T) {
 			t.Fatalf("the archive lacks %s: %v", name, err)
 		}
 	}
-	if m, _ := filepath.Glob(filepath.Join(out, "*", "*.html")); len(m) > 0 {
-		t.Fatalf("an encrypted backup wrote plaintext pages: %v", m)
+	if p := plaintextIn(t, out); len(p) > 0 {
+		t.Fatalf("an encrypted backup wrote plaintext: %v", p)
 	}
 
 	// No terminal: refused, naming why.
@@ -182,4 +196,63 @@ func TestTheCLIMakesAndBacksUpAnEncryptedArchiveAtARealTerminal(t *testing.T) {
 	if strings.Contains(p.shown(), pw) {
 		t.Fatal("the password was shown on the terminal")
 	}
+	if p := plaintextIn(t, out); len(p) > 0 {
+		t.Fatalf("the keyed backup wrote plaintext: %v", p)
+	}
+
+	// Its key files deleted, the folder stays encrypted to a keyless backup — this
+	// computer recorded it — which is refused, changing nothing (R37).
+	for _, name := range []string{".mailarchive-vault.json", ".mailarchive-vault.bak.json"} {
+		if err := os.Remove(filepath.Join(out, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before := treeOf(t, out)
+	cmd = exec.Command(testBin, "-out", out, "-input", "../../testdata/support.pst")
+	cmd.Env = env
+	stderr.Reset()
+	cmd.Stderr = &stderr
+	err = cmd.Run()
+	code = 0
+	if ee, ok := err.(*exec.ExitError); ok {
+		code = ee.ExitCode()
+	}
+	assure.Refused(t, code, stderr.String(), assure.Code(1), assure.Names(out, "key files are missing"),
+		assure.NoSideEffect(func() bool { return treeOf(t, out) == before }))
+}
+
+// plaintextIn lists what a plaintext archive writes and an encrypted one never
+// does, anywhere under out: pages, originals, attachment zips, the index, a
+// plaintext manifest (the P3-1a pass, FID-11).
+func plaintextIn(t *testing.T, out string) []string {
+	t.Helper()
+	var found []string
+	filepath.WalkDir(out, func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		switch n := d.Name(); {
+		case strings.HasSuffix(n, ".html"), strings.HasSuffix(n, ".eml"), strings.HasSuffix(n, ".zip"), n == "search.db",
+			n == ".mailarchive-manifest.json" && vault.ManifestIsPlaintext(p):
+			found = append(found, p)
+		}
+		return nil
+	})
+	return found
+}
+
+// treeOf is every file under out with its size and modification time.
+func treeOf(t *testing.T, out string) string {
+	t.Helper()
+	var b strings.Builder
+	filepath.WalkDir(out, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if fi, ierr := d.Info(); ierr == nil {
+			fmt.Fprintf(&b, "%s %d %d\n", p, fi.Size(), fi.ModTime().UnixNano())
+		}
+		return nil
+	})
+	return b.String()
 }

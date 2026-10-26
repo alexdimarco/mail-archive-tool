@@ -21,5 +21,11 @@ func ownersOnly(f *os.File, path string) string {
 	if fi.Mode().Perm()&0o077 != 0 {
 		return fmt.Sprintf("can be read by other users (mode %04o) — run `chmod 600 %s`", fi.Mode().Perm(), path)
 	}
+	// An access list beyond the mode can let others read it (the P3-1a pass,
+	// SEC-06). Linux's is read here; macOS's is not reachable without cgo, a
+	// residual stated in the review.
+	if extendedACL(f) {
+		return fmt.Sprintf("has an access list that may let other users read it — run `setfacl -b %s`", path)
+	}
 	return ""
 }

@@ -16,12 +16,17 @@ import (
 // person at a terminal, as Desktop's Encryption card does by its nature, and exits 0
 // when done, 1 when refused or failed, 130/143 when interrupted (X1).
 
-// keyVerbFlags parses a key verb's -out and secret-file flags.
-func keyVerbFlags(name, usage string, args []string, extra func(*flag.FlagSet)) (string, *keyFlags, error) {
+// keyVerbFlags parses a key verb's -out and, for a verb that unlocks the archive
+// (opens), the secret-file flags and -remember (§3.4: "-remember is taken by any
+// keyed open"; the P3-1a pass, FID-10). A verb that does not unlock takes neither.
+func keyVerbFlags(name, usage string, args []string, opens bool, extra func(*flag.FlagSet)) (string, *keyFlags, error) {
 	fs := flag.NewFlagSet("mailarchive "+name, flag.ContinueOnError)
 	out := fs.String("out", "", "the encrypted archive's folder (required)")
 	k := &keyFlags{}
-	addSecretFileFlags(fs, k)
+	if opens {
+		addSecretFileFlags(fs, k)
+		k.remember = fs.Bool("remember", false, "also remember the archive's key on this computer, so backups you start here and opening it do not ask for the password")
+	}
 	if extra != nil {
 		extra(fs)
 	}
@@ -38,6 +43,7 @@ func keyVerbFlags(name, usage string, args []string, extra func(*flag.FlagSet)) 
 	if *out == "" {
 		return "", nil, errors.New("-out is required (the encrypted archive's folder)")
 	}
+	k.rememberGiven = flagWasSet(fs, "remember")
 	return abspath(*out), k, nil
 }
 
@@ -58,7 +64,7 @@ func confirmByRemembered(a asker, u *keyring.Unlocked, what string) error {
 }
 
 func runChangePassword(args []string) error {
-	out, k, err := keyVerbFlags("change-password", "Set a new password for an encrypted archive. It asks for the current password (or recovery key) unless this computer remembers the key; then for the new one, twice.", args, nil)
+	out, k, err := keyVerbFlags("change-password", "Set a new password for an encrypted archive. It asks for the current password (or recovery key) unless this computer remembers the key; then for the new one, twice.", args, true, nil)
 	if err != nil {
 		return err
 	}
@@ -91,7 +97,7 @@ func changePassword(a asker, out string, k *keyFlags) error {
 
 func runNewRecoveryKey(args []string) error {
 	var keyOut *string
-	out, k, err := keyVerbFlags("new-recovery-key", "Make a new recovery key for an encrypted archive; the old one stops opening its key file. It asks for the current password (or recovery key) unless this computer remembers the key.", args, func(fs *flag.FlagSet) {
+	out, k, err := keyVerbFlags("new-recovery-key", "Make a new recovery key for an encrypted archive; the old one stops opening its key file. It asks for the current password (or recovery key) unless this computer remembers the key.", args, true, func(fs *flag.FlagSet) {
 		keyOut = fs.String("recovery-key-out", "", "also save the new recovery key to this NEW file, readable only by you, outside the archive")
 	})
 	if err != nil {
@@ -102,6 +108,16 @@ func runNewRecoveryKey(args []string) error {
 }
 
 func newRecoveryKey(a asker, out string, k *keyFlags) error {
+	keyOut := ""
+	if k.recoveryKeyOut != nil {
+		keyOut = *k.recoveryKeyOut
+	}
+	// Where the key is to be saved is judged before anything is asked.
+	if keyOut != "" {
+		if _, err := checkRecoveryKeyOut(keyOut, out); err != nil {
+			return err
+		}
+	}
 	u, err := unlockForWrite(a, out, "making a new recovery key", k)
 	if err != nil {
 		return err
@@ -114,26 +130,26 @@ func newRecoveryKey(a asker, out string, k *keyFlags) error {
 	if err != nil {
 		return err
 	}
-	committed := false
-	defer func() {
-		if !committed {
-			p.Discard()
-		}
-	}()
-	if k.recoveryKeyOut != nil && *k.recoveryKeyOut != "" {
-		if err := writeRecoveryKeyFile(a, *k.recoveryKeyOut, out, u.ArchiveID().String(), p.RecoveryKey()); err != nil {
-			return err
-		}
-	}
+	// Discard does nothing once the change is spent; on every other way out it
+	// destroys the pending key (the P3-1a pass, SEC-05).
+	defer p.Discard()
 	if err := confirmRecoveryKey(a, p.RecoveryKey()); err != nil {
 		return err
 	}
+	keyFile := ""
+	if keyOut != "" {
+		if keyFile, err = writeRecoveryKeyFile(keyOut, out, u.ArchiveID(), p.RecoveryKey()); err != nil {
+			return err
+		}
+	}
 	err = p.Commit()
-	committed = true
 	switch {
 	case errors.Is(err, vault.ErrPartiallySaved):
 		a.say("The new recovery key is in effect; the second copy of the key file is rewritten at the next opening.")
 	case err != nil:
+		// Not in effect: the person must not keep the key just shown (CON-03).
+		voidRecoveryKeyFile(a, keyFile)
+		a.say("The recovery key just shown is NOT in effect; your earlier recovery key still opens the archive.")
 		return err
 	default:
 		a.say("The new recovery key is in effect.")
@@ -143,7 +159,7 @@ func newRecoveryKey(a asker, out string, k *keyFlags) error {
 }
 
 func runForgetKey(args []string) error {
-	out, _, err := keyVerbFlags("forget-key", "Stop remembering an encrypted archive's key on this computer: backups you start and opening the archive will ask for the password. The archive and this computer's record of it are unchanged.", args, nil)
+	out, _, err := keyVerbFlags("forget-key", "Stop remembering an encrypted archive's key on this computer: backups you start and opening the archive will ask for the password. The archive and this computer's record of it are unchanged.", args, false, nil)
 	if err != nil {
 		return err
 	}
@@ -167,7 +183,7 @@ func forgetKey(a asker, out string) error {
 }
 
 func runForgetArchive(args []string) error {
-	out, _, err := keyVerbFlags("forget-archive", "Forget that this folder holds one of this computer's encrypted archives (for example after you removed it on purpose). Until then MailArchive refuses to back up into the folder without the archive's key.", args, nil)
+	out, _, err := keyVerbFlags("forget-archive", "Forget that this folder holds one of this computer's encrypted archives (for example after you removed it on purpose). Until then MailArchive refuses to back up into the folder without the archive's key.", args, false, nil)
 	if err != nil {
 		return err
 	}

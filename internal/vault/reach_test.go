@@ -24,6 +24,15 @@ var keyProducers = map[string]bool{
 	"PrepareNewRecovery": true, "RequireRetrievableKey": true,
 }
 
+// keyUsers are the vault functions that change an archive's key file or remembered
+// key, or wrap a key as a secret: phase3 §3.1 makes internal/keyring their only
+// production caller (the P3-1a pass, SEC-08). VerifyKey is also package app's, for
+// a keyed run to check the key it was handed.
+var keyUsers = map[string]string{
+	"ChangePasswordAt": "", "Heal": "", "Remember": "", "Forget": "", "KeySecret": "",
+	"VerifyKey": "app",
+}
+
 // keyMethods are the *Vault methods that return a usable *Key. Without type
 // information the scan matches them by name in any file importing the vault.
 var keyMethods = map[string]bool{"Unlock": true, "UnlockRecovery": true}
@@ -155,6 +164,9 @@ func reachesIn(rel string, f *ast.File) []string {
 				if keyProducers[x.Sel.Name] {
 					out = append(out, rel+": calls vault."+x.Sel.Name)
 				}
+				if pkg, ok := keyUsers[x.Sel.Name]; ok && (pkg == "" || pkg != f.Name.Name) {
+					out = append(out, rel+": calls vault."+x.Sel.Name)
+				}
 				// Detect sees only a readable vault: an archive is recognised as
 				// encrypted by EncryptedMarker alone (phase2a §5, P2a-C8).
 				if x.Sel.Name == "Detect" {
@@ -199,6 +211,9 @@ func TestTheReachScanFindsWhatItLooksFor(t *testing.T) {
 		"\t_ = p\n" +
 		"\t_ = app.Options{Out: \"o\", Key: nil}\n" +
 		"\t_ = v.KeySecret(nil)\n" +
+		"\t_ = v.ChangePasswordAt(\"o\", v.ID{}, v.Secret{}, \"pw\")\n" +
+		"\t_ = v.Remember(nil, nil)\n" +
+		"\t_ = v.VerifyKey(\"o\", v.ID{}, nil)\n" +
 		"\t_, _ = v.EncryptedMarker(\"out\")\n" +
 		"\t_, _, _ = v.Detect(\"out\")\n" +
 		"\tvv, _ := v.Parse(nil)\n" +
@@ -227,12 +242,24 @@ func TestTheReachScanFindsWhatItLooksFor(t *testing.T) {
 		"x.go: assigns .Key (sets Options.Key)",
 		"x.go: calls Vault.Unlock",
 		"x.go: calls Vault.UnlockRecovery",
+		"x.go: calls vault.ChangePasswordAt",
 		"x.go: calls vault.Detect (recognise an encrypted archive with vault.EncryptedMarker)",
+		"x.go: calls vault.KeySecret",
 		"x.go: calls vault.Parse",
 		"x.go: calls vault.PrepareCreate",
+		"x.go: calls vault.Remember",
+		"x.go: calls vault.VerifyKey",
 		"x.go: sets Options.Key",
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("the scan must find exactly the aliased producer calls (PrepareCreate, Parse), the key methods (Unlock, UnlockRecovery), Detect, the Options.Key literal and both .Key assignments — and not KeySecret, EncryptedMarker, a mutex Unlock or attr.Key outside app:\n got: %q\nwant: %q", got, want)
+		t.Fatalf("the scan must find exactly the aliased producer calls (PrepareCreate, Parse), the key methods (Unlock, UnlockRecovery), the key users (ChangePasswordAt, KeySecret, Remember, and VerifyKey outside package app), Detect, the Options.Key literal and both .Key assignments — and not EncryptedMarker, a mutex Unlock or attr.Key outside app:\n got: %q\nwant: %q", got, want)
+	}
+	// Package app may verify a key it was handed.
+	appOwn, err := parser.ParseFile(token.NewFileSet(), "enc.go", "package app\nimport \"mail-archive-tool/internal/vault\"\nvar _ = vault.VerifyKey(\"o\", vault.ID{}, nil)\n", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := reachesIn("enc.go", appOwn); len(r) != 0 {
+		t.Fatalf("package app's VerifyKey was flagged: %v", r)
 	}
 }

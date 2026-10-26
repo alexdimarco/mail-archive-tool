@@ -48,16 +48,20 @@ func PlanForget(out string, s vault.Store) (ForgetPlan, error) {
 		return ForgetPlan{}, refuseUnusableRecord(out, err)
 	}
 	m, ok := rec.Lookup(out)
-	if !ok || encrecord.Spelling(m.Folder) != encrecord.Spelling(out) {
+	if !ok || !atRecordedFolder(out, m) {
 		return ForgetPlan{}, fmt.Errorf("%s is not a folder this computer recorded as an encrypted archive; nothing to forget", out)
 	}
-	if m.Path.Unproven {
+	// An unproven path (§4.5 case 0) is proven by opening it — unless its key files
+	// are gone, when nothing can prove it: then it may be forgotten, with the strong
+	// confirmation (implementer's call on the P3-1a pass, CRIT-02; vetoable).
+	unprovenGone := m.Path.Unproven && !vault.Claims(out).Present
+	if m.Path.Unproven && !unprovenGone {
 		return ForgetPlan{}, fmt.Errorf("%s was rebuilt by a repair of this computer's record and is not proven yet; open it with its password first", out)
 	}
 	res, _ := encmark.At(out)
 	e := rec.Archives[m.ID]
 	p := ForgetPlan{Out: out, Spelling: m.Path.Spelling, ID: m.ID, Case: res.Case, entry: cloneEntry(e)}
-	p.Strong = res.Case == encmark.Link || res.Case == encmark.Foreign || res.Case == encmark.Other
+	p.Strong = unprovenGone || res.Case == encmark.Link || res.Case == encmark.Foreign || res.Case == encmark.Other
 	for _, pe := range e.Paths {
 		if pe.Spelling != m.Path.Spelling {
 			p.Others = append(p.Others, pe)
@@ -90,10 +94,12 @@ type ForgetOptions struct {
 	Store vault.Store
 }
 
-// Forget carries out a confirmed plan (§4.6): the remembered key first when asked
-// (a crash after leaves the record still naming the archive), then — under the
-// archive lock when the folder is there, then the record's lock — the record is
-// re-read and the forget refused if anything changed since the plan.
+// Forget carries out a confirmed plan (§4.6): under the archive lock when the
+// folder is there, then the record's lock, it re-reads the folder's case and the
+// record and refuses if either changed since the plan; only then does it forget
+// the remembered key, when asked, and then write the record — keys first, so a
+// crash between leaves the record still naming the archive, but never before the
+// re-check (the P3-1a pass, CON-05, FID-01).
 func Forget(p ForgetPlan, o ForgetOptions) error {
 	if o.Keys && !o.Whole {
 		return errors.New("the key is forgotten only with the whole archive")
@@ -101,6 +107,7 @@ func Forget(p ForgetPlan, o ForgetOptions) error {
 	if o.Whole && !p.Last {
 		return errors.New("the whole archive is forgotten only from its last folder")
 	}
+	var keyID vault.ID
 	if o.Keys {
 		if o.Store == nil {
 			return errors.New("no secret store to forget the key from")
@@ -109,18 +116,28 @@ func Forget(p ForgetPlan, o ForgetOptions) error {
 		if err != nil {
 			return err
 		}
-		if err := vault.Forget(o.Store, id); err != nil && p.Remembered {
-			return fmt.Errorf("the remembered key could not be forgotten, so nothing was changed: %w", err)
-		}
+		keyID = id
 	}
-	if l := lockFolder(p.Out); l != nil {
+	l, err := lockFolder(p.Out)
+	if err != nil {
+		return err
+	}
+	if l != nil {
 		defer l.Release()
 	}
-	_, err := update("forget-archive", func(rec *encrecord.Record) error {
+	if res, _ := encmark.At(p.Out); res.Case != p.Case {
+		return ErrForgetChanged
+	}
+	_, err = update("forget-archive", func(rec *encrecord.Record) error {
 		m, ok := rec.Lookup(p.Out)
 		e := rec.Archives[p.ID]
 		if !ok || m.ID != p.ID || m.Path.Spelling != p.Spelling || e == nil || !sameEntry(*e, p.entry) {
 			return ErrForgetChanged
+		}
+		if o.Keys {
+			if err := vault.Forget(o.Store, keyID); err != nil && p.Remembered {
+				return fmt.Errorf("the remembered key could not be forgotten, so nothing was changed: %w", err)
+			}
 		}
 		if o.Whole {
 			rec.ForgetID(p.ID)
@@ -134,20 +151,24 @@ func Forget(p ForgetPlan, o ForgetOptions) error {
 
 // lockFolder takes the archive lock of a folder that is there and is no link (the
 // lock order: the archive's before the record's, §4.3). A folder that is a link,
-// or absent, is not written into; a lock held elsewhere is waited on not at all —
-// the forget then proceeds on the record alone.
-func lockFolder(out string) *lockfile.Lock {
+// or absent, is not written into. A lock another run holds refuses the forget —
+// try again when it is free (the P3-1a pass, FID-02); a lock that cannot be taken
+// for another reason (a read-only drive) lets it proceed on the record alone.
+func lockFolder(out string) (*lockfile.Lock, error) {
 	if link, _ := util.IsLinkLike(out); link {
-		return nil
+		return nil, nil
 	}
 	if fi, err := os.Stat(out); err != nil || !fi.IsDir() {
-		return nil
+		return nil, nil
 	}
 	l, err := lockfile.AcquireAs(filepath.Join(out, lockfile.Name), "forget-archive")
-	if err != nil {
-		return nil
+	if errors.Is(err, lockfile.ErrHeld) {
+		return nil, fmt.Errorf("%s is in use by another MailArchive run; nothing was changed — try again when it is free: %w", out, err)
 	}
-	return l
+	if err != nil {
+		return nil, nil
+	}
+	return l, nil
 }
 
 func sameEntry(a, b encrecord.Entry) bool {

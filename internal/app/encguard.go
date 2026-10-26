@@ -7,6 +7,7 @@ import (
 
 	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/export"
+	"mail-archive-tool/internal/vault"
 )
 
 // ErrEncryptedNeedsKey refuses an operation that would treat an encrypted archive
@@ -138,6 +139,24 @@ func encryptedArchiveAt(out string) bool {
 // a folder judged encrypted only because this computer's record cannot be used — so a
 // caller at a terminal may unlock it instead of refusing (phase3 §6).
 func EncryptedArchiveAt(out string) bool { return encryptedArchiveAt(out) }
+
+// UnlockableAt reports whether a person at a terminal may unlock out for a backup:
+// an encrypted archive holding itself (EncryptedArchiveAt), or one whose recorded
+// path a repair left unproven and which still holds key files — the open for the
+// write proves the path (§4.3; the P3-1a pass, REG-02). verify's own guard keeps
+// to EncryptedArchiveAt: it checks only an archive this computer knows is intact
+// (CRIT-03).
+func UnlockableAt(out string) bool {
+	if encryptedArchiveAt(out) {
+		return true
+	}
+	abs, err := filepath.Abs(out)
+	if err != nil {
+		abs = filepath.Clean(out)
+	}
+	res, _ := encmark.At(abs)
+	return res.Encrypted && !res.ByRecordErr && res.Case == encmark.Unproven && res.Folder == abs && vault.Claims(abs).Present
+}
 
 // RefuseVerify is verify's guard. An encrypted archive itself is checked without
 // its key (tier 1, phase2b §4), but never with -record; a folder inside one, or one
