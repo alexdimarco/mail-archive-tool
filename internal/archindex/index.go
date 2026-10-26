@@ -22,10 +22,10 @@ import (
 	"strings"
 	"time"
 
+	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/util"
-	"mail-archive-tool/internal/vault"
 )
 
 // KindEncrypted is the kind of an encrypted archive: known without its key from
@@ -127,6 +127,9 @@ func WriteFile(path string, idx Index) error {
 	if len(idx.Entries) > MaxEntries {
 		return fmt.Errorf("refusing to write archive index %s with %d archives, over the %d limit: remove some first", path, len(idx.Entries), MaxEntries)
 	}
+	if err := encmark.RefuseSettingsWrite(path, "the list of your archives"); err != nil {
+		return err
+	}
 	data, err := json.MarshalIndent(idx, "", "  ")
 	if err != nil {
 		return err
@@ -181,7 +184,7 @@ func inspect(folder string) (kind string, ok bool) {
 	}
 	// An encrypted archive is an archive: listed, labelled, never greyed out as
 	// broken because its manifest is not a plaintext one (C10, phase2a §5).
-	if enc, _, _ := vault.EncryptedMarker(folder); enc {
+	if enc, _, _ := encmark.Here(folder); enc {
 		return KindEncrypted, true
 	}
 	root, err := os.OpenRoot(folder)

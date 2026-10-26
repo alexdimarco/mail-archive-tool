@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([switch]$RemoveLocalAppState)
+param([switch]$RemoveLocalAppState, [switch]$ForgetEncryptedArchives)
 $ErrorActionPreference = 'Stop'
 
 # Credential Manager entries are user scoped. Run this AS the user who signed in.
@@ -36,8 +36,28 @@ foreach ($pattern in 'desktop*.lock', 'desktop-instance*.json', 'serve-*.json') 
     Remove-Item (Join-Path $state $pattern) -Force -ErrorAction SilentlyContinue
 }
 
+# This computer's record of the encrypted archives it made (encrypted-archives.rec,
+# its mirror, lock and lost-record list; design-encrypted-archives-phase3 §4.1) is
+# KEPT, like the remembered keys of encrypted archives: without it a folder whose key
+# files were deleted could read as unencrypted here. Only -ForgetEncryptedArchives
+# removes them — the remembered keys first ("mailarchive:archive:..." in Credential
+# Manager), then the record, so an interruption never leaves keys the record no
+# longer names.
+if ($ForgetEncryptedArchives) {
+    $keys = cmdkey.exe /list |
+        Select-String 'LegacyGeneric:target=(mailarchive:archive:[^\s]*)' |
+        ForEach-Object { $_.Matches.Groups[1].Value } |
+        Select-Object -Unique
+    foreach ($key in $keys) {
+        if ($key) { cmdkey.exe /delete:$key | Out-Null }
+    }
+    Remove-Item (Join-Path $state 'encrypted-archives.*') -Force -ErrorAction SilentlyContinue
+}
+
 if ($RemoveLocalAppState) {
-    Remove-Item "$env:LOCALAPPDATA\MailArchiveDesktop" -Recurse -Force -ErrorAction SilentlyContinue
+    Get-ChildItem $state -Force -ErrorAction SilentlyContinue |
+        Where-Object { $ForgetEncryptedArchives -or $_.Name -notlike 'encrypted-archives.*' } |
+        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item "$env:APPDATA\mailarchive" -Recurse -Force -ErrorAction SilentlyContinue
 }
 Write-Output 'Current-user MailArchive authorization cleanup completed. Archive data was not deleted.'

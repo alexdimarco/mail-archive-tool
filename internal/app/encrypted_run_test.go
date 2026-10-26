@@ -170,6 +170,9 @@ func TestAnEncryptedLocalRunWritesOnlyUnitsAndIsIncremental(t *testing.T) {
 
 // covers: MA-725, R37
 func TestAnEncryptedRunRefusesWhatItCannotWriteSafely(t *testing.T) {
+	// Parallel: it changes no package-level seam, and it is among the package's
+	// slowest.
+	t.Parallel()
 	src := encryptedSourcePST(t)
 	_, otherKey := encryptedOut(t)
 

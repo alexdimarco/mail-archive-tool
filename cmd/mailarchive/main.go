@@ -32,6 +32,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -676,12 +677,26 @@ func runVerify(args []string) error {
 
 	// Ctrl-C or a terminate says what happened (F10); the running record is
 	// left as a kill leaves it, so status reports the verify as never finished.
+	// An encrypted archive's check stops between files instead (phase3 §8): it is
+	// recorded as stopped, the lock released, and the exit is still 130 or 143.
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
-	stopWatch := watchVerifyInterrupt(sigs, os.Stderr, abspath(*o.out), os.Exit)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var stopCode atomic.Int32
+	var stopWatch func()
+	if app.ArchiveEncrypted(abspath(*o.out)) {
+		stopWatch = watchVerifyStop(sigs, cancel, &stopCode, os.Exit)
+	} else {
+		stopWatch = watchVerifyInterrupt(sigs, os.Stderr, abspath(*o.out), os.Exit)
+	}
 	defer func() { signal.Stop(sigs); stopWatch() }()
 
-	rep, verr := app.Verify(abspath(*o.out), app.VerifyOptions{Record: *o.record}, logger, nil)
+	rep, verr := app.Verify(abspath(*o.out), app.VerifyOptions{Record: *o.record, Ctx: ctx}, logger, nil)
+	if errors.Is(verr, app.ErrVerifyStopped) {
+		fmt.Fprintf(os.Stderr, "mailarchive: verify stopped: the archive was not fully checked and no new verdict was recorded; the last finished verdict still stands (see `mailarchive status`). Run `mailarchive verify -out %q` again to finish.\n", abspath(*o.out))
+		return &exitError{code: int(stopCode.Load())}
+	}
 	if verr != nil {
 		if *o.log != "" { // a scheduled run leaves its reason in its own log
 			logger.Printf("FAILED: %v", verr)
@@ -713,6 +728,35 @@ func runVerify(args []string) error {
 // calls exit with the shell's code for that signal (130 for Ctrl-C, 143 for
 // terminate). The returned func stops the watcher and waits for it, so a verify
 // that finished normally prints nothing.
+// watchVerifyStop is an encrypted archive's Ctrl-C: the first signal records its
+// exit code (130 for an interrupt, 143 for a terminate) and cancels the check, which
+// stops between files and records itself as stopped; a second signal exits at once.
+func watchVerifyStop(sigs <-chan os.Signal, cancel func(), code *atomic.Int32, exit func(int)) (stop func()) {
+	quit, done := make(chan struct{}), make(chan struct{})
+	codeOf := func(s os.Signal) int32 {
+		if s == syscall.SIGTERM {
+			return 143
+		}
+		return 130
+	}
+	go func() {
+		defer close(done)
+		select {
+		case s := <-sigs:
+			code.Store(codeOf(s))
+			cancel()
+		case <-quit:
+			return
+		}
+		select {
+		case s := <-sigs:
+			exit(int(codeOf(s)))
+		case <-quit:
+		}
+	}()
+	return func() { close(quit); <-done }
+}
+
 func watchVerifyInterrupt(sigs <-chan os.Signal, w io.Writer, out string, exit func(int)) (stop func()) {
 	quit, done := make(chan struct{}), make(chan struct{})
 	go func() {

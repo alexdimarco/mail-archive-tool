@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"mail-archive-tool/internal/encrecord"
 	"mail-archive-tool/internal/instance"
 )
 
@@ -229,5 +230,35 @@ func TestPackagingFilesMatchTheNewLaunch(t *testing.T) {
 		if !matched {
 			t.Errorf("the state file %s the code writes is matched by no pattern Cleanup-CurrentUser.ps1 removes", name)
 		}
+	}
+}
+
+// covers: MA-774, R37
+// The Windows cleanup script keeps this computer's record of encrypted archives
+// (phase3 §4.1): no pattern it always removes matches the record's files, its
+// -RemoveLocalAppState spares them, and only -ForgetEncryptedArchives removes them —
+// after deleting the remembered keys ("mailarchive:archive:..."), never before.
+func TestTheCleanupScriptKeepsTheRecordOfEncryptedArchives(t *testing.T) {
+	cleanup := packagingFile(t, "Cleanup-CurrentUser.ps1")
+	record := []string{encrecord.FileName, encrecord.MirrorName, encrecord.LockName}
+	for _, p := range []string{"desktop*.lock", "desktop-instance*.json", "serve-*.json"} {
+		for _, name := range record {
+			if ok, _ := filepath.Match(p, name); ok {
+				t.Errorf("the always-removed pattern %s matches the record file %s", p, name)
+			}
+		}
+	}
+	for _, name := range record {
+		if ok, _ := filepath.Match("encrypted-archives.*", name); !ok {
+			t.Errorf("the script's record pattern does not match %s", name)
+		}
+	}
+	if !strings.Contains(cleanup, "[switch]$ForgetEncryptedArchives") ||
+		!strings.Contains(cleanup, "$ForgetEncryptedArchives -or $_.Name -notlike 'encrypted-archives.*'") {
+		t.Error("-RemoveLocalAppState does not spare the record unless -ForgetEncryptedArchives is given")
+	}
+	keys, rec := strings.Index(cleanup, "mailarchive:archive:"), strings.Index(cleanup, "Remove-Item (Join-Path $state 'encrypted-archives.*')")
+	if keys < 0 || rec < 0 || keys > rec {
+		t.Errorf("-ForgetEncryptedArchives must delete the remembered keys before the record (keys at %d, record at %d)", keys, rec)
 	}
 }

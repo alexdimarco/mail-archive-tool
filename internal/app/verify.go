@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -44,7 +45,15 @@ type VerifyOptions struct {
 	// Labelled as a baseline from current bytes, never proof the bytes were
 	// pristine.
 	Record bool
+	// Ctx, when it ends, stops an encrypted archive's check between files (Ctrl-C,
+	// Desktop's Cancel; phase3 §8): the check is recorded as stopped, carrying the
+	// last finished verdict, and Verify returns ErrVerifyStopped. Nil never stops.
+	Ctx context.Context
 }
+
+// ErrVerifyStopped is a check ended on purpose before it finished: it attests
+// nothing and changes no earlier verdict.
+var ErrVerifyStopped = errors.New("the check was stopped before it finished")
 
 // Problem is one classified file that is not plainly ok.
 type Problem struct {
@@ -171,7 +180,11 @@ func Verify(out string, opts VerifyOptions, logger *log.Logger, onProgress func(
 		return Report{}, err
 	}
 	if encryptedArchiveAt(out) {
-		return verifyKeyless(out, onProgress)
+		ctx := opts.Ctx
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		return verifyKeyless(ctx, out, onProgress)
 	}
 	lock, lerr := lockfile.AcquireAs(filepath.Join(out, lockfile.Name), "verify")
 	if lerr != nil {
@@ -313,7 +326,7 @@ func Verify(out string, opts VerifyOptions, logger *log.Logger, onProgress func(
 // (container.CheckKeyless) and records the outcome alone, in the last-verify
 // record's allow-listed shape (A18). It writes nothing else but that record and the
 // integrity notice.
-func verifyKeyless(out string, onProgress func(Report)) (Report, error) {
+func verifyKeyless(ctx context.Context, out string, onProgress func(Report)) (Report, error) {
 	lock, lerr := lockfile.AcquireAs(filepath.Join(out, lockfile.Name), "verify")
 	if lerr != nil {
 		return Report{}, lerr
@@ -322,9 +335,18 @@ func verifyKeyless(out string, onProgress func(Report)) (Report, error) {
 	// As for a plaintext archive (F79): "running" now, carrying the last finished
 	// verdict, so a check that never finishes cannot erase it.
 	started := time.Now().UTC()
-	_ = state.WriteLastVerify(out, state.LastVerify{Status: state.VerifyRunning, Started: started, Encrypted: true, Previous: state.LastVerdict(out)})
-	// RecordedGen (A25) is 0 until Phases 3–4 persist it.
-	rep := keylessReport(out, container.CheckKeyless(out, 0))
+	previous := state.LastVerdict(out)
+	_ = state.WriteLastVerify(out, state.LastVerify{Status: state.VerifyRunning, Started: started, Encrypted: true, Previous: previous})
+	// RecordedGen (A25) is 0 until the generations design ships (phase3 §12, A35).
+	c, cerr := container.CheckKeylessContext(ctx, out, 0)
+	if cerr != nil {
+		// Stopped on purpose: recorded as stopped, the last finished verdict kept, the
+		// lock released by the deferred Release.
+		finished := time.Now().UTC()
+		_ = state.WriteLastVerify(out, state.LastVerify{Status: state.VerifyStopped, Started: started, Finished: &finished, Encrypted: true, Previous: previous})
+		return Report{Out: out, Encrypted: true}, fmt.Errorf("%w: %s — nothing was changed; the last finished check's result still stands", ErrVerifyStopped, out)
+	}
+	rep := keylessReport(out, c)
 	if onProgress != nil {
 		onProgress(rep)
 	}

@@ -5,10 +5,10 @@ import (
 	"path/filepath"
 	"strings"
 
+	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/thunderbird"
-	"mail-archive-tool/internal/vault"
 )
 
 // What the archive was made from, read from the manifest's store ids ("path:..." is a local mail
@@ -32,7 +32,7 @@ func archiveKind(out string) string {
 	}
 	// An encrypted archive's sources are sealed: it is labelled, and the features a
 	// source kind enables (pre-sync, local schedule rebuild) stay off (phase2a §5).
-	if enc, _, _ := vault.EncryptedMarker(out); enc {
+	if enc, _, _ := encmark.Here(out); enc {
 		return kindEncrypted
 	}
 	mpath := filepath.Join(out, manifestName)

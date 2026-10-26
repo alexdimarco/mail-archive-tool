@@ -79,6 +79,10 @@ func syncDir(dir string) {
 	d.Close()
 }
 
+// ErrReadableByOthers is wrapped by ReadSecureFile's refusal of a file other users
+// can read, so a caller can name that case and its remedy.
+var ErrReadableByOthers = errors.New("readable by other users")
+
 // ReadSecureFile reads a small secret-bearing file with the hardened discipline a
 // client secret and an OAuth token cache both need, factored into one place so the
 // two callers cannot drift (design-graph-delegated D-C4):
@@ -124,7 +128,7 @@ func ReadSecureFile(path, kind string, maxBytes int64) ([]byte, error) {
 		return nil, fmt.Errorf("%s %s must be a regular file (not a symlink, pipe or device)", kind, path)
 	}
 	if runtime.GOOS != "windows" && fi.Mode().Perm()&0o077 != 0 {
-		return nil, fmt.Errorf("%s %s is readable by other users (mode %04o): run `chmod 600 %s`", kind, path, fi.Mode().Perm(), path)
+		return nil, fmt.Errorf("%s %s is readable by other users (mode %04o): run `chmod 600 %s`: %w", kind, path, fi.Mode().Perm(), path, ErrReadableByOthers)
 	}
 	if fi.Size() > maxBytes {
 		return nil, fmt.Errorf("%s %s is %d bytes; larger than the %d-byte limit — is this the right file?", kind, path, fi.Size(), maxBytes)

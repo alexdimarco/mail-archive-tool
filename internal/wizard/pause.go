@@ -4,10 +4,10 @@ import (
 	"fmt"
 
 	"mail-archive-tool/internal/app"
+	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/seal"
 	"mail-archive-tool/internal/state"
-	"mail-archive-tool/internal/vault"
 )
 
 // PauseArchive makes the archive at out hard read-only ("Pause (make read-only)", the
@@ -50,7 +50,7 @@ func PauseArchive(out, reason string) error {
 	// the folder, if it is missing) would be written into the encrypted archive. When
 	// the check cannot tell, the archive is treated as encrypted: the marker is empty
 	// (the Phase-2b-1 adversarial pass, FC-4).
-	dir, _, derr := vault.EncryptedAtOrAbove(out)
+	dir, _, derr := encmark.AtOrAbove(out)
 	if derr != nil {
 		reason = ""
 	}

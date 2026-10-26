@@ -319,9 +319,14 @@ func TestMirrorsCoverForEachOther(t *testing.T) {
 	for _, e := range s.ptr.Manifest {
 		if e.I == posHeader {
 			p := filepath.Join(out2, filepath.FromSlash(e.Name.Path()))
+			fi, _ := os.Stat(p)
 			b, _ := os.ReadFile(p)
 			b[0] ^= 1
 			os.WriteFile(p, b, 0o600)
+			// Bit rot keeps a file's time; rewriting it here would not, and the refusal
+			// dates the damaged file by it (otherwise the test fails once the clock's
+			// UTC date passes the run's).
+			os.Chtimes(p, fi.ModTime(), fi.ModTime())
 		}
 	}
 	_, _, err = LoadManifest(out2, opts(3))

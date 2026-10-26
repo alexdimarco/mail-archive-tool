@@ -255,7 +255,10 @@ func writeSidecarAtomic(path string, data []byte) error {
 // or hand-edited file) so a status surface can fail closed on each.
 func ReadLastRun(out string) (LastRun, LastRunState, error) {
 	var r LastRun
-	data, err := os.ReadFile(filepath.Join(out, LastRunName))
+	// Read as a planted file may be: never through a link, never waiting on a pipe,
+	// never whole past its bound (the 2b-4 residual, phase3 §6 E8) — status runs it
+	// unattended.
+	data, err := util.ReadRegularFile(filepath.Join(out, LastRunName), maxLastRunSize)
 	if errors.Is(err, fs.ErrNotExist) {
 		return r, LastRunAbsent, nil
 	}
@@ -329,10 +332,13 @@ func LastVerdict(out string) *LastVerify {
 	return &v
 }
 
-// LastVerify statuses.
+// LastVerify statuses. A stopped check was ended on purpose (Ctrl-C, or Desktop's
+// Cancel; phase3 §8): like a running record it carries the last finished verdict
+// and has no outcome of its own.
 const (
 	VerifyRunning = "running"
 	VerifyDone    = "done"
+	VerifyStopped = "stopped"
 )
 
 // WriteLastVerify writes the verify record atomically into out and, when the
@@ -462,12 +468,16 @@ func ReadLastVerify(out string) (LastVerify, LastVerifyState, error) {
 // previous verdict is under 2 KiB.
 const maxLastVerifySize = 64 << 10
 
+// maxLastRunSize bounds the last-run record a reader takes in. A real one is a few
+// kilobytes; its warnings list is bounded by the run.
+const maxLastRunSize = 4 << 20
+
 // checkVerdicts refuses a record a verify does not write: a status other than
 // running or done, a carried verdict that is not a finished one, and on an
 // encrypted record a finished verdict whose outcome is not in the closed list. A
 // running record has no outcome yet.
 func checkVerdicts(v LastVerify) error {
-	if v.Status != VerifyRunning && v.Status != VerifyDone {
+	if v.Status != VerifyRunning && v.Status != VerifyDone && v.Status != VerifyStopped {
 		return errors.New("its status is not one MailArchive writes")
 	}
 	if v.Previous != nil && v.Previous.Status != VerifyDone {
@@ -477,7 +487,7 @@ func checkVerdicts(v LastVerify) error {
 		if o == nil || !o.Encrypted {
 			continue
 		}
-		if (o.Status == VerifyDone && !KnownOutcome(o.Outcome)) || (o.Status == VerifyRunning && o.Outcome != "") {
+		if (o.Status == VerifyDone && !KnownOutcome(o.Outcome)) || (o.Status != VerifyDone && o.Outcome != "") {
 			return errors.New("its verify outcome is not one MailArchive writes")
 		}
 	}

@@ -1,9 +1,11 @@
 package container
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -67,6 +69,32 @@ func wholeArchive(t *testing.T) string {
 	saveOnDisk(t, out, 2, 10, 3, 1)
 	saveOnDisk(t, out, 3, 20, 3, 2)
 	return out
+}
+
+// covers: MA-773, R37
+// A check asked to stop stops between files (phase3 §8): cancelled while judging the
+// first listed file, it opens no other and returns the context's error with no
+// verdict. The positive twin: left to run, the same archive opens every live file
+// and is intact.
+func TestAKeylessCheckStopsBetweenFiles(t *testing.T) {
+	out := wholeArchive(t)
+	opened := 0
+	beforeOpen = func(string) { opened++ }
+	defer func() { beforeOpen = nil }()
+	c, err := CheckKeylessContext(context.Background(), out, 0)
+	if err != nil || c.Outcome != state.OutcomeIntact || opened < 3 {
+		t.Fatalf("the positive twin: %+v %v, %d files opened", c, err, opened)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	opened = 0
+	beforeOpen = func(string) { opened++; cancel() }
+	c, err = CheckKeylessContext(ctx, out, 0)
+	if !errors.Is(err, context.Canceled) || c.Outcome != "" {
+		t.Fatalf("a stopped check: %+v %v", c, err)
+	}
+	if opened != 1 {
+		t.Fatalf("the check went on to open %d files after it was asked to stop", opened-1)
+	}
 }
 
 // listed is every file the archive's file list names, by state.

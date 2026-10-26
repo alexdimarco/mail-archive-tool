@@ -15,6 +15,12 @@ import (
 	"mail-archive-tool/internal/util"
 )
 
+// RefuseSettingsWrite refuses the sign-in cache inside an encrypted archive
+// (phase3 §6 E5). encmark installs its check here when it is linked in, as it does
+// for graphconfig (this package is imported beneath encmark). Until then it refuses
+// nothing.
+var RefuseSettingsWrite = func(path, kind string) error { return nil }
+
 // The delegated (per-user) scopes: read-only mail for the signed-in user's OWN
 // mailbox, plus offline_access for a refresh token so later scheduled runs need
 // no re-sign-in. Never Mail.ReadWrite/Mail.Send — the client stays GET-only (R17).
@@ -304,6 +310,9 @@ func (b tokenBackend) putLocked(upn string, tok *oauth2.Token) error {
 	if b.store != nil {
 		return b.store.StoreToken(data)
 	}
+	if err := RefuseSettingsWrite(b.path, "the Microsoft 365 sign-in cache"); err != nil {
+		return err
+	}
 	return util.WriteFileAtomic0600(b.path, data)
 }
 
@@ -366,6 +375,9 @@ func PersistSignIn(cfg Config, data []byte) error {
 	defer tokenWriteMu.Unlock()
 	if cfg.TokenStore != nil {
 		return cfg.TokenStore.StoreToken(data)
+	}
+	if err := RefuseSettingsWrite(cfg.TokenCachePath, "the Microsoft 365 sign-in cache"); err != nil {
+		return err
 	}
 	return util.WriteFileAtomic0600(cfg.TokenCachePath, data)
 }

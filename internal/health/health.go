@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/index"
 	"mail-archive-tool/internal/instance"
 	"mail-archive-tool/internal/job"
@@ -22,18 +23,24 @@ import (
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/util"
-	"mail-archive-tool/internal/vault"
 )
 
 // Input is everything known about an archive before judging it.
 type Input struct {
 	Out string
 
-	// Encrypted says the archive is an encrypted one (vault.EncryptedMarker), and
-	// EncryptedWhy what showed it: its manifest, index and history are not read
-	// without the key, and Assess judges only what is keyless (phase2a §5).
+	// Encrypted says the archive is an encrypted one (encmark: its own markers or
+	// this computer's record), and EncryptedWhy what showed it: its manifest, index
+	// and history are not read without the key, and Assess judges only what is
+	// keyless (phase2a §5).
 	Encrypted    bool
 	EncryptedWhy string
+	// EncryptedCase is how a folder this computer recorded as encrypted now stands
+	// (phase3 §4.5): anything but encmark.None is a RED naming the case, and an
+	// unproven path a WARN. RecordProblem is why this computer's record of encrypted
+	// archives cannot be used, a WARN.
+	EncryptedCase encmark.Case
+	RecordProblem string
 
 	// Surface names who reads the report: "" for the CLI (commands and SQLite's
 	// words are fine), "desktop" for MailArchive Desktop's Status & health card,
@@ -391,6 +398,20 @@ func Assess(in Input, now time.Time) Report {
 	// §5). What needs no key is still judged below like any archive's — the last
 	// run's outcome, a run that never finished or is stuck, staleness, an unreadable
 	// record, an archive that cannot be written (F16).
+	// A folder this computer recorded as encrypted that no longer holds its own
+	// archive — a link now, other files, another archive's key files, its key files
+	// gone, or emptied — is RED in the case's own words (phase3 §4.5); a path the
+	// record's repair rebuilt and nobody has confirmed yet is a WARN.
+	switch in.EncryptedCase {
+	case encmark.None:
+	case encmark.Unproven:
+		r.warn("encrypted_record_unproven", in.EncryptedWhy)
+	default:
+		r.red("encrypted_record_mismatch", in.EncryptedWhy)
+	}
+	if in.RecordProblem != "" {
+		r.warn("encrypted_record_unusable", in.RecordProblem)
+	}
 	if in.Encrypted {
 		r.note("encrypted", "this archive is encrypted ("+in.EncryptedWhy+"): its message counts, search index and history are sealed — open it in MailArchive with its password to see them")
 		// Its last backup finished with the sealed index still missing messages: the
@@ -602,6 +623,15 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 			}
 			r.warn("verify_never_finished", fmt.Sprintf("the verify started %s UTC never finished (Ctrl-C, crash, kill, or power loss) — run `mailarchive verify -out %q` again; the last finished verify's verdict is still reported%s", started, in.Out, sched))
 		}
+		judge = lv.Previous != nil
+		if judge {
+			lv = *lv.Previous
+		}
+	}
+	// A check stopped on purpose (phase3 §8) attests nothing and changes nothing: a
+	// note, and the last finished verdict it carries is judged as usual.
+	if judge && lv.Status == state.VerifyStopped {
+		r.note("verify_stopped", fmt.Sprintf("the last check (started %s UTC) was stopped before it finished — the last finished check's result still stands; run `mailarchive verify -out %q` to check again", lv.Started.UTC().Format("2006-01-02 15:04"), in.Out))
 		judge = lv.Previous != nil
 		if judge {
 			lv = *lv.Previous
@@ -1422,8 +1452,13 @@ func Gather(out, nameOverride string) Input {
 	// Phase 2b, must not be trusted as a plaintext archive's): status reads only what
 	// is keyless — the run records, the lock, the schedule — and says it is
 	// encrypted (phase2a §5).
-	if enc, why, _ := vault.EncryptedMarker(out); enc {
+	if enc, why, _ := encmark.Here(out); enc {
 		in.Encrypted, in.EncryptedWhy = true, why
+	}
+	if res, _ := encmark.At(out); res.RecordErr != nil {
+		in.RecordProblem = util.StripControl(res.RecordErr.Error())
+	} else if res.Recorded && res.Case != encmark.None {
+		in.Encrypted, in.EncryptedWhy, in.EncryptedCase = true, res.Why, res.Case
 	}
 	mpath := filepath.Join(out, ".mailarchive-manifest.json")
 	if _, serr := os.Stat(mpath); serr == nil && !in.Encrypted {

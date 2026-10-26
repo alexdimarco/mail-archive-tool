@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"mail-archive-tool/internal/vault"
+	"mail-archive-tool/internal/encmark"
 )
 
 // ErrEncryptedArchive refuses a schedule for an encrypted archive, or one whose log
@@ -22,7 +22,7 @@ var ErrEncryptedArchive = errors.New("an encrypted archive cannot be scheduled y
 // goes through Install, so this one check covers them all.
 func refuseEncrypted(s Spec) error {
 	if s.Out != "" {
-		dir, why, err := vault.EncryptedAtOrAbove(s.Out)
+		dir, why, err := encmark.AtOrAbove(s.Out)
 		if dir != "" {
 			return fmt.Errorf("%w: %s is an encrypted archive (%s) — scheduled backups of an encrypted archive are not available yet; nothing was installed", ErrEncryptedArchive, dir, why)
 		}
@@ -31,7 +31,7 @@ func refuseEncrypted(s Spec) error {
 		}
 	}
 	if s.Log != "" {
-		if dir, why, _ := vault.EncryptedAtOrAbove(filepath.Dir(s.Log)); dir != "" {
+		if dir, why, _ := encmark.AtOrAbove(filepath.Dir(s.Log)); dir != "" {
 			return fmt.Errorf("%w: the schedule's log %s would be inside the encrypted archive %s (%s) — choose a log folder outside it; nothing was installed", ErrEncryptedArchive, s.Log, dir, why)
 		}
 	}

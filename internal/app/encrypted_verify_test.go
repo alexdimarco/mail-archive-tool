@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -213,6 +214,36 @@ func TestKeylessVerifyTakesTheArchiveLock(t *testing.T) {
 	held.Release()
 	if rep, err := Verify(out, VerifyOptions{}, discard(), nil); err != nil || rep.Outcome != state.OutcomeIntact {
 		t.Fatalf("with the lock released: %+v %v", rep, err)
+	}
+}
+
+// covers: MA-773, R37
+// A keyless check stopped on purpose (phase3 §8): Verify returns ErrVerifyStopped,
+// the record says stopped and carries the last finished verdict, the lock is
+// released, and status reports the stop as a note while still judging that verdict.
+// The positive twin: the same archive checked to the end is intact.
+func TestAStoppedKeylessCheckKeepsTheLastVerdict(t *testing.T) {
+	out := sealedArchive(t)
+	if rep, err := Verify(out, VerifyOptions{}, discard(), nil); err != nil || rep.Outcome != state.OutcomeIntact {
+		t.Fatalf("the positive twin: %+v %v", rep, err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := Verify(out, VerifyOptions{Ctx: ctx}, discard(), nil)
+	if !errors.Is(err, ErrVerifyStopped) {
+		t.Fatalf("want ErrVerifyStopped, got %v", err)
+	}
+	assure.Refused(t, 1, err.Error(), assure.Code(1), assure.Names(out, "last finished check"))
+	lv, st, rerr := state.ReadLastVerify(out)
+	if st != state.LastVerifyPresent || rerr != nil || lv.Status != state.VerifyStopped || lv.Outcome != "" ||
+		lv.Previous == nil || lv.Previous.Outcome != state.OutcomeIntact {
+		t.Fatalf("the stopped record: %+v %v %v", lv, st, rerr)
+	}
+	if lockfile.Held(filepath.Join(out, lockfile.Name)) {
+		t.Fatal("a stopped check kept the archive lock")
+	}
+	if rep, err := Verify(out, VerifyOptions{}, discard(), nil); err != nil || rep.Outcome != state.OutcomeIntact {
+		t.Fatalf("checked again after the stop: %+v %v", rep, err)
 	}
 }
 

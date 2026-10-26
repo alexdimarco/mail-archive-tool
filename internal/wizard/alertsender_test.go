@@ -6,6 +6,7 @@ import (
 
 	"mail-archive-tool/internal/alert"
 	"mail-archive-tool/internal/backupalert"
+	"mail-archive-tool/internal/encrecord"
 )
 
 // TestMain installs a no-op backup-alert sender for the whole package, so a test
@@ -15,5 +16,15 @@ import (
 // recording sender via SetSenderForTest and restore to this no-op.
 func TestMain(m *testing.M) {
 	backupalert.SetSenderForTest(func(alert.Config, string, alert.Event) error { return nil })
-	os.Exit(m.Run())
+	// This computer's record of encrypted archives, which every writer reads, is a
+	// throwaway one: never the developer's.
+	dir, err := os.MkdirTemp("", "mailarchive-wizard-record-")
+	if err != nil {
+		panic(err)
+	}
+	restore := encrecord.SetDirForTest(dir)
+	code := m.Run()
+	restore()
+	os.RemoveAll(dir)
+	os.Exit(code)
 }

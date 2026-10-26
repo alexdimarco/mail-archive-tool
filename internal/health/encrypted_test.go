@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"mail-archive-tool/internal/encrecord"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/vault"
 )
@@ -51,6 +52,55 @@ func TestStatusOnAnEncryptedArchiveReadsOnlyWhatIsKeyless(t *testing.T) {
 	in.LastRun.Status = state.RunFailed
 	if r := Assess(in, time.Now()); r.Posture != "RED" || !slices.Contains(r.Codes, "run_failed") {
 		t.Fatalf("a failed last run of an encrypted archive must still RED, got %s %v", r.Posture, r.Codes)
+	}
+}
+
+// covers: MA-770, R37
+// A folder this computer recorded as encrypted that now holds a plaintext archive
+// reads RED in status, as encrypted, in the case's words (it may have been
+// tampered with), and its plaintext manifest is not read. The positive twin: the
+// same folder, not recorded, is a plaintext archive to status. A record that cannot
+// be used is a WARN naming it.
+func TestStatusREDsARecordedArchiveThatNoLongerHoldsItself(t *testing.T) {
+	out := t.TempDir()
+	os.WriteFile(filepath.Join(out, ".mailarchive-manifest.json"), []byte(`{"version":6,"entries":{}}`), 0o600)
+	os.Mkdir(filepath.Join(out, "Inbox"), 0o700)
+	if in := Gather(out, ""); in.Encrypted || !in.HasManifestFile {
+		t.Fatalf("the positive twin, not recorded: %+v", in)
+	}
+	id := "0123456789abcdef0123456789abcdef"
+	encrecord.Update("test", func(r *encrecord.Record) error { return r.Add(id, out, false, time.Now()) })
+	t.Cleanup(func() { encrecord.Update("test", func(r *encrecord.Record) error { r.ForgetID(id); return nil }) })
+	in := Gather(out, "")
+	r := Assess(in, time.Now())
+	if !in.Encrypted || in.HasManifestFile || r.Posture != "RED" || !slices.Contains(r.Codes, "encrypted_record_mismatch") ||
+		!strings.Contains(strings.Join(r.Reasons, "\n"), "tampered") {
+		t.Fatalf("a recorded folder now holding plaintext: %s %v %v", r.Posture, r.Codes, r.Reasons)
+	}
+
+	in = Input{Out: t.TempDir(), RecordProblem: "this computer's record of encrypted archives is damaged and needs repair"}
+	if r := Assess(in, time.Now()); r.Posture != "WARN" || !slices.Contains(r.Codes, "encrypted_record_unusable") {
+		t.Fatalf("an unusable record: %s %v", r.Posture, r.Codes)
+	}
+}
+
+// covers: MA-773, R37
+// A check stopped on purpose is a note, and the verdict it carries is still judged:
+// a damaged one stays RED. A stopped record that claims an outcome of its own is not
+// one MailArchive writes and is refused when written.
+func TestStatusJudgesAStoppedCheckByTheVerdictItCarries(t *testing.T) {
+	finished := time.Now().UTC()
+	in := Input{Out: t.TempDir(), LastVerifyState: state.LastVerifyPresent, LastVerify: state.LastVerify{
+		Status: state.VerifyStopped, Started: finished, Finished: &finished, Encrypted: true,
+		Previous: &state.LastVerify{Status: state.VerifyDone, Finished: &finished, Encrypted: true, Outcome: state.OutcomeDamaged},
+	}}
+	r := Assess(in, time.Now())
+	if r.Posture != "RED" || !slices.Contains(r.Codes, "verify_stopped") || !slices.Contains(r.Codes, "verify_damaged") {
+		t.Fatalf("a stopped check over a damaged verdict: %s %v", r.Posture, r.Codes)
+	}
+	bad := state.LastVerify{Status: state.VerifyStopped, Encrypted: true, Outcome: state.OutcomeIntact}
+	if err := state.WriteLastVerify(t.TempDir(), bad); err == nil {
+		t.Fatal("a stopped record claiming its own outcome was written")
 	}
 }
 

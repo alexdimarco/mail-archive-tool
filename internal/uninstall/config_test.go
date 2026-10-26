@@ -5,12 +5,30 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"mail-archive-tool/internal/encrecord"
 )
 
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// covers: MA-774, R37
+// Uninstall keeps this computer's record of encrypted archives (phase3 §4.1, K8):
+// ConfigTargets never names the record, its mirror or its lock, beside the config
+// files it does remove (the positive twin).
+func TestUninstallKeepsTheRecordOfEncryptedArchives(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "desktop-settings.json"), "{}")
+	for _, name := range []string{encrecord.FileName, encrecord.MirrorName, encrecord.LockName} {
+		writeFile(t, filepath.Join(dir, name), "x")
+	}
+	targets, err := ConfigTargets(dir, nil)
+	if err != nil || len(targets) != 1 || filepath.Base(targets[0]) != "desktop-settings.json" {
+		t.Fatalf("uninstall's config targets: %v %v", targets, err)
 	}
 }
 

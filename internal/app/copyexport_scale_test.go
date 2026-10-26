@@ -42,6 +42,8 @@ func (d *dirSyncCounter) SyncDir(rel string) error {
 // every message has its own line in the record; the progress counters advance and an
 // ETA is present while it runs; and a 200,001-message selection is refused with R-i.
 func TestCopyExportScalesToSixtyThousandMessages(t *testing.T) {
+	// Not parallel: it measures the whole process's heap growth, which another
+	// test's work (a key derivation's 256 MiB) would add to.
 	const n = 60000
 	e, src := newCEEnv(t), newFakeSrc()
 	src.body = func(id string) []byte { return []byte("From: a@x\r\n\r\n" + id) }

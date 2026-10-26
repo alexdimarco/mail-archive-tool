@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 
+	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/graphconfig"
 	"mail-archive-tool/internal/util"
 )
@@ -142,6 +143,9 @@ func LoadSettings(path string) Settings {
 // has no field for (written by a newer build) is kept as it was, and so is a version above
 // this build's own: saving never turns a newer build's file into an older one's (EW-AC14).
 func SaveSettings(path string, s Settings) error {
+	if err := encmark.RefuseSettingsWrite(path, "the Desktop settings file"); err != nil {
+		return err
+	}
 	if s.Version < 1 {
 		s.Version = 1
 	}

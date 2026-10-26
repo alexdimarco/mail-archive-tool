@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"mail-archive-tool/internal/container"
+	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/index"
 	"mail-archive-tool/internal/lockfile"
@@ -1070,7 +1071,7 @@ func insideEncrypted(out string) bool {
 	}
 	for _, p := range []string{abs, util.ResolveExisting(abs)} {
 		if parent := filepath.Dir(p); parent != p {
-			if dir, _, _ := vault.EncryptedAtOrAbove(parent); dir != "" {
+			if dir, _, _ := encmark.AtOrAbove(parent); dir != "" {
 				return true
 			}
 		}

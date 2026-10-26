@@ -1,6 +1,7 @@
 package container
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -102,13 +103,25 @@ const adviceRecordCopy = "What to do: run a backup now. It rewrites the damaged 
 // is the highest generation this computer committed (A25; 0 until Phases 3–4
 // persist it).
 func CheckKeyless(out string, recordedGen uint64) Check {
-	k := &keylessCheck{out: out}
+	c, _ := CheckKeylessContext(context.Background(), out, recordedGen)
+	return c
+}
+
+// CheckKeylessContext is CheckKeyless that stops between files when ctx ends
+// (Ctrl-C, Desktop's Cancel; phase3 §8): it then returns ctx's error and no
+// verdict, since a check that did not finish attests nothing.
+func CheckKeylessContext(ctx context.Context, out string, recordedGen uint64) (Check, error) {
+	k := &keylessCheck{out: out, ctx: ctx}
 	k.c.Outcome, k.c.Reason = k.decide(recordedGen)
-	return k.c
+	if err := ctx.Err(); err != nil {
+		return Check{}, err
+	}
+	return k.c, nil
 }
 
 type keylessCheck struct {
 	out    string
+	ctx    context.Context
 	c      Check
 	listed map[string]bool // every path the file list names, in any state
 	// unitsBad counts the files under units/ among Missing and Modified; chunks and
@@ -342,6 +355,9 @@ func (k *keylessCheck) judgeListed(top Top) {
 			continue
 		}
 		for _, f := range sh.Files {
+			if k.ctx.Err() != nil {
+				return
+			}
 			k.listed[f.Path] = true
 			if f.State != Live {
 				continue

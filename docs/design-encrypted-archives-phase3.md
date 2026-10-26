@@ -143,7 +143,8 @@ Not in Phase 3:
   key".** A confirmation is asked, and the R-E2 disclosure is shown.
 - **K14 — opening an archive this computer has not recorded asks before deriving above the
   floor cost.** Without a terminal it is refused, naming the cost.
-- **K15 — a remembered key may rebuild missing key files** (§9.5). The remembered key is the
+- **K15 — a remembered key may rebuild missing key files** (§9.5). **Owner ruling O8,
+  2026-10-25: yes.** The remembered key is the
   master key (A10), so rebuilding from it adds no exposure beyond K13. Without this, a person
   who lost both key files and the recovery key would lose an archive this computer can still
   open.
@@ -1146,12 +1147,12 @@ Each slice is built test-first, with prove-fail and prove-pass, and owes its own
 
 | Slice | What |
 |---|---|
-| **P3-0** groundwork | the record (§4); `encmark` and its tests; `lockfile.AcquireWait`; the cleanup script; E3, E5, E8, U16; tier-1 cancellation, `stopped`, exit codes 130/143 |
+| **P3-0** groundwork | the record (§4); `encmark` and its tests; `lockfile.AcquireWait`; the cleanup script; E5, E8; tier-1 cancellation, `stopped`, exit codes 130/143. (E3 and U16 moved to P3-3 when it was built: both change only what the wizard and Desktop show for an encrypted archive, which no one can reach before P3-3.) |
 | **P3-1a** keyring + CLI | `internal/keyring` (leases, hand-offs, heal ordering); `tty.ReadSecret`; secret sources and the Windows read check; the no-secret-flag test; the linux-arm64 measurement; `-encrypt` create; keyed `export`/`graph`; `change-password`, `new-recovery-key`, `forget-key`, `forget-archive`, `repair-record`; E2. **Operator gate: the MA-726 allow-list entry.** |
 | **P3-1b** recovery | §9.4 and §9.5, `vault.PrepareRestore`/`Commit`; its own adversarial pass |
 | **P3-2a** reader | §7; CLI `serve`/`search`/`extract`; keyed `reindex` with E7 |
 | **P3-2b** keyed check | `verify -full` (§8) |
-| **P3-3** Desktop + wizard | the card, unlock and lock, Open an archive folder, create with the hook, Run now, the heal, the keyed pause, the key verbs, Put back the key file, forget, the uninstall plan's scratch rendering (MA-739), the wizard step |
+| **P3-3** Desktop + wizard | the card, unlock and lock, Open an archive folder, create with the hook, Run now, the heal, the keyed pause, the key verbs, Put back the key file, forget, the uninstall plan's scratch rendering (MA-739), the wizard step; E3 (the wizard's log for an encrypted archive in the settings folder) and U16 (encrypted wording where text names `index.html`, the report or `search.db`: `capture.go:259`, `wizard.go:1517`, `refusals.go:142-144`, `health.go:1389`) |
 | **P3-4** plaintext copy | §10, `UnderCloudSync`, the Phase 2c closure |
 | **P3-5** break glass | the note; the program design and review first; O7 |
 | **P3-6** encrypt existing | its design and review first (§11) |

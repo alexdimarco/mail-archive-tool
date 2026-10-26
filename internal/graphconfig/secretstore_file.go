@@ -45,6 +45,9 @@ func (s fileStore) Set(account, secret string) error {
 	if strings.TrimSpace(secret) == "" {
 		return errors.New("refusing to store an empty secret")
 	}
+	if err := RefuseSettingsWrite(s.path(account), "a stored secret"); err != nil {
+		return err
+	}
 	return util.WriteFileAtomic0600(s.path(account), []byte(secret))
 }
 

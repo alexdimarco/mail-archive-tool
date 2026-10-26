@@ -10,8 +10,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"mail-archive-tool/internal/assure"
+	"mail-archive-tool/internal/encrecord"
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/vault"
@@ -59,6 +61,9 @@ func keylessOps(src string) map[string]func(out string) error {
 
 // covers: MA-728, R37
 func TestKeylessOperationsRefuseAnEncryptedArchiveBeforeTouchingIt(t *testing.T) {
+	// Parallel: it changes no package-level seam, and it is among the package's
+	// slowest (the package runs close to go test's per-package limit).
+	t.Parallel()
 	src := encryptedSourcePST(t)
 	// The positive twin: each operation succeeds on a plaintext archive.
 	for name, op := range keylessOps(src) {
@@ -99,6 +104,46 @@ func TestKeylessOperationsRefuseAnEncryptedArchiveBeforeTouchingIt(t *testing.T)
 		assure.Refused(t, 1, err.Error(), assure.Code(1), assure.Names(out),
 			assure.NoSideEffect(func() bool { return sameTree(before, snapshotTree(t, out)) }))
 	})
+}
+
+// covers: MA-770, R37
+// A15 for a folder this computer recorded: an encrypted archive stripped of its key
+// files, units and sealed record and replanted as a plaintext archive is still
+// refused by every keyless writer, naming the folder and that it may have been
+// tampered with, writing nothing; a log is not opened inside it; and its run records
+// stay minimised. The positive twin, each operation succeeding on the same
+// plaintext folder when it is not recorded, is TestKeylessOperationsRefuse…'s: the
+// record is what refuses. (A recorded folder holding a plaintext archive is exactly
+// the stripped-and-replanted state; building a sealed archive first adds nothing.)
+func TestAStrippedRecordedArchiveRefusesEveryKeylessWriter(t *testing.T) {
+	src := encryptedSourcePST(t)
+	for name, op := range keylessOps(src) {
+		t.Run(name, func(t *testing.T) {
+			out := plainArchive(t)
+			id := "0123456789abcdef0123456789abcdef"
+			if _, err := encrecord.Update("test", func(r *encrecord.Record) error {
+				return r.Add(id, out, false, time.Now())
+			}); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				encrecord.Update("test", func(r *encrecord.Record) error { r.ForgetID(id); return nil })
+			})
+			before := snapshotTree(t, out)
+			err := op(out)
+			if !errors.Is(err, ErrEncryptedNeedsKey) {
+				t.Fatalf("want ErrEncryptedNeedsKey, got %v", err)
+			}
+			assure.Refused(t, 1, err.Error(), assure.Code(1), assure.Names(out, "tampered"),
+				assure.NoSideEffect(func() bool { return sameTree(before, snapshotTree(t, out)) }))
+			if lerr := RefuseLogInside(filepath.Join(out, "run.log")); !errors.Is(lerr, ErrLogInEncryptedArchive) {
+				t.Fatalf("a log inside the recorded folder: %v", lerr)
+			}
+			if !ArchiveEncrypted(out) {
+				t.Fatal("the run records of a recorded folder are not minimised")
+			}
+		})
+	}
 }
 
 // covers: MA-728, R37

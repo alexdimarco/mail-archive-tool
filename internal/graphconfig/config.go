@@ -17,6 +17,12 @@ import (
 	"mail-archive-tool/internal/util"
 )
 
+// RefuseSettingsWrite refuses a settings or secret file inside an encrypted archive
+// (phase3 §6 E5). encmark installs its check here when it is linked in — every
+// MailArchive program links it through internal/app — because encmark imports the
+// vault, whose own tests import this package. Until then it refuses nothing.
+var RefuseSettingsWrite = func(path, kind string) error { return nil }
+
 // ConfigVersion is the on-disk schema version (additive-only, like the manifest).
 const ConfigVersion = 1
 
@@ -91,6 +97,9 @@ func Load(path string) (*Config, error) {
 // crash never leaves a torn file. The secret is not part of Config, so this file
 // is never a credential.
 func Save(path string, c *Config) error {
+	if err := RefuseSettingsWrite(path, "the Microsoft 365 settings file"); err != nil {
+		return err
+	}
 	c.Version = ConfigVersion
 	data, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {

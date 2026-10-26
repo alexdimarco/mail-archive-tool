@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // covers: MA-85, R5, S25
@@ -43,6 +44,35 @@ func TestExclusiveLock(t *testing.T) {
 		t.Fatalf("acquire after release: %v", err)
 	}
 	third.Release()
+}
+
+// covers: MA-768, R37
+// AcquireWait waits for a short holder: released within the wait, the lock is
+// taken; held past it, the refusal wraps ErrHeld, and only after the wait has run.
+func TestAcquireWaitWaitsForAShortHolder(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "record.lock")
+	first, err := AcquireAs(path, "record")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		first.Release()
+	}()
+	second, err := AcquireWait(path, "record", 2*time.Second)
+	if err != nil {
+		t.Fatalf("a holder that let go within the wait still refused: %v", err)
+	}
+	start := time.Now()
+	third, err := AcquireWait(path, "record", 300*time.Millisecond)
+	if err == nil {
+		third.Release()
+		t.Fatal("a lock held past the wait was taken")
+	}
+	if !errors.Is(err, ErrHeld) || time.Since(start) < 300*time.Millisecond {
+		t.Fatalf("refused after %v, want ErrHeld after the whole wait: %v", time.Since(start), err)
+	}
+	second.Release()
 }
 
 // covers: MA-431, R5, S25

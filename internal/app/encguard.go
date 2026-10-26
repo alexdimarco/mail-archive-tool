@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/export"
-	"mail-archive-tool/internal/vault"
 )
 
 // ErrEncryptedNeedsKey refuses an operation that would treat an encrypted archive
@@ -42,7 +42,7 @@ func RefuseLogInside(logPath string) error {
 	if err != nil {
 		abs = filepath.Clean(logPath)
 	}
-	dir, why, uerr := vault.EncryptedAtOrAbove(filepath.Dir(abs))
+	dir, why, uerr := encmark.AtOrAbove(filepath.Dir(abs))
 	if dir != "" {
 		return fmt.Errorf("%w: %s would be inside the encrypted archive %s (%s) — leave out -log, or choose a folder outside the archive",
 			ErrLogInEncryptedArchive, abs, dir, why)
@@ -62,7 +62,7 @@ func refuseStoreIntoEncrypted(exp *export.Exporter, token string) error {
 		return nil
 	}
 	dir := filepath.Join(exp.OutDir, token)
-	if enc, why, _ := vault.EncryptedMarker(dir); enc {
+	if enc, why, _ := encmark.Here(dir); enc {
 		return fmt.Errorf("%w: the store folder %s is an encrypted archive (%s); refusing to write this source's messages into it — move that archive out of %s",
 			ErrEncryptedNeedsKey, dir, why, exp.OutDir)
 	}
@@ -71,8 +71,9 @@ func refuseStoreIntoEncrypted(exp *export.Exporter, token string) error {
 
 // RefuseKeyless refuses op on out — before any lock, log, read or write — when
 // out is an encrypted archive, or sits inside one, or any of extra (a -manifest
-// folder, an extract destination) is or sits inside one, as vault.EncryptedMarker
-// recognises it, the path as given and through its links (EncryptedAtOrAbove). A
+// folder, an extract destination) is or sits inside one, as encmark recognises it —
+// the folder's own markers or this computer's record of encrypted archives, the path
+// as given and through its links. A
 // target that cannot be checked at all is refused too (ErrEncryptionUnknown): the
 // operation might reach it by another spelling. op names the operation in the
 // refusal ("archive into it").
@@ -85,7 +86,7 @@ func RefuseKeyless(op, out string, extra ...string) error {
 		if err != nil {
 			abs = filepath.Clean(target)
 		}
-		dir, why, uerr := vault.EncryptedAtOrAbove(abs)
+		dir, why, uerr := encmark.AtOrAbove(abs)
 		if dir != "" {
 			where := dir
 			if dir != abs {
@@ -115,7 +116,7 @@ func encryptedArchiveAt(out string) bool {
 	if err != nil {
 		abs = filepath.Clean(out)
 	}
-	dir, _, _ := vault.EncryptedAtOrAbove(abs)
+	dir, _, _ := encmark.AtOrAbove(abs)
 	return dir == abs
 }
 

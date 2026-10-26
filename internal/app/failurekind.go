@@ -6,9 +6,9 @@ import (
 	"net/url"
 
 	"mail-archive-tool/internal/container"
+	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/state"
-	"mail-archive-tool/internal/vault"
 )
 
 // kindError tags a run error with its failure kind (state.Fail*) without changing
@@ -110,6 +110,6 @@ func ArchiveEncrypted(out string) bool { return encryptedAt(out) }
 func encryptedAt(out string) bool {
 	// A check that cannot tell counts as encrypted: the minimised record is safe for
 	// either kind of archive, the full one only for a plaintext one (FC-4).
-	enc, _, err := vault.EncryptedMarker(out)
+	enc, _, err := encmark.Here(out)
 	return enc || err != nil
 }

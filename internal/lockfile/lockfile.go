@@ -41,7 +41,16 @@ func Acquire(path string) (*Lock, error) { return AcquireAs(path, "") }
 // the file records "pid=… started=… host=… verb=<verb>" (verb omitted when
 // empty). When another process holds it the error wraps ErrHeld and names the
 // path and, when readable, the holder.
-func AcquireAs(path, verb string) (*Lock, error) {
+func AcquireAs(path, verb string) (*Lock, error) { return AcquireWait(path, verb, acquireGrace) }
+
+// AcquireWait is AcquireAs waiting up to wait for another holder to let go, for a
+// lock held only for a short write rather than a whole run (this computer's record
+// of encrypted archives, design-encrypted-archives-phase3 §4.3). A wait shorter
+// than acquireGrace is raised to it.
+func AcquireWait(path, verb string, wait time.Duration) (*Lock, error) {
+	if wait < acquireGrace {
+		wait = acquireGrace
+	}
 	// Never follow a symlink: a lock file that points elsewhere would be
 	// truncated when the holder line is written (an insider's planted link).
 	if fi, err := os.Lstat(path); err == nil && !fi.Mode().IsRegular() {
@@ -51,7 +60,7 @@ func AcquireAs(path, verb string) (*Lock, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open lock %s: %w", path, err)
 	}
-	if err := tryLockFor(f, acquireGrace); err != nil {
+	if err := tryLockFor(f, wait); err != nil {
 		f.Close()
 		holder := readHolder(path)
 		if holder != "" {
