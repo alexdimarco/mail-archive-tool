@@ -384,11 +384,12 @@ func TestRestoreSourcesAndAPendingRestorePrintRedacted(t *testing.T) {
 }
 
 // covers: MA-793, MA-791, R37
-// Open residual: with no copy of the key file left on disk a restore's generation
-// is the clock, so a second restore on a clock behind the first's is outranked if
-// the first's key file comes back (the P3-1b pass, FID-01, CRY-04, CRIT-02).
+// A stated limit, accepted by the owner (2026-10-26): with no copy of the key file
+// left on disk a restore's generation is the clock, so a second restore on a clock
+// behind the first's is outranked if the first's key file comes back (the P3-1b
+// pass, FID-01, CRY-04, CRIT-02).
 func TestASecondRestoreOutranksTheFirstWithNoCopyLeft(t *testing.T) {
-	t.Skip("open residual (P3-1b pass FID-01, CRY-04; the CRIT-02 policy): with no copy left on disk the restore's generation is the clock, so §9.4 and MA-791 claim outranking only while a copy claiming the earlier generation survives or the clocks were right. Closing it needs a floor that survives losing every copy, which a record on this computer cannot give another computer.")
+	t.Skip("stated limit, accepted by the owner 2026-10-26 (P3-1b pass FID-01, CRY-04; the CRIT-02 policy): with no copy left on disk the restore's generation is the clock, so §9.4 and MA-791 claim outranking only while a copy claiming the earlier generation survives or the clocks were right. Closing it needs a floor that survives losing every copy, which a record on this computer cannot give another computer.")
 	lowCost(t)
 	out, _, rk, file := sealedArchive(t)
 	dropKeyFiles(t, out)

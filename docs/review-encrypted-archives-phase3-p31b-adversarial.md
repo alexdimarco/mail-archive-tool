@@ -29,8 +29,8 @@ FID-03); the rest low. The critic graded CRIT-01 and CRIT-02 medium.
 
 ## Outcome
 
-Every confirmed finding is fixed with a regression test, except one open gap left to the owner
-(FID-01/CRY-04) and two stated residuals. The fixes are under catalog MA-793, with amendments to
+Every confirmed finding is fixed with a regression test, except one limit the owner accepted
+(FID-01/CRY-04, 2026-10-26) and two stated residuals. The fixes are under catalog MA-793, with amendments to
 MA-789 (REG-05) and MA-791 (the open gap). The design is amended in place in §9.2 and §9.4, marked
 *Amended after the P3-1b adversarial pass*.
 
@@ -51,7 +51,7 @@ MA-789 (REG-05) and MA-791 (the open gap). The design is amended in place in §9
 | CRY-01 (+REG-01) | medium | `OpenWithin` re-derived on a newer copy without the limit | every copy judged before any derivation |
 | CRY-02 (+CRIT-03) | low | with no record, a forged recovery file could replace a healthy key file | a copy naming the archive must be the source's own (`vouches`) |
 | CRY-03 (+FID-04) | low | a planted generation claim wrapped round, or blocked unnamed | claims within the headroom refused by file name; no wrap possible |
-| CRY-04 | low | a restore on a corrected clock outranked by an earlier fast-clock one | **open, owner's decision** (with FID-01) |
+| CRY-04 | low | a restore on a corrected clock outranked by an earlier fast-clock one | **accepted by the owner** as a stated limit (with FID-01) |
 | CRY-05 | low | a recovery file derived at any cost up to the ceiling, unasked | K14's limit and question at unrecorded folders |
 | CRY-06 | low | the code blocks on a damaged pointer; §9.4 and the wording said otherwise | strict rule kept; §9.4 and the refusal now say so |
 | OUT-01 (+CON-03) | medium | a failed read-back after the write said "NOT in effect" | read back only the primary; failures are `ErrUnconfirmed`, in effect |
@@ -65,7 +65,7 @@ MA-789 (REG-05) and MA-791 (the open gap). The design is amended in place in §9
 | REG-03 | low | `CostError` could follow a derivation | the pre-scan (CRY-01) makes it mean "nothing derived" |
 | REG-04 | low | help, the subcommand list and the stray-flag refusal missed the new verb and flag | added; the refusal names the flags given |
 | REG-05 | low | the no-secret-flag allow-list grew without the catalog saying so | MA-789 amended |
-| FID-01 | medium | the outranking claim fails with no copy left on disk | **open, owner's decision**; a skipped test encodes it |
+| FID-01 | medium | the outranking claim fails with no copy left on disk | **accepted by the owner** as a stated limit; a skipped test records it |
 | FID-03 | medium | Commit's re-judge, read-back, cap and newer-pointer refusal untested | tests for each, and the clock's positive twin |
 | FID-05 | low | damaged key files at a recorded folder were not offered the restore | offered at every open; (b) **design gap, stated** |
 | FID-06 | low | parts of MA-792 untested | tests for each |
@@ -74,7 +74,9 @@ MA-789 (REG-05) and MA-791 (the open gap). The design is amended in place in §9
 | CRIT-05 | low | Commit did not judge the folder's case again | judged again; nothing written |
 | CRIT-06 | low | a mistyped recovery key found only after the password | checked first; asked again, the password kept |
 
-## Open gap — the owner's decision
+## The owner's decision
+
+**Accepted as a stated limit, 2026-10-26** (the owner: "accept, keep going"; option 1 below).
 
 **FID-01 / CRY-04.** With no copy of the key file left on disk, a restore's generation is the
 clock. Suppose a first restore ran on a clock set ahead, both copies were lost again, and a second

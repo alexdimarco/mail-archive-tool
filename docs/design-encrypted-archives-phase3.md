@@ -959,8 +959,8 @@ review-encrypted-archives-phase3-p31b-adversarial):*
   by its name ("move it aside"), and so is a clock that far ahead; every restore leaves 2^32
   rewrites below the cap (CRY-03, OUT-03). A claim far ahead of the clock but nowhere near the cap
   is still outranked: it is the only floor after a restore on a fast clock (CRIT-02).
-- **The outranking claim has an open gap (owner's decision).** With no copy of the key file left on
-  disk, the generation is the clock alone. A second restore on a clock behind the first's is then
+- **The outranking claim has a stated limit (accepted by the owner, 2026-10-26: "accept").** With
+  no copy of the key file left on disk, the generation is the clock alone. A second restore on a clock behind the first's is then
   outranked if the first's key file comes back, and the password it withdrew opens again (FID-01,
   CRY-04). The sentence "a key file put back from an old backup therefore never outranks the
   restored one" holds while a copy claiming the earlier generation survives or the clocks were
