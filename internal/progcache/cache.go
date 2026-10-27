@@ -253,6 +253,32 @@ func (c *Cache) Verified(version string) map[string]string {
 	return out
 }
 
+// Asset is a verified file of the cache: its SHA-256 and size.
+type Asset struct {
+	SHA256 string
+	Size   int64
+}
+
+// Assets is Verified with each file's size, and the version's SHA256SUMS as one more
+// entry under SumsName.
+func (c *Cache) Assets(version string) map[string]Asset {
+	v := c.Verified(version)
+	if v == nil {
+		return nil
+	}
+	dir := filepath.Join(c.root, version)
+	out := map[string]Asset{}
+	for a, d := range v {
+		if fi, err := os.Lstat(filepath.Join(dir, a)); err == nil {
+			out[a] = Asset{SHA256: d, Size: fi.Size()}
+		}
+	}
+	if b, err := c.Sums(version); err == nil {
+		out[SumsName] = Asset{SHA256: hexSHA(b), Size: int64(len(b))}
+	}
+	return out
+}
+
 // Sums is version's verified SHA256SUMS, byte for byte (R16, R18).
 func (c *Cache) Sums(version string) ([]byte, error) {
 	dir, err := c.versionDir(version, false)

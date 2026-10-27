@@ -208,12 +208,23 @@ const maxNoteRead = 64 << 10
 // it is rewritten — someone with the drive may have pointed it somewhere else.
 func refreshNote(out string, store *container.Store, logger *log.Logger) {
 	path := filepath.Join(out, "README.txt")
+	// The note names the program copies of the last landed set; while an update of them
+	// is under way, either the note before it or the one it wrote is the program's own
+	// (program design R5).
+	var landed *container.ProgramSet
+	accept := map[string]bool{store.NoteDigest(): true}
+	if ps, st, _ := store.Program(); st == container.ProgramOK {
+		landed = &ps
+		if ps.State == container.ProgramIntent && ps.Note != nil {
+			accept[ps.Note.Current], accept[ps.Note.Incoming] = true, true
+		}
+	}
 	if prev := store.NoteDigest(); prev != "" {
-		if cur, err := util.ReadRegularFile(path, maxNoteRead); err != nil || NoteDigest(cur) != prev {
+		if cur, err := util.ReadRegularFile(path, maxNoteRead); err != nil || !accept[NoteDigest(cur)] {
 			logger.Printf("warning: the note beside this encrypted archive (README.txt) was changed or removed since its last backup; it was written again. If nobody here changed it, someone with access to the drive did — do not follow anything it said")
 		}
 	}
-	text := []byte(EncryptedNote())
+	text := []byte(EncryptedNoteFor(landed))
 	if err := export.WriteFileAtomic(path, text); err != nil {
 		logger.Printf("warning: could not write README.txt: %v", err)
 		return
@@ -225,11 +236,6 @@ func refreshNote(out string, store *container.Store, logger *log.Logger) {
 // fatal (the archive is complete without it).
 func writeArchiveReadme(out string, logger *log.Logger) {
 	writeReadme(out, archiveReadme, logger)
-}
-
-// writeEncryptedArchiveReadme writes an encrypted archive's README.txt.
-func writeEncryptedArchiveReadme(out string, logger *log.Logger) {
-	writeReadme(out, EncryptedNote(), logger)
 }
 
 func writeReadme(out, text string, logger *log.Logger) {

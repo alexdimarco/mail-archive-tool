@@ -53,8 +53,9 @@ func TestAKeyedRunSealsTheProgramCopiesChoice(t *testing.T) {
 }
 
 // covers: MA-832, R37
-// The choice changes only keep: an update of the copies under way stays as it was
-// sealed (R7).
+// The choice changes only keep: the rest of the set — the high-water mark — stays as
+// sealed (R7); the run's program step then finishes the update a stopped run left
+// (state landed), a name being removed that is gone dropped.
 func TestTheChoiceKeepsTheRestOfTheSet(t *testing.T) {
 	out, key := encryptedOut(t)
 	if _, err := Run(context.Background(), Options{Inputs: []string{encryptedSourcePST(t)}, Out: out, Key: key, ProgramCopies: ProgramCopiesOn}, log.New(io.Discard, "", 0), nil); err != nil {
@@ -78,7 +79,7 @@ func TestTheChoiceKeepsTheRestOfTheSet(t *testing.T) {
 	}
 	_, s, _ = container.LoadManifest(out, container.LoadOptions{Key: key, ReadOnly: true})
 	got, st, _ := s.Program()
-	assure.Reached(t, st == container.ProgramOK && got.Keep != nil && !*got.Keep && got.State == container.ProgramIntent && got.Version == "v1.5.0" && len(got.Removing) == 1,
+	assure.Reached(t, st == container.ProgramOK && got.Keep != nil && !*got.Keep && got.State == container.ProgramLanded && got.Version == "v1.5.0" && len(got.Removing) == 0,
 		fmt.Sprintf("the rest of the set kept: %+v", got))
 }
 

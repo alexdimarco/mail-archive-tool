@@ -105,6 +105,15 @@ func (s *Store) SetProgram(ps ProgramSet) error {
 	return nil
 }
 
+// SetProgramRawForTest plants raw as the sealed set for the next commit: a test's
+// stand-in for a set a newer MailArchive wrote. Never called outside tests.
+func (s *Store) SetProgramRawForTest(raw []byte) {
+	s.hdr.Program = append(json.RawMessage(nil), raw...)
+}
+
+// ProgramRaw is the sealed set's bytes as the record holds them.
+func (s *Store) ProgramRaw() []byte { return append([]byte(nil), s.hdr.Program...) }
+
 func decodeProgram(raw json.RawMessage) (ProgramSet, ProgramStatus, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return ProgramSet{}, ProgramAbsent, nil
@@ -136,6 +145,13 @@ var (
 	selfPlatform = regexp.MustCompile(`^(darwin|windows|linux|freebsd|openbsd|netbsd|dragonfly|illumos|solaris|aix)-(amd64|arm64|386|arm|universal|riscv64|ppc64|ppc64le|s390x|mips64|mips64le|loong64)$`)
 	sha256Hex    = regexp.MustCompile(`^[0-9a-f]{64}$`)
 )
+
+// PlatformChecksums is the platform of a kept SHA256SUMS-<version> file: it covers
+// that version's copies of every platform (R16).
+const PlatformChecksums = "checksums"
+
+// ReleasePlatforms are the platforms a release publishes an asset for, in order.
+var ReleasePlatforms = []string{"macos", "windows-amd64", "linux-amd64", "linux-arm64"}
 
 // releasePlatforms are the platforms a release publishes an asset for (R15).
 var releasePlatforms = map[string]bool{"macos": true, "windows-amd64": true, "linux-amd64": true, "linux-arm64": true}
@@ -252,7 +268,9 @@ func validateProgramFile(f ProgramFile) error {
 		return bad("size", f.Size)
 	case f.Version != "" && !ExactVersion(f.Version):
 		return bad("version", f.Version)
-	case f.Origin == OriginRelease && !releasePlatforms[f.Platform]:
+	case f.Origin == OriginRelease && f.Platform == PlatformChecksums && !strings.HasPrefix(f.Name, "SHA256SUMS-"):
+		return bad("platform", f.Platform)
+	case f.Origin == OriginRelease && f.Platform != PlatformChecksums && !releasePlatforms[f.Platform]:
 		return bad("platform", f.Platform)
 	case f.Origin == OriginSelf && !selfPlatform.MatchString(f.Platform):
 		return bad("platform", f.Platform)

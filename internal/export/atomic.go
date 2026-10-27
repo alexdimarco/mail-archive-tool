@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -106,8 +107,8 @@ const SnapshotPrefix = ".mailarchive-snapshot-"
 // in-flight files SweepTemps removes, and the orphan attachment zips
 // SweepOrphanZips removes. It returns the number of files removed. A local
 // run and reindex sweep both; a Microsoft 365 capture sweeps temps only.
-func SweepOrphans(out string, before time.Time, logger *log.Logger) int {
-	return SweepTemps(out, before, logger) + SweepOrphanZips(out, logger)
+func SweepOrphans(out string, before time.Time, logger *log.Logger, skip ...string) int {
+	return SweepTemps(out, before, logger, skip...) + SweepOrphanZips(out, logger, skip...)
 }
 
 // SweepTemps removes in-flight files a crashed run left under out — temp files
@@ -115,33 +116,38 @@ func SweepOrphans(out string, before time.Time, logger *log.Logger) int {
 // snapshots (SnapshotPrefix…, a whole copy of the source mailbox) — whose
 // modification time is before `before` (the current run's start, so a file this
 // run is still writing is never touched). Nothing else is ever deleted.
-func SweepTemps(out string, before time.Time, logger *log.Logger) int {
+func SweepTemps(out string, before time.Time, logger *log.Logger, skip ...string) int {
 	return sweep(out, logger, func(path, name string, d fs.DirEntry) bool {
 		if !(strings.HasPrefix(name, tempPrefix) && strings.HasSuffix(name, ".tmp")) && !strings.HasPrefix(name, SnapshotPrefix) {
 			return false
 		}
 		info, err := d.Info()
 		return err == nil && info.ModTime().Before(before)
-	})
+	}, skip...)
 }
 
 // SweepOrphanZips removes attachment zips whose sibling .html does not exist (a
 // crash between the zip rename and the html rename, or a message re-exported
 // under a new name). Nothing else is ever deleted.
-func SweepOrphanZips(out string, logger *log.Logger) int {
+func SweepOrphanZips(out string, logger *log.Logger, skip ...string) int {
 	return sweep(out, logger, func(path, name string, _ fs.DirEntry) bool {
 		if !strings.HasSuffix(name, zipSuffix) {
 			return false
 		}
 		_, err := os.Stat(strings.TrimSuffix(path, zipSuffix) + ".html")
 		return err != nil
-	})
+	}, skip...)
 }
 
-// sweep removes every regular file under out that orphan accepts.
-func sweep(out string, logger *log.Logger, orphan func(path, name string, d fs.DirEntry) bool) int {
+// sweep removes every regular file under out that orphan accepts, never under a
+// folder in skip: an encrypted archive's program folder, whose own step sweeps its
+// temporary files through its handle (program design R11).
+func sweep(out string, logger *log.Logger, orphan func(path, name string, d fs.DirEntry) bool, skip ...string) int {
 	removed := 0
 	filepath.WalkDir(out, func(path string, d fs.DirEntry, err error) error {
+		if err == nil && d.IsDir() && slices.Contains(skip, path) {
+			return filepath.SkipDir
+		}
 		if err != nil || d.IsDir() || !orphan(path, d.Name(), d) {
 			return nil
 		}

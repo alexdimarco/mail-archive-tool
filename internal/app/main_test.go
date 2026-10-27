@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"mail-archive-tool/internal/encrecord"
+	"mail-archive-tool/internal/progcache"
 	"mail-archive-tool/internal/vault"
 )
 
@@ -26,9 +27,21 @@ func TestMain(m *testing.M) {
 	// The copy's plan reads the archives this computer knows from the real config
 	// folder; the package's tests know none unless one says so.
 	knownArchives = func() []string { return nil }
+	// The program copies (program design R22): a throwaway cache, checked untouched at
+	// the end, and a small file standing in for this program, so a test's self-copy is
+	// not the whole test binary.
+	cacheDone := progcache.UseTestRoot(filepath.Join(root, "program-cache"))
+	stand := filepath.Join(root, "mailarchive-test-program")
+	os.WriteFile(stand, []byte("#!/bin/sh\necho mailarchive test program\n"), 0o755)
+	standFI, _ := os.Stat(stand)
+	selfExecutable = func() (string, os.FileInfo) { return stand, standFI }
 	restore := encrecord.SetDirForTest(filepath.Join(root, "record"))
 	code := m.Run()
 	restore()
+	if err := cacheDone(); err != nil {
+		fmt.Fprintln(os.Stderr, "TestMain:", err)
+		code = 1
+	}
 	os.RemoveAll(root)
 	os.Exit(code)
 }

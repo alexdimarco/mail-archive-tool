@@ -174,14 +174,16 @@ type Result struct {
 	// can tell how many of the run's exports were new messages and how many
 	// replaced an earlier copy of the same key (F13).
 	ManifestBefore int
-	Indexed        int    // messages in the search index (0 if indexing disabled)
-	IndexErrors    int    // messages the index refused (R8 parity broken; surfaced, not swallowed)
-	IndexBehind    bool   // an encrypted archive's indexed run ended with its sealed index still missing messages
-	Issues         int    // rows in the regenerated verification report
-	ReportPath     string // path to the verification report ("" when nothing to report)
-	Fillable       int    // manifest records still missing content an on-demand source may deliver (a record that is only partly read is counted in Unreadable instead)
-	Terminal       int    // records missing content the source can never deliver (recorded, never retried)
-	Unknown        int    // legacy records not yet re-examined (migrated from a version-1 manifest)
+	Indexed        int  // messages in the search index (0 if indexing disabled)
+	IndexErrors    int  // messages the index refused (R8 parity broken; surfaced, not swallowed)
+	IndexBehind    bool // an encrypted archive's indexed run ended with its sealed index still missing messages
+	// Program is what an encrypted archive's program step did (program design R1).
+	Program    ProgramOutcome
+	Issues     int    // rows in the regenerated verification report
+	ReportPath string // path to the verification report ("" when nothing to report)
+	Fillable   int    // manifest records still missing content an on-demand source may deliver (a record that is only partly read is counted in Unreadable instead)
+	Terminal   int    // records missing content the source can never deliver (recorded, never retried)
+	Unknown    int    // legacy records not yet re-examined (migrated from a version-1 manifest)
 
 	// Fault isolation (§4.2). Unreadable and Unparsed are the manifest's partly-read
 	// and unparsed records; Gaps is what this run observed in the capture-gap
@@ -226,15 +228,13 @@ type Result struct {
 func finish(out string, r *Result, exp *export.Exporter, manifest *state.Manifest, idx *index.Index, indexErrors int, scaffold bool, logger *log.Logger) {
 	// An encrypted archive (a keyed run, which prepareEncrypted proved against the
 	// archive's vault) gets no layout README and no report: both describe, in
-	// cleartext, what the units hide (phase2a §4).
+	// cleartext, what the units hide (phase2a §4). Its note is written by refreshNote
+	// as the run opens, its digest sealed, and by the program step (program design R5):
+	// never here, where it would not match the digest.
 	enc := exp.Units != nil
 	r.encrypted = enc
-	if scaffold {
-		if enc {
-			writeEncryptedArchiveReadme(out, logger)
-		} else {
-			writeArchiveReadme(out, logger)
-		}
+	if scaffold && !enc {
+		writeArchiveReadme(out, logger)
 	}
 	r.Stats = exp.Stats
 	r.ManifestSize = manifest.Len()
@@ -525,13 +525,18 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	var manifest *state.Manifest
 	var units *export.Units
 	var sealed *container.Store
+	var download *programDownload
+	encStart := time.Now().UTC()
 	if opts.Key != nil {
-		if manifest, units, sealed, err = openEncrypted(opts, lock.StillHeld, time.Now().UTC(), logger, nil); err != nil {
+		if manifest, units, sealed, err = openEncrypted(opts, lock.StillHeld, encStart, logger, nil); err != nil {
 			if opts.Unattended {
 				writeRefusedRun(opts, err)
 			}
 			return Result{}, err
 		}
+		// The program copies' download starts now, outside the step that waits for it
+		// (program design §5, R17).
+		download = startProgramDownload(ctx, sealed)
 	}
 	// Every run that begins is recorded (R18): "running" now, before any early
 	// return, finalized on the way out — so a run that never finishes is
@@ -583,7 +588,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 
 	// What a crashed earlier run may have left behind (R5): stale temps and
 	// orphan zips. Only files older than this run's start are touched.
-	if n := export.SweepOrphans(opts.Out, time.Now(), logger); n > 0 {
+	if n := export.SweepOrphans(opts.Out, time.Now(), logger, programSweepSkip(opts)...); n > 0 {
 		logger.Printf("swept %d orphaned temp/zip file(s) from an interrupted run", n)
 	}
 	// An encrypted archive's snapshots live in its scratch folder: a crashed run's are
@@ -830,6 +835,11 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 			saveErr = gErr
 		}
 		result.IndexBehind = opts.Index && sealed.IndexBehind()
+		// The program copies, under the lock, after the last save (program design R1).
+		if fatal == nil && lockLost == nil && saveErr == nil && ctx.Err() == nil {
+			result.Program = programStep(programEnv{ctx: ctx, out: opts.Out, store: sealed, save: manifest.Save,
+				stillHeld: lock.StillHeld, logger: logger, runStart: encStart, download: download})
+		}
 	}
 	// What ended the run or its sources, most serious first: the archive's own fault, a
 	// source the breaker stopped (with the files that failed to open, if any), the

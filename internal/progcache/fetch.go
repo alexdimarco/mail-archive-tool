@@ -245,8 +245,18 @@ func (f *Fetcher) sums(ctx context.Context, dir, version string) (map[string]str
 			return m, ""
 		}
 	}
-	resp, class := f.get(ctx, version, SumsName, 0)
+	// The same idle limit as an asset's download (R17): a server that answers nothing
+	// ends the attempt as stalled.
+	rctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var stalled atomic.Bool
+	timer := time.AfterFunc(f.idle(), func() { stalled.Store(true); cancel() })
+	defer timer.Stop()
+	resp, class := f.get(rctx, version, SumsName, 0)
 	if class != "" {
+		if stalled.Load() {
+			return nil, ClassStalled
+		}
 		return nil, class
 	}
 	defer resp.Body.Close()
@@ -258,6 +268,10 @@ func (f *Fetcher) sums(ctx context.Context, dir, version string) (map[string]str
 	}
 	b, err := io.ReadAll(io.LimitReader(resp.Body, maxSums+1))
 	switch {
+	case err != nil && stalled.Load():
+		return nil, ClassStalled
+	case err != nil && ctx.Err() != nil:
+		return nil, ClassCancelled
 	case err != nil:
 		return nil, ClassNetwork
 	case len(b) > maxSums:

@@ -164,14 +164,17 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	var manifest *state.Manifest
 	var units *export.Units
 	var sealed *container.Store
+	var download *programDownload
+	encStart := time.Now().UTC()
 	if opts.Key != nil {
 		owed := func(m *state.Manifest) error { return refuseOwedCollapse(opts, m, g.Mailboxes) }
-		if manifest, units, sealed, err = openEncrypted(opts, lock.StillHeld, time.Now().UTC(), logger, owed); err != nil {
+		if manifest, units, sealed, err = openEncrypted(opts, lock.StillHeld, encStart, logger, owed); err != nil {
 			if opts.Unattended {
 				writeRefusedRun(opts, err)
 			}
 			return Result{}, err
 		}
+		download = startProgramDownload(ctx, sealed) // program design §5, R17
 	}
 	begun := beginRun(opts)
 	defer recordRun(opts, begun, &result, &err, logger)
@@ -179,7 +182,7 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	// What a crashed earlier capture may have left behind (R5): stale temps — a
 	// half-written page, zip or manifest. Only temps, never zips: a capture's
 	// zip-without-page is not the local runs' crash signature (2a-P).
-	if n := export.SweepTemps(opts.Out, time.Now(), logger); n > 0 {
+	if n := export.SweepTemps(opts.Out, time.Now(), logger, programSweepSkip(opts)...); n > 0 {
 		logger.Printf("swept %d orphaned temp file(s) from an interrupted run", n)
 	}
 
@@ -550,6 +553,11 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 			saveErr = gErr
 		}
 		result.IndexBehind = opts.Index && sealed.IndexBehind()
+		// The program copies, under the lock, after the last save (program design R1).
+		if lockLost == nil && saveErr == nil && ctx.Err() == nil {
+			result.Program = programStep(programEnv{ctx: ctx, out: opts.Out, store: sealed, save: manifest.Save,
+				stillHeld: lock.StillHeld, logger: logger, runStart: encStart, download: download})
+		}
 	}
 	if saveErr != nil {
 		if failures > 0 && firstErr != nil {

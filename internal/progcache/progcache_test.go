@@ -283,6 +283,14 @@ func TestADownloadResumesAndAStallEndsIt(t *testing.T) {
 	if res.Class != ClassStalled || err != nil || fi.Size() != 10 {
 		t.Fatalf("a stall: %+v, partial %v %v", res, fi, err)
 	}
+	// A server that answers nothing to the checksum file stalls too, never hangs.
+	silent := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) { <-req.Context().Done() }))
+	defer silent.Close()
+	fs := r.fetcher(t)
+	fs.BaseURL, fs.Client, fs.Idle = silent.URL, silent.Client(), 300*time.Millisecond
+	if res := fs.Fetch(context.Background(), "v1.5.0"); res.Class != ClassStalled {
+		t.Fatalf("a silent server: %+v", res)
+	}
 	r.mu.Lock()
 	r.stall = ""
 	r.mu.Unlock()
