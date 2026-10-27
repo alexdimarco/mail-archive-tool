@@ -73,6 +73,12 @@ func RunJobInProcessKeyed(ctx context.Context, jobPath string, logger *log.Logge
 	}
 	opts := optsForJob(j, j.Inputs, logger.Writer())
 	opts.Unattended = false
+	switch j.ProgramCopies { // the choice the archive was made with, until a run seals it
+	case "on":
+		opts.ProgramCopiesIfUnchosen = app.ProgramCopiesOn
+	case "off":
+		opts.ProgramCopiesIfUnchosen = app.ProgramCopiesOff
+	}
 	done, err := apply(&opts)
 	if err != nil {
 		return "", err

@@ -25,6 +25,10 @@ func EncryptedNoteFor(ps *container.ProgramSet) string {
 }
 
 // systemName names a release platform or a self-copy's <os>-<arch> in words.
+// SystemName is a platform's name as the person reads it ("Mac", "Linux (ARM)"), for a
+// front end that tells of a kept copy.
+func SystemName(platform string) string { return systemName(platform) }
+
 func systemName(platform string) string {
 	switch platform {
 	case "macos":

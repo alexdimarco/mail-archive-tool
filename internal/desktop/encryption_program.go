@@ -4,7 +4,9 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"time"
 
+	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/container"
 	"mail-archive-tool/internal/keyring"
 )
@@ -69,6 +71,19 @@ func programCardLine(ps *container.ProgramSet, st container.ProgramStatus) (line
 		line = "Copies of MailArchive are no longer kept: the ones in this archive are removed at its next backup."
 	default:
 		line = "No copies of MailArchive are kept in this archive."
+	}
+	// What the reassuring line does not say (the PG4 pass, COR-6).
+	if ps.State == container.ProgramIntent {
+		line += " An update of them did not finish; the next backup finishes it."
+	}
+	for _, f := range ps.Files {
+		if f.UncheckedSince != "" {
+			since := f.UncheckedSince
+			if t, err := time.Parse(time.RFC3339, since); err == nil {
+				since = t.Local().Format("2 January 2006")
+			}
+			line += " The copy for " + app.SystemName(f.Platform) + " is kept online only and has not been checked since " + since + "."
+		}
 	}
 	return line, on, true
 }

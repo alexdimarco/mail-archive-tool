@@ -13,6 +13,55 @@ import (
 	"mail-archive-tool/internal/state"
 )
 
+// covers: MA-848, R37
+// verify -full while an update's intent stands takes either side of it as the program's
+// own (R5, R7; the PG4 pass, DUR-2): the note written for the update, a copy already
+// replaced by its incoming version and a copy whose removal was under way, gone, tell
+// nothing but the unfinished update. A file no entry names is told, by name, whether
+// copies are kept or not (COR-3); with copies switched off, the copies still sealed are
+// still compared.
+func TestVerifyFullTakesAnUnfinishedUpdateAsItsOwn(t *testing.T) {
+	out := sealedArchive(t)
+	dir := filepath.Join(out, container.ProgramDir)
+	os.MkdirAll(dir, 0o755)
+	entry := func(name, plat, version string, body []byte) container.ProgramFile {
+		s := sha256.Sum256(body)
+		return container.ProgramFile{Name: name, SHA256: hex.EncodeToString(s[:]), Size: int64(len(body)), Origin: container.OriginRelease, Version: version, Platform: plat, Reads: 1}
+	}
+	oldNote, newNote := []byte("the note for v1.5.0"), []byte("the note for v1.6.0")
+	os.WriteFile(filepath.Join(out, "README.txt"), newNote, 0o644)
+	os.WriteFile(filepath.Join(dir, "MailArchive-macos.zip"), []byte("mac v1.6.0"), 0o644) // already replaced
+	keep := true
+	set := &container.ProgramSet{Format: container.ProgramFormat, Keep: &keep, State: container.ProgramIntent, Version: "v1.5.0",
+		Files: []container.ProgramFile{entry("MailArchive-macos.zip", "macos", "v1.5.0", []byte("mac v1.5.0")),
+			entry("SHA256SUMS-v1.5.0", container.PlatformChecksums, "v1.5.0", []byte("sums"))},
+		Incoming: []container.ProgramFile{entry("MailArchive-macos.zip", "macos", "v1.6.0", []byte("mac v1.6.0"))},
+		Removing: []string{"SHA256SUMS-v1.5.0"}, // already removed
+		Note:     &container.ProgramNote{Current: NoteDigest(oldNote), Incoming: NoteDigest(newNote)}}
+	verify := func() []string {
+		rep, err := VerifySealed(out, VerifyOptions{}, discard(), nil, &fakeSealed{m: oneRecord(t), listOK: true, program: set, note: NoteDigest(oldNote)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rep.ProgramFindings
+	}
+	during := verify()
+	if len(during) != 1 || !strings.Contains(during[0], "did not finish") {
+		t.Fatalf("an unfinished update is the program's own: %v", during)
+	}
+	os.WriteFile(filepath.Join(dir, "mailarchive-windows-amd64.zip"), []byte("planted"), 0o644)
+	planted := strings.Join(verify(), " | ")
+	off := false
+	os.WriteFile(filepath.Join(dir, "MailArchive-macos.zip"), []byte("swapped"), 0o644)
+	set = &container.ProgramSet{Format: container.ProgramFormat, Keep: &off, State: container.ProgramLanded, Version: "v1.6.0",
+		Files: []container.ProgramFile{entry("MailArchive-macos.zip", "macos", "v1.6.0", []byte("mac v1.6.0"))}}
+	os.WriteFile(filepath.Join(out, "README.txt"), oldNote, 0o644)
+	switchedOff := strings.Join(verify(), " | ")
+	assure.Reached(t, strings.Contains(planted, "mailarchive-windows-amd64.zip, which MailArchive did not put there") &&
+		strings.Contains(switchedOff, "Mac was changed") && strings.Contains(switchedOff, "did not put there"),
+		"planted: "+planted+"\nswitched off: "+switchedOff)
+}
+
 // covers: MA-847, R37
 // verify -full compares the program folder and the note with what the record seals
 // (program design §6, C18), read-only: a changed copy, a missing one, something in a

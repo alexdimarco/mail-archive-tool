@@ -49,6 +49,11 @@ const (
 	ProgramKeptAsIs   = "kept as it is"
 	ProgramStopped    = "stopped"
 	ProgramCancelled  = "cancelled" // Ctrl-C or Cancel: nothing new written (R17)
+	ProgramUnchecked  = "unchecked" // a copy kept online only, unchecked since an earlier run (R4)
+	// With copies switched off:
+	ProgramRemoved    = "removed"     // the copies were removed
+	ProgramNotKept    = "not kept"    // none kept, nothing to do
+	ProgramNotRemoved = "not removed" // a copy could not be removed
 )
 
 // programIdentity is this program's version and whether it is a release build — an
@@ -99,6 +104,14 @@ type programDownload struct {
 	task    *progcache.Task
 	fetcher *progcache.Fetcher
 	version string
+}
+
+// downloadContext is the context the run's program download runs under.
+func (o Options) downloadContext(run context.Context) context.Context {
+	if o.ProgramDownload != nil {
+		return o.ProgramDownload
+	}
+	return run
 }
 
 // startProgramDownload starts, outside any lock, the download the program step will
@@ -184,6 +197,18 @@ func programStep(env programEnv) ProgramOutcome {
 		return s.o
 	}
 	s.o.Class = s.run(set)
+	if !*set.Keep {
+		// Copies switched off: the step only removes, and status says so — never that
+		// copies are kept (the PG4 pass, LEAK-1, COR-5).
+		switch s.o.Class {
+		case ProgramUpdated:
+			s.o.Class = ProgramRemoved
+		case ProgramUnchanged:
+			s.o.Class = ProgramNotKept
+		case ProgramIncomplete:
+			s.o.Class = ProgramNotRemoved
+		}
+	}
 	return s.o
 }
 
@@ -332,9 +357,11 @@ func hashRegular(path string, judgedFI os.FileInfo, size int64) (string, error) 
 }
 
 // programCode is the step's outcome as the last-run record names it, from the closed
-// list; "" when it did not run or the copies were never chosen.
+// list; "" when it did not run, the copies were never chosen, or none is kept and none
+// was there to remove.
 func programCode(class string) string {
 	return map[string]string{
+		ProgramRemoved: state.ProgramRemoved, ProgramNotRemoved: state.ProgramNotRemoved, ProgramUnchecked: state.ProgramUnchecked,
 		ProgramUpdated: state.ProgramUpdated, ProgramUnchanged: state.ProgramUnchanged, ProgramIncomplete: state.ProgramIncomplete,
 		ProgramSkipped: state.ProgramSkipped, ProgramKeptAsIs: state.ProgramUnread, ProgramStopped: state.ProgramStopped,
 		ProgramCancelled: state.ProgramCancelled,
@@ -448,6 +475,14 @@ func (s *programStepState) classOf(plan programPlan, wrote bool) string {
 	}
 	if len(plan.blocked) > 0 || s.failed {
 		return ProgramIncomplete
+	}
+	// A copy kept online only and unchecked since an earlier run: the lasting line (R4;
+	// the PG4 pass, COR-6).
+	since := s.env.runStart.UTC().Format(time.RFC3339)
+	for _, k := range plan.keep {
+		if k.UncheckedSince != "" && k.UncheckedSince < since {
+			return ProgramUnchecked
+		}
 	}
 	if wrote {
 		return ProgramUpdated

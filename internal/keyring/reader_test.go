@@ -451,9 +451,10 @@ func TestTheReaderServesTheProgramsOwnNote(t *testing.T) {
 	assure.Reached(t, code == 200 && strings.HasPrefix(h.Get("Content-Type"), "text/plain") && body == app.EncryptedNote(), "the program's own note")
 }
 
-// covers: MA-845, R37
+// covers: MA-845, MA-848, R37
 // The note the reader serves names the copies of MailArchive the record keeps, as
-// the note beside the archive does (program design §6; the PG pass's NOTE finding).
+// the note beside the archive does (program design §6; the PG pass's NOTE finding),
+// and, for a set a newer MailArchive wrote, says copies may be kept (LEAK-4).
 func TestTheReaderServesTheNoteWithTheKeptCopies(t *testing.T) {
 	freshRecord(t)
 	out, _, w := made(t, nil)
@@ -487,5 +488,31 @@ func TestTheReaderServesTheNoteWithTheKeptCopies(t *testing.T) {
 	ts := httptest.NewServer(server.Serve(r))
 	defer ts.Close()
 	_, _, body := get(t, ts, "/files/README.txt")
-	assure.Reached(t, strings.Contains(body, "for Mac: MailArchive v1.5.0"), "the kept copies in the served note")
+	if !strings.Contains(body, "for Mac: MailArchive v1.5.0") {
+		t.Fatalf("the kept copies in the served note:\n%s", body)
+	}
+
+	// A set a newer MailArchive wrote: the served note says copies may be kept, as the
+	// one this program writes beside the archive does (the PG4 pass, LEAK-4).
+	k, _, err = u.acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, s, err = container.LoadManifest(out, container.LoadOptions{Key: k})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.SetProgramRawForTest([]byte(`{"format":2,"keep":true}`))
+	if err := m.Save(); err != nil {
+		t.Fatal(err)
+	}
+	u.release()
+	r2, err := ReaderSource(u, ReaderOptions{LockedNote: "unlock it"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts2 := httptest.NewServer(server.Serve(r2))
+	defer ts2.Close()
+	_, _, newer := get(t, ts2, "/files/README.txt")
+	assure.Reached(t, strings.Contains(newer, "by\na newer MailArchive") || strings.Contains(newer, "by a newer MailArchive"), "the newer set's note served:\n"+newer)
 }

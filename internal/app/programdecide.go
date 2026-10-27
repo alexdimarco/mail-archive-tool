@@ -138,13 +138,7 @@ func decide(v programView) programPlan {
 			opens[plat] = e.Reads >= programReads
 			versions[e.Version] = true
 		case has && st.present():
-			if st == jOK {
-				e.MissingRuns, e.UncheckedSince = 0, ""
-			}
-			if st == jUnchecked && e.UncheckedSince == "" {
-				e.UncheckedSince = v.now
-			}
-			p.keep = append(p.keep, e)
+			p.keep = append(p.keep, v.checked(e, st))
 			opens[plat] = e.Reads >= programReads
 			versions[e.Version] = true
 		case has && st == jChanged:
@@ -221,14 +215,14 @@ func decide(v programView) programPlan {
 			((s.Name == v.selfName && s.Version == v.selfVersion()) || container.CompareVersions(s.Version, v.selfVersion()) > 0):
 			// This system's own copy — this program's, or a newer one another computer of
 			// the same system wrote: kept, never replaced by an older program (CRIT-04).
-			p.keep = append(p.keep, s)
+			p.keep = append(p.keep, v.checked(s, st))
 			ownWritten = true
 		case s.Platform == v.selfPlatform && !thisOpens && v.selfName != "":
 			if st != jAbsent {
 				p.remove = append(p.remove, s.Name) // replaced by this program's own
 			}
 		case st.present():
-			p.keep = append(p.keep, s)
+			p.keep = append(p.keep, v.checked(s, st))
 		default:
 			s.MissingRuns++
 			p.keep = append(p.keep, s)
@@ -261,6 +255,19 @@ func (v programView) withoutFailed(failed map[string]bool) programView {
 		w.selfName = ""
 	}
 	return w
+}
+
+// checked is a kept entry as this run found it (R4): checked, its marks cleared; kept
+// online only, marked unchecked from the first run that found it so — a self-copy as a
+// release copy (the PG4 pass, COR-6).
+func (v programView) checked(e container.ProgramFile, st judged) container.ProgramFile {
+	if st == jOK {
+		e.MissingRuns, e.UncheckedSince = 0, ""
+	}
+	if st == jUnchecked && e.UncheckedSince == "" {
+		e.UncheckedSince = v.now
+	}
+	return e
 }
 
 // selfVersion is the version a self-copy of this program records: its release version,

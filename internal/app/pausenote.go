@@ -36,6 +36,7 @@ func SealPauseNote(ctx context.Context, opts Options, note string, logger *log.L
 		return withKind(state.FailArchiveUnwritable, err)
 	}
 	defer lock.Release()
+	opts.settingOnly = true
 	manifest, _, store, err := openEncrypted(opts, lock.StillHeld, time.Now().UTC(), logger, nil)
 	if err != nil {
 		return err

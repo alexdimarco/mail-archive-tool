@@ -511,11 +511,8 @@ func (r *Reader) open(req *http.Request, rel string) ([]byte, func(), error) {
 			// The note as this program writes it — its copies of MailArchive as the
 			// record seals them — never the file beside the archive, which anyone with
 			// the drive could have changed (phase 3 §13.1; program design §6).
-			var set *container.ProgramSet
-			if ps, st, _ := v.store.Program(); st == container.ProgramOK {
-				set = &ps
-			}
-			return []byte(app.EncryptedNoteFor(set)), func() {}, nil
+			ps, st, _ := v.store.Program()
+			return []byte(app.EncryptedNoteOf(&ps, st)), func() {}, nil
 		}
 		if page, ok, err := r.page(v, rel); ok || err != nil {
 			return page, func() {}, err

@@ -382,7 +382,7 @@ func (d *dashboard) runBackupKeyed(w http.ResponseWriter, out, jobPath string) {
 			}
 		}
 		return wizard.RunJobInProcessKeyed(j.ctx, jobPath, logger, func(o *app.Options) (func(), error) {
-			o.ProgramSkip, o.OnProgramWait = j.skip, j.onWait
+			o.ProgramSkip, o.OnProgramWait, o.ProgramDownload = j.skip, j.onWait, d.life.Context()
 			return keyring.Apply(o, lease)
 		})
 	}); err != nil {

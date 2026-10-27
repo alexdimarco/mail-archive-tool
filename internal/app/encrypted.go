@@ -404,9 +404,17 @@ func openEncrypted(opts Options, stillHeld func() error, runStart time.Time, log
 		return nil, nil, nil, err
 	}
 	// The note beside the archive, checked against the digest the record sealed and
-	// written again, its new digest sealed by this run's commit (§13.1).
-	refreshNote(opts.Out, store, logger, manifest.Save)
-	sealProgramChoice(store, opts.ProgramCopies, logger)
+	// written again, its new digest sealed by this run's commit (§13.1). A setting's
+	// change leaves it to the next backup, whose log tells a note changed meanwhile (the
+	// PG4 pass, DUR-3).
+	if !opts.settingOnly {
+		refreshNote(opts.Out, store, logger, manifest.Save)
+	}
+	choice := opts.ProgramCopies
+	if ps, st, _ := store.Program(); choice == ProgramCopiesUnset && (st == container.ProgramAbsent || st == container.ProgramOK && ps.Keep == nil) {
+		choice = opts.ProgramCopiesIfUnchosen
+	}
+	sealProgramChoice(store, choice, logger)
 	return manifest, units, store, nil
 }
 

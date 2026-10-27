@@ -45,6 +45,11 @@ type Job struct {
 	// Thunderbird before archiving (design §4.2.5). Presence means ON. Additive:
 	// a job written before it reads as off.
 	ThunderbirdSync *ThunderbirdSync `json:"thunderbird_sync,omitempty"`
+	// ProgramCopies, "on" or "off", is a new encrypted archive's choice to keep copies
+	// of MailArchive in it, as it was made (program design R21): each run carries it
+	// until a run seals it, never over a choice already sealed (the PG4 pass, SEC-1).
+	// Additive: a job written before it carries none.
+	ProgramCopies string `json:"program_copies,omitempty"`
 }
 
 // ThunderbirdSync is the GUI job's Thunderbird pre-sync setting (design §4.2.5).

@@ -385,14 +385,15 @@ func logSummary(logger *log.Logger, r app.Result) {
 
 // wizardChoice is what the wizard learned; the schedule step repeats it.
 type wizardChoice struct {
-	inputs     []string
-	auto       bool // "all of them" from auto-detect: re-discover at run time
-	out        string
-	mode       export.Mode
-	since      string
-	copyFirst  bool
-	outlookCOM bool
-	keepRaw    bool // also keep each message's original .eml (raw-capable sources)
+	programCopies string // a new encrypted archive's choice, "on" or "off" (job.Job.ProgramCopies)
+	inputs        []string
+	auto          bool // "all of them" from auto-detect: re-discover at run time
+	out           string
+	mode          export.Mode
+	since         string
+	copyFirst     bool
+	outlookCOM    bool
+	keepRaw       bool // also keep each message's original .eml (raw-capable sources)
 	// followLinks are the inputs whose folder links the user asked to have read
 	// (owner ruling OR6: the per-input opt-in; a folder store only).
 	followLinks []string
@@ -1800,7 +1801,7 @@ func jobFor(name string, c wizardChoice) job.Job {
 		Name: name, Inputs: c.inputs, Auto: c.auto, Out: c.out,
 		Mode:  "incremental",
 		Since: c.since, CopyFirst: c.copyFirst, Outlook: c.outlookCOM,
-		KeepRaw: c.keepRaw, FollowLinks: c.followLinks,
+		KeepRaw: c.keepRaw, FollowLinks: c.followLinks, ProgramCopies: c.programCopies,
 	}
 	if c.outlookCOM {
 		j.Inputs = nil

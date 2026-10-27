@@ -37,6 +37,7 @@ func SealProgramCopies(ctx context.Context, opts Options, choice ProgramChoice, 
 	}
 	defer lock.Release()
 	opts.ProgramCopies = ProgramCopiesUnset // set below, so a refusal is told, not logged
+	opts.settingOnly = true
 	manifest, _, store, err := openEncrypted(opts, lock.StillHeld, time.Now().UTC(), logger, nil)
 	if err != nil {
 		return err

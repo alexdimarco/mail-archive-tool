@@ -149,6 +149,10 @@ func (d *dashboard) commitCreate(w http.ResponseWriter, it *pendingItem) {
 	}
 	// The run job Run now repeats is written at once, so an archive whose first backup
 	// cannot start is still finished by Run now (the P3-3 follow-up pass, MAKE-01).
+	// The person's choice of program copies goes in it, carried by every run until one
+	// seals it — a first backup that cannot start or is cancelled does not lose it
+	// (R21; the PG4 pass, SEC-1).
+	it.add.SetProgramCopies(!it.programOff)
 	jobPath, jerr := it.add.WriteRunJob()
 	if jerr != nil {
 		lines = append(lines, "Its backup settings could not be saved ("+jerr.Error()+"): back it up with mailarchive -out at a terminal to finish setting it up.")
@@ -168,12 +172,7 @@ func (d *dashboard) commitCreate(w http.ResponseWriter, it *pendingItem) {
 	if rerr := d.runKeyedJobOn(out, func(j keyedJob, logger *log.Logger) (string, error) {
 		defer u.Destroy() // the first backup's key goes when it ends
 		return wizard.RunJobInProcessKeyed(j.ctx, jobPath, logger, func(o *app.Options) (func(), error) {
-			o.ProgramSkip, o.OnProgramWait = j.skip, j.onWait
-			// The person's choice, sealed by the first backup's commit (R21).
-			o.ProgramCopies = app.ProgramCopiesOn
-			if it.programOff {
-				o.ProgramCopies = app.ProgramCopiesOff
-			}
+			o.ProgramSkip, o.OnProgramWait, o.ProgramDownload = j.skip, j.onWait, d.life.Context()
 			return keyring.Apply(o, u)
 		})
 	}); rerr != nil {

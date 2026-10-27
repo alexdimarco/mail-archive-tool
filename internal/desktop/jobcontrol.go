@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 )
@@ -29,7 +30,12 @@ func (d *dashboard) runKeyedJobOn(out string, fn func(j keyedJob, logger *log.Lo
 		c.mu.Lock()
 		c.cancel, c.skip, c.skipped = cancel, skip, false
 		c.mu.Unlock()
-		return fn(keyedJob{ctx: ctx, skip: skip, onWait: c.setWaiting}, logger)
+		result, err := fn(keyedJob{ctx: ctx, skip: skip, onWait: c.setWaiting}, logger)
+		if errors.Is(err, context.Canceled) && ctx.Err() != nil && d.life.Context().Err() == nil {
+			// The person's Cancel, not a failure (the PG4 pass, CMP-1).
+			return "The backup was cancelled. The archive is safe; the next backup finishes what this one left.", nil
+		}
+		return result, err
 	})
 	if err != nil {
 		cancel()

@@ -107,11 +107,22 @@ type Options struct {
 	// encrypted archive (program design §6, R21): on or off is sealed by this run's
 	// commit; unset leaves what the record sealed. Unused by a plaintext run.
 	ProgramCopies ProgramChoice
+	// ProgramCopiesIfUnchosen is the choice an archive was made with, sealed only while
+	// the record holds none — a run job's, carried until a run seals it, never over the
+	// person's later change (the PG4 pass, SEC-1).
+	ProgramCopiesIfUnchosen ProgramChoice
 	// ProgramSkip, when closed, ends the program step's wait for its download, and only
 	// the wait: the run goes on with this computer's own copy (R20). OnProgramWait is
 	// told when that wait starts and ends, so a front end offers the skip only then.
 	ProgramSkip   <-chan struct{}
 	OnProgramWait func(waiting bool)
+	// ProgramDownload, when set, is the context the run's program download runs under,
+	// so it outlives the run — the Desktop's own, where a skipped download carries on
+	// for the next backup (the PG4 pass, DUR-1). Unset: the run's own.
+	ProgramDownload context.Context
+	// settingOnly: a setting's keyed change (a pause note, keeping program copies), not a
+	// backup — the note beside the archive is left for the next backup to check.
+	settingOnly bool
 
 	// BeforeRead, when non-nil, runs once after the archive lock is held and the
 	// run has begun, and before any source is read: the opt-in Thunderbird
@@ -541,7 +552,7 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		}
 		// The program copies' download starts now, outside the step that waits for it
 		// (program design §5, R17).
-		download = startProgramDownload(ctx, sealed)
+		download = startProgramDownload(opts.downloadContext(ctx), sealed)
 	}
 	// Every run that begins is recorded (R18): "running" now, before any early
 	// return, finalized on the way out — so a run that never finishes is
@@ -1023,7 +1034,14 @@ func beginRun(opts Options) state.LastRun {
 // path, job, mode or warnings.
 func newRunRecord(opts Options) state.LastRun {
 	if opts.Key != nil || encryptedAt(opts.Out) {
-		return state.LastRun{Status: state.RunRunning, Started: time.Now().UTC(), Encrypted: true}
+		// The program copies' line the last run left, kept until this run's step says
+		// another (the PG4 pass, LEAK-3).
+		prev, st, _ := state.ReadLastRun(opts.Out)
+		program := ""
+		if st == state.LastRunPresent {
+			program = prev.Program
+		}
+		return state.LastRun{Status: state.RunRunning, Started: time.Now().UTC(), Encrypted: true, Program: program}
 	}
 	exe, _ := os.Executable()
 	mode := "incremental"
@@ -1155,7 +1173,11 @@ var appendRunHistory = state.AppendRunHistory
 func recordRun(opts Options, lr state.LastRun, result *Result, err *error, logger *log.Logger) {
 	lr.Finished = time.Now().UTC()
 	if lr.Encrypted {
-		lr.Program = programCode(result.Program.Class) // program design §4, §8
+		// When the step did not run (an early end, a cancel), the copies are as the last
+		// run that ran it left them, and so is the line newRunRecord carried (LEAK-3).
+		if result.Program.Class != "" {
+			lr.Program = programCode(result.Program.Class) // program design §4, §8
+		}
 	}
 	switch {
 	case *err == nil:

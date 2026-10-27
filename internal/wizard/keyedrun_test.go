@@ -60,3 +60,27 @@ func TestTheKeyedRunNowRefusesBeforeTheKey(t *testing.T) {
 	s := encryptedSummary(app.Result{IndexBehind: true})
 	assure.Reached(t, !strings.Contains(s, "index.html") && !strings.Contains(s, "report") && strings.Contains(s, "search index"), "the summary names no file")
 }
+
+// covers: MA-848, R37
+// A new encrypted archive's choice of program copies is in its run job, and Run now
+// carries it as the choice to seal only while none is sealed (R21; the PG4 pass,
+// SEC-1): a first backup that could not start or was cancelled does not lose it.
+func TestTheRunJobCarriesTheProgramCopiesChoice(t *testing.T) {
+	out := t.TempDir()
+	quiet := log.New(io.Discard, "", 0)
+	got := map[string]app.ProgramChoice{}
+	for _, on := range []bool{true, false} {
+		p := PendingAddFor(out, nil)
+		p.SetProgramCopies(on)
+		j := jobFor("a", p.c)
+		path := filepath.Join(t.TempDir(), "job.json")
+		if err := job.Write(path, j); err != nil {
+			t.Fatal(err)
+		}
+		RunJobInProcessKeyed(context.Background(), path, quiet, func(o *app.Options) (func(), error) {
+			got[j.ProgramCopies] = o.ProgramCopiesIfUnchosen
+			return func() {}, context.Canceled
+		})
+	}
+	assure.Reached(t, len(got) == 2 && got["on"] == app.ProgramCopiesOn && got["off"] == app.ProgramCopiesOff, "each choice carried as the one to seal while none is")
+}

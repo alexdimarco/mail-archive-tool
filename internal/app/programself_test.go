@@ -124,17 +124,22 @@ func TestADownloadThatOutlastsTheWaitBringsTheOwnProgram(t *testing.T) {
 // covers: MA-847, R37
 // Skipping the wait (R20) ends only the wait: the front end is told when the wait starts
 // and ends, the run goes on and keeps this computer's own program, with a warning; the
-// skipped attempt is not counted, so the download is tried again.
+// skipped attempt is not counted, and the download, under a context that outlives the
+// run, carries on after the run and its own context end (the PG4 pass, DUR-1).
 func TestSkippingTheWaitKeepsTheOwnProgramAndCountsNoAttempt(t *testing.T) {
+	cutOff := make(chan struct{}, 16) // a download request ended by its client
 	stall := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		<-r.Context().Done()
+		cutOff <- struct{}{}
 	}))
 	defer stall.Close()
+	dl, endDownload := context.WithCancel(context.Background())
+	defer endDownload() // before the server closes: the stalled request ends first
 	isolatedCache(t)
 	oi, of, ow := programIdentity, programFetcher, programWaitMax
 	programIdentity = func() (string, bool) { return "v1.7.0", true }
 	programFetcher = func(c *progcache.Cache, this string) *progcache.Fetcher {
-		return &progcache.Fetcher{Cache: c, This: this, BaseURL: stall.URL, Client: stall.Client(), Trusted: func(h string) bool { return h == "127.0.0.1" }, Idle: 5 * time.Second}
+		return &progcache.Fetcher{Cache: c, This: this, BaseURL: stall.URL, Client: stall.Client(), Trusted: func(h string) bool { return h == "127.0.0.1" }, Idle: time.Minute}
 	}
 	programWaitMax = 2 * time.Minute
 	defer func() { programIdentity, programFetcher, programWaitMax = oi, of, ow }()
@@ -143,13 +148,15 @@ func TestSkippingTheWaitKeepsTheOwnProgramAndCountsNoAttempt(t *testing.T) {
 	var told []bool
 	var logged bytes.Buffer
 	start := time.Now()
-	res, err := Run(context.Background(), Options{Inputs: []string{encryptedSourcePST(t)}, Out: out, Key: key, ProgramCopies: ProgramCopiesOn,
-		ProgramSkip: skip, OnProgramWait: func(waiting bool) {
+	runCtx, endRun := context.WithCancel(context.Background())
+	res, err := Run(runCtx, Options{Inputs: []string{encryptedSourcePST(t)}, Out: out, Key: key, ProgramCopies: ProgramCopiesOn,
+		ProgramDownload: dl, ProgramSkip: skip, OnProgramWait: func(waiting bool) {
 			told = append(told, waiting)
 			if waiting {
 				close(skip)
 			}
 		}}, log.New(&logged, "", 0), nil)
+	endRun() // as the Desktop's job ends
 	if err != nil {
 		t.Fatalf("backup: %v\n%s", err, logged.String())
 	}
@@ -157,7 +164,14 @@ func TestSkippingTheWaitKeepsTheOwnProgramAndCountsNoAttempt(t *testing.T) {
 	files := strings.Join(programFiles(t, out), " ")
 	c, _ := progcache.Open("")
 	ok, _ := programFetcher(c, "v1.7.0").ShouldTry("v1.7.0")
-	assure.Reached(t, strings.Contains(logged.String(), "was skipped") && strings.Contains(files, name) && ok &&
+	// The download's request is not cut off when the run and its context end.
+	finished := false
+	select {
+	case <-cutOff:
+		finished = true
+	case <-time.After(500 * time.Millisecond):
+	}
+	assure.Reached(t, strings.Contains(logged.String(), "was skipped") && strings.Contains(files, name) && ok && !finished &&
 		len(told) == 2 && told[0] && !told[1] && time.Since(start) < time.Minute && res.Program.Class == ProgramUpdated,
-		"skipped: the own program, no attempt counted: "+files)
+		"skipped: the own program, no attempt counted, the download carrying on: "+files)
 }

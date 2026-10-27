@@ -13,6 +13,21 @@ import (
 	"mail-archive-tool/internal/lockfile"
 )
 
+// covers: MA-848, R37
+// The card does not only reassure (the PG4 pass, COR-6): an update left unfinished and
+// a copy kept online only, with the day it was last checkable, are said beside the
+// line; a copy as it should be adds nothing.
+func TestTheCardSaysWhatTheReassuranceLeavesOut(t *testing.T) {
+	on := true
+	plain, _, _ := programCardLine(&container.ProgramSet{Keep: &on, State: container.ProgramLanded,
+		Files: []container.ProgramFile{{Name: "MailArchive-macos.zip", Platform: "macos"}}}, container.ProgramOK)
+	line, _, _ := programCardLine(&container.ProgramSet{Keep: &on, State: container.ProgramIntent,
+		Files: []container.ProgramFile{{Name: "MailArchive-macos.zip", Platform: "macos", UncheckedSince: "2026-10-20T09:00:00Z"}}}, container.ProgramOK)
+	assure.Reached(t, plain == "This archive keeps copies of MailArchive, so it can be opened years from now." &&
+		strings.Contains(line, "did not finish") && strings.Contains(line, "The copy for Mac is kept online only and has not been checked since 20 October 2026"),
+		"told: "+line)
+}
+
 // covers: MA-847, R37
 // The Encryption card's switch for keeping copies of MailArchive (program design §6,
 // C16): refused while the archive is locked, and while another run holds the archive,

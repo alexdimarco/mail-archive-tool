@@ -24,6 +24,12 @@ import (
 // and what to back up into it.
 type PendingAdd struct{ c wizardChoice }
 
+// SetProgramCopies records the choice to keep copies of MailArchive in the new archive,
+// for its run job to carry until a run seals it (program design R21).
+func (p *PendingAdd) SetProgramCopies(on bool) {
+	p.c.programCopies = map[bool]string{true: "on", false: "off"}[on]
+}
+
 // Out is the new archive's folder.
 func (p *PendingAdd) Out() string { return p.c.out }
 

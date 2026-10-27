@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -110,5 +111,7 @@ func TestTheJobSlotSkipsTheWaitAndCancelsAKeyedBackup(t *testing.T) {
 		t.Fatal("Cancel did not end the job")
 	}
 	m = until("the cancelled job ends", func(m map[string]any) bool { return m["running"] != true })
-	assure.Reached(t, err == context.Canceled && m["cancellable"] != true && m["skippable"] != true, "Cancel ends the keyed backup")
+	// Told as the person's Cancel, never as a failure (the PG4 pass, CMP-1).
+	assure.Reached(t, err == context.Canceled && m["cancellable"] != true && m["skippable"] != true &&
+		m["error"] == "" && strings.Contains(str(m["result"]), "cancelled"), "Cancel ends the keyed backup, told as a cancel")
 }

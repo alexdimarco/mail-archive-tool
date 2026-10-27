@@ -174,7 +174,7 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 			}
 			return Result{}, err
 		}
-		download = startProgramDownload(ctx, sealed) // program design §5, R17
+		download = startProgramDownload(opts.downloadContext(ctx), sealed) // program design §5, R17
 	}
 	begun := beginRun(opts)
 	defer recordRun(opts, begun, &result, &err, logger)

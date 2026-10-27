@@ -208,6 +208,19 @@ const maxNoteRead = 64 << 10
 // record sealed, writes the note again and seals the new one's digest for the run's
 // commit (§13.1): a note changed or removed since the last keyed run is told before
 // it is rewritten — someone with the drive may have pointed it somewhere else.
+// EncryptedNoteOf is the note this program writes for a sealed set as it reads (st):
+// naming the kept copies; saying copies may be kept, for a set a newer MailArchive
+// wrote; or the plain note. The reader serves the same (the PG4 pass, LEAK-4).
+func EncryptedNoteOf(ps *container.ProgramSet, st container.ProgramStatus) string {
+	switch st {
+	case container.ProgramOK:
+		return EncryptedNoteFor(ps)
+	case container.ProgramUnknown, container.ProgramInvalid:
+		return EncryptedNote() + "\n" + programSectionUnread
+	}
+	return EncryptedNote()
+}
+
 func refreshNote(out string, store *container.Store, logger *log.Logger, save func() error) {
 	path := filepath.Join(out, "README.txt")
 	prev := store.NoteDigest()
@@ -216,13 +229,12 @@ func refreshNote(out string, store *container.Store, logger *log.Logger, save fu
 	// is under way, either the note before it or the one it wrote is the program's own
 	// (program design R5).
 	accept := map[string]bool{prev: true}
-	var text []byte
-	switch ps, st, _ := store.Program(); st {
+	ps, st, _ := store.Program()
+	switch st {
 	case container.ProgramOK:
 		if ps.State == container.ProgramIntent && ps.Note != nil {
 			accept[ps.Note.Current], accept[ps.Note.Incoming] = true, true
 		}
-		text = []byte(EncryptedNoteFor(&ps))
 	case container.ProgramUnknown, container.ProgramInvalid:
 		// A newer MailArchive keeps the copies: its note, untouched, names them; one
 		// that changed is replaced by this program's, which says copies may be kept
@@ -230,10 +242,8 @@ func refreshNote(out string, store *container.Store, logger *log.Logger, save fu
 		if rerr == nil && prev != "" && NoteDigest(cur) == prev {
 			return
 		}
-		text = []byte(EncryptedNote() + "\n" + programSectionUnread)
-	default:
-		text = []byte(EncryptedNote())
 	}
+	text := []byte(EncryptedNoteOf(&ps, st))
 	if prev != "" && (rerr != nil || !accept[NoteDigest(cur)]) {
 		logger.Printf("warning: the note beside this encrypted archive (README.txt) was changed or removed since its last backup; it was written again. If nobody here changed it, someone with access to the drive did — do not follow anything it said")
 	}
