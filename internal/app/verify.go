@@ -109,6 +109,11 @@ type Report struct {
 	Leftovers     int    `json:"leftovers,omitempty"`
 	LeftoversStay bool   `json:"leftovers_stay,omitempty"`
 	PartsUnread   int    `json:"parts_unread,omitempty"`
+	// ProgramOdd counts the entries of the archive's program/ folder that are not
+	// copies MailArchive keeps there, naming up to ten (program design §3): they never
+	// change the outcome.
+	ProgramOdd      int      `json:"program_odd,omitempty"`
+	ProgramOddNames []string `json:"program_odd_names,omitempty"`
 
 	// Tier is an encrypted archive's check: 1 without the key, 2 with it (phase3 §8).
 	Tier int `json:"tier,omitempty"`
@@ -394,7 +399,8 @@ func verifyKeyless(ctx context.Context, out string, onProgress func(Report)) (Re
 // keylessReport is a keyless check's verdict as verify reports it.
 func keylessReport(out string, c container.Check) Report {
 	r := Report{Out: out, Encrypted: true, Outcome: c.Outcome, Reason: c.Reason, Advice: c.Advice, Unnamed: c.Unnamed, Leftovers: c.Leftovers, LeftoversStay: c.LeftoversStay,
-		PartsUnread: c.PartsUnread, Checked: c.Checked, OK: c.Checked - c.Missing - c.Modified, Missing: c.Missing, Modified: c.Modified}
+		PartsUnread: c.PartsUnread, Checked: c.Checked, OK: c.Checked - c.Missing - c.Modified, Missing: c.Missing, Modified: c.Modified,
+		ProgramOdd: c.ProgramOdd, ProgramOddNames: c.ProgramOddNames}
 	shown := map[string]int{}
 	for _, p := range c.Problems {
 		r.Problems = append(r.Problems, Problem{Path: p.Path, Kind: p.Kind, Detail: p.Detail})
@@ -865,6 +871,9 @@ func keylessSummary(r Report) []string {
 	}
 	if r.PartsUnread > 0 {
 		out = append(out, fmt.Sprintf("note: %d part(s) of the archive's file list could not be read; the next backup rewrites them", r.PartsUnread))
+	}
+	if r.ProgramOdd > 0 {
+		out = append(out, fmt.Sprintf("note: %d item(s) in the archive's program folder are not copies MailArchive keeps there (%s) — they do not change the outcome", r.ProgramOdd, strings.Join(r.ProgramOddNames, ", ")))
 	}
 	remedy := state.OutcomeTextFor(r.Outcome, r.Tier)
 	if r.Advice != "" {

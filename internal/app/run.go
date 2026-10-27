@@ -103,6 +103,10 @@ type Options struct {
 	// this machine committed, recorded outside the archive (A25; Phases 3-4 persist
 	// it). Zero: none recorded.
 	RecordedGen uint64
+	// ProgramCopies is the person's choice to keep copies of MailArchive in an
+	// encrypted archive (program design §6, R21): on or off is sealed by this run's
+	// commit; unset leaves what the record sealed. Unused by a plaintext run.
+	ProgramCopies ProgramChoice
 
 	// BeforeRead, when non-nil, runs once after the archive lock is held and the
 	// run has begun, and before any source is read: the opt-in Thunderbird

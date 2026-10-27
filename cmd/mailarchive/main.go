@@ -344,6 +344,7 @@ func runExport(args []string) error {
 		}
 		defer done()
 		opts.CredentialPaths = append(opts.CredentialPaths, kf.secretPaths()...)
+		opts.ProgramCopies = kf.programChoice(creating)
 	}
 
 	// Optional Thunderbird pre-sync (macOS and Windows): start Thunderbird (hidden on
@@ -1673,6 +1674,7 @@ func runGraph(args []string) (err error) {
 		}
 		defer done()
 		opts.CredentialPaths = append(opts.CredentialPaths, kf.secretPaths()...)
+		opts.ProgramCopies = kf.programChoice(creating)
 		if gopts.TokenCachePath != "" {
 			opts.CredentialPaths = append(opts.CredentialPaths, gopts.TokenCachePath)
 		}

@@ -11,7 +11,9 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"mail-archive-tool/internal/state"
@@ -52,6 +54,11 @@ type Check struct {
 	LeftoversStay bool
 	// PartsUnread counts shards of the file list that could not be read.
 	PartsUnread int
+	// ProgramOdd counts the entries of program/ that are not copies MailArchive keeps
+	// there (program design §3, C9), naming up to ten: informational, never changing
+	// the outcome.
+	ProgramOdd      int
+	ProgramOddNames []string
 }
 
 // FileProblem is one live file that is not as the file list says.
@@ -116,7 +123,61 @@ func CheckKeylessContext(ctx context.Context, out string, recordedGen uint64) (C
 	if err := ctx.Err(); err != nil {
 		return Check{}, err
 	}
+	k.c.ProgramOdd, k.c.ProgramOddNames = programOdd(out)
 	return k.c, nil
+}
+
+// ProgramDir is the folder an encrypted archive keeps copies of MailArchive in.
+const ProgramDir = "program"
+
+// programTemp is the name of the program step's own temporary file (§4.3).
+var programTemp = regexp.MustCompile(`^\.mailarchive-program-[0-9]{1,20}\.tmp$`)
+
+// maxProgramOddNames bounds the names a check gives.
+const maxProgramOddNames = 10
+
+// programOdd counts what in program/ is not a copy MailArchive could keep there: a
+// link, a folder, a special file, a name outside §3's pattern or ending
+// -attachments.zip, a file over ProgramMaxFile. program/ itself not a real folder is
+// one. Its own temporary files and the system's litter are not counted; nothing is
+// followed or opened.
+func programOdd(out string) (int, []string) {
+	dir := filepath.Join(out, ProgramDir)
+	ok, err := realDir(dir)
+	switch {
+	case err != nil:
+		return 1, []string{ProgramDir}
+	case !ok:
+		return 0, nil
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 1, []string{ProgramDir}
+	}
+	n, names := 0, []string(nil)
+	for _, e := range entries {
+		name := e.Name()
+		if util.IsLitter(name) || programTemp.MatchString(name) {
+			continue
+		}
+		odd := !e.Type().IsRegular() || !programName.MatchString(name) || strings.HasSuffix(strings.ToLower(name), "-attachments.zip")
+		if !odd {
+			if fi, err := e.Info(); err != nil || fi.Size() > ProgramMaxFile {
+				odd = true
+			}
+		}
+		if !odd {
+			continue
+		}
+		n++
+		if len(names) < maxProgramOddNames {
+			if !programName.MatchString(name) {
+				name = strconv.QuoteToASCII(name)
+			}
+			names = append(names, ProgramDir+"/"+name)
+		}
+	}
+	return n, names
 }
 
 type keylessCheck struct {

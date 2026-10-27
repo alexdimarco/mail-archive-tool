@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"mail-archive-tool/internal/encmark"
 )
 
 // Reason explains which program ProgramForSchedule chose, and why, so one
@@ -30,6 +32,27 @@ const (
 // moment the app quits, so every caller refuses (D1, §4.6.1). It carries no path,
 // and its message is the X2 refusal every caller shows.
 var ErrTranslocated = errors.New("Mail Archive is running from a temporary copy macOS made of a downloaded app; a schedule recorded from it stops working when the app quits. Do this: drag Mail Archive.app to your Applications folder, open it from there, and install the schedule (or choose Repair) again.")
+
+// ErrKeptCopy is returned by ProgramForSchedule when the running program is a copy
+// of MailArchive kept in an encrypted archive (design-encrypted-archives-phase3-program
+// §6, C15): the next backup may replace or remove it, so a schedule recorded from it
+// would stop working. It carries no path.
+var ErrKeptCopy = errors.New("Mail Archive is running from a copy kept inside an encrypted archive; a backup may replace or remove that copy, so a schedule cannot run it. Do this: copy the program out of the archive folder (or download it again from the official release page), open it from there, and install the schedule (or choose Repair) again.")
+
+// refuseKeptCopy refuses a program inside an encrypted archive — in its program
+// folder or anywhere in it — or named as a self-copy (mailarchive-self-…), on any
+// part of its path.
+func refuseKeptCopy(p string) error {
+	if res, _ := encmark.At(filepath.Dir(p)); res.Encrypted {
+		return ErrKeptCopy
+	}
+	for _, seg := range strings.Split(filepath.ToSlash(p), "/") {
+		if strings.HasPrefix(strings.ToLower(seg), "mailarchive-self-") {
+			return ErrKeptCopy
+		}
+	}
+	return nil
+}
 
 // l2WrapperGateHolds records whether lab item L-W2 has shown that a wrapped
 // schedule can run the no-console build mailarchivew.exe — that cmd.exe waits for
@@ -82,6 +105,11 @@ func ProgramForSchedule(wrapped bool) (exe string, reason Reason, err error) {
 	exe, reason, err = programForSchedule(runtime.GOOS, self, wrapped, SiblingQualifies)
 	if err != nil {
 		return exe, reason, err
+	}
+	for _, p := range []string{self, exe} {
+		if kerr := refuseKeptCopy(p); kerr != nil {
+			return "", ReasonNone, kerr
+		}
 	}
 	// §5.3/Q20 (MA-648): refuse a program an account other than the owner could
 	// replace in place, so a scheduled run can never be made to execute someone

@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/graphconfig"
 	"mail-archive-tool/internal/keyring"
 	"mail-archive-tool/internal/tty"
@@ -25,13 +26,14 @@ type keyFlags struct {
 	recoveryKeyFile *string
 	recoveryKeyOut  *string
 	recoveryFileOut *string
+	programCopies   *string // "on", "off" or "" (program design §6, R21)
 	// rememberGiven: -remember was on the command line, either way, so the
 	// question is not asked.
 	rememberGiven bool
 }
 
 // keyFlagNames are the flags parseJob refuses in a scheduled job.
-var keyFlagNames = []string{"encrypt", "remember", "password-file", "recovery-key-file", "recovery-key-out", "recovery-file-out"}
+var keyFlagNames = []string{"encrypt", "remember", "password-file", "recovery-key-file", "recovery-key-out", "recovery-file-out", "program-copies"}
 
 func addKeyFlags(fs *flag.FlagSet) *keyFlags {
 	k := &keyFlags{}
@@ -40,7 +42,28 @@ func addKeyFlags(fs *flag.FlagSet) *keyFlags {
 	addSecretFileFlags(fs, k)
 	k.recoveryKeyOut = fs.String("recovery-key-out", "", "with -encrypt: also save the new recovery key to this NEW file, readable only by you, outside the archive")
 	addRecoveryFileFlag(fs, k)
+	k.programCopies = fs.String("program-copies", "", "on or off: keep copies of MailArchive for Mac, Windows and Linux in the encrypted archive, so it can be opened years from now (about 134 MB each time a new version updates them); -encrypt keeps them unless this is off")
 	return k
+}
+
+// copies is -program-copies as given, or "".
+func (k *keyFlags) copies() string {
+	if k.programCopies == nil {
+		return ""
+	}
+	return *k.programCopies
+}
+
+// programChoice is the run's choice of program copies: as given, else on for a new
+// encrypted archive (on by default, O1), else the sealed choice is left as it is.
+func (k *keyFlags) programChoice(creating bool) app.ProgramChoice {
+	switch {
+	case k.copies() == "on", k.copies() == "" && creating:
+		return app.ProgramCopiesOn
+	case k.copies() == "off":
+		return app.ProgramCopiesOff
+	}
+	return app.ProgramCopiesUnset
 }
 
 // addRecoveryFileFlag adds -recovery-file-out (§9.4): where a new recovery key's
@@ -100,6 +123,8 @@ func refuseStrayKeyFlags(fs *flag.FlagSet, k *keyFlags, keyed, creating bool) er
 		return errors.New("-recovery-key-out and -recovery-file-out save the recovery key of a NEW encrypted archive (-encrypt); for a new recovery key run `mailarchive new-recovery-key`")
 	case creating && (*k.passwordFile != "" || *k.recoveryKeyFile != ""):
 		return errors.New("-encrypt asks for the new archive's password at the terminal; -password-file and -recovery-key-file open an existing one")
+	case k.copies() != "" && k.copies() != "on" && k.copies() != "off":
+		return fmt.Errorf("-program-copies is on or off, not %q", k.copies())
 	}
 	return nil
 }

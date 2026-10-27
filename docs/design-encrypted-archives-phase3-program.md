@@ -3,7 +3,8 @@
 **Status:** revision 3, 2026-10-27 — the conditions of its pre-code review (C1–C19) and of
 condition 20's targeted re-review of §4 and §5 (R1–R22, §11) folded in; both reviews are filed in
 docs/review-encrypted-archives-phase3-program-predesign.md (GO_WITH_CONDITIONS each). Where §§1–9
-and §11 differ, **§11 governs**. Not built, except PG5 (MA-827).
+and §11 differ, **§11 governs**. Built: PG5 (MA-827) and PG1 (MA-831..834; the Desktop's
+creation checkbox for the choice is PG4's). PG2–PG4 are not built.
 **Parent:** docs/design-encrypted-archives-phase3.md §13.2 (settled points, requirements 1–12),
 §13.1 (the note, built as MA-826), §14 (leak budget); owner rulings O1 (all four platforms,
 downloaded and checked; offline, this computer's own program) and O7 (published releases become

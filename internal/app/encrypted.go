@@ -406,7 +406,35 @@ func openEncrypted(opts Options, stillHeld func() error, runStart time.Time, log
 	// The note beside the archive, checked against the digest the record sealed and
 	// written again, its new digest sealed by this run's commit (§13.1).
 	refreshNote(opts.Out, store, logger)
+	sealProgramChoice(store, opts.ProgramCopies, logger)
 	return manifest, units, store, nil
+}
+
+// ProgramChoice is the choice to keep copies of MailArchive in an encrypted archive.
+type ProgramChoice int
+
+const (
+	ProgramCopiesUnset ProgramChoice = iota // leave the sealed choice as it is
+	ProgramCopiesOn
+	ProgramCopiesOff
+)
+
+// sealProgramChoice records the run's choice for its commit to seal (R21), keeping
+// the rest of the set — an update under way included (R7). A set this MailArchive
+// cannot read is kept as it is, with a warning (R6).
+func sealProgramChoice(store *container.Store, choice ProgramChoice, logger *log.Logger) {
+	if choice == ProgramCopiesUnset {
+		return
+	}
+	ps, st, _ := store.Program()
+	if st == container.ProgramAbsent {
+		ps = container.ProgramSet{Format: container.ProgramFormat}
+	}
+	keep := choice == ProgramCopiesOn
+	ps.Keep = &keep
+	if err := store.SetProgram(ps); err != nil {
+		logger.Printf("warning: the choice to keep copies of MailArchive in this archive was not recorded: %v", err)
+	}
 }
 
 // recordRefusal is a sealed record's load refusal as the run's refusal, worded by
