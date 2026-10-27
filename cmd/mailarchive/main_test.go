@@ -13,6 +13,7 @@ import (
 	"mail-archive-tool/internal/backupalert"
 	"mail-archive-tool/internal/encrecord"
 	"mail-archive-tool/internal/lockfile"
+	"mail-archive-tool/internal/progcache"
 )
 
 var testBin string
@@ -32,6 +33,9 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	encrecord.SetDirForTest(recordDir)
+	// Never let an in-process test read or remove the developer's downloaded program
+	// copies (program design R22).
+	progcache.UseTestRoot(filepath.Join(recordDir, "program-cache"))
 	cliHome = filepath.Join(recordDir, "home")
 	if err := os.MkdirAll(cliHome, 0o700); err != nil {
 		panic(err)

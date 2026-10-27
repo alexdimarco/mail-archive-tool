@@ -73,6 +73,9 @@ func printUninstallPlan(w io.Writer, rep *uninstall.Report) {
 			fmt.Fprintf(w, "      %s\n", f)
 		}
 	}
+	if rep.ProgramCache != "" {
+		fmt.Fprintf(w, "  - downloaded copies of MailArchive kept for encrypted archives: %s\n", rep.ProgramCache)
+	}
 	if rep.ClearedSignIn {
 		fmt.Fprintln(w, "  - the saved Microsoft sign-in (token and app secret)")
 	}

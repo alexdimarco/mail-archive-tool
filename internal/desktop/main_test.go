@@ -8,6 +8,7 @@ import (
 	"mail-archive-tool/internal/alert"
 	"mail-archive-tool/internal/backupalert"
 	"mail-archive-tool/internal/encrecord"
+	"mail-archive-tool/internal/progcache"
 	"mail-archive-tool/internal/vault"
 )
 
@@ -26,12 +27,18 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
+	// Before HOME moves, so the real program cache is the one guarded (R22).
+	cacheDone := progcache.UseTestRoot(filepath.Join(home, "program-cache"))
 	for _, v := range []string{"HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "AppData", "LOCALAPPDATA"} {
 		os.Setenv(v, home)
 	}
 	restore := encrecord.SetDirForTest(filepath.Join(home, "record"))
 	code := m.Run()
 	restore()
+	if err := cacheDone(); err != nil {
+		println("TestMain:", err.Error())
+		code = 1
+	}
 	os.RemoveAll(home)
 	os.Exit(code)
 }

@@ -810,6 +810,9 @@ func (d *dashboard) uninstallAction(w http.ResponseWriter, r *http.Request) {
 	if len(rep.Scratch) > 0 { // only when there is any: an encrypted archive's leftover working copies
 		plan["scratchFiles"] = rep.Scratch
 	}
+	if rep.ProgramCache != "" { // only when there is one: downloaded release copies (program design §5)
+		plan["programCache"] = rep.ProgramCache
+	}
 	if encryptedRecordKept() { // only when there is any (K8, A20)
 		plan["encryptedRecordKept"] = true
 	}
@@ -1681,6 +1684,7 @@ function uninstallPlanText(d){
     '- settings and log files: '+((d.configFiles||[]).length)];
   const scratch=d.scratchFiles||[];
   if(scratch.length){lines.push("- leftover working copies in MailArchive's working folder: "+scratch.length);scratch.forEach(f=>lines.push('     '+f));}
+  if(d.programCache)lines.push('- downloaded copies of MailArchive kept for encrypted archives: '+d.programCache);
   if(d.clearedSignIn)lines.push('- the saved Microsoft sign-in');
   lines.push('');
   lines.push('It will KEEP your '+kept.length+' archive(s) — your mail is never deleted:');

@@ -9,6 +9,7 @@ import (
 	"runtime"
 
 	"mail-archive-tool/internal/graphconfig"
+	"mail-archive-tool/internal/progcache"
 	"mail-archive-tool/internal/schedule"
 )
 
@@ -21,7 +22,11 @@ type Report struct {
 	// Scratch is what of MailArchive's working folder (job.ScratchDir) is removed: an
 	// encrypted archive's leftover working copies and their folders. Empty — and so not
 	// shown — when there is none.
-	Scratch      []string
+	Scratch []string
+	// ProgramCache is the folder of downloaded MailArchive release copies (program
+	// design §5, PG2), shown as one folder; programCache is what of it is removed.
+	ProgramCache string
+	programCache []string
 	KeptArchives []string // archives left untouched, named for the owner
 	BinaryNote   string   // how to remove the program itself (no self-delete, U-C6)
 }
@@ -31,7 +36,9 @@ type Report struct {
 var (
 	listSchedules  = schedule.OurInstalled
 	removeSchedule = schedule.RemoveLiveEntry
-	clearSignIn    = func(tenant, clientID string) error {
+	// programCacheRoot is the downloaded release copies' cache (progcache.DefaultRoot).
+	programCacheRoot = progcache.DefaultRoot
+	clearSignIn      = func(tenant, clientID string) error {
 		ts := graphconfig.DefaultTokenStore(tenant, clientID)
 		tcp, _ := graphconfig.DefaultTokenCachePath(tenant, clientID)
 		ss, _ := graphconfig.DefaultSecretStore()
@@ -57,6 +64,12 @@ func Uninstall(configDir string, knownArchives []string, exe string, dryRun bool
 			return nil, err // ErrOverlap, ErrScratchUnexpected or a read error — nothing is touched
 		}
 	}
+	var cache []string
+	if root, rerr := programCacheRoot(); rerr == nil {
+		if cache, err = progcache.UninstallTargets(root); err != nil {
+			return nil, err // a download under way, or a planted link — nothing is touched
+		}
+	}
 	entries := listSchedules()
 	tenant, clientID, gerr := graphKeys(configDir)
 	if gerr != nil {
@@ -69,6 +82,10 @@ func Uninstall(configDir string, knownArchives []string, exe string, dryRun bool
 		ClearedSignIn: tenant != "" || clientID != "",
 		ConfigFiles:   append([]string(nil), cfgTargets...),
 		Scratch:       scratch,
+		programCache:  cache,
+	}
+	if len(cache) > 0 {
+		rep.ProgramCache = cache[len(cache)-1]
 	}
 	for _, e := range entries {
 		rep.Schedules = append(rep.Schedules, e.Name)
@@ -96,6 +113,13 @@ func Uninstall(configDir string, knownArchives []string, exe string, dryRun bool
 	for _, p := range scratch {
 		if derr := os.Remove(p); derr != nil && !errors.Is(derr, fs.ErrNotExist) {
 			return rep, fmt.Errorf("could not remove %s from MailArchive's working folder (stopping; the settings were not removed): %w", p, derr)
+		}
+	}
+	// 3b) The downloaded MailArchive release copies: the cache's own files, deepest
+	// first, each folder only when empty.
+	for _, p := range cache {
+		if derr := os.Remove(p); derr != nil && !errors.Is(derr, fs.ErrNotExist) {
+			return rep, fmt.Errorf("could not remove %s from MailArchive's program cache (stopping; the settings were not removed): %w", p, derr)
 		}
 	}
 	// 4) The config files (the enumeration sources, deleted last).

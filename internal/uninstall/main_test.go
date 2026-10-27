@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"mail-archive-tool/internal/progcache"
 )
 
 // TestMain points MailArchive's scratch folder at a throwaway folder for the whole
@@ -15,7 +17,12 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	scratchRoot = func() (string, error) { return filepath.Join(dir, "scratch"), nil }
+	cacheDone := progcache.UseTestRoot(filepath.Join(dir, "program-cache"))
 	code := m.Run()
+	if err := cacheDone(); err != nil {
+		println("TestMain:", err.Error())
+		code = 1
+	}
 	os.RemoveAll(dir)
 	os.Exit(code)
 }
