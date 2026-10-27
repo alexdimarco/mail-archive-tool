@@ -116,10 +116,13 @@ func TestTheRecordsActionsOnTheStatusCard(t *testing.T) {
 	if _, m := sessionRequest(t, h, http.MethodGet, "api/health", ""); !slices.Contains(offered(m), actionDismissLost) {
 		t.Fatalf("a lost record is offered Dismiss: %v", m)
 	}
+	// Locked, Dismiss is refused: only the archive opened with its key says which
+	// warning is its own (the P3-3 follow-up pass, DRIVE-01); dismissing it once
+	// unlocked is TestDismissClearsOnlyTheOpenArchivesWarning.
 	code, m = sessionRequest(t, h, http.MethodPost, "api/encryption/dismiss-lost", csrf)
 	lost, _ := encrecord.Lost()
-	assure.Reached(t, code == http.StatusOK && m["ok"] == true && !encmark.LostHere(arch) && slices.Contains(lost, "ffffffffffffffffffffffffffffffff"),
-		"dismissed for this folder alone")
+	assure.Refused(t, 1, toText(m), assure.Code(1), assure.Names("unlock this archive first"),
+		assure.NoSideEffect(func() bool { return code == http.StatusOK && encmark.LostHere(arch) && len(lost) == 2 }))
 }
 
 // covers: MA-804, R37, X10

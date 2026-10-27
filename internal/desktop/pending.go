@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/keyring"
 	"mail-archive-tool/internal/wizard"
 )
@@ -24,14 +25,16 @@ const pendingLife = 10 * time.Minute
 
 // pendingItem is one prepared key change.
 type pendingItem struct {
-	key   string // the registry's key of the archive (keyOf)
-	out   string // the archive's folder, as it was prepared for
-	rec   *keyring.PendingRecovery
-	res   *keyring.PendingRestore // a key file to put back (§9.4, §9.5), instead of rec
-	plan  *keyring.ForgetPlan     // a forget shown and awaiting its confirmation (§4.6)
-	add   *wizard.PendingAdd      // a new archive the wizard's questions chose (§5.2)
-	make  *keyring.PendingCreate  // its key, made and awaiting the recovery key typed back (K2)
-	lease *keyring.Unlocked
+	key  string // the registry's key of the archive (keyOf)
+	out  string // the archive's folder, as it was prepared for
+	rec  *keyring.PendingRecovery
+	res  *keyring.PendingRestore // a key file to put back (§9.4, §9.5), instead of rec
+	plan *keyring.ForgetPlan     // a forget shown and awaiting its confirmation (§4.6)
+	add  *wizard.PendingAdd      // a new archive the wizard's questions chose (§5.2)
+	make *keyring.PendingCreate  // its key, made and awaiting the recovery key typed back (K2)
+	// copyPlan is an unencrypted copy planned and awaiting its confirmation (§10, X14).
+	copyPlan *app.DecryptPlan
+	lease    *keyring.Unlocked
 	// file is the recovery file saved for it, "" while none: written only while the
 	// item is in the store, under its lock, so a discard always sees it.
 	file  string
@@ -42,10 +45,14 @@ type pendingItem struct {
 // left where it is).
 func isKeyChange(it *pendingItem) bool  { return it.rec != nil || it.res != nil || it.make != nil }
 func isForgetPlan(it *pendingItem) bool { return it.plan != nil }
+func isCopyPlan(it *pendingItem) bool   { return it.copyPlan != nil }
 
 // ofCurrentArchive is an item prepared on the current archive's own card — a new
-// recovery key, or a key file to put back — which a switch away discards.
-func ofCurrentArchive(it *pendingItem) bool { return it.rec != nil || it.res != nil }
+// recovery key, a key file to put back, a copy planned — which a switch away
+// discards.
+func ofCurrentArchive(it *pendingItem) bool {
+	return it.rec != nil || it.res != nil || it.copyPlan != nil
+}
 
 // recoveryKey is the new recovery key it shows.
 func (it *pendingItem) recoveryKey() string {
@@ -127,9 +134,12 @@ func (p *pendingSecrets) put(it *pendingItem) string {
 	it.timer = time.AfterFunc(p.life, func() { p.discard(token) })
 	p.items[token] = it
 	p.mu.Unlock()
+	// Replaced items end off the caller's locks: voiding a recovery file is disk
+	// work, and a hung disk must never hold the registry (the P3-3 follow-up pass,
+	// LIFE-02).
 	for _, o := range old {
 		o.timer.Stop()
-		o.discard()
+		go o.discard()
 	}
 	return token
 }

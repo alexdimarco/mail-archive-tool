@@ -36,11 +36,16 @@ func TestACancelledCreateWritesNothing(t *testing.T) {
 	_, m := e.post(t, "api/encryption/create", map[string]any{})
 	token := m["token"]
 	const pw = "the new archive's own passphrase"
-	e.post(t, "api/encryption/create/key", map[string]any{"token": token, "newPassword": pw, "again": pw})
+	_, k := e.post(t, "api/encryption/create/key", map[string]any{"token": token, "newPassword": pw, "again": pw})
+	if m["ok"] != true || k["ok"] != true || str(k["recoveryKey"]) == "" {
+		t.Fatalf("the create did not start: %v %v", m, k)
+	}
 	e.post(t, "api/encryption/new-recovery-key/cancel", map[string]any{"token": token})
+	// Typed back after Cancel: refused, nothing written (the P3-3 follow-up pass, FIX-06).
+	_, c := e.post(t, "api/encryption/new-recovery-key/confirm", map[string]any{"token": token, "typed": k["recoveryKey"]})
 	_, statErr := os.Stat(filepath.Join(out, vault.FileName))
 	rec, _ := encrecord.Load()
-	assure.Reached(t, os.IsNotExist(statErr) && len(rec.Archives) == 0, "cancelled: nothing written")
+	assure.Reached(t, c["ok"] != true && os.IsNotExist(statErr) && len(rec.Archives) == 0, "cancelled: nothing written")
 }
 
 // covers: MA-816, R37

@@ -267,7 +267,8 @@ func TestNoRecoveryFileOutlivesItsDiscardedKey(t *testing.T) {
 	e.post(t, "api/encryption/unlock", map[string]any{"secret": keysPassword})
 	_, m = e.post(t, "api/encryption/new-recovery-key", map[string]any{"confirm": true})
 	_, s = e.post(t, "api/encryption/new-recovery-key/save-file", map[string]any{"token": m["token"]})
-	assure.Reached(t, s["ok"] == true && strings.HasPrefix(str(s["path"]), saveDir), "positive twin: a waiting key's recovery file is saved")
+	assure.Reached(t, s["ok"] == true && strings.HasPrefix(str(s["path"]), saveDir) && filepath.Base(str(s["path"])) == recoveryFileName(out),
+		"positive twin: a waiting key's recovery file is saved, named for its own archive (HTTP-04)")
 	e.post(t, "api/encryption/new-recovery-key/cancel", map[string]any{"token": m["token"]})
 }
 
@@ -451,8 +452,8 @@ func TestShutDownWaitsForTheReadersWorkingCopy(t *testing.T) {
 func TestARefusedUninstallAndASettingsSaveLeaveUnlockWorking(t *testing.T) {
 	out := backedUpEncrypted(t)
 	e := newKeysEnv(t, out)
-	e.cfg.Keys.lockAll(true) // as the confirmed uninstall does
-	e.cfg.Keys.reopen()      // and undoes when it is refused
+	e.cfg.Keys.lockForUninstall() // as the confirmed uninstall does
+	e.cfg.Keys.reopen()           // and undoes when it is refused
 	if _, m := e.post(t, "api/encryption/unlock", map[string]any{"secret": keysPassword}); m["ok"] != true {
 		t.Fatalf("an unlock after a refused uninstall: %v", m)
 	}

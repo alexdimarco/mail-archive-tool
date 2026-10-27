@@ -21,9 +21,12 @@ func TestReadingTheRecoveryFileNeverWaitsOnAPipe(t *testing.T) {
 	path := filepath.Join(dir, "MailArchive recovery file.txt")
 	reg, fifo := filepath.Join(dir, "reg.tmp"), filepath.Join(dir, "fifo.tmp")
 	os.WriteFile(path, []byte("x"), 0o600)
-	stop := make(chan struct{})
-	defer close(stop)
+	stop, swapped := make(chan struct{}), make(chan struct{})
+	// The swapper is stopped and waited for before the folder is cleaned up (the
+	// P3-3 follow-up pass, FIX-07).
+	defer func() { close(stop); <-swapped }()
 	go func() {
+		defer close(swapped)
 		for {
 			select {
 			case <-stop:

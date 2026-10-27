@@ -203,16 +203,7 @@ func p14Local(t *testing.T, input string) p14Fixture {
 // served with an attachment.
 func p14Graph(t *testing.T) p14Fixture {
 	t.Helper()
-	s := graphtest.NewServer()
-	t.Cleanup(s.Close)
-	s.Fixture()
-	s.SetValue("U1IN1", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, p14Attached("subj-U1IN1", "u1in1"))
-	})
-	g := GraphOptions{
-		Tenant: "t", ClientID: "c", ClientSecret: "s", Mailboxes: []string{"u1", "u2"},
-		BaseURL: s.URL, TokenURL: s.URL + "/token",
-	}
+	g := p14GraphOptions(t)
 	out := tmpDir(t)
 	opts := Options{Out: out, Mode: export.Incremental, KeepRaw: true}
 	first, err := RunGraph(context.Background(), g, opts, discard())
@@ -227,6 +218,22 @@ func p14Graph(t *testing.T) p14Fixture {
 		t.Errorf("an incremental Graph re-run exported %d, want 0 (R2)", second.Stats.Exported)
 	}
 	return p14Collect(t, out)
+}
+
+// p14GraphOptions starts the fake Graph server with its two mailboxes, one message
+// served with an attachment, and says how to reach it.
+func p14GraphOptions(t *testing.T) GraphOptions {
+	t.Helper()
+	s := graphtest.NewServer()
+	t.Cleanup(s.Close)
+	s.Fixture()
+	s.SetValue("U1IN1", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, p14Attached("subj-U1IN1", "u1in1"))
+	})
+	return GraphOptions{
+		Tenant: "t", ClientID: "c", ClientSecret: "s", Mailboxes: []string{"u1", "u2"},
+		BaseURL: s.URL, TokenURL: s.URL + "/token",
+	}
 }
 
 // covers: MA-329, R2, R3, R5

@@ -58,16 +58,28 @@ func PendingAddFor(out string, inputs []string) *PendingAdd {
 	return &PendingAdd{c: wizardChoice{out: out, inputs: inputs, keepRaw: true}}
 }
 
-// RunFirstBackup writes the run job Run now repeats for the new archive — in the
-// settings folder, with no schedule (O5) — and runs its first backup attended with
-// the key apply hands over, as Run now does (RunJobInProcessKeyed).
-func (p *PendingAdd) RunFirstBackup(ctx context.Context, logger *log.Logger, apply func(*app.Options) (func(), error)) (string, error) {
+// WriteRunJob writes the run job Run now repeats for the new archive — in the
+// settings folder, with no schedule (O5) — and returns its path. The Desktop writes
+// it as soon as the archive is made, so a first backup that cannot start then still
+// leaves an archive Run now finishes setting up (the P3-3 follow-up pass, MAKE-01).
+func (p *PendingAdd) WriteRunJob() (string, error) {
 	name := schedule.DefaultNameFor(p.c.out)
 	path, err := job.PathFor(name)
 	if err != nil {
 		return "", err
 	}
 	if err := job.Write(path, jobFor(name, p.c)); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+// RunFirstBackup writes the run job (WriteRunJob) and runs the new archive's first
+// backup attended with the key apply hands over, as Run now does
+// (RunJobInProcessKeyed).
+func (p *PendingAdd) RunFirstBackup(ctx context.Context, logger *log.Logger, apply func(*app.Options) (func(), error)) (string, error) {
+	path, err := p.WriteRunJob()
+	if err != nil {
 		return "", err
 	}
 	return RunJobInProcessKeyed(ctx, path, logger, apply)

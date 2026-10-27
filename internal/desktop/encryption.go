@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"mail-archive-tool/internal/app"
@@ -15,6 +16,7 @@ import (
 	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/encrecord"
 	"mail-archive-tool/internal/keyring"
+	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/vault"
 )
 
@@ -177,6 +179,9 @@ func archiveFolderProblem(path string) string {
 	if p := recordedProblem(abs); p != "" {
 		return p
 	}
+	if state.UnfinishedCopy(abs) {
+		return fmt.Sprintf("%s holds an unencrypted copy that did not finish: it is not complete — delete it, then make the copy again.", abs)
+	}
 	if !archindex.IsArchive(abs) {
 		// The same words as the No-archive card; a manifest that is there but cannot be
 		// read is told so, with where its repair shows (the P3-3 pass, REG-04).
@@ -241,27 +246,30 @@ func (d *dashboard) repairRecordAction(w http.ResponseWriter, r *http.Request) {
 }
 
 // dismissLostAction acknowledges that this computer's record no longer lists the
-// current archive (§4.3): only that folder's ids leave the lost list, so the warning
-// stops for it and no other.
+// current archive (§4.3): only the archive open here leaves the lost list, so the
+// warning stops for it and no other.
 func (d *dashboard) dismissLostAction(w http.ResponseWriter, r *http.Request) {
 	out := d.cfg.effectiveOut()
-	ids := encmark.LostIDs(out)
-	if len(ids) == 0 {
+	if len(encmark.LostIDs(out)) == 0 {
 		writeJSON(w, map[string]any{"ok": false, "error": "there is no warning about this archive's record to dismiss"})
 		return
 	}
-	// The ids are what the folder's key files claim, unchecked without the key: two
-	// copies that disagree may be one planted to clear another archive's warning, so
-	// nothing is cleared until they agree (the P3-3 pass, OUT-D).
-	if c := vault.Claims(out); len(c.IDs) > 1 {
-		writeJSON(w, map[string]any{"ok": false, "error": "the two copies of this archive's key file name different archives, so the warning was not dismissed — open the archive with its password: that tells which is right"})
+	// The folder's key files can name any archive — a planted copy, or both copies
+	// replaced — so only the id of the archive opened here with its key is cleared:
+	// the one id nobody can plant (the P3-3 follow-up pass, DRIVE-01).
+	e := d.cfg.Keys.get(out)
+	if e == nil {
+		writeJSON(w, map[string]any{"ok": false, "error": "unlock this archive first: opening it with its key shows which archive the warning is about, and only that one's warning is dismissed"})
 		return
 	}
-	for _, id := range ids {
-		if err := encrecord.ClearLost(id); err != nil {
-			writeJSON(w, map[string]any{"ok": false, "error": "the warning could not be dismissed: " + err.Error()})
-			return
-		}
+	lost, _ := encrecord.Lost()
+	if !slices.Contains(lost, e.id) {
+		writeJSON(w, map[string]any{"ok": false, "error": "the archive open here is not the one the warning is about: its key files may have been replaced — nothing was dismissed"})
+		return
+	}
+	if err := encrecord.ClearLost(e.id); err != nil {
+		writeJSON(w, map[string]any{"ok": false, "error": "the warning could not be dismissed: " + err.Error()})
+		return
 	}
 	writeJSON(w, map[string]any{"ok": true})
 }

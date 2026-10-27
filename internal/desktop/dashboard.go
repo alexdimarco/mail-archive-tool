@@ -345,6 +345,8 @@ func (d *dashboard) router() localweb.Router {
 	mux.HandleFunc("/api/encryption/forget/plan", d.api(d.forgetPlanAction))
 	mux.HandleFunc("/api/encryption/forget", d.api(d.forgetAction))
 	mux.HandleFunc("/api/encryption/forget-all", d.api(d.forgetAllAction))
+	mux.HandleFunc("/api/encryption/copy/plan", d.api(d.copyPlanAction))
+	mux.HandleFunc("/api/encryption/copy/start", d.api(d.copyStartAction))
 	mux.HandleFunc("/api/encryption/create", d.api(d.createStartAction))
 	mux.HandleFunc("/api/encryption/create/key", d.api(d.createKeyAction))
 	mux.HandleFunc("/api/encryption/repair-record", d.api(d.repairRecordAction))
@@ -782,7 +784,7 @@ func (d *dashboard) uninstallAction(w http.ResponseWriter, r *http.Request) {
 	// prepared key change — unless it is refused, when the Desktop carries on as it
 	// was (REG-01).
 	if in.Confirm {
-		d.cfg.Keys.lockAll(true)
+		d.cfg.Keys.lockForUninstall()
 		d.pending.discardFor("")
 	} else {
 		defer d.cfg.Keys.hush()()
@@ -1377,6 +1379,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       {{if .EncPauseNote}}<p class="card-sub" id="encPauseNote">Paused: {{.EncPauseNote}}</p>{{end}}
       {{range .EncWarnings}}<p class="card-sub warn">{{.}}</p>{{end}}
       <button class="btn secondary" type="button" id="encLock" title="Close this archive: its messages are unreadable again until it is unlocked.">Lock</button>
+      <button class="btn secondary" type="button" id="encCopy" title="Make a readable copy of this archive in a new folder you choose — the way out of encryption. The archive itself is not changed.">Make an unencrypted copy…</button>
       <details class="small" id="encKeys"><summary>Change the password, make a new recovery key, or change whether this computer remembers the key</summary>
         <div id="encChangePw">
           <label for="encNewPw">New password</label> <input type="password" id="encNewPw" autocomplete="new-password" spellcheck="false">

@@ -40,6 +40,17 @@ import (
 // HistoryName is the archive-local timeline log, under -out beside the manifest.
 const HistoryName = ".mailarchive-history.jsonl"
 
+// UnfinishedCopyName marks a folder holding an unencrypted copy of an encrypted
+// archive that did not finish (design-encrypted-archives-phase3 §10): written first,
+// removed last. Nothing backs up into such a folder, and status says what it is.
+const UnfinishedCopyName = "_COPY-NOT-FINISHED.txt"
+
+// UnfinishedCopy reports whether out holds an unencrypted copy that did not finish.
+func UnfinishedCopy(out string) bool {
+	_, err := os.Lstat(filepath.Join(out, UnfinishedCopyName))
+	return err == nil
+}
+
 // HistoryEvent is one line of the history log. Fields carry omitempty so each
 // line holds only its kind's fields; the reader classifies by which are set.
 type HistoryEvent struct {

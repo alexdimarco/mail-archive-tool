@@ -19,6 +19,12 @@ import (
 // kills the dashboard (DC3), with the run log streamed into the bounded ring and
 // the result surfaced via /api/activity.
 func (d *dashboard) runJob(fn func(*log.Logger) (string, error)) error {
+	return d.runJobOn(d.cfg.effectiveOut(), fn)
+}
+
+// runJobOn is runJob for a job on the archive at out, which its failure is worded
+// for: a new archive's first backup is not the current archive's (MAKE-02).
+func (d *dashboard) runJobOn(out string, fn func(*log.Logger) (string, error)) error {
 	c := d.cap
 	c.mu.Lock()
 	if c.running {
@@ -29,7 +35,6 @@ func (d *dashboard) runJob(fn func(*log.Logger) (string, error)) error {
 	c.mu.Unlock()
 	// The archive the job runs on, taken as it starts: a switch while it runs does not
 	// change how its failure is worded (the P3-3 plan, 3d).
-	out := d.cfg.effectiveOut()
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {

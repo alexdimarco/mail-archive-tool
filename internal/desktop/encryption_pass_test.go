@@ -107,20 +107,18 @@ func TestDismissingTheLostWarningClearsOnlyThisArchive(t *testing.T) {
 	xID, zID := vault.Claims(x).IDs[0].String(), vault.Claims(z).IDs[0].String()
 	encrecord.MarkLost(xID)
 	encrecord.MarkLost(zID)
+	e := newKeysEnv(t, x)
+	e.post(t, "api/encryption/unlock", map[string]any{"secret": keysPassword})
 	keep, _ := os.ReadFile(filepath.Join(x, vault.BackupName))
 	b, _ := os.ReadFile(filepath.Join(z, vault.BackupName))
 	os.WriteFile(filepath.Join(x, vault.BackupName), b, 0o600)
-	e := newKeysEnv(t, x)
-	_, m := e.post(t, "api/encryption/dismiss-lost", nil)
-	lost, _ := encrecord.Lost()
-	assure.Refused(t, 1, str(m["error"]), assure.Code(1), assure.Names("name different archives"),
-		assure.NoSideEffect(func() bool { return len(lost) == 2 }))
-
-	os.WriteFile(filepath.Join(x, vault.BackupName), keep, 0o600)
+	// The copies disagree; the archive open here is X, and only X's mark is cleared
+	// (OUT-D, as the follow-up pass's DRIVE-01 fix settled it).
 	if _, m := e.post(t, "api/encryption/dismiss-lost", nil); m["ok"] != true {
-		t.Fatalf("positive twin: %v", m)
+		t.Fatalf("dismiss: %v", m)
 	}
-	lost, _ = encrecord.Lost()
+	os.WriteFile(filepath.Join(x, vault.BackupName), keep, 0o600)
+	lost, _ := encrecord.Lost()
 	assure.Reached(t, len(lost) == 1 && lost[0] == zID, "only this archive's mark was cleared")
 }
 

@@ -54,8 +54,13 @@ type archiveKeys struct {
 	busy     map[string]bool   // an open under way: deriving its key, or a remembered key looked up
 	held     map[string]bool   // locked by the person: no silent re-open this process (O3)
 	gen      map[string]uint64 // bumped for an archive each time it is locked: an open begun before loses
-	hushed   int               // silent re-opens refused meanwhile: every remembered key is being forgotten
-	closed   bool
+	hushed   int               // opens refused meanwhile: every remembered key is being forgotten
+	forgets  uint64            // bumped by every forget-all: a key change prepared across one is not kept
+	closed   bool              // Shut down: nothing more is unlocked, for good
+	// uninstalling counts confirmed uninstalls under way: nothing is unlocked
+	// meanwhile; one that is refused gives the Desktop back (reopen), never Shut
+	// down's refusal (the P3-3 follow-up pass, LIFE-04).
+	uninstalling int
 	// lastUsed is the last time a person used the Desktop (K4).
 	lastUsed time.Time
 	onLock   []func(key string) // told each archive that locks: its prepared key changes go (3e)
@@ -129,22 +134,30 @@ type keyEntry struct {
 	readerMu sync.Mutex // guards the fields below, never held across a load
 	reader   *keyring.Reader
 	lease    *keyring.Unlocked // the reader's own lease: its lock flag is its own (§3.2)
+	building *keyring.Unlocked // the lease of a reader being made, until it is kept or dropped
 	closed   bool
 }
 
-// close locks the entry: its open and its reader's lease first, so no request
-// decrypts after it and a reader still being made fails at once, then its reader, so
-// its index, pages and scratch file go. It never waits on a load (§3.2). wait: also
-// wait until the reader's working copy of its index is removed, as Shut down and
+// buildWait bounds how long Shut down and uninstall wait for a reader being made to
+// give up after its lease is locked.
+const buildWait = 10 * time.Second
+
+// close locks the entry: its open, its reader's lease and the lease of a reader
+// being made first, so no request decrypts after it and a build fails at once (the
+// P3-3 follow-up pass, LIFE-01), then its reader, so its index, pages and scratch
+// file go. It never waits on a load (§3.2). wait: also wait until the reader's
+// working copy of its index is removed and a build has given up, as Shut down and
 // uninstall do before what follows them.
 func (e *keyEntry) close(wait bool) {
 	e.readerMu.Lock()
-	r, l := e.reader, e.lease
+	r, l, b := e.reader, e.lease, e.building
 	e.reader, e.lease, e.closed = nil, nil, true
 	e.readerMu.Unlock()
 	e.u.Lock()
-	if l != nil {
-		l.Lock()
+	for _, x := range []*keyring.Unlocked{l, b} {
+		if x != nil {
+			x.Lock()
+		}
 	}
 	if r != nil {
 		if wait {
@@ -152,6 +165,14 @@ func (e *keyEntry) close(wait bool) {
 		} else {
 			r.Lock()
 			go r.Close() // removes the scratch file; it may wait, the lock never does
+		}
+	}
+	if wait {
+		done := make(chan struct{})
+		go func() { e.buildMu.Lock(); e.buildMu.Unlock(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(buildWait):
 		}
 	}
 }
@@ -229,9 +250,12 @@ func (k *archiveKeys) open(out string, silent bool, may func(abs string) bool, o
 	abs, key := keyOf(out)
 	k.mu.Lock()
 	switch {
-	case k.closed:
+	case k.shut():
 		k.mu.Unlock()
 		return nil, errKeysClosed
+	case k.hushed > 0 && !silent:
+		k.mu.Unlock()
+		return nil, errKeysHushed
 	case k.entries[key] != nil:
 		e := k.entries[key]
 		k.mu.Unlock()
@@ -263,7 +287,7 @@ func (k *archiveKeys) open(out string, silent bool, may func(abs string) bool, o
 	}
 	// A Lock and a hush both bump the generation of an open under way, so this
 	// also refuses a silent open the person's Lock or a forget-all landed on.
-	if k.closed || k.gen[key] != gen {
+	if k.shut() || k.gen[key] != gen {
 		u.Destroy()
 		return nil, keyring.ErrLocked
 	}
@@ -283,7 +307,7 @@ func (k *archiveKeys) ifOpen(out string, e *keyEntry, fn func()) bool {
 	_, key := keyOf(out)
 	k.mu.Lock()
 	defer k.mu.Unlock()
-	if k.closed || e == nil || k.entries[key] != e {
+	if k.shut() || e == nil || k.entries[key] != e {
 		return false
 	}
 	fn()
@@ -311,12 +335,32 @@ func (k *archiveKeys) readerFor(out string) (*keyring.Reader, error) {
 		return r, nil
 	}
 	l, err := e.u.Lease()
+	if errors.Is(err, keyring.ErrLocked) {
+		return nil, nil // locked as the reader was asked for: the locked page (CRIT-01)
+	}
 	if err != nil {
 		return nil, err
 	}
+	// The build's lease is on the entry, so a lock that lands while it loads locks it
+	// and the load fails at once (LIFE-01).
+	e.readerMu.Lock()
+	if e.closed {
+		e.readerMu.Unlock()
+		l.Lock()
+		return nil, nil
+	}
+	e.building = l
+	e.readerMu.Unlock()
 	r, err = readerSource(l, keyring.ReaderOptions{LockedNote: k.note})
+	e.readerMu.Lock()
+	e.building = nil
+	closedMeanwhile := e.closed
+	e.readerMu.Unlock()
 	if err != nil {
 		l.Lock()
+		if closedMeanwhile {
+			return nil, nil // the lock, not damage: the locked page (CRIT-01)
+		}
 		return nil, err
 	}
 	e.readerMu.Lock()
@@ -328,7 +372,7 @@ func (k *archiveKeys) readerFor(out string) (*keyring.Reader, error) {
 	if !kept { // locked while the reader was made
 		l.Lock()
 		k.mu.Lock()
-		closing := k.closed
+		closing := k.shut()
 		k.mu.Unlock()
 		if closing {
 			r.Close() // Shut down waits for its working copy to go
@@ -378,14 +422,32 @@ func (k *archiveKeys) lockAll(closing bool) {
 	k.closeWhere(func(string) bool { return true }, closing, true, false)
 }
 
-// reopen lets archives be unlocked again after a lockAll(true) whose purpose did not
-// go ahead: an uninstall that was refused.
+// shut reports whether nothing may be unlocked now: Shut down, or an uninstall
+// under way. Called with k.mu held.
+func (k *archiveKeys) shut() bool { return k.closed || k.uninstalling > 0 }
+
+// lockForUninstall locks every open archive, waiting for each reader's working copy
+// to go, and refuses every unlock until reopen: a confirmed uninstall is under way.
+func (k *archiveKeys) lockForUninstall() {
+	if k == nil {
+		return
+	}
+	k.mu.Lock()
+	k.uninstalling++
+	k.mu.Unlock()
+	k.closeWhere(func(string) bool { return true }, false, true, false)
+}
+
+// reopen lets archives be unlocked again after an uninstall that was refused. It
+// never undoes Shut down.
 func (k *archiveKeys) reopen() {
 	if k == nil {
 		return
 	}
 	k.mu.Lock()
-	k.closed = false
+	if k.uninstalling > 0 {
+		k.uninstalling--
+	}
 	k.mu.Unlock()
 }
 
@@ -398,14 +460,70 @@ func (k *archiveKeys) hush() (release func()) {
 	}
 	k.mu.Lock()
 	k.hushed++
+	k.forgets++
 	k.mu.Unlock()
 	k.closeWhere(func(string) bool { return true }, false, true, false)
+	// Every open already under way finishes first, so what it remembered or recorded
+	// on this computer is forgotten with the rest (the P3-3 follow-up pass, CRIT-02).
+	for deadline := time.Now().Add(hushWait); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		k.mu.Lock()
+		n := len(k.busy)
+		k.mu.Unlock()
+		if n == 0 {
+			break
+		}
+	}
 	return func() {
 		k.mu.Lock()
 		k.hushed--
 		k.mu.Unlock()
 	}
 }
+
+// hushWait bounds how long a hush waits for opens under way to finish.
+const hushWait = 30 * time.Second
+
+// forgetMark is the count of forget-alls so far: a key change prepared from now on
+// is kept only while it has not moved (LIFE-06).
+func (k *archiveKeys) forgetMark() uint64 {
+	if k == nil {
+		return 0
+	}
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return k.forgets
+}
+
+// forgotSince reports whether a forget-all began or ran since mark.
+func (k *archiveKeys) forgotSince(mark uint64) bool {
+	if k == nil {
+		return false
+	}
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return k.forgets != mark || k.hushed > 0
+}
+
+// unlessForgotten runs fn under the registry's lock unless a forget-all began or ran
+// since mark: what fn keeps is then either kept before the forget-all, which ends it,
+// or not kept at all (LIFE-06). fn must be quick and must not call back into the
+// registry.
+func (k *archiveKeys) unlessForgotten(mark uint64, fn func()) bool {
+	if k == nil {
+		fn()
+		return true
+	}
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if k.forgets != mark || k.hushed > 0 {
+		return false
+	}
+	fn()
+	return true
+}
+
+// errKeysHushed refuses an unlock while every remembered key is being forgotten.
+var errKeysHushed = errors.New("every encrypted archive is being forgotten on this computer — try again in a moment")
 
 // closeWhere locks every open archive match names, and makes every open of one under
 // way lose. unhold: the person's Lock no longer holds those archives.

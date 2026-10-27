@@ -59,6 +59,7 @@ func (d *dashboard) restoreAction(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { in.RecoveryKey, in.NewPassword, in.Again = "", "", "" }()
 	out := d.cfg.effectiveOut()
+	mark := d.cfg.Keys.forgetMark() // a forget-all from now on ends what this prepares (LIFE-06)
 	if !keysMissingHere(out) {
 		writeJSON(w, map[string]any{"ok": false, "error": "The key file is put back only for an archive this computer recorded whose key files are missing or damaged."})
 		return
@@ -134,8 +135,14 @@ func (d *dashboard) restoreAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	abs, key := keyOf(out)
-	token, ok := d.keep(w, &pendingItem{key: key, out: abs, res: p})
-	if !ok {
+	var token string
+	if !d.cfg.Keys.unlessForgotten(mark, func() { token = d.pending.put(&pendingItem{key: key, out: abs, res: p}) }) {
+		p.Discard()
+		writeJSON(w, map[string]any{"ok": false, "error": "Every encrypted archive was forgotten on this computer while the key file was prepared: nothing was put back."})
+		return
+	}
+	if token == "" {
+		writeJSON(w, map[string]any{"ok": false, "error": errKeysClosed.Error()})
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true, "token": token, "recoveryKey": p.RecoveryKey(), "warning": keyring.RecoveryWarning})

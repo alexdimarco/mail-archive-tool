@@ -22,13 +22,16 @@ func ChangePassword(u *Unlocked, newPassword string) error {
 	if err := CheckNewPassword(newPassword); err != nil {
 		return err
 	}
+	// The derivation turn first, the key after: a Lock that lands while the change
+	// waits for its turn wins, and nothing is changed (the P3-3 follow-up pass,
+	// FIX-01). A Lock during the derivation itself does not stop it.
+	deriving.Lock()
+	defer deriving.Unlock()
 	k, _, err := u.acquire()
 	if err != nil {
 		return err
 	}
 	defer u.release()
-	deriving.Lock()
-	defer deriving.Unlock()
 	return vault.ChangePasswordAt(u.out, u.id, vault.KeySecret(k), newPassword)
 }
 

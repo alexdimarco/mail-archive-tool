@@ -103,16 +103,24 @@ func (d *dashboard) createKeyAction(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
-	// Kept only while the item still waits: one discarded meanwhile (Cancel, its ten
-	// minutes, Shut down) never holds the new key.
-	var old *keyring.PendingCreate
-	if !d.pending.withItem(in.Token, it, func() { old, it.make = it.make, p }) {
+	// Kept only while the item still waits and has no key yet: one discarded
+	// meanwhile (Cancel, its ten minutes, Shut down) never holds the new key, and a
+	// key already made is never replaced — the recovery key typed back is always the
+	// one committed, and no recovery file is left for a key that was not (the P3-3
+	// follow-up pass, MAKE-03).
+	made := false
+	if !d.pending.withItem(in.Token, it, func() {
+		if made = it.make != nil; !made {
+			it.make = p
+		}
+	}) || made {
 		p.Discard()
-		writeJSON(w, map[string]any{"ok": false, "error": "That new archive is no longer waiting — click Add again."})
+		msg := "That new archive is no longer waiting — click Add again."
+		if made {
+			msg = "This new archive's key is already made — Cancel, then start again to choose another password."
+		}
+		writeJSON(w, map[string]any{"ok": false, "error": msg})
 		return
-	}
-	if old != nil {
-		old.Discard() // a second password replaces the first key
 	}
 	writeJSON(w, map[string]any{"ok": true, "token": in.Token, "recoveryKey": p.RecoveryKey(), "warning": keyring.RecoveryWarning})
 }
@@ -135,15 +143,27 @@ func (d *dashboard) commitCreate(w http.ResponseWriter, it *pendingItem) {
 	if it.file != "" {
 		lines = append(lines, keyring.RecoveryFileNote)
 	}
+	// The run job Run now repeats is written at once, so an archive whose first backup
+	// cannot start is still finished by Run now (the P3-3 follow-up pass, MAKE-01).
+	jobPath, jerr := it.add.WriteRunJob()
+	if jerr != nil {
+		lines = append(lines, "Its backup settings could not be saved ("+jerr.Error()+"): back it up with mailarchive -out at a terminal to finish setting it up.")
+	}
 	if err != nil { // made, but not recorded here: it says how to finish
 		writeJSON(w, map[string]any{"ok": true, "lines": append(lines, err.Error())})
 		return
 	}
 	lines = append(lines, u.Warnings()...)
-	add := it.add
-	if rerr := d.runJob(func(logger *log.Logger) (string, error) {
+	if jerr != nil {
+		u.Destroy()
+		writeJSON(w, map[string]any{"ok": true, "lines": lines})
+		return
+	}
+	// The job is the new archive's own: its failure is worded for it, not for the
+	// archive open here (MAKE-02).
+	if rerr := d.runJobOn(out, func(logger *log.Logger) (string, error) {
 		defer u.Destroy() // the first backup's key goes when it ends
-		return add.RunFirstBackup(d.life.Context(), logger, func(o *app.Options) (func(), error) {
+		return wizard.RunJobInProcessKeyed(d.life.Context(), jobPath, logger, func(o *app.Options) (func(), error) {
 			return keyring.Apply(o, u)
 		})
 	}); rerr != nil {

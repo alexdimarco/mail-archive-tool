@@ -1,6 +1,8 @@
 package app
 
 import (
+	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -13,6 +15,7 @@ import (
 	"mail-archive-tool/internal/container"
 	"mail-archive-tool/internal/health"
 	"mail-archive-tool/internal/lockfile"
+	"mail-archive-tool/internal/memguard"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/vault"
 )
@@ -64,6 +67,12 @@ func TestAnAmberThatOpenedNoMessageKeepsTheRedStanding(t *testing.T) {
 		if rep.Outcome != state.OutcomeNotAttested || state.StandingRed(&v) == nil || aerr != nil || rep.StandingOutcome != state.OutcomeDamaged {
 			t.Fatalf("an unreadable check erased the standing red: %s, standing %v, file kept %v\n%s", rep.Outcome, state.StandingRed(&v) != nil, aerr == nil, summary)
 		}
+		// Status never says the messages are intact of a check that could not open them
+		// (the P3-3 follow-up pass, FIX-05).
+		reasons := strings.Join(health.Assess(health.Gather(out, ""), time.Now()).Reasons, "\n")
+		if strings.Contains(reasons, "messages themselves are intact") || !strings.Contains(reasons, "could not open every message") {
+			t.Fatalf("status of an amber that kept a red standing:\n%s", reasons)
+		}
 	})
 	t.Run("moved under a lock-free check", func(t *testing.T) {
 		out := sealedArchive(t)
@@ -84,6 +93,24 @@ func TestAnAmberThatOpenedNoMessageKeepsTheRedStanding(t *testing.T) {
 			t.Fatalf("a moved check (%s) erased the standing red (%v) or its attention file (kept %v)", rep.Outcome, state.StandingRed(&v) != nil, aerr == nil)
 		}
 	})
+	// The rule's other cases (the P3-3 follow-up pass, FIX-02): a record the key could
+	// not load, a message too large to open, and the record's files not all read.
+	for name, src := range map[string]*fakeSealed{
+		"the record not loaded": {loadErr: fmt.Errorf("%w: x", container.ErrNewerFormat)},
+		"a message too large":   {listOK: true, unitErr: memguard.ErrTooLarge},
+		"record files unread":   {listOK: true, chunkErr: errors.New("a read failed")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			out := sealedArchive(t)
+			attention := aStandingRed(t, out)
+			rep, _ := fullSummary(t, out, src)
+			v, _, _ := state.ReadLastVerify(out)
+			_, aerr := os.Stat(attention)
+			if state.OutcomeIsRed(rep.Outcome) || state.StandingRed(&v) == nil || aerr != nil {
+				t.Fatalf("%s: %s erased the standing red (%v) or its attention file (kept %v)", name, rep.Outcome, state.StandingRed(&v) != nil, aerr == nil)
+			}
+		})
+	}
 	t.Run("every message opened", func(t *testing.T) {
 		out := sealedArchive(t)
 		attention := aStandingRed(t, out)

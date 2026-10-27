@@ -81,6 +81,8 @@ func main() {
 		err = runVerify(args[1:])
 	case len(args) > 0 && args[0] == "extract":
 		err = runExtract(args[1:])
+	case len(args) > 0 && args[0] == "decrypt":
+		err = runDecrypt(args[1:])
 	case len(args) > 0 && args[0] == "pause":
 		err = runPause(args[1:])
 	case len(args) > 0 && args[0] == "resume":
@@ -1824,6 +1826,7 @@ Usage:
   mailarchive restore-key-file -out DIR -from FILE       put back an encrypted archive's lost key files (or -remembered)
   mailarchive forget-archive   -out DIR                  stop treating a folder as one of this computer's encrypted archives
   mailarchive repair-record                              rebuild this computer's damaged record of encrypted archives
+  mailarchive decrypt  -out DIR -dest PARENT             make an UNENCRYPTED copy of an encrypted archive
   mailarchive desktop  [-capture]                        the dashboard & launcher (also opens on double-click)
   mailarchive wizard                                     step-by-step setup with native dialogs
   mailarchive run-job  FILE                              run a saved job headlessly (what a schedule runs)

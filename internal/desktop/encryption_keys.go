@@ -192,32 +192,35 @@ func (d *dashboard) saveRecoveryFileAction(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, map[string]any{"ok": true, "canceled": true})
 		return
 	}
-	// Written only while the key still waits, under the store's lock: a key discarded
-	// while the dialog was open — a Lock, a switch, Cancel, its ten minutes — never
-	// gets a recovery file that would outlive it (the P3-3 pass, KEY-07). The file is
-	// named for, and kept outside, the archive the key was made for (HTTP-04).
-	var path string
-	var werr error
-	if !d.pending.withItem(in.Token, it, func() {
-		data, err := it.recoveryFile()
-		if err != nil {
-			werr = err
-			return
-		}
-		if path, werr = keyring.WriteNewFile("The file chosen", "the recovery file", filepath.Join(dir, recoveryFileName(it.out)), it.out, data); werr != nil {
-			return
-		}
-		if it.file != "" {
-			_ = keyring.VoidFile(it.file)
-		}
-		it.file = path
-	}) {
+	// Written before it is attached, then attached only while the key still waits: a
+	// key discarded while the dialog was open — a Lock, a switch, Cancel, its ten
+	// minutes — never keeps a recovery file (KEY-07), and no disk work is done under
+	// the store's lock (the P3-3 follow-up pass, LIFE-03). The file is named for, and
+	// kept outside, the archive the key was made for (HTTP-04).
+	var data []byte
+	var derr error
+	if !d.pending.withItem(in.Token, it, func() { data, derr = it.recoveryFile() }) {
 		notWaiting(w)
 		return
 	}
-	if werr != nil {
-		writeJSON(w, map[string]any{"ok": false, "error": werr.Error()})
+	if derr != nil {
+		writeJSON(w, map[string]any{"ok": false, "error": derr.Error()})
 		return
+	}
+	path, err := keyring.WriteNewFile("The file chosen", "the recovery file", filepath.Join(dir, recoveryFileName(it.out)), it.out, data)
+	clear(data)
+	if err != nil {
+		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	var earlier string
+	if !d.pending.withItem(in.Token, it, func() { earlier, it.file = it.file, path }) {
+		_ = keyring.VoidFile(path)
+		notWaiting(w)
+		return
+	}
+	if earlier != "" {
+		_ = keyring.VoidFile(earlier)
 	}
 	writeJSON(w, map[string]any{"ok": true, "path": path, "note": keyring.RecoveryFileNote})
 }

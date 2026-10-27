@@ -1655,6 +1655,37 @@ P3-8.
   CLI make the copy; skipped messages are listed in `_COPY-PROBLEMS.txt` inside the copy, never in
   a log or the activity.
 
+*The P3-3 follow-up pass (2026-10-27; docs/review-encrypted-archives-phase3-p33-followup.md),
+its calls (vetoable):*
+- **A lock with no verb on an encrypted archive cannot say which run holds it** (FIX-04 accepted,
+  CRIT-03): while a keyed extract or a forget runs, a backup that died earlier reads as "a run is in
+  progress" rather than red, as it already did beside a password change or a keyed pause. A verb
+  would say beside the archive what ran; telling liveness by the lock's start time is owed if this
+  proves confusing.
+- **A Lock during the password change's own derivation (about a second) does not stop it** — the
+  change is the one the person just asked for; a Lock while it waits for its turn does (FIX-01).
+- **Dismiss needs the archive open here** and clears only that archive's own mark (DRIVE-01).
+- **A second password on a create already holding its key is refused**: Cancel and start again.
+
+*P3-4 steps 3–7 as built (2026-10-27), and their calls (vetoable):*
+- **The Phase 2c closure passes with every fixture, the fake Graph server included** (MA-822): an
+  encrypted run's copy equals the plaintext golden byte for byte.
+- **A copy with no search index exits 3**, as one that left messages out does; the summary names
+  `reindex -rebuild`. A part of the go-back timeline that could not be read is said, not exit 3:
+  the archive itself has that hole.
+- **A read error on a sealed unit other than missing, damaged or too large fails the whole copy**
+  (marked unfinished) rather than leave the message out: it is the drive, not the message.
+- **At a terminal the CLI asks "Make this unencrypted copy?" even for a local folder**; without a
+  terminal (with -password-file) a local folder is copied without a question, and one that may
+  leave this computer is refused.
+- **Inside the 0700 copy folder**, files are 0644 and folders 0755, as a plaintext run writes them.
+  The run-state files (last run, run history, source streak, verify record) are not carried:
+  status on the copy says no backups yet.
+- **The key is held while the history and the index image are read**, each in one piece (the
+  index streamed). Per-chunk holds, as `verify -full` has, are owed if P3-4's pass asks for them.
+- **A copy left unfinished is never backed up into**, and status says so in red
+  (`state.UnfinishedCopy`).
+
 *The P3-3 pass's fix round (2026-10-27; docs/review-encrypted-archives-phase3-p33-adversarial.md),
 and its calls (vetoable):*
 - **A Lock holds for this process; a switch ends it.** "Unlock with the key this computer remembers"

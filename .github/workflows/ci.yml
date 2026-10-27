@@ -57,7 +57,7 @@ jobs:
       # detector too (phase3 §3.2, K4; the P3-3 plan, 3c).
       - name: Race detector (the Desktop's open archives)
         if: matrix.os == 'ubuntu-latest'
-        run: go test -race -count=1 -run 'Encryption|Unlock|Remembered|Locks|Lock|OpenAnArchive|Records|RunNow|KeyRegistry|Hush|Switch|ForgetAll|RecoveryFile|Prepared|Cancel' ./internal/desktop/
+        run: go test -race -count=1 -run 'Encryption|Unlock|Remembered|Locks|Lock|OpenAnArchive|Records|RunNow|KeyRegistry|Hush|Switch|ForgetAll|RecoveryFile|Prepared|Cancel|ShutDown|Confirm|MakesAnEncrypted|Create|Forgetting|Dismiss|PuttingBack|Defaults|Repair|Pause|Reader|UnencryptedCopy|TheCard' ./internal/desktop/
 
       - name: Vulnerability scan (reachable code)
         if: matrix.os == 'ubuntu-latest'

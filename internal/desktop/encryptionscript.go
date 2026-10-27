@@ -47,6 +47,27 @@ if(ur)ur.addEventListener('click',async()=>{
   if(d&&d.ok){say('Unlocked.');setTimeout(()=>location.reload(),600);}
   else say((d&&d.error)||'Could not unlock.');
 });
+// Make an unencrypted copy: the plan first, confirmed once — twice for a folder that
+// may leave this computer — then the copy runs as the Desktop's task (K5, X14).
+const cy=$('encCopy');
+if(cy)cy.addEventListener('click',async()=>{
+  let d=null;
+  try{d=await send('api/encryption/copy/plan');}
+  catch(e){say('Could not reach MailArchive Desktop — reload the page.');return;}
+  if(!d||!d.ok){say((d&&d.error)||'Could not plan the copy.');return;}
+  if(d.canceled)return;
+  const plan=(d.lines||[]).join('\n');
+  if(!confirm(plan+'\n\nMake this copy?')){say('Nothing was copied.');return;}
+  let again=false;
+  if(d.askTwice){
+    again=confirm('The readable copy may leave this computer:\n'+(d.leaves||[]).join('\n')+'\n\nMake it there anyway?');
+    if(!again){say('Nothing was copied.');return;}
+  }
+  try{
+    const s=await send('api/encryption/copy/start',{token:d.token,confirm:true,confirmAgain:again});
+    say(s.ok?'The copy is being made — it shows in Activity as it goes.':(s.error||'Could not start the copy.'));
+  }catch(e){say('Could not reach MailArchive Desktop — reload the page.');}
+});
 const lk=$('encLock');
 if(lk)lk.addEventListener('click',async()=>{
   try{const d=await send('api/encryption/lock');if(d.ok){location.reload();return;}say(d.error||'Could not lock.');}

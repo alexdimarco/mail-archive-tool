@@ -424,6 +424,9 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 	if err := seal.RefuseWrite(opts.Out); err != nil {
 		return Result{}, err
 	}
+	if err := RefuseUnfinishedCopy(opts.Out); err != nil {
+		return Result{}, err
+	}
 	// An encrypted archive is written only with its key: without one, refuse
 	// before discovery, any write, lock or record (phase2a §5). A scheduled run's
 	// refusal is still recorded (A14, N13).

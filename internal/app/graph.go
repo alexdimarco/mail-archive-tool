@@ -90,6 +90,9 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 	if err := seal.RefuseWrite(opts.Out); err != nil {
 		return Result{}, err
 	}
+	if err := RefuseUnfinishedCopy(opts.Out); err != nil {
+		return Result{}, err
+	}
 	// An encrypted archive is captured into only with its key: refuse before the
 	// sign-in and any write (phase2a §5); a scheduled capture's refusal is recorded.
 	if opts.Key == nil {

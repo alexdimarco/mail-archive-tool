@@ -381,6 +381,12 @@ func Assess(in Input, now time.Time) Report {
 		r.red("manifest_unreadable", fmt.Sprintf("the archive's manifest cannot be read: %s", util.StripControl(in.ManifestLoadErr.Error())))
 	}
 
+	// An unencrypted copy of an encrypted archive that did not finish: readable mail,
+	// and not complete (design-encrypted-archives-phase3 §10).
+	if in.Out != "" && state.UnfinishedCopy(in.Out) {
+		r.red("unfinished_copy", fmt.Sprintf("%s holds an UNENCRYPTED copy of an encrypted archive that did not finish: it holds readable mail and is not complete — delete it, then make the copy again", in.Out))
+	}
+
 	// OP-3 (R18): the archive location itself is gone (an unplugged removable/
 	// network drive, or a deleted folder). Gather would otherwise read it as a
 	// brand-new empty archive and the no-schedule remedy below would invite a
@@ -670,7 +676,14 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 		if state.TierOf(&lv) == state.TierFull {
 			check = "check with the key"
 		}
-		reason := fmt.Sprintf("the last %s of this encrypted archive (%s UTC): %s", check, when, state.OutcomeTextFor(lv.Outcome, state.TierOf(&lv)))
+		text := state.OutcomeTextFor(lv.Outcome, state.TierOf(&lv))
+		if state.TierOf(&lv) == state.TierFull && lv.Outcome == state.OutcomeNotAttested && lv.Standing != nil {
+			// An amber that kept a red standing did so because it could not open every
+			// message: it says that, never that the messages are intact (the P3-3
+			// follow-up pass, FIX-05).
+			text = "it could not open every message (unreadable here, too large, its record not all read, or the archive changed while it was checked), so the earlier finding below still stands — run mailarchive verify -full again"
+		}
+		reason := fmt.Sprintf("the last %s of this encrypted archive (%s UTC): %s", check, when, text)
 		if state.TierOf(&lv) == state.TierFull && state.OutcomeIsRed(lv.Outcome) {
 			reason += fullRedClears(in.Out) // the P3-2b pass, REC-05
 		}
