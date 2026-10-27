@@ -71,3 +71,25 @@ jobs:
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
           GOOS=windows "$(go env GOPATH)/bin/govulncheck" ./cmd/mailarchive-desktop
+
+      # The ubuntu job is the gate, and nothing in it built the Windows code or its
+      # tests: a Unix-only call in one test file (syscall.Mkfifo) kept every Desktop test
+      # from building for Windows unnoticed (the P3-8 Windows lab, B30). Build, never
+      # run, every package's tests for Windows, and vet the Windows build. They come
+      # last and run even when an earlier step failed, so they never hide another
+      # step's result.
+      - name: Windows compile check (every package's tests)
+        if: matrix.os == 'ubuntu-latest' && !cancelled()
+        env:
+          GOOS: windows
+          GOARCH: amd64
+        run: |
+          mkdir -p "$RUNNER_TEMP/windows-tests"
+          go test -c -o "$RUNNER_TEMP/windows-tests/" ./...
+
+      - name: Windows vet
+        if: matrix.os == 'ubuntu-latest' && !cancelled()
+        env:
+          GOOS: windows
+          GOARCH: amd64
+        run: go vet ./...
