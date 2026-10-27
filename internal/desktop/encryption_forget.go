@@ -46,7 +46,10 @@ func (d *dashboard) forgetPlanAction(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
-	lines := []string{fmt.Sprintf("This computer recorded an encrypted archive at %s.", p.Spelling)}
+	// The folder is shown as its row names it, not in the record's case-folded form,
+	// since the person may be asked to type it back (P3-8 friction review, B27); the
+	// record matches either.
+	lines := []string{fmt.Sprintf("This computer recorded an encrypted archive at %s.", p.Out)}
 	for _, o := range p.Others {
 		lines = append(lines, fmt.Sprintf("Its other folder %s (recorded %s) stays protected.", o.Spelling, o.Recorded.Local().Format("2006-01-02")))
 	}
@@ -117,7 +120,7 @@ func (d *dashboard) forgetAction(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
-	done := fmt.Sprintf("This computer no longer protects %s as an encrypted archive.", p.Spelling)
+	done := fmt.Sprintf("This computer no longer protects %s as an encrypted archive.", p.Out)
 	if o.Whole {
 		done = "This computer forgot the encrypted archive."
 	}

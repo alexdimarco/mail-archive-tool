@@ -381,9 +381,11 @@ func (d *dashboard) runBackupKeyed(w http.ResponseWriter, out, jobPath string) {
 				logger.Printf("The damaged copy of this archive's key file was rewritten from the good one.")
 			}
 		}
-		res, err := wizard.RunJobInProcessKeyed(j.ctx, jobPath, logger, func(o *app.Options) (func(), error) {
-			o.ProgramSkip, o.OnProgramWait, o.ProgramDownload = j.skip, j.onWait, d.life.Context()
-			return keyring.Apply(o, lease)
+		res, err := withProgramLine(logger, func(logger *log.Logger) (string, error) {
+			return wizard.RunJobInProcessKeyed(j.ctx, jobPath, logger, func(o *app.Options) (func(), error) {
+				o.ProgramSkip, o.OnProgramWait, o.ProgramDownload = j.skip, j.onWait, d.life.Context()
+				return keyring.Apply(o, lease)
+			})
 		})
 		return runNowResultHere(res), err
 	}); err != nil {

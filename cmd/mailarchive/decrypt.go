@@ -138,7 +138,9 @@ func decryptPlanLines(p *app.DecryptPlan) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "An UNENCRYPTED copy of %s will be made — readable by anyone who can open its folder:\n", p.Out)
 	fmt.Fprintf(&b, "  new folder: %s\n", p.Dest)
-	fmt.Fprintf(&b, "  size: up to %s", thunderbird.HumanBytes(p.NeedBytes))
+	// The mail's size and, apart from it, the room kept free for what the copy writes
+	// besides — not one "up to" figure that reads as the copy's size (P3-8 friction, w3 c6).
+	fmt.Fprintf(&b, "  size: about %s of mail, plus up to %s kept free for its pages, report and README", thunderbird.HumanBytes(p.MailBytes), thunderbird.HumanBytes(p.ReserveBytes))
 	if p.FreeKnown {
 		fmt.Fprintf(&b, " (%s free)", thunderbird.HumanBytes(int64(p.FreeBytes)))
 	}

@@ -10,6 +10,7 @@ import (
 
 	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/assure"
+	"mail-archive-tool/internal/thunderbird"
 )
 
 // `mailarchive decrypt` (design-encrypted-archives-phase3 §10, K5, X14; P3-4 step 6).
@@ -47,12 +48,26 @@ func TestDecryptShowsThePlanThenMakesTheCopy(t *testing.T) {
 	dest := filepath.Join(parent, filepath.Base(out)+"-unencrypted-2026-10-27")
 	// The plan is a message (stderr); the result is stdout's (X8).
 	plan := stderr.String()
-	if !strings.Contains(plan, "UNENCRYPTED copy of "+out) || !strings.Contains(plan, "new folder: "+dest) || !strings.Contains(plan, "size: up to") {
+	if !strings.Contains(plan, "UNENCRYPTED copy of "+out) || !strings.Contains(plan, "new folder: "+dest) || !strings.Contains(plan, "size: about ") ||
+		!strings.Contains(plan, "kept free for its pages, report and README") {
 		t.Fatalf("the plan shown:\n%s", plan)
 	}
 	_, err = os.Stat(filepath.Join(dest, ".mailarchive-manifest.json"))
 	_, marker := os.Stat(filepath.Join(dest, app.CopyMarkerName))
 	assure.Reached(t, err == nil && os.IsNotExist(marker) && strings.Contains(stdout.String(), "Unencrypted copy made at "+dest), "a finished plaintext archive in the new folder")
+}
+
+// covers: MA-852, R37
+// The plan's size says the mail's own size and, apart from it, the room kept free for
+// the copy's pages, report and README — never their sum as one "up to" figure that reads
+// as the copy's size (P3-8 friction review, w3 c6). The free space is still shown.
+func TestDecryptsPlanShowsTheMailApartFromTheReserve(t *testing.T) {
+	const mail, reserve = 10 << 20, 32 << 20
+	p := &app.DecryptPlan{Out: "/a/Enc", Dest: "/b/Enc-unencrypted-2026-10-27", MailBytes: mail, ReserveBytes: reserve, NeedBytes: mail + reserve,
+		FreeBytes: 1 << 30, FreeKnown: true}
+	got := decryptPlanLines(p)
+	want := "size: about " + thunderbird.HumanBytes(mail) + " of mail, plus up to " + thunderbird.HumanBytes(reserve) + " kept free for its pages, report and README (" + thunderbird.HumanBytes(1<<30) + " free)"
+	assure.Reached(t, strings.Contains(got, want) && !strings.Contains(got, thunderbird.HumanBytes(mail+reserve)), got)
 }
 
 // covers: MA-823, R37

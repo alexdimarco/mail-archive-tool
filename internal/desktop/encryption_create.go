@@ -171,9 +171,11 @@ func (d *dashboard) commitCreate(w http.ResponseWriter, it *pendingItem) {
 	// archive open here (MAKE-02).
 	if rerr := d.runKeyedJobOn(out, func(j keyedJob, logger *log.Logger) (string, error) {
 		defer u.Destroy() // the first backup's key goes when it ends
-		return wizard.RunJobInProcessKeyed(j.ctx, jobPath, logger, func(o *app.Options) (func(), error) {
-			o.ProgramSkip, o.OnProgramWait, o.ProgramDownload = j.skip, j.onWait, d.life.Context()
-			return keyring.Apply(o, u)
+		return withProgramLine(logger, func(logger *log.Logger) (string, error) {
+			return wizard.RunJobInProcessKeyed(j.ctx, jobPath, logger, func(o *app.Options) (func(), error) {
+				o.ProgramSkip, o.OnProgramWait, o.ProgramDownload = j.skip, j.onWait, d.life.Context()
+				return keyring.Apply(o, u)
+			})
 		})
 	}); rerr != nil {
 		u.Destroy()

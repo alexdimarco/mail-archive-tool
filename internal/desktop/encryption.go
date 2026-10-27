@@ -106,10 +106,20 @@ func (d *dashboard) unlockAction(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"ok": false, "confirm": "rerecord",
 			"error": "You once told MailArchive to forget this encrypted archive on this computer. Remembering its key records it here again. Go ahead?"})
 	case errors.Is(err, vault.ErrWrongSecret):
-		writeJSON(w, map[string]any{"ok": false, "error": "That password or recovery key does not open this archive."})
+		writeJSON(w, map[string]any{"ok": false, "error": wrongSecretText(out)})
 	default:
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 	}
+}
+
+// wrongSecretText is the unlock's answer to a password or recovery key that does not
+// open the archive at out, in the command line's words (P3-8 friction review, B14's
+// second voice): that nothing changed, which secret to try, and — when neither opens
+// it — how to put back key files that may have been replaced.
+func wrongSecretText(out string) string {
+	return "That does not open this archive, so nothing was changed. Try again: the password, or the recovery key if you have forgotten it. " +
+		"If neither the password nor the recovery key opens it, its key files may have been replaced: put them back with mailarchive restore-key-file -out " +
+		encmark.CommandPath(out) + " -from FILE (FILE is the recovery file you saved)."
 }
 
 // lockAction locks the current encrypted archive because the person asked: its

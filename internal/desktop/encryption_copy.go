@@ -51,14 +51,22 @@ func (d *dashboard) copyPlanAction(w http.ResponseWriter, r *http.Request) {
 	lines := []string{
 		"An UNENCRYPTED copy of this archive will be made — readable by anyone who can open its folder.",
 		"New folder: " + plan.Dest,
-		"Size: up to " + thunderbird.HumanBytes(plan.NeedBytes),
-	}
-	if plan.FreeKnown {
-		lines[2] += fmt.Sprintf(" (%s free)", thunderbird.HumanBytes(int64(plan.FreeBytes)))
+		"Size: " + copySizeText(plan),
 	}
 	lines = append(lines, plan.Warnings...)
 	lines = append(lines, copyRunsOnText)
 	writeJSON(w, map[string]any{"ok": true, "token": token, "lines": lines, "leaves": plan.Leaves, "askTwice": plan.AskTwice()})
+}
+
+// copySizeText is the plan's size: about the mail's own size, and apart from it the
+// room kept free for the copy's pages, report and README — not one "up to" figure that
+// reads as the copy's size (P3-8 friction review, w3 c6) — with the free space.
+func copySizeText(plan *app.DecryptPlan) string {
+	s := fmt.Sprintf("about %s of mail, plus up to %s kept free for its pages, report and README", thunderbird.HumanBytes(plan.MailBytes), thunderbird.HumanBytes(plan.ReserveBytes))
+	if plan.FreeKnown {
+		s += fmt.Sprintf(" (%s free)", thunderbird.HumanBytes(int64(plan.FreeBytes)))
+	}
+	return s
 }
 
 // copyRunsOnText says, in the plan, what Lock and Shut down do to a copy once it runs.

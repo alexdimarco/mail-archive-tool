@@ -246,7 +246,8 @@ func (d *dashboard) confirmRecoveryAction(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err := keyring.CheckRecoveryKey(shown, in.Typed); err != nil {
-		writeJSON(w, map[string]any{"ok": false, "error": "That is not the recovery key shown (" + err.Error() + "). Type it again from where you saved it."})
+		// The command line's words for it, never the vault's own (P3-8 friction review, B14).
+		writeJSON(w, map[string]any{"ok": false, "error": keyring.RecoveryKeyRetry(err)})
 		return
 	}
 	if it = d.pending.take(in.Token, isKeyChange); it == nil {

@@ -3,8 +3,11 @@ package desktop
 import (
 	"context"
 	"errors"
+	"io"
 	"log"
 	"net/http"
+	"strings"
+	"sync"
 )
 
 // A keyed backup in the job slot has a context of its own (program design R20): Cancel
@@ -41,6 +44,42 @@ func (d *dashboard) runKeyedJobOn(out string, fn func(j keyedJob, logger *log.Lo
 		cancel()
 	}
 	return err
+}
+
+// programLinePrefix begins the one line a backup logs when it wrote or removed copies of
+// MailArchive in the archive (app's ProgramOutcome.Summary, P3-8 friction review, B23).
+const programLinePrefix = "Copies of MailArchive: "
+
+// programLine passes a run's log through, keeping the program step's one line.
+type programLine struct {
+	w    io.Writer
+	mu   sync.Mutex
+	line string
+}
+
+func (p *programLine) Write(b []byte) (int, error) {
+	if s := strings.TrimSpace(string(b)); strings.HasPrefix(s, programLinePrefix) {
+		p.mu.Lock()
+		p.line = s
+		p.mu.Unlock()
+	}
+	return p.w.Write(b)
+}
+
+// withProgramLine runs a keyed backup on logger and ends its result with the line saying
+// the copies of MailArchive it wrote or removed — tens of megabytes on the archive's
+// drive — when it changed any (B23): the wizard's run says only its counts. A result
+// that already carries the line is left as it is.
+func withProgramLine(logger *log.Logger, run func(*log.Logger) (string, error)) (string, error) {
+	p := &programLine{w: logger.Writer()}
+	res, err := run(log.New(p, logger.Prefix(), logger.Flags()))
+	p.mu.Lock()
+	line := p.line
+	p.mu.Unlock()
+	if err != nil || line == "" || strings.Contains(res, line) {
+		return res, err
+	}
+	return strings.TrimSpace(res+" "+line) + ".", nil
 }
 
 func (c *captureState) setWaiting(waiting bool) {
