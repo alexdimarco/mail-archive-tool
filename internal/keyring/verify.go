@@ -1,0 +1,97 @@
+package keyring
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log"
+
+	"mail-archive-tool/internal/app"
+	"mail-archive-tool/internal/container"
+	"mail-archive-tool/internal/export"
+	"mail-archive-tool/internal/memguard"
+	"mail-archive-tool/internal/state"
+	"mail-archive-tool/internal/vault"
+)
+
+// VerifyFull is verify -full on the encrypted archive u opened
+// (design-encrypted-archives-phase3 §3.1, §8): app.VerifySealed through a sealed
+// side that holds the key only while it reads, reads each unit within the memory
+// budget, and heals nothing.
+func VerifyFull(ctx context.Context, u *Unlocked, o app.VerifyOptions, logger *log.Logger, onProgress func(app.Report)) (app.Report, error) {
+	o.Ctx = ctx
+	return app.VerifySealed(u.Out(), o, logger, onProgress, &sealedCheck{u: u, out: u.Out(), guard: memguard.Process})
+}
+
+// sealedCheck is app.SealedCheck over the archive u opened.
+type sealedCheck struct {
+	u     *Unlocked
+	out   string
+	guard *memguard.Guard
+	store *container.Store
+}
+
+// locked words a lock of the key seen mid-check as the check's own error.
+func checkLocked(err error) error {
+	if errors.Is(err, ErrLocked) || errors.Is(err, vault.ErrKeyDestroyed) {
+		return fmt.Errorf("%w: %w", app.ErrCheckLocked, err)
+	}
+	return err
+}
+
+// Load reads the record read-only (§7.3), its unit files listed for the cross-check.
+func (s *sealedCheck) Load() (*state.Manifest, error) {
+	k, _, err := s.u.acquire()
+	if err != nil {
+		return nil, checkLocked(err)
+	}
+	defer s.u.release()
+	m, st, err := container.LoadManifest(s.out, container.LoadOptions{Key: k, ReadOnly: true, Units: app.UnitLister(&export.Units{Root: s.out, Key: k})})
+	if err != nil {
+		return nil, checkLocked(err)
+	}
+	s.store = st
+	return m, nil
+}
+
+// Chunks opens every chunk the record names.
+func (s *sealedCheck) Chunks(ctx context.Context) ([]container.ChunkProblem, error) {
+	if _, _, err := s.u.acquire(); err != nil {
+		return nil, checkLocked(err)
+	}
+	defer s.u.release()
+	p, err := s.store.CheckChunks(ctx)
+	return p, checkLocked(err)
+}
+
+// FileList compares the record with the archive's file list.
+func (s *sealedCheck) FileList() ([]container.ListProblem, bool) { return s.store.CrossCheck() }
+
+// Unit reads one unit whole within the memory budget, holding the key only to name
+// and to open it (§3.2).
+func (s *sealedCheck) Unit(ctx context.Context, rec state.Record, kind vault.UnitKind, su state.SealedUnit) (string, error) {
+	k, _, err := s.u.acquire()
+	if err != nil {
+		return "", checkLocked(err)
+	}
+	rel, err := (&export.Units{Root: s.out, Key: k}).Locate(rec.Unit, kind, su)
+	s.u.release()
+	if err != nil {
+		return "", checkLocked(err)
+	}
+	release, err := s.guard.Reserve(ctx, 2*su.Size)
+	if err != nil {
+		return rel, err
+	}
+	defer release()
+	sealed, err := export.ReadSealedAt(s.out, rel, su)
+	if err != nil {
+		return rel, err
+	}
+	if k, _, err = s.u.acquire(); err != nil {
+		return rel, checkLocked(err)
+	}
+	defer s.u.release()
+	_, err = (&export.Units{Root: s.out, Key: k}).Open(rec.Unit, kind, su, sealed)
+	return rel, checkLocked(err)
+}

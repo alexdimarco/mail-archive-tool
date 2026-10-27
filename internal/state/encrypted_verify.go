@@ -32,6 +32,40 @@ var outcomeText = map[string]string{
 // OutcomeText is outcome's fixed sentence; "" for an outcome not in the list.
 func OutcomeText(outcome string) string { return outcomeText[outcome] }
 
+// fullOutcomeText is a check with the key's sentence where it says more than the
+// keyless one (design-encrypted-archives-phase3 §8; the owner's rulings): amber is
+// a part the archive can live without — a spare copy of its record, its search
+// index, part of its go-back timeline — with the mail intact; red is mail itself.
+var fullOutcomeText = map[string]string{
+	OutcomeIntact:      "every file of the archive opens with its key and is intact",
+	OutcomeNotAttested: "a part of the archive needs attention — a spare copy of its record, its search index or part of its go-back timeline; the messages themselves are intact — run mailarchive verify -full to see what to do",
+	OutcomeDamaged:     "messages in the archive are missing or damaged, or its record cannot be read — restore the whole archive folder from your newest backup copy",
+}
+
+// OutcomeTextFor is outcome's fixed sentence for a check of tier (1: without the
+// key; 2: with it).
+func OutcomeTextFor(outcome string, tier int) string {
+	if t, ok := fullOutcomeText[outcome]; ok && tier == 2 {
+		return t
+	}
+	return outcomeText[outcome]
+}
+
+// The tiers of an encrypted archive's check (§8): without the key, and with it. A
+// record from before tiers were recorded is tier 1.
+const (
+	TierKeyless = 1
+	TierFull    = 2
+)
+
+// TierOf is v's tier, a record that names none being tier 1.
+func TierOf(v *LastVerify) int {
+	if v == nil || v.Tier == 0 {
+		return TierKeyless
+	}
+	return v.Tier
+}
+
 // KnownOutcome reports whether outcome is in the closed list.
 func KnownOutcome(outcome string) bool { _, ok := outcomeText[outcome]; return ok }
 
@@ -55,6 +89,7 @@ type encryptedLastVerify struct {
 	Finished  *time.Time           `json:"finished"`
 	Outcome   string               `json:"outcome,omitempty"`
 	Encrypted bool                 `json:"encrypted"`
+	Tier      int                  `json:"tier,omitempty"`
 	Previous  *encryptedLastVerify `json:"previous,omitempty"`
 }
 
@@ -63,7 +98,7 @@ type encryptedLastVerify struct {
 // carried: it would read as a finished check that found nothing (the adversarial
 // pass, LEAK-03).
 func minimisedVerify(v LastVerify) *encryptedLastVerify {
-	e := &encryptedLastVerify{Version: v.Version, Status: v.Status, Started: v.Started, Finished: v.Finished, Outcome: v.Outcome, Encrypted: true}
+	e := &encryptedLastVerify{Version: v.Version, Status: v.Status, Started: v.Started, Finished: v.Finished, Outcome: v.Outcome, Encrypted: true, Tier: v.Tier}
 	if v.Previous != nil && KnownOutcome(v.Previous.Outcome) {
 		p := *v.Previous
 		p.Version, p.Previous = v.Version, nil
@@ -80,9 +115,9 @@ func marshalLastVerify(v LastVerify) ([]byte, error) {
 		return json.MarshalIndent(v, "", "  ")
 	}
 	e := minimisedVerify(v)
-	back := LastVerify{Status: e.Status, Outcome: e.Outcome, Encrypted: true}
+	back := LastVerify{Status: e.Status, Outcome: e.Outcome, Encrypted: true, Tier: e.Tier}
 	if e.Previous != nil {
-		back.Previous = &LastVerify{Status: e.Previous.Status, Outcome: e.Previous.Outcome, Encrypted: true}
+		back.Previous = &LastVerify{Status: e.Previous.Status, Outcome: e.Previous.Outcome, Encrypted: true, Tier: e.Previous.Tier}
 	}
 	if err := checkVerdicts(back); err != nil {
 		return nil, fmt.Errorf("state: an encrypted archive's verify record: %w", err)
@@ -97,12 +132,17 @@ func encryptedIntegrityAttention(v LastVerify) string {
 	if v.Finished != nil {
 		when = v.Finished.UTC().Format(time.RFC3339)
 	}
+	how := "The check looked at its files without the password:\n" +
+		"it can tell whether they are all present and unchanged, not read the messages."
+	if TierOf(&v) == TierFull {
+		how = "The check opened every file with the archive's key: it read the messages\n" +
+			"themselves, as well as checking that every file is present."
+	}
 	return fmt.Sprintf("This email archive needs your attention.\n\n"+
 		"Checked:  %s\n"+
 		"Finding:  %s.\n\n"+
-		"This archive is encrypted. The check looked at its files without the password:\n"+
-		"it can tell whether they are all present and unchanged, not read the messages.\n\n"+
+		"This archive is encrypted. %s\n\n"+
 		"What to do: open MailArchive and look at this archive's status. This file is\n"+
 		"removed automatically once a check finds every file intact.\n",
-		when, OutcomeText(v.Outcome))
+		when, OutcomeTextFor(v.Outcome, TierOf(&v)), how)
 }

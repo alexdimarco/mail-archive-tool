@@ -30,7 +30,8 @@ func TestAnEncryptedArchivesVerifyRecordHoldsOnlyTheAllowList(t *testing.T) {
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		t.Fatal(err)
 	}
-	allowed := map[string]bool{"version": true, "status": true, "started": true, "finished": true, "outcome": true, "encrypted": true, "previous": true}
+	// tier (1 or 2) joined the allow-list in P3-2b (phase3 §8; MA-765 amended).
+	allowed := map[string]bool{"version": true, "status": true, "started": true, "finished": true, "outcome": true, "encrypted": true, "tier": true, "previous": true}
 	p, _ := doc["previous"].(map[string]any)
 	if p == nil || p["outcome"] != OutcomeDamaged {
 		t.Fatalf("the running record lost the verdict it carries:\n%s", raw)
@@ -73,6 +74,7 @@ func TestAnEncryptedArchivesVerifyRecordHoldsOnlyTheAllowList(t *testing.T) {
 	for name, body := range map[string]string{
 		"an unknown outcome at the top":   `{"version":1,"status":"done","started":"2026-10-25T00:00:00Z","finished":"2026-10-25T00:00:00Z","outcome":"` + planted + `","encrypted":true}`,
 		"no outcome at the top":           `{"version":1,"status":"done","started":"2026-10-25T00:00:00Z","finished":"2026-10-25T00:00:00Z","encrypted":true}`,
+		"a tier a verify never writes":    `{"version":1,"status":"done","started":"2026-10-25T00:00:00Z","finished":"2026-10-25T00:00:00Z","outcome":"intact","encrypted":true,"tier":3}`,
 		"an unknown outcome carried":      strings.Replace(string(raw), `"damaged"`, `"`+planted+`"`, 1),
 		"a status a verify never writes":  `{"version":1,"status":"` + planted + `","started":"2026-10-25T00:00:00Z","finished":null}`,
 		"a carried verdict still running": `{"version":1,"status":"running","started":"2026-10-25T00:00:00Z","finished":null,"previous":{"version":1,"status":"running","started":"2026-10-25T00:00:00Z","finished":null}}`,

@@ -703,14 +703,19 @@ func readKeyFlags(fs *flag.FlagSet) *keyFlags {
 // refuseReadKeyFlags refuses a read verb's key flags on an archive that is not
 // encrypted, naming those given (R12).
 func refuseReadKeyFlags(fs *flag.FlagSet) error {
+	if given := readKeyFlagsGiven(fs); given != "" {
+		return fmt.Errorf("%s: for an encrypted archive only, and this archive is not encrypted", given)
+	}
+	return nil
+}
+
+// readKeyFlagsGiven names the read verbs' key flags given, "" for none.
+func readKeyFlagsGiven(fs *flag.FlagSet) string {
 	var given []string
 	for _, n := range []string{"password-file", "recovery-key-file", "remember"} {
 		if flagWasSet(fs, n) {
 			given = append(given, "-"+n)
 		}
 	}
-	if len(given) == 0 {
-		return nil
-	}
-	return fmt.Errorf("%s: for an encrypted archive only, and this archive is not encrypted", strings.Join(given, ", "))
+	return strings.Join(given, ", ")
 }

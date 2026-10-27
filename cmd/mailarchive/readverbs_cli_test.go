@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"io/fs"
 	"log"
@@ -139,6 +140,49 @@ func TestTheReadVerbsUnlockAnEncryptedArchive(t *testing.T) {
 	err = runSearch([]string{"-out", plain, "-password-file", pwFile, "x"})
 	code, msg = refused(err)
 	assure.Refused(t, code, msg, assure.Code(1), assure.Names("-password-file", "not encrypted"))
+}
+
+// covers: MA-799, R37
+// verify -full unlocks an encrypted archive by -password-file with no terminal and
+// checks it with its key: a whole archive exits 0; a message's file gone is named
+// and exits 2. -full on an archive that is not encrypted, -full with -unattended, a
+// key flag without -full, and a scheduled verify -full are each refused by name,
+// writing nothing.
+func TestVerifyFullAtTheCommandLine(t *testing.T) {
+	out, pwFile := backedUpArchive(t)
+	got, err := stdout(t, func() error { return runVerify([]string{"-out", out, "-full", "-password-file", pwFile}) })
+	if err != nil || !strings.Contains(got, "with the key") {
+		t.Fatalf("positive twin: %v\n%s", err, got)
+	}
+
+	var unit string
+	filepath.WalkDir(filepath.Join(out, "units"), func(p string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && unit == "" {
+			unit = p
+		}
+		return nil
+	})
+	os.Remove(unit)
+	rel, _ := filepath.Rel(out, unit)
+	got, err = stdout(t, func() error { return runVerify([]string{"-out", out, "-full", "-password-file", pwFile}) })
+	var ee *exitError
+	if !errors.As(err, &ee) || ee.code != 2 || !strings.Contains(got, filepath.ToSlash(rel)) || !strings.Contains(got, "missing") {
+		t.Fatalf("a message gone: %v\n%s", err, got)
+	}
+
+	tree := filesUnder(t, out)
+	unchanged := func() bool { return len(filesUnder(t, out)) == len(tree) }
+	code, msg := refused(runVerify([]string{"-out", out, "-full", "-unattended", "-password-file", pwFile}))
+	assure.Refused(t, code, msg, assure.Code(1), assure.Names(out, "-full"), assure.NoSideEffect(unchanged))
+	code, msg = refused(runVerify([]string{"-out", out, "-password-file", pwFile}))
+	assure.Refused(t, code, msg, assure.Code(1), assure.Names("-password-file", "add -full"), assure.NoSideEffect(unchanged))
+	code, msg = parseJobRefusal([]string{"verify", "-out", out, "-full"})
+	assure.Refused(t, code, msg, assure.Code(1), assure.Names("-full", "schedule plain verify"))
+
+	plain := t.TempDir()
+	code, msg = refused(runVerify([]string{"-out", plain, "-full", "-password-file", pwFile}))
+	assure.Refused(t, code, msg, assure.Code(1), assure.Names("-full", "not one this computer can check", plain),
+		assure.NoSideEffect(func() bool { return len(filesUnder(t, plain)) == 0 }))
 }
 
 // covers: MA-797, R37

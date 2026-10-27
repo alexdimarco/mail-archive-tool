@@ -24,7 +24,9 @@ import (
 
 // verifyAllowed is every key the last-verify record of an encrypted archive may
 // carry (A18): times, the status and the outcome — no counts, no paths.
-var verifyAllowed = map[string]bool{"version": true, "status": true, "started": true, "finished": true, "outcome": true, "encrypted": true, "previous": true}
+// verifyAllowed is the record's allow-list; tier (1 or 2) joined it in P3-2b, as
+// phase3 §8 says (MA-765 amended).
+var verifyAllowed = map[string]bool{"version": true, "status": true, "started": true, "finished": true, "outcome": true, "encrypted": true, "tier": true, "previous": true}
 
 // requireMinimisedVerify fails unless out's last-verify record holds only the
 // allow-listed keys, at the top and in the verdict it carries, with outcome want.

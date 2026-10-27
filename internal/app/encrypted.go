@@ -260,6 +260,10 @@ func removeScratchIndex(out string, id vault.ID, logger *log.Logger) {
 }
 
 // unitFiles lists the unit files records name, for the sealed record's inventory.
+// UnitLister is unitFiles for a keyed check's load (phase3 §8): the record's unit
+// files and their digests, so the record can be compared with the file list.
+func UnitLister(units *export.Units) container.UnitFiles { return unitFiles(units) }
+
 func unitFiles(units *export.Units) container.UnitFiles {
 	return func(entries map[string]state.Record) (map[string]container.Digest, error) {
 		out := map[string]container.Digest{}

@@ -14,6 +14,7 @@ import (
 	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/graph"
 	"mail-archive-tool/internal/graphconfig"
+	"mail-archive-tool/internal/keyring"
 	"mail-archive-tool/internal/outlookcom"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/util"
@@ -135,6 +136,9 @@ type verifyOpts struct {
 	out, log       *string
 	asJSON, record *bool
 	unattended     *bool
+	full           *bool
+	// keyed is the encrypted archive -full opened, for checkArchive; nil otherwise.
+	keyed *keyring.Unlocked
 }
 
 func verifyFlags(fs *flag.FlagSet) *verifyOpts {
@@ -144,6 +148,7 @@ func verifyFlags(fs *flag.FlagSet) *verifyOpts {
 	o.record = fs.Bool("record", false, "baseline fixity: hash the current bytes of every recorded file that has no digest and store them as fixity from now (not proof the existing bytes were pristine)")
 	o.log = fs.String("log", "", "write the run log to this file (size-capped, rotated) instead of stderr — what scheduled jobs use")
 	o.unattended = fs.Bool("unattended", false, "scheduled run: refuse to verify a non-existent archive (an unmounted drive), never wait for input")
+	o.full = fs.Bool("full", false, "for an encrypted archive: check it with its key — open every file, read every message — naming each damaged file (asks for the password, or takes -password-file or -recovery-key-file)")
 	return o
 }
 
@@ -449,6 +454,11 @@ func parseJob(args []string) (job, error) {
 		}
 		if *o.out == "" {
 			return job{}, errors.New("-out is required (the archive directory to verify)")
+		}
+		if *o.full {
+			// A check with the key needs the key at a terminal; unattended keyed work is
+			// Phase 4 (phase3 §8, O5). Refused by name, never silently dropped.
+			return job{}, errors.New("verify job: -full checks an encrypted archive with its key, at a terminal — a scheduled check runs without the key; schedule plain verify, and run verify -full yourself")
 		}
 		if err := noControl("a job argument", *o.out+*o.log); err != nil {
 			return job{}, err

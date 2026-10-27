@@ -109,6 +109,17 @@ type Report struct {
 	Leftovers     int    `json:"leftovers,omitempty"`
 	LeftoversStay bool   `json:"leftovers_stay,omitempty"`
 	PartsUnread   int    `json:"parts_unread,omitempty"`
+
+	// Tier is an encrypted archive's check: 1 without the key, 2 with it (phase3 §8).
+	Tier int `json:"tier,omitempty"`
+	// StandingOutcome is the red a check with the key found, which a keyless check
+	// cannot clear (the owner's ruling, §8): it stands, from StandingSince, and the
+	// exit is 2 whatever the keyless check found.
+	StandingOutcome string     `json:"standing_outcome,omitempty"`
+	StandingSince   *time.Time `json:"standing_since,omitempty"`
+	// NotSaved: the result could not be saved in the archive (a read-only medium);
+	// the exit is the result's all the same.
+	NotSaved bool `json:"not_saved,omitempty"`
 }
 
 // verifyJSONVersion is the schema version of the `verify -json` document, so a
@@ -135,7 +146,7 @@ func (r Report) MarshalJSON() ([]byte, error) {
 // archive is attested only by the outcome intact.
 func (r Report) Attested() bool {
 	if r.Encrypted {
-		return r.Outcome == state.OutcomeIntact
+		return r.Outcome == state.OutcomeIntact && r.StandingOutcome == ""
 	}
 	return r.Modified == 0 && r.Missing == 0 && r.Unrecorded == 0
 }
@@ -336,22 +347,30 @@ func verifyKeyless(ctx context.Context, out string, onProgress func(Report)) (Re
 	// verdict, so a check that never finishes cannot erase it.
 	started := time.Now().UTC()
 	previous := state.LastVerdict(out)
-	_ = state.WriteLastVerify(out, state.LastVerify{Status: state.VerifyRunning, Started: started, Encrypted: true, Previous: previous})
+	_ = state.WriteLastVerify(out, state.LastVerify{Status: state.VerifyRunning, Started: started, Encrypted: true, Tier: state.TierKeyless, Previous: previous})
 	// RecordedGen (A25) is 0 until the generations design ships (phase3 §12, A35).
 	c, cerr := container.CheckKeylessContext(ctx, out, 0)
 	if cerr != nil {
 		// Stopped on purpose: recorded as stopped, the last finished verdict kept, the
 		// lock released by the deferred Release.
 		finished := time.Now().UTC()
-		_ = state.WriteLastVerify(out, state.LastVerify{Status: state.VerifyStopped, Started: started, Finished: &finished, Encrypted: true, Previous: previous})
-		return Report{Out: out, Encrypted: true}, fmt.Errorf("%w: %s — nothing was changed; the last finished check's result still stands", ErrVerifyStopped, out)
+		_ = state.WriteLastVerify(out, state.LastVerify{Status: state.VerifyStopped, Started: started, Finished: &finished, Encrypted: true, Tier: state.TierKeyless, Previous: previous})
+		return Report{Out: out, Encrypted: true, Tier: state.TierKeyless}, fmt.Errorf("%w: %s — nothing was changed; the last finished check's result still stands", ErrVerifyStopped, out)
 	}
 	rep := keylessReport(out, c)
+	rep.Tier = state.TierKeyless
 	if onProgress != nil {
 		onProgress(rep)
 	}
+	// A red found with the key stands: a keyless check cannot see what it saw, so it
+	// writes that verdict back unchanged and says so (the owner's ruling, phase3 §8).
+	if previous != nil && state.TierOf(previous) == state.TierFull && state.OutcomeIsRed(previous.Outcome) {
+		_ = state.WriteLastVerify(out, *previous)
+		rep.StandingOutcome, rep.StandingSince = previous.Outcome, previous.Finished
+		return rep, nil
+	}
 	finished := time.Now().UTC()
-	_ = state.WriteLastVerify(out, state.LastVerify{Status: state.VerifyDone, Started: started, Finished: &finished, Encrypted: true, Outcome: rep.Outcome})
+	_ = state.WriteLastVerify(out, state.LastVerify{Status: state.VerifyDone, Started: started, Finished: &finished, Encrypted: true, Tier: state.TierKeyless, Outcome: rep.Outcome})
 	return rep, nil
 }
 
@@ -776,6 +795,13 @@ func keylessSummary(r Report) []string {
 		"its files only — reading its messages needs its password or recovery key",
 		fmt.Sprintf("files checked=%d · ok=%d · missing=%d · modified=%d", r.Checked, r.OK, r.Missing, r.Modified),
 	}
+	if r.Tier == state.TierFull {
+		out = []string{
+			fmt.Sprintf("Check with the key of the encrypted archive %s", r.Out),
+			"every file opened with its key: its record, search index, go-back timeline and messages",
+			fmt.Sprintf("message files checked=%d · ok=%d · missing=%d · damaged=%d", r.Checked, r.OK, r.Missing, r.Modified),
+		}
+	}
 	for _, p := range r.Problems {
 		line := "  " + p.Kind + ": " + rawPath(p.Path)
 		if p.Detail != "" {
@@ -783,7 +809,12 @@ func keylessSummary(r Report) []string {
 		}
 		out = append(out, line)
 	}
-	for _, kind := range []string{"modified", "missing"} {
+	kinds := make([]string, 0, len(r.Truncated))
+	for kind := range r.Truncated {
+		kinds = append(kinds, kind)
+	}
+	sort.Strings(kinds)
+	for _, kind := range kinds {
 		if n := r.Truncated[kind]; n > 0 {
 			out = append(out, fmt.Sprintf("  … %d more %s (list truncated)", n, kind))
 		}
@@ -802,19 +833,30 @@ func keylessSummary(r Report) []string {
 	if r.PartsUnread > 0 {
 		out = append(out, fmt.Sprintf("note: %d part(s) of the archive's file list could not be read; the next backup rewrites them", r.PartsUnread))
 	}
-	remedy := state.OutcomeText(r.Outcome)
+	remedy := state.OutcomeTextFor(r.Outcome, r.Tier)
 	if r.Advice != "" {
 		remedy = r.Advice
 	}
-	switch {
-	case r.Attested():
+	switch r.Outcome {
+	case state.OutcomeIntact:
 		out = append(out, "intact: "+r.Reason)
-	case r.Outcome == state.OutcomeNotAttested:
+	case state.OutcomeNotAttested:
 		out = append(out, "NOT attested: "+r.Reason, "  "+remedy)
-	case r.Outcome == state.OutcomeNewerFormat:
+	case state.OutcomeNewerFormat:
 		out = append(out, "NOT checked: "+r.Reason, "  "+remedy)
 	default:
 		out = append(out, "NOT intact: "+r.Reason, "  "+remedy)
+	}
+	if r.StandingOutcome != "" {
+		when := "earlier"
+		if r.StandingSince != nil {
+			when = "on " + r.StandingSince.UTC().Format("2006-01-02")
+		}
+		out = append(out, fmt.Sprintf("NOT attested: a check with the key %s found: %s", when, state.OutcomeTextFor(r.StandingOutcome, state.TierFull)),
+			"  a check without the key cannot see that: only `mailarchive verify -full` can clear it")
+	}
+	if r.NotSaved {
+		out = append(out, "note: the result could not be saved in the archive (read-only); status keeps its previous result")
 	}
 	return out
 }
@@ -826,7 +868,11 @@ func VerifyResultLine(r Report) string {
 		verdict = "NOT-ATTESTED"
 	}
 	if r.Encrypted {
-		return fmt.Sprintf("%s outcome=%s checked=%d ok=%d missing=%d modified=%d unnamed=%d leftovers=%d", verdict, r.Outcome, r.Checked, r.OK, r.Missing, r.Modified, r.Unnamed, r.Leftovers)
+		line := fmt.Sprintf("%s tier=%d outcome=%s checked=%d ok=%d missing=%d modified=%d unnamed=%d leftovers=%d", verdict, max(r.Tier, 1), r.Outcome, r.Checked, r.OK, r.Missing, r.Modified, r.Unnamed, r.Leftovers)
+		if r.StandingOutcome != "" {
+			line += " standing=" + r.StandingOutcome
+		}
+		return line
 	}
 	return fmt.Sprintf("%s records=%d with-fixity=%d checked=%d ok=%d modified=%d missing=%d unrecorded=%d unexpected=%d recorded=%d",
 		verdict, r.Records, r.WithFixity, r.Checked, r.OK, r.Modified, r.Missing, r.Unrecorded, r.Unexpected, r.Recorded)

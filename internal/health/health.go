@@ -657,7 +657,11 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 		if lv.Finished != nil {
 			when = lv.Finished.UTC().Format("2006-01-02 15:04")
 		}
-		reason := fmt.Sprintf("the last check of this encrypted archive (%s UTC): %s", when, state.OutcomeText(lv.Outcome))
+		check := "check"
+		if state.TierOf(&lv) == state.TierFull {
+			check = "check with the key"
+		}
+		reason := fmt.Sprintf("the last %s of this encrypted archive (%s UTC): %s", check, when, state.OutcomeTextFor(lv.Outcome, state.TierOf(&lv)))
 		switch {
 		case state.OutcomeIsRed(lv.Outcome):
 			r.red("verify_"+lv.Outcome, reason)
@@ -2005,7 +2009,11 @@ func Summary(in Input, rep Report) []string {
 func verifyVerdict(lv state.LastVerify) string {
 	when := lv.Finished.UTC().Format("2006-01-02 15:04")
 	if lv.Encrypted {
-		return fmt.Sprintf("%s → %s (a keyless check of its files)", when, strings.ReplaceAll(lv.Outcome, "_", " "))
+		how := "a keyless check of its files"
+		if state.TierOf(&lv) == state.TierFull {
+			how = "a check with the key"
+		}
+		return fmt.Sprintf("%s → %s (%s)", when, strings.ReplaceAll(lv.Outcome, "_", " "), how)
 	}
 	if lv.Attested {
 		return fmt.Sprintf("%s → attested", when)
@@ -2155,6 +2163,9 @@ type JSONLastVerify struct {
 	// Encrypted says the record is one: new optional keys, omitted otherwise.
 	Outcome   string `json:"outcome,omitempty"`
 	Encrypted bool   `json:"encrypted,omitempty"`
+	// Tier is an encrypted archive's check, 1 without the key or 2 with it (phase3
+	// §8): a new optional key.
+	Tier int `json:"tier,omitempty"`
 	// Previous is the last finished verdict a running record carries (F79): a
 	// new optional key, omitted otherwise, so JSONVersion is unchanged.
 	Previous *JSONLastVerify `json:"previous,omitempty"`
@@ -2171,6 +2182,7 @@ func jsonLastVerify(lv state.LastVerify) *JSONLastVerify {
 		ExitCode: lv.ExitCode, Outcome: lv.Outcome, Encrypted: lv.Encrypted,
 	}
 	if lv.Encrypted {
+		j.Tier = state.TierOf(&lv)
 		// The record keeps no counts and no exit code (A18): the verdict and verify's
 		// exit for it come from the outcome alone, so a damaged archive never reads as
 		// exit 0 (the adversarial pass, FID-05), and counts a planted record carries

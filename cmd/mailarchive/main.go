@@ -821,6 +821,7 @@ func runVerify(args []string) error {
 	fs := flag.NewFlagSet("mailarchive verify", flag.ContinueOnError)
 	fs.Usage = verifyUsage(fs)
 	o := verifyFlags(fs)
+	k := readKeyFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -834,6 +835,33 @@ func runVerify(args []string) error {
 	}
 	if kerr := app.RefuseVerify(*o.out, *o.record); kerr != nil {
 		return kerr
+	}
+	// -full checks an encrypted archive with its key (phase3 §8): unlocked to read,
+	// after everything that can refuse without asking.
+	dir := abspath(*o.out)
+	switch {
+	case *o.full && !app.EncryptedArchiveAt(dir):
+		return fmt.Errorf("-full checks an encrypted archive with its key, and %s is not one this computer can check — run mailarchive verify -out %s without -full", dir, quoteForHint(dir))
+	case *o.full:
+		if *o.unattended {
+			return errNeedsKeyToRead(dir, "checking it with its key (-full)")
+		}
+		if err := readKeyAvailable(stdAsker(), dir, "checking it with its key (-full)", k); err != nil {
+			return err
+		}
+		if err := app.RefuseLogInside(*o.log); err != nil {
+			return err
+		}
+		u, err := unlockForRead(stdAsker(), dir, "checking it with its key (-full)", k)
+		if err != nil {
+			return interrupted(err, os.Stderr)
+		}
+		defer u.Destroy()
+		o.keyed = u
+	default:
+		if given := readKeyFlagsGiven(fs); given != "" {
+			return fmt.Errorf("%s: for the check with the key — add -full, or leave them out", given)
+		}
 	}
 	logger, closeLog, err := newRunLogger(*o.log)
 	if err != nil {
@@ -868,7 +896,13 @@ func verifyStopWatch(out string, sigs <-chan os.Signal, cancel func(), code *ato
 // checkArchive checks the archive until ctx is cancelled and reports the result. A
 // check a signal stopped says so on stderr and exits with that signal's code.
 func checkArchive(ctx context.Context, o *verifyOpts, logger *log.Logger, stopCode *atomic.Int32, stderr io.Writer) error {
-	rep, verr := app.Verify(abspath(*o.out), app.VerifyOptions{Record: *o.record, Ctx: ctx}, logger, nil)
+	var rep app.Report
+	var verr error
+	if o.keyed != nil {
+		rep, verr = keyring.VerifyFull(ctx, o.keyed, app.VerifyOptions{}, logger, nil)
+	} else {
+		rep, verr = app.Verify(abspath(*o.out), app.VerifyOptions{Record: *o.record, Ctx: ctx}, logger, nil)
+	}
 	if errors.Is(verr, app.ErrVerifyStopped) {
 		fmt.Fprintf(stderr, "mailarchive: verify stopped: the archive was not fully checked and no new verdict was recorded; the last finished verdict still stands (see `mailarchive status`). Run `mailarchive verify -out %q` again to finish.\n", abspath(*o.out))
 		return &exitError{code: int(stopCode.Load())}
@@ -961,13 +995,19 @@ func verifyUsage(fs *flag.FlagSet) func() {
 
 Usage:
   mailarchive verify -out DIR [-json] [-record]
+  mailarchive verify -out DIR -full [-password-file FILE | -recovery-key-file FILE] [-json]
 
 Re-hashes every archived file the manifest records and reports each as ok,
 modified, missing or unrecorded, plus any stray file as unexpected. Fixity is
 detected for files written by this version or later, or baselined with -record.
 
+An encrypted archive is checked without its key: every file present and
+unchanged. With -full it is checked with its key: every file opened, every
+message read, each damaged file named. Only -full clears what -full found.
+
 Exit: 0 attested (every recorded file checked and intact, none unrecorded);
-2 not attested (any modified/missing/unrecorded, each named); 1 refusal/error.
+2 not attested (any modified/missing/unrecorded, each named); 1 refusal/error;
+130 or 143 stopped by Ctrl-C or a terminate signal (nothing recorded).
 
 verify holds the archive's exclusive lock for its whole run, so a scheduled
 backup that fires meanwhile refuses — run verify OUTSIDE the backup window.

@@ -935,6 +935,26 @@ shows it as stopped, with that verdict beside it (CON-04).
   naming it; a scheduled `verify -full` is refused (unattended keyed work is Phase 4, O5); plain
   `verify` on a read-only medium stays refused at the lock, as today.
 
+*Built in P3-2b (2026-10-26; MA-799).* What the build decided, beyond the text above:
+- **Where it lives.** `app.VerifySealed` judges; `keyring.VerifyFull` gives it a sealed side
+  (`app.SealedCheck`: Load, Chunks, FileList, Unit) that holds the key only while it reads, so no
+  key leaves `internal/keyring`. `container.CheckChunks` opens every chunk the pointer names and
+  names each one it cannot; `container.CrossCheck` compares the files the record names with the
+  file list written for the same generation.
+- **The file list.** A file list that differs from the record, or that cannot be compared (one
+  save behind, or none), is `not_attested` with "run a backup now: it writes the archive's file
+  list again". The messages themselves are judged by opening them, not by the list.
+- **A key locked mid-check** records nothing: the running record is replaced by the last finished
+  verdict as it was, and the command says the archive was locked.
+- **Lock-free on a read-only medium.** Only when taking the lock fails as read-only. The record's
+  pointers are peeked before and after; if they moved, the check is `not_attested` ("check it
+  again").
+- **The command line.** `-full` routes after every refusal that needs no key: `-full` on an
+  archive that is not encrypted, then `-full` with `-unattended`, then the want of a key, then a
+  log inside the archive; only then is the password asked. A key flag without `-full` is refused
+  naming it. Status says "the last check with the key" for a tier-2 verdict and carries `tier` in
+  `-json`.
+
 ## 9. The keys after creation
 
 The CLI's key verbs need a foreground terminal; Desktop's card is attended by nature.
@@ -1420,6 +1440,17 @@ Each slice is built test-first, with prove-fail and prove-pass, and owes its own
 | **P3-6** encrypt existing | its design and review first (§11) |
 | **P3-7** generations | its design and review first (§12) |
 | **P3-8** gates | the friction review and X1–X17 walk; Windows lab (reader, hidden prompt, `-recovery-key-out` access list, secret-file read check, the P3-5/P3-6 items) |
+
+*The owner's ruling on the first working copy (2026-10-26):* "consider to P3-5 and jump to P3-8 as
+first working copy and add P3-6 and P3-7 as enhancements". The first release is P3-0 through
+P3-5, then P3-8's gates; this replaces "full build before ship" for that release. P3-8's Windows
+lab drops the P3-6 items until P3-6 is built. P3-6 and P3-7 follow as enhancements, each still
+owing its own design and review first. Stated limits of the first release, to be said in its
+notes: an existing archive cannot be encrypted in place — a new encrypted archive is made beside
+it (P3-6); and a restored older copy of an encrypted archive is not noticed — every load passes
+`RecordedGen` 0, so the archive carries on from that copy, and mail backed up after it is
+collected again only if it is still in the mailbox (P3-7; a plaintext archive does not notice
+this either).
 
 *Planned for P3-2a (2026-10-26), from a map of the code it touches.* It is built in four parts,
 each test-first; the adversarial pass covers the whole slice:

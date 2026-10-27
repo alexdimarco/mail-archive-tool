@@ -309,6 +309,9 @@ type LastVerify struct {
 	// shape only (A18, encrypted_verify.go). Both absent from a plaintext record.
 	Outcome   string `json:"outcome,omitempty"`
 	Encrypted bool   `json:"encrypted,omitempty"`
+	// Tier is an encrypted archive's check: 1 without the key, 2 with it (phase3
+	// §8); absent from a plaintext record and from one written before tiers were.
+	Tier int `json:"tier,omitempty"`
 	// Previous carries the last FINISHED verdict inside a "running" record, so
 	// a verify that never finishes (crash, kill, power loss) cannot erase it:
 	// status keeps judging it until a new verdict is final (F79). Absent on a
@@ -489,6 +492,9 @@ func checkVerdicts(v LastVerify) error {
 		}
 		if (o.Status == VerifyDone && !KnownOutcome(o.Outcome)) || (o.Status != VerifyDone && o.Outcome != "") {
 			return errors.New("its verify outcome is not one MailArchive writes")
+		}
+		if o.Tier != 0 && o.Tier != TierKeyless && o.Tier != TierFull {
+			return errors.New("its check's tier is not one MailArchive writes")
 		}
 	}
 	return nil
