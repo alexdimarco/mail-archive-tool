@@ -26,6 +26,9 @@ func ResolveExisting(p string) string {
 	var tail []string
 	for {
 		if resolved, rerr := filepath.EvalSymlinks(cur); rerr == nil {
+			if final, ok := finalPath(resolved); ok {
+				resolved = final // through a Windows junction too (B2)
+			}
 			parts := append([]string{resolved}, reverseStrings(tail)...)
 			return filepath.Join(parts...)
 		}

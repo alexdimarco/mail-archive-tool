@@ -28,7 +28,8 @@ var selfAtStart = func() (s struct {
 }) {
 	if exe, err := os.Executable(); err == nil {
 		s.path = util.ResolveExisting(exe)
-		s.fi, _ = os.Stat(s.path)
+		fi, _ := os.Stat(s.path)
+		s.fi = util.PinIdentity(fi) // the file as the process started, compared later (B1)
 	}
 	return
 }()
@@ -42,6 +43,7 @@ var selfExecutable = func() (string, os.FileInfo) { return selfAtStart.path, sel
 // file rather than the test binary. Never called outside tests.
 func UseTestProgram(path string) {
 	fi, _ := os.Stat(path)
+	fi = util.PinIdentity(fi)
 	selfExecutable = func() (string, os.FileInfo) { return path, fi }
 }
 

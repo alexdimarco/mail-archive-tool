@@ -1124,7 +1124,7 @@ func (a *ArchiveSource) openGatedIn(root *os.Root, rel string) (*os.File, os.Fil
 		if !fi.Mode().IsRegular() {
 			return nil, nil, &ArchiveFileError{Kind: AFIrregular, Rel: rel}
 		}
-		last = fi
+		last = util.PinIdentity(fi) // compared once it is opened (P3-8, B1)
 	}
 	f, err := openRegularIn(root, filepath.FromSlash(rel))
 	if err != nil {

@@ -347,6 +347,7 @@ func PrepareRestore(out string, want ID, src RestoreSource, newPassword string) 
 	if err != nil {
 		return nil, err
 	}
+	os.SameFile(dir, dir) // its identity fixed now, compared at Commit (P3-8 Windows lab, B1)
 	now := clock()
 	if now.Before(releaseFloor) {
 		return nil, fmt.Errorf("%w: it reads %s, before this MailArchive was made (%s) — set the clock, then try again", ErrClock, now.UTC().Format(time.DateOnly), releaseFloor.Format(time.DateOnly))

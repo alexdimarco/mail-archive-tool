@@ -63,6 +63,7 @@ type programPlan struct {
 	keep     []container.ProgramFile // entries kept as they are (counters updated)
 	warnings []string
 	blocked  []string // platforms a folder, link or special file blocks (R8)
+	changed  []string // platforms whose kept copy was changed: removed or replaced, and told (P3-8, B3)
 }
 
 // selfReleasePlatform is the release platform a self-copy's <os>-<arch> stands in for.
@@ -129,6 +130,10 @@ func decide(v programView) programPlan {
 			p.add = append(p.add, programAdd{file: f, asset: f.Name})
 			opens[plat] = true
 			versions[v.cacheVersion] = true
+			if has && st == jChanged {
+				p.changed = append(p.changed, plat)
+				p.warnings = append(p.warnings, fmt.Sprintf("the copy of MailArchive for %s in this archive was changed; it was replaced with the release's own", plat))
+			}
 		case has && st == jUnreadable:
 			// Never grounds for a rewrite or a removal (R4), but never silent: it is told on
 			// every run and counts toward the lasting "incomplete" line (SWAP-01, CRIT-05).
@@ -147,6 +152,7 @@ func decide(v programView) programPlan {
 			p.remove = append(p.remove, e.Name)
 			e.MissingRuns++
 			p.keep = append(p.keep, e)
+			p.changed = append(p.changed, plat)
 			p.warnings = append(p.warnings, fmt.Sprintf("the copy of MailArchive for %s in this archive was changed; it was removed", plat))
 			versions[e.Version] = true
 		case has:
@@ -211,6 +217,14 @@ func decide(v programView) programPlan {
 			if st != jAbsent {
 				p.remove = append(p.remove, s.Name) // a release copy arrived for its platform
 			}
+		case st == jChanged && !(s.Platform == v.selfPlatform && !thisOpens && v.selfName != ""):
+			// Another computer's own copy, changed: it cannot be written again here, so it
+			// goes, its entry marked missing — never left on the drive to be run (B3).
+			p.remove = append(p.remove, s.Name)
+			s.MissingRuns++
+			p.keep = append(p.keep, s)
+			p.changed = append(p.changed, s.Platform)
+			p.warnings = append(p.warnings, fmt.Sprintf("the copy of MailArchive for %s in this archive was changed; it was removed", s.Platform))
 		case s.Platform == v.selfPlatform && !thisOpens && st.present() &&
 			((s.Name == v.selfName && s.Version == v.selfVersion()) || container.CompareVersions(s.Version, v.selfVersion()) > 0):
 			// This system's own copy — this program's, or a newer one another computer of
@@ -220,6 +234,10 @@ func decide(v programView) programPlan {
 		case s.Platform == v.selfPlatform && !thisOpens && v.selfName != "":
 			if st != jAbsent {
 				p.remove = append(p.remove, s.Name) // replaced by this program's own
+			}
+			if st == jChanged { // never silently (the program design §4.2, §6; P3-8, B3)
+				p.changed = append(p.changed, s.Platform)
+				p.warnings = append(p.warnings, fmt.Sprintf("the copy of MailArchive for %s in this archive was changed; it was replaced with this computer's own program", s.Platform))
 			}
 		case st.present():
 			p.keep = append(p.keep, v.checked(s, st))

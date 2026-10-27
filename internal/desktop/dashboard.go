@@ -1770,10 +1770,16 @@ function render(d){
   if(d.device&&d.device.code){dev.hidden=false;$('deviceCode').textContent=d.device.code;$('deviceUrl').href=d.device.url;}
   else dev.hidden=true;
   if(d.log&&d.log.length){act.hidden=false;act.textContent=d.log.join('\n');act.scrollTop=act.scrollHeight;}
+  jobButtons(d,null);
+  if(!d.running&&res){res.hidden=false;res.textContent=d.error?('Capture failed: '+d.error):(d.result||'Done.');}
+}
+// jobButtons shows the running job's Cancel and Skip, next to at when given — the
+// note of the control that started the job — so they are where the person looks.
+function jobButtons(d,at){
   const sk=$('jobSkipProgram'),cn=$('jobCancel');
+  if(at&&sk&&cn&&at.nextElementSibling!==sk)at.after(sk,cn);
   if(sk)sk.hidden=!(d.running&&d.skippable);
   if(cn)cn.hidden=!(d.running&&d.cancellable);
-  if(!d.running&&res){res.hidden=false;res.textContent=d.error?('Capture failed: '+d.error):(d.result||'Done.');}
 }
 fetch('api/activity').then(r=>r.json()).then(d=>{if(d.running)start();}).catch(()=>{});
 for(const [id,path] of [['jobSkipProgram','api/job/skip-program'],['jobCancel','api/job/cancel']]){
@@ -1823,6 +1829,7 @@ async function pollBackup(){
   const n=$('runBackupNote'),b=$('runBackupBtn');
   try{const d=await(await fetch('api/activity')).json();
     if(n&&d.log&&d.log.length)n.textContent=d.log[d.log.length-1];
+    jobButtons(d,n); // Cancel (and Skip) beside Run now's own note (P3-8, B7)
     if(d.running){setTimeout(pollBackup,1500);return;}
     if(n){n.hidden=false;n.textContent=d.error?('Backup failed: '+d.error):(d.result||'Backup finished.');}
   }catch(e){}

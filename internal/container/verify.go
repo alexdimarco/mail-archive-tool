@@ -490,6 +490,7 @@ func judgeFile(root, rel string, d Digest) (kind, detail string) {
 	if !util.DescriptorReadable(runtime.GOOS, fi.Mode()) {
 		return "modified", "not a regular file"
 	}
+	fi = util.PinIdentity(fi) // compared once it is opened (P3-8, B1)
 	if fi.Size() != d.Size {
 		return "modified", fmt.Sprintf("size %d, listed %d", fi.Size(), d.Size)
 	}

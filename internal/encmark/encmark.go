@@ -229,6 +229,14 @@ func classify(m encrecord.Match) Case {
 	return Gone
 }
 
+// KeysGone says out, an encrypted archive by its other files, holds neither copy of
+// its key file in a form any MailArchive reads — a copied or inherited archive this
+// computer never recorded is judged by its own folder (P3-8 friction review, B5).
+func KeysGone(out string) bool {
+	c := vault.Claims(out)
+	return !c.Parses && !c.Newer
+}
+
 // forgetOffer is how a refusal points at forgetting the folder (§4.6): the verb
 // P3-1a ships, which asks its own confirmations.
 func forgetOffer(why, folder string) string {

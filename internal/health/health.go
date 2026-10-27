@@ -1536,6 +1536,11 @@ func Gather(out, nameOverride string) Input {
 		in.Encrypted, in.EncryptedWhy, in.EncryptedCase = true, res.Why, res.Case
 	}
 	in.RecordLost = encmark.LostHere(out)
+	if in.Encrypted && in.EncryptedCase == encmark.None && in.RecordProblem == "" && encmark.KeysGone(out) {
+		// Recorded or not, an archive with no key file nobody can open (B5).
+		in.EncryptedCase = encmark.KeysMissing
+		in.EncryptedWhy = fmt.Sprintf("this encrypted archive's key files are missing or damaged, so it cannot be opened — restore the whole archive folder from a backup copy, or put the key files back with its recovery file and recovery key: `mailarchive restore-key-file -out %q -from FILE`", out)
+	}
 	if in.Encrypted && in.EncryptedCase == encmark.None {
 		in.NotSetUp = encmark.NotSetUp(out)
 		in.KeyCopiesDiffer = keyCopiesDiffer(out)

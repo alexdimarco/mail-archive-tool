@@ -93,6 +93,7 @@ const (
 	ProgramStopped    = "program_stopped"
 	ProgramCancelled  = "program_cancelled"
 	ProgramUnchecked  = "program_unchecked"   // a copy kept online only, not checked (R4)
+	ProgramChanged    = "program_changed"     // a kept copy had been changed: removed or replaced
 	ProgramRemoved    = "program_removed"     // copies switched off: removed
 	ProgramNotRemoved = "program_not_removed" // copies switched off: one could not be removed
 )
@@ -107,6 +108,7 @@ var programText = map[string]string{
 	ProgramStopped:    "an update of the copies of MailArchive kept in this archive did not finish; the next backup finishes it",
 	ProgramCancelled:  "the update of the copies of MailArchive kept in this archive was cancelled; the next backup tries again",
 	ProgramUnchecked:  "a copy of MailArchive kept in this archive is kept online only and has not been checked for more than one backup — the Encryption card says since when; make it available on this computer to have it checked",
+	ProgramChanged:    "someone changed a copy of MailArchive kept in this archive; the backup removed or replaced it — do not run a copy taken from this archive before now, and if anyone did, check that computer",
 	ProgramRemoved:    "the copies of MailArchive were removed from this archive, as chosen",
 	ProgramNotRemoved: "copies of MailArchive are no longer kept, but one could not be removed from this archive — open the archive in MailArchive to see which; the next backup tries again",
 }
@@ -117,7 +119,7 @@ func ProgramText(code string) string { return programText[code] }
 // ProgramWarns says a program outcome is one status warns about.
 func ProgramWarns(code string) bool {
 	switch code {
-	case ProgramIncomplete, ProgramSkipped, ProgramStopped, ProgramNotRemoved:
+	case ProgramIncomplete, ProgramSkipped, ProgramStopped, ProgramNotRemoved, ProgramChanged:
 		return true
 	}
 	return false

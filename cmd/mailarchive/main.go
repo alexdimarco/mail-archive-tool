@@ -802,9 +802,9 @@ func reindexEncrypted(dir string, o *reindexOpts, k *keyFlags) error {
 	unwatch := watchVerifyStop(sigs, cancel, &stopped, os.Exit)
 	rep, err := keyring.Reindex(ctx, u, logger)
 	unwatch()
-	if c := stopped.Load(); c != 0 {
+	if c := reindexStopCode(stopped.Load(), err); c != 0 {
 		fmt.Fprintln(os.Stderr, "mailarchive: reindex stopped: nothing was saved; the archive keeps its earlier search index")
-		return &exitError{code: int(c)}
+		return &exitError{code: c}
 	}
 	if err != nil {
 		logger.Printf("FAILED: %v", err)
@@ -812,6 +812,16 @@ func reindexEncrypted(dir string, o *reindexOpts, k *keyFlags) error {
 	}
 	logger.Printf("rebuilt the search index: added=%d unreadable=%d failed=%d", rep.Added, rep.Unreadable, rep.Failed)
 	return nil
+}
+
+// reindexStopCode is a keyed reindex's exit for a stop (130 or 143), or 0: a stop
+// counts only when it ended the rebuild — one that came after the rebuild was saved
+// leaves a saved rebuild, told as saved (P3-8 friction review, B4).
+func reindexStopCode(stopped int32, err error) int {
+	if stopped == 0 || err == nil {
+		return 0
+	}
+	return int(stopped)
 }
 
 // runVerify checks the archive at -out against its recorded fixity and prints a

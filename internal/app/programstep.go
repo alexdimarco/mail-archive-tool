@@ -41,15 +41,16 @@ type ProgramOutcome struct {
 
 // The program step's outcome classes.
 const (
-	ProgramNotChosen  = "not chosen"
-	ProgramUnchanged  = "unchanged"
-	ProgramUpdated    = "updated"
-	ProgramIncomplete = "incomplete"
-	ProgramSkipped    = "skipped"
-	ProgramKeptAsIs   = "kept as it is"
-	ProgramStopped    = "stopped"
-	ProgramCancelled  = "cancelled" // Ctrl-C or Cancel: nothing new written (R17)
-	ProgramUnchecked  = "unchecked" // a copy kept online only, unchecked since an earlier run (R4)
+	ProgramNotChosen    = "not chosen"
+	ProgramUnchanged    = "unchanged"
+	ProgramUpdated      = "updated"
+	ProgramIncomplete   = "incomplete"
+	ProgramSkipped      = "skipped"
+	ProgramKeptAsIs     = "kept as it is"
+	ProgramStopped      = "stopped"
+	ProgramCancelled    = "cancelled"     // Ctrl-C or Cancel: nothing new written (R17)
+	ProgramUnchecked    = "unchecked"     // a copy kept online only, unchecked since an earlier run (R4)
+	ProgramChangedFound = "changed found" // a kept copy had been changed: removed or replaced, and told
 	// With copies switched off:
 	ProgramRemoved    = "removed"     // the copies were removed
 	ProgramNotKept    = "not kept"    // none kept, nothing to do
@@ -273,6 +274,7 @@ func openProgramDir(dir string, create bool) (*programRoot, error) {
 	if !fi.IsDir() {
 		return nil, fmt.Errorf("the program folder is %s, not a folder", util.ModeKind(fi.Mode()))
 	}
+	fi = util.PinIdentity(fi) // compared on every later check (R3; B1)
 	root, err := os.OpenRoot(dir)
 	if err != nil {
 		return nil, err
@@ -313,6 +315,7 @@ func (r *programRoot) judgeOne(f container.ProgramFile) (judged, string) {
 	case err != nil:
 		return jUnreadable, ""
 	}
+	fi = util.PinIdentity(fi) // the file judged, compared when it is opened (B1)
 	path := filepath.Join(r.dir, f.Name)
 	if programPlaceholder(path) {
 		return jUnchecked, ""
@@ -362,7 +365,8 @@ func hashRegular(path string, judgedFI os.FileInfo, size int64) (string, error) 
 func programCode(class string) string {
 	return map[string]string{
 		ProgramRemoved: state.ProgramRemoved, ProgramNotRemoved: state.ProgramNotRemoved, ProgramUnchecked: state.ProgramUnchecked,
-		ProgramUpdated: state.ProgramUpdated, ProgramUnchanged: state.ProgramUnchanged, ProgramIncomplete: state.ProgramIncomplete,
+		ProgramChangedFound: state.ProgramChanged,
+		ProgramUpdated:      state.ProgramUpdated, ProgramUnchanged: state.ProgramUnchanged, ProgramIncomplete: state.ProgramIncomplete,
 		ProgramSkipped: state.ProgramSkipped, ProgramKeptAsIs: state.ProgramUnread, ProgramStopped: state.ProgramStopped,
 		ProgramCancelled: state.ProgramCancelled,
 	}[class]
@@ -467,6 +471,9 @@ func sameFiles(a, b []container.ProgramFile) bool {
 
 // classOf is the outcome of a plan carried out.
 func (s *programStepState) classOf(plan programPlan, wrote bool) string {
+	if len(plan.changed) > 0 {
+		return ProgramChangedFound // above all else: someone changed a copy (P3-8, B3)
+	}
 	for _, k := range plan.keep {
 		if k.MissingRuns >= 2 {
 			s.warn("the program copies are incomplete: the copy for %s has been missing for %d backups", systemName(k.Platform), k.MissingRuns)
@@ -848,7 +855,7 @@ func (s *programStepState) write(pr *programRoot, dir string, set container.Prog
 	if !*next.Keep && len(pr.entries()) == 0 {
 		os.Remove(dir)
 	}
-	return s.classOf(programPlan{keep: next.Files, blocked: plan.blocked}, len(renamed) > 0 || len(plan.remove) > 0)
+	return s.classOf(programPlan{keep: next.Files, blocked: plan.blocked, changed: plan.changed}, len(renamed) > 0 || len(plan.remove) > 0)
 }
 
 // replan decides again with the failed files taken out, warning nothing twice.

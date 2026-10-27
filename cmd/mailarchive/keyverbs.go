@@ -286,6 +286,10 @@ func restoreKeyFile(a asker, out, from string, k *keyFlags) error {
 		if err != nil {
 			return err
 		}
+		// Said only when it is so: judged before any question (P3-8 friction review, B6).
+		if !keyring.HasRemembered(abspath(out), store) {
+			return fmt.Errorf("this computer does not remember a key for an encrypted archive at %s, so nothing was changed — put the key files back from the archive's recovery file and recovery key instead: mailarchive restore-key-file -out %q -from FILE", abspath(out), abspath(out))
+		}
 		ok, err := askYes(a, "This computer remembers the archive's key, so its key files can be rebuilt without the password or recovery key. Anyone using this computer's account could do the same: encryption protects a copy of the archive that leaves this computer, not this computer. Go ahead?", false)
 		if err != nil {
 			return err

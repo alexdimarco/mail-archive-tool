@@ -7,6 +7,8 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+
+	"mail-archive-tool/internal/util"
 )
 
 // allowedFiles is the http.FileSystem /files/ serves: the archive's exported
@@ -153,7 +155,8 @@ func checkEntry(root *os.Root, segs []string) ([]fs.FileInfo, entryKind, bool) {
 		if k == entryRefused || (i < len(segs)-1 && k != entryDir) {
 			return nil, entryRefused, false
 		}
-		infos, kind = append(infos, info), k
+		// Pinned: each is compared with what is opened later (P3-8 Windows lab, B1).
+		infos, kind = append(infos, util.PinIdentity(info)), k
 	}
 	if kind == entryFile && !fileAllowed(len(segs), segs[len(segs)-1]) {
 		return nil, entryRefused, false

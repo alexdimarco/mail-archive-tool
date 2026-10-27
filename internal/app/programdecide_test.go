@@ -94,11 +94,12 @@ func TestDecidingTheProgramFolder(t *testing.T) {
 			"+" + mac + "@v1.5.0 +" + win + "@v1.5.0 +" + lx + "@v1.5.0 +" + arm + "@v1.5.0 +SHA256SUMS-v1.5.0@v1.5.0 -SHA256SUMS-v1.4.0", ""},
 		{"a platform the new release lacks keeps its older copy and checksums", withCache(kept(view(), v14...), "v1.5.0", "macos", "windows-amd64", "linux-amd64"),
 			"+" + mac + "@v1.5.0 +" + win + "@v1.5.0 +" + lx + "@v1.5.0 +SHA256SUMS-v1.5.0@v1.5.0 =" + arm + " =SHA256SUMS-v1.4.0", ""},
-		{"a changed copy is written again from the cache", func() programView {
+		// Written again and told — design line 230: "replaces a changed copy and warns" (P3-8, B3).
+		{"a changed copy is written again from the cache, and told", func() programView {
 			v := withCache(kept(view(), relFile("macos", "v1.5.0")), "v1.5.0", "macos")
 			v.state[mac] = jChanged
 			return v
-		}(), "+" + mac + "@v1.5.0 +SHA256SUMS-v1.5.0@v1.5.0", ""},
+		}(), "+" + mac + "@v1.5.0 +SHA256SUMS-v1.5.0@v1.5.0", "was changed; it was replaced with the release's own"},
 		{"a changed copy the cache cannot write goes, its entry marked missing", func() programView {
 			v := kept(view(), relFile("macos", "v1.5.0"))
 			v.state[mac] = jChanged
