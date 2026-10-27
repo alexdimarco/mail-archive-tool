@@ -3,6 +3,7 @@ package state
 import (
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 )
 
@@ -27,6 +28,38 @@ type SealedSet struct {
 // ErrUnitRecord refuses a manifest whose encrypted-archive unit records are
 // malformed or shared between records.
 var ErrUnitRecord = errors.New("manifest: an encrypted archive's unit record is damaged")
+
+// ErrNotSealed refuses DetachPlaintext on a manifest that is not an encrypted
+// archive's sealed record.
+var ErrNotSealed = errors.New("manifest: only an encrypted archive's sealed record can be detached into a plaintext copy")
+
+// DetachPlaintext turns a sealed manifest, read for an unencrypted copy (Phase 3
+// P3-4), into that copy's plaintext manifest in place — never a second manifest in
+// memory: every record's Unit and Sealed are stripped, the persister and the
+// after-save hook are dropped, and the manifest is bound to path, so the next Save
+// writes a plaintext manifest there and the sealed record is never committed. It
+// refuses a manifest that is not sealed and a path that already exists, changing
+// nothing.
+func (m *Manifest) DetachPlaintext(path string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.persist == nil {
+		return ErrNotSealed
+	}
+	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+		if err == nil {
+			err = os.ErrExist
+		}
+		return fmt.Errorf("the copy's manifest %s: %w", path, err)
+	}
+	for k, r := range m.Entries {
+		r.Unit, r.Sealed = "", nil
+		m.Entries[k] = r
+	}
+	m.persist, m.afterSave, m.unitSet = nil, nil, nil
+	m.path = path
+	return nil
+}
 
 // UnitIDLen is the length of a record's unit id: 128 bits as lowercase hex.
 const UnitIDLen = 32

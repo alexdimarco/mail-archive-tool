@@ -199,6 +199,36 @@ func ArchiveAt(dir string) bool {
 	return err == nil && fi.Mode().IsRegular()
 }
 
+// ArchivesAbove are the archive folders (a folder with an archive's manifest in it)
+// that parent is or lies inside, by the path as it is given and as it resolves,
+// nearest first: Desktop's Create folder writes in none of them, and an unencrypted
+// copy is made in none of them (phase 3 P3-4).
+func ArchivesAbove(parent string) []string {
+	var out []string
+	seen := map[string]bool{}
+	starts := []string{parent}
+	if r, err := filepath.EvalSymlinks(parent); err == nil && r != parent {
+		starts = append(starts, r)
+	}
+	for _, start := range starts {
+		if !filepath.IsAbs(start) {
+			continue
+		}
+		for p := filepath.Clean(start); ; {
+			if !seen[p] && ArchiveAt(p) {
+				seen[p] = true
+				out = append(out, p)
+			}
+			up := filepath.Dir(p)
+			if up == p {
+				break
+			}
+			p = up
+		}
+	}
+	return out
+}
+
 // PlanFoldersOf summarizes msgs by folder path, in the order first met: a retry's selection.
 func PlanFoldersOf(msgs []CopyMessage) []CopyPlanFolder { return foldersOf(msgs) }
 

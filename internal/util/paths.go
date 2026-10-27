@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"unicode"
 
@@ -187,9 +188,13 @@ func StripBidi(s string) string {
 // OneDrive* environment variables the client sets to its sync roots, and every
 // supported provider by a path segment naming its local root: OneDrive
 // (a segment beginning with "OneDrive", so "OneDrive - Company" matches),
-// Dropbox, Google Drive ("My Drive"/"Google Drive"), iCloud Drive and Box — all
-// case-insensitive. The matched service name is returned for a legible remedy;
-// ok is false when the path is not synced.
+// Dropbox, Google Drive ("My Drive"/"Google Drive"), iCloud Drive ("iCloudDrive"
+// on Windows), Box, Nextcloud, ownCloud, pCloud and Synology Drive — all
+// case-insensitive. On macOS everything under Library/CloudStorage (where the
+// File Provider clients keep their roots) and Library/Mobile Documents (iCloud
+// Drive's own store) is synced too (encrypted archives phase 3, §10). The matched
+// service name is returned for a legible remedy; ok is false when the path is not
+// synced.
 func UnderCloudSync(absPath string) (service string, ok bool) {
 	clean := filepath.Clean(absPath)
 	for _, env := range []string{"OneDrive", "OneDriveCommercial", "OneDriveConsumer"} {
@@ -197,12 +202,53 @@ func UnderCloudSync(absPath string) (service string, ok bool) {
 			return "OneDrive", true
 		}
 	}
-	for _, seg := range strings.FieldsFunc(clean, func(r rune) bool { return r == '/' || r == '\\' }) {
+	segs := strings.FieldsFunc(clean, func(r rune) bool { return r == '/' || r == '\\' })
+	for i, seg := range segs {
+		if strings.EqualFold(seg, "Library") && i+1 < len(segs) {
+			switch {
+			case strings.EqualFold(segs[i+1], "Mobile Documents"):
+				return "iCloud Drive", true
+			case strings.EqualFold(segs[i+1], "CloudStorage"):
+				if i+2 < len(segs) {
+					if svc := cloudStorageService(segs[i+2]); svc != "" {
+						return svc, true
+					}
+				}
+				return "a cloud storage service", true
+			}
+		}
 		if svc := cloudSyncService(seg); svc != "" {
 			return svc, true
 		}
 	}
 	return "", false
+}
+
+// MaySync reports whether absPath sits in a folder macOS may keep in iCloud
+// without the path saying so — the Desktop and Documents folders under home, when
+// iCloud's "Desktop & Documents Folders" is on (phase 3 §10: "this folder may be
+// synced"). It is false on every other system, where a synced Desktop or Documents
+// moves to a path UnderCloudSync recognises.
+func MaySync(absPath, home string) bool { return maySync(absPath, home, runtime.GOOS) }
+
+func maySync(absPath, home, goos string) bool {
+	if goos != "darwin" || home == "" {
+		return false
+	}
+	clean, h := filepath.Clean(absPath), filepath.Clean(home)
+	return pathWithin(clean, filepath.Join(h, "Desktop")) || pathWithin(clean, filepath.Join(h, "Documents"))
+}
+
+// cloudStorageService names the service whose root a Library/CloudStorage folder
+// is, from the name the File Provider client gives it ("GoogleDrive-<account>",
+// "OneDrive-Personal", "Dropbox", "Box-Box"), or "" when it is not one MailArchive
+// knows.
+func cloudStorageService(seg string) string {
+	head, _, _ := strings.Cut(seg, "-")
+	if svc := cloudSyncService(head); svc != "" {
+		return svc
+	}
+	return ""
 }
 
 // cloudSyncService maps one path segment to the consumer cloud-sync service
@@ -216,10 +262,18 @@ func cloudSyncService(seg string) string {
 		return "Dropbox"
 	case l == "google drive" || l == "googledrive" || l == "my drive":
 		return "Google Drive"
-	case l == "icloud drive":
+	case l == "icloud drive" || l == "iclouddrive":
 		return "iCloud Drive"
 	case l == "box" || l == "box sync":
 		return "Box"
+	case l == "nextcloud":
+		return "Nextcloud"
+	case l == "owncloud":
+		return "ownCloud"
+	case l == "pcloud drive" || l == "pclouddrive":
+		return "pCloud"
+	case l == "synologydrive" || l == "synology drive":
+		return "Synology Drive"
 	}
 	return ""
 }

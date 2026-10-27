@@ -144,6 +144,21 @@ func (ix *Index) openScratchImage(withImage bool) (m *Index, err error) {
 	return m, nil
 }
 
+// CheckImageFile refuses a file that is not a rollback-journal SQLite database
+// (ErrImage), an empty one included: the check a sealed index image gets before an
+// unencrypted copy keeps it as its search.db (Phase 3 P3-4). An empty file would
+// open as a new index with no rows, so the copy rebuilds rather than keep one.
+func CheckImageFile(path string) error {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("index image: %w", err)
+	}
+	if fi.Size() == 0 {
+		return fmt.Errorf("%w: empty", ErrImage)
+	}
+	return checkRollbackImage(path)
+}
+
 // checkRollbackImage refuses a scratch file that holds something other than nothing
 // or a rollback-journal SQLite database (ErrImage).
 func checkRollbackImage(path string) error {

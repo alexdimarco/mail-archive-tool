@@ -247,6 +247,18 @@ func TestHealthyInputsMatchTheGolden(t *testing.T) {
 		"evolution-imap": p14Local(t, p14EvolutionCache(t, parent)),
 		"graph":          p14Graph(t),
 	}
+	if !p14Compare(t, got, *writeP14Golden) {
+		t.Fatalf("the healthy inputs' archives differ from %s (the differences are listed above)", p14GoldenFile)
+	}
+}
+
+// p14Compare compares the fixtures got with the frozen golden (write: write it
+// instead — MA-329's own flag; nothing else ever writes it), reporting each
+// difference, and says whether they matched. The plaintext copy of an encrypted run
+// is compared with the same golden (design-encrypted-archives-phase3 §10, the Phase
+// 2c closure).
+func p14Compare(t *testing.T, got map[string]p14Fixture, write bool) (matched bool) {
+	t.Helper()
 	for name, f := range got {
 		if len(f.Entries) == 0 || len(f.Files) == 0 {
 			t.Fatalf("fixture %s archived nothing (%d records, %d files): the golden would prove nothing", name, len(f.Entries), len(f.Files))
@@ -258,19 +270,19 @@ func TestHealthyInputsMatchTheGolden(t *testing.T) {
 	}
 	gotJSON = append(gotJSON, '\n')
 
-	if *writeP14Golden {
+	if write {
 		if err := os.WriteFile(p14GoldenFile, gotJSON, 0o644); err != nil {
 			t.Fatal(err)
 		}
 		t.Logf("wrote %s (%d bytes)", p14GoldenFile, len(gotJSON))
-		return
+		return true
 	}
 	want, err := os.ReadFile(p14GoldenFile)
 	if err != nil {
 		t.Fatalf("the pre-change golden %s is missing: %v", p14GoldenFile, err)
 	}
 	if string(want) == string(gotJSON) {
-		return
+		return true
 	}
 	var wantFx map[string]p14Fixture
 	if err := json.Unmarshal(want, &wantFx); err != nil {
@@ -320,6 +332,7 @@ func TestHealthyInputsMatchTheGolden(t *testing.T) {
 	if !t.Failed() {
 		t.Errorf("the output differs from %s but no record or file differs: the golden's encoding changed", p14GoldenFile)
 	}
+	return false
 }
 
 func p14SortedKeys[V any](m map[string]V) []string {

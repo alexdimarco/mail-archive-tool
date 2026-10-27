@@ -1,0 +1,276 @@
+package app
+
+import (
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"time"
+
+	"mail-archive-tool/internal/container"
+	"mail-archive-tool/internal/encmark"
+	"mail-archive-tool/internal/encrecord"
+	"mail-archive-tool/internal/export"
+	"mail-archive-tool/internal/graphconfig"
+	"mail-archive-tool/internal/instance"
+	"mail-archive-tool/internal/job"
+	"mail-archive-tool/internal/util"
+)
+
+// An unencrypted copy of an encrypted archive (phase 3 §10, P3-4) is planned without
+// the key, and the plan is what the copy executes (X14): where the new folder goes,
+// its exact name, how large it can be, the free space, and why the destination may
+// leave this computer — each such reason asks twice (K5). Planning writes nothing.
+
+// DecryptPlan is a planned unencrypted copy.
+type DecryptPlan struct {
+	Out    string // the encrypted archive, absolute
+	Parent string // the folder the copy is made in
+	Name   string // the new folder's name, fixed here: <archive>-unencrypted-<date>[-N]
+	Dest   string // Parent/Name
+
+	// NeedBytes is an upper bound on the copy's size: the sealed files it is made
+	// from (the vault does not compress, so each is at least its plaintext) and a
+	// reserve for the pages, report and README the copy writes besides.
+	NeedBytes int64
+	FreeBytes uint64 // the destination's free space; 0 with FreeKnown false when it cannot be read
+	FreeKnown bool
+
+	// Leaves says why the copy may leave this computer — a synced folder, a folder
+	// that may be synced, a removable or external drive, a network share. Each asks
+	// twice (K5).
+	Leaves   []string
+	Warnings []string
+
+	pointer container.Peeked // the record as it was planned: a backup since then makes the plan stale
+	outside *CopyOutside
+}
+
+// AskTwice reports whether the copy must be confirmed twice before it starts (K5).
+func (p *DecryptPlan) AskTwice() bool { return len(p.Leaves) > 0 }
+
+// decryptReserve is the room kept beside the sealed files' size for what the copy
+// writes that they do not hold: the folder pages, the report and the README.
+func decryptReserve(sealed int64) int64 { return 32<<20 + sealed/50 }
+
+// ErrDecryptStale refuses a copy whose plan no longer holds: a backup changed the
+// archive, or the new folder's name was taken, since it was planned (X14).
+var ErrDecryptStale = errors.New("the unencrypted copy's plan no longer holds")
+
+// PlanDecryptCopy plans an unencrypted copy of the encrypted archive out into a new
+// folder in parent (phase 3 §10). archives are the other archive folders this
+// computer knows, settings the settings folders a front end keeps besides
+// MailArchive's own; the copy is made inside none of them. It needs no key and
+// writes nothing.
+func (e *CopyExportEnv) PlanDecryptCopy(out, parent string, archives, settings []string, now time.Time) (*DecryptPlan, error) {
+	abs, err := filepath.Abs(out)
+	if err != nil {
+		return nil, err
+	}
+	abs = filepath.Clean(abs)
+	if !UnlockableAt(abs) {
+		return nil, refuse("R-src", fmt.Sprintf("%s is not an encrypted archive MailArchive can open here, so no unencrypted copy of it can be made — `mailarchive status -out %q` says why.", abs, abs))
+	}
+	outside, err := e.CheckDecryptDestination(parent, abs, archives, settings)
+	if err != nil {
+		return nil, err
+	}
+	p := &DecryptPlan{Out: abs, Parent: parent, outside: outside}
+	if p.Name, err = freeCopyName(parent, filepath.Base(abs)+"-unencrypted-"+now.Format("2006-01-02")); err != nil {
+		return nil, err
+	}
+	p.Dest = filepath.Join(parent, p.Name)
+	if p.pointer, err = container.PeekFile(abs); err != nil {
+		return nil, fmt.Errorf("reading %s's record: %w", abs, err)
+	}
+	sealed := sealedSize(abs)
+	p.NeedBytes = sealed + decryptReserve(sealed)
+	if free, ferr := e.freeOnDest(parent); ferr == nil {
+		p.FreeBytes, p.FreeKnown = free, true
+		if int64(free) < p.NeedBytes {
+			p.Warnings = append(p.Warnings, fmt.Sprintf("%s may not have room: the copy can take up to %s and %s is free", parent, humanBytes(p.NeedBytes), humanBytes(int64(free))))
+		}
+	}
+	p.Leaves = e.copyLeaves(parent)
+	return p, nil
+}
+
+// copyLeaves says why parent may leave this computer (K5): each reason asks twice.
+func (e *CopyExportEnv) copyLeaves(parent string) []string {
+	var why []string
+	if svc, ok := util.UnderCloudSync(parent); ok {
+		why = append(why, fmt.Sprintf("%s is synced to %s: the readable copy will be uploaded there", parent, svc))
+	} else if home, err := os.UserHomeDir(); err == nil && util.MaySync(parent, home) {
+		why = append(why, fmt.Sprintf("%s may be synced to iCloud (when iCloud keeps your Desktop and Documents folders): the readable copy may be uploaded there", parent))
+	}
+	if e.removable(parent) {
+		why = append(why, fmt.Sprintf("%s is on a removable or external drive: the readable copy leaves this computer with it", parent))
+	}
+	if e.viewFor(parent).Kind == viewShare {
+		why = append(why, fmt.Sprintf("%s is on a network share: the readable copy is written to another computer", parent))
+	}
+	return why
+}
+
+// CheckDecryptDestination checks parent as the folder an unencrypted copy of the
+// encrypted archive out is made in: an absolute, clean path to an existing folder;
+// not inside an encrypted archive; not inside a folder MailArchive keeps its
+// settings, record, sign-in or working copies in (uninstall removes those, and they
+// are not meant to hold mail); and outside out and every other archive, by path and
+// by identity (CheckDestinationOther). It writes nothing; it returns what the copy
+// checks again before it starts.
+func (e *CopyExportEnv) CheckDecryptDestination(parent, out string, archives, settings []string) (*CopyOutside, error) {
+	if r := checkCopyParent(parent); r != nil {
+		return nil, r
+	}
+	if res, _ := encmark.At(parent); res.Encrypted || res.ByRecordErr {
+		why := res.Why
+		if res.ByRecordErr {
+			why = "this computer's record of encrypted archives cannot be used, and it holds MailArchive's files"
+		}
+		where := fmt.Sprintf("is inside an encrypted archive (%s)", res.Folder)
+		if res.Folder == parent || res.ByRecordErr {
+			where = "may be an encrypted archive"
+			if !res.ByRecordErr {
+				where = "is an encrypted archive"
+			}
+		}
+		return nil, refuse("R-enc", fmt.Sprintf("The folder %s %s — %s. An unencrypted copy is never made inside one: choose a folder outside it.", parent, where, why))
+	}
+	rp := util.ResolveExisting(parent)
+	for _, d := range append(mailarchiveOwnDirs(), settings...) {
+		if strings.TrimSpace(d) == "" {
+			continue
+		}
+		if util.Within(util.ResolveExisting(d), rp) {
+			return nil, refuse("R-set", fmt.Sprintf("The folder %s is inside %s, where MailArchive keeps its settings or working files — uninstalling MailArchive removes it. Choose a folder of your own for the unencrypted copy.", parent, d))
+		}
+	}
+	all := append([]string{out}, archives...)
+	all = append(all, ArchivesAbove(parent)...)
+	for _, a := range all {
+		if overlap, how := util.Overlap(parent, strings.TrimSpace(a)); overlap && how != "contains" && strings.TrimSpace(a) != "" {
+			return nil, copyRefusalF(a)
+		}
+	}
+	outside, err := e.CheckDestinationOther(parent, all, out)
+	if err != nil {
+		var r *CopyRefusal
+		if errors.As(err, &r) {
+			return nil, copyWording(r, parent)
+		}
+		return nil, err
+	}
+	return outside, nil
+}
+
+// mailarchiveOwnDirs are the folders MailArchive keeps its settings, this
+// computer's record of encrypted archives, its instance files, its sign-in and its
+// working copies in.
+func mailarchiveOwnDirs() []string {
+	var dirs []string
+	for _, f := range []func() (string, error){job.Dir, instance.Dir, encrecord.Dir, graphconfig.DefaultConfigDir, job.ScratchDir} {
+		if d, err := f(); err == nil {
+			dirs = append(dirs, d)
+		}
+	}
+	if d, err := job.ScratchDir(); err == nil {
+		dirs = append(dirs, filepath.Dir(d)) // the cache folder the scratch folder is in
+	}
+	return dirs
+}
+
+// checkCopyParent is the copy's path check, worded for it and for either front end.
+func checkCopyParent(parent string) *CopyRefusal {
+	switch {
+	case strings.TrimSpace(parent) == "":
+		return refuse("R-e", "No folder is chosen for the unencrypted copy — name an existing folder; the copy is made in a new folder inside it.")
+	case strings.ContainsRune(parent, 0) || !filepath.IsAbs(parent) || parent != filepath.Clean(parent):
+		return refuse("R-e", fmt.Sprintf("The folder %s isn't a full path to an existing folder — MailArchive doesn't expand ~, %%NAME%% or $NAME. Name the full path, for example %s.", printable(parent), DestExampleFor(runtime.GOOS)))
+	}
+	fi, err := os.Stat(parent)
+	switch {
+	case err != nil:
+		return refuse("R-e", fmt.Sprintf("The folder %s doesn't exist — the unencrypted copy is made in a new folder inside an existing one.", parent))
+	case !fi.IsDir():
+		return refuse("R-e", fmt.Sprintf("%s is a file, not a folder — the unencrypted copy is made in a new folder inside an existing one.", parent))
+	}
+	return nil
+}
+
+func copyRefusalF(archive string) *CopyRefusal {
+	return refuse("R-f", fmt.Sprintf("That folder is inside an archive (%s) — an unencrypted copy made there would mix into it. Choose a folder outside %s.", archive, archive))
+}
+
+// copyWording rewords a refusal of the export's destination check for the copy.
+func copyWording(r *CopyRefusal, parent string) *CopyRefusal {
+	switch r.ID {
+	case "R-f":
+		return refuse("R-f", fmt.Sprintf("The folder %s is an archive folder under another name (a link, a share or a mount of it) — an unencrypted copy made there would mix into it. Choose a folder outside every archive.", parent))
+	case "R-f2":
+		return refuse("R-f2", fmt.Sprintf("MailArchive couldn't confirm that %s is outside the archive — it or the archive is on a network share or a FUSE mount, where one folder can show under two names, so nothing was written. Choose a folder on this computer's own drive.", parent))
+	}
+	return r
+}
+
+// freeCopyName is base, or base-2, base-3 … — the first name nothing in parent
+// holds now.
+func freeCopyName(parent, base string) (string, error) {
+	for n := 1; n <= 99; n++ {
+		name := base
+		if n > 1 {
+			name = fmt.Sprintf("%s-%d", base, n)
+		}
+		if _, err := os.Lstat(filepath.Join(parent, name)); errors.Is(err, fs.ErrNotExist) {
+			return name, nil
+		} else if err != nil {
+			return "", fmt.Errorf("checking %s: %w", filepath.Join(parent, name), err)
+		}
+	}
+	return "", refuse("R-name", fmt.Sprintf("%s already holds %s and 98 more like it — remove the copies you no longer need, or choose another folder.", parent, base))
+}
+
+// sealedSize is the size of the sealed files an unencrypted copy is made from: the
+// units and the record's chunks. A link or an unreadable entry adds nothing.
+func sealedSize(out string) int64 {
+	var total int64
+	for _, dir := range []string{export.UnitsDir, container.ChunksDir} {
+		filepath.WalkDir(filepath.Join(out, dir), func(_ string, d fs.DirEntry, err error) error {
+			if err != nil || !d.Type().IsRegular() {
+				return nil
+			}
+			if fi, ierr := d.Info(); ierr == nil {
+				total += fi.Size()
+			}
+			return nil
+		})
+	}
+	return total
+}
+
+// Recheck is the copy's repetition of its plan's checks just before it starts
+// (X14): the destination again, and the plan itself — the archive's record and the
+// new folder's name as they were planned — else ErrDecryptStale.
+func (p *DecryptPlan) Recheck(e *CopyExportEnv, archives, settings []string) error {
+	if _, err := e.CheckDecryptDestination(p.Parent, p.Out, archives, settings); err != nil {
+		return err
+	}
+	if err := p.outside.Recheck(e, p.Parent); err != nil {
+		var r *CopyRefusal
+		if errors.As(err, &r) {
+			return copyWording(r, p.Parent)
+		}
+		return err
+	}
+	now, err := container.PeekFile(p.Out)
+	if err != nil || now != p.pointer {
+		return fmt.Errorf("%w: %s changed since the copy was planned (a backup ran) — plan the copy again", ErrDecryptStale, p.Out)
+	}
+	if _, err := os.Lstat(p.Dest); !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("%w: %s now exists — plan the copy again", ErrDecryptStale, p.Dest)
+	}
+	return nil
+}

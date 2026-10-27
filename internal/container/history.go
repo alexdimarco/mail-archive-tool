@@ -315,6 +315,30 @@ func (s *Store) history(checked bool) ([]state.HistoryEvent, error) {
 	return out, nil
 }
 
+// HistoryForCopy is the sealed timeline for an unencrypted copy (Phase 3 P3-4): a
+// chunk that is gone or damaged stands as a Barrier event and is counted in lost,
+// as History does, but a key locked meanwhile is an error — the copy stops rather
+// than write a timeline with holes the archive does not have.
+func (s *Store) HistoryForCopy() (events []state.HistoryEvent, lost int, err error) {
+	for _, e := range s.ptr.History {
+		sealed, _, rerr := readChunk(s.out, e)
+		var plain []byte
+		if rerr == nil {
+			plain, rerr = s.opts.Key.OpenChunk(vault.ContainerHistory, e.Gen, e.I, sealed)
+		}
+		switch {
+		case rerr == nil:
+			events = append(events, decodeEvents(plain)...)
+		case errors.Is(rerr, vault.ErrKeyDestroyed):
+			return nil, 0, fmt.Errorf("container: the history chunk %s: %w", e.Name.Path(), rerr)
+		default:
+			events = append(events, state.HistoryEvent{Barrier: true})
+			lost++
+		}
+	}
+	return events, lost, nil
+}
+
 // HistoryGap is the part of the timeline the record says is lost — from, and to
 // (zero: up to now) — when there is one: a reader says go-back is partial (§7.2).
 func (s *Store) HistoryGap() (from, to uint64, ok bool) {

@@ -438,6 +438,21 @@ func HistoryStatus(path string) (HistoryStat, error) {
 	return st, nil
 }
 
+// WriteHistory writes events to w as the log's lines, one JSON object and a
+// newline each, in order: the rewrite CompactHistory makes, and the history an
+// unencrypted copy of an encrypted archive is given (Phase 3 P3-4). The caller
+// owns the file — its creation, sync and close.
+func WriteHistory(w io.Writer, events []HistoryEvent) error {
+	bw := bufio.NewWriter(w)
+	enc := json.NewEncoder(bw)
+	for _, ev := range events {
+		if err := enc.Encode(ev); err != nil { // Encode appends '\n'
+			return err
+		}
+	}
+	return bw.Flush()
+}
+
 // CompactHistory rewrites the log at path, dropping every per-message event
 // whose key `keep` rejects — the redaction step `reindex` runs after pruning the
 // index/manifest rows of files gone from disk, so a message removed from the
@@ -475,16 +490,7 @@ func CompactHistory(path string, keep func(key string) bool) (dropped int, err e
 		return 0, fmt.Errorf("compact history log %s: %w", path, err)
 	}
 	tmpName := tmp.Name()
-	bw := bufio.NewWriter(tmp)
-	enc := json.NewEncoder(bw)
-	for _, ev := range kept {
-		if err := enc.Encode(ev); err != nil { // Encode appends '\n'
-			tmp.Close()
-			os.Remove(tmpName)
-			return 0, fmt.Errorf("compact history log %s: %w", path, err)
-		}
-	}
-	if err := bw.Flush(); err != nil {
+	if err := WriteHistory(tmp, kept); err != nil {
 		tmp.Close()
 		os.Remove(tmpName)
 		return 0, fmt.Errorf("compact history log %s: %w", path, err)

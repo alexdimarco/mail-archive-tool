@@ -438,6 +438,8 @@ type CopyExportEnv struct {
 	destIDs  func(dest string) ([]ceIdentity, error) // the identities of the destination and its ancestors
 	walkDirs int                                     // the archive walk's directory bound
 	walkTime time.Duration                           // and its time bound
+
+	removableSeam func(dir string) bool // whether a folder is on a removable or external drive (phase 3 K5)
 }
 
 // NewCopyExportEnv is the production environment for stateDir.

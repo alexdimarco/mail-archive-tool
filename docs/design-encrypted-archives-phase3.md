@@ -1609,6 +1609,72 @@ decide what is clear and raise only what is not):*
 - **3f's Outlook-app backup** into a Desktop-made encrypted archive is refused for now (E2's
   working folder is wired at the CLI only); `mailarchive -encrypt` makes one at a terminal.
 
+*Planned for P3-4 (2026-10-27), from a read-only map of the code (4 mappers and a critic, at
+dd984cd).* Eight steps, each test-first, the unfiltered suite green, catalog rows from MA-810:
+0. Refactor the MA-329 golden test into reusable helpers (no product change) and spike an
+   encrypted run of its fixtures, stripped of Unit/Sealed, against the frozen golden — which is
+   never regenerated.
+1. Groundwork: `state.(*Manifest).DetachPlaintext` (strip Unit/Sealed in place after the walk —
+   no second manifest in memory); the history file writer factored out; a history read for the
+   copy; `util.UnderCloudSync` widened; removable-media detection behind a seam;
+   `app.ArchivesAbove` moved from the Desktop; `app.DecryptableAt`.
+2. The keyless plan, `app.PlanDecryptCopy`: destination checks with copy wording, including
+   refusals inside the settings, instance and cache folders (uninstall removes them); the exact
+   name `<name>-unencrypted-<date>` and its first free `-N` fixed at plan time; an upper-bound size
+   from the sealed files; the K5 verdict; the record's pointer digest, so start executes exactly
+   the plan (X14). It writes nothing.
+3. The engine, `app.DecryptSealed` over a `SealedCopy` interface: the source lock with no verb
+   (lock-free on a read-only medium, judged before and after); recheck; an exclusive new folder
+   (0700) and the "not finished" marker first; each unit within the memory budget, checked against
+   its Fixity, written exclusively through `os.Root` — never over a file (paths that collide on
+   another system's case or name rules are reported, never overwritten); the history; `search.db`
+   from the sealed image, else a rebuild; the pages, report and README by the plaintext run's own
+   code (unchanged, so MA-329's bytes hold); the manifest last; a final walk refusing any link;
+   then the marker removed. It logs counts only — never a path or subject — and lists skipped
+   messages in a problems file inside the copy.
+4. `keyring.DecryptCopy`: its own lease (never heals, never adopts, never Apply); a lock mid-copy
+   is `ErrCopyLocked`, never damage.
+5. Phase 2c closed (package `app_test`, through `keyring.DecryptCopy`): an encrypted run over
+   MA-329's inputs, decrypted, matches the plaintext golden byte for byte under its masks.
+6. `mailarchive decrypt -out DIR -dest PARENT` (`DecryptableAt` — a record that cannot be used
+   does not block the escape hatch; K5 refusals before the key; the path typed back; 130/143).
+7. Desktop: "Make an unencrypted copy" on the Encryption card — the plan first, K5 asked twice, a
+   read lease taken as it is clicked, cancelled at Shut down.
+Gates: P3-4's adversarial pass; the X1 and X14 row amendments (operator); the friction review at
+P3-8.
+
+*The implementer's calls for P3-4 (vetoable):*
+- **A copy that leaves messages out** (missing, damaged, failing their checksum, too large, a
+  name that collides) finishes the rest, lists those inside the copy, removes its "not finished"
+  marker — making the copy again cannot mend damage — and exits **3, partial**, as `extract` does.
+  The X1 row gains decrypt's 3 and 130/143.
+- **A copy still marked "not finished"** is refused by `export` and `graph` (no new mail mixed
+  into it), and `status` and "Open an archive folder…" say it is unfinished.
+- The lock names no verb (an unencrypted copy existing somewhere is not told beside the archive);
+  the Desktop takes a read lease, never a write lease; a record that cannot be used still lets the
+  CLI make the copy; skipped messages are listed in `_COPY-PROBLEMS.txt` inside the copy, never in
+  a log or the activity.
+
+*Step 1 as built (2026-10-27), and its calls (vetoable):*
+- **No `app.DecryptableAt`.** The map's critic expected a record that cannot be used to block the
+  escape hatch. It does not: an archive holding its own key files is recognised by its own files
+  (`vault.EncryptedAtOrAbove`), so `encmark.At` never marks it "encrypted only because the record
+  cannot be used", and `UnlockableAt` stays true. The copy gates on `UnlockableAt`; MA-814 pins
+  it with the record usable and unusable.
+- **"Removable" means any drive that can leave this computer:** on macOS a volume under /Volumes
+  or one the kernel marks removable; on Linux a mount under /media, /run/media or /mnt; on Windows
+  a removable or optical drive. An external disk Windows reports as fixed is not caught — pending
+  the Windows lab (P3-8). A network share is told by the copy-export view (`viewShare`) and asks
+  twice too (step 2).
+- **"This folder may be synced"** (macOS Desktop and Documents, `util.MaySync`) asks twice, worded
+  "may be".
+- **The synced list** widened for every caller of `util.UnderCloudSync` — `status`, the export
+  preview, the copy: Library/CloudStorage and Library/Mobile Documents on macOS, plus Nextcloud,
+  ownCloud, pCloud, Synology Drive and Windows' iCloudDrive. MEGA is left out: its folder name is
+  too plain to match on safely. An archive already in one of these now gets `status`'s synced WARN.
+- `index.CheckImageFile` refuses an empty file too (a scratch file may be empty; a copy's
+  search.db may not).
+
 *Amended in P3-1a — what the slice built, and what stays pending:*
 - Built: `internal/keyring` (open by password, recovery key or remembered key; the recorded id
   as `want`; adoption only for a write or a remember, a tombstone asked about; unproven paths
