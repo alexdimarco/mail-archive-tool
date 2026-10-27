@@ -249,14 +249,15 @@ func TestTheSweepMendsCaseAndReportsWhatIsNotItsOwn(t *testing.T) {
 	}
 	if runtime.GOOS != "windows" {
 		// An entry Go calls irregular at a sealed name: with the cloud rule it is judged
-		// by its bytes (here changed: written again); without it, it blocks its system.
+		// by its bytes (here changed: written again, and told — the program design's
+		// line 230, P3-8 B3); without it, it blocks its system.
 		win := filepath.Join(dir, progcache.AssetFor("windows-amd64"))
 		os.Remove(win)
 		mkfifo(win)
 		res, _ = backup(t, out, key, ProgramCopiesUnset)
 		programCloudFile = oc
 		fi, _ := os.Lstat(win)
-		if res.Program.Class != ProgramUpdated || !fi.Mode().IsRegular() {
+		if res.Program.Class != ProgramChangedFound || !fi.Mode().IsRegular() {
 			t.Fatalf("a cloud entry at a sealed name: %s", res.Program.Class)
 		}
 		os.Remove(win)

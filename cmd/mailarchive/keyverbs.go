@@ -528,6 +528,13 @@ func runRepairRecord(args []string) error {
 		return fmt.Errorf("unexpected argument %q", fs.Arg(0))
 	}
 	rep, err := encrecord.Repair()
+	if errors.Is(err, encrecord.ErrNotDamaged) {
+		if _, lerr := encrecord.Load(); lerr == nil {
+			// Nothing to repair is not a failure (the owner's X1 ruling, 2026-10-27).
+			fmt.Fprintln(os.Stderr, "This computer's record of encrypted archives is not damaged: there is nothing to repair.")
+			return nil
+		}
+	}
 	if err != nil {
 		return err
 	}

@@ -420,8 +420,19 @@ func parseCmdlineBuffer(buf []byte) string {
 	if us.Buffer == 0 || us.Length == 0 {
 		return ""
 	}
-	n := int(us.Length) / 2
-	return syscall.UTF16ToString(unsafe.Slice((*uint16)(unsafe.Pointer(us.Buffer)), n))
+	// The string lives in buf itself, after the header: read it from buf by its offset,
+	// bounds-checked, never through the raw address (P3-8 Windows lab, the vet finding).
+	off := us.Buffer - uintptr(unsafe.Pointer(&buf[0]))
+	head := uintptr(unsafe.Sizeof(wUnicodeString{}))
+	if us.Buffer < uintptr(unsafe.Pointer(&buf[0])) || off < head || off+uintptr(us.Length) > uintptr(len(buf)) {
+		return ""
+	}
+	raw := buf[off : off+uintptr(us.Length)]
+	u := make([]uint16, len(raw)/2)
+	for i := range u {
+		u[i] = uint16(raw[2*i]) | uint16(raw[2*i+1])<<8
+	}
+	return syscall.UTF16ToString(u)
 }
 
 // filetimeToUnix converts a Windows FILETIME (100ns ticks since 1601-01-01) to

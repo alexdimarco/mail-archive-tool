@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"mail-archive-tool/internal/assure"
+	"mail-archive-tool/internal/encrecord"
 	"mail-archive-tool/internal/vault"
 )
 
@@ -41,6 +42,19 @@ func TestRestoreFromTheRememberedKeyChecksFirst(t *testing.T) {
 	code, msg = refused(err)
 	assure.Refused(t, code, msg, assure.Code(1), assure.Names("does not remember"),
 		assure.NoSideEffect(func() bool { return len(a.prompts) == 0 && !exists(filepath.Join(out, vault.FileName)) }))
+}
+
+// covers: MA-850, R37
+// repair-record on a record that needs no repair succeeds (exit 0), saying there is
+// nothing to repair — the owner's X1 ruling, 2026-10-27 — and repairs nothing.
+func TestRepairRecordOnAHealthyRecordSucceeds(t *testing.T) {
+	flowRecord(t)
+	if _, err := encrecord.Load(); err != nil {
+		t.Fatalf("a fresh record is usable: %v", err)
+	}
+	err := runRepairRecord(nil)
+	rec, lerr := encrecord.Load()
+	assure.Reached(t, err == nil && lerr == nil && len(rec.Archives) == 0, "nothing to repair: exit 0")
 }
 
 // covers: MA-849, R37

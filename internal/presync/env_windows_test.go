@@ -226,6 +226,17 @@ func TestParseCmdlineBuffer(t *testing.T) {
 	if got := parseCmdlineBuffer(buf); got != s {
 		t.Errorf("parseCmdlineBuffer -> %q, want %q", got, s)
 	}
+	// A length past the buffer, or a string pointer outside it, is refused, never read
+	// (P3-8: the length was not checked against the buffer).
+	us.Length = uint16(len(buf))
+	if got := parseCmdlineBuffer(buf); got != "" {
+		t.Errorf("a length past the buffer -> %q, want \"\"", got)
+	}
+	us.Length = uint16((len(u16) - 1) * 2)
+	us.Buffer = uintptr(unsafe.Pointer(&buf[0]))
+	if got := parseCmdlineBuffer(buf); got != "" {
+		t.Errorf("a string pointer at the header -> %q, want \"\"", got)
+	}
 }
 
 // covers: MA-554
