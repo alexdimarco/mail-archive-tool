@@ -345,6 +345,8 @@ func (d *dashboard) router() localweb.Router {
 	mux.HandleFunc("/api/encryption/forget/plan", d.api(d.forgetPlanAction))
 	mux.HandleFunc("/api/encryption/forget", d.api(d.forgetAction))
 	mux.HandleFunc("/api/encryption/forget-all", d.api(d.forgetAllAction))
+	mux.HandleFunc("/api/encryption/create", d.api(d.createStartAction))
+	mux.HandleFunc("/api/encryption/create/key", d.api(d.createKeyAction))
 	mux.HandleFunc("/api/encryption/repair-record", d.api(d.repairRecordAction))
 	mux.HandleFunc("/api/encryption/dismiss-lost", d.api(d.dismissLostAction))
 	mux.HandleFunc("/api/browser-link", d.browserLink)
@@ -1196,7 +1198,8 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
     {{if .KindLine}}<p class="lede" id="archiveKind" style="margin-top:-14px">{{.KindLine}}</p>{{end}}
     {{if not .OutDir}}<div class="card" id="noArchive">
       <h2>No archive chosen yet</h2>
-      <p><button class="btn" type="button" data-open-archive title="Choose an archive folder you already have — from another computer, a drive or a backup copy, encrypted or not.">Open an archive folder…</button></p>
+      <p><button class="btn" type="button" data-open-archive title="Choose an archive folder you already have — from another computer, a drive or a backup copy, encrypted or not.">Open an archive folder…</button>
+      <button class="btn secondary" type="button" data-create-encrypted title="Make a new archive whose messages open only with its password or recovery key. The wizard's windows ask what to back up and where; the password is typed here.">Make a new encrypted archive…</button></p>
       {{if .Offer}}<p>The MailArchive wizard (mailarchive wizard) last used <span class="mono">{{.Offer}}</span>. Use this archive?</p>{{end}}
       <button class="btn" id="useOffer" type="button" data-path="{{.Offer}}"{{if not .Offer}} hidden{{end}} title="Open this archive in MailArchive Desktop — read it, check its health, and keep it backed up.">Use this archive</button>{{if .Offer}} <span class="card-sub">Nothing changes until you click it.</span>{{end}}
       <p class="steps">{{if .Offer}}To pick a different folder, type{{else}}MailArchive Desktop has no archive to read yet. To open one you already have (for example one made from Thunderbird), type{{end}} its folder in <b>Settings → Archive location</b> below (the folder that holds the .mailarchive-manifest.json file) and click <b>Save settings</b>.</p>
@@ -1221,6 +1224,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <p class="card-sub">Keep a second mailbox or mail source as its own archive on this computer. The wizard's windows open here; the new archive joins <b>Your archives</b> without changing your current one.</p>
       <button class="btn secondary" id="addArchiveBtn" type="button" title="Create a new, additional archive with the MailArchive wizard. The wizard's windows open on your computer; the new archive is added without changing your current one.">Add another archive…</button>
       <button class="btn secondary" type="button" data-open-archive title="Choose an archive folder you already have — from another computer, a drive or a backup copy, encrypted or not. It becomes your current archive.">Open an archive folder…</button>
+      <button class="btn secondary" type="button" data-create-encrypted title="Make a new archive whose messages open only with its password or recovery key. The wizard's windows ask what to back up and where; the password is typed here.">Make a new encrypted archive…</button>
       <div class="note" id="addArchiveNote" hidden></div>
     </div>{{end}}
 
@@ -1316,6 +1320,32 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       </div>
     </div>
 
+    <div class="card" id="sec-encsteps" hidden>
+      <h2>Encryption</h2>
+      <div id="encCreateForm" hidden>
+        <p class="card-sub" id="encCreatePath"></p>
+        <p class="card-sub" id="encCreateHint"></p>
+        <label for="encCreatePw">Password for the new archive</label> <input type="password" id="encCreatePw" autocomplete="new-password" spellcheck="false">
+        <label for="encCreatePw2">Type it again</label> <input type="password" id="encCreatePw2" autocomplete="new-password" spellcheck="false">
+        <label class="small"><input type="checkbox" id="encCreateRemember" checked> Remember the key on this computer — backups and opening it here then need no password, for anyone using this computer's account</label>
+        <button class="btn" type="button" id="encCreateKeyBtn">Make its key</button>
+      </div>
+      <div id="encNewKeyBox" hidden>
+        <p class="card-sub">Your new recovery key:</p>
+        <p class="mono" id="encNewKey"></p>
+        <p class="card-sub warn" id="encNewKeyWarn"></p>
+        <button class="btn secondary" type="button" id="encSaveFileBtn" title="Save its recovery file in a folder you choose, outside the archive: with the recovery key it puts back lost key files.">Save the recovery file…</button>
+        <button class="btn secondary" type="button" id="encSavedBtn">I have saved the recovery key</button>
+        <div id="encTypeBack" hidden>
+          <label for="encTypedKey">Type the recovery key from where you saved it</label> <input type="text" id="encTypedKey" autocomplete="off" spellcheck="false" autocapitalize="off">
+          <button class="btn" type="button" id="encUseKeyBtn">Use this recovery key</button>
+          <button class="btn secondary" type="button" id="encShowAgainBtn">Show it again</button>
+        </div>
+        <button class="btn secondary" type="button" id="encCancelKeyBtn">Cancel</button>
+      </div>
+      <p class="small" id="encNote" hidden></p>
+    </div>
+
     {{if .ShowEncryption}}<div class="card" id="sec-encryption">
       <h2>Encryption</h2>
       {{if .EncNotSetUp}}<p class="card-sub warn" id="encNotSetUp">Finish setting up: {{.EncNotSetUp}}{{if .EncRunNow}} Unlock it, then click Run now on the Weekly backup card.{{end}}</p>{{end}}
@@ -1349,20 +1379,6 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
         <label class="small"><input type="checkbox" id="encRemember"{{if .EncNotSetUp}} checked{{end}}> Remember the key on this computer — it then opens by itself here, for anyone using this computer's account</label>
         <button class="btn" type="submit" id="encUnlock">Unlock</button>
       </form>{{end}}
-      <div id="encNewKeyBox" hidden>
-        <p class="card-sub">Your new recovery key:</p>
-        <p class="mono" id="encNewKey"></p>
-        <p class="card-sub warn" id="encNewKeyWarn"></p>
-        <button class="btn secondary" type="button" id="encSaveFileBtn" title="Save its recovery file in a folder you choose, outside the archive: with the recovery key it puts back lost key files.">Save the recovery file…</button>
-        <button class="btn secondary" type="button" id="encSavedBtn">I have saved the recovery key</button>
-        <div id="encTypeBack" hidden>
-          <label for="encTypedKey">Type the recovery key from where you saved it</label> <input type="text" id="encTypedKey" autocomplete="off" spellcheck="false" autocapitalize="off">
-          <button class="btn" type="button" id="encUseKeyBtn">Use this recovery key</button>
-          <button class="btn secondary" type="button" id="encShowAgainBtn">Show it again</button>
-        </div>
-        <button class="btn secondary" type="button" id="encCancelKeyBtn">Cancel</button>
-      </div>
-      <p class="small" id="encNote" hidden></p>
     </div>{{end}}
 
     <div class="card" id="sec-backup">
@@ -1467,8 +1483,8 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
     </div>
   </div></main>
 </div>
-<script src="dashboard.js"></script>{{if .ShowEncryption}}
-<script src="encryption.js"></script>{{end}}
+<script src="dashboard.js"></script>
+<script src="encryption.js"></script>
 {{if .Export}}<script src="signin.js"></script>{{end}}
 </body></html>`))
 

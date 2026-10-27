@@ -22,21 +22,21 @@ func TestSurfaceChoiceRoutes(t *testing.T) {
 	}
 }
 
-// covers: MA-805, MA-651, R33
+// covers: MA-805, MA-809, MA-651, R33
 // The first step offers to open an archive someone already has, encrypted or not
 // (design-encrypted-archives-phase3 §7.1): it opens MailArchive Desktop — where the
 // folder is chosen and an encrypted one unlocked — never a password dialog here; the
 // local item stays first, the default.
 func TestTheFirstStepOpensAnArchiveInDesktop(t *testing.T) {
-	if surfaceChoices[0] != surfaceLocalItem || !surfaceOpensDesktop(surfaceOpenItem) {
+	if surfaceChoices[0] != surfaceLocalItem || !surfaceOpensDesktop(surfaceOpenItem) || !surfaceOpensDesktop(surfaceEncryptItem) {
 		t.Fatalf("choices %v", surfaceChoices)
 	}
-	found := false
+	offered := map[string]bool{}
 	for _, c := range surfaceChoices {
-		found = found || c == surfaceOpenItem
+		offered[c] = true
 	}
-	if !found {
-		t.Fatal("the open item is not offered")
+	if !offered[surfaceOpenItem] || !offered[surfaceEncryptItem] {
+		t.Fatal("the open and encrypt items are offered")
 	}
 }
 

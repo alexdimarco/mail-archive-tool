@@ -8,7 +8,8 @@ package desktop
 const encryptionJS = `(function(){
 const csrf=document.querySelector('meta[name=csrf]').content;
 const $=id=>document.getElementById(id);
-function say(t){const n=$('encNote');if(n){n.hidden=false;n.textContent=t;}}
+function steps(){const c=$('sec-encsteps');if(c)c.hidden=false;}
+function say(t){const n=$('encNote');if(n){steps();n.hidden=false;n.textContent=t;}}
 async function send(path,body){
   const r=await fetch(path,{method:'POST',headers:{'X-CSRF-Token':csrf,'Content-Type':'application/json'},body:JSON.stringify(body||{})});
   return r.json();
@@ -60,13 +61,42 @@ if(cp)cp.addEventListener('click',async()=>{
     if(a)a.value='';if(b)b.value='';say(lines(d,'The password was changed.'));}
   catch(e){say('Could not reach MailArchive Desktop — reload the page.');}
 });
-let newKey='',token='',restoring=false;
+let newKey='',token='',restoring=false,creating=false;
 function showKey(on){const k=$('encNewKey');if(k)k.textContent=on?newKey:'';}
 function startKey(d){
   newKey=d.recoveryKey;token=d.token;showKey(true);
   const w=$('encNewKeyWarn');if(w)w.textContent=d.warning||'';
-  const box=$('encNewKeyBox');if(box)box.hidden=false;
+  const box=$('encNewKeyBox');if(box)box.hidden=false;steps();
 }
+// Make a new encrypted archive: the wizard's windows choose what and where, then the
+// password is typed here and the recovery key shown and typed back before anything
+// is written.
+document.querySelectorAll('[data-create-encrypted]').forEach(b=>b.addEventListener('click',async()=>{
+  b.disabled=true;say('Answer the questions in the windows that open on your computer…');
+  let d;
+  try{d=await send('api/encryption/create',{});}catch(e){d={ok:false,error:'Could not reach MailArchive Desktop — reload the page.'};}
+  b.disabled=false;
+  if(d.canceled){say('Nothing was made.');return;}
+  if(!d.ok){say(d.error||'Could not make an encrypted archive.');return;}
+  token=d.token;creating=true;
+  const p=$('encCreatePath'),h=$('encCreateHint'),f=$('encCreateForm');
+  if(p)p.textContent='The new encrypted archive goes in '+d.path+'. Choose its password.';
+  if(h)h.textContent=d.hint||'';
+  if(f)f.hidden=false;say('');
+}));
+const ckb=$('encCreateKeyBtn');
+if(ckb)ckb.addEventListener('click',async()=>{
+  const a=$('encCreatePw'),c=$('encCreatePw2'),r=$('encCreateRemember');
+  const body={token:token,newPassword:a?a.value:'',again:c?c.value:'',remember:!!(r&&r.checked)};
+  ckb.disabled=true;say('Making the key… this takes a few seconds.');
+  let d;
+  try{d=await send('api/encryption/create/key',body);}catch(e){d={ok:false,error:'Could not reach MailArchive Desktop — reload the page.'};}
+  body.newPassword='';body.again='';ckb.disabled=false;
+  if(!d.ok){say(d.error||'Could not make the key.');return;}
+  if(a)a.value='';if(c)c.value='';
+  const f=$('encCreateForm');if(f)f.hidden=true;
+  startKey(d);say('');
+});
 const nk=$('encNewKeyBtn');
 if(nk)nk.addEventListener('click',async()=>{
   try{const d=await change('api/encryption/new-recovery-key',{});
@@ -112,7 +142,7 @@ if(uk)uk.addEventListener('click',async()=>{
   try{const d=await send('api/encryption/new-recovery-key/confirm',{token:token,typed:t?t.value:''});
     if(d.ok){if(t)t.value='';newKey='';token='';showKey(false);const box=$('encNewKeyBox');if(box)box.hidden=true;}
     say(lines(d,'The new recovery key is in effect.'));
-    if(d.ok&&restoring)setTimeout(()=>location.reload(),8000);}
+    if(d.ok&&(restoring||creating))setTimeout(()=>location.reload(),8000);}
   catch(e){say('Could not reach MailArchive Desktop — reload the page.');}
 });
 const ck=$('encCancelKeyBtn');
@@ -120,6 +150,7 @@ if(ck)ck.addEventListener('click',async()=>{
   try{await send('api/encryption/new-recovery-key/cancel',{token:token});}catch(e){}
   newKey='';token='';showKey(false);const box=$('encNewKeyBox');if(box)box.hidden=true;if(nk)nk.hidden=false;
   const f=$('encRestoreForm');if(f)f.hidden=false;restoring=false;
+  const cf=$('encCreateForm');if(cf)cf.hidden=true;creating=false;
   say('Nothing was changed.');
 });
 for(const [id,on] of [['encRememberKey',true],['encForgetKey',false]]){

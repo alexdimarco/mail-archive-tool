@@ -1599,6 +1599,15 @@ decide what is clear and raise only what is not):*
   `vault.UseTestCost`).
 - **Out of P3-3:** Desktop verify -full; the program-copies step (P3-5 adds it to both front
   ends); new X rows (P3-8).
+- **The standalone wizard makes no encrypted archive itself** (built in 3g; a deviation from
+  §5.2's wizard step, vetoable): its first step offers "Make a new encrypted archive (in
+  MailArchive Desktop)", which opens Desktop, whose page takes the password and shows the
+  recovery key (3f). No secret ever passes through a native dialog — on Linux zenity carries
+  dialog text on the command line (K11), and a recovery key copied from a dialog can linger in
+  clipboard history — and one tested path makes every encrypted archive. E3 and U16's wizard
+  sites then do not arise: the wizard never writes into an encrypted archive.
+- **3f's Outlook-app backup** into a Desktop-made encrypted archive is refused for now (E2's
+  working folder is wired at the CLI only); `mailarchive -encrypt` makes one at a terminal.
 
 *Amended in P3-1a — what the slice built, and what stays pending:*
 - Built: `internal/keyring` (open by password, recovery key or remembered key; the recorded id

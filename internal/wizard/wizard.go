@@ -82,10 +82,16 @@ const (
 	// "Open an archive folder…" button is and where an encrypted one is unlocked: the
 	// wizard never asks for a password (design-encrypted-archives-phase3 §7.1, K11).
 	surfaceOpenItem = "Open an archive folder I already have, encrypted or not (in MailArchive Desktop)"
+	// surfaceEncryptItem makes a new encrypted archive — in MailArchive Desktop, whose
+	// page takes the password and shows the recovery key: no secret ever passes
+	// through the wizard's native dialogs, which on Linux carry their text where other
+	// accounts can read it (K11), and the archive is made by the one tested path (the
+	// P3-3 plan, 3g).
+	surfaceEncryptItem = "Make a new encrypted archive (in MailArchive Desktop)"
 )
 
 // surfaceChoices is the first step's list, local item first (and defaulted).
-var surfaceChoices = []string{surfaceLocalItem, surfaceDesktopItem, surfaceOpenItem}
+var surfaceChoices = []string{surfaceLocalItem, surfaceDesktopItem, surfaceOpenItem, surfaceEncryptItem}
 
 // OpenDesktop launches MailArchive Desktop in the SAME process (MA-612/R33 — never a
 // child). The cmd layer wires it: it may import internal/desktop, but the wizard may
@@ -406,7 +412,7 @@ type wizardChoice struct {
 // local-file wizard. Pure, so MA-651 tables it: only the Desktop item opens
 // Desktop; the local item, an empty pick and anything else stay local.
 func surfaceOpensDesktop(pick string) bool {
-	return pick == surfaceDesktopItem || pick == surfaceOpenItem
+	return pick == surfaceDesktopItem || pick == surfaceOpenItem || pick == surfaceEncryptItem
 }
 
 // openDesktopSurface hands off to MailArchive Desktop IN-PROCESS (MA-612/R33 — never
@@ -467,7 +473,14 @@ func AddArchive() (string, error) {
 // chosen, when set, is called with the output folder just before the export runs,
 // so a caller (AddArchive) can register the new archive even if the export is later
 // cancelled.
-func localArchiveFlow(chosen func(out string)) error {
+func localArchiveFlow(chosen func(out string)) error { return localArchiveFlowWith(chosen, nil, nil) }
+
+// localArchiveFlowWith is localArchiveFlow with the encrypted create's two hooks
+// (design-encrypted-archives-phase3 §5.2; the P3-3 plan, 3f): check judges the
+// output folder as soon as it is chosen, before any other question or any key; and
+// keyed, when set, receives the answers in place of the plaintext export, which never
+// runs — the caller makes the key and runs the first backup with it.
+func localArchiveFlowWith(chosen func(out string), check func(out string) error, keyed func(wizardChoice)) error {
 	// 3. Choose the source type, then pick the file/folder accordingly.
 	choices := []string{srcAuto, srcOutlook}
 	if runtime.GOOS == "windows" {
@@ -585,6 +598,11 @@ func localArchiveFlow(chosen func(out string)) error {
 	if err != nil {
 		return err
 	}
+	if check != nil {
+		if err := check(choice.out); err != nil {
+			return err
+		}
+	}
 
 	// 3. Export mode — not asked when the prep just forced a full re-export
 	//    (asking, then overriding the answer, would be a lie).
@@ -670,6 +688,10 @@ func localArchiveFlow(chosen func(out string)) error {
 	// 6. Run with a progress dialog, then offer to keep it current. Tell the caller
 	//    the chosen output folder first, so AddArchive can register the new archive
 	//    (a cancel during the export still leaves it registered, nothing half-hidden).
+	if keyed != nil {
+		keyed(choice)
+		return nil
+	}
 	if chosen != nil {
 		chosen(choice.out)
 	}

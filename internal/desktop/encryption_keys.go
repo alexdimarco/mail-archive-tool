@@ -198,6 +198,14 @@ func (d *dashboard) confirmRecoveryAction(w http.ResponseWriter, r *http.Request
 		d.commitRestore(w, it)
 		return
 	}
+	if it.make != nil {
+		d.commitCreate(w, it)
+		return
+	}
+	if it.rec == nil {
+		writeJSON(w, map[string]any{"ok": false, "error": "That new recovery key is no longer waiting — make a new one."})
+		return
+	}
 	err := it.rec.Commit()
 	it.lease.Destroy()
 	if err != nil && !errors.Is(err, vault.ErrPartiallySaved) {

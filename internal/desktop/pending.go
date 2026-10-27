@@ -3,10 +3,12 @@ package desktop
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"sync"
 	"time"
 
 	"mail-archive-tool/internal/keyring"
+	"mail-archive-tool/internal/wizard"
 )
 
 // The key changes the Encryption card makes in two steps — a new recovery key shown,
@@ -26,6 +28,8 @@ type pendingItem struct {
 	rec   *keyring.PendingRecovery
 	res   *keyring.PendingRestore // a key file to put back (§9.4, §9.5), instead of rec
 	plan  *keyring.ForgetPlan     // a forget shown and awaiting its confirmation (§4.6)
+	add   *wizard.PendingAdd      // a new archive the wizard's questions chose (§5.2)
+	make  *keyring.PendingCreate  // its key, made and awaiting the recovery key typed back (K2)
 	lease *keyring.Unlocked
 	file  string // the recovery file saved for it, "" while none
 	timer *time.Timer
@@ -33,18 +37,28 @@ type pendingItem struct {
 
 // recoveryKey is the new recovery key it shows.
 func (it *pendingItem) recoveryKey() string {
-	if it.res != nil {
+	switch {
+	case it.res != nil:
 		return it.res.RecoveryKey()
+	case it.make != nil:
+		return it.make.RecoveryKey()
+	case it.rec != nil:
+		return it.rec.RecoveryKey()
 	}
-	return it.rec.RecoveryKey()
+	return ""
 }
 
 // recoveryFile is the new recovery key's recovery file.
 func (it *pendingItem) recoveryFile() ([]byte, error) {
-	if it.res != nil {
+	switch {
+	case it.res != nil:
 		return it.res.RecoveryFile()
+	case it.make != nil:
+		return it.make.RecoveryFile()
+	case it.rec != nil:
+		return it.rec.RecoveryFile()
 	}
-	return it.rec.RecoveryFile()
+	return nil, errors.New("there is no new recovery key waiting")
 }
 
 // discard ends an item that was not committed: its new key forgotten, its lease
@@ -55,6 +69,9 @@ func (it *pendingItem) discard() {
 	}
 	if it.res != nil {
 		it.res.Discard()
+	}
+	if it.make != nil {
+		it.make.Discard()
 	}
 	if it.lease != nil {
 		it.lease.Destroy()

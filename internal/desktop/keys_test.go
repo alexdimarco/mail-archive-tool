@@ -86,7 +86,7 @@ func newKeysEnv(t *testing.T, out string) *keysEnv {
 		t.Fatal(err)
 	}
 	store := graphconfig.NewFileSecretStore(t.TempDir())
-	cfg := Config{SettingsPath: settings, Store: store, Keys: newArchiveKeys(store, readerLockedNote)}
+	cfg := Config{SettingsPath: settings, IndexPath: filepath.Join(dir, "known-archives.json"), Store: store, Keys: newArchiveKeys(store, readerLockedNote)}
 	sess := localweb.NewSession()
 	h := dashboardHandler(cfg, loopback(8097), sess, nil)
 	page := sessionPage(t, h)

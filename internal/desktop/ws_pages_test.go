@@ -173,7 +173,7 @@ func bound(src string) []string {
 // Graph comes back as a JSON-escaped string, with nosniff and no-store (X15).
 func TestWorkspaceScriptsAndPagesAreInert(t *testing.T) {
 	e := newWsEnv(t)
-	for name, src := range map[string]string{"workspace.js": workspaceJS, "exports.js": exportsJS, "signin.js": signinJS} {
+	for name, src := range map[string]string{"workspace.js": workspaceJS, "exports.js": exportsJS, "signin.js": signinJS, "encryption.js": encryptionJS} {
 		for _, bad := range []string{"innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "Function(", "setTimeout('", `setTimeout("`} {
 			if strings.Contains(src, bad) {
 				t.Errorf("%s contains %q", name, bad)
