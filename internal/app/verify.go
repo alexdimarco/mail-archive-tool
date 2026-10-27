@@ -878,8 +878,18 @@ func keylessSummary(r Report) []string {
 	if r.ProgramOdd > 0 {
 		out = append(out, fmt.Sprintf("note: %d item(s) in the archive's program folder are not copies MailArchive keeps there (%s) — they do not change the outcome", r.ProgramOdd, strings.Join(r.ProgramOddNames, ", ")))
 	}
+	if r.Tier != state.TierFull {
+		// What a check without the key cannot see, said once (P3-8 friction, T2-3).
+		out = append(out, fmt.Sprintf("note: the program folder and README.txt are checked only by `mailarchive verify -full -out %q`, which needs the password or recovery key", r.Out))
+	}
 	for _, f := range r.ProgramFindings {
-		out = append(out, "warning: copies of MailArchive: "+f+" — this does not change the outcome")
+		// The note's finding names the note; the others are about the copies (P3-8
+		// friction: the note's warning carried the copies' prefix).
+		prefix := "warning: copies of MailArchive: "
+		if f == noteChangedFinding {
+			prefix = "warning: "
+		}
+		out = append(out, prefix+f+" — this does not change the outcome")
 	}
 	remedy := state.OutcomeTextFor(r.Outcome, r.Tier)
 	if r.Advice != "" {

@@ -163,8 +163,16 @@ const encryptedNoteText = `This folder is an encrypted email archive made by Mai
 The messages in it are encrypted. Without the archive's password or its recovery
 key nobody can read them — not you, and not MailArchive's makers.
 
-To open it in MailArchive Desktop, choose "%[1]s", pick this folder,
-and unlock it with its password or recovery key. At a terminal:
+If this archive was handed down to you: its password, its recovery key or its
+recovery file is most likely kept where its owner kept other important papers or
+passwords — a recovery key printed or written on paper, a recovery file saved on
+another drive or a USB stick, or a password manager.
+
+To open it you need MailArchive. If this computer does not have it, use a copy kept
+in this archive's "program" folder (see the end of this note, when there is one), or
+download it from the official page named below.
+In MailArchive Desktop, choose "%[1]s", pick this folder, and unlock it
+with its password or recovery key. At a terminal:
   mailarchive serve -out <this folder>
 
 To take your mail out of encryption, MailArchive can make a normal, unencrypted

@@ -115,6 +115,7 @@ type Store struct {
 	// the header's gap that is lost for good (markHistoryLoss).
 	indexSource  func() (IndexCapture, bool, error) // the run's in-memory index (SetIndex)
 	indexDigests [][32]byte                         // plaintext digest per sealed index chunk, once loaded or committed
+	quietBehind  bool                               // the behind mark is a rebuild's own (MarkIndexRebuilding)
 
 	timeline       *sealedTimeline
 	histTail       []byte
@@ -740,16 +741,29 @@ func (s *Store) SetRunStamp(t time.Time) { s.runStamp = t }
 // at: the next commit moves that mailbox's seen_at forward (P2b-C12).
 func (s *Store) WalkDone(token string, at time.Time) { s.walkDone[token] = at }
 
+// Retained reports whether the inventory lists rel as retained: superseded during
+// the last run, so the start sweep's removal of it is routine (P3-8 friction, B18).
+func (s *Store) Retained(rel string) bool { return s.invRetained[rel] }
+
 // SweepContainers removes, under the lock and before the first write, chunk files
 // the pointer does not name and the inventory does not list as live, and
 // inventory files the top file does not name, when older than before. It returns
 // how many it removed. With the sweep not allowed it removes nothing.
 func (s *Store) SweepContainers(before time.Time) (int, error) {
+	routine, other, err := s.SweepContainersSplit(before)
+	return routine + other, err
+}
+
+// SweepContainersSplit is SweepContainers, its count split: routine is what every
+// save leaves for the next run to remove — chunks the inventory lists as retained and
+// superseded parts of the file list; other is the rest, chunks a run wrote and never
+// committed (an interrupted one), which is worth telling (P3-8 friction, B18).
+func (s *Store) SweepContainersSplit(before time.Time) (routine, other int, err error) {
 	if s.opts.ReadOnly {
-		return 0, s.refuse(ErrReadOnly, "the sweep did not run")
+		return 0, 0, s.refuse(ErrReadOnly, "the sweep did not run")
 	}
 	if !s.sweepOK {
-		return 0, nil
+		return 0, 0, nil
 	}
 	named := map[string]bool{}
 	for _, sec := range [][]Entry{s.ptr.Manifest, s.ptr.History, s.ptr.Index} {
@@ -757,17 +771,20 @@ func (s *Store) SweepContainers(before time.Time) (int, error) {
 			named[e.Name.Path()] = true
 		}
 	}
-	removed := 0
-	err := s.walkFiles(func(rel string, fi os.FileInfo) {
+	err = s.walkFiles(func(rel string, fi os.FileInfo) {
 		if !strings.HasPrefix(rel, ChunksDir+"/") || named[rel] || !s.MayRemove(rel, fi.ModTime()) || !fi.Mode().IsRegular() || !fi.ModTime().Before(before) {
 			return
 		}
 		if os.Remove(filepath.Join(s.out, filepath.FromSlash(rel))) == nil {
-			removed++
+			if s.invRetained[rel] {
+				routine++
+			} else {
+				other++
+			}
 		}
 	})
 	if err != nil {
-		return removed, err
+		return routine, other, err
 	}
 	keep := map[string]bool{}
 	if s.inv != nil {
@@ -777,11 +794,11 @@ func (s *Store) SweepContainers(before time.Time) (int, error) {
 	}
 	dir := filepath.Join(s.out, InventoryDir)
 	if ok, err := realDir(dir); err != nil {
-		return removed, s.refuse(ErrRecord, "%v", err)
+		return routine, other, s.refuse(ErrRecord, "%v", err)
 	} else if ok {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
-			return removed, err
+			return routine, other, err
 		}
 		for _, e := range entries {
 			rel := InventoryDir + "/" + e.Name()
@@ -790,11 +807,11 @@ func (s *Store) SweepContainers(before time.Time) (int, error) {
 				continue
 			}
 			if os.Remove(filepath.Join(dir, e.Name())) == nil {
-				removed++
+				routine++ // a superseded part of the file list: every save leaves one
 			}
 		}
 	}
-	return removed, nil
+	return routine, other, nil
 }
 
 // nextFixedTime is the mtime of the next commit's pointer pair and top file:

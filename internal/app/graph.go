@@ -175,6 +175,11 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 			return Result{}, err
 		}
 		download = startProgramDownload(opts.downloadContext(ctx), sealed) // program design §5, R17
+		defer func() {
+			if err == nil {
+				tellStandingDamage(opts, logger) // P3-8 friction, B19
+			}
+		}()
 	}
 	begun := beginRun(opts)
 	defer recordRun(opts, begun, &result, &err, logger)

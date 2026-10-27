@@ -58,16 +58,27 @@ func prepareEncrypted(opts Options, manifest *state.Manifest, store *container.S
 	if !store.SweepAllowed() {
 		return nil
 	}
-	n, err := units.SweepUnits(manifest, runStart, store.MayRemove)
+	// What every save leaves for the next run to remove — files superseded during the
+	// last run — goes without a word; only what an interrupted run left is told (P3-8
+	// friction, B18).
+	routineUnits := 0
+	may := func(rel string, mtime time.Time) bool {
+		ok := store.MayRemove(rel, mtime)
+		if ok && store.Retained(rel) {
+			routineUnits++
+		}
+		return ok
+	}
+	n, err := units.SweepUnits(manifest, runStart, may)
 	if err != nil {
 		return refuse("its unit store is damaged", err)
 	}
-	c, err := store.SweepContainers(runStart)
+	_, c, err := store.SweepContainersSplit(runStart)
 	if err != nil {
 		return refuse("its record's files are damaged", err)
 	}
-	if n+c > 0 {
-		logger.Printf("swept %d unit and %d record file(s) nothing names: superseded during the last run, or left by an interrupted one", n, c)
+	if left := max(n-routineUnits, 0) + c; left > 0 {
+		logger.Printf("removed %d file(s) an interrupted backup left in the archive: they belonged to no message the archive keeps, so nothing was lost", left)
 	}
 	return nil
 }
@@ -289,6 +300,34 @@ func unitFiles(units *export.Units) container.UnitFiles {
 		}
 		return out, nil
 	}
+}
+
+// tellStandingDamage tells a backup into an encrypted archive whose last check found
+// messages missing or damaged — a red that stands until a check with the key passes —
+// what the backup did about it (P3-8 friction, B19): an incremental one adds new mail
+// only and repairs nothing, so it names the repair; a full one wrote every message
+// again, so it names the check that confirms it.
+func tellStandingDamage(opts Options, logger *log.Logger) {
+	v := state.LastVerdict(opts.Out)
+	if v == nil || !v.Encrypted {
+		return
+	}
+	red := v
+	if v.Outcome != state.OutcomeDamaged {
+		red = state.StandingRed(v)
+	}
+	if red == nil || red.Outcome != state.OutcomeDamaged {
+		return
+	}
+	when := ""
+	if red.Finished != nil {
+		when = " (" + red.Finished.Local().Format("2006-01-02 15:04 MST") + ")"
+	}
+	if opts.Mode == export.Full {
+		logger.Printf("note: the last check of this archive%s found messages missing or damaged; this backup wrote every message again — run `mailarchive verify -full -out %q` to confirm the damage is gone", when, opts.Out)
+		return
+	}
+	logger.Printf("warning: the last check of this archive%s found messages missing or damaged, and this backup did not repair them: it only adds new mail. If you still have the mail they came from, run a backup with -mode full from it (`mailarchive -input <your mail> -out %q -mode full`), then `mailarchive verify -full -out %q`; otherwise restore the whole archive folder from your newest backup copy", when, opts.Out, opts.Out)
 }
 
 // encRefusal is an ErrEncryptedArchive refusal naming out, why, and its cause.

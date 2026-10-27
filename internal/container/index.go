@@ -120,12 +120,27 @@ func (s *Store) MarkIndexBehind() {
 	}
 }
 
+// MarkIndexRebuilding marks the index behind for a keyed rebuild that is about to
+// fill a new one, without a word: the person asked for the rebuild, and telling them
+// on every run that the index "is missing messages" alarmed them (P3-8 friction). An
+// index already behind keeps its mark and its words; the rebuild's clearing of a mark
+// it set itself is silent too.
+func (s *Store) MarkIndexRebuilding() {
+	if s.hdr.IndexBehind == nil {
+		s.hdr.IndexBehind = &Behind{Since: s.attempted + 1}
+		s.quietBehind = true
+	}
+}
+
 // ClearIndexBehind records that the index holds every record again (a catch-up or a
 // keyed rebuild finished): the next commit seals the cleared mark (§6, P2b-C16).
 func (s *Store) ClearIndexBehind() {
 	if s.hdr.IndexBehind != nil {
 		s.hdr.IndexBehind = nil
-		s.notice("the archive's search index holds every message again")
+		if !s.quietBehind {
+			s.notice("the archive's search index holds every message again")
+		}
+		s.quietBehind = false
 	}
 }
 

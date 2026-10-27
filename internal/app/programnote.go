@@ -54,7 +54,9 @@ func programSection(ps *container.ProgramSet) string {
 	}
 	var release, self []string
 	sums := map[string]bool{}
-	kinds := map[string]bool{} // which run steps the kept copies need
+	// Which run steps the kept copies need, each with the file names it is for, so the
+	// steps name the very file to type (P3-8 friction, B22).
+	kinds := map[string][]string{}
 	for _, f := range ps.Files {
 		if f.MissingRuns > 0 {
 			continue // not on the drive now: never named as kept (NOTE-03)
@@ -68,24 +70,26 @@ func programSection(ps *container.ProgramSet) string {
 			if f.Version != "" {
 				v = f.Version
 			}
-			self = append(self, fmt.Sprintf("  - for %s: this computer's own program, %s — it cannot be checked", systemName(f.Platform), v))
+			self = append(self, fmt.Sprintf("  - for %s: this computer's own program, %s — it cannot be checked: no\n    release page or checksum file vouches for it, so nobody can tell whether it was\n    changed since it was put here", systemName(f.Platform), v))
 			switch {
 			case strings.HasSuffix(f.Name, ".zip"):
-				kinds["macapp"] = true
+				kinds["macapp"] = append(kinds["macapp"], f.Name)
 			case goos == "windows":
-				kinds["windows"] = true
+				kinds["windows"] = append(kinds["windows"], f.Name)
+			case goos == "darwin":
+				kinds["macbare"] = append(kinds["macbare"], f.Name)
 			default:
-				kinds["bare"] = true
+				kinds["bare"] = append(kinds["bare"], f.Name)
 			}
 		default:
 			release = append(release, fmt.Sprintf("  - for %s: MailArchive %s", systemName(f.Platform), f.Version))
 			switch f.Platform {
 			case "macos":
-				kinds["macapp"] = true
+				kinds["macapp"] = append(kinds["macapp"], f.Name)
 			case "windows-amd64":
-				kinds["windowszip"] = true
+				kinds["windowszip"] = append(kinds["windowszip"], f.Name)
 			default:
-				kinds["bare"] = true
+				kinds["bare"] = append(kinds["bare"], f.Name)
 			}
 		}
 	}
@@ -108,17 +112,51 @@ func programSection(ps *container.ProgramSet) string {
 		fmt.Fprintf(&b, "Each release copy's checksum is in its version's checksum file in that folder\n(SHA256SUMS-%s) and on the release page:\n  %s\nThe file in the folder could have been changed with the copy; the release page\ncannot.\n", strings.Join(vs, ", SHA256SUMS-"), releasesPage)
 	}
 	b.WriteString("Copy a program out of the archive's folder before you open or unzip it. Then:\n")
-	if kinds["macapp"] {
-		b.WriteString("  - a Mac copy: unzip it and open the app (the Mac may say it is from the internet).\n")
+	if len(kinds["macapp"]) > 0 {
+		b.WriteString("  - a Mac copy (a .zip): unzip it and open the app inside. If the Mac says the app\n" +
+			"    cannot be opened, or that it is from the internet: Control-click the app, choose\n" +
+			"    Open, then Open again (or System Settings > Privacy & Security > Open Anyway).\n")
 	}
-	if kinds["windowszip"] {
-		b.WriteString("  - the Windows copy: unzip it and run mailarchive.exe (SmartScreen may warn).\n")
+	if len(kinds["windowszip"]) > 0 {
+		b.WriteString("  - the Windows copy (a .zip): unzip it, then double-click mailarchivew.exe to open\n" +
+			"    MailArchive Desktop (mailarchive.exe beside it is the same program, for a\n" +
+			"    terminal). If Windows SmartScreen warns, choose More info, then Run anyway.\n")
 	}
-	if kinds["windows"] {
-		b.WriteString("  - this computer's own Windows program: run it (SmartScreen may warn).\n")
+	for _, name := range kinds["windows"] {
+		fmt.Fprintf(&b, "  - this computer's own Windows program runs at a terminal. Copy %s to your\n"+
+			"    Documents folder, open Command Prompt, and type these two lines, pressing Enter\n"+
+			"    after each (after -out, type this folder's path in quotes):\n"+
+			"      cd %%USERPROFILE%%\\Documents\n"+
+			"      %s serve -out \"<this folder>\"\n"+
+			"    If Windows SmartScreen warns, choose More info, then Run anyway.\n", name, name)
 	}
-	if kinds["bare"] {
-		b.WriteString("  - a Linux or bare program: copy it to your home folder, then in a terminal run\n      chmod +x <the file>\n      ./<the file> serve -out <this folder>\n")
+	for _, name := range kinds["macbare"] {
+		fmt.Fprintf(&b, "  - this computer's own Mac program runs at a terminal. Copy %s to your\n"+
+			"    home folder, open Terminal (in Applications > Utilities), and type these lines,\n"+
+			"    pressing Return after each (the third may say \"No such xattr\": that is fine;\n"+
+			"    for the last, type the line up to -out and a space, then drag this folder onto\n"+
+			"    the Terminal window, and press Return):\n"+
+			"      cd ~\n"+
+			"      chmod +x %s\n"+
+			"      xattr -d com.apple.quarantine %s\n"+
+			"      ./%s serve -out <this folder>\n", name, name, name, name)
+	}
+	if bare := kinds["bare"]; len(bare) > 0 {
+		sort.Strings(bare)
+		name, others := bare[0], ""
+		if len(bare) > 1 {
+			others = fmt.Sprintf(" (on a computer\n    with another processor, use %s instead in each line)", strings.Join(bare[1:], " or "))
+		}
+		fmt.Fprintf(&b, "  - a Linux copy runs at a terminal. Copy %s to your home folder, open a\n"+
+			"    terminal, and type these lines, pressing Enter after each%s; after -out,\n"+
+			"    type this folder's path in quotes:\n"+
+			"      cd ~\n"+
+			"      chmod +x %s\n"+
+			"      ./%s serve -out \"<this folder>\"\n", name, others, name, name)
+	}
+	if len(kinds["windows"])+len(kinds["macbare"])+len(kinds["bare"]) > 0 {
+		b.WriteString("    It asks for the archive's password or recovery key, then prints a link: open\n" +
+			"    the link in a web browser to read the mail. Press Ctrl-C at the terminal to stop.\n")
 	}
 	b.WriteString(programOffline)
 	return b.String()

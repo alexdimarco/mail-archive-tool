@@ -38,8 +38,12 @@ type DecryptPlan struct {
 	// from (the vault does not compress, so each is at least its plaintext) and a
 	// reserve for the pages, report and README the copy writes besides.
 	NeedBytes int64
-	FreeBytes uint64 // the destination's free space; 0 with FreeKnown false when it cannot be read
-	FreeKnown bool
+	// MailBytes and ReserveBytes are NeedBytes' two parts, for a plan that shows them
+	// apart (P3-8 friction: the estimate read as inflated): about the size of the mail
+	// itself, and the room kept for the pages, report and README the copy writes.
+	MailBytes, ReserveBytes int64
+	FreeBytes               uint64 // the destination's free space; 0 with FreeKnown false when it cannot be read
+	FreeKnown               bool
 
 	// Leaves says why the copy may leave this computer — a synced folder, a folder
 	// that may be synced, a removable or external drive, a network share. Each asks
@@ -91,11 +95,12 @@ func (e *CopyExportEnv) PlanDecryptCopy(out, parent string, archives, settings [
 		return nil, fmt.Errorf("reading %s's record: %w", abs, err)
 	}
 	sealed := sealedSize(abs)
-	p.NeedBytes = sealed + decryptReserve(sealed)
+	p.MailBytes, p.ReserveBytes = sealed, decryptReserve(sealed)
+	p.NeedBytes = p.MailBytes + p.ReserveBytes
 	if free, ferr := e.freeOnDest(parent); ferr == nil {
 		p.FreeBytes, p.FreeKnown = free, true
 		if int64(free) < p.NeedBytes {
-			p.Warnings = append(p.Warnings, fmt.Sprintf("%s may not have room: the copy can take up to %s and %s is free", parent, humanBytes(p.NeedBytes), humanBytes(int64(free))))
+			p.Warnings = append(p.Warnings, fmt.Sprintf("%s may not have room: %s is free, and the copy takes about %s for the mail plus up to %s kept free for its pages, report and README", parent, humanBytes(int64(free)), humanBytes(p.MailBytes), humanBytes(p.ReserveBytes)))
 		}
 	}
 	p.Leaves = e.copyLeaves(parent)

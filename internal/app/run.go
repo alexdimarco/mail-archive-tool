@@ -553,6 +553,13 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		// The program copies' download starts now, outside the step that waits for it
 		// (program design §5, R17).
 		download = startProgramDownload(opts.downloadContext(ctx), sealed)
+		// A backup into an archive whose last check found damage says so at its end
+		// (P3-8 friction, B19).
+		defer func() {
+			if err == nil {
+				tellStandingDamage(opts, logger)
+			}
+		}()
 	}
 	// Every run that begins is recorded (R18): "running" now, before any early
 	// return, finalized on the way out — so a run that never finishes is

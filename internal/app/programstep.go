@@ -37,6 +37,10 @@ import (
 type ProgramOutcome struct {
 	Class    string
 	Warnings []string
+	// Summary is the one line the backup prints when the step wrote or removed copies
+	// — tens of megabytes on the archive's drive — for a front end to show with the
+	// run's result too; empty when it changed nothing (P3-8 friction, B23).
+	Summary string
 }
 
 // The program step's outcome classes.
@@ -170,6 +174,25 @@ type programStepState struct {
 	env    programEnv
 	o      ProgramOutcome
 	failed bool // a planned file could not be written: the outcome is incomplete
+	// What the step put in place and removed, for its one line (B23).
+	wrote, removed           int
+	wroteBytes, removedBytes int64
+}
+
+// summary is the step's one line when it wrote or removed copies (P3-8 friction,
+// B23): how many, and how much of the archive's drive they take or gave back.
+func (s *programStepState) summary(keep bool) string {
+	switch {
+	case s.wrote > 0 && s.removed > 0:
+		return fmt.Sprintf("Copies of MailArchive: wrote %d file(s) (%s) and removed %d (%s) in the archive's program folder; README.txt lists what is kept", s.wrote, humanBytes(s.wroteBytes), s.removed, humanBytes(s.removedBytes))
+	case s.wrote > 0:
+		return fmt.Sprintf("Copies of MailArchive: wrote %d file(s) (%s) into the archive's program folder, so the archive can be opened years from now; README.txt lists them", s.wrote, humanBytes(s.wroteBytes))
+	case s.removed > 0 && !keep:
+		return fmt.Sprintf("Copies of MailArchive: removed %d file(s) (%s) from the archive's program folder, as you chose", s.removed, humanBytes(s.removedBytes))
+	case s.removed > 0:
+		return fmt.Sprintf("Copies of MailArchive: removed %d file(s) (%s) from the archive's program folder", s.removed, humanBytes(s.removedBytes))
+	}
+	return ""
 }
 
 func (s *programStepState) warn(format string, a ...any) {
@@ -198,6 +221,9 @@ func programStep(env programEnv) ProgramOutcome {
 		return s.o
 	}
 	s.o.Class = s.run(set)
+	if s.o.Summary = s.summary(*set.Keep); s.o.Summary != "" {
+		env.logger.Printf("%s", s.o.Summary)
+	}
 	if !*set.Keep {
 		// Copies switched off: the step only removes, and status says so — never that
 		// copies are kept (the PG4 pass, LEAK-1, COR-5).
@@ -854,6 +880,24 @@ func (s *programStepState) write(pr *programRoot, dir string, set container.Prog
 	}
 	if !*next.Keep && len(pr.entries()) == 0 {
 		os.Remove(dir)
+	}
+	// What landed, for the step's one line (B23): a copy replaced in place counts as
+	// written, not also removed.
+	size := map[string]int64{}
+	for _, f := range set.Files {
+		size[f.Name] = f.Size
+	}
+	for _, st := range stagedFiles {
+		if renamed[st.add.file.Name] {
+			s.wrote++
+			s.wroteBytes += st.add.file.Size
+		}
+	}
+	for _, name := range plan.remove {
+		if !renamed[name] {
+			s.removed++
+			s.removedBytes += size[name]
+		}
 	}
 	return s.classOf(programPlan{keep: next.Files, blocked: plan.blocked, changed: plan.changed}, len(renamed) > 0 || len(plan.remove) > 0)
 }

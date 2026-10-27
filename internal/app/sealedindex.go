@@ -363,7 +363,7 @@ func RebuildEncrypted(ctx context.Context, opts Options, logger *log.Logger) (In
 		return IndexCatchUp{}, withKind(state.FailScratch, fmt.Errorf("%w: the search index cannot be rebuilt without room to work on it", ErrScratchSpace))
 	}
 	defer si.idx.Close()
-	store.MarkIndexBehind()
+	store.MarkIndexRebuilding() // without "the index is missing messages" (P3-8 friction)
 	rep, err := catchUpIndex(ctx, si.idx, manifest, units, store, logger)
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return rep, err // stopped: nothing is saved

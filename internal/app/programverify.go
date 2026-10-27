@@ -7,6 +7,10 @@ import (
 	"mail-archive-tool/internal/util"
 )
 
+// noteChangedFinding is the finding that the note beside the archive is not the one
+// the last backup wrote: about the note, not the copies of MailArchive.
+const noteChangedFinding = "the note beside the archive (README.txt) is not the one the last backup wrote — do not follow it; the next backup writes it again"
+
 // checkProgramFolder is verify -full's comparison of the program folder and the note
 // with what the record seals (program design §6, C18; PG4): read-only — nothing is
 // written, swept or renamed — and every finding a warning that never changes the
@@ -22,7 +26,7 @@ func checkProgramFolder(out string, set *container.ProgramSet, noteDigest string
 		accept[set.Note.Current], accept[set.Note.Incoming] = true, true
 	}
 	if b, err := util.ReadRegularFile(filepath.Join(out, "README.txt"), maxNoteRead); noteDigest != "" && (err != nil || !accept[NoteDigest(b)]) {
-		found = append(found, "the note beside the archive (README.txt) is not the one the last backup wrote — do not follow it; the next backup writes it again")
+		found = append(found, noteChangedFinding)
 	}
 	if set == nil {
 		return found

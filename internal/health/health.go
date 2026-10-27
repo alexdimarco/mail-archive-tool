@@ -304,6 +304,11 @@ type Report struct {
 	now time.Time
 }
 
+// localStamp is how status writes a local time: with its zone named, since the
+// verify lines beside it are UTC — so no time in status is read in the wrong zone
+// (F9; P3-8 friction: status mixed local time and UTC unlabelled).
+const localStamp = "2006-01-02 15:04 MST"
+
 func (r *Report) warn(code, msg string) {
 	if r.Posture != "RED" {
 		r.Posture = "WARN"
@@ -439,8 +444,16 @@ func Assess(in Input, now time.Time) Report {
 		// Keyless, so status and the Desktop say the same (X10; the P3-3 plan, 3b).
 		r.warn("encrypted_key_copy_differs", "one of this encrypted archive's two key-file copies is missing or differs from the other — open it with its password or recovery key, or run a backup into it, and MailArchive rewrites it from the good one")
 	}
+	// A folder that no longer holds its own archive is RED above in its own words: the
+	// note below does not repeat them, nor say what its copies of MailArchive did
+	// (P3-8 friction: the RED text doubled, "copies … updated" under RED).
+	recordRed := in.EncryptedCase != encmark.None && in.EncryptedCase != encmark.Unproven
 	if in.Encrypted {
-		r.note("encrypted", "this archive is encrypted ("+in.EncryptedWhy+"): its message counts, search index and history are sealed — "+openToSee(in.Surface))
+		why := " (" + in.EncryptedWhy + ")"
+		if recordRed {
+			why = ""
+		}
+		r.note("encrypted", "this archive is encrypted"+why+": its message counts, search index and history are sealed — "+openToSee(in.Surface))
 		// Its last backup finished with the sealed index still missing messages: the
 		// one thing about the index status can say without the key (owner ruling
 		// 2026-10-25, "keep and warn").
@@ -450,9 +463,12 @@ func Assess(in Input, now time.Time) Report {
 		// The copies of MailArchive kept in it, as its last backup left them (program
 		// design §4: one line in status).
 		if lr := in.LastRun; in.LastRunState == state.LastRunPresent && lr.Encrypted && state.ProgramText(lr.Program) != "" {
+			// A run that did not finish carries the line of the last one that ran the
+			// step (LEAK-3): a warning still stands, but "were updated" or "were
+			// removed" would read as this run's doing (P3-8 friction).
 			if state.ProgramWarns(lr.Program) {
 				r.warn(lr.Program, state.ProgramText(lr.Program))
-			} else {
+			} else if !recordRed && lr.Status == state.RunOK {
 				r.note(lr.Program, state.ProgramText(lr.Program))
 			}
 		}
@@ -586,7 +602,7 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 		lr := in.LastRun
 		switch lr.Status {
 		case state.RunFailed:
-			r.red("run_failed", fmt.Sprintf("the last run (%s) FAILED: %s", lr.Started.Local().Format("2006-01-02 15:04"), runErrorText(in, lr)))
+			r.red("run_failed", fmt.Sprintf("the last run (%s) FAILED: %s", lr.Started.Local().Format(localStamp), runErrorText(in, lr)))
 			// A breaker trip is recorded by kind as an outage; its text (the server's
 			// last words, the mailbox's name) is not read for needles (S3-AC5).
 			if lr.ErrorKind != state.ErrKindServiceUnavailable && looksLikeAuthFailure(lr.Error) {
@@ -596,14 +612,14 @@ func assessKeyless(r *Report, in Input, now time.Time) {
 			alive := runRunning(in)
 			switch {
 			case alive && now.Sub(lr.Started) <= period:
-				r.note("run_in_progress", fmt.Sprintf("a run is in progress (pid %d, started %s)", lr.PID, lr.Started.Local().Format("2006-01-02 15:04")))
+				r.note("run_in_progress", fmt.Sprintf("a run is in progress (pid %d, started %s)", lr.PID, lr.Started.Local().Format(localStamp)))
 			case alive:
-				r.red("run_stuck", fmt.Sprintf("a run started %s is still running (pid %d) — longer than the schedule period; check the log", lr.Started.Local().Format("2006-01-02 15:04"), lr.PID))
+				r.red("run_stuck", fmt.Sprintf("a run started %s is still running (pid %d) — longer than the schedule period; check the log", lr.Started.Local().Format(localStamp), lr.PID))
 			default:
-				r.red("run_never_finished", fmt.Sprintf("the run started %s never finished (pid %d is gone: crash, kill, or power loss) — check the log and run again", lr.Started.Local().Format("2006-01-02 15:04"), lr.PID))
+				r.red("run_never_finished", fmt.Sprintf("the run started %s never finished (pid %d is gone: crash, kill, or power loss) — check the log and run again", lr.Started.Local().Format(localStamp), lr.PID))
 			}
 		case state.RunCancelled:
-			r.warn("run_cancelled", fmt.Sprintf("the last run (%s) was cancelled before finishing; progress was kept", lr.Started.Local().Format("2006-01-02 15:04")))
+			r.warn("run_cancelled", fmt.Sprintf("the last backup (%s) was cancelled; what it saved is kept, and the next backup finishes what it left", lr.Started.Local().Format(localStamp)))
 		}
 		if in.HasDescriptor && lr.Status != state.RunRunning && now.Sub(lr.Started) > 2*period {
 			r.warn("stale", fmt.Sprintf("the last run was %s ago, more than twice the %s schedule period — %s", HumanAge(now.Sub(lr.Started)), in.Desc.Interval, stalenessQuestion(in.GOOS, in.Desc.At)))
@@ -1987,7 +2003,11 @@ func Summary(in Input, rep Report) []string {
 		}
 		// Local time, with its zone named: the verify lines below are UTC (F9).
 		line := fmt.Sprintf("Last run:   %s → %s", lr.Started.Local().Format("2006-01-02 15:04 MST"), how)
-		if lr.Status == state.RunOK && lr.Encrypted {
+		if lr.Status == state.RunCancelled {
+			// A cancel is not a failure: one truth with the Desktop's "cancelled" (X10;
+			// P3-8 friction, B20).
+			line += ": the next backup finishes what it left"
+		} else if lr.Status == state.RunOK && lr.Encrypted {
 			// The counts are sealed with the archive: never shown as 0 (F15).
 			line += fmt.Sprintf(" · took %s · its counts are sealed", lr.Finished.Sub(lr.Started).Round(time.Second))
 		} else if lr.Status == state.RunOK {
@@ -2031,6 +2051,10 @@ func Summary(in Input, rep Report) []string {
 	case in.HasDescriptorFile:
 		lines = append(lines, "Schedule:   (descriptor present but unreadable — see the posture below)")
 		lines = append(lines, "scheduled (kind not readable)")
+	case in.Encrypted:
+		// Every backup into an encrypted archive asks for its password, so none runs on
+		// a schedule (O5): say so, not merely that none is recorded (P3-8 friction).
+		lines = append(lines, "Schedule:   none — a backup of an encrypted archive needs its password or recovery key, so it runs only when you start it yourself (at a terminal, or Run now in MailArchive Desktop while the archive is unlocked), never on a schedule")
 	default:
 		lines = append(lines, "Schedule:   none recorded")
 	}
@@ -2135,7 +2159,13 @@ type JSONReport struct {
 	Indexed     int      `json:"indexed"`
 	// IndexedKnown is false when search.db exists but could not be read (busy
 	// or damaged), so Indexed's 0 is not a count (F8). Additive; version stays.
-	IndexedKnown bool             `json:"indexed_known"`
+	IndexedKnown bool `json:"indexed_known"`
+	// CountsSealed says the archive is encrypted: its message counts (messages,
+	// indexed, fillable, terminal, unknown, unreadable, undecodable, fidelity_fallback,
+	// and last_run's exported and filled) are sealed inside it and unknown without its
+	// key — each is 0 here, not a count (P3-8 friction, B21). Additive, omitted for a
+	// plaintext archive, so the version stays.
+	CountsSealed bool             `json:"counts_sealed,omitempty"`
 	Fillable     int              `json:"fillable"`
 	Terminal     int              `json:"terminal"`
 	Unknown      int              `json:"unknown"`
@@ -2346,7 +2376,8 @@ func JSON(in Input, rep Report) JSONReport {
 		Out:          in.Out,
 		Messages:     in.Messages,
 		Indexed:      in.Indexed,
-		IndexedKnown: !(in.HasIndexFile && !in.HasIndex),
+		IndexedKnown: !(in.HasIndexFile && !in.HasIndex) && !in.Encrypted,
+		CountsSealed: in.Encrypted,
 		Fillable:     in.Fillable,
 		Terminal:     in.Terminal,
 		Unknown:      in.Unknown,

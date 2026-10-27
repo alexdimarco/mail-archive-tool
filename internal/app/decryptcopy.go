@@ -55,8 +55,9 @@ type SealedCopy interface {
 // ErrCopyLocked: the archive was locked while the copy was made. It is never damage.
 var ErrCopyLocked = errors.New("the archive was locked during the unencrypted copy")
 
-// ErrCopyStopped: the copy was stopped before it finished.
-var ErrCopyStopped = errors.New("the unencrypted copy was stopped")
+// ErrCopyStopped: the copy was stopped before it finished. Its words do not say
+// "stopped": the front end that tells it does (P3-8 friction).
+var ErrCopyStopped = errors.New("the unencrypted copy did not finish")
 
 // ErrCopyFailed: the copy could not be finished; its folder is marked unfinished.
 var ErrCopyFailed = errors.New("the unencrypted copy could not be finished")
@@ -306,7 +307,8 @@ func (c *copier) run(ctx context.Context) error {
 		return err
 	}
 	writeReport(c.p.Dest, c.m, c.m.Migrated > 0, silentLogger())
-	writeArchiveReadme(c.p.Dest, silentLogger())
+	// The copy's README says first what the copy is (P3-8 friction).
+	writeReadme(c.p.Dest, unencryptedCopyReadmeHead+archiveReadme, silentLogger())
 	if !c.e.holds(c.root, c.p.Dest) {
 		return c.failErr(errCopyMoved)
 	}
@@ -576,7 +578,10 @@ func openCopyIndex(path string, small bool) (*index.Index, error) {
 // stop marks the copy stopped — the mark rewritten with counts only — and returns why.
 func (c *copier) stop(why error) error {
 	c.rewriteMarker(fmt.Sprintf("It was stopped after %d of %d messages.\n", c.rep.Copied+c.rep.Skipped, c.rep.Messages))
-	return fmt.Errorf("%w: %s is marked unfinished — delete it, then make the copy again", why, c.p.Dest)
+	if c.rep.Copied == 0 {
+		return fmt.Errorf("%w: %s was made but holds no mail yet; it is marked unfinished — delete it, then make the copy again", why, c.p.Dest)
+	}
+	return fmt.Errorf("%w: %s holds the READABLE mail copied so far (%d of %d messages) and is marked unfinished — delete it, then make the copy again", why, c.p.Dest, c.rep.Copied, c.rep.Messages)
 }
 
 // fail leaves the copy marked unfinished and says why.
@@ -600,6 +605,16 @@ func (c *copier) rewriteMarker(extra string) {
 		f.Close()
 	}
 }
+
+// unencryptedCopyReadmeHead opens the README of an unencrypted copy: what the folder
+// is, that anyone who can open it can read the mail, and that the encrypted archive it
+// came from is unchanged (P3-8 friction).
+const unencryptedCopyReadmeHead = `THIS FOLDER IS AN UNENCRYPTED COPY of an encrypted MailArchive archive.
+Anyone who can open this folder can read the mail in it: keep it somewhere only you
+can reach, and delete it when you no longer need it. The encrypted archive it was
+made from was not changed.
+
+`
 
 func markerText(extra string) string {
 	return "This folder is an UNFINISHED, UNENCRYPTED copy of an encrypted MailArchive archive.\n" +

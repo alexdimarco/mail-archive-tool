@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/memguard"
 	"mail-archive-tool/internal/state"
+	"mail-archive-tool/internal/util"
 	"mail-archive-tool/internal/vault"
 )
 
@@ -49,6 +51,22 @@ type SealedCheck interface {
 	Unit(ctx context.Context, rec state.Record, kind vault.UnitKind, s state.SealedUnit) (path string, err error)
 }
 
+// MessageNamer is an optional side of a SealedCheck: a message's date, sender and
+// subject as the person knows them, read with the key — from the search index, or
+// from another part of the message that opens — so a damaged message is named by
+// what it is, not only by its sealed file (P3-8 friction, B19). ok is false when
+// nothing could be read; the check then names it by what its record holds.
+type MessageNamer interface {
+	NameMessage(ctx context.Context, rec state.Record) (MessageName, bool)
+}
+
+// MessageName is a message as the person knows it. Any field may be empty.
+type MessageName struct {
+	Date    string // as the person reads it, e.g. "2026-03-14 09:30 UTC"
+	From    string
+	Subject string
+}
+
 // verifyLock takes the archive lock for verify -full; a var so a test can present
 // a read-only medium.
 var verifyLock = lockfile.AcquireAs
@@ -74,8 +92,21 @@ const (
 	adviceChunksRead = "check again; if it happens again, run a backup"
 	adviceMoved      = "check it again once nothing is writing to it"
 	adviceLoad       = "restore the whole archive folder from your newest backup copy"
-	adviceUnits      = "restore the whole archive folder from your newest backup copy: the messages named above are missing or damaged"
 )
+
+// adviceUnits is the remedy for messages missing or damaged: first the cheaper repair
+// — a backup with -mode full from the mail they came from writes every message again,
+// the damaged ones included — then the restore (P3-8 friction, B19).
+func adviceUnits(out string) string {
+	return fmt.Sprintf("the messages named above are missing or damaged. If you still have the mail they came from, a backup with -mode full from that mail writes them again: run `mailarchive -input <your mail> -out %q -mode full`, then `mailarchive verify -full -out %q` to check. Otherwise restore the whole archive folder from your newest backup copy", out, out)
+}
+
+// genericAdvice says advice is outcome's fixed sentence — a check's general remedy,
+// which a finding's own remedy replaces, so the remedy is said once (P3-8 friction,
+// B19).
+func genericAdvice(outcome, advice string) bool {
+	return advice == state.OutcomeText(outcome) || advice == state.OutcomeTextFor(outcome, state.TierFull)
+}
 
 // outcomeRank orders outcomes from best to worst: one run records the worse.
 func outcomeRank(o string) int {
@@ -324,7 +355,9 @@ func (f *fullCheck) raise(outcome, reason, advice string) {
 		}
 		switch {
 		case advice == "" || strings.Contains(f.rep.Advice, advice):
-		case f.rep.Advice == "":
+		case genericAdvice(outcome, advice) && f.rep.Advice != "":
+			// The general remedy beside a finding's own: said once, by the finding.
+		case f.rep.Advice == "" || genericAdvice(outcome, f.rep.Advice):
 			f.rep.Advice = advice
 		default:
 			f.rep.Advice += "; " + advice
@@ -332,11 +365,84 @@ func (f *fullCheck) raise(outcome, reason, advice string) {
 	}
 }
 
+// messageLabel names rec's message as the person knows it (P3-8 friction, B19): its
+// date, sender and subject as src reads them with the key, else what its record
+// holds — the date and subject its file name was made from — and its folder.
+func (f *fullCheck) messageLabel(ctx context.Context, src SealedCheck, rec state.Record) string {
+	var n MessageName
+	if namer, ok := src.(MessageNamer); ok {
+		n, _ = namer.NameMessage(ctx, rec)
+	}
+	date, subject := recordDateSubject(rec)
+	if n.Date == "" {
+		n.Date = date
+	}
+	var parts []string
+	if d := plainLabel(n.Date, 40); d != "" {
+		parts = append(parts, "dated "+d)
+	}
+	if from := plainLabel(n.From, 80); from != "" {
+		parts = append(parts, "from "+from)
+	}
+	switch {
+	case plainLabel(n.Subject, 80) != "":
+		parts = append(parts, "subject “"+plainLabel(n.Subject, 80)+"”")
+	case rec.Subject != "":
+		parts = append(parts, "subject “"+plainLabel(rec.Subject, 80)+"”")
+	case subject != "":
+		parts = append(parts, "subject like “"+subject+"”")
+	}
+	if folder := plainLabel(rec.Folder, 80); folder != "" {
+		parts = append(parts, "in "+folder)
+	}
+	if len(parts) == 0 {
+		return "a message whose date, sender and subject could not be read"
+	}
+	return "the message " + strings.Join(parts, ", ")
+}
+
+// plainLabel is s as one line for the terminal: no control characters, at most max
+// runes.
+func plainLabel(s string, max int) string {
+	s = strings.Join(strings.Fields(util.StripControl(s)), " ")
+	if r := []rune(s); len(r) > max {
+		s = string(r[:max-1]) + "…"
+	}
+	return s
+}
+
+// recordDateSubject is the date and the subject a record's own fields, or else its
+// file name (<date>_<time>_<subject>_<hash>.html), hold.
+func recordDateSubject(rec state.Record) (date, subject string) {
+	if t, err := time.Parse(time.RFC3339, rec.Date); err == nil {
+		date = t.UTC().Format("2006-01-02 15:04") + " UTC"
+	}
+	base := strings.TrimSuffix(path.Base(filepath.ToSlash(rec.Path)), ".html")
+	parts := strings.Split(base, "_")
+	if len(parts) < 3 {
+		return date, ""
+	}
+	if t, err := time.Parse("2006-01-02_1504", parts[0]+"_"+parts[1]); date == "" && err == nil {
+		date = t.Format("2006-01-02 15:04") + " UTC"
+	}
+	if len(parts) >= 4 {
+		subject = plainLabel(strings.ReplaceAll(strings.Join(parts[2:len(parts)-1], "_"), "-", " "), 80)
+	}
+	return date, subject
+}
+
+// slashPath is an archive-relative path with forward slashes, whatever separator
+// its maker used: a unit's or chunk's path holds only hex names and slashes, so a
+// path the keyless check named and one the keyed side named are one string for one
+// file (FID-04 on Windows; P3-8 friction).
+func slashPath(p string) string { return strings.ReplaceAll(filepath.ToSlash(p), `\`, "/") }
+
 // problem names a damaged file and its part, within the report's cap; a file the
 // keyless check named already is named once, with its part (FID-04).
 func (f *fullCheck) problem(path, kind, part string) {
+	path = slashPath(path)
 	for i := range f.rep.Problems {
-		if f.rep.Problems[i].Path == path {
+		if slashPath(f.rep.Problems[i].Path) == path {
 			f.rep.Problems[i].Kind, f.rep.Problems[i].Detail = kind, part
 			return
 		}
@@ -394,6 +500,9 @@ func (f *fullCheck) units(ctx context.Context, m *state.Manifest, src SealedChec
 			}
 			path, err := src.Unit(ctx, rec, u.kind, *u.s)
 			f.rep.Checked++
+			// A message the check could not open is named as the person knows it too
+			// (P3-8 friction, B19), read only for such a message.
+			part := func() string { return unitPart(u.kind) + ": " + f.messageLabel(ctx, src, rec) }
 			switch {
 			case err == nil:
 				f.rep.OK++
@@ -403,21 +512,21 @@ func (f *fullCheck) units(ctx context.Context, m *state.Manifest, src SealedChec
 				return err
 			case errors.Is(err, memguard.ErrTooLarge):
 				f.rep.TooLarge++
-				f.problem(path, "too large to check here", unitPart(u.kind))
+				f.problem(path, "too large to check here", part())
 				f.raise(state.OutcomeNotAttested, "a message is too large to check", adviceTooLarge)
 			case errors.Is(err, fs.ErrNotExist):
 				f.rep.Missing++
-				f.problem(path, "missing", unitPart(u.kind))
-				f.raise(state.OutcomeDamaged, "messages are missing from the archive", adviceUnits)
+				f.problem(path, "missing", part())
+				f.raise(state.OutcomeDamaged, "messages are missing from the archive", adviceUnits(f.rep.Out))
 			case errors.Is(err, export.ErrUnitStore), errors.Is(err, ErrUnitDoesNotOpen):
 				f.rep.Modified++
-				f.problem(path, "unreadable", unitPart(u.kind))
-				f.raise(state.OutcomeDamaged, "messages in the archive are damaged", adviceUnits)
+				f.problem(path, "unreadable", part())
+				f.raise(state.OutcomeDamaged, "messages in the archive are damaged", adviceUnits(f.rep.Out))
 			default:
 				// Access or a drive error is not lost mail: a red here would stand
 				// after the drive is back (the P3-2b pass, CRIT-05).
 				f.rep.Unread++
-				f.problem(path, "could not be read here", unitPart(u.kind))
+				f.problem(path, "could not be read here", part())
 				f.raise(state.OutcomeNotAttested, "messages could not be read on this computer", adviceUnreadable)
 			}
 			if onProgress != nil && f.rep.Checked%256 == 0 {
