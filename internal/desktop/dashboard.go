@@ -409,7 +409,7 @@ func (d *dashboard) browserLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !server.GuardLocalPOST(r, d.csrf) {
-		http.Error(w, "refused: same-origin, tokened, local requests only", http.StatusForbidden)
+		http.Error(w, csrfRefused, http.StatusForbidden)
 		return
 	}
 	if d.cfg.NewLink == nil {
@@ -432,7 +432,7 @@ func (d *dashboard) shutdown(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !server.GuardLocalPOST(r, d.csrf) {
-		http.Error(w, "refused: same-origin, tokened, local requests only", http.StatusForbidden)
+		http.Error(w, csrfRefused, http.StatusForbidden)
 		return
 	}
 	if d.life == nil {
@@ -453,7 +453,7 @@ func (d *dashboard) saveSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !server.GuardLocalPOST(r, d.csrf) {
-		http.Error(w, "refused: same-origin, tokened, local requests only", http.StatusForbidden)
+		http.Error(w, csrfRefused, http.StatusForbidden)
 		return
 	}
 	var in struct {
@@ -554,7 +554,7 @@ func (d *dashboard) clearSignin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !server.GuardLocalPOST(r, d.csrf) {
-		http.Error(w, "refused: same-origin, tokened, local requests only", http.StatusForbidden)
+		http.Error(w, csrfRefused, http.StatusForbidden)
 		return
 	}
 	c := d.cfg.load()
@@ -569,6 +569,11 @@ func (d *dashboard) clearSignin(w http.ResponseWriter, r *http.Request) {
 	d.signInChanged("") // the workspace's session, previews and a running export go with it (XC7)
 	writeJSON(w, map[string]any{"ok": true})
 }
+
+// csrfRefused is the refusal of a request that did not come from this Desktop's own page
+// (no page token, another site, or not this computer), in plain words with what to do
+// (P3-8, Tier C: no "same-origin, tokened").
+const csrfRefused = "refused: this request did not come from this MailArchive Desktop page. Reload the page and try again; nothing was changed."
 
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -736,7 +741,7 @@ func (d *dashboard) archiveActionPath(w http.ResponseWriter, r *http.Request) (s
 		return "", false
 	}
 	if !server.GuardLocalPOST(r, d.csrf) {
-		http.Error(w, "refused: same-origin, tokened, local requests only", http.StatusForbidden)
+		http.Error(w, csrfRefused, http.StatusForbidden)
 		return "", false
 	}
 	var in struct{ Path string }
@@ -767,7 +772,7 @@ func (d *dashboard) uninstallAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !server.GuardLocalPOST(r, d.csrf) {
-		http.Error(w, "refused: same-origin, tokened, local requests only", http.StatusForbidden)
+		http.Error(w, csrfRefused, http.StatusForbidden)
 		return
 	}
 	var in struct{ Confirm bool }
@@ -901,7 +906,7 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		ResidualOS       string // "macOS" or "Linux": where another account can read a just-opened link's argv
 		KindLine         string // what the archive was made from, in plain words ("" when unknown)
 		LocalOnly        bool   // local mail files only and no Microsoft 365 setup: Archive now and the weekly backup are off
-		ArchiveNowOff    string // why, and the steps that add new mail instead
+		ArchiveNowOff    string // why Archive now is off, and the steps that add new mail instead ("" when it applies)
 		Offer            string // the archive the GUI used last, offered when none is set
 		// §4.6.3/MA-617 + Q18(b): the Weekly backup card's state. HasSchedule when a
 		// descriptor is recorded; ScheduleKind names it in words; the Show* flags
@@ -935,6 +940,15 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		EncProgram      string
 		EncProgramOn    bool
 		EncProgramOffer bool
+		// ProgramCopiesLabel is the copies checkbox's words: a release keeps copies for
+		// Mac, Windows and Linux, a development build only itself (P3-8, Tier C).
+		ProgramCopiesLabel string
+		// EncBackupHow is how an encrypted archive with no backup job set up here is
+		// backed up: at a terminal, the exact command (P3-8, B26).
+		EncBackupHow string
+		// SwitchLocks is the encrypted archive open here that a switch to another
+		// archive locks, said before the switch (P3-8, T2-12); "" when none is open.
+		SwitchLocks string
 		// Local-archive scheduling (design-thunderbird-presync-desktop): a localOnly
 		// archive the Desktop can reconstruct + schedule from its OWN record (on an
 		// adapter platform) shows a create form (ShowLocalCreate) in place of the
@@ -977,9 +991,8 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		AlertProvider: orElse(s.AlertProvider, "office365"), AlertHost: s.AlertHost, AlertPort: s.AlertPort,
 		AlertSecurity: orElse(s.AlertSecurity, "starttls"), AlertFrom: s.AlertFrom, AlertTo: s.AlertTo, AlertUsername: s.AlertUsername}
 	data.KindLine = kindLine(archiveKind(data.OutDir))
-	if data.LocalOnly = cfg.localOnly(); data.LocalOnly {
-		data.ArchiveNowOff = archiveNowOff(cfg.goos(), data.OutDir)
-	}
+	data.LocalOnly = cfg.localOnly()
+	data.ArchiveNowOff = cfg.archiveNowOffLine() // every encrypted archive's too: Archive now never fills one (B25)
 	data.Offer = cfg.offer()
 	// Backup alerts (MA-699): default the display port, and tell the form whether a
 	// password is already stored (so it can say "leave blank to keep") — never its value.
@@ -1016,7 +1029,7 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 			ev := schedule.BuildKindEvidence(out)
 			switch {
 			case ev.Has(schedule.KindRunJob) && !ev.Has(schedule.KindCapture):
-				data.ShowRepair, data.ScheduleKind = true, "a run-job backup (keeps this archive current)"
+				data.ShowRepair, data.ScheduleKind = true, "a backup that re-reads this archive's mail files (keeps this archive current)"
 			case ev.Has(schedule.KindCapture):
 				data.ScheduleKind = "a scheduled Microsoft 365 capture"
 			default:
@@ -1065,7 +1078,9 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 	if data.Encrypted = archiveKind(data.OutDir) == kindEncrypted; data.Encrypted {
 		data.ShowInstall, data.ShowRepair, data.ShowLocalCreate, data.ShowLocalEdit, data.ShowBackupOff = false, false, false, false, false
 		data.ShowRemove = data.HasSchedule
+		data.EncBackupHow = encBackupHow(cfg.goos(), data.OutDir, false)
 	}
+	data.ProgramCopiesLabel = programCopiesLabel(releaseBuild())
 	data.EncRecordKept = cfg.Keys != nil && encryptedRecordKept()
 	// A recorded archive whose key files are gone cannot be unlocked: its card offers
 	// to put them back (§9.4, §9.5; 3e).
@@ -1092,6 +1107,7 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		if e != nil {
 			data.EncRemembered = keyring.RememberedFor(e.u, cfg.Store)
 			data.EncUnlocked = true
+			data.SwitchLocks = data.OutDir // a switch locks the archive left (K4): said before it does
 			if seal.IsSealed(data.OutDir) {
 				data.EncPauseNote, _ = keyring.PauseNote(e.u)
 			}
@@ -1211,6 +1227,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       {{if .ReaderURL}}<a href="{{.ReaderURL}}" target="_blank" rel="noopener">Open archive</a>
       <a href="{{.ReaderURL}}goback" target="_blank" rel="noopener">Go back in time</a>{{else}}<span class="nav-disabled" title="The archive reader is not running">Open archive</span>
       <span class="nav-disabled" title="The archive reader is not running">Go back in time</span>{{end}}
+      {{if .ShowEncryption}}<a href="#sec-encryption" id="navEncryption">Encryption</a>{{end}}
       {{if .CanAddArchive}}<a href="#sec-add-archive" id="navAddArchive">Add another archive</a>{{end}}
       {{if .Export}}<div class="nav-title">Export</div>
       <a href="#sec-export">Extraction workspace</a>
@@ -1222,7 +1239,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <div class="nav-title">Setup</div>
       <a href="#sec-m365">Microsoft 365 connection</a>
       <a href="#sec-backup">Weekly backup</a>
-      <a href="#sec-alerts">Backup alerts</a>
+      {{if not .Encrypted}}<a href="#sec-alerts">Backup alerts</a>{{end}}
     </nav>
     <div class="sidebar-foot">Local control panel<br>127.0.0.1</div>
   </aside>
@@ -1235,7 +1252,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
     <div class="note" id="shutdownNote" hidden></div>
     {{if .FormerNotice}}<div class="note warnbox" id="formerNotice" role="alert">{{.FormerNotice}}</div>{{end}}
     <h1>Overview</h1>
-    <p class="lede">{{if .LocalOnly}}Your mail archive, running locally on this PC.{{else}}Your personal Microsoft 365 archive, running locally on this PC.{{end}}</p>
+    <p class="lede">{{if .Encrypted}}Your encrypted mail archive, running locally on this PC.{{else if .LocalOnly}}Your mail archive, running locally on this PC.{{else}}Your personal Microsoft 365 archive, running locally on this PC.{{end}}</p>
     {{if .KindLine}}<p class="lede" id="archiveKind" style="margin-top:-14px">{{.KindLine}}</p>{{end}}
     {{if not .OutDir}}<div class="card" id="noArchive">
       <h2>No archive chosen yet</h2>
@@ -1249,6 +1266,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
     {{if .ShowArchives}}<div class="card" id="sec-archives">
       <h2>Your archives</h2>
       <p class="card-sub">The mail archives MailArchive Desktop knows about on this computer. The one marked current is what every tool here reads and what the weekly backup keeps; switch to work on a different one.</p>
+      {{if .SwitchLocks}}<p class="card-sub warn" id="switchLocks">{{template "switchLocks" .}}</p>{{end}}
       <ul class="archive-list">
         {{range .Archives}}<li class="archive-row{{if not .Available}} unavailable{{end}}">
           <span class="mono archive-path">{{.Path}}</span>
@@ -1329,7 +1347,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
 
     <div class="card" id="sec-archive">
       <h2>Archive now</h2>
-      {{if .LocalOnly}}<p class="card-sub steps" id="archiveNowOff">{{.ArchiveNowOff}}</p>{{else}}<p class="card-sub">Fetch the latest mail into your archive. The first time, you sign in with a Microsoft device code shown here.</p>
+      {{if .ArchiveNowOff}}<p class="card-sub steps" id="archiveNowOff">{{.ArchiveNowOff}}</p>{{else}}<p class="card-sub">Fetch the latest mail into your archive. The first time, you sign in with a Microsoft device code shown here.</p>
       <button class="btn" id="archiveBtn">Archive now</button>{{end}}
       {{if .ReaderURL}}<a class="btn secondary" href="{{.ReaderURL}}" target="_blank" rel="noopener">Open archive</a> <a class="btn secondary" href="{{.ReaderURL}}goback" target="_blank" rel="noopener">Go back in time</a>{{end}}
       <button class="btn secondary" id="anotherBrowser" type="button">Use another browser…</button>
@@ -1350,6 +1368,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <h2>Settings</h2>
       <label for="outDir">Archive location</label>
       <input id="outDir" value="{{.OutDir}}" placeholder="e.g. C:\MailArchive, a mapped drive, or a UNC path" spellcheck="false">
+      {{if .SwitchLocks}}<p class="card-sub warn" id="switchLocksSettings">{{template "switchLocks" .}}</p>{{end}}
       <label class="checkline"><input type="checkbox" id="keepRaw"{{if .KeepRaw}} checked{{end}}> Keep each message's original .eml too</label>
       <label class="checkline"><input type="checkbox" id="incDeleted"{{if .IncludeDeleted}} checked{{end}}> Include Deleted Items</label>
       <label class="checkline"><input type="checkbox" id="incJunk"{{if .IncludeJunk}} checked{{end}}> Include Junk Email</label>
@@ -1371,8 +1390,8 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
         <label for="encCreatePw">Password for the new archive</label> <input type="password" id="encCreatePw" autocomplete="new-password" spellcheck="false">
         <label for="encCreatePw2">Type it again</label> <input type="password" id="encCreatePw2" autocomplete="new-password" spellcheck="false">
         <label class="small"><input type="checkbox" id="encCreateRemember" checked> Remember the key on this computer — backups and opening it here then need no password, for anyone using this computer's account</label>
-        <label class="small"><input type="checkbox" id="encCreateProgram" checked> Keep a copy of MailArchive for Mac, Windows and Linux in the archive so it can be opened years from now (about 134 MB each time a new version updates it)</label>
-        <button class="btn" type="button" id="encCreateKeyBtn">Make its key</button>
+        <label class="small"><input type="checkbox" id="encCreateProgram" checked> {{.ProgramCopiesLabel}}</label>
+        <button class="btn" type="button" id="encCreateKeyBtn">Continue — show the recovery key</button>
       </div>
       <div id="encNewKeyBox" hidden>
         <p class="card-sub">Your new recovery key:</p>
@@ -1397,7 +1416,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       {{if .EncPauseNote}}<p class="card-sub" id="encPauseNote">Paused: {{.EncPauseNote}}</p>{{end}}
       {{range .EncWarnings}}<p class="card-sub warn">{{.}}</p>{{end}}
       {{if .EncProgram}}<p class="card-sub" id="encProgram">{{.EncProgram}}</p>{{end}}
-      {{if .EncProgramOffer}}<label class="small"><input type="checkbox" id="encProgramCopies"{{if .EncProgramOn}} checked{{end}}> Keep a copy of MailArchive for Mac, Windows and Linux in the archive so it can be opened years from now (about 134 MB each time a new version updates it)</label>{{end}}
+      {{if .EncProgramOffer}}<label class="small"><input type="checkbox" id="encProgramCopies"{{if .EncProgramOn}} checked{{end}}> {{.ProgramCopiesLabel}}</label>{{end}}
       <button class="btn secondary" type="button" id="encLock" title="Close this archive: its messages are unreadable again until it is unlocked.">Lock</button>
       <button class="btn secondary" type="button" id="encCopy" title="Make a readable copy of this archive in a new folder you choose — the way out of encryption. The archive itself is not changed.">Make an unencrypted copy…</button>
       <details class="small" id="encKeys"><summary>Change the password, make a new recovery key, or change whether this computer remembers the key</summary>
@@ -1431,7 +1450,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
 
     <div class="card" id="sec-backup">
       <h2>Weekly backup</h2>
-      {{if .Encrypted}}<p class="card-sub" id="backupEncrypted">Scheduled backups of an encrypted archive aren't available yet: a backup into it needs its password, so it runs only while you are here to give it.{{if .EncRunNow}}{{if not .EncUnlocked}} Unlock it on its Encryption card, then click Run now.{{end}}{{else}} An archive made at the command line is backed up there (mailarchive at a terminal).{{end}}</p>{{end}}
+      {{if .Encrypted}}<p class="card-sub" id="backupEncrypted">Scheduled backups of an encrypted archive aren't available yet: a backup into it needs its password, so it runs only while you are here to give it.{{if .EncRunNow}}{{if not .EncUnlocked}} Unlock it on its Encryption card, then click Run now.{{end}}{{else}} {{.EncBackupHow}}{{end}}</p>{{end}}
       {{if .ShowBackupOff}}<p class="card-sub steps" id="backupOff">A scheduled backup isn't set up here for this archive. To keep this local-files archive current on a schedule, set one up in the MailArchive wizard (mailarchive wizard) — answer "Keep this archive current?" at the end — or run the mailarchive schedule command that Status &amp; health prints for this archive.</p>{{else}}
       {{if .HasSchedule}}<p class="card-sub" id="schedKind">This archive's scheduled backup: {{.ScheduleKind}}.</p>{{end}}
       {{if .ShowInstall}}<p class="card-sub">Run a capture automatically on a schedule. It runs even when this app is closed (as long as you stay signed in to your computer), using your saved Microsoft sign-in.</p>{{end}}
@@ -1449,7 +1468,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       <div class="note" id="schedState" hidden></div>{{end}}
     </div>
 
-    <div class="card" id="sec-alerts">
+    {{if not .Encrypted}}<div class="card" id="sec-alerts">
       <h2>Backup alerts</h2>
       <p class="card-sub">Email someone when a scheduled backup fails, so a broken backup never goes unnoticed. MailArchive sends the mail itself over SMTP — there is no script to install.</p>
       <div><label><input type="checkbox" id="alertEnabled"{{if .AlertEnabled}} checked{{end}}> <b>Send backup alerts by email</b></label></div>
@@ -1476,7 +1495,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
         <p><b>Gmail:</b> turn on 2-step verification, create an App Password, and paste it here. Server smtp.gmail.com, port 587, STARTTLS.</p>
         <p><b>Other (standard SMTP):</b> your own mail server — fill in its address, port and security. Leave the username blank if it accepts mail from this computer without a sign-in.</p>
       </details>
-    </div>
+    </div>{{end}}
 
     <div class="card" id="sec-history">
       <h2>Recent backups</h2>
@@ -1534,7 +1553,8 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
 <script src="dashboard.js"></script>
 <script src="encryption.js"></script>
 {{if .Export}}<script src="signin.js"></script>{{end}}
-</body></html>`))
+</body></html>
+{{- define "switchLocks"}}Switching to another archive locks {{.SwitchLocks}}.{{if .EncRemembered}} This computer remembers its key, so it opens again by itself when you switch back.{{else}} When you switch back, unlock it again on its Encryption card.{{end}}{{end}}`))
 
 // dashboardJS wires the action buttons (clear sign-in, settings, archive-now with
 // device-code + activity polling). Served at /dashboard.js so it runs under

@@ -90,7 +90,7 @@ func (d *dashboard) requireOut() (string, bool) {
 // (read-only integrity check, R20). Loopback-only, CSRF-guarded; runs as a job.
 func (d *dashboard) verifyAction(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost || !server.GuardLocalPOST(r, d.csrf) {
-		http.Error(w, "refused", http.StatusForbidden)
+		http.Error(w, csrfRefused, http.StatusForbidden)
 		return
 	}
 	out, ok := d.requireOut()
@@ -116,7 +116,7 @@ func (d *dashboard) verifyAction(w http.ResponseWriter, r *http.Request) {
 // itself — recovery for a lost/corrupt index (renames into place on success, R8).
 func (d *dashboard) rebuildAction(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost || !server.GuardLocalPOST(r, d.csrf) {
-		http.Error(w, "refused", http.StatusForbidden)
+		http.Error(w, csrfRefused, http.StatusForbidden)
 		return
 	}
 	out, ok := d.requireOut()
@@ -196,7 +196,7 @@ func (d *dashboard) healthAction(w http.ResponseWriter, r *http.Request) {
 	rep := health.Assess(in, time.Now())
 	summary := health.Summary(in, rep)
 	if d.cfg.localOnly() {
-		summary = append(summary, newMailLine(d.cfg.goos(), out))
+		summary = append(summary, d.cfg.newMailLineFor(out))
 	}
 	reply := map[string]any{"posture": rep.Posture, "summary": summary}
 	if actions := recordActions(out); len(actions) > 0 { // only when there is any (the P3-3 plan, 3b)

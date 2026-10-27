@@ -46,7 +46,9 @@ func TestMA694_RunBackupNow(t *testing.T) {
 	req.Header.Set("X-CSRF-Token", d.csrf)
 	rec := httptest.NewRecorder()
 	d.runBackup(rec, req)
-	if !strings.Contains(rec.Body.String(), `"ok":false`) || !strings.Contains(rec.Body.String(), "no run-job backup") {
+	// In plain words, naming what to use instead (P3-8: no "run-job" jargon).
+	if !strings.Contains(rec.Body.String(), `"ok":false`) || !strings.Contains(rec.Body.String(), "Run now has nothing to run") ||
+		!strings.Contains(rec.Body.String(), "Archive now") || strings.Contains(rec.Body.String(), "run-job") {
 		t.Fatalf("run-backup on an archive with no run-job must refuse, got %s", rec.Body.String())
 	}
 }

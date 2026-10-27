@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"html"
 	"io/fs"
 	"net/http"
 	"strings"
@@ -61,8 +62,62 @@ func SealedFiles(open SealedOpen, lockedNote func() string, writeTimeout time.Du
 			return
 		}
 		defer release()
+		data = withDownloadLine(segs[len(segs)-1], data)
 		http.ServeContent(progressWriter{w, http.NewResponseController(w), writeTimeout}, r, segs[len(segs)-1], time.Time{}, bytes.NewReader(data))
 	}))
+}
+
+// DownloadNotEncrypted is K9's line (design-encrypted-archives-phase3 K9): what a
+// reader of an encrypted archive is told beside a download — an attachment zip or an
+// original .eml leaves the archive as a plain file (P3-8, B8).
+const DownloadNotEncrypted = "A downloaded file is not encrypted: it is an ordinary copy on this computer."
+
+// withDownloadLine is a page of an encrypted archive with K9's line where it offers a
+// download. A message page gets it beside each of its own download links — the
+// attachment zip and the original .eml the page sits beside, as the export writes them
+// (internal/export: base.html, base-attachments.zip, base.eml, each href HTML-escaped).
+// A folder page that lists attachment zips (internal/pages' paperclip column) gets it
+// once, above its list. Any other file is returned as it is. The line is fixed text of
+// ours; a mail that spells the same link only gets the line beside it too.
+func withDownloadLine(leaf string, data []byte) []byte {
+	base, ok := strings.CutSuffix(leaf, ".html")
+	if !ok {
+		return data
+	}
+	page := string(data)
+	if base == "index" || isFolderPageName(leaf) {
+		// Everything before the list is the page's own markup: the folder's name in it is
+		// escaped, so it cannot spell the wrap div.
+		const zipCell, wrap = `title="attachments">📎</a>`, `<div class="wrap">`
+		i := strings.Index(page, wrap)
+		if i < 0 || !strings.Contains(page, zipCell) {
+			return data
+		}
+		i += len(wrap)
+		return []byte(page[:i] + `<p class="muted mailarchive-k9">` + DownloadNotEncrypted + `</p>` + page[i:])
+	}
+	note := ` <span class="mailarchive-k9">(` + DownloadNotEncrypted + `)</span>`
+	changed := false
+	for _, link := range []string{
+		`<a href="` + html.EscapeString(base+"-attachments.zip") + `">download zip</a>`,
+		`<a href="` + html.EscapeString(base+".eml") + `">Original message (.eml)</a>`,
+	} {
+		if strings.Contains(page, link) {
+			page = strings.ReplaceAll(page, link, link+note)
+			changed = true
+		}
+	}
+	if !changed {
+		return data
+	}
+	return []byte(page)
+}
+
+// isFolderPageName reports a folder page's own name, index-N.html: a page of links,
+// never a message's.
+func isFolderPageName(leaf string) bool {
+	n, ok := strings.CutPrefix(strings.TrimSuffix(leaf, ".html"), "index-")
+	return ok && n != "" && strings.Trim(n, "0123456789") == ""
 }
 
 // sealedError answers a sealed open that failed, in its own words: the locked

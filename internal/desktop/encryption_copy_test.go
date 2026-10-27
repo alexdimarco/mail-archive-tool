@@ -46,7 +46,7 @@ func TestTheCardMakesAnUnencryptedCopy(t *testing.T) {
 	}
 	e.post(t, "api/encryption/lock", nil) // after the click: the copy goes on
 	res, errText := waitIdle(t, e)
-	if errText != "" || !strings.Contains(res, "Unencrypted copy made at") || !strings.Contains(res, "1 of 1 messages") {
+	if errText != "" || !strings.Contains(res, "Unencrypted copy made at") || !strings.Contains(res, "1 of 1 message copied") { // P3-8: not "1 messages"
 		t.Fatalf("the copy: %q %q", res, errText)
 	}
 	entries, _ = os.ReadDir(parent)

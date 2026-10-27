@@ -1,5 +1,7 @@
 package server
 
+import "strings"
+
 // pageHTML is the single-page search + reader UI (inline CSS; its script is
 // served separately at /app.js so the page runs under script-src 'self'). It
 // talks to /api/search, /api/facets, and /files/.
@@ -54,12 +56,24 @@ button:disabled{opacity:.45;cursor:default}
   </div>
 </div>
 <div class="main">
+  <!--k9-->
   <div class="meta" id="meta"></div>
   <div id="results"></div>
   <div class="pager"><button id="prev">‹ Prev</button><button id="next">Next ›</button></div>
 </div>
 <script src="app.js"></script>
 </body></html>`
+
+// readerPage is the search page for src: an encrypted archive's carries K9's line,
+// since its results offer attachment zips to download (P3-8, B8); a plaintext
+// folder's is today's page.
+func readerPage(src Source) string {
+	line := ""
+	if _, plain := src.(folder); !plain {
+		line = `<div class="meta" id="k9">` + DownloadNotEncrypted + `</div>`
+	}
+	return strings.Replace(pageHTML, "<!--k9-->", line, 1)
+}
 
 // appJS is the UI script, served at /app.js.
 const appJS = `const $=s=>document.querySelector(s);

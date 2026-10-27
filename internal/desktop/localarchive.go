@@ -7,6 +7,7 @@ import (
 
 	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/job"
+	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/thunderbird"
 )
@@ -84,12 +85,68 @@ func kindLine(kind string) string {
 // localOnly is whether Archive now and the weekly backup cannot apply: the archive has only local
 // mail and Microsoft 365 was never set up here. A Microsoft 365, mixed or empty archive, or one
 // with a Microsoft 365 setup, keeps them (the owner may be about to add a mailbox).
+//
+// An encrypted archive's sources are sealed, so its kind is read from what this computer
+// holds: a backup job set up here for it reads local mail files only (job.Job has no
+// Microsoft 365 source), so such an archive is local whatever else is set up; with no job,
+// it is local when Microsoft 365 was never set up here, as a plaintext one is (P3-8, B25).
 func (cfg Config) localOnly() bool {
-	if archiveKind(cfg.effectiveOut()) != kindLocal {
+	out := cfg.effectiveOut()
+	switch archiveKind(out) {
+	case kindLocal:
+	case kindEncrypted:
+		if encryptedRunJob(out) {
+			return true
+		}
+	default:
 		return false
 	}
 	c := cfg.load()
 	return c == nil || strings.TrimSpace(c.Tenant) == ""
+}
+
+// encryptedRunJob reports that a backup job was set up on this computer for the encrypted
+// archive at out — what Run now repeats (the P3-3 plan, 3d) — read from owner-side state
+// only, never from the archive.
+func encryptedRunJob(out string) bool {
+	return schedule.BuildKindEvidence(out).Has(schedule.KindRunJob)
+}
+
+// encBackupHow is how new mail is added to the encrypted archive at out, in plain words:
+// with Run now when a backup job was set up here for it, otherwise at a terminal with the
+// exact command — an archive made at the command line is backed up there (P3-8, B26).
+func encBackupHow(goos, out string, runNow bool) string {
+	if runNow {
+		return "To add new mail, unlock it on its Encryption card, then click Run now on the Weekly backup card."
+	}
+	cmd := shellJoin(AddMailArgv("<the mail folder or file it was made from>", out), goos)
+	return "It was made at the command line, so it is backed up there. To add new mail, type this in a terminal: " + cmd +
+		" — it asks for the archive's password, then adds only what is new."
+}
+
+// archiveNowOffLine is the line shown in place of the Archive now button, "" when the button
+// applies: a local-only archive's steps, or for any encrypted archive why Archive now cannot
+// fill it from here and how it is backed up instead — Archive now never captures into an
+// encrypted archive (app.RefuseKeyless), whatever it was made from (P3-8, B25).
+func (cfg Config) archiveNowOffLine() string {
+	out := cfg.effectiveOut()
+	if archiveKind(out) == kindEncrypted {
+		return "Archive now is off for this archive: it fetches mail from Microsoft 365 into an archive that is not encrypted, and this one is encrypted. " +
+			encBackupHow(cfg.goos(), out, encryptedRunJob(out))
+	}
+	if cfg.localOnly() {
+		return archiveNowOff(cfg.goos(), out)
+	}
+	return ""
+}
+
+// newMailLineFor is the Status & health line that says where new mail comes from, for a
+// local-only archive; an encrypted one is told how it is backed up (P3-8, B25).
+func (cfg Config) newMailLineFor(out string) string {
+	if archiveKind(out) == kindEncrypted {
+		return "New mail: MailArchive Desktop does not fetch Microsoft 365 mail into an encrypted archive. " + encBackupHow(cfg.goos(), out, encryptedRunJob(out))
+	}
+	return newMailLine(cfg.goos(), out)
 }
 
 // AddMailArgv is the command line that adds new mail from a Thunderbird (or any mbox / maildir)

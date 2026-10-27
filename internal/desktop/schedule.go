@@ -119,7 +119,7 @@ func saveScheduleChoice(path, interval, at string) error {
 // scheduleInstall installs/updates the weekly backup (loopback-only, CSRF-guarded).
 func (d *dashboard) scheduleInstall(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost || !server.GuardLocalPOST(r, d.csrf) {
-		http.Error(w, "refused", http.StatusForbidden)
+		http.Error(w, csrfRefused, http.StatusForbidden)
 		return
 	}
 	out := d.cfg.effectiveOut()
@@ -228,7 +228,7 @@ func (d *dashboard) repairRunJob(w http.ResponseWriter, out string) {
 // scheduleRemove removes the weekly backup (loopback-only, CSRF-guarded).
 func (d *dashboard) scheduleRemove(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost || !server.GuardLocalPOST(r, d.csrf) {
-		http.Error(w, "refused", http.StatusForbidden)
+		http.Error(w, csrfRefused, http.StatusForbidden)
 		return
 	}
 	if _, err := d.cfg.backupSpec(); err != nil {
@@ -326,13 +326,13 @@ func (d *dashboard) runBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !server.GuardLocalPOST(r, d.csrf) {
-		http.Error(w, "refused: same-origin, tokened, local requests only", http.StatusForbidden)
+		http.Error(w, csrfRefused, http.StatusForbidden)
 		return
 	}
 	out := d.cfg.effectiveOut()
 	ev := schedule.BuildKindEvidence(out)
 	if !ev.Has(schedule.KindRunJob) || ev.JobPath == "" {
-		writeJSON(w, map[string]any{"ok": false, "error": "this archive has no run-job backup to run here"})
+		writeJSON(w, map[string]any{"ok": false, "error": noRunNowText(d.cfg.goos(), out)})
 		return
 	}
 	jobPath := ev.JobPath
@@ -381,16 +381,37 @@ func (d *dashboard) runBackupKeyed(w http.ResponseWriter, out, jobPath string) {
 				logger.Printf("The damaged copy of this archive's key file was rewritten from the good one.")
 			}
 		}
-		return wizard.RunJobInProcessKeyed(j.ctx, jobPath, logger, func(o *app.Options) (func(), error) {
+		res, err := wizard.RunJobInProcessKeyed(j.ctx, jobPath, logger, func(o *app.Options) (func(), error) {
 			o.ProgramSkip, o.OnProgramWait, o.ProgramDownload = j.skip, j.onWait, d.life.Context()
 			return keyring.Apply(o, lease)
 		})
+		return runNowResultHere(res), err
 	}); err != nil {
 		lease.Destroy() // the run never started: its key goes now
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true})
+}
+
+// noRunNowText is Run now's refusal for an archive with no backup set up on this
+// computer for it to repeat, in plain words with what to do instead: an encrypted
+// archive made at the command line is backed up there, by the exact command (P3-8, B26).
+func noRunNowText(goos, out string) string {
+	if archiveKind(out) == kindEncrypted {
+		return "Run now has nothing to run: no backup was set up on this computer for this encrypted archive. " + encBackupHow(goos, out, false)
+	}
+	return "Run now has nothing to run: no backup was set up on this computer for this archive. A Microsoft 365 archive is brought up to date with Archive now; an archive of local mail files with its scheduled backup, set up on this card or in the MailArchive wizard (mailarchive wizard)."
+}
+
+// wizardReadThem is how the wizard's keyed run ends its result, for someone outside
+// MailArchive Desktop; runNowResultHere says it to someone already in it (P3-8, Tier C).
+const wizardReadThem = "; open it in MailArchive Desktop to read them."
+
+// runNowResultHere is a keyed Run now's result as Desktop shows it: the messages are read
+// here, with Open archive, while the archive is unlocked.
+func runNowResultHere(res string) string {
+	return strings.Replace(res, wizardReadThem, "; read them here with Open archive while it is unlocked.", 1)
 }
 
 // scheduleState reports the weekly-backup posture for the UI (GET; no side effect).

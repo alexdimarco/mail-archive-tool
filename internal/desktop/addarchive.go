@@ -28,7 +28,7 @@ func (d *dashboard) addArchive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !server.GuardLocalPOST(r, d.csrf) {
-		http.Error(w, "refused: same-origin, tokened, local requests only", http.StatusForbidden)
+		http.Error(w, csrfRefused, http.StatusForbidden)
 		return
 	}
 	if !d.addBusy.CompareAndSwap(false, true) {

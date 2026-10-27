@@ -44,7 +44,7 @@ func (d *dashboard) saveAlertSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !server.GuardLocalPOST(r, d.csrf) {
-		http.Error(w, "refused: same-origin, tokened, local requests only", http.StatusForbidden)
+		http.Error(w, csrfRefused, http.StatusForbidden)
 		return
 	}
 	var in struct {
@@ -108,7 +108,7 @@ func (d *dashboard) alertTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !server.GuardLocalPOST(r, d.csrf) {
-		http.Error(w, "refused: same-origin, tokened, local requests only", http.StatusForbidden)
+		http.Error(w, csrfRefused, http.StatusForbidden)
 		return
 	}
 	if err := backupalert.SendTest(d.cfg.SettingsPath, d.cfg.Store, d.cfg.effectiveOut(), nil); err != nil {

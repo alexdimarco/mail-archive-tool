@@ -115,10 +115,7 @@ func (d *dashboard) copyStartAction(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return "", spokenErr(copyFailureText(plan, rep, err))
 		}
-		msg := fmt.Sprintf("Unencrypted copy made at %s: %d of %d messages copied.", rep.Dest, rep.Copied, rep.Messages)
-		if rep.Skipped > 0 {
-			msg += fmt.Sprintf(" %d were left out — each is listed, with why, in %s inside the copy.", rep.Skipped, app.CopyProblemsName)
-		}
+		msg := copiedLine(rep.Dest, rep.Copied, rep.Messages, rep.Skipped)
 		if rep.HistoryLost > 0 || rep.HistoryGap {
 			msg += " Part of the archive's go-back timeline could not be read, so the copy's go-back view is partial too."
 		}
@@ -135,6 +132,24 @@ func (d *dashboard) copyStartAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true})
+}
+
+// copiedLine is a finished copy's first line, its counts in plain English: "1 of 1
+// message", "1 was left out" (P3-8, Tier C).
+func copiedLine(dest string, copied, total, skipped int) string {
+	noun := "messages"
+	if total == 1 {
+		noun = "message"
+	}
+	msg := fmt.Sprintf("Unencrypted copy made at %s: %d of %d %s copied.", dest, copied, total, noun)
+	if skipped > 0 {
+		verb := "were"
+		if skipped == 1 {
+			verb = "was"
+		}
+		msg += fmt.Sprintf(" %d %s left out — each is listed, with why, in %s inside the copy.", skipped, verb, app.CopyProblemsName)
+	}
+	return msg
 }
 
 // decryptCopy makes the copy; tests hold it open (fault injection) to drive Lock and

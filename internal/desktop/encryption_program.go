@@ -4,6 +4,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"runtime/debug"
 	"time"
 
 	"mail-archive-tool/internal/app"
@@ -43,6 +44,34 @@ func (d *dashboard) programCopiesAction(w http.ResponseWriter, r *http.Request) 
 		line = "Copies of MailArchive are no longer kept: any in this archive are removed at its next backup."
 	}
 	writeJSON(w, map[string]any{"ok": true, "lines": []string{line}})
+}
+
+// releaseBuild reports whether this program is a release build: an exact
+// vMAJOR.MINOR.PATCH from a clean checkout, the test the program copies use (internal/app's
+// programIdentity, C12). Only a release keeps copies for every platform; a development
+// build keeps only itself. A var, so a test can be either.
+var releaseBuild = func() bool {
+	bi, ok := debug.ReadBuildInfo()
+	if !ok {
+		return false
+	}
+	modified := true
+	for _, s := range bi.Settings {
+		if s.Key == "vcs.modified" {
+			modified = s.Value != "false"
+		}
+	}
+	return container.ExactVersion(bi.Main.Version) && !modified
+}
+
+// programCopiesLabel is the words of the checkbox that keeps copies of MailArchive in an
+// encrypted archive: what this build will keep, never a release's promise from a
+// development build (P3-8, Tier C).
+func programCopiesLabel(release bool) string {
+	if release {
+		return "Keep a copy of MailArchive for Mac, Windows and Linux in the archive so it can be opened years from now (about 134 MB each time a new version updates it)"
+	}
+	return "Keep a copy of this program in the archive so it can be opened years from now. This is a development build of MailArchive: it keeps only a copy of itself, for this kind of computer — not the copies for Mac, Windows and Linux a release keeps"
 }
 
 // programCardLine is what the card says of the copies the sealed set keeps, whether

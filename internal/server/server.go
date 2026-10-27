@@ -30,6 +30,7 @@ func New(outDir string, ix *index.Index) http.Handler { return Serve(Folder(outD
 func Serve(src Source) http.Handler {
 	mux := localweb.NewMux()
 
+	page := []byte(readerPage(src))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
@@ -40,7 +41,7 @@ func Serve(src Source) http.Handler {
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write([]byte(pageHTML))
+		w.Write(page)
 	})
 	// The UI's script is a same-origin file, never inline, so the UI can run
 	// under script-src 'self' (R19).

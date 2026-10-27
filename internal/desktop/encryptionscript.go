@@ -77,7 +77,7 @@ if(lk)lk.addEventListener('click',async()=>{
 async function change(path,body){
   let d=await send(path,body);
   for(let i=0;i<2&&d&&!d.ok&&d.confirm;i++){
-    if(!confirm(d.error))return{ok:false,error:'Nothing was changed.'};
+    if(!confirm(d.question||d.error))return{ok:false,error:'Nothing was changed.'};
     if(d.confirm==='rerecord')body.reRecord=true;else body.confirm=true;
     d=await send(path,body);
   }

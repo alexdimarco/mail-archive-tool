@@ -186,7 +186,7 @@ func (d *dashboard) capture(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !server.GuardLocalPOST(r, d.csrf) {
-		http.Error(w, "refused: same-origin, tokened, local requests only", http.StatusForbidden)
+		http.Error(w, csrfRefused, http.StatusForbidden)
 		return
 	}
 	if err := d.startCapture(); err != nil {
@@ -210,8 +210,8 @@ func (d *dashboard) activity(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *dashboard) startCapture() error {
-	if d.cfg.localOnly() { // the page shows no button; a direct request is told the same, with the steps
-		return errors.New(archiveNowOff(d.cfg.goos(), d.cfg.effectiveOut()))
+	if off := d.cfg.archiveNowOffLine(); off != "" { // the page shows no button; a direct request is told the same, with the steps
+		return errors.New(off)
 	}
 	cfg := d.cfg.load()
 	if cfg == nil || strings.TrimSpace(cfg.Tenant) == "" || strings.TrimSpace(cfg.ClientID) == "" {

@@ -57,7 +57,8 @@ func askFirst(w http.ResponseWriter, e *keyEntry, confirmed bool, what string) b
 	if confirmed {
 		return false
 	}
-	writeJSON(w, map[string]any{"ok": false, "confirm": "keychange", "error": keyring.KeyChangeQuestion(e.u.How(), true, what)})
+	// A question, not an error: it travels in its own field (P3-8, Tier C).
+	writeJSON(w, map[string]any{"ok": false, "confirm": "keychange", "question": keyring.KeyChangeQuestion(e.u.How(), true, what)})
 	return true
 }
 

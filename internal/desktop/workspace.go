@@ -123,7 +123,7 @@ func (d *dashboard) api(h func(w http.ResponseWriter, r *http.Request)) http.Han
 				writeJSONStatus(w, ref.Status, ref.body())
 				return
 			}
-			writeJSONStatus(w, http.StatusForbidden, map[string]any{"ok": false, "error": "refused: same-origin, tokened, local requests only"})
+			writeJSONStatus(w, http.StatusForbidden, map[string]any{"ok": false, "error": csrfRefused})
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, maxBody)
