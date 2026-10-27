@@ -37,9 +37,14 @@ func TestMain(m *testing.M) {
 	// Never let an in-process test read or remove the developer's downloaded program
 	// copies (program design R22).
 	progcache.UseTestRoot(filepath.Join(recordDir, "program-cache"))
+	// A small self-copy, not the test binary; on Windows named mailarchive.exe, the
+	// console program a self-copy is made from there.
 	stand := filepath.Join(recordDir, "mailarchive-test-program")
+	if runtime.GOOS == "windows" {
+		stand = filepath.Join(recordDir, "mailarchive.exe")
+	}
 	os.WriteFile(stand, []byte("#!/bin/sh\necho mailarchive test program\n"), 0o755)
-	app.UseTestProgram(stand) // a small self-copy, not the test binary
+	app.UseTestProgram(stand)
 	cliHome = filepath.Join(recordDir, "home")
 	if err := os.MkdirAll(cliHome, 0o700); err != nil {
 		panic(err)

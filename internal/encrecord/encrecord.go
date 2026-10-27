@@ -149,11 +149,10 @@ type UnusableError struct {
 func (e *UnusableError) Error() string {
 	switch e.Case {
 	case CasePermissions:
-		fix := "chmod 600 " + e.Path
 		if runtime.GOOS == "windows" {
-			fix = `icacls "` + e.Path + `" /inheritance:r /grant:r "%USERNAME%:F"`
+			return windowsOwnerRefusal(e.Path, e.Err)
 		}
-		return fmt.Sprintf("this computer's record of encrypted archives (%s) can be read by other users or is not yours — run `%s`", e.Path, fix)
+		return fmt.Sprintf("this computer's record of encrypted archives (%s) can be read by other users or is not yours — run `chmod 600 %s`", e.Path, e.Path)
 	case CaseNewer:
 		return fmt.Sprintf("this computer's record of encrypted archives (%s) was written by a newer MailArchive — upgrade MailArchive", e.Path)
 	case CaseUnreadable:
@@ -164,6 +163,83 @@ func (e *UnusableError) Error() string {
 }
 
 func (e *UnusableError) Unwrap() error { return e.Err }
+
+// accountName is the DOMAIN\name of the Windows account a SID names, or "" when it
+// cannot be looked up (always "" off Windows); a var so a test can name accounts.
+var accountName = lookupAccountName
+
+// windowsOwnerRefusal is the Windows refusal of a record copy another account owns
+// (the only permission Windows checks here): it names the owner and this account by
+// name, and gives the icacls commands that end the refusal when run as printed in a
+// Command Prompt or PowerShell — /setowner to this account, for this copy and for
+// the other copy when another account owns it too, so fixing one never meets a second
+// refusal. The account is spelled out, never "%USERNAME%", which PowerShell does not
+// expand (the P3-8 Windows lab, B11; the secret file's refusal does the same).
+func windowsOwnerRefusal(path string, err error) string {
+	head := fmt.Sprintf("this computer's record of encrypted archives (%s)", path)
+	type copyOwner struct{ path, owner string }
+	var foreign []copyOwner
+	var me string
+	paths := []string{path}
+	switch filepath.Base(path) {
+	case FileName:
+		paths = append(paths, filepath.Join(filepath.Dir(path), MirrorName))
+	case MirrorName:
+		paths = append(paths, filepath.Join(filepath.Dir(path), FileName))
+	}
+	for i, p := range paths {
+		owner, accounts, rerr := instance.OwnerReader(p)
+		if rerr != nil || len(accounts) == 0 {
+			if i == 0 {
+				why := err
+				if rerr != nil {
+					why = rerr
+				}
+				return fmt.Sprintf("%s cannot be checked: MailArchive cannot tell who owns it (%v). Make sure the file is yours and that you can read it, then try again", head, why)
+			}
+			continue
+		}
+		me = accounts[0]
+		mine := false
+		for _, a := range accounts {
+			mine = mine || owner == a
+		}
+		if !mine || i == 0 {
+			foreign = append(foreign, copyOwner{p, owner})
+		}
+	}
+	shown := func(sid string) string {
+		if n := accountName(sid); n != "" {
+			return n
+		}
+		return "an account with no name here (" + sid + ")"
+	}
+	arg := func(sid string) string {
+		if n := accountName(sid); n != "" {
+			return n
+		}
+		return "*" + sid
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s is not yours: it is owned by %s, and you are %s", head, shown(foreign[0].owner), shown(me))
+	for _, c := range foreign[1:] {
+		fmt.Fprintf(&b, "; its other copy (%s) is owned by %s", c.path, shown(c.owner))
+	}
+	if len(foreign) == 1 {
+		b.WriteString(". To make it yours, run this in a Command Prompt or PowerShell, then try again:")
+	} else {
+		b.WriteString(". To make them yours, run these in a Command Prompt or PowerShell, one after the other, then try again:")
+	}
+	for _, c := range foreign {
+		fmt.Fprintf(&b, "\n  icacls \"%s\" /setowner \"%s\"", c.path, arg(me))
+	}
+	them := "it"
+	if len(foreign) > 1 {
+		them = "them"
+	}
+	b.WriteString("\nIf Windows answers \"Access is denied\", run " + them + " in a window opened with \"Run as administrator\".")
+	return b.String()
+}
 
 // ErrTooLarge refuses a change that would take the record past MaxBytes.
 var ErrTooLarge = errors.New("this computer's record of encrypted archives would be larger than its limit")

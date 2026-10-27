@@ -3,6 +3,7 @@ package desktop
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"mail-archive-tool/internal/alert"
@@ -31,8 +32,12 @@ func TestMain(m *testing.M) {
 	// Before HOME moves, so the real program cache is the one guarded (R22).
 	cacheDone := progcache.UseTestRoot(filepath.Join(home, "program-cache"))
 	// A small file stands in for this program, so a new archive's self-copy is not the
-	// whole test binary.
+	// whole test binary. On Windows it is named mailarchive.exe, the console program a
+	// self-copy is made from there.
 	stand := filepath.Join(home, "mailarchive-test-program")
+	if runtime.GOOS == "windows" {
+		stand = filepath.Join(home, "mailarchive.exe")
+	}
 	os.WriteFile(stand, []byte("#!/bin/sh\necho mailarchive test program\n"), 0o755)
 	app.UseTestProgram(stand)
 	for _, v := range []string{"HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "AppData", "LOCALAPPDATA"} {

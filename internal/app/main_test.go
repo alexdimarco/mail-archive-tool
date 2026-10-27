@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"mail-archive-tool/internal/encrecord"
@@ -29,9 +30,10 @@ func TestMain(m *testing.M) {
 	knownArchives = func() []string { return nil }
 	// The program copies (program design R22): a throwaway cache, checked untouched at
 	// the end, and a small file standing in for this program, so a test's self-copy is
-	// not the whole test binary.
+	// not the whole test binary. On Windows it is named mailarchive.exe, the console
+	// program a self-copy is made from there (selfSource).
 	cacheDone := progcache.UseTestRoot(filepath.Join(root, "program-cache"))
-	stand := filepath.Join(root, "mailarchive-test-program")
+	stand := filepath.Join(root, testProgramName())
 	os.WriteFile(stand, []byte("#!/bin/sh\necho mailarchive test program\n"), 0o755)
 	standFI, _ := os.Stat(stand)
 	selfExecutable = func() (string, os.FileInfo) { return stand, standFI }
@@ -44,4 +46,14 @@ func TestMain(m *testing.M) {
 	}
 	os.RemoveAll(root)
 	os.Exit(code)
+}
+
+// testProgramName is the name of the file standing in for this program: on Windows
+// mailarchive.exe, since a self-copy there is made only from the console program of
+// that name (the P3-8 Windows lab), else a name no real program has.
+func testProgramName() string {
+	if runtime.GOOS == "windows" {
+		return "mailarchive.exe"
+	}
+	return "mailarchive-test-program"
 }

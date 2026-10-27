@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 )
 
 // MaxSecret bounds a typed secret, as it bounds a secret file
@@ -38,22 +39,53 @@ func ReadLine(in *os.File, out io.Writer, prompt string) (string, error) {
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sigs)
+	return askLine(in, out, prompt, sigs)
+}
+
+// askLine prints prompt to out and reads the answer from in, unless a signal on sigs
+// ends the prompt first (*ErrInterrupted). On Windows Ctrl-C ends the console read
+// as if the input had run out, so a read that ended with nothing typed waits
+// interruptGrace for it, as the hidden prompt does (the P3-8 Windows lab, B10).
+func askLine(in io.Reader, out io.Writer, prompt string, sigs <-chan os.Signal) (string, error) {
 	fmt.Fprint(out, prompt)
-	type line struct {
-		b   []byte
-		err error
-	}
-	lines := make(chan line, 1)
+	lines := make(chan readResult, 1)
 	go func() {
 		b, err := readLine(in)
-		lines <- line{b, err}
+		lines <- readResult{b, err}
 	}()
+	b, err := awaitLine(lines, sigs, interruptGrace)
+	var ie *ErrInterrupted
+	if errors.As(err, &ie) {
+		fmt.Fprintln(out)
+	}
+	return string(b), err
+}
+
+// readResult is what a read of the terminal gave: the line, or why there is none.
+type readResult struct {
+	b   []byte
+	err error
+}
+
+// awaitLine waits for the read or an interrupt, whichever ends the prompt. Where
+// grace is more than zero (Windows), a read that ended with nothing typed is held for
+// up to grace in case Ctrl-C ended it, so the interrupt is told as one
+// (*ErrInterrupted) rather than as input that ran out.
+func awaitLine(lines <-chan readResult, sigs <-chan os.Signal, grace time.Duration) ([]byte, error) {
 	select {
 	case l := <-lines:
-		return string(l.b), l.err
+		if grace > 0 && l.b == nil && errors.Is(l.err, io.EOF) {
+			t := time.NewTimer(grace)
+			defer t.Stop()
+			select {
+			case s := <-sigs:
+				return nil, &ErrInterrupted{Signal: s}
+			case <-t.C:
+			}
+		}
+		return l.b, l.err
 	case s := <-sigs:
-		fmt.Fprintln(out)
-		return "", &ErrInterrupted{Signal: s}
+		return nil, &ErrInterrupted{Signal: s}
 	}
 }
 
