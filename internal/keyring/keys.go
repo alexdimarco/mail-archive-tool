@@ -52,8 +52,13 @@ func (p *PendingRecovery) RecoveryKey() string { return p.p.RecoveryKey().String
 // recovery key must be made.
 func (p *PendingRecovery) Commit() error { return p.p.Commit() }
 
-// Discard forgets the new recovery key; the old one stays in force.
-func (p *PendingRecovery) Discard() { p.p.Discard() }
+// Discard forgets the new recovery key; the old one stays in force. A zero value
+// holds nothing to forget.
+func (p *PendingRecovery) Discard() {
+	if p.p != nil {
+		p.p.Discard()
+	}
+}
 
 // NewRecoveryKey prepares a new recovery key for u's archive (§9.2), authorised by
 // u (K13).
@@ -98,6 +103,15 @@ func CheckRecoveryKey(shown, typed string) error {
 	}
 	if got != want {
 		return errors.New("that is not the recovery key shown")
+	}
+	return nil
+}
+
+// RecoveryKeyProblem says, without quoting any of it, why text does not read as a
+// recovery key; nil when it does.
+func RecoveryKeyProblem(text string) error {
+	if _, err := vault.ParseRecoveryKey(text); err != nil {
+		return recoveryKeyRefusal(err)
 	}
 	return nil
 }

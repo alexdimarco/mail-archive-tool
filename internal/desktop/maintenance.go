@@ -9,6 +9,7 @@ import (
 
 	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/health"
+	"mail-archive-tool/internal/keyring"
 	"mail-archive-tool/internal/server"
 )
 
@@ -112,6 +113,42 @@ func (d *dashboard) rebuildAction(w http.ResponseWriter, r *http.Request) {
 	out, ok := d.requireOut()
 	if !ok {
 		writeJSON(w, map[string]any{"ok": false, "error": noArchiveText})
+		return
+	}
+	// An encrypted archive's index is rebuilt with its key, from its sealed messages
+	// (§3.1, E7): only while it is open here, on a write lease taken as it is clicked
+	// (the P3-3 pass, FID-02). Without the key, app.Rebuild refuses it as before.
+	if app.ArchiveEncrypted(out) && d.cfg.Keys != nil {
+		e := d.cfg.Keys.get(out)
+		if e == nil {
+			e = d.cfg.Keys.remembered(out)
+		}
+		if e == nil {
+			writeJSON(w, map[string]any{"ok": false, "error": "This encrypted archive is locked: unlock it on its Encryption card, then click Rebuild search index again."})
+			return
+		}
+		lease, lerr := e.u.LeaseForWrite(keyring.OpenOptions{Store: d.cfg.Store})
+		if lerr != nil {
+			writeJSON(w, map[string]any{"ok": false, "error": lerr.Error()})
+			return
+		}
+		if err := d.runJob(func(l *log.Logger) (string, error) {
+			defer lease.Destroy()
+			c, rerr := keyring.Reindex(d.life.Context(), lease, l)
+			if rerr != nil {
+				return "", rerr
+			}
+			msg := fmt.Sprintf("Search index rebuilt: %d message(s) indexed.", c.Added)
+			if c.Unreadable+c.Failed > 0 {
+				msg += fmt.Sprintf(" %d could not be read or indexed — `mailarchive verify -full -out %q` names which.", c.Unreadable+c.Failed, out)
+			}
+			return msg, nil
+		}); err != nil {
+			lease.Destroy()
+			writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true})
 		return
 	}
 	err := d.runJob(func(l *log.Logger) (string, error) {

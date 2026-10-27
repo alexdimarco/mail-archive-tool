@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -14,6 +13,7 @@ import (
 
 	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/keyring"
+	"mail-archive-tool/internal/util"
 	"mail-archive-tool/internal/vault"
 )
 
@@ -91,6 +91,12 @@ func (d *dashboard) restoreAction(w http.ResponseWriter, r *http.Request) {
 	case "remembered":
 		p, err = keyring.RestoreFromRemembered(out, d.cfg.Store, in.NewPassword, o)
 	case "file":
+		// A typing mistake is told before the file dialog opens, in words that quote
+		// none of what was typed (HTTP-01).
+		if perr := keyring.RecoveryKeyProblem(in.RecoveryKey); perr != nil {
+			writeJSON(w, map[string]any{"ok": false, "error": "That is not a recovery key (" + perr.Error() + "). Type it again from where you saved it."})
+			return
+		}
 		ctx, cancel := context.WithTimeout(d.life.Context(), pickerBudget)
 		defer cancel()
 		stop := context.AfterFunc(r.Context(), cancel)
@@ -127,41 +133,45 @@ func (d *dashboard) restoreAction(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
-	_, key := keyOf(out)
-	token := d.pending.put(&pendingItem{key: key, res: p})
+	abs, key := keyOf(out)
+	token, ok := d.keep(w, &pendingItem{key: key, out: abs, res: p})
+	if !ok {
+		return
+	}
 	writeJSON(w, map[string]any{"ok": true, "token": token, "recoveryKey": p.RecoveryKey(), "warning": keyring.RecoveryWarning})
 }
 
 // readRecoveryFile reads a recovery file the person picked, bounded and never through
-// a link.
+// a link: the open neither follows a link nor waits on a pipe swapped in after the
+// check, and the file opened is checked again (the P3-3 pass, OUT-B).
 func readRecoveryFile(path string) ([]byte, error) {
-	fi, err := os.Lstat(path)
-	if err != nil {
-		return nil, err
+	if fi, err := os.Lstat(path); err == nil && fi.Mode().IsRegular() && fi.Size() > maxRecoveryFileRead {
+		return nil, tooLargeForRecoveryFile(path)
 	}
-	if !fi.Mode().IsRegular() {
+	data, err := util.ReadRegularFile(path, maxRecoveryFileRead)
+	if nr := (*util.NotRegularError)(nil); errors.As(err, &nr) {
 		return nil, fmt.Errorf("%s is not a file", path)
 	}
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	data, err := io.ReadAll(io.LimitReader(f, maxRecoveryFileRead+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(data) > maxRecoveryFileRead {
-		return nil, fmt.Errorf("%s is larger than a recovery file is; choose the recovery file saved with the archive's recovery key", path)
-	}
-	return data, nil
+	return data, err
+}
+
+func tooLargeForRecoveryFile(path string) error {
+	return fmt.Errorf("%s is larger than a recovery file is; choose the recovery file saved with the archive's recovery key", path)
 }
 
 // commitRestore writes the key file a typed-back restore prepared (§9.4): once the
 // first copy is written it is in effect, whatever follows, and is said so.
 func (d *dashboard) commitRestore(w http.ResponseWriter, it *pendingItem) {
+	// Only for the current archive: one switched away from is not written to unasked
+	// (the P3-3 pass, KEY-05).
+	if _, key := keyOf(d.cfg.effectiveOut()); key != it.key {
+		it.discard()
+		writeJSON(w, map[string]any{"ok": false, "error": "That key file is no longer waiting — the current archive changed. Put it back again from its card."})
+		return
+	}
 	err := it.res.Commit()
 	if !keyring.InEffect(err) {
+		it.res.Discard() // the reply says to start again: this one's key goes now (KEY-04)
 		if it.file != "" {
 			_ = keyring.VoidFile(it.file)
 		}

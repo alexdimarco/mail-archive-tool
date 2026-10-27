@@ -59,8 +59,11 @@ func (d *dashboard) createStartAction(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"ok": false, "error": "An encrypted archive made in MailArchive Desktop backs up mail files, not through the Outlook app, for now: choose the mail files, or make it with `mailarchive -encrypt` at a terminal."})
 		return
 	}
-	_, key := keyOf(add.Out())
-	token := d.pending.put(&pendingItem{key: key, add: add})
+	abs, key := keyOf(add.Out())
+	token, ok := d.keep(w, &pendingItem{key: key, out: abs, add: add})
+	if !ok {
+		return
+	}
 	writeJSON(w, map[string]any{"ok": true, "token": token, "path": add.Out(), "hint": keyring.PasswordHint})
 }
 
@@ -82,8 +85,8 @@ func (d *dashboard) createKeyAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { in.NewPassword, in.Again = "", "" }()
-	it := d.pending.get(in.Token)
-	if it == nil || it.add == nil {
+	it := d.pending.get(in.Token, func(it *pendingItem) bool { return it.add != nil })
+	if it == nil {
 		writeJSON(w, map[string]any{"ok": false, "error": "That new archive is no longer waiting — click Add again."})
 		return
 	}
@@ -100,10 +103,17 @@ func (d *dashboard) createKeyAction(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
-	if it.make != nil {
-		it.make.Discard() // a second password replaces the first key
+	// Kept only while the item still waits: one discarded meanwhile (Cancel, its ten
+	// minutes, Shut down) never holds the new key.
+	var old *keyring.PendingCreate
+	if !d.pending.withItem(in.Token, it, func() { old, it.make = it.make, p }) {
+		p.Discard()
+		writeJSON(w, map[string]any{"ok": false, "error": "That new archive is no longer waiting — click Add again."})
+		return
 	}
-	it.make = p
+	if old != nil {
+		old.Discard() // a second password replaces the first key
+	}
 	writeJSON(w, map[string]any{"ok": true, "token": in.Token, "recoveryKey": p.RecoveryKey(), "warning": keyring.RecoveryWarning})
 }
 
@@ -113,6 +123,7 @@ func (d *dashboard) commitCreate(w http.ResponseWriter, it *pendingItem) {
 	out := it.add.Out()
 	u, err := it.make.Commit()
 	if err != nil && !errors.Is(err, keyring.ErrCreatedNotRecorded) {
+		it.make.Discard() // nothing was made: its key goes now, never to be committed later
 		if it.file != "" {
 			_ = keyring.VoidFile(it.file)
 		}

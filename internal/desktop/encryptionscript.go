@@ -37,6 +37,16 @@ if(form)form.addEventListener('submit',async ev=>{
   if(d&&d.ok){say('Unlocked.');setTimeout(()=>location.reload(),600);}
   else say((d&&d.error)||'Could not unlock.');
 });
+const ur=$('encUnlockRemembered');
+if(ur)ur.addEventListener('click',async()=>{
+  ur.disabled=true;say('Unlocking… this takes a few seconds.');
+  let d=null;
+  try{d=await send('api/encryption/unlock',{remembered:true});}
+  catch(e){d={ok:false,error:'Could not reach MailArchive Desktop — reload the page.'};}
+  ur.disabled=false;
+  if(d&&d.ok){say('Unlocked.');setTimeout(()=>location.reload(),600);}
+  else say((d&&d.error)||'Could not unlock.');
+});
 const lk=$('encLock');
 if(lk)lk.addEventListener('click',async()=>{
   try{const d=await send('api/encryption/lock');if(d.ok){location.reload();return;}say(d.error||'Could not lock.');}

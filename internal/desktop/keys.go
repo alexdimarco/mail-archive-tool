@@ -48,11 +48,15 @@ type archiveKeys struct {
 	note  string // the reader's locked note
 
 	mu       sync.Mutex
+	watchers map[int]keyWatch // one-shot: told when their archive locks
+	watchID  int
 	entries  map[string]*keyEntry
-	busy     map[string]bool // an unlock deriving its key
-	held     map[string]bool // locked by the person: no silent re-open this process (O3)
+	busy     map[string]bool   // an open under way: deriving its key, or a remembered key looked up
+	held     map[string]bool   // locked by the person: no silent re-open this process (O3)
+	gen      map[string]uint64 // bumped for an archive each time it is locked: an open begun before loses
+	hushed   int               // silent re-opens refused meanwhile: every remembered key is being forgotten
 	closed   bool
-	epoch    uint64
+	// lastUsed is the last time a person used the Desktop (K4).
 	lastUsed time.Time
 	onLock   []func(key string) // told each archive that locks: its prepared key changes go (3e)
 }
@@ -67,11 +71,49 @@ func (k *archiveKeys) whenLocked(fn func(key string)) {
 	k.mu.Unlock()
 }
 
-// locked tells the listeners that the archive under key locked.
+// keyWatch is a one-shot watcher of one archive's lock.
+type keyWatch struct {
+	key string
+	fn  func()
+}
+
+// watchLock has fn called if the archive under key locks before the returned func
+// is: a key change in progress gives up its lease (the P3-3 pass, KEY-03).
+func (k *archiveKeys) watchLock(key string, fn func()) (stop func()) {
+	if k == nil {
+		return func() {}
+	}
+	k.mu.Lock()
+	if k.watchers == nil {
+		k.watchers = map[int]keyWatch{}
+	}
+	k.watchID++
+	id := k.watchID
+	k.watchers[id] = keyWatch{key: key, fn: fn}
+	k.mu.Unlock()
+	return func() {
+		k.mu.Lock()
+		delete(k.watchers, id)
+		k.mu.Unlock()
+	}
+}
+
+// locked tells the listeners, and the watchers of that archive, that the archive
+// under key locked.
 func (k *archiveKeys) locked(key string) {
 	k.mu.Lock()
 	fns := append([]func(string){}, k.onLock...)
+	var once []func()
+	for id, w := range k.watchers {
+		if w.key == key {
+			once = append(once, w.fn)
+			delete(k.watchers, id)
+		}
+	}
 	k.mu.Unlock()
+	for _, fn := range once {
+		fn()
+	}
 	for _, fn := range fns {
 		fn(key)
 	}
@@ -83,37 +125,40 @@ type keyEntry struct {
 	path string
 	id   string
 
-	readerMu sync.Mutex
+	buildMu  sync.Mutex // one reader made at a time; never held by close
+	readerMu sync.Mutex // guards the fields below, never held across a load
 	reader   *keyring.Reader
 	lease    *keyring.Unlocked // the reader's own lease: its lock flag is its own (§3.2)
+	closed   bool
 }
 
-// close locks the entry: its reader first (never waiting), then its lease and its
-// open, so no request decrypts after it and the reader's index, pages and scratch
-// file go at once. wait: also wait for the reader's scratch file to be removed, as
-// Shut down does before the program ends.
+// close locks the entry: its open and its reader's lease first, so no request
+// decrypts after it and a reader still being made fails at once, then its reader, so
+// its index, pages and scratch file go. It never waits on a load (§3.2). wait: also
+// wait until the reader's working copy of its index is removed, as Shut down and
+// uninstall do before what follows them.
 func (e *keyEntry) close(wait bool) {
 	e.readerMu.Lock()
 	r, l := e.reader, e.lease
-	e.reader, e.lease = nil, nil
+	e.reader, e.lease, e.closed = nil, nil, true
 	e.readerMu.Unlock()
-	if r != nil {
-		r.Lock()
-		if wait {
-			r.Close()
-		} else {
-			go r.Close() // removes the scratch file; it may wait, the lock never does
-		}
-	}
+	e.u.Lock()
 	if l != nil {
 		l.Lock()
 	}
-	e.u.Lock()
+	if r != nil {
+		if wait {
+			r.Close() // locks it, and waits for its scratch file to go
+		} else {
+			r.Lock()
+			go r.Close() // removes the scratch file; it may wait, the lock never does
+		}
+	}
 }
 
 func newArchiveKeys(store graphconfig.SecretStore, note string) *archiveKeys {
 	k := &archiveKeys{store: store, now: time.Now, note: note,
-		entries: map[string]*keyEntry{}, busy: map[string]bool{}, held: map[string]bool{}}
+		entries: map[string]*keyEntry{}, busy: map[string]bool{}, held: map[string]bool{}, gen: map[string]uint64{}}
 	k.lastUsed = k.now()
 	return k
 }
@@ -143,27 +188,26 @@ func (k *archiveKeys) get(out string) *keyEntry {
 // time per archive; a lock or Shut down that lands while it derives wins — the new
 // key is destroyed and the unlock refused (§3.2).
 func (k *archiveKeys) unlock(out, typed string, o keyring.OpenOptions) (*keyEntry, error) {
-	return k.open(out, func(abs string) (*keyring.Unlocked, error) { return openArchive(abs, typed, o) })
+	return k.open(out, false, nil, func(abs string) (*keyring.Unlocked, error) { return openArchive(abs, typed, o) })
+}
+
+// unlockRemembered opens the archive at out with the key this computer remembers
+// because the person clicked Unlock: a Lock they made earlier no longer holds it.
+func (k *archiveKeys) unlockRemembered(out string) (*keyEntry, error) {
+	return k.open(out, false, nil, func(abs string) (*keyring.Unlocked, error) {
+		return rememberedArchive(abs, keyring.OpenOptions{Store: k.store})
+	})
 }
 
 // remembered opens the archive at out by itself with the key this computer
 // remembers for it (O3), unless the person locked it in this process; nil when
-// there is no such key.
+// there is no such key. The remembered key is looked up as part of the open, so a
+// Lock or a switch that lands meanwhile wins.
 func (k *archiveKeys) remembered(out string) *keyEntry {
 	if k == nil {
 		return nil
 	}
-	abs, key := keyOf(out)
-	k.mu.Lock()
-	e, held := k.entries[key], k.held[key]
-	k.mu.Unlock()
-	if e != nil {
-		return e
-	}
-	if held || !hasRemembered(abs, k.store) {
-		return nil
-	}
-	e, err := k.open(out, func(abs string) (*keyring.Unlocked, error) {
+	e, err := k.open(out, true, func(abs string) bool { return hasRemembered(abs, k.store) }, func(abs string) (*keyring.Unlocked, error) {
 		return rememberedArchive(abs, keyring.OpenOptions{Store: k.store})
 	})
 	if err != nil {
@@ -172,7 +216,16 @@ func (k *archiveKeys) remembered(out string) *keyEntry {
 	return e
 }
 
-func (k *archiveKeys) open(out string, opener func(abs string) (*keyring.Unlocked, error)) (*keyEntry, error) {
+// errNotRemembered: a silent re-open found no remembered key, or was not allowed.
+var errNotRemembered = errors.New("no remembered key opens this archive now")
+
+// open opens the archive at out through opener, one open at a time per archive. A
+// silent open (a remembered key, nobody asking) is refused while the person holds
+// the archive locked or every remembered key is being forgotten, and goes on only
+// when may (if given) says so. An open begun before a lock of the same archive, or before
+// Shut down, loses: its key is destroyed (§3.2). Only an open the person asked for
+// clears their Lock.
+func (k *archiveKeys) open(out string, silent bool, may func(abs string) bool, opener func(abs string) (*keyring.Unlocked, error)) (*keyEntry, error) {
 	abs, key := keyOf(out)
 	k.mu.Lock()
 	switch {
@@ -186,12 +239,21 @@ func (k *archiveKeys) open(out string, opener func(abs string) (*keyring.Unlocke
 	case k.busy[key]:
 		k.mu.Unlock()
 		return nil, errUnlockBusy
+	case silent && (k.held[key] || k.hushed > 0):
+		k.mu.Unlock()
+		return nil, errNotRemembered
 	}
 	k.busy[key] = true
-	epoch := k.epoch
+	gen := k.gen[key]
 	k.mu.Unlock()
 
-	u, err := opener(abs)
+	var u *keyring.Unlocked
+	var err error
+	if may != nil && !may(abs) {
+		err = errNotRemembered
+	} else {
+		u, err = opener(abs)
+	}
 
 	k.mu.Lock()
 	defer k.mu.Unlock()
@@ -199,19 +261,39 @@ func (k *archiveKeys) open(out string, opener func(abs string) (*keyring.Unlocke
 	if err != nil {
 		return nil, err
 	}
-	if k.closed || k.epoch != epoch {
+	// A Lock and a hush both bump the generation of an open under way, so this
+	// also refuses a silent open the person's Lock or a forget-all landed on.
+	if k.closed || k.gen[key] != gen {
 		u.Destroy()
 		return nil, keyring.ErrLocked
 	}
 	e := &keyEntry{u: u, path: abs, id: u.ArchiveID().String()}
 	k.entries[key] = e
-	delete(k.held, key)
+	if !silent {
+		delete(k.held, key)
+	}
 	k.lastUsed = k.now()
 	return e, nil
 }
 
+// ifOpen runs fn while e is still the archive open at out, under the registry's
+// lock, so no lock of it lands meanwhile; false, fn not run, when it is not. fn must
+// be quick and must not call back into the registry.
+func (k *archiveKeys) ifOpen(out string, e *keyEntry, fn func()) bool {
+	_, key := keyOf(out)
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if k.closed || e == nil || k.entries[key] != e {
+		return false
+	}
+	fn()
+	return true
+}
+
 // readerFor is the reader of the open archive at out, made on the first request
-// from a lease of its own; nil when the archive is locked.
+// from a lease of its own; nil when the archive is locked. The reader is made
+// without holding what a lock takes, so a lock never waits on it; one made for an
+// archive locked meanwhile is not kept.
 func (k *archiveKeys) readerFor(out string) (*keyring.Reader, error) {
 	e := k.get(out)
 	if e == nil {
@@ -220,28 +302,42 @@ func (k *archiveKeys) readerFor(out string) (*keyring.Reader, error) {
 	if e == nil {
 		return nil, nil
 	}
+	e.buildMu.Lock()
+	defer e.buildMu.Unlock()
 	e.readerMu.Lock()
-	defer e.readerMu.Unlock()
-	if e.reader != nil {
-		return e.reader, nil
+	r, closed := e.reader, e.closed
+	e.readerMu.Unlock()
+	if r != nil || closed {
+		return r, nil
 	}
 	l, err := e.u.Lease()
 	if err != nil {
 		return nil, err
 	}
-	r, err := readerSource(l, keyring.ReaderOptions{LockedNote: k.note})
+	r, err = readerSource(l, keyring.ReaderOptions{LockedNote: k.note})
 	if err != nil {
 		l.Lock()
 		return nil, err
 	}
-	// Locked while the reader was made: it is not kept.
-	if k.get(out) != e {
-		r.Lock()
-		go r.Close()
+	e.readerMu.Lock()
+	kept := !e.closed && k.get(out) == e
+	if kept {
+		e.reader, e.lease = r, l
+	}
+	e.readerMu.Unlock()
+	if !kept { // locked while the reader was made
 		l.Lock()
+		k.mu.Lock()
+		closing := k.closed
+		k.mu.Unlock()
+		if closing {
+			r.Close() // Shut down waits for its working copy to go
+		} else {
+			r.Lock()
+			go r.Close()
+		}
 		return nil, nil
 	}
-	e.reader, e.lease = r, l
 	return r, nil
 }
 
@@ -253,7 +349,7 @@ func (k *archiveKeys) lock(out string) {
 	e := k.entries[key]
 	delete(k.entries, key)
 	k.held[key] = true
-	k.epoch++
+	k.gen[key]++
 	k.mu.Unlock()
 	if e != nil {
 		e.close(false)
@@ -262,13 +358,14 @@ func (k *archiveKeys) lock(out string) {
 }
 
 // lockExcept locks every open archive but the one at out: the current archive
-// changed (K4).
+// changed (K4). An archive the person locked and switched away from may re-open by
+// its remembered key once it is current again (O3: a switch).
 func (k *archiveKeys) lockExcept(out string) {
 	if k == nil {
 		return
 	}
 	_, keep := keyOf(out)
-	k.closeWhere(func(key string) bool { return key != keep }, false, false)
+	k.closeWhere(func(key string) bool { return key != keep }, false, false, true)
 }
 
 // lockAll locks every open archive, waiting until each reader's working copy of its
@@ -278,10 +375,41 @@ func (k *archiveKeys) lockAll(closing bool) {
 	if k == nil {
 		return
 	}
-	k.closeWhere(func(string) bool { return true }, closing, true)
+	k.closeWhere(func(string) bool { return true }, closing, true, false)
 }
 
-func (k *archiveKeys) closeWhere(match func(key string) bool, closing, wait bool) {
+// reopen lets archives be unlocked again after a lockAll(true) whose purpose did not
+// go ahead: an uninstall that was refused.
+func (k *archiveKeys) reopen() {
+	if k == nil {
+		return
+	}
+	k.mu.Lock()
+	k.closed = false
+	k.mu.Unlock()
+}
+
+// hush locks every open archive and refuses every silent re-open until the returned
+// func is called: every remembered key is being forgotten, and none may open an
+// archive meanwhile.
+func (k *archiveKeys) hush() (release func()) {
+	if k == nil {
+		return func() {}
+	}
+	k.mu.Lock()
+	k.hushed++
+	k.mu.Unlock()
+	k.closeWhere(func(string) bool { return true }, false, true, false)
+	return func() {
+		k.mu.Lock()
+		k.hushed--
+		k.mu.Unlock()
+	}
+}
+
+// closeWhere locks every open archive match names, and makes every open of one under
+// way lose. unhold: the person's Lock no longer holds those archives.
+func (k *archiveKeys) closeWhere(match func(key string) bool, closing, wait, unhold bool) {
 	k.mu.Lock()
 	if closing {
 		k.closed = true
@@ -293,9 +421,21 @@ func (k *archiveKeys) closeWhere(match func(key string) bool, closing, wait bool
 			gone = append(gone, e)
 			keys = append(keys, key)
 			delete(k.entries, key)
+			k.gen[key]++
 		}
 	}
-	k.epoch++
+	for key := range k.busy {
+		if match(key) {
+			k.gen[key]++
+		}
+	}
+	if unhold {
+		for key := range k.held {
+			if match(key) {
+				delete(k.held, key)
+			}
+		}
+	}
 	k.mu.Unlock()
 	for _, e := range gone {
 		e.close(wait)
@@ -347,7 +487,7 @@ func (k *archiveKeys) reap(now time.Time) {
 	idle := now.Sub(k.lastUsed) >= keyIdle
 	k.mu.Unlock()
 	if idle {
-		k.closeWhere(func(string) bool { return true }, false, false)
+		k.closeWhere(func(string) bool { return true }, false, false, false)
 	}
 }
 

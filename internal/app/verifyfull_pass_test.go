@@ -83,7 +83,9 @@ func TestARefusedLoadOrALostRecordPartIsTold(t *testing.T) {
 		err     error
 		outcome string
 	}{{container.ErrNewerFormat, state.OutcomeNewerFormat}, {container.ErrUnfinishedSave, state.OutcomeUnfinishedSave}} {
-		rep, summary = fullSummary(t, out, &fakeSealed{loadErr: fmt.Errorf("%w: x", c.err)})
+		// Each on an archive of its own: the red recorded above stands beneath a later
+		// check that opens no message (MA-819), with its own restore advice.
+		rep, summary = fullSummary(t, sealedArchive(t), &fakeSealed{loadErr: fmt.Errorf("%w: x", c.err)})
 		if rep.Outcome != c.outcome || !strings.Contains(summary, state.OutcomeText(c.outcome)) || strings.Contains(summary, adviceLoad) {
 			t.Fatalf("%s: %s\n%s", c.outcome, rep.Outcome, summary)
 		}

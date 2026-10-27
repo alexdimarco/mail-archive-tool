@@ -353,13 +353,19 @@ func (d *dashboard) runBackup(w http.ResponseWriter, r *http.Request) {
 // switch after it does not stop the run — and destroyed when the run ends, or at
 // once if the run cannot start; healed first, a failed heal only a warning, a fork
 // never healed. Shut down cancels it.
+// runLease takes Run now's write lease; a seam, so a test can see it destroyed.
+var runLease = func(e *keyEntry, o keyring.OpenOptions) (*keyring.Unlocked, error) { return e.u.LeaseForWrite(o) }
+
 func (d *dashboard) runBackupKeyed(w http.ResponseWriter, out, jobPath string) {
 	e := d.cfg.Keys.get(out)
+	if e == nil {
+		e = d.cfg.Keys.remembered(out) // a remembered key opens it, unless the person locked it (O3; FID-03)
+	}
 	if e == nil {
 		writeJSON(w, map[string]any{"ok": false, "error": "This encrypted archive is locked: unlock it on its Encryption card, then click Run now again."})
 		return
 	}
-	lease, err := e.u.LeaseForWrite(keyring.OpenOptions{Store: d.cfg.Store})
+	lease, err := runLease(e, keyring.OpenOptions{Store: d.cfg.Store})
 	if err != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return

@@ -69,7 +69,7 @@ func (d *dashboard) changePasswordAction(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	defer func() { in.NewPassword, in.Again = "", "" }()
-	_, e := d.openHere(w)
+	out, e := d.openHere(w)
 	if e == nil {
 		return
 	}
@@ -90,6 +90,14 @@ func (d *dashboard) changePasswordAction(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	defer lease.Destroy()
+	// A lock that lands while the new password's key is derived wins: the change is
+	// not made on an archive the person locked (the P3-3 pass, KEY-03).
+	_, key := keyOf(out)
+	defer d.cfg.Keys.watchLock(key, lease.Lock)()
+	if !d.cfg.Keys.ifOpen(out, e, func() {}) {
+		writeJSON(w, map[string]any{"ok": false, "error": "This encrypted archive was locked: nothing was changed."})
+		return
+	}
 	err = keyring.ChangePassword(lease, in.NewPassword)
 	switch {
 	case err == nil:
@@ -123,9 +131,38 @@ func (d *dashboard) newRecoveryAction(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
-	_, key := keyOf(out)
-	token := d.pending.put(&pendingItem{key: key, rec: rec, lease: lease})
+	// Kept only while the archive is still open here: one locked while the key was
+	// made — by the person, the idle lock, a switch or Shut down — never keeps a
+	// prepared change (the P3-3 pass, KEY-03).
+	abs, key := keyOf(out)
+	it := &pendingItem{key: key, out: abs, rec: rec, lease: lease}
+	var token string
+	if !d.cfg.Keys.ifOpen(out, e, func() { token = d.pending.put(it) }) {
+		it.discard()
+		writeJSON(w, map[string]any{"ok": false, "error": "This encrypted archive was locked while the new recovery key was made: nothing was changed."})
+		return
+	}
+	if token == "" {
+		writeJSON(w, map[string]any{"ok": false, "error": errKeysClosed.Error()})
+		return
+	}
 	writeJSON(w, map[string]any{"ok": true, "token": token, "recoveryKey": rec.RecoveryKey(), "warning": keyring.RecoveryWarning})
+}
+
+// keep puts it in the store and answers with its token, or answers that the Desktop
+// is shutting down; false when it answered.
+func (d *dashboard) keep(w http.ResponseWriter, it *pendingItem) (string, bool) {
+	token := d.pending.put(it)
+	if token == "" {
+		writeJSON(w, map[string]any{"ok": false, "error": errKeysClosed.Error()})
+		return "", false
+	}
+	return token, true
+}
+
+// notWaiting answers that a prepared key change is gone.
+func notWaiting(w http.ResponseWriter) {
+	writeJSON(w, map[string]any{"ok": false, "error": "That new recovery key is no longer waiting — make a new one."})
 }
 
 // recoveryFileName is the recovery file's name in the folder the person picks.
@@ -141,9 +178,9 @@ func (d *dashboard) saveRecoveryFileAction(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	it := d.pending.get(in.Token)
+	it := d.pending.get(in.Token, isKeyChange)
 	if it == nil {
-		writeJSON(w, map[string]any{"ok": false, "error": "That new recovery key is no longer waiting — make a new one."})
+		notWaiting(w)
 		return
 	}
 	ctx, cancel := context.WithTimeout(d.life.Context(), pickerBudget)
@@ -155,21 +192,33 @@ func (d *dashboard) saveRecoveryFileAction(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, map[string]any{"ok": true, "canceled": true})
 		return
 	}
-	data, err := it.recoveryFile()
-	if err != nil {
-		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+	// Written only while the key still waits, under the store's lock: a key discarded
+	// while the dialog was open — a Lock, a switch, Cancel, its ten minutes — never
+	// gets a recovery file that would outlive it (the P3-3 pass, KEY-07). The file is
+	// named for, and kept outside, the archive the key was made for (HTTP-04).
+	var path string
+	var werr error
+	if !d.pending.withItem(in.Token, it, func() {
+		data, err := it.recoveryFile()
+		if err != nil {
+			werr = err
+			return
+		}
+		if path, werr = keyring.WriteNewFile("The file chosen", "the recovery file", filepath.Join(dir, recoveryFileName(it.out)), it.out, data); werr != nil {
+			return
+		}
+		if it.file != "" {
+			_ = keyring.VoidFile(it.file)
+		}
+		it.file = path
+	}) {
+		notWaiting(w)
 		return
 	}
-	out := d.cfg.effectiveOut()
-	path, err := keyring.WriteNewFile("The file chosen", "the recovery file", filepath.Join(dir, recoveryFileName(out)), out, data)
-	if err != nil {
-		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+	if werr != nil {
+		writeJSON(w, map[string]any{"ok": false, "error": werr.Error()})
 		return
 	}
-	if it.file != "" {
-		_ = keyring.VoidFile(it.file)
-	}
-	it.file = path
 	writeJSON(w, map[string]any{"ok": true, "path": path, "note": keyring.RecoveryFileNote})
 }
 
@@ -181,17 +230,23 @@ func (d *dashboard) confirmRecoveryAction(w http.ResponseWriter, r *http.Request
 		return
 	}
 	defer func() { in.Typed = "" }()
-	it := d.pending.get(in.Token)
+	it := d.pending.get(in.Token, isKeyChange)
 	if it == nil {
-		writeJSON(w, map[string]any{"ok": false, "error": "That new recovery key is no longer waiting — make a new one."})
+		notWaiting(w)
 		return
 	}
-	if err := keyring.CheckRecoveryKey(it.recoveryKey(), in.Typed); err != nil {
+	var shown string
+	d.pending.withItem(in.Token, it, func() { shown = it.recoveryKey() })
+	if shown == "" {
+		writeJSON(w, map[string]any{"ok": false, "error": "Type your new password first; its recovery key is shown next."})
+		return
+	}
+	if err := keyring.CheckRecoveryKey(shown, in.Typed); err != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": "That is not the recovery key shown (" + err.Error() + "). Type it again from where you saved it."})
 		return
 	}
-	if it = d.pending.take(in.Token); it == nil {
-		writeJSON(w, map[string]any{"ok": false, "error": "That new recovery key is no longer waiting — make a new one."})
+	if it = d.pending.take(in.Token, isKeyChange); it == nil {
+		notWaiting(w)
 		return
 	}
 	if it.res != nil {
@@ -202,13 +257,17 @@ func (d *dashboard) confirmRecoveryAction(w http.ResponseWriter, r *http.Request
 		d.commitCreate(w, it)
 		return
 	}
-	if it.rec == nil {
-		writeJSON(w, map[string]any{"ok": false, "error": "That new recovery key is no longer waiting — make a new one."})
+	// The archive must still be open here, as the one the key was made for: a lock
+	// discards the item, so this only closes the moment between (the P3-3 pass, KEY-03).
+	if e := d.cfg.Keys.get(it.out); e == nil || e.u.ArchiveID() != it.lease.ArchiveID() {
+		it.discard()
+		writeJSON(w, map[string]any{"ok": false, "error": "This encrypted archive was locked: the new recovery key was not saved, and the earlier one still works."})
 		return
 	}
 	err := it.rec.Commit()
 	it.lease.Destroy()
 	if err != nil && !errors.Is(err, vault.ErrPartiallySaved) {
+		it.rec.Discard() // the reply says to make a new one: this one's key goes now (KEY-04)
 		if it.file != "" {
 			_ = keyring.VoidFile(it.file)
 		}
@@ -248,7 +307,7 @@ func (d *dashboard) rememberAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !in.On {
-		if _, err := keyring.ForgetKey(out, d.cfg.Store); err != nil {
+		if err := keyring.ForgetKeyOf(e.u, d.cfg.Store); err != nil {
 			writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 			return
 		}

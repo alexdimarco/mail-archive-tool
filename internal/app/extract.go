@@ -158,7 +158,14 @@ func extract(out string, format ExtractFormat, dest string, overwrite bool, logg
 	// Hold the exclusive archive lock for the whole run (PC14): extract is a
 	// cold, whole-archive read, so it belongs OUTSIDE the backup window — a
 	// scheduled backup that fires meanwhile refuses.
-	lock, lerr := lockfile.AcquireAs(filepath.Join(out, lockfile.Name), "extract")
+	// An encrypted archive's lock names no verb: "extract" left beside it would tell
+	// anyone with the drive that readable mail was copied out of it (the P3-3 pass,
+	// OUT-C; §16).
+	verb := "extract"
+	if sealed != nil {
+		verb = ""
+	}
+	lock, lerr := lockfile.AcquireAs(filepath.Join(out, lockfile.Name), verb)
 	if lerr != nil {
 		return ExtractReport{}, lerr
 	}

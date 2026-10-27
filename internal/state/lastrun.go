@@ -469,9 +469,10 @@ func updateIntegritySidecar(out string, v LastVerify) {
 		_ = writeSidecarAtomic(path, []byte(encryptedIntegrityAttention(v)))
 	case v.Encrypted && v.Outcome == OutcomeIntact:
 		_ = os.Remove(path)
-	case v.Encrypted && TierOf(&v) == TierFull && v.Outcome == OutcomeNotAttested:
-		// A check with the key replaces the verdict before it, and found the messages
-		// intact: an earlier red notice no longer holds (the P3-2b pass, REC-03).
+	case v.Encrypted && TierOf(&v) == TierFull && v.Outcome == OutcomeNotAttested && v.Standing == nil:
+		// A check with the key replaces the verdict before it, and opened every message
+		// intact: an earlier red notice no longer holds (the P3-2b pass, REC-03). One
+		// that kept a red standing did not, and the notice stays (CRIT-04).
 		_ = os.Remove(path)
 	case v.Encrypted:
 		// not_attested or newer_format: no new finding, so an earlier notice stays.

@@ -161,7 +161,9 @@ func lockFolder(out string) (*lockfile.Lock, error) {
 	if fi, err := os.Stat(out); err != nil || !fi.IsDir() {
 		return nil, nil
 	}
-	l, err := lockfile.AcquireAs(filepath.Join(out, lockfile.Name), "forget-archive")
+	// No verb: one left beside the folder would tell anyone with the drive that this
+	// computer stopped protecting it (§16; the P3-3 pass, OUT-C).
+	l, err := lockfile.AcquireAs(filepath.Join(out, lockfile.Name), "")
 	if errors.Is(err, lockfile.ErrHeld) {
 		return nil, fmt.Errorf("%s is in use by another MailArchive run; nothing was changed — try again when it is free: %w", out, err)
 	}
@@ -188,10 +190,20 @@ func ForgetAll(s vault.Store) (int, error) {
 		return 0, err
 	}
 	n := 0
+	ids := make([]string, 0, len(rec.Archives))
 	for idHex := range rec.Archives {
 		n++
+		ids = append(ids, idHex)
+	}
+	// An archive the record lost may still have its key remembered here (§4.3): that
+	// key goes too, before the lost list that points at it (the P3-3 pass, FID-01).
+	lost, lerr := encrecord.Lost()
+	if lerr == nil {
+		ids = append(ids, lost...)
+	}
+	for _, idHex := range ids {
 		if s == nil {
-			continue
+			break
 		}
 		id, perr := parseID(idHex)
 		if perr != nil {
@@ -209,12 +221,30 @@ func ForgetAll(s vault.Store) (int, error) {
 	}); err != nil {
 		return 0, err
 	}
-	if lost, err := encrecord.Lost(); err == nil {
-		for _, id := range lost {
-			_ = encrecord.ClearLost(id)
-		}
+	for _, id := range lost {
+		_ = encrecord.ClearLost(id)
 	}
 	return n, nil
+}
+
+// ForgetKeyOf removes the key this computer remembers for the archive u opened, by
+// that archive's own id — never by what its folder's key files claim now, which
+// someone who can write the drive chooses (the P3-3 pass, OUT-A).
+func ForgetKeyOf(u *Unlocked, s vault.Store) error {
+	if s == nil {
+		return errors.New("no secret store to forget the key from")
+	}
+	return vault.Forget(s, u.ArchiveID())
+}
+
+// RememberedFor reports whether this computer remembers the key of the archive u
+// opened, by its own id.
+func RememberedFor(u *Unlocked, s vault.Store) bool {
+	if s == nil {
+		return false
+	}
+	_, err := s.Get(vault.Account(u.ArchiveID()))
+	return err == nil
 }
 
 // ForgetKey removes the key this computer remembers for the archive at out (§9.3):

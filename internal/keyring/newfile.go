@@ -5,11 +5,16 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/util"
 	"mail-archive-tool/internal/winsec"
 )
+
+// restrictToOwner makes a new file readable only by its owner; a seam, so a test can
+// make it fail as a FAT or exFAT drive does on Windows.
+var restrictToOwner = winsec.RestrictToOwner
 
 // The files a recovery key or a recovery file is saved to (§5.2, §9.4), for the
 // command line and the Desktop alike (the P3-3 plan, 3a). label names where the path
@@ -51,10 +56,16 @@ func WriteNewFile(label, what, path, out string, data []byte) (string, error) {
 		}
 		return "", fmt.Errorf("%s %s: %w", label, abs, err)
 	}
-	if err := winsec.RestrictToOwner(abs); err != nil {
+	if err := restrictToOwner(abs); err != nil {
 		f.Close()
 		os.Remove(abs)
-		return "", fmt.Errorf("%s %s could not be made readable only by you (%v); nothing was saved — choose a folder of your own", label, abs, err)
+		remedy := "choose a folder of your own"
+		if strings.HasPrefix(label, "-") {
+			// At the command line leaving the flag out always works: the key is still
+			// shown on screen (the P3-3 pass, REG-03).
+			remedy += ", or leave out " + label
+		}
+		return "", fmt.Errorf("%s %s could not be made readable only by you (%v); nothing was saved — %s", label, abs, err, remedy)
 	}
 	_, werr := f.Write(data)
 	if werr == nil {

@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"mail-archive-tool/internal/app"
@@ -36,6 +38,9 @@ type unlockRequest struct {
 	// ReRecord: the person agreed to record again an archive they once told
 	// MailArchive to forget (§4.2) — asked only when Remember records it.
 	ReRecord bool `json:"reRecord"`
+	// Remembered: open it with the key this computer remembers, the person's own Lock
+	// notwithstanding (O3; the P3-3 pass, FID-03). No secret is sent.
+	Remembered bool `json:"remembered"`
 }
 
 // unlockAction unlocks the current encrypted archive with what the person typed, on
@@ -53,6 +58,25 @@ func (d *dashboard) unlockAction(w http.ResponseWriter, r *http.Request) {
 	if d.cfg.Keys == nil || out == "" || !app.ArchiveEncrypted(out) || !app.UnlockableAt(out) {
 		writeJSON(w, map[string]any{"ok": false, "error": "The current archive is not an encrypted archive MailArchive Desktop can open here."})
 		return
+	}
+	if in.Remembered {
+		in.Secret = ""
+		if _, err := d.cfg.Keys.unlockRemembered(out); err != nil {
+			writeJSON(w, map[string]any{"ok": false, "error": "The key this computer remembers did not open this archive: " + err.Error() + " — unlock it with its password or recovery key."})
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true})
+		return
+	}
+	// Remember records the folder: one the person told MailArchive to forget is asked
+	// about before any key is derived, not after (§4.2; the P3-3 pass, FID-05).
+	if in.Remember && !in.ReRecord {
+		if gone, _ := keyring.Forgotten(out); gone {
+			in.Secret = ""
+			writeJSON(w, map[string]any{"ok": false, "confirm": "rerecord",
+				"error": "You once told MailArchive to forget this encrypted archive on this computer. Remembering its key records it here again. Go ahead?"})
+			return
+		}
 	}
 	var askedCost *vault.Params
 	askedReRecord := false
@@ -154,9 +178,24 @@ func archiveFolderProblem(path string) string {
 		return p
 	}
 	if !archindex.IsArchive(abs) {
-		return fmt.Sprintf("%s isn't a MailArchive archive — choose the folder that holds the archive's README.txt.", abs)
+		// The same words as the No-archive card; a manifest that is there but cannot be
+		// read is told so, with where its repair shows (the P3-3 pass, REG-04).
+		if _, err := os.Lstat(filepath.Join(abs, ".mailarchive-manifest.json")); err == nil {
+			return fmt.Sprintf("%s holds an archive whose record (.mailarchive-manifest.json) cannot be read — type the folder in Settings → Archive location, and Status & health shows how to repair it.", abs)
+		}
+		return fmt.Sprintf("%s isn't a MailArchive archive — choose the folder that holds the .mailarchive-manifest.json file.", abs)
 	}
 	return ""
+}
+
+// claimsID reports whether a key file in out still names the archive id opened here.
+func claimsID(out, id string) bool {
+	for _, c := range vault.Claims(out).IDs {
+		if c.String() == id {
+			return true
+		}
+	}
+	return false
 }
 
 // Status actions the health reply offers, by the warning they answer.
@@ -209,6 +248,13 @@ func (d *dashboard) dismissLostAction(w http.ResponseWriter, r *http.Request) {
 	ids := encmark.LostIDs(out)
 	if len(ids) == 0 {
 		writeJSON(w, map[string]any{"ok": false, "error": "there is no warning about this archive's record to dismiss"})
+		return
+	}
+	// The ids are what the folder's key files claim, unchecked without the key: two
+	// copies that disagree may be one planted to clear another archive's warning, so
+	// nothing is cleared until they agree (the P3-3 pass, OUT-D).
+	if c := vault.Claims(out); len(c.IDs) > 1 {
+		writeJSON(w, map[string]any{"ok": false, "error": "the two copies of this archive's key file name different archives, so the warning was not dismissed — open the archive with its password: that tells which is right"})
 		return
 	}
 	for _, id := range ids {

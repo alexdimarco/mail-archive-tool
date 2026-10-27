@@ -260,7 +260,7 @@ func newDashboard(cfg Config) *dashboard {
 	// Prepared key changes go when their archive locks, and every one at Shut down (3e).
 	d.pending = newPendingSecrets()
 	cfg.Keys.whenLocked(d.pending.discardFor)
-	d.life.OnDrain(func(context.Context) error { d.pending.discardFor(""); return nil })
+	d.life.OnDrain(func(context.Context) error { d.pending.close(); return nil })
 	d.life.OnDrain(d.drain)
 	return d
 }
@@ -532,8 +532,11 @@ func (d *dashboard) saveSettings(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"ok": false, "error": msg})
 		return
 	}
-	// A switch locks every encrypted archive but the new current one (K4).
+	// A switch locks every encrypted archive but the new current one (K4), and ends
+	// every key change prepared on another archive's card (the P3-3 pass, KEY-05).
 	d.cfg.Keys.lockExcept(d.cfg.effectiveOut())
+	_, current := keyOf(d.cfg.effectiveOut())
+	d.pending.discardExcept(current)
 	writeJSON(w, map[string]any{"ok": true})
 }
 
@@ -695,8 +698,11 @@ func (d *dashboard) sealPauseNote(e *keyEntry, note string) error {
 		return err
 	}
 	defer lease.Destroy()
-	return keyring.SetPauseNote(d.life.Context(), lease, note, log.New(io.Discard, "", 0))
+	return setPauseNote(d.life.Context(), lease, note, log.New(io.Discard, "", 0))
 }
+
+// setPauseNote seals a pause note; a seam, so a test can make it fail.
+var setPauseNote = keyring.SetPauseNote
 
 // resumeArchive makes the named archive writable again and restores its backup schedule.
 func (d *dashboard) resumeArchive(w http.ResponseWriter, r *http.Request) {
@@ -771,11 +777,21 @@ func (d *dashboard) uninstallAction(w http.ResponseWriter, r *http.Request) {
 	exe, _ := os.Executable()
 	// The Desktop's own encrypted archives are locked first, their readers' working
 	// copies removed, so neither the plan nor the removal meets them as another
-	// program's (phase3 §7.4; the P3-3 plan, 3c). The real run refuses every unlock
-	// after it.
-	d.cfg.Keys.lockAll(in.Confirm)
+	// program's (phase3 §7.4; the P3-3 plan, 3c); no remembered key re-opens one
+	// meanwhile (CRIT-03). The real run refuses every unlock after it and ends every
+	// prepared key change — unless it is refused, when the Desktop carries on as it
+	// was (REG-01).
+	if in.Confirm {
+		d.cfg.Keys.lockAll(true)
+		d.pending.discardFor("")
+	} else {
+		defer d.cfg.Keys.hush()()
+	}
 	rep, err := uninstallRun(filepath.Dir(cfgPath), d.knownArchivePaths(), exe, !in.Confirm)
 	if err != nil {
+		if in.Confirm {
+			d.cfg.Keys.reopen()
+		}
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
@@ -1052,7 +1068,15 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		data.EncNotSetUp = encmark.NotSetUp(data.OutDir)
 		abs, _ := keyOf(data.OutDir)
 		data.EncRemembered = hasRemembered(abs, cfg.Store)
-		if e := cfg.Keys.get(data.OutDir); e != nil {
+		e := cfg.Keys.get(data.OutDir)
+		if e != nil && !claimsID(abs, e.id) {
+			// The folder's key files no longer name the archive opened here: someone
+			// replaced them. It is locked, and nothing is said of it as open (OUT-A).
+			cfg.Keys.lock(data.OutDir)
+			e = nil
+		}
+		if e != nil {
+			data.EncRemembered = keyring.RememberedFor(e.u, cfg.Store)
 			data.EncUnlocked = true
 			if seal.IsSealed(data.OutDir) {
 				data.EncPauseNote, _ = keyring.PauseNote(e.u)
@@ -1378,6 +1402,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
         <input type="password" id="encSecret" autocomplete="off" spellcheck="false" autocapitalize="off">
         <label class="small"><input type="checkbox" id="encRemember"{{if .EncNotSetUp}} checked{{end}}> Remember the key on this computer — it then opens by itself here, for anyone using this computer's account</label>
         <button class="btn" type="submit" id="encUnlock">Unlock</button>
+        {{if .EncRemembered}}<button class="btn secondary" type="button" id="encUnlockRemembered" title="No password needed: the key this computer remembers opens it.">Unlock with the key this computer remembers</button>{{end}}
       </form>{{end}}
     </div>{{end}}
 

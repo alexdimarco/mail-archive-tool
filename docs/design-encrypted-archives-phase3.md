@@ -1655,6 +1655,20 @@ P3-8.
   CLI make the copy; skipped messages are listed in `_COPY-PROBLEMS.txt` inside the copy, never in
   a log or the activity.
 
+*The P3-3 pass's fix round (2026-10-27; docs/review-encrypted-archives-phase3-p33-adversarial.md),
+and its calls (vetoable):*
+- **A Lock holds for this process; a switch ends it.** "Unlock with the key this computer remembers"
+  opens it again with no password. Switching away and back re-opens a remembered archive by
+  itself (O3). Run now and Rebuild search index open a remembered archive the person did not lock.
+- **verify keeps `verb=verify` in an encrypted archive's lock file**; forget and keyed extract name
+  none. Status reads the verify verb to tell a check running from one that died; it says only that
+  a check ran.
+- **Deferred to P3-8's friction review:** a lock state on each row of Your archives, a plaintext
+  golden of the overview and health reply, and K9's "this file is not encrypted" line on reader
+  downloads.
+- A prepared change from another archive's card ends at a switch; a new archive being made and a
+  forget being shown do not.
+
 *Step 1 as built (2026-10-27), and its calls (vetoable):*
 - **No `app.DecryptableAt`.** The map's critic expected a record that cannot be used to block the
   escape hatch. It does not: an archive holding its own key files is recognised by its own files

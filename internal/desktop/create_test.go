@@ -5,12 +5,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/encrecord"
 	"mail-archive-tool/internal/job"
 	"mail-archive-tool/internal/keyring"
+	"mail-archive-tool/internal/memguard"
 	"mail-archive-tool/internal/schedule"
 	"mail-archive-tool/internal/vault"
 	"mail-archive-tool/internal/wizard"
@@ -39,6 +41,36 @@ func TestACancelledCreateWritesNothing(t *testing.T) {
 	_, statErr := os.Stat(filepath.Join(out, vault.FileName))
 	rec, _ := encrecord.Load()
 	assure.Reached(t, os.IsNotExist(statErr) && len(rec.Archives) == 0, "cancelled: nothing written")
+}
+
+// covers: MA-816, R37
+// A new archive's key made while its create was cancelled is never kept (the P3-3
+// pass's fix round): the key step answers that it is no longer waiting, and no
+// recovery key is shown for it.
+func TestACreateCancelledWhileItsKeyIsMadeKeepsNoKey(t *testing.T) {
+	t.Cleanup(encrecord.SetDirForTest(t.TempDir()))
+	out := filepath.Join(t.TempDir(), "New")
+	orig := addEncryptedFn
+	t.Cleanup(func() { addEncryptedFn = orig })
+	addEncryptedFn = func(check func(string) error) (*wizard.PendingAdd, error) {
+		return wizard.PendingAddFor(out, nil), check(out)
+	}
+	e := newKeysEnv(t, archiveAt(t, t.TempDir(), "Plain", map[string]string{"path:/mail/a.mbox": "a"}))
+	_, m := e.post(t, "api/encryption/create", map[string]any{})
+	token := m["token"]
+	turn := memguard.Process.Derivations()
+	turn.Lock()
+	done := make(chan map[string]any, 1)
+	go func() {
+		const pw = "the new archive's own passphrase"
+		_, k := e.post(t, "api/encryption/create/key", map[string]any{"token": token, "newPassword": pw, "again": pw})
+		done <- k
+	}()
+	time.Sleep(300 * time.Millisecond) // the key waits for the derivation turn
+	e.post(t, "api/encryption/new-recovery-key/cancel", map[string]any{"token": token})
+	turn.Unlock()
+	k := <-done
+	assure.Reached(t, k["ok"] != true && k["recoveryKey"] == nil, "no key kept for a cancelled create")
 }
 
 // covers: MA-808, R37

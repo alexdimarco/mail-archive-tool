@@ -230,6 +230,7 @@ func VerifySealed(out string, opts VerifyOptions, logger *log.Logger, onProgress
 			// A pass that ended early attests none of the chunks it did not open
 			// (the P3-2b pass, CRIT-04).
 			f.raise(state.OutcomeNotAttested, "the record's files could not all be read: "+err.Error(), adviceChunksRead)
+			f.chunksUnread = true
 		}
 		copies := map[uint32]int{}
 		for _, p := range chunks {
@@ -266,18 +267,30 @@ func VerifySealed(out string, opts VerifyOptions, logger *log.Logger, onProgress
 			return stopped()
 		}
 	}
+	moved := false
 	if lockFree {
 		if after, _ := container.PeekFile(out); after != before {
 			// The archive moved under the check: nothing it found can be trusted, a
 			// red included (the P3-2b pass, OUT-1).
 			rep.Outcome, rep.Reason, rep.Advice = state.OutcomeNotAttested, "the archive changed while it was checked", adviceMoved
+			moved = true
+		}
+	}
+	// A red found with the key stands until a check with the key passes (§8): an amber
+	// check that did not open every message — the record not loaded, a message unread
+	// or too large, the record's files not all read, the archive moved — keeps it
+	// standing beneath, as a check without the key does (the P3-3 pass, CRIT-04).
+	var standing *state.LastVerify
+	if !state.OutcomeIsRed(rep.Outcome) && (!rep.KeyedLoad || rep.Unread > 0 || rep.TooLarge > 0 || f.chunksUnread || moved) {
+		if standing = state.StandingRed(previous); standing != nil {
+			rep.StandingOutcome, rep.StandingSince = standing.Outcome, standing.Finished
 		}
 	}
 	if onProgress != nil {
 		onProgress(rep)
 	}
 	finished := time.Now().UTC()
-	if err := state.WriteLastVerify(out, state.LastVerify{Status: state.VerifyDone, Started: started, Finished: &finished, Encrypted: true, Tier: state.TierFull, Outcome: rep.Outcome}); err != nil {
+	if err := state.WriteLastVerify(out, state.LastVerify{Status: state.VerifyDone, Started: started, Finished: &finished, Encrypted: true, Tier: state.TierFull, Outcome: rep.Outcome, Standing: standing}); err != nil {
 		rep.NotSaved = true // a read-only medium: the result is told, not kept (§8)
 	}
 	return rep, nil
@@ -285,8 +298,9 @@ func VerifySealed(out string, opts VerifyOptions, logger *log.Logger, onProgress
 
 // fullCheck accumulates a tier-2 run's verdict.
 type fullCheck struct {
-	rep   *Report
-	shown int
+	rep          *Report
+	shown        int
+	chunksUnread bool // the pass over the record's files ended early
 }
 
 // raise records outcome when it is worse than the run's so far, with its reason and

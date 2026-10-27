@@ -68,8 +68,12 @@ func (p *PendingRestore) RecoveryFile() ([]byte, error) { return p.p.RecoveryFil
 // ArchiveID is the archive being restored.
 func (p *PendingRestore) ArchiveID() vault.ID { return p.p.ArchiveID() }
 
-// Discard forgets the prepared key file.
-func (p *PendingRestore) Discard() { p.p.Discard() }
+// Discard forgets the prepared key file. A zero value holds nothing to forget.
+func (p *PendingRestore) Discard() {
+	if p.p != nil {
+		p.p.Discard()
+	}
+}
 
 // RestoreFromFile prepares putting back out's key files from a recovery file and
 // its recovery key (§9.4), with newPassword. rk must be a recovery key
@@ -77,6 +81,11 @@ func (p *PendingRestore) Discard() { p.p.Discard() }
 func RestoreFromFile(out string, file []byte, rk Secret, newPassword string, o RestoreOptions) (*PendingRestore, error) {
 	if !rk.IsRecoveryKey() {
 		return nil, errors.New("a recovery file is opened with its recovery key, not a password")
+	}
+	// Refused without quoting it: a password typed in the recovery key's place would
+	// otherwise be named in part, a character or its length (the P3-3 pass, HTTP-01).
+	if err := RecoveryKeyProblem(rk.text); err != nil {
+		return nil, err
 	}
 	e, err := vault.ParseRecoveryFile(file)
 	if err != nil {

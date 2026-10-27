@@ -54,7 +54,10 @@ func (d *dashboard) forgetPlanAction(w http.ResponseWriter, r *http.Request) {
 	if p.Strong {
 		lines = append(lines, "This folder may have been tampered with: it no longer holds the archive this computer made there.")
 	}
-	token := d.pending.put(&pendingItem{key: key, plan: &p})
+	token, ok := d.keep(w, &pendingItem{key: key, out: abs, plan: &p})
+	if !ok {
+		return
+	}
 	writeJSON(w, map[string]any{"ok": true, "token": token, "lines": lines, "strong": p.Strong, "spelling": p.Spelling, "last": p.Last, "remembered": p.Remembered})
 }
 
@@ -75,7 +78,12 @@ func (d *dashboard) forgetAllAction(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"ok": false, "error": "Nothing was forgotten: type " + forgetAllWord + " to go ahead."})
 		return
 	}
-	d.cfg.Keys.lockAll(false)
+	// Every archive stays closed for the whole forget — no remembered key re-opens one
+	// meanwhile (CRIT-02) — and every key change prepared here goes first: a key file
+	// put back afterwards would record a forgotten archive again unasked (CRIT-01).
+	release := d.cfg.Keys.hush()
+	defer release()
+	d.pending.discardFor("")
 	n, err := keyring.ForgetAll(d.cfg.Store)
 	if err != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
@@ -90,8 +98,8 @@ func (d *dashboard) forgetAction(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	it := d.pending.take(in.Token)
-	if it == nil || it.plan == nil {
+	it := d.pending.take(in.Token, isForgetPlan)
+	if it == nil {
 		writeJSON(w, map[string]any{"ok": false, "error": "That forget is no longer waiting — click Forget again."})
 		return
 	}
