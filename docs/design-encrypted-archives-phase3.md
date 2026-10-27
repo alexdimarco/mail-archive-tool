@@ -1409,6 +1409,14 @@ review before P3-5 is coded. O7's change to the release process is made in P3-5.
   and swept after a crash.
 - **Downloaded attachments and originals** are plain files (K9).
 - **A plaintext copy** is plaintext wherever it goes.
+- **An unencrypted copy being made** *(added 2026-10-27 from the P3-4 pass)*:
+  - Its destination is held before its last checks and compared with its path before and after
+    them. A folder above it swapped for a link and back again while the checks run is not caught.
+    That needs write access to a folder above the destination (CRIT-05).
+  - The copy's search index above 256 MiB may spill sorted subjects and senders to the system's
+    temporary folder, deleted at once; a smaller one keeps that work in memory (LEAK-05, CRIT-04).
+  - A copy stopped or failed part way is marked unfinished inside its folder only. MailArchive
+    does not remember it after it closes; the plan says so (CRIT-03, the owner's call).
 - **The old unencrypted copy** after encrypting stays readable until removed (O2).
 - **Encryption authenticates an archive as it stands when encrypted.**
 - **The master key is never re-keyed.** An earlier recovery key with a file saved alongside it
@@ -1638,7 +1646,10 @@ dd984cd).* Eight steps, each test-first, the unfiltered suite green, catalog row
    then the marker removed. It logs counts only — never a path or subject — and lists skipped
    messages in a problems file inside the copy.
 4. `keyring.DecryptCopy`: its own lease (never heals, never adopts, never Apply); a lock mid-copy
-   is `ErrCopyLocked`, never damage.
+   is `ErrCopyLocked`, never damage. *(Corrected 2026-10-27, the P3-4 pass's KEY-03: an archive
+   already locked when the copy begins is `ErrCopyLocked`; once begun, the lease is the copy's own
+   key and a Lock does not stop it — only its context does (Ctrl-C, Shut down). The front ends say
+   so where the person acts.)*
 5. Phase 2c closed (package `app_test`, through `keyring.DecryptCopy`): an encrypted run over
    MA-329's inputs, decrypted, matches the plaintext golden byte for byte under its masks.
 6. `mailarchive decrypt -out DIR -dest PARENT` (`DecryptableAt` — a record that cannot be used

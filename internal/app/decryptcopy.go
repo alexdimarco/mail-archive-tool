@@ -42,6 +42,8 @@ type SealedCopy interface {
 	History() (events []state.HistoryEvent, lost int, err error)
 	// HistoryGap says the record itself marks part of the timeline lost.
 	HistoryGap() bool
+	// IndexBehind says the sealed index is marked as missing messages the archive holds.
+	IndexBehind() bool
 	// IndexImage streams the sealed search index's image to w; IndexSize is its size.
 	IndexImage(w io.Writer) error
 	IndexSize() int64
@@ -104,10 +106,21 @@ var copyLock = func(path string) (*lockfile.Lock, error) { return lockfile.Acqui
 
 var indexPageName = regexp.MustCompile(`^index(-[0-9]+)?\.html$`)
 
-// copyTop are the names the copy writes at its top: no message's files go there.
+// copyTop are the names the copy writes at its top, in lower case: no message's files
+// go there, in any letter case (a destination may not tell case apart).
 var copyTop = map[string]bool{
-	CopyMarkerName: true, CopyProblemsName: true, "README.txt": true, "search.db": true,
-	"search.db-wal": true, "search.db-shm": true, "attachments-report.tsv": true, "index.html": true,
+	strings.ToLower(CopyMarkerName): true, strings.ToLower(CopyProblemsName): true, "readme.txt": true, "search.db": true,
+	"search.db-wal": true, "search.db-shm": true, "search.db-journal": true, "attachments-report.tsv": true, "index.html": true,
+}
+
+// hasPageName says a segment takes a folder page's name, in any case.
+func hasPageName(segs []string) bool {
+	for _, s := range segs {
+		if indexPageName.MatchString(strings.ToLower(s)) {
+			return true
+		}
+	}
+	return false
 }
 
 // DecryptSealed makes the unencrypted copy p planned.
@@ -135,7 +148,24 @@ func (e *CopyExportEnv) DecryptSealed(ctx context.Context, p *DecryptPlan, archi
 	default:
 		return DecryptReport{}, lerr
 	}
+	// The folder is held first, and the checks must read the folder held: it is
+	// compared with the folder its path names before and after them (CreateFolder's
+	// order). A swap there and back while they run is not caught (§14).
+	pr, err := os.OpenRoot(p.Parent)
+	if err != nil {
+		if rerr := p.Recheck(e, archives, settings); rerr != nil {
+			return DecryptReport{}, rerr
+		}
+		return DecryptReport{}, err
+	}
+	defer pr.Close()
+	if err := e.sameFolder(pr, p.Parent); err != nil {
+		return DecryptReport{}, err
+	}
 	if err := p.Recheck(e, archives, settings); err != nil {
+		return DecryptReport{}, err
+	}
+	if err := e.sameFolder(pr, p.Parent); err != nil {
 		return DecryptReport{}, err
 	}
 	m, err := src.Load()
@@ -146,12 +176,6 @@ func (e *CopyExportEnv) DecryptSealed(ctx context.Context, p *DecryptPlan, archi
 	if free, ferr := e.freeOnDest(p.Parent); ferr == nil && int64(free) < need {
 		return DecryptReport{}, refuse("R-g2", fmt.Sprintf("%s has %s free and the unencrypted copy needs %s — free some space or choose another folder; nothing was written.", p.Parent, humanBytes(int64(free)), humanBytes(need)))
 	}
-
-	pr, err := os.OpenRoot(p.Parent)
-	if err != nil {
-		return DecryptReport{}, err
-	}
-	defer pr.Close()
 	if err := pr.Mkdir(p.Name, 0o700); err != nil {
 		if errors.Is(err, fs.ErrExist) {
 			return DecryptReport{}, fmt.Errorf("%w: %s now exists — plan the copy again", ErrDecryptStale, p.Dest)
@@ -163,24 +187,19 @@ func (e *CopyExportEnv) DecryptSealed(ctx context.Context, p *DecryptPlan, archi
 		return DecryptReport{}, err
 	}
 	defer cr.Close()
-	c := &copier{e: e, p: p, m: m, src: src, root: cr, logger: logger, onProgress: onProgress,
+	c := &copier{e: e, p: p, m: m, src: src, root: cr, logger: logger, onProgress: onProgress, lockFree: lockFree,
 		rep: DecryptReport{Dest: p.Dest, Messages: m.Len(), Unfinished: true}}
 	if err := writeNew(cr, CopyMarkerName, []byte(markerText(""))); err != nil {
 		cr.Close()
 		pr.Remove(p.Name) // the folder is empty: nothing readable is left
 		return DecryptReport{}, fmt.Errorf("%w: the folder's unfinished mark could not be written: %w", ErrCopyFailed, err)
 	}
-	var before container.Peeked
-	if lockFree {
-		before, _ = container.PeekFile(p.Out)
-	}
 	if err := c.run(ctx); err != nil {
 		return c.rep, err
 	}
-	if lockFree {
-		if after, _ := container.PeekFile(p.Out); after != before {
-			return c.fail(fmt.Errorf("%s changed while the copy was made", p.Out))
-		}
+	e.step("decrypt-unmark")
+	if ctx.Err() != nil { // a stop before the mark comes off leaves the copy unfinished
+		return c.rep, c.stop(ErrCopyStopped)
 	}
 	if err := cr.Remove(CopyMarkerName); err != nil {
 		return c.rep, fmt.Errorf("%w: its unfinished mark could not be removed: %w", ErrCopyFailed, err)
@@ -216,7 +235,29 @@ type copier struct {
 	root       *os.Root
 	logger     *log.Logger
 	onProgress func(DecryptReport)
+	lockFree   bool // the archive could not be locked (a read-only medium): its record is compared with the plan's at the end
 	rep        DecryptReport
+}
+
+// sameFolder refuses, before the copy writes anything, unless the folder r holds is
+// the one dir names now.
+func (e *CopyExportEnv) sameFolder(r *os.Root, dir string) error {
+	if e.holds(r, dir) {
+		return nil
+	}
+	return refuse("R-e", fmt.Sprintf("The folder %s changed while MailArchive was checking it — nothing was written. Choose it again.", dir))
+}
+
+// holds says the folder r holds is the one dir names now.
+func (e *CopyExportEnv) holds(r *os.Root, dir string) bool {
+	f, err := r.Open(".")
+	if err != nil {
+		return false
+	}
+	id, ierr := readIdentity(f)
+	f.Close()
+	k, ok := e.folderKey(dir)
+	return ierr == nil && ok && k == dirKeyOf(id)
 }
 
 func (c *copier) run(ctx context.Context) error {
@@ -243,34 +284,59 @@ func (c *copier) run(ctx context.Context) error {
 	if err := c.history(); err != nil {
 		return err
 	}
-	if err := c.index(); err != nil {
+	if ctx.Err() != nil {
+		return c.stop(ErrCopyStopped)
+	}
+	// The index, the pages, the report and the README are written by path: the
+	// folder the path names must be the one the copy holds, before and after.
+	if !c.e.holds(c.root, c.p.Dest) {
+		return c.failErr(errCopyMoved)
+	}
+	if err := c.index(ctx); err != nil {
 		return err
 	}
 	writeReport(c.p.Dest, c.m, c.m.Migrated > 0, silentLogger())
 	writeArchiveReadme(c.p.Dest, silentLogger())
-	if _, err := c.root.Lstat("README.txt"); err != nil {
-		_, err = c.fail(fmt.Errorf("its README could not be written: %w", err))
-		return err
+	if !c.e.holds(c.root, c.p.Dest) {
+		return c.failErr(errCopyMoved)
 	}
-	if err := c.m.DetachPlaintext(filepath.Join(c.p.Dest, ".mailarchive-manifest.json")); err != nil {
-		_, err = c.fail(err)
-		return err
-	}
-	if err := c.m.Save(); err != nil {
-		_, err = c.fail(err)
-		return err
+	if !c.regular("README.txt") {
+		return c.failErr(errors.New("its README could not be written"))
 	}
 	if len(c.rep.Problems) > 0 {
 		if err := writeNew(c.root, CopyProblemsName, []byte(problemsText(c.rep.Problems))); err != nil {
-			_, err = c.fail(err)
-			return err
+			return c.failErr(err)
 		}
 	}
 	if bad := strayEntry(c.p.Dest); bad != "" {
-		_, err := c.fail(fmt.Errorf("it holds a link or a special file (%s)", bad))
-		return err
+		return c.failErr(fmt.Errorf("it holds a link or a special file (%s)", bad))
+	}
+	if c.lockFree {
+		if now, err := container.PeekFile(c.p.Out); err != nil || now != c.p.pointer {
+			return c.failErr(fmt.Errorf("%s changed while the copy was made", c.p.Out))
+		}
+	}
+	// The manifest last: until it is there, nothing takes the folder for an archive.
+	if err := c.m.DetachPlaintext(filepath.Join(c.p.Dest, plainManifestName)); err != nil {
+		return c.failErr(err)
+	}
+	if err := c.m.Save(); err != nil {
+		return c.failErr(err)
+	}
+	if !c.e.holds(c.root, c.p.Dest) || !c.regular(plainManifestName) {
+		return c.failErr(errCopyMoved)
 	}
 	return nil
+}
+
+const plainManifestName = ".mailarchive-manifest.json"
+
+var errCopyMoved = errors.New("its folder was moved or replaced while the copy was made")
+
+// regular says name, at the copy's top, is a regular file.
+func (c *copier) regular(name string) bool {
+	fi, err := c.root.Lstat(name)
+	return err == nil && fi.Mode().IsRegular()
 }
 
 // record copies one message's files, or lists it as left out.
@@ -281,7 +347,7 @@ func (c *copier) record(ctx context.Context, r state.Record) error {
 		return c.leftOut(rawPath(r.Path), "its recorded path is not a safe path inside an archive")
 	case r.Unit == "" || r.Sealed == nil:
 		return c.leftOut(r.Path, "the archive holds no sealed files for it")
-	case copyTop[segs[0]] || indexPageName.MatchString(segs[len(segs)-1]) || hasDotSegment(segs):
+	case copyTop[strings.ToLower(segs[0])] || hasPageName(segs) || hasDotSegment(segs):
 		return c.leftOut(r.Path, "its name is one the copy keeps for its own files")
 	}
 	stem := strings.TrimSuffix(r.Path, ".html")
@@ -350,7 +416,7 @@ func (c *copier) leftOut(rel, why string) error {
 // indexCopied builds the copy's index from the files it wrote, as reindex -rebuild
 // does but pruning nothing and logging nothing: a message whose files were left out
 // is simply not searchable.
-func indexCopied(dest string, m *state.Manifest, idx *index.Index) error {
+func indexCopied(ctx context.Context, dest string, m *state.Manifest, idx *index.Index) error {
 	verf := &verifier{out: dest}
 	var scratch RebuildReport
 	recs := m.All()
@@ -360,6 +426,9 @@ func indexCopied(dest string, m *state.Manifest, idx *index.Index) error {
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		rec := recs[key]
 		segs, ok := validRelPath(rec.Path)
 		if !ok || len(segs) < 2 {
@@ -395,6 +464,11 @@ func (c *copier) history() error {
 		return err
 	}
 	c.rep.HistoryLost, c.rep.HistoryGap = lost, c.src.HistoryGap()
+	if c.rep.HistoryGap {
+		// The record marks part of the timeline lost: the copy's says so, as a lost
+		// chunk's does, so its go-back view is partial too.
+		events = append([]state.HistoryEvent{{Barrier: true}}, events...)
+	}
 	f, err := c.root.OpenFile(state.HistoryName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err == nil {
 		err = state.WriteHistory(f, events)
@@ -412,37 +486,46 @@ func (c *copier) history() error {
 	return nil
 }
 
-// index writes search.db from the sealed image, or rebuilds it from the copied
-// files when the image cannot be used; then the folder pages from it.
-func (c *copier) index() error {
+// index writes search.db from the sealed image, or rebuilds it from the copied files
+// when the image cannot be used as it is — unreadable, marked behind (it misses
+// messages the copy holds), or listing messages the copy left out; then the folder
+// pages from it.
+func (c *copier) index(ctx context.Context) error {
 	dbPath := filepath.Join(c.p.Dest, "search.db")
-	f, err := c.root.OpenFile("search.db", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-	if err != nil {
-		_, err = c.fail(fmt.Errorf("its search index: %w", err))
-		return err
-	}
-	err = c.src.IndexImage(f)
-	if cerr := f.Close(); err == nil {
-		err = cerr
-	}
-	if errors.Is(err, ErrCopyLocked) {
-		return c.stop(err)
-	}
+	small := c.src.IndexSize() <= copyIndexMemory
+	err := errIndexNotAsIs
 	var idx *index.Index
-	if err == nil {
-		if err = index.CheckImageFile(dbPath); err == nil {
-			idx, err = index.Open(dbPath)
+	if c.rep.Skipped == 0 && !c.src.IndexBehind() {
+		f, ferr := c.root.OpenFile("search.db", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if ferr != nil {
+			return c.failErr(fmt.Errorf("its search index: %w", ferr))
+		}
+		err = c.src.IndexImage(f)
+		if cerr := f.Close(); err == nil {
+			err = cerr
+		}
+		if errors.Is(err, ErrCopyLocked) {
+			return c.stop(err)
+		}
+		if err == nil {
+			if err = index.CheckImageFile(dbPath); err == nil {
+				idx, err = openCopyIndex(dbPath, small)
+			}
 		}
 	}
 	c.rep.Index = "copied"
 	if err != nil {
 		removeRootDB(c.root)
 		c.rep.Index = "rebuilt"
-		if idx, err = index.Open(dbPath); err == nil {
-			if err = indexCopied(c.p.Dest, c.m, idx); err != nil {
+		if idx, err = openCopyIndex(dbPath, small); err == nil {
+			if err = indexCopied(ctx, c.p.Dest, c.m, idx); err != nil {
 				idx.Close()
 				idx = nil
 			}
+		}
+		if ctx.Err() != nil {
+			removeRootDB(c.root)
+			return c.stop(ErrCopyStopped)
 		}
 		if err != nil {
 			removeRootDB(c.root)
@@ -451,11 +534,28 @@ func (c *copier) index() error {
 		}
 	}
 	defer idx.Close()
+	if ctx.Err() != nil {
+		return c.stop(ErrCopyStopped)
+	}
 	if err := pages.Generate(c.p.Dest, idx, silentLogger(), gapBannerCount(c.m)); err != nil {
-		_, err = c.fail(fmt.Errorf("its folder pages: %w", err))
-		return err
+		return c.failErr(fmt.Errorf("its folder pages: %w", err))
 	}
 	return nil
+}
+
+var errIndexNotAsIs = errors.New("the archive's index is not used as it is")
+
+// copyIndexMemory is the largest index whose work SQLite keeps in memory, as the
+// reader's (§7.4): the folder pages' sort then never spills the subjects and senders
+// to the system's temporary folder. A larger one may spill there (§14).
+var copyIndexMemory int64 = 256 << 20
+
+// openCopyIndex opens the copy's index, its temporary work kept in memory when small.
+func openCopyIndex(path string, small bool) (*index.Index, error) {
+	if small {
+		return index.OpenTempInMemory(path)
+	}
+	return index.Open(path)
 }
 
 // stop marks the copy stopped — the mark rewritten with counts only — and returns why.
@@ -470,7 +570,15 @@ func (c *copier) fail(err error) (DecryptReport, error) {
 	return c.rep, fmt.Errorf("%w: %s is marked unfinished — delete it, then make the copy again: %w", ErrCopyFailed, c.p.Dest, err)
 }
 
+func (c *copier) failErr(err error) error {
+	_, err = c.fail(err)
+	return err
+}
+
+// rewriteMarker marks the copy unfinished, taking its manifest away: an unfinished
+// copy holds none, so nothing takes it for an archive.
 func (c *copier) rewriteMarker(extra string) {
+	c.root.Remove(plainManifestName)
 	if f, err := c.root.OpenFile(CopyMarkerName, os.O_WRONLY|os.O_TRUNC, 0); err == nil {
 		f.Write([]byte(markerText(extra)))
 		f.Sync()

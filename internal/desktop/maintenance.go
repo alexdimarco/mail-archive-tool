@@ -64,6 +64,10 @@ const checkButton = "Maintenance → Check integrity"
 // (g7 F3); any other failure keeps its own text. A job on an encrypted archive
 // says its failure kind's fixed words, never the error's text (P2a-C16).
 func jobErrorText(out string, err error) string {
+	var s spokenErr
+	if errors.As(err, &s) {
+		return string(s)
+	}
 	if app.ArchiveEncrypted(out) {
 		return app.ErrorTextFor(out, err)
 	}

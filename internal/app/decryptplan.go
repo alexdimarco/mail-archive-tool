@@ -7,9 +7,11 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
+	"mail-archive-tool/internal/archindex"
 	"mail-archive-tool/internal/container"
 	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/encrecord"
@@ -47,6 +49,8 @@ type DecryptPlan struct {
 
 	pointer container.Peeked // the record as it was planned: a backup since then makes the plan stale
 	outside *CopyOutside
+	parent  ceDirKey // the folder Parent named when it was planned
+	parentK bool     // parent could be read
 }
 
 // AskTwice reports whether the copy must be confirmed twice before it starts (K5).
@@ -95,24 +99,72 @@ func (e *CopyExportEnv) PlanDecryptCopy(out, parent string, archives, settings [
 		}
 	}
 	p.Leaves = e.copyLeaves(parent)
+	p.parent, p.parentK = e.folderKey(parent)
 	return p, nil
 }
 
-// copyLeaves says why parent may leave this computer (K5): each reason asks twice.
+// folderKey is the identity of the folder dir names now, by path.
+func (e *CopyExportEnv) folderKey(dir string) (ceDirKey, bool) {
+	ids, err := e.destChain(dir)
+	if err != nil || len(ids) == 0 {
+		return ceDirKey{}, false
+	}
+	return dirKeyOf(ids[0]), true
+}
+
+// copyLeaves says why parent may leave this computer (K5): each reason asks twice. It
+// judges the folder as spelled and where its links lead, so a link into a synced
+// folder or onto a removable drive asks twice too.
 func (e *CopyExportEnv) copyLeaves(parent string) []string {
 	var why []string
-	if svc, ok := util.UnderCloudSync(parent); ok {
+	spellings := []string{parent}
+	if rp := util.ResolveExisting(parent); rp != parent {
+		spellings = append(spellings, rp)
+	}
+	svc, synced := "", false
+	for _, s := range spellings {
+		if svc, synced = util.UnderCloudSync(s); synced {
+			break
+		}
+	}
+	if synced {
 		why = append(why, fmt.Sprintf("%s is synced to %s: the readable copy will be uploaded there", parent, svc))
-	} else if home, err := os.UserHomeDir(); err == nil && util.MaySync(parent, home) {
+	} else if mayICloud(spellings) {
 		why = append(why, fmt.Sprintf("%s may be synced to iCloud (when iCloud keeps your Desktop and Documents folders): the readable copy may be uploaded there", parent))
 	}
-	if e.removable(parent) {
+	if e.removable(parent) || (len(spellings) > 1 && e.removable(spellings[1])) {
 		why = append(why, fmt.Sprintf("%s is on a removable or external drive: the readable copy leaves this computer with it", parent))
 	}
 	if e.viewFor(parent).Kind == viewShare {
 		why = append(why, fmt.Sprintf("%s is on a network share: the readable copy is written to another computer", parent))
 	}
 	return why
+}
+
+// mayICloud says one of the spellings is in the Desktop or Documents folder, which
+// macOS may keep in iCloud — by path, or by identity for a link or another spelling
+// of the same folder (/System/Volumes/Data/Users/…).
+func mayICloud(spellings []string) bool {
+	home, err := os.UserHomeDir()
+	if err != nil || runtime.GOOS != "darwin" {
+		return false
+	}
+	for _, s := range spellings {
+		if util.MaySync(s, home) {
+			return true
+		}
+		for _, d := range []string{"Desktop", "Documents"} {
+			if base := filepath.Join(home, d); dirExists(base) && util.Within(base, s) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func dirExists(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && fi.IsDir()
 }
 
 // CheckDecryptDestination checks parent as the folder an unencrypted copy of the
@@ -151,6 +203,7 @@ func (e *CopyExportEnv) CheckDecryptDestination(parent, out string, archives, se
 	}
 	all := append([]string{out}, archives...)
 	all = append(all, ArchivesAbove(parent)...)
+	all = append(all, knownArchives()...)
 	for _, a := range all {
 		if overlap, how := util.Overlap(parent, strings.TrimSpace(a)); overlap && how != "contains" && strings.TrimSpace(a) != "" {
 			return nil, copyRefusalF(a)
@@ -165,6 +218,31 @@ func (e *CopyExportEnv) CheckDecryptDestination(parent, out string, archives, se
 		return nil, err
 	}
 	return outside, nil
+}
+
+// knownArchives are the archive folders this computer knows: the Desktop's list, its
+// current archive and the wizard's last one. The copy is made outside each, by path
+// and by identity, from either front end.
+var knownArchives = func() []string {
+	var out []string
+	if idx, err := archindex.Read(); err == nil {
+		for _, e := range idx.Entries {
+			out = append(out, e.Path)
+		}
+	}
+	if f, err := job.DesktopSettingsFile(); err == nil {
+		out = append(out, job.ReadDesktopOut(f))
+	}
+	if f, err := job.LastArchiveFile(); err == nil {
+		out = append(out, job.ReadLastArchive(f))
+	}
+	kept := out[:0]
+	for _, a := range out {
+		if a = strings.TrimSpace(a); filepath.IsAbs(a) {
+			kept = append(kept, filepath.Clean(a))
+		}
+	}
+	return kept
 }
 
 // mailarchiveOwnDirs are the folders MailArchive keeps its settings, this
@@ -264,6 +342,14 @@ func (p *DecryptPlan) Recheck(e *CopyExportEnv, archives, settings []string) err
 			return copyWording(r, p.Parent)
 		}
 		return err
+	}
+	if k, ok := e.folderKey(p.Parent); ok != p.parentK || k != p.parent {
+		return fmt.Errorf("%w: %s is not the folder it was when the copy was planned — plan the copy again", ErrDecryptStale, p.Parent)
+	}
+	for _, why := range e.copyLeaves(p.Parent) {
+		if !slices.Contains(p.Leaves, why) {
+			return fmt.Errorf("%w: %s — that was not so when the copy was planned; plan the copy again", ErrDecryptStale, why)
+		}
 	}
 	now, err := container.PeekFile(p.Out)
 	if err != nil || now != p.pointer {

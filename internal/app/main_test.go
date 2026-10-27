@@ -23,6 +23,9 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	scratchRoot = func() (string, error) { return root, nil }
+	// The copy's plan reads the archives this computer knows from the real config
+	// folder; the package's tests know none unless one says so.
+	knownArchives = func() []string { return nil }
 	restore := encrecord.SetDirForTest(filepath.Join(root, "record"))
 	code := m.Run()
 	restore()

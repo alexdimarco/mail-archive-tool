@@ -122,6 +122,10 @@ func (d *dashboard) lockAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	d.cfg.Keys.lock(out)
+	if d.copyRunning(out) {
+		writeJSON(w, map[string]any{"ok": true, "note": copyGoesOnText})
+		return
+	}
 	writeJSON(w, map[string]any{"ok": true})
 }
 

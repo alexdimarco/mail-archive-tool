@@ -98,8 +98,27 @@ type Index struct {
 // or serve read-only open running WAL recovery, or a writer committing. Without
 // that wait such a moment failed the open with SQLITE_BUSY(_RECOVERY), and with
 // it the whole export run. A damaged file is not busy and still fails at once.
-func Open(path string) (*Index, error) {
-	dsn, err := fileURI(path, "mode=rwc", writerBusyTimeout)
+func Open(path string) (*Index, error) { return openRW(path, "") }
+
+// OpenTempInMemory is Open with SQLite's temporary work — the sorts a query needs —
+// kept in memory, never spilled to the system's temporary folder: an unencrypted
+// copy's index, whose subjects and senders must not leave its folder.
+func OpenTempInMemory(path string) (*Index, error) { return openRW(path, "&_pragma=temp_store(2)") }
+
+// TempInMemory says the index keeps its temporary work in memory.
+func (ix *Index) TempInMemory() bool {
+	var q interface {
+		QueryRow(string, ...any) *sql.Row
+	} = ix.db
+	if ix.tx != nil {
+		q = ix.tx
+	}
+	var v int
+	return q.QueryRow(`PRAGMA temp_store`).Scan(&v) == nil && v == 2
+}
+
+func openRW(path, extra string) (*Index, error) {
+	dsn, err := fileURI(path, "mode=rwc"+extra, writerBusyTimeout)
 	if err != nil {
 		return nil, fmt.Errorf("open index: %w", err)
 	}

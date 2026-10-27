@@ -38,8 +38,10 @@ func (nopPersister) Commit(state.View) error { return nil }
 
 // fakeMsg is one message the fake archive holds: its files' plaintext by suffix.
 type fakeMsg struct {
-	path  string
-	files map[string][]byte // ".html", "-attachments.zip", ".eml"
+	path     string
+	files    map[string][]byte // ".html", "-attachments.zip", ".eml"
+	missing  []string          // the record's Missing labels: an issue the report lists
+	fallback string            // the record's BodyFallback
 }
 
 type fakeCopy struct {
@@ -55,6 +57,11 @@ type fakeCopy struct {
 	histErr  error
 	image    []byte
 	imageErr error
+	gap      bool   // the record marks part of the timeline lost
+	behind   bool   // the sealed index is marked behind
+	onLoad   func() // runs inside Load
+	onHist   func() // runs inside History
+	onImage  func() // runs inside IndexImage
 }
 
 func unitID(i int) string { return fmt.Sprintf("%032x", i+1) }
@@ -84,7 +91,7 @@ func newFakeCopy(t *testing.T, msgs ...fakeMsg) *fakeCopy {
 	at := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
 	for i, m := range msgs {
 		r := state.Record{Path: m.path, Folder: "Inbox", ExportedAt: at, FirstSeen: at, LastSeen: at, FirstFolder: "Inbox", Present: true,
-			Unit: unitID(i), Sealed: &state.SealedSet{}, Fixity: &state.Fixity{}}
+			Unit: unitID(i), Sealed: &state.SealedSet{}, Fixity: &state.Fixity{}, Missing: m.missing, BodyFallback: m.fallback}
 		for _, k := range copyKinds {
 			b, ok := m.files[k.suffix]
 			if !ok {
@@ -114,7 +121,12 @@ func newFakeCopy(t *testing.T, msgs ...fakeMsg) *fakeCopy {
 	return f
 }
 
-func (f *fakeCopy) Load() (*state.Manifest, error) { return f.m, nil }
+func (f *fakeCopy) Load() (*state.Manifest, error) {
+	if f.onLoad != nil {
+		f.onLoad()
+	}
+	return f.m, nil
+}
 
 func (f *fakeCopy) Unit(ctx context.Context, rec state.Record, kind vault.UnitKind, su state.SealedUnit, use func([]byte) error) error {
 	stem := strings.TrimSuffix(rec.Path, ".html")
@@ -137,9 +149,18 @@ func (f *fakeCopy) Unit(ctx context.Context, rec state.Record, kind vault.UnitKi
 	return use(bytes.Clone(b))
 }
 
-func (f *fakeCopy) History() ([]state.HistoryEvent, int, error) { return f.history, f.lost, f.histErr }
-func (f *fakeCopy) HistoryGap() bool                            { return false }
+func (f *fakeCopy) History() ([]state.HistoryEvent, int, error) {
+	if f.onHist != nil {
+		f.onHist()
+	}
+	return f.history, f.lost, f.histErr
+}
+func (f *fakeCopy) HistoryGap() bool  { return f.gap }
+func (f *fakeCopy) IndexBehind() bool { return f.behind }
 func (f *fakeCopy) IndexImage(w io.Writer) error {
+	if f.onImage != nil {
+		f.onImage()
+	}
 	if f.imageErr != nil {
 		return f.imageErr
 	}

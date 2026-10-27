@@ -2,13 +2,17 @@ package desktop
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
+	"time"
 
 	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/keyring"
+	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/thunderbird"
 )
 
@@ -53,8 +57,12 @@ func (d *dashboard) copyPlanAction(w http.ResponseWriter, r *http.Request) {
 		lines[2] += fmt.Sprintf(" (%s free)", thunderbird.HumanBytes(int64(plan.FreeBytes)))
 	}
 	lines = append(lines, plan.Warnings...)
+	lines = append(lines, copyRunsOnText)
 	writeJSON(w, map[string]any{"ok": true, "token": token, "lines": lines, "leaves": plan.Leaves, "askTwice": plan.AskTwice()})
 }
+
+// copyRunsOnText says, in the plan, what Lock and Shut down do to a copy once it runs.
+const copyRunsOnText = "Once started, the copy runs to its end even if you lock the archive. Shut down stops it and leaves its folder marked unfinished; MailArchive does not remember a stopped copy after it closes, so delete that folder yourself."
 
 // copyArchives are the other archive folders the copy is made outside of.
 func (d *dashboard) copyArchives() []string {
@@ -98,17 +106,26 @@ func (d *dashboard) copyStartAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	plan, env, archives, settings := it.copyPlan, d.copyEnv(), d.copyArchives(), d.cfg.settingsDirs()
+	_, key := keyOf(it.out)
 	if err := d.runJob(func(logger *log.Logger) (string, error) {
 		defer lease.Destroy()
-		rep, err := keyring.DecryptCopy(d.life.Context(), lease, env, plan, archives, settings, logger, nil)
+		d.copying.Store(key)
+		defer d.copying.Store("")
+		rep, err := decryptCopy(d.life.Context(), lease, env, plan, archives, settings, logger, copyProgress(logger, time.Now))
 		if err != nil {
-			return "", err
+			return "", spokenErr(copyFailureText(plan, err))
 		}
 		msg := fmt.Sprintf("Unencrypted copy made at %s: %d of %d messages copied.", rep.Dest, rep.Copied, rep.Messages)
 		if rep.Skipped > 0 {
 			msg += fmt.Sprintf(" %d were left out — each is listed, with why, in %s inside the copy.", rep.Skipped, app.CopyProblemsName)
 		}
-		if rep.Index == "none" {
+		if rep.HistoryLost > 0 || rep.HistoryGap {
+			msg += " Part of the archive's go-back timeline could not be read, so the copy's go-back view is partial too."
+		}
+		switch rep.Index {
+		case "rebuilt":
+			msg += " The copy's search index was rebuilt from the copied files."
+		case "none":
 			msg += " The copy has no search index: Rebuild search index on it makes one."
 		}
 		return msg, nil
@@ -118,4 +135,63 @@ func (d *dashboard) copyStartAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true})
+}
+
+// decryptCopy makes the copy; tests hold it open (fault injection) to drive Lock and
+// Shut down while it runs.
+var decryptCopy = keyring.DecryptCopy
+
+// copyProgressEvery is how often, at most, the copy's progress shows in Activity.
+const copyProgressEvery = 3 * time.Second
+
+// copyProgress writes the copy's progress to Activity as counts only — never a path
+// or a subject — at most every copyProgressEvery, and the first message at once.
+func copyProgress(logger *log.Logger, now func() time.Time) func(app.DecryptReport) {
+	var last time.Time
+	return func(r app.DecryptReport) {
+		if t := now(); last.IsZero() || t.Sub(last) >= copyProgressEvery {
+			last = t
+			logger.Printf("Unencrypted copy: %d of %d messages so far", r.Copied+r.Skipped, r.Messages)
+		}
+	}
+}
+
+// copyRunning says an unencrypted copy of the archive at out is being made.
+func (d *dashboard) copyRunning(out string) bool {
+	_, key := keyOf(out)
+	s, _ := d.copying.Load().(string)
+	return s != "" && s == key
+}
+
+// copyGoesOnText is the Lock reply while a copy of the archive is being made.
+const copyGoesOnText = "Locked. The unencrypted copy already started goes on until it finishes — Shut down stops it, leaving its folder marked unfinished."
+
+// spokenErr is a task's failure already worded for the person: the task's result
+// shows it as it is.
+type spokenErr string
+
+func (e spokenErr) Error() string { return string(e) }
+
+// copyFailureText words a copy that did not finish for the person: what happened, and
+// where the folder of readable mail it left is. It never shows the engine's wrapped
+// cause, which can name a message's file.
+func copyFailureText(plan *app.DecryptPlan, err error) string {
+	var r *app.CopyRefusal
+	switch {
+	case errors.As(err, &r):
+		return r.Message
+	case errors.Is(err, app.ErrDecryptStale), errors.Is(err, lockfile.ErrHeld):
+		return err.Error()
+	}
+	if _, lerr := os.Lstat(plan.Dest); lerr != nil {
+		if errors.Is(err, app.ErrCopyLocked) {
+			return "The archive was locked before the copy began; nothing was made. Unlock it, then make the copy again."
+		}
+		return "The unencrypted copy could not be started; nothing was made. Check that the folder is still there and the archive is unlocked, then make the copy again."
+	}
+	what := "The unencrypted copy did not finish."
+	if errors.Is(err, app.ErrCopyStopped) {
+		what = "The unencrypted copy was stopped."
+	}
+	return what + " The folder " + plan.Dest + " holds part of it, READABLE by anyone who can open it — delete it, then make the copy again."
 }

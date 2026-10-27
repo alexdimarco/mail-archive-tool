@@ -59,6 +59,7 @@ func decryptWith(a asker, out, dest, logPath string, k *keyFlags, now time.Time,
 		return fmt.Errorf("the unencrypted copy would be made in %s, which may leave this computer:\n  %s\nrun decrypt at a terminal to confirm it, or choose a folder on this computer's own drive", plan.Parent, strings.Join(plan.Leaves, "\n  "))
 	}
 	fmt.Fprintln(stdout, decryptPlanLines(plan))
+	fmt.Fprintln(stdout, "  Ctrl-C stops the copy and leaves its folder marked unfinished; delete that folder yourself — MailArchive does not keep track of it.")
 	if a.attended() {
 		ok, err := askYes(a, "Make this unencrypted copy?", false)
 		if err != nil {
@@ -96,7 +97,7 @@ func decryptWith(a asker, out, dest, logPath string, k *keyFlags, now time.Time,
 	stopWatch := watchVerifyStop(sigs, cancel, &stopCode, os.Exit)
 	defer func() { signal.Stop(sigs); stopWatch() }()
 
-	rep, err := keyring.DecryptCopy(ctx, u, env, plan, nil, nil, logger, nil)
+	rep, err := decryptCopy(ctx, u, env, plan, nil, nil, logger, nil)
 	switch {
 	case errors.Is(err, app.ErrCopyStopped):
 		fmt.Fprintf(stderr, "mailarchive: decrypt stopped: %v\n", err)
@@ -115,6 +116,9 @@ func decryptWith(a asker, out, dest, logPath string, k *keyFlags, now time.Time,
 	}
 	return nil
 }
+
+// decryptCopy makes the copy; a test injects a stop through it (fault injection).
+var decryptCopy = keyring.DecryptCopy
 
 // decryptPlanLines is the plan as the terminal shows it (X14).
 func decryptPlanLines(p *app.DecryptPlan) string {
@@ -146,7 +150,7 @@ func decryptSummary(r app.DecryptReport) []string {
 	}
 	switch r.Index {
 	case "rebuilt":
-		lines = append(lines, "The archive's search index could not be read, so the copy's was rebuilt from its files.")
+		lines = append(lines, "The copy's search index was rebuilt from the copied files: the archive's own could not be used as it was (unreadable, missing messages, or listing ones left out).")
 	case "none":
 		lines = append(lines, fmt.Sprintf("The copy has no search index: run `mailarchive reindex -rebuild -out %q` to make one.", r.Dest))
 	}

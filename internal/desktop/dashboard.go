@@ -216,6 +216,7 @@ type dashboard struct {
 	csrf    string
 	cap     *captureState
 	pending *pendingSecrets // the Encryption card's prepared key changes (3e)
+	copying atomic.Value    // the archive (a key from keyOf) an unencrypted copy is being made of, or ""
 
 	boot  string // this process's epoch: a page that carries another one was made before a restart (R-y)
 	life  *Lifecycle

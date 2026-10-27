@@ -5,6 +5,7 @@ import (
 	"html/template"
 	"net/http"
 	"path/filepath"
+	"slices"
 
 	"mail-archive-tool/internal/index"
 	"mail-archive-tool/internal/state"
@@ -89,6 +90,11 @@ func (f folder) GoBack() (GoBack, error) {
 	// A read error yields no events: the availability above already tells the
 	// reader the timeline is partial or unavailable.
 	g.Events, _ = state.ReadHistory(hpath)
+	if g.Timeline == TimelineAvailable && slices.ContainsFunc(g.Events, func(e state.HistoryEvent) bool { return e.Barrier }) {
+		// An unencrypted copy of an encrypted archive whose timeline was lost in part
+		// carries the loss as a barrier: its past dates may be incomplete.
+		g.Timeline = TimelinePartial
+	}
 	if m, err := state.Load(filepath.Join(f.dir, ".mailarchive-manifest.json")); err == nil {
 		g.Records = m
 	}

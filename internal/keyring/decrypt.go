@@ -18,8 +18,11 @@ import (
 // DecryptCopy makes the unencrypted copy p planned of the encrypted archive u opened
 // (design-encrypted-archives-phase3 §10): app.DecryptSealed through a sealed side on
 // a lease of its own — never a heal, an adoption or an Apply — that holds the key only
-// while it opens what it reads. A lock of u, or of the lease, mid-copy stops it with
-// app.ErrCopyLocked, never as damage.
+// while it opens what it reads. An archive already locked when the copy begins is
+// app.ErrCopyLocked, never damage. Once begun, the lease is the copy's own key: a
+// lock of u does not stop it (§3.2) — the Desktop says so where the person acts —
+// and only its context does (Ctrl-C, Shut down). Its ErrCopyLocked handling mid-copy
+// is defence, for a lease destroyed under it.
 func DecryptCopy(ctx context.Context, u *Unlocked, e *app.CopyExportEnv, p *app.DecryptPlan, archives, settings []string, logger *log.Logger, onProgress func(app.DecryptReport)) (app.DecryptReport, error) {
 	l, err := u.Lease()
 	if err != nil {
@@ -108,6 +111,9 @@ func (s *sealedCopy) History() ([]state.HistoryEvent, int, error) {
 
 // HistoryGap says the record marks part of the timeline lost.
 func (s *sealedCopy) HistoryGap() bool { _, _, ok := s.store.HistoryGap(); return ok }
+
+// IndexBehind says the sealed index is marked as missing messages (MA-761).
+func (s *sealedCopy) IndexBehind() bool { return s.store.IndexBehind() }
 
 // IndexImage streams the sealed index image to w, the key held while it is read.
 func (s *sealedCopy) IndexImage(w io.Writer) error {

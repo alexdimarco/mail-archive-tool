@@ -65,12 +65,12 @@ if(cy)cy.addEventListener('click',async()=>{
   }
   try{
     const s=await send('api/encryption/copy/start',{token:d.token,confirm:true,confirmAgain:again});
-    say(s.ok?'The copy is being made — it shows in Activity as it goes.':(s.error||'Could not start the copy.'));
+    say(s.ok?'The copy is being made — it shows in Activity as it goes. Locking the archive does not stop it; Shut down does.':(s.error||'Could not start the copy.'));
   }catch(e){say('Could not reach MailArchive Desktop — reload the page.');}
 });
 const lk=$('encLock');
 if(lk)lk.addEventListener('click',async()=>{
-  try{const d=await send('api/encryption/lock');if(d.ok){location.reload();return;}say(d.error||'Could not lock.');}
+  try{const d=await send('api/encryption/lock');if(d.ok&&d.note){say(d.note);setTimeout(()=>location.reload(),6000);return;}if(d.ok){location.reload();return;}say(d.error||'Could not lock.');}
   catch(e){say('Could not reach MailArchive Desktop — reload the page.');}
 });
 // A key change: sent once, then again with the confirmation the page asked for.
