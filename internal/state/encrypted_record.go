@@ -82,9 +82,45 @@ func FailureText(kind string) string {
 	return failureText[FailRunFailed]
 }
 
+// The program step's outcome as an encrypted archive's record names it (program
+// design §4, §8): a CLOSED list, like the failure kinds.
+const (
+	ProgramUpdated    = "program_updated"
+	ProgramUnchanged  = "program_unchanged"
+	ProgramIncomplete = "program_incomplete"
+	ProgramSkipped    = "program_skipped"
+	ProgramUnread     = "program_unread" // a set a newer MailArchive keeps
+	ProgramStopped    = "program_stopped"
+	ProgramCancelled  = "program_cancelled"
+)
+
+// programText is each program outcome's fixed sentence for status and the Desktop.
+var programText = map[string]string{
+	ProgramUpdated:    "the copies of MailArchive kept in this archive were updated",
+	ProgramUnchanged:  "the copies of MailArchive kept in this archive are as they should be",
+	ProgramIncomplete: "the copies of MailArchive kept in this archive are incomplete — a copy is missing, cannot be read, or something stands in its place; open the archive in MailArchive to see which",
+	ProgramSkipped:    "the copies of MailArchive kept in this archive were not refreshed — its program folder is not a plain folder, or MailArchive ran from inside it",
+	ProgramUnread:     "the copies of MailArchive in this archive are kept by a newer MailArchive and were left as they are",
+	ProgramStopped:    "an update of the copies of MailArchive kept in this archive did not finish; the next backup finishes it",
+	ProgramCancelled:  "the update of the copies of MailArchive kept in this archive was cancelled; the next backup tries again",
+}
+
+// ProgramText is a program outcome's fixed sentence, or "" for none.
+func ProgramText(code string) string { return programText[code] }
+
+// ProgramWarns says a program outcome is one status warns about.
+func ProgramWarns(code string) bool {
+	switch code {
+	case ProgramIncomplete, ProgramSkipped, ProgramStopped:
+		return true
+	}
+	return false
+}
+
 // encryptedLastRun is the ONLY shape an encrypted archive's last-run record takes on
 // disk: the allow-list of frozen A6 — times, the outcome and the failure kind
-// (P2a-C16). Counts, the job, the program path, warnings and error text are never
+// (P2a-C16) — and, by the program design's §8, the program step's outcome from its
+// closed list. Counts, the job, the program path, warnings and error text are never
 // written beside an encrypted archive.
 type encryptedLastRun struct {
 	Version   int       `json:"version"`
@@ -92,6 +128,7 @@ type encryptedLastRun struct {
 	Started   time.Time `json:"started"`
 	Finished  time.Time `json:"finished,omitempty"`
 	ErrorKind string    `json:"error_kind,omitempty"`
+	Program   string    `json:"program,omitempty"`
 	Encrypted bool      `json:"encrypted"`
 }
 
@@ -101,9 +138,13 @@ func marshalLastRun(r LastRun) ([]byte, error) {
 	if !r.Encrypted {
 		return json.MarshalIndent(r, "", "  ")
 	}
+	program := r.Program
+	if _, known := programText[program]; !known {
+		program = "" // only the closed list is ever written
+	}
 	return json.MarshalIndent(encryptedLastRun{
 		Version: r.Version, Status: r.Status, Started: r.Started, Finished: r.Finished,
-		ErrorKind: r.ErrorKind, Encrypted: true,
+		ErrorKind: r.ErrorKind, Program: program, Encrypted: true,
 	}, "", "  ")
 }
 

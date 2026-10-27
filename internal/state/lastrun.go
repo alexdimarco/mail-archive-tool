@@ -116,6 +116,10 @@ type LastRun struct {
 	// configured" and an older binary ignores it.
 	Presync *PresyncRecord `json:"presync,omitempty"`
 
+	// Program is an encrypted archive's program step outcome, one of the Program*
+	// codes (program design §4, §8). Absent when the step did not run.
+	Program string `json:"program,omitempty"`
+
 	// Encrypted marks the record of an encrypted archive: WriteLastRun then writes
 	// only the allow-listed fields (encryptedLastRun) and the attention notice says
 	// the failure kind in fixed words (P2a-C16). The caller sets it — state does not

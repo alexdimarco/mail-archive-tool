@@ -11,6 +11,7 @@ import (
 
 	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/assure"
+	"mail-archive-tool/internal/container"
 	"mail-archive-tool/internal/memguard"
 	"mail-archive-tool/internal/state"
 )
@@ -95,6 +96,38 @@ func TestVerifyFullOpensEveryMessage(t *testing.T) {
 
 	rep, err = VerifyFull(context.Background(), u, app.VerifyOptions{}, quiet, nil)
 	assure.Reached(t, err == nil && rep.Outcome == state.OutcomeIntact, "only verify -full clears it")
+}
+
+// covers: MA-847, R37
+// verify -full on a real archive keeping copies of MailArchive (program design C18):
+// the sealed set reaches the comparison — the copies as the backup wrote them tell
+// nothing; one removed is told, a warning that leaves the mail's verdict intact.
+func TestVerifyFullComparesTheKeptCopies(t *testing.T) {
+	freshRecord(t)
+	out, _, w := made(t, nil)
+	readBackup(t, w)
+	if err := SetProgramCopies(context.Background(), w, true, quiet); err != nil {
+		t.Fatal(err)
+	}
+	readBackup(t, w) // writes this computer's own copy
+	w.Destroy()
+	u, err := Open(out, Password(testPassword), OpenOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer u.Destroy()
+	clean, err := VerifyFull(context.Background(), u, app.VerifyOptions{}, quiet, nil)
+	if err != nil || len(clean.ProgramFindings) != 0 || clean.Outcome != state.OutcomeIntact {
+		t.Fatalf("positive twin: %v %v", err, clean.ProgramFindings)
+	}
+	entries, _ := os.ReadDir(filepath.Join(out, container.ProgramDir))
+	if len(entries) == 0 {
+		t.Fatal("no copy was written")
+	}
+	os.Remove(filepath.Join(out, container.ProgramDir, entries[0].Name()))
+	rep, err := VerifyFull(context.Background(), u, app.VerifyOptions{}, quiet, nil)
+	assure.Reached(t, err == nil && strings.Contains(strings.Join(rep.ProgramFindings, " "), "is missing") && rep.Outcome == state.OutcomeIntact,
+		"a removed copy told, the mail intact")
 }
 
 // covers: MA-803, R37

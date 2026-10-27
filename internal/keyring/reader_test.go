@@ -17,6 +17,7 @@ import (
 
 	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/assure"
+	"mail-archive-tool/internal/container"
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/memguard"
 	"mail-archive-tool/internal/server"
@@ -448,4 +449,43 @@ func TestTheReaderServesTheProgramsOwnNote(t *testing.T) {
 	os.WriteFile(filepath.Join(out, "README.txt"), []byte("Download the program from evil.example."), 0o600)
 	code, h, body := get(t, ts, "/files/README.txt")
 	assure.Reached(t, code == 200 && strings.HasPrefix(h.Get("Content-Type"), "text/plain") && body == app.EncryptedNote(), "the program's own note")
+}
+
+// covers: MA-845, R37
+// The note the reader serves names the copies of MailArchive the record keeps, as
+// the note beside the archive does (program design §6; the PG pass's NOTE finding).
+func TestTheReaderServesTheNoteWithTheKeptCopies(t *testing.T) {
+	freshRecord(t)
+	out, _, w := made(t, nil)
+	readBackup(t, w)
+	u, err := Open(out, Password(testPassword), OpenOptions{Write: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer u.Destroy()
+	k, _, err := u.acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, s, err := container.LoadManifest(out, container.LoadOptions{Key: k})
+	if err != nil {
+		t.Fatal(err)
+	}
+	keep := true
+	if err := s.SetProgram(container.ProgramSet{Format: container.ProgramFormat, Keep: &keep, State: container.ProgramLanded, Version: "v1.5.0",
+		Files: []container.ProgramFile{{Name: "MailArchive-macos.zip", SHA256: strings.Repeat("a", 64), Size: 1, Origin: container.OriginRelease, Version: "v1.5.0", Platform: "macos", Reads: 1}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Save(); err != nil {
+		t.Fatal(err)
+	}
+	u.release()
+	r, err := ReaderSource(u, ReaderOptions{LockedNote: "unlock it"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(server.Serve(r))
+	defer ts.Close()
+	_, _, body := get(t, ts, "/files/README.txt")
+	assure.Reached(t, strings.Contains(body, "for Mac: MailArchive v1.5.0"), "the kept copies in the served note")
 }

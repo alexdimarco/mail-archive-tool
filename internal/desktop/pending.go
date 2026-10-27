@@ -32,6 +32,8 @@ type pendingItem struct {
 	plan *keyring.ForgetPlan     // a forget shown and awaiting its confirmation (§4.6)
 	add  *wizard.PendingAdd      // a new archive the wizard's questions chose (§5.2)
 	make *keyring.PendingCreate  // its key, made and awaiting the recovery key typed back (K2)
+	// programOff: the person unticked keeping copies of MailArchive in the new archive.
+	programOff bool
 	// copyPlan is an unencrypted copy planned and awaiting its confirmation (§10, X14).
 	copyPlan *app.DecryptPlan
 	lease    *keyring.Unlocked

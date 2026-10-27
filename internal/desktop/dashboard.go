@@ -352,6 +352,9 @@ func (d *dashboard) router() localweb.Router {
 	mux.HandleFunc("/api/encryption/create/key", d.api(d.createKeyAction))
 	mux.HandleFunc("/api/encryption/repair-record", d.api(d.repairRecordAction))
 	mux.HandleFunc("/api/encryption/dismiss-lost", d.api(d.dismissLostAction))
+	mux.HandleFunc("/api/encryption/program-copies", d.api(d.programCopiesAction))
+	mux.HandleFunc("/api/job/cancel", d.api(d.cancelJobAction))
+	mux.HandleFunc("/api/job/skip-program", d.api(d.skipProgramAction))
 	mux.HandleFunc("/api/browser-link", d.browserLink)
 	if !d.cfg.WorkspaceOff {
 		d.registerWorkspace(mux)
@@ -927,6 +930,11 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 		EncUnlocked    bool
 		EncRemembered  bool
 		EncWarnings    []string
+		// The copies of MailArchive kept in it (program design §6, C16): what the sealed
+		// set says, whether keeping them is on, and whether the switch is offered.
+		EncProgram      string
+		EncProgramOn    bool
+		EncProgramOffer bool
 		// Local-archive scheduling (design-thunderbird-presync-desktop): a localOnly
 		// archive the Desktop can reconstruct + schedule from its OWN record (on an
 		// adapter platform) shows a create form (ShowLocalCreate) in place of the
@@ -1086,6 +1094,9 @@ func (cfg Config) overviewFor(csrf, epoch string) string {
 			data.EncUnlocked = true
 			if seal.IsSealed(data.OutDir) {
 				data.EncPauseNote, _ = keyring.PauseNote(e.u)
+			}
+			if ps, st, err := keyring.ProgramCopies(e.u); err == nil {
+				data.EncProgram, data.EncProgramOn, data.EncProgramOffer = programCardLine(ps, st)
 			}
 			if e.u.NeedsHeal() {
 				data.EncWarnings = append(data.EncWarnings, "One copy of this archive's key file is damaged or missing; a backup into it rewrites it from the good one.")
@@ -1330,6 +1341,8 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       </div>
       <div id="sec-activity" class="anchor"></div>
       <pre id="activity" hidden></pre>
+      <button class="btn secondary" type="button" id="jobSkipProgram" hidden title="Stop waiting for the download: this backup keeps this computer's own copy of MailArchive instead, and the download carries on for the next one.">Skip the program download</button>
+      <button class="btn secondary" type="button" id="jobCancel" hidden title="Stop this backup now. The archive is left safe; the next backup finishes what this one left.">Cancel the backup</button>
       <div class="note" id="captureResult" hidden></div>
     </div>
 
@@ -1358,6 +1371,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
         <label for="encCreatePw">Password for the new archive</label> <input type="password" id="encCreatePw" autocomplete="new-password" spellcheck="false">
         <label for="encCreatePw2">Type it again</label> <input type="password" id="encCreatePw2" autocomplete="new-password" spellcheck="false">
         <label class="small"><input type="checkbox" id="encCreateRemember" checked> Remember the key on this computer — backups and opening it here then need no password, for anyone using this computer's account</label>
+        <label class="small"><input type="checkbox" id="encCreateProgram" checked> Keep a copy of MailArchive for Mac, Windows and Linux in the archive so it can be opened years from now (about 134 MB each time a new version updates it)</label>
         <button class="btn" type="button" id="encCreateKeyBtn">Make its key</button>
       </div>
       <div id="encNewKeyBox" hidden>
@@ -1382,6 +1396,8 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border:1px 
       {{if .EncUnlocked}}<p class="card-sub" id="encState">Unlocked: you can read this archive's messages, search it and go back in time.{{if .EncRemembered}} This computer remembers its key.{{end}}</p>
       {{if .EncPauseNote}}<p class="card-sub" id="encPauseNote">Paused: {{.EncPauseNote}}</p>{{end}}
       {{range .EncWarnings}}<p class="card-sub warn">{{.}}</p>{{end}}
+      {{if .EncProgram}}<p class="card-sub" id="encProgram">{{.EncProgram}}</p>{{end}}
+      {{if .EncProgramOffer}}<label class="small"><input type="checkbox" id="encProgramCopies"{{if .EncProgramOn}} checked{{end}}> Keep a copy of MailArchive for Mac, Windows and Linux in the archive so it can be opened years from now (about 134 MB each time a new version updates it)</label>{{end}}
       <button class="btn secondary" type="button" id="encLock" title="Close this archive: its messages are unreadable again until it is unlocked.">Lock</button>
       <button class="btn secondary" type="button" id="encCopy" title="Make a readable copy of this archive in a new folder you choose — the way out of encryption. The archive itself is not changed.">Make an unencrypted copy…</button>
       <details class="small" id="encKeys"><summary>Change the password, make a new recovery key, or change whether this computer remembers the key</summary>
@@ -1754,9 +1770,20 @@ function render(d){
   if(d.device&&d.device.code){dev.hidden=false;$('deviceCode').textContent=d.device.code;$('deviceUrl').href=d.device.url;}
   else dev.hidden=true;
   if(d.log&&d.log.length){act.hidden=false;act.textContent=d.log.join('\n');act.scrollTop=act.scrollHeight;}
+  const sk=$('jobSkipProgram'),cn=$('jobCancel');
+  if(sk)sk.hidden=!(d.running&&d.skippable);
+  if(cn)cn.hidden=!(d.running&&d.cancellable);
   if(!d.running&&res){res.hidden=false;res.textContent=d.error?('Capture failed: '+d.error):(d.result||'Done.');}
 }
 fetch('api/activity').then(r=>r.json()).then(d=>{if(d.running)start();}).catch(()=>{});
+for(const [id,path] of [['jobSkipProgram','api/job/skip-program'],['jobCancel','api/job/cancel']]){
+  const b=$(id);
+  if(b)b.addEventListener('click',async()=>{
+    b.disabled=true;
+    try{const d=await(await post(path)).json();if(!d.ok){const r=$('captureResult');if(r){r.hidden=false;r.textContent=d.error||'Could not do that.';}}}catch(e){}
+    b.disabled=false;b.hidden=true;
+  });
+}
 
 async function schedState(){
   const n=$('schedState');if(!n)return;

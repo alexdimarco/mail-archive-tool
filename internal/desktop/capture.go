@@ -143,6 +143,11 @@ type captureState struct {
 	lines   []string
 	result  string
 	errMsg  string
+	// A keyed backup's own cancel and skip, nil for any other job (jobcontrol.go).
+	cancel  context.CancelFunc
+	skip    chan struct{}
+	skipped bool
+	waiting bool // the program step waits for its download: the skip is offered
 }
 
 func (c *captureState) Write(p []byte) (int, error) {
@@ -170,6 +175,7 @@ func (c *captureState) setDevice(d graph.DeviceAuth) {
 func (c *captureState) finish(result, errMsg string) {
 	c.mu.Lock()
 	c.running, c.device, c.result, c.errMsg = false, nil, result, errMsg
+	c.cancel, c.skip, c.skipped, c.waiting = nil, nil, false, false
 	c.mu.Unlock()
 }
 
@@ -194,7 +200,8 @@ func (d *dashboard) capture(w http.ResponseWriter, r *http.Request) {
 func (d *dashboard) activity(w http.ResponseWriter, r *http.Request) {
 	c := d.cap
 	c.mu.Lock()
-	out := map[string]any{"running": c.running, "log": append([]string(nil), c.lines...), "result": c.result, "error": c.errMsg}
+	out := map[string]any{"running": c.running, "log": append([]string(nil), c.lines...), "result": c.result, "error": c.errMsg,
+		"cancellable": c.cancel != nil, "skippable": c.waiting && !c.skipped}
 	if c.device != nil {
 		out["device"] = map[string]any{"code": c.device.UserCode, "url": c.device.VerificationURI}
 	}

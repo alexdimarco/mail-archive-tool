@@ -447,6 +447,15 @@ func Assess(in Input, now time.Time) Report {
 		if lr := in.LastRun; in.LastRunState == state.LastRunPresent && lr.Encrypted && lr.Status == state.RunOK && lr.ErrorKind == state.NoteIndexBehind {
 			r.warn("index_behind", state.FailureText(state.NoteIndexBehind))
 		}
+		// The copies of MailArchive kept in it, as its last backup left them (program
+		// design §4: one line in status).
+		if lr := in.LastRun; in.LastRunState == state.LastRunPresent && lr.Encrypted && state.ProgramText(lr.Program) != "" {
+			if state.ProgramWarns(lr.Program) {
+				r.warn(lr.Program, state.ProgramText(lr.Program))
+			} else {
+				r.note(lr.Program, state.ProgramText(lr.Program))
+			}
+		}
 	} else {
 		assessContents(&r, in, now)
 	}

@@ -37,6 +37,14 @@ var selfAtStart = func() (s struct {
 // test can stand a file in for it.
 var selfExecutable = func() (string, os.FileInfo) { return selfAtStart.path, selfAtStart.fi }
 
+// UseTestProgram stands the file at path in for this program's own file in a test
+// binary's whole run (another package's TestMain), so a test's self-copy is a small
+// file rather than the test binary. Never called outside tests.
+func UseTestProgram(path string) {
+	fi, _ := os.Stat(path)
+	selfExecutable = func() (string, os.FileInfo) { return path, fi }
+}
+
 // appBundle is the .app bundle exe runs from, or "".
 func appBundle(exe string) string {
 	for d := filepath.Dir(exe); d != filepath.Dir(d); d = filepath.Dir(d) {

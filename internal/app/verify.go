@@ -114,6 +114,9 @@ type Report struct {
 	// change the outcome.
 	ProgramOdd      int      `json:"program_odd,omitempty"`
 	ProgramOddNames []string `json:"program_odd_names,omitempty"`
+	// ProgramFindings, a check with the key only: how the program folder and the note
+	// differ from what the record seals (C18) — warnings that never change the outcome.
+	ProgramFindings []string `json:"program_findings,omitempty"`
 
 	// Tier is an encrypted archive's check: 1 without the key, 2 with it (phase3 §8).
 	Tier int `json:"tier,omitempty"`
@@ -874,6 +877,9 @@ func keylessSummary(r Report) []string {
 	}
 	if r.ProgramOdd > 0 {
 		out = append(out, fmt.Sprintf("note: %d item(s) in the archive's program folder are not copies MailArchive keeps there (%s) — they do not change the outcome", r.ProgramOdd, strings.Join(r.ProgramOddNames, ", ")))
+	}
+	for _, f := range r.ProgramFindings {
+		out = append(out, "warning: copies of MailArchive: "+f+" — this does not change the outcome")
 	}
 	remedy := state.OutcomeTextFor(r.Outcome, r.Tier)
 	if r.Advice != "" {

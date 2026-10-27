@@ -68,7 +68,8 @@ func TestAnEncryptedArchivesRunRecordsHoldOnlyTheAllowList(t *testing.T) {
 	}
 	for k := range keys {
 		switch k {
-		case "version", "status", "started", "finished", "error_kind", "encrypted":
+		case "version", "status", "started", "finished", "error_kind", "encrypted", "program":
+			// "program": the program step's outcome, a closed list (program design §8).
 		default:
 			t.Fatalf("an encrypted archive's record carries %q, outside the allow-list:\n%s", k, raw)
 		}
@@ -99,6 +100,17 @@ func TestAnEncryptedArchivesRunRecordsHoldOnlyTheAllowList(t *testing.T) {
 			}
 		}
 	}
+
+	// The program outcome is written from its closed list only.
+	for code, want := range map[string]string{ProgramIncomplete: ProgramIncomplete, "copied /Users/someone/secret": ""} {
+		r.Program = code
+		WriteLastRun(sealed, r)
+		back, _, _ := ReadLastRun(sealed)
+		if back.Program != want {
+			t.Fatalf("program %q was recorded as %q", code, back.Program)
+		}
+	}
+	r.Program = ""
 
 	// An ok run removes the encrypted notice like the plaintext one.
 	r.Status, r.ErrorKind = RunOK, ""

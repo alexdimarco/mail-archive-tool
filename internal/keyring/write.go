@@ -88,6 +88,40 @@ func SetPauseNote(ctx context.Context, u *Unlocked, note string, logger *log.Log
 	return app.SealPauseNote(ctx, opts, note, logger)
 }
 
+// SetProgramCopies seals the choice to keep copies of MailArchive in the archive
+// (program design §6, C16): a keyed write, so u must be a write lease. The next backup
+// writes the copies, or removes them.
+func SetProgramCopies(ctx context.Context, u *Unlocked, on bool, logger *log.Logger) error {
+	opts := app.Options{Out: u.Out()}
+	done, err := Apply(&opts, u)
+	if err != nil {
+		return err
+	}
+	defer done()
+	choice := app.ProgramCopiesOff
+	if on {
+		choice = app.ProgramCopiesOn
+	}
+	return app.SealProgramCopies(ctx, opts, choice, logger)
+}
+
+// ProgramCopies reads the archive's sealed program set, read-only and without the
+// archive lock (§7.3), for the card: its status, and the set when it is one this
+// program reads.
+func ProgramCopies(u *Unlocked) (*container.ProgramSet, container.ProgramStatus, error) {
+	k, _, err := u.acquire()
+	if err != nil {
+		return nil, container.ProgramAbsent, err
+	}
+	defer u.release()
+	_, s, err := container.LoadManifest(u.out, container.LoadOptions{Key: k, ReadOnly: true})
+	if err != nil {
+		return nil, container.ProgramAbsent, err
+	}
+	ps, st, _ := s.Program()
+	return &ps, st, nil
+}
+
 // PauseNote reads the pause note sealed in the archive's record, read-only and
 // without the archive lock (§7.3).
 func PauseNote(u *Unlocked) (string, error) {

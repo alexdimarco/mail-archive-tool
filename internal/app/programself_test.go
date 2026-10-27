@@ -3,8 +3,10 @@ package app
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"io"
 	"io/fs"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -117,4 +119,45 @@ func TestADownloadThatOutlastsTheWaitBringsTheOwnProgram(t *testing.T) {
 	ok, _ := f.ShouldTry("v1.7.0")
 	assure.Reached(t, strings.Contains(logged, "did not finish within the wait") && strings.Contains(files, name) && !ok &&
 		time.Since(start) < time.Minute && res.Program.Class == ProgramUpdated, "the own program, the attempt counted: "+files)
+}
+
+// covers: MA-847, R37
+// Skipping the wait (R20) ends only the wait: the front end is told when the wait starts
+// and ends, the run goes on and keeps this computer's own program, with a warning; the
+// skipped attempt is not counted, so the download is tried again.
+func TestSkippingTheWaitKeepsTheOwnProgramAndCountsNoAttempt(t *testing.T) {
+	stall := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer stall.Close()
+	isolatedCache(t)
+	oi, of, ow := programIdentity, programFetcher, programWaitMax
+	programIdentity = func() (string, bool) { return "v1.7.0", true }
+	programFetcher = func(c *progcache.Cache, this string) *progcache.Fetcher {
+		return &progcache.Fetcher{Cache: c, This: this, BaseURL: stall.URL, Client: stall.Client(), Trusted: func(h string) bool { return h == "127.0.0.1" }, Idle: 5 * time.Second}
+	}
+	programWaitMax = 2 * time.Minute
+	defer func() { programIdentity, programFetcher, programWaitMax = oi, of, ow }()
+	out, key := encryptedOut(t)
+	skip := make(chan struct{})
+	var told []bool
+	var logged bytes.Buffer
+	start := time.Now()
+	res, err := Run(context.Background(), Options{Inputs: []string{encryptedSourcePST(t)}, Out: out, Key: key, ProgramCopies: ProgramCopiesOn,
+		ProgramSkip: skip, OnProgramWait: func(waiting bool) {
+			told = append(told, waiting)
+			if waiting {
+				close(skip)
+			}
+		}}, log.New(&logged, "", 0), nil)
+	if err != nil {
+		t.Fatalf("backup: %v\n%s", err, logged.String())
+	}
+	_, name := selfPlatformAndName()
+	files := strings.Join(programFiles(t, out), " ")
+	c, _ := progcache.Open("")
+	ok, _ := programFetcher(c, "v1.7.0").ShouldTry("v1.7.0")
+	assure.Reached(t, strings.Contains(logged.String(), "was skipped") && strings.Contains(files, name) && ok &&
+		len(told) == 2 && told[0] && !told[1] && time.Since(start) < time.Minute && res.Program.Class == ProgramUpdated,
+		"skipped: the own program, no attempt counted: "+files)
 }

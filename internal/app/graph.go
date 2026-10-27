@@ -558,7 +558,8 @@ func RunGraph(ctx context.Context, g GraphOptions, opts Options, logger *log.Log
 		// The program copies, under the lock, after the last save (program design R1).
 		if volumeFatal == nil && lockLost == nil && saveErr == nil && ctx.Err() == nil {
 			result.Program = programStep(programEnv{ctx: ctx, out: opts.Out, store: sealed, save: manifest.Save,
-				stillHeld: lock.StillHeld, logger: logger, runStart: encStart, download: download})
+				stillHeld: lock.StillHeld, logger: logger, runStart: encStart, download: download,
+				skip: opts.ProgramSkip, onWait: opts.OnProgramWait})
 		}
 	}
 	if saveErr != nil {

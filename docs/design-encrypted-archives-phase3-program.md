@@ -5,7 +5,9 @@ condition 20's targeted re-review of §4 and §5 (R1–R22, §11) folded in; bot
 docs/review-encrypted-archives-phase3-program-predesign.md (GO_WITH_CONDITIONS each). Where §§1–9
 and §11 differ, **§11 governs**. Built: PG5 (MA-827), PG1 (MA-831..834; the Desktop's
 creation checkbox for the choice is PG4's), PG2 (MA-835..838, `internal/progcache`) and
-PG3 (MA-839..842, `internal/app/program*.go`). PG4 is not built; no tag carries PG3 without it.
+PG3 (MA-839..842, `internal/app/program*.go`) and PG4 (MA-847: `status`, the reader's note,
+`verify -full`, the Desktop's creation checkbox, card switch and job-slot Cancel and skip). PG4's
+adversarial pass is owed before any tag carries the program copies.
 **Parent:** docs/design-encrypted-archives-phase3.md §13.2 (settled points, requirements 1–12),
 §13.1 (the note, built as MA-826), §14 (leak budget); owner rulings O1 (all four platforms,
 downloaded and checked; offline, this computer's own program) and O7 (published releases become

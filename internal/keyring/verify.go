@@ -72,6 +72,15 @@ func (s *sealedCheck) FileList() ([]container.ListProblem, bool) { return s.stor
 // Marks is what the loaded record says it lacks.
 func (s *sealedCheck) Marks() (historyGap, indexBehind bool) { return s.store.RecordMarks() }
 
+// Program is the record's program set and the note's sealed digest (C18).
+func (s *sealedCheck) Program() (*container.ProgramSet, string) {
+	ps, st, _ := s.store.Program()
+	if st != container.ProgramOK {
+		return nil, s.store.NoteDigest()
+	}
+	return &ps, s.store.NoteDigest()
+}
+
 // Unit reads one unit whole within the memory budget, holding the key only to name
 // and to open it (§3.2).
 func (s *sealedCheck) Unit(ctx context.Context, rec state.Record, kind vault.UnitKind, su state.SealedUnit) (string, error) {

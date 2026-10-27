@@ -372,7 +372,7 @@ func (d *dashboard) runBackupKeyed(w http.ResponseWriter, out, jobPath string) {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
-	if err := d.runJob(func(logger *log.Logger) (string, error) {
+	if err := d.runKeyedJobOn(out, func(j keyedJob, logger *log.Logger) (string, error) {
 		defer lease.Destroy()
 		if lease.NeedsHeal() && !lease.Forked() {
 			if herr := keyring.Heal(lease); herr != nil {
@@ -381,7 +381,8 @@ func (d *dashboard) runBackupKeyed(w http.ResponseWriter, out, jobPath string) {
 				logger.Printf("The damaged copy of this archive's key file was rewritten from the good one.")
 			}
 		}
-		return wizard.RunJobInProcessKeyed(d.life.Context(), jobPath, logger, func(o *app.Options) (func(), error) {
+		return wizard.RunJobInProcessKeyed(j.ctx, jobPath, logger, func(o *app.Options) (func(), error) {
+			o.ProgramSkip, o.OnProgramWait = j.skip, j.onWait
 			return keyring.Apply(o, lease)
 		})
 	}); err != nil {

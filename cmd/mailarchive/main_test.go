@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"mail-archive-tool/internal/alert"
+	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/backupalert"
 	"mail-archive-tool/internal/encrecord"
@@ -36,6 +37,9 @@ func TestMain(m *testing.M) {
 	// Never let an in-process test read or remove the developer's downloaded program
 	// copies (program design R22).
 	progcache.UseTestRoot(filepath.Join(recordDir, "program-cache"))
+	stand := filepath.Join(recordDir, "mailarchive-test-program")
+	os.WriteFile(stand, []byte("#!/bin/sh\necho mailarchive test program\n"), 0o755)
+	app.UseTestProgram(stand) // a small self-copy, not the test binary
 	cliHome = filepath.Join(recordDir, "home")
 	if err := os.MkdirAll(cliHome, 0o700); err != nil {
 		panic(err)

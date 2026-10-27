@@ -7,7 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/assure"
+	"mail-archive-tool/internal/container"
 	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/encrecord"
 	"mail-archive-tool/internal/job"
@@ -158,4 +160,63 @@ func TestDesktopMakesAnEncryptedArchive(t *testing.T) {
 		return nil
 	})
 	assure.Reached(t, len(plainFiles) == 0, "nothing readable without the key")
+}
+
+// covers: MA-847, R37
+// The create page's "Keep a copy of MailArchive" box, ticked by default, is the new
+// archive's sealed choice (program design §6, R21): left ticked (or absent from the
+// request) the first backup seals keep on and writes this computer's copy into
+// program/; unticked, it seals keep off and writes no program/ at all.
+func TestDesktopCreateSealsTheProgramCopiesChoice(t *testing.T) {
+	const pw = "the new archive's own passphrase"
+	create := func(t *testing.T, programCopies any) (keep *bool, program []os.DirEntry) {
+		t.Cleanup(encrecord.SetDirForTest(t.TempDir()))
+		box := filepath.Join(t.TempDir(), "Inbox")
+		os.WriteFile(box, []byte(keysMbox), 0o600)
+		out := filepath.Join(t.TempDir(), "New")
+		orig := addEncryptedFn
+		t.Cleanup(func() { addEncryptedFn = orig })
+		addEncryptedFn = func(check func(string) error) (*wizard.PendingAdd, error) {
+			return wizard.PendingAddFor(out, []string{box}), check(out)
+		}
+		e := newKeysEnv(t, archiveAt(t, t.TempDir(), "Plain", map[string]string{"path:/mail/a.mbox": "a"}))
+		_, m := e.post(t, "api/encryption/create", map[string]any{})
+		body := map[string]any{"token": m["token"], "newPassword": pw, "again": pw}
+		if programCopies != nil {
+			body["programCopies"] = programCopies
+		}
+		_, k := e.post(t, "api/encryption/create/key", body)
+		if _, c := e.post(t, "api/encryption/new-recovery-key/confirm", map[string]any{"token": m["token"], "typed": k["recoveryKey"]}); c["running"] != true {
+			t.Fatalf("made: %v %v", k, c)
+		}
+		if _, errText := waitIdle(t, e); errText != "" {
+			t.Fatalf("the first backup: %s", errText)
+		}
+		u, err := keyring.Open(out, keyring.Password(pw), keyring.OpenOptions{Write: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer u.Destroy()
+		o := app.Options{Out: out}
+		done, err := keyring.Apply(&o, u)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer done()
+		_, s, err := container.LoadManifest(out, container.LoadOptions{Key: o.Key, ReadOnly: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ps, _, _ := s.Program()
+		program, _ = os.ReadDir(filepath.Join(out, container.ProgramDir))
+		return ps.Keep, program
+	}
+	t.Run("ticked by default", func(t *testing.T) {
+		keep, program := create(t, nil)
+		assure.Reached(t, keep != nil && *keep && len(program) > 0, "keep sealed on, a copy written")
+	})
+	t.Run("unticked", func(t *testing.T) {
+		keep, program := create(t, false)
+		assure.Reached(t, keep != nil && !*keep && len(program) == 0, "keep sealed off, no program folder")
+	})
 }

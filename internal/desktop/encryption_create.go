@@ -74,6 +74,9 @@ type createKeyRequest struct {
 	NewPassword string `json:"newPassword"`
 	Again       string `json:"again"`
 	Remember    bool   `json:"remember"`
+	// ProgramCopies keeps copies of MailArchive in the new archive (program design §6,
+	// R21): on unless the request says off.
+	ProgramCopies *bool `json:"programCopies"`
 }
 
 // createKeyAction makes the new archive's key from its password and shows its
@@ -112,6 +115,7 @@ func (d *dashboard) createKeyAction(w http.ResponseWriter, r *http.Request) {
 	if !d.pending.withItem(in.Token, it, func() {
 		if made = it.make != nil; !made {
 			it.make = p
+			it.programOff = in.ProgramCopies != nil && !*in.ProgramCopies
 		}
 	}) || made {
 		p.Discard()
@@ -161,9 +165,15 @@ func (d *dashboard) commitCreate(w http.ResponseWriter, it *pendingItem) {
 	}
 	// The job is the new archive's own: its failure is worded for it, not for the
 	// archive open here (MAKE-02).
-	if rerr := d.runJobOn(out, func(logger *log.Logger) (string, error) {
+	if rerr := d.runKeyedJobOn(out, func(j keyedJob, logger *log.Logger) (string, error) {
 		defer u.Destroy() // the first backup's key goes when it ends
-		return wizard.RunJobInProcessKeyed(d.life.Context(), jobPath, logger, func(o *app.Options) (func(), error) {
+		return wizard.RunJobInProcessKeyed(j.ctx, jobPath, logger, func(o *app.Options) (func(), error) {
+			o.ProgramSkip, o.OnProgramWait = j.skip, j.onWait
+			// The person's choice, sealed by the first backup's commit (R21).
+			o.ProgramCopies = app.ProgramCopiesOn
+			if it.programOff {
+				o.ProgramCopies = app.ProgramCopiesOff
+			}
 			return keyring.Apply(o, u)
 		})
 	}); rerr != nil {

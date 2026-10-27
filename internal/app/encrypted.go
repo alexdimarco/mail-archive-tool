@@ -423,8 +423,15 @@ const (
 // the rest of the set — an update under way included (R7). A set this MailArchive
 // cannot read is kept as it is, with a warning (R6).
 func sealProgramChoice(store *container.Store, choice ProgramChoice, logger *log.Logger) {
+	if err := setProgramChoice(store, choice); err != nil {
+		logger.Printf("warning: the choice to keep copies of MailArchive in this archive was not recorded: %v", err)
+	}
+}
+
+// setProgramChoice sets the choice in the record, for its next save to seal.
+func setProgramChoice(store *container.Store, choice ProgramChoice) error {
 	if choice == ProgramCopiesUnset {
-		return
+		return nil
 	}
 	ps, st, _ := store.Program()
 	if st == container.ProgramAbsent {
@@ -432,9 +439,7 @@ func sealProgramChoice(store *container.Store, choice ProgramChoice, logger *log
 	}
 	keep := choice == ProgramCopiesOn
 	ps.Keep = &keep
-	if err := store.SetProgram(ps); err != nil {
-		logger.Printf("warning: the choice to keep copies of MailArchive in this archive was not recorded: %v", err)
-	}
+	return store.SetProgram(ps)
 }
 
 // recordRefusal is a sealed record's load refusal as the run's refusal, worded by

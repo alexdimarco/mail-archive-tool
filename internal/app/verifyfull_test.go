@@ -39,9 +39,13 @@ type fakeSealed struct {
 	gap, behind bool
 	// onChunks and onUnit run as those reads do, for a stop or a change mid-check.
 	onChunks, onUnit func()
+	// program and note are the record's program set and note digest (Program).
+	program *container.ProgramSet
+	note    string
 }
 
-func (f *fakeSealed) Marks() (bool, bool) { return f.gap, f.behind }
+func (f *fakeSealed) Marks() (bool, bool)                      { return f.gap, f.behind }
+func (f *fakeSealed) Program() (*container.ProgramSet, string) { return f.program, f.note }
 
 func (f *fakeSealed) Load() (*state.Manifest, error) { return f.m, f.loadErr }
 func (f *fakeSealed) Chunks(context.Context) ([]container.ChunkProblem, error) {

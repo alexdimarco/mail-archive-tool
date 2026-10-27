@@ -117,8 +117,8 @@ document.querySelectorAll('[data-create-encrypted]').forEach(b=>b.addEventListen
 }));
 const ckb=$('encCreateKeyBtn');
 if(ckb)ckb.addEventListener('click',async()=>{
-  const a=$('encCreatePw'),c=$('encCreatePw2'),r=$('encCreateRemember');
-  const body={token:token,newPassword:a?a.value:'',again:c?c.value:'',remember:!!(r&&r.checked)};
+  const a=$('encCreatePw'),c=$('encCreatePw2'),r=$('encCreateRemember'),pc=$('encCreateProgram');
+  const body={token:token,newPassword:a?a.value:'',again:c?c.value:'',remember:!!(r&&r.checked),programCopies:!pc||pc.checked};
   ckb.disabled=true;say('Making the key… this takes a few seconds.');
   let d;
   try{d=await send('api/encryption/create/key',body);}catch(e){d={ok:false,error:'Could not reach MailArchive Desktop — reload the page.'};}
@@ -191,5 +191,16 @@ for(const [id,on] of [['encRememberKey',true],['encForgetKey',false]]){
     catch(e){say('Could not reach MailArchive Desktop — reload the page.');}
   });
 }
+// Keep copies of MailArchive in the archive: saved at once; the next backup acts on it.
+const pcs=$('encProgramCopies');
+if(pcs)pcs.addEventListener('change',async()=>{
+  const on=pcs.checked;pcs.disabled=true;
+  let d;
+  try{d=await send('api/encryption/program-copies',{on:on});}catch(e){d={ok:false,error:'Could not reach MailArchive Desktop — reload the page.'};}
+  pcs.disabled=false;
+  if(!d.ok)pcs.checked=!on;
+  say(lines(d,'Saved.'));
+  const p=$('encProgram');if(d.ok&&p)p.textContent=(d.lines||[''])[0];
+});
 })();
 `

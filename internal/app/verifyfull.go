@@ -40,6 +40,9 @@ type SealedCheck interface {
 	// Marks is what the loaded record says it lacks: a lost stretch of the go-back
 	// timeline, a search index behind its records (the P3-2b pass, VERD-05).
 	Marks() (historyGap, indexBehind bool)
+	// Program is the record's program set as it stands, nil when none is kept or this
+	// MailArchive cannot read it, and the note's sealed digest (program design §6, C18).
+	Program() (set *container.ProgramSet, noteDigest string)
 	// Unit reads and opens one unit within the memory budget: nil when it opens. A
 	// unit whose bytes are its record's but do not open with the key is
 	// ErrUnitDoesNotOpen.
@@ -266,6 +269,8 @@ func VerifySealed(out string, opts VerifyOptions, logger *log.Logger, onProgress
 			}
 			return stopped()
 		}
+		set, note := src.Program()
+		rep.ProgramFindings = checkProgramFolder(out, set, note)
 	}
 	moved := false
 	if lockFree {

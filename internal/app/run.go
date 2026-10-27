@@ -107,6 +107,11 @@ type Options struct {
 	// encrypted archive (program design §6, R21): on or off is sealed by this run's
 	// commit; unset leaves what the record sealed. Unused by a plaintext run.
 	ProgramCopies ProgramChoice
+	// ProgramSkip, when closed, ends the program step's wait for its download, and only
+	// the wait: the run goes on with this computer's own copy (R20). OnProgramWait is
+	// told when that wait starts and ends, so a front end offers the skip only then.
+	ProgramSkip   <-chan struct{}
+	OnProgramWait func(waiting bool)
 
 	// BeforeRead, when non-nil, runs once after the archive lock is held and the
 	// run has begun, and before any source is read: the opt-in Thunderbird
@@ -838,7 +843,8 @@ func Run(ctx context.Context, opts Options, logger *log.Logger, onProgress Progr
 		// The program copies, under the lock, after the last save (program design R1).
 		if fatal == nil && lockLost == nil && saveErr == nil && ctx.Err() == nil {
 			result.Program = programStep(programEnv{ctx: ctx, out: opts.Out, store: sealed, save: manifest.Save,
-				stillHeld: lock.StillHeld, logger: logger, runStart: encStart, download: download})
+				stillHeld: lock.StillHeld, logger: logger, runStart: encStart, download: download,
+				skip: opts.ProgramSkip, onWait: opts.OnProgramWait})
 		}
 	}
 	// What ended the run or its sources, most serious first: the archive's own fault, a
@@ -1148,6 +1154,9 @@ var appendRunHistory = state.AppendRunHistory
 
 func recordRun(opts Options, lr state.LastRun, result *Result, err *error, logger *log.Logger) {
 	lr.Finished = time.Now().UTC()
+	if lr.Encrypted {
+		lr.Program = programCode(result.Program.Class) // program design §4, §8
+	}
 	switch {
 	case *err == nil:
 		lr.Status = state.RunOK

@@ -22,6 +22,7 @@ import (
 	"mail-archive-tool/internal/container"
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/progcache"
+	"mail-archive-tool/internal/state"
 	"mail-archive-tool/internal/util"
 )
 
@@ -147,6 +148,8 @@ type programEnv struct {
 	logger    *log.Logger
 	runStart  time.Time
 	download  *programDownload
+	skip      <-chan struct{} // closed: the person skipped the wait (R20)
+	onWait    func(bool)      // told when the wait starts and ends
 }
 
 type programStepState struct {
@@ -326,6 +329,16 @@ func hashRegular(path string, judgedFI os.FileInfo, size int64) (string, error) 
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// programCode is the step's outcome as the last-run record names it, from the closed
+// list; "" when it did not run or the copies were never chosen.
+func programCode(class string) string {
+	return map[string]string{
+		ProgramUpdated: state.ProgramUpdated, ProgramUnchanged: state.ProgramUnchanged, ProgramIncomplete: state.ProgramIncomplete,
+		ProgramSkipped: state.ProgramSkipped, ProgramKeptAsIs: state.ProgramUnread, ProgramStopped: state.ProgramStopped,
+		ProgramCancelled: state.ProgramCancelled,
+	}[class]
 }
 
 // programTempName is a staging name: <n> a random 64-bit number (R11).
@@ -582,18 +595,41 @@ func (s *programStepState) commit(set container.ProgramSet) error {
 	return err
 }
 
-// awaitDownload waits for the run's download up to programWaitMax, or until the run is
-// cancelled (R17, R20); a wait that runs out counts as that day's attempt. It reports
-// false when the run was cancelled: the step then writes nothing new (DUR-06, INT-01).
+// awaitDownload waits for the run's download up to programWaitMax, until the person
+// skips the wait, or until the run is cancelled (R17, R20); a wait that runs out counts
+// as that day's attempt, a skipped one does not — the download goes on, for the next
+// backup. It reports false when the run was cancelled: the step then writes nothing new
+// (DUR-06, INT-01).
 func (s *programStepState) awaitDownload() bool {
 	d := s.env.download
 	if d == nil {
 		return s.env.ctx.Err() == nil
 	}
 	s.env.logger.Printf("Waiting for the download of MailArchive %s for the archive's program copies (up to %v)…", d.version, programWaitMax)
-	if res, ok := d.task.Wait(s.env.ctx, programWaitMax); !ok {
-		if s.env.ctx.Err() != nil {
+	ctx, stop := context.WithCancel(s.env.ctx)
+	defer stop()
+	skipped := make(chan struct{})
+	if s.env.skip != nil {
+		go func() {
+			select {
+			case <-s.env.skip:
+				close(skipped)
+				stop()
+			case <-ctx.Done():
+			}
+		}()
+	}
+	if s.env.onWait != nil {
+		s.env.onWait(true)
+		defer s.env.onWait(false)
+	}
+	if res, ok := d.task.Wait(ctx, programWaitMax); !ok {
+		switch {
+		case s.env.ctx.Err() != nil:
 			return false
+		case isClosed(skipped):
+			s.warn("the download of MailArchive %s was skipped; this computer's own program is kept instead, and the download carries on for the next backup", d.version)
+			return true
 		}
 		d.fetcher.CountAttempt(d.version, progcache.ClassWaitRanOut)
 		s.warn("the download of MailArchive %s did not finish within the wait; this computer's own program is kept instead", d.version)
@@ -601,6 +637,15 @@ func (s *programStepState) awaitDownload() bool {
 		s.warn("the download of MailArchive %s did not complete (%s)", d.version, res.Class)
 	}
 	return s.env.ctx.Err() == nil
+}
+
+func isClosed(c <-chan struct{}) bool {
+	select {
+	case <-c:
+		return true
+	default:
+		return false
+	}
 }
 
 // programCacheVersion is the verified cached version release copies are written from:

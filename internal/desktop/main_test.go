@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"mail-archive-tool/internal/alert"
+	"mail-archive-tool/internal/app"
 	"mail-archive-tool/internal/backupalert"
 	"mail-archive-tool/internal/encrecord"
 	"mail-archive-tool/internal/progcache"
@@ -29,6 +30,11 @@ func TestMain(m *testing.M) {
 	}
 	// Before HOME moves, so the real program cache is the one guarded (R22).
 	cacheDone := progcache.UseTestRoot(filepath.Join(home, "program-cache"))
+	// A small file stands in for this program, so a new archive's self-copy is not the
+	// whole test binary.
+	stand := filepath.Join(home, "mailarchive-test-program")
+	os.WriteFile(stand, []byte("#!/bin/sh\necho mailarchive test program\n"), 0o755)
+	app.UseTestProgram(stand)
 	for _, v := range []string{"HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "AppData", "LOCALAPPDATA"} {
 		os.Setenv(v, home)
 	}
