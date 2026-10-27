@@ -60,7 +60,7 @@ func requireNoCleartextScaffold(t *testing.T, out string) {
 		}
 		return nil
 	})
-	if b, err := os.ReadFile(filepath.Join(out, "README.txt")); err != nil || string(b) != encryptedArchiveReadme {
+	if b, err := os.ReadFile(filepath.Join(out, "README.txt")); err != nil || string(b) != EncryptedNote() {
 		t.Errorf("an encrypted archive's README is not the encrypted one (%v):\n%s", err, b)
 	}
 }

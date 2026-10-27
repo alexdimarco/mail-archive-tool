@@ -507,6 +507,11 @@ func (r *Reader) open(req *http.Request, rel string) ([]byte, func(), error) {
 		if err != nil {
 			return nil, nil, err
 		}
+		if rel == "README.txt" {
+			// The note as this program writes it, never the file beside the archive,
+			// which anyone with the drive could have changed (phase 3 §13.1).
+			return []byte(app.EncryptedNote()), func() {}, nil
+		}
 		if page, ok, err := r.page(v, rel); ok || err != nil {
 			return page, func() {}, err
 		}

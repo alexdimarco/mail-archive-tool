@@ -46,6 +46,7 @@ type header struct {
 	HistoryGap      *Gap                 `json:"history_gap,omitempty"`
 	RunDetails      json.RawMessage      `json:"run_details,omitempty"`
 	PauseNote       string               `json:"pause_note,omitempty"`
+	NoteDigest      string               `json:"note_sha256,omitempty"` // the note beside the archive, as last written (phase3 §13.1)
 }
 
 // seenLatest is the LastSeen encoding of a record seen at its mailbox's last

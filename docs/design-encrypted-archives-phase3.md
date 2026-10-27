@@ -1392,9 +1392,14 @@ review before P3-5 is coded. O7's change to the release process is made in P3-5.
 - **The program copies** reveal the MailArchive version that last refreshed them. A self-copy also
   reveals this computer's operating system and processor type; its triggers are stated in the
   program design.
-- **The download** sends this computer's IP address and the version to GitHub, once per version.
+- **The download** contacts GitHub once a day per version until verified, plus the newer version
+  an archive here expects, through the environment's proxy, sending this computer's IP address and
+  the versions. *(Corrected 2026-10-27 from "once per version": an accuracy fix from the program
+  design's review, condition 19.)*
 - **A swapped program copy or note** can mislead someone, or steal a password from someone who
-  runs it elsewhere. The note says to prefer the official download and how to check it. The next
+  runs it elsewhere. The note says to prefer the official download and how to check it — a check
+  that depends on reaching the release page; offline a copy cannot be told from a swapped one, and
+  changing the password afterwards does not undo it (the master key is never re-keyed). The next
   keyed run detects a swap, after the fact. The checksums prove what the release published, not
   who made it.
 - **This computer's record** maps folder paths to archive ids, on this computer only, owner-only.

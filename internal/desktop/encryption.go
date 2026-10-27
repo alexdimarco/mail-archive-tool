@@ -127,7 +127,7 @@ func (d *dashboard) lockAction(w http.ResponseWriter, r *http.Request) {
 
 // OpenArchiveLabel is the "Open an archive folder…" button's words, kept in one place
 // so the note an encrypted archive carries (P3-5) can quote them exactly.
-const OpenArchiveLabel = "Open an archive folder…"
+const OpenArchiveLabel = app.OpenArchiveWords
 
 // openArchiveAction is "Open an archive folder…" (§7.1): the folder picker, then a
 // judgement of the folder chosen — an archive at its own folder, plaintext or

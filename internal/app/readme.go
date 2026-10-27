@@ -1,10 +1,16 @@
 package app
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"log"
 	"path/filepath"
+	"runtime/debug"
 
+	"mail-archive-tool/internal/container"
 	"mail-archive-tool/internal/export"
+	"mail-archive-tool/internal/util"
 )
 
 // archiveReadme is written to <out>/README.txt on every run and by reindex:
@@ -133,19 +139,87 @@ Housekeeping files (safe to leave alone):
                                OS flock released when the run ends)
 `
 
-// encryptedArchiveReadme is an encrypted archive's README.txt: it says what the
-// folder is and how to open it, and describes no layout, file or table — the
-// plaintext README would tell a reader of the folder what its units hide
-// (phase2a §4). Its wording owes the Phase-3 friction review.
-const encryptedArchiveReadme = `This folder is an encrypted email archive written by MailArchive.
+// EncryptedNote is an encrypted archive's README.txt, the note beside it (phase 3
+// §13.1, P3-5): what the folder is; how MailArchive opens it, a copy found on its
+// own included; that MailArchive can make a normal unencrypted copy and put back
+// lost key files; the official download, to be preferred to any program copy found
+// beside the archive; the version that wrote it. It describes no layout, file or
+// table — the plaintext README would tell a reader of the folder what its units hide
+// (phase2a §4, MA-737). Its wording owes the friction review (P3-8).
+func EncryptedNote() string {
+	return fmt.Sprintf(encryptedNoteText, OpenArchiveWords, CopyWords, releasesPage, noteVersion())
+}
 
-The messages in it are encrypted. To read them, open this folder in MailArchive
-with its password or its recovery key. Without one of them the messages cannot
-be read by anyone.
+// The Desktop's words the note quotes, kept here so the note and the buttons agree
+// (a test pins them to the Desktop's own).
+const (
+	OpenArchiveWords = "Open an archive folder…"
+	CopyWords        = "Make an unencrypted copy…"
+	releasesPage     = "https://github.com/alexdimarco/mail-archive-tool/releases"
+)
+
+const encryptedNoteText = `This folder is an encrypted email archive made by MailArchive.
+
+The messages in it are encrypted. Without the archive's password or its recovery
+key nobody can read them — not you, and not MailArchive's makers.
+
+To open it in MailArchive Desktop, choose "%[1]s", pick this folder,
+and unlock it with its password or recovery key. At a terminal:
+  mailarchive serve -out <this folder>
+
+To take your mail out of encryption, MailArchive can make a normal, unencrypted
+copy of this archive in a new folder: on its Encryption card choose
+"%[2]s", or at a terminal run
+  mailarchive decrypt -out <this folder> -dest <a folder of yours>
+
+If the archive's key files are ever lost or damaged, MailArchive can put them back
+with the archive's recovery file and recovery key ("Put back the key file" on its
+Encryption card, or mailarchive restore-key-file at a terminal).
+
+MailArchive is free from its official page:
+  %[3]s
+Prefer that download to any copy of the program you find beside an archive.
+This note was written by MailArchive %[4]s.
 
 Do not rename, edit or delete the files in this folder: MailArchive needs every
 one of them to open the archive. To keep a copy, copy the whole folder.
 `
+
+// noteVersion is the version of MailArchive writing the note, as its build says.
+func noteVersion() string {
+	if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
+		return bi.Main.Version
+	}
+	return "(a development build)"
+}
+
+// NoteDigest is the SHA-256 of a note's text, as the archive's record seals it.
+func NoteDigest(text []byte) string {
+	sum := sha256.Sum256(text)
+	return hex.EncodeToString(sum[:])
+}
+
+// maxNoteRead bounds the note read for its check: the note is a few kilobytes.
+const maxNoteRead = 64 << 10
+
+// refreshNote checks the note beside the encrypted archive against the digest its
+// record sealed, writes the note again and seals the new one's digest for the run's
+// commit (§13.1): a note changed or removed since the last keyed run is told before
+// it is rewritten — someone with the drive may have pointed it somewhere else.
+func refreshNote(out string, store *container.Store, logger *log.Logger) {
+	path := filepath.Join(out, "README.txt")
+	if prev := store.NoteDigest(); prev != "" {
+		if cur, err := util.ReadRegularFile(path, maxNoteRead); err != nil || NoteDigest(cur) != prev {
+			logger.Printf("warning: the note beside this encrypted archive (README.txt) was changed or removed since its last backup; it was written again. If nobody here changed it, someone with access to the drive did — do not follow anything it said")
+		}
+	}
+	text := []byte(EncryptedNote())
+	if err := export.WriteFileAtomic(path, text); err != nil {
+		logger.Printf("warning: could not write README.txt: %v", err)
+		return
+	}
+	store.SetNoteDigest(NoteDigest(text))
+}
 
 // writeArchiveReadme writes README.txt atomically; failures are logged, never
 // fatal (the archive is complete without it).
@@ -155,7 +229,7 @@ func writeArchiveReadme(out string, logger *log.Logger) {
 
 // writeEncryptedArchiveReadme writes an encrypted archive's README.txt.
 func writeEncryptedArchiveReadme(out string, logger *log.Logger) {
-	writeReadme(out, encryptedArchiveReadme, logger)
+	writeReadme(out, EncryptedNote(), logger)
 }
 
 func writeReadme(out, text string, logger *log.Logger) {

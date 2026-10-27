@@ -36,7 +36,7 @@ GOOS=windows GOARCH=amd64 go build -o "$DIST/mailarchive.exe" $ONE
 GOOS=windows GOARCH=amd64 go build -ldflags -H=windowsgui -o "$DIST/mailarchivew.exe" $ONE
 
 echo "==> macOS .app bundle + universal CLI"
-OUT="$DIST" bash "$ROOT/packaging/macos/build-app.sh" "$VERSION"
+OUT="$DIST" RELEASE_TAG="$VERSION" bash "$ROOT/packaging/macos/build-app.sh" "$VERSION"
 
 # Package the macOS CLI as a .tar.gz, never a bare binary: Finder opens a bare,
 # extension-less Mach-O in a text editor when double-clicked, and a download loses
@@ -51,13 +51,14 @@ cp "$ROOT/packaging/macos/README-macOS.txt" "$CLIDIR/READ ME.txt"
 ( cd "$DIST" && tar -czf mailarchive-cli-macos.tar.gz mailarchive-cli-macos )
 rm -rf "$CLIDIR"
 
-# Refuse, before packaging any Windows release file, a build that cannot be traced
-# to a commit: a missing vcs.revision or vcs.modified=true in `go version -m` means
-# the release bytes are not a clean checkout (SC7, SC11). MA-628 compares the pair's
-# build info; this is the release-side gate, so no other case of MA-614 needs a
-# clean working tree. (SC33 — that the main-module version is not "(devel)" — is a
-# stated OPEN condition: a plain `go build` reads "(devel)", so it is not a refusal
-# trigger here; it is noted, not enforced.)
+# Refuse, before packaging any release file, a program that is not exactly this
+# release: every shipped binary — both Linux programs, the Windows pair, and the
+# macOS slices (checked in build-app.sh) — must name the tag as its main-module
+# version and a clean checkout (SC7, SC11; SC33 closed: Go stamps the tag of a clean
+# tagged checkout). The program copies an encrypted archive keeps trust a release
+# only when this holds (design-encrypted-archives-phase3-program §7). Every build, a
+# release or not, must still be traceable to a clean commit (SC7, SC11); release.yml
+# refuses a tag that is not exact, so a release never skips the version check.
 require_stamped() {
   local f="$1" info
   info="$(go version -m "$f" 2>/dev/null || true)"
@@ -66,6 +67,11 @@ require_stamped() {
 }
 require_stamped "$DIST/mailarchive.exe"
 require_stamped "$DIST/mailarchivew.exe"
+if [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  bash "$ROOT/packaging/require-release-stamp.sh" "$VERSION" \
+    "$DIST/mailarchive-linux-amd64" "$DIST/mailarchive-linux-arm64" \
+    "$DIST/mailarchive.exe" "$DIST/mailarchivew.exe"
+fi
 
 # The Windows release asset: one zip of the install names the owner double-clicks.
 # Flat members mailarchive.exe, mailarchivew.exe and READ ME.txt, byte-identical to

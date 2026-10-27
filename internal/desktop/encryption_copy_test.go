@@ -97,3 +97,16 @@ func toLines(v any) []string {
 	}
 	return out
 }
+
+// covers: MA-826, R37
+// The note beside an encrypted archive quotes the Desktop's own words for opening a
+// folder and making an unencrypted copy (phase 3 §13.1): the buttons say exactly
+// what the note tells a person to choose.
+func TestTheNoteQuotesTheDesktopsButtons(t *testing.T) {
+	out := backedUpEncrypted(t)
+	e := newKeysEnv(t, out)
+	e.post(t, "api/encryption/unlock", map[string]any{"secret": keysPassword})
+	page := sessionPage(t, e.h)
+	assure.Reached(t, strings.Contains(page, ">"+app.CopyWords+"<") && OpenArchiveLabel == app.OpenArchiveWords &&
+		strings.Contains(app.EncryptedNote(), app.CopyWords), "the note and the buttons agree")
+}

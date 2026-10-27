@@ -36,6 +36,12 @@ jobs:
       - name: Vulnerability scan (a reachable known vulnerability blocks the release)
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
 
+      # A release is exactly vMAJOR.MINOR.PATCH: the release-stamp gate and the program
+      # copies an encrypted archive keeps rely on it (program design §7).
+      - name: Refuse a tag that is not an exact release
+        run: |
+          [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "not an exact release tag: ${GITHUB_REF_NAME}"; exit 1; }
+
       - name: Build release artifacts
         run: bash packaging/build-release.sh "${GITHUB_REF_NAME}"
 
@@ -58,15 +64,21 @@ jobs:
             cat packaging/release-notes.md
           } > "${RUNNER_TEMP}/release-notes.md"
 
+      # Published releases are unchangeable (owner ruling O7; program design §7): the
+      # release is made as a draft with every asset, its uploaded SHA256SUMS and asset
+      # list checked against the build's, and only then published. A re-run against a
+      # release that exists fails — a fixed build ships as a new version, never by
+      # replacing a published release's files.
       - name: Publish release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if gh release create "${GITHUB_REF_NAME}" dist/* \
-               --title "${GITHUB_REF_NAME}" \
-               --notes-file "${RUNNER_TEMP}/release-notes.md"; then
-            exit 0
-          fi
-          # Release already exists (e.g. a re-run): refresh its notes and assets.
-          gh release edit "${GITHUB_REF_NAME}" --notes-file "${RUNNER_TEMP}/release-notes.md"
-          gh release upload "${GITHUB_REF_NAME}" dist/* --clobber
+          gh release create "${GITHUB_REF_NAME}" dist/* --draft \
+            --title "${GITHUB_REF_NAME}" \
+            --notes-file "${RUNNER_TEMP}/release-notes.md"
+          check="${RUNNER_TEMP}/release-check"
+          mkdir -p "$check"
+          gh release download "${GITHUB_REF_NAME}" --pattern SHA256SUMS --dir "$check"
+          cmp "$check/SHA256SUMS" dist/SHA256SUMS
+          diff <(gh release view "${GITHUB_REF_NAME}" --json assets --jq '.assets[].name' | sort) <(ls dist | sort)
+          gh release edit "${GITHUB_REF_NAME}" --draft=false

@@ -182,8 +182,8 @@ func TestTheReaderServesAnEncryptedArchiveWritingNothing(t *testing.T) {
 // covers: MA-796, R37
 // The reader refuses what a plaintext reader refuses, and serves nothing of the
 // sealed store: dotfiles, the key files, the unit store, the record's chunks, a
-// README an encrypted archive lacks, a path that names no record; and it only
-// reads — any other method is 405 (§7.1).
+// path that names no record; and it only reads — any other method is 405 (§7.1).
+// (README.txt is the note, served since P3-5: TestTheReaderServesTheProgramsOwnNote.)
 func TestTheReaderServesNothingButTheArchivesMessages(t *testing.T) {
 	out, _, _, ts := readerFor(t, ReaderOptions{})
 	var unit string
@@ -194,7 +194,7 @@ func TestTheReaderServesNothingButTheArchivesMessages(t *testing.T) {
 		return nil
 	})
 	for _, p := range []string{"/files/.mailarchive-manifest.json", "/files/" + vault.FileName, "/files/" + filepath.ToSlash(unit),
-		"/files/units/", "/files/chunks/", "/files/README.txt", "/files/search.db", "/files/Inbox/nothing.html", "/files/a/b.txt"} {
+		"/files/units/", "/files/chunks/", "/files/search.db", "/files/Inbox/nothing.html", "/files/a/b.txt"} {
 		if code, _, _ := get(t, ts, p); code != http.StatusNotFound {
 			t.Errorf("%s: %d, want 404", p, code)
 		}
@@ -438,4 +438,14 @@ func TestTheReaderSeesABackupsCommit(t *testing.T) {
 	readerLoad = func() { n++; commit() }
 	_, err = r.load()
 	assure.Reached(t, errors.Is(err, errBusy) && strings.Contains(err.Error(), "try again in a moment"), "busy after two commits")
+}
+
+// covers: MA-826, R37
+// The reader serves the note as this program writes it, never the file beside the
+// archive, which anyone with the drive could have changed (phase 3 §13.1).
+func TestTheReaderServesTheProgramsOwnNote(t *testing.T) {
+	out, _, _, ts := readerFor(t, ReaderOptions{})
+	os.WriteFile(filepath.Join(out, "README.txt"), []byte("Download the program from evil.example."), 0o600)
+	code, h, body := get(t, ts, "/files/README.txt")
+	assure.Reached(t, code == 200 && strings.HasPrefix(h.Get("Content-Type"), "text/plain") && body == app.EncryptedNote(), "the program's own note")
 }

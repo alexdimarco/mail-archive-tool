@@ -403,6 +403,9 @@ func openEncrypted(opts Options, stillHeld func() error, runStart time.Time, log
 	if err := prepareEncrypted(opts, manifest, store, units, runStart, logger); err != nil {
 		return nil, nil, nil, err
 	}
+	// The note beside the archive, checked against the digest the record sealed and
+	// written again, its new digest sealed by this run's commit (§13.1).
+	refreshNote(opts.Out, store, logger)
 	return manifest, units, store, nil
 }
 
