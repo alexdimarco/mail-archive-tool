@@ -147,6 +147,9 @@ func TestTheCLIMakesAndBacksUpAnEncryptedArchiveAtARealTerminal(t *testing.T) {
 	// The remember question, answered on the terminal (typing shown): no.
 	p.await("Remember the key on this computer?", 1, 10*time.Second)
 	p.typeIn("n\n")
+	// The program-copies question (§5.1 step 4): Enter keeps them, the default.
+	p.await("Keep a copy of MailArchive", 1, 10*time.Second)
+	p.typeIn("\n")
 	p.await("Press Enter once you have saved it.", 1, 60*time.Second)
 	key := reRecoveryKey.FindString(p.shown())
 	assure.Reached(t, key, "the recovery key shown")

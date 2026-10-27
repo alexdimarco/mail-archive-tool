@@ -332,9 +332,35 @@ func parseID(s string) (vault.ID, error) {
 }
 
 // refuseUnusableRecord refuses a write, create or adoption while the record
-// cannot be used (§4.3).
+// cannot be used (§4.3), in the record's own words — which name its fix, such as
+// `mailarchive repair-record` for a damaged one (P3-8 friction review, B13) — said
+// once.
 func refuseUnusableRecord(out string, err error) error {
-	return fmt.Errorf("%w: %s cannot be written to while it cannot be used: %w", encmark.ErrRecordUnusable, out, err)
+	return &wordedRefusal{
+		msg:  fmt.Sprintf("%v. Until then MailArchive writes nothing to the encrypted archive %s; nothing was changed", err, out),
+		errs: []error{encmark.ErrRecordUnusable, err},
+	}
+}
+
+// wordedRefusal is a refusal worded for a person that still matches, by
+// errors.Is, the errors it stands for.
+type wordedRefusal struct {
+	msg  string
+	errs []error
+}
+
+func (r *wordedRefusal) Error() string   { return r.msg }
+func (r *wordedRefusal) Unwrap() []error { return r.errs }
+
+// CheckRecordUsable refuses a write to out — a keyed backup, a key change, a
+// restore — while this computer's record of encrypted archives cannot be used,
+// before any password is asked (P3-8 friction review, T2-2): the write would be
+// refused after it anyway.
+func CheckRecordUsable(out string) error {
+	if _, err := encrecord.Load(); err != nil {
+		return refuseUnusableRecord(out, err)
+	}
+	return nil
 }
 
 // refuseCase refuses a write at a recorded folder that is not intact, in its
@@ -515,7 +541,7 @@ func adopt(u *Unlocked, r recorded, confirm func(string) (bool, error)) error {
 			confirmed = ok
 		}
 		if !confirmed {
-			return fmt.Errorf("%w (archive %s); it was not recorded again", ErrReRecordRefused, id)
+			return fmt.Errorf("%w (archive %s); it was not recorded again and nothing was changed — to use it on this computer, open it again and answer yes when asked to record it again", ErrReRecordRefused, id)
 		}
 	}
 	if r.ok && !r.unproven && r.match.ID == id {
@@ -526,7 +552,7 @@ func adopt(u *Unlocked, r recorded, confirm func(string) (bool, error)) error {
 		// Forgotten since the question was asked, or without it being asked: the
 		// person never said to record it again (the P3-1a pass, CON-04).
 		if e := rec.Archives[id]; e != nil && e.Forgotten && !confirmed {
-			return fmt.Errorf("%w (archive %s); it was not recorded again", ErrReRecordRefused, id)
+			return fmt.Errorf("%w (archive %s); it was not recorded again and nothing was changed — to use it on this computer, open it again and answer yes when asked to record it again", ErrReRecordRefused, id)
 		}
 		if m, ok := rec.Lookup(u.out); ok && m.Path.Unproven && m.ID != id {
 			rec.ForgetPath(m.ID, m.Path.Spelling)

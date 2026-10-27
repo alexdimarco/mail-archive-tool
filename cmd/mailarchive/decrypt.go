@@ -58,8 +58,15 @@ func decryptWith(a asker, out, dest, logPath string, k *keyFlags, now time.Time,
 	if plan.AskTwice() && !a.attended() {
 		return fmt.Errorf("the unencrypted copy would be made in %s, which may leave this computer:\n  %s\nrun decrypt at a terminal to confirm it, or choose a folder on this computer's own drive", plan.Parent, strings.Join(plan.Leaves, "\n  "))
 	}
-	fmt.Fprintln(stdout, decryptPlanLines(plan))
-	fmt.Fprintln(stdout, "  Ctrl-C stops the copy and leaves its folder marked unfinished; delete that folder yourself — MailArchive does not keep track of it.")
+	// The copy takes the archive's lock: a run holding it refuses before the plan's
+	// question and the password (P3-8 friction review, T2-1, B15).
+	if err := refuseBusy(out); err != nil {
+		return err
+	}
+	// The plan and its notes are messages, on stderr; stdout carries only the
+	// result (X8; P3-8 friction review, Tier C).
+	fmt.Fprintln(stderr, decryptPlanLines(plan))
+	fmt.Fprintln(stderr, "  Ctrl-C stops the copy and leaves its folder marked unfinished; delete that folder yourself — MailArchive does not keep track of it.")
 	if a.attended() {
 		ok, err := askYes(a, "Make this unencrypted copy?", false)
 		if err != nil {
@@ -97,7 +104,13 @@ func decryptWith(a asker, out, dest, logPath string, k *keyFlags, now time.Time,
 	stopWatch := watchVerifyStop(sigs, cancel, &stopCode, os.Exit)
 	defer func() { signal.Stop(sigs); stopWatch() }()
 
-	rep, err := decryptCopy(ctx, u, env, plan, nil, nil, logger, nil)
+	// The count is said once, by the summary below: without -log the copy's own
+	// count line would repeat it on the terminal (X8).
+	copyLog := logger
+	if logPath == "" {
+		copyLog = nil
+	}
+	rep, err := decryptCopy(ctx, u, env, plan, nil, nil, copyLog, nil)
 	switch {
 	case errors.Is(err, app.ErrCopyStopped):
 		fmt.Fprintf(stderr, "mailarchive: decrypt stopped: %v\n", err)

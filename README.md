@@ -247,6 +247,45 @@ What it gives you, beyond reading and searching the archive:
   from this computer. It shows a plan first and **keeps every archive** — your
   mail is never deleted.
 
+## Encrypted archives
+
+An encrypted archive keeps its messages, its search index and what it was made
+from sealed: without its password or its recovery key, nobody can read them —
+not you, not us. Make one at a terminal, into a new or empty folder:
+
+```sh
+mailarchive -encrypt -out ~/MailArchive-encrypted -input ~/mail/inbox.mbox
+```
+
+It asks for a new password (twice, at least 12 characters), whether to remember
+the key on this computer (then backups you start here do not ask for the
+password), and whether to keep a copy of MailArchive inside the archive so it
+can be opened years from now. Then it shows a **recovery key** once: save it in
+your password manager, then type it back. `-recovery-key-out FILE` and
+`-recovery-file-out FILE` also save the key and a recovery file (which puts lost
+key files back) to new files outside the archive. MailArchive Desktop's
+**Encryption** card does the same in the browser.
+
+Later backups into it are the same command without `-encrypt`; they ask for the
+password at the terminal unless this computer remembers the key. Scheduled
+(unattended) backups into an encrypted archive are not available in this
+version.
+
+| To… | Run |
+|---|---|
+| search it, or read it in the browser | `mailarchive search -out DIR …`, `mailarchive serve -out DIR` |
+| check it fully, opening every message | `mailarchive verify -full -out DIR` |
+| set a new password | `mailarchive change-password -out DIR` |
+| replace the recovery key | `mailarchive new-recovery-key -out DIR` |
+| put back lost or damaged key files | `mailarchive restore-key-file -out DIR -from RECOVERY-FILE` |
+| stop remembering the key here | `mailarchive forget-key -out DIR` |
+| stop treating a folder as one of this computer's encrypted archives | `mailarchive forget-archive -out DIR` |
+| rebuild this computer's damaged record of encrypted archives | `mailarchive repair-record` |
+| make an unencrypted (readable) copy | `mailarchive decrypt -out DIR -dest PARENT` |
+
+Each prints its own help with `-h`. If you lose both the password and the
+recovery key, the archive can never be opened: there is no reset.
+
 ## Output layout
 
 ```

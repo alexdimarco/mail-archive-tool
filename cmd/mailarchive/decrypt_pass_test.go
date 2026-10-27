@@ -40,7 +40,7 @@ func TestDecryptExitsPartialAndListsWhatItLeftOut(t *testing.T) {
 	problems, perr := os.ReadFile(filepath.Join(dest, app.CopyProblemsName))
 	_, marker := os.Stat(filepath.Join(dest, app.CopyMarkerName))
 	assure.Reached(t, errors.As(err, &ex) && ex.code == 3 && strings.Contains(stderr.String(), "left out: ") && perr == nil && len(problems) > 0 &&
-		os.IsNotExist(marker) && strings.Contains(stdout.String(), "Ctrl-C stops the copy") && strings.Contains(stdout.String(), "does not keep track"),
+		os.IsNotExist(marker) && strings.Contains(stderr.String(), "Ctrl-C stops the copy") && strings.Contains(stderr.String(), "does not keep track"),
 		"exit 3, listed: "+stderr.String())
 }
 

@@ -253,6 +253,19 @@ func ForgetKey(out string, s vault.Store) (vault.ID, error) {
 	if s == nil {
 		return vault.ID{}, errors.New("no secret store to forget the key from")
 	}
+	id, err := keyTarget(out)
+	if err != nil {
+		return vault.ID{}, err
+	}
+	if err := vault.Forget(s, id); err != nil {
+		return id, err
+	}
+	return id, nil
+}
+
+// keyTarget is the archive whose remembered key ForgetKey forgets at out: the
+// recorded id's, or the one its key files claim.
+func keyTarget(out string) (vault.ID, error) {
 	r, err := lookup(out)
 	if err != nil {
 		return vault.ID{}, err
@@ -265,8 +278,20 @@ func ForgetKey(out string, s vault.Store) (vault.ID, error) {
 		}
 		id = info.ArchiveID
 	}
-	if err := vault.Forget(s, id); err != nil {
-		return id, err
-	}
 	return id, nil
+}
+
+// KeyRemembered reports whether this computer remembers the key ForgetKey would
+// forget at out, so forgetting nothing is not told as a key forgotten (P3-8
+// friction review, Tier C); an error when which archive it is cannot be told.
+func KeyRemembered(out string, s vault.Store) (bool, error) {
+	if s == nil {
+		return false, errors.New("no secret store to look for a remembered key in")
+	}
+	id, err := keyTarget(out)
+	if err != nil {
+		return false, err
+	}
+	_, gerr := s.Get(vault.Account(id))
+	return gerr == nil, nil
 }

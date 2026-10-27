@@ -44,7 +44,7 @@ const (
 
 // ErrAuth is the refusal of sealed bytes that do not authenticate: altered,
 // truncated, moved to another place, or sealed for another archive or key.
-var ErrAuth = errors.New("vault: sealed data failed authentication (altered, truncated, moved, or from another archive)")
+var ErrAuth = errors.New("encrypted data did not check out: it was altered, cut short, moved, or is from another archive")
 
 // randReader is the source of every nonce, key, salt and archive id; a var so a
 // test can observe each draw and inject a failing source.
@@ -166,7 +166,7 @@ func seal(key, aad, plaintext []byte) ([]byte, error) {
 	}
 	out := make([]byte, nonceSize, nonceSize+len(plaintext)+overhead)
 	if _, err := io.ReadFull(randReader, out); err != nil {
-		return nil, fmt.Errorf("vault: draw nonce: %w", err)
+		return nil, fmt.Errorf("this computer could not supply random numbers to encrypt with (the nonce): %w", err)
 	}
 	return a.Seal(out, out, plaintext, aad), nil
 }
@@ -206,7 +206,7 @@ type Key struct {
 
 // ErrKeyDestroyed refuses a key that was destroyed, or never made by this
 // package (a zero Key).
-var ErrKeyDestroyed = errors.New("vault: this key was destroyed or never unlocked")
+var ErrKeyDestroyed = errors.New("this archive was locked again (or never unlocked); open it again")
 
 // usable refuses a nil, zero or destroyed key.
 func (k *Key) usable() error {

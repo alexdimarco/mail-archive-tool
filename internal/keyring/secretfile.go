@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"mail-archive-tool/internal/util"
 	"mail-archive-tool/internal/vault"
@@ -58,10 +59,19 @@ func RecoveryKeyFile(path string) (Secret, error) {
 	return Secret{how: ByRecoveryKey, text: lines[0]}, nil
 }
 
-// RecoveryKeyFileText is the text -recovery-key-out saves: a comment naming the
-// archive, then the key, which RecoveryKeyFile reads back.
-func RecoveryKeyFileText(id vault.ID, key string) string {
-	return fmt.Sprintf("# MailArchive recovery key for the encrypted archive %s\n%s\n", id, key)
+// RecoveryKeyFileText is the text -recovery-key-out saves: comments naming the
+// archive the way its owner knows it — its folder and the day the key was made —
+// beside its id, then the key, which RecoveryKeyFile reads back (P3-8 friction
+// review, B24). A control character in the folder's name is shown as a space, so
+// the comment stays one line.
+func RecoveryKeyFileText(id vault.ID, key, folder string, made time.Time) string {
+	folder = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) {
+			return ' '
+		}
+		return r
+	}, folder)
+	return fmt.Sprintf("# MailArchive recovery key for the encrypted archive in %s\n# made %s; archive id %s\n%s\n", folder, made.Format("2006-01-02"), id, key)
 }
 
 // readSecretFile reads a secret file with one descriptor-judged open (§3.4): a

@@ -159,7 +159,7 @@ func (e *UnusableError) Error() string {
 	case CaseUnreadable:
 		return fmt.Sprintf("this computer's record of encrypted archives cannot be looked for (%s: %v) — MailArchive needs its own settings folder, readable by you", e.Path, e.Err)
 	default:
-		return fmt.Sprintf("this computer's record of encrypted archives (%s) is damaged and needs repair", e.Path)
+		return fmt.Sprintf("this computer's record of encrypted archives (%s) is damaged and needs repair: run `mailarchive repair-record` (or Repair the record on MailArchive Desktop's Encryption card), then try again", e.Path)
 	}
 }
 

@@ -24,7 +24,7 @@ func TestTheCLIPutsBackALostKeyFileFromItsRecoveryFile(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "recovery-file.json")
 	k := noKeyFlags()
 	k.recoveryFileOut = &file
-	a := &scripted{isAttended: true, answers: []string{flowPassword, flowPassword, "n", keyAnswer}}
+	a := &scripted{isAttended: true, answers: []string{flowPassword, flowPassword, "n", "", keyAnswer}}
 	u, err := createEncrypted(a, out, k, false, nil)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, a.transcript())
@@ -70,7 +70,7 @@ func TestTheCLIPutsBackALostKeyFileFromItsRecoveryFile(t *testing.T) {
 func TestTheCLIRebuildsKeyFilesFromTheRememberedKey(t *testing.T) {
 	flowRecord(t)
 	out := filepath.Join(t.TempDir(), "archive")
-	a := &scripted{isAttended: true, answers: []string{flowPassword, flowPassword, "", keyAnswer}}
+	a := &scripted{isAttended: true, answers: []string{flowPassword, flowPassword, "", "", keyAnswer}}
 	u, err := createEncrypted(a, out, noKeyFlags(), false, nil)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, a.transcript())

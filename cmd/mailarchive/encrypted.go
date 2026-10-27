@@ -7,8 +7,10 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"mail-archive-tool/internal/app"
+	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/graphconfig"
 	"mail-archive-tool/internal/keyring"
 	"mail-archive-tool/internal/tty"
@@ -317,7 +319,7 @@ func confirmRecoveryKey(a asker, key string) error {
 				break
 			}
 			if err := keyring.CheckRecoveryKey(key, typed); err != nil {
-				a.say("That is not the recovery key shown (%v).", err)
+				a.say("%s", keyring.RecoveryKeyRetry(err))
 				continue
 			}
 			return nil
@@ -336,7 +338,7 @@ func checkRecoveryKeyOut(path, out string) (string, error) {
 // every encrypted archive (§5.2), once the key was entered again and just before it
 // is committed (the P3-1a pass, SEC-01).
 func writeRecoveryKeyFile(path, out string, id vault.ID, key string) (string, error) {
-	return keyring.WriteNewFile("-recovery-key-out", "the recovery key", path, out, []byte(keyring.RecoveryKeyFileText(id, key)))
+	return keyring.WriteNewFile("-recovery-key-out", "the recovery key", path, out, []byte(keyring.RecoveryKeyFileText(id, key, out, time.Now())))
 }
 
 // writeRecoveryFileOut saves the recovery file (§9.4) to a NEW file, the same way:
@@ -386,6 +388,18 @@ func checkKeyCopies(k *keyFlags, out string) error {
 		}
 	}
 	return nil
+}
+
+// saySaved says where each copy of a recovery key now in effect was saved (P3-8
+// friction review, B24): saved is what saveKeyCopies wrote, the key file first.
+func saySaved(a asker, k *keyFlags, saved []string) {
+	for i, p := range saved {
+		what := "Recovery file"
+		if i == 0 && k.recoveryKeyOut != nil && *k.recoveryKeyOut != "" {
+			what = "Recovery key"
+		}
+		a.say("%s saved to %s", what, p)
+	}
 }
 
 // voidFiles voids each saved copy of a recovery key that did not take effect.
@@ -452,6 +466,9 @@ func createEncrypted(a asker, out string, k *keyFlags, rememberSet bool, credent
 			remember = false
 		}
 	}
+	if err := askProgramCopies(a, k); err != nil {
+		return nil, err
+	}
 	a.say("Making the archive's key (this takes a few seconds)...")
 	p, err := keyring.Create(out, pw, keyring.CreateOptions{Remember: remember, Store: store, CredentialPaths: credentials})
 	if err != nil {
@@ -479,14 +496,51 @@ func createEncrypted(a asker, out string, k *keyFlags, rememberSet bool, credent
 		voidFiles(a, saved)
 		return nil, err
 	}
+	saySaved(a, k, saved)
 	if k.recoveryFileOut != nil && *k.recoveryFileOut != "" {
 		a.say("%s", keyring.RecoveryFileNote)
 	}
 	for _, w := range u.Warnings() {
 		a.say("warning: %s", w)
 	}
+	if remember {
+		a.say("%s", rememberedLine(out))
+	}
 	a.say("The encrypted archive is ready at %s. Its first backup starts now.", out)
 	return u, nil
+}
+
+// programCopiesQuestion is design §5.1 step 4's question, on by default.
+const programCopiesQuestion = "Keep a copy of MailArchive for Mac, Windows and Linux in the archive so it can be opened years from now (about 134 MB each time a new version updates it)?"
+
+// askProgramCopies asks, while a new encrypted archive is made, whether to keep
+// copies of MailArchive in it — unless -program-copies said — and says what was
+// chosen and how to change it later (§5.1 step 4; P3-8 friction review, B9).
+func askProgramCopies(a asker, k *keyFlags) error {
+	if k.programCopies == nil {
+		k.programCopies = new(string)
+	}
+	if *k.programCopies == "" {
+		keep, err := askYes(a, programCopiesQuestion, true)
+		if err != nil {
+			return err
+		}
+		*k.programCopies = "off"
+		if keep {
+			*k.programCopies = "on"
+		}
+	}
+	if *k.programCopies == "on" {
+		a.say("Copies of MailArchive will be kept in the archive's program folder. To stop keeping them, add -program-copies off to a later backup.")
+	} else {
+		a.say("No copies of MailArchive will be kept in the archive. To keep them, add -program-copies on to a later backup.")
+	}
+	return nil
+}
+
+// rememberedLine confirms a key this run remembered (P3-8 friction review, Tier C).
+func rememberedLine(out string) string {
+	return fmt.Sprintf("This computer now remembers the key of %s: backups you start and opening it here will not ask for the password. To stop, run: mailarchive forget-key -out %s", out, encmark.CommandPath(out))
 }
 
 // unlockForWrite opens the encrypted archive at out for a backup or a key change, at
@@ -497,6 +551,18 @@ func createEncrypted(a asker, out string, k *keyFlags, rememberSet bool, credent
 func unlockForWrite(a asker, out, what string, k *keyFlags) (*keyring.Unlocked, error) {
 	if !a.attended() {
 		return nil, errNeedsTerminal(out, what)
+	}
+	// Everything that refuses without the secret is judged before it is asked for
+	// (P3-8 friction review, T2-1, T2-2): key files that cannot open, a record that
+	// cannot be written, another run holding the archive.
+	if err := refuseKeysGone(out); err != nil {
+		return nil, err
+	}
+	if err := keyring.CheckRecordUsable(out); err != nil {
+		return nil, err
+	}
+	if err := refuseBusy(out); err != nil {
+		return nil, err
 	}
 	store, serr := secretStore()
 	if serr != nil {
@@ -513,7 +579,7 @@ func unlockForWrite(a asker, out, what string, k *keyFlags) (*keyring.Unlocked, 
 			return askYes(a, fmt.Sprintf("This archive's key file asks for %s to open, more than MailArchive's own (%s), and this computer has not recorded it. Open it anyway?", p, vault.CostFloor()), false)
 		},
 		ConfirmReRecord: func(string) (bool, error) {
-			return askYes(a, "You told MailArchive to forget this encrypted archive. Record it again on this computer?", false)
+			return askYes(a, keyring.ReRecordQuestion, false)
 		},
 	}
 	u, err := openBySecret(a, out, k, store, o)
@@ -522,6 +588,9 @@ func unlockForWrite(a asker, out, what string, k *keyFlags) (*keyring.Unlocked, 
 	}
 	for _, w := range u.Warnings() {
 		a.say("warning: %s", w)
+	}
+	if remember {
+		a.say("%s", rememberedLine(out))
 	}
 	// Setting up finished, or an archive handed over, is offered Remember again,
 	// on by default (§5.1 step 7; the P3-1a pass, CON-07).
@@ -534,6 +603,8 @@ func unlockForWrite(a asker, out, what string, k *keyFlags) (*keyring.Unlocked, 
 		if yes {
 			if err := keyring.Remember(u, store); err != nil {
 				a.say("warning: the key could not be remembered (%v); every backup and opening will ask for the password", err)
+			} else {
+				a.say("%s", rememberedLine(out))
 			}
 		}
 	}
@@ -555,24 +626,56 @@ func openBySecret(a asker, out string, k *keyFlags, store vault.Store, o keyring
 	switch {
 	case k.passwordFile != nil && *k.passwordFile != "":
 		u, err = open(keyring.PasswordFile(*k.passwordFile))
+		err = wrongSecret(err, out, fmt.Sprintf("The password in %s (read with -password-file)", abspath(*k.passwordFile)),
+			"Check that the file holds this archive's current password, or leave out -password-file and type the password or the recovery key at a terminal.")
 	case k.recoveryKeyFile != nil && *k.recoveryKeyFile != "":
 		u, err = open(keyring.RecoveryKeyFile(*k.recoveryKeyFile))
+		err = wrongSecret(err, out, fmt.Sprintf("The recovery key in %s (read with -recovery-key-file)", abspath(*k.recoveryKeyFile)),
+			"Check that the file holds this archive's current recovery key (a new recovery key replaces the earlier one), or leave out -recovery-key-file and type the password at a terminal.")
 	case keyring.HasRemembered(out, store):
-		u, err = keyring.Remembered(out, o)
+		if u, err = keyring.Remembered(out, o); err == nil {
+			a.say("Opened %s with the key this computer remembers.", out)
+		}
 	default:
-		for tries := 0; tries < 3; tries++ {
+		// An empty Enter asks again without counting as a try (P3-8 friction review,
+		// T2-8); a few in a row end it, so a closed input cannot loop.
+		for tries, empties := 0, 0; tries < 3; {
 			typed, perr := a.secret(fmt.Sprintf("Password (or recovery key) for the encrypted archive %s: ", out))
 			if perr != nil {
 				return nil, perr
 			}
+			if strings.TrimSpace(typed) == "" {
+				if empties++; empties >= 5 {
+					return nil, errors.New("nothing was typed, so the archive was not opened; nothing was changed")
+				}
+				a.say("Nothing was typed. Type the archive's password, or its recovery key.")
+				continue
+			}
+			tries++
 			u, err = keyring.OpenTyped(out, typed, o)
 			if !errors.Is(err, vault.ErrWrongSecret) {
 				break
 			}
-			a.say("That does not open this archive.")
+			if tries < 3 {
+				a.say("That does not open this archive. Try again: the password, or the recovery key if you have forgotten it.")
+			}
 		}
+		err = wrongSecret(err, out, "Three tries", "Run the command again and type the password; if you have forgotten it, type the archive's recovery key at the same prompt instead.")
 	}
 	return u, err
+}
+
+// wrongSecret words a secret that did not open out (P3-8 friction review, B14):
+// what was tried, that nothing changed, and what to do next — the other secret, or
+// putting back key files that may have been replaced. Any other error is kept.
+func wrongSecret(err error, out, tried, next string) error {
+	if !errors.Is(err, vault.ErrWrongSecret) {
+		return err
+	}
+	return &worded{
+		msg: fmt.Sprintf("%s did not open the encrypted archive %s, so nothing was changed. %s If neither the password nor the recovery key opens it, its key files may have been replaced: put them back with mailarchive restore-key-file -out %s -from FILE (FILE is the recovery file you saved).", tried, out, next, encmark.CommandPath(out)),
+		err: err,
+	}
 }
 
 // unlockForRead opens the encrypted archive at out to read it — serve, search,
@@ -582,6 +685,9 @@ func openBySecret(a asker, out string, k *keyFlags, store vault.Store, o keyring
 // the folder (§3.3). Without a terminal it asks nothing: with no file and no
 // remembered key it is refused, naming the files that would do.
 func unlockForRead(a asker, out, what string, k *keyFlags) (*keyring.Unlocked, error) {
+	if err := refuseKeysGone(out); err != nil {
+		return nil, err
+	}
 	store, serr := secretStore()
 	if serr != nil {
 		store = nil
@@ -597,7 +703,7 @@ func unlockForRead(a asker, out, what string, k *keyFlags) (*keyring.Unlocked, e
 			return askYes(a, fmt.Sprintf("This archive's key file asks for %s to open, more than MailArchive's own (%s), and this computer has not recorded it. Open it anyway?", p, vault.CostFloor()), false)
 		}
 		o.ConfirmReRecord = func(string) (bool, error) {
-			return askYes(a, "You told MailArchive to forget this encrypted archive. Record it again on this computer?", false)
+			return askYes(a, keyring.ReRecordQuestion, false)
 		}
 	}
 	if err := readKeyAvailable(a, out, what, k); err != nil {
@@ -609,6 +715,9 @@ func unlockForRead(a asker, out, what string, k *keyFlags) (*keyring.Unlocked, e
 	}
 	for _, w := range u.Warnings() {
 		a.say("warning: %s", w)
+	}
+	if remember {
+		a.say("%s", rememberedLine(out))
 	}
 	return u, nil
 }

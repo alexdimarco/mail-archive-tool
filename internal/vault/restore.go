@@ -47,24 +47,24 @@ var clock = time.Now
 
 var (
 	// ErrRecoveryFile refuses text that is not a recovery file this build reads.
-	ErrRecoveryFile = errors.New("vault: not a MailArchive recovery file")
+	ErrRecoveryFile = errors.New("not a MailArchive recovery file")
 	// ErrKeyFileOpens refuses a restore while a copy of the key file still opens:
 	// nothing needs putting back.
-	ErrKeyFileOpens = errors.New("vault: a copy of this archive's key file still opens with this key — nothing needs putting back")
+	ErrKeyFileOpens = errors.New("a copy of this archive's key file still opens with this key — nothing needs putting back")
 	// ErrNotProven refuses a restore whose key this folder's sealed record does not
 	// prove (another archive's key, or a folder with no record this computer
 	// recorded as the archive's).
-	ErrNotProven = errors.New("vault: this folder's sealed record does not prove the key belongs to it")
+	ErrNotProven = errors.New("this folder's encrypted record does not prove the key belongs to it")
 	// ErrClock refuses a restore on a clock that reads earlier than this build.
-	ErrClock = errors.New("vault: this computer's clock is wrong")
+	ErrClock = errors.New("this computer's clock is wrong")
 	// ErrKeyFileUnreadable refuses a restore when a copy of the key file cannot be
 	// read: that is not damage, and nothing is put over it.
-	ErrKeyFileUnreadable = errors.New("vault: the key file could not be read — check the drive")
+	ErrKeyFileUnreadable = errors.New("the key file could not be read — check the drive")
 	// ErrUnconfirmed reports a restore that WAS written — the new password and
 	// recovery key are the ones that count now — but whose key file did not read
 	// back as written (the P3-1b pass, OUT-01): keep the new recovery key, and open
 	// the archive with the new password to check it.
-	ErrUnconfirmed = errors.New("vault: the key file was written, but it did not read back as written — the new password and recovery key are the ones that count now; open the archive with the new password to check it")
+	ErrUnconfirmed = errors.New("the key file was written, but it did not read back as written — the new password and recovery key are the ones that count now; open the archive with the new password to check it")
 )
 
 // RecoveryFile is the recovery entry of a vault, as text (O6, K12, A28): the
@@ -495,7 +495,7 @@ func (p *PendingRestore) readBack() error {
 type CostError struct{ Params Params }
 
 func (e *CostError) Error() string {
-	return fmt.Sprintf("vault: this key file asks for %s to open, above the limit allowed without asking", e.Params)
+	return fmt.Sprintf("this key file asks for %s to open, above the limit allowed without asking", e.Params)
 }
 
 // OpenWithin is Open, refusing with *CostError before any derivation a copy whose

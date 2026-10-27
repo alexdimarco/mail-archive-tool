@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"mail-archive-tool/internal/assure"
 	"mail-archive-tool/internal/encmark"
@@ -396,7 +397,7 @@ func TestSecretFilesReadWhatMailArchiveAndEditorsWrite(t *testing.T) {
 		}
 		return p
 	}
-	s, err := RecoveryKeyFile(write("rk", []byte(RecoveryKeyFileText(a.ArchiveID(), rk))))
+	s, err := RecoveryKeyFile(write("rk", []byte(RecoveryKeyFileText(a.ArchiveID(), rk, out, time.Now()))))
 	if err != nil {
 		t.Fatalf("MailArchive's own recovery-key file: %v", err)
 	}

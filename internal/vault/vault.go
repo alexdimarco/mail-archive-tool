@@ -23,14 +23,14 @@ const wrappedSize = nonceSize + keySize + overhead
 var (
 	// ErrWrongSecret refuses a password or recovery key that does not unlock
 	// this archive.
-	ErrWrongSecret = errors.New("vault: that password or recovery key does not unlock this archive")
+	ErrWrongSecret = errors.New("that password or recovery key does not open this archive")
 	// ErrTampered refuses a vault whose public fields fail the header MAC: an
 	// entry stripped, the archive id swapped, the generation or a cost changed.
-	ErrTampered = errors.New("vault: the archive's key file was altered")
+	ErrTampered = errors.New("the archive's key file was altered")
 	// ErrNewerVault refuses a vault written by a newer MailArchive.
-	ErrNewerVault = errors.New("vault: written by a newer MailArchive")
+	ErrNewerVault = errors.New("written by a newer MailArchive (upgrade MailArchive to open it)")
 	// ErrCorrupt refuses a vault that does not parse as one.
-	ErrCorrupt = errors.New("vault: the archive's key file is damaged")
+	ErrCorrupt = errors.New("the archive's key file is damaged")
 )
 
 // Entry is one wrap of the master key: under the password, or under the
@@ -65,10 +65,10 @@ func Create(password string) (*Vault, *Key, RecoveryKey, error) {
 	master := make([]byte, keySize)
 	defer clear(master)
 	if _, err := io.ReadFull(randReader, id[:]); err != nil {
-		return nil, nil, none, fmt.Errorf("vault: draw archive id: %w", err)
+		return nil, nil, none, fmt.Errorf("this computer could not supply random numbers for the archive's id: %w", err)
 	}
 	if _, err := io.ReadFull(randReader, master); err != nil {
-		return nil, nil, none, fmt.Errorf("vault: draw master key: %w", err)
+		return nil, nil, none, fmt.Errorf("this computer could not supply random numbers for the archive's key: %w", err)
 	}
 	rk, err := newRecoveryKey()
 	if err != nil {
@@ -93,7 +93,7 @@ func Create(password string) (*Vault, *Key, RecoveryKey, error) {
 func wrap(id ID, kind entryKind, secret, master []byte) (Entry, error) {
 	e := Entry{Params: floor}
 	if _, err := io.ReadFull(randReader, e.Salt[:]); err != nil {
-		return e, fmt.Errorf("vault: draw salt: %w", err)
+		return e, fmt.Errorf("this computer could not supply random numbers for the key file: %w", err)
 	}
 	kek, err := deriveKEK(secret, e.Salt[:], e.Params)
 	if err != nil {

@@ -184,20 +184,26 @@ func TestScheduleRefusals(t *testing.T) {
 	assure.Refused(t, code, stderr, assure.Code(1), assure.Names("install", "remove"))
 }
 
-// covers: MA-39, R12
-// X3 (UX contract): the root and every subcommand emit usage naming their flags.
+// covers: MA-39, MA-850, R12, R37
+// X3 (UX contract): the root and every subcommand emit usage naming their flags —
+// the encrypted archive's verbs included, each with its exit codes, `encrypt -h`
+// printing usage rather than a refusal, and `verify -h` naming -full (P3-8
+// friction review, B28).
 func TestHelpTotality(t *testing.T) {
 	cases := []struct {
 		args []string
 		want []string
 	}{
-		{[]string{"-h"}, []string{"-out", "-input", "-enable-offline", "-encrypt", "-password-file", "-recovery-file-out", "change-password", "forget-archive", "repair-record", "restore-key-file"}},
-		{[]string{"change-password", "-h"}, []string{"-out", "-password-file", "-recovery-key-file"}},
-		{[]string{"new-recovery-key", "-h"}, []string{"-out", "-recovery-key-out", "-recovery-file-out"}},
-		{[]string{"restore-key-file", "-h"}, []string{"-out", "-from", "-remembered", "-recovery-key-file", "-recovery-key-out", "-recovery-file-out"}},
-		{[]string{"forget-key", "-h"}, []string{"-out"}},
-		{[]string{"forget-archive", "-h"}, []string{"-out"}},
-		{[]string{"repair-record", "-h"}, []string{"repair-record", "damaged"}},
+		{[]string{"-h"}, []string{"-out", "-input", "-enable-offline", "-encrypt", "-password-file", "-recovery-file-out", "-program-copies", "change-password", "new-recovery-key", "forget-key", "forget-archive", "repair-record", "restore-key-file", "decrypt", "-encrypt -out NEWDIR -input"}},
+		{[]string{"change-password", "-h"}, []string{"-out", "-password-file", "-recovery-key-file", "-remember", "Exit:"}},
+		{[]string{"new-recovery-key", "-h"}, []string{"-out", "-recovery-key-out", "-recovery-file-out", "Exit:"}},
+		{[]string{"restore-key-file", "-h"}, []string{"-out", "-from", "-remembered", "-recovery-key-file", "-recovery-key-out", "-recovery-file-out", "Exit:"}},
+		{[]string{"forget-key", "-h"}, []string{"-out", "Exit:"}},
+		{[]string{"forget-archive", "-h"}, []string{"-out", "Exit:"}},
+		{[]string{"repair-record", "-h"}, []string{"repair-record", "damaged", "Exit:"}},
+		{[]string{"decrypt", "-h"}, []string{"-out", "-dest", "-password-file", "-recovery-key-file", "unencrypted copy", "Exit:"}},
+		{[]string{"encrypt", "-h"}, []string{"Usage:", "-encrypt -out NEWDIR", "-input", "-program-copies", "Exit:"}},
+		{[]string{"verify", "-h"}, []string{"-full", "-password-file", "Exit:"}},
 		{[]string{"serve", "-h"}, []string{"-out", "-addr"}},
 		{[]string{"search", "-h"}, []string{"-out", "-folder"}},
 		{[]string{"reindex", "-h"}, []string{"-out"}},

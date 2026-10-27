@@ -1,6 +1,7 @@
 package keyring
 
 import (
+	"errors"
 	"fmt"
 
 	"golang.org/x/text/unicode/norm"
@@ -44,6 +45,24 @@ func KeyChangeQuestion(how How, unlockedHere bool, what string) string {
 		return "This archive is unlocked here, so " + what + " without typing the current password. Anyone using this computer while it is unlocked could do the same: encryption protects a copy of the archive that leaves this computer, not this computer. Go ahead?"
 	}
 	return ""
+}
+
+// ReRecordQuestion is asked before an archive the person told MailArchive to forget
+// is recorded again (§4.2), saying what recording does and what no leaves (P3-8
+// friction review, Tier C).
+const ReRecordQuestion = "Earlier, you told MailArchive to forget this encrypted archive, so this computer stopped protecting its folder. Record it again on this computer, so the folder is protected as one of its encrypted archives again? (Answering n opens nothing and changes nothing.)"
+
+// RecoveryKeyRetry says, without quoting it, why what was typed back is not the
+// recovery key just shown (K2), with what to do — never the vault's own words
+// (P3-8 friction review, B14).
+func RecoveryKeyRetry(err error) string {
+	switch {
+	case errors.Is(err, vault.ErrRecoveryCheck):
+		return "That has a typing mistake: compare it with the key you saved, group by group, and type it again."
+	case errors.Is(err, vault.ErrRecoveryFormat):
+		return "That is not a recovery key: a recovery key is groups of letters and digits separated by dashes. Type it again."
+	}
+	return "That is a recovery key, but not the one just shown: type the one you saved from this screen."
 }
 
 // NewPasswordProblem says what is wrong with pw as a new password, before any key

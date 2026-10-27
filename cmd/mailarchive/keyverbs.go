@@ -32,7 +32,7 @@ func keyVerbFlags(name, usage string, args []string, opens bool, extra func(*fla
 		extra(fs)
 	}
 	fs.Usage = func() {
-		fmt.Fprintf(fs.Output(), "Usage: mailarchive %s -out DIR [options]\n\n%s\n\nOptions:\n", name, usage)
+		fmt.Fprintf(fs.Output(), "Usage: mailarchive %s -out DIR [options]\n\n%s\n\n%s\n\nOptions:\n", name, usage, keyVerbExit)
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -47,6 +47,10 @@ func keyVerbFlags(name, usage string, args []string, opens bool, extra func(*fla
 	k.rememberGiven = flagWasSet(fs, "remember")
 	return abspath(*out), k, nil
 }
+
+// keyVerbExit is the key verbs' exit line in their help (X1; P3-8 friction review,
+// Tier C).
+const keyVerbExit = "Exit: 0 done; 1 refused or failed (it says why, and nothing was changed unless it says so); 130 or 143 stopped by Ctrl-C or a terminate signal."
 
 // remembered asks the K13 confirmation when the remembered key, not a secret the
 // person gave, authorises a key change.
@@ -74,6 +78,13 @@ func runChangePassword(args []string) error {
 }
 
 func changePassword(a asker, out string, k *keyFlags) error {
+	// The terminal, then the folder, before anything is asked (B17, B16).
+	if !a.attended() {
+		return keyVerbTerminal("change-password", k)
+	}
+	if err := judgeKeyedFolder(out); err != nil {
+		return err
+	}
 	u, err := unlockForWrite(a, out, "changing its password", k)
 	if err != nil {
 		return err
@@ -116,8 +127,15 @@ func runNewRecoveryKey(args []string) error {
 }
 
 func newRecoveryKey(a asker, out string, k *keyFlags) error {
-	// Where the key is to be saved is judged before anything is asked.
+	// The terminal, where the key is to be saved and the folder are judged before
+	// anything is asked (B17, B16).
+	if !a.attended() {
+		return keyVerbTerminal("new-recovery-key", k)
+	}
 	if err := checkKeyCopies(k, out); err != nil {
+		return err
+	}
+	if err := judgeKeyedFolder(out); err != nil {
 		return err
 	}
 	u, err := unlockForWrite(a, out, "making a new recovery key", k)
@@ -157,6 +175,7 @@ func newRecoveryKey(a asker, out string, k *keyFlags) error {
 	default:
 		a.say("The new recovery key is in effect.")
 	}
+	saySaved(a, k, saved)
 	sayWithdrawal(a, k)
 	return nil
 }
@@ -227,14 +246,23 @@ func runRestoreKeyFile(args []string) error {
 // withdraw. from is the recovery file; "" rebuilds from the remembered key (K15).
 func restoreKeyFile(a asker, out, from string, k *keyFlags) error {
 	if !a.attended() {
-		return errNeedsTerminal(out, "putting its key file back")
+		return keyVerbTerminal("restore-key-file", k)
 	}
 	if err := checkKeyCopies(k, out); err != nil {
 		return err
 	}
+	// A restore writes the key files and the record: a record that cannot be used,
+	// or another run holding the archive, refuses before anything is asked (T2-1,
+	// T2-2).
+	if err := keyring.CheckRecordUsable(out); err != nil {
+		return err
+	}
+	if err := refuseBusy(out); err != nil {
+		return err
+	}
 	o := keyring.RestoreOptions{
 		ConfirmReRecord: func(string) (bool, error) {
-			return askYes(a, "You told MailArchive to forget this encrypted archive. Record it again on this computer?", false)
+			return askYes(a, keyring.ReRecordQuestion, false)
 		},
 		ConfirmCost: func(p vault.Params) (bool, error) {
 			return askYes(a, fmt.Sprintf("This recovery file asks for %s to open, more than MailArchive's own (%s), and this computer has not recorded this archive. Use it anyway?", p, vault.CostFloor()), false)
@@ -262,13 +290,22 @@ func restoreKeyFile(a asker, out, from string, k *keyFlags) error {
 			}
 		} else {
 			askKey = func() error {
-				for tries := 0; tries < 3; tries++ {
+				// An empty Enter asks again without counting as a try (T2-8).
+				for tries, empties := 0, 0; tries < 3; {
 					typed, err := a.secret("The recovery key saved with this recovery file: ")
 					if err != nil {
 						return err
 					}
-					if _, err := vault.ParseRecoveryKey(typed); err != nil {
-						a.say("That is not a recovery key (%v).", err)
+					if strings.TrimSpace(typed) == "" {
+						if empties++; empties >= 5 {
+							break
+						}
+						a.say("Nothing was typed. Type the recovery key you saved with this recovery file.")
+						continue
+					}
+					tries++
+					if err := keyring.RecoveryKeyProblem(typed); err != nil {
+						a.say("%s", keyring.RecoveryKeyRetry(err))
 						continue
 					}
 					rk = keyring.RecoveryKey(typed)
@@ -317,6 +354,10 @@ func restoreKeyFile(a asker, out, from string, k *keyFlags) error {
 		}
 		// A recovery key that does not open the recovery file is asked again,
 		// keeping the new password (CRIT-06).
+		if from != "" && errors.Is(err, vault.ErrWrongSecret) && (askKey == nil || tries >= 2) {
+			// The next step, not the vault's words (B14).
+			return &worded{msg: fmt.Sprintf("the recovery key given does not open the recovery file %s, so nothing was changed. Each recovery key has its own recovery file: use the recovery file saved with this recovery key, or the recovery key saved with this file.", abspath(from)), err: err}
+		}
 		if !errors.Is(err, vault.ErrWrongSecret) || askKey == nil || tries >= 2 {
 			return err
 		}
@@ -337,8 +378,10 @@ func restoreKeyFile(a asker, out, from string, k *keyFlags) error {
 	switch {
 	case err == nil:
 		a.say("The key file of %s is back, with your new password and new recovery key.", out)
+		saySaved(a, k, saved)
 	case errors.Is(err, vault.ErrPartiallySaved) && !errors.Is(err, vault.ErrUnconfirmed) && !errors.Is(err, keyring.ErrRestoredNotRecorded):
 		a.say("The key file is back and in effect; its second copy is rewritten at the next opening.")
+		saySaved(a, k, saved)
 		err = nil
 	case keyring.InEffect(err):
 		// Written, and only what followed failed: the new password and recovery key
@@ -368,17 +411,25 @@ func runForgetKey(args []string) error {
 
 func forgetKey(a asker, out string) error {
 	if !a.attended() {
-		return errNeedsTerminal(out, "forgetting its key")
+		return keyVerbTerminal("forget-key", nil)
 	}
 	store, err := secretStore()
 	if err != nil {
 		return err
 	}
-	id, err := keyring.ForgetKey(out, store)
-	if err != nil {
+	// Nothing remembered is said as it is, not as a key forgotten (P3-8 friction
+	// review, Tier C); there is nothing to do, so it is no failure.
+	switch remembered, err := keyring.KeyRemembered(out, store); {
+	case err != nil:
+		return err
+	case !remembered:
+		a.say("This computer does not remember a key for %s, so there was nothing to forget; nothing was changed.", out)
+		return nil
+	}
+	if _, err := keyring.ForgetKey(out, store); err != nil {
 		return err
 	}
-	a.say("This computer no longer remembers the key of the encrypted archive %s (%s); backups you start and opening it will ask for the password.", out, id)
+	a.say("This computer no longer remembers the key of the encrypted archive %s; backups you start and opening it will ask for the password.", out)
 	return nil
 }
 
@@ -394,7 +445,7 @@ func runForgetArchive(args []string) error {
 // forgets; the forget itself refuses if anything changed meanwhile.
 func forgetArchive(a asker, out string) error {
 	if !a.attended() {
-		return errNeedsTerminal(out, "forgetting it")
+		return keyVerbTerminal("forget-archive", nil)
 	}
 	store, serr := secretStore()
 	if serr != nil {
@@ -404,7 +455,16 @@ func forgetArchive(a asker, out string) error {
 	if err != nil {
 		return err
 	}
-	a.say("This computer recorded the encrypted archive %s at:\n    %s", p.ID, p.Spelling)
+	// The forget takes the archive's lock: a run holding it refuses now, before
+	// the questions, not after them (T2-1, B15).
+	if err := refuseBusy(out); err != nil {
+		return err
+	}
+	// The folder is shown as it was typed, not in the record's case-folded form,
+	// since the person may be asked to type it back (P3-8 friction review, B27);
+	// the record matches either.
+	shown := p.Out
+	a.say("This computer recorded the encrypted archive %s at:\n    %s", p.ID, shown)
 	if len(p.Others) > 0 {
 		a.say("Its other folders stay protected:")
 		for _, o := range p.Others {
@@ -451,7 +511,7 @@ func forgetArchive(a asker, out string) error {
 	case o.Whole:
 		a.say("This computer forgot the encrypted archive %s.", p.ID)
 	default:
-		a.say("This computer no longer protects %s as an encrypted archive.", p.Spelling)
+		a.say("This computer no longer protects %s as an encrypted archive.", shown)
 	}
 	return nil
 }
@@ -459,7 +519,7 @@ func forgetArchive(a asker, out string) error {
 func runRepairRecord(args []string) error {
 	fs := flag.NewFlagSet("mailarchive repair-record", flag.ContinueOnError)
 	fs.Usage = func() {
-		fmt.Fprintf(fs.Output(), "Usage: mailarchive repair-record\n\nRebuild this computer's damaged record of encrypted archives from what still reads. The damaged copies are kept beside it; every rebuilt folder stays protected until its archive is opened with its password.\n")
+		fmt.Fprintf(fs.Output(), "Usage: mailarchive repair-record\n\nRebuild this computer's damaged record of encrypted archives from what still reads. The damaged copies are kept beside it; every rebuilt folder stays protected until its archive is opened with its password.\n\n%s\n", keyVerbExit)
 	}
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -484,6 +544,18 @@ func runRepairRecord(args []string) error {
 	return nil
 }
 
+// encryptPointer is what `mailarchive encrypt` says: a new encrypted archive is
+// made by a backup with -encrypt (§5.2).
+const encryptPointer = "to make a new encrypted archive, run a backup with -encrypt into a new or empty folder: mailarchive -encrypt -out NEWDIR -input FILE|DIR (or -auto in place of -input). Encrypting an existing archive comes in a later version"
+
 func runEncrypt(args []string) error {
-	return errors.New("to make a new encrypted archive, run a backup with -encrypt into a new or empty folder (mailarchive -encrypt -out DIR -input …); encrypting an existing archive comes in a later version")
+	// -h prints usage, as every verb's does (X3; P3-8 friction review, B28).
+	fs := flag.NewFlagSet("mailarchive encrypt", flag.ContinueOnError)
+	fs.Usage = func() {
+		fmt.Fprintf(fs.Output(), "Usage: mailarchive -encrypt -out NEWDIR -input FILE|DIR [-input …] [-remember] [-recovery-key-out FILE] [-recovery-file-out FILE] [-program-copies on|off]\n\nThere is no separate encrypt step in this version: %s.\nAt a terminal it asks for a new password (twice), whether to remember the key on this computer and whether to keep copies of MailArchive in the archive; then it shows the recovery key once, asks you to type it back, and runs the first backup. See `mailarchive -h` for the backup's other flags.\n\n%s\n", encryptPointer, keyVerbExit)
+	}
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	return errors.New(encryptPointer)
 }

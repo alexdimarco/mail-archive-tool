@@ -105,8 +105,8 @@ func TestTheCLIMakesAnEncryptedArchiveAtTheTerminal(t *testing.T) {
 	k := noKeyFlags()
 	k.recoveryKeyOut = &keyFile
 	// A short password, then a mismatch, then the password twice; remember (Enter:
-	// yes); Enter alone shows the key again; then the key.
-	a := &scripted{isAttended: true, answers: []string{"short", flowPassword, "not the same", flowPassword, flowPassword, "", "", keyAnswer}}
+	// yes); program copies (Enter: yes); Enter alone shows the key again; then the key.
+	a := &scripted{isAttended: true, answers: []string{"short", flowPassword, "not the same", flowPassword, flowPassword, "", "", "", keyAnswer}}
 	u, err := createEncrypted(a, out, k, false, nil)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, a.transcript())
@@ -147,7 +147,7 @@ func TestTheCLIMakesNothingUntilTheRecoveryKeyIsEnteredAgain(t *testing.T) {
 	}{
 		"no terminal":               {false, nil, nil, nil, []string{"terminal"}},
 		"three short passwords":     {true, []string{"a", "b", "c"}, nil, nil, []string{"no password was chosen"}},
-		"the key never entered":     {true, []string{flowPassword, flowPassword, "n", "wrong", "wrong again", "still wrong"}, nil, nil, []string{"ran out"}},
+		"the key never entered":     {true, []string{flowPassword, flowPassword, "n", "", "wrong", "wrong again", "still wrong"}, nil, nil, []string{"ran out"}},
 		"the key out inside it":     {true, []string{flowPassword, flowPassword, "n"}, nil, func(out string) string { return filepath.Join(out, "rk.txt") }, []string{"inside the archive folder"}},
 		"the key out already there": {true, []string{flowPassword, flowPassword, "n"}, nil, func(string) string { p := keyFile(); os.WriteFile(p, nil, 0o600); return p }, []string{"already exists"}},
 	}
@@ -179,7 +179,7 @@ func TestTheCLIMakesNothingUntilTheRecoveryKeyIsEnteredAgain(t *testing.T) {
 func makeArchive(t *testing.T) string {
 	t.Helper()
 	out := filepath.Join(t.TempDir(), "archive")
-	a := &scripted{isAttended: true, answers: []string{flowPassword, flowPassword, "n", keyAnswer}}
+	a := &scripted{isAttended: true, answers: []string{flowPassword, flowPassword, "n", "", keyAnswer}}
 	u, err := createEncrypted(a, out, noKeyFlags(), false, nil)
 	if err != nil {
 		t.Fatalf("make the archive: %v\n%s", err, a.transcript())

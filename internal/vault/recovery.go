@@ -27,14 +27,14 @@ var recoveryEncoding = base32.StdEncoding.WithPadding(base32.NoPadding)
 // ErrRecoveryFormat refuses text that is not a recovery key; ErrRecoveryCheck
 // refuses one with a typing mistake (its check character does not match).
 var (
-	ErrRecoveryFormat = errors.New("vault: not a recovery key")
-	ErrRecoveryCheck  = errors.New("vault: recovery key has a typing mistake")
+	ErrRecoveryFormat = errors.New("that is not a recovery key")
+	ErrRecoveryCheck  = errors.New("that recovery key has a typing mistake")
 )
 
 func newRecoveryKey() (RecoveryKey, error) {
 	var k RecoveryKey
 	if _, err := io.ReadFull(randReader, k[:]); err != nil {
-		return k, fmt.Errorf("vault: draw recovery key: %w", err)
+		return k, fmt.Errorf("this computer could not supply random numbers for the recovery key: %w", err)
 	}
 	return k, nil
 }

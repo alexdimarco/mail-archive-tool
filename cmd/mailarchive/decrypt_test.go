@@ -39,18 +39,20 @@ func TestDecryptShowsThePlanThenMakesTheCopy(t *testing.T) {
 		assure.NoSideEffect(func() bool { return len(entries) == 0 && len(a.prompts) == 1 }))
 
 	stdout.Reset()
+	stderr.Reset()
 	a = &scripted{isAttended: true, answers: []string{"y", flowPassword}}
 	if err := decryptWith(a, out, parent, "", noKeyFlags(), decryptDay, &stdout, &stderr); err != nil {
 		t.Fatalf("the copy: %v\n%s", err, a.transcript())
 	}
 	dest := filepath.Join(parent, filepath.Base(out)+"-unencrypted-2026-10-27")
-	plan := stdout.String()
+	// The plan is a message (stderr); the result is stdout's (X8).
+	plan := stderr.String()
 	if !strings.Contains(plan, "UNENCRYPTED copy of "+out) || !strings.Contains(plan, "new folder: "+dest) || !strings.Contains(plan, "size: up to") {
 		t.Fatalf("the plan shown:\n%s", plan)
 	}
 	_, err = os.Stat(filepath.Join(dest, ".mailarchive-manifest.json"))
 	_, marker := os.Stat(filepath.Join(dest, app.CopyMarkerName))
-	assure.Reached(t, err == nil && os.IsNotExist(marker) && strings.Contains(plan, "Unencrypted copy made at "+dest), "a finished plaintext archive in the new folder")
+	assure.Reached(t, err == nil && os.IsNotExist(marker) && strings.Contains(stdout.String(), "Unencrypted copy made at "+dest), "a finished plaintext archive in the new folder")
 }
 
 // covers: MA-823, R37
@@ -72,7 +74,7 @@ func TestDecryptAsksTwiceWhereTheCopyMayLeave(t *testing.T) {
 	entries, _ := os.ReadDir(synced)
 	code, msg := refusedText(err)
 	assure.Refused(t, code, msg, assure.Code(1), assure.Names("does not match"),
-		assure.NoSideEffect(func() bool { return len(entries) == 0 && strings.Contains(stdout.String(), "synced to Dropbox") }))
+		assure.NoSideEffect(func() bool { return len(entries) == 0 && strings.Contains(stderr.String(), "synced to Dropbox") }))
 
 	dest := filepath.Join(synced, filepath.Base(out)+"-unencrypted-2026-10-27")
 	a = &scripted{isAttended: true, answers: []string{"y", dest, flowPassword}}

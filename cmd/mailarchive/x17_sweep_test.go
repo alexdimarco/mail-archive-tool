@@ -86,6 +86,15 @@ var sweptGo = []string{
 	"internal/health/health.go",
 	"internal/health/gaps.go",
 	"internal/health/shownassource.go",
+	// The encrypted archive's texts (P3-8 friction review, B29): the README and the
+	// program note written beside every encrypted archive, and the key verbs'
+	// words at the command line.
+	"internal/app/readme.go",
+	"internal/app/programnote.go",
+	"cmd/mailarchive/encrypted.go",
+	"cmd/mailarchive/keyverbs.go",
+	"cmd/mailarchive/keyjudge.go",
+	"cmd/mailarchive/decrypt.go",
 }
 
 // guardPkgs are the owner-facing packages the completeness guard scans for a
@@ -93,8 +102,9 @@ var sweptGo = []string{
 // so a new owner surface cannot slip in unswept. cmd/mailarchive is included so
 // the CLI package is guarded too; its one detection file (dispatch.go) is skipped
 // by name below. (internal/schedule joins this set at SE2, with schedule.ProgramNote
-// and the §4.6.1 translocation refusal.)
-var guardPkgs = []string{"internal/wizard", "internal/desktop", "internal/health", "cmd/mailarchive"}
+// and the §4.6.1 translocation refusal.) internal/keyring — the words every
+// encrypted-archive surface shares — joined at the P3-8 friction review (B29).
+var guardPkgs = []string{"internal/wizard", "internal/desktop", "internal/health", "cmd/mailarchive", "internal/keyring"}
 
 // guardSkipFiles hold a former-name string literal that is NOT owner text:
 // cmd/mailarchive/dispatch.go is the §4.1 rule-6 router whose case labels ARE the

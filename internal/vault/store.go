@@ -36,19 +36,19 @@ var (
 	// it does not prove the folder was never encrypted (a deleted vault looks the
 	// same), so a path that knows an archive id for the folder refuses instead
 	// (RequireRetrievableKey, A15).
-	ErrNoVault = errors.New("vault: no vault found in this folder")
+	ErrNoVault = errors.New("this folder holds no encrypted archive's key file")
 	// ErrExists refuses to create a vault where one (or a fragment of one) exists.
-	ErrExists = errors.New("vault: this archive already has a key file")
+	ErrExists = errors.New("this archive already has a key file")
 	// ErrConflict refuses to settle two different vaults at the same generation
 	// (two machines changed the vault at once), or to commit a prepared change
 	// over a vault that changed since it was prepared.
-	ErrConflict = errors.New("vault: the archive's key file changed or forked")
+	ErrConflict = errors.New("the archive's key file was changed meanwhile, here or on another computer")
 	// ErrPartiallySaved reports a change that IS in effect — the primary holds it
 	// — whose mirror could not be written; the next change or heal repairs it.
-	ErrPartiallySaved = errors.New("vault: the change is saved, but its backup copy could not be written")
+	ErrPartiallySaved = errors.New("the change is saved, but the second copy of the key file could not be written")
 	// ErrPendingUsed refuses a prepared change that was already committed or
 	// discarded.
-	ErrPendingUsed = errors.New("vault: this prepared change was already committed or discarded")
+	ErrPendingUsed = errors.New("this change was already saved or abandoned")
 )
 
 // Seams: writeCopy writes one vault copy atomically and durably (A8),
@@ -460,7 +460,7 @@ func lockArchive(out string) (*lockfile.Lock, error) {
 // removed or replaced mid-operation means another run may hold a fresh one.
 func stillHeld(l *lockfile.Lock) error {
 	if err := l.StillHeld(); err != nil {
-		return fmt.Errorf("vault: nothing was written: %w", err)
+		return fmt.Errorf("nothing was written: %w", err)
 	}
 	return nil
 }
@@ -567,7 +567,7 @@ func (p *PendingCreate) Commit() (*Key, error) {
 	}
 	if err := save(p.out, p.v); err != nil {
 		if held := stillHeld(l); held != nil {
-			return nil, fmt.Errorf("vault: the new key file could not be written (%w), and the archive lock was lost, so nothing was cleaned up — check %s before trying again: %w", err, p.out, held)
+			return nil, fmt.Errorf("the new key file could not be written (%w), and the archive lock was lost, so nothing was cleaned up — check %s before trying again: %w", err, p.out, held)
 		}
 		var left []string
 		for _, name := range []string{FileName, BackupName} {
@@ -577,9 +577,9 @@ func (p *PendingCreate) Commit() (*Key, error) {
 		}
 		util.SyncDir(p.out)
 		if len(left) > 0 {
-			return nil, fmt.Errorf("vault: the new key file could not be written, and %s could not be removed — delete it before trying again: %w", strings.Join(left, ", "), err)
+			return nil, fmt.Errorf("the new key file could not be written, and %s could not be removed — delete it before trying again: %w", strings.Join(left, ", "), err)
 		}
-		return nil, fmt.Errorf("vault: the new key file could not be written, so none was kept — try again: %w", err)
+		return nil, fmt.Errorf("the new key file could not be written, so none was kept — try again: %w", err)
 	}
 	k := p.k
 	p.k, p.done = nil, true

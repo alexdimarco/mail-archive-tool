@@ -37,11 +37,11 @@ import (
 	"time"
 
 	"mail-archive-tool/internal/app"
+	"mail-archive-tool/internal/encmark"
 	"mail-archive-tool/internal/export"
 	"mail-archive-tool/internal/graphconfig"
 	"mail-archive-tool/internal/index"
 	"mail-archive-tool/internal/keyring"
-	"mail-archive-tool/internal/lockfile"
 	"mail-archive-tool/internal/outlookcom"
 	"mail-archive-tool/internal/runlog"
 	"mail-archive-tool/internal/schedule"
@@ -165,7 +165,7 @@ func runExport(args []string) error {
 	inputs := append(o.inputs, fs.Args()...)
 
 	if *o.out == "" {
-		return errors.New("-out is required (or use a subcommand: serve, search, reindex, schedule, graph, status, verify, extract, pause, resume, uninstall, change-password, new-recovery-key, restore-key-file, forget-key, forget-archive, repair-record, encrypt)")
+		return errors.New("-out is required (or use a subcommand: serve, search, reindex, schedule, graph, status, verify, extract, decrypt, pause, resume, uninstall, change-password, new-recovery-key, restore-key-file, forget-key, forget-archive, repair-record, encrypt)")
 	}
 	if err := refuseEncryptWith(*kf.encrypt, *o.unattended, *o.manifest != "", *o.list); err != nil {
 		return err
@@ -209,7 +209,7 @@ func runExport(args []string) error {
 			if *o.unattended {
 				app.RecordRefusedRun(app.Options{Out: *o.out, Unattended: true}, kerr)
 			}
-			return kerr
+			return keylessRefusal(kerr, *o.out)
 		}
 	}
 	if err := refuseStrayKeyFlags(fs, kf, keyed, creating); err != nil {
@@ -217,6 +217,17 @@ func runExport(args []string) error {
 	}
 	if err := requireAttended(*o.out, keyed, creating, kf.secretPaths()); err != nil {
 		return err
+	}
+	// What refuses a keyed run without the secret is judged before it is asked for
+	// (P3-8 friction review, T2-2): -outlook where Outlook cannot run, a -log inside
+	// an encrypted archive.
+	if keyed || creating {
+		if *o.outlook && runtime.GOOS != "windows" {
+			return fmt.Errorf("%w", outlookcom.ErrUnsupported)
+		}
+		if err := app.RefuseLogInside(*o.log); err != nil {
+			return err
+		}
 	}
 
 	// Discover the inputs up front (friction #2), BEFORE any output dir, run log,
@@ -386,7 +397,7 @@ func runExport(args []string) error {
 	// prints only the "FAILED:" line, never a misleading "Done. exported=0 …
 	// manifest=0" first (friction #7b/#22).
 	if printsSummary(runErr) {
-		printSummary(logger, result, *doIndex, *keepRaw, *out)
+		printSummaryLed(logger, result, *doIndex, *keepRaw, *out, summaryLead(runErr))
 	}
 
 	// The -outlook COM path builds a full, mailbox-sized PST copy under
@@ -543,7 +554,7 @@ func scrubTTY(s string) string {
 
 func runSearch(args []string) error {
 	fs := flag.NewFlagSet("mailarchive search", flag.ContinueOnError)
-	out := fs.String("out", ".", "export directory to search (contains search.db)")
+	out := fs.String("out", ".", "the archive folder to search (an encrypted archive is opened with its password or recovery key first)")
 	limit := fs.Int("limit", 20, "maximum results")
 	folder := fs.String("folder", "", "restrict to a folder (and its subfolders); a folder: token in the query overrides this")
 	sender := fs.String("sender", "", "restrict to a sender (substring); a from: token in the query overrides this")
@@ -582,11 +593,13 @@ func runSearch(args []string) error {
 	// §7.5); -paths stays refused there, before anything is asked: it would print
 	// file paths an encrypted archive's disk does not hold.
 	var useIndex func(func(*index.Index) error) error
+	encrypted := false
 	if kerr := app.RefuseKeyless("search it", *out); kerr != nil {
 		dir := abspath(*out)
 		if !app.UnlockableAt(dir) {
-			return kerr
+			return keylessRefusal(kerr, dir)
 		}
+		encrypted = true
 		if *asPaths {
 			return fmt.Errorf("%s is an encrypted archive: -paths prints file paths, and its messages are not files on disk — use -json, or read them with mailarchive serve", dir)
 		}
@@ -655,7 +668,16 @@ func runSearch(args []string) error {
 		if r.Snippet != "" {
 			fmt.Printf("    %s\n", scrubTTY(markTags.ReplaceAllString(r.Snippet, "")))
 		}
-		fmt.Printf("    -> %s\n\n", r.Path)
+		// An encrypted archive's messages are not files on disk, so no file path is
+		// printed for them (P3-8 friction review, Tier C); the line below says how
+		// to read them.
+		if !encrypted {
+			fmt.Printf("    -> %s\n", r.Path)
+		}
+		fmt.Println()
+	}
+	if encrypted && len(results) > 0 {
+		fmt.Fprintf(os.Stderr, "These messages are inside the encrypted archive, not files on disk: read them with mailarchive serve -out %s\n", encmark.CommandPath(abspath(*out)))
 	}
 	return nil
 }
@@ -734,7 +756,7 @@ func runReindex(args []string) (err error) {
 	if kerr := app.RefuseKeyless("reindex it", *o.out); kerr != nil {
 		dir := abspath(*o.out)
 		if !app.UnlockableAt(dir) {
-			return kerr
+			return keylessRefusal(kerr, dir)
 		}
 		return reindexEncrypted(dir, o, k)
 	}
@@ -861,9 +883,9 @@ func runVerify(args []string) error {
 			return errNeedsKeyToRead(dir, "checking it with its key (-full)")
 		}
 		// A busy archive needs no key to refuse: before any password is asked or
-		// derived (the P3-2b pass, FID-07).
-		if lockfile.Held(filepath.Join(dir, lockfile.Name)) {
-			return fmt.Errorf("%w: %s is being written by another MailArchive (a backup or another check) — check it once that finishes", lockfile.ErrHeld, dir)
+		// derived (the P3-2b pass, FID-07), in the words every keyed verb uses (B15).
+		if err := refuseBusy(dir); err != nil {
+			return err
 		}
 		if err := readKeyAvailable(stdAsker(), dir, "checking it with its key (-full)", k); err != nil {
 			return err
@@ -1080,9 +1102,14 @@ func runExtract(args []string) error {
 	if kerr := app.RefuseKeyless("extract from it", *o.out, *o.dest); kerr != nil {
 		dir := abspath(*o.out)
 		if derr := app.RefuseKeyless("extract into it", "", *o.dest); derr != nil || !app.UnlockableAt(dir) {
-			return kerr
+			return keylessRefusal(kerr, dir)
 		}
 		if err := readKeyAvailable(stdAsker(), dir, "extracting from it", k); err != nil {
+			return err
+		}
+		// extract takes the archive's lock: a run holding it refuses before the
+		// password (P3-8 friction review, T2-1, B15).
+		if err := refuseBusy(dir); err != nil {
 			return err
 		}
 		if err := app.RefuseLogInside(*o.log); err != nil {
@@ -1554,7 +1581,7 @@ func runGraph(args []string) (err error) {
 		if *o.unattended {
 			app.RecordRefusedRun(app.Options{Out: *o.out, Unattended: true}, kerr)
 		}
-		return kerr
+		return keylessRefusal(kerr, *o.out)
 	}
 	if err := refuseStrayKeyFlags(fs, kf, keyed, creating); err != nil {
 		return err
@@ -1702,7 +1729,7 @@ func runGraph(args []string) (err error) {
 	}
 
 	result, runErr := app.RunGraph(ctx, gopts, opts, logger)
-	printSummary(logger, result, *o.index, *o.keepRaw, *o.out)
+	printSummaryLed(logger, result, *o.index, *o.keepRaw, *o.out, summaryLead(runErr))
 	err = graphOutcome(logger, runErr)
 	return err
 }
@@ -1832,9 +1859,10 @@ Usage:
   mailarchive status   -out DIR                          completeness, last run, schedule posture
   mailarchive verify   -out DIR [-json] [-record]        check archived files against recorded fixity
   mailarchive extract  -out DIR -format mbox|eml -dest OUTDIR   migrate the archive out as standard mail
-  mailarchive -encrypt -out NEWDIR [-input ...]          make a new ENCRYPTED archive, at a terminal
-  mailarchive change-password  -out DIR                  an encrypted archive's keys: change-password,
-  mailarchive new-recovery-key -out DIR                    new-recovery-key, forget-key
+  mailarchive -encrypt -out NEWDIR -input FILE|DIR ...   make a new ENCRYPTED archive, at a terminal (or -auto for -input)
+  mailarchive change-password  -out DIR                  set a new password for an encrypted archive
+  mailarchive new-recovery-key -out DIR                  make a new recovery key for an encrypted archive
+  mailarchive forget-key       -out DIR                  stop remembering an encrypted archive's key on this computer
   mailarchive restore-key-file -out DIR -from FILE       put back an encrypted archive's lost key files (or -remembered)
   mailarchive forget-archive   -out DIR                  stop treating a folder as one of this computer's encrypted archives
   mailarchive repair-record                              rebuild this computer's damaged record of encrypted archives
@@ -2021,8 +2049,23 @@ func printNotCaptured(logger *log.Logger, r app.Result) {
 }
 
 func printSummary(logger *log.Logger, r app.Result, indexed, keepRaw bool, out string) {
+	printSummaryLed(logger, r, indexed, keepRaw, out, "Done.")
+}
+
+// summaryLead is the word the summary starts with: "Done." for a run that
+// finished, never for one Ctrl-C or a terminate stopped, whose counts are what it
+// did before it stopped (P3-8 friction review, Tier C).
+func summaryLead(runErr error) string {
+	if errors.Is(runErr, context.Canceled) {
+		return "Stopped before the end (interrupted); what it did so far is saved:"
+	}
+	return "Done."
+}
+
+// printSummaryLed is printSummary with its first word given.
+func printSummaryLed(logger *log.Logger, r app.Result, indexed, keepRaw bool, out, lead string) {
 	s := r.Stats
-	msg := fmt.Sprintf("Done. exported=%d filled=%d skipped(seen)=%d skipped(date)=%d attachments=%d inline=%d non-html=%d no-body=%d manifest=%d",
+	msg := fmt.Sprintf(lead+" exported=%d filled=%d skipped(seen)=%d skipped(date)=%d attachments=%d inline=%d non-html=%d no-body=%d manifest=%d",
 		s.Exported, s.Filled, s.SkippedManifest, s.SkippedDate, s.Attachments, s.AttachmentsInline, s.NonHTMLBodies, s.NoBody, r.ManifestSize)
 	if indexed {
 		msg += fmt.Sprintf(" indexed=%d", r.Indexed)

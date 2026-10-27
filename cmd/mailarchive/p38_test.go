@@ -26,7 +26,7 @@ func TestRestoreFromTheRememberedKeyChecksFirst(t *testing.T) {
 		assure.NoSideEffect(func() bool { return len(a.prompts) == 0 && !exists(filepath.Join(plain, vault.FileName)) }))
 
 	out := filepath.Join(t.TempDir(), "archive")
-	c := &scripted{isAttended: true, answers: []string{flowPassword, flowPassword, "", keyAnswer}}
+	c := &scripted{isAttended: true, answers: []string{flowPassword, flowPassword, "", "", keyAnswer}}
 	u, err := createEncrypted(c, out, noKeyFlags(), false, nil)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, c.transcript())

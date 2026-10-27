@@ -24,7 +24,7 @@ type Located interface{ Location() string }
 
 // ErrStoreInsideArchive refuses to remember a key in a store whose folder is inside
 // an encrypted archive: the key would travel with the archive it opens (P2a-C14).
-var ErrStoreInsideArchive = errors.New("vault: the secret store is inside an encrypted archive")
+var ErrStoreInsideArchive = errors.New("the place this computer keeps remembered keys is inside an encrypted archive")
 
 // Remember files k's master key in s so unattended backups can open the archive
 // (D1's default, A10). It is the master key itself, protected only by the store
@@ -49,11 +49,11 @@ func Forget(s Store, id ID) error { return s.Delete(Account(id)) }
 var (
 	// ErrKeyNotRetrievable refuses an unattended run that cannot get a key which
 	// opens the archive (C7, A15).
-	ErrKeyNotRetrievable = errors.New("vault: this archive's remembered key cannot be retrieved")
+	ErrKeyNotRetrievable = errors.New("this archive's remembered key cannot be used")
 	// ErrVaultMissing is the gate's reason when an archive this computer recorded
 	// as encrypted has no key file. It is deliberately NOT ErrNoVault: nothing
 	// that reads "no vault, maybe plaintext" may match it (A15).
-	ErrVaultMissing = errors.New("vault: this encrypted archive's key file is missing")
+	ErrVaultMissing = errors.New("this encrypted archive's key file is missing")
 )
 
 // Remedies the gate names, by cause.

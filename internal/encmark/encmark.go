@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 
@@ -172,7 +173,7 @@ func judged(m encrecord.Match) string {
 // to forget it instead (the P3-1a pass, CRIT-02).
 func caseWording(c Case, m encrecord.Match) string {
 	if c == Unproven && !vault.Claims(judged(m)).Present {
-		return fmt.Sprintf("this computer once recorded an encrypted archive at %s, and its record was repaired, but the archive's key files are not there; %s", m.Folder, forgetOffer("you removed it on purpose", m.Folder))
+		return fmt.Sprintf("Is the drive plugged in? This computer once recorded an encrypted archive in this folder, and its record was repaired, but the archive's key files are not there now. If the archive is on a drive, plug it in and try again. %s", forgetOffer("you removed the archive on purpose", m.Folder))
 	}
 	return Wording(c, m.Folder)
 }
@@ -238,26 +239,40 @@ func KeysGone(out string) bool {
 }
 
 // forgetOffer is how a refusal points at forgetting the folder (§4.6): the verb
-// P3-1a ships, which asks its own confirmations.
+// P3-1a ships, which asks its own confirmations. It is the one place the folder's
+// path is printed, in the command to type (P3-8 friction review, B12).
 func forgetOffer(why, folder string) string {
-	return fmt.Sprintf("if %s, run `mailarchive forget-archive -out %q`", why, folder)
+	return fmt.Sprintf("If %s, tell this computer to stop protecting this folder: mailarchive forget-archive -out %s", why, CommandPath(folder))
 }
 
-// Wording is a case's refusal for folder (§4.5).
+// CommandPath is a folder as a person types it into a command: in double quotes,
+// and — on Windows — with its backslashes as they are, not doubled.
+func CommandPath(p string) string {
+	if runtime.GOOS == "windows" && !strings.ContainsAny(p, `"`) {
+		return `"` + p + `"`
+	}
+	return fmt.Sprintf("%q", p)
+}
+
+// Wording is a case's refusal for folder (§4.5). Each says what happened, why
+// MailArchive will not go on, and what to do, naming the folder once — in the
+// command to type where there is one (P3-8 friction review, B12). A folder gone
+// asks first whether its drive is plugged in; a folder that became a link is not
+// worded as removed (case L): the archive itself may be whole where it now is.
 func Wording(c Case, folder string) string {
 	switch c {
 	case Link:
-		return fmt.Sprintf("%s was an encrypted archive this computer made, and is now a link to somewhere else — it may have been tampered with; %s", folder, forgetOffer("you made this change on purpose", folder))
+		return fmt.Sprintf("This folder was an encrypted archive this computer made, and it — or a folder above it — is now a link to another place, so MailArchive will not write through it: it may have been tampered with. The archive itself was not removed by this: if you moved it on purpose, use it where it is now (a backup into it there records it). %s", forgetOffer("you made this link on purpose", folder))
 	case Unproven:
-		return fmt.Sprintf("this computer once recorded an encrypted archive at %s, and its record was repaired; open it with its password to confirm", folder)
+		return fmt.Sprintf("This computer's record was repaired, and the encrypted archive it lists in %s is not confirmed yet: open the archive once with its password to confirm it — run a backup into it at a terminal, which asks for the password.", folder)
 	case Other:
-		return fmt.Sprintf("%s was an encrypted archive this computer made, and now holds other files — it may have been tampered with, or another drive may now use this path; restore the whole archive folder from a backup copy, or, %s", folder, forgetOffer("you replaced it on purpose", folder))
+		return fmt.Sprintf("This folder was an encrypted archive this computer made, and now holds other files — it may have been tampered with, or another drive may now use this path. Restore the whole archive folder from a backup copy. %s", forgetOffer("you replaced it on purpose", folder))
 	case Foreign:
-		return fmt.Sprintf("%s holds files naming a different encrypted archive than the one this computer recorded there — it may have been tampered with; %s", folder, forgetOffer("you put that archive there on purpose", folder))
+		return fmt.Sprintf("This folder holds key files naming a different encrypted archive than the one this computer recorded here — it may have been tampered with. %s", forgetOffer("you put that archive there on purpose", folder))
 	case KeysMissing:
-		return fmt.Sprintf("%s holds an encrypted archive this computer made, but its key files are missing or damaged — restore the whole archive folder from a backup copy, or put the key files back with its recovery file and recovery key: `mailarchive restore-key-file -out %q -from FILE` (or `-remembered`, when this computer remembers its key)", folder, folder)
+		return fmt.Sprintf("This folder holds an encrypted archive this computer made, but its key files are missing or damaged, so it cannot be opened. Put them back with the archive's recovery file and recovery key: mailarchive restore-key-file -out %s -from FILE (FILE is the recovery file you saved; if this computer remembers the archive's key, give -remembered instead of -from FILE). Or restore the whole archive folder from a backup copy.", CommandPath(folder))
 	case Gone:
-		return fmt.Sprintf("%s used to hold an encrypted archive this computer made; %s", folder, forgetOffer("you removed it on purpose", folder))
+		return fmt.Sprintf("Is the drive plugged in? This folder used to hold an encrypted archive this computer made, and the archive is not there now. If it is on a drive, plug the drive in and try again. %s", forgetOffer("you removed the archive on purpose", folder))
 	}
 	return ""
 }

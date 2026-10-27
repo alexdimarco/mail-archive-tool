@@ -23,7 +23,7 @@ func archiveWithFile(t *testing.T) (out, file, rk string) {
 	file = filepath.Join(t.TempDir(), "recovery-file.json")
 	k := noKeyFlags()
 	k.recoveryFileOut = &file
-	a := &scripted{isAttended: true, answers: []string{flowPassword, flowPassword, "n", keyAnswer}}
+	a := &scripted{isAttended: true, answers: []string{flowPassword, flowPassword, "n", "", keyAnswer}}
 	u, err := createEncrypted(a, out, k, false, nil)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, a.transcript())

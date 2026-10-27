@@ -49,10 +49,10 @@ const saltSize = 16
 const MinPasswordRunes = 12
 
 // ErrParams refuses a wrap entry whose cost is outside [floor, ceiling].
-var ErrParams = errors.New("vault: key-derivation cost outside the allowed range")
+var ErrParams = errors.New("the key file asks for an amount of work to open it outside what MailArchive allows")
 
 // ErrWeakPassword refuses a password below the floor when it is set.
-var ErrWeakPassword = errors.New("vault: password too short")
+var ErrWeakPassword = errors.New("the password is too short")
 
 func (p Params) check() error {
 	if p.MemoryKiB < floor.MemoryKiB || p.Time < floor.Time || p.Threads < floor.Threads {

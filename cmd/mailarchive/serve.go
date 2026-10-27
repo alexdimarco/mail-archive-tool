@@ -52,7 +52,7 @@ var linkWindow = 15 * time.Second
 // archive for a fresh link and prints it [CC18].
 func serveMain(ctx context.Context, args []string, env *linkEnv) error {
 	fs := flag.NewFlagSet("mailarchive serve", flag.ContinueOnError)
-	out := fs.String("out", ".", "export directory to serve (contains search.db)")
+	out := fs.String("out", ".", "the archive folder to serve (an encrypted archive is opened with its password or recovery key first, and served on this computer only)")
 	addr := fs.String("addr", "127.0.0.1:8099", "address to listen on")
 	noBrowser := fs.Bool("no-browser", false, "do not open the reader in a browser: print a link instead (none is opened without a display either)")
 	link := fs.Bool("link", false, "print a fresh one-time link from the serve already running on -out, and exit (for a serve with no terminal, or another browser or device)")
@@ -77,7 +77,7 @@ func serveMain(ctx context.Context, args []string, env *linkEnv) error {
 	if kerr := app.RefuseKeyless("serve it", *out); kerr != nil {
 		dir := abspath(*out)
 		if !app.UnlockableAt(dir) {
-			return kerr
+			return keylessRefusal(kerr, dir)
 		}
 		if !server.IsLoopback(*addr) {
 			return fmt.Errorf("%s is an encrypted archive: it is served only on this computer, and -addr %s is not a loopback address — leave -addr out, or use 127.0.0.1", dir, *addr)
@@ -142,6 +142,9 @@ func serveMain(ctx context.Context, args []string, env *linkEnv) error {
 	}
 	fmt.Fprintf(env.Stdout, "Serving %d indexed messages from %s\n", count, *out)
 	fmt.Fprintf(env.Stdout, "Search UI:  %s\n", served)
+	// The address alone answers "not signed in": it opens through a private link
+	// (P3-8 friction review, Tier C).
+	fmt.Fprintln(env.Stdout, "            (that address opens only through a private link — the one below, or one from `mailarchive serve -link`)")
 	l.start()
 	fmt.Fprintln(env.Stdout, l.stopHint(l.enter(ctx)))
 	if env.Ready != nil {

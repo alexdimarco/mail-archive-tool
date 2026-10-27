@@ -34,7 +34,7 @@ func TestARecoveryKeyFileIsKeptOnlyForAKeyInEffect(t *testing.T) {
 	keyOut := filepath.Join(t.TempDir(), "recovery.txt")
 	k := noKeyFlags()
 	k.recoveryKeyOut = &keyOut
-	wrong := []string{flowPassword, flowPassword, "n"}
+	wrong := []string{flowPassword, flowPassword, "n", ""}
 	for i := 0; i < 15; i++ {
 		wrong = append(wrong, "AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAA")
 	}
@@ -82,7 +82,7 @@ func TestTheCLIRefusesWhatWouldGoWrongBeforeAsking(t *testing.T) {
 	flowRecord(t)
 	out := filepath.Join(t.TempDir(), "archive")
 	const shaped = "mango umbrella umbrella hammer"
-	a := &scripted{isAttended: true, answers: []string{shaped, flowPassword, flowPassword, "n", keyAnswer}}
+	a := &scripted{isAttended: true, answers: []string{shaped, flowPassword, flowPassword, "n", "", keyAnswer}}
 	u, err := createEncrypted(a, out, noKeyFlags(), false, nil)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, a.transcript())

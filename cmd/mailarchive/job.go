@@ -125,10 +125,10 @@ type reindexOpts struct {
 
 func reindexFlags(fs *flag.FlagSet) *reindexOpts {
 	o := &reindexOpts{}
-	o.out = fs.String("out", "", "export directory to reconcile (contains search.db) (required)")
+	o.out = fs.String("out", "", "the archive folder to reconcile (required); an encrypted archive takes only -rebuild, at a terminal, with its password or recovery key")
 	o.log = fs.String("log", "", "write the run log to this file (size-capped, rotated) instead of stderr")
 	o.unattended = fs.Bool("unattended", false, "scheduled run: never wait for input")
-	o.rebuild = fs.Bool("rebuild", false, "reconstruct search.db and the folder pages from the archive itself (the manifest and the on-disk .html/.eml files) — recovery for a lost or corrupt index; requires the manifest")
+	o.rebuild = fs.Bool("rebuild", false, "reconstruct search.db and the folder pages from the archive itself (the manifest and the on-disk .html/.eml files) — recovery for a lost or corrupt index; requires the manifest. For an encrypted archive it rebuilds the search index from the encrypted messages, and never removes one")
 	return o
 }
 
